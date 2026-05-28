@@ -1,0 +1,3 @@
+import "mod_ffi_func.leno" as m
+var pid = m.get_pid()
+print("PID=" + pid)

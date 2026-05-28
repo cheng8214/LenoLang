@@ -1,0 +1,122 @@
+import sockets
+import io
+
+// V2: 非阻塞多客户端聊天服务器（简化版）
+
+var clients = []
+var client_names = []
+var client_counter = 0
+
+// 广播消息
+func broadcast(string msg, var exclude) {
+    io.print("[广播] 消息: " + msg.trim() + " 给 " + (clients.len() - 1) + " 个客户端")
+    var i = 0
+    while i < clients.len() {
+        if clients[i] != exclude {
+            var result = sockets.send(clients[i], msg)
+            io.print("[广播] 发送给 " + client_names[i] + ": " + result)
+        }
+        i = i + 1
+    }
+}
+
+main() {
+    var port = 8888
+    
+    io.print("=== V2 非阻塞聊天服务器 ===")
+    
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("启动失败")
+        return
+    }
+    
+    var nb_result = sockets.set_nonblocking(server, true)
+    io.print("服务器运行在 127.0.0.1:" + port)
+    io.print("非阻塞模式: " + nb_result)
+    io.print("")
+    
+    while true {
+        // 接受新连接
+        var client = sockets.accept(server)
+        if client != null {
+            client_counter = client_counter + 1
+            var name = "User" + client_counter
+            
+            io.print("新客户端: " + name)
+            
+            sockets.set_nonblocking(client, true)
+            sockets.send(client, "Welcome " + name + "!\n")
+            
+            // 先添加，再广播
+            clients.add(client)
+            client_names.add(name)
+            
+            broadcast("[系统] " + name + " 加入\n", client)
+            io.print("当前客户端: " + clients.len() + "\n")
+        }
+        
+        // 处理现有客户端
+        if clients.len() > 0 {
+            var ready = sockets.select(clients, 100)
+            
+            var idx = 0
+            while idx < ready.len() {
+                var sock = ready[idx]
+                
+                // 查找索引
+                var client_idx = 0
+                var found = false
+                while client_idx < clients.len() {
+                    if clients[client_idx] == sock {
+                        found = true
+                        break
+                    }
+                    client_idx = client_idx + 1
+                }
+                
+                if found {
+                    var data = sockets.recv(sock, 1024)
+                    
+                    if data == null {
+                        io.print("[" + client_names[client_idx] + "] 断开")
+                        sockets.close(sock)
+                        
+                        // 移除
+                        var new_clients = []
+                        var new_names = []
+                        var j = 0
+                        while j < clients.len() {
+                            if j != client_idx {
+                                new_clients.add(clients[j])
+                                new_names.add(client_names[j])
+                            }
+                            j = j + 1
+                        }
+                        clients = new_clients
+                        client_names = new_names
+                    } else {
+                        var msg = data.trim()
+                        if msg.len() > 0 {
+                            var n = client_names[client_idx]
+                            io.print("[" + n + "]: " + msg)
+                            
+                            if msg == "/quit" {
+                                sockets.send(sock, "Bye!\n")
+                                sockets.close(sock)
+                            } else {
+                                broadcast("[" + n + "]: " + msg + "\n", sock)
+                                // 给发送者也发一份，避免客户端 recv 阻塞
+                                sockets.send(sock, "[我]: " + msg + "\n")
+                            }
+                        }
+                    }
+                }
+                
+                idx = idx + 1
+            }
+        }
+    }
+    
+    sockets.close(server)
+}

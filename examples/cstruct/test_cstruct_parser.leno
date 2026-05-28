@@ -1,0 +1,16 @@
+// 测试 cstruct 解析
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    print("cstruct 解析测试通过!")
+}

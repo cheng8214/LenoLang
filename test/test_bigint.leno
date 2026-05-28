@@ -1,0 +1,74 @@
+// BigInt 测试
+
+main()
+{
+    // 测试超大整数创建 - 对外统一显示为 int
+    var big1 = 12345678901234567890
+    var big2 = 98765432109876543210
+    
+    // 对外统一是 int 类型（内部自动处理 bigint）
+    assert_eq(type(big1), "int")
+    assert_eq(type(big2), "int")
+
+    // 测试 BigInt 加法
+    var sum = big1 + big2
+    assert_eq(sum, 111111111011111111100)
+
+    // 测试 BigInt 减法
+    var diff = big2 - big1
+    assert_eq(diff, 86419753208641975320)
+
+    // 测试 BigInt 乘法
+    var product = big1 * 2
+    assert_eq(product, 24691357802469135780)
+
+    // 测试 BigInt 除法 - int / int = int（整数除法）
+    var quotient = big2 / 10
+    assert_eq(type(quotient), "int")
+    assert_eq(quotient, 9876543210987654321)
+    // 除法后再乘回去应该等于原值（或接近，因为是整数除法）
+    var check = quotient * 10
+    assert_eq(check, big2 - (big2 % 10))  // 减去余数
+
+    // 测试 BigInt 取模
+    var remainder = big2 % 100
+    assert_eq(remainder, 10)
+
+    // 测试 BigInt 比较
+    assert_eq(big1 < big2, true)
+    assert_eq(big1 > big2, false)
+    assert_eq(big1 == big1, true)
+    assert_eq(big1 != big2, true)
+
+    // 测试 BigInt 与 int 混合运算
+    var mixed = big1 + 100
+    assert_eq(mixed, 12345678901234567990)
+
+    // 测试负数 BigInt
+    var neg = -12345678901234567890
+    assert_eq(neg < 0, true)
+    assert_eq(-neg, 12345678901234567890)
+
+    // 测试斐波那契数列（大数）
+    var fib100 = fib_bigint(100)
+    assert_eq(fib100, 354224848179261915075)
+
+    print("test_bigint passed")
+}
+
+func fib_bigint(var n)
+{
+    if n <= 1 {
+        return n
+    }
+    var a = 0
+    var b = 1
+    var i = 2
+    while i <= n {
+        var temp = a + b
+        a = b
+        b = temp
+        i = i + 1
+    }
+    return b
+}

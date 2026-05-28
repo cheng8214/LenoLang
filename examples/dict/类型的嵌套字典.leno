@@ -1,0 +1,26 @@
+main() 
+{ 
+  // 测试1：显式类型的嵌套字典
+  Dict[string, Dict[string, int]] nested = {
+    level1: {
+      a: 1,
+      b: 2
+    }
+  }
+  print(type(nested))
+  
+  // 测试2：外层字典 set 应该检查内层字典类型
+  nested.set("level2", {c: 3, d: 4})  // 应该正常
+  print(nested)
+  
+  // 测试3：错误类型应该报错
+  nested.set("level3", {e: "wrong"})  // 应该报错，值应该是 int 不是 string
+  
+  // 测试4：数组嵌套字典
+  var arr = [{x: 1}, {y: 2}]
+  arr.add({z: 3})  // 应该正常
+  print(arr)
+  arr.add({w: "wrong"})  // 应该报错
+  
+  print("done")
+}

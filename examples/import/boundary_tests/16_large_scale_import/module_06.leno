@@ -1,0 +1,5 @@
+// 大规模导入测试 - 模块 06
+export var id = 6
+export var name = "module_06"
+export func get_value() { return id * 10 }
+export func compute(int x) { return x + id }

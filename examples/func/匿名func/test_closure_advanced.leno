@@ -1,0 +1,40 @@
+// 高级闭包测试
+
+main() {
+    print("=== 高级闭包测试 ===")
+    
+    // 测试 1: 简单的闭包
+    print("\n测试 1: 简单闭包")
+    var x = 10
+    var f = func() { return x }
+    print(f())
+    
+    // 测试 2: 闭包作为返回值
+    print("\n测试 2: 闭包作为返回值")
+    var add5 = make_adder(5)
+    print(add5(10))
+    print(add5(20))
+    
+    // 测试 3: 计数器闭包
+    print("\n测试 3: 计数器闭包")
+    var counter = make_counter(0)
+    print(counter())
+    print(counter())
+    print(counter())
+    
+    print("\n=== 所有测试通过！===")
+}
+
+// 创建加法器
+func make_adder(var n) {
+    return func(var x) { return x + n }
+}
+
+// 创建计数器
+func make_counter(var start) {
+    var count = start
+    return func() {
+        count = count + 1
+        return count
+    }
+}

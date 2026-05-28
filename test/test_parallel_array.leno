@@ -1,0 +1,47 @@
+// 数组索引并行赋值测试
+
+main()
+{
+    // 测试1: 两个数组索引交换
+    var arr1 = [1, 2, 3, 4, 5]
+    arr1[0], arr1[4] = arr1[4], arr1[0]
+    assert_eq(arr1[0], 5)
+    assert_eq(arr1[4], 1)
+
+    // 测试2: 三个数组索引赋值
+    var arr2 = [10, 20, 30, 40, 50]
+    arr2[0], arr2[2], arr2[4] = 100, 300, 500
+    assert_eq(arr2[0], 100)
+    assert_eq(arr2[2], 300)
+    assert_eq(arr2[4], 500)
+    assert_eq(arr2[1], 20)  // 未改变的元素
+    assert_eq(arr2[3], 40)
+
+    // 测试3: 混合变量和数组索引
+    var arr3 = [1, 2, 3]
+    var x = 100
+    var y = 200
+    arr3[0], x, arr3[2], y = x, arr3[0], y, arr3[2]
+    assert_eq(arr3[0], 100)
+    assert_eq(x, 1)
+    assert_eq(arr3[2], 200)
+    assert_eq(y, 3)
+
+    // 测试4: 同一数组多个索引
+    var arr4 = [0, 0, 0, 0, 0]
+    arr4[1], arr4[3] = 10, 40
+    assert_eq(arr4[1], 10)
+    assert_eq(arr4[3], 40)
+    assert_eq(arr4[0], 0)
+    assert_eq(arr4[2], 0)
+    assert_eq(arr4[4], 0)
+
+    // 测试5: 数组元素交换（冒泡排序的一步）
+    var arr5 = [5, 3, 8, 1, 2]
+    // 交换相邻元素
+    arr5[0], arr5[1] = arr5[1], arr5[0]
+    assert_eq(arr5[0], 3)
+    assert_eq(arr5[1], 5)
+
+    print("test_parallel_array passed")
+}

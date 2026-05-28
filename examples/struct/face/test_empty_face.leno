@@ -1,0 +1,26 @@
+// ============================================================================
+// 测试：空 face（不含任何方法声明的接口）
+// ============================================================================
+//
+// 本测试验证：
+//   1. face 可以不声明任何方法（空接口）
+//   2. struct 可以 impl 空的 face
+//   3. 空 face 类型的函数参数可以接受实现了该 face 的 struct
+//
+// 预期输出：got empty face
+
+face Empty {
+}
+
+struct Thing impl Empty {
+    string name = ""
+}
+
+func check(Empty e) {
+    print("got empty face")
+}
+
+main() {
+    var t = Thing()
+    check(t)
+}

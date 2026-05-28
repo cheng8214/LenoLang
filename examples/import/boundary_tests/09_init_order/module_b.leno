@@ -1,0 +1,12 @@
+// 模块 B - 依赖 C 和 logger
+
+import "init_logger.leno" as logger
+import "module_c.leno" as c
+
+logger.log_init("module_b")
+
+export var b_value = 2 + c.c_value
+
+export func get_value() {
+    return b_value
+}

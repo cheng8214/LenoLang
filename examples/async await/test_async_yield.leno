@@ -1,0 +1,31 @@
+import io
+import asyncs
+
+// 测试 asyncs.yield() - 主动让出执行权
+async func test_yield() {
+    io.print("yield 测试: 开始")
+    for 0:3 to i {
+        io.print($"  步骤 {i}")
+        await asyncs.yield()  // 让出执行权，让其他协程运行
+    }
+    io.print("yield 测试: 完成")
+}
+
+async func test_task(string name) {
+    io.print($"任务 {name} 开始")
+    await asyncs.yield()
+    io.print($"任务 {name} 继续")
+    await asyncs.yield()
+    io.print($"任务 {name} 完成")
+}
+
+main() {
+    io.print("=== 测试 asyncs.yield() ===")
+    
+    test_yield()
+    test_task("A")
+    test_task("B")
+    
+    asyncs.run()
+    io.print("=== 完成 ===")
+}

@@ -1,0 +1,11 @@
+// 字符串测试
+var s = "hello"
+assert_eq(s.len(), 5)
+assert_eq(s + " world", "hello world")
+assert_eq("abc" == "abc", true)
+assert_eq("abc" != "def", true)
+
+assert_eq("hello"[0], "h")
+assert_eq("hello"[4], "o")
+
+print("test_string passed")

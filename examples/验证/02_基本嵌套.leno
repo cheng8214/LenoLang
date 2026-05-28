@@ -1,0 +1,28 @@
+// 基本嵌套示例
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+struct Size {
+    int width = 100
+    int height = 100
+}
+
+struct Rect {
+    Point position
+    Size size
+}
+
+main() {
+    var r = Rect()
+    print(r)
+    
+    r.position.x = 10
+    r.position.y = 20
+    r.size.width = 200
+    r.size.height = 150
+    
+    print(r.position.x)
+    print(r.size.width)
+}

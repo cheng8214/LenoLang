@@ -1,0 +1,53 @@
+// 测试 struct 中的 self
+
+struct Point
+{
+    int x
+    int y
+    
+    // 使用 self 访问字段
+    func print_self()
+    {
+        print("self.x = " + self.x)
+        print("self.y = " + self.y)
+    }
+    
+    // 使用 self 修改字段
+    func move(int dx, int dy)
+    {
+        self.x = self.x + dx
+        self.y = self.y + dy
+    }
+    
+    // 使用 self 调用其他方法
+    func print_and_move(int dx, int dy)
+    {
+        self.print_self()
+        self.move(dx, dy)
+        self.print_self()
+    }
+}
+
+main()
+{
+    print("=== 测试 struct 中的 self ===")
+    print("")
+    
+    var p = Point(x = 10, y = 20)
+    
+    print("1. 测试 print_self():")
+    p.print_self()
+    
+    print("")
+    print("2. 测试 move():")
+    p.move(5, 10)
+    p.print_self()
+    
+    print("")
+    print("3. 测试 print_and_move():")
+    var p2 = Point(x = 0, y = 0)
+    p2.print_and_move(100, 200)
+    
+    print("")
+    print("=== 完成 ===")
+}

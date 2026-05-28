@@ -1,0 +1,20 @@
+main() {
+    // 数组
+    var arr = [10, 20, 30]
+    for arr to item, index {
+        print($"{index}: {item}")
+    }
+    print("---")
+
+    // 字符串
+    for "abc" to char, index {
+        print($"{index}: {char}")
+    }
+    print("---")
+
+    // 字典
+    var dict = {name: "cheng", age: 25}
+    for dict to key, value {//
+        print($"{key}:{value}")
+    }
+}

@@ -1,0 +1,97 @@
+import sockets
+import io
+
+// 聊天服务器 - 支持中文
+
+// 处理单个客户端
+func handle_client(var client, string name) {
+    io.print("[" + name + "] 连接成功")
+
+    // 发送欢迎消息（使用简单ASCII避免编码问题）
+    var welcome = "Welcome " + name + "!\n"
+    if not sockets.send(client, welcome) {
+        io.print("Send welcome failed")
+        return
+    }
+
+    // 循环接收消息
+    while true {
+        var data = sockets.recv(client, 1024)
+
+        if data == null {
+            io.print("[" + name + "] disconnected")
+            break
+        }
+
+        var msg = data.trim()
+        
+        // 显示接收到的消息（原始字节）
+        io.print("[" + name + "] recv: " + msg.len() + " bytes")
+
+        if msg.len() == 0 {
+            continue
+        }
+
+        // 退出命令
+        if msg == "/quit" {
+            sockets.send(client, "Bye!\n")
+            break
+        }
+
+        // 回显消息
+        var reply = name + ": " + msg + "\n"
+        var sent = sockets.send(client, reply)
+        
+        if not sent {
+            io.print("Send reply failed")
+            break
+        }
+    }
+
+    sockets.close(client)
+    io.print("[" + name + "] closed")
+}
+
+// 主函数
+main() {
+    var port = 8888
+
+    io.print("=== Chat Server ===")
+    io.print("Starting...")
+
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("Start failed")
+        return
+    }
+
+    io.print("Server running on 127.0.0.1:" + port)
+    io.print("")
+
+    var client_id = 0
+
+    // 循环接受连接
+    while true {
+        io.print("Waiting for client...")
+
+        var client = sockets.accept(server)
+
+        if client == null {
+            io.print("Accept failed")
+            continue
+        }
+
+        client_id = client_id + 1
+        var name = "User" + client_id
+
+        io.print("New client: " + name)
+
+        // 处理客户端（阻塞）
+        handle_client(client, name)
+
+        io.print("Client " + name + " done")
+        io.print("")
+    }
+
+    sockets.close(server)
+}

@@ -1,0 +1,28 @@
+main()
+{
+	print("=== 短路运算符测试 ===")
+	
+	func sideEffect(var msg) {
+	    print("执行了: " + msg)
+	    return true
+	}
+
+	// 21.1 and 短路
+	print("false and sideEffect('and'): " + (false and sideEffect("and")))
+	
+	 //21.2 or 短路
+	print("true or sideEffect('or'): " + (true or sideEffect("or")))
+	
+	// 21.3 链式短路
+	var a = false
+	var b = true
+	var c = false
+	print("a and b and c: " + (a and b and c))
+	print("a or b or c: " + (a or b or c))
+	
+	// 21.4 复杂表达式
+	var x = 10
+	print("x > 5 and x < 20: " + (x > 5 and x < 20))
+	print("x < 5 or x > 15: " + (x < 5 or x > 15))
+
+}

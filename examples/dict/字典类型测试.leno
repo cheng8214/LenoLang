@@ -1,0 +1,21 @@
+main() {
+  // 测试空字典
+  Dict empty = {}
+  print("空字典: " + type(empty))
+
+  // 测试单一类型字典 (int)
+  Dict intDict = {"a": 1, "b": 2, "c": 3}
+  print("int类型字典: " + type(intDict))
+
+  // 测试单一类型字典 (string)
+  Dict strDict = {"a": "hello", "b": "world"}
+  print("string类型字典: " + type(strDict))
+
+  // 测试 int/float 混合（应该提升为 float）
+  Dict numDict = {"a": 1, "b": 2.5}
+  print("int/float混合: " + type(numDict))
+
+  // 测试多类型混合
+  Dict mixed = {"a": 1, "b": "hello", "c": true}
+  print("多类型混合: " + type(mixed))
+}

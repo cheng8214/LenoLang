@@ -1,0 +1,95 @@
+// 测试嵌套 cstruct - 更复杂的场景
+
+cstruct Vec2 {
+    f32 x
+    f32 y
+}
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+// 嵌套结构体
+cstruct Rect {
+    Vec2 origin
+    Vec2 size
+}
+
+// 多层嵌套
+cstruct Transform {
+    Vec3 position
+    Vec3 rotation
+    Vec3 scale
+}
+
+// 混合嵌套和数组
+cstruct Mesh {
+    Vec3 vertices[4]   // 4个顶点的数组
+    Vec2 uvs[4]        // 4个UV坐标的数组
+    i32 triangle_count
+}
+
+main() {
+    print("=== 测试嵌套 cstruct - 复杂场景 ===")
+    
+    // 测试简单嵌套
+    var r = Rect.malloc()
+    r.origin.x = 10.0
+    r.origin.y = 20.0
+    r.size.x = 100.0
+    r.size.y = 200.0
+    print("Rect: origin=(" + r.origin.x + ", " + r.origin.y + "), size=(" + r.size.x + ", " + r.size.y + ")")
+    r.free()
+    
+    // 测试多层嵌套
+    var t = Transform.malloc()
+    t.position.x = 1.0
+    t.position.y = 2.0
+    t.position.z = 3.0
+    t.rotation.x = 0.0
+    t.rotation.y = 90.0
+    t.rotation.z = 0.0
+    t.scale.x = 1.0
+    t.scale.y = 1.0
+    t.scale.z = 1.0
+    print("Transform position: (" + t.position.x + ", " + t.position.y + ", " + t.position.z + ")")
+    print("Transform rotation: (" + t.rotation.x + ", " + t.rotation.y + ", " + t.rotation.z + ")")
+    print("Transform scale: (" + t.scale.x + ", " + t.scale.y + ", " + t.scale.z + ")")
+    t.free()
+    
+    // 测试混合嵌套和数组
+    var m = Mesh.malloc()
+    m.vertices[0].x = 0.0
+    m.vertices[0].y = 0.0
+    m.vertices[0].z = 0.0
+    m.vertices[1].x = 1.0
+    m.vertices[1].y = 0.0
+    m.vertices[1].z = 0.0
+    m.vertices[2].x = 1.0
+    m.vertices[2].y = 1.0
+    m.vertices[2].z = 0.0
+    m.vertices[3].x = 0.0
+    m.vertices[3].y = 1.0
+    m.vertices[3].z = 0.0
+    
+    m.uvs[0].x = 0.0
+    m.uvs[0].y = 0.0
+    m.uvs[1].x = 1.0
+    m.uvs[1].y = 0.0
+    m.uvs[2].x = 1.0
+    m.uvs[2].y = 1.0
+    m.uvs[3].x = 0.0
+    m.uvs[3].y = 1.0
+    
+    m.triangle_count = 2
+    
+    print("Mesh vertices[0]: (" + m.vertices[0].x + ", " + m.vertices[0].y + ", " + m.vertices[0].z + ")")
+    print("Mesh vertices[3]: (" + m.vertices[3].x + ", " + m.vertices[3].y + ", " + m.vertices[3].z + ")")
+    print("Mesh uvs[0]: (" + m.uvs[0].x + ", " + m.uvs[0].y + ")")
+    print("Mesh triangle_count: " + m.triangle_count)
+    m.free()
+    
+    print("=== 所有测试通过 ===")
+}

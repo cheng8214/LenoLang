@@ -1,0 +1,12 @@
+// 新建文件: Untitled.leno
+main()
+{
+	var b=221212123
+	var i=1
+	while i<10000
+	{
+		b=b*i
+		i++
+	}
+	print(b)
+}

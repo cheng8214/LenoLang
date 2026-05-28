@@ -1,0 +1,64 @@
+// 类型跨模块使用测试
+// 使用其他模块定义的类型
+
+import "point_struct.leno" as ps
+import "color_enum.leno" as ce
+import "type_aliases.leno" as ta
+
+// 1. 使用其他模块的 struct
+export func create_line(var p1, var p2) {
+    return {
+        "start": p1,
+        "end": p2,
+        "length": ps.distance(p1, p2)
+    }
+}
+
+export func is_point_in_rect(var point, var rect) {
+    return point.x >= rect.top_left.x and
+           point.x <= rect.bottom_right.x and
+           point.y >= rect.top_left.y and
+           point.y <= rect.bottom_right.y
+}
+
+// 2. 使用其他模块的 enum
+export func get_status_icon(var status) {
+    if (status == ce.Status.PENDING) {
+        return "pending"
+    } else if (status == ce.Status.RUNNING) {
+        return "running"
+    } else if (status == ce.Status.COMPLETED) {
+        return "completed"
+    } else if (status == ce.Status.FAILED) {
+        return "failed"
+    }
+    return "unknown"
+}
+
+export func create_colored_point(var x, var y, var color) {
+    return {
+        "x": x,
+        "y": y,
+        "color": color,
+        "color_name": ce.color_name(color)
+    }
+}
+
+// 3. 使用其他模块的类型别名
+export func process_data(var data) {
+    var result = {}
+    result["sum"] = ta.pair_sum(data)
+    result["swapped"] = ta.pair_swap(data)
+    return result
+}
+
+// 4. 组合使用多个模块的类型
+export func create_shape(var tl, var br, var fill_color, var border_color) {
+    return {
+        "rectangle": ps.create_rectangle(tl, br),
+        "area": ps.rectangle_area(ps.create_rectangle(tl, br)),
+        "fill": ce.color_name(fill_color),
+        "border": ce.color_name(border_color),
+        "metadata": ta.create_string_map()
+    }
+}

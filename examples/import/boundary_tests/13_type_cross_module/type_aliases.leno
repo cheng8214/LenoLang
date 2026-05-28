@@ -1,0 +1,47 @@
+// 跨模块类型别名测试
+// 定义各种类型别名
+
+// 1. 基本类型别名
+export var IntPair = [0, 0]  // 使用数组模拟元组
+export var StringMap = {}    // 使用字典模拟 Map
+
+// 2. 导出创建类型实例的函数
+export func create_int_pair(int a, int b) {
+    return [a, b]
+}
+
+export func create_string_map() {
+    return {}
+}
+
+// 3. 导出操作类型别名的函数
+export func pair_sum(var pair) {
+    return pair[0] + pair[1]
+}
+
+export func pair_swap(var pair) {
+    var temp = pair[0]
+    pair[0] = pair[1]
+    pair[1] = temp
+    return pair
+}
+
+export func map_set(var map, var key, var value) {
+    map[key] = value
+    return map
+}
+
+export func map_get(var map, var key) {
+    return map[key]
+}
+
+// 4. 导出复杂类型操作
+export func merge_pairs(var p1, var p2) {
+    return [p1[0], p1[1], p2[0], p2[1]]
+}
+
+export func map_merge(var m1, var m2) {
+    var result = {}
+    // 简化版本，直接返回 m1
+    return m1
+}

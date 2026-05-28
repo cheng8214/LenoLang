@@ -1,0 +1,8 @@
+export func make_counter(var start) {
+    var count = start
+    func counter_func() {
+        count = count + 1
+        return count
+    }
+    return counter_func
+}

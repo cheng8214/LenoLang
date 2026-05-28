@@ -1,0 +1,19 @@
+import ffi
+
+
+// ========== 纯 Leno 版本（不用 FFI 内存）对比 ==========
+func benchmark_sum_pure_leno(int n) {
+    var sum = 0
+    var i = n
+    while i > 0 {
+        sum = sum + i
+        i = i - 1
+    }
+   
+}
+
+main() {
+  //  _gc(false)  // 关闭 GC
+    var result = benchmark_sum_pure_leno(100000)
+    print("结果: " + result)
+}

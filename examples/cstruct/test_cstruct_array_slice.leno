@@ -1,0 +1,66 @@
+// 测试 cstruct 数组字段切片功能
+
+// 定义一个包含数组字段的 cstruct
+cstruct TestArray {
+    u32 values[10]      // 整数数组
+    u8 bytes[20]        // 字节数组
+}
+
+main() {
+    print("=== 测试 cstruct 数组字段切片 ===")
+    
+    // 创建 cstruct 实例
+    var obj = TestArray.malloc()
+    
+    // 初始化数组数据
+    for 0 : 9 to i {
+        obj.values[i] = (i + 1) * 10  // 10, 20, 30, ..., 100
+    }
+    for 0 : 19 to i {
+        obj.bytes[i] = i + 1           // 1, 2, 3, ..., 20
+    }
+    
+    print("1. 原始数组数据:")
+    print("   values: " + obj.values[0] + ", " + obj.values[1] + ", ... , " + obj.values[9])
+    print("   bytes: " + obj.bytes[0] + ", " + obj.bytes[1] + ", ... , " + obj.bytes[19])
+    
+    // 测试切片 - 完整范围
+    print("\n2. 切片测试 - values[2:5]:")
+    var slice1 = obj.values[2:5]
+    print("   结果: " + slice1)
+    print("   长度: " + slice1.len())
+    
+    // 测试切片 - 从开始
+    print("\n3. 切片测试 - values[:3]:")
+    var slice2 = obj.values[:3]
+    print("   结果: " + slice2)
+    
+    // 测试切片 - 到结束
+    print("\n4. 切片测试 - values[7:]:")
+    var slice3 = obj.values[7:]
+    print("   结果: " + slice3)
+    
+    // 测试字节数组切片
+    print("\n5. 切片测试 - bytes[5:10]:")
+    var slice4 = obj.bytes[5:10]
+    print("   结果: " + slice4)
+    
+    // 测试边界情况
+    print("\n6. 边界测试 - values[0:0] (单个元素):")
+    var slice5 = obj.values[0:0]
+    print("   结果: " + slice5)
+    
+    print("\n7. 边界测试 - values[8:9] (最后两个):")
+    var slice6 = obj.values[8:9]
+    print("   结果: " + slice6)
+    
+    // 验证切片是独立的副本
+    print("\n8. 验证切片是独立副本:")
+    var original_val = obj.values[2]
+    slice1[0] = 999
+    print("   修改切片后，原数组 obj.values[2] = " + obj.values[2])
+    print("   (应该仍然是 " + original_val + ")")
+    
+    obj.free()
+    print("\n=== 测试完成 ===")
+}

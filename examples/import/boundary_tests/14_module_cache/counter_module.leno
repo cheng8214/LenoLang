@@ -1,0 +1,30 @@
+// 模块缓存测试 - 计数器模块
+// 用于测试模块级变量的持久性和缓存行为
+
+export var counter = 0
+export var init_count = 0
+export var module_name = "counter_module"
+
+// 模块初始化时增加计数
+init_count = init_count + 1
+
+export func increment() {
+    counter = counter + 1
+    return counter
+}
+
+export func get_counter() {
+    return counter
+}
+
+export func get_init_count() {
+    return init_count
+}
+
+export func reset() {
+    counter = 0
+}
+
+export func set_value(int v) {
+    counter = v
+}

@@ -1,0 +1,51 @@
+// 测试 win_process_cstruct 模块
+
+import "win_process_cstruct.leno" as wp
+
+main() {
+    print("=== 测试 win_process_cstruct 模块 ===")
+    
+    // 初始化
+    wp.init()
+    
+    // 获取当前进程ID
+    var currentPid = wp.getCurrentPid()
+    print("当前进程ID: " + currentPid)
+    
+    // 获取处理器数量
+    var procCount = wp.getProcessorCount()
+    print("处理器数量: " + procCount)
+    
+    // 获取系统内存信息
+    var memInfo = wp.getSystemMemory()
+    print("\n系统内存信息:")
+    print("  内存负载: " + memInfo.memoryLoad + "%")
+    print("  总物理内存: " + memInfo.totalPhys + " MB")
+    print("  可用物理内存: " + memInfo.availPhys + " MB")
+    
+    // 获取系统运行时间
+    var uptime = wp.getSystemUpTime()
+    print("\n系统运行时间: " + wp.formatUptime(uptime))
+    
+    // 获取当前进程的详细信息
+    print("\n当前进程信息:")
+    var procInfo = wp.getFullProcessInfo(currentPid)
+    if procInfo.success {
+        print("  名称: " + procInfo.name)
+        print("  PID: " + procInfo.pid)
+        print("  内存使用: " + procInfo.memory + " KB")
+        print("  峰值内存: " + procInfo.peakMemory + " KB")
+        print("  父进程ID: " + procInfo.parentPid)
+    }
+    
+    // 查找 notepad 进程
+    print("\n查找 notepad 进程:")
+    var found = wp.findByName("notepad.exe")
+    if found.found {
+        print("  找到 notepad.exe，PID: " + found.pid)
+    } else {
+        print("  未找到 notepad.exe")
+    }
+    
+    print("\n=== 测试完成 ===")
+}

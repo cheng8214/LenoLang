@@ -1,0 +1,21 @@
+// 新建文件: if eif.leno
+main()
+{
+	var a=10
+	if a==11
+	{
+		print(11)
+	}
+	else if a==12
+	{
+		print(12)
+	}
+	eif a==10 //功能等同于else if
+	{
+		print(10)
+	}
+	else 
+	{
+		print("未知")
+	}
+}

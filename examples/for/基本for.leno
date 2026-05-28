@@ -1,0 +1,64 @@
+// 新建文件: Untitled.leno
+main()
+{
+	for 5
+	{
+		printf("cs"+" ")//循环五次
+	}
+	print("")
+	for 5 to num
+	{
+		printf(num+" ")//输出0,1,2,3,4//五次
+	}
+	print("")
+	for :5 to num //有:就是包含5
+	{
+		printf(num+" ")//输出0,1,2,3,4,5
+		
+	}
+	print("")
+	for 0:5 to num //有:就是0到5包含5，简写就是:5
+	{
+		printf(num+" ")//输出0,1,2,3,4,5
+	}
+	print("")
+	for 2:5 to num //有:就是2到5包含5
+	{
+		printf(num+" ")//输出2,3,4,5
+	}
+	print("")
+	for 0:5:2 to num //有:就是0到5包含5,步进2
+	{
+		printf(num+" ")//输出0，2，4
+	}
+	print("")
+	
+	for 0:1:0.1 to var num //有:就是0到1包含1,步进0.1
+	{
+		printf(num+" ")
+		/*
+		0.0
+		0.1
+		0.2
+		0.3
+		0.4
+		0.5
+		0.6
+		0.7
+		0.8
+		0.9
+		1.0
+		*/
+	}
+	print("")
+	for 5:0 to num
+	{
+		printf(num+" ")//5,4,3,2,1,0
+	}
+	print("")
+	for 5:0:-2 to num
+	{
+		printf(num+" ")//5,3,1
+	}
+
+}

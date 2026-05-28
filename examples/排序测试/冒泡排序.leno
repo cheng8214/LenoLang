@@ -1,0 +1,37 @@
+import times as ti
+import rands
+// Leno语言实现的冒泡排序算法
+func bubble_sort(var arr){
+    var n = arr.len();
+    for n - 1 to var i {
+        for n - i - 1 to var j {
+            if arr[j] > arr[j + 1] {
+                var temp = arr[j];
+                arr[j] = arr[j+1];
+                arr[j+1] = temp;
+            }
+        }
+    }
+    return arr;
+}
+
+// 辅助函数：验证数组是否已排序
+func verify_sorted(var arr) {
+    for arr.len() - 1 to var i {
+        if arr[i] > arr[i + 1]{
+            return false;
+        }
+    }
+    return true;
+}
+
+main()
+{
+	var arr=rands.int_array(1,1999)
+	print(arr)
+    var s1 = ti.ms();
+    var result1 = bubble_sort(arr);
+    var s2 = ti.ms();
+    print($"冒泡排序: {s2 - s1}毫秒 (正确性: {verify_sorted(result1)})");
+    print(result1)
+}

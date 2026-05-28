@@ -1,0 +1,157 @@
+import times
+int csnum=10000000
+main()
+{
+    print("======== While vs For 性能对比 ========")
+    print("")
+
+    // 测试1: 纯空循环对比
+    print("--- 测试1: 1亿次空循环 ---")
+
+    var t1=times.ms()
+    for csnum {}
+    var t2=times.ms()
+    var for_empty = t2-t1
+    print($"for N : " + for_empty + "ms")
+
+    t1=times.ms()
+    var i=0
+    while i < csnum {
+        i++
+    }
+    t2=times.ms()
+    var while_empty = t2-t1
+    print($"while i < N: " + while_empty + "ms")
+    print($"比值: for/while = " + (for_empty * 100 / while_empty) + "%")
+    print("")
+
+    // 测试2: 带简单操作的循环
+    print("--- 测试2: 1000万次 i++ ---")
+
+    t1=times.ms()
+    for csnum {
+        i++
+    }
+    t2=times.ms()
+    var for_inc = t2-t1
+    print($"for N: " + for_inc + "ms")
+
+    t1=times.ms()
+    i=0
+    while i < csnum {
+        i++
+    }
+    t2=times.ms()
+    var while_inc = t2-t1
+    print($"while i < N: " + while_inc + "ms")
+    print($"比值: for/while = " + (for_inc * 100 / while_inc) + "%")
+    print("")
+
+    // 测试3: 带循环变量的 for vs while
+    print("--- 测试3: for to var vs while (带循环变量访问) ---")
+
+    t1=times.ms()
+    var sum=0
+    for csnum to j {
+        j
+    }
+    t2=times.ms()
+    var for_var = t2-t1
+    print($"for N to j: " + for_var + "ms")
+
+    t1=times.ms()
+    var jj=0
+    while jj < csnum {
+        jj
+        jj++
+    }
+    t2=times.ms()
+    var while_var = t2-t1
+    print($"while i < N: " + while_var + "ms")
+    print($"比值: for/while = " + (for_var * 100 / while_var) + "%")
+    print("")
+
+    // 测试4: 数组操作场景
+    print("--- 测试4: 数组添加操作 ---")
+
+    var arr=[]
+    t1=times.ms()
+    for csnum {
+        arr.add(1)
+    }
+    t2=times.ms()
+    var for_arr = t2-t1
+    print($"for N: " + for_arr + "ms, 长度: " + arr.len())
+
+    arr=[]
+    t1=times.ms()
+    i=0
+    while i < csnum {
+        arr.add(1)
+        i++
+    }
+    t2=times.ms()
+    var while_arr = t2-t1
+    print($"while i < N: " + while_arr + "ms, 长度: " + arr.len())
+    print($"比值: for/while = " + (for_arr * 100 / while_arr) + "%")
+    print("")
+
+    // 测试5: 循环变量修改场景
+    print("--- 测试5: 步长为2 (模拟每隔一个执行) ---")
+
+    arr=[]
+    t1=times.ms()
+    for csnum to k {
+        k++
+        arr.add(k)
+    }
+    t2=times.ms()
+    var for_step = t2-t1
+    print($"for N to k + k++: " + for_step + "ms, 长度: " + arr.len())
+
+    arr=[]
+    t1=times.ms()
+    var kk=0
+    while kk < csnum {
+        kk++
+        arr.add(kk)
+        kk++
+    }
+    t2=times.ms()
+    var while_step = t2-t1
+    print($"while + 两次i++: " + while_step + "ms, 长度: " + arr.len())
+    print("")
+
+    // 测试6: 嵌套循环场景
+    print("--- 测试6: 嵌套循环 (1000 * 1000) ---")
+
+    t1=times.ms()
+    var count=0
+    for 1000 {
+        for 1000 {
+            count++
+        }
+    }
+    t2=times.ms()
+    var for_nested = t2-t1
+    print($"for + for: " + for_nested + "ms, count=" + count)
+
+    count=0
+    t1=times.ms()
+    i=0
+    while i < 1000 {
+        var m=0
+        while m < 1000 {
+            count++
+            m++
+        }
+        i++
+    }
+    t2=times.ms()
+    var while_nested = t2-t1
+    print($"while + while: " + while_nested + "ms, count=" + count)
+    print($"比值: for/while = " + (for_nested * 100 / while_nested) + "%")
+
+    print("")
+    print("======== 总结 ========")
+}

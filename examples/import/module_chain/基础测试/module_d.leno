@@ -1,0 +1,13 @@
+// 模块 D - 直接调用模块 A
+
+import "module_a.leno" as a
+
+export func use_a()
+{
+    return a.get_value()
+}
+
+export func add_with_a(var x, var y)
+{
+    return a.add(x, y)
+}

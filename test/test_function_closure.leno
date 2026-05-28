@@ -1,0 +1,42 @@
+// 函数与闭包测试
+func add(var a, var b) {
+    return a + b
+}
+assert_eq(add(3, 4), 7)
+assert_eq(add(1.5, 2.5), 4.0)
+
+func factorial(var n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+assert_eq(factorial(5), 120)
+assert_eq(factorial(0), 1)
+
+func make_counter() {
+    var count = 0
+    func increment() {
+        count = count + 1
+        return count
+    }
+    return increment
+}
+
+var counter = make_counter()
+assert_eq(counter(), 1)
+assert_eq(counter(), 2)
+assert_eq(counter(), 3)
+
+func make_adder(var x) {
+    func adder(var y) {
+        return x + y
+    }
+    return adder
+}
+
+var add5 = make_adder(5)
+assert_eq(add5(3), 8)
+assert_eq(add5(10), 15)
+
+print("test_function_closure passed")

@@ -1,0 +1,47 @@
+// 控制流测试
+var x = 0
+if true {
+    x = 1
+}
+assert_eq(x, 1)
+
+if false {
+    x = 2
+} else {
+    x = 3
+}
+assert_eq(x, 3)
+
+var y = 0
+for 5 to i{
+    y = y + i
+}
+assert_eq(y, 10)
+
+var sum = 0
+var i = 1
+while i <= 10 {
+    sum = sum + i
+    i = i + 1
+}
+assert_eq(sum, 55)
+
+var result = 0
+for 10 to i {
+    if i == 5 {
+        break
+    }
+    result = i
+}
+assert_eq(result, 4)
+
+var odd_sum = 0
+for 10 to i{
+    if i % 2 == 0 {
+        continue
+    }
+    odd_sum = odd_sum + i
+}
+assert_eq(odd_sum, 25)
+
+print("test_control_flow passed")

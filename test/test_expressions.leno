@@ -1,0 +1,32 @@
+// 位运算测试
+assert_eq(5 & 3, 1)
+assert_eq(5 | 3, 7)
+assert_eq(5 ^ 3, 6)
+assert_eq(~0, -1)
+assert_eq(1 << 4, 16)
+assert_eq(16 >> 2, 4)
+
+// 复合赋值测试
+var x = 10
+x += 5
+assert_eq(x, 15)
+x -= 3
+assert_eq(x, 12)
+x *= 2
+assert_eq(x, 24)
+x /= 4
+assert_eq(x, 6)
+x %= 4
+assert_eq(x, 2)
+
+// 三元运算符（if-then-else 表达式）
+var t = if true then 1 else 2
+assert_eq(t, 1)
+var f = if false then 1 else 2
+assert_eq(f, 2)
+
+// 字符串插值
+var name = "World"
+assert_eq($"Hello {name}!", "Hello World!")
+
+print("test_expressions passed")

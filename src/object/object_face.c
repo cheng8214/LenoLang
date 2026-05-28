@@ -1,0 +1,100 @@
+#include "include/lenolang.h"
+
+#define MAX_FACE_DEFS 256
+
+static THREAD_LOCAL ObjFaceDef* face_def_table[MAX_FACE_DEFS];
+static THREAD_LOCAL int face_def_count = 0;
+
+ObjFaceDef* face_def_new(const char* name, int method_count) {
+    ObjFaceDef* def = (ObjFaceDef*)gc_alloc(sizeof(ObjFaceDef), OBJ_FACE_DEF);
+    if (!def) return NULL;
+
+    def->name = strdup(name);
+    def->method_count = method_count;
+
+    if (method_count > 0) {
+        def->methods = (FaceMethodInfo*)calloc(method_count, sizeof(FaceMethodInfo));
+    } else {
+        def->methods = NULL;
+    }
+
+    return def;
+}
+
+void face_def_register(ObjFaceDef* def) {
+    if (face_def_count >= MAX_FACE_DEFS) {
+        error_add(ERR_RUNTIME, 0, "face 定义数量超过上限");
+        return;
+    }
+
+    for (int i = 0; i < face_def_count; i++) {
+        if (strcmp(face_def_table[i]->name, def->name) == 0) {
+            face_def_table[i] = def;
+            return;
+        }
+    }
+
+    face_def_table[face_def_count++] = def;
+}
+
+ObjFaceDef* face_def_find(const char* name) {
+    for (int i = 0; i < face_def_count; i++) {
+        if (strcmp(face_def_table[i]->name, name) == 0) {
+            return face_def_table[i];
+        }
+    }
+    return NULL;
+}
+
+int struct_implements_face(ObjStructDef* struct_def, ObjFaceDef* face_def) {
+    if (!struct_def || !face_def) return 0;
+
+    for (int i = 0; i < struct_def->impl_count; i++) {
+        if (strcmp(struct_def->impl_names[i], face_def->name) == 0) {
+            return 1;
+        }
+    }
+
+    for (int i = 0; i < face_def->method_count; i++) {
+        const char* mname = face_def->methods[i].name;
+        int found = 0;
+        for (int j = 0; j < struct_def->method_count; j++) {
+            if (strcmp(struct_def->methods[j].name, mname) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return 0;
+    }
+
+    return 1;
+}
+
+int struct_def_has_face_method(const char* struct_name, const char* method_name, int* out_param_count, TypeKind* out_return_type) {
+    if (!struct_name || !method_name) return 0;
+
+    ObjStructDef* sdef = struct_def_find(struct_name);
+    if (!sdef || sdef->impl_count <= 0) return 0;
+
+    for (int i = 0; i < sdef->impl_count; i++) {
+        ObjFaceDef* fdef = face_def_find(sdef->impl_names[i]);
+        if (fdef) {
+            for (int j = 0; j < fdef->method_count; j++) {
+                if (strcmp(fdef->methods[j].name, method_name) == 0) {
+                    if (out_param_count) *out_param_count = fdef->methods[j].param_count;
+                    if (out_return_type) *out_return_type = fdef->methods[j].return_type ? fdef->methods[j].return_type->kind : TYPE_ANY;
+                    return 1;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+void face_def_mark_all(void) {
+    extern void gc_mark_object(Object* obj);
+    for (int i = 0; i < face_def_count; i++) {
+        gc_mark_object((Object*)face_def_table[i]);
+    }
+}

@@ -1,0 +1,39 @@
+import sockets
+import io
+
+// 测试 sockets 模块
+main() {
+    io.print("=== Sockets 模块测试 ===")
+    io.print("")
+    
+    // 测试1: TCP 客户端连接
+    io.print("测试1: TCP 连接到 baidu.com:80")
+    var conn = sockets.connect("www.baidu.com", 80)
+    
+    if conn != null {
+        io.print("  连接成功!")
+        
+        // 发送 HTTP 请求
+        var request = "GET / HTTP/1.0\r\nHost: www.baidu.com\r\n\r\n"
+        var sent = sockets.send(conn, request)
+        io.print("  发送请求: " + sent)
+        
+        // 接收响应
+        var response = sockets.recv(conn, 1024)
+        if response != null {
+            io.print("  收到响应长度: " + response.len())
+            io.print("  响应前50字符: " + response.sub_str(0, 50))
+        } else {
+            io.print("  接收失败或连接已关闭")
+        }
+        
+        // 关闭连接
+        sockets.close(conn)
+        io.print("  连接已关闭")
+    } else {
+        io.print("  连接失败")
+    }
+    
+    io.print("")
+    io.print("=== 测试完成 ===")
+}

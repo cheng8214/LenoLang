@@ -1,0 +1,99 @@
+main()
+  {  // 测试1: 基本闭包
+    var x = 10
+    func test1()
+    {
+        print("test1: x=" + x)
+    }
+    test1()
+
+    // 测试2: 嵌套函数 - 同名变量遮蔽
+    var a = 1
+    func outer()
+    {
+        var a = 2
+        func inner()
+        {
+            print("inner: a=" + a)
+        }
+        inner()
+        print("outer: a=" + a)
+    }
+    outer()
+    print("main: a=" + a)
+
+    // 测试3: 多层嵌套
+    var m = "main"
+    func level1()
+    {
+        var m = "level1"
+        func level2()
+        {
+            var m = "level2"
+            func level3()
+            {
+                print("level3: m=" + m)
+            }
+            level3()
+            print("level2: m=" + m)
+        }
+        level2()
+        print("level1: m=" + m)
+    }
+    level1()
+    print("main: m=" + m)
+
+    // 测试4: 闭包修改外部变量
+    func makeCounter()
+    {
+        var count = 0
+        func inc()
+        {
+            count = count + 1
+            return count
+        }
+        return inc
+    }
+    var c1 = makeCounter()
+    var c2 = makeCounter()
+    print("c1: " + c1())
+    print("c1: " + c1())
+    print("c2: " + c2())
+    print("c1: " + c1())
+
+    // 测试5: 深层嵌套捕获不同层级的变量
+    var g = "global"
+    func f1()
+    {
+        var a1 = "f1"
+        func f2()
+        {
+            var a2 = "f2"
+            func f3()
+            {
+                print("f3 sees: g=" + g + ", a1=" + a1 + ", a2=" + a2)
+            }
+            f3()
+        }
+        f2()
+    }
+    f1()
+}
+
+//===== 执行结果 =====
+//
+//test1: x=10
+//inner: a=2
+//outer: a=2
+//main: a=1
+//level3: m=level2
+//level2: m=level2
+//level1: m=level1
+//main: m=main
+//c1: 1
+//c1: 2
+//c2: 1
+//c1: 3
+//f3 sees: g=global, a1=f1, a2=f2
+//
+//按任意键继续...

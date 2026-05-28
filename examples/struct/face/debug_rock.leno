@@ -1,0 +1,27 @@
+// ============================================================================
+// 测试：未实现 face 的 struct 使用 is 运算符
+// ============================================================================
+//
+// 本测试验证：
+//   1. Rock 没有实现 Speaker face 的 speak 方法
+//   2. 使用 "r is Speaker" 运行时类型检查应返回 false
+//   3. 不实现 face 的 struct 不应被误判为实现了该 face
+//
+// 预期输出：OK: Rock is not Speaker
+
+face Speaker {
+    func speak():string
+}
+
+struct Rock {
+    int weight = 0
+}
+
+main() {
+    var r = Rock()
+    if r is Speaker {
+        print("BUG: Rock is Speaker")
+    } else {
+        print("OK: Rock is not Speaker")
+    }
+}

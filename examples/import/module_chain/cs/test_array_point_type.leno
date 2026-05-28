@@ -1,0 +1,41 @@
+// 测试 Array[Point] 类型守卫
+
+struct Point
+{
+    int x
+    int y
+}
+
+func create_points(int count)
+{
+    var points = []
+    for 0 : count - 1 to var i {
+        var p = Point(x = i * 10, y = i * 20)
+        points.add(p)
+    }
+    return points
+}
+
+func test_point_array(var points)
+{
+    print("=== 测试 Array[Point] 类型守卫 ===")
+    
+    // 测试 Array[Point] 类型守卫
+    if points is Array[Point] {
+        print("points is Array[Point]: true")
+        var p = points[0]
+        print("p.x = " + p.x + ", p.y = " + p.y)
+    } else {
+        print("points is Array[Point]: false")
+    }
+}
+
+main()
+{
+    print("=== 测试 Array[Point] 类型守卫 ===")
+    
+    var points = create_points(3)
+    test_point_array(points)
+    
+    print("=== 完成 ===")
+}

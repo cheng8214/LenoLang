@@ -1,0 +1,37 @@
+// 重导出测试模块
+// 测试从其他模块重导出
+
+import "named_exports.leno" as inner
+
+// 1. 直接重导出（重新导出原模块的所有导出）
+// 注意：这里我们不使用 export import 语法，而是手动重导出需要的成员
+
+// 2. 重导出特定成员
+export var reexported_var = inner.public_var
+export var reexported_PI = inner.PI
+
+// 3. 重导出函数（包装或代理）
+export func wrapped_add(var a, var b) {
+    print("Wrapped add called with " + a + " and " + b)
+    return inner.add(a, b)
+}
+
+export func reexported_greet(var name) {
+    return inner.greet(name)
+}
+
+// 4. 重导出并修改
+export func enhanced_config() {
+    var cfg = inner.config
+    cfg["enhanced"] = true
+    cfg["version"] = "2.0"
+    return cfg
+}
+
+// 5. 组合多个导出
+export func combined_use() {
+    return inner.public_var + inner.PI + inner.data_array[0]
+}
+
+// 6. 重导出数组
+export var reexported_array = inner.data_array

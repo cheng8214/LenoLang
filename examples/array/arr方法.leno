@@ -1,0 +1,31 @@
+// 新建文件: arr方法.leno
+main()
+{
+	var arr = [1, 2, 3]
+	print("初始:", arr)
+	
+	arr.add(4)
+	print("add(4)后:", arr)
+	
+	print("len:", arr.len())
+	
+	var popped = arr.pop()
+	print("pop:", popped, "数组:", arr)
+	
+	print("has(2):", arr.has(2))
+	print("has(99):", arr.has(99))
+	
+	arr.insert(1, 99)
+	print("insert(1,99)后:", arr)
+	
+	var removed = arr.remove(1)
+	print("remove(1):", removed, "数组:", arr)
+	
+	var arr2 = arr.copy()
+	arr.add(100)
+	print("原数组:", arr)
+	print("拷贝:", arr2)
+	
+	print("\n所有测试通过!")
+
+}

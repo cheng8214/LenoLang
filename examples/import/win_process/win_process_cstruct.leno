@@ -1,0 +1,865 @@
+// Windows 进程管理模块（cstruct 版本）
+// 功能：进程枚举、启动、终止、内存查询
+// 版本: 3.0 - 使用 cstruct 替代手动内存操作
+
+import ffi
+
+// ========== 常量定义 ==========
+
+// 进程访问权限
+export var PROCESS_QUERY_INFORMATION = 0x0400
+export var PROCESS_VM_READ           = 0x0010
+export var PROCESS_TERMINATE         = 0x0001
+export var PROCESS_SET_INFORMATION   = 0x0200
+
+// 创建进程标志
+export var CREATE_NEW_CONSOLE        = 0x00000010
+
+// 错误码
+export var ERROR_SUCCESS             = 0
+export var ERROR_ACCESS_DENIED       = 5
+
+// 权限常量
+export var TOKEN_ADJUST_PRIVILEGES   = 0x0020
+export var TOKEN_QUERY               = 0x0008
+export var SE_PRIVILEGE_ENABLED      = 0x00000002
+export var SE_DEBUG_NAME             = "SeDebugPrivilege"
+
+// 优先级常量
+export var PRIORITY_IDLE = 64
+export var PRIORITY_BELOW_NORMAL = 16384
+export var PRIORITY_NORMAL = 32
+export var PRIORITY_ABOVE_NORMAL = 32768
+export var PRIORITY_HIGH = 128
+export var PRIORITY_REALTIME = 256
+
+// ========== cstruct 定义 ==========
+
+// FILETIME 结构体
+cstruct FILETIME {
+    u32 dwLowDateTime
+    u32 dwHighDateTime
+}
+
+// PROCESS_MEMORY_COUNTERS 结构体
+cstruct PROCESS_MEMORY_COUNTERS {
+    u32 cb
+    u32 PageFaultCount
+    u64 PeakWorkingSetSize
+    u64 WorkingSetSize
+    u64 QuotaPeakPagedPoolUsage
+    u64 QuotaPagedPoolUsage
+    u64 QuotaPeakNonPagedPoolUsage
+    u64 QuotaNonPagedPoolUsage
+    u64 PagefileUsage
+    u64 PeakPagefileUsage
+}
+
+// MEMORYSTATUSEX 结构体
+cstruct MEMORYSTATUSEX {
+    u32 dwLength
+    u32 dwMemoryLoad
+    u64 ullTotalPhys
+    u64 ullAvailPhys
+    u64 ullTotalPageFile
+    u64 ullAvailPageFile
+    u64 ullTotalVirtual
+    u64 ullAvailVirtual
+    u64 ullAvailExtendedVirtual
+}
+
+// SYSTEM_INFO 结构体
+cstruct SYSTEM_INFO {
+    u16 wProcessorArchitecture
+    u16 wReserved
+    u32 dwPageSize
+    u64 lpMinimumApplicationAddress
+    u64 lpMaximumApplicationAddress
+    u64 dwActiveProcessorMask
+    u32 dwNumberOfProcessors
+    u32 dwProcessorType
+    u32 dwAllocationGranularity
+    u16 wProcessorLevel
+    u16 wProcessorRevision
+}
+
+// PROCESSENTRY32W 结构体
+cstruct PROCESSENTRY32W {
+    u32 dwSize
+    u32 cntUsage
+    u32 th32ProcessID
+    u64 th32DefaultHeapID
+    u32 th32ModuleID
+    u32 cntThreads
+    u32 th32ParentProcessID
+    i32 pcPriClassBase
+    u32 dwFlags
+    // szExeFile[260] 是 WCHAR 数组，占用 520 字节
+    // 我们使用数组字段来表示
+    u16 szExeFile[260]
+}
+
+// STARTUPINFO 结构体（简化版，只包含需要的字段）
+cstruct STARTUPINFO {
+    u32 cb
+    u64 lpReserved
+    u64 lpDesktop
+    u64 lpTitle
+    u32 dwX
+    u32 dwY
+    u32 dwXSize
+    u32 dwYSize
+    u32 dwXCountChars
+    u32 dwYCountChars
+    u32 dwFillAttribute
+    u32 dwFlags
+    u16 wShowWindow
+    u16 cbReserved2
+    u64 lpReserved2
+    u64 hStdInput
+    u64 hStdOutput
+    u64 hStdError
+}
+
+// PROCESS_INFORMATION 结构体
+cstruct PROCESS_INFORMATION {
+    u64 hProcess
+    u64 hThread
+    u32 dwProcessId
+    u32 dwThreadId
+}
+
+// LUID 结构体
+cstruct LUID {
+    u32 LowPart
+    i32 HighPart
+}
+
+// LUID_AND_ATTRIBUTES 结构体
+cstruct LUID_AND_ATTRIBUTES {
+    LUID Luid
+    u32 Attributes
+}
+
+// TOKEN_PRIVILEGES 结构体（只包含一个特权）
+cstruct TOKEN_PRIVILEGES {
+    u32 PrivilegeCount
+    LUID_AND_ATTRIBUTES Privileges[1]
+}
+
+// ========== 模块级变量 ==========
+
+export var _kernel32 = null
+export var _psapi    = null
+export var _advapi32 = null
+
+// 初始化
+export func init() {
+    if _kernel32 == null {
+        _kernel32 = ffi.load("kernel32.dll")
+    }
+    if _psapi == null {
+        _psapi = ffi.load("psapi.dll")
+    }
+    if _advapi32 == null {
+        _advapi32 = ffi.load("advapi32.dll")
+    }
+}
+
+// ========== 权限提升 ==========
+
+// 启用调试权限（提升进程权限以终止系统进程）
+export func enableDebugPrivilege() {
+    if _kernel32 == null { init() }
+
+    // 使用 cstruct 分配内存
+    var hTokenBuffer = TOKEN_PRIVILEGES.malloc()
+    hTokenBuffer.PrivilegeCount = 0  // 初始化为0
+
+    try {
+        Ptr hProcess = ffi.call_ptr(_kernel32, "GetCurrentProcess")
+
+        int openResult = ffi.call_int(_kernel32, "OpenProcessToken",
+            hProcess, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, hTokenBuffer.to_ptr())
+
+        if openResult == 0 {
+            return {success: false, errorCode: ERROR_ACCESS_DENIED}
+        }
+
+        Ptr hToken = ffi.read_ptr(hTokenBuffer.to_ptr(), 0)
+
+        // 使用 cstruct 分配 TOKEN_PRIVILEGES
+        var tp = TOKEN_PRIVILEGES.malloc()
+        try {
+            tp.PrivilegeCount = 1
+
+            // 查找特权值
+            Ptr privName = ffi.utf8_to_utf16(SE_DEBUG_NAME)
+            try {
+                int lookupResult = ffi.call_int(_advapi32, "LookupPrivilegeValueW",
+                    ffi.nullptr(), privName, tp.Privileges[0].Luid.to_ptr())
+
+                if lookupResult == 0 {
+                    return {success: false, errorCode: ERROR_ACCESS_DENIED}
+                }
+            } finally {
+                ffi.free(privName)
+            }
+
+            // 设置属性为 SE_PRIVILEGE_ENABLED
+            tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
+
+            // 调整令牌特权
+            int adjustResult = ffi.call_int(_advapi32, "AdjustTokenPrivileges",
+                hToken, 0, tp.to_ptr(), TOKEN_PRIVILEGES.size(), ffi.nullptr(), ffi.nullptr())
+
+            ffi.call_int(_kernel32, "CloseHandle", hToken)
+
+            if adjustResult == 0 {
+                return {success: false, errorCode: ERROR_ACCESS_DENIED}
+            }
+
+            return {success: true, errorCode: 0}
+        } finally {
+            tp.free()
+        }
+    } finally {
+        hTokenBuffer.free()
+    }
+}
+
+// ========== 进程枚举 ==========
+
+// 获取所有进程ID
+export func enumProcesses() {
+    if _kernel32 == null { init() }
+
+    Ptr buffer = ffi.malloc(4096)
+    Ptr needed = ffi.malloc(4)
+
+    try {
+        int result = ffi.call_int(_psapi, "EnumProcesses", buffer, 4096, needed)
+
+        if result == 0 {
+            return {pids: [], errorCode: ERROR_ACCESS_DENIED}
+        }
+
+        int count = _int(ffi.read_int(needed, 0) / 4)
+        var pids = []
+
+        for 0 : count - 1 to i {
+            int pid = ffi.read_int(buffer, i * 4)
+            if pid > 0 {
+                pids.add(pid)
+            }
+        }
+
+        return {pids: pids, errorCode: 0}
+    } finally {
+        ffi.free(buffer)
+        ffi.free(needed)
+    }
+}
+
+// 获取进程名
+func _getProcessName(int pid) {
+    if pid == 0 { return "System Idle Process" }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess",
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+
+    if not hProcess {
+        return ""
+    }
+
+    try {
+        Ptr buffer = ffi.malloc(512)
+        try {
+            int result = ffi.call_int(_psapi, "GetModuleBaseNameW",
+                hProcess, ffi.nullptr(), buffer, 256)
+
+            if result > 0 {
+                return ffi.utf16_to_utf8(buffer)
+            }
+        } finally {
+            ffi.free(buffer)
+        }
+
+        return ""
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取进程列表
+export func listProcesses() {
+    var enumResult = enumProcesses()
+    if enumResult.errorCode != 0 {
+        return {processes: [], errorCode: enumResult.errorCode}
+    }
+
+    var processes = []
+
+    for enumResult.pids to pid {
+        var name = _getProcessName(pid)
+        if name != "" {
+            processes.add({pid: pid, name: name})
+        }
+    }
+
+    return {processes: processes, errorCode: 0}
+}
+
+// ========== 进程操作 ==========
+
+// 查找进程（不区分大小写）
+export func findByName(string name) {
+    var result = listProcesses()
+
+    for result.processes to proc {
+        if proc.name.to_lower() == name.to_lower() {
+            return {found: true, pid: proc.pid}
+        }
+    }
+
+    return {found: false, pid: 0}
+}
+
+// 终止进程
+export func terminate(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_TERMINATE, 0, pid)
+
+    if not hProcess {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        int result = ffi.call_int(_kernel32, "TerminateProcess", hProcess, 0)
+        return {success: result != 0, errorCode: 0}
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 启动进程
+export func run(string commandLine) {
+    if _kernel32 == null { init() }
+
+    // 使用 cstruct 分配内存
+    var startupInfo = STARTUPINFO.malloc()
+    var processInfo = PROCESS_INFORMATION.malloc()
+
+    try {
+        // 初始化结构体（cstruct 自动分配内存，不需要手动清零）
+        startupInfo.cb = STARTUPINFO.size()
+
+        Ptr wCmdLine = ffi.utf8_to_utf16(commandLine)
+        try {
+            int result = ffi.call_int(_kernel32, "CreateProcessW",
+                ffi.nullptr(), wCmdLine, ffi.nullptr(), ffi.nullptr(),
+                0, CREATE_NEW_CONSOLE, ffi.nullptr(), ffi.nullptr(),
+                startupInfo.to_ptr(), processInfo.to_ptr())
+
+            if result != 0 {
+                return {pid: processInfo.dwProcessId, errorCode: 0}
+            } else {
+                return {pid: 0, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            ffi.free(wCmdLine)
+        }
+    } finally {
+        startupInfo.free()
+        processInfo.free()
+    }
+}
+
+// ========== 高级进程信息 ==========
+
+// 获取进程内存信息
+export func getProcessMemory(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess",
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+
+    if not hProcess {
+        return {workingSet: 0, peakWorkingSet: 0, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        // 使用 cstruct 分配内存
+        var memCounters = PROCESS_MEMORY_COUNTERS.malloc()
+
+        try {
+            memCounters.cb = PROCESS_MEMORY_COUNTERS.size()
+
+            int result = ffi.call_int(_psapi, "GetProcessMemoryInfo",
+                hProcess, memCounters.to_ptr(), PROCESS_MEMORY_COUNTERS.size())
+
+            if result != 0 {
+                return {
+                    workingSet: _int(memCounters.WorkingSetSize / 1024),
+                    peakWorkingSet: _int(memCounters.PeakWorkingSetSize / 1024),
+                    errorCode: 0
+                }
+            } else {
+                return {workingSet: 0, peakWorkingSet: 0, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            memCounters.free()
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取进程详细信息（带内存）
+export func getProcessDetails(int pid) {
+    var name = _getProcessName(pid)
+    if name == "" {
+        return {found: false, info: null}
+    }
+
+    var memInfo = getProcessMemory(pid)
+
+    return {
+        found: true,
+        info: {
+            pid: pid,
+            name: name,
+            memory: memInfo.workingSet,
+            peakMemory: memInfo.peakWorkingSet
+        }
+    }
+}
+
+// 获取系统内存信息
+export func getSystemMemory() {
+    if _kernel32 == null { init() }
+
+    // 使用 cstruct 分配内存
+    var memStatus = MEMORYSTATUSEX.malloc()
+
+    try {
+        memStatus.dwLength = MEMORYSTATUSEX.size()
+
+        int result = ffi.call_int(_kernel32, "GlobalMemoryStatusEx", memStatus.to_ptr())
+
+        if result != 0 {
+            return {
+                memoryLoad: memStatus.dwMemoryLoad,
+                totalPhys: _int(memStatus.ullTotalPhys / (1024 * 1024)),
+                availPhys: _int(memStatus.ullAvailPhys / (1024 * 1024)),
+                errorCode: 0
+            }
+        } else {
+            return {memoryLoad: 0, totalPhys: 0, availPhys: 0, errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        memStatus.free()
+    }
+}
+
+// ========== 进程等待 ==========
+
+// 等待进程退出（带超时）
+export func waitForExit(int pid, int timeoutMs) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess",
+        PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if not hProcess {
+        return {success: false, exited: false, exitCode: -1}
+    }
+
+    try {
+        int result = ffi.call_int(_kernel32, "WaitForSingleObject",
+            hProcess, timeoutMs)
+
+        if result == 0 {
+            Ptr exitCodePtr = ffi.malloc(4)
+            try {
+                int gotCode = ffi.call_int(_kernel32, "GetExitCodeProcess",
+                    hProcess, exitCodePtr)
+                if gotCode != 0 {
+                    int exitCode = ffi.read_int(exitCodePtr, 0)
+                    return {success: true, exited: true, exitCode: exitCode}
+                }
+            } finally {
+                ffi.free(exitCodePtr)
+            }
+        }
+
+        return {success: true, exited: false, exitCode: -1}
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// ========== 系统信息 ==========
+
+// 获取系统启动时间（毫秒）
+export func getSystemUptime() {
+    if _kernel32 == null { init() }
+
+    var uptime = ffi.call(_kernel32, "GetTickCount64")
+
+    return uptime
+}
+
+// 获取处理器数量
+export func getProcessorCount() {
+    if _kernel32 == null { init() }
+
+    // 使用 cstruct 分配内存
+    var sysInfo = SYSTEM_INFO.malloc()
+
+    try {
+        ffi.call(_kernel32, "GetNativeSystemInfo", sysInfo.to_ptr())
+
+        return sysInfo.dwNumberOfProcessors
+    } finally {
+        sysInfo.free()
+    }
+}
+
+// ========== 增强功能 ==========
+
+// 尝试多种方式终止进程（包括强制终止）
+export func terminateForce(int pid) {
+    if _kernel32 == null { init() }
+
+    // 首先尝试正常终止
+    var result = terminate(pid)
+    if result.success {
+        return {success: true, method: "normal", errorCode: 0}
+    }
+
+    // 尝试以更高权限打开进程
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", 0x0401, 0, pid)
+
+    if not hProcess {
+        return {success: false, method: "none", errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        int termResult = ffi.call_int(_kernel32, "TerminateProcess", hProcess, 0)
+
+        if termResult != 0 {
+            return {success: true, method: "force", errorCode: 0}
+        } else {
+            return {success: false, method: "force", errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 检查进程是否存在
+export func exists(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if not hProcess {
+        return false
+    }
+
+    Ptr exitCodePtr = ffi.malloc(4)
+    int result = ffi.call_int(_kernel32, "GetExitCodeProcess", hProcess, exitCodePtr)
+    int exitCode = ffi.read_int(exitCodePtr, 0)
+    ffi.free(exitCodePtr)
+
+    ffi.call_int(_kernel32, "CloseHandle", hProcess)
+
+    if result == 0 {
+        return false
+    }
+
+    // STILL_ACTIVE = 259
+    return exitCode == 259
+}
+
+// 获取进程退出码（如果进程已退出）
+export func getExitCode(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if not hProcess {
+        return {success: false, exitCode: -1, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        Ptr exitCodePtr = ffi.malloc(4)
+        try {
+            int result = ffi.call_int(_kernel32, "GetExitCodeProcess", hProcess, exitCodePtr)
+
+            if result != 0 {
+                int exitCode = ffi.read_int(exitCodePtr, 0)
+                bool isRunning = (exitCode == 259)
+                return {success: true, exitCode: exitCode, isRunning: isRunning, errorCode: 0}
+            } else {
+                return {success: false, exitCode: -1, isRunning: false, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            ffi.free(exitCodePtr)
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取进程优先级
+export func getPriority(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if not hProcess {
+        return {success: false, priority: 0, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        int priority = ffi.call_int(_kernel32, "GetPriorityClass", hProcess)
+
+        if priority != 0 {
+            return {success: true, priority: priority, errorCode: 0}
+        } else {
+            return {success: false, priority: 0, errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 设置进程优先级
+export func setPriority(int pid, int priorityClass) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_SET_INFORMATION, 0, pid)
+
+    if not hProcess {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        int result = ffi.call_int(_kernel32, "SetPriorityClass", hProcess, priorityClass)
+
+        return {success: result != 0, errorCode: 0}
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取进程启动时间（需要管理员权限）
+export func getProcessTimes(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if not hProcess {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        // 使用 cstruct 分配 FILETIME
+        var createTime = FILETIME.malloc()
+        var exitTime = FILETIME.malloc()
+        var kernelTime = FILETIME.malloc()
+        var userTime = FILETIME.malloc()
+
+        try {
+            int result = ffi.call_int(_kernel32, "GetProcessTimes",
+                hProcess, createTime.to_ptr(), exitTime.to_ptr(),
+                kernelTime.to_ptr(), userTime.to_ptr())
+
+            if result != 0 {
+                // FILETIME 是 100 纳秒为单位，需要转换为毫秒
+                var kernel = _int(kernelTime.dwHighDateTime) * 4294967296 + kernelTime.dwLowDateTime
+                var user = _int(userTime.dwHighDateTime) * 4294967296 + userTime.dwLowDateTime
+
+                return {
+                    success: true,
+                    kernelTime: _int(kernel / 10000),
+                    userTime: _int(user / 10000),
+                    errorCode: 0
+                }
+            } else {
+                return {success: false, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            createTime.free()
+            exitTime.free()
+            kernelTime.free()
+            userTime.free()
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取父进程ID（使用 Toolhelp32 快照）
+export func getParentPid(int pid) {
+    if _kernel32 == null { init() }
+
+    // TH32CS_SNAPPROCESS = 0x00000002
+    Ptr hSnapshot = ffi.call_ptr(_kernel32, "CreateToolhelp32Snapshot", 0x00000002, 0)
+
+    if not hSnapshot {
+        return {success: false, parentPid: 0, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        // 使用 cstruct 分配 PROCESSENTRY32W
+        var pe32 = PROCESSENTRY32W.malloc()
+
+        // 设置 dwSize 字段
+        pe32.dwSize = PROCESSENTRY32W.size()
+
+        // 开始遍历
+        int result = ffi.call_int(_kernel32, "Process32FirstW", hSnapshot, pe32.to_ptr())
+
+        int parentPid = 0
+        bool found = false
+
+        while result != 0 {
+            if pe32.th32ProcessID == pid {
+                parentPid = _int(pe32.th32ParentProcessID)
+                found = true
+                break
+            }
+
+            result = ffi.call_int(_kernel32, "Process32NextW", hSnapshot, pe32.to_ptr())
+        }
+
+        pe32.free()
+
+        if found {
+            return {success: true, parentPid: parentPid, errorCode: 0}
+        } else {
+            return {success: false, parentPid: 0, errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hSnapshot)
+    }
+}
+
+// 获取系统运行时间
+export func getSystemUpTime() {
+    if _kernel32 == null { init() }
+
+    var uptime = ffi.call(_kernel32, "GetTickCount64")
+
+    return _int(uptime)
+}
+
+// 格式化时间为可读字符串
+export func formatUptime(int ms) {
+    int totalSec = _int(ms / 1000)
+    int days = _int(totalSec / 86400)
+    int hours = _int((totalSec % 86400) / 3600)
+    int minutes = _int((totalSec % 3600) / 60)
+    int seconds = totalSec % 60
+
+    if days > 0 {
+        return days + " 天 " + hours + " 小时 " + minutes + " 分钟 " + seconds + " 秒"
+    } else if hours > 0 {
+        return hours + " 小时 " + minutes + " 分钟 " + seconds + " 秒"
+    } else if minutes > 0 {
+        return minutes + " 分钟 " + seconds + " 秒"
+    } else {
+        return seconds + " 秒"
+    }
+}
+
+// 获取系统信息（完整版）
+export func getSystemInfo() {
+    if _kernel32 == null { init() }
+
+    // 使用 cstruct 分配 SYSTEM_INFO
+    var sysInfo = SYSTEM_INFO.malloc()
+
+    try {
+        ffi.call(_kernel32, "GetNativeSystemInfo", sysInfo.to_ptr())
+
+        int processorCount = _int(sysInfo.dwNumberOfProcessors)
+        int pageSize = _int(sysInfo.dwPageSize)
+
+        // 获取系统运行时间
+        var uptime = ffi.call(_kernel32, "GetTickCount64")
+        int uptimeMs = _int(uptime)
+
+        // 获取系统内存信息
+        var memStatus = MEMORYSTATUSEX.malloc()
+        try {
+            memStatus.dwLength = MEMORYSTATUSEX.size()
+            int memResult = ffi.call_int(_kernel32, "GlobalMemoryStatusEx", memStatus.to_ptr())
+
+            if memResult != 0 {
+                return {
+                    processorCount: processorCount,
+                    pageSize: pageSize,
+                    uptimeMs: uptimeMs,
+                    memoryLoad: memStatus.dwMemoryLoad,
+                    totalPhys: _int(memStatus.ullTotalPhys / (1024 * 1024)),
+                    availPhys: _int(memStatus.ullAvailPhys / (1024 * 1024)),
+                    errorCode: 0
+                }
+            }
+        } finally {
+            memStatus.free()
+        }
+
+        return {
+            processorCount: processorCount,
+            pageSize: pageSize,
+            uptimeMs: uptimeMs,
+            memoryLoad: 0,
+            totalPhys: 0,
+            availPhys: 0,
+            errorCode: 0
+        }
+    } finally {
+        sysInfo.free()
+    }
+}
+
+// 获取进程完整信息
+export func getFullProcessInfo(int pid) {
+    var name = _getProcessName(pid)
+    if name == "" {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    var memInfo = getProcessMemory(pid)
+    var priorityInfo = getPriority(pid)
+    var timesInfo = getProcessTimes(pid)
+    var parentInfo = getParentPid(pid)
+    var exitCodeInfo = getExitCode(pid)
+
+    return {
+        success: true,
+        pid: pid,
+        name: name,
+        memory: memInfo.workingSet,
+        peakMemory: memInfo.peakWorkingSet,
+        priority: priorityInfo.priority,
+        kernelTime: timesInfo.kernelTime,
+        userTime: timesInfo.userTime,
+        parentPid: parentInfo.parentPid,
+        exitCode: exitCodeInfo.exitCode,
+        isRunning: exitCodeInfo.isRunning,
+        errorCode: 0
+    }
+}
+
+// 获取当前进程ID
+export func getCurrentPid() {
+    if _kernel32 == null { init() }
+    return ffi.call_int(_kernel32, "GetCurrentProcessId")
+}

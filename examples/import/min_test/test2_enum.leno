@@ -1,0 +1,2 @@
+import "mod_enum.leno" as m
+print("RED=" + m.Color.RED)

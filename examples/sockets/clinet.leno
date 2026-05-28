@@ -1,0 +1,90 @@
+import sockets
+import io
+
+// 聊天客户端 - V2 非阻塞版本
+
+main() {
+    var host = "127.0.0.1"
+    var port = 8888
+    var name = "用户"
+
+    io.print("=== Leno 聊天客户端 ===")
+
+    // 输入昵称
+    var input_name = input("请输入昵称：")
+    input_name = input_name.trim()
+    if input_name.len() > 0 {
+        name = input_name
+    }
+
+    io.print("连接到 " + host + ":" + port)
+
+    // 连接服务器
+    var conn = sockets.connect(host, port)
+    if conn == null {
+        io.print("连接失败！")
+        return
+    }
+
+    io.print("已连接！")
+
+    // 设置非阻塞模式
+    sockets.set_nonblocking(conn, true)
+
+    // 接收欢迎消息（阻塞一次）
+    var welcome = sockets.recv(conn, 1024)
+    if welcome != null {
+        io.print(welcome)
+    }
+
+    io.print("")
+    io.print("=== 开始聊天 ===")
+    io.print("提示：输入消息按回车发送，输入 /quit 退出")
+    io.print("注意：输入时看不到实时消息，发送后会显示")
+    io.print("")
+
+    // 主循环
+    while true {
+        // 先检查是否有新消息（非阻塞）
+        var msg = sockets.recv(conn, 1024)
+        if msg != null {
+            io.print(msg)
+        }
+
+        // 读取用户输入
+        var input_msg = input("[" + name + "] ")
+        input_msg = input_msg.trim()
+
+        if input_msg.len() == 0 {
+            continue
+        }
+
+        // 发送消息
+        var full_msg = input_msg + "\n"
+        var sent = sockets.send(conn, full_msg)
+
+        if not sent {
+            io.print("[系统] 发送失败")
+            break
+        }
+
+        // 检查退出命令
+        if input_msg == "/quit" {
+            break
+        }
+
+        // 发送后尝试接收消息（显示其他用户的回复）
+        var retry = 0
+        while retry < 5 {
+            var reply = sockets.recv(conn, 1024)
+            if reply != null {
+                io.print(reply)
+            }
+            retry = retry + 1
+        }
+    }
+
+    sockets.close(conn)
+    io.print("")
+    io.print("客户端已退出")
+}

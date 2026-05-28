@@ -1,0 +1,99 @@
+// 模块缓存和重新加载测试主文件
+// 测试同一模块被多次导入时是否正确缓存
+
+import "counter_module.leno" as direct_counter
+import "user_a.leno" as user_a
+import "user_b.leno" as user_b
+
+main() {
+    print("=== 模块缓存和重新加载测试 ===")
+
+    // ========== 测试 1: 模块级变量持久性 ==========
+    print("\n1. 模块级变量持久性测试:")
+
+    // 直接操作计数器
+    direct_counter.reset()
+    print("  初始计数器值: " + direct_counter.get_counter() + " (期望: 0)")
+
+    direct_counter.increment()
+    direct_counter.increment()
+    print("  增加2次后: " + direct_counter.get_counter() + " (期望: 2)")
+
+    direct_counter.increment()
+    print("  再增加1次后: " + direct_counter.get_counter() + " (期望: 3)")
+
+    // ========== 测试 2: 模块缓存（同一模块被多次导入） ==========
+    print("\n2. 模块缓存测试:")
+
+    // 重置计数器
+    direct_counter.reset()
+    print("  重置后计数器: " + direct_counter.get_counter() + " (期望: 0)")
+
+    // 用户 A 使用计数器
+    var result_a = user_a.use_counter()
+    print("  用户 A 使用后:")
+    print("    返回值: " + result_a["values"] + " (期望: [1, 2, 3])")
+    print("    最终值: " + result_a["final"] + " (期望: 3)")
+
+    // 用户 B 使用计数器（应该看到用户 A 的状态）
+    var result_b = user_b.use_counter()
+    print("  用户 B 使用后:")
+    print("    返回值: " + result_b["values"] + " (期望: [4, 5])")
+    print("    最终值: " + result_b["final"] + " (期望: 5)")
+
+    // 直接访问计数器
+    print("  直接访问计数器: " + direct_counter.get_counter() + " (期望: 5)")
+
+    // ========== 测试 3: 模块初始化次数 ==========
+    print("\n3. 模块初始化次数测试:")
+
+    // 检查模块初始化次数
+    // 如果模块被正确缓存，init_count 应该为 1
+    var init_count_a = user_a.get_init_count()
+    var init_count_b = user_b.get_init_count()
+    var init_count_direct = direct_counter.get_init_count()
+
+    print("  用户 A 看到的 init_count: " + init_count_a + " (期望: 1)")
+    print("  用户 B 看到的 init_count: " + init_count_b + " (期望: 1)")
+    print("  直接访问的 init_count: " + init_count_direct + " (期望: 1)")
+
+    // ========== 测试 4: 状态共享 ==========
+    print("\n4. 状态共享测试:")
+
+    // 用户 B 设置计数器值
+    user_b.set_counter(100)
+    print("  用户 B 设置计数器为 100")
+
+    // 用户 A 应该能看到新值
+    var counter_from_a = user_a.get_counter_ref()
+    print("  用户 A 看到的计数器: " + counter_from_a + " (期望: 100)")
+
+    // 直接访问也应该看到新值
+    var counter_direct = direct_counter.get_counter()
+    print("  直接访问的计数器: " + counter_direct + " (期望: 100)")
+
+    // 用户 B 重置计数器
+    user_b.reset_counter()
+    print("  用户 B 重置计数器")
+
+    // 所有人应该看到 0
+    print("  用户 A 看到的计数器: " + user_a.get_counter_ref() + " (期望: 0)")
+    print("  直接访问的计数器: " + direct_counter.get_counter() + " (期望: 0)")
+
+    // ========== 测试 5: 模块级变量修改 ==========
+    print("\n5. 模块级变量修改测试:")
+
+    // 修改模块级变量
+    direct_counter.set_value(42)
+    print("  直接设置计数器为 42")
+
+    // 通过不同方式访问
+    print("  用户 A 看到: " + user_a.get_counter_ref() + " (期望: 42)")
+    print("  用户 B 看到: " + user_b.get_counter_ref() + " (期望: 42)")
+
+    print("\n=== 所有模块缓存测试完成 ===")
+    print("\n测试结论:")
+    print("- 如果所有测试通过，说明模块被正确缓存")
+    print("- 所有导入者共享同一个模块实例")
+    print("- 模块级变量状态在多次导入间保持持久")
+}

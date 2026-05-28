@@ -1,0 +1,8 @@
+main() 
+{
+    var dict = {id: 1, name: "cheng8214", age: 25}
+    print(dict)
+    dict["id"] = 100
+    dict.id = 100
+    print(dict["id"])
+}

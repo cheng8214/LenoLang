@@ -1,0 +1,7 @@
+import "cs2.leno"
+
+main() {
+    print("开始测试 cstruct 模块方法...")
+    cs2.test()
+    print("测试完成!")
+}

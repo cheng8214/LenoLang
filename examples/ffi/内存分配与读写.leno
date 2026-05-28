@@ -1,0 +1,78 @@
+import ffi
+
+main()
+{
+    // ===== 测试 1: 内存分配与读写 =====
+    var ptr = ffi.malloc(100)
+    print("分配了 100 字节内存")
+
+    ffi.write_int(ptr, 0, 42)
+    var val = ffi.read_int(ptr, 0)
+    print("写入 42, 读回: " + val)
+
+    ffi.write_double(ptr, 8, 3.14)
+    var d = ffi.read_double(ptr, 8)
+    print("写入 3.14, 读回: " + d)
+
+    ffi.write_string(ptr, 16, "Hello FFI!")
+    var s = ffi.read_string(ptr, 16)
+    print("写入字符串, 读回: " + s)
+
+    ffi.free(ptr)
+    print("内存已释放")
+
+    // ===== 测试 2: 调用 MessageBoxA =====
+    print("\n--- 调用 MessageBoxA ---")
+
+    var user32 = ffi.load("user32.dll")
+    if user32 != null
+    {
+        // MessageBoxA(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uType)
+        // 返回 int
+        var result = ffi.call(user32, "MessageBoxA", 0, "Hello from Leno FFI!", "Leno Message", 0)
+        print("MessageBox 返回值: " + result)
+
+        ffi.free(user32)
+        print("user32.dll 已释放")
+    }
+    else
+    {
+        print("加载 user32.dll 失败")
+    }
+
+    // ===== 测试 3: 调用 msvcrt 标准库函数 =====
+    print("\n--- 调用 C 标准库函数 ---")
+
+    var libc = ffi.load("msvcrt.dll")
+    if libc != null
+    {
+        // 调用 strlen（返回 int）
+        var len = ffi.call(libc, "strlen", "Hello")
+        print("strlen('Hello') = " + len)
+
+        // 调用 atoi（返回 int）
+        var num = ffi.call(libc, "atoi", "999")
+        print("atoi('999') = " + num)
+
+        // 调用 abs（返回 int）
+        var abs_val = ffi.call(libc, "abs", -123)
+        print("abs(-123) = " + abs_val)
+
+        // 调用 sqrt（返回 double）
+        var sq = ffi.call_double(libc, "sqrt", 2.0)
+        print("sqrt(2.0) = " + sq)
+
+        // 调用 srand（无返回值）
+        ffi.call_void(libc, "srand", 42)
+        print("srand(42) 已执行")
+
+        ffi.free(libc)
+        print("msvcrt.dll 已释放")
+    }
+    else
+    {
+        print("加载 msvcrt.dll 失败")
+    }
+
+    print("\n所有测试完成!")
+}

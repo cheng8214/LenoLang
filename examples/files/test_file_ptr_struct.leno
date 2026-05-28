@@ -1,0 +1,86 @@
+// 测试 File 和 Ptr 类型在 struct 内部使用
+import files
+import ffi
+
+// 定义包含 File 的 struct
+struct FileWrapper
+{
+    File handle
+    string path
+}
+
+// 定义包含 Ptr 的 struct
+struct PtrWrapper
+{
+    Ptr memory
+    int size
+}
+
+// 定义混合 struct
+struct ResourceManager
+{
+    File logFile
+    Ptr buffer
+    string name
+}
+
+main()
+{
+    print("=== Testing File in struct ===")
+    
+    // 创建包含 File 的 struct - 使用构造函数
+    File f = files.open("test_struct.txt", "w")
+    FileWrapper fw = FileWrapper(handle = f, path = "test_struct.txt")
+    
+    fw.handle.write("Hello from struct!")
+    fw.handle.close()
+    
+    // 重新打开读取
+    File f2 = files.open(fw.path, "r")
+    fw.handle = f2
+    string content = fw.handle.read()
+    print("Content: " + content)
+    fw.handle.close()
+    
+    print("=== Testing Ptr in struct ===")
+    
+    // 创建包含 Ptr 的 struct - 使用构造函数
+    Ptr p = ffi.malloc(100)
+    PtrWrapper pw = PtrWrapper(memory = p, size = 100)
+    
+    // 写入数据
+    ffi.write_int(pw.memory, 0, 42)
+    ffi.write_int(pw.memory, 4, 99)
+    
+    // 读取数据
+    int val1 = ffi.read_int(pw.memory, 0)
+    int val2 = ffi.read_int(pw.memory, 4)
+    print("Values: " + val1 + ", " + val2)
+    
+    ffi.free(pw.memory)
+    
+    print("=== Testing mixed struct ===")
+    
+    // 创建混合 struct - 使用构造函数
+    File log = files.open("log.txt", "w")
+    Ptr buf = ffi.malloc(50)
+    ResourceManager rm = ResourceManager(logFile = log, buffer = buf, name = "TestManager")
+    
+    // 使用资源
+    rm.logFile.write("Log entry 1")
+    ffi.write_int(rm.buffer, 0, 12345)
+    
+    // 读取验证
+    int logVal = ffi.read_int(rm.buffer, 0)
+    print("Buffer value: " + logVal)
+    
+    // 清理资源
+    rm.logFile.close()
+    ffi.free(rm.buffer)
+    
+    // 清理测试文件
+    files.delete("test_struct.txt")
+    files.delete("log.txt")
+    
+    print("All struct tests passed!")
+}

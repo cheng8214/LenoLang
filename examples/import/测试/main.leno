@@ -1,0 +1,8 @@
+
+import "test.leno"
+main()
+{
+	
+	test.add2(10);
+
+}

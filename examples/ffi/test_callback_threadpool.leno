@@ -1,0 +1,193 @@
+// 多线程回调测试 - 使用 Windows 线程池
+// 测试场景：C 库的工作线程调用 Leno 回调
+// 注意：Windows ThreadPoolWork 回调有 3 个参数 (Instance, Context, Work)
+
+import ffi
+import threads
+
+// ========== 全局状态 ==========
+var global_counter = 0
+var main_thread_id = 0
+var callback_thread_id = 0
+
+// ========== 测试 1: 基本多线程回调 ==========
+func worker_callback(Ptr instance, Ptr context, Ptr work): void {
+    import ffi
+
+    global_counter = global_counter + 1
+
+    var value = ffi.read_int(context, 0)
+    ffi.write_int(context, 0, value + 1)
+}
+
+func test_basic_threadpool_callback() {
+    print("=== 测试 1: 基本多线程回调 ===")
+
+    var kernel32 = ffi.load("kernel32.dll")
+    global_counter = 0
+
+    var context = ffi.malloc(8)
+    ffi.write_int(context, 0, 100)
+
+    var cb = ffi.callback(worker_callback, "void", ["pointer", "pointer", "pointer"])
+    assert(ffi.is_ptr(cb), "回调应该有效")
+
+    var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, context, ffi.nullptr())
+    assert(work != ffi.nullptr(), "工作项应该创建成功")
+
+    // 提交 5 次工作项
+    for 0 : 4 to i {
+        ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
+    }
+
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+
+    assert(global_counter == 5, "应该有 5 次回调，实际: " + global_counter)
+    print("✓ 回调执行次数正确: " + global_counter)
+
+    var final_value = ffi.read_int(context, 0)
+    assert(final_value == 105, "上下文值应该被增加到 105，实际: " + final_value)
+    print("✓ 上下文修改正确: " + final_value)
+
+    ffi.call_void(kernel32, "CloseThreadpoolWork", work)
+    ffi.free(context)
+    ffi.free(cb)
+    ffi.free(kernel32)
+
+    print("✓ 基本多线程回调测试通过")
+    print("")
+}
+
+// ========== 测试 2: 回调中使用 FFI ==========
+func io_callback(Ptr instance, Ptr context, Ptr work): void {
+    import ffi
+
+    var kernel32 = ffi.load("kernel32.dll")
+    var tick = ffi.call_int(kernel32, "GetTickCount")
+    ffi.free(kernel32)
+
+    ffi.write_int(context, 0, tick)
+}
+
+func test_callback_with_ffi() {
+    print("=== 测试 2: 回调中使用 FFI ===")
+
+    var kernel32 = ffi.load("kernel32.dll")
+
+    var context = ffi.malloc(8)
+    ffi.write_int(context, 0, 0)
+
+    var cb = ffi.callback(io_callback, "void", ["pointer", "pointer", "pointer"])
+    var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, context, ffi.nullptr())
+
+    ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+
+    var tick = ffi.read_int(context, 0)
+    assert(tick > 0, "回调应该设置了 tick 值")
+    print("✓ 回调中 FFI 调用成功，tick: " + tick)
+
+    ffi.call_void(kernel32, "CloseThreadpoolWork", work)
+    ffi.free(context)
+    ffi.free(cb)
+    ffi.free(kernel32)
+
+    print("✓ 回调中使用 FFI 测试通过")
+    print("")
+}
+
+// ========== 测试 3: 多个回调并发执行 ==========
+var concurrent_counter = 0
+
+func concurrent_callback(Ptr instance, Ptr context, Ptr work): void {
+    import ffi
+
+    concurrent_counter = concurrent_counter + 1
+}
+
+func test_concurrent_callbacks() {
+    print("=== 测试 3: 多个回调并发执行 ===")
+
+    var kernel32 = ffi.load("kernel32.dll")
+    concurrent_counter = 0
+
+    var cb = ffi.callback(concurrent_callback, "void", ["pointer", "pointer", "pointer"])
+    var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, ffi.nullptr(), ffi.nullptr())
+
+    // 提交 10 个工作项（减少并发度）
+    for 10 to i{
+        ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
+    }
+
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+
+    assert(concurrent_counter == 10, "应该有 10 次回调，实际: " + concurrent_counter)
+    print("✓ 并发回调执行次数正确: " + concurrent_counter)
+
+    ffi.call_void(kernel32, "CloseThreadpoolWork", work)
+    ffi.free(cb)
+    ffi.free(kernel32)
+
+    print("✓ 并发回调测试通过")
+    print("")
+}
+
+// ========== 测试 4: 回调线程身份验证 ==========
+func check_thread_callback(Ptr instance, Ptr context, Ptr work): void {
+    import ffi
+
+    var kernel32 = ffi.load("kernel32.dll")
+    var current_thread = ffi.call_int(kernel32, "GetCurrentThreadId")
+    ffi.free(kernel32)
+
+    callback_thread_id = current_thread
+}
+
+func test_callback_thread_identity() {
+    print("=== 测试 4: 回调线程身份验证 ===")
+
+    var kernel32 = ffi.load("kernel32.dll")
+    main_thread_id = ffi.call_int(kernel32, "GetCurrentThreadId")
+    callback_thread_id = 0
+    print("主线程 ID: " + main_thread_id)
+
+    var cb = ffi.callback(check_thread_callback, "void", ["pointer", "pointer", "pointer"])
+    var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, ffi.nullptr(), ffi.nullptr())
+
+    ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+
+    print("回调线程 ID: " + callback_thread_id)
+    assert(callback_thread_id != 0, "回调应该设置了线程 ID")
+    assert(callback_thread_id != main_thread_id, "回调应该来自工作线程，而非主线程")
+    print("✓ 回调确实来自工作线程 (ID: " + callback_thread_id + ")")
+
+    ffi.call_void(kernel32, "CloseThreadpoolWork", work)
+    ffi.free(cb)
+    ffi.free(kernel32)
+
+    print("✓ 回调线程身份验证通过")
+    print("")
+}
+
+// ========== 主函数 ==========
+main() {
+    print("开始多线程回调测试...")
+    print("")
+
+    try {
+        test_basic_threadpool_callback()
+        test_callback_with_ffi()
+        test_concurrent_callbacks()
+        test_callback_thread_identity()
+
+        print("========================================")
+        print("所有多线程回调测试通过！")
+        print("========================================")
+    } catch (e) {
+        print("")
+        print("========================================")
+        print("测试失败: " + e)
+        print("========================================")
+    }
+}

@@ -1,0 +1,166 @@
+import threads
+import times as ti
+import rands
+
+// 测试1: 线程中的闭包
+func test_closure() {
+    var x = 10
+    var y = 20
+    func inner() {
+        print("闭包捕获: x=" + x + ", y=" + y)
+        x = x + 1
+        print("闭包修改后: x=" + x)
+    }
+    inner()
+    print("闭包外: x=" + x)
+}
+
+// 测试2: 线程中的异常处理
+func test_exception() {
+    try {
+        print("try 块执行")
+        throw "线程中的错误"
+    } catch e {
+        print("捕获异常: " + e)
+    } finally {
+        print("finally 执行")
+    }
+    print("异常处理后继续执行")
+}
+
+// 测试3: 线程中的嵌套函数调用和返回值
+func add(var a, var b) {
+    return a + b
+}
+func multiply(var a, var b) {
+    return a * b
+}
+func test_nested_call() {
+    var a = 3
+    var b = 4
+    var sum = add(a, b)
+    var product = multiply(a, b)
+    print("a=" + a + ", b=" + b)
+    print("a+b=" + sum)
+    print("a*b=" + product)
+    var result = multiply(add(a, b), 2)
+    print("(a+b)*2=" + result)
+}
+
+// 测试4: 线程中的字典操作
+func test_dict() {
+    var person = {id: 1, name: "Leno", age: 25}
+    print("字典: " + person)
+    print("name: " + person["name"])
+    print("age: " + person.age)
+    person["age"] = 26
+    print("修改后age: " + person.age)
+}
+
+// 测试5: 线程中的数组操作
+func test_array() {
+    var arr = [10, 20, 30, 40, 50]
+    print("数组: " + arr)
+    print("长度: " + arr.len())
+    arr.add(60)
+    print("添加后: " + arr)
+    print("切片[1:3]: " + arr[1:3])
+}
+
+// 测试6: 线程中的循环和条件
+func test_loop() {
+    var sum = 0
+    for 100 to var i {
+        if i % 2 == 0 {
+            sum = sum + i
+        }
+    }
+    print("1-100偶数和: " + sum)
+
+    var n = 10
+    var fib1 = 0
+    var fib2 = 1
+    for n - 1 to var i {
+        var temp = fib2
+        fib2 = fib1 + fib2
+        fib1 = temp
+    }
+    print("斐波那契第" + n + "项: " + fib2)
+}
+
+// 测试7: 线程中的字符串操作
+func test_string() {
+    var s = "hello world"
+    print("原始: " + s)
+    print("大写: " + s.to_upper())
+    print("长度: " + s.len())
+}
+
+// 测试8: 线程中多层嵌套闭包
+func test_deep_closure() {
+    var g = "global"
+    func f1() {
+        var a1 = "f1"
+        func f2() {
+            var a2 = "f2"
+            func f3() {
+                print("深层闭包: g=" + g + ", a1=" + a1 + ", a2=" + a2)
+            }
+            f3()
+        }
+        f2()
+    }
+    f1()
+}
+
+// 测试9: 线程中的 try-catch 嵌套
+func test_nested_exception() {
+    try {
+        try {
+            throw "内层错误"
+        } catch e {
+            print("内层捕获: " + e)
+            throw "外层错误"
+        }
+    } catch e {
+        print("外层捕获: " + e)
+    }
+}
+
+// 测试10: 线程中的递归
+func fibonacci(var n) {
+    if n <= 1 { return n }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}
+func test_recursion() {
+    var result = fibonacci(15)
+    print("fibonacci(15)=" + result)
+}
+
+main() {
+    print("===== 主线程开始 =====")
+
+    var t1 = threads.start(test_closure)
+    var t2 = threads.start(test_exception)
+    var t3 = threads.start(test_nested_call)
+    var t4 = threads.start(test_dict)
+    var t5 = threads.start(test_array)
+    var t6 = threads.start(test_loop)
+    var t7 = threads.start(test_string)
+    var t8 = threads.start(test_deep_closure)
+    var t9 = threads.start(test_nested_exception)
+    var t10 = threads.start(test_recursion)
+
+    var r1 = t1.join()
+    var r2 = t2.join()
+    var r3 = t3.join()
+    var r4 = t4.join()
+    var r5 = t5.join()
+    var r6 = t6.join()
+    var r7 = t7.join()
+    var r8 = t8.join()
+    var r9 = t9.join()
+    var r10 = t10.join()
+
+    print("===== 所有线程完成 =====")
+}

@@ -1,0 +1,27 @@
+// io 模块测试
+
+import io
+
+main()
+{
+    // 测试1: print 基本输出
+    io.print("测试 io.print")
+
+    // 测试2: printf 格式化输出
+    io.printf("格式化: %s, %d, %f", "字符串", 42, 3.14)
+
+    // 测试3: 输入输出类型测试
+    io.print(123)
+    io.print(3.14159)
+    io.print(true)
+    io.print(null)
+
+    // 测试4: 数组和字典输出
+    var arr = [1, 2, 3]
+    io.print(arr)
+
+    var dict = {a: 1, b: 2}
+    io.print(dict)
+
+    print("test_io passed")
+}

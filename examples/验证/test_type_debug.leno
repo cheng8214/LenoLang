@@ -1,0 +1,19 @@
+// 调试类型推断
+struct Test {
+    Array[int] scores = []
+    
+    func getScores():Array[int] {
+        return scores  // 测试 scores 的类型
+    }
+    
+    func getFirst():int {
+        return scores[0]  // 测试数组索引返回类型
+    }
+}
+
+main() {
+    var t = Test()
+    t.scores = [85, 90, 78]
+    print(t.getScores())
+    print(t.getFirst())
+}

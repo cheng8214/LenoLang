@@ -1,0 +1,36 @@
+// 跨模块 struct 定义测试
+// 定义一个 Point 结构体
+
+export struct Point {
+    int x
+    int y
+}
+
+export struct Rectangle {
+    Point top_left
+    Point bottom_right
+}
+
+// 导出创建 Point 的工厂函数
+export func create_point(int x, int y) {
+    return Point(x = x, y = y)
+}
+
+// 导出计算两点距离的功能
+export func distance(Point p1, Point p2) {
+    var dx = p2.x - p1.x
+    var dy = p2.y - p1.y
+    return dx * dx + dy * dy  // 返回距离的平方
+}
+
+// 导出创建矩形的工厂函数
+export func create_rectangle(Point tl, Point br) {
+    return Rectangle(top_left = tl, bottom_right = br)
+}
+
+// 导出计算矩形面积的功能
+export func rectangle_area(Rectangle rect) {
+    var width = rect.bottom_right.x - rect.top_left.x
+    var height = rect.bottom_right.y - rect.top_left.y
+    return width * height
+}

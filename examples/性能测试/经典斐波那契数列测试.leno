@@ -1,0 +1,21 @@
+// 经典斐波那契数列测试
+import times
+
+main() {
+  
+    var t1=times.ms()
+    print(fib(30)) 
+    var t2=times.ms()
+    print((t2-t1)+"ms")
+}
+
+func fib(var n){
+
+    if n <= 1 {
+        return n
+    }
+    
+    return fib(n - 2)+fib(n - 1)
+  
+  
+}

@@ -1,0 +1,26 @@
+// 简单字段访问测试
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    print("=== 测试 cstruct 直接字段访问 ===")
+    
+    var v = Vec3.malloc()
+    
+    // 使用直接字段访问（新语法）
+    v.x = 1.0
+    v.y = 2.0
+    v.z = 3.0
+    
+    print("v.x = " + v.x)
+    print("v.y = " + v.y)
+    print("v.z = " + v.z)
+    
+    v.free()
+    
+    print("=== 测试完成 ===")
+}

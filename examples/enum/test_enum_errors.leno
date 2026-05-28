@@ -1,0 +1,16 @@
+// 测试 enum 错误处理
+
+// 测试 1: 重复定义 enum
+enum Color {
+    red
+    green
+}
+
+// 这行应该报错：重复定义
+enum Color {
+    blue
+}
+
+main() {
+    print("不应该执行到这里")
+}

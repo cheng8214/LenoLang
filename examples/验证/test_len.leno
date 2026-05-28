@@ -1,0 +1,14 @@
+// 测试 len() 返回类型
+struct Test {
+    Array[int] scores = []
+    
+    func testLen():int {
+        return scores.len()  // 应该返回 int
+    }
+}
+
+main() {
+    var t = Test()
+    t.scores = [85, 90, 78]
+    print(t.testLen())
+}

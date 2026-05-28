@@ -1,0 +1,7 @@
+// 中文路径测试模块 - 使用英文名称
+
+export var 测试 = "你好"
+
+export func say_hello() {
+    return "来自中文路径的问候: " + 测试
+}

@@ -1,0 +1,22 @@
+import io
+import asyncs
+//_gc(false)//关闭GC就没事
+main() {
+    async func task(int id) {
+       // await asyncs.sleep(10)
+       var arr=[]
+       for 100000 to i
+       {
+       arr.add(i)
+       }
+        io.print($"任务 {id} 完成")
+    }
+
+    for 0:10000 to i {
+        task(i)
+    }
+
+    io.print("启动 100 个协程")
+    asyncs.run()
+    io.print("全部完成")
+}

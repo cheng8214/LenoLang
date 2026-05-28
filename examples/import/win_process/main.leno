@@ -1,0 +1,310 @@
+// 进程管理接口使用示例
+// 演示多态使用 ProcessManager 接口
+
+import "win_process_str16.leno" as wp
+
+// ========== 接口定义 ==========
+
+face ProcessManager {
+    func getCurrentPid():int
+    func listProcesses():Dict
+    func findByName(string name):Dict
+    func terminate(int pid):Dict
+    func getProcessMemory(int pid):Dict
+    func getProcessDetails(int pid):Dict
+    func getSystemInfo():Dict
+    func getSystemUpTime():int
+    func formatUptime(int ms):string
+}
+
+// ========== Mock 实现 ==========
+
+struct MockProcessManager impl ProcessManager {
+    Array _processes = []
+    int _nextPid = 1000
+    int _uptimeMs = 3600000
+    Dict _systemInfo = {
+        processorCount: 4,
+        pageSize: 4096,
+        uptimeMs: 3600000,
+        memoryLoad: 45,
+        totalPhys: 16384,
+        availPhys: 8192,
+        errorCode: 0
+    }
+
+    func addMockProcess(string name) {
+        _processes.add({pid: _nextPid, name: name, memory: 10240, peakMemory: 20480})
+        _nextPid = _nextPid + 1
+    }
+
+    func getCurrentPid():int { return 1234 }
+
+    func listProcesses():Dict {
+        return {processes: _processes, errorCode: 0}
+    }
+
+    func findByName(string name):Dict {
+        for _processes to proc {
+            if proc.name.to_lower() == name.to_lower() {
+                return {found: true, pid: proc.pid}
+            }
+        }
+        return {found: false, pid: 0}
+    }
+
+    func terminate(int pid):Dict {
+        var newProcesses = []
+        var found = false
+        for _processes to proc {
+            if proc.pid != pid {
+                newProcesses.add(proc)
+            } else {
+                found = true
+            }
+        }
+        _processes = newProcesses
+        return {success: found, errorCode: 0}
+    }
+
+    func getProcessMemory(int pid):Dict {
+        for _processes to proc {
+            if proc.pid == pid {
+                return {workingSet: proc.memory, peakWorkingSet: proc.peakMemory, errorCode: 0}
+            }
+        }
+        return {workingSet: 0, peakWorkingSet: 0, errorCode: 1}
+    }
+
+    func getProcessDetails(int pid):Dict {
+        for _processes to proc {
+            if proc.pid == pid {
+                return {
+                    found: true,
+                    info: {
+                        pid: proc.pid,
+                        name: proc.name,
+                        memory: proc.memory,
+                        peakMemory: proc.peakMemory
+                    }
+                }
+            }
+        }
+        return {found: false, info: null}
+    }
+
+    func getSystemInfo():Dict { return _systemInfo }
+
+    func getSystemUpTime():int { return _uptimeMs }
+
+    func formatUptime(int ms):string {
+        int totalSec = _int(ms / 1000)
+        int days = _int(totalSec / 86400)
+        int hours = _int((totalSec % 86400) / 3600)
+        int minutes = _int((totalSec % 3600) / 60)
+        int seconds = totalSec % 60
+
+        if days > 0 {
+            return days + " 天 " + hours + " 小时 " + minutes + " 分钟 " + seconds + " 秒"
+        } else if hours > 0 {
+            return hours + " 小时 " + minutes + " 分钟 " + seconds + " 秒"
+        } else if minutes > 0 {
+            return minutes + " 分钟 " + seconds + " 秒"
+        } else {
+            return seconds + " 秒"
+        }
+    }
+}
+
+// ========== Windows 实现 ==========
+
+struct WinProcessManager impl ProcessManager {
+    func getCurrentPid():int {
+        return wp.getCurrentPid()
+    }
+
+    func listProcesses():Dict {
+        return wp.listProcesses()
+    }
+
+    func findByName(string name):Dict {
+        return wp.findByName(name)
+    }
+
+    func terminate(int pid):Dict {
+        return wp.terminate(pid)
+    }
+
+    func getProcessMemory(int pid):Dict {
+        return wp.getProcessMemory(pid)
+    }
+
+    func getProcessDetails(int pid):Dict {
+        return wp.getProcessDetails(pid)
+    }
+
+    func getSystemInfo():Dict{
+        return wp.getSystemInfo()
+    }
+
+    func getSystemUpTime():int {
+        return _int(wp.getSystemUpTime())
+    }
+
+    func formatUptime(int ms):string {
+        return wp.formatUptime(ms)
+    }
+}
+
+// ========== 辅助函数 ==========
+
+func show_system_info(ProcessManager mgr) {
+    print("=== 系统信息 ===")
+    var info = mgr.getSystemInfo()
+    print("CPU 核心数: " + info.processorCount)
+    print("页面大小: " + info.pageSize + " 字节")
+    print("内存负载: " + info.memoryLoad + "%")
+    print("总物理内存: " + info.totalPhys + " MB")
+    print("可用物理内存: " + info.availPhys + " MB")
+    print("")
+}
+
+func show_uptime(ProcessManager mgr) {
+    print("=== 系统运行时间 ===")
+    var uptime = mgr.getSystemUpTime()
+    print("运行时间: " + mgr.formatUptime(uptime))
+    print("")
+}
+
+// ========== 测试函数 ==========
+
+func test_mock_manager() {
+    print("===== 测试 Mock 进程管理器 =====")
+    print("")
+
+    var mgr = MockProcessManager()
+    mgr.addMockProcess("notepad.exe")
+    mgr.addMockProcess("chrome.exe")
+    mgr.addMockProcess("explorer.exe")
+
+    print("当前进程ID: " + mgr.getCurrentPid())
+    print("")
+
+    show_system_info(mgr)
+    show_uptime(mgr)
+
+    print("=== 进程列表 ===")
+    var listResult = mgr.listProcesses()
+    for listResult.processes to proc {
+        print("  - " + proc.name + " (PID: " + proc.pid + ")")
+    }
+    print("")
+
+    print("=== 查找 chrome.exe ===")
+    var findResult = mgr.findByName("chrome.exe")
+    if findResult.found {
+        print("找到! PID: " + findResult.pid)
+
+        var memInfo = mgr.getProcessMemory(findResult.pid)
+        print("内存使用: " + memInfo.workingSet + " KB")
+        print("峰值内存: " + memInfo.peakWorkingSet + " KB")
+
+        var details = mgr.getProcessDetails(findResult.pid)
+        if details.found {
+            print("进程详情: " + details.info)
+        }
+
+        print("终止进程...")
+        var termResult = mgr.terminate(findResult.pid)
+        print("终止结果: " + termResult.success)
+    }
+    print("")
+
+    print("=== 终止后的进程列表 ===")
+    listResult = mgr.listProcesses()
+    for listResult.processes to proc {
+        print("  - " + proc.name + " (PID: " + proc.pid + ")")
+    }
+    print("")
+}
+
+func test_windows_manager() {
+    print("===== 测试 Windows 进程管理器 =====")
+    print("")
+
+    var mgr = WinProcessManager()
+
+    print("当前进程ID: " + mgr.getCurrentPid())
+    print("")
+
+    show_system_info(mgr)
+    show_uptime(mgr)
+
+    print("=== 进程列表 (前5个) ===")
+    var listResult = mgr.listProcesses()
+    int count = 0
+    print(listResult.processes)
+    for listResult.processes to proc {
+        if count < 5 {
+            print("  - " + proc.name + " (PID: " + proc.pid + ")")
+            count = count + 1
+        }
+    }
+    print("")
+
+    print("=== 查找 explorer.exe ===")
+    var findResult = mgr.findByName("explorer.exe")
+    if findResult.found {
+        print("找到! PID: " + findResult.pid)
+
+        var memInfo = mgr.getProcessMemory(findResult.pid)
+        if memInfo.errorCode == 0 {
+            print("内存使用: " + memInfo.workingSet + " KB")
+            print("峰值内存: " + memInfo.peakWorkingSet + " KB")
+        }
+
+        var details = mgr.getProcessDetails(findResult.pid)
+        if details.found {
+            print("进程详情: " + details.info)
+        }
+    } else {
+        print("未找到 explorer.exe")
+    }
+    print("")
+}
+
+func demo_polymorphism() {
+    print("===== 演示多态 =====")
+    print("")
+
+    // 使用 face 类型变量
+    ProcessManager mgr1 = MockProcessManager()
+    ProcessManager mgr2 = WinProcessManager()
+
+    print("--- Mock 实现 ---")
+    print("当前进程ID: " + mgr1.getCurrentPid())
+    print("系统运行时间: " + mgr1.formatUptime(mgr1.getSystemUpTime()))
+    print("")
+
+    print("--- Windows 实现 ---")
+    print("当前进程ID: " + mgr2.getCurrentPid())
+    print("系统运行时间: " + mgr2.formatUptime(mgr2.getSystemUpTime()))
+    print("")
+
+    // 使用类型守卫
+    print("--- 类型守卫测试 ---")
+    var mockMgr = MockProcessManager()
+    if mockMgr is MockProcessManager {
+        print("mockMgr 是 MockProcessManager 类型")
+    }
+    if mockMgr is ProcessManager {
+        print("mockMgr 实现了 ProcessManager 接口")
+    }
+}
+
+main() {
+    test_mock_manager()
+    test_windows_manager()
+    demo_polymorphism()
+    print("===== 所有测试完成 =====")
+}

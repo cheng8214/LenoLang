@@ -1,0 +1,25 @@
+// 测试闭包类型问题（之前报错的测试）
+
+main() {
+    print("=== 测试闭包类型问题 ===")
+    
+    // 测试：修改外部变量
+    print("\n测试 1: 修改外部变量")
+    var count = 0
+    var inc = func() { count = count + 1 }
+    inc()
+    inc()
+    inc()
+    print(count)
+    
+    // 测试：多个闭包共享同一个外部变量
+    print("\n测试 2: 多个闭包共享外部变量")
+    var shared = 100
+    var get = func() { return shared }
+    var set = func(int v) { shared = v }
+    print(get())
+    set(200)
+    print(get())
+    
+    print("\n=== 测试完成 ===")
+}

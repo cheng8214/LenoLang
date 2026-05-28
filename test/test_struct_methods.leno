@@ -1,0 +1,64 @@
+// 结构体方法测试
+
+struct Point
+{
+    int x
+    int y
+
+    func move(int dx, int dy)
+    {
+        x = x + dx
+        y = y + dy
+    }
+
+    func distance_to_origin()
+    {
+        return x * x + y * y
+    }
+}
+
+struct Rectangle
+{
+    Point top_left
+    Point bottom_right
+
+    func area()
+    {
+        var width = bottom_right.x - top_left.x
+        var height = bottom_right.y - top_left.y
+        return width * height
+    }
+}
+
+main()
+{
+    // 测试结构体创建和方法
+    var p = Point()
+    p.x = 3
+    p.y = 4
+    assert_eq(p.x, 3)
+    assert_eq(p.y, 4)
+
+    // 测试结构体方法
+    p.move(1, 1)
+    assert_eq(p.x, 4)
+    assert_eq(p.y, 5)
+
+    // 测试返回值方法
+    var dist = p.distance_to_origin()
+    assert_eq(dist, 41)  // 4*4 + 5*5
+
+    // 测试嵌套结构体
+    var rect = Rectangle()
+    rect.top_left = Point()
+    rect.bottom_right = Point()
+    rect.top_left.x = 0
+    rect.top_left.y = 0
+    rect.bottom_right.x = 10
+    rect.bottom_right.y = 5
+
+    var area = rect.area()
+    assert_eq(area, 50)  // 10 * 5
+
+    print("test_struct_methods passed")
+}

@@ -1,0 +1,67 @@
+// 测试函数作为一等公民
+
+// 测试1: 函数赋值给变量
+func add(int a, int b) {
+    return a + b
+}
+
+func mul(int a, int b) {
+    return a * b
+}
+
+// 测试2: 函数作为参数
+func apply_operation(int x, int y, var operation) {
+    return operation(x, y)
+}
+
+// 测试3: 函数作为返回值
+func get_operation(var op_name) {
+    if op_name == "add" {
+        return add
+    } else if op_name == "mul" {
+        return mul
+    }
+    return null
+}
+
+// 测试4: 函数存储在数组中
+func func1() { return 1 }
+func func2() { return 2 }
+func func3() { return 3 }
+
+// 测试5: 函数存储在字典中
+func greet_en() { return "Hello" }
+func greet_cn() { return "你好" }
+
+main() {
+    print("=== 函数作为一等公民测试 ===")
+    
+    // 测试1: 函数赋值给变量
+    var my_add = add
+    var my_mul = mul
+    print("my_add(3,4): " + my_add(3, 4))
+    print("my_mul(3,4): " + my_mul(3, 4))
+    
+    // 测试2: 函数作为参数
+    var result1 = apply_operation(5, 3, add)
+    var result2 = apply_operation(5, 3, mul)
+    print("apply add: " + result1)
+    print("apply mul: " + result2)
+    
+    // 测试3: 函数作为返回值
+    var op = get_operation("add")
+    print("get_operation result: " + op(10, 20))
+    
+    // 测试4: 函数存储在数组中
+    var func_array = [func1, func2, func3]
+    for func_array to f {
+        print("Func result: " + f())
+    }
+    
+    // 测试5: 函数存储在字典中
+    var greetings = {"en": greet_en, "cn": greet_cn}
+    print("English: " + greetings["en"]())
+    print("Chinese: " + greetings["cn"]())
+    
+    print("=== 测试完成 ===")
+}

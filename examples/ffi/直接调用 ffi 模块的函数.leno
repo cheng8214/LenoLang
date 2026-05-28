@@ -1,0 +1,10 @@
+import ffi
+
+main()
+{
+    // 直接调用 ffi 模块的函数
+    var ptr = ffi.malloc(100)
+    print("Allocated pointer: " + ptr)
+    ffi.free(ptr)
+    print("Freed pointer")
+}

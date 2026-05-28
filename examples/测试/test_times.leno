@@ -1,0 +1,7 @@
+import times
+
+main() {
+    var t = times.ms()
+    print("t = " + t)
+    print("t 是 int: " + (t is int))
+}

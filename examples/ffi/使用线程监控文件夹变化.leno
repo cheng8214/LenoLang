@@ -1,0 +1,195 @@
+// 使用线程监控文件夹变化
+// 主线程可以继续执行其他任务
+
+import ffi
+import threads
+
+// Windows 常量
+var FILE_NOTIFY_CHANGE_FILE_NAME = 0x00000001
+var FILE_NOTIFY_CHANGE_DIR_NAME = 0x00000002
+var FILE_NOTIFY_CHANGE_SIZE = 0x00000008
+var FILE_NOTIFY_CHANGE_LAST_WRITE = 0x00000010
+var FILE_NOTIFY_CHANGE_CREATION = 0x00000040
+
+var FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+var FILE_SHARE_READ = 0x00000001
+var FILE_SHARE_WRITE = 0x00000002
+var FILE_SHARE_DELETE = 0x00000004
+var OPEN_EXISTING = 3
+
+// 监控线程函数
+func watch_folder(var ch, var watchPath) {
+    import ffi
+
+    var kernel32 = ffi.load("kernel32.dll")
+    var buffer = ffi.malloc(4096)
+
+    // 创建文件夹
+    var pathW = ffi.utf8_to_utf16(watchPath)
+    var result = ffi.call_int(kernel32, "CreateDirectoryW", pathW, ffi.nullptr())
+
+    // 打开文件夹句柄
+    var pathW2 = ffi.utf8_to_utf16(watchPath)
+    var hDirectory = ffi.call_ptr(kernel32, "CreateFileW",
+        pathW2,
+        0x0001,  // FILE_LIST_DIRECTORY
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        ffi.nullptr(),
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        ffi.nullptr()
+    )
+
+    if ffi.ptr_to_int(hDirectory) == -1 {
+        ch.send({type: "error", msg: "无法打开文件夹"})
+        ffi.free(buffer)
+        ffi.free(kernel32)
+        return
+    }
+
+    ch.send({type: "started", path: watchPath})
+
+    var notifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME |
+                       FILE_NOTIFY_CHANGE_DIR_NAME |
+                       FILE_NOTIFY_CHANGE_SIZE |
+                       FILE_NOTIFY_CHANGE_LAST_WRITE |
+                       FILE_NOTIFY_CHANGE_CREATION
+
+    var running = true
+    while running {
+        ffi.memset(buffer, 0, 4096)
+
+        var bytesReturned = ffi.malloc(4)
+        ffi.write_uint(bytesReturned, 0, 0)
+
+        var success = ffi.call_int(kernel32, "ReadDirectoryChangesW",
+            hDirectory,
+            buffer,
+            4096,
+            0,
+            notifyFilter,
+            bytesReturned,
+            ffi.nullptr(),
+            ffi.nullptr()
+        )
+
+        var bytesRead = ffi.read_uint(bytesReturned, 0)
+        ffi.free(bytesReturned)
+
+        if success != 0 and bytesRead > 0 {
+            // 解析通知
+            var offset = 0
+            while offset < bytesRead {
+                var action = ffi.read_uint(buffer, offset + 4)
+                var fileNameLen = ffi.read_uint(buffer, offset + 8)
+
+                if fileNameLen > 0 {
+                    var fileNamePtr = ffi.offset(buffer, offset + 12)
+                    var fileName = ffi.utf16_to_utf8(fileNamePtr)
+
+                    var actionStr = ""
+                    switch action
+                    {
+                    case  1 { actionStr = "添加" }
+                    case  2 { actionStr = "删除" }
+                    case  3 { actionStr = "修改" }
+                    case  4 { actionStr = "重命名(旧)" }
+                    case  5 { actionStr = "重命名(新)" }
+                    default { actionStr = "未知" }
+					}
+                    ch.send({type: "event", action: actionStr, file: fileName})
+                }
+
+                var nextOffset = ffi.read_uint(buffer, offset)
+                if nextOffset == 0 { break }
+                offset = offset + nextOffset
+            }
+        }
+
+        // 检查是否收到停止信号（非阻塞检查）
+        // 这里用简单的超时机制
+        ffi.call_void(kernel32, "Sleep", 100)
+    }
+
+    ffi.call_void(kernel32, "CloseHandle", hDirectory)
+    ffi.free(buffer)
+    ffi.free(kernel32)
+    ch.send({type: "stopped"})
+}
+
+// 主线程任务：模拟其他工作
+func main_task(var ch) {
+    import ffi
+
+    var kernel32 = ffi.load("kernel32.dll")
+    for 0 : 29 to i {
+        ffi.call_void(kernel32, "Sleep", 500)  // 模拟工作
+        ch.send({type: "heartbeat", count: i + 1})
+    }
+    ffi.free(kernel32)
+}
+
+main() {
+    print("=== 线程版文件夹监控 ===")
+    print("")
+
+    var watchPath = "d:\\test_watch_folder"
+    var ch = threads.channel(100)
+
+    // 启动监控线程
+    var watchThread = threads.start(watch_folder, ch, watchPath)
+    print("监控线程已启动...")
+    print("文件夹: " + watchPath)
+    print("")
+
+    // 等待监控启动
+    var msg = ch.receive()
+    if msg.type == "started" {
+        print("✓ 监控已开始: " + msg.path)
+    } else if msg.type == "error" {
+        print("✗ 启动失败: " + msg.msg)
+        watchThread.join()
+        return
+    }
+
+    print("")
+    print("请在文件夹中进行操作（创建/删除/修改文件）")
+    print("主线程继续执行其他任务...")
+    print("(输入 'q' 退出)")
+    print("")
+
+    // 主线程同时执行其他任务
+    var taskThread = threads.start(main_task, ch)
+
+    // 处理消息
+    var running = true
+    var eventCount = 0
+
+    while running {
+        var msg = ch.receive()
+
+        if msg.type == "event" {
+            eventCount = eventCount + 1
+            print("[监控] " + msg.action + ": " + msg.file)
+        } else if msg.type == "heartbeat" {
+            print("[主任务] 心跳 " + msg.count + "/30")
+        } else if msg.type == "stopped" {
+            print("[监控] 监控已停止")
+            running = false
+        }
+
+        // 简单退出条件：收到30个心跳或10个事件
+        if eventCount >= 10 {
+            print("")
+            print("已收到10个文件事件，准备退出...")
+            running = false
+        }
+    }
+
+    print("")
+    print("等待线程结束...")
+    taskThread.join()
+    // watchThread 是无限循环，这里不 join，直接退出
+
+    print("=== 测试完成 ===")
+}

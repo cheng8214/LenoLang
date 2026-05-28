@@ -1,0 +1,136 @@
+// ============================================================================
+// For 循环操作类操作码 (OP_FOR_LOOP)
+// ============================================================================
+
+OPCODE(OP_FOR_PREP) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    // For循环准备: 初始化循环变量并检查初始条件，如果不满足则跳转到循环后
+    // 操作数: start_slot(1), end_slot(1), step_slot(1), loop_var_slot(1), inclusive(1), jump_offset(2)
+    uint8_t start_slot = READ_BYTE();
+    uint8_t end_slot = READ_BYTE();
+    uint8_t step_slot = READ_BYTE();
+    uint8_t loop_var_slot = READ_BYTE();
+    uint8_t inclusive = READ_BYTE();
+    uint16_t jump_offset = READ_SHORT();
+    
+    // 获取 start, end, step 值
+    Value start_val = frame->locals[start_slot];
+    Value end_val = frame->locals[end_slot];
+    Value step_val = frame->locals[step_slot];
+    
+    // 初始化 loop_var = start
+    frame->locals[loop_var_slot] = start_val;
+    
+    // 检查是否需要执行循环（初始条件）- 支持 int/float/bigint
+    double start_num = value_to_double(start_val);
+    double end_num = value_to_double(end_val);
+    double step_num = value_to_double(step_val);
+    
+    int should_run = 0;
+    if (step_num > 0) {
+        // 正向循环
+        should_run = inclusive ? (start_num <= end_num) : (start_num < end_num);
+    } else if (step_num < 0) {
+        // 反向循环
+        should_run = inclusive ? (start_num >= end_num) : (start_num > end_num);
+    }
+    // step == 0 时不执行循环
+    
+    if (!should_run) {
+        // 跳过循环体（包括后面的 OP_FOR_LOOP 指令）
+        frame->ip += jump_offset;
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_FOR_LOOP) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    // For循环迭代: 更新 loop_var 并检查是否继续，如果继续则跳转回循环开始
+    // 操作数: loop_var_slot(1), step_slot(1), end_slot(1), inclusive(1), jump_offset(2)
+    uint8_t loop_var_slot = READ_BYTE();
+    uint8_t step_slot = READ_BYTE();
+    uint8_t end_slot = READ_BYTE();
+    uint8_t inclusive = READ_BYTE();
+    uint16_t jump_offset = READ_SHORT();
+
+    // 获取当前值
+    Value loop_var = frame->locals[loop_var_slot];
+    Value step_val = frame->locals[step_slot];
+    Value end_val = frame->locals[end_slot];
+
+    // 优化：如果 step 和 loop_var 都是普通整数（不是 BigInt），使用整数运算
+    if (val_is_int(loop_var) && val_is_int(step_val) && val_is_int(end_val)) {
+        int loop_num = val_as_int(loop_var);
+        int step_num = val_as_int(step_val);
+        int end_num = val_as_int(end_val);
+
+        // 更新 loop_var += step
+        loop_num += step_num;
+        frame->locals[loop_var_slot] = val_int(loop_num);
+
+        // 检查是否继续循环
+        int should_continue = 0;
+        if (step_num > 0) {
+            should_continue = inclusive ? (loop_num <= end_num) : (loop_num < end_num);
+        } else if (step_num < 0) {
+            should_continue = inclusive ? (loop_num >= end_num) : (loop_num > end_num);
+        }
+
+        if (should_continue) {
+            frame->ip -= jump_offset;
+        }
+    } else if (val_is_bigint(loop_var) || val_is_bigint(step_val) || val_is_bigint(end_val)) {
+        // BigInt 循环 - 使用 BigInt 运算
+        ObjBigInt* loop_big = get_bigint_operand(loop_var);
+        ObjBigInt* step_big = get_bigint_operand(step_val);
+        ObjBigInt* end_big = get_bigint_operand(end_val);
+        
+        // 更新 loop_var += step
+        Value new_loop = bigint_add(loop_big, step_big);
+        if (!val_is_bigint(new_loop)) {
+            // 结果不是 BigInt（可能是 0），转换为 int
+            frame->locals[loop_var_slot] = val_int(0);
+        } else {
+            frame->locals[loop_var_slot] = new_loop;
+        }
+        
+        // 检查是否继续循环
+        int cmp = bigint_compare(val_as_bigint(new_loop), end_big);
+        int should_continue = 0;
+        int step_cmp = bigint_compare(step_big, bigint_from_int64(0));
+        
+        if (step_cmp > 0) {
+            // 正向循环
+            should_continue = inclusive ? (cmp <= 0) : (cmp < 0);
+        } else if (step_cmp < 0) {
+            // 反向循环
+            should_continue = inclusive ? (cmp >= 0) : (cmp > 0);
+        }
+
+        if (should_continue) {
+            frame->ip -= jump_offset;
+        }
+    } else {
+        // 浮点数或混合类型循环
+        double loop_num = value_to_double(loop_var);
+        double step_num = value_to_double(step_val);
+        double end_num = value_to_double(end_val);
+
+        // 更新 loop_var += step
+        loop_num += step_num;
+        frame->locals[loop_var_slot] = val_num(loop_num);
+
+        // 检查是否继续循环
+        int should_continue = 0;
+        if (step_num > 0) {
+            should_continue = inclusive ? (loop_num <= end_num) : (loop_num < end_num);
+        } else if (step_num < 0) {
+            should_continue = inclusive ? (loop_num >= end_num) : (loop_num > end_num);
+        }
+
+        if (should_continue) {
+            frame->ip -= jump_offset;
+        }
+    }
+    DISPATCH;
+}

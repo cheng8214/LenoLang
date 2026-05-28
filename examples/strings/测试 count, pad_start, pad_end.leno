@@ -1,0 +1,31 @@
+import strings
+
+main() {
+    print("=== 测试 count, pad_start, pad_end ===")
+    
+    // 测试 count
+    print("\n1. count - 统计子串出现次数:")
+    print("  'abab'.count('ab') = " + "abab".count("ab"))      // 2
+    print("  'hello world'.count('l') = " + "hello world".count("l"))  // 3
+    print("  'aaa'.count('aa') = " + "aaa".count("aa"))        // 1 (不重叠)
+    print("  'abc'.count('xyz') = " + "abc".count("xyz"))      // 0
+    
+    // 测试 pad_start
+    print("\n2. pad_start - 左侧填充:")
+    print("  '5'.pad_start(3, '0') = '" + "5".pad_start(3, "0") + "'")     // "005"
+    print("  'hi'.pad_start(5, ' ') = '" + "hi".pad_start(5, " ") + "'")            // "   hi"
+    print("  'hello'.pad_start(3, '0') = '" + "hello".pad_start(3, "0") + "'")  // "hello" (不截断)
+    
+    // 测试 pad_end
+    print("\n3. pad_end - 右侧填充:")
+    print("  'hi'.pad_end(5, '!') = '" + "hi".pad_end(5, "!") + "'")       // "hi!!!"
+    print("  'test'.pad_end(8, ' ') = '" + "test".pad_end(8, " ") + "'")            // "test    "
+    print("  'abc'.pad_end(2, '-') = '" + "abc".pad_end(2, "-") + "'")     // "abc" (不截断)
+    
+    // 实际应用场景
+    print("\n4. 实际应用场景 - 数字补零:")
+    var nums = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+    for nums to num {
+        print("  Item-" + num.pad_start(3, "0"))
+    }
+}

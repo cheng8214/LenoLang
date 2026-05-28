@@ -1,0 +1,9 @@
+// 深层嵌套测试 - Level 4
+
+import "level5.leno" as l5
+
+export var level4_value = 4
+
+export func level4_func() {
+    return "Level4 -> " + l5.level5_func()
+}

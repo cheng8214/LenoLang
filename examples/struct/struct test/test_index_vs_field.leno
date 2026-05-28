@@ -1,0 +1,34 @@
+import times
+
+// 对比测试：索引访问 vs 字段访问
+
+struct Point
+{
+    int x
+    int y
+}
+
+main()
+{
+    var p = Point(x=10, y=20)
+    
+    // 测试字段访问（优化后）
+    var t1 = times.ms()
+    var sum = 0
+    for 1000000 to i
+    {
+        sum = sum + p.y
+    }
+    var t2 = times.ms()
+    print("字段访问 p.y 100万次: " + (t2 - t1) + "ms")
+    
+    // 测试索引访问（字符串查找）
+    t1 = times.ms()
+    sum = 0
+    for 1000000 to i
+    {
+        sum = sum + p["y"]
+    }
+    t2 = times.ms()
+    print("索引访问 p[\"y\"] 100万次: " + (t2 - t1) + "ms")
+}

@@ -1,0 +1,56 @@
+import files
+import dirs
+
+main() {
+    var chinese_dir = "D:\\2022 - 副本"
+    var test_file = dirs.join(chinese_dir, "测试文件.txt")
+    
+    print("测试中文路径文件操作")
+    print("目录: " + chinese_dir)
+    print("测试文件: " + test_file)
+    
+    // 检查目录是否存在
+    print("\n检查目录是否存在...")
+    var dir_exists = dirs.exists(chinese_dir)
+    print("目录存在: " + dir_exists)
+    
+    if not dir_exists {
+        print("目录不存在，创建目录...")
+        dirs.mkdir(chinese_dir)
+        print("目录创建完成")
+    }
+    
+    // 测试 files.write
+    print("\n1. 测试 files.write ...")
+    files.write(test_file, "这是一个中文内容测试\nHello World!")
+    print("   写入成功!")
+    
+    // 测试 files.exists
+    print("\n2. 测试 files.exists ...")
+    var exists = files.exists(test_file)
+    print("   文件存在: " + exists)
+    
+    // 测试 files.read
+    print("\n3. 测试 files.read ...")
+    var content = files.read(test_file)
+    print("   文件内容:")
+    print("   " + content)
+    
+    // 测试 files.open
+    print("\n4. 测试 files.open ...")
+    var f = files.open(test_file, "r")
+    var line = f.readline()
+    print("   第一行: " + line)
+    f.close()
+    
+    // 测试 files.delete
+    print("\n5. 测试 files.delete ...")
+    files.delete(test_file)
+    print("   删除成功!")
+    
+    // 验证删除
+    exists = files.exists(test_file)
+    print("\n   删除后文件存在: " + exists)
+    
+    print("\n所有测试通过!")
+}

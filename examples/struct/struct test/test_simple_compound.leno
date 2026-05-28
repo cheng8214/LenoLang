@@ -1,0 +1,23 @@
+// 简单测试：struct 方法内复合赋值
+
+struct Counter
+{
+    int value
+    
+    func test()
+    {
+        value += 1
+    }
+    
+    func getValue(): int
+    {
+        return value
+    }
+}
+
+main()
+{
+    Counter c = Counter(value = 10)
+    c.test()
+    print($"结果: {c.getValue()}, 期望: 11")
+}

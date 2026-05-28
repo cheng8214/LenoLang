@@ -1,0 +1,65 @@
+import arrays
+import io
+
+// 定义回调函数
+func double(var x, var i) {
+    return x * 2
+}
+
+func triple(var x, var i) {
+    return x * 3
+}
+
+func is_even(var x, var i) {
+    return x % 2 == 0
+}
+
+func is_odd(var x, var i) {
+    return x % 2 == 1
+}
+
+func sum_acc(var acc, var x, var i) {
+    return acc + x
+}
+
+func product_acc(var acc, var x, var i) {
+    return acc * x
+}
+
+main()
+{
+    io.print("=== 测试 map ===")
+    var arr = [1, 2, 3, 4, 5]
+
+    // 实例方法: arr.map(fn)
+    var doubled = arr.map(double)
+    io.print(doubled)
+
+    // 模块方法: arrays.map(arr, fn)
+    var tripled = arrays.map(arr, triple)
+    io.print(tripled)
+
+    io.print("=== 测试 filter ===")
+    var nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    // 实例方法: arr.filter(fn)
+    var evens = nums.filter(is_even)
+    io.print(evens)
+
+    // 模块方法: arrays.filter(arr, fn)
+    var odds = arrays.filter(nums, is_odd)
+    io.print(odds)
+
+    io.print("=== 测试 reduce ===")
+    var data = [1, 2, 3, 4, 5]
+
+    // 实例方法: arr.reduce(fn, init)
+    var sum = data.reduce(sum_acc, 0)
+    io.print(sum)
+
+    // 模块方法: arrays.reduce(arr, fn, init)
+    var product = arrays.reduce(data, product_acc, 1)
+    io.print(product)
+
+    io.print("=== 所有测试通过! ===")
+}

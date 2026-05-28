@@ -1,0 +1,11 @@
+// 深层嵌套测试主文件
+// 测试：5层模块链
+
+import "level1.leno" as l1
+
+main() {
+    print("=== 深层嵌套测试 (5层) ===")
+    print("调用链: " + l1.level1_func())
+    print("Level1 value: " + l1.level1_value)
+    print("=== 测试完成 ===")
+}

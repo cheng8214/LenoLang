@@ -1,0 +1,32 @@
+// 测试模块导出 enum
+
+// 导出一个 enum
+export enum Color {
+    red
+    green
+    blue
+}
+
+// 导出另一个 enum
+export enum Status {
+    ok = 200
+    not_found = 404
+    error = 500
+}
+
+// 导出一个函数，使用 enum
+export func get_color_name(var color) {
+    if color == Color.red {
+        return "red"
+    } else if color == Color.green {
+        return "green"
+    } else if color == Color.blue {
+        return "blue"
+    }
+    return "unknown"
+}
+
+// 导出函数，使用 Status enum
+export func is_success(var status) {
+    return status == Status.ok
+}

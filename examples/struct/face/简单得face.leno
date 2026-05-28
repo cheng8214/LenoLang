@@ -1,0 +1,28 @@
+// ============================================================================
+// 测试：face 最基本用法——struct 实现 face 并作为函数参数传递
+// ============================================================================
+//
+// 本测试验证：
+//   1. 定义 face Speaker，声明 speak():string 方法
+//   2. struct Dog 使用 impl Speaker 显式实现该 face
+//   3. 函数 make_sound 接受 Speaker 类型参数，实现多态调用
+//
+// 预期输出：woof
+
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+func make_sound(Speaker s) {
+    print(s.speak())
+}
+
+main() {
+    var d = Dog()
+    make_sound(d)
+}

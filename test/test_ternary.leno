@@ -1,0 +1,48 @@
+// 三元表达式测试
+
+main()
+{
+    // 测试1: 基本三元表达式
+    var a = 10
+    var b = 20
+    var max = if a > b then a else b
+    assert_eq(max, 20)
+
+    // 测试2: 带括号的三元表达式
+    var min = if (a < b) then a else b
+    assert_eq(min, 10)
+
+    // 测试3: 简化嵌套三元表达式 - 先打印结果
+    var c = 15
+    var middle = if a > b then a else (if b > c then b else c)
+    print("middle = " + middle)
+    // a=10, b=20, c=15; a>b 为 false，所以执行 else 分支
+    // b>c (20>15) 为 true，所以结果是 b=20
+    assert_eq(middle, 20)
+
+    // 测试4: 在表达式中使用
+    var x = 5
+    var y = if x > 0 then x * 2 else x * -2
+    assert_eq(y, 10)
+
+    // 测试5: 布尔条件
+    var flag = true
+    var result = if flag then "yes" else "no"
+    assert_eq(result, "yes")
+
+    flag = false
+    result = if flag then "yes" else "no"
+    assert_eq(result, "no")
+
+    // 测试6: 复杂表达式作为条件
+    var score = 85
+    var grade = if score >= 90 then "A" else (if score >= 80 then "B" else "C")
+    assert_eq(grade, "B")
+
+    // 测试7: 返回值类型一致
+    var num = 10
+    var str = if num > 5 then "big" else "small"
+    assert_eq(str, "big")
+
+    print("test_ternary passed")
+}

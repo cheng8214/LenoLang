@@ -1,0 +1,17 @@
+// Struct GC 测试
+
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+main() {
+    var i = 0
+    while i < 100000 {
+        var p = Point()
+        p.x = i
+        p.y = i * 2
+        i = i + 1
+    }
+    print("完成")
+}

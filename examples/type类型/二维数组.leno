@@ -1,0 +1,22 @@
+main()
+{
+    // 二维 int 数组
+    Array[Array[int]] arr1= [[1,2],[3,4]]
+    print("二维int数组:", type(arr1))
+    
+    // 三维 int 数组
+    Array[Array[Array[int]]] arr2 = [[[1,2]],[[3,4]]]
+    print("三维int数组:", type(arr2))
+    
+    // 二维 string 数组
+    Array[Array[string]] str = [["a","b"],["c","d"]]
+    print("二维string数组:", type(str))
+    
+    // 一维数组（对比）
+    Array[int] arr3 = [1,2,3]
+    print("一维int数组:", type(arr3))
+    
+    // 混合类型（应该显示 Array）
+    var mixed = [[1,2],["a","b"]]
+    print("混合类型:", type(mixed))
+}

@@ -1,0 +1,239 @@
+// 测试 Windows API 监控文件夹变化
+// 使用 ReadDirectoryChangesW 和异步 I/O 回调
+
+import ffi
+
+// 定义需要的 Windows 常量
+var FILE_NOTIFY_CHANGE_FILE_NAME = 0x00000001
+var FILE_NOTIFY_CHANGE_DIR_NAME = 0x00000002
+var FILE_NOTIFY_CHANGE_ATTRIBUTES = 0x00000004
+var FILE_NOTIFY_CHANGE_SIZE = 0x00000008
+var FILE_NOTIFY_CHANGE_LAST_WRITE = 0x00000010
+var FILE_NOTIFY_CHANGE_LAST_ACCESS = 0x00000020
+var FILE_NOTIFY_CHANGE_CREATION = 0x00000040
+var FILE_NOTIFY_CHANGE_SECURITY = 0x00000100
+
+var FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+var FILE_FLAG_OVERLAPPED = 0x40000000
+var FILE_SHARE_READ = 0x00000001
+var FILE_SHARE_WRITE = 0x00000002
+var FILE_SHARE_DELETE = 0x00000004
+var OPEN_EXISTING = 3
+
+var ERROR_IO_PENDING = 997
+
+// cstruct 定义
+cstruct OVERLAPPED {
+    u32 Internal
+    u32 InternalHigh
+    u32 Offset
+    u32 OffsetHigh
+    u32 hEvent
+}
+
+// 文件通知信息结构
+cstruct FILE_NOTIFY_INFORMATION {
+    u32 NextEntryOffset
+    u32 Action
+    u32 FileNameLength
+    // FileName 是变长数组，需要动态读取
+}
+
+// 全局变量存储回调数据
+var g_buffer = ffi.malloc(4096)
+var g_overlapped = OVERLAPPED.malloc()
+var g_callback_called = false
+var g_watch_path = ""
+
+// 回调函数：当目录变化时被调用
+func on_directory_changed(int errorCode, int bytesTransferred, Ptr overlapped): void {
+    print("回调被调用!")
+    print("错误码: " + errorCode)
+    print("传输字节数: " + bytesTransferred)
+
+    if errorCode == 0 and bytesTransferred > 0 {
+        // 解析通知信息
+        var offset = 0
+        while offset < bytesTransferred {
+            var action = ffi.read_uint(g_buffer, offset + 4)
+            var fileNameLen = ffi.read_uint(g_buffer, offset + 8)
+
+            // 读取文件名 (UTF-16)
+            var fileNamePtr = ffi.offset(g_buffer, offset + 12)
+            var fileName = ffi.utf16_to_utf8(fileNamePtr)
+
+            var actionStr = ""
+            if action == 1 { actionStr = "添加" }
+            else if action == 2 { actionStr = "删除" }
+            else if action == 3 { actionStr = "修改" }
+            else if action == 4 { actionStr = "重命名(旧)" }
+            else if action == 5 { actionStr = "重命名(新)" }
+            else { actionStr = "未知(" + action + ")" }
+
+            print("  [" + actionStr + "] " + fileName)
+
+            // 检查是否有下一个条目
+            var nextOffset = ffi.read_uint(g_buffer, offset)
+            if nextOffset == 0 { break }
+            offset = offset + nextOffset
+        }
+    } else if errorCode == 0 and bytesTransferred == 0 {
+        print("缓冲区溢出 - 变化太多")
+    }
+
+    g_callback_called = true
+}
+
+main() {
+    print("=== 测试文件夹监控 ===")
+
+    // 要监控的文件夹路径
+    var watchPath = "D:\\test_watch_folder"
+
+    // 创建测试文件夹
+    var kernel32 = ffi.load("kernel32.dll")
+
+    // 使用 CreateDirectoryW 创建文件夹
+    var pathW = ffi.utf8_to_utf16(watchPath)
+    var result = ffi.call_int(kernel32, "CreateDirectoryW", pathW, ffi.nullptr())
+    if result == 0 {
+        var err = ffi.call_int(kernel32, "GetLastError")
+        if err == 183 {  // ERROR_ALREADY_EXISTS
+            print("文件夹已存在: " + watchPath)
+        } else {
+            print("创建文件夹失败，错误码: " + err)
+        }
+    } else {
+        print("创建文件夹: " + watchPath)
+    }
+
+    // 打开文件夹句柄
+    var pathW2 = ffi.utf8_to_utf16(watchPath)
+    var hDirectory = ffi.call_ptr(kernel32, "CreateFileW",
+        pathW2,
+        0x0001,  // FILE_LIST_DIRECTORY
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        ffi.nullptr(),
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+        ffi.nullptr()
+    )
+
+    if ffi.ptr_to_int(hDirectory) == -1 {
+        print("无法打开文件夹: " + watchPath)
+        ffi.free(kernel32)
+        return
+    }
+
+    print("文件夹句柄: " + ffi.ptr_to_int(hDirectory))
+
+    // 创建事件对象用于异步 I/O
+    var hEvent = ffi.call_ptr(kernel32, "CreateEventW", ffi.nullptr(), 0, 0, ffi.nullptr())
+    print("事件句柄: " + ffi.ptr_to_int(hEvent))
+
+    // 设置 OVERLAPPED 结构
+    g_overlapped.hEvent = ffi.ptr_to_int(hEvent)
+    g_overlapped.Internal = 0
+    g_overlapped.InternalHigh = 0
+    g_overlapped.Offset = 0
+    g_overlapped.OffsetHigh = 0
+
+    // 创建回调
+    var callback = ffi.callback(on_directory_changed, "void", ["uint32", "uint32", "pointer"])
+    print("回调对象创建成功: " + ffi.is_ptr(callback))
+
+    // 启动监控
+    print("")
+    print("开始监控文件夹: " + watchPath)
+    print("请在文件夹中创建、修改或删除文件来触发通知...")
+    print("(按 Ctrl+C 结束)")
+    print("")
+
+    // 启动第一次 ReadDirectoryChangesW
+    var notifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME |
+                       FILE_NOTIFY_CHANGE_DIR_NAME |
+                       FILE_NOTIFY_CHANGE_SIZE |
+                       FILE_NOTIFY_CHANGE_LAST_WRITE |
+                       FILE_NOTIFY_CHANGE_CREATION
+
+    // 注意：ReadDirectoryChangesW 需要绑定到 I/O 完成端口或使用事件
+    // 这里我们使用同步版本简化测试
+
+    // 使用同步方式测试
+    for 0 : 9 to i {
+        print("等待变化... (" + (i + 1) + "/10)")
+
+        // 清零缓冲区
+        ffi.memset(g_buffer, 0, 4096)
+
+        // 调用 ReadDirectoryChangesW (同步版本)
+        var bytesReturned = ffi.malloc(4)
+        ffi.write_uint(bytesReturned, 0, 0)
+
+        var success = ffi.call_int(kernel32, "ReadDirectoryChangesW",
+            hDirectory,
+            g_buffer,
+            4096,
+            0,  // 不监控子目录
+            notifyFilter,
+            bytesReturned,
+            ffi.nullptr(),  // 不使用 OVERLAPPED (同步)
+            ffi.nullptr()   // 不使用回调
+        )
+
+        var bytesRead = ffi.read_uint(bytesReturned, 0)
+        ffi.free(bytesReturned)
+
+        if success != 0 and bytesRead > 0 {
+            print("检测到变化!")
+
+            // 解析通知
+            var offset = 0
+            while offset < bytesRead {
+                var action = ffi.read_uint(g_buffer, offset + 4)
+                var fileNameLen = ffi.read_uint(g_buffer, offset + 8)
+
+                if fileNameLen > 0 {
+                    // 读取文件名 (UTF-16)
+                    var fileNamePtr = ffi.offset(g_buffer, offset + 12)
+                    var fileName = ffi.utf16_to_utf8(fileNamePtr)
+
+                    var actionStr = ""
+                    if action == 1 { actionStr = "添加" }
+                    else if action == 2 { actionStr = "删除" }
+                    else if action == 3 { actionStr = "修改" }
+                    else if action == 4 { actionStr = "重命名(旧)" }
+                    else if action == 5 { actionStr = "重命名(新)" }
+                    else { actionStr = "未知(" + action + ")" }
+
+                    print("  [" + actionStr + "] " + fileName)
+                }
+
+                var nextOffset = ffi.read_uint(g_buffer, offset)
+                if nextOffset == 0 { break }
+                offset = offset + nextOffset
+            }
+        } else if success == 0 {
+            var err = ffi.call_int(kernel32, "GetLastError")
+            print("ReadDirectoryChangesW 失败，错误码: " + err)
+        } else {
+            print("无变化")
+        }
+
+        // 等待一段时间
+        ffi.call_void(kernel32, "Sleep", 1000)
+    }
+
+    print("")
+    print("监控结束")
+
+    // 清理资源
+    ffi.call_void(kernel32, "CloseHandle", hEvent)
+    ffi.call_void(kernel32, "CloseHandle", hDirectory)
+    ffi.free(callback)
+    ffi.free(g_buffer)
+    g_overlapped.free()
+    ffi.free(kernel32)
+
+    print("=== 测试完成 ===")
+}

@@ -1,0 +1,28 @@
+// ============================================================================
+// 测试：face 方法带参数
+// ============================================================================
+//
+// 本测试验证：
+//   1. face 可以声明带参数的方法（greet 接受 string 类型的 name 参数）
+//   2. struct 实现带参数的 face 方法时，参数签名需匹配
+//   3. 通过 face 类型参数调用带参方法，参数正确传递
+//
+// 预期输出：Hello World
+
+face Greeter {
+    func greet(string name):string
+}
+
+struct Friendly impl Greeter {
+    string prefix = "Hello"
+    func greet(string name):string { return prefix + " " + name }
+}
+
+func say_hi(Greeter g) {
+    print(g.greet("World"))
+}
+
+main() {
+    var f = Friendly()
+    say_hi(f)
+}

@@ -1,0 +1,183 @@
+// 测试 win_process 模块 v2.0 - 新的 FFI API 和类型守卫 + 增强功能
+
+import "win_process_simple.leno" as proc
+
+main() {
+    print("=== Windows 进程模块 v2.0 增强功能测试 ===")
+    print("")
+
+    // 1. 测试类型守卫案例
+    print("1. 测试类型守卫案例")
+    var pid1 = proc.getCurrentPid_withGuard()
+    print("   通过类型守卫获取的 PID: " + pid1)
+    print("")
+
+    // 2. 测试标准版本
+    print("2. 测试标准版本 (ffi.call_int)")
+    var pid2 = proc.getCurrentPid()
+    print("   标准版本获取的 PID: " + pid2)
+    print("   两种方式结果相同: " + (pid1 == pid2))
+    print("")
+
+    // 3. 测试进程是否存在
+    print("3. 测试进程是否存在")
+    var exists = proc.exists(pid2)
+    print("   当前进程存在: " + exists)
+    print("   进程 99999 存在: " + proc.exists(99999))
+    print("")
+
+    // 4. 测试获取退出码
+    print("4. 测试获取退出码")
+    var exitInfo = proc.getExitCode(pid2)
+    if exitInfo.success {
+        print("   退出码: " + exitInfo.exitCode)
+        print("   仍在运行: " + exitInfo.isRunning)
+    }
+    print("")
+
+    // 5. 测试进程列表
+    print("5. 测试进程列表")
+    var listResult = proc.listProcesses()
+    print("   获取 " + listResult.processes.len() + " 个进程")
+    print("")
+
+    // 6. 测试内存信息
+    print("6. 测试进程内存信息")
+    var memInfo = proc.getProcessMemory(pid2)
+    if memInfo.errorCode == 0 {
+        print("   工作集: " + memInfo.workingSet + " KB")
+        print("   峰值工作集: " + memInfo.peakWorkingSet + " KB")
+    }
+    print("")
+
+    // 7. 测试系统内存
+    print("7. 测试系统内存")
+    var sysMem = proc.getSystemMemory()
+    if sysMem.errorCode == 0 {
+        print("   使用率: " + sysMem.memoryLoad + "%")
+        print("   总内存: " + sysMem.totalPhys + " MB")
+    }
+    print("")
+
+    // 8. 测试处理器数量
+    print("8. 测试处理器数量")
+    var cpuCount = proc.getProcessorCount()
+    print("   处理器数量: " + cpuCount)
+    print("")
+
+    // 9. 测试查找进程
+    print("9. 测试查找 explorer.exe")
+    var findResult = proc.findByName("explorer.exe")
+    if findResult.found {
+        print("   找到! PID: " + findResult.pid)
+
+        // 10. 测试获取父进程ID
+        print("10. 测试获取父进程ID")
+        var parentInfo = proc.getParentPid(findResult.pid)
+        if parentInfo.success {
+            print("   explorer.exe 的父进程 PID: " + parentInfo.parentPid)
+        } else {
+            print("   获取父进程ID失败 (可能需要管理员权限)")
+        }
+
+        // 11. 测试获取进程优先级
+        print("11. 测试获取进程优先级")
+        var priorityInfo = proc.getPriority(findResult.pid)
+        if priorityInfo.success {
+            print("   优先级: " + priorityInfo.priority)
+        } else {
+            print("   获取进程优先级失败")
+        }
+
+        // 12. 测试获取进程时间信息
+        print("12. 测试获取进程时间信息")
+        var timesInfo = proc.getProcessTimes(findResult.pid)
+        if timesInfo.success {
+            print("   内核时间: " + timesInfo.kernelTime + " ms")
+            print("   用户时间: " + timesInfo.userTime + " ms")
+        } else {
+            print("   获取进程时间信息失败")
+        }
+
+        // 13. 测试获取完整进程信息
+        print("13. 测试获取完整进程信息")
+        var fullInfo = proc.getFullProcessInfo(findResult.pid)
+        if fullInfo.success {
+            print("   进程名: " + fullInfo.name)
+            print("   内存: " + fullInfo.memory + " KB")
+            print("   父进程: " + fullInfo.parentPid)
+        }
+    }
+    print("")
+
+    // 14. 测试系统运行时间
+    print("14. 测试系统运行时间")
+    var uptimeMs = proc.getSystemUpTime()
+    print("   系统已运行: " + proc.formatUptime(uptimeMs))
+    print("")
+
+    // 15. 测试系统信息（完整版）
+    print("15. 测试系统信息（完整版）")
+    var sysInfo = proc.getSystemInfo()
+    print("   处理器数量: " + sysInfo.processorCount)
+    print("   页面大小: " + sysInfo.pageSize + " 字节")
+    print("   运行时间: " + proc.formatUptime(sysInfo.uptimeMs))
+    print("   内存使用率: " + sysInfo.memoryLoad + "%")
+    print("   总内存: " + sysInfo.totalPhys + " MB")
+    print("")
+
+    // 16. 测试启用调试权限
+    print("16. 测试启用调试权限")
+    var privResult = proc.enableDebugPrivilege()
+    if privResult.success {
+        print("   调试权限已启用")
+    } else {
+        print("   启用调试权限失败（需要管理员权限）")
+    }
+    print("")
+
+    // 17. 测试终止进程（启动一个记事本然后终止它）
+    print("17. 测试终止进程")
+    print("   启动记事本...")
+    var notepad = proc.run("notepad.exe")
+    if notepad.errorCode == 0 {
+        print("   记事本已启动，PID: " + notepad.pid)
+        print("   等待 2 秒...")
+
+        sleep(2000)
+
+        // 检查进程是否存在
+        if proc.exists(notepad.pid) {
+            print("   进程存在，尝试终止...")
+
+            // 尝试正常终止
+            var termResult = proc.terminate(notepad.pid)
+            print("   正常终止结果: " + termResult.success)
+
+            if not termResult.success {
+                // 尝试强制终止
+                print("   正常终止失败，尝试强制终止...")
+                var forceResult = proc.terminateForce(notepad.pid)
+                print("   强制终止结果: " + forceResult.success)
+                if forceResult.success {
+                    print("   终止方式: " + forceResult.method)
+                }
+            }
+
+            sleep(1000)
+
+            if proc.exists(notepad.pid) {
+                print("   进程仍在运行（可能需要管理员权限）")
+            } else {
+                print("   进程已成功终止")
+            }
+        } else {
+            print("   进程已退出（用户可能手动关闭了记事本）")
+        }
+    } else {
+        print("   启动记事本失败")
+    }
+    print("")
+
+    print("=== 测试完成 ===")
+}

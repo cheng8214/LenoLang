@@ -1,0 +1,205 @@
+// ============================================================================
+// 位运算类操作码 (OP_BITWISE)
+// ============================================================================
+// 位运算：与、或、异或、左移、右移、位非
+
+OPCODE(OP_BITAND) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value b = vm_stack_pop(&vm);
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int & int（最常见）
+    if (likely(val_is_int(a) && val_is_int(b))) {
+        vm_stack_push(&vm, val_int(val_as_int(a) & val_as_int(b)));
+        DISPATCH;
+    }
+
+    // null 不能参与位运算（罕见错误）
+    if (unlikely(val_is_null(a) || val_is_null(b))) {
+        throw_runtime_error("null 不能参与位运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 位运算（罕见）
+    if (unlikely(needs_bigint_op(a, b))) {
+        ObjBigInt* ba = promote_to_bigint(a);
+        ObjBigInt* bb = promote_to_bigint(b);
+        Value result = bigint_and(ba, bb);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位运算操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_BITOR) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value b = vm_stack_pop(&vm);
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int | int（最常见）
+    if (likely(val_is_int(a) && val_is_int(b))) {
+        vm_stack_push(&vm, val_int(val_as_int(a) | val_as_int(b)));
+        DISPATCH;
+    }
+
+    // null 不能参与位运算（罕见错误）
+    if (unlikely(val_is_null(a) || val_is_null(b))) {
+        throw_runtime_error("null 不能参与位运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 位运算（罕见）
+    if (unlikely(needs_bigint_op(a, b))) {
+        ObjBigInt* ba = promote_to_bigint(a);
+        ObjBigInt* bb = promote_to_bigint(b);
+        Value result = bigint_or(ba, bb);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位运算操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_BITXOR) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value b = vm_stack_pop(&vm);
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int ^ int（最常见）
+    if (likely(val_is_int(a) && val_is_int(b))) {
+        vm_stack_push(&vm, val_int(val_as_int(a) ^ val_as_int(b)));
+        DISPATCH;
+    }
+
+    // null 不能参与位运算（罕见错误）
+    if (unlikely(val_is_null(a) || val_is_null(b))) {
+        throw_runtime_error("null 不能参与位运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 位运算（罕见）
+    if (unlikely(needs_bigint_op(a, b))) {
+        ObjBigInt* ba = promote_to_bigint(a);
+        ObjBigInt* bb = promote_to_bigint(b);
+        Value result = bigint_xor(ba, bb);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位运算操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_SHL) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value b = vm_stack_pop(&vm);
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int << int（移位量 < 32，最常见）
+    if (likely(val_is_int(a) && val_is_int(b))) {
+        int shift = val_as_int(b);
+        if (likely(shift < 32)) {
+            vm_stack_push(&vm, val_int(val_as_int(a) << shift));
+            DISPATCH;
+        }
+        // shift >= 32 时继续执行 BigInt 路径
+        ObjBigInt* ba = promote_to_bigint(a);
+        Value result = bigint_shl(ba, shift);
+        vm_stack_push(&vm, result);
+        DISPATCH;
+    }
+
+    // null 不能参与位移运算（罕见错误）
+    if (unlikely(val_is_null(a) || val_is_null(b))) {
+        throw_runtime_error("null 不能参与位移运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // 检查是否需要使用 BigInt（罕见）
+    int shift;
+    if (!value_to_index(b, &shift)) {
+        throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    if (unlikely(val_is_bigint(a) || val_is_bigint(b) || shift >= 32)) {
+        ObjBigInt* ba = promote_to_bigint(a);
+        Value result = bigint_shl(ba, shift);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_SHR) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value b = vm_stack_pop(&vm);
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int >> int（最常见）
+    if (likely(val_is_int(a) && val_is_int(b))) {
+        vm_stack_push(&vm, val_int(val_as_int(a) >> val_as_int(b)));
+        DISPATCH;
+    }
+
+    // null 不能参与位移运算（罕见错误）
+    if (unlikely(val_is_null(a) || val_is_null(b))) {
+        throw_runtime_error("null 不能参与位移运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 位移（罕见）
+    if (unlikely(val_is_bigint(a) || val_is_bigint(b))) {
+        ObjBigInt* ba = promote_to_bigint(a);
+        int shift;
+        if (!value_to_index(b, &shift)) {
+            throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH;
+        }
+        Value result = bigint_shr(ba, shift);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_BITNOT) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：~int（最常见）
+    if (likely(val_is_int(a))) {
+        vm_stack_push(&vm, val_int(~val_as_int(a)));
+        DISPATCH;
+    }
+
+    // BigInt 位非（罕见）
+    if (unlikely(val_is_bigint(a))) {
+        ObjBigInt* ba = val_as_bigint(a);
+        Value result = bigint_not(ba);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位非操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}

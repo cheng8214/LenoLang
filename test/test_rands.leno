@@ -1,0 +1,53 @@
+// rands 模块测试
+
+import rands
+
+main()
+{
+    // 测试1: ints 生成指定范围的随机整数
+    var r1 = rands.ints(1, 10)
+    print("随机数1: " + r1)
+    assert_eq(r1 >= 1, true)
+    assert_eq(r1 <= 10, true)
+
+    var r2 = rands.ints(100, 200)
+    print("随机数2: " + r2)
+    assert_eq(r2 >= 100, true)
+    assert_eq(r2 <= 200, true)
+
+    // 测试2: 生成多个随机数，验证范围
+    var all_in_range = true
+    for 10 to i {
+        var r = rands.ints(1, 100)
+        if r < 1 or r > 100 {
+            all_in_range = false
+        }
+    }
+    assert_eq(all_in_range, true)
+
+    // 测试3: 生成随机数组 (3个参数: n, min, max)
+    var arr = rands.array(5, 1, 100)
+    assert_eq(arr.len(), 5)
+    for arr to val {
+        assert_eq(val >= 1, true)
+        assert_eq(val <= 100, true)
+    }
+
+    // 测试4: int_array 生成不重复的随机排列 (2个参数: min, max)
+    var arr2 = rands.int_array(1, 10)
+    assert_eq(arr2.len(), 10)
+
+    // 测试5: 随机浮点数 om()
+    var rf = rands.om()
+    print("随机浮点数: " + rf)
+    assert_eq(rf >= 0.0, true)
+    assert_eq(rf < 1.0, true)
+
+    // 测试6: floats 生成范围浮点数
+    var rf2 = rands.floats(0.0, 10.0)
+    print("范围浮点数: " + rf2)
+    assert_eq(rf2 >= 0.0, true)
+    assert_eq(rf2 < 10.0, true)
+
+    print("test_rands passed")
+}

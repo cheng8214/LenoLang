@@ -1,0 +1,561 @@
+// ===============================
+// 1. miniLang 解释器主函数
+// ===============================
+func tinylang_main(var code) {
+    print("=== TinyLang 解释器 ===")
+    
+    try {
+        // 1. 分词
+        var tokens = tinylang_tokenize(code)
+        // 2. 解析
+        var ast = tinylang_parse(tokens)
+        // 3. 执行
+        tinylang_execute(ast)
+    } catch e {
+        print("[错误] " + e)
+    }
+
+   print("\n=== 执行完成 ===")
+}
+// ===============================
+// 2. 词法分析：分词器
+// ===============================
+func tinylang_tokenize(var code) {
+    // 集中定义关键字列表
+    var keywords = ["print", "if", "else", "for", "while", "var"]
+    
+    var tokens = []
+    var i = 0
+    var len = code.len()
+    var line = 1  // 当前行号
+
+    // 分词主循环
+    while i < len {
+        var c = code[i]
+
+        // 换行 - 作为语句分隔符
+        if c == "\n" {
+            tokens.add({type: "NEWLINE", value: "\n", line: line})
+            line = line + 1
+            i++
+        }
+        
+        // 数字
+        eif c >= "0" and c <= "9" {
+            var start = i
+            while i < len and (code[i] >= "0" and code[i] <= "9" or code[i] == "."){i++}
+            var num_str = code.sub_str(start, i - start)
+            tokens.add({type: "NUMBER", value: num_str, line: line})
+        }
+
+        // 字符串
+        eif c == "\"" {
+            i++
+            var start = i
+            while i < len and code[i] != "\""{i++}
+            var str = code.sub_str(start, i - start)
+            i++
+            tokens.add({type: "STRING", value: str, line: line})
+        }
+
+        // 标识符和关键字
+        eif c >= "a" and c <= "z" or c >= "A" and c <= "Z" or c == "_" {
+            var start = i;
+            while i < len and ((code[i] >= "a" and code[i] <= "z") or (code[i] >= "A" and code[i] <= "Z") or (code[i] >= "0" and code[i] <= "9") or code[i] == "_"){ i++}
+
+            var id = code.sub_str(start, i - start);
+            // 关键字检查
+            if keywords.has(id){tokens.add({type: "KEYWORD", value: id, line: line})}
+            else {tokens.add({type: "IDENTIFIER", value: id, line: line})}
+
+        }
+
+        // 注释: // ...
+        eif c == "/" and i + 1 < len and code[i + 1] == "/" {
+            // 跳过注释直到行尾
+            while i < len and code[i] != "\n" {
+                i++
+            }
+        }
+        
+        // 运算符
+        eif c == "=" or c == "+" or c == "-" or c == "*" or c == "/" or c == "(" or c == ")" or c == "{" or c == "}" or c == ";" {
+            tokens.add({type: "SYMBOL", value: c, line: line});
+            i++;
+        }
+
+        // 比较运算符
+        eif c == ">" or c == "<" or c == "!" {
+            var op = c;
+            i++;
+            if i < len and code[i] == "=" {
+                op += "="
+                i++
+            }
+            tokens.add({type: "OPERATOR", value: op, line: line})
+        }
+
+        // 跳过空白字符
+        eif c == " " or c == "\t" or c == "\r" {
+            i++
+        }
+
+        // 无法识别的字符 - 报错
+        else {
+            throw "第 " + line + " 行: 无法识别的字符 '" + c + "'"
+        }
+        
+    }
+    
+    return tokens
+}
+// ===============================
+// 3. 语法分析：生成 AST
+// ===============================
+func tinylang_parse(var tokens) {
+    var ast = {type: "PROGRAM", statements: []};
+    var token_index = 0;
+    var len = tokens.len();
+    
+    // 关键字列表（用于检查标识符是否是关键字）
+    var keywords = ["print", "if", "else", "for", "while", "var"]
+    
+    // 辅助函数：检查字符串是否是关键字
+    func is_keyword(var s) {
+        return keywords.has(s)
+    }
+    
+    // 辅助函数：获取当前标记
+    func peek() {
+        return tokens[token_index] or null;
+    }
+    
+    // 辅助函数：消费当前标记
+    func next() {
+        if token_index < len {
+            token_index++;
+        }
+    }
+    
+    // 辅助函数：跳过语句结束符（分号或换行）
+    func skip_stmt_end() {
+        // 跳过分号或换行
+        while token_index < len {
+            var t = tokens[token_index]
+            if t.type == "SYMBOL" and t.value == ";" {
+                token_index++
+            }
+            eif t.type == "NEWLINE" {
+                token_index++
+            }
+            else {
+                break
+            }
+        }
+    }
+    
+    // 解析表达式
+    func parse_expr() {
+        return parse_binary_expr();
+    }
+    
+    // 解析二元表达式
+    func parse_binary_expr() {
+        var left = parse_primary();
+        if not left {return null}
+        while token_index < len and (tokens[token_index].type == "OPERATOR" or (tokens[token_index].type == "SYMBOL" and (tokens[token_index].value == "+" or tokens[token_index].value == "-" or tokens[token_index].value == "*" or tokens[token_index].value == "/"))) {
+            var op_token = tokens[token_index];
+            next();
+            var right = parse_primary();
+            if not right {return null}
+            left = {type: "BINARY", op: op_token.value, left: left, right: right};
+        }
+        return left;
+    }
+    
+    // 解析基本表达式
+    func parse_primary() {
+        var token = peek()
+        if not token {return null}
+        
+        if token.type == "NUMBER" or token.type == "STRING" or token.type == "IDENTIFIER" {
+            next()
+            return token
+        }
+        
+        eif token.type == "SYMBOL" and token.value == "(" {
+            next();
+            var expr = parse_expr();
+            if not expr {return null}
+            // 跳过 )
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == ")") {
+                next();
+            }
+            next();
+            return expr;
+        }
+        
+        return null;
+    }
+    
+    // 解析语句
+    func parse_stmt() {
+        // 跳过前导换行
+        while token_index < len and tokens[token_index].type == "NEWLINE" {
+            token_index++
+        }
+        
+        var token = peek();
+        if not token {return null}
+        
+        // var 声明: var x = 10; 或 var x = 10\n
+        if token.type == "KEYWORD" and token.value == "var" {
+            next()
+            var id_token = peek()
+            if not id_token or id_token.type != "IDENTIFIER" {
+                throw "第 " + token.line + " 行: var 后需要变量名"
+            }
+            var id = id_token.value
+            next()
+            // 跳过 =
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "=") {next()}
+            next()
+            var expr = parse_expr()
+            if not expr {
+                throw "第 " + token.line + " 行: var 声明需要初始值"
+            }
+            // 跳过语句结束符（分号或换行）
+            skip_stmt_end()
+            return {type: "ASSIGN", name: id, value: expr}
+        }
+        
+        // 赋值语句: x = 10; 或 x = 10\n (没有 var)
+        if token.type == "IDENTIFIER" {
+            var id = token.value;
+            // 检查标识符是否以关键字开头（如 for5、whilex 等）
+            for keywords to var kw {
+                if id.sub_str(0, kw.len()) == kw {
+                    throw "第 " + token.line + " 行: '" + id + "' 不是有效的标识符，关键字 '" + kw + "' 后需要分隔符"
+                }
+            }
+            next();
+            // 跳过 =
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "=") {next()}
+            next()
+            var expr = parse_expr()
+            if not expr {
+                throw "第 " + token.line + " 行: 赋值需要右边的值"
+            }
+            // 跳过语句结束符（分号或换行）
+            skip_stmt_end()
+            return {type: "ASSIGN", name: id, value: expr}
+        }
+        
+        // 打印语句: print(x); 或 print(x)\n
+        eif token.type == "KEYWORD" and token.value == "print" {
+            next()
+            // 跳过 (
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "(") {next()}
+            next()
+            var expr = parse_expr();
+            if not expr {
+                throw "第 " + token.line + " 行: print 需要表达式"
+            }
+            // 跳过 )
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == ")") {next()}
+            next()
+            // 跳过语句结束符（分号或换行）
+            skip_stmt_end()
+            return {type: "PRINT", expr: expr}
+        }
+        
+        // if 语句: if x > 5 { ... } 或 if (x > 5) { ... } else { ... }
+        eif token.type == "KEYWORD" and token.value == "if" {
+            next()
+            // 可选的 (
+            var has_paren = false
+            if token_index < len and tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "(" {
+                has_paren = true
+                next()
+            }
+            var condition = parse_expr();
+            if not condition {
+                throw "第 " + token.line + " 行: if 需要条件表达式"
+            }
+            // 如果开了括号，必须关闭
+            if has_paren {
+                if token_index >= len or not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == ")") {   
+                    throw "第 " + token.line + " 行: if 条件后需要 ')'"
+                }
+                next()
+            }
+            // 检查 {
+            if token_index >= len or not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "{") {
+                throw "第 " + token.line + " 行: if 后需要 '{'"
+            }
+            next()
+            
+            // 解析 if 体
+            var if_body = [];
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "}") {
+                var stmt = parse_stmt()
+                if stmt {
+                if_body.add(stmt)
+                }
+            }
+            next()
+            
+            // 解析 else 部分
+            var else_body = [];
+            if token_index < len and tokens[token_index].type == "KEYWORD" and tokens[token_index].value == "else" {
+                next()
+                // 跳过 {
+                while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "{") {next()}
+                next()
+                
+                while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "}") {
+                   var stmt = parse_stmt()
+                   if stmt
+                   {
+                    else_body.add(stmt)
+                   }
+                }
+                next()
+            }
+            
+            return {type: "IF", condition: condition, body: if_body, else_body: else_body}
+        }
+        
+        // for 语句: for 3 { ... } 或 for (3) { ... }
+        eif token.type == "KEYWORD" and token.value == "for" {
+            next()
+            // 可选的 (
+            var has_paren = false
+            if token_index < len and tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "(" {
+                has_paren = true
+                next()
+            }
+            var count = parse_expr()
+            if not count {
+                throw "第 " + token.line + " 行: for 需要循环次数"
+            }
+            // 如果开了括号，必须关闭
+            if has_paren {
+                if token_index >= len or not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == ")") {
+                    throw "第 " + token.line + " 行: for 条件后需要 ')'"
+                }
+                next()
+            }
+            // 检查 {
+            if token_index >= len or not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "{") {
+                throw "第 " + token.line + " 行: for 后需要 '{'"
+            }
+            next()
+            
+            // 解析 loop 体
+            var loop_body = [];
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "}") {
+                var stmt = parse_stmt();
+                if stmt {loop_body.add(stmt)}
+            }
+            next()
+            return {type: "FOR_LOOP", count: count, body: loop_body}
+        }
+        
+        // while 语句: while condition { ... } 或 while (condition) { ... }
+        eif token.type == "KEYWORD" and token.value == "while" {
+            next()
+            // 可选的 (
+            var has_paren = false
+            if token_index < len and tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "(" {
+                has_paren = true
+                next()
+            }
+            var condition = parse_expr()
+            if not condition {
+                throw "第 " + token.line + " 行: while 需要条件表达式"
+            }
+            // 如果开了括号，必须关闭
+            if has_paren {
+                if token_index >= len or not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == ")") {   
+                    throw "第 " + token.line + " 行: while 条件后需要 ')'"
+                }
+                next()
+            }
+            // 检查 {
+            if token_index >= len or not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "{") {
+                throw "第 " + token.line + " 行: while 后需要 '{'"
+            }
+            next()
+            
+            // 解析 while 体
+            var while_body = [];
+            while token_index < len and not(tokens[token_index].type == "SYMBOL" and tokens[token_index].value == "}") {
+                var stmt = parse_stmt();
+                if stmt {while_body.add(stmt)}
+            }
+            next()
+            return {type: "WHILE", condition: condition, body: while_body}
+        }
+        
+        // 无法识别的语句
+        if token {
+            throw "第 " + token.line + " 行: 无法识别的语句"
+        }
+        return null
+    }
+    
+    // 解析程序
+    while token_index < len {
+        // 跳过前导的换行
+        while token_index < len and tokens[token_index].type == "NEWLINE" {
+            token_index++
+        }
+        if token_index >= len {break}
+        
+        var stmt = parse_stmt()
+        if stmt {ast.statements.add(stmt)}
+    }
+    
+    return ast
+}
+
+
+// ===============================
+// 4. 执行：解释器核心
+// ===============================
+func tinylang_execute(var ast) {
+    var env = {}
+    
+    // 执行表达式
+    func execute_expr(var expr) {
+        if not expr {return null}
+        
+        if expr.type == "NUMBER" or expr.type == "STRING" {return expr.value}
+        
+        eif expr.type == "IDENTIFIER" {return env[expr.value] or null}
+        
+        eif expr.type == "BINARY" {
+            if not expr.left or not expr.right {return null}
+            var left_val = execute_expr(expr.left)
+            var right_val = execute_expr(expr.right)
+            if left_val == null or right_val == null {return null}
+            var left = _int(left_val)
+            var right = _int(right_val)
+            
+            switch expr.op {
+                case "+" {return left + right}
+                case "-" {return left - right}
+                case "*" {return left * right}
+                case "/" {return left / right}
+                case "=="{return left == right}
+                case "!=" {return left != right}
+                case ">" {return left > right}
+                case "<" {return left < right}
+                case ">=" {return left >= right}
+                case "<=" {return left <= right}
+                default {return null}
+            }
+        }
+        return null
+    }
+    
+    // 执行语句
+    func execute_stmt(var stmt) {
+        switch stmt.type {
+            case "PROGRAM" {
+                for stmt.statements to var st {
+                    execute_stmt(st)
+                }
+			}
+            case "ASSIGN"{
+                var value = execute_expr(stmt.value);
+                env[stmt.name] = value
+			}
+            case "PRINT"{
+                var value = execute_expr(stmt.expr);
+                print(value);
+               }
+            case "IF"{
+            
+                var condition = execute_expr(stmt.condition);
+              
+                if condition {
+                    for  stmt.body to var body{
+                        execute_stmt(body)}
+                } else {
+                    for stmt.else_body to body{
+                        execute_stmt(body)
+                        }
+                	}
+                }
+
+            case "FOR_LOOP"{
+                int count =_int(execute_expr(stmt.count))
+                
+                for count {
+                    for  stmt.body to var body{
+                        execute_stmt(body)
+                        }
+                   }
+                }
+            
+            case "WHILE"{
+                var cond = execute_expr(stmt.condition)
+                while cond {
+                    for stmt.body to var body {
+                        execute_stmt(body)
+                    }
+                    cond = execute_expr(stmt.condition)
+                }
+            }
+        }
+    }
+    
+    execute_stmt(ast);
+}
+
+
+func tinylang_test() {
+    // 测试错误：for5 应该报错
+    print("=== 测试 for5 错误 ===")
+    var err_code = @"for5 {
+        print(""Loop iteration"");
+    }"
+    tinylang_main(err_code)
+    
+    print("=== 测试 var 声明 ===")
+    var test_code = @"var x = 90;
+var y = 20;
+var sum = x - y;
+var b = sum - 100;
+print(b);
+if (sum > 125) {
+						    print(""Sum is big"");
+						} else {
+						    print(""Sum is small"");
+						}
+                        
+                        for (5) {
+						
+						    print(""Loop iteration"");
+						}
+						
+						var a = 100;
+						print(a);
+						var bb = 0;
+						// while 循环测试
+						var i = 0;
+						while (i < 5) {
+						    print(i);  // 打印当前值
+						    i = i + 1; // 自增
+						    }
+						 "
+    tinylang_main(test_code)
+}
+
+main()
+{
+        tinylang_test();
+       
+}

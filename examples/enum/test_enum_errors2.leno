@@ -1,0 +1,12 @@
+// 测试 enum 错误处理 - 未定义成员
+
+enum Color {
+    red
+    green
+}
+
+main() {
+    // 访问未定义的成员
+    var x = Color.blue
+    print(x)
+}

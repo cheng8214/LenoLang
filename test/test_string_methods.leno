@@ -1,0 +1,43 @@
+// 字符串方法测试
+
+main()
+{
+    // 测试字符串长度
+    var s = "hello"
+    assert_eq(s.len(), 5)
+
+    // 测试字符串拼接
+    var concat = s + " world"
+    assert_eq(concat, "hello world")
+
+    // 测试字符串相等比较
+    assert_eq("abc" == "abc", true)
+    assert_eq("abc" != "def", true)
+    assert_eq("abc" == "def", false)
+
+    // 测试字符串索引访问
+    assert_eq(s[0], "h")
+    assert_eq(s[4], "o")
+
+    // 测试 has
+    assert_eq(s.has("ell"), true)
+    assert_eq(s.has("xyz"), false)
+
+    // 测试 split
+    var parts = "a,b,c".split(",")
+    assert_eq(parts.len(), 3)
+    assert_eq(parts[0], "a")
+    assert_eq(parts[2], "c")
+
+    // 测试 sub_str
+    var sub = "hello world".sub_str(0, 5)
+    assert_eq(sub, "hello")
+
+    // 测试字符串插值
+    var name = "Leno"
+    var version = 1.0
+    var message = $"Welcome to {name} v{version}!"
+    assert_eq(message, "Welcome to Leno v1.0!")
+
+    print("test_string_methods passed")
+}

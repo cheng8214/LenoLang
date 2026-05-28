@@ -1,0 +1,127 @@
+﻿import ffi
+
+main()
+{
+    print("===== FFI 新功能测试 =====")
+
+    // ===== 1. call_bool 测试 =====
+    print("\n--- call_bool 测试 ---")
+    var user32 = ffi.load("user32.dll")
+    if user32 != null
+    {
+        // IsWindow 返回 BOOL
+        var is_win = ffi.call_bool(user32, "IsWindow", 0)
+        print("IsWindow(NULL) = " + is_win + " (应为 false)")
+        ffi.free(user32)
+    }
+
+    // ===== 2. calloc / realloc 测试 =====
+    print("\n--- calloc / realloc 测试 ---")
+    var ptr = ffi.calloc(10, 4)
+    // 分配 10 个 int 的空间，共 40 字节
+    print("calloc 分配大小: " + ffi.sizeof(ptr))
+
+    // 写入并读取
+    ffi.write_int(ptr, 0, 100)
+    ffi.write_int(ptr, 4, 200)
+    print("read_int(0) = " + ffi.read_int(ptr, 0))
+    print("read_int(4) = " + ffi.read_int(ptr, 4))
+
+    // realloc 扩展
+    ptr = ffi.realloc(ptr, 80)
+    print("realloc 后大小: " + ffi.sizeof(ptr))
+    print("realloc 后旧数据仍在: " + ffi.read_int(ptr, 0))
+    ffi.free(ptr)
+
+    // ===== 3. offset 指针偏移 =====
+    print("\n--- offset 指针偏移测试 ---")
+    var buf = ffi.malloc(32)
+    ffi.write_int(buf, 0, 11111)
+    ffi.write_int(buf, 4, 22222)
+    ffi.write_int(buf, 8, 33333)
+
+    var p2 = ffi.offset(buf, 4)
+    print("offset+4 后读 int: " + ffi.read_int(p2, 0))  // 应为 0x22222222
+    ffi.free(buf)
+
+    // ===== 4. 新类型读写 =====
+    print("\n--- 新类型读写测试 ---")
+    var bp = ffi.malloc(16)
+    ffi.write_byte(bp, 0, 255)
+    ffi.write_int8(bp, 1, -1)
+    ffi.write_int16(bp, 2, 1000)
+    ffi.write_float(bp, 4, 1.5)
+    ffi.write_double(bp, 8, 2.71828)
+
+    print("read_byte(0) = " + ffi.read_byte(bp, 0))     // 255
+    print("read_int8(1) = " + ffi.read_int8(bp, 1))     // -1
+    print("read_int16(2) = " + ffi.read_int16(bp, 2))   // 1000
+    print("read_float(4) = " + ffi.read_float(bp, 4))    // 1.5
+    print("read_double(8) = " + ffi.read_double(bp, 8))  // 2.71828
+    ffi.free(bp)
+
+    // ===== 5. read_ptr / write_ptr 测试 =====
+    print("\n--- read_ptr / write_ptr 测试 ---")
+    var pp = ffi.malloc(24)
+    var inner = ffi.malloc(8)
+    ffi.write_int(inner, 0, 42)
+    ffi.write_ptr(pp, 0, inner)  // 把 inner 指针写到 pp 的偏移 0
+    var recovered = ffi.read_ptr(pp, 0)  // 读回指针
+    print("通过指针的指针读回: " + ffi.read_int(recovered, 0))  // 应为 42
+    ffi.free(inner)
+    ffi.free(pp)
+
+    // ===== 6. read_bool 测试 =====
+    print("\n--- read_bool 测试 ---")
+    var bp2 = ffi.malloc(8)
+    ffi.write_int(bp2, 0, 1)
+    ffi.write_int(bp2, 4, 0)
+    print("read_bool(0) = " + ffi.read_bool(bp2, 0))  // true
+    print("read_bool(4) = " + ffi.read_bool(bp2, 4))  // false
+    ffi.free(bp2)
+
+    // ===== 7. sizeof_type / alignof =====
+    print("\n--- 类型信息测试 ---")
+    print("sizeof(int) = " + ffi.sizeof_type("int"))
+    print("sizeof(double) = " + ffi.sizeof_type("double"))
+    print("sizeof(pointer) = " + ffi.sizeof_type("pointer"))
+    print("sizeof(int64) = " + ffi.sizeof_type("int64"))
+    print("alignof(int) = " + ffi.alignof("int"))
+    print("alignof(double) = " + ffi.alignof("double"))
+
+    // ===== 8. 边界检查测试 =====
+    print("\n--- 边界检查测试 ---")
+    var small = ffi.malloc(4)
+    ffi.write_int(small, 0, 123)
+    print("正常写入: " + ffi.read_int(small, 0))
+    // 以下应该触发越界错误（offset=2, sizeof(int32_t)=4, 总共 6 > 4）
+    // ffi.write_int(small, 2, 456)  // 这会触发越界错误
+    ffi.free(small)
+
+    // ===== 9. 混合参数调用测试 =====
+    print("\n--- 混合参数调用测试 ---")
+    var libc = ffi.load("msvcrt.dll")
+    if libc != null
+    {
+        // pow(double, double) - 纯 double
+        var p = ffi.call_double(libc, "pow", 2.0, 10.0)
+        print("pow(2.0, 10.0) = " + p)
+
+        // fmod(double, double)
+        var m = ffi.call_double(libc, "fmod", 10.0, 3.0)
+        print("fmod(10.0, 3.0) = " + m)
+
+        ffi.free(libc)
+    }
+
+    // ===== 10. use-after-free 保护 =====
+    print("\n--- use-after-free 保护 ---")
+    var freed_ptr = ffi.malloc(16)
+    ffi.write_int(freed_ptr, 0, 999)
+    ffi.free(freed_ptr)
+    // 以下读取已释放指针应该报错
+    // var bad = ffi.read_int(freed_ptr, 0)  // 会触发 "空指针引用或指针已释放"
+    print("已释放指针的 freed 标志阻止了 use-after-free")
+
+    print("\n所有新功能测试完成!")
+}

@@ -1,0 +1,30 @@
+// 异常处理测试
+var caught = false
+try {
+    throw "test_error"
+} catch e {
+    caught = true
+}
+assert_true(caught)
+
+var finally_ran = false
+try {
+    var x = 1
+} catch e {
+    var y = 2
+} finally {
+    finally_ran = true
+}
+assert_true(finally_ran)
+
+var result = 0
+try {
+    result = 1
+    throw "error"
+    result = 2
+} catch e {
+    result = result + 10
+}
+assert_eq(result, 11)
+
+print("test_exception passed")

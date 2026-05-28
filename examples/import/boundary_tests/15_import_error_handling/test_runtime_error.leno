@@ -1,0 +1,11 @@
+// 测试 3: 导入运行时错误的模块
+
+main() {
+    print("=== 测试 3: 导入运行时错误的模块 ===")
+    print("尝试导入有运行时错误的模块...")
+
+    import "runtime_error_module.leno" as runtime_error
+
+    // 如果导入失败，下面的代码应该不会执行
+    print("如果看到这行，说明运行时错误没有正确报错")
+}

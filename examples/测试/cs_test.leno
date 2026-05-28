@@ -1,0 +1,541 @@
+import times
+int csnum=10000000
+main()
+{
+	for 30
+	{
+		maintest()
+	}
+}
+func maintest()
+{
+    print("======== 算术运算与赋值性能分析 ========")
+    print("")
+
+    // 测试1: 纯整数自增 (baseline)
+    print("--- 测试1: 纯整数自增 (i++) ---")
+    var t1=times.ms()
+    var i=0
+    for csnum
+    {
+        i++
+    }
+    var t2=times.ms()
+    print($"{csnum}次 i++: " + (t2-t1) + "ms")
+
+    // 测试2: 局部变量赋值
+    print("")
+    print("--- 测试2: 局部变量赋值 (a = b) ---")
+    t1=times.ms()
+    var a=0
+    var b=1
+    for csnum
+    {
+        a = b
+    }
+    t2=times.ms()
+    print($"{csnum}次 a = b: " + (t2-t1) + "ms")
+
+    // 测试3: 常量赋值
+    print("")
+    print("--- 测试3: 常量赋值 (a = 1) ---")
+    t1=times.ms()
+    a=0
+    for csnum
+    {
+        a = 1
+    }
+    t2=times.ms()
+    print($"{csnum}1亿次 a = 1: " + (t2-t1) + "ms")
+
+    // 测试4: 简单加法 (两个常量)
+    print("")
+    print("--- 测试4: 加法 a = 1 + 2 ---")
+    t1=times.ms()
+    a=0
+    for csnum
+    {
+        a = 1 + 2
+    }
+    t2=times.ms()
+    print($"{csnum}次 a = 1 + 2: " + (t2-t1) + "ms")
+
+    // 测试5: 变量加法
+    print("")
+    print("--- 测试5: 变量加法 a = b + c ---")
+    a=0
+    b=1
+    var c=2
+    t1=times.ms()
+    for csnum
+    {
+        a = b + c
+    }
+    t2=times.ms()
+    print($"{csnum}1亿次 a = b + c: " + (t2-t1) + "ms")
+
+    // 测试6: 复合加法赋值
+    print("")
+    print("--- 测试6: 复合加法 a += 1 ---")
+    a=0
+    t1=times.ms()
+    for csnum
+    {
+        a += 1
+    }
+    t2=times.ms()
+    print($"{csnum}次 a += 1: " + (t2-t1) + "ms")
+
+    // 测试7: 自增 vs 加1 对比
+    print("")
+    print("--- 测试7: i++ vs i = i + 1 ---")
+    t1=times.ms()
+    i=0
+    for csnum
+    {
+        i = i + 1
+    }
+    t2=times.ms()
+    var add1_time = t2-t1
+    print($"{csnum}次 i = i + 1: " + add1_time + "ms")
+
+    t1=times.ms()
+    i=0
+    for csnum
+    {
+        i++
+    }
+    t2=times.ms()
+    var inc_time = t2-t1
+    print($"{csnum}次 i++: " + inc_time + "ms")
+    print($"比值: i++ / (i=i+1) = " + (inc_time * 100 / add1_time) + "%")
+
+    // 测试8: 乘法
+    print("")
+    print("--- 测试8: 乘法 a = b * c ---")
+    a=0
+    b=2
+    c=3
+    t1=times.ms()
+    for csnum
+    {
+        a = b * c
+    }
+    t2=times.ms()
+    print($"{csnum}次 a = b * c: " + (t2-t1) + "ms")
+
+    // 测试9: 减法
+    print("")
+    print("--- 测试9: 减法 a = b - c ---")
+    a=0
+    b=10
+    c=3
+    t1=times.ms()
+    for csnum
+    {
+        a = b - c
+    }
+    t2=times.ms()
+    print($"{csnum}次 a = b - c: " + (t2-t1) + "ms")
+
+    // 测试10: 连续操作
+    print("")
+    print("--- 测试10: 连续操作 a = b + c + d ---")
+    a=0
+    b=1
+    c=2
+    var d=3
+    t1=times.ms()
+    for csnum
+    {
+        a = b + c + d
+    }
+    t2=times.ms()
+    print($"{csnum}次 a = b + c + d: " + (t2-t1) + "ms")
+
+    print("")
+    print("======== 下一个测试=======")
+    test1()
+    trytest()
+    whileandfor()
+    fibtest()
+}
+func test1()
+{
+	
+	 print("======== LenoC VM 性能基准测试 ========")
+    print("")
+
+    // 基础运算
+    print("--- 基础运算 ---")
+    var i=0
+    var t1=times.ms()
+    for csnum
+    {
+        i++
+    }
+    var t2=times.ms()
+    var elapsed = t2-t1
+    print($"{csnum}次 i++: " + elapsed + "ms")
+
+    // 算术运算
+    var a=1
+    var b=2
+    var c=0
+    t1=times.ms()
+    for csnum
+    {
+        c = a + b
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"{csnum}次加法: " + elapsed + "ms")
+
+    // 函数调用
+    print("")
+    print("--- 函数调用 ---")
+    t1=times.ms()
+    for csnum
+    {
+        myfunc()
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"{csnum}次空函数调用: " + elapsed + "ms")
+
+    // 数组操作
+    print("")
+    print("--- 数组操作 ---")
+    var arr=[]
+    t1=times.ms()
+    for csnum
+    {
+        arr.add(1)
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"{csnum}次 arr.add(): " + elapsed + "ms")
+
+    // 数组访问
+    var arr1=[]
+    var k=0
+    for 1000 { arr1.add(1) }
+    t1=times.ms()
+    for csnum
+    {
+        arr[0]
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"{csnum}次 arr[index]: " + elapsed + "ms")
+
+    // 字典操作
+    print("")
+    print("--- 字典操作 ---")
+    var d={}
+    t1=times.ms()
+    for csnum
+    {
+        d.set("key",1)
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"{csnum}次 dict[key]=value: " + elapsed + "ms")
+
+    print("")
+    print("======== 下一个测试=======")
+}
+
+func myfunc()
+{
+	
+}
+
+
+func trytest()
+{
+print("")
+print("======== try 测试=======")
+var t1 = times.ms();
+ var d1=no_try_test()
+ var t2 = times.ms();
+ print($" {t2 - t1}ms 结果:{d1}\n");
+  var t3 = times.ms();
+  var d2=with_try_test()
+  var t4 = times.ms();
+   print($" {t4 -t3 }ms 结果:{d2}\n");
+    print("======== 下一个测试=======")
+}
+
+// 测试 A：没有 try 的循环
+func no_try_test() {
+    var sum = 0
+    for csnum{
+         sum++
+    }
+    return sum
+}
+
+// 测试 B：有空 try 的循环
+func with_try_test() {
+    var sum = 0
+    for csnum{
+        try {
+           sum++
+        } catch e { }
+    }
+    return sum
+}
+
+func whileandfor()
+{
+    print("======== While vs For 性能对比 ========")
+    print("")
+
+    // 测试1: 纯空循环对比
+    print($"--- 测试1:{csnum}次 空循环 ---")
+
+    var t1=times.ms()
+    for csnum {}
+    var t2=times.ms()
+    var for_empty = t2-t1
+    print($"for N \{\}: " + for_empty + "ms")
+
+    t1=times.ms()
+    var i=0
+    while i < csnum {
+        i++
+    }
+    t2=times.ms()
+    var while_empty = t2-t1
+    print($"while i < N: " + while_empty + "ms")
+    print($"比值: for/while = " + (for_empty * 100 / while_empty) + "%")
+    print("")
+
+    // 测试2: 带简单操作的循环
+    print("--- 测试2: 1000万次 i++ ---")
+
+    t1=times.ms()
+    for csnum {
+        i++
+    }
+    t2=times.ms()
+    var for_inc = t2-t1
+    print($"for N: " + for_inc + "ms")
+
+    t1=times.ms()
+    i=0
+    while i < csnum {
+        i++
+    }
+    t2=times.ms()
+    var while_inc = t2-t1
+    print($"while i < N: " + while_inc + "ms")
+    print($"比值: for/while = " + (for_inc * 100 / while_inc) + "%")
+    print("")
+
+    // 测试3: 带循环变量的 for vs while
+    print("--- 测试3: for to var vs while (带循环变量访问) ---")
+
+    t1=times.ms()
+    var sum=0
+    for csnum to j {
+        j
+    }
+    t2=times.ms()
+    var for_var = t2-t1
+    print($"for N to j: " + for_var + "ms")
+
+    t1=times.ms()
+    var jj=0
+    while jj < csnum {
+      
+        jj++
+    }
+    t2=times.ms()
+    var while_var = t2-t1
+    print($"while i < N: " + while_var + "ms")
+    print($"比值: for/while = " + (for_var * 100 / while_var) + "%")
+    print("")
+
+    // 测试4: 数组操作场景
+    print("--- 测试4: 数组添加操作 ---")
+
+    var arr=[]
+    t1=times.ms()
+    for csnum {
+        arr.add(1)
+    }
+    t2=times.ms()
+    var for_arr = t2-t1
+    print($"for N: " + for_arr + "ms, 长度: " + arr.len())
+
+    var arr1=[]
+    t1=times.ms()
+    i=0
+    while i < csnum {
+        arr1.add(1)
+        i++
+    }
+    t2=times.ms()
+    var while_arr = t2-t1
+    print($"while i < N: " + while_arr + "ms, 长度: " + arr.len())
+    print($"比值: for/while = " + (for_arr * 100 / while_arr) + "%")
+    print("")
+
+    // 测试5: 循环变量修改场景
+    print("--- 测试5: 步长为2 (模拟每隔一个执行) ---")
+
+    var arr2=[]
+    t1=times.ms()
+    for csnum to k {
+        k++
+        arr2.add(k)
+    }
+    t2=times.ms()
+    var for_step = t2-t1
+    print($"for N to k + k++: " + for_step + "ms, 长度: " + arr.len())
+
+    var arr3=[]
+    t1=times.ms()
+    var kk=0
+    while kk < csnum {
+        kk++
+        arr3.add(kk)
+        kk++
+    }
+    t2=times.ms()
+    var while_step = t2-t1
+    print($"while + 两次i++: " + while_step + "ms, 长度: " + arr.len())
+    print("")
+
+    // 测试6: 嵌套循环场景
+    print("--- 测试6: 嵌套循环 (1000 * 1000) ---")
+
+    t1=times.ms()
+    var count=0
+    for 1000 {
+        for 1000 {
+            count++
+        }
+    }
+    t2=times.ms()
+    var for_nested = t2-t1
+    print($"for + for: " + for_nested + "ms, count=" + count)
+
+    count=0
+    t1=times.ms()
+    i=0
+    while i < 1000 {
+        var m=0
+        while m < 1000 {
+            count++
+            m++
+        }
+        i++
+    }
+    t2=times.ms()
+    var while_nested = t2-t1
+    print($"while + while: " + while_nested + "ms, count=" + count)
+    print($"比值: for/while = " + (for_nested * 100 / while_nested) + "%")
+
+    print("")
+    print("======== 总结 ========")
+}
+
+
+
+// 版本1：经典递归（原始版本）
+func fib_recursive(int n):int {
+    if n <= 1 {
+        return n
+    }
+    return fib_recursive(n - 2) + fib_recursive(n - 1)
+}
+
+// 版本2：记忆化递归
+func fib_memo(int n) {
+    var memo = {}
+    return fib_memo_helper(n, memo)
+}
+
+func fib_memo_helper(int n, Dict memo) {
+    if n <= 1 {
+        return n
+    }
+    var str=_str(n)
+    if memo.has(str) {
+        return memo[str]
+    }
+    var result = fib_memo_helper(n - 1, memo) + fib_memo_helper(n - 2, memo)
+    memo[str] = result
+    return result
+}
+
+// 版本3：迭代实现（最快）
+func fib_iterative(var n) {
+    if n <= 1 {
+        return n
+    }
+    var a = 0
+    var b = 1
+    // 循环从 2 到 n（包含 n），因为 LenoLang 的 range 语法包含结束值
+    // for 2:n 会生成 [2, 3, ..., n]，共 n-1 个元素
+    for 2:n to var i {
+        var temp = a + b
+        a = b
+        b = temp
+    }
+    return b
+}
+
+// 版本4：尾递归优化
+func fib_tail(var n) {
+    return fib_tail_helper(n, 0, 1)
+}
+
+func fib_tail_helper(var n,var a,var b) {
+    if n == 0 {
+        return a
+    }
+    if n == 1 {
+        return b
+    }
+    return fib_tail_helper(n - 1, b, a + b)
+}
+
+func fibtest() {
+    var n = 30
+    
+    print("斐波那契数列优化对比 (n=" + n + "):\n")
+    
+    // 测试1：经典递归
+    var t1 = times.ms()
+    var r1 = fib_recursive(n)
+    var t2 = times.ms()
+    print("经典递归: " + r1 + "  耗时: " + (t2 - t1) + "ms")
+    
+    // 测试2：记忆化递归
+    var t3 = times.ms()
+    var r2 = fib_memo(n)
+    var t4 = times.ms()
+    print("记忆化递归: " + r2 + "  耗时: " + (t4 - t3) + "ms")
+    
+    // 测试3：迭代实现
+    var t5 = times.ms()
+    var r3 = fib_iterative(n)
+    var t6 = times.ms()
+    print("迭代实现: " + r3 + "  耗时: " + (t6 - t5) + "ms")
+    
+    // 测试4：尾递归
+    var t7 = times.ms()
+    var r4 = fib_tail(n)
+    var t8 = times.ms()
+    print("尾递归: " + r4 + "  耗时: " + (t8 - t7) + "ms")
+    
+    print("\n测试更大的数 (n=1000):")
+    var t9 = times.ms()
+    var r5 = fib_iterative(1000)
+    var t10 = times.ms()
+    print("迭代实现 fib(1000): " + r5 + "  耗时: " + (t10 - t9) + "ms")
+}

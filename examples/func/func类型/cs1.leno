@@ -1,0 +1,12 @@
+func make_counter(var start):func():int {
+
+    int count=_int(start)
+    func test():int {
+        count = count + 1
+        return count
+    }
+    return test
+    
+}
+
+print(make_counter(10)())

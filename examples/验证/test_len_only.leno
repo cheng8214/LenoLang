@@ -1,0 +1,16 @@
+// 只测试 len() 调用
+struct Test {
+    Array[int] scores = []
+    
+    func getLen() {
+        // 不返回，只看是否能编译
+        var x = scores.len()
+        print(x)
+    }
+}
+
+main() {
+    var t = Test()
+    t.scores = [1, 2, 3]
+    t.getLen()
+}

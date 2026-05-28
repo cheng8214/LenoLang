@@ -1,0 +1,6 @@
+// 新建文件: Untitled.leno
+import "test_a.leno" as a
+main()
+{
+	print(a.info())
+}

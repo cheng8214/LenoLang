@@ -1,0 +1,16 @@
+// 简化版 win_process 模块
+
+import ffi
+
+var _kernel32 = null
+
+func init() {
+    if _kernel32 == null {
+        _kernel32 = ffi.load("kernel32.dll")
+    }
+}
+
+export func getCurrentPid() {
+    if _kernel32 == null { init() }
+    return ffi.call_int(_kernel32, "GetCurrentProcessId")
+}

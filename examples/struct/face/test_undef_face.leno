@@ -1,0 +1,24 @@
+// ============================================================================
+// 测试：struct impl 一个未定义的 face
+// ============================================================================
+//
+// 本测试验证：
+//   1. struct Bad 声明了 impl NonExist，但 NonExist 在 struct 之前已定义
+//   2. 编译器应能正确处理 face 的定义顺序
+//   3. 如果 face 确实未定义，编译器应报错
+//   注：此文件中 NonExist 已定义，所以应正常编译和运行
+//
+// 预期输出：hi
+
+face NonExist {
+    func hello():string
+}
+
+struct Bad impl NonExist {
+    func hello():string { return "hi" }
+}
+
+main() {
+    var b = Bad()
+    print(b.hello())
+}

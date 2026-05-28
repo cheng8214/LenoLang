@@ -1,0 +1,81 @@
+// 测试 cstruct 与 FFI 结合使用 - 内存布局控制示例
+// 使用 Windows MEMORYSTATUS 结构体
+
+import ffi
+
+// Windows MEMORYSTATUS 结构体（64位系统）
+// 注意：Windows 使用 SIZE_T 类型，在64位系统上是64位
+// 但 GlobalMemoryStatus 使用的是 DWORD (32位) 和 SIZE_T (64位)
+cstruct MEMORYSTATUS {
+    u32 dwLength          // 结构体大小 (4 bytes)
+    u32 dwMemoryLoad      // 内存使用百分比 (4 bytes)
+    u64 dwTotalPhys       // 总物理内存 (8 bytes)
+    u64 dwAvailPhys       // 可用物理内存 (8 bytes)
+    u64 dwTotalPageFile   // 总页面文件 (8 bytes)
+    u64 dwAvailPageFile   // 可用页面文件 (8 bytes)
+    u64 dwTotalVirtual    // 总虚拟内存 (8 bytes)
+    u64 dwAvailVirtual    // 可用虚拟内存 (8 bytes)
+}
+
+// 辅助函数：将字节转换为人类可读的格式
+// 使用 f64 避免溢出
+func formatBytes(var bytes): string {
+    var b = _float(bytes)
+    if b >= 1073741824.0 {
+        return (b / 1073741824.0) + " GB"
+    } else if b >= 1048576.0 {
+        return (b / 1048576.0) + " MB"
+    } else if b >= 1024.0 {
+        return (b / 1024.0) + " KB"
+    } else {
+        return b + " B"
+    }
+}
+
+main() {
+    print("=== 测试 cstruct 内存布局控制 ===")
+    
+    // 验证结构体大小
+    var actual_size = MEMORYSTATUS.size()
+    print("MEMORYSTATUS size: " + actual_size + " bytes")
+    print("Alignment: " + MEMORYSTATUS.alignment())
+    
+    // 加载 kernel32.dll
+    var kernel32 = ffi.load("kernel32.dll")
+    
+    // 分配 cstruct
+    var memStatus = MEMORYSTATUS.malloc()
+    
+    try {
+        // 设置 dwLength 字段（Windows 要求）
+        memStatus.dwLength = actual_size
+        
+        print("\n设置的 dwLength: " + memStatus.dwLength)
+        
+        // 调用 GlobalMemoryStatus
+        ffi.call(kernel32, "GlobalMemoryStatus", memStatus.to_ptr())
+        
+        print("\n内存状态:")
+        print(memStatus.to_str())
+        
+        print("\n解析后的内存信息:")
+        print("  内存负载: " + memStatus.dwMemoryLoad + "%")
+        print("  总物理内存: " + formatBytes(memStatus.dwTotalPhys))
+        print("  可用物理内存: " + formatBytes(memStatus.dwAvailPhys))
+        print("  总页面文件: " + formatBytes(memStatus.dwTotalPageFile))
+        print("  可用页面文件: " + formatBytes(memStatus.dwAvailPageFile))
+        print("  总虚拟内存: " + formatBytes(memStatus.dwTotalVirtual))
+        print("  可用虚拟内存: " + formatBytes(memStatus.dwAvailVirtual))
+        
+        // 计算使用率
+        var physUsed = memStatus.dwTotalPhys - memStatus.dwAvailPhys
+        var physUsage = (physUsed * 100) / memStatus.dwTotalPhys
+        print("\n  物理内存使用率: " + physUsage + "%")
+        
+    } finally {
+        memStatus.free()
+        ffi.free(kernel32)
+    }
+    
+    print("\n=== 测试完成 ===")
+}

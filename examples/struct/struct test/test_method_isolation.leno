@@ -1,0 +1,70 @@
+// 测试：方法查找是否是全局的
+// 创建两个不同的struct，定义同名方法
+
+struct Point2D
+{
+    int x
+    int y
+    
+    func getName(): string
+    {
+        return "Point2D"
+    }
+    
+    func sum(): int
+    {
+        return x + y
+    }
+}
+
+struct Point3D
+{
+    int x
+    int y
+    int z
+    
+    func getName(): string
+    {
+        return "Point3D"
+    }
+    
+    func sum(): int
+    {
+        return x + y + z
+    }
+}
+
+main()
+{
+    // 创建两个不同类型的实例
+    Point2D p2 = Point2D(x=1, y=2)
+    Point3D p3 = Point3D(x=1, y=2, z=3)
+    
+    // 测试1：调用同名方法 getName()
+    print("p2.getName():")
+    string name2 = p2.getName()
+    print(name2)  // 期望: "Point2D"
+    
+    print("p3.getName():")
+    string name3 = p3.getName()
+    print(name3)  // 期望: "Point3D"
+    
+    // 测试2：调用同名方法 sum()
+    print("p2.sum():")
+    int sum2 = p2.sum()
+    print(sum2)   // 期望: 3 (1+2)
+    
+    print("p3.sum():")
+    int sum3 = p3.sum()
+    print(sum3)   // 期望: 6 (1+2+3)
+    
+    // 测试3：验证方法是否被覆盖
+    if name2 == "Point2D" and name3 == "Point3D"
+    {
+        print("测试通过：每个struct的方法独立")
+    }
+    else
+    {
+        print("测试失败：方法被覆盖！")
+    }
+}

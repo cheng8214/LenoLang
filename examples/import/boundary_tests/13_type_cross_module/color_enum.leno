@@ -1,0 +1,52 @@
+// 跨模块 enum 定义测试
+// 定义颜色枚举
+
+export enum Color {
+    RED = 0
+    GREEN = 1
+    BLUE = 2
+    YELLOW = 3
+    BLACK = 4
+    WHITE = 5
+}
+
+export enum Status {
+    PENDING = 0
+    RUNNING = 1
+    COMPLETED = 2
+    FAILED = 3
+}
+
+// 导出颜色名称映射
+export func color_name(var color) {
+    if (color == Color.RED) {
+        return "Red"
+    } else if (color == Color.GREEN) {
+        return "Green"
+    } else if (color == Color.BLUE) {
+        return "Blue"
+    } else if (color == Color.YELLOW) {
+        return "Yellow"
+    } else if (color == Color.BLACK) {
+        return "Black"
+    } else if (color == Color.WHITE) {
+        return "White"
+    }
+    return "Unknown"
+}
+
+// 导出状态检查函数
+export func is_terminal_status(var status) {
+    return status == Status.COMPLETED or status == Status.FAILED
+}
+
+// 导出混合颜色功能（模拟）
+export func mix_colors(var c1, var c2) {
+    // 简单的颜色混合逻辑
+    if ((c1 == Color.RED and c2 == Color.BLUE) or (c1 == Color.BLUE and c2 == Color.RED)) {
+        return Color.BLACK  // 简化为黑色
+    } else if ((c1 == Color.RED and c2 == Color.YELLOW) or (c1 == Color.YELLOW and c2 == Color.RED)) {
+        return Color.RED
+    }
+    return c1  // 默认返回第一个颜色
+}

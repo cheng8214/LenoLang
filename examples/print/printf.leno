@@ -1,0 +1,8 @@
+// 新建文件: printf.leno
+main()
+{
+	printf("Hello LenoLang");//不自动换行
+	printf("Hello LenoLang\t")//分号可选
+	printf("Hello LenoLang");
+	print("\"")
+}

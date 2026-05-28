@@ -1,0 +1,14 @@
+// 特殊字符路径测试主文件
+// 测试：中文路径、空格路径、横线路径
+
+import "中文文件夹/中文模块.leno" as cn
+import "folder with spaces/space module.leno" as sp
+import "folder-with-dashes/dash-module.leno" as dash
+
+main() {
+    print("=== 特殊字符路径测试 ===")
+    print("中文: " + cn.say_hello())
+    print("Space: " + sp.space_func())
+    print("Dash: " + dash.dash_func())
+    print("=== 测试完成 ===")
+}

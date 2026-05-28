@@ -1,0 +1,29 @@
+// 测试导入模块中的 enum
+
+import "color_module.leno"
+
+main() {
+    // 测试访问导入的 enum 成员
+    print("Color.red =", color_module.Color.red)
+    print("Color.green =", color_module.Color.green)
+    print("Color.blue =", color_module.Color.blue)
+    
+    print("Status.ok =", color_module.Status.ok)
+    print("Status.not_found =", color_module.Status.not_found)
+    print("Status.error =", color_module.Status.error)
+    
+    // 测试使用导入的 enum 调用函数
+    var name = color_module.get_color_name(color_module.Color.green)
+    print("颜色名称:", name)
+    
+    // 测试 is_success 函数
+    var success = color_module.is_success(color_module.Status.ok)
+    print("Status.ok 是成功状态:", success)
+    
+    var fail = color_module.is_success(color_module.Status.error)
+    print("Status.error 是成功状态:", fail)
+    
+    // 测试直接使用 enum 值
+    var my_color = color_module.Color.blue
+    print("我的颜色值:", my_color)
+}

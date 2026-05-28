@@ -1,0 +1,22 @@
+struct Point
+{
+    int x
+    int y
+    func test()
+    {
+        print(x)
+        print(y)
+    }
+    func sum()
+    {
+        return x + y
+    }
+}
+
+main()
+{
+    Point p1 = Point(x=10, y=20)
+    p1.test()
+    int s = p1.sum()
+    print(s)
+}

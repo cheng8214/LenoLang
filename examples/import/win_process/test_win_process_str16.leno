@@ -1,0 +1,47 @@
+// 测试 str16 + Ptr[T] 版本的 win_process 模块
+import "win_process_str16.leno" as wp
+
+main() {
+    print("=== 测试 win_process_str16 模块 (Ptr[T] 版本) ===")
+    
+    // 1. 获取当前进程 ID
+    var currentPid = wp.getCurrentPid()
+    print("1. 当前进程 ID: " + currentPid)
+    
+    // 2. 获取系统信息
+    var sysInfo = wp.getSystemInfo()
+    print("2. 系统信息:")
+    print("   - CPU 核心数: " + sysInfo.processorCount)
+    print("   - 页面大小: " + sysInfo.pageSize)
+    print("   - 内存负载: " + sysInfo.memoryLoad + "%")
+    print("   - 总物理内存: " + sysInfo.totalPhys + " MB")
+    print("   - 可用物理内存: " + sysInfo.availPhys + " MB")
+    
+    // 3. 获取系统运行时间
+    var uptime = wp.getSystemUpTime()
+    print("3. 系统运行时间: " + wp.formatUptime(uptime))
+    
+    // 4. 获取当前进程详细信息
+    var procInfo = wp.getFullProcessInfo(currentPid)
+    if procInfo.success {
+        print("4. 当前进程信息:")
+        print("   - 名称: " + procInfo.name)
+        print("   - PID: " + procInfo.pid)
+        print("   - 内存使用: " + procInfo.memory + " KB")
+        print("   - 峰值内存: " + procInfo.peakMemory + " KB")
+        print("   - 是否运行中: " + procInfo.isRunning)
+    }
+    
+    // 5. 列出部分进程
+    var processes = wp.listProcesses()
+    print("5. 进程列表 (前 5 个):")
+    int count = 0
+    for processes.processes to proc {
+        if count < 5 {
+            print("   - " + proc.name + " (PID: " + proc.pid + ")")
+            count = count + 1
+        }
+    }
+    
+    print("=== 测试完成 ===")
+}

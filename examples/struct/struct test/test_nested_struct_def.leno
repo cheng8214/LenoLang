@@ -1,0 +1,27 @@
+// 测试在函数内定义 struct
+
+func createStructWithCapture()
+{
+    var local_var = 100
+    
+    // 在函数内部定义 struct
+    struct LocalStruct
+    {
+        int data
+        
+        func getData()
+        {
+            return data
+        }
+    }
+    
+    return LocalStruct(data = 5)
+}
+
+main()
+{
+    print("测试在函数内定义 struct")
+    var obj = createStructWithCapture()
+    var result = obj.getData()
+    print($"结果: {result}")
+}

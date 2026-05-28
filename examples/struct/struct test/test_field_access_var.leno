@@ -1,0 +1,12 @@
+struct Point
+{
+    int x
+    int y
+}
+
+main()
+{
+    Point p1 = Point(x=10, y=20)
+    int a = p1["x"]
+    print(a)
+}

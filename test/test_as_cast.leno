@@ -1,0 +1,89 @@
+// as 安全类型转换测试
+
+face Shape {
+    func area():float
+}
+
+struct Circle impl Shape {
+    float _radius = 1.0
+
+    func area():float { return 3.14159 * _radius * _radius }
+}
+
+struct Rect impl Shape {
+    float _width = 1.0
+    float _height = 1.0
+
+    func area():float { return _width * _height }
+}
+
+// 测试 1: as 基本类型转换 - 匹配时返回原值
+var x = 42
+var xi = x as int
+assert_eq(xi, 42)
+
+var f = 3.14
+var ff = f as float
+assert_eq(ff, 3.14)
+
+var s = "hello"
+var ss = s as string
+assert_eq(ss, "hello")
+
+var b = true
+var bb = b as bool
+assert_eq(bb, true)
+
+// 测试 2: as 基本类型转换 - 不匹配时返回 null
+var maybe_int = "not_int" as int
+assert_eq(maybe_int, null)
+
+var maybe_float = 42 as float
+assert_eq(maybe_float, null)
+
+var maybe_str = 100 as string
+assert_eq(maybe_str, null)
+
+// 测试 3: as struct 类型转换 - 匹配时返回原值
+var circle = Circle()
+circle._radius = 5.0
+var c = circle as Circle
+assert_eq(c._radius, 5.0)
+
+// 测试 4: as struct 类型转换 - 不匹配时返回 null
+var rect = Rect()
+var not_circle = rect as Circle
+assert_eq(not_circle, null)
+
+// 测试 5: as face 类型转换 - 匹配时返回原值
+var shape1 = Circle()
+shape1._radius = 2.0
+var as_shape = shape1 as Shape
+assert_eq(as_shape != null, true)
+assert_eq(as_shape.area(), 3.14159 * 2.0 * 2.0)
+
+// 测试 6: as face 类型转换 - 不匹配时返回 null
+var not_shape = 42 as Shape
+assert_eq(not_shape, null)
+
+// 测试 7: as 与 is 配合使用
+func describe(Shape s) {
+    var c = s as Circle
+    if c != null {
+        return "Circle radius=" + _str(c._radius)
+    }
+    var r = s as Rect
+    if r != null {
+        return "Rect " + _str(r._width) + "x" + _str(r._height)
+    }
+    return "Unknown shape"
+}
+
+assert_eq(describe(Circle()), "Circle radius=1")
+assert_eq(describe(Rect()), "Rect 1x1")
+
+// 测试 8: as null 值转换
+var n = null as int
+assert_eq(n, null)
+
+print("test_as_cast passed")

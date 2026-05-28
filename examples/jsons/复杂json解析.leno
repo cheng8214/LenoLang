@@ -1,0 +1,72 @@
+import jsons
+
+print("========== 唐诗集赏析 ==========\n")
+
+// 读取 JSON 文件
+var data = jsons.read_file("D:\\CLeno\\LenoC\\test\\jsons\\cs.json")
+
+// 显示集合信息
+print("【" + data["collection"]["name"] + "】")
+print("描述: " + data["collection"]["description"])
+print("共收录 " + data["collection"]["total"] + " 首")
+print("语言: " + data["collection"]["language"])
+print("版本: " + data["collection"]["version"])
+print("")
+
+// 遍历所有诗歌
+var poems = data["poems"]
+for poems to poem
+{
+    print("═══════════════════════════════════════")
+    print("【" + poem["title"] + "】")
+    print("作者: " + poem["author"]["name"] + " (" + poem["author"]["dynasty"] + ")")
+    print("类型: " + poem["type"])
+    print("难度: " + poem["difficulty"])
+    print("")
+    
+    // 显示诗歌内容
+    print("【原文】")
+    var content = poem["content"]
+    for content to line
+    {
+        print("  " + line["text"])
+    }
+    
+    // 显示现代文翻译
+    print("")
+    print("【现代文翻译】")
+    print("  " + poem["translation"]["modern_chinese"])
+    
+    // 显示赏析
+    print("")
+    print("【赏析】")
+    print("  " + poem["appreciation"])
+    
+    // 显示标签
+    print("")
+    print("【标签】")
+    var tags = poem["tags"]
+    var tag_str = ""
+    for tags to tag
+    {
+        tag_str = tag_str + tag + " "
+    }
+    print("  " + tag_str)
+    
+    // 显示注释（如果有的话）
+    var annotations = poem["annotations"]
+    if (annotations.len() > 0)
+    {
+        print("")
+        print("【注释】")
+        for annotations to note
+        {
+            print("  " + note["term"] + ": " + note["note"])
+        }
+    }
+    
+    print("")
+}
+
+print("═══════════════════════════════════════")
+print("\n========== 唐诗集展示完毕 ==========")

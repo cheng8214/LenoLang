@@ -1,0 +1,12 @@
+// 初始化顺序测试 - 日志记录器
+// 用于记录模块初始化顺序
+
+export var init_log = []
+
+export func log_init(var module_name) {
+    init_log.add(module_name)
+}
+
+export func get_log() {
+    return init_log
+}

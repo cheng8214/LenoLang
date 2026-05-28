@@ -1,0 +1,135 @@
+// 测试 struct 中定义 func，添加到数组中调用
+
+import maths
+
+struct Point
+{
+    int x
+    int y
+    
+    // 定义方法：打印坐标
+    func print_coord()
+    {
+        print("Point(" + x + ", " + y + ")")
+    }
+    
+    // 定义方法：计算到原点的欧几里得距离
+    func distance_to_origin():float
+    {
+        return maths.sqrt(x * x + y * y)
+    }
+    
+    // 定义方法：计算到另一个点的欧几里得距离
+    func distance_to(Point other):float
+    {
+        int dx = other.x - x
+        int dy = other.y - y
+        return maths.sqrt(dx * dx + dy * dy)
+    }
+    
+    // 定义方法：移动点
+    func move(int dx, int dy)
+    {
+        x = x + dx
+        y = y + dy
+    }
+}
+
+// 创建 Point 数组
+func create_points(int count)
+{
+    var points = []
+    for 0 : count - 1 to var i {
+        var p = Point(x = i * 10, y = i * 20)
+        points.add(p)
+    }
+    return points
+}
+
+// 测试 1: 遍历数组调用方法
+func test_array_methods(var points)
+{
+    print("=== 测试遍历数组调用方法 ===")
+    
+    if points is Array[Point] {
+        print("遍历所有点并调用 print_coord():")
+        for points to var p, var i {
+            print("Point " + i + ": ")
+            p.print_coord()
+        }
+        
+        print("")
+        print("计算每个点到原点的欧几里得距离:")
+        for points to var p, var i {
+            var dist = p.distance_to_origin()
+            print("Point " + i + " distance to origin: " + dist)
+        }
+    } else {
+        print("不是 Array[Point] 类型")
+    }
+}
+
+// 测试 2: 计算点之间的距离
+func test_point_distances(var points)
+{
+    print("=== 测试计算点之间的距离 ===")
+    
+    if points is Array[Point] {
+        if points.len() >= 2 {
+            var p0 = points[0]
+            var p1 = points[1]
+            var dist = p0.distance_to(p1)
+            print("Euclidean distance from Point 0 to Point 1: " + dist)
+        }
+        
+        // 计算相邻点之间的距离
+        print("")
+        print("相邻点之间的欧几里得距离:")
+        for 0 : points.len() - 2 to var i {
+            var p1 = points[i]
+            var p2 = points[i + 1]
+            var dist = p1.distance_to(p2)
+            print("Distance from Point " + i + " to Point " + (i + 1) + ": " + dist)
+        }
+    }
+}
+
+// 测试 3: 修改点的位置
+func test_move_points(var points)
+{
+    print("=== 测试移动点 ===")
+    
+    if points is Array[Point] {
+        if points.len() > 0 {
+            var p = points[0]
+            print("Before move:")
+            p.print_coord()
+            
+            p.move(5, 10)
+            
+            print("After move(5, 10):")
+            p.print_coord()
+        }
+    }
+}
+
+main()
+{
+    print("=== 测试 struct 方法在数组中调用 ===")
+    print("")
+    
+    var points = create_points(5)
+    print("Created " + points.len() + " points")
+    print("")
+    
+    test_array_methods(points)
+    print("")
+    
+    test_point_distances(points)
+    print("")
+    
+    test_move_points(points)
+    
+    print("")
+    print("=== 完成 ===")
+}

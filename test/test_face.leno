@@ -1,0 +1,72 @@
+// face 接口测试
+
+face Animal {
+    func speak():string
+    func name():string
+}
+
+struct Dog impl Animal {
+    string _name = "Dog"
+
+    func speak():string { return "Woof" }
+    func name():string { return _name }
+}
+
+struct Cat impl Animal {
+    string _name = "Cat"
+
+    func speak():string { return "Meow" }
+    func name():string { return _name }
+}
+
+// 测试基本 face 调用
+var dog = Dog()
+var cat = Cat()
+assert_eq(dog.speak(), "Woof")
+assert_eq(cat.speak(), "Meow")
+assert_eq(dog.name(), "Dog")
+assert_eq(cat.name(), "Cat")
+
+// 测试 face 类型变量多态
+Animal a1 = Dog()
+Animal a2 = Cat()
+assert_eq(a1.speak(), "Woof")
+assert_eq(a2.speak(), "Meow")
+
+// 测试 face 作为函数参数
+func greet(Animal a) {
+    return a.name() + " says " + a.speak()
+}
+
+assert_eq(greet(dog), "Dog says Woof")
+assert_eq(greet(cat), "Cat says Meow")
+
+// 测试类型守卫
+var d = Dog()
+if d is Dog {
+    print("d is Dog - OK")
+}
+if d is Animal {
+    print("d is Animal - OK")
+}
+
+// 测试带参数的 face 方法
+face Calculator {
+    func add(int a, int b):int
+    func multiply(int a, int b):int
+}
+
+struct SimpleCalc impl Calculator {
+    func add(int a, int b):int { return a + b }
+    func multiply(int a, int b):int { return a * b }
+}
+
+var calc = SimpleCalc()
+assert_eq(calc.add(3, 4), 7)
+assert_eq(calc.multiply(3, 4), 12)
+
+Calculator c = SimpleCalc()
+assert_eq(c.add(10, 20), 30)
+assert_eq(c.multiply(10, 20), 200)
+
+print("test_face passed")

@@ -1,0 +1,28 @@
+// 测试使用 use 导入 face
+import "test_module_face.leno" as mf
+use mf.Shape
+
+// 使用导入的 face 作为参数类型
+func printArea(Shape s) {
+    print("面积: " + s.area())
+}
+
+main() {
+    print("===== 测试 use 导入 face =====")
+    print("")
+
+    // 创建 Rectangle
+    print("--- Rectangle ---")
+    var rect = mf.createRectangle(5.0, 3.0)
+    print("宽度: 5.0, 高度: 3.0")
+    printArea(rect)
+    print("")
+
+    // 创建 Circle
+    print("--- Circle ---")
+    var circle = mf.createCircle(2.0)
+    print("半径: 2.0")
+    printArea(circle)
+
+    print("===== 测试完成 =====")
+}

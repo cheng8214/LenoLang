@@ -1,0 +1,32 @@
+// 测试嵌套 cstruct 数组 - 最简化版
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Mesh {
+    Vec3 vertices[4]
+}
+
+main() {
+    print("=== 测试嵌套 cstruct 数组 ===")
+    
+    var m = Mesh.malloc()
+    
+    // 设置顶点
+    m.vertices[0].x = 0.0
+    m.vertices[0].y = 1.0
+    m.vertices[0].z = 2.0
+    
+    // 读取顶点 - 使用临时变量
+    var v0 = m.vertices[0]
+    print(v0.x)
+    print(v0.y)
+    print(v0.z)
+    
+    m.free()
+    
+    print("=== 测试通过 ===")
+}

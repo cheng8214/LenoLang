@@ -1,0 +1,16 @@
+struct LocalPoint
+{
+    int x
+    int y
+}
+
+main()
+{
+    // 测试本地 struct 命名参数
+    var p1 = LocalPoint(x=100, y=200)
+    print("p1: x=" + p1.x + ", y=" + p1.y)
+
+    // 测试本地 struct 位置参数
+    var p2 = LocalPoint(50, 75)
+    print("p2: x=" + p2.x + ", y=" + p2.y)
+}

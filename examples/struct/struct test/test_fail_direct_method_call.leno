@@ -1,0 +1,15 @@
+struct Point
+{
+    int x
+    int y
+    func test()
+    {
+        print(x)
+    }
+}
+
+main()
+{
+    Point p1 = Point(x=10, y=20)
+    Point_test(p1)
+}

@@ -1,0 +1,265 @@
+// 综合测试：多种控制流结构（while、for、switch、if）与闭包
+
+main()
+{
+    print("=== 综合测试：控制流与闭包 ===")
+    
+    // ==================== 测试1: 多个while嵌套闭包 ====================
+    print("\n1. 多个while嵌套闭包:")
+    var results1 = []
+    var i = 0
+    while i < 2 {
+        i = i + 1
+        func outerFunc() { return i * 100 }
+        
+        var j = 0
+        while j < 2 {
+            j = j + 1
+            func middleFunc() { return outerFunc() + j * 10 }
+            
+            var k = 0
+            while k < 2 {
+                k = k + 1
+                func innerFunc() { return middleFunc() + k }
+                results1.add(innerFunc())
+            }
+        }
+    }
+    print("  三层while嵌套: " + results1)
+    
+    // ==================== 测试2: 多个for循环嵌套闭包 ====================
+    print("\n2. 多个for循环嵌套闭包:")
+    var results2 = []
+    for 1:2 to var a {
+        func forOuter() { return a * 100 }
+        for 1:2 to var b {
+            func forMiddle() { return forOuter() + b * 10 }
+            for 1:2 to var c {
+                func forInner() { return forMiddle() + c }
+                results2.add(forInner())
+            }
+        }
+    }
+    print("  三层for嵌套: " + results2)
+    
+    // ==================== 测试3: while和for混合嵌套闭包 ====================
+    print("\n3. while和for混合嵌套闭包:")
+    var results3 = []
+    var x = 0
+    while x < 2 {
+        x = x + 1
+        func whileFunc() { return x * 100 }
+        
+        for 1:2 to var y {
+            func forFunc() { return whileFunc() + y * 10 }
+            
+            var z = 0
+            while z < 2 {
+                z = z + 1
+                func mixedFunc() { return forFunc() + z }
+                results3.add(mixedFunc())
+            }
+        }
+    }
+    print("  while-for-while混合: " + results3)
+    
+    // ==================== 测试4: if语句中的闭包 ====================
+    print("\n4. if语句中的闭包:")
+    var results4 = []
+    var n = 0
+    while n < 3 {
+        n = n + 1
+        
+        if n == 1 {
+            func ifFunc() { return n * 10 }
+            results4.add(ifFunc())
+        } else if n == 2 {
+            func elifFunc() { return n * 100 }
+            results4.add(elifFunc())
+        } else {
+            func elseFunc() { return n * 1000 }
+            results4.add(elseFunc())
+        }
+    }
+    print("  if-elif-else中的闭包: " + results4)
+    
+    // ==================== 测试5: 嵌套if中的闭包 ====================
+    print("\n5. 嵌套if中的闭包:")
+    var results5 = []
+    var p = 0
+    while p < 2 {
+        p = p + 1
+        func outerIf() { return p }
+        
+        if p > 0 {
+            var q = 0
+            while q < 2 {
+                q = q + 1
+                func innerIf() { return outerIf() * 10 + q }
+                
+                if q == 1 {
+                    func deepIf() { return innerIf() * 100 }
+                    results5.add(deepIf())
+                } else {
+                    func deepElse() { return innerIf() * 1000 }
+                    results5.add(deepElse())
+                }
+            }
+        }
+    }
+    print("  嵌套if-while-if: " + results5)
+    
+    // ==================== 测试6: switch语句中的闭包 ====================
+    print("\n6. switch语句中的闭包:")
+    var results6 = []
+    var s = 0
+    while s < 3 {
+        s = s + 1
+        func switchOuter() { return s * 10 }
+        
+        switch s {
+            case 1 {
+                func case1Func() { return switchOuter() + 1 }
+                results6.add(case1Func())
+            }
+            case 2 {
+                func case2Func() { return switchOuter() + 2 }
+                results6.add(case2Func())
+            }
+            default {
+                func defaultFunc() { return switchOuter() + 3 }
+                results6.add(defaultFunc())
+            }
+        }
+    }
+    print("  switch中的闭包: " + results6)
+    
+    // ==================== 测试7: 复杂混合场景 ====================
+    print("\n7. 复杂混合场景（while+for+if+switch）:")
+    var results7 = []
+    var level = 0
+    while level < 2 {
+        level = level + 1
+        func levelFunc() { return level * 1000 }
+        
+        for 1:2 to var item {
+            func itemFunc() { return levelFunc() + item * 100 }
+            
+            if item == 1 {
+                var sub = 0
+                while sub < 2 {
+                    sub = sub + 1
+                    func subFunc() { return itemFunc() + sub * 10 }
+                    
+                    switch sub {
+                        case 1 {
+                            func finalFunc1() { return subFunc() + 1 }
+                            results7.add(finalFunc1())
+                        }
+                        default {
+                            func finalFunc2() { return subFunc() + 2 }
+                            results7.add(finalFunc2())
+                        }
+                    }
+                }
+            } else {
+                func elseItemFunc() { return itemFunc() + 50 }
+                results7.add(elseItemFunc())
+            }
+        }
+    }
+    print("  复杂混合: " + results7)
+    
+    // ==================== 测试8: 闭包修改外部变量（跨控制流） ====================
+    print("\n8. 闭包修改外部变量（跨控制流）:")
+    var counter = 0
+    var results8 = []
+    
+    var a1 = 0
+    while a1 < 2 {
+        a1 = a1 + 1
+        func incWhile() { counter = counter + 1; return counter }
+        
+        for 1:2 to var b1 {
+            func incFor() { counter = counter + 10; return counter }
+            
+            if b1 == 1 {
+                func incIf() { counter = counter + 100; return counter }
+                results8.add(incWhile() + incFor() + incIf())
+            }
+        }
+    }
+    print("  修改外部变量结果: " + results8)
+    print("  最终counter: " + counter)
+    
+    // ==================== 测试9: 函数返回闭包（跨控制流定义） ====================
+    print("\n9. 函数返回闭包（跨控制流定义）:")
+    var results9 = []
+    
+    func createClosureInLoop() {
+        var funcs = []
+        var m = 0
+        while m < 3 {
+            m = m + 1
+            var captured = m
+            
+            if m % 2 == 1 {
+                func oddFunc() { return captured * 10 }
+                funcs.add(oddFunc)
+            } else {
+                func evenFunc() { return captured * 100 }
+                funcs.add(evenFunc)
+            }
+        }
+        return funcs
+    }
+    
+    var closureList = createClosureInLoop()
+    for closureList to var fn {
+        results9.add(fn())
+    }
+    print("  跨控制流定义的闭包: " + results9)
+    
+    // ==================== 测试10: 闭包数组（在控制流中收集） ====================
+    print("\n10. 闭包数组（在控制流中收集）:")
+    var results10 = []
+    var funcArray = []
+    
+    var idx = 0
+    while idx < 3 {
+        idx = idx + 1
+        var localIdx = idx
+        
+        for 1:2 to var multiplier {
+            var localMult = multiplier
+            func arrayFunc() { return localIdx * localMult }
+            funcArray.add(arrayFunc)
+        }
+    }
+    
+    for funcArray to var f {
+        results10.add(f())
+    }
+    print("  控制流中收集的闭包: " + results10)
+    
+    print("\n=== 所有测试完成 ===")
+}
+
+/*
+测试1-3：三层嵌套循环产生 8 个结果，计算公式为 i*100 + j*10 + k（i/j/k 取值 1~2），得到 [111,112,121,122,211,212,221,222]。✅
+
+测试4：if-elif-else 中闭包捕获循环变量 n，输出 [10,200,3000]。✅
+
+测试5：嵌套 if 与 while，计算 (p*10+q)*100 或 *1000，得到 [1100,12000,2100,22000]。✅
+
+测试6：switch 中闭包返回 s*10 + s（s=1,2,3），输出 [11,22,33]。✅
+
+测试7：复杂混合场景，按顺序计算得 [1111,1122,1250,2111,2122,2250]。✅
+
+测试8：闭包修改外部 counter，累加后得 [123,456]，最终 counter=222。✅
+
+测试9：函数返回闭包列表，利用副本捕获，得 [10,200,30]。✅
+
+测试10：循环中收集闭包，每个闭包捕获本地副本，得 [1,2,2,4,3,6]。✅
+
+*/

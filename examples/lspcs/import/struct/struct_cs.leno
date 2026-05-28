@@ -1,0 +1,7 @@
+import "struct_import.leno"
+use struct_import.Point
+
+main()
+{
+ Point p = struct_import.Point(x=1,y=10)
+}

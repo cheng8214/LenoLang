@@ -1,0 +1,8 @@
+// 新建文件: Untitled.leno
+main()
+{
+	Array[int] b,c
+	print(b,c)
+	b.add("12")
+	print(b)
+}

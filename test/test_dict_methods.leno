@@ -1,0 +1,42 @@
+// 字典方法测试
+
+main()
+{
+    // 测试字典创建和基本操作
+    var d = {name: "leno", version: 1, active: true}
+    assert_eq(d["name"], "leno")
+    assert_eq(d["version"], 1)
+    assert_eq(d["active"], true)
+
+    // 测试点访问
+    assert_eq(d.name, "leno")
+    assert_eq(d.version, 1)
+
+    // 测试添加新键
+    d["author"] = "developer"
+    assert_eq(d["author"], "developer")
+
+    // 测试修改值
+    d["version"] = 2
+    assert_eq(d["version"], 2)
+
+    // 测试长度
+    assert_eq(d.len(), 4)
+
+    // 测试嵌套字典
+    var nested = {
+        user: {
+            name: "张三",
+            age: 25
+        },
+        settings: {
+            theme: "dark",
+            lang: "zh"
+        }
+    }
+    assert_eq(nested["user"]["name"], "张三")
+    assert_eq(nested["settings"]["theme"], "dark")
+    assert_eq(nested.user.name, "张三")
+
+    print("test_dict_methods passed")
+}

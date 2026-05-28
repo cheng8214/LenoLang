@@ -1,0 +1,16 @@
+// null 检查示例
+struct Container {
+    Dict data = null
+    Array items = null
+}
+
+main() {
+    var c = Container()
+    
+    // 获取 null 本身（不应警告）
+    var d = c.data
+    print(d)
+    
+    var arr = c.items
+    print(arr)
+}

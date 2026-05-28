@@ -1,0 +1,224 @@
+import times as ti
+import rands
+import threads
+func test()
+{
+// Leno语言实现的冒泡排序算法
+func bubble_sort(var arr) {
+    var n = arr.len();
+    for n - 1 to var i {
+        for n - i - 1 to var j {
+            if arr[j] > arr[j + 1] {
+                var temp = arr[j];
+                arr[j] = arr[j+1];
+                arr[j+1] = temp;
+            }
+        }
+    }
+    return arr;
+}
+// 原始快速排序算法（有性能问题）
+func quick_sort_original(var arr) {
+    if arr.len() <= 1 {
+        return arr
+    }
+    var pivot = arr[0]
+    var left = []
+    var right = []
+    for  1:arr.len()-1 to var i {
+        if arr[i] <= pivot {
+            left.add(arr[i])
+        } else {
+            right.add(arr[i])
+        }
+    }
+    var sorted_left = quick_sort_original(left)
+    var sorted_right = quick_sort_original(right)
+    var result = sorted_left;
+    result.add(pivot);
+    for sorted_right.len() to var i {
+        result.add(sorted_right[i]);
+    }
+    return result;
+}
+// 优化的原地快速排序算法
+func quick_sort(var arr) {
+    return quick_sort_recursive(arr, 0, arr.len() - 1)
+}
+func quick_sort_recursive(var arr,var  left,var  right) {
+    if left >= right {return arr}
+    var pivot_index = partition(arr, left, right)
+    quick_sort_recursive(arr, left, pivot_index - 1)
+    quick_sort_recursive(arr, pivot_index + 1, right)
+    return arr;
+}
+func partition(var arr, var left, var right) {
+    // 选择中间元素作为基准值，避免最坏情况
+    var mid = (left + right) / 2;
+    var pivot = arr[mid];
+    // 将基准值移到最右边
+    var temp = arr[mid];
+    arr[mid] = arr[right];
+    arr[right] = temp;
+    var i = left;
+    for left:right-1 to var j {
+        if arr[j] <= pivot {
+            // 交换arr[i]和arr[j]
+            var temp = arr[i]
+            arr[i] = arr[j]
+            arr[j] = temp
+            i++;
+        }
+    }
+    // 将基准值放回正确位置
+    var temp1 = arr[i]
+    arr[i] = arr[right]
+    arr[right] = temp1
+    return i
+}
+// 进一步优化的快速排序（小数组用插入排序）
+func quick_sort_optimized(var arr) {
+    return quick_sort_opt(arr, 0, arr.len() - 1)
+}
+func quick_sort_opt(var arr, var left,var right) {
+    // 小数组使用插入排序
+    if right - left < 20 {
+        return insertion_sort_range(arr, left, right);
+    }
+    if left < right {
+        var pivot_index = partition_opt(arr, left, right);
+        quick_sort_opt(arr, left, pivot_index - 1);
+        quick_sort_opt(arr, pivot_index + 1, right);
+    }
+    return arr;
+}
+func partition_opt(var arr,var  left, var right) {
+    // 三数取中法选择基准值
+    var mid = (left + right) / 2;
+    // 确保arr[left] <= arr[mid] <= arr[right]
+    if arr[left] > arr[mid] {
+        var temp = arr[left];
+        arr[left] = arr[mid];
+        arr[mid] = temp;
+    }
+    if arr[mid] > arr[right] {
+        var temp = arr[mid];
+        arr[mid] = arr[right];
+        arr[right] = temp;
+    }
+    if arr[left] > arr[mid] {
+        var temp = arr[left];
+        arr[left] = arr[mid];
+        arr[mid] = temp;
+    }
+    var pivot = arr[mid];
+    // 将基准值移到right-1位置
+    var temp = arr[mid];
+    arr[mid] = arr[right - 1];
+    arr[right - 1] = temp;
+    var i = left;
+    var j = right - 1;
+    while true {
+        i = i + 1;
+        while arr[i] < pivot {i = i + 1}
+        j = j - 1;
+        while arr[j] > pivot {j = j - 1}
+        if i < j {
+            // 交换arr[i]和arr[j]
+            var temp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = temp;
+        } else {
+            break
+        }
+    }
+    // 将基准值放回正确位置
+    var temp1 = arr[i];
+    arr[i] = arr[right - 1];
+    arr[right - 1] = temp1
+    return i
+}
+func insertion_sort_range(var arr,var  left, var right) {
+	 if left >= right {
+	        return arr
+	    }
+    for  left + 1:right to var i {
+        var key = arr[i];
+        var j = i - 1;
+        while j >= left and arr[j] > key {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+    }
+    return arr;
+}
+// 辅助函数：验证数组是否已排序
+func verify_sorted(var arr) {
+    for arr.len() - 1 to var i {
+        if arr[i] > arr[i + 1]{
+            return false;
+        }
+    }
+    return true;
+}
+
+
+    print("========== 排序算法性能对比 ==========\n");
+    // 测试不同规模的数据
+    var test_cases = [
+        {"size": 500, "name": "小规模"},
+        {"size": 2000, "name": "中规模"},
+        {"size": 10000, "name": "大规模"}
+    ];
+    for test_cases to  var test_case {
+        var size = test_case["size"];
+        var name = test_case["name"];
+        print($"\n=== {name}测试 (数组大小: {size}) ===");
+        // 生成测试数据
+        var original = rands.int_array(0, size);
+        // 测试1：冒泡排序（只测试小规模）
+        if size <= 2000 {
+            var arr1 = original.copy();
+           
+          //  print(arr1[0:20])
+            var s1 = ti.ms();
+            var result1 = bubble_sort(arr1);
+          //  print(result1[0:20])
+            var s2 = ti.ms();
+            print($"冒泡排序: {s2 - s1}毫秒 (正确性: {verify_sorted(result1)})");
+        }
+        // 测试2：原始快速排序（只测试小规模）
+        if size <= 2000{
+            var arr2 = original.copy();
+            var s3 = ti.ms();
+            var result2 = quick_sort_original(arr2);
+            var s4 = ti.ms();
+            print($"原始快速排序: {s4 - s3}毫秒 (正确性: {verify_sorted(result2)})");
+        }
+        // 测试3：优化的原地快速排序
+        var arr3 = original.copy()
+        var s5 = ti.ms();
+        var result3 = quick_sort(arr3);
+        var s6 = ti.ms();
+        print($"原地快速排序: {s6 - s5}毫秒 (正确性: {verify_sorted(result3)})");
+        // 测试4：进一步优化的快速排序
+        var arr4 = original.copy()
+        var s7 = ti.ms();
+        var result4 = quick_sort_optimized(arr4);
+        var s8 = ti.ms();
+        print($"优化快速排序: {s8 - s7}毫秒 (正确性: {verify_sorted(result4)})");
+        // 显示性能提升比例
+        if size > 2000 {
+            print("注：冒泡排序和原始快速排序在大规模数据上性能过差，已跳过测试");
+        }
+    }
+    print("\n========== 测试完成 ==========");
+   
+}
+
+main()
+{
+	test()
+	threads.start(test)
+}

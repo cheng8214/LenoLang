@@ -1,0 +1,138 @@
+// 正则表达式模块测试
+import regexs
+
+main() {
+    print("=== 测试 regexs 模块 ===")
+
+    // ========== 测试 match ==========
+    print("\n--- 测试 match ---")
+
+    // 基本匹配
+    assert_eq(regexs.match("hello", "[a-z]+"), true)
+    assert_eq(regexs.match("hello123", "[a-z]+[0-9]+"), true)
+    assert_eq(regexs.match("hello", "^hello$"), true)
+
+    // 不匹配的情况
+    assert_eq(regexs.match("Hello", "^[a-z]+$"), false)
+    assert_eq(regexs.match("123", "^[a-z]+$"), false)
+
+    // 使用点号匹配
+    assert_eq(regexs.match("abc", "a.c"), true)
+
+    print("match 测试通过!")
+
+    // ========== 测试 find ==========
+    print("\n--- 测试 find ---")
+
+    // 基本查找
+    assert_eq(regexs.find("Hello, World!", "World"), 8)
+    assert_eq(regexs.find("abc123def", "[0-9]+"), 4)
+
+    // 未找到
+    assert_eq(regexs.find("Hello", "xyz"), null)
+
+    // 查找开头
+    assert_eq(regexs.find("Hello", "^Hello"), 1)
+
+    print("find 测试通过!")
+
+    // ========== 测试 find_all ==========
+    print("\n--- 测试 find_all ---")
+
+    var matches = regexs.find_all("abc123def456", "[0-9]+")
+    assert_eq(matches.len(), 2)
+    assert_eq(matches[0]["text"], "123")
+    assert_eq(matches[0]["start"], 4)
+    assert_eq(matches[0]["end"], 7)
+    assert_eq(matches[1]["text"], "456")
+
+    // 无匹配
+    var no_matches = regexs.find_all("hello", "[0-9]+")
+    assert_eq(no_matches.len(), 0)
+
+    print("find_all 测试通过!")
+
+    // ========== 测试 extract ==========
+    print("\n--- 测试 extract ---")
+
+    assert_eq(regexs.extract("Email: user@example.com", "[a-z]+@[a-z.]+"), "user@example.com")
+    assert_eq(regexs.extract("abc123def", "[0-9]+"), "123")
+    assert_eq(regexs.extract("hello", "[0-9]+"), null)
+
+    print("extract 测试通过!")
+
+    // ========== 测试 extract_all ==========
+    print("\n--- 测试 extract_all ---")
+
+    var all_nums = regexs.extract_all("abc123def456ghi789", "[0-9]+")
+    assert_eq(all_nums.len(), 3)
+    assert_eq(all_nums[0], "123")
+    assert_eq(all_nums[1], "456")
+    assert_eq(all_nums[2], "789")
+
+    // 无匹配
+    var empty = regexs.extract_all("hello", "[0-9]+")
+    assert_eq(empty.len(), 0)
+
+    print("extract_all 测试通过!")
+
+    // ========== 测试 replace ==========
+    print("\n--- 测试 replace ---")
+
+    assert_eq(regexs.replace("hello world", "world", "Leno"), "hello Leno")
+    assert_eq(regexs.replace("abc123def", "[0-9]+", "XXX"), "abcXXXdef")
+
+    // 未找到时返回原字符串
+    assert_eq(regexs.replace("hello", "xyz", "abc"), "hello")
+
+    print("replace 测试通过!")
+
+    // ========== 测试 replace_all ==========
+    print("\n--- 测试 replace_all ---")
+
+    assert_eq(regexs.replace_all("a1b2c3", "[0-9]", "X"), "aXbXcX")
+    assert_eq(regexs.replace_all("hello world hello", "hello", "hi"), "hi world hi")
+
+    print("replace_all 测试通过!")
+
+    // ========== 测试 split ==========
+    print("\n--- 测试 split ---")
+
+    // 基本分割
+    var parts1 = regexs.split("a,b,c", ",")
+    assert_eq(parts1.len(), 3)
+    assert_eq(parts1[0], "a")
+    assert_eq(parts1[1], "b")
+    assert_eq(parts1[2], "c")
+
+    print("split 测试通过!")
+
+    // ========== 测试 escape ==========
+    print("\n--- 测试 escape ---")
+
+    assert_eq(regexs.escape("hello.world"), "hello\\.world")
+    assert_eq(regexs.escape("a+b*c?"), "a\\+b\\*c\\?")
+    assert_eq(regexs.escape("[test]"), "\\[test\\]")
+
+    // 验证转义后的字符串可以正确匹配
+    var escaped = regexs.escape("hello.world")
+    assert_eq(regexs.match("hello.world", escaped), true)
+    assert_eq(regexs.match("helloXworld", escaped), false)
+
+    print("escape 测试通过!")
+
+    // ========== 综合测试 ==========
+    print("\n--- 综合测试 ---")
+
+    // 统计单词
+    func count_words(string text):int {
+        var words = regexs.extract_all(text, "[a-zA-Z]+")
+        return words.len()
+    }
+
+    assert_eq(count_words("Hello, World! This is Leno."), 5)
+
+    print("综合测试通过!")
+
+    print("\n=== 所有测试通过! ===")
+}

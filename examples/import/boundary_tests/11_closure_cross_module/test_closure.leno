@@ -1,0 +1,33 @@
+// 闭包跨模块测试主文件
+// 测试：模块返回闭包，调用方使用闭包
+
+import "closure_factory.leno" as factory
+
+main() {
+    print("=== 闭包跨模块测试 ===")
+
+    // 测试1: 计数器闭包
+    var counter = factory.make_counter(10)
+    print("Counter1: " + counter())
+    print("Counter2: " + counter())
+    print("Counter3: " + counter())
+
+    // 测试2: 加法器闭包
+    var add5 = factory.make_adder(5)
+    print("Add5 to 10: " + add5(10))
+    print("Add5 to 20: " + add5(20))
+
+    // 测试3: 乘法器闭包
+    var double = factory.make_multiplier(2)
+    print("Double 5: " + double(5))
+    print("Double 10: " + double(10))
+
+    // 测试4: 银行账户（多个闭包共享 upvalue）
+    var account = factory.make_bank_account(100)
+    print("Initial balance: " + account["get_balance"]())
+    print("Deposit 50: " + account["deposit"](50))
+    print("Withdraw 30: " + account["withdraw"](30))
+    print("Final balance: " + account["get_balance"]())
+
+    print("=== 测试完成 ===")
+}

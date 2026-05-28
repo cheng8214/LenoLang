@@ -1,0 +1,888 @@
+﻿// Windows 注册表操作模块（Unicode 版本）- 使用 Ptr 类型 + struct 结构体
+// 功能：
+// 1. 基本键操作（打开、创建、关闭、删除）
+// 2. 值操作（读写字符串、DWORD、MULTI_SZ）
+// 3. 枚举子键和值（RegEnumKeyEx, RegEnumValue）
+// 4. 统一的错误码处理
+// 版本: 4.0
+
+import ffi
+
+// ========== 枚举定义 ==========
+
+// 访问权限枚举
+export enum KeyAccess {
+    QUERY_VALUE        = 0x0001
+    SET_VALUE          = 0x0002
+    CREATE_SUB_KEY     = 0x0004
+    ENUMERATE_SUB_KEYS = 0x0008
+    READ               = 0x20019
+    WRITE              = 0x20006
+    ALL_ACCESS         = 0xF003F
+}
+
+// 值类型枚举
+export enum ValueType {
+    NONE        = 0
+    SZ          = 1
+    EXPAND_SZ   = 2
+    BINARY      = 3
+    DWORD       = 4
+    MULTI_SZ    = 7
+    QWORD       = 11
+}
+
+// HKEY 根键枚举
+export enum HKey {
+    CLASSES_ROOT   = 0x80000000
+    CURRENT_USER   = 0x80000001
+    LOCAL_MACHINE  = 0x80000002
+    USERS          = 0x80000003
+    CURRENT_CONFIG = 0x80000005
+}
+
+// Windows 错误码枚举
+export enum WinError {
+    SUCCESS             = 0
+    FILE_NOT_FOUND      = 2
+    PATH_NOT_FOUND      = 3
+    ACCESS_DENIED       = 5
+    INVALID_HANDLE      = 6
+    OUTOFMEMORY         = 14
+    MORE_DATA           = 234
+    NO_MORE_ITEMS       = 259
+    KEY_DELETED         = 1018
+}
+
+// ========== Struct 定义 ==========
+
+// 注册表值信息结构体
+export struct RegValueInfo {
+    string name
+    int type
+    string typeName
+}
+
+// 打开键结果结构体
+export struct OpenKeyResult {
+    Ptr handle
+    int errorCode
+}
+
+// 创建键结果结构体
+export struct CreateKeyResult {
+    Ptr handle
+    int errorCode
+    bool created
+}
+
+// 读取字符串结果结构体
+export struct ReadStringResult {
+    string value
+    int errorCode
+}
+
+// 读取展开字符串结果结构体
+export struct ReadExpandStringResult {
+    string value
+    int errorCode
+}
+
+// 读取二进制结果结构体
+export struct ReadBinaryResult {
+    Array data
+    int errorCode
+}
+
+// 读取多字符串结果结构体
+export struct ReadMultiStringResult {
+    Array strings
+    int errorCode
+}
+
+// 读取 DWORD 结果结构体
+export struct ReadDwordResult {
+    int value
+    int errorCode
+}
+
+// 读取 QWORD 结果结构体
+export struct ReadQwordResult {
+    int value
+    int errorCode
+}
+
+// 枚举子键结果结构体
+export struct EnumSubKeysResult {
+    Array subKeys
+    int errorCode
+}
+
+// 枚举值结果结构体
+export struct EnumValuesResult {
+    Array values
+    int errorCode
+}
+
+// ========== 内部辅助函数 ==========
+
+func toWstr(string str): Ptr {
+    return ffi.utf8_to_utf16(str)
+}
+
+// 预计算的 HKEY 根键指针
+export var HKEY_CLASSES_ROOT   = ffi.ptr_from_int(0x80000000)
+export var HKEY_CURRENT_USER   = ffi.ptr_from_int(0x80000001)
+export var HKEY_LOCAL_MACHINE  = ffi.ptr_from_int(0x80000002)
+export var HKEY_USERS          = ffi.ptr_from_int(0x80000003)
+export var HKEY_CURRENT_CONFIG = ffi.ptr_from_int(0x80000005)
+
+// 内部辅助函数：将 HKey enum 值转换为指针
+func getHKeyPtr(var hKey):Ptr {
+    if hKey is Ptr {
+        return hKey
+    }
+    switch hKey {
+        case HKey.CLASSES_ROOT   { return HKEY_CLASSES_ROOT }
+        case HKey.CURRENT_USER   { return HKEY_CURRENT_USER }
+        case HKey.LOCAL_MACHINE  { return HKEY_LOCAL_MACHINE }
+        case HKey.USERS          { return HKEY_USERS }
+        case HKey.CURRENT_CONFIG { return HKEY_CURRENT_CONFIG }
+        default {
+            return ffi.ptr_from_int(hKey)
+        }
+    }
+}
+
+export func errorToString(var errorCode):string {
+    switch errorCode {
+        case WinError.SUCCESS { return "SUCCESS" }
+        case WinError.FILE_NOT_FOUND { return "FILE_NOT_FOUND" }
+        case WinError.PATH_NOT_FOUND { return "PATH_NOT_FOUND" }
+        case WinError.ACCESS_DENIED { return "ACCESS_DENIED" }
+        case WinError.INVALID_HANDLE { return "INVALID_HANDLE" }
+        case WinError.OUTOFMEMORY { return "OUTOFMEMORY" }
+        case WinError.MORE_DATA { return "MORE_DATA" }
+        case WinError.NO_MORE_ITEMS { return "NO_MORE_ITEMS" }
+        case WinError.KEY_DELETED { return "KEY_DELETED" }
+        default { return "UNKNOWN_ERROR(" + errorCode + ")" }
+    }
+}
+
+// ========== 键操作 ==========
+
+export func openKey(var hKey, string subKey, var samDesired) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr hResult = ffi.malloc(8)
+    try {
+        Ptr wSubKey = toWstr(subKey)
+        try {
+            Ptr hKeyPtr = _ptr(getHKeyPtr(hKey))
+            var result = ffi.call(advapi, "RegOpenKeyExW",
+                hKeyPtr, wSubKey, 0, samDesired, hResult)
+            if result == WinError.SUCCESS {
+                return OpenKeyResult(handle = ffi.read_ptr(hResult, 0), errorCode = 0)
+            }
+            return OpenKeyResult(handle = null, errorCode = _int(result))
+        } finally {
+            ffi.free(wSubKey)
+        }
+    } finally {
+        ffi.free(hResult)
+        ffi.free(advapi)
+    }
+}
+
+export func createKey(var hKey, string subKey, var samDesired):CreateKeyResult {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr hResult = ffi.malloc(8)
+    Ptr disp = ffi.malloc(4)
+    try {
+        Ptr wSubKey = toWstr(subKey)
+        try {
+            Ptr hKeyPtr = _ptr(getHKeyPtr(hKey))
+            var result = ffi.call(advapi, "RegCreateKeyExW",
+                hKeyPtr, wSubKey, 0, ffi.nullptr(), 0,
+                samDesired, ffi.nullptr(), hResult, disp)
+            if result == WinError.SUCCESS {
+                return CreateKeyResult(
+                    handle = ffi.read_ptr(hResult, 0),
+                    errorCode = 0,
+                    created = ffi.read_int(disp, 0) == 1
+                )
+            }
+            return CreateKeyResult(handle = null, errorCode = _int(result), created = false)
+        } finally {
+            ffi.free(wSubKey)
+        }
+    } finally {
+        ffi.free(hResult)
+        ffi.free(disp)
+        ffi.free(advapi)
+    }
+}
+
+export func closeKey(var hKey) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    try {
+        return ffi.call(advapi, "RegCloseKey", hKey)
+    } finally {
+        ffi.free(advapi)
+    }
+}
+
+export func deleteKey(var hKey, string subKey) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr wSubKey = toWstr(subKey)
+    try {
+        Ptr hKeyPtr = _ptr(getHKeyPtr(hKey))
+        return ffi.call(advapi, "RegDeleteKeyW", hKeyPtr, wSubKey)
+    } finally {
+        ffi.free(wSubKey)
+        ffi.free(advapi)
+    }
+}
+
+// ========== 枚举操作 ==========
+
+export func enumSubKeys(var hKey) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    var subKeys = []
+    int index = 0
+    
+    try {
+        while true {
+            Ptr nameBuf = ffi.malloc(512)
+            Ptr nameLen = ffi.malloc(4)
+            ffi.write_int(nameLen, 0, 256)
+            
+            var result = ffi.call(advapi, "RegEnumKeyExW",
+                hKey, index, nameBuf, nameLen, ffi.nullptr(),
+                ffi.nullptr(), ffi.nullptr(), ffi.nullptr())
+            
+            if result == WinError.NO_MORE_ITEMS {
+                ffi.free(nameBuf)
+                ffi.free(nameLen)
+                break
+            }
+            
+            if result == WinError.SUCCESS {
+                var keyName = ffi.utf16_to_utf8(nameBuf)
+                subKeys.add(keyName)
+                index = index + 1
+            }
+            
+            ffi.free(nameBuf)
+            ffi.free(nameLen)
+            
+            if result != WinError.SUCCESS and result != WinError.NO_MORE_ITEMS {
+                return EnumSubKeysResult(subKeys = subKeys, errorCode =_int(result))
+            }
+        }
+        return EnumSubKeysResult(subKeys = subKeys, errorCode = 0)
+    } finally {
+        ffi.free(advapi)
+    }
+}
+
+export func enumValues(var hKey) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    var values = []
+    int index = 0
+    
+    try {
+        while true {
+            Ptr nameBuf = ffi.malloc(512)
+            Ptr nameLen = ffi.malloc(4)
+            ffi.write_int(nameLen, 0, 256)
+            
+            Ptr typeBuf = ffi.malloc(4)
+            Ptr dataBuf = ffi.malloc(2048)
+            Ptr dataLen = ffi.malloc(4)
+            ffi.write_int(dataLen, 0, 2048)
+            
+            var result = ffi.call(advapi, "RegEnumValueW",
+                hKey, index, nameBuf, nameLen, ffi.nullptr(),
+                typeBuf, dataBuf, dataLen)
+            
+            if result == WinError.NO_MORE_ITEMS {
+                ffi.free(nameBuf)
+                ffi.free(nameLen)
+                ffi.free(typeBuf)
+                ffi.free(dataBuf)
+                ffi.free(dataLen)
+                break
+            }
+            
+            if result == WinError.SUCCESS {
+                var valName = ffi.utf16_to_utf8(nameBuf)
+                int valType = ffi.read_int(typeBuf, 0)
+                
+                var typeName = "UNKNOWN"
+                switch valType {
+                    case ValueType.SZ { typeName = "SZ" }
+                    case ValueType.EXPAND_SZ { typeName = "EXPAND_SZ" }
+                    case ValueType.BINARY { typeName = "BINARY" }
+                    case ValueType.DWORD { typeName = "DWORD" }
+                    case ValueType.MULTI_SZ { typeName = "MULTI_SZ" }
+                    case ValueType.QWORD { typeName = "QWORD" }
+                }
+                
+                var valueInfo = RegValueInfo(
+                    name = valName,
+                    type = valType,
+                    typeName = typeName
+                )
+                values.add(valueInfo)
+                index = index + 1
+            }
+            
+            ffi.free(nameBuf)
+            ffi.free(nameLen)
+            ffi.free(typeBuf)
+            ffi.free(dataBuf)
+            ffi.free(dataLen)
+            
+            if result != WinError.SUCCESS and result != WinError.NO_MORE_ITEMS {
+                return EnumValuesResult(values = values, errorCode =_int(result))
+            }
+        }
+        return EnumValuesResult(values = values, errorCode = 0)
+    } finally {
+        ffi.free(advapi)
+    }
+}
+
+// ========== 值操作 ==========
+
+export func readString(var hKey, string valueName) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr dataType = ffi.malloc(4)
+    Ptr dataSize = ffi.malloc(4)
+    
+    try {
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            ffi.write_int(dataSize, 0, 0)
+            var result = ffi.call(advapi, "RegQueryValueExW",
+                hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
+            
+            if result != WinError.SUCCESS {
+                return ReadStringResult(value = null, errorCode =_int(result))
+            }
+            
+            int actualType = ffi.read_int(dataType, 0)
+            if actualType != ValueType.SZ {
+                return ReadStringResult(value = null, errorCode =_int(WinError.INVALID_HANDLE))
+            }
+            
+            int requiredSize = ffi.read_int(dataSize, 0)
+            Ptr dataBuffer = ffi.malloc(requiredSize)
+            try {
+                result = ffi.call(advapi, "RegQueryValueExW",
+                    hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
+                
+                if result == WinError.SUCCESS {
+                    return ReadStringResult(value = ffi.utf16_to_utf8(dataBuffer), errorCode = 0)
+                }
+                return ReadStringResult(value = null, errorCode =_int(result))
+            } finally {
+                ffi.free(dataBuffer)
+            }
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(dataType)
+        ffi.free(dataSize)
+        ffi.free(advapi)
+    }
+}
+
+export func readExpandString(var hKey, string valueName) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr dataType = ffi.malloc(4)
+    Ptr dataSize = ffi.malloc(4)
+    
+    try {
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            ffi.write_int(dataSize, 0, 0)
+            var result = ffi.call(advapi, "RegQueryValueExW",
+                hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
+            
+            if result != WinError.SUCCESS {
+                return ReadExpandStringResult(value = null, errorCode =_int(result))
+            }
+            
+            int actualType = ffi.read_int(dataType, 0)
+            if actualType != ValueType.EXPAND_SZ {
+                return ReadExpandStringResult(value = null, errorCode =_int(WinError.INVALID_HANDLE))
+            }
+            
+            int requiredSize = ffi.read_int(dataSize, 0)
+            Ptr dataBuffer = ffi.malloc(requiredSize)
+            try {
+                result = ffi.call(advapi, "RegQueryValueExW",
+                    hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
+                
+                if result == WinError.SUCCESS {
+                    // 展开环境变量（从 kernel32.dll 调用）
+                    Ptr kernel32 = ffi.load("kernel32.dll")
+                    try {
+                        Ptr expandedBuf = ffi.malloc(32767)  // Windows 最大路径长度
+                        try {
+                            var expandedLen = ffi.call(kernel32, "ExpandEnvironmentStringsW",
+                                dataBuffer, expandedBuf, 32767)
+                            if expandedLen > 0 {
+                                return ReadExpandStringResult(value = ffi.utf16_to_utf8(expandedBuf), errorCode = 0)
+                            }
+                            // 展开失败，返回原始值
+                            return ReadExpandStringResult(value = ffi.utf16_to_utf8(dataBuffer), errorCode = 0)
+                        } finally {
+                            ffi.free(expandedBuf)
+                        }
+                    } finally {
+                        ffi.free(kernel32)
+                    }
+                }
+                return ReadExpandStringResult(value = null, errorCode =_int(result))
+            } finally {
+                ffi.free(dataBuffer)
+            }
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(dataType)
+        ffi.free(dataSize)
+        ffi.free(advapi)
+    }
+}
+
+export func readDword(var hKey, string valueName) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr dataType = ffi.malloc(4)
+    Ptr dataSize = ffi.malloc(4)
+    Ptr dataBuffer = ffi.malloc(4)
+    
+    try {
+        ffi.write_int(dataSize, 0, 4)
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            var result = ffi.call(advapi, "RegQueryValueExW",
+                hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
+            
+            if result != WinError.SUCCESS {
+                return ReadDwordResult(value = 0, errorCode =_int(result))
+            }
+            
+            if ffi.read_int(dataType, 0) != ValueType.DWORD {
+                return ReadDwordResult(value = 0, errorCode =_int(WinError.INVALID_HANDLE))
+            }
+            
+            return ReadDwordResult(value = ffi.read_int(dataBuffer, 0), errorCode = 0)
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(dataType)
+        ffi.free(dataSize)
+        ffi.free(dataBuffer)
+        ffi.free(advapi)
+    }
+}
+
+export func readQword(var hKey, string valueName) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr dataType = ffi.malloc(4)
+    Ptr dataSize = ffi.malloc(4)
+    Ptr dataBuffer = ffi.malloc(8)
+    
+    try {
+        ffi.write_int(dataSize, 0, 8)
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            var result = ffi.call(advapi, "RegQueryValueExW",
+                hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
+            
+            if result != WinError.SUCCESS {
+                return ReadQwordResult(value = 0, errorCode =_int(result))
+            }
+            
+            if ffi.read_int(dataType, 0) != ValueType.QWORD {
+                return ReadQwordResult(value = 0, errorCode =_int(WinError.INVALID_HANDLE))
+            }
+            
+            // QWORD 是 64 位，但 Leno int 目前也是 64 位，可以直接读取
+            return ReadQwordResult(value = ffi.read_int64(dataBuffer, 0), errorCode = 0)
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(dataType)
+        ffi.free(dataSize)
+        ffi.free(dataBuffer)
+        ffi.free(advapi)
+    }
+}
+
+export func writeString(var hKey, string valueName, string value) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+    Ptr wValue = toWstr(value)
+    
+    try {
+        var byteLen = ffi.sizeof(wValue)
+        var result = ffi.call(advapi, "RegSetValueExW",
+            hKey, wValueName, 0, ValueType.SZ, wValue, byteLen)
+        return result
+    } finally {
+        if wValueName != ffi.nullptr() {
+            ffi.free(wValueName)
+        }
+        ffi.free(wValue)
+        ffi.free(advapi)
+    }
+}
+
+export func writeExpandString(var hKey, string valueName, string value) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+    Ptr wValue = toWstr(value)
+    
+    try {
+        var byteLen = ffi.sizeof(wValue)
+        var result = ffi.call(advapi, "RegSetValueExW",
+            hKey, wValueName, 0, ValueType.EXPAND_SZ, wValue, byteLen)
+        return result
+    } finally {
+        if wValueName != ffi.nullptr() {
+            ffi.free(wValueName)
+        }
+        ffi.free(wValue)
+        ffi.free(advapi)
+    }
+}
+
+export func writeDword(var hKey, string valueName, int value) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr buffer = ffi.malloc(4)
+    try {
+        ffi.write_int(buffer, 0, value)
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            return ffi.call(advapi, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.DWORD, buffer, 4)
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(buffer)
+        ffi.free(advapi)
+    }
+}
+
+export func writeQword(var hKey, string valueName, int value) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr buffer = ffi.malloc(8)
+    try {
+        ffi.write_int64(buffer, 0, value)
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            return ffi.call(advapi, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.QWORD, buffer, 8)
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(buffer)
+        ffi.free(advapi)
+    }
+}
+
+export func readBinary(var hKey, string valueName) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr dataType = ffi.malloc(4)
+    Ptr dataSize = ffi.malloc(4)
+    
+    try {
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            ffi.write_int(dataSize, 0, 0)
+            var result = ffi.call(advapi, "RegQueryValueExW",
+                hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
+            
+            if result != WinError.SUCCESS {
+                return ReadBinaryResult(data = null, errorCode =_int(result))
+            }
+            
+            int actualType = ffi.read_int(dataType, 0)
+            if actualType != ValueType.BINARY {
+                return ReadBinaryResult(data = null, errorCode =_int(WinError.INVALID_HANDLE))
+            }
+            
+            int requiredSize = ffi.read_int(dataSize, 0)
+            Ptr dataBuffer = ffi.malloc(requiredSize)
+            try {
+                result = ffi.call(advapi, "RegQueryValueExW",
+                    hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
+                
+                if result == WinError.SUCCESS {
+                    // 将二进制数据转换为字节数组
+                    var byteArray = []
+                    for 0 : requiredSize - 1 to i {
+                        byteArray.add(ffi.read_byte(dataBuffer, i))
+                    }
+                    return ReadBinaryResult(data = byteArray, errorCode = 0)
+                }
+                return ReadBinaryResult(data = null, errorCode =_int(result))
+            } finally {
+                ffi.free(dataBuffer)
+            }
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(dataType)
+        ffi.free(dataSize)
+        ffi.free(advapi)
+    }
+}
+
+export func writeBinary(var hKey, string valueName, Array data) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    int dataLen = data.len()
+    Ptr buffer = ffi.malloc(dataLen)
+    try {
+        // 将字节数组写入缓冲区
+        for 0 : dataLen - 1 to i {
+            ffi.write_byte(buffer, i, _int(data[i]))
+        }
+        
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            return ffi.call(advapi, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.BINARY, buffer, dataLen)
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(buffer)
+        ffi.free(advapi)
+    }
+}
+
+export func readMultiString(var hKey, string valueName) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr dataType = ffi.malloc(4)
+    Ptr dataSize = ffi.malloc(4)
+    
+    try {
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            ffi.write_int(dataSize, 0, 0)
+            var result = ffi.call(advapi, "RegQueryValueExW",
+                hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
+            
+            if result != WinError.SUCCESS {
+                return ReadMultiStringResult(strings = null, errorCode =_int(result))
+            }
+            
+            int actualType = ffi.read_int(dataType, 0)
+            if actualType != ValueType.MULTI_SZ {
+                return ReadMultiStringResult(strings = null, errorCode =_int(WinError.INVALID_HANDLE))
+            }
+            
+            int requiredSize = ffi.read_int(dataSize, 0)
+            Ptr dataBuffer = ffi.malloc(requiredSize)
+            try {
+                result = ffi.call(advapi, "RegQueryValueExW",
+                    hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
+                
+                if result == WinError.SUCCESS {
+                    // 解析多字符串（以双 null 结尾的字符串列表）
+                    var resultStrings = []
+                    int offset = 0
+                    while offset < requiredSize - 2 {
+                        // 边界检查：确保不会越界
+                        if offset >= requiredSize {
+                            break
+                        }
+                        // 读取当前偏移处的字符串
+                        string currentStr = ffi.utf16_to_utf8(ffi.offset(dataBuffer, offset))
+                        if currentStr == "" {
+                            break
+                        }
+                        resultStrings.add(currentStr)
+                        // 移动到下一个字符串（跳过当前字符串 + null）
+                        int nextOffset = offset + (currentStr.len() + 1) * 2  // UTF-16，每个字符2字节
+                        // 防止格式不规范导致无限循环
+                        if nextOffset <= offset {
+                            break
+                        }
+                        offset = nextOffset
+                    }
+                    return ReadMultiStringResult(strings = resultStrings, errorCode = 0)
+                }
+                return ReadMultiStringResult(strings = null, errorCode =_int(result))
+            } finally {
+                ffi.free(dataBuffer)
+            }
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(dataType)
+        ffi.free(dataSize)
+        ffi.free(advapi)
+    }
+}
+
+export func writeMultiString(var hKey, string valueName, Array multiStrings) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    
+    // 计算需要的总大小
+    int totalSize = 0
+    int strCount = multiStrings.len()
+    for 0 : strCount - 1 to i {
+        string s = _str(multiStrings[i])
+        totalSize = totalSize + (s.len() + 1) * 2  // 每个字符串 + null，UTF-16
+    }
+    totalSize = totalSize + 2  // 最后的双 null
+    
+    Ptr buffer = ffi.malloc(totalSize)
+    try {
+        // 清空缓冲区
+        for 0 : totalSize - 1 to i {
+            ffi.write_byte(buffer, i, 0)
+        }
+        
+        // 写入字符串（使用 ffi.memcpy 优化内存拷贝）
+        int offset = 0
+        for 0 : strCount - 1 to j {
+            string s = _str(multiStrings[j])
+            Ptr wstr = toWstr(s)
+            try {
+                int byteLen = ffi.sizeof(wstr)
+                // 使用 ffi.memcpy 进行高效的内存拷贝
+                ffi.memcpy(ffi.offset(buffer, offset), wstr, byteLen)
+                offset = offset + byteLen
+            } finally {
+                ffi.free(wstr)
+            }
+        }
+        
+        var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
+        try {
+            return ffi.call(advapi, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.MULTI_SZ, buffer, totalSize)
+        } finally {
+            if wValueName != ffi.nullptr() {
+                ffi.free(wValueName)
+            }
+        }
+    } finally {
+        ffi.free(buffer)
+        ffi.free(advapi)
+    }
+}
+
+export func deleteValue(var hKey, string valueName) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    Ptr wValueName = toWstr(valueName)
+    try {
+        return ffi.call(advapi, "RegDeleteValueW", hKey, wValueName)
+    } finally {
+        ffi.free(wValueName)
+        ffi.free(advapi)
+    }
+}
+
+export func setDefaultValue(var hKey, string value) {
+    return writeString(hKey, "", value)
+}
+
+export func getDefaultValue(var hKey) {
+    return readString(hKey, "")
+}
+
+export func flushKey(var hKey) {
+    Ptr advapi = ffi.load("advapi32.dll")
+    try {
+        return ffi.call(advapi, "RegFlushKey", hKey)
+    } finally {
+        ffi.free(advapi)
+    }
+}
+
+// ========== 高级操作 ==========
+
+export func keyExists(var hKey, string subKey) {
+    var result = openKey(hKey, subKey, KeyAccess.QUERY_VALUE)
+    var handle = result.handle
+    var errorCode = result.errorCode
+    
+    if handle != null {
+        closeKey(handle)
+        return true
+    }
+    return errorCode != WinError.FILE_NOT_FOUND and errorCode != WinError.PATH_NOT_FOUND
+}
+
+export func valueExists(var hKey, string valueName) {
+    var result = readString(hKey, valueName)
+    return result.errorCode == 0
+}
+
+// 递归删除键及其所有子键和值
+export func deleteKeyRecursive(var hKey, string subKey) {
+    // 打开要删除的键
+    var openResult = openKey(hKey, subKey, KeyAccess.ALL_ACCESS)
+    if openResult.errorCode != WinError.SUCCESS {
+        return openResult.errorCode
+    }
+    
+    var targetKey = openResult.handle
+    
+    try {
+        // 1. 删除所有值
+        var enumValuesResult = enumValues(targetKey)
+        if enumValuesResult.errorCode == WinError.SUCCESS {
+            for enumValuesResult.values to valueInfo {
+                deleteValue(targetKey, _str(valueInfo.name))
+            }
+        }
+        
+        // 2. 递归删除所有子键
+        var enumSubKeysResult = enumSubKeys(targetKey)
+        if enumSubKeysResult.errorCode == WinError.SUCCESS {
+            for enumSubKeysResult.subKeys to childKeyName {
+                deleteKeyRecursive(targetKey,_str(childKeyName))
+            }
+        }
+    } finally {
+        closeKey(targetKey)
+    }
+    
+    // 3. 删除空键
+    return deleteKey(hKey, subKey)
+}

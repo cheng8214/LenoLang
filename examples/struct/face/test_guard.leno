@@ -1,0 +1,50 @@
+// ============================================================================
+// 测试：is / not is 运算符的运行时类型检查
+// ============================================================================
+//
+// 本测试验证：
+//   1. Dog impl Speaker → "d is Speaker" 应返回 true
+//   2. Cat impl Speaker → "c is Speaker" 应返回 true
+//   3. Rock 未实现 Speaker → "r is Speaker" 应返回 false（不进入 if 分支）
+//   4. Rock 未实现 Speaker → "r not is Speaker" 应返回 true
+//
+// 预期输出：
+//   Dog is Speaker
+//   Cat is Speaker
+//   Rock not is Speaker
+
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+struct Cat impl Speaker {
+    func speak():string { return "meow" }
+}
+
+struct Rock {
+    int weight = 0
+}
+
+main() {
+    var d = Dog()
+    var c = Cat()
+    var r = Rock()
+
+    if d is Speaker {
+        print("Dog is Speaker")
+    }
+    if c is Speaker {
+        print("Cat is Speaker")
+    }
+    if r is Speaker {
+        print("Rock is Speaker")
+    }
+    if r not is Speaker {
+        print("Rock not is Speaker")
+    }
+}

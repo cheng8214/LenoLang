@@ -1,0 +1,73 @@
+// 导出边界测试主文件
+// 测试 export 的各种形式
+
+import "named_exports.leno" as named
+import "reexport_module.leno" as reexported
+import "export_circular_a.leno" as circ_a
+import "export_circular_b.leno" as circ_b
+
+main() {
+    print("=== 导出边界测试 ===")
+
+    // ========== 测试 1: 命名导出 ==========
+    print("\n1. 命名导出测试:")
+
+    // 测试导出变量
+    print("  public_var: " + named.public_var + " (期望: 42)")
+    print("  public_string: " + named.public_string + " (期望: hello)")
+
+    // 测试导出函数
+    print("  add(3, 4): " + named.add(3, 4) + " (期望: 7)")
+    print("  greet('World'): " + named.greet("World") + " (期望: Hello, World)")
+
+    // 测试导出常量
+    print("  PI: " + named.PI + " (期望: 3.14159)")
+    print("  MAX_SIZE: " + named.MAX_SIZE + " (期望: 100)")
+
+    // 测试导出复杂数据结构
+    print("  config.host: " + named.config["host"] + " (期望: localhost)")
+    print("  config.port: " + named.config["port"] + " (期望: 8080)")
+    print("  data_array[2]: " + named.data_array[2] + " (期望: 3)")
+
+    // 测试私有成员不可访问（应该编译错误，这里注释掉）
+    // print("  private_var: " + named.private_var)  // 应该报错
+
+    // 测试通过导出函数访问私有成员
+    print("  use_private(): " + named.use_private())
+    print("  use_private() again: " + named.use_private())
+    print("  get_private_counter(): " + named.get_private_counter() + " (期望: 2)")
+
+    // ========== 测试 2: 重导出 ==========
+    print("\n2. 重导出测试:")
+
+    print("  reexported_var: " + reexported.reexported_var + " (期望: 42)")
+    print("  reexported_PI: " + reexported.reexported_PI + " (期望: 3.14159)")
+    print("  wrapped_add(5, 6): " + reexported.wrapped_add(5, 6) + " (期望: 11)")
+    print("  reexported_greet('User'): " + reexported.reexported_greet("User"))
+
+    var enhanced = reexported.enhanced_config()
+    print("  enhanced_config()['enhanced']: " + enhanced["enhanced"] + " (期望: true)")
+    print("  enhanced_config()['version']: " + enhanced["version"] + " (期望: 2.0)")
+
+    print("  combined_use(): " + reexported.combined_use())
+    print("  reexported_array[3]: " + reexported.reexported_array[3] + " (期望: 4)")
+
+    // ========== 测试 3: 导出循环依赖 ==========
+    print("\n3. 导出循环依赖测试:")
+
+    print("  circ_a.name_a: " + circ_a.name_a + " (期望: Module A)")
+    print("  circ_b.name_b: " + circ_b.name_b + " (期望: Module B)")
+    print("  circ_a.value_a: " + circ_a.value_a + " (期望: 100)")
+    print("  circ_b.value_b: " + circ_b.value_b + " (期望: 200)")
+
+    print("  circ_a.get_from_b(): " + circ_a.get_from_b() + " (期望: 200)")
+    print("  circ_b.get_from_a(): " + circ_b.get_from_a() + " (期望: 100)")
+
+    print("  circ_a.combined(): " + circ_a.combined() + " (期望: 300)")
+    print("  circ_b.combined_b(): " + circ_b.combined_b() + " (期望: 300)")
+
+    // 测试函数调用（可能涉及循环依赖）
+    // print("  circ_a.func_a(): " + circ_a.func_a())  // 可能栈溢出，谨慎测试
+
+    print("\n=== 所有导出边界测试完成 ===")
+}

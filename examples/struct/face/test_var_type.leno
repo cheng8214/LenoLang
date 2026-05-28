@@ -1,0 +1,24 @@
+// ============================================================================
+// 测试：使用 face 类型声明变量
+// ============================================================================
+//
+// 本测试验证：
+//   1. 可以用 face 类型声明变量：Speaker s = Dog()
+//   2. 通过 face 类型变量调用方法，动态派发到实际 struct 的实现
+//   3. face 类型变量与 struct 实例的方法调用结果一致
+//
+// 预期输出：woof
+
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+main() {
+    Speaker s = Dog()
+    print(s.speak())
+}

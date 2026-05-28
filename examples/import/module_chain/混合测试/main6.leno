@@ -1,0 +1,8 @@
+import "test_b.leno" as b
+
+main()
+{
+    // 测试传入过多参数
+    var p1 = b.Point(10, 20, 30)
+    print("p1: x=" + p1.x + ", y=" + p1.y)
+}

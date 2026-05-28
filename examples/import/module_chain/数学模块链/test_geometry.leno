@@ -1,0 +1,18 @@
+// 测试 geometry 模块调用 math_utils
+
+import "geometry.leno" as geo
+
+main()
+{
+    print("=== 测试 geometry 调用 math_utils ===")
+    
+    var area = geo.circle_area(5)
+    print("circle_area(5) = ")
+    print(area)
+    
+    var rect = geo.rectangle_area(10, 20)
+    print("rectangle_area(10, 20) = ")
+    print(rect)
+    
+    print("=== 完成 ===")
+}

@@ -1,0 +1,11 @@
+main()
+{
+    var dict={id:1,name:"cheng8214",age:25}
+    print(dict)           // {id: 1,name: cheng8214,age: 25}
+    print(dict["id"])     // 1
+    print(dict["name"])   // cheng8214
+    print(dict["age"])    // 25
+    //dict["city"]="Beijing"//这种要报错，而不是新建
+    print(dict)           // {id: 1, name: cheng8214, age: 25, city: Beijing}
+   print(dict.id)
+}

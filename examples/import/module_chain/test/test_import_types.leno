@@ -1,0 +1,19 @@
+// 测试导入 types 模块
+
+import "../类型定义/types.leno" as ty
+
+main()
+{
+    print("=== 测试导入 types ===")
+    
+    // 测试枚举
+    print("Color.RED = ")
+    print(ty.Color.RED)
+    
+    // 测试创建点
+    var p = ty.create_point(10, 20)
+    print("Point x = ")
+    print(p.x)
+    
+    print("=== 完成 ===")
+}

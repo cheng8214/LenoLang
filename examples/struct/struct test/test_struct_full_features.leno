@@ -1,0 +1,29 @@
+// 完整测试 struct 功能
+
+struct Point {
+    int x = 0
+    float y = 10.0
+}
+
+main() {
+    // 使用命名参数创建实例
+    var a = Point(x=10, y=20.0)
+    
+    // 使用默认值创建实例
+    Point b = Point()
+    
+    print(a)
+    print(b)
+    print(b.x)
+    print(b.y)
+    
+    // 访问字段
+    print(a.x)
+    print(a.y)
+    
+    // 修改字段
+    a.x = 100
+    a.y = 200.5
+    print(a)
+    print(a.x)
+}

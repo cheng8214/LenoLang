@@ -1,0 +1,9 @@
+// 简化测试
+
+import "color_module.leno"
+
+main() {
+    // 先测试能否访问 Color 本身
+   
+    print("Color:", color_module.Color)
+}

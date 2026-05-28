@@ -1,0 +1,49 @@
+// 链表实现示例
+struct Node {
+    int value
+    Node next = null
+}
+
+struct LinkedList {
+    Node head = null
+    int count = 0
+}
+
+func list_add(LinkedList list, int value) {
+    var new_node = Node()
+    new_node.value = value
+    
+    if (list.head == null) {
+        list.head = new_node
+    } else {
+        var current = list.head
+        while (current.next != null) {
+            current = current.next
+        }
+        current.next = new_node
+    }
+    list.count = list.count + 1
+}
+
+func list_print(LinkedList list) {
+    print("链表: ")
+    var current = list.head
+    while (current != null) {
+        print(current.value)
+        print(" -> ")
+        current = current.next
+    }
+    print("null")
+}
+
+main() {
+    var list = LinkedList()
+    
+    list_add(list, 10)
+    list_add(list, 20)
+    list_add(list, 30)
+    
+    list_print(list)
+    print("数量: ")
+    print(list.count)
+}

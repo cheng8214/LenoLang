@@ -1,0 +1,43 @@
+// 完整测试 cstruct 功能
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    print("=== 测试 cstruct 完整功能 ===")
+    
+    // 测试 alloc
+    print("1. 测试 malloc()")
+    var v = Vec3.malloc()
+    print("   分配成功"+type(v))
+    
+    // 测试字段访问（通过直接字段访问）
+    print("2. 测试字段访问")
+    v.x = 1.0
+    v.y = 2.0
+    v.z = 3.0
+    
+    print("   x = " + v.x)
+    print("   y = " + v.y)
+    print("   z = " + v.z)
+    
+    // 测试 to_ptr
+    print("3. 测试 to_ptr()")
+    var ptr = v.to_ptr()
+    print("   指针: " + ptr)
+    
+    // 测试 from_ptr
+    print("4. 测试 from_ptr()")
+    var v2 = Vec3.from_ptr(ptr)
+    print("   从指针创建的实例 x = " + v2.x)
+    
+    // 测试 free
+    print("5. 测试 free()")
+    v.free()
+    print("   释放成功")
+    
+    print("=== 所有测试完成 ===")
+}

@@ -1,0 +1,12 @@
+// 快速入门示例
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+main() {
+    var p = Point()
+    p.x = 10
+    p.y = 20
+    print(p)
+}

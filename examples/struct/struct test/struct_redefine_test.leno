@@ -1,0 +1,48 @@
+// 测试 struct 重新定义（覆盖）
+// 验证内存泄漏修复
+
+// 第一次定义
+struct Config
+{
+    int version = 1
+    string name = "old"
+}
+
+// 第二次定义（覆盖）
+struct Config
+{
+    int version = 2
+    string name = "new"
+    float extra = 3.14
+}
+
+// 第三次定义（再次覆盖）
+struct Config
+{
+    int version = 3
+}
+
+main()
+{
+    print("测试 struct 重新定义")
+    
+    Config c = Config()
+    
+    print($"version: {c.version}, 期望: 3")
+    
+    if c.version == 3
+    {
+        print("测试通过! Struct 覆盖工作正常")
+    }
+    else
+    {
+        print("测试失败!")
+    }
+    
+    // 多次重复定义测试内存稳定性
+    print("")
+    print("重复定义测试...")
+    
+    // 循环中多次定义（模拟多次加载/热更新场景）
+    // 注意：实际语法不支持循环内定义 struct，这里只是概念演示
+}

@@ -1,0 +1,111 @@
+import jsons
+
+print("========== JSON 中文支持测试 ==========\n")
+
+// ========== 1. 中文字符串 ==========
+print("--- 1. 中文字符串测试 ---")
+
+var chinese_str = jsons.decode("\"你好世界\"")
+print("中文字符串: " + chinese_str)
+
+var mixed_str = jsons.decode("\"Hello 你好 World 世界\"")
+print("混合字符串: " + mixed_str)
+
+// ========== 2. 中文键名 ==========
+print("\n--- 2. 中文键名测试 ---")
+
+var chinese_keys = jsons.decode("{\"姓名\": \"张三\", \"年龄\": 25, \"城市\": \"北京\"}")
+print("中文键对象: " + chinese_keys)
+print("  姓名: " + chinese_keys["姓名"])
+print("  年龄: " + chinese_keys["年龄"])
+print("  城市: " + chinese_keys["城市"])
+
+// ========== 3. 中文数组 ==========
+print("\n--- 3. 中文数组测试 ---")
+
+var chinese_arr = jsons.decode("[\"苹果\", \"香蕉\", \"橙子\"]")
+print("中文数组: " + chinese_arr)
+print("  第1个: " + chinese_arr[0])
+print("  第2个: " + chinese_arr[1])
+print("  第3个: " + chinese_arr[2])
+
+// ========== 4. 复杂中文对象 ==========
+print("\n--- 4. 复杂中文对象测试 ---")
+
+var user_json = "{\"用户\": {\"昵称\": \"小明\", \"邮箱\": \"xiaoming@example.com\"}, \"订单\": [{\"商品\": \"手机\", \"价格\": 3999}, {\"商品\": \"耳机\", \"价格\": 299}], \"总计\": 4298}"
+var user_data = jsons.decode(user_json)
+
+print("用户信息:")
+print("  昵称: " + user_data["用户"]["昵称"])
+print("  邮箱: " + user_data["用户"]["邮箱"])
+print("\n订单列表:")
+print("  订单1: " + user_data["订单"][0]["商品"] + " - ¥" + user_data["订单"][0]["价格"])
+print("  订单2: " + user_data["订单"][1]["商品"] + " - ¥" + user_data["订单"][1]["价格"])
+print("  总计: ¥" + user_data["总计"])
+
+// ========== 5. 中文编码测试 ==========
+print("\n--- 5. 中文编码测试 ---")
+
+// 使用引号字符串作为中文键
+var chinese_obj = {}
+chinese_obj["产品"] = "智能手机"
+chinese_obj["品牌"] = "华为"
+chinese_obj["规格"] = {}
+chinese_obj["规格"]["内存"] = "8GB"
+chinese_obj["规格"]["存储"] = "256GB"
+chinese_obj["价格"] = 4999
+
+var encoded = jsons.encode(chinese_obj)
+print("编码结果: " + encoded)
+
+var pretty = jsons.encode_pretty(chinese_obj)
+print("美化格式:\n" + pretty)
+
+// ========== 6. 中文文件读写 ==========
+print("\n--- 6. 中文文件读写测试 ---")
+
+var chinese_file = "chinese_test.json"
+jsons.write_file(chinese_file, chinese_obj)
+print("写入文件: " + chinese_file)
+
+var read_back = jsons.read_file(chinese_file)
+print("读取结果: " + read_back)
+print("  产品: " + read_back["产品"])
+print("  品牌: " + read_back["品牌"])
+print("  规格.内存: " + read_back["规格"]["内存"])
+
+// ========== 7. 特殊中文字符 ==========
+print("\n--- 7. 特殊中文字符测试 ---")
+
+var special = jsons.decode("{\"标点\": \"，。！？\" , \"符号\": \"【】《》\"}")
+print("特殊字符:")
+print("  标点: " + special["标点"])
+print("  符号: " + special["符号"])
+
+// ========== 8. 中文与数字混合 ==========
+print("\n--- 8. 中文与数字混合测试 ---")
+
+var mixed = jsons.decode("{\"编号\": \"第001号\", \"金额\": \"¥1000.50元\", \"百分比\": \"50%\"}")
+print("混合内容:")
+print("  编号: " + mixed["编号"])
+print("  金额: " + mixed["金额"])
+print("  百分比: " + mixed["百分比"])
+
+// ========== 9. 长文本中文 ==========
+print("\n--- 9. 长文本中文测试 ---")
+
+var long_text = jsons.decode("{\"描述\": \"这是一个很长的中文描述文本，用于测试JSON模块对长文本的处理能力。可以包含各种特殊字符。\"}")
+print("长文本:")
+print("  " + long_text["描述"])
+
+// ========== 10. 中文诗词测试 ==========
+print("\n--- 10. 中文诗词测试 ---")
+
+var poem = jsons.decode("{\"标题\": \"静夜思\", \"作者\": \"李白\", \"内容\": [\"床前明月光\", \"疑是地上霜\", \"举头望明月\", \"低头思故乡\"]}")
+print(poem["标题"] + " - " + poem["作者"])
+print("  " + poem["内容"][0])
+print("  " + poem["内容"][1])
+print("  " + poem["内容"][2])
+print("  " + poem["内容"][3])
+
+print("\n========== 中文测试全部通过 ==========")

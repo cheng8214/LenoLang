@@ -1,0 +1,28 @@
+// 测试 to_str() 方法 - 简化版
+
+cstruct Vec2 {
+    f32 x
+    f32 y
+}
+
+cstruct Rect {
+    Vec2 origin
+    Vec2 size
+}
+
+main() {
+    print("=== 测试 to_str() ===")
+    
+    var r = Rect.malloc()
+    r.origin.x = 10.0
+    r.origin.y = 20.0
+    r.size.x = 100.0
+    r.size.y = 200.0
+    
+    var s = r.to_str()
+    print(s)
+    
+    r.free()
+    
+    print("=== 测试完成 ===")
+}

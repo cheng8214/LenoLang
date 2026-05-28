@@ -1,0 +1,19 @@
+// 测试多级模块调用链
+// main -> advanced_math -> geometry -> math_utils
+
+import "advanced_math.leno" as adv
+
+main()
+{
+    print("=== 测试多级模块调用链 ===")
+    
+    var vol = adv.cylinder_volume(3, 10)
+    print("cylinder_volume(3, 10) = ")
+    print(vol)
+    
+    var surf = adv.cylinder_surface_area(3, 10)
+    print("cylinder_surface_area(3, 10) = ")
+    print(surf)
+    
+    print("=== 完成 ===")
+}

@@ -1,0 +1,26 @@
+// 测试 struct 方法作用域
+
+struct Point
+{
+    int y
+    int x
+    func add()
+    {
+        print("add called")
+    }
+    func test(int cc)
+    {
+        print(x + y + cc)
+        add()
+        func test1()
+        {
+                print(x)
+        }
+    }
+}
+
+main()
+{
+    Point p1 = Point(x = 10, y = 10)
+    p1.test(5)
+}

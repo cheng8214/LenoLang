@@ -1,0 +1,16 @@
+// 调试测试3 - 检查变量类型
+
+cstruct Vec3 {
+    f32 x
+}
+
+main() {
+    var v = Vec3.malloc()
+    
+    // 使用直接字段访问测试
+    v.x = 1.0
+    var x_val = v.x
+    print("x via direct access = " + x_val)
+    
+    v.free()
+}

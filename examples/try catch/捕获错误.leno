@@ -1,0 +1,31 @@
+main()
+{
+    // 测试1：捕获除零错误
+    try {
+        var a = 10 / 0
+        print("这行不会执行")
+    } catch e {
+        print($"捕获除零错误: {e}")
+    }
+    
+    // 测试2：捕获数组越界
+    try {
+        var arr = [1, 2, 3]
+        var x = arr[10]
+        print("这行不会执行")
+    } catch e {
+        print($"捕获数组越界: {e}")
+    }
+    finally {
+        print("这行会执行")
+    }
+    
+    // 测试3：正常的 throw 仍然有效
+    try {
+        throw "自定义异常"
+    } catch e {
+        print($"捕获自定义异常: {e}")
+    }
+    
+    print("所有测试完成!")
+}

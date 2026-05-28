@@ -1,0 +1,82 @@
+// dirs 模块测试
+
+import dirs
+
+main()
+{
+    // 测试1: 获取当前工作目录
+    var cwd = dirs.cwd()
+    print("当前目录: " + cwd)
+    assert_eq(cwd.len() > 0, true)
+
+    // 测试2: 检查目录是否存在
+    var exists = dirs.exists(cwd)
+    assert_eq(exists, true)
+
+    var not_exists = dirs.exists("/non_existent_dir_12345")
+    assert_eq(not_exists, false)
+
+    // 测试3: 判断是文件还是目录
+    assert_eq(dirs.is_dir(cwd), true)
+    assert_eq(dirs.is_file(cwd), false)
+
+    // 测试4: 创建和删除目录 (使用 rmdir)
+    var test_dir = "test_temp_dir"
+
+    // 确保目录不存在
+    if dirs.exists(test_dir) {
+        dirs.rmdir(test_dir)
+    }
+
+    // 创建目录
+    var create_result = dirs.mkdir(test_dir)
+    assert_eq(create_result, true)
+    assert_eq(dirs.exists(test_dir), true)
+    assert_eq(dirs.is_dir(test_dir), true)
+
+    // 删除目录
+    var remove_result = dirs.rmdir(test_dir)
+    assert_eq(remove_result, true)
+    assert_eq(dirs.exists(test_dir), false)
+
+    // 测试5: 路径拼接
+    var joined_path = dirs.join("folder", "subfolder", "file.txt")
+    print("拼接路径: " + joined_path)
+    assert_eq(joined_path.has("folder"), true)
+    assert_eq(joined_path.has("file.txt"), true)
+
+    // 测试6: 路径操作
+    var path = "src/module/io/io.c"
+    var basename = dirs.basename(path)
+    var dirname = dirs.dirname(path)
+    var extname = dirs.extname(path)
+    print("文件名: " + basename)
+    print("目录名: " + dirname)
+    print("扩展名: " + extname)
+    assert_eq(basename, "io.c")
+    assert_eq(dirname, "src/module/io")
+    assert_eq(extname, ".c")
+
+    // 测试7: 绝对路径
+    var abs = dirs.abspath("test")
+    print("绝对路径: " + abs)
+    assert_eq(abs.len() > 0, true)
+
+    // 测试8: 路径分隔符
+    var sep = dirs.sep()
+    print("路径分隔符: '" + sep + "'")
+    assert_eq(sep.len(), 1)
+
+    // 测试9: 列出目录内容
+    var entries = dirs.listdir(cwd)
+    print("当前目录条目数: " + entries.len())
+    assert_eq(entries.len() > 0, true)
+
+    // 测试10: stat 获取文件信息
+    var info = dirs.stat(cwd)
+    print("目录信息: exists=" + info["exists"] + ", is_dir=" + info["is_dir"])
+    assert_eq(info["exists"], true)
+    assert_eq(info["is_dir"], true)
+
+    print("test_dirs passed")
+}

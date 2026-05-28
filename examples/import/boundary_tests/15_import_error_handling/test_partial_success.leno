@@ -1,0 +1,21 @@
+// 测试 4: 部分导入成功后的使用
+
+main() {
+    print("=== 测试 4: 部分导入成功后的使用 ===")
+
+    import "partial_success_module.leno" as partial
+
+    // 测试可以正常访问的变量
+    print("partial.first = " + partial.first + " (期望: 1)")
+    print("partial.second = " + partial.second + " (期望: 2)")
+    print("partial.third = " + partial.third + " (期望: 3)")
+
+    // 测试正常函数
+    var normal_result = partial.normal_func()
+    print("partial.normal_func() = " + normal_result + " (期望: success)")
+
+    // 测试会失败的函数
+    print("调用会失败的函数...")
+    var fail_result = partial.will_fail()
+    print("如果看到这行，说明运行时错误没有正确报错")
+}

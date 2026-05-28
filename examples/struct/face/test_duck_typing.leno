@@ -1,0 +1,55 @@
+// ============================================================================
+// 测试：鸭子类型（duck typing）——struct 未声明 impl 但拥有 face 要求的方法
+// ============================================================================
+//
+// 本测试验证：
+//   1. Dog 显式声明 impl Speaker，通过 try_speak(d) 调用正常
+//   2. Duck 没有声明 impl Speaker，但拥有 speak():string 方法
+//      - 使用 "duck is Speaker" 运行时检查，鸭子类型机制应返回 true
+//      - 因为 Duck 满足 Speaker 要求的所有方法签名
+//   3. Rock 既没有声明 impl，也没有 speak 方法
+//      - 使用 "rock not is Speaker" 应返回 true
+//
+// 预期输出：
+//   woof
+//   Duck matches Speaker (duck typing)
+//   quack
+//   Rock not is Speaker
+
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+struct Duck {
+    string name = ""
+    func speak():string { return "quack" }
+}
+
+struct Rock {
+    int weight = 0
+}
+
+func try_speak(Speaker s) {
+    print(s.speak())
+}
+
+main() {
+    var d = Dog()
+    try_speak(d)
+
+    var duck = Duck()
+    if duck is Speaker {
+        print("Duck matches Speaker (duck typing)")
+        print(duck.speak())
+    }
+
+    var rock = Rock()
+    if rock not is Speaker {
+        print("Rock not is Speaker")
+    }
+}

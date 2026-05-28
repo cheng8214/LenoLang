@@ -1,0 +1,19 @@
+// sockets 模块测试
+
+import sockets
+
+main()
+{
+    // 测试1: 字节序转换函数
+    var host_short = 0x1234
+    var net_short = sockets.htons(host_short)
+    var host_short_back = sockets.ntohs(net_short)
+    assert_eq(host_short, host_short_back)
+
+    var host_long = 0x12345678
+    var net_long = sockets.htonl(host_long)
+    var host_long_back = sockets.ntohl(net_long)
+    assert_eq(host_long, host_long_back)
+
+    print("test_sockets passed")
+}

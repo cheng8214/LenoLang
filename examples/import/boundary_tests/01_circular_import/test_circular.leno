@@ -1,0 +1,13 @@
+// 循环依赖测试主文件
+// 测试：两个模块相互导入
+
+import "module_a.leno" as ma
+import "module_b.leno" as mb
+
+main() {
+    print("=== 循环依赖测试 ===")
+    print("A value: " + ma.a_value)
+    print("B value: " + mb.b_value)
+    print(ma.a_func())
+    print("=== 测试完成 ===")
+}

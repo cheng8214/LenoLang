@@ -1,0 +1,132 @@
+#ifndef MODULE_SYMBOL_TABLE_H
+#define MODULE_SYMBOL_TABLE_H
+
+#include "leno_types.h"
+
+// 模块函数符号
+typedef struct {
+    char* name;                 // 函数名
+    TypeKind return_type;       // 返回类型
+    char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
+} ModuleFuncSymbol;
+
+// 模块 struct 字段
+typedef struct {
+    char* name;                 // 字段名
+    TypeKind type;              // 字段类型
+    TypeKind element_type;      // Ptr[T] 中 T 的类型（仅当 type == TYPE_PTR_GENERIC 时有效）
+} ModuleStructField;
+
+// 模块 struct 方法
+typedef struct {
+    char* name;                 // 方法名
+    TypeKind return_type;       // 返回类型
+    char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
+    int param_count;            // 参数数量（不包括 self）
+    TypeKind* param_types;      // 参数类型数组（不包括 self）
+} ModuleStructMethod;
+
+// 模块 struct 符号
+typedef struct {
+    char* name;                 // struct 名称
+    int field_count;            // 字段数量
+    ModuleStructField* fields;  // 字段数组
+    int method_count;           // 方法数量
+    ModuleStructMethod* methods; // 方法数组
+    int is_cstruct;             // 是否是 cstruct (1 = 是, 0 = 否)
+    int impl_count;             // 实现的 face 数量
+    char** impl_names;          // 实现的 face 名称数组
+} ModuleStructSymbol;
+
+// 模块 enum 符号
+typedef struct {
+    char* name;                 // enum 名称
+} ModuleEnumSymbol;
+
+// 模块 face 方法符号
+typedef struct {
+    char* name;                 // 方法名
+    TypeKind return_type;       // 返回类型
+    char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
+    int param_count;            // 参数数量
+} ModuleFaceMethodSymbol;
+
+// 模块 face 符号
+typedef struct {
+    char* name;                 // face 名称
+    int method_count;           // 方法数量
+    ModuleFaceMethodSymbol* methods; // 方法数组
+} ModuleFaceSymbol;
+
+// 模块变量符号
+typedef struct {
+    char* name;                 // 变量名
+    TypeKind type;              // 变量类型
+    char* struct_name;          // 如果类型是 struct，存储 struct 名称
+} ModuleVarSymbol;
+
+// 模块符号表
+typedef struct {
+    char* module_path;          // 模块文件路径
+    ModuleFuncSymbol* funcs;    // 函数符号数组
+    int func_count;             // 函数数量
+    int func_capacity;          // 函数数组容量
+    ModuleStructSymbol* structs; // struct 符号数组
+    int struct_count;           // struct 数量
+    int struct_capacity;        // struct 数组容量
+    ModuleEnumSymbol* enums;    // enum 符号数组
+    int enum_count;             // enum 数量
+    int enum_capacity;          // enum 数组容量
+    ModuleFaceSymbol* faces;    // face 符号数组
+    int face_count;             // face 数量
+    int face_capacity;          // face 数组容量
+    ModuleVarSymbol* vars;      // 变量符号数组
+    int var_count;              // 变量数量
+    int var_capacity;           // 变量数组容量
+} ModuleSymbolTable;
+
+// 创建模块符号表
+ModuleSymbolTable* module_symbol_table_create(const char* module_path);
+
+// 销毁模块符号表
+void module_symbol_table_destroy(ModuleSymbolTable* table);
+
+// 扫描模块文件并填充符号表
+// current_file: 当前文件路径（用于解析相对路径）
+// 返回: 0 成功，-1 失败
+int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file);
+
+// 查找函数符号
+ModuleFuncSymbol* module_symbol_table_find_func(ModuleSymbolTable* table, const char* func_name);
+
+// 查找 struct 符号
+ModuleStructSymbol* module_symbol_table_find_struct(ModuleSymbolTable* table, const char* struct_name);
+
+// 添加函数符号
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name);
+
+// 添加 struct 符号
+void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct);
+
+// 查找 struct 方法
+ModuleStructMethod* module_symbol_table_find_struct_method(ModuleSymbolTable* table, const char* struct_name, const char* method_name);
+
+// 查找 enum 符号
+ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const char* enum_name);
+
+// 添加 enum 符号
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name);
+
+// 查找 face 符号
+ModuleFaceSymbol* module_symbol_table_find_face(ModuleSymbolTable* table, const char* face_name);
+
+// 添加 face 符号
+void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, int method_count, ModuleFaceMethodSymbol* methods);
+
+// 查找变量符号
+ModuleVarSymbol* module_symbol_table_find_var(ModuleSymbolTable* table, const char* var_name);
+
+// 添加变量符号
+void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name);
+
+#endif // MODULE_SYMBOL_TABLE_H

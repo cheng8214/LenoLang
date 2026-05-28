@@ -1,0 +1,12 @@
+import "test_b.leno" as b
+
+main()
+{
+    // 测试无参数创建
+    var p1 = b.Point()
+    print("p1: x=" + p1.x + ", y=" + p1.y)
+
+    // 测试带参数创建
+    var p2 = b.Point(10,20)
+    print("p2: x=" + p2.x + ", y=" + p2.y)
+}

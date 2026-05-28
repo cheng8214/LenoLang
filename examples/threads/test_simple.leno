@@ -1,0 +1,8 @@
+import threads
+
+var t1 = threads.start(func() {
+    return 1 + 2 + 3 + 4 + 5
+})
+
+var r1 = t1.join()
+print("result: " + r1)

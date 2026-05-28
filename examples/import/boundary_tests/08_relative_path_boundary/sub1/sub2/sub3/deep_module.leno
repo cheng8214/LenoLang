@@ -1,0 +1,7 @@
+// 深层模块
+
+export var level = "deep"
+
+export func get_level() {
+    return level
+}

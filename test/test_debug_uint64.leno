@@ -1,0 +1,38 @@
+import ffi
+
+main() {
+    var buf = ffi.malloc(16)
+    ffi.memset(buf, 0, 16)
+
+    // 测试 1: 用 write_int64 写入 -1 (位模式 = 0xFFFFFFFFFFFFFFFF)
+    ffi.write_int64(buf, 0, -1)
+    print("write_int64(-1), read_byte: " + ffi.read_byte(buf, 0) + " " + ffi.read_byte(buf, 1) + " " + ffi.read_byte(buf, 7))
+    print("read_int64: " + ffi.read_int64(buf, 0))
+    print("read_uint64: " + ffi.read_uint64(buf, 0))
+
+    // 测试 2: 用 write_uint64 写入 0xFFFFFFFFFFFFFFFF
+    ffi.memset(buf, 0, 16)
+    ffi.write_uint64(buf, 0, 0xFFFFFFFFFFFFFFFF)
+    print("")
+    print("write_uint64(0xFFFFFFFFFFFFFFFF), read_byte: " + ffi.read_byte(buf, 0) + " " + ffi.read_byte(buf, 1) + " " + ffi.read_byte(buf, 7))
+
+    // 测试 3: 用 write_uint64 写入 0x8000000000000000
+    ffi.memset(buf, 0, 16)
+    ffi.write_uint64(buf, 0, 0x8000000000000000)
+    print("")
+    print("write_uint64(0x8000000000000000), read_byte: " + ffi.read_byte(buf, 0) + " " + ffi.read_byte(buf, 7))
+
+    // 测试 4: 用 write_int64 写入 INT64_MIN
+    ffi.memset(buf, 0, 16)
+    ffi.write_int64(buf, 0, -9223372036854775808)
+    print("")
+    print("write_int64(INT64_MIN), read_byte: " + ffi.read_byte(buf, 0) + " " + ffi.read_byte(buf, 7))
+
+    // 测试 5: 中等大小的值
+    ffi.memset(buf, 0, 16)
+    ffi.write_uint64(buf, 0, 34128048128)
+    print("")
+    print("write_uint64(34128048128): " + ffi.read_uint64(buf, 0))
+
+    ffi.free(buf)
+}

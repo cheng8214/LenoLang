@@ -1,0 +1,17 @@
+// 直接测试 Rectangle 结构体
+
+import "../类型定义/types.leno" as ty
+
+main()
+{
+    print("=== 直接测试 Rectangle ===")
+    
+    // 直接创建 Rectangle
+    var rect = ty.Rectangle(x = 0, y = 0, width = 100, height = 50)
+    print("Rect width = ")
+    print(rect.width)
+    print("Rect height = ")
+    print(rect.height)
+    
+    print("=== 完成 ===")
+}

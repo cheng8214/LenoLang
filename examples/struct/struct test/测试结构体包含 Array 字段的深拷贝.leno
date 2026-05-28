@@ -1,0 +1,81 @@
+// 测试结构体包含 Array 字段的深拷贝
+
+struct Inner
+{
+    int value
+    Array[int] items
+}
+
+struct Outer
+{
+    int id
+    Inner inner
+    Array[int] data
+}
+
+main()
+{
+    print("=== 测试结构体包含 Array 字段的深拷贝 ===")
+    print("")
+
+    // 创建嵌套结构体
+    Outer original = Outer(
+        id=1,
+        inner=Inner(value=100, items=[1, 2, 3]),
+        data=[10, 20, 30]
+    )
+
+    print("原始对象:")
+    print("  original.id = " + original.id)
+    print("  original.inner.value = " + original.inner.value)
+    print("  original.inner.items = " + original.inner.items)
+    print("  original.data = " + original.data)
+    print("")
+
+    // 深拷贝
+    Outer copy = original.copy()
+
+    print("拷贝对象:")
+    print("  copy.id = " + copy.id)
+    print("  copy.inner.value = " + copy.inner.value)
+    print("  copy.inner.items = " + copy.inner.items)
+    print("  copy.data = " + copy.data)
+    print("")
+
+    // 修改拷贝对象
+    copy.id = 999
+    copy.inner.value = 999
+    copy.inner.items[0] = 999
+    copy.data[0] = 999
+
+    print("修改拷贝对象后:")
+    print("  original.id = " + original.id + " (期望: 1)")
+    print("  copy.id = " + copy.id + " (期望: 999)")
+    print("  original.inner.value = " + original.inner.value + " (期望: 100)")
+    print("  copy.inner.value = " + copy.inner.value + " (期望: 999)")
+    print("  original.inner.items[0] = " + original.inner.items[0] + " (期望: 1)")
+    print("  copy.inner.items[0] = " + copy.inner.items[0] + " (期望: 999)")
+    print("  original.data[0] = " + original.data[0] + " (期望: 10)")
+    print("  copy.data[0] = " + copy.data[0] + " (期望: 999)")
+    print("")
+
+    // 验证测试
+    int pass = 1
+    if original.id != 1 { pass = 0 }
+    if copy.id != 999 { pass = 0 }
+    if original.inner.value != 100 { pass = 0 }
+    if copy.inner.value != 999 { pass = 0 }
+    if original.inner.items[0] != 1 { pass = 0 }
+    if copy.inner.items[0] != 999 { pass = 0 }
+    if original.data[0] != 10 { pass = 0 }
+    if copy.data[0] != 999 { pass = 0 }
+
+    if pass
+    {
+        print("✓ 所有测试通过！Array 字段深拷贝工作正常。")
+    }
+    else
+    {
+        print("✗ 测试失败！深拷贝存在问题。")
+    }
+}

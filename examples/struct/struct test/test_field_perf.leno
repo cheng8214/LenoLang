@@ -1,0 +1,81 @@
+import times
+
+// 测试字段索引优化的性能
+// 创建一个有很多字段的 struct，然后频繁访问
+
+struct BigStruct
+{
+    int field0
+    int field1
+    int field2
+    int field3
+    int field4
+    int field5
+    int field6
+    int field7
+    int field8
+    int field9
+    int field10
+    int field11
+    int field12
+    int field13
+    int field14
+    int field15
+    int field16
+    int field17
+    int field18
+    int field19
+    
+    func getField19(): int
+    {
+        return field19
+    }
+}
+
+main()
+{
+    var obj = BigStruct(
+        field0 = 0,
+        field1 = 1,
+        field2 = 2,
+        field3 = 3,
+        field4 = 4,
+        field5 = 5,
+        field6 = 6,
+        field7 = 7,
+        field8 = 8,
+        field9 = 9,
+        field10 = 10,
+        field11 = 11,
+        field12 = 12,
+        field13 = 13,
+        field14 = 14,
+        field15 = 15,
+        field16 = 16,
+        field17 = 17,
+        field18 = 18,
+        field19 = 19
+    )
+    
+    // 测试直接字段访问
+    var t1 = times.ms()
+    var sum = 0
+    for 1000000 to i
+    {
+        sum = sum + obj.field19
+    }
+    var t2 = times.ms()
+    print("直接访问 field19 100万次: " + (t2 - t1) + "ms")
+    print("sum = " + sum)
+    
+    // 测试方法内字段访问
+    t1 = times.ms()
+    sum = 0
+    for 1000000 to i
+    {
+        sum = sum + obj.getField19()
+    }
+    t2 = times.ms()
+    print("方法内访问 field19 100万次: " + (t2 - t1) + "ms")
+    print("sum = " + sum)
+}

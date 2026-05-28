@@ -1,0 +1,59 @@
+// 测试 maths 模块所有功能
+
+import maths
+
+main() {
+    // 基本运算 - 使用 int，应该自动升级到 float
+    print("=== 基本运算 ===")
+    print("sqrt(16) = " + maths.sqrt(16))
+    print("abs(-5) = " + maths.abs(-5))
+    print("pow(2, 3) = " + maths.pow(2, 3))
+    
+    // 取整函数
+    print("\n=== 取整函数 ===")
+    print("round(3.7) = " + maths.round(3.7))
+    print("ceil(3.2) = " + maths.ceil(3.2))
+    print("floor(3.8) = " + maths.floor(3.8))
+    print("trunc(3.9) = " + maths.trunc(3.9))
+    
+    // 三角函数（弧度制）
+    print("\n=== 三角函数 ===")
+    print("sin(0) = " + maths.sin(0))
+    print("cos(0) = " + maths.cos(0))
+    print("tan(0) = " + maths.tan(0))
+    print("asin(0) = " + maths.asin(0))
+    print("acos(1) = " + maths.acos(1))
+    print("atan(0) = " + maths.atan(0))
+    print("atan2(1, 1) = " + maths.atan2(1, 1))
+    
+    // 对数和指数
+    print("\n=== 对数和指数 ===")
+    print("log(1) = " + maths.log(1))
+    print("log10(100) = " + maths.log10(100))
+    print("exp(0) = " + maths.exp(0))
+    
+    // 工具函数
+    print("\n=== 工具函数 ===")
+    print("max(3, 7, 2) = " + maths.max(3, 7, 2))
+    print("min(3, 7, 2) = " + maths.min(3, 7, 2))
+    print("deg(pi) = " + maths.deg(maths.pi()))
+    print("rad(180) = " + maths.rad(180))
+    print("sign(-5) = " + maths.sign(-5))
+    print("sign(5) = " + maths.sign(5))
+    
+    // 常量
+    print("\n=== 常量 ===")
+    print("pi = " + maths.pi())
+    print("e = " + maths.e())
+    
+    // 数字实例方法测试
+    print("\n=== 数字实例方法 ===")
+    var num = 3
+    print("3.14.sqrt() = " + num.sqrt())
+    print("(-5).abs() = " + (-5).abs())
+    print("2.pow(3) = " + 2.pow(3))
+    print("3.7.round() = " + 3.7.round())
+    print("3.2.ceil() = " + 3.2.ceil())
+    print("3.8.floor() = " + 3.8.floor())
+    print("3.14.sin() = " + 3.14.sin())
+}

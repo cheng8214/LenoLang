@@ -1,0 +1,46 @@
+// 验证超大数取模结果
+
+main()
+{
+    // 验证：1234567890123456789012345678901234567890 % 100
+    // 一个数 % 100 的结果就是它的最后两位数字
+    // 1234567890123456789012345678901234567890 的最后两位是 90
+    
+    var big_a = 1234567890123456789012345678901234567890
+    var big_b = 100
+    var r = big_a % big_b
+    
+    print($"{big_a} % {big_b} = {r}")
+    print("期望: 90 (最后两位数字)")
+    
+    if r == 90
+    {
+        print("验证通过!")
+    }
+    else
+    {
+        print("验证失败!")
+    }
+    
+    // 更多测试
+    print("")
+    print("--- 更多测试 ---")
+    
+    // 测试 1000 % 7
+    var t1 = 1000 % 7
+    print($"1000 % 7 = {t1}, 期望: 6")
+    
+    // 测试超大数 % 7
+    var big = 123456789012345678901234567890
+    var t2 = big % 7
+    print($"超大数 % 7 = {t2}")
+    
+    // 手动验证：使用 (a * b + c) % b == c
+    var base = 123456789012345678901234567890
+    var divisor = 7
+    var expected_remainder = 5
+    var dividend = base * divisor + expected_remainder
+    var result = dividend % divisor
+    print($"验证: ({base} * {divisor} + {expected_remainder}) % {divisor} = {result}")
+    print($"期望: {expected_remainder}")
+}

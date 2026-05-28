@@ -1,0 +1,32 @@
+import times as time
+
+main() {
+ var t1 = time.ms();
+ var d1=no_try_test()
+ var t2 = time.ms();
+ print($" {t2 - t1}ms 结果:{d1}\n");
+  var t3 = time.ms();
+  var d2=with_try_test()
+  var t4 = time.ms();
+   print($" {t4 -t3 }ms 结果:{d2}\n");
+}
+
+// 测试 A：没有 try 的循环
+func no_try_test() {
+    var sum = 0
+    for 10000000{
+         sum++
+    }
+    return sum
+}
+
+// 测试 B：有空 try 的循环
+func with_try_test() {
+    var sum = 0
+    for 10000000{
+        try {
+           sum++
+        } catch e { }
+    }
+    return sum
+}

@@ -1,0 +1,11 @@
+// 测试 2: 导入语法错误的模块
+
+main() {
+    print("=== 测试 2: 导入语法错误的模块 ===")
+    print("尝试导入有语法错误的模块...")
+
+    import "syntax_error_module.leno" as syntax_error
+
+    // 如果导入失败，下面的代码应该不会执行
+    print("如果看到这行，说明语法错误没有正确报错")
+}

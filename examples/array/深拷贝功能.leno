@@ -1,0 +1,64 @@
+// 测试结构体深拷贝功能
+
+struct Inner
+{
+    int value
+}
+
+struct Outer
+{
+    int id
+    Inner inner
+}
+
+main()
+{
+    print("=== 测试结构体深拷贝 ===")
+    print("")
+
+    // 创建嵌套结构体
+    Outer original = Outer(
+        id=1,
+        inner=Inner(value=100)
+    )
+
+    print("原始对象:")
+    print("  original.id = " + original.id)
+    print("  original.inner.value = " + original.inner.value)
+    print("")
+
+    // 深拷贝
+    Outer copy = original.copy()
+
+    print("拷贝对象:")
+    print("  copy.id = " + copy.id)
+    print("  copy.inner.value = " + copy.inner.value)
+    print("")
+
+    // 修改拷贝对象
+    copy.id = 999
+    copy.inner.value = 999
+
+    print("修改拷贝对象后:")
+    print("  original.id = " + original.id + " (期望: 1)")
+    print("  copy.id = " + copy.id + " (期望: 999)")
+    print("  original.inner.value = " + original.inner.value + " (期望: 100)")
+    print("  copy.inner.value = " + copy.inner.value + " (期望: 999)")
+    print("")
+
+    // 验证测试
+    int pass = 1
+    if original.id != 1 { pass = 0 }
+    if copy.id != 999 { pass = 0 }
+    if original.inner.value != 100 { pass = 0 }
+    if copy.inner.value != 999 { pass = 0 }
+
+    if pass
+    {
+        print("✓ 所有测试通过！深拷贝工作正常。")
+    }
+    else
+    {
+        print("✗ 测试失败！深拷贝存在问题。")
+    }
+}

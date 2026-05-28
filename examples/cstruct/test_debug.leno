@@ -1,0 +1,24 @@
+// 调试测试
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Mesh {
+    Vec3 vertices[4]
+}
+
+main() {
+    print("Creating Mesh...")
+    var m = Mesh.malloc()
+    print("Setting vertex 0...")
+    m.vertices[0].x = 1.0
+    print("x set to 1.0")
+    print("Reading vertex 0 x...")
+    var x_val = m.vertices[0].x
+    print("x value: " + x_val)
+    m.free()
+    print("Done")
+}

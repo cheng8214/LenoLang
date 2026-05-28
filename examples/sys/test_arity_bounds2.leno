@@ -1,0 +1,22 @@
+main() {
+    // 逐步测试，找出崩溃点
+    print("测试1: assert")
+    assert(true)
+
+    print("测试2: assert_eq")
+    assert_eq(1, 1)
+
+    print("测试3: _gc")
+    _gc()
+
+    print("测试4: input")
+    // input()  // 可能这里崩溃
+
+    print("测试5: print")
+    print("hello")
+
+    print("测试6: format")
+    format("hello %s", "world")
+
+    print("全部正常调用通过")
+}

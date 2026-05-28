@@ -1,0 +1,294 @@
+// 测试 win_reg_enum_v4 模块 - 使用 Ptr 类型 + struct 结构体
+// 版本: 4.0
+
+import "win_reg_enum_v4.leno" as win_reg
+import times
+main() {
+    print("=== 测试 Windows 注册表模块 V4 ===")
+    print("")
+    
+    // ========== 测试基本键操作 ==========
+    print("--- 测试键操作 ---")
+    
+    // 使用预定义的 HKEY 常量
+    print("1. 使用 HKEY_CURRENT_USER 创建测试键")
+    var t1=times.ms()
+    // 创建键 - 返回 CreateKeyResult 结构体
+    var createResult = win_reg.createKey(
+        win_reg.HKEY_CURRENT_USER,
+        "SOFTWARE\\LenoTestV4",
+        win_reg.KeyAccess.ALL_ACCESS
+    )
+ 
+    if createResult.errorCode == win_reg.WinError.SUCCESS {
+        print("   创建成功，句柄: " + createResult.handle)
+        print("   是否新建: " + createResult.created)
+        
+        // 关闭键
+        var closeResult = win_reg.closeKey(createResult.handle)
+        print("   关闭结果: " + win_reg.errorToString(closeResult))
+    } else {
+        print("   创建失败: " + win_reg.errorToString(createResult.errorCode))
+    }
+    
+    print("")
+    print("2. 打开已存在的键")
+    
+    // 打开键 - 返回 OpenKeyResult 结构体
+    var openResult = win_reg.openKey(
+        win_reg.HKEY_CURRENT_USER,
+        "SOFTWARE\\LenoTestV4",
+        win_reg.KeyAccess.ALL_ACCESS
+    )
+    
+    var hKey = null
+    if openResult.errorCode == win_reg.WinError.SUCCESS {
+        hKey = openResult.handle
+        print("   打开成功，句柄: " + hKey)
+        
+        // ========== 测试值操作 ==========
+        print("")
+        print("--- 测试值操作 ---")
+        
+        // 写入字符串值
+        print("3. 写入字符串值")
+        var writeResult = win_reg.writeString(hKey, "TestString", "Hello from Leno V4!")
+        print("   写入结果: " + win_reg.errorToString(writeResult))
+        
+        // 读取字符串值 - 返回 ReadStringResult 结构体
+        print("4. 读取字符串值")
+        var readResult = win_reg.readString(hKey, "TestString")
+        if readResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   读取成功: " + readResult.value)
+        } else {
+            print("   读取失败: " + win_reg.errorToString(readResult.errorCode))
+        }
+        
+        // 写入 DWORD 值
+        print("")
+        print("5. 写入 DWORD 值")
+        writeResult = win_reg.writeDword(hKey, "TestDword", 42)
+        print("   写入结果: " + win_reg.errorToString(writeResult))
+        
+        // 读取 DWORD 值 - 返回 ReadDwordResult 结构体
+        print("6. 读取 DWORD 值")
+        var dwordResult = win_reg.readDword(hKey, "TestDword")
+        if dwordResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   读取成功: " + dwordResult.value)
+        } else {
+            print("   读取失败: " + win_reg.errorToString(dwordResult.errorCode))
+        }
+        
+        // 写入 QWORD 值
+        print("")
+        print("6.5. 写入 QWORD 值")
+        writeResult = win_reg.writeQword(hKey, "TestQword", 123456789012345)
+        print("   写入结果: " + win_reg.errorToString(writeResult))
+        
+        // 读取 QWORD 值
+        print("6.6. 读取 QWORD 值")
+        var qwordResult = win_reg.readQword(hKey, "TestQword")
+        if qwordResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   读取成功: " + qwordResult.value)
+        } else {
+            print("   读取失败: " + win_reg.errorToString(qwordResult.errorCode))
+        }
+        
+        // 写入展开字符串值
+        print("")
+        print("6.7. 写入展开字符串值")
+        writeResult = win_reg.writeExpandString(hKey, "TestExpand", "%SystemRoot%\\System32")
+        print("   写入结果: " + win_reg.errorToString(writeResult))
+        
+        // 读取展开字符串值
+        print("6.8. 读取展开字符串值（已展开）")
+        var expandResult = win_reg.readExpandString(hKey, "TestExpand")
+        if expandResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   读取成功: " + expandResult.value)
+        } else {
+            print("   读取失败: " + win_reg.errorToString(expandResult.errorCode))
+        }
+        
+        // 写入二进制值
+        print("")
+        print("6.9. 写入二进制值")
+        var binaryData = [0x48, 0x65, 0x6C, 0x6C, 0x6F]  // "Hello" in ASCII
+        writeResult = win_reg.writeBinary(hKey, "TestBinary", binaryData)
+        print("   写入结果: " + win_reg.errorToString(writeResult))
+        
+        // 读取二进制值
+        print("6.10. 读取二进制值")
+        var binaryResult = win_reg.readBinary(hKey, "TestBinary")
+        if binaryResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   读取成功，字节数: " + binaryResult.data.len())
+            print("   数据: " + binaryResult.data)
+        } else {
+            print("   读取失败: " + win_reg.errorToString(binaryResult.errorCode))
+        }
+        
+        // 写入多字符串值
+        print("")
+        print("6.11. 写入多字符串值")
+        var multiStrings = ["Path1", "Path2", "Path3"]
+        writeResult = win_reg.writeMultiString(hKey, "TestMulti", multiStrings)
+        print("   写入结果: " + win_reg.errorToString(writeResult))
+        
+        // 读取多字符串值
+        print("6.12. 读取多字符串值")
+        var multiResult = win_reg.readMultiString(hKey, "TestMulti")
+        if multiResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   读取成功，字符串数: " + multiResult.strings.len())
+            for multiResult.strings to str {
+                print("   - " + str)
+            }
+        } else {
+            print("   读取失败: " + win_reg.errorToString(multiResult.errorCode))
+        }
+        
+        // 写入默认值
+        print("")
+        print("7. 写入默认值")
+        writeResult = win_reg.setDefaultValue(hKey, "Default Value from V4")
+        print("   写入结果: " + win_reg.errorToString(writeResult))
+        
+        // 读取默认值
+        print("8. 读取默认值")
+        var defaultResult = win_reg.getDefaultValue(hKey)
+        if defaultResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   读取成功: " + defaultResult.value)
+        } else {
+            print("   读取失败: " + win_reg.errorToString(defaultResult.errorCode))
+        }
+        
+        // ========== 测试枚举操作 ==========
+        print("")
+        print("--- 测试枚举操作 ---")
+        
+        // 枚举值 - 返回 EnumValuesResult 结构体
+        print("9. 枚举所有值")
+        var enumValuesResult = win_reg.enumValues(hKey)
+        if enumValuesResult.errorCode == win_reg.WinError.SUCCESS {
+            print("   找到 " + enumValuesResult.values.len() + " 个值:")
+            for enumValuesResult.values to valueInfo {
+                // valueInfo 是 RegValueInfo 结构体
+                print("     - " + valueInfo.name + " (类型: " + valueInfo.typeName + ")")
+            }
+        } else {
+            print("   枚举失败: " + win_reg.errorToString(enumValuesResult.errorCode))
+        }
+        
+        // 创建子键用于枚举测试
+        print("")
+        print("10. 创建子键用于枚举测试")
+        var subKeyResult = win_reg.createKey(
+            hKey,
+            "SubKey1",
+            win_reg.KeyAccess.ALL_ACCESS
+        )
+        if subKeyResult.errorCode == win_reg.WinError.SUCCESS {
+            win_reg.closeKey(subKeyResult.handle)
+            print("    子键1创建成功")
+        }
+        
+        var subKeyResult2 = win_reg.createKey(
+            hKey,
+            "SubKey2",
+            win_reg.KeyAccess.ALL_ACCESS
+        )
+        if subKeyResult2.errorCode == win_reg.WinError.SUCCESS {
+            win_reg.closeKey(subKeyResult2.handle)
+            print("    子键2创建成功")
+        }
+        
+        // 枚举子键 - 返回 EnumSubKeysResult 结构体
+        print("")
+        print("11. 枚举子键")
+        var enumSubKeysResult = win_reg.enumSubKeys(hKey)
+        if enumSubKeysResult.errorCode == win_reg.WinError.SUCCESS {
+            print("    找到 " + enumSubKeysResult.subKeys.len() + " 个子键:")
+            for enumSubKeysResult.subKeys to subKeyName {
+                print("     - " + subKeyName)
+            }
+        } else {
+            print("    枚举失败: " + win_reg.errorToString(enumSubKeysResult.errorCode))
+        }
+        
+        // ========== 测试高级操作 ==========
+        print("")
+        print("--- 测试高级操作 ---")
+        
+        // 测试值是否存在
+        print("12. 检查值是否存在")
+        var exists = win_reg.valueExists(hKey, "TestString")
+        print("    TestString 存在: " + exists)
+        
+        exists = win_reg.valueExists(hKey, "NonExistent")
+        print("    NonExistent 存在: " + exists)
+        
+        // 刷新键
+        print("")
+        print("13. 刷新键到磁盘")
+        var flushResult = win_reg.flushKey(hKey)
+        print("    刷新结果: " + win_reg.errorToString(flushResult))
+        
+        // 删除值
+        print("")
+        print("14. 删除测试值")
+        var deleteResult = win_reg.deleteValue(hKey, "TestString")
+        print("    删除 TestString: " + win_reg.errorToString(deleteResult))
+        
+        deleteResult = win_reg.deleteValue(hKey, "TestDword")
+        print("    删除 TestDword: " + win_reg.errorToString(deleteResult))
+        
+        // 关闭键
+        print("")
+        print("15. 关闭键")
+        var closeKeyResult = win_reg.closeKey(hKey)
+        print("    关闭结果: " + win_reg.errorToString(closeKeyResult))
+        
+        // 删除测试键（递归删除所有子键）
+        print("")
+        print("16. 删除测试键（递归）")
+        deleteResult = win_reg.deleteKeyRecursive(win_reg.HKEY_CURRENT_USER, "SOFTWARE\\LenoTestV4")
+        print("    删除结果: " + win_reg.errorToString(deleteResult))
+        
+    } else {
+        print("   打开失败: " + win_reg.errorToString(openResult.errorCode))
+    }
+    
+    // ========== 测试使用 enum HKey ==========
+    print("")
+    print("--- 测试使用 enum HKey ---")
+    print("17. 使用 HKey.CURRENT_USER enum 打开键")
+    
+    // 先创建测试键
+    var enumTestResult = win_reg.createKey(
+        win_reg.HKey.CURRENT_USER,
+        "SOFTWARE\\LenoEnumTest",
+        win_reg.KeyAccess.ALL_ACCESS
+    )
+    
+    if enumTestResult.errorCode == win_reg.WinError.SUCCESS {
+        win_reg.closeKey(enumTestResult.handle)
+        print("    使用 enum 创建成功")
+        
+        // 使用 enum 打开
+        var enumOpenResult = win_reg.openKey(
+            win_reg.HKey.CURRENT_USER,
+            "SOFTWARE\\LenoEnumTest",
+            win_reg.KeyAccess.ALL_ACCESS
+        )
+        
+        if enumOpenResult.errorCode == win_reg.WinError.SUCCESS {
+            print("    使用 enum 打开成功")
+            win_reg.closeKey(enumOpenResult.handle)
+        }
+        
+        // 清理
+        win_reg.deleteKey(win_reg.HKEY_CURRENT_USER, "SOFTWARE\\LenoEnumTest")
+    }
+    var t2=times.ms()
+    print($"run time:{t2-t1}ms")
+    print("")
+    print("=== 所有测试完成 ===")
+}

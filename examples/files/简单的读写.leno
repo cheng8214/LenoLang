@@ -1,0 +1,15 @@
+// 新建文件: Untitled.leno
+import files
+main()
+{
+	
+files.write("d:\\test.txt", "hello")
+var f = files.open("d:\\test.txt", "r")
+
+// 测试 type() 函数
+print("f 的类型: " + type(f))
+print(f.read())
+f.close()
+files.delete("test.txt")
+
+}

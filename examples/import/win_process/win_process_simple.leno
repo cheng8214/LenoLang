@@ -1,0 +1,908 @@
+// Windows 进程管理模块（简化版）
+// 功能：进程枚举、启动、终止、内存查询
+// 版本: 2.0 - 使用新的 FFI API
+
+import ffi
+
+// ========== 常量定义 ==========
+
+// 进程访问权限
+export var PROCESS_QUERY_INFORMATION = 0x0400
+export var PROCESS_VM_READ           = 0x0010
+export var PROCESS_TERMINATE         = 0x0001
+
+// 创建进程标志
+export var CREATE_NEW_CONSOLE        = 0x00000010
+
+// 错误码
+export var ERROR_SUCCESS             = 0
+export var ERROR_ACCESS_DENIED       = 5
+
+// 权限常量
+export var TOKEN_ADJUST_PRIVILEGES   = 0x0020
+export var TOKEN_QUERY               = 0x0008
+export var SE_PRIVILEGE_ENABLED      = 0x00000002
+export var SE_DEBUG_NAME             = "SeDebugPrivilege"
+
+// ========== 调试/安全检查 ==========
+
+// 安全读取 int，带边界检查
+func _safeReadInt(Ptr ptr, int offset, string fieldName) : int {
+    int ptrSize = ffi.sizeof(ptr)
+    if offset + 4 > ptrSize {
+        print("[ERROR] 内存访问越界: 尝试读取 '" + fieldName + "' 在偏移 " + offset +
+              "，但指针只有 " + ptrSize + " 字节")
+        print("[ERROR] 请检查结构体大小和偏移量是否正确")
+        // 返回 0 而不是崩溃
+        return 0
+    }
+    return ffi.read_int(ptr, offset)
+}
+
+// 安全读取 int64，带边界检查
+func _safeReadInt64(Ptr ptr, int offset, string fieldName) : int {
+    int ptrSize = ffi.sizeof(ptr)
+    if offset + 8 > ptrSize {
+        print("[ERROR] 内存访问越界: 尝试读取 '" + fieldName + "' 在偏移 " + offset +
+              "，但指针只有 " + ptrSize + " 字节")
+        print("[ERROR] 请检查结构体大小和偏移量是否正确")
+        return 0
+    }
+    return ffi.read_int64(ptr, offset)
+}
+
+// 安全读取指针，带边界检查
+func _safeReadPtr(Ptr ptr, int offset, string fieldName) : Ptr {
+    int ptrSize = ffi.sizeof(ptr)
+    if offset + 8 > ptrSize {  // x64 指针 8 字节
+        print("[ERROR] 内存访问越界: 尝试读取 '" + fieldName + "' 在偏移 " + offset +
+              "，但指针只有 " + ptrSize + " 字节")
+        print("[ERROR] 请检查结构体大小和偏移量是否正确")
+        return ffi.nullptr()
+    }
+    return ffi.read_ptr(ptr, offset)
+}
+
+// ========== 模块级变量 ==========
+
+export var _kernel32 = null
+export var _psapi    = null
+export var _advapi32 = null
+
+// 初始化
+export func init() {
+    if _kernel32 == null {
+        _kernel32 = ffi.load("kernel32.dll")
+    }
+    if _psapi == null {
+        _psapi = ffi.load("psapi.dll")
+    }
+    if _advapi32 == null {
+        _advapi32 = ffi.load("advapi32.dll")
+    }
+}
+
+// ========== 权限提升 ==========
+
+// 启用调试权限（提升进程权限以终止系统进程）
+// 注意：此函数需要管理员权限才能成功
+export func enableDebugPrivilege() {
+    if _kernel32 == null { init() }
+
+    // 打开当前进程的访问令牌
+    // 使用一个缓冲区来接收令牌句柄（模拟指针传出参数）
+    Ptr hTokenBuffer = ffi.malloc(8)  // 64位指针大小
+    try {
+        ffi.write_ptr(hTokenBuffer, 0, ffi.nullptr())
+
+        Ptr hProcess = ffi.call_ptr(_kernel32, "GetCurrentProcess")
+
+        // OpenProcessToken 的第三个参数是 PHANDLE（指针）
+        // 我们需要传递一个指向内存位置的指针
+        int openResult = ffi.call_int(_kernel32, "OpenProcessToken",
+            hProcess, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, hTokenBuffer)
+
+        if openResult == 0 {
+            return {success: false, errorCode: ERROR_ACCESS_DENIED}
+        }
+
+        Ptr hToken = ffi.read_ptr(hTokenBuffer, 0)
+
+        // 查找 SeDebugPrivilege 的 LUID
+        // LUID_AND_ATTRIBUTES 结构体: 8 bytes (LUID) + 4 bytes (Attributes) = 12 bytes
+        // TOKEN_PRIVILEGES 结构体: 4 bytes (Count) + 12 bytes (LUID_AND_ATTRIBUTES) = 16 bytes
+        Ptr tp = ffi.malloc(16)
+
+        try {
+            // 初始化 TOKEN_PRIVILEGES
+            ffi.write_int(tp, 0, 1)  // PrivilegeCount = 1
+
+            Ptr luidPtr = ffi.offset(tp, 4)  // LUID 在 TOKEN_PRIVILEGES 中的偏移
+
+            // 查找特权值
+            Ptr privName = ffi.utf8_to_utf16(SE_DEBUG_NAME)
+            try {
+                int lookupResult = ffi.call_int(_advapi32, "LookupPrivilegeValueW",
+                    ffi.nullptr(), privName, luidPtr)
+
+                if lookupResult == 0 {
+                    return {success: false, errorCode: ERROR_ACCESS_DENIED}
+                }
+            } finally {
+                ffi.free(privName)
+            }
+
+            // 设置属性为 SE_PRIVILEGE_ENABLED
+            ffi.write_int(tp, 12, SE_PRIVILEGE_ENABLED)
+
+            // 调整令牌特权
+            int adjustResult = ffi.call_int(_advapi32, "AdjustTokenPrivileges",
+                hToken, 0, tp, 16, ffi.nullptr(), ffi.nullptr())
+
+            ffi.call_int(_kernel32, "CloseHandle", hToken)
+
+            if adjustResult == 0 {
+                return {success: false, errorCode: ERROR_ACCESS_DENIED}
+            }
+
+            return {success: true, errorCode: 0}
+        } finally {
+            ffi.free(tp)
+        }
+    } finally {
+        ffi.free(hTokenBuffer)
+    }
+}
+
+// ========== 进程枚举 ==========
+
+// 获取所有进程ID
+export func enumProcesses() {
+    if _kernel32 == null { init() }
+
+    Ptr buffer = ffi.malloc(4096)
+    Ptr needed = ffi.malloc(4)
+
+    try {
+        // 使用 ffi.call_int 明确返回 int
+        int result = ffi.call_int(_psapi, "EnumProcesses", buffer, 4096, needed)
+
+        if result == 0 {
+            return {pids: [], errorCode: ERROR_ACCESS_DENIED}
+        }
+
+        int count = _int(ffi.read_int(needed, 0) / 4)
+        var pids = []
+
+        for 0 : count - 1 to i {
+            int pid = ffi.read_int(buffer, i * 4)
+            if pid > 0 {
+                pids.add(pid)
+            }
+        }
+
+        return {pids: pids, errorCode: 0}
+    } finally {
+        ffi.free(buffer)
+        ffi.free(needed)
+    }
+}
+
+// 获取进程名
+func _getProcessName(int pid) {
+    if pid == 0 { return "System Idle Process" }
+
+    // 使用 ffi.call_ptr 明确返回 Ptr
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess",
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return ""
+    }
+
+    try {
+        Ptr buffer = ffi.malloc(512)
+        try {
+            // 使用 ffi.call_int 明确返回 int
+            int result = ffi.call_int(_psapi, "GetModuleBaseNameW",
+                hProcess, ffi.nullptr(), buffer, 256)
+
+            if result > 0 {
+                return ffi.utf16_to_utf8(buffer)
+            }
+        } finally {
+            ffi.free(buffer)
+        }
+
+        return ""
+    } finally {
+        // CloseHandle 返回 BOOL，用 call_int
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取进程列表
+export func listProcesses() {
+    var enumResult = enumProcesses()
+    if enumResult.errorCode != 0 {
+        return {processes: [], errorCode: enumResult.errorCode}
+    }
+
+    var processes = []
+
+    for enumResult.pids to pid {
+        var name = _getProcessName(pid)
+        if name != "" {
+            processes.add({pid: pid, name: name})
+        }
+    }
+
+    return {processes: processes, errorCode: 0}
+}
+
+// ========== 进程操作 ==========
+
+// 查找进程（不区分大小写）
+export func findByName(string name) {
+    var result = listProcesses()
+
+    for result.processes to proc {
+        if proc.name.to_lower() == name.to_lower() {
+            return {found: true, pid: proc.pid}
+        }
+    }
+
+    return {found: false, pid: 0}
+}
+
+// 终止进程
+export func terminate(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_TERMINATE, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        int result = ffi.call_int(_kernel32, "TerminateProcess", hProcess, 0)
+        return {success: result != 0, errorCode: 0}
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 启动进程
+export func run(string commandLine) {
+    if _kernel32 == null { init() }
+
+    // STARTUPINFO 结构体大小: 68 bytes (x86/x64 相同)
+    Ptr startupInfo = ffi.malloc(68)
+    // PROCESS_INFORMATION 结构体 (x64): 8+8+4+4 = 24 bytes
+    // 但为了安全，多分配一些内存
+    Ptr processInfo = ffi.malloc(32)
+
+    try {
+        // 清空结构体
+        for 0 : 67 to i {
+            ffi.write_byte(startupInfo, i, 0)
+        }
+        for 0 : 31 to i {
+            ffi.write_byte(processInfo, i, 0)
+        }
+
+        ffi.write_int(startupInfo, 0, 68)
+
+        Ptr wCmdLine = ffi.utf8_to_utf16(commandLine)
+        try {
+            int result = ffi.call_int(_kernel32, "CreateProcessW",
+                ffi.nullptr(), wCmdLine, ffi.nullptr(), ffi.nullptr(),
+                0, CREATE_NEW_CONSOLE, ffi.nullptr(), ffi.nullptr(),
+                startupInfo, processInfo)
+
+            if result != 0 {
+                // PROCESS_INFORMATION 结构体 (x64):
+                // HANDLE hProcess;    // offset 0,  8 bytes
+                // HANDLE hThread;     // offset 8,  8 bytes
+                // DWORD  dwProcessId; // offset 16, 4 bytes
+                // DWORD  dwThreadId;  // offset 20, 4 bytes
+                int pid = _safeReadInt(processInfo, 16, "dwProcessId")
+
+                return {pid: pid, errorCode: 0}
+            } else {
+                return {pid: 0, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            ffi.free(wCmdLine)
+        }
+    } finally {
+        ffi.free(startupInfo)
+        ffi.free(processInfo)
+    }
+}
+
+// ========== 类型守卫案例 ==========
+
+// 【类型守卫案例】使用 ffi.call (返回 any) + 类型守卫
+// 这个函数展示了如何使用类型守卫来处理 ffi.call 的返回值
+export func getCurrentPid_withGuard() {
+    if _kernel32 == null { init() }
+
+    // ffi.call 返回 any 类型
+    var result = ffi.call(_kernel32, "GetCurrentProcessId")
+
+    // 使用类型守卫检查返回值的类型
+    if result is int {
+        // 编译器知道这里 result 是 int 类型
+        print("[类型守卫] 返回值是 int 类型，PID: " + result)
+        return result
+    } else if result is Ptr {
+        // 理论上不会发生，但为了演示类型守卫
+        print("[类型守卫] 返回值是 Ptr 类型")
+        return 0
+    } else {
+        print("[类型守卫] 返回值是其他类型: " + result)
+        // 使用 _int() 转换
+        return _int(result)
+    }
+}
+
+// 标准版本：使用 ffi.call_int (推荐)
+export func getCurrentPid() {
+    if _kernel32 == null { init() }
+    return ffi.call_int(_kernel32, "GetCurrentProcessId")
+}
+
+// ========== 高级进程信息 ==========
+
+// 获取进程内存信息
+export func getProcessMemory(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess",
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return {workingSet: 0, peakWorkingSet: 0, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        Ptr memCounters = ffi.malloc(72)
+
+        try {
+            ffi.write_int(memCounters, 0, 72)
+
+            int result = ffi.call_int(_psapi, "GetProcessMemoryInfo",
+                hProcess, memCounters, 72)
+
+            if result != 0 {
+                var workingSet = ffi.read_int64(memCounters, 16)
+                var peakWorkingSet = ffi.read_int64(memCounters, 8)
+
+                return {
+                    workingSet: _int(workingSet / 1024),
+                    peakWorkingSet: _int(peakWorkingSet / 1024),
+                    errorCode: 0
+                }
+            } else {
+                return {workingSet: 0, peakWorkingSet: 0, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            ffi.free(memCounters)
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取进程详细信息（带内存）
+export func getProcessDetails(int pid) {
+    var name = _getProcessName(pid)
+    if name == "" {
+        return {found: false, info: null}
+    }
+
+    var memInfo = getProcessMemory(pid)
+
+    return {
+        found: true,
+        info: {
+            pid: pid,
+            name: name,
+            memory: memInfo.workingSet,
+            peakMemory: memInfo.peakWorkingSet
+        }
+    }
+}
+
+// 获取系统内存信息
+export func getSystemMemory() {
+    if _kernel32 == null { init() }
+
+    Ptr memStatus = ffi.malloc(64)
+
+    try {
+        ffi.write_int(memStatus, 0, 64)
+
+        int result = ffi.call_int(_kernel32, "GlobalMemoryStatusEx", memStatus)
+
+        if result != 0 {
+            int memoryLoad = ffi.read_int(memStatus, 4)
+            var totalPhys = ffi.read_int64(memStatus, 8)
+            var availPhys = ffi.read_int64(memStatus, 16)
+
+            return {
+                memoryLoad: memoryLoad,
+                totalPhys: _int(totalPhys / (1024 * 1024)),
+                availPhys: _int(availPhys / (1024 * 1024)),
+                errorCode: 0
+            }
+        } else {
+            return {memoryLoad: 0, totalPhys: 0, availPhys: 0, errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        ffi.free(memStatus)
+    }
+}
+
+// ========== 进程等待 ==========
+
+// 等待进程退出（带超时）
+export func waitForExit(int pid, int timeoutMs) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess",
+        PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return {success: false, exited: false, exitCode: -1}
+    }
+
+    try {
+        int result = ffi.call_int(_kernel32, "WaitForSingleObject",
+            hProcess, timeoutMs)
+
+        if result == 0 {
+            Ptr exitCodePtr = ffi.malloc(4)
+            try {
+                int gotCode = ffi.call_int(_kernel32, "GetExitCodeProcess",
+                    hProcess, exitCodePtr)
+                if gotCode != 0 {
+                    int exitCode = ffi.read_int(exitCodePtr, 0)
+                    return {success: true, exited: true, exitCode: exitCode}
+                }
+            } finally {
+                ffi.free(exitCodePtr)
+            }
+        }
+
+        return {success: true, exited: false, exitCode: -1}
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// ========== 系统信息 ==========
+
+// 获取系统启动时间（毫秒）
+export func getSystemUptime() {
+    if _kernel32 == null { init() }
+
+    // GetTickCount64 返回 64 位值
+    var uptime = ffi.call(_kernel32, "GetTickCount64")
+
+    return uptime
+}
+
+// 获取处理器数量
+export func getProcessorCount() {
+    if _kernel32 == null { init() }
+
+    Ptr sysInfo = ffi.malloc(48)
+
+    try {
+        ffi.call(_kernel32, "GetNativeSystemInfo", sysInfo)
+
+        int count = ffi.read_int(sysInfo, 32)
+
+        return count
+    } finally {
+        ffi.free(sysInfo)
+    }
+}
+
+// ========== 增强功能 ==========
+
+// 尝试多种方式终止进程（包括强制终止）
+export func terminateForce(int pid) {
+    if _kernel32 == null { init() }
+
+    // 首先尝试正常终止
+    var result = terminate(pid)
+    if result.success {
+        return {success: true, method: "normal", errorCode: 0}
+    }
+
+    // 尝试以更高权限打开进程
+    // PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION = 0x0001 | 0x0400 = 0x0401
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", 0x0401, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        // 最后尝试使用系统权限（可能失败）
+        return {success: false, method: "none", errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        // 先尝试优雅地请求退出
+        int termResult = ffi.call_int(_kernel32, "TerminateProcess", hProcess, 0)
+
+        if termResult != 0 {
+            return {success: true, method: "force", errorCode: 0}
+        } else {
+            return {success: false, method: "force", errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 检查进程是否存在
+export func exists(int pid) {
+    if _kernel32 == null { init() }
+
+    // 尝试打开进程（只查询信息）
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return false
+    }
+
+    // 还需要检查进程是否真的存在，通过获取退出码验证
+    Ptr exitCodePtr = ffi.malloc(4)
+    int result = ffi.call_int(_kernel32, "GetExitCodeProcess", hProcess, exitCodePtr)
+    int exitCode = ffi.read_int(exitCodePtr, 0)
+    ffi.free(exitCodePtr)
+
+    ffi.call_int(_kernel32, "CloseHandle", hProcess)
+
+    // 如果获取退出码失败，或者退出码不是 STILL_ACTIVE(259)，进程不存在或已退出
+    if result == 0 {
+        return false
+    }
+
+    // STILL_ACTIVE = 259，表示进程仍在运行
+    return exitCode == 259
+}
+
+// 获取进程退出码（如果进程已退出）
+export func getExitCode(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return {success: false, exitCode: -1, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        Ptr exitCodePtr = ffi.malloc(4)
+        try {
+            int result = ffi.call_int(_kernel32, "GetExitCodeProcess", hProcess, exitCodePtr)
+
+            if result != 0 {
+                int exitCode = ffi.read_int(exitCodePtr, 0)
+                // STILL_ACTIVE = 259 表示进程仍在运行
+                bool isRunning = (exitCode == 259)
+                return {success: true, exitCode: exitCode, isRunning: isRunning, errorCode: 0}
+            } else {
+                return {success: false, exitCode: -1, isRunning: false, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            ffi.free(exitCodePtr)
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取进程优先级
+export func getPriority(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return {success: false, priority: 0, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        int priority = ffi.call_int(_kernel32, "GetPriorityClass", hProcess)
+
+        if priority != 0 {
+            return {success: true, priority: priority, errorCode: 0}
+        } else {
+            return {success: false, priority: 0, errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 设置进程优先级
+export func setPriority(int pid, int priorityClass) {
+    if _kernel32 == null { init() }
+
+    // PROCESS_SET_INFORMATION = 0x0200
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", 0x0200, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        int result = ffi.call_int(_kernel32, "SetPriorityClass", hProcess, priorityClass)
+
+        return {success: result != 0, errorCode: 0}
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 优先级常量
+export var PRIORITY_IDLE = 64           // 空闲
+export var PRIORITY_BELOW_NORMAL = 16384  // 低于正常
+export var PRIORITY_NORMAL = 32         // 正常
+export var PRIORITY_ABOVE_NORMAL = 32768  // 高于正常
+export var PRIORITY_HIGH = 128          // 高
+export var PRIORITY_REALTIME = 256      // 实时
+
+// 获取进程启动时间（需要管理员权限）
+export func getProcessTimes(int pid) {
+    if _kernel32 == null { init() }
+
+    Ptr hProcess = ffi.call_ptr(_kernel32, "OpenProcess", PROCESS_QUERY_INFORMATION, 0, pid)
+
+    if hProcess == ffi.nullptr() {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        // FILETIME 结构体：64位值（8字节）
+        Ptr createTime = ffi.malloc(8)
+        Ptr exitTime = ffi.malloc(8)
+        Ptr kernelTime = ffi.malloc(8)
+        Ptr userTime = ffi.malloc(8)
+
+        try {
+            int result = ffi.call_int(_kernel32, "GetProcessTimes",
+                hProcess, createTime, exitTime, kernelTime, userTime)
+
+            if result != 0 {
+                // 读取时间值（FILETIME 是 100 纳秒为单位）
+                var create = ffi.read_int64(createTime, 0)
+                var kernel = ffi.read_int64(kernelTime, 0)
+                var user = ffi.read_int64(userTime, 0)
+
+                return {
+                    success: true,
+                    createTime: create,
+                    kernelTime: _int(kernel / 10000),  // 转换为毫秒
+                    userTime: _int(user / 10000),      // 转换为毫秒
+                    errorCode: 0
+                }
+            } else {
+                return {success: false, errorCode: ERROR_ACCESS_DENIED}
+            }
+        } finally {
+            ffi.free(createTime)
+            ffi.free(exitTime)
+            ffi.free(kernelTime)
+            ffi.free(userTime)
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hProcess)
+    }
+}
+
+// 获取父进程ID（使用 Toolhelp32 快照）
+export func getParentPid(int pid) {
+    if _kernel32 == null { init() }
+
+    // 创建进程快照
+    // TH32CS_SNAPPROCESS = 0x00000002
+    Ptr hSnapshot = ffi.call_ptr(_kernel32, "CreateToolhelp32Snapshot", 0x00000002, 0)
+
+    if hSnapshot == ffi.nullptr() {
+        return {success: false, parentPid: 0, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    try {
+        // PROCESSENTRY32W 结构体大小（Unicode版本）
+        // typedef struct tagPROCESSENTRY32W {
+        //   DWORD     dwSize;              // 0,   4 bytes
+        //   DWORD     cntUsage;            // 4,   4 bytes
+        //   DWORD     th32ProcessID;       // 8,   4 bytes
+        //   ULONG_PTR th32DefaultHeapID;   // 12,  4/8 bytes (x86=4, x64=8)
+        //   DWORD     th32ModuleID;        // 16/20, 4 bytes
+        //   DWORD     cntThreads;          // 20/24, 4 bytes
+        //   DWORD     th32ParentProcessID; // 24/28, 4 bytes
+        //   LONG      pcPriClassBase;      // 28/32, 4 bytes
+        //   DWORD     dwFlags;             // 32/36, 4 bytes
+        //   WCHAR     szExeFile[260];      // 36/40, 520 bytes
+        // } PROCESSENTRY32W;  // Total: 556/568 bytes
+
+        int peSize = 568  // x64 下的 PROCESSENTRY32W 大小
+        Ptr pe32 = ffi.malloc(peSize)
+
+        // 初始化整个结构体为0
+        for 0 : peSize - 1 to i {
+            ffi.write_byte(pe32, i, 0)
+        }
+        // 设置 dwSize 字段
+        ffi.write_int(pe32, 0, peSize)
+
+        // 开始遍历
+        int result = ffi.call_int(_kernel32, "Process32FirstW", hSnapshot, pe32)
+
+        int parentPid = 0
+
+        bool found = false
+
+        while result != 0 {
+            int currentPid = ffi.read_int(pe32, 8)  // th32ProcessID offset = 8
+
+            if currentPid == pid {
+                parentPid = ffi.read_int(pe32, 24)  // th32ParentProcessID offset = 24 (x64)
+                found = true
+                break
+            }
+
+            result = ffi.call_int(_kernel32, "Process32NextW", hSnapshot, pe32)
+        }
+
+        ffi.free(pe32)
+
+        if found {
+            return {success: true, parentPid: parentPid, errorCode: 0}
+        } else {
+            return {success: false, parentPid: 0, errorCode: ERROR_ACCESS_DENIED}
+        }
+    } finally {
+        ffi.call_int(_kernel32, "CloseHandle", hSnapshot)
+    }
+}
+
+// 获取系统运行时间
+export func getSystemUpTime() {
+    if _kernel32 == null { init() }
+
+    // GetTickCount64 返回毫秒数
+    var uptime = ffi.call(_kernel32, "GetTickCount64")
+
+    return _int(uptime)
+}
+
+// 格式化时间为可读字符串
+export func formatUptime(int ms) {
+    int totalSec = _int(ms / 1000)
+    int days = _int(totalSec / 86400)
+    int hours = _int((totalSec % 86400) / 3600)
+    int minutes = _int((totalSec % 3600) / 60)
+    int seconds = totalSec % 60
+
+    if days > 0 {
+        return days + " 天 " + hours + " 小时 " + minutes + " 分钟 " + seconds + " 秒"
+    } else if hours > 0 {
+        return hours + " 小时 " + minutes + " 分钟 " + seconds + " 秒"
+    } else if minutes > 0 {
+        return minutes + " 分钟 " + seconds + " 秒"
+    } else {
+        return seconds + " 秒"
+    }
+}
+
+// 获取系统信息（完整版）
+export func getSystemInfo() {
+    if _kernel32 == null { init() }
+
+    // SYSTEM_INFO 结构体 (x64)
+    // typedef struct _SYSTEM_INFO {
+    //   union {
+    //     DWORD dwOemId;           // 0, 4 bytes
+    //     struct {
+    //       WORD wProcessorArchitecture;  // 0, 2 bytes
+    //       WORD wReserved;               // 2, 2 bytes
+    //     } DUMMYSTRUCTNAME;
+    //   } DUMMYUNIONNAME;
+    //   DWORD     dwPageSize;              // 4, 4 bytes
+    //   LPVOID    lpMinimumApplicationAddress; // 8, 8 bytes
+    //   LPVOID    lpMaximumApplicationAddress; // 16, 8 bytes
+    //   DWORD_PTR dwActiveProcessorMask;   // 24, 8 bytes
+    //   DWORD     dwNumberOfProcessors;    // 32, 4 bytes
+    //   DWORD     dwProcessorType;         // 36, 4 bytes
+    //   DWORD     dwAllocationGranularity; // 40, 4 bytes
+    //   WORD      wProcessorLevel;         // 44, 2 bytes
+    //   WORD      wProcessorRevision;      // 46, 2 bytes
+    // } SYSTEM_INFO;  // Total: 48 bytes
+
+    Ptr sysInfo = ffi.malloc(48)
+
+    try {
+        ffi.call(_kernel32, "GetNativeSystemInfo", sysInfo)
+
+        int processorCount = ffi.read_int(sysInfo, 32)  // dwNumberOfProcessors offset = 32
+        int processorType = ffi.read_int(sysInfo, 36)   // dwProcessorType offset = 36
+        int pageSize = ffi.read_int(sysInfo, 4)         // dwPageSize offset = 4
+
+        // 获取系统运行时间
+        var uptime = ffi.call(_kernel32, "GetTickCount64")
+        int uptimeMs = _int(uptime)
+
+        // 获取系统内存信息
+        Ptr memStatus = ffi.malloc(64)
+        try {
+            ffi.write_int(memStatus, 0, 64)
+            int memResult = ffi.call_int(_kernel32, "GlobalMemoryStatusEx", memStatus)
+
+            if memResult != 0 {
+                int memoryLoad = ffi.read_int(memStatus, 4)
+                var totalPhys = ffi.read_int64(memStatus, 8)
+                var availPhys = ffi.read_int64(memStatus, 16)
+
+                return {
+                    processorCount: processorCount,
+                    pageSize: pageSize,
+                    uptimeMs: uptimeMs,
+                    memoryLoad: memoryLoad,
+                    totalPhys: _int(totalPhys / (1024 * 1024)),
+                    availPhys: _int(availPhys / (1024 * 1024)),
+                    errorCode: 0
+                }
+            }
+        } finally {
+            ffi.free(memStatus)
+        }
+
+        return {
+            processorCount: processorCount,
+            pageSize: pageSize,
+            uptimeMs: uptimeMs,
+            memoryLoad: 0,
+            totalPhys: 0,
+            availPhys: 0,
+            errorCode: 0
+        }
+    } finally {
+        ffi.free(sysInfo)
+    }
+}
+
+// 获取进程完整信息
+export func getFullProcessInfo(int pid) {
+    var name = _getProcessName(pid)
+    if name == "" {
+        return {success: false, errorCode: ERROR_ACCESS_DENIED}
+    }
+
+    var memInfo = getProcessMemory(pid)
+    var priorityInfo = getPriority(pid)
+    var timesInfo = getProcessTimes(pid)
+    var parentInfo = getParentPid(pid)
+    var exitCodeInfo = getExitCode(pid)
+
+    return {
+        success: true,
+        pid: pid,
+        name: name,
+        memory: memInfo.workingSet,
+        peakMemory: memInfo.peakWorkingSet,
+        priority: priorityInfo.priority,
+        kernelTime: timesInfo.kernelTime,
+        userTime: timesInfo.userTime,
+        parentPid: parentInfo.parentPid,
+        exitCode: exitCodeInfo.exitCode,
+        isRunning: exitCodeInfo.isRunning,
+        errorCode: 0
+    }
+}

@@ -1,0 +1,47 @@
+// 测试编译时类型推断 - 加减乘除
+
+main()
+{
+    // 基本类型推断
+    var a = 10          // 应该推断为 int
+    var b = 3.14        // 应该推断为 float
+    
+    // 加法运算类型推断
+    var add1 = 1 + 2           // int + int = int
+    var add2 = 1 + 2.5         // int + float = float
+    var add3 = a + b           // int + float = float
+    
+    // 减法运算类型推断
+    var sub1 = 10 - 3          // int - int = int
+    var sub2 = 10.5 - 3        // float - int = float
+    
+    // 乘法运算类型推断
+    var mul1 = 5 * 3           // int * int = int
+    var mul2 = 5 * 2.5         // int * float = float
+    
+    // 除法运算类型推断（注意：除法总是返回 float）
+    var div1 = 10 / 2          // int / int = float
+    var div2 = 10.0 / 3        // float / int = float
+    
+    // 混合运算
+    var mixed = (1 + 2) * 3.5  // int + int = int, int * float = float
+    
+    // 打印类型信息验证
+    print("add1类型:", type(add1))   // 期望: int
+    print("add2类型:", type(add2))   // 期望: float
+    print("add3类型:", type(add3))   // 期望: float
+    print("sub1类型:", type(sub1))   // 期望: int
+    print("sub2类型:", type(sub2))   // 期望: float
+    print("mul1类型:", type(mul1))   // 期望: int
+    print("mul2类型:", type(mul2))   // 期望: float
+    print("div1类型:", type(div1))   // 期望: float
+    print("div2类型:", type(div2))   // 期望: float
+    print("mixed类型:", type(mixed)) // 期望: float
+    
+    // 验证值正确
+    print("add1值:", add1)
+    print("add2值:", add2)
+    print("div1值:", div1)
+    
+    print("类型推断测试完成！")
+}

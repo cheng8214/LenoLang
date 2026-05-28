@@ -1,0 +1,82 @@
+// 测试数组添加 struct 后的类型
+
+struct Point
+{
+    int x
+    int y
+}
+
+// 创建点数组
+func create_points(int count)
+{
+    var points = []
+    for 0 : count - 1 to var i {
+        var p = Point(x = i * 10, y = i * 20)
+        points.add(p)
+    }
+    return points
+}
+
+// 测试 1: 检查数组类型守卫
+func test_array_type(var points)
+{
+    print("=== 测试数组类型 ===")
+    
+    // 测试 Array 类型守卫
+    if points is Array {
+        print("points is Array: true")
+    } else {
+        print("points is Array: false")
+    }
+    
+    // 测试 Array[int] 类型守卫
+    if points is Array[int] {
+        print("points is Array[int]: true")
+    } else {
+        print("points is Array[int]: false")
+    }
+    
+    // 测试 Array[Point] 类型守卫（如果支持的话）
+    // if points is Array[Point] {
+    //     print("points is Array[Point]: true")
+    // } else {
+    //     print("points is Array[Point]: false")
+    // }
+}
+
+// 测试 2: 检查元素类型
+func test_element_type(var points)
+{
+    print("=== 测试元素类型 ===")
+    
+    if points is Array {
+        var p = points[0]
+        print("p.x = " + p.x)
+        print("p.y = " + p.y)
+        
+        // 检查 p 是否是 Point 类型
+        // if p is Point {
+        //     print("p is Point: true")
+        // } else {
+        //     print("p is Point: false")
+        // }
+    }
+}
+
+main()
+{
+    print("=== 测试数组添加 struct 后的类型 ===")
+    print("")
+    
+    var points = create_points(3)
+    print("Created " + points.len() + " points")
+    print("")
+    
+    test_array_type(points)
+    print("")
+    
+    test_element_type(points)
+    
+    print("")
+    print("=== 完成 ===")
+}

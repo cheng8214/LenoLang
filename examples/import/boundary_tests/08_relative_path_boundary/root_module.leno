@@ -1,0 +1,7 @@
+// 根目录模块
+
+export var level = "root"
+
+export func get_level() {
+    return level
+}

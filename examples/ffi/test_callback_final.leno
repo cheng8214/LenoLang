@@ -1,0 +1,45 @@
+// 最终版多线程回调测试
+import ffi
+
+var callback_value = 0
+
+// Windows ThreadPoolWork 回调签名：
+// VOID CALLBACK WorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work)
+func work_callback(Ptr instance, Ptr context, Ptr work): void {
+    import ffi
+
+    var val = ffi.read_int(context, 0)
+    callback_value = val + 100
+    ffi.write_int(context, 0, callback_value)
+}
+
+main() {
+    print("开始多线程回调测试...")
+
+    var kernel32 = ffi.load("kernel32.dll")
+
+    var context = ffi.malloc(8)
+    ffi.write_int(context, 0, 999)
+
+    // 使用 3 个参数的回调签名
+    var cb = ffi.callback(work_callback, "void", ["pointer", "pointer", "pointer"])
+    var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, context, ffi.nullptr())
+
+    ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+
+    var final_value = ffi.read_int(context, 0)
+    print("callback_value: " + callback_value)
+    print("context value: " + final_value + " (期望: 1099)")
+
+    ffi.call_void(kernel32, "CloseThreadpoolWork", work)
+    ffi.free(context)
+    ffi.free(cb)
+    ffi.free(kernel32)
+
+    if callback_value == 1099 and final_value == 1099 {
+        print("✓ 测试通过！")
+    } else {
+        print("✗ 测试失败")
+    }
+}

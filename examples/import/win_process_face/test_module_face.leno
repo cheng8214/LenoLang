@@ -1,0 +1,54 @@
+// 测试模块中定义 face 和 struct
+
+// 在模块中定义 face
+export face Shape {
+    func area():float
+    func perimeter():float
+}
+
+// 在模块中定义实现 face 的 struct
+export struct Rectangle impl Shape {
+    float width = 0.0
+    float height = 0.0
+
+    func area():float {
+        return width * height
+    }
+
+    func perimeter():float {
+        return 2.0 * (width + height)
+    }
+}
+
+// 在模块中定义实现 face 的 struct
+export struct Circle impl Shape {
+    float radius = 0.0
+
+    func area():float {
+        return 3.14159 * radius * radius
+    }
+
+    func perimeter():float {
+        return 2.0 * 3.14159 * radius
+    }
+}
+
+// 工厂函数
+export func createRectangle(float w, float h):Rectangle {
+    var rect = Rectangle()
+    rect.width = w
+    rect.height = h
+    return rect
+}
+
+export func createCircle(float r):Circle {
+    var circle = Circle()
+    circle.radius = r
+    return circle
+}
+
+// 使用 face 作为参数的函数
+export func printShapeInfo(Shape s) {
+    print("面积: " + s.area())
+    print("周长: " + s.perimeter())
+}

@@ -1,0 +1,15 @@
+// 测试 len() 调用
+struct Test {
+    Array[int] scores = []
+    
+    func getLen():int {
+        var l = scores.len()  // 先赋值给变量
+        return l
+    }
+}
+
+main() {
+    var t = Test()
+    t.scores = [85, 90, 78]
+    print(t.getLen())
+}

@@ -1,0 +1,42 @@
+// ============================================================================
+// 测试：struct 实现多个 face（多接口实现）
+// ============================================================================
+//
+// 本测试验证：
+//   1. 一个 struct 可以同时 impl 多个 face（Record impl Printable, Serializable）
+//   2. 不同 face 类型参数的函数可以分别接受同一个 struct 实例
+//   3. print_it 接受 Printable，save_it 接受 Serializable，Record 同时满足两者
+//
+// 预期输出：
+//   Record
+//   hello
+
+face Printable {
+    func to_str():string
+}
+
+face Serializable {
+    func serialize():string
+}
+
+struct Record impl Printable, Serializable {
+    int id = 0
+    string data = ""
+    func to_str():string { return "Record" }
+    func serialize():string { return data }
+}
+
+func print_it(Printable p) {
+    print(p.to_str())
+}
+
+func save_it(Serializable s) {
+    print(s.serialize())
+}
+
+main() {
+    var r = Record()
+    r.data = "hello"
+    print_it(r)
+    save_it(r)
+}

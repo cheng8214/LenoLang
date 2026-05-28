@@ -1,0 +1,49 @@
+// 测试重构后的代码
+main() {
+    print("=== 测试重构后的错误处理 ===\n")
+    
+    // 测试 1: 正常计算
+    var a = 10
+    var b = 20
+    print("10 + 20 = " + (a + b))
+    print("10 - 20 = " + (a - b))
+    print("10 * 20 = " + (a * b))
+    print("20 / 10 = " + (b / a))
+    print("20 % 10 = " + (b % a))
+    
+    // 测试 2: null 错误
+    print("\n=== 测试 null 错误 ===")
+    var n = null
+    // 这些应该报错
+    // var r1 = n + 1  // 运行时错误: 加法: null 不能参与算术运算
+    // var r2 = 1 - n  // 运行时错误: 减法: null 不能参与算术运算
+    // var r3 = n * 2  // 运行时错误: 乘法: null 不能参与算术运算
+    // var r4 = 10 / n // 运行时错误: 除法: null 不能参与算术运算
+    // var r5 = 10 % n // 运行时错误: 取模: null 不能参与算术运算
+    
+    // 测试 3: 大数计算
+    print("\n=== 测试大数计算 ===")
+    var big1 = 12200160415121876738
+    var big2 = 19740274219868223167
+    print("big1 + big2 = " + (big1 + big2))
+    print("big2 - big1 = " + (big2 - big1))
+    print("big1 * 2 = " + (big1 * 2))
+    
+    // 测试 4: fib(100)
+    print("\n=== 测试 fib(100) ===")
+    var f1 = 0
+    var f2 = 1
+    for 2:100 to i {
+        var temp = f1 + f2
+        f1 = f2
+        f2 = temp
+    }
+    print("fib(100) = " + f2)
+    if f2 == 354224848179261915075 {
+        print("结果: PASS")
+    } else {
+        print("结果: FAIL")
+    }
+    
+    print("\n=== 所有测试完成 ===")
+}

@@ -1,0 +1,48 @@
+// 测试 cstruct 数组字段
+
+cstruct Matrix4 {
+    f32 m[16]   // 4×4 矩阵
+}
+
+cstruct DataBuffer {
+    i32 count
+    f64 values[10]
+}
+
+main() {
+    print("=== 测试 cstruct 数组字段 ===")
+    
+    // 测试 Matrix4
+    print("1. Matrix4 定义:")
+    print(Matrix4)
+    
+    var mat = Matrix4.malloc()
+    mat.m[0] = 1.0
+    mat.m[1] = 2.0
+    mat.m[15] = 16.0
+    print("mat.m[0] = " + mat.m[0])
+    print("mat.m[1] = " + mat.m[1])
+    print("mat.m[15] = " + mat.m[15])
+    print(mat.to_str())
+    mat.free()
+    
+    print("")
+    
+    // 测试 DataBuffer
+    print("2. DataBuffer 定义:")
+    print(DataBuffer)
+    
+    var buf = DataBuffer.malloc()
+    buf.count = 3
+    buf.values[0] = 1.1
+    buf.values[1] = 2.2
+    buf.values[2] = 3.3
+    print("buf.count = " + buf.count)
+    print("buf.values[0] = " + buf.values[0])
+    print("buf.values[1] = " + buf.values[1])
+    print("buf.values[2] = " + buf.values[2])
+    print(buf.to_str())
+    buf.free()
+    
+    print("=== 测试完成 ===")
+}

@@ -1,0 +1,15 @@
+import io
+import asyncs
+
+// 测试 task 函数
+async func task(string name, int ms) {
+    io.print($"任务 {name} 开始")
+    await asyncs.sleep(ms)
+    io.print($"任务 {name} 完成")
+}
+
+main() {
+    io.print("=== 测试开始 ===")
+    await task("X", 100)
+    io.print("=== 测试完成 ===")
+}

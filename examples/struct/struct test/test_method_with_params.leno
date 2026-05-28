@@ -1,0 +1,21 @@
+struct Point
+{
+    int y
+    int x
+    func test(int cc)
+    {
+    if cc==10
+    {
+    	print(x+y)
+    }else{
+    print(x + y + cc)
+    }
+        
+    }
+}
+
+main()
+{
+    Point p1 = Point(x=10, y=10)
+    p1.test(10)
+}

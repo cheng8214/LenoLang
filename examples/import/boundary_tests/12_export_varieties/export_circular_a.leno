@@ -1,0 +1,19 @@
+// 导出循环依赖测试 - 模块 A
+// 测试导出时的循环依赖处理
+
+import "export_circular_b.leno" as mod_b
+
+export var name_a = "Module A"
+export var value_a = 100
+
+export func func_a() {
+    return "A calling B: " + mod_b.func_b()
+}
+
+export func get_from_b() {
+    return mod_b.value_b
+}
+
+export func combined() {
+    return value_a + mod_b.value_b
+}

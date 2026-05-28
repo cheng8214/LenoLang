@@ -1,0 +1,10 @@
+
+export func add(a, b)
+{
+    return a + b
+}
+
+export func greet(name)
+{
+    print("Hello, " + name)
+}

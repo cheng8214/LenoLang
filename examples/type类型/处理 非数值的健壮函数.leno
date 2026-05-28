@@ -1,0 +1,40 @@
+// ✅ 处理 null/非数值的健壮函数
+func safeAdd(var a, var b):int {
+    // 边界1：检查 null
+    if a ==null or b ==null {
+        return 0
+    }
+    // 边界2：检查数值类型
+    if a is int and b is int {
+        return a + b
+    } else if a is float and b is float {
+        return _int(a + b) // 转换为 int 返回
+    }
+    // 边界3：兜底（非数值类型）
+    return 0
+}
+
+// ✅ 安全转换数组
+func toIntArr(var arr):Array[int] {
+    Array[int] res
+    // 边界：检查是否为数组
+    if arr not is Array {
+        return res // 返回空数组
+    }
+    // 边界：逐个转换元素
+    for arr to item {
+        if item is int {
+            res.add(item)
+        } else if item is float {
+            res.add(_int(item)) // float 转 int
+        }
+        // 非数值元素直接跳过
+    }
+    return res
+}
+
+main()
+{
+	print(safeAdd(0, 10))
+	 print(toIntArr([10]))
+}

@@ -1,0 +1,63 @@
+﻿import ffi
+
+main() {
+    print("=== 使用 KEY_ALL_ACCESS 测试 ===")
+    
+    var HKEY_CURRENT_USER_PTR = ffi.ptr_from_int(0x80000001)
+    Ptr advapi = ffi.load("advapi32.dll")
+    
+    var hKey = ffi.malloc(8)
+    var disp = ffi.malloc(4)
+    
+    // KEY_ALL_ACCESS = 0xF003F
+    var result = ffi.call(advapi, "RegCreateKeyExA",
+        HKEY_CURRENT_USER_PTR,
+        "SOFTWARE\\LenoAllAccess",
+        0,
+        ffi.nullptr(),
+        0,
+        0xF003F,  // KEY_ALL_ACCESS
+        ffi.nullptr(),
+        hKey,
+        disp
+    )
+    print("创建结果: " + result + ", disposition: " + ffi.read_int(disp, 0))
+    
+    if result == 0 {
+        var handle = ffi.read_ptr(hKey, 0)
+        
+        // 写入默认值（空名称）
+        var writeData = "DefaultValue"
+        var writeResult = ffi.call(advapi, "RegSetValueExA",
+            handle,
+            "",  // 空名称 = 默认值
+            0,
+            1,  // REG_SZ
+            writeData,
+            writeData.len() + 1
+        )
+        print("写入默认值结果: " + writeResult)
+        
+        // 写入命名值
+        writeResult = ffi.call(advapi, "RegSetValueExA",
+            handle,
+            "NamedValue",
+            0,
+            1,
+            "NamedData",
+            10
+        )
+        print("写入命名值结果: " + writeResult)
+        
+        // 刷新注册表（强制写入磁盘）
+        var flushResult = ffi.call(advapi, "RegFlushKey", handle)
+        print("刷新结果: " + flushResult)
+        
+        ffi.call(advapi, "RegCloseKey", handle)
+        print("键已关闭，请立即检查注册表: HKCU\\SOFTWARE\\LenoAllAccess")
+    }
+    
+    ffi.free(hKey)
+    ffi.free(disp)
+    ffi.free(advapi)
+}

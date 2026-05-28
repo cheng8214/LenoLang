@@ -1,0 +1,89 @@
+// 测试 struct 方法直接使用外部变量（upvalue）
+// 这种情况方法本身需要捕获外部变量
+
+// 全局变量
+var global_counter = 0
+
+struct TestStruct
+{
+    int value
+    
+    // 方法直接使用全局变量
+    func useGlobal()
+    {
+        global_counter = global_counter + 1
+        return global_counter
+    }
+    
+    // 方法访问 self 和全局变量
+    func combine()
+    {
+        return value + global_counter
+    }
+}
+
+// 测试在函数内定义 struct，捕获局部变量
+func createStructWithCapture()
+{
+    var local_var = 100
+    
+    struct LocalStruct
+    {
+        int data
+        
+        // 尝试捕获外部局部变量
+        func getLocal()
+        {
+            return local_var + data
+        }
+    }
+    
+    return LocalStruct(data = 5)
+}
+
+main()
+{
+    print("======== struct 方法直接使用外部变量测试 ========")
+    print("")
+    
+    // 测试1: 使用全局变量
+    print("--- 测试1: 方法使用全局变量 ---")
+    TestStruct t = TestStruct(value = 10)
+    
+    var r1 = t.useGlobal()
+    print($"第一次调用: {r1}, 期望: 1")
+    
+    var r2 = t.useGlobal()
+    print($"第二次调用: {r2}, 期望: 2")
+    
+    var r3 = t.combine()
+    print($"combine 结果: {r3}, 期望: 12 (10 + 2)")
+    
+    if r1 == 1 and r2 == 2 and r3 == 12
+    {
+        print("测试1通过!")
+    }
+    else
+    {
+        print("测试1失败!")
+    }
+    print("")
+    
+    // 测试2: 捕获局部变量
+    print("--- 测试2: 方法捕获局部变量 ---")
+    var obj = createStructWithCapture()
+    var result = obj.getLocal()
+    print($"结果: {result}, 期望: 105 (100 + 5)")
+    
+    if result == 105
+    {
+        print("测试2通过!")
+    }
+    else
+    {
+        print("测试2失败!")
+    }
+    print("")
+    
+    print("======== 测试完成 ========")
+}

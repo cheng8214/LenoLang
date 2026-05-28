@@ -1,0 +1,13 @@
+import "struct_import.leno"
+use struct_import.Point
+
+main()
+{
+    // 测试 use struct
+    Point p = struct_import.Point()
+    p.x = 10
+    p.y = 20
+    print(p.x)
+    print(p.y)
+    
+}

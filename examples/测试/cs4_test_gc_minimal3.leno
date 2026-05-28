@@ -1,0 +1,22 @@
+import times
+
+main() {
+    // 创建一个 BigInt 对象
+    var start = times.ms()
+    print("start = " + start)
+
+    // 使用较大的循环次数，sum 会溢出为 BigInt
+    var sum = 0
+    var i = 100000
+    while i > 0 {
+        sum = sum + i
+        i = i - 1
+        // 每10000次打印一次
+        if i % 10000 == 0 {
+            print("i=" + i + ", sum=" + sum)
+        }
+    }
+
+    print("final sum = " + sum)
+    print("start again = " + start)
+}

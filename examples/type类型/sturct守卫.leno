@@ -1,0 +1,35 @@
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+main() {
+    var p = Point()
+    
+    // 直接变量
+    if p is Point {
+        print("direct: match")
+    }
+    
+    // 从数组取出
+    var arr = [p]
+    var item = arr[0]
+    if item is Point {
+        print("from array: match")
+    }
+    
+    // for循环变量
+    for arr to x {
+        if x is Point {
+            print("for loop: match")
+        }
+    }
+    
+    // any数组
+    var anyArr = [1, "hello", p]
+    for anyArr to y {
+        if y is Point {
+            print("any array for: match")
+        }
+    }
+}

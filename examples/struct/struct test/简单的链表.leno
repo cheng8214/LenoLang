@@ -1,0 +1,29 @@
+struct Node
+{
+    int value
+    Node next = null
+}
+
+struct LinkedList
+{
+    Node head = null
+    int count = 0
+}
+
+func set_head(LinkedList list, Node node)
+{
+    list.head = node
+}
+
+main()
+{
+    var list = LinkedList()
+    var n = Node()
+    n.value = 100
+    
+    set_head(list, n)
+    
+    print("head value: ")
+    //会报错
+    print(list.head.value)
+}

@@ -1,0 +1,79 @@
+import files
+
+// 测试分块复制二进制文件（适合大文件）
+var src_path = "d:\\1.zip"
+var dst_path = "c:\\111.zip"
+
+// 检查源文件是否存在
+if !files.exists(src_path) {
+    print("错误: 源文件不存在: " + src_path)
+    return
+}
+
+print("开始分块复制文件...")
+print("源文件: " + src_path)
+print("目标文件: " + dst_path)
+
+// 以二进制读取模式打开源文件
+var f_src = files.open(src_path, "rb")
+
+// 以二进制写入模式打开目标文件  
+var f_dst = files.open(dst_path, "wb")
+
+// 获取文件大小
+var file_size = f_src.len()
+print("源文件大小: " + file_size + " 字节")
+
+// 分块读取和写入
+var chunk_size = 65536  // 64KB 一块
+var total_written = 0
+var chunk_count = 0
+
+while !f_src.eof() {
+    // 读取一块数据
+    var chunk = f_src.read(chunk_size)
+    //print(type(chunk))
+    // 获取这块的大小
+    var chunk_len =_int(chunk.len())
+    
+    // 如果读到空内容，说明结束了
+    if chunk_len == 0 {
+        break
+    }
+    
+    // 写入目标文件
+    f_dst.write(chunk)
+    
+    // 累加写入大小
+    total_written = total_written + chunk_len
+    chunk_count = chunk_count + 1
+    
+    // 每10块显示一次进度
+    if chunk_count % 10 == 0 {
+        print("已复制 " + total_written + " 字节 (" + chunk_count + " 块)")
+    }
+}
+
+// 关闭文件
+f_src.close()
+f_dst.close()
+
+print("\n复制完成!")
+print("总块数: " + chunk_count)
+print("总字节: " + total_written)
+
+// 验证目标文件
+if files.exists(dst_path) {
+    var f_check = files.open(dst_path, "rb")
+    var dst_size = f_check.len()
+    f_check.close()
+    print("目标文件大小: " + dst_size + " 字节")
+    
+    if dst_size == file_size {
+        print("✓ 文件大小匹配，复制成功!")
+    } else {
+        print("✗ 文件大小不匹配!")
+    }
+} else {
+    print("✗ 目标文件创建失败!")
+}

@@ -1,0 +1,32 @@
+// 模块缓存测试 - 用户 B
+// 导入计数器模块并使用（测试是否共享状态）
+
+import "counter_module.leno" as counter
+
+export func use_counter() {
+    // 使用计数器模块
+    var val1 = counter.increment()
+    var val2 = counter.increment()
+
+    return {
+        "user": "B",
+        "values": [val1, val2],
+        "final": counter.get_counter()
+    }
+}
+
+export func get_counter_ref() {
+    return counter.get_counter()
+}
+
+export func get_init_count() {
+    return counter.get_init_count()
+}
+
+export func reset_counter() {
+    counter.reset()
+}
+
+export func set_counter(int v) {
+    counter.set_value(v)
+}

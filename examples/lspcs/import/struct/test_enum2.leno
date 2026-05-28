@@ -1,0 +1,8 @@
+import "struct_import.leno"
+
+main()
+{
+    // 不使用 use，直接通过模块名访问 enum
+    var w = struct_import.word.a
+    print(w)
+}

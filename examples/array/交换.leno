@@ -1,0 +1,9 @@
+// 新建文件: 交换.leno
+main()
+{
+	var arr=[10,20]
+	var a=arr[0]
+	arr[0]=arr[1]
+	arr[1]=a
+	print(arr)
+}

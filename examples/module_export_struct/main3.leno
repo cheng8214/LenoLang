@@ -1,0 +1,16 @@
+// 测试 csmath 函数
+
+import "math.leno"
+
+main()
+{
+    print("测试 csmath 函数")
+    
+    var p1 = math.create_point(10, 20)
+    var p2 = math.create_point(30, 40)
+    
+    var result = math.csmath(p1, p2)
+    print($"csmath result: {result}")
+    
+    print("测试完成!")
+}

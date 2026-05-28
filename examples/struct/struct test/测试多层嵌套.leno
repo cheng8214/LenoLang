@@ -1,0 +1,48 @@
+struct Point
+{
+        int x=0
+        int y=0
+}
+
+struct Size
+{
+        int width=100
+        int height=100
+}
+
+struct Rect
+{
+        Point position
+        Size size
+}
+
+main()
+{
+        // 测试多层嵌套 - 需要显式初始化嵌套 struct 字段
+        var r=Rect(position=Point(), size=Size())
+        print("默认矩形: ")
+        print(r)
+        
+        // 修改嵌套字段
+        r.position.x=10
+        r.position.y=20
+        r.size.width=200
+        r.size.height=150
+        
+        print("\n修改后矩形: ")
+        print(r)
+        
+        // 测试单独访问嵌套字段
+        printf("\n位置x: ")
+        print(r.position.x)
+        printf("位置y: ")
+        print(r.position.y)
+        
+        // 测试赋值嵌套对象
+        var p=Point()
+        p.x=50
+        p.y=60
+        r.position=p
+        print("\n赋值新位置后: ")
+        print(r)
+}

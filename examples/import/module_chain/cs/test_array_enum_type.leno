@@ -1,0 +1,93 @@
+// 测试数组添加 enum 后的类型
+
+enum Color {
+    RED = 0
+    GREEN = 1
+    BLUE = 2
+}
+
+// 创建颜色数组
+func create_colors(int count)
+{
+    var colors = []
+    for 0 : count - 1 to var i {
+        if i % 3 == 0 {
+            colors.add(Color.RED)
+        } else if i % 3 == 1 {
+            colors.add(Color.GREEN)
+        } else {
+            colors.add(Color.BLUE)
+        }
+    }
+    return colors
+}
+
+// 测试数组类型守卫
+func test_array_type(var colors)
+{
+    print("=== 测试数组类型 ===")
+    
+    // 测试 Array 类型守卫
+    if colors is Array {
+        print("colors is Array: true")
+    } else {
+        print("colors is Array: false")
+    }
+    
+    // 测试 Array[int] 类型守卫
+    if colors is Array[int] {
+        print("colors is Array[int]: true")
+    } else {
+        print("colors is Array[int]: false")
+    }
+    
+    // 测试 Array[Color] 类型守卫
+    if colors is Array[Color] {
+        print("colors is Array[Color]: true")
+    } else {
+        print("colors is Array[Color]: false")
+    }
+}
+
+// 测试元素类型
+func test_element_type(var colors)
+{
+    print("=== 测试元素类型 ===")
+    
+    if colors is Array {
+        var c = colors[0]
+        print("c = " + c)
+        
+        // 检查 c 是否是 Color 类型
+        if c is Color {
+            print("c is Color: true")
+        } else {
+            print("c is Color: false")
+        }
+        
+        // 检查 c 是否是 int 类型
+        if c is int {
+            print("c is int: true")
+        } else {
+            print("c is int: false")
+        }
+    }
+}
+
+main()
+{
+    print("=== 测试数组添加 enum 后的类型 ===")
+    print("")
+    
+    var colors = create_colors(5)
+    print("Created " + colors.len() + " colors")
+    print("")
+    
+    test_array_type(colors)
+    print("")
+    
+    test_element_type(colors)
+    
+    print("")
+    print("=== 完成 ===")
+}

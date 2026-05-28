@@ -1,0 +1,30 @@
+import io
+import asyncs
+
+async func check(int n):bool {
+    await asyncs.sleep(50)
+    return n > 5
+}
+
+async func test_control_flow() {
+    // if 中 await
+    if await check(10) {
+        io.print("10 > 5: 是")
+    } else {
+        io.print("10 > 5: 否")
+    }
+
+    // for 中 await
+    for 0:3 to i {
+        if await check(i) {
+            io.print($"{i} > 5: 是")
+        } else {
+            io.print($"{i} > 5: 否")
+        }
+    }
+}
+
+main() {
+    test_control_flow()
+    asyncs.run()
+}

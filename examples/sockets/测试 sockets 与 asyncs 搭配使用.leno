@@ -1,0 +1,180 @@
+import sockets
+import asyncs
+import io
+
+// 测试 sockets 与 asyncs 搭配使用
+
+// 异步 HTTP 请求
+async func fetch_http(string host, string path):string {
+    io.print("  [" + host + "] 开始连接...")
+    var conn = sockets.connect(host, 80)
+    
+    if conn == null {
+        io.print("  [" + host + "] 连接失败")
+        return ""
+    }
+    
+    io.print("  [" + host + "] 连接成功，发送请求...")
+    
+    // 构造 HTTP 请求
+    var request = "GET " + path + " HTTP/1.0\r\n"
+    request = request + "Host: " + host + "\r\n"
+    request = request + "Connection: close\r\n\r\n"
+    
+    sockets.send(conn, request)
+    
+    // 让出执行权，让其他协程运行
+    await asyncs.yield()
+    
+    io.print("  [" + host + "] 接收响应...")
+    
+    // 接收响应
+    var response = ""
+    while true {
+        var chunk = sockets.recv(conn, 4096)
+        if chunk == null {
+            break
+        }
+        response = response + chunk
+        
+        // 每次接收后让出执行权
+        await asyncs.yield()
+    }
+    
+    sockets.close(conn)
+    io.print("  [" + host + "] 完成，共 " + response.len() + " 字节")
+    
+    return response
+}
+
+// 并发请求多个网站
+async func fetch_multiple() {
+    io.print("\n=== 并发 HTTP 请求测试 ===")
+    
+    // 启动三个并发请求
+    var f1 = fetch_http("www.example.com", "/")
+    var f2 = fetch_http("www.baidu.com", "/")
+    var f3 = fetch_http("www.taobao.com", "/")
+    
+    io.print("三个请求已启动，等待完成...")
+    
+    // 等待所有请求完成
+    await f1
+    await f2
+    await f3
+    
+    // 获取结果
+    var results = asyncs.all([f1, f2, f3])
+    
+    io.print("\n所有请求完成:")
+    io.print("  example.com: " + results[0].len() + " 字节")
+    io.print("  baidu.com: " + results[1].len() + " 字节")
+    io.print("  taobao.com: " + results[2].len() + " 字节")
+}
+
+// 带超时的网络请求
+async func fetch_with_timeout(string host, int timeout_ms) {
+    io.print("\n=== 超时请求测试 ===")
+    io.print("请求 " + host + "，超时 " + timeout_ms + "ms")
+    
+    var task = fetch_http(host, "/")
+    var result = await asyncs.timeout(task, timeout_ms)
+    
+    if result != null {
+        io.print("请求成功，收到 " + result.len() + " 字节")
+    } else {
+        io.print("请求超时!")
+    }
+}
+
+// 简单的异步服务器处理
+async func handle_client(var client, int client_id) {
+    io.print("  [服务器] 客户端 " + client_id + " 已连接")
+    
+    // 接收数据
+    var data = sockets.recv(client, 1024)
+    if data != null {
+        io.print("  [服务器] 从客户端 " + client_id + " 收到: " + data.sub_str(0, 30))
+        
+        // 发送响应
+        var response = "Server received: " + data
+        sockets.send(client, response)
+        
+        await asyncs.yield()
+    }
+    
+    sockets.close(client)
+    io.print("  [服务器] 客户端 " + client_id + " 已断开")
+}
+
+// 启动简单的 Echo 服务器
+async func start_echo_server(int port) {
+    io.print("\n=== 启动 Echo 服务器 ===")
+    
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("服务器启动失败")
+        return
+    }
+    
+    io.print("服务器监听在 127.0.0.1:" + port)
+    io.print("等待客户端连接...")
+    
+    // 只接受一个连接（简化版）
+    var client = sockets.accept(server)
+    if client != null {
+        // 异步处理客户端
+        handle_client(client, 1)
+        await asyncs.yield()
+    }
+    
+    sockets.close(server)
+    io.print("服务器已关闭")
+}
+
+// 测试 Echo 服务器
+async func test_echo() {
+    io.print("\n=== Echo 服务器测试 ===")
+    
+    var port = 12345
+    
+    // 启动服务器（在另一个协程中）
+    start_echo_server(port)
+    
+    // 等待服务器启动
+    await asyncs.sleep(100)
+    
+    // 连接并测试
+    var conn = sockets.connect("127.0.0.1", port)
+    if conn != null {
+        sockets.send(conn, "Hello, Server!")
+        
+        await asyncs.yield()
+        
+        var reply = sockets.recv(conn, 1024)
+        if reply != null {
+            io.print("客户端收到: " + reply)
+        }
+        
+        sockets.close(conn)
+    }
+}
+
+main() {
+    io.print("========== Sockets + Asyncs 测试 ==========")
+    
+    // 测试1: 并发 HTTP 请求
+    fetch_multiple()
+    
+    // 测试2: 带超时的请求
+    fetch_with_timeout("www.example.com", 5000)
+    
+    // 测试3: Echo 服务器
+    // test_echo()  // 暂时跳过，因为会阻塞
+    
+    // 启动事件循环
+    io.print("\n启动事件循环...")
+    asyncs.run()
+    
+    io.print("\n========== 测试完成 ==========")
+}

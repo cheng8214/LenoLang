@@ -1,0 +1,11 @@
+// 结构体测试模块
+
+export struct TestStruct {
+    int a
+    int b
+}
+
+export func create_test(int x, int y)
+{
+    return TestStruct(a = x, b = y)
+}

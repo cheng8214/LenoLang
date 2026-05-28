@@ -1,0 +1,35 @@
+// 测试模块：导出 struct
+
+export struct Point
+{
+    int x
+    int y
+    func test():int
+    {
+    	return x+y
+    }
+}
+
+export func create_point(int x, int y): Point
+{
+    return Point(x = x, y = y)
+}
+
+export func distance(Point p1, Point p2): int
+{
+    var dx = p2.x - p1.x
+    var dy = p2.y - p1.y
+    return dx * dx + dy * dy
+}
+
+export func csmath(Point p1, Point p2): int
+{
+    var dx = p2.x - p1.x
+    var dy = p2.y - p1.y
+    return dx + dy
+}
+
+export func get():Point
+{
+	return Point(x=1,y=2)
+}

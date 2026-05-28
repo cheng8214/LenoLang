@@ -1,0 +1,55 @@
+// 学生管理系统 - 用类型守卫改进 Dict 版本
+import times
+
+main() {
+    var students = []
+    
+    // 创建学生
+    for 0:100 to i {
+        var s = {
+            name: "学生" + _str(i),
+            age: 18 + (i % 5),
+            scores: [85 + (i % 10), 90 + (i % 5), 78 + (i % 15)]
+        }
+        students.add(s)
+    }
+    
+    // 使用类型守卫安全访问字段
+    for students to s {
+        // 类型守卫收窄类型
+        if s.name is string and s.age is int {
+            print(s.name + " 年龄: " + _str(s.age))
+        }
+        
+        // 安全计算平均分
+        if s.scores is Array {
+            int total = 0
+            for s.scores to score {
+                // score 是 any，但我们可以守卫它
+                if score is int {
+                    total = total + score
+                }
+            }
+            if s.scores.len() > 0 {
+                float avg = total / s.scores.len()
+                if s.name is string {
+                    print(s.name + " 平均分: " + _str(avg))
+                }
+            }
+        }
+    }
+    
+    // 计算平均年龄（使用类型守卫）
+    int totalAge = 0
+    int validCount = 0
+    for students to s {
+        if s.age is int {
+            totalAge = totalAge + s.age
+            validCount = validCount + 1
+        }
+    }
+    if validCount > 0 {
+        float avgAge = totalAge / validCount
+        print("平均年龄: " + _str(avgAge))
+    }
+}

@@ -1,0 +1,26 @@
+// 死代码消除测试
+// if true 分支消除
+var a = 0
+if true {
+    a = 1
+} else {
+    a = 2
+}
+assert_eq(a, 1)
+
+// while false 消除
+var b = 10
+while false {
+    b = 20
+}
+assert_eq(b, 10)
+
+// return 后死代码
+func test_return_dce() {
+    return 42
+    var dead = 100
+    return dead
+}
+assert_eq(test_return_dce(), 42)
+
+print("test_dce passed")

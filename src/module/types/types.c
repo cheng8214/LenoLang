@@ -1,0 +1,629 @@
+#include "include/lenolang.h"
+#include "include/native.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <limits.h>
+
+// 辅助函数：获取值的基础类型
+static TypeKind get_value_type(Value value) {
+    switch (val_get_type(value)) {
+        case VAL_INT: return TYPE_INT;
+        case VAL_FLOAT: return TYPE_FLOAT;
+        case VAL_BOOL: return TYPE_BOOL;
+        case VAL_NULL: return TYPE_ANY;
+        case VAL_OBJ:
+            if (val_as_obj(value)->type == OBJ_STRING) return TYPE_STRING;
+            else if (val_as_obj(value)->type == OBJ_DICT) return TYPE_DICT;
+            else if (val_as_obj(value)->type == OBJ_ARRAY) return TYPE_ARRAY;
+            return TYPE_ANY;
+        default: return TYPE_ANY;
+    }
+}
+
+// 前向声明 infer_dict_type（供 infer_array_type 调用）
+static ObjString* infer_dict_type(ObjDict* dict);
+
+// 辅助函数：递归推断数组类型并构建泛型格式字符串
+// 返回 Array[ElementType] 格式的类型字符串
+static ObjString* infer_array_type(ObjArray* arr) {
+    if (arr->count == 0) {
+        // 空数组：优先使用 type_info（如果有）
+        if (arr->type_info != NULL) {
+            const char* type_str = type_to_string(arr->type_info);
+            return str_copy(type_str, (int)strlen(type_str));
+        }
+        return str_copy("Array", 5);  // 空数组返回 Array（未指定元素类型）
+    }
+
+    // 检查第一个元素的类型
+    Value first = arr->elements[0];
+
+    // 如果元素是数组或字典，优先使用递归推断（而不是 type_info）
+    // 因为 type_info 可能不包含嵌套类型的详细信息
+    if (val_is_obj(first) && val_as_obj(first)->type == OBJ_ARRAY) {
+        ObjString* inner_type = infer_array_type((ObjArray*)val_as_obj(first));
+
+        int canPromote = 1;
+        for (int i = 1; i < arr->count; i++) {
+            Value elem = arr->elements[i];
+            if (!(val_is_obj(elem) && val_as_obj(elem)->type == OBJ_ARRAY)) {
+                canPromote = 0;
+                break;
+            }
+            ObjString* check_type = infer_array_type((ObjArray*)val_as_obj(elem));
+            // 检查是否可以类型提升
+            if (strcmp(inner_type->chars, check_type->chars) != 0) {
+                // 尝试类型提升：检查是否是 int/float 混合
+                if ((strcmp(inner_type->chars, "Array[int]") == 0 && strcmp(check_type->chars, "Array[float]") == 0) ||
+                    (strcmp(inner_type->chars, "Array[float]") == 0 && strcmp(check_type->chars, "Array[int]") == 0)) {
+                    // 提升为 Array[Array[float]]
+                    inner_type = str_copy("Array[float]", 12);
+                } else {
+                    canPromote = 0;
+                    break;
+                }
+            }
+        }
+
+        char buf[BUFFER_SMALL];
+        if (canPromote) {
+            snprintf(buf, sizeof(buf), "Array[%s]", inner_type->chars);
+        } else {
+            snprintf(buf, sizeof(buf), "Array[any]");  // 无法类型提升，返回 Array[any]
+        }
+        return str_copy(buf, (int)strlen(buf));
+    }
+
+    // 如果元素是字典，递归推断
+    if (val_is_obj(first) && val_as_obj(first)->type == OBJ_DICT) {
+        ObjString* inner_type = infer_dict_type((ObjDict*)val_as_obj(first));
+
+        int canPromote = 1;
+        for (int i = 1; i < arr->count; i++) {
+            Value elem = arr->elements[i];
+            if (!(val_is_obj(elem) && val_as_obj(elem)->type == OBJ_DICT)) {
+                canPromote = 0;
+                break;
+            }
+            ObjString* check_type = infer_dict_type((ObjDict*)val_as_obj(elem));
+            if (strcmp(inner_type->chars, check_type->chars) != 0) {
+                canPromote = 0;
+                break;
+            }
+        }
+
+        char buf[BUFFER_SMALL];
+        if (canPromote) {
+            snprintf(buf, sizeof(buf), "Array[%s]", inner_type->chars);
+        } else {
+            snprintf(buf, sizeof(buf), "Array[any]");
+        }
+        return str_copy(buf, (int)strlen(buf));
+    }
+
+    // 基本类型处理 - 支持类型提升
+    TypeKind elemType = get_value_type(first);
+    
+    // 检查所有元素类型，支持类型提升
+    for (int i = 1; i < arr->count; i++) {
+        Value elem = arr->elements[i];
+        TypeKind currType = get_value_type(elem);
+        
+        if (currType != elemType) {
+            // 尝试类型提升
+            // int + float -> float
+            if ((elemType == TYPE_INT && currType == TYPE_FLOAT) ||
+                (elemType == TYPE_FLOAT && currType == TYPE_INT)) {
+                elemType = TYPE_FLOAT;  // 提升为 float
+            }
+            // int/float + bigint -> bigint
+            else if ((elemType == TYPE_INT && currType == TYPE_BIGINT) ||
+                     (elemType == TYPE_BIGINT && currType == TYPE_INT) ||
+                     (elemType == TYPE_FLOAT && currType == TYPE_BIGINT) ||
+                     (elemType == TYPE_BIGINT && currType == TYPE_FLOAT)) {
+                elemType = TYPE_BIGINT;  // 提升为 bigint
+            }
+            // 无法类型提升
+            else {
+                return str_copy("Array[any]", 10);  // 返回 Array[any]
+            }
+        }
+    }
+    
+    // 根据最终类型构建类型字符串
+    const char* typeName;
+    switch (elemType) {
+        case TYPE_INT: typeName = "int"; break;
+        case TYPE_FLOAT: typeName = "float"; break;
+        case TYPE_BOOL: typeName = "bool"; break;
+        case TYPE_STRING: typeName = "string"; break;
+        case TYPE_DICT: typeName = "Dict"; break;
+        case TYPE_BIGINT: typeName = "int"; break;
+        default: typeName = "any"; break;
+    }
+    
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Array[%s]", typeName);
+    return str_copy(buf, (int)strlen(buf));
+}
+
+// 辅助函数：推断字典类型并构建泛型格式字符串
+// 返回 Dict[KeyType, ValueType] 格式的类型字符串
+static ObjString* infer_dict_type_internal(ObjDict* dict) {
+    // 空字典检查
+    int total_count = dict->count + dict->acount;
+    if (total_count == 0) {
+        return str_copy("Dict", 4);  // 空字典返回 Dict
+    }
+
+    // 键类型固定为 string（字典键总是字符串）
+    const char* keyTypeName = "string";
+
+    // 推断值类型
+    TypeKind valueType = TYPE_ANY;
+    int first = 1;
+
+    // 用于存储嵌套对象的类型字符串（当值是Array或Dict时）
+    ObjString* nestedTypeStr = NULL;
+
+    // 检查哈希部分（字符串键存储在这里）
+    for (int i = 0; i < dict->capacity; i++) {
+        ObjDictEntry* entry = &dict->entries[i];
+        if (entry->key == NULL) continue;  // 空槽
+
+        Value val = entry->value;
+        TypeKind currType = get_value_type(val);
+
+        // 如果值是数组，递归推断数组类型
+        if (currType == TYPE_ARRAY && val_is_obj(val) && val_as_obj(val)->type == OBJ_ARRAY) {
+            ObjString* arrType = infer_array_type((ObjArray*)val_as_obj(val));
+            if (first) {
+                nestedTypeStr = arrType;
+                valueType = TYPE_ARRAY;
+                first = 0;
+            } else {
+                // 检查是否与之前的类型一致
+                if (valueType != TYPE_ARRAY || strcmp(nestedTypeStr->chars, arrType->chars) != 0) {
+                    // 类型不一致，返回 any
+                    valueType = TYPE_ANY;
+                    if (nestedTypeStr) {
+                        // 不需要释放，GC会处理
+                    }
+                    goto mixed_type;
+                }
+            }
+            continue;
+        }
+
+        // 如果值是字典，递归推断字典类型
+        if (currType == TYPE_DICT && val_is_obj(val) && val_as_obj(val)->type == OBJ_DICT) {
+            ObjString* dictType = infer_dict_type((ObjDict*)val_as_obj(val));
+            if (first) {
+                nestedTypeStr = dictType;
+                valueType = TYPE_DICT;
+                first = 0;
+            } else {
+                // 检查是否与之前的类型一致
+                if (valueType != TYPE_DICT || strcmp(nestedTypeStr->chars, dictType->chars) != 0) {
+                    // 类型不一致，返回 any
+                    valueType = TYPE_ANY;
+                    if (nestedTypeStr) {
+                        // 不需要释放，GC会处理
+                    }
+                    goto mixed_type;
+                }
+            }
+            continue;
+        }
+
+        // 基本类型处理
+        if (first) {
+            valueType = currType;
+            first = 0;
+        } else if (currType != valueType) {
+            // 尝试类型提升
+            if ((valueType == TYPE_INT && currType == TYPE_FLOAT) ||
+                (valueType == TYPE_FLOAT && currType == TYPE_INT)) {
+                valueType = TYPE_FLOAT;
+            } else if ((valueType == TYPE_INT && currType == TYPE_BIGINT) ||
+                       (valueType == TYPE_BIGINT && currType == TYPE_INT) ||
+                       (valueType == TYPE_FLOAT && currType == TYPE_BIGINT) ||
+                       (valueType == TYPE_BIGINT && currType == TYPE_FLOAT)) {
+                valueType = TYPE_BIGINT;
+            } else {
+                // 无法类型提升，返回 Dict[string, any]
+                valueType = TYPE_ANY;
+                first = 0;
+                goto mixed_type;
+            }
+        }
+    }
+
+    // 检查数组部分（数字键存储在这里）
+    if (dict->array != NULL && dict->asize > 0) {
+        for (int i = 0; i < dict->asize; i++) {
+            // 检查是否是有效的数组元素（非 null）
+            if (val_is_null(dict->array[i])) continue;
+
+            Value val = dict->array[i];
+            TypeKind currType = get_value_type(val);
+
+            // 如果值是数组，递归推断数组类型
+            if (currType == TYPE_ARRAY && val_is_obj(val) && val_as_obj(val)->type == OBJ_ARRAY) {
+                ObjString* arrType = infer_array_type((ObjArray*)val_as_obj(val));
+                if (first) {
+                    nestedTypeStr = arrType;
+                    valueType = TYPE_ARRAY;
+                    first = 0;
+                } else {
+                    // 检查是否与之前的类型一致
+                    if (valueType != TYPE_ARRAY || strcmp(nestedTypeStr->chars, arrType->chars) != 0) {
+                        valueType = TYPE_ANY;
+                        goto mixed_type;
+                    }
+                }
+                continue;
+            }
+
+            // 如果值是字典，递归推断字典类型
+            if (currType == TYPE_DICT && val_is_obj(val) && val_as_obj(val)->type == OBJ_DICT) {
+                ObjString* innerDictType = infer_dict_type((ObjDict*)val_as_obj(val));
+                if (first) {
+                    nestedTypeStr = innerDictType;
+                    valueType = TYPE_DICT;
+                    first = 0;
+                } else {
+                    // 检查是否与之前的类型一致
+                    if (valueType != TYPE_DICT || strcmp(nestedTypeStr->chars, innerDictType->chars) != 0) {
+                        valueType = TYPE_ANY;
+                        goto mixed_type;
+                    }
+                }
+                continue;
+            }
+
+            // 基本类型处理
+            if (first) {
+                valueType = currType;
+                first = 0;
+            } else if (currType != valueType) {
+                // 尝试类型提升
+                if ((valueType == TYPE_INT && currType == TYPE_FLOAT) ||
+                    (valueType == TYPE_FLOAT && currType == TYPE_INT)) {
+                    valueType = TYPE_FLOAT;
+                } else if ((valueType == TYPE_INT && currType == TYPE_BIGINT) ||
+                           (valueType == TYPE_BIGINT && currType == TYPE_INT) ||
+                           (valueType == TYPE_FLOAT && currType == TYPE_BIGINT) ||
+                           (valueType == TYPE_BIGINT && currType == TYPE_FLOAT)) {
+                    valueType = TYPE_BIGINT;
+                } else {
+                    // 无法类型提升，返回 Dict[string, any]
+                    valueType = TYPE_ANY;
+                    goto mixed_type;
+                }
+            }
+        }
+    }
+
+mixed_type:
+
+    // 根据值类型构建类型字符串
+    char buf[BUFFER_MEDIUM];
+    if (valueType == TYPE_ARRAY && nestedTypeStr) {
+        // 嵌套数组类型
+        snprintf(buf, sizeof(buf), "Dict[%s, %s]", keyTypeName, nestedTypeStr->chars);
+    } else if (valueType == TYPE_DICT && nestedTypeStr) {
+        // 嵌套字典类型
+        snprintf(buf, sizeof(buf), "Dict[%s, %s]", keyTypeName, nestedTypeStr->chars);
+    } else {
+        // 基本类型
+        const char* valueTypeName;
+        switch (valueType) {
+            case TYPE_INT: valueTypeName = "int"; break;
+            case TYPE_FLOAT: valueTypeName = "float"; break;
+            case TYPE_BOOL: valueTypeName = "bool"; break;
+            case TYPE_STRING: valueTypeName = "string"; break;
+            case TYPE_BIGINT: valueTypeName = "int"; break;
+            default: valueTypeName = "any"; break;
+        }
+        snprintf(buf, sizeof(buf), "Dict[%s, %s]", keyTypeName, valueTypeName);
+    }
+    return str_copy(buf, (int)strlen(buf));
+}
+
+static ObjString* infer_dict_type(ObjDict* dict) {
+    return infer_dict_type_internal(dict);
+}
+
+// type(value) - 返回值的类型字符串
+static Value native_type(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_null();
+    }
+    
+    Value value = args[0];
+    ObjString* typeStr;
+    
+    switch (val_get_type(value)) {
+        case VAL_NULL:
+            typeStr = str_copy("null", 4);
+            break;
+        case VAL_BOOL:
+            typeStr = str_copy("bool", 4);
+            break;
+        case VAL_INT:
+            typeStr = str_copy("int", 3);
+            break;
+        case VAL_FLOAT:
+            typeStr = str_copy("float", 5);
+            break;
+        case VAL_OBJ:
+            if (val_as_obj(value)->type == OBJ_STRING) {
+                typeStr = str_copy("string", 6);
+            } else if (val_as_obj(value)->type == OBJ_FUNCTION || val_as_obj(value)->type == OBJ_CLOSURE) {
+                typeStr = str_copy("func", 4);
+            } else if (val_as_obj(value)->type == OBJ_NATIVE) {
+                typeStr = str_copy("native", 6);
+            } else if (val_as_obj(value)->type == OBJ_BIGINT) {
+                typeStr = str_copy("int", 3);
+            } else if (val_as_obj(value)->type == OBJ_ARRAY) {
+                typeStr = infer_array_type((ObjArray*)val_as_obj(value));
+            } else if (val_as_obj(value)->type == OBJ_DICT) {
+                typeStr = infer_dict_type((ObjDict*)val_as_obj(value));
+            } else if (val_as_obj(value)->type == OBJ_FILE) {
+                typeStr = str_copy("file", 4);
+            } else if (val_as_obj(value)->type == OBJ_STRUCT) {
+                ObjStruct* struct_obj = (ObjStruct*)val_as_obj(value);
+                ObjStructDef* struct_def = struct_obj->def;
+                if (struct_def && struct_def->name) {
+                    typeStr = str_copy(struct_def->name, (int)strlen(struct_def->name));
+                } else {
+                    typeStr = str_copy("struct", 6);
+                }
+            } else if (val_as_obj(value)->type == OBJ_CSTRUCT) {
+                ObjCStruct* cstruct_obj = (ObjCStruct*)val_as_obj(value);
+                ObjCStructDef* cstruct_def = cstruct_obj->def;
+                if (cstruct_def && cstruct_def->name) {
+                    typeStr = str_copy(cstruct_def->name, (int)strlen(cstruct_def->name));
+                } else {
+                    typeStr = str_copy("cstruct", 7);
+                }
+            } else {
+                typeStr = str_copy("object", 6);
+            }
+            break;
+        default:
+            typeStr = str_copy("unknown", 7);
+            break;
+    }
+    
+    return val_obj((Object*)typeStr);
+}
+
+// _int(value) - 转换为整数
+static Value native_to_int(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_int(0);
+    }
+    
+    Value value = args[0];
+    
+    switch (val_get_type(value)) {
+        case VAL_INT:
+            return value;
+        case VAL_FLOAT:
+            return val_int((int)val_as_num(value));
+        case VAL_BOOL:
+            return val_int(val_as_bool(value) ? 1 : 0);
+        case VAL_NULL:
+            return val_int(0);
+        case VAL_OBJ:
+            if (val_as_obj(value)->type == OBJ_STRING) {
+                ObjString* str = (ObjString*)val_as_obj(value);
+                char* end;
+                long num = strtol(str->chars, &end, 10);
+                if (*end == '\0') {
+                    return val_int((int)num);
+                }
+                native_throw_error("无法将字符串转换为整数");
+                return val_int(0);
+            } else if (val_as_obj(value)->type == OBJ_BIGINT) {
+                ObjBigInt* big = (ObjBigInt*)val_as_obj(value);
+                // 检查是否在 int32 范围内
+                if (big->limb_count == 1) {
+                    // 单个 limb，检查值是否在 int32 范围内
+                    uint32_t val = big->limbs[0];
+                    if (!big->is_negative && val <= INT32_MAX) {
+                        return val_int((int)val);
+                    } else if (big->is_negative && val <= ((uint32_t)INT32_MAX + 1)) {
+                        return val_int(-(int)val);
+                    }
+                }
+                // 超出 int32 范围，保持为 bigint 返回
+                return value;
+            }
+            break;
+        default:
+            break;
+    }
+    
+    // 不支持的类型，报错
+    native_throw_error("无法将该类型转换为整数");
+    return val_int(0);
+}
+
+// _float(value) - 转换为浮点数
+static Value native_to_float(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_float(0.0);
+    }
+    
+    Value value = args[0];
+    
+    switch (val_get_type(value)) {
+        case VAL_INT:
+            return val_float(val_as_num(value));
+        case VAL_FLOAT:
+            return value;
+        case VAL_BOOL:
+            return val_float(val_as_bool(value) ? 1.0 : 0.0);
+        case VAL_NULL:
+            return val_float(0.0);
+        case VAL_OBJ:
+            if (val_as_obj(value)->type == OBJ_STRING) {
+                ObjString* str = (ObjString*)val_as_obj(value);
+                char* end;
+                double num = strtod(str->chars, &end);
+                if (*end == '\0') {
+                    return val_float(num);
+                }
+                native_throw_error("无法将字符串转换为浮点数");
+                return val_float(0.0);
+            } else if (val_as_obj(value)->type == OBJ_BIGINT) {
+                ObjBigInt* bigint = (ObjBigInt*)val_as_obj(value);
+                if (bigint->limb_count <= 2) {
+                    return val_float((double)bigint_to_int64(bigint));
+                }
+                // 大数转换
+                double result = 0.0;
+                double base = 4294967296.0;  // 2^32
+                for (int i = bigint->limb_count - 1; i >= 0; i--) {
+                    result = result * base + (double)bigint->limbs[i];
+                }
+                return val_float(bigint->is_negative ? -result : result);
+            }
+            break;
+        default:
+            break;
+    }
+    
+    // 不支持的类型，报错
+    native_throw_error("无法将该类型转换为浮点数");
+    return val_float(0.0);
+}
+
+// _bool(value) - 转换为布尔值
+static Value native_to_bool(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_bool(0);
+    }
+    
+    Value value = args[0];
+    
+    switch (val_get_type(value)) {
+        case VAL_NULL:
+            return val_bool(0);
+        case VAL_BOOL:
+            return value;
+        case VAL_INT:
+            return val_bool(val_as_num(value) != 0);
+        case VAL_FLOAT:
+            return val_bool(val_as_num(value) != 0.0);
+        case VAL_OBJ: {
+            ObjType objType = val_as_obj(value)->type;
+            if (objType == OBJ_STRING) {
+                ObjString* str = (ObjString*)val_as_obj(value);
+                return val_bool(str->len > 0);
+            } else if (objType == OBJ_ARRAY) {
+                ObjArray* arr = (ObjArray*)val_as_obj(value);
+                return val_bool(arr->count > 0);
+            } else if (objType == OBJ_DICT) {
+                return val_bool(1);
+            } else if (objType == OBJ_BIGINT) {
+                return val_bool(!bigint_is_zero((ObjBigInt*)val_as_obj(value)));
+            }
+            return val_bool(1);
+        }
+        default:
+            return val_bool(0);
+    }
+}
+
+// _str(value) - 转换为字符串
+static Value native_to_str(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_obj((Object*)str_copy("", 0));
+    }
+    
+    Value value = args[0];
+    char buf[BUFFER_MEDIUM];
+    ObjString* result;
+    
+    switch (val_get_type(value)) {
+        case VAL_NULL:
+            result = str_copy("null", 4);
+            break;
+        case VAL_BOOL:
+            result = str_copy(val_as_bool(value) ? "true" : "false", val_as_bool(value) ? 4 : 5);
+            break;
+        case VAL_INT:
+            snprintf(buf, sizeof(buf), "%.0f", val_as_num(value));
+            result = str_copy(buf, (int)strlen(buf));
+            break;
+        case VAL_FLOAT:
+            snprintf(buf, sizeof(buf), "%.6g", val_as_num(value));
+            result = str_copy(buf, (int)strlen(buf));
+            break;
+        case VAL_OBJ:
+            if (val_as_obj(value)->type == OBJ_STRING) {
+                return value;
+            } else if (val_as_obj(value)->type == OBJ_BIGINT) {
+                ObjBigInt* big = (ObjBigInt*)val_as_obj(value);
+                char* bigStr = bigint_to_string(big);
+                result = str_copy(bigStr, (int)strlen(bigStr));
+                free(bigStr);
+            } else {
+                snprintf(buf, sizeof(buf), "<%s>", "object");
+                result = str_copy(buf, (int)strlen(buf));
+            }
+            break;
+        default:
+            result = str_copy("", 0);
+            break;
+    }
+    
+    return val_obj((Object*)result);
+}
+// _ptr(value) - 转换为指针
+static Value native_to_ptr(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_null();
+    }
+    
+    Value value = args[0];
+    
+    // 如果已经是 FFI 指针，直接返回
+    if (val_is_obj(value) && (val_as_obj(value)->type == OBJ_FFI_POINTER ||
+                              val_as_obj(value)->type == OBJ_FFI_CALLBACK)) {
+        return value;
+    }
+    
+    // 如果是 null，返回 null
+    if (val_is_null(value)) {
+        return val_null();
+    }
+    
+    // 其他类型无法转换为指针
+    native_throw_error("无法将该类型转换为指针");
+    return val_null();
+}
+// ==================== 初始化 ====================
+
+void types_init_globals(void) {
+    // 注册全局 type 函数（返回 string，1 个参数）
+    TypeKind type_params[] = {TYPE_ANY};
+    vm_register_native("type", native_type, 1, -1, -1, TYPE_STRING, type_params);
+
+    // 注册类型转换函数
+    TypeKind convert_params[] = {TYPE_ANY};
+    vm_register_native("_int", native_to_int, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_float", native_to_float, 1, -1, -1, TYPE_FLOAT, convert_params);
+    vm_register_native("_bool", native_to_bool, 1, -1, -1, TYPE_BOOL, convert_params);
+    vm_register_native("_str", native_to_str, 1, -1, -1, TYPE_STRING, convert_params);
+    vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, convert_params);
+}
+
+// types 模块通过全局 type() 函数提供服务
+// 不需要单独的模块初始化，保留此文件以维持模块结构一致性

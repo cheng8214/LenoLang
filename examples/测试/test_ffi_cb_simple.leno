@@ -1,0 +1,21 @@
+import ffi
+
+func simple_cb(): int {
+    return 42
+}
+
+var cb = ffi.callback(simple_cb, "int", [])
+print("callback created: " + _str(ffi.is_ptr(cb)))
+
+var libc = ffi.load("msvcrt.dll")
+
+var arr = ffi.malloc(20)
+ffi.write_int(arr, 0, 5)
+ffi.write_int(arr, 4, 3)
+ffi.write_int(arr, 8, 1)
+ffi.write_int(arr, 12, 4)
+ffi.write_int(arr, 16, 2)
+
+ffi.call_void(libc, "qsort", arr, 5, 4, cb)
+
+ffi.free(arr)

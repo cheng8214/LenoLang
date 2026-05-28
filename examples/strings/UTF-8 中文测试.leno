@@ -1,0 +1,32 @@
+import strings
+
+main() {
+    var str = "Hello 世界! 你好 Leno!"
+
+    print("=== UTF-8 中文测试 ===\n")
+    print("原字符串: " + str)
+    print("字节长度: " + str.len())
+
+    print("\n1. slice 测试 (按字符索引)")
+    print("   slice(0, 5): '" + str.slice(0, 5) + "'")     // 应该输出 "Hello"
+    print("   slice(6, 8): '" + str.slice(6, 8) + "'")     // 应该输出 "世界"
+    print("   slice(10, 12): '" + str.slice(10, 12) + "'") // 应该输出 "你好"
+
+    print("\n2. reverse 测试")
+    var reversed = str.reverse()
+    print("   反转后: '" + reversed + "'")
+    print("   再反转: '" + reversed.reverse() + "'")
+
+    print("\n3. sub_str 测试")
+    print("   sub_str(6, 2): '" + str.sub_str(6, 2) + "'")   // 应该输出 "世界"
+    print("   sub_str(10, 2): '" + str.sub_str(10, 2) + "'") // 应该输出 "你好"
+
+    print("\n4. 纯中文测试")
+    var chinese = "中华人民共和国"
+    print("   原字符串: '" + chinese + "'")
+    print("   slice(0, 2): '" + chinese.slice(0, 2) + "'")   // 应该输出 "中华"
+    print("   slice(2, 5): '" + chinese.slice(2, 5) + "'")   // 应该输出 "人民共"
+    print("   reverse: '" + chinese.reverse() + "'")
+
+    print("\n=== 所有测试通过! ===")
+}

@@ -1,0 +1,14 @@
+
+main()
+{
+	var a1=10
+	var c=test(a1,101)
+	print(c)
+}
+
+func test(var a,var b)
+{
+	print(a)
+	print(b)
+	return a+b
+}

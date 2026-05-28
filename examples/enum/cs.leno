@@ -1,0 +1,7 @@
+
+import "cs_module.leno"
+main()
+{
+    cs_module.Color.blue
+
+}

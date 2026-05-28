@@ -1,0 +1,32 @@
+// 新建文件: Untitled_4.leno
+import threads
+import times as ti
+import rands
+main()
+{
+	threads.start(test)
+	print("这是主线程")
+}
+
+func test()
+{
+	func bubble_sort(var arr){
+	    var n = arr.len();
+	    for n - 1 to var i {
+	        for n - i - 1 to var j {
+	            if arr[j] > arr[j + 1] {
+	                var temp = arr[j];
+	                arr[j] = arr[j+1];
+	                arr[j+1] = temp;
+	            }
+	        }
+	    }
+	    return arr;
+	}
+	var arr=rands.int_array(1,100)
+    var result1 = bubble_sort(arr);
+    print("接收结果:"+result1)
+}
+
+
+

@@ -1,0 +1,14 @@
+// 同名不同路径测试主文件
+// 测试：同时导入两个同名但不同路径的模块
+
+import "folder1/utils.leno" as u1
+import "folder2/utils.leno" as u2
+
+main() {
+    print("=== 同名不同路径模块测试 ===")
+    print("u1: " + u1.get_info())
+    print("u2: " + u2.get_info())
+    print("u1.version: " + u1.version)
+    print("u2.version: " + u2.version)
+    print("=== 测试完成 ===")
+}

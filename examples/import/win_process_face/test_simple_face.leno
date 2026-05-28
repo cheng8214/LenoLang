@@ -1,0 +1,80 @@
+// 测试简单的 ProcessManager face
+import "win_process_face_simple.leno" as pm
+use pm.ProcessManager
+
+// 使用 ProcessManager face 作为参数
+func printProcessList(ProcessManager manager) {
+    print("=== 进程列表 ===")
+    var result = manager.listProcesses()
+    
+    if result.errorCode != 0 {
+        print("获取进程列表失败，错误码: " + result.errorCode)
+        return
+    }
+    
+    print("找到 " + result.processes.len() + " 个进程")
+    print("")
+    
+    // 只显示前 5 个进程
+    int count = 0
+    for result.processes to proc {
+        if count >= 5 { break }
+        print("PID: " + proc.pid + " | 名称: " + proc.name)
+        count = count + 1
+    }
+    
+    if result.processes.len() > 5 {
+        print("... 还有 " + (result.processes.len() - 5) + " 个进程")
+    }
+}
+
+// 使用 ProcessManager face 查找进程
+func findAndPrintProcess(ProcessManager manager, string name) {
+    print("=== 查找进程: " + name + " ===")
+    var result = manager.findByName(name)
+    
+    if result.found {
+        print("找到进程: PID = " + result.pid)
+        
+        // 检查进程是否存在
+        if manager.exists(result.pid) {
+            print("进程状态: 运行中")
+            
+            // 获取内存信息
+            var memInfo = pm.getProcessMemory(result.pid)
+            if memInfo.errorCode == 0 {
+                print("工作集: " + memInfo.workingSet + " KB")
+                print("峰值工作集: " + memInfo.peakWorkingSet + " KB")
+            }
+        } else {
+            print("进程状态: 已退出")
+        }
+    } else {
+        print("未找到进程: " + name)
+    }
+}
+
+main() {
+    print("===== 测试 ProcessManager Face =====")
+    print("")
+    
+    // 测试 StandardProcessManager
+    print("【测试 StandardProcessManager】")
+    var stdManager = pm.StandardProcessManager()
+    printProcessList(stdManager)
+    print("")
+    
+    // 查找当前进程
+    var currentPid = pm.getCurrentPid()
+    print("当前进程 PID: " + currentPid)
+    print("当前进程存在: " + stdManager.exists(currentPid))
+    print("")
+    
+    // 测试 SafeProcessManager
+    print("【测试 SafeProcessManager】")
+    var safeManager = pm.SafeProcessManager()
+    printProcessList(safeManager)
+    print("")
+    
+    print("===== 测试完成 =====")
+}

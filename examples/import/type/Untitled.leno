@@ -1,0 +1,7 @@
+// 新建文件: Untitled.leno
+import "module.leno" as cs
+main()
+{
+	int b=cs.b
+	print(b)
+}

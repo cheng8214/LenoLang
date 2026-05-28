@@ -1,0 +1,36 @@
+// 测试各种类型注解组合
+
+// 2. 使用 var 关键字
+func add2(var a, var b) {
+    return a + b
+}
+
+// 3. 带参数类型注解
+func add3(int a, int b) {
+    return a + b
+}
+
+// 4. 带返回类型注解
+func add4(var a, var b): int {
+	//如果写的var那么类型就是any,所以这里需要转换
+    return _int(a + b)
+}
+
+// 5. 带参数类型和返回类型注解
+func add5(int a, int b): int {
+    return a + b
+}
+
+// 6. 混合使用
+func add6(int a,var b): int {
+//这int a;var b,因为b是any
+    return a + _int(b)
+}
+
+main() {
+    print(add2(3, 4))
+    print(add3(5, 6))
+    print(add4(7, 8))
+    print(add5(9, 10))
+    print(add6(11, 12))
+}

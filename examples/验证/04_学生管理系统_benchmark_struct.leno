@@ -1,0 +1,69 @@
+// Struct 版本性能测试
+import times
+
+struct Student {
+    int age = 0
+    int score = 0
+}
+
+struct Class {
+    Array[Student] students = []
+    
+    func addStudent(int age, int score) {
+        var s = Student()
+        s.age = age
+        s.score = score
+        students.add(s)
+    }
+    
+    func getAverageAge():float {
+        if (students.len() == 0) {
+            return 0.0
+        }
+        int total = 0
+        for students to s {
+            total = total + s.age
+        }
+        float result = total
+        return result / students.len()
+    }
+    
+    func getAverageScore():float {
+        if (students.len() == 0) {
+            return 0.0
+        }
+        int total = 0
+        for students to s {
+            total = total + s.score
+        }
+        float result = total
+        return result / students.len()
+    }
+}
+
+main() {
+    var start = times.ms()
+    
+    // 创建班级
+    var mathClass = Class()
+    
+    // 创建 10000 个学生
+    for 0:10000 to i {
+        mathClass.addStudent(18 + (i % 5), 80 + (i % 20))
+    }
+    
+    var create_time = times.ms() - start
+    
+    // 测试计算 1000 次
+    start = times.ms()
+    for 0:1000 to i {
+        var avgAge = mathClass.getAverageAge()
+        var avgScore = mathClass.getAverageScore()
+    }
+    var calc_time = times.ms() - start
+    
+    print("=== Struct 版本 ===")
+    print("创建 10000 个学生: " + create_time + " ms")
+    print("计算平均(x1000): " + calc_time + " ms")
+    print("总学生数: " + mathClass.students.len())
+}

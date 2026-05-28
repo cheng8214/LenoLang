@@ -1,0 +1,38 @@
+// 调试 FFI 修改问题 - 进一步测试
+import ffi
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    print("=== 调试 FFI 修改 2 ===")
+    
+    var p = Point.malloc()
+    p.x = 100
+    p.y = 200
+    
+    var ptr = p.to_ptr()
+    
+    // 修改 y
+    ffi.write_int(ptr, 4, 400)
+    
+    // 单独读取 y
+    var y_val = p.y
+    print("y_val = " + y_val)
+    
+    // 测试字符串连接
+    print("Testing string concat:")
+    var s1 = "y = "
+    var s2 = s1 + y_val
+    print(s2)
+    
+    // 直接打印
+    print("Direct print:")
+    print(p.y)
+    
+    p.free()
+    
+    print("\n=== 调试完成 ===")
+}

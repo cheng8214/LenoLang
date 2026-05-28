@@ -1,0 +1,16 @@
+// 测试模块导出的 struct 方法
+
+import "math.leno"
+
+main()
+{
+    print("测试模块导出的 struct 方法")
+    
+    var p1 = math.create_point(10, 20)
+    
+    // 调用 struct 方法
+    var result = p1.test()
+    print($"test() result: {result}")
+    
+    print("测试完成!")
+}

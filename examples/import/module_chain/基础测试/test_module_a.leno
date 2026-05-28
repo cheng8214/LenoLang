@@ -1,0 +1,21 @@
+// 直接测试模块 A
+
+import "module_a.leno" as a
+
+main()
+{
+    print("=== 直接测试模块 A ===")
+    
+    print("value = ")
+    print(a.value)
+    
+    var v = a.get_value()
+    print("get_value() = ")
+    print(v)
+    
+    var sum = a.add(10, 20)
+    print("add(10, 20) = ")
+    print(sum)
+    
+    print("=== 完成 ===")
+}

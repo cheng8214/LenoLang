@@ -1,0 +1,179 @@
+import ffi
+import times
+_gc(false)
+// ========== 寄存器文件 ==========
+var eax = 0; var ebx = 0; var ecx = 0; var edx = 0
+var esi = 0; var edi = 0; var ebp = 0; var esp = 0
+
+// ========== 内存模型 ==========
+var MEMORY = ffi.malloc(1024 * 1024)  // 1MB 模拟内存
+var STACK_BASE = 1024 * 1024 - 4      // 栈从高地址向低地址增长
+
+func init_machine() {
+    esp = STACK_BASE
+    ebp = esp
+}
+
+// ========== 指令模拟 ==========
+func mov_eax(int val) { eax = val }
+func mov_ebx(int val) { ebx = val }
+func mov_ecx(int val) { ecx = val }
+
+func mov_eax_from_mem(var addr) {
+    eax = ffi.read_int(MEMORY, addr)
+}
+
+func mov_mem_from_ebx(var addr) {
+    ffi.write_int(MEMORY, addr, ebx)
+}
+
+func push_eax() {
+    esp = esp - 4
+    ffi.write_int(MEMORY, esp, eax)
+}
+
+func pop_ebx() {
+    ebx = ffi.read_int(MEMORY, esp)
+    esp = esp + 4
+}
+
+func add_eax_ebx() {
+    eax = eax + ebx
+}
+
+func cmp_eax_ebx() {
+    var result = eax - ebx
+}
+
+// ========== 性能测试：计算 1+2+...+N ==========
+func benchmark_sum(int n) {
+    init_machine()
+    
+    mov_eax(0)      // 累加器清零
+    mov_ebx(n)      // 计数器 = N
+    
+    var start = times.ns()
+    
+    // 循环：sum += n; n--
+    while ebx > 0 {
+        add_eax_ebx()       // eax += ebx
+        ebx = ebx - 1       // ebx--
+    }
+    
+    var end = times.ns()
+    var elapsed = end - start
+    
+    print("N=" + n + " | 结果=" + eax + " | 耗时=" + elapsed + "ns (" + (elapsed / 1000000.0) + "ms)")
+    
+    return elapsed
+}
+
+// ========== 纯 Leno 版本（不用 FFI 内存）对比 ==========
+func benchmark_sum_pure_leno(int n) {
+    var sum = 0
+    var i = n
+    
+    var start = times.ns()
+    
+    while i > 0 {
+        sum = sum + i
+        i = i - 1
+    }
+    
+    var end = times.ns()
+    var elapsed = end - start
+    
+    print("[纯Leno] N=" + n + " | 结果=" + sum + " | 耗时=" + elapsed + "ns (" + (elapsed / 1000000.0) + "ms)")
+    
+    return elapsed
+}
+
+// ========== 密集 FFI 内存操作测试 ==========
+func benchmark_memory_ops(int iterations) {
+    init_machine()
+    
+    // 准备测试数据
+    for 0:1000:4 to i {
+        ffi.write_int(MEMORY, i, i)
+    }
+    
+    var start = times.ns()
+    
+    // 大量 read/write 操作
+    for iterations to i {
+        var addr = (i * 4) % 1000
+        var val = ffi.read_int(MEMORY, addr)
+        ffi.write_int(MEMORY, addr, val + 1)
+    }
+    
+    var end = times.ns()
+    var elapsed = end - start
+    
+    print("[FFI内存] 操作次数=" + iterations + " | 耗时=" + elapsed + "ns (" + (elapsed / 1000000.0) + "ms)")
+    print("  单次操作=" + (elapsed / iterations) + "ns")
+    
+    return elapsed
+}
+
+// ========== 模拟器指令吞吐量测试 ==========
+func benchmark_instruction_throughput(int iterations) {
+    init_machine()
+    
+    var start = times.ns()
+    
+    for iterations to i {
+        // 模拟一条"复杂"指令序列：mov + add + push + pop + cmp
+        mov_eax(i)
+        mov_ebx(i + 1)
+        add_eax_ebx()
+        push_eax()
+        pop_ebx()
+        cmp_eax_ebx()
+    }
+    
+    var end = times.ns()
+    var elapsed = end - start
+    
+    print("[指令吞吐量] 迭代=" + iterations + " | 耗时=" + elapsed + "ns (" + (elapsed / 1000000.0) + "ms)")
+    print("  单次迭代(6条指令)=" + (elapsed / iterations) + "ns")
+    print("  单条指令~" + (elapsed / iterations / 6) + "ns")
+    
+    return elapsed
+}
+
+main() {
+    print("=== Leno FFI 模拟器性能测试 ===")
+    print("")
+    
+    // 测试1：小规模求和
+    print("--- 测试1: 小规模求和 (N=1000) ---")
+    benchmark_sum(1000)
+    benchmark_sum_pure_leno(1000)
+    print("")
+    
+    // 测试2：中规模求和
+    print("--- 测试2: 中规模求和 (N=100000) ---")
+    benchmark_sum(100000)
+    benchmark_sum_pure_leno(100000)
+    print("")
+    
+    // 测试3：大规模求和
+    print("--- 测试3: 大规模求和 (N=1000000) ---")
+    benchmark_sum(1000000)
+    benchmark_sum_pure_leno(1000000)
+    print("")
+    
+    // 测试4：FFI 内存操作密集度
+    print("--- 测试4: FFI 内存操作 ---")
+    benchmark_memory_ops(100000)
+    benchmark_memory_ops(1000000)
+    print("")
+    
+    // 测试5：模拟器指令吞吐量
+    print("--- 测试5: 模拟器指令吞吐量 ---")
+    benchmark_instruction_throughput(100000)
+    benchmark_instruction_throughput(1000000)
+    print("")
+    
+    print("=== 测试完成 ===")
+}

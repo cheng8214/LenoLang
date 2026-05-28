@@ -1,0 +1,31 @@
+main() {
+    // 测试 1: 基本默认参数
+    func add(int x, int y = 10):int { return x + y }
+    print(add(1))       // 期望: 11
+    print(add(1, 20))   // 期望: 21
+
+    // 测试 2: 多个默认参数
+    func test(int x, int y = 10, string z = "hi"):string {
+        return $"x={x} y={y} z={z}"
+    }
+    print(test(1))            // 期望: x=1 y=10 z=hi
+    print(test(1, 20))        // 期望: x=1 y=20 z=hi
+    print(test(1, 20, "hey")) // 期望: x=1 y=20 z=hey
+
+    // 测试 3: var 参数默认值
+    func test2(var a, var b = 0) {
+        print(type(a))
+        print(type(b))
+    }
+    test2(42)         // 期望: any, int
+    test2("hi", 10)   // 期望: any, int
+
+    // 测试 4: 默认参数位置错误
+    //func bad(int x = 10, int y) { }  // 取消注释测试: 应报错
+
+    // 测试 5: 类型不匹配
+     //func bad2(int x, int y = 3.14) { }  // 取消注释测试: 应报错
+
+    // 测试 6: 参数数量检查
+    //print(add())  // 取消注释测试: 应报错（缺少必选参数）
+}

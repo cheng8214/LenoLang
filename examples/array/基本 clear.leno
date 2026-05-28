@@ -1,0 +1,40 @@
+import arrays
+main() {
+    // 测试1：基本 clear
+    var arr = [1, 2, 3]
+    print("clear前: " + type(arr))
+    print(arr)
+    arr.clear()
+    print("clear后: " + type(arr))
+    print(arr)
+    
+    // 测试2：clear 后可以继续添加相同类型的元素
+    arr.add(4)
+    arr.add(5)
+    print("添加后: " + type(arr))
+    print(arr)
+    try
+    {
+    // 测试3：嵌套数组的 clear
+    var arr2 = [[1, 2], [3, 4]]
+    print("嵌套数组clear前: " + type(arr2))
+    arr2.clear()
+    print("嵌套数组clear后: " + type(arr2))
+    arr2.add([5, 6])
+    print("添加后: " + type(arr2))
+    print(arr2)
+    
+    arr2[0][10]=100
+    }
+    catch e{
+    print(e)
+    }
+    // 测试4：模块调用方式
+    var arr3 = ["a", "b", "c"]
+    print("模块调用clear前: " + type(arr3))
+    arrays.clear(arr3)
+    print("模块调用clear后: " + type(arr3))
+    arr3.add("d")
+    print("添加后: " + type(arr3))
+    print(arr3)
+}

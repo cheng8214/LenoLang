@@ -1,0 +1,26 @@
+// 测试索引访问语法（v["x"]）
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    print("=== 测试索引访问语法 ===")
+    
+    var v = Vec3.malloc()
+    
+    // 使用索引访问语法
+    v["x"] = 1.0
+    v["y"] = 2.0
+    v["z"] = 3.0
+    
+    print("v['x'] = " + v["x"])
+    print("v['y'] = " + v["y"])
+    print("v['z'] = " + v["z"])
+    
+    v.free()
+    
+    print("=== 测试完成 ===")
+}

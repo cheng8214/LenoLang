@@ -1,0 +1,16 @@
+// 模块初始化顺序测试主文件
+// 测试：模块级代码的执行顺序
+
+import "module_a.leno" as a
+import "module_b.leno" as b
+import "module_c.leno" as c
+import "init_logger.leno" as logger
+
+main() {
+    print("=== 模块初始化顺序测试 ===")
+    print("A value: " + a.get_value())
+    print("B value: " + b.get_value())
+    print("C value: " + c.get_value())
+    print("Init order: " + logger.get_log())
+    print("=== 测试完成 ===")
+}

@@ -1,0 +1,23 @@
+main() 
+{ 
+    print("BigInt 除法测试:")
+    
+    // 测试 1: 普通整数除法
+    var x = 10 / 3
+    print("10 / 3 = " + x)
+    
+    // 测试 2: BigInt 除法（超出 int64 范围）
+    var big = 99999999999999999999999999999999999999
+    var result = big / 3
+    print("99999999999999999999999999999999999999 / 3 = " + result)
+    
+    // 测试 3: BigInt 取模
+    print("")
+    print("BigInt 取模测试:")
+    var big2 = 12345678901234567890
+    var mod_result = big2 % 1000000000
+    print("12345678901234567890 % 1000000000 = " + mod_result)
+    
+    print("")
+    print("所有测试完成!")
+}

@@ -1,0 +1,10 @@
+// 简单测试
+
+cstruct Vec3 {
+    f32 x
+}
+
+main() {
+    print("Vec3 = " + Vec3)
+    print("Vec3.to_str() = " + Vec3.to_str())
+}

@@ -1,0 +1,15 @@
+// 相对路径边界测试主文件
+// 测试：从深层目录使用相对路径访问上级目录
+
+// 使用相对路径访问上级目录
+import "../../../root_module.leno" as root
+
+// 同级目录
+import "./deep_module.leno" as deep
+
+main() {
+    print("=== 相对路径边界测试 ===")
+    print("Root: " + root.get_level())
+    print("Deep: " + deep.get_level())
+    print("=== 测试完成 ===")
+}

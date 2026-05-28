@@ -1,0 +1,43 @@
+// 测试 dict.set 快速通道
+import times
+
+main() {
+    print("测试 dict.set 快速通道...")
+    
+    var d = {}
+    var n = 100000
+    
+    // 使用 dict.set(key, value) 语法
+    var start = times.ms()
+    for 0:n to var i {
+        d.set("key_" + i, i)
+    }
+    var elapsed = times.ms() - start
+    print("d.set() 插入 " + n + " 个键值对耗时: " + elapsed + " ms")
+    
+    // 验证
+    var correct = 1
+    for 0:n to var i {
+        if d["key_" + i] != i {
+            correct = 0
+            print("错误 at " + i)
+            break
+        }
+    }
+    if correct {
+        print("验证: 通过")
+    } else {
+        print("验证: 失败")
+    }
+    
+    // 对比：使用 [] 语法
+    var d2 = {}
+    start = times.ms()
+    for 0:n to var i {
+        d2["key_"+i] = i
+    }
+    elapsed = times.ms() - start
+    print("d[key] = value 插入 " + n + " 个键值对耗时: " + elapsed + " ms")
+    
+    print("测试完成!")
+}

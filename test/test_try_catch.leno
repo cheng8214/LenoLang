@@ -1,0 +1,65 @@
+// try-catch-finally 异常处理测试
+
+main()
+{
+    // 测试1: 基本 try-catch
+    var caught = false
+    try {
+        throw "error message"
+    } catch e {
+        caught = true
+        assert_eq(e, "error message")
+    }
+    assert_eq(caught, true)
+
+    // 测试2: try-catch-finally
+    var finally_executed = false
+    try {
+        throw "test error"
+    } catch e {
+        assert_eq(e, "test error")
+    } finally {
+        finally_executed = true
+    }
+    assert_eq(finally_executed, true)
+
+    // 测试3: 无异常时不执行 catch
+    var catch_executed = false
+    try {
+        var x = 10
+    } catch e {
+        catch_executed = true
+    }
+    assert_eq(catch_executed, false)
+
+    // 测试4: finally 总是执行（即使无异常）
+    var finally_always = false
+    try {
+        var y = 20
+    } catch e {
+        // 不执行
+    } finally {
+        finally_always = true
+    }
+    assert_eq(finally_always, true)
+
+    // 测试5: 嵌套 try-catch
+    var outer_caught = false
+    var inner_caught = false
+    try {
+        try {
+            throw "inner error"
+        } catch e {
+            inner_caught = true
+            assert_eq(e, "inner error")
+            throw "outer error"
+        }
+    } catch e {
+        outer_caught = true
+        assert_eq(e, "outer error")
+    }
+    assert_eq(inner_caught, true)
+    assert_eq(outer_caught, true)
+
+    print("test_try_catch passed")
+}

@@ -1,0 +1,9 @@
+import "struct_import.leno"
+use struct_import.word
+
+main()
+{
+    // 测试 use enum
+    var w =struct_import.word
+    print(w)
+}

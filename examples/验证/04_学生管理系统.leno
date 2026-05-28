@@ -1,0 +1,63 @@
+// 学生管理系统示例
+struct Student {
+    string name = ""
+    int age = 0
+    Array[int] scores = []
+    
+    func averageScore():float {
+        if (scores.len() == 0) {
+            return 0.0
+        }
+        int total = 0
+        for scores to score {
+            total = total + score
+        }
+        // 转换为 float 并计算
+        float result = total
+        return result / scores.len()
+    }
+}
+
+struct Class {
+    string name = ""
+    Array[Student] students = []
+    
+    func addStudent(Student s) {
+        students.add(s)
+    }
+    
+    func getAverageAge():float {
+        if (students.len() == 0) {
+            return 0.0
+        }
+        int total = 0
+        for students to s {
+            total = total + s.age
+        }
+        // 转换为 float 并计算
+        float result = total
+        return result / students.len()
+    }
+}
+
+main() {
+    var mathClass = Class()
+    mathClass.name = "数学一班"
+    
+    var s1 = Student()
+    s1.name = "张三"
+    s1.age = 18
+    s1.scores = [85, 90, 78]
+    
+    var s2 = Student()
+    s2.name = "李四"
+    s2.age = 19
+    s2.scores = [92, 88, 95]
+    
+    mathClass.addStudent(s1)
+    mathClass.addStudent(s2)
+    
+    print("班级: " + mathClass.name)
+    print("平均年龄: " + mathClass.getAverageAge())
+    print("张三平均分: " + s1.averageScore())
+}

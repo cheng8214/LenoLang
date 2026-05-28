@@ -1,0 +1,89 @@
+import dirs
+import io
+
+main() {
+    io.print("=== 测试 dirs 模块所有功能 ===")
+    
+    // 测试 dirs.cwd() - 获取当前工作目录
+    io.print("\n1. 测试 dirs.cwd():")
+    var current = dirs.cwd()
+    io.print("当前目录: " + current)
+    
+    // 测试 dirs.exists() - 检查路径是否存在
+    io.print("\n2. 测试 dirs.exists():")
+    io.print("当前目录存在? " + dirs.exists(current))
+    io.print("不存在的路径? " + dirs.exists("C:/不存在的路径/xyz"))
+    
+    // 测试 dirs.is_file() 和 dirs.is_dir()
+    io.print("\n3. 测试 dirs.is_file() 和 dirs.is_dir():")
+    io.print("当前目录是目录? " + dirs.is_dir(current))
+    io.print("当前目录是文件? " + dirs.is_file(current))
+    
+    // 测试 dirs.stat()
+    io.print("\n4. 测试 dirs.stat():")
+    var info = dirs.stat(current)
+    io.print("目录信息:")
+    io.print("  exists: " + info["exists"])
+    io.print("  is_dir: " + info["is_dir"])
+    io.print("  is_file: " + info["is_file"])
+    io.print("  size: " + info["size"])
+    io.print("  mtime: " + info["mtime"])
+    
+    // 测试不存在的文件
+    io.print("\n5. 测试不存在的文件 stat:")
+    var nofile = dirs.stat("C:/不存在的文件.txt")
+    io.print("不存在文件信息:")
+    io.print("  exists: " + nofile["exists"])
+    io.print("  is_dir: " + nofile["is_dir"])
+    io.print("  is_file: " + nofile["is_file"])
+    
+    // 测试 dirs.mkdir() 和 dirs.rmdir()
+    io.print("\n6. 测试 dirs.mkdir() 和 dirs.rmdir():")
+    var test_dir = "D:/test_leno_dir"
+    
+    // 先删除可能存在的目录
+    if dirs.exists(test_dir) {
+        dirs.rmdir(test_dir)
+    }
+    
+    io.print("创建目录: " + test_dir)
+    var result = dirs.mkdir(test_dir)
+    io.print("创建结果: " + result)
+    io.print("目录是否存在? " + dirs.exists(test_dir))
+    io.print("是目录? " + dirs.is_dir(test_dir))
+    
+    io.print("删除目录...")
+    var del_result = dirs.rmdir(test_dir)
+    io.print("删除结果: " + del_result)
+    io.print("目录是否还存在? " + dirs.exists(test_dir))
+    
+    // 测试 dirs.listdir()
+    io.print("\n7. 测试 dirs.listdir():")
+    var entries = dirs.listdir(current)
+    io.print("当前目录条目数: " + entries.len())
+    
+    // 显示前3个条目 - 使用 Leno 的 for 语法
+    io.print("前3个条目:")
+    var count = 0
+    for entries to entry {
+        if count < 3 {
+            io.print("  " + count + ": " + entry)
+            count = count + 1
+        }
+    }
+    
+    // 测试 dirs.join() 和 dirs.sep()
+    io.print("\n8. 测试 dirs.join() 和 dirs.sep():")
+    io.print("路径分隔符: '" + dirs.sep() + "'")
+    io.print("拼接路径: " + dirs.join("a", "b", "c"))
+    
+    // 测试 dirs.basename() 和 dirs.dirname()
+    io.print("\n9. 测试 dirs.basename() 和 dirs.dirname():")
+    var test_path = "src/module/dirs/dirs.c"
+    io.print("路径: " + test_path)
+    io.print("  basename: " + dirs.basename(test_path))
+    io.print("  dirname: " + dirs.dirname(test_path))
+    io.print("  extname: " + dirs.extname(test_path))
+    
+    io.print("\n=== 所有测试完成 ===")
+}

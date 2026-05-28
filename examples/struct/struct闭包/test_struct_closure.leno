@@ -1,0 +1,68 @@
+// 测试 struct 定义中的闭包
+
+struct Counter
+{
+    int count = 0
+
+    // 返回一个闭包，每次调用增加计数
+    func get_incrementor()
+    {
+        // 返回一个捕获 self 的闭包
+        return func()
+        {
+            count = count + 1
+            return count
+        }
+    }
+
+    // 返回一个闭包，获取当前计数
+    func get_getter()
+    {
+        return func()
+        {
+            return count
+        }
+    }
+}
+
+main()
+{
+    print("=== 测试 struct 中的闭包 ===")
+
+    var c = Counter()
+
+    // 获取增加器和获取器
+    var inc = c.get_incrementor()
+    var get = c.get_getter()
+
+    print("初始值:")
+    print(get())
+
+    print("调用 inc() 第一次:")
+    inc()
+    print(get())
+
+    print("调用 inc() 第二次:")
+    inc()
+    print(get())
+
+    print("调用 inc() 第三次:")
+    inc()
+    print(get())
+
+    // 创建另一个 Counter 实例，验证闭包隔离
+    print("\n=== 另一个 Counter 实例 ===")
+    var c2 = Counter()
+    var inc2 = c2.get_incrementor()
+    var get2 = c2.get_getter()
+
+    print("c2 初始值:")
+    print(get2())
+
+    inc2()
+    print("c2 增加后:")
+    print(get2())
+
+    print("\nc1 的值应该不变:")
+    print(get())
+}

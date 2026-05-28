@@ -1,0 +1,26 @@
+// 测试嵌套 struct 互相引用
+// A 包含 B 字段，B 包含 A 字段
+
+struct A
+{
+    int value_a
+    B b_field
+}
+
+struct B
+{
+    int value_b
+    A a_field
+}
+
+main()
+{
+    print("测试嵌套 struct 互相引用")
+    print("如果发生栈溢出，说明存在无限递归问题")
+    
+    // 尝试创建 A 实例
+    // 这会导致：创建 A → 自动创建 B → 自动创建 A → 无限递归
+    A obj = A(value_a = 10)
+    
+    print($"创建成功: value_a = {obj.value_a}")
+}

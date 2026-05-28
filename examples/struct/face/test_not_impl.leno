@@ -1,0 +1,37 @@
+// ============================================================================
+// 测试：将未实现 face 的 struct 传给 face 类型参数
+// ============================================================================
+//
+// 本测试验证：
+//   1. Dog impl Speaker，make_sound(dog) 调用正常
+//   2. Fish 没有实现 Speaker（只有 swim 方法，没有 speak 方法）
+//   3. 编译器应在编译期检测到类型不匹配并报错
+//
+// 预期行为：编译期报错 "make_sound 第 1 个参数类型不匹配: 期望 face Speaker, 实际 struct Fish"
+// 此文件不应通过编译，exit code = -1 是正确的
+
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+struct Fish {
+    string name = ""
+    func swim():string { return "swimming" }
+}
+
+func make_sound(Speaker s) {
+    print(s.speak())
+}
+
+main() {
+    var dog = Dog()
+    make_sound(dog)
+
+    var fish = Fish()
+    make_sound(fish)
+}

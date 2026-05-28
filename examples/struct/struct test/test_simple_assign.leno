@@ -1,0 +1,27 @@
+// 简单测试：struct 方法内普通赋值 vs 复合赋值
+
+struct Counter
+{
+    int value
+    
+    func test()
+    {
+        // 普通赋值（应该工作）
+        value = value + 1
+        
+        // 复合赋值（可能不工作）
+        // value += 1
+    }
+    
+    func getValue(): int
+    {
+        return value
+    }
+}
+
+main()
+{
+    Counter c = Counter(value = 10)
+    c.test()
+    print($"结果: {c.getValue()}, 期望: 11")
+}

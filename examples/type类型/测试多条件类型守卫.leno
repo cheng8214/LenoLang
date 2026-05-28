@@ -1,0 +1,18 @@
+// 测试多条件类型守卫
+
+var x = 5
+var y = "hello"
+
+if x is int or y is string {
+    print("guard passed")
+} else {
+    print("guard failed")
+}
+
+// 测试单条件类型守卫（兼容旧版本）
+var a = 10
+if a is int {
+    print("single guard passed")
+}
+
+print("All multi-guard tests passed!")

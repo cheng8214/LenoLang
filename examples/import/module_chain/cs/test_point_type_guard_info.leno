@@ -1,0 +1,113 @@
+// 测试 Point 类型守卫后的类型信息
+
+struct Point
+{
+    int x
+    int y
+}
+
+// 创建点数组
+func create_points(int count)
+{
+    var points = []
+    for 0 : count - 1 to var i {
+        var p = Point(x = i * 10, y = i * 20)
+        points.add(p)
+    }
+    return points
+}
+
+// 测试 1: 使用 Array[Point] 类型守卫后访问字段
+func test_point_array_access(var points)
+{
+    print("=== 测试 Array[Point] 类型守卫 ===")
+    
+    if points is Array[Point] {
+        print("points is Array[Point]: true")
+        
+        var p = points[0]
+        print("p.x = " + p.x + " (type should be int)")
+        print("p.y = " + p.y + " (type should be int)")
+        
+        // 测试 p 是否是 Point 类型
+        if p is Point {
+            print("p is Point: true")
+        } else {
+            print("p is Point: false")
+        }
+        
+        // 测试字段类型 - 使用 int 声明
+        int x_val = p.x
+        int y_val = p.y
+        
+        print("x_val = " + x_val + " (declared as int)")
+        print("y_val = " + y_val + " (declared as int)")
+    } else {
+        print("points is Array[Point]: false")
+    }
+}
+
+// 测试 2: 使用 Array 类型守卫（无泛型）
+func test_any_array_access(var points)
+{
+    print("=== 测试 Array 类型守卫 ===")
+    
+    if points is Array {
+        print("points is Array: true")
+        
+        var p = points[0]
+        print("p.x = " + p.x)
+        print("p.y = " + p.y)
+        
+        // 测试 p 是否是 Point 类型
+        if p is Point {
+            print("p is Point: true")
+        } else {
+            print("p is Point: false")
+        }
+        
+        // 测试 p.x 是否是 int 类型
+        if p.x is int {
+            print("p.x is int: true")
+        } else {
+            print("p.x is int: false")
+        }
+    }
+}
+
+// 测试 3: 直接访问（无类型守卫）
+func test_direct_access(var points)
+{
+    print("=== 测试直接访问（无类型守卫） ===")
+    
+    var p = points[0]
+    print("p.x = " + p.x)
+    print("p.y = " + p.y)
+    
+    if p is Point {
+        print("p is Point: true")
+    } else {
+        print("p is Point: false")
+    }
+}
+
+main()
+{
+    print("=== 测试 Point 类型守卫后的类型信息 ===")
+    print("")
+    
+    var points = create_points(3)
+    print("Created " + points.len() + " points")
+    print("")
+    
+    test_point_array_access(points)
+    print("")
+    
+    test_any_array_access(points)
+    print("")
+    
+    test_direct_access(points)
+    
+    print("")
+    print("=== 完成 ===")
+}

@@ -1,0 +1,55 @@
+// FFI 回调函数测试
+
+import ffi
+
+// 测试 1: 基本回调 - 使用 C 标准库的 qsort
+func compare(Ptr a, Ptr b): int {
+    int va = ffi.read_int(a, 0)
+    int vb = ffi.read_int(b, 0)
+    if va < vb { return -1 }
+    if va > vb { return 1 }
+    return 0
+}
+
+var cb = ffi.callback(compare, "int", ["pointer", "pointer"])
+assert_eq(ffi.is_ptr(cb), true)
+
+// 测试 2: 使用 msvcrt 的 qsort 排序整数数组
+var libc = ffi.load("msvcrt.dll")
+
+var arr = ffi.malloc(20)
+ffi.write_int(arr, 0, 5)
+ffi.write_int(arr, 4, 3)
+ffi.write_int(arr, 8, 1)
+ffi.write_int(arr, 12, 4)
+ffi.write_int(arr, 16, 2)
+
+ffi.call_void(libc, "qsort", arr, 5, 4, cb)
+
+assert_eq(ffi.read_int(arr, 0), 1)
+assert_eq(ffi.read_int(arr, 4), 2)
+assert_eq(ffi.read_int(arr, 8), 3)
+assert_eq(ffi.read_int(arr, 12), 4)
+assert_eq(ffi.read_int(arr, 16), 5)
+for 0:16:4 to i
+{
+	int result=ffi.read_int(arr, i)
+	print(result)
+}
+ffi.free(arr)
+
+// 测试 3: 简单回调 - 返回值测试
+func add_one(int x): int {
+    return x + 1
+}
+
+var add_cb = ffi.callback(add_one, "int", ["int"])
+
+// 测试 4: 多个回调同时存在
+func multiply_two(int x): int {
+    return x * 2
+}
+
+var mul_cb = ffi.callback(multiply_two, "int", ["int"])
+
+print("test_ffi_callback passed")

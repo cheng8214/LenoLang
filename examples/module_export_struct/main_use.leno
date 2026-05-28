@@ -1,0 +1,43 @@
+// 使用 use 语句导入 struct 类型的示例
+import "math.leno" as math
+use math.Point
+
+main()
+{
+    print("=== 使用 use 语句导入 Point 类型 ===")
+    print("")
+
+    // 1. 直接使用 Point 类型声明变量
+    print("1. 直接使用 Point 类型声明变量")
+    Point p1 = math.Point(x = 10, y = 20)
+    print("   p1: Point(x=" + p1.x + ", y=" + p1.y + ")")
+    print("")
+
+    // 2. 使用导入的 Point 类型作为函数参数
+    print("2. 使用 Point 类型作为函数参数")
+    Point p2 = math.Point(x = 5, y = 8)
+    var dist = math.distance(p1, p2)
+    print("   p1 和 p2 的距离平方: " + dist)
+    print("")
+
+    // 3. 函数返回 Point 类型
+    print("3. 函数返回 Point 类型")
+    Point p3 = math.get()
+    print("   p3: Point(x=" + p3.x + ", y=" + p3.y + ")")
+    print("")
+
+    // 4. 调用 struct 方法
+    print("4. 调用 struct 方法")
+    var sum = p1.test()
+    print("   p1.test() = " + sum + " (x + y = " + p1.x + " + " + p1.y + ")")
+    print("")
+
+    // 5. 对比：不使用 use 时需要通过模块访问
+    print("5. 对比：不使用 use 时")
+    print("   必须通过 math.Point() 访问")
+    var p4 = math.Point(x = 1, y = 2)
+    print("   p4: Point(x=" + p4.x + ", y=" + p4.y + ")")
+    print("")
+
+    print("=== 测试完成 ===")
+}

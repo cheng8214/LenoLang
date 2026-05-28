@@ -1,0 +1,26 @@
+// ============================================================================
+// 测试：face 方法返回值的使用
+// ============================================================================
+//
+// 本测试验证：
+//   1. face 方法返回值可以被赋值给变量
+//   2. Counter 实现了 Number face 的 value():int 方法
+//   3. 调用 c.value() 返回的 int 值可以正常使用和输出
+//
+// 预期输出：42
+
+face Number {
+    func value():int
+}
+
+struct Counter impl Number {
+    int n = 0
+    func value():int { return n }
+}
+
+main() {
+    var c = Counter()
+    c.n = 42
+    var result = c.value()
+    print(result)
+}

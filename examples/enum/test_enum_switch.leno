@@ -1,0 +1,47 @@
+// 测试 enum 在 switch 中的使用
+
+enum Status {
+    ok = 200
+    not_found = 404
+    error = 500
+}
+
+main() {
+    var status = Status.not_found
+    
+    switch status {
+        case Status.ok {
+            print("OK")
+        }
+        case Status.not_found {
+            print("Not Found")
+        }
+        case Status.error {
+            print("Error")
+        }
+        default {
+            print("Unknown")
+        }
+    }
+    
+    // 测试多个 enum 值
+    test_status(Status.ok)
+    test_status(Status.error)
+}
+
+func test_status(var s) {
+    switch s {
+        case Status.ok {
+            print("测试: OK")
+        }
+        case Status.not_found {
+            print("测试: Not Found")
+        }
+        case Status.error {
+            print("测试: Error")
+        }
+        default {
+            print("测试: Unknown")
+        }
+    }
+}

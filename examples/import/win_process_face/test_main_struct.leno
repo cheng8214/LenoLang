@@ -1,0 +1,8 @@
+// 测试导入模块中的 struct 前向引用
+import "test_module_struct.leno" as ms
+
+main() {
+    var person = ms.createPerson()
+    print("Name: ", person.name)
+    print("Age: ", person.age)
+}

@@ -1,0 +1,13 @@
+// 测试字段类型推断
+struct Test {
+    Array[int] scores = []
+    
+    func getScores():Array[int] {
+        return scores
+    }
+}
+
+main() {
+    var t = Test()
+    print(t.getScores())
+}

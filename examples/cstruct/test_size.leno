@@ -1,0 +1,49 @@
+// 测试 size() 和 alignment() 方法
+
+cstruct Vec2 {
+    f32 x
+    f32 y
+}
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Matrix4 {
+    f32 m[16]
+}
+
+cstruct Rect {
+    Vec2 origin
+    Vec2 size
+}
+
+main() {
+    print("=== 测试 size() 和 alignment() ===")
+    
+    // 测试定义上的方法
+    print("Vec2 size: " + Vec2.size() + " bytes, alignment: " + Vec2.alignment())
+    print("Vec3 size: " + Vec3.size() + " bytes, alignment: " + Vec3.alignment())
+    print("Matrix4 size: " + Matrix4.size() + " bytes, alignment: " + Matrix4.alignment())
+    print("Rect size: " + Rect.size() + " bytes, alignment: " + Rect.alignment())
+    
+    // 测试实例上的方法
+    var v = Vec3.malloc()
+    print("\nVec3 instance size: " + v.size() + " bytes")
+    print("Vec3 instance alignment: " + v.alignment())
+    v.free()
+    
+    var mat = Matrix4.malloc()
+    print("\nMatrix4 instance size: " + mat.size() + " bytes")
+    print("Matrix4 instance alignment: " + mat.alignment())
+    mat.free()
+    
+    // 实际应用场景：计算数组总大小
+    var count = 100
+    var total_size = Vec3.size() * count
+    print("\n100 Vec3 elements need " + total_size + " bytes")
+    
+    print("\n=== 测试完成 ===")
+}

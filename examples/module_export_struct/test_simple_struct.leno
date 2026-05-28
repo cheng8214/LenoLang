@@ -1,0 +1,26 @@
+// 简单测试 struct 方法
+
+struct Point
+{
+    int x
+    int y
+    func test():int
+    {
+        return x+y
+    }
+}
+
+main()
+{
+    print("测试本地 struct 方法")
+    
+    var p1 = Point()
+    p1.x = 10
+    p1.y = 20
+    
+    // 调用 struct 方法
+    var result = p1.test()
+    print($"test() result: {result}")
+    
+    print("测试完成!")
+}

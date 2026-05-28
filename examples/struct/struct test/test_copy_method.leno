@@ -1,0 +1,36 @@
+// 测试 struct 的 copy 方法是否真的可用
+
+struct Point
+{
+    int x
+    int y
+}
+
+main()
+{
+    Point p1 = Point(x=10, y=20)
+    
+    // 尝试调用 copy 方法
+    print("尝试调用 p1.copy()...")
+    Point p2 = p1.copy()
+    
+    print("p1.x = " + p1.x + ", p1.y = " + p1.y)
+    print("p2.x = " + p2.x + ", p2.y = " + p2.y)
+    
+    // 修改 p2，看是否影响 p1
+    p2.x = 100
+    p2.y = 200
+    
+    print("修改 p2 后:")
+    print("p1.x = " + p1.x + ", p1.y = " + p1.y)
+    print("p2.x = " + p2.x + ", p2.y = " + p2.y)
+    
+    if p1.x == 10 and p1.y == 20
+    {
+        print("测试通过：copy 创建了独立副本")
+    }
+    else
+    {
+        print("测试失败：copy 没有创建独立副本")
+    }
+}

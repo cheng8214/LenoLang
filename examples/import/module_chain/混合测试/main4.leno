@@ -1,0 +1,8 @@
+import "test_c.leno" as c
+
+main()
+{
+    // 测试：只传一个参数，但字段有3个
+    var p1 = c.Point3(100)
+    print("p1: x=" + p1.x + ", y=" + p1.y + ", z=" + p1.z)
+}

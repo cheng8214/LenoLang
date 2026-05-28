@@ -1,0 +1,30 @@
+import times
+
+main()
+{
+   // var 多变量声明
+   var a=10, b, c=1
+   
+   print("a=" + a + ", type=" + type(a))
+   print("b=" + b + ", type=" + type(b))
+   print("c=" + c + ", type=" + type(c))
+   
+   // 显式类型多变量声明
+   int x, y, z
+   x = 100
+   y = 200
+   z = 300
+   print("x=" + x + ", type=" + type(x))
+   print("y=" + y + ", type=" + type(y))
+   print("z=" + z + ", type=" + type(z))
+   
+   // float 类型多变量声明
+   float f1, f2=3.14
+   f1 = 2.5
+   print("f1=" + f1 + ", type=" + type(f1))
+   print("f2=" + f2 + ", type=" + type(f2))
+   
+   // 混合初始化
+   var m=1, n=2, p=3
+   print("m+n+p=" + (m+n+p))
+}

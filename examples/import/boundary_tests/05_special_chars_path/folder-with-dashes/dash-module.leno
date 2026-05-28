@@ -1,0 +1,7 @@
+// 带横线路径测试模块
+
+export var dash_var = "dash"
+
+export func dash_func() {
+    return "from folder-with-dashes"
+}

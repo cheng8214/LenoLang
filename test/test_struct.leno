@@ -1,0 +1,20 @@
+// 结构体测试
+struct Point {
+    int x = 0
+    int y = 0
+    
+    func distance() {
+        return x * x + y * y
+    }
+}
+
+var p = Point(x=3, y=4)
+assert_eq(p.x, 3)
+assert_eq(p.y, 4)
+assert_eq(p.distance(), 25)
+
+var p2 = Point()
+assert_eq(p2.x, 0)
+assert_eq(p2.y, 0)
+
+print("test_struct passed")

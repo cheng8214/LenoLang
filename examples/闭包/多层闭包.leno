@@ -1,0 +1,14 @@
+main()
+{
+    var level1 = 0
+    
+    func closureL1() {
+        return level1 * 100
+    }
+    
+    func closureL2() {
+        return closureL1() + 10
+    }
+    
+    print(closureL2())
+}

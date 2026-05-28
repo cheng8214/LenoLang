@@ -1,0 +1,22 @@
+import times
+
+main() {
+    // 创建一个 BigInt 对象（times.ms() 返回的值通常超过 32 位 int 范围）
+    var start = times.ms()
+    print("start = " + start)
+
+    // 触发一些分配来引发 GC
+    var sum = 0
+    var i = 100000
+    while i > 0 {
+        sum = sum + i
+        i = i - 1
+    }
+
+    print("sum = " + sum)
+
+    // 再次使用 start 变量
+    var end = times.ms()
+    print("end = " + end)
+    print("elapsed = " + (end - start))
+}

@@ -1,0 +1,57 @@
+import dirs
+import rands
+import strings
+
+// 递归遍历目录，重命名所有 .cpp 文件
+func rename_cpp_files(string dir) {
+    var entries = dirs.listdir(dir)
+    if entries == null {
+        return
+    }
+    
+    for entries to entry {
+        var fullpath = dirs.join(dir, entry)
+        var name = dirs.basename(fullpath)
+        
+        // 跳过回收站和系统目录
+        if name.starts_with("$") {
+            continue
+        }
+        
+        if dirs.is_dir(fullpath) {
+            // 是目录，递归处理
+            rename_cpp_files(fullpath)
+        } else {
+            // 是文件，检查是否是 .cpp 文件
+            var ext = dirs.extname(fullpath)
+            if ext == ".cpp" {
+                // 生成随机新文件名 (8位随机字符)
+                var random_name = rands.str(8, "abcdefghijklmnopqrstuvwxyz0123456789")
+                var new_name = random_name + ".cpp"
+                var new_path = dirs.join(dir, new_name)
+                
+                print("重命名: " + fullpath + " -> " + new_path)
+                
+                // 执行重命名
+                var success = dirs.rename(fullpath, new_path)
+                if not success {
+                    print("  重命名失败!")
+                }
+            }
+        }
+    }
+}
+
+main() {
+    var target_dir = "D:\\2022 - 副本"
+    
+    // 检查目录是否存在
+    if not dirs.exists(target_dir) {
+        print("目录不存在: " + target_dir)
+        return
+    }
+    
+    print("开始处理目录: " + target_dir)
+    rename_cpp_files(target_dir)
+    print("处理完成!")
+}

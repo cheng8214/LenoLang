@@ -1,0 +1,31 @@
+import threads 
+ 
+func test1() 
+{ 
+    var sum = 0 
+    for 1000
+    { 
+        sum = sum + 10 
+       print(sum)
+    } 
+    return sum 
+} 
+func test2() 
+{ 
+    var sum = 0 
+    for 100 
+    { 
+        sum = sum + 1 
+        print(sum)
+    } 
+    return sum 
+} 
+main()
+{
+var t1_parallel = threads.start(test1) 
+var t2_parallel = threads.start(test2) 
+var r1_parallel = t1_parallel.join() 
+var r2_parallel = t2_parallel.join() 
+print("任务1结果: " + r1_parallel) 
+print("任务2结果: " + r2_parallel)
+}

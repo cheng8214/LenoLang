@@ -1,0 +1,42 @@
+
+func shell_sort(Array[int] arr) 
+{
+    var n = arr.len();
+    print("数组长度: " + n);
+    
+    var gap =_int(n / 2)
+    print("初始gap: " + gap);
+    
+    while gap >= 1 {
+        print("当前gap: " + gap);
+        
+        for gap:n-1 to var i {
+            var temp = arr[i];
+            var j = i;
+            
+            while j >= gap and arr[j - gap] > temp {
+                arr[j] = arr[j - gap];
+                j = j - gap;
+            }
+            arr[j] = temp;
+        }
+        
+        if gap == 1 { break; }
+        gap = _int(gap / 2)
+        if gap < 1 { gap = 1; }
+    }
+    return arr;
+}
+
+main() {
+    print("=== 希尔排序测试 ===");
+    
+    // 测试小数组
+    var arr = [5, 2, 8, 1, 9, 3];
+    print("原始数组: " + arr);
+    
+    shell_sort(arr);
+    
+    print("排序后: " + arr);
+    print("测试完成!");
+}

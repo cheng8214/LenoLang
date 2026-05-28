@@ -1,0 +1,177 @@
+import jsons
+
+print("========== JSON 模块功能测试 ==========\n")
+
+// ========== 1. decode 函数测试 ==========
+print("--- 1. decode 函数测试 ---")
+
+// 基本类型测试
+print("\n>> 基本类型:")
+var str1 = jsons.decode("\"hello world\"")
+print("字符串: " + str1)
+
+var num1 = jsons.decode("42")
+print("整数: " + num1)
+
+var num2 = jsons.decode("3.14")
+print("浮点数: " + num2)
+
+var bool1 = jsons.decode("true")
+print("布尔 true: " + bool1)
+
+var bool2 = jsons.decode("false")
+print("布尔 false: " + bool2)
+
+var null1 = jsons.decode("null")
+print("null: " + null1)
+
+// 数组测试
+print("\n>> 数组:")
+var arr1 = jsons.decode("[1, 2, 3]")
+print("数字数组: " + arr1)
+print("  arr1[0]: " + arr1[0])
+print("  arr1[1]: " + arr1[1])
+print("  arr1[2]: " + arr1[2])
+
+var arr2 = jsons.decode("[\"a\", \"b\", \"c\"]")
+print("字符串数组: " + arr2)
+print("  arr2[0]: " + arr2[0])
+
+var arr3 = jsons.decode("[1, \"two\", true, null]")
+print("混合数组: " + arr3)
+
+// 嵌套数组
+var arr4 = jsons.decode("[[1, 2], [3, 4]]")
+print("嵌套数组: " + arr4)
+print("  arr4[0][0]: " + arr4[0][0])
+print("  arr4[1][1]: " + arr4[1][1])
+
+// 对象测试
+print("\n>> 对象:")
+var obj1 = jsons.decode("{\"name\": \"Leno\", \"version\": 1.0}")
+print("简单对象: " + obj1)
+print("  obj1.name: " + obj1.name)
+print("  obj1.version: " + obj1.version)
+
+// 嵌套对象
+print("\n>> 嵌套对象:")
+var obj2 = jsons.decode("{\"user\": {\"id\": 1, \"name\": \"张三\"}, \"active\": true}")
+print("嵌套对象: " + obj2)
+print("  obj2.user.name: " + obj2.user.name)
+print("  obj2.user.id: " + obj2.user.id)
+print("  obj2.active: " + obj2.active)
+
+// 复杂嵌套
+print("\n>> 复杂嵌套结构:")
+var complex = jsons.decode("{\"users\": [{\"name\": \"A\", \"age\": 20}, {\"name\": \"B\", \"age\": 25}], \"total\": 2}")
+print("复杂对象: " + complex)
+print("  complex.total: " + complex.total)
+print("  complex.users[0].name: " + complex.users[0].name)
+print("  complex.users[1].age: " + complex.users[1].age)
+
+// 空对象和空数组
+print("\n>> 空对象和空数组:")
+var empty_obj = jsons.decode("{}")
+print("空对象: " + empty_obj)
+
+var empty_arr = jsons.decode("[]")
+print("空数组: " + empty_arr)
+
+// 转义字符测试
+print("\n>> 转义字符:")
+var escape = jsons.decode("{\"text\": \"line1\\nline2\\ttab\"}")
+print("转义字符: " + escape.text)
+
+// ========== 2. encode 函数测试 ==========
+print("\n--- 2. encode 函数测试 ---")
+
+var test_obj = {
+    name: "测试",
+    count: 42,
+    valid: true,
+    data: null,
+    items: ["a", "b", "c"],
+    nested: {x: 1, y: 2}
+}
+
+var encoded = jsons.encode(test_obj)
+print("编码结果: " + encoded)
+
+// ========== 3. encode_pretty 函数测试 ==========
+print("\n--- 3. encode_pretty 函数测试 ---")
+
+var pretty = jsons.encode_pretty(test_obj)
+print("美化格式:\n" + pretty)
+
+// ========== 4. write_file 和 read_file 测试 ==========
+print("\n--- 4. 文件操作测试 ---")
+
+var test_file = "test_json_data.json"
+
+// 写入文件
+var write_result = jsons.write_file(test_file, test_obj)
+var result_str = "失败"
+if (write_result) {
+    result_str = "成功"
+}
+print("写入文件: " + test_file + " - " + result_str)
+
+// 读取文件
+var read_data = jsons.read_file(test_file)
+print("读取文件结果: " + read_data)
+print("  read_data.name: " + read_data.name)
+print("  read_data.count: " + read_data.count)
+print("  read_data.items: " + read_data.items)
+print("  read_data.nested.x: " + read_data.nested.x)
+
+// ========== 5. 类型保持测试 ==========
+print("\n--- 5. 类型保持测试 ---")
+
+var type_test = jsons.decode("{\"int\": 100, \"float\": 3.14, \"bool\": false, \"null_val\": null}")
+print("int 类型: " + type(type_test["int"]))
+print("float 类型: " + type(type_test["float"]))
+print("bool 类型: " + type(type_test["bool"]))
+print("null 类型: " + type(type_test["null_val"]))
+
+// ========== 6. 中文测试 ==========
+print("\n--- 6. 中文支持测试 ---")
+
+var chinese = jsons.decode("{\"中文\": \"你好世界\", \"emoji\": \"🎉\"}")
+print("中文键值: " + chinese)
+print("  chinese['中文']: " + chinese["中文"])
+
+// ========== 7. 数字边界测试 ==========
+print("\n--- 7. 数字边界测试 ---")
+
+var numbers = jsons.decode("{\"negative\": -123, \"zero\": 0, \"large\": 999999999}")
+print("数字边界: " + numbers)
+print("  negative: " + numbers.negative)
+print("  zero: " + numbers.zero)
+print("  large: " + numbers.large)
+
+// ========== 8. 特殊字符测试 ==========
+print("\n--- 8. 特殊字符测试 ---")
+
+var special = jsons.decode("{\"quote\": \"say \\\"hello\\\"\", \"backslash\": \"path\\\\to\\\\file\", \"slash\": \"http://example.com\"}")
+print("特殊字符:")
+print("  quote: " + special.quote)
+print("  backslash: " + special.backslash)
+print("  slash: " + special.slash)
+
+// ========== 9. 深度嵌套测试 ==========
+print("\n--- 9. 深度嵌套测试 ---")
+
+var deep = jsons.decode("{\"a\": {\"b\": {\"c\": {\"d\": \"deep value\"}}}}")
+print("深度嵌套: " + deep)
+print("  a.b.c.d: " + deep.a.b.c.d)
+
+// ========== 10. 数组索引访问测试 ==========
+print("\n--- 10. 数组操作测试 ---")
+
+var arr_obj = jsons.decode("[{\"id\": 1}, {\"id\": 2}, {\"id\": 3}]")
+print("对象数组:")
+print("  arr_obj[0].id: " + arr_obj[0].id)
+print("  arr_obj[1].id: " + arr_obj[1].id)
+print("  arr_obj[2].id: " + arr_obj[2].id)
+
+print("\n========== 所有测试完成 ==========")

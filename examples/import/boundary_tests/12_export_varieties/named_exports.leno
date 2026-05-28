@@ -1,0 +1,48 @@
+// 命名导出测试模块
+// 测试各种命名导出形式
+
+// 1. 导出变量
+export var public_var = 42
+export var public_string = "hello"
+
+// 2. 导出函数
+export func add(var a, var b) {
+    return a + b
+}
+
+export func greet(var name) {
+    return "Hello, " + name
+}
+
+// 3. 导出常量（使用 var 模拟）
+export var PI = 3.14159
+export var MAX_SIZE = 100
+
+// 4. 导出复杂数据结构
+export var config = {
+    "host": "localhost",
+    "port": 8080,
+    "debug": true
+}
+
+export var data_array = [1, 2, 3, 4, 5]
+
+// 5. 私有变量（不导出）
+var private_var = "secret"
+var private_counter = 0
+
+// 6. 私有函数（不导出）
+func private_helper() {
+    return "helper"
+}
+
+// 7. 导出使用私有成员的函数
+export func use_private() {
+    private_counter = private_counter + 1
+    return private_var + "-" + private_helper() + "-" + private_counter
+}
+
+// 8. 导出获取私有状态的函数
+export func get_private_counter() {
+    return private_counter
+}

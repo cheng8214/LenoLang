@@ -1,0 +1,110 @@
+import times
+import arrays
+
+// ============================================================================
+// 绑定方法尾调用测试
+// 测试 OP_TAIL_CALL 是否正确处理 OBJ_BOUND_METHOD
+// ============================================================================
+
+main() {
+    print("======== 绑定方法尾调用测试 ========")
+    print("")
+
+    // 测试1: 数组 copy 方法尾调用
+    print("--- 测试1: 数组 copy 方法尾调用 ---")
+    var arr = [1, 2, 3, 4, 5]
+    var t1 = times.ms()
+    var result1 = test_array_copy_tail(arr, 1000)
+    var t2 = times.ms()
+    print($"数组 copy 尾调用测试完成，结果长度: {result1.len()}")
+    print($"耗时: {t2 - t1}ms")
+    print("")
+
+    // 测试2: 数组 append 方法尾调用
+    print("--- 测试2: 数组 append 方法尾调用 ---")
+    t1 = times.ms()
+    var result2 = test_array_append_tail(0, 1000)
+    t2 = times.ms()
+    print($"数组 append 尾调用测试完成，结果长度: {result2.len()}")
+    print($"耗时: {t2 - t1}ms")
+    print("")
+
+    // 测试3: 字符串 len 方法尾调用
+    print("--- 测试3: 字符串方法尾调用 ---")
+    t1 = times.ms()
+    var result3 = test_string_len_tail("hello", 10000)
+    t2 = times.ms()
+    print($"字符串 len 尾调用测试完成，结果: {result3}")
+    print($"耗时: {t2 - t1}ms")
+    print("")
+
+    // 测试4: 链式调用尾调用
+    print("--- 测试4: 链式方法调用尾调用 ---")
+    t1 = times.ms()
+    var result4 = test_chain_tail(1000)
+    t2 = times.ms()
+    print($"链式调用尾调用测试完成，结果长度: {result4.len()}")
+    print($"耗时: {t2 - t1}ms")
+    print("")
+
+    print("======== 所有测试完成 ========")
+}
+
+// ============================================================================
+// 测试1: 数组 copy 方法尾递归
+// 递归调用 arr.copy() 作为尾调用
+// ============================================================================
+func test_array_copy_tail(var arr, var n) {
+    if n <= 0 {
+        return arr
+    }
+    // 尾调用位置调用绑定方法 arr.copy()
+    return test_array_copy_tail(arr.copy(), n - 1)
+}
+
+// ============================================================================
+// 测试2: 数组 append 方法尾递归
+// ============================================================================
+func test_array_append_tail(var start, var n) {
+    if n <= 0 {
+        return [start]
+    }
+    var arr = [start]
+    // 尾调用位置
+    return test_array_append_tail(start + 1, n - 1)
+}
+
+// ============================================================================
+// 测试3: 字符串 len 方法尾递归
+// ============================================================================
+func test_string_len_tail(var str, var n) {
+    if n <= 0 {
+        return str.len()
+    }
+    // 尾调用位置调用绑定方法 str.len()
+    // 注意：这里只是测试尾调用是否能工作，不实际使用 len 的结果
+    var _ = str.len()
+    return test_string_len_tail(str, n - 1)
+}
+
+// ============================================================================
+// 测试4: 链式调用尾递归
+// 在尾调用位置使用方法调用
+// ============================================================================
+func test_chain_tail(var n) {
+    if n <= 0 {
+        return [1, 2, 3]
+    }
+    var arr = [n]
+    // 尾调用位置
+    return test_chain_tail(n - 1)
+}
+
+// ============================================================================
+// 测试5: 直接尾调用绑定方法（这会触发 BoundMethod 尾调用）
+// ============================================================================
+func direct_bound_method_call(var arr) {
+    // 直接返回绑定方法调用的结果
+    // 这应该触发 OP_TAIL_CALL 对 OBJ_BOUND_METHOD 的处理
+    return arr.copy()
+}

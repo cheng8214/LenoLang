@@ -1,0 +1,69 @@
+// 混合测试 - 类型定义 + 数学模块链
+// 多级嵌套调用测试
+
+import "shape_math.leno" as sm
+import "../类型定义/types.leno" as t
+
+main()
+{
+    print("=== 混合测试：类型定义 + 数学模块链 ===")
+    print("")
+
+    // 测试 1: 创建圆形并计算面积
+    print("--- 测试 1: 圆形面积 ---")
+    var circle_radius = 5
+    var circle_area = sm.circle_area(circle_radius)
+    print("Circle radius = " + circle_radius)
+    print("Circle area = " + circle_area)
+    print("")
+
+    // 测试 2: 创建矩形并计算面积
+    print("--- 测试 2: 矩形面积 ---")
+    var rect = sm.create_rectangle(0, 0, 100, 50)
+    print("Rectangle: x=" + rect.x + ", y=" + rect.y + ", width=" + rect.width + ", height=" + rect.height)
+    print("Rectangle area = " + sm.rectangle_area(rect))
+    print("")
+
+    // 测试 3: 两个矩形的总面积
+    print("--- 测试 3: 两个矩形总面积 ---")
+    var rect1 = sm.create_rectangle(0, 0, 10, 20)
+    var rect2 = sm.create_rectangle(0, 0, 30, 40)
+    var total = sm.total_area(rect1, rect2)
+    print("Rect1 area = " + sm.rectangle_area(rect1))
+    print("Rect2 area = " + sm.rectangle_area(rect2))
+    print("Total area = " + total)
+    print("")
+
+    // 测试 4: 混合形状面积（圆形 + 矩形）
+    print("--- 测试 4: 混合形状面积 ---")
+    var mixed_rect = sm.create_rectangle(0, 0, 10, 10)
+    var mixed_area = sm.mixed_shape_area(5, mixed_rect)
+    print("Circle (r=5) + Rectangle (10x10) = " + mixed_area)
+    print("")
+
+    // 测试 5: 颜色名称
+    print("--- 测试 5: 颜色名称 ---")
+    print("Color RED name = " + sm.get_color_name(t.Color.RED))
+    print("Color BLUE name = " + sm.get_color_name(t.Color.BLUE))
+    print("")
+
+    // 测试 6: 点数组和距离计算
+    print("--- 测试 6: 点数组和距离 ---")
+    var points = sm.create_points(5)
+    print("Created " + points.len() + " points")
+    for points to var p, var i {
+        print("Point " + i + ": (" + p.x + ", " + p.y + ")")
+    }
+    var dist = sm.total_distance(points)
+    print("Total distance = " + dist)
+    print("")
+
+    // 测试 7: 多级调用链
+    print("--- 测试 7: 多级调用链 ---")
+    print("shape_math -> geometry -> math_utils")
+    var area = sm.circle_area(3)
+    print("circle_area(3) via chain = " + area)
+    print("")
+
+    print("=== 所有混合测试完成 ===")
+}

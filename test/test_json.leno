@@ -1,0 +1,63 @@
+// JSON 模块测试
+
+import jsons
+
+main()
+{
+    // 测试1: decode 基本类型
+    var str1 = jsons.decode("\"hello\"")
+    assert_eq(str1, "hello")
+
+    var num1 = jsons.decode("42")
+    assert_eq(num1, 42)
+
+    var num2 = jsons.decode("3.14")
+    assert_eq(num2, 3.14)
+
+    var bool1 = jsons.decode("true")
+    assert_eq(bool1, true)
+
+    var bool2 = jsons.decode("false")
+    assert_eq(bool2, false)
+
+    var null1 = jsons.decode("null")
+    assert_eq(null1, null)
+
+    // 测试2: decode 数组
+    var arr1 = jsons.decode("[1, 2, 3]")
+    assert_eq(arr1.len(), 3)
+    assert_eq(arr1[0], 1)
+    assert_eq(arr1[1], 2)
+    assert_eq(arr1[2], 3)
+
+    // 测试3: decode 对象
+    var obj1 = jsons.decode("{\"name\": \"Leno\", \"version\": 1.0}")
+    assert_eq(obj1.name, "Leno")
+    assert_eq(obj1.version, 1.0)
+
+    // 测试4: decode 嵌套对象
+    var obj2 = jsons.decode("{\"user\": {\"id\": 1, \"name\": \"张三\"}, \"active\": true}")
+    assert_eq(obj2.user.name, "张三")
+    assert_eq(obj2.user.id, 1)
+    assert_eq(obj2.active, true)
+
+    // 测试5: encode
+    var test_obj = {
+        name: "测试",
+        count: 42,
+        valid: true
+    }
+    var encoded = jsons.encode(test_obj)
+    assert_eq(encoded.has("\"name\":\"测试\""), true)
+    assert_eq(encoded.has("\"count\":42"), true)
+    assert_eq(encoded.has("\"valid\":true"), true)
+
+    // 测试6: 空对象和空数组
+    var empty_obj = jsons.decode("{}")
+    assert_eq(type(empty_obj), "Dict")
+
+    var empty_arr = jsons.decode("[]")
+    assert_eq(empty_arr.len(), 0)
+
+    print("test_json passed")
+}

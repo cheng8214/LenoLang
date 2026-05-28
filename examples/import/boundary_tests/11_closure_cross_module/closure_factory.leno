@@ -1,0 +1,53 @@
+// 闭包工厂模块 - 创建带 upvalue 的闭包
+
+export func make_counter(var start) {
+    var count = start
+
+    func counter_func() {
+        count = count + 1
+        return count
+    }
+    return counter_func
+}
+
+export func make_adder(var base) {
+    func adder_func(var x) {
+        return base + x
+    }
+    return adder_func
+}
+
+export func make_multiplier(var factor) {
+    func multiplier_func(var x) {
+        return x * factor
+    }
+    return multiplier_func
+}
+
+// 返回多个闭包共享同一个 upvalue
+export func make_bank_account(var initial) {
+    var balance = initial
+
+    func deposit_func(var amount) {
+        balance = balance + amount
+        return balance
+    }
+
+    func withdraw_func(var amount) {
+        if amount > balance {
+            throw "Insufficient funds"
+        }
+        balance = balance - amount
+        return balance
+    }
+
+    func get_balance_func() {
+        return balance
+    }
+
+    var account = {}
+    account["deposit"] = deposit_func
+    account["withdraw"] = withdraw_func
+    account["get_balance"] = get_balance_func
+    return account
+}

@@ -1,0 +1,46 @@
+// 测试 File 和 Ptr 类型作为参数传递
+import files
+import ffi
+
+// 测试函数：接收 File 类型参数
+func process_file(File f)
+{
+    string content = f.read()
+    print("File content length: " + content.len())
+    f.close()
+}
+
+// 测试函数：接收 Ptr 类型参数
+func process_ptr(Ptr p)
+{
+    ffi.write_int(p, 0, 100)
+    int value = ffi.read_int(p, 0)
+    print("Ptr value: " + value)
+}
+
+main()
+{
+    // 测试 File 作为参数
+    print("=== Testing File as parameter ===")
+    
+    // 创建测试文件
+    File f = files.open("test_param.txt", "w")
+    f.write("Hello from File parameter!")
+    f.close()
+    
+    // 重新打开并传递给函数
+    File f2 = files.open("test_param.txt", "r")
+    process_file(f2)
+    
+    // 测试 Ptr 作为参数
+    print("=== Testing Ptr as parameter ===")
+    
+    Ptr p = ffi.malloc(100)
+    process_ptr(p)
+    ffi.free(p)
+    
+    // 清理
+    files.delete("test_param.txt")
+    
+    print("All tests passed!")
+}

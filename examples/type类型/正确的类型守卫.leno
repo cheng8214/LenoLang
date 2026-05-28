@@ -1,0 +1,32 @@
+
+main() {
+    var a = 100  // a 是 int
+
+    // 测试1：正确的类型守卫（int）
+    print("=== 测试1：if a is int ===")
+    if a is int {
+        print("进入 int 分支")
+        int result = a + 100
+        print("result = " + result)
+    } else {
+        print("进入 else 分支")
+    }
+
+    // 测试2：错误的类型守卫（float）
+    print("\n=== 测试2：if a is float ===")
+    if a is float {
+        print("错误：不应该进入 float 分支！")
+    } else {
+        print("正确：跳过 float 分支，进入 else")
+    }
+
+    // 测试3：string 类型守卫
+    print("\n=== 测试3：if a is string ===")
+    if a is string {
+        print("错误：不应该进入 string 分支！")
+    } else {
+        print("正确：跳过 string 分支，进入 else")
+    }
+
+    print("\n=== 测试完成 ===")
+}

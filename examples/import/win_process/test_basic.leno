@@ -1,0 +1,45 @@
+// 基础功能测试
+import "win_process_simple.leno" as proc
+
+main() {
+    print("=== 基础功能测试 ===")
+    print("")
+
+    // 测试获取当前PID
+    print("1. 获取当前PID")
+    var currentPid = proc.getCurrentPid()
+    print("   PID: " + currentPid)
+    print("")
+
+    // 测试枚举进程
+    print("2. 枚举进程")
+    var enumResult = proc.enumProcesses()
+    print("   发现 " + enumResult.pids.len() + " 个进程")
+    print("")
+
+    // 测试获取进程列表
+    print("3. 获取进程列表")
+    var listResult = proc.listProcesses()
+    print("   获取 " + listResult.processes.len() + " 个进程")
+    print("")
+
+    // 显示前3个
+    print("4. 前3个进程:")
+    for 0 : 2 to i {
+        var p = listResult.processes[i]
+        print("   - " + p.name + " (PID: " + p.pid + ")")
+    }
+    print("")
+
+    // 测试查找
+    print("5. 查找 explorer.exe")
+    var findResult = proc.findByName("explorer.exe")
+    if findResult.found {
+        print("   找到! PID: " + findResult.pid)
+    } else {
+        print("   未找到")
+    }
+    print("")
+
+    print("=== 测试完成 ===")
+}

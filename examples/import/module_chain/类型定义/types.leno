@@ -1,0 +1,97 @@
+// 类型定义模块 - 测试导出 enum 和 struct
+
+// 颜色枚举
+export enum Color {
+    RED = 0
+    GREEN = 1
+    BLUE = 2
+    YELLOW = 3
+    BLACK = 4
+    WHITE = 5
+}
+
+// 状态枚举
+export enum Status {
+    PENDING = 0
+    RUNNING = 1
+    COMPLETED = 2
+    FAILED = 3
+}
+
+// 点结构体
+export struct Point {
+    int x
+    int y
+}
+
+// 矩形结构体
+export struct Rectangle {
+    int x
+    int y
+    int width
+    int height
+}
+
+// 人员结构体
+export struct Person {
+    string name
+    int age
+}
+
+// 创建点的函数
+export func create_point(int x, int y)
+{
+    return Point(x = x, y = y)
+}
+
+// 创建矩形的函数
+export func create_rect(int x, int y, int w, int h)
+{
+    return Rectangle(x = x, y = y, width = w, height = h)
+}
+
+// 创建人员的函数
+export func create_person(string name, int age)
+{
+    return Person(name = name, age = age)
+}
+
+// 计算矩形面积
+export func rect_area(var rect)
+{
+    return rect.width * rect.height
+}
+
+// 获取颜色名称
+export func color_name(var color)
+{
+    if color == Color.RED {
+        return "Red"
+    } else if color == Color.GREEN {
+        return "Green"
+    } else if color == Color.BLUE {
+        return "Blue"
+    } else if color == Color.YELLOW {
+        return "Yellow"
+    } else if color == Color.BLACK {
+        return "Black"
+    } else if color == Color.WHITE {
+        return "White"
+    }
+    return "Unknown"
+}
+
+// 获取状态名称
+export func status_name(var status)
+{
+    if status == Status.PENDING {
+        return "Pending"
+    } else if status == Status.RUNNING {
+        return "Running"
+    } else if status == Status.COMPLETED {
+        return "Completed"
+    } else if status == Status.FAILED {
+        return "Failed"
+    }
+    return "Unknown"
+}

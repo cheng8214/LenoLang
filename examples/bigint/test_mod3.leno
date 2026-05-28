@@ -1,0 +1,16 @@
+main() 
+{ 
+    print("测试 3:")
+    var big2 = 12345678901234567890
+    var divisor = 1000000000
+    var mod_result = big2 % divisor
+    print("mod_result = " + mod_result)
+    print("预期 = 234567890")
+    
+    // 测试 4: 更简单的测试
+    print("")
+    var big3 = 123456789
+    var result2 = big3 % 100
+    print("123456789 % 100 = " + result2)
+    print("预期 = 89")
+}

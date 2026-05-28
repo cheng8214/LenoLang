@@ -1,0 +1,13 @@
+// 模块 A - 基础功能
+
+export var value = 100
+
+export func get_value()
+{
+    return 42
+}
+
+export func add(var a, var b)
+{
+    return a + b
+}

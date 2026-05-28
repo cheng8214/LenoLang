@@ -1,0 +1,45 @@
+// strings 模块测试
+
+import strings
+
+main()
+{
+    // 测试1: to_lower
+    var s1 = "HELLO"
+    assert_eq(strings.to_lower(s1), "hello")
+
+    // 测试2: to_upper
+    var s2 = "world"
+    assert_eq(strings.to_upper(s2), "WORLD")
+
+    // 测试3: 使用字符串实例方法 sub_str 替代 substring
+    var s3 = "hello world"
+    assert_eq(s3.sub_str(0, 5), "hello")
+    assert_eq(s3.sub_str(6, 5), "world")
+
+    // 测试4: len
+    var s4 = "hello"
+    assert_eq(strings.len(s4), 5)
+
+    // 测试5: format - 使用 %s %d %f 格式
+    var formatted1 = strings.format("Hello %s", "World")
+    assert_eq(formatted1, "Hello World")
+
+    var formatted2 = strings.format("Name: %s, Age: %d", "张三", 25)
+    assert_eq(formatted2, "Name: 张三, Age: 25")
+
+    var formatted3 = strings.format("Pi = %f", 3.14159)
+    // 浮点数格式化可能有精度差异，先打印看结果
+    print("formatted3 = " + formatted3)
+
+    // 测试6: 中文支持
+    var chinese = "你好世界"
+    // 中文字符长度（UTF-8 字节数）
+    var len_chinese = strings.len(chinese)
+    print("chinese len = " + len_chinese)
+    // UTF-8 中文字符通常是 3 字节
+    assert_eq(len_chinese >= 4, true)
+    assert_eq(strings.to_upper(chinese), "你好世界")  // 中文没有大小写
+
+    print("test_strings_module passed")
+}

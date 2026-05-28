@@ -1,0 +1,33 @@
+face Shape {
+    func area():float
+    func name():string
+}
+
+struct Circle impl Shape {
+    float radius = 0.0
+    func area():float { return 3.14159 * radius * radius }
+    func name():string { return "Circle" }
+}
+
+struct Rect impl Shape {
+    float w = 0.0
+    float h = 0.0
+    func area():float { return w * h }
+    func name():string { return "Rect" }
+}
+
+func print_shape(Shape s) {
+    print(s.name())
+    print(s.area())
+}
+
+main() {
+    var c = Circle()
+    c.radius = 5.0
+    var r = Rect()
+    r.w = 3.0
+    r.h = 4.0
+
+    print_shape(c)
+    print_shape(r)
+}

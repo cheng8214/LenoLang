@@ -1,0 +1,13 @@
+// 循环依赖测试 - 模块 B
+
+import "module_a.leno" as a
+
+export var b_value = 20
+
+export func b_func() {
+    return "B (a_value=" + a.a_value + ")"
+}
+
+export func b_get_value() {
+    return b_value
+}

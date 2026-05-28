@@ -1,0 +1,72 @@
+import sockets
+import io
+
+// 简化版聊天服务器 - 只处理单个客户端，测试基本功能
+
+main() {
+    var port = 8888
+    
+    io.print("=== 简化版聊天服务器 ===")
+    io.print("启动中...")
+    
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("启动失败")
+        return
+    }
+    
+    io.print("服务器运行在 127.0.0.1:" + port)
+    io.print("等待客户端连接...")
+    io.print("")
+    
+    // 接受一个客户端
+    var client = sockets.accept(server)
+    if client == null {
+        io.print("接受连接失败")
+        return
+    }
+    
+    io.print("客户端已连接！")
+    
+    // 发送欢迎消息
+    var welcome = "欢迎加入聊天室！\n"
+    io.print("发送欢迎消息...")
+    var sent = sockets.send(client, welcome)
+    io.print("发送结果: " + sent)
+    
+    // 简单循环：接收消息并回复
+    while true {
+        io.print("等待接收数据...")
+        
+        var data = sockets.recv(client, 1024)
+        
+        if data == null {
+            io.print("客户端断开连接")
+            break
+        }
+        
+        io.print("收到原始数据: [" + data + "]")
+        
+        var msg = data.trim()
+        io.print("处理后: [" + msg + "]")
+        
+        if msg.len() > 0 {
+            io.print("收到消息: " + msg)
+            
+            // 回复客户端
+            var reply = "服务器收到: " + msg + "\n"
+            sockets.send(client, reply)
+            io.print("已发送回复")
+            
+            // 检查退出命令
+            if msg == "/quit" {
+                io.print("客户端请求退出")
+                break
+            }
+        }
+    }
+    
+    sockets.close(client)
+    sockets.close(server)
+    io.print("服务器已关闭")
+}

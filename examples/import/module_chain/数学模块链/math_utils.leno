@@ -1,0 +1,18 @@
+// 基础数学工具模块
+
+export var PI = 3.14159265359
+
+export func add(var a, var b)
+{
+    return a + b
+}
+
+export func multiply(var a, var b)
+{
+    return a * b
+}
+
+export func square(var x)
+{
+    return x * x
+}

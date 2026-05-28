@@ -1,0 +1,18 @@
+// ============================================================================
+// 测试：struct 声明 impl face 但缺少方法
+// ============================================================================
+//
+// 本测试验证：
+//   1. BadDog 声明了 impl Speaker，但没有实现 speak():string 方法
+//   2. 编译器应在语义分析阶段检测到缺少方法并报错
+//
+// 预期行为：编译期报错 "struct 'BadDog' 声明 impl 'Speaker' 但缺少方法 'speak'"
+// 此文件不应通过编译，exit code = -1 是正确的
+
+face Speaker {
+    func speak():string
+}
+
+struct BadDog impl Speaker {
+    string name = ""
+}

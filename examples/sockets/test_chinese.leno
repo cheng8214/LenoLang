@@ -1,0 +1,42 @@
+import sockets
+import io
+
+// 中文传输测试
+
+main() {
+    var host = "127.0.0.1"
+    var port = 8888
+    
+    io.print("=== 中文测试客户端 ===")
+    
+    var conn = sockets.connect(host, port)
+    if conn == null {
+        io.print("连接失败")
+        return
+    }
+    
+    io.print("已连接")
+    
+    // 接收欢迎消息
+    var welcome = sockets.recv(conn, 1024)
+    io.print("欢迎消息: " + welcome)
+    
+    // 测试中文
+    var chinese_msg = "你好世界"
+    io.print("发送中文: " + chinese_msg)
+    sockets.send(conn, chinese_msg + "\n")
+    
+    var reply = sockets.recv(conn, 1024)
+    io.print("收到回复: " + reply)
+    
+    // 测试中文2
+    var msg2 = "这是一个测试消息"
+    io.print("发送: " + msg2)
+    sockets.send(conn, msg2 + "\n")
+    
+    var reply2 = sockets.recv(conn, 1024)
+    io.print("收到回复: " + reply2)
+    
+    sockets.close(conn)
+    io.print("测试完成")
+}

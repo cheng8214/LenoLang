@@ -1,0 +1,14 @@
+
+
+main() {
+   var b=test(10,15)
+   print(b)
+}
+
+func add(int a, int b):int {
+    return a + b
+}
+
+func test(a, b) {      // a,b 是 any
+    return add(a, b)   // 编译时检查：a,b 是 any，但 add 要 int
+}

@@ -1,0 +1,10 @@
+// 简单 GC 测试
+
+main() {
+    var i = 0
+    while i < 100000 {
+        var s = "string " + i
+        i = i + 1
+    }
+    print("完成")
+}

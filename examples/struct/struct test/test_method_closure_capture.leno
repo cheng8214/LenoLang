@@ -1,0 +1,155 @@
+// 测试 struct 方法捕获外部变量（闭包）
+// 如果 upvalue 绑定有问题，外部变量将无法正常访问
+
+struct Counter
+{
+    int value
+    
+    // 方法需要捕获外部变量
+    func createIncrementor(int step)
+    {
+        // 返回一个闭包，捕获 step 和 self
+        func increment()
+        {
+            value = value + step  // 访问 self.value 和外部 step
+            return value
+        }
+        return increment
+    }
+}
+
+// 测试外部作用域变量捕获
+struct Container
+{
+    int data
+    
+    func process()
+    {
+        // 捕获外部局部变量
+        var multiplier = 10
+        
+        func transform()
+        {
+            // 应该能访问 self.data 和外部 multiplier
+            return data * multiplier
+        }
+        
+        return transform()
+    }
+}
+
+// 测试嵌套闭包捕获
+struct Calculator
+{
+    int base
+    
+    func compute(int offset)
+    {
+        var factor = 2
+        
+        func inner1()
+        {
+            var temp = base + offset  // 捕获 self.base 和 offset
+            
+            func inner2()
+            {
+                return temp * factor  // 捕获 temp 和 factor
+            }
+            
+            return inner2()
+        }
+        
+        return inner1()
+    }
+}
+
+main()
+{
+    print("======== struct 方法闭包捕获测试 ========")
+    print("")
+    
+    // 测试1: Counter 创建 incrementor
+    print("--- 测试1: Counter 闭包 ---")
+    Counter c = Counter(value = 0)
+    var inc = c.createIncrementor(5)
+    
+    print("第一次调用 inc():")
+    var r1 = inc()
+    print($"结果: {r1}, 期望: 5")
+    
+    print("第二次调用 inc():")
+    var r2 = inc()
+    print($"结果: {r2}, 期望: 10")
+    
+    print("第三次调用 inc():")
+    var r3 = inc()
+    print($"结果: {r3}, 期望: 15")
+    
+    if r1 == 5 and r2 == 10 and r3 == 15
+    {
+        print("测试1通过!")
+    }
+    else
+    {
+        print("测试1失败!")
+    }
+    print("")
+    
+    // 测试2: Container 捕获外部变量
+    print("--- 测试2: Container 捕获外部变量 ---")
+    Container cont = Container(data = 7)
+    var result2 = cont.process()
+    print($"结果: {result2}, 期望: 70 (7 * 10)")
+    
+    if result2 == 70
+    {
+        print("测试2通过!")
+    }
+    else
+    {
+        print("测试2失败!")
+    }
+    print("")
+    
+    // 测试3: Calculator 嵌套闭包
+    print("--- 测试3: Calculator 嵌套闭包 ---")
+    Calculator calc = Calculator(base = 3)
+    var result3 = calc.compute(4)
+    print($"结果: {result3}, 期望: 14 ((3+4) * 2)")
+    
+    if result3 == 14
+    {
+        print("测试3通过!")
+    }
+    else
+    {
+        print("测试3失败!")
+    }
+    print("")
+    
+    // 测试4: 多个实例独立
+    print("--- 测试4: 多个实例独立 ---")
+    Counter c1 = Counter(value = 100)
+    Counter c2 = Counter(value = 200)
+    
+    var inc1 = c1.createIncrementor(1)
+    var inc2 = c2.createIncrementor(2)
+    
+    var v1 = inc1()  // 应该是 101
+    var v2 = inc2()  // 应该是 202
+    
+    print($"c1 结果: {v1}, 期望: 101")
+    print($"c2 结果: {v2}, 期望: 202")
+    
+    if v1 == 101 and v2 == 202
+    {
+        print("测试4通过!")
+    }
+    else
+    {
+        print("测试4失败!")
+    }
+    print("")
+    
+    print("======== 测试完成 ========")
+}

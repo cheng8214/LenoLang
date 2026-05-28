@@ -1,0 +1,286 @@
+#ifndef LENO_AST_H
+#define LENO_AST_H
+
+#include "leno_types.h"
+#include "leno_value.h"
+
+// ============================================================================
+// AST 节点类型
+// ============================================================================
+
+typedef enum {
+    AST_NUM,
+    AST_STRING,
+    AST_BOOL,
+    AST_NULL,
+    AST_ARRAY,
+    AST_DICT,
+    AST_RANGE,         // 范围字面量：0:9
+    AST_VAR,
+    AST_BINOP,
+    AST_UNARY,
+    AST_CALL,
+    AST_INDEX,
+    AST_SLICE,         // 数组切片：arr[start:end]
+    AST_INDEX_ASSIGN,  // 索引赋值：dict["key"] = value
+    AST_BLOCK,
+    AST_IF,
+    AST_WHILE,
+    AST_FOR,
+    AST_SWITCH,
+    AST_FUNC_DEF,
+    AST_RETURN,
+    AST_BREAK,
+    AST_CONTINUE,
+    AST_ASSIGN,
+    AST_COMPOUND_ASSIGN,  // 复合赋值: += -= *= /=
+    AST_VAR_DECL,
+    AST_EXPR_STMT,
+    AST_IMPORT,        // import 语句
+    AST_EXPORT,        // export 语句
+    AST_USE,           // use 语句：use module.Type
+    AST_MODULE_CALL,   // 模块方法调用：io.print()
+    AST_MODULE_ACCESS, // 模块成员访问：test.PI
+    AST_INTERP_STRING, // 插值字符串: $("hello {name}")
+    AST_TRY,           // try-catch-finally 语句
+    AST_THROW,         // throw 语句
+    AST_TYPE_CHECK,    // 类型检查表达式: a is int
+    AST_AS_CAST,       // 安全类型转换: a as TypeName
+    AST_STRUCT_DEF,    // struct 定义
+    AST_FACE_DEF,      // face 定义
+    AST_CSTRUCT_DEF,   // cstruct 定义（C 布局结构体）
+    AST_ENUM_DEF,      // enum 定义
+    AST_STRUCT_INIT,   // struct 构造函数调用
+    AST_FIELD_ACCESS,  // 字段访问: obj.field
+    AST_AWAIT,         // await 表达式
+} AstKind;
+
+typedef struct Ast Ast;
+
+// ============================================================================
+// AST 列表（用于块、参数列表等）
+// ============================================================================
+
+typedef struct {
+    Ast** items;
+    int count;
+    int capacity;
+} AstList;
+
+void ast_list_init(AstList* list);
+void ast_list_add(AstList* list, Ast* ast);
+
+// ============================================================================
+// 符号引用信息（存储在AST节点中，避免悬空指针问题）
+// ============================================================================
+
+typedef struct {
+    SymKind kind;
+    int index;
+    char* name;
+    TypeKind type_kind;
+} SymRef;
+
+// ============================================================================
+// AST 节点结构
+// ============================================================================
+
+// 字典键值对结构
+typedef struct {
+    char* key;
+    Ast* value;
+} DictEntry;
+
+typedef struct {
+    DictEntry* entries;
+    int count;
+    int capacity;
+} DictEntryList;
+
+// 类型守卫条件结构（使用新的泛型类型系统）
+typedef struct {
+    char* var_name;        // 被检查的变量名
+    TypeInfo* guard_type;  // 检查的完整类型信息（支持 Array[int], Dict[string, int] 等）
+} TypeGuardCond;
+
+typedef struct {
+    TypeGuardCond* items;
+    int count;
+    int capacity;
+} TypeGuardList;
+
+void type_guard_list_init(TypeGuardList* list);
+void type_guard_list_add(TypeGuardList* list, TypeGuardCond cond);
+void type_guard_list_free(TypeGuardList* list);
+
+struct Ast {
+    AstKind kind;
+    int line;
+    TypeInfo* cached_type;  // 类型推断缓存，避免重复推断同一表达式
+    union {
+        struct { double value; int is_bigint; char* bigint_str; int is_float; } num;
+        struct { char* value; } string;
+        int boolean;
+        AstList array;
+        DictEntryList dict;
+        struct { Ast* start; Ast* end; int inclusive; } range;  // 范围：0:9
+        struct { char* name; SymRef ref; } var;
+        struct { Ast* l; Ast* r; LenoTokenType op; } binop;
+        struct { Ast* operand; LenoTokenType op; int is_postfix; } unary;
+        struct { Ast* callee; AstList args; int is_tail_call; } call;
+        struct { Ast* obj; Ast* index; } index;
+        struct { Ast* obj; Ast* start; Ast* end; } slice;  // 切片：arr[start:end]
+        struct { Ast* obj; Ast* index; Ast* value; int field_index; } index_assign;
+        AstList block;
+        struct {
+            Ast* cond;
+            Ast* then;
+            Ast* else_;
+            // 类型守卫相关字段（使用新的泛型类型系统）
+            char* guard_var;       // 被检查的变量名（如 "a"）
+            TypeInfo* guard_type;  // 检查的完整类型信息（支持 Array[int] 等）
+            SymRef guard_var_ref;  // 被检查变量的符号引用（用于代码生成）
+            // 多条件类型守卫支持
+            TypeGuardList guard_conds; // 所有类型守卫条件列表
+        } if_;
+        struct { Ast* cond; Ast* body; } while_;
+        struct {
+            Ast* start;      // 起始值（可为NULL，表示从0开始）
+            Ast* end;        // 结束值
+            Ast* step;       // 步进值（可为NULL，表示根据方向自动判断）
+            int inclusive;   // 是否包含结束值（有:表示包含）
+            char* var_name;  // 循环变量名（NULL表示无变量）
+            char* index_var_name;  // 索引变量名（NULL表示无索引变量）
+            Ast* body;
+            int loop_var_index;  // 循环变量的局部变量索引
+            int end_index;       // 结束值的局部变量索引
+            int step_index;      // 步进值的局部变量索引
+            int start_index;     // 起始值的局部变量索引（用于浮点数循环）
+            int counter_index;   // 整数计数器的局部变量索引（用于浮点数循环）
+            int index_var_index; // 索引变量的局部变量索引（用于迭代循环）
+        } for_;
+        struct { 
+            Ast* expr;           // switch 表达式
+            struct SwitchCase {
+                AstList values;  // case 值列表（支持多个值）
+                Ast* body;       // case 体
+            }* cases;            // case 数组
+            int case_count;      // case 数量
+            Ast* default_body;   // default 体
+        } switch_;
+        struct {
+            char* name;
+            char** params;
+            TypeInfo** param_types;    // 参数完整类型信息
+            int pcnt;
+            TypeInfo* return_type;     // 返回完整类型信息
+            Ast* body;
+            SymRef ref;
+            int local_count;
+            // 闭包信息
+            char** upvalue_names;      // upvalue 名称数组
+            int* upvalue_indices;      // upvalue 在外层函数的索引
+            int* upvalue_is_local;     // upvalue 是否是外层函数的局部变量（1=局部，0=upvalue）
+            int* upvalue_is_value_capture; // upvalue 是否使用值捕获（1=值捕获，0=引用捕获）
+            int upvalue_count;         // upvalue 数量
+            int is_in_loop;            // 函数是否在循环体内定义（1=是，0=否）
+            // 默认参数信息
+            Ast** param_defaults;      // 参数默认值表达式数组（NULL 表示没有默认值）
+            int default_count;         // 有默认值的参数数量
+            // 协程信息
+            int is_async;              // 是否是 async 函数（1=是，0=否）
+        } func;
+        Ast* ret;
+        struct {
+            char** names;         // 目标变量名数组（并行赋值）
+            int name_count;       // 目标变量数量
+            Ast** targets;        // 目标表达式数组（支持复杂赋值目标）
+            Ast* value;           // 右侧表达式（可能是元组/列表）
+            SymRef* refs;         // 符号引用数组
+        } assign;
+        struct { char* name; Ast* value; SymRef ref; LenoTokenType op; } compound_assign;  // 复合赋值
+        struct { char* name; Ast* init; SymRef ref; TypeInfo* type; } var_decl;
+        struct { Ast* expr; } expr_stmt;
+        struct { char* module_name; char* alias; char* file_path; } import;
+        struct { Ast* decl; } export;
+        struct { char* module_name; char* symbol_name; } use;
+        struct { char* module_name; char* method_name; AstList args; } module_call;
+        struct { char* module_name; char* member_name; SymRef ref; } module_access;
+        struct {
+            char** parts;      // 字符串片段数组
+            Ast** exprs;       // 表达式数组
+            int count;         // 片段/表达式数量
+        } interp_string;
+        struct {
+            Ast* try_body;     // try 代码块
+            char* catch_var;   // catch 变量名（可为 NULL）
+            Ast* catch_body;   // catch 代码块（可为 NULL）
+            Ast* finally_body; // finally 代码块（可为 NULL）
+            SymRef catch_var_ref; // catch 变量的引用信息
+        } try_;
+        struct {
+            Ast* expr;         // throw 的表达式
+        } throw_;
+        struct {
+            Ast* expr;         // 被检查的表达式
+            TypeInfo* type;    // 检查的类型
+        } type_check;
+        struct {
+            char* name;        // struct 名称
+            char** field_names; // 字段名称数组
+            TypeInfo** field_types; // 字段类型数组
+            Ast** field_defaults;   // 字段默认值表达式数组（可为 NULL）
+            int field_count;    // 字段数量
+            Ast** methods;      // 方法定义数组（AST_FUNC_DEF）
+            int method_count;   // 方法数量
+            char** impl_names;  // impl 声明的 face 名称数组
+            int impl_count;     // impl 声明数量
+        } struct_def;
+        struct {
+            char* name;              // face 名称
+            char** method_names;     // 方法名称数组
+            TypeInfo** method_return_types; // 方法返回类型数组
+            TypeInfo*** method_param_types; // 方法参数类型数组
+            int* method_param_counts;      // 方法参数数量数组
+            int method_count;        // 方法数量
+        } face_def;
+        struct {
+            char* name;        // cstruct 名称
+            char** field_names; // 字段名称数组
+            TypeInfo** field_types; // 字段类型数组（必须是 C 布局类型）
+            int field_count;    // 字段数量
+            int total_size;     // 总大小（编译期计算）
+            int alignment;      // 对齐要求（编译期计算）
+            int* field_offsets; // 字段偏移量数组（编译期计算）
+            int* field_array_dims; // 字段数组维度（0 表示非数组，>0 表示数组大小）
+            SymRef ref;        // 符号引用信息
+        } cstruct_def;
+        struct {
+            char* name;        // enum 名称
+            char** member_names; // 成员名称数组
+            int64_t* member_values;  // 成员值数组（显式指定或自动分配）
+            int member_count;    // 成员数量
+            SymRef ref;        // 符号引用信息（用于模块变量索引）
+        } enum_def;
+        struct {
+            char* struct_name;  // struct 名称
+            char** field_names; // 字段名称数组（命名参数）
+            Ast** field_values; // 字段值表达式数组
+            int field_count;    // 字段数量
+        } struct_init;
+        struct {
+            Ast* obj;          // 对象表达式
+            char* field_name;  // 字段名称
+            int field_index;   // 字段索引（编译期确定，-1 表示未确定）
+        } field_access;
+        struct {
+            Ast* expr;         // await 的表达式
+        } await;
+    } u;
+};
+
+// AST API
+Ast* ast_new(AstKind kind, int line);
+void ast_free(Ast* ast);
+
+#endif // LENO_AST_H

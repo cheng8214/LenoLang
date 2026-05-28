@@ -1,0 +1,18 @@
+
+//test.leno文件内容
+export var PI=3.14156
+export func add(var a,var b)
+{	
+	
+	return add1(a,b)
+}
+
+func add1(var a,var b)
+{
+	return a+b
+}
+
+export func add2(int a)
+{
+	print(a.sin())
+}

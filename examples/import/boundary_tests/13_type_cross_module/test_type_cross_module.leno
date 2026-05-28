@@ -1,0 +1,112 @@
+// 类型系统跨模块测试主文件
+// 测试 struct、enum、类型别名跨模块使用
+
+import "point_struct.leno" as ps
+import "color_enum.leno" as ce
+import "type_aliases.leno" as ta
+import "type_user.leno" as tu
+
+main() {
+    print("=== 类型系统跨模块测试 ===")
+
+    // ========== 测试 1: struct 跨模块使用 ==========
+    print("\n1. struct 跨模块使用测试:")
+
+    // 创建 Point
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    print("  p1: (" + p1.x + ", " + p1.y + ") (期望: 0, 0)")
+    print("  p2: (" + p2.x + ", " + p2.y + ") (期望: 3, 4)")
+
+    // 计算距离
+    var dist = ps.distance(p1, p2)
+    print("  distance(p1, p2): " + dist + " (期望: 25)")
+
+    // 创建 Rectangle
+    var rect = ps.create_rectangle(p1, p2)
+    print("  rect.top_left: (" + rect.top_left.x + ", " + rect.top_left.y + ")")
+    print("  rect.bottom_right: (" + rect.bottom_right.x + ", " + rect.bottom_right.y + ")")
+
+    // 计算面积
+    var area = ps.rectangle_area(rect)
+    print("  rectangle_area(rect): " + area + " (期望: 12)")
+
+    // ========== 测试 2: enum 跨模块使用 ==========
+    print("\n2. enum 跨模块使用测试:")
+
+    // 使用 Color enum
+    var red = ce.Color.RED
+    var blue = ce.Color.BLUE
+    print("  Color.RED: " + red + " (期望: 0)")
+    print("  Color.BLUE: " + blue + " (期望: 2)")
+
+    // 颜色名称
+    print("  color_name(RED): " + ce.color_name(red) + " (期望: Red)")
+    print("  color_name(BLUE): " + ce.color_name(blue) + " (期望: Blue)")
+
+    // 使用 Status enum
+    var pending = ce.Status.PENDING
+    var completed = ce.Status.COMPLETED
+    print("  Status.PENDING: " + pending + " (期望: 0)")
+    print("  Status.COMPLETED: " + completed + " (期望: 2)")
+
+    // 状态检查
+    print("  is_terminal_status(PENDING): " + ce.is_terminal_status(pending) + " (期望: false)")
+    print("  is_terminal_status(COMPLETED): " + ce.is_terminal_status(completed) + " (期望: true)")
+
+    // 颜色混合
+    var mixed = ce.mix_colors(red, blue)
+    print("  mix_colors(RED, BLUE): " + mixed + " (期望: 4 - BLACK)")
+
+    // ========== 测试 3: 类型别名跨模块使用 ==========
+    print("\n3. 类型别名跨模块使用测试:")
+
+    // 创建 IntPair
+    var pair = ta.create_int_pair(10, 20)
+    print("  pair: [" + pair[0] + ", " + pair[1] + "] (期望: [10, 20])")
+
+    // 计算和
+    var sum = ta.pair_sum(pair)
+    print("  pair_sum(pair): " + sum + " (期望: 30)")
+
+    // 交换
+    var swapped = ta.pair_swap(pair)
+    print("  pair_swap(pair): [" + swapped[0] + ", " + swapped[1] + "] (期望: [20, 10])")
+
+    // 创建 StringMap
+    var map = ta.create_string_map()
+    map = ta.map_set(map, "name", "Alice")
+    map = ta.map_set(map, "age", "25")
+    print("  map['name']: " + ta.map_get(map, "name") + " (期望: Alice)")
+    print("  map['age']: " + ta.map_get(map, "age") + " (期望: 25)")
+
+    // ========== 测试 4: 组合使用多个模块的类型 ==========
+    print("\n4. 组合使用多个模块的类型测试:")
+
+    // 创建线
+    var line = tu.create_line(p1, p2)
+    print("  line.length: " + line["length"] + " (期望: 25)")
+
+    // 检查点是否在矩形内
+    var inside = tu.is_point_in_rect(ps.create_point(1, 1), rect)
+    print("  is_point_in_rect((1,1), rect): " + inside + " (期望: true)")
+
+    var outside = tu.is_point_in_rect(ps.create_point(10, 10), rect)
+    print("  is_point_in_rect((10,10), rect): " + outside + " (期望: false)")
+
+    // 创建彩色点
+    var colored = tu.create_colored_point(5, 5, ce.Color.GREEN)
+    print("  colored_point.color_name: " + colored["color_name"] + " (期望: Green)")
+
+    // 处理数据
+    var processed = tu.process_data([3, 4])
+    print("  processed.sum: " + processed["sum"] + " (期望: 7)")
+
+    // 创建形状
+    var shape = tu.create_shape(p1, p2, ce.Color.RED, ce.Color.BLUE)
+    print("  shape.area: " + shape["area"] + " (期望: 12)")
+    print("  shape.fill: " + shape["fill"] + " (期望: Red)")
+    print("  shape.border: " + shape["border"] + " (期望: Blue)")
+
+    print("\n=== 所有类型系统跨模块测试完成 ===")
+}

@@ -1,0 +1,7 @@
+// 带空格路径测试模块
+
+export var space_var = "space"
+
+export func space_func() {
+    return "from folder with spaces"
+}

@@ -1,0 +1,16 @@
+main()
+{
+    var a=12
+    if a==11
+    {
+        print(11)
+    }
+    else if a==12
+    {
+        print(12)
+    }
+    else 
+    {
+    	print(10)
+    }
+}

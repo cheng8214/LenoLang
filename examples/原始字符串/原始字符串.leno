@@ -1,0 +1,22 @@
+main() {
+     var test_code = @"x = 90;
+						y = 20;
+						sum = x - y;
+						b=sum-100;
+						print(sum);
+						print(b);
+						print(""Hello, TinyLang!"");
+						
+						if (sum > 125) {
+						    print(""Sum is big"");
+						} else {
+						    print(""Sum is small"");
+						}
+						
+						loop (5) {
+						
+						    print(""Loop iteration\"");
+						}"
+						
+						print(test_code)
+}

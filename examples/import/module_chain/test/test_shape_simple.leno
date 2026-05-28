@@ -1,0 +1,21 @@
+// 测试简化形状数学模块
+
+import "shape_math_simple.leno" as sm
+import "../类型定义/types.leno" as ty
+
+main()
+{
+    print("=== 测试简化形状数学 ===")
+    
+    // 测试圆形面积
+    var area = sm.circle_area(5)
+    print("Circle area = ")
+    print(area)
+    
+    // 测试颜色名称
+    var name = sm.get_color_name(ty.Color.RED)
+    print("Color name = ")
+    print(name)
+    
+    print("=== 完成 ===")
+}

@@ -1,0 +1,51 @@
+// 简化测试：struct 方法捕获外部变量
+
+var global_var = 42
+
+struct Test
+{
+    int x
+    
+    // 方法使用全局变量
+    func useGlobal()
+    {
+        return global_var + x
+    }
+}
+
+main()
+{
+    print("======== struct 方法 upvalue 测试 ========")
+    print("")
+    
+    Test t = Test(x = 8)
+    var result = t.useGlobal()
+    
+    print($"结果: {result}, 期望: 50 (42 + 8)")
+    
+    if result == 50
+    {
+        print("测试通过!")
+    }
+    else
+    {
+        print("测试失败!")
+    }
+    print("")
+    
+    // 修改全局变量再调用
+    global_var = 100
+    var result2 = t.useGlobal()
+    print($"修改后结果: {result2}, 期望: 108 (100 + 8)")
+    
+    if result2 == 108
+    {
+        print("测试通过!")
+    }
+    else
+    {
+        print("测试失败!")
+    }
+    
+    print("======== 测试完成 ========")
+}

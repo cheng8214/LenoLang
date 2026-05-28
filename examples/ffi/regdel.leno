@@ -1,0 +1,51 @@
+﻿import ffi
+
+main() {
+    print("=== 清理注册表测试键 ===")
+    
+    var HKEY_CURRENT_USER_PTR = ffi.ptr_from_int(0x80000001)
+    var advapi = ffi.load("advapi32.dll")
+    
+    // 要删除的键列表
+    var keys = [
+        "SOFTWARE\\LenoTest",
+        "SOFTWARE\\LenoTest2", 
+        "SOFTWARE\\LenoTest3",
+        "SOFTWARE\\LenoVerify",
+        "SOFTWARE\\LenoDiag",
+        "SOFTWARE\\LenoReadback",
+        "SOFTWARE\\LenoDetail",
+        "SOFTWARE\\LenoAllAccess",
+        "SOFTWARE\\LenoBeforeClose"
+    ]
+    
+    var deleted = 0
+    var failed = 0
+    
+    for keys to keyPath {
+        var result = ffi.call(advapi, "RegDeleteKeyA",
+            HKEY_CURRENT_USER_PTR,
+            keyPath
+        )
+        
+        if result == 0 {
+            print("已删除: " + keyPath)
+            deleted = deleted + 1
+        } else if result == 2 {
+            // ERROR_FILE_NOT_FOUND = 2，键不存在
+            print("不存在: " + keyPath)
+        } else {
+            print("删除失败 " + keyPath + ", 错误码: " + result)
+            failed = failed + 1
+        }
+    }
+    
+    print("\n=== 清理完成 ===")
+    print("已删除: " + deleted + " 个键")
+    print("不存在: " + (keys.len() - deleted - failed) + " 个键")
+    if failed > 0 {
+        print("失败: " + failed + " 个键")
+    }
+    
+    ffi.free(advapi)
+}

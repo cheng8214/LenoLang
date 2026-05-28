@@ -1,0 +1,23 @@
+// 测试类型守卫特性
+
+main()
+{
+    var a = 100        // a 是  int,因为参数是整形
+    
+    test_any(a)
+}
+
+func test_any(var a)   // a 是 any,虽然传过来是整形，但是参数不会继承调用者，统一是any类型
+{
+    print("类型守卫前: " + type(a))//运行时这里时int
+    
+    // 类型守卫：if a is int
+    if a is int {
+        // 在这个块内，a 被视为 int 类型
+        print("在类型守卫块内")
+        int result = a + 100    // 应该可以编译通过！
+        print("result = " + result)
+    }
+    
+    print("类型守卫后: " + type(a))
+}

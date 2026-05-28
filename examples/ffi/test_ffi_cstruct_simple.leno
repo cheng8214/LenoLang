@@ -1,0 +1,51 @@
+// 简单的 cstruct + FFI 测试
+import ffi
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    print("=== cstruct + FFI 简单测试 ===")
+    
+    // 创建 cstruct 实例
+    var p = Point.malloc()
+    p.x = 100
+    p.y = 200
+    
+    print("Point 结构体:")
+    print(p.to_str())
+    print("Size: " + Point.size() + " bytes")
+    
+    // 获取指针并使用 FFI 操作内存
+    var ptr = p.to_ptr()
+    print("\n通过 FFI 读取内存:")
+    print("  x = " + ffi.read_int(ptr, 0))
+    print("  y = " + ffi.read_int(ptr, 4))
+    
+    // 通过 FFI 修改内存
+    ffi.write_int(ptr, 0, 300)
+    ffi.write_int(ptr, 4, 400)
+    
+    print("\n通过 FFI 修改后:")
+    print("  x = " + p.x)
+    print("  y = " + p.y)
+    
+    p.free()
+    
+    // 从现有指针创建 cstruct（不拥有内存）
+    print("\n从指针创建 cstruct:")
+    var buffer = ffi.malloc(8)
+    ffi.write_int(buffer, 0, 500)
+    ffi.write_int(buffer, 4, 600)
+    
+    var p2 = Point.from_ptr(buffer)
+    print("  x = " + p2.x)
+    print("  y = " + p2.y)
+    
+    // p2 不拥有内存，需要手动释放
+    ffi.free(buffer)
+    
+    print("\n=== 测试完成 ===")
+}

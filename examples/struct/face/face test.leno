@@ -1,0 +1,47 @@
+// ============================================================================
+// 测试：face 综合用法——函数参数、变量声明、is 运算符
+// ============================================================================
+//
+// 本测试验证：
+//   1. face 类型作为函数参数（make_sound 接受 Speaker 类型）
+//   2. 不同 struct 实现同一 face 时，多态调用正确（Dog 输出 woof，Cat 输出 meow）
+//   3. 使用 face 类型声明变量（Speaker s = Dog()），调用方法正确
+//   4. 使用 is 运算符检查 struct 是否实现了 face
+//
+// 预期输出：
+//   woof
+//   meow
+//   woof
+//   Dog is Speaker
+
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+struct Cat impl Speaker {
+    func speak():string { return "meow" }
+}
+
+func make_sound(Speaker s) {
+    print(s.speak())
+}
+
+main() {
+_gc(false)
+    var d = Dog()
+    var c = Cat()
+    make_sound(d)
+    make_sound(c)
+
+    Speaker s = Dog()
+    print(s.speak())
+
+    if d is Speaker {
+        print("Dog is Speaker")
+    }
+}

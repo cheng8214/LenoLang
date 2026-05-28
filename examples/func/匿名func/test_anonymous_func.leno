@@ -1,0 +1,52 @@
+// 测试匿名函数支持
+
+main() {
+    print("=== 测试匿名函数 ===")
+    
+    // 测试 1: 基本的匿名函数表达式
+    print("\n测试 1: 基本匿名函数")
+    var f = func() { return 42 }
+    print(f())
+    
+    // 测试 2: 带参数的匿名函数
+    print("\n测试 2: 带参数的匿名函数")
+    var add = func(var a, var b) { return a + b }
+    print(add(1, 2))
+    print(add(10, 20))
+    
+    // 测试 3: 匿名函数作为参数
+    print("\n测试 3: 匿名函数作为参数")
+    apply(func(var x) { return x * 2 }, 5)
+    
+    // 测试 4: 立即执行匿名函数 (IIFE)
+    print("\n测试 4: IIFE")
+    var result = func() { return 100 }()
+    print(result)
+    
+    // 测试 5: 匿名函数存储在数组中
+    print("\n测试 5: 匿名函数在数组中")
+    var funcs = [
+        func() { return 1 },
+        func() { return 2 },
+        func() { return 3 }
+    ]
+    print(funcs[0]())
+    print(funcs[1]())
+    print(funcs[2]())
+    
+    // 测试 6: 匿名函数存储在字典中
+    print("\n测试 6: 匿名函数在字典中")
+    var ops = {
+        "double": func(var x) { return x * 2 },
+        "triple": func(var x) { return x * 3 }
+    }
+    print(ops["double"](5))
+    print(ops["triple"](5))
+    
+    print("\n=== 所有测试通过！===")
+}
+
+// 辅助函数：应用函数到值
+func apply(var f, var x) {
+    print(f(x))
+}

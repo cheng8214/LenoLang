@@ -1,0 +1,7 @@
+import ffi
+
+export var KERNEL32 = ffi.load("kernel32")
+
+export func get_pid(): int {
+    return ffi.call_int(KERNEL32, "GetCurrentProcessId")
+}

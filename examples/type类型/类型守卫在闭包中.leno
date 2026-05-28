@@ -1,0 +1,64 @@
+// 测试1：类型守卫在闭包中
+func test_closure(var a):int {
+    if a is int {
+        // 闭包捕获类型守卫变量
+        func inner():int {
+            return a + 10  // a 被识别为 int
+        }
+        return inner()
+    }
+    return 0
+}
+
+// 测试2：is 表达式赋值给变量
+func test_assign(var b):int {
+    var is_int = b is int
+    print("b is int: " + is_int)
+    
+    if is_int {
+        // 注意：这里不能类型收窄，因为 is_int 是变量不是直接的 is 表达式
+        // int bb = b  // 这行会报错
+    }
+    return 0
+}
+
+// 测试3：is 表达式在函数调用中
+func check_type(var x):bool {
+    return x is string
+}
+
+func test_call(var c):int {
+    if check_type(c) {
+        // 函数返回的 bool 也不能类型收窄
+        print("c is string (from func)")
+    }
+    return 0
+}
+
+// 测试4：直接类型守卫（可以收窄）
+func test_direct(var d):int {
+    if d is string {
+        string s = d  // ✅ 可以收窄
+        print("direct guard: " + s)
+    }
+    return 0
+}
+
+main() {
+    print("=== 测试闭包 ===")
+    print(test_closure(5))
+    
+    print("=== 测试赋值 ===")
+    test_assign(10)
+    test_assign("hello")
+    
+    print("=== 测试函数调用 ===")
+    test_call("test")
+    test_call(123)
+    
+    print("=== 测试直接守卫 ===")
+    test_direct("world")
+    test_direct(456)
+    
+    print("=== 全部完成 ===")
+}

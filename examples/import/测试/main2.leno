@@ -1,0 +1,12 @@
+import "test2.leno"
+
+main()
+{
+    var b = test2.add(1, 2)
+    print(type(b))
+    print(b)
+    print(test2.PI)
+    print(test2.fib(1))
+    test2.bibao()
+   
+}

@@ -1,0 +1,49 @@
+// 测试嵌套 cstruct 数组 - 简化版
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Mesh {
+    Vec3 vertices[4]
+    i32 triangle_count
+}
+
+main() {
+    print("=== 测试嵌套 cstruct 数组 ===")
+    
+    var m = Mesh.malloc()
+    
+    // 设置顶点
+    m.vertices[0].x = 0.0
+    m.vertices[0].y = 0.0
+    m.vertices[0].z = 0.0
+    m.vertices[1].x = 1.0
+    m.vertices[1].y = 0.0
+    m.vertices[1].z = 0.0
+    m.vertices[2].x = 1.0
+    m.vertices[2].y = 1.0
+    m.vertices[2].z = 0.0
+    m.vertices[3].x = 0.0
+    m.vertices[3].y = 1.0
+    m.vertices[3].z = 0.0
+    
+    m.triangle_count = 2
+    
+    // 读取顶点
+    print("Vertex 0 x: " + m.vertices[0].x)
+    print("Vertex 0 y: " + m.vertices[0].y)
+    print("Vertex 0 z: " + m.vertices[0].z)
+    
+    print("Vertex 3 x: " + m.vertices[3].x)
+    print("Vertex 3 y: " + m.vertices[3].y)
+    print("Vertex 3 z: " + m.vertices[3].z)
+    
+    print("Triangle count: " + m.triangle_count)
+    
+    m.free()
+    
+    print("=== 测试通过 ===")
+}

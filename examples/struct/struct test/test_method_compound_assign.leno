@@ -1,0 +1,68 @@
+// 测试 struct 方法内复合赋值
+
+struct Counter
+{
+    int value
+    
+    // 方法内使用复合赋值
+    func increment()
+    {
+        value += 1  // 复合赋值
+    }
+    
+    func add(int n)
+    {
+        value += n  // 复合赋值
+    }
+    
+    func multiply(int n)
+    {
+        value *= n  // 复合赋值
+    }
+    
+    func decrement()
+    {
+        value -= 1  // 复合赋值
+    }
+    
+    func getValue(): int
+    {
+        return value
+    }
+}
+
+main()
+{
+    print("======== struct 方法复合赋值测试 ========")
+    print("")
+    
+    Counter c = Counter(value = 10)
+    
+    // 测试 += 1
+    print("初始值: 10")
+    c.increment()
+    print($"increment() 后: {c.getValue()}, 期望: 11")
+    
+    // 测试 += n
+    c.add(5)
+    print($"add(5) 后: {c.getValue()}, 期望: 16")
+    
+    // 测试 *= n
+    c.multiply(2)
+    print($"multiply(2) 后: {c.getValue()}, 期望: 32")
+    
+    // 测试 -= 1
+    c.decrement()
+    print($"decrement() 后: {c.getValue()}, 期望: 31")
+    
+    print("")
+    if c.getValue() == 31
+    {
+        print("所有测试通过!")
+    }
+    else
+    {
+        print("测试失败!")
+    }
+    print("======== 测试完成 ========")
+}

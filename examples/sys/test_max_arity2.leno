@@ -1,0 +1,16 @@
+main() {
+    // 正常调用
+    _gc()
+    _gc(true)
+
+    // input 最多 1 个参数
+    input("prompt")
+
+    // assert 最多 2 个参数
+    assert(true, "msg")
+
+    // assert_eq 最多 3 个参数
+    assert_eq(1, 1, "msg")
+
+    print("全部正常调用通过")
+}

@@ -1,0 +1,49 @@
+// 测试 Windows 进程管理器 v2（使用 FFI 版本）
+import "win_process_face_simple.leno" as pm
+use pm.ProcessManager
+use pm.StandardProcessManager
+
+// 使用 ProcessManager face 作为参数
+func printProcessList(ProcessManager manager) {
+    print("=== 进程列表 ===")
+    var result = manager.listProcesses()
+    
+    if result.errorCode != 0 {
+        print("获取进程列表失败，错误码: " + result.errorCode)
+        return
+    }
+    
+    print("找到 " + result.processes.len() + " 个进程")
+    print("")
+    
+    // 只显示前 5 个进程
+    int count = 0
+    for result.processes to proc {
+        if count >= 5 { break }
+        print("PID: " + proc.pid + " | 名称: " + proc.name)
+        count = count + 1
+    }
+    
+    if result.processes.len() > 5 {
+        print("... 还有 " + (result.processes.len() - 5) + " 个进程")
+    }
+}
+
+main() {
+    print("===== 测试 Windows ProcessManager Face v2 =====")
+    print("")
+    
+    // 测试 StandardProcessManager
+    print("【测试 StandardProcessManager】")
+    var manager = StandardProcessManager()
+    printProcessList(manager)
+    print("")
+    
+    // 查找当前进程
+    var currentPid = pm.getCurrentPid()
+    print("当前进程 PID: " + currentPid)
+    print("当前进程存在: " + manager.exists(currentPid))
+    print("")
+    
+    print("===== 测试完成 =====")
+}

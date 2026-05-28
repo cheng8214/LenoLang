@@ -1,0 +1,8 @@
+import "mod_complex.leno" as m
+use m.MyStruct
+print("enum A=" + m.MyEnum.A)
+var s = m.MyStruct(x = 10, y = 20)
+print("struct=" + s.x + "," + s.y)
+print("ptr=" + m.MY_PTR)
+print("lib=" + m.MY_LIB)
+print("test=" + m.test())

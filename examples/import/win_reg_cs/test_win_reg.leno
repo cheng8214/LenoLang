@@ -1,0 +1,120 @@
+// 测试 win_reg 模块 - 基础版本
+// 测试基本的注册表操作功能
+
+import "win_reg.leno" as reg
+
+main() {
+    print("=== 测试 Windows 注册表模块 ===")
+    print("")
+    
+    // ========== 测试创建和打开键 ==========
+    print("1. 创建测试键")
+    var result = reg.createKey(
+        reg.HKEY_CURRENT_USER,
+        "SOFTWARE\\LenoTest",
+        reg.KEY_ALL_ACCESS
+    )
+    
+    if result != null {
+        var handle = result[0]
+        var isNew = result[1]
+        print("   创建成功，是否新建: " + isNew)
+        
+        // 关闭键
+        reg.closeKey(handle)
+        print("   键已关闭")
+    } else {
+        print("   创建失败")
+    }
+    
+    print("")
+    print("2. 打开测试键")
+    var hKey = reg.openKey(
+        reg.HKEY_CURRENT_USER,
+        "SOFTWARE\\LenoTest",
+        reg.KEY_ALL_ACCESS
+    )
+    
+    if hKey != null {
+        print("   打开成功")
+        
+        // ========== 测试值操作 ==========
+        print("")
+        print("3. 写入字符串值")
+        var writeResult = reg.writeString(hKey, "TestString", "Hello from Leno!")
+        print("   写入结果: " + writeResult + " (0=成功)")
+        
+        print("")
+        print("4. 读取字符串值")
+        var value = reg.readString(hKey, "TestString")
+        if value != null {
+            print("   读取成功: " + value)
+        } else {
+            print("   读取失败")
+        }
+        
+        print("")
+        print("5. 写入 DWORD 值")
+        writeResult = reg.writeDword(hKey, "TestDword", 42)
+        print("   写入结果: " + writeResult + " (0=成功)")
+        
+        print("")
+        print("6. 读取 DWORD 值")
+        var dwordValue = reg.readDword(hKey, "TestDword")
+        if dwordValue != null {
+            print("   读取成功: " + dwordValue)
+        } else {
+            print("   读取失败")
+        }
+        
+        print("")
+        print("7. 写入默认值")
+        writeResult = reg.setDefaultValue(hKey, "Default Value")
+        print("   写入结果: " + writeResult + " (0=成功)")
+        
+        print("")
+        print("8. 读取默认值")
+        var defaultValue = reg.getDefaultValue(hKey)
+        if defaultValue != null {
+            print("   读取成功: " + defaultValue)
+        } else {
+            print("   读取失败")
+        }
+        
+        print("")
+        print("9. 刷新到磁盘")
+        var flushResult = reg.flushKey(hKey)
+        print("   刷新结果: " + flushResult + " (0=成功)")
+        
+        print("")
+        print("10. 关闭键")
+        reg.closeKey(hKey)
+        print("    键已关闭")
+        
+        // 重新打开验证数据
+        print("")
+        print("11. 重新打开验证数据")
+        hKey = reg.openKey(
+            reg.HKEY_CURRENT_USER,
+            "SOFTWARE\\LenoTest",
+            reg.KEY_READ
+        )
+        if hKey != null {
+            var verifyValue = reg.readString(hKey, "TestString")
+            print("    验证读取: " + verifyValue)
+            reg.closeKey(hKey)
+        }
+        
+        // 清理：删除测试键
+        print("")
+        print("12. 删除测试键")
+        var deleteResult = reg.deleteKey(reg.HKEY_CURRENT_USER, "SOFTWARE\\LenoTest")
+        print("    删除结果: " + deleteResult + " (0=成功)")
+        
+    } else {
+        print("   打开失败")
+    }
+    
+    print("")
+    print("=== 测试完成 ===")
+}

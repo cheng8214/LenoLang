@@ -1,0 +1,27 @@
+import times
+
+struct Point
+{
+    int x
+    int y
+    func fib(int n):int{
+
+    if n <= 1 {
+        return n
+    }
+    
+    return fib(n - 2)+fib(n - 1)
+  
+  
+}
+}
+
+main()
+{
+    Point p1 = Point(x=10, y=20)
+     var t1=times.ms()
+    var a=p1.fib(30)
+    var t2=times.ms()
+    print((t2-t1)+"ms")
+    print(a)
+}

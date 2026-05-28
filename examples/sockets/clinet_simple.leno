@@ -1,0 +1,59 @@
+import sockets
+import io
+
+// 简化版聊天客户端 - 同步版本
+
+main() {
+    var host = "127.0.0.1"
+    var port = 8888
+    
+    io.print("=== 简化版聊天客户端 ===")
+    io.print("连接到 " + host + ":" + port)
+    
+    // 连接服务器
+    var conn = sockets.connect(host, port)
+    if conn == null {
+        io.print("连接失败！")
+        return
+    }
+    
+    io.print("已连接！")
+    
+    // 接收欢迎消息
+    io.print("等待欢迎消息...")
+    var welcome = sockets.recv(conn, 1024)
+    if welcome != null {
+        io.print("收到: " + welcome)
+    }
+    
+    // 发送几条消息
+    var messages = ["你好", "测试消息", "/quit"]
+    
+    for messages to msg {
+        io.print("")
+        io.print("[发送] " + msg)
+        
+        var full_msg = msg + "\n"
+        var sent = sockets.send(conn, full_msg)
+        io.print("发送结果: " + sent)
+        
+        if not sent {
+            io.print("发送失败，退出")
+            break
+        }
+        
+        // 接收服务器回复
+        io.print("等待服务器回复...")
+        var reply = sockets.recv(conn, 1024)
+        if reply != null {
+            io.print("[收到] " + reply)
+        } else {
+            io.print("未收到回复或连接断开")
+            break
+        }
+    }
+    
+    sockets.close(conn)
+    io.print("")
+    io.print("客户端已退出")
+}

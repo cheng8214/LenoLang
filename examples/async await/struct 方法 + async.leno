@@ -1,0 +1,22 @@
+import io
+import asyncs
+
+struct Timer {
+    int delay = 100
+
+    async func wait() {
+        await asyncs.sleep(delay)
+        io.print($"Timer {delay}ms 完成")
+    }
+}
+
+main() {
+    var t1 = Timer()
+    t1.delay = 200
+    var t2 = Timer()
+    t2.delay = 100
+
+    t1.wait()
+    t2.wait()
+    asyncs.run()
+}

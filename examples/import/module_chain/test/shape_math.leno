@@ -1,0 +1,89 @@
+// 形状数学模块 - 结合类型定义和数学计算
+// 依赖：数学模块链中的 geometry 和 类型定义中的 types
+
+import "../数学模块链/geometry.leno" as geo
+import "../类型定义/types.leno" as ty
+
+// 创建圆形结构体（用 Rectangle 表示）
+export func create_circle(int radius)
+{
+    return ty.Rectangle(x = 0, y = 0, width = radius * 2, height = radius * 2)
+}
+
+// 计算圆形面积（使用 geometry 模块）
+export func circle_area(int radius)
+{
+    return geo.circle_area(radius)
+}
+
+// 创建矩形结构体
+export func create_rectangle(int x, int y, int w, int h)
+{
+    return ty.Rectangle(x = x, y = y, width = w, height = h)
+}
+
+// 计算矩形面积
+export func rectangle_area(var rect)
+{
+    return ty.rect_area(rect)
+}
+
+// 计算两个矩形的总面积
+export func total_area(var rect1, var rect2)
+{
+    return ty.rect_area(rect1) + ty.rect_area(rect2)
+}
+
+// 创建带颜色的形状
+export func create_colored_rect(int x, int y, int w, int h, var color)
+{
+    var rect = ty.Rectangle(x = x, y = y, width = w, height = h)
+    return rect
+}
+
+// 获取颜色名称
+export func get_color_name(var color)
+{
+    return ty.color_name(color)
+}
+
+// 复杂计算：圆形 + 矩形
+export func mixed_shape_area(int radius, var rect)
+{
+    var circle = geo.circle_area(radius)
+    var rectangle = ty.rect_area(rect)
+    return circle + rectangle
+}
+
+// 创建点数组
+export func create_points(int count)
+{
+    var points = []
+    for 0 : count - 1 to var i {
+        var p = ty.create_point(i * 10, i * 20)
+        points.add(p)
+    }
+    return points
+}
+
+// 计算点数组的总距离（简化版）
+export func total_distance(var points)
+{
+    // 使用类型守卫确保 points 是 Point 数组
+    if points is Array[Point] {
+        int total = 0
+        var n = points.len()
+        for 0 : n - 2 to var i {
+            var p1 = points[i]
+            var p2 = points[i + 1]
+            // 简化距离计算：|x2-x1| + |y2-y1|
+            int dx = p2.x - p1.x
+            int dy = p2.y - p1.y
+            if dx < 0 { dx = -dx }
+            if dy < 0 { dy = -dy }
+            total = total + dx + dy
+        }
+        return total
+    }
+    return 0
+}

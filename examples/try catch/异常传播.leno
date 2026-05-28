@@ -1,0 +1,24 @@
+
+
+main() {
+	try
+	{
+	test()
+	}
+	catch e
+	{
+		print("main:"+e)
+	}
+}
+
+func test()
+{
+	try
+	{
+	float a=10/0
+	}
+	catch e
+	{
+		throw e//这里是不是继续向上抛
+	}
+}

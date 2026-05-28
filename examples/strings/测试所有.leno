@@ -1,0 +1,43 @@
+import strings
+
+main() {
+    // 测试 reverse - 字符串反转
+    var s1 = "abc"
+    var s2 = "Hello, World!"
+    var s3 = ""
+    
+    print("=== 测试 reverse 字符串反转 ===")
+    print(strings.reverse(s1))           // 预期: cba
+    print(strings.reverse(s2))           // 预期: !dlroW ,olleH
+    print(strings.reverse(s3))           // 预期: (空字符串)
+    
+    // 测试 rep - 重复字符串
+    print("\n=== 测试 rep 重复字符串 ===")
+    print(strings.rep("a", 3))           // 预期: aaa
+    print(strings.rep("ha", 3))          // 预期: hahaha
+    print(strings.rep("abc", 0))         // 预期: (空)
+    print(strings.rep("", 5))            // 预期: (空)
+    
+    // 测试 byte - 获取字符ASCII码
+    print("\n=== 测试 byte 获取ASCII码 ===")
+    print(strings.byte("Hello", 1))      // 预期: 72 (H)
+    print(strings.byte("Hello", 2))      // 预期: 101 (e)
+    print(strings.byte("Hello", 5))      // 预期: 111 (o)
+    print(strings.byte("Hello", -1))     // 预期: 111 (o, 负数索引)
+    print(strings.byte("Hello", 10))     // 预期: null (越界)
+    
+    // 测试 char - 从ASCII码创建字符串
+    print("\n=== 测试 char 从ASCII码创建 ===")
+    print(strings.char(72))              // 预期: H
+    print(strings.char(72, 101, 108, 108, 111))  // 预期: Hello
+    print(strings.char(65, 66, 67))      // 预期: ABC
+    
+    // 测试 find - 查找子串位置
+    print("\n=== 测试 find 查找子串 ===")
+    var text = "Hello, World! Hello!"
+    print(strings.find(text, "Hello"))      // 预期: 1
+    print(strings.find(text, "World"))      // 预期: 8
+    print(strings.find(text, "Hello", 2))   // 预期: 15 (从位置2开始找)
+    print(strings.find(text, "xyz"))        // 预期: null (未找到)
+    print(strings.find(text, "", 5))        // 预期: 5 (空模式)
+}

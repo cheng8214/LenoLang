@@ -1,0 +1,11 @@
+// 别名冲突测试主文件
+// 测试：使用相同的别名导入不同模块
+
+import "module_a.leno" as mod
+import "module_b.leno" as mod  // 重复别名
+
+main() {
+    print("=== 别名冲突测试 ===")
+    print(mod.get_name())
+    print("=== 测试完成 ===")
+}

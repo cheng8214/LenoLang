@@ -1,0 +1,51 @@
+// 学生管理系统 - 用插值字符串改进 Dict 版本
+// 对比显式转换，插值更简洁
+
+import strings
+
+main() {
+    var students = []
+    
+    // 创建学生
+    for 0:10 to i {
+        var s = {
+            name: $"学生{i}",           // 插值字符串，自动转换
+            age: 18 + (i % 5),
+            scores: [85 + (i % 10), 90 + (i % 5), 78 + (i % 15)]
+        }
+        students.add(s)
+    }
+    
+    // 方法1：使用插值字符串（推荐）
+    print("=== 使用插值字符串 ===")
+    for students to s {
+        // 不需要 _str()，插值自动处理
+        print($"{s.name} 年龄: {s.age}")
+        
+        // 计算平均分
+        int total = 0
+        for s.scores to score {
+            total = total + _int(score)   // 求和仍需转换
+        }
+        var avg = total / s.scores.len()
+        print($"{s.name} 平均分: {avg}")
+    }
+    
+    // 方法2：使用 format（更灵活）
+    print("\n=== 使用 format ===")
+    for students to s {
+        strings.format("{0} 年龄: {1}", s.name, s.age)
+        print(strings.format("{0} 年龄: {1}", s.name, s.age))
+    }
+    
+    // 计算平均年龄
+    int totalAge = 0
+    for students to s {
+        totalAge = totalAge + _int(s.age)
+    }
+    float avgAge = totalAge / students.len()
+    
+    // 插值输出结果
+    print($"\n总学生数: {students.len()}")
+    print($"平均年龄: {avgAge}")
+}

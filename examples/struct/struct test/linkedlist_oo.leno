@@ -1,0 +1,108 @@
+struct Node
+{
+    int value
+    Node next = null
+}
+
+struct LinkedList
+{
+    Node head = null
+    int count = 0
+
+    // 添加元素到链表尾部
+    func add(int value)
+    {
+        var new_node = Node()
+        new_node.value = value
+        
+        if (head == null)
+        {
+            head = new_node
+        }
+        else
+        {
+            var current = head
+            while (current.next != null)
+            {
+                current = current.next
+            }
+            current.next = new_node
+        }
+        count = count + 1
+    }
+
+    // 添加元素到链表头部
+    func add_head(int value)
+    {
+        var new_node = Node()
+        new_node.value = value
+        new_node.next = head
+        head = new_node
+        count = count + 1
+    }
+
+    // 打印链表
+    func print_list()
+    {
+        printf("链表 (共 ")
+        printf(count)
+        printf(" 个): ")
+        
+        var current = head
+        while (current != null)
+        {
+            printf(current.value)
+            printf(" -> ")
+            current = current.next
+        }
+        print("null")
+    }
+
+    // 获取指定位置的元素
+    func get(int index)
+    {
+        if (index < 0 or index >= count)
+        {
+            return null
+        }
+        var current = head
+        var i = 0
+        while (i < index)
+        {
+            current = current.next
+            i = i + 1
+        }
+        return current.value
+    }
+
+    // 清空链表
+    func clear()
+    {
+        head = null
+        count = 0
+    }
+}
+
+main()
+{
+    print("=== LinkedList 面向对象版本 ===")
+
+    var list = LinkedList()
+
+    print("\n添加元素到尾部: 10, 20, 30")
+    list.add(10)
+    list.add(20)
+    list.add(30)
+    list.print_list()
+
+    print("\n添加元素到头部: 5")
+    list.add_head(5)
+    list.print_list()
+
+    printf("\n获取第2个元素: ")
+    print(list.get(2))
+
+    print("\n清空链表")
+    list.clear()
+    list.print_list()
+}

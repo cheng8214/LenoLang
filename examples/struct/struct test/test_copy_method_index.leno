@@ -1,0 +1,19 @@
+// 测试 struct 的 copy 方法 - 使用不同的调用语法
+
+struct Point
+{
+    int x
+    int y
+}
+
+main()
+{
+    Point p1 = Point(x=10, y=20)
+    
+    // 方式1: 使用 [] 索引语法调用 copy
+    print("方式1: p1['copy']()...")
+    var p2 = p1["copy"]()
+    
+    print("p1.x = " + p1.x + ", p1.y = " + p1.y)
+    print("p2.x = " + p2.x + ", p2.y = " + p2.y)
+}

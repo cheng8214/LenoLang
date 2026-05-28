@@ -1,0 +1,23 @@
+// 新建文件: Untitled.leno
+main()
+{
+  // 创建字典
+    var user = {
+        id: 1001,
+        name: "张三",
+        age: 25,
+        email: "zhang@test.com",
+        vip: true,
+        tags: ["活跃", "高价值"],
+        address: {
+            city: "北京",
+            street: "朝阳路"
+        }
+    }
+   
+   print(user.tags[0]) // 活跃
+   print(user.tags)//[活跃, 高价值],
+    print(user.address.city)
+    print(user["address"]["city"])
+    print(type(user))
+}

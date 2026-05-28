@@ -1,0 +1,33 @@
+// ============================================================================
+// 测试：face 类型变量重新赋值（多态切换）
+// ============================================================================
+//
+// 本测试验证：
+//   1. Speaker 类型的变量 s 可以指向 Dog 实例，调用 speak() 输出 "woof"
+//   2. 同一个变量 s 可以重新赋值为 Cat 实例，调用 speak() 输出 "meow"
+//   3. face 类型变量的动态派发正确
+//
+// 预期输出：
+//   woof
+//   meow
+
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+struct Cat impl Speaker {
+    func speak():string { return "meow" }
+}
+
+main() {
+    Speaker s = Dog()
+    print(s.speak())
+
+    s = Cat()
+    print(s.speak())
+}

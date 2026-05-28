@@ -1,0 +1,13 @@
+main() 
+{ 
+    var big1 = 999999999999999999999999999999 
+    var big2 = 12345678901234567890 
+    
+    print("big1 = " + big1) 
+    print("big2 = " + big2) 
+    
+    var mod_result = big1 % big2 
+    print("big1 % big2 = " + mod_result) 
+    print("") 
+    print("正确结果应该是: 81910000008189")
+}

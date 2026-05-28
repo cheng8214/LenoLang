@@ -1,0 +1,21 @@
+export struct Point
+{
+    int x
+    int y
+    func test():int
+    {
+        print("test")
+    }
+}
+export enum word
+{
+	a
+	b
+	c
+}
+
+export func testint():Point
+{
+    return Point()
+}
+export var name=100

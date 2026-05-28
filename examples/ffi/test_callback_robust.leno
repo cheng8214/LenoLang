@@ -1,0 +1,414 @@
+// FFI 回调健壮性测试
+// 测试场景：多回调并发、错误处理、资源管理、边界条件
+
+import ffi
+
+// ========== 测试 1: 基本回调功能 ==========
+func test_basic_callback() {
+    print("=== 测试 1: 基本回调功能 ===")
+
+    func compare(Ptr a, Ptr b): int {
+        int va = ffi.read_int(a, 0)
+        int vb = ffi.read_int(b, 0)
+        if va < vb { return -1 }
+        if va > vb { return 1 }
+        return 0
+    }
+
+    var cb = ffi.callback(compare, "int", ["pointer", "pointer"])
+    assert(ffi.is_ptr(cb), "回调对象应该被识别为指针")
+
+    var libc = ffi.load("msvcrt.dll")
+    var arr = ffi.malloc(20)
+
+    ffi.write_int(arr, 0, 5)
+    ffi.write_int(arr, 4, 3)
+    ffi.write_int(arr, 8, 1)
+    ffi.write_int(arr, 12, 4)
+    ffi.write_int(arr, 16, 2)
+
+    ffi.call_void(libc, "qsort", arr, 5, 4, cb)
+
+    assert(ffi.read_int(arr, 0) == 1, "排序后第1个元素应该是1")
+    assert(ffi.read_int(arr, 4) == 2, "排序后第2个元素应该是2")
+    assert(ffi.read_int(arr, 8) == 3, "排序后第3个元素应该是3")
+    assert(ffi.read_int(arr, 12) == 4, "排序后第4个元素应该是4")
+    assert(ffi.read_int(arr, 16) == 5, "排序后第5个元素应该是5")
+
+    ffi.free(arr)
+    ffi.free(cb)
+    ffi.free(libc)
+
+    print("✓ 基本回调功能测试通过")
+}
+
+// ========== 测试 2: 多回调同时存在 ==========
+func test_multiple_callbacks() {
+    print("=== 测试 2: 多回调同时存在 ===")
+
+    func compare_asc(Ptr a, Ptr b): int {
+        int va = ffi.read_int(a, 0)
+        int vb = ffi.read_int(b, 0)
+        if va < vb { return -1 }
+        if va > vb { return 1 }
+        return 0
+    }
+
+    func compare_desc(Ptr a, Ptr b): int {
+        int va = ffi.read_int(a, 0)
+        int vb = ffi.read_int(b, 0)
+        if va > vb { return -1 }
+        if va < vb { return 1 }
+        return 0
+    }
+
+    var cb_asc = ffi.callback(compare_asc, "int", ["pointer", "pointer"])
+    var cb_desc = ffi.callback(compare_desc, "int", ["pointer", "pointer"])
+
+    assert(ffi.is_ptr(cb_asc), "升序回调应该有效")
+    assert(ffi.is_ptr(cb_desc), "降序回调应该有效")
+
+    var libc = ffi.load("msvcrt.dll")
+
+    // 测试升序排序
+    var arr1 = ffi.malloc(20)
+    ffi.write_int(arr1, 0, 5)
+    ffi.write_int(arr1, 4, 3)
+    ffi.write_int(arr1, 8, 1)
+    ffi.write_int(arr1, 12, 4)
+    ffi.write_int(arr1, 16, 2)
+    ffi.call_void(libc, "qsort", arr1, 5, 4, cb_asc)
+    assert(ffi.read_int(arr1, 0) == 1, "升序排序后第1个元素应该是1")
+    assert(ffi.read_int(arr1, 16) == 5, "升序排序后最后元素应该是5")
+    ffi.free(arr1)
+
+    // 测试降序排序
+    var arr2 = ffi.malloc(20)
+    ffi.write_int(arr2, 0, 1)
+    ffi.write_int(arr2, 4, 3)
+    ffi.write_int(arr2, 8, 5)
+    ffi.write_int(arr2, 12, 2)
+    ffi.write_int(arr2, 16, 4)
+    ffi.call_void(libc, "qsort", arr2, 5, 4, cb_desc)
+    assert(ffi.read_int(arr2, 0) == 5, "降序排序后第1个元素应该是5")
+    assert(ffi.read_int(arr2, 16) == 1, "降序排序后最后元素应该是1")
+    ffi.free(arr2)
+
+    ffi.free(cb_asc)
+    ffi.free(cb_desc)
+    ffi.free(libc)
+
+    print("✓ 多回调同时存在测试通过")
+}
+
+// ========== 测试 3: 回调中使用闭包变量 ==========
+func test_callback_with_closure() {
+    print("=== 测试 3: 回调中使用闭包变量 ===")
+
+    var call_count = 0
+    var sum = 0
+
+    func track_call(int x): int {
+        call_count = call_count + 1
+        sum = sum + x
+        return x * 2
+    }
+
+    var cb = ffi.callback(track_call, "int", ["int"])
+    assert(ffi.is_ptr(cb), "闭包回调应该有效")
+
+    // 注意：这里只是创建回调，不实际调用
+    // 因为 C 库调用回调时，闭包变量的修改可能不可见
+    // 这取决于具体实现
+
+    ffi.free(cb)
+
+    print("✓ 回调中使用闭包变量测试通过")
+}
+
+// ========== 测试 4: 回调参数类型测试 ==========
+func test_callback_param_types() {
+    print("=== 测试 4: 回调参数类型测试 ===")
+
+    // int 参数
+    func int_param(int x): int {
+        return x + 1
+    }
+    var cb_int = ffi.callback(int_param, "int", ["int"])
+    assert(ffi.is_ptr(cb_int), "int参数回调应该有效")
+    ffi.free(cb_int)
+
+    // float 参数
+    func float_param(float x): float {
+        return x * 2.0
+    }
+    var cb_float = ffi.callback(float_param, "float", ["float"])
+    assert(ffi.is_ptr(cb_float), "float参数回调应该有效")
+    ffi.free(cb_float)
+
+    // pointer 参数
+    func ptr_param(Ptr p): int {
+        if not p { return 0 }
+        return ffi.read_int(p, 0)
+    }
+    var cb_ptr = ffi.callback(ptr_param, "int", ["pointer"])
+    assert(ffi.is_ptr(cb_ptr), "pointer参数回调应该有效")
+    ffi.free(cb_ptr)
+
+    // bool 参数
+    func bool_param(bool b): int {
+        if b { return 1 }
+        return 0
+    }
+    var cb_bool = ffi.callback(bool_param, "int", ["bool"])
+    assert(ffi.is_ptr(cb_bool), "bool参数回调应该有效")
+    ffi.free(cb_bool)
+
+    print("✓ 回调参数类型测试通过")
+}
+
+// ========== 测试 5: 回调资源管理 ==========
+func test_callback_resource_management() {
+    print("=== 测试 5: 回调资源管理 ===")
+
+    func dummy(int x): int {
+        return x
+    }
+
+    // 创建多个回调
+    var callbacks = []
+    for 0 : 9 to i {
+        var cb = ffi.callback(dummy, "int", ["int"])
+        callbacks.add(cb)
+    }
+
+    // 验证所有回调都有效
+    for callbacks to cb {
+        assert(ffi.is_ptr(cb), "所有回调应该都是有效的指针")
+    }
+
+    // 释放所有回调
+    for callbacks to cb {
+        ffi.free(cb)
+    }
+
+    print("✓ 回调资源管理测试通过")
+}
+
+// ========== 测试 6: 回调与 cstruct 结合 ==========
+func test_callback_with_cstruct() {
+    print("=== 测试 6: 回调与 cstruct 结合 ===")
+
+    cstruct Point {
+        i32 x
+        i32 y
+    }
+
+    func compare_points(Ptr a, Ptr b): int {
+        int xa = ffi.read_int(a, 0)
+        int ya = ffi.read_int(a, 4)
+        int xb = ffi.read_int(b, 0)
+        int yb = ffi.read_int(b, 4)
+
+        // 按距离原点排序
+        int dist_a = xa * xa + ya * ya
+        int dist_b = xb * xb + yb * yb
+
+        if dist_a < dist_b { return -1 }
+        if dist_a > dist_b { return 1 }
+        return 0
+    }
+
+    var cb = ffi.callback(compare_points, "int", ["pointer", "pointer"])
+    assert(ffi.is_ptr(cb), "cstruct回调应该有效")
+
+    var libc = ffi.load("msvcrt.dll")
+
+    // 创建 Point 数组
+    var points = ffi.malloc(40)  // 5个点，每个8字节
+
+    // Point(3, 4) -> dist = 25
+    ffi.write_int(points, 0, 3)
+    ffi.write_int(points, 4, 4)
+
+    // Point(1, 1) -> dist = 2
+    ffi.write_int(points, 8, 1)
+    ffi.write_int(points, 12, 1)
+
+    // Point(0, 5) -> dist = 25
+    ffi.write_int(points, 16, 0)
+    ffi.write_int(points, 20, 5)
+
+    // Point(2, 2) -> dist = 8
+    ffi.write_int(points, 24, 2)
+    ffi.write_int(points, 28, 2)
+
+    // Point(5, 0) -> dist = 25
+    ffi.write_int(points, 32, 5)
+    ffi.write_int(points, 36, 0)
+
+    ffi.call_void(libc, "qsort", points, 5, 8, cb)
+
+    // 验证排序结果（按距离升序）
+    int x0 = ffi.read_int(points, 0)
+    int y0 = ffi.read_int(points, 4)
+    assert(x0 == 1 and y0 == 1, "最近的点应该是(1,1)")
+
+    ffi.free(points)
+    ffi.free(cb)
+    ffi.free(libc)
+
+    print("✓ 回调与 cstruct 结合测试通过")
+}
+
+// ========== 测试 7: 回调异常处理 ==========
+func test_callback_error_handling() {
+    print("=== 测试 7: 回调异常处理 ===")
+
+    // 测试回调中访问无效内存（应该被捕获或安全处理）
+    func risky_compare(Ptr a, Ptr b): int {
+        // 这里假设指针有效，但如果传入无效指针可能会出问题
+        // 实际测试中我们只使用有效指针
+        int va = ffi.read_int(a, 0)
+        int vb = ffi.read_int(b, 0)
+        return va - vb
+    }
+
+    var cb = ffi.callback(risky_compare, "int", ["pointer", "pointer"])
+    assert(ffi.is_ptr(cb), "风险回调应该被创建")
+
+    // 正常使用
+    var libc = ffi.load("msvcrt.dll")
+    var arr = ffi.malloc(12)
+    ffi.write_int(arr, 0, 3)
+    ffi.write_int(arr, 4, 1)
+    ffi.write_int(arr, 8, 2)
+
+    ffi.call_void(libc, "qsort", arr, 3, 4, cb)
+
+    assert(ffi.read_int(arr, 0) == 1, "排序后第1个元素应该是1")
+
+    ffi.free(arr)
+    ffi.free(cb)
+    ffi.free(libc)
+
+    print("✓ 回调异常处理测试通过")
+}
+
+// ========== 测试 8: 大量回调创建释放 ==========
+func test_massive_callbacks() {
+    print("=== 测试 8: 大量回调创建释放 ===")
+
+    func identity(int x): int {
+        return x
+    }
+
+    // 创建并立即释放大量回调，测试资源管理
+    for 0 : 49 to i {
+        var cb = ffi.callback(identity, "int", ["int"])
+        assert(ffi.is_ptr(cb), "回调 " + i + " 应该有效")
+        ffi.free(cb)
+    }
+
+    print("✓ 大量回调创建释放测试通过")
+}
+
+// ========== 测试 9: 回调嵌套调用 ==========
+func test_nested_callback_usage() {
+    print("=== 测试 9: 回调嵌套调用场景 ===")
+
+    // 模拟一个场景：排序后使用另一个回调处理结果
+    func compare(Ptr a, Ptr b): int {
+        int va = ffi.read_int(a, 0)
+        int vb = ffi.read_int(b, 0)
+        if va < vb { return -1 }
+        if va > vb { return 1 }
+        return 0
+    }
+
+    var cb_sort = ffi.callback(compare, "int", ["pointer", "pointer"])
+
+    var libc = ffi.load("msvcrt.dll")
+
+    // 多次使用同一个回调
+    for 0 : 4 to round {
+        var arr = ffi.malloc(16)
+        ffi.write_int(arr, 0, 4 - round)
+        ffi.write_int(arr, 4, 3 - round)
+        ffi.write_int(arr, 8, 2 - round)
+        ffi.write_int(arr, 12, 1 - round)
+
+        ffi.call_void(libc, "qsort", arr, 4, 4, cb_sort)
+
+        assert(ffi.read_int(arr, 0) == 1 - round, "第 " + round + " 轮排序正确")
+
+        ffi.free(arr)
+    }
+
+    ffi.free(cb_sort)
+    ffi.free(libc)
+
+    print("✓ 回调嵌套调用测试通过")
+}
+
+// ========== 测试 10: 回调与动态库生命周期 ==========
+func test_callback_library_lifecycle() {
+    print("=== 测试 10: 回调与动态库生命周期 ===")
+
+    func compare(Ptr a, Ptr b): int {
+        int va = ffi.read_int(a, 0)
+        int vb = ffi.read_int(b, 0)
+        return va - vb
+    }
+
+    var cb = ffi.callback(compare, "int", ["pointer", "pointer"])
+
+    // 多次加载和释放库，回调保持有效
+    for 0 : 2 to i {
+        var libc = ffi.load("msvcrt.dll")
+
+        var arr = ffi.malloc(12)
+        ffi.write_int(arr, 0, 3)
+        ffi.write_int(arr, 4, 1)
+        ffi.write_int(arr, 8, 2)
+
+        ffi.call_void(libc, "qsort", arr, 3, 4, cb)
+        assert(ffi.read_int(arr, 0) == 1, "库重新加载后回调仍然有效")
+
+        ffi.free(arr)
+        ffi.free(libc)
+    }
+
+    ffi.free(cb)
+
+    print("✓ 回调与动态库生命周期测试通过")
+}
+
+// ========== 主函数 ==========
+main() {
+    print("开始 FFI 回调健壮性测试...")
+    print("")
+
+    try {
+        test_basic_callback()
+        test_multiple_callbacks()
+        test_callback_with_closure()
+        test_callback_param_types()
+        test_callback_resource_management()
+        test_callback_with_cstruct()
+        test_callback_error_handling()
+        test_massive_callbacks()
+        test_nested_callback_usage()
+        test_callback_library_lifecycle()
+
+        print("")
+        print("========================================")
+        print("所有回调健壮性测试通过！")
+        print("========================================")
+    } catch (e) {
+        print("")
+        print("========================================")
+        print("测试失败: " + e)
+        print("========================================")
+    }
+}

@@ -1,0 +1,79 @@
+struct Node
+{
+    int value
+    Node next = null
+}
+
+struct LinkedList
+{
+    Node head = null
+    int count = 0
+
+    // 添加元素到链表头部（更简单，不需要遍历）
+    func add_head(int value)
+    {
+        var new_node = Node()
+        new_node.value = value
+        new_node.next = head
+        head = new_node
+        count = count + 1
+    }
+
+    // 打印链表
+    func print_list()
+    {
+        printf("链表 (共 ")
+        printf(count)
+        printf(" 个): ")
+        
+        // 使用局部变量遍历，避免 head.next 链式访问的问题
+        var current = head
+        while (current != null)
+        {
+            printf(current.value)
+            printf(" -> ")
+            // 将 next 赋值给 current，避免链式访问
+            var next_node = current.next
+            current = next_node
+        }
+        print("null")
+    }
+
+    // 获取链表长度
+    func size()
+    {
+        return count
+    }
+
+    // 清空链表
+    func clear()
+    {
+        head = null
+        count = 0
+    }
+}
+
+main()
+{
+    print("=== LinkedList 面向对象版本 ===\n")
+
+    LinkedList list = LinkedList()
+
+    // 添加元素
+    print("添加元素: 10, 20, 30, 40, 50\n")
+    list.add_head(10)
+    list.add_head(20)
+    list.add_head(30)
+    list.add_head(40)
+    list.add_head(50)
+
+    // 打印链表
+    list.print_list()
+
+    print("\n链表长度: ")
+    print(list.size())
+
+    print("\n清空链表\n")
+    list.clear()
+    list.print_list()
+}

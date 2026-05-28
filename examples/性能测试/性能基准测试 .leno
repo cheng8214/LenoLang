@@ -1,0 +1,90 @@
+import times
+main()
+{
+    print("======== LenoC VM 性能基准测试 ========")
+    print("")
+
+    // 基础运算
+    print("--- 基础运算 ---")
+    var i=0
+    var t1=times.ms()
+    for 100000000
+    {
+        i++
+    }
+    var t2=times.ms()
+    var elapsed = t2-t1
+    print($"1亿次 i++: " + elapsed + "ms")
+
+    // 算术运算
+    var a=1
+    var b=2
+    var c=0
+    t1=times.ms()
+    for 100000000
+    {
+        c = a + b
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"1亿次加法: " + elapsed + "ms")
+
+    // 函数调用
+    print("")
+    print("--- 函数调用 ---")
+    t1=times.ms()
+    for 10000000
+    {
+        myfunc()
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"1000万次空函数调用: " + elapsed + "ms")
+
+    // 数组操作
+    print("")
+    print("--- 数组操作 ---")
+    var arr=[]
+    t1=times.ms()
+    for 10000000
+    {
+        arr.add(1)
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"1000万次 arr.add(): " + elapsed + "ms")
+
+    // 数组访问
+    arr=[]
+    var k=0
+    for 1000 { arr.add(1) }
+    t1=times.ms()
+    for 10000000
+    {
+        arr[0]
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"1000万次 arr[index]: " + elapsed + "ms")
+
+    // 字典操作
+    print("")
+    print("--- 字典操作 ---")
+    var d={}
+    t1=times.ms()
+    for 10000000
+    {
+        d.set("key",1)
+    }
+    t2=times.ms()
+    elapsed = t2-t1
+    print($"1000万次 dict[key]=value: " + elapsed + "ms")
+
+    print("")
+    print("======== 性能总结 ========")
+}
+
+func myfunc()
+{
+    // 空函数
+}
