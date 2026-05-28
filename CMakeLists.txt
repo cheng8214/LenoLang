@@ -78,6 +78,7 @@ set(LENO_SOURCES
     src/module/threads/threads.c
     src/module/assert/assert.c
     src/module/sys/sys.c
+    src/module/regexs/regexs.c
     src/platform/platform_thread.c
     src/serialize/serialize.c
 )
