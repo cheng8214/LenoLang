@@ -1,8 +1,0 @@
-// 调试测试
-import "test_module.leno" as tm
-
-main() {
-    var obj = tm.createTest()
-    print("调用 sleep 方法...")
-    obj.sleep(1000)
-}
