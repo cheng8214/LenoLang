@@ -115,7 +115,7 @@ ObjStruct* struct_instance_new(ObjStructDef* def) {
             obj->field_values[i] = def->fields[i].default_value;
         } else {
             // 嵌套 struct 类型不再自动创建实例，以避免循环引用导致的无限递归
-            // 用户需要显式赋值，如: A a = A(b_field = B(...))
+            // 用户需要显式赋值，如: A a = new A(b_field = new B(...))
             obj->field_values[i] = val_null();
         }
     }

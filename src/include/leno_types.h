@@ -94,6 +94,7 @@ typedef enum {
     TOK_ENUM,          // enum 关键字
     TOK_FACE,          // face 关键字
     TOK_IMPL,          // impl 关键字
+    TOK_NEW,           // new 关键字（struct 实例化）
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
     TOK_FILE_TYPE, TOK_PTR_TYPE,  // File 和 Ptr 类型

@@ -23,6 +23,6 @@ func say_hi(Greeter g) {
 }
 
 main() {
-    var f = Friendly()
+    var f = new Friendly()
     say_hi(f)
 }

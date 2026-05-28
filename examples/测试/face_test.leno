@@ -16,12 +16,12 @@ func make_sound(Speaker s) {
 }
 
 main() {
-    var d = Dog()
-    var c = Cat()
+    var d = new Dog()
+    var c = new Cat()
     make_sound(d)
     make_sound(c)
 
-    Speaker s = Dog()
+    Speaker s = new Dog()
     print(s.speak())
 
     if d is Speaker {

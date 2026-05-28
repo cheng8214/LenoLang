@@ -33,7 +33,7 @@ struct Rectangle
 main()
 {
     // 测试结构体创建和方法
-    var p = Point()
+    var p = new Point()
     p.x = 3
     p.y = 4
     assert_eq(p.x, 3)
@@ -49,9 +49,9 @@ main()
     assert_eq(dist, 41)  // 4*4 + 5*5
 
     // 测试嵌套结构体
-    var rect = Rectangle()
-    rect.top_left = Point()
-    rect.bottom_right = Point()
+    var rect = new Rectangle()
+    rect.top_left = new Point()
+    rect.bottom_right = new Point()
     rect.top_left.x = 0
     rect.top_left.y = 0
     rect.bottom_right.x = 10

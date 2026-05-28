@@ -1,0 +1,38 @@
+// 简单测试：直接在文件中使用struct
+
+struct LocalStruct {
+    int value
+    bool isInit
+
+    func init(): bool {
+        isInit = true
+        return true
+    }
+
+    func sleep(int ms) {
+        print("sleep " + ms + " ms")
+    }
+
+    func uninit() {
+        print("uninit called")
+        isInit = false
+    }
+}
+
+main() {
+    print("创建对象...")
+    var obj = new LocalStruct()
+    obj.init()
+
+    if obj.isInit {
+        print("对象已初始化")
+
+        print("调用 obj.sleep(1000)...")
+        obj.sleep(1000)
+
+        print("调用 obj.uninit()...")
+        obj.uninit()
+    }
+
+    print("完成")
+}

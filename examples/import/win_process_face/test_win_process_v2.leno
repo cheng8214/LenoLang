@@ -35,7 +35,7 @@ main() {
     
     // 测试 StandardProcessManager
     print("【测试 StandardProcessManager】")
-    var manager = StandardProcessManager()
+    var manager = new StandardProcessManager()
     printProcessList(manager)
     print("")
     

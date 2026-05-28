@@ -181,9 +181,9 @@ export func openKey(var hKey, string subKey, var samDesired) {
             var result = ffi.call(advapi, "RegOpenKeyExW",
                 hKeyPtr, wSubKey, 0, samDesired, hResult)
             if result == WinError.SUCCESS {
-                return OpenKeyResult(handle = ffi.read_ptr(hResult, 0), errorCode = 0)
+                return new OpenKeyResult(handle = ffi.read_ptr(hResult, 0), errorCode = 0)
             }
-            return OpenKeyResult(handle = null, errorCode = _int(result))
+            return new OpenKeyResult(handle = null, errorCode = _int(result))
         } finally {
             ffi.free(wSubKey)
         }
@@ -205,13 +205,13 @@ export func createKey(var hKey, string subKey, var samDesired):CreateKeyResult {
                 hKeyPtr, wSubKey, 0, ffi.nullptr(), 0,
                 samDesired, ffi.nullptr(), hResult, disp)
             if result == WinError.SUCCESS {
-                return CreateKeyResult(
+                return new CreateKeyResult(
                     handle = ffi.read_ptr(hResult, 0),
                     errorCode = 0,
                     created = ffi.read_int(disp, 0) == 1
                 )
             }
-            return CreateKeyResult(handle = null, errorCode = _int(result), created = false)
+            return new CreateKeyResult(handle = null, errorCode = _int(result), created = false)
         } finally {
             ffi.free(wSubKey)
         }
@@ -276,10 +276,10 @@ export func enumSubKeys(var hKey) {
             ffi.free(nameLen)
             
             if result != WinError.SUCCESS and result != WinError.NO_MORE_ITEMS {
-                return EnumSubKeysResult(subKeys = subKeys, errorCode =_int(result))
+                return new EnumSubKeysResult(subKeys = subKeys, errorCode =_int(result))
             }
         }
-        return EnumSubKeysResult(subKeys = subKeys, errorCode = 0)
+        return new EnumSubKeysResult(subKeys = subKeys, errorCode = 0)
     } finally {
         ffi.free(advapi)
     }
@@ -328,7 +328,7 @@ export func enumValues(var hKey) {
                     case ValueType.QWORD { typeName = "QWORD" }
                 }
                 
-                var valueInfo = RegValueInfo(
+                var valueInfo = new RegValueInfo(
                     name = valName,
                     type = valType,
                     typeName = typeName
@@ -344,10 +344,10 @@ export func enumValues(var hKey) {
             ffi.free(dataLen)
             
             if result != WinError.SUCCESS and result != WinError.NO_MORE_ITEMS {
-                return EnumValuesResult(values = values, errorCode =_int(result))
+                return new EnumValuesResult(values = values, errorCode =_int(result))
             }
         }
-        return EnumValuesResult(values = values, errorCode = 0)
+        return new EnumValuesResult(values = values, errorCode = 0)
     } finally {
         ffi.free(advapi)
     }
@@ -368,12 +368,12 @@ export func readString(var hKey, string valueName) {
                 hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
             
             if result != WinError.SUCCESS {
-                return ReadStringResult(value = null, errorCode =_int(result))
+                return new ReadStringResult(value = null, errorCode =_int(result))
             }
             
             int actualType = ffi.read_int(dataType, 0)
             if actualType != ValueType.SZ {
-                return ReadStringResult(value = null, errorCode =_int(WinError.INVALID_HANDLE))
+                return new ReadStringResult(value = null, errorCode =_int(WinError.INVALID_HANDLE))
             }
             
             int requiredSize = ffi.read_int(dataSize, 0)
@@ -383,9 +383,9 @@ export func readString(var hKey, string valueName) {
                     hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
                 
                 if result == WinError.SUCCESS {
-                    return ReadStringResult(value = ffi.utf16_to_utf8(dataBuffer), errorCode = 0)
+                    return new ReadStringResult(value = ffi.utf16_to_utf8(dataBuffer), errorCode = 0)
                 }
-                return ReadStringResult(value = null, errorCode =_int(result))
+                return new ReadStringResult(value = null, errorCode =_int(result))
             } finally {
                 ffi.free(dataBuffer)
             }
@@ -414,12 +414,12 @@ export func readExpandString(var hKey, string valueName) {
                 hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
             
             if result != WinError.SUCCESS {
-                return ReadExpandStringResult(value = null, errorCode =_int(result))
+                return new ReadExpandStringResult(value = null, errorCode =_int(result))
             }
             
             int actualType = ffi.read_int(dataType, 0)
             if actualType != ValueType.EXPAND_SZ {
-                return ReadExpandStringResult(value = null, errorCode =_int(WinError.INVALID_HANDLE))
+                return new ReadExpandStringResult(value = null, errorCode =_int(WinError.INVALID_HANDLE))
             }
             
             int requiredSize = ffi.read_int(dataSize, 0)
@@ -437,10 +437,10 @@ export func readExpandString(var hKey, string valueName) {
                             var expandedLen = ffi.call(kernel32, "ExpandEnvironmentStringsW",
                                 dataBuffer, expandedBuf, 32767)
                             if expandedLen > 0 {
-                                return ReadExpandStringResult(value = ffi.utf16_to_utf8(expandedBuf), errorCode = 0)
-                            }
-                            // 展开失败，返回原始值
-                            return ReadExpandStringResult(value = ffi.utf16_to_utf8(dataBuffer), errorCode = 0)
+                                return new ReadExpandStringResult(value = ffi.utf16_to_utf8(expandedBuf), errorCode = 0)
+                        }
+                        // 展开失败，返回原始值
+                        return new ReadExpandStringResult(value = ffi.utf16_to_utf8(dataBuffer), errorCode = 0)
                         } finally {
                             ffi.free(expandedBuf)
                         }
@@ -448,7 +448,7 @@ export func readExpandString(var hKey, string valueName) {
                         ffi.free(kernel32)
                     }
                 }
-                return ReadExpandStringResult(value = null, errorCode =_int(result))
+                return new ReadExpandStringResult(value = null, errorCode =_int(result))
             } finally {
                 ffi.free(dataBuffer)
             }
@@ -478,14 +478,14 @@ export func readDword(var hKey, string valueName) {
                 hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
             
             if result != WinError.SUCCESS {
-                return ReadDwordResult(value = 0, errorCode =_int(result))
+                return new ReadDwordResult(value = 0, errorCode =_int(result))
             }
             
             if ffi.read_int(dataType, 0) != ValueType.DWORD {
-                return ReadDwordResult(value = 0, errorCode =_int(WinError.INVALID_HANDLE))
+                return new ReadDwordResult(value = 0, errorCode =_int(WinError.INVALID_HANDLE))
             }
             
-            return ReadDwordResult(value = ffi.read_int(dataBuffer, 0), errorCode = 0)
+            return new ReadDwordResult(value = ffi.read_int(dataBuffer, 0), errorCode = 0)
         } finally {
             if wValueName != ffi.nullptr() {
                 ffi.free(wValueName)
@@ -513,15 +513,15 @@ export func readQword(var hKey, string valueName) {
                 hKey, wValueName, ffi.nullptr(), dataType, dataBuffer, dataSize)
             
             if result != WinError.SUCCESS {
-                return ReadQwordResult(value = 0, errorCode =_int(result))
+                return new ReadQwordResult(value = 0, errorCode =_int(result))
             }
             
             if ffi.read_int(dataType, 0) != ValueType.QWORD {
-                return ReadQwordResult(value = 0, errorCode =_int(WinError.INVALID_HANDLE))
+                return new ReadQwordResult(value = 0, errorCode =_int(WinError.INVALID_HANDLE))
             }
             
             // QWORD 是 64 位，但 Leno int 目前也是 64 位，可以直接读取
-            return ReadQwordResult(value = ffi.read_int64(dataBuffer, 0), errorCode = 0)
+            return new ReadQwordResult(value = ffi.read_int64(dataBuffer, 0), errorCode = 0)
         } finally {
             if wValueName != ffi.nullptr() {
                 ffi.free(wValueName)
@@ -626,12 +626,12 @@ export func readBinary(var hKey, string valueName) {
                 hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
             
             if result != WinError.SUCCESS {
-                return ReadBinaryResult(data = null, errorCode =_int(result))
+                return new ReadBinaryResult(data = null, errorCode =_int(result))
             }
             
             int actualType = ffi.read_int(dataType, 0)
             if actualType != ValueType.BINARY {
-                return ReadBinaryResult(data = null, errorCode =_int(WinError.INVALID_HANDLE))
+                return new ReadBinaryResult(data = null, errorCode =_int(WinError.INVALID_HANDLE))
             }
             
             int requiredSize = ffi.read_int(dataSize, 0)
@@ -646,9 +646,9 @@ export func readBinary(var hKey, string valueName) {
                     for 0 : requiredSize - 1 to i {
                         byteArray.add(ffi.read_byte(dataBuffer, i))
                     }
-                    return ReadBinaryResult(data = byteArray, errorCode = 0)
+                    return new ReadBinaryResult(data = byteArray, errorCode = 0)
                 }
-                return ReadBinaryResult(data = null, errorCode =_int(result))
+                return new ReadBinaryResult(data = null, errorCode =_int(result))
             } finally {
                 ffi.free(dataBuffer)
             }
@@ -702,12 +702,12 @@ export func readMultiString(var hKey, string valueName) {
                 hKey, wValueName, ffi.nullptr(), dataType, ffi.nullptr(), dataSize)
             
             if result != WinError.SUCCESS {
-                return ReadMultiStringResult(strings = null, errorCode =_int(result))
+                return new ReadMultiStringResult(strings = null, errorCode =_int(result))
             }
             
             int actualType = ffi.read_int(dataType, 0)
             if actualType != ValueType.MULTI_SZ {
-                return ReadMultiStringResult(strings = null, errorCode =_int(WinError.INVALID_HANDLE))
+                return new ReadMultiStringResult(strings = null, errorCode =_int(WinError.INVALID_HANDLE))
             }
             
             int requiredSize = ffi.read_int(dataSize, 0)
@@ -739,9 +739,9 @@ export func readMultiString(var hKey, string valueName) {
                         }
                         offset = nextOffset
                     }
-                    return ReadMultiStringResult(strings = resultStrings, errorCode = 0)
+                    return new ReadMultiStringResult(strings = resultStrings, errorCode = 0)
                 }
-                return ReadMultiStringResult(strings = null, errorCode =_int(result))
+                return new ReadMultiStringResult(strings = null, errorCode =_int(result))
             } finally {
                 ffi.free(dataBuffer)
             }

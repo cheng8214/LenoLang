@@ -10,6 +10,6 @@ struct Point
 
 main()
 {
-    Point p1 = Point(x=10, y=20)
+    Point p1 = new Point(x=10, y=20)
     p1.test()
 }

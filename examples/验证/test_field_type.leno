@@ -8,6 +8,6 @@ struct Test {
 }
 
 main() {
-    var t = Test()
+    var t = new Test()
     print(t.getScores())
 }

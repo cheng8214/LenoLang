@@ -17,8 +17,8 @@ func set_head(LinkedList list, Node node)
 
 main()
 {
-    var list = LinkedList()
-    var n = Node()
+    var list = new LinkedList()
+    var n = new Node()
     n.value = 100
     
     set_head(list, n)

@@ -30,7 +30,7 @@ main()
     
     // 创建包含 File 的 struct - 使用构造函数
     File f = files.open("test_struct.txt", "w")
-    FileWrapper fw = FileWrapper(handle = f, path = "test_struct.txt")
+    FileWrapper fw = new FileWrapper(handle = f, path = "test_struct.txt")
     
     fw.handle.write("Hello from struct!")
     fw.handle.close()
@@ -46,7 +46,7 @@ main()
     
     // 创建包含 Ptr 的 struct - 使用构造函数
     Ptr p = ffi.malloc(100)
-    PtrWrapper pw = PtrWrapper(memory = p, size = 100)
+    PtrWrapper pw = new PtrWrapper(memory = p, size = 100)
     
     // 写入数据
     ffi.write_int(pw.memory, 0, 42)
@@ -64,7 +64,7 @@ main()
     // 创建混合 struct - 使用构造函数
     File log = files.open("log.txt", "w")
     Ptr buf = ffi.malloc(50)
-    ResourceManager rm = ResourceManager(logFile = log, buffer = buf, name = "TestManager")
+    ResourceManager rm = new ResourceManager(logFile = log, buffer = buf, name = "TestManager")
     
     // 使用资源
     rm.logFile.write("Log entry 1")

@@ -3,6 +3,6 @@ import "test_b.leno" as b
 main()
 {
     // 测试传入过多命名参数
-    var p1 = b.Point(x=10, y=20, z=30)
+    var p1 = new b.Point(x=10, y=20, z=30)
     print("p1: x=" + p1.x + ", y=" + p1.y)
 }

@@ -4,7 +4,7 @@ struct Point {
 }
 
 main() {
-    var p = Point()
+    var p = new Point()
     
     // 直接变量
     if p is Point {

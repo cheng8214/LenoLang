@@ -195,13 +195,13 @@ export struct SafeProcessManager impl ProcessManager {
     
     // 获取进程列表
     func listProcesses():Dict {
-        var std = StandardProcessManager()
+        var std = new StandardProcessManager()
         return std.listProcesses()
     }
     
     // 根据名称查找进程
     func findByName(string name):Dict {
-        var std = StandardProcessManager()
+        var std = new StandardProcessManager()
         return std.findByName(name)
     }
     
@@ -212,7 +212,7 @@ export struct SafeProcessManager impl ProcessManager {
     
     // 检查进程是否存在
     func exists(int pid):bool {
-        var std = StandardProcessManager()
+        var std = new StandardProcessManager()
         return std.exists(pid)
     }
 }

@@ -5,7 +5,7 @@ struct Point {
 }
 
 main() {
-    var p = Point()
+    var p = new Point()
     p.x = 10
     p.y = 20
     print(p)

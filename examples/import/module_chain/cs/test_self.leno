@@ -33,7 +33,7 @@ main()
     print("=== 测试 struct 中的 self ===")
     print("")
     
-    var p = Point(x = 10, y = 20)
+    var p = new Point(x = 10, y = 20)
     
     print("1. 测试 print_self():")
     p.print_self()
@@ -45,7 +45,7 @@ main()
     
     print("")
     print("3. 测试 print_and_move():")
-    var p2 = Point(x = 0, y = 0)
+    var p2 = new Point(x = 0, y = 0)
     p2.print_and_move(100, 200)
     
     print("")

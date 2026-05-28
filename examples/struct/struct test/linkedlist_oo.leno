@@ -12,7 +12,7 @@ struct LinkedList
     // 添加元素到链表尾部
     func add(int value)
     {
-        var new_node = Node()
+        var new_node = new Node()
         new_node.value = value
         
         if (head == null)
@@ -34,7 +34,7 @@ struct LinkedList
     // 添加元素到链表头部
     func add_head(int value)
     {
-        var new_node = Node()
+        var new_node = new Node()
         new_node.value = value
         new_node.next = head
         head = new_node
@@ -87,7 +87,7 @@ main()
 {
     print("=== LinkedList 面向对象版本 ===")
 
-    var list = LinkedList()
+    var list = new LinkedList()
 
     print("\n添加元素到尾部: 10, 20, 30")
     list.add(10)

@@ -39,16 +39,16 @@ func try_speak(Speaker s) {
 }
 
 main() {
-    var d = Dog()
+    var d = new Dog()
     try_speak(d)
 
-    var duck = Duck()
+    var duck = new Duck()
     if duck is Speaker {
         print("Duck matches Speaker (duck typing)")
         print(duck.speak())
     }
 
-    var rock = Rock()
+    var rock = new Rock()
     if rock not is Speaker {
         print("Rock not is Speaker")
     }

@@ -87,7 +87,6 @@ Ast* parse_prefix_inc_dec(Parser* p);
 // 中缀表达式解析器
 Ast* parse_binary(Parser* p, Ast* left);
 Ast* parse_call(Parser* p, Ast* callee);
-Ast* parse_struct_init(Parser* p, const char* struct_name);
 Ast* parse_index(Parser* p, Ast* obj);
 Ast* parse_dot(Parser* p, Ast* left);
 Ast* parse_assignment(Parser* p, Ast* left);

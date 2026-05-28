@@ -5,7 +5,7 @@
 // 本测试验证：
 //   1. face 类型作为函数参数（make_sound 接受 Speaker 类型）
 //   2. 不同 struct 实现同一 face 时，多态调用正确（Dog 输出 woof，Cat 输出 meow）
-//   3. 使用 face 类型声明变量（Speaker s = Dog()），调用方法正确
+//   3. 使用 face 类型声明变量（Speaker s = new Dog()），调用方法正确
 //   4. 使用 is 运算符检查 struct 是否实现了 face
 //
 // 预期输出：
@@ -33,12 +33,12 @@ func make_sound(Speaker s) {
 
 main() {
 _gc(false)
-    var d = Dog()
-    var c = Cat()
+    var d = new Dog()
+    var c = new Cat()
     make_sound(d)
     make_sound(c)
 
-    Speaker s = Dog()
+    Speaker s = new Dog()
     print(s.speak())
 
     if d is Speaker {

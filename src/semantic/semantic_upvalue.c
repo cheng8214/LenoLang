@@ -71,6 +71,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
         ref->index = local_sym->index;
         ref->name = strdup(local_sym->name);
         ref->type_kind = local_sym->type ? local_sym->type->kind : TYPE_ANY;
+        ref->struct_name = (local_sym->type && local_sym->type->struct_name) ? strdup(local_sym->type->struct_name) : NULL;
         return local_sym;
     }
     
@@ -98,6 +99,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
                 ref->index = sym->index;
                 ref->name = strdup(sym->name);
                 ref->type_kind = sym->type ? sym->type->kind : TYPE_ANY;
+                ref->struct_name = (sym->type && sym->type->struct_name) ? strdup(sym->type->struct_name) : NULL;
                 return sym;
             }
             // 如果变量定义在当前函数的函数作用域中，不是 upvalue
@@ -106,6 +108,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
                 ref->index = target_sym->index;
                 ref->name = strdup(target_sym->name);
                 ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
+                ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
                 return target_sym;
             }
             // 检查变量定义的作用域是否在当前函数内部（如while/for循环中）
@@ -115,11 +118,11 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
                 int crossed_func = 0;
                 while (check_scope) {
                     if (check_scope == current_func_scope) {
-                        // 变量在当前函数内的非函数作用域中定义，不是upvalue
                         ref->kind = target_sym->kind;
                         ref->index = target_sym->index;
                         ref->name = strdup(target_sym->name);
                         ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
+                        ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
                         return target_sym;
                     }
                     if (check_scope->is_func) {
@@ -162,6 +165,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
             ref->index = global_sym->index;
             ref->name = strdup(global_sym->name);
             ref->type_kind = global_sym->type ? global_sym->type->kind : TYPE_ANY;
+            ref->struct_name = (global_sym->type && global_sym->type->struct_name) ? strdup(global_sym->type->struct_name) : NULL;
             return global_sym;
         }
         return NULL;
@@ -212,5 +216,6 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
     }
     ref->name = strdup(name);
     ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
+    ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
     return target_sym;
 }

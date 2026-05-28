@@ -7,6 +7,6 @@ struct Point2
 main()
 {
     // 测试本地 struct 传入过多命名参数
-    var p1 = Point2(x=10, y=20, z=30)
+    var p1 = new Point2(x=10, y=20, z=30)
     print("p1: x=" + p1.x + ", y=" + p1.y)
 }

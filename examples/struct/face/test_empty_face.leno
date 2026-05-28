@@ -21,6 +21,6 @@ func check(Empty e) {
 }
 
 main() {
-    var t = Thing()
+    var t = new Thing()
     check(t)
 }

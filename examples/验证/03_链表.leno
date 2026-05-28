@@ -10,7 +10,7 @@ struct LinkedList {
 }
 
 func list_add(LinkedList list, int value) {
-    var new_node = Node()
+    var new_node = new Node()
     new_node.value = value
     
     if (list.head == null) {
@@ -37,7 +37,7 @@ func list_print(LinkedList list) {
 }
 
 main() {
-    var list = LinkedList()
+    var list = new LinkedList()
     
     list_add(list, 10)
     list_add(list, 20)

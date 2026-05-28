@@ -37,8 +37,8 @@ struct Point3D
 main()
 {
     // 创建两个不同类型的实例
-    Point2D p2 = Point2D(x=1, y=2)
-    Point3D p3 = Point3D(x=1, y=2, z=3)
+    Point2D p2 = new Point2D(x=1, y=2)
+    Point3D p3 = new Point3D(x=1, y=2, z=3)
     
     // 测试1：调用同名方法 getName()
     print("p2.getName():")

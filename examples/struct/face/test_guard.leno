@@ -31,9 +31,9 @@ struct Rock {
 }
 
 main() {
-    var d = Dog()
-    var c = Cat()
-    var r = Rock()
+    var d = new Dog()
+    var c = new Cat()
+    var r = new Rock()
 
     if d is Speaker {
         print("Dog is Speaker")

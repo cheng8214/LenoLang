@@ -348,12 +348,14 @@ void visit(Semantic* s, Ast* ast) {
 
             if (sym) {
                 ast->u.var_decl.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
+                if (sym->type && sym->type->struct_name) {
+                    ast->u.var_decl.ref.struct_name = strdup(sym->type->struct_name);
+                }
             }
             break;
         }
         
         case AST_VAR: {
-            // 使用新的 upvalue 解析
             Symbol* sym = resolve_variable_with_upvalue(s, ast->u.var.name, &ast->u.var.ref);
             if (!sym) {
                 char msg[BUFFER_MEDIUM];
@@ -361,7 +363,9 @@ void visit(Semantic* s, Ast* ast) {
                 error_add(ERR_UNDEFINED_VAR, ast->line, msg);
             } else {
                 ast->u.var.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
-                // 缓存变量类型到 AST，供代码生成器使用
+                if (sym->type && sym->type->struct_name) {
+                    ast->u.var.ref.struct_name = strdup(sym->type->struct_name);
+                }
                 if (sym->type && !ast->cached_type) {
                     ast->cached_type = type_copy(sym->type);
                 }
@@ -904,7 +908,6 @@ void visit(Semantic* s, Ast* ast) {
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index_assign.obj);
 
             if (obj_type && obj_type->kind == TYPE_STRUCT) {
-                // 获取字段名
                 if (ast->u.index_assign.index->kind == AST_STRING) {
                     char* field_name = ast->u.index_assign.index->u.string.value;
 
@@ -993,7 +996,6 @@ void visit(Semantic* s, Ast* ast) {
                 // 检查是否是实例方法调用
                 if (index_ast->u.index.index->kind == AST_STRING) {
                     const char* method_name = index_ast->u.index.index->u.string.value;
-                    // 从索引表达式的对象推断 receiver 类型（arr[0] 的类型，不是 arr 的类型）
                     TypeInfo* receiver_type = infer_expr_type(s, index_ast->u.index.obj);
                     
                     if (receiver_type) {
@@ -1207,15 +1209,14 @@ void visit(Semantic* s, Ast* ast) {
                 // 使用resolve_variable_with_upvalue处理函数调用，支持闭包
                 sym = resolve_variable_with_upvalue(s, func_name, &ast->u.call.callee->u.var.ref);
                 if (!sym) {
-                    // 函数未定义，检查是否是 struct 类型（支持前向引用）
+                    // 函数未定义，检查是否是 struct 类型
                     Symbol* struct_sym = scope_resolve(s->current, func_name);
                     if (struct_sym && struct_sym->type && struct_sym->type->kind == TYPE_STRUCT) {
-                        // 是 struct 类型，创建一个虚拟符号用于后续处理
-                        sym = struct_sym;
-                        ast->u.call.callee->u.var.ref.kind = struct_sym->kind;
-                        ast->u.call.callee->u.var.ref.index = struct_sym->index;
-                        ast->u.call.callee->u.var.ref.name = strdup(struct_sym->name);
-                        ast->u.call.callee->u.var.ref.type_kind = TYPE_STRUCT;
+                        // 是 struct 类型，提示使用 new 关键字
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "struct '%s' 需要使用 new 关键字实例化，例如: new %s()",
+                                func_name, func_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
                     } else {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "未定义的函数: %s", func_name);
@@ -1224,74 +1225,12 @@ void visit(Semantic* s, Ast* ast) {
                 } else {
                     ast->u.call.callee->u.var.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
 
-                    // 检查是否是 struct 类型调用
+                    // 检查是否是 struct 类型调用（未使用 new 关键字）
                     if (sym->type && sym->type->kind == TYPE_STRUCT) {
-                        // 检查参数是否都是命名参数形式（x=10）
-                        int all_named = 1;
-                        for (int i = 0; i < ast->u.call.args.count; i++) {
-                            if (ast->u.call.args.items[i]->kind != AST_ASSIGN) {
-                                all_named = 0;
-                                break;
-                            }
-                        }
-
-                        if (ast->u.call.args.count > 0 && !all_named) {
-                            // 有非命名参数，报错
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "创建结构体 '%s' 必须使用命名参数形式，例如: %s(x=10, y=20)",
-                                    func_name, func_name);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
-                        } else {
-                            // 空参数列表或全是命名参数，转换为 struct 构造函数调用
-                            Ast* old_callee = ast->u.call.callee;
-
-                            int field_count = ast->u.call.args.count;
-                            char** field_names = NULL;
-                            Ast** field_values = NULL;
-
-                            if (field_count > 0) {
-                                field_names = (char**)malloc(sizeof(char*) * field_count);
-                                field_values = (Ast**)malloc(sizeof(Ast*) * field_count);
-
-                                for (int i = 0; i < field_count; i++) {
-                                    Ast* assign = ast->u.call.args.items[i];
-                                    // AST_ASSIGN 的 names 是数组，对于 x=20，names[0] 是 "x"
-                                    if (assign->u.assign.name_count > 0 && assign->u.assign.names) {
-                                        field_names[i] = strdup(assign->u.assign.names[0]);
-                                    } else {
-                                        field_names[i] = strdup("");
-                                    }
-                                    field_values[i] = assign->u.assign.value;
-                                    // 释放 assign 节点本身，但保留 value
-                                    if (assign->u.assign.names) {
-                                        for (int j = 0; j < assign->u.assign.name_count; j++) {
-                                            free(assign->u.assign.names[j]);
-                                        }
-                                        free(assign->u.assign.names);
-                                    }
-                                    if (assign->u.assign.targets) {
-                                        free(assign->u.assign.targets);
-                                    }
-                                    if (assign->u.assign.refs) {
-                                        free(assign->u.assign.refs);
-                                    }
-                                    free(assign);
-                                }
-                            }
-
-                            ast->kind = AST_STRUCT_INIT;
-                            ast->u.struct_init.struct_name = strdup(func_name);
-                            ast->u.struct_init.field_names = field_names;
-                            ast->u.struct_init.field_values = field_values;
-                            ast->u.struct_init.field_count = field_count;
-
-                            // 释放旧的 callee（AST_VAR 节点）
-                            free(old_callee->u.var.name);
-                            if (old_callee->u.var.ref.name) {
-                                free(old_callee->u.var.ref.name);
-                            }
-                            free(old_callee);
-                        }
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "struct '%s' 需要使用 new 关键字实例化，例如: new %s()",
+                                func_name, func_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
                     }
                 }
             } else {
@@ -1774,7 +1713,7 @@ void visit(Semantic* s, Ast* ast) {
                         module_symbol_table_scan(info->sym_table, current_file);
 
                         // 注意：不再将模块中的 struct 定义注册到当前作用域
-                        // struct 必须通过模块名访问，例如：module.Point()
+                        // struct 必须通过模块名访问，例如：new module.Point()
                         // 这样可以保持与 func 和 var 的一致性
 
                         // 但是，需要将模块中的 face 定义注册到全局表
@@ -2130,14 +2069,12 @@ void visit(Semantic* s, Ast* ast) {
                         ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(sym_table, ast->u.module_call.method_name);
                         if (struct_sym) {
                             is_struct = 1;
-                            // 是 struct 定义，检查是否使用了位置参数
-                            if (ast->u.module_call.args.count > 0) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "创建模块结构体 '%s.%s' 必须使用命名参数形式，例如: %s.%s(x=10, y=20)",
-                                        ast->u.module_call.module_name, struct_sym->name,
-                                        ast->u.module_call.module_name, struct_sym->name);
-                                error_add(ERR_SEMANTIC, ast->line, msg);
-                            }
+                            // 是 struct 定义，提示使用 new 关键字
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "struct '%s.%s' 需要使用 new 关键字实例化，例如: new %s.%s()",
+                                    ast->u.module_call.module_name, struct_sym->name,
+                                    ast->u.module_call.module_name, struct_sym->name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
                         }
                     }
                     module_symbol_table_destroy(sym_table);
@@ -2242,6 +2179,20 @@ void visit(Semantic* s, Ast* ast) {
                                 for (int mi = 0; mi < s->imported_module_count && !is_struct_method; mi++) {
                                     ImportedModuleInfo* m = &s->imported_modules[mi];
                                     if (m && m->sym_table) {
+                                        ModuleStructMethod* mod_method = module_symbol_table_find_struct_method(
+                                            m->sym_table, obj_type->struct_name, method_name);
+                                        if (mod_method) {
+                                            is_struct_method = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!is_struct_method) {
+                                for (int mi = 0; mi < s->imported_module_count && !is_struct_method; mi++) {
+                                    ImportedModuleInfo* m = &s->imported_modules[mi];
+                                    if (m && m->sym_table) {
                                         ObjStructDef* sd = struct_def_find(obj_type->struct_name);
                                         if (sd && sd->impl_count > 0) {
                                             for (int ii = 0; ii < sd->impl_count && !is_struct_method; ii++) {
@@ -2275,13 +2226,14 @@ void visit(Semantic* s, Ast* ast) {
                             self_var->u.var.ref.index = ref.index;
                             self_var->u.var.ref.name = strdup(ref.name);
                             self_var->u.var.ref.type_kind = ref.type_kind;
+                            self_var->u.var.ref.struct_name = (ref.struct_name) ? strdup(ref.struct_name) : NULL;
                         } else if (obj_sym) {
                             self_var->u.var.ref.kind = obj_sym->kind;
                             self_var->u.var.ref.index = obj_sym->index;
                             self_var->u.var.ref.name = strdup(obj_sym->name);
                             self_var->u.var.ref.type_kind = obj_sym->type ? obj_sym->type->kind : TYPE_ANY;
+                            self_var->u.var.ref.struct_name = (obj_sym->type && obj_sym->type->struct_name) ? strdup(obj_sym->type->struct_name) : NULL;
                         }
-                        // 设置 cached_type，供代码生成器使用
                         if (obj_type) {
                             self_var->cached_type = type_copy(obj_type);
                         }
@@ -2305,11 +2257,13 @@ void visit(Semantic* s, Ast* ast) {
                             self_arg->u.var.ref.index = ref.index;
                             self_arg->u.var.ref.name = strdup(ref.name);
                             self_arg->u.var.ref.type_kind = ref.type_kind;
+                            self_arg->u.var.ref.struct_name = (ref.struct_name) ? strdup(ref.struct_name) : NULL;
                         } else if (obj_sym) {
                             self_arg->u.var.ref.kind = obj_sym->kind;
                             self_arg->u.var.ref.index = obj_sym->index;
                             self_arg->u.var.ref.name = strdup(obj_sym->name);
                             self_arg->u.var.ref.type_kind = obj_sym->type ? obj_sym->type->kind : TYPE_ANY;
+                            self_arg->u.var.ref.struct_name = (obj_sym->type && obj_sym->type->struct_name) ? strdup(obj_sym->type->struct_name) : NULL;
                         }
                         ast_list_add(&new_args, self_arg);
                         for (int i = 0; i < ast->u.module_call.args.count; i++) {
@@ -2581,20 +2535,24 @@ void visit(Semantic* s, Ast* ast) {
                 Ast* var_ast = ast_new(AST_VAR, ast->line);
                 var_ast->u.var.name = strdup(ast->u.module_access.module_name);
                 if (ref.name) {
-                    // 使用resolve_variable_with_upvalue返回的引用信息（支持upvalue）
                     var_ast->u.var.ref.kind = ref.kind;
                     var_ast->u.var.ref.index = ref.index;
                     var_ast->u.var.ref.name = strdup(ref.name);
                     var_ast->u.var.ref.type_kind = ref.type_kind;
+                    var_ast->u.var.ref.struct_name = ref.struct_name ? strdup(ref.struct_name) : NULL;
                 } else if (var_sym) {
                     var_ast->u.var.ref.kind = var_sym->kind;
                     var_ast->u.var.ref.index = var_sym->index;
                     var_ast->u.var.ref.name = strdup(var_sym->name);
                     var_ast->u.var.ref.type_kind = var_sym->type ? var_sym->type->kind : TYPE_ANY;
+                    var_ast->u.var.ref.struct_name = (var_sym->type && var_sym->type->struct_name) ? strdup(var_sym->type->struct_name) : NULL;
                 } else {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.module_access.module_name);
                     error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                }
+                if (var_sym && var_sym->type) {
+                    var_ast->cached_type = type_copy(var_sym->type);
                 }
                 
                 // 检查变量是否是 struct 或 cstruct 类型
@@ -3231,8 +3189,43 @@ void visit(Semantic* s, Ast* ast) {
         case AST_STRUCT_INIT:
             // 处理 struct 构造函数调用
             {
-                // 查找 struct 类型
-                Symbol* sym = scope_resolve(s->current, ast->u.struct_init.struct_name);
+                // 检查是否是模块限定的 struct 名称（如 "math.Point"）
+                const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
+                Symbol* sym = NULL;
+
+                if (dot_pos) {
+                    // 模块限定的 struct：从导入的模块中查找
+                    int mod_name_len = dot_pos - ast->u.struct_init.struct_name;
+                    char* module_name = (char*)malloc(mod_name_len + 1);
+                    memcpy(module_name, ast->u.struct_init.struct_name, mod_name_len);
+                    module_name[mod_name_len] = '\0';
+                    const char* struct_name_part = dot_pos + 1;
+                    ImportedModuleInfo* module_info = find_imported_module(s, module_name);
+                    if (module_info && module_info->sym_table) {
+                        ModuleStructSymbol* mod_struct = module_symbol_table_find_struct(module_info->sym_table, struct_name_part);
+                        if (mod_struct) {
+                            // 从模块符号表创建虚拟符号用于字段检查
+                            sym = (Symbol*)calloc(1, sizeof(Symbol));
+                            sym->name = strdup(struct_name_part);
+                            sym->type = type_new(TYPE_STRUCT);
+                            sym->type->struct_name = strdup(struct_name_part);
+                            sym->struct_field_count = mod_struct->field_count;
+                            if (mod_struct->field_count > 0) {
+                                sym->struct_field_names = (char**)malloc(sizeof(char*) * mod_struct->field_count);
+                                sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * mod_struct->field_count);
+                                for (int fi = 0; fi < mod_struct->field_count; fi++) {
+                                    sym->struct_field_names[fi] = strdup(mod_struct->fields[fi].name);
+                                    sym->struct_field_types[fi] = type_new(mod_struct->fields[fi].type);
+                                }
+                            }
+                        }
+                    }
+                    free(module_name);
+                } else {
+                    // 直接的 struct 名称
+                    sym = scope_resolve(s->current, ast->u.struct_init.struct_name);
+                }
+
                 if (!sym) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "未定义的 struct 类型 '%s'", ast->u.struct_init.struct_name);
@@ -3302,10 +3295,7 @@ void visit(Semantic* s, Ast* ast) {
             break;
 
         case AST_FIELD_ACCESS:
-            // 处理字段访问
-            // 初始化字段索引为 -1（未确定）
             ast->u.field_access.field_index = -1;
-
             if (ast->u.field_access.obj) {
                 visit(s, ast->u.field_access.obj);
 
@@ -3320,12 +3310,15 @@ void visit(Semantic* s, Ast* ast) {
                     if (ast->u.field_access.obj->kind == AST_VAR) {
                         var_name = ast->u.field_access.obj->u.var.name;
                         struct_sym = scope_resolve(s->current, var_name);
+                        if (struct_sym && struct_sym->struct_field_count == 0 && obj_type->struct_name) {
+                            struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                        }
                     }
 
                     // 如果找不到符号，尝试通过类型名称查找 struct/cstruct 定义
                     if (!struct_sym && obj_type->struct_name) {
-                        struct_sym = scope_resolve(s->current, obj_type->struct_name);
-                    }
+                    struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                }
 
                     // 检查是否是 self["field_name"] 形式（在 struct 方法中）
                     if (!struct_sym && ast->u.field_access.obj->kind == AST_INDEX) {
@@ -3343,12 +3336,11 @@ void visit(Semantic* s, Ast* ast) {
                     }
 
                     if (struct_sym && struct_sym->struct_field_count > 0) {
-                        // 检查字段是否存在，并设置字段索引
                         int field_found = 0;
                         for (int i = 0; i < struct_sym->struct_field_count; i++) {
                             if (strcmp(struct_sym->struct_field_names[i], field_name) == 0) {
                                 field_found = 1;
-                                ast->u.field_access.field_index = i; // 设置字段索引
+                                ast->u.field_access.field_index = i;
                                 break;
                             }
                         }

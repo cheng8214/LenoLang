@@ -8,7 +8,7 @@ struct Point
 
 main()
 {
-    Point p1 = Point(x=10, y=20)
+    Point p1 = new Point(x=10, y=20)
     
     // 方式1: 使用 [] 索引语法调用 copy
     print("方式1: p1['copy']()...")

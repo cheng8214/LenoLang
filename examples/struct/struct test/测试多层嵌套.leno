@@ -19,7 +19,7 @@ struct Rect
 main()
 {
         // 测试多层嵌套 - 需要显式初始化嵌套 struct 字段
-        var r=Rect(position=Point(), size=Size())
+        var r=new Rect(position=new Point(), size=new Size())
         print("默认矩形: ")
         print(r)
         
@@ -39,7 +39,7 @@ main()
         print(r.position.y)
         
         // 测试赋值嵌套对象
-        var p=Point()
+        var p=new Point()
         p.x=50
         p.y=60
         r.position=p

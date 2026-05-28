@@ -29,7 +29,7 @@ main()
 {
     print("=== 测试 struct 中的闭包 ===")
 
-    var c = Counter()
+    var c = new Counter()
 
     // 获取增加器和获取器
     var inc = c.get_incrementor()
@@ -52,7 +52,7 @@ main()
 
     // 创建另一个 Counter 实例，验证闭包隔离
     print("\n=== 另一个 Counter 实例 ===")
-    var c2 = Counter()
+    var c2 = new Counter()
     var inc2 = c2.get_incrementor()
     var get2 = c2.get_getter()
 

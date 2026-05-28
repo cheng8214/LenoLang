@@ -182,7 +182,7 @@ func test_mock_manager() {
     print("===== 测试 Mock 进程管理器 =====")
     print("")
 
-    var mgr = MockProcessManager()
+    var mgr = new MockProcessManager()
     mgr.addMockProcess("notepad.exe")
     mgr.addMockProcess("chrome.exe")
     mgr.addMockProcess("explorer.exe")
@@ -232,7 +232,7 @@ func test_windows_manager() {
     print("===== 测试 Windows 进程管理器 =====")
     print("")
 
-    var mgr = WinProcessManager()
+    var mgr = new WinProcessManager()
 
     print("当前进程ID: " + mgr.getCurrentPid())
     print("")
@@ -278,8 +278,8 @@ func demo_polymorphism() {
     print("")
 
     // 使用 face 类型变量
-    ProcessManager mgr1 = MockProcessManager()
-    ProcessManager mgr2 = WinProcessManager()
+    ProcessManager mgr1 = new MockProcessManager()
+    ProcessManager mgr2 = new WinProcessManager()
 
     print("--- Mock 实现 ---")
     print("当前进程ID: " + mgr1.getCurrentPid())
@@ -293,7 +293,7 @@ func demo_polymorphism() {
 
     // 使用类型守卫
     print("--- 类型守卫测试 ---")
-    var mockMgr = MockProcessManager()
+    var mockMgr = new MockProcessManager()
     if mockMgr is MockProcessManager {
         print("mockMgr 是 MockProcessManager 类型")
     }

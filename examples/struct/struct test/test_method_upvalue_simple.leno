@@ -18,7 +18,7 @@ main()
     print("======== struct 方法 upvalue 测试 ========")
     print("")
     
-    Test t = Test(x = 8)
+    Test t = new Test(x = 8)
     var result = t.useGlobal()
     
     print($"结果: {result}, 期望: 50 (42 + 8)")

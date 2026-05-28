@@ -6,7 +6,7 @@ struct Point
 
 main()
 {
-    Point p1 = Point(x=10, y=20)
+    Point p1 = new Point(x=10, y=20)
     print(p1["x"])
     print(p1["y"])
 }

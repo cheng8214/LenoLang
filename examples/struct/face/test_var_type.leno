@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // 本测试验证：
-//   1. 可以用 face 类型声明变量：Speaker s = Dog()
+//   1. 可以用 face 类型声明变量：Speaker s = new Dog()
 //   2. 通过 face 类型变量调用方法，动态派发到实际 struct 的实现
 //   3. face 类型变量与 struct 实例的方法调用结果一致
 //
@@ -19,6 +19,6 @@ struct Dog impl Speaker {
 }
 
 main() {
-    Speaker s = Dog()
+    Speaker s = new Dog()
     print(s.speak())
 }

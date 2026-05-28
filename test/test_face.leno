@@ -20,16 +20,16 @@ struct Cat impl Animal {
 }
 
 // 测试基本 face 调用
-var dog = Dog()
-var cat = Cat()
+var dog = new Dog()
+var cat = new Cat()
 assert_eq(dog.speak(), "Woof")
 assert_eq(cat.speak(), "Meow")
 assert_eq(dog.name(), "Dog")
 assert_eq(cat.name(), "Cat")
 
 // 测试 face 类型变量多态
-Animal a1 = Dog()
-Animal a2 = Cat()
+Animal a1 = new Dog()
+Animal a2 = new Cat()
 assert_eq(a1.speak(), "Woof")
 assert_eq(a2.speak(), "Meow")
 
@@ -42,7 +42,7 @@ assert_eq(greet(dog), "Dog says Woof")
 assert_eq(greet(cat), "Cat says Meow")
 
 // 测试类型守卫
-var d = Dog()
+var d = new Dog()
 if d is Dog {
     print("d is Dog - OK")
 }
@@ -61,11 +61,11 @@ struct SimpleCalc impl Calculator {
     func multiply(int a, int b):int { return a * b }
 }
 
-var calc = SimpleCalc()
+var calc = new SimpleCalc()
 assert_eq(calc.add(3, 4), 7)
 assert_eq(calc.multiply(3, 4), 12)
 
-Calculator c = SimpleCalc()
+Calculator c = new SimpleCalc()
 assert_eq(c.add(10, 20), 30)
 assert_eq(c.multiply(10, 20), 200)
 

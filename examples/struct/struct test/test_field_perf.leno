@@ -34,7 +34,7 @@ struct BigStruct
 
 main()
 {
-    var obj = BigStruct(
+    var obj = new BigStruct(
         field0 = 0,
         field1 = 1,
         field2 = 2,

@@ -8,7 +8,7 @@ struct Test {
 }
 
 main() {
-    var t = Test()
+    var t = new Test()
     t.scores = [85, 90, 78]
     print(t.testLen())
 }

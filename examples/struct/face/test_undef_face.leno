@@ -19,6 +19,6 @@ struct Bad impl NonExist {
 }
 
 main() {
-    var b = Bad()
+    var b = new Bad()
     print(b.hello())
 }

@@ -52,7 +52,7 @@ main()
 {
     print("=== 测试 struct 嵌套闭包 ===")
 
-    var calc = Calculator()
+    var calc = new Calculator()
 
     print("\n测试闭包工厂:")
     var add5 = calc.create_adder(5)
@@ -78,7 +78,7 @@ main()
     print(ops["get_val"]())
 
     print("\n验证不同实例隔离:")
-    var calc2 = Calculator()
+    var calc2 = new Calculator()
     var ops2 = calc2.get_operations()
     ops2["add_fn"](100)
     print("calc2 的值:")

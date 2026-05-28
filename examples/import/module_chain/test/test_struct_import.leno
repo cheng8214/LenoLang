@@ -14,7 +14,7 @@ main()
     print(s1.b)
     
     // 直接创建结构体
-    var s2 = m.TestStruct(a = 100, b = 200)
+    var s2 = new m.TestStruct(a = 100, b = 200)
     print("s2.a = ")
     print(s2.a)
     print("s2.b = ")

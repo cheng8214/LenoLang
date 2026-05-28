@@ -21,7 +21,7 @@ struct Counter
 
 main()
 {
-    Counter c = Counter(value = 10)
+    Counter c = new Counter(value = 10)
     c.test()
     print($"结果: {c.getValue()}, 期望: 11")
 }

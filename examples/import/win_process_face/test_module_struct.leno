@@ -1,7 +1,7 @@
 // 测试模块中的 struct 前向引用（不使用 face）
 
 export func createPerson():Person {
-    return Person()
+    return new Person()
 }
 
 struct Person {

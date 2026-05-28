@@ -8,7 +8,7 @@ struct Point
 
 main()
 {
-    Point p1 = Point(x=10, y=20)
+    Point p1 = new Point(x=10, y=20)
     
     // 尝试调用 copy 方法
     print("尝试调用 p1.copy()...")

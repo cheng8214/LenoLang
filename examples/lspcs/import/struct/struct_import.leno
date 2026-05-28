@@ -16,6 +16,6 @@ export enum word
 
 export func testint():Point
 {
-    return Point()
+    return new Point()
 }
 export var name=100

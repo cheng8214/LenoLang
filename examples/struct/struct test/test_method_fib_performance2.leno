@@ -18,7 +18,7 @@ struct Point
 
 main()
 {
-    Point p1 = Point(x=10, y=20)
+    Point p1 = new Point(x=10, y=20)
      var t1=times.ms()
     var a=p1.fib(30)
     var t2=times.ms()

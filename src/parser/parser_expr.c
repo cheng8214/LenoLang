@@ -5,6 +5,7 @@
 // ============================================================================
 
 static Ast* parse_anon_func(Parser* p);
+static Ast* parse_new(Parser* p);
 
 // ============================================================================
 // Pratt 规则表 - 定义每个 token 的前缀/中缀解析器和优先级
@@ -69,6 +70,7 @@ static ParseRule rules[] = {
     [TOK_NULL]      = {parse_literal,  NULL,   PREC_NONE},
     [TOK_IF]        = {parse_if_expr,    NULL,   PREC_NONE},  // if 表达式
     [TOK_FUNC]      = {parse_anon_func,  NULL,   PREC_NONE},  // 匿名函数表达式
+    [TOK_NEW]       = {parse_new,        NULL,   PREC_NONE},  // new StructName() struct 实例化
     [TOK_EOF]       = {NULL,     NULL,   PREC_NONE},
     // 类型关键字 - 只在语句解析中使用，不在表达式解析中使用
     [TOK_INT_TYPE]       = {NULL,     NULL,   PREC_NONE},
@@ -548,40 +550,7 @@ Ast* parse_binary(Parser* p, Ast* left) {
     return ast;
 }
 
-// 辅助函数：检查是否是命名参数形式的调用 (x=10, y=20)
-static int is_named_param_call(Parser* p) {
-    Lexer saved = p->lex;
-    lexer_next(&p->lex); // 消费 '('
-    
-    int is_named = 0;
-    if (p->lex.current.type == TOK_IDENT) {
-        // 预读检查是否是命名参数形式
-        lexer_next(&p->lex);
-        if (p->lex.current.type == TOK_EQ) {
-            // 发现命名参数
-            is_named = 1;
-        }
-    }
-    // 恢复 lexer 状态
-    p->lex = saved;
-    return is_named;
-}
-
-// 辅助函数：从索引表达式提取结构体名称
-// 支持: Point (简单变量) 或 b.Point (模块访问)
-static char* extract_struct_name_from_callee(Ast* callee) {
-    if (callee->kind == AST_VAR) {
-        // 简单变量: Point
-        return strdup(callee->u.var.name);
-    } else if (callee->kind == AST_INDEX && 
-               callee->u.index.index->kind == AST_STRING) {
-        // 模块访问: b.Point
-        return strdup(callee->u.index.index->u.string.value);
-    }
-    return NULL;
-}
-
-// 解析函数调用表达式 func(arg1, arg2) 或 struct 构造函数调用 Point(x=1, y=2)
+// 解析函数调用表达式 func(arg1, arg2)
 Ast* parse_call(Parser* p, Ast* callee) {
     // 检查当前 token 是否是 '('
     if (p->lex.current.type != TOK_LPAREN) {
@@ -589,23 +558,6 @@ Ast* parse_call(Parser* p, Ast* callee) {
     }
 
     int line = p->lex.current.line;
-
-    // 检查是否是 struct 构造函数调用（命名参数形式）
-    // 支持: Point(x=10) 或 b.Point(x=10)
-    if (callee->kind == AST_VAR ||
-        (callee->kind == AST_INDEX && callee->u.index.index->kind == AST_STRING)) {
-
-        // 预读检查是否是命名参数（x=10）形式的调用
-        if (is_named_param_call(p)) {
-            // 提取结构体名称
-            char* struct_name = extract_struct_name_from_callee(callee);
-            if (struct_name) {
-                Ast* result = parse_struct_init(p, struct_name);
-                free(struct_name);
-                return result;
-            }
-        }
-    }
 
     // 普通函数调用
     Ast* ast = ast_new(AST_CALL, line);
@@ -635,22 +587,104 @@ Ast* parse_call(Parser* p, Ast* callee) {
     return ast;
 }
 
-// 解析 struct 构造函数调用 Point(x=1, y=2)
-Ast* parse_struct_init(Parser* p, const char* struct_name) {
+// 解析 new StructName() 或 new StructName(field=value, ...) 或 new module.StructName(...) struct 实例化
+Ast* parse_new(Parser* p) {
     int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'new'
+
+    // 期望 struct 名称（标识符）
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "new 后面期望 struct 名称");
+        return ast_new(AST_NULL, line);
+    }
+
+    char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex); // 消费 struct 名称
+
+    // 支持 new module.StructName(...) 语法
+    if (p->lex.current.type == TOK_DOT) {
+        lexer_next(&p->lex); // 消费 '.'
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "期望 struct 名称");
+            free(struct_name);
+            return ast_new(AST_NULL, line);
+        }
+        // struct_name 作为模块名，读取真正的 struct 名称
+        char* real_struct_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex); // 消费 struct 名称
+
+        // 期望 '('
+        if (!consume(p, TOK_LPAREN, "new 后面期望 '('")) {
+            free(struct_name);
+            free(real_struct_name);
+            return ast_new(AST_NULL, line);
+        }
+
+        // 创建 AST_STRUCT_INIT，struct_name 为 "module.StructName" 格式
+        Ast* ast = ast_new(AST_STRUCT_INIT, line);
+        // 拼接模块名和 struct 名
+        int full_name_len = strlen(struct_name) + 1 + strlen(real_struct_name) + 1;
+        char* full_name = (char*)malloc(full_name_len);
+        snprintf(full_name, full_name_len, "%s.%s", struct_name, real_struct_name);
+        ast->u.struct_init.struct_name = full_name;
+        free(struct_name);
+        free(real_struct_name);
+        ast->u.struct_init.field_names = NULL;
+        ast->u.struct_init.field_values = NULL;
+        ast->u.struct_init.field_count = 0;
+
+        int capacity = 8;
+        ast->u.struct_init.field_names = (char**)malloc(sizeof(char*) * capacity);
+        ast->u.struct_init.field_values = (Ast**)malloc(sizeof(Ast*) * capacity);
+
+        if (p->lex.current.type != TOK_RPAREN) {
+            do {
+                if (p->lex.current.type != TOK_IDENT) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "期望字段名");
+                    break;
+                }
+                char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
+                lexer_next(&p->lex);
+                if (!consume(p, TOK_EQ, "期望 '='")) {
+                    free(field_name);
+                    break;
+                }
+                Ast* field_value = parse_expression(p);
+                if (ast->u.struct_init.field_count >= capacity) {
+                    capacity *= 2;
+                    ast->u.struct_init.field_names = (char**)realloc(ast->u.struct_init.field_names,
+                                                                      sizeof(char*) * capacity);
+                    ast->u.struct_init.field_values = (Ast**)realloc(ast->u.struct_init.field_values,
+                                                                      sizeof(Ast*) * capacity);
+                }
+                ast->u.struct_init.field_names[ast->u.struct_init.field_count] = field_name;
+                ast->u.struct_init.field_values[ast->u.struct_init.field_count] = field_value;
+                ast->u.struct_init.field_count++;
+            } while (match(p, TOK_COMMA));
+        }
+
+        consume(p, TOK_RPAREN, "期望 ')'");
+        return ast;
+    }
+
+    // 普通 new StructName(...) 语法
+    // 期望 '('
+    if (!consume(p, TOK_LPAREN, "new 后面期望 '('")) {
+        free(struct_name);
+        return ast_new(AST_NULL, line);
+    }
+
+    // 复用 parse_struct_init 的逻辑：解析命名参数列表
     Ast* ast = ast_new(AST_STRUCT_INIT, line);
-    ast->u.struct_init.struct_name = strdup(struct_name);
+    ast->u.struct_init.struct_name = struct_name;
     ast->u.struct_init.field_names = NULL;
     ast->u.struct_init.field_values = NULL;
     ast->u.struct_init.field_count = 0;
-    
-    lexer_next(&p->lex); // 消费 '('
-    
-    // 动态数组存储字段
+
     int capacity = 8;
     ast->u.struct_init.field_names = (char**)malloc(sizeof(char*) * capacity);
     ast->u.struct_init.field_values = (Ast**)malloc(sizeof(Ast*) * capacity);
-    
+
     if (p->lex.current.type != TOK_RPAREN) {
         do {
             // 期望字段名
@@ -658,34 +692,34 @@ Ast* parse_struct_init(Parser* p, const char* struct_name) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "期望字段名");
                 break;
             }
-            
+
             char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
-            
+
             // 期望 '='
             if (!consume(p, TOK_EQ, "期望 '='")) {
                 free(field_name);
                 break;
             }
-            
+
             // 解析字段值
             Ast* field_value = parse_expression(p);
-            
+
             // 扩容检查
             if (ast->u.struct_init.field_count >= capacity) {
                 capacity *= 2;
-                ast->u.struct_init.field_names = (char**)realloc(ast->u.struct_init.field_names, 
+                ast->u.struct_init.field_names = (char**)realloc(ast->u.struct_init.field_names,
                                                                   sizeof(char*) * capacity);
-                ast->u.struct_init.field_values = (Ast**)realloc(ast->u.struct_init.field_values, 
+                ast->u.struct_init.field_values = (Ast**)realloc(ast->u.struct_init.field_values,
                                                                   sizeof(Ast*) * capacity);
             }
-            
+
             ast->u.struct_init.field_names[ast->u.struct_init.field_count] = field_name;
             ast->u.struct_init.field_values[ast->u.struct_init.field_count] = field_value;
             ast->u.struct_init.field_count++;
         } while (match(p, TOK_COMMA));
     }
-    
+
     consume(p, TOK_RPAREN, "期望 ')'");
     return ast;
 }
@@ -763,15 +797,6 @@ Ast* parse_dot(Parser* p, Ast* left) {
     if (p->lex.current.type == TOK_LPAREN) {
         // 方法调用：left.name(...)
         if (left->kind == AST_VAR) {
-            // 检查是否是命名参数形式的调用 (x=10, y=20) - 这是 struct 初始化
-            // 注意：Leno 函数调用不支持命名参数，所以这种形式一定是 struct 初始化
-            if (is_named_param_call(p)) {
-                // 命名参数形式，解析为 struct 初始化
-                Ast* result = parse_struct_init(p, name);
-                free(name);
-                return result;
-            }
-            
             // 变量方法调用：arr.add(...) 或 module.func(...)
             // 统一创建为 MODULE_CALL，由语义分析阶段确定具体类型
             Ast* ast = ast_new(AST_MODULE_CALL, line);

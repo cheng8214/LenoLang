@@ -18,7 +18,7 @@ struct Rock {
 }
 
 main() {
-    var r = Rock()
+    var r = new Rock()
     if r is Speaker {
         print("BUG: Rock is Speaker")
     } else {

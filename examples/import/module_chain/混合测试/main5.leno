@@ -3,14 +3,14 @@ import "test_c.leno" as c
 main()
 {
     // 测试命名参数创建
-    var p1 = c.Point3(x=10, y=20, z=30)
+    var p1 = new c.Point3(x=10, y=20, z=30)
     print("p1: x=" + p1.x + ", y=" + p1.y + ", z=" + p1.z)
 
     // 测试部分命名参数
-    var p2 = c.Point3(x=5, y=15)
+    var p2 = new c.Point3(x=5, y=15)
     print("p2: x=" + p2.x + ", y=" + p2.y + ", z=" + p2.z)
 
     // 测试无序命名参数
-    var p3 = c.Point3(z=100, x=50, y=75)
+    var p3 = new c.Point3(z=100, x=50, y=75)
     print("p3: x=" + p3.x + ", y=" + p3.y + ", z=" + p3.z)
 }

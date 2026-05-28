@@ -41,19 +41,19 @@ export struct Person {
 // 创建点的函数
 export func create_point(int x, int y)
 {
-    return Point(x = x, y = y)
+    return new Point(x = x, y = y)
 }
 
 // 创建矩形的函数
 export func create_rect(int x, int y, int w, int h)
 {
-    return Rectangle(x = x, y = y, width = w, height = h)
+    return new Rectangle(x = x, y = y, width = w, height = h)
 }
 
 // 创建人员的函数
 export func create_person(string name, int age)
 {
-    return Person(name = name, age = age)
+    return new Person(name = name, age = age)
 }
 
 // 计算矩形面积

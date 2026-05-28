@@ -7,7 +7,7 @@ import "../类型定义/types.leno" as ty
 // 创建圆形结构体（用 Rectangle 表示）
 export func create_circle(int radius)
 {
-    return ty.Rectangle(x = 0, y = 0, width = radius * 2, height = radius * 2)
+    return new ty.Rectangle(x = 0, y = 0, width = radius * 2, height = radius * 2)
 }
 
 // 计算圆形面积（使用 geometry 模块）
@@ -19,7 +19,7 @@ export func circle_area(int radius)
 // 创建矩形结构体
 export func create_rectangle(int x, int y, int w, int h)
 {
-    return ty.Rectangle(x = x, y = y, width = w, height = h)
+    return new ty.Rectangle(x = x, y = y, width = w, height = h)
 }
 
 // 计算矩形面积
@@ -37,7 +37,7 @@ export func total_area(var rect1, var rect2)
 // 创建带颜色的形状
 export func create_colored_rect(int x, int y, int w, int h, var color)
 {
-    var rect = ty.Rectangle(x = x, y = y, width = w, height = h)
+    var rect = new ty.Rectangle(x = x, y = y, width = w, height = h)
     return rect
 }
 

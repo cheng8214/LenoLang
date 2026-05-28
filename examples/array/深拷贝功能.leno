@@ -17,9 +17,9 @@ main()
     print("")
 
     // 创建嵌套结构体
-    Outer original = Outer(
+    Outer original = new Outer(
         id=1,
-        inner=Inner(value=100)
+        inner=new Inner(value=100)
     )
 
     print("原始对象:")

@@ -188,16 +188,23 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return result;
         }
         case AST_VAR: {
+            if (ast->cached_type) {
+                return type_copy(ast->cached_type);
+            }
             Symbol* sym = scope_resolve(s->current, ast->u.var.name);
             if (sym && sym->type) {
-                // 使用 type_copy 复制完整的类型信息（包括数组元素类型）
                 ast->cached_type = type_copy(sym->type);
                 return type_copy(sym->type);
             }
-            // 如果 scope_resolve 找不到变量（例如在代码生成阶段，s->current 指向全局作用域）
-            // 使用 AST 节点中保存的 type_kind
             if (ast->u.var.ref.type_kind != TYPE_ANY && ast->u.var.ref.type_kind != TYPE_INFER) {
                 ast->cached_type = type_new(ast->u.var.ref.type_kind);
+                if (ast->u.var.ref.struct_name &&
+                    (ast->u.var.ref.type_kind == TYPE_STRUCT ||
+                     ast->u.var.ref.type_kind == TYPE_FACE ||
+                     ast->u.var.ref.type_kind == TYPE_CSTRUCT ||
+                     ast->u.var.ref.type_kind == TYPE_ENUM)) {
+                    ast->cached_type->struct_name = strdup(ast->u.var.ref.struct_name);
+                }
             } else {
                 ast->cached_type = type_new(TYPE_ANY);
             }
@@ -677,7 +684,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     return type;
                 }
 
-                // 检查是否是 struct 初始化（如 module.Point()）
+                // 检查是否是 struct 初始化（如 new module.Point()）
                 ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(module_info->sym_table, method_name);
                 if (struct_sym) {
                     TypeInfo* type = type_new(TYPE_STRUCT);
@@ -918,7 +925,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         case AST_STRUCT_INIT: {
             // struct 构造函数调用返回对应的 struct 类型
             TypeInfo* struct_type = type_new(TYPE_STRUCT);
-            struct_type->struct_name = strdup(ast->u.struct_init.struct_name);
+            // 处理模块限定的 struct 名称（如 "math.Point"），提取实际的 struct 名称
+            const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
+            struct_type->struct_name = strdup(dot_pos ? dot_pos + 1 : ast->u.struct_init.struct_name);
             result = struct_type;
             break;
         }

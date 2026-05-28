@@ -107,6 +107,7 @@ static void init_keyword_table(void) {
         {"enum", TOK_ENUM},
         {"face", TOK_FACE},
         {"impl", TOK_IMPL},
+        {"new", TOK_NEW},
         {"int", TOK_INT_TYPE},
         {"float", TOK_FLOAT_TYPE},
         {"string", TOK_STRING_TYPE},

@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "../semantic/semantic_internal.h"
 
 static void gen_binary(CodeGen* gen, Ast* ast);
 static void gen_unary(CodeGen* gen, Ast* ast);
@@ -520,8 +521,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                     expected_args = native_arity;  // 不包含 self，因为 BoundMethod 已经包含 receiver
                     required_args = expected_args;
                 } else {
-                    // 未知方法，尝试从 struct 定义推断参数数量
-                    expected_args = provided_args + 1;
+                    expected_args = provided_args + (obj_ast->kind == AST_VAR ? 0 : 1);
                     required_args = expected_args;
                 }
             }
@@ -865,12 +865,10 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             break;
         }
         case AST_INDEX_ASSIGN: {
-            // 检查 obj 是否是 struct 类型
             Ast* obj = ast->u.index_assign.obj;
             Ast* index = ast->u.index_assign.index;
             Ast* value = ast->u.index_assign.value;
             
-            // 如果 obj 是 struct 类型且 index 是字符串字段名，使用 OP_SET_FIELD
             if (obj->cached_type && obj->cached_type->kind == TYPE_STRUCT &&
                 index->kind == AST_STRING) {
                 // OP_SET_FIELD 期望栈: [obj, value] (value 在栈顶，先被pop)
@@ -1055,16 +1053,45 @@ void gen_expr(CodeGen* gen, Ast* ast) {
         }
         case AST_STRUCT_INIT: {
             // 生成结构体构造函数调用
-            // 将结构体名称作为常量
-            ObjString* struct_name = str_copy(ast->u.struct_init.struct_name, 
-                                              strlen(ast->u.struct_init.struct_name));
+            // 处理模块限定的 struct 名称（如 "math.Point"），提取实际的 struct 名称
+            const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
+            const char* actual_struct_name = dot_pos ? dot_pos + 1 : ast->u.struct_init.struct_name;
+
+            ObjString* struct_name = str_copy(actual_struct_name,
+                                              strlen(actual_struct_name));
             int name_const = make_constant(gen, val_obj((Object*)struct_name));
             
             // 编译期从符号表查找 struct 定义和字段索引
-            // 注意：不能使用 struct_def_find，因为它查找的是运行时表
-            Symbol* struct_sym = scope_resolve(gen->sem->root_scope, ast->u.struct_init.struct_name);
+            Symbol* struct_sym = scope_resolve(gen->sem->root_scope, actual_struct_name);
             if (!struct_sym) {
-                struct_sym = scope_resolve(gen->sem->current, ast->u.struct_init.struct_name);
+                struct_sym = scope_resolve(gen->sem->current, actual_struct_name);
+            }
+
+            // 模块限定的 struct：从导入模块的符号表中获取字段信息
+            if (!struct_sym && dot_pos) {
+                int mod_name_len = dot_pos - ast->u.struct_init.struct_name;
+                char* module_name = (char*)malloc(mod_name_len + 1);
+                memcpy(module_name, ast->u.struct_init.struct_name, mod_name_len);
+                module_name[mod_name_len] = '\0';
+
+                ImportedModuleInfo* module_info = find_imported_module(gen->sem, module_name);
+                if (module_info && module_info->sym_table) {
+                    ModuleStructSymbol* mod_struct = module_symbol_table_find_struct(module_info->sym_table, actual_struct_name);
+                    if (mod_struct) {
+                        struct_sym = (Symbol*)calloc(1, sizeof(Symbol));
+                        struct_sym->name = strdup(actual_struct_name);
+                        struct_sym->type = type_new(TYPE_STRUCT);
+                        struct_sym->type->struct_name = strdup(actual_struct_name);
+                        struct_sym->struct_field_count = mod_struct->field_count;
+                        if (mod_struct->field_count > 0) {
+                            struct_sym->struct_field_names = (char**)malloc(sizeof(char*) * mod_struct->field_count);
+                            for (int fi = 0; fi < mod_struct->field_count; fi++) {
+                                struct_sym->struct_field_names[fi] = strdup(mod_struct->fields[fi].name);
+                            }
+                        }
+                    }
+                }
+                free(module_name);
             }
             
             // 编译期检查参数数量是否超过字段数量

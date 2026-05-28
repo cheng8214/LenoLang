@@ -35,14 +35,14 @@ export struct Circle impl Shape {
 
 // 工厂函数
 export func createRectangle(float w, float h):Rectangle {
-    var rect = Rectangle()
+    var rect = new Rectangle()
     rect.width = w
     rect.height = h
     return rect
 }
 
 export func createCircle(float r):Circle {
-    var circle = Circle()
+    var circle = new Circle()
     circle.radius = r
     return circle
 }

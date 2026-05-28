@@ -7,5 +7,5 @@ export struct TestStruct {
 
 export func create_test(int x, int y)
 {
-    return TestStruct(a = x, b = y)
+    return new TestStruct(a = x, b = y)
 }

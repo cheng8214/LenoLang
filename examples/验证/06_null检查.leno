@@ -5,7 +5,7 @@ struct Container {
 }
 
 main() {
-    var c = Container()
+    var c = new Container()
     
     // 获取 null 本身（不应警告）
     var d = c.data

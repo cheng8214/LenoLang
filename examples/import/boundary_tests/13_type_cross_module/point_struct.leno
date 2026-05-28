@@ -13,7 +13,7 @@ export struct Rectangle {
 
 // 导出创建 Point 的工厂函数
 export func create_point(int x, int y) {
-    return Point(x = x, y = y)
+    return new Point(x = x, y = y)
 }
 
 // 导出计算两点距离的功能
@@ -25,7 +25,7 @@ export func distance(Point p1, Point p2) {
 
 // 导出创建矩形的工厂函数
 export func create_rectangle(Point tl, Point br) {
-    return Rectangle(top_left = tl, bottom_right = br)
+    return new Rectangle(top_left = tl, bottom_right = br)
 }
 
 // 导出计算矩形面积的功能

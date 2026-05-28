@@ -12,9 +12,9 @@ main()
     print("测试 struct 正常使用")
     
     // 创建多个实例
-    Config c1 = Config(version = 1, name = "config1")
-    Config c2 = Config(version = 2, name = "config2")
-    Config c3 = Config(version = 3, name = "config3")
+    Config c1 = new Config(version = 1, name = "config1")
+    Config c2 = new Config(version = 2, name = "config2")
+    Config c3 = new Config(version = 3, name = "config3")
     
     print($"c1: version={c1.version}, name={c1.name}")
     print($"c2: version={c2.version}, name={c2.name}")

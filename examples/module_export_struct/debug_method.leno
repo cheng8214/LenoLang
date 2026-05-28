@@ -15,7 +15,7 @@ main()
 {
     print("调试 struct 方法")
     
-    var p1 = Point()
+    var p1 = new Point()
     p1.x = 10
     p1.y = 20
     

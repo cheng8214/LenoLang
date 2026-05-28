@@ -23,6 +23,6 @@ func make_sound(Speaker s) {
 }
 
 main() {
-    var d = Dog()
+    var d = new Dog()
     make_sound(d)
 }

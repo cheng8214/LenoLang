@@ -60,7 +60,7 @@ main() {
     
     // 测试 StandardProcessManager
     print("【测试 StandardProcessManager】")
-    var stdManager = pm.StandardProcessManager()
+    var stdManager = new pm.StandardProcessManager()
     printProcessList(stdManager)
     print("")
     
@@ -72,7 +72,7 @@ main() {
     
     // 测试 SafeProcessManager
     print("【测试 SafeProcessManager】")
-    var safeManager = pm.SafeProcessManager()
+    var safeManager = new pm.SafeProcessManager()
     printProcessList(safeManager)
     print("")
     

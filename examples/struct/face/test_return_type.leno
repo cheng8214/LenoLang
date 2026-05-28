@@ -19,7 +19,7 @@ struct Counter impl Number {
 }
 
 main() {
-    var c = Counter()
+    var c = new Counter()
     c.n = 42
     var result = c.value()
     print(result)

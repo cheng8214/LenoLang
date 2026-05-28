@@ -25,9 +25,9 @@ struct Cat impl Speaker {
 }
 
 main() {
-    Speaker s = Dog()
+    Speaker s = new Dog()
     print(s.speak())
 
-    s = Cat()
+    s = new Cat()
     print(s.speak())
 }

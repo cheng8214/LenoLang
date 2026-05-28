@@ -12,7 +12,7 @@ struct LinkedList
     // 添加元素到链表头部（更简单，不需要遍历）
     func add_head(int value)
     {
-        var new_node = Node()
+        var new_node = new Node()
         new_node.value = value
         new_node.next = head
         head = new_node
@@ -57,7 +57,7 @@ main()
 {
     print("=== LinkedList 面向对象版本 ===\n")
 
-    LinkedList list = LinkedList()
+    LinkedList list = new LinkedList()
 
     // 添加元素
     print("添加元素: 10, 20, 30, 40, 50\n")

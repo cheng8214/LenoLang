@@ -15,7 +15,7 @@ struct Rect {
 }
 
 main() {
-    var r = Rect()
+    var r = new Rect()
     print(r)
     
     r.position.x = 10

@@ -1102,25 +1102,25 @@ struct Rectangle {
 
 ```leno
 // 命名参数创建（推荐）
-var p1 = Point(x = 10, y = 20)
-var rect = Rectangle(x = 0, y = 0, width = 100, height = 50)
+var p1 = new Point(x = 10, y = 20)
+var rect = new Rectangle(x = 0, y = 0, width = 100, height = 50)
 
 // 空参数创建（字段使用默认值）
-var p2 = Point()        // x = null, y = null
-var rect2 = Rectangle() // x = 0, y = 0, width = null, height = null
+var p2 = new Point()        // x = null, y = null
+var rect2 = new Rectangle() // x = 0, y = 0, width = null, height = null
 ```
 
 > **⚠️ 注意：struct 创建必须使用命名参数形式**
 >
 > ```leno
-> var p = Point(10, 20)      // ❌ 错误：必须使用 Point(x = 10, y = 20)
-> var p = Point(x = 10, y = 20)  // ✅ 正确
+> var p = new Point(10, 20)      // ❌ 错误：必须使用 new Point(x = 10, y = 20)
+> var p = new Point(x = 10, y = 20)  // ✅ 正确
 > ```
 
 ### 访问和修改字段
 
 ```leno
-var p = Point(x = 10, y = 20)
+var p = new Point(x = 10, y = 20)
 
 // 访问字段
 print(p.x)      // 10
@@ -1166,8 +1166,8 @@ struct Point {
 }
 
 // 使用方法
-var p1 = Point(x = 0, y = 0)
-var p2 = Point(x = 3, y = 4)
+var p1 = new Point(x = 0, y = 0)
+var p2 = new Point(x = 3, y = 4)
 
 p1.print_coord()                    // Point(0, 0)
 print(p1.distance_to_origin())      // 0.0
@@ -1198,7 +1198,7 @@ struct Counter {
     }
 }
 
-var c = Counter()
+var c = new Counter()
 c.increment()
 c.increment()
 print(c.get_count())    // 2
@@ -1218,9 +1218,9 @@ struct 实例添加到数组后，保留完整类型信息：
 ```leno
 // 创建 Point 数组
 var points = []
-points.add(Point(x = 0, y = 0))
-points.add(Point(x = 3, y = 4))
-points.add(Point(x = 6, y = 8))
+points.add(new Point(x = 0, y = 0))
+points.add(new Point(x = 3, y = 4))
+points.add(new Point(x = 6, y = 8))
 
 // 使用 Array[Point] 类型守卫
 func process_points(var points) {
@@ -1254,7 +1254,7 @@ struct LinkedList {
     
     // 添加元素到尾部
     func add(int value) {
-        var new_node = Node()
+        var new_node = new Node()
         new_node.value = value
         
         if head == null {
@@ -1289,7 +1289,7 @@ struct Node {
 }
 
 // 使用
-var list = LinkedList()
+var list = new LinkedList()
 list.add(10)
 list.add(20)
 list.add(30)
@@ -1310,10 +1310,10 @@ struct Person {
     Address addr    // 嵌套结构体
 }
 
-var p = Person(
+var p = new Person(
     name = "张三",
     age = 25,
-    addr = Address(city = "北京", street = "朝阳路")
+    addr = new Address(city = "北京", street = "朝阳路")
 )
 
 print(p.name)           // 张三
@@ -2705,7 +2705,7 @@ lenolang program.leno
 | 功能       | 语法                                |
 | -------- | --------------------------------- |
 | 定义结构体    | `struct Point { int x, int y }`   |
-| 创建实例     | `Point(x=10, y=20)`               |
+| 创建实例     | `new Point(x=10, y=20)`              |
 | 访问字段     | `p.x`, `p.y`                      |
 | 定义方法     | `func method():type { }`          |
 | self 关键字 | `self.field`, `self.method()`     |

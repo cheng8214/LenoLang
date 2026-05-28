@@ -19,9 +19,9 @@ main()
     print("")
 
     // 创建嵌套结构体
-    Outer original = Outer(
+    Outer original = new Outer(
         id=1,
-        inner=Inner(value=100, items=[1, 2, 3]),
+        inner=new Inner(value=100, items=[1, 2, 3]),
         data=[10, 20, 30]
     )
 

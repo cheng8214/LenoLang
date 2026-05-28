@@ -10,7 +10,7 @@ struct Test {
 }
 
 main() {
-    var t = Test()
+    var t = new Test()
     t.scores = [1, 2, 3]
     t.getLen()
 }

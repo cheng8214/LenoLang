@@ -22,9 +22,9 @@ func print_shape(Shape s) {
 }
 
 main() {
-    var c = Circle()
+    var c = new Circle()
     c.radius = 5.0
-    var r = Rect()
+    var r = new Rect()
     r.w = 3.0
     r.h = 4.0
 

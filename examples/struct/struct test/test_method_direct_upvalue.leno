@@ -38,7 +38,7 @@ func createStructWithCapture()
         }
     }
     
-    return LocalStruct(data = 5)
+    return new LocalStruct(data = 5)
 }
 
 main()
@@ -48,7 +48,7 @@ main()
     
     // 测试1: 使用全局变量
     print("--- 测试1: 方法使用全局变量 ---")
-    TestStruct t = TestStruct(value = 10)
+    TestStruct t = new TestStruct(value = 10)
     
     var r1 = t.useGlobal()
     print($"第一次调用: {r1}, 期望: 1")

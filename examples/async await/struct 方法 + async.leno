@@ -11,9 +11,9 @@ struct Timer {
 }
 
 main() {
-    var t1 = Timer()
+    var t1 = new Timer()
     t1.delay = 200
-    var t2 = Timer()
+    var t2 = new Timer()
     t2.delay = 100
 
     t1.wait()

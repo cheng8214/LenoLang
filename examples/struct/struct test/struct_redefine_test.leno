@@ -26,7 +26,7 @@ main()
 {
     print("测试 struct 重新定义")
     
-    Config c = Config()
+    Config c = new Config()
     
     print($"version: {c.version}, 期望: 3")
     

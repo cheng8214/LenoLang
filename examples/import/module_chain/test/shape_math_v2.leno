@@ -12,7 +12,7 @@ export func circle_area(var radius)
 // 创建矩形结构体
 export func create_rectangle(int x, int y, int w, int h)
 {
-    return ty.Rectangle(x = x, y = y, width = w, height = h)
+    return new ty.Rectangle(x = x, y = y, width = w, height = h)
 }
 
 // 计算矩形面积

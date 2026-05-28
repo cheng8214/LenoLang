@@ -7,8 +7,8 @@ struct Point
 }
 main()
 {
-	var b=Point(y=100)
-	Point p1 = Point(x=1.0, y=2.0)
+	var b=new Point(y=100)
+	Point p1 = new Point(x=1.0, y=2.0)
 	Point p2 = p1.copy()        //  可以 p1.copy()拷贝一个
 	p2.x = 99.0
 	print(p1.x)

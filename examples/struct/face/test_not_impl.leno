@@ -29,9 +29,9 @@ func make_sound(Speaker s) {
 }
 
 main() {
-    var dog = Dog()
+    var dog = new Dog()
     make_sound(dog)
 
-    var fish = Fish()
+    var fish = new Fish()
     make_sound(fish)
 }

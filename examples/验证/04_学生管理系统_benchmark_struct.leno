@@ -10,7 +10,7 @@ struct Class {
     Array[Student] students = []
     
     func addStudent(int age, int score) {
-        var s = Student()
+        var s = new Student()
         s.age = age
         s.score = score
         students.add(s)
@@ -45,7 +45,7 @@ main() {
     var start = times.ms()
     
     // 创建班级
-    var mathClass = Class()
+    var mathClass = new Class()
     
     // 创建 10000 个学生
     for 0:10000 to i {

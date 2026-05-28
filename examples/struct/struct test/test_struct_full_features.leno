@@ -7,10 +7,10 @@ struct Point {
 
 main() {
     // 使用命名参数创建实例
-    var a = Point(x=10, y=20.0)
+    var a = new Point(x=10, y=20.0)
     
     // 使用默认值创建实例
-    Point b = Point()
+    Point b = new Point()
     
     print(a)
     print(b)

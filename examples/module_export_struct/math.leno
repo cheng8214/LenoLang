@@ -12,7 +12,7 @@ export struct Point
 
 export func create_point(int x, int y): Point
 {
-    return Point(x = x, y = y)
+    return new Point(x = x, y = y)
 }
 
 export func distance(Point p1, Point p2): int
@@ -31,5 +31,5 @@ export func csmath(Point p1, Point p2): int
 
 export func get():Point
 {
-	return Point(x=1,y=2)
+	return new Point(x=1,y=2)
 }

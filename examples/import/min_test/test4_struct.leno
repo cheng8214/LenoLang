@@ -1,4 +1,4 @@
 import "mod_struct.leno" as m
 use m.Point
-var p = m.Point(x = 10, y = 20)
+var p = new m.Point(x = 10, y = 20)
 print("Point: " + p.show())

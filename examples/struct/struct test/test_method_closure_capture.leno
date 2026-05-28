@@ -70,7 +70,7 @@ main()
     
     // 测试1: Counter 创建 incrementor
     print("--- 测试1: Counter 闭包 ---")
-    Counter c = Counter(value = 0)
+    Counter c = new Counter(value = 0)
     var inc = c.createIncrementor(5)
     
     print("第一次调用 inc():")
@@ -97,7 +97,7 @@ main()
     
     // 测试2: Container 捕获外部变量
     print("--- 测试2: Container 捕获外部变量 ---")
-    Container cont = Container(data = 7)
+    Container cont = new Container(data = 7)
     var result2 = cont.process()
     print($"结果: {result2}, 期望: 70 (7 * 10)")
     
@@ -113,7 +113,7 @@ main()
     
     // 测试3: Calculator 嵌套闭包
     print("--- 测试3: Calculator 嵌套闭包 ---")
-    Calculator calc = Calculator(base = 3)
+    Calculator calc = new Calculator(base = 3)
     var result3 = calc.compute(4)
     print($"结果: {result3}, 期望: 14 ((3+4) * 2)")
     
@@ -129,8 +129,8 @@ main()
     
     // 测试4: 多个实例独立
     print("--- 测试4: 多个实例独立 ---")
-    Counter c1 = Counter(value = 100)
-    Counter c2 = Counter(value = 200)
+    Counter c1 = new Counter(value = 100)
+    Counter c2 = new Counter(value = 200)
     
     var inc1 = c1.createIncrementor(1)
     var inc2 = c2.createIncrementor(2)

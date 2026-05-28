@@ -13,7 +13,7 @@ struct LinkedList
 // ✅ 正确的添加：追加到链表尾部
 func list_add(LinkedList list, int value)
 {
-    var new_node = Node()
+    var new_node = new Node()
     new_node.value = value
     
     if (list.head == null)
@@ -37,7 +37,7 @@ func list_add(LinkedList list, int value)
 // ✅ 或者：头插法（新节点插在最前面）
 func list_add_head(LinkedList list, int value)
 {
-    var new_node = Node()
+    var new_node = new Node()
     new_node.value = value
     new_node.next = list.head   // 新节点指向原来的 head
     list.head = new_node        // head 指向新节点
@@ -47,7 +47,7 @@ func list_add_head(LinkedList list, int value)
 main()
 {
     print("=== 尾插法 ===")
-    var list1 = LinkedList()
+    var list1 = new LinkedList()
     for 5 to i
     {
         list_add(list1, 100 + i)  // 添加 100, 101, 102, 103, 104
@@ -66,7 +66,7 @@ main()
     print(list1.count)
     
     print("\n=== 头插法 ===")
-    var list2 = LinkedList()
+    var list2 = new LinkedList()
     for 5 to i
     {
         list_add_head(list2, 100 + i)  // 添加 100, 101, 102, 103, 104

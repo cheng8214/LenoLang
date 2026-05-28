@@ -8,7 +8,7 @@ export face ProcessManager {
 }
 
 export func createMockManager():ProcessManager {
-    return MockManager()
+    return new MockManager()
 }
 
 struct MockManager impl ProcessManager {

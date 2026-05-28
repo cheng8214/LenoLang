@@ -15,7 +15,7 @@ func createStructWithCapture()
         }
     }
     
-    return LocalStruct(data = 5)
+    return new LocalStruct(data = 5)
 }
 
 main()

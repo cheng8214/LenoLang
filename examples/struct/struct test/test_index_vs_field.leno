@@ -10,7 +10,7 @@ struct Point
 
 main()
 {
-    var p = Point(x=10, y=20)
+    var p = new Point(x=10, y=20)
     
     // 测试字段访问（优化后）
     var t1 = times.ms()

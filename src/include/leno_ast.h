@@ -79,6 +79,7 @@ typedef struct {
     int index;
     char* name;
     TypeKind type_kind;
+    char* struct_name;
 } SymRef;
 
 // ============================================================================

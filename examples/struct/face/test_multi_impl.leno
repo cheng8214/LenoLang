@@ -35,7 +35,7 @@ func save_it(Serializable s) {
 }
 
 main() {
-    var r = Record()
+    var r = new Record()
     r.data = "hello"
     print_it(r)
     save_it(r)
