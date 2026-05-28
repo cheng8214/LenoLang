@@ -1,0 +1,19 @@
+# 忽略 docs 文件夹
+docs/
+
+# 构建输出
+build/
+*.exe
+*.o
+*.obj
+
+# IDE
+.vscode/
+.idea/
+*.sln
+*.vcxproj
+
+# 临时文件
+*.tmp
+*.temp
+*.log
