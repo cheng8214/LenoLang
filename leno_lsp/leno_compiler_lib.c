@@ -107,14 +107,11 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
 bool compiler_get_symbol_info(CompilerContext* ctx, const char* name, 
                                char** type_str_out, bool* is_global_out) {
     if (!ctx || !name || !ctx->root_scope) {
-        fprintf(stderr, "[COMPILER DEBUG] get_symbol_info: invalid params ctx=%p name=%s root_scope=%p\n", 
-                (void*)ctx, name ? name : "(null)", (void*)(ctx ? ctx->root_scope : NULL));
         return false;
     }
     
     // 在作用域树中查找符号（使用 BFS 遍历所有嵌套作用域）
     Symbol* sym = scope_resolve_tree_bfs(ctx->root_scope, name);
-    fprintf(stderr, "[COMPILER DEBUG] scope_resolve_tree_bfs returned: %p for name '%s'\n", (void*)sym, name);
     if (!sym) return false;
     
     if (type_str_out) {

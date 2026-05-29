@@ -21,6 +21,7 @@ typedef enum {
     OP_DUP,
     OP_GET_LOCAL,
     OP_SET_LOCAL,
+    OP_SET_LOCAL_POP,   // 设置局部变量并弹出栈顶（合并 OP_SET_LOCAL + OP_POP）
     OP_GET_GLOBAL,
     OP_SET_GLOBAL,
     OP_GET_UPVALUE,

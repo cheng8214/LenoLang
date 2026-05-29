@@ -3,16 +3,17 @@
 // ============================================================================
 
 OPCODE(OP_GET_LOCAL) {
+    frame = &vm.frames[vm.frame_cnt - 1];
     uint16_t slot = READ_SHORT();
     if (frame->locals != NULL) {
         if (slot < frame->local_count) {
-            vm_stack_push_fast(&vm, frame->locals[slot]);
+            vm_stack_push(&vm, frame->locals[slot]);
         } else {
             runtime_error("局部变量索引越界", GET_CURRENT_LINE());
             return -1;
         }
     } else {
-        vm_stack_push_fast(&vm, vm.stack[frame->stack_base + slot]);
+        vm_stack_push(&vm, vm.stack[frame->stack_base + slot]);
     }
     DISPATCH;
 }
@@ -28,6 +29,21 @@ OPCODE(OP_SET_LOCAL) {
         }
     } else {
         vm.stack[frame->stack_base + slot] = vm_stack_peek(&vm, 0);
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_SET_LOCAL_POP) {
+    uint16_t slot = READ_SHORT();
+    if (frame->locals != NULL) {
+        if (slot < frame->local_count) {
+            frame->locals[slot] = vm_stack_pop(&vm);
+        } else {
+            runtime_error("局部变量索引越界", GET_CURRENT_LINE());
+            return -1;
+        }
+    } else {
+        vm.stack[frame->stack_base + slot] = vm_stack_pop(&vm);
     }
     DISPATCH;
 }

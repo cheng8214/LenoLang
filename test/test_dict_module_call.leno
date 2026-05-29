@@ -1,0 +1,191 @@
+// 测试字典字面量中调用跨模块函数的修复
+// 修复问题: 在字典字面量中直接调用跨模块函数会导致运行时错误
+
+import "../examples/import/boundary_tests/13_type_cross_module/point_struct.leno" as ps
+
+// 辅助函数：创建点
+func create_test_point(var x, var y) {
+    return ps.create_point(x, y)
+}
+
+// 测试1: 基本跨模块函数调用在字典中
+func test_basic_module_call() {
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    
+    var result = {
+        "start": p1,
+        "end": p2,
+        "length": ps.distance(p1, p2)
+    }
+    
+    assert(result["length"] == 25, "基本跨模块函数调用失败")
+    print("✓ test_basic_module_call passed")
+}
+
+// 测试2: 多个跨模块函数调用在同一个字典中
+func test_multiple_module_calls() {
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    var p3 = ps.create_point(6, 8)
+    
+    var result = {
+        "dist1": ps.distance(p1, p2),
+        "dist2": ps.distance(p2, p3),
+        "dist3": ps.distance(p1, p3)
+    }
+    
+    assert(result["dist1"] == 25, "dist1 计算错误")
+    assert(result["dist2"] == 25, "dist2 计算错误")
+    assert(result["dist3"] == 100, "dist3 计算错误")
+    print("✓ test_multiple_module_calls passed")
+}
+
+// 测试3: 函数调用作为第一个值
+func test_call_as_first_value() {
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    
+    var result = {
+        "length": ps.distance(p1, p2),
+        "start": p1,
+        "end": p2
+    }
+    
+    assert(result["length"] == 25, "函数调用作为第一个值失败")
+    print("✓ test_call_as_first_value passed")
+}
+
+// 测试4: 函数调用作为最后一个值
+func test_call_as_last_value() {
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    
+    var result = {
+        "start": p1,
+        "end": p2,
+        "length": ps.distance(p1, p2)
+    }
+    
+    assert(result["length"] == 25, "函数调用作为最后一个值失败")
+    print("✓ test_call_as_last_value passed")
+}
+
+// 测试5: 嵌套字典中的跨模块函数调用
+func test_nested_dict_with_call() {
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    
+    var result = {
+        "points": {
+            "start": p1,
+            "end": p2
+        },
+        "meta": {
+            "distance": ps.distance(p1, p2),
+            "name": "line segment"
+        }
+    }
+    
+    assert(result["meta"]["distance"] == 25, "嵌套字典中的函数调用失败")
+    print("✓ test_nested_dict_with_call passed")
+}
+
+// 测试6: 单条目字典（不应触发临时变量逻辑）
+func test_single_entry_dict() {
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    
+    var result = {
+        "length": ps.distance(p1, p2)
+    }
+    
+    assert(result["length"] == 25, "单条目字典失败")
+    print("✓ test_single_entry_dict passed")
+}
+
+// 测试7: 无函数调用的字典（不应受影响）
+func test_dict_without_call() {
+    var p1 = ps.create_point(1, 2)
+    var p2 = ps.create_point(3, 4)
+    
+    var result = {
+        "start": p1,
+        "end": p2,
+        "name": "test"
+    }
+    
+    assert(result["start"]["x"] == 1, "无函数调用的字典失败")
+    assert(result["end"]["y"] == 4, "无函数调用的字典失败")
+    print("✓ test_dict_without_call passed")
+}
+
+// 测试8: 数组中的字典包含跨模块函数调用
+func test_array_with_dict_call() {
+    var p1 = ps.create_point(0, 0)
+    var p2 = ps.create_point(3, 4)
+    
+    var arr = [
+        {"name": "first", "dist": ps.distance(p1, p2)},
+        {"name": "second", "dist": ps.distance(p2, p1)}
+    ]
+    
+    assert(arr[0]["dist"] == 25, "数组中的字典函数调用失败")
+    assert(arr[1]["dist"] == 25, "数组中的字典函数调用失败")
+    print("✓ test_array_with_dict_call passed")
+}
+
+// 测试9: 混合本地函数和跨模块函数调用
+func local_multiply(var a, var b) {
+    return a * b
+}
+
+func test_mixed_local_and_module_calls() {
+    var p1 = ps.create_point(2, 3)
+    var p2 = ps.create_point(5, 7)
+    
+    var result = {
+        "product": local_multiply(p1["x"], p2["x"]),
+        "distance": ps.distance(p1, p2)
+    }
+    
+    assert(result["product"] == 10, "本地函数调用失败")
+    assert(result["distance"] == 25, "跨模块函数调用失败")
+    print("✓ test_mixed_local_and_module_calls passed")
+}
+
+// 测试10: 跨模块函数调用创建结构体作为字典值
+func test_module_call_creates_struct() {
+    var p1 = ps.create_point(10, 20)
+    var p2 = ps.create_point(30, 40)
+    
+    var result = {
+        "point1": ps.create_point(1, 2),
+        "point2": ps.create_point(3, 4),
+        "distance": ps.distance(p1, p2)
+    }
+    
+    assert(result["point1"]["x"] == 1, "创建结构体作为字典值失败")
+    assert(result["point2"]["y"] == 4, "创建结构体作为字典值失败")
+    assert(result["distance"] == 800, "距离计算错误")
+    print("✓ test_module_call_creates_struct passed")
+}
+
+main() {
+    print("Running dict module call tests...")
+    print("")
+    
+    test_basic_module_call()
+    test_multiple_module_calls()
+    test_call_as_first_value()
+    test_call_as_last_value()
+    test_nested_dict_with_call()
+    test_single_entry_dict()
+    test_dict_without_call()
+    test_array_with_dict_call()
+    test_mixed_local_and_module_calls()
+    test_module_call_creates_struct()
+    
+    print("")
+    print("All dict module call tests passed!")
+}

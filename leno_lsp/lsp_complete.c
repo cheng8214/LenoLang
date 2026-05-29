@@ -20,9 +20,11 @@ static const char* leno_keywords[] = {
     "switch", "case", "default",
     "return",
     // 声明
-    "var", "func", "struct", "enum",
+    "var", "func", "struct", "cstruct", "enum", "face", "impl",
+    // 实例化
+    "new",
     // 模块
-    "import", "export", "as",
+    "import", "export", "as", "use",
     // 逻辑
     "and", "or", "not", "is", "in",
     // 异常
@@ -37,7 +39,20 @@ static const char* leno_keywords[] = {
 // LenoC 内置类型
 static const char* leno_types[] = {
     "int", "float", "string", "bool",
-    "Array", "Dict", "File", "Ptr", "any",
+    "Array", "Dict", "File", "Ptr", "any", "face",
+    "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
+    "c_int", "c_uint", "c_long", "c_ulong", "c_longlong", "c_ulonglong", "c_size", "c_ssize",
+    "bigint", "str16", "Thread", "Channel",
+    NULL
+};
+
+static const char* cstruct_instance_methods[] = {
+    "free", "to_ptr", "to_str", "size", "alignment", "debug", "hex", "free_all",
+    NULL
+};
+
+static const char* cstruct_static_methods[] = {
+    "malloc", "from_ptr", "malloc_array",
     NULL
 };
 
@@ -188,30 +203,21 @@ static void add_completion_item(LspCompletionItem** items, int* count, int* capa
 // enum_name: enum 名称（如 "Color"）
 static void add_current_file_enum_completions(const char* content, LspCompletionItem** items, int* count, int* capacity,
                                               const char* enum_name) {
-    fprintf(stderr, "[LSP DEBUG] add_current_file_enum_completions: enum_name='%s'\n", enum_name);
-
     // 在内容中查找 enum 定义
     const char* search_pos = content;
     char enum_pattern[256];
     snprintf(enum_pattern, sizeof(enum_pattern), "enum %s", enum_name);
 
-    fprintf(stderr, "[LSP DEBUG] Looking for pattern: '%s'\n", enum_pattern);
-
     while (*search_pos) {
         const char* enum_kw = strstr(search_pos, enum_pattern);
         if (!enum_kw) {
-            fprintf(stderr, "[LSP DEBUG] Pattern not found\n");
             break;
         }
-        fprintf(stderr, "[LSP DEBUG] Found pattern at offset %d\n", (int)(enum_kw - content));
 
         // 确保这是一个 enum 定义（前面是行首或空白字符）
         const char* check = enum_kw - 1;
         while (check > content && isspace((unsigned char)*check)) check--;
-        fprintf(stderr, "[LSP DEBUG] check offset %d, char='%c' (0x%02x)\n",
-                (int)(check - content), *check >= 32 && *check < 127 ? *check : '?', (unsigned char)*check);
         if (check > content && *check != '\n' && *check != ';' && *check != '}') {
-            fprintf(stderr, "[LSP DEBUG] Rejected, char before is not valid\n");
             search_pos = enum_kw + 1;
             continue;
         }
@@ -220,11 +226,9 @@ static void add_current_file_enum_completions(const char* content, LspCompletion
         const char* after_name = enum_kw + strlen(enum_pattern);
         while (*after_name && isspace((unsigned char)*after_name)) after_name++;
         if (*after_name != '{' && *after_name != '\n' && *after_name != '\r' && *after_name != '\0') {
-            fprintf(stderr, "[LSP DEBUG] Rejected, not a valid enum definition\n");
             search_pos = enum_kw + 1;
             continue;
         }
-        fprintf(stderr, "[LSP DEBUG] Accepted as enum definition\n");
 
         // 找到了 enum 定义，解析 enum 值
         // 支持两种格式：enum Color { ... } 或 enum Color\n{ ... }
@@ -278,6 +282,88 @@ static void add_current_file_enum_completions(const char* content, LspCompletion
     }
 }
 
+static char* find_enclosing_struct_name(const char* content, int cursor_offset) {
+    if (!content || cursor_offset <= 0) return NULL;
+
+    int brace_depth = 0;
+    int pos = cursor_offset - 1;
+
+    while (pos >= 0) {
+        char c = content[pos];
+
+        if (c == '}') {
+            brace_depth++;
+            pos--;
+            continue;
+        }
+
+        if (c == '{') {
+            brace_depth--;
+            if (brace_depth < 0) {
+                int check_pos = pos - 1;
+                while (check_pos >= 0 && isspace((unsigned char)content[check_pos])) check_pos--;
+
+                int name_end = check_pos + 1;
+                int name_start = name_end;
+                while (name_start > 0 && (isalnum((unsigned char)content[name_start - 1]) || content[name_start - 1] == '_')) {
+                    name_start--;
+                }
+                int name_len = name_end - name_start;
+
+                if (name_len == 0) {
+                    brace_depth = 0;
+                    pos--;
+                    continue;
+                }
+
+                int kw_end = name_start - 1;
+                while (kw_end >= 0 && isspace((unsigned char)content[kw_end])) kw_end--;
+
+                const char* struct_kw = "struct";
+                const char* cstruct_kw = "cstruct";
+                int struct_kw_len = 6;
+                int cstruct_kw_len = 7;
+
+                bool is_struct = false;
+                bool is_cstruct = false;
+
+                if (kw_end >= cstruct_kw_len - 1) {
+                    int kw_start = kw_end - cstruct_kw_len + 1;
+                    if (strncmp(content + kw_start, cstruct_kw, cstruct_kw_len) == 0 &&
+                        (kw_start == 0 || (!isalnum((unsigned char)content[kw_start - 1]) && content[kw_start - 1] != '_'))) {
+                        is_cstruct = true;
+                    }
+                }
+
+                if (!is_cstruct && kw_end >= struct_kw_len - 1) {
+                    int kw_start = kw_end - struct_kw_len + 1;
+                    if (strncmp(content + kw_start, struct_kw, struct_kw_len) == 0 &&
+                        (kw_start == 0 || (!isalnum((unsigned char)content[kw_start - 1]) && content[kw_start - 1] != '_'))) {
+                        is_struct = true;
+                    }
+                }
+
+                if (is_struct || is_cstruct) {
+                    char* result = (char*)malloc(name_len + 1);
+                    if (result) {
+                        strncpy(result, content + name_start, name_len);
+                        result[name_len] = '\0';
+                    }
+                    return result;
+                }
+
+                brace_depth = 0;
+            }
+            pos--;
+            continue;
+        }
+
+        pos--;
+    }
+
+    return NULL;
+}
+
 // 从编译器符号表中查找 struct 定义并提供字段补全
 // struct_name: struct 名称（如 "Point"）
 // var_name: 变量名（如 "p"），用于构建 detail
@@ -285,35 +371,18 @@ static void add_current_file_enum_completions(const char* content, LspCompletion
 static void add_symbol_table_struct_completions(const char* struct_name, const char* var_name,
                                                 CompilerContext* ctx, LspCompletionItem** items, int* count, int* capacity) {
     if (!struct_name || !ctx || !ctx->root_scope) {
-        fprintf(stderr, "[LSP DEBUG] add_symbol_table_struct_completions: invalid params\n");
         return;
-    }
-
-    fprintf(stderr, "[LSP DEBUG] Looking for struct '%s' in symbol table, root_scope=%p, sym_cnt=%d\n",
-            struct_name, (void*)ctx->root_scope, ctx->root_scope->sym_cnt);
-
-    // 打印所有符号
-    for (int i = 0; i < ctx->root_scope->sym_cnt; i++) {
-        Symbol* sym = ctx->root_scope->syms[i];
-        fprintf(stderr, "[LSP DEBUG] Symbol[%d]: name='%s', kind=%d, type_kind=%d\n",
-                i, sym->name, sym->kind, sym->type ? sym->type->kind : -1);
     }
 
     // 在符号表中查找 struct 定义
     Symbol* struct_sym = scope_resolve_tree_bfs(ctx->root_scope, struct_name);
     if (!struct_sym) {
-        fprintf(stderr, "[LSP DEBUG] Struct '%s' not found in symbol table\n", struct_name);
         return;
     }
 
-    // 检查是否是 struct 类型
-    if (struct_sym->type->kind != TYPE_STRUCT) {
-        fprintf(stderr, "[LSP DEBUG] Symbol '%s' is not a struct (kind=%d)\n", struct_name, struct_sym->type->kind);
+    if (struct_sym->type->kind != TYPE_STRUCT && struct_sym->type->kind != TYPE_CSTRUCT) {
         return;
     }
-
-    fprintf(stderr, "[LSP DEBUG] Found struct '%s' in symbol table, field_count=%d\n",
-            struct_name, struct_sym->struct_field_count);
 
     // 添加字段补全
     for (int i = 0; i < struct_sym->struct_field_count; i++) {
@@ -329,7 +398,6 @@ static void add_symbol_table_struct_completions(const char* struct_name, const c
                            LSP_COMP_FIELD,
                            detail,
                            NULL);
-        fprintf(stderr, "[LSP DEBUG] Added field: %s\n", field_name);
     }
 }
 
@@ -340,41 +408,64 @@ static void add_current_file_struct_completions(const char* content, LspCompleti
                                                 const char* struct_name, const char* var_name) {
     if (!content || !struct_name) return;
 
-    // 在内容中查找 struct 定义
     const char* search_pos = content;
     char struct_pattern[256];
+    char cstruct_pattern[256];
     snprintf(struct_pattern, sizeof(struct_pattern), "struct %s", struct_name);
+    snprintf(cstruct_pattern, sizeof(cstruct_pattern), "cstruct %s", struct_name);
 
     while (*search_pos) {
         const char* struct_kw = strstr(search_pos, struct_pattern);
-        if (!struct_kw) break;
+        const char* cstruct_kw = strstr(search_pos, cstruct_pattern);
+        const char* found_kw = NULL;
+        int matched_pattern_len = 0;
 
-        // 确保这是一个 struct 定义（前面是行首、空白字符、或 export 关键字）
-        const char* check = struct_kw - 1;
-        while (check > content && isspace((unsigned char)*check)) check--;
-        if (check > content && *check != '\n' && *check != ';' && *check != '}') {
-            // 检查前面是否是 "export" 关键字
-            if (check >= content + 5) {
-                if (strncmp(check - 5, "export", 6) != 0) {
+        if (cstruct_kw && (!struct_kw || cstruct_kw < struct_kw)) {
+            if (cstruct_kw > content) {
+                char before = *(cstruct_kw - 1);
+                if (isalnum((unsigned char)before) || before == '_') {
+                    search_pos = cstruct_kw + 1;
+                    continue;
+                }
+            }
+            found_kw = cstruct_kw;
+            matched_pattern_len = strlen(cstruct_pattern);
+        } else if (struct_kw) {
+            if (struct_kw > content) {
+                char before = *(struct_kw - 1);
+                if (isalnum((unsigned char)before) || before == '_') {
                     search_pos = struct_kw + 1;
                     continue;
                 }
+            }
+            found_kw = struct_kw;
+            matched_pattern_len = strlen(struct_pattern);
+        } else {
+            break;
+        }
+
+        const char* check = found_kw - 1;
+        while (check > content && isspace((unsigned char)*check)) check--;
+        if (check > content && *check != '\n' && *check != ';' && *check != '}') {
+            if (check >= content + 5) {
+                if (strncmp(check - 5, "export", 6) != 0) {
+                    search_pos = found_kw + 1;
+                    continue;
+                }
             } else {
-                search_pos = struct_kw + 1;
+                search_pos = found_kw + 1;
                 continue;
             }
         }
 
-        // 检查 struct 名称后面是否跟着空白或 '{'
-        const char* after_name = struct_kw + strlen(struct_pattern);
+        const char* after_name = found_kw + matched_pattern_len;
         while (*after_name && isspace((unsigned char)*after_name)) after_name++;
         if (*after_name != '{' && *after_name != '\n' && *after_name != '\r' && *after_name != '\0') {
-            search_pos = struct_kw + 1;
+            search_pos = found_kw + 1;
             continue;
         }
 
-        // 找到了 struct 定义，解析字段
-        const char* brace = strchr(struct_kw, '{');
+        const char* brace = strchr(found_kw, '{');
         if (!brace) break;
 
         // 使用括号匹配找到 struct 的结束 '}'（考虑嵌套的 {}）
@@ -491,6 +582,107 @@ static void add_current_file_struct_completions(const char* content, LspCompleti
     }
 }
 
+static void find_face_methods_in_content(const char* content, const char* face_name,
+                                         LspCompletionItem** items, int* count, int* capacity,
+                                         const char* var_name) {
+    if (!content || !face_name) return;
+
+    const char* search_pos = content;
+    char face_pattern[256];
+    char export_face_pattern[256];
+    snprintf(face_pattern, sizeof(face_pattern), "face %s", face_name);
+    snprintf(export_face_pattern, sizeof(export_face_pattern), "export face %s", face_name);
+
+    while (*search_pos) {
+        const char* face_kw = NULL;
+        int matched_pattern_len = 0;
+
+        const char* p_export_face = strstr(search_pos, export_face_pattern);
+        const char* p_face = strstr(search_pos, face_pattern);
+
+        if (p_export_face && (!p_face || p_export_face < p_face)) {
+            face_kw = p_export_face;
+            matched_pattern_len = strlen(export_face_pattern);
+        } else if (p_face) {
+            if (p_face > content) {
+                char before = *(p_face - 1);
+                if (isalnum((unsigned char)before) || before == '_') {
+                    search_pos = p_face + 1;
+                    continue;
+                }
+            }
+            face_kw = p_face;
+            matched_pattern_len = strlen(face_pattern);
+        } else {
+            break;
+        }
+
+        const char* after_name = face_kw + matched_pattern_len;
+        while (*after_name && isspace((unsigned char)*after_name)) after_name++;
+        if (*after_name != '{' && *after_name != '\n' && *after_name != '\r' && *after_name != '\0') {
+            search_pos = face_kw + 1;
+            continue;
+        }
+
+        const char* brace = strchr(face_kw, '{');
+        if (!brace) break;
+
+        const char* end_brace = brace + 1;
+        int brace_count = 1;
+        while (*end_brace && brace_count > 0) {
+            if (*end_brace == '{') brace_count++;
+            else if (*end_brace == '}') brace_count--;
+            end_brace++;
+        }
+        if (brace_count != 0) break;
+        end_brace--;
+
+        const char* p = brace + 1;
+        while (p < end_brace) {
+            while (p < end_brace && isspace((unsigned char)*p)) p++;
+            if (p >= end_brace) break;
+
+            if (p + 1 < end_brace && p[0] == '/' && p[1] == '/') {
+                while (p < end_brace && *p != '\n') p++;
+                continue;
+            }
+
+            if (strncmp(p, "func", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
+                const char* func_name_start = p + 4;
+                while (*func_name_start && isspace((unsigned char)*func_name_start)) func_name_start++;
+                const char* name_start = func_name_start;
+                while (*func_name_start && (isalnum((unsigned char)*func_name_start) || *func_name_start == '_')) func_name_start++;
+                int name_len = func_name_start - name_start;
+
+                if (name_len > 0) {
+                    char* method_name = (char*)malloc(name_len + 1);
+                    if (method_name) {
+                        strncpy(method_name, name_start, name_len);
+                        method_name[name_len] = '\0';
+
+                        char detail[256];
+                        snprintf(detail, sizeof(detail), "%s.%s()", var_name, method_name);
+
+                        add_completion_item(items, count, capacity,
+                                           method_name,
+                                           LSP_COMP_METHOD,
+                                           detail,
+                                           NULL);
+                        free(method_name);
+                    }
+                }
+
+                while (p < end_brace && *p != '\n') p++;
+                continue;
+            }
+
+            while (p < end_brace && *p != '\n') p++;
+        }
+
+        break;
+    }
+}
+
 // 从模块源代码中解析指定 struct 的方法
 // module_source: 模块文件内容
 // struct_name: struct 名称
@@ -498,58 +690,71 @@ static void add_current_file_struct_completions(const char* content, LspCompleti
 static void add_module_struct_methods(const char* module_source, const char* struct_name, const char* module_alias,
                                       LspCompletionItem** items, int* count, int* capacity) {
     if (!module_source || !struct_name) {
-        fprintf(stderr, "[LSP DEBUG] add_module_struct_methods: null argument\n");
         return;
     }
 
-    fprintf(stderr, "[LSP DEBUG] add_module_struct_methods: looking for struct '%s'\n", struct_name);
-
-    // 在内容中查找 struct 定义（支持 export struct 和 struct 两种格式）
     const char* search_pos = module_source;
     char struct_pattern[256];
     char export_struct_pattern[256];
+    char cstruct_pattern[256];
+    char export_cstruct_pattern[256];
     snprintf(struct_pattern, sizeof(struct_pattern), "struct %s", struct_name);
     snprintf(export_struct_pattern, sizeof(export_struct_pattern), "export struct %s", struct_name);
+    snprintf(cstruct_pattern, sizeof(cstruct_pattern), "cstruct %s", struct_name);
+    snprintf(export_cstruct_pattern, sizeof(export_cstruct_pattern), "export cstruct %s", struct_name);
 
     while (*search_pos) {
-        // 先尝试匹配 export struct，再尝试匹配 struct
-        const char* struct_kw = strstr(search_pos, export_struct_pattern);
-        int is_export = 1;
-        if (!struct_kw) {
-            struct_kw = strstr(search_pos, struct_pattern);
-            is_export = 0;
+        const char* struct_kw = NULL;
+        int matched_pattern_len = 0;
+
+        const char* p_export_struct = strstr(search_pos, export_struct_pattern);
+        const char* p_export_cstruct = strstr(search_pos, export_cstruct_pattern);
+        const char* p_struct = strstr(search_pos, struct_pattern);
+        const char* p_cstruct = strstr(search_pos, cstruct_pattern);
+
+        if (p_export_cstruct && p_export_cstruct < (p_export_struct ? p_export_struct : (const char*)-1)) {
+            struct_kw = p_export_cstruct;
+            matched_pattern_len = strlen(export_cstruct_pattern);
+        } else if (p_export_struct) {
+            struct_kw = p_export_struct;
+            matched_pattern_len = strlen(export_struct_pattern);
+        } else if (p_cstruct && p_cstruct < (p_struct ? p_struct : (const char*)-1)) {
+            struct_kw = p_cstruct;
+            matched_pattern_len = strlen(cstruct_pattern);
+        } else if (p_struct) {
+            if (p_struct > module_source) {
+                char before = *(p_struct - 1);
+                if (before == 'c') {
+                    search_pos = p_struct + 1;
+                    continue;
+                }
+            }
+            struct_kw = p_struct;
+            matched_pattern_len = strlen(struct_pattern);
         }
+
         if (!struct_kw) {
-            fprintf(stderr, "[LSP DEBUG] struct pattern not found\n");
             break;
         }
-        fprintf(stderr, "[LSP DEBUG] found struct keyword at position %d (export=%d)\n", (int)(struct_kw - module_source), is_export);
 
         // 确保这是一个 struct 定义（前面是行首或空白字符）
         const char* check = struct_kw - 1;
         while (check > module_source && isspace((unsigned char)*check)) check--;
         if (check > module_source && *check != '\n' && *check != ';' && *check != '}') {
-            fprintf(stderr, "[LSP DEBUG] rejected, char before is not valid\n");
             search_pos = struct_kw + 1;
             continue;
         }
 
-        // 检查 struct 名称后面是否跟着空白或 '{'
-        const char* pattern = is_export ? export_struct_pattern : struct_pattern;
-        const char* after_name = struct_kw + strlen(pattern);
+        const char* after_name = struct_kw + matched_pattern_len;
         while (*after_name && isspace((unsigned char)*after_name)) after_name++;
         if (*after_name != '{' && *after_name != '\n' && *after_name != '\r' && *after_name != '\0') {
-            fprintf(stderr, "[LSP DEBUG] rejected, after name is not valid: '%c'\n", *after_name);
             search_pos = struct_kw + 1;
             continue;
         }
-        fprintf(stderr, "[LSP DEBUG] struct definition validated\n");
 
         // 找到了 struct 定义，解析方法
-        fprintf(stderr, "[LSP DEBUG] found struct definition, looking for methods\n");
         const char* brace = strchr(struct_kw, '{');
         if (!brace) {
-            fprintf(stderr, "[LSP DEBUG] no opening brace found\n");
             break;
         }
 
@@ -578,9 +783,7 @@ static void add_module_struct_methods(const char* module_source, const char* str
             }
 
             // 检查是否是 func 定义
-            fprintf(stderr, "[LSP DEBUG] checking: '%.10s'\n", p);
             if (strncmp(p, "func", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
-                fprintf(stderr, "[LSP DEBUG] found func keyword\n");
                 // 解析 func 名称
                 const char* func_name_start = p + 4;  // 跳过 "func"
                 // 跳过空白
@@ -590,14 +793,12 @@ static void add_module_struct_methods(const char* module_source, const char* str
                 while (*func_name_start && (isalnum((unsigned char)*func_name_start) || *func_name_start == '_')) func_name_start++;
                 int name_len = func_name_start - name_start;
 
-                fprintf(stderr, "[LSP DEBUG] method name len=%d\n", name_len);
                 if (name_len > 0) {
                     char* method_name = (char*)malloc(name_len + 1);
                     if (method_name) {
                         strncpy(method_name, name_start, name_len);
                         method_name[name_len] = '\0';
 
-                        fprintf(stderr, "[LSP DEBUG] adding method '%s'\n", method_name);
                         char detail[256];
                         snprintf(detail, sizeof(detail), "%s.%s.%s()", module_alias, struct_name, method_name);
 
@@ -643,67 +844,41 @@ static void add_module_struct_methods(const char* module_source, const char* str
 static void add_module_symbol_completions(const char* content, LspCompletionItem** items, int* count, int* capacity,
                                           const char* module_alias, const char* member_name,
                                           ImportAlias* import_aliases, int import_count,
-                                          const char* current_file) {
-    (void)content;  // 抑制未使用参数警告
-    // 查找模块路径
+                                          const char* current_file, const char* prefix) {
+    (void)content;
     const char* module_path = find_module_path_by_alias(import_aliases, import_count, module_alias);
-    fprintf(stderr, "[LSP DEBUG] add_module_symbol_completions: module_alias='%s', module_path='%s', current_file='%s'\n",
-            module_alias ? module_alias : "NULL", module_path ? module_path : "NULL", current_file ? current_file : "NULL");
     if (!module_path) return;
 
-    // 读取模块文件内容
     char* module_source = read_module_file(module_path, current_file);
     if (!module_source) {
-        fprintf(stderr, "[LSP DEBUG] Failed to read module file\n");
         return;
     }
 
-    // 使用编译器分析模块
     CompilerContext ctx;
     compiler_context_init(&ctx);
     bool analyzed = compiler_analyze_with_filename(&ctx, module_source, current_file);
 
     if (!analyzed || !ctx.root_scope) {
-        fprintf(stderr, "[LSP DEBUG] Failed to analyze module\n");
         free(module_source);
         compiler_context_cleanup(&ctx);
         return;
     }
 
-    fprintf(stderr, "[LSP DEBUG] Module analyzed successfully\n");
-
-    // 如果有成员名，查找该成员（enum 或 struct）
     if (member_name && *member_name) {
-        // 查找符号
         Symbol* sym = scope_resolve_tree_bfs(ctx.root_scope, member_name);
-        fprintf(stderr, "[LSP DEBUG] Looking for member '%s', sym=%p\n", member_name, (void*)sym);
-        if (sym) {
-            fprintf(stderr, "[LSP DEBUG] Found symbol '%s', kind=%d, type=%p\n", sym->name, sym->kind, (void*)sym->type);
-            if (sym->type) {
-                fprintf(stderr, "[LSP DEBUG] Symbol type kind=%d\n", sym->type->kind);
-            }
-        }
-        // 检查符号是否是类型定义（SYM_TYPE）或者是模块级别的类型（SYM_MODULE 且 type 为 STRUCT/ENUM）
         bool is_type_symbol = (sym && sym->kind == SYM_TYPE) ||
                               (sym && sym->kind == SYM_MODULE && sym->type &&
                                (sym->type->kind == TYPE_STRUCT || sym->type->kind == TYPE_ENUM));
         if (is_type_symbol) {
             if (sym->type && sym->type->kind == TYPE_ENUM) {
-                // 是 enum，添加 enum 值补全
-                // 从符号的 enum 值列表中获取
-                // 注意：enum 值存储在符号的附加信息中，这里简化处理
-                // 实际应该从编译器的 enum 定义中获取
-                // 暂时使用类型名称显示
                 char detail[256];
                 snprintf(detail, sizeof(detail), "%s: enum", member_name);
                 add_completion_item(items, count, capacity,
                                    member_name,
                                    LSP_COMP_ENUM,
                                    detail,
-                                   NULL);
+                                   prefix);
             } else if (sym->type && sym->type->kind == TYPE_STRUCT) {
-                // 是 struct，添加字段和方法补全
-                // 添加字段
                 if (sym->struct_field_names && sym->struct_field_types) {
                     for (int i = 0; i < sym->struct_field_count; i++) {
                         const char* type_str = type_to_string(sym->struct_field_types[i]);
@@ -714,28 +889,17 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
                                            sym->struct_field_names[i],
                                            LSP_COMP_FIELD,
                                            detail,
-                                           NULL);
+                                           prefix);
                     }
                 }
-                // 从模块源代码解析 struct 方法
                 add_module_struct_methods(module_source, member_name, module_alias, items, count, capacity);
             }
         }
     } else {
-        // 没有成员名，遍历所有导出的符号
-        // 遍历作用域中的所有符号
         for (int i = 0; i < ctx.root_scope->sym_cnt; i++) {
             Symbol* sym = ctx.root_scope->syms[i];
-            // 只处理导出的符号（这里简化处理，实际应该检查 export 标记）
-            // 在模块文件中，所有顶层符号都是导出的
 
-            fprintf(stderr, "[LSP DEBUG] Checking symbol '%s', kind=%d, scope=%p, root_scope=%p\n",
-                    sym->name, sym->kind, (void*)sym->scope, (void*)ctx.root_scope);
-
-            // 跳过非顶层符号（如 struct 内部的方法）
-            // 顶层符号的 scope 应该是根作用域
             if (sym->scope != ctx.root_scope) {
-                fprintf(stderr, "[LSP DEBUG] Skipping non-top-level symbol '%s'\n", sym->name);
                 continue;
             }
 
@@ -749,7 +913,7 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
                                        sym->name,
                                        LSP_COMP_FUNCTION,
                                        detail,
-                                       NULL);
+                                       prefix);
                     break;
                 case SYM_TYPE:
                     if (sym->type && sym->type->kind == TYPE_STRUCT) {
@@ -758,14 +922,14 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
                                            sym->name,
                                            LSP_COMP_STRUCT,
                                            detail,
-                                           NULL);
+                                           prefix);
                     } else if (sym->type && sym->type->kind == TYPE_ENUM) {
                         snprintf(detail, sizeof(detail), "%s.%s: enum", module_alias, sym->name);
                         add_completion_item(items, count, capacity,
                                            sym->name,
                                            LSP_COMP_ENUM,
                                            detail,
-                                           NULL);
+                                           prefix);
                     }
                     break;
                 case SYM_GLOBAL:
@@ -775,7 +939,7 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
                                        sym->name,
                                        LSP_COMP_VARIABLE,
                                        detail,
-                                       NULL);
+                                       prefix);
                     break;
                 default:
                     break;
@@ -824,7 +988,171 @@ static int is_string_literal_before_dot(const char* content, int dot_pos) {
         pos--;
     }
     
-    return -1;  // 没有找到匹配的引号
+    return -1;
+}
+
+static bool is_type_annotation_context(const char* content, int cursor_offset) {
+    if (!content || cursor_offset <= 0) return false;
+
+    int pos = cursor_offset - 1;
+
+    while (pos >= 0 && (isalnum((unsigned char)content[pos]) || content[pos] == '_')) {
+        pos--;
+    }
+
+    while (pos >= 0 && isspace((unsigned char)content[pos])) {
+        pos--;
+    }
+
+    if (pos < 0) return false;
+
+    if (content[pos] == ':') {
+        int check = pos - 1;
+        while (check >= 0 && isspace((unsigned char)content[check])) check--;
+
+        if (check >= 0 && content[check] == ')') {
+            return true;
+        }
+
+        if (check >= 0 && (isalnum((unsigned char)content[check]) || content[check] == '_')) {
+            while (check >= 0 && (isalnum((unsigned char)content[check]) || content[check] == '_')) {
+                check--;
+            }
+            while (check >= 0 && isspace((unsigned char)content[check])) check--;
+
+            if (check >= 2 && content[check - 2] == 'v' && content[check - 1] == 'a' && content[check] == 'r' &&
+                (check == 2 || (!isalnum((unsigned char)content[check - 3]) && content[check - 3] != '_'))) {
+            }
+
+            int paren_depth = 0;
+            int p2 = check;
+            while (p2 >= 0) {
+                if (content[p2] == ')') paren_depth++;
+                else if (content[p2] == '(') {
+                    paren_depth--;
+                    if (paren_depth < 0) {
+                        p2--;
+                        while (p2 >= 0 && isspace((unsigned char)content[p2])) p2--;
+                        if (p2 >= 0 && (isalnum((unsigned char)content[p2]) || content[p2] == '_')) {
+                            while (p2 >= 0 && (isalnum((unsigned char)content[p2]) || content[p2] == '_')) p2--;
+                            while (p2 >= 0 && isspace((unsigned char)content[p2])) p2--;
+                            if (p2 >= 3 && content[p2 - 3] == 'f' && content[p2 - 2] == 'u' && content[p2 - 1] == 'n' && content[p2] == 'c' &&
+                                (p2 == 3 || (!isalnum((unsigned char)content[p2 - 4]) && content[p2 - 4] != '_'))) {
+                                return true;
+                            }
+                        }
+                        break;
+                    }
+                }
+                p2--;
+            }
+        }
+        return false;
+    }
+
+    if (pos >= 1 && content[pos - 1] == 'a' && content[pos] == 's') {
+        if (pos == 1 || (!isalnum((unsigned char)content[pos - 2]) && content[pos - 2] != '_')) {
+            int line_start = pos - 2;
+            while (line_start >= 0 && content[line_start] != '\n') line_start--;
+            if (line_start < 0) line_start = 0;
+            else line_start++;
+
+            bool is_import = false;
+            const char* line = content + line_start;
+            const char* ip = strstr(line, "import");
+            if (ip && ip < content + pos - 1) {
+                if (ip == line || (!isalnum((unsigned char)*(ip - 1)) && *(ip - 1) != '_')) {
+                    if (!isalnum((unsigned char)ip[6]) && ip[6] != '_') {
+                        is_import = true;
+                    }
+                }
+            }
+
+            if (!is_import) {
+                return true;
+            }
+        }
+    }
+
+    if (content[pos] == '(' || content[pos] == ',') {
+        if (content[pos] == '(') {
+            int check = pos - 1;
+            while (check >= 0 && isspace((unsigned char)content[check])) check--;
+            if (check >= 0 && (isalnum((unsigned char)content[check]) || content[check] == '_')) {
+                while (check >= 0 && (isalnum((unsigned char)content[check]) || content[check] == '_')) check--;
+                while (check >= 0 && isspace((unsigned char)content[check])) check--;
+                if (check >= 3 && content[check - 3] == 'f' && content[check - 2] == 'u' && content[check - 1] == 'n' && content[check] == 'c' &&
+                    (check == 3 || (!isalnum((unsigned char)content[check - 4]) && content[check - 4] != '_'))) {
+                    return true;
+                }
+            }
+        } else {
+            int paren_depth = 0;
+            int check = pos - 1;
+            while (check >= 0) {
+                if (content[check] == ')') paren_depth++;
+                else if (content[check] == '(') {
+                    paren_depth--;
+                    if (paren_depth < 0) {
+                        check--;
+                        while (check >= 0 && isspace((unsigned char)content[check])) check--;
+                        if (check >= 0 && (isalnum((unsigned char)content[check]) || content[check] == '_')) {
+                            while (check >= 0 && (isalnum((unsigned char)content[check]) || content[check] == '_')) check--;
+                            while (check >= 0 && isspace((unsigned char)content[check])) check--;
+                            if (check >= 3 && content[check - 3] == 'f' && content[check - 2] == 'u' && content[check - 1] == 'n' && content[check] == 'c' &&
+                                (check == 3 || (!isalnum((unsigned char)content[check - 4]) && content[check - 4] != '_'))) {
+                                return true;
+                            }
+                        }
+                        break;
+                    }
+                }
+                check--;
+            }
+        }
+    }
+
+    {
+        int line_start = pos;
+        while (line_start > 0 && content[line_start - 1] != '\n') line_start--;
+        const char* line = content + line_start;
+        int line_len = pos - line_start;
+        if (line_len == 0) return false;
+
+        char* line_copy = (char*)malloc(line_len + 1);
+        memcpy(line_copy, line, line_len);
+        line_copy[line_len] = '\0';
+
+        char* trimmed = line_copy;
+        while (*trimmed && isspace((unsigned char)*trimmed)) trimmed++;
+
+        bool is_type_context = false;
+
+        if (trimmed[0] == '\0') {
+            is_type_context = true;
+        } else {
+            static const char* type_prefixes[] = {
+                "func ", "export func ", "struct ", "export struct ",
+                "cstruct ", "export cstruct ", "enum ", "export enum ",
+                "face ", "export face ",
+                NULL
+            };
+            for (int i = 0; type_prefixes[i]; i++) {
+                if (strncmp(trimmed, type_prefixes[i], strlen(type_prefixes[i])) == 0) {
+                    is_type_context = true;
+                    break;
+                }
+            }
+        }
+
+        free(line_copy);
+
+        if (is_type_context) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // 获取光标前的单词（包含模块前缀，如 "maths.")"
@@ -1153,12 +1481,8 @@ static char* get_variable_type(const char* content, const char* var_name, const 
     CompilerContext ctx;
     compiler_context_init(&ctx);
 
-    // 调试：打印内容前100字符
-    fprintf(stderr, "[LSP DEBUG] content preview: %.100s\n", content ? content : "(null)");
-
     // 即使分析有错误，也尝试获取符号信息
     bool analyze_ok = compiler_analyze_with_filename(&ctx, content, file_path);
-    fprintf(stderr, "[LSP DEBUG] compiler_analyze returned: %d, root_scope: %p\n", analyze_ok, (void*)ctx.root_scope);
 
     // 如果解析失败，尝试去掉包含变量引用的那一行（可能是不完整的代码）再解析
     if (!analyze_ok || !ctx.root_scope) {
@@ -1192,7 +1516,6 @@ static char* get_variable_type(const char* content, const char* var_name, const 
                     if (line_end) {
                         // 去掉这一行：将 line_end 之后的内容移到 line_start
                         memmove(line_start, line_end + 1, strlen(line_end + 1) + 1);
-                        fprintf(stderr, "[LSP DEBUG] Removed line with '%s.', retry %d, new content: %.100s\n", var_name, retry_count + 1, content_copy);
 
                         // 清理之前的上下文
                         compiler_context_cleanup(&ctx);
@@ -1200,7 +1523,6 @@ static char* get_variable_type(const char* content, const char* var_name, const 
 
                         // 重新解析
                         analyze_ok = compiler_analyze_with_filename(&ctx, content_copy, file_path);
-                        fprintf(stderr, "[LSP DEBUG] Retry %d compiler_analyze returned: %d, root_scope: %p\n", retry_count + 1, analyze_ok, (void*)ctx.root_scope);
                         
                         if (analyze_ok || ctx.root_scope) {
                             // 解析成功，跳出循环
@@ -1210,7 +1532,6 @@ static char* get_variable_type(const char* content, const char* var_name, const 
                     } else {
                         // 没有找到换行符，可能是最后一行
                         *line_start = '\0';
-                        fprintf(stderr, "[LSP DEBUG] Removed last line with '%s.', content: %.100s\n", var_name, content_copy);
                         
                         // 清理之前的上下文
                         compiler_context_cleanup(&ctx);
@@ -1218,7 +1539,6 @@ static char* get_variable_type(const char* content, const char* var_name, const 
 
                         // 重新解析
                         analyze_ok = compiler_analyze_with_filename(&ctx, content_copy, file_path);
-                        fprintf(stderr, "[LSP DEBUG] Retry %d compiler_analyze returned: %d, root_scope: %p\n", retry_count + 1, analyze_ok, (void*)ctx.root_scope);
                         break;
                     }
                 }
@@ -1229,17 +1549,13 @@ static char* get_variable_type(const char* content, const char* var_name, const 
     }
 
     char* type_str = NULL;
-    fprintf(stderr, "[LSP DEBUG] root_scope: %p, var_name: '%s'\n", (void*)ctx.root_scope, var_name);
     if (ctx.root_scope && compiler_get_symbol_info(&ctx, var_name, &type_str, NULL)) {
-        // 调试输出
-        fprintf(stderr, "[LSP DEBUG] Variable '%s' has type: '%s'\n", var_name, type_str);
-        
         // 将编译器的类型名转换为实例方法类型名
         char* result = NULL;
         // 先检查 struct，因为 type_str 可能是 "struct Point" 包含 "int"
         if (strstr(type_str, "struct")) {
-            // 对于 struct 类型，返回原始类型字符串（如 "struct Point"）
-            // 这样调用者可以解析出 struct 名称并获取字段
+            result = strdup(type_str);
+        } else if (strstr(type_str, "face")) {
             result = strdup(type_str);
         } else if (strcmp(type_str, "int") == 0 || strcmp(type_str, "float") == 0 || strcmp(type_str, "bigint") == 0) {
             result = strdup("number");
@@ -1258,15 +1574,13 @@ static char* get_variable_type(const char* content, const char* var_name, const 
         } else if (strcmp(type_str, "file") == 0) {
             result = strdup("file");
         }
-        fprintf(stderr, "[LSP DEBUG] Converted to instance type: '%s'\n", result ? result : "NULL");
         free(type_str);
         compiler_context_cleanup(&ctx);
 
         // 验证该类型是否有实例方法（只对非struct类型）
-        if (result && strstr(result, "struct") == NULL) {
+        if (result && strstr(result, "struct") == NULL && strstr(result, "face") == NULL) {
             int test_count = 0;
             char** test_methods = native_get_instance_methods(result, &test_count);
-            fprintf(stderr, "[LSP DEBUG] Instance methods count for '%s': %d\n", result, test_count);
             if (test_methods && test_count > 0) {
                 native_free_instance_method_list(test_methods, test_count);
             } else {
@@ -1278,9 +1592,77 @@ static char* get_variable_type(const char* content, const char* var_name, const 
         return result;
     }
 
-    fprintf(stderr, "[LSP DEBUG] Failed to get type for '%s'\n", var_name);
     compiler_context_cleanup(&ctx);
     return NULL;
+}
+
+static int detect_use_context(const char* content, LspPosition pos, char** use_module_out, char** use_prefix_out) {
+    if (!content) return 0;
+
+    *use_module_out = NULL;
+    *use_prefix_out = NULL;
+
+    int offset = lsp_position_to_offset(content, pos);
+    if (offset <= 0) return 0;
+
+    int line_start = offset - 1;
+    while (line_start > 0 && content[line_start - 1] != '\n') line_start--;
+
+    int p = line_start;
+    while (p < offset && isspace((unsigned char)content[p])) p++;
+
+    if (p + 3 > offset) return 0;
+    if (strncmp(content + p, "use", 3) != 0) return 0;
+
+    if (p > line_start && (isalnum((unsigned char)content[p-1]) || content[p-1] == '_')) return 0;
+
+    if (p + 3 < offset && (isalnum((unsigned char)content[p+3]) || content[p+3] == '_')) return 0;
+
+    if (p + 3 >= offset) return 0;
+
+    int after_use = p + 3;
+    while (after_use < offset && isspace((unsigned char)content[after_use])) after_use++;
+
+    if (after_use >= offset) return 1;
+
+    int alias_start = after_use;
+    int q = after_use;
+    while (q < offset && (isalnum((unsigned char)content[q]) || content[q] == '_')) q++;
+
+    int alias_len = q - alias_start;
+    if (alias_len == 0) return 1;
+
+    if (q < offset && content[q] == '.') {
+        *use_module_out = (char*)malloc(alias_len + 1);
+        if (*use_module_out) {
+            memcpy(*use_module_out, content + alias_start, alias_len);
+            (*use_module_out)[alias_len] = '\0';
+        }
+
+        int after_dot = q + 1;
+        if (after_dot < offset) {
+            int sym_start = after_dot;
+            int r = after_dot;
+            while (r < offset && (isalnum((unsigned char)content[r]) || content[r] == '_')) r++;
+            int sym_len = r - sym_start;
+            if (sym_len > 0) {
+                *use_prefix_out = (char*)malloc(sym_len + 1);
+                if (*use_prefix_out) {
+                    memcpy(*use_prefix_out, content + sym_start, sym_len);
+                    (*use_prefix_out)[sym_len] = '\0';
+                }
+            }
+        }
+
+        return 2;
+    }
+
+    *use_prefix_out = (char*)malloc(alias_len + 1);
+    if (*use_prefix_out) {
+        memcpy(*use_prefix_out, content + alias_start, alias_len);
+        (*use_prefix_out)[alias_len] = '\0';
+    }
+    return 1;
 }
 
 // 获取补全项
@@ -1299,20 +1681,31 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
     // 检查是否是字符串字面量实例方法调用（如 "". 或 "hello".")
     bool is_string_literal = (prefix && strcmp(prefix, "__STRING_LITERAL__") == 0);
 
+    // 检查是否是 "new " 后面（需要补全 struct 名称）
+    bool is_new_prefix = false;
+    {
+        int offset = lsp_position_to_offset(content, pos);
+        if (offset > 4) {
+            int start = offset - 1;
+            while (start >= 0 && isspace((unsigned char)content[start])) start--;
+            if (start >= 3 &&
+                (content[start-3] == 'n' || content[start-3] == 'N') &&
+                (content[start-2] == 'e' || content[start-2] == 'E') &&
+                (content[start-1] == 'w' || content[start-1] == 'W') &&
+                (start == 3 || !isalnum((unsigned char)content[start-4]))) {
+                is_new_prefix = true;
+            }
+        }
+    }
+
     // 检查是否是模块前缀（如 "maths." 或 "color_module.Color."）
     char* module_alias = NULL;
     char* member_name = NULL;
     bool is_module_prefix = parse_module_prefix(prefix, &module_alias, &member_name);
 
-    // DEBUG
-    if (prefix) {
-        fprintf(stderr, "[LSP DEBUG] prefix='%s', is_module_prefix=%d\n", prefix, is_module_prefix);
-        if (is_module_prefix) {
-            fprintf(stderr, "[LSP DEBUG] module_alias='%s', member_name='%s'\n",
-                    module_alias ? module_alias : "NULL",
-                    member_name ? member_name : "NULL");
-        }
-    }
+    char* use_module = NULL;
+    char* use_prefix = NULL;
+    int use_context = detect_use_context(content, pos, &use_module, &use_prefix);
 
     // 分配补全数组
     int capacity = 256;
@@ -1322,11 +1715,95 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
         free(prefix);
         free(module_alias);
         free(member_name);
+        free(use_module);
+        free(use_prefix);
         free_import_aliases(import_aliases, import_count);
         return NULL;
     }
     
-    if (is_string_literal) {
+    if (is_new_prefix) {
+        // "new " 后补全：列出所有 struct 名称和模块别名
+        CompilerContext ctx;
+        compiler_context_init(&ctx);
+        compiler_analyze_with_filename(&ctx, content, file_path);
+
+        if (ctx.root_scope) {
+            for (int i = 0; i < ctx.root_scope->sym_cnt; i++) {
+                Symbol* sym = ctx.root_scope->syms[i];
+                if (sym->type && sym->type->kind == TYPE_STRUCT) {
+                    char detail[256];
+                    snprintf(detail, sizeof(detail), "struct %s", sym->name);
+                    add_completion_item(&items, count, &capacity,
+                                       sym->name,
+                                       LSP_COMP_STRUCT,
+                                       detail,
+                                       prefix);
+                }
+            }
+        }
+        compiler_context_cleanup(&ctx);
+
+        // 也列出模块别名（用于 new module.StructName()）
+        for (int i = 0; i < import_count; i++) {
+            char detail[256];
+            snprintf(detail, sizeof(detail), "module %s", import_aliases[i].alias);
+            add_completion_item(&items, count, &capacity,
+                               import_aliases[i].alias,
+                               LSP_COMP_MODULE,
+                               detail,
+                               prefix);
+        }
+    } else if (use_context == 1) {
+        for (int i = 0; i < import_count; i++) {
+            char detail[256];
+            snprintf(detail, sizeof(detail), "module %s", import_aliases[i].alias);
+            add_completion_item(&items, count, &capacity,
+                               import_aliases[i].alias,
+                               LSP_COMP_MODULE,
+                               detail,
+                               use_prefix);
+        }
+    } else if (use_context == 2) {
+        const char* mod_path = find_module_path_by_alias(import_aliases, import_count, use_module);
+        bool is_leno_mod = (mod_path != NULL);
+
+        if (is_leno_mod) {
+            add_module_symbol_completions(content, &items, count, &capacity,
+                                          use_module, NULL,
+                                          import_aliases, import_count,
+                                          file_path, use_prefix);
+        }
+
+        const char* actual_mod = find_module_by_alias(import_aliases, import_count, use_module);
+        int mtd_count = 0;
+        ModuleMethodMeta* metas = native_get_module_method_metas(actual_mod, &mtd_count);
+        if (metas && mtd_count > 0) {
+            for (int i = 0; i < mtd_count; i++) {
+                char detail[512];
+                const char* ret_str = type_kind_to_string(metas[i].return_type);
+                if (metas[i].arity == 0) {
+                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", use_module, metas[i].method_name, ret_str);
+                } else if (metas[i].arity < 0) {
+                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", use_module, metas[i].method_name, ret_str);
+                } else {
+                    char params[256] = "";
+                    int off = 0;
+                    for (int pp = 0; pp < metas[i].arity && pp < MAX_METHOD_PARAMS; pp++) {
+                        const char* pt = type_kind_to_string(metas[i].param_types[pp]);
+                        if (pp > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
+                        off += snprintf(params + off, sizeof(params) - off, "%s", pt);
+                    }
+                    snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", use_module, metas[i].method_name, params, ret_str);
+                }
+                add_completion_item(&items, count, &capacity,
+                                   metas[i].method_name,
+                                   LSP_COMP_METHOD,
+                                   detail,
+                                   use_prefix);
+            }
+            native_free_module_method_metas(metas);
+        }
+    } else if (is_string_literal) {
         // 字符串字面量实例方法补全
         const char* display_name = "\"\"";  // 显示为 ""
         int method_count = 0;
@@ -1357,20 +1834,34 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             native_free_instance_method_list(methods, method_count);
         }
     } else if (is_module_prefix) {
-        // 首先尝试从导入的 .leno 模块符号表获取补全
-        // 检查是否是导入的 .leno 模块（通过查找模块路径）
+        if (strcmp(module_alias, "self") == 0) {
+            int cursor_offset = lsp_position_to_offset(content, pos);
+            char* enclosing_struct = find_enclosing_struct_name(content, cursor_offset);
+
+            if (enclosing_struct) {
+                add_current_file_struct_completions(content, &items, count, &capacity, enclosing_struct, "self");
+
+                CompilerContext ctx;
+                compiler_context_init(&ctx);
+                bool analyze_ok = compiler_analyze_with_filename(&ctx, content, file_path);
+
+                if (analyze_ok || ctx.root_scope) {
+                    add_symbol_table_struct_completions(enclosing_struct, "self", &ctx, &items, count, &capacity);
+                }
+                compiler_context_cleanup(&ctx);
+
+                free(enclosing_struct);
+            }
+        } else {
         const char* module_path = find_module_path_by_alias(import_aliases, import_count, module_alias);
         bool is_leno_module = (module_path != NULL);
 
         if (is_leno_module) {
-            // 是导入的 .leno 模块，从符号表获取补全
             add_module_symbol_completions(content, &items, count, &capacity,
                                           module_alias, member_name,
                                           import_aliases, import_count,
-                                          file_path);
+                                          file_path, NULL);
         } else {
-            // 不是导入的模块，检查是否是当前文件中定义的 enum（如 "Color."）
-            // 尝试从当前文件内容中查找 enum 定义
             add_current_file_enum_completions(content, &items, count, &capacity, module_alias);
         }
 
@@ -1426,118 +1917,140 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             }
             native_free_module_method_metas(metas);
         } else if (!is_leno_module) {
-            // 不是模块方法，尝试实例方法或 struct 字段补全
             char* var_type = get_variable_type(content, module_alias, file_path);
 
             if (var_type) {
-                // 检查是否是 struct 类型
-                if (strstr(var_type, "struct")) {
-                    // 解析 struct 名称
-                    const char* struct_name = strstr(var_type, "struct");
+                bool is_cstruct_type = (strstr(var_type, "cstruct") != NULL);
+                bool is_face_type = (strstr(var_type, "face") != NULL);
+                if (is_cstruct_type || strstr(var_type, "struct")) {
+                    const char* keyword = is_cstruct_type ? "cstruct" : "struct";
+                    const char* struct_name = strstr(var_type, keyword);
                     if (struct_name) {
-                        struct_name += 6; // 跳过 "struct"
+                        struct_name += strlen(keyword);
                         while (*struct_name && isspace((unsigned char)*struct_name)) struct_name++;
 
-                        // 首先从当前文件内容中查找 struct 定义
-                        int items_before = *count;
-                        add_current_file_struct_completions(content, &items, count, &capacity, struct_name, module_alias);
+                        if (is_cstruct_type && strcmp(module_alias, struct_name) == 0) {
+                            for (int i = 0; cstruct_static_methods[i]; i++) {
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s.%s()", module_alias, cstruct_static_methods[i]);
+                                add_completion_item(&items, count, &capacity,
+                                                   cstruct_static_methods[i],
+                                                   LSP_COMP_METHOD,
+                                                   detail,
+                                                   NULL);
+                            }
+                        } else {
+                            int items_before = *count;
+                            add_current_file_struct_completions(content, &items, count, &capacity, struct_name, module_alias);
 
-                        // 如果在当前文件中找不到，尝试从符号表中查找（支持 use 语句导入的 struct）
-                        if (*count == items_before) {
-                            fprintf(stderr, "[LSP DEBUG] Struct '%s' not found in current file, trying symbol table\n", struct_name);
-                            
-                            // 编译代码获取符号表
-                            CompilerContext ctx;
-                            compiler_context_init(&ctx);
-                            fprintf(stderr, "[LSP DEBUG] Calling compiler_analyze_with_filename with file_path: '%s'\n", 
-                                    file_path ? file_path : "(null)");
-                            bool analyze_ok = compiler_analyze_with_filename(&ctx, content, file_path);
-                            fprintf(stderr, "[LSP DEBUG] compiler_analyze_with_filename returned: %d, root_scope: %p\n", 
-                                    analyze_ok, (void*)ctx.root_scope);
-                            
-                            // 如果分析失败且没有 root_scope，尝试去掉包含变量引用的那一行再重试
-                            if (!analyze_ok && !ctx.root_scope) {
-                                fprintf(stderr, "[LSP DEBUG] First analyze failed, retrying without var line\n");
-                                // 去掉包含 "p." 的那一行（未完成的代码）
-                                char* content_copy = strdup(content);
-                                if (content_copy) {
-                                    // 查找 "p." 模式
-                                    char* search_pattern = malloc(strlen(module_alias) + 2);
-                                    if (search_pattern) {
-                                        sprintf(search_pattern, "%s.", module_alias);
-                                        char* var_pos = strstr(content_copy, search_pattern);
-                                        free(search_pattern);
-                                        
-                                        if (var_pos) {
-                                            // 找到该行的开始（前一个换行符）
-                                            char* line_start = content_copy;
-                                            char* p = content_copy;
-                                            while (p < var_pos) {
-                                                if (*p == '\n') line_start = p + 1;
-                                                p++;
+                            if (*count == items_before) {
+                                CompilerContext ctx;
+                                compiler_context_init(&ctx);
+                                bool analyze_ok = compiler_analyze_with_filename(&ctx, content, file_path);
+
+                                if (!analyze_ok && !ctx.root_scope) {
+                                    char* content_copy = strdup(content);
+                                    if (content_copy) {
+                                        char* search_pattern = malloc(strlen(module_alias) + 2);
+                                        if (search_pattern) {
+                                            sprintf(search_pattern, "%s.", module_alias);
+                                            char* var_pos = strstr(content_copy, search_pattern);
+                                            free(search_pattern);
+                                            
+                                            if (var_pos) {
+                                                char* line_start = content_copy;
+                                                char* p = content_copy;
+                                                while (p < var_pos) {
+                                                    if (*p == '\n') line_start = p + 1;
+                                                    p++;
+                                                }
+                                                char* line_end = strchr(var_pos, '\n');
+                                                if (line_end) {
+                                                    memmove(line_start, line_end + 1, strlen(line_end + 1) + 1);
+                                                    
+                                                    compiler_context_cleanup(&ctx);
+                                                    compiler_context_init(&ctx);
+                                                    analyze_ok = compiler_analyze_with_filename(&ctx, content_copy, file_path);
+                                                }
                                             }
-                                            // 找到该行的结束（后一个换行符）
-                                            char* line_end = strchr(var_pos, '\n');
-                                            if (line_end) {
-                                                // 去掉这一行：将 line_end 之后的内容移到 line_start
-                                                memmove(line_start, line_end + 1, strlen(line_end + 1) + 1);
-                                                fprintf(stderr, "[LSP DEBUG] Retrying without var line, new content: %.100s\n", content_copy);
-                                                
-                                                compiler_context_cleanup(&ctx);
-                                                compiler_context_init(&ctx);
-                                                analyze_ok = compiler_analyze_with_filename(&ctx, content_copy, file_path);
-                                                fprintf(stderr, "[LSP DEBUG] Retry compiler_analyze_with_filename returned: %d, root_scope: %p\n", 
-                                                        analyze_ok, (void*)ctx.root_scope);
+                                        }
+                                        free(content_copy);
+                                    }
+                                }
+                                
+                                if (analyze_ok || ctx.root_scope) {
+                                    add_symbol_table_struct_completions(struct_name, module_alias, &ctx, &items, count, &capacity);
+
+                                    for (int i = 0; i < import_count; i++) {
+                                        const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                                        if (mp) {
+                                            char* module_source = read_module_file(mp, file_path);
+                                            if (module_source) {
+                                                add_module_struct_methods(module_source, struct_name, module_alias, &items, count, &capacity);
+                                                free(module_source);
+                                                break;
                                             }
                                         }
                                     }
-                                    free(content_copy);
+                                    
+                                    compiler_context_cleanup(&ctx);
                                 }
                             }
-                            
-                            if (analyze_ok || ctx.root_scope) {
-                                fprintf(stderr, "[LSP DEBUG] Calling add_symbol_table_struct_completions for '%s'\n", struct_name);
-                                add_symbol_table_struct_completions(struct_name, module_alias, &ctx, &items, count, &capacity);
-                                
-                                // 从符号表获取字段后，再从模块源代码中解析方法
-                                // 因为符号表中不存储方法信息
-                                fprintf(stderr, "[LSP DEBUG] Looking for struct methods in module source\n");
+
+                            if (*count == items_before) {
                                 for (int i = 0; i < import_count; i++) {
-                                    const char* module_path = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
-                                    if (module_path) {
-                                        char* module_source = read_module_file(module_path, file_path);
+                                    const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                                    if (mp) {
+                                        char* module_source = read_module_file(mp, file_path);
                                         if (module_source) {
-                                            // 只解析方法，不解析字段（因为字段已经从符号表获取）
-                                            add_module_struct_methods(module_source, struct_name, module_alias, &items, count, &capacity);
+                                            add_current_file_struct_completions(module_source, &items, count, &capacity, struct_name, module_alias);
                                             free(module_source);
-                                            break;
+                                            if (*count > items_before) {
+                                                break;
+                                            }
                                         }
                                     }
                                 }
-                                
-                                compiler_context_cleanup(&ctx);
+                            }
+
+                            if (is_cstruct_type) {
+                                for (int i = 0; cstruct_instance_methods[i]; i++) {
+                                    char detail[256];
+                                    snprintf(detail, sizeof(detail), "%s.%s()", module_alias, cstruct_instance_methods[i]);
+                                    add_completion_item(&items, count, &capacity,
+                                                       cstruct_instance_methods[i],
+                                                       LSP_COMP_METHOD,
+                                                       detail,
+                                                       NULL);
+                                }
                             } else {
-                                fprintf(stderr, "[LSP DEBUG] compiler_analyze failed, skipping symbol table lookup\n");
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s.copy()", module_alias);
+                                add_completion_item(&items, count, &capacity,
+                                                   "copy",
+                                                   LSP_COMP_METHOD,
+                                                   detail,
+                                                   NULL);
                             }
                         }
+                    }
+                } else if (is_face_type) {
+                    const char* face_name = strstr(var_type, "face");
+                    face_name += 4;
+                    while (*face_name && isspace((unsigned char)*face_name)) face_name++;
 
-                        // 如果还是找不到，尝试从导入的模块源代码中查找
-                        if (*count == items_before) {
-                            fprintf(stderr, "[LSP DEBUG] Struct '%s' not found in symbol table, trying imported modules\n", struct_name);
-                            // 遍历所有导入的模块，查找 struct 定义
-                            for (int i = 0; i < import_count; i++) {
-                                const char* module_path = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
-                                if (module_path) {
-                                    char* module_source = read_module_file(module_path, file_path);
-                                    if (module_source) {
-                                        // 尝试从模块源代码中解析 struct 字段和方法
-                                        add_current_file_struct_completions(module_source, &items, count, &capacity, struct_name, module_alias);
-                                        free(module_source);
-                                        if (*count > items_before) {
-                                            fprintf(stderr, "[LSP DEBUG] Found struct '%s' in module '%s'\n", struct_name, import_aliases[i].alias);
-                                            break;
-                                        }
-                                    }
+                    int items_before = *count;
+                    find_face_methods_in_content(content, face_name, &items, count, &capacity, module_alias);
+
+                    if (*count == items_before) {
+                        for (int i = 0; i < import_count; i++) {
+                            const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                            if (mp) {
+                                char* module_source = read_module_file(mp, file_path);
+                                if (module_source) {
+                                    find_face_methods_in_content(module_source, face_name, &items, count, &capacity, module_alias);
+                                    free(module_source);
+                                    if (*count > items_before) break;
                                 }
                             }
                         }
@@ -1576,21 +2089,74 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                 free(var_type);
             }
         }
+        }
     } else if (module_alias) {
-        // 检查是否是实例方法调用（如 "a." 其中 a 是变量）
         char* var_type = get_variable_type(content, module_alias, file_path);
 
         if (var_type) {
-            // 检查是否是 struct 类型
-            if (strstr(var_type, "struct")) {
-                // 解析 struct 名称
-                const char* struct_name = strstr(var_type, "struct");
+            bool is_cstruct_var = (strstr(var_type, "cstruct") != NULL);
+            bool is_face_var = (strstr(var_type, "face") != NULL);
+            if (is_cstruct_var || strstr(var_type, "struct")) {
+                const char* keyword = is_cstruct_var ? "cstruct" : "struct";
+                const char* struct_name = strstr(var_type, keyword);
                 if (struct_name) {
-                    struct_name += 6; // 跳过 "struct"
+                    struct_name += strlen(keyword);
                     while (*struct_name && isspace((unsigned char)*struct_name)) struct_name++;
 
-                    // 从当前文件内容中查找 struct 定义并添加字段补全
-                    add_current_file_struct_completions(content, &items, count, &capacity, struct_name, module_alias);
+                    if (is_cstruct_var && strcmp(module_alias, struct_name) == 0) {
+                        for (int i = 0; cstruct_static_methods[i]; i++) {
+                            char detail[256];
+                            snprintf(detail, sizeof(detail), "%s.%s()", module_alias, cstruct_static_methods[i]);
+                            add_completion_item(&items, count, &capacity,
+                                               cstruct_static_methods[i],
+                                               LSP_COMP_METHOD,
+                                               detail,
+                                               NULL);
+                        }
+                    } else {
+                        add_current_file_struct_completions(content, &items, count, &capacity, struct_name, module_alias);
+
+                        if (is_cstruct_var) {
+                            for (int i = 0; cstruct_instance_methods[i]; i++) {
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s.%s()", module_alias, cstruct_instance_methods[i]);
+                                add_completion_item(&items, count, &capacity,
+                                                   cstruct_instance_methods[i],
+                                                   LSP_COMP_METHOD,
+                                                   detail,
+                                                   NULL);
+                            }
+                        } else {
+                            char detail[256];
+                            snprintf(detail, sizeof(detail), "%s.copy()", module_alias);
+                            add_completion_item(&items, count, &capacity,
+                                               "copy",
+                                               LSP_COMP_METHOD,
+                                               detail,
+                                               NULL);
+                        }
+                    }
+                }
+            } else if (is_face_var) {
+                const char* face_name = strstr(var_type, "face");
+                face_name += 4;
+                while (*face_name && isspace((unsigned char)*face_name)) face_name++;
+
+                int items_before = *count;
+                find_face_methods_in_content(content, face_name, &items, count, &capacity, module_alias);
+
+                if (*count == items_before) {
+                    for (int i = 0; i < import_count; i++) {
+                        const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                        if (mp) {
+                            char* module_source = read_module_file(mp, file_path);
+                            if (module_source) {
+                                find_face_methods_in_content(module_source, face_name, &items, count, &capacity, module_alias);
+                                free(module_source);
+                                if (*count > items_before) break;
+                            }
+                        }
+                    }
                 }
             } else {
                 // 获取该类型的实例方法
@@ -1626,12 +2192,108 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             free(var_type);
         }
     } else {
+        int type_ctx_offset = lsp_position_to_offset(content, pos);
+        if (is_type_annotation_context(content, type_ctx_offset)) {
+            for (int i = 0; leno_types[i]; i++) {
+                add_completion_item(&items, count, &capacity, leno_types[i],
+                                   LSP_COMP_CLASS, "type", prefix);
+            }
+
+            add_completion_item(&items, count, &capacity, "var",
+                               LSP_COMP_KEYWORD, "type inference", prefix);
+
+            CompilerContext ctx;
+            compiler_context_init(&ctx);
+            compiler_analyze_with_filename(&ctx, content, file_path);
+            if (ctx.root_scope) {
+                for (int i = 0; i < ctx.root_scope->sym_cnt; i++) {
+                    Symbol* sym = ctx.root_scope->syms[i];
+                    if (sym->kind == SYM_TYPE || sym->kind == SYM_STRUCT ||
+                        sym->kind == SYM_CSTRUCT || sym->kind == SYM_ENUM) {
+                        const char* type_label = "type";
+                        int comp_kind = LSP_COMP_CLASS;
+                        if (sym->type) {
+                            switch (sym->type->kind) {
+                                case TYPE_STRUCT: type_label = "struct"; comp_kind = LSP_COMP_STRUCT; break;
+                                case TYPE_CSTRUCT: type_label = "cstruct"; comp_kind = LSP_COMP_STRUCT; break;
+                                case TYPE_ENUM: type_label = "enum"; comp_kind = LSP_COMP_ENUM; break;
+                                case TYPE_FACE: type_label = "face"; comp_kind = LSP_COMP_INTERFACE; break;
+                                default: break;
+                            }
+                        }
+                        char detail[256];
+                        snprintf(detail, sizeof(detail), "%s %s", type_label, sym->name);
+                        add_completion_item(&items, count, &capacity,
+                                           sym->name, comp_kind, detail, prefix);
+                    }
+                }
+            }
+            compiler_context_cleanup(&ctx);
+
+            for (int i = 0; i < import_count; i++) {
+                const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                if (mp) {
+                    char* module_source = read_module_file(mp, file_path);
+                    if (module_source) {
+                        CompilerContext mctx;
+                        compiler_context_init(&mctx);
+                        bool analyzed = compiler_analyze_with_filename(&mctx, module_source, file_path);
+                        if (analyzed || mctx.root_scope) {
+                            for (int j = 0; j < mctx.root_scope->sym_cnt; j++) {
+                                Symbol* sym = mctx.root_scope->syms[j];
+                                if (sym->kind == SYM_TYPE || sym->kind == SYM_STRUCT ||
+                                    sym->kind == SYM_CSTRUCT || sym->kind == SYM_ENUM) {
+                                    const char* type_label = "type";
+                                    int comp_kind = LSP_COMP_CLASS;
+                                    if (sym->type) {
+                                        switch (sym->type->kind) {
+                                            case TYPE_STRUCT: type_label = "struct"; comp_kind = LSP_COMP_STRUCT; break;
+                                            case TYPE_CSTRUCT: type_label = "cstruct"; comp_kind = LSP_COMP_STRUCT; break;
+                                            case TYPE_ENUM: type_label = "enum"; comp_kind = LSP_COMP_ENUM; break;
+                                            case TYPE_FACE: type_label = "face"; comp_kind = LSP_COMP_INTERFACE; break;
+                                            default: break;
+                                        }
+                                    }
+                                    char detail[256];
+                                    snprintf(detail, sizeof(detail), "%s.%s: %s", import_aliases[i].alias, sym->name, type_label);
+                                    add_completion_item(&items, count, &capacity,
+                                                       sym->name, comp_kind, detail, prefix);
+                                }
+                            }
+                        }
+                        compiler_context_cleanup(&mctx);
+                        free(module_source);
+                    }
+                }
+            }
+
+            for (int i = 0; i < import_count; i++) {
+                char detail[256];
+                snprintf(detail, sizeof(detail), "module %s", import_aliases[i].alias);
+                add_completion_item(&items, count, &capacity,
+                                   import_aliases[i].alias,
+                                   LSP_COMP_MODULE,
+                                   detail,
+                                   prefix);
+            }
+        } else {
         // 正常补全：关键字、类型、内置函数、模块方法、用户符号
         
         // 1. 添加关键字
         for (int i = 0; leno_keywords[i]; i++) {
             add_completion_item(&items, count, &capacity, leno_keywords[i], 
                                LSP_COMP_KEYWORD, "keyword", prefix);
+        }
+
+        // 1.5 如果在结构体方法体内，添加 self 关键字补全
+        {
+            int cursor_offset = lsp_position_to_offset(content, pos);
+            char* enclosing_struct = find_enclosing_struct_name(content, cursor_offset);
+            if (enclosing_struct) {
+                add_completion_item(&items, count, &capacity, "self",
+                                   LSP_COMP_KEYWORD, enclosing_struct, prefix);
+                free(enclosing_struct);
+            }
         }
         
         // 2. 添加类型
@@ -1671,11 +2333,14 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
         
         // 5. 从编译器符号表添加用户定义的符号
         add_symbols_from_compiler(content, &items, count, &capacity, prefix, file_path);
+        }
     }
     
     free(prefix);
     free(module_alias);
     free(member_name);
+    free(use_module);
+    free(use_prefix);
     free_import_aliases(import_aliases, import_count);
 
     return items;

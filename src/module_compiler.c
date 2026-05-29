@@ -83,6 +83,11 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
             if (func_ast && func_name) {
                 Chunk func_chunk;
                 chunk_init(&func_chunk);
+                // 设置函数 chunk 的文件名为当前模块文件名
+                const char* current_file = error_get_filename();
+                if (current_file) {
+                    func_chunk.filename = strdup(current_file);
+                }
                 
                 CodeGen func_gen;
                 codegen_init(&func_gen, &func_chunk, &sem);
@@ -122,6 +127,11 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                         
                         Chunk method_chunk;
                         chunk_init(&method_chunk);
+                        // 设置方法 chunk 的文件名为当前模块文件名
+                        const char* current_file = error_get_filename();
+                        if (current_file) {
+                            method_chunk.filename = strdup(current_file);
+                        }
                         
                         CodeGen method_gen;
                         codegen_init(&method_gen, &method_chunk, &sem);

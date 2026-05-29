@@ -112,25 +112,47 @@ static bool find_definition_in_content(const char* content, const char* word,
     const char* p = content;
     int line = 0;
     int col = 0;
-    int offset = 0;
+    
+    static const struct {
+        const char* prefix;
+        int len;
+    } def_patterns[] = {
+        {"export cstruct ", 15},
+        {"export struct ", 14},
+        {"export func ", 12},
+        {"export enum ", 12},
+        {"export face ", 12},
+        {"export var ", 11},
+        {"cstruct ", 8},
+        {"struct ", 7},
+        {"func ", 5},
+        {"enum ", 5},
+        {"face ", 5},
+        {"var ", 4},
+    };
+    static const int num_patterns = sizeof(def_patterns) / sizeof(def_patterns[0]);
     
     while (*p) {
-        // 检查是否是定义
-        // 简单实现：查找 "func word"、"var word"、"struct word" 模式
-        if ((strncmp(p, "func ", 5) == 0 && strncmp(p + 5, word, word_len) == 0 &&
-             !isalnum((unsigned char)p[5 + word_len]) && p[5 + word_len] != '_') ||
-            (strncmp(p, "var ", 4) == 0 && strncmp(p + 4, word, word_len) == 0 &&
-             !isalnum((unsigned char)p[4 + word_len]) && p[4 + word_len] != '_') ||
-            (strncmp(p, "struct ", 7) == 0 && strncmp(p + 7, word, word_len) == 0 &&
-             !isalnum((unsigned char)p[7 + word_len]) && p[7 + word_len] != '_')) {
-            
-            // 找到定义
-            range->start.line = line;
-            range->start.character = col + (p[0] == 'v' ? 4 : (p[0] == 'f' ? 5 : 7));
-            range->end.line = line;
-            range->end.character = range->start.character + word_len;
-            
-            return true;
+        bool at_boundary = (p == content ||
+                            isspace((unsigned char)p[-1]) ||
+                            p[-1] == '{');
+        
+        if (at_boundary) {
+            for (int i = 0; i < num_patterns; i++) {
+                int plen = def_patterns[i].len;
+                if (strncmp(p, def_patterns[i].prefix, plen) == 0 &&
+                    strncmp(p + plen, word, word_len) == 0 &&
+                    !isalnum((unsigned char)p[plen + word_len]) &&
+                    p[plen + word_len] != '_') {
+                    
+                    range->start.line = line;
+                    range->start.character = col + plen;
+                    range->end.line = line;
+                    range->end.character = range->start.character + word_len;
+                    
+                    return true;
+                }
+            }
         }
         
         if (*p == '\n') {
@@ -140,7 +162,6 @@ static bool find_definition_in_content(const char* content, const char* word,
             col++;
         }
         p++;
-        offset++;
     }
     
     return false;

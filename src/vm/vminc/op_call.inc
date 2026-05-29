@@ -7,7 +7,7 @@
 OPCODE(OP_CALL) {
     frame = &vm.frames[vm.frame_cnt - 1];
     int arg_count = READ_SHORT();
-    Value callee = vm_stack_peek_fast(&vm, 0);
+    Value callee = vm_stack_peek(&vm, 0);
 
     if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
         ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
@@ -401,7 +401,8 @@ OPCODE(OP_CLOSURE) {
 }
 
 OPCODE(OP_RETURN) {
-    Value result = vm_stack_pop_fast(&vm);
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value result = vm_stack_pop(&vm);
 
     // 检查是否有 finally 块需要执行（且当前不在 finally 中）
     if (frame->finally_ip != NULL && !frame->in_finally) {
@@ -457,7 +458,7 @@ OPCODE(OP_RETURN) {
     }
 
     vm.sp = stack_base;
-    vm_stack_push_fast(&vm, result);
+    vm_stack_push(&vm, result);
 
     // 仅当使用动态分配时才需要 free
     if (locals != NULL && locals_is_dynamic) {

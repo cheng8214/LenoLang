@@ -606,8 +606,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
     if (ref->kind == SYM_GLOBAL) {
         emit_define_global(gen, ref->index, ast->line);
     } else if (ref->kind == SYM_LOCAL) {
-        emit_bytes_2(gen, OP_SET_LOCAL, ref->index, ast->line);
-        emit_byte(gen, OP_POP, ast->line);
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
     } else if (ref->kind == SYM_MODULE) {
         emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
         emit_byte(gen, OP_POP, ast->line);

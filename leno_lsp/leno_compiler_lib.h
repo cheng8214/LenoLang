@@ -7,6 +7,10 @@
 #define LENO_COMPILER_LIB_H
 
 #include "../src/include/lenolang.h"
+#include "../src/include/leno_ast.h"
+#include "../src/include/leno_lexer.h"
+#include "../src/include/leno_parser.h"
+#include "../src/include/leno_semantic.h"
 
 // 编译上下文
 typedef struct {

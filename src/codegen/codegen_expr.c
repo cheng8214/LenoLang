@@ -787,12 +787,61 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             break;
         }
         case AST_DICT: {
+            // 检查是否有任何 value 包含函数调用（包括普通调用和模块调用）
+            int has_call = 0;
             for (int i = 0; i < ast->u.dict.count; i++) {
-                ObjString* key = str_copy(ast->u.dict.entries[i].key,
-                                          (int)strlen(ast->u.dict.entries[i].key));
-                emit_constant(gen, val_obj((Object*)key), ast->line);
-                gen_expr(gen, ast->u.dict.entries[i].value);
+                Ast* value = ast->u.dict.entries[i].value;
+                if (value->kind == AST_CALL ||
+                    value->kind == AST_MODULE_CALL ||
+                    (value->kind == AST_INDEX && value->u.index.obj->kind == AST_CALL)) {
+                    has_call = 1;
+                    break;
+                }
             }
+            
+            if (has_call && ast->u.dict.count > 1) {
+                // 如果有函数调用且字典有多个条目，使用临时变量策略
+                // 先计算所有 value 并保存到临时变量，然后再组装字典
+                
+                // 计算需要的临时槽位数（每个 value 一个槽位）
+                int count = ast->u.dict.count;
+                
+                // 查找当前最大局部变量索引
+                int max_local_index = -1;
+                if (gen->current_func) {
+                    for (int j = 0; j < gen->current_func->local_count; j++) {
+                        if (j > max_local_index) max_local_index = j;
+                    }
+                }
+                int temp_slot_base = max_local_index + 1;
+                int max_temp_slot = temp_slot_base + count - 1;
+                if (max_temp_slot > gen->max_local_slot) {
+                    gen->max_local_slot = max_temp_slot;
+                }
+                
+                // 计算所有 value 并保存到临时变量（使用 OP_SET_LOCAL_POP 优化）
+                for (int i = 0; i < count; i++) {
+                    gen_expr(gen, ast->u.dict.entries[i].value);
+                    emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_slot_base + i, ast->line);
+                }
+                
+                // 按顺序生成 key-value 对（从临时变量加载 value）
+                for (int i = 0; i < count; i++) {
+                    ObjString* key = str_copy(ast->u.dict.entries[i].key,
+                                              (int)strlen(ast->u.dict.entries[i].key));
+                    emit_constant(gen, val_obj((Object*)key), ast->line);
+                    emit_bytes_2(gen, OP_GET_LOCAL, temp_slot_base + i, ast->line);
+                }
+            } else {
+                // 简单情况：直接生成 key-value 对
+                for (int i = 0; i < ast->u.dict.count; i++) {
+                    ObjString* key = str_copy(ast->u.dict.entries[i].key,
+                                              (int)strlen(ast->u.dict.entries[i].key));
+                    emit_constant(gen, val_obj((Object*)key), ast->line);
+                    gen_expr(gen, ast->u.dict.entries[i].value);
+                }
+            }
+            
             emit_byte(gen, OP_DICT, ast->line);
             emit_byte(gen, (ast->u.dict.count >> 8) & 0xff, ast->line);
             emit_byte(gen, ast->u.dict.count & 0xff, ast->line);

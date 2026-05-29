@@ -101,6 +101,118 @@ static const BuiltinFunctionMeta builtin_functions[] = {
         1,
         "Ptr"
     },
+    {
+        "input",
+        "input(prompt?)",
+        "从标准输入读取一行字符串",
+        "input()            // 读取输入\ninput(\"name: \")    // 带提示读取",
+        -1,
+        "string"
+    },
+    {
+        "sleep",
+        "sleep(ms)",
+        "暂停当前线程指定的毫秒数",
+        "sleep(1000)        // 暂停1秒",
+        1,
+        "null"
+    },
+    {
+        "assert",
+        "assert(condition, message?)",
+        "断言条件为真，否则抛出异常",
+        "assert(x > 0)\nassert(x > 0, \"must be positive\")",
+        -1,
+        "null"
+    },
+    {
+        "assert_eq",
+        "assert_eq(expected, actual, message?)",
+        "断言两个值相等",
+        "assert_eq(1, 1)\nassert_eq(a, b, \"should be equal\")",
+        -1,
+        "null"
+    },
+    {
+        "assert_ne",
+        "assert_ne(expected, actual, message?)",
+        "断言两个值不相等",
+        "assert_ne(1, 2)\nassert_ne(a, b, \"should not be equal\")",
+        -1,
+        "null"
+    },
+    {
+        "assert_true",
+        "assert_true(condition, message?)",
+        "断言条件为真",
+        "assert_true(x > 0)",
+        -1,
+        "null"
+    },
+    {
+        "assert_false",
+        "assert_false(condition, message?)",
+        "断言条件为假",
+        "assert_false(x < 0)",
+        -1,
+        "null"
+    },
+    {
+        "assert_null",
+        "assert_null(value, message?)",
+        "断言值为 null",
+        "assert_null(x)",
+        -1,
+        "null"
+    },
+    {
+        "format",
+        "format(template, ...args)",
+        "格式化字符串",
+        "format(\"hello %s\", name)\nformat(\"%d items\", count)",
+        -1,
+        "string"
+    },
+    {
+        "_args",
+        "_args()",
+        "获取命令行参数列表",
+        "_args()             // [\"script.leno\", \"arg1\"]",
+        0,
+        "Array"
+    },
+    {
+        "_script",
+        "_script()",
+        "获取当前脚本文件路径",
+        "_script()           // \"path/to/script.leno\"",
+        0,
+        "string"
+    },
+    {
+        "_executable",
+        "_executable()",
+        "获取当前可执行文件路径",
+        "_executable()       // \"/usr/bin/leno\"",
+        0,
+        "string"
+    },
+    {
+        "_gc",
+        "_gc()",
+        "手动触发垃圾回收",
+        "_gc()",
+        0,
+        "null"
+    },
+    {
+        "_os",
+        "_os()",
+        "获取当前操作系统名称",
+        "_os()               // \"windows\" 或 \"linux\" 或 \"macos\"",
+        0,
+        "string"
+    },
     {NULL, NULL, NULL, NULL, 0, NULL}
 };
 

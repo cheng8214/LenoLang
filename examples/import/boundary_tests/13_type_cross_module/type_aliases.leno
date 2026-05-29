@@ -20,10 +20,8 @@ export func pair_sum(var pair) {
 }
 
 export func pair_swap(var pair) {
-    var temp = pair[0]
-    pair[0] = pair[1]
-    pair[1] = temp
-    return pair
+    // 返回新数组，不修改原数组
+    return [pair[1], pair[0]]
 }
 
 export func map_set(var map, var key, var value) {

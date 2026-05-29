@@ -14,6 +14,8 @@
 
 // LenoC 需要的全局变量
 int debugMode = 0;
+int g_argc = 0;
+char** g_argv = NULL;
 
 static volatile int running = 1;
 
@@ -41,12 +43,7 @@ LspServer* lsp_server_create(void) {
     fprintf(stderr, "[LSP] Leno LSP Server v%s starting...\n", LSP_VERSION);
 
     // 初始化 GC（实例方法注册需要）
-    // 注意：LSP 服务器不需要完整的 VM，但需要 GC 来分配对象
-    // 创建一个临时的 GC 实例
-    extern GC* gc_get_current(void);
-    GC* gc = gc_get_current();
-    extern void gc_init(GC* gc, struct VM* vm);
-    gc_init(gc, NULL);
+    gc_init();
     lsp_log(server, LSP_LOG_INFO, "GC initialized");
 
     // 初始化实例方法元数据（只需初始化一次）

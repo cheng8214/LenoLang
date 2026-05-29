@@ -4,7 +4,7 @@
 // 指令名称表（用于调试）- 必须与 leno_vm.h 中的 OpCode 枚举完全一致
 static const char* opCodeNames[] = {
     "OP_CONST", "OP_NULL", "OP_TRUE", "OP_FALSE", "OP_ZERO", "OP_ONE", "OP_POP", "OP_DUP",
-    "OP_GET_LOCAL", "OP_SET_LOCAL", "OP_GET_GLOBAL", "OP_SET_GLOBAL",
+    "OP_GET_LOCAL", "OP_SET_LOCAL", "OP_SET_LOCAL_POP", "OP_GET_GLOBAL", "OP_SET_GLOBAL",
     "OP_GET_UPVALUE", "OP_SET_UPVALUE", "OP_CLOSE_UPVALUE", "OP_DEFINE_GLOBAL",
     "OP_GET_GLOBAL_FUNC", "OP_DEFINE_GLOBAL_FUNC", "OP_GET_NATIVE",
     "OP_ADD", "OP_SUB", "OP_MUL", "OP_DIV", "OP_MOD", "OP_BITAND", "OP_BITOR", "OP_BITXOR", "OP_BITNOT", "OP_SHL", "OP_SHR", "OP_NEG", "OP_NOT",
@@ -121,6 +121,7 @@ int disassembleInstruction(Chunk* chunk, int offset) {
         }
         case OP_GET_LOCAL:
         case OP_SET_LOCAL:
+        case OP_SET_LOCAL_POP:
         case OP_GET_UPVALUE:
         case OP_SET_UPVALUE: {
             int idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
@@ -323,7 +324,16 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int alignment = chunk->code[offset + 6];
             printf(" name=%d fields=%d size=%d align=%d", name_idx, field_count, total_size, alignment);
             // 跳过指令头 (7字节) + 字段信息 (每个字段: 2字节名称 + 1字节类型 + 2字节偏移 + 2字节数组维度 + 2字节结构体类型名)
-            return offset + 7 + field_count * 9;
+            // 注意：如果字段类型是 TYPE_PTR_GENERIC (19)，还有一个额外的字节表示元素类型
+            int data_offset = offset + 7;
+            for (int i = 0; i < field_count; i++) {
+                int field_type = chunk->code[data_offset + 2]; // 字段类型在字段名(2字节)之后
+                data_offset += 9; // 基础字段信息大小
+                if (field_type == 19) { // TYPE_PTR_GENERIC
+                    data_offset += 1; // 额外1字节元素类型
+                }
+            }
+            return data_offset;
         }
         case OP_GET_CSTRUCT_DEF: {
             int name_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];

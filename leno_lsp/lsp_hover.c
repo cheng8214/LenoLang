@@ -315,8 +315,6 @@ static char* find_struct_name_at_position(const char* content, LspPosition pos) 
     int offset = lsp_position_to_offset(content, pos);
     if (offset < 0) return NULL;
 
-    fprintf(stderr, "[LSP DEBUG] find_struct_name_at_position: offset=%d, line=%d\n", offset, pos.line);
-
     // 从当前位置向前搜索 "struct" 关键字
     // 我们需要找到最近的一个 "struct Name {" 定义，且该定义在光标之前
     const char* search_start = content + offset;
@@ -329,8 +327,6 @@ static char* find_struct_name_at_position(const char* content, LspPosition pos) 
             (p == content || !isalnum((unsigned char)*(p-1))) &&
             !isalnum((unsigned char)*(p+6))) {
 
-            fprintf(stderr, "[LSP DEBUG] Found 'struct' keyword at offset %d\n", (int)(p - content));
-
             // 找到 struct 后，解析 struct 名称
             // 格式应该是: struct Name { 或 export struct Name {
             const char* name_start = p + 6;
@@ -340,8 +336,6 @@ static char* find_struct_name_at_position(const char* content, LspPosition pos) 
                 name_start++;
             }
 
-            fprintf(stderr, "[LSP DEBUG] After 'struct', name_start='%c'\n", *name_start);
-
             // 现在 name_start 应该指向 struct 名称
             const char* name_end = name_start;
             while (*name_end && (isalnum((unsigned char)*name_end) || *name_end == '_')) {
@@ -349,7 +343,6 @@ static char* find_struct_name_at_position(const char* content, LspPosition pos) 
             }
 
             int name_len = name_end - name_start;
-            fprintf(stderr, "[LSP DEBUG] name_len=%d\n", name_len);
 
             if (name_len > 0) {
                 // 检查这个 struct 定义是否包含光标位置（通过查找匹配的 }）
@@ -358,9 +351,6 @@ static char* find_struct_name_at_position(const char* content, LspPosition pos) 
                 while (*brace && *brace != '{' && *brace != '\n') {
                     brace++;
                 }
-
-                fprintf(stderr, "[LSP DEBUG] brace char='%c', brace_offset=%d, cursor_offset=%d\n",
-                        *brace, (int)(brace - content), offset);
 
                 if (*brace == '{') {
                     // 找到了 struct 定义的开始，检查光标是否在这个定义内
@@ -373,19 +363,14 @@ static char* find_struct_name_at_position(const char* content, LspPosition pos) 
                         if (struct_name) {
                             strncpy(struct_name, name_start, name_len);
                             struct_name[name_len] = '\0';
-                            fprintf(stderr, "[LSP DEBUG] Found struct '%s' at position line=%d\n",
-                                    struct_name, pos.line);
                             return struct_name;
                         }
-                    } else {
-                        fprintf(stderr, "[LSP DEBUG] Cursor is outside struct block, continuing search\n");
                     }
                 }
             }
         }
     }
 
-    fprintf(stderr, "[LSP DEBUG] No struct found at position\n");
     return NULL;
 }
 
@@ -576,15 +561,9 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
     char* current_struct_name = find_struct_name_at_position(content, pos);
 
     if (current_struct_name) {
-        // 如果确定了当前 struct，检查该字段是否在其中
         char* type_str = NULL;
-        fprintf(stderr, "[LSP DEBUG] Current struct at cursor: '%s', looking for field '%s'\n",
-                current_struct_name, word);
         bool found = compiler_get_struct_field_info(&ctx, current_struct_name, word, &type_str);
         if (found) {
-            fprintf(stderr, "[LSP DEBUG] Found field '%s' in struct '%s' with type '%s'\n",
-                    word, current_struct_name, type_str ? type_str : "unknown");
-            // 构建悬停信息（使用固定大小缓冲区避免警告）
             char* info = (char*)malloc(4096);
             if (info) {
                 snprintf(info, 4096, "**%s**\n\n"
@@ -603,25 +582,14 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
             compiler_context_cleanup(&ctx);
             return info;
         }
-        fprintf(stderr, "[LSP DEBUG] Field '%s' not found in struct '%s'\n", word, current_struct_name);
     }
 
     // 如果不在 struct 定义中，尝试在作用域树中查找符号
     // 优先查找当前函数作用域中的符号，避免其他函数的参数干扰
     Symbol* sym = find_symbol_in_current_function(ctx.root_scope, word, content, pos);
-    if (sym) {
-        fprintf(stderr, "[LSP DEBUG] Found symbol '%s' in current function, kind=%d, type_kind=%d\n",
-                word, sym->kind, sym->type ? (int)sym->type->kind : -1);
-    }
 
-    // 如果没找到，尝试在整个作用域树中查找（使用 BFS）
     if (!sym) {
-        fprintf(stderr, "[LSP DEBUG] Trying to find symbol '%s' in entire scope tree\n", word);
         sym = scope_resolve_tree_bfs(ctx.root_scope, word);
-        if (sym) {
-            fprintf(stderr, "[LSP DEBUG] Found symbol '%s' in scope tree, kind=%d, type_kind=%d\n",
-                    word, sym->kind, sym->type ? (int)sym->type->kind : -1);
-        }
     }
 
     // 如果没找到，尝试查找所有包含该字段的 struct
@@ -630,9 +598,6 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         int struct_count = compiler_find_structs_with_field(&ctx, word, &struct_names);
 
         if (struct_count > 0) {
-            // 使用第一个找到的 struct
-            fprintf(stderr, "[LSP DEBUG] Found %d structs with field '%s', using first: '%s'\n",
-                    struct_count, word, struct_names[0]);
             char* type_str = NULL;
             bool found = compiler_get_struct_field_info(&ctx, struct_names[0], word, &type_str);
 
@@ -671,8 +636,6 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
     // 构建悬停信息
     const char* type_str = type_to_string(sym->type);
-    fprintf(stderr, "[LSP DEBUG] sym->type kind=%d, type_str='%s'\n",
-            sym->type ? (int)sym->type->kind : -1, type_str ? type_str : "null");
     int info_len = 512 + strlen(word) + (type_str ? strlen(type_str) : 0);
     char* info = (char*)malloc(info_len);
     if (!info) {
@@ -754,6 +717,35 @@ static char* get_keyword_doc(const char* word) {
                      "    int y = 0\n"
                      "}\n"
                      "```");
+    }
+    else if (strcmp(word, "impl") == 0) {
+        return strdup("**impl** - 接口实现关键字\n\n"
+                     "用于声明 struct 实现某个 face（接口）。\n\n"
+                     "```leno\n"
+                     "face Speaker {\n"
+                     "    func speak():string\n"
+                     "}\n\n"
+                     "struct Dog impl Speaker {\n"
+                     "    string name = \"\"\n"
+                     "    func speak():string { return \"woof\" }\n"
+                     "}\n"
+                     "```");
+    }
+    else if (strcmp(word, "cstruct") == 0) {
+        return strdup("**cstruct** - C 布局结构体定义关键字\n\n"
+                     "定义与 C 兼容的内存布局结构体，用于 FFI 互操作。\n"
+                     "cstruct 的字段必须是 C 布局类型（i8, u8, i32, f64, Ptr 等）。\n\n"
+                     "```leno\n"
+                     "cstruct Point {\n"
+                     "    i32 x\n"
+                     "    i32 y\n"
+                     "}\n\n"
+                     "var p = Point.malloc()\n"
+                     "p.x = 10\n"
+                     "p.y = 20\n"
+                     "p.free()\n"
+                     "```\n\n"
+                     "> **注意**: cstruct 实例需要手动管理内存（malloc/free）。");
     }
     else if (strcmp(word, "import") == 0) {
         return strdup("**import** - 模块导入关键字\n\n"
@@ -945,6 +937,43 @@ static char* get_keyword_doc(const char* word) {
                      "}\n"
                      "```");
     }
+    else if (strcmp(word, "face") == 0) {
+        return strdup("**face** - 接口定义关键字\n\n"
+                     "用于定义接口类型，指定 struct 必须实现的方法。\n\n"
+                     "```leno\n"
+                     "face Speaker {\n"
+                     "    func speak():string\n"
+                     "}\n\n"
+                     "struct Dog impl Speaker {\n"
+                     "    string name = \"\"\n"
+                     "    func speak():string { return \"woof\" }\n"
+                     "}\n"
+                     "```");
+    }
+    else if (strcmp(word, "new") == 0) {
+        return strdup("**new** - struct 实例化关键字\n\n"
+                     "用于创建 struct 实例，必须使用命名参数。\n\n"
+                     "```leno\n"
+                     "struct Point {\n"
+                     "    int x = 0\n"
+                     "    int y = 0\n"
+                     "}\n\n"
+                     "var p1 = new Point(x = 10, y = 20)\n"
+                     "var p2 = new Point()\n"
+                     "var p3 = new math.Point(x = 1, y = 2)\n"
+                     "```\n\n"
+                     "> **注意**: `new` 关键字区分 struct 实例化和函数调用。");
+    }
+    else if (strcmp(word, "use") == 0) {
+        return strdup("**use** - 导入符号关键字\n\n"
+                     "从导入的模块中选择性导入符号到当前作用域。\n\n"
+                     "```leno\n"
+                     "import \"math.leno\" as math\n"
+                     "use math.Point\n"
+                     "use math.createPoint\n\n"
+                     "var p = new Point(x = 10, y = 20)\n"
+                     "```");
+    }
     else if (strcmp(word, "true") == 0) {
         return strdup("**true** - 布尔真值\n\n"
                      "布尔类型的真值。");
@@ -1021,6 +1050,162 @@ static char* get_keyword_doc(const char* word) {
     else if (strcmp(word, "any") == 0) {
         return strdup("**any** - 任意类型\n\n"
                      "可以表示任何类型的值。");
+    }
+    else if (strcmp(word, "bigint") == 0) {
+        return strdup("**bigint** - 大整数类型\n\n"
+                     "支持任意精度整数运算。");
+    }
+    else if (strcmp(word, "i8") == 0) {
+        return strdup("**i8** - C 布局 8 位有符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "u8") == 0) {
+        return strdup("**u8** - C 布局 8 位无符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "i16") == 0) {
+        return strdup("**i16** - C 布局 16 位有符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "u16") == 0) {
+        return strdup("**u16** - C 布局 16 位无符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "i32") == 0) {
+        return strdup("**i32** - C 布局 32 位有符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "u32") == 0) {
+        return strdup("**u32** - C 布局 32 位无符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "i64") == 0) {
+        return strdup("**i64** - C 布局 64 位有符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "u64") == 0) {
+        return strdup("**u64** - C 布局 64 位无符号整数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "f32") == 0) {
+        return strdup("**f32** - C 布局 32 位浮点数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "f64") == 0) {
+        return strdup("**f64** - C 布局 64 位浮点数\n\n"
+                     "用于 cstruct 字段定义和 FFI 互操作。");
+    }
+    else if (strcmp(word, "c_int") == 0) {
+        return strdup("**c_int** - C 平台 int 类型\n\n"
+                     "与 C 语言的 int 类型大小一致，用于 FFI 互操作。");
+    }
+    else if (strcmp(word, "c_uint") == 0) {
+        return strdup("**c_uint** - C 平台 unsigned int 类型\n\n"
+                     "与 C 语言的 unsigned int 类型大小一致，用于 FFI 互操作。");
+    }
+    else if (strcmp(word, "c_long") == 0) {
+        return strdup("**c_long** - C 平台 long 类型\n\n"
+                     "与 C 语言的 long 类型大小一致，用于 FFI 互操作。");
+    }
+    else if (strcmp(word, "c_ulong") == 0) {
+        return strdup("**c_ulong** - C 平台 unsigned long 类型\n\n"
+                     "与 C 语言的 unsigned long 类型大小一致，用于 FFI 互操作。");
+    }
+    else if (strcmp(word, "c_char") == 0) {
+        return strdup("**c_char** - C 平台 char 类型\n\n"
+                     "与 C 语言的 char 类型大小一致，用于 FFI 互操作。");
+    }
+    else if (strcmp(word, "c_size") == 0) {
+        return strdup("**c_size** - C 平台 size_t 类型\n\n"
+                     "与 C 语言的 size_t 类型大小一致，用于 FFI 互操作。");
+    }
+    else if (strcmp(word, "str16") == 0) {
+        return strdup("**str16** - UTF-16 字符串数组类型\n\n"
+                     "用于 Windows API 的宽字符字符串互操作。");
+    }
+    else if (strcmp(word, "Thread") == 0) {
+        return strdup("**Thread** - 线程类型\n\n"
+                     "用于并发编程，通过 async 模块创建。");
+    }
+    else if (strcmp(word, "Channel") == 0) {
+        return strdup("**Channel** - Channel 类型\n\n"
+                     "用于协程间通信，通过 async 模块创建。");
+    }
+    else if (strcmp(word, "face") == 0) {
+        return strdup("**face** - 接口类型\n\n"
+                     "定义接口类型，用于声明变量类型和类型守卫。\n\n"
+                     "```leno\n"
+                     "face Speaker {\n"
+                     "    func speak():string\n"
+                     "}\n\n"
+                     "Speaker s = new Dog()\n"
+                     "if s is Speaker {\n"
+                     "    print(s.speak())\n"
+                     "}\n"
+                     "```");
+    }
+    // 内置函数
+    else if (strcmp(word, "input") == 0) {
+        return strdup("**input()** - 读取用户输入\n\n"
+                     "从标准输入读取一行文本。\n\n"
+                     "```leno\n"
+                     "var name = input(\"请输入姓名: \")\n"
+                     "```");
+    }
+    else if (strcmp(word, "sleep") == 0) {
+        return strdup("**sleep(ms)** - 休眠\n\n"
+                     "暂停当前线程指定毫秒数。\n\n"
+                     "```leno\n"
+                     "sleep(1000)  // 休眠 1 秒\n"
+                     "```");
+    }
+    else if (strcmp(word, "assert") == 0) {
+        return strdup("**assert(condition)** - 断言\n\n"
+                     "断言条件为真，否则抛出异常。");
+    }
+    else if (strcmp(word, "assert_eq") == 0) {
+        return strdup("**assert_eq(a, b)** - 相等断言\n\n"
+                     "断言两个值相等，否则抛出异常。");
+    }
+    else if (strcmp(word, "assert_ne") == 0) {
+        return strdup("**assert_ne(a, b)** - 不等断言\n\n"
+                     "断言两个值不相等，否则抛出异常。");
+    }
+    else if (strcmp(word, "assert_true") == 0) {
+        return strdup("**assert_true(value)** - 真值断言\n\n"
+                     "断言值为 true，否则抛出异常。");
+    }
+    else if (strcmp(word, "assert_false") == 0) {
+        return strdup("**assert_false(value)** - 假值断言\n\n"
+                     "断言值为 false，否则抛出异常。");
+    }
+    else if (strcmp(word, "assert_null") == 0) {
+        return strdup("**assert_null(value)** - 空值断言\n\n"
+                     "断言值为 null，否则抛出异常。");
+    }
+    else if (strcmp(word, "format") == 0) {
+        return strdup("**format(template, args...)** - 格式化字符串\n\n"
+                     "使用模板和参数生成格式化字符串。");
+    }
+    else if (strcmp(word, "_args") == 0) {
+        return strdup("**_args** - 命令行参数\n\n"
+                     "返回命令行参数数组。");
+    }
+    else if (strcmp(word, "_script") == 0) {
+        return strdup("**_script** - 脚本路径\n\n"
+                     "返回当前脚本的文件路径。");
+    }
+    else if (strcmp(word, "_executable") == 0) {
+        return strdup("**_executable** - 可执行文件路径\n\n"
+                     "返回当前解释器的可执行文件路径。");
+    }
+    else if (strcmp(word, "_gc") == 0) {
+        return strdup("**_gc()** - 垃圾回收\n\n"
+                     "手动触发垃圾回收。");
+    }
+    else if (strcmp(word, "_os") == 0) {
+        return strdup("**_os** - 操作系统名称\n\n"
+                     "返回当前操作系统名称字符串（如 \"windows\", \"linux\", \"macos\"）。");
     }
     // 内置函数 - 从元数据表获取
     const BuiltinFunctionMeta* builtin = find_builtin_function(word);
@@ -1103,16 +1288,8 @@ static int parse_module_path(const char* word, char** segments, int max_segments
 static char* get_module_symbol_hover(const char* content, const char* word, const char* current_file) {
     if (!content || !word) return NULL;
 
-    fprintf(stderr, "[LSP DEBUG] get_module_symbol_hover: word='%s', current_file='%s'\n",
-            word, current_file ? current_file : "NULL");
-
-    // 解析模块路径
     char* segments[4];
     int segment_count = parse_module_path(word, segments, 4);
-    fprintf(stderr, "[LSP DEBUG] parse_module_path returned: %d segments\n", segment_count);
-    for (int i = 0; i < segment_count; i++) {
-        fprintf(stderr, "[LSP DEBUG] segment[%d]='%s'\n", i, segments[i]);
-    }
     if (segment_count < 2) {
         for (int i = 0; i < segment_count; i++) free(segments[i]);
         return NULL;
@@ -1187,20 +1364,15 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
     }
 
     if (!module_path) {
-        fprintf(stderr, "[LSP DEBUG] module_path not found for alias '%s'\n", segments[0]);
         for (int i = 0; i < segment_count; i++) free(segments[i]);
         return NULL;
     }
 
-    fprintf(stderr, "[LSP DEBUG] Found module_path='%s'\n", module_path);
-
-    // 读取模块文件内容
     extern char* read_module_file(const char* file_path, const char* current_file);
     char* module_source = read_module_file(module_path, current_file);
     free(module_path);
 
     if (!module_source) {
-        fprintf(stderr, "[LSP DEBUG] Failed to read module file\n");
         for (int i = 0; i < segment_count; i++) free(segments[i]);
         return NULL;
     }
@@ -1212,13 +1384,10 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
     free(module_source);
 
     if (!analyzed || !ctx.root_scope) {
-        fprintf(stderr, "[LSP DEBUG] Failed to analyze module\n");
         compiler_context_cleanup(&ctx);
         for (int i = 0; i < segment_count; i++) free(segments[i]);
         return NULL;
     }
-
-    fprintf(stderr, "[LSP DEBUG] Module analyzed successfully\n");
 
     char* result = NULL;
 
@@ -1229,7 +1398,6 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
         // 从编译器符号表中查找
         Symbol* sym = scope_resolve_tree_bfs(ctx.root_scope, symbol_name);
         if (sym) {
-            fprintf(stderr, "[LSP DEBUG] Found symbol '%s' in module, kind=%d\n", symbol_name, sym->kind);
             const char* type_str = type_to_string(sym->type);
 
             switch (sym->kind) {
@@ -1247,9 +1415,7 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                     break;
                 }
                 case SYM_TYPE: {
-                    fprintf(stderr, "[LSP DEBUG] SYM_TYPE: symbol_name='%s', sym->type=%p\n", symbol_name, (void*)sym->type);
                     if (sym->type && sym->type->kind == TYPE_STRUCT) {
-                        fprintf(stderr, "[LSP DEBUG] It's a struct\n");
                         int len = 512 + strlen(word);
                         result = (char*)malloc(len);
                         if (result) {
@@ -1261,7 +1427,6 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                                  word, symbol_name);
                         }
                     } else {
-                        fprintf(stderr, "[LSP DEBUG] It's an enum or other type\n");
                         int len = 512 + strlen(word);
                         result = (char*)malloc(len);
                         if (result) {
@@ -1273,7 +1438,6 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                                  word, symbol_name);
                         }
                     }
-                    fprintf(stderr, "[LSP DEBUG] SYM_TYPE case done\n");
                     break;
                 }
                 case SYM_GLOBAL:
@@ -1294,8 +1458,6 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                 default:
                     break;
             }
-        } else {
-            fprintf(stderr, "[LSP DEBUG] Symbol '%s' not found in module\n", symbol_name);
         }
     } else if (segment_count == 3) {
         // module.Enum.value 或 module.Struct.field
@@ -1323,8 +1485,6 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
         if (!result) {
             Symbol* struct_sym = scope_resolve_tree_bfs(ctx.root_scope, type_name);
             if (struct_sym && struct_sym->kind == SYM_TYPE && struct_sym->type && struct_sym->type->kind == TYPE_STRUCT) {
-                fprintf(stderr, "[LSP DEBUG] Found struct '%s', looking for field '%s'\n", type_name, member_name);
-                // 在 struct 的字段中查找（使用 Symbol 中的字段信息）
                 if (struct_sym->struct_field_names && struct_sym->struct_field_types) {
                     for (int i = 0; i < struct_sym->struct_field_count; i++) {
                         if (strcmp(struct_sym->struct_field_names[i], member_name) == 0) {
@@ -1340,16 +1500,10 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                                          word, word, field_type_str,
                                          type_name, type_name);
                             }
-                            fprintf(stderr, "[LSP DEBUG] Found field '%s' with type '%s'\n", member_name, field_type_str);
                             break;
                         }
                     }
                 }
-                if (!result) {
-                    fprintf(stderr, "[LSP DEBUG] Field '%s' not found in struct '%s'\n", member_name, type_name);
-                }
-            } else {
-                fprintf(stderr, "[LSP DEBUG] Struct '%s' not found in module\n", type_name);
             }
         }
     }
@@ -1606,10 +1760,6 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
     char* word = get_word_at_position(content, pos);
     if (!word) return NULL;
     
-    // 调试输出
-    fprintf(stderr, "[LSP HOVER DEBUG] pos.line=%d, pos.character=%d, word='%s'\n", 
-            pos.line, pos.character, word);
-    
     char* info = NULL;
     
     // 0. 检查是否是导入模块的导出符号 (如 "color_module.Color.red")
@@ -1651,19 +1801,14 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             int offset = lsp_position_to_offset(content, pos);
             if (!is_inside_string_literal(content, offset) && !is_inside_comment(content, offset)) {
                 // 首先尝试使用编译器确定变量类型
-                char* var_type = get_variable_type_from_compiler(content, module, file_path);
+                const char* var_type = get_variable_type_from_compiler(content, module, file_path);
                 if (var_type) {
-                    // 检查该类型是否有这个方法
                     int arity = native_get_instance_method_arity(var_type, method);
                     if (arity >= 0) {
                         info = generate_instance_method_doc(var_type, method);
                     }
-                    // 释放类型字符串（对于 struct 类型是动态分配的）
-                    // 注意：对于基本类型（string, array, dict），var_type 是常量，不需要释放
-                    // 但对于 struct 类型，var_type 是动态分配的，需要释放
-                    // 这里我们通过检查 var_type 是否在常量字符串池中来判断
-                    if (var_type != "string" && var_type != "array" && var_type != "dict") {
-                        free(var_type);
+                    if (strcmp(var_type, "string") != 0 && strcmp(var_type, "array") != 0 && strcmp(var_type, "dict") != 0) {
+                        free((void*)var_type);
                     }
                 }
 

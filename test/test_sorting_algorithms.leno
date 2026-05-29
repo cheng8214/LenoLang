@@ -1,0 +1,458 @@
+// 排序算法测试 - 使用断言验证各种排序算法的正确性
+import rands as rand
+
+// ==================== 插入排序 ====================
+func insertion_sort(var arr) {
+    var n = arr.len();
+    if n <= 1 {
+        return arr;
+    }
+    for 1:n-1 to var i {
+        var key = arr[i];
+        var j = i - 1;
+        while j >= 0 and arr[j] > key {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+    }
+    return arr;
+}
+
+// ==================== 冒泡排序 ====================
+func bubble_sort(var arr) {
+    var n = arr.len();
+    if n <= 1 {
+        return arr;
+    }
+    for n - 1 to var i {
+        for n - i - 1 to var j {
+            if arr[j] > arr[j + 1] {
+                var temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+        }
+    }
+    return arr;
+}
+
+// ==================== 选择排序 ====================
+func selection_sort(var arr) {
+    var n = arr.len();
+    if n <= 1 {
+        return arr;
+    }
+    for n - 1 to var i {
+        var min_idx = i;
+        for i + 1:n-1 to var j {
+            if arr[j] < arr[min_idx] {
+                min_idx = j;
+            }
+        }
+        if min_idx != i {
+            var temp = arr[i];
+            arr[i] = arr[min_idx];
+            arr[min_idx] = temp;
+        }
+    }
+    return arr;
+}
+
+// ==================== 希尔排序 ====================
+func shell_sort(var arr) {
+    var n = arr.len();
+    if n <= 1 {
+        return arr;
+    }
+    var gap = n / 2;
+    while gap >= 1 {
+        for gap:n-1 to var i {
+            var temp = arr[i];
+            var j = i;
+            while j >= gap and arr[j - gap] > temp {
+                arr[j] = arr[j - gap];
+                j = _int(j - gap)
+            }
+            arr[j] = temp;
+        }
+        if gap == 1 { break; }
+        gap = gap / 2;
+        if gap < 1 { gap = 1; }
+    }
+    return arr;
+}
+
+// ==================== 归并排序（迭代版本）====================
+func merge_sort(Array[int] arr) {
+    if arr.len() <= 1 {
+        return arr;
+    }
+    
+    var temp = [];
+    for arr.len() to var i {
+        temp.add(0);
+    }
+    
+    var n = arr.len();
+    var width = 1;
+    while width < n {
+        var left = 0;
+        while left < n {
+            var mid = left + width - 1;
+            if mid >= n - 1 {
+                break;
+            }
+            var right = left + 2 * width - 1;
+            if right >= n {
+                right = _int(n - 1);
+            }
+            
+            var i = left;
+            var j = mid + 1;
+            var k = left;
+            
+            while i <= mid and j <= right {
+                if arr[i] <= arr[j] {
+                    temp[k] = arr[i];
+                    i = i + 1;
+                } else {
+                    temp[k] = arr[j];
+                    j = j + 1;
+                }
+                k = k + 1;
+            }
+            
+            while i <= mid {
+                temp[k] = arr[i];
+                i = i + 1;
+                k = k + 1;
+            }
+            
+            while j <= right {
+                temp[k] = arr[j];
+                j = j + 1;
+                k = k + 1;
+            }
+            
+            for left:right to var idx {
+                arr[idx] = temp[idx];
+            }
+            
+            left = left + 2 * width;
+        }
+        width = width * 2;
+    }
+    return arr;
+}
+
+// ==================== 堆排序（迭代版本）====================
+func heap_sort(var arr) {
+    var n = arr.len();
+    if n <= 1 {
+        return arr;
+    }
+    
+    var start = n / 2 - 1;
+    while start >= 0 {
+        heapify(arr, n, start);
+        start = start - 1;
+    }
+    
+    var end = n - 1;
+    while end > 0 {
+        var temp = arr[0];
+        arr[0] = arr[end];
+        arr[end] = temp;
+        
+        heapify(arr, end, 0);
+        end = end - 1;
+    }
+    return arr;
+}
+
+func heapify(var arr, var n, var i) {
+    while true {
+        var largest = i;
+        var left = 2 * i + 1;
+        var right = 2 * i + 2;
+        
+        if left < n and arr[left] > arr[largest] {
+            largest = left;
+        }
+        if right < n and arr[right] > arr[largest] {
+            largest = right;
+        }
+        
+        if largest == i {
+            break;
+        }
+        
+        var temp = arr[i];
+        arr[i] = arr[largest];
+        arr[largest] = temp;
+        i = largest;
+    }
+}
+
+// ==================== 快速排序 ====================
+func quick_sort(var arr) {
+    return quick_sort_opt(arr, 0, arr.len() - 1)
+}
+
+func quick_sort_opt(var arr, var left, var right) {
+    if right - left < 20 {
+        return quick_insertion_sort_range(arr, left, right);
+    }
+    if left < right {
+        var pivot_index = partition_opt(arr, left, right);
+        quick_sort_opt(arr, left, pivot_index - 1);
+        quick_sort_opt(arr, pivot_index + 1, right);
+    }
+    return arr;
+}
+
+func partition_opt(var arr, var left, var right) {
+    var mid = (left + right) / 2;
+    if arr[left] > arr[mid] {
+        var temp = arr[left];
+        arr[left] = arr[mid];
+        arr[mid] = temp;
+    }
+    if arr[mid] > arr[right] {
+        var temp = arr[mid];
+        arr[mid] = arr[right];
+        arr[right] = temp;
+    }
+    if arr[left] > arr[mid] {
+        var temp = arr[left];
+        arr[left] = arr[mid];
+        arr[mid] = temp;
+    }
+    var pivot = arr[mid];
+    var temp = arr[mid];
+    arr[mid] = arr[right - 1];
+    arr[right - 1] = temp;
+    var i = left;
+    var j = right - 1;
+    while true {
+        i = i + 1;
+        while arr[i] < pivot { i = i + 1 }
+        j = j - 1;
+        while arr[j] > pivot { j = j - 1 }
+        if i < j {
+            var temp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = temp;
+        } else {
+            break
+        }
+    }
+    var temp1 = arr[i];
+    arr[i] = arr[right - 1];
+    arr[right - 1] = temp1
+    return i
+}
+
+func quick_insertion_sort_range(var arr, var left, var right) {
+    if left >= right {
+        return arr
+    }
+    for left + 1:right to var i {
+        var key = arr[i];
+        var j = i - 1;
+        while j >= left and arr[j] > key {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+    }
+    return arr;
+}
+
+// ==================== 计数排序 ====================
+func counting_sort(var arr) {
+    if arr.len() <= 1 {
+        return arr;
+    }
+    
+    var max_val = arr[0];
+    var min_val = arr[0];
+    for 1:arr.len()-1 to var i {
+        if arr[i] > max_val { max_val = arr[i]; }
+        if arr[i] < min_val { min_val = arr[i]; }
+    }
+    
+    var range = _int(max_val - min_val + 1);
+    var count = [];
+    for range to var i {
+        count.add(0);
+    }
+    
+    for 0:arr.len()-1 to var i {
+        count[arr[i] - min_val] = count[arr[i] - min_val] + 1;
+    }
+    
+    var index = 0;
+    for range to var i {
+        while count[i] > 0 {
+            arr[index] = i + min_val;
+            index = index + 1;
+            count[i] = count[i] - 1;
+        }
+    }
+    return arr;
+}
+
+// ==================== 基数排序 ====================
+func radix_sort(Array[int] arr) {
+    if arr.len() <= 1 {
+        return arr;
+    }
+    
+    var max_val = arr[0];
+    for 1:arr.len()-1 to var i {
+        if arr[i] > max_val { max_val = arr[i]; }
+    }
+    
+    var exp = 1;
+    while max_val / exp > 0 {
+        counting_sort_by_digit(arr, exp);
+        exp = exp * 10;
+    }
+    return arr;
+}
+
+func counting_sort_by_digit(Array[int] arr, var exp) {
+    var n = arr.len();
+    var output = [];
+    for n to var i { output.add(0); }
+    
+    var count = [];
+    for 10 to var i { count.add(0); }
+    
+    // 统计当前位上每个数字出现的次数
+    for 0:n-1 to var i {
+        var digit = (arr[i] / exp) % 10;
+        count[digit] = count[digit] + 1;
+    }
+    
+    // 计算位置
+    for 1:10 to var i {
+        count[i] = count[i] + count[i - 1];
+    }
+    
+    // 构建输出数组（从后向前遍历）
+    for 0:n to var idx {
+        var i = n - 1 - idx;
+        var digit =_int((arr[i] / exp) % 10)
+        output[count[digit] - 1] = arr[i];
+        count[digit] = count[digit] - 1;
+    }
+    
+    // 复制回原数组
+    for 0:n-1 to var i {
+        arr[i] = output[i];
+    }
+}
+
+// ==================== 辅助函数 ====================
+func is_sorted(var arr) {
+    for 0:arr.len()-2 to var i {
+        if arr[i] > arr[i + 1] {
+            return false;
+        }
+    }
+    return true;
+}
+
+func arrays_equal(var arr1, var arr2) {
+    if arr1.len() != arr2.len() {
+        return false;
+    }
+    for arr1.len() to var i {
+        if arr1[i] != arr2[i] {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ==================== 测试代码 ====================
+main() {
+    // 测试空数组
+    var empty = [];
+    assert_eq(is_sorted(insertion_sort(empty.copy())), true);
+    assert_eq(is_sorted(bubble_sort(empty.copy())), true);
+    assert_eq(is_sorted(selection_sort(empty.copy())), true);
+    
+    // 测试单元素数组
+    var single = [42];
+    assert_eq(is_sorted(insertion_sort(single.copy())), true);
+    assert_eq(is_sorted(bubble_sort(single.copy())), true);
+    assert_eq(is_sorted(selection_sort(single.copy())), true);
+    
+    // 测试已排序数组
+    var sorted = [1, 2, 3, 4, 5];
+    assert_eq(is_sorted(insertion_sort(sorted.copy())), true);
+    assert_eq(is_sorted(bubble_sort(sorted.copy())), true);
+    assert_eq(is_sorted(selection_sort(sorted.copy())), true);
+    
+    // 测试逆序数组
+    var reverse = [5, 4, 3, 2, 1];
+    assert_eq(is_sorted(insertion_sort(reverse.copy())), true);
+    assert_eq(is_sorted(bubble_sort(reverse.copy())), true);
+    assert_eq(is_sorted(selection_sort(reverse.copy())), true);
+    
+    // 测试重复元素
+    var duplicates = [3, 1, 4, 1, 5, 9, 2, 6, 5];
+    assert_eq(is_sorted(insertion_sort(duplicates.copy())), true);
+    assert_eq(is_sorted(bubble_sort(duplicates.copy())), true);
+    assert_eq(is_sorted(selection_sort(duplicates.copy())), true);
+    
+    // 测试负数
+    var negatives = [-5, 3, -10, 0, 8, -2];
+    assert_eq(is_sorted(insertion_sort(negatives.copy())), true);
+    assert_eq(is_sorted(bubble_sort(negatives.copy())), true);
+    assert_eq(is_sorted(selection_sort(negatives.copy())), true);
+    
+    // 测试希尔排序
+    var test_arr = [64, 34, 25, 12, 22, 11, 90];
+    assert_eq(is_sorted(shell_sort(test_arr.copy())), true);
+    
+    // 测试归并排序
+    var merge_arr = [38, 27, 43, 3, 9, 82, 10];
+    assert_eq(is_sorted(merge_sort(merge_arr.copy())), true);
+    
+    // 测试堆排序
+    var heap_arr = [12, 11, 13, 5, 6, 7];
+    assert_eq(is_sorted(heap_sort(heap_arr.copy())), true);
+    
+    // 测试快速排序
+    var quick_arr = [10, 7, 8, 9, 1, 5];
+    assert_eq(is_sorted(quick_sort(quick_arr.copy())), true);
+    
+    // 测试计数排序
+    var count_arr = [4, 2, 2, 8, 3, 3, 1];
+    assert_eq(is_sorted(counting_sort(count_arr.copy())), true);
+    
+    // 测试基数排序（原示例中未测试，此处也跳过）
+    // var radix_arr = [170, 45, 75, 90, 802, 24, 2, 66];
+    // assert_eq(is_sorted(radix_sort(radix_arr.copy())), true);
+    
+    // 测试较大数组
+    var large = rand.int_array(0, 1000);
+    assert_eq(is_sorted(quick_sort(large.copy())), true);
+    assert_eq(is_sorted(merge_sort(large.copy())), true);
+    assert_eq(is_sorted(heap_sort(large.copy())), true);
+    assert_eq(is_sorted(shell_sort(large.copy())), true);
+    
+    // 验证排序结果正确性（与预期排序结果比较）
+    var to_sort = [64, 34, 25, 12, 22, 11, 90];
+    var expected = [11, 12, 22, 25, 34, 64, 90];
+    assert_eq(arrays_equal(quick_sort(to_sort.copy()), expected), true);
+    assert_eq(arrays_equal(merge_sort(to_sort.copy()), expected), true);
+    assert_eq(arrays_equal(heap_sort(to_sort.copy()), expected), true);
+    
+    print("test_sorting_algorithms passed");
+}

@@ -7,18 +7,23 @@ import "type_aliases.leno" as ta
 
 // 1. 使用其他模块的 struct
 export func create_line(var p1, var p2) {
+    // 先计算长度，避免在字典字面量中调用跨模块函数
+    var len = ps.distance(p1, p2)
     return {
         "start": p1,
         "end": p2,
-        "length": ps.distance(p1, p2)
+        "length": len
     }
 }
 
 export func is_point_in_rect(var point, var rect) {
-    return point.x >= rect.top_left.x and
-           point.x <= rect.bottom_right.x and
-           point.y >= rect.top_left.y and
-           point.y <= rect.bottom_right.y
+    // 使用局部变量存储中间结果，避免链式访问问题
+    var tl = rect.top_left
+    var br = rect.bottom_right
+    return point.x >= tl.x and
+           point.x <= br.x and
+           point.y >= tl.y and
+           point.y <= br.y
 }
 
 // 2. 使用其他模块的 enum
@@ -36,11 +41,13 @@ export func get_status_icon(var status) {
 }
 
 export func create_colored_point(var x, var y, var color) {
+    // 先获取颜色名称，避免在字典字面量中调用跨模块函数
+    var name = ce.color_name(color)
     return {
         "x": x,
         "y": y,
         "color": color,
-        "color_name": ce.color_name(color)
+        "color_name": name
     }
 }
 
@@ -54,11 +61,17 @@ export func process_data(var data) {
 
 // 4. 组合使用多个模块的类型
 export func create_shape(var tl, var br, var fill_color, var border_color) {
+    // 先计算所有值，避免在字典字面量中调用跨模块函数
+    var rect = ps.create_rectangle(tl, br)
+    var area = ps.rectangle_area(rect)
+    var fill_name = ce.color_name(fill_color)
+    var border_name = ce.color_name(border_color)
+    var meta = ta.create_string_map()
     return {
-        "rectangle": ps.create_rectangle(tl, br),
-        "area": ps.rectangle_area(ps.create_rectangle(tl, br)),
-        "fill": ce.color_name(fill_color),
-        "border": ce.color_name(border_color),
-        "metadata": ta.create_string_map()
+        "rectangle": rect,
+        "area": area,
+        "fill": fill_name,
+        "border": border_name,
+        "metadata": meta
     }
 }

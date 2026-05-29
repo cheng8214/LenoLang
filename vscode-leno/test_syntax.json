@@ -1,0 +1,19 @@
+{
+  "comment": "Test if TextMate grammar loads correctly",
+  "scopeName": "source.leno.test",
+  "patterns": [
+    {
+      "name": "keyword.control.leno",
+      "match": "\\b(func|var|if|else|for|while|return)\\b"
+    },
+    {
+      "name": "string.quoted.double.leno",
+      "begin": "\"",
+      "end": "\""
+    },
+    {
+      "name": "comment.line.double-slash.leno",
+      "match": "//.*$"
+    }
+  ]
+}
