@@ -347,12 +347,12 @@ func counting_sort_by_digit(Array[int] arr, var exp) {
     }
     
     // 计算位置
-    for 1:10 to var i {
+    for 1:9 to var i {
         count[i] = count[i] + count[i - 1];
     }
     
     // 构建输出数组（从后向前遍历）
-    for 0:n to var idx {
+    for 0:n-1 to var idx {
         var i = n - 1 - idx;
         var digit =_int((arr[i] / exp) % 10)
         output[count[digit] - 1] = arr[i];
@@ -434,8 +434,14 @@ main() {
     counting_sort(arr6);
     var t10 = time.ms();
     print($"计数排序: {t10 - t9}ms (正确: {verify_sorted(arr6)})\n");
-    
 
+    // 6. 基数排序
+    print("测试基数排序...");
+    var arr7 = original.copy();
+    var t11 = time.ms();
+    radix_sort(arr7);
+    var t12 = time.ms();
+    print($"基数排序: {t12 - t11}ms (正确: {verify_sorted(arr7)})\n");
     
     // 7. 插入排序（测试10000元素）
     print("测试插入排序...");

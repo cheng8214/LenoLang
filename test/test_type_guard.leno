@@ -1,0 +1,236 @@
+// 类型守卫（Type Guard）测试
+
+// ==================== 测试 1: 基本类型守卫收窄 ====================
+
+func test_basic_narrowing() {
+    var x = 42
+    if x is int {
+        int n = x
+        assert_eq(n, 42)
+    }
+
+    var s = "hello"
+    if s is string {
+        string ss = s
+        assert_eq(ss, "hello")
+    }
+
+    var f = 3.14
+    if f is float {
+        float ff = f
+        assert_eq(ff, 3.14)
+    }
+
+    var b = true
+    if b is bool {
+        bool bb = b
+        assert_eq(bb, true)
+    }
+}
+
+// ==================== 测试 2: var 参数类型守卫收窄 ====================
+
+func test_var_param_narrowing(var val) {
+    if val is int {
+        int n = val
+        assert_eq(n > 0, true)
+    }
+    if val is string {
+        string s = val
+        assert_eq(s.len() > 0, true)
+    }
+}
+
+test_var_param_narrowing(42)
+test_var_param_narrowing("hello")
+
+// ==================== 测试 3: 否定类型守卫 ====================
+
+func test_negated_guard(var val) {
+    if val not is int {
+        assert_eq(val is int, false)
+    } else {
+        // else 分支内 val 被收窄为 int
+        var n = val
+        assert_eq(n >= 0, true)
+    }
+}
+
+test_negated_guard(10)
+test_negated_guard("not_int")
+
+// ==================== 测试 4: 多条件 and 类型守卫 ====================
+
+func test_and_guard(var x, var y) {
+    if x is int and y is string {
+        int n = x
+        string s = y
+        assert_eq(n + 1, 43)
+        assert_eq(s.len() > 0, true)
+    }
+}
+
+test_and_guard(42, "hello")
+
+// ==================== 测试 5: or 条件不收窄 ====================
+
+func test_or_no_narrowing(var x, var y) {
+    if x is int or y is string {
+        // or 条件下不收窄，x 和 y 仍是 any
+        // 不能直接赋值给具体类型变量
+    }
+}
+
+test_or_no_narrowing(42, "hello")
+
+// ==================== 测试 6: 作用域恢复 ====================
+
+func test_scope_recovery(var val) {
+    if val is int {
+        int n = val
+        assert_eq(n, 10)
+    }
+    // 离开 if 后，val 恢复为 any
+}
+
+test_scope_recovery(10)
+
+// ==================== 测试 7: 闭包中类型守卫 ====================
+
+func test_closure_guard(var a) {
+    if a is int {
+        func inner():int {
+            return a + 10
+        }
+        assert_eq(inner(), 52)
+    }
+}
+
+test_closure_guard(42)
+
+// ==================== 测试 8: Array 类型守卫 ====================
+
+func test_array_guard(var arr) {
+    if arr is Array[int] {
+        arr.add(99)
+        assert_eq(arr[arr.len() - 1], 99)
+    }
+}
+
+test_array_guard([1, 2, 3])
+
+// ==================== 测试 9: Dict 字段访问类型守卫收窄 ====================
+
+func test_dict_field_guard() {
+    var s = {name: "张三", age: 25, scores: [85, 90, 78]}
+
+    if s.name is string and s.age is int {
+        string name = s.name
+        int age = s.age
+        assert_eq(name, "张三")
+        assert_eq(age, 25)
+    }
+
+    if s.scores is Array {
+        int total = 0
+        for s.scores to score {
+            if score is int {
+                total = total + score
+            }
+        }
+        assert_eq(total, 253)
+    }
+}
+
+test_dict_field_guard()
+
+// ==================== 测试 10: 循环内 Dict 字段守卫 ====================
+
+func test_loop_dict_field_guard() {
+    var items = []
+    for 0:4 to i {
+        var item = {value: i * 10}
+        items.add(item)
+    }
+
+    int total = 0
+    for items to item {
+        if item.value is int {
+            total = total + item.value
+        }
+    }
+    assert_eq(total, 100)
+}
+
+test_loop_dict_field_guard()
+
+// ==================== 测试 11: is null 检查 ====================
+
+func test_null_check() {
+    var a = null
+    var b = "hello"
+    if a is null {
+        assert_eq(a, null)
+    }
+    if b is null {
+        assert_eq(true, false)
+    }
+}
+
+test_null_check()
+
+// ==================== 测试 12: struct 类型守卫 ====================
+
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+func test_struct_guard(var obj) {
+    if obj is Point {
+        int x_val = obj.x
+        int y_val = obj.y
+        assert_eq(x_val, 10)
+        assert_eq(y_val, 20)
+    }
+}
+
+var p = new Point()
+p.x = 10
+p.y = 20
+test_struct_guard(p)
+test_struct_guard(42)
+
+// ==================== 测试 13: 嵌套字段守卫 ====================
+
+func test_nested_field_guard() {
+    var data = {inner: {count: 5}}
+    if data.inner is Dict {
+        var inner = data.inner
+        if inner.count is int {
+            int count = inner.count
+            assert_eq(count, 5)
+        }
+    }
+}
+
+test_nested_field_guard()
+
+// ==================== 测试 14: Array[Struct] 类型守卫 ====================
+
+func test_array_struct_guard(var points) {
+    if points is Array[Point] {
+        var first = points[0]
+        int x_val = first.x
+        int y_val = first.y
+        assert_eq(x_val, 1)
+        assert_eq(y_val, 2)
+    }
+}
+
+var arr = []
+arr.add(new Point(x = 1, y = 2))
+arr.add(new Point(x = 3, y = 4))
+test_array_struct_guard(arr)
+
+print("test_type_guard passed")

@@ -54,25 +54,58 @@ Ast* parse_if_stmt(Parser* p) {
         char* var_name = copy_string(p->lex.current.text, p->lex.current.len);
         int var_line = p->lex.current.line;
 
-        // 向前看，检查是否是 "is" 或 "not is" 关键字
+        // 向前看，检查是否是类型守卫语法
         Lexer saved_lex = p->lex;
         lexer_next(&p->lex); // 消费变量名
 
-        // 检查是否是 "not is"（否定类型守卫）
-        int is_not_is = 0;
-        if (p->lex.current.type == TOK_NOT) {
-            Lexer not_saved_lex = p->lex;
-            lexer_next(&p->lex); // 消费 "not"
-            if (p->lex.current.type == TOK_IS) {
-                is_not_is = 1;
+        // 检查是否是属性访问守卫：obj.field is Type
+        char* field_name = NULL;
+        if (p->lex.current.type == TOK_DOT) {
+            Lexer dot_saved_lex = p->lex;
+            lexer_next(&p->lex); // 消费 "."
+            if (p->lex.current.type == TOK_IDENT) {
+                // 保存字段名，继续看后面是否是 "is"
+                field_name = copy_string(p->lex.current.text, p->lex.current.len);
+                lexer_next(&p->lex); // 消费字段名
+                if (p->lex.current.type != TOK_IS && p->lex.current.type != TOK_NOT) {
+                    // 不是类型守卫，恢复到 "." 之前
+                    free(field_name);
+                    field_name = NULL;
+                    p->lex = dot_saved_lex;
+                }
             } else {
-                // 不是 "not is"，恢复位置
-                p->lex = not_saved_lex;
+                // "." 后面不是标识符，恢复
+                p->lex = dot_saved_lex;
             }
         }
 
-        if (p->lex.current.type == TOK_IS || is_not_is) {
-            // 是类型守卫语法！
+        // 检查是否是 "not is"（否定类型守卫）
+        int is_not_is = 0;
+        if (field_name == NULL) {
+            if (p->lex.current.type == TOK_NOT) {
+                Lexer not_saved_lex = p->lex;
+                lexer_next(&p->lex); // 消费 "not"
+                if (p->lex.current.type == TOK_IS) {
+                    is_not_is = 1;
+                } else {
+                    p->lex = not_saved_lex;
+                }
+            }
+        } else {
+            if (p->lex.current.type == TOK_NOT) {
+                Lexer not_saved_lex = p->lex;
+                lexer_next(&p->lex); // 消费 "not"
+                if (p->lex.current.type == TOK_IS) {
+                    is_not_is = 1;
+                } else {
+                    p->lex = not_saved_lex;
+                }
+            }
+        }
+
+        // 是类型守卫语法：var is Type 或 var.field is Type
+        if ((field_name == NULL && (p->lex.current.type == TOK_IS || is_not_is)) ||
+            (field_name != NULL && (p->lex.current.type == TOK_IS || is_not_is))) {
             lexer_next(&p->lex); // 消费 "is"
 
             // 使用新的类型解析函数解析类型（支持 Array[int], Dict[string, int] 等）
@@ -80,19 +113,30 @@ Ast* parse_if_stmt(Parser* p) {
             if (!type_info) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "类型守卫期望类型名（如 int, Array[int], Dict[string, int] 等）");
                 free(var_name);
+                if (field_name) free(field_name);
                 return NULL;
             }
 
             guard_var = strdup(var_name);
             guard_type = type_info;
 
-            // 创建一个条件表达式
+            // 创建条件表达式
             // 对于 "not is"，创建否定表达式
             if (is_not_is) {
                 // 创建一元非表达式：!(type_check)
                 Ast* type_check = ast_new(AST_TYPE_CHECK, var_line);
-                type_check->u.type_check.expr = ast_new(AST_VAR, var_line);
-                type_check->u.type_check.expr->u.var.name = strdup(var_name);
+                if (field_name) {
+                    // 属性访问守卫：s.age not is int
+                    type_check->u.type_check.expr = ast_new(AST_FIELD_ACCESS, var_line);
+                    type_check->u.type_check.expr->u.field_access.obj = ast_new(AST_VAR, var_line);
+                    type_check->u.type_check.expr->u.field_access.obj->u.var.name = strdup(var_name);
+                    type_check->u.type_check.expr->u.field_access.field_name = strdup(field_name);
+                    type_check->u.type_check.expr->u.field_access.field_index = -1;
+                } else {
+                    // 简单变量守卫：x not is int
+                    type_check->u.type_check.expr = ast_new(AST_VAR, var_line);
+                    type_check->u.type_check.expr->u.var.name = strdup(var_name);
+                }
                 type_check->u.type_check.type = type_copy(type_info);
                 
                 cond = ast_new(AST_UNARY, var_line);
@@ -100,19 +144,33 @@ Ast* parse_if_stmt(Parser* p) {
                 cond->u.unary.operand = type_check;
             } else {
                 cond = ast_new(AST_TYPE_CHECK, var_line);
-                cond->u.type_check.expr = ast_new(AST_VAR, var_line);
-                cond->u.type_check.expr->u.var.name = strdup(var_name);
+                if (field_name) {
+                    // 属性访问守卫：s.age is int
+                    cond->u.type_check.expr = ast_new(AST_FIELD_ACCESS, var_line);
+                    cond->u.type_check.expr->u.field_access.obj = ast_new(AST_VAR, var_line);
+                    cond->u.type_check.expr->u.field_access.obj->u.var.name = strdup(var_name);
+                    cond->u.type_check.expr->u.field_access.field_name = strdup(field_name);
+                    cond->u.type_check.expr->u.field_access.field_index = -1;
+                } else {
+                    // 简单变量守卫：x is int
+                    cond->u.type_check.expr = ast_new(AST_VAR, var_line);
+                    cond->u.type_check.expr->u.var.name = strdup(var_name);
+                }
                 cond->u.type_check.type = type_copy(type_info);
             }
 
             // 初始化类型守卫条件列表，添加第一个条件
             type_guard_list_init(&guard_conds);
             has_guard_conds = 1;
-            TypeGuardCond first_cond = {
-                .var_name = var_name,
-                .guard_type = type_copy(type_info)
-            };
+            TypeGuardCond first_cond;
+            memset(&first_cond, 0, sizeof(first_cond));
+            first_cond.var_name = strdup(var_name);
+            first_cond.field_name = field_name ? strdup(field_name) : NULL;
+            first_cond.guard_type = type_copy(type_info);
             type_guard_list_add(&guard_conds, first_cond);
+
+            free(var_name);
+            if (field_name) free(field_name);
 
             // 检查是否有 or/and 连接多个类型守卫条件
             while (p->lex.current.type == TOK_OR || p->lex.current.type == TOK_AND) {
@@ -124,6 +182,24 @@ Ast* parse_if_stmt(Parser* p) {
                     char* next_var_name = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex); // 消费变量名
 
+                    // 检查是否是属性访问守卫
+                    char* next_field_name = NULL;
+                    if (p->lex.current.type == TOK_DOT) {
+                        Lexer dot_saved = p->lex;
+                        lexer_next(&p->lex); // 消费 "."
+                        if (p->lex.current.type == TOK_IDENT) {
+                            next_field_name = copy_string(p->lex.current.text, p->lex.current.len);
+                            lexer_next(&p->lex); // 消费字段名
+                            if (p->lex.current.type != TOK_IS) {
+                                free(next_field_name);
+                                next_field_name = NULL;
+                                p->lex = dot_saved;
+                            }
+                        } else {
+                            p->lex = dot_saved;
+                        }
+                    }
+
                     if (p->lex.current.type == TOK_IS) {
                         lexer_next(&p->lex); // 消费 "is"
 
@@ -132,15 +208,17 @@ Ast* parse_if_stmt(Parser* p) {
                         if (!next_type_info) {
                             error_add(ERR_SYNTAX, p->lex.current.line, "期望类型名");
                             free(next_var_name);
+                            if (next_field_name) free(next_field_name);
                             type_guard_list_free(&guard_conds);
                             return NULL;
                         }
 
                         // 添加到类型守卫条件列表
-                        TypeGuardCond next_cond = {
-                            .var_name = next_var_name,
-                            .guard_type = next_type_info
-                        };
+                        TypeGuardCond next_cond;
+                        memset(&next_cond, 0, sizeof(next_cond));
+                        next_cond.var_name = next_var_name;
+                        next_cond.field_name = next_field_name;
+                        next_cond.guard_type = next_type_info;
                         type_guard_list_add(&guard_conds, next_cond);
 
                         // 创建下一个条件的占位
@@ -154,8 +232,9 @@ Ast* parse_if_stmt(Parser* p) {
                         binop->u.binop.op = (op == TOK_OR) ? TOK_OR : TOK_AND;
                         cond = binop;
                     } else {
-                        error_add(ERR_SYNTAX, p->lex.current.line, "类型守卫语法应为 '变量 is 类型'");
+                        error_add(ERR_SYNTAX, p->lex.current.line, "类型守卫语法应为 '变量 is 类型' 或 '变量.字段 is 类型'");
                         free(next_var_name);
+                        if (next_field_name) free(next_field_name);
                         type_guard_list_free(&guard_conds);
                         return NULL;
                     }
@@ -167,6 +246,7 @@ Ast* parse_if_stmt(Parser* p) {
             }
         } else {
             // 不是类型守卫，恢复 lexer 位置并正常解析表达式
+            if (field_name) free(field_name);
             p->lex = saved_lex;
             free(var_name);
             cond = parse_expression(p);

@@ -338,12 +338,12 @@ func counting_sort_by_digit(Array[int] arr, var exp) {
     }
     
     // 计算位置
-    for 1:10 to var i {
+    for 1:9 to var i {
         count[i] = count[i] + count[i - 1];
     }
     
     // 构建输出数组（从后向前遍历）
-    for 0:n to var idx {
+    for 0:n-1 to var idx {
         var i = n - 1 - idx;
         var digit =_int((arr[i] / exp) % 10)
         output[count[digit] - 1] = arr[i];
@@ -436,9 +436,8 @@ main() {
     var count_arr = [4, 2, 2, 8, 3, 3, 1];
     assert_eq(is_sorted(counting_sort(count_arr.copy())), true);
     
-    // 测试基数排序（原示例中未测试，此处也跳过）
-    // var radix_arr = [170, 45, 75, 90, 802, 24, 2, 66];
-    // assert_eq(is_sorted(radix_sort(radix_arr.copy())), true);
+    var radix_arr = [170, 45, 75, 90, 802, 24, 2, 66];
+    assert_eq(is_sorted(radix_sort(radix_arr.copy())), true);
     
     // 测试较大数组
     var large = rand.int_array(0, 1000);

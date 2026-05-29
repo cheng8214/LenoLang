@@ -34,8 +34,8 @@ main() {
     // 方法2：使用 format（更灵活）
     print("\n=== 使用 format ===")
     for students to s {
-        strings.format("{0} 年龄: {1}", s.name, s.age)
-        print(strings.format("{0} 年龄: {1}", s.name, s.age))
+        strings.format("%s 年龄: %d", s.name, s.age)
+        print(strings.format("%s 年龄: %d", s.name, s.age))
     }
     
     // 计算平均年龄

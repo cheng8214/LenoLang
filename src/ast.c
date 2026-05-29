@@ -57,6 +57,9 @@ void type_guard_list_add(TypeGuardList* list, TypeGuardCond cond) {
 void type_guard_list_free(TypeGuardList* list) {
     for (int i = 0; i < list->count; i++) {
         free(list->items[i].var_name);
+        if (list->items[i].field_name) {
+            free(list->items[i].field_name);
+        }
         if (list->items[i].guard_type) {
             type_free(list->items[i].guard_type);
         }

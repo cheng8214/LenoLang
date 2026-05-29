@@ -783,6 +783,23 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return type_new(TYPE_ANY);
         }
         case AST_INDEX: {
+            // 检查是否有字段类型守卫收窄（如 if s.age is int）
+            // dict 的 s.age 语法被解析为 AST_INDEX（obj=AST_VAR("s"), index=AST_STRING("age")）
+            if (ast->u.index.obj && ast->u.index.obj->kind == AST_VAR &&
+                ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
+                const char* var_name = ast->u.index.obj->u.var.name;
+                const char* field_name = ast->u.index.index->u.string.value;
+                int guard_name_len = strlen(var_name) + strlen(field_name) + 2;
+                char* guard_name = (char*)malloc(guard_name_len);
+                snprintf(guard_name, guard_name_len, "%s.%s", var_name, field_name);
+                Symbol* guard_sym = scope_resolve(s->current, guard_name);
+                free(guard_name);
+                if (guard_sym && guard_sym->type) {
+                    result = type_copy(guard_sym->type);
+                    return result;
+                }
+            }
+
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index.obj);
             if (obj_type) {
                 if (obj_type->kind == TYPE_ARRAY) {
@@ -937,6 +954,22 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
             // 初始化字段索引为 -1（未确定）
             ast->u.field_access.field_index = -1;
+
+            // 检查是否有字段类型守卫收窄（如 if s.age is int）
+            if (ast->u.field_access.obj->kind == AST_VAR) {
+                const char* var_name = ast->u.field_access.obj->u.var.name;
+                const char* field_name = ast->u.field_access.field_name;
+                int guard_name_len = strlen(var_name) + strlen(field_name) + 2;
+                char* guard_name = (char*)malloc(guard_name_len);
+                snprintf(guard_name, guard_name_len, "%s.%s", var_name, field_name);
+                Symbol* guard_sym = scope_resolve(s->current, guard_name);
+                free(guard_name);
+                if (guard_sym && guard_sym->type) {
+                    result = type_copy(guard_sym->type);
+                    if (obj_type) type_free(obj_type);
+                    break;
+                }
+            }
 
             if (obj_type && obj_type->kind == TYPE_STRUCT) {
                 // 获取字段名

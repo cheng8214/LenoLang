@@ -7,7 +7,7 @@ main() {
     // 创建学生
     for 0:100 to i {
         var s = {
-            name: "学生" + _str(i),
+            name: "学生" + i,
             age: 18 + (i % 5),
             scores: [85 + (i % 10), 90 + (i % 5), 78 + (i % 15)]
         }
@@ -18,7 +18,7 @@ main() {
     for students to s {
         // 类型守卫收窄类型
         if s.name is string and s.age is int {
-            print(s.name + " 年龄: " + _str(s.age))
+            print(s.name + " 年龄: " + s.age)
         }
         
         // 安全计算平均分

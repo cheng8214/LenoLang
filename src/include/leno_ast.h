@@ -101,6 +101,7 @@ typedef struct {
 // 类型守卫条件结构（使用新的泛型类型系统）
 typedef struct {
     char* var_name;        // 被检查的变量名
+    char* field_name;      // 被检查的字段名（如 s.age is int 中的 "age"），NULL 表示简单变量守卫
     TypeInfo* guard_type;  // 检查的完整类型信息（支持 Array[int], Dict[string, int] 等）
 } TypeGuardCond;
 

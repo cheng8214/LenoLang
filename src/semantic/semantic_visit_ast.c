@@ -581,6 +581,21 @@ void visit(Semantic* s, Ast* ast) {
                         TypeGuardCond* cond = &ast->u.if_.guard_conds.items[gi];
                         if (cond->var_name == NULL) continue;
 
+                        if (cond->field_name != NULL) {
+                            // 属性访问守卫：s.age is int
+                            // 在作用域中创建 "varname.fieldname" 符号记录收窄类型
+                            int guard_name_len = strlen(cond->var_name) + strlen(cond->field_name) + 2;
+                            char* guard_name = (char*)malloc(guard_name_len);
+                            snprintf(guard_name, guard_name_len, "%s.%s", cond->var_name, cond->field_name);
+                            Symbol* field_guard_sym = scope_define(s->current, guard_name, SYM_LOCAL);
+                            if (field_guard_sym) {
+                                field_guard_sym->type = type_copy(cond->guard_type);
+                                field_guard_sym->index = -1;
+                            }
+                            free(guard_name);
+                            continue;
+                        }
+
                         // 使用resolve_variable_with_upvalue支持闭包
                         SymRef ref;
                         memset(&ref, 0, sizeof(ref));
@@ -672,6 +687,10 @@ void visit(Semantic* s, Ast* ast) {
                     for (int gi = 0; gi < ast->u.if_.guard_conds.count; gi++) {
                         TypeGuardCond* cond = &ast->u.if_.guard_conds.items[gi];
                         if (cond->var_name == NULL) continue;
+
+                        if (cond->field_name != NULL) {
+                            continue;
+                        }
 
                         // 使用resolve_variable_with_upvalue支持闭包
                         SymRef ref;
@@ -785,12 +804,24 @@ void visit(Semantic* s, Ast* ast) {
                                 } else if (iterable_type->kind == TYPE_ARRAY && iterable_type->element_type) {
                                     // 数组遍历，元素类型
                                     sym->type = type_copy(iterable_type->element_type);
+                                } else if (iterable_type->kind == TYPE_ARRAY) {
+                                    // 空数组遍历，元素类型未知，设为 any
+                                    sym->type = type_new(TYPE_ANY);
                                 } else if (iterable_type->kind == TYPE_STRING) {
                                     // 字符串遍历，字符是 string 类型
                                     sym->type = type_new(TYPE_STRING);
-                                } else {
-                                    // 默认为 int
+                                } else if (iterable_type->kind == TYPE_INT) {
+                                    // 数值简写循环：for 5 to i（等价于 for 0:4 to i）
                                     sym->type = type_new(TYPE_INT);
+                                } else if (iterable_type->kind == TYPE_FLOAT) {
+                                    // 浮点简写循环：for 5.0 to i
+                                    sym->type = type_new(TYPE_FLOAT);
+                                } else if (iterable_type->kind == TYPE_ANY) {
+                                    // any 类型：运行时可能是数字，保持向后兼容推断为 int
+                                    sym->type = type_new(TYPE_INT);
+                                } else {
+                                    // 默认为 any
+                                    sym->type = type_new(TYPE_ANY);
                                 }
                             } else {
                                 sym->type = type_new(TYPE_ANY);

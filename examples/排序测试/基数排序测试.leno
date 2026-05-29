@@ -1,0 +1,80 @@
+import times as time
+import rands as rand
+
+func radix_sort(Array[int] arr) {
+    if arr.len() <= 1 {
+        return arr;
+    }
+
+    var max_val = arr[0];
+    for 1:arr.len()-1 to var i {
+        if arr[i] > max_val { max_val = arr[i]; }
+    }
+
+    var exp = 1;
+    while max_val / exp > 0 {
+        counting_sort_by_digit(arr, exp);
+        exp = exp * 10;
+    }
+    return arr;
+}
+
+func counting_sort_by_digit(Array[int] arr, var exp) {
+    var n = arr.len();
+    var output = [];
+    for n to var i { output.add(0); }
+
+    var count = [];
+    for 10 to var i { count.add(0); }
+
+    for 0:n-1 to var i {
+        var digit = _int((arr[i] / exp) % 10);
+        count[digit] = count[digit] + 1;
+    }
+
+    for 1:9 to var i {
+        count[i] = count[i] + count[i - 1];
+    }
+
+    for 0:n-1 to var idx {
+        var i = n - 1 - idx;
+        var digit = _int((arr[i] / exp) % 10);
+        output[count[digit] - 1] = arr[i];
+        count[digit] = count[digit] - 1;
+    }
+
+    for 0:n-1 to var i {
+        arr[i] = output[i];
+    }
+}
+
+func verify_sorted(var arr) {
+    for 0:arr.len()-2 to var i {
+        if arr[i] > arr[i + 1] {
+            return false;
+        }
+    }
+    return true;
+}
+
+main() {
+    print("========== 基数排序测试 ==========\n");
+
+    var size = 10000;
+    print($"测试数组大小: {size}");
+    print($"数据范围: 0 - {size * 10}\n");
+
+    var original = rand.int_array(0, size);
+    print($"原始数组前10个元素: {original[0:10]}\n");
+
+    var arr = original.copy();
+    var t1 = time.ms();
+    radix_sort(arr);
+    var t2 = time.ms();
+
+    print($"排序后前10个元素: {arr[0:10]}");
+    print($"基数排序耗时: {t2 - t1}ms");
+    print($"排序正确性: {verify_sorted(arr)}\n");
+
+    print("========== 测试完成 ==========");
+}

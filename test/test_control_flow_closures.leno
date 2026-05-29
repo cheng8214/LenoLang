@@ -1,0 +1,243 @@
+// 综合测试：多种控制流结构（while、for、switch、if）与闭包
+
+// ==================== 测试1: 多个while嵌套闭包 ====================
+func test_nested_while_closures() {
+    var results = []
+    var i = 0
+    while i < 2 {
+        i = i + 1
+        func outerFunc() { return i * 100 }
+        var j = 0
+        while j < 2 {
+            j = j + 1
+            func middleFunc() { return outerFunc() + j * 10 }
+            var k = 0
+            while k < 2 {
+                k = k + 1
+                func innerFunc() { return middleFunc() + k }
+                results.add(innerFunc())
+            }
+        }
+    }
+    assert_eq(results, [111, 112, 121, 122, 211, 212, 221, 222])
+}
+
+// ==================== 测试2: 多个for循环嵌套闭包 ====================
+func test_nested_for_closures() {
+    var results = []
+    for 1:2 to var a {
+        func forOuter() { return a * 100 }
+        for 1:2 to var b {
+            func forMiddle() { return forOuter() + b * 10 }
+            for 1:2 to var c {
+                func forInner() { return forMiddle() + c }
+                results.add(forInner())
+            }
+        }
+    }
+    assert_eq(results, [111, 112, 121, 122, 211, 212, 221, 222])
+}
+
+// ==================== 测试3: while和for混合嵌套闭包 ====================
+func test_mixed_while_for_closures() {
+    var results = []
+    var x = 0
+    while x < 2 {
+        x = x + 1
+        func whileFunc() { return x * 100 }
+        for 1:2 to var y {
+            func forFunc() { return whileFunc() + y * 10 }
+            var z = 0
+            while z < 2 {
+                z = z + 1
+                func mixedFunc() { return forFunc() + z }
+                results.add(mixedFunc())
+            }
+        }
+    }
+    assert_eq(results, [111, 112, 121, 122, 211, 212, 221, 222])
+}
+
+// ==================== 测试4: if语句中的闭包 ====================
+func test_if_closures() {
+    var results = []
+    var n = 0
+    while n < 3 {
+        n = n + 1
+        if n == 1 {
+            func ifFunc() { return n * 10 }
+            results.add(ifFunc())
+        } else if n == 2 {
+            func elifFunc() { return n * 100 }
+            results.add(elifFunc())
+        } else {
+            func elseFunc() { return n * 1000 }
+            results.add(elseFunc())
+        }
+    }
+    assert_eq(results, [10, 200, 3000])
+}
+
+// ==================== 测试5: 嵌套if中的闭包 ====================
+func test_nested_if_closures() {
+    var results = []
+    var p = 0
+    while p < 2 {
+        p = p + 1
+        func outerIf() { return p }
+        if p > 0 {
+            var q = 0
+            while q < 2 {
+                q = q + 1
+                func innerIf() { return outerIf() * 10 + q }
+                if q == 1 {
+                    func deepIf() { return innerIf() * 100 }
+                    results.add(deepIf())
+                } else {
+                    func deepElse() { return innerIf() * 1000 }
+                    results.add(deepElse())
+                }
+            }
+        }
+    }
+    assert_eq(results, [1100, 12000, 2100, 22000])
+}
+
+// ==================== 测试6: switch语句中的闭包 ====================
+func test_switch_closures() {
+    var results = []
+    var s = 0
+    while s < 3 {
+        s = s + 1
+        func switchOuter() { return s * 10 }
+        switch s {
+            case 1 {
+                func case1Func() { return switchOuter() + 1 }
+                results.add(case1Func())
+            }
+            case 2 {
+                func case2Func() { return switchOuter() + 2 }
+                results.add(case2Func())
+            }
+            default {
+                func defaultFunc() { return switchOuter() + 3 }
+                results.add(defaultFunc())
+            }
+        }
+    }
+    assert_eq(results, [11, 22, 33])
+}
+
+// ==================== 测试7: 复杂混合场景 ====================
+func test_complex_mixed_closures() {
+    var results = []
+    var level = 0
+    while level < 2 {
+        level = level + 1
+        func levelFunc() { return level * 1000 }
+        for 1:2 to var item {
+            func itemFunc() { return levelFunc() + item * 100 }
+            if item == 1 {
+                var sub = 0
+                while sub < 2 {
+                    sub = sub + 1
+                    func subFunc() { return itemFunc() + sub * 10 }
+                    switch sub {
+                        case 1 {
+                            func finalFunc1() { return subFunc() + 1 }
+                            results.add(finalFunc1())
+                        }
+                        default {
+                            func finalFunc2() { return subFunc() + 2 }
+                            results.add(finalFunc2())
+                        }
+                    }
+                }
+            } else {
+                func elseItemFunc() { return itemFunc() + 50 }
+                results.add(elseItemFunc())
+            }
+        }
+    }
+    assert_eq(results, [1111, 1122, 1250, 2111, 2122, 2250])
+}
+
+// ==================== 测试8: 闭包修改外部变量（跨控制流） ====================
+func test_closure_modify_outer_var() {
+    var counter = 0
+    var results = []
+    var a1 = 0
+    while a1 < 2 {
+        a1 = a1 + 1
+        func incWhile() { counter = counter + 1; return counter }
+        for 1:2 to var b1 {
+            func incFor() { counter = counter + 10; return counter }
+            if b1 == 1 {
+                func incIf() { counter = counter + 100; return counter }
+                results.add(incWhile() + incFor() + incIf())
+            }
+        }
+    }
+    assert_eq(results, [123, 456])
+    assert_eq(counter, 222)
+}
+
+// ==================== 测试9: 函数返回闭包（跨控制流定义） ====================
+func test_return_closures_from_loop() {
+    var results = []
+    func createClosureInLoop() {
+        var funcs = []
+        var m = 0
+        while m < 3 {
+            m = m + 1
+            var captured = m
+            if m % 2 == 1 {
+                func oddFunc() { return captured * 10 }
+                funcs.add(oddFunc)
+            } else {
+                func evenFunc() { return captured * 100 }
+                funcs.add(evenFunc)
+            }
+        }
+        return funcs
+    }
+    var closureList = createClosureInLoop()
+    for closureList to var fn {
+        results.add(fn())
+    }
+    assert_eq(results, [10, 200, 30])
+}
+
+// ==================== 测试10: 闭包数组（在控制流中收集） ====================
+func test_closure_array_in_control_flow() {
+    var results = []
+    var funcArray = []
+    var idx = 0
+    while idx < 3 {
+        idx = idx + 1
+        var localIdx = idx
+        for 1:2 to var multiplier {
+            var localMult = multiplier
+            func arrayFunc() { return localIdx * localMult }
+            funcArray.add(arrayFunc)
+        }
+    }
+    for funcArray to var f {
+        results.add(f())
+    }
+    assert_eq(results, [1, 2, 2, 4, 3, 6])
+}
+
+main() {
+    test_nested_while_closures()
+    test_nested_for_closures()
+    test_mixed_while_for_closures()
+    test_if_closures()
+    test_nested_if_closures()
+    test_switch_closures()
+    test_complex_mixed_closures()
+    test_closure_modify_outer_var()
+    test_return_closures_from_loop()
+    test_closure_array_in_control_flow()
+    print("test_control_flow_closures passed")
+}
