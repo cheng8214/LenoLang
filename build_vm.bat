@@ -21,6 +21,8 @@ set SOURCES=!SOURCES! src\object\object_struct.c
 set SOURCES=!SOURCES! src\object\object_face.c
 set SOURCES=!SOURCES! src\object\object_cstruct.c
 set SOURCES=!SOURCES! src\object\object_thread.c
+set SOURCES=!SOURCES! src\object\object_event.c
+set SOURCES=!SOURCES! src\object\object_draw.c
 set SOURCES=!SOURCES! src\bound_method.c
 set SOURCES=!SOURCES! src\coroutine.c
 set SOURCES=!SOURCES! src\vm\vm.c
@@ -53,10 +55,12 @@ set SOURCES=!SOURCES! src\module\threads\threads.c
 set SOURCES=!SOURCES! src\module\assert\assert.c
 set SOURCES=!SOURCES! src\module\sys\sys.c
 set SOURCES=!SOURCES! src\module\regexs\regexs.c
+set SOURCES=!SOURCES! src\module\guis\guis.c
+set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 
-gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -lm -municode -lws2_32 -DLENO_VM_ONLY
+gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -lm -municode -lws2_32 -lgdi32 -DLENO_VM_ONLY
 
 if %ERRORLEVEL% neq 0 (
     echo VM build failed

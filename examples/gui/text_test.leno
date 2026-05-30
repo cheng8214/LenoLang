@@ -1,0 +1,50 @@
+import guis
+
+main() {
+    guis.init()
+
+    Win win = guis.create_window("LenoC GUI - Text Test", 800, 600, 1)
+
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_draw_color(30, 30, 46, 255)
+            ren.clear()
+
+            ren.set_draw_color(255, 255, 255, 255)
+            ren.draw_text("Hello, LenoC!", 50, 50, 3)
+
+            ren.set_draw_color(100, 255, 100, 255)
+            ren.draw_text("GUI Module - draw_text", 50, 100, 2)
+
+            ren.set_draw_color(255, 100, 100, 255)
+            ren.draw_text("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 50, 140, 2)
+
+            ren.set_draw_color(100, 150, 255, 255)
+            ren.draw_text("0123456789 !@#$%^&*()", 50, 170, 2)
+
+            ren.set_draw_color(255, 255, 0, 255)
+            ren.draw_text("Small", 50, 210, 1)
+            ren.draw_text("Medium", 130, 210, 2)
+            ren.draw_text("Large", 290, 210, 3)
+            ren.draw_text("XL", 470, 210, 4)
+
+            ren.set_draw_color(180, 100, 255, 255)
+            ren.draw_text("Press ESC to quit", 50, 300, 2)
+
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                guis.set_window_should_close(win, true)
+            }
+            if e.is_key_down() {
+                if e.key() == 0x1B {
+                    guis.set_window_should_close(win, true)
+                }
+            }
+        }
+    )
+
+    guis.cleanup(win)
+    print("text test done!")
+}

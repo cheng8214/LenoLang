@@ -1,0 +1,118 @@
+import guis
+//_gc(false)
+main() {
+    guis.init()
+    Win win = guis.create_window("LenoC Chess Board", 640, 700, 0)
+
+    var font = guis.load_font("Arial", 36)
+    var font_sm = guis.load_font("Arial", 16)
+    var font_title = guis.load_font("Arial", 24)
+
+    var board_x = 40
+    var board_y = 60
+    var cell = 70
+
+    var selected_row = -1
+    var selected_col = -1
+
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_draw_color(40, 40, 55, 255)
+            ren.clear()
+
+            ren.set_draw_color(230, 230, 240, 255)
+            ren.draw_text_font(font_title, "Chess Board", 250, 15)
+
+            for 8 to var r {
+                for 8 to var c {
+                    var x = board_x + c * cell
+                    var y = board_y + r * cell
+
+                    if (r + c) % 2 == 0 {
+                        ren.set_draw_color(240, 217, 181, 255)
+                    } else {
+                        ren.set_draw_color(181, 136, 99, 255)
+                    }
+
+                    if r == selected_row and c == selected_col {
+                        ren.set_draw_color(130, 180, 100, 255)
+                    }
+
+                    ren.fill_rect(x, y, cell, cell)
+                    ren.set_draw_color(60, 50, 40, 255)
+                    ren.draw_rect(x, y, cell, cell)
+                }
+            }
+
+            var pieces_b = ["♜","♞","♝","♛","♚","♝","♞","♜"]
+            for 8 to var c {
+                var px = board_x + c * cell + 14
+                ren.set_draw_color(30, 30, 30, 255)
+                ren.draw_text_font(font, pieces_b[c], px, board_y + 14)
+            }
+
+            for 8 to var c {
+                var px = board_x + c * cell + 14
+                ren.set_draw_color(30, 30, 30, 255)
+                ren.draw_text_font(font, "♟", px, board_y + cell + 14)
+            }
+
+            for 8 to var c {
+                var px = board_x + c * cell + 14
+                ren.set_draw_color(250, 250, 250, 255)
+                ren.draw_text_font(font, "♙", px, board_y + 6 * cell + 14)
+            }
+
+            var pieces_w = ["♖","♘","♗","♕","♔","♗","♘","♖"]
+            for 8 to var c {
+                var px = board_x + c * cell + 14
+                ren.set_draw_color(250, 250, 250, 255)
+                ren.draw_text_font(font, pieces_w[c], px, board_y + 7 * cell + 14)
+            }
+
+            for 8 to var c {
+                ren.set_draw_color(180, 180, 190, 255)
+                ren.draw_text_font(font_sm, _str(c + 1), board_x + c * cell + 28, board_y + 8 * cell + 6)
+            }
+
+            var cols = ["a","b","c","d","e","f","g","h"]
+            for 8 to var r {
+                ren.set_draw_color(180, 180, 190, 255)
+                ren.draw_text_font(font_sm, cols[r], board_x - 18, board_y + r * cell + 26)
+            }
+
+            ren.set_draw_color(120, 120, 140, 255)
+            ren.draw_text_font(font_sm, "Click to select  |  ESC to quit", 190, 670)
+
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                guis.set_window_should_close(win, true)
+            }
+            if e.is_key_down() and e.key() == 0x1B {
+                guis.set_window_should_close(win, true)
+            }
+            if e.is_mouse_down() {
+                var mx = e.mouse_x()
+                var my = e.mouse_y()
+                var c = (mx - board_x) / cell
+                var r = (my - board_y) / cell
+                if c >= 0 and c < 8 and r >= 0 and r < 8 {
+                    if r == selected_row and c == selected_col {
+                        selected_row = -1
+                        selected_col = -1
+                    } else {
+                        selected_row = r
+                        selected_col = c
+                    }
+                }
+            }
+        }
+    )
+
+    guis.destroy_font(font)
+    guis.destroy_font(font_sm)
+    guis.destroy_font(font_title)
+    guis.cleanup(win)
+}

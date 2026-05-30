@@ -1,0 +1,35 @@
+import guis
+
+main() {
+    guis.init()
+    Win win = guis.create_window("Viewport & Clip", 800, 600, 1)
+	
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_draw_color(30, 30, 46, 255)
+            ren.clear()
+
+            ren.set_viewport(50, 50, 200, 200)
+            ren.set_draw_color(60, 60, 90, 255)
+            ren.fill_rect(0, 0, 200, 200)
+            ren.set_draw_color(255, 255, 100, 255)
+            ren.draw_rect(10, 10, 180, 180)
+			
+            var rs = ren.get_size()
+            ren.set_viewport(0, 0, rs[0], rs[1])
+
+            ren.set_clip_rect(550, 50, 200, 200)
+            ren.set_draw_color(80, 40, 40, 255)
+            ren.fill_rect(500, 0, 350, 350)
+            ren.disable_clip_rect()
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                guis.set_window_should_close(win, true)
+            }
+        }
+    )
+
+    guis.cleanup(win)
+}

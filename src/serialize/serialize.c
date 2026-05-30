@@ -509,6 +509,26 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             return 1;
         }
         default:
+            /* 注意：以下对象类型不需要序列化，因为它们只在运行时创建，
+             * 不会出现在编译后的 Chunk 常量表中：
+             *   OBJ_STRUCT       - 结构体实例（运行时通过 new 创建）
+             *   OBJ_CSTRUCT      - C 布局结构体实例（运行时创建）
+             *   OBJ_CSTRUCT_ARRAY_VIEW - C 布局结构体数组视图
+             *   OBJ_CSTRUCT_ARRAY      - C 布局结构体数组
+             *   OBJ_UPVALUE      - Upvalue（运行时闭包捕获）
+             *   OBJ_BOUND_METHOD - 绑定方法（运行时绑定）
+             *   OBJ_NATIVE       - Native 函数（运行时注册）
+             *   OBJ_COROUTINE    - 协程（运行时创建）
+             *   OBJ_FUTURE       - Future（运行时创建）
+             *   OBJ_THREAD       - 线程（运行时创建）
+             *   OBJ_CHANNEL      - Channel（运行时创建）
+             *   OBJ_FFI_CALLBACK - FFI 回调（运行时创建）
+             *   OBJ_GUI_WINDOW   - GUI 窗口（运行时创建）
+             *   OBJ_GUI_RENDERER - GUI 渲染器（运行时创建）
+             *   OBJ_GUI_FONT     - GUI 字体（运行时创建）
+             *   OBJ_GUI_EVENT    - GUI 事件（运行时创建）
+             * 如果打包成功但此处返回 0，说明遇到了不应该出现的对象类型。
+             */
             return 0;
         }
     }
