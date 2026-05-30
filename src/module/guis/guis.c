@@ -107,6 +107,12 @@ typedef struct {
     LenoGUIPlatformTexture* platform;
 } ObjGUITexture;
 
+/* Event 对象：内部持有 ObjDict 存储事件数据，独立类型避免与普通 Dict 冲突 */
+typedef struct {
+    Object header;
+    ObjDict* data;
+} ObjGUIEvent;
+
 static ObjGUIWindow* create_window_obj(LenoGUIPlatformWindow* pw) {
     ObjGUIWindow* obj = (ObjGUIWindow*)gc_alloc(sizeof(ObjGUIWindow), OBJ_GUI_WINDOW);
     if (!obj) return NULL;
@@ -199,6 +205,8 @@ static Value call_leno_closure(Value callee, int arg_count, Value* args) {
 
 static Value event_to_dict(LenoGUIEvent* ev) {
     ObjDict* d = dict_new(16);
+    ObjGUIEvent* event_obj = (ObjGUIEvent*)gc_alloc(sizeof(ObjGUIEvent), OBJ_GUI_EVENT);
+    event_obj->data = d;
     dict_add_int(d, "type", ev->type);
     dict_add_int(d, "window_id", ev->window_id);
 
@@ -232,7 +240,7 @@ static Value event_to_dict(LenoGUIEvent* ev) {
         dict_add_float(d, "wheel_y", ev->wheel_y);
     }
 
-    return val_obj((Object*)d);
+    return val_obj((Object*)event_obj);
 }
 
 static Value gui_init_func(int argc, Value* args) {
@@ -984,26 +992,32 @@ void guis_init_instance_methods(void) {
  * 事件底层是 Dict，方法通过 event_find_method 查找分发
  * ============================================================================ */
 
+/* 辅助：从事件对象中获取内部 dict */
+static ObjDict* event_get_dict(Value event_val) {
+    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_GUI_EVENT) return NULL;
+    return ((ObjGUIEvent*)val_as_obj(event_val))->data;
+}
+
 /* 辅助：从事件字典中获取 "type" 字段值 */
 static int event_get_type(Value event_val) {
-    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_DICT) return 0;
-    ObjDict* d = (ObjDict*)val_as_obj(event_val);
+    ObjDict* d = event_get_dict(event_val);
+    if (!d) return 0;
     Value v = dict_get(d, str_copy("type", 4));
     return val_is_int(v) ? val_as_int(v) : 0;
 }
 
 /* 辅助：从事件字典中获取整数字段 */
 static int event_get_int(Value event_val, const char* key) {
-    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_DICT) return 0;
-    ObjDict* d = (ObjDict*)val_as_obj(event_val);
+    ObjDict* d = event_get_dict(event_val);
+    if (!d) return 0;
     Value v = dict_get(d, str_copy(key, (int)strlen(key)));
     return val_is_int(v) ? val_as_int(v) : 0;
 }
 
 /* 辅助：从事件字典中获取字符串字段 */
 static const char* event_get_string(Value event_val, const char* key) {
-    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_DICT) return "";
-    ObjDict* d = (ObjDict*)val_as_obj(event_val);
+    ObjDict* d = event_get_dict(event_val);
+    if (!d) return "";
     Value v = dict_get(d, str_copy(key, (int)strlen(key)));
     if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
         return ((ObjString*)val_as_obj(v))->chars;

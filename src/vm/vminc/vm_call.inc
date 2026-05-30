@@ -24,7 +24,7 @@ static inline int value_matches_type(Value value, TypeKind expected) {
         case TYPE_DRAW:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_RENDERER);
         case TYPE_EVENT:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
+            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_EVENT);
         case TYPE_PTR:
             return (val_is_obj(value) &&
                    (val_as_obj(value)->type == OBJ_FFI_POINTER ||

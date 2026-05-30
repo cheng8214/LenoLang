@@ -146,7 +146,7 @@ OPCODE(OP_AS_CAST) {
             break;
         case TYPE_EVENT:
             (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_EVENT);
             break;
         case TYPE_PTR:
             (void)READ_BYTE();

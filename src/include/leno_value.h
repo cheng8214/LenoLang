@@ -43,9 +43,10 @@ typedef enum {
     OBJ_FFI_CALLBACK, // FFI 回调对象
     OBJ_THREAD,     // 线程对象
     OBJ_CHANNEL,    // Channel 对象
-    OBJ_GUI_WINDOW, // GUI 窗口对象
+    OBJ_GUI_WINDOW,   // GUI 窗口对象
     OBJ_GUI_RENDERER, // GUI 渲染器对象
     OBJ_GUI_TEXTURE,  // GUI 纹理对象
+    OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
     OBJ_FLOAT,      // float 类型标记（内联缓存用）

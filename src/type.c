@@ -489,16 +489,9 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type_new(TYPE_WIN);
             } else if (val_as_obj(*v)->type == OBJ_GUI_RENDERER) {
                 return type_new(TYPE_DRAW);
+            } else if (val_as_obj(*v)->type == OBJ_GUI_EVENT) {
+                return type_new(TYPE_EVENT);
             } else if (val_as_obj(*v)->type == OBJ_DICT) {
-                /* 检查是否为 Event 类型（通过 dict 的 event_type 字段判断） */
-                ObjDict* d = (ObjDict*)val_as_obj(*v);
-                Value et = dict_get(d, str_copy("type", 4));
-                if (!val_is_null(et) && val_is_int(et)) {
-                    int t = val_as_int(et);
-                    if (t >= 0x100 && t <= 0x6FF) {
-                        return type_new(TYPE_EVENT);
-                    }
-                }
                 return type_new(TYPE_DICT);
             } else if (val_as_obj(*v)->type == OBJ_FFI_POINTER) {
                 ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)val_as_obj(*v);

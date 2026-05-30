@@ -27,6 +27,12 @@
 #include "include/native.h"
 #include "include/leno_vm.h"
 #include <stdlib.h>
+
+/* 前向声明：Event 对象结构体（定义在 guis.c） */
+typedef struct {
+    Object header;
+    void* data;
+} ObjGUIEvent;
 #include <string.h>
 #include <stdint.h>
 
@@ -266,7 +272,13 @@ void gc_mark_object(Object* obj) {
             break;
         case OBJ_GUI_TEXTURE:
             break;
-        // 数组：标记所有元素
+        case OBJ_GUI_EVENT: {
+            /* Event 对象内部持有 ObjDict*，需要标记 */
+            ObjGUIEvent* ev = (ObjGUIEvent*)obj;
+            if (ev->data) gc_mark_object((Object*)ev->data);
+            break;
+        }
+        /* 数组：标记所有元素 */
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;
             for (int i = 0; i < arr->count; i++) {
@@ -646,6 +658,7 @@ static size_t get_object_size(Object* obj) {
         case OBJ_GUI_WINDOW: return sizeof(Object) + sizeof(int) + sizeof(void*);
         case OBJ_GUI_RENDERER: return sizeof(Object) + sizeof(void*) + sizeof(void*);
         case OBJ_GUI_TEXTURE: return sizeof(Object) + sizeof(void*);
+        case OBJ_GUI_EVENT: return sizeof(Object) + sizeof(void*);
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
             return sizeof(ObjBigInt) + bigint->limb_count * sizeof(uint32_t);
@@ -808,8 +821,8 @@ static void free_object_resources(Object* obj) {
         case OBJ_GUI_WINDOW:
         case OBJ_GUI_RENDERER:
         case OBJ_GUI_TEXTURE:
+        case OBJ_GUI_EVENT:
             break;
-        // 数组：释放元素数组
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;
             free(arr->elements);
