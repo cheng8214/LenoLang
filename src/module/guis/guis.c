@@ -1,69 +1,86 @@
 /* Leno GUI - LenoC 模块注册
  * 将平台抽象层连接到 LenoC VM
  *
- * LenoC 端 API (回调式):
+ * 类型关键字:
+ *   Win   - 窗口对象 (OBJ_GUI_WINDOW)
+ *   Draw  - 渲染器对象 (OBJ_GUI_RENDERER)
+ *   Event - 事件对象 (OBJ_DICT 别名)
+ *
+ * 模块级 API:
  *   guis.init() -> bool
- *   guis.quit() -> null
- *   guis.create_window(title, w, h, flags) -> Window|null
- *   guis.destroy_window(win) -> null
- *   guis.show_window(win) -> null
- *   guis.hide_window(win) -> null
- *   guis.set_window_title(win, title) -> null
- *   guis.set_window_size(win, w, h) -> null
- *   guis.get_window_size(win) -> [w, h]
- *   guis.set_window_position(win, x, y) -> null
- *   guis.get_window_position(win) -> [x, y]
- *   guis.set_window_fullscreen(win, fullscreen) -> null
+ *   guis.cleanup(win) -> null              销毁窗口 + 退出 GUI
+ *   guis.create_window(title, w, h, flags) -> Win
+ *   guis.show_window(win) / hide_window(win)
+ *   guis.set_window_title(win, title)
+ *   guis.set_window_size(win, w, h) / get_window_size(win) -> [w, h]
+ *   guis.set_window_position(win, x, y) / get_window_position(win) -> [x, y]
+ *   guis.set_window_fullscreen(win, bool)
  *   guis.window_should_close(win) -> bool
- *   guis.set_window_should_close(win, bool) -> null
+ *   guis.set_window_should_close(win, bool)
+ *   guis.set_window_opacity(win, opacity)
+ *   guis.create_renderer(win) -> Draw
+ *   guis.destroy_renderer(ren)
+ *   guis.create_texture(ren, w, h) -> Texture
+ *   guis.destroy_texture(tex)
+ *   guis.poll_event() / wait_event(timeout_ms)
+ *   guis.get_key_state(key) -> bool
+ *   guis.get_mouse_state() -> {x, y, buttons}
+ *   guis.get_clipboard_text() / set_clipboard_text(text)
+ *   guis.show_cursor(bool)
+ *   guis.show_message_box(title, message, type) -> int
+ *   guis.get_ticks() / get_performance_counter() / get_performance_frequency()
+ *   guis.delay(ms)
+ *   guis.get_display_size() / get_display_dpi()
+ *   guis.run(win, onDraw, onEvent)          回调式事件循环
  *
- *   guis.create_renderer(win) -> Renderer|null
- *   guis.destroy_renderer(ren) -> null
- *   guis.set_draw_color(ren, r, g, b, a) -> null
- *   guis.render_clear(ren) -> null
- *   guis.render_present(ren) -> null
- *   guis.render_draw_point(ren, x, y) -> null
- *   guis.render_draw_line(ren, x1, y1, x2, y2) -> null
- *   guis.render_draw_rect(ren, x, y, w, h) -> null
- *   guis.render_fill_rect(ren, x, y, w, h) -> null
- *   guis.get_renderer_size(ren) -> [w, h]
+ * Draw 实例方法 (ren.method()):
+ *   ren.set_draw_color(r, g, b, a)
+ *   ren.clear() / ren.present()
+ *   ren.draw_point(x, y) / ren.draw_line(x1, y1, x2, y2)
+ *   ren.draw_rect(x, y, w, h) / ren.fill_rect(x, y, w, h)
+ *   ren.draw_circle(cx, cy, r) / ren.fill_circle(cx, cy, r)
+ *   ren.draw_rounded_rect(x, y, w, h, r) / ren.fill_rounded_rect(x, y, w, h, r)
+ *   ren.set_viewport(x, y, w, h) / ren.get_viewport() -> [x, y, w, h]
+ *   ren.set_clip_rect(x, y, w, h) / ren.get_clip_rect() / ren.disable_clip_rect()
+ *   ren.draw_texture(tex, x, y)
+ *   ren.draw_texture_src(tex, sx, sy, sw, sh, dx, dy, dw, dh)
+ *   ren.draw_texture_rotated(tex, x, y, angle, flip)
+ *   ren.update_texture(tex, data, pitch)
+ *   ren.get_size() -> [w, h]
  *
- *   guis.create_texture(ren, w, h) -> Texture|null
- *   guis.destroy_texture(tex) -> null
- *   guis.render_texture(ren, tex, x, y) -> null
- *   guis.update_texture(tex, data_ptr, pitch) -> null
- *
- *   guis.poll_event() -> dict|null
- *   guis.wait_event(timeout_ms) -> dict|null
- *   guis.get_display_size() -> [w, h]
- *
- * 回调式 API (推荐):
- *   guis.run(win, on_draw, on_event) -> null
- *     win      - 窗口对象
- *     on_draw  - 绘画回调 func(var ren) { ... }，每帧调用
- *     on_event - 事件回调 func(var event) { ... }，每个事件调用
+ * Event 实例方法 (e.method()):
+ *   e.type() -> int
+ *   e.is_quit() / e.is_window_close() / e.is_window_resize() / e.is_window_move()
+ *   e.is_key_down() / e.is_key_up() / e.is_text_input()
+ *   e.is_mouse_move() / e.is_mouse_down() / e.is_mouse_up() / e.is_mouse_wheel()
+ *   e.key() -> int
+ *   e.mouse_x() / e.mouse_y() / e.mouse_button() -> int
+ *   e.width() / e.height() -> int
+ *   e.text() -> string
  *
  * 使用示例:
  *   import guis
  *   main() {
  *       guis.init()
- *       var win = guis.create_window("Hello", 800, 600, 1)
+ *       Win win = guis.create_window("Hello", 800, 600, 1)
  *       guis.run(win,
- *           func(var ren) {
- *               guis.set_draw_color(ren, 30, 30, 46, 255)
- *               guis.render_clear(ren)
- *               guis.set_draw_color(ren, 255, 0, 0, 255)
- *               guis.render_fill_rect(ren, 100, 100, 200, 150)
- *               guis.render_present(ren)
+ *           func(Draw ren) {
+ *               ren.set_draw_color(30, 30, 46, 255)
+ *               ren.clear()
+ *               ren.set_draw_color(255, 0, 0, 255)
+ *               ren.fill_rect(100, 100, 200, 150)
+ *               ren.present()
  *           },
- *           func(var event) {
- *               if event["type"] == 0x100 or event["type"] == 0x201 {
+ *           func(Event e) {
+ *               if e.is_quit() or e.is_window_close() {
+ *                   guis.set_window_should_close(win, true)
+ *               }
+ *               if e.is_key_down() and e.key() == 0x1B {
  *                   guis.set_window_should_close(win, true)
  *               }
  *           }
  *       )
- *       guis.destroy_window(win)
- *       guis.quit()
+ *       guis.cleanup(win)
  *   }
  */
 
