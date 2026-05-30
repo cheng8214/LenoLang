@@ -925,6 +925,52 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             }
             break;
         }
+        case AST_IF: {
+            // if 表达式类型推断：根据 then 和 else 分支推断
+            TypeInfo* then_type = infer_expr_type(s, ast->u.if_.then);
+            TypeInfo* else_type = infer_expr_type(s, ast->u.if_.else_);
+
+            if (then_type && else_type) {
+                if (type_equals(then_type, else_type)) {
+                    // 两个分支类型相同，直接返回该类型
+                    result = type_copy(then_type);
+                } else {
+                    // 类型不同，尝试类型提升（复用数组推断中的逻辑）
+                    int promoted = 0;
+
+                    // int + float -> float
+                    if ((then_type->kind == TYPE_INT && else_type->kind == TYPE_FLOAT) ||
+                        (then_type->kind == TYPE_FLOAT && else_type->kind == TYPE_INT)) {
+                        result = type_new(TYPE_FLOAT);
+                        promoted = 1;
+                    }
+                    // int/float + bigint -> bigint
+                    else if ((then_type->kind == TYPE_INT && else_type->kind == TYPE_BIGINT) ||
+                             (then_type->kind == TYPE_BIGINT && else_type->kind == TYPE_INT) ||
+                             (then_type->kind == TYPE_FLOAT && else_type->kind == TYPE_BIGINT) ||
+                             (then_type->kind == TYPE_BIGINT && else_type->kind == TYPE_FLOAT)) {
+                        result = type_new(TYPE_BIGINT);
+                        promoted = 1;
+                    }
+                    // bigint + bigint
+                    else if (then_type->kind == TYPE_BIGINT && else_type->kind == TYPE_BIGINT) {
+                        result = type_new(TYPE_BIGINT);
+                        promoted = 1;
+                    }
+
+                    if (!promoted) {
+                        // 无法类型提升，返回 any
+                        result = type_new(TYPE_ANY);
+                    }
+                }
+            } else {
+                result = type_new(TYPE_ANY);
+            }
+
+            if (then_type) type_free(then_type);
+            if (else_type) type_free(else_type);
+            break;
+        }
         case AST_TYPE_CHECK:
             // is 表达式返回 bool
             result = type_new(TYPE_BOOL);

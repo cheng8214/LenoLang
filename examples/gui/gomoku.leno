@@ -1,4 +1,5 @@
 import guis
+import maths
 
 main() {
     guis.init()
@@ -28,6 +29,9 @@ main() {
     var winner = 0
     var last_move_r = -1
     var last_move_c = -1
+    var ai_player = 2
+    var human_player = 1
+    var ai_thinking = false
 
     func check_win(int br, int bc) {
         var player = board[br][bc]
@@ -82,6 +86,137 @@ main() {
         winner = 0
         last_move_r = -1
         last_move_c = -1
+        ai_thinking = false
+    }
+
+    func evaluate_line(int r, int c, int dr, int dc, int player):int {
+        var score = 0
+        var count = 0
+        var empty_ends = 0
+
+        var rr = r
+        var cc = c
+        while rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == player {
+            count = count + 1
+            rr = rr + dr
+            cc = cc + dc
+        }
+        if rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == 0 {
+            empty_ends = empty_ends + 1
+        }
+
+        rr = r - dr
+        cc = c - dc
+        while rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == player {
+            count = count + 1
+            rr = rr - dr
+            cc = cc - dc
+        }
+        if rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == 0 {
+            empty_ends = empty_ends + 1
+        }
+
+        if count >= 5 {
+            score = 100000
+        } else if count == 4 {
+            if empty_ends == 2 {
+                score = 10000
+            } else if empty_ends == 1 {
+                score = 1000
+            }
+        } else if count == 3 {
+            if empty_ends == 2 {
+                score = 1000
+            } else if empty_ends == 1 {
+                score = 100
+            }
+        } else if count == 2 {
+            if empty_ends == 2 {
+                score = 100
+            } else if empty_ends == 1 {
+                score = 10
+            }
+        } else if count == 1 {
+            if empty_ends == 2 {
+                score = 10
+            } else if empty_ends == 1 {
+                score = 1
+            }
+        }
+
+        return score
+    }
+
+    func evaluate_position(int r, int c, int player):float {
+        if board[r][c] != 0 {
+            return -1.0
+        }
+
+        var attack_score = evaluate_line(r, c, 0, 1, player)
+        attack_score = attack_score + evaluate_line(r, c, 1, 0, player)
+        attack_score = attack_score + evaluate_line(r, c, 1, 1, player)
+        attack_score = attack_score + evaluate_line(r, c, 1, -1, player)
+
+        int opponent = if player == 1 then 2 else 1
+        var defense_score = evaluate_line(r, c, 0, 1, opponent)
+        defense_score = defense_score + evaluate_line(r, c, 1, 0, opponent)
+        defense_score = defense_score + evaluate_line(r, c, 1, 1, opponent)
+        defense_score = defense_score + evaluate_line(r, c, 1, -1, opponent)
+
+        return _float(attack_score) + _float(defense_score) * 0.8
+    }
+
+    func ai_move() {
+        float best_score = -1.0
+        var best_r = -1
+        var best_c = -1
+
+        for board_size to r {
+            for board_size to c {
+                if board[r][c] == 0 {
+                    var score = evaluate_position(r, c, ai_player)
+                    if score > best_score {
+                        best_score = score
+                        best_r = r
+                        best_c = c
+                    }
+                }
+            }
+        }
+
+        if best_r >= 0 and best_c >= 0 {
+            board[best_r][best_c] = ai_player
+            last_move_r = best_r
+            last_move_c = best_c
+
+            if check_win(best_r, best_c) {
+                game_over = true
+                winner = ai_player
+            } else {
+                current_player = human_player
+            }
+        }
+
+        ai_thinking = false
+    }
+
+    func do_human_move(int r, int c) {
+        if board[r][c] != 0 {
+            return
+        }
+
+        board[r][c] = human_player
+        last_move_r = r
+        last_move_c = c
+
+        if check_win(r, c) {
+            game_over = true
+            winner = human_player
+        } else {
+            current_player = ai_player
+            ai_thinking = true
+            ai_move()
+        }
     }
 
     guis.run(win,
@@ -142,16 +277,16 @@ main() {
 
             ren.set_draw_color(200, 200, 200, 255)
             if game_over {
-                if winner == 1 {
-                    ren.draw_text_font(font_info, "黑棋获胜! 按 R 重新开始", 230, 720)
+                if winner == human_player {
+                    ren.draw_text_font(font_info, "你赢了! 按 R 重新开始", 240, 720)
                 } else {
-                    ren.draw_text_font(font_info, "白棋获胜! 按 R 重新开始", 230, 720)
+                    ren.draw_text_font(font_info, "AI获胜! 按 R 重新开始", 240, 720)
                 }
             } else {
-                if current_player == 1 {
-                    ren.draw_text_font(font_info, "当前: 黑棋", 300, 720)
+                if ai_thinking {
+                    ren.draw_text_font(font_info, "AI 思考中...", 280, 720)
                 } else {
-                    ren.draw_text_font(font_info, "当前: 白棋", 300, 720)
+                    ren.draw_text_font(font_info, "当前: 你的回合", 270, 720)
                 }
             }
 
@@ -173,29 +308,14 @@ main() {
                     reset_game()
                 }
             }
-            if e.is_mouse_down() and not game_over {
+            if e.is_mouse_down() and not game_over and not ai_thinking and current_player == human_player {
                 int mx = e.mouse_x()
                 int my = e.mouse_y()
-                int c = (mx - board_x) / cell
-                int r = (my - board_y) / cell
+                int c = _int(maths.round(_float(mx - board_x) / cell))
+                int r = _int(maths.round(_float(my - board_y) / cell))
 
                 if c >= 0 and c < board_size and r >= 0 and r < board_size {
-                    if board[r][c] == 0 {
-                        board[r][c] = current_player
-                        last_move_r = r
-                        last_move_c = c
-
-                        if check_win(r, c) {
-                            game_over = true
-                            winner = current_player
-                        } else {
-                            if current_player == 1 {
-                                current_player = 2
-                            } else {
-                                current_player = 1
-                            }
-                        }
-                    }
+                    do_human_move(r, c)
                 }
             }
         }

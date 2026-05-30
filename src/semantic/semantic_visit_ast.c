@@ -742,6 +742,12 @@ void visit(Semantic* s, Ast* ast) {
                     scope_free(else_scope);
                 }
             }
+
+            // if 表达式：触发类型推断并缓存到 AST 节点，供代码生成器使用
+            TypeInfo* if_type = infer_expr_type(s, ast);
+            if (if_type) {
+                type_free(if_type);
+            }
             break;
         }
             
