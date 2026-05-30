@@ -402,6 +402,9 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_BIGINT:   return "bigint";
         case TYPE_NULL:     return "null";
         case TYPE_FILE:     return "file";
+        case TYPE_WIN:      return "win";
+        case TYPE_DRAW:     return "draw";
+        case TYPE_EVENT:    return "event";
         case TYPE_PTR:      return "ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
         case TYPE_ANY:      return "any";
@@ -482,6 +485,21 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type;
             } else if (val_as_obj(*v)->type == OBJ_FILE) {
                 return type_new(TYPE_FILE);
+            } else if (val_as_obj(*v)->type == OBJ_GUI_WINDOW) {
+                return type_new(TYPE_WIN);
+            } else if (val_as_obj(*v)->type == OBJ_GUI_RENDERER) {
+                return type_new(TYPE_DRAW);
+            } else if (val_as_obj(*v)->type == OBJ_DICT) {
+                /* 检查是否为 Event 类型（通过 dict 的 event_type 字段判断） */
+                ObjDict* d = (ObjDict*)val_as_obj(*v);
+                Value et = dict_get(d, str_copy("type", 4));
+                if (!val_is_null(et) && val_is_int(et)) {
+                    int t = val_as_int(et);
+                    if (t >= 0x100 && t <= 0x6FF) {
+                        return type_new(TYPE_EVENT);
+                    }
+                }
+                return type_new(TYPE_DICT);
             } else if (val_as_obj(*v)->type == OBJ_FFI_POINTER) {
                 ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)val_as_obj(*v);
                 if (ffi_ptr->element_type != TYPE_PTR && ffi_ptr->element_type != TYPE_INFER) {
@@ -735,6 +753,9 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_ARRAY_TYPE:    return TYPE_ARRAY;
         case TOK_DICT_TYPE:     return TYPE_DICT;
         case TOK_FILE_TYPE:     return TYPE_FILE;
+        case TOK_WIN_TYPE:      return TYPE_WIN;
+        case TOK_DRAW_TYPE:     return TYPE_DRAW;
+        case TOK_EVENT_TYPE:    return TYPE_EVENT;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;
         // C 布局类型

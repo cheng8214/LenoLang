@@ -266,6 +266,32 @@ OPCODE(OP_GET_PROPERTY) {
         DISPATCH;
     }
 
+    // 处理 Draw 渲染器对象的方法调用（如 ren.clear()）
+    if (val_is_obj(receiver) && val_as_obj(receiver)->type == OBJ_GUI_RENDERER) {
+        ObjNative* native_method = draw_find_method(name->chars);
+        if (native_method) {
+            ObjBoundMethod* bound = bound_method_new(receiver, native_method);
+            vm_stack_push(&vm, val_obj((Object*)bound));
+            DISPATCH;
+        }
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Draw 渲染器没有方法 '%s'", name->chars);
+        throw_runtime_error(msg, GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // 处理 Event 事件对象的方法调用（如 e.is_quit()）
+    if (val_is_obj(receiver) && val_as_obj(receiver)->type == OBJ_DICT) {
+        ObjNative* native_method = event_find_method(name->chars);
+        if (native_method) {
+            ObjBoundMethod* bound = bound_method_new(receiver, native_method);
+            vm_stack_push(&vm, val_obj((Object*)bound));
+            DISPATCH;
+        }
+        /* 不是 Event 方法，继续走正常的 dict 属性访问 */
+    }
+
     throw_runtime_error("只能获取数组、字典或模块的属性", GET_CURRENT_LINE());
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;

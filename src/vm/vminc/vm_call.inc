@@ -19,6 +19,12 @@ static inline int value_matches_type(Value value, TypeKind expected) {
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
         case TYPE_FILE:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
+        case TYPE_WIN:
+            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_WINDOW);
+        case TYPE_DRAW:
+            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_RENDERER);
+        case TYPE_EVENT:
+            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
         case TYPE_PTR:
             return (val_is_obj(value) &&
                    (val_as_obj(value)->type == OBJ_FFI_POINTER ||

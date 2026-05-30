@@ -79,14 +79,21 @@ set(LENO_SOURCES
     src/module/assert/assert.c
     src/module/sys/sys.c
     src/module/regexs/regexs.c
+    src/module/guis/guis.c
     src/platform/platform_thread.c
     src/serialize/serialize.c
 )
 
 if(WIN32)
     list(APPEND LENO_SOURCES src/module/ffi/leno_ffi_win64.c)
+    list(APPEND LENO_SOURCES src/module/guis/leno_guis_win32.c)
 else()
     list(APPEND LENO_SOURCES src/module/ffi/leno_ffi_linux.c)
+    if(APPLE)
+        list(APPEND LENO_SOURCES src/module/guis/leno_guis_macos.c)
+    else()
+        list(APPEND LENO_SOURCES src/module/guis/leno_guis_linux.c)
+    endif()
 endif()
 
 add_executable(leno ${LENO_SOURCES})
@@ -100,12 +107,23 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(leno PRIVATE ws2_32)
+    target_link_libraries(leno PRIVATE ws2_32 gdi32 user32)
     if(MINGW)
         target_link_options(leno PRIVATE -municode)
     endif()
 else()
     target_link_libraries(leno PRIVATE m pthread dl)
+    if(APPLE)
+        find_library(APPKIT_LIBRARY AppKit)
+        if(APPKIT_LIBRARY)
+            target_link_libraries(leno PRIVATE ${APPKIT_LIBRARY})
+        endif()
+    else()
+        find_library(X11_LIBRARY X11)
+        if(X11_LIBRARY)
+            target_link_libraries(leno PRIVATE ${X11_LIBRARY})
+        endif()
+    endif()
     find_library(ICONV_LIBRARY NAMES iconv iconv_hook)
     if(ICONV_LIBRARY)
         target_link_libraries(leno PRIVATE ${ICONV_LIBRARY})

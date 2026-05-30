@@ -319,6 +319,9 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "bigint") == 0) return TYPE_BIGINT;
     if (strcmp(type_str, "null") == 0) return TYPE_NULL;
     if (strcmp(type_str, "File") == 0) return TYPE_FILE;
+    if (strcmp(type_str, "Win") == 0) return TYPE_WIN;
+    if (strcmp(type_str, "Draw") == 0) return TYPE_DRAW;
+    if (strcmp(type_str, "Event") == 0) return TYPE_EVENT;
     if (strcmp(type_str, "any") == 0) return TYPE_ANY;
     if (strcmp(type_str, "Ptr") == 0) return TYPE_PTR;
     return TYPE_ANY;  // 未知类型，可能是自定义 struct

@@ -1,0 +1,1137 @@
+/* Leno GUI - LenoC 模块注册
+ * 将平台抽象层连接到 LenoC VM
+ *
+ * LenoC 端 API (回调式):
+ *   guis.init() -> bool
+ *   guis.quit() -> null
+ *   guis.create_window(title, w, h, flags) -> Window|null
+ *   guis.destroy_window(win) -> null
+ *   guis.show_window(win) -> null
+ *   guis.hide_window(win) -> null
+ *   guis.set_window_title(win, title) -> null
+ *   guis.set_window_size(win, w, h) -> null
+ *   guis.get_window_size(win) -> [w, h]
+ *   guis.set_window_position(win, x, y) -> null
+ *   guis.get_window_position(win) -> [x, y]
+ *   guis.set_window_fullscreen(win, fullscreen) -> null
+ *   guis.window_should_close(win) -> bool
+ *   guis.set_window_should_close(win, bool) -> null
+ *
+ *   guis.create_renderer(win) -> Renderer|null
+ *   guis.destroy_renderer(ren) -> null
+ *   guis.set_draw_color(ren, r, g, b, a) -> null
+ *   guis.render_clear(ren) -> null
+ *   guis.render_present(ren) -> null
+ *   guis.render_draw_point(ren, x, y) -> null
+ *   guis.render_draw_line(ren, x1, y1, x2, y2) -> null
+ *   guis.render_draw_rect(ren, x, y, w, h) -> null
+ *   guis.render_fill_rect(ren, x, y, w, h) -> null
+ *   guis.get_renderer_size(ren) -> [w, h]
+ *
+ *   guis.create_texture(ren, w, h) -> Texture|null
+ *   guis.destroy_texture(tex) -> null
+ *   guis.render_texture(ren, tex, x, y) -> null
+ *   guis.update_texture(tex, data_ptr, pitch) -> null
+ *
+ *   guis.poll_event() -> dict|null
+ *   guis.wait_event(timeout_ms) -> dict|null
+ *   guis.get_display_size() -> [w, h]
+ *
+ * 回调式 API (推荐):
+ *   guis.run(win, on_draw, on_event) -> null
+ *     win      - 窗口对象
+ *     on_draw  - 绘画回调 func(var ren) { ... }，每帧调用
+ *     on_event - 事件回调 func(var event) { ... }，每个事件调用
+ *
+ * 使用示例:
+ *   import guis
+ *   main() {
+ *       guis.init()
+ *       var win = guis.create_window("Hello", 800, 600, 1)
+ *       guis.run(win,
+ *           func(var ren) {
+ *               guis.set_draw_color(ren, 30, 30, 46, 255)
+ *               guis.render_clear(ren)
+ *               guis.set_draw_color(ren, 255, 0, 0, 255)
+ *               guis.render_fill_rect(ren, 100, 100, 200, 150)
+ *               guis.render_present(ren)
+ *           },
+ *           func(var event) {
+ *               if event["type"] == 0x100 or event["type"] == 0x201 {
+ *                   guis.set_window_should_close(win, true)
+ *               }
+ *           }
+ *       )
+ *       guis.destroy_window(win)
+ *       guis.quit()
+ *   }
+ */
+
+#include "include/native.h"
+#include "include/leno_value.h"
+#include "include/leno_vm.h"
+#include "leno_guis.h"
+#include <string.h>
+#include <stdlib.h>
+
+typedef struct {
+    Object header;
+    LenoGUIPlatformWindow* platform;
+} ObjGUIWindow;
+
+typedef struct {
+    Object header;
+    LenoGUIPlatformRenderer* platform;
+    ObjGUIWindow* window;
+} ObjGUIRenderer;
+
+typedef struct {
+    Object header;
+    LenoGUIPlatformTexture* platform;
+} ObjGUITexture;
+
+static ObjGUIWindow* create_window_obj(LenoGUIPlatformWindow* pw) {
+    ObjGUIWindow* obj = (ObjGUIWindow*)gc_alloc(sizeof(ObjGUIWindow), OBJ_GUI_WINDOW);
+    if (!obj) return NULL;
+    obj->platform = pw;
+    return obj;
+}
+
+static ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWindow* win) {
+    ObjGUIRenderer* obj = (ObjGUIRenderer*)gc_alloc(sizeof(ObjGUIRenderer), OBJ_GUI_RENDERER);
+    if (!obj) return NULL;
+    obj->platform = pr;
+    obj->window = win;
+    return obj;
+}
+
+static ObjGUITexture* create_texture_obj(LenoGUIPlatformTexture* pt) {
+    ObjGUITexture* obj = (ObjGUITexture*)gc_alloc(sizeof(ObjGUITexture), OBJ_GUI_TEXTURE);
+    if (!obj) return NULL;
+    obj->platform = pt;
+    return obj;
+}
+
+static ObjGUIWindow* as_window(Value v) {
+    if (!val_is_obj(v)) return NULL;
+    Object* obj = val_as_obj(v);
+    if (obj->type != OBJ_GUI_WINDOW) return NULL;
+    return (ObjGUIWindow*)obj;
+}
+
+static ObjGUIRenderer* as_renderer(Value v) {
+    if (!val_is_obj(v)) return NULL;
+    Object* obj = val_as_obj(v);
+    if (obj->type != OBJ_GUI_RENDERER) return NULL;
+    return (ObjGUIRenderer*)obj;
+}
+
+static ObjGUITexture* as_texture(Value v) {
+    if (!val_is_obj(v)) return NULL;
+    Object* obj = val_as_obj(v);
+    if (obj->type != OBJ_GUI_TEXTURE) return NULL;
+    return (ObjGUITexture*)obj;
+}
+
+static void dict_add_int(ObjDict* d, const char* key, int value) {
+    ObjString* k = str_copy(key, (int)strlen(key));
+    dict_set(d, k, val_int(value));
+}
+
+static void dict_add_float(ObjDict* d, const char* key, float value) {
+    ObjString* k = str_copy(key, (int)strlen(key));
+    dict_set(d, k, val_float((double)value));
+}
+
+static void dict_add_string(ObjDict* d, const char* key, const char* value) {
+    ObjString* k = str_copy(key, (int)strlen(key));
+    ObjString* v = str_copy(value, (int)strlen(value));
+    dict_set(d, k, val_obj((Object*)v));
+}
+
+static ObjArray* make_int_array2(int a, int b) {
+    ObjArray* arr = arr_new(2);
+    arr->count = 2;
+    arr_write(arr, 0, val_int(a));
+    arr_write(arr, 1, val_int(b));
+    return arr;
+}
+
+static Value call_leno_closure(Value callee, int arg_count, Value* args) {
+    VM* vm_ptr = current_exec_vm ? current_exec_vm : &vm;
+    int saved_sp = vm_ptr->sp;
+    int saved_frame_cnt = vm_ptr->frame_cnt;
+
+    for (int i = 0; i < arg_count; i++) {
+        vm_stack_push(vm_ptr, args[i]);
+    }
+    vm_stack_push(vm_ptr, callee);
+
+    int call_result = vm_call_value(callee, arg_count, 0);
+    Value ret_val = vm_ptr->last_return_value;
+
+    if (call_result != 1) {
+        vm_ptr->has_exception = 0;
+        vm_ptr->exception = val_null();
+        vm_ptr->frame_cnt = saved_frame_cnt;
+        ret_val = val_null();
+    }
+    vm_ptr->sp = saved_sp;
+    return ret_val;
+}
+
+static Value event_to_dict(LenoGUIEvent* ev) {
+    ObjDict* d = dict_new(16);
+    dict_add_int(d, "type", ev->type);
+    dict_add_int(d, "window_id", ev->window_id);
+
+    if (ev->type == LENO_GUI_EVT_WINDOW_RESIZE) {
+        dict_add_int(d, "width", ev->data1);
+        dict_add_int(d, "height", ev->data2);
+    } else if (ev->type == LENO_GUI_EVT_WINDOW_MOVE) {
+        dict_add_int(d, "x", ev->data1);
+        dict_add_int(d, "y", ev->data2);
+    } else if (ev->type == LENO_GUI_EVT_KEY_DOWN || ev->type == LENO_GUI_EVT_KEY_UP) {
+        dict_add_int(d, "key", ev->key);
+        dict_add_int(d, "scancode", ev->scancode);
+        dict_add_int(d, "mod", ev->mod_flags);
+        dict_add_int(d, "repeat", ev->repeat);
+    } else if (ev->type == LENO_GUI_EVT_TEXT_INPUT) {
+        dict_add_string(d, "text", ev->text);
+    } else if (ev->type == LENO_GUI_EVT_MOUSE_MOVE) {
+        dict_add_float(d, "x", ev->mouse_x);
+        dict_add_float(d, "y", ev->mouse_y);
+        dict_add_float(d, "xrel", ev->mouse_xrel);
+        dict_add_float(d, "yrel", ev->mouse_yrel);
+    } else if (ev->type == LENO_GUI_EVT_MOUSE_DOWN || ev->type == LENO_GUI_EVT_MOUSE_UP) {
+        dict_add_float(d, "x", ev->mouse_x);
+        dict_add_float(d, "y", ev->mouse_y);
+        dict_add_int(d, "button", ev->mouse_button);
+        dict_add_int(d, "clicks", ev->mouse_clicks);
+    } else if (ev->type == LENO_GUI_EVT_MOUSE_WHEEL) {
+        dict_add_float(d, "x", ev->mouse_x);
+        dict_add_float(d, "y", ev->mouse_y);
+        dict_add_float(d, "wheel_x", ev->wheel_x);
+        dict_add_float(d, "wheel_y", ev->wheel_y);
+    }
+
+    return val_obj((Object*)d);
+}
+
+static Value gui_init_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_bool(leno_gui_platform_init() != 0);
+}
+
+static Value gui_create_window_func(int argc, Value* args) {
+    (void)argc;
+    ObjString* title = (ObjString*)val_as_obj(args[0]);
+    int w = val_as_int(args[1]);
+    int h = val_as_int(args[2]);
+    int flags = val_as_int(args[3]);
+
+    LenoGUIPlatformWindow* pw = leno_gui_platform_create_window(title->chars, w, h, flags);
+    if (!pw) return val_null();
+
+    ObjGUIWindow* obj = create_window_obj(pw);
+    if (!obj) {
+        leno_gui_platform_destroy_window(pw);
+        return val_null();
+    }
+    return val_obj((Object*)obj);
+}
+
+static Value gui_show_window_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) leno_gui_platform_show_window(win->platform);
+    return val_null();
+}
+
+static Value gui_hide_window_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) leno_gui_platform_hide_window(win->platform);
+    return val_null();
+}
+
+static Value gui_set_window_title_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    ObjString* title = (ObjString*)val_as_obj(args[1]);
+    if (win && win->platform) leno_gui_platform_set_window_title(win->platform, title->chars);
+    return val_null();
+}
+
+static Value gui_set_window_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int w = val_as_int(args[1]);
+    int h = val_as_int(args[2]);
+    if (win && win->platform) leno_gui_platform_set_window_size(win->platform, w, h);
+    return val_null();
+}
+
+static Value gui_get_window_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int w = 0, h = 0;
+    if (win && win->platform) leno_gui_platform_get_window_size(win->platform, &w, &h);
+    return val_obj((Object*)make_int_array2(w, h));
+}
+
+static Value gui_set_window_position_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    if (win && win->platform) leno_gui_platform_set_window_position(win->platform, x, y);
+    return val_null();
+}
+
+static Value gui_get_window_position_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int x = 0, y = 0;
+    if (win && win->platform) leno_gui_platform_get_window_position(win->platform, &x, &y);
+    return val_obj((Object*)make_int_array2(x, y));
+}
+
+static Value gui_set_window_fullscreen_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int fullscreen = val_as_bool(args[1]) ? 1 : 0;
+    if (win && win->platform) leno_gui_platform_set_window_fullscreen(win->platform, fullscreen);
+    return val_null();
+}
+
+static Value gui_window_should_close_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) return val_bool(leno_gui_platform_window_should_close(win->platform) != 0);
+    return val_bool(true);
+}
+
+static Value gui_set_window_should_close_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int val = val_as_bool(args[1]) ? 1 : 0;
+    if (win && win->platform) leno_gui_platform_set_window_should_close(win->platform, val);
+    return val_null();
+}
+
+static Value gui_create_renderer_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (!win || !win->platform) return val_null();
+
+    LenoGUIPlatformRenderer* pr = leno_gui_platform_create_renderer(win->platform);
+    if (!pr) return val_null();
+
+    ObjGUIRenderer* obj = create_renderer_obj(pr, win);
+    if (!obj) {
+        leno_gui_platform_destroy_renderer(pr);
+        return val_null();
+    }
+    return val_obj((Object*)obj);
+}
+
+static Value gui_destroy_renderer_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (ren && ren->platform) {
+        leno_gui_platform_destroy_renderer(ren->platform);
+        ren->platform = NULL;
+    }
+    return val_null();
+}
+
+static Value gui_set_draw_color_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    uint8_t r = (uint8_t)val_as_int(args[1]);
+    uint8_t g = (uint8_t)val_as_int(args[2]);
+    uint8_t b = (uint8_t)val_as_int(args[3]);
+    uint8_t a = (uint8_t)val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_set_draw_color(ren->platform, r, g, b, a);
+    return val_null();
+}
+
+static Value gui_render_clear_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (ren && ren->platform) leno_gui_platform_render_clear(ren->platform);
+    return val_null();
+}
+
+static Value gui_render_present_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (ren && ren->platform) leno_gui_platform_render_present(ren->platform);
+    return val_null();
+}
+
+static Value gui_render_draw_point_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_point(ren->platform, x, y);
+    return val_null();
+}
+
+static Value gui_render_draw_line_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x1 = val_as_int(args[1]);
+    int y1 = val_as_int(args[2]);
+    int x2 = val_as_int(args[3]);
+    int y2 = val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_line(ren->platform, x1, y1, x2, y2);
+    return val_null();
+}
+
+static Value gui_render_draw_rect_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    int w = val_as_int(args[3]);
+    int h = val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_rect(ren->platform, x, y, w, h);
+    return val_null();
+}
+
+static Value gui_render_fill_rect_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    int w = val_as_int(args[3]);
+    int h = val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_render_fill_rect(ren->platform, x, y, w, h);
+    return val_null();
+}
+
+static Value gui_get_renderer_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int w = 0, h = 0;
+    if (ren && ren->platform) leno_gui_platform_get_renderer_size(ren->platform, &w, &h);
+    return val_obj((Object*)make_int_array2(w, h));
+}
+
+static Value gui_create_texture_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int w = val_as_int(args[1]);
+    int h = val_as_int(args[2]);
+    if (!ren || !ren->platform) return val_null();
+
+    LenoGUIPlatformTexture* pt = leno_gui_platform_create_texture(ren->platform, w, h);
+    if (!pt) return val_null();
+
+    ObjGUITexture* obj = create_texture_obj(pt);
+    if (!obj) {
+        leno_gui_platform_destroy_texture(pt);
+        return val_null();
+    }
+    return val_obj((Object*)obj);
+}
+
+static Value gui_destroy_texture_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUITexture* tex = as_texture(args[0]);
+    if (tex && tex->platform) {
+        leno_gui_platform_destroy_texture(tex->platform);
+        tex->platform = NULL;
+    }
+    return val_null();
+}
+
+static Value gui_render_texture_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    ObjGUITexture* tex = as_texture(args[1]);
+    int x = val_as_int(args[2]);
+    int y = val_as_int(args[3]);
+    if (ren && ren->platform && tex && tex->platform)
+        leno_gui_platform_render_texture(ren->platform, tex->platform, x, y);
+    return val_null();
+}
+
+static Value gui_update_texture_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUITexture* tex = as_texture(args[0]);
+    if (!tex || !tex->platform) return val_null();
+
+    if (val_is_obj(args[1])) {
+        Object* obj = val_as_obj(args[1]);
+        if (obj->type == OBJ_STRING) {
+            ObjString* str = (ObjString*)obj;
+            int pitch = val_as_int(args[2]);
+            leno_gui_platform_update_texture(tex->platform, str->chars, pitch);
+        }
+    }
+    return val_null();
+}
+
+static Value gui_poll_event_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    LenoGUIEvent ev;
+    if (!leno_gui_platform_poll_event(&ev)) return val_null();
+    return event_to_dict(&ev);
+}
+
+static Value gui_wait_event_func(int argc, Value* args) {
+    (void)argc;
+    int timeout_ms = val_as_int(args[0]);
+    LenoGUIEvent ev;
+    if (!leno_gui_platform_wait_event(&ev, timeout_ms)) return val_null();
+    return event_to_dict(&ev);
+}
+
+static Value gui_get_display_size_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    int w = 0, h = 0;
+    leno_gui_platform_get_display_size(&w, &h);
+    return val_obj((Object*)make_int_array2(w, h));
+}
+
+/* ===== 新增绘图函数 ===== */
+
+/* 绘制圆形边框 */
+static Value gui_render_draw_circle_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int cx = val_as_int(args[1]);
+    int cy = val_as_int(args[2]);
+    int radius = val_as_int(args[3]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_circle(ren->platform, cx, cy, radius);
+    return val_null();
+}
+
+/* 填充圆形 */
+static Value gui_render_fill_circle_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int cx = val_as_int(args[1]);
+    int cy = val_as_int(args[2]);
+    int radius = val_as_int(args[3]);
+    if (ren && ren->platform) leno_gui_platform_render_fill_circle(ren->platform, cx, cy, radius);
+    return val_null();
+}
+
+/* 绘制圆角矩形边框 */
+static Value gui_render_draw_rounded_rect_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    int w = val_as_int(args[3]);
+    int h = val_as_int(args[4]);
+    int radius = val_as_int(args[5]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_rounded_rect(ren->platform, x, y, w, h, radius);
+    return val_null();
+}
+
+/* 填充圆角矩形 */
+static Value gui_render_fill_rounded_rect_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    int w = val_as_int(args[3]);
+    int h = val_as_int(args[4]);
+    int radius = val_as_int(args[5]);
+    if (ren && ren->platform) leno_gui_platform_render_fill_rounded_rect(ren->platform, x, y, w, h, radius);
+    return val_null();
+}
+
+/* ===== 视口和裁剪 ===== */
+
+/* 设置渲染视口 */
+static Value gui_set_viewport_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    int w = val_as_int(args[3]);
+    int h = val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_set_viewport(ren->platform, x, y, w, h);
+    return val_null();
+}
+
+/* 获取当前视口设置 */
+static Value gui_get_viewport_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = 0, y = 0, w = 0, h = 0;
+    if (ren && ren->platform) leno_gui_platform_get_viewport(ren->platform, &x, &y, &w, &h);
+    ObjArray* arr = arr_new(4);
+    arr->count = 4;
+    arr_write(arr, 0, val_int(x));
+    arr_write(arr, 1, val_int(y));
+    arr_write(arr, 2, val_int(w));
+    arr_write(arr, 3, val_int(h));
+    return val_obj((Object*)arr);
+}
+
+/* 设置裁剪矩形 */
+static Value gui_set_clip_rect_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    int w = val_as_int(args[3]);
+    int h = val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_set_clip_rect(ren->platform, x, y, w, h);
+    return val_null();
+}
+
+/* 获取当前裁剪矩形 */
+static Value gui_get_clip_rect_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = 0, y = 0, w = 0, h = 0;
+    if (ren && ren->platform) leno_gui_platform_get_clip_rect(ren->platform, &x, &y, &w, &h);
+    ObjArray* arr = arr_new(4);
+    arr->count = 4;
+    arr_write(arr, 0, val_int(x));
+    arr_write(arr, 1, val_int(y));
+    arr_write(arr, 2, val_int(w));
+    arr_write(arr, 3, val_int(h));
+    return val_obj((Object*)arr);
+}
+
+/* 禁用裁剪矩形 */
+static Value gui_disable_clip_rect_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (ren && ren->platform) leno_gui_platform_disable_clip_rect(ren->platform);
+    return val_null();
+}
+
+/* ===== 纹理高级渲染 ===== */
+
+/* 纹理源矩形渲染（可缩放） */
+static Value gui_render_texture_src_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    ObjGUITexture* tex = as_texture(args[1]);
+    int sx = val_as_int(args[2]);
+    int sy = val_as_int(args[3]);
+    int sw = val_as_int(args[4]);
+    int sh = val_as_int(args[5]);
+    int dx = val_as_int(args[6]);
+    int dy = val_as_int(args[7]);
+    int dw = val_as_int(args[8]);
+    int dh = val_as_int(args[9]);
+    if (ren && ren->platform && tex && tex->platform)
+        leno_gui_platform_render_texture_src(ren->platform, tex->platform, sx, sy, sw, sh, dx, dy, dw, dh);
+    return val_null();
+}
+
+/* 纹理旋转/翻转渲染 */
+static Value gui_render_texture_rotated_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    ObjGUITexture* tex = as_texture(args[1]);
+    int x = val_as_int(args[2]);
+    int y = val_as_int(args[3]);
+    double angle = val_as_double(args[4]);
+    int flip = val_as_int(args[5]);
+    if (ren && ren->platform && tex && tex->platform)
+        leno_gui_platform_render_texture_rotated(ren->platform, tex->platform, x, y, angle, flip);
+    return val_null();
+}
+
+/* ===== 输入状态查询 ===== */
+
+/* 查询指定按键是否按下 */
+static Value gui_get_key_state_func(int argc, Value* args) {
+    (void)argc;
+    int key = val_as_int(args[0]);
+    return val_bool(leno_gui_platform_get_key_state(key) != 0);
+}
+
+/* 查询鼠标状态 */
+static Value gui_get_mouse_state_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    int x = 0, y = 0, buttons = 0;
+    leno_gui_platform_get_mouse_state(&x, &y, &buttons);
+    ObjDict* d = dict_new(8);
+    dict_add_int(d, "x", x);
+    dict_add_int(d, "y", y);
+    dict_add_int(d, "buttons", buttons);
+    return val_obj((Object*)d);
+}
+
+/* ===== 剪贴板 ===== */
+
+/* 获取剪贴板文本 */
+static Value gui_get_clipboard_text_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    char* text = leno_gui_platform_get_clipboard_text();
+    if (!text) return val_null();
+    ObjString* str = str_copy(text, (int)strlen(text));
+    free(text);
+    return val_obj((Object*)str);
+}
+
+/* 设置剪贴板文本 */
+static Value gui_set_clipboard_text_func(int argc, Value* args) {
+    (void)argc;
+    ObjString* str = (ObjString*)val_as_obj(args[0]);
+    if (str) leno_gui_platform_set_clipboard_text(str->chars);
+    return val_null();
+}
+
+/* ===== 光标控制 ===== */
+
+/* 显示或隐藏光标 */
+static Value gui_show_cursor_func(int argc, Value* args) {
+    (void)argc;
+    int show = val_as_bool(args[0]) ? 1 : 0;
+    leno_gui_platform_show_cursor(show);
+    return val_null();
+}
+
+/* ===== 窗口透明度 ===== */
+
+/* 设置窗口透明度 */
+static Value gui_set_window_opacity_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    float opacity = (float)val_as_double(args[1]);
+    if (win && win->platform) leno_gui_platform_set_window_opacity(win->platform, opacity);
+    return val_null();
+}
+
+/* ===== 消息框 ===== */
+
+/* 显示系统消息框 */
+static Value gui_show_message_box_func(int argc, Value* args) {
+    (void)argc;
+    ObjString* title = (ObjString*)val_as_obj(args[0]);
+    ObjString* message = (ObjString*)val_as_obj(args[1]);
+    int type = val_as_int(args[2]);
+    int result = leno_gui_platform_show_message_box(title->chars, message->chars, type);
+    return val_int(result);
+}
+
+/* ===== 高精度计时器 ===== */
+
+/* 获取毫秒数 */
+static Value gui_get_ticks_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_int((int64_t)leno_gui_platform_get_ticks());
+}
+
+/* 获取性能计数器值 */
+static Value gui_get_performance_counter_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_int((int64_t)leno_gui_platform_get_performance_counter());
+}
+
+/* 获取性能计数器频率 */
+static Value gui_get_performance_frequency_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_int((int64_t)leno_gui_platform_get_performance_frequency());
+}
+
+/* 延迟指定毫秒 */
+static Value gui_delay_func(int argc, Value* args) {
+    (void)argc;
+    uint32_t ms = (uint32_t)val_as_int(args[0]);
+    leno_gui_platform_delay(ms);
+    return val_null();
+}
+
+/* ===== 显示器 DPI ===== */
+
+/* 获取显示器 DPI */
+static Value gui_get_display_dpi_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_float((double)leno_gui_platform_get_display_dpi());
+}
+
+static Value gui_run_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (!win || !win->platform) return val_null();
+
+    Value on_draw = args[1];
+    Value on_event = args[2];
+
+    LenoGUIPlatformRenderer* pr = leno_gui_platform_create_renderer(win->platform);
+    if (!pr) return val_null();
+
+    ObjGUIRenderer* ren_obj = create_renderer_obj(pr, win);
+    if (!ren_obj) {
+        leno_gui_platform_destroy_renderer(pr);
+        return val_null();
+    }
+
+    Value ren_val = val_obj((Object*)ren_obj);
+
+    while (!leno_gui_platform_window_should_close(win->platform)) {
+        LenoGUIEvent ev;
+        while (leno_gui_platform_poll_event(&ev)) {
+            if (!val_is_null(on_event)) {
+                Value event_dict = event_to_dict(&ev);
+                call_leno_closure(on_event, 1, &event_dict);
+            }
+            if (leno_gui_platform_window_should_close(win->platform)) break;
+        }
+
+        if (leno_gui_platform_window_should_close(win->platform)) break;
+
+        if (!val_is_null(on_draw)) {
+            call_leno_closure(on_draw, 1, &ren_val);
+        }
+
+#ifdef _WIN32
+        Sleep(1);
+#else
+        struct timespec ts = {0, 1000000};
+        nanosleep(&ts, NULL);
+#endif
+    }
+
+    leno_gui_platform_destroy_renderer(pr);
+    ren_obj->platform = NULL;
+
+    return val_null();
+}
+
+/* 一键清理：销毁窗口 + 退出 GUI 子系统 */
+static Value gui_cleanup_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) {
+        leno_gui_platform_destroy_window(win->platform);
+        win->platform = NULL;
+    }
+    leno_gui_platform_quit();
+    return val_null();
+}
+
+/* 前向声明：Draw 实例方法注册 */
+void guis_init_instance_methods(void);
+
+void guis_init_module(void) {
+    TypeKind no_params[] = {};
+    TypeKind str_4int[] = {TYPE_STRING, TYPE_INT, TYPE_INT, TYPE_INT};
+    TypeKind obj_1int[] = {TYPE_ANY, TYPE_INT};
+    TypeKind obj_2int[] = {TYPE_ANY, TYPE_INT, TYPE_INT};
+    TypeKind obj_str[] = {TYPE_ANY, TYPE_STRING};
+    TypeKind obj_bool[] = {TYPE_ANY, TYPE_BOOL};
+    TypeKind obj_2func[] = {TYPE_ANY, TYPE_ANY, TYPE_ANY};
+    TypeKind int_params[] = {TYPE_INT};
+    TypeKind str_2int[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
+    TypeKind obj_float[] = {TYPE_ANY, TYPE_FLOAT};
+    TypeKind bool_params[] = {TYPE_BOOL};
+    TypeKind str_params[] = {TYPE_STRING};
+
+    /* ===== 初始化/关闭 ===== */
+    native_register_module_method("guis", "init", gui_init_func, 0, -1, -1, TYPE_BOOL, no_params);
+    native_register_module_method("guis", "cleanup", gui_cleanup_func, 1, -1, -1, TYPE_NULL, obj_1int);
+
+    /* ===== 窗口操作 ===== */
+    native_register_module_method("guis", "create_window", gui_create_window_func, 4, -1, -1, TYPE_WIN, str_4int);
+    native_register_module_method("guis", "show_window", gui_show_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
+    native_register_module_method("guis", "hide_window", gui_hide_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
+    native_register_module_method("guis", "set_window_title", gui_set_window_title_func, 2, -1, -1, TYPE_NULL, obj_str);
+    native_register_module_method("guis", "set_window_size", gui_set_window_size_func, 3, -1, -1, TYPE_NULL, obj_2int);
+    native_register_module_method("guis", "get_window_size", gui_get_window_size_func, 1, -1, -1, TYPE_ANY, obj_1int);
+    native_register_module_method("guis", "set_window_position", gui_set_window_position_func, 3, -1, -1, TYPE_NULL, obj_2int);
+    native_register_module_method("guis", "get_window_position", gui_get_window_position_func, 1, -1, -1, TYPE_ANY, obj_1int);
+    native_register_module_method("guis", "set_window_fullscreen", gui_set_window_fullscreen_func, 2, -1, -1, TYPE_NULL, obj_bool);
+    native_register_module_method("guis", "window_should_close", gui_window_should_close_func, 1, -1, -1, TYPE_BOOL, obj_1int);
+    native_register_module_method("guis", "set_window_should_close", gui_set_window_should_close_func, 2, -1, -1, TYPE_NULL, obj_bool);
+    native_register_module_method("guis", "set_window_opacity", gui_set_window_opacity_func, 2, -1, -1, TYPE_NULL, obj_float);
+
+    /* ===== 渲染器操作（工厂/析构） ===== */
+    native_register_module_method("guis", "create_renderer", gui_create_renderer_func, 1, -1, -1, TYPE_DRAW, obj_1int);
+    native_register_module_method("guis", "destroy_renderer", gui_destroy_renderer_func, 1, -1, -1, TYPE_NULL, obj_1int);
+
+    /* ===== 纹理操作（工厂/析构） ===== */
+    native_register_module_method("guis", "create_texture", gui_create_texture_func, 3, -1, -1, TYPE_ANY, obj_2int);
+    native_register_module_method("guis", "destroy_texture", gui_destroy_texture_func, 1, -1, -1, TYPE_NULL, obj_1int);
+
+    /* ===== 事件操作 ===== */
+    native_register_module_method("guis", "poll_event", gui_poll_event_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "wait_event", gui_wait_event_func, 1, -1, -1, TYPE_ANY, int_params);
+
+    /* ===== 输入状态查询 ===== */
+    native_register_module_method("guis", "get_key_state", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, int_params);
+    native_register_module_method("guis", "get_mouse_state", gui_get_mouse_state_func, 0, -1, -1, TYPE_ANY, no_params);
+
+    /* ===== 剪贴板 ===== */
+    native_register_module_method("guis", "get_clipboard_text", gui_get_clipboard_text_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "set_clipboard_text", gui_set_clipboard_text_func, 1, -1, -1, TYPE_NULL, str_params);
+
+    /* ===== 光标控制 ===== */
+    native_register_module_method("guis", "show_cursor", gui_show_cursor_func, 1, -1, -1, TYPE_NULL, bool_params);
+
+    /* ===== 消息框 ===== */
+    native_register_module_method("guis", "show_message_box", gui_show_message_box_func, 3, -1, -1, TYPE_INT, str_2int);
+
+    /* ===== 高精度计时器 ===== */
+    native_register_module_method("guis", "get_ticks", gui_get_ticks_func, 0, -1, -1, TYPE_INT, no_params);
+    native_register_module_method("guis", "get_performance_counter", gui_get_performance_counter_func, 0, -1, -1, TYPE_INT, no_params);
+    native_register_module_method("guis", "get_performance_frequency", gui_get_performance_frequency_func, 0, -1, -1, TYPE_INT, no_params);
+    native_register_module_method("guis", "delay", gui_delay_func, 1, -1, -1, TYPE_NULL, int_params);
+
+    /* ===== 显示器信息 ===== */
+    native_register_module_method("guis", "get_display_size", gui_get_display_size_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "get_display_dpi", gui_get_display_dpi_func, 0, -1, -1, TYPE_FLOAT, no_params);
+
+    /* ===== 回调式事件循环 ===== */
+    native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, obj_2func);
+
+    /* 注册 Draw 实例方法 */
+    guis_init_instance_methods();
+}
+
+/* 前向声明 */
+extern void draw_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                              int min_arity, int max_arity,
+                                              TypeKind return_type, TypeKind* param_types);
+extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
+extern void draw_init_methods(void);
+
+/* 注册 Draw 渲染器实例方法（ren.method() 风格） */
+void guis_init_instance_methods(void) {
+    draw_init_methods();
+
+    TypeKind no_params[] = {};
+    TypeKind int_4[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    TypeKind int_2[] = {TYPE_INT, TYPE_INT};
+    TypeKind int_4_rect[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    TypeKind int_3_circle[] = {TYPE_INT, TYPE_INT, TYPE_INT};
+    TypeKind int_5_rounded[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    TypeKind int_4_vp[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    TypeKind any_2int[] = {TYPE_ANY, TYPE_INT, TYPE_INT};
+    TypeKind any_8int[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    TypeKind any_2int_float_int[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_FLOAT, TYPE_INT};
+    TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
+
+    /* ren.set_draw_color(r, g, b, a) - 用户可见 4 参数，实际 5（含 receiver） */
+    draw_register_method_with_params("set_draw_color", make_native(gui_set_draw_color_func, 5, "set_draw_color"), 4, -1, -1, TYPE_NULL, int_4);
+    /* ren.clear() */
+    draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, no_params);
+    /* ren.present() */
+    draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, no_params);
+    /* ren.draw_point(x, y) */
+    draw_register_method_with_params("draw_point", make_native(gui_render_draw_point_func, 3, "draw_point"), 2, -1, -1, TYPE_NULL, int_2);
+    /* ren.draw_line(x1, y1, x2, y2) */
+    draw_register_method_with_params("draw_line", make_native(gui_render_draw_line_func, 5, "draw_line"), 4, -1, -1, TYPE_NULL, int_4);
+    /* ren.draw_rect(x, y, w, h) */
+    draw_register_method_with_params("draw_rect", make_native(gui_render_draw_rect_func, 5, "draw_rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
+    /* ren.fill_rect(x, y, w, h) */
+    draw_register_method_with_params("fill_rect", make_native(gui_render_fill_rect_func, 5, "fill_rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
+    /* ren.draw_circle(cx, cy, radius) */
+    draw_register_method_with_params("draw_circle", make_native(gui_render_draw_circle_func, 4, "draw_circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
+    /* ren.fill_circle(cx, cy, radius) */
+    draw_register_method_with_params("fill_circle", make_native(gui_render_fill_circle_func, 4, "fill_circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
+    /* ren.draw_rounded_rect(x, y, w, h, radius) */
+    draw_register_method_with_params("draw_rounded_rect", make_native(gui_render_draw_rounded_rect_func, 6, "draw_rounded_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
+    /* ren.fill_rounded_rect(x, y, w, h, radius) */
+    draw_register_method_with_params("fill_rounded_rect", make_native(gui_render_fill_rounded_rect_func, 6, "fill_rounded_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
+    /* ren.get_size() */
+    draw_register_method_with_params("get_size", make_native(gui_get_renderer_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, no_params);
+    /* ren.set_viewport(x, y, w, h) */
+    draw_register_method_with_params("set_viewport", make_native(gui_set_viewport_func, 5, "set_viewport"), 4, -1, -1, TYPE_NULL, int_4_vp);
+    /* ren.get_viewport() */
+    draw_register_method_with_params("get_viewport", make_native(gui_get_viewport_func, 1, "get_viewport"), 0, -1, -1, TYPE_ANY, no_params);
+    /* ren.set_clip_rect(x, y, w, h) */
+    draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, int_4_vp);
+    /* ren.get_clip_rect() */
+    draw_register_method_with_params("get_clip_rect", make_native(gui_get_clip_rect_func, 1, "get_clip_rect"), 0, -1, -1, TYPE_ANY, no_params);
+    /* ren.disable_clip_rect() */
+    draw_register_method_with_params("disable_clip_rect", make_native(gui_disable_clip_rect_func, 1, "disable_clip_rect"), 0, -1, -1, TYPE_NULL, no_params);
+    /* ren.draw_texture(tex, x, y) */
+    draw_register_method_with_params("draw_texture", make_native(gui_render_texture_func, 4, "draw_texture"), 3, -1, -1, TYPE_NULL, any_2int);
+    /* ren.draw_texture_src(tex, sx, sy, sw, sh, dx, dy, dw, dh) */
+    draw_register_method_with_params("draw_texture_src", make_native(gui_render_texture_src_func, 10, "draw_texture_src"), 9, -1, -1, TYPE_NULL, any_8int);
+    /* ren.draw_texture_rotated(tex, x, y, angle, flip) */
+    draw_register_method_with_params("draw_texture_rotated", make_native(gui_render_texture_rotated_func, 6, "draw_texture_rotated"), 5, -1, -1, TYPE_NULL, any_2int_float_int);
+    /* ren.update_texture(tex, data, pitch) */
+    draw_register_method_with_params("update_texture", make_native(gui_update_texture_func, 3, "update_texture"), 2, -1, -1, TYPE_NULL, str_int);
+}
+
+/* ============================================================================
+ * Event 事件实例方法（e.method() 风格）
+ * 事件底层是 Dict，方法通过 event_find_method 查找分发
+ * ============================================================================ */
+
+/* 辅助：从事件字典中获取 "type" 字段值 */
+static int event_get_type(Value event_val) {
+    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_DICT) return 0;
+    ObjDict* d = (ObjDict*)val_as_obj(event_val);
+    Value v = dict_get(d, str_copy("type", 4));
+    return val_is_int(v) ? val_as_int(v) : 0;
+}
+
+/* 辅助：从事件字典中获取整数字段 */
+static int event_get_int(Value event_val, const char* key) {
+    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_DICT) return 0;
+    ObjDict* d = (ObjDict*)val_as_obj(event_val);
+    Value v = dict_get(d, str_copy(key, (int)strlen(key)));
+    return val_is_int(v) ? val_as_int(v) : 0;
+}
+
+/* 辅助：从事件字典中获取字符串字段 */
+static const char* event_get_string(Value event_val, const char* key) {
+    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_DICT) return "";
+    ObjDict* d = (ObjDict*)val_as_obj(event_val);
+    Value v = dict_get(d, str_copy(key, (int)strlen(key)));
+    if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+        return ((ObjString*)val_as_obj(v))->chars;
+    }
+    return "";
+}
+
+/* e.type() - 获取事件类型 */
+static Value event_type_func(int argc, Value* args) {
+    (void)argc;
+    return val_int(event_get_type(args[0]));
+}
+
+/* e.is_quit() - 是否为退出事件 */
+static Value event_is_quit_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_QUIT);
+}
+
+/* e.is_window_close() - 是否为窗口关闭事件 */
+static Value event_is_window_close_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_CLOSE);
+}
+
+/* e.is_window_resize() - 是否为窗口大小改变事件 */
+static Value event_is_window_resize_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_RESIZE);
+}
+
+/* e.is_window_move() - 是否为窗口移动事件 */
+static Value event_is_window_move_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_MOVE);
+}
+
+/* e.is_key_down() - 是否为按键按下事件 */
+static Value event_is_key_down_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_KEY_DOWN);
+}
+
+/* e.is_key_up() - 是否为按键释放事件 */
+static Value event_is_key_up_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_KEY_UP);
+}
+
+/* e.is_text_input() - 是否为文本输入事件 */
+static Value event_is_text_input_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_TEXT_INPUT);
+}
+
+/* e.is_mouse_move() - 是否为鼠标移动事件 */
+static Value event_is_mouse_move_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_MOVE);
+}
+
+/* e.is_mouse_down() - 是否为鼠标按下事件 */
+static Value event_is_mouse_down_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_DOWN);
+}
+
+/* e.is_mouse_up() - 是否为鼠标释放事件 */
+static Value event_is_mouse_up_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_UP);
+}
+
+/* e.is_mouse_wheel() - 是否为鼠标滚轮事件 */
+static Value event_is_mouse_wheel_func(int argc, Value* args) {
+    (void)argc;
+    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_WHEEL);
+}
+
+/* e.key() - 获取按键码 */
+static Value event_key_func(int argc, Value* args) {
+    (void)argc;
+    return val_int(event_get_int(args[0], "key"));
+}
+
+/* e.mouse_x() - 获取鼠标 X 坐标 */
+static Value event_mouse_x_func(int argc, Value* args) {
+    (void)argc;
+    return val_int(event_get_int(args[0], "x"));
+}
+
+/* e.mouse_y() - 获取鼠标 Y 坐标 */
+static Value event_mouse_y_func(int argc, Value* args) {
+    (void)argc;
+    return val_int(event_get_int(args[0], "y"));
+}
+
+/* e.mouse_button() - 获取鼠标按钮 */
+static Value event_mouse_button_func(int argc, Value* args) {
+    (void)argc;
+    return val_int(event_get_int(args[0], "button"));
+}
+
+/* e.width() - 获取窗口宽度（resize 事件） */
+static Value event_width_func(int argc, Value* args) {
+    (void)argc;
+    return val_int(event_get_int(args[0], "width"));
+}
+
+/* e.height() - 获取窗口高度（resize 事件） */
+static Value event_height_func(int argc, Value* args) {
+    (void)argc;
+    return val_int(event_get_int(args[0], "height"));
+}
+
+/* e.text() - 获取输入文本（text_input 事件） */
+static Value event_text_func(int argc, Value* args) {
+    (void)argc;
+    const char* text = event_get_string(args[0], "text");
+    return val_obj((Object*)str_copy(text, (int)strlen(text)));
+}
+
+/* 注册 Event 实例方法 */
+void guis_init_event_methods(void) {
+    event_init_methods();
+
+    TypeKind no_params[] = {};
+
+    event_register_method_with_params("type", make_native(event_type_func, 1, "type"), 0, -1, -1, TYPE_INT, no_params);
+    event_register_method_with_params("is_quit", make_native(event_is_quit_func, 1, "is_quit"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_window_close", make_native(event_is_window_close_func, 1, "is_window_close"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_window_resize", make_native(event_is_window_resize_func, 1, "is_window_resize"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_window_move", make_native(event_is_window_move_func, 1, "is_window_move"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_key_down", make_native(event_is_key_down_func, 1, "is_key_down"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_key_up", make_native(event_is_key_up_func, 1, "is_key_up"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_text_input", make_native(event_is_text_input_func, 1, "is_text_input"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_mouse_move", make_native(event_is_mouse_move_func, 1, "is_mouse_move"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_mouse_down", make_native(event_is_mouse_down_func, 1, "is_mouse_down"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_mouse_up", make_native(event_is_mouse_up_func, 1, "is_mouse_up"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("is_mouse_wheel", make_native(event_is_mouse_wheel_func, 1, "is_mouse_wheel"), 0, -1, -1, TYPE_BOOL, no_params);
+    event_register_method_with_params("key", make_native(event_key_func, 1, "key"), 0, -1, -1, TYPE_INT, no_params);
+    event_register_method_with_params("mouse_x", make_native(event_mouse_x_func, 1, "mouse_x"), 0, -1, -1, TYPE_INT, no_params);
+    event_register_method_with_params("mouse_y", make_native(event_mouse_y_func, 1, "mouse_y"), 0, -1, -1, TYPE_INT, no_params);
+    event_register_method_with_params("mouse_button", make_native(event_mouse_button_func, 1, "mouse_button"), 0, -1, -1, TYPE_INT, no_params);
+    event_register_method_with_params("width", make_native(event_width_func, 1, "width"), 0, -1, -1, TYPE_INT, no_params);
+    event_register_method_with_params("height", make_native(event_height_func, 1, "height"), 0, -1, -1, TYPE_INT, no_params);
+    event_register_method_with_params("text", make_native(event_text_func, 1, "text"), 0, -1, -1, TYPE_STRING, no_params);
+}

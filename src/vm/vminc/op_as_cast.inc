@@ -136,6 +136,18 @@ OPCODE(OP_AS_CAST) {
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
             break;
+        case TYPE_WIN:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_WINDOW);
+            break;
+        case TYPE_DRAW:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_RENDERER);
+            break;
+        case TYPE_EVENT:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
+            break;
         case TYPE_PTR:
             (void)READ_BYTE();
             matches = (val_is_obj(value) &&

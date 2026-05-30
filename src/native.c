@@ -16,6 +16,7 @@ extern VM vm;
 static const char* builtin_module_names[] = {
     "io", "times", "arrays", "strings", "maths", "rands",
     "files", "asyncs", "dirs", "jsons", "sockets", "ffi", "threads", "regexs",
+    "guis",
     NULL
 };
 
@@ -44,6 +45,7 @@ extern void sockets_init_module(void);
 extern void ffi_init_module(void);
 extern void threads_init_module(void);
 extern void regexs_init_module(void);
+extern void guis_init_module(void);
 
 // 模块初始化函数映射表
 typedef void (*ModuleInitFunc)(void);
@@ -68,6 +70,7 @@ static ModuleInitEntry module_init_table[] = {
     {"ffi", ffi_init_module},
     {"threads", threads_init_module},
     {"regexs", regexs_init_module},
+    {"guis", guis_init_module},
     {NULL, NULL}
 };
 
@@ -391,6 +394,8 @@ void native_register_all_module_metas(void) {
     threads_init_module();
     extern void regexs_init_module(void);
     regexs_init_module();
+    extern void guis_init_module(void);
+    guis_init_module();
 }
 
 // ============================================================================
@@ -1163,6 +1168,10 @@ void maths_init_instance_methods(void);
 void dicts_init_instance_methods(void);
 // 前向声明：文件实例方法初始化（在 files.c 中定义）
 void files_init_instance_methods(void);
+// 前向声明：Draw 渲染器实例方法初始化（在 guis.c 中定义）
+void guis_init_instance_methods(void);
+// 前向声明：Event 事件实例方法初始化（在 guis.c 中定义）
+void guis_init_event_methods(void);
 // 前向声明：结构体实例方法初始化（在 structs.c 中定义）
 void structs_init_instance_methods(void);
 // 前向声明：cstruct 实例方法初始化（在 cstructs.c 中定义）
@@ -1177,6 +1186,8 @@ void native_register_all_instance_method_metas(void) {
     maths_init_instance_methods();
     dicts_init_instance_methods();
     files_init_instance_methods();
+    guis_init_instance_methods();
+    guis_init_event_methods();
     structs_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
@@ -1189,6 +1200,9 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_STRING: return "string";
         case TYPE_DICT:   return "dict";
         case TYPE_FILE:   return "file";
+        case TYPE_WIN:    return "win";
+        case TYPE_DRAW:   return "draw";
+        case TYPE_EVENT:  return "event";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";
         case TYPE_THREAD:  return "thread";

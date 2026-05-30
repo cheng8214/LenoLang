@@ -260,6 +260,12 @@ void gc_mark_object(Object* obj) {
         // 原生函数：无子引用
         case OBJ_NATIVE:
             break;
+        case OBJ_GUI_WINDOW:
+            break;
+        case OBJ_GUI_RENDERER:
+            break;
+        case OBJ_GUI_TEXTURE:
+            break;
         // 数组：标记所有元素
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;
@@ -542,11 +548,15 @@ static void mark_roots(void) {
     extern void string_mark_methods(void);
     extern void dict_mark_methods(void);
     extern void file_mark_methods(void);
+    extern void draw_mark_methods(void);
+    extern void event_mark_methods(void);
     extern void number_mark_methods(void);
     array_mark_methods();
     string_mark_methods();
     dict_mark_methods();
     file_mark_methods();
+    draw_mark_methods();
+    event_mark_methods();
     number_mark_methods();
     thread_mark_methods();
     channel_mark_methods();
@@ -633,6 +643,9 @@ static size_t get_object_size(Object* obj) {
         case OBJ_CLOSURE: return sizeof(ObjClosure);
         case OBJ_FUNCTION: return sizeof(ObjFunction);
         case OBJ_NATIVE: return sizeof(ObjNative);
+        case OBJ_GUI_WINDOW: return sizeof(Object) + sizeof(int) + sizeof(void*);
+        case OBJ_GUI_RENDERER: return sizeof(Object) + sizeof(void*) + sizeof(void*);
+        case OBJ_GUI_TEXTURE: return sizeof(Object) + sizeof(void*);
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
             return sizeof(ObjBigInt) + bigint->limb_count * sizeof(uint32_t);
@@ -792,6 +805,10 @@ static void free_object_resources(Object* obj) {
             free(native->name);
             break;
         }
+        case OBJ_GUI_WINDOW:
+        case OBJ_GUI_RENDERER:
+        case OBJ_GUI_TEXTURE:
+            break;
         // 数组：释放元素数组
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;

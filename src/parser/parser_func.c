@@ -41,6 +41,18 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_FILE);
     }
+    if (p->lex.current.type == TOK_WIN_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_WIN);
+    }
+    if (p->lex.current.type == TOK_DRAW_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_DRAW);
+    }
+    if (p->lex.current.type == TOK_EVENT_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_EVENT);
+    }
     if (p->lex.current.type == TOK_PTR_TYPE) {
         lexer_next(&p->lex);
         // 检查是否有泛型参数 Ptr[T]

@@ -22,8 +22,13 @@ static inline ObjNative* find_method_by_type(ObjType type, const char* name) {
     switch (type) {
         case OBJ_ARRAY:   return array_find_method(name);
         case OBJ_STRING:  return string_find_method(name);
-        case OBJ_DICT:    return dict_find_method(name);
+        case OBJ_DICT:    {
+            ObjNative* m = dict_find_method(name);
+            if (m) return m;
+            return event_find_method(name);
+        }
         case OBJ_FILE:    return file_find_method(name);
+        case OBJ_GUI_RENDERER: return draw_find_method(name);
         case OBJ_STRUCT:  return struct_find_method(name);
         case OBJ_CSTRUCT_DEF:
         case OBJ_CSTRUCT: return cstruct_find_method(name);

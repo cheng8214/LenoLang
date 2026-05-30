@@ -43,6 +43,9 @@ typedef enum {
     OBJ_FFI_CALLBACK, // FFI 回调对象
     OBJ_THREAD,     // 线程对象
     OBJ_CHANNEL,    // Channel 对象
+    OBJ_GUI_WINDOW, // GUI 窗口对象
+    OBJ_GUI_RENDERER, // GUI 渲染器对象
+    OBJ_GUI_TEXTURE,  // GUI 纹理对象
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
     OBJ_FLOAT,      // float 类型标记（内联缓存用）
@@ -1140,6 +1143,61 @@ FileMethodEntry file_find_method_meta(const char* name);
 
 // 获取文件方法的参数类型
 TypeKind file_get_method_param_type(const char* method_name, int param_index);
+
+// ============================================================================
+// Draw 渲染器方法系统 API
+// ============================================================================
+
+// Draw 方法元信息（编译期类型检查用）
+typedef struct {
+    const char* name;
+    ObjNative* method;
+    int arity;
+    TypeKind return_type;
+    TypeKind param_types[MAX_METHOD_PARAMS];
+} DrawMethodEntry;
+
+// 初始化 Draw 方法表
+void draw_init_methods(void);
+
+// 标记所有 Draw 方法对象（供 GC 使用）
+void draw_mark_methods(void);
+
+// 注册 Draw 方法（带参数类型）
+void draw_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                       int min_arity, int max_arity,
+                                       TypeKind return_type, TypeKind* param_types);
+
+// 查找 Draw 方法的元信息
+DrawMethodEntry draw_find_method_meta(const char* name);
+
+// 查找 Draw 方法（运行时查找）
+ObjNative* draw_find_method(const char* name);
+
+// 获取 Draw 方法的参数类型
+TypeKind draw_get_method_param_type(const char* method_name, int param_index);
+
+// ============================================================================
+// Event 事件方法系统 API
+// ============================================================================
+
+// Event 方法元信息
+typedef struct {
+    const char* name;
+    ObjNative* method;
+    int arity;
+    TypeKind return_type;
+    TypeKind param_types[MAX_METHOD_PARAMS];
+} EventMethodEntry;
+
+void event_init_methods(void);
+void event_mark_methods(void);
+void event_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                        int min_arity, int max_arity,
+                                        TypeKind return_type, TypeKind* param_types);
+EventMethodEntry event_find_method_meta(const char* name);
+TypeKind event_get_method_param_type(const char* method_name, int param_index);
+ObjNative* event_find_method(const char* name);
 
 // ============================================================================
 // 协程系统 API
