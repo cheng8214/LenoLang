@@ -1176,7 +1176,10 @@ static int event_get_int(Value event_val, const char* key) {
     ObjDict* d = event_get_dict(event_val);
     if (!d) return 0;
     Value v = dict_get(d, str_copy(key, (int)strlen(key)));
-    return val_is_int(v) ? val_as_int(v) : 0;
+    if (val_is_int(v)) return val_as_int(v);
+    if (val_is_float(v)) return (int)val_as_double(v);
+    if (val_is_num(v)) return (int)val_as_num(v);
+    return 0;
 }
 
 /* 辅助：从事件字典中获取字符串字段 */

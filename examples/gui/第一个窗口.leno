@@ -14,10 +14,10 @@ main() {
              ren.fill_rect(100, 100, 200, 150)
              ren.present()
      }
-    func Event1(var event) 
+    func Event1(Event event) 
     {
             // onEvent: 每个事件调用
-            if event["type"] == 0x100 or event["type"] == 0x201 
+            if event.is_window_close() or event.is_key_down() 
             {
                 gui.set_window_should_close(win, true)
             }

@@ -405,7 +405,7 @@ OPCODE(OP_SET_FIELD) {
 
 OPCODE(OP_GET_METHOD) {
     frame = &vm.frames[vm.frame_cnt - 1];
-    // 获取结构体方法
+    // 获取结构体方法或原生对象方法
     // 操作数：2字节方法名常量索引
     // 栈：obj -> func
     uint16_t method_name_idx = READ_SHORT();
@@ -420,67 +420,92 @@ OPCODE(OP_GET_METHOD) {
     // 从栈中弹出对象
     Value obj_val = vm_stack_pop(&vm);
     
-    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
-        runtime_error("尝试在非 struct 类型上获取方法", GET_CURRENT_LINE());
+    if (!val_is_obj(obj_val)) {
+        runtime_error("尝试在非对象类型上获取方法", GET_CURRENT_LINE());
         return -1;
     }
     
-    ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
-    ObjStructDef* def = obj->def;
+    Object* obj = val_as_obj(obj_val);
     
-    // 在方法表中查找
-    ObjClosure* closure = NULL;
-    ObjFunction* func = NULL;
-    for (int i = 0; i < def->method_count; i++) {
-        if (strcmp(def->methods[i].name, method_name->chars) == 0) {
-            closure = def->methods[i].closure;
-            func = def->methods[i].func;
-            break;
+    // 处理 struct 类型
+    if (obj->type == OBJ_STRUCT) {
+        ObjStruct* s = (ObjStruct*)obj;
+        ObjStructDef* def = s->def;
+        
+        // 在方法表中查找
+        ObjClosure* closure = NULL;
+        ObjFunction* func = NULL;
+        for (int i = 0; i < def->method_count; i++) {
+            if (strcmp(def->methods[i].name, method_name->chars) == 0) {
+                closure = def->methods[i].closure;
+                func = def->methods[i].func;
+                break;
+            }
         }
-    }
 
-    if (func) {
-        // 找到用户定义的方法
-        if (closure) {
-            // 预创建的闭包（不需要 upvalue），直接返回
-            vm_stack_push(&vm, val_obj((Object*)closure));
-            DISPATCH;
-        } else {
-            // 需要 upvalue 的方法，动态创建闭包
-            // 注意：struct 方法不应该捕获运行时 upvalue
-            // 如果需要 upvalue，说明是全局变量或模块级别变量
-            // 这种情况下 upvalue 应该在编译期确定，这里我们创建一个空闭包
-            // 实际使用时通过全局变量表访问
-            // GC 保护：gc_alloc 可能触发 GC，先将 obj_val 压回栈防止被回收
+        if (func) {
+            if (closure) {
+                vm_stack_push(&vm, val_obj((Object*)closure));
+                DISPATCH;
+            } else {
+                vm_stack_push(&vm, obj_val);
+                ObjClosure* new_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                vm_stack_pop(&vm);
+                if (!new_closure) {
+                    runtime_error("内存不足，无法创建方法闭包", GET_CURRENT_LINE());
+                    return -1;
+                }
+                new_closure->function = func;
+                new_closure->upvalue_count = func->upvalue_count;
+                for (int i = 0; i < func->upvalue_count; i++) {
+                    new_closure->upvalues[i] = NULL;
+                }
+                vm_stack_push(&vm, val_obj((Object*)new_closure));
+                DISPATCH;
+            }
+        }
+        
+        // 未找到用户定义的方法，尝试查找原生方法（如 copy）
+        ObjNative* native_method = struct_find_method(method_name->chars);
+        if (native_method) {
             vm_stack_push(&vm, obj_val);
-            ObjClosure* new_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
-            vm_stack_pop(&vm); // 移除 GC 保护
-            if (!new_closure) {
-                runtime_error("内存不足，无法创建方法闭包", GET_CURRENT_LINE());
-                return -1;
-            }
-            new_closure->function = func;
-            new_closure->upvalue_count = func->upvalue_count;
-            for (int i = 0; i < func->upvalue_count; i++) {
-                new_closure->upvalues[i] = NULL;
-            }
-            vm_stack_push(&vm, val_obj((Object*)new_closure));
+            ObjBoundMethod* bound = bound_method_new(obj_val, native_method);
+            vm_stack_pop(&vm);
+            vm_stack_push(&vm, val_obj((Object*)bound));
             DISPATCH;
         }
+        
+        runtime_error("对象没有此方法", GET_CURRENT_LINE());
+        return -1;
     }
     
-    // 未找到用户定义的方法，尝试查找原生方法（如 copy）
-    ObjNative* native_method = struct_find_method(method_name->chars);
+    // 处理原生对象类型（Event, Draw, Win 等）
+    ObjNative* native_method = NULL;
+    if (obj->type == OBJ_GUI_EVENT) {
+        native_method = event_find_method(method_name->chars);
+    } else if (obj->type == OBJ_GUI_RENDERER) {
+        native_method = draw_find_method(method_name->chars);
+    } else if (obj->type == OBJ_GUI_WINDOW) {
+        // Win 类型方法通过 draw_find_method 或单独实现
+        // 暂时使用 event_find_method 作为占位（Win 方法通常通过模块函数调用）
+        native_method = NULL;
+    } else if (obj->type == OBJ_FILE) {
+        native_method = file_find_method(method_name->chars);
+    }
+    
     if (native_method) {
-        // 创建绑定方法（receiver + native_method）
-        // GC 保护：bound_method_new 可能触发 GC，先将 obj_val 压回栈防止被回收
         vm_stack_push(&vm, obj_val);
         ObjBoundMethod* bound = bound_method_new(obj_val, native_method);
-        vm_stack_pop(&vm); // 移除 GC 保护
+        vm_stack_pop(&vm);
         vm_stack_push(&vm, val_obj((Object*)bound));
         DISPATCH;
     }
     
-    runtime_error("对象没有此方法", GET_CURRENT_LINE());
+    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW || obj->type == OBJ_FILE) {
+        runtime_error("对象没有此方法", GET_CURRENT_LINE());
+        return -1;
+    }
+    
+    runtime_error("尝试在非 struct 类型上获取方法", GET_CURRENT_LINE());
     return -1;
 }

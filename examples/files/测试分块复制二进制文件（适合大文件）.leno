@@ -5,7 +5,7 @@ var src_path = "d:\\1.zip"
 var dst_path = "c:\\111.zip"
 
 // 检查源文件是否存在
-if !files.exists(src_path) {
+if not files.exists(src_path) {
     print("错误: 源文件不存在: " + src_path)
     return
 }
@@ -29,7 +29,7 @@ var chunk_size = 65536  // 64KB 一块
 var total_written = 0
 var chunk_count = 0
 
-while !f_src.eof() {
+while not f_src.eof() {
     // 读取一块数据
     var chunk = f_src.read(chunk_size)
     //print(type(chunk))
@@ -58,7 +58,7 @@ while !f_src.eof() {
 f_src.close()
 f_dst.close()
 
-print("\n复制完成!")
+print("\n复制完成not ")
 print("总块数: " + chunk_count)
 print("总字节: " + total_written)
 
@@ -70,10 +70,10 @@ if files.exists(dst_path) {
     print("目标文件大小: " + dst_size + " 字节")
     
     if dst_size == file_size {
-        print("✓ 文件大小匹配，复制成功!")
+        print("✓ 文件大小匹配，复制成功not ")
     } else {
-        print("✗ 文件大小不匹配!")
+        print("✗ 文件大小不匹配not ")
     }
 } else {
-    print("✗ 目标文件创建失败!")
+    print("✗ 目标文件创建失败not ")
 }

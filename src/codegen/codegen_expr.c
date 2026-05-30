@@ -447,7 +447,16 @@ static void gen_call(CodeGen* gen, Ast* ast) {
 
         // 推断 receiver 的类型
         TypeInfo* receiver_type = infer_expr_type(gen->sem, obj_ast);
+        int is_native_obj_type = 0;
+        const char* native_type_name = NULL;
         if (receiver_type && (receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_FACE) && receiver_type->struct_name) {
+            // struct/face 类型，已有 struct_name
+        } else if (receiver_type && (receiver_type->kind == TYPE_EVENT || receiver_type->kind == TYPE_DRAW || receiver_type->kind == TYPE_WIN || receiver_type->kind == TYPE_FILE)) {
+            // 原生对象类型（Event, Draw, Win, File 等）
+            is_native_obj_type = 1;
+            native_type_name = native_get_type_name(receiver_type->kind);
+        }
+        if (receiver_type && ((receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_FACE) && receiver_type->struct_name) || is_native_obj_type) {
             char method_key[256];
             Ast* method_def = NULL;
             int provided_args = ast->u.call.args.count;
@@ -459,7 +468,19 @@ static void gen_call(CodeGen* gen, Ast* ast) {
             int is_native_method = 0;
             int native_arity = 0;
 
-            if (!is_face_call) {
+            if (is_native_obj_type) {
+                // 原生对象类型：直接从原生方法元信息获取
+                TypeKind return_type = native_get_instance_method_return_type(native_type_name, method_name, &native_arity);
+                if (return_type != TYPE_ANY && native_arity >= 0) {
+                    is_native_method = 1;
+                    expected_args = native_arity;  // 不包含 self
+                    required_args = expected_args;
+                    has_method_def = 1;
+                } else {
+                    expected_args = provided_args + (obj_ast->kind == AST_VAR ? 0 : 1);
+                    required_args = expected_args;
+                }
+            } else if (!is_face_call) {
                 snprintf(method_key, sizeof(method_key), "%s::%s", receiver_type->struct_name, method_name);
                 method_def = func_table_find(&gen->sem->func_table, method_key);
                 if (!method_def) {
@@ -508,11 +529,11 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 }
             }
             
-            if (method_def && method_def->kind == AST_FUNC_DEF) {
+            if (!is_native_obj_type && method_def && method_def->kind == AST_FUNC_DEF) {
                 expected_args = method_def->u.func.pcnt;
                 required_args = expected_args - method_def->u.func.default_count;
                 has_method_def = 1;
-            } else if (!has_method_def) {
+            } else if (!is_native_obj_type && !has_method_def) {
                 // 方法不在全局函数表中，尝试从原生方法元信息获取参数数量
                 TypeKind return_type = native_get_instance_method_return_type("struct", method_name, &native_arity);
                 if (return_type != TYPE_ANY && native_arity >= 0) {
@@ -549,7 +570,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 return;
             }
 
-            if (is_native_method) {
+            if (is_native_method || is_native_obj_type) {
                 // 原生方法：先压入参数，再压入 receiver，OP_GET_METHOD 会创建 BoundMethod（包含 receiver）
                 for (int i = 0; i < ast->u.call.args.count; i++) {
                     gen_expr(gen, ast->u.call.args.items[i]);
