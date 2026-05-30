@@ -321,6 +321,20 @@ ObjNative* struct_find_method(const char* name) {
     return NULL;
 }
 
+// 标记 struct 方法表中的所有方法（供 GC 使用）
+void struct_mark_methods(void) {
+    if (!structMethodTable.entries) return;
+    for (int i = 0; i < structMethodTable.capacity; i++) {
+        StructMethodHashEntry* entry = structMethodTable.entries[i];
+        while (entry) {
+            if (entry->method) {
+                gc_mark_object((Object*)entry->method);
+            }
+            entry = entry->next;
+        }
+    }
+}
+
 void struct_init_methods(void) {
     struct_method_table_free();
     struct_method_table_init();

@@ -665,6 +665,20 @@ ObjNative* cstruct_find_method(const char* name) {
     return NULL;
 }
 
+// 标记 cstruct 方法表中的所有方法（供 GC 使用）
+void cstruct_mark_methods(void) {
+    if (!cstructMethodTable.entries) return;
+    for (int i = 0; i < cstructMethodTable.capacity; i++) {
+        CStructMethodHashEntry* entry = cstructMethodTable.entries[i];
+        while (entry) {
+            if (entry->method) {
+                gc_mark_object((Object*)entry->method);
+            }
+            entry = entry->next;
+        }
+    }
+}
+
 void cstruct_init_methods(void) {
     cstruct_method_table_free();
     cstruct_method_table_init();

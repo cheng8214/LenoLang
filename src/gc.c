@@ -123,6 +123,9 @@ void gc_init(void) {
     gc.remembered_capacity = 0;
     gc.promote_age = GC_PROMOTE_AGE;
     gc.minor_gc_count = 0;
+    gc.extra_roots = NULL;
+    gc.extra_root_count = 0;
+    gc.extra_root_capacity = 0;
 }
 
 // 设置 GC 开关（1=启用，0=禁用）
@@ -133,6 +136,24 @@ void gc_set_enabled(int enabled) {
 // 获取 GC 开关状态
 int gc_get_enabled(void) {
     return gc.enabled;
+}
+
+void gc_push_root(Value* ptr) {
+    if (gc.extra_root_count >= gc.extra_root_capacity) {
+        int new_cap = gc.extra_root_capacity * 2;
+        if (new_cap < 64) new_cap = 64;
+        Value** new_roots = (Value**)realloc(gc.extra_roots, new_cap * sizeof(Value*));
+        if (!new_roots) return;
+        gc.extra_roots = new_roots;
+        gc.extra_root_capacity = new_cap;
+    }
+    gc.extra_roots[gc.extra_root_count++] = ptr;
+}
+
+void gc_pop_root(void) {
+    if (gc.extra_root_count > 0) {
+        gc.extra_root_count--;
+    }
 }
 
 // ============================================================================
@@ -177,11 +198,6 @@ Object* gc_alloc(size_t size, ObjType type) {
     obj->next = gc.young_heap;
     gc.young_heap = obj;
     gc.young_allocated += size;
-
-    // 分配完成后检查是否需要 GC（对象已初始化，状态相对安全）
-    if (gc_requested && gc.enabled && !gc.running) {
-        gc_check_safe_point();
-    }
 
     return obj;
 }
@@ -268,9 +284,12 @@ void gc_mark_object(Object* obj) {
             break;
         case OBJ_GUI_WINDOW:
             break;
-        case OBJ_GUI_RENDERER:
+        case OBJ_GUI_RENDERER: {
+            extern void guis_mark_renderer_refs(Object* obj);
+            guis_mark_renderer_refs(obj);
             break;
-        case OBJ_GUI_TEXTURE:
+        }
+        case OBJ_GUI_FONT:
             break;
         case OBJ_GUI_EVENT: {
             /* Event 对象内部持有 ObjDict*，需要标记 */
@@ -534,6 +553,20 @@ static void mark_roots(void) {
         gc_mark_value(gc.vm->globals[i]);
     }
 
+    // 3.5 标记当前模块帧及其全局变量
+    ModuleFrame* module_frame = gc.vm->current_module_frame;
+    while (module_frame) {
+        if (module_frame->module) {
+            gc_mark_object((Object*)module_frame->module);
+        }
+        if (module_frame->globals) {
+            for (int i = 0; i < module_frame->global_count; i++) {
+                gc_mark_value(module_frame->globals[i]);
+            }
+        }
+        module_frame = module_frame->parent;
+    }
+
     // 4. 标记全局函数
     for (int i = 0; i < gc.vm->global_func_count; i++) {
         gc_mark_value(gc.vm->global_funcs[i]);
@@ -563,6 +596,8 @@ static void mark_roots(void) {
     extern void draw_mark_methods(void);
     extern void event_mark_methods(void);
     extern void number_mark_methods(void);
+    extern void cstruct_mark_methods(void);
+    extern void struct_mark_methods(void);
     array_mark_methods();
     string_mark_methods();
     dict_mark_methods();
@@ -572,6 +607,8 @@ static void mark_roots(void) {
     number_mark_methods();
     thread_mark_methods();
     channel_mark_methods();
+    cstruct_mark_methods();
+    struct_mark_methods();
 
     // 10. 标记内化字符串表
     intern_mark_all();
@@ -587,6 +624,10 @@ static void mark_roots(void) {
     // 13. 标记全局 C 结构体定义表
     extern void cstruct_def_mark_all(void);
     cstruct_def_mark_all();
+
+    // 13.5 标记已加载模块缓存
+    extern void loaded_modules_mark_all(void);
+    loaded_modules_mark_all();
 
     // 14. 标记当前协程
     if (gc.vm->current_coroutine) {
@@ -618,6 +659,15 @@ static void mark_roots(void) {
             gc_mark_object((Object*)gc.vm->event_loop->timers[i].coroutine);
         }
     }
+
+    // 17. 标记额外根集合（gc_push_root 注册的 Value 指针）
+    for (int i = 0; i < gc.extra_root_count; i++) {
+        gc_mark_value(*gc.extra_roots[i]);
+    }
+
+    // 18. 标记 GUI 模块的额外根（定时器回调等）
+    extern void guis_mark_extra_roots(void);
+    guis_mark_extra_roots();
 }
 
 // 标记 remembered set 中的老年代对象（Minor GC 时作为额外根集合）
@@ -657,7 +707,7 @@ static size_t get_object_size(Object* obj) {
         case OBJ_NATIVE: return sizeof(ObjNative);
         case OBJ_GUI_WINDOW: return sizeof(Object) + sizeof(int) + sizeof(void*);
         case OBJ_GUI_RENDERER: return sizeof(Object) + sizeof(void*) + sizeof(void*);
-        case OBJ_GUI_TEXTURE: return sizeof(Object) + sizeof(void*);
+        case OBJ_GUI_FONT: return sizeof(Object) + sizeof(void*);
         case OBJ_GUI_EVENT: return sizeof(Object) + sizeof(void*);
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
@@ -820,7 +870,7 @@ static void free_object_resources(Object* obj) {
         }
         case OBJ_GUI_WINDOW:
         case OBJ_GUI_RENDERER:
-        case OBJ_GUI_TEXTURE:
+        case OBJ_GUI_FONT:
         case OBJ_GUI_EVENT:
             break;
         case OBJ_ARRAY: {
@@ -1037,7 +1087,7 @@ static void sweep_young(void) {
             // 无效的对象，从链表中移除
             Object* invalid = *obj;
             *obj = invalid->next;
-            gc.young_allocated -= sizeof(Object);
+            gc.young_allocated -= invalid->size;
             free(invalid);
             continue;
         }
@@ -1045,7 +1095,7 @@ static void sweep_young(void) {
             // 未标记 → 回收
             Object* unreached = *obj;
             *obj = unreached->next;
-            gc.young_allocated -= get_object_size(unreached);
+            gc.young_allocated -= unreached->size;
             free_object_resources(unreached);
             free(unreached);
         } else {
@@ -1062,7 +1112,7 @@ static void sweep_young(void) {
                 promote->survived = 0;
                 promote->next = gc.old_heap;
                 gc.old_heap = promote;
-                size_t obj_size = get_object_size(promote);
+                size_t obj_size = promote->size;
                 gc.young_allocated -= obj_size;
                 gc.old_allocated += obj_size;
             } else {
@@ -1083,7 +1133,7 @@ static void sweep_old(void) {
             // 无效的对象，从链表中移除
             Object* invalid = *obj;
             *obj = invalid->next;
-            gc.old_allocated -= sizeof(Object);
+            gc.old_allocated -= invalid->size;
             free(invalid);
             continue;
         }
@@ -1091,7 +1141,7 @@ static void sweep_old(void) {
             // 未标记 → 回收
             Object* unreached = *obj;
             *obj = unreached->next;
-            gc.old_allocated -= get_object_size(unreached);
+            gc.old_allocated -= unreached->size;
             free_object_resources(unreached);
             free(unreached);
         } else {
@@ -1277,12 +1327,26 @@ void gc_free_all(void) {
     // 释放 remembered set
     free(gc.remembered_set);
 
+    // 释放额外根集合
+    free(gc.extra_roots);
+
     // 重置 GC 状态
     gc.young_heap = NULL;
     gc.old_heap = NULL;
     gc.young_allocated = 0;
     gc.old_allocated = 0;
+    gc.young_threshold = GC_YOUNG_THRESHOLD;
+    gc.old_threshold = GC_OLD_THRESHOLD;
+    gc.running = 0;
+    gc.mode = GC_MODE_FULL;
+    gc.vm = NULL;
+    gc.enabled = 1;
     gc.remembered_set = NULL;
     gc.remembered_count = 0;
     gc.remembered_capacity = 0;
+    gc.promote_age = GC_PROMOTE_AGE;
+    gc.minor_gc_count = 0;
+    gc.extra_roots = NULL;
+    gc.extra_root_count = 0;
+    gc.extra_root_capacity = 0;
 }

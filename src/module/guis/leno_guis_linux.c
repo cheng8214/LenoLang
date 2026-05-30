@@ -107,6 +107,7 @@ struct LenoGUIPlatformRenderer {
     /* 裁剪矩形（参考 SDL3 SDL_SetRenderClipRect） */
     int clip_x, clip_y, clip_w, clip_h;
     int clip_enabled;
+    int needs_resize;  /* 窗口大小变化标志，参考 SDL3 surface_valid */
 };
 
 /* ===== 平台纹理结构 ===== */
@@ -117,6 +118,8 @@ struct LenoGUIPlatformTexture {
     int height;
     int pitch;
 };
+
+#include "leno_guis_swrender.c"
 
 /* ===== X11 KeySym 到 Leno 键码映射 ===== */
 
@@ -221,128 +224,6 @@ static uint64_t get_timestamp_ms(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
-}
-
-/* ===== 软件渲染辅助函数（与 win32 共用逻辑，接受渲染器指针） ===== */
-
-/* 绘制单个像素点，应用视口偏移和裁剪矩形 */
-static void sw_draw_point(LenoGUIPlatformRenderer* ren, int x, int y, uint32_t color) {
-    /* 逻辑坐标转物理坐标（加上视口偏移） */
-    int px = x + ren->vp_x;
-    int py = y + ren->vp_y;
-    /* 视口边界裁剪 */
-    if (px < ren->vp_x || px >= ren->vp_x + ren->vp_w) return;
-    if (py < ren->vp_y || py >= ren->vp_y + ren->vp_h) return;
-    /* 裁剪矩形检查（仅在启用时） */
-    if (ren->clip_enabled) {
-        if (px < ren->clip_x || px >= ren->clip_x + ren->clip_w) return;
-        if (py < ren->clip_y || py >= ren->clip_y + ren->clip_h) return;
-    }
-    /* 缓冲区边界保护 */
-    if (px >= 0 && px < ren->width && py >= 0 && py < ren->height) {
-        ren->pixels[py * ren->width + px] = color;
-    }
-}
-
-/* Bresenham 直线算法，逐点调用 sw_draw_point 自动裁剪 */
-static void sw_draw_line(LenoGUIPlatformRenderer* ren, int x0, int y0, int x1, int y1, uint32_t color) {
-    int dx = abs(x1 - x0);
-    int dy = -abs(y1 - y0);
-    int sx = x0 < x1 ? 1 : -1;
-    int sy = y0 < y1 ? 1 : -1;
-    int err = dx + dy;
-    for (;;) {
-        sw_draw_point(ren, x0, y0, color);
-        if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
-    }
-}
-
-/* 绘制矩形边框（四条边） */
-static void sw_draw_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, uint32_t color) {
-    for (int i = 0; i < w; i++) {
-        sw_draw_point(ren, x + i, y, color);
-        sw_draw_point(ren, x + i, y + h - 1, color);
-    }
-    for (int i = 0; i < h; i++) {
-        sw_draw_point(ren, x, y + i, color);
-        sw_draw_point(ren, x + w - 1, y + i, color);
-    }
-}
-
-/* 填充矩形（优化：计算裁剪区域后批量写入像素行） */
-static void sw_fill_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, uint32_t color) {
-    /* 逻辑坐标转物理坐标 */
-    int px = x + ren->vp_x;
-    int py = y + ren->vp_y;
-    /* 计算有效绘制区域（与视口求交集） */
-    int x1 = px > ren->vp_x ? px : ren->vp_x;
-    int y1 = py > ren->vp_y ? py : ren->vp_y;
-    int x2 = (px + w) < (ren->vp_x + ren->vp_w) ? (px + w) : (ren->vp_x + ren->vp_w);
-    int y2 = (py + h) < (ren->vp_y + ren->vp_h) ? (py + h) : (ren->vp_y + ren->vp_h);
-    /* 裁剪矩形进一步限制 */
-    if (ren->clip_enabled) {
-        if (x1 < ren->clip_x) x1 = ren->clip_x;
-        if (y1 < ren->clip_y) y1 = ren->clip_y;
-        if (x2 > ren->clip_x + ren->clip_w) x2 = ren->clip_x + ren->clip_w;
-        if (y2 > ren->clip_y + ren->clip_h) y2 = ren->clip_y + ren->clip_h;
-    }
-    /* 缓冲区边界保护 */
-    if (x1 < 0) x1 = 0;
-    if (y1 < 0) y1 = 0;
-    if (x2 > ren->width) x2 = ren->width;
-    if (y2 > ren->height) y2 = ren->height;
-    if (x1 >= x2 || y1 >= y2) return;
-    /* 逐行批量写入 */
-    for (int row = y1; row < y2; row++) {
-        uint32_t* row_ptr = ren->pixels + row * ren->width;
-        for (int col = x1; col < x2; col++) {
-            row_ptr[col] = color;
-        }
-    }
-}
-
-/* 纹理 blit（支持 Alpha 混合），应用视口偏移和裁剪 */
-static void sw_blit_texture(LenoGUIPlatformRenderer* ren,
-                             const uint32_t* src, int sw_val, int sh_val, int spitch,
-                             int dx, int dy) {
-    for (int y = 0; y < sh_val; y++) {
-        int py = dy + y + ren->vp_y;
-        /* 视口裁剪 */
-        if (py < ren->vp_y || py >= ren->vp_y + ren->vp_h) continue;
-        /* 裁剪矩形 */
-        if (ren->clip_enabled && (py < ren->clip_y || py >= ren->clip_y + ren->clip_h)) continue;
-        /* 缓冲区边界 */
-        if (py < 0 || py >= ren->height) continue;
-        for (int x = 0; x < sw_val; x++) {
-            int px = dx + x + ren->vp_x;
-            if (px < ren->vp_x || px >= ren->vp_x + ren->vp_w) continue;
-            if (ren->clip_enabled && (px < ren->clip_x || px >= ren->clip_x + ren->clip_w)) continue;
-            if (px < 0 || px >= ren->width) continue;
-            uint32_t src_pixel = src[y * (spitch / 4) + x];
-            uint8_t sa = (src_pixel >> 24) & 0xFF;
-            if (sa == 0) continue;
-            if (sa == 255) {
-                ren->pixels[py * ren->width + px] = src_pixel;
-            } else {
-                /* Alpha 混合 */
-                uint32_t dst_pixel = ren->pixels[py * ren->width + px];
-                uint8_t dr = (dst_pixel >> 16) & 0xFF;
-                uint8_t dg = (dst_pixel >> 8) & 0xFF;
-                uint8_t db = dst_pixel & 0xFF;
-                uint8_t sr = (src_pixel >> 16) & 0xFF;
-                uint8_t sg = (src_pixel >> 8) & 0xFF;
-                uint8_t sb = src_pixel & 0xFF;
-                uint8_t inv_a = 255 - sa;
-                dr = (uint8_t)((sr * sa + dr * inv_a) / 255);
-                dg = (uint8_t)((sg * sa + dg * inv_a) / 255);
-                db = (uint8_t)((sb * sa + db * inv_a) / 255);
-                ren->pixels[py * ren->width + px] = LENO_GUI_PIXEL(dr, dg, db, 255);
-            }
-        }
-    }
 }
 
 /* ===== 平台 API 实现 ===== */
@@ -482,12 +363,6 @@ void leno_gui_platform_set_window_size(LenoGUIPlatformWindow* win, int w, int h)
     XFlush(g_display);
 }
 
-void leno_gui_platform_get_window_size(LenoGUIPlatformWindow* win, int* w, int* h) {
-    if (!win) { if (w) *w = 0; if (h) *h = 0; return; }
-    if (w) *w = win->width;
-    if (h) *h = win->height;
-}
-
 void leno_gui_platform_set_window_position(LenoGUIPlatformWindow* win, int x, int y) {
     if (!win || !g_display || !win->xwindow) return;
     XMoveWindow(g_display, win->xwindow, x, y);
@@ -523,14 +398,6 @@ void leno_gui_platform_set_window_fullscreen(LenoGUIPlatformWindow* win, int ful
     XFlush(g_display);
 
     win->is_fullscreen = fullscreen;
-}
-
-int leno_gui_platform_window_should_close(LenoGUIPlatformWindow* win) {
-    return win ? win->should_close : 1;
-}
-
-void leno_gui_platform_set_window_should_close(LenoGUIPlatformWindow* win, int val) {
-    if (win) win->should_close = val;
 }
 
 /* ===== 渲染器 ===== */
@@ -589,358 +456,84 @@ void leno_gui_platform_destroy_renderer(LenoGUIPlatformRenderer* ren) {
     free(ren);
 }
 
-void leno_gui_platform_render_clear(LenoGUIPlatformRenderer* ren) {
-    if (!ren || !ren->pixels) return;
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    int total = ren->width * ren->height;
-    for (int i = 0; i < total; i++) {
-        ren->pixels[i] = color;
+/* 检查并自动调整渲染器大小（参考 SDL3 GetWindowSurface） */
+static int check_and_resize_renderer(LenoGUIPlatformRenderer* ren) {
+    if (!ren || !ren->window || !g_display || !ren->window->xwindow) return 0;
+
+    /* 获取窗口当前大小 */
+    XWindowAttributes attr;
+    if (!XGetWindowAttributes(g_display, ren->window->xwindow, &attr)) return 0;
+
+    int new_width = attr.width;
+    int new_height = attr.height;
+
+    /* 如果大小变化或需要调整，重新创建渲染器 */
+    if (ren->needs_resize || new_width != ren->width || new_height != ren->height) {
+        if (new_width > 0 && new_height > 0) {
+            return leno_gui_platform_renderer_resize(ren, new_width, new_height);
+        }
     }
+    return 1;
 }
 
 void leno_gui_platform_render_present(LenoGUIPlatformRenderer* ren) {
     if (!ren || !ren->pixels || !g_display || !ren->window || !ren->window->xwindow) return;
+
     XPutImage(g_display, ren->window->xwindow, ren->gc, ren->ximage,
               0, 0, 0, 0, ren->width, ren->height);
     XFlush(g_display);
 }
 
-void leno_gui_platform_set_draw_color(LenoGUIPlatformRenderer* ren, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    if (!ren) return;
-    ren->draw_r = r;
-    ren->draw_g = g;
-    ren->draw_b = b;
-    ren->draw_a = a;
-}
+/* 当窗口大小改变时，重新调整渲染器大小 */
+int leno_gui_platform_renderer_resize(LenoGUIPlatformRenderer* ren, int w, int h) {
+    if (!ren || !g_display || w <= 0 || h <= 0) return 0;
 
-void leno_gui_platform_render_draw_point(LenoGUIPlatformRenderer* ren, int x, int y) {
-    if (!ren || !ren->pixels) return;
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    sw_draw_point(ren, x, y, color);
-}
-
-void leno_gui_platform_render_draw_line(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2) {
-    if (!ren || !ren->pixels) return;
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    sw_draw_line(ren, x1, y1, x2, y2, color);
-}
-
-void leno_gui_platform_render_draw_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h) {
-    if (!ren || !ren->pixels) return;
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    sw_draw_rect(ren, x, y, w, h, color);
-}
-
-void leno_gui_platform_render_fill_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h) {
-    if (!ren || !ren->pixels) return;
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    sw_fill_rect(ren, x, y, w, h, color);
-}
-
-void leno_gui_platform_get_renderer_size(LenoGUIPlatformRenderer* ren, int* w, int* h) {
-    if (!ren) { if (w) *w = 0; if (h) *h = 0; return; }
-    if (w) *w = ren->width;
-    if (h) *h = ren->height;
-}
-
-/* ===== 纹理 ===== */
-
-LenoGUIPlatformTexture* leno_gui_platform_create_texture(LenoGUIPlatformRenderer* ren, int w, int h) {
-    (void)ren;
-    LenoGUIPlatformTexture* tex = (LenoGUIPlatformTexture*)calloc(1, sizeof(LenoGUIPlatformTexture));
-    if (!tex) return NULL;
-    tex->width = w;
-    tex->height = h;
-    tex->pitch = w * 4;
-    tex->pixels = (uint32_t*)calloc(w * h, sizeof(uint32_t));
-    if (!tex->pixels) {
-        free(tex);
-        return NULL;
+    /* 销毁旧的 XImage */
+    if (ren->ximage) {
+        ren->ximage->data = NULL;
+        XDestroyImage(ren->ximage);
+        ren->ximage = NULL;
     }
-    return tex;
-}
 
-void leno_gui_platform_destroy_texture(LenoGUIPlatformTexture* tex) {
-    if (!tex) return;
-    if (tex->pixels) free(tex->pixels);
-    free(tex);
-}
-
-void leno_gui_platform_render_texture(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex, int x, int y) {
-    if (!ren || !ren->pixels || !tex || !tex->pixels) return;
-    sw_blit_texture(ren, tex->pixels, tex->width, tex->height, tex->pitch, x, y);
-}
-
-void leno_gui_platform_update_texture(LenoGUIPlatformTexture* tex, const void* data, int pitch) {
-    if (!tex || !tex->pixels || !data) return;
-    const uint32_t* src = (const uint32_t*)data;
-    for (int y = 0; y < tex->height; y++) {
-        memcpy(tex->pixels + y * tex->width, (const uint8_t*)src + y * pitch, tex->width * 4);
+    /* 释放旧的像素缓冲区 */
+    if (ren->pixels) {
+        free(ren->pixels);
+        ren->pixels = NULL;
     }
-}
 
-int leno_gui_platform_texture_width(LenoGUIPlatformTexture* tex) {
-    return tex ? tex->width : 0;
-}
+    /* 更新尺寸 */
+    ren->width = w;
+    ren->height = h;
 
-int leno_gui_platform_texture_height(LenoGUIPlatformTexture* tex) {
-    return tex ? tex->height : 0;
-}
+    /* 重置视口为新的全尺寸 */
+    ren->vp_x = 0; ren->vp_y = 0;
+    ren->vp_w = w; ren->vp_h = h;
 
-/* ===== 画圆（Bresenham 中点圆算法，与 win32 实现一致） ===== */
-
-void leno_gui_platform_render_draw_circle(LenoGUIPlatformRenderer* ren, int cx, int cy, int radius) {
-    if (!ren || !ren->pixels || radius <= 0) return;
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    /* Bresenham 中点圆算法：利用八分对称性只计算 1/8 圆弧 */
-    int x = 0, y = radius;
-    int d = 3 - 2 * radius;
-    while (x <= y) {
-        /* 八分对称绘制 8 个点 */
-        sw_draw_point(ren, cx + x, cy + y, color);
-        sw_draw_point(ren, cx - x, cy + y, color);
-        sw_draw_point(ren, cx + x, cy - y, color);
-        sw_draw_point(ren, cx - x, cy - y, color);
-        sw_draw_point(ren, cx + y, cy + x, color);
-        sw_draw_point(ren, cx - y, cy + x, color);
-        sw_draw_point(ren, cx + y, cy - x, color);
-        sw_draw_point(ren, cx - y, cy - x, color);
-        if (d < 0) {
-            d += 4 * x + 6;
-        } else {
-            d += 4 * (x - y) + 10;
-            y--;
-        }
-        x++;
-    }
-}
-
-/* 填充圆（水平扫描线填充，与 win32 实现一致） */
-void leno_gui_platform_render_fill_circle(LenoGUIPlatformRenderer* ren, int cx, int cy, int radius) {
-    if (!ren || !ren->pixels || radius <= 0) return;
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    /* 使用 Bresenham 算法计算圆的边界，然后水平扫描线填充 */
-    int x = 0, y = radius;
-    int d = 3 - 2 * radius;
-    while (x <= y) {
-        /* 每对对称点之间画水平线 */
-        sw_draw_line(ren, cx - x, cy + y, cx + x, cy + y, color);
-        sw_draw_line(ren, cx - x, cy - y, cx + x, cy - y, color);
-        sw_draw_line(ren, cx - y, cy + x, cx + y, cy + x, color);
-        sw_draw_line(ren, cx - y, cy - x, cx + y, cy - x, color);
-        if (d < 0) {
-            d += 4 * x + 6;
-        } else {
-            d += 4 * (x - y) + 10;
-            y--;
-        }
-        x++;
-    }
-}
-
-/* 绘制圆角矩形边框（与 win32 实现一致） */
-void leno_gui_platform_render_draw_rounded_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius) {
-    if (!ren || !ren->pixels || w <= 0 || h <= 0) return;
-    /* 圆角半径不能超过短边的一半 */
-    if (radius > w / 2) radius = w / 2;
-    if (radius > h / 2) radius = h / 2;
-    if (radius <= 0) {
-        leno_gui_platform_render_draw_rect(ren, x, y, w, h);
-        return;
-    }
-    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
-    /* 四条直线边 */
-    sw_draw_line(ren, x + radius, y, x + w - 1 - radius, y, color);
-    sw_draw_line(ren, x + radius, y + h - 1, x + w - 1 - radius, y + h - 1, color);
-    sw_draw_line(ren, x, y + radius, x, y + h - 1 - radius, color);
-    sw_draw_line(ren, x + w - 1, y + radius, x + w - 1, y + h - 1 - radius, color);
-    /* 四个圆角（四分之一圆弧） */
-    int cx1 = x + radius, cy1 = y + radius;
-    int cx2 = x + w - 1 - radius, cy2 = y + radius;
-    int cx3 = x + radius, cy3 = y + h - 1 - radius;
-    int cx4 = x + w - 1 - radius, cy4 = y + h - 1 - radius;
-    int ax = 0, ay = radius;
-    int dd = 3 - 2 * radius;
-    while (ax <= ay) {
-        sw_draw_point(ren, cx1 - ax, cy1 - ay, color);
-        sw_draw_point(ren, cx1 - ay, cy1 - ax, color);
-        sw_draw_point(ren, cx2 + ax, cy2 - ay, color);
-        sw_draw_point(ren, cx2 + ay, cy2 - ax, color);
-        sw_draw_point(ren, cx3 - ax, cy3 + ay, color);
-        sw_draw_point(ren, cx3 - ay, cy3 + ax, color);
-        sw_draw_point(ren, cx4 + ax, cy4 + ay, color);
-        sw_draw_point(ren, cx4 + ay, cy4 + ax, color);
-        if (dd < 0) {
-            dd += 4 * ax + 6;
-        } else {
-            dd += 4 * (ax - ay) + 10;
-            ay--;
-        }
-        ax++;
-    }
-}
-
-/* 填充圆角矩形（与 win32 实现一致） */
-void leno_gui_platform_render_fill_rounded_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius) {
-    if (!ren || !ren->pixels || w <= 0 || h <= 0) return;
-    if (radius > w / 2) radius = w / 2;
-    if (radius > h / 2) radius = h / 2;
-    if (radius <= 0) {
-        leno_gui_platform_render_fill_rect(ren, x, y, w, h);
-        return;
-    }
-    /* 中间矩形区域直接填充 */
-    leno_gui_platform_render_fill_rect(ren, x, y + radius, w, h - 2 * radius);
-    /* 上下两条矩形条 */
-    leno_gui_platform_render_fill_rect(ren, x + radius, y, w - 2 * radius, radius);
-    leno_gui_platform_render_fill_rect(ren, x + radius, y + h - radius, w - 2 * radius, radius);
-    /* 四个圆角用扫描线填充 */
-    int ax = 0, ay = radius;
-    int dd = 3 - 2 * radius;
-    while (ax <= ay) {
-        /* 左上角 */
-        sw_draw_line(ren, x + radius - ay, y + radius - ax, x + radius - 1, y + radius - ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + radius - ax, y + radius - ay, x + radius - 1, y + radius - ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        /* 右上角 */
-        sw_draw_line(ren, x + w - radius, y + radius - ax, x + w - radius + ay - 1, y + radius - ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + w - radius, y + radius - ay, x + w - radius + ax - 1, y + radius - ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        /* 左下角 */
-        sw_draw_line(ren, x + radius - ay, y + h - radius + ax, x + radius - 1, y + h - radius + ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + radius - ax, y + h - radius + ay, x + radius - 1, y + h - radius + ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        /* 右下角 */
-        sw_draw_line(ren, x + w - radius, y + h - radius + ax, x + w - radius + ay - 1, y + h - radius + ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + w - radius, y + h - radius + ay, x + w - radius + ax - 1, y + h - radius + ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        if (dd < 0) {
-            dd += 4 * ax + 6;
-        } else {
-            dd += 4 * (ax - ay) + 10;
-            ay--;
-        }
-        ax++;
-    }
-}
-
-/* ===== 视口和裁剪（参考 SDL3 SDL_SetRenderViewport / SDL_SetRenderClipRect） ===== */
-
-/* 设置渲染视口：所有后续绘制坐标相对于视口左上角 */
-void leno_gui_platform_set_viewport(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h) {
-    if (!ren) return;
-    ren->vp_x = x;
-    ren->vp_y = y;
-    ren->vp_w = w > 0 ? w : ren->width;
-    ren->vp_h = h > 0 ? h : ren->height;
-}
-
-/* 获取当前视口设置 */
-void leno_gui_platform_get_viewport(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h) {
-    if (!ren) { if (x) *x = 0; if (y) *y = 0; if (w) *w = 0; if (h) *h = 0; return; }
-    if (x) *x = ren->vp_x;
-    if (y) *y = ren->vp_y;
-    if (w) *w = ren->vp_w;
-    if (h) *h = ren->vp_h;
-}
-
-/* 设置裁剪矩形：限制绘制区域（物理坐标） */
-void leno_gui_platform_set_clip_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h) {
-    if (!ren) return;
-    ren->clip_x = x;
-    ren->clip_y = y;
-    ren->clip_w = w;
-    ren->clip_h = h;
-    ren->clip_enabled = 1;
-}
-
-/* 获取当前裁剪矩形 */
-void leno_gui_platform_get_clip_rect(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h) {
-    if (!ren) { if (x) *x = 0; if (y) *y = 0; if (w) *w = 0; if (h) *h = 0; return; }
-    if (x) *x = ren->clip_x;
-    if (y) *y = ren->clip_y;
-    if (w) *w = ren->clip_w;
-    if (h) *h = ren->clip_h;
-}
-
-/* 禁用裁剪矩形 */
-void leno_gui_platform_disable_clip_rect(LenoGUIPlatformRenderer* ren) {
-    if (!ren) return;
+    /* 重置裁剪矩形 */
+    ren->clip_x = 0; ren->clip_y = 0;
+    ren->clip_w = w; ren->clip_h = h;
     ren->clip_enabled = 0;
-}
 
-/* ===== 纹理高级渲染 ===== */
+    /* 分配新的像素缓冲区 */
+    ren->pixels = (uint32_t*)calloc(ren->width * ren->height, sizeof(uint32_t));
+    if (!ren->pixels) return 0;
 
-/* 纹理源矩形渲染：从纹理中取子区域绘制到目标位置（可缩放） */
-void leno_gui_platform_render_texture_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
-                                          int sx, int sy, int sw_val, int sh_val, int dx, int dy, int dw, int dh) {
-    if (!ren || !ren->pixels || !tex || !tex->pixels) return;
-    if (sw_val <= 0 || sh_val <= 0 || dw <= 0 || dh <= 0) return;
-    /* 计算缩放比例 */
-    float x_scale = (float)sw_val / (float)dw;
-    float y_scale = (float)sh_val / (float)dh;
-    int src_pitch_int = tex->pitch / 4;
-    /* 逐像素采样（最近邻插值） */
-    for (int row = 0; row < dh; row++) {
-        int src_y = sy + (int)(row * y_scale);
-        if (src_y < 0 || src_y >= tex->height) continue;
-        for (int col = 0; col < dw; col++) {
-            int src_x = sx + (int)(col * x_scale);
-            if (src_x < 0 || src_x >= tex->width) continue;
-            uint32_t src_pixel = tex->pixels[src_y * src_pitch_int + src_x];
-            uint8_t sa = (src_pixel >> 24) & 0xFF;
-            if (sa == 0) continue;
-            /* 使用 sw_draw_point 自动处理视口和裁剪 */
-            if (sa == 255) {
-                int px = dx + col + ren->vp_x;
-                int py = dy + row + ren->vp_y;
-                if (px >= ren->vp_x && px < ren->vp_x + ren->vp_w &&
-                    py >= ren->vp_y && py < ren->vp_y + ren->vp_h) {
-                    if (!ren->clip_enabled || (px >= ren->clip_x && px < ren->clip_x + ren->clip_w &&
-                                                py >= ren->clip_y && py < ren->clip_y + ren->clip_h)) {
-                        if (px >= 0 && px < ren->width && py >= 0 && py < ren->height) {
-                            ren->pixels[py * ren->width + px] = src_pixel;
-                        }
-                    }
-                }
-            } else {
-                sw_draw_point(ren, dx + col, dy + row, src_pixel);
-            }
-        }
+    /* 创建新的 XImage */
+    Visual* visual = DefaultVisual(g_display, g_screen);
+    int depth = DefaultDepth(g_display, g_screen);
+
+    ren->ximage = XCreateImage(g_display, visual, depth, ZPixmap, 0,
+                                (char*)ren->pixels, ren->width, ren->height, 32, 0);
+    if (!ren->ximage) {
+        free(ren->pixels);
+        ren->pixels = NULL;
+        return 0;
     }
-}
 
-/* 纹理旋转/翻转渲染（参考 SDL3 SDL_RenderTextureRotated） */
-void leno_gui_platform_render_texture_rotated(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
-                                               int x, int y, double angle, int flip) {
-    if (!ren || !ren->pixels || !tex || !tex->pixels) return;
-    /* 角度转弧度 */
-    double rad = angle * 3.14159265358979323846 / 180.0;
-    double cos_a = cos(rad);
-    double sin_a = sin(rad);
-    int tw = tex->width;
-    int th = tex->height;
-    /* 旋转中心为纹理中心 */
-    double cx = tw / 2.0;
-    double cy = th / 2.0;
-    int src_pitch_int = tex->pitch / 4;
-    /* 遍历目标区域（包围盒），反向映射到源纹理 */
-    for (int dy = -th; dy <= th; dy++) {
-        for (int dx = -tw; dx <= tw; dx++) {
-            /* 应用翻转 */
-            double fx = dx, fy = dy;
-            if (flip & LENO_GUI_FLIP_HORIZONTAL) fx = -fx;
-            if (flip & LENO_GUI_FLIP_VERTICAL) fy = -fy;
-            /* 反向旋转：从目标坐标计算源坐标 */
-            double src_x = cos_a * fx + sin_a * fy + cx;
-            double src_y = -sin_a * fx + cos_a * fy + cy;
-            /* 最近邻采样 */
-            int isx = (int)(src_x + 0.5);
-            int isy = (int)(src_y + 0.5);
-            if (isx < 0 || isx >= tw || isy < 0 || isy >= th) continue;
-            uint32_t src_pixel = tex->pixels[isy * src_pitch_int + isx];
-            uint8_t sa = (src_pixel >> 24) & 0xFF;
-            if (sa == 0) continue;
-            /* 绘制到目标位置（加上旋转中心偏移） */
-            sw_draw_point(ren, x + dx, y + dy, src_pixel);
-        }
-    }
+    /* 清除调整标志 */
+    ren->needs_resize = 0;
+
+    return 1;
 }
 
 /* ===== 事件 ===== */
@@ -978,6 +571,14 @@ static void pump_x11_events(void) {
                 ev.data1 = xev.xconfigure.width;
                 ev.data2 = xev.xconfigure.height;
                 event_queue_push(&ev);
+                break;
+            }
+            case Expose: {
+                /* 窗口需要重绘（拖动/遮挡后暴露） */
+                if (xev.xexpose.count == 0) {  /* 只处理最后一个 Expose 事件 */
+                    ev.type = LENO_GUI_EVT_WINDOW_EXPOSED;
+                    event_queue_push(&ev);
+                }
                 break;
             }
             case KeyPress: {
@@ -1271,6 +872,70 @@ void leno_gui_platform_set_window_opacity(LenoGUIPlatformWindow* win, float opac
     XChangeProperty(g_display, win->xwindow, opacity_atom, XA_CARDINAL, 32,
                     PropModeReplace, (unsigned char*)&opacity_value, 1);
     XFlush(g_display);
+}
+
+/* ===== 字体操作（Xft 系统字体渲染） ===== */
+
+#include <X11/Xft/Xft.h>
+
+struct LenoGUIPlatformFont {
+    XftFont* xft_font;
+    int size;
+};
+
+LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size) {
+    if (!g_display || size <= 0) size = 16;
+    XftFont* xft_font = XftFontOpenName(g_display, g_screen, name, size);
+    if (!xft_font) {
+        char fallback[256];
+        snprintf(fallback, sizeof(fallback), "sans-%d", size);
+        xft_font = XftFontOpenName(g_display, g_screen, fallback, size);
+    }
+    if (!xft_font) return NULL;
+    LenoGUIPlatformFont* font = (LenoGUIPlatformFont*)calloc(1, sizeof(LenoGUIPlatformFont));
+    if (!font) { XftFontClose(g_display, xft_font); return NULL; }
+    font->xft_font = xft_font;
+    font->size = size;
+    return font;
+}
+
+void leno_gui_platform_destroy_font(LenoGUIPlatformFont* font) {
+    if (!font) return;
+    if (font->xft_font && g_display) XftFontClose(g_display, font->xft_font);
+    free(font);
+}
+
+void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int x, int y) {
+    if (!ren || !ren->pixels || !font || !font->xft_font || !text || !g_display) return;
+    Drawable drawable = XCreatePixmap(g_display, DefaultRootWindow(g_display), ren->width, ren->height, DefaultDepth(g_display, g_screen));
+    XftDraw* draw = XftDrawCreate(g_display, drawable, DefaultVisual(g_display, g_screen), DefaultColormap(g_display, g_screen));
+    XRenderColor xrc = { ren->draw_r << 8, ren->draw_g << 8, ren->draw_b << 8, ren->draw_a << 8 };
+    XftColor xft_color;
+    XftColorAllocValue(g_display, DefaultVisual(g_display, g_screen), DefaultColormap(g_display, g_screen), &xrc, &xft_color);
+    XftDrawStringUtf8(draw, &xft_color, font->xft_font, x + ren->vp_x, y + ren->vp_y + font->xft_font->ascent, (const FcChar8*)text, strlen(text));
+    XftColorFree(g_display, DefaultVisual(g_display, g_screen), DefaultColormap(g_display, g_screen), &xft_color);
+    XftDrawDestroy(draw);
+    XImage* img = XGetImage(g_display, drawable, 0, 0, ren->width, ren->height, AllPlanes, ZPixmap);
+    if (img) {
+        for (int py = 0; py < ren->height; py++) {
+            for (int px = 0; px < ren->width; px++) {
+                unsigned long pixel = XGetPixel(img, px, py);
+                if (pixel != 0) {
+                    ren->pixels[py * ren->width + px] = (uint32_t)pixel;
+                }
+            }
+        }
+        XDestroyImage(img);
+    }
+    XFreePixmap(g_display, drawable);
+}
+
+void leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* text, int* w, int* h) {
+    if (!font || !font->xft_font || !text) { if (w) *w = 0; if (h) *h = 0; return; }
+    XGlyphInfo extents;
+    XftTextExtentsUtf8(g_display, font->xft_font, (const FcChar8*)text, strlen(text), &extents);
+    if (w) *w = extents.width;
+    if (h) *h = extents.height;
 }
 
 /* ===== 消息框（X11 没有原生消息框，使用 fprintf 输出到控制台） ===== */

@@ -1,8 +1,20 @@
 // 测试 str16 + Ptr[T] 版本的 win_process 模块
 import "win_process_str16.leno" as wp
-
+//_gc(false)
 main() {
-    print("=== 测试 win_process_str16 模块 (Ptr[T] 版本) ===")
+for 1500 to i
+{
+	_clear()
+	print($"第{i}次循环")
+   test()
+   }
+    print("=== 测试完成 ===")
+}
+
+
+func test()
+{
+	 print("=== 测试 win_process_str16 模块 (Ptr[T] 版本) ===")
     
     // 1. 获取当前进程 ID
     var currentPid = wp.getCurrentPid()
@@ -43,5 +55,4 @@ main() {
         }
     }
     
-    print("=== 测试完成 ===")
 }

@@ -45,7 +45,7 @@ typedef enum {
     OBJ_CHANNEL,    // Channel 对象
     OBJ_GUI_WINDOW,   // GUI 窗口对象
     OBJ_GUI_RENDERER, // GUI 渲染器对象
-    OBJ_GUI_TEXTURE,  // GUI 纹理对象
+    OBJ_GUI_FONT,     // GUI 字体对象
     OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
@@ -677,6 +677,9 @@ typedef struct {
     int remembered_capacity;
     int promote_age;
     size_t minor_gc_count;
+    Value** extra_roots;
+    int extra_root_count;
+    int extra_root_capacity;
 } GC;
 
 extern THREAD_LOCAL GC gc;
@@ -696,6 +699,8 @@ void gc_write_barrier_obj(Object* holder, Object* value_obj);
 void gc_set_enabled(int enabled);
 int gc_get_enabled(void);
 void gc_check_safe_point(void);
+void gc_push_root(Value* ptr);
+void gc_pop_root(void);
 
 // ============================================================================
 // 对象操作 API
@@ -1012,6 +1017,7 @@ void cstruct_array_free(ObjCStructArray* array);
 
 // cstruct 方法支持
 void cstruct_init_methods(void);
+void cstruct_mark_methods(void);
 void cstruct_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind* param_types);
@@ -1019,6 +1025,7 @@ ObjNative* cstruct_find_method(const char* name);
 
 // 查找结构体方法
 ObjNative* struct_find_method(const char* name);
+void struct_mark_methods(void);
 
 // ============================================================================
 // 绑定方法支持

@@ -47,6 +47,7 @@ extern "C" {
 #define LENO_GUI_EVT_WINDOW_UNFOCUS    0x205
 #define LENO_GUI_EVT_WINDOW_SHOW       0x206
 #define LENO_GUI_EVT_WINDOW_HIDE       0x207
+#define LENO_GUI_EVT_WINDOW_EXPOSED    0x208  /* 窗口需要重绘（拖动/遮挡后暴露） */
 #define LENO_GUI_EVT_KEY_DOWN          0x300
 #define LENO_GUI_EVT_KEY_UP            0x301
 #define LENO_GUI_EVT_TEXT_INPUT        0x302
@@ -165,6 +166,10 @@ LenoGUIPlatformRenderer* leno_gui_platform_create_renderer(LenoGUIPlatformWindow
 void   leno_gui_platform_destroy_renderer(LenoGUIPlatformRenderer* ren);
 void   leno_gui_platform_render_clear(LenoGUIPlatformRenderer* ren);
 void   leno_gui_platform_render_present(LenoGUIPlatformRenderer* ren);
+/* 当窗口大小改变时，重新调整渲染器大小 */
+int    leno_gui_platform_renderer_resize(LenoGUIPlatformRenderer* ren, int w, int h);
+/* 标记渲染器需要调整大小（参考 SDL3 surface_valid） */
+void   leno_gui_platform_renderer_mark_resize(LenoGUIPlatformRenderer* ren);
 void   leno_gui_platform_set_draw_color(LenoGUIPlatformRenderer* ren, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 void   leno_gui_platform_render_draw_point(LenoGUIPlatformRenderer* ren, int x, int y);
 void   leno_gui_platform_render_draw_line(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2);
@@ -194,6 +199,28 @@ void   leno_gui_platform_render_texture_rotated(LenoGUIPlatformRenderer* ren, Le
 void   leno_gui_platform_update_texture(LenoGUIPlatformTexture* tex, const void* data, int pitch);
 int    leno_gui_platform_texture_width(LenoGUIPlatformTexture* tex);
 int    leno_gui_platform_texture_height(LenoGUIPlatformTexture* tex);
+
+/* ===== 文字渲染（内置 8x8 点阵字体，参考 SDL3 SDL_RenderDebugText） ===== */
+void   leno_gui_platform_draw_text(LenoGUIPlatformRenderer* ren, const char* text, int x, int y, int size);
+void   leno_gui_platform_text_size(const char* text, int size, int* w, int* h);
+
+/* ===== 字体操作（系统字体渲染） ===== */
+typedef struct LenoGUIPlatformFont LenoGUIPlatformFont;
+LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size);
+void   leno_gui_platform_destroy_font(LenoGUIPlatformFont* font);
+void   leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int x, int y);
+void   leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* text, int* w, int* h);
+
+/* ===== 全局渲染状态（参考 SDL3 主回调机制） ===== */
+typedef void (*LenoGUIRenderCallback)(void* user_data);
+typedef void (*LenoGUIEventCallback)(void* user_data, LenoGUIEvent* event);
+
+void   leno_gui_platform_set_main_callbacks(LenoGUIPlatformWindow* win, 
+                                             LenoGUIPlatformRenderer* ren,
+                                             LenoGUIRenderCallback render_cb,
+                                             LenoGUIEventCallback event_cb,
+                                             void* user_data);
+int    leno_gui_platform_iterate_main_callbacks(void);
 
 /* ===== 事件操作 ===== */
 int    leno_gui_platform_poll_event(LenoGUIEvent* event);

@@ -82,6 +82,19 @@ static Value native_os(int argCount, Value* args) {
     #endif
 }
 
+// _clear() - 清屏（跨平台）
+static Value native_clear(int argCount, Value* args) {
+    (void)argCount;
+    (void)args;
+
+    #ifdef _WIN32
+        system("cls");
+    #else
+        system("clear");
+    #endif
+    return val_null();
+}
+
 // ==================== 初始化 ====================
 
 void sys_init_globals(void) {
@@ -99,4 +112,7 @@ void sys_init_globals(void) {
 
     // 注册全局 _os 函数（返回 string，0 个参数）
     vm_register_native("_os", native_os, 0, -1, -1, TYPE_STRING, NULL);
+
+    // 注册全局 _clear 函数（清屏，0 个参数）
+    vm_register_native("_clear", native_clear, 0, -1, -1, TYPE_NULL, NULL);
 }

@@ -13,8 +13,8 @@
 #define MAX_SYMBOLS 1024      // 最大符号数量（全局变量、函数、局部变量等）
 #define MAX_STACK 4096        // 最大栈深度（值栈容量）
 #define MAX_CONSTANTS 4096    // 最大常量数量（每个代码块）
-#define MAX_UPVALUES 128      // 最大上值数量（闭包捕获变量）
-#define MAX_ERRORS 128        // 最大错误记录数量
+#define MAX_UPVALUES 256     // 最大上值数量（闭包捕获变量）
+#define MAX_ERRORS 256        // 最大错误记录数量
 #define MAX_CODE_SIZE 65536   // 最大字节码大小（每个代码块）
 #define MAX_FRAMES 512        // 最大调用帧深度（递归限制）
 

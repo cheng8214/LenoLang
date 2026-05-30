@@ -340,6 +340,16 @@ void reset_loaded_modules(void) {
     loaded_modules.count = 0;
 }
 
+// 标记所有已加载模块（供 GC 使用）
+void loaded_modules_mark_all(void) {
+    for (int i = 0; i < loaded_modules.count; i++) {
+        if (loaded_modules.modules[i]) {
+            extern void gc_mark_object(Object* obj);
+            gc_mark_object((Object*)loaded_modules.modules[i]);
+        }
+    }
+}
+
 // 从模块文件中提取导出项（用于语义分析）
 int extract_module_exports_from_file(const char* file_path, const char* current_file,
                                       char exports[][64], int max_exports) {
