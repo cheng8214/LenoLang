@@ -8,7 +8,7 @@ extern _Thread_local ObjString* tombstone;
 extern void dict_init_methods(void);
 extern void dict_register_method_with_params(const char* name, ObjNative* method, int arity,
                                               int min_arity, int max_arity,
-                                              TypeKind return_type, TypeKind* param_types);
+                                              TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 
 // ==================== 核心方法实现 ====================
 
@@ -120,23 +120,23 @@ void dicts_init_instance_methods(void) {
     dict_init_methods();
     
     TypeKind len_params[] = {};
-    dict_register_method_with_params("len", make_native(dict_method_len, 1, "len"), 0, -1, -1, TYPE_INT, len_params);
+    dict_register_method_with_params("len", make_native(dict_method_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
 
     TypeKind has_params[] = {TYPE_STRING};
-    dict_register_method_with_params("has", make_native(dict_method_has, 2, "has"), 1, -1, -1, TYPE_BOOL, has_params);
+    dict_register_method_with_params("has", make_native(dict_method_has, 2, "has"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, has_params);
 
     TypeKind get_params[] = {TYPE_STRING};
-    dict_register_method_with_params("get", make_native(dict_method_get, 2, "get"), 1, -1, -1, TYPE_ANY, get_params);
+    dict_register_method_with_params("get", make_native(dict_method_get, 2, "get"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, get_params);
 
     TypeKind set_params[] = {TYPE_STRING, TYPE_ANY};
-    dict_register_method_with_params("set", make_native(dict_method_set, 3, "set"), 2, -1, -1, TYPE_ANY, set_params);
+    dict_register_method_with_params("set", make_native(dict_method_set, 3, "set"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, set_params);
 
     TypeKind remove_params[] = {TYPE_STRING};
-    dict_register_method_with_params("remove", make_native(dict_method_remove, 2, "remove"), 1, -1, -1, TYPE_ANY, remove_params);
+    dict_register_method_with_params("remove", make_native(dict_method_remove, 2, "remove"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, remove_params);
 
     TypeKind keys_params[] = {};
-    dict_register_method_with_params("keys", make_native(dict_method_keys, 1, "keys"), 0, -1, -1, TYPE_ARRAY, keys_params);
+    dict_register_method_with_params("keys", make_native(dict_method_keys, 1, "keys"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, keys_params);
 
     TypeKind values_params[] = {};
-    dict_register_method_with_params("values", make_native(dict_method_values, 1, "values"), 0, -1, -1, TYPE_ARRAY, values_params);
+    dict_register_method_with_params("values", make_native(dict_method_values, 1, "values"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, values_params);
 }

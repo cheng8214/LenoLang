@@ -22,12 +22,13 @@ static uint32_t file_hash_string(const char* str) {
     }
     return hash;
 }
-
+/* 方法哈希表条目 */
 typedef struct FileMethodHashEntry {
     char* name;
     ObjNative* method;
     int arity;
     TypeKind return_type;
+    TypeKind return_element_type;
     TypeKind param_types[MAX_METHOD_PARAMS];
     struct FileMethodHashEntry* next;
 } FileMethodHashEntry;
@@ -95,7 +96,7 @@ static void file_method_table_resize(void) {
 // 注册文件方法（带参数类型）
 void file_register_method_with_params(const char* name, ObjNative* method, int arity,
                                        int min_arity, int max_arity,
-                                       TypeKind return_type, TypeKind* param_types) {
+                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!fileMethodTable.entries) {
         file_method_table_init();
     }
@@ -113,6 +114,7 @@ void file_register_method_with_params(const char* name, ObjNative* method, int a
             entry->method = method;
             entry->arity = arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -141,7 +143,7 @@ void file_register_method_with_params(const char* name, ObjNative* method, int a
     new_entry->method = method;
     new_entry->arity = arity;
     new_entry->return_type = return_type;
-    
+    new_entry->return_element_type = return_element_type;
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
         for (int i = 0; i < count; i++) {
@@ -159,8 +161,8 @@ void file_register_method_with_params(const char* name, ObjNative* method, int a
     new_entry->next = fileMethodTable.entries[index];
     fileMethodTable.entries[index] = new_entry;
     fileMethodTable.count++;
-    
-    native_register_instance_method_meta_with_params("file", name, arity, min_arity, max_arity, return_type, param_types);
+  /* 同时注册编译期元信息 */
+    native_register_instance_method_meta_with_params("file", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 // 获取文件方法的参数类型
@@ -202,7 +204,7 @@ ObjNative* file_find_method(const char* name) {
 
 // 查找文件方法的元信息（用于编译期类型检查）
 FileMethodEntry file_find_method_meta(const char* name) {
-    FileMethodEntry result = {NULL, NULL, 0, TYPE_ANY, {TYPE_ANY}};
+    FileMethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
     
     if (!fileMethodTable.entries || fileMethodTable.count == 0) return result;
     
@@ -216,6 +218,7 @@ FileMethodEntry file_find_method_meta(const char* name) {
             result.method = entry->method;
             result.arity = entry->arity;
             result.return_type = entry->return_type;
+            result.return_element_type = entry->return_element_type;
             for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
                 result.param_types[i] = entry->param_types[i];
             }

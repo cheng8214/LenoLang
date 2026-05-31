@@ -489,40 +489,40 @@ static Value rands_gauss(int argc, Value* args) {
 
 void rands_init_module(void) {
     TypeKind om_params[] = {};
-    native_register_module_method("rands", "om", rands_om, 0, -1, -1, TYPE_FLOAT, om_params);
+    native_register_module_method("rands", "om", rands_om, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, om_params);
 
     TypeKind ints_params[] = {TYPE_INT, TYPE_INT};
-    native_register_module_method("rands", "ints", rands_ints, 2, -1, -1, TYPE_INT, ints_params);
+    native_register_module_method("rands", "ints", rands_ints, 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, ints_params);
 
     TypeKind floats_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("rands", "floats", rands_floats, 2, -1, -1, TYPE_FLOAT, floats_params);
+    native_register_module_method("rands", "floats", rands_floats, 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, floats_params);
 
     TypeKind bools_params[] = {TYPE_FLOAT};
-    native_register_module_method("rands", "bools", rands_bools, 1, -1, -1, TYPE_BOOL, bools_params);
+    native_register_module_method("rands", "bools", rands_bools, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, bools_params);
 
     TypeKind choice_params[] = {TYPE_ARRAY};
-    native_register_module_method("rands", "choice", rands_choice, 1, -1, -1, TYPE_ANY, choice_params);
+    native_register_module_method("rands", "choice", rands_choice, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, choice_params);
 
     TypeKind sample_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method("rands", "sample", rands_sample, 2, -1, -1, TYPE_ARRAY, sample_params);
+    native_register_module_method("rands", "sample", rands_sample, 2, -1, -1, TYPE_ARRAY, TYPE_ANY, sample_params);
 
     TypeKind shuffle_params[] = {TYPE_ARRAY};
-    native_register_module_method("rands", "shuffle", rands_shuffle, 1, -1, -1, TYPE_ARRAY, shuffle_params);
+    native_register_module_method("rands", "shuffle", rands_shuffle, 1, -1, -1, TYPE_ARRAY, TYPE_ANY, shuffle_params);
 
     TypeKind str_params[] = {TYPE_INT, TYPE_STRING};
-    native_register_module_method("rands", "str", rands_str, 2, -1, -1, TYPE_STRING, str_params);
+    native_register_module_method("rands", "str", rands_str, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, str_params);
 
     TypeKind int_array_params[] = {TYPE_INT, TYPE_INT};
-    native_register_module_method("rands", "int_array", rands_int_array, 2, -1, -1, TYPE_ARRAY, int_array_params);
+    native_register_module_method("rands", "int_array", rands_int_array, 2, -1, -1, TYPE_ARRAY, TYPE_INT, int_array_params);
 
     TypeKind seed_params[] = {TYPE_INT};
-    native_register_module_method("rands", "seed", rands_seed, 1, -1, -1, TYPE_NULL, seed_params);
+    native_register_module_method("rands", "seed", rands_seed, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, seed_params);
 
     // 新增：批量生成随机数数组
     TypeKind array_params[] = {TYPE_INT, TYPE_INT, TYPE_INT};
-    native_register_module_method("rands", "array", rands_array, 3, -1, -1, TYPE_ARRAY, array_params);
+    native_register_module_method("rands", "array", rands_array, 3, -1, -1, TYPE_ARRAY, TYPE_INT, array_params);
 
     // 新增：正态分布随机数
     TypeKind gauss_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("rands", "gauss", rands_gauss, 2, -1, -1, TYPE_FLOAT, gauss_params);
+    native_register_module_method("rands", "gauss", rands_gauss, 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, gauss_params);
 }

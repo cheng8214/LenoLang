@@ -479,7 +479,7 @@ static Value native_files_write(int argCount, Value* args) {
 // 外部声明：文件方法注册函数
 extern void file_register_method_with_params(const char* name, ObjNative* method, int arity,
                                               int min_arity, int max_arity,
-                                              TypeKind return_type, TypeKind* param_types);
+                                              TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 // 外部声明：创建原生函数对象的辅助函数
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 
@@ -495,11 +495,11 @@ void files_init_module(void) {
     TypeKind string_params[] = {TYPE_STRING};
     TypeKind string2_params[] = {TYPE_STRING, TYPE_STRING};
     
-    native_register_module_method("files", "open", native_files_open, 2, -1, -1, TYPE_FILE, open_params);
-    native_register_module_method("files", "exists", native_files_exists, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("files", "delete", native_files_delete, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("files", "read", native_files_read, 1, -1, -1, TYPE_STRING, string_params);
-    native_register_module_method("files", "write", native_files_write, 2, -1, -1, TYPE_ANY, string2_params);
+    native_register_module_method("files", "open", native_files_open, 2, -1, -1, TYPE_FILE, TYPE_UNKNOWN, open_params);
+    native_register_module_method("files", "exists", native_files_exists, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("files", "delete", native_files_delete, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("files", "read", native_files_read, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("files", "write", native_files_write, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, string2_params);
 
     // 调用 files_init_instance_methods 注册文件实例方法
     files_init_instance_methods();
@@ -514,26 +514,26 @@ void files_init_instance_methods(void) {
     // 注意：make_native 的 arity 需要包含 receiver（+1）
     // f.read() / f.read(n) - 用户可见 0 或 1 个参数，实际 1 或 2 个（含 receiver）
     TypeKind read_params[] = {TYPE_INT};
-    file_register_method_with_params("read", make_native(file_method_read, -1, "read"), -1, 0, 1, TYPE_STRING, read_params);
+    file_register_method_with_params("read", make_native(file_method_read, -1, "read"), -1, 0, 1, TYPE_STRING, TYPE_UNKNOWN, read_params);
     // f.readline() - 用户可见 0 个参数，实际 1 个（含 receiver）
     TypeKind no_params[] = {};
-    file_register_method_with_params("readline", make_native(file_method_readline, 1, "readline"), 0, -1, -1, TYPE_STRING, no_params);
+    file_register_method_with_params("readline", make_native(file_method_readline, 1, "readline"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
     // f.readlines() - 用户可见 0 个参数，实际 1 个（含 receiver）
-    file_register_method_with_params("readlines", make_native(file_method_readlines, 1, "readlines"), 0, -1, -1, TYPE_ARRAY, no_params);
+    file_register_method_with_params("readlines", make_native(file_method_readlines, 1, "readlines"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, no_params);
     // f.write(string) - 用户可见 1 个参数，实际 2 个（含 receiver）
     TypeKind write_params[] = {TYPE_STRING};
-    file_register_method_with_params("write", make_native(file_method_write, 2, "write"), 1, -1, -1, TYPE_INT, write_params);
+    file_register_method_with_params("write", make_native(file_method_write, 2, "write"), 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, write_params);
     // f.writeln(string) - 用户可见 1 个参数，实际 2 个（含 receiver）
-    file_register_method_with_params("writeln", make_native(file_method_writeln, 2, "writeln"), 1, -1, -1, TYPE_ANY, write_params);
+    file_register_method_with_params("writeln", make_native(file_method_writeln, 2, "writeln"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, write_params);
     // f.seek(pos, whence) - 用户可见 1 或 2 个参数，实际 2 或 3 个（含 receiver）
     TypeKind seek_params[] = {TYPE_INT, TYPE_STRING};
-    file_register_method_with_params("seek", make_native(file_method_seek, -1, "seek"), -1, 1, 2, TYPE_INT, seek_params);
+    file_register_method_with_params("seek", make_native(file_method_seek, -1, "seek"), -1, 1, 2, TYPE_INT, TYPE_UNKNOWN, seek_params);
     // f.tell() - 用户可见 0 个参数，实际 1 个（含 receiver）
-    file_register_method_with_params("tell", make_native(file_method_tell, 1, "tell"), 0, -1, -1, TYPE_INT, no_params);
+    file_register_method_with_params("tell", make_native(file_method_tell, 1, "tell"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
     // f.len() - 用户可见 0 个参数，实际 1 个（含 receiver）
-    file_register_method_with_params("len", make_native(file_method_len, 1, "len"), 0, -1, -1, TYPE_INT, no_params);
+    file_register_method_with_params("len", make_native(file_method_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
     // f.eof() - 用户可见 0 个参数，实际 1 个（含 receiver）
-    file_register_method_with_params("eof", make_native(file_method_eof, 1, "eof"), 0, -1, -1, TYPE_BOOL, no_params);
+    file_register_method_with_params("eof", make_native(file_method_eof, 1, "eof"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
     // f.close() - 用户可见 0 个参数，实际 1 个（含 receiver）
-    file_register_method_with_params("close", make_native(file_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, no_params);
+    file_register_method_with_params("close", make_native(file_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
 }

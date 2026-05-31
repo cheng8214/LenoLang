@@ -301,7 +301,7 @@ static Value gui_disable_clip_rect_func(int argc, Value* args) {
 /* 前向声明 */
 extern void draw_register_method_with_params(const char* name, ObjNative* method, int arity,
                                               int min_arity, int max_arity,
-                                              TypeKind return_type, TypeKind* param_types);
+                                              TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 extern void draw_init_methods(void);
 
@@ -319,29 +319,29 @@ void guis_init_instance_methods(void) {
     TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
 
     TypeKind rgb_1[] = {TYPE_RGB};
-    draw_register_method_with_params("set_color", make_native(gui_set_color_func, 2, "set_color"), 1, -1, -1, TYPE_NULL, rgb_1);
-    draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, no_params);
-    draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, no_params);
-    draw_register_method_with_params("point", make_native(gui_render_draw_point_func, 3, "point"), 2, -1, -1, TYPE_NULL, int_2);
-    draw_register_method_with_params("line", make_native(gui_render_draw_line_func, 5, "line"), 4, -1, -1, TYPE_NULL, int_4);
-    draw_register_method_with_params("rect", make_native(gui_render_draw_rect_func, 5, "rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
-    draw_register_method_with_params("fill_rect", make_native(gui_render_fill_rect_func, 5, "fill_rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
-    draw_register_method_with_params("circle", make_native(gui_render_draw_circle_func, 4, "circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
-    draw_register_method_with_params("fill_circle", make_native(gui_render_fill_circle_func, 4, "fill_circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
-    draw_register_method_with_params("round_rect", make_native(gui_render_draw_rounded_rect_func, 6, "round_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
-    draw_register_method_with_params("fill_round", make_native(gui_render_fill_rounded_rect_func, 6, "fill_round"), 5, -1, -1, TYPE_NULL, int_5_rounded);
-    draw_register_method_with_params("get_size", make_native(gui_get_renderer_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, no_params);
-    draw_register_method_with_params("set_viewport", make_native(gui_set_viewport_func, 5, "set_viewport"), 4, -1, -1, TYPE_NULL, int_4_vp);
-    draw_register_method_with_params("get_viewport", make_native(gui_get_viewport_func, 1, "get_viewport"), 0, -1, -1, TYPE_ANY, no_params);
-    draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, int_4_vp);
-    draw_register_method_with_params("get_clip_rect", make_native(gui_get_clip_rect_func, 1, "get_clip_rect"), 0, -1, -1, TYPE_ANY, no_params);
-    draw_register_method_with_params("no_clip", make_native(gui_disable_clip_rect_func, 1, "no_clip"), 0, -1, -1, TYPE_NULL, no_params);
-    draw_register_method_with_params("text", make_native(gui_draw_text_func, 5, "text"), 4, -1, -1, TYPE_NULL, any_3int);
-    draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, str_int);
+    draw_register_method_with_params("set_color", make_native(gui_set_color_func, 2, "set_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, rgb_1);
+    draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("point", make_native(gui_render_draw_point_func, 3, "point"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
+    draw_register_method_with_params("line", make_native(gui_render_draw_line_func, 5, "line"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4);
+    draw_register_method_with_params("rect", make_native(gui_render_draw_rect_func, 5, "rect"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_rect);
+    draw_register_method_with_params("fill_rect", make_native(gui_render_fill_rect_func, 5, "fill_rect"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_rect);
+    draw_register_method_with_params("circle", make_native(gui_render_draw_circle_func, 4, "circle"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_3_circle);
+    draw_register_method_with_params("fill_circle", make_native(gui_render_fill_circle_func, 4, "fill_circle"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_3_circle);
+    draw_register_method_with_params("round_rect", make_native(gui_render_draw_rounded_rect_func, 6, "round_rect"), 5, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_5_rounded);
+    draw_register_method_with_params("fill_round", make_native(gui_render_fill_rounded_rect_func, 6, "fill_round"), 5, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_5_rounded);
+    draw_register_method_with_params("get_size", make_native(gui_get_renderer_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("set_viewport", make_native(gui_set_viewport_func, 5, "set_viewport"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_vp);
+    draw_register_method_with_params("get_viewport", make_native(gui_get_viewport_func, 1, "get_viewport"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_vp);
+    draw_register_method_with_params("get_clip_rect", make_native(gui_get_clip_rect_func, 1, "get_clip_rect"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("no_clip", make_native(gui_disable_clip_rect_func, 1, "no_clip"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("text", make_native(gui_draw_text_func, 5, "text"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_3int);
+    draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, str_int);
 
     TypeKind font_str_2int[] = {TYPE_ANY, TYPE_ANY, TYPE_INT, TYPE_INT};
-    draw_register_method_with_params("text_font", make_native(gui_draw_text_font_func, 5, "text_font"), 4, -1, -1, TYPE_NULL, font_str_2int);
+    draw_register_method_with_params("text_font", make_native(gui_draw_text_font_func, 5, "text_font"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, font_str_2int);
 
     TypeKind font_str[] = {TYPE_ANY, TYPE_STRING};
-    draw_register_method_with_params("font_size", make_native(gui_text_size_font_func, 2, "font_size"), 2, -1, -1, TYPE_ANY, font_str);
+    draw_register_method_with_params("font_size", make_native(gui_text_size_font_func, 2, "font_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, font_str);
 }

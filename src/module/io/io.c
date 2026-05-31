@@ -391,12 +391,12 @@ void io_init_globals(void) {
 
 // 初始化 io 模块（import io 时调用）
 void io_init_module(void) {
-    // 注册 io.print 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
-    native_register_module_method("io", "print", native_print, -1, 0, -1, TYPE_ANY, NULL);
+    // 注册 io.print 方法（模块名，方法名，函数指针，参数数量，返回类型，返回元素类型，参数类型数组）
+    native_register_module_method("io", "print", native_print, -1, 0, -1, TYPE_ANY, TYPE_UNKNOWN, NULL);
 
-    // 注册 io.printf 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
-    native_register_module_method("io", "printf", native_printf, -1, 0, -1, TYPE_ANY, NULL);
+    // 注册 io.printf 方法（模块名，方法名，函数指针，参数数量，返回类型，返回元素类型，参数类型数组）
+    native_register_module_method("io", "printf", native_printf, -1, 0, -1, TYPE_ANY, TYPE_UNKNOWN, NULL);
 
-    // 注册 io.input 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
-    native_register_module_method("io", "input", native_input, -1, 0, 1, TYPE_STRING, NULL);
+    // 注册 io.input 方法（模块名，方法名，函数指针，参数数量，返回类型，返回元素类型，参数类型数组）
+    native_register_module_method("io", "input", native_input, -1, 0, 1, TYPE_STRING, TYPE_UNKNOWN, NULL);
 }

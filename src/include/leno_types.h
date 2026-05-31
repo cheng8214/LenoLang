@@ -131,6 +131,7 @@ typedef enum {
 // ============================================================================
 
 typedef enum {
+    TYPE_UNKNOWN,   // 未知/未指定类型
     TYPE_INFER,     // 类型推断
     TYPE_INT,       // 整数
     TYPE_FLOAT,     // 浮点数

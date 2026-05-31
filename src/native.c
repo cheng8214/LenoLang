@@ -407,9 +407,10 @@ void native_register_all_module_metas(void) {
 // 注册模块方法（带参数类型）
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // param_types: 参数类型数组，长度为 arity，如果为 NULL 则所有参数默认为 TYPE_ANY
+// return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
 void native_register_module_method(const char* module_name, const char* method_name,
                                    NativeFn function, int arity, int min_arity, int max_arity,
-                                   TypeKind return_type, TypeKind* param_types) {
+                                   TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!moduleMethodTable.entries) {
         module_method_table_init();
     }
@@ -434,6 +435,7 @@ void native_register_module_method(const char* module_name, const char* method_n
             entry->meta.min_arity = min_arity;
             entry->meta.max_arity = max_arity;
             entry->meta.return_type = return_type;
+            entry->meta.return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -480,6 +482,7 @@ void native_register_module_method(const char* module_name, const char* method_n
     new_entry->meta.min_arity = min_arity;
     new_entry->meta.max_arity = max_arity;
     new_entry->meta.return_type = return_type;
+    new_entry->meta.return_element_type = return_element_type;
 
     // 复制参数类型
     if (param_types && arity > 0) {
@@ -528,6 +531,13 @@ TypeKind native_get_module_method_return_type(const char* module_name, const cha
     ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
     if (meta) return meta->return_type;
     return TYPE_ANY;
+}
+
+// 获取模块方法返回数组时的元素类型（编译时调用）
+TypeKind native_get_module_method_return_element_type(const char* module_name, const char* method_name) {
+    ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
+    if (meta) return meta->return_element_type;
+    return TYPE_UNKNOWN;
 }
 
 // 获取模块方法的参数数量
@@ -898,16 +908,16 @@ static void instance_method_table_resize(void) {
 }
 
 // 注册实例方法元信息（编译时调用）
-void native_register_instance_method_meta(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type) {
+void native_register_instance_method_meta(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type) {
     TypeKind param_types[MAX_METHOD_PARAMS];
     for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
         param_types[i] = TYPE_ANY;
     }
-    native_register_instance_method_meta_with_params(type_name, method_name, arity, min_arity, max_arity, return_type, param_types);
+    native_register_instance_method_meta_with_params(type_name, method_name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 // 注册实例方法元信息（带参数类型）
-void native_register_instance_method_meta_with_params(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind* param_types) {
+void native_register_instance_method_meta_with_params(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!instanceMethodTable.entries) {
         instance_method_table_init();
     }
@@ -929,6 +939,7 @@ void native_register_instance_method_meta_with_params(const char* type_name, con
             entry->meta.min_arity = min_arity;
             entry->meta.max_arity = max_arity;
             entry->meta.return_type = return_type;
+            entry->meta.return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -962,6 +973,7 @@ void native_register_instance_method_meta_with_params(const char* type_name, con
     new_entry->meta.min_arity = min_arity;
     new_entry->meta.max_arity = max_arity;
     new_entry->meta.return_type = return_type;
+    new_entry->meta.return_element_type = return_element_type;
 
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
@@ -1025,6 +1037,26 @@ TypeKind native_get_instance_method_return_type(const char* type_name, const cha
         *out_arity = -1;
     }
     return TYPE_ANY;
+}
+
+// 获取实例方法返回数组时的元素类型（编译时调用）
+TypeKind native_get_instance_method_return_element_type(const char* type_name, const char* method_name) {
+    if (!instanceMethodTable.entries || instanceMethodTable.count == 0) {
+        return TYPE_UNKNOWN;
+    }
+    
+    uint32_t hash = hash_instance_method(type_name, method_name);
+    int index = hash & (instanceMethodTable.capacity - 1);
+    
+    InstanceMethodEntry* entry = instanceMethodTable.entries[index];
+    while (entry) {
+        if (strcmp(entry->type_name, type_name) == 0 &&
+            strcmp(entry->method_name, method_name) == 0) {
+            return entry->meta.return_element_type;
+        }
+        entry = entry->next;
+    }
+    return TYPE_UNKNOWN;
 }
 
 // 获取实例方法的参数类型（编译时调用）

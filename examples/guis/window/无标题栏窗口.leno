@@ -1,0 +1,81 @@
+import guis
+
+main() {
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        borderless: true,
+        resizable: true
+    }
+    Win win = guis.create_window("Borderless", w_style)
+
+    var dragging = false
+    var drag_start_x = 0
+    var drag_start_y = 0
+    var win_start_x = 0
+    var win_start_y = 0
+
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_color(_rgb(30, 30, 46, 255))
+            ren.clear()
+
+            // 自定义标题栏区域
+            ren.set_color(_rgb(60, 60, 90, 255))
+            ren.fill_rect(0, 0, 800, 40)
+
+            // 关闭按钮
+            ren.set_color(_rgb(255, 80, 80, 255))
+            ren.fill_circle(770, 20, 10)
+
+            // 标题文字
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.text("无边框窗口 - 拖动标题栏移动", 50, 12, 2)
+
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() and e.key() == 0x1B {
+                win.set_should_close(true)
+            }
+
+            // 鼠标按下开始拖动
+            if e.is_mouse_down() {
+                int mx = e.mouse_x()
+                int my = e.mouse_y()
+                // 点击标题栏区域开始拖动
+                if my < 40 {
+                    dragging = true
+                    drag_start_x = mx
+                    drag_start_y = my
+                    var pos = win.get_pos()
+                    win_start_x = pos[0]
+                    win_start_y = pos[1]
+                }
+                // 点击关闭按钮
+                if mx > 760 and mx < 780 and my > 10 and my < 30 {
+                    win.set_should_close(true)
+                }
+            }
+
+            // 鼠标释放停止拖动
+            if e.is_mouse_up() {
+                dragging = false
+            }
+
+            // 鼠标移动时拖动窗口
+            if e.is_mouse_move() and dragging {
+                int mx = e.mouse_x()
+                int my = e.mouse_y()
+                int new_x = win_start_x + (mx - drag_start_x)
+                int new_y = win_start_y + (my - drag_start_y)
+                win.set_pos(new_x, new_y)
+            }
+        }
+    )
+
+    win.close()
+}

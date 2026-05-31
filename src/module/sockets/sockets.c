@@ -602,52 +602,52 @@ void sockets_init_module(void) {
     // 注册模块方法
     // TCP 客户端
     TypeKind connect_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method("sockets", "connect", sockets_connect_func, 2, -1, -1, TYPE_ANY, connect_params);
+    native_register_module_method("sockets", "connect", sockets_connect_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, connect_params);
 
     // TCP 服务器
     TypeKind listen_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method("sockets", "listen", sockets_listen_func, 2, -1, -1, TYPE_ANY, listen_params);
+    native_register_module_method("sockets", "listen", sockets_listen_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, listen_params);
 
     // UDP
     TypeKind udp_bind_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method("sockets", "udp_bind", sockets_udp_bind_func, 2, -1, -1, TYPE_ANY, udp_bind_params);
+    native_register_module_method("sockets", "udp_bind", sockets_udp_bind_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, udp_bind_params);
 
     // Socket 实例方法（通过模块方式注册，第一个参数是 socket 对象）
     TypeKind send_params[] = {TYPE_ANY, TYPE_STRING};
-    native_register_module_method("sockets", "send", socket_send_func, 2, -1, -1, TYPE_BOOL, send_params);
+    native_register_module_method("sockets", "send", socket_send_func, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, send_params);
 
     TypeKind recv_params[] = {TYPE_ANY, TYPE_INT};
-    native_register_module_method("sockets", "recv", socket_recv_func, 2, -1, -1, TYPE_ANY, recv_params);
+    native_register_module_method("sockets", "recv", socket_recv_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, recv_params);
 
     TypeKind close_params[] = {TYPE_ANY};
-    native_register_module_method("sockets", "close", socket_close_func, 1, -1, -1, TYPE_NULL, close_params);
+    native_register_module_method("sockets", "close", socket_close_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, close_params);
 
     TypeKind accept_params[] = {TYPE_ANY};
-    native_register_module_method("sockets", "accept", socket_accept_func, 1, -1, -1, TYPE_ANY, accept_params);
+    native_register_module_method("sockets", "accept", socket_accept_func, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, accept_params);
 
     TypeKind sendto_params[] = {TYPE_ANY, TYPE_STRING, TYPE_STRING, TYPE_INT};
-    native_register_module_method("sockets", "sendto", socket_sendto_func, 4, -1, -1, TYPE_BOOL, sendto_params);
+    native_register_module_method("sockets", "sendto", socket_sendto_func, 4, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, sendto_params);
 
     TypeKind recvfrom_params[] = {TYPE_ANY, TYPE_INT};
-    native_register_module_method("sockets", "recvfrom", socket_recvfrom_func, 2, -1, -1, TYPE_ANY, recvfrom_params);
+    native_register_module_method("sockets", "recvfrom", socket_recvfrom_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, recvfrom_params);
 
     // V2: 非阻塞 IO
     TypeKind set_nonblocking_params[] = {TYPE_ANY, TYPE_BOOL};
-    native_register_module_method("sockets", "set_nonblocking", socket_set_nonblocking_func, 2, -1, -1, TYPE_BOOL, set_nonblocking_params);
+    native_register_module_method("sockets", "set_nonblocking", socket_set_nonblocking_func, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_nonblocking_params);
 
     TypeKind select_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method("sockets", "select", socket_select_func, 2, -1, -1, TYPE_ARRAY, select_params);
+    native_register_module_method("sockets", "select", socket_select_func, 2, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, select_params);
 
     // 字节序转换函数
     TypeKind htons_params[] = {TYPE_INT};
-    native_register_module_method("sockets", "htons", sockets_htons_func, 1, -1, -1, TYPE_INT, htons_params);
+    native_register_module_method("sockets", "htons", sockets_htons_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, htons_params);
 
     TypeKind htonl_params[] = {TYPE_INT};
-    native_register_module_method("sockets", "htonl", sockets_htonl_func, 1, -1, -1, TYPE_INT, htonl_params);
+    native_register_module_method("sockets", "htonl", sockets_htonl_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, htonl_params);
 
     TypeKind ntohs_params[] = {TYPE_INT};
-    native_register_module_method("sockets", "ntohs", sockets_ntohs_func, 1, -1, -1, TYPE_INT, ntohs_params);
+    native_register_module_method("sockets", "ntohs", sockets_ntohs_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, ntohs_params);
 
     TypeKind ntohl_params[] = {TYPE_INT};
-    native_register_module_method("sockets", "ntohl", sockets_ntohl_func, 1, -1, -1, TYPE_INT, ntohl_params);
+    native_register_module_method("sockets", "ntohl", sockets_ntohl_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, ntohl_params);
 }

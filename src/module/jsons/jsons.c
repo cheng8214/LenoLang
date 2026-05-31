@@ -691,15 +691,15 @@ static Value jsons_write_file_func(int argc, Value* args) {
 // Module initialization
 void jsons_init_module(void) {
     TypeKind decode_params[] = {TYPE_STRING};
-    native_register_module_method("jsons", "decode", jsons_decode_func, 1, -1, -1, TYPE_ANY, decode_params);
+    native_register_module_method("jsons", "decode", jsons_decode_func, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, decode_params);
 
     TypeKind encode_params[] = {TYPE_ANY};
-    native_register_module_method("jsons", "encode", jsons_encode_func, 1, -1, -1, TYPE_STRING, encode_params);
-    native_register_module_method("jsons", "encode_pretty", jsons_encode_pretty_func, 1, -1, -1, TYPE_STRING, encode_params);
+    native_register_module_method("jsons", "encode", jsons_encode_func, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, encode_params);
+    native_register_module_method("jsons", "encode_pretty", jsons_encode_pretty_func, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, encode_params);
 
     TypeKind read_file_params[] = {TYPE_STRING};
-    native_register_module_method("jsons", "read_file", jsons_read_file_func, 1, -1, -1, TYPE_ANY, read_file_params);
+    native_register_module_method("jsons", "read_file", jsons_read_file_func, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, read_file_params);
 
     TypeKind write_file_params[] = {TYPE_STRING, TYPE_ANY};
-    native_register_module_method("jsons", "write_file", jsons_write_file_func, 2, -1, -1, TYPE_BOOL, write_file_params);
+    native_register_module_method("jsons", "write_file", jsons_write_file_func, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, write_file_params);
 }

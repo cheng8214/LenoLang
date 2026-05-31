@@ -756,30 +756,30 @@ void dirs_init_module(void) {
     TypeKind string2_params[] = {TYPE_STRING, TYPE_STRING};
     TypeKind no_params[] = {};
     
-    native_register_module_method("dirs", "cwd", native_dirs_cwd, 0, -1, -1, TYPE_STRING, no_params);
-    native_register_module_method("dirs", "abspath", native_dirs_abspath, 1, -1, -1, TYPE_STRING, string_params);
-    native_register_module_method("dirs", "basename", native_dirs_basename, 1, -1, -1, TYPE_STRING, string_params);
-    native_register_module_method("dirs", "dirname", native_dirs_dirname, 1, -1, -1, TYPE_STRING, string_params);
-    native_register_module_method("dirs", "extname", native_dirs_extname, 1, -1, -1, TYPE_STRING, string_params);
-    native_register_module_method("dirs", "join", native_dirs_join, -1, 0, -1, TYPE_STRING, string_params);
-    native_register_module_method("dirs", "sep", native_dirs_sep, 0, -1, -1, TYPE_STRING, no_params);
+    native_register_module_method("dirs", "cwd", native_dirs_cwd, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    native_register_module_method("dirs", "abspath", native_dirs_abspath, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "basename", native_dirs_basename, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "dirname", native_dirs_dirname, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "extname", native_dirs_extname, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "join", native_dirs_join, -1, 0, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "sep", native_dirs_sep, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
 
     // 检查操作
-    native_register_module_method("dirs", "exists", native_dirs_exists, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("dirs", "is_file", native_dirs_is_file, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("dirs", "is_dir", native_dirs_is_dir, 1, -1, -1, TYPE_BOOL, string_params);
+    native_register_module_method("dirs", "exists", native_dirs_exists, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "is_file", native_dirs_is_file, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "is_dir", native_dirs_is_dir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
 
     // 目录操作
-    native_register_module_method("dirs", "mkdir", native_dirs_mkdir, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("dirs", "mkdir_p", native_dirs_mkdir_p, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("dirs", "rmdir", native_dirs_rmdir, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("dirs", "remove", native_dirs_remove, 1, -1, -1, TYPE_BOOL, string_params);
-    native_register_module_method("dirs", "rename", native_dirs_rename, 2, -1, -1, TYPE_BOOL, string2_params);
+    native_register_module_method("dirs", "mkdir", native_dirs_mkdir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "mkdir_p", native_dirs_mkdir_p, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "rmdir", native_dirs_rmdir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "remove", native_dirs_remove, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "rename", native_dirs_rename, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string2_params);
 
     // 遍历操作
-    native_register_module_method("dirs", "listdir", native_dirs_listdir, 1, -1, -1, TYPE_ARRAY, string_params);
-    native_register_module_method("dirs", "walk", native_dirs_walk, 1, -1, -1, TYPE_ARRAY, string_params);
+    native_register_module_method("dirs", "listdir", native_dirs_listdir, 1, -1, -1, TYPE_ARRAY, TYPE_STRING, string_params);
+    native_register_module_method("dirs", "walk", native_dirs_walk, 1, -1, -1, TYPE_ARRAY, TYPE_STRING, string_params);
 
     // 文件信息
-    native_register_module_method("dirs", "stat", native_dirs_stat, 1, -1, -1, TYPE_DICT, string_params);
+    native_register_module_method("dirs", "stat", native_dirs_stat, 1, -1, -1, TYPE_DICT, TYPE_UNKNOWN, string_params);
 }

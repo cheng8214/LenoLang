@@ -153,12 +153,13 @@ void struct_set_field(ObjStruct* obj, int index, Value value) {
 
 #define STRUCT_METHOD_TABLE_INITIAL_CAPACITY 16
 #define STRUCT_METHOD_TABLE_MAX_LOAD 0.75
-
+/* 方法哈希表条目 */
 typedef struct StructMethodHashEntry {
     char* name;
     ObjNative* method;
     int arity;
     TypeKind return_type;
+    TypeKind return_element_type;
     TypeKind param_types[MAX_METHOD_PARAMS];
     struct StructMethodHashEntry* next;
 } StructMethodHashEntry;
@@ -236,7 +237,7 @@ static void struct_method_table_resize(void) {
 
 // 注册结构体方法（带参数类型）
 void struct_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind* param_types) {
+                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!structMethodTable.entries) {
         struct_method_table_init();
     }
@@ -254,6 +255,7 @@ void struct_register_method_with_params(const char* name, ObjNative* method, int
             entry->method = method;
             entry->arity = arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -282,6 +284,7 @@ void struct_register_method_with_params(const char* name, ObjNative* method, int
     new_entry->method = method;
     new_entry->arity = arity;
     new_entry->return_type = return_type;
+    new_entry->return_element_type = return_element_type;
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
         for (int i = 0; i < count; i++) {
@@ -300,8 +303,34 @@ void struct_register_method_with_params(const char* name, ObjNative* method, int
     structMethodTable.entries[index] = new_entry;
     structMethodTable.count++;
     
-    // 同时注册到编译期元信息表
-    native_register_instance_method_meta_with_params("struct", name, arity, min_arity, max_arity, return_type, param_types);
+    // 同时注册到编译期元信息表，避免重复维护
+    native_register_instance_method_meta_with_params("struct", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+}
+
+// 查找结构体方法的元信息（用于编译期类型检查）
+StructMethodEntry struct_find_method_meta(const char* name) {
+    StructMethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
+    if (!structMethodTable.entries || structMethodTable.count == 0) return result;
+    
+    uint32_t hash = struct_hash_string(name);
+    int index = hash & (structMethodTable.capacity - 1);
+    
+    StructMethodHashEntry* entry = structMethodTable.entries[index];
+    while (entry) {
+        if (strcmp(entry->name, name) == 0) {
+            result.name = entry->name;
+            result.method = entry->method;
+            result.arity = entry->arity;
+            result.return_type = entry->return_type;
+            result.return_element_type = entry->return_element_type;
+            for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+                result.param_types[i] = entry->param_types[i];
+            }
+            return result;
+        }
+        entry = entry->next;
+    }
+    return result;
 }
 
 // 查找结构体方法

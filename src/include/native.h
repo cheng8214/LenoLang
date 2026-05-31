@@ -22,6 +22,7 @@ typedef struct {
     int min_arity;          // 最小参数个数（仅 arity == -1 时有效，-1 表示不限制）
     int max_arity;          // 最大参数个数（仅 arity == -1 时有效，-1 表示不限制）
     TypeKind return_type;
+    TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
     NativeFn function;
 } ModuleMethodMeta;
@@ -63,9 +64,10 @@ void native_mark_all_functions(void);
 // 注册模块方法（带参数类型）
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // param_types: 参数类型数组，长度为 arity，如果为 NULL 则所有参数默认为 TYPE_ANY
+// return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
 void native_register_module_method(const char* module_name, const char* method_name,
                                    NativeFn function, int arity, int min_arity, int max_arity,
-                                   TypeKind return_type, TypeKind* param_types);
+                                   TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 
 // 获取模块方法的参数类型
 TypeKind native_get_module_method_param_type(const char* module_name, const char* method_name, int param_index);
@@ -75,6 +77,9 @@ ModuleMethodMeta* native_find_module_method(const char* module_name, const char*
 
 // 获取模块方法的返回类型
 TypeKind native_get_module_method_return_type(const char* module_name, const char* method_name);
+
+// 获取模块方法返回数组时的元素类型（编译时调用）
+TypeKind native_get_module_method_return_element_type(const char* module_name, const char* method_name);
 
 // 获取模块方法的参数数量（编译时调用）
 int native_get_module_method_arity(const char* module_name, const char* method_name);
@@ -140,22 +145,28 @@ typedef struct {
     int min_arity;          // 最小参数个数（仅 arity == -1 时有效，-1 表示不限制）
     int max_arity;          // 最大参数个数（仅 arity == -1 时有效，-1 表示不限制）
     TypeKind return_type;   // 返回类型
+    TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS]; // 参数类型数组
 } InstanceMethodMeta;
 
 // 注册实例方法元信息（编译时调用）
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void native_register_instance_method_meta(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type);
+// return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
+void native_register_instance_method_meta(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type);
 
 // 注册实例方法元信息（带参数类型）
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void native_register_instance_method_meta_with_params(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind* param_types);
+// return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
+void native_register_instance_method_meta_with_params(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 
 // 获取实例方法的参数数量（编译时调用）
 int native_get_instance_method_arity(const char* type_name, const char* method_name);
 
 // 获取实例方法的返回类型（编译时调用）
 TypeKind native_get_instance_method_return_type(const char* type_name, const char* method_name, int* out_arity);
+
+// 获取实例方法返回数组时的元素类型（编译时调用）
+TypeKind native_get_instance_method_return_element_type(const char* type_name, const char* method_name);
 
 // 获取实例方法的参数类型（编译时调用）
 TypeKind native_get_instance_method_param_type(const char* type_name, const char* method_name, int param_index);

@@ -161,17 +161,17 @@ static Value native_async_timeout(int arg_count, Value* args) {
 // 注册 asyncs 模块
 void asyncs_init_module(void) {
     TypeKind sleep_params[] = {TYPE_INT};
-    native_register_module_method("asyncs", "sleep", native_async_sleep, 1, -1, -1, TYPE_ANY, sleep_params);
+    native_register_module_method("asyncs", "sleep", native_async_sleep, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, sleep_params);
 
-    native_register_module_method("asyncs", "run", native_async_run, 0, -1, -1, TYPE_NULL, NULL);
+    native_register_module_method("asyncs", "run", native_async_run, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
 
-    native_register_module_method("asyncs", "yield", native_async_yield, 0, -1, -1, TYPE_ANY, NULL);
+    native_register_module_method("asyncs", "yield", native_async_yield, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, NULL);
 
     TypeKind all_params[] = {TYPE_ARRAY};
-    native_register_module_method("asyncs", "all", native_async_all, 1, -1, -1, TYPE_ARRAY, all_params);
+    native_register_module_method("asyncs", "all", native_async_all, 1, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, all_params);
 
     TypeKind timeout_params[] = {TYPE_ANY, TYPE_INT};
-    native_register_module_method("asyncs", "timeout", native_async_timeout, 2, -1, -1, TYPE_ANY, timeout_params);
+    native_register_module_method("asyncs", "timeout", native_async_timeout, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, timeout_params);
 }
 
 // 初始化 asyncs 模块全局变量和事件循环

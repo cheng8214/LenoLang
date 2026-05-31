@@ -6,7 +6,7 @@
 extern void cstruct_init_methods(void);
 extern void cstruct_register_method_with_params(const char* name, ObjNative* method, int arity,
                                                 int min_arity, int max_arity,
-                                                TypeKind return_type, TypeKind* param_types);
+                                                TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 
 // ==================== 核心方法实现 ====================
 // 注意：receiver 和参数的类型检查由编译期和运行时方法分发机制保证
@@ -725,62 +725,62 @@ void cstructs_init_methods(void) {
     // malloc()
     TypeKind malloc_params[] = {};
     cstruct_register_method_with_params("malloc", make_native(cstruct_method_alloc, 1, "malloc"),
-                                       0, -1, -1, TYPE_CSTRUCT, malloc_params);
+                                       0, -1, -1, TYPE_CSTRUCT, TYPE_UNKNOWN, malloc_params);
 
     // from_ptr(ptr)
     TypeKind from_ptr_params[] = {TYPE_PTR};
     cstruct_register_method_with_params("from_ptr", make_native(cstruct_method_from_ptr, 2, "from_ptr"),
-                                       1, -1, -1, TYPE_CSTRUCT, from_ptr_params);
+                                       1, -1, -1, TYPE_CSTRUCT, TYPE_UNKNOWN, from_ptr_params);
 
     // malloc_array(count) - 创建结构体数组
     TypeKind malloc_array_params[] = {TYPE_INT};
     cstruct_register_method_with_params("malloc_array", make_native(cstruct_method_malloc_array, 2, "malloc_array"),
-                                       1, -1, -1, TYPE_CSTRUCT, malloc_array_params);
+                                       1, -1, -1, TYPE_CSTRUCT, TYPE_UNKNOWN, malloc_array_params);
 
     // 注册 cstruct 实例的方法
     // free()
     TypeKind free_params[] = {};
     cstruct_register_method_with_params("free", make_native(cstruct_method_free, 1, "free"),
-                                       0, -1, -1, TYPE_BOOL, free_params);
+                                       0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, free_params);
 
     // to_ptr()
     TypeKind to_ptr_params[] = {};
     cstruct_register_method_with_params("to_ptr", make_native(cstruct_method_to_ptr, 1, "to_ptr"),
-                                       0, -1, -1, TYPE_PTR, to_ptr_params);
+                                       0, -1, -1, TYPE_PTR, TYPE_UNKNOWN, to_ptr_params);
 
     // to_str() - 打印内存布局
     TypeKind to_str_params[] = {};
     cstruct_register_method_with_params("to_str", make_native(cstruct_method_to_str, 1, "to_str"),
-                                       0, -1, -1, TYPE_STRING, to_str_params);
+                                       0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, to_str_params);
 
     // size() - 返回 cstruct 大小
     TypeKind size_params[] = {};
     cstruct_register_method_with_params("size", make_native(cstruct_method_size, 1, "size"),
-                                       0, -1, -1, TYPE_I32, size_params);
+                                       0, -1, -1, TYPE_I32, TYPE_UNKNOWN, size_params);
 
     // alignment() - 返回 cstruct 对齐要求
     TypeKind alignment_params[] = {};
     cstruct_register_method_with_params("alignment", make_native(cstruct_method_alignment, 1, "alignment"),
-                                       0, -1, -1, TYPE_I32, alignment_params);
+                                       0, -1, -1, TYPE_I32, TYPE_UNKNOWN, alignment_params);
 
     // debug() - 显示详细的内存布局、偏移、对齐信息
     TypeKind debug_params[] = {};
     cstruct_register_method_with_params("debug", make_native(cstruct_method_debug, 1, "debug"),
-                                       0, -1, -1, TYPE_STRING, debug_params);
+                                       0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, debug_params);
 
     // hex() - 以十六进制格式显示原始字节
     TypeKind hex_params[] = {};
     cstruct_register_method_with_params("hex", make_native(cstruct_method_hex, 1, "hex"),
-                                       0, -1, -1, TYPE_STRING, hex_params);
+                                       0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, hex_params);
 
     // free_all() - 释放结构体数组
     TypeKind free_all_params[] = {};
     cstruct_register_method_with_params("free_all", make_native(cstruct_method_free_all, 1, "free_all"),
-                                       0, -1, -1, TYPE_BOOL, free_all_params);
+                                       0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, free_all_params);
 
     // 注册 cstruct 数组的方法（OBJ_CSTRUCT_ARRAY 实例方法）
     // len() - 返回数组长度
     TypeKind array_len_params[] = {};
     cstruct_register_method_with_params("len", make_native(cstruct_array_method_len, 1, "len"),
-                                       0, -1, -1, TYPE_INT, array_len_params);
+                                       0, -1, -1, TYPE_INT, TYPE_UNKNOWN, array_len_params);
 }

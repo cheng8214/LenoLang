@@ -30,6 +30,7 @@ typedef struct EventMethodHashEntry {
     ObjNative* method;
     int arity;
     TypeKind return_type;
+    TypeKind return_element_type;
     TypeKind param_types[MAX_METHOD_PARAMS];
     struct EventMethodHashEntry* next;
 } EventMethodHashEntry;
@@ -91,10 +92,10 @@ static void event_method_table_resize(void) {
     eventMethodTable.capacity = new_capacity;
 }
 
-/* 注册 Event 方法 */
+/* 注册 Event 方法（带参数类型信息，供编译期和运行时使用） */
 void event_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind* param_types) {
+                                         int min_arity, int max_arity,
+                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!eventMethodTable.entries) {
         event_method_table_init();
     }
@@ -110,6 +111,7 @@ void event_register_method_with_params(const char* name, ObjNative* method, int 
             entry->method = method;
             entry->arity = arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) entry->param_types[i] = param_types[i];
@@ -131,6 +133,7 @@ void event_register_method_with_params(const char* name, ObjNative* method, int 
     new_entry->method = method;
     new_entry->arity = arity;
     new_entry->return_type = return_type;
+    new_entry->return_element_type = return_element_type;
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
         for (int i = 0; i < count; i++) new_entry->param_types[i] = param_types[i];
@@ -140,9 +143,8 @@ void event_register_method_with_params(const char* name, ObjNative* method, int 
     }
     new_entry->next = eventMethodTable.entries[index];
     eventMethodTable.entries[index] = new_entry;
-    eventMethodTable.count++;
-
-    native_register_instance_method_meta_with_params("event", name, arity, min_arity, max_arity, return_type, param_types);
+    eventMethodTable.count++;/* 同时注册编译期元信息 */
+    native_register_instance_method_meta_with_params("event", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 /* 获取 Event 方法的参数类型 */
@@ -178,9 +180,9 @@ ObjNative* event_find_method(const char* name) {
     return NULL;
 }
 
-/* 查找 Event 方法的元信息 */
+/* 查找 Event 方法的元信息（编译期类型检查） */
 EventMethodEntry event_find_method_meta(const char* name) {
-    EventMethodEntry result = {NULL, NULL, 0, TYPE_ANY, {TYPE_ANY}};
+    EventMethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
     if (!eventMethodTable.entries || eventMethodTable.count == 0) return result;
     uint32_t hash = event_hash_string(name);
     int index = hash & (eventMethodTable.capacity - 1);
@@ -191,6 +193,7 @@ EventMethodEntry event_find_method_meta(const char* name) {
             result.method = entry->method;
             result.arity = entry->arity;
             result.return_type = entry->return_type;
+            result.return_element_type = entry->return_element_type;
             for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
                 result.param_types[i] = entry->param_types[i];
             }

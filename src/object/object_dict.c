@@ -370,12 +370,13 @@ static uint32_t dict_hash_string(const char* str) {
     }
     return hash;
 }
-
+/* 方法哈希表条目 */
 typedef struct DictMethodHashEntry {
     char* name;
     ObjNative* method;
     int arity;
     TypeKind return_type;
+    TypeKind return_element_type;
     TypeKind param_types[MAX_METHOD_PARAMS];
     struct DictMethodHashEntry* next;
 } DictMethodHashEntry;
@@ -486,7 +487,7 @@ void dict_register_method(const char* name, ObjNative* method, int arity, TypeKi
 }
 
 void dict_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                       TypeKind return_type, TypeKind* param_types) {
+                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!dictMethodTable.entries) {
         dict_method_table_init();
     }
@@ -504,6 +505,7 @@ void dict_register_method_with_params(const char* name, ObjNative* method, int a
             entry->method = method;
             entry->arity = arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -518,7 +520,7 @@ void dict_register_method_with_params(const char* name, ObjNative* method, int a
                 }
             }
             // 同时更新编译期元信息表
-            native_register_instance_method_meta_with_params("dict", name, arity, min_arity, max_arity, return_type, param_types);
+            native_register_instance_method_meta_with_params("dict", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
             return;
         }
         entry = entry->next;
@@ -534,7 +536,7 @@ void dict_register_method_with_params(const char* name, ObjNative* method, int a
     new_entry->method = method;
     new_entry->arity = arity;
     new_entry->return_type = return_type;
-    
+    new_entry->return_element_type = return_element_type;
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
         for (int i = 0; i < count; i++) {
@@ -552,8 +554,8 @@ void dict_register_method_with_params(const char* name, ObjNative* method, int a
     new_entry->next = dictMethodTable.entries[index];
     dictMethodTable.entries[index] = new_entry;
     dictMethodTable.count++;
-    
-    native_register_instance_method_meta_with_params("dict", name, arity, min_arity, max_arity, return_type, param_types);
+  /* 同时注册编译期元信息 */
+    native_register_instance_method_meta_with_params("dict", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 // 查找字典方法（O(1)）
@@ -590,4 +592,31 @@ void dict_mark_methods(void) {
             entry = entry->next;
         }
     }
+}
+
+/* 查找 Dict 方法的元信息（编译期类型检查） */
+DictMethodEntry dict_find_method_meta(const char* name) {
+    DictMethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
+    
+    if (!dictMethodTable.entries || dictMethodTable.count == 0) return result;
+    
+    uint32_t hash = dict_hash_string(name);
+    int index = hash & (dictMethodTable.capacity - 1);
+    
+    DictMethodHashEntry* entry = dictMethodTable.entries[index];
+    while (entry) {
+        if (strcmp(entry->name, name) == 0) {
+            result.name = entry->name;
+            result.method = entry->method;
+            result.arity = entry->arity;
+            result.return_type = entry->return_type;
+            result.return_element_type = entry->return_element_type;
+            for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+                result.param_types[i] = entry->param_types[i];
+            }
+            return result;
+        }
+        entry = entry->next;
+    }
+    return result;
 }

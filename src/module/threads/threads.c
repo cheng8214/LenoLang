@@ -16,10 +16,10 @@ extern Value channel_try_receive(ObjChannel* channel);
 // 外部声明：线程方法注册函数
 extern void thread_register_method_with_params(const char* name, ObjNative* method, int arity,
                                               int min_arity, int max_arity,
-                                              TypeKind return_type, TypeKind* param_types);
+                                              TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 extern void channel_register_method_with_params(const char* name, ObjNative* method, int arity,
                                                int min_arity, int max_arity,
-                                               TypeKind return_type, TypeKind* param_types);
+                                               TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 // 外部声明：创建原生函数对象的辅助函数
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 // 外部声明：初始化方法表
@@ -150,25 +150,25 @@ void threads_init_instance_methods(void) {
     TypeKind any_params[] = {TYPE_ANY};
 
     // Thread 实例方法
-    thread_register_method_with_params("join", make_native(thread_method_join, 1, "join"), 0, -1, -1, TYPE_ANY, no_params);
-    thread_register_method_with_params("state", make_native(thread_method_state, 1, "state"), 0, -1, -1, TYPE_STRING, no_params);
+    thread_register_method_with_params("join", make_native(thread_method_join, 1, "join"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    thread_register_method_with_params("state", make_native(thread_method_state, 1, "state"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
 
     // Channel 实例方法
-    channel_register_method_with_params("send", make_native(channel_method_send, 2, "send"), 1, -1, -1, TYPE_ANY, any_params);
-    channel_register_method_with_params("receive", make_native(channel_method_receive, 1, "receive"), 0, -1, -1, TYPE_ANY, no_params);
-    channel_register_method_with_params("close", make_native(channel_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, no_params);
-    channel_register_method_with_params("try_send", make_native(channel_method_try_send, 2, "try_send"), 1, -1, -1, TYPE_BOOL, any_params);
-    channel_register_method_with_params("try_receive", make_native(channel_method_try_receive, 1, "try_receive"), 0, -1, -1, TYPE_ANY, no_params);
+    channel_register_method_with_params("send", make_native(channel_method_send, 2, "send"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, any_params);
+    channel_register_method_with_params("receive", make_native(channel_method_receive, 1, "receive"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    channel_register_method_with_params("close", make_native(channel_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    channel_register_method_with_params("try_send", make_native(channel_method_try_send, 2, "try_send"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, any_params);
+    channel_register_method_with_params("try_receive", make_native(channel_method_try_receive, 1, "try_receive"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
 }
 
 // ==================== 模块初始化 ====================
 
 void threads_init_module(void) {
     TypeKind start_params[] = {TYPE_ANY};
-    native_register_module_method("threads", "start", threads_start, -1, 1, -1, TYPE_THREAD, start_params);
+    native_register_module_method("threads", "start", threads_start, -1, 1, -1, TYPE_THREAD, TYPE_UNKNOWN, start_params);
 
     TypeKind channel_params[] = {TYPE_INT};
-    native_register_module_method("threads", "channel", threads_channel, 1, -1, -1, TYPE_CHANNEL, channel_params);
+    native_register_module_method("threads", "channel", threads_channel, 1, -1, -1, TYPE_CHANNEL, TYPE_UNKNOWN, channel_params);
 
     // 调用 threads_init_instance_methods 注册线程和通道实例方法
     threads_init_instance_methods();

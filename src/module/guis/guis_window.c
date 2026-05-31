@@ -141,7 +141,7 @@ static Value win_set_opacity_func(int argc, Value* args) {
 /* 前向声明 */
 extern void window_register_method_with_params(const char* name, ObjNative* method, int arity,
                                                 int min_arity, int max_arity,
-                                                TypeKind return_type, TypeKind* param_types);
+                                                TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 extern void window_init_methods(void);
 
@@ -154,16 +154,16 @@ void guis_init_window_instance_methods(void) {
     TypeKind bool_1[] = {TYPE_BOOL};
     TypeKind float_1[] = {TYPE_FLOAT};
 
-    window_register_method_with_params("show", make_native(win_show_func, 1, "show"), 0, -1, -1, TYPE_NULL, no_params);
-    window_register_method_with_params("hide", make_native(win_hide_func, 1, "hide"), 0, -1, -1, TYPE_NULL, no_params);
-    window_register_method_with_params("close", make_native(win_close_func, 1, "close"), 0, -1, -1, TYPE_NULL, no_params);
-    window_register_method_with_params("set_title", make_native(win_set_title_func, 2, "set_title"), 1, -1, -1, TYPE_NULL, str_1);
-    window_register_method_with_params("set_size", make_native(win_set_size_func, 3, "set_size"), 2, -1, -1, TYPE_NULL, int_2);
-    window_register_method_with_params("get_size", make_native(win_get_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, no_params);
-    window_register_method_with_params("set_pos", make_native(win_set_pos_func, 3, "set_pos"), 2, -1, -1, TYPE_NULL, int_2);
-    window_register_method_with_params("get_pos", make_native(win_get_pos_func, 1, "get_pos"), 0, -1, -1, TYPE_ANY, no_params);
-    window_register_method_with_params("set_fullscreen", make_native(win_set_fullscreen_func, 2, "set_fullscreen"), 1, -1, -1, TYPE_NULL, bool_1);
-    window_register_method_with_params("should_close", make_native(win_should_close_func, 1, "should_close"), 0, -1, -1, TYPE_BOOL, no_params);
-    window_register_method_with_params("set_should_close", make_native(win_set_should_close_func, 2, "set_should_close"), 1, -1, -1, TYPE_NULL, bool_1);
-    window_register_method_with_params("set_opacity", make_native(win_set_opacity_func, 2, "set_opacity"), 1, -1, -1, TYPE_NULL, float_1);
+    window_register_method_with_params("show", make_native(win_show_func, 1, "show"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    window_register_method_with_params("hide", make_native(win_hide_func, 1, "hide"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    window_register_method_with_params("close", make_native(win_close_func, 1, "close"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    window_register_method_with_params("set_title", make_native(win_set_title_func, 2, "set_title"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_1);
+    window_register_method_with_params("set_size", make_native(win_set_size_func, 3, "set_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
+    window_register_method_with_params("get_size", make_native(win_get_size_func, 1, "get_size"), 0, -1, -1, TYPE_ARRAY, TYPE_INT, no_params);
+    window_register_method_with_params("set_pos", make_native(win_set_pos_func, 3, "set_pos"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
+    window_register_method_with_params("get_pos", make_native(win_get_pos_func, 1, "get_pos"), 0, -1, -1, TYPE_ARRAY, TYPE_INT, no_params);
+    window_register_method_with_params("set_fullscreen", make_native(win_set_fullscreen_func, 2, "set_fullscreen"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
+    window_register_method_with_params("should_close", make_native(win_should_close_func, 1, "should_close"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    window_register_method_with_params("set_should_close", make_native(win_set_should_close_func, 2, "set_should_close"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
+    window_register_method_with_params("set_opacity", make_native(win_set_opacity_func, 2, "set_opacity"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, float_1);
 }

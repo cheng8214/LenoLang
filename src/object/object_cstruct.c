@@ -501,7 +501,10 @@ typedef struct CStructMethodHashEntry {
     char* name;
     ObjNative* method;
     int arity;
+    int min_arity;
+    int max_arity;
     TypeKind return_type;
+    TypeKind return_element_type;
     TypeKind param_types[MAX_METHOD_PARAMS];
     struct CStructMethodHashEntry* next;
 } CStructMethodHashEntry;
@@ -580,7 +583,7 @@ static void cstruct_method_table_resize(void) {
 // 注册 cstruct 方法（带参数类型）
 void cstruct_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind* param_types) {
+                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!cstructMethodTable.entries) {
         cstruct_method_table_init();
     }
@@ -597,7 +600,10 @@ void cstruct_register_method_with_params(const char* name, ObjNative* method, in
         if (strcmp(entry->name, name) == 0) {
             entry->method = method;
             entry->arity = arity;
+            entry->min_arity = min_arity;
+            entry->max_arity = max_arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -625,7 +631,10 @@ void cstruct_register_method_with_params(const char* name, ObjNative* method, in
     new_entry->name = strdup(name);
     new_entry->method = method;
     new_entry->arity = arity;
+    new_entry->min_arity = min_arity;
+    new_entry->max_arity = max_arity;
     new_entry->return_type = return_type;
+    new_entry->return_element_type = return_element_type;
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
         for (int i = 0; i < count; i++) {
@@ -645,7 +654,7 @@ void cstruct_register_method_with_params(const char* name, ObjNative* method, in
     cstructMethodTable.count++;
     
     // 同时注册到编译期元信息表
-    native_register_instance_method_meta_with_params("cstruct", name, arity, min_arity, max_arity, return_type, param_types);
+    native_register_instance_method_meta_with_params("cstruct", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 // 查找 cstruct 方法

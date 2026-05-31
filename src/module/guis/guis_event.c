@@ -196,23 +196,23 @@ void guis_init_event_methods(void) {
 
     TypeKind no_params[] = {};
 
-    event_register_method_with_params("type", make_native(event_type_func, 1, "type"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("is_quit", make_native(event_is_quit_func, 1, "is_quit"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_window_close", make_native(event_is_window_close_func, 1, "is_window_close"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_window_resize", make_native(event_is_window_resize_func, 1, "is_window_resize"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_window_move", make_native(event_is_window_move_func, 1, "is_window_move"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_key_down", make_native(event_is_key_down_func, 1, "is_key_down"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_key_up", make_native(event_is_key_up_func, 1, "is_key_up"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_text_input", make_native(event_is_text_input_func, 1, "is_text_input"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_move", make_native(event_is_mouse_move_func, 1, "is_mouse_move"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_down", make_native(event_is_mouse_down_func, 1, "is_mouse_down"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_up", make_native(event_is_mouse_up_func, 1, "is_mouse_up"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_wheel", make_native(event_is_mouse_wheel_func, 1, "is_mouse_wheel"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("key", make_native(event_key_func, 1, "key"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("mouse_x", make_native(event_mouse_x_func, 1, "mouse_x"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("mouse_y", make_native(event_mouse_y_func, 1, "mouse_y"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("mouse_button", make_native(event_mouse_button_func, 1, "mouse_button"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("width", make_native(event_width_func, 1, "width"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("height", make_native(event_height_func, 1, "height"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("text", make_native(event_text_func, 1, "text"), 0, -1, -1, TYPE_STRING, no_params);
+    event_register_method_with_params("type", make_native(event_type_func, 1, "type"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_quit", make_native(event_is_quit_func, 1, "is_quit"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_window_close", make_native(event_is_window_close_func, 1, "is_window_close"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_window_resize", make_native(event_is_window_resize_func, 1, "is_window_resize"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_window_move", make_native(event_is_window_move_func, 1, "is_window_move"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_key_down", make_native(event_is_key_down_func, 1, "is_key_down"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_key_up", make_native(event_is_key_up_func, 1, "is_key_up"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_text_input", make_native(event_is_text_input_func, 1, "is_text_input"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_mouse_move", make_native(event_is_mouse_move_func, 1, "is_mouse_move"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_mouse_down", make_native(event_is_mouse_down_func, 1, "is_mouse_down"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_mouse_up", make_native(event_is_mouse_up_func, 1, "is_mouse_up"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("is_mouse_wheel", make_native(event_is_mouse_wheel_func, 1, "is_mouse_wheel"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("key", make_native(event_key_func, 1, "key"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("mouse_x", make_native(event_mouse_x_func, 1, "mouse_x"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("mouse_y", make_native(event_mouse_y_func, 1, "mouse_y"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("mouse_button", make_native(event_mouse_button_func, 1, "mouse_button"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("width", make_native(event_width_func, 1, "width"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("height", make_native(event_height_func, 1, "height"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("text", make_native(event_text_func, 1, "text"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
 }

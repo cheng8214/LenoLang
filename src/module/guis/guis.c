@@ -670,52 +670,52 @@ void guis_init_module(void) {
     TypeKind str_params[] = {TYPE_STRING};
 
     /* ===== 窗口操作 ===== */
-    native_register_module_method("guis", "create_window", gui_create_window_func, -1, 2, 4, TYPE_WIN, NULL);
+    native_register_module_method("guis", "create_window", gui_create_window_func, -1, 2, 4, TYPE_WIN, TYPE_UNKNOWN, NULL);
 
     /* ===== 渲染器操作（工厂/析构） ===== */
-    native_register_module_method("guis", "create_renderer", gui_create_renderer_func, 1, -1, -1, TYPE_DRAW, obj_1int);
-    native_register_module_method("guis", "destroy_renderer", gui_destroy_renderer_func, 1, -1, -1, TYPE_NULL, obj_1int);
-    native_register_module_method("guis", "resize_renderer", gui_resize_renderer_func, 3, -1, -1, TYPE_BOOL, obj_2int);
+    native_register_module_method("guis", "create_renderer", gui_create_renderer_func, 1, -1, -1, TYPE_DRAW, TYPE_UNKNOWN, obj_1int);
+    native_register_module_method("guis", "destroy_renderer", gui_destroy_renderer_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_1int);
+    native_register_module_method("guis", "resize_renderer", gui_resize_renderer_func, 3, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, obj_2int);
 
     /* ===== 事件操作 ===== */
-    native_register_module_method("guis", "poll", gui_poll_event_func, 0, -1, -1, TYPE_ANY, no_params);
-    native_register_module_method("guis", "wait", gui_wait_event_func, 1, -1, -1, TYPE_ANY, int_params);
+    native_register_module_method("guis", "poll", gui_poll_event_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "wait", gui_wait_event_func, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, int_params);
 
     /* ===== 输入状态查询 ===== */
-    native_register_module_method("guis", "get_key", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, int_params);
-    native_register_module_method("guis", "get_mouse", gui_get_mouse_state_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "get_key", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
+    native_register_module_method("guis", "get_mouse", gui_get_mouse_state_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
 
     /* ===== 剪贴板 ===== */
-    native_register_module_method("guis", "get_clipboard", gui_get_clipboard_text_func, 0, -1, -1, TYPE_ANY, no_params);
-    native_register_module_method("guis", "set_clipboard", gui_set_clipboard_text_func, 1, -1, -1, TYPE_NULL, str_params);
+    native_register_module_method("guis", "get_clipboard", gui_get_clipboard_text_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "set_clipboard", gui_set_clipboard_text_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_params);
 
     /* ===== 光标控制 ===== */
-    native_register_module_method("guis", "show_cursor", gui_show_cursor_func, 1, -1, -1, TYPE_NULL, bool_params);
+    native_register_module_method("guis", "show_cursor", gui_show_cursor_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_params);
 
     /* ===== 消息框 ===== */
-    native_register_module_method("guis", "msg_box", gui_msg_box_func, 3, -1, -1, TYPE_INT, str_2int);
+    native_register_module_method("guis", "msg_box", gui_msg_box_func, 3, -1, -1, TYPE_INT, TYPE_UNKNOWN, str_2int);
 
     /* ===== 高精度计时器 ===== */
-    native_register_module_method("guis", "get_ticks", gui_get_ticks_func, 0, -1, -1, TYPE_INT, no_params);
-    native_register_module_method("guis", "get_perf_counter", gui_get_performance_counter_func, 0, -1, -1, TYPE_INT, no_params);
-    native_register_module_method("guis", "get_perf_freq", gui_get_performance_frequency_func, 0, -1, -1, TYPE_INT, no_params);
-    native_register_module_method("guis", "delay", gui_delay_func, 1, -1, -1, TYPE_NULL, int_params);
+    native_register_module_method("guis", "get_ticks", gui_get_ticks_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "get_perf_counter", gui_get_performance_counter_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "get_perf_freq", gui_get_performance_frequency_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "delay", gui_delay_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
 
     /* ===== 定时器回调 ===== */
     TypeKind int_func[] = {TYPE_INT, TYPE_ANY};
-    native_register_module_method("guis", "add_timer", gui_add_timer_func, 2, -1, -1, TYPE_INT, int_func);
-    native_register_module_method("guis", "remove_timer", gui_remove_timer_func, 1, -1, -1, TYPE_BOOL, int_params);
+    native_register_module_method("guis", "add_timer", gui_add_timer_func, 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, int_func);
+    native_register_module_method("guis", "remove_timer", gui_remove_timer_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
 
     /* ===== 字体操作 ===== */
-    native_register_module_method("guis", "load_font", gui_load_font_func, 2, -1, -1, TYPE_ANY, str_int);
-    native_register_module_method("guis", "destroy_font", gui_destroy_font_func, 1, -1, -1, TYPE_NULL, obj_1int);
+    native_register_module_method("guis", "load_font", gui_load_font_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, str_int);
+    native_register_module_method("guis", "destroy_font", gui_destroy_font_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_1int);
 
     /* ===== 显示器信息 ===== */
-    native_register_module_method("guis", "get_display", gui_get_display_size_func, 0, -1, -1, TYPE_ANY, no_params);
-    native_register_module_method("guis", "get_dpi", gui_get_display_dpi_func, 0, -1, -1, TYPE_FLOAT, no_params);
+    native_register_module_method("guis", "get_display", gui_get_display_size_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "get_dpi", gui_get_display_dpi_func, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
 
     /* ===== 回调式事件循环 ===== */
-    native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, obj_2func);
+    native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_2func);
 
     /* 注册 Draw 实例方法 */
     guis_init_instance_methods();

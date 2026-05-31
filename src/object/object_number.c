@@ -20,12 +20,15 @@ static uint32_t number_hash_string(const char* str) {
     }
     return hash;
 }
-
+/* 方法哈希表条目 */
 typedef struct NumberMethodHashEntry {
     char* name;
     ObjNative* method;
     int arity;
+    int min_arity;
+    int max_arity;
     TypeKind return_type;
+    TypeKind return_element_type;
     TypeKind param_types[MAX_METHOD_PARAMS];
     struct NumberMethodHashEntry* next;
 } NumberMethodHashEntry;
@@ -136,7 +139,7 @@ void number_register_method(const char* name, ObjNative* method, int arity, Type
 }
 
 void number_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind* param_types) {
+                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!numberMethodTable.entries) {
         number_method_table_init();
     }
@@ -153,7 +156,10 @@ void number_register_method_with_params(const char* name, ObjNative* method, int
         if (strcmp(entry->name, name) == 0) {
             entry->method = method;
             entry->arity = arity;
+            entry->min_arity = min_arity;
+            entry->max_arity = max_arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -181,8 +187,10 @@ void number_register_method_with_params(const char* name, ObjNative* method, int
     new_entry->name = strdup(name);
     new_entry->method = method;
     new_entry->arity = arity;
+    new_entry->min_arity = min_arity;
+    new_entry->max_arity = max_arity;
     new_entry->return_type = return_type;
-    
+    new_entry->return_element_type = return_element_type;
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
         for (int i = 0; i < count; i++) {
@@ -200,8 +208,8 @@ void number_register_method_with_params(const char* name, ObjNative* method, int
     new_entry->next = numberMethodTable.entries[index];
     numberMethodTable.entries[index] = new_entry;
     numberMethodTable.count++;
-    
-    native_register_instance_method_meta_with_params("number", name, arity, min_arity, max_arity, return_type, param_types);
+  /* 同时注册编译期元信息 */
+    native_register_instance_method_meta_with_params("number", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 // 查找数字方法（O(1)）

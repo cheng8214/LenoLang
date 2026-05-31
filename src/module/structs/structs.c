@@ -6,7 +6,7 @@
 extern void struct_init_methods(void);
 extern void struct_register_method_with_params(const char* name, ObjNative* method, int arity,
                                                 int min_arity, int max_arity,
-                                                TypeKind return_type, TypeKind* param_types);
+                                                TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 
 // ==================== 深拷贝实现 ====================
 
@@ -46,5 +46,5 @@ void structs_init_instance_methods(void) {
     // 注册 copy 方法
     TypeKind copy_params[] = {};
     struct_register_method_with_params("copy", make_native(struct_method_copy, 1, "copy"),
-                                       0, -1, -1, TYPE_STRUCT, copy_params);
+                                       0, -1, -1, TYPE_STRUCT, TYPE_UNKNOWN, copy_params);
 }

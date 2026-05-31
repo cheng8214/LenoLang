@@ -30,6 +30,7 @@ typedef struct WindowMethodHashEntry {
     ObjNative* method;
     int arity;
     TypeKind return_type;
+    TypeKind return_element_type;
     TypeKind param_types[MAX_METHOD_PARAMS];
     struct WindowMethodHashEntry* next;
 } WindowMethodHashEntry;
@@ -94,7 +95,7 @@ static void window_method_table_resize(void) {
 /* 注册 Win 方法（带参数类型信息，供编译期和运行时使用） */
 void window_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind* param_types) {
+                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!windowMethodTable.entries) {
         window_method_table_init();
     }
@@ -111,6 +112,7 @@ void window_register_method_with_params(const char* name, ObjNative* method, int
             entry->method = method;
             entry->arity = arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) entry->param_types[i] = param_types[i];
@@ -133,6 +135,7 @@ void window_register_method_with_params(const char* name, ObjNative* method, int
     new_entry->method = method;
     new_entry->arity = arity;
     new_entry->return_type = return_type;
+    new_entry->return_element_type = return_element_type;
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
         for (int i = 0; i < count; i++) new_entry->param_types[i] = param_types[i];
@@ -145,7 +148,7 @@ void window_register_method_with_params(const char* name, ObjNative* method, int
     windowMethodTable.count++;
 
     /* 同时注册编译期元信息 */
-    native_register_instance_method_meta_with_params("win", name, arity, min_arity, max_arity, return_type, param_types);
+    native_register_instance_method_meta_with_params("win", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 /* 获取 Win 方法的参数类型 */
@@ -183,7 +186,7 @@ ObjNative* window_find_method(const char* name) {
 
 /* 查找 Win 方法的元信息（编译期类型检查） */
 WindowMethodEntry window_find_method_meta(const char* name) {
-    WindowMethodEntry result = {NULL, NULL, 0, TYPE_ANY, {TYPE_ANY}};
+    WindowMethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
     if (!windowMethodTable.entries || windowMethodTable.count == 0) return result;
     uint32_t hash = window_hash_string(name);
     int index = hash & (windowMethodTable.capacity - 1);
@@ -194,6 +197,7 @@ WindowMethodEntry window_find_method_meta(const char* name) {
             result.method = entry->method;
             result.arity = entry->arity;
             result.return_type = entry->return_type;
+            result.return_element_type = entry->return_element_type;
             for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
                 result.param_types[i] = entry->param_types[i];
             }

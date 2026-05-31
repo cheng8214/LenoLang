@@ -1,6 +1,8 @@
 #include "semantic_internal.h"
 #include "include/module_symbol_table.h"
 
+
+
 // ============================================================================
 // 从函数体推断返回类型
 // ============================================================================
@@ -640,6 +642,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 return result;
                             }
 
+                            // 如果返回类型是数组，从元信息获取元素类型
+                            if (return_type == TYPE_ARRAY) {
+                                TypeKind elem_type = native_get_instance_method_return_element_type(type_name, method_name);
+                                if (elem_type != TYPE_UNKNOWN) {
+                                    type_free(obj_type);
+                                    TypeInfo* arr_type = type_new(TYPE_ARRAY);
+                                    arr_type->element_type = type_new(elem_type);
+                                    return arr_type;
+                                }
+                            }
+
                             type_free(obj_type);
                             return type_new(return_type);
                         }
@@ -657,9 +670,21 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             int is_native_module = native_is_module(actual_module);
 
             if (is_native_module) {
+                const char* method_name = ast->u.module_call.method_name;
                 TypeKind return_type = native_get_module_method_return_type(
                     actual_module,
-                    ast->u.module_call.method_name);
+                    method_name);
+                
+                // 如果返回类型是数组，从元信息获取元素类型
+                if (return_type == TYPE_ARRAY) {
+                    TypeKind elem_type = native_get_module_method_return_element_type(actual_module, method_name);
+                    if (elem_type != TYPE_UNKNOWN) {
+                        TypeInfo* arr_type = type_new(TYPE_ARRAY);
+                        arr_type->element_type = type_new(elem_type);
+                        return arr_type;
+                    }
+                }
+                
                 return type_new(return_type);
             }
 

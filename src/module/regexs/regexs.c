@@ -858,19 +858,19 @@ void regexs_init_module(void) {
     TypeKind str_params[] = {TYPE_STRING, TYPE_STRING};
     TypeKind str3_params[] = {TYPE_STRING, TYPE_STRING, TYPE_STRING};
 
-    native_register_module_method("regexs", "match", regex_match, 2, -1, -1, TYPE_BOOL, str_params);
-    native_register_module_method("regexs", "find", regex_find, 2, -1, -1, TYPE_INT, str_params);
-    native_register_module_method("regexs", "extract", regex_extract, 2, -1, -1, TYPE_STRING, str_params);
-    native_register_module_method("regexs", "replace", regex_replace, 3, -1, -1, TYPE_STRING, str3_params);
-    native_register_module_method("regexs", "split", regex_split, -1, 2, 3, TYPE_ARRAY, str_params);
-    native_register_module_method("regexs", "groups", regex_groups, 2, -1, -1, TYPE_ARRAY, str_params);
+    native_register_module_method("regexs", "match", regex_match, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, str_params);
+    native_register_module_method("regexs", "find", regex_find, 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, str_params);
+    native_register_module_method("regexs", "extract", regex_extract, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, str_params);
+    native_register_module_method("regexs", "replace", regex_replace, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, str3_params);
+    native_register_module_method("regexs", "split", regex_split, -1, 2, 3, TYPE_ARRAY, TYPE_STRING, str_params);
+    native_register_module_method("regexs", "groups", regex_groups, 2, -1, -1, TYPE_ARRAY, TYPE_STRING, str_params);
 
     // 返回数组的方法
-    native_register_module_method("regexs", "find_all", regex_find_all, 2, -1, -1, TYPE_ARRAY, str_params);
-    native_register_module_method("regexs", "extract_all", regex_extract_all, 2, -1, -1, TYPE_ARRAY, str_params);
-    native_register_module_method("regexs", "replace_all", regex_replace_all, 3, -1, -1, TYPE_STRING, str3_params);
+    native_register_module_method("regexs", "find_all", regex_find_all, 2, -1, -1, TYPE_ARRAY, TYPE_STRING, str_params);
+    native_register_module_method("regexs", "extract_all", regex_extract_all, 2, -1, -1, TYPE_ARRAY, TYPE_STRING, str_params);
+    native_register_module_method("regexs", "replace_all", regex_replace_all, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, str3_params);
 
     // 单参数方法
     TypeKind single_str_params[] = {TYPE_STRING};
-    native_register_module_method("regexs", "escape", regex_escape, 1, -1, -1, TYPE_STRING, single_str_params);
+    native_register_module_method("regexs", "escape", regex_escape, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, single_str_params);
 }

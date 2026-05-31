@@ -80,6 +80,7 @@ typedef struct ArrayMethodHashEntry {
     ObjNative* method;             // 方法实现
     int arity;                     // 参数个数
     TypeKind return_type;          // 返回类型
+    TypeKind return_element_type;  // 返回元素类型
     TypeKind param_types[MAX_METHOD_PARAMS]; // 参数类型数组
     struct ArrayMethodHashEntry* next;  // 链式冲突处理
 } ArrayMethodHashEntry;
@@ -199,7 +200,7 @@ void array_register_method(const char* name, ObjNative* method, int arity, TypeK
 
 // 注册数组方法（带参数类型）
 void array_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind* param_types) {
+                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (!arrayMethodTable.entries) {
         array_method_table_init();
     }
@@ -221,6 +222,7 @@ void array_register_method_with_params(const char* name, ObjNative* method, int 
             entry->method = method;
             entry->arity = arity;
             entry->return_type = return_type;
+            entry->return_element_type = return_element_type;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -250,6 +252,7 @@ void array_register_method_with_params(const char* name, ObjNative* method, int 
     new_entry->method = method;
     new_entry->arity = arity;
     new_entry->return_type = return_type;
+    new_entry->return_element_type = return_element_type;
     
     // 复制参数类型
     if (param_types && arity > 0) {
@@ -272,7 +275,7 @@ void array_register_method_with_params(const char* name, ObjNative* method, int 
     arrayMethodTable.count++;
     
     // 同时注册到编译期元信息表，避免重复维护
-    native_register_instance_method_meta_with_params("array", name, arity, min_arity, max_arity, return_type, param_types);
+    native_register_instance_method_meta_with_params("array", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 // 获取数组方法的参数类型
@@ -314,7 +317,7 @@ ObjNative* array_find_method(const char* name) {
 
 // 查找数组方法的元信息（用于编译期类型检查）
 ArrayMethodEntry array_find_method_meta(const char* name) {
-    ArrayMethodEntry result = {NULL, NULL, 0, TYPE_ANY, {TYPE_ANY}};
+    ArrayMethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
     
     if (!arrayMethodTable.entries || arrayMethodTable.count == 0) return result;
     
@@ -328,6 +331,7 @@ ArrayMethodEntry array_find_method_meta(const char* name) {
             result.method = entry->method;
             result.arity = entry->arity;
             result.return_type = entry->return_type;
+            result.return_element_type = entry->return_element_type;
             for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
                 result.param_types[i] = entry->param_types[i];
             }
