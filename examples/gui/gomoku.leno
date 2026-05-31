@@ -2,7 +2,12 @@ import guis
 import maths
 
 main() {
-    Win win = guis.create_window("五子棋 Gomoku", 700, 800, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 900,
+        resizable: true
+    }
+    Win win = guis.create_window("Gomoku", w_style)
 
     var font_title = guis.load_font("SimSun", 28)
     var font_info = guis.load_font("SimSun", 18)
@@ -11,8 +16,8 @@ main() {
     var cell = 40
     var board_x = 50
     var board_y = 80
-    var board_w = board_size * cell
-    var board_h = board_size * cell
+    var board_w = (board_size - 1) * cell
+    var board_h = (board_size - 1) * cell
 
     var board = []
     for board_size to r {
@@ -239,18 +244,19 @@ main() {
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.text_font(font_title, "五子棋", 300, 20)
 
+            var margin = 20
             ren.set_color(_rgb(220, 180, 100, 255))
-            ren.fill_rect(board_x - 10, board_y - 10, board_w + 20, board_h + 20)
+            ren.fill_rect(board_x - margin, board_y - margin, board_w + margin*2, board_h + margin*2)
 
             ren.set_color(_rgb(240, 210, 140, 255))
-            ren.fill_rect(board_x, board_y, board_w, board_h)
+            ren.fill_rect(board_x - margin/2, board_y - margin/2, board_w + margin, board_h + margin)
 
             ren.set_color(_rgb(80, 60, 40, 255))
-            for board_size + 1 to i {
+            for board_size to i {
                 var x = board_x + i * cell
                 ren.line(x, board_y, x, board_y + board_h)
             }
-            for board_size + 1 to i {
+            for board_size to i {
                 var y = board_y + i * cell
                 ren.line(board_x, y, board_x + board_w, y)
             }
@@ -309,12 +315,12 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
             if e.is_key_down() {
                 var key = e.key()
                 if key == 0x1B {
-                    guis.set_should_close(win, true)
+                    win.set_should_close(true)
                 }
                 if key == 0x52 or key == 0x72 {
                     reset_game()
@@ -326,14 +332,17 @@ main() {
                 int c = _int(maths.round(_float(mx - board_x) / cell))
                 int r = _int(maths.round(_float(my - board_y) / cell))
 
-                if c >= 0 and c < board_size and r >= 0 and r < board_size {
-                    do_human_move(r, c)
-                }
+                if c < 0 { c = 0 }
+                if c >= board_size { c = board_size - 1 }
+                if r < 0 { r = 0 }
+                if r >= board_size { r = board_size - 1 }
+
+                do_human_move(r, c)
             }
         }
     )
 
     guis.destroy_font(font_title)
     guis.destroy_font(font_info)
-    guis.cleanup(win)
+    win.close()
 }

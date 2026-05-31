@@ -1,0 +1,17 @@
+// 测试 Style[window] 语法
+
+import guis
+
+// 使用 Style[window] 定义窗口样式
+Style[window] w_style = {
+    width: 800,
+    height: 600
+}
+
+// 验证 w_style 可以像 Dict 一样使用
+var w = w_style.width
+var h = w_style.height
+
+print("width =", w)
+print("height =", h)
+print("type =", type(w_style))

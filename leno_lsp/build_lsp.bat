@@ -50,6 +50,9 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_array.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_dict.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_number.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_file.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_draw.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_window.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_event.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_struct.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_cstruct.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_face.c
@@ -93,9 +96,14 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/module/threads/threads.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/assert/assert.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/sys/sys.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/regexs/regexs.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_draw.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_window.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_event.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/leno_guis_win32.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/platform/platform_thread.c
 
-gcc -o build\leno_lsp.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32
+gcc -o build\leno_lsp.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32 -lgdi32 -luser32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed

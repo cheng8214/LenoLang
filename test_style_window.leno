@@ -1,0 +1,18 @@
+// 测试 Style[window] + create_window
+
+import guis
+
+// 定义窗口样式
+Style[window] w_style = {
+    width: 1024,
+    height: 768
+}
+
+// 使用 Style 创建窗口
+var win = guis.create_window("Hello Style", w_style)
+
+print("Window created:", win)
+print("Type:", type(win))
+
+// 清理
+guis.cleanup(win)

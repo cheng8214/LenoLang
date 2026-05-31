@@ -102,6 +102,9 @@ OPCODE(OP_MODULE_CALL) {
                     case TYPE_EVENT:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_EVENT);
                         break;
+                    case TYPE_STYLE:
+                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_DICT);
+                        break;
                     case TYPE_PTR:
                         if (val_is_obj(arg) &&
                             (val_as_obj(arg)->type == OBJ_FFI_POINTER ||

@@ -99,6 +99,10 @@ void scope_free(Scope* scope) {
                 }
                 free(sym->dict_keys);
             }
+            // 释放 Style 目标控件名
+            if (sym->style_target) {
+                free(sym->style_target);
+            }
             free(sym);
         }
     }

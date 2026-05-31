@@ -2,7 +2,12 @@ import guis
 import times
 
 main() {
-    Win win = guis.create_window("LenoC Timer & Clock", 800, 600, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("LenoC Timer & Clock", w_style)
 
     var elapsed = 0
     var start_ms = times.ms()
@@ -48,14 +53,14 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
             if e.is_key_down() and e.key() == 0x1B {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
         }
     )
 
-    guis.cleanup(win)
+    win.close()
     print("timer clock done!")
 }

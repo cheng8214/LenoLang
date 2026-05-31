@@ -63,7 +63,17 @@ guis.c               - LenoC 模块注册
 import guis
 
 main() {
-    Win win = guis.create_window("Hello", 800, 600, 1)
+    // 方式一：显式 Style 类型（推荐，支持 IDE 字段补全）
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("Hello", w_style)
+
+    // 方式二：直接传入 Dict（简洁，适合快速原型）
+    // Win win = guis.create_window("Hello", {width: 800, height: 600})
+
     guis.run(win,
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
@@ -74,11 +84,11 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
         }
     )
-    guis.cleanup(win)
+    win.close()
 }
 ```
 
@@ -99,9 +109,16 @@ main() {
 | `64` | 最大化 (`MAXIMIZED`) |
 
 ```leno
-var win = guis.create_window("App", 800, 600, 1)         // 可调整大小
-var win = guis.create_window("App", 800, 600, 1 | 16)    // 可调整大小 + 置顶
-var win = guis.create_window("App", 800, 600, 4)          // 无边框
+// 使用 Style[window] 定义窗口样式
+Style[window] w_style = {
+    width: 800,
+    height: 600,
+    resizable: true
+}
+var win = guis.create_window("App", w_style)
+
+// 或使用内联样式
+var win = guis.create_window("App", {width: 1024, height: 768, fullscreen: true})
 ```
 
 ---
@@ -112,35 +129,49 @@ var win = guis.create_window("App", 800, 600, 4)          // 无边框
 
 ---
 
-### `guis.cleanup(win)`
+### `win.close()`
 
 销毁窗口并退出 GUI 子系统。程序结束时调用。
-
-**参数**:
-- `win` (Win): 窗口对象
 
 **返回**: `null`
 
 ```leno
-guis.cleanup(win)
+win.close()
 ```
 
 ---
 
-### `guis.create_window(title, w, h, flags)`
+### `guis.create_window(title, style_dict)`
 
 创建窗口。
 
 **参数**:
 - `title` (string): 窗口标题
-- `w` (int): 窗口宽度
-- `h` (int): 窗口高度
-- `flags` (int): 窗口标志（见上文）
+- `style_dict` (Dict): 窗口样式字典，支持以下字段：
+  - `width` (int): 窗口宽度，默认 800
+  - `height` (int): 窗口高度，默认 600
+  - `x` (int): 窗口位置 X
+  - `y` (int): 窗口位置 Y
+  - `fullscreen` (bool): 是否全屏
+  - `borderless` (bool): 是否无边框
+  - `resizable` (bool): 是否可调整大小
+  - `opacity` (float): 透明度 0.0~1.0
+  - `visible` (bool): 是否可见
+  - `always_on_top` (bool): 是否置顶
 
 **返回**: `Win` - 窗口对象
 
 ```leno
-Win win = guis.create_window("My App", 1024, 768, 1)
+// 方式一：显式 Style 类型（推荐，支持 IDE 字段补全）
+Style[window] w_style = {
+    width: 1024,
+    height: 768,
+    resizable: true
+}
+Win win = guis.create_window("My App", w_style)
+
+// 方式二：直接传入 Dict（简洁，适合快速原型）
+Win win = guis.create_window("My App", {width: 800, height: 600})
 ```
 
 ---
@@ -165,7 +196,7 @@ guis.run(win,
     },
     func(Event e) {
         if e.is_quit() {
-            guis.set_should_close(win, true)
+            win.set_should_close(true)
         }
     }
 )
@@ -173,77 +204,79 @@ guis.run(win,
 
 ---
 
-## 窗口操作
+## 窗口操作（Win 实例方法）
 
-### `guis.show(win)` / `guis.hide(win)`
+Win 类型支持实例方法调用，使用 `win.method()` 风格：
+
+### `win.show()` / `win.hide()`
 
 显示或隐藏窗口。
 
 ```leno
-guis.show(win)
-guis.hide(win)
+win.show()
+win.hide()
 ```
 
 ---
 
-### `guis.set_title(win, title)`
+### `win.set_title(title)`
 
 设置窗口标题。
 
 ```leno
-guis.set_title(win, "新标题")
+win.set_title("新标题")
 ```
 
 ---
 
-### `guis.set_size(win, w, h)` / `guis.get_size(win)`
+### `win.set_size(w, h)` / `win.get_size()`
 
 设置或获取窗口大小。`get_size` 返回 `[w, h]` 数组。
 
 ```leno
-guis.set_size(win, 1024, 768)
-var size = guis.get_size(win)
+win.set_size(1024, 768)
+var size = win.get_size()
 print("宽: " + size[0] + " 高: " + size[1])
 ```
 
 ---
 
-### `guis.set_pos(win, x, y)` / `guis.get_pos(win)`
+### `win.set_pos(x, y)` / `win.get_pos()`
 
 设置或获取窗口位置。`get_pos` 返回 `[x, y]` 数组。
 
 ```leno
-guis.set_pos(win, 100, 100)
-var pos = guis.get_pos(win)
+win.set_pos(100, 100)
+var pos = win.get_pos()
 ```
 
 ---
 
-### `guis.set_fullscreen(win, bool)`
+### `win.set_fullscreen(bool)`
 
 设置窗口全屏状态。
 
 ```leno
-guis.set_fullscreen(win, true)   // 全屏
-guis.set_fullscreen(win, false)  // 退出全屏
+win.set_fullscreen(true)   // 全屏
+win.set_fullscreen(false)  // 退出全屏
 ```
 
 ---
 
-### `guis.should_close(win)` / `guis.set_should_close(win, bool)`
+### `win.should_close()` / `win.set_should_close(bool)`
 
 查询或设置窗口关闭标志。
 
 ```leno
-if guis.should_close(win) {
+if win.should_close() {
     print("窗口应该关闭")
 }
-guis.set_should_close(win, true)
+win.set_should_close(true)
 ```
 
 ---
 
-### `guis.set_opacity(win, opacity)`
+### `win.set_opacity(opacity)`
 
 设置窗口透明度。
 
@@ -251,7 +284,7 @@ guis.set_should_close(win, true)
 - `opacity` (float): 0.0（完全透明）~ 1.0（完全不透明）
 
 ```leno
-guis.set_opacity(win, 0.85)
+win.set_opacity(0.85)
 ```
 
 ---
@@ -467,7 +500,7 @@ func(Event e) {
     if e.is_key_down() {
         var key = e.key()
         if key == 0x1B {
-            guis.set_should_close(win, true)
+            win.set_should_close(true)
         }
         print("key: " + _str(key))
     }
@@ -603,10 +636,10 @@ guis.run(win,
     func(Event e) {
         // 事件处理
         if e.is_quit() or e.is_window_close() {
-            guis.set_should_close(win, true)
+            win.set_should_close(true)
         }
         if e.is_key_down() and e.key() == 0x1B {
-            guis.set_should_close(win, true)
+            win.set_should_close(true)
         }
     }
 )
@@ -617,15 +650,15 @@ guis.run(win,
 如果不使用 `guis.run()`，可以手动管理渲染器和事件循环：
 
 ```leno
-Win win = guis.create_window("App", 800, 600, 1)
+Win win = guis.create_window("App", {width: 800, height: 600})
 Draw ren = guis.create_renderer(win)
 
-while not guis.should_close(win) {
+while not win.should_close() {
     var ev = guis.poll()
     while ev != null {
         // 处理事件
         if ev.is_quit() {
-            guis.set_should_close(win, true)
+            win.set_should_close(true)
         }
         ev = guis.poll()
     }
@@ -636,7 +669,7 @@ while not guis.should_close(win) {
 }
 
 guis.destroy_renderer(ren)
-guis.cleanup(win)
+win.close()
 ```
 
 ---
@@ -845,7 +878,12 @@ print("DPI: " + dpi)
 import guis
 
 main() {
-    Win win = guis.create_window("Hello LenoC", 800, 600, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("Hello LenoC", w_style)
 
     guis.run(win,
         func(Draw ren) {
@@ -857,12 +895,12 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
         }
     )
 
-    guis.cleanup(win)
+    win.close()
 }
 ```
 
@@ -874,7 +912,12 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("FPS Counter", 800, 600, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("FPS Counter", w_style)
 
     var frame = 0
     var start_ticks = guis.get_ticks()
@@ -895,12 +938,12 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
         }
     )
 
-    guis.cleanup(win)
+    win.close()
 }
 ```
 
@@ -912,7 +955,12 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("Mouse Demo", 800, 600, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("Mouse Demo", w_style)
 
     var mx = 0
     var my = 0
@@ -934,7 +982,7 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
             if e.is_mouse_move() {
                 mx = e.mouse_x()
@@ -949,7 +997,7 @@ main() {
         }
     )
 
-    guis.cleanup(win)
+    win.close()
 }
 ```
 
@@ -961,7 +1009,12 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("Viewport & Clip", 800, 600, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("Viewport & Clip", w_style)
 
     guis.run(win,
         func(Draw ren) {
@@ -986,12 +1039,12 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
         }
     )
 
-    guis.cleanup(win)
+    win.close()
 }
 
 ---
@@ -1002,9 +1055,13 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("LenoC GUI - Draw Test", 800, 600, 1)
-
-    guis.set_opacity(win, 0.95)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true,
+        opacity: 0.95
+    }
+    Win win = guis.create_window("LenoC GUI - Draw Test", w_style)
 
     guis.run(win,
         func(Draw ren) {
@@ -1030,18 +1087,18 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
             if e.is_key_down() {
                 var key = e.key()
                 if key == 0x1B {
-                    guis.set_should_close(win, true)
+                    win.set_should_close(true)
                 }
             }
         }
     )
 
-    guis.cleanup(win)
+    win.close()
     print("test done!")
 }
 ```
@@ -1100,14 +1157,14 @@ ren.present()         // 3. 呈现
    ```leno
    func(Event e) {
        if e.is_quit() or e.is_window_close() {
-           guis.set_should_close(win, true)
+           win.set_should_close(true)
        }
    }
    ```
 
-3. **使用 `guis.cleanup()` 清理资源**
+3. **使用 `win.close()` 清理资源**
    ```leno
-   guis.cleanup(win)
+   win.close()
    ```
 
 4. **合理控制帧率**

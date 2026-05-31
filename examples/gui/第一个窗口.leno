@@ -1,8 +1,13 @@
 import guis as gui
 
 main() {
-    var win = gui.create_window("标题", 800, 600, 1)
-    
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    var win = gui.create_window("标题", w_style)
+
     func Draw1(Draw ren)
     {
             // onDraw: 每帧调用，ren 是自动创建的渲染器
@@ -12,16 +17,15 @@ main() {
              ren.fill_rect(100, 100, 200, 150)
              ren.present()
      }
-    func Event1(Event event) 
+    func Event1(Event event)
     {
             // onEvent: 每个事件调用
             if event.is_window_close() or event.is_key_down()
             {
-                gui.set_should_close(win, true)
+                win.set_should_close(true)
             }
     }
     gui.run(win,Draw1,Event1)
-   
-    
-     gui.cleanup(win)
+
+    win.close()
 }

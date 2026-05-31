@@ -486,9 +486,7 @@ OPCODE(OP_GET_METHOD) {
     } else if (obj->type == OBJ_GUI_RENDERER) {
         native_method = draw_find_method(method_name->chars);
     } else if (obj->type == OBJ_GUI_WINDOW) {
-        // Win 类型方法通过 draw_find_method 或单独实现
-        // 暂时使用 event_find_method 作为占位（Win 方法通常通过模块函数调用）
-        native_method = NULL;
+        native_method = window_find_method(method_name->chars);
     } else if (obj->type == OBJ_FILE) {
         native_method = file_find_method(method_name->chars);
     }

@@ -1183,6 +1183,8 @@ void structs_init_instance_methods(void);
 void cstructs_init_methods(void);
 // 前向声明：线程实例方法初始化（在 threads.c 中定义）
 void threads_init_instance_methods(void);
+// 前向声明：Win 实例方法初始化（在 guis_window.c 中定义）
+void guis_init_window_instance_methods(void);
 
 void native_register_all_instance_method_metas(void) {
     native_reset_instance_method_metas();
@@ -1192,6 +1194,7 @@ void native_register_all_instance_method_metas(void) {
     dicts_init_instance_methods();
     files_init_instance_methods();
     guis_init_instance_methods();
+    guis_init_window_instance_methods();
     guis_init_event_methods();
     structs_init_instance_methods();
     cstructs_init_methods();
@@ -1208,6 +1211,7 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_WIN:    return "win";
         case TYPE_DRAW:   return "draw";
         case TYPE_EVENT:  return "event";
+        case TYPE_STYLE:  return "style";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";
         case TYPE_THREAD:  return "thread";

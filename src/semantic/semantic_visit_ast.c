@@ -293,6 +293,11 @@ void visit(Semantic* s, Ast* ast) {
                     }
                 }
 
+                // 如果变量类型是 Style[xxx]，记录 style_target 供 LSP 补全使用
+                if (sym && sym->type && sym->type->kind == TYPE_STYLE && sym->type->style_target) {
+                    sym->style_target = strdup(sym->type->style_target);
+                }
+
                 // 如果变量类型是 struct 或 cstruct，复制 struct/cstruct 定义的字段信息
                 if (sym && sym->type && (sym->type->kind == TYPE_STRUCT || sym->type->kind == TYPE_CSTRUCT)) {
                     // 从初始化表达式获取类型名称

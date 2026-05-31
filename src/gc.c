@@ -596,6 +596,7 @@ static void mark_roots(void) {
     extern void dict_mark_methods(void);
     extern void file_mark_methods(void);
     extern void draw_mark_methods(void);
+    extern void window_mark_methods(void);
     extern void event_mark_methods(void);
     extern void number_mark_methods(void);
     extern void cstruct_mark_methods(void);
@@ -605,6 +606,7 @@ static void mark_roots(void) {
     dict_mark_methods();
     file_mark_methods();
     draw_mark_methods();
+    window_mark_methods();
     event_mark_methods();
     number_mark_methods();
     thread_mark_methods();

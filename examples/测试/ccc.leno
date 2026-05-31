@@ -1,28 +1,19 @@
-import gui
+import guis
 
 main() {
-    var win = gui.create_window("标题", 800, 600, 1)
+    var win = guis.create_window("标题",{width:100,height:80})
     
-    func Draw(var ren)
+    func Draw1(var ren)
     {
-            // onDraw: 每帧调用，ren 是自动创建的渲染器
-            gui.set_draw_color(ren, 30, 30, 46, 255)
-            gui.render_clear(ren)
-            gui.set_draw_color(ren, 255, 0, 0, 255)
-            gui.render_fill_rect(ren, 100, 100, 200, 150)
-            gui.render_present(ren)
-        }
-    func Event(Event event) 
+           
+     }
+    func Event1(Event event) 
     {
             // onEvent: 每个事件调用
-            if event.is_window_close() or event.is_key_down() 
-            {
-                gui.set_window_should_close(win, true)
-            }
+           
     }
-    gui.run(win,Draw,Event)
-   
+    guis.run(win,Draw1,Event1)
+    guis.cleanup(win)
     
-    gui.destroy_window(win)
-    gui.quit()
+  
 }

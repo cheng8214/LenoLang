@@ -2,9 +2,13 @@
 import guis
 
 main() {
-    Win win = guis.create_window("LenoC GUI - Event 方法测试", 800, 600, 1)
-
-    guis.set_opacity(win, 0.95)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true,
+        opacity: 0.95
+    }
+    Win win = guis.create_window("LenoC GUI - Event 方法测试", w_style)
 
     var frame = 0
     var start_ticks = guis.get_ticks()
@@ -60,12 +64,12 @@ main() {
         func(Event e) {
             /* Event 方法风格 - 比 event["type"] 直观多了 */
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
             if e.is_key_down() {
                 var key = e.key()
                 if key == 0x1B {
-                    guis.set_should_close(win, true)
+                    win.set_should_close(true)
                 }
                 print("key down: " + _str(key))
             }
@@ -78,6 +82,6 @@ main() {
         }
     )
 
-    guis.cleanup(win)
+    win.close()
     print("test done!")
 }

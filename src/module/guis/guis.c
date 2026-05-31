@@ -6,17 +6,18 @@
  *   Draw  - 渲染器对象 (OBJ_GUI_RENDERER)
  *   Event - 事件对象 (OBJ_GUI_EVENT )
  *
+ * Win 实例方法 (win.method()):
+ *   win.show() / hide() / close()
+ *   win.set_title(title)
+ *   win.set_size(w, h) / get_size() -> [w, h]
+ *   win.set_pos(x, y) / get_pos() -> [x, y]
+ *   win.set_fullscreen(bool)
+ *   win.should_close() -> bool
+ *   win.set_should_close(bool)
+ *   win.set_opacity(opacity)
+ *
  * 模块级 API:
- *   guis.cleanup(win) -> null              销毁窗口 + 退出 GUI
- *   guis.create_window(title, w, h, flags) -> Win
- *   guis.show(win) / hide(win)
- *   guis.set_title(win, title)
- *   guis.set_size(win, w, h) / get_size(win) -> [w, h]
- *   guis.set_pos(win, x, y) / get_pos(win) -> [x, y]
- *   guis.set_fullscreen(win, bool)
- *   guis.should_close(win) -> bool
- *   guis.set_should_close(win, bool)
- *   guis.set_opacity(win, opacity)
+ *   guis.create_window(title, style_dict) -> Win      Style 方式创建窗口
  *   guis.create_renderer(win) -> Draw
  *   guis.destroy_renderer(ren)
  *   guis.resize_renderer(ren, w, h) -> bool    窗口大小改变时调整渲染器
@@ -38,33 +39,6 @@
  *   guis.remove_timer(timer_id) -> bool                  取消定时器
  *   guis.get_display() / get_dpi()
  *   guis.run(win, onDraw, onEvent)          回调式事件循环
- *
-
-
- * 使用示例:
- *   import guis
- *   main() {
- *       guis.init()
- *       Win win = guis.create_window("Hello", 800, 600, 1)
- *       guis.run(win,
- *           func(Draw ren) {
- *               ren.set_color(30, 30, 46, 255)
- *               ren.clear()
- *               ren.set_color(255, 0, 0, 255)
- *               ren.fill_rect(100, 100, 200, 150)
- *               ren.present()
- *           },
- *           func(Event e) {
- *               if e.is_quit() or e.is_window_close() {
- *                   guis.set_should_close(win, true)
- *               }
- *               if e.is_key_down() and e.key() == 0x1B {
- *                   guis.set_should_close(win, true)
- *               }
- *           }
- *       )
- *       guis.cleanup(win)
- *   }
  */
 
 #include "include/native.h"
@@ -237,11 +211,28 @@ Value event_to_dict(LenoGUIEvent* ev) {
 }
 
 static Value gui_create_window_func(int argc, Value* args) {
-    (void)argc;
+    if (argc != 2) return val_null();
+
     ObjString* title = (ObjString*)val_as_obj(args[0]);
-    int w = val_as_int(args[1]);
-    int h = val_as_int(args[2]);
-    int flags = val_as_int(args[3]);
+    int w = 800, h = 600, flags = 0;
+
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
+        ObjDict* style = (ObjDict*)val_as_obj(args[1]);
+        ObjString* key_w = str_copy("width", 5);
+        ObjString* key_h = str_copy("height", 6);
+        ObjString* key_full = str_copy("fullscreen", 10);
+
+        Value vw = dict_get(style, key_w);
+        if (!val_is_null(vw)) w = val_as_int(vw);
+
+        Value vh = dict_get(style, key_h);
+        if (!val_is_null(vh)) h = val_as_int(vh);
+
+        Value vfull = dict_get(style, key_full);
+        if (!val_is_null(vfull) && val_as_bool(vfull)) {
+            flags |= 0x01;
+        }
+    }
 
     if (!leno_gui_platform_init()) return val_null();
 
@@ -254,85 +245,6 @@ static Value gui_create_window_func(int argc, Value* args) {
         return val_null();
     }
     return val_obj((Object*)obj);
-}
-
-static Value gui_show_window_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    if (win && win->platform) leno_gui_platform_show_window(win->platform);
-    return val_null();
-}
-
-static Value gui_hide_window_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    if (win && win->platform) leno_gui_platform_hide_window(win->platform);
-    return val_null();
-}
-
-static Value gui_set_window_title_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    ObjString* title = (ObjString*)val_as_obj(args[1]);
-    if (win && win->platform) leno_gui_platform_set_window_title(win->platform, title->chars);
-    return val_null();
-}
-
-static Value gui_set_window_size_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    int w = val_as_int(args[1]);
-    int h = val_as_int(args[2]);
-    if (win && win->platform) leno_gui_platform_set_window_size(win->platform, w, h);
-    return val_null();
-}
-
-static Value gui_get_window_size_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    int w = 0, h = 0;
-    if (win && win->platform) leno_gui_platform_get_window_size(win->platform, &w, &h);
-    return val_obj((Object*)make_int_array2(w, h));
-}
-
-static Value gui_set_window_position_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    if (win && win->platform) leno_gui_platform_set_window_position(win->platform, x, y);
-    return val_null();
-}
-
-static Value gui_get_window_position_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    int x = 0, y = 0;
-    if (win && win->platform) leno_gui_platform_get_window_position(win->platform, &x, &y);
-    return val_obj((Object*)make_int_array2(x, y));
-}
-
-static Value gui_set_window_fullscreen_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    int fullscreen = val_as_bool(args[1]) ? 1 : 0;
-    if (win && win->platform) leno_gui_platform_set_window_fullscreen(win->platform, fullscreen);
-    return val_null();
-}
-
-static Value gui_window_should_close_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    if (win && win->platform) return val_bool(leno_gui_platform_window_should_close(win->platform) != 0);
-    return val_bool(true);
-}
-
-static Value gui_set_window_should_close_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    int val = val_as_bool(args[1]) ? 1 : 0;
-    if (win && win->platform) leno_gui_platform_set_window_should_close(win->platform, val);
-    return val_null();
 }
 
 static Value gui_create_renderer_func(int argc, Value* args) {
@@ -470,17 +382,6 @@ static Value gui_show_cursor_func(int argc, Value* args) {
     (void)argc;
     int show = val_as_bool(args[0]) ? 1 : 0;
     leno_gui_platform_show_cursor(show);
-    return val_null();
-}
-
-/* ===== 窗口透明度 ===== */
-
-/* 设置窗口透明度 */
-static Value gui_set_window_opacity_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    float opacity = (float)val_as_double(args[1]);
-    if (win && win->platform) leno_gui_platform_set_window_opacity(win->platform, opacity);
     return val_null();
 }
 
@@ -759,52 +660,25 @@ static Value gui_rgb_func(int argc, Value* args) {
     return val_obj((Object*)rgb);
 }
 
-/* 一键清理：销毁窗口 + 退出 GUI 子系统 */
-static Value gui_cleanup_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    if (win && win->platform) {
-        leno_gui_platform_destroy_window(win->platform);
-        win->platform = NULL;
-    }
-    leno_gui_platform_quit();
-    return val_null();
-}
-
-/* 前向声明：Draw 实例方法注册 */
+/* 前向声明：Draw / Win 实例方法注册 */
 void guis_init_instance_methods(void);
+
+/* 外部声明：Win 实例方法注册 */
+extern void guis_init_window_instance_methods(void);
 
 void guis_init_module(void) {
     TypeKind no_params[] = {};
-    TypeKind str_4int[] = {TYPE_STRING, TYPE_INT, TYPE_INT, TYPE_INT};
     TypeKind obj_1int[] = {TYPE_ANY, TYPE_INT};
     TypeKind obj_2int[] = {TYPE_ANY, TYPE_INT, TYPE_INT};
-    TypeKind obj_str[] = {TYPE_ANY, TYPE_STRING};
-    TypeKind obj_bool[] = {TYPE_ANY, TYPE_BOOL};
     TypeKind obj_2func[] = {TYPE_ANY, TYPE_ANY, TYPE_ANY};
     TypeKind int_params[] = {TYPE_INT};
     TypeKind str_2int[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
     TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
-    TypeKind obj_float[] = {TYPE_ANY, TYPE_FLOAT};
     TypeKind bool_params[] = {TYPE_BOOL};
     TypeKind str_params[] = {TYPE_STRING};
 
-    /* ===== 初始化/关闭 ===== */
-    native_register_module_method("guis", "cleanup", gui_cleanup_func, 1, -1, -1, TYPE_NULL, obj_1int);
-
     /* ===== 窗口操作 ===== */
-    native_register_module_method("guis", "create_window", gui_create_window_func, 4, -1, -1, TYPE_WIN, str_4int);
-    native_register_module_method("guis", "show", gui_show_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
-    native_register_module_method("guis", "hide", gui_hide_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
-    native_register_module_method("guis", "set_title", gui_set_window_title_func, 2, -1, -1, TYPE_NULL, obj_str);
-    native_register_module_method("guis", "set_size", gui_set_window_size_func, 3, -1, -1, TYPE_NULL, obj_2int);
-    native_register_module_method("guis", "get_size", gui_get_window_size_func, 1, -1, -1, TYPE_ANY, obj_1int);
-    native_register_module_method("guis", "set_pos", gui_set_window_position_func, 3, -1, -1, TYPE_NULL, obj_2int);
-    native_register_module_method("guis", "get_pos", gui_get_window_position_func, 1, -1, -1, TYPE_ANY, obj_1int);
-    native_register_module_method("guis", "set_fullscreen", gui_set_window_fullscreen_func, 2, -1, -1, TYPE_NULL, obj_bool);
-    native_register_module_method("guis", "should_close", gui_window_should_close_func, 1, -1, -1, TYPE_BOOL, obj_1int);
-    native_register_module_method("guis", "set_should_close", gui_set_window_should_close_func, 2, -1, -1, TYPE_NULL, obj_bool);
-    native_register_module_method("guis", "set_opacity", gui_set_window_opacity_func, 2, -1, -1, TYPE_NULL, obj_float);
+    native_register_module_method("guis", "create_window", gui_create_window_func, -1, 2, 4, TYPE_WIN, NULL);
 
     /* ===== 渲染器操作（工厂/析构） ===== */
     native_register_module_method("guis", "create_renderer", gui_create_renderer_func, 1, -1, -1, TYPE_DRAW, obj_1int);
@@ -853,6 +727,48 @@ void guis_init_module(void) {
 
     /* 注册 Draw 实例方法 */
     guis_init_instance_methods();
+
+    /* 注册 Win 实例方法 */
+    guis_init_window_instance_methods();
+}
+
+/* ===== Style 字段定义（供 LSP 补全使用） ===== */
+
+typedef struct {
+    const char* target;
+    const char** fields;
+    int field_count;
+} StyleDef;
+
+static const char* window_style_fields[] = {
+    "width", "height", "x", "y",
+    "title", "fullscreen", "borderless", "resizable",
+    "opacity", "visible", "always_on_top"
+};
+
+static const char* button_style_fields[] = {
+    "bk_color", "text", "text_color", "text_size",
+    "width", "height", "x", "y",
+    "border_radius", "hover_color", "active_color"
+};
+
+static StyleDef style_defs[] = {
+    { "window", window_style_fields, sizeof(window_style_fields) / sizeof(window_style_fields[0]) },
+    { "button", button_style_fields, sizeof(button_style_fields) / sizeof(button_style_fields[0]) },
+};
+
+// 获取 Style 目标控件的字段列表（供 LSP 使用）
+const char** guis_get_style_fields(const char* target, int* count) {
+    if (!target || !count) return NULL;
+    int def_count = sizeof(style_defs) / sizeof(style_defs[0]);
+    for (int i = 0; i < def_count; i++) {
+        if (strcmp(style_defs[i].target, target) == 0) {
+            *count = style_defs[i].field_count;
+            return style_defs[i].fields;
+        }
+    }
+    *count = 0;
+    return NULL;
 }
 
 /* 注册全局函数（不需要 import guis） */

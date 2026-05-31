@@ -281,6 +281,43 @@ static TypeInfo* parse_array_type(Parser* p) {
     return type_array(element_type);
 }
 
+// 解析 Style 类型: Style[target]
+static TypeInfo* parse_style_type(Parser* p) {
+    lexer_next(&p->lex); // 消费 'Style'
+    
+    if (p->lex.current.type != TOK_LBRACKET) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要指定目标控件: Style[window] 或 Style[button]");
+        return type_style("");
+    }
+    
+    lexer_next(&p->lex); // 消费 '['
+    
+    // 解析目标控件名（标识符）
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要有效的控件名称，如 window 或 button");
+        // 尝试跳过到 ]
+        while (p->lex.current.type != TOK_RBRACKET && p->lex.current.type != TOK_EOF) {
+            lexer_next(&p->lex);
+        }
+        if (p->lex.current.type == TOK_RBRACKET) {
+            lexer_next(&p->lex);
+        }
+        return type_style("");
+    }
+    
+    char* target_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex); // 消费标识符
+    
+    if (p->lex.current.type != TOK_RBRACKET) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束 Style 类型");
+        free(target_name);
+        return type_style("");
+    }
+    lexer_next(&p->lex); // 消费 ']'
+    
+    return type_style(target_name);
+}
+
 // 解析函数类型: func 或 func():ReturnType 或 func(ParamType1, ParamType2):ReturnType
 static TypeInfo* parse_function_type(Parser* p) {
     lexer_next(&p->lex); // 消费 'func'
@@ -346,6 +383,11 @@ static TypeInfo* parse_type_internal(Parser* p) {
     // 尝试解析 Dict[K,V]
     if (p->lex.current.type == TOK_DICT_TYPE) {
         return parse_dict_type(p);
+    }
+    
+    // 尝试解析 Style[target]
+    if (p->lex.current.type == TOK_STYLE_TYPE) {
+        return parse_style_type(p);
     }
     
     // 解析基础类型

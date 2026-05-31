@@ -71,6 +71,15 @@ TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param
     return type;
 }
 
+// 创建样式类型 Style[target]
+TypeInfo* type_style(const char* target) {
+    TypeInfo* type = type_new(TYPE_STYLE);
+    if (type && target) {
+        type->style_target = strdup(target);
+    }
+    return type;
+}
+
 // 释放类型信息
 void type_free(TypeInfo* type) {
     if (!type) return;
@@ -86,6 +95,9 @@ void type_free(TypeInfo* type) {
     }
     if (type->struct_name) {
         free(type->struct_name);
+    }
+    if (type->style_target) {
+        free(type->style_target);
     }
     free(type);
 }
@@ -117,6 +129,11 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
                 return strcmp(a->struct_name, b->struct_name) == 0;
             }
             return a->struct_name == b->struct_name;
+        case TYPE_STYLE:
+            if (a->style_target && b->style_target) {
+                return strcmp(a->style_target, b->style_target) == 0;
+            }
+            return a->style_target == b->style_target;
         default:
             return 1;
     }
@@ -158,6 +175,11 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_ENUM:
             if (type->struct_name) {
                 copy->struct_name = strdup(type->struct_name);
+            }
+            break;
+        case TYPE_STYLE:
+            if (type->style_target) {
+                copy->style_target = strdup(type->style_target);
             }
             break;
         default:
@@ -358,6 +380,28 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             }
             break;
         }
+        case TYPE_STYLE: {
+            // Style[target]
+            const char* prefix = "Style[";
+            size_t prefix_len = strlen(prefix);
+            if (*offset + prefix_len < buf_size - 1) {
+                memcpy(buf + *offset, prefix, prefix_len);
+                *offset += prefix_len;
+            }
+            if (type->style_target) {
+                size_t name_len = strlen(type->style_target);
+                if (*offset + name_len < buf_size - 1) {
+                    memcpy(buf + *offset, type->style_target, name_len);
+                    *offset += name_len;
+                }
+            }
+            if (*offset + 1 < buf_size) {
+                buf[*offset] = ']';
+                (*offset)++;
+                buf[*offset] = '\0';
+            }
+            break;
+        }
         default: {
             // 基础类型
             const char* type_str = type_kind_to_string(type->kind);
@@ -406,6 +450,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_DRAW:     return "draw";
         case TYPE_EVENT:    return "event";
         case TYPE_RGB:      return "rgb";
+        case TYPE_STYLE:    return "style";
         case TYPE_PTR:      return "ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
         case TYPE_ANY:      return "any";
@@ -677,6 +722,14 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         return 0;
     }
 
+    // Style 类型兼容性检查：Style[xxx] 可以接受 Dict
+    if (target->kind == TYPE_STYLE) {
+        if (source->kind == TYPE_DICT || source->kind == TYPE_STYLE) {
+            return 1;
+        }
+        return 0;
+    }
+
     // face 类型兼容性检查
     if (target->kind == TYPE_FACE) {
         if (source->kind == TYPE_FACE) {
@@ -751,6 +804,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_DRAW_TYPE:     return TYPE_DRAW;
         case TOK_EVENT_TYPE:    return TYPE_EVENT;
         case TOK_RGB_TYPE:      return TYPE_RGB;
+        case TOK_STYLE_TYPE:    return TYPE_STYLE;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;
         // C 布局类型

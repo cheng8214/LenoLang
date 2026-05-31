@@ -248,6 +248,8 @@ struct Symbol {
     int cstruct_size;           // cstruct 总大小
     int cstruct_alignment;      // cstruct 对齐要求
     int* cstruct_field_offsets; // cstruct 字段偏移量数组
+    // Style 类型信息（仅当类型为 Style 时使用）
+    char* style_target;         // Style 目标控件名（如 "window", "button"）
 };
 
 struct Scope {

@@ -1,7 +1,12 @@
 import guis
 
 main() {
-    Win win = guis.create_window("Viewport & Clip", 800, 600, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("Viewport & Clip", w_style)
 	
     guis.run(win,
         func(Draw ren) {
@@ -25,10 +30,10 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
         }
     )
 
-    guis.cleanup(win)
+    win.close()
 }

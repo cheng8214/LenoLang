@@ -98,6 +98,7 @@ typedef enum {
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
     TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_WIN_TYPE, TOK_DRAW_TYPE, TOK_EVENT_TYPE, TOK_RGB_TYPE,  // File, Ptr, Win, Draw, Event, Rgb 类型
+    TOK_STYLE_TYPE,      // Style 类型（用于 GUI 样式定义）
     // C 布局类型关键字
     TOK_I8, TOK_U8,           // i8, u8
     TOK_I16, TOK_U16,         // i16, u16
@@ -144,6 +145,7 @@ typedef enum {
     TYPE_DRAW,      // GUI 渲染器类型
     TYPE_EVENT,     // GUI 事件类型（Dict 别名）
     TYPE_RGB,       // RGB 颜色类型
+    TYPE_STYLE,     // GUI 样式类型（Style[window], Style[button] 等）
     TYPE_ANY,       // 任意类型
     TYPE_FUNCTION,  // 函数类型
     TYPE_STRUCT,    // 结构体类型
@@ -180,6 +182,8 @@ struct TypeInfo {
     int param_count;         // 函数参数数量
     // 结构体类型相关
     char* struct_name;       // 结构体名称
+    // 样式类型相关
+    char* style_target;      // Style 目标控件名（如 "window", "button"）
 };
 
 // 类型系统 API
@@ -188,6 +192,7 @@ TypeInfo* type_array(TypeInfo* element_type);
 TypeInfo* type_dict(TypeInfo* key_type, TypeInfo* value_type);
 TypeInfo* type_ptr_generic(TypeInfo* element_type);
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count);
+TypeInfo* type_style(const char* target);
 void type_free(TypeInfo* type);
 int type_equals(TypeInfo* a, TypeInfo* b);
 TypeInfo* type_copy(TypeInfo* type);

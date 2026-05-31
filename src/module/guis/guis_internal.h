@@ -70,4 +70,7 @@ ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWindow* w
 /* 调用 Leno 闭包 */
 Value call_leno_closure(Value callee, int arg_count, Value* args);
 
+/* Style 字段查询（供 LSP 使用） */
+const char** guis_get_style_fields(const char* target, int* count);
+
 #endif /* GUIS_INTERNAL_H */

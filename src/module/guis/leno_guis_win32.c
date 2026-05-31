@@ -511,8 +511,8 @@ int leno_gui_platform_init(void) {
         wc.style = CS_DBLCLKS;
         wc.lpfnWndProc = leno_gui_wndproc;
         wc.hInstance = GetModuleHandleW(NULL);
-        wc.hIcon = LoadIconW(NULL, IDI_APPLICATION);
-        wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+        wc.hIcon = LoadIconW(NULL, (LPCWSTR)(ULONG_PTR)IDI_APPLICATION);
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_ARROW);
         wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
         wc.lpszClassName = LENO_GUI_CLASS;
         if (!RegisterClassExW(&wc)) return 0;

@@ -1,7 +1,12 @@
 import guis
 
 main() {
-    Win win = guis.create_window("LenoC GUI - Font Test", 800, 600, 1)
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("LenoC GUI - Font Test", w_style)
 
     var font_arial = guis.load_font("Arial", 24)
     var font_consolas = guis.load_font("Consolas", 18)
@@ -40,10 +45,10 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
             if e.is_key_down() and e.key() == 0x1B {
-                guis.set_should_close(win, true)
+                win.set_should_close(true)
             }
         }
     )
@@ -52,6 +57,6 @@ main() {
     guis.destroy_font(font_consolas)
     guis.destroy_font(font_simhei)
     guis.destroy_font(font_yahei)
-    guis.cleanup(win)
+    win.close()
     print("font test done!")
 }

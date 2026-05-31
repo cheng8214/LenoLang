@@ -1,0 +1,169 @@
+/* Leno GUI - Win 窗口实例方法
+ * 从 guis.c 拆分出来的 Win 方法实现
+ *
+ * Win 实例方法 (win.method()):
+ *   win.show()                          显示窗口
+ *   win.hide()                          隐藏窗口
+ *   win.close()                         关闭窗口（销毁 + 退出 GUI）
+ *   win.set_title(title)                设置窗口标题
+ *   win.set_size(w, h)                  设置窗口大小
+ *   win.get_size() -> [w, h]            获取窗口大小
+ *   win.set_pos(x, y)                   设置窗口位置
+ *   win.get_pos() -> [x, y]            获取窗口位置
+ *   win.set_fullscreen(bool)            设置全屏
+ *   win.should_close() -> bool          是否应该关闭
+ *   win.set_should_close(bool)          设置关闭标志
+ *   win.set_opacity(opacity)            设置透明度
+ */
+#include "include/native.h"
+#include "include/leno_value.h"
+#include "guis_internal.h"
+#include <string.h>
+
+/* ============================================================================
+ * Win 窗口实例方法（win.method() 风格）
+ * ============================================================================ */
+
+/* win.show() */
+static Value win_show_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) leno_gui_platform_show_window(win->platform);
+    return val_null();
+}
+
+/* win.hide() */
+static Value win_hide_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) leno_gui_platform_hide_window(win->platform);
+    return val_null();
+}
+
+/* win.close() - 销毁窗口 + 退出 GUI */
+static Value win_close_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) {
+        leno_gui_platform_destroy_window(win->platform);
+        win->platform = NULL;
+    }
+    leno_gui_platform_quit();
+    return val_null();
+}
+
+/* win.set_title(title) */
+static Value win_set_title_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    ObjString* title = (ObjString*)val_as_obj(args[1]);
+    if (win && win->platform) leno_gui_platform_set_window_title(win->platform, title->chars);
+    return val_null();
+}
+
+/* win.set_size(w, h) */
+static Value win_set_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int w = val_as_int(args[1]);
+    int h = val_as_int(args[2]);
+    if (win && win->platform) leno_gui_platform_set_window_size(win->platform, w, h);
+    return val_null();
+}
+
+/* win.get_size() -> [w, h] */
+static Value win_get_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int w = 0, h = 0;
+    if (win && win->platform) leno_gui_platform_get_window_size(win->platform, &w, &h);
+    return val_obj((Object*)make_int_array2(w, h));
+}
+
+/* win.set_pos(x, y) */
+static Value win_set_pos_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    if (win && win->platform) leno_gui_platform_set_window_position(win->platform, x, y);
+    return val_null();
+}
+
+/* win.get_pos() -> [x, y] */
+static Value win_get_pos_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int x = 0, y = 0;
+    if (win && win->platform) leno_gui_platform_get_window_position(win->platform, &x, &y);
+    return val_obj((Object*)make_int_array2(x, y));
+}
+
+/* win.set_fullscreen(bool) */
+static Value win_set_fullscreen_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int fullscreen = val_as_bool(args[1]) ? 1 : 0;
+    if (win && win->platform) leno_gui_platform_set_window_fullscreen(win->platform, fullscreen);
+    return val_null();
+}
+
+/* win.should_close() -> bool */
+static Value win_should_close_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) return val_bool(leno_gui_platform_window_should_close(win->platform) != 0);
+    return val_bool(true);
+}
+
+/* win.set_should_close(bool) */
+static Value win_set_should_close_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int val = val_as_bool(args[1]) ? 1 : 0;
+    if (win && win->platform) leno_gui_platform_set_window_should_close(win->platform, val);
+    return val_null();
+}
+
+/* win.set_opacity(opacity) */
+static Value win_set_opacity_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    float opacity = (float)val_as_double(args[1]);
+    if (win && win->platform) leno_gui_platform_set_window_opacity(win->platform, opacity);
+    return val_null();
+}
+
+/* ============================================================================
+ * 注册 Win 实例方法
+ * ============================================================================ */
+
+/* 前向声明 */
+extern void window_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                                int min_arity, int max_arity,
+                                                TypeKind return_type, TypeKind* param_types);
+extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
+extern void window_init_methods(void);
+
+void guis_init_window_instance_methods(void) {
+    window_init_methods();
+
+    TypeKind no_params[] = {};
+    TypeKind int_2[] = {TYPE_INT, TYPE_INT};
+    TypeKind str_1[] = {TYPE_STRING};
+    TypeKind bool_1[] = {TYPE_BOOL};
+    TypeKind float_1[] = {TYPE_FLOAT};
+
+    window_register_method_with_params("show", make_native(win_show_func, 1, "show"), 0, -1, -1, TYPE_NULL, no_params);
+    window_register_method_with_params("hide", make_native(win_hide_func, 1, "hide"), 0, -1, -1, TYPE_NULL, no_params);
+    window_register_method_with_params("close", make_native(win_close_func, 1, "close"), 0, -1, -1, TYPE_NULL, no_params);
+    window_register_method_with_params("set_title", make_native(win_set_title_func, 2, "set_title"), 1, -1, -1, TYPE_NULL, str_1);
+    window_register_method_with_params("set_size", make_native(win_set_size_func, 3, "set_size"), 2, -1, -1, TYPE_NULL, int_2);
+    window_register_method_with_params("get_size", make_native(win_get_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, no_params);
+    window_register_method_with_params("set_pos", make_native(win_set_pos_func, 3, "set_pos"), 2, -1, -1, TYPE_NULL, int_2);
+    window_register_method_with_params("get_pos", make_native(win_get_pos_func, 1, "get_pos"), 0, -1, -1, TYPE_ANY, no_params);
+    window_register_method_with_params("set_fullscreen", make_native(win_set_fullscreen_func, 2, "set_fullscreen"), 1, -1, -1, TYPE_NULL, bool_1);
+    window_register_method_with_params("should_close", make_native(win_should_close_func, 1, "should_close"), 0, -1, -1, TYPE_BOOL, no_params);
+    window_register_method_with_params("set_should_close", make_native(win_set_should_close_func, 2, "set_should_close"), 1, -1, -1, TYPE_NULL, bool_1);
+    window_register_method_with_params("set_opacity", make_native(win_set_opacity_func, 2, "set_opacity"), 1, -1, -1, TYPE_NULL, float_1);
+}

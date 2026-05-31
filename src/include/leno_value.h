@@ -1218,6 +1218,27 @@ TypeKind event_get_method_param_type(const char* method_name, int param_index);
 ObjNative* event_find_method(const char* name);
 
 // ============================================================================
+// Win 窗口方法系统 API
+// ============================================================================
+
+typedef struct {
+    const char* name;
+    ObjNative* method;
+    int arity;
+    TypeKind return_type;
+    TypeKind param_types[MAX_METHOD_PARAMS];
+} WindowMethodEntry;
+
+void window_init_methods(void);
+void window_mark_methods(void);
+void window_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                         int min_arity, int max_arity,
+                                         TypeKind return_type, TypeKind* param_types);
+WindowMethodEntry window_find_method_meta(const char* name);
+TypeKind window_get_method_param_type(const char* method_name, int param_index);
+ObjNative* window_find_method(const char* name);
+
+// ============================================================================
 // 协程系统 API
 // ============================================================================
 

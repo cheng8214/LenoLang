@@ -2,7 +2,7 @@
  * 从 guis.c 拆分出来的 Draw 方法实现
  *
  * Draw 实例方法 (ren.method()):
- *   ren.set_color(r, g, b, a)              设置绘制颜色（影响后续所有绘制）
+ *   ren.set_color(_Rgb)              设置绘制颜色（影响后续所有绘制）
  *   ren.clear()                            用当前颜色清空画布
  *   ren.present()                          将绘制内容显示到窗口
  *   ren.point(x, y)                        绘制单个像素点
