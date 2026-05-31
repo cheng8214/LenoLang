@@ -5,28 +5,28 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_color(30, 30, 46, 255)
+            ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
-            ren.set_color(255, 255, 255, 255)
+            ren.set_color(_rgb(255, 255, 255, 255))
             ren.text("Hello, LenoC!", 50, 50, 3)
 
-            ren.set_color(100, 255, 100, 255)
+            ren.set_color(_rgb(100, 255, 100, 255))
             ren.text("GUI Module - text", 50, 100, 2)
 
-            ren.set_color(255, 100, 100, 255)
+            ren.set_color(_rgb(255, 100, 100, 255))
             ren.text("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 50, 140, 2)
 
-            ren.set_color(100, 150, 255, 255)
+            ren.set_color(_rgb(100, 150, 255, 255))
             ren.text("0123456789 !@#$%^&*()", 50, 170, 2)
 
-            ren.set_color(255, 255, 0, 255)
+            ren.set_color(_rgb(255, 255, 0, 255))
             ren.text("Small", 50, 210, 1)
             ren.text("Medium", 130, 210, 2)
             ren.text("Large", 290, 210, 3)
             ren.text("XL", 470, 210, 4)
 
-            ren.set_color(180, 100, 255, 255)
+            ren.set_color(_rgb(180, 100, 255, 255))
             ren.text("Press ESC to quit", 50, 300, 2)
 
             ren.present()

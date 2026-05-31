@@ -405,6 +405,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_WIN:      return "win";
         case TYPE_DRAW:     return "draw";
         case TYPE_EVENT:    return "event";
+        case TYPE_RGB:      return "rgb";
         case TYPE_PTR:      return "ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
         case TYPE_ANY:      return "any";
@@ -749,6 +750,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_WIN_TYPE:      return TYPE_WIN;
         case TOK_DRAW_TYPE:     return TYPE_DRAW;
         case TOK_EVENT_TYPE:    return TYPE_EVENT;
+        case TOK_RGB_TYPE:      return TYPE_RGB;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;
         // C 布局类型

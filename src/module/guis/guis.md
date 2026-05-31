@@ -66,9 +66,9 @@ main() {
     Win win = guis.create_window("Hello", 800, 600, 1)
     guis.run(win,
         func(Draw ren) {
-            ren.set_color(30, 30, 46, 255)
+            ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
-            ren.set_color(255, 0, 0, 255)
+            ren.set_color(_rgb(255, 0, 0, 255))
             ren.fill_rect(100, 100, 200, 150)
             ren.present()
         },
@@ -159,7 +159,7 @@ Win win = guis.create_window("My App", 1024, 768, 1)
 ```leno
 guis.run(win,
     func(Draw ren) {
-        ren.set_color(0, 0, 0, 255)
+        ren.set_color(_rgb(0, 0, 0, 255))
         ren.clear()
         ren.present()
     },
@@ -260,16 +260,16 @@ guis.set_opacity(win, 0.85)
 
 渲染器通过 `guis.run()` 的 onDraw 回调参数获取，或通过 `guis.create_renderer(win)` 手动创建。
 
-### `ren.set_color(r, g, b, a)`
+### `ren.set_color(Rgb)`
 
 设置绘制颜色。
 
 **参数**:
-- `r`, `g`, `b` (int): RGB 颜色分量 (0-255)
-- `a` (int): Alpha 透明度 (0-255)
+- `color` (Rgb): RGB 颜色对象，通过 `_rgb(r, g, b, a)` 创建
 
 ```leno
-ren.set_color(255, 100, 50, 255)
+var c = _rgb(255, 100, 50, 255)
+ren.set_color(c)
 ```
 
 ---
@@ -279,7 +279,7 @@ ren.set_color(255, 100, 50, 255)
 用当前绘制颜色清除整个渲染缓冲区。
 
 ```leno
-ren.set_color(30, 30, 46, 255)
+ren.set_color(_rgb(30, 30, 46, 255))
 ren.clear()
 ```
 
@@ -300,7 +300,7 @@ ren.present()
 绘制单个像素点。
 
 ```leno
-ren.set_color(255, 0, 0, 255)
+ren.set_color(_rgb(255, 0, 0, 255))
 ren.point(100, 100)
 ```
 
@@ -311,7 +311,7 @@ ren.point(100, 100)
 绘制直线。
 
 ```leno
-ren.set_color(255, 255, 0, 255)
+ren.set_color(_rgb(255, 255, 0, 255))
 ren.line(0, 0, 800, 600)
 ```
 
@@ -322,7 +322,7 @@ ren.line(0, 0, 800, 600)
 绘制矩形边框。
 
 ```leno
-ren.set_color(0, 255, 0, 255)
+ren.set_color(_rgb(0, 255, 0, 255))
 ren.rect(50, 50, 200, 100)
 ```
 
@@ -333,7 +333,7 @@ ren.rect(50, 50, 200, 100)
 填充矩形。
 
 ```leno
-ren.set_color(100, 100, 255, 255)
+ren.set_color(_rgb(100, 100, 255, 255))
 ren.fill_rect(50, 50, 200, 100)
 ```
 
@@ -344,7 +344,7 @@ ren.fill_rect(50, 50, 200, 100)
 绘制圆形边框（Bresenham 中点圆算法）。
 
 ```leno
-ren.set_color(255, 100, 100, 255)
+ren.set_color(_rgb(255, 100, 100, 255))
 ren.circle(400, 300, 80)
 ```
 
@@ -355,7 +355,7 @@ ren.circle(400, 300, 80)
 填充圆形（水平扫描线填充）。
 
 ```leno
-ren.set_color(100, 255, 100, 255)
+ren.set_color(_rgb(100, 255, 100, 255))
 ren.fill_circle(400, 300, 60)
 ```
 
@@ -366,7 +366,7 @@ ren.fill_circle(400, 300, 60)
 绘制圆角矩形边框。
 
 ```leno
-ren.set_color(100, 150, 255, 255)
+ren.set_color(_rgb(100, 150, 255, 255))
 ren.round_rect(50, 50, 200, 100, 15)
 ```
 
@@ -377,7 +377,7 @@ ren.round_rect(50, 50, 200, 100, 15)
 填充圆角矩形。
 
 ```leno
-ren.set_color(180, 100, 255, 255)
+ren.set_color(_rgb(180, 100, 255, 255))
 ren.fill_round(50, 50, 200, 100, 15)
 ```
 
@@ -595,7 +595,7 @@ var ev = guis.wait(1000)
 guis.run(win,
     func(Draw ren) {
         // 每帧渲染
-        ren.set_color(0, 0, 0, 255)
+        ren.set_color(_rgb(0, 0, 0, 255))
         ren.clear()
         // ... 绘制内容
         ren.present()
@@ -630,7 +630,7 @@ while not guis.should_close(win) {
         ev = guis.poll()
     }
 
-    ren.set_color(0, 0, 0, 255)
+    ren.set_color(_rgb(0, 0, 0, 255))
     ren.clear()
     ren.present()
 }
@@ -849,9 +849,9 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_color(30, 30, 46, 255)
+            ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
-            ren.set_color(255, 100, 100, 255)
+            ren.set_color(_rgb(255, 100, 100, 255))
             ren.fill_rect(100, 100, 200, 150)
             ren.present()
         },
@@ -881,7 +881,7 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_color(0, 0, 0, 255)
+            ren.set_color(_rgb(0, 0, 0, 255))
             ren.clear()
 
             frame = frame + 1
@@ -920,13 +920,13 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_color(20, 20, 30, 255)
+            ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
 
             if clicked {
-                ren.set_color(255, 100, 100, 255)
+                ren.set_color(_rgb(255, 100, 100, 255))
             } else {
-                ren.set_color(100, 255, 100, 255)
+                ren.set_color(_rgb(100, 255, 100, 255))
             }
             ren.fill_circle(mx, my, 30)
 
@@ -965,20 +965,20 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_color(30, 30, 46, 255)
+            ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
             ren.set_viewport(50, 50, 200, 200)
-            ren.set_color(60, 60, 90, 255)
+            ren.set_color(_rgb(60, 60, 90, 255))
             ren.fill_rect(0, 0, 200, 200)
-            ren.set_color(255, 255, 100, 255)
+            ren.set_color(_rgb(255, 255, 100, 255))
             ren.rect(10, 10, 180, 180)
 
             var rs = ren.get_size()
             ren.set_viewport(0, 0, rs[0], rs[1])
 
             ren.set_clip_rect(550, 50, 200, 200)
-            ren.set_color(80, 40, 40, 255)
+            ren.set_color(_rgb(80, 40, 40, 255))
             ren.fill_rect(500, 0, 350, 350)
             ren.no_clip()
 
@@ -1008,22 +1008,22 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_color(30, 30, 46, 255)
+            ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
-            ren.set_color(255, 100, 100, 255)
+            ren.set_color(_rgb(255, 100, 100, 255))
             ren.circle(400, 150, 80)
 
-            ren.set_color(100, 255, 100, 255)
+            ren.set_color(_rgb(100, 255, 100, 255))
             ren.fill_circle(400, 350, 60)
 
-            ren.set_color(100, 150, 255, 255)
+            ren.set_color(_rgb(100, 150, 255, 255))
             ren.round_rect(50, 350, 200, 100, 20)
 
-            ren.set_color(180, 100, 255, 255)
+            ren.set_color(_rgb(180, 100, 255, 255))
             ren.fill_round(550, 350, 200, 100, 15)
 
-            ren.set_color(255, 255, 0, 255)
+            ren.set_color(_rgb(255, 255, 0, 255))
             ren.line(300, 450, 500, 550)
 
             ren.present()
@@ -1063,7 +1063,7 @@ var win = guis.create_window("App", 800, 600, 1)
 每帧必须按 `clear()` → 绘制 → `present()` 的顺序操作。缺少 `present()` 会导致画面不更新。
 
 ```leno
-ren.set_color(0, 0, 0, 255)
+ren.set_color(_rgb(0, 0, 0, 255))
 ren.clear()           // 1. 清除
 ren.fill_rect(...)    // 2. 绘制
 ren.present()         // 3. 呈现

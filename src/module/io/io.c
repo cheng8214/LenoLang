@@ -119,6 +119,23 @@ static void print_value_internal(Value value) {
                     printf("<file>");
                     break;
                 }
+                case OBJ_GUI_WINDOW: {
+                    printf("<win>");
+                    break;
+                }
+                case OBJ_GUI_RENDERER: {
+                    printf("<draw>");
+                    break;
+                }
+                case OBJ_GUI_EVENT: {
+                    printf("<event>");
+                    break;
+                }
+                case OBJ_RGB: {
+                    ObjRgb* rgb = (ObjRgb*)obj;
+                    printf("Rgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
+                    break;
+                }
                 case OBJ_CSTRUCT_DEF: {
                     ObjCStructDef* def = (ObjCStructDef*)obj;
                     printf("cstruct %s{", def->name);

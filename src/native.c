@@ -363,6 +363,8 @@ void native_register_all_module_metas(void) {
     assert_init_globals();
     extern void sys_init_globals(void);
     sys_init_globals();
+    extern void guis_init_globals(void);
+    guis_init_globals();
 
     // 初始化模块方法表（用于编译期类型推断）
     // 注意：这里只注册方法元信息，不创建函数对象（运行时再做）
@@ -785,6 +787,9 @@ void native_register_globals(void) {
     assert_init_globals();
 
     sys_init_globals();
+
+    extern void guis_init_globals(void);
+    guis_init_globals();
 }
 
 // 检查模块名是否是原生模块（如 io, times, maths）

@@ -58,6 +58,14 @@ const char* val_to_string(Value v) {
                 return "[struct]";
             } else if (val_as_obj(v)->type == OBJ_ENUM_DEF) {
                 return "[enum_def]";
+            } else if (val_as_obj(v)->type == OBJ_GUI_WINDOW) {
+                return "[win]";
+            } else if (val_as_obj(v)->type == OBJ_GUI_RENDERER) {
+                return "[draw]";
+            } else if (val_as_obj(v)->type == OBJ_GUI_EVENT) {
+                return "[event]";
+            } else if (val_as_obj(v)->type == OBJ_RGB) {
+                return "[rgb]";
             }
             return "[object]";
         default:
@@ -410,6 +418,17 @@ char* value_to_string(Value v) {
 
                 result[pos++] = '}';
                 result[pos] = '\0';
+            } else if (val_as_obj(v)->type == OBJ_GUI_WINDOW) {
+                result = strdup("<win>");
+            } else if (val_as_obj(v)->type == OBJ_GUI_RENDERER) {
+                result = strdup("<draw>");
+            } else if (val_as_obj(v)->type == OBJ_GUI_EVENT) {
+                result = strdup("<event>");
+            } else if (val_as_obj(v)->type == OBJ_RGB) {
+                ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Rgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
+                result = strdup(buf);
             } else {
                 result = strdup("[object]");
             }

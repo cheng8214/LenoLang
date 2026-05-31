@@ -744,6 +744,21 @@ static Value gui_run_func(int argc, Value* args) {
     return val_null();
 }
 
+/* _rgb(r, g, b, a?) -> Rgb 颜色对象 */
+static Value gui_rgb_func(int argc, Value* args) {
+    uint8_t r = (uint8_t)val_as_int(args[0]);
+    uint8_t g = (uint8_t)val_as_int(args[1]);
+    uint8_t b = (uint8_t)val_as_int(args[2]);
+    uint8_t a = (argc >= 4) ? (uint8_t)val_as_int(args[3]) : 255;
+    ObjRgb* rgb = (ObjRgb*)gc_alloc(sizeof(ObjRgb), OBJ_RGB);
+    if (!rgb) return val_null();
+    rgb->r = r;
+    rgb->g = g;
+    rgb->b = b;
+    rgb->a = a;
+    return val_obj((Object*)rgb);
+}
+
 /* 一键清理：销毁窗口 + 退出 GUI 子系统 */
 static Value gui_cleanup_func(int argc, Value* args) {
     (void)argc;
@@ -840,6 +855,9 @@ void guis_init_module(void) {
     guis_init_instance_methods();
 }
 
-
+/* 注册全局函数（不需要 import guis） */
+void guis_init_globals(void) {
+    vm_register_native("_rgb", gui_rgb_func, -1, 3, 4, TYPE_RGB, NULL);
+}
 
 

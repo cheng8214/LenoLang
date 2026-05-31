@@ -103,5 +103,6 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_WIN_TYPE ||
            type == TOK_DRAW_TYPE ||
            type == TOK_EVENT_TYPE ||
+           type == TOK_RGB_TYPE ||
            type == TOK_PTR_TYPE;
 }

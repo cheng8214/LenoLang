@@ -17,6 +17,10 @@ static TypeKind get_value_type(Value value) {
             if (val_as_obj(value)->type == OBJ_STRING) return TYPE_STRING;
             else if (val_as_obj(value)->type == OBJ_DICT) return TYPE_DICT;
             else if (val_as_obj(value)->type == OBJ_ARRAY) return TYPE_ARRAY;
+            else if (val_as_obj(value)->type == OBJ_GUI_WINDOW) return TYPE_WIN;
+            else if (val_as_obj(value)->type == OBJ_GUI_RENDERER) return TYPE_DRAW;
+            else if (val_as_obj(value)->type == OBJ_GUI_EVENT) return TYPE_EVENT;
+            else if (val_as_obj(value)->type == OBJ_RGB) return TYPE_RGB;
             return TYPE_ANY;
         default: return TYPE_ANY;
     }
@@ -390,6 +394,14 @@ static Value native_type(int argCount, Value* args) {
                 } else {
                     typeStr = str_copy("cstruct", 7);
                 }
+            } else if (val_as_obj(value)->type == OBJ_GUI_WINDOW) {
+                typeStr = str_copy("win", 3);
+            } else if (val_as_obj(value)->type == OBJ_GUI_RENDERER) {
+                typeStr = str_copy("draw", 4);
+            } else if (val_as_obj(value)->type == OBJ_GUI_EVENT) {
+                typeStr = str_copy("event", 5);
+            } else if (val_as_obj(value)->type == OBJ_RGB) {
+                typeStr = str_copy("rgb", 3);
             } else {
                 typeStr = str_copy("object", 6);
             }

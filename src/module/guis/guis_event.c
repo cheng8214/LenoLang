@@ -2,14 +2,23 @@
  * 从 guis.c 拆分出来的 Event 方法实现
  *
  * Event 实例方法 (e.method()):
- *   e.type() -> int
- *   e.is_quit() / e.is_window_close() / e.is_window_resize() / e.is_window_move()
- *   e.is_key_down() / e.is_key_up() / e.is_text_input()
- *   e.is_mouse_move() / e.is_mouse_down() / e.is_mouse_up() / e.is_mouse_wheel()
- *   e.key() -> int
- *   e.mouse_x() / e.mouse_y() / e.mouse_button() -> int
- *   e.width() / e.height() -> int
- *   e.text() -> string
+ *   e.type() -> int                          获取事件类型码
+ *   e.is_quit()                              是否为退出事件
+ *   e.is_window_close()                      是否为窗口关闭事件
+ *   e.is_window_resize()                     是否为窗口大小改变事件
+ *   e.is_window_move()                       是否为窗口移动事件
+ *   e.is_key_down()                          是否为按键按下事件
+ *   e.is_key_up()                            是否为按键释放事件
+ *   e.is_text_input()                        是否为文本输入事件
+ *   e.is_mouse_move()                        是否为鼠标移动事件
+ *   e.is_mouse_down()                        是否为鼠标按下事件
+ *   e.is_mouse_up()                          是否为鼠标释放事件
+ *   e.is_mouse_wheel()                       是否为鼠标滚轮事件
+ *   e.key() -> int                           获取按键码
+ *   e.mouse_x() / e.mouse_y() -> int         获取鼠标坐标
+ *   e.mouse_button() -> int                  获取鼠标按钮（1=左键, 2=中键, 3=右键）
+ *   e.width() / e.height() -> int            获取窗口新尺寸（resize 事件）
+ *   e.text() -> string                       获取输入的文本字符
  *
  */
 

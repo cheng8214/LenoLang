@@ -47,6 +47,7 @@ typedef enum {
     OBJ_GUI_RENDERER, // GUI 渲染器对象
     OBJ_GUI_FONT,     // GUI 字体对象
     OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
+    OBJ_RGB,          // RGB 颜色对象
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
     OBJ_FLOAT,      // float 类型标记（内联缓存用）
@@ -119,6 +120,15 @@ typedef struct ObjFFICallback {
     void* trampoline;
     Value func_val;
 } ObjFFICallback;
+
+// RGB 颜色对象（供核心模块使用）
+typedef struct ObjRgb {
+    Object header;
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t a;
+} ObjRgb;
 
 #define QNAN        ((uint64_t)0x7FF8000000000000ULL)
 #define SIGN_BIT    ((uint64_t)0x8000000000000000ULL)

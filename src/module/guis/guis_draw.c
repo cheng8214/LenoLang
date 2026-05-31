@@ -33,15 +33,18 @@
  * Draw 渲染器实例方法（ren.method() 风格）
  * ============================================================================ */
 
-/* ren.set_color(r, g, b, a) */
+/* ren.set_color(Rgb) */
 static Value gui_set_color_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
-    uint8_t r = (uint8_t)val_as_int(args[1]);
-    uint8_t g = (uint8_t)val_as_int(args[2]);
-    uint8_t b = (uint8_t)val_as_int(args[3]);
-    uint8_t a = (uint8_t)val_as_int(args[4]);
-    if (ren && ren->platform) leno_gui_platform_set_draw_color(ren->platform, r, g, b, a);
+    if (!ren || !ren->platform) return val_null();
+
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_RGB) {
+        return val_null();
+    }
+
+    ObjRgb* rgb = (ObjRgb*)val_as_obj(args[1]);
+    leno_gui_platform_set_draw_color(ren->platform, rgb->r, rgb->g, rgb->b, rgb->a);
     return val_null();
 }
 
@@ -315,7 +318,8 @@ void guis_init_instance_methods(void) {
     TypeKind any_3int[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_INT};
     TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
 
-    draw_register_method_with_params("set_color", make_native(gui_set_color_func, 5, "set_color"), 4, -1, -1, TYPE_NULL, int_4);
+    TypeKind rgb_1[] = {TYPE_RGB};
+    draw_register_method_with_params("set_color", make_native(gui_set_color_func, 2, "set_color"), 1, -1, -1, TYPE_NULL, rgb_1);
     draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, no_params);
     draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, no_params);
     draw_register_method_with_params("point", make_native(gui_render_draw_point_func, 3, "point"), 2, -1, -1, TYPE_NULL, int_2);

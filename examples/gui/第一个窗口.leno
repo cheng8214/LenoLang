@@ -6,9 +6,9 @@ main() {
     func Draw1(Draw ren)
     {
             // onDraw: 每帧调用，ren 是自动创建的渲染器
-             ren.set_color( 30, 30, 46, 255)
+             ren.set_color(_rgb( 30, 30, 46, 255))
              ren.clear()
-             ren.set_color( 255, 0, 0, 255)
+             ren.set_color(_rgb( 255, 0, 0, 255))
              ren.fill_rect(100, 100, 200, 150)
              ren.present()
      }
