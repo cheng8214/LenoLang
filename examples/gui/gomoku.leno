@@ -3,8 +3,8 @@ import maths
 
 main() {
     Style[window] w_style = {
-        width: 800,
-        height: 900,
+        width: 700,
+        height: 800,
         resizable: true
     }
     Win win = guis.create_window("Gomoku", w_style)
@@ -20,9 +20,9 @@ main() {
     var board_h = (board_size - 1) * cell
 
     var board = []
-    for board_size to r {
+    for board_size {
         var row = []
-        for board_size to c {
+        for board_size{
             row.add(0)
         }
         board.add(row)

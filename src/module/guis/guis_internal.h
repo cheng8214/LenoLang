@@ -70,7 +70,33 @@ ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWindow* w
 /* 调用 Leno 闭包 */
 Value call_leno_closure(Value callee, int arg_count, Value* args);
 
-/* Style 字段查询（供 LSP 使用） */
+/* ===== Style 字段类型系统（供 LSP 使用） ===== */
+
+typedef enum {
+    STYLE_TYPE_STRING,
+    STYLE_TYPE_INT,
+    STYLE_TYPE_FLOAT,
+    STYLE_TYPE_BOOL,
+    STYLE_TYPE_COLOR,
+    STYLE_TYPE_ENUM,
+} StyleFieldType;
+
+typedef struct {
+    const char* name;
+    StyleFieldType type;
+    const char* description;
+    const char* default_value;
+    const char** options;
+    int option_count;
+} StyleFieldInfo;
+
+// 获取字段名称列表（返回的数组需要 free 释放）
 const char** guis_get_style_fields(const char* target, int* count);
+
+// 获取字段详细信息
+StyleFieldInfo* guis_get_style_field_info(const char* target, const char* field_name);
+
+// 获取字段类型名称字符串
+const char* guis_style_field_type_name(StyleFieldType type);
 
 #endif /* GUIS_INTERNAL_H */

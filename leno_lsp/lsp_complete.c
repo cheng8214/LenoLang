@@ -8,6 +8,7 @@
 #include "leno_builtins.h"
 #include "../src/include/native.h"
 #include <ctype.h>
+#include <stdlib.h>
 
 // 从模块加载器读取模块文件
 extern char* read_module_file(const char* file_path, const char* current_file);
@@ -1034,8 +1035,19 @@ static char* detect_style_context(const char* content, LspPosition pos) {
 
 // 复用 guis_style.c 中的字段定义
 extern const char** guis_get_style_fields(const char* target, int* count);
+extern void* guis_get_style_field_info(const char* target, const char* field_name);
+extern const char* guis_style_field_type_name(int type);
 
-// 添加 Style 字段补全
+typedef struct {
+    const char* name;
+    int type;
+    const char* description;
+    const char* default_value;
+    const char** options;
+    int option_count;
+} StyleFieldInfo;
+
+// 添加 Style 字段补全（带类型信息）
 static void add_style_field_completions(const char* target, LspCompletionItem** items,
                                          int* count, int* capacity, const char* prefix) {
     if (!target) return;
@@ -1045,8 +1057,35 @@ static void add_style_field_completions(const char* target, LspCompletionItem** 
     
     if (fields && field_count > 0) {
         for (int i = 0; i < field_count; i++) {
-            char detail[256];
-            snprintf(detail, sizeof(detail), "Style[%s].%s", target, fields[i]);
+            StyleFieldInfo* info = (StyleFieldInfo*)guis_get_style_field_info(target, fields[i]);
+            char detail[512];
+            
+            if (info) {
+                const char* type_name = guis_style_field_type_name(info->type);
+                if (info->type == 5 && info->options && info->option_count > 0) {
+                    // 枚举类型，显示可选值
+                    char options_str[256] = {0};
+                    int pos = 0;
+                    for (int j = 0; j < info->option_count && pos < 200; j++) {
+                        int len = strlen(info->options[j]);
+                        if (pos + len + 2 < (int)sizeof(options_str)) {
+                            if (j > 0) {
+                                options_str[pos++] = '|';
+                            }
+                            memcpy(options_str + pos, info->options[j], len);
+                            pos += len;
+                        }
+                    }
+                    options_str[pos] = '\0';
+                    snprintf(detail, sizeof(detail), "%s %s (%s) 默认:%s", 
+                            type_name, info->description, options_str, info->default_value);
+                } else {
+                    snprintf(detail, sizeof(detail), "%s %s 默认:%s", 
+                            type_name, info->description, info->default_value);
+                }
+            } else {
+                snprintf(detail, sizeof(detail), "Style[%s].%s", target, fields[i]);
+            }
             
             add_completion_item(items, count, capacity,
                                fields[i],
@@ -1054,6 +1093,7 @@ static void add_style_field_completions(const char* target, LspCompletionItem** 
                                detail,
                                prefix);
         }
+        free(fields);
     }
 }
 
