@@ -456,7 +456,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
             is_native_obj_type = 1;
             native_type_name = native_get_type_name(receiver_type->kind);
         }
-        if (receiver_type && ((receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_FACE) && receiver_type->struct_name) || is_native_obj_type) {
+        if (receiver_type && (((receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_FACE) && receiver_type->struct_name) || is_native_obj_type)) {
             char method_key[256];
             Ast* method_def = NULL;
             int provided_args = ast->u.call.args.count;

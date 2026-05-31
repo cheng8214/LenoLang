@@ -687,6 +687,8 @@ static void mark_remembered_set(void) {
 // ============================================================================
 
 // 计算对象的总内存占用（包含动态分配的子资源）
+// 注：当前未使用，保留供调试和内存分析使用
+__attribute__((unused))
 static size_t get_object_size(Object* obj) {
     if (!obj) return sizeof(Object);
     switch (obj->type) {

@@ -155,20 +155,57 @@ static ObjGUIFont* as_font(Value v) {
     return (ObjGUIFont*)obj;
 }
 
-static void dict_add_int(ObjDict* d, const char* key, int value) {
-    ObjString* k = str_copy(key, (int)strlen(key));
-    dict_set(d, k, val_int(value));
+// 静态字符串键，避免每次事件都创建新字符串导致内存泄漏
+static ObjString* str_key_type = NULL;
+static ObjString* str_key_window_id = NULL;
+static ObjString* str_key_width = NULL;
+static ObjString* str_key_height = NULL;
+static ObjString* str_key_x = NULL;
+static ObjString* str_key_y = NULL;
+static ObjString* str_key_key = NULL;
+static ObjString* str_key_scancode = NULL;
+static ObjString* str_key_mod = NULL;
+static ObjString* str_key_repeat = NULL;
+static ObjString* str_key_text = NULL;
+static ObjString* str_key_xrel = NULL;
+static ObjString* str_key_yrel = NULL;
+static ObjString* str_key_button = NULL;
+static ObjString* str_key_clicks = NULL;
+static ObjString* str_key_wheel_x = NULL;
+static ObjString* str_key_wheel_y = NULL;
+
+static void init_event_string_keys(void) {
+    if (str_key_type) return;  // 已初始化
+    str_key_type = str_copy("type", 4);
+    str_key_window_id = str_copy("window_id", 9);
+    str_key_width = str_copy("width", 5);
+    str_key_height = str_copy("height", 6);
+    str_key_x = str_copy("x", 1);
+    str_key_y = str_copy("y", 1);
+    str_key_key = str_copy("key", 3);
+    str_key_scancode = str_copy("scancode", 8);
+    str_key_mod = str_copy("mod", 3);
+    str_key_repeat = str_copy("repeat", 6);
+    str_key_text = str_copy("text", 4);
+    str_key_xrel = str_copy("xrel", 4);
+    str_key_yrel = str_copy("yrel", 4);
+    str_key_button = str_copy("button", 6);
+    str_key_clicks = str_copy("clicks", 6);
+    str_key_wheel_x = str_copy("wheel_x", 7);
+    str_key_wheel_y = str_copy("wheel_y", 7);
 }
 
-static void dict_add_float(ObjDict* d, const char* key, float value) {
-    ObjString* k = str_copy(key, (int)strlen(key));
-    dict_set(d, k, val_float((double)value));
+static void dict_add_int_key(ObjDict* d, ObjString* key, int value) {
+    dict_set(d, key, val_int(value));
 }
 
-static void dict_add_string(ObjDict* d, const char* key, const char* value) {
-    ObjString* k = str_copy(key, (int)strlen(key));
+static void dict_add_float_key(ObjDict* d, ObjString* key, float value) {
+    dict_set(d, key, val_float((double)value));
+}
+
+static void dict_add_string_key(ObjDict* d, ObjString* key, const char* value) {
     ObjString* v = str_copy(value, (int)strlen(value));
-    dict_set(d, k, val_obj((Object*)v));
+    dict_set(d, key, val_obj((Object*)v));
 }
 
 static ObjArray* make_int_array2(int a, int b) {
@@ -203,40 +240,41 @@ static Value call_leno_closure(Value callee, int arg_count, Value* args) {
 }
 
 static Value event_to_dict(LenoGUIEvent* ev) {
+    init_event_string_keys();  // 确保静态字符串键已初始化
     ObjDict* d = dict_new(16);
     ObjGUIEvent* event_obj = (ObjGUIEvent*)gc_alloc(sizeof(ObjGUIEvent), OBJ_GUI_EVENT);
     event_obj->data = d;
-    dict_add_int(d, "type", ev->type);
-    dict_add_int(d, "window_id", ev->window_id);
+    dict_add_int_key(d, str_key_type, ev->type);
+    dict_add_int_key(d, str_key_window_id, ev->window_id);
 
     if (ev->type == LENO_GUI_EVT_WINDOW_RESIZE) {
-        dict_add_int(d, "width", ev->data1);
-        dict_add_int(d, "height", ev->data2);
+        dict_add_int_key(d, str_key_width, ev->data1);
+        dict_add_int_key(d, str_key_height, ev->data2);
     } else if (ev->type == LENO_GUI_EVT_WINDOW_MOVE) {
-        dict_add_int(d, "x", ev->data1);
-        dict_add_int(d, "y", ev->data2);
+        dict_add_int_key(d, str_key_x, ev->data1);
+        dict_add_int_key(d, str_key_y, ev->data2);
     } else if (ev->type == LENO_GUI_EVT_KEY_DOWN || ev->type == LENO_GUI_EVT_KEY_UP) {
-        dict_add_int(d, "key", ev->key);
-        dict_add_int(d, "scancode", ev->scancode);
-        dict_add_int(d, "mod", ev->mod_flags);
-        dict_add_int(d, "repeat", ev->repeat);
+        dict_add_int_key(d, str_key_key, ev->key);
+        dict_add_int_key(d, str_key_scancode, ev->scancode);
+        dict_add_int_key(d, str_key_mod, ev->mod_flags);
+        dict_add_int_key(d, str_key_repeat, ev->repeat);
     } else if (ev->type == LENO_GUI_EVT_TEXT_INPUT) {
-        dict_add_string(d, "text", ev->text);
+        dict_add_string_key(d, str_key_text, ev->text);
     } else if (ev->type == LENO_GUI_EVT_MOUSE_MOVE) {
-        dict_add_float(d, "x", ev->mouse_x);
-        dict_add_float(d, "y", ev->mouse_y);
-        dict_add_float(d, "xrel", ev->mouse_xrel);
-        dict_add_float(d, "yrel", ev->mouse_yrel);
+        dict_add_float_key(d, str_key_x, ev->mouse_x);
+        dict_add_float_key(d, str_key_y, ev->mouse_y);
+        dict_add_float_key(d, str_key_xrel, ev->mouse_xrel);
+        dict_add_float_key(d, str_key_yrel, ev->mouse_yrel);
     } else if (ev->type == LENO_GUI_EVT_MOUSE_DOWN || ev->type == LENO_GUI_EVT_MOUSE_UP) {
-        dict_add_float(d, "x", ev->mouse_x);
-        dict_add_float(d, "y", ev->mouse_y);
-        dict_add_int(d, "button", ev->mouse_button);
-        dict_add_int(d, "clicks", ev->mouse_clicks);
+        dict_add_float_key(d, str_key_x, ev->mouse_x);
+        dict_add_float_key(d, str_key_y, ev->mouse_y);
+        dict_add_int_key(d, str_key_button, ev->mouse_button);
+        dict_add_int_key(d, str_key_clicks, ev->mouse_clicks);
     } else if (ev->type == LENO_GUI_EVT_MOUSE_WHEEL) {
-        dict_add_float(d, "x", ev->mouse_x);
-        dict_add_float(d, "y", ev->mouse_y);
-        dict_add_float(d, "wheel_x", ev->wheel_x);
-        dict_add_float(d, "wheel_y", ev->wheel_y);
+        dict_add_float_key(d, str_key_x, ev->mouse_x);
+        dict_add_float_key(d, str_key_y, ev->mouse_y);
+        dict_add_float_key(d, str_key_wheel_x, ev->wheel_x);
+        dict_add_float_key(d, str_key_wheel_y, ev->wheel_y);
     }
 
     return val_obj((Object*)event_obj);
@@ -695,9 +733,10 @@ static Value gui_get_mouse_state_func(int argc, Value* args) {
     int x = 0, y = 0, buttons = 0;
     leno_gui_platform_get_mouse_state(&x, &y, &buttons);
     ObjDict* d = dict_new(8);
-    dict_add_int(d, "x", x);
-    dict_add_int(d, "y", y);
-    dict_add_int(d, "buttons", buttons);
+    init_event_string_keys();
+    dict_add_int_key(d, str_key_x, x);
+    dict_add_int_key(d, str_key_y, y);
+    dict_add_int_key(d, str_key_button, buttons);
     return val_obj((Object*)d);
 }
 
@@ -964,9 +1003,18 @@ static Value gui_run_func(int argc, Value* args) {
     gc_push_root(&run_state.win_val);
 
     /* 使用迭代回调机制（参考 SDL3） */
+    int frame_count = 0;
     while (1) {
         process_timers();
         if (!leno_gui_platform_iterate_main_callbacks()) break;
+
+        /* 每 60 帧触发一次 GC，防止事件循环中内存泄漏 */
+        frame_count++;
+        if (frame_count >= 60) {
+            frame_count = 0;
+            gc_collect();
+        }
+
 #ifdef _WIN32
         Sleep(1);
 #else
