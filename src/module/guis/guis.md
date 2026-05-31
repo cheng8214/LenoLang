@@ -66,15 +66,15 @@ main() {
     Win win = guis.create_window("Hello", 800, 600, 1)
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(30, 30, 46, 255)
+            ren.set_color(30, 30, 46, 255)
             ren.clear()
-            ren.set_draw_color(255, 0, 0, 255)
+            ren.set_color(255, 0, 0, 255)
             ren.fill_rect(100, 100, 200, 150)
             ren.present()
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
         }
     )
@@ -159,13 +159,13 @@ Win win = guis.create_window("My App", 1024, 768, 1)
 ```leno
 guis.run(win,
     func(Draw ren) {
-        ren.set_draw_color(0, 0, 0, 255)
+        ren.set_color(0, 0, 0, 255)
         ren.clear()
         ren.present()
     },
     func(Event e) {
         if e.is_quit() {
-            guis.set_window_should_close(win, true)
+            guis.set_should_close(win, true)
         }
     }
 )
@@ -175,75 +175,75 @@ guis.run(win,
 
 ## 窗口操作
 
-### `guis.show_window(win)` / `guis.hide_window(win)`
+### `guis.show(win)` / `guis.hide(win)`
 
 显示或隐藏窗口。
 
 ```leno
-guis.show_window(win)
-guis.hide_window(win)
+guis.show(win)
+guis.hide(win)
 ```
 
 ---
 
-### `guis.set_window_title(win, title)`
+### `guis.set_title(win, title)`
 
 设置窗口标题。
 
 ```leno
-guis.set_window_title(win, "新标题")
+guis.set_title(win, "新标题")
 ```
 
 ---
 
-### `guis.set_window_size(win, w, h)` / `guis.get_window_size(win)`
+### `guis.set_size(win, w, h)` / `guis.get_size(win)`
 
-设置或获取窗口大小。`get_window_size` 返回 `[w, h]` 数组。
+设置或获取窗口大小。`get_size` 返回 `[w, h]` 数组。
 
 ```leno
-guis.set_window_size(win, 1024, 768)
-var size = guis.get_window_size(win)
+guis.set_size(win, 1024, 768)
+var size = guis.get_size(win)
 print("宽: " + size[0] + " 高: " + size[1])
 ```
 
 ---
 
-### `guis.set_window_position(win, x, y)` / `guis.get_window_position(win)`
+### `guis.set_pos(win, x, y)` / `guis.get_pos(win)`
 
-设置或获取窗口位置。`get_window_position` 返回 `[x, y]` 数组。
+设置或获取窗口位置。`get_pos` 返回 `[x, y]` 数组。
 
 ```leno
-guis.set_window_position(win, 100, 100)
-var pos = guis.get_window_position(win)
+guis.set_pos(win, 100, 100)
+var pos = guis.get_pos(win)
 ```
 
 ---
 
-### `guis.set_window_fullscreen(win, bool)`
+### `guis.set_fullscreen(win, bool)`
 
 设置窗口全屏状态。
 
 ```leno
-guis.set_window_fullscreen(win, true)   // 全屏
-guis.set_window_fullscreen(win, false)  // 退出全屏
+guis.set_fullscreen(win, true)   // 全屏
+guis.set_fullscreen(win, false)  // 退出全屏
 ```
 
 ---
 
-### `guis.window_should_close(win)` / `guis.set_window_should_close(win, bool)`
+### `guis.should_close(win)` / `guis.set_should_close(win, bool)`
 
 查询或设置窗口关闭标志。
 
 ```leno
-if guis.window_should_close(win) {
+if guis.should_close(win) {
     print("窗口应该关闭")
 }
-guis.set_window_should_close(win, true)
+guis.set_should_close(win, true)
 ```
 
 ---
 
-### `guis.set_window_opacity(win, opacity)`
+### `guis.set_opacity(win, opacity)`
 
 设置窗口透明度。
 
@@ -251,7 +251,7 @@ guis.set_window_should_close(win, true)
 - `opacity` (float): 0.0（完全透明）~ 1.0（完全不透明）
 
 ```leno
-guis.set_window_opacity(win, 0.85)
+guis.set_opacity(win, 0.85)
 ```
 
 ---
@@ -260,7 +260,7 @@ guis.set_window_opacity(win, 0.85)
 
 渲染器通过 `guis.run()` 的 onDraw 回调参数获取，或通过 `guis.create_renderer(win)` 手动创建。
 
-### `ren.set_draw_color(r, g, b, a)`
+### `ren.set_color(r, g, b, a)`
 
 设置绘制颜色。
 
@@ -269,7 +269,7 @@ guis.set_window_opacity(win, 0.85)
 - `a` (int): Alpha 透明度 (0-255)
 
 ```leno
-ren.set_draw_color(255, 100, 50, 255)
+ren.set_color(255, 100, 50, 255)
 ```
 
 ---
@@ -279,7 +279,7 @@ ren.set_draw_color(255, 100, 50, 255)
 用当前绘制颜色清除整个渲染缓冲区。
 
 ```leno
-ren.set_draw_color(30, 30, 46, 255)
+ren.set_color(30, 30, 46, 255)
 ren.clear()
 ```
 
@@ -300,7 +300,7 @@ ren.present()
 绘制单个像素点。
 
 ```leno
-ren.set_draw_color(255, 0, 0, 255)
+ren.set_color(255, 0, 0, 255)
 ren.draw_point(100, 100)
 ```
 
@@ -311,7 +311,7 @@ ren.draw_point(100, 100)
 绘制直线。
 
 ```leno
-ren.set_draw_color(255, 255, 0, 255)
+ren.set_color(255, 255, 0, 255)
 ren.draw_line(0, 0, 800, 600)
 ```
 
@@ -322,7 +322,7 @@ ren.draw_line(0, 0, 800, 600)
 绘制矩形边框。
 
 ```leno
-ren.set_draw_color(0, 255, 0, 255)
+ren.set_color(0, 255, 0, 255)
 ren.draw_rect(50, 50, 200, 100)
 ```
 
@@ -333,7 +333,7 @@ ren.draw_rect(50, 50, 200, 100)
 填充矩形。
 
 ```leno
-ren.set_draw_color(100, 100, 255, 255)
+ren.set_color(100, 100, 255, 255)
 ren.fill_rect(50, 50, 200, 100)
 ```
 
@@ -344,7 +344,7 @@ ren.fill_rect(50, 50, 200, 100)
 绘制圆形边框（Bresenham 中点圆算法）。
 
 ```leno
-ren.set_draw_color(255, 100, 100, 255)
+ren.set_color(255, 100, 100, 255)
 ren.draw_circle(400, 300, 80)
 ```
 
@@ -355,7 +355,7 @@ ren.draw_circle(400, 300, 80)
 填充圆形（水平扫描线填充）。
 
 ```leno
-ren.set_draw_color(100, 255, 100, 255)
+ren.set_color(100, 255, 100, 255)
 ren.fill_circle(400, 300, 60)
 ```
 
@@ -366,7 +366,7 @@ ren.fill_circle(400, 300, 60)
 绘制圆角矩形边框。
 
 ```leno
-ren.set_draw_color(100, 150, 255, 255)
+ren.set_color(100, 150, 255, 255)
 ren.draw_rounded_rect(50, 50, 200, 100, 15)
 ```
 
@@ -377,7 +377,7 @@ ren.draw_rounded_rect(50, 50, 200, 100, 15)
 填充圆角矩形。
 
 ```leno
-ren.set_draw_color(180, 100, 255, 255)
+ren.set_color(180, 100, 255, 255)
 ren.fill_rounded_rect(50, 50, 200, 100, 15)
 ```
 
@@ -421,7 +421,7 @@ ren.disable_clip_rect()
 
 ## 事件方法（Event 实例方法）
 
-事件通过 `guis.run()` 的 onEvent 回调参数获取，或通过 `guis.poll_event()` 获取。
+事件通过 `guis.run()` 的 onEvent 回调参数获取，或通过 `guis.poll()` 获取。
 
 ### 事件类型判断
 
@@ -467,7 +467,7 @@ func(Event e) {
     if e.is_key_down() {
         var key = e.key()
         if key == 0x1B {
-            guis.set_window_should_close(win, true)
+            guis.set_should_close(win, true)
         }
         print("key: " + _str(key))
     }
@@ -552,14 +552,14 @@ ren.update_texture(tex, pixel_data, 256 * 4)
 
 ## 事件系统
 
-### `guis.poll_event()`
+### `guis.poll()`
 
 轮询事件队列。非阻塞。
 
 **返回**: `Event` 或 `null`（无事件时）
 
 ```leno
-var ev = guis.poll_event()
+var ev = guis.poll()
 if ev != null {
     // 处理事件
 }
@@ -567,7 +567,7 @@ if ev != null {
 
 ---
 
-### `guis.wait_event(timeout_ms)`
+### `guis.wait(timeout_ms)`
 
 等待事件（带超时）。阻塞直到有事件或超时。
 
@@ -577,7 +577,7 @@ if ev != null {
 **返回**: `Event` 或 `null`（超时时）
 
 ```leno
-var ev = guis.wait_event(1000)
+var ev = guis.wait(1000)
 ```
 
 ---
@@ -595,7 +595,7 @@ var ev = guis.wait_event(1000)
 guis.run(win,
     func(Draw ren) {
         // 每帧渲染
-        ren.set_draw_color(0, 0, 0, 255)
+        ren.set_color(0, 0, 0, 255)
         ren.clear()
         // ... 绘制内容
         ren.present()
@@ -603,10 +603,10 @@ guis.run(win,
     func(Event e) {
         // 事件处理
         if e.is_quit() or e.is_window_close() {
-            guis.set_window_should_close(win, true)
+            guis.set_should_close(win, true)
         }
         if e.is_key_down() and e.key() == 0x1B {
-            guis.set_window_should_close(win, true)
+            guis.set_should_close(win, true)
         }
     }
 )
@@ -620,17 +620,17 @@ guis.run(win,
 Win win = guis.create_window("App", 800, 600, 1)
 Draw ren = guis.create_renderer(win)
 
-while not guis.window_should_close(win) {
-    var ev = guis.poll_event()
+while not guis.should_close(win) {
+    var ev = guis.poll()
     while ev != null {
         // 处理事件
         if ev.is_quit() {
-            guis.set_window_should_close(win, true)
+            guis.set_should_close(win, true)
         }
-        ev = guis.poll_event()
+        ev = guis.poll()
     }
 
-    ren.set_draw_color(0, 0, 0, 255)
+    ren.set_color(0, 0, 0, 255)
     ren.clear()
     ren.present()
 }
@@ -643,7 +643,7 @@ guis.cleanup(win)
 
 ## 输入状态查询
 
-### `guis.get_key_state(key)`
+### `guis.get_key(key)`
 
 查询指定按键是否按下。
 
@@ -653,21 +653,21 @@ guis.cleanup(win)
 **返回**: `bool`
 
 ```leno
-if guis.get_key_state(0x20) {
+if guis.get_key(0x20) {
     print("空格键正在按下")
 }
 ```
 
 ---
 
-### `guis.get_mouse_state()`
+### `guis.get_mouse()`
 
 查询鼠标状态。
 
 **返回**: `{x, y, buttons}` - 鼠标位置和按钮状态
 
 ```leno
-var mouse = guis.get_mouse_state()
+var mouse = guis.get_mouse()
 print("鼠标: " + mouse.x + ", " + mouse.y)
 if mouse.buttons & 1 {
     print("左键按下")
@@ -678,13 +678,13 @@ if mouse.buttons & 1 {
 
 ## 剪贴板
 
-### `guis.get_clipboard_text()` / `guis.set_clipboard_text(text)`
+### `guis.get_clipboard()` / `guis.set_clipboard(text)`
 
 获取或设置剪贴板文本。
 
 ```leno
-guis.set_clipboard_text("Hello from Leno!")
-var text = guis.get_clipboard_text()
+guis.set_clipboard("Hello from Leno!")
+var text = guis.get_clipboard()
 print(text)
 ```
 
@@ -737,13 +737,13 @@ print("耗时: " + elapsed + "ms")
 
 ---
 
-### `guis.get_performance_counter()` / `guis.get_performance_frequency()`
+### `guis.get_perf_counter()` / `guis.get_perf_freq()`
 
 获取高精度性能计数器值和频率。
 
 ```leno
-var counter = guis.get_performance_counter()
-var freq = guis.get_performance_frequency()
+var counter = guis.get_perf_counter()
+var freq = guis.get_perf_freq()
 var seconds = counter / freq
 ```
 
@@ -823,15 +823,15 @@ guis.delay(16)  // 延迟约 16ms（约 60 FPS）
 
 ---
 
-### `guis.get_display_size()` / `guis.get_display_dpi()`
+### `guis.get_display()` / `guis.get_dpi()`
 
 获取显示器尺寸和 DPI。
 
 ```leno
-var size = guis.get_display_size()
+var size = guis.get_display()
 print("屏幕: " + size[0] + "x" + size[1])
 
-var dpi = guis.get_display_dpi()
+var dpi = guis.get_dpi()
 print("DPI: " + dpi)
 ```
 
@@ -849,15 +849,15 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(30, 30, 46, 255)
+            ren.set_color(30, 30, 46, 255)
             ren.clear()
-            ren.set_draw_color(255, 100, 100, 255)
+            ren.set_color(255, 100, 100, 255)
             ren.fill_rect(100, 100, 200, 150)
             ren.present()
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
         }
     )
@@ -881,7 +881,7 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(0, 0, 0, 255)
+            ren.set_color(0, 0, 0, 255)
             ren.clear()
 
             frame = frame + 1
@@ -895,7 +895,7 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
         }
     )
@@ -920,13 +920,13 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(20, 20, 30, 255)
+            ren.set_color(20, 20, 30, 255)
             ren.clear()
 
             if clicked {
-                ren.set_draw_color(255, 100, 100, 255)
+                ren.set_color(255, 100, 100, 255)
             } else {
-                ren.set_draw_color(100, 255, 100, 255)
+                ren.set_color(100, 255, 100, 255)
             }
             ren.fill_circle(mx, my, 30)
 
@@ -934,7 +934,7 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
             if e.is_mouse_move() {
                 mx = e.mouse_x()
@@ -965,20 +965,20 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(30, 30, 46, 255)
+            ren.set_color(30, 30, 46, 255)
             ren.clear()
 
             ren.set_viewport(50, 50, 200, 200)
-            ren.set_draw_color(60, 60, 90, 255)
+            ren.set_color(60, 60, 90, 255)
             ren.fill_rect(0, 0, 200, 200)
-            ren.set_draw_color(255, 255, 100, 255)
+            ren.set_color(255, 255, 100, 255)
             ren.draw_rect(10, 10, 180, 180)
 
             var rs = ren.get_size()
             ren.set_viewport(0, 0, rs[0], rs[1])
 
             ren.set_clip_rect(550, 50, 200, 200)
-            ren.set_draw_color(80, 40, 40, 255)
+            ren.set_color(80, 40, 40, 255)
             ren.fill_rect(500, 0, 350, 350)
             ren.disable_clip_rect()
 
@@ -986,7 +986,7 @@ main() {
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
         }
     )
@@ -1005,38 +1005,38 @@ import guis
 main() {
     Win win = guis.create_window("LenoC GUI - Draw Test", 800, 600, 1)
 
-    guis.set_window_opacity(win, 0.95)
+    guis.set_opacity(win, 0.95)
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(30, 30, 46, 255)
+            ren.set_color(30, 30, 46, 255)
             ren.clear()
 
-            ren.set_draw_color(255, 100, 100, 255)
+            ren.set_color(255, 100, 100, 255)
             ren.draw_circle(400, 150, 80)
 
-            ren.set_draw_color(100, 255, 100, 255)
+            ren.set_color(100, 255, 100, 255)
             ren.fill_circle(400, 350, 60)
 
-            ren.set_draw_color(100, 150, 255, 255)
+            ren.set_color(100, 150, 255, 255)
             ren.draw_rounded_rect(50, 350, 200, 100, 20)
 
-            ren.set_draw_color(180, 100, 255, 255)
+            ren.set_color(180, 100, 255, 255)
             ren.fill_rounded_rect(550, 350, 200, 100, 15)
 
-            ren.set_draw_color(255, 255, 0, 255)
+            ren.set_color(255, 255, 0, 255)
             ren.draw_line(300, 450, 500, 550)
 
             ren.present()
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
             if e.is_key_down() {
                 var key = e.key()
                 if key == 0x1B {
-                    guis.set_window_should_close(win, true)
+                    guis.set_should_close(win, true)
                 }
             }
         }
@@ -1064,7 +1064,7 @@ var win = guis.create_window("App", 800, 600, 1)
 每帧必须按 `clear()` → 绘制 → `present()` 的顺序操作。缺少 `present()` 会导致画面不更新。
 
 ```leno
-ren.set_draw_color(0, 0, 0, 255)
+ren.set_color(0, 0, 0, 255)
 ren.clear()           // 1. 清除
 ren.fill_rect(...)    // 2. 绘制
 ren.present()         // 3. 呈现
@@ -1101,7 +1101,7 @@ ren.present()         // 3. 呈现
    ```leno
    func(Event e) {
        if e.is_quit() or e.is_window_close() {
-           guis.set_window_should_close(win, true)
+           guis.set_should_close(win, true)
        }
    }
    ```

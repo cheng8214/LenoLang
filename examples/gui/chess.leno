@@ -16,10 +16,10 @@ main() {
 
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(40, 40, 55, 255)
+            ren.set_color(40, 40, 55, 255)
             ren.clear()
 
-            ren.set_draw_color(230, 230, 240, 255)
+            ren.set_color(230, 230, 240, 255)
             ren.draw_text_font(font_title, "Chess Board", 250, 15)
 
             for 8 to var r {
@@ -28,17 +28,17 @@ main() {
                     var y = board_y + r * cell
 
                     if (r + c) % 2 == 0 {
-                        ren.set_draw_color(240, 217, 181, 255)
+                        ren.set_color(240, 217, 181, 255)
                     } else {
-                        ren.set_draw_color(181, 136, 99, 255)
+                        ren.set_color(181, 136, 99, 255)
                     }
 
                     if r == selected_row and c == selected_col {
-                        ren.set_draw_color(130, 180, 100, 255)
+                        ren.set_color(130, 180, 100, 255)
                     }
 
                     ren.fill_rect(x, y, cell, cell)
-                    ren.set_draw_color(60, 50, 40, 255)
+                    ren.set_color(60, 50, 40, 255)
                     ren.draw_rect(x, y, cell, cell)
                 }
             }
@@ -46,51 +46,51 @@ main() {
             var pieces_b = ["♜","♞","♝","♛","♚","♝","♞","♜"]
             for 8 to var c {
                 var px = board_x + c * cell + 14
-                ren.set_draw_color(30, 30, 30, 255)
+                ren.set_color(30, 30, 30, 255)
                 ren.draw_text_font(font, pieces_b[c], px, board_y + 14)
             }
 
             for 8 to var c {
                 var px = board_x + c * cell + 14
-                ren.set_draw_color(30, 30, 30, 255)
+                ren.set_color(30, 30, 30, 255)
                 ren.draw_text_font(font, "♟", px, board_y + cell + 14)
             }
 
             for 8 to var c {
                 var px = board_x + c * cell + 14
-                ren.set_draw_color(250, 250, 250, 255)
+                ren.set_color(250, 250, 250, 255)
                 ren.draw_text_font(font, "♙", px, board_y + 6 * cell + 14)
             }
 
             var pieces_w = ["♖","♘","♗","♕","♔","♗","♘","♖"]
             for 8 to var c {
                 var px = board_x + c * cell + 14
-                ren.set_draw_color(250, 250, 250, 255)
+                ren.set_color(250, 250, 250, 255)
                 ren.draw_text_font(font, pieces_w[c], px, board_y + 7 * cell + 14)
             }
 
             for 8 to var c {
-                ren.set_draw_color(180, 180, 190, 255)
+                ren.set_color(180, 180, 190, 255)
                 ren.draw_text_font(font_sm, _str(c + 1), board_x + c * cell + 28, board_y + 8 * cell + 6)
             }
 
             var cols = ["a","b","c","d","e","f","g","h"]
             for 8 to var r {
-                ren.set_draw_color(180, 180, 190, 255)
+                ren.set_color(180, 180, 190, 255)
                 ren.draw_text_font(font_sm, cols[r], board_x - 18, board_y + r * cell + 26)
             }
 
-            ren.set_draw_color(120, 120, 140, 255)
+            ren.set_color(120, 120, 140, 255)
             ren.draw_text_font(font_sm, "Click to select  |  ESC to quit", 190, 670)
 
             ren.present()
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
             if e.is_key_down() and e.key() == 0x1B {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
             if e.is_mouse_down() {
                 var mx = e.mouse_x()

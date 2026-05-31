@@ -4,20 +4,19 @@
  * 类型关键字:
  *   Win   - 窗口对象 (OBJ_GUI_WINDOW)
  *   Draw  - 渲染器对象 (OBJ_GUI_RENDERER)
- *   Event - 事件对象 (OBJ_DICT 别名)
+ *   Event - 事件对象 (OBJ_GUI_EVENT )
  *
  * 模块级 API:
- *   guis.init() -> bool
  *   guis.cleanup(win) -> null              销毁窗口 + 退出 GUI
  *   guis.create_window(title, w, h, flags) -> Win
- *   guis.show_window(win) / hide_window(win)
- *   guis.set_window_title(win, title)
- *   guis.set_window_size(win, w, h) / get_window_size(win) -> [w, h]
- *   guis.set_window_position(win, x, y) / get_window_position(win) -> [x, y]
- *   guis.set_window_fullscreen(win, bool)
- *   guis.window_should_close(win) -> bool
- *   guis.set_window_should_close(win, bool)
- *   guis.set_window_opacity(win, opacity)
+ *   guis.show(win) / hide(win)
+ *   guis.set_title(win, title)
+ *   guis.set_size(win, w, h) / get_size(win) -> [w, h]
+ *   guis.set_pos(win, x, y) / get_pos(win) -> [x, y]
+ *   guis.set_fullscreen(win, bool)
+ *   guis.should_close(win) -> bool
+ *   guis.set_should_close(win, bool)
+ *   guis.set_opacity(win, opacity)
  *   guis.create_renderer(win) -> Draw
  *   guis.destroy_renderer(ren)
  *   guis.resize_renderer(ren, w, h) -> bool    窗口大小改变时调整渲染器
@@ -27,42 +26,21 @@
  *   guis.destroy_font(font)                               销毁字体
  *   ren.draw_text_font(font, text, x, y)                  系统字体渲染
  *   ren.text_size_font(font, text) -> [w, h]              系统字体文字尺寸
- *   guis.poll_event() / wait_event(timeout_ms)
- *   guis.get_key_state(key) -> bool
- *   guis.get_mouse_state() -> {x, y, buttons}
- *   guis.get_clipboard_text() / set_clipboard_text(text)
+ *   guis.poll() / wait(timeout_ms)
+ *   guis.get_key(key) -> bool
+ *   guis.get_mouse() -> {x, y, buttons}
+ *   guis.get_clipboard() / set_clipboard(text)
  *   guis.show_cursor(bool)
  *   guis.msg_box(title, message, type) -> int
- *   guis.get_ticks() / get_performance_counter() / get_performance_frequency()
+ *   guis.get_ticks() / get_perf_counter() / get_perf_freq()
  *   guis.delay(ms)
  *   guis.add_timer(interval_ms, callback) -> timer_id    定时器回调
  *   guis.remove_timer(timer_id) -> bool                  取消定时器
- *   guis.get_display_size() / get_display_dpi()
+ *   guis.get_display() / get_dpi()
  *   guis.run(win, onDraw, onEvent)          回调式事件循环
  *
- * Draw 实例方法 (ren.method()):
- *   ren.set_draw_color(r, g, b, a)
- *   ren.clear() / ren.present()
- *   ren.draw_point(x, y) / ren.draw_line(x1, y1, x2, y2)
- *   ren.draw_rect(x, y, w, h) / ren.fill_rect(x, y, w, h)
- *   ren.draw_circle(cx, cy, r) / ren.fill_circle(cx, cy, r)
- *   ren.draw_rounded_rect(x, y, w, h, r) / ren.fill_rounded_rect(x, y, w, h, r)
- *   ren.set_viewport(x, y, w, h) / ren.get_viewport() -> [x, y, w, h]
- *   ren.set_clip_rect(x, y, w, h) / ren.get_clip_rect() / ren.disable_clip_rect()
- *   ren.draw_text(text, x, y, size)                       内置 8x8 点阵字体
- *   ren.text_size(text, size) -> [w, h]                   计算文字尺寸
- *   ren.get_size() -> [w, h]
- *
- * Event 实例方法 (e.method()):
- *   e.type() -> int
- *   e.is_quit() / e.is_window_close() / e.is_window_resize() / e.is_window_move()
- *   e.is_key_down() / e.is_key_up() / e.is_text_input()
- *   e.is_mouse_move() / e.is_mouse_down() / e.is_mouse_up() / e.is_mouse_wheel()
- *   e.key() -> int
- *   e.mouse_x() / e.mouse_y() / e.mouse_button() -> int
- *   e.width() / e.height() -> int
- *   e.text() -> string
- *
+
+
  * 使用示例:
  *   import guis
  *   main() {
@@ -70,18 +48,18 @@
  *       Win win = guis.create_window("Hello", 800, 600, 1)
  *       guis.run(win,
  *           func(Draw ren) {
- *               ren.set_draw_color(30, 30, 46, 255)
+ *               ren.set_color(30, 30, 46, 255)
  *               ren.clear()
- *               ren.set_draw_color(255, 0, 0, 255)
+ *               ren.set_color(255, 0, 0, 255)
  *               ren.fill_rect(100, 100, 200, 150)
  *               ren.present()
  *           },
  *           func(Event e) {
  *               if e.is_quit() or e.is_window_close() {
- *                   guis.set_window_should_close(win, true)
+ *                   guis.set_should_close(win, true)
  *               }
  *               if e.is_key_down() and e.key() == 0x1B {
- *                   guis.set_window_should_close(win, true)
+ *                   guis.set_should_close(win, true)
  *               }
  *           }
  *       )
@@ -801,17 +779,17 @@ void guis_init_module(void) {
 
     /* ===== 窗口操作 ===== */
     native_register_module_method("guis", "create_window", gui_create_window_func, 4, -1, -1, TYPE_WIN, str_4int);
-    native_register_module_method("guis", "show_window", gui_show_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
-    native_register_module_method("guis", "hide_window", gui_hide_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
-    native_register_module_method("guis", "set_window_title", gui_set_window_title_func, 2, -1, -1, TYPE_NULL, obj_str);
-    native_register_module_method("guis", "set_window_size", gui_set_window_size_func, 3, -1, -1, TYPE_NULL, obj_2int);
-    native_register_module_method("guis", "get_window_size", gui_get_window_size_func, 1, -1, -1, TYPE_ANY, obj_1int);
-    native_register_module_method("guis", "set_window_position", gui_set_window_position_func, 3, -1, -1, TYPE_NULL, obj_2int);
-    native_register_module_method("guis", "get_window_position", gui_get_window_position_func, 1, -1, -1, TYPE_ANY, obj_1int);
-    native_register_module_method("guis", "set_window_fullscreen", gui_set_window_fullscreen_func, 2, -1, -1, TYPE_NULL, obj_bool);
-    native_register_module_method("guis", "window_should_close", gui_window_should_close_func, 1, -1, -1, TYPE_BOOL, obj_1int);
-    native_register_module_method("guis", "set_window_should_close", gui_set_window_should_close_func, 2, -1, -1, TYPE_NULL, obj_bool);
-    native_register_module_method("guis", "set_window_opacity", gui_set_window_opacity_func, 2, -1, -1, TYPE_NULL, obj_float);
+    native_register_module_method("guis", "show", gui_show_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
+    native_register_module_method("guis", "hide", gui_hide_window_func, 1, -1, -1, TYPE_NULL, obj_1int);
+    native_register_module_method("guis", "set_title", gui_set_window_title_func, 2, -1, -1, TYPE_NULL, obj_str);
+    native_register_module_method("guis", "set_size", gui_set_window_size_func, 3, -1, -1, TYPE_NULL, obj_2int);
+    native_register_module_method("guis", "get_size", gui_get_window_size_func, 1, -1, -1, TYPE_ANY, obj_1int);
+    native_register_module_method("guis", "set_pos", gui_set_window_position_func, 3, -1, -1, TYPE_NULL, obj_2int);
+    native_register_module_method("guis", "get_pos", gui_get_window_position_func, 1, -1, -1, TYPE_ANY, obj_1int);
+    native_register_module_method("guis", "set_fullscreen", gui_set_window_fullscreen_func, 2, -1, -1, TYPE_NULL, obj_bool);
+    native_register_module_method("guis", "should_close", gui_window_should_close_func, 1, -1, -1, TYPE_BOOL, obj_1int);
+    native_register_module_method("guis", "set_should_close", gui_set_window_should_close_func, 2, -1, -1, TYPE_NULL, obj_bool);
+    native_register_module_method("guis", "set_opacity", gui_set_window_opacity_func, 2, -1, -1, TYPE_NULL, obj_float);
 
     /* ===== 渲染器操作（工厂/析构） ===== */
     native_register_module_method("guis", "create_renderer", gui_create_renderer_func, 1, -1, -1, TYPE_DRAW, obj_1int);
@@ -819,16 +797,16 @@ void guis_init_module(void) {
     native_register_module_method("guis", "resize_renderer", gui_resize_renderer_func, 3, -1, -1, TYPE_BOOL, obj_2int);
 
     /* ===== 事件操作 ===== */
-    native_register_module_method("guis", "poll_event", gui_poll_event_func, 0, -1, -1, TYPE_ANY, no_params);
-    native_register_module_method("guis", "wait_event", gui_wait_event_func, 1, -1, -1, TYPE_ANY, int_params);
+    native_register_module_method("guis", "poll", gui_poll_event_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "wait", gui_wait_event_func, 1, -1, -1, TYPE_ANY, int_params);
 
     /* ===== 输入状态查询 ===== */
-    native_register_module_method("guis", "get_key_state", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, int_params);
-    native_register_module_method("guis", "get_mouse_state", gui_get_mouse_state_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "get_key", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, int_params);
+    native_register_module_method("guis", "get_mouse", gui_get_mouse_state_func, 0, -1, -1, TYPE_ANY, no_params);
 
     /* ===== 剪贴板 ===== */
-    native_register_module_method("guis", "get_clipboard_text", gui_get_clipboard_text_func, 0, -1, -1, TYPE_ANY, no_params);
-    native_register_module_method("guis", "set_clipboard_text", gui_set_clipboard_text_func, 1, -1, -1, TYPE_NULL, str_params);
+    native_register_module_method("guis", "get_clipboard", gui_get_clipboard_text_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "set_clipboard", gui_set_clipboard_text_func, 1, -1, -1, TYPE_NULL, str_params);
 
     /* ===== 光标控制 ===== */
     native_register_module_method("guis", "show_cursor", gui_show_cursor_func, 1, -1, -1, TYPE_NULL, bool_params);
@@ -838,8 +816,8 @@ void guis_init_module(void) {
 
     /* ===== 高精度计时器 ===== */
     native_register_module_method("guis", "get_ticks", gui_get_ticks_func, 0, -1, -1, TYPE_INT, no_params);
-    native_register_module_method("guis", "get_performance_counter", gui_get_performance_counter_func, 0, -1, -1, TYPE_INT, no_params);
-    native_register_module_method("guis", "get_performance_frequency", gui_get_performance_frequency_func, 0, -1, -1, TYPE_INT, no_params);
+    native_register_module_method("guis", "get_perf_counter", gui_get_performance_counter_func, 0, -1, -1, TYPE_INT, no_params);
+    native_register_module_method("guis", "get_perf_freq", gui_get_performance_frequency_func, 0, -1, -1, TYPE_INT, no_params);
     native_register_module_method("guis", "delay", gui_delay_func, 1, -1, -1, TYPE_NULL, int_params);
 
     /* ===== 定时器回调 ===== */
@@ -852,8 +830,8 @@ void guis_init_module(void) {
     native_register_module_method("guis", "destroy_font", gui_destroy_font_func, 1, -1, -1, TYPE_NULL, obj_1int);
 
     /* ===== 显示器信息 ===== */
-    native_register_module_method("guis", "get_display_size", gui_get_display_size_func, 0, -1, -1, TYPE_ANY, no_params);
-    native_register_module_method("guis", "get_display_dpi", gui_get_display_dpi_func, 0, -1, -1, TYPE_FLOAT, no_params);
+    native_register_module_method("guis", "get_display", gui_get_display_size_func, 0, -1, -1, TYPE_ANY, no_params);
+    native_register_module_method("guis", "get_dpi", gui_get_display_dpi_func, 0, -1, -1, TYPE_FLOAT, no_params);
 
     /* ===== 回调式事件循环 ===== */
     native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, obj_2func);

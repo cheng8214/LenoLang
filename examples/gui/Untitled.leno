@@ -4,49 +4,49 @@ import guis
 main() {
     Win win = guis.create_window("LenoC GUI - Event 方法测试", 800, 600, 1)
 
-    guis.set_window_opacity(win, 0.95)
+    guis.set_opacity(win, 0.95)
 
     var frame = 0
     var start_ticks = guis.get_ticks()
 	guis.msg_box("234","ere",0)
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(30, 30, 46, 255)
+            ren.set_color(30, 30, 46, 255)
             ren.clear()
 
             /* 视口测试 */
             ren.set_viewport(50, 50, 200, 200)
-            ren.set_draw_color(60, 60, 90, 255)
+            ren.set_color(60, 60, 90, 255)
             ren.fill_rect(0, 0, 200, 200)
-            ren.set_draw_color(255, 255, 100, 255)
+            ren.set_color(255, 255, 100, 255)
             ren.draw_rect(10, 10, 180, 180)
             var rs = ren.get_size()
             ren.set_viewport(0, 0, rs[0], rs[1])
 
             /* 裁剪测试 */
             ren.set_clip_rect(550, 50, 200, 200)
-            ren.set_draw_color(80, 40, 40, 255)
+            ren.set_color(80, 40, 40, 255)
             ren.fill_rect(500, 0, 350, 350)
             ren.disable_clip_rect()
 
             /* 画圆 */
-            ren.set_draw_color(255, 100, 100, 255)
+            ren.set_color(255, 100, 100, 255)
             ren.draw_circle(400, 150, 80)
 
             /* 填充圆 */
-            ren.set_draw_color(100, 255, 100, 255)
+            ren.set_color(100, 255, 100, 255)
             ren.fill_circle(400, 350, 60)
 
             /* 圆角矩形 */
-            ren.set_draw_color(100, 150, 255, 255)
+            ren.set_color(100, 150, 255, 255)
             ren.draw_rounded_rect(50, 350, 200, 100, 20)
 
             /* 填充圆角矩形 */
-            ren.set_draw_color(180, 100, 255, 255)
+            ren.set_color(180, 100, 255, 255)
             ren.fill_rounded_rect(550, 350, 200, 100, 15)
 
             /* 画线 */
-            ren.set_draw_color(255, 255, 0, 255)
+            ren.set_color(255, 255, 0, 255)
             ren.draw_line(300, 450, 500, 550)
 
             frame = frame + 1
@@ -61,12 +61,12 @@ main() {
         func(Event e) {
             /* Event 方法风格 - 比 event["type"] 直观多了 */
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
             if e.is_key_down() {
                 var key = e.key()
                 if key == 0x1B {
-                    guis.set_window_should_close(win, true)
+                    guis.set_should_close(win, true)
                 }
                 print("key down: " + _str(key))
             }

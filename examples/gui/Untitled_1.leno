@@ -5,16 +5,16 @@ main() {
     
     guis.run(win,
         func(Draw ren) {
-            ren.set_draw_color(30, 30, 46, 255)
+            ren.set_color(30, 30, 46, 255)
             ren.clear()
-            ren.set_draw_color(255, 0, 0, 255)
+            ren.set_color(255, 0, 0, 255)
             ren.fill_rect(100, 100, 200, 150)
             ren.present()  // 自动调整大小！
         },
         func(Event e) {
             // 不需要手动处理窗口大小变化！
             if e.is_quit() or e.is_window_close() {
-                guis.set_window_should_close(win, true)
+                guis.set_should_close(win, true)
             }
         }
     )

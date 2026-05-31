@@ -1,5 +1,16 @@
 /* Leno GUI - Event 事件实例方法
  * 从 guis.c 拆分出来的 Event 方法实现
+ *
+ * Event 实例方法 (e.method()):
+ *   e.type() -> int
+ *   e.is_quit() / e.is_window_close() / e.is_window_resize() / e.is_window_move()
+ *   e.is_key_down() / e.is_key_up() / e.is_text_input()
+ *   e.is_mouse_move() / e.is_mouse_down() / e.is_mouse_up() / e.is_mouse_wheel()
+ *   e.key() -> int
+ *   e.mouse_x() / e.mouse_y() / e.mouse_button() -> int
+ *   e.width() / e.height() -> int
+ *   e.text() -> string
+ *
  */
 
 #include "include/native.h"

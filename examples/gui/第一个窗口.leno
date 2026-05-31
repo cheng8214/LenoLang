@@ -6,18 +6,18 @@ main() {
     func Draw1(Draw ren)
     {
             // onDraw: 每帧调用，ren 是自动创建的渲染器
-             ren.set_draw_color( 30, 30, 46, 255)
+             ren.set_color( 30, 30, 46, 255)
              ren.clear()
-             ren.set_draw_color( 255, 0, 0, 255)
+             ren.set_color( 255, 0, 0, 255)
              ren.fill_rect(100, 100, 200, 150)
              ren.present()
      }
     func Event1(Event event) 
     {
             // onEvent: 每个事件调用
-            if event.is_window_close() or event.is_key_down() 
+            if event.is_window_close() or event.is_key_down()
             {
-                gui.set_window_should_close(win, true)
+                gui.set_should_close(win, true)
             }
     }
     gui.run(win,Draw1,Event1)

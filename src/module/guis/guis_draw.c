@@ -1,7 +1,19 @@
 /* Leno GUI - Draw 渲染器实例方法
  * 从 guis.c 拆分出来的 Draw 方法实现
- */
 
+ * Draw 实例方法 (ren.method()):
+ *   ren.set_color(r, g, b, a)
+ *   ren.clear() / ren.present()
+ *   ren.draw_point(x, y) / ren.draw_line(x1, y1, x2, y2)
+ *   ren.draw_rect(x, y, w, h) / ren.fill_rect(x, y, w, h)
+ *   ren.draw_circle(cx, cy, r) / ren.fill_circle(cx, cy, r)
+ *   ren.draw_rounded_rect(x, y, w, h, r) / ren.fill_rounded_rect(x, y, w, h, r)
+ *   ren.set_viewport(x, y, w, h) / ren.get_viewport() -> [x, y, w, h]
+ *   ren.set_clip_rect(x, y, w, h) / ren.get_clip_rect() / ren.disable_clip_rect()
+ *   ren.draw_text(text, x, y, size)                       内置 8x8 点阵字体
+ *   ren.text_size(text, size) -> [w, h]                   计算文字尺寸
+ *   ren.get_size() -> [w, h]
+   */
 #include "include/native.h"
 #include "include/leno_value.h"
 #include "guis_internal.h"
@@ -11,8 +23,8 @@
  * Draw 渲染器实例方法（ren.method() 风格）
  * ============================================================================ */
 
-/* ren.set_draw_color(r, g, b, a) */
-static Value gui_set_draw_color_func(int argc, Value* args) {
+/* ren.set_color(r, g, b, a) */
+static Value gui_set_color_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
     uint8_t r = (uint8_t)val_as_int(args[1]);
@@ -293,7 +305,7 @@ void guis_init_instance_methods(void) {
     TypeKind any_3int[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_INT};
     TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
 
-    draw_register_method_with_params("set_draw_color", make_native(gui_set_draw_color_func, 5, "set_draw_color"), 4, -1, -1, TYPE_NULL, int_4);
+    draw_register_method_with_params("set_color", make_native(gui_set_color_func, 5, "set_color"), 4, -1, -1, TYPE_NULL, int_4);
     draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, no_params);
     draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, no_params);
     draw_register_method_with_params("draw_point", make_native(gui_render_draw_point_func, 3, "draw_point"), 2, -1, -1, TYPE_NULL, int_2);
