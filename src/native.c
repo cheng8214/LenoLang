@@ -1170,7 +1170,7 @@ void dicts_init_instance_methods(void);
 void files_init_instance_methods(void);
 // 前向声明：Draw 渲染器实例方法初始化（在 guis.c 中定义）
 void guis_init_instance_methods(void);
-// 前向声明：Event 事件实例方法初始化（在 guis.c 中定义）
+// 前向声明：Event 事件实例方法初始化（在 guis_event.c 中定义）
 void guis_init_event_methods(void);
 // 前向声明：结构体实例方法初始化（在 structs.c 中定义）
 void structs_init_instance_methods(void);

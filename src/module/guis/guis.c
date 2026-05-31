@@ -93,39 +93,17 @@
 #include "include/leno_value.h"
 #include "include/leno_vm.h"
 #include "leno_guis.h"
+#include "guis_internal.h"
 #include <string.h>
-#include <stdlib.h>
 
-typedef struct {
-    Object header;
-    LenoGUIPlatformWindow* platform;
-} ObjGUIWindow;
-
-typedef struct {
-    Object header;
-    LenoGUIPlatformRenderer* platform;
-    ObjGUIWindow* window;
-} ObjGUIRenderer;
-
-typedef struct {
-    Object header;
-    LenoGUIPlatformFont* platform;
-} ObjGUIFont;
-
-/* Event 对象：内部持有 ObjDict 存储事件数据，独立类型避免与普通 Dict 冲突 */
-typedef struct {
-    Object header;
-    ObjDict* data;
-} ObjGUIEvent;
-
-static ObjGUIWindow* create_window_obj(LenoGUIPlatformWindow* pw) {
+ObjGUIWindow* create_window_obj(LenoGUIPlatformWindow* pw) {
     ObjGUIWindow* obj = (ObjGUIWindow*)gc_alloc(sizeof(ObjGUIWindow), OBJ_GUI_WINDOW);
     if (!obj) return NULL;
     obj->platform = pw;
     return obj;
 }
 
-static ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWindow* win) {
+ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWindow* win) {
     ObjGUIRenderer* obj = (ObjGUIRenderer*)gc_alloc(sizeof(ObjGUIRenderer), OBJ_GUI_RENDERER);
     if (!obj) return NULL;
     obj->platform = pr;
@@ -134,21 +112,21 @@ static ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWi
     return obj;
 }
 
-static ObjGUIWindow* as_window(Value v) {
+ObjGUIWindow* as_window(Value v) {
     if (!val_is_obj(v)) return NULL;
     Object* obj = val_as_obj(v);
     if (obj->type != OBJ_GUI_WINDOW) return NULL;
     return (ObjGUIWindow*)obj;
 }
 
-static ObjGUIRenderer* as_renderer(Value v) {
+ObjGUIRenderer* as_renderer(Value v) {
     if (!val_is_obj(v)) return NULL;
     Object* obj = val_as_obj(v);
     if (obj->type != OBJ_GUI_RENDERER) return NULL;
     return (ObjGUIRenderer*)obj;
 }
 
-static ObjGUIFont* as_font(Value v) {
+ObjGUIFont* as_font(Value v) {
     if (!val_is_obj(v)) return NULL;
     Object* obj = val_as_obj(v);
     if (obj->type != OBJ_GUI_FONT) return NULL;
@@ -156,25 +134,25 @@ static ObjGUIFont* as_font(Value v) {
 }
 
 // 静态字符串键，避免每次事件都创建新字符串导致内存泄漏
-static ObjString* str_key_type = NULL;
-static ObjString* str_key_window_id = NULL;
-static ObjString* str_key_width = NULL;
-static ObjString* str_key_height = NULL;
-static ObjString* str_key_x = NULL;
-static ObjString* str_key_y = NULL;
-static ObjString* str_key_key = NULL;
-static ObjString* str_key_scancode = NULL;
-static ObjString* str_key_mod = NULL;
-static ObjString* str_key_repeat = NULL;
-static ObjString* str_key_text = NULL;
-static ObjString* str_key_xrel = NULL;
-static ObjString* str_key_yrel = NULL;
-static ObjString* str_key_button = NULL;
-static ObjString* str_key_clicks = NULL;
-static ObjString* str_key_wheel_x = NULL;
-static ObjString* str_key_wheel_y = NULL;
+ObjString* str_key_type = NULL;
+ObjString* str_key_window_id = NULL;
+ObjString* str_key_width = NULL;
+ObjString* str_key_height = NULL;
+ObjString* str_key_x = NULL;
+ObjString* str_key_y = NULL;
+ObjString* str_key_key = NULL;
+ObjString* str_key_scancode = NULL;
+ObjString* str_key_mod = NULL;
+ObjString* str_key_repeat = NULL;
+ObjString* str_key_text = NULL;
+ObjString* str_key_xrel = NULL;
+ObjString* str_key_yrel = NULL;
+ObjString* str_key_button = NULL;
+ObjString* str_key_clicks = NULL;
+ObjString* str_key_wheel_x = NULL;
+ObjString* str_key_wheel_y = NULL;
 
-static void init_event_string_keys(void) {
+void init_event_string_keys(void) {
     if (str_key_type) return;  // 已初始化
     str_key_type = str_copy("type", 4);
     str_key_window_id = str_copy("window_id", 9);
@@ -195,20 +173,20 @@ static void init_event_string_keys(void) {
     str_key_wheel_y = str_copy("wheel_y", 7);
 }
 
-static void dict_add_int_key(ObjDict* d, ObjString* key, int value) {
+void dict_add_int_key(ObjDict* d, ObjString* key, int value) {
     dict_set(d, key, val_int(value));
 }
 
-static void dict_add_float_key(ObjDict* d, ObjString* key, float value) {
+void dict_add_float_key(ObjDict* d, ObjString* key, float value) {
     dict_set(d, key, val_float((double)value));
 }
 
-static void dict_add_string_key(ObjDict* d, ObjString* key, const char* value) {
+void dict_add_string_key(ObjDict* d, ObjString* key, const char* value) {
     ObjString* v = str_copy(value, (int)strlen(value));
     dict_set(d, key, val_obj((Object*)v));
 }
 
-static ObjArray* make_int_array2(int a, int b) {
+ObjArray* make_int_array2(int a, int b) {
     ObjArray* arr = arr_new(2);
     arr->count = 2;
     arr_write(arr, 0, val_int(a));
@@ -216,7 +194,7 @@ static ObjArray* make_int_array2(int a, int b) {
     return arr;
 }
 
-static Value call_leno_closure(Value callee, int arg_count, Value* args) {
+Value call_leno_closure(Value callee, int arg_count, Value* args) {
     VM* vm_ptr = current_exec_vm ? current_exec_vm : &vm;
     int saved_sp = vm_ptr->sp;
     int saved_frame_cnt = vm_ptr->frame_cnt;
@@ -239,7 +217,7 @@ static Value call_leno_closure(Value callee, int arg_count, Value* args) {
     return ret_val;
 }
 
-static Value event_to_dict(LenoGUIEvent* ev) {
+Value event_to_dict(LenoGUIEvent* ev) {
     init_event_string_keys();  // 确保静态字符串键已初始化
     ObjDict* d = dict_new(16);
     ObjGUIEvent* event_obj = (ObjGUIEvent*)gc_alloc(sizeof(ObjGUIEvent), OBJ_GUI_EVENT);
@@ -417,112 +395,6 @@ static Value gui_resize_renderer_func(int argc, Value* args) {
     return val_bool(false);
 }
 
-static Value gui_set_draw_color_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    uint8_t r = (uint8_t)val_as_int(args[1]);
-    uint8_t g = (uint8_t)val_as_int(args[2]);
-    uint8_t b = (uint8_t)val_as_int(args[3]);
-    uint8_t a = (uint8_t)val_as_int(args[4]);
-    if (ren && ren->platform) leno_gui_platform_set_draw_color(ren->platform, r, g, b, a);
-    return val_null();
-}
-
-static Value gui_render_clear_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    if (ren && ren->platform) leno_gui_platform_render_clear(ren->platform);
-    return val_null();
-}
-
-static Value gui_render_present_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    if (ren && ren->platform) leno_gui_platform_render_present(ren->platform);
-    return val_null();
-}
-
-static Value gui_render_draw_point_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    if (ren && ren->platform) leno_gui_platform_render_draw_point(ren->platform, x, y);
-    return val_null();
-}
-
-static Value gui_render_draw_line_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x1 = val_as_int(args[1]);
-    int y1 = val_as_int(args[2]);
-    int x2 = val_as_int(args[3]);
-    int y2 = val_as_int(args[4]);
-    if (ren && ren->platform) leno_gui_platform_render_draw_line(ren->platform, x1, y1, x2, y2);
-    return val_null();
-}
-
-static Value gui_render_draw_rect_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    int w = val_as_int(args[3]);
-    int h = val_as_int(args[4]);
-    if (ren && ren->platform) leno_gui_platform_render_draw_rect(ren->platform, x, y, w, h);
-    return val_null();
-}
-
-static Value gui_render_fill_rect_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    int w = val_as_int(args[3]);
-    int h = val_as_int(args[4]);
-    if (ren && ren->platform) leno_gui_platform_render_fill_rect(ren->platform, x, y, w, h);
-    return val_null();
-}
-
-static Value gui_get_renderer_size_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int w = 0, h = 0;
-    if (ren && ren->platform) leno_gui_platform_get_renderer_size(ren->platform, &w, &h);
-    return val_obj((Object*)make_int_array2(w, h));
-}
-
-static Value gui_draw_text_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    if (!ren || !ren->platform) return val_null();
-
-    const char* text = "";
-    if (val_is_obj(args[1])) {
-        Object* obj = val_as_obj(args[1]);
-        if (obj->type == OBJ_STRING) text = ((ObjString*)obj)->chars;
-    }
-    int x = val_as_int(args[2]);
-    int y = val_as_int(args[3]);
-    int size = val_as_int(args[4]);
-
-    leno_gui_platform_draw_text(ren->platform, text, x, y, size);
-    return val_null();
-}
-
-static Value gui_text_size_func(int argc, Value* args) {
-    (void)argc;
-    const char* text = "";
-    if (val_is_obj(args[0])) {
-        Object* obj = val_as_obj(args[0]);
-        if (obj->type == OBJ_STRING) text = ((ObjString*)obj)->chars;
-    }
-    int size = val_as_int(args[1]);
-    int w = 0, h = 0;
-    leno_gui_platform_text_size(text, size, &w, &h);
-    return val_obj((Object*)make_int_array2(w, h));
-}
-
 static Value gui_load_font_func(int argc, Value* args) {
     (void)argc;
     const char* name = "Arial";
@@ -549,36 +421,6 @@ static Value gui_destroy_font_func(int argc, Value* args) {
     return val_null();
 }
 
-static Value gui_draw_text_font_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    ObjGUIFont* font = as_font(args[1]);
-    if (!ren || !ren->platform || !font || !font->platform) return val_null();
-    const char* text = "";
-    if (val_is_obj(args[2])) {
-        Object* obj = val_as_obj(args[2]);
-        if (obj->type == OBJ_STRING) text = ((ObjString*)obj)->chars;
-    }
-    int x = val_as_int(args[3]);
-    int y = val_as_int(args[4]);
-    leno_gui_platform_draw_text_font(ren->platform, font->platform, text, x, y);
-    return val_null();
-}
-
-static Value gui_text_size_font_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIFont* font = as_font(args[0]);
-    if (!font || !font->platform) return val_obj((Object*)make_int_array2(0, 0));
-    const char* text = "";
-    if (val_is_obj(args[1])) {
-        Object* obj = val_as_obj(args[1]);
-        if (obj->type == OBJ_STRING) text = ((ObjString*)obj)->chars;
-    }
-    int w = 0, h = 0;
-    leno_gui_platform_text_size_font(font->platform, text, &w, &h);
-    return val_obj((Object*)make_int_array2(w, h));
-}
-
 static Value gui_poll_event_func(int argc, Value* args) {
     (void)argc; (void)args;
     LenoGUIEvent ev;
@@ -599,120 +441,6 @@ static Value gui_get_display_size_func(int argc, Value* args) {
     int w = 0, h = 0;
     leno_gui_platform_get_display_size(&w, &h);
     return val_obj((Object*)make_int_array2(w, h));
-}
-
-/* ===== 新增绘图函数 ===== */
-
-/* 绘制圆形边框 */
-static Value gui_render_draw_circle_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int cx = val_as_int(args[1]);
-    int cy = val_as_int(args[2]);
-    int radius = val_as_int(args[3]);
-    if (ren && ren->platform) leno_gui_platform_render_draw_circle(ren->platform, cx, cy, radius);
-    return val_null();
-}
-
-/* 填充圆形 */
-static Value gui_render_fill_circle_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int cx = val_as_int(args[1]);
-    int cy = val_as_int(args[2]);
-    int radius = val_as_int(args[3]);
-    if (ren && ren->platform) leno_gui_platform_render_fill_circle(ren->platform, cx, cy, radius);
-    return val_null();
-}
-
-/* 绘制圆角矩形边框 */
-static Value gui_render_draw_rounded_rect_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    int w = val_as_int(args[3]);
-    int h = val_as_int(args[4]);
-    int radius = val_as_int(args[5]);
-    if (ren && ren->platform) leno_gui_platform_render_draw_rounded_rect(ren->platform, x, y, w, h, radius);
-    return val_null();
-}
-
-/* 填充圆角矩形 */
-static Value gui_render_fill_rounded_rect_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    int w = val_as_int(args[3]);
-    int h = val_as_int(args[4]);
-    int radius = val_as_int(args[5]);
-    if (ren && ren->platform) leno_gui_platform_render_fill_rounded_rect(ren->platform, x, y, w, h, radius);
-    return val_null();
-}
-
-/* ===== 视口和裁剪 ===== */
-
-/* 设置渲染视口 */
-static Value gui_set_viewport_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    int w = val_as_int(args[3]);
-    int h = val_as_int(args[4]);
-    if (ren && ren->platform) leno_gui_platform_set_viewport(ren->platform, x, y, w, h);
-    return val_null();
-}
-
-/* 获取当前视口设置 */
-static Value gui_get_viewport_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = 0, y = 0, w = 0, h = 0;
-    if (ren && ren->platform) leno_gui_platform_get_viewport(ren->platform, &x, &y, &w, &h);
-    ObjArray* arr = arr_new(4);
-    arr->count = 4;
-    arr_write(arr, 0, val_int(x));
-    arr_write(arr, 1, val_int(y));
-    arr_write(arr, 2, val_int(w));
-    arr_write(arr, 3, val_int(h));
-    return val_obj((Object*)arr);
-}
-
-/* 设置裁剪矩形 */
-static Value gui_set_clip_rect_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = val_as_int(args[1]);
-    int y = val_as_int(args[2]);
-    int w = val_as_int(args[3]);
-    int h = val_as_int(args[4]);
-    if (ren && ren->platform) leno_gui_platform_set_clip_rect(ren->platform, x, y, w, h);
-    return val_null();
-}
-
-/* 获取当前裁剪矩形 */
-static Value gui_get_clip_rect_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int x = 0, y = 0, w = 0, h = 0;
-    if (ren && ren->platform) leno_gui_platform_get_clip_rect(ren->platform, &x, &y, &w, &h);
-    ObjArray* arr = arr_new(4);
-    arr->count = 4;
-    arr_write(arr, 0, val_int(x));
-    arr_write(arr, 1, val_int(y));
-    arr_write(arr, 2, val_int(w));
-    arr_write(arr, 3, val_int(h));
-    return val_obj((Object*)arr);
-}
-
-/* 禁用裁剪矩形 */
-static Value gui_disable_clip_rect_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    if (ren && ren->platform) leno_gui_platform_disable_clip_rect(ren->platform);
-    return val_null();
 }
 
 /* ===== 输入状态查询 ===== */
@@ -1134,252 +862,6 @@ void guis_init_module(void) {
     guis_init_instance_methods();
 }
 
-/* 前向声明 */
-extern void draw_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                              int min_arity, int max_arity,
-                                              TypeKind return_type, TypeKind* param_types);
-extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
-extern void draw_init_methods(void);
 
-/* 注册 Draw 渲染器实例方法（ren.method() 风格） */
-void guis_init_instance_methods(void) {
-    draw_init_methods();
 
-    TypeKind no_params[] = {};
-    TypeKind int_4[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind int_2[] = {TYPE_INT, TYPE_INT};
-    TypeKind int_4_rect[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind int_3_circle[] = {TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind int_5_rounded[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind int_4_vp[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind any_3int[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
 
-    /* ren.set_draw_color(r, g, b, a) - 用户可见 4 参数，实际 5（含 receiver） */
-    draw_register_method_with_params("set_draw_color", make_native(gui_set_draw_color_func, 5, "set_draw_color"), 4, -1, -1, TYPE_NULL, int_4);
-    /* ren.clear() */
-    draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, no_params);
-    /* ren.present() */
-    draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, no_params);
-    /* ren.draw_point(x, y) */
-    draw_register_method_with_params("draw_point", make_native(gui_render_draw_point_func, 3, "draw_point"), 2, -1, -1, TYPE_NULL, int_2);
-    /* ren.draw_line(x1, y1, x2, y2) */
-    draw_register_method_with_params("draw_line", make_native(gui_render_draw_line_func, 5, "draw_line"), 4, -1, -1, TYPE_NULL, int_4);
-    /* ren.draw_rect(x, y, w, h) */
-    draw_register_method_with_params("draw_rect", make_native(gui_render_draw_rect_func, 5, "draw_rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
-    /* ren.fill_rect(x, y, w, h) */
-    draw_register_method_with_params("fill_rect", make_native(gui_render_fill_rect_func, 5, "fill_rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
-    /* ren.draw_circle(cx, cy, radius) */
-    draw_register_method_with_params("draw_circle", make_native(gui_render_draw_circle_func, 4, "draw_circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
-    /* ren.fill_circle(cx, cy, radius) */
-    draw_register_method_with_params("fill_circle", make_native(gui_render_fill_circle_func, 4, "fill_circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
-    /* ren.draw_rounded_rect(x, y, w, h, radius) */
-    draw_register_method_with_params("draw_rounded_rect", make_native(gui_render_draw_rounded_rect_func, 6, "draw_rounded_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
-    /* ren.fill_rounded_rect(x, y, w, h, radius) */
-    draw_register_method_with_params("fill_rounded_rect", make_native(gui_render_fill_rounded_rect_func, 6, "fill_rounded_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
-    /* ren.get_size() */
-    draw_register_method_with_params("get_size", make_native(gui_get_renderer_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, no_params);
-    /* ren.set_viewport(x, y, w, h) */
-    draw_register_method_with_params("set_viewport", make_native(gui_set_viewport_func, 5, "set_viewport"), 4, -1, -1, TYPE_NULL, int_4_vp);
-    /* ren.get_viewport() */
-    draw_register_method_with_params("get_viewport", make_native(gui_get_viewport_func, 1, "get_viewport"), 0, -1, -1, TYPE_ANY, no_params);
-    /* ren.set_clip_rect(x, y, w, h) */
-    draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, int_4_vp);
-    /* ren.get_clip_rect() */
-    draw_register_method_with_params("get_clip_rect", make_native(gui_get_clip_rect_func, 1, "get_clip_rect"), 0, -1, -1, TYPE_ANY, no_params);
-    /* ren.disable_clip_rect() */
-    draw_register_method_with_params("disable_clip_rect", make_native(gui_disable_clip_rect_func, 1, "disable_clip_rect"), 0, -1, -1, TYPE_NULL, no_params);
-    /* ren.draw_text(text, x, y, size) */
-    draw_register_method_with_params("draw_text", make_native(gui_draw_text_func, 5, "draw_text"), 4, -1, -1, TYPE_NULL, any_3int);
-    /* ren.text_size(text, size) */
-    draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, str_int);
-    /* ren.draw_text_font(font, text, x, y) */
-    TypeKind font_str_2int[] = {TYPE_ANY, TYPE_ANY, TYPE_INT, TYPE_INT};
-    draw_register_method_with_params("draw_text_font", make_native(gui_draw_text_font_func, 5, "draw_text_font"), 4, -1, -1, TYPE_NULL, font_str_2int);
-    /* ren.text_size_font(font, text) */
-    TypeKind font_str[] = {TYPE_ANY, TYPE_STRING};
-    draw_register_method_with_params("text_size_font", make_native(gui_text_size_font_func, 2, "text_size_font"), 2, -1, -1, TYPE_ANY, font_str);
-}
-
-/* ============================================================================
- * Event 事件实例方法（e.method() 风格）
- * 事件底层是 Dict，方法通过 event_find_method 查找分发
- * ============================================================================ */
-
-/* 辅助：从事件对象中获取内部 dict */
-static ObjDict* event_get_dict(Value event_val) {
-    if (!val_is_obj(event_val) || val_as_obj(event_val)->type != OBJ_GUI_EVENT) return NULL;
-    return ((ObjGUIEvent*)val_as_obj(event_val))->data;
-}
-
-/* 辅助：从事件字典中获取 "type" 字段值 */
-static int event_get_type(Value event_val) {
-    ObjDict* d = event_get_dict(event_val);
-    if (!d) return 0;
-    Value v = dict_get(d, str_copy("type", 4));
-    return val_is_int(v) ? val_as_int(v) : 0;
-}
-
-/* 辅助：从事件字典中获取整数字段 */
-static int event_get_int(Value event_val, const char* key) {
-    ObjDict* d = event_get_dict(event_val);
-    if (!d) return 0;
-    Value v = dict_get(d, str_copy(key, (int)strlen(key)));
-    if (val_is_int(v)) return val_as_int(v);
-    if (val_is_float(v)) return (int)val_as_double(v);
-    if (val_is_num(v)) return (int)val_as_num(v);
-    return 0;
-}
-
-/* 辅助：从事件字典中获取字符串字段 */
-static const char* event_get_string(Value event_val, const char* key) {
-    ObjDict* d = event_get_dict(event_val);
-    if (!d) return "";
-    Value v = dict_get(d, str_copy(key, (int)strlen(key)));
-    if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
-        return ((ObjString*)val_as_obj(v))->chars;
-    }
-    return "";
-}
-
-/* e.type() - 获取事件类型 */
-static Value event_type_func(int argc, Value* args) {
-    (void)argc;
-    return val_int(event_get_type(args[0]));
-}
-
-/* e.is_quit() - 是否为退出事件 */
-static Value event_is_quit_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_QUIT);
-}
-
-/* e.is_window_close() - 是否为窗口关闭事件 */
-static Value event_is_window_close_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_CLOSE);
-}
-
-/* e.is_window_resize() - 是否为窗口大小改变事件 */
-static Value event_is_window_resize_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_RESIZE);
-}
-
-/* e.is_window_move() - 是否为窗口移动事件 */
-static Value event_is_window_move_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_MOVE);
-}
-
-/* e.is_key_down() - 是否为按键按下事件 */
-static Value event_is_key_down_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_KEY_DOWN);
-}
-
-/* e.is_key_up() - 是否为按键释放事件 */
-static Value event_is_key_up_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_KEY_UP);
-}
-
-/* e.is_text_input() - 是否为文本输入事件 */
-static Value event_is_text_input_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_TEXT_INPUT);
-}
-
-/* e.is_mouse_move() - 是否为鼠标移动事件 */
-static Value event_is_mouse_move_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_MOVE);
-}
-
-/* e.is_mouse_down() - 是否为鼠标按下事件 */
-static Value event_is_mouse_down_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_DOWN);
-}
-
-/* e.is_mouse_up() - 是否为鼠标释放事件 */
-static Value event_is_mouse_up_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_UP);
-}
-
-/* e.is_mouse_wheel() - 是否为鼠标滚轮事件 */
-static Value event_is_mouse_wheel_func(int argc, Value* args) {
-    (void)argc;
-    return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_WHEEL);
-}
-
-/* e.key() - 获取按键码 */
-static Value event_key_func(int argc, Value* args) {
-    (void)argc;
-    return val_int(event_get_int(args[0], "key"));
-}
-
-/* e.mouse_x() - 获取鼠标 X 坐标 */
-static Value event_mouse_x_func(int argc, Value* args) {
-    (void)argc;
-    return val_int(event_get_int(args[0], "x"));
-}
-
-/* e.mouse_y() - 获取鼠标 Y 坐标 */
-static Value event_mouse_y_func(int argc, Value* args) {
-    (void)argc;
-    return val_int(event_get_int(args[0], "y"));
-}
-
-/* e.mouse_button() - 获取鼠标按钮 */
-static Value event_mouse_button_func(int argc, Value* args) {
-    (void)argc;
-    return val_int(event_get_int(args[0], "button"));
-}
-
-/* e.width() - 获取窗口宽度（resize 事件） */
-static Value event_width_func(int argc, Value* args) {
-    (void)argc;
-    return val_int(event_get_int(args[0], "width"));
-}
-
-/* e.height() - 获取窗口高度（resize 事件） */
-static Value event_height_func(int argc, Value* args) {
-    (void)argc;
-    return val_int(event_get_int(args[0], "height"));
-}
-
-/* e.text() - 获取输入文本（text_input 事件） */
-static Value event_text_func(int argc, Value* args) {
-    (void)argc;
-    const char* text = event_get_string(args[0], "text");
-    return val_obj((Object*)str_copy(text, (int)strlen(text)));
-}
-
-/* 注册 Event 实例方法 */
-void guis_init_event_methods(void) {
-    event_init_methods();
-
-    TypeKind no_params[] = {};
-
-    event_register_method_with_params("type", make_native(event_type_func, 1, "type"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("is_quit", make_native(event_is_quit_func, 1, "is_quit"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_window_close", make_native(event_is_window_close_func, 1, "is_window_close"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_window_resize", make_native(event_is_window_resize_func, 1, "is_window_resize"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_window_move", make_native(event_is_window_move_func, 1, "is_window_move"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_key_down", make_native(event_is_key_down_func, 1, "is_key_down"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_key_up", make_native(event_is_key_up_func, 1, "is_key_up"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_text_input", make_native(event_is_text_input_func, 1, "is_text_input"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_move", make_native(event_is_mouse_move_func, 1, "is_mouse_move"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_down", make_native(event_is_mouse_down_func, 1, "is_mouse_down"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_up", make_native(event_is_mouse_up_func, 1, "is_mouse_up"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("is_mouse_wheel", make_native(event_is_mouse_wheel_func, 1, "is_mouse_wheel"), 0, -1, -1, TYPE_BOOL, no_params);
-    event_register_method_with_params("key", make_native(event_key_func, 1, "key"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("mouse_x", make_native(event_mouse_x_func, 1, "mouse_x"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("mouse_y", make_native(event_mouse_y_func, 1, "mouse_y"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("mouse_button", make_native(event_mouse_button_func, 1, "mouse_button"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("width", make_native(event_width_func, 1, "width"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("height", make_native(event_height_func, 1, "height"), 0, -1, -1, TYPE_INT, no_params);
-    event_register_method_with_params("text", make_native(event_text_func, 1, "text"), 0, -1, -1, TYPE_STRING, no_params);
-}
