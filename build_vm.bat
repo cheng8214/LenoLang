@@ -59,6 +59,7 @@ set SOURCES=!SOURCES! src\module\regexs\regexs.c
 set SOURCES=!SOURCES! src\module\guis\guis.c
 set SOURCES=!SOURCES! src\module\guis\guis_draw.c
 set SOURCES=!SOURCES! src\module\guis\guis_window.c
+set SOURCES=!SOURCES! src\module\guis\guis_style.c
 set SOURCES=!SOURCES! src\module\guis\guis_event.c
 set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c

@@ -1032,43 +1032,8 @@ static char* detect_style_context(const char* content, LspPosition pos) {
     return NULL;
 }
 
-// Style 字段定义表（内联定义，避免依赖 guis 模块）
-typedef struct {
-    const char* target;
-    const char** fields;
-    int field_count;
-} StyleFieldDef;
-
-static const char* window_style_fields[] = {
-    "width", "height", "x", "y",
-    "title", "fullscreen", "borderless", "resizable",
-    "opacity", "visible", "always_on_top"
-};
-
-static const char* button_style_fields[] = {
-    "bk_color", "text", "text_color", "text_size",
-    "width", "height", "x", "y",
-    "border_radius", "hover_color", "active_color"
-};
-
-static StyleFieldDef style_field_defs[] = {
-    { "window", window_style_fields, sizeof(window_style_fields) / sizeof(window_style_fields[0]) },
-    { "button", button_style_fields, sizeof(button_style_fields) / sizeof(button_style_fields[0]) },
-};
-
-// 获取 Style 目标控件的字段列表
-static const char** get_style_fields(const char* target, int* count) {
-    if (!target || !count) return NULL;
-    int def_count = sizeof(style_field_defs) / sizeof(style_field_defs[0]);
-    for (int i = 0; i < def_count; i++) {
-        if (strcmp(style_field_defs[i].target, target) == 0) {
-            *count = style_field_defs[i].field_count;
-            return style_field_defs[i].fields;
-        }
-    }
-    *count = 0;
-    return NULL;
-}
+// 复用 guis_style.c 中的字段定义
+extern const char** guis_get_style_fields(const char* target, int* count);
 
 // 添加 Style 字段补全
 static void add_style_field_completions(const char* target, LspCompletionItem** items,
@@ -1076,7 +1041,7 @@ static void add_style_field_completions(const char* target, LspCompletionItem** 
     if (!target) return;
     
     int field_count = 0;
-    const char** fields = get_style_fields(target, &field_count);
+    const char** fields = guis_get_style_fields(target, &field_count);
     
     if (fields && field_count > 0) {
         for (int i = 0; i < field_count; i++) {

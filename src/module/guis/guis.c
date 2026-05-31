@@ -6,15 +6,7 @@
  *   Draw  - 渲染器对象 (OBJ_GUI_RENDERER)
  *   Event - 事件对象 (OBJ_GUI_EVENT )
  *
- * Win 实例方法 (win.method()):
- *   win.show() / hide() / close()
- *   win.set_title(title)
- *   win.set_size(w, h) / get_size() -> [w, h]
- *   win.set_pos(x, y) / get_pos() -> [x, y]
- *   win.set_fullscreen(bool)
- *   win.should_close() -> bool
- *   win.set_should_close(bool)
- *   win.set_opacity(opacity)
+ * Win 实例方法 (win.method())
  *
  * 模块级 API:
  *   guis.create_window(title, style_dict) -> Win      Style 方式创建窗口
@@ -730,45 +722,6 @@ void guis_init_module(void) {
 
     /* 注册 Win 实例方法 */
     guis_init_window_instance_methods();
-}
-
-/* ===== Style 字段定义（供 LSP 补全使用） ===== */
-
-typedef struct {
-    const char* target;
-    const char** fields;
-    int field_count;
-} StyleDef;
-
-static const char* window_style_fields[] = {
-    "width", "height", "x", "y",
-    "title", "fullscreen", "borderless", "resizable",
-    "opacity", "visible", "always_on_top"
-};
-
-static const char* button_style_fields[] = {
-    "bk_color", "text", "text_color", "text_size",
-    "width", "height", "x", "y",
-    "border_radius", "hover_color", "active_color"
-};
-
-static StyleDef style_defs[] = {
-    { "window", window_style_fields, sizeof(window_style_fields) / sizeof(window_style_fields[0]) },
-    { "button", button_style_fields, sizeof(button_style_fields) / sizeof(button_style_fields[0]) },
-};
-
-// 获取 Style 目标控件的字段列表（供 LSP 使用）
-const char** guis_get_style_fields(const char* target, int* count) {
-    if (!target || !count) return NULL;
-    int def_count = sizeof(style_defs) / sizeof(style_defs[0]);
-    for (int i = 0; i < def_count; i++) {
-        if (strcmp(style_defs[i].target, target) == 0) {
-            *count = style_defs[i].field_count;
-            return style_defs[i].fields;
-        }
-    }
-    *count = 0;
-    return NULL;
 }
 
 /* 注册全局函数（不需要 import guis） */

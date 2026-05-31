@@ -99,6 +99,7 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/module/regexs/regexs.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_draw.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_window.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_style.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_event.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/leno_guis_win32.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/platform/platform_thread.c
