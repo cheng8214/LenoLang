@@ -20,7 +20,7 @@ main() {
             ren.clear()
 
             ren.set_color(230, 230, 240, 255)
-            ren.draw_text_font(font_title, "Chess Board", 250, 15)
+            ren.text_font(font_title, "Chess Board", 250, 15)
 
             for 8 to var r {
                 for 8 to var c {
@@ -39,7 +39,7 @@ main() {
 
                     ren.fill_rect(x, y, cell, cell)
                     ren.set_color(60, 50, 40, 255)
-                    ren.draw_rect(x, y, cell, cell)
+                    ren.rect(x, y, cell, cell)
                 }
             }
 
@@ -47,41 +47,41 @@ main() {
             for 8 to var c {
                 var px = board_x + c * cell + 14
                 ren.set_color(30, 30, 30, 255)
-                ren.draw_text_font(font, pieces_b[c], px, board_y + 14)
+                ren.text_font(font, pieces_b[c], px, board_y + 14)
             }
 
             for 8 to var c {
                 var px = board_x + c * cell + 14
                 ren.set_color(30, 30, 30, 255)
-                ren.draw_text_font(font, "♟", px, board_y + cell + 14)
+                ren.text_font(font, "♟", px, board_y + cell + 14)
             }
 
             for 8 to var c {
                 var px = board_x + c * cell + 14
                 ren.set_color(250, 250, 250, 255)
-                ren.draw_text_font(font, "♙", px, board_y + 6 * cell + 14)
+                ren.text_font(font, "♙", px, board_y + 6 * cell + 14)
             }
 
             var pieces_w = ["♖","♘","♗","♕","♔","♗","♘","♖"]
             for 8 to var c {
                 var px = board_x + c * cell + 14
                 ren.set_color(250, 250, 250, 255)
-                ren.draw_text_font(font, pieces_w[c], px, board_y + 7 * cell + 14)
+                ren.text_font(font, pieces_w[c], px, board_y + 7 * cell + 14)
             }
 
             for 8 to var c {
                 ren.set_color(180, 180, 190, 255)
-                ren.draw_text_font(font_sm, _str(c + 1), board_x + c * cell + 28, board_y + 8 * cell + 6)
+                ren.text_font(font_sm, _str(c + 1), board_x + c * cell + 28, board_y + 8 * cell + 6)
             }
 
             var cols = ["a","b","c","d","e","f","g","h"]
             for 8 to var r {
                 ren.set_color(180, 180, 190, 255)
-                ren.draw_text_font(font_sm, cols[r], board_x - 18, board_y + r * cell + 26)
+                ren.text_font(font_sm, cols[r], board_x - 18, board_y + r * cell + 26)
             }
 
             ren.set_color(120, 120, 140, 255)
-            ren.draw_text_font(font_sm, "Click to select  |  ESC to quit", 190, 670)
+            ren.text_font(font_sm, "Click to select  |  ESC to quit", 190, 670)
 
             ren.present()
         },

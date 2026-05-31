@@ -295,35 +295,35 @@ ren.present()
 
 ---
 
-### `ren.draw_point(x, y)`
+### `ren.point(x, y)`
 
 绘制单个像素点。
 
 ```leno
 ren.set_color(255, 0, 0, 255)
-ren.draw_point(100, 100)
+ren.point(100, 100)
 ```
 
 ---
 
-### `ren.draw_line(x1, y1, x2, y2)`
+### `ren.line(x1, y1, x2, y2)`
 
 绘制直线。
 
 ```leno
 ren.set_color(255, 255, 0, 255)
-ren.draw_line(0, 0, 800, 600)
+ren.line(0, 0, 800, 600)
 ```
 
 ---
 
-### `ren.draw_rect(x, y, w, h)`
+### `ren.rect(x, y, w, h)`
 
 绘制矩形边框。
 
 ```leno
 ren.set_color(0, 255, 0, 255)
-ren.draw_rect(50, 50, 200, 100)
+ren.rect(50, 50, 200, 100)
 ```
 
 ---
@@ -339,13 +339,13 @@ ren.fill_rect(50, 50, 200, 100)
 
 ---
 
-### `ren.draw_circle(cx, cy, radius)`
+### `ren.circle(cx, cy, radius)`
 
 绘制圆形边框（Bresenham 中点圆算法）。
 
 ```leno
 ren.set_color(255, 100, 100, 255)
-ren.draw_circle(400, 300, 80)
+ren.circle(400, 300, 80)
 ```
 
 ---
@@ -361,24 +361,24 @@ ren.fill_circle(400, 300, 60)
 
 ---
 
-### `ren.draw_rounded_rect(x, y, w, h, radius)`
+### `ren.round_rect(x, y, w, h, radius)`
 
 绘制圆角矩形边框。
 
 ```leno
 ren.set_color(100, 150, 255, 255)
-ren.draw_rounded_rect(50, 50, 200, 100, 15)
+ren.round_rect(50, 50, 200, 100, 15)
 ```
 
 ---
 
-### `ren.fill_rounded_rect(x, y, w, h, radius)`
+### `ren.fill_round(x, y, w, h, radius)`
 
 填充圆角矩形。
 
 ```leno
 ren.set_color(180, 100, 255, 255)
-ren.fill_rounded_rect(50, 50, 200, 100, 15)
+ren.fill_round(50, 50, 200, 100, 15)
 ```
 
 ---
@@ -407,14 +407,14 @@ var vp = ren.get_viewport()  // [x, y, w, h]
 
 ---
 
-### `ren.set_clip_rect(x, y, w, h)` / `ren.get_clip_rect()` / `ren.disable_clip_rect()`
+### `ren.set_clip_rect(x, y, w, h)` / `ren.get_clip_rect()` / `ren.no_clip()`
 
 设置、获取或禁用裁剪矩形。裁剪矩形限制绘制区域（物理坐标）。
 
 ```leno
 ren.set_clip_rect(100, 100, 300, 200)
 // 此区域外的绘制将被裁剪
-ren.disable_clip_rect()
+ren.no_clip()
 ```
 
 ---
@@ -972,7 +972,7 @@ main() {
             ren.set_color(60, 60, 90, 255)
             ren.fill_rect(0, 0, 200, 200)
             ren.set_color(255, 255, 100, 255)
-            ren.draw_rect(10, 10, 180, 180)
+            ren.rect(10, 10, 180, 180)
 
             var rs = ren.get_size()
             ren.set_viewport(0, 0, rs[0], rs[1])
@@ -980,7 +980,7 @@ main() {
             ren.set_clip_rect(550, 50, 200, 200)
             ren.set_color(80, 40, 40, 255)
             ren.fill_rect(500, 0, 350, 350)
-            ren.disable_clip_rect()
+            ren.no_clip()
 
             ren.present()
         },
@@ -993,7 +993,6 @@ main() {
 
     guis.cleanup(win)
 }
-```
 
 ---
 
@@ -1013,19 +1012,19 @@ main() {
             ren.clear()
 
             ren.set_color(255, 100, 100, 255)
-            ren.draw_circle(400, 150, 80)
+            ren.circle(400, 150, 80)
 
             ren.set_color(100, 255, 100, 255)
             ren.fill_circle(400, 350, 60)
 
             ren.set_color(100, 150, 255, 255)
-            ren.draw_rounded_rect(50, 350, 200, 100, 20)
+            ren.round_rect(50, 350, 200, 100, 20)
 
             ren.set_color(180, 100, 255, 255)
-            ren.fill_rounded_rect(550, 350, 200, 100, 15)
+            ren.fill_round(550, 350, 200, 100, 15)
 
             ren.set_color(255, 255, 0, 255)
-            ren.draw_line(300, 450, 500, 550)
+            ren.line(300, 450, 500, 550)
 
             ren.present()
         },
@@ -1138,7 +1137,7 @@ ren.present()         // 3. 呈现
    ```leno
    ren.set_clip_rect(x, y, w, h)
    // 绘制内容不会超出裁剪区域
-   ren.disable_clip_rect()
+   ren.no_clip()
    ```
 
 ---

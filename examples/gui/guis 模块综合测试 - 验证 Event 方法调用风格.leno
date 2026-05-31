@@ -19,19 +19,18 @@ main() {
             ren.set_color(60, 60, 90, 255)
             ren.fill_rect(0, 0, 200, 200)
             ren.set_color(255, 255, 100, 255)
-            ren.draw_rect(10, 10, 180, 180)
+            ren.rect(10, 10, 180, 180)
             var rs = ren.get_size()
             ren.set_viewport(0, 0, rs[0], rs[1])
 
-            /* 裁剪测试 */
             ren.set_clip_rect(550, 50, 200, 200)
             ren.set_color(80, 40, 40, 255)
             ren.fill_rect(500, 0, 350, 350)
-            ren.disable_clip_rect()
+            ren.no_clip()
 
             /* 画圆 */
             ren.set_color(255, 100, 100, 255)
-            ren.draw_circle(400, 150, 80)
+            ren.circle(400, 150, 80)
 
             /* 填充圆 */
             ren.set_color(100, 255, 100, 255)
@@ -39,15 +38,15 @@ main() {
 
             /* 圆角矩形 */
             ren.set_color(100, 150, 255, 255)
-            ren.draw_rounded_rect(50, 350, 200, 100, 20)
+            ren.round_rect(50, 350, 200, 100, 20)
 
             /* 填充圆角矩形 */
             ren.set_color(180, 100, 255, 255)
-            ren.fill_rounded_rect(550, 350, 200, 100, 15)
+            ren.fill_round(550, 350, 200, 100, 15)
 
             /* 画线 */
             ren.set_color(255, 255, 0, 255)
-            ren.draw_line(300, 450, 500, 550)
+            ren.line(300, 450, 500, 550)
 
             frame = frame + 1
             var elapsed = guis.get_ticks() - start_ticks

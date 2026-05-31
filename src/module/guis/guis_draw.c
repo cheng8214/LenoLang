@@ -1,18 +1,28 @@
 /* Leno GUI - Draw 渲染器实例方法
  * 从 guis.c 拆分出来的 Draw 方法实现
-
+ *
  * Draw 实例方法 (ren.method()):
- *   ren.set_color(r, g, b, a)
- *   ren.clear() / ren.present()
- *   ren.draw_point(x, y) / ren.draw_line(x1, y1, x2, y2)
- *   ren.draw_rect(x, y, w, h) / ren.fill_rect(x, y, w, h)
- *   ren.draw_circle(cx, cy, r) / ren.fill_circle(cx, cy, r)
- *   ren.draw_rounded_rect(x, y, w, h, r) / ren.fill_rounded_rect(x, y, w, h, r)
- *   ren.set_viewport(x, y, w, h) / ren.get_viewport() -> [x, y, w, h]
- *   ren.set_clip_rect(x, y, w, h) / ren.get_clip_rect() / ren.disable_clip_rect()
- *   ren.draw_text(text, x, y, size)                       内置 8x8 点阵字体
- *   ren.text_size(text, size) -> [w, h]                   计算文字尺寸
- *   ren.get_size() -> [w, h]
+ *   ren.set_color(r, g, b, a)              设置绘制颜色（影响后续所有绘制）
+ *   ren.clear()                            用当前颜色清空画布
+ *   ren.present()                          将绘制内容显示到窗口
+ *   ren.point(x, y)                        绘制单个像素点
+ *   ren.line(x1, y1, x2, y2)               绘制直线
+ *   ren.rect(x, y, w, h)                   绘制矩形边框
+ *   ren.fill_rect(x, y, w, h)              填充矩形
+ *   ren.circle(cx, cy, r)                  绘制圆形边框
+ *   ren.fill_circle(cx, cy, r)             填充圆形
+ *   ren.round_rect(x, y, w, h, r)          绘制圆角矩形边框
+ *   ren.fill_round(x, y, w, h, r)          填充圆角矩形
+ *   ren.text(text, x, y, size)             绘制文字（内置 8x8 点阵字体）
+ *   ren.text_font(font, text, x, y)        使用指定字体绘制文字
+ *   ren.text_size(text, size) -> [w, h]    计算文字尺寸
+ *   ren.font_size(font, text) -> [w, h]    计算指定字体文字尺寸
+ *   ren.get_size() -> [w, h]               获取渲染器缓冲区大小
+ *   ren.set_viewport(x, y, w, h)           设置渲染视口
+ *   ren.get_viewport() -> [x, y, w, h]     获取当前视口
+ *   ren.set_clip_rect(x, y, w, h)          设置裁剪矩形
+ *   ren.get_clip_rect() -> [x, y, w, h]    获取当前裁剪矩形
+ *   ren.no_clip()                          禁用裁剪矩形
    */
 #include "include/native.h"
 #include "include/leno_value.h"
@@ -51,7 +61,7 @@ static Value gui_render_present_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ren.draw_point(x, y) */
+/* ren.point(x, y) */
 static Value gui_render_draw_point_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -61,7 +71,7 @@ static Value gui_render_draw_point_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ren.draw_line(x1, y1, x2, y2) */
+/* ren.line(x1, y1, x2, y2) */
 static Value gui_render_draw_line_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -73,7 +83,7 @@ static Value gui_render_draw_line_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ren.draw_rect(x, y, w, h) */
+/* ren.rect(x, y, w, h) */
 static Value gui_render_draw_rect_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -106,7 +116,7 @@ static Value gui_get_renderer_size_func(int argc, Value* args) {
     return val_obj((Object*)make_int_array2(w, h));
 }
 
-/* ren.draw_text(text, x, y, size) */
+/* ren.text(text, x, y, size) */
 static Value gui_draw_text_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -139,7 +149,7 @@ static Value gui_text_size_func(int argc, Value* args) {
     return val_obj((Object*)make_int_array2(w, h));
 }
 
-/* ren.draw_text_font(font, text, x, y) */
+/* ren.text_font(font, text, x, y) */
 static Value gui_draw_text_font_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -156,7 +166,7 @@ static Value gui_draw_text_font_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ren.text_size_font(font, text) -> [w, h] */
+/* ren.font_size(font, text) -> [w, h] */
 static Value gui_text_size_font_func(int argc, Value* args) {
     (void)argc;
     ObjGUIFont* font = as_font(args[0]);
@@ -171,7 +181,7 @@ static Value gui_text_size_font_func(int argc, Value* args) {
     return val_obj((Object*)make_int_array2(w, h));
 }
 
-/* ren.draw_circle(cx, cy, radius) */
+/* ren.circle(cx, cy, radius) */
 static Value gui_render_draw_circle_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -193,7 +203,7 @@ static Value gui_render_fill_circle_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ren.draw_rounded_rect(x, y, w, h, radius) */
+/* ren.round_rect(x, y, w, h, radius) */
 static Value gui_render_draw_rounded_rect_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -206,7 +216,7 @@ static Value gui_render_draw_rounded_rect_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ren.fill_rounded_rect(x, y, w, h, radius) */
+/* ren.fill_round(x, y, w, h, radius) */
 static Value gui_render_fill_rounded_rect_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -273,7 +283,7 @@ static Value gui_get_clip_rect_func(int argc, Value* args) {
     return val_obj((Object*)arr);
 }
 
-/* ren.disable_clip_rect() */
+/* ren.no_clip() */
 static Value gui_disable_clip_rect_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
@@ -308,26 +318,26 @@ void guis_init_instance_methods(void) {
     draw_register_method_with_params("set_color", make_native(gui_set_color_func, 5, "set_color"), 4, -1, -1, TYPE_NULL, int_4);
     draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, no_params);
     draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, no_params);
-    draw_register_method_with_params("draw_point", make_native(gui_render_draw_point_func, 3, "draw_point"), 2, -1, -1, TYPE_NULL, int_2);
-    draw_register_method_with_params("draw_line", make_native(gui_render_draw_line_func, 5, "draw_line"), 4, -1, -1, TYPE_NULL, int_4);
-    draw_register_method_with_params("draw_rect", make_native(gui_render_draw_rect_func, 5, "draw_rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
+    draw_register_method_with_params("point", make_native(gui_render_draw_point_func, 3, "point"), 2, -1, -1, TYPE_NULL, int_2);
+    draw_register_method_with_params("line", make_native(gui_render_draw_line_func, 5, "line"), 4, -1, -1, TYPE_NULL, int_4);
+    draw_register_method_with_params("rect", make_native(gui_render_draw_rect_func, 5, "rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
     draw_register_method_with_params("fill_rect", make_native(gui_render_fill_rect_func, 5, "fill_rect"), 4, -1, -1, TYPE_NULL, int_4_rect);
-    draw_register_method_with_params("draw_circle", make_native(gui_render_draw_circle_func, 4, "draw_circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
+    draw_register_method_with_params("circle", make_native(gui_render_draw_circle_func, 4, "circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
     draw_register_method_with_params("fill_circle", make_native(gui_render_fill_circle_func, 4, "fill_circle"), 3, -1, -1, TYPE_NULL, int_3_circle);
-    draw_register_method_with_params("draw_rounded_rect", make_native(gui_render_draw_rounded_rect_func, 6, "draw_rounded_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
-    draw_register_method_with_params("fill_rounded_rect", make_native(gui_render_fill_rounded_rect_func, 6, "fill_rounded_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
+    draw_register_method_with_params("round_rect", make_native(gui_render_draw_rounded_rect_func, 6, "round_rect"), 5, -1, -1, TYPE_NULL, int_5_rounded);
+    draw_register_method_with_params("fill_round", make_native(gui_render_fill_rounded_rect_func, 6, "fill_round"), 5, -1, -1, TYPE_NULL, int_5_rounded);
     draw_register_method_with_params("get_size", make_native(gui_get_renderer_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, no_params);
     draw_register_method_with_params("set_viewport", make_native(gui_set_viewport_func, 5, "set_viewport"), 4, -1, -1, TYPE_NULL, int_4_vp);
     draw_register_method_with_params("get_viewport", make_native(gui_get_viewport_func, 1, "get_viewport"), 0, -1, -1, TYPE_ANY, no_params);
     draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, int_4_vp);
     draw_register_method_with_params("get_clip_rect", make_native(gui_get_clip_rect_func, 1, "get_clip_rect"), 0, -1, -1, TYPE_ANY, no_params);
-    draw_register_method_with_params("disable_clip_rect", make_native(gui_disable_clip_rect_func, 1, "disable_clip_rect"), 0, -1, -1, TYPE_NULL, no_params);
-    draw_register_method_with_params("draw_text", make_native(gui_draw_text_func, 5, "draw_text"), 4, -1, -1, TYPE_NULL, any_3int);
+    draw_register_method_with_params("no_clip", make_native(gui_disable_clip_rect_func, 1, "no_clip"), 0, -1, -1, TYPE_NULL, no_params);
+    draw_register_method_with_params("text", make_native(gui_draw_text_func, 5, "text"), 4, -1, -1, TYPE_NULL, any_3int);
     draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, str_int);
 
     TypeKind font_str_2int[] = {TYPE_ANY, TYPE_ANY, TYPE_INT, TYPE_INT};
-    draw_register_method_with_params("draw_text_font", make_native(gui_draw_text_font_func, 5, "draw_text_font"), 4, -1, -1, TYPE_NULL, font_str_2int);
+    draw_register_method_with_params("text_font", make_native(gui_draw_text_font_func, 5, "text_font"), 4, -1, -1, TYPE_NULL, font_str_2int);
 
     TypeKind font_str[] = {TYPE_ANY, TYPE_STRING};
-    draw_register_method_with_params("text_size_font", make_native(gui_text_size_font_func, 2, "text_size_font"), 2, -1, -1, TYPE_ANY, font_str);
+    draw_register_method_with_params("font_size", make_native(gui_text_size_font_func, 2, "font_size"), 2, -1, -1, TYPE_ANY, font_str);
 }

@@ -12,15 +12,15 @@ main() {
             ren.set_color(60, 60, 90, 255)
             ren.fill_rect(0, 0, 200, 200)
             ren.set_color(255, 255, 100, 255)
-            ren.draw_rect(10, 10, 180, 180)
-			
+            ren.rect(10, 10, 180, 180)
+
             var rs = ren.get_size()
             ren.set_viewport(0, 0, rs[0], rs[1])
 
             ren.set_clip_rect(550, 50, 200, 200)
             ren.set_color(80, 40, 40, 255)
             ren.fill_rect(500, 0, 350, 350)
-            ren.disable_clip_rect()
+            ren.no_clip()
             ren.present()
         },
         func(Event e) {
