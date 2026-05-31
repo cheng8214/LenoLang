@@ -91,23 +91,20 @@ main() {
 
     func evaluate_line(int r, int c, int dr, int dc, int player):int {
         var score = 0
-        var count = 1  // 包含当前要下的位置
+        var count = 0
         var empty_ends = 0
 
-        // 正向搜索
-        var rr = r + dr
-        var cc = c + dc
+        var rr = r
+        var cc = c
         while rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == player {
             count = count + 1
             rr = rr + dr
             cc = cc + dc
         }
-        // 检查正向末端是否为空
         if rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == 0 {
             empty_ends = empty_ends + 1
         }
 
-        // 反向搜索
         rr = r - dr
         cc = c - dc
         while rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == player {
@@ -115,37 +112,35 @@ main() {
             rr = rr - dr
             cc = cc - dc
         }
-        // 检查反向末端是否为空
         if rr >= 0 and rr < board_size and cc >= 0 and cc < board_size and board[rr][cc] == 0 {
             empty_ends = empty_ends + 1
         }
 
-        // 评分：count 包含当前位置，所以 count=5 就是五连（获胜）
         if count >= 5 {
-            score = 1000000  // 直接获胜
+            score = 100000
         } else if count == 4 {
             if empty_ends == 2 {
-                score = 500000   // 活四 - 下这里就赢
+                score = 10000
             } else if empty_ends == 1 {
-                score = 10000    // 冲四
+                score = 1000
             }
         } else if count == 3 {
             if empty_ends == 2 {
-                score = 10000    // 活三 - 很大威胁
+                score = 1000
             } else if empty_ends == 1 {
-                score = 1000     // 冲三
+                score = 100
             }
         } else if count == 2 {
             if empty_ends == 2 {
-                score = 1000     // 活二
+                score = 100
             } else if empty_ends == 1 {
-                score = 100      // 冲二
+                score = 10
             }
         } else if count == 1 {
             if empty_ends == 2 {
-                score = 100      // 活一
+                score = 10
             } else if empty_ends == 1 {
-                score = 10       // 冲一
+                score = 1
             }
         }
 
@@ -157,26 +152,18 @@ main() {
             return -1.0
         }
 
-        var directions = [
-            [0, 1],
-            [1, 0],
-            [1, 1],
-            [1, -1]
-        ]
-
-        var attack_score = 0
-        for directions to d {
-            attack_score = attack_score + evaluate_line(r, c, d[0], d[1], player)
-        }
+        var attack_score = evaluate_line(r, c, 0, 1, player)
+        attack_score = attack_score + evaluate_line(r, c, 1, 0, player)
+        attack_score = attack_score + evaluate_line(r, c, 1, 1, player)
+        attack_score = attack_score + evaluate_line(r, c, 1, -1, player)
 
         int opponent = if player == 1 then 2 else 1
-        var defense_score = 0
-        for directions to d {
-            defense_score = defense_score + evaluate_line(r, c, d[0], d[1], opponent)
-        }
+        var defense_score = evaluate_line(r, c, 0, 1, opponent)
+        defense_score = defense_score + evaluate_line(r, c, 1, 0, opponent)
+        defense_score = defense_score + evaluate_line(r, c, 1, 1, opponent)
+        defense_score = defense_score + evaluate_line(r, c, 1, -1, opponent)
 
-        // 防守权重提高到1.2，确保优先拦截对手威胁
-        return _float(attack_score) + _float(defense_score) * 1.2
+        return _float(attack_score) + _float(defense_score) * 0.8
     }
 
     func ai_move() {

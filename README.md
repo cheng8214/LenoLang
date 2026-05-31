@@ -676,6 +676,17 @@ main() {
 }
 ```
 
+**类型规则**：
+
+- 如果 `then` 和 `else` 分支类型相同，返回该具体类型
+- 如果类型不同，返回 `any`
+
+```leno
+var x = if true then 1 else 2          // ✅ int
+var y = if true then 1 else "hello"    // ⚠️ any（类型不同）
+int z = if flag then 2 else 1          // ✅ 可直接赋值给 int
+```
+
 ### switch 多分支
 
 ```leno
@@ -1110,7 +1121,7 @@ var p2 = new Point()        // x = null, y = null
 var rect2 = new Rectangle() // x = 0, y = 0, width = null, height = null
 ```
 
-> **⚠️ 注意：struct 创建必须使用命名参数形式**
+> **⚠️ 注意：struct 创建必须使用** **`new`** **关键字和命名参数形式**
 >
 > ```leno
 > var p = new Point(10, 20)      // ❌ 错误：必须使用 new Point(x = 10, y = 20)
@@ -2705,7 +2716,7 @@ lenolang program.leno
 | 功能       | 语法                                |
 | -------- | --------------------------------- |
 | 定义结构体    | `struct Point { int x, int y }`   |
-| 创建实例     | `new Point(x=10, y=20)`              |
+| 创建实例     | `new Point(x=10, y=20)`           |
 | 访问字段     | `p.x`, `p.y`                      |
 | 定义方法     | `func method():type { }`          |
 | self 关键字 | `self.field`, `self.method()`     |
@@ -2800,4 +2811,4 @@ lenolang program.leno
 
 ***
 
-
+**注意**：本文档中的示例均来自 `d:\CLeno\LenoC\test` 目录下的实际测试文件。

@@ -2,9 +2,9 @@
 import "win_process_str16.leno" as wp
 //_gc(false)
 main() {
-for 1500 to i
+for 1 to i
 {
-	_clear()
+	//_clear()
 	print($"第{i}次循环")
    test()
    }
