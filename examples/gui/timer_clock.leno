@@ -2,7 +2,6 @@ import guis
 import times
 
 main() {
-    guis.init()
     Win win = guis.create_window("LenoC Timer & Clock", 800, 600, 1)
 
     var elapsed = 0

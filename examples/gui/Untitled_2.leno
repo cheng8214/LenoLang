@@ -1,7 +1,6 @@
 import guis
 
 main() {
-    guis.init()
     Win win = guis.create_window("Viewport & Clip", 800, 600, 1)
 	
     guis.run(win,

@@ -1,8 +1,6 @@
 import gui
 
 main() {
-    gui.init()
-    
     var win = gui.create_window("标题", 800, 600, 1)
     
     func Draw(var ren)

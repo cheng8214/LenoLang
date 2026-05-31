@@ -1,7 +1,6 @@
 import guis
 //_gc(false)
 main() {
-    guis.init()
     Win win = guis.create_window("LenoC Chess Board", 640, 700, 0)
 
     var font = guis.load_font("Arial", 36)

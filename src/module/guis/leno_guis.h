@@ -221,6 +221,7 @@ void   leno_gui_platform_set_main_callbacks(LenoGUIPlatformWindow* win,
                                              LenoGUIEventCallback event_cb,
                                              void* user_data);
 int    leno_gui_platform_iterate_main_callbacks(void);
+void   leno_gui_platform_request_redraw(void);
 
 /* ===== 事件操作 ===== */
 int    leno_gui_platform_poll_event(LenoGUIEvent* event);

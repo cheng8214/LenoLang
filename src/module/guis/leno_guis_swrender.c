@@ -600,6 +600,7 @@ typedef struct {
     LenoGUIEventCallback event_cb;
     void* user_data;
     int should_quit;
+    int needs_redraw;
 } LenoGUIMainCallbacks;
 
 static LenoGUIMainCallbacks g_main_callbacks = {0};
@@ -617,6 +618,7 @@ void leno_gui_platform_set_main_callbacks(LenoGUIPlatformWindow* win,
     g_main_callbacks.event_cb = event_cb;
     g_main_callbacks.user_data = user_data;
     g_main_callbacks.should_quit = 0;
+    g_main_callbacks.needs_redraw = 1;
 }
 
 int leno_gui_platform_iterate_main_callbacks(void) {
@@ -625,7 +627,9 @@ int leno_gui_platform_iterate_main_callbacks(void) {
     }
 
     LenoGUIEvent ev;
+    int had_event = 0;
     while (leno_gui_platform_poll_event(&ev)) {
+        had_event = 1;
         if (ev.type == LENO_GUI_EVT_WINDOW_RESIZE && g_main_callbacks.renderer) {
             leno_gui_platform_renderer_mark_resize(g_main_callbacks.renderer);
         }
@@ -647,13 +651,22 @@ int leno_gui_platform_iterate_main_callbacks(void) {
         return 0;
     }
 
+    if (had_event) {
+        g_main_callbacks.needs_redraw = 1;
+    }
+
     if (g_main_callbacks.renderer) {
         check_and_resize_renderer(g_main_callbacks.renderer);
     }
 
-    if (g_main_callbacks.render_cb) {
+    if (g_main_callbacks.needs_redraw && g_main_callbacks.render_cb) {
         g_main_callbacks.render_cb(g_main_callbacks.user_data);
+        g_main_callbacks.needs_redraw = 0;
     }
 
     return 1;
+}
+
+void leno_gui_platform_request_redraw(void) {
+    g_main_callbacks.needs_redraw = 1;
 }

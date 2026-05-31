@@ -1,6 +1,5 @@
 import guis
 main() {
-    guis.init()
     Win win = guis.create_window("Hello", 800, 600, 1)
     Draw ren = guis.create_renderer(win)
     

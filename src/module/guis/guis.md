@@ -63,7 +63,6 @@ guis.c               - LenoC 模块注册
 import guis
 
 main() {
-    guis.init()
     Win win = guis.create_window("Hello", 800, 600, 1)
     guis.run(win,
         func(Draw ren) {
@@ -109,18 +108,7 @@ var win = guis.create_window("App", 800, 600, 4)          // 无边框
 
 ## 模块方法
 
-### `guis.init()`
 
-初始化 GUI 子系统。必须在所有其他 GUI 操作之前调用。
-
-**返回**: `bool` - 是否成功
-
-```leno
-if not guis.init() {
-    print("GUI 初始化失败")
-    return
-}
-```
 
 ---
 
@@ -629,7 +617,6 @@ guis.run(win,
 如果不使用 `guis.run()`，可以手动管理渲染器和事件循环：
 
 ```leno
-guis.init()
 Win win = guis.create_window("App", 800, 600, 1)
 Draw ren = guis.create_renderer(win)
 
@@ -858,7 +845,6 @@ print("DPI: " + dpi)
 import guis
 
 main() {
-    guis.init()
     Win win = guis.create_window("Hello LenoC", 800, 600, 1)
 
     guis.run(win,
@@ -888,7 +874,6 @@ main() {
 import guis
 
 main() {
-    guis.init()
     Win win = guis.create_window("FPS Counter", 800, 600, 1)
 
     var frame = 0
@@ -927,7 +912,6 @@ main() {
 import guis
 
 main() {
-    guis.init()
     Win win = guis.create_window("Mouse Demo", 800, 600, 1)
 
     var mx = 0
@@ -977,7 +961,6 @@ main() {
 import guis
 
 main() {
-    guis.init()
     Win win = guis.create_window("Viewport & Clip", 800, 600, 1)
 
     guis.run(win,
@@ -1020,7 +1003,6 @@ main() {
 import guis
 
 main() {
-    guis.init()
     Win win = guis.create_window("LenoC GUI - Draw Test", 800, 600, 1)
 
     guis.set_window_opacity(win, 0.95)
@@ -1071,10 +1053,9 @@ main() {
 
 ### 1. 初始化顺序
 
-必须先调用 `guis.init()`，再创建窗口和使用其他 GUI 功能。
+`create_window` 会自动初始化 GUI 子系统，无需手动调用初始化。
 
 ```leno
-guis.init()  // 必须首先调用
 var win = guis.create_window("App", 800, 600, 1)
 ```
 

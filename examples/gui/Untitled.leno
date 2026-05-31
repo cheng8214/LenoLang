@@ -2,8 +2,6 @@
 import guis
 
 main() {
-    guis.init()
-
     Win win = guis.create_window("LenoC GUI - Event 方法测试", 800, 600, 1)
 
     guis.set_window_opacity(win, 0.95)

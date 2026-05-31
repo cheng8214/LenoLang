@@ -1,8 +1,6 @@
 import guis
 
 main() {
-    guis.init()
-
     Win win = guis.create_window("LenoC GUI - Text Test", 800, 600, 1)
 
     guis.run(win,

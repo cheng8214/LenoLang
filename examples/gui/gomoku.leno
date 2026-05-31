@@ -2,7 +2,6 @@ import guis
 import maths
 
 main() {
-    guis.init()
     Win win = guis.create_window("五子棋 Gomoku", 700, 800, 1)
 
     var font_title = guis.load_font("SimSun", 28)

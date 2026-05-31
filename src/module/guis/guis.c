@@ -280,17 +280,14 @@ static Value event_to_dict(LenoGUIEvent* ev) {
     return val_obj((Object*)event_obj);
 }
 
-static Value gui_init_func(int argc, Value* args) {
-    (void)argc; (void)args;
-    return val_bool(leno_gui_platform_init() != 0);
-}
-
 static Value gui_create_window_func(int argc, Value* args) {
     (void)argc;
     ObjString* title = (ObjString*)val_as_obj(args[0]);
     int w = val_as_int(args[1]);
     int h = val_as_int(args[2]);
     int flags = val_as_int(args[3]);
+
+    if (!leno_gui_platform_init()) return val_null();
 
     LenoGUIPlatformWindow* pw = leno_gui_platform_create_window(title->chars, w, h, flags);
     if (!pw) return val_null();
@@ -816,14 +813,16 @@ static void init_timers(void) {
     }
 }
 
-static void process_timers(void) {
-    if (!g_timers_initialized) return;
+static int process_timers(void) {
+    if (!g_timers_initialized) return 0;
+    int any_fired = 0;
     uint64_t now = leno_gui_platform_get_ticks();
     for (int i = 0; i < LENO_GUI_MAX_TIMERS; i++) {
         LenoGUITimer* t = &g_timers[i];
         if (!t->active || val_is_null(t->callback)) continue;
         if (now < t->next_fire) continue;
 
+        any_fired = 1;
         Value args[2];
         args[0] = val_int(t->timer_id);
         args[1] = val_int(t->interval_ms);
@@ -838,6 +837,7 @@ static void process_timers(void) {
             t->next_fire = now + t->interval_ms;
         }
     }
+    return any_fired;
 }
 
 static void clear_all_timers(void) {
@@ -1005,7 +1005,9 @@ static Value gui_run_func(int argc, Value* args) {
     /* 使用迭代回调机制（参考 SDL3） */
     int frame_count = 0;
     while (1) {
-        process_timers();
+        if (process_timers()) {
+            leno_gui_platform_request_redraw();
+        }
         if (!leno_gui_platform_iterate_main_callbacks()) break;
 
         /* 每 60 帧触发一次 GC，防止事件循环中内存泄漏 */
@@ -1016,9 +1018,9 @@ static Value gui_run_func(int argc, Value* args) {
         }
 
 #ifdef _WIN32
-        Sleep(1);
+        Sleep(16);
 #else
-        struct timespec ts = {0, 1000000};
+        struct timespec ts = {0, 16000000};
         nanosleep(&ts, NULL);
 #endif
     }
@@ -1067,7 +1069,6 @@ void guis_init_module(void) {
     TypeKind str_params[] = {TYPE_STRING};
 
     /* ===== 初始化/关闭 ===== */
-    native_register_module_method("guis", "init", gui_init_func, 0, -1, -1, TYPE_BOOL, no_params);
     native_register_module_method("guis", "cleanup", gui_cleanup_func, 1, -1, -1, TYPE_NULL, obj_1int);
 
     /* ===== 窗口操作 ===== */
