@@ -213,6 +213,11 @@ void   leno_gui_platform_destroy_font(LenoGUIPlatformFont* font);
 void   leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int x, int y);
 void   leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* text, int* w, int* h);
 
+/* ===== 事件过滤器（借鉴 SDL3）===== */
+typedef int (*LenoGUIEventFilterFunc)(void* userdata, LenoGUIEvent* event);
+void   leno_gui_platform_add_event_filter(void* userdata, LenoGUIEventFilterFunc filter);
+void   leno_gui_platform_remove_event_filter(void* userdata, LenoGUIEventFilterFunc filter);
+
 /* ===== 全局渲染状态（参考 SDL3 主回调机制） ===== */
 typedef void (*LenoGUIRenderCallback)(void* user_data);
 typedef void (*LenoGUIEventCallback)(void* user_data, LenoGUIEvent* event);

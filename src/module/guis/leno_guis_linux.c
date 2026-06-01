@@ -33,38 +33,170 @@
 #include <pthread.h>
 #include <unistd.h>
 
-/* ===== 事件队列 ===== */
+/* ===== 事件队列（借鉴 SDL3：链表 + 对象池）===== */
 
-#define MAX_GUI_EVENTS 512
+typedef struct LenoGUIEventEntry {
+    LenoGUIEvent event;
+    struct LenoGUIEventEntry* next;
+} LenoGUIEventEntry;
 
-static LenoGUIEvent g_event_queue[MAX_GUI_EVENTS];
-static int g_event_head = 0;
-static int g_event_tail = 0;
+static LenoGUIEventEntry* g_event_queue_head = NULL;
+static LenoGUIEventEntry* g_event_queue_tail = NULL;
 static int g_event_count = 0;
+static int g_event_max_seen = 0;
+
+/* 对象池：空闲事件节点 */
+static LenoGUIEventEntry* g_event_free_list = NULL;
 
 static pthread_mutex_t g_event_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static void event_queue_push(const LenoGUIEvent* ev) {
+/* 事件过滤器（借鉴 SDL3） */
+typedef struct LenoGUIEventFilter {
+    void* userdata;
+    int (*filter)(void* userdata, LenoGUIEvent* event);
+    struct LenoGUIEventFilter* next;
+} LenoGUIEventFilter;
+
+static LenoGUIEventFilter* g_event_filters = NULL;
+
+/* 添加事件过滤器 */
+void leno_gui_platform_add_event_filter(void* userdata, int (*filter)(void*, LenoGUIEvent*)) {
+    if (!filter) return;
+    LenoGUIEventFilter* f = (LenoGUIEventFilter*)malloc(sizeof(LenoGUIEventFilter));
+    if (!f) return;
+    f->userdata = userdata;
+    f->filter = filter;
     pthread_mutex_lock(&g_event_mutex);
-    if (g_event_count < MAX_GUI_EVENTS) {
-        g_event_queue[g_event_tail] = *ev;
-        g_event_tail = (g_event_tail + 1) % MAX_GUI_EVENTS;
-        g_event_count++;
+    f->next = g_event_filters;
+    g_event_filters = f;
+    pthread_mutex_unlock(&g_event_mutex);
+}
+
+/* 移除事件过滤器 */
+void leno_gui_platform_remove_event_filter(void* userdata, int (*filter)(void*, LenoGUIEvent*)) {
+    pthread_mutex_lock(&g_event_mutex);
+    LenoGUIEventFilter** current = &g_event_filters;
+    while (*current) {
+        LenoGUIEventFilter* f = *current;
+        if (f->userdata == userdata && f->filter == filter) {
+            *current = f->next;
+            free(f);
+            break;
+        }
+        current = &f->next;
+    }
+    pthread_mutex_unlock(&g_event_mutex);
+}
+
+/* 从对象池获取或分配新节点 */
+static LenoGUIEventEntry* event_entry_alloc(void) {
+    pthread_mutex_lock(&g_event_mutex);
+    LenoGUIEventEntry* entry = g_event_free_list;
+    if (entry) {
+        g_event_free_list = entry->next;
+        memset(entry, 0, sizeof(LenoGUIEventEntry));
+    }
+    pthread_mutex_unlock(&g_event_mutex);
+    
+    if (!entry) {
+        entry = (LenoGUIEventEntry*)calloc(1, sizeof(LenoGUIEventEntry));
+    }
+    return entry;
+}
+
+/* 回收节点到对象池 */
+static void event_entry_free(LenoGUIEventEntry* entry) {
+    if (!entry) return;
+    pthread_mutex_lock(&g_event_mutex);
+    entry->next = g_event_free_list;
+    g_event_free_list = entry;
+    pthread_mutex_unlock(&g_event_mutex);
+}
+
+static void event_queue_push(const LenoGUIEvent* ev) {
+    /* 运行事件过滤器 */
+    LenoGUIEvent filtered = *ev;
+    LenoGUIEventFilter* f = g_event_filters;
+    while (f) {
+        if (f->filter && !f->filter(f->userdata, &filtered)) {
+            return; /* 过滤器阻止事件 */
+        }
+        f = f->next;
+    }
+    
+    LenoGUIEventEntry* entry = event_entry_alloc();
+    if (!entry) return;
+    
+    entry->event = filtered;
+    entry->next = NULL;
+    
+    pthread_mutex_lock(&g_event_mutex);
+    if (g_event_queue_tail) {
+        g_event_queue_tail->next = entry;
+    } else {
+        g_event_queue_head = entry;
+    }
+    g_event_queue_tail = entry;
+    g_event_count++;
+    if (g_event_count > g_event_max_seen) {
+        g_event_max_seen = g_event_count;
     }
     pthread_mutex_unlock(&g_event_mutex);
 }
 
 static int event_queue_pop(LenoGUIEvent* ev) {
     pthread_mutex_lock(&g_event_mutex);
-    if (g_event_count == 0) {
+    LenoGUIEventEntry* entry = g_event_queue_head;
+    if (!entry) {
         pthread_mutex_unlock(&g_event_mutex);
         return 0;
     }
-    *ev = g_event_queue[g_event_head];
-    g_event_head = (g_event_head + 1) % MAX_GUI_EVENTS;
+    
+    g_event_queue_head = entry->next;
+    if (!g_event_queue_head) {
+        g_event_queue_tail = NULL;
+    }
     g_event_count--;
     pthread_mutex_unlock(&g_event_mutex);
+    
+    *ev = entry->event;
+    event_entry_free(entry);
     return 1;
+}
+
+/* 清理事件队列和对象池 */
+static void event_queue_cleanup(void) {
+    pthread_mutex_lock(&g_event_mutex);
+    
+    /* 清理队列 */
+    LenoGUIEventEntry* entry = g_event_queue_head;
+    while (entry) {
+        LenoGUIEventEntry* next = entry->next;
+        free(entry);
+        entry = next;
+    }
+    g_event_queue_head = NULL;
+    g_event_queue_tail = NULL;
+    
+    /* 清理对象池 */
+    entry = g_event_free_list;
+    while (entry) {
+        LenoGUIEventEntry* next = entry->next;
+        free(entry);
+        entry = next;
+    }
+    g_event_free_list = NULL;
+    
+    /* 清理过滤器 */
+    LenoGUIEventFilter* f = g_event_filters;
+    while (f) {
+        LenoGUIEventFilter* next = f->next;
+        free(f);
+        f = next;
+    }
+    g_event_filters = NULL;
+    
+    pthread_mutex_unlock(&g_event_mutex);
 }
 
 /* ===== 窗口 ID 计数器 ===== */
@@ -287,6 +419,10 @@ int leno_gui_platform_init(void) {
 
 void leno_gui_platform_quit(void) {
     if (!g_gui_initialized) return;
+    
+    /* 清理事件队列和对象池 */
+    event_queue_cleanup();
+    
     if (g_display) {
         XCloseDisplay(g_display);
         g_display = NULL;

@@ -16,49 +16,184 @@
 #include <stdio.h>
 #include <math.h>
 
-/* ===== 事件队列 ===== */
+/* ===== 事件队列（借鉴 SDL3：链表 + 对象池）===== */
 
-#define MAX_GUI_EVENTS 512
+typedef struct LenoGUIEventEntry {
+    LenoGUIEvent event;
+    struct LenoGUIEventEntry* next;
+} LenoGUIEventEntry;
 
-static LenoGUIEvent g_event_queue[MAX_GUI_EVENTS];
-static int g_event_head = 0;
-static int g_event_tail = 0;
+static LenoGUIEventEntry* g_event_queue_head = NULL;
+static LenoGUIEventEntry* g_event_queue_tail = NULL;
 static int g_event_count = 0;
+static int g_event_max_seen = 0;
+
+/* 对象池：空闲事件节点 */
+static LenoGUIEventEntry* g_event_free_list = NULL;
 
 static CRITICAL_SECTION g_event_cs;
 static int g_cs_initialized = 0;
+
+/* 事件过滤器（借鉴 SDL3） */
+typedef struct LenoGUIEventFilter {
+    void* userdata;
+    int (*filter)(void* userdata, LenoGUIEvent* event);
+    struct LenoGUIEventFilter* next;
+} LenoGUIEventFilter;
+
+static LenoGUIEventFilter* g_event_filters = NULL;
 
 static void event_queue_init(void) {
     if (!g_cs_initialized) {
         InitializeCriticalSection(&g_event_cs);
         g_cs_initialized = 1;
     }
-    g_event_head = 0;
-    g_event_tail = 0;
+    g_event_queue_head = NULL;
+    g_event_queue_tail = NULL;
     g_event_count = 0;
+    g_event_max_seen = 0;
+    g_event_free_list = NULL;
+    g_event_filters = NULL;
+}
+
+/* 从对象池获取或分配新节点 */
+static LenoGUIEventEntry* event_entry_alloc(void) {
+    EnterCriticalSection(&g_event_cs);
+    LenoGUIEventEntry* entry = g_event_free_list;
+    if (entry) {
+        g_event_free_list = entry->next;
+        memset(entry, 0, sizeof(LenoGUIEventEntry));
+    }
+    LeaveCriticalSection(&g_event_cs);
+    
+    if (!entry) {
+        entry = (LenoGUIEventEntry*)calloc(1, sizeof(LenoGUIEventEntry));
+    }
+    return entry;
+}
+
+/* 回收节点到对象池 */
+static void event_entry_free(LenoGUIEventEntry* entry) {
+    if (!entry) return;
+    EnterCriticalSection(&g_event_cs);
+    entry->next = g_event_free_list;
+    g_event_free_list = entry;
+    LeaveCriticalSection(&g_event_cs);
+}
+
+/* 添加事件过滤器 */
+void leno_gui_platform_add_event_filter(void* userdata, int (*filter)(void*, LenoGUIEvent*)) {
+    if (!filter) return;
+    LenoGUIEventFilter* f = (LenoGUIEventFilter*)malloc(sizeof(LenoGUIEventFilter));
+    if (!f) return;
+    f->userdata = userdata;
+    f->filter = filter;
+    EnterCriticalSection(&g_event_cs);
+    f->next = g_event_filters;
+    g_event_filters = f;
+    LeaveCriticalSection(&g_event_cs);
+}
+
+/* 移除事件过滤器 */
+void leno_gui_platform_remove_event_filter(void* userdata, int (*filter)(void*, LenoGUIEvent*)) {
+    EnterCriticalSection(&g_event_cs);
+    LenoGUIEventFilter** current = &g_event_filters;
+    while (*current) {
+        LenoGUIEventFilter* f = *current;
+        if (f->userdata == userdata && f->filter == filter) {
+            *current = f->next;
+            free(f);
+            break;
+        }
+        current = &f->next;
+    }
+    LeaveCriticalSection(&g_event_cs);
 }
 
 static void event_queue_push(const LenoGUIEvent* ev) {
+    /* 运行事件过滤器 */
+    LenoGUIEvent filtered = *ev;
+    LenoGUIEventFilter* f = g_event_filters;
+    while (f) {
+        if (f->filter && !f->filter(f->userdata, &filtered)) {
+            return; /* 过滤器阻止事件 */
+        }
+        f = f->next;
+    }
+    
+    LenoGUIEventEntry* entry = event_entry_alloc();
+    if (!entry) return;
+    
+    entry->event = filtered;
+    entry->next = NULL;
+    
     EnterCriticalSection(&g_event_cs);
-    if (g_event_count < MAX_GUI_EVENTS) {
-        g_event_queue[g_event_tail] = *ev;
-        g_event_tail = (g_event_tail + 1) % MAX_GUI_EVENTS;
-        g_event_count++;
+    if (g_event_queue_tail) {
+        g_event_queue_tail->next = entry;
+    } else {
+        g_event_queue_head = entry;
+    }
+    g_event_queue_tail = entry;
+    g_event_count++;
+    if (g_event_count > g_event_max_seen) {
+        g_event_max_seen = g_event_count;
     }
     LeaveCriticalSection(&g_event_cs);
 }
 
 static int event_queue_pop(LenoGUIEvent* ev) {
     EnterCriticalSection(&g_event_cs);
-    if (g_event_count == 0) {
+    LenoGUIEventEntry* entry = g_event_queue_head;
+    if (!entry) {
         LeaveCriticalSection(&g_event_cs);
         return 0;
     }
-    *ev = g_event_queue[g_event_head];
-    g_event_head = (g_event_head + 1) % MAX_GUI_EVENTS;
+    
+    g_event_queue_head = entry->next;
+    if (!g_event_queue_head) {
+        g_event_queue_tail = NULL;
+    }
     g_event_count--;
     LeaveCriticalSection(&g_event_cs);
+    
+    *ev = entry->event;
+    event_entry_free(entry);
     return 1;
+}
+
+/* 清理事件队列和对象池 */
+static void event_queue_cleanup(void) {
+    EnterCriticalSection(&g_event_cs);
+    
+    /* 清理队列 */
+    LenoGUIEventEntry* entry = g_event_queue_head;
+    while (entry) {
+        LenoGUIEventEntry* next = entry->next;
+        free(entry);
+        entry = next;
+    }
+    g_event_queue_head = NULL;
+    g_event_queue_tail = NULL;
+    
+    /* 清理对象池 */
+    entry = g_event_free_list;
+    while (entry) {
+        LenoGUIEventEntry* next = entry->next;
+        free(entry);
+        entry = next;
+    }
+    g_event_free_list = NULL;
+    
+    /* 清理过滤器 */
+    LenoGUIEventFilter* f = g_event_filters;
+    while (f) {
+        LenoGUIEventFilter* next = f->next;
+        free(f);
+        f = next;
+    }
+    g_event_filters = NULL;
+    
+    LeaveCriticalSection(&g_event_cs);
 }
 
 /* ===== 窗口计数器（用于 window_id） ===== */
@@ -174,6 +309,71 @@ static int get_mod_flags(void) {
     return mod;
 }
 
+/* ===== 事件发送辅助函数（借鉴 SDL3，减少重复代码）===== */
+
+static void push_window_event(LenoGUIPlatformWindow* win, int type, int data1, int data2) {
+    LenoGUIEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = type;
+    ev.timestamp = GetTickCount64();
+    ev.window_id = win ? win->window_id : 0;
+    ev.data1 = data1;
+    ev.data2 = data2;
+    event_queue_push(&ev);
+}
+
+static void push_key_event(LenoGUIPlatformWindow* win, int type, int keycode, int scancode, int mod, int repeat) {
+    LenoGUIEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = type;
+    ev.timestamp = GetTickCount64();
+    ev.window_id = win ? win->window_id : 0;
+    ev.key = keycode;
+    ev.scancode = scancode;
+    ev.mod_flags = mod;
+    ev.repeat = repeat;
+    event_queue_push(&ev);
+}
+
+static void push_mouse_motion_event(LenoGUIPlatformWindow* win, float x, float y, float xrel, float yrel) {
+    LenoGUIEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LENO_GUI_EVT_MOUSE_MOVE;
+    ev.timestamp = GetTickCount64();
+    ev.window_id = win ? win->window_id : 0;
+    ev.mouse_x = x;
+    ev.mouse_y = y;
+    ev.mouse_xrel = xrel;
+    ev.mouse_yrel = yrel;
+    event_queue_push(&ev);
+}
+
+static void push_mouse_button_event(LenoGUIPlatformWindow* win, int type, int button, int clicks, float x, float y) {
+    LenoGUIEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = type;
+    ev.timestamp = GetTickCount64();
+    ev.window_id = win ? win->window_id : 0;
+    ev.mouse_x = x;
+    ev.mouse_y = y;
+    ev.mouse_button = button;
+    ev.mouse_clicks = clicks;
+    event_queue_push(&ev);
+}
+
+static void push_mouse_wheel_event(LenoGUIPlatformWindow* win, float x, float y, float mouse_x, float mouse_y) {
+    LenoGUIEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LENO_GUI_EVT_MOUSE_WHEEL;
+    ev.timestamp = GetTickCount64();
+    ev.window_id = win ? win->window_id : 0;
+    ev.wheel_x = x;
+    ev.wheel_y = y;
+    ev.mouse_x = mouse_x;
+    ev.mouse_y = mouse_y;
+    event_queue_push(&ev);
+}
+
 /* ===== 窗口过程 ===== */
 
 static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -182,21 +382,12 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
     switch (msg) {
         case WM_CLOSE: {
             if (win) win->should_close = 1;
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_WINDOW_CLOSE;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            event_queue_push(&ev);
+            push_window_event(win, LENO_GUI_EVT_WINDOW_CLOSE, 0, 0);
             return 0;
         }
         case WM_DESTROY: {
             if (win) win->should_close = 1;
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_QUIT;
-            ev.timestamp = GetTickCount64();
-            event_queue_push(&ev);
+            push_window_event(win, LENO_GUI_EVT_QUIT, 0, 0);
             return 0;
         }
         case WM_SIZE: {
@@ -204,43 +395,19 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
                 win->width = LOWORD(lparam);
                 win->height = HIWORD(lparam);
             }
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_WINDOW_RESIZE;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            ev.data1 = (int)LOWORD(lparam);
-            ev.data2 = (int)HIWORD(lparam);
-            event_queue_push(&ev);
+            push_window_event(win, LENO_GUI_EVT_WINDOW_RESIZE, (int)LOWORD(lparam), (int)HIWORD(lparam));
             return 0;
         }
         case WM_MOVE: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_WINDOW_MOVE;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            ev.data1 = (int)(short)LOWORD(lparam);
-            ev.data2 = (int)(short)HIWORD(lparam);
-            event_queue_push(&ev);
+            push_window_event(win, LENO_GUI_EVT_WINDOW_MOVE, (int)(short)LOWORD(lparam), (int)(short)HIWORD(lparam));
             return 0;
         }
         case WM_SETFOCUS: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_WINDOW_FOCUS;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            event_queue_push(&ev);
+            push_window_event(win, LENO_GUI_EVT_WINDOW_FOCUS, 0, 0);
             return 0;
         }
         case WM_KILLFOCUS: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_WINDOW_UNFOCUS;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            event_queue_push(&ev);
+            push_window_event(win, LENO_GUI_EVT_WINDOW_UNFOCUS, 0, 0);
             return 0;
         }
         case WM_ERASEBKGND: {
@@ -300,14 +467,9 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             if (win) {
                 RECT clientRect;
                 GetClientRect(hwnd, &clientRect);
-                LenoGUIEvent ev;
-                memset(&ev, 0, sizeof(ev));
-                ev.type = LENO_GUI_EVT_WINDOW_RESIZE;
-                ev.timestamp = GetTickCount64();
-                ev.window_id = win->window_id;
-                ev.data1 = clientRect.right - clientRect.left;
-                ev.data2 = clientRect.bottom - clientRect.top;
-                event_queue_push(&ev);
+                push_window_event(win, LENO_GUI_EVT_WINDOW_RESIZE, 
+                                  clientRect.right - clientRect.left,
+                                  clientRect.bottom - clientRect.top);
             }
             return 0;
         }
@@ -321,29 +483,14 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
         }
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_KEY_DOWN;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            ev.key = vk_to_leno_key(wparam);
-            ev.scancode = (int)((lparam >> 16) & 0xFF);
-            ev.mod_flags = get_mod_flags();
-            ev.repeat = (lparam >> 30) & 1;
-            event_queue_push(&ev);
+            push_key_event(win, LENO_GUI_EVT_KEY_DOWN, vk_to_leno_key(wparam),
+                           (int)((lparam >> 16) & 0xFF), get_mod_flags(), (lparam >> 30) & 1);
             return 0;
         }
         case WM_KEYUP:
         case WM_SYSKEYUP: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_KEY_UP;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            ev.key = vk_to_leno_key(wparam);
-            ev.scancode = (int)((lparam >> 16) & 0xFF);
-            ev.mod_flags = get_mod_flags();
-            event_queue_push(&ev);
+            push_key_event(win, LENO_GUI_EVT_KEY_UP, vk_to_leno_key(wparam),
+                           (int)((lparam >> 16) & 0xFF), get_mod_flags(), 0);
             return 0;
         }
         case WM_CHAR: {
@@ -360,38 +507,26 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             return 0;
         }
         case WM_MOUSEMOVE: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_MOUSE_MOVE;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            ev.mouse_x = (float)(short)LOWORD(lparam);
-            ev.mouse_y = (float)(short)HIWORD(lparam);
-            {
-                static int last_x = 0, last_y = 0;
-                ev.mouse_xrel = ev.mouse_x - (float)last_x;
-                ev.mouse_yrel = ev.mouse_y - (float)last_y;
-                last_x = (int)ev.mouse_x;
-                last_y = (int)ev.mouse_y;
-            }
-            event_queue_push(&ev);
+            float x = (float)(short)LOWORD(lparam);
+            float y = (float)(short)HIWORD(lparam);
+            static float last_x = 0, last_y = 0;
+            float xrel = x - last_x;
+            float yrel = y - last_y;
+            last_x = x;
+            last_y = y;
+            push_mouse_motion_event(win, x, y, xrel, yrel);
             return 0;
         }
         case WM_LBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_RBUTTONDOWN: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_MOUSE_DOWN;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            ev.mouse_x = (float)(short)LOWORD(lparam);
-            ev.mouse_y = (float)(short)HIWORD(lparam);
-            if (msg == WM_LBUTTONDOWN)      ev.mouse_button = LENO_GUI_MOUSE_LEFT;
-            else if (msg == WM_MBUTTONDOWN) ev.mouse_button = LENO_GUI_MOUSE_MIDDLE;
-            else                            ev.mouse_button = LENO_GUI_MOUSE_RIGHT;
-            ev.mouse_clicks = 1;
-            event_queue_push(&ev);
+            float x = (float)(short)LOWORD(lparam);
+            float y = (float)(short)HIWORD(lparam);
+            int button;
+            if (msg == WM_LBUTTONDOWN)      button = LENO_GUI_MOUSE_LEFT;
+            else if (msg == WM_MBUTTONDOWN) button = LENO_GUI_MOUSE_MIDDLE;
+            else                            button = LENO_GUI_MOUSE_RIGHT;
+            push_mouse_button_event(win, LENO_GUI_EVT_MOUSE_DOWN, button, 1, x, y);
             /* 无边框窗口拖动支持：左键在可拖动区域时启动拖动 */
             if (win && win->is_borderless && msg == WM_LBUTTONDOWN) {
                 int mx = (short)LOWORD(lparam);
@@ -415,62 +550,35 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
         case WM_LBUTTONUP:
         case WM_MBUTTONUP:
         case WM_RBUTTONUP: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_MOUSE_UP;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            ev.mouse_x = (float)(short)LOWORD(lparam);
-            ev.mouse_y = (float)(short)HIWORD(lparam);
-            if (msg == WM_LBUTTONUP)        ev.mouse_button = LENO_GUI_MOUSE_LEFT;
-            else if (msg == WM_MBUTTONUP)   ev.mouse_button = LENO_GUI_MOUSE_MIDDLE;
-            else                            ev.mouse_button = LENO_GUI_MOUSE_RIGHT;
-            event_queue_push(&ev);
+            float x = (float)(short)LOWORD(lparam);
+            float y = (float)(short)HIWORD(lparam);
+            int button;
+            if (msg == WM_LBUTTONUP)        button = LENO_GUI_MOUSE_LEFT;
+            else if (msg == WM_MBUTTONUP)   button = LENO_GUI_MOUSE_MIDDLE;
+            else                            button = LENO_GUI_MOUSE_RIGHT;
+            push_mouse_button_event(win, LENO_GUI_EVT_MOUSE_UP, button, 0, x, y);
             return 0;
         }
         case WM_MOUSEWHEEL: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_MOUSE_WHEEL;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
             POINT pt;
             pt.x = (short)LOWORD(lparam);
             pt.y = (short)HIWORD(lparam);
             ScreenToClient(hwnd, &pt);
-            ev.mouse_x = (float)pt.x;
-            ev.mouse_y = (float)pt.y;
             short delta = GET_WHEEL_DELTA_WPARAM(wparam);
-            ev.wheel_x = 0.0f;
-            ev.wheel_y = (float)delta / (float)WHEEL_DELTA;
-            event_queue_push(&ev);
+            push_mouse_wheel_event(win, 0.0f, (float)delta / WHEEL_DELTA, (float)pt.x, (float)pt.y);
             return 0;
         }
         case WM_MOUSEHWHEEL: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_MOUSE_WHEEL;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
             POINT pt;
             pt.x = (short)LOWORD(lparam);
             pt.y = (short)HIWORD(lparam);
             ScreenToClient(hwnd, &pt);
-            ev.mouse_x = (float)pt.x;
-            ev.mouse_y = (float)pt.y;
             short delta = GET_WHEEL_DELTA_WPARAM(wparam);
-            ev.wheel_x = (float)delta / (float)WHEEL_DELTA;
-            ev.wheel_y = 0.0f;
-            event_queue_push(&ev);
+            push_mouse_wheel_event(win, (float)delta / WHEEL_DELTA, 0.0f, (float)pt.x, (float)pt.y);
             return 0;
         }
         case WM_SHOWWINDOW: {
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = wparam ? LENO_GUI_EVT_WINDOW_SHOW : LENO_GUI_EVT_WINDOW_HIDE;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            event_queue_push(&ev);
+            push_window_event(win, wparam ? LENO_GUI_EVT_WINDOW_SHOW : LENO_GUI_EVT_WINDOW_HIDE, 0, 0);
             return 0;
         }
         default:
@@ -547,6 +655,10 @@ int leno_gui_platform_init(void) {
 void leno_gui_platform_quit(void) {
     if (!g_gui_initialized) return;
     g_gui_initialized = 0;
+    
+    /* 清理事件队列和对象池 */
+    event_queue_cleanup();
+    
     if (g_cs_initialized) {
         DeleteCriticalSection(&g_event_cs);
         g_cs_initialized = 0;
@@ -746,35 +858,57 @@ void leno_gui_platform_destroy_renderer(LenoGUIPlatformRenderer* ren) {
     free(ren);
 }
 
+/* 检查并自动调整渲染器大小（借鉴 SDL3 的 surface_valid 检查） */
 static int check_and_resize_renderer(LenoGUIPlatformRenderer* ren) {
-    if (!ren || !ren->window) return 0;
-    if (!ren->needs_resize) return 1;
+    if (!ren || !ren->window || !ren->window->hwnd) return 0;
+    
+    /* 检查窗口大小是否变化 */
     RECT rect;
     if (!GetClientRect(ren->window->hwnd, &rect)) return 0;
     int new_width = rect.right - rect.left;
     int new_height = rect.bottom - rect.top;
+    
+    /* 如果大小没有变化且不需要调整，直接返回 */
+    if (!ren->needs_resize && ren->width == new_width && ren->height == new_height) {
+        return 1;
+    }
+    
+    /* 只有在需要调整且大小有效时才调整 */
     if (new_width > 0 && new_height > 0) {
         return leno_gui_platform_renderer_resize(ren, new_width, new_height);
     }
     return 1;
 }
 
-void leno_gui_platform_render_present(LenoGUIPlatformRenderer* ren) {
-    if (!ren || !ren->window || !ren->window->hwnd || !ren->back_dc) return;
+/* 强制检查窗口大小并调整渲染器（用于 present 前） */
+static int ensure_renderer_size(LenoGUIPlatformRenderer* ren) {
+    if (!ren || !ren->window || !ren->window->hwnd) return 0;
+    
     RECT rect;
-    GetClientRect(ren->window->hwnd, &rect);
+    if (!GetClientRect(ren->window->hwnd, &rect)) return 0;
     int win_w = rect.right - rect.left;
     int win_h = rect.bottom - rect.top;
+    
+    /* 如果窗口大小与渲染器不匹配，自动调整 */
+    if (win_w != ren->width || win_h != ren->height) {
+        if (win_w > 0 && win_h > 0) {
+            return leno_gui_platform_renderer_resize(ren, win_w, win_h);
+        }
+    }
+    return 1;
+}
+
+void leno_gui_platform_render_present(LenoGUIPlatformRenderer* ren) {
+    if (!ren || !ren->window || !ren->window->hwnd || !ren->back_dc) return;
+    
+    /* 自动检查并调整渲染器大小（借鉴 SDL3） */
+    if (!ensure_renderer_size(ren)) return;
+    
     HWND hwnd = ren->window->hwnd;
     HDC hdc = GetDC(hwnd);
     if (hdc) {
-        if (ren->width == win_w && ren->height == win_h) {
-            BitBlt(hdc, 0, 0, ren->width, ren->height, ren->back_dc, 0, 0, SRCCOPY);
-        } else if (win_w > 0 && win_h > 0) {
-            SetStretchBltMode(hdc, COLORONCOLOR);
-            StretchBlt(hdc, 0, 0, win_w, win_h,
-                       ren->back_dc, 0, 0, ren->width, ren->height, SRCCOPY);
-        }
+        /* 现在渲染器大小应该与窗口匹配，直接使用 BitBlt */
+        BitBlt(hdc, 0, 0, ren->width, ren->height, ren->back_dc, 0, 0, SRCCOPY);
         ReleaseDC(hwnd, hdc);
     }
     ValidateRect(hwnd, NULL);
