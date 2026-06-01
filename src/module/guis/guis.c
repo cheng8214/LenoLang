@@ -17,7 +17,7 @@
  *   ren.text_size(text, size) -> [w, h]                   计算文字尺寸
  *   guis.load_font(name, size) -> Font                    加载系统字体
  *   guis.destroy_font(font)                               销毁字体
- *   ren.draw_text_font(font, text, x, y)                  系统字体渲染
+ *   ren.draw_text_ex(font, text, x, y)                    系统字体渲染
  *   ren.text_size_font(font, text) -> [w, h]              系统字体文字尺寸
  *   guis.poll() / wait(timeout_ms)
  *   guis.get_key(key) -> bool
@@ -213,6 +213,10 @@ static Value gui_create_window_func(int argc, Value* args) {
         ObjString* key_w = str_copy("width", 5);
         ObjString* key_h = str_copy("height", 6);
         ObjString* key_full = str_copy("fullscreen", 10);
+        ObjString* key_borderless = str_copy("borderless", 10);
+        ObjString* key_resizable = str_copy("resizable", 9);
+        ObjString* key_hidden = str_copy("visible", 7);
+        ObjString* key_always_on_top = str_copy("always_on_top", 13);
 
         Value vw = dict_get(style, key_w);
         if (!val_is_null(vw)) w = val_as_int(vw);
@@ -222,7 +226,27 @@ static Value gui_create_window_func(int argc, Value* args) {
 
         Value vfull = dict_get(style, key_full);
         if (!val_is_null(vfull) && val_as_bool(vfull)) {
-            flags |= 0x01;
+            flags |= LENO_GUI_WIN_FULLSCREEN;
+        }
+
+        Value vborderless = dict_get(style, key_borderless);
+        if (!val_is_null(vborderless) && val_as_bool(vborderless)) {
+            flags |= LENO_GUI_WIN_BORDERLESS;
+        }
+
+        Value vresizable = dict_get(style, key_resizable);
+        if (!val_is_null(vresizable) && val_as_bool(vresizable)) {
+            flags |= LENO_GUI_WIN_RESIZABLE;
+        }
+
+        Value vhidden = dict_get(style, key_hidden);
+        if (!val_is_null(vhidden) && !val_as_bool(vhidden)) {
+            flags |= LENO_GUI_WIN_HIDDEN;
+        }
+
+        Value vtop = dict_get(style, key_always_on_top);
+        if (!val_is_null(vtop) && val_as_bool(vtop)) {
+            flags |= LENO_GUI_WIN_ALWAYS_ON_TOP;
         }
     }
 

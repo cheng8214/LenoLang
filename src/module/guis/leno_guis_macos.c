@@ -66,6 +66,31 @@ static int event_queue_pop(LenoGUIEvent* ev) {
 static int g_next_window_id = 1;
 static int g_gui_initialized = 0;
 
+/* ===== 窗口列表（用于事件处理查找窗口） ===== */
+
+#define MAX_GUI_WINDOWS 16
+
+static LenoGUIPlatformWindow* g_window_list[MAX_GUI_WINDOWS];
+static int g_window_count = 0;
+
+static void window_list_add(LenoGUIPlatformWindow* win) {
+    if (g_window_count < MAX_GUI_WINDOWS) {
+        g_window_list[g_window_count++] = win;
+    }
+}
+
+static void window_list_remove(LenoGUIPlatformWindow* win) {
+    for (int i = 0; i < g_window_count; i++) {
+        if (g_window_list[i] == win) {
+            for (int j = i; j < g_window_count - 1; j++) {
+                g_window_list[j] = g_window_list[j + 1];
+            }
+            g_window_count--;
+            break;
+        }
+    }
+}
+
 /* ===== 平台窗口结构 ===== */
 
 struct LenoGUIPlatformWindow {
@@ -76,6 +101,12 @@ struct LenoGUIPlatformWindow {
     int height;
     int should_close;
     int is_fullscreen;
+    int is_borderless;
+    int drag_area_enabled;
+    int drag_area_x;
+    int drag_area_y;
+    int drag_area_w;
+    int drag_area_h;
 };
 
 /* ===== 平台渲染器结构（包含视口/裁剪字段） ===== */
@@ -183,12 +214,19 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     win->height = h;
     win->should_close = 0;
     win->is_fullscreen = 0;
+    win->is_borderless = (flags & LENO_GUI_WIN_BORDERLESS) ? 1 : 0;
+    win->drag_area_enabled = 0;
 
     id ns_string = objc_msgSend(objc_getClass("NSString"),
                                  sel_registerName("stringWithUTF8String:"), title);
 
     unsigned int style_mask = 1 | 2 | 4 | 8;
-    if (flags & LENO_GUI_WIN_BORDERLESS) style_mask = 0;
+    if (flags & LENO_GUI_WIN_BORDERLESS) {
+        style_mask = 0;
+        if (flags & LENO_GUI_WIN_RESIZABLE) {
+            style_mask |= 4; /* NSWindowStyleMaskResizable */
+        }
+    }
     if (!(flags & LENO_GUI_WIN_RESIZABLE)) style_mask &= ~4;
 
     NSRect frame = {{0, 0}, {w, h}};
@@ -217,12 +255,15 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
         objc_msgSend(ns_window, sel_registerName("setLevel:"), 3);
     }
 
+    window_list_add(win);
+
     return win;
 }
 
 /* 销毁平台窗口 */
 void leno_gui_platform_destroy_window(LenoGUIPlatformWindow* win) {
     if (!win) return;
+    window_list_remove(win);
     if (win->ns_window) {
         objc_msgSend(win->ns_window, sel_registerName("close"));
     }
@@ -277,6 +318,20 @@ void leno_gui_platform_set_window_fullscreen(LenoGUIPlatformWindow* win, int ful
     if (!win || !win->ns_window) return;
     objc_msgSend(win->ns_window, sel_registerName("setFullScreen:"), fullscreen);
     win->is_fullscreen = fullscreen;
+}
+
+void leno_gui_platform_set_window_drag_area(LenoGUIPlatformWindow* win, int x, int y, int w, int h) {
+    if (!win) return;
+    win->drag_area_enabled = 1;
+    win->drag_area_x = x;
+    win->drag_area_y = y;
+    win->drag_area_w = w;
+    win->drag_area_h = h;
+}
+
+void leno_gui_platform_clear_window_drag_area(LenoGUIPlatformWindow* win) {
+    if (!win) return;
+    win->drag_area_enabled = 0;
 }
 
 /* ===== 渲染器 ===== */
@@ -423,10 +478,13 @@ int leno_gui_platform_renderer_resize(LenoGUIPlatformRenderer* ren, int w, int h
 /* 事件掩码 */
 #define NSEventMaskAny                  0xFFFFFFFFULL
 
-/* 查找窗口映射表（简化版，实际需要窗口管理器） */
+/* 查找窗口映射表 */
 static LenoGUIPlatformWindow* find_window_by_ns_window(id ns_window) {
-    /* 简化实现：返回最近创建的窗口 */
-    /* 实际应该维护一个窗口映射表 */
+    for (int i = 0; i < g_window_count; i++) {
+        if (g_window_list[i] && g_window_list[i]->ns_window == ns_window) {
+            return g_window_list[i];
+        }
+    }
     return NULL;
 }
 
@@ -445,8 +503,7 @@ static void pump_cocoa_event(id ns_event) {
     id ns_window = ((id(*)(id, SEL))objc_msgSend)(ns_event, sel_registerName("window"));
     LenoGUIPlatformWindow* win = NULL;
     if (ns_window) {
-        /* 这里需要查找对应的 LenoGUIPlatformWindow */
-        /* 简化处理：遍历所有窗口查找匹配的 ns_window */
+        win = find_window_by_ns_window(ns_window);
     }
     ev.window_id = win ? win->window_id : 0;
 
@@ -486,6 +543,24 @@ static void pump_cocoa_event(id ns_event) {
             else if (event_type == NSEventTypeRightMouseDown) ev.mouse_button = LENO_GUI_MOUSE_RIGHT;
             else ev.mouse_button = LENO_GUI_MOUSE_MIDDLE;
             ev.mouse_clicks = 1;
+            /* 无边框窗口拖动支持 */
+            if (win && win->is_borderless && event_type == NSEventTypeLeftMouseDown) {
+                int mx = (int)location.x;
+                int my = (int)(win->height - location.y); /* 转换为左下角坐标 */
+                int can_drag = 0;
+                if (win->drag_area_enabled) {
+                    if (mx >= win->drag_area_x && mx < win->drag_area_x + win->drag_area_w &&
+                        my >= win->drag_area_y && my < win->drag_area_y + win->drag_area_h) {
+                        can_drag = 1;
+                    }
+                } else {
+                    can_drag = 1;
+                }
+                if (can_drag) {
+                    /* macOS 无边框窗口拖动：使用 performWindowDragWithEvent */
+                    objc_msgSend(win->ns_window, sel_registerName("performWindowDragWithEvent:"), ns_event);
+                }
+            }
             event_queue_push(&ev);
             break;
         }

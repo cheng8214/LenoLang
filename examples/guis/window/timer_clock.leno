@@ -23,7 +23,7 @@ main() {
             ren.clear()
 
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.text("Timer & Clock Demo", 50, 30, 3)
+            ren.draw_text("Timer & Clock Demo", 50, 30, 3)
 
             var total_sec = elapsed / 1000
             var min = total_sec / 60
@@ -31,23 +31,23 @@ main() {
             var ms = elapsed % 1000
 
             ren.set_color(_rgb(100, 255, 100, 255))
-            ren.text("Elapsed: " + _str(min) + "m " + sec + "s " +ms + "ms", 50, 100, 2)
+            ren.draw_text("Elapsed: " + _str(min) + "m " + sec + "s " +ms + "ms", 50, 100, 2)
 
             var now = times.now()
             var time_str = times.format(now, "%H:%M:%S")
             var date_str = times.format(now, "%Y-%m-%d")
 
             ren.set_color(_rgb(255, 200, 100, 255))
-            ren.text("Clock: " + time_str, 50, 160, 3)
+            ren.draw_text("Clock: " + time_str, 50, 160, 3)
 
             ren.set_color(_rgb(150, 150, 200, 255))
-            ren.text("Date:  " + date_str, 50, 210, 2)
+            ren.draw_text("Date:  " + date_str, 50, 210, 2)
 
             ren.set_color(_rgb(100, 150, 255, 255))
-            ren.text("times.ms()  = " + times.ms(), 50, 280, 2)
+            ren.draw_text("times.ms()  = " + times.ms(), 50, 280, 2)
 
             ren.set_color(_rgb(180, 100, 255, 255))
-            ren.text("Press ESC to quit", 50, 350, 2)
+            ren.draw_text("Press ESC to quit", 50, 350, 2)
 
             ren.present()
         },

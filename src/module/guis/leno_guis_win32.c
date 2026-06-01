@@ -77,6 +77,9 @@ struct LenoGUIPlatformWindow {
     DWORD saved_style;
     RECT saved_rect;
     LenoGUIPlatformRenderer* renderer;  /* 关联的渲染器，用于 WM_PAINT 直接渲染 */
+    int is_borderless;                  /* 是否无边框窗口 */
+    int drag_area_enabled;              /* 是否启用拖动区域限制 */
+    RECT drag_area;                     /* 可拖动区域（客户区坐标） */
 };
 
 /* ===== 平台渲染器结构 ===== */
@@ -389,6 +392,24 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             else                            ev.mouse_button = LENO_GUI_MOUSE_RIGHT;
             ev.mouse_clicks = 1;
             event_queue_push(&ev);
+            /* 无边框窗口拖动支持：左键在可拖动区域时启动拖动 */
+            if (win && win->is_borderless && msg == WM_LBUTTONDOWN) {
+                int mx = (short)LOWORD(lparam);
+                int my = (short)HIWORD(lparam);
+                int can_drag = 0;
+                if (win->drag_area_enabled) {
+                    if (mx >= win->drag_area.left && mx < win->drag_area.right &&
+                        my >= win->drag_area.top && my < win->drag_area.bottom) {
+                        can_drag = 1;
+                    }
+                } else {
+                    can_drag = 1;
+                }
+                if (can_drag) {
+                    ReleaseCapture();
+                    SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                }
+            }
             return 0;
         }
         case WM_LBUTTONUP:
@@ -543,9 +564,16 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     win->height = h;
     win->should_close = 0;
     win->is_fullscreen = 0;
+    win->is_borderless = (flags & LENO_GUI_WIN_BORDERLESS) ? 1 : 0;
+    win->drag_area_enabled = 0;
 
     DWORD style = WS_OVERLAPPEDWINDOW;
-    if (flags & LENO_GUI_WIN_BORDERLESS) style = WS_POPUP;
+    if (flags & LENO_GUI_WIN_BORDERLESS) {
+        style = WS_POPUP;
+        if (flags & LENO_GUI_WIN_RESIZABLE) {
+            style |= WS_THICKFRAME;
+        }
+    }
     if (!(flags & LENO_GUI_WIN_RESIZABLE)) style &= ~WS_THICKFRAME;
     if (flags & LENO_GUI_WIN_MINIMIZED) style |= WS_MINIMIZE;
     if (flags & LENO_GUI_WIN_MAXIMIZED) style |= WS_MAXIMIZE;
@@ -664,6 +692,20 @@ void leno_gui_platform_set_window_fullscreen(LenoGUIPlatformWindow* win, int ful
                      SWP_FRAMECHANGED | SWP_NOZORDER);
         win->is_fullscreen = 0;
     }
+}
+
+void leno_gui_platform_set_window_drag_area(LenoGUIPlatformWindow* win, int x, int y, int w, int h) {
+    if (!win) return;
+    win->drag_area_enabled = 1;
+    win->drag_area.left = x;
+    win->drag_area.top = y;
+    win->drag_area.right = x + w;
+    win->drag_area.bottom = y + h;
+}
+
+void leno_gui_platform_clear_window_drag_area(LenoGUIPlatformWindow* win) {
+    if (!win) return;
+    win->drag_area_enabled = 0;
 }
 
 /* ===== 渲染器 ===== */

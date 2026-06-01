@@ -13,8 +13,8 @@
  *   ren.fill_circle(cx, cy, r)             填充圆形
  *   ren.round_rect(x, y, w, h, r)          绘制圆角矩形边框
  *   ren.fill_round(x, y, w, h, r)          填充圆角矩形
- *   ren.text(text, x, y, size)             绘制文字（内置 8x8 点阵字体）
- *   ren.text_font(font, text, x, y)        使用指定字体绘制文字
+ *   ren.draw_text(text, x, y, size)        绘制文字（内置 8x8 点阵字体）
+ *   ren.draw_text_ex(font, text, x, y)     使用指定字体绘制文字
  *   ren.text_size(text, size) -> [w, h]    计算文字尺寸
  *   ren.font_size(font, text) -> [w, h]    计算指定字体文字尺寸
  *   ren.get_size() -> [w, h]               获取渲染器缓冲区大小
@@ -336,11 +336,11 @@ void guis_init_instance_methods(void) {
     draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_vp);
     draw_register_method_with_params("get_clip_rect", make_native(gui_get_clip_rect_func, 1, "get_clip_rect"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     draw_register_method_with_params("no_clip", make_native(gui_disable_clip_rect_func, 1, "no_clip"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
-    draw_register_method_with_params("text", make_native(gui_draw_text_func, 5, "text"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_3int);
+    draw_register_method_with_params("draw_text", make_native(gui_draw_text_func, 5, "draw_text"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_3int);
     draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, str_int);
 
     TypeKind font_str_2int[] = {TYPE_ANY, TYPE_ANY, TYPE_INT, TYPE_INT};
-    draw_register_method_with_params("text_font", make_native(gui_draw_text_font_func, 5, "text_font"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, font_str_2int);
+    draw_register_method_with_params("draw_text_ex", make_native(gui_draw_text_font_func, 5, "draw_text_ex"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, font_str_2int);
 
     TypeKind font_str[] = {TYPE_ANY, TYPE_STRING};
     draw_register_method_with_params("font_size", make_native(gui_text_size_font_func, 2, "font_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, font_str);

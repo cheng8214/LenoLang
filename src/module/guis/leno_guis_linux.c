@@ -78,6 +78,40 @@ static int g_screen = 0;
 static Atom g_wm_delete_window = None;
 static int g_gui_initialized = 0;
 
+/* ===== 窗口列表（用于事件处理查找窗口） ===== */
+
+#define MAX_GUI_WINDOWS 16
+
+static LenoGUIPlatformWindow* g_window_list[MAX_GUI_WINDOWS];
+static int g_window_count = 0;
+
+static void window_list_add(LenoGUIPlatformWindow* win) {
+    if (g_window_count < MAX_GUI_WINDOWS) {
+        g_window_list[g_window_count++] = win;
+    }
+}
+
+static void window_list_remove(LenoGUIPlatformWindow* win) {
+    for (int i = 0; i < g_window_count; i++) {
+        if (g_window_list[i] == win) {
+            for (int j = i; j < g_window_count - 1; j++) {
+                g_window_list[j] = g_window_list[j + 1];
+            }
+            g_window_count--;
+            break;
+        }
+    }
+}
+
+static LenoGUIPlatformWindow* window_list_find(Window xwindow) {
+    for (int i = 0; i < g_window_count; i++) {
+        if (g_window_list[i] && g_window_list[i]->xwindow == xwindow) {
+            return g_window_list[i];
+        }
+    }
+    return NULL;
+}
+
 /* ===== 平台窗口结构 ===== */
 
 struct LenoGUIPlatformWindow {
@@ -87,6 +121,12 @@ struct LenoGUIPlatformWindow {
     int height;
     int should_close;
     int is_fullscreen;
+    int is_borderless;
+    int drag_area_enabled;
+    int drag_area_x;
+    int drag_area_y;
+    int drag_area_w;
+    int drag_area_h;
 };
 
 /* ===== 平台渲染器结构 ===== */
@@ -265,6 +305,8 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     win->height = h;
     win->should_close = 0;
     win->is_fullscreen = 0;
+    win->is_borderless = (flags & LENO_GUI_WIN_BORDERLESS) ? 1 : 0;
+    win->drag_area_enabled = 0;
 
     Window root = RootWindow(g_display, g_screen);
     unsigned long bg = BlackPixel(g_display, g_screen);
@@ -324,12 +366,15 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
         XMapWindow(g_display, win->xwindow);
     }
 
+    window_list_add(win);
+
     XFlush(g_display);
     return win;
 }
 
 void leno_gui_platform_destroy_window(LenoGUIPlatformWindow* win) {
     if (!win) return;
+    window_list_remove(win);
     if (g_display && win->xwindow) {
         XDestroyWindow(g_display, win->xwindow);
         XFlush(g_display);
@@ -398,6 +443,20 @@ void leno_gui_platform_set_window_fullscreen(LenoGUIPlatformWindow* win, int ful
     XFlush(g_display);
 
     win->is_fullscreen = fullscreen;
+}
+
+void leno_gui_platform_set_window_drag_area(LenoGUIPlatformWindow* win, int x, int y, int w, int h) {
+    if (!win) return;
+    win->drag_area_enabled = 1;
+    win->drag_area_x = x;
+    win->drag_area_y = y;
+    win->drag_area_w = w;
+    win->drag_area_h = h;
+}
+
+void leno_gui_platform_clear_window_drag_area(LenoGUIPlatformWindow* win) {
+    if (!win) return;
+    win->drag_area_enabled = 0;
 }
 
 /* ===== 渲染器 ===== */
@@ -546,7 +605,7 @@ static void pump_x11_events(void) {
 
         LenoGUIPlatformWindow* win = NULL;
         if (xev.xany.window) {
-            /* 查找匹配的窗口 - 简化实现 */
+            win = window_list_find(xev.xany.window);
         }
 
         LenoGUIEvent ev;
@@ -604,6 +663,18 @@ static void pump_x11_events(void) {
                 ev.mouse_x = (float)xev.xmotion.x;
                 ev.mouse_y = (float)xev.xmotion.y;
                 event_queue_push(&ev);
+                /* 无边框窗口拖动 */
+                if (win && win->is_borderless) {
+                    Window root_return, child_return;
+                    int root_x, root_y, win_x, win_y;
+                    unsigned int mask_return;
+                    XQueryPointer(g_display, win->xwindow, &root_return, &child_return,
+                                  &root_x, &root_y, &win_x, &win_y, &mask_return);
+                    if (mask_return & Button1Mask) {
+                        XMoveWindow(g_display, win->xwindow,
+                                    root_x - xev.xmotion.x, root_y - xev.xmotion.y);
+                    }
+                }
                 break;
             }
             case ButtonPress: {
@@ -619,6 +690,26 @@ static void pump_x11_events(void) {
                     ev.mouse_y = (float)xev.xbutton.y;
                     ev.mouse_button = (int)xev.xbutton.button;
                     ev.mouse_clicks = 1;
+                    /* 无边框窗口拖动支持 */
+                    if (win && win->is_borderless && xev.xbutton.button == 1) {
+                        int mx = xev.xbutton.x;
+                        int my = xev.xbutton.y;
+                        int can_drag = 0;
+                        if (win->drag_area_enabled) {
+                            if (mx >= win->drag_area_x && mx < win->drag_area_x + win->drag_area_w &&
+                                my >= win->drag_area_y && my < win->drag_area_y + win->drag_area_h) {
+                                can_drag = 1;
+                            }
+                        } else {
+                            can_drag = 1;
+                        }
+                        if (can_drag) {
+                            XRaiseWindow(g_display, win->xwindow);
+                            XGrabPointer(g_display, win->xwindow, True,
+                                         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                                         GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+                        }
+                    }
                 }
                 event_queue_push(&ev);
                 break;
@@ -630,6 +721,10 @@ static void pump_x11_events(void) {
                 ev.mouse_y = (float)xev.xbutton.y;
                 ev.mouse_button = (int)xev.xbutton.button;
                 event_queue_push(&ev);
+                /* 释放鼠标捕获 */
+                if (win && win->is_borderless) {
+                    XUngrabPointer(g_display, CurrentTime);
+                }
                 break;
             }
             case FocusIn: {

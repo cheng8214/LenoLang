@@ -134,6 +134,26 @@ static Value win_set_opacity_func(int argc, Value* args) {
     return val_null();
 }
 
+/* win.set_drag_area(x, y, w, h) */
+static Value win_set_drag_area_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int x = val_as_int(args[1]);
+    int y = val_as_int(args[2]);
+    int w = val_as_int(args[3]);
+    int h = val_as_int(args[4]);
+    if (win && win->platform) leno_gui_platform_set_window_drag_area(win->platform, x, y, w, h);
+    return val_null();
+}
+
+/* win.clear_drag_area() */
+static Value win_clear_drag_area_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win && win->platform) leno_gui_platform_clear_window_drag_area(win->platform);
+    return val_null();
+}
+
 /* ============================================================================
  * 注册 Win 实例方法
  * ============================================================================ */
@@ -150,6 +170,7 @@ void guis_init_window_instance_methods(void) {
 
     TypeKind no_params[] = {};
     TypeKind int_2[] = {TYPE_INT, TYPE_INT};
+    TypeKind int_4[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
     TypeKind str_1[] = {TYPE_STRING};
     TypeKind bool_1[] = {TYPE_BOOL};
     TypeKind float_1[] = {TYPE_FLOAT};
@@ -166,4 +187,6 @@ void guis_init_window_instance_methods(void) {
     window_register_method_with_params("should_close", make_native(win_should_close_func, 1, "should_close"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("set_should_close", make_native(win_set_should_close_func, 2, "set_should_close"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
     window_register_method_with_params("set_opacity", make_native(win_set_opacity_func, 2, "set_opacity"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, float_1);
+    window_register_method_with_params("set_drag_area", make_native(win_set_drag_area_func, 5, "set_drag_area"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4);
+    window_register_method_with_params("clear_drag_area", make_native(win_clear_drag_area_func, 1, "clear_drag_area"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
 }

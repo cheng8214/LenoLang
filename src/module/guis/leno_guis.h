@@ -155,6 +155,8 @@ void   leno_gui_platform_get_window_position(LenoGUIPlatformWindow* win, int* x,
 void   leno_gui_platform_set_window_fullscreen(LenoGUIPlatformWindow* win, int fullscreen);
 int    leno_gui_platform_window_should_close(LenoGUIPlatformWindow* win);
 void   leno_gui_platform_set_window_should_close(LenoGUIPlatformWindow* win, int val);
+void   leno_gui_platform_set_window_drag_area(LenoGUIPlatformWindow* win, int x, int y, int w, int h);
+void   leno_gui_platform_clear_window_drag_area(LenoGUIPlatformWindow* win);
 
 /* ===== 翻转标志（参考 SDL_FlipMode） ===== */
 #define LENO_GUI_FLIP_NONE       0

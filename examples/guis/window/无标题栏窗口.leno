@@ -9,11 +9,13 @@ main() {
     }
     Win win = guis.create_window("Borderless", w_style)
 
-    var dragging = false
-    var drag_start_x = 0
-    var drag_start_y = 0
-    var win_start_x = 0
-    var win_start_y = 0
+    // 限制只有顶部标题栏区域可拖动（可选）
+    // 如果不调用，整个窗口都可拖动
+   
+   win.set_drag_area(0, 0, 800, 40)
+
+    // 加载中文字体（Windows 系统字体）
+    var font = guis.load_font("Microsoft YaHei", 16)
 
     guis.run(win,
         func(Draw ren) {
@@ -28,9 +30,14 @@ main() {
             ren.set_color(_rgb(255, 80, 80, 255))
             ren.fill_circle(770, 20, 10)
 
-            // 标题文字
+            // 标题文字（使用系统字体渲染中文）
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.text("无边框窗口 - 拖动标题栏移动", 50, 12, 2)
+            if font != null {
+                ren.draw_text_ex(font, "无边框窗口 - 拖动标题栏移动", 50, 10)
+            } else {
+                // 字体加载失败，使用内置字体（不支持中文）
+                ren.draw_text("Borderless Window", 50, 12, 2)
+            }
 
             ren.present()
         },
@@ -42,40 +49,22 @@ main() {
                 win.set_should_close(true)
             }
 
-            // 鼠标按下开始拖动
+            // 点击关闭按钮
             if e.is_mouse_down() {
                 int mx = e.mouse_x()
                 int my = e.mouse_y()
-                // 点击标题栏区域开始拖动
-                if my < 40 {
-                    dragging = true
-                    drag_start_x = mx
-                    drag_start_y = my
-                    var pos = win.get_pos()
-                    win_start_x = pos[0]
-                    win_start_y = pos[1]
-                }
-                // 点击关闭按钮
+                print(mx,my)
                 if mx > 760 and mx < 780 and my > 10 and my < 30 {
                     win.set_should_close(true)
                 }
             }
-
-            // 鼠标释放停止拖动
-            if e.is_mouse_up() {
-                dragging = false
-            }
-
-            // 鼠标移动时拖动窗口
-            if e.is_mouse_move() and dragging {
-                int mx = e.mouse_x()
-                int my = e.mouse_y()
-                int new_x = win_start_x + (mx - drag_start_x)
-                int new_y = win_start_y + (my - drag_start_y)
-                win.set_pos(new_x, new_y)
-            }
         }
     )
+
+    // 清理字体资源
+    if font != null {
+        guis.destroy_font(font)
+    }
 
     win.close()
 }

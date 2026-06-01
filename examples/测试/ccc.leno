@@ -13,7 +13,7 @@ main() {
            
     }
     guis.run(win,Draw1,Event1)
-    guis.cleanup(win)
+    win.close()
     
   
 }
