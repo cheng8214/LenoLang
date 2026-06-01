@@ -48,6 +48,9 @@ extern "C" {
 #define LENO_GUI_EVT_WINDOW_SHOW       0x206
 #define LENO_GUI_EVT_WINDOW_HIDE       0x207
 #define LENO_GUI_EVT_WINDOW_EXPOSED    0x208  /* 窗口需要重绘（拖动/遮挡后暴露） */
+#define LENO_GUI_EVT_WINDOW_MINIMIZED  0x209  /* 窗口已最小化 */
+#define LENO_GUI_EVT_WINDOW_MAXIMIZED  0x20A  /* 窗口已最大化 */
+#define LENO_GUI_EVT_WINDOW_RESTORED   0x20B  /* 窗口已恢复（从最小化/最大化） */
 #define LENO_GUI_EVT_KEY_DOWN          0x300
 #define LENO_GUI_EVT_KEY_UP            0x301
 #define LENO_GUI_EVT_TEXT_INPUT        0x302
@@ -280,6 +283,19 @@ int    leno_gui_platform_wait_event(LenoGUIEvent* event, int timeout_ms);
 /* ===== 输入状态查询（参考 SDL_GetKeyboardState / SDL_GetMouseState） ===== */
 int    leno_gui_platform_get_key_state(int key);
 int    leno_gui_platform_get_mouse_state(int* x, int* y, int* buttons);
+
+/* ===== 键盘状态跟踪（参考 SDL3 prev/curr 按键状态数组） ===== */
+/* 更新键盘状态（每次 poll 前由平台层调用，比较 prev/curr 产生 is_pressed/is_released） */
+void   leno_gui_platform_update_key_states(void);
+/* 检查按键是否刚被按下（从上一帧的 up 变为当前帧的 down） */
+int    leno_gui_platform_is_key_pressed(int key);
+/* 检查按键是否刚被释放（从上一帧的 down 变为当前帧的 up） */
+int    leno_gui_platform_is_key_released(int key);
+
+/* ===== 文本输入控制（参考 SDL_StartTextInput / SDL_StopTextInput） ===== */
+void   leno_gui_platform_start_text_input(void);
+void   leno_gui_platform_stop_text_input(void);
+int    leno_gui_platform_is_text_input_active(void);
 
 /* ===== 剪贴板（参考 SDL_GetClipboardText / SDL_SetClipboardText） ===== */
 char*  leno_gui_platform_get_clipboard_text(void);

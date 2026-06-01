@@ -179,7 +179,7 @@ Value event_to_dict(LenoGUIEvent* ev) {
     dict_add_int_key(d, str_key_type, ev->type);
     dict_add_int_key(d, str_key_window_id, ev->window_id);
 
-    if (ev->type == LENO_GUI_EVT_WINDOW_RESIZE) {
+    if (ev->type == LENO_GUI_EVT_WINDOW_RESIZE || ev->type == LENO_GUI_EVT_WINDOW_MINIMIZED || ev->type == LENO_GUI_EVT_WINDOW_MAXIMIZED || ev->type == LENO_GUI_EVT_WINDOW_RESTORED) {
         dict_add_int_key(d, str_key_width, ev->data1);
         dict_add_int_key(d, str_key_height, ev->data2);
     } else if (ev->type == LENO_GUI_EVT_WINDOW_MOVE) {
@@ -203,10 +203,10 @@ Value event_to_dict(LenoGUIEvent* ev) {
         dict_add_int_key(d, str_key_button, ev->mouse_button);
         dict_add_int_key(d, str_key_clicks, ev->mouse_clicks);
     } else if (ev->type == LENO_GUI_EVT_MOUSE_WHEEL) {
-        dict_add_float_key(d, str_key_x, ev->mouse_x);
-        dict_add_float_key(d, str_key_y, ev->mouse_y);
-        dict_add_float_key(d, str_key_wheel_x, ev->wheel_x);
-        dict_add_float_key(d, str_key_wheel_y, ev->wheel_y);
+        dict_add_int_key(d, str_key_x, (int)ev->mouse_x);
+        dict_add_int_key(d, str_key_y, (int)ev->mouse_y);
+        dict_add_int_key(d, str_key_wheel_x, (int)ev->wheel_x);
+        dict_add_int_key(d, str_key_wheel_y, (int)ev->wheel_y);
     } else if (ev->type == LENO_GUI_EVT_DROP_FILE) {
         dict_add_string_key(d, str_key_text, ev->drop_file);
     } else if (ev->type == LENO_GUI_EVT_DROP_TEXT) {
@@ -370,6 +370,40 @@ static Value gui_get_key_state_func(int argc, Value* args) {
     (void)argc;
     int key = val_as_int(args[0]);
     return val_bool(leno_gui_platform_get_key_state(key) != 0);
+}
+
+/* 检查按键是否刚被按下（本帧按下的瞬间） */
+static Value gui_is_key_pressed_func(int argc, Value* args) {
+    (void)argc;
+    int key = val_as_int(args[0]);
+    return val_bool(leno_gui_platform_is_key_pressed(key) != 0);
+}
+
+/* 检查按键是否刚被释放（本帧释放的瞬间） */
+static Value gui_is_key_released_func(int argc, Value* args) {
+    (void)argc;
+    int key = val_as_int(args[0]);
+    return val_bool(leno_gui_platform_is_key_released(key) != 0);
+}
+
+/* 开始接收文本输入事件 */
+static Value gui_start_text_input_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    leno_gui_platform_start_text_input();
+    return val_null();
+}
+
+/* 停止接收文本输入事件 */
+static Value gui_stop_text_input_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    leno_gui_platform_stop_text_input();
+    return val_null();
+}
+
+/* 检查是否正在接收文本输入 */
+static Value gui_is_text_input_active_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_bool(leno_gui_platform_is_text_input_active() != 0);
 }
 
 /* 查询鼠标状态 */
@@ -947,7 +981,14 @@ void guis_init_module(void) {
 
     /* ===== 输入状态查询 ===== */
     native_register_module_method("guis", "get_key", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
+    native_register_module_method("guis", "is_key_pressed", gui_is_key_pressed_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
+    native_register_module_method("guis", "is_key_released", gui_is_key_released_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
     native_register_module_method("guis", "get_mouse", gui_get_mouse_state_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+
+    /* ===== 文本输入控制 ===== */
+    native_register_module_method("guis", "start_text_input", gui_start_text_input_func, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "stop_text_input", gui_stop_text_input_func, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    native_register_module_method("guis", "is_text_input_active", gui_is_text_input_active_func, 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
 
     /* ===== 剪贴板 ===== */
     native_register_module_method("guis", "get_clipboard", gui_get_clipboard_text_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
@@ -1045,6 +1086,9 @@ void guis_init_module(void) {
     native_register_module_const("guis", "EVT_WINDOW_SHOW",       LENO_GUI_EVT_WINDOW_SHOW);
     native_register_module_const("guis", "EVT_WINDOW_HIDE",       LENO_GUI_EVT_WINDOW_HIDE);
     native_register_module_const("guis", "EVT_WINDOW_EXPOSED",    LENO_GUI_EVT_WINDOW_EXPOSED);
+    native_register_module_const("guis", "EVT_WINDOW_MINIMIZED",  LENO_GUI_EVT_WINDOW_MINIMIZED);
+    native_register_module_const("guis", "EVT_WINDOW_MAXIMIZED",  LENO_GUI_EVT_WINDOW_MAXIMIZED);
+    native_register_module_const("guis", "EVT_WINDOW_RESTORED",   LENO_GUI_EVT_WINDOW_RESTORED);
     native_register_module_const("guis", "EVT_KEY_DOWN",          LENO_GUI_EVT_KEY_DOWN);
     native_register_module_const("guis", "EVT_KEY_UP",            LENO_GUI_EVT_KEY_UP);
     native_register_module_const("guis", "EVT_TEXT_INPUT",        LENO_GUI_EVT_TEXT_INPUT);

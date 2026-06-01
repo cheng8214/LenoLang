@@ -937,6 +937,58 @@ int leno_gui_platform_get_mouse_state(int* x, int* y, int* buttons) {
     return btns;
 }
 
+/* ===== 键盘状态跟踪（参考 SDL3 prev/curr 按键状态数组） ===== */
+
+static uint8_t g_macos_prev_keys[256] = {0};
+static uint8_t g_macos_curr_keys[256] = {0};
+static int g_macos_key_states_valid = 0;
+
+/* 辅助：将 Leno 键码映射到 macOS keycode */
+static int leno_key_to_macos_index(int key) {
+    int kc = leno_key_to_macos_keycode(key);
+    if (kc < 0 || kc >= 256) return -1;
+    return kc;
+}
+
+void leno_gui_platform_update_key_states(void) {
+    memcpy(g_macos_prev_keys, g_macos_curr_keys, sizeof(g_macos_prev_keys));
+    for (int kc = 0; kc < 128; kc++) {
+        bool pressed = CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)kc);
+        g_macos_curr_keys[kc] = pressed ? 1 : 0;
+    }
+    g_macos_key_states_valid = 1;
+}
+
+int leno_gui_platform_is_key_pressed(int key) {
+    if (!g_macos_key_states_valid) return 0;
+    int idx = leno_key_to_macos_index(key);
+    if (idx < 0 || idx >= 256) return 0;
+    return (g_macos_curr_keys[idx] && !g_macos_prev_keys[idx]) ? 1 : 0;
+}
+
+int leno_gui_platform_is_key_released(int key) {
+    if (!g_macos_key_states_valid) return 0;
+    int idx = leno_key_to_macos_index(key);
+    if (idx < 0 || idx >= 256) return 0;
+    return (!g_macos_curr_keys[idx] && g_macos_prev_keys[idx]) ? 1 : 0;
+}
+
+/* ===== 文本输入控制 ===== */
+
+static int g_macos_text_input_active = 0;
+
+void leno_gui_platform_start_text_input(void) {
+    g_macos_text_input_active = 1;
+}
+
+void leno_gui_platform_stop_text_input(void) {
+    g_macos_text_input_active = 0;
+}
+
+int leno_gui_platform_is_text_input_active(void) {
+    return g_macos_text_input_active;
+}
+
 /* ===== 剪贴板（参考 SDL3 SDL_cocoaclipboard.m） ===== */
 
 /* 获取剪贴板文本内容（使用 NSPasteboard） */

@@ -814,12 +814,22 @@ static void pump_x11_events(void) {
                 break;
             }
             case ButtonPress: {
-                if (xev.xbutton.button == 4 || xev.xbutton.button == 5) {
+                if (xev.xbutton.button == 4 || xev.xbutton.button == 5 ||
+                    xev.xbutton.button == 6 || xev.xbutton.button == 7) {
                     ev.type = LENO_GUI_EVT_MOUSE_WHEEL;
                     ev.mouse_x = (float)xev.xbutton.x;
                     ev.mouse_y = (float)xev.xbutton.y;
-                    ev.wheel_y = (xev.xbutton.button == 4) ? 1.0f : -1.0f;
-                    ev.wheel_x = 0.0f;
+                    /* 垂直滚轮: button 4=up, 5=down */
+                    if (xev.xbutton.button == 4) {
+                        ev.wheel_y = 1.0f; ev.wheel_x = 0.0f;
+                    } else if (xev.xbutton.button == 5) {
+                        ev.wheel_y = -1.0f; ev.wheel_x = 0.0f;
+                    /* 水平滚轮: button 6=left, 7=right (参考 SDL_x11events.c) */
+                    } else if (xev.xbutton.button == 6) {
+                        ev.wheel_y = 0.0f; ev.wheel_x = -1.0f;
+                    } else if (xev.xbutton.button == 7) {
+                        ev.wheel_y = 0.0f; ev.wheel_x = 1.0f;
+                    }
                 } else {
                     ev.type = LENO_GUI_EVT_MOUSE_DOWN;
                     ev.mouse_x = (float)xev.xbutton.x;
@@ -943,6 +953,67 @@ int leno_gui_platform_get_key_state(int key) {
     if (byte_idx < 0 || byte_idx >= 32) return 0;
 
     return (keymap[byte_idx] & (1 << bit_idx)) ? 1 : 0;
+}
+
+/* ===== 键盘状态跟踪（参考 SDL3 prev/curr 按键状态数组） ===== */
+
+static uint8_t g_linux_prev_keys[256] = {0};
+static uint8_t g_linux_curr_keys[256] = {0};
+static int g_linux_key_states_valid = 0;
+
+/* 辅助：将 Leno 键码映射到 keymap 索引 */
+static int leno_key_to_linux_index(int key) {
+    if (!g_display) return -1;
+    KeySym ks = leno_key_to_keysym(key);
+    if (ks == NoSymbol) return -1;
+    KeyCode kc = XKeysymToKeycode(g_display, ks);
+    if (kc == 0 || kc >= 256) return -1;
+    return (int)kc;
+}
+
+void leno_gui_platform_update_key_states(void) {
+    if (!g_display) return;
+    memcpy(g_linux_prev_keys, g_linux_curr_keys, sizeof(g_linux_prev_keys));
+
+    char keymap[32];
+    XQueryKeymap(g_display, keymap);
+    for (int kc = 0; kc < 256; kc++) {
+        int byte_idx = kc / 8;
+        int bit_idx = kc % 8;
+        if (byte_idx < 0 || byte_idx >= 32) continue;
+        g_linux_curr_keys[kc] = (keymap[byte_idx] & (1 << bit_idx)) ? 1 : 0;
+    }
+    g_linux_key_states_valid = 1;
+}
+
+int leno_gui_platform_is_key_pressed(int key) {
+    if (!g_linux_key_states_valid) return 0;
+    int idx = leno_key_to_linux_index(key);
+    if (idx < 0 || idx >= 256) return 0;
+    return (g_linux_curr_keys[idx] && !g_linux_prev_keys[idx]) ? 1 : 0;
+}
+
+int leno_gui_platform_is_key_released(int key) {
+    if (!g_linux_key_states_valid) return 0;
+    int idx = leno_key_to_linux_index(key);
+    if (idx < 0 || idx >= 256) return 0;
+    return (!g_linux_curr_keys[idx] && g_linux_prev_keys[idx]) ? 1 : 0;
+}
+
+/* ===== 文本输入控制 ===== */
+
+static int g_linux_text_input_active = 0;
+
+void leno_gui_platform_start_text_input(void) {
+    g_linux_text_input_active = 1;
+}
+
+void leno_gui_platform_stop_text_input(void) {
+    g_linux_text_input_active = 0;
+}
+
+int leno_gui_platform_is_text_input_active(void) {
+    return g_linux_text_input_active;
 }
 
 /* 查询鼠标状态：位置和按钮（使用 XQueryPointer，参考 SDL_x11mouse.c） */

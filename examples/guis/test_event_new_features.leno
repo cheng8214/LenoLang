@@ -1,0 +1,214 @@
+/* guis 模块新事件功能测试
+   测试项:
+   1. is_key_pressed / is_key_released
+   2. 鼠标滚轮事件 (wheel_x/wheel_y)
+   3. 窗口事件回调 (minimized/maximized/restored/focus/unfocus)
+   4. IME 文本输入事件 (text_input)
+   5. Event 方法: mod/scancode/repeat/clicks/xrel/yrel/window_id
+*/
+
+import guis
+import strings
+
+main() {
+    Style[window] w_style = {
+        width: 600,
+        height: 400,
+        resizable: true
+    }
+    Win win = guis.create_window("Event 新功能测试", w_style)
+
+    /* 启用文本输入（用于 IME 测试） */
+    guis.start_text_input()
+
+    var test_count = 0
+    var pass_count = 0
+
+    var bg = _rgb(40, 40, 56, 255)
+    var fg = _rgb(255, 255, 255, 255)
+    var green = _rgb(100, 255, 100, 255)
+
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_color(bg)
+            ren.clear()
+
+            /* 绘制测试信息 */
+            ren.set_color(fg)
+            ren.draw_text("测试: is_key_pressed / is_key_released", 10, 10, 16)
+            ren.draw_text("  按任意键 -> 查看 pressed/released 输出", 10, 30, 16)
+            ren.draw_text("测试: 鼠标滚轮 -> 滚轮可查 wheel_x/wheel_y", 10, 50, 16)
+            ren.draw_text("测试: 窗口事件 -> 最小化/恢复/焦点变化", 10, 70, 16)
+            ren.draw_text("测试: 文本输入 -> 输入中文/英文（需要 IME）", 10, 90, 16)
+            ren.set_color(green)
+            ren.draw_text("按 ESC 或关闭窗口退出测试", 10, 120, 16)
+
+            ren.present()
+        },
+        func(Event e) {
+            /* ---- 退出 ---- */
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() and e.key() == 0x1B {
+                win.set_should_close(true)
+            }
+
+            /* ---- 测试 1: is_key_pressed / is_key_released ---- */
+            if e.is_key_down() {
+                var key = e.key()
+                var pressed = guis.is_key_pressed(key)
+                var released = guis.is_key_released(key)
+
+                print("[KEY_DOWN] key=" + _str(key) +
+                      " scancode=" + _str(e.scancode()) +
+                      " mod=" + _str(e.mod()) +
+                      " repeat=" + _str(e.repeat()))
+
+                /* 刚按下时 is_key_pressed 应该为 true */
+                if pressed {
+                    print("  -> is_key_pressed: true (OK)")
+                    pass_count = pass_count + 1
+                }
+                test_count = test_count + 1
+            }
+
+            if e.is_key_up() {
+                var key = e.key()
+                var pressed = guis.is_key_pressed(key)
+                var released = guis.is_key_released(key)
+
+                print("[KEY_UP] key=" + _str(key) +
+                      " pressed=" + _str(pressed) +
+                      " released=" + _str(released))
+
+                /* 刚释放时 is_key_released 应该为 true */
+                if released {
+                    print("  -> is_key_released: true (OK)")
+                    pass_count = pass_count + 1
+                }
+                test_count = test_count + 1
+            }
+
+            /* ---- 测试 2: 鼠标滚轮事件 ---- */
+            if e.is_mouse_wheel() {
+                var wx = e.wheel_x()
+                var wy = e.wheel_y()
+                var mx = e.mouse_x()
+                var my = e.mouse_y()
+                print("[MOUSE_WHEEL] wheel_x=" + _str(wx) +
+                      " wheel_y=" + _str(wy) +
+                      " mouse_x=" + _str(mx) +
+                      " mouse_y=" + _str(my))
+
+                if wy != 0 or wx != 0 {
+                    print("  -> 滚轮值有效 (OK)")
+                    pass_count = pass_count + 1
+                }
+                test_count = test_count + 1
+            }
+
+            /* ---- 测试 3: 窗口事件回调 ---- */
+            if e.is_window_resize() {
+                print("[RESIZE] " + _str(e.width()) + "x" + _str(e.height()) +
+                      " window_id=" + _str(e.window_id()))
+                pass_count = pass_count + 1
+                test_count = test_count + 1
+            }
+
+            if e.is_window_move() {
+                print("[MOVE] x=" + _str(e.width()) + " y=" + _str(e.height()))
+            }
+
+            if e.is_window_focus() {
+                print("[FOCUS] 窗口获得焦点 (OK)")
+                pass_count = pass_count + 1
+                test_count = test_count + 1
+            }
+
+            if e.is_window_unfocus() {
+                print("[UNFOCUS] 窗口失去焦点 (OK)")
+                pass_count = pass_count + 1
+                test_count = test_count + 1
+            }
+
+            if e.is_window_minimized() {
+                print("[MINIMIZED] 窗口已最小化 " +
+                      _str(e.width()) + "x" + _str(e.height()) + " (OK)")
+                pass_count = pass_count + 1
+                test_count = test_count + 1
+            }
+
+            if e.is_window_maximized() {
+                print("[MAXIMIZED] 窗口已最大化 " +
+                      _str(e.width()) + "x" + _str(e.height()) + " (OK)")
+                pass_count = pass_count + 1
+                test_count = test_count + 1
+            }
+
+            if e.is_window_restored() {
+                print("[RESTORED] 窗口已恢复 " +
+                      _str(e.width()) + "x" + _str(e.height()) + " (OK)")
+                pass_count = pass_count + 1
+                test_count = test_count + 1
+            }
+
+            if e.is_window_show() {
+                print("[SHOW] 窗口显示")
+            }
+
+            if e.is_window_hide() {
+                print("[HIDE] 窗口隐藏")
+            }
+
+            if e.is_window_exposed() {
+                print("[EXPOSED] 窗口需要重绘")
+            }
+
+            /* ---- 测试 4: 文本输入事件 (IME) ---- */
+            if e.is_text_input() {
+                var t = e.text()
+                print("[TEXT_INPUT] text='" + t + "' (len=" + _str(strings.len(t)) + ")")
+
+                if strings.len(t) > 0 {
+                    print("  -> 文本输入有效 (OK)")
+                    pass_count = pass_count + 1
+                }
+                test_count = test_count + 1
+            }
+
+            /* ---- 测试 5: 鼠标事件扩展 ---- */
+            if e.is_mouse_down() {
+                var mx = e.mouse_x()
+                var my = e.mouse_y()
+                var mb = e.mouse_button()
+                var cl = e.clicks()
+                print("[MOUSE_DOWN] x=" + _str(mx) + " y=" + _str(my) +
+                      " button=" + _str(mb) + " clicks=" + _str(cl))
+            }
+
+            if e.is_mouse_move() {
+                var xr = e.xrel()
+                var yr = e.yrel()
+                if xr != 0 or yr != 0 {
+                    print("[MOTION] xrel=" + _str(xr) + " yrel=" + _str(yr))
+                }
+            }
+        }
+    )
+
+    /* 停止文本输入 */
+    guis.stop_text_input()
+    win.close()
+
+    print("")
+    print("========== 测试结果 ==========")
+    print("测试项数: " + _str(test_count))
+    print("通过数: " + _str(pass_count))
+    if test_count > 0 {
+        print("通过率: " + _str(pass_count * 100 / test_count) + "%")
+    } else {
+        print("(无事件触发，请手动操作窗口)")
+    }
+    print("==============================")
+}

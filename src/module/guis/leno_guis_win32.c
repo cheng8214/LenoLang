@@ -231,6 +231,10 @@ struct LenoGUIPlatformWindow {
     int max_w;                          /* 最大宽度 */
     int max_h;                          /* 最大高度 */
     HCURSOR custom_cursor;              /* 自定义光标句柄 */
+    /* 键盘状态跟踪（参考 SDL3 prev/curr 按键状态） */
+    uint8_t prev_keys[256];             /* 上一帧按键状态 */
+    uint8_t curr_keys[256];             /* 当前帧按键状态 */
+    int key_states_valid;               /* 按键状态是否有效（已执行过 update） */
 };
 
 /* ===== 平台渲染器结构 ===== */
@@ -279,6 +283,9 @@ struct LenoGUIPlatformTexture {
 /* 渲染目标定义在 swrender.c */
 
 #include "leno_guis_swrender.c"
+
+/* ===== 文本输入控制（参考 SDL_StartTextInput） ===== */
+static int g_text_input_active = 0;
 
 /* ===== 窗口类注册 ===== */
 
@@ -449,7 +456,15 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
                 win->width = LOWORD(lparam);
                 win->height = HIWORD(lparam);
             }
-            push_window_event(win, LENO_GUI_EVT_WINDOW_RESIZE, (int)LOWORD(lparam), (int)HIWORD(lparam));
+            if (wparam == SIZE_MINIMIZED) {
+                push_window_event(win, LENO_GUI_EVT_WINDOW_MINIMIZED, (int)LOWORD(lparam), (int)HIWORD(lparam));
+            } else if (wparam == SIZE_MAXIMIZED) {
+                push_window_event(win, LENO_GUI_EVT_WINDOW_MAXIMIZED, (int)LOWORD(lparam), (int)HIWORD(lparam));
+            } else if (wparam == SIZE_RESTORED) {
+                push_window_event(win, LENO_GUI_EVT_WINDOW_RESTORED, (int)LOWORD(lparam), (int)HIWORD(lparam));
+            } else {
+                push_window_event(win, LENO_GUI_EVT_WINDOW_RESIZE, (int)LOWORD(lparam), (int)HIWORD(lparam));
+            }
             return 0;
         }
         case WM_MOVE: {
@@ -531,14 +546,20 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             return 0;
         }
         case WM_CHAR: {
+            /* 使用 WideCharToMultiByte 将 UTF-16 转为 UTF-8（参考 SDL3） */
             LenoGUIEvent ev;
             memset(&ev, 0, sizeof(ev));
             ev.type = LENO_GUI_EVT_TEXT_INPUT;
             ev.timestamp = GetTickCount64();
             ev.window_id = win ? win->window_id : 0;
-            if (wparam < 0x10000) {
-                ev.text[0] = (char)(wparam & 0xFF);
-                ev.text[1] = '\0';
+            if (wparam >= 0x20 || wparam == '\t' || wparam == '\r' || wparam == '\n') {
+                WCHAR wc = (WCHAR)wparam;
+                int len = WideCharToMultiByte(CP_UTF8, 0, &wc, 1, ev.text, sizeof(ev.text) - 1, NULL, NULL);
+                if (len > 0) {
+                    ev.text[len] = '\0';
+                } else {
+                    ev.text[0] = '\0';
+                }
             }
             event_queue_push(&ev);
             return 0;
@@ -1340,6 +1361,110 @@ int leno_gui_platform_get_key_state(int key) {
         }
     }
     return (GetAsyncKeyState(vk) & 0x8000) ? 1 : 0;
+}
+
+/* ===== 键盘状态跟踪（参考 SDL3 prev/curr 按键状态数组） ===== */
+
+/* 辅助：将 Leno 键码映射到数组索引 [0..255] */
+static int leno_key_to_index(int key) {
+    if (key >= 'A' && key <= 'Z') return key;
+    if (key >= '0' && key <= '9') return key;
+    switch (key) {
+        case LENO_GUI_KEY_RETURN:    return VK_RETURN;
+        case LENO_GUI_KEY_ESCAPE:    return VK_ESCAPE;
+        case LENO_GUI_KEY_BACKSPACE: return VK_BACK;
+        case LENO_GUI_KEY_TAB:       return VK_TAB;
+        case LENO_GUI_KEY_SPACE:     return VK_SPACE;
+        case LENO_GUI_KEY_DELETE:    return VK_DELETE;
+        case LENO_GUI_KEY_LEFT:      return VK_LEFT;
+        case LENO_GUI_KEY_RIGHT:     return VK_RIGHT;
+        case LENO_GUI_KEY_UP:        return VK_UP;
+        case LENO_GUI_KEY_DOWN:      return VK_DOWN;
+        case LENO_GUI_KEY_INSERT:    return VK_INSERT;
+        case LENO_GUI_KEY_HOME:      return VK_HOME;
+        case LENO_GUI_KEY_END:       return VK_END;
+        case LENO_GUI_KEY_PAGEUP:    return VK_PRIOR;
+        case LENO_GUI_KEY_PAGEDOWN:  return VK_NEXT;
+        case LENO_GUI_KEY_F1: case LENO_GUI_KEY_F2: case LENO_GUI_KEY_F3:
+        case LENO_GUI_KEY_F4: case LENO_GUI_KEY_F5: case LENO_GUI_KEY_F6:
+        case LENO_GUI_KEY_F7: case LENO_GUI_KEY_F8: case LENO_GUI_KEY_F9:
+        case LENO_GUI_KEY_F10: case LENO_GUI_KEY_F11: case LENO_GUI_KEY_F12:
+            return VK_F1 + (key - LENO_GUI_KEY_F1);
+        case LENO_GUI_KEY_LSHIFT:    return VK_LSHIFT;
+        case LENO_GUI_KEY_RSHIFT:    return VK_RSHIFT;
+        case LENO_GUI_KEY_LCTRL:     return VK_LCONTROL;
+        case LENO_GUI_KEY_RCTRL:     return VK_RCONTROL;
+        case LENO_GUI_KEY_LALT:      return VK_LMENU;
+        case LENO_GUI_KEY_RALT:      return VK_RMENU;
+        case LENO_GUI_KEY_CAPSLOCK:  return VK_CAPITAL;
+        case LENO_GUI_KEY_NUMLOCK:   return VK_NUMLOCK;
+        default: return -1;
+    }
+}
+
+/* 更新键盘状态（在 poll 前调用，比较 prev/curr 用于 is_pressed/is_released 判断） */
+void leno_gui_platform_update_key_states(void) {
+    /* 对所有活跃窗口更新按键状态 */
+    /* 简单实现：扫描所有窗口，更新第一个活跃窗口的状态 */
+    LenoGUIPlatformWindow* win = NULL;
+    /* 查找第一个存在的窗口 */
+    HWND hwnd = FindWindowW(L"LenoGUIWindow", NULL);
+    if (hwnd) {
+        win = (LenoGUIPlatformWindow*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    }
+    if (!win) return;
+
+    /* 保存上一帧状态 */
+    memcpy(win->prev_keys, win->curr_keys, sizeof(win->prev_keys));
+
+    /* 读取当前帧状态（使用 GetAsyncKeyState 扫描所有 VK） */
+    for (int i = 0; i < 256; i++) {
+        win->curr_keys[i] = (GetAsyncKeyState(i) & 0x8000) ? 1 : 0;
+    }
+    win->key_states_valid = 1;
+}
+
+/* 检查按键是否刚被按下 */
+int leno_gui_platform_is_key_pressed(int key) {
+    int idx = leno_key_to_index(key);
+    if (idx < 0 || idx >= 256) return 0;
+
+    /* 查找活跃窗口 */
+    HWND hwnd = FindWindowW(L"LenoGUIWindow", NULL);
+    if (!hwnd) return 0;
+    LenoGUIPlatformWindow* win = (LenoGUIPlatformWindow*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    if (!win || !win->key_states_valid) return 0;
+
+    /* pressed = 当前按下 && 上一帧未按下 */
+    return (win->curr_keys[idx] && !win->prev_keys[idx]) ? 1 : 0;
+}
+
+/* 检查按键是否刚被释放 */
+int leno_gui_platform_is_key_released(int key) {
+    int idx = leno_key_to_index(key);
+    if (idx < 0 || idx >= 256) return 0;
+
+    HWND hwnd = FindWindowW(L"LenoGUIWindow", NULL);
+    if (!hwnd) return 0;
+    LenoGUIPlatformWindow* win = (LenoGUIPlatformWindow*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    if (!win || !win->key_states_valid) return 0;
+
+    /* released = 当前未按下 && 上一帧按下 */
+    return (!win->curr_keys[idx] && win->prev_keys[idx]) ? 1 : 0;
+}
+
+/* ===== 文本输入控制（参考 SDL_StartTextInput / SDL_StopTextInput） ===== */
+
+void leno_gui_platform_start_text_input(void) {
+    g_text_input_active = 1;
+}
+
+void leno_gui_platform_stop_text_input(void) {
+    g_text_input_active = 0;
+}
+
+int leno_gui_platform_is_text_input_active(void) {
+    return g_text_input_active;
 }
 
 /* 查询鼠标状态：位置和按钮 */
