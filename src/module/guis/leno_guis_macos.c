@@ -234,6 +234,11 @@ struct LenoGUIPlatformWindow {
     int should_close;
     int is_fullscreen;
     int is_borderless;
+    int is_minimized;       /* 跟踪最小化状态（参考 SDL3） */
+    int is_zoomed;          /* 跟踪最大化状态（参考 SDL3 windowDidResize） */
+    int has_focus;          /* 跟踪焦点状态（参考 SDL3 windowDidBecomeKey） */
+    int is_visible;         /* 跟踪可见状态（参考 SDL3 KVO visible） */
+    int is_hiding;          /* 区分隐藏/最小化 */
     int drag_area_enabled;
     int drag_area_x;
     int drag_area_y;
@@ -409,12 +414,14 @@ void leno_gui_platform_destroy_window(LenoGUIPlatformWindow* win) {
 /* 显示窗口 */
 void leno_gui_platform_show_window(LenoGUIPlatformWindow* win) {
     if (!win || !win->ns_window) return;
+    win->is_hiding = 0;
     objc_msgSend(win->ns_window, sel_registerName("makeKeyAndOrderFront:"), nil);
 }
 
 /* 隐藏窗口 */
 void leno_gui_platform_hide_window(LenoGUIPlatformWindow* win) {
     if (!win || !win->ns_window) return;
+    win->is_hiding = 1;
     objc_msgSend(win->ns_window, sel_registerName("orderOut:"), nil);
 }
 
@@ -736,6 +743,103 @@ static void pump_cocoa_event(id ns_event) {
     }
 }
 
+/* 轮询窗口状态变化（参考 SDL3：通过 NSNotificationCenter 或主动检查窗口属性）
+ * 由于本项目使用纯 C + objc_msgSend，无法直接设置 NSWindowDelegate，
+ * 因此通过主动检查窗口属性来检测状态变化。
+ */
+static void poll_window_states(void) {
+    LenoGUIEvent ev;
+    uint64_t now = leno_gui_platform_get_ticks();
+
+    for (int i = 0; i < g_window_count; i++) {
+        LenoGUIPlatformWindow* win = g_window_list[i];
+        if (!win || !win->ns_window) continue;
+
+        /* 检查可见性（参考 SDL3 KVO "visible" 属性） */
+        BOOL is_visible = (BOOL)((intptr_t)objc_msgSend(win->ns_window, sel_registerName("isVisible")));
+        if (is_visible != win->is_visible) {
+            memset(&ev, 0, sizeof(ev));
+            ev.timestamp = now;
+            ev.window_id = win->window_id;
+            if (is_visible) {
+                win->is_visible = 1;
+                ev.type = LENO_GUI_EVT_WINDOW_SHOW;
+            } else {
+                win->is_visible = 0;
+                /* 如果是最小化，不发 HIDE（由 isMiniaturized 检查处理） */
+                BOOL is_mini = (BOOL)((intptr_t)objc_msgSend(win->ns_window, sel_registerName("isMiniaturized")));
+                if (!is_mini && !win->is_hiding) {
+                    ev.type = LENO_GUI_EVT_WINDOW_HIDE;
+                }
+            }
+            if (ev.type != 0) event_queue_push(&ev);
+        }
+
+        /* 检查最小化（参考 SDL3 windowDidMiniaturize / windowDidDeminiaturize） */
+        BOOL is_mini = (BOOL)((intptr_t)objc_msgSend(win->ns_window, sel_registerName("isMiniaturized")));
+        if (is_mini != win->is_minimized) {
+            memset(&ev, 0, sizeof(ev));
+            ev.timestamp = now;
+            ev.window_id = win->window_id;
+            win->is_minimized = is_mini ? 1 : 0;
+            if (is_mini) {
+                ev.type = LENO_GUI_EVT_WINDOW_MINIMIZED;
+            } else {
+                ev.type = LENO_GUI_EVT_WINDOW_RESTORED;
+            }
+            event_queue_push(&ev);
+        }
+
+        /* 检查最大化（参考 SDL3 windowDidResize 中的 isZoomed 检查） */
+        BOOL is_zoomed = (BOOL)((intptr_t)objc_msgSend(win->ns_window, sel_registerName("isZoomed")));
+        if (is_zoomed != win->is_zoomed) {
+            memset(&ev, 0, sizeof(ev));
+            ev.timestamp = now;
+            ev.window_id = win->window_id;
+            win->is_zoomed = is_zoomed ? 1 : 0;
+            if (is_zoomed) {
+                ev.type = LENO_GUI_EVT_WINDOW_MAXIMIZED;
+            } else {
+                ev.type = LENO_GUI_EVT_WINDOW_RESTORED;
+            }
+            event_queue_push(&ev);
+        }
+
+        /* 检查焦点（参考 SDL3 windowDidBecomeKey / windowDidResignKey） */
+        BOOL is_key = (BOOL)((intptr_t)objc_msgSend(win->ns_window, sel_registerName("isKeyWindow")));
+        if (is_key != win->has_focus) {
+            memset(&ev, 0, sizeof(ev));
+            ev.timestamp = now;
+            ev.window_id = win->window_id;
+            win->has_focus = is_key ? 1 : 0;
+            if (is_key) {
+                ev.type = LENO_GUI_EVT_WINDOW_FOCUS;
+            } else {
+                ev.type = LENO_GUI_EVT_WINDOW_UNFOCUS;
+            }
+            event_queue_push(&ev);
+        }
+
+        /* 检查大小变化（参考 SDL3 windowDidResize） */
+        NSRect frame = ((NSRect(*)(id, SEL))objc_msgSend)(win->ns_window, sel_registerName("frame"));
+        NSRect content_rect = ((NSRect(*)(id, SEL, NSRect))objc_msgSend)(win->ns_window,
+            sel_registerName("contentRectForFrameRect:"), frame);
+        int new_w = (int)content_rect.size.width;
+        int new_h = (int)content_rect.size.height;
+        if (new_w != win->width || new_h != win->height) {
+            win->width = new_w;
+            win->height = new_h;
+            memset(&ev, 0, sizeof(ev));
+            ev.type = LENO_GUI_EVT_WINDOW_RESIZE;
+            ev.data1 = new_w;
+            ev.data2 = new_h;
+            ev.timestamp = now;
+            ev.window_id = win->window_id;
+            event_queue_push(&ev);
+        }
+    }
+}
+
 /* 泵送 Cocoa 事件（参考 SDL3 Cocoa_PumpEvents） */
 static void pump_cocoa_events(void) {
     id app = objc_msgSend(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
@@ -775,6 +879,9 @@ static void pump_cocoa_events(void) {
 
     /* 更新窗口（处理重绘等） */
     objc_msgSend(app, sel_registerName("updateWindows"));
+
+    /* 轮询窗口状态变化（参考 SDL3 窗口事件通知机制） */
+    poll_window_states();
 
     /* 发送窗口暴露事件（简化实现，实际需要监听 NSWindowDidExposeNotification） */
     /* 这里我们简单地定期发送暴露事件，让应用程序重绘 */

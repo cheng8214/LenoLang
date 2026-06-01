@@ -254,6 +254,8 @@ struct LenoGUIPlatformWindow {
     int should_close;
     int is_fullscreen;
     int is_borderless;
+    int is_minimized;       /* 跟踪最小化状态（参考 SDL3） */
+    int is_hiding;          /* 区分 UnmapNotify 是最小化还是隐藏（参考 SDL3） */
     int drag_area_enabled;
     int drag_area_x;
     int drag_area_y;
@@ -520,12 +522,14 @@ void leno_gui_platform_destroy_window(LenoGUIPlatformWindow* win) {
 
 void leno_gui_platform_show_window(LenoGUIPlatformWindow* win) {
     if (!win || !g_display || !win->xwindow) return;
+    win->is_hiding = 0;
     XMapWindow(g_display, win->xwindow);
     XFlush(g_display);
 }
 
 void leno_gui_platform_hide_window(LenoGUIPlatformWindow* win) {
     if (!win || !g_display || !win->xwindow) return;
+    win->is_hiding = 1;  /* 标记为程序主动隐藏，UnmapNotify 会发 WINDOW_HIDE */
     XUnmapWindow(g_display, win->xwindow);
     XFlush(g_display);
 }
@@ -874,23 +878,68 @@ static void pump_x11_events(void) {
                 break;
             }
             case FocusIn: {
+                /* 参考 SDL3 X11_DispatchFocusIn：过滤 NotifyGrab/NotifyUngrab/NotifyInferior/NotifyPointer */
+                if (xev.xfocus.mode == NotifyGrab || xev.xfocus.mode == NotifyUngrab) break;
+                if (xev.xfocus.detail == NotifyInferior || xev.xfocus.detail == NotifyPointer) break;
                 ev.type = LENO_GUI_EVT_WINDOW_FOCUS;
                 event_queue_push(&ev);
                 break;
             }
             case FocusOut: {
+                /* 参考 SDL3 X11_DispatchFocusOut：同样过滤 */
+                if (xev.xfocus.mode == NotifyGrab || xev.xfocus.mode == NotifyUngrab) break;
+                if (xev.xfocus.detail == NotifyInferior || xev.xfocus.detail == NotifyPointer) break;
                 ev.type = LENO_GUI_EVT_WINDOW_UNFOCUS;
                 event_queue_push(&ev);
                 break;
             }
             case MapNotify: {
+                /* 参考 SDL3 X11_DispatchMapNotify */
                 ev.type = LENO_GUI_EVT_WINDOW_SHOW;
                 event_queue_push(&ev);
+                /* 如果之前是最小化状态，则发送 RESTORED 事件 */
+                if (win && win->is_minimized) {
+                    win->is_minimized = 0;
+                    ev.type = LENO_GUI_EVT_WINDOW_RESTORED;
+                    event_queue_push(&ev);
+                    ev.type = LENO_GUI_EVT_WINDOW_EXPOSED;
+                    event_queue_push(&ev);
+                }
                 break;
             }
             case UnmapNotify: {
-                ev.type = LENO_GUI_EVT_WINDOW_HIDE;
-                event_queue_push(&ev);
+                /* 参考 SDL3 X11_DispatchUnmapNotify：
+                 * 区分最小化（用户最小化窗口）和隐藏（程序调用 hide_window）
+                 * is_hiding 为 true 时是程序主动隐藏，发 WINDOW_HIDE
+                 * is_hiding 为 false 时是窗口管理器最小化，发 WINDOW_MINIMIZED
+                 */
+                if (win && !win->is_hiding) {
+                    win->is_minimized = 1;
+                    ev.type = LENO_GUI_EVT_WINDOW_MINIMIZED;
+                    event_queue_push(&ev);
+                } else {
+                    ev.type = LENO_GUI_EVT_WINDOW_HIDE;
+                    event_queue_push(&ev);
+                }
+                break;
+            }
+            case ConfigureNotify: {
+                /* 参考 SDL3 ConfigureNotify 处理：发送 RESIZE 和 MOVE 事件 */
+                if (win) {
+                    int new_w = xev.xconfigure.width;
+                    int new_h = xev.xconfigure.height;
+                    int new_x = xev.xconfigure.x;
+                    int new_y = xev.xconfigure.y;
+                    /* 检测大小变化 */
+                    if (new_w != win->width || new_h != win->height) {
+                        win->width = new_w;
+                        win->height = new_h;
+                        ev.type = LENO_GUI_EVT_WINDOW_RESIZE;
+                        ev.data1 = new_w;
+                        ev.data2 = new_h;
+                        event_queue_push(&ev);
+                    }
+                }
                 break;
             }
         }
