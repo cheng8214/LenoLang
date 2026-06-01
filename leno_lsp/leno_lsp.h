@@ -107,7 +107,8 @@ typedef enum {
 	LSP_COMP_FILE = 17,
 	LSP_COMP_REFERENCE = 18,
 	LSP_COMP_STRUCT = 19,
-	LSP_COMP_ENUM_MEMBER = 20
+	LSP_COMP_ENUM_MEMBER = 20,
+	LSP_COMP_CONSTANT = 21       // 模块常量
 } LspCompletionItemKind;
 
 // 补全项

@@ -102,6 +102,7 @@
         [OP_DICT_GET_KEY] = &&LABEL(OP_DICT_GET_KEY),
         [OP_LOAD_NATIVE_MODULE] = &&LABEL(OP_LOAD_NATIVE_MODULE),
         [OP_MODULE_CALL] = &&LABEL(OP_MODULE_CALL),
+        [OP_GET_MODULE_CONST] = &&LABEL(OP_GET_MODULE_CONST),
         [OP_STRING_ADD] = &&LABEL(OP_STRING_ADD),
         [OP_INDEX] = &&LABEL(OP_INDEX),
         [OP_INDEX_SET] = &&LABEL(OP_INDEX_SET),
@@ -288,6 +289,9 @@
 
             // 模块调用类操作码
             #include "op_module_call.inc"
+
+            // 模块常量获取操作码
+            #include "op_get_module_const.inc"
 
             // 属性获取类操作码
             #include "op_property.inc"

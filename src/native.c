@@ -182,6 +182,198 @@ static void module_method_table_resize(void) {
     moduleMethodTable.capacity = new_capacity;
 }
 
+// ============================================================================
+// 模块常量哈希表（原生模块导出的 int 常量，如 guis.LOGICAL_PRESENTATION_STRETCH）
+// ============================================================================
+
+typedef struct ModuleConstEntry {
+    char module_name[32];
+    char const_name[64];
+    int value;
+    struct ModuleConstEntry* next;
+} ModuleConstEntry;
+
+typedef struct {
+    ModuleConstEntry** entries;
+    int capacity;
+    int count;
+} ModuleConstTable;
+
+static THREAD_LOCAL ModuleConstTable moduleConstTable = {NULL, 0, 0};
+
+static uint32_t hash_module_const(const char* module_name, const char* const_name) {
+    uint32_t hash = native_hash_string(module_name);
+    while (*const_name) {
+        hash ^= (unsigned char)(*const_name);
+        hash *= 16777619;
+        const_name++;
+    }
+    return hash;
+}
+
+static void module_const_table_init(void) {
+    moduleConstTable.capacity = MODULE_METHOD_TABLE_INITIAL_CAPACITY;
+    moduleConstTable.count = 0;
+    moduleConstTable.entries = (ModuleConstEntry**)calloc(moduleConstTable.capacity, sizeof(ModuleConstEntry*));
+}
+
+static void module_const_table_free(void) {
+    if (!moduleConstTable.entries) return;
+    for (int i = 0; i < moduleConstTable.capacity; i++) {
+        ModuleConstEntry* entry = moduleConstTable.entries[i];
+        while (entry) {
+            ModuleConstEntry* next = entry->next;
+            free(entry);
+            entry = next;
+        }
+    }
+    free(moduleConstTable.entries);
+    moduleConstTable.entries = NULL;
+    moduleConstTable.capacity = 0;
+    moduleConstTable.count = 0;
+}
+
+static void module_const_table_resize(void) {
+    int old_capacity = moduleConstTable.capacity;
+    ModuleConstEntry** old_entries = moduleConstTable.entries;
+    
+    int new_capacity = old_capacity * 2;
+    ModuleConstEntry** new_entries = (ModuleConstEntry**)calloc(new_capacity, sizeof(ModuleConstEntry*));
+    if (!new_entries) return;
+    
+    for (int i = 0; i < old_capacity; i++) {
+        ModuleConstEntry* entry = old_entries[i];
+        while (entry) {
+            ModuleConstEntry* next = entry->next;
+            uint32_t hash = hash_module_const(entry->module_name, entry->const_name);
+            int index = hash & (new_capacity - 1);
+            entry->next = new_entries[index];
+            new_entries[index] = entry;
+            entry = next;
+        }
+    }
+    
+    free(old_entries);
+    moduleConstTable.entries = new_entries;
+    moduleConstTable.capacity = new_capacity;
+}
+
+void native_register_module_const(const char* module_name, const char* const_name, int value) {
+    if (!moduleConstTable.entries) {
+        module_const_table_init();
+    }
+    
+    if (moduleConstTable.count >= moduleConstTable.capacity * MODULE_METHOD_TABLE_MAX_LOAD) {
+        module_const_table_resize();
+    }
+    
+    uint32_t hash = hash_module_const(module_name, const_name);
+    int index = hash & (moduleConstTable.capacity - 1);
+    
+    // 检查是否已存在（更新值）
+    ModuleConstEntry* entry = moduleConstTable.entries[index];
+    while (entry) {
+        if (strcmp(entry->module_name, module_name) == 0 &&
+            strcmp(entry->const_name, const_name) == 0) {
+            entry->value = value;
+            return;
+        }
+        entry = entry->next;
+    }
+    
+    // 创建新条目
+    ModuleConstEntry* new_entry = (ModuleConstEntry*)malloc(sizeof(ModuleConstEntry));
+    if (!new_entry) return;
+    
+    int mod_len = strlen(module_name);
+    int const_len = strlen(const_name);
+    if (mod_len > 31) mod_len = 31;
+    if (const_len > 63) const_len = 63;
+    
+    memcpy(new_entry->module_name, module_name, mod_len);
+    new_entry->module_name[mod_len] = '\0';
+    
+    memcpy(new_entry->const_name, const_name, const_len);
+    new_entry->const_name[const_len] = '\0';
+    
+    new_entry->value = value;
+    
+    new_entry->next = moduleConstTable.entries[index];
+    moduleConstTable.entries[index] = new_entry;
+    moduleConstTable.count++;
+}
+
+int native_find_module_const(const char* module_name, const char* const_name, bool* found) {
+    if (found) *found = false;
+    if (!moduleConstTable.entries || moduleConstTable.count == 0) return 0;
+    
+    uint32_t hash = hash_module_const(module_name, const_name);
+    int index = hash & (moduleConstTable.capacity - 1);
+    
+    ModuleConstEntry* entry = moduleConstTable.entries[index];
+    while (entry) {
+        if (strcmp(entry->module_name, module_name) == 0 &&
+            strcmp(entry->const_name, const_name) == 0) {
+            if (found) *found = true;
+            return entry->value;
+        }
+        entry = entry->next;
+    }
+    return 0;
+}
+
+char** native_get_module_consts(const char* module_name, int* count) {
+    if (!moduleConstTable.entries || moduleConstTable.count == 0 || !module_name || !count) {
+        if (count) *count = 0;
+        return NULL;
+    }
+    
+    int const_count = 0;
+    for (int i = 0; i < moduleConstTable.capacity; i++) {
+        ModuleConstEntry* entry = moduleConstTable.entries[i];
+        while (entry) {
+            if (strcmp(entry->module_name, module_name) == 0) {
+                const_count++;
+            }
+            entry = entry->next;
+        }
+    }
+    
+    if (const_count == 0) {
+        *count = 0;
+        return NULL;
+    }
+    
+    char** consts = (char**)malloc(sizeof(char*) * const_count);
+    if (!consts) {
+        *count = 0;
+        return NULL;
+    }
+    
+    int idx = 0;
+    for (int i = 0; i < moduleConstTable.capacity && idx < const_count; i++) {
+        ModuleConstEntry* entry = moduleConstTable.entries[i];
+        while (entry && idx < const_count) {
+            if (strcmp(entry->module_name, module_name) == 0) {
+                consts[idx] = strdup(entry->const_name);
+                idx++;
+            }
+            entry = entry->next;
+        }
+    }
+    
+    *count = const_count;
+    return consts;
+}
+
+void native_free_module_const_list(char** consts, int count) {
+    if (!consts) return;
+    for (int i = 0; i < count; i++) {
+        free(consts[i]);
+    }
+    free(consts);
+}
+
 // 编译时和运行时共用的元信息表
 #define MAX_NATIVE_FUNCTIONS 64
 
@@ -279,6 +471,7 @@ void native_reset_registry(void) {
     functionCount = 0;
     nativeFunctionObjectCount = 0;
     module_method_table_free();
+    module_const_table_free();
     moduleAliasCount = 0;
 }
 

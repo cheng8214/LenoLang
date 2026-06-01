@@ -1119,6 +1119,366 @@ int leno_gui_platform_show_message_box(const char* title, const char* message, i
     return 1;
 }
 
+/* ===== 文件对话框（参考 SDL3 SDL_cocoadialog.m：使用 NSOpenPanel/NSSavePanel） ===== */
+
+/* 文件对话框参数，传递给工作线程 */
+typedef struct {
+    int type;
+    int allow_many;
+    int nfilters;
+    char** filter_names;
+    char** filter_patterns;
+    char* default_path;
+    char* title;
+    LenoGUIPlatformWindow* win;
+} FileDialogArgs;
+
+/* 文件对话框结果（通过互斥锁保护，从工作线程传递到主线程） */
+typedef struct {
+    char** files;
+    int nfiles;
+    int filter_index;
+} FileDialogResult;
+
+static FileDialogResult* g_filedlg_result = NULL;
+static pthread_mutex_t g_filedlg_result_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* 释放文件对话框结果 */
+static void filedlg_result_free(FileDialogResult* r) {
+    if (!r) return;
+    if (r->files) {
+        for (int i = 0; i < r->nfiles; i++) free(r->files[i]);
+        free(r->files);
+    }
+    free(r);
+}
+
+/* 将 UTF-8 字符串转换为 NSString */
+static id nsstring_from_utf8(const char* str) {
+    if (!str) return NULL;
+    return ((id(*)(id, SEL, const char*))objc_msgSend)(
+        objc_getClass("NSString"),
+        sel_registerName("stringWithUTF8String:"),
+        str);
+}
+
+/* 将 NSString 转换为 UTF-8 C 字符串 */
+static char* utf8_from_nsstring(id nsstr) {
+    if (!nsstr) return NULL;
+    const char* utf8 = ((const char*(*)(id, SEL))objc_msgSend)(
+        nsstr, sel_registerName("UTF8String"));
+    return utf8 ? strdup(utf8) : NULL;
+}
+
+/* 获取 NSURL 的路径字符串 */
+static char* path_from_nsurl(id url) {
+    if (!url) return NULL;
+    id path_str = ((id(*)(id, SEL))objc_msgSend)(url, sel_registerName("path"));
+    return utf8_from_nsstring(path_str);
+}
+
+/* 文件对话框工作线程 */
+static void* file_dialog_thread_proc(void* param) {
+    FileDialogArgs* args = (FileDialogArgs*)param;
+    char** files = NULL;
+    int nfiles = 0;
+
+    /* 创建 autorelease pool */
+    id pool = ((id(*)(id, SEL))objc_msgSend)(
+        objc_getClass("NSAutoreleasePool"), sel_registerName("new"));
+
+    id dialog = NULL;
+    id dialog_as_open = NULL;
+
+    /* 根据类型创建对话框 */
+    if (args->type == 1) {
+        /* 保存文件：NSSavePanel */
+        dialog = ((id(*)(id, SEL))objc_msgSend)(
+            objc_getClass("NSSavePanel"), sel_registerName("savePanel"));
+    } else {
+        /* 打开文件或文件夹：NSOpenPanel */
+        dialog_as_open = ((id(*)(id, SEL))objc_msgSend)(
+            objc_getClass("NSOpenPanel"), sel_registerName("openPanel"));
+        dialog = dialog_as_open;
+
+        if (args->type == 2) {
+            /* 文件夹模式 */
+            ((void(*)(id, SEL, BOOL))objc_msgSend)(
+                dialog_as_open, sel_registerName("setCanChooseFiles:"), 0);
+            ((void(*)(id, SEL, BOOL))objc_msgSend)(
+                dialog_as_open, sel_registerName("setCanChooseDirectories:"), 1);
+        }
+
+        /* 多选 */
+        BOOL multi = args->allow_many ? 1 : 0;
+        ((void(*)(id, SEL, BOOL))objc_msgSend)(
+            dialog_as_open, sel_registerName("setAllowsMultipleSelection:"), multi);
+    }
+
+    /* 设置标题 */
+    if (args->title && args->title[0]) {
+        id title_str = nsstring_from_utf8(args->title);
+        if (title_str) {
+            ((void(*)(id, SEL, id))objc_msgSend)(
+                dialog, sel_registerName("setTitle:"), title_str);
+        }
+    }
+
+    /* 设置默认路径 */
+    if (args->default_path && args->default_path[0]) {
+        /* 创建 NSURL */
+        id path_str = nsstring_from_utf8(args->default_path);
+        if (path_str) {
+            id url = ((id(*)(id, SEL, id, BOOL, id))objc_msgSend)(
+                objc_getClass("NSURL"),
+                sel_registerName("fileURLWithPath:isDirectory:relativeToURL:"),
+                path_str, 0, NULL);
+            if (url) {
+                /* 检查是否是目录 */
+                BOOL is_dir = 0;
+                id fm = ((id(*)(id, SEL))objc_msgSend)(
+                    objc_getClass("NSFileManager"), sel_registerName("defaultManager"));
+                BOOL exists = ((BOOL(*)(id, SEL, id, BOOL*))objc_msgSend)(
+                    fm, sel_registerName("fileExistsAtPath:isDirectory:"),
+                    path_str, &is_dir);
+                if (exists && is_dir) {
+                    ((void(*)(id, SEL, id))objc_msgSend)(
+                        dialog, sel_registerName("setDirectoryURL:"), url);
+                } else {
+                    /* 文件名：设置 directory + nameFieldStringValue */
+                    id dir_url = ((id(*)(id, SEL))objc_msgSend)(
+                        url, sel_registerName("URLByDeletingLastPathComponent"));
+                    if (dir_url) {
+                        ((void(*)(id, SEL, id))objc_msgSend)(
+                            dialog, sel_registerName("setDirectoryURL:"), dir_url);
+                    }
+                    id fname = ((id(*)(id, SEL))objc_msgSend)(
+                        url, sel_registerName("lastPathComponent"));
+                    if (fname) {
+                        ((void(*)(id, SEL, id))objc_msgSend)(
+                            dialog, sel_registerName("setNameFieldStringValue:"), fname);
+                    }
+                }
+            }
+        }
+    }
+
+    /* 设置文件过滤器 */
+    if (args->nfilters > 0 && args->filter_patterns && args->filter_patterns[0]) {
+        id types = ((id(*)(id, SEL))objc_msgSend)(
+            objc_getClass("NSMutableArray"), sel_registerName("array"));
+
+        for (int i = 0; i < args->nfilters; i++) {
+            if (!args->filter_patterns[i]) continue;
+            /* 提取扩展名（去掉 *. 前缀） */
+            const char* pattern = args->filter_patterns[i];
+            if (pattern[0] == '*') pattern++;
+            if (pattern[0] == '.') pattern++;
+            if (pattern[0] == '\0') continue;
+
+            id ext_str = nsstring_from_utf8(pattern);
+            if (!ext_str) continue;
+
+            /* 尝试使用 UTType（macOS 11+），失败则用字符串 */
+            id uttype = NULL;
+            SEL sel_typeWithFilenameExtension = sel_registerName("typeWithFilenameExtension:");
+            if ([objc_getClass("UTType") respondsToSelector:sel_typeWithFilenameExtension]) {
+                uttype = ((id(*)(id, SEL, id))objc_msgSend)(
+                    objc_getClass("UTType"), sel_typeWithFilenameExtension, ext_str);
+            }
+
+            if (uttype) {
+                ((void(*)(id, SEL, id))objc_msgSend)(
+                    types, sel_registerName("addObject:"), uttype);
+            } else {
+                ((void(*)(id, SEL, id))objc_msgSend)(
+                    types, sel_registerName("addObject:"), ext_str);
+            }
+        }
+
+        ((void(*)(id, SEL, id))objc_msgSend)(
+            dialog, sel_registerName("setAllowedFileTypes:"), types);
+        ((void(*)(id, SEL, BOOL))objc_msgSend)(
+            dialog, sel_registerName("setAllowsOtherFileTypes:"), 1);
+    }
+
+    /* 运行模态对话框 */
+    NSInteger result = ((NSInteger(*)(id, SEL))objc_msgSend)(
+        dialog, sel_registerName("runModal"));
+
+    if (result == 1) { /* NSModalResponseOK */
+        if (args->allow_many && dialog_as_open && args->type != 1) {
+            /* 多文件：获取 URLs */
+            id urls = ((id(*)(id, SEL))objc_msgSend)(
+                dialog_as_open, sel_registerName("URLs"));
+            if (urls) {
+                NSUInteger count = ((NSUInteger(*)(id, SEL))objc_msgSend)(
+                    urls, sel_registerName("count"));
+                nfiles = (int)count;
+                files = (char**)calloc(nfiles + 1, sizeof(char*));
+                if (files) {
+                    for (NSUInteger i = 0; i < count; i++) {
+                        id url = ((id(*)(id, SEL, NSUInteger))objc_msgSend)(
+                            urls, sel_registerName("objectAtIndex:"), i);
+                        files[i] = path_from_nsurl(url);
+                    }
+                    files[nfiles] = NULL;
+                }
+            }
+        } else {
+            /* 单文件：获取 URL */
+            id url = ((id(*)(id, SEL))objc_msgSend)(
+                dialog, sel_registerName("URL"));
+            if (url) {
+                files = (char**)calloc(2, sizeof(char*));
+                if (files) {
+                    files[0] = path_from_nsurl(url);
+                    files[1] = NULL;
+                    nfiles = 1;
+                }
+            }
+        }
+    }
+
+    /* 释放 autorelease pool */
+    ((void(*)(id, SEL))objc_msgSend)(pool, sel_registerName("drain"));
+
+    /* 将结果通过互斥锁传递到主线程 */
+    pthread_mutex_lock(&g_filedlg_result_mutex);
+
+    if (g_filedlg_result) {
+        filedlg_result_free(g_filedlg_result);
+        g_filedlg_result = NULL;
+    }
+
+    if (nfiles > 0 && files) {
+        g_filedlg_result = (FileDialogResult*)calloc(1, sizeof(FileDialogResult));
+        if (g_filedlg_result) {
+            g_filedlg_result->files = files;
+            g_filedlg_result->nfiles = nfiles;
+            g_filedlg_result->filter_index = -1;
+            files = NULL;
+        }
+    }
+
+    pthread_mutex_unlock(&g_filedlg_result_mutex);
+
+    /* 推送事件唤醒主循环 */
+    {
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        event_queue_push(&ev);
+    }
+
+    /* 清理 */
+    if (files) {
+        for (int i = 0; i < nfiles; i++) free(files[i]);
+        free(files);
+    }
+    if (args->filter_names) {
+        for (int i = 0; i < args->nfilters; i++) free(args->filter_names[i]);
+        free(args->filter_names);
+    }
+    if (args->filter_patterns) {
+        for (int i = 0; i < args->nfilters; i++) free(args->filter_patterns[i]);
+        free(args->filter_patterns);
+    }
+    free(args->default_path);
+    free(args->title);
+    free(args);
+
+    return NULL;
+}
+
+void leno_gui_platform_show_file_dialog(int type, LenoGUIFileDialogCallback callback,
+                                         void* userdata, LenoGUIPlatformWindow* win,
+                                         const LenoGUIFileFilter* filters, int nfilters,
+                                         const char* default_path, int allow_many,
+                                         const char* title) {
+    (void)callback; (void)userdata;
+
+    FileDialogArgs* args = (FileDialogArgs*)calloc(1, sizeof(FileDialogArgs));
+    if (!args) {
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        event_queue_push(&ev);
+        return;
+    }
+
+    args->type = type;
+    args->allow_many = allow_many;
+    args->nfilters = nfilters;
+    args->default_path = default_path ? strdup(default_path) : NULL;
+    args->title = title ? strdup(title) : NULL;
+    args->win = win;
+
+    /* 复制过滤器 */
+    if (filters && nfilters > 0) {
+        args->filter_names = (char**)calloc(nfilters, sizeof(char*));
+        args->filter_patterns = (char**)calloc(nfilters, sizeof(char*));
+        if (args->filter_names && args->filter_patterns) {
+            for (int i = 0; i < nfilters; i++) {
+                args->filter_names[i] = filters[i].name ? strdup(filters[i].name) : NULL;
+                args->filter_patterns[i] = filters[i].pattern ? strdup(filters[i].pattern) : NULL;
+            }
+        }
+    }
+
+    /* 创建工作线程运行对话框 */
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, file_dialog_thread_proc, args) != 0) {
+        if (args->filter_names) {
+            for (int i = 0; i < nfilters; i++) free(args->filter_names[i]);
+            free(args->filter_names);
+        }
+        if (args->filter_patterns) {
+            for (int i = 0; i < nfilters; i++) free(args->filter_patterns[i]);
+            free(args->filter_patterns);
+        }
+        free(args->default_path);
+        free(args->title);
+        free(args);
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        event_queue_push(&ev);
+        return;
+    }
+    pthread_detach(thread);
+}
+
+#include "guis_internal.h"
+
+int leno_gui_platform_process_filedialog_result(void) {
+    int processed = 0;
+
+    pthread_mutex_lock(&g_filedlg_result_mutex);
+    FileDialogResult* result = g_filedlg_result;
+    g_filedlg_result = NULL;
+    pthread_mutex_unlock(&g_filedlg_result_mutex);
+
+    if (result) {
+        const char** c_files = (const char**)calloc((size_t)(result->nfiles + 1), sizeof(const char*));
+        if (c_files) {
+            for (int i = 0; i < result->nfiles; i++) {
+                c_files[i] = result->files[i];
+            }
+            c_files[result->nfiles] = NULL;
+
+            process_filedialog_callback(c_files, result->nfiles, result->filter_index);
+
+            free(c_files);
+        }
+
+        filedlg_result_free(result);
+        processed = 1;
+    }
+
+    return processed;
+}
+
 /* ===== 高精度计时器（参考 SDL3 SDL_GetTicks / SDL_GetPerformanceCounter） ===== */
 
 /* 用于缓存 mach_timebase 信息 */

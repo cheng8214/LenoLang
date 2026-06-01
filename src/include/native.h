@@ -108,6 +108,21 @@ void native_free_module_method_metas(ModuleMethodMeta* metas);
 // 初始化 io 模块（import io 时调用）
 void io_init_module(void);
 
+// ========== 模块常量支持 ==========
+
+// 注册模块常量（原生模块可导出 int 常量，如 guis.LOGICAL_PRESENTATION_STRETCH）
+void native_register_module_const(const char* module_name, const char* const_name, int value);
+
+// 查找模块常量值，未找到返回 0 且 *found 设为 false
+int native_find_module_const(const char* module_name, const char* const_name, bool* found);
+
+// 获取模块的所有常量名（LSP 使用）
+// 返回常量名数组，通过 count 返回数量，需要调用者用 native_free_module_const_list 释放
+char** native_get_module_consts(const char* module_name, int* count);
+
+// 释放模块常量名列表
+void native_free_module_const_list(char** consts, int count);
+
 // ========== 模块别名支持 ==========
 
 // 注册模块别名

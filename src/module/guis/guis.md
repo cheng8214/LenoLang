@@ -17,6 +17,9 @@
 - [输入状态查询](#输入状态查询)
 - [剪贴板](#剪贴板)
 - [光标与透明度](#光标与透明度)
+- [文件对话框](#文件对话框)
+- [字体操作](#字体操作)
+- [逻辑呈现模式](#逻辑呈现模式)
 - [计时器](#计时器)
 - [示例代码](#示例代码)
 - [注意事项](#注意事项)
@@ -54,6 +57,9 @@ guis.c               - LenoC 模块注册
 | `Win` | 窗口对象 |
 | `Draw` | 渲染器对象 |
 | `Event` | 事件对象 |
+| `Texture` | 纹理对象 |
+| `Font` | 字体对象 |
+| `Rgb` | 颜色对象（通过 `_rgb(r, g, b, a?)` 创建） |
 
 ---
 
@@ -463,6 +469,12 @@ ren.no_clip()
 | `e.is_quit()` | 是否为退出事件 |
 | `e.is_window_close()` | 是否为窗口关闭事件 |
 | `e.is_window_resize()` | 是否为窗口大小改变事件 |
+| `e.is_window_move()` | 是否为窗口移动事件 |
+| `e.is_window_focus()` | 是否为窗口获得焦点事件 |
+| `e.is_window_unfocus()` | 是否为窗口失去焦点事件 |
+| `e.is_window_show()` | 是否为窗口显示事件 |
+| `e.is_window_hide()` | 是否为窗口隐藏事件 |
+| `e.is_window_exposed()` | 是否为窗口暴露事件（需要重绘） |
 | `e.is_key_down()` | 是否为按键按下事件 |
 | `e.is_key_up()` | 是否为按键释放事件 |
 | `e.is_text_input()` | 是否为文本输入事件 |
@@ -470,6 +482,8 @@ ren.no_clip()
 | `e.is_mouse_down()` | 是否为鼠标按下事件 |
 | `e.is_mouse_up()` | 是否为鼠标释放事件 |
 | `e.is_mouse_wheel()` | 是否为鼠标滚轮事件 |
+| `e.is_drop_file()` | 是否为文件拖放事件 |
+| `e.is_drop_text()` | 是否为文本拖放事件 |
 
 ---
 
@@ -478,13 +492,24 @@ ren.no_clip()
 | 方法 | 返回类型 | 说明 | 适用事件 |
 |------|----------|------|----------|
 | `e.type()` | int | 事件类型编号 | 所有事件 |
+| `e.window_id()` | int | 窗口 ID | 所有事件 |
 | `e.key()` | int | 按键码 | key_down / key_up |
-| `e.mouse_x()` | int | 鼠标 X 坐标 | mouse_move / mouse_down / mouse_up |
-| `e.mouse_y()` | int | 鼠标 Y 坐标 | mouse_move / mouse_down / mouse_up |
+| `e.scancode()` | int | 扫描码 | key_down / key_up |
+| `e.mod()` | int | 修饰键标志 | key_down / key_up |
+| `e.repeat()` | int | 是否为重复按键 | key_down |
+| `e.mouse_x()` | int | 鼠标 X 坐标 | mouse_move / mouse_down / mouse_up / mouse_wheel |
+| `e.mouse_y()` | int | 鼠标 Y 坐标 | mouse_move / mouse_down / mouse_up / mouse_wheel |
+| `e.mouse_xrel()` | int | 鼠标 X 相对移动量 | mouse_move |
+| `e.mouse_yrel()` | int | 鼠标 Y 相对移动量 | mouse_move |
 | `e.mouse_button()` | int | 鼠标按钮 (1=左 2=中 3=右) | mouse_down / mouse_up |
+| `e.mouse_clicks()` | int | 点击次数（双击检测） | mouse_down / mouse_up |
+| `e.wheel_x()` | int | 滚轮水平滚动量 | mouse_wheel |
+| `e.wheel_y()` | int | 滚轮垂直滚动量 | mouse_wheel |
 | `e.width()` | int | 窗口宽度 | window_resize |
 | `e.height()` | int | 窗口高度 | window_resize |
-| `e.text()` | string | 输入文本 | text_input |
+| `e.x()` | int | 窗口新位置 X | window_move |
+| `e.y()` | int | 窗口新位置 Y | window_move |
+| `e.text()` | string | 输入文本 | text_input / drop_file / drop_text |
 
 ### 常用按键码
 
@@ -750,6 +775,237 @@ guis.msg_box("提示", "操作完成", 0)
 guis.msg_box("警告", "磁盘空间不足", 1)
 guis.msg_box("错误", "无法连接服务器", 2)
 ```
+
+---
+
+### `guis.set_cursor(cursor_type)`
+
+设置系统光标样式。
+
+**参数**:
+- `cursor_type` (int): 光标类型，可用值：
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| 0 | 默认 | 默认箭头 |
+| 1 | 文本 | 文本选择 I 型 |
+| 2 | 等待 | 等待（沙漏） |
+| 3 | 十字 | 十字准星 |
+| 4 | 进度 | 后台忙（带箭头沙漏） |
+| 5 | 调整大小 NW-SE | 西北-东南双箭头 |
+| 6 | 调整大小 NE-SW | 东北-西南双箭头 |
+| 7 | 调整大小 E-W | 东西双箭头 |
+| 8 | 调整大小 N-S | 南北双箭头 |
+| 9 | 移动 | 四向箭头（移动） |
+| 10 | 禁止 | 禁止操作 |
+| 11 | 手型 | 链接手型 |
+
+```leno
+guis.set_cursor(1)  // 文本输入光标
+guis.set_cursor(11) // 手型光标
+guis.set_cursor(0)  // 恢复默认
+```
+
+---
+
+## 文件对话框
+
+### `guis.file_dialog(type, callback, opts?)`
+
+显示系统原生文件对话框。对话框在后台线程中打开，不会阻塞主线程。用户选择完成后，回调在主线程中执行。
+
+**参数**:
+- `type` (int): 对话框类型
+  - `0` — 打开文件 (`OPENFILE`)
+  - `1` — 保存文件 (`SAVEFILE`)
+  - `2` — 打开文件夹 (`OPENFOLDER`)
+- `callback` (func): 回调函数，签名为 `func(file_list, filter_index)`
+  - `file_list` (array): 用户选择的文件路径数组（取消时为 `null`）
+  - `filter_index` (int): 用户选择的过滤器索引
+- `opts` (Dict, 可选): 选项字典，支持以下字段：
+  - `title` (string): 对话框标题
+  - `path` (string): 默认路径
+  - `multiple` (bool): 是否允许多选
+  - `filters` (array): 文件过滤器数组，每个元素为 `{name: "显示名", pattern: "匹配模式"}`
+  - `window` (Win): 父窗口（Windows 下为模态对话框）
+
+```leno
+// 打开文件对话框
+guis.file_dialog(0, func(file_list, filter_index) {
+    if file_list != null {
+        for var i = 0; i < file_list.len(); i = i + 1 {
+            print("选中文件: " + file_list[i])
+        }
+    } else {
+        print("用户取消了选择")
+    }
+}, {
+    title: "选择文本文件",
+    filters: [
+        {name: "Text Files", pattern: "*.txt"},
+        {name: "All Files", pattern: "*.*"}
+    ],
+    multiple: true
+})
+
+// 保存文件对话框
+guis.file_dialog(1, func(file_list, filter_index) {
+    if file_list != null {
+        print("保存到: " + file_list[0])
+    }
+}, {
+    title: "保存文件",
+    path: "untitled.txt"
+})
+
+// 打开文件夹对话框
+guis.file_dialog(2, func(file_list, filter_index) {
+    if file_list != null {
+        print("选中目录: " + file_list[0])
+    }
+}, {
+    title: "选择目录"
+})
+```
+
+> **注意**：文件对话框的回调在主线程的事件循环中执行，回调中可以安全地使用闭包捕获外部变量。
+
+---
+
+## 字体操作
+
+### `guis.load_font(name, size)`
+
+加载系统字体。
+
+**参数**:
+- `name` (string): 字体名称，如 `"Arial"`、`"Consolas"`、`"SimSun"` 等
+- `size` (int): 字体大小（像素）
+
+**返回**: `Font` 或 `null`（加载失败时）
+
+```leno
+var font = guis.load_font("Consolas", 16)
+```
+
+---
+
+### `guis.destroy_font(font)`
+
+销毁字体对象，释放资源。
+
+```leno
+guis.destroy_font(font)
+```
+
+---
+
+### `ren.draw_text(text, x, y, size)`
+
+使用内置 8x8 点阵字体绘制文字。
+
+**参数**:
+- `text` (string): 要绘制的文本
+- `x`, `y` (int): 绘制位置
+- `size` (int): 字体大小
+
+```leno
+ren.set_color(_rgb(255, 255, 255, 255))
+ren.draw_text("Hello Leno!", 100, 100, 16)
+```
+
+---
+
+### `ren.text_size(text, size) -> [w, h]`
+
+计算内置点阵字体的文字尺寸。
+
+```leno
+var size = ren.text_size("Hello", 16)
+print("宽: " + size[0] + " 高: " + size[1])
+```
+
+---
+
+### `ren.draw_text_ex(font, text, x, y)`
+
+使用指定系统字体绘制文字。
+
+```leno
+ren.set_color(_rgb(255, 255, 255, 255))
+ren.draw_text_ex(font, "Hello Leno!", 100, 200)
+```
+
+---
+
+### `ren.font_size(font, text) -> [w, h]`
+
+计算指定系统字体的文字尺寸。
+
+```leno
+var size = ren.font_size(font, "Hello")
+print("宽: " + size[0] + " 高: " + size[1])
+```
+
+---
+
+## 逻辑呈现模式
+
+逻辑呈现模式（借鉴 SDL3 `SDL_RendererLogicalPresentation`）允许将渲染坐标与窗口物理尺寸解耦，实现自适应缩放。
+
+### `ren.set_logical_size(w, h)`
+
+设置逻辑渲染大小。后续所有绘制坐标基于此逻辑尺寸，自动缩放到窗口实际大小。
+
+```leno
+ren.set_logical_size(1920, 1080)
+```
+
+---
+
+### `ren.get_logical_size() -> [w, h]`
+
+获取当前逻辑渲染大小。
+
+---
+
+### `ren.set_logical_presentation(mode)`
+
+设置逻辑呈现模式。
+
+**参数**:
+- `mode` (int):
+
+| 值 | 说明 |
+|----|------|
+| `0` | 禁用逻辑大小 |
+| `1` | 拉伸填充 |
+| `2` | 信箱模式（保持比例，加黑边） |
+| `3` | 过扫描 |
+| `4` | 整数倍缩放 |
+
+```leno
+ren.set_logical_size(1920, 1080)
+ren.set_logical_presentation(2)  // 信箱模式
+```
+
+---
+
+### `ren.get_logical_presentation() -> int`
+
+获取当前逻辑呈现模式。
+
+---
+
+### `ren.get_logical_viewport() -> [x, y, w, h]`
+
+获取逻辑尺寸映射到窗口的实际视口区域。
+
+---
+
+### `ren.reset_logical_size()`
+
+重置逻辑大小，恢复为窗口物理尺寸。
 
 ---
 
@@ -1199,5 +1455,5 @@ ren.present()         // 3. 呈现
 
 ---
 
-*文档版本: 1.0*  
-*最后更新: 2026-05-30*
+*文档版本: 1.1*  
+*最后更新: 2026-06-01*

@@ -2475,6 +2475,7 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
         char** modules = native_get_all_modules(&module_count);
         if (modules && module_count > 0) {
             for (int m = 0; m < module_count; m++) {
+                // 模块方法
                 int method_count = 0;
                 char** methods = native_get_module_methods(modules[m], &method_count);
                 if (methods && method_count > 0) {
@@ -2487,6 +2488,20 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                                            LSP_COMP_METHOD, signature, prefix);
                     }
                     native_free_module_method_list(methods, method_count);
+                }
+                // 模块常量
+                int const_count = 0;
+                char** consts = native_get_module_consts(modules[m], &const_count);
+                if (consts && const_count > 0) {
+                    for (int i = 0; i < const_count; i++) {
+                        char full_name[256];
+                        snprintf(full_name, sizeof(full_name), "%s.%s", modules[m], consts[i]);
+                        char detail[256];
+                        snprintf(detail, sizeof(detail), "%s.%s (const)", modules[m], consts[i]);
+                        add_completion_item(&items, count, &capacity, full_name,
+                                           LSP_COMP_CONSTANT, detail, prefix);
+                    }
+                    native_free_module_const_list(consts, const_count);
                 }
             }
             native_free_module_list(modules, module_count);

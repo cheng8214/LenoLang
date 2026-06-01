@@ -1044,6 +1044,27 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             break;
         }
         case AST_MODULE_ACCESS: {
+            // 检查是否是原生模块常量（语义分析阶段标记为 TYPE_INT）
+            const char* actual_module = native_resolve_module_alias(ast->u.module_access.module_name);
+            if (native_is_module(actual_module)) {
+                // 原生模块常量：生成 OP_GET_MODULE_CONST
+                ObjString* module_name = str_copy(actual_module,
+                                                  (int)strlen(actual_module));
+                int module_const = make_constant(gen, val_obj((Object*)module_name));
+
+                ObjString* const_name = str_copy(ast->u.module_access.member_name,
+                                                 (int)strlen(ast->u.module_access.member_name));
+                int const_idx = make_constant(gen, val_obj((Object*)const_name));
+
+                emit_byte(gen, OP_GET_MODULE_CONST, ast->line);
+                emit_byte(gen, (module_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, module_const & 0xff, ast->line);
+                emit_byte(gen, (const_idx >> 8) & 0xff, ast->line);
+                emit_byte(gen, const_idx & 0xff, ast->line);
+                break;
+            }
+
+            // .leno 用户模块成员访问
             Symbol* module_sym = scope_resolve(gen->sem->root_scope, ast->u.module_access.module_name);
             if (!module_sym || (module_sym->kind != SYM_GLOBAL && module_sym->kind != SYM_MODULE)) {
                 error_add(ERR_SEMANTIC, ast->line, "未定义的模块");

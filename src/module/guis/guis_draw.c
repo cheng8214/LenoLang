@@ -232,6 +232,70 @@ static Value gui_render_fill_rounded_rect_func(int argc, Value* args) {
     return val_null();
 }
 
+/* ren.set_logical_size(w, h) */
+static Value gui_set_logical_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int w = val_as_int(args[1]);
+    int h = val_as_int(args[2]);
+    if (ren && ren->platform) leno_gui_platform_set_logical_size(ren->platform, w, h);
+    return val_null();
+}
+
+/* ren.get_logical_size() -> [w, h] */
+static Value gui_get_logical_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int w = 0, h = 0;
+    if (ren && ren->platform) leno_gui_platform_get_logical_size(ren->platform, &w, &h);
+    ObjArray* arr = arr_new(2);
+    arr->count = 2;
+    arr_write(arr, 0, val_int(w));
+    arr_write(arr, 1, val_int(h));
+    return val_obj((Object*)arr);
+}
+
+/* ren.set_logical_presentation(mode) */
+static Value gui_set_logical_presentation_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int mode = val_as_int(args[1]);
+    if (ren && ren->platform) leno_gui_platform_set_logical_presentation(ren->platform, mode);
+    return val_null();
+}
+
+/* ren.get_logical_presentation() -> int */
+static Value gui_get_logical_presentation_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int mode = LENO_GUI_LOGICAL_PRESENTATION_DISABLED;
+    if (ren && ren->platform) mode = leno_gui_platform_get_logical_presentation(ren->platform);
+    return val_int(mode);
+}
+
+/* ren.get_logical_viewport() -> [x, y, w, h] */
+static Value gui_get_logical_viewport_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x = 0, y = 0, w = 0, h = 0;
+    if (ren && ren->platform) leno_gui_platform_get_logical_viewport(ren->platform, &x, &y, &w, &h);
+    ObjArray* arr = arr_new(4);
+    arr->count = 4;
+    arr_write(arr, 0, val_int(x));
+    arr_write(arr, 1, val_int(y));
+    arr_write(arr, 2, val_int(w));
+    arr_write(arr, 3, val_int(h));
+    return val_obj((Object*)arr);
+}
+
+/* ren.reset_logical_size() */
+static Value gui_reset_logical_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (ren && ren->platform) leno_gui_platform_reset_logical_size(ren->platform);
+    return val_null();
+}
+
 /* ren.set_viewport(x, y, w, h) */
 static Value gui_set_viewport_func(int argc, Value* args) {
     (void)argc;
@@ -331,6 +395,17 @@ void guis_init_instance_methods(void) {
     draw_register_method_with_params("round_rect", make_native(gui_render_draw_rounded_rect_func, 6, "round_rect"), 5, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_5_rounded);
     draw_register_method_with_params("fill_round", make_native(gui_render_fill_rounded_rect_func, 6, "fill_round"), 5, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_5_rounded);
     draw_register_method_with_params("get_size", make_native(gui_get_renderer_size_func, 1, "get_size"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    
+    /* 逻辑呈现模式（借鉴 SDL3） */
+    TypeKind int_2_size[] = {TYPE_INT, TYPE_INT};
+    draw_register_method_with_params("set_logical_size", make_native(gui_set_logical_size_func, 3, "set_logical_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2_size);
+    draw_register_method_with_params("get_logical_size", make_native(gui_get_logical_size_func, 1, "get_logical_size"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    TypeKind int_1[] = {TYPE_INT};
+    draw_register_method_with_params("set_logical_presentation", make_native(gui_set_logical_presentation_func, 2, "set_logical_presentation"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    draw_register_method_with_params("get_logical_presentation", make_native(gui_get_logical_presentation_func, 1, "get_logical_presentation"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("get_logical_viewport", make_native(gui_get_logical_viewport_func, 1, "get_logical_viewport"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    draw_register_method_with_params("reset_logical_size", make_native(gui_reset_logical_size_func, 1, "reset_logical_size"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    
     draw_register_method_with_params("set_viewport", make_native(gui_set_viewport_func, 5, "set_viewport"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_vp);
     draw_register_method_with_params("get_viewport", make_native(gui_get_viewport_func, 1, "get_viewport"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_vp);

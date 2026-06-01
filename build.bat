@@ -87,11 +87,12 @@ set SOURCES=!SOURCES! src\module\guis\guis_draw.c
 set SOURCES=!SOURCES! src\module\guis\guis_window.c
 set SOURCES=!SOURCES! src\module\guis\guis_style.c
 set SOURCES=!SOURCES! src\module\guis\guis_event.c
+set SOURCES=!SOURCES! src\module\guis\leno_guis_log.c
 set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 
-gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32 -lgdi32 -luser32
+gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32 -lgdi32 -luser32 -lcomdlg32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed

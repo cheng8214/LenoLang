@@ -55,6 +55,11 @@ extern "C" {
 #define LENO_GUI_EVT_MOUSE_DOWN        0x401
 #define LENO_GUI_EVT_MOUSE_UP          0x402
 #define LENO_GUI_EVT_MOUSE_WHEEL       0x403
+#define LENO_GUI_EVT_DROP_FILE         0x500  /* 文件拖放 */
+#define LENO_GUI_EVT_DROP_TEXT         0x501  /* 文本拖放 */
+#define LENO_GUI_EVT_DROP_BEGIN        0x502  /* 拖放开始 */
+#define LENO_GUI_EVT_DROP_COMPLETE     0x503  /* 拖放完成 */
+#define LENO_GUI_EVT_FILEDIALOG_RESULT 0x600  /* 文件对话框结果（内部使用） */
 
 /* ===== 鼠标按钮 ===== */
 #define LENO_GUI_MOUSE_LEFT     1
@@ -131,6 +136,8 @@ typedef struct {
     int mouse_clicks;
     float wheel_x;
     float wheel_y;
+    /* 拖放数据 */
+    char drop_file[512];  /* 拖放的文件路径 */
 } LenoGUIEvent;
 
 /* ===== 平台窗口/渲染器/纹理（不透明指针） ===== */
@@ -163,6 +170,13 @@ void   leno_gui_platform_clear_window_drag_area(LenoGUIPlatformWindow* win);
 #define LENO_GUI_FLIP_HORIZONTAL 1
 #define LENO_GUI_FLIP_VERTICAL   2
 
+/* ===== 逻辑呈现模式（借鉴 SDL3 SDL_RendererLogicalPresentation）===== */
+#define LENO_GUI_LOGICAL_PRESENTATION_DISABLED      0  /* 禁用逻辑大小 */
+#define LENO_GUI_LOGICAL_PRESENTATION_STRETCH       1  /* 拉伸填充 */
+#define LENO_GUI_LOGICAL_PRESENTATION_LETTERBOX     2  /* 信箱模式（保持比例） */
+#define LENO_GUI_LOGICAL_PRESENTATION_OVERSCAN      3  /* 过扫描 */
+#define LENO_GUI_LOGICAL_PRESENTATION_INTEGER_SCALE 4  /* 整数倍缩放 */
+
 /* ===== 渲染器操作 ===== */
 LenoGUIPlatformRenderer* leno_gui_platform_create_renderer(LenoGUIPlatformWindow* win);
 void   leno_gui_platform_destroy_renderer(LenoGUIPlatformRenderer* ren);
@@ -170,6 +184,14 @@ void   leno_gui_platform_render_clear(LenoGUIPlatformRenderer* ren);
 void   leno_gui_platform_render_present(LenoGUIPlatformRenderer* ren);
 /* 当窗口大小改变时，重新调整渲染器大小 */
 int    leno_gui_platform_renderer_resize(LenoGUIPlatformRenderer* ren, int w, int h);
+
+/* ===== 逻辑呈现模式（借鉴 SDL3）===== */
+void   leno_gui_platform_set_logical_size(LenoGUIPlatformRenderer* ren, int w, int h);
+void   leno_gui_platform_get_logical_size(LenoGUIPlatformRenderer* ren, int* w, int* h);
+void   leno_gui_platform_set_logical_presentation(LenoGUIPlatformRenderer* ren, int mode);
+int    leno_gui_platform_get_logical_presentation(LenoGUIPlatformRenderer* ren);
+void   leno_gui_platform_get_logical_viewport(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h);
+void   leno_gui_platform_reset_logical_size(LenoGUIPlatformRenderer* ren);
 /* 标记渲染器需要调整大小（参考 SDL3 surface_valid） */
 void   leno_gui_platform_renderer_mark_resize(LenoGUIPlatformRenderer* ren);
 void   leno_gui_platform_set_draw_color(LenoGUIPlatformRenderer* ren, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
@@ -190,8 +212,14 @@ void   leno_gui_platform_set_clip_rect(LenoGUIPlatformRenderer* ren, int x, int 
 void   leno_gui_platform_get_clip_rect(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h);
 void   leno_gui_platform_disable_clip_rect(LenoGUIPlatformRenderer* ren);
 
+/* ===== 纹理访问模式（借鉴 SDL3）===== */
+#define LENO_GUI_TEXTUREACCESS_STATIC    0  /* 变化少，不可锁定 */
+#define LENO_GUI_TEXTUREACCESS_STREAMING 1  /* 变化频繁，可锁定 */
+#define LENO_GUI_TEXTUREACCESS_TARGET    2  /* 可作为渲染目标 */
+
 /* ===== 纹理操作 ===== */
 LenoGUIPlatformTexture* leno_gui_platform_create_texture(LenoGUIPlatformRenderer* ren, int w, int h);
+LenoGUIPlatformTexture* leno_gui_platform_create_texture_with_access(LenoGUIPlatformRenderer* ren, int w, int h, int access);
 void   leno_gui_platform_destroy_texture(LenoGUIPlatformTexture* tex);
 void   leno_gui_platform_render_texture(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex, int x, int y);
 void   leno_gui_platform_render_texture_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
@@ -201,6 +229,21 @@ void   leno_gui_platform_render_texture_rotated(LenoGUIPlatformRenderer* ren, Le
 void   leno_gui_platform_update_texture(LenoGUIPlatformTexture* tex, const void* data, int pitch);
 int    leno_gui_platform_texture_width(LenoGUIPlatformTexture* tex);
 int    leno_gui_platform_texture_height(LenoGUIPlatformTexture* tex);
+int    leno_gui_platform_texture_access(LenoGUIPlatformTexture* tex);
+
+/* ===== 渲染目标（离屏渲染，借鉴 SDL3）===== */
+int    leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex);
+LenoGUIPlatformTexture* leno_gui_platform_get_render_target(LenoGUIPlatformRenderer* ren);
+void   leno_gui_platform_reset_render_target(LenoGUIPlatformRenderer* ren);
+void   leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+                                                  int x, int y, int w, int h);
+void   leno_gui_platform_clear_render_target(LenoGUIPlatformTexture* tex, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+const uint32_t* leno_gui_platform_get_render_target_pixels(LenoGUIPlatformTexture* tex);
+int    leno_gui_platform_get_render_target_pitch(LenoGUIPlatformTexture* tex);
+int    leno_gui_platform_copy_render_target(LenoGUIPlatformTexture* dst, LenoGUIPlatformTexture* src);
+void   leno_gui_platform_blend_render_targets(LenoGUIPlatformTexture* dst, LenoGUIPlatformTexture* src,
+                                               int x, int y, uint8_t alpha);
+int    leno_gui_platform_resize_render_target(LenoGUIPlatformTexture* tex, int w, int h);
 
 /* ===== 文字渲染（内置 8x8 点阵字体，参考 SDL3 SDL_RenderDebugText） ===== */
 void   leno_gui_platform_draw_text(LenoGUIPlatformRenderer* ren, const char* text, int x, int y, int size);
@@ -242,14 +285,68 @@ int    leno_gui_platform_get_mouse_state(int* x, int* y, int* buttons);
 char*  leno_gui_platform_get_clipboard_text(void);
 void   leno_gui_platform_set_clipboard_text(const char* text);
 
+/* ===== 系统光标类型（参考 SDL3 SDL_SystemCursor） ===== */
+#define LENO_GUI_CURSOR_DEFAULT        0   /* 默认箭头 */
+#define LENO_GUI_CURSOR_TEXT           1   /* 文本选择 I 型 */
+#define LENO_GUI_CURSOR_WAIT           2   /* 等待（沙漏） */
+#define LENO_GUI_CURSOR_CROSSHAIR      3   /* 十字准星 */
+#define LENO_GUI_CURSOR_PROGRESS       4   /* 后台忙（带箭头沙漏） */
+#define LENO_GUI_CURSOR_RESIZE_NWSE    5   /* 西北-东南双箭头 */
+#define LENO_GUI_CURSOR_RESIZE_NESW    6   /* 东北-西南双箭头 */
+#define LENO_GUI_CURSOR_RESIZE_EW      7   /* 东西双箭头 */
+#define LENO_GUI_CURSOR_RESIZE_NS      8   /* 南北双箭头 */
+#define LENO_GUI_CURSOR_MOVE           9   /* 四向箭头（移动） */
+#define LENO_GUI_CURSOR_NOT_ALLOWED    10  /* 禁止 */
+#define LENO_GUI_CURSOR_POINTER        11  /* 链接手型 */
+#define LENO_GUI_CURSOR_COUNT          12
+
 /* ===== 光标控制（参考 SDL_ShowCursor / SDL_HideCursor） ===== */
 void   leno_gui_platform_show_cursor(int show);
+/* 设置系统光标 */
+void   leno_gui_platform_set_system_cursor(int cursor_type);
+/* 设置自定义光标（从 ARGB 像素数据创建） */
+int    leno_gui_platform_create_custom_cursor(const uint32_t* pixels, int w, int h, int hot_x, int hot_y);
+void   leno_gui_platform_destroy_custom_cursor(void);
+void   leno_gui_platform_set_cursor(int cursor_id);
 
 /* ===== 窗口透明度（参考 SDL_SetWindowOpacity） ===== */
 void   leno_gui_platform_set_window_opacity(LenoGUIPlatformWindow* win, float opacity);
 
+/* ===== 拖放支持（参考 SDL3 Drop Events） ===== */
+void   leno_gui_platform_accept_drag_and_drop(LenoGUIPlatformWindow* win, int accept);
+
+/* ===== 文件对话框（参考 SDL3 SDL_ShowFileDialogWithProperties） ===== */
+#define LENO_GUI_FILEDIALOG_OPENFILE     0
+#define LENO_GUI_FILEDIALOG_SAVEFILE     1
+#define LENO_GUI_FILEDIALOG_OPENFOLDER   2
+
+/* 文件对话框回调 */
+typedef void (*LenoGUIFileDialogCallback)(void* userdata, const char* const* files, int filter_index);
+
+/* 文件过滤器 */
+typedef struct {
+    const char* name;   /* 显示名称，如 "Text Files" */
+    const char* pattern; /* 匹配模式，如 "*.txt" */
+} LenoGUIFileFilter;
+
+void   leno_gui_platform_show_file_dialog(int type, LenoGUIFileDialogCallback callback,
+                                           void* userdata, LenoGUIPlatformWindow* win,
+                                           const LenoGUIFileFilter* filters, int nfilters,
+                                           const char* default_path, int allow_many,
+                                           const char* title);
+
+/* ===== 窗口图标（参考 SDL_SetWindowIcon） ===== */
+void   leno_gui_platform_set_window_icon(LenoGUIPlatformWindow* win, const uint32_t* pixels, int w, int h);
+
+/* ===== 窗口最小/最大尺寸限制（参考 SDL_SetWindowMinimumSize / SDL_SetWindowMaximumSize） ===== */
+void   leno_gui_platform_set_window_minimum_size(LenoGUIPlatformWindow* win, int min_w, int min_h);
+void   leno_gui_platform_set_window_maximum_size(LenoGUIPlatformWindow* win, int max_w, int max_h);
+
 /* ===== 消息框（参考 SDL_ShowSimpleMessageBox） ===== */
 int    leno_gui_platform_show_message_box(const char* title, const char* message, int type);
+
+/* ===== 文件对话框结果处理（由主循环调用，线程安全） ===== */
+int    leno_gui_platform_process_filedialog_result(void);
 
 /* ===== 高精度计时器（参考 SDL_GetTicks / SDL_GetPerformanceCounter） ===== */
 uint64_t leno_gui_platform_get_ticks(void);

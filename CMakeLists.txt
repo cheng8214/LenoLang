@@ -107,7 +107,7 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(leno PRIVATE ws2_32 gdi32 user32)
+    target_link_libraries(leno PRIVATE ws2_32 gdi32 user32 comdlg32)
     if(MINGW)
         target_link_options(leno PRIVATE -municode)
     endif()

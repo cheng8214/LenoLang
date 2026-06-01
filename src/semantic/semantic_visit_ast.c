@@ -2637,10 +2637,31 @@ void visit(Semantic* s, Ast* ast) {
                     visit(s, index_ast);
                 }
             } else {
-                ast->u.module_access.ref.kind = module_sym->kind;
-                ast->u.module_access.ref.index = module_sym->index;
-                ast->u.module_access.ref.name = strdup(module_sym->name);
-                ast->u.module_access.ref.type_kind = module_sym->type ? module_sym->type->kind : TYPE_ANY;
+                // 检查是否是原生模块的常量访问
+                const char* actual_module = native_resolve_module_alias(ast->u.module_access.module_name);
+                if (native_is_module(actual_module)) {
+                    bool found = false;
+                    native_find_module_const(actual_module, ast->u.module_access.member_name, &found);
+                    if (!found) {
+                        // 不是常量，可能是方法名被误解析为 MODULE_ACCESS
+                        // 报告错误
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "模块 '%s' 中没有常量 '%s'，如果是方法调用请加括号 ()",
+                                 actual_module, ast->u.module_access.member_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                    // 原生模块常量：保留 AST_MODULE_ACCESS，设置类型为 TYPE_INT
+                    ast->u.module_access.ref.kind = SYM_MODULE;
+                    ast->u.module_access.ref.index = 0;
+                    ast->u.module_access.ref.name = strdup(ast->u.module_access.module_name);
+                    ast->u.module_access.ref.type_kind = TYPE_INT;
+                } else {
+                    // .leno 用户模块：按原有逻辑处理
+                    ast->u.module_access.ref.kind = module_sym->kind;
+                    ast->u.module_access.ref.index = module_sym->index;
+                    ast->u.module_access.ref.name = strdup(module_sym->name);
+                    ast->u.module_access.ref.type_kind = module_sym->type ? module_sym->type->kind : TYPE_ANY;
+                }
             }
             break;
         }

@@ -1,0 +1,85 @@
+// 日志系统测试
+// 用法: build\leno.exe test\test_guis_log.leno
+
+import guis
+
+print("=== 日志系统测试 ===")
+print("")
+
+// ===== 测试 1: 常量检查 =====
+print("[测试1] 日志常量值检查")
+assert_eq(guis.LOG_CATEGORY_APPLICATION, 0)
+assert_eq(guis.LOG_CATEGORY_RENDER, 5)
+assert_eq(guis.LOG_CATEGORY_WINDOW, 8)
+
+assert_eq(guis.LOG_PRIORITY_TRACE, 1)
+assert_eq(guis.LOG_PRIORITY_DEBUG, 3)
+assert_eq(guis.LOG_PRIORITY_INFO, 4)
+assert_eq(guis.LOG_PRIORITY_WARN, 5)
+assert_eq(guis.LOG_PRIORITY_ERROR, 6)
+assert_eq(guis.LOG_PRIORITY_CRITICAL, 7)
+print("  常量检查通过")
+
+// ===== 测试 2: 默认优先级 =====
+print("")
+print("[测试2] 默认优先级检查")
+// 默认: APPLICATION=INFO, 其他=ERROR
+assert_eq(guis.log_get_priority(guis.LOG_CATEGORY_APPLICATION), guis.LOG_PRIORITY_INFO)
+assert_eq(guis.log_get_priority(guis.LOG_CATEGORY_RENDER), guis.LOG_PRIORITY_ERROR)
+print("  默认优先级检查通过")
+
+// ===== 测试 3: 设置和获取优先级 =====
+print("")
+print("[测试3] 设置/获取优先级")
+guis.log_set_priority(guis.LOG_CATEGORY_RENDER, guis.LOG_PRIORITY_DEBUG)
+assert_eq(guis.log_get_priority(guis.LOG_CATEGORY_RENDER), guis.LOG_PRIORITY_DEBUG)
+
+guis.log_set_priority(guis.LOG_CATEGORY_APPLICATION, guis.LOG_PRIORITY_WARN)
+assert_eq(guis.log_get_priority(guis.LOG_CATEGORY_APPLICATION), guis.LOG_PRIORITY_WARN)
+
+// 恢复
+guis.log_set_priority(guis.LOG_CATEGORY_APPLICATION, guis.LOG_PRIORITY_INFO)
+guis.log_set_priority(guis.LOG_CATEGORY_RENDER, guis.LOG_PRIORITY_ERROR)
+print("  设置/获取优先级通过")
+
+// ===== 测试 4: 全部优先级设置 =====
+print("")
+print("[测试4] 全局优先级设置")
+guis.log_set_all_priority(guis.LOG_PRIORITY_WARN)
+assert_eq(guis.log_get_priority(guis.LOG_CATEGORY_APPLICATION), guis.LOG_PRIORITY_WARN)
+assert_eq(guis.log_get_priority(guis.LOG_CATEGORY_RENDER), guis.LOG_PRIORITY_WARN)
+assert_eq(guis.log_get_priority(guis.LOG_CATEGORY_INPUT), guis.LOG_PRIORITY_WARN)
+
+// 恢复默认
+guis.log_set_all_priority(guis.LOG_PRIORITY_INFO)
+print("  全局优先级设置通过")
+
+// ===== 测试 5: 日志输出（各层级） =====
+print("")
+print("[测试5] 各级别日志输出")
+print("  以下应输出 info/warn/error/critical，不应输出 trace/debug:")
+guis.log_trace("这条 TRACE 日志不应出现")
+guis.log_debug("这条 DEBUG 日志不应出现")
+guis.log_info("这是一条 INFO 日志")
+guis.log_warn("这是一条 WARN 日志")
+guis.log_error("这是一条 ERROR 日志")
+guis.log_critical("这是一条 CRITICAL 日志")
+print("  日志输出测试完成")
+
+// ===== 测试 6: 过滤验证 =====
+print("")
+print("[测试6] 过滤级别验证")
+// 设为 ERROR 级别，INFO/WARN 不应该输出
+guis.log_set_priority(guis.LOG_CATEGORY_APPLICATION, guis.LOG_PRIORITY_ERROR)
+print("  以下应只输出 error/critical:")
+guis.log_info("这条 INFO 不应该出现")
+guis.log_warn("这条 WARN 不应该出现")
+guis.log_error("这条 ERROR 应该出现")
+guis.log_critical("这条 CRITICAL 应该出现")
+
+// 恢复
+guis.log_set_priority(guis.LOG_CATEGORY_APPLICATION, guis.LOG_PRIORITY_INFO)
+print("  过滤验证完成")
+
+print("")
+print("=== 日志系统测试全部通过 ===")

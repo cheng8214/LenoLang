@@ -35,6 +35,7 @@ ObjGUIWindow* as_window(Value v);
 ObjGUIRenderer* as_renderer(Value v);
 ObjGUIFont* as_font(Value v);
 ObjArray* make_int_array2(int a, int b);
+ObjGUIWindow* as_window_from_platform(LenoGUIPlatformWindow* pw);
 
 /* 事件字符串键（由 guis.c 定义） */
 extern ObjString* str_key_type;
@@ -69,6 +70,9 @@ ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWindow* w
 
 /* 调用 Leno 闭包 */
 Value call_leno_closure(Value callee, int arg_count, Value* args);
+
+/* 文件对话框结果处理（由平台层调用，确保在主线程中执行） */
+void process_filedialog_callback(const char* const* files, int nfiles, int filter_index);
 
 /* ===== Style 字段类型系统（供 LSP 使用） ===== */
 

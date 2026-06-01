@@ -2,11 +2,12 @@
  * 将平台抽象层连接到 LenoC VM
  *
  * 类型关键字:
- *   Win   - 窗口对象 (OBJ_GUI_WINDOW)
- *   Draw  - 渲染器对象 (OBJ_GUI_RENDERER)
- *   Event - 事件对象 (OBJ_GUI_EVENT )
- *
- * Win 实例方法 (win.method())
+ *   Win     - 窗口对象 (OBJ_GUI_WINDOW)
+ *   Draw    - 渲染器对象 (OBJ_GUI_RENDERER)
+ *   Event   - 事件对象 (OBJ_GUI_EVENT )
+ *   Texture - 纹理对象 (OBJ_GUI_TEXTURE)
+ *   Font    - 字体对象 (OBJ_GUI_FONT)
+ *   Rgb     - 颜色对象 (_rgb(r, g, b, a?))
  *
  * 模块级 API:
  *   guis.create_window(title, style_dict) -> Win      Style 方式创建窗口
@@ -18,12 +19,14 @@
  *   guis.load_font(name, size) -> Font                    加载系统字体
  *   guis.destroy_font(font)                               销毁字体
  *   ren.draw_text_ex(font, text, x, y)                    系统字体渲染
- *   ren.text_size_font(font, text) -> [w, h]              系统字体文字尺寸
+ *   ren.font_size(font, text) -> [w, h]                   系统字体文字尺寸
  *   guis.poll() / wait(timeout_ms)
  *   guis.get_key(key) -> bool
  *   guis.get_mouse() -> {x, y, buttons}
  *   guis.get_clipboard() / set_clipboard(text)
  *   guis.show_cursor(bool)
+ *   guis.set_cursor(cursor_type)                          设置系统光标样式
+ *   guis.file_dialog(type, callback, opts?)               系统原生文件对话框
  *   guis.msg_box(title, message, type) -> int
  *   guis.get_ticks() / get_perf_counter() / get_perf_freq()
  *   guis.delay(ms)
@@ -31,12 +34,19 @@
  *   guis.remove_timer(timer_id) -> bool                  取消定时器
  *   guis.get_display() / get_dpi()
  *   guis.run(win, onDraw, onEvent)          回调式事件循环
+ *   ren.set_logical_size(w, h)                           设置逻辑渲染尺寸
+ *   ren.get_logical_size() -> [w, h]                     获取逻辑渲染尺寸
+ *   ren.set_logical_presentation(mode)                   设置逻辑呈现模式
+ *   ren.get_logical_presentation() -> int                获取逻辑呈现模式
+ *   ren.get_logical_viewport() -> [x, y, w, h]           获取实际视口区域
+ *   ren.reset_logical_size()                             重置逻辑尺寸
  */
 
 #include "include/native.h"
 #include "include/leno_value.h"
 #include "include/leno_vm.h"
 #include "leno_guis.h"
+#include "leno_guis_log.h"
 #include "guis_internal.h"
 #include <string.h>
 
@@ -197,6 +207,10 @@ Value event_to_dict(LenoGUIEvent* ev) {
         dict_add_float_key(d, str_key_y, ev->mouse_y);
         dict_add_float_key(d, str_key_wheel_x, ev->wheel_x);
         dict_add_float_key(d, str_key_wheel_y, ev->wheel_y);
+    } else if (ev->type == LENO_GUI_EVT_DROP_FILE) {
+        dict_add_string_key(d, str_key_text, ev->drop_file);
+    } else if (ev->type == LENO_GUI_EVT_DROP_TEXT) {
+        dict_add_string_key(d, str_key_text, ev->drop_file);
     }
 
     return val_obj((Object*)event_obj);
@@ -401,6 +415,14 @@ static Value gui_show_cursor_func(int argc, Value* args) {
     return val_null();
 }
 
+/* 设置系统光标 */
+static Value gui_set_cursor_func(int argc, Value* args) {
+    (void)argc;
+    int cursor_type = val_as_int(args[0]);
+    leno_gui_platform_set_system_cursor(cursor_type);
+    return val_null();
+}
+
 /* ===== 消息框 ===== */
 
 /* 显示系统消息框 */
@@ -411,6 +433,139 @@ static Value gui_msg_box_func(int argc, Value* args) {
     int type = val_as_int(args[2]);
     int result = leno_gui_platform_show_message_box(title->chars, message->chars, type);
     return val_int(result);
+}
+
+/* ===== 文件对话框 ===== */
+
+/* 文件对话框回调状态 */
+typedef struct {
+    Value callback;     /* Leno 回调函数 */
+    int is_active;
+} FileDialogCbState;
+
+static FileDialogCbState g_filedlg_cb = { 0, 0 };  /* 零初始化，is_active=0 保证不被使用 */
+
+/* 文件对话框回调处理（必须在主线程中调用） */
+void process_filedialog_callback(const char* const* files, int nfiles, int filter_index) {
+    if (!g_filedlg_cb.is_active || val_is_null(g_filedlg_cb.callback)) return;
+
+    /* 构建文件列表数组 */
+    ObjArray* arr = arr_new(8);
+    if (files && arr) {
+        for (int i = 0; i < nfiles; i++) {
+            ObjString* s = str_copy(files[i], (int)strlen(files[i]));
+            while (arr->count >= arr->capacity) {
+                if (!arr_grow(arr)) break;
+            }
+            arr_write(arr, arr->count, val_obj((Object*)s));
+        }
+    }
+
+    Value args[2];
+    args[0] = val_obj((Object*)arr);
+    args[1] = val_int(filter_index);
+    call_leno_closure(g_filedlg_cb.callback, 2, args);
+
+    g_filedlg_cb.is_active = 0;
+    g_filedlg_cb.callback = val_null();
+}
+
+/* 显示文件对话框 */
+static Value gui_file_dialog_func(int argc, Value* args) {
+    (void)argc;
+    int type = val_as_int(args[0]);      /* 对话框类型 */
+    Value callback_val = args[1];        /* 回调函数 */
+
+    /* 可选参数：过滤器、默认路径等 */
+    LenoGUIFileFilter* filters = NULL;
+    int nfilters = 0;
+    const char* default_path = NULL;
+    int allow_many = 0;
+    const char* title = NULL;
+    LenoGUIPlatformWindow* win = NULL;
+
+    if (argc >= 3 && val_is_obj(args[2])) {
+        ObjDict* opts = (ObjDict*)val_as_obj(args[2]);
+        if (opts && opts->header.type == OBJ_DICT) {
+            /* 读取 title */
+            ObjString* key_title = str_copy("title", 5);
+            Value vtitle = dict_get(opts, key_title);
+            if (!val_is_null(vtitle) && val_is_obj(vtitle)) {
+                Object* obj = val_as_obj(vtitle);
+                if (obj->type == OBJ_STRING) title = ((ObjString*)obj)->chars;
+            }
+
+            /* 读取 default_path */
+            ObjString* key_path = str_copy("path", 4);
+            Value vpath = dict_get(opts, key_path);
+            if (!val_is_null(vpath) && val_is_obj(vpath)) {
+                Object* obj = val_as_obj(vpath);
+                if (obj->type == OBJ_STRING) default_path = ((ObjString*)obj)->chars;
+            }
+
+            /* 读取 allow_many */
+            ObjString* key_many = str_copy("multiple", 8);
+            Value vmany = dict_get(opts, key_many);
+            if (!val_is_null(vmany) && val_as_bool(vmany)) allow_many = 1;
+
+            /* 读取 filters */
+            ObjString* key_filters = str_copy("filters", 7);
+            Value vfilters = dict_get(opts, key_filters);
+            if (!val_is_null(vfilters) && val_is_obj(vfilters)) {
+                Object* obj = val_as_obj(vfilters);
+                if (obj->type == OBJ_ARRAY) {
+                    ObjArray* fa = (ObjArray*)obj;
+                    nfilters = fa->count;
+                    filters = (LenoGUIFileFilter*)malloc(nfilters * sizeof(LenoGUIFileFilter));
+                    if (filters) {
+                        memset(filters, 0, nfilters * sizeof(LenoGUIFileFilter));
+                        for (int i = 0; i < nfilters; i++) {
+                            Value vf = fa->elements[i];
+                            if (val_is_obj(vf) && val_as_obj(vf)->type == OBJ_DICT) {
+                                ObjDict* fd = (ObjDict*)val_as_obj(vf);
+                                ObjString* kn = str_copy("name", 4);
+                                ObjString* kp = str_copy("pattern", 7);
+                                Value vn = dict_get(fd, kn);
+                                Value vp = dict_get(fd, kp);
+                                if (!val_is_null(vn) && val_is_obj(vn)) {
+                                    filters[i].name = ((ObjString*)val_as_obj(vn))->chars;
+                                }
+                                if (!val_is_null(vp) && val_is_obj(vp)) {
+                                    filters[i].pattern = ((ObjString*)val_as_obj(vp))->chars;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* 读取 window（可选） */
+            ObjString* key_win = str_copy("window", 6);
+            Value vwin = dict_get(opts, key_win);
+            if (!val_is_null(vwin)) {
+                win = as_window(vwin)->platform;
+            }
+        }
+    }
+
+    /* 保存回调 */
+    g_filedlg_cb.callback = callback_val;
+    g_filedlg_cb.is_active = 1;
+
+    /* 显示对话框（回调通过事件队列投递到主线程） */
+    leno_gui_platform_show_file_dialog(type, NULL, NULL,
+                                        win, filters, nfilters,
+                                        default_path, allow_many, title);
+
+    if (filters) free(filters);
+    return val_null();
+}
+
+/* 标记文件对话框回调 */
+void guis_mark_filedlg_callback(void) {
+    if (g_filedlg_cb.is_active) {
+        gc_mark_value(g_filedlg_cb.callback);
+    }
 }
 
 /* ===== 定时器回调 ===== */
@@ -473,11 +628,15 @@ static void clear_all_timers(void) {
 }
 
 void guis_mark_extra_roots(void) {
-    if (!g_timers_initialized) return;
-    for (int i = 0; i < LENO_GUI_MAX_TIMERS; i++) {
-        if (g_timers[i].active) {
-            gc_mark_value(g_timers[i].callback);
+    if (g_timers_initialized) {
+        for (int i = 0; i < LENO_GUI_MAX_TIMERS; i++) {
+            if (g_timers[i].active) {
+                gc_mark_value(g_timers[i].callback);
+            }
         }
+    }
+    if (g_filedlg_cb.is_active) {
+        gc_mark_value(g_filedlg_cb.callback);
     }
 }
 
@@ -631,6 +790,10 @@ static Value gui_run_func(int argc, Value* args) {
         if (process_timers()) {
             leno_gui_platform_request_redraw();
         }
+
+        /* 每帧请求重绘，确保流畅渲染 */
+        leno_gui_platform_request_redraw();
+
         if (!leno_gui_platform_iterate_main_callbacks()) break;
 
         /* 每 60 帧触发一次 GC，防止事件循环中内存泄漏 */
@@ -676,6 +839,82 @@ static Value gui_rgb_func(int argc, Value* args) {
     return val_obj((Object*)rgb);
 }
 
+/* 辅助：从 Value 获取 C 字符串 */
+static const char* value_to_cstr(Value v) {
+    if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+        return ((ObjString*)val_as_obj(v))->chars;
+    }
+    return "";
+}
+
+/* ===== 日志系统 Native Wrappers ===== */
+
+/* guis.log_set_priority(category, priority) */
+static Value gui_log_set_priority_func(int argc, Value* args) {
+    (void)argc;
+    int category = (int)val_as_int(args[0]);
+    int priority = (int)val_as_int(args[1]);
+    leno_gui_log_set_priority(category, priority);
+    return val_null();
+}
+
+/* guis.log_set_all_priority(priority) */
+static Value gui_log_set_all_priority_func(int argc, Value* args) {
+    (void)argc;
+    int priority = (int)val_as_int(args[0]);
+    leno_gui_log_set_all_priority(priority);
+    return val_null();
+}
+
+/* guis.log_get_priority(category) -> int */
+static Value gui_log_get_priority_func(int argc, Value* args) {
+    (void)argc;
+    int category = (int)val_as_int(args[0]);
+    return val_int(leno_gui_log_get_priority(category));
+}
+
+/* guis.log_trace(msg) */
+static Value gui_log_trace_func(int argc, Value* args) {
+    (void)argc;
+    leno_gui_log_trace("%s", value_to_cstr(args[0]));
+    return val_null();
+}
+
+/* guis.log_debug(msg) */
+static Value gui_log_debug_func(int argc, Value* args) {
+    (void)argc;
+    leno_gui_log_debug("%s", value_to_cstr(args[0]));
+    return val_null();
+}
+
+/* guis.log_info(msg) */
+static Value gui_log_info_func(int argc, Value* args) {
+    (void)argc;
+    leno_gui_log_info("%s", value_to_cstr(args[0]));
+    return val_null();
+}
+
+/* guis.log_warn(msg) */
+static Value gui_log_warn_func(int argc, Value* args) {
+    (void)argc;
+    leno_gui_log_warn("%s", value_to_cstr(args[0]));
+    return val_null();
+}
+
+/* guis.log_error(msg) */
+static Value gui_log_error_func(int argc, Value* args) {
+    (void)argc;
+    leno_gui_log_error("%s", value_to_cstr(args[0]));
+    return val_null();
+}
+
+/* guis.log_critical(msg) */
+static Value gui_log_critical_func(int argc, Value* args) {
+    (void)argc;
+    leno_gui_log_critical("%s", value_to_cstr(args[0]));
+    return val_null();
+}
+
 /* 前向声明：Draw / Win 实例方法注册 */
 void guis_init_instance_methods(void);
 
@@ -688,6 +927,7 @@ void guis_init_module(void) {
     TypeKind obj_2int[] = {TYPE_ANY, TYPE_INT, TYPE_INT};
     TypeKind obj_2func[] = {TYPE_ANY, TYPE_ANY, TYPE_ANY};
     TypeKind int_params[] = {TYPE_INT};
+    TypeKind int_2int[] = {TYPE_INT, TYPE_INT};
     TypeKind str_2int[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
     TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
     TypeKind bool_params[] = {TYPE_BOOL};
@@ -715,6 +955,11 @@ void guis_init_module(void) {
 
     /* ===== 光标控制 ===== */
     native_register_module_method("guis", "show_cursor", gui_show_cursor_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_params);
+    native_register_module_method("guis", "set_cursor", gui_set_cursor_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
+
+    /* ===== 文件对话框 ===== */
+    TypeKind int_func_dict[] = {TYPE_INT, TYPE_ANY, TYPE_ANY};
+    native_register_module_method("guis", "file_dialog", gui_file_dialog_func, -1, 2, 3, TYPE_NULL, TYPE_UNKNOWN, int_func_dict);
 
     /* ===== 消息框 ===== */
     native_register_module_method("guis", "msg_box", gui_msg_box_func, 3, -1, -1, TYPE_INT, TYPE_UNKNOWN, str_2int);
@@ -740,6 +985,152 @@ void guis_init_module(void) {
 
     /* ===== 回调式事件循环 ===== */
     native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_2func);
+
+    /* ===== 模块常量：按键码 ===== */
+    native_register_module_const("guis", "KEY_UNKNOWN",    LENO_GUI_KEY_UNKNOWN);
+    native_register_module_const("guis", "KEY_RETURN",     LENO_GUI_KEY_RETURN);
+    native_register_module_const("guis", "KEY_ESCAPE",     LENO_GUI_KEY_ESCAPE);
+    native_register_module_const("guis", "KEY_BACKSPACE",  LENO_GUI_KEY_BACKSPACE);
+    native_register_module_const("guis", "KEY_TAB",        LENO_GUI_KEY_TAB);
+    native_register_module_const("guis", "KEY_SPACE",      LENO_GUI_KEY_SPACE);
+    native_register_module_const("guis", "KEY_DELETE",     LENO_GUI_KEY_DELETE);
+    native_register_module_const("guis", "KEY_LEFT",       LENO_GUI_KEY_LEFT);
+    native_register_module_const("guis", "KEY_RIGHT",      LENO_GUI_KEY_RIGHT);
+    native_register_module_const("guis", "KEY_UP",         LENO_GUI_KEY_UP);
+    native_register_module_const("guis", "KEY_DOWN",       LENO_GUI_KEY_DOWN);
+    native_register_module_const("guis", "KEY_INSERT",     LENO_GUI_KEY_INSERT);
+    native_register_module_const("guis", "KEY_HOME",       LENO_GUI_KEY_HOME);
+    native_register_module_const("guis", "KEY_END",        LENO_GUI_KEY_END);
+    native_register_module_const("guis", "KEY_PAGEUP",     LENO_GUI_KEY_PAGEUP);
+    native_register_module_const("guis", "KEY_PAGEDOWN",   LENO_GUI_KEY_PAGEDOWN);
+    native_register_module_const("guis", "KEY_F1",         LENO_GUI_KEY_F1);
+    native_register_module_const("guis", "KEY_F2",         LENO_GUI_KEY_F2);
+    native_register_module_const("guis", "KEY_F3",         LENO_GUI_KEY_F3);
+    native_register_module_const("guis", "KEY_F4",         LENO_GUI_KEY_F4);
+    native_register_module_const("guis", "KEY_F5",         LENO_GUI_KEY_F5);
+    native_register_module_const("guis", "KEY_F6",         LENO_GUI_KEY_F6);
+    native_register_module_const("guis", "KEY_F7",         LENO_GUI_KEY_F7);
+    native_register_module_const("guis", "KEY_F8",         LENO_GUI_KEY_F8);
+    native_register_module_const("guis", "KEY_F9",         LENO_GUI_KEY_F9);
+    native_register_module_const("guis", "KEY_F10",        LENO_GUI_KEY_F10);
+    native_register_module_const("guis", "KEY_F11",        LENO_GUI_KEY_F11);
+    native_register_module_const("guis", "KEY_F12",        LENO_GUI_KEY_F12);
+    native_register_module_const("guis", "KEY_LSHIFT",     LENO_GUI_KEY_LSHIFT);
+    native_register_module_const("guis", "KEY_RSHIFT",     LENO_GUI_KEY_RSHIFT);
+    native_register_module_const("guis", "KEY_LCTRL",      LENO_GUI_KEY_LCTRL);
+    native_register_module_const("guis", "KEY_RCTRL",      LENO_GUI_KEY_RCTRL);
+    native_register_module_const("guis", "KEY_LALT",       LENO_GUI_KEY_LALT);
+    native_register_module_const("guis", "KEY_RALT",       LENO_GUI_KEY_RALT);
+    native_register_module_const("guis", "KEY_CAPSLOCK",   LENO_GUI_KEY_CAPSLOCK);
+    native_register_module_const("guis", "KEY_NUMLOCK",    LENO_GUI_KEY_NUMLOCK);
+
+    /* ===== 模块常量：修饰键标志 ===== */
+    native_register_module_const("guis", "MOD_SHIFT",      LENO_GUI_MOD_SHIFT);
+    native_register_module_const("guis", "MOD_CTRL",       LENO_GUI_MOD_CTRL);
+    native_register_module_const("guis", "MOD_ALT",        LENO_GUI_MOD_ALT);
+    native_register_module_const("guis", "MOD_SUPER",      LENO_GUI_MOD_SUPER);
+
+    /* ===== 模块常量：鼠标按钮 ===== */
+    native_register_module_const("guis", "MOUSE_LEFT",     LENO_GUI_MOUSE_LEFT);
+    native_register_module_const("guis", "MOUSE_MIDDLE",   LENO_GUI_MOUSE_MIDDLE);
+    native_register_module_const("guis", "MOUSE_RIGHT",    LENO_GUI_MOUSE_RIGHT);
+
+    /* ===== 模块常量：事件类型 ===== */
+    native_register_module_const("guis", "EVT_QUIT",              LENO_GUI_EVT_QUIT);
+    native_register_module_const("guis", "EVT_WINDOW_CLOSE",      LENO_GUI_EVT_WINDOW_CLOSE);
+    native_register_module_const("guis", "EVT_WINDOW_RESIZE",     LENO_GUI_EVT_WINDOW_RESIZE);
+    native_register_module_const("guis", "EVT_WINDOW_MOVE",       LENO_GUI_EVT_WINDOW_MOVE);
+    native_register_module_const("guis", "EVT_WINDOW_FOCUS",      LENO_GUI_EVT_WINDOW_FOCUS);
+    native_register_module_const("guis", "EVT_WINDOW_UNFOCUS",    LENO_GUI_EVT_WINDOW_UNFOCUS);
+    native_register_module_const("guis", "EVT_WINDOW_SHOW",       LENO_GUI_EVT_WINDOW_SHOW);
+    native_register_module_const("guis", "EVT_WINDOW_HIDE",       LENO_GUI_EVT_WINDOW_HIDE);
+    native_register_module_const("guis", "EVT_WINDOW_EXPOSED",    LENO_GUI_EVT_WINDOW_EXPOSED);
+    native_register_module_const("guis", "EVT_KEY_DOWN",          LENO_GUI_EVT_KEY_DOWN);
+    native_register_module_const("guis", "EVT_KEY_UP",            LENO_GUI_EVT_KEY_UP);
+    native_register_module_const("guis", "EVT_TEXT_INPUT",        LENO_GUI_EVT_TEXT_INPUT);
+    native_register_module_const("guis", "EVT_MOUSE_MOVE",        LENO_GUI_EVT_MOUSE_MOVE);
+    native_register_module_const("guis", "EVT_MOUSE_DOWN",        LENO_GUI_EVT_MOUSE_DOWN);
+    native_register_module_const("guis", "EVT_MOUSE_UP",          LENO_GUI_EVT_MOUSE_UP);
+    native_register_module_const("guis", "EVT_MOUSE_WHEEL",       LENO_GUI_EVT_MOUSE_WHEEL);
+    native_register_module_const("guis", "EVT_DROP_FILE",         LENO_GUI_EVT_DROP_FILE);
+    native_register_module_const("guis", "EVT_DROP_TEXT",         LENO_GUI_EVT_DROP_TEXT);
+    native_register_module_const("guis", "EVT_DROP_BEGIN",        LENO_GUI_EVT_DROP_BEGIN);
+    native_register_module_const("guis", "EVT_DROP_COMPLETE",     LENO_GUI_EVT_DROP_COMPLETE);
+    native_register_module_const("guis", "EVT_FILEDIALOG_RESULT", LENO_GUI_EVT_FILEDIALOG_RESULT);
+
+    /* ===== 模块常量：逻辑呈现模式 ===== */
+    native_register_module_const("guis", "LOGICAL_PRESENTATION_DISABLED",      LENO_GUI_LOGICAL_PRESENTATION_DISABLED);
+    native_register_module_const("guis", "LOGICAL_PRESENTATION_STRETCH",       LENO_GUI_LOGICAL_PRESENTATION_STRETCH);
+    native_register_module_const("guis", "LOGICAL_PRESENTATION_LETTERBOX",     LENO_GUI_LOGICAL_PRESENTATION_LETTERBOX);
+    native_register_module_const("guis", "LOGICAL_PRESENTATION_OVERSCAN",      LENO_GUI_LOGICAL_PRESENTATION_OVERSCAN);
+    native_register_module_const("guis", "LOGICAL_PRESENTATION_INTEGER_SCALE", LENO_GUI_LOGICAL_PRESENTATION_INTEGER_SCALE);
+
+    /* ===== 模块常量：窗口标志 ===== */
+    native_register_module_const("guis", "WIN_RESIZABLE",     LENO_GUI_WIN_RESIZABLE);
+    native_register_module_const("guis", "WIN_FULLSCREEN",    LENO_GUI_WIN_FULLSCREEN);
+    native_register_module_const("guis", "WIN_BORDERLESS",    LENO_GUI_WIN_BORDERLESS);
+    native_register_module_const("guis", "WIN_HIDDEN",        LENO_GUI_WIN_HIDDEN);
+    native_register_module_const("guis", "WIN_ALWAYS_ON_TOP", LENO_GUI_WIN_ALWAYS_ON_TOP);
+
+    /* ===== 模块常量：光标类型 ===== */
+    native_register_module_const("guis", "CURSOR_DEFAULT",      LENO_GUI_CURSOR_DEFAULT);
+    native_register_module_const("guis", "CURSOR_TEXT",         LENO_GUI_CURSOR_TEXT);
+    native_register_module_const("guis", "CURSOR_WAIT",         LENO_GUI_CURSOR_WAIT);
+    native_register_module_const("guis", "CURSOR_CROSSHAIR",    LENO_GUI_CURSOR_CROSSHAIR);
+    native_register_module_const("guis", "CURSOR_PROGRESS",     LENO_GUI_CURSOR_PROGRESS);
+    native_register_module_const("guis", "CURSOR_RESIZE_NWSE",  LENO_GUI_CURSOR_RESIZE_NWSE);
+    native_register_module_const("guis", "CURSOR_RESIZE_NESW",  LENO_GUI_CURSOR_RESIZE_NESW);
+    native_register_module_const("guis", "CURSOR_RESIZE_EW",    LENO_GUI_CURSOR_RESIZE_EW);
+    native_register_module_const("guis", "CURSOR_RESIZE_NS",    LENO_GUI_CURSOR_RESIZE_NS);
+    native_register_module_const("guis", "CURSOR_MOVE",         LENO_GUI_CURSOR_MOVE);
+    native_register_module_const("guis", "CURSOR_NOT_ALLOWED",  LENO_GUI_CURSOR_NOT_ALLOWED);
+    native_register_module_const("guis", "CURSOR_POINTER",      LENO_GUI_CURSOR_POINTER);
+
+    /* ===== 模块常量：文件对话框类型 ===== */
+    native_register_module_const("guis", "FILEDIALOG_OPENFILE",   LENO_GUI_FILEDIALOG_OPENFILE);
+    native_register_module_const("guis", "FILEDIALOG_SAVEFILE",   LENO_GUI_FILEDIALOG_SAVEFILE);
+    native_register_module_const("guis", "FILEDIALOG_OPENFOLDER", LENO_GUI_FILEDIALOG_OPENFOLDER);
+
+    /* ===== 模块常量：翻转标志 ===== */
+    native_register_module_const("guis", "FLIP_NONE",       LENO_GUI_FLIP_NONE);
+    native_register_module_const("guis", "FLIP_HORIZONTAL", LENO_GUI_FLIP_HORIZONTAL);
+    native_register_module_const("guis", "FLIP_VERTICAL",   LENO_GUI_FLIP_VERTICAL);
+
+    /* ===== 模块常量：纹理访问模式 ===== */
+    native_register_module_const("guis", "TEXTUREACCESS_STATIC",    LENO_GUI_TEXTUREACCESS_STATIC);
+    native_register_module_const("guis", "TEXTUREACCESS_STREAMING", LENO_GUI_TEXTUREACCESS_STREAMING);
+    native_register_module_const("guis", "TEXTUREACCESS_TARGET",    LENO_GUI_TEXTUREACCESS_TARGET);
+
+    /* ===== 日志系统函数 ===== */
+    native_register_module_method("guis", "log_set_priority", gui_log_set_priority_func, 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2int);
+    native_register_module_method("guis", "log_set_all_priority", gui_log_set_all_priority_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
+    native_register_module_method("guis", "log_get_priority", gui_log_get_priority_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, int_params);
+    native_register_module_method("guis", "log_trace", gui_log_trace_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_params);
+    native_register_module_method("guis", "log_debug", gui_log_debug_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_params);
+    native_register_module_method("guis", "log_info", gui_log_info_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_params);
+    native_register_module_method("guis", "log_warn", gui_log_warn_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_params);
+    native_register_module_method("guis", "log_error", gui_log_error_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_params);
+    native_register_module_method("guis", "log_critical", gui_log_critical_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_params);
+
+    /* ===== 模块常量：日志类别 ===== */
+    native_register_module_const("guis", "LOG_CATEGORY_APPLICATION", LENO_GUI_LOG_CATEGORY_APPLICATION);
+    native_register_module_const("guis", "LOG_CATEGORY_ERROR",       LENO_GUI_LOG_CATEGORY_ERROR);
+    native_register_module_const("guis", "LOG_CATEGORY_ASSERT",      LENO_GUI_LOG_CATEGORY_ASSERT);
+    native_register_module_const("guis", "LOG_CATEGORY_SYSTEM",      LENO_GUI_LOG_CATEGORY_SYSTEM);
+    native_register_module_const("guis", "LOG_CATEGORY_VIDEO",       LENO_GUI_LOG_CATEGORY_VIDEO);
+    native_register_module_const("guis", "LOG_CATEGORY_RENDER",      LENO_GUI_LOG_CATEGORY_RENDER);
+    native_register_module_const("guis", "LOG_CATEGORY_INPUT",       LENO_GUI_LOG_CATEGORY_INPUT);
+    native_register_module_const("guis", "LOG_CATEGORY_EVENT",       LENO_GUI_LOG_CATEGORY_EVENT);
+    native_register_module_const("guis", "LOG_CATEGORY_WINDOW",      LENO_GUI_LOG_CATEGORY_WINDOW);
+
+    /* ===== 模块常量：日志优先级 ===== */
+    native_register_module_const("guis", "LOG_PRIORITY_TRACE",    LENO_GUI_LOG_PRIORITY_TRACE);
+    native_register_module_const("guis", "LOG_PRIORITY_VERBOSE",  LENO_GUI_LOG_PRIORITY_VERBOSE);
+    native_register_module_const("guis", "LOG_PRIORITY_DEBUG",    LENO_GUI_LOG_PRIORITY_DEBUG);
+    native_register_module_const("guis", "LOG_PRIORITY_INFO",     LENO_GUI_LOG_PRIORITY_INFO);
+    native_register_module_const("guis", "LOG_PRIORITY_WARN",     LENO_GUI_LOG_PRIORITY_WARN);
+    native_register_module_const("guis", "LOG_PRIORITY_ERROR",    LENO_GUI_LOG_PRIORITY_ERROR);
+    native_register_module_const("guis", "LOG_PRIORITY_CRITICAL", LENO_GUI_LOG_PRIORITY_CRITICAL);
 
     /* 注册 Draw 实例方法 */
     guis_init_instance_methods();

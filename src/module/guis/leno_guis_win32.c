@@ -34,6 +34,16 @@ static LenoGUIEventEntry* g_event_free_list = NULL;
 static CRITICAL_SECTION g_event_cs;
 static int g_cs_initialized = 0;
 
+/* 文件对话框结果（通过事件队列从工作线程投递到主线程） */
+typedef struct {
+    char** files;
+    int nfiles;
+    int filter_index;
+} FileDialogResult;
+
+static FileDialogResult* g_filedlg_result = NULL;
+static CRITICAL_SECTION g_filedlg_result_cs;
+
 /* 事件过滤器（借鉴 SDL3） */
 typedef struct LenoGUIEventFilter {
     void* userdata;
@@ -215,6 +225,12 @@ struct LenoGUIPlatformWindow {
     int is_borderless;                  /* 是否无边框窗口 */
     int drag_area_enabled;              /* 是否启用拖动区域限制 */
     RECT drag_area;                     /* 可拖动区域（客户区坐标） */
+    int drag_drop_enabled;              /* 是否启用拖放（参考 SDL3） */
+    int min_w;                          /* 最小宽度 */
+    int min_h;                          /* 最小高度 */
+    int max_w;                          /* 最大宽度 */
+    int max_h;                          /* 最大高度 */
+    HCURSOR custom_cursor;              /* 自定义光标句柄 */
 };
 
 /* ===== 平台渲染器结构 ===== */
@@ -227,6 +243,7 @@ struct LenoGUIPlatformRenderer {
     uint32_t* pixels;
     int width;
     int height;
+    int pitch;         /* 每行字节数（借鉴 SDL3 surface pitch） */
     uint8_t draw_r;
     uint8_t draw_g;
     uint8_t draw_b;
@@ -235,6 +252,14 @@ struct LenoGUIPlatformRenderer {
     int clip_x, clip_y, clip_w, clip_h;
     int clip_enabled;
     int needs_resize;  /* 窗口大小变化标志，参考 SDL3 surface_valid */
+    
+    /* 逻辑呈现模式（借鉴 SDL3） */
+    int logical_w;     /* 逻辑宽度 */
+    int logical_h;     /* 逻辑高度 */
+    int logical_mode;  /* 呈现模式 */
+    float scale_x;     /* X 轴缩放 */
+    float scale_y;     /* Y 轴缩放 */
+    int logical_enabled; /* 是否启用逻辑大小 */
 };
 
 /* ===== 平台纹理结构 ===== */
@@ -244,7 +269,14 @@ struct LenoGUIPlatformTexture {
     int width;
     int height;
     int pitch;
+    int access;           /* 访问模式: STATIC/STREAMING/TARGET */
+    /* 渲染目标支持 */
+    HDC target_dc;        /* 渲染目标 DC */
+    HBITMAP target_bitmap;
+    HBITMAP old_bitmap;
 };
+
+/* 渲染目标定义在 swrender.c */
 
 #include "leno_guis_swrender.c"
 
@@ -253,6 +285,28 @@ struct LenoGUIPlatformTexture {
 static const wchar_t* LENO_GUI_CLASS = L"LenoGUIWindow";
 static int g_class_registered = 0;
 static int g_gui_initialized = 0;
+
+/* ===== 光标管理（参考 SDL3） ===== */
+static HCURSOR g_system_cursors[LENO_GUI_CURSOR_COUNT] = { NULL };
+static HCURSOR g_custom_cursor = NULL;
+static int g_custom_cursor_id = 0;
+
+/* 初始化系统光标表 */
+static void init_system_cursors(void) {
+    if (g_system_cursors[LENO_GUI_CURSOR_DEFAULT]) return; /* 已初始化 */
+    g_system_cursors[LENO_GUI_CURSOR_DEFAULT]    = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_ARROW);
+    g_system_cursors[LENO_GUI_CURSOR_TEXT]       = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_IBEAM);
+    g_system_cursors[LENO_GUI_CURSOR_WAIT]       = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_WAIT);
+    g_system_cursors[LENO_GUI_CURSOR_CROSSHAIR]  = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_CROSS);
+    g_system_cursors[LENO_GUI_CURSOR_PROGRESS]   = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_APPSTARTING);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_NWSE]= LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_SIZENWSE);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_NESW]= LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_SIZENESW);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_EW]  = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_SIZEWE);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_NS]  = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_SIZENS);
+    g_system_cursors[LENO_GUI_CURSOR_MOVE]       = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_SIZEALL);
+    g_system_cursors[LENO_GUI_CURSOR_NOT_ALLOWED]= LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_NO);
+    g_system_cursors[LENO_GUI_CURSOR_POINTER]    = LoadCursorW(NULL, (LPCWSTR)(ULONG_PTR)IDC_HAND);
+}
 
 /* ===== Win32 虚拟键码到 Leno 键码映射 ===== */
 
@@ -415,27 +469,10 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             return 1;
         }
         case WM_PAINT: {
+            /* 所有绘制由 render_present 处理，WM_PAINT 只需验证区域 */
+            /* 这样可以避免 WM_PAINT 和 render_present 之间的绘制冲突 */
             PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-            
-            /* 直接绘制后备缓冲区到窗口 */
-            if (win && win->renderer && win->renderer->back_dc && hdc) {
-                RECT clientRect;
-                GetClientRect(hwnd, &clientRect);
-                int win_w = clientRect.right - clientRect.left;
-                int win_h = clientRect.bottom - clientRect.top;
-                
-                if (win->renderer->width == win_w && win->renderer->height == win_h) {
-                    BitBlt(hdc, 0, 0, win->renderer->width, win->renderer->height,
-                           win->renderer->back_dc, 0, 0, SRCCOPY);
-                } else if (win_w > 0 && win_h > 0) {
-                    SetStretchBltMode(hdc, COLORONCOLOR);
-                    StretchBlt(hdc, 0, 0, win_w, win_h,
-                               win->renderer->back_dc, 0, 0,
-                               win->renderer->width, win->renderer->height, SRCCOPY);
-                }
-            }
-            
+            BeginPaint(hwnd, &ps);
             EndPaint(hwnd, &ps);
             return 0;
         }
@@ -581,6 +618,74 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             push_window_event(win, wparam ? LENO_GUI_EVT_WINDOW_SHOW : LENO_GUI_EVT_WINDOW_HIDE, 0, 0);
             return 0;
         }
+        case WM_GETMINMAXINFO: {
+            if (win) {
+                MINMAXINFO* mmi = (MINMAXINFO*)lparam;
+                if (win->min_w > 0 && win->min_h > 0) {
+                    mmi->ptMinTrackSize.x = win->min_w;
+                    mmi->ptMinTrackSize.y = win->min_h;
+                }
+                if (win->max_w > 0 && win->max_h > 0) {
+                    mmi->ptMaxTrackSize.x = win->max_w;
+                    mmi->ptMaxTrackSize.y = win->max_h;
+                }
+            }
+            return 0;
+        }
+        case WM_DROPFILES: {
+            /* 文件拖放处理（参考 SDL3 WM_DROPFILES） */
+            if (win) {
+                HDROP drop = (HDROP)wparam;
+                UINT count = DragQueryFileW(drop, 0xFFFFFFFF, NULL, 0);
+                LenoGUIEvent ev;
+                memset(&ev, 0, sizeof(ev));
+                ev.type = LENO_GUI_EVT_DROP_BEGIN;
+                ev.timestamp = GetTickCount64();
+                ev.window_id = win->window_id;
+                event_queue_push(&ev);
+
+                for (UINT i = 0; i < count; i++) {
+                    UINT size = DragQueryFileW(drop, i, NULL, 0) + 1;
+                    wchar_t* buffer = (wchar_t*)malloc(size * sizeof(wchar_t));
+                    if (buffer) {
+                        if (DragQueryFileW(drop, i, buffer, size)) {
+                            memset(&ev, 0, sizeof(ev));
+                            ev.type = LENO_GUI_EVT_DROP_FILE;
+                            ev.timestamp = GetTickCount64();
+                            ev.window_id = win->window_id;
+                            WideCharToMultiByte(CP_UTF8, 0, buffer, -1,
+                                                ev.drop_file, sizeof(ev.drop_file), NULL, NULL);
+                            ev.drop_file[sizeof(ev.drop_file) - 1] = '\0';
+                            event_queue_push(&ev);
+                        }
+                        free(buffer);
+                    }
+                }
+                memset(&ev, 0, sizeof(ev));
+                ev.type = LENO_GUI_EVT_DROP_COMPLETE;
+                ev.timestamp = GetTickCount64();
+                ev.window_id = win->window_id;
+                event_queue_push(&ev);
+
+                DragFinish(drop);
+            }
+            return 0;
+        }
+        case WM_SETCURSOR: {
+            /* 光标设置（参考 SDL3） */
+            if (LOWORD(lparam) == HTCLIENT) {
+                if (g_custom_cursor) {
+                    SetCursor(g_custom_cursor);
+                    return TRUE;
+                }
+                /* 使用当前系统光标 */
+                if (g_system_cursors[LENO_GUI_CURSOR_DEFAULT]) {
+                    SetCursor(g_system_cursors[LENO_GUI_CURSOR_DEFAULT]);
+                    return TRUE;
+                }
+            }
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        }
         default:
             return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
@@ -632,6 +737,7 @@ int leno_gui_platform_init(void) {
     if (g_gui_initialized) return 1;
 
     event_queue_init();
+    InitializeCriticalSection(&g_filedlg_result_cs);
 
     if (!g_class_registered) {
         WNDCLASSEXW wc;
@@ -663,6 +769,21 @@ void leno_gui_platform_quit(void) {
         DeleteCriticalSection(&g_event_cs);
         g_cs_initialized = 0;
     }
+    
+    /* 清理文件对话框结果 */
+    EnterCriticalSection(&g_filedlg_result_cs);
+    if (g_filedlg_result) {
+        if (g_filedlg_result->files) {
+            for (int i = 0; i < g_filedlg_result->nfiles; i++) {
+                free(g_filedlg_result->files[i]);
+            }
+            free(g_filedlg_result->files);
+        }
+        free(g_filedlg_result);
+        g_filedlg_result = NULL;
+    }
+    LeaveCriticalSection(&g_filedlg_result_cs);
+    DeleteCriticalSection(&g_filedlg_result_cs);
 }
 
 LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w, int h, int flags) {
@@ -678,6 +799,12 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     win->is_fullscreen = 0;
     win->is_borderless = (flags & LENO_GUI_WIN_BORDERLESS) ? 1 : 0;
     win->drag_area_enabled = 0;
+    win->drag_drop_enabled = 0;
+    win->min_w = 0;
+    win->min_h = 0;
+    win->max_w = 0;
+    win->max_h = 0;
+    win->custom_cursor = NULL;
 
     DWORD style = WS_OVERLAPPEDWINDOW;
     if (flags & LENO_GUI_WIN_BORDERLESS) {
@@ -831,6 +958,7 @@ LenoGUIPlatformRenderer* leno_gui_platform_create_renderer(LenoGUIPlatformWindow
     ren->window = win;
     ren->width = win->width;
     ren->height = win->height;
+    ren->pitch = win->width * 4;  /* 每行 4 字节 * 宽度 */
     ren->draw_r = 0;
     ren->draw_g = 0;
     ren->draw_b = 0;
@@ -838,6 +966,14 @@ LenoGUIPlatformRenderer* leno_gui_platform_create_renderer(LenoGUIPlatformWindow
     ren->vp_x = 0; ren->vp_y = 0; ren->vp_w = ren->width; ren->vp_h = ren->height;
     ren->clip_x = 0; ren->clip_y = 0; ren->clip_w = ren->width; ren->clip_h = ren->height;
     ren->clip_enabled = 0;
+    
+    /* 初始化逻辑呈现模式（借鉴 SDL3） */
+    ren->logical_w = win->width;
+    ren->logical_h = win->height;
+    ren->logical_mode = LENO_GUI_LOGICAL_PRESENTATION_DISABLED;
+    ren->scale_x = 1.0f;
+    ren->scale_y = 1.0f;
+    ren->logical_enabled = 0;
 
     if (!create_dib_section(ren->width, ren->height, &ren->back_dc, &ren->back_bitmap,
                             &ren->old_bitmap, &ren->pixels)) {
@@ -862,6 +998,15 @@ void leno_gui_platform_destroy_renderer(LenoGUIPlatformRenderer* ren) {
 static int check_and_resize_renderer(LenoGUIPlatformRenderer* ren) {
     if (!ren || !ren->window || !ren->window->hwnd) return 0;
     
+    /* 逻辑呈现模式下，渲染器大小保持逻辑大小，不自动调整 */
+    if (ren->logical_enabled && ren->logical_mode != LENO_GUI_LOGICAL_PRESENTATION_DISABLED) {
+        /* 只需要检查是否需要重置为逻辑大小 */
+        if (ren->width != ren->logical_w || ren->height != ren->logical_h) {
+            return leno_gui_platform_renderer_resize(ren, ren->logical_w, ren->logical_h);
+        }
+        return 1;
+    }
+    
     /* 检查窗口大小是否变化 */
     RECT rect;
     if (!GetClientRect(ren->window->hwnd, &rect)) return 0;
@@ -881,36 +1026,110 @@ static int check_and_resize_renderer(LenoGUIPlatformRenderer* ren) {
 }
 
 /* 强制检查窗口大小并调整渲染器（用于 present 前） */
-static int ensure_renderer_size(LenoGUIPlatformRenderer* ren) {
-    if (!ren || !ren->window || !ren->window->hwnd) return 0;
-    
-    RECT rect;
-    if (!GetClientRect(ren->window->hwnd, &rect)) return 0;
-    int win_w = rect.right - rect.left;
-    int win_h = rect.bottom - rect.top;
-    
-    /* 如果窗口大小与渲染器不匹配，自动调整 */
-    if (win_w != ren->width || win_h != ren->height) {
-        if (win_w > 0 && win_h > 0) {
-            return leno_gui_platform_renderer_resize(ren, win_w, win_h);
-        }
-    }
-    return 1;
-}
+/* 保留供将来使用 */
+/* static int ensure_renderer_size(LenoGUIPlatformRenderer* ren) { ... } */
 
 void leno_gui_platform_render_present(LenoGUIPlatformRenderer* ren) {
     if (!ren || !ren->window || !ren->window->hwnd || !ren->back_dc) return;
-    
-    /* 自动检查并调整渲染器大小（借鉴 SDL3） */
-    if (!ensure_renderer_size(ren)) return;
-    
+
     HWND hwnd = ren->window->hwnd;
     HDC hdc = GetDC(hwnd);
-    if (hdc) {
-        /* 现在渲染器大小应该与窗口匹配，直接使用 BitBlt */
-        BitBlt(hdc, 0, 0, ren->width, ren->height, ren->back_dc, 0, 0, SRCCOPY);
-        ReleaseDC(hwnd, hdc);
+    if (!hdc) return;
+
+    /* 获取窗口实际大小 */
+    RECT clientRect;
+    GetClientRect(hwnd, &clientRect);
+    int win_w = clientRect.right - clientRect.left;
+    int win_h = clientRect.bottom - clientRect.top;
+
+    if (ren->logical_enabled && ren->logical_mode != LENO_GUI_LOGICAL_PRESENTATION_DISABLED) {
+        /* 逻辑呈现模式：使用内存DC双缓冲，避免直接在屏幕上清屏导致闪烁 */
+
+        /* 计算目标矩形 */
+        int dst_x = 0, dst_y = 0, dst_w = win_w, dst_h = win_h;
+
+        switch (ren->logical_mode) {
+            case LENO_GUI_LOGICAL_PRESENTATION_STRETCH:
+                dst_x = 0; dst_y = 0;
+                dst_w = win_w; dst_h = win_h;
+                break;
+
+            case LENO_GUI_LOGICAL_PRESENTATION_LETTERBOX:
+                {
+                    float scale_x = (float)win_w / ren->logical_w;
+                    float scale_y = (float)win_h / ren->logical_h;
+                    float scale = (scale_x < scale_y) ? scale_x : scale_y;
+                    dst_w = (int)(ren->logical_w * scale);
+                    dst_h = (int)(ren->logical_h * scale);
+                    dst_x = (win_w - dst_w) / 2;
+                    dst_y = (win_h - dst_h) / 2;
+                }
+                break;
+
+            case LENO_GUI_LOGICAL_PRESENTATION_OVERSCAN:
+                {
+                    float scale_x = (float)win_w / ren->logical_w;
+                    float scale_y = (float)win_h / ren->logical_h;
+                    float scale = (scale_x > scale_y) ? scale_x : scale_y;
+                    dst_w = (int)(ren->logical_w * scale);
+                    dst_h = (int)(ren->logical_h * scale);
+                    dst_x = (win_w - dst_w) / 2;
+                    dst_y = (win_h - dst_h) / 2;
+                }
+                break;
+
+            case LENO_GUI_LOGICAL_PRESENTATION_INTEGER_SCALE:
+                {
+                    int scale = (int)((float)win_w / ren->logical_w);
+                    int scale_y = (int)((float)win_h / ren->logical_h);
+                    if (scale_y < scale) scale = scale_y;
+                    if (scale < 1) scale = 1;
+                    dst_w = ren->logical_w * scale;
+                    dst_h = ren->logical_h * scale;
+                    dst_x = (win_w - dst_w) / 2;
+                    dst_y = (win_h - dst_h) / 2;
+                }
+                break;
+        }
+
+        /* 创建内存DC作为双缓冲 */
+        HDC mem_dc = CreateCompatibleDC(hdc);
+        if (mem_dc) {
+            HBITMAP mem_bitmap = CreateCompatibleBitmap(hdc, win_w, win_h);
+            if (mem_bitmap) {
+                HBITMAP old_bitmap = (HBITMAP)SelectObject(mem_dc, mem_bitmap);
+
+                /* 在内存DC中绘制：先清屏 */
+                RECT rect = {0, 0, win_w, win_h};
+                FillRect(mem_dc, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+
+                /* 在内存DC中绘制：再StretchBlt */
+                SetStretchBltMode(mem_dc, ren->logical_mode == LENO_GUI_LOGICAL_PRESENTATION_INTEGER_SCALE ?
+                                  COLORONCOLOR : HALFTONE);
+                StretchBlt(mem_dc, dst_x, dst_y, dst_w, dst_h,
+                           ren->back_dc, 0, 0, ren->logical_w, ren->logical_h, SRCCOPY);
+
+                /* 一次性将内存DC复制到屏幕 */
+                BitBlt(hdc, 0, 0, win_w, win_h, mem_dc, 0, 0, SRCCOPY);
+
+                SelectObject(mem_dc, old_bitmap);
+                DeleteObject(mem_bitmap);
+            }
+            DeleteDC(mem_dc);
+        }
+    } else {
+        /* 正常模式：直接复制 */
+        if (ren->width == win_w && ren->height == win_h) {
+            BitBlt(hdc, 0, 0, ren->width, ren->height, ren->back_dc, 0, 0, SRCCOPY);
+        } else if (win_w > 0 && win_h > 0) {
+            SetStretchBltMode(hdc, COLORONCOLOR);
+            StretchBlt(hdc, 0, 0, win_w, win_h,
+                       ren->back_dc, 0, 0,
+                       ren->width, ren->height, SRCCOPY);
+        }
     }
+
+    ReleaseDC(hwnd, hdc);
     ValidateRect(hwnd, NULL);
 }
 
@@ -920,6 +1139,7 @@ int leno_gui_platform_renderer_resize(LenoGUIPlatformRenderer* ren, int w, int h
     ren->pixels = NULL;
     ren->width = w;
     ren->height = h;
+    ren->pitch = w * 4;  /* 更新 pitch */
     ren->vp_x = 0; ren->vp_y = 0;
     ren->vp_w = w; ren->vp_h = h;
     ren->clip_x = 0; ren->clip_y = 0;
@@ -931,6 +1151,131 @@ int leno_gui_platform_renderer_resize(LenoGUIPlatformRenderer* ren, int w, int h
     }
     ren->needs_resize = 0;
     return 1;
+}
+
+/* ===== 逻辑呈现模式 API（借鉴 SDL3）===== */
+
+void leno_gui_platform_set_logical_size(LenoGUIPlatformRenderer* ren, int w, int h) {
+    if (!ren || w <= 0 || h <= 0) return;
+    ren->logical_w = w;
+    ren->logical_h = h;
+    ren->logical_enabled = 1;
+    
+    /* 重新创建 DIB section 为逻辑大小 */
+    destroy_dib_section(&ren->back_dc, &ren->back_bitmap, &ren->old_bitmap);
+    if (!create_dib_section(w, h, &ren->back_dc, &ren->back_bitmap, &ren->old_bitmap, &ren->pixels)) {
+        ren->logical_enabled = 0;
+        return;
+    }
+    
+    /* 更新渲染器尺寸为逻辑尺寸 */
+    ren->width = w;
+    ren->height = h;
+    ren->pitch = w * 4;
+    ren->vp_x = 0; ren->vp_y = 0;
+    ren->vp_w = w; ren->vp_h = h;
+    ren->clip_x = 0; ren->clip_y = 0;
+    ren->clip_w = w; ren->clip_h = h;
+}
+
+void leno_gui_platform_get_logical_size(LenoGUIPlatformRenderer* ren, int* w, int* h) {
+    if (!ren) {
+        if (w) *w = 0;
+        if (h) *h = 0;
+        return;
+    }
+    if (w) *w = ren->logical_w;
+    if (h) *h = ren->logical_h;
+}
+
+void leno_gui_platform_set_logical_presentation(LenoGUIPlatformRenderer* ren, int mode) {
+    if (!ren) return;
+    if (mode < LENO_GUI_LOGICAL_PRESENTATION_DISABLED || mode > LENO_GUI_LOGICAL_PRESENTATION_INTEGER_SCALE)
+        return;
+    ren->logical_mode = mode;
+    if (mode != LENO_GUI_LOGICAL_PRESENTATION_DISABLED && !ren->logical_enabled) {
+        /* 如果启用逻辑模式但未设置大小，使用当前大小 */
+        leno_gui_platform_set_logical_size(ren, ren->width, ren->height);
+    }
+}
+
+int leno_gui_platform_get_logical_presentation(LenoGUIPlatformRenderer* ren) {
+    return ren ? ren->logical_mode : LENO_GUI_LOGICAL_PRESENTATION_DISABLED;
+}
+
+void leno_gui_platform_get_logical_viewport(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h) {
+    if (!ren || !ren->logical_enabled) {
+        if (x) *x = 0;
+        if (y) *y = 0;
+        if (w) *w = 0;
+        if (h) *h = 0;
+        return;
+    }
+    
+    /* 获取窗口实际客户区大小 */
+    int win_w = ren->window->width;
+    int win_h = ren->window->height;
+    if (ren->window->hwnd) {
+        RECT clientRect;
+        GetClientRect(ren->window->hwnd, &clientRect);
+        win_w = clientRect.right - clientRect.left;
+        win_h = clientRect.bottom - clientRect.top;
+    }
+    
+    /* 计算实际显示区域 */
+    int dst_x = 0, dst_y = 0, dst_w = win_w, dst_h = win_h;
+    
+    switch (ren->logical_mode) {
+        case LENO_GUI_LOGICAL_PRESENTATION_LETTERBOX:
+            {
+                float scale_x = (float)win_w / ren->logical_w;
+                float scale_y = (float)win_h / ren->logical_h;
+                float scale = (scale_x < scale_y) ? scale_x : scale_y;
+                dst_w = (int)(ren->logical_w * scale);
+                dst_h = (int)(ren->logical_h * scale);
+                dst_x = (win_w - dst_w) / 2;
+                dst_y = (win_h - dst_h) / 2;
+            }
+            break;
+        case LENO_GUI_LOGICAL_PRESENTATION_INTEGER_SCALE:
+            {
+                int scale = (int)((float)win_w / ren->logical_w);
+                int scale_y = (int)((float)win_h / ren->logical_h);
+                if (scale_y < scale) scale = scale_y;
+                if (scale < 1) scale = 1;
+                dst_w = ren->logical_w * scale;
+                dst_h = ren->logical_h * scale;
+                dst_x = (win_w - dst_w) / 2;
+                dst_y = (win_h - dst_h) / 2;
+            }
+            break;
+    }
+    
+    if (x) *x = dst_x;
+    if (y) *y = dst_y;
+    if (w) *w = dst_w;
+    if (h) *h = dst_h;
+}
+
+void leno_gui_platform_reset_logical_size(LenoGUIPlatformRenderer* ren) {
+    if (!ren) return;
+    ren->logical_enabled = 0;
+    ren->logical_mode = LENO_GUI_LOGICAL_PRESENTATION_DISABLED;
+    
+    /* 恢复窗口实际大小 */
+    int w = ren->window->width;
+    int h = ren->window->height;
+    
+    destroy_dib_section(&ren->back_dc, &ren->back_bitmap, &ren->old_bitmap);
+    if (create_dib_section(w, h, &ren->back_dc, &ren->back_bitmap, &ren->old_bitmap, &ren->pixels)) {
+        ren->width = w;
+        ren->height = h;
+        ren->pitch = w * 4;
+        ren->vp_w = w;
+        ren->vp_h = h;
+        ren->clip_w = w;
+        ren->clip_h = h;
+    }
 }
 
 /* ===== 事件 ===== */
@@ -1162,36 +1507,6 @@ void leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* tex
     if (h) *h = rc.bottom - rc.top;
 }
 
-/* ===== 消息框（参考 SDL3 SDL_ShowSimpleMessageBox） ===== */
-
-/* 显示系统消息框：type 0=信息 1=警告 2=错误 */
-int leno_gui_platform_show_message_box(const char* title, const char* message, int type) {
-    /* UTF-8 转宽字符 */
-    int wtlen = MultiByteToWideChar(CP_UTF8, 0, title, -1, NULL, 0);
-    int wmlen = MultiByteToWideChar(CP_UTF8, 0, message, -1, NULL, 0);
-    wchar_t* wtitle = NULL;
-    wchar_t* wmsg = NULL;
-    if (wtlen > 0) {
-        wtitle = (wchar_t*)malloc(wtlen * sizeof(wchar_t));
-        MultiByteToWideChar(CP_UTF8, 0, title, -1, wtitle, wtlen);
-    }
-    if (wmlen > 0) {
-        wmsg = (wchar_t*)malloc(wmlen * sizeof(wchar_t));
-        MultiByteToWideChar(CP_UTF8, 0, message, -1, wmsg, wmlen);
-    }
-    /* 根据类型选择图标 */
-    UINT mb_type = MB_OK;
-    switch (type) {
-        case 1: mb_type |= MB_ICONWARNING; break;
-        case 2: mb_type |= MB_ICONERROR; break;
-        default: mb_type |= MB_ICONINFORMATION; break;
-    }
-    int result = MessageBoxW(NULL, wmsg, wtitle, mb_type);
-    free(wtitle);
-    free(wmsg);
-    return result;
-}
-
 /* ===== 高精度计时器（参考 SDL3 SDL_GetTicks / SDL_GetPerformanceCounter） ===== */
 
 /* 获取自系统启动以来的毫秒数 */
@@ -1239,6 +1554,541 @@ float leno_gui_platform_get_display_dpi(void) {
         ReleaseDC(NULL, hdc);
     }
     return dpi;
+}
+
+/* ===== 系统光标设置（参考 SDL3 SDL_CreateSystemCursor） ===== */
+
+void leno_gui_platform_set_system_cursor(int cursor_type) {
+    if (cursor_type < 0 || cursor_type >= LENO_GUI_CURSOR_COUNT) return;
+    init_system_cursors();
+    g_custom_cursor = NULL;
+    g_custom_cursor_id = 0;
+    if (g_system_cursors[cursor_type]) {
+        /* 将系统光标设为全局默认，WM_SETCURSOR 会使用它 */
+        /* 也可以直接调用 SetCursor */
+        SetCursor(g_system_cursors[cursor_type]);
+    }
+}
+
+/* ===== 自定义光标创建（参考 SDL3 SDL_CreateColorCursor） ===== */
+
+int leno_gui_platform_create_custom_cursor(const uint32_t* pixels, int w, int h, int hot_x, int hot_y) {
+    if (!pixels || w <= 0 || h <= 0 || hot_x < 0 || hot_y < 0 || hot_x >= w || hot_y >= h) return 0;
+
+    /* 创建 AND 掩码（全透明=全1，非透明=全0） */
+    int mask_size = ((w + 7) / 8) * h;
+    BYTE* and_mask = (BYTE*)calloc(mask_size, 1);
+    BYTE* xor_mask = (BYTE*)calloc(mask_size, 1);
+    if (!and_mask || !xor_mask) {
+        free(and_mask);
+        free(xor_mask);
+        return 0;
+    }
+
+    /* 将 32 位 ARGB 转换为 1 位单色掩码 */
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int byte_idx = y * ((w + 7) / 8) + (x / 8);
+            int bit_idx = 7 - (x % 8);
+            uint32_t pixel = pixels[y * w + x];
+            BYTE a = (BYTE)(pixel >> 24);
+
+            if (a > 128) {
+                /* 不透明：XOR 位=1 (显示颜色), AND 位=0 (保留) */
+                xor_mask[byte_idx] |= (1 << bit_idx);
+                and_mask[byte_idx] &= ~(1 << bit_idx);
+            } else {
+                /* 透明：XOR 位=0, AND 位=1 (保留背景) */
+                xor_mask[byte_idx] &= ~(1 << bit_idx);
+                and_mask[byte_idx] |= (1 << bit_idx);
+            }
+        }
+    }
+
+    /* 创建图标 */
+    HICON icon = CreateIcon(GetModuleHandleW(NULL), w, h, 1, 1, and_mask, xor_mask);
+    free(and_mask);
+    free(xor_mask);
+
+    if (!icon) return 0;
+
+    /* 销毁旧光标 */
+    if (g_custom_cursor) {
+        DestroyCursor(g_custom_cursor);
+        g_custom_cursor = NULL;
+    }
+
+    /* 从图标创建光标 */
+    ICONINFO icon_info;
+    if (GetIconInfo(icon, &icon_info)) {
+        g_custom_cursor = (HCURSOR)CopyImage(icon, IMAGE_CURSOR, w, h, LR_COPYFROMRESOURCE);
+        if (!g_custom_cursor) {
+            g_custom_cursor = CreateIconIndirect(&icon_info);
+        }
+        if (icon_info.hbmColor) DeleteObject(icon_info.hbmColor);
+        if (icon_info.hbmMask) DeleteObject(icon_info.hbmMask);
+    }
+    DestroyIcon(icon);
+
+    if (!g_custom_cursor) return 0;
+
+    g_custom_cursor_id = 1;
+    SetCursor(g_custom_cursor);
+    return 1;
+}
+
+void leno_gui_platform_destroy_custom_cursor(void) {
+    if (g_custom_cursor) {
+        DestroyCursor(g_custom_cursor);
+        g_custom_cursor = NULL;
+    }
+    g_custom_cursor_id = 0;
+}
+
+void leno_gui_platform_set_cursor(int cursor_id) {
+    if (cursor_id == 0) {
+        /* 恢复系统光标 */
+        g_custom_cursor = NULL;
+        g_custom_cursor_id = 0;
+    }
+    /* cursor_id > 0 时使用自定义光标 */
+}
+
+/* ===== 拖放支持（参考 SDL3 SDL_AcceptDragAndDrop） ===== */
+
+void leno_gui_platform_accept_drag_and_drop(LenoGUIPlatformWindow* win, int accept) {
+    if (!win || !win->hwnd) return;
+    win->drag_drop_enabled = accept;
+    DragAcceptFiles(win->hwnd, accept ? TRUE : FALSE);
+}
+
+/* ===== 窗口最小/最大尺寸限制（参考 SDL3 SDL_SetWindowMinimumSize / SDL_SetWindowMaximumSize） ===== */
+
+void leno_gui_platform_set_window_minimum_size(LenoGUIPlatformWindow* win, int min_w, int min_h) {
+    if (!win) return;
+    win->min_w = min_w;
+    win->min_h = min_h;
+}
+
+void leno_gui_platform_set_window_maximum_size(LenoGUIPlatformWindow* win, int max_w, int max_h) {
+    if (!win) return;
+    win->max_w = max_w;
+    win->max_h = max_h;
+}
+
+/* ===== 窗口图标设置（参考 SDL3 SDL_SetWindowIcon） ===== */
+
+void leno_gui_platform_set_window_icon(LenoGUIPlatformWindow* win, const uint32_t* pixels, int w, int h) {
+    if (!win || !win->hwnd || !pixels || w <= 0 || h <= 0) return;
+
+    /* 将 ARGB 像素数据转换为 GDI 位图 */
+    HDC screen_dc = GetDC(NULL);
+    HDC mem_dc = CreateCompatibleDC(screen_dc);
+
+    BITMAPINFO bmi;
+    memset(&bmi, 0, sizeof(bmi));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h; /* 自上而下 */
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = NULL;
+    HBITMAP color_bmp = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &bits, NULL, 0);
+    if (color_bmp && bits) {
+        memcpy(bits, pixels, w * h * sizeof(uint32_t));
+    }
+
+    /* 创建单色掩码 */
+    BYTE* mask_bits = (BYTE*)calloc(((w + 15) / 16) * 2 * h, 1);
+    HBITMAP mask_bmp = NULL;
+    if (mask_bits) {
+        mask_bmp = CreateBitmap(w, h, 1, 1, mask_bits);
+    }
+
+    /* 创建图标 */
+    ICONINFO icon_info;
+    memset(&icon_info, 0, sizeof(icon_info));
+    icon_info.fIcon = TRUE;
+    icon_info.xHotspot = 0;
+    icon_info.yHotspot = 0;
+    icon_info.hbmMask = mask_bmp;
+    icon_info.hbmColor = color_bmp;
+
+    HICON icon = CreateIconIndirect(&icon_info);
+    if (icon) {
+        /* 设置大图标和小图标 */
+        SendMessageW(win->hwnd, WM_SETICON, ICON_BIG, (LPARAM)icon);
+        SendMessageW(win->hwnd, WM_SETICON, ICON_SMALL, (LPARAM)icon);
+        DestroyIcon(icon);
+    }
+
+    if (color_bmp) {
+        SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+        DeleteObject(color_bmp);
+    }
+    if (mask_bmp) DeleteObject(mask_bmp);
+    free(mask_bits);
+    DeleteDC(mem_dc);
+    ReleaseDC(NULL, screen_dc);
+}
+
+/* ===== 文件对话框（参考 SDL3 SDL_ShowFileDialogWithProperties） ===== */
+
+/* 文件对话框线程参数 */
+typedef struct {
+    int type;                    /* 对话框类型 */
+    LenoGUIFileDialogCallback callback;
+    void* userdata;
+    HWND hwnd;
+    LenoGUIFileFilter* filters;
+    int nfilters;
+    char* default_path;
+    int allow_many;
+    char* title;
+} FileDialogArgs;
+
+/* UTF-8 字符串转宽字符 */
+static wchar_t* utf8_to_wchar(const char* str) {
+    if (!str) return NULL;
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
+    if (wlen <= 0) return NULL;
+    wchar_t* wstr = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+    if (wstr) {
+        MultiByteToWideChar(CP_UTF8, 0, str, -1, wstr, wlen);
+    }
+    return wstr;
+}
+
+/* 宽字符转 UTF-8 */
+static char* wchar_to_utf8(const wchar_t* wstr) {
+    if (!wstr) return NULL;
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
+    if (len <= 0) return NULL;
+    char* str = (char*)malloc(len);
+    if (str) {
+        WideCharToMultiByte(CP_UTF8, 0, wstr, -1, str, len, NULL, NULL);
+    }
+    return str;
+}
+
+/* 构建过滤器字符串（Win32 格式：双 null 终止） */
+static wchar_t* build_filter_string(const LenoGUIFileFilter* filters, int nfilters) {
+    if (!filters || nfilters <= 0) return NULL;
+
+    /* 计算所需缓冲区大小 */
+    size_t total_len = 0;
+    for (int i = 0; i < nfilters; i++) {
+        total_len += MultiByteToWideChar(CP_UTF8, 0, filters[i].name, -1, NULL, 0);
+        total_len += MultiByteToWideChar(CP_UTF8, 0, filters[i].pattern, -1, NULL, 0);
+    }
+    total_len += 1; /* 额外的 null 终止 */
+
+    wchar_t* filter_str = (wchar_t*)malloc(total_len * sizeof(wchar_t));
+    if (!filter_str) return NULL;
+
+    wchar_t* ptr = filter_str;
+    for (int i = 0; i < nfilters; i++) {
+        /* 名称 */
+        int nlen = MultiByteToWideChar(CP_UTF8, 0, filters[i].name, -1, ptr,
+                                        (int)(total_len - (ptr - filter_str)));
+        ptr += nlen; /* 包含 null */
+
+        /* 模式 */
+        MultiByteToWideChar(CP_UTF8, 0, filters[i].pattern, -1, ptr,
+                            (int)(total_len - (ptr - filter_str)));
+        ptr += wcslen(ptr) + 1;
+    }
+    *ptr = L'\0'; /* 双 null 终止 */
+
+    return filter_str;
+}
+
+/* 文件对话框工作线程 */
+static DWORD WINAPI file_dialog_thread_proc(LPVOID param) {
+    FileDialogArgs* args = (FileDialogArgs*)param;
+    int filter_index = -1;
+    char** files = NULL;
+    int nfiles = 0;
+
+    wchar_t* title_w = utf8_to_wchar(args->title);
+    wchar_t* filter_w = build_filter_string(args->filters, args->nfilters);
+
+    /* 使用 GetOpenFileName / GetSaveFileName */
+    {
+        wchar_t filebuffer[65536] = { 0 };
+
+        if (args->default_path) {
+            wchar_t* default_w = utf8_to_wchar(args->default_path);
+            if (default_w) {
+                /* 检查是否是文件夹路径 */
+                size_t len = wcslen(default_w);
+                if (len > 0 && (default_w[len-1] == L'\\' || default_w[len-1] == L'/')) {
+                    /* 文件夹路径，不使用 lpstrFile 初始化 */
+                } else {
+                    MultiByteToWideChar(CP_UTF8, 0, args->default_path, -1, filebuffer, 65536);
+                    /* 转换正斜杠 */
+                    for (int i = 0; filebuffer[i]; i++) {
+                        if (filebuffer[i] == L'/') filebuffer[i] = L'\\';
+                    }
+                }
+                free(default_w);
+            }
+        }
+
+        OPENFILENAMEW ofn;
+        memset(&ofn, 0, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = args->hwnd;
+        ofn.lpstrFilter = filter_w;
+        ofn.lpstrFile = filebuffer;
+        ofn.nMaxFile = 65536;
+        ofn.lpstrTitle = title_w;
+        ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+        if (args->allow_many) ofn.Flags |= OFN_ALLOWMULTISELECT;
+        if (args->type == LENO_GUI_FILEDIALOG_SAVEFILE) ofn.Flags |= OFN_OVERWRITEPROMPT;
+
+        BOOL result;
+        if (args->type == LENO_GUI_FILEDIALOG_SAVEFILE) {
+            result = GetSaveFileNameW(&ofn);
+        } else {
+            result = GetOpenFileNameW(&ofn);
+        }
+
+        if (result) {
+            if (!(ofn.Flags & OFN_ALLOWMULTISELECT) || args->type == LENO_GUI_FILEDIALOG_SAVEFILE) {
+                /* 单个文件 */
+                char* chosen = wchar_to_utf8(ofn.lpstrFile);
+                if (chosen) {
+                    files = (char**)calloc(2, sizeof(char*));
+                    nfiles = 1;
+                    files[0] = chosen;
+                }
+            } else {
+                /* 多个文件：目录\0文件1\0文件2\0\0 */
+                wchar_t* file_ptr = ofn.lpstrFile;
+                size_t dir_len = wcslen(file_ptr);
+                char* dir = wchar_to_utf8(file_ptr);
+                file_ptr += dir_len + 1;
+
+                if (*file_ptr) {
+                    /* 有多个文件 */
+                    while (*file_ptr) {
+                        size_t fname_len = wcslen(file_ptr);
+                        char* fname = wchar_to_utf8(file_ptr);
+                        if (fname) {
+                            char* fullpath = (char*)malloc(strlen(dir) + strlen(fname) + 2);
+                            if (fullpath) {
+                                sprintf(fullpath, "%s\\%s", dir, fname);
+                                char** new_files = (char**)realloc(files, (nfiles + 2) * sizeof(char*));
+                                if (new_files) {
+                                    files = new_files;
+                                    files[nfiles] = fullpath;
+                                    nfiles++;
+                                    files[nfiles] = NULL;
+                                } else {
+                                    free(fullpath);
+                                }
+                            }
+                            free(fname);
+                        }
+                        file_ptr += fname_len + 1;
+                    }
+                } else {
+                    /* 只有一个文件 */
+                    files = (char**)calloc(2, sizeof(char*));
+                    nfiles = 1;
+                    files[0] = dir;
+                    dir = NULL; /* 不释放 */
+                }
+                if (dir) free(dir);
+            }
+            filter_index = (int)(ofn.nFilterIndex - 1);
+        }
+    }
+
+    /* 将结果通过临界区投递到主线程 */
+    EnterCriticalSection(&g_filedlg_result_cs);
+    /* 释放旧结果 */
+    if (g_filedlg_result) {
+        if (g_filedlg_result->files) {
+            for (int i = 0; i < g_filedlg_result->nfiles; i++) {
+                free(g_filedlg_result->files[i]);
+            }
+            free(g_filedlg_result->files);
+        }
+        free(g_filedlg_result);
+        g_filedlg_result = NULL;
+    }
+    /* 存储新结果 */
+    if (nfiles > 0 && files) {
+        g_filedlg_result = (FileDialogResult*)calloc(1, sizeof(FileDialogResult));
+        if (g_filedlg_result) {
+            g_filedlg_result->files = files;
+            g_filedlg_result->nfiles = nfiles;
+            g_filedlg_result->filter_index = filter_index;
+            files = NULL; /* 转移所有权，不再在下面释放 */
+        }
+    }
+    LeaveCriticalSection(&g_filedlg_result_cs);
+
+    /* 推送一个空事件来唤醒主循环 */
+    {
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        ev.timestamp = GetTickCount64();
+        event_queue_push(&ev);
+    }
+
+    /* 清理未被转移的文件 */
+    if (files) {
+        for (int i = 0; i < nfiles; i++) {
+            free(files[i]);
+        }
+        free(files);
+    }
+    free(title_w);
+    free(filter_w);
+    free(args->default_path);
+    free(args->title);
+    free(args->filters);
+    free(args);
+
+    return 0;
+}
+
+void leno_gui_platform_show_file_dialog(int type, LenoGUIFileDialogCallback callback,
+                                         void* userdata, LenoGUIPlatformWindow* win,
+                                         const LenoGUIFileFilter* filters, int nfilters,
+                                         const char* default_path, int allow_many,
+                                         const char* title) {
+    FileDialogArgs* args = (FileDialogArgs*)calloc(1, sizeof(FileDialogArgs));
+    if (!args) {
+        /* 内存分配失败，推送空结果事件 */
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        ev.timestamp = GetTickCount64();
+        event_queue_push(&ev);
+        return;
+    }
+
+    args->type = type;
+    args->callback = callback;
+    args->userdata = userdata;
+    args->hwnd = (win && win->hwnd) ? win->hwnd : NULL;
+    args->allow_many = allow_many;
+    args->nfilters = nfilters;
+    args->default_path = default_path ? _strdup(default_path) : NULL;
+    args->title = title ? _strdup(title) : NULL;
+
+    /* 复制过滤器 */
+    if (filters && nfilters > 0) {
+        args->filters = (LenoGUIFileFilter*)malloc(nfilters * sizeof(LenoGUIFileFilter));
+        if (args->filters) {
+            for (int i = 0; i < nfilters; i++) {
+                args->filters[i].name = filters[i].name ? _strdup(filters[i].name) : NULL;
+                args->filters[i].pattern = filters[i].pattern ? _strdup(filters[i].pattern) : NULL;
+            }
+        }
+    }
+
+    /* 创建线程运行对话框 */
+    HANDLE thread = CreateThread(NULL, 0, file_dialog_thread_proc, args, 0, NULL);
+    if (!thread) {
+        /* 线程创建失败，清理并通过事件队列通知 */
+        if (args->filters) {
+            for (int i = 0; i < nfilters; i++) {
+                free((void*)args->filters[i].name);
+                free((void*)args->filters[i].pattern);
+            }
+            free(args->filters);
+        }
+        free(args->default_path);
+        free(args->title);
+        free(args);
+        /* 推送空结果事件 */
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        ev.timestamp = GetTickCount64();
+        event_queue_push(&ev);
+        return;
+    }
+    CloseHandle(thread);
+}
+
+/* ===== 消息框（参考 SDL3 SDL_ShowSimpleMessageBox） ===== */
+
+/* 显示系统消息框：type 0=信息 1=警告 2=错误 */
+int leno_gui_platform_show_message_box(const char* title, const char* message, int type) {
+    /* UTF-8 转宽字符 */
+    int wtlen = MultiByteToWideChar(CP_UTF8, 0, title, -1, NULL, 0);
+    int wmlen = MultiByteToWideChar(CP_UTF8, 0, message, -1, NULL, 0);
+    wchar_t* wtitle = NULL;
+    wchar_t* wmsg = NULL;
+    if (wtlen > 0) {
+        wtitle = (wchar_t*)malloc(wtlen * sizeof(wchar_t));
+        MultiByteToWideChar(CP_UTF8, 0, title, -1, wtitle, wtlen);
+    }
+    if (wmlen > 0) {
+        wmsg = (wchar_t*)malloc(wmlen * sizeof(wchar_t));
+        MultiByteToWideChar(CP_UTF8, 0, message, -1, wmsg, wmlen);
+    }
+    /* 根据类型选择图标 */
+    UINT mb_type = MB_OK;
+    switch (type) {
+        case 1: mb_type |= MB_ICONWARNING; break;
+        case 2: mb_type |= MB_ICONERROR; break;
+        default: mb_type |= MB_ICONINFORMATION; break;
+    }
+    int result = MessageBoxW(NULL, wmsg, wtitle, mb_type);
+    free(wtitle);
+    free(wmsg);
+    return result;
+}
+
+/* ===== 文件对话框结果处理（由主循环调用，线程安全） ===== */
+
+#include "guis_internal.h"
+
+int leno_gui_platform_process_filedialog_result(void) {
+    int processed = 0;
+    
+    EnterCriticalSection(&g_filedlg_result_cs);
+    FileDialogResult* result = g_filedlg_result;
+    g_filedlg_result = NULL;
+    LeaveCriticalSection(&g_filedlg_result_cs);
+    
+    if (result) {
+        /* 构建 C 字符串数组 */
+        const char** files = (const char**)calloc((size_t)(result->nfiles + 1), sizeof(const char*));
+        if (files) {
+            for (int i = 0; i < result->nfiles; i++) {
+                files[i] = result->files[i];
+            }
+            files[result->nfiles] = NULL;
+            
+            /* 在主线程中调用 Leno 回调 */
+            process_filedialog_callback(files, result->nfiles, result->filter_index);
+            
+            free(files);
+        }
+        
+        /* 清理结果 */
+        if (result->files) {
+            for (int i = 0; i < result->nfiles; i++) {
+                free(result->files[i]);
+            }
+            free(result->files);
+        }
+        free(result);
+        processed = 1;
+    }
+    
+    return processed;
 }
 
 #endif /* _WIN32 */

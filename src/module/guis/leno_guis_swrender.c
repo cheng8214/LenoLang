@@ -627,11 +627,22 @@ int leno_gui_platform_iterate_main_callbacks(void) {
     }
 
     LenoGUIEvent ev;
-    int had_event = 0;
+    int needs_redraw_from_event = 0;
     while (leno_gui_platform_poll_event(&ev)) {
-        had_event = 1;
+        if (ev.type == LENO_GUI_EVT_FILEDIALOG_RESULT) {
+            /* 文件对话框结果事件：在主线程中处理 */
+            leno_gui_platform_process_filedialog_result();
+            needs_redraw_from_event = 1;
+            continue;
+        }
+
         if (ev.type == LENO_GUI_EVT_WINDOW_RESIZE && g_main_callbacks.renderer) {
             leno_gui_platform_renderer_mark_resize(g_main_callbacks.renderer);
+            needs_redraw_from_event = 1;
+        }
+
+        if (ev.type == LENO_GUI_EVT_WINDOW_EXPOSED) {
+            needs_redraw_from_event = 1;
         }
 
         if (g_main_callbacks.event_cb) {
@@ -651,7 +662,7 @@ int leno_gui_platform_iterate_main_callbacks(void) {
         return 0;
     }
 
-    if (had_event) {
+    if (needs_redraw_from_event) {
         g_main_callbacks.needs_redraw = 1;
     }
 
@@ -669,4 +680,116 @@ int leno_gui_platform_iterate_main_callbacks(void) {
 
 void leno_gui_platform_request_redraw(void) {
     g_main_callbacks.needs_redraw = 1;
+}
+
+/* ===== 渲染目标（离屏渲染，借鉴 SDL3）===== */
+
+static LenoGUIPlatformTexture* g_current_render_target = NULL;
+static LenoGUIPlatformRenderer* g_target_renderer = NULL;
+static uint32_t* g_saved_pixels = NULL;
+static int g_saved_width = 0;
+static int g_saved_height = 0;
+static int g_saved_pitch = 0;
+
+int leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex) {
+    if (!ren) return 0;
+    
+    /* 如果已经有目标，先恢复 */
+    if (g_current_render_target) {
+        leno_gui_platform_reset_render_target(ren);
+    }
+    
+    if (!tex) {
+        /* 设置为空表示渲染到窗口 */
+        return 1;
+    }
+    
+    /* 检查纹理是否是渲染目标 */
+    if (tex->access != LENO_GUI_TEXTUREACCESS_TARGET) {
+        return 0;
+    }
+    
+    /* 保存当前渲染器状态 */
+    g_target_renderer = ren;
+    g_saved_pixels = ren->pixels;
+    g_saved_width = ren->width;
+    g_saved_height = ren->height;
+    g_saved_pitch = ren->pitch;
+    
+    /* 切换到纹理 */
+    ren->pixels = tex->pixels;
+    ren->width = tex->width;
+    ren->height = tex->height;
+    ren->pitch = tex->pitch;
+    
+    /* 重置视口和裁剪 */
+    ren->vp_x = 0;
+    ren->vp_y = 0;
+    ren->vp_w = tex->width;
+    ren->vp_h = tex->height;
+    ren->clip_enabled = 0;
+    
+    g_current_render_target = tex;
+    
+    return 1;
+}
+
+LenoGUIPlatformTexture* leno_gui_platform_get_render_target(LenoGUIPlatformRenderer* ren) {
+    (void)ren;
+    return g_current_render_target;
+}
+
+void leno_gui_platform_reset_render_target(LenoGUIPlatformRenderer* ren) {
+    if (!ren || !g_current_render_target) return;
+    
+    /* 恢复渲染器状态 */
+    ren->pixels = g_saved_pixels;
+    ren->width = g_saved_width;
+    ren->height = g_saved_height;
+    ren->pitch = g_saved_pitch;
+    
+    /* 重置视口 */
+    ren->vp_x = 0;
+    ren->vp_y = 0;
+    ren->vp_w = g_saved_width;
+    ren->vp_h = g_saved_height;
+    ren->clip_enabled = 0;
+    
+    g_current_render_target = NULL;
+    g_target_renderer = NULL;
+    g_saved_pixels = NULL;
+}
+
+void leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+                                                int x, int y, int w, int h) {
+    if (!ren || !tex || !tex->pixels) return;
+    
+    /* 保存当前状态 */
+    LenoGUIPlatformTexture* old_target = g_current_render_target;
+    
+    /* 重置到窗口 */
+    if (old_target) {
+        leno_gui_platform_reset_render_target(ren);
+    }
+    
+    /* 渲染纹理到窗口 */
+    if (w <= 0) w = tex->width;
+    if (h <= 0) h = tex->height;
+    
+    leno_gui_platform_render_texture_src(ren, tex, 0, 0, tex->width, tex->height, x, y, w, h);
+    
+    /* 恢复之前的渲染目标 */
+    if (old_target) {
+        leno_gui_platform_set_render_target(ren, old_target);
+    }
+}
+
+void leno_gui_platform_clear_render_target(LenoGUIPlatformTexture* tex, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (!tex || !tex->pixels) return;
+    
+    uint32_t color = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    int count = tex->width * tex->height;
+    for (int i = 0; i < count; i++) {
+        tex->pixels[i] = color;
+    }
 }

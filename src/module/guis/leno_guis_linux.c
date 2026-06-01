@@ -1183,6 +1183,280 @@ int leno_gui_platform_show_message_box(const char* title, const char* message, i
     return 0;
 }
 
+/* ===== 文件对话框（参考 SDL3 SDL_zenitydialog.c：使用 Zenity 子进程） ===== */
+
+/* 文件对话框参数，传递给工作线程 */
+typedef struct {
+    int type;
+    int allow_many;
+    int nfilters;
+    char** filter_names;
+    char** filter_patterns;
+    char* default_path;
+    char* title;
+} FileDialogArgs;
+
+/* 文件对话框结果（通过临界区保护，从工作线程传递到主线程） */
+typedef struct {
+    char** files;
+    int nfiles;
+    int filter_index;
+} FileDialogResult;
+
+static FileDialogResult* g_filedlg_result = NULL;
+static pthread_mutex_t g_filedlg_result_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* 释放文件对话框结果 */
+static void filedlg_result_free(FileDialogResult* r) {
+    if (!r) return;
+    if (r->files) {
+        for (int i = 0; i < r->nfiles; i++) free(r->files[i]);
+        free(r->files);
+    }
+    free(r);
+}
+
+/* 构建 Zenity 命令行并在工作线程中执行 */
+static void* file_dialog_thread_proc(void* param) {
+    FileDialogArgs* args = (FileDialogArgs*)param;
+    char** files = NULL;
+    int nfiles = 0;
+
+    /* 构建 Zenity 命令 */
+    /* 基础命令和类型 */
+    char cmd[4096] = {0};
+    int cmd_len = 0;
+
+    /* 检查 zenity 是否存在 */
+    FILE* test = popen("which zenity 2>/dev/null", "r");
+    if (!test) goto done;
+    char test_buf[256] = {0};
+    if (!fgets(test_buf, sizeof(test_buf), test)) {
+        pclose(test);
+        goto done;
+    }
+    pclose(test);
+    if (test_buf[0] == '\0') goto done;
+
+    /* 构建命令：zenity --file-selection */
+    cmd_len = snprintf(cmd, sizeof(cmd), "zenity --file-selection");
+
+    /* 标题 */
+    if (args->title && args->title[0]) {
+        cmd_len += snprintf(cmd + cmd_len, sizeof(cmd) - cmd_len,
+                            " --title=\"%s\"", args->title);
+    }
+
+    /* 类型 */
+    if (args->type == 1) { /* LENO_GUI_FILEDIALOG_SAVEFILE */
+        cmd_len += snprintf(cmd + cmd_len, sizeof(cmd) - cmd_len, " --save --confirm-overwrite");
+    } else if (args->type == 2) { /* LENO_GUI_FILEDIALOG_OPENFOLDER */
+        cmd_len += snprintf(cmd + cmd_len, sizeof(cmd) - cmd_len, " --directory");
+    }
+
+    /* 多选 */
+    if (args->allow_many && args->type == 0) {
+        cmd_len += snprintf(cmd + cmd_len, sizeof(cmd) - cmd_len, " --multiple --separator=\"\\n\"");
+    }
+
+    /* 默认路径 */
+    if (args->default_path && args->default_path[0]) {
+        cmd_len += snprintf(cmd + cmd_len, sizeof(cmd) - cmd_len,
+                            " --filename=\"%s\"", args->default_path);
+    }
+
+    /* 过滤器 */
+    if (args->nfilters > 0 && args->filter_names && args->filter_patterns) {
+        for (int i = 0; i < args->nfilters; i++) {
+            if (args->filter_names[i] && args->filter_patterns[i]) {
+                /* Zenity 格式: --file-filter="名称 | *.ext" */
+                char filter_str[512];
+                /* 把管道符替换成斜杠（Zenity 用 | 作为分隔符） */
+                char* p = args->filter_names[i];
+                while (*p) { if (*p == '|') *p = '/'; p++; }
+
+                snprintf(filter_str, sizeof(filter_str), "%s | %s",
+                         args->filter_names[i], args->filter_patterns[i]);
+                cmd_len += snprintf(cmd + cmd_len, sizeof(cmd) - cmd_len,
+                                    " --file-filter=\"%s\"", filter_str);
+            }
+        }
+    }
+
+    /* 执行 Zenity */
+    FILE* fp = popen(cmd, "r");
+    if (!fp) goto done;
+
+    /* 读取输出（每行一个文件路径） */
+    char line[4096];
+    int cap = 8;
+    files = (char**)calloc(cap + 1, sizeof(char*));
+    if (!files) { pclose(fp); goto done; }
+
+    while (fgets(line, sizeof(line), fp)) {
+        /* 去除末尾换行符 */
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+            line[--len] = '\0';
+        }
+        if (len == 0) continue;
+
+        /* 扩展数组 */
+        if (nfiles >= cap) {
+            cap *= 2;
+            char** new_files = (char**)realloc(files, (cap + 1) * sizeof(char*));
+            if (!new_files) { pclose(fp); goto done; }
+            files = new_files;
+        }
+
+        files[nfiles] = strdup(line);
+        if (!files[nfiles]) { pclose(fp); goto done; }
+        nfiles++;
+    }
+    files[nfiles] = NULL;
+    pclose(fp);
+
+done:
+    /* 将结果通过互斥锁传递到主线程 */
+    pthread_mutex_lock(&g_filedlg_result_mutex);
+
+    /* 释放旧结果 */
+    if (g_filedlg_result) {
+        filedlg_result_free(g_filedlg_result);
+        g_filedlg_result = NULL;
+    }
+
+    /* 存储新结果 */
+    if (nfiles > 0 && files) {
+        g_filedlg_result = (FileDialogResult*)calloc(1, sizeof(FileDialogResult));
+        if (g_filedlg_result) {
+            g_filedlg_result->files = files;
+            g_filedlg_result->nfiles = nfiles;
+            g_filedlg_result->filter_index = -1; /* Zenity 不支持过滤器索引 */
+            files = NULL; /* 转移所有权 */
+        }
+    }
+
+    pthread_mutex_unlock(&g_filedlg_result_mutex);
+
+    /* 推送事件唤醒主循环 */
+    {
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        event_queue_push(&ev);
+    }
+
+    /* 清理 */
+    if (files) {
+        for (int i = 0; i < nfiles; i++) free(files[i]);
+        free(files);
+    }
+    if (args->filter_names) {
+        for (int i = 0; i < args->nfilters; i++) free(args->filter_names[i]);
+        free(args->filter_names);
+    }
+    if (args->filter_patterns) {
+        for (int i = 0; i < args->nfilters; i++) free(args->filter_patterns[i]);
+        free(args->filter_patterns);
+    }
+    free(args->default_path);
+    free(args->title);
+    free(args);
+
+    return NULL;
+}
+
+void leno_gui_platform_show_file_dialog(int type, LenoGUIFileDialogCallback callback,
+                                         void* userdata, LenoGUIPlatformWindow* win,
+                                         const LenoGUIFileFilter* filters, int nfilters,
+                                         const char* default_path, int allow_many,
+                                         const char* title) {
+    (void)callback; (void)userdata; (void)win;
+
+    FileDialogArgs* args = (FileDialogArgs*)calloc(1, sizeof(FileDialogArgs));
+    if (!args) {
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        event_queue_push(&ev);
+        return;
+    }
+
+    args->type = type;
+    args->allow_many = allow_many;
+    args->nfilters = nfilters;
+    args->default_path = default_path ? strdup(default_path) : NULL;
+    args->title = title ? strdup(title) : NULL;
+
+    /* 复制过滤器 */
+    if (filters && nfilters > 0) {
+        args->filter_names = (char**)calloc(nfilters, sizeof(char*));
+        args->filter_patterns = (char**)calloc(nfilters, sizeof(char*));
+        if (args->filter_names && args->filter_patterns) {
+            for (int i = 0; i < nfilters; i++) {
+                args->filter_names[i] = filters[i].name ? strdup(filters[i].name) : NULL;
+                args->filter_patterns[i] = filters[i].pattern ? strdup(filters[i].pattern) : NULL;
+            }
+        }
+    }
+
+    /* 创建工作线程运行对话框 */
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, file_dialog_thread_proc, args) != 0) {
+        /* 线程创建失败，清理并推送空事件 */
+        if (args->filter_names) {
+            for (int i = 0; i < nfilters; i++) free(args->filter_names[i]);
+            free(args->filter_names);
+        }
+        if (args->filter_patterns) {
+            for (int i = 0; i < nfilters; i++) free(args->filter_patterns[i]);
+            free(args->filter_patterns);
+        }
+        free(args->default_path);
+        free(args->title);
+        free(args);
+        LenoGUIEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LENO_GUI_EVT_FILEDIALOG_RESULT;
+        event_queue_push(&ev);
+        return;
+    }
+    pthread_detach(thread);
+}
+
+#include "guis_internal.h"
+
+int leno_gui_platform_process_filedialog_result(void) {
+    int processed = 0;
+
+    pthread_mutex_lock(&g_filedlg_result_mutex);
+    FileDialogResult* result = g_filedlg_result;
+    g_filedlg_result = NULL;
+    pthread_mutex_unlock(&g_filedlg_result_mutex);
+
+    if (result) {
+        /* 构建 C 字符串数组 */
+        const char** c_files = (const char**)calloc((size_t)(result->nfiles + 1), sizeof(const char*));
+        if (c_files) {
+            for (int i = 0; i < result->nfiles; i++) {
+                c_files[i] = result->files[i];
+            }
+            c_files[result->nfiles] = NULL;
+
+            /* 在主线程中调用 Leno 回调 */
+            process_filedialog_callback(c_files, result->nfiles, result->filter_index);
+
+            free(c_files);
+        }
+
+        filedlg_result_free(result);
+        processed = 1;
+    }
+
+    return processed;
+}
+
 /* ===== 高精度计时器（参考 SDL3 SDL_GetTicks / SDL_GetPerformanceCounter） ===== */
 
 /* 获取自系统启动以来的毫秒数（使用 clock_gettime CLOCK_MONOTONIC） */
