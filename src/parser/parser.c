@@ -82,6 +82,8 @@ Ast* parse_statement(Parser* p) {
         case TOK_DRAW_TYPE:
         case TOK_EVENT_TYPE:
         case TOK_RGB_TYPE:
+        case TOK_IMAGE_TYPE:
+        case TOK_FONT_TYPE:
         case TOK_STYLE_TYPE:
         case TOK_PTR_TYPE:
             stmt = parse_var_decl_internal(p);
