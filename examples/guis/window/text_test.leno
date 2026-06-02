@@ -8,31 +8,36 @@ main() {
     }
     Win win = guis.create_window("LenoC GUI - Text Test", w_style)
 
+    var font_large = guis.load_font("Arial", 32)
+    var font_medium = guis.load_font("Arial", 20)
+    var font_small = guis.load_font("Arial", 14)
+    var font_tiny = guis.load_font("Arial", 10)
+
     guis.run(win,
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text("Hello, LenoC!", 50, 50, 3)
+            ren.draw_text(font_large, "Hello, LenoC!", 50, 50)
 
             ren.set_color(_rgb(100, 255, 100, 255))
-            ren.draw_text("GUI Module - text", 50, 100, 2)
+            ren.draw_text(font_medium, "GUI Module - text", 50, 100)
 
             ren.set_color(_rgb(255, 100, 100, 255))
-            ren.draw_text("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 50, 140, 2)
+            ren.draw_text(font_medium, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 50, 140)
 
             ren.set_color(_rgb(100, 150, 255, 255))
-            ren.draw_text("0123456789 !@#$%^&*()", 50, 170, 2)
+            ren.draw_text(font_medium, "0123456789 !@#$%^&*()", 50, 170)
 
             ren.set_color(_rgb(255, 255, 0, 255))
-            ren.draw_text("Small", 50, 210, 1)
-            ren.draw_text("Medium", 130, 210, 2)
-            ren.draw_text("Large", 290, 210, 3)
-            ren.draw_text("XL", 470, 210, 4)
+            ren.draw_text(font_tiny, "Tiny", 50, 210)
+            ren.draw_text(font_small, "Small", 130, 210)
+            ren.draw_text(font_medium, "Medium", 220, 210)
+            ren.draw_text(font_large, "Large", 350, 210)
 
             ren.set_color(_rgb(180, 100, 255, 255))
-            ren.draw_text("Press ESC to quit", 50, 300, 2)
+            ren.draw_text(font_medium, "Press ESC to quit", 50, 300)
 
             ren.present()
         },
@@ -48,6 +53,10 @@ main() {
         }
     )
 
+    font_large.close()
+    font_medium.close()
+    font_small.close()
+    font_tiny.close()
     win.close()
     print("text test done!")
 }

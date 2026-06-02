@@ -53,11 +53,11 @@ main() {
 
             /* 标题 */
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text_ex(font, "File Dialog Test", 20, 20)
+            ren.draw_text(font, "File Dialog Test", 20, 20)
 
             /* 操作提示 */
             ren.set_color(_rgb(100, 180, 255, 255))
-            ren.draw_text_ex(font_small, "按键操作: [O] 打开文件  [S] 保存文件  [F] 打开文件夹  [ESC] 退出", 20, 55)
+            ren.draw_text(font_small, "按键操作: [O] 打开文件  [S] 保存文件  [F] 打开文件夹  [ESC] 退出", 20, 55)
 
             /* 分隔线 */
             ren.set_color(_rgb(80, 80, 80, 255))
@@ -65,25 +65,25 @@ main() {
 
             /* 显示结果 */
             ren.set_color(_rgb(200, 200, 200, 255))
-            ren.draw_text_ex(font_small, "操作: " + last_action, 20, 100)
+            ren.draw_text(font_small, "操作: " + last_action, 20, 100)
 
             if filter_index >= 0 {
                 ren.set_color(_rgb(136, 136, 136, 255))
-                ren.draw_text_ex(font_small, "过滤器索引: " + _str(filter_index), 20, 125)
+                ren.draw_text(font_small, "过滤器索引: " + _str(filter_index), 20, 125)
             }
 
             ren.set_color(_rgb(136, 136, 136, 255))
             var n = selected_files.len()
-            ren.draw_text_ex(font_small, "选中文件 (" + _str(n) + " 个):", 20, 155)
+            ren.draw_text(font_small, "选中文件 (" + _str(n) + " 个):", 20, 155)
 
             var y = 180
             for selected_files to f {
                 ren.set_color(_rgb(102, 204, 102, 255))
-                ren.draw_text_ex(font_small, "  " + f, 30, y)
+                ren.draw_text(font_small, "  " + f, 30, y)
                 y = y + 22
                 if y > 440 {
                     ren.set_color(_rgb(102, 102, 102, 255))
-                    ren.draw_text_ex(font_small, "  ... (更多文件未显示)", 30, y)
+                    ren.draw_text(font_small, "  ... (更多文件未显示)", 30, y)
                     break
                 }
             }

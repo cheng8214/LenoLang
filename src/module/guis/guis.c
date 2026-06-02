@@ -10,17 +10,11 @@
  *   Rgb     - 颜色对象 (_rgb(r, g, b, a?))
  *
  * 模块级 API:
- *   guis.create_window(title, style_dict) -> Win      Style 方式创建窗口
- *   guis.create_renderer(win) -> Draw
- *   guis.destroy_renderer(ren)
- *   guis.resize_renderer(ren, w, h) -> bool    窗口大小改变时调整渲染器
- *   ren.draw_text(text, x, y, size)                       内置 8x8 点阵字体
- *   ren.text_size(text, size) -> [w, h]                   计算文字尺寸
+ *   guis.create_window(title, style_dict) -> Win          Style 方式创建窗口
  *   guis.load_font(name, size) -> Font                    加载系统字体
- *   guis.destroy_font(font)                               销毁字体
- *   ren.draw_text_ex(font, text, x, y)                    系统字体渲染
- *   ren.font_size(font, text) -> [w, h]                   系统字体文字尺寸
- *   guis.poll() / wait(timeout_ms)
+ *   font.close()                                          关闭字体
+ *   ren.draw_text(font, text, x, y)                       使用字体绘制文字
+ *   ren.text_size(font, text) -> [w, h]                   计算字体文字尺寸
  *   guis.get_key(key) -> bool
  *   guis.get_mouse() -> {x, y, buttons}
  *   guis.get_clipboard() / set_clipboard(text)
@@ -30,10 +24,10 @@
  *   guis.msg_box(title, message, type) -> int
  *   guis.get_ticks() / get_perf_counter() / get_perf_freq()
  *   guis.delay(ms)
- *   guis.add_timer(interval_ms, callback) -> timer_id    定时器回调
- *   guis.remove_timer(timer_id) -> bool                  取消定时器
+ *   guis.add_timer(interval_ms, callback) -> timer_id     定时器回调
+ *   guis.remove_timer(timer_id) -> bool                   取消定时器
  *   guis.get_display() / get_dpi()
- *   guis.run(win, onDraw, onEvent)          回调式事件循环
+ *   guis.run(win, onDraw, onEvent)                        事件循环
  *   ren.set_logical_size(w, h)                           设置逻辑渲染尺寸
  *   ren.get_logical_size() -> [w, h]                     获取逻辑渲染尺寸
  *   ren.set_logical_presentation(mode)                   设置逻辑呈现模式
@@ -301,44 +295,6 @@ static Value gui_create_window_func(int argc, Value* args) {
         return val_null();
     }
     return val_obj((Object*)obj);
-}
-
-static Value gui_create_renderer_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIWindow* win = as_window(args[0]);
-    if (!win || !win->platform) return val_null();
-
-    LenoGUIPlatformRenderer* pr = leno_gui_platform_create_renderer(win->platform);
-    if (!pr) return val_null();
-
-    ObjGUIRenderer* obj = create_renderer_obj(pr, win);
-    if (!obj) {
-        leno_gui_platform_destroy_renderer(pr);
-        return val_null();
-    }
-    return val_obj((Object*)obj);
-}
-
-static Value gui_destroy_renderer_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    if (ren && ren->platform) {
-        leno_gui_platform_destroy_renderer(ren->platform);
-        ren->platform = NULL;
-    }
-    return val_null();
-}
-
-static Value gui_resize_renderer_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    int w = val_as_int(args[1]);
-    int h = val_as_int(args[2]);
-    if (ren && ren->platform) {
-        int result = leno_gui_platform_renderer_resize(ren->platform, w, h);
-        return val_bool(result != 0);
-    }
-    return val_bool(false);
 }
 
 static Value gui_load_font_func(int argc, Value* args) {
@@ -636,21 +592,6 @@ static Value gui_zlib_decode_noheader_func(int argc, Value* args) {
     free(result);
     if (!str) return val_null();
     return val_obj((Object*)str);
-}
-
-static Value gui_poll_event_func(int argc, Value* args) {
-    (void)argc; (void)args;
-    LenoGUIEvent ev;
-    if (!leno_gui_platform_poll_event(&ev)) return val_null();
-    return event_to_dict(&ev);
-}
-
-static Value gui_wait_event_func(int argc, Value* args) {
-    (void)argc;
-    int timeout_ms = val_as_int(args[0]);
-    LenoGUIEvent ev;
-    if (!leno_gui_platform_wait_event(&ev, timeout_ms)) return val_null();
-    return event_to_dict(&ev);
 }
 
 static Value gui_get_display_size_func(int argc, Value* args) {
@@ -1256,8 +1197,6 @@ extern void guis_init_font_instance_methods(void);
 
 void guis_init_module(void) {
     TypeKind no_params[] = {};
-    TypeKind obj_1int[] = {TYPE_ANY, TYPE_INT};
-    TypeKind obj_2int[] = {TYPE_ANY, TYPE_INT, TYPE_INT};
     TypeKind obj_2func[] = {TYPE_ANY, TYPE_ANY, TYPE_ANY};
     TypeKind int_params[] = {TYPE_INT};
     TypeKind int_2int[] = {TYPE_INT, TYPE_INT};
@@ -1269,14 +1208,8 @@ void guis_init_module(void) {
     /* ===== 窗口操作 ===== */
     native_register_module_method("guis", "create_window", gui_create_window_func, -1, 2, 4, TYPE_WIN, TYPE_UNKNOWN, NULL);
 
-    /* ===== 渲染器操作（工厂/析构） ===== */
-    native_register_module_method("guis", "create_renderer", gui_create_renderer_func, 1, -1, -1, TYPE_DRAW, TYPE_UNKNOWN, obj_1int);
-    native_register_module_method("guis", "destroy_renderer", gui_destroy_renderer_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_1int);
-    native_register_module_method("guis", "resize_renderer", gui_resize_renderer_func, 3, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, obj_2int);
-
-    /* ===== 事件操作 ===== */
-    native_register_module_method("guis", "poll", gui_poll_event_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
-    native_register_module_method("guis", "wait", gui_wait_event_func, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, int_params);
+    /* ===== 事件循环 ===== */
+    native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_2func);
 
     /* ===== 输入状态查询 ===== */
     native_register_module_method("guis", "get_key", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
@@ -1347,9 +1280,6 @@ void guis_init_module(void) {
     /* ===== 显示器信息 ===== */
     native_register_module_method("guis", "get_display", gui_get_display_size_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     native_register_module_method("guis", "get_dpi", gui_get_display_dpi_func, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-
-    /* ===== 回调式事件循环 ===== */
-    native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_2func);
 
     /* ===== 日志系统函数 ===== */
     native_register_module_method("guis", "log_set_priority", gui_log_set_priority_func, 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2int);

@@ -13,10 +13,8 @@
  *   ren.fill_circle(cx, cy, r)             填充圆形
  *   ren.round_rect(x, y, w, h, r)          绘制圆角矩形边框
  *   ren.fill_round(x, y, w, h, r)          填充圆角矩形
- *   ren.draw_text(text, x, y, size)        绘制文字（内置 8x8 点阵字体）
- *   ren.draw_text_ex(font, text, x, y)     使用指定字体绘制文字
- *   ren.text_size(text, size) -> [w, h]    计算文字尺寸
- *   ren.font_size(font, text) -> [w, h]    计算指定字体文字尺寸
+ *   ren.draw_text(font, text, x, y)        使用指定字体绘制文字
+ *   ren.text_size(font, text) -> [w, h]    计算指定字体文字尺寸
  *   ren.get_size() -> [w, h]               获取渲染器缓冲区大小
  *   ren.set_viewport(x, y, w, h)           设置渲染视口
  *   ren.get_viewport() -> [x, y, w, h]     获取当前视口
@@ -119,41 +117,8 @@ static Value gui_get_renderer_size_func(int argc, Value* args) {
     return val_obj((Object*)make_int_array2(w, h));
 }
 
-/* ren.text(text, x, y, size) */
+/* ren.draw_text(font, text, x, y) */
 static Value gui_draw_text_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    if (!ren || !ren->platform) return val_null();
-
-    const char* text = "";
-    if (val_is_obj(args[1])) {
-        Object* obj = val_as_obj(args[1]);
-        if (obj->type == OBJ_STRING) text = ((ObjString*)obj)->chars;
-    }
-    int x = val_as_int(args[2]);
-    int y = val_as_int(args[3]);
-    int size = val_as_int(args[4]);
-
-    leno_gui_platform_draw_text(ren->platform, text, x, y, size);
-    return val_null();
-}
-
-/* ren.text_size(text, size) -> [w, h] */
-static Value gui_text_size_func(int argc, Value* args) {
-    (void)argc;
-    const char* text = "";
-    if (val_is_obj(args[0])) {
-        Object* obj = val_as_obj(args[0]);
-        if (obj->type == OBJ_STRING) text = ((ObjString*)obj)->chars;
-    }
-    int size = val_as_int(args[1]);
-    int w = 0, h = 0;
-    leno_gui_platform_text_size(text, size, &w, &h);
-    return val_obj((Object*)make_int_array2(w, h));
-}
-
-/* ren.text_font(font, text, x, y) */
-static Value gui_draw_text_font_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
     ObjGUIFont* font = as_font(args[1]);
@@ -169,8 +134,8 @@ static Value gui_draw_text_font_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ren.font_size(font, text) -> [w, h] */
-static Value gui_text_size_font_func(int argc, Value* args) {
+/* ren.text_size(font, text) -> [w, h] */
+static Value gui_text_size_func(int argc, Value* args) {
     (void)argc;
     ObjGUIFont* font = as_font(args[0]);
     if (!font || !font->platform) return val_obj((Object*)make_int_array2(0, 0));
@@ -379,8 +344,6 @@ void guis_init_instance_methods(void) {
     TypeKind int_3_circle[] = {TYPE_INT, TYPE_INT, TYPE_INT};
     TypeKind int_5_rounded[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
     TypeKind int_4_vp[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind any_3int[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_INT};
-    TypeKind str_int[] = {TYPE_STRING, TYPE_INT};
 
     TypeKind rgb_1[] = {TYPE_RGB};
     draw_register_method_with_params("set_color", make_native(gui_set_color_func, 2, "set_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, rgb_1);
@@ -411,12 +374,9 @@ void guis_init_instance_methods(void) {
     draw_register_method_with_params("set_clip_rect", make_native(gui_set_clip_rect_func, 5, "set_clip_rect"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_vp);
     draw_register_method_with_params("get_clip_rect", make_native(gui_get_clip_rect_func, 1, "get_clip_rect"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     draw_register_method_with_params("no_clip", make_native(gui_disable_clip_rect_func, 1, "no_clip"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
-    draw_register_method_with_params("draw_text", make_native(gui_draw_text_func, 5, "draw_text"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_3int);
-    draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, str_int);
-
-    TypeKind font_str_2int[] = {TYPE_ANY, TYPE_ANY, TYPE_INT, TYPE_INT};
-    draw_register_method_with_params("draw_text_ex", make_native(gui_draw_text_font_func, 5, "draw_text_ex"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, font_str_2int);
+    TypeKind font_str_2int[] = {TYPE_ANY, TYPE_STRING, TYPE_INT, TYPE_INT};
+    draw_register_method_with_params("draw_text", make_native(gui_draw_text_func, 5, "draw_text"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, font_str_2int);
 
     TypeKind font_str[] = {TYPE_ANY, TYPE_STRING};
-    draw_register_method_with_params("font_size", make_native(gui_text_size_font_func, 2, "font_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, font_str);
+    draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, font_str);
 }

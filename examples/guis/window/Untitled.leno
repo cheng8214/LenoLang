@@ -1,14 +1,11 @@
-/* 调试逻辑呈现模式 */
 import guis
 
 main() {
-    Style[window] w_style = {
-        width: 800,
-        height: 600
-    }
-    Win win = guis.create_window("调试", w_style)
-    
-    Font font = guis.load_font("SimSun", 16)
+for 10
+{
+    var font = guis.load_font("SimSun", 16)
+    print("font created")
     font.close()
-    win.close()
+    print("font closed")
+    }
 }

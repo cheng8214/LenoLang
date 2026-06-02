@@ -8,7 +8,9 @@ main() {
     }
     var win = gui.create_window("标题", w_style)
 
-    func Draw1(Draw ren)
+    
+    gui.run(win,Draw1,Event1)
+func Draw1(Draw ren)
     {
             // onDraw: 每帧调用，ren 是自动创建的渲染器
              ren.set_color(_rgb( 30, 30, 46, 255))
@@ -25,7 +27,5 @@ main() {
                 win.set_should_close(true)
             }
     }
-    gui.run(win,Draw1,Event1)
-
     win.close()
 }

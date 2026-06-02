@@ -28,6 +28,8 @@ main() {
     var fg = _rgb(255, 255, 255, 255)
     var green = _rgb(100, 255, 100, 255)
 
+    var font = guis.load_font("SimSun", 16)
+
     guis.run(win,
         func(Draw ren) {
             ren.set_color(bg)
@@ -35,13 +37,13 @@ main() {
 
             /* 绘制测试信息 */
             ren.set_color(fg)
-            ren.draw_text("测试: is_key_pressed / is_key_released", 10, 10, 16)
-            ren.draw_text("  按任意键 -> 查看 pressed/released 输出", 10, 30, 16)
-            ren.draw_text("测试: 鼠标滚轮 -> 滚轮可查 wheel_x/wheel_y", 10, 50, 16)
-            ren.draw_text("测试: 窗口事件 -> 最小化/恢复/焦点变化", 10, 70, 16)
-            ren.draw_text("测试: 文本输入 -> 输入中文/英文（需要 IME）", 10, 90, 16)
+            ren.draw_text(font, "测试: is_key_pressed / is_key_released", 10, 10)
+            ren.draw_text(font, "  按任意键 -> 查看 pressed/released 输出", 10, 30)
+            ren.draw_text(font, "测试: 鼠标滚轮 -> 滚轮可查 wheel_x/wheel_y", 10, 50)
+            ren.draw_text(font, "测试: 窗口事件 -> 最小化/恢复/焦点变化", 10, 70)
+            ren.draw_text(font, "测试: 文本输入 -> 输入中文/英文（需要 IME）", 10, 90)
             ren.set_color(green)
-            ren.draw_text("按 ESC 或关闭窗口退出测试", 10, 120, 16)
+            ren.draw_text(font, "按 ESC 或关闭窗口退出测试", 10, 120)
 
             ren.present()
         },
@@ -199,6 +201,7 @@ main() {
 
     /* 停止文本输入 */
     guis.stop_text_input()
+    font.close()
     win.close()
 
     print("")

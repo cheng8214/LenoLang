@@ -66,8 +66,8 @@ main() {
 
             // 绘制标题
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text_ex(font, "普通加载 (flip_vertical: false)", 50, 20)
-            ren.draw_text_ex(font, "垂直翻转 (flip_vertical: true)", 450, 20)
+            ren.draw_text(font, "普通加载 (flip_vertical: false)", 50, 20)
+            ren.draw_text(font, "垂直翻转 (flip_vertical: true)", 450, 20)
 
             // 绘制图片（缩放显示）
             var scale = 2
@@ -75,7 +75,7 @@ main() {
             img2.draw_scaled(ren, 450, 60, w * scale, h * scale)
 
             // 绘制说明
-            ren.draw_text_ex(font, "注意：翻转后图片上下颠倒", 450, 60 + h * scale + 20)
+            ren.draw_text(font, "注意：翻转后图片上下颠倒", 450, 60 + h * scale + 20)
 
             ren.present()
         },

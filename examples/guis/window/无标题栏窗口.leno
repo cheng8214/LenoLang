@@ -33,7 +33,7 @@ main() {
             // 标题文字（使用系统字体渲染中文）
             ren.set_color(_rgb(255, 255, 255, 255))
             if font != null {
-                ren.draw_text_ex(font, "无边框窗口 - 拖动标题栏移动", 50, 10)
+                ren.draw_text(font, "无边框窗口 - 拖动标题栏移动", 50, 10)
             } else {
                 // 字体加载失败，使用内置字体（不支持中文）
                 ren.draw_text("Borderless Window", 50, 12, 2)

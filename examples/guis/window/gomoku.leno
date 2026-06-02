@@ -243,7 +243,7 @@ main() {
             ren.clear()
 
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text_ex(font_title, "五子棋", 300, 20)
+            ren.draw_text(font_title, "五子棋", 300, 20)
 
             var margin = 20
             ren.set_color(_rgb(220, 180, 100, 255))
@@ -297,20 +297,20 @@ main() {
             ren.set_color(_rgb(200, 200, 200, 255))
             if game_over {
                 if winner == human_player {
-                    ren.draw_text_ex(font_info, "你赢了! 按 R 重新开始", 240, 720)
+                    ren.draw_text(font_info, "你赢了! 按 R 重新开始", 240, 720)
                 } else {
-                    ren.draw_text_ex(font_info, "AI获胜! 按 R 重新开始", 240, 720)
+                    ren.draw_text(font_info, "AI获胜! 按 R 重新开始", 240, 720)
                 }
             } else {
                 if ai_thinking {
-                    ren.draw_text_ex(font_info, "AI 思考中...", 280, 720)
+                    ren.draw_text(font_info, "AI 思考中...", 280, 720)
                 } else {
-                    ren.draw_text_ex(font_info, "当前: 你的回合", 270, 720)
+                    ren.draw_text(font_info, "当前: 你的回合", 270, 720)
                 }
             }
 
             ren.set_color(_rgb(150, 150, 150, 255))
-            ren.draw_text_ex(font_info, "ESC 退出  |  R 重新开始", 240, 740)
+            ren.draw_text(font_info, "ESC 退出  |  R 重新开始", 240, 740)
 
             ren.present()
         },

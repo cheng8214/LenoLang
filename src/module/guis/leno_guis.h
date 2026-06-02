@@ -255,10 +255,6 @@ void   leno_gui_platform_blend_render_targets(LenoGUIPlatformImage* dst, LenoGUI
                                                int x, int y, uint8_t alpha);
 int    leno_gui_platform_resize_render_target(LenoGUIPlatformImage* tex, int w, int h);
 
-/* ===== 文字渲染（内置 8x8 点阵字体，参考 SDL3 SDL_RenderDebugText） ===== */
-void   leno_gui_platform_draw_text(LenoGUIPlatformRenderer* ren, const char* text, int x, int y, int size);
-void   leno_gui_platform_text_size(const char* text, int size, int* w, int* h);
-
 /* ===== 字体操作（系统字体渲染） ===== */
 typedef struct LenoGUIPlatformFont LenoGUIPlatformFont;
 LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size);

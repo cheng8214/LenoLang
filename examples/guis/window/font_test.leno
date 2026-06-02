@@ -12,6 +12,7 @@ main() {
     var font_consolas = guis.load_font("Consolas", 18)
     var font_simhei = guis.load_font("SimHei", 28)
     Font font_yahei = guis.load_font("Microsoft YaHei", 20)
+    var font_small = guis.load_font("Arial", 16)
 
     guis.run(win,
         func(Draw ren) {
@@ -19,27 +20,27 @@ main() {
             ren.clear()
 
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text("Built-in 8x8 Font:", 30, 20, 2)
-            ren.draw_text("Hello, LenoC GUI!", 30, 50, 2)
+            ren.draw_text(font_small, "System Font Test:", 30, 20)
+            ren.draw_text(font_small, "Hello, LenoC GUI!", 30, 50)
 
             ren.set_color(_rgb(100, 255, 100, 255))
-            ren.draw_text_ex(font_arial, "Arial 24px - System Font", 30, 100)
+            ren.draw_text(font_arial, "Arial 24px - System Font", 30, 100)
 
             ren.set_color(_rgb(100, 200, 255, 255))
-            ren.draw_text_ex(font_consolas, "Consolas 18px - Monospace", 30, 140)
+            ren.draw_text(font_consolas, "Consolas 18px - Monospace", 30, 140)
 
             ren.set_color(_rgb(255, 200, 100, 255))
-            ren.draw_text_ex(font_simhei, "SimHei 28px - 黑体中文测试", 30, 180)
+            ren.draw_text(font_simhei, "SimHei 28px - 黑体中文测试", 30, 180)
 
             ren.set_color(_rgb(200, 150, 255, 255))
-            ren.draw_text_ex(font_yahei, "Microsoft YaHei 20px - 微软雅黑", 30, 230)
+            ren.draw_text(font_yahei, "Microsoft YaHei 20px - 微软雅黑", 30, 230)
 
             ren.set_color(_rgb(255, 100, 100, 255))
-            ren.draw_text_ex(font_arial, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 30, 280)
-            ren.draw_text_ex(font_consolas, "0123456789 !@#$%^&*()", 30, 310)
+            ren.draw_text(font_arial, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 30, 280)
+            ren.draw_text(font_consolas, "0123456789 !@#$%^&*()", 30, 310)
 
             ren.set_color(_rgb(150, 150, 150, 255))
-            ren.draw_text("Press ESC to quit", 30, 560, 2)
+            ren.draw_text(font_small, "Press ESC to quit", 30, 560)
 
             ren.present()
         },
@@ -57,6 +58,7 @@ main() {
     font_consolas.close()
     font_simhei.close()
     font_yahei.close()
+    font_small.close()
     win.close()
     print("font test done!")
 }

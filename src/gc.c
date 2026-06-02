@@ -601,6 +601,7 @@ static void mark_roots(void) {
     extern void window_mark_methods(void);
     extern void event_mark_methods(void);
     extern void image_mark_methods(void);
+    extern void font_mark_methods(void);
     extern void number_mark_methods(void);
     extern void cstruct_mark_methods(void);
     extern void struct_mark_methods(void);
@@ -612,6 +613,7 @@ static void mark_roots(void) {
     window_mark_methods();
     event_mark_methods();
     image_mark_methods();
+    font_mark_methods();
     number_mark_methods();
     thread_mark_methods();
     channel_mark_methods();

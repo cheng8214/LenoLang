@@ -29,13 +29,14 @@ main() {
     var speed = 1.0       // 旋转速度（度/帧）
     var max_speed = 10.0
 
-    // 1ms 定时器 ≈ 1000fps
-    guis.add_timer(1,
+    // 16ms 定时器 
+    guis.add_timer(16,
         func(int id, int interval) {
             angle = angle + speed
             if angle >= 360.0 {
                 angle = angle - 360.0
             }
+            print(interval)
             return interval
         }
     )
@@ -60,11 +61,11 @@ main() {
             var font = guis.load_font("SimSun", 16)
             var info = "缩放: " + _int(scale * 100.0) + "%  速度: x" + speed+ "  旋转: " + angle + "°"
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text_ex(font, info, 10, 10)
+            ren.draw_text(font, info, 10, 10)
 
             var hint = "左键双击加速 | 右键双击减速 | 滚轮缩放 | ESC 退出"
             ren.set_color(_rgb(150, 150, 200, 255))
-            ren.draw_text_ex(font, hint, 10, 580)
+            ren.draw_text(font, hint, 10, 580)
             font.close()
 
             ren.present()

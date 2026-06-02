@@ -503,7 +503,8 @@ OPCODE(OP_GET_METHOD) {
         DISPATCH;
     }
 
-    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW || obj->type == OBJ_GUI_IMAGE || obj->type == OBJ_GUI_FONT || obj->type == OBJ_FILE) {
+    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW ||
+         obj->type == OBJ_GUI_IMAGE || obj->type == OBJ_GUI_FONT || obj->type == OBJ_FILE) {
         runtime_error("对象没有此方法", GET_CURRENT_LINE());
         return -1;
     }

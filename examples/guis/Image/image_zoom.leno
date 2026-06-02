@@ -45,7 +45,7 @@ main() {
             var font = guis.load_font("SimSun", 16)
             var info = "缩放: " + _str(scale * 100.0) + "%"
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text_ex(font, info, 10, 10)
+            ren.draw_text(font, info, 10, 10)
             font.close()
 
             ren.present()

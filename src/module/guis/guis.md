@@ -12,10 +12,9 @@
 - [渲染器方法（Draw 实例方法）](#渲染器方法draw-实例方法)
 - [事件方法（Event 实例方法）](#事件方法event-实例方法)
 - [图片加载](#图片加载)
-- [zlib解压](#zlib解压)
-- [纹理操作](#纹理操作)
-- [事件系统](#事件系统)
-- [回调式事件循环](#回调式事件循环)
+- [zlib 解压](#zlib-解压)
+- [Image 实例方法](#image-实例方法)
+- [事件循环](#事件循环)
 - [输入状态查询](#输入状态查询)
 - [剪贴板](#剪贴板)
 - [光标与透明度](#光标与透明度)
@@ -684,64 +683,6 @@ var raw = guis.zlib_decode_noheader(compressed_data)
 
 ---
 
-## 图像操作
-
-### `guis.create_image(ren, w, h)`
-
-创建图像（像素缓冲区）。
-
-**返回**: `Image` - 图像对象
-
-```leno
-var tex = guis.create_image(ren, 256, 256)
-```
-
----
-
-### `ren.draw_image(tex, x, y)`
-
-将图像整体绘制到渲染器目标位置。
-
-```leno
-ren.draw_image(tex, 100, 100)
-```
-
----
-
-### `ren.draw_image_src(tex, sx, sy, sw, sh, dx, dy, dw, dh)`
-
-图像源矩形渲染，从图像中取子区域绘制到目标位置（可缩放）。
-
-```leno
-ren.draw_image_src(tex, 0, 0, 64, 64, 100, 100, 128, 128)
-```
-
----
-
-### `ren.draw_image_rotated(tex, x, y, angle, flip)`
-
-图像旋转/翻转渲染。
-
-**参数**:
-- `angle` (float): 旋转角度（度）
-- `flip` (int): 翻转标志 (0=无, 1=水平, 2=垂直)
-
-```leno
-ren.draw_image_rotated(tex, 400, 300, 45.0, 1)
-```
-
----
-
-### `ren.update_image(tex, data, pitch)`
-
-更新图像像素数据。
-
-```leno
-ren.update_image(tex, pixel_data, 256 * 4)
-```
-
----
-
 ## Image 实例方法
 
 ### `image.close()`
@@ -813,41 +754,72 @@ img.draw_rotated_scaled(ren, 400, 300, 200, 150, 45.0)
 
 ---
 
-## 事件系统
+### `image.draw_src(ren, sx, sy, sw, sh, dx, dy, dw, dh)`
 
-### `guis.poll()`
-
-轮询事件队列。非阻塞。
-
-**返回**: `Event` 或 `null`（无事件时）
-
-```leno
-var ev = guis.poll()
-if ev != null {
-    // 处理事件
-}
-```
-
----
-
-### `guis.wait(timeout_ms)`
-
-等待事件（带超时）。阻塞直到有事件或超时。
+从图像中取子区域绘制到目标位置（可缩放）。
 
 **参数**:
-- `timeout_ms` (int): 超时毫秒数
-
-**返回**: `Event` 或 `null`（超时时）
+- `ren` (Draw): 渲染器对象
+- `sx`, `sy`, `sw`, `sh`: 源图像区域（x, y, 宽, 高）
+- `dx`, `dy`, `dw`, `dh`: 目标绘制区域（x, y, 宽, 高）
 
 ```leno
-var ev = guis.wait(1000)
+img.draw_src(ren, 0, 0, 64, 64, 100, 100, 128, 128)
 ```
 
 ---
 
-## 回调式事件循环
+### `image.draw_flipped(ren, x, y, flip)`
 
-`guis.run()` 是推荐的事件循环方式，内部自动处理：
+翻转绘制图像。
+
+**参数**:
+- `flip` (int): 翻转标志 (0=无, 1=水平, 2=垂直, 3=两者)
+
+```leno
+img.draw_flipped(ren, 100, 100, guis.FLIP_HORIZONTAL)
+```
+
+---
+
+### `image.draw_flipped_scaled(ren, x, y, w, h, flip)`
+
+翻转+缩放绘制图像。
+
+```leno
+img.draw_flipped_scaled(ren, 100, 100, 200, 150, guis.FLIP_HORIZONTAL)
+```
+
+---
+
+### `image.size()`
+
+获取图像尺寸。
+
+**返回**: `[w, h]` - 宽高数组
+
+```leno
+var size = img.size()
+print("尺寸: " + size[0] + "x" + size[1])
+```
+
+---
+
+### `image.access()`
+
+获取图像访问模式。
+
+**返回**: `int` - 访问模式（0=静态, 1=流式, 2=目标）
+
+```leno
+var mode = img.access()
+```
+
+---
+
+## 事件循环
+
+`guis.run()` 是事件循环方式，内部自动处理：
 
 1. 轮询并分发所有事件到 onEvent 回调
 2. 检查窗口关闭标志
@@ -873,33 +845,6 @@ guis.run(win,
         }
     }
 )
-```
-
-### 手动事件循环（高级用法）
-
-如果不使用 `guis.run()`，可以手动管理渲染器和事件循环：
-
-```leno
-Win win = guis.create_window("App", {width: 800, height: 600})
-Draw ren = guis.create_renderer(win)
-
-while not win.should_close() {
-    var ev = guis.poll()
-    while ev != null {
-        // 处理事件
-        if ev.is_quit() {
-            win.set_should_close(true)
-        }
-        ev = guis.poll()
-    }
-
-    ren.set_color(_rgb(0, 0, 0, 255))
-    ren.clear()
-    ren.present()
-}
-
-guis.destroy_renderer(ren)
-win.close()
 ```
 
 ---
@@ -1095,61 +1040,49 @@ var font = guis.load_font("Consolas", 16)
 
 ---
 
-### `guis.destroy_font(font)`
+### `font.close()`
 
-销毁字体对象，释放资源。
+关闭并释放字体资源。
 
 ```leno
-guis.destroy_font(font)
+font.close()
 ```
 
 ---
 
-### `ren.draw_text(text, x, y, size)`
+### `ren.draw_text(font, text, x, y)`
 
-使用内置 8x8 点阵字体绘制文字。
+使用指定字体绘制文字。
 
 **参数**:
+- `font` (Font): 字体对象
 - `text` (string): 要绘制的文本
 - `x`, `y` (int): 绘制位置
-- `size` (int): 字体大小
 
 ```leno
+var font = guis.load_font("SimSun", 16)
 ren.set_color(_rgb(255, 255, 255, 255))
-ren.draw_text("Hello Leno!", 100, 100, 16)
+ren.draw_text(font, "Hello Leno!", 100, 100)
+font.close()
 ```
 
 ---
 
-### `ren.text_size(text, size) -> [w, h]`
+### `ren.text_size(font, text) -> [w, h]`
 
-计算内置点阵字体的文字尺寸。
+计算指定字体的文字尺寸。
+
+**参数**:
+- `font` (Font): 字体对象
+- `text` (string): 要计算的文本
+
+**返回**: `[宽度, 高度]` 数组
 
 ```leno
-var size = ren.text_size("Hello", 16)
+var font = guis.load_font("SimSun", 16)
+var size = ren.text_size(font, "Hello")
 print("宽: " + size[0] + " 高: " + size[1])
-```
-
----
-
-### `ren.draw_text_ex(font, text, x, y)`
-
-使用指定系统字体绘制文字。
-
-```leno
-ren.set_color(_rgb(255, 255, 255, 255))
-ren.draw_text_ex(font, "Hello Leno!", 100, 200)
-```
-
----
-
-### `ren.font_size(font, text) -> [w, h]`
-
-计算指定系统字体的文字尺寸。
-
-```leno
-var size = ren.font_size(font, "Hello")
-print("宽: " + size[0] + " 高: " + size[1])
+font.close()
 ```
 
 ---
@@ -1573,7 +1506,7 @@ main() {
 `create_window` 会自动初始化 GUI 子系统，无需手动调用初始化。
 
 ```leno
-var win = guis.create_window("App", 800, 600, 1)
+var win = guis.create_window("App", {width: 800, height: 600})
 ```
 
 ### 2. 渲染循环
@@ -1589,7 +1522,7 @@ ren.present()         // 3. 呈现
 
 ### 3. 窗口大小变化
 
-使用 `guis.run()` 时，渲染器会自动调整大小。手动管理时需要调用 `guis.resize_renderer()` 处理窗口 resize 事件。
+使用 `guis.run()` 时，渲染器会自动调整大小。
 
 ### 4. 像素格式
 
@@ -1609,12 +1542,7 @@ ren.present()         // 3. 呈现
 
 ## 最佳实践
 
-1. **使用 `guis.run()` 管理事件循环**
-   ```leno
-   guis.run(win, onDraw, onEvent)
-   ```
-
-2. **始终处理退出事件**
+1. **始终处理退出事件**
    ```leno
    func(Event e) {
        if e.is_quit() or e.is_window_close() {
@@ -1623,12 +1551,12 @@ ren.present()         // 3. 呈现
    }
    ```
 
-3. **使用 `win.close()` 清理资源**
+2. **使用 `win.close()` 清理资源**
    ```leno
    win.close()
    ```
 
-4. **合理控制帧率**
+3. **合理控制帧率**
    ```leno
    var frame = 0
    var start = guis.get_ticks()
@@ -1641,7 +1569,7 @@ ren.present()         // 3. 呈现
    }
    ```
 
-5. **使用视口简化局部绘制**
+4. **使用视口简化局部绘制**
    ```leno
    ren.set_viewport(x, y, w, h)
    // 在视口内使用相对坐标绘制
@@ -1651,7 +1579,7 @@ ren.present()         // 3. 呈现
    ren.set_viewport(0, 0, size[0], size[1])
    ```
 
-6. **使用裁剪矩形限制绘制区域**
+5. **使用裁剪矩形限制绘制区域**
    ```leno
    ren.set_clip_rect(x, y, w, h)
    // 绘制内容不会超出裁剪区域
@@ -1660,5 +1588,5 @@ ren.present()         // 3. 呈现
 
 ---
 
-*文档版本: 1.1*  
-*最后更新: 2026-06-01*
+*文档版本: 1.2*  
+*最后更新: 2026-06-02*
