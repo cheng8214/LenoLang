@@ -15,7 +15,6 @@
 - [zlib 解压](#zlib-解压)
 - [Image 实例方法](#image-实例方法)
 - [事件循环](#事件循环)
-- [输入状态查询](#输入状态查询)
 - [剪贴板](#剪贴板)
 - [光标与透明度](#光标与透明度)
 - [文件对话框](#文件对话框)
@@ -849,41 +848,6 @@ guis.run(win,
 
 ---
 
-## 输入状态查询
-
-### `guis.get_key(key)`
-
-查询指定按键是否按下。
-
-**参数**:
-- `key` (int): 按键码
-
-**返回**: `bool`
-
-```leno
-if guis.get_key(0x20) {
-    print("空格键正在按下")
-}
-```
-
----
-
-### `guis.get_mouse()`
-
-查询鼠标状态。
-
-**返回**: `{x, y, buttons}` - 鼠标位置和按钮状态
-
-```leno
-var mouse = guis.get_mouse()
-print("鼠标: " + mouse.x + ", " + mouse.y)
-if mouse.buttons & 1 {
-    print("左键按下")
-}
-```
-
----
-
 ## 剪贴板
 
 ### `guis.get_clipboard()` / `guis.set_clipboard(text)`
@@ -1239,16 +1203,6 @@ var tid = guis.add_timer(500, func(id, interval) {
     return interval  // 保持 500ms
 })
 ```
-
-### `guis.delay(ms)`
-
-延迟指定毫秒数。
-
-```leno
-guis.delay(16)  // 延迟约 16ms（约 60 FPS）
-```
-
----
 
 ### `guis.get_display()` / `guis.get_dpi()`
 

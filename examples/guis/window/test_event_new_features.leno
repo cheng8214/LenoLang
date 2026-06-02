@@ -1,6 +1,6 @@
 /* guis 模块新事件功能测试
    测试项:
-   1. is_key_pressed / is_key_released
+   1. 键盘事件 (key_down/key_up)
    2. 鼠标滚轮事件 (wheel_x/wheel_y)
    3. 窗口事件回调 (minimized/maximized/restored/focus/unfocus)
    4. IME 文本输入事件 (text_input)
@@ -37,8 +37,8 @@ main() {
 
             /* 绘制测试信息 */
             ren.set_color(fg)
-            ren.draw_text(font, "测试: is_key_pressed / is_key_released", 10, 10)
-            ren.draw_text(font, "  按任意键 -> 查看 pressed/released 输出", 10, 30)
+            ren.draw_text(font, "测试: 键盘事件 (key_down/key_up)", 10, 10)
+            ren.draw_text(font, "  按任意键 -> 查看 key/scancode/mod/repeat", 10, 30)
             ren.draw_text(font, "测试: 鼠标滚轮 -> 滚轮可查 wheel_x/wheel_y", 10, 50)
             ren.draw_text(font, "测试: 窗口事件 -> 最小化/恢复/焦点变化", 10, 70)
             ren.draw_text(font, "测试: 文本输入 -> 输入中文/英文（需要 IME）", 10, 90)
@@ -56,39 +56,27 @@ main() {
                 win.set_should_close(true)
             }
 
-            /* ---- 测试 1: is_key_pressed / is_key_released ---- */
+            /* ---- 测试 1: 键盘事件 ---- */
             if e.is_key_down() {
                 var key = e.key()
-                var pressed = guis.is_key_pressed(key)
-                var released = guis.is_key_released(key)
 
                 print("[KEY_DOWN] key=" + _str(key) +
                       " scancode=" + _str(e.scancode()) +
                       " mod=" + _str(e.mod()) +
                       " repeat=" + _str(e.repeat()))
 
-                /* 刚按下时 is_key_pressed 应该为 true */
-                if pressed {
-                    print("  -> is_key_pressed: true (OK)")
-                    pass_count = pass_count + 1
-                }
+                print("  -> 键盘按下事件 (OK)")
+                pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 
             if e.is_key_up() {
                 var key = e.key()
-                var pressed = guis.is_key_pressed(key)
-                var released = guis.is_key_released(key)
 
-                print("[KEY_UP] key=" + _str(key) +
-                      " pressed=" + _str(pressed) +
-                      " released=" + _str(released))
+                print("[KEY_UP] key=" + _str(key))
 
-                /* 刚释放时 is_key_released 应该为 true */
-                if released {
-                    print("  -> is_key_released: true (OK)")
-                    pass_count = pass_count + 1
-                }
+                print("  -> 键盘释放事件 (OK)")
+                pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 

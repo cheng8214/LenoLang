@@ -15,15 +15,12 @@
  *   font.close()                                          关闭字体
  *   ren.draw_text(font, text, x, y)                       使用字体绘制文字
  *   ren.text_size(font, text) -> [w, h]                   计算字体文字尺寸
- *   guis.get_key(key) -> bool
- *   guis.get_mouse() -> {x, y, buttons}
  *   guis.get_clipboard() / set_clipboard(text)
  *   guis.show_cursor(bool)
  *   guis.set_cursor(cursor_type)                          设置系统光标样式
  *   guis.file_dialog(type, callback, opts?)               系统原生文件对话框
  *   guis.msg_box(title, message, type) -> int
  *   guis.get_ticks() / get_perf_counter() / get_perf_freq()
- *   guis.delay(ms)
  *   guis.add_timer(interval_ms, callback) -> timer_id     定时器回调
  *   guis.remove_timer(timer_id) -> bool                   取消定时器
  *   guis.get_display() / get_dpi()
@@ -601,28 +598,7 @@ static Value gui_get_display_size_func(int argc, Value* args) {
     return val_obj((Object*)make_int_array2(w, h));
 }
 
-/* ===== 输入状态查询 ===== */
-
-/* 查询指定按键是否按下 */
-static Value gui_get_key_state_func(int argc, Value* args) {
-    (void)argc;
-    int key = val_as_int(args[0]);
-    return val_bool(leno_gui_platform_get_key_state(key) != 0);
-}
-
-/* 检查按键是否刚被按下（本帧按下的瞬间） */
-static Value gui_is_key_pressed_func(int argc, Value* args) {
-    (void)argc;
-    int key = val_as_int(args[0]);
-    return val_bool(leno_gui_platform_is_key_pressed(key) != 0);
-}
-
-/* 检查按键是否刚被释放（本帧释放的瞬间） */
-static Value gui_is_key_released_func(int argc, Value* args) {
-    (void)argc;
-    int key = val_as_int(args[0]);
-    return val_bool(leno_gui_platform_is_key_released(key) != 0);
-}
+/* ===== 文本输入 ===== */
 
 /* 开始接收文本输入事件 */
 static Value gui_start_text_input_func(int argc, Value* args) {
@@ -642,19 +618,6 @@ static Value gui_stop_text_input_func(int argc, Value* args) {
 static Value gui_is_text_input_active_func(int argc, Value* args) {
     (void)argc; (void)args;
     return val_bool(leno_gui_platform_is_text_input_active() != 0);
-}
-
-/* 查询鼠标状态 */
-static Value gui_get_mouse_state_func(int argc, Value* args) {
-    (void)argc; (void)args;
-    int x = 0, y = 0, buttons = 0;
-    leno_gui_platform_get_mouse_state(&x, &y, &buttons);
-    ObjDict* d = dict_new(8);
-    init_event_string_keys();
-    dict_add_int_key(d, str_key_x, x);
-    dict_add_int_key(d, str_key_y, y);
-    dict_add_int_key(d, str_key_button, buttons);
-    return val_obj((Object*)d);
 }
 
 /* ===== 剪贴板 ===== */
@@ -976,14 +939,6 @@ static Value gui_get_performance_frequency_func(int argc, Value* args) {
     return val_int((int64_t)leno_gui_platform_get_performance_frequency());
 }
 
-/* 延迟指定毫秒 */
-static Value gui_delay_func(int argc, Value* args) {
-    (void)argc;
-    uint32_t ms = (uint32_t)val_as_int(args[0]);
-    leno_gui_platform_delay(ms);
-    return val_null();
-}
-
 /* ===== 显示器 DPI ===== */
 
 /* 获取显示器 DPI */
@@ -1211,12 +1166,6 @@ void guis_init_module(void) {
     /* ===== 事件循环 ===== */
     native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_2func);
 
-    /* ===== 输入状态查询 ===== */
-    native_register_module_method("guis", "get_key", gui_get_key_state_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
-    native_register_module_method("guis", "is_key_pressed", gui_is_key_pressed_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
-    native_register_module_method("guis", "is_key_released", gui_is_key_released_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
-    native_register_module_method("guis", "get_mouse", gui_get_mouse_state_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
-
     /* ===== 文本输入控制 ===== */
     native_register_module_method("guis", "start_text_input", gui_start_text_input_func, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
     native_register_module_method("guis", "stop_text_input", gui_stop_text_input_func, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
@@ -1241,7 +1190,6 @@ void guis_init_module(void) {
     native_register_module_method("guis", "get_ticks", gui_get_ticks_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
     native_register_module_method("guis", "get_perf_counter", gui_get_performance_counter_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
     native_register_module_method("guis", "get_perf_freq", gui_get_performance_frequency_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
-    native_register_module_method("guis", "delay", gui_delay_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
 
     /* ===== 定时器回调 ===== */
     TypeKind int_func[] = {TYPE_INT, TYPE_ANY};
