@@ -143,7 +143,7 @@ main() {
         }
     )
 
-    guis.destroy_font(font)
-    guis.destroy_font(font_small)
+    font.close()
+    font_small.close()
     win.close()
 }

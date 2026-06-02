@@ -20,6 +20,8 @@ static TypeKind get_value_type(Value value) {
             else if (val_as_obj(value)->type == OBJ_GUI_WINDOW) return TYPE_WIN;
             else if (val_as_obj(value)->type == OBJ_GUI_RENDERER) return TYPE_DRAW;
             else if (val_as_obj(value)->type == OBJ_GUI_EVENT) return TYPE_EVENT;
+            else if (val_as_obj(value)->type == OBJ_GUI_IMAGE) return TYPE_IMAGE;
+            else if (val_as_obj(value)->type == OBJ_GUI_FONT) return TYPE_FONT;
             else if (val_as_obj(value)->type == OBJ_RGB) return TYPE_RGB;
             return TYPE_ANY;
         default: return TYPE_ANY;

@@ -120,6 +120,8 @@ static void init_keyword_table(void) {
         {"Draw", TOK_DRAW_TYPE},
         {"Event", TOK_EVENT_TYPE},
         {"Rgb", TOK_RGB_TYPE},
+        {"Image", TOK_IMAGE_TYPE},
+        {"Font", TOK_FONT_TYPE},
         {"Style", TOK_STYLE_TYPE},
         {"Ptr", TOK_PTR_TYPE},
         {"async", TOK_ASYNC},

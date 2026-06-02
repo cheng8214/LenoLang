@@ -27,6 +27,11 @@ typedef struct {
 
 typedef struct {
     Object header;
+    LenoGUIPlatformImage* platform;
+} ObjGUIImage;
+
+typedef struct {
+    Object header;
     ObjDict* data;
 } ObjGUIEvent;
 
@@ -34,6 +39,7 @@ typedef struct {
 ObjGUIWindow* as_window(Value v);
 ObjGUIRenderer* as_renderer(Value v);
 ObjGUIFont* as_font(Value v);
+ObjGUIImage* as_image(Value v);
 ObjArray* make_int_array2(int a, int b);
 ObjGUIWindow* as_window_from_platform(LenoGUIPlatformWindow* pw);
 

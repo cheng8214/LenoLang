@@ -42,6 +42,7 @@ set(LENO_SOURCES
     src/object/object_face.c
     src/object/object_cstruct.c
     src/object/object_thread.c
+    src/object/object_image.c
     src/bound_method.c
     src/coroutine.c
     src/vm/vm.c

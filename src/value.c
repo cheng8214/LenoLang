@@ -64,6 +64,8 @@ const char* val_to_string(Value v) {
                 return "[draw]";
             } else if (val_as_obj(v)->type == OBJ_GUI_EVENT) {
                 return "[event]";
+            } else if (val_as_obj(v)->type == OBJ_GUI_IMAGE) {
+                return "[image]";
             } else if (val_as_obj(v)->type == OBJ_RGB) {
                 return "[rgb]";
             }
@@ -424,6 +426,8 @@ char* value_to_string(Value v) {
                 result = strdup("<draw>");
             } else if (val_as_obj(v)->type == OBJ_GUI_EVENT) {
                 result = strdup("<event>");
+            } else if (val_as_obj(v)->type == OBJ_GUI_IMAGE) {
+                result = strdup("<image>");
             } else if (val_as_obj(v)->type == OBJ_RGB) {
                 ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
                 char buf[64];

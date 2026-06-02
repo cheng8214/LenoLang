@@ -291,6 +291,8 @@ void gc_mark_object(Object* obj) {
         }
         case OBJ_GUI_FONT:
             break;
+        case OBJ_GUI_IMAGE:
+            break;
         case OBJ_GUI_EVENT: {
             /* Event 对象内部持有 ObjDict*，需要标记 */
             ObjGUIEvent* ev = (ObjGUIEvent*)obj;
@@ -598,6 +600,7 @@ static void mark_roots(void) {
     extern void draw_mark_methods(void);
     extern void window_mark_methods(void);
     extern void event_mark_methods(void);
+    extern void image_mark_methods(void);
     extern void number_mark_methods(void);
     extern void cstruct_mark_methods(void);
     extern void struct_mark_methods(void);
@@ -608,6 +611,7 @@ static void mark_roots(void) {
     draw_mark_methods();
     window_mark_methods();
     event_mark_methods();
+    image_mark_methods();
     number_mark_methods();
     thread_mark_methods();
     channel_mark_methods();
@@ -714,6 +718,7 @@ static size_t get_object_size(Object* obj) {
         case OBJ_GUI_WINDOW: return sizeof(Object) + sizeof(int) + sizeof(void*);
         case OBJ_GUI_RENDERER: return sizeof(Object) + sizeof(void*) + sizeof(void*);
         case OBJ_GUI_FONT: return sizeof(Object) + sizeof(void*);
+        case OBJ_GUI_IMAGE: return sizeof(Object) + sizeof(void*);
         case OBJ_GUI_EVENT: return sizeof(Object) + sizeof(void*);
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
@@ -877,6 +882,7 @@ static void free_object_resources(Object* obj) {
         case OBJ_GUI_WINDOW:
         case OBJ_GUI_RENDERER:
         case OBJ_GUI_FONT:
+        case OBJ_GUI_IMAGE:
         case OBJ_GUI_EVENT:
             break;
         case OBJ_ARRAY: {

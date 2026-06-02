@@ -57,6 +57,14 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_RGB);
     }
+    if (p->lex.current.type == TOK_IMAGE_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_IMAGE);
+    }
+    if (p->lex.current.type == TOK_FONT_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_FONT);
+    }
     if (p->lex.current.type == TOK_PTR_TYPE) {
         lexer_next(&p->lex);
         // 检查是否有泛型参数 Ptr[T]

@@ -27,6 +27,8 @@ static inline ObjNative* find_method_by_type(ObjType type, const char* name) {
         case OBJ_GUI_RENDERER: return draw_find_method(name);
         case OBJ_GUI_WINDOW: return window_find_method(name);
         case OBJ_GUI_EVENT: return event_find_method(name);
+        case OBJ_GUI_IMAGE: return image_find_method(name);
+        case OBJ_GUI_FONT: return font_find_method(name);
         case OBJ_STRUCT:  return struct_find_method(name);
         case OBJ_CSTRUCT_DEF:
         case OBJ_CSTRUCT: return cstruct_find_method(name);
@@ -48,5 +50,5 @@ static inline int ic_type_supported(ObjType type) {
            type == OBJ_STRUCT ||
            type == OBJ_CSTRUCT_DEF || type == OBJ_CSTRUCT ||
            type == OBJ_THREAD || type == OBJ_CHANNEL ||
-           type == OBJ_GUI_WINDOW || type == OBJ_GUI_RENDERER || type == OBJ_GUI_EVENT;
+           type == OBJ_GUI_WINDOW || type == OBJ_GUI_RENDERER || type == OBJ_GUI_EVENT || type == OBJ_GUI_IMAGE;
 }

@@ -11,7 +11,7 @@ main() {
     var font_arial = guis.load_font("Arial", 24)
     var font_consolas = guis.load_font("Consolas", 18)
     var font_simhei = guis.load_font("SimHei", 28)
-    var font_yahei = guis.load_font("Microsoft YaHei", 20)
+    Font font_yahei = guis.load_font("Microsoft YaHei", 20)
 
     guis.run(win,
         func(Draw ren) {
@@ -53,10 +53,10 @@ main() {
         }
     )
 
-    guis.destroy_font(font_arial)
-    guis.destroy_font(font_consolas)
-    guis.destroy_font(font_simhei)
-    guis.destroy_font(font_yahei)
+    font_arial.close()
+    font_consolas.close()
+    font_simhei.close()
+    font_yahei.close()
     win.close()
     print("font test done!")
 }

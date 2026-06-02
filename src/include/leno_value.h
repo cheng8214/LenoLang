@@ -47,6 +47,7 @@ typedef enum {
     OBJ_GUI_RENDERER, // GUI 渲染器对象
     OBJ_GUI_FONT,     // GUI 字体对象
     OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
+    OBJ_GUI_IMAGE,    // GUI 图像对象
     OBJ_RGB,          // RGB 颜色对象
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
@@ -1243,6 +1244,52 @@ void window_register_method_with_params(const char* name, ObjNative* method, int
 WindowMethodEntry window_find_method_meta(const char* name);
 TypeKind window_get_method_param_type(const char* method_name, int param_index);
 ObjNative* window_find_method(const char* name);
+
+// ============================================================================
+// Image 图像方法系统 API
+// ============================================================================
+
+// Image 方法元信息
+typedef struct {
+    const char* name;
+    ObjNative* method;
+    int arity;
+    TypeKind return_type;
+    TypeKind return_element_type;
+    TypeKind param_types[MAX_METHOD_PARAMS];
+} ImageMethodEntry;
+
+void image_init_methods(void);
+void image_mark_methods(void);
+void image_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                        int min_arity, int max_arity,
+                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+ImageMethodEntry image_find_method_meta(const char* name);
+TypeKind image_get_method_param_type(const char* method_name, int param_index);
+ObjNative* image_find_method(const char* name);
+
+// ============================================================================
+// Font 字体方法系统 API
+// ============================================================================
+
+// Font 方法元信息
+typedef struct {
+    const char* name;
+    ObjNative* method;
+    int arity;
+    TypeKind return_type;
+    TypeKind return_element_type;
+    TypeKind param_types[MAX_METHOD_PARAMS];
+} FontMethodEntry;
+
+void font_init_methods(void);
+void font_mark_methods(void);
+void font_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                       int min_arity, int max_arity,
+                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+FontMethodEntry font_find_method_meta(const char* name);
+TypeKind font_get_method_param_type(const char* method_name, int param_index);
+ObjNative* font_find_method(const char* name);
 
 // ============================================================================
 // Dict 字典方法系统 API

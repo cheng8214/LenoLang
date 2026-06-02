@@ -450,6 +450,8 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_DRAW:     return "draw";
         case TYPE_EVENT:    return "event";
         case TYPE_RGB:      return "rgb";
+        case TYPE_IMAGE:    return "image";
+        case TYPE_FONT:     return "font";
         case TYPE_STYLE:    return "style";
         case TYPE_PTR:      return "ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
@@ -537,6 +539,10 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type_new(TYPE_DRAW);
             } else if (val_as_obj(*v)->type == OBJ_GUI_EVENT) {
                 return type_new(TYPE_EVENT);
+            } else if (val_as_obj(*v)->type == OBJ_GUI_IMAGE) {
+                return type_new(TYPE_IMAGE);
+            } else if (val_as_obj(*v)->type == OBJ_GUI_FONT) {
+                return type_new(TYPE_FONT);
             } else if (val_as_obj(*v)->type == OBJ_DICT) {
                 return type_new(TYPE_DICT);
             } else if (val_as_obj(*v)->type == OBJ_FFI_POINTER) {
@@ -804,6 +810,8 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_DRAW_TYPE:     return TYPE_DRAW;
         case TOK_EVENT_TYPE:    return TYPE_EVENT;
         case TOK_RGB_TYPE:      return TYPE_RGB;
+        case TOK_IMAGE_TYPE:    return TYPE_IMAGE;
+        case TOK_FONT_TYPE:     return TYPE_FONT;
         case TOK_STYLE_TYPE:    return TYPE_STYLE;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;

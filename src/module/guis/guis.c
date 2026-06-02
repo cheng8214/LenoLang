@@ -5,7 +5,7 @@
  *   Win     - 窗口对象 (OBJ_GUI_WINDOW)
  *   Draw    - 渲染器对象 (OBJ_GUI_RENDERER)
  *   Event   - 事件对象 (OBJ_GUI_EVENT )
- *   Texture - 纹理对象 (OBJ_GUI_TEXTURE)
+ *   Image   - 图像对象 (OBJ_GUI_IMAGE)
  *   Font    - 字体对象 (OBJ_GUI_FONT)
  *   Rgb     - 颜色对象 (_rgb(r, g, b, a?))
  *
@@ -85,6 +85,13 @@ ObjGUIFont* as_font(Value v) {
     Object* obj = val_as_obj(v);
     if (obj->type != OBJ_GUI_FONT) return NULL;
     return (ObjGUIFont*)obj;
+}
+
+ObjGUIImage* as_image(Value v) {
+    if (!val_is_obj(v)) return NULL;
+    Object* obj = val_as_obj(v);
+    if (obj->type != OBJ_GUI_IMAGE) return NULL;
+    return (ObjGUIImage*)obj;
 }
 
 // 静态字符串键，避免每次事件都创建新字符串导致内存泄漏
@@ -331,14 +338,37 @@ static Value gui_load_font_func(int argc, Value* args) {
     return val_obj((Object*)font);
 }
 
-static Value gui_destroy_font_func(int argc, Value* args) {
+/* ===== 图片加载 ===== */
+
+/* guis.load_image(path) -> Image */
+static Value gui_load_image_func(int argc, Value* args) {
     (void)argc;
-    ObjGUIFont* font = as_font(args[0]);
-    if (font && font->platform) {
-        leno_gui_platform_destroy_font(font->platform);
-        font->platform = NULL;
+    const char* path = NULL;
+    if (val_is_obj(args[0])) {
+        Object* obj = val_as_obj(args[0]);
+        if (obj->type == OBJ_STRING) path = ((ObjString*)obj)->chars;
     }
-    return val_null();
+    if (!path) return val_null();
+
+    if (!leno_gui_platform_init()) return val_null();
+
+    LenoGUIPlatformImage* pt = leno_gui_platform_load_image(path);
+    if (!pt) {
+        /* 加载失败，打印错误信息 */
+        const char* err = leno_gui_platform_get_image_error();
+        if (err && err[0]) {
+            leno_gui_log_error("load_image 失败: %s", err);
+        }
+        return val_null();
+    }
+
+    ObjGUIImage* tex = (ObjGUIImage*)gc_alloc(sizeof(ObjGUIImage), OBJ_GUI_IMAGE);
+    if (!tex) {
+        leno_gui_platform_destroy_image(pt);
+        return val_null();
+    }
+    tex->platform = pt;
+    return val_obj((Object*)tex);
 }
 
 static Value gui_poll_event_func(int argc, Value* args) {
@@ -949,11 +979,13 @@ static Value gui_log_critical_func(int argc, Value* args) {
     return val_null();
 }
 
-/* 前向声明：Draw / Win 实例方法注册 */
+/* 前向声明：Draw / Win / Image 实例方法注册 */
 void guis_init_instance_methods(void);
 
-/* 外部声明：Win 实例方法注册 */
+/* 外部声明：Win / Image / Font 实例方法注册 */
 extern void guis_init_window_instance_methods(void);
+extern void guis_init_image_instance_methods(void);
+extern void guis_init_font_instance_methods(void);
 
 void guis_init_module(void) {
     TypeKind no_params[] = {};
@@ -1017,8 +1049,10 @@ void guis_init_module(void) {
     native_register_module_method("guis", "remove_timer", gui_remove_timer_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, int_params);
 
     /* ===== 字体操作 ===== */
-    native_register_module_method("guis", "load_font", gui_load_font_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, str_int);
-    native_register_module_method("guis", "destroy_font", gui_destroy_font_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_1int);
+    native_register_module_method("guis", "load_font", gui_load_font_func, 2, -1, -1, TYPE_FONT, TYPE_UNKNOWN, str_int);
+
+    /* ===== 图片加载 ===== */
+    native_register_module_method("guis", "load_image", gui_load_image_func, 1, -1, -1, TYPE_IMAGE, TYPE_UNKNOWN, str_params);
 
     /* ===== 显示器信息 ===== */
     native_register_module_method("guis", "get_display", gui_get_display_size_func, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
@@ -1141,9 +1175,9 @@ void guis_init_module(void) {
     native_register_module_const("guis", "FLIP_VERTICAL",   LENO_GUI_FLIP_VERTICAL);
 
     /* ===== 模块常量：纹理访问模式 ===== */
-    native_register_module_const("guis", "TEXTUREACCESS_STATIC",    LENO_GUI_TEXTUREACCESS_STATIC);
-    native_register_module_const("guis", "TEXTUREACCESS_STREAMING", LENO_GUI_TEXTUREACCESS_STREAMING);
-    native_register_module_const("guis", "TEXTUREACCESS_TARGET",    LENO_GUI_TEXTUREACCESS_TARGET);
+    native_register_module_const("guis", "IMAGEACCESS_STATIC",    LENO_GUI_IMAGEACCESS_STATIC);
+    native_register_module_const("guis", "IMAGEACCESS_STREAMING", LENO_GUI_IMAGEACCESS_STREAMING);
+    native_register_module_const("guis", "IMAGEACCESS_TARGET",    LENO_GUI_IMAGEACCESS_TARGET);
 
     /* ===== 日志系统函数 ===== */
     native_register_module_method("guis", "log_set_priority", gui_log_set_priority_func, 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2int);
@@ -1181,6 +1215,12 @@ void guis_init_module(void) {
 
     /* 注册 Win 实例方法 */
     guis_init_window_instance_methods();
+
+    /* 注册 Image 实例方法 */
+    guis_init_image_instance_methods();
+
+    /* 注册 Font 实例方法 */
+    guis_init_font_instance_methods();
 }
 
 /* 注册全局函数（不需要 import guis） */

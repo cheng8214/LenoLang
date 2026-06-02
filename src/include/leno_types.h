@@ -97,7 +97,8 @@ typedef enum {
     TOK_NEW,           // new 关键字（struct 实例化）
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
-    TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_WIN_TYPE, TOK_DRAW_TYPE, TOK_EVENT_TYPE, TOK_RGB_TYPE,  // File, Ptr, Win, Draw, Event, Rgb 类型
+    TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_WIN_TYPE, TOK_DRAW_TYPE, TOK_EVENT_TYPE, TOK_RGB_TYPE, 
+    TOK_IMAGE_TYPE, TOK_FONT_TYPE,  // File, Ptr, Win, Draw, Event, Rgb, Image, Font 类型
     TOK_STYLE_TYPE,      // Style 类型（用于 GUI 样式定义）
     // C 布局类型关键字
     TOK_I8, TOK_U8,           // i8, u8
@@ -146,6 +147,8 @@ typedef enum {
     TYPE_DRAW,      // GUI 渲染器类型
     TYPE_EVENT,     // GUI 事件类型（Dict 别名）
     TYPE_RGB,       // RGB 颜色类型
+    TYPE_IMAGE,     // GUI 图像类型
+    TYPE_FONT,      // GUI 字体类型
     TYPE_STYLE,     // GUI 样式类型（Style[window], Style[button] 等）
     TYPE_ANY,       // 任意类型
     TYPE_FUNCTION,  // 函数类型

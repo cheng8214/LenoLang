@@ -1410,6 +1410,10 @@ void cstructs_init_methods(void);
 void threads_init_instance_methods(void);
 // 前向声明：Win 实例方法初始化（在 guis_window.c 中定义）
 void guis_init_window_instance_methods(void);
+// 前向声明：Image 实例方法初始化（在 guis_image.c 中定义）
+void guis_init_image_instance_methods(void);
+// 前向声明：Font 实例方法初始化（在 guis_font.c 中定义）
+void guis_init_font_instance_methods(void);
 
 void native_register_all_instance_method_metas(void) {
     native_reset_instance_method_metas();
@@ -1421,6 +1425,8 @@ void native_register_all_instance_method_metas(void) {
     guis_init_instance_methods();
     guis_init_window_instance_methods();
     guis_init_event_methods();
+    guis_init_image_instance_methods();
+    guis_init_font_instance_methods();
     structs_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
@@ -1436,6 +1442,9 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_WIN:    return "win";
         case TYPE_DRAW:   return "draw";
         case TYPE_EVENT:  return "event";
+        case TYPE_RGB:    return "rgb";
+        case TYPE_IMAGE:  return "image";
+        case TYPE_FONT:   return "font";
         case TYPE_STYLE:  return "style";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";

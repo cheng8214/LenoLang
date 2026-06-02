@@ -244,6 +244,11 @@ struct LenoGUIPlatformWindow {
     int drag_area_y;
     int drag_area_w;
     int drag_area_h;
+    /* 双击检测状态 */
+    uint64_t last_click_time[3];        /* 上次点击时间（纳秒，索引0=左键,1=中键,2=右键） */
+    int last_click_x[3];                /* 上次点击X坐标 */
+    int last_click_y[3];                /* 上次点击Y坐标 */
+    int click_count[3];                 /* 当前点击计数（用于双击检测） */
 };
 
 /* ===== 平台渲染器结构（包含视口/裁剪字段） ===== */
@@ -263,9 +268,9 @@ struct LenoGUIPlatformRenderer {
     int needs_resize;  /* 窗口大小变化标志，参考 SDL3 surface_valid */
 };
 
-/* ===== 平台纹理结构 ===== */
+/* ===== 平台图像结构 ===== */
 
-struct LenoGUIPlatformTexture {
+struct LenoGUIPlatformImage {
     uint32_t* pixels;
     int width;
     int height;
@@ -273,6 +278,7 @@ struct LenoGUIPlatformTexture {
 };
 
 #include "leno_guis_swrender.c"
+#include "leno_guis_image.c"
 
 /* ===== macOS 键码到 Leno 键码映射 ===== */
 
@@ -682,10 +688,35 @@ static void pump_cocoa_event(id ns_event) {
             ev.type = LENO_GUI_EVT_MOUSE_DOWN;
             ev.mouse_x = (float)location.x;
             ev.mouse_y = (float)location.y;
-            if (event_type == NSEventTypeLeftMouseDown) ev.mouse_button = LENO_GUI_MOUSE_LEFT;
-            else if (event_type == NSEventTypeRightMouseDown) ev.mouse_button = LENO_GUI_MOUSE_RIGHT;
-            else ev.mouse_button = LENO_GUI_MOUSE_MIDDLE;
-            ev.mouse_clicks = 1;
+            int button_idx;
+            if (event_type == NSEventTypeLeftMouseDown) { ev.mouse_button = LENO_GUI_MOUSE_LEFT; button_idx = 0; }
+            else if (event_type == NSEventTypeRightMouseDown) { ev.mouse_button = LENO_GUI_MOUSE_RIGHT; button_idx = 2; }
+            else { ev.mouse_button = LENO_GUI_MOUSE_MIDDLE; button_idx = 1; }
+            /* 双击检测逻辑 */
+            if (win) {
+                uint64_t now = mach_absolute_time();
+                /* 转换为纳秒 */
+                static mach_timebase_info_data_t timebase_info;
+                if (timebase_info.denom == 0) {
+                    mach_timebase_info(&timebase_info);
+                }
+                uint64_t now_ms = now * timebase_info.numer / timebase_info.denom / 1000000;
+                uint64_t elapsed = now_ms - win->last_click_time[button_idx];
+                int dx = (int)location.x - win->last_click_x[button_idx];
+                int dy = (int)location.y - win->last_click_y[button_idx];
+                /* 双击阈值：400ms 内，位置偏移小于 4 像素 */
+                if (elapsed < 400 && dx * dx + dy * dy < 16) {
+                    win->click_count[button_idx]++;
+                } else {
+                    win->click_count[button_idx] = 1;
+                }
+                win->last_click_time[button_idx] = now_ms;
+                win->last_click_x[button_idx] = (int)location.x;
+                win->last_click_y[button_idx] = (int)location.y;
+                ev.mouse_clicks = win->click_count[button_idx];
+            } else {
+                ev.mouse_clicks = 1;
+            }
             /* 无边框窗口拖动支持 */
             if (win && win->is_borderless && event_type == NSEventTypeLeftMouseDown) {
                 int mx = (int)location.x;

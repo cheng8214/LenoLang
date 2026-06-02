@@ -115,8 +115,8 @@ main() {
         }
     )
 
-    guis.destroy_font(font)
-    guis.destroy_font(font_sm)
-    guis.destroy_font(font_title)
+    font.close()
+    font_sm.close()
+    font_title.close()
     win.close()
 }

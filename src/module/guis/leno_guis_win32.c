@@ -266,9 +266,9 @@ struct LenoGUIPlatformRenderer {
     int logical_enabled; /* 是否启用逻辑大小 */
 };
 
-/* ===== 平台纹理结构 ===== */
+/* ===== 平台图像结构 ===== */
 
-struct LenoGUIPlatformTexture {
+struct LenoGUIPlatformImage {
     uint32_t* pixels;
     int width;
     int height;
@@ -283,6 +283,7 @@ struct LenoGUIPlatformTexture {
 /* 渲染目标定义在 swrender.c */
 
 #include "leno_guis_swrender.c"
+#include "leno_guis_image.c"
 
 /* ===== 文本输入控制（参考 SDL_StartTextInput） ===== */
 static int g_text_input_active = 0;
@@ -584,6 +585,7 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             if (msg == WM_LBUTTONDOWN)      button = LENO_GUI_MOUSE_LEFT;
             else if (msg == WM_MBUTTONDOWN) button = LENO_GUI_MOUSE_MIDDLE;
             else                            button = LENO_GUI_MOUSE_RIGHT;
+            /* 单击：clicks = 1 */
             push_mouse_button_event(win, LENO_GUI_EVT_MOUSE_DOWN, button, 1, x, y);
             /* 无边框窗口拖动支持：左键在可拖动区域时启动拖动 */
             if (win && win->is_borderless && msg == WM_LBUTTONDOWN) {
@@ -603,6 +605,19 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
                     SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
                 }
             }
+            return 0;
+        }
+        case WM_LBUTTONDBLCLK:
+        case WM_MBUTTONDBLCLK:
+        case WM_RBUTTONDBLCLK: {
+            float x = (float)(short)LOWORD(lparam);
+            float y = (float)(short)HIWORD(lparam);
+            int button;
+            if (msg == WM_LBUTTONDBLCLK)      button = LENO_GUI_MOUSE_LEFT;
+            else if (msg == WM_MBUTTONDBLCLK) button = LENO_GUI_MOUSE_MIDDLE;
+            else                              button = LENO_GUI_MOUSE_RIGHT;
+            /* 双击：clicks = 2 */
+            push_mouse_button_event(win, LENO_GUI_EVT_MOUSE_DOWN, button, 2, x, y);
             return 0;
         }
         case WM_LBUTTONUP:

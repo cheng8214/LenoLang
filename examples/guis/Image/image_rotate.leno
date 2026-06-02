@@ -1,0 +1,121 @@
+import guis
+import maths
+
+main() {
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true
+    }
+    Win win = guis.create_window("LenoC GUI - Image Rotate", w_style)
+
+    Image img = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
+    if img == null {
+        print("加载图片失败")
+        return
+    }
+
+    int img_w = img.width()
+    int img_h = img.height()
+    print("Image size:", img_w, "x", img_h)
+
+    // 缩放因子
+    var scale = 1.0
+    var min_scale = 0.1
+    var max_scale = 5.0
+
+    // 旋转角度（度），定时器驱动
+    var angle = 0.0
+    var speed = 1.0       // 旋转速度（度/帧）
+    var max_speed = 10.0
+
+    // 1ms 定时器 ≈ 1000fps
+    guis.add_timer(1,
+        func(int id, int interval) {
+            angle = angle + speed
+            if angle >= 360.0 {
+                angle = angle - 360.0
+            }
+            return interval
+        }
+    )
+
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_color(_rgb(30, 30, 46, 255))
+            ren.clear()
+
+            // 计算缩放后的尺寸
+            var dw = _int(img_w * scale)
+            var dh = _int(img_h * scale)
+
+            // 居中
+            var dx = (800 - dw) / 2
+            var dy = (600 - dh) / 2
+
+            ren.set_color(_rgb(255, 255, 255, 255))
+            img.draw_rotated_scaled(ren, dx, dy, dw, dh, angle)
+
+            // 显示信息
+            var font = guis.load_font("SimSun", 16)
+            var info = "缩放: " + _int(scale * 100.0) + "%  速度: x" + speed+ "  旋转: " + angle + "°"
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.draw_text_ex(font, info, 10, 10)
+
+            var hint = "左键双击加速 | 右键双击减速 | 滚轮缩放 | ESC 退出"
+            ren.set_color(_rgb(150, 150, 200, 255))
+            ren.draw_text_ex(font, hint, 10, 580)
+            font.close()
+
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() and e.key() == 0x1B {
+                win.set_should_close(true)
+            }
+            if e.is_mouse_wheel() {
+                var wy = e.wheel_y()
+                if wy > 0 {
+                    scale = scale * 1.1
+                    if scale > max_scale {
+                        scale = max_scale
+                    }
+                }
+                if wy < 0 {
+                    scale = scale * 0.9
+                    if scale < min_scale {
+                        scale = min_scale
+                    }
+                }
+            }
+            if e.is_mouse_down() and e.mouse_button() == guis.MOUSE_LEFT {
+                // 使用底层双击检测：clicks() 返回点击次数（1=单击, 2=双击, 3=三击...）
+                if e.clicks() == 2 {
+                    // 左键双击：加速
+                    speed = speed + 1.0
+                    if speed > max_speed {
+                        speed = max_speed
+                    }
+                    print("左键双击! 速度: x" + speed)
+                }
+            }
+            if e.is_mouse_down() and e.mouse_button() == guis.MOUSE_RIGHT {
+                if e.clicks() == 2 {
+                    // 右键双击：减速
+                    speed = speed - 1.0
+                    if speed < 1.0 {
+                        speed = 1.0
+                    }
+                    print("右键双击! 速度: x" + speed)
+                }
+            }
+        }
+    )
+
+    img.close()
+    win.close()
+    print("image rotate test done!")
+}

@@ -102,6 +102,15 @@ OPCODE(OP_MODULE_CALL) {
                     case TYPE_EVENT:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_EVENT);
                         break;
+                    case TYPE_RGB:
+                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_RGB);
+                        break;
+                    case TYPE_IMAGE:
+                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_IMAGE);
+                        break;
+                    case TYPE_FONT:
+                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_FONT);
+                        break;
                     case TYPE_STYLE:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_DICT);
                         break;

@@ -143,10 +143,10 @@ typedef struct {
     char drop_file[512];  /* 拖放的文件路径 */
 } LenoGUIEvent;
 
-/* ===== 平台窗口/渲染器/纹理（不透明指针） ===== */
+/* ===== 平台窗口/渲染器/图像（不透明指针） ===== */
 typedef struct LenoGUIPlatformWindow LenoGUIPlatformWindow;
 typedef struct LenoGUIPlatformRenderer LenoGUIPlatformRenderer;
-typedef struct LenoGUIPlatformTexture LenoGUIPlatformTexture;
+typedef struct LenoGUIPlatformImage LenoGUIPlatformImage;
 
 /* ===== 平台初始化/关闭 ===== */
 int  leno_gui_platform_init(void);
@@ -215,38 +215,42 @@ void   leno_gui_platform_set_clip_rect(LenoGUIPlatformRenderer* ren, int x, int 
 void   leno_gui_platform_get_clip_rect(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h);
 void   leno_gui_platform_disable_clip_rect(LenoGUIPlatformRenderer* ren);
 
-/* ===== 纹理访问模式（借鉴 SDL3）===== */
-#define LENO_GUI_TEXTUREACCESS_STATIC    0  /* 变化少，不可锁定 */
-#define LENO_GUI_TEXTUREACCESS_STREAMING 1  /* 变化频繁，可锁定 */
-#define LENO_GUI_TEXTUREACCESS_TARGET    2  /* 可作为渲染目标 */
+/* ===== 图像访问模式（借鉴 SDL3）===== */
+#define LENO_GUI_IMAGEACCESS_STATIC    0  /* 变化少，不可锁定 */
+#define LENO_GUI_IMAGEACCESS_STREAMING 1  /* 变化频繁，可锁定 */
+#define LENO_GUI_IMAGEACCESS_TARGET    2  /* 可作为渲染目标 */
 
-/* ===== 纹理操作 ===== */
-LenoGUIPlatformTexture* leno_gui_platform_create_texture(LenoGUIPlatformRenderer* ren, int w, int h);
-LenoGUIPlatformTexture* leno_gui_platform_create_texture_with_access(LenoGUIPlatformRenderer* ren, int w, int h, int access);
-void   leno_gui_platform_destroy_texture(LenoGUIPlatformTexture* tex);
-void   leno_gui_platform_render_texture(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex, int x, int y);
-void   leno_gui_platform_render_texture_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+/* ===== 图像操作 ===== */
+LenoGUIPlatformImage* leno_gui_platform_create_image(LenoGUIPlatformRenderer* ren, int w, int h);
+LenoGUIPlatformImage* leno_gui_platform_create_image_with_access(LenoGUIPlatformRenderer* ren, int w, int h, int access);
+void   leno_gui_platform_destroy_image(LenoGUIPlatformImage* tex);
+void   leno_gui_platform_render_image(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex, int x, int y);
+void   leno_gui_platform_render_image_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                              int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh);
-void   leno_gui_platform_render_texture_rotated(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+void   leno_gui_platform_render_image_rotated(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                                   int x, int y, double angle, int flip);
-void   leno_gui_platform_update_texture(LenoGUIPlatformTexture* tex, const void* data, int pitch);
-int    leno_gui_platform_texture_width(LenoGUIPlatformTexture* tex);
-int    leno_gui_platform_texture_height(LenoGUIPlatformTexture* tex);
-int    leno_gui_platform_texture_access(LenoGUIPlatformTexture* tex);
+void   leno_gui_platform_render_image_rotated_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
+                                                      int sx, int sy, int sw, int sh,
+                                                      int dx, int dy, int dw, int dh,
+                                                      double angle, int flip);
+void   leno_gui_platform_update_image(LenoGUIPlatformImage* tex, const void* data, int pitch);
+int    leno_gui_platform_image_width(LenoGUIPlatformImage* tex);
+int    leno_gui_platform_image_height(LenoGUIPlatformImage* tex);
+int    leno_gui_platform_image_access(LenoGUIPlatformImage* tex);
 
 /* ===== 渲染目标（离屏渲染，借鉴 SDL3）===== */
-int    leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex);
-LenoGUIPlatformTexture* leno_gui_platform_get_render_target(LenoGUIPlatformRenderer* ren);
+int    leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex);
+LenoGUIPlatformImage* leno_gui_platform_get_render_target(LenoGUIPlatformRenderer* ren);
 void   leno_gui_platform_reset_render_target(LenoGUIPlatformRenderer* ren);
-void   leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+void   leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                                   int x, int y, int w, int h);
-void   leno_gui_platform_clear_render_target(LenoGUIPlatformTexture* tex, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
-const uint32_t* leno_gui_platform_get_render_target_pixels(LenoGUIPlatformTexture* tex);
-int    leno_gui_platform_get_render_target_pitch(LenoGUIPlatformTexture* tex);
-int    leno_gui_platform_copy_render_target(LenoGUIPlatformTexture* dst, LenoGUIPlatformTexture* src);
-void   leno_gui_platform_blend_render_targets(LenoGUIPlatformTexture* dst, LenoGUIPlatformTexture* src,
+void   leno_gui_platform_clear_render_target(LenoGUIPlatformImage* tex, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+const uint32_t* leno_gui_platform_get_render_target_pixels(LenoGUIPlatformImage* tex);
+int    leno_gui_platform_get_render_target_pitch(LenoGUIPlatformImage* tex);
+int    leno_gui_platform_copy_render_target(LenoGUIPlatformImage* dst, LenoGUIPlatformImage* src);
+void   leno_gui_platform_blend_render_targets(LenoGUIPlatformImage* dst, LenoGUIPlatformImage* src,
                                                int x, int y, uint8_t alpha);
-int    leno_gui_platform_resize_render_target(LenoGUIPlatformTexture* tex, int w, int h);
+int    leno_gui_platform_resize_render_target(LenoGUIPlatformImage* tex, int w, int h);
 
 /* ===== 文字渲染（内置 8x8 点阵字体，参考 SDL3 SDL_RenderDebugText） ===== */
 void   leno_gui_platform_draw_text(LenoGUIPlatformRenderer* ren, const char* text, int x, int y, int size);
@@ -373,6 +377,11 @@ void     leno_gui_platform_delay(uint32_t ms);
 /* ===== 显示器信息 ===== */
 void   leno_gui_platform_get_display_size(int* w, int* h);
 float  leno_gui_platform_get_display_dpi(void);
+
+/* ===== 图片加载（参考 SDL3 SDL_LoadSurface / SDL_LoadPNG） ===== */
+LenoGUIPlatformImage* leno_gui_platform_load_image(const char* filepath);
+LenoGUIPlatformImage* leno_gui_platform_load_image_mem(const unsigned char* data, int len);
+const char* leno_gui_platform_get_image_error(void);
 
 #ifdef __cplusplus
 }

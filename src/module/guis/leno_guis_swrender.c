@@ -2,7 +2,7 @@
  * 三个平台（Win32/Linux/macOS）共用的像素缓冲区渲染逻辑
  * 通过 #include 方式引入，可直接访问平台文件中定义的结构体
  *
- * 包含: 软件渲染辅助函数、绘图 API、视口裁剪、纹理操作、文字渲染
+ * 包含: 软件渲染辅助函数、绘图 API、视口裁剪、图像操作、文字渲染
  */
 
 /* ===== 软件渲染辅助函数 ===== */
@@ -73,7 +73,7 @@ static void sw_fill_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int 
     }
 }
 
-static void sw_blit_texture(LenoGUIPlatformRenderer* ren,
+static void sw_blit_image(LenoGUIPlatformRenderer* ren,
                              const uint32_t* src, int sw_val, int sh_val, int spitch,
                              int dx, int dy) {
     for (int y = 0; y < sh_val; y++) {
@@ -320,11 +320,11 @@ void leno_gui_platform_disable_clip_rect(LenoGUIPlatformRenderer* ren) {
     ren->clip_enabled = 0;
 }
 
-/* ===== 纹理操作 ===== */
+/* ===== 图像操作 ===== */
 
-LenoGUIPlatformTexture* leno_gui_platform_create_texture(LenoGUIPlatformRenderer* ren, int w, int h) {
+LenoGUIPlatformImage* leno_gui_platform_create_image(LenoGUIPlatformRenderer* ren, int w, int h) {
     (void)ren;
-    LenoGUIPlatformTexture* tex = (LenoGUIPlatformTexture*)calloc(1, sizeof(LenoGUIPlatformTexture));
+    LenoGUIPlatformImage* tex = (LenoGUIPlatformImage*)calloc(1, sizeof(LenoGUIPlatformImage));
     if (!tex) return NULL;
     tex->width = w;
     tex->height = h;
@@ -337,18 +337,18 @@ LenoGUIPlatformTexture* leno_gui_platform_create_texture(LenoGUIPlatformRenderer
     return tex;
 }
 
-void leno_gui_platform_destroy_texture(LenoGUIPlatformTexture* tex) {
+void leno_gui_platform_destroy_image(LenoGUIPlatformImage* tex) {
     if (!tex) return;
     if (tex->pixels) free(tex->pixels);
     free(tex);
 }
 
-void leno_gui_platform_render_texture(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex, int x, int y) {
+void leno_gui_platform_render_image(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex, int x, int y) {
     if (!ren || !ren->pixels || !tex || !tex->pixels) return;
-    sw_blit_texture(ren, tex->pixels, tex->width, tex->height, tex->pitch, x, y);
+    sw_blit_image(ren, tex->pixels, tex->width, tex->height, tex->pitch, x, y);
 }
 
-void leno_gui_platform_update_texture(LenoGUIPlatformTexture* tex, const void* data, int pitch) {
+void leno_gui_platform_update_image(LenoGUIPlatformImage* tex, const void* data, int pitch) {
     if (!tex || !tex->pixels || !data) return;
     const uint32_t* src = (const uint32_t*)data;
     for (int y = 0; y < tex->height; y++) {
@@ -356,15 +356,19 @@ void leno_gui_platform_update_texture(LenoGUIPlatformTexture* tex, const void* d
     }
 }
 
-int leno_gui_platform_texture_width(LenoGUIPlatformTexture* tex) {
+int leno_gui_platform_image_width(LenoGUIPlatformImage* tex) {
     return tex ? tex->width : 0;
 }
 
-int leno_gui_platform_texture_height(LenoGUIPlatformTexture* tex) {
+int leno_gui_platform_image_height(LenoGUIPlatformImage* tex) {
     return tex ? tex->height : 0;
 }
 
-void leno_gui_platform_render_texture_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+int leno_gui_platform_image_access(LenoGUIPlatformImage* tex) {
+    return tex ? tex->access : 0;
+}
+
+void leno_gui_platform_render_image_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                           int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh) {
     if (!ren || !ren->pixels || !tex || !tex->pixels) return;
     if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
@@ -399,31 +403,63 @@ void leno_gui_platform_render_texture_src(LenoGUIPlatformRenderer* ren, LenoGUIP
     }
 }
 
-void leno_gui_platform_render_texture_rotated(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+void leno_gui_platform_render_image_rotated(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                                int x, int y, double angle, int flip) {
+    int w = tex ? tex->width : 0;
+    int h = tex ? tex->height : 0;
+    leno_gui_platform_render_image_rotated_src(ren, tex, 0, 0, w, h, x, y, w, h, angle, flip);
+}
+
+void leno_gui_platform_render_image_rotated_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
+                                                   int sx, int sy, int sw, int sh,
+                                                   int dx, int dy, int dw, int dh,
+                                                   double angle, int flip) {
     if (!ren || !ren->pixels || !tex || !tex->pixels) return;
+    if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
     double rad = angle * 3.14159265358979323846 / 180.0;
     double cos_a = cos(rad);
     double sin_a = sin(rad);
     int tw = tex->width;
     int th = tex->height;
-    double cx = tw / 2.0;
-    double cy = th / 2.0;
     int src_pitch_int = tex->pitch / 4;
-    for (int dy = -th; dy <= th; dy++) {
-        for (int dx = -tw; dx <= tw; dx++) {
-            double fx = dx, fy = dy;
-            if (flip & LENO_GUI_FLIP_HORIZONTAL) fx = -fx;
-            if (flip & LENO_GUI_FLIP_VERTICAL) fy = -fy;
-            double src_x = cos_a * fx + sin_a * fy + cx;
-            double src_y = -sin_a * fx + cos_a * fy + cy;
+    double scale_x = (double)dw / sw;   /* 目标→源比例，现在用源图尺寸缩放 */
+    double scale_y = (double)dh / sh;
+    double src_cx = sx + sw / 2.0;
+    double src_cy = sy + sh / 2.0;
+
+    /* 计算旋转后的包围盒：源图四个角旋转后的范围 */
+    double abs_cos = fabs(cos_a);
+    double abs_sin = fabs(sin_a);
+    double hsw = sw * 0.5, hsh = sh * 0.5;
+    /* 包围盒半宽 = |cos|*hsw + |sin|*hsh，半高 = |sin|*hsw + |cos|*hsh */
+    double bhw = (abs_cos * hsw + abs_sin * hsh) * scale_x;
+    double bhh = (abs_sin * hsw + abs_cos * hsh) * scale_y;
+    int ibhw = (int)(bhw + 1.0);
+    int ibhh = (int)(bhh + 1.0);
+
+    /* 中心点 */
+    int ctx = dx + dw / 2;
+    int cty = dy + dh / 2;
+
+    /* 逆缩放因子（目标→源） */
+    double inv_scale_x = (double)sw / dw;
+    double inv_scale_y = (double)sh / dh;
+
+    for (int ody = -ibhh; ody <= ibhh; ody++) {
+        for (int odx = -ibhw; odx <= ibhw; odx++) {
+            double ofx = (double)odx, ofy = (double)ody;
+            if (flip & LENO_GUI_FLIP_HORIZONTAL) ofx = -ofx;
+            if (flip & LENO_GUI_FLIP_VERTICAL) ofy = -ofy;
+            /* 逆旋转变换：从目标坐标映射回源坐标 */
+            double src_x = (cos_a * ofx - sin_a * ofy) * inv_scale_x + src_cx;
+            double src_y = (sin_a * ofx + cos_a * ofy) * inv_scale_y + src_cy;
             int isx = (int)(src_x + 0.5);
             int isy = (int)(src_y + 0.5);
             if (isx < 0 || isx >= tw || isy < 0 || isy >= th) continue;
             uint32_t src_pixel = tex->pixels[isy * src_pitch_int + isx];
             uint8_t sa = (src_pixel >> 24) & 0xFF;
             if (sa == 0) continue;
-            sw_draw_point(ren, x + dx, y + dy, src_pixel);
+            sw_draw_point(ren, ctx + odx, cty + ody, src_pixel);
         }
     }
 }
@@ -684,14 +720,14 @@ void leno_gui_platform_request_redraw(void) {
 
 /* ===== 渲染目标（离屏渲染，借鉴 SDL3）===== */
 
-static LenoGUIPlatformTexture* g_current_render_target = NULL;
+static LenoGUIPlatformImage* g_current_render_target = NULL;
 static LenoGUIPlatformRenderer* g_target_renderer = NULL;
 static uint32_t* g_saved_pixels = NULL;
 static int g_saved_width = 0;
 static int g_saved_height = 0;
 static int g_saved_pitch = 0;
 
-int leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex) {
+int leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex) {
     if (!ren) return 0;
     
     /* 如果已经有目标，先恢复 */
@@ -705,7 +741,7 @@ int leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPla
     }
     
     /* 检查纹理是否是渲染目标 */
-    if (tex->access != LENO_GUI_TEXTUREACCESS_TARGET) {
+    if (tex->access != LENO_GUI_IMAGEACCESS_TARGET) {
         return 0;
     }
     
@@ -734,7 +770,7 @@ int leno_gui_platform_set_render_target(LenoGUIPlatformRenderer* ren, LenoGUIPla
     return 1;
 }
 
-LenoGUIPlatformTexture* leno_gui_platform_get_render_target(LenoGUIPlatformRenderer* ren) {
+LenoGUIPlatformImage* leno_gui_platform_get_render_target(LenoGUIPlatformRenderer* ren) {
     (void)ren;
     return g_current_render_target;
 }
@@ -760,12 +796,12 @@ void leno_gui_platform_reset_render_target(LenoGUIPlatformRenderer* ren) {
     g_saved_pixels = NULL;
 }
 
-void leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, LenoGUIPlatformTexture* tex,
+void leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                                 int x, int y, int w, int h) {
     if (!ren || !tex || !tex->pixels) return;
     
     /* 保存当前状态 */
-    LenoGUIPlatformTexture* old_target = g_current_render_target;
+    LenoGUIPlatformImage* old_target = g_current_render_target;
     
     /* 重置到窗口 */
     if (old_target) {
@@ -776,7 +812,7 @@ void leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, Len
     if (w <= 0) w = tex->width;
     if (h <= 0) h = tex->height;
     
-    leno_gui_platform_render_texture_src(ren, tex, 0, 0, tex->width, tex->height, x, y, w, h);
+    leno_gui_platform_render_image_src(ren, tex, 0, 0, tex->width, tex->height, x, y, w, h);
     
     /* 恢复之前的渲染目标 */
     if (old_target) {
@@ -784,7 +820,7 @@ void leno_gui_platform_render_target_to_window(LenoGUIPlatformRenderer* ren, Len
     }
 }
 
-void leno_gui_platform_clear_render_target(LenoGUIPlatformTexture* tex, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+void leno_gui_platform_clear_render_target(LenoGUIPlatformImage* tex, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     if (!tex || !tex->pixels) return;
     
     uint32_t color = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;

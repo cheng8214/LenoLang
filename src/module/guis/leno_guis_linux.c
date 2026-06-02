@@ -261,6 +261,11 @@ struct LenoGUIPlatformWindow {
     int drag_area_y;
     int drag_area_w;
     int drag_area_h;
+    /* 双击检测状态 */
+    unsigned long last_click_time[3];   /* 上次点击时间（毫秒，索引0=左键,1=中键,2=右键） */
+    int last_click_x[3];                /* 上次点击X坐标 */
+    int last_click_y[3];                /* 上次点击Y坐标 */
+    int click_count[3];                 /* 当前点击计数（用于双击检测） */
 };
 
 /* ===== 平台渲染器结构 ===== */
@@ -284,9 +289,9 @@ struct LenoGUIPlatformRenderer {
     int needs_resize;  /* 窗口大小变化标志，参考 SDL3 surface_valid */
 };
 
-/* ===== 平台纹理结构 ===== */
+/* ===== 平台图像结构 ===== */
 
-struct LenoGUIPlatformTexture {
+struct LenoGUIPlatformImage {
     uint32_t* pixels;
     int width;
     int height;
@@ -294,6 +299,7 @@ struct LenoGUIPlatformTexture {
 };
 
 #include "leno_guis_swrender.c"
+#include "leno_guis_image.c"
 
 /* ===== X11 KeySym 到 Leno 键码映射 ===== */
 
@@ -839,7 +845,28 @@ static void pump_x11_events(void) {
                     ev.mouse_x = (float)xev.xbutton.x;
                     ev.mouse_y = (float)xev.xbutton.y;
                     ev.mouse_button = (int)xev.xbutton.button;
-                    ev.mouse_clicks = 1;
+                    /* 双击检测逻辑 */
+                    int button_idx = (int)xev.xbutton.button - 1;
+                    if (button_idx >= 0 && button_idx < 3 && win) {
+                        struct timespec ts;
+                        clock_gettime(CLOCK_MONOTONIC, &ts);
+                        unsigned long now = (unsigned long)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+                        unsigned long elapsed = now - win->last_click_time[button_idx];
+                        int dx = xev.xbutton.x - win->last_click_x[button_idx];
+                        int dy = xev.xbutton.y - win->last_click_y[button_idx];
+                        /* 双击阈值：400ms 内，位置偏移小于 4 像素 */
+                        if (elapsed < 400 && dx * dx + dy * dy < 16) {
+                            win->click_count[button_idx]++;
+                        } else {
+                            win->click_count[button_idx] = 1;
+                        }
+                        win->last_click_time[button_idx] = now;
+                        win->last_click_x[button_idx] = xev.xbutton.x;
+                        win->last_click_y[button_idx] = xev.xbutton.y;
+                        ev.mouse_clicks = win->click_count[button_idx];
+                    } else {
+                        ev.mouse_clicks = 1;
+                    }
                     /* 无边框窗口拖动支持 */
                     if (win && win->is_borderless && xev.xbutton.button == 1) {
                         int mx = xev.xbutton.x;

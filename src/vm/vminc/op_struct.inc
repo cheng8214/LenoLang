@@ -487,6 +487,8 @@ OPCODE(OP_GET_METHOD) {
         native_method = draw_find_method(method_name->chars);
     } else if (obj->type == OBJ_GUI_WINDOW) {
         native_method = window_find_method(method_name->chars);
+    } else if (obj->type == OBJ_GUI_IMAGE) {
+        native_method = image_find_method(method_name->chars);
     } else if (obj->type == OBJ_FILE) {
         native_method = file_find_method(method_name->chars);
     }
@@ -499,7 +501,7 @@ OPCODE(OP_GET_METHOD) {
         DISPATCH;
     }
     
-    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW || obj->type == OBJ_FILE) {
+    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW || obj->type == OBJ_GUI_IMAGE || obj->type == OBJ_FILE) {
         runtime_error("对象没有此方法", GET_CURRENT_LINE());
         return -1;
     }

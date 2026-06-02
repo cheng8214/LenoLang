@@ -15,7 +15,7 @@ main() {
    win.set_drag_area(0, 0, 800, 40)
 
     // 加载中文字体（Windows 系统字体）
-    var font = guis.load_font("Microsoft YaHei", 16)
+    Font font = guis.load_font("Microsoft YaHei", 16)
 
     guis.run(win,
         func(Draw ren) {
@@ -63,7 +63,7 @@ main() {
 
     // 清理字体资源
     if font != null {
-        guis.destroy_font(font)
+        font.close()
     }
 
     win.close()

@@ -1,0 +1,126 @@
+import guis
+main() {
+    Style[window] w_style = {
+        width: 920,
+        height: 540,
+        resizable: true
+    }
+    Win win = guis.create_window("LenoC GUI - Image Test", w_style)
+
+    var font = guis.load_font("SimSun", 14)
+	
+    Image logo_png = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
+    Image logo_jpg = guis.load_image("D:\CLeno\LenoC\icons\leno_logo_2.jpg")
+	if logo_jpg==null{
+	print("加载图片失败")
+	win.close()
+	return
+	}
+    // 打印图像信息
+    print("PNG size:", logo_png.size())
+    print("PNG width:", logo_png.width(), "height:", logo_png.height())
+    print("PNG access mode:", logo_png.access())
+    print("JPG size:", logo_jpg.size())
+    print("JPG access mode:", logo_jpg.access())
+
+    // 缩略图尺寸
+    var thumb_w = 70
+    var thumb_h = 70
+    // 网格间距
+    var gap_x = 140
+    var gap_y = 110
+    var start_x = 20
+    var start_y = 20
+
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_color(_rgb(30, 30, 46, 255))
+            ren.clear()
+
+            ren.set_color(_rgb(255, 255, 255, 255))
+
+            var pw = logo_png.width()
+            var ph = logo_png.height()
+            var jw = logo_jpg.width()
+            var jh = logo_jpg.height()
+
+            // === 第1行: PNG 基本绘制 ===
+            ren.draw_text_ex(font, "1) draw_scaled", start_x, start_y)
+            logo_png.draw_scaled(ren, start_x, start_y + 18, thumb_w, thumb_h)
+
+            ren.draw_text_ex(font, "2) draw_src partial", start_x + gap_x, start_y)
+            logo_png.draw_src(ren, pw/4, ph/4, pw/2, ph/2,
+                start_x + gap_x, start_y + 18, thumb_w, thumb_h)
+
+            ren.draw_text_ex(font, "3) draw_src zoom", start_x + gap_x*2, start_y)
+            logo_png.draw_src(ren, 0, 0, pw, ph,
+                start_x + gap_x*2, start_y + 18, thumb_w, thumb_h)
+
+            ren.draw_text_ex(font, "4) draw_src crop", start_x + gap_x*3, start_y)
+            logo_png.draw_src(ren, 0, 0, pw/2, ph/2,
+                start_x + gap_x*3, start_y + 18, thumb_w, thumb_h)
+
+            ren.draw_text_ex(font, "5) scaled wide", start_x + gap_x*4, start_y)
+            logo_png.draw_scaled(ren, start_x + gap_x*4, start_y + 18, thumb_w + 40, thumb_h)
+
+            ren.draw_text_ex(font, "6) scaled tall", start_x + gap_x*5, start_y)
+            logo_png.draw_scaled(ren, start_x + gap_x*5, start_y + 18, thumb_w, thumb_h + 30)
+
+            // === 第2行: PNG/JPG 缩放变体 ===
+            ren.draw_text_ex(font, "7) JPG scaled", start_x, start_y + gap_y)
+            logo_jpg.draw_scaled(ren, start_x, start_y + gap_y + 18, thumb_w, thumb_h)
+
+            ren.draw_text_ex(font, "8) JPG src partial", start_x + gap_x, start_y + gap_y)
+            logo_jpg.draw_src(ren, jw/4, jh/4, jw/2, jh/2,
+                start_x + gap_x, start_y + gap_y + 18, thumb_w, thumb_h)
+
+            ren.draw_text_ex(font, "9) JPG src full", start_x + gap_x*2, start_y + gap_y)
+            logo_jpg.draw_src(ren, 0, 0, jw, jh,
+                start_x + gap_x*2, start_y + gap_y + 18, thumb_w, thumb_h)
+
+            ren.draw_text_ex(font, "10) JPG wide", start_x + gap_x*3, start_y + gap_y)
+            logo_jpg.draw_scaled(ren, start_x + gap_x*3, start_y + gap_y + 18, thumb_w + 40, thumb_h)
+
+            ren.draw_text_ex(font, "11) JPG tall", start_x + gap_x*4, start_y + gap_y)
+            logo_jpg.draw_scaled(ren, start_x + gap_x*4, start_y + gap_y + 18, thumb_w, thumb_h + 30)
+
+            ren.draw_text_ex(font, "12) JPG tiny", start_x + gap_x*5, start_y + gap_y)
+            logo_jpg.draw_scaled(ren, start_x + gap_x*5, start_y + gap_y + 18, 20, 20)
+
+            // === 第3行: 翻转/旋转 + 缩放 (新方法) ===
+            ren.draw_text_ex(font, "13) flipped H scaled", start_x, start_y + gap_y*2)
+            logo_png.draw_flipped_scaled(ren, start_x, start_y + gap_y*2 + 18, thumb_w, thumb_h, 1)
+
+            ren.draw_text_ex(font, "14) flipped V scaled", start_x + gap_x, start_y + gap_y*2)
+            logo_png.draw_flipped_scaled(ren, start_x + gap_x, start_y + gap_y*2 + 18, thumb_w, thumb_h, 2)
+
+            ren.draw_text_ex(font, "15) flipped HV scaled", start_x + gap_x*2, start_y + gap_y*2)
+            logo_png.draw_flipped_scaled(ren, start_x + gap_x*2, start_y + gap_y*2 + 18, thumb_w, thumb_h, 3)
+
+            ren.draw_text_ex(font, "16) rotated 45 scaled", start_x + gap_x*3, start_y + gap_y*2)
+            logo_png.draw_rotated_scaled(ren, start_x + gap_x*3, start_y + gap_y*2 + 18, thumb_w, thumb_h, 45.0)
+
+            ren.draw_text_ex(font, "17) rotated 90 scaled", start_x + gap_x*4, start_y + gap_y*2)
+            logo_png.draw_rotated_scaled(ren, start_x + gap_x*4, start_y + gap_y*2 + 18, thumb_w, thumb_h, 90.0)
+
+            ren.draw_text_ex(font, "18) rotated 180 scaled", start_x + gap_x*5, start_y + gap_y*2)
+            logo_png.draw_rotated_scaled(ren, start_x + gap_x*5, start_y + gap_y*2 + 18, thumb_w, thumb_h, 180.0)
+
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() and e.key() == 0x1B {
+                win.set_should_close(true)
+            }
+        }
+    )
+
+    logo_png.close()
+    logo_jpg.close()
+    font.close()
+    win.close()
+    print("image test done!")
+}

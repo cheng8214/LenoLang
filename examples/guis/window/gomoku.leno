@@ -9,7 +9,7 @@ main() {
     }
     Win win = guis.create_window("Gomoku", w_style)
 
-    var font_title = guis.load_font("SimSun", 28)
+    Font font_title = guis.load_font("SimSun", 28)
     var font_info = guis.load_font("SimSun", 18)
 
     var board_size = 15
@@ -343,7 +343,7 @@ main() {
         }
     )
 
-    guis.destroy_font(font_title)
-    guis.destroy_font(font_info)
+    font_title.close()
+    font_info.close()
     win.close()
 }

@@ -152,6 +152,14 @@ OPCODE(OP_AS_CAST) {
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_RGB);
             break;
+        case TYPE_IMAGE:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_IMAGE);
+            break;
+        case TYPE_FONT:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_FONT);
+            break;
         case TYPE_STYLE:
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);

@@ -57,7 +57,7 @@ guis.c               - LenoC 模块注册
 | `Win` | 窗口对象 |
 | `Draw` | 渲染器对象 |
 | `Event` | 事件对象 |
-| `Texture` | 纹理对象 |
+| `Image` | 图像对象 |
 | `Font` | 字体对象 |
 | `Rgb` | 颜色对象（通过 `_rgb(r, g, b, a?)` 创建） |
 
@@ -540,70 +540,131 @@ func(Event e) {
 
 ---
 
-## 纹理操作
+## 图像操作
 
-### `guis.create_texture(ren, w, h)`
+### `guis.create_image(ren, w, h)`
 
-创建纹理（像素缓冲区）。
+创建图像（像素缓冲区）。
 
-**返回**: `Texture` - 纹理对象
+**返回**: `Image` - 图像对象
 
 ```leno
-var tex = guis.create_texture(ren, 256, 256)
+var tex = guis.create_image(ren, 256, 256)
 ```
 
 ---
 
-### `guis.destroy_texture(tex)`
+### `ren.draw_image(tex, x, y)`
 
-销毁纹理。
+将图像整体绘制到渲染器目标位置。
 
 ```leno
-guis.destroy_texture(tex)
+ren.draw_image(tex, 100, 100)
 ```
 
 ---
 
-### `ren.draw_texture(tex, x, y)`
+### `ren.draw_image_src(tex, sx, sy, sw, sh, dx, dy, dw, dh)`
 
-将纹理整体绘制到渲染器目标位置。
+图像源矩形渲染，从图像中取子区域绘制到目标位置（可缩放）。
 
 ```leno
-ren.draw_texture(tex, 100, 100)
+ren.draw_image_src(tex, 0, 0, 64, 64, 100, 100, 128, 128)
 ```
 
 ---
 
-### `ren.draw_texture_src(tex, sx, sy, sw, sh, dx, dy, dw, dh)`
+### `ren.draw_image_rotated(tex, x, y, angle, flip)`
 
-纹理源矩形渲染，从纹理中取子区域绘制到目标位置（可缩放）。
-
-```leno
-ren.draw_texture_src(tex, 0, 0, 64, 64, 100, 100, 128, 128)
-```
-
----
-
-### `ren.draw_texture_rotated(tex, x, y, angle, flip)`
-
-纹理旋转/翻转渲染。
+图像旋转/翻转渲染。
 
 **参数**:
 - `angle` (float): 旋转角度（度）
 - `flip` (int): 翻转标志 (0=无, 1=水平, 2=垂直)
 
 ```leno
-ren.draw_texture_rotated(tex, 400, 300, 45.0, 1)
+ren.draw_image_rotated(tex, 400, 300, 45.0, 1)
 ```
 
 ---
 
-### `ren.update_texture(tex, data, pitch)`
+### `ren.update_image(tex, data, pitch)`
 
-更新纹理像素数据。
+更新图像像素数据。
 
 ```leno
-ren.update_texture(tex, pixel_data, 256 * 4)
+ren.update_image(tex, pixel_data, 256 * 4)
+```
+
+---
+
+## Image 实例方法
+
+### `image.close()`
+
+关闭并释放图像资源。
+
+```leno
+var img = guis.load_image("logo.png")
+// 使用图像...
+img.close()
+```
+
+---
+
+### `image.width()` / `image.height()`
+
+获取图像尺寸。
+
+**返回**: `int` - 宽度或高度（像素）
+
+```leno
+var w = img.width()
+var h = img.height()
+```
+
+---
+
+### `image.draw(ren, x, y)`
+
+绘制图像到渲染器。
+
+```leno
+img.draw(ren, 100, 100)
+```
+
+---
+
+### `image.draw_scaled(ren, x, y, w, h)`
+
+缩放绘制图像。
+
+```leno
+img.draw_scaled(ren, 100, 100, 200, 150)
+```
+
+---
+
+### `image.draw_rotated(ren, x, y, angle, flip)`
+
+旋转/翻转绘制图像。
+
+**参数**:
+- `angle` (float): 旋转角度（度）
+- `flip` (int): 翻转标志 (0=无, 1=水平, 2=垂直)
+
+```leno
+img.draw_rotated(ren, 400, 300, 45.0, guis.FLIP_NONE)
+```
+
+---
+
+### `image.draw_rotated_scaled(ren, x, y, w, h, angle)`
+
+旋转+缩放绘制图像。
+
+```leno
+img.draw_rotated_scaled(ren, 400, 300, 200, 150, 45.0)
 ```
 
 ---
