@@ -3,6 +3,14 @@
  * 通过 #include 方式引入到各平台文件中，共享代码
  */
 
+/* 禁用 stb_image 的未使用函数警告 */
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#endif
+
 /* ===== stb_image 配置（参考 SDL3） ===== */
 #define STB_IMAGE_STATIC
 #define STBI_NO_THREAD_LOCALS
@@ -13,6 +21,12 @@
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
 #define STBI_ASSERT(x) ((void)0)
+
+/* 禁用回调IO接口（消除未使用函数警告） */
+#define STBI_NO_CALLBACKS
+
+/* 禁用线程局部版本函数（消除未使用函数警告） */
+#define STBI_NO_THREAD_FUNCS
 
 /* 重定向内存分配函数（参考 SDL3） */
 #include <stdlib.h>
@@ -155,3 +169,100 @@ LenoGUIPlatformImage* leno_gui_platform_load_image_mem(const unsigned char* data
 const char* leno_gui_platform_get_image_error(void) {
     return sw_get_image_error();
 }
+
+/* 获取图片信息（不加载像素数据） */
+static int sw_get_image_info(const char* filepath, int* w, int* h, int* channels) {
+    return stbi_info(filepath, w, h, channels);
+}
+
+/* 获取内存图片信息（不加载像素数据） */
+static int sw_get_image_info_from_memory(const unsigned char* data, int data_len, int* w, int* h, int* channels) {
+    return stbi_info_from_memory(data, data_len, w, h, channels);
+}
+
+/* ===== 图片信息查询 API ===== */
+
+int leno_gui_platform_get_image_info(const char* filepath, int* w, int* h, int* channels) {
+    return sw_get_image_info(filepath, w, h, channels);
+}
+
+int leno_gui_platform_get_image_info_mem(const unsigned char* data, int len, int* w, int* h, int* channels) {
+    return sw_get_image_info_from_memory(data, len, w, h, channels);
+}
+
+/* 设置垂直翻转选项 */
+void leno_gui_platform_set_flip_vertically_on_load(int flag) {
+    stbi_set_flip_vertically_on_load(flag);
+}
+
+/* ===== 高级图片加载选项 ===== */
+
+/* 设置Alpha预乘选项 */
+void leno_gui_platform_set_unpremultiply_on_load(int flag) {
+    stbi_set_unpremultiply_on_load(flag);
+}
+
+/* 设置iPhone PNG转换选项 */
+void leno_gui_platform_convert_iphone_png_to_rgb(int flag) {
+    stbi_convert_iphone_png_to_rgb(flag);
+}
+
+/* ===== 16位/HDR图片支持 ===== */
+
+/* 检查图片是否为16位 */
+int leno_gui_platform_is_16_bit(const char* filepath) {
+    return stbi_is_16_bit(filepath);
+}
+
+int leno_gui_platform_is_16_bit_from_memory(const unsigned char* data, int len) {
+    return stbi_is_16_bit_from_memory(data, len);
+}
+
+/* 检查图片是否为HDR格式 */
+int leno_gui_platform_is_hdr(const char* filepath) {
+    return stbi_is_hdr(filepath);
+}
+
+int leno_gui_platform_is_hdr_from_memory(const unsigned char* data, int len) {
+    return stbi_is_hdr_from_memory(data, len);
+}
+
+/* 加载16位深度图片 - 返回原始16位像素数据指针（需要手动释放） */
+stbi_us* leno_gui_platform_load_image_16_raw(const char* filepath, int* w, int* h, int* channels) {
+    return stbi_load_16(filepath, w, h, channels, 4);
+}
+
+stbi_us* leno_gui_platform_load_image_16_raw_mem(const unsigned char* data, int len, int* w, int* h, int* channels) {
+    return stbi_load_16_from_memory(data, len, w, h, channels, 4);
+}
+
+/* 释放16位像素数据 */
+void leno_gui_platform_free_16_pixels(stbi_us* pixels) {
+    stbi_image_free(pixels);
+}
+
+/* ===== zlib解压支持（PNG内部使用） ===== */
+
+/* zlib解压 - 基础版本 */
+char* leno_gui_platform_zlib_decode_malloc(const char* buffer, int len, int* outlen) {
+    return stbi_zlib_decode_malloc(buffer, len, outlen);
+}
+
+/* zlib解压 - 到指定缓冲区 */
+int leno_gui_platform_zlib_decode_buffer(char* obuffer, int olen, const char* ibuffer, int ilen) {
+    return stbi_zlib_decode_buffer(obuffer, olen, ibuffer, ilen);
+}
+
+/* zlib解压 - 无头部版本 */
+char* leno_gui_platform_zlib_decode_noheader_malloc(const char* buffer, int len, int* outlen) {
+    return stbi_zlib_decode_noheader_malloc(buffer, len, outlen);
+}
+
+int leno_gui_platform_zlib_decode_noheader_buffer(char* obuffer, int olen, const char* ibuffer, int ilen) {
+    return stbi_zlib_decode_noheader_buffer(obuffer, olen, ibuffer, ilen);
+}
+
+/* 恢复警告设置 */
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif

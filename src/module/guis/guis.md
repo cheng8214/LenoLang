@@ -11,6 +11,8 @@
 - [窗口操作](#窗口操作)
 - [渲染器方法（Draw 实例方法）](#渲染器方法draw-实例方法)
 - [事件方法（Event 实例方法）](#事件方法event-实例方法)
+- [图片加载](#图片加载)
+- [zlib解压](#zlib解压)
 - [纹理操作](#纹理操作)
 - [事件系统](#事件系统)
 - [回调式事件循环](#回调式事件循环)
@@ -536,6 +538,148 @@ func(Event e) {
         print("resize: " + _str(e.width()) + "x" + _str(e.height()))
     }
 }
+```
+
+---
+
+## 图片加载
+
+### `guis.load_image(path)`
+
+从文件加载图片。
+
+**参数**:
+- `path` (string): 图片文件路径
+
+**返回**: `Image` - 图片对象，失败返回 `null`
+
+```leno
+var img = guis.load_image("photo.png")
+if img != null {
+    print("图片尺寸: " + img.width() + "x" + img.height())
+    img.close()
+}
+```
+
+---
+
+### `guis.load_image_ex(path, options)`
+
+带选项加载图片。
+
+**参数**:
+- `path` (string): 图片文件路径
+- `options` (Dict): 选项字典
+  - `flip_vertical` (bool): 是否垂直翻转（OpenGL兼容）
+
+**返回**: `Image` - 图片对象
+
+```leno
+// 垂直翻转加载（OpenGL纹理坐标兼容）
+var img = guis.load_image_ex("texture.png", {flip_vertical: true})
+```
+
+---
+
+### `guis.load_image_from_memory(data)`
+
+从内存数据加载图片。
+
+**参数**:
+- `data` (string): 图片二进制数据（字节字符串）
+
+**返回**: `Image` - 图片对象
+
+```leno
+import files
+
+var f = files.open("image.png", "rb")
+var bytes = f.read()
+f.close()
+
+var img = guis.load_image_from_memory(bytes)
+```
+
+---
+
+### `guis.image_info(path)` / `guis.image_info_from_memory(data)`
+
+获取图片信息（不加载像素数据）。
+
+**返回**: `{width, height, channels}` 或 `null`
+
+```leno
+var info = guis.image_info("photo.png")
+if info != null {
+    print("宽度: " + info.width)
+    print("高度: " + info.height)
+    print("通道: " + info.channels)  // 1=灰度, 3=RGB, 4=RGBA
+}
+```
+
+---
+
+### `guis.is_16_bit(path)` / `guis.is_16_bit_from_memory(data)`
+
+检查图片是否为16位深度。
+
+**返回**: `bool`
+
+```leno
+if guis.is_16_bit("image.png") {
+    print("这是16位图片")
+}
+```
+
+---
+
+### `guis.is_hdr(path)` / `guis.is_hdr_from_memory(data)`
+
+检查图片是否为HDR格式。
+
+**返回**: `bool`
+
+```leno
+if guis.is_hdr("scene.hdr") {
+    print("这是HDR图片")
+}
+```
+
+---
+
+## zlib解压
+
+### `guis.zlib_decode(data)`
+
+解压zlib压缩的数据。
+
+**参数**:
+- `data` (string): 压缩的二进制数据
+
+**返回**: `string` - 解压后的数据，失败返回 `null`
+
+```leno
+var compressed = files.read("data.zlib")
+var raw = guis.zlib_decode(compressed)
+if raw != null {
+    print("解压成功，大小: " + raw.len())
+}
+```
+
+---
+
+### `guis.zlib_decode_noheader(data)`
+
+解压无头部的zlib压缩数据。
+
+**参数**:
+- `data` (string): 压缩的二进制数据（无zlib头部）
+
+**返回**: `string` - 解压后的数据
+
+```leno
+// 某些格式使用无头部的zlib压缩
+var raw = guis.zlib_decode_noheader(compressed_data)
 ```
 
 ---

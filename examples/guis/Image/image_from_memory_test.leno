@@ -1,0 +1,83 @@
+// encoding: UTF-8
+import guis
+import files
+
+main() {
+    print($"=== guis.load_image_from_memory() & image_info_from_memory() 测试 ===")
+    print($"")
+
+    var png_path = "D:\\CLeno\\LenoC\\icons\\leno_logo.png"
+
+    // 1. 测试从文件读取字节
+    print($"1. 从文件读取字节数据:")
+    var f = files.open(png_path, "rb")
+    if f == null {
+        print($"   ✗ 无法打开文件")
+        return
+    }
+    var bytes = f.read()
+    f.close()
+    print($"   读取字节数: {bytes.len()}")
+    print($"")
+
+    // 2. 测试 image_info_from_memory
+    print($"2. 测试 image_info_from_memory:")
+    var info = guis.image_info_from_memory(bytes)
+    if info != null {
+        print($"   宽度: {info.width}")
+        print($"   高度: {info.height}")
+        print($"   通道: {info.channels}")
+        print($"   ✓ 成功获取内存图片信息")
+    } else {
+        print($"   ✗ 获取内存图片信息失败")
+    }
+    print($"")
+
+    // 3. 对比 image_info 和 image_info_from_memory
+    print($"3. 对比 image_info 和 image_info_from_memory:")
+    var info_file = guis.image_info(png_path)
+    var info_mem = guis.image_info_from_memory(bytes)
+    if info_file != null and info_mem != null {
+        print($"   文件方式 - 宽度: {info_file.width}, 高度: {info_file.height}")
+        print($"   内存方式 - 宽度: {info_mem.width}, 高度: {info_mem.height}")
+        if info_file.width == info_mem.width and info_file.height == info_mem.height {
+            print($"   ✓ 两种方式结果一致")
+        } else {
+            print($"   ✗ 两种方式结果不一致")
+        }
+    }
+    print($"")
+
+    // 4. 测试 load_image_from_memory
+    print($"4. 测试 load_image_from_memory:")
+    var img = guis.load_image_from_memory(bytes)
+    if img != null {
+        print($"   加载成功!")
+        print($"   宽度: {img.width()}")
+        print($"   高度: {img.height()}")
+        print($"   ✓ 从内存成功加载图片")
+        img.close()
+    } else {
+        print($"   ✗ 从内存加载图片失败")
+    }
+    print($"")
+
+    // 5. 对比 load_image 和 load_image_from_memory
+    print($"5. 对比 load_image 和 load_image_from_memory:")
+    var img_file = guis.load_image(png_path)
+    var img_mem = guis.load_image_from_memory(bytes)
+    if img_file != null and img_mem != null {
+        print($"   文件方式 - 尺寸: {img_file.width()} x {img_file.height()}")
+        print($"   内存方式 - 尺寸: {img_mem.width()} x {img_mem.height()}")
+        if img_file.width() == img_mem.width() and img_file.height() == img_mem.height() {
+            print($"   ✓ 两种方式加载的图片尺寸一致")
+        } else {
+            print($"   ✗ 两种方式加载的图片尺寸不一致")
+        }
+        img_file.close()
+        img_mem.close()
+    }
+    print($"")
+
+    print($"=== 测试完成 ===")
+}

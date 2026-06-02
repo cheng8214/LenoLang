@@ -25,6 +25,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* stb_image 类型定义 */
+typedef unsigned short stbi_us;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -382,6 +385,34 @@ float  leno_gui_platform_get_display_dpi(void);
 LenoGUIPlatformImage* leno_gui_platform_load_image(const char* filepath);
 LenoGUIPlatformImage* leno_gui_platform_load_image_mem(const unsigned char* data, int len);
 const char* leno_gui_platform_get_image_error(void);
+
+/* 图片信息查询（不加载像素数据） */
+int leno_gui_platform_get_image_info(const char* filepath, int* w, int* h, int* channels);
+int leno_gui_platform_get_image_info_mem(const unsigned char* data, int len, int* w, int* h, int* channels);
+
+/* 设置图片加载选项 */
+void leno_gui_platform_set_flip_vertically_on_load(int flag);
+
+/* 高级图片加载选项 */
+void leno_gui_platform_set_unpremultiply_on_load(int flag);
+void leno_gui_platform_convert_iphone_png_to_rgb(int flag);
+
+/* 16位/HDR图片检测 */
+int leno_gui_platform_is_16_bit(const char* filepath);
+int leno_gui_platform_is_16_bit_from_memory(const unsigned char* data, int len);
+int leno_gui_platform_is_hdr(const char* filepath);
+int leno_gui_platform_is_hdr_from_memory(const unsigned char* data, int len);
+
+/* 16位深度图片加载 - 返回原始像素数据 */
+stbi_us* leno_gui_platform_load_image_16_raw(const char* filepath, int* w, int* h, int* channels);
+stbi_us* leno_gui_platform_load_image_16_raw_mem(const unsigned char* data, int len, int* w, int* h, int* channels);
+void leno_gui_platform_free_16_pixels(stbi_us* pixels);
+
+/* zlib解压支持 */
+char* leno_gui_platform_zlib_decode_malloc(const char* buffer, int len, int* outlen);
+int leno_gui_platform_zlib_decode_buffer(char* obuffer, int olen, const char* ibuffer, int ilen);
+char* leno_gui_platform_zlib_decode_noheader_malloc(const char* buffer, int len, int* outlen);
+int leno_gui_platform_zlib_decode_noheader_buffer(char* obuffer, int olen, const char* ibuffer, int ilen);
 
 #ifdef __cplusplus
 }

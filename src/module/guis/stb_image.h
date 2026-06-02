@@ -520,9 +520,10 @@ STBIDEF void stbi_set_flip_vertically_on_load(int flag_true_if_should_flip);
 // as above, but only applies to images loaded on the thread that calls the function
 // this function is only available if your compiler supports thread-local variables;
 // calling it will fail to link if your compiler doesn't
-STBIDEF void stbi_set_unpremultiply_on_load_thread(int flag_true_if_should_unpremultiply);
-STBIDEF void stbi_convert_iphone_png_to_rgb_thread(int flag_true_if_should_convert);
-STBIDEF void stbi_set_flip_vertically_on_load_thread(int flag_true_if_should_flip);
+// 注：以下线程局部版本函数未使用，已注释以消除编译警告
+// STBIDEF void stbi_set_unpremultiply_on_load_thread(int flag_true_if_should_unpremultiply);
+// STBIDEF void stbi_convert_iphone_png_to_rgb_thread(int flag_true_if_should_convert);
+// STBIDEF void stbi_set_flip_vertically_on_load_thread(int flag_true_if_should_flip);
 
 // ZLIB client - used by PNG, available for other purposes
 

@@ -1,0 +1,34 @@
+// encoding: UTF-8
+import guis
+import files
+
+main() {
+    print($"=== guis.is_16_bit() & guis.is_hdr() 测试 ===")
+    print($"")
+
+    var png_path = "D:\\CLeno\\LenoC\\icons\\leno_logo.png"
+    var jpg_path = "D:\\CLeno\\LenoC\\icons\\leno_logo_2.jpg"
+
+    // 1. 测试 is_16_bit
+    print($"1. 测试 is_16_bit:")
+    print($"   PNG: {guis.is_16_bit(png_path)}")
+    print($"   JPG: {guis.is_16_bit(jpg_path)}")
+    print($"")
+
+    // 2. 测试 is_hdr
+    print($"2. 测试 is_hdr:")
+    print($"   PNG: {guis.is_hdr(png_path)}")
+    print($"   JPG: {guis.is_hdr(jpg_path)}")
+    print($"")
+
+    // 3. 从内存检测
+    print($"3. 从内存检测:")
+    var f = files.open(png_path, "rb")
+    var bytes = f.read()
+    f.close()
+    print($"   is_16_bit_from_memory: {guis.is_16_bit_from_memory(bytes)}")
+    print($"   is_hdr_from_memory: {guis.is_hdr_from_memory(bytes)}")
+    print($"")
+
+    print($"=== 测试完成 ===")
+}

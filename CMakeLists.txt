@@ -81,6 +81,7 @@ set(LENO_SOURCES
     src/module/sys/sys.c
     src/module/regexs/regexs.c
     src/module/guis/guis.c
+    src/module/guis/guis_constants.c
     src/platform/platform_thread.c
     src/serialize/serialize.c
 )

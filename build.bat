@@ -85,6 +85,7 @@ set SOURCES=!SOURCES! src\module\assert\assert.c
 set SOURCES=!SOURCES! src\module\sys\sys.c
 set SOURCES=!SOURCES! src\module\regexs\regexs.c
 set SOURCES=!SOURCES! src\module\guis\guis.c
+set SOURCES=!SOURCES! src\module\guis\guis_constants.c
 set SOURCES=!SOURCES! src\module\guis\guis_draw.c
 set SOURCES=!SOURCES! src\module\guis\guis_window.c
 set SOURCES=!SOURCES! src\module\guis\guis_style.c

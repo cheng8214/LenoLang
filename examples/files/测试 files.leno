@@ -38,7 +38,7 @@ main() {
     
     // 测试 files.open
     print("\n4. 测试 files.open ...")
-    var f = files.open(test_file, "r")
+    File f = files.open(test_file, "r")
     var line = f.readline()
     print("   第一行: " + line)
     f.close()

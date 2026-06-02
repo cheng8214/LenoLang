@@ -1,0 +1,98 @@
+// encoding: UTF-8
+import guis
+
+main() {
+    print($"=== guis.load_image_ex() 测试 ===")
+    print($"")
+
+    var png_path = "D:\\CLeno\\LenoC\\icons\\leno_logo.png"
+
+    // 1. 测试普通加载（不翻转）
+    print($"1. 测试普通加载（不翻转）:")
+    var img_normal = guis.load_image_ex(png_path, {})
+    if img_normal != null {
+        print($"   尺寸: {img_normal.width()} x {img_normal.height()}")
+        print($"   ✓ 普通加载成功")
+        img_normal.close()
+    } else {
+        print($"   ✗ 普通加载失败")
+    }
+    print($"")
+
+    // 2. 测试垂直翻转加载
+    print($"2. 测试垂直翻转加载:")
+    var img_flipped = guis.load_image_ex(png_path, {flip_vertical: true})
+    if img_flipped != null {
+        print($"   尺寸: {img_flipped.width()} x {img_flipped.height()}")
+        print($"   ✓ 翻转加载成功")
+        img_flipped.close()
+    } else {
+        print($"   ✗ 翻转加载失败")
+    }
+    print($"")
+
+    // 3. 测试对比：普通加载 vs 翻转加载
+    print($"3. 创建窗口对比普通加载和翻转加载:")
+    
+    Style[window] w_style = {
+        width: 800,
+        height: 400,
+        resizable: false
+    }
+    Win win = guis.create_window("load_image_ex 测试 - 左:普通 右:垂直翻转", w_style)
+    
+    var font = guis.load_font("SimSun", 16)
+    
+    // 加载两张图片
+    Image img1 = guis.load_image_ex(png_path, {flip_vertical: false})
+    Image img2 = guis.load_image_ex(png_path, {flip_vertical: true})
+    
+    if img1 == null or img2 == null {
+        print($"   ✗ 图片加载失败")
+        win.close()
+        return
+    }
+    
+    var w = img1.width()
+    var h = img1.height()
+    print($"   图片尺寸: {w} x {h}")
+    print($"   按 ESC 或关闭窗口退出")
+    print($"")
+
+    guis.run(win,
+        func(Draw ren) {
+            ren.set_color(_rgb(40, 40, 60, 255))
+            ren.clear()
+
+            // 绘制标题
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.draw_text_ex(font, "普通加载 (flip_vertical: false)", 50, 20)
+            ren.draw_text_ex(font, "垂直翻转 (flip_vertical: true)", 450, 20)
+
+            // 绘制图片（缩放显示）
+            var scale = 2
+            img1.draw_scaled(ren, 50, 60, w * scale, h * scale)
+            img2.draw_scaled(ren, 450, 60, w * scale, h * scale)
+
+            // 绘制说明
+            ren.draw_text_ex(font, "注意：翻转后图片上下颠倒", 450, 60 + h * scale + 20)
+
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() and e.key() == guis.KEY_ESCAPE {
+                win.set_should_close(true)
+            }
+        }
+    )
+
+    img1.close()
+    img2.close()
+    font.close()
+    // win 已经在 guis.run 结束后自动关闭，不需要手动调用 win.close()
+
+    print($"=== 测试完成 ===")
+}
