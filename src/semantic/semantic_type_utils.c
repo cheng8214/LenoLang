@@ -301,6 +301,92 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
 }
 
 // ============================================================================
+// 生成详细的类型错误提示（包含转换建议）
+// ============================================================================
+
+// 获取类型转换建议
+// 根据期望类型和实际类型，返回转换建议字符串
+static const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
+    // any 转具体类型
+    if (actual == TYPE_ANY) {
+        switch (expected) {
+            case TYPE_INT: return "提示：使用 _int(value) 进行显式转换";
+            case TYPE_FLOAT: return "提示：使用 _float(value) 进行显式转换";
+            case TYPE_STRING: return "提示：使用 _str(value) 进行显式转换";
+            case TYPE_BOOL: return "提示：使用 _bool(value) 进行显式转换";
+            default: return "提示：any 类型需要显式转换后才能赋值给具体类型变量";
+        }
+    }
+    
+    // float 转 int（需要截断）
+    if (actual == TYPE_FLOAT && expected == TYPE_INT) {
+        return "提示：float 转 int 会截断小数部分，使用 _int(value) 显式转换";
+    }
+    
+    // int 转 float（自动升级，但这里报错说明可能需要显式处理）
+    if (actual == TYPE_INT && expected == TYPE_FLOAT) {
+        return "提示：int 可以自动升级为 float，检查是否有其他类型问题";
+    }
+    
+    // string 转数值
+    if (actual == TYPE_STRING) {
+        if (expected == TYPE_INT) return "提示：字符串转 int 使用 _int(value)，失败会报错";
+        if (expected == TYPE_FLOAT) return "提示：字符串转 float 使用 _float(value)，失败会报错";
+    }
+    
+    // 数组类型不匹配
+    if (expected == TYPE_ARRAY && actual == TYPE_ARRAY) {
+        return "提示：数组类型是不变的，Array[int] 不能赋给 Array 或其他元素类型的数组";
+    }
+    
+    // Dict 类型不匹配
+    if (expected == TYPE_DICT && actual == TYPE_DICT) {
+        return "提示：字典类型是不变的，确保键值类型完全匹配";
+    }
+    
+    return NULL;  // 没有特定提示
+}
+
+// 生成详细的类型错误信息
+// 参数：
+//   buf - 输出缓冲区
+//   buf_size - 缓冲区大小
+//   expected - 期望类型
+//   actual - 实际类型
+//   context - 错误上下文（如"变量赋值"、"函数参数"等）
+void format_detailed_type_error(char* buf, size_t buf_size,
+                                TypeInfo* expected, TypeInfo* actual,
+                                const char* context) {
+    char expected_buf[128] = "";
+    char actual_buf[128] = "";
+    
+    if (expected) {
+        const char* str = type_to_string(expected);
+        strncpy(expected_buf, str, sizeof(expected_buf) - 1);
+        expected_buf[sizeof(expected_buf) - 1] = '\0';
+    }
+    
+    if (actual) {
+        const char* str = type_to_string(actual);
+        strncpy(actual_buf, str, sizeof(actual_buf) - 1);
+        actual_buf[sizeof(actual_buf) - 1] = '\0';
+    }
+    
+    // 构建基础错误信息
+    int offset = snprintf(buf, buf_size, "类型错误：%s\n  期望类型: %s\n  实际类型: %s",
+                          context ? context : "类型不匹配",
+                          expected_buf, actual_buf);
+    
+    // 添加转换建议
+    if (expected && actual) {
+        const char* hint = get_type_conversion_hint(expected->kind, actual->kind);
+        if (hint && (size_t)offset < buf_size - 1) {
+            snprintf(buf + offset, buf_size - offset, "\n  %s", hint);
+        }
+    }
+}
+
+// ============================================================================
 // 数组索引赋值类型检查工具函数
 // ============================================================================
 
@@ -328,8 +414,8 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
     // any 不能赋值给具体类型（从不确定到确定需要显式转换）
     if (value_type->kind == TYPE_ANY) {
         char msg[BUFFER_MEDIUM];
-        snprintf(msg, sizeof(msg), "类型错误: 数组元素期望 '%s'，但传入 '%s'",
-                 type_kind_to_string(elem_type->kind), type_to_string(value_type));
+        format_detailed_type_error(msg, sizeof(msg),
+            elem_type, value_type, "数组元素类型不匹配");
         error_add(ERR_SEMANTIC, line, msg);
         return 0;
     }
@@ -345,8 +431,8 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
     
     // 类型不兼容，报告错误
     char msg[BUFFER_MEDIUM];
-    snprintf(msg, sizeof(msg), "类型错误: 数组元素期望 '%s'，但传入 '%s'",
-             type_kind_to_string(elem_type->kind), type_to_string(value_type));
+    format_detailed_type_error(msg, sizeof(msg),
+        elem_type, value_type, "数组元素类型不匹配");
     error_add(ERR_SEMANTIC, line, msg);
     
     return 0;
@@ -387,8 +473,8 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     // any 不能赋值给具体类型（从不确定到确定需要显式转换）
     if (assign_type->kind == TYPE_ANY) {
         char msg[BUFFER_MEDIUM];
-        snprintf(msg, sizeof(msg), "类型错误: 字典值期望 '%s'，但传入 '%s'",
-                 type_kind_to_string(value_type->kind), type_to_string(assign_type));
+        format_detailed_type_error(msg, sizeof(msg),
+            value_type, assign_type, "字典值类型不匹配");
         error_add(ERR_SEMANTIC, line, msg);
         return 0;
     }
@@ -404,8 +490,8 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     
     // 类型不兼容，报告错误
     char msg[BUFFER_MEDIUM];
-    snprintf(msg, sizeof(msg), "类型错误: 字典值期望 '%s'，但传入 '%s'",
-             type_kind_to_string(value_type->kind), type_to_string(assign_type));
+    format_detailed_type_error(msg, sizeof(msg),
+        value_type, assign_type, "字典值类型不匹配");
     error_add(ERR_SEMANTIC, line, msg);
     
     return 0;

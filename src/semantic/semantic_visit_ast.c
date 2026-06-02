@@ -250,10 +250,11 @@ void visit(Semantic* s, Ast* ast) {
                     if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
                         if (!type_is_compatible(ast->u.var_decl.type, init_type)) {
                             char msg[BUFFER_MEDIUM];
-                            format_type_error(msg, sizeof(msg),
-                                "类型不匹配：无法将 %s1 赋值给 %s2 类型的变量 %s3",
-                                init_type, ast->u.var_decl.type,
-                                ast->u.var_decl.name, NULL);
+                            char context[256];
+                            snprintf(context, sizeof(context), "变量 '%s' 声明类型与初始化值类型不匹配",
+                                     ast->u.var_decl.name);
+                            format_detailed_type_error(msg, sizeof(msg),
+                                ast->u.var_decl.type, init_type, context);
                             error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                             sym->type = type_copy(ast->u.var_decl.type);
                         } else {
@@ -1149,8 +1150,13 @@ void visit(Semantic* s, Ast* ast) {
                                                     }
                                                     if (!type_compatible) {
                                                         char msg[BUFFER_MEDIUM];
-                                                        snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                                 i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                        char context[256];
+                                                        snprintf(context, sizeof(context), "函数 '%s' 的参数 %d 类型不匹配",
+                                                                 method_name, i + 1);
+                                                        TypeInfo* expected_type = type_new(expected_param_type);
+                                                        format_detailed_type_error(msg, sizeof(msg),
+                                                            expected_type, arg_type, context);
+                                                        type_free(expected_type);
                                                         error_add(ERR_SEMANTIC, ast->line, msg);
                                                     }
                                                 }

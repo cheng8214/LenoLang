@@ -61,6 +61,11 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
                        TypeInfo* type1, TypeInfo* type2,
                        const char* str1, const char* str2);
 
+// 生成详细的类型错误信息（包含转换建议）
+void format_detailed_type_error(char* buf, size_t buf_size,
+                                TypeInfo* expected, TypeInfo* actual,
+                                const char* context);
+
 // 数组索引赋值类型检查工具函数
 int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line);
 
