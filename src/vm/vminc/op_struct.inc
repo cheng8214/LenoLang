@@ -489,10 +489,12 @@ OPCODE(OP_GET_METHOD) {
         native_method = window_find_method(method_name->chars);
     } else if (obj->type == OBJ_GUI_IMAGE) {
         native_method = image_find_method(method_name->chars);
+    } else if (obj->type == OBJ_GUI_FONT) {
+        native_method = font_find_method(method_name->chars);
     } else if (obj->type == OBJ_FILE) {
         native_method = file_find_method(method_name->chars);
     }
-    
+
     if (native_method) {
         vm_stack_push(&vm, obj_val);
         ObjBoundMethod* bound = bound_method_new(obj_val, native_method);
@@ -500,8 +502,8 @@ OPCODE(OP_GET_METHOD) {
         vm_stack_push(&vm, val_obj((Object*)bound));
         DISPATCH;
     }
-    
-    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW || obj->type == OBJ_GUI_IMAGE || obj->type == OBJ_FILE) {
+
+    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW || obj->type == OBJ_GUI_IMAGE || obj->type == OBJ_GUI_FONT || obj->type == OBJ_FILE) {
         runtime_error("对象没有此方法", GET_CURRENT_LINE());
         return -1;
     }

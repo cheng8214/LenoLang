@@ -8,63 +8,7 @@ main() {
     }
     Win win = guis.create_window("调试", w_style)
     
-    var frame = 0
-    
-    guis.run(win,
-        func(Draw ren) {
-            frame = frame + 1
-            
-            // 只在第一帧设置
-            if frame == 1 {
-                print("设置逻辑大小...")
-               ren.set_logical_size(320, 240)
-                
-                var size = ren.get_logical_size()
-                print("逻辑大小: " + size[0] + "x" + size[1])
-                
-                print("设置 LETTERBOX 模式...")
-                ren.set_logical_presentation(2)
-                
-                var mode = ren.get_logical_presentation()
-                print("模式: " + mode)
-                
-                var vp = ren.get_logical_viewport()
-                print("视口: x=" + vp[0] + ", y=" + vp[1] + ", w=" + vp[2] + ", h=" + vp[3])
-            }
-            
-            // 绘制
-            ren.set_color(_rgb(0, 0, 0, 255))
-            ren.clear()
-            
-            ren.set_color(_rgb(255, 0, 0, 255))
-            ren.fill_rect(0, 0, 160, 120)
-            
-            ren.set_color(_rgb(0, 255, 0, 255))
-            ren.fill_rect(160, 0, 160, 120)
-            
-            ren.set_color(_rgb(0, 0, 255, 255))
-            ren.fill_rect(0, 120, 160, 120)
-            
-            ren.set_color(_rgb(255, 255, 0, 255))
-            ren.fill_rect(160, 120, 160, 120)
-            
-            ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text("Frame " + frame, 10, 10, 2)
-            
-            // 关键：调用 present() 显示内容！
-            ren.present()
-            
-            // 10秒后退出
-            if frame > 600 {
-                win.set_should_close(true)
-            }
-        },
-        func(Event e) {
-            if e.is_quit() or e.is_window_close() {
-                win.set_should_close(true)
-            }
-        }
-    )
-    
+    Font font = guis.load_font("SimSun", 16)
+    font.close()
     win.close()
 }
