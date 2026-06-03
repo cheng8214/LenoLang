@@ -1,19 +1,7 @@
 import guis
 
 main() {
-    var win = guis.create_window("标题",{width:100,height:80})
-    
-    func Draw1(var ren)
-    {
-           
-     }
-    func Event1(Event event) 
-    {
-            // onEvent: 每个事件调用
-           
-    }
-    guis.run(win,Draw1,Event1)
-    win.close()
+    int a="123"
     
   
 }
