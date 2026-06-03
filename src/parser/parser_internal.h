@@ -59,6 +59,9 @@ char* copy_string(const char* text, int len);
 char* process_raw_string(const char* text, int len, int* out_len);
 int is_type_keyword(LenoTokenType type);
 
+// 错误恢复：同步到语句边界
+void parser_synchronize(Parser* p);
+
 // struct 前向引用支持（在 parser.c 中实现）
 int is_struct_name(Parser* p, const char* name);
 

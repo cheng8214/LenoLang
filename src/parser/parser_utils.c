@@ -88,6 +88,44 @@ char* process_raw_string(const char* text, int len, int* out_len) {
 }
 
 // ============================================================================
+// 错误恢复 - 同步到语句边界
+// ============================================================================
+
+// 检查 token 是否是一个语句的开始位置（用于错误恢复同步）
+// 包括语句关键词、分号、大括号、标识符、文件结尾
+static int is_statement_start(LenoTokenType type) {
+    return type == TOK_SEMI || type == TOK_RBRACE || type == TOK_EOF ||
+           type == TOK_IF || type == TOK_EIF ||
+           type == TOK_WHILE || type == TOK_FOR || type == TOK_SWITCH ||
+           type == TOK_FUNC || type == TOK_ASYNC ||
+           type == TOK_STRUCT || type == TOK_FACE ||
+           type == TOK_CSTRUCT || type == TOK_ENUM ||
+           type == TOK_VAR || type == TOK_RETURN ||
+           type == TOK_BREAK || type == TOK_CONTINUE ||
+           type == TOK_THROW || type == TOK_TRY ||
+           type == TOK_IMPORT || type == TOK_EXPORT || type == TOK_USE ||
+           type == TOK_INT_TYPE || type == TOK_FLOAT_TYPE ||
+           type == TOK_STRING_TYPE || type == TOK_BOOL_TYPE ||
+           type == TOK_ARRAY_TYPE || type == TOK_DICT_TYPE ||
+           type == TOK_IDENT || type == TOK_LBRACE;
+}
+
+// 同步解析器到下一个语句边界
+// 在解析错误后调用，跳过混乱的 token 直到找到下一个可识别的语句开始位置
+// 不会消费边界 token（如 if/func/var/; 等），由调用者决定如何处理
+void parser_synchronize(Parser* p) {
+    // 如果是词法错误 token，先消费掉
+    if (p->lex.current.type == TOK_ERROR) {
+        lexer_next(&p->lex);
+    }
+
+    while (p->lex.current.type != TOK_EOF &&
+           !is_statement_start(p->lex.current.type)) {
+        lexer_next(&p->lex);
+    }
+}
+
+// ============================================================================
 // 类型检查函数
 // ============================================================================
 

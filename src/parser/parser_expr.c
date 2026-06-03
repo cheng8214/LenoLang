@@ -107,9 +107,13 @@ Ast* parse_precedence(Parser* p, Precedence precedence) {
     LenoTokenType type = p->lex.current.type;
     ParseRule* rule = get_rule(type);
     
-    // 没有前缀解析器，报错
+    // 没有前缀解析器，报错并消费错误 token 后返回 NULL
+    // 消费 token 确保高级别错误恢复不会重复遇到同一个无法解析的 token
     if (!rule->prefix) {
         error_add(ERR_SYNTAX, p->lex.current.line, "期望表达式");
+        if (p->lex.current.type != TOK_EOF) {
+            lexer_next(&p->lex);
+        }
         return NULL;
     }
     

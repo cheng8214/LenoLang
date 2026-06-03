@@ -16,9 +16,15 @@ Ast* parse_block_internal(Parser* p) {
         Ast* stmt = parse_statement(p);
         if (stmt) {
             ast_list_add(&ast->u.block, stmt);
-        } else {
-            // 如果解析失败，消费一个 token 以避免无限循环
-            lexer_next(&p->lex);
+        }
+        // 错误恢复：同步到块内下一个语句开始位置
+        // 跳过混乱的 token 直到找到语句边界或块结束
+        if (!stmt && p->lex.current.type != TOK_EOF && p->lex.current.type != TOK_RBRACE) {
+            parser_synchronize(p);
+            // 在块内，只消费分号，不消费右大括号（它属于当前块）
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
         }
     }
     

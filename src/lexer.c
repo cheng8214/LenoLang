@@ -593,7 +593,7 @@ void lexer_next(Lexer* lex) {
             } else {
                 error_add(ERR_SYNTAX, lex->line, "意外的字符 '$'，插值字符串需要使用 $\"...\"");
                 advance(lex);
-                lex->current = make_token(lex, TOK_EOF);
+                lex->current = make_token(lex, TOK_ERROR);
             }
             break;
         case '@':
@@ -602,7 +602,7 @@ void lexer_next(Lexer* lex) {
             } else {
                 error_add(ERR_SYNTAX, lex->line, "意外的字符 '@'，原始字符串需要使用 @\"...\"");
                 advance(lex);
-                lex->current = make_token(lex, TOK_EOF);
+                lex->current = make_token(lex, TOK_ERROR);
             }
             break;
         case '=':
@@ -751,7 +751,7 @@ void lexer_next(Lexer* lex) {
             } else {
                 error_add(ERR_SYNTAX, lex->line, "意外的字符");
                 advance(lex);
-                lex->current = make_token(lex, TOK_EOF);
+                lex->current = make_token(lex, TOK_ERROR);
             }
             break;
     }

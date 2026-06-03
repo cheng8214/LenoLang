@@ -161,31 +161,11 @@ Ast* parse_program_internal(Parser* p) {
         if (stmt) {
             ast_list_add(&ast->u.block, stmt);
         }
-        // 错误恢复：如果解析语句失败，尝试跳过当前token继续解析
+        // 错误恢复：如果解析语句失败，同步到下一个语句开始位置
         // 这样可以收集更多错误而不是遇到第一个错误就停止
         if (!stmt && p->lex.current.type != TOK_EOF) {
-            // 尝试同步到下一个语句的开始
-            // 跳过当前token，寻找下一个可能的语句开始位置
-            while (p->lex.current.type != TOK_EOF &&
-                   p->lex.current.type != TOK_SEMI &&
-                   p->lex.current.type != TOK_RBRACE &&
-                   p->lex.current.type != TOK_IF &&
-                   p->lex.current.type != TOK_WHILE &&
-                   p->lex.current.type != TOK_FOR &&
-                   p->lex.current.type != TOK_FUNC &&
-                   p->lex.current.type != TOK_ASYNC &&
-                   p->lex.current.type != TOK_STRUCT &&
-                   p->lex.current.type != TOK_FACE &&
-                   p->lex.current.type != TOK_VAR &&
-                   p->lex.current.type != TOK_RETURN &&
-                   p->lex.current.type != TOK_INT_TYPE &&
-                   p->lex.current.type != TOK_FLOAT_TYPE &&
-                   p->lex.current.type != TOK_STRING_TYPE &&
-                   p->lex.current.type != TOK_BOOL_TYPE &&
-                   p->lex.current.type != TOK_IDENT) {
-                lexer_next(&p->lex);
-            }
-            // 如果遇到分号或右大括号，消费它并继续
+            parser_synchronize(p);
+            // 在顶层，消费碰到的分号和大括号（它们是分隔符，不属于任何语句）
             if (p->lex.current.type == TOK_SEMI || p->lex.current.type == TOK_RBRACE) {
                 lexer_next(&p->lex);
             }
