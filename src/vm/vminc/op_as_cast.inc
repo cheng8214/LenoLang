@@ -25,14 +25,32 @@ OPCODE(OP_AS_CAST) {
     int matches = 0;
 
     switch (expected_type) {
-        case TYPE_INT:
+        case TYPE_INT: {
             (void)READ_BYTE();
-            matches = val_is_int(value);
+            if (val_is_int(value)) {
+                matches = 1;
+            } else if (val_is_float(value)) {
+                // float 转换为 int（截断小数）
+                value = val_num((int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
             break;
-        case TYPE_FLOAT:
+        }
+        case TYPE_FLOAT: {
             (void)READ_BYTE();
-            matches = val_is_float(value);
+            if (val_is_float(value)) {
+                matches = 1;
+            } else if (val_is_int(value)) {
+                // int 转换为 float
+                value = val_float((double)val_as_int(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
             break;
+        }
         case TYPE_STRING:
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING);

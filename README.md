@@ -301,6 +301,33 @@ main() {
 }
 ```
 
+### as 类型转换
+
+`as` 操作符用于类型转换，支持数值类型之间的转换：
+
+```leno
+main() {
+    // float 转换为 int（截断小数）
+    var f = 3.14
+    var i = f as int       // 3
+
+    // int 转换为 float
+    var a = 10
+    var b = a as float     // 10.0
+
+    // 在表达式中使用
+    var x = 10 + 3.14 as int   // 13（先计算 10+3.14=13.14，再转为 int）
+}
+```
+
+> **⚠️ 注意：`as`** **只支持数值类型转换**
+>
+> ```leno
+> var i = 3.14 as int      // ✅ 3
+> var f = 10 as float      // ✅ 10.0
+> var s = "123" as int     // ❌ 不支持，返回 null
+> ```
+
 ### type() 函数
 
 `type()` 返回**运行时值的类型**（不是编译时声明的类型）：
@@ -2707,6 +2734,7 @@ lenolang program.leno
 | 数组切片  | `arr[2:8]`, `arr[:5]`, `arr[3:]`              |
 | 数组比较  | `[1,2] == [1,2]`                              |
 | 类型转换  | `_int(x)`, `_float(x)`, `_str(x)`, `_bool(x)` |
+| as 转换   | `x as int`, `x as float`                      |
 | 类型检查  | `type(x)`                                     |
 | 字符串插值 | `$"Hello {name}"`                             |
 | 原始字符串 | `@"raw string"`                               |
