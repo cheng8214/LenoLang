@@ -81,7 +81,42 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
         case_infos[i].match_jumps = malloc(sizeof(int) * (value_count > 0 ? value_count : 1));
         case_infos[i].match_jump_count = 0;
 
-        if (value_count > 0) {
+        if (ast->u.switch_.cases[i].is_type_match) {
+            // case is Type 模式：生成类型检查
+            emit_byte(gen, OP_DUP, ast->line);
+            emit_byte(gen, OP_TYPE_CHECK, ast->line);
+            TypeInfo* mt = ast->u.switch_.cases[i].match_type;
+            if (mt && mt->kind == TYPE_FACE && mt->struct_name) {
+                ObjString* face_name_str = str_copy(mt->struct_name,
+                                                     strlen(mt->struct_name));
+                int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
+                emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
+                emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, face_name_const & 0xff, ast->line);
+            } else if (mt && mt->kind == TYPE_STRUCT && mt->struct_name) {
+                ObjString* struct_name_str = str_copy(mt->struct_name,
+                                                       strlen(mt->struct_name));
+                int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
+                emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
+                emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, struct_name_const & 0xff, ast->line);
+            } else {
+                if (mt) {
+                    emit_byte(gen, (uint8_t)mt->kind, ast->line);
+                    if (mt->element_type) {
+                        emit_byte(gen, (uint8_t)mt->element_type->kind, ast->line);
+                    } else {
+                        emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+                    }
+                } else {
+                    emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+                    emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+                }
+            }
+            case_infos[i].match_jumps[case_infos[i].match_jump_count++] =
+                emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
+            emit_byte(gen, OP_POP, ast->line);
+        } else if (value_count > 0) {
             for (int j = 0; j < value_count; j++) {
                 emit_byte(gen, OP_DUP, ast->line);
 

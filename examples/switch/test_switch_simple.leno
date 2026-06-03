@@ -1,0 +1,10 @@
+// 最简测试
+var s = "hello"
+switch s {
+    case is string {
+        print("s is string")
+    }
+    default {
+        print("s is not string")
+    }
+}

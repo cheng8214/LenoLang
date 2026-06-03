@@ -1,0 +1,154 @@
+// switch case is 混合值匹配和类型匹配测试
+
+// 测试值匹配和类型匹配混合
+func test_mixed_value_and_type() {
+    var cmd = "help"
+    string result = ""
+    switch cmd {
+        case "help" {
+            result = "help"
+        }
+        case "quit" {
+            result = "quit"
+        }
+        case is string {
+            result = "other_string"
+        }
+        default {
+            result = "default"
+        }
+    }
+    assert_eq(result, "help")
+}
+
+// 测试值不匹配时走类型匹配
+func test_value_no_match_type_match() {
+    var cmd = "unknown"
+    string result = ""
+    switch cmd {
+        case "help" {
+            result = "help"
+        }
+        case "quit" {
+            result = "quit"
+        }
+        case is string {
+            result = "other_string"
+        }
+        default {
+            result = "default"
+        }
+    }
+    assert_eq(result, "other_string")
+}
+
+// 测试数值类型中混合值匹配和类型匹配
+func test_mixed_int_value_and_type() {
+    var val = 0
+    string result = ""
+    switch val {
+        case 0 {
+            result = "zero"
+        }
+        case 1 {
+            result = "one"
+        }
+        case is int {
+            result = "other_int"
+        }
+        default {
+            result = "default"
+        }
+    }
+    assert_eq(result, "zero")
+}
+
+// 测试 int 类型但值不匹配
+func test_int_no_value_match() {
+    var val = 99
+    string result = ""
+    switch val {
+        case 0 {
+            result = "zero"
+        }
+        case 1 {
+            result = "one"
+        }
+        case is int {
+            result = "other_int"
+        }
+        default {
+            result = "default"
+        }
+    }
+    assert_eq(result, "other_int")
+}
+
+// 测试 string 参数混合匹配
+func test_string_param_mixed(var cmd) {
+    string result = ""
+    switch cmd {
+        case "start" {
+            result = "start"
+        }
+        case "stop" {
+            result = "stop"
+        }
+        case is string {
+            result = "other_str"
+        }
+        case is int {
+            result = "int"
+        }
+        default {
+            result = "default"
+        }
+    }
+    return result
+}
+
+assert_eq(test_string_param_mixed("start"), "start")
+assert_eq(test_string_param_mixed("stop"), "stop")
+assert_eq(test_string_param_mixed("hello"), "other_str")
+assert_eq(test_string_param_mixed(42), "int")
+assert_eq(test_string_param_mixed(true), "default")
+
+// 测试多个类型分支 + 值分支
+func test_multi_type_with_value(var val) {
+    string result = ""
+    switch val {
+        case 0 {
+            result = "zero_val"
+        }
+        case is int {
+            result = "int_type"
+        }
+        case is string {
+            result = "string_type"
+        }
+        case is float {
+            result = "float_type"
+        }
+        case is bool {
+            result = "bool_type"
+        }
+        default {
+            result = "other"
+        }
+    }
+    return result
+}
+
+assert_eq(test_multi_type_with_value(0), "zero_val")
+assert_eq(test_multi_type_with_value(123), "int_type")
+assert_eq(test_multi_type_with_value("abc"), "string_type")
+assert_eq(test_multi_type_with_value(2.5), "float_type")
+assert_eq(test_multi_type_with_value(false), "bool_type")
+assert_eq(test_multi_type_with_value(null), "other")
+
+test_mixed_value_and_type()
+test_value_no_match_type_match()
+test_mixed_int_value_and_type()
+test_int_no_value_match()
+
+print("test_switch_case_is_mixed passed")

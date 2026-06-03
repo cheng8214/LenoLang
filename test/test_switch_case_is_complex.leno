@@ -1,0 +1,160 @@
+// switch case is 复合场景测试
+
+// 测试 switch 中类型判断不影响外部（不 fallthrough）
+func test_no_fallthrough() {
+    var val = 10
+    int counter = 0
+    switch val {
+        case is int {
+            counter = counter + 1
+        }
+        case is string {
+            counter = counter + 10
+        }
+        default {
+            counter = counter + 100
+        }
+    }
+    assert_eq(counter, 1)
+}
+
+// 测试 switch 中使用闭包
+func test_with_closure() {
+    var val = 50
+    int result = 0
+    switch val {
+        case is int {
+            func double():int {
+                return val * 2
+            }
+            result = double()
+        }
+        default {
+            result = -1
+        }
+    }
+    assert_eq(result, 100)
+}
+
+// 测试在函数内 return 的 switch
+func test_return_in_switch(var val):string {
+    switch val {
+        case is int {
+            return "int"
+        }
+        case is string {
+            return "string"
+        }
+        default {
+            return "other"
+        }
+    }
+    return "unreachable"
+}
+
+assert_eq(test_return_in_switch(42), "int")
+assert_eq(test_return_in_switch("hello"), "string")
+assert_eq(test_return_in_switch(3.14), "other")
+
+// 测试 switch 内部修改外部变量
+func test_modify_outer_var() {
+    var val = 5
+    int modified = 0
+    switch val {
+        case is int {
+            modified = val * 10
+        }
+        default {
+            modified = -1
+        }
+    }
+    assert_eq(modified, 50)
+}
+
+// 测试 Array 类型匹配
+func test_array_match() {
+    var arr = [1, 2, 3]
+    string result = ""
+    switch arr {
+        case is int {
+            result = "int"
+        }
+        case is string {
+            result = "string"
+        }
+        default {
+            result = "not_int_or_string"
+        }
+    }
+    assert_eq(result, "not_int_or_string")
+}
+
+// 测试嵌套 switch
+func test_nested_switch() {
+    var outer = 10
+    var inner = "hello"
+    string result = ""
+
+    switch outer {
+        case is int {
+            switch inner {
+                case is string {
+                    result = "int_and_string"
+                }
+                default {
+                    result = "int_and_other"
+                }
+            }
+        }
+        default {
+            result = "other"
+        }
+    }
+    assert_eq(result, "int_and_string")
+}
+
+// 测试只有 default 的 switch（全走 default）
+func test_only_default() {
+    var val = null
+    string result = ""
+    switch val {
+        default {
+            result = "only_default"
+        }
+    }
+    assert_eq(result, "only_default")
+}
+
+// 测试多 case 类型分支，全部类型分支
+func test_all_type_cases() {
+    var val = false
+    int hit = 0
+    switch val {
+        case is int {
+            hit = 1
+        }
+        case is float {
+            hit = 2
+        }
+        case is string {
+            hit = 3
+        }
+        case is bool {
+            hit = 4
+        }
+        default {
+            hit = 5
+        }
+    }
+    assert_eq(hit, 4)
+}
+
+test_no_fallthrough()
+test_with_closure()
+test_modify_outer_var()
+test_array_match()
+test_nested_switch()
+test_only_default()
+test_all_type_cases()
+
+print("test_switch_case_is_complex passed")

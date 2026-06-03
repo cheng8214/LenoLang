@@ -301,32 +301,79 @@ main() {
 }
 ```
 
-### as 类型转换
+### as 安全类型转换
 
-`as` 操作符用于类型转换，支持数值类型之间的转换：
+`as` 操作符提供安全类型转换：**匹配时返回原值，不匹配时返回 `null`**。int ↔ float 之间还会进行数值转换。
 
 ```leno
 main() {
-    // float 转换为 int（截断小数）
+    // 同类型：返回原值
+    var x = 42
+    var xi = x as int          // 42
+
+    // int ↔ float 数值转换
     var f = 3.14
-    var i = f as int       // 3
-
-    // int 转换为 float
+    var i = f as int           // 3（float→int 截断小数）
     var a = 10
-    var b = a as float     // 10.0
+    var b = a as float         // 10.0（int→float 自动升级）
 
-    // 在表达式中使用
-    var x = 10 + 3.14 as int   // 13（先计算 10+3.14=13.14，再转为 int）
+    // 不同类型：返回 null
+    var s = "hello"
+    var si = s as int          // null（string 不是 int）
+    var n = 100
+    var ns = n as string       // null（int 不是 string）
+
+    // null 转换
+    var na = null as int       // null
 }
 ```
 
-> **⚠️ 注意：`as`** **只支持数值类型转换**
+**struct 和 face 类型：**
+
+```leno
+struct Dog {
+    string name = ""
+    func speak():string { return "Woof" }
+}
+
+struct Cat {
+    string name = ""
+    func speak():string { return "Meow" }
+}
+
+var dog = new Dog()
+var d = dog as Dog       // Dog 实例（匹配）
+var c = dog as Cat       // null（不匹配）
+
+// face 向下转型（最常用场景）
+face Shape {
+    func area():float
+}
+
+func describe(Shape s) {
+    var c = s as Circle
+    if c != null {
+        return "Circle: " + _str(c._radius)
+    }
+    var r = s as Rect
+    if r != null {
+        return "Rect: " + _str(r._width)
+    }
+    return "Unknown"
+}
+```
+
+> **⚠️ 注意：`as`** **与** **`_int()`/`_float()`** **的区别**
 >
-> ```leno
-> var i = 3.14 as int      // ✅ 3
-> var f = 10 as float      // ✅ 10.0
-> var s = "123" as int     // ❌ 不支持，返回 null
-> ```
+> | 写法 | 语义 | 结果 |
+> |------|------|------|
+> | `42 as float` | 类型检查 + 数值转换 | `42.0` |
+> | `_float(42)` | 强制类型转换 | `42.0` |
+> | `"abc" as int` | 类型检查 | `null`（不匹配） |
+> | `_int("abc")` | 强制类型转换 | 运行时错误（解析失败） |
+>
+> `as` 是**安全的**：不匹配返回 `null`，不会崩溃。
+> `_int()`/`_float()` 是**强制的**：转换失败会抛出运行时错误。
 
 ### type() 函数
 
@@ -736,6 +783,107 @@ main() {
     print(b)        // 输出100
 }
 ```
+
+### switch `case is` 类型匹配
+
+`case is` 可以在 switch 中按类型匹配分支，类似 if 类型守卫但在 switch 中更简洁：
+
+```leno
+main() {
+    var x = "hello"
+
+    switch x {
+        case is int {
+            print("是整数: " + x)
+        }
+        case is string {
+            print("是字符串: " + x)    // 匹配此分支
+        }
+        case is float {
+            print("是浮点数: " + x)
+        }
+        case is bool {
+            print("是布尔值")
+        }
+        default {
+            print("未知类型")
+        }
+    }
+}
+```
+
+**值匹配和类型匹配可以混合使用：**
+
+```leno
+func process(var x) {
+    switch x {
+        case 0 {
+            print("零")
+        }
+        case 1, 2, 3 {
+            print("小数字")
+        }
+        case is int {
+            print("其他整数: " + x)
+        }
+        case is string {
+            print("字符串: " + x)
+        }
+        default {
+            print("其他类型")
+        }
+    }
+}
+```
+
+**支持的类型：** `int`、`float`、`string`、`bool`、`null`、struct 类型、face 类型等。
+
+```leno
+face Shape {
+    func area():float
+}
+
+struct Circle impl Shape {
+    float _radius = 1.0
+    func area():float { return 3.14159 * _radius * _radius }
+}
+
+struct Rect impl Shape {
+    float _width = 1.0
+    float _height = 1.0
+    func area():float { return _width * _height }
+}
+
+func describe(var s) {
+    switch s {
+        case is Circle {
+            print("圆形，面积: " + s.area())
+        }
+        case is Rect {
+            print("矩形，面积: " + s.area())
+        }
+        case is Shape {
+            print("其他形状，面积: " + s.area())
+        }
+        default {
+            print("不是形状")
+        }
+    }
+}
+```
+
+> **⚠️ 注意：`case is` 匹配成功后变量类型会被收窄**
+>
+> ```leno
+> switch x {
+>     case is int {
+>         int n = x   // ✅ 分支内 x 被收窄为 int
+>     }
+>     case is string {
+>         string s = x  // ✅ 分支内 x 被收窄为 string
+>     }
+> }
+> ```
 
 ### while 循环
 
@@ -2709,7 +2857,7 @@ lenolang program.leno
 | for 遍历字典  | `for dict to key`, `for dict to key, value`    |
 | for 遍历字符串 | `for str to char`, `for str to char, index`    |
 | while 循环  | `while i < 10 { }`                             |
-| switch    | `switch x { case v { } default { } }`          |
+| switch    | `switch x { case v { } case is Type { } default { } }` |
 
 ### 运算符
 
@@ -2734,7 +2882,7 @@ lenolang program.leno
 | 数组切片  | `arr[2:8]`, `arr[:5]`, `arr[3:]`              |
 | 数组比较  | `[1,2] == [1,2]`                              |
 | 类型转换  | `_int(x)`, `_float(x)`, `_str(x)`, `_bool(x)` |
-| as 转换   | `x as int`, `x as float`                      |
+| 安全转换  | `x as Type`（匹配返回原值，不匹配返回 null；int↔float 数值转换） |
 | 类型检查  | `type(x)`                                     |
 | 字符串插值 | `$"Hello {name}"`                             |
 | 原始字符串 | `@"raw string"`                               |

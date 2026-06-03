@@ -1,0 +1,23 @@
+// face 类型匹配测试（分步）
+face Shape {
+    func area():int
+}
+
+struct Rect impl Shape {
+    int width = 0
+    int height = 0
+    func area() { return width * height }
+}
+
+var r = new Rect(width=10, height=20)
+print("created Rect")
+
+// Step 1: 先测试 struct 匹配
+switch r {
+    case is Rect {
+        print("r is Rect")
+    }
+    default {
+        print("r is not Rect")
+    }
+}

@@ -166,6 +166,10 @@ struct Ast {
             struct SwitchCase {
                 AstList values;  // case 值列表（支持多个值）
                 Ast* body;       // case 体
+                int is_type_match;    // 1 = case is Type 模式
+                TypeInfo* match_type; // 匹配的类型（int, string, Array, Point, Shape 等）
+                char* guard_var;      // switch 表达式变量名（用于类型收窄）
+                SymRef guard_var_ref; // switch 表达式变量的符号引用
             }* cases;            // case 数组
             int case_count;      // case 数量
             Ast* default_body;   // default 体

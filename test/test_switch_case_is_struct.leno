@@ -1,0 +1,111 @@
+// switch case is struct 类型匹配测试
+
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+struct Rect {
+    int width = 0
+    int height = 0
+    func area():int { return width * height }
+}
+
+struct Circle {
+    float radius = 0.0
+}
+
+// 测试 struct 类型匹配
+func test_struct_match() {
+    var p = new Point(x = 3, y = 4)
+    string result = ""
+    switch p {
+        case is Point {
+            result = "Point"
+        }
+        case is Rect {
+            result = "Rect"
+        }
+        default {
+            result = "other"
+        }
+    }
+    assert_eq(result, "Point")
+}
+
+// 测试不同 struct 不匹配
+func test_struct_no_match() {
+    var r = new Rect(width = 10, height = 20)
+    string result = ""
+    switch r {
+        case is Point {
+            result = "Point"
+        }
+        case is Circle {
+            result = "Circle"
+        }
+        default {
+            result = "neither"
+        }
+    }
+    assert_eq(result, "neither")
+}
+
+// 测试 struct 匹配后访问字段
+func test_struct_field_access() {
+    var p = new Point(x = 10, y = 20)
+    int sum = 0
+    switch p {
+        case is Point {
+            sum = p.x + p.y
+        }
+        default {
+            sum = -1
+        }
+    }
+    assert_eq(sum, 30)
+}
+
+// 测试 Rect struct 匹配和方法调用
+func test_struct_with_method() {
+    var r = new Rect(width = 5, height = 6)
+    int a = 0
+    switch r {
+        case is Rect {
+            a = r.area()
+        }
+        default {
+            a = -1
+        }
+    }
+    assert_eq(a, 30)
+}
+
+// 测试多个 struct 分支，匹配第二个
+func test_multi_struct_match() {
+    var c = new Circle(radius = 2.5)
+    string result = ""
+    switch c {
+        case is Point {
+            result = "Point"
+        }
+        case is Rect {
+            result = "Rect"
+        }
+        case is Circle {
+            result = "Circle"
+        }
+        default {
+            result = "other"
+        }
+    }
+    assert_eq(result, "Circle")
+}
+
+test_struct_match()
+test_struct_no_match()
+test_struct_field_access()
+test_struct_with_method()
+test_multi_struct_match()
+
+print("test_switch_case_is_struct passed")

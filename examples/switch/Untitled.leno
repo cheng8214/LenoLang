@@ -1,5 +1,0 @@
-// 新建文件: Untitled.leno
-main()
-{
-	print("Hello LenoLang");
-}

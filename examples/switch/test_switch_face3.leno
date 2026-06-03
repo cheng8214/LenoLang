@@ -1,0 +1,18 @@
+// 没有 face，只测试 struct 匹配
+struct Rect {
+    int width = 0
+    int height = 0
+    func area() { return width * height }
+}
+
+var r = new Rect(width=10, height=20)
+print("created Rect")
+
+switch r {
+    case is Rect {
+        print("r is Rect")
+    }
+    default {
+        print("r is not Rect")
+    }
+}

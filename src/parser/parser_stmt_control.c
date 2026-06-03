@@ -467,9 +467,16 @@ Ast* parse_switch_stmt(Parser* p) {
     // 解析 switch 表达式
     Ast* expr = parse_expression(p);
     
+    // 提取 switch 表达式的变量名（用于 case is Type 的类型收窄）
+    char* switch_var_name = NULL;
+    if (expr->kind == AST_VAR) {
+        switch_var_name = strdup(expr->u.var.name);
+    }
+    
     // switch 体必须用大括号包裹
     if (p->lex.current.type != TOK_LBRACE) {
         error_add(ERR_SYNTAX, p->lex.current.line, "switch 语句体必须用大括号 {} 包裹");
+        free(switch_var_name);
         return NULL;
     }
     lexer_next(&p->lex); // 消费 '{'
@@ -491,20 +498,45 @@ Ast* parse_switch_stmt(Parser* p) {
                 cases = realloc(cases, sizeof(struct SwitchCase) * case_capacity);
             }
             
-            // 初始化 case 值列表
+            // 初始化 case 字段
             ast_list_init(&cases[case_count].values);
+            cases[case_count].is_type_match = 0;
+            cases[case_count].match_type = NULL;
+            cases[case_count].guard_var = NULL;
+            memset(&cases[case_count].guard_var_ref, 0, sizeof(SymRef));
             
-            // 解析 case 值（支持多个值，用逗号分隔）
-            do {
-                Ast* value = parse_expression(p);
-                if (value) {
-                    ast_list_add(&cases[case_count].values, value);
+            // 检查是否是 case is Type 模式
+            if (p->lex.current.type == TOK_IS) {
+                lexer_next(&p->lex); // is
+                
+                // 解析类型
+                TypeInfo* type_info = parse_type(p);
+                if (!type_info) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "case is 后期望类型名");
+                    free(switch_var_name);
+                    free(cases);
+                    return NULL;
                 }
-            } while (match(p, TOK_COMMA));
+                
+                cases[case_count].is_type_match = 1;
+                cases[case_count].match_type = type_info;
+                if (switch_var_name) {
+                    cases[case_count].guard_var = strdup(switch_var_name);
+                }
+            } else {
+                // 普通值匹配：解析 case 值（支持多个值，用逗号分隔）
+                do {
+                    Ast* value = parse_expression(p);
+                    if (value) {
+                        ast_list_add(&cases[case_count].values, value);
+                    }
+                } while (match(p, TOK_COMMA));
+            }
             
             // case 体必须用大括号包裹
             if (p->lex.current.type != TOK_LBRACE) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "case 语句体必须用大括号 {} 包裹");
+                free(switch_var_name);
                 free(cases);
                 return NULL;
             }
@@ -516,12 +548,14 @@ Ast* parse_switch_stmt(Parser* p) {
             // default 体必须用大括号包裹
             if (p->lex.current.type != TOK_LBRACE) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "default 语句体必须用大括号 {} 包裹");
+                free(switch_var_name);
                 free(cases);
                 return NULL;
             }
             default_body = parse_block_internal(p);
         } else {
             error_add(ERR_SYNTAX, p->lex.current.line, "switch 语句中期望 case 或 default");
+            free(switch_var_name);
             free(cases);
             return NULL;
         }
@@ -536,5 +570,6 @@ Ast* parse_switch_stmt(Parser* p) {
     ast->u.switch_.case_count = case_count;
     ast->u.switch_.default_body = default_body;
     
+    free(switch_var_name);
     return ast;
 }

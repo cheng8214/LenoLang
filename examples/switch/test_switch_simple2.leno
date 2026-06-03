@@ -1,0 +1,27 @@
+// 简单测试
+face Shape {
+    func area():int
+}
+
+struct Rect impl Shape {
+    int width = 0
+    int height = 0
+    func area() { return width * height }
+}
+
+var s = new Rect(width=10, height=20)
+
+// 先用 if is 测试（已知能工作）
+if s is Shape {
+    print("s is Shape (if test)")
+}
+
+// 再用 switch is 测试
+switch s {
+    case is Shape {
+        print("s is Shape (switch test)")
+    }
+    default {
+        print("s is not Shape")
+    }
+}

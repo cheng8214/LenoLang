@@ -152,6 +152,10 @@ void ast_free(Ast* ast) {
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 free_ast_list(&ast->u.switch_.cases[i].values);
                 ast_free(ast->u.switch_.cases[i].body);
+                if (ast->u.switch_.cases[i].match_type) {
+                    type_free(ast->u.switch_.cases[i].match_type);
+                }
+                free(ast->u.switch_.cases[i].guard_var);
             }
             free(ast->u.switch_.cases);
             ast_free(ast->u.switch_.default_body);

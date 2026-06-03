@@ -1,0 +1,117 @@
+// 测试 switch case is Type 类型匹配
+
+// 测试1：基本类型匹配
+func test_basic_type_match() {
+    var val = 42
+    switch val {
+        case is int {
+            print("val 是整数")
+        }
+        case is string {
+            print("val 是字符串")
+        }
+        default {
+            print("val 是其他类型")
+        }
+    }
+}
+
+// 测试2：字符串类型匹配
+func test_string_type_match() {
+    var name = "hello"
+    switch name {
+        case is int {
+            print("name 是整数")
+        }
+        case is string {
+            print("name 是字符串")
+        }
+        default {
+            print("name 是其他类型")
+        }
+    }
+}
+
+// 测试3：混合值匹配和类型匹配
+func test_mixed_match() {
+    var cmd = "quit"
+    switch cmd {
+        case "help" {
+            print("显示帮助")
+        }
+        case is string {
+            print("未知字符串命令: " + cmd)
+        }
+        case is int {
+            print("数字命令")
+        }
+        default {
+            print("未知类型")
+        }
+    }
+}
+
+// 测试4：Array 类型匹配
+func test_array_type_match() {
+    var arr = [1, 2, 3]
+    switch arr {
+        case is int {
+            print("arr 是整数")
+        }
+        case is Array {
+            print("arr 是数组")
+        }
+        default {
+            print("arr 是其他类型")
+        }
+    }
+}
+
+// 测试5：struct 类型匹配 + 类型收窄
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+struct Circle {
+    float radius = 0.0
+}
+
+func test_struct_type_match() {
+    var p = new Point(x=3, y=4)
+    switch p {
+        case is Point {
+            print("是 Point: " + _str(p.x) + ", " + _str(p.y))
+        }
+        case is Circle {
+            print("是 Circle")
+        }
+        default {
+            print("未知类型")
+        }
+    }
+}
+
+// 测试6：bool 和 null 类型匹配
+func test_misc_type_match() {
+    var b = true
+    switch b {
+        case is bool {
+            print("b 是布尔值")
+        }
+        case is int {
+            print("b 是整数")
+        }
+        default {
+            print("b 是其他类型")
+        }
+    }
+}
+
+// 运行所有测试
+test_basic_type_match()
+test_string_type_match()
+test_mixed_match()
+test_array_type_match()
+test_struct_type_match()
+test_misc_type_match()

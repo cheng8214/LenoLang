@@ -894,6 +894,30 @@ void visit(Semantic* s, Ast* ast) {
                 Scope* case_scope = scope_new(s->current, 0);
                 s->current = case_scope;
 
+                // case is Type 模式：解析 guard_var 的符号引用，并修正类型（struct -> face）
+                if (ast->u.switch_.cases[i].is_type_match && ast->u.switch_.cases[i].match_type) {
+                    TypeInfo* mt = ast->u.switch_.cases[i].match_type;
+                    // 如果类型是 TYPE_STRUCT 但实际上是 face，修正为 TYPE_FACE
+                    if (mt->kind == TYPE_STRUCT && mt->struct_name && face_def_find(mt->struct_name)) {
+                        mt->kind = TYPE_FACE;
+                    }
+                    // 解析 guard_var 的符号引用
+                    if (ast->u.switch_.cases[i].guard_var) {
+                        SymRef ref;
+                        memset(&ref, 0, sizeof(ref));
+                        Symbol* sym = resolve_variable_with_upvalue(s, ast->u.switch_.cases[i].guard_var, &ref);
+                        if (ref.name) {
+                            ast->u.switch_.cases[i].guard_var_ref.kind = ref.kind;
+                            ast->u.switch_.cases[i].guard_var_ref.index = ref.index;
+                            ast->u.switch_.cases[i].guard_var_ref.name = strdup(ref.name);
+                        } else if (sym) {
+                            ast->u.switch_.cases[i].guard_var_ref.kind = sym->kind;
+                            ast->u.switch_.cases[i].guard_var_ref.index = sym->index;
+                            ast->u.switch_.cases[i].guard_var_ref.name = strdup(sym->name);
+                        }
+                    }
+                }
+
                 for (int j = 0; j < ast->u.switch_.cases[i].values.count; j++) {
                     visit(s, ast->u.switch_.cases[i].values.items[j]);
                 }
