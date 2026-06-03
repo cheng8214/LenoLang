@@ -114,7 +114,10 @@ char* package_find_project_root(const char* source_file) {
     /* 防止无限循环：最多向上查找 32 层 */
     for (int depth = 0; depth < 32; depth++) {
         char toml_path[MAX_PATH_LEN];
-        snprintf(toml_path, MAX_PATH_LEN, "%s%cleno.toml", current, sep);
+        /* 确保不会超出缓冲区: current + sep + "leno.toml" */
+        size_t clen = strlen(current);
+        if (clen + 10 >= (size_t)MAX_PATH_LEN) return NULL;
+        snprintf(toml_path, sizeof(toml_path), "%s%cleno.toml", current, sep);
 
         if (file_exists_internal(toml_path)) {
             /* 找到了，返回项目根目录（带结尾分隔符） */
@@ -147,8 +150,11 @@ int package_resolve_module_file(const char* module_name, char* out_path, int out
     char candidate[MAX_PATH_LEN];
 
     for (int i = 0; i < search_path_count; i++) {
-        snprintf(candidate, MAX_PATH_LEN, "%s%s.leno",
-                 search_paths[i], module_name);
+        size_t plen = strlen(search_paths[i]);
+        size_t mlen = strlen(module_name);
+        if (plen + mlen + 6 >= (size_t)MAX_PATH_LEN) continue;
+        snprintf(candidate, sizeof(candidate), "%.*s%.*s.leno",
+                 (int)plen, search_paths[i], (int)mlen, module_name);
 
         if (file_exists_internal(candidate)) {
             strncpy(out_path, candidate, out_len - 1);

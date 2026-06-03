@@ -103,7 +103,11 @@ void package_cache_add_to_search_paths(void) {
 #ifdef _WIN32
     /* 枚举缓存目录下的所有子目录 */
     char pattern[MAX_PATH_LEN];
-    snprintf(pattern, sizeof(pattern), "%s*", cache);
+    {
+        size_t clen = strlen(cache);
+        if (clen + 2 >= sizeof(pattern)) return;
+        snprintf(pattern, sizeof(pattern), "%s*", cache);
+    }
 
     WIN32_FIND_DATAW fd;
     wchar_t wpattern[MAX_PATH_LEN];
@@ -121,8 +125,13 @@ void package_cache_add_to_search_paths(void) {
                             name, sizeof(name), NULL, NULL);
 
         char lib_path[MAX_PATH_LEN];
-        snprintf(lib_path, sizeof(lib_path), "%s%s%clib%c",
-                 cache, name, PATH_SEP, PATH_SEP);
+        {
+            size_t clen = strlen(cache);
+            size_t nlen = strlen(name);
+            if (clen + nlen + 6 >= sizeof(lib_path)) continue;
+            snprintf(lib_path, sizeof(lib_path), "%.*s%.*s%clib%c",
+                     (int)clen, cache, (int)nlen, name, PATH_SEP, PATH_SEP);
+        }
 
         /* 检查 lib/ 目录存在 */
         struct stat st;
@@ -143,8 +152,13 @@ void package_cache_add_to_search_paths(void) {
         if (ent->d_type != DT_DIR) continue;
 
         char lib_path[MAX_PATH_LEN];
-        snprintf(lib_path, sizeof(lib_path), "%s%s%clib%c",
-                 cache, ent->d_name, PATH_SEP, PATH_SEP);
+        {
+            size_t clen = strlen(cache);
+            size_t nlen = strlen(ent->d_name);
+            if (clen + nlen + 6 >= sizeof(lib_path)) continue;
+            snprintf(lib_path, sizeof(lib_path), "%.*s%.*s%clib%c",
+                     (int)clen, cache, (int)nlen, ent->d_name, PATH_SEP, PATH_SEP);
+        }
 
         struct stat st;
         if (stat(lib_path, &st) == 0 && (st.st_mode & S_IFDIR)) {
@@ -186,7 +200,8 @@ static int copy_dir(const char* src, const char* dst) {
 #endif
 }
 
-/* 简单文件复制 */
+/* 简单文件复制（当前未使用，保留用于未来扩展） */
+#if 0
 static int copy_file(const char* src, const char* dst) {
     FILE* fsrc = fopen(src, "rb");
     if (!fsrc) return -1;
@@ -202,6 +217,7 @@ static int copy_file(const char* src, const char* dst) {
     fclose(fdst);
     return 0;
 }
+#endif
 
 /* ============================================================================
  * Git 源 URL 解析
@@ -315,7 +331,14 @@ int package_install_from_git(const char* git_url) {
     /* 3. 创建临时目录 */
     const char* cache = package_cache_dir();
     char tmp_dir[MAX_PATH_LEN];
-    snprintf(tmp_dir, sizeof(tmp_dir), "%s.leno-tmp", cache);
+    {
+        size_t clen = strlen(cache);
+        if (clen + 10 >= sizeof(tmp_dir)) {
+            fprintf(stderr, "[leno install] 错误: 缓存路径过长\n");
+            return -1;
+        }
+        snprintf(tmp_dir, sizeof(tmp_dir), "%s.leno-tmp", cache);
+    }
 
 #ifdef _WIN32
     char rm_cmd[MAX_PATH_LEN * 2];
@@ -352,7 +375,14 @@ int package_install_from_git(const char* git_url) {
     /* 5. 定位包目录：monorepo 则定位到子目录，否则用仓库根目录 */
     char pkg_dir[MAX_PATH_LEN];
     if (subdir[0]) {
-        snprintf(pkg_dir, sizeof(pkg_dir), "%s%c%s", tmp_dir, PATH_SEP, subdir);
+        size_t tlen = strlen(tmp_dir);
+        size_t slen = strlen(subdir);
+        if (tlen + slen + 2 >= sizeof(pkg_dir)) {
+            fprintf(stderr, "[leno install] 错误: 包路径过长\n");
+            return -1;
+        }
+        snprintf(pkg_dir, sizeof(pkg_dir), "%.*s%c%.*s",
+                 (int)tlen, tmp_dir, PATH_SEP, (int)slen, subdir);
     } else {
         strncpy(pkg_dir, tmp_dir, sizeof(pkg_dir) - 1);
         pkg_dir[sizeof(pkg_dir) - 1] = '\0';
@@ -360,7 +390,11 @@ int package_install_from_git(const char* git_url) {
 
     /* 5.1 检查包目录中是否有 leno.toml */
     char cloned_toml[MAX_PATH_LEN];
-    snprintf(cloned_toml, sizeof(cloned_toml), "%s%cleno.toml", pkg_dir, PATH_SEP);
+    {
+        size_t plen = strlen(pkg_dir);
+        if (plen + 11 >= sizeof(cloned_toml)) return -1;
+        snprintf(cloned_toml, sizeof(cloned_toml), "%s%cleno.toml", pkg_dir, PATH_SEP);
+    }
     if (!file_exists(cloned_toml)) {
         fprintf(stderr, "[leno install] 错误: 克隆的仓库中缺少 leno.toml\n");
         fprintf(stderr, "  路径: %s\n", cloned_toml);
@@ -379,7 +413,11 @@ int package_install_from_git(const char* git_url) {
 
     /* 7. 检查 lib/ 目录 */
     char cloned_lib[MAX_PATH_LEN];
-    snprintf(cloned_lib, sizeof(cloned_lib), "%s%clib", pkg_dir, PATH_SEP);
+    {
+        size_t plen = strlen(pkg_dir);
+        if (plen + 5 >= sizeof(cloned_lib)) return -1;
+        snprintf(cloned_lib, sizeof(cloned_lib), "%s%clib", pkg_dir, PATH_SEP);
+    }
     if (!dir_exists(cloned_lib)) {
         fprintf(stderr, "[leno install] 警告: 包 '%s' 没有 lib/ 目录，可能无法正常导入\n", cfg->name);
     }
@@ -408,7 +446,11 @@ int package_install_from_dir(const char* pkg_path) {
 
     /* 1. 检查 leno.toml 是否存在 */
     char toml_path[MAX_PATH_LEN];
-    snprintf(toml_path, sizeof(toml_path), "%s%cleno.toml", pkg_path, PATH_SEP);
+    {
+        size_t plen = strlen(pkg_path);
+        if (plen + 11 >= sizeof(toml_path)) return -1;
+        snprintf(toml_path, sizeof(toml_path), "%s%cleno.toml", pkg_path, PATH_SEP);
+    }
     if (!file_exists(toml_path)) {
         fprintf(stderr, "[leno install] 错误: 在 '%s' 中找不到 leno.toml\n", pkg_path);
         return -1;
@@ -428,7 +470,13 @@ int package_install_from_dir(const char* pkg_path) {
     /* 4. 计算目标路径 */
     const char* cache = package_cache_dir();
     char dst_dir[MAX_PATH_LEN];
-    snprintf(dst_dir, sizeof(dst_dir), "%s%s%c", cache, cfg->name, PATH_SEP);
+    {
+        size_t clen = strlen(cache);
+        size_t nlen = strlen(cfg->name);
+        if (clen + nlen + 2 >= sizeof(dst_dir)) return -1;
+        snprintf(dst_dir, sizeof(dst_dir), "%.*s%.*s%c",
+                 (int)clen, cache, (int)nlen, cfg->name, PATH_SEP);
+    }
 
     /* 5. 如果已存在，先删除再覆盖 */
     if (dir_exists(dst_dir)) {
@@ -502,8 +550,18 @@ int package_install_deps(const char* toml_path) {
         /* 检查是否已在缓存中 */
         const char* cache = package_cache_dir();
         char cached_lib[MAX_PATH_LEN];
-        snprintf(cached_lib, sizeof(cached_lib), "%s%s%clib%c%s.leno",
-                 cache, dep_name, PATH_SEP, PATH_SEP, dep_name);
+        {
+            size_t clen = strlen(cache);
+            size_t nlen = strlen(dep_name);
+            if (clen + nlen * 2 + 11 >= sizeof(cached_lib)) {
+                fprintf(stderr, "  [失败] %s - 路径过长\n", dep_name);
+                fail_count++;
+                continue;
+            }
+            snprintf(cached_lib, sizeof(cached_lib), "%.*s%.*s%clib%c%.*s.leno",
+                     (int)clen, cache, (int)nlen, dep_name, PATH_SEP, PATH_SEP,
+                     (int)nlen, dep_name);
+        }
 
         if (file_exists(cached_lib)) {
             printf("  [跳过] %s (已安装)\n", dep_name);
