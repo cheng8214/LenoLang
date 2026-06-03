@@ -13,7 +13,7 @@ main() {
     var frame = 0
     var start_ticks = guis.get_ticks()
 	guis.msg_box("234")
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()

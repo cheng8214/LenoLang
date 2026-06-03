@@ -19,7 +19,7 @@ main() {
     var selected_row = -1
     var selected_col = -1
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(40, 40, 55, 255))
             ren.clear()

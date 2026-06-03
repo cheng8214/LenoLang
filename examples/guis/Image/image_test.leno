@@ -32,7 +32,7 @@ main() {
     var start_x = 20
     var start_y = 20
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()

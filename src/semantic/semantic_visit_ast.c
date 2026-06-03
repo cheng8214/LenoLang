@@ -1172,6 +1172,10 @@ void visit(Semantic* s, Ast* ast) {
                                                         (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
                                                         type_compatible = true;
                                                     }
+                                                    // 允许 Style[xxx] 传给 Dict 参数
+                                                    if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
+                                                        type_compatible = true;
+                                                    }
                                                     if (!type_compatible) {
                                                         char msg[BUFFER_MEDIUM];
                                                         char context[256];
@@ -1253,6 +1257,10 @@ void visit(Semantic* s, Ast* ast) {
                                                         // 允许 Ptr[T] <-> Ptr 之间的隐式转换
                                                         if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
                                                             (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
+                                                            type_compatible = true;
+                                                        }
+                                                        // 允许 Style[xxx] 传给 Dict 参数
+                                                        if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
                                                             type_compatible = true;
                                                         }
                                                         if (!type_compatible) {
@@ -1358,6 +1366,10 @@ void visit(Semantic* s, Ast* ast) {
                                             // 允许 Ptr[T] <-> Ptr 之间的隐式转换
                                             if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
                                                 (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
+                                                type_compatible = true;
+                                            }
+                                            // 允许 Style[xxx] 传给 Dict 参数
+                                            if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
                                                 type_compatible = true;
                                             }
                                             if (!type_compatible) {
@@ -2114,6 +2126,10 @@ void visit(Semantic* s, Ast* ast) {
                             (expected_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
                             type_compatible = true;
                         }
+                        // 允许 Style[xxx] 传给 Dict 参数
+                        if (expected_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
+                            type_compatible = true;
+                        }
                         if (!type_compatible) {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
@@ -2515,6 +2531,10 @@ void visit(Semantic* s, Ast* ast) {
                                             // 允许 Ptr[T] <-> Ptr 之间的隐式转换
                                             if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
                                                 (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
+                                                type_compatible = true;
+                                            }
+                                            // 允许 Style[xxx] 传给 Dict 参数
+                                            if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
                                                 type_compatible = true;
                                             }
                                             if (!type_compatible) {

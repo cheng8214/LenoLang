@@ -14,6 +14,7 @@
  *   win.should_close() -> bool          是否应该关闭
  *   win.set_should_close(bool)          设置关闭标志
  *   win.set_opacity(opacity)            设置透明度
+ *   win.run(on_draw, on_event)          运行事件循环
  */
 #include "include/native.h"
 #include "include/leno_value.h"
@@ -165,6 +166,9 @@ extern void window_register_method_with_params(const char* name, ObjNative* meth
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 extern void window_init_methods(void);
 
+/* win.run(on_draw, on_event) - 定义在 guis.c 中 */
+extern Value win_run_func(int argc, Value* args);
+
 void guis_init_window_instance_methods(void) {
     window_init_methods();
 
@@ -174,6 +178,7 @@ void guis_init_window_instance_methods(void) {
     TypeKind str_1[] = {TYPE_STRING};
     TypeKind bool_1[] = {TYPE_BOOL};
     TypeKind float_1[] = {TYPE_FLOAT};
+    TypeKind func_2[] = {TYPE_ANY, TYPE_ANY};
 
     window_register_method_with_params("show", make_native(win_show_func, 1, "show"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("hide", make_native(win_hide_func, 1, "hide"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
@@ -189,4 +194,7 @@ void guis_init_window_instance_methods(void) {
     window_register_method_with_params("set_opacity", make_native(win_set_opacity_func, 2, "set_opacity"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, float_1);
     window_register_method_with_params("set_drag_area", make_native(win_set_drag_area_func, 5, "set_drag_area"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4);
     window_register_method_with_params("clear_drag_area", make_native(win_clear_drag_area_func, 1, "clear_drag_area"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+
+    /* win.run(on_draw, on_event) - 事件循环 */
+    window_register_method_with_params("run", make_native(win_run_func, 3, "run"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, func_2);
 }

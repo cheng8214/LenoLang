@@ -12,7 +12,7 @@ main() {
 
     var frame = 0
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             frame = frame + 1
 

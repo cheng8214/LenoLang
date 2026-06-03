@@ -22,7 +22,7 @@ main() {
         return interval
     })
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()

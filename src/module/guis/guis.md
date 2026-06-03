@@ -80,7 +80,7 @@ main() {
     // 方式二：直接传入 Dict（简洁，适合快速原型）
     // Win win = guis.create_window("Hello", {width: 800, height: 600})
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
@@ -182,19 +182,18 @@ Win win = guis.create_window("My App", {width: 800, height: 600})
 
 ---
 
-### `guis.run(win, onDraw, onEvent)`
+### `win.run(onDraw, onEvent)`
 
-回调式事件循环（推荐使用方式）。自动创建渲染器，循环处理事件和渲染，直到窗口关闭。
+Win 实例方法：回调式事件循环（推荐使用方式）。自动创建渲染器，循环处理事件和渲染，直到窗口关闭。
 
 **参数**:
-- `win` (Win): 窗口对象
 - `onDraw` (func(Draw)): 渲染回调，每帧调用
 - `onEvent` (func(Event)): 事件回调，每个事件调用
 
 **返回**: `null`
 
 ```leno
-guis.run(win,
+win.run(
     func(Draw ren) {
         ren.set_color(_rgb(0, 0, 0, 255))
         ren.clear()
@@ -297,7 +296,7 @@ win.set_opacity(0.85)
 
 ## 渲染器方法（Draw 实例方法）
 
-渲染器通过 `guis.run()` 的 onDraw 回调参数获取，或通过 `guis.create_renderer(win)` 手动创建。
+渲染器通过 `win.run()` 的 onDraw 回调参数获取，或通过 `guis.create_renderer(win)` 手动创建。
 
 ### `ren.set_color(Rgb)`
 
@@ -460,7 +459,7 @@ ren.no_clip()
 
 ## 事件方法（Event 实例方法）
 
-事件通过 `guis.run()` 的 onEvent 回调参数获取，或通过 `guis.poll()` 获取。
+事件通过 `win.run()` 的 onEvent 回调参数获取，或通过 `guis.poll()` 获取。
 
 ### 事件类型判断
 
@@ -818,7 +817,7 @@ var mode = img.access()
 
 ## 事件循环
 
-`guis.run()` 是事件循环方式，内部自动处理：
+`win.run()` 是事件循环方式，内部自动处理：
 
 1. 轮询并分发所有事件到 onEvent 回调
 2. 检查窗口关闭标志
@@ -826,7 +825,7 @@ var mode = img.access()
 4. 调用 onDraw 回调进行渲染
 
 ```leno
-guis.run(win,
+win.run(
     func(Draw ren) {
         // 每帧渲染
         ren.set_color(_rgb(0, 0, 0, 255))
@@ -1233,7 +1232,7 @@ main() {
     }
     Win win = guis.create_window("Hello LenoC", w_style)
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
@@ -1270,7 +1269,7 @@ main() {
     var frame = 0
     var start_ticks = guis.get_ticks()
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(0, 0, 0, 255))
             ren.clear()
@@ -1314,7 +1313,7 @@ main() {
     var my = 0
     var clicked = false
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
@@ -1364,7 +1363,7 @@ main() {
     }
     Win win = guis.create_window("Viewport & Clip", w_style)
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
@@ -1411,7 +1410,7 @@ main() {
     }
     Win win = guis.create_window("LenoC GUI - Draw Test", w_style)
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
@@ -1476,7 +1475,7 @@ ren.present()         // 3. 呈现
 
 ### 3. 窗口大小变化
 
-使用 `guis.run()` 时，渲染器会自动调整大小。
+使用 `win.run()` 时，渲染器会自动调整大小。
 
 ### 4. 像素格式
 
@@ -1490,7 +1489,7 @@ ren.present()         // 3. 呈现
 
 ### 6. 事件处理
 
-在 `guis.run()` 的事件回调中，必须处理 `is_quit()` 和 `is_window_close()` 事件并设置窗口关闭标志，否则窗口无法正常关闭。
+在 `win.run()` 的事件回调中，必须处理 `is_quit()` 和 `is_window_close()` 事件并设置窗口关闭标志，否则窗口无法正常关闭。
 
 ---
 

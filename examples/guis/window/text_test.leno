@@ -13,7 +13,7 @@ main() {
     var font_small = guis.load_font("Arial", 14)
     var font_tiny = guis.load_font("Arial", 10)
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()

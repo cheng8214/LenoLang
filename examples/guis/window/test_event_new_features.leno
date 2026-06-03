@@ -30,7 +30,7 @@ main() {
 
     var font = guis.load_font("SimSun", 16)
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(bg)
             ren.clear()

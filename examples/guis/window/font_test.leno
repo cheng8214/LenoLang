@@ -14,7 +14,7 @@ main() {
     Font font_yahei = guis.load_font("Microsoft YaHei", 20)
     var font_small = guis.load_font("Arial", 16)
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()

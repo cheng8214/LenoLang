@@ -46,7 +46,7 @@ main() {
         title: "选择文件夹"
     }
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(34, 34, 34, 255))
             ren.clear()

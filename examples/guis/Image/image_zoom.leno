@@ -23,7 +23,7 @@ main() {
     var min_scale = 0.1
     var max_scale = 5.0
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()

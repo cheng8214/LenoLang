@@ -9,7 +9,7 @@ main() {
     var win = gui.create_window("标题", w_style)
 
     
-    gui.run(win,Draw1,Event1)
+    win.run(Draw1,Event1)
 func Draw1(Draw ren)
     {
             // onDraw: 每帧调用，ren 是自动创建的渲染器

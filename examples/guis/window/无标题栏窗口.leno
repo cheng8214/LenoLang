@@ -17,7 +17,7 @@ main() {
     // 加载中文字体（Windows 系统字体）
     Font font = guis.load_font("Microsoft YaHei", 16)
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()

@@ -24,7 +24,7 @@
  *   guis.add_timer(interval_ms, callback) -> timer_id     定时器回调
  *   guis.remove_timer(timer_id) -> bool                   取消定时器
  *   guis.get_display() / get_dpi()
- *   guis.run(win, onDraw, onEvent)                        事件循环
+ *   win.run(onDraw, onEvent)                              事件循环
  *   ren.set_logical_size(w, h)                           设置逻辑渲染尺寸
  *   ren.get_logical_size() -> [w, h]                     获取逻辑渲染尺寸
  *   ren.set_logical_presentation(mode)                   设置逻辑呈现模式
@@ -973,7 +973,7 @@ static void leno_gui_event_callback(void* user_data, LenoGUIEvent* ev) {
     }
 }
 
-static Value gui_run_func(int argc, Value* args) {
+Value win_run_func(int argc, Value* args) {
     (void)argc;
     ObjGUIWindow* win = as_window(args[0]);
     if (!win || !win->platform) return val_null();
@@ -1152,7 +1152,6 @@ extern void guis_init_font_instance_methods(void);
 
 void guis_init_module(void) {
     TypeKind no_params[] = {};
-    TypeKind obj_2func[] = {TYPE_ANY, TYPE_ANY, TYPE_ANY};
     TypeKind int_params[] = {TYPE_INT};
     TypeKind int_2int[] = {TYPE_INT, TYPE_INT};
     TypeKind str_2int[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
@@ -1161,10 +1160,8 @@ void guis_init_module(void) {
     TypeKind str_params[] = {TYPE_STRING};
 
     /* ===== 窗口操作 ===== */
-    native_register_module_method("guis", "create_window", gui_create_window_func, -1, 2, 4, TYPE_WIN, TYPE_UNKNOWN, NULL);
-
-    /* ===== 事件循环 ===== */
-    native_register_module_method("guis", "run", gui_run_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, obj_2func);
+    TypeKind win_params[] = {TYPE_STRING, TYPE_DICT};
+    native_register_module_method("guis", "create_window", gui_create_window_func, 2, -1, -1, TYPE_WIN, TYPE_UNKNOWN, win_params);
 
     /* ===== 文本输入控制 ===== */
     native_register_module_method("guis", "start_text_input", gui_start_text_input_func, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
@@ -1180,8 +1177,8 @@ void guis_init_module(void) {
     native_register_module_method("guis", "set_cursor", gui_set_cursor_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
 
     /* ===== 文件对话框 ===== */
-    TypeKind int_func_dict[] = {TYPE_INT, TYPE_ANY, TYPE_ANY};
-    native_register_module_method("guis", "file_dialog", gui_file_dialog_func, -1, 2, 3, TYPE_NULL, TYPE_UNKNOWN, int_func_dict);
+    TypeKind file_dialog_params[] = {TYPE_INT, TYPE_ANY, TYPE_DICT};
+    native_register_module_method("guis", "file_dialog", gui_file_dialog_func, -1, 2, 3, TYPE_NULL, TYPE_UNKNOWN, file_dialog_params);
 
     /* ===== 消息框 ===== */
     native_register_module_method("guis", "msg_box", gui_msg_box_func, 3, -1, -1, TYPE_INT, TYPE_UNKNOWN, str_2int);
@@ -1206,7 +1203,7 @@ void guis_init_module(void) {
     native_register_module_method("guis", "image_info", gui_image_info_func, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, str_params);
 
     /* guis.load_image_ex(path, options) -> Image */
-    TypeKind str_dict_params[] = {TYPE_STRING, TYPE_ANY};
+    TypeKind str_dict_params[] = {TYPE_STRING, TYPE_DICT};
     native_register_module_method("guis", "load_image_ex", gui_load_image_ex_func, 2, -1, -1, TYPE_IMAGE, TYPE_UNKNOWN, str_dict_params);
 
     /* guis.load_image_from_memory(data) -> Image */

@@ -59,7 +59,7 @@ main() {
     print($"   按 ESC 或关闭窗口退出")
     print($"")
 
-    guis.run(win,
+    win.run(
         func(Draw ren) {
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.clear()
