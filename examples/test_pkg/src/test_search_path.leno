@@ -1,0 +1,9 @@
+// 测试通过搜索路径导入 - 不带 .leno 后缀
+// 应该自动在 lib/ 搜索 test_pkg.leno
+import "test_pkg"
+
+main() {
+    print("===== 搜索路径导入测试 =====")
+    test_pkg.hello()
+    print("导入验证通过！")
+}

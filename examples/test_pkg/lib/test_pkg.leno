@@ -1,0 +1,17 @@
+// test_pkg 模块
+// 测试通过包名导入（不用 .leno 后缀）
+
+export func hello() {
+    print("Hello from test_pkg!")
+}
+
+export func add(var a, var b) {
+    return a + b
+}
+
+export var VERSION = "0.1.0"
+
+// 私有函数（不导出，外部不可见）
+func internal_secret() {
+    return "you can't see me"
+}

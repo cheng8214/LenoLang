@@ -96,6 +96,11 @@ set SOURCES=!SOURCES! src\module\guis\leno_guis_log.c
 set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
+set SOURCES=!SOURCES! src\package\package_platform.c
+set SOURCES=!SOURCES! src\package\package_toml.c
+set SOURCES=!SOURCES! src\package\package_init.c
+set SOURCES=!SOURCES! src\package\package_resolve.c
+set SOURCES=!SOURCES! src\package\package_install.c
 
 gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32 -lgdi32 -luser32 -lcomdlg32
 

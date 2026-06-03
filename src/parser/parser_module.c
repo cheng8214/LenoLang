@@ -1,5 +1,6 @@
 #include "parser_internal.h"
 #include "../include/native.h"
+#include "../include/leno_package.h"
 #include <string.h>
 
 // ============================================================================
@@ -45,9 +46,24 @@ Ast* parse_import_stmt(Parser* p) {
             lexer_next(&p->lex);
         }
     } else if (p->lex.current.type == TOK_STRING) {
-        // 字符串形式：import "test.leno"
+        // 字符串形式：import "test.leno" 或 import "test_pkg"
         module_name = copy_string(p->lex.current.text, p->lex.current.len);
         lexer_next(&p->lex);
+
+        /*
+         * 如果字符串不包含 .leno（即不是明确的文件路径），
+         * 尝试在搜索路径中查找该模块。
+         * 例如 import "test_pkg" → 在 lib/ 搜索 test_pkg.leno
+         */
+        if (strstr(module_name, ".leno") == NULL) {
+            char resolved_path[1024];
+            if (package_resolve_module_file(module_name, resolved_path, sizeof(resolved_path)) == 1) {
+                /* 找到了！用解析后的路径替换 module_name */
+                free(module_name);
+                module_name = strdup(resolved_path);
+            }
+            /* 找不到也不报错，留给后续阶段（语义分析/codegen）判断 */
+        }
 
         // 检查是否有 as 别名
         if (p->lex.current.type == TOK_AS) {

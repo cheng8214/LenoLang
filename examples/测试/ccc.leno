@@ -1,7 +1,9 @@
-import guis
+// 任意项目的 main.leno - 使用包
+import "my-pkg" as my
 
 main() {
-    int a="123"
-    
-  
+    my.hello()          // Hello from my-pkg!
+    var result = my.add(1, 2)
+    print(result)           // 3
+    print(my.VERSION)   // 0.1.0
 }

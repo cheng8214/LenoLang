@@ -8,6 +8,7 @@
 #include "include/leno_serialize.h"
 #include "include/native.h"
 #include "include/module_compiler.h"
+#include "include/leno_package.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,8 @@ int debugMode = 0;
 static int pauseMode = 0;
 static int compileMode = 0;
 static int packMode = 0;
+static int initMode = 0;
+static int installMode = 0;
 
 // 命令行参数（供 _args() 全局函数使用）
 int g_argc = 0;
@@ -58,6 +61,8 @@ static void printHelp(const char* program) {
     printf("  --debug       启用调试模式（输出字节码）\n");
     printf("  --compile     编译为二进制文件（.lenb），不执行\n");
     printf("  --pack        编译并打包为独立 exe（嵌入 leno_vm.exe）\n");
+    printf("  --init [路径] 在当前目录创建新 Leno 包项目\n");
+    printf("  --install     安装包或依赖到全局缓存\n");
     printf("\n");
     printf("示例:\n");
     printf("  %s                    启动交互式解释器\n", program);
@@ -66,6 +71,12 @@ static void printHelp(const char* program) {
     printf("  %s --compile test.leno  编译为二进制\n", program);
     printf("  %s --pack test.leno    打包为独立 exe\n", program);
     printf("  %s --debug test.leno  调试模式运行\n", program);
+    printf("  %s --init             在当前目录创建新包\n", program);
+    printf("  %s --install          安装包依赖到全局缓存\n", program);
+    printf("  %s --install <路径>   安装指定包目录到全局缓存\n", program);
+    printf("  %s --install <git源>  从 Git 远程安装包\n", program);
+    printf("                        如: gitee:user/repo/pkg-a  (monorepo子包)\n");
+    printf("                        如: gitee:user/repo        (整个仓库)\n");
 }
 
 // 主执行流程
@@ -603,6 +614,73 @@ int lenolang_run_file(const char* path) {
     source[read] = '\0';
     fclose(file);
 
+    // 设置模块搜索路径（根据项目根目录 + 全局缓存）
+    // 必须在编译/打包/运行之前设置，确保 import 能解析到包
+    {
+        package_search_path_clear();
+        const char* abs_file = error_get_filename();
+        if (abs_file) {
+            char* proj_root = package_find_project_root(abs_file);
+            if (proj_root) {
+                // 添加 <项目根>/lib/ 到搜索路径
+                char lib_path[MAX_PATH_LEN];
+                snprintf(lib_path, sizeof(lib_path), "%slib%c", proj_root, 
+#ifdef _WIN32
+                    '\\'
+#else
+                    '/'
+#endif
+                );
+                package_search_path_add(lib_path);
+
+                // 从 leno.toml 读取依赖，添加依赖包的 lib/ 到搜索路径
+                char toml_path[MAX_PATH_LEN];
+                snprintf(toml_path, sizeof(toml_path), "%sleno.toml", proj_root);
+                PackageConfig* pkg_cfg = package_config_parse(toml_path);
+                if (pkg_cfg) {
+                    for (int di = 0; di < pkg_cfg->dep_count; di++) {
+                        const char* dn = pkg_cfg->dependencies[di].name;
+                        if (!dn) continue;
+                        const char* cache = package_cache_dir();
+                        char dep_lib[MAX_PATH_LEN];
+                        snprintf(dep_lib, sizeof(dep_lib), "%s%s%clib%c",
+                                 cache, dn,
+#ifdef _WIN32
+                                 '\\',
+#else
+                                 '/',
+#endif
+#ifdef _WIN32
+                                 '\\'
+#else
+                                 '/'
+#endif
+                        );
+                        package_search_path_add(dep_lib);
+                    }
+                    package_config_free(pkg_cfg);
+                }
+                free(proj_root);
+            }
+            // 始终添加源文件所在目录作为搜索路径
+            char file_dir[MAX_PATH_LEN];
+            strncpy(file_dir, abs_file, MAX_PATH_LEN - 1);
+            file_dir[MAX_PATH_LEN - 1] = '\0';
+            char* last_sep = strrchr(file_dir, 
+#ifdef _WIN32
+                '\\'
+#else
+                '/'
+#endif
+            );
+            if (last_sep) *(last_sep + 1) = '\0';
+            package_search_path_add(file_dir);
+        }
+
+        // 添加全局缓存中所有已安装包的 lib/ 到搜索路径
+        package_cache_add_to_search_paths();
+    }
+
     // 编译模式：编译为 .lenb 文件
     if (compileMode) {
         char* bin_path = serialize_get_bin_path(path);
@@ -805,6 +883,12 @@ static int main_logic(int argc, char** argv) {
         } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
             printVersion();
             return 0;
+        } else if (strcmp(argv[i], "--init") == 0) {
+            initMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--install") == 0) {
+            installMode = 1;
+            continue;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printHelp(argv[0]);
             return 0;
@@ -826,7 +910,42 @@ static int main_logic(int argc, char** argv) {
         return 64;
     }
     
-    if (filePath == NULL) {
+    if (initMode) {
+        if (filePath) {
+            /* 如果参数包含路径分隔符，当作目录路径；否则在当前目录下创建子目录 */
+            int is_path = strchr(filePath, '/') || strchr(filePath, '\\');
+            if (is_path) {
+                return package_init(filePath, NULL);
+            } else {
+                return package_init(filePath, filePath);
+            }
+        } else {
+            return package_init(".", NULL);
+        }
+    } else if (installMode) {
+        package_cache_ensure();
+        if (filePath) {
+            /* leno --install <git-url> 或 <本地目录路径> */
+            if (strncmp(filePath, "gitee:", 6) == 0 ||
+                strncmp(filePath, "github:", 7) == 0 ||
+                strncmp(filePath, "gitlab:", 7) == 0 ||
+                strncmp(filePath, "git:", 4) == 0 ||
+                strncmp(filePath, "https://", 8) == 0 ||
+                strncmp(filePath, "http://", 7) == 0 ||
+                strstr(filePath, "git@")) {
+                /* git 源 → 远程安装 */
+                return package_install_from_git(filePath);
+            } else {
+                /* 本地目录路径 → 本地安装 */
+                return package_install_from_dir(filePath);
+            }
+        } else {
+            /* leno --install - 从当前目录的 leno.toml 安装所有依赖 */
+            char toml_path[MAX_PATH_LEN];
+            snprintf(toml_path, sizeof(toml_path), "leno.toml");
+            return package_install_deps(toml_path);
+        }
+    } else if (filePath == NULL) {
         // REPL 模式
         lenolang_repl();
     } else {

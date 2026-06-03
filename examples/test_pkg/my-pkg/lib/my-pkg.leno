@@ -1,0 +1,18 @@
+// my-pkg 示例模块
+
+export func hello() {
+    print("Hello from my-pkg!")
+}
+
+export func add(var a, var b) {
+    return a + b
+}
+
+export var VERSION = "0.1.0"
+
+export var PI = 3.14159
+
+// 私有函数（不导出）
+func _secret() {
+    return "internal"
+}

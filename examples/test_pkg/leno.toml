@@ -1,0 +1,14 @@
+[package]
+name = "test_pkg"
+version = "0.1.0"
+description = "测试搜索路径导入的包"
+authors = "Leno Dev"
+license = "MIT"
+leno_version = ">=1.0.0"
+
+[dependencies]
+
+[dev-dependencies]
+
+[modules]
+root = "lib"

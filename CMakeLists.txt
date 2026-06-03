@@ -84,6 +84,11 @@ set(LENO_SOURCES
     src/module/guis/guis_constants.c
     src/platform/platform_thread.c
     src/serialize/serialize.c
+    src/package/package_platform.c
+    src/package/package_toml.c
+    src/package/package_init.c
+    src/package/package_resolve.c
+    src/package/package_install.c
 )
 
 if(WIN32)
