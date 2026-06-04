@@ -11,6 +11,7 @@
  *   ffi.call_void(lib, name, ...)   - 调用函数（无返回值）
  *   ffi.call_ptr(lib, name, ...)    - 调用函数（返回指针）
  *   ffi.call_bool(lib, name, ...)   - 调用函数（返回布尔值）
+ *   ffi.alloc(type_name, value)    - 分配指定类型内存并初始化（value 可选）
  *   ffi.malloc(size)                - 分配内存
  *   ffi.calloc(count, size)         - 分配并清零内存
  *   ffi.realloc(ptr, size)          - 重新分配内存
@@ -1221,6 +1222,169 @@ static Value ffi_utf16_to_utf8_func(int argc, Value* args) {
 }
 #endif // _WIN32
 
+/* ffi.alloc(type_name, value) - 分配指定类型的内存并初始化
+ * 简化语法：ffi.alloc("int", 42) 等价于 ffi.malloc(4) + ffi.write_int(ptr, 0, 42)
+ * value 可选，不传则清零初始化
+ */
+static Value ffi_new_func(int argc, Value* args) {
+    const char* name = ((ObjString*)val_as_obj(args[0]))->chars;
+
+    /* 获取类型大小 */
+    size_t size = 0;
+    int type_kind = 0;  /* 0=other, 1=int, 2=uint, 3=float, 4=ptr, 5=bool, 6=int8, 7=uint8, 8=int16, 9=uint16, 10=int64, 11=uint64 */
+
+    if (strcmp(name, "int8")    == 0) { size = 1; type_kind = 6; }
+    else if (strcmp(name, "uint8")   == 0 || strcmp(name, "byte") == 0) { size = 1; type_kind = 7; }
+    else if (strcmp(name, "int16")   == 0) { size = 2; type_kind = 8; }
+    else if (strcmp(name, "uint16")  == 0) { size = 2; type_kind = 9; }
+    else if (strcmp(name, "int")     == 0 || strcmp(name, "int32") == 0) { size = 4; type_kind = 1; }
+    else if (strcmp(name, "uint32")  == 0) { size = 4; type_kind = 2; }
+    else if (strcmp(name, "int64")   == 0) { size = 8; type_kind = 10; }
+    else if (strcmp(name, "uint64")  == 0) { size = 8; type_kind = 11; }
+    else if (strcmp(name, "float")   == 0) { size = 4; type_kind = 3; }
+    else if (strcmp(name, "double")  == 0) { size = 8; type_kind = 3; }
+    else if (strcmp(name, "pointer") == 0 || strcmp(name, "ptr") == 0) { size = sizeof(void*); type_kind = 4; }
+    else if (strcmp(name, "bool")    == 0) { size = sizeof(int); type_kind = 5; }
+    else if (strcmp(name, "long")    == 0) { size = sizeof(long); type_kind = 1; }
+    else if (strcmp(name, "size_t")  == 0) { size = sizeof(size_t); type_kind = 2; }
+    else {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "ffi.alloc 不支持的类型: '%s'", name);
+        native_throw_error(msg);
+        return val_null();
+    }
+
+    /* 分配内存 */
+    void* ptr = malloc(size);
+    if (!ptr) {
+        native_throw_error("内存不足");
+        return val_null();
+    }
+    memset(ptr, 0, size);
+
+    /* 如果提供了初始值，写入 */
+    if (argc >= 2 && !val_is_null(args[1])) {
+        Value val = args[1];
+        switch (type_kind) {
+            case 6: { /* int8 */
+                int8_t v = (int8_t)val_as_int(val);
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 7: { /* uint8 */
+                uint8_t v = (uint8_t)val_as_int(val);
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 8: { /* int16 */
+                int16_t v = (int16_t)val_as_int(val);
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 9: { /* uint16 */
+                uint16_t v = (uint16_t)val_as_int(val);
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 1: { /* int32 */
+                int32_t v;
+                if (val_is_int(val)) {
+                    v = (int32_t)val_as_int(val);
+                } else if (val_is_bigint(val)) {
+                    v = (int32_t)bigint_to_int64(val_as_bigint(val));
+                } else {
+                    v = 0;
+                }
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 2: { /* uint32 */
+                uint32_t v;
+                if (val_is_int(val)) {
+                    v = (uint32_t)(uint64_t)val_as_int(val);
+                } else if (val_is_bigint(val)) {
+                    v = (uint32_t)bigint_to_int64(val_as_bigint(val));
+                } else {
+                    v = 0;
+                }
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 10: { /* int64 */
+                int64_t v;
+                if (val_is_int(val)) {
+                    v = (int64_t)val_as_int(val);
+                } else if (val_is_bigint(val)) {
+                    v = bigint_to_int64(val_as_bigint(val));
+                } else {
+                    v = 0;
+                }
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 11: { /* uint64 */
+                uint64_t v;
+                if (val_is_int(val)) {
+                    v = (uint64_t)(int64_t)val_as_int(val);
+                } else if (val_is_bigint(val)) {
+                    ObjBigInt* bi = val_as_bigint(val);
+                    if (bi->limb_count == 0) v = 0;
+                    else if (bi->limb_count == 1) v = (uint64_t)bi->limbs[0];
+                    else if (bi->limb_count >= 2) v = ((uint64_t)bi->limbs[1] << 32) | (uint64_t)bi->limbs[0];
+                    else v = 0;
+                } else {
+                    v = 0;
+                }
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 3: { /* float/double */
+                if (strcmp(name, "float") == 0) {
+                    float v = (float)val_as_num(val);
+                    memcpy(ptr, &v, sizeof(v));
+                } else {
+                    double v = val_as_num(val);
+                    memcpy(ptr, &v, sizeof(v));
+                }
+                break;
+            }
+            case 4: { /* pointer */
+                void* v = NULL;
+                if (val_is_ffi_ptr(val)) {
+                    ObjFFIPointer* p = val_as_ffi_ptr(val);
+                    v = p->freed ? NULL : p->ptr;
+                } else if (val_is_null(val)) {
+                    v = NULL;
+                } else if (val_is_int(val)) {
+                    v = (void*)(intptr_t)val_as_int(val);
+                }
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+            case 5: { /* bool */
+                int v = val_is_truthy(val) ? 1 : 0;
+                memcpy(ptr, &v, sizeof(v));
+                break;
+            }
+        }
+    }
+
+    /* 创建 FFI 指针对象 */
+    ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+    if (!ffi_ptr) {
+        free(ptr);
+        native_throw_error("内存不足");
+        return val_null();
+    }
+    ffi_ptr->ptr = ptr;
+    ffi_ptr->size = size;
+    ffi_ptr->owned = 1;
+    ffi_ptr->freed = 0;
+    ffi_ptr->element_type = TYPE_PTR;
+
+    return val_obj((Object*)ffi_ptr);
+}
+
 /* ==================== 类型信息函数 ==================== */
 
 /* ffi.sizeof_type(type_name) - 获取 C 类型的大小（字节） */
@@ -1756,6 +1920,9 @@ void ffi_init_module(void) {
     /* ===== 内存操作函数 ===== */
     TypeKind malloc_params[] = {TYPE_INT};
     native_register_module_method("ffi", "malloc", ffi_malloc_func, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, malloc_params);
+
+    TypeKind new_params[] = {TYPE_STRING, TYPE_ANY};
+    native_register_module_method("ffi", "alloc", ffi_new_func, -1, 1, 2, TYPE_PTR, TYPE_UNKNOWN, new_params);
 
     TypeKind calloc_params[] = {TYPE_INT, TYPE_INT};
     native_register_module_method("ffi", "calloc", ffi_calloc_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, calloc_params);

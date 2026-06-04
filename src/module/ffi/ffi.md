@@ -11,6 +11,8 @@
 - [回调函数](#回调函数)
 - [类型守卫](#类型守卫)
 - [内存管理](#内存管理)
+  - [alloc](#alloctype_name-value)
+  - [malloc](#mallocsize)
 - [内存拷贝](#内存拷贝)
 - [内存填充](#内存填充)
 - [指针操作](#指针操作)
@@ -411,6 +413,45 @@ main() {
 ---
 
 ## 内存管理
+
+### `alloc(type_name, value)`
+
+分配指定类型的内存并初始化。等价于 `ffi.malloc(ffi.sizeof_type(type_name))` + 写入初始值。
+
+**参数**:
+- `type_name` (string): 类型名称，支持 `"int8"`, `"uint8"`, `"byte"`, `"int16"`, `"uint16"`, `"int"`, `"int32"`, `"uint32"`, `"int64"`, `"uint64"`, `"float"`, `"double"`, `"ptr"`, `"pointer"`, `"bool"`, `"long"`, `"size_t"`
+- `value` (可选): 初始值，不传则清零初始化
+
+**返回**: FFI 指针对象
+
+```leno
+// 分配 int32 并初始化为 42
+var p = ffi.alloc("int", 42)
+print(ffi.read_int(p, 0))  // 42
+
+// 分配 double 并初始化
+var d = ffi.alloc("double", 3.14)
+print(ffi.read_double(d, 0))  // 3.14
+
+// 分配指针，清零（null）
+var ptr = ffi.alloc("ptr")
+
+// 分配 bool 并初始化
+var b = ffi.alloc("bool", true)
+print(ffi.read_bool(b, 0))  // true
+
+// 不传初始值，清零
+var z = ffi.alloc("int")
+print(ffi.read_int(z, 0))  // 0
+
+ffi.free(p)
+ffi.free(d)
+ffi.free(ptr)
+ffi.free(b)
+ffi.free(z)
+```
+
+---
 
 ### `malloc(size)`
 
@@ -1372,6 +1413,7 @@ main() {
 
 | 函数 | 参数 | 返回 | 说明 |
 |------|------|------|------|
+| `alloc(type_name, value?)` | string, any | ptr | 分配指定类型内存并初始化 |
 | `malloc(size)` | int | ptr | 分配内存 |
 | `calloc(count, size)` | int, int | ptr | 分配并清零 |
 | `realloc(ptr, size)` | ptr, int | ptr | 重新分配 |
