@@ -70,7 +70,7 @@ set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 
-gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -lm -municode -lws2_32 -lgdi32 -lcomdlg32 -DLENO_VM_ONLY
+gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -lm -municode -lws2_32 -lgdi32 -lcomdlg32 -lwinmm -DLENO_VM_ONLY
 
 if %ERRORLEVEL% neq 0 (
     echo VM build failed

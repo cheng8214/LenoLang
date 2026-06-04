@@ -79,6 +79,10 @@ main() {
     var fps = 0
     var last_fps_time = times.ms()
     
+    // 帧率限制 ~60fps
+    var frame_start = times.ms()
+    var target_frame_ms = 16
+    
     // 平台列表 - 更长的关卡
     var platforms = [
         // 第一区域
@@ -463,6 +467,13 @@ main() {
             ren.draw_text(font_fps, "FPS: " + fps, 10, 10)
             
             ren.present()
+            
+            // 帧率限制 ~60fps
+            var elapsed = times.ms() - frame_start
+            if elapsed < target_frame_ms {
+                sleep(target_frame_ms - elapsed)
+            }
+            frame_start = times.ms()
         },
         func(Event e) {
             if e.is_quit() or e.is_window_close() {

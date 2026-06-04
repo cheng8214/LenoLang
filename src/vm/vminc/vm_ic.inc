@@ -50,5 +50,5 @@ static inline int ic_type_supported(ObjType type) {
            type == OBJ_STRUCT ||
            type == OBJ_CSTRUCT_DEF || type == OBJ_CSTRUCT ||
            type == OBJ_THREAD || type == OBJ_CHANNEL ||
-           type == OBJ_GUI_WINDOW || type == OBJ_GUI_RENDERER || type == OBJ_GUI_EVENT || type == OBJ_GUI_IMAGE;
+           type == OBJ_GUI_WINDOW || type == OBJ_GUI_RENDERER || type == OBJ_GUI_EVENT || type == OBJ_GUI_IMAGE || type == OBJ_GUI_FONT;
 }

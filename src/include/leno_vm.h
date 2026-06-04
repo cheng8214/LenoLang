@@ -324,6 +324,7 @@ void scope_detach_child(Scope* parent, Scope* child);
 typedef struct {
     int valid;              // 缓存是否有效
     ObjType receiver_type;  // receiver 的对象类型
+    uint32_t name_hash;     // 方法名的哈希值（防止不同方法碰撞到同一缓存槽）
     ObjNative* method;      // 缓存的方法指针
 } InlineCacheEntry;
 

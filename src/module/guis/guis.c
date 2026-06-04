@@ -1031,9 +1031,9 @@ Value win_run_func(int argc, Value* args) {
         }
 
 #ifdef _WIN32
-        Sleep(16);
+        Sleep(1);
 #else
-        struct timespec ts = {0, 16000000};
+        struct timespec ts = {0, 1000000};
         nanosleep(&ts, NULL);
 #endif
     }

@@ -32,6 +32,7 @@ void vm_init_with_scope(Scope* global_scope) {
     for (int i = 0; i < IC_CACHE_SIZE; i++) {
         vm.ic_cache[i].valid = 0;
         vm.ic_cache[i].receiver_type = 0;
+        vm.ic_cache[i].name_hash = 0;
         vm.ic_cache[i].method = NULL;
     }
     vm.ic_hits = 0;

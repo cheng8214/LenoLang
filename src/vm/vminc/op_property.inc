@@ -28,7 +28,40 @@ OPCODE(OP_GET_PROPERTY) {
             ObjNative* method = find_method_by_type(receiver_type, name->chars);
 
             if (method) {
-                // 创建绑定方法
+                // ===== 窥孔优化：检测下一条指令是否是 OP_CALL =====
+                if (*frame->ip == OP_CALL) {
+                    uint16_t arg_count = ((uint16_t)frame->ip[1] << 8) | frame->ip[2];
+                    frame->ip += 3;
+
+                    int arg_start = vm.sp - arg_count;
+                    for (int i = arg_count - 1; i >= 0; i--) {
+                        vm.stack[arg_start + i + 1] = vm.stack[arg_start + i];
+                    }
+                    vm.stack[arg_start] = receiver;
+                    vm.sp++;
+
+                    Value result = method->function(arg_count + 1, &vm.stack[arg_start]);
+
+                    if (unlikely(vm.has_exception)) {
+                        char* msg = NULL;
+                        if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
+                            msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
+                        } else {
+                            msg = value_to_string(vm.exception);
+                        }
+                        error_clear();
+                        throw_runtime_error(msg, GET_CURRENT_LINE());
+                        free(msg);
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        return -1;
+                    }
+
+                    vm.sp -= arg_count + 1;
+                    vm_stack_push(&vm, result);
+                    DISPATCH;
+                }
+
+                // 创建绑定方法（非直接调用场景）
                 vm_stack_push(&vm, receiver);
                 ObjBoundMethod* bound = bound_method_new(receiver, method);
                 vm_stack_pop(&vm);
@@ -123,13 +156,53 @@ OPCODE(OP_GET_PROPERTY) {
             uint8_t* ip_before = frame->ip - 3;  // OP_GET_PROPERTY 是 3 字节指令
             int cache_idx = ic_cache_index(ip_before);
             InlineCacheEntry* cache = &vm.ic_cache[cache_idx];
+            uint32_t name_hash = name->hash;  // ObjString 预计算的 FNV-1a 哈希值
 
-            // 检查缓存是否命中
-            if (cache->valid && cache->receiver_type == receiver_type) {
+            // 检查缓存是否命中（同时校验 receiver 类型 + 方法名哈希）
+            if (cache->valid && cache->receiver_type == receiver_type && cache->name_hash == name_hash) {
                 // 缓存命中！
                 vm.ic_hits++;
 
-                // 创建绑定方法
+                // ===== 窥孔优化：检测下一条指令是否是 OP_CALL =====
+                // 如果是，直接执行方法调用，跳过 ObjBoundMethod 创建和 OP_CALL 执行
+                if (*frame->ip == OP_CALL) {
+                    uint16_t arg_count = ((uint16_t)frame->ip[1] << 8) | frame->ip[2];
+                    frame->ip += 3;  // 跳过 OP_CALL 指令
+
+                    // 栈布局: [arg1, ..., argN]（receiver 已被 vm_stack_pop 弹出）
+                    // 目标布局: [receiver, arg1, ..., argN]
+                    // 将 receiver 放回栈顶并移到参数开头
+                    int arg_start = vm.sp - arg_count;
+                    for (int i = arg_count - 1; i >= 0; i--) {
+                        vm.stack[arg_start + i + 1] = vm.stack[arg_start + i];
+                    }
+                    vm.stack[arg_start] = receiver;
+                    vm.sp++;
+
+                    Value result = cache->method->function(arg_count + 1, &vm.stack[arg_start]);
+
+                    // 检查 native 函数是否抛出异常
+                    if (unlikely(vm.has_exception)) {
+                        char* msg = NULL;
+                        if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
+                            msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
+                        } else {
+                            msg = value_to_string(vm.exception);
+                        }
+                        error_clear();
+                        throw_runtime_error(msg, GET_CURRENT_LINE());
+                        free(msg);
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        return -1;
+                    }
+
+                    vm.sp -= arg_count + 1;
+                    vm_stack_push(&vm, result);
+                    DISPATCH;
+                }
+
+                // 非直接调用场景（如 var f = obj.method 捕获方法引用）
+                // 回退到创建 ObjBoundMethod
                 vm_stack_push(&vm, receiver);
                 ObjBoundMethod* bound = bound_method_new(receiver, cache->method);
                 vm_stack_pop(&vm);
@@ -143,12 +216,46 @@ OPCODE(OP_GET_PROPERTY) {
             ObjNative* method = find_method_by_type(receiver_type, name->chars);
 
             if (method) {
-                // 更新缓存
+                // 更新缓存（存储 receiver 类型 + 方法名哈希 + 方法指针）
                 cache->valid = 1;
                 cache->receiver_type = receiver_type;
+                cache->name_hash = name_hash;
                 cache->method = method;
 
-                // 创建绑定方法
+                // ===== 窥孔优化：检测下一条指令是否是 OP_CALL =====
+                if (*frame->ip == OP_CALL) {
+                    uint16_t arg_count = ((uint16_t)frame->ip[1] << 8) | frame->ip[2];
+                    frame->ip += 3;
+
+                    int arg_start = vm.sp - arg_count;
+                    for (int i = arg_count - 1; i >= 0; i--) {
+                        vm.stack[arg_start + i + 1] = vm.stack[arg_start + i];
+                    }
+                    vm.stack[arg_start] = receiver;
+                    vm.sp++;
+
+                    Value result = method->function(arg_count + 1, &vm.stack[arg_start]);
+
+                    if (unlikely(vm.has_exception)) {
+                        char* msg = NULL;
+                        if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
+                            msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
+                        } else {
+                            msg = value_to_string(vm.exception);
+                        }
+                        error_clear();
+                        throw_runtime_error(msg, GET_CURRENT_LINE());
+                        free(msg);
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        return -1;
+                    }
+
+                    vm.sp -= arg_count + 1;
+                    vm_stack_push(&vm, result);
+                    DISPATCH;
+                }
+
+                // 创建绑定方法（非直接调用场景）
                 vm_stack_push(&vm, receiver);
                 ObjBoundMethod* bound = bound_method_new(receiver, method);
                 vm_stack_pop(&vm);

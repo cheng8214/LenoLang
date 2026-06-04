@@ -102,7 +102,7 @@ set SOURCES=!SOURCES! src\package\package_init.c
 set SOURCES=!SOURCES! src\package\package_resolve.c
 set SOURCES=!SOURCES! src\package\package_install.c
 
-gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32 -lgdi32 -luser32 -lcomdlg32
+gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32 -lgdi32 -luser32 -lcomdlg32 -lwinmm
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed

@@ -772,6 +772,9 @@ static void destroy_dib_section(HDC* dc, HBITMAP* bitmap, HBITMAP* old_bitmap) {
 int leno_gui_platform_init(void) {
     if (g_gui_initialized) return 1;
 
+    /* 提升系统定时器精度到 1ms，使 Sleep(1) 真正只睡 ~1ms */
+    timeBeginPeriod(1);
+
     event_queue_init();
     InitializeCriticalSection(&g_filedlg_result_cs);
 
@@ -798,6 +801,9 @@ void leno_gui_platform_quit(void) {
     if (!g_gui_initialized) return;
     g_gui_initialized = 0;
     
+    /* 恢复系统定时器默认精度 */
+    timeEndPeriod(1);
+
     /* 清理事件队列和对象池 */
     event_queue_cleanup();
     
