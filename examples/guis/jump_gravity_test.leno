@@ -1,0 +1,248 @@
+// Leno GUI 跳跃重力测试
+// 按空格跳跃，受重力影响下降
+
+import guis
+
+main() {
+    Win win = guis.create_window("Jump & Gravity Test", {
+        width: 800,
+        height: 600
+    })
+    
+    // 地面高度
+    var ground_y = 450
+    
+    // 玩家属性（使用整数位置，但速度用浮点数累加）
+    var player_x = 100
+    var player_y = ground_y - 64  // 地面上的位置
+    var player_w = 48
+    var player_h = 64
+    
+    // 物理属性
+    var velocity_x = 0
+    var velocity_y = 0
+    var speed = 5
+    var jump_power = -15    // 向上的初速度（负Y方向）
+    var gravity = 1         // 重力加速度（整数）
+    var friction_num = 85   // 摩擦力分子
+    var friction_den = 100  // 摩擦力分母
+    
+    // 状态
+    var on_ground = true
+    var facing_right = true
+    
+    // 动画
+    var anim_frame = 0
+    var anim_timer = 0
+    
+    win.run(
+        func(Draw ren) {
+            // 清空背景（天空色）
+            ren.set_color(_rgb(135, 206, 235, 255))
+            ren.clear()
+            
+            // 绘制云朵
+            ren.set_color(_rgb(255, 255, 255, 200))
+            ren.fill_ellipse(150, 100, 60, 30)
+            ren.fill_ellipse(180, 90, 50, 35)
+            ren.fill_ellipse(550, 150, 70, 25)
+            ren.fill_ellipse(600, 140, 55, 30)
+            
+            // 绘制地面
+            ren.set_color(_rgb(34, 139, 34, 255))
+            ren.fill_rect(0, ground_y, 800, 600 - ground_y)
+            
+            // 绘制草地顶部
+            ren.set_color(_rgb(50, 205, 50, 255))
+            ren.fill_rect(0, ground_y, 800, 10)
+            
+            // ===== 物理更新 =====
+            
+            // 应用重力
+            velocity_y = velocity_y + gravity
+            
+            // 更新位置
+            player_x = player_x + velocity_x
+            player_y = player_y + velocity_y
+            
+            // 地面碰撞检测
+            if player_y >= ground_y - player_h {
+                player_y = ground_y - player_h
+                velocity_y = 0
+                on_ground = true
+            } else {
+                on_ground = false
+            }
+            
+            // 边界限制
+            if player_x < 0 {
+                player_x = 0
+                velocity_x = 0
+            }
+            if player_x > 800 - player_w {
+                player_x = 800 - player_w
+                velocity_x = 0
+            }
+            
+            // 地面摩擦力（使用整数运算）
+            if on_ground {
+                velocity_x = velocity_x * friction_num / friction_den
+                if velocity_x == 0 {
+                    velocity_x = 0
+                }
+            }
+            
+            // ===== 绘制玩家 =====
+            
+            // 身体颜色（根据状态变化）
+            if on_ground {
+                ren.set_color(_rgb(255, 100, 100, 255))  // 红色 - 地面
+            } else {
+                ren.set_color(_rgb(100, 100, 255, 255))  // 蓝色 - 空中
+            }
+            ren.fill_rect(player_x, player_y, player_w, player_h)
+            
+            // 身体边框
+            ren.set_color(_rgb(0, 0, 0, 255))
+            ren.rect(player_x, player_y, player_w, player_h)
+            
+            // 眼睛（根据朝向）
+            ren.set_color(_rgb(255, 255, 255, 255))
+            var eye_y = player_y + 15
+            if facing_right {
+                ren.fill_rect(player_x + 28, eye_y, 12, 12)
+                ren.fill_rect(player_x + 10, eye_y, 8, 8)
+            } else {
+                ren.fill_rect(player_x + 8, eye_y, 12, 12)
+                ren.fill_rect(player_x + 30, eye_y, 8, 8)
+            }
+            
+            // 瞳孔
+            ren.set_color(_rgb(0, 0, 0, 255))
+            if facing_right {
+                ren.fill_rect(player_x + 32, eye_y + 3, 6, 6)
+            } else {
+                ren.fill_rect(player_x + 10, eye_y + 3, 6, 6)
+            }
+            
+            // 腿部动画（只在移动时）
+            if velocity_x != 0 and on_ground {
+                anim_timer = anim_timer + 1
+                if anim_timer > 5 {
+                    anim_timer = 0
+                    anim_frame = (anim_frame + 1) % 2
+                }
+                
+                ren.set_color(_rgb(139, 69, 19, 255))
+                if anim_frame == 0 {
+                    ren.fill_rect(player_x + 8, player_y + player_h, 10, 12)
+                    ren.fill_rect(player_x + 30, player_y + player_h - 5, 10, 17)
+                } else {
+                    ren.fill_rect(player_x + 8, player_y + player_h - 5, 10, 17)
+                    ren.fill_rect(player_x + 30, player_y + player_h, 10, 12)
+                }
+            } else {
+                // 静止时的腿
+                ren.set_color(_rgb(139, 69, 19, 255))
+                ren.fill_rect(player_x + 8, player_y + player_h, 10, 12)
+                ren.fill_rect(player_x + 30, player_y + player_h, 10, 12)
+            }
+            
+            // ===== 显示信息 =====
+            
+            // 信息面板背景
+            ren.set_color(_rgb(0, 0, 0, 150))
+            ren.fill_rect(10, 10, 250, 120)
+            
+            // 绘制简单的状态指示器
+            ren.set_color(_rgb(255, 255, 255, 255))
+            
+            // 速度指示条
+            var bar_w = 100
+            var vel_pct = velocity_x
+            if vel_pct < 0 { vel_pct = -vel_pct }
+            if vel_pct > 10 { vel_pct = 10 }
+            var vel_bar = vel_pct / 10 * bar_w
+            
+            ren.set_color(_rgb(100, 100, 100, 255))
+            ren.fill_rect(20, 30, bar_w, 10)
+            ren.set_color(_rgb(0, 255, 0, 255))
+            if velocity_x < 0 {
+                ren.fill_rect(20 + bar_w - vel_bar, 30, vel_bar, 10)
+            } else {
+                ren.fill_rect(20, 30, vel_bar, 10)
+            }
+            
+            // 高度指示条
+            var height_pct = (ground_y - player_y - player_h) / 200
+            if height_pct > 1 { height_pct = 1 }
+            if height_pct < 0 { height_pct = 0 }
+            var height_bar = height_pct * 60
+            
+            ren.set_color(_rgb(100, 100, 100, 255))
+            ren.fill_rect(20, 55, 10, 60)
+            ren.set_color(_rgb(255, 200, 0, 255))
+            ren.fill_rect(20, 55 + 60 - height_bar, 10, height_bar)
+            
+            // 地面状态指示
+            if on_ground {
+                ren.set_color(_rgb(0, 255, 0, 255))
+                ren.fill_circle(200, 35, 8)
+            } else {
+                ren.set_color(_rgb(255, 0, 0, 255))
+                ren.fill_circle(200, 35, 8)
+            }
+            
+            // 操作提示
+            ren.set_color(_rgb(200, 200, 200, 255))
+            // 空格=跳跃, 左右=移动
+            ren.fill_rect(20, 100, 8, 8)
+            ren.fill_rect(32, 100, 8, 8)
+            ren.fill_rect(44, 100, 8, 8)
+            ren.fill_rect(56, 100, 8, 8)
+            
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            
+            if e.is_key_down() {
+                // 空格 - 跳跃
+                if e.key() == guis.KEY_SPACE and on_ground {
+                    velocity_y = jump_power
+                    on_ground = false
+                }
+                
+                // 左方向键
+                if e.key() == guis.KEY_LEFT {
+                    velocity_x = velocity_x - 2
+                    if velocity_x < -speed {
+                        velocity_x = -speed
+                    }
+                    facing_right = false
+                }
+                
+                // 右方向键
+                if e.key() == guis.KEY_RIGHT {
+                    velocity_x = velocity_x + 2
+                    if velocity_x > speed {
+                        velocity_x = speed
+                    }
+                    facing_right = true
+                }
+                
+                // R键 - 重置位置 (R = 82)
+                if e.key() == 82 {
+                    player_x = 100
+                    player_y = ground_y - player_h
+                    velocity_x = 0
+                    velocity_y = 0
+                }
+            }
+        }
+    )
+    
+    win.close()
+}

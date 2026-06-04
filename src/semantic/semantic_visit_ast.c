@@ -458,9 +458,9 @@ void visit(Semantic* s, Ast* ast) {
                         if (value_type) {
                             if (!type_is_compatible(sym->type, value_type)) {
                                 char msg[BUFFER_MEDIUM];
-                                format_type_error(msg, sizeof(msg),
-                                    "类型不匹配：无法将 %s1 赋值给 %s2 类型的变量 %s3",
-                                    value_type, sym->type, sym->name, NULL);
+                                format_detailed_type_error(msg, sizeof(msg),
+                                    sym->type, value_type,
+                                    "无法将值赋值给变量");
                                 error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                             } else {
                                 // var 声明的变量（类型为 any），第一次赋非 null 值时锁定类型
@@ -519,9 +519,9 @@ void visit(Semantic* s, Ast* ast) {
                 if (value_type) {
                     if (!type_is_compatible(sym->type, value_type)) {
                         char msg[BUFFER_MEDIUM];
-                        format_type_error(msg, sizeof(msg),
-                            "类型不匹配：复合赋值无法将 %s1 赋值给 %s2 类型的变量 %s3",
-                            value_type, sym->type, sym->name, NULL);
+                        format_detailed_type_error(msg, sizeof(msg),
+                            sym->type, value_type,
+                            "复合赋值类型不匹配");
                         error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                     }
                     type_free(value_type);
