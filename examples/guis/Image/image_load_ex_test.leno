@@ -92,7 +92,7 @@ main() {
     img1.close()
     img2.close()
     font.close()
-    // win 已经在 guis.run 结束后自动关闭，不需要手动调用 win.close()
+    // win 已经在 win.run 结束后自动关闭，不需要手动调用 win.close()
 
     print($"=== 测试完成 ===")
 }
