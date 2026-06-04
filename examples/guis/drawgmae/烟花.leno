@@ -1,0 +1,277 @@
+// 烟花爆炸效果 - 性能测试
+import guis
+import times
+import maths
+import rands
+
+// 烟花粒子
+struct Particle {
+    float x
+    float y
+    float vx
+    float vy
+    int r
+    int g
+    int b
+    int a = 255
+    int life
+    int max_life
+    int size = 3
+    float gravity = 0.05
+    float friction = 0.98
+}
+
+// 烟花发射器
+struct Firework {
+    float x
+    float y
+    float vx
+    float vy
+    float target_y
+    int state     // 0=上升, 1=爆炸
+    int timer
+    int r
+    int g
+    int b
+    bool alive = true
+}
+
+main() {
+    Win win = guis.create_window("🎆 Fireworks Demo", {
+        width: 800,
+        height: 600
+    })
+
+    var font_fps = guis.load_font("Arial", 16)
+    var screen_w = 800
+    var screen_h = 600
+
+    // 粒子系统 - 字符串键
+    var MAX_PARTICLES = 3000
+    var particles = {}       // "p"+id → Particle
+    var particle_ids = {}    // "i"+idx → id(int)
+    var particle_count = 0
+    var next_id = 0
+
+    // 发射器 - 字符串键
+    var fireworks = {}       // "f"+id → Firework
+    var firework_ids = {}    // "j"+idx → id(int)
+    var firework_count = 0
+    var fw_next_id = 0
+
+    // 发射计时
+    var launch_timer = 0
+    var launch_interval = 30
+
+    // FPS
+    var frame_count = 0
+    var fps = 0
+    var last_fps_time = times.ms()
+    var frame_start = times.ms()
+    var target_frame_ms = 16
+
+    // 创建粒子
+    func spawn_particle(float x, float y, float vx, float vy, int r, int g, int b, int life, int size) {
+        if particle_count >= MAX_PARTICLES {
+            return
+        }
+
+        var p = new Particle(
+            x=x, y=y, vx=vx, vy=vy,
+            r=r, g=g, b=b,
+            life=life, max_life=life,
+            size=size
+        )
+
+        var id = next_id
+        particles["p" + id] = p
+        particle_ids["i" + particle_count] = id
+        particle_count = particle_count + 1
+        next_id = next_id + 1
+    }
+
+    // 发射烟花
+    func launch_firework() {
+        if firework_count >= 50 { return }
+
+        var x = rands.floats(100.0, screen_w - 100)
+        var target_y = rands.floats(100.0, 350.0)
+        var vy = rands.floats(-12.0, -8.0)
+
+        var fw = new Firework(
+            x=x, y=(screen_h - 50), vx=0.0, vy=vy,
+            target_y=target_y, state=0, timer=0
+        )
+
+        var id = fw_next_id
+        fireworks["f" + id] = fw
+        firework_ids["j" + firework_count] = id
+        firework_count = firework_count + 1
+        fw_next_id = fw_next_id + 1
+    }
+
+    // 烟花爆炸
+    func explode_firework(float x, float y) {
+        var r = rands.ints(100, 255)
+        var g = rands.ints(100, 255)
+        var b = rands.ints(100, 255)
+
+        var particle_count_target = rands.ints(80, 150)
+
+        for 0:particle_count_target - 1 to i {
+            var dir = i * 6.28318 / particle_count_target
+            var spd = 2.0 + (i % 7)
+            var dx = spd * maths.cos(dir)
+            var dy = spd * maths.sin(dir)
+
+            var life = rands.ints(30, 80)
+            var size = rands.ints(1, 4)
+
+            spawn_particle(x, y, dx, dy, r, g, b, life, size)
+        }
+    }
+
+    // 移除粒子
+    func remove_particle(int index) {
+        var last = particle_count - 1
+        if index != last {
+            particle_ids["i" + index] = particle_ids["i" + last]
+        }
+        particle_count = particle_count - 1
+    }
+
+    // 移除烟花
+    func remove_firework(int index) {
+        var last = firework_count - 1
+        if index != last {
+            firework_ids["j" + index] = firework_ids["j" + last]
+        }
+        firework_count = firework_count - 1
+    }
+
+    win.run(
+        func(Draw ren) {
+            // FPS
+            frame_count = frame_count + 1
+            var now = times.ms()
+            if now - last_fps_time >= 1000 {
+                fps = frame_count
+                frame_count = 0
+                last_fps_time = now
+            }
+
+            // 发射烟花
+            launch_timer = launch_timer + 1
+            if launch_timer >= launch_interval {
+                launch_timer = 0
+                launch_firework()
+                if rands.om() > 0.7 {
+                    launch_firework()
+                }
+            }
+
+            // 清屏
+            ren.set_color(_rgb(5, 5, 15, 255))
+            ren.clear()
+
+            // 更新发射器
+            var i = 0
+            while i < firework_count {
+                var id = firework_ids["j" + i]
+                var fw = fireworks["f" + id]
+                var removed = false
+
+                if fw.state == 0 {
+                    // 上升阶段
+                    fw.y = fw.y + fw.vy
+                    fw.vy = fw.vy + 0.15
+
+                    // 拖尾粒子
+                    if (i % 2) == 0 {
+                        spawn_particle(fw.x, fw.y, rands.floats(-0.5, 0.5), rands.floats(0.5, 2.0), 255, 255, 200, 15, 2)
+                    }
+
+                    if fw.y <= fw.target_y {
+                        fw.state = 1
+                        fw.timer = 0
+                        explode_firework(fw.x, fw.y)
+                        // 爆炸闪光
+                        for 0:7 to j {
+                            spawn_particle(fw.x, fw.y, rands.floats(-3.0, 3.0), rands.floats(-3.0, 3.0), 255, 255, 255, 10, 3)
+                        }
+                        remove_firework(i)
+                        removed = true
+                    }
+                }
+
+                if not removed {
+                    i = i + 1
+                }
+            }
+
+            // 更新粒子
+            var j = 0
+            while j < particle_count {
+                var id = particle_ids["i" + j]
+                var p = particles["p" + id]
+
+                p.life = p.life - 1
+                if p.life <= 0 {
+                    remove_particle(j)
+                } else {
+                    p.x = p.x + p.vx
+                    p.y = p.y + p.vy
+                    p.vy = p.vy + p.gravity
+                    p.vx = p.vx * p.friction
+                    p.vy = p.vy * p.friction
+                    p.a = (p.life * 255 / p.max_life) | 0
+
+                    j = j + 1
+                }
+            }
+
+            // 绘制粒子
+            for 0:particle_count - 1 to k {
+                var id = particle_ids["i" + k]
+                var p = particles["p" + id]
+
+                if p.x >= 0.0 and p.x <= screen_w and p.y >= 0.0 and p.y <= screen_h {
+                    ren.set_color(_rgb(p.r, p.g, p.b, p.a))
+                    if p.size <= 1 {
+                        ren.fill_rect(_int(p.x) , p.y as int, 1, 1)
+                    } else {
+                        ren.fill_rect(p.x as int ,p.y as int, p.size, p.size)
+                    }
+                }
+            }
+
+            // FPS 显示
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.draw_text(font_fps, "FPS: " + fps + " | Particles: " + particle_count, 10, 10)
+
+            ren.present()
+
+            // 帧率限制
+            var elapsed = times.ms() - frame_start
+            if elapsed < target_frame_ms {
+                sleep(target_frame_ms - elapsed)
+            }
+            frame_start = times.ms()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == guis.KEY_SPACE {
+                    launch_firework()
+                    launch_firework()
+                    launch_firework()
+                }
+            }
+        }
+    )
+
+    font_fps.close()
+    win.close()
+}

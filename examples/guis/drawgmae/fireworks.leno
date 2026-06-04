@@ -1,0 +1,705 @@
+// ============================================================================
+// 烟花爆炸效果 - 绚丽版
+// 8 种爆炸形状 + 颜色主题 + 辉光 + 二次爆炸 + 背景星空
+// ============================================================================
+import guis
+import times
+import maths
+import rands
+// ---- 粒子 ----
+struct Particle {
+    float x
+    float y
+    float vx
+    float vy
+    int r
+    int g
+    int b
+    int a = 255
+    int life
+    int max_life
+    int size = 1
+    float gravity = 0.05
+    float friction = 0.98
+    int ptype = 0   // 0=普通 1=辉光 2=火花 3=闪烁
+}
+
+// ---- 烟花 ----
+struct Firework {
+    float x
+    float y
+    float vx
+    float vy
+    float target_y
+    int state      // 0=上升 1=爆炸
+    int burst_type // 爆炸形状 0-7
+    int r
+    int g
+    int b
+}
+
+// ---- 背景星星 ----
+struct Star {
+    float x
+    float y
+    float twinkle
+    float twinkle_speed
+    int r
+    int g
+    int b
+}
+
+main() {
+print(_gc(false))
+    Win win = guis.create_window("🎆 烟花绚烂 - 压力测试版", {
+        width: 960,
+        height: 680
+    })
+
+    var font_fps = guis.load_font("Consolas", 14)
+    var font_info = guis.load_font("Consolas", 11)
+    var screen_w = 960
+    var screen_h = 680
+
+    // ---- 粒子池 ----
+    var MAX_PARTICLES = 6000
+    var particles = {}
+    var particle_ids = {}
+    var particle_count = 0
+    var next_pid = 0
+
+    // ---- 烟花池 ----
+    var fireworks = {}
+    var firework_ids = {}
+    var firework_count = 0
+    var next_fid = 0
+
+    // ---- 地面火花池 ----
+    var MAX_GROUND = 200
+    var ground_sparks = {}
+    var ground_ids = {}
+    var ground_count = 0
+    var next_gid = 0
+
+    // ---- 背景星星 ----
+    var MAX_STARS = 120
+    var stars = {}
+    var star_ids = {}
+    var star_count = 0
+    var next_sid = 0
+
+    // ---- 计时 ----
+    var launch_timer = 0
+    var launch_interval = 20
+
+    // ---- FPS ----
+    var frame_count = 0
+    var fps = 0
+    var last_fps_time = times.ms()
+    var frame_start = times.ms()
+    var target_frame_ms = 16
+    var peak_particles = 0
+
+    // ===== 颜色主题表 (RGB) =====
+    // 18 种主题色，确保颜色鲜艳
+    var themes = [
+        [255, 50, 50],    // 红
+        [255, 140, 0],    // 橙
+        [255, 220, 0],    // 金
+        [50, 255, 50],    // 绿
+        [0, 200, 255],    // 天蓝
+        [50, 80, 255],    // 蓝
+        [180, 50, 255],   // 紫
+        [255, 50, 200],   // 品红
+        [255, 100, 100],  // 浅红
+        [255, 180, 60],   // 琥珀
+        [100, 255, 100],  // 亮绿
+        [0, 255, 200],    // 青
+        [100, 150, 255],  // 淡蓝
+        [220, 100, 255],  // 淡紫
+        [255, 80, 150],   // 玫红
+        [255, 255, 100],  // 亮黄
+        [255, 160, 120],  // 珊瑚
+        [120, 255, 160] // 薄荷
+    ]
+
+    // ===== 粒子操作 =====
+    func spawn_particle(float x, float y, float vx, float vy, int r, int g, int b, int life, int size, int ptype, float grav, float fric) {
+        if particle_count >= MAX_PARTICLES { return }
+
+        var p = new Particle(
+            x=x, y=y, vx=vx, vy=vy,
+            r=r, g=g, b=b,
+            life=life, max_life=life,
+            size=size, ptype=ptype,
+            gravity=grav, friction=fric
+        )
+
+        var id = next_pid
+        particles["p" + id] = p
+        particle_ids["pi" + particle_count] = id
+        particle_count = particle_count + 1
+        next_pid = next_pid + 1
+    }
+
+    func remove_particle(int index) {
+        var last = particle_count - 1
+        if index != last {
+            particle_ids["pi" + index] = particle_ids["pi" + last]
+        }
+        particle_count = particle_count - 1
+    }
+
+    func remove_firework(int index) {
+        var last = firework_count - 1
+        if index != last {
+            firework_ids["fi" + index] = firework_ids["fi" + last]
+        }
+        firework_count = firework_count - 1
+    }
+
+    func remove_ground(int index) {
+        var last = ground_count - 1
+        if index != last {
+            ground_ids["gi" + index] = ground_ids["gi" + last]
+        }
+        ground_count = ground_count - 1
+    }
+
+    // ===== 地面火花 =====
+    func spawn_ground(float x, float y, int r, int g, int b) {
+        if ground_count >= MAX_GROUND { return }
+        var count = rands.ints(5, 15)
+        for 0:count - 1 to j {
+            var ang = rands.floats(0.0, 6.28318)
+            var spd = rands.floats(0.5, 3.0)
+            var gs = new Particle(
+                x=x, y=y,
+                vx=maths.cos(ang) * spd,
+                vy=maths.sin(ang) * spd * 0.5 - rands.floats(0.5, 2.0),
+                r=r, g=g, b=b,
+                life=rands.ints(10, 30), max_life=0,
+                size=rands.ints(1, 2),
+                gravity=0.1, friction=0.92
+            )
+            gs.max_life = gs.life
+
+            var gid = next_gid
+            ground_sparks["g" + gid] = gs
+            ground_ids["gi" + ground_count] = gid
+            ground_count = ground_count + 1
+            next_gid = next_gid + 1
+        }
+    }
+
+    // ===== 发射烟花 =====
+    func launch_firework(float from_x, float from_y, float target_x, float target_y) {
+        if firework_count >= 80 { return }
+
+        var btype = rands.ints(0, 7)
+        var theme = themes[rands.ints(0, 17)]
+        var tr = theme[0]
+        var tg = theme[1]
+        var tb = theme[2]
+
+        // 添加随机色彩偏移
+        tr = tr + rands.ints(-30, 30)
+        tg = tg + rands.ints(-30, 30)
+        tb = tb + rands.ints(-30, 30)
+        if tr < 0 { tr = 0 } else if tr > 255 { tr = 255 }
+        if tg < 0 { tg = 0 } else if tg > 255 { tg = 255 }
+        if tb < 0 { tb = 0 } else if tb > 255 { tb = 255 }
+
+        var dx = target_x - from_x
+        var dy = target_y - from_y
+        var dist = maths.sqrt(dx * dx + dy * dy)
+        if dist < 1.0 { dist = 1.0 }
+        var speed = rands.floats(11.0, 16.0)
+        var vx = dx / dist * speed * 0.25
+        var vy = dy / dist * speed
+
+        var fw = new Firework(
+            x=from_x, y=from_y, vx=vx, vy=vy,
+            target_y=target_y, state=0,
+            burst_type=btype,
+            r=tr, g=tg, b=tb
+        )
+
+        var id = next_fid
+        fireworks["f" + id] = fw
+        firework_ids["fi" + firework_count] = id
+        firework_count = firework_count + 1
+        next_fid = next_fid + 1
+
+        // 地面火花
+        spawn_ground(from_x, screen_h - 3, tr, tg, tb)
+    }
+
+    // ===== 爆炸核心 =====
+    func explode_firework(float x, float y, int r, int g, int b, int burst_type) {
+        var count = rands.ints(100, 250)
+        var hue_idx = rands.ints(0, 17)
+
+        // ---- 中心辉光团 ----
+        for 0:6 to j {
+            var ang = j * 1.047
+            var spd = rands.floats(1.0, 4.0)
+            spawn_particle(x, y,
+                maths.cos(ang) * spd,
+                maths.sin(ang) * spd,
+                255, 255, 240, rands.ints(8, 15), rands.ints(2, 3), 1, 0.01, 0.93)
+        }
+
+        // ---- 闪烁星光核心 ----
+        for 0:8 to j {
+            var ang = rands.floats(0.0, 6.28318)
+            var spd = rands.floats(0.3, 1.5)
+            spawn_particle(x, y,
+                maths.cos(ang) * spd,
+                maths.sin(ang) * spd,
+                255, 255, 255, rands.ints(20, 35), rands.ints(1, 2), 3, 0.0, 1.0)
+        }
+
+        if burst_type == 0 {
+            // ===== 圆形爆炸 - 经典 =====
+            for 0:count - 1 to i {
+                var ang = i * 6.28318 / count
+                var spd = rands.floats(2.5, 8.0)
+                var life = rands.ints(35, 80)
+                var sz = rands.ints(1, 2)
+                var cr = r + rands.ints(-40, 40)
+                var cg = g + rands.ints(-40, 40)
+                var cb = b + rands.ints(-40, 40)
+                if cr < 0 { cr = 0 } else if cr > 255 { cr = 255 }
+                if cg < 0 { cg = 0 } else if cg > 255 { cg = 255 }
+                if cb < 0 { cb = 0 } else if cb > 255 { cb = 255 }
+                spawn_particle(x, y,
+                    maths.cos(ang) * spd,
+                    maths.sin(ang) * spd,
+                    cr, cg, cb, life, sz, 0, 0.04, 0.98)
+            }
+        } else if burst_type == 1 {
+            // ===== 环形 - 完美圆环 =====
+            for 0:count - 1 to i {
+                var ang = i * 6.28318 / count
+                var radius = rands.floats(3.5, 8.0)
+                var life = rands.ints(40, 75)
+                var sz = rands.ints(1, 2)
+                spawn_particle(x, y,
+                    maths.cos(ang) * radius,
+                    maths.sin(ang) * radius,
+                    r, g, b, life, sz, 0, 0.03, 0.99)
+
+                // 外圈淡色粒子
+                if (i % 3) == 0 {
+                    spawn_particle(x, y,
+                        maths.cos(ang) * (radius + 1.5),
+                        maths.sin(ang) * (radius + 1.5),
+                        255, 255, 200, life - 10, 1, 0, 0.02, 0.98)
+                }
+            }
+        } else if burst_type == 2 {
+            // ===== 心形 =====
+            for 0:count - 1 to i {
+                var t = i * 6.28318 / count
+                var sx = 16.0 * maths.sin(t) * maths.sin(t) * maths.sin(t)
+                var sy = 13.0 * maths.cos(t) - 5.0 * maths.cos(2.0 * t) - 2.0 * maths.cos(3.0 * t) - maths.cos(4.0 * t)
+                var spd = rands.floats(1.5, 4.0)
+                var life = rands.ints(45, 85)
+                var sz = rands.ints(1, 2)
+                var factor = spd * 0.18
+                spawn_particle(x, y,
+                    sx * factor,
+                    -sy * factor,
+                    r, g, b, life, sz, 0, 0.05, 0.97)
+            }
+        } else if burst_type == 3 {
+            // ===== 螺旋 - 多圈旋转 =====
+            var spirals = rands.ints(2, 4)
+            for 0:count - 1 to i {
+                var t = i * 0.25
+                var rad = 0.5 + i * 0.035
+                var phase = (i % spirals) * (6.28318 / spirals)
+                var hx = rad * maths.cos(t + phase)
+                var hy = rad * maths.sin(t + phase)
+                var life = rands.ints(45, 95)
+                var sz = rands.ints(1, 2)
+                var cr = ((r + i * 3) % 256)
+                var cg = ((g + i * 2) % 256)
+                var cb = ((b + i * 5) % 256)
+                if cr < 0 { cr = cr + 256 } else if cr > 255 { cr = cr - 256 }
+                if cg < 0 { cg = cg + 256 } else if cg > 255 { cg = cg - 256 }
+                if cb < 0 { cb = cb + 256 } else if cb > 255 { cb = cb - 256 }
+                spawn_particle(x, y,
+                    hx * 2.5,
+                    hy * 2.5,
+                    cr, cg, cb, life, sz, 0, 0.03, 0.98)
+            }
+        } else if burst_type == 4 {
+            // ===== 柳叶 - 瀑布垂落 =====
+            for 0:count - 1 to i {
+                var ang = i * 6.28318 / count
+                var spd = rands.floats(2.5, 7.0)
+                var life = rands.ints(55, 110)
+                var sz = 1
+                var cr = r + rands.ints(-20, 20)
+                var cg = g + rands.ints(-20, 20)
+                var cb = b + rands.ints(-20, 20)
+                if cr < 0 { cr = 0 } else if cr > 255 { cr = 255 }
+                if cg < 0 { cg = 0 } else if cg > 255 { cg = 255 }
+                if cb < 0 { cb = 0 } else if cb > 255 { cb = 255 }
+                spawn_particle(x, y,
+                    maths.cos(ang) * spd * 0.8,
+                    maths.sin(ang) * spd * 0.4 - 0.5,
+                    cr, cg, cb, life, sz, 0, 0.09, 0.955)
+            }
+        } else if burst_type == 5 {
+            // ===== 菊花 - 长射线辐射 =====
+            for 0:count - 1 to i {
+                var ang = i * 6.28318 / count
+                var spd = rands.floats(3.5, 9.0)
+                var life = rands.ints(60, 130)
+                var sz = rands.ints(1, 2)
+                // 颜色随角度渐变
+                var theme2 = themes[(hue_idx + i * 3) % 18]
+                var cr = theme2[0]
+                var cg = theme2[1]
+                var cb = theme2[2]
+                spawn_particle(x, y,
+                    maths.cos(ang) * spd,
+                    maths.sin(ang) * spd,
+                    cr, cg, cb, life, sz, 0, 0.025, 0.99)
+            }
+        } else if burst_type == 6 {
+            // ===== 星形 =====
+            var arms = rands.ints(5, 9)
+            for 0:count - 1 to i {
+                var ang = i * 6.28318 / count
+                var arm_idx = (ang * arms / 6.28318) as int
+                var arm_ang = arm_idx * 6.28318 / arms
+                var diff = ang - arm_ang
+                var star_factor = 0.3 + 0.7 * maths.abs(maths.cos(arms * diff * 0.5))
+                var spd = rands.floats(3.0, 7.5)
+                var life = rands.ints(40, 80)
+                var sz = rands.ints(1, 2)
+                spawn_particle(x, y,
+                    maths.cos(ang) * spd * star_factor,
+                    maths.sin(ang) * spd * star_factor,
+                    r, g, b, life, sz, 0, 0.04, 0.98)
+            }
+        } else {
+            // ===== 双环/多层环 =====
+            var rings = rands.ints(2, 4)
+            var per_ring = count / rings
+            for 0:rings - 1 to ri {
+                var radius = 3.0 + ri * 3.5
+                var cr = ((r + ri * 40) % 256)
+                var cg = ((g + ri * 30) % 256)
+                var cb = ((b + ri * 50) % 256)
+                if cr < 0 { cr = cr + 256 } else if cr > 255 { cr = cr - 256 }
+                if cg < 0 { cg = cg + 256 } else if cg > 255 { cg = cg - 256 }
+                if cb < 0 { cb = cb + 256 } else if cb > 255 { cb = cb - 256 }
+                for 0:per_ring - 1 to j {
+                    var ang = j * 6.28318 / per_ring + ri * 0.5
+                    var spd = rands.floats(radius - 0.5, radius + 1.5)
+                    spawn_particle(x, y,
+                        maths.cos(ang) * spd,
+                        maths.sin(ang) * spd,
+                        cr, cg, cb, rands.ints(35, 75), rands.ints(1, 2),
+                        0, 0.03, 0.98)
+                }
+            }
+        }
+
+        // ---- 二次爆炸（概率触发） ----
+        if rands.ints(0, 100) < 15 {
+            var scount = rands.ints(20, 50)
+            for 0:scount - 1 to k {
+                var sang = rands.floats(0.0, 6.28318)
+                var sspd = rands.floats(5.0, 11.0)
+                var slife = rands.ints(25, 55)
+                spawn_particle(x, y,
+                    maths.cos(sang) * sspd,
+                    maths.sin(sang) * sspd,
+                    255, 230, 60, slife, rands.ints(1, 3), 2, 0.07, 0.94)
+            }
+        }
+
+        // ---- 地面反射火花 ----
+        var gr_y = screen_h - 5
+        if y < gr_y {
+            spawn_ground(x, gr_y, r, g, b)
+        }
+
+    }
+
+    // ===== 初始化背景星空 =====
+    for 0:MAX_STARS - 1 to i {
+        var s = new Star(
+            x=rands.floats(0.0, screen_w + 0.0),
+            y=rands.floats(0.0, screen_h + 0.0),
+            twinkle=rands.floats(0.0, 6.28318),
+            twinkle_speed=rands.floats(0.01, 0.05),
+            r=rands.ints(150, 255),
+            g=rands.ints(150, 255),
+            b=rands.ints(180, 255)
+        )
+        var sid = next_sid
+        stars["s" + sid] = s
+        star_ids["si" + star_count] = sid
+        star_count = star_count + 1
+        next_sid = next_sid + 1
+    }
+
+    // ========================================================================
+    // 主渲染循环
+    // ========================================================================
+    win.run(
+        func(Draw ren) {
+            frame_count = frame_count + 1
+            var now = times.ms()
+            if now - last_fps_time >= 1000 {
+                fps = frame_count
+                frame_count = 0
+                last_fps_time = now
+            }
+
+            if particle_count > peak_particles {
+                peak_particles = particle_count
+            }
+
+            // ===== 自动发射烟花 =====
+            launch_timer = launch_timer + 1
+            if launch_timer >= launch_interval {
+                launch_timer = 0
+                var lx = rands.floats(80.0, screen_w - 80.0)
+                var tx = lx + rands.floats(-100.0, 100.0)
+                var ty = rands.floats(80.0, screen_h * 0.5)
+                launch_firework(lx, screen_h - 30.0, tx, ty)
+                // 有时双发
+                if rands.ints(0, 100) > 60 {
+                    var lx2 = rands.floats(80.0, screen_w - 80.0)
+                    launch_firework(lx2, screen_h - 30.0,
+                        lx2 + rands.floats(-80.0, 80.0),
+                        rands.floats(60.0, screen_h * 0.45))
+                }
+            }
+
+            // ===== 清屏（带拖尾） =====
+            ren.set_color(_rgb(6, 6, 20, 35))
+            ren.clear()
+
+            // ===== 绘制星空 =====
+            for 0:star_count - 1 to si {
+                var sid = star_ids["si" + si]
+                var s = stars["s" + sid]
+                s.twinkle = s.twinkle + s.twinkle_speed
+                if s.twinkle > 6.28318 { s.twinkle = s.twinkle - 6.28318 }
+                var sa = 80 + (maths.sin(s.twinkle) * 70) as int
+                if sa < 30 { sa = 30 } else if sa > 220 { sa = 220 }
+                ren.set_color(_rgb(s.r, s.g, s.b, sa))
+                ren.fill_rect(s.x as int, s.y as int, 1, 1)
+                // 亮星画大一点
+                if sa > 150 {
+                    ren.set_color(_rgb(s.r, s.g, s.b, sa / 4))
+                    ren.fill_circle(s.x as int, s.y as int, 1)
+                }
+            }
+
+            // ===== 更新烟花 =====
+            var fi = 0
+            while fi < firework_count {
+                var fid = firework_ids["fi" + fi]
+                var fw = fireworks["f" + fid]
+                var removed = false
+
+                if fw.state == 0 {
+                    // 上升
+                    fw.y = fw.y + fw.vy
+                    fw.x = fw.x + fw.vx
+                    fw.vy = fw.vy + 0.1
+
+                    // 上升拖尾 (每一帧)
+                    spawn_particle(fw.x, fw.y,
+                        rands.floats(-0.4, 0.4), rands.floats(0.5, 2.0),
+                        fw.r, fw.g, fw.b, rands.ints(8, 14), rands.ints(1, 2), 0, 0.02, 0.94)
+
+                    // 到达目标 -> 爆炸
+                    if fw.y <= fw.target_y {
+                        fw.state = 1
+                        explode_firework(fw.x, fw.y, fw.r, fw.g, fw.b, fw.burst_type)
+                        remove_firework(fi)
+                        removed = true
+                    }
+                }
+
+                if removed == false {
+                    fi = fi + 1
+                }
+            }
+
+            // ===== 更新粒子 =====
+            var pj = 0
+            while pj < particle_count {
+                var pid = particle_ids["pi" + pj]
+                var p = particles["p" + pid]
+
+                p.life = p.life - 1
+                if p.life <= 0 {
+                    remove_particle(pj)
+                } else {
+                    p.x = p.x + p.vx
+                    p.y = p.y + p.vy
+                    p.vy = p.vy + p.gravity
+                    p.vx = p.vx * p.friction
+                    p.vy = p.vy * p.friction
+
+                    // 渐变透明度（float 除法确保平滑过渡）
+                    var frac = p.life * 1.0 / p.max_life
+                    if p.ptype == 3 {
+                        // 闪烁粒子：中间最亮
+                        var brightness = 0.5 + 0.5 * maths.sin(frac * 6.28318 * 3.0)
+                        p.a = (brightness * 255) as int
+                    } else {
+                        p.a = (frac * 255) as int
+                    }
+                    if p.a < 0 { p.a = 0 } else if p.a > 255 { p.a = 255 }
+
+                    // 火花粒子 mid-life 子粒子
+                    if p.ptype == 2 {
+                        var half = p.max_life / 2
+                        if p.life == half or p.life == (half + 1) {
+                            var sk = rands.ints(2, 6)
+                            for 0:sk - 1 to sp {
+                                var sang = rands.floats(0.0, 6.28318)
+                                var sspd = rands.floats(1.5, 4.0)
+                                spawn_particle(p.x, p.y,
+                                    maths.cos(sang) * sspd,
+                                    maths.sin(sang) * sspd,
+                                    p.r, p.g, p.b, p.life - 2, 1, 0, 0.06, 0.93)
+                            }
+                        }
+                    }
+
+                    pj = pj + 1
+                }
+            }
+
+            // ===== 更新地面火花 =====
+            var gj = 0
+            while gj < ground_count {
+                var gid = ground_ids["gi" + gj]
+                var gs = ground_sparks["g" + gid]
+
+                gs.life = gs.life - 1
+                if gs.life <= 0 {
+                    remove_ground(gj)
+                } else {
+                    gs.x = gs.x + gs.vx
+                    gs.y = gs.y + gs.vy
+                    gs.vy = gs.vy + gs.gravity
+                    gs.vx = gs.vx * gs.friction
+                    gs.vy = gs.vy * gs.friction
+                    gs.a = (gs.life * 255 / gs.max_life) as int
+                    if gs.a < 0 { gs.a = 0 } else if gs.a > 255 { gs.a = 255 }
+                    gj = gj + 1
+                }
+            }
+
+            // ===== 绘制粒子 =====
+            for 0:particle_count - 1 to pk {
+                var pid = particle_ids["pi" + pk]
+                var p = particles["p" + pid]
+
+                if p.x >= -20.0 and p.x <= (screen_w + 20) and p.y >= -20.0 and p.y <= (screen_h + 20) {
+                    var px = p.x as int
+                    var py = p.y as int
+
+                    if p.ptype == 1 {
+                        // 辉光粒子 - 光晕
+                        var glow_a = (p.a / 4) as int
+                        if glow_a > 80 { glow_a = 80 }
+                        ren.set_color(_rgb(p.r, p.g, p.b, glow_a))
+                        ren.fill_circle(px, py, p.size + 1)
+                    }
+
+                    ren.set_color(_rgb(p.r, p.g, p.b, p.a))
+                    if p.size <= 1 {
+                        ren.fill_rect(px, py, 1, 1)
+                    } else if p.size <= 2 {
+                        ren.fill_circle(px, py, p.size)
+                    } else {
+                        // 较大粒子
+                        ren.fill_circle(px, py, p.size)
+                    }
+                }
+            }
+
+            // ===== 绘制地面火花 =====
+            for 0:ground_count - 1 to gk {
+                var gid = ground_ids["gi" + gk]
+                var gs = ground_sparks["g" + gid]
+                if gs.x >= 0.0 and gs.x <= screen_w and gs.y >= 0.0 and gs.y <= screen_h {
+                    ren.set_color(_rgb(gs.r, gs.g, gs.b, gs.a))
+                    ren.fill_rect(gs.x as int, gs.y as int, gs.size, gs.size)
+                }
+            }
+
+            // ===== HUD =====
+            ren.set_color(_rgb(255, 255, 255, 230))
+            ren.draw_text(font_fps,
+                "FPS:" + fps + "  粒子:" + particle_count + "  峰值:" + peak_particles + "  烟花:" + firework_count,
+                10, 10)
+
+            ren.set_color(_rgb(160, 160, 200, 200))
+            ren.draw_text(font_info,
+                "SPACE=齐射  |  CLICK=点击发射  |  R=重置峰值",
+                10, 28)
+
+            ren.present()
+
+            // 帧率限制
+            var elapsed = times.ms() - frame_start
+            if elapsed < target_frame_ms {
+                sleep(target_frame_ms - elapsed)
+            }
+            frame_start = times.ms()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == guis.KEY_SPACE {
+                    // 齐射 6 发
+                    for 0:5 to bv {
+                        launch_firework(
+                            rands.floats(80.0, screen_w - 80.0), screen_h - 30.0,
+                            rands.floats(100.0, screen_w - 100.0),
+                            rands.floats(60.0, screen_h * 0.45))
+                    }
+                }
+                if e.key() == 0x52 {
+                    peak_particles = 0
+                }
+            }
+            if e.is_mouse_down() {
+                var mx = e.mouse_x()
+                var my = e.mouse_y()
+                if my > 50 {
+                    // 点击发射，散布
+                    for 0:2 to bv {
+                        launch_firework(
+                            rands.floats(mx - 80.0, mx + 80.0), screen_h - 25.0,
+                            mx + rands.floats(-40.0, 40.0),
+                            my + rands.floats(-40.0, 20.0))
+                    }
+                }
+            }
+        }
+    )
+
+    font_fps.close()
+    font_info.close()
+    win.close()
+}
