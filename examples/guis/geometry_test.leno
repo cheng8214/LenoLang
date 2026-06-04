@@ -1,0 +1,99 @@
+// Leno GUI 几何图形扩展测试
+// 测试: ellipse, fill_ellipse, arc, triangle, fill_triangle, polygon, fill_polygon, bezier
+
+import guis
+
+main() {
+    Style[window] w_style = {
+        width: 900,
+        height: 700,
+        resizable: true
+    }
+    Win win = guis.create_window("LenoC GUI - 几何图形扩展测试", w_style)
+    
+    // 动画变量
+    var angle = 0.0
+    
+    win.run(
+        func(Draw ren) {
+            // 深色背景
+            ren.set_color(_rgb(20, 20, 30, 255))
+            ren.clear()
+            
+            // ========== 1. 椭圆 ==========
+            // 绘制椭圆边框
+            ren.set_color(_rgb(255, 100, 100, 255))
+            ren.ellipse(150, 100, 80, 50)
+            
+            // 填充椭圆
+            ren.set_color(_rgb(100, 255, 100, 180))
+            ren.fill_ellipse(350, 100, 60, 40)
+            
+            // ========== 2. 圆弧 ==========
+            // 绘制圆弧 (0度到270度)
+            ren.set_color(_rgb(100, 200, 255, 255))
+            ren.arc(550, 100, 60, 0.0, 270.0)
+            
+            // 动态旋转的圆弧
+            ren.set_color(_rgb(255, 200, 50, 255))
+            ren.arc(750, 100, 50, angle, angle + 180.0)
+            
+            // ========== 3. 三角形 ==========
+            // 绘制三角形边框
+            ren.set_color(_rgb(255, 150, 50, 255))
+            ren.triangle(100, 250, 200, 250, 150, 150)
+            
+            // 填充三角形
+            ren.set_color(_rgb(150, 100, 255, 200))
+            ren.fill_triangle(300, 250, 450, 250, 375, 150)
+            
+            // 多个填充三角形组成图案
+            ren.set_color(_rgb(255, 100, 150, 150))
+            ren.fill_triangle(550, 250, 620, 150, 690, 250)
+            ren.set_color(_rgb(150, 255, 200, 150))
+            ren.fill_triangle(550, 250, 690, 250, 620, 280)
+            
+            // ========== 4. 多边形 ==========
+            // 绘制五边形边框
+            ren.set_color(_rgb(200, 255, 100, 255))
+            var pentagon = [150, 400, 200, 350, 250, 350, 280, 400, 215, 450]
+            ren.polygon(pentagon)
+            
+            // 填充六边形
+            ren.set_color(_rgb(100, 150, 255, 200))
+            var hexagon = [400, 350, 450, 380, 450, 430, 400, 460, 350, 430, 350, 380]
+            ren.fill_polygon(hexagon)
+            
+            // 星形
+            ren.set_color(_rgb(255, 200, 100, 255))
+            var star = [650, 350, 670, 410, 730, 410, 685, 450, 700, 510, 650, 470, 600, 510, 615, 450, 570, 410, 630, 410]
+            ren.polygon(star)
+            
+            // ========== 5. 贝塞尔曲线 ==========
+            // 三次贝塞尔曲线
+            ren.set_color(_rgb(255, 255, 255, 255))
+            var bezier3 = [100, 600, 200, 500, 300, 700, 400, 600]
+            ren.bezier(bezier3, 50)
+            
+            // 多点贝塞尔曲线
+            ren.set_color(_rgb(255, 100, 255, 255))
+            var bezier_multi = [500, 650, 550, 550, 650, 550, 700, 650, 750, 550]
+            ren.bezier(bezier_multi, 80)
+            
+            // 更新动画角度
+            angle = angle + 2.0
+            if angle > 360.0 {
+                angle = 0.0
+            }
+            
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() {
+                win.set_should_close(true)
+            }
+        }
+    )
+    
+    win.close()
+}

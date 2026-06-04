@@ -211,6 +211,16 @@ void   leno_gui_platform_render_draw_rounded_rect(LenoGUIPlatformRenderer* ren, 
 void   leno_gui_platform_render_fill_rounded_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius);
 void   leno_gui_platform_get_renderer_size(LenoGUIPlatformRenderer* ren, int* w, int* h);
 
+/* ===== 几何图形扩展（椭圆、三角形、多边形、圆弧） ===== */
+void   leno_gui_platform_render_draw_ellipse(LenoGUIPlatformRenderer* ren, int cx, int cy, int rx, int ry);
+void   leno_gui_platform_render_fill_ellipse(LenoGUIPlatformRenderer* ren, int cx, int cy, int rx, int ry);
+void   leno_gui_platform_render_draw_arc(LenoGUIPlatformRenderer* ren, int cx, int cy, int r, double start_angle, double end_angle);
+void   leno_gui_platform_render_draw_triangle(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2, int x3, int y3);
+void   leno_gui_platform_render_fill_triangle(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2, int x3, int y3);
+void   leno_gui_platform_render_draw_polygon(LenoGUIPlatformRenderer* ren, const int* points, int num_points);
+void   leno_gui_platform_render_fill_polygon(LenoGUIPlatformRenderer* ren, const int* points, int num_points);
+void   leno_gui_platform_render_draw_bezier(LenoGUIPlatformRenderer* ren, const int* points, int num_points, int steps);
+
 /* ===== 视口和裁剪（参考 SDL_SetRenderViewport / SDL_SetRenderClipRect） ===== */
 void   leno_gui_platform_set_viewport(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h);
 void   leno_gui_platform_get_viewport(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h);

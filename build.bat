@@ -111,7 +111,7 @@ if %ERRORLEVEL% neq 0 (
 
 echo Building test runner...
 if not exist build mkdir build
-gcc -o build\test_runner.exe test\test_runner.c -std=c99 -O2
+gcc -o build\test_runner.exe assert\test_runner.c -std=c99 -O2
 
 if %ERRORLEVEL% neq 0 (
     echo Test runner build failed
@@ -121,4 +121,4 @@ if %ERRORLEVEL% neq 0 (
 echo Build successful
 echo.
 echo Usage: build\leno.exe ^<file.leno^>
-echo Tests:  build\test_runner.exe build\leno.exe test
+echo Tests:  build\test_runner.exe build\leno.exe assert

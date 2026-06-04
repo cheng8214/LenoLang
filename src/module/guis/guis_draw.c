@@ -324,6 +324,144 @@ static Value gui_disable_clip_rect_func(int argc, Value* args) {
 }
 
 /* ============================================================================
+ * 几何图形扩展（椭圆、三角形、多边形、圆弧）
+ * ============================================================================ */
+
+/* ren.ellipse(cx, cy, rx, ry) */
+static Value gui_render_draw_ellipse_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int cx = val_as_int(args[1]);
+    int cy = val_as_int(args[2]);
+    int rx = val_as_int(args[3]);
+    int ry = val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_ellipse(ren->platform, cx, cy, rx, ry);
+    return val_null();
+}
+
+/* ren.fill_ellipse(cx, cy, rx, ry) */
+static Value gui_render_fill_ellipse_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int cx = val_as_int(args[1]);
+    int cy = val_as_int(args[2]);
+    int rx = val_as_int(args[3]);
+    int ry = val_as_int(args[4]);
+    if (ren && ren->platform) leno_gui_platform_render_fill_ellipse(ren->platform, cx, cy, rx, ry);
+    return val_null();
+}
+
+/* ren.arc(cx, cy, r, start_angle, end_angle) */
+static Value gui_render_draw_arc_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int cx = val_as_int(args[1]);
+    int cy = val_as_int(args[2]);
+    int r = val_as_int(args[3]);
+    double start_angle = val_as_double(args[4]);
+    double end_angle = val_as_double(args[5]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_arc(ren->platform, cx, cy, r, start_angle, end_angle);
+    return val_null();
+}
+
+/* ren.triangle(x1, y1, x2, y2, x3, y3) */
+static Value gui_render_draw_triangle_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x1 = val_as_int(args[1]);
+    int y1 = val_as_int(args[2]);
+    int x2 = val_as_int(args[3]);
+    int y2 = val_as_int(args[4]);
+    int x3 = val_as_int(args[5]);
+    int y3 = val_as_int(args[6]);
+    if (ren && ren->platform) leno_gui_platform_render_draw_triangle(ren->platform, x1, y1, x2, y2, x3, y3);
+    return val_null();
+}
+
+/* ren.fill_triangle(x1, y1, x2, y2, x3, y3) */
+static Value gui_render_fill_triangle_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    int x1 = val_as_int(args[1]);
+    int y1 = val_as_int(args[2]);
+    int x2 = val_as_int(args[3]);
+    int y2 = val_as_int(args[4]);
+    int x3 = val_as_int(args[5]);
+    int y3 = val_as_int(args[6]);
+    if (ren && ren->platform) leno_gui_platform_render_fill_triangle(ren->platform, x1, y1, x2, y2, x3, y3);
+    return val_null();
+}
+
+/* ren.polygon(points_array) - points_array = [x1, y1, x2, y2, ...] */
+static Value gui_render_draw_polygon_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (!ren || !ren->platform) return val_null();
+    
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_ARRAY) {
+        return val_null();
+    }
+    ObjArray* arr = (ObjArray*)val_as_obj(args[1]);
+    int num_points = arr->count / 2;
+    if (num_points < 3) return val_null();
+    
+    int points[32];  /* 最多支持16个点 (32个坐标) */
+    int max_points = num_points > 16 ? 16 : num_points;
+    for (int i = 0; i < max_points * 2 && i < arr->count; i++) {
+        points[i] = val_as_int(arr->elements[i]);
+    }
+    leno_gui_platform_render_draw_polygon(ren->platform, points, max_points);
+    return val_null();
+}
+
+/* ren.fill_polygon(points_array) */
+static Value gui_render_fill_polygon_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (!ren || !ren->platform) return val_null();
+    
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_ARRAY) {
+        return val_null();
+    }
+    ObjArray* arr = (ObjArray*)val_as_obj(args[1]);
+    int num_points = arr->count / 2;
+    if (num_points < 3) return val_null();
+    
+    int points[32];
+    int max_points = num_points > 16 ? 16 : num_points;
+    for (int i = 0; i < max_points * 2 && i < arr->count; i++) {
+        points[i] = val_as_int(arr->elements[i]);
+    }
+    leno_gui_platform_render_fill_polygon(ren->platform, points, max_points);
+    return val_null();
+}
+
+/* ren.bezier(points_array, steps) */
+static Value gui_render_draw_bezier_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIRenderer* ren = as_renderer(args[0]);
+    if (!ren || !ren->platform) return val_null();
+    
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_ARRAY) {
+        return val_null();
+    }
+    ObjArray* arr = (ObjArray*)val_as_obj(args[1]);
+    int num_points = arr->count / 2;
+    if (num_points < 3) return val_null();
+    
+    int steps = val_as_int(args[2]);
+    if (steps < 10) steps = 10;
+    
+    int points[32];
+    int max_points = num_points > 16 ? 16 : num_points;
+    for (int i = 0; i < max_points * 2 && i < arr->count; i++) {
+        points[i] = val_as_int(arr->elements[i]);
+    }
+    leno_gui_platform_render_draw_bezier(ren->platform, points, max_points, steps);
+    return val_null();
+}
+
+/* ============================================================================
  * 注册 Draw 实例方法
  * ============================================================================ */
 
@@ -379,4 +517,23 @@ void guis_init_instance_methods(void) {
 
     TypeKind font_str[] = {TYPE_ANY, TYPE_STRING};
     draw_register_method_with_params("text_size", make_native(gui_text_size_func, 2, "text_size"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, font_str);
+    
+    /* 几何图形扩展 */
+    TypeKind int_4_ellipse[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    draw_register_method_with_params("ellipse", make_native(gui_render_draw_ellipse_func, 5, "ellipse"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_ellipse);
+    draw_register_method_with_params("fill_ellipse", make_native(gui_render_fill_ellipse_func, 5, "fill_ellipse"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_ellipse);
+    
+    TypeKind int_3_float2[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_FLOAT, TYPE_FLOAT};
+    draw_register_method_with_params("arc", make_native(gui_render_draw_arc_func, 6, "arc"), 5, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_3_float2);
+    
+    TypeKind int_6_triangle[] = {TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    draw_register_method_with_params("triangle", make_native(gui_render_draw_triangle_func, 7, "triangle"), 6, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_6_triangle);
+    draw_register_method_with_params("fill_triangle", make_native(gui_render_fill_triangle_func, 7, "fill_triangle"), 6, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_6_triangle);
+    
+    TypeKind arr_1[] = {TYPE_ARRAY};
+    draw_register_method_with_params("polygon", make_native(gui_render_draw_polygon_func, 2, "polygon"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, arr_1);
+    draw_register_method_with_params("fill_polygon", make_native(gui_render_fill_polygon_func, 2, "fill_polygon"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, arr_1);
+    
+    TypeKind arr_int[] = {TYPE_ARRAY, TYPE_INT};
+    draw_register_method_with_params("bezier", make_native(gui_render_draw_bezier_func, 3, "bezier"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, arr_int);
 }

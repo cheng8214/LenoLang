@@ -280,6 +280,203 @@ void leno_gui_platform_render_fill_rounded_rect(LenoGUIPlatformRenderer* ren, in
     }
 }
 
+/* ===== 几何图形扩展（椭圆、三角形、多边形、圆弧） ===== */
+
+void leno_gui_platform_render_draw_ellipse(LenoGUIPlatformRenderer* ren, int cx, int cy, int rx, int ry) {
+    if (!ren || !ren->pixels || rx <= 0 || ry <= 0) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    int rx2 = rx * rx;
+    int ry2 = ry * ry;
+    int x = 0, y = ry;
+    int d = ry2 - rx2 * ry + rx2 / 4;
+    while (ry2 * x <= rx2 * y) {
+        sw_draw_point(ren, cx + x, cy + y, color);
+        sw_draw_point(ren, cx - x, cy + y, color);
+        sw_draw_point(ren, cx + x, cy - y, color);
+        sw_draw_point(ren, cx - x, cy - y, color);
+        x++;
+        if (d < 0) {
+            d += 2 * ry2 * x + ry2;
+        } else {
+            y--;
+            d += 2 * ry2 * x - 2 * rx2 * y + ry2;
+        }
+    }
+    d = ry2 * (x + 0.5) * (x + 0.5) + rx2 * (y - 1) * (y - 1) - rx2 * ry2;
+    while (y >= 0) {
+        sw_draw_point(ren, cx + x, cy + y, color);
+        sw_draw_point(ren, cx - x, cy + y, color);
+        sw_draw_point(ren, cx + x, cy - y, color);
+        sw_draw_point(ren, cx - x, cy - y, color);
+        y--;
+        if (d > 0) {
+            d -= 2 * rx2 * y + rx2;
+        } else {
+            x++;
+            d += 2 * ry2 * x - 2 * rx2 * y + rx2;
+        }
+    }
+}
+
+void leno_gui_platform_render_fill_ellipse(LenoGUIPlatformRenderer* ren, int cx, int cy, int rx, int ry) {
+    if (!ren || !ren->pixels || rx <= 0 || ry <= 0) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    for (int y = -ry; y <= ry; y++) {
+        int x = (int)(rx * sqrt(1.0 - (double)(y * y) / (ry * ry)));
+        sw_draw_line(ren, cx - x, cy + y, cx + x, cy + y, color);
+    }
+}
+
+void leno_gui_platform_render_draw_arc(LenoGUIPlatformRenderer* ren, int cx, int cy, int r, double start_angle, double end_angle) {
+    if (!ren || !ren->pixels || r <= 0) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    const double PI = 3.14159265358979323846;
+    double start = start_angle * PI / 180.0;
+    double end = end_angle * PI / 180.0;
+    if (end < start) end += 2 * PI;
+    int steps = (int)(r * (end - start));
+    if (steps < 10) steps = 10;
+    double prev_x = cx + r * cos(start);
+    double prev_y = cy + r * sin(start);
+    for (int i = 1; i <= steps; i++) {
+        double t = start + (end - start) * i / steps;
+        double x = cx + r * cos(t);
+        double y = cy + r * sin(t);
+        sw_draw_line(ren, (int)prev_x, (int)prev_y, (int)x, (int)y, color);
+        prev_x = x;
+        prev_y = y;
+    }
+}
+
+void leno_gui_platform_render_draw_triangle(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2, int x3, int y3) {
+    if (!ren || !ren->pixels) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    sw_draw_line(ren, x1, y1, x2, y2, color);
+    sw_draw_line(ren, x2, y2, x3, y3, color);
+    sw_draw_line(ren, x3, y3, x1, y1, color);
+}
+
+static void sw_fill_flat_bottom_triangle(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2, int x3, int y3, uint32_t color) {
+    float slope1 = (float)(x2 - x1) / (y2 - y1);
+    float slope2 = (float)(x3 - x1) / (y3 - y1);
+    float x_start = x1;
+    float x_end = x1;
+    for (int y = y1; y <= y2; y++) {
+        sw_draw_line(ren, (int)x_start, y, (int)x_end, y, color);
+        x_start += slope1;
+        x_end += slope2;
+    }
+}
+
+static void sw_fill_flat_top_triangle(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2, int x3, int y3, uint32_t color) {
+    float slope1 = (float)(x1 - x3) / (y1 - y3);
+    float slope2 = (float)(x2 - x3) / (y2 - y3);
+    float x_start = x3;
+    float x_end = x3;
+    for (int y = y3; y >= y1; y--) {
+        sw_draw_line(ren, (int)x_start, y, (int)x_end, y, color);
+        x_start -= slope1;
+        x_end -= slope2;
+    }
+}
+
+void leno_gui_platform_render_fill_triangle(LenoGUIPlatformRenderer* ren, int x1, int y1, int x2, int y2, int x3, int y3) {
+    if (!ren || !ren->pixels) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    /* 按 y 坐标排序 */
+    if (y1 > y2) { int t = x1; x1 = x2; x2 = t; t = y1; y1 = y2; y2 = t; }
+    if (y1 > y3) { int t = x1; x1 = x3; x3 = t; t = y1; y1 = y3; y3 = t; }
+    if (y2 > y3) { int t = x2; x2 = x3; x3 = t; t = y2; y2 = y3; y3 = t; }
+    if (y2 == y3) {
+        sw_fill_flat_bottom_triangle(ren, x1, y1, x2, y2, x3, y3, color);
+    } else if (y1 == y2) {
+        sw_fill_flat_top_triangle(ren, x1, y1, x2, y2, x3, y3, color);
+    } else {
+        int x4 = x1 + (int)((float)(y2 - y1) / (y3 - y1) * (x3 - x1));
+        sw_fill_flat_bottom_triangle(ren, x1, y1, x2, y2, x4, y2, color);
+        sw_fill_flat_top_triangle(ren, x2, y2, x4, y2, x3, y3, color);
+    }
+}
+
+void leno_gui_platform_render_draw_polygon(LenoGUIPlatformRenderer* ren, const int* points, int num_points) {
+    if (!ren || !ren->pixels || num_points < 3) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    for (int i = 0; i < num_points; i++) {
+        int x1 = points[i * 2];
+        int y1 = points[i * 2 + 1];
+        int x2 = points[((i + 1) % num_points) * 2];
+        int y2 = points[((i + 1) % num_points) * 2 + 1];
+        sw_draw_line(ren, x1, y1, x2, y2, color);
+    }
+}
+
+void leno_gui_platform_render_fill_polygon(LenoGUIPlatformRenderer* ren, const int* points, int num_points) {
+    if (!ren || !ren->pixels || num_points < 3) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    /* 扫描线填充算法 */
+    int min_y = points[1], max_y = points[1];
+    for (int i = 1; i < num_points; i++) {
+        if (points[i * 2 + 1] < min_y) min_y = points[i * 2 + 1];
+        if (points[i * 2 + 1] > max_y) max_y = points[i * 2 + 1];
+    }
+    for (int y = min_y; y <= max_y; y++) {
+        int intersections[64];
+        int count = 0;
+        for (int i = 0; i < num_points && count < 64; i++) {
+            int x1 = points[i * 2], y1 = points[i * 2 + 1];
+            int x2 = points[((i + 1) % num_points) * 2], y2 = points[((i + 1) % num_points) * 2 + 1];
+            if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y)) {
+                float t = (float)(y - y1) / (y2 - y1);
+                intersections[count++] = (int)(x1 + t * (x2 - x1));
+            }
+        }
+        /* 冒泡排序交点 */
+        for (int i = 0; i < count - 1; i++) {
+            for (int j = 0; j < count - i - 1; j++) {
+                if (intersections[j] > intersections[j + 1]) {
+                    int t = intersections[j];
+                    intersections[j] = intersections[j + 1];
+                    intersections[j + 1] = t;
+                }
+            }
+        }
+        for (int i = 0; i < count - 1; i += 2) {
+            sw_draw_line(ren, intersections[i], y, intersections[i + 1], y, color);
+        }
+    }
+}
+
+void leno_gui_platform_render_draw_bezier(LenoGUIPlatformRenderer* ren, const int* points, int num_points, int steps) {
+    if (!ren || !ren->pixels || num_points < 3 || steps < 2) return;
+    uint32_t color = LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a);
+    if (steps < 10) steps = 10;
+    double prev_x = points[0];
+    double prev_y = points[1];
+    for (int i = 1; i <= steps; i++) {
+        double t = (double)i / steps;
+        double x = 0, y = 0;
+        /* De Casteljau 算法计算贝塞尔曲线点 */
+        double temp[16][2];
+        int n = num_points;
+        if (n > 16) n = 16;
+        for (int j = 0; j < n; j++) {
+            temp[j][0] = points[j * 2];
+            temp[j][1] = points[j * 2 + 1];
+        }
+        for (int r = 1; r < n; r++) {
+            for (int j = 0; j < n - r; j++) {
+                temp[j][0] = (1 - t) * temp[j][0] + t * temp[j + 1][0];
+                temp[j][1] = (1 - t) * temp[j][1] + t * temp[j + 1][1];
+            }
+        }
+        x = temp[0][0];
+        y = temp[0][1];
+        sw_draw_line(ren, (int)prev_x, (int)prev_y, (int)x, (int)y, color);
+        prev_x = x;
+        prev_y = y;
+    }
+}
+
 /* ===== 视口和裁剪（参考 SDL3） ===== */
 
 void leno_gui_platform_set_viewport(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h) {
