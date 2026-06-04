@@ -303,57 +303,91 @@ if wid == main_window_id {
 
 ---
 
-## 常用按键码
+## 按键常量（推荐）
 
-### 功能键
+guis 模块提供了一系列按键常量，使用常量比直接使用数字更清晰：
 
-| 按键 | 码值 | 常量名 |
-|------|------|--------|
-| Escape | 0x1B | VK_ESCAPE |
-| Return/Enter | 0x0D | VK_RETURN |
-| Space | 0x20 | VK_SPACE |
-| Backspace | 0x08 | VK_BACK |
-| Tab | 0x09 | VK_TAB |
-| Delete | 0x7F | VK_DELETE |
-| Insert | 0x2D | VK_INSERT |
-| Home | 0x24 | VK_HOME |
-| End | 0x23 | VK_END |
-| Page Up | 0x21 | VK_PRIOR |
-| Page Down | 0x22 | VK_NEXT |
+```leno
+if e.is_key_down() and e.key() == guis.KEY_SPACE {
+    jump()
+}
 
-### 方向键
+if e.is_key_down() and e.key() == guis.KEY_ESCAPE {
+    win.set_should_close(true)
+}
+```
 
-| 按键 | 码值 |
+### 功能键常量
+
+| 常量 | 说明 |
 |------|------|
-| Left | 0x25 |
-| Up | 0x26 |
-| Right | 0x27 |
-| Down | 0x28 |
+| `guis.KEY_UNKNOWN` | 未知按键 |
+| `guis.KEY_RETURN` | 回车键 |
+| `guis.KEY_ESCAPE` | ESC键 |
+| `guis.KEY_BACKSPACE` | 退格键 |
+| `guis.KEY_TAB` | Tab键 |
+| `guis.KEY_SPACE` | 空格键 |
+| `guis.KEY_DELETE` | Delete键 |
+| `guis.KEY_INSERT` | Insert键 |
+| `guis.KEY_HOME` | Home键 |
+| `guis.KEY_END` | End键 |
+| `guis.KEY_PAGEUP` | Page Up |
+| `guis.KEY_PAGEDOWN` | Page Down |
 
-### 功能键 F1-F12
+### 方向键常量
 
-| 按键 | 码值 |
+| 常量 | 说明 |
 |------|------|
-| F1 | 0x70 |
-| F2 | 0x71 |
-| ... | ... |
-| F12 | 0x7B |
+| `guis.KEY_LEFT` | 左方向键 |
+| `guis.KEY_RIGHT` | 右方向键 |
+| `guis.KEY_UP` | 上方向键 |
+| `guis.KEY_DOWN` | 下方向键 |
 
-### 字母和数字
+### 功能键常量 F1-F12
 
-| 按键 | 码值 |
+| 常量 | 说明 |
 |------|------|
-| A-Z | 65-90 (0x41-0x5A) |
-| 0-9 | 48-57 (0x30-0x39) |
+| `guis.KEY_F1` ~ `guis.KEY_F12` | F1 到 F12 |
 
-### 修饰键
+### 修饰键常量
 
-| 按键 | 码值 |
+| 常量 | 说明 |
 |------|------|
-| Shift | 0x10 |
-| Ctrl | 0x11 |
-| Alt | 0x12 |
-| Caps Lock | 0x14 |
+| `guis.KEY_LSHIFT` | 左Shift |
+| `guis.KEY_RSHIFT` | 右Shift |
+| `guis.KEY_LCTRL` | 左Ctrl |
+| `guis.KEY_RCTRL` | 右Ctrl |
+| `guis.KEY_LALT` | 左Alt |
+| `guis.KEY_RALT` | 右Alt |
+| `guis.KEY_CAPSLOCK` | Caps Lock |
+| `guis.KEY_NUMLOCK` | Num Lock |
+
+### 鼠标按钮常量
+
+| 常量 | 说明 |
+|------|------|
+| `guis.MOUSE_LEFT` | 左键 (1) |
+| `guis.MOUSE_MIDDLE` | 中键 (2) |
+| `guis.MOUSE_RIGHT` | 右键 (3) |
+
+---
+
+## 事件类型常量
+
+用于 `e.type()` 比较：
+
+| 常量 | 说明 |
+|------|------|
+| `guis.EVT_QUIT` | 程序退出 |
+| `guis.EVT_WINDOW_CLOSE` | 窗口关闭 |
+| `guis.EVT_WINDOW_RESIZE` | 窗口大小改变 |
+| `guis.EVT_WINDOW_MOVE` | 窗口移动 |
+| `guis.EVT_KEY_DOWN` | 按键按下 |
+| `guis.EVT_KEY_UP` | 按键释放 |
+| `guis.EVT_MOUSE_DOWN` | 鼠标按下 |
+| `guis.EVT_MOUSE_UP` | 鼠标释放 |
+| `guis.EVT_MOUSE_MOVE` | 鼠标移动 |
+| `guis.EVT_MOUSE_WHEEL` | 鼠标滚轮 |
 
 ---
 
@@ -361,14 +395,26 @@ if wid == main_window_id {
 
 `e.mod()` 返回的位掩码：
 
-| 标志 | 值 | 说明 |
+| 常量 | 值 | 说明 |
 |------|-----|------|
-| 0x01 | 1 | Ctrl 按下 |
-| 0x02 | 2 | Shift 按下 |
-| 0x04 | 4 | Alt 按下 |
-| 0x08 | 8 | Win/Cmd 按下 |
-| 0x10 | 16 | Num Lock 开启 |
-| 0x20 | 32 | Caps Lock 开启 |
+| `guis.MOD_CTRL` | 1 | Ctrl 按下 |
+| `guis.MOD_SHIFT` | 2 | Shift 按下 |
+| `guis.MOD_ALT` | 4 | Alt 按下 |
+| `guis.MOD_SUPER` | 8 | Win/Cmd 按下 |
+
+```leno
+if e.is_key_down() {
+    var mod = e.mod()
+    if e.key() == guis.KEY_Z {
+        if mod & guis.MOD_CTRL {
+            undo()  // Ctrl+Z
+        }
+        if mod & guis.MOD_SHIFT {
+            redo()  // Shift+Z (或 Ctrl+Shift+Z)
+        }
+    }
+}
+```
 
 ---
 
