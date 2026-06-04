@@ -191,6 +191,8 @@ Value call_leno_closure(Value callee, int arg_count, Value* args) {
 Value event_to_dict(LenoGUIEvent* ev) {
     init_event_string_keys();  // 确保静态字符串键已初始化
     ObjDict* d = dict_new(16);
+    Value d_val = val_obj((Object*)d);
+    gc_push_root(&d_val);  // 保护字典，防止 gc_alloc 时被回收
     ObjGUIEvent* event_obj = (ObjGUIEvent*)gc_alloc(sizeof(ObjGUIEvent), OBJ_GUI_EVENT);
     event_obj->data = d;
     dict_add_int_key(d, str_key_type, ev->type);
@@ -230,6 +232,7 @@ Value event_to_dict(LenoGUIEvent* ev) {
         dict_add_string_key(d, str_key_text, ev->drop_file);
     }
 
+    gc_pop_root();  // d_val
     return val_obj((Object*)event_obj);
 }
 
@@ -1023,7 +1026,7 @@ Value win_run_func(int argc, Value* args) {
 
         if (!leno_gui_platform_iterate_main_callbacks()) break;
 
-        /* 每 60 帧触发一次 GC，防止事件循环中内存泄漏 */
+        /* 每 60 帧触发 GC */
         frame_count++;
         if (frame_count >= 60) {
             frame_count = 0;

@@ -323,7 +323,12 @@ OPCODE(OP_GET_FIELD) {
         }
     }
     else {
-        runtime_error("尝试在非 struct/cstruct 类型上获取字段", GET_CURRENT_LINE());
+        Object* actual_obj = val_as_obj(obj_val);
+        ObjType actual_type = actual_obj->type;
+        char dbg[256];
+        snprintf(dbg, sizeof(dbg), "尝试在非 struct/cstruct 类型上获取字段 (类型=%d, line=%d, val_bits=0x%llx)",
+            actual_type, GET_CURRENT_LINE(), (unsigned long long)obj_val);
+        runtime_error(dbg, GET_CURRENT_LINE());
         return -1;
     }
     

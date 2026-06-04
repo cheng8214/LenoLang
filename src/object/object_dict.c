@@ -268,6 +268,13 @@ use_hash:
     }
 }
 
+// 验证返回的对象是否为野指针（type 字段不在有效范围内）
+static inline int is_valid_obj_value(Value v) {
+    if (!val_is_obj(v)) return 1;
+    Object* obj = val_as_obj(v);
+    return obj->type >= OBJ_STRING && obj->type < OBJ_NONE;
+}
+
 Value dict_get(ObjDict* dict, ObjString* key) {
     if (!dict || !key) return val_null();
     
@@ -276,6 +283,7 @@ Value dict_get(ObjDict* dict, ObjString* key) {
     if (array_index >= 0 && array_index < dict->asize) {
         Value value = dict->array[array_index];
         if (!val_is_null(value)) {
+            if (!is_valid_obj_value(value)) return val_null();
             return value;
         }
         // 如果是 null，可能实际存的是 null，也可能在哈希表中
@@ -286,7 +294,9 @@ Value dict_get(ObjDict* dict, ObjString* key) {
     if (dict->capacity == 0) return val_null();
     int index = dict_find_entry(dict, key);
     if (index >= 0) {
-        return dict->entries[index].value;
+        Value value = dict->entries[index].value;
+        if (!is_valid_obj_value(value)) return val_null();
+        return value;
     }
     return val_null();
 }
@@ -307,6 +317,21 @@ int dict_has(ObjDict* dict, ObjString* key) {
     return dict_find_entry(dict, key) >= 0;
 }
 
+// 从 order 数组移除指定 key（用字符串内容比较，避免指针比较被 GC 野指针坑）
+static void dict_remove_from_order(ObjDict* dict, ObjString* key) {
+    for (int i = 0; i < dict->order_count; i++) {
+        ObjString* entry = dict->order[i];
+        if (entry != NULL && entry->len == key->len &&
+            entry->hash == key->hash &&
+            memcmp(entry->chars, key->chars, key->len) == 0) {
+            // swap-remove: 用最后一个元素替换当前位置
+            dict->order[i] = dict->order[dict->order_count - 1];
+            dict->order_count--;
+            return;
+        }
+    }
+}
+
 void dict_delete(ObjDict* dict, ObjString* key) {
     if (!dict || !key) return;
     
@@ -316,6 +341,7 @@ void dict_delete(ObjDict* dict, ObjString* key) {
         if (!val_is_null(dict->array[array_index])) {
             dict->array[array_index] = val_null();
             dict->acount--;
+            dict_remove_from_order(dict, key);
             return;
         }
     }
@@ -334,6 +360,7 @@ void dict_delete(ObjDict* dict, ObjString* key) {
         dict->entries[index].value = val_null();
         dict->count--;
         dict->tombstone_count++;
+        dict_remove_from_order(dict, key);
     }
 }
 

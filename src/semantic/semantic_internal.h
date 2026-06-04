@@ -61,6 +61,9 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
                        TypeInfo* type1, TypeInfo* type2,
                        const char* str1, const char* str2);
 
+// 获取类型转换建议
+const char* get_type_conversion_hint(TypeKind expected, TypeKind actual);
+
 // 生成详细的类型错误信息（包含转换建议）
 void format_detailed_type_error(char* buf, size_t buf_size,
                                 TypeInfo* expected, TypeInfo* actual,

@@ -1240,8 +1240,14 @@ void visit(Semantic* s, Ast* ast) {
                                                         char exp_buf[BUFFER_SMALL];
                                                         strncpy(exp_buf, exp_str, sizeof(exp_buf) - 1);
                                                         exp_buf[sizeof(exp_buf) - 1] = '\0';
-                                                        snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                                 i + 1, exp_buf, type_to_string(arg_type));
+                                                        const char* hint = get_type_conversion_hint(expected_type_for_check->kind, arg_type->kind);
+                                                        if (hint) {
+                                                            snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                                     i + 1, exp_buf, type_to_string(arg_type), hint);
+                                                        } else {
+                                                            snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
+                                                                     i + 1, exp_buf, type_to_string(arg_type));
+                                                        }
                                                         error_add(ERR_SEMANTIC, ast->line, msg);
                                                     }
                                                 } else if (expected_param_type != TYPE_ANY) {
@@ -1265,8 +1271,14 @@ void visit(Semantic* s, Ast* ast) {
                                                         }
                                                         if (!type_compatible) {
                                                             char msg[BUFFER_MEDIUM];
-                                                            snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                                     i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                            const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
+                                                            if (hint) {
+                                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                                         i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type), hint);
+                                                            } else {
+                                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
+                                                                         i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                            }
                                                             error_add(ERR_SEMANTIC, ast->line, msg);
                                                         }
                                                     }
@@ -1374,8 +1386,14 @@ void visit(Semantic* s, Ast* ast) {
                                             }
                                             if (!type_compatible) {
                                                 char msg[BUFFER_MEDIUM];
-                                                snprintf(msg, sizeof(msg), "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但传入 '%s'",
-                                                         func_name, j + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
+                                                if (hint) {
+                                                    snprintf(msg, sizeof(msg), "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                             func_name, j + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type), hint);
+                                                } else {
+                                                    snprintf(msg, sizeof(msg), "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但传入 '%s'",
+                                                             func_name, j + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                }
                                                 error_add(ERR_SEMANTIC, ast->line, msg);
                                             }
                                         }
@@ -2132,9 +2150,16 @@ void visit(Semantic* s, Ast* ast) {
                         }
                         if (!type_compatible) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
-                                     actual_module, ast->u.module_call.method_name, i + 1,
-                                     type_kind_to_string(expected_type), type_to_string(arg_type));
+                            const char* hint = get_type_conversion_hint(expected_type, arg_type->kind);
+                            if (hint) {
+                                snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'\n%s",
+                                         actual_module, ast->u.module_call.method_name, i + 1,
+                                         type_kind_to_string(expected_type), type_to_string(arg_type), hint);
+                            } else {
+                                snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
+                                         actual_module, ast->u.module_call.method_name, i + 1,
+                                         type_kind_to_string(expected_type), type_to_string(arg_type));
+                            }
                             error_add(ERR_SEMANTIC, ast->line, msg);
                         }
                     }
@@ -2514,8 +2539,14 @@ void visit(Semantic* s, Ast* ast) {
                                             char exp_buf[BUFFER_SMALL];
                                             strncpy(exp_buf, exp_str, sizeof(exp_buf) - 1);
                                             exp_buf[sizeof(exp_buf) - 1] = '\0';
-                                            snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                     i + 1, exp_buf, type_to_string(arg_type));
+                                            const char* hint = get_type_conversion_hint(expected_type_for_check->kind, arg_type->kind);
+                                            if (hint) {
+                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                         i + 1, exp_buf, type_to_string(arg_type), hint);
+                                            } else {
+                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
+                                                         i + 1, exp_buf, type_to_string(arg_type));
+                                            }
                                             error_add(ERR_SEMANTIC, ast->line, msg);
                                         }
                                     } else if (expected_param_type != TYPE_ANY) {
@@ -2539,8 +2570,14 @@ void visit(Semantic* s, Ast* ast) {
                                             }
                                             if (!type_compatible) {
                                                 char msg[BUFFER_MEDIUM];
-                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                         i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
+                                                if (hint) {
+                                                    snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                             i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type), hint);
+                                                } else {
+                                                    snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
+                                                             i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                }
                                                 error_add(ERR_SEMANTIC, ast->line, msg);
                                             }
                                         }

@@ -27,6 +27,7 @@
 #include "include/native.h"
 #include "include/leno_vm.h"
 #include <stdlib.h>
+#include <stdio.h>
 
 /* 前向声明：Event 对象结构体（定义在 guis.c） */
 typedef struct {
@@ -35,6 +36,8 @@ typedef struct {
 } ObjGUIEvent;
 #include <string.h>
 #include <stdint.h>
+
+
 
 // GC 全局实例（线程局部存储）
 THREAD_LOCAL GC gc = {0};
@@ -309,7 +312,7 @@ void gc_mark_object(Object* obj) {
             }
             break;
         }
-        // 字典：标记数组部分和哈希表部分的键值
+        // 字典：标记数组部分、哈希表部分和插入顺序数组中的键值
         case OBJ_DICT: {
             ObjDict* dict = (ObjDict*)obj;
             for (int i = 0; i < dict->asize; i++) {
@@ -320,6 +323,11 @@ void gc_mark_object(Object* obj) {
                 if (key != NULL && key != tombstone) {
                     gc_mark_object((Object*)key);
                     gc_mark_value(dict->entries[i].value);
+                }
+            }
+            for (int i = 0; i < dict->order_count; i++) {
+                if (dict->order[i] != NULL) {
+                    gc_mark_object((Object*)dict->order[i]);
                 }
             }
             break;
@@ -1098,7 +1106,6 @@ static void sweep_young(void) {
     while (*obj) {
         // 安全检查：验证对象类型是否有效
         if (!is_valid_obj_type((*obj)->type)) {
-            // 无效的对象，从链表中移除
             Object* invalid = *obj;
             *obj = invalid->next;
             gc.young_allocated -= invalid->size;
@@ -1106,21 +1113,17 @@ static void sweep_young(void) {
             continue;
         }
         if (!(*obj)->marked) {
-            // 未标记 → 回收
             Object* unreached = *obj;
             *obj = unreached->next;
             gc.young_allocated -= unreached->size;
             free_object_resources(unreached);
             free(unreached);
         } else {
-            // 已标记 → 检查是否需要晋升
             (*obj)->survived++;
             if ((*obj)->survived >= gc.promote_age) {
-                // 晋升到老年代
                 Object* promote = *obj;
                 *obj = promote->next;
                 // Major GC 时 sweep_old 紧接着执行，晋升对象必须保持 marked=1
-                // 否则会被 sweep_old 当作未标记对象回收
                 promote->marked = (gc.mode == GC_MODE_FULL) ? 1 : 0;
                 promote->generation = GEN_OLD;
                 promote->survived = 0;
@@ -1130,7 +1133,6 @@ static void sweep_young(void) {
                 gc.young_allocated -= obj_size;
                 gc.old_allocated += obj_size;
             } else {
-                // 继续留在年轻代，重置标记
                 (*obj)->marked = 0;
                 obj = &(*obj)->next;
             }
@@ -1142,9 +1144,7 @@ static void sweep_young(void) {
 static void sweep_old(void) {
     Object** obj = &gc.old_heap;
     while (*obj) {
-        // 安全检查：验证对象类型是否有效
         if (!is_valid_obj_type((*obj)->type)) {
-            // 无效的对象，从链表中移除
             Object* invalid = *obj;
             *obj = invalid->next;
             gc.old_allocated -= invalid->size;
@@ -1152,14 +1152,12 @@ static void sweep_old(void) {
             continue;
         }
         if (!(*obj)->marked) {
-            // 未标记 → 回收
             Object* unreached = *obj;
             *obj = unreached->next;
             gc.old_allocated -= unreached->size;
             free_object_resources(unreached);
             free(unreached);
         } else {
-            // 已标记 → 重置标记，下次 GC 重新标记
             (*obj)->marked = 0;
             obj = &(*obj)->next;
         }
@@ -1175,8 +1173,13 @@ static void rebuild_remembered_set(void) {
 // 确保老年代对象在 mark_roots 阶段能被重新扫描，
 // 否则老年代对象保持 marked=1 会导致 gc_mark_object 跳过它们，
 // 其引用的年轻代对象不会被标记，从而被误回收
-static void clear_old_marks(void) {
-    Object* obj = gc.old_heap;
+static void clear_all_marks(void) {
+    Object* obj = gc.young_heap;
+    while (obj) {
+        obj->marked = 0;
+        obj = obj->next;
+    }
+    obj = gc.old_heap;
     while (obj) {
         obj->marked = 0;
         obj = obj->next;
@@ -1190,13 +1193,13 @@ static void clear_old_marks(void) {
 // Minor GC：只收集年轻代
 // 流程：标记根集合 → 标记 remembered set → 清除年轻代 → 重建 remembered set
 void gc_minor_collect(void) {
-    if (gc.running) return;
+    if (gc.running || !gc.enabled) return;
 
     gc.running = 1;
     gc.mode = GC_MODE_MINOR;
     gc.minor_gc_count++;
 
-    clear_old_marks();
+    clear_all_marks();
     mark_roots();
     mark_remembered_set();
 
@@ -1218,11 +1221,12 @@ void gc_minor_collect(void) {
 // Major GC：收集全部（年轻代 + 老年代）
 // 流程：标记根集合 → 标记 remembered set → 清除年轻代 → 清除老年代 → 重建 remembered set
 void gc_major_collect(void) {
-    if (gc.running) return;
+    if (gc.running || !gc.enabled) return;
 
     gc.running = 1;
     gc.mode = GC_MODE_FULL;
 
+    clear_all_marks();
     mark_roots();
     mark_remembered_set();
 
@@ -1254,7 +1258,7 @@ void gc_major_collect(void) {
 
 // 自动选择 Minor 或 Major GC
 void gc_collect(void) {
-    if (gc.running) return;
+    if (gc.running || !gc.enabled) return;
 
     size_t total = gc.young_allocated + gc.old_allocated;
     if (total > gc.old_threshold) {

@@ -667,8 +667,8 @@ typedef struct {
 #define GC_MODE_FULL    0
 #define GC_MODE_MINOR   1
 
-#define GC_YOUNG_THRESHOLD   (1024 * 1024 * 8)   // 增加到8MB
-#define GC_OLD_THRESHOLD     (1024 * 1024 * 32)  // 增加到32MB
+#define GC_YOUNG_THRESHOLD   (1024 * 1024 * 8)   // 8MB
+#define GC_OLD_THRESHOLD     (1024 * 1024 * 32)  // 32MB
 #define GC_PROMOTE_AGE       2
 #define GC_REMEMBERED_INIT   256
 

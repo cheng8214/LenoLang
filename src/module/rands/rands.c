@@ -136,9 +136,14 @@ static Value rands_ints(int argc, Value* args) {
         // 确保 PCG32 已初始化
         init_pcg32();
         
-        // 需要 BigInt
-        ObjBigInt* min_big = bigint_from_int64(min_val);
-        ObjBigInt* range_big = bigint_from_int64(range);
+        // 需要 BigInt — 使用 gc_push_root 保护所有中间对象，
+        // 因为 bigint_from_int64/bigint_new/bigint_mod/bigint_add 内部都会调用 gc_alloc，
+        // 如果 malloc 失败会触发 gc_major_collect()，未 root 的对象会被回收。
+        Value min_big_val = val_obj((Object*)bigint_from_int64(min_val));
+        gc_push_root(&min_big_val);
+        
+        Value range_big_val = val_obj((Object*)bigint_from_int64(range));
+        gc_push_root(&range_big_val);
         
         // 生成 BigInt 随机数：min + random[0, range)
         // 简化：使用多次随机生成足够位数的 BigInt
@@ -155,6 +160,8 @@ static Value rands_ints(int argc, Value* args) {
         // 生成随机 limbs
         uint32_t* rand_limbs = (uint32_t*)malloc(limbs_needed * sizeof(uint32_t));
         if (!rand_limbs) {
+            gc_pop_root();
+            gc_pop_root();
             return val_int(0);
         }
         
@@ -162,14 +169,21 @@ static Value rands_ints(int argc, Value* args) {
             rand_limbs[i] = pcg32_random_r(&pcg32_global);
         }
         
-        ObjBigInt* rand_big = bigint_new(rand_limbs, limbs_needed, 0);
+        Value rand_big_val = val_obj((Object*)bigint_new(rand_limbs, limbs_needed, 0));
+        gc_push_root(&rand_big_val);
         free(rand_limbs);
         
         // rand_big % range_big
-        ObjBigInt* mod_result = val_as_bigint(bigint_mod(rand_big, range_big));
+        Value mod_result_val = bigint_mod(val_as_bigint(rand_big_val), val_as_bigint(range_big_val));
+        gc_push_root(&mod_result_val);
         
         // min + mod_result
-        Value result = bigint_add(min_big, mod_result);
+        Value result = bigint_add(val_as_bigint(min_big_val), val_as_bigint(mod_result_val));
+        
+        gc_pop_root(); // mod_result_val
+        gc_pop_root(); // rand_big_val
+        gc_pop_root(); // range_big_val
+        gc_pop_root(); // min_big_val
         
         return result;
     }

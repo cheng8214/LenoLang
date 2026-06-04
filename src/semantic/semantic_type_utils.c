@@ -306,7 +306,7 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
 
 // 获取类型转换建议
 // 根据期望类型和实际类型，返回转换建议字符串
-static const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
+const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
     // any 转具体类型
     if (actual == TYPE_ANY) {
         switch (expected) {

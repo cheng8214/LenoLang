@@ -1,9 +1,13 @@
-// 任意项目的 main.leno - 使用包
-import "my-pkg" as my
-
-main() {
-    my.hello()          // Hello from my-pkg!
-    var result = my.add(1, 2)
-    print(result)           // 3
-    print(my.VERSION)   // 0.1.0
-}
+ 
+ main()
+ {
+ var rng_seed =0
+ func rand_next():float 
+ {
+        rng_seed = (rng_seed * 1103515245 + 12345) & 0x7fffffff
+        return rng_seed / 2147483647.0
+ }
+ 
+ 
+ print(rand_next())
+ }
