@@ -1,0 +1,21 @@
+// 测试字符串插值
+
+main() {
+    var a = 10
+    var b = 20
+    
+    // 基本插值
+    var s1 = $"{a}"
+    assert_eq(s1, "10")
+    
+    // 表达式插值
+    var s2 = $"{a} + {b} = {a + b}"
+    assert_eq(s2, "10 + 20 = 30")
+    
+    // 字符串插值
+    var name = "Leno"
+    var s3 = $"Hello, {name}!"
+    assert_eq(s3, "Hello, Leno!")
+    
+    print("test_interpolation passed")
+}

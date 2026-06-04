@@ -1,0 +1,46 @@
+// 测试闭包
+
+main() {
+    // 基本闭包
+    var x = 10
+    func test1() {
+        assert(x == 10)
+    }
+    test1()
+    
+    // 嵌套函数 - 同名变量遮蔽
+    var a = 1
+    func outer() {
+        var a = 2
+        func inner() {
+            assert(a == 2)
+        }
+        inner()
+        assert(a == 2)
+    }
+    outer()
+    assert(a == 1)
+    
+    // 闭包捕获并修改外部变量
+    var count = 0
+    func increment() {
+        count = count + 1
+    }
+    increment()
+    increment()
+    increment()
+    assert(count == 3)
+    
+    // 函数返回函数（闭包工厂）
+    func make_adder(int n) {
+        return func(int x) {
+            return x + n
+        }
+    }
+    var add5 = make_adder(5)
+    var add10 = make_adder(10)
+    assert(add5(3) == 8)
+    assert(add10(3) == 13)
+    
+    print("test_closure passed")
+}

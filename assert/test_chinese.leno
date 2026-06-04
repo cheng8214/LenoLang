@@ -1,0 +1,25 @@
+// 测试中文标识符
+
+func 打招呼(var 名字) {
+    return "你好，" + 名字 + "！"
+}
+
+func 计算面积(var 长, var 宽) {
+    return 长 * 宽
+}
+
+main() {
+    var 姓名 = "世界"
+    var 长度 = 10
+    var 宽度 = 5
+    
+    assert_eq(打招呼(姓名), "你好，世界！")
+    assert_eq(计算面积(长度, 宽度), 50)
+    
+    // 测试中文变量赋值
+    var 计数器 = 0
+    计数器 = 计数器 + 1
+    assert_eq(计数器, 1)
+    
+    print("test_chinese passed")
+}
