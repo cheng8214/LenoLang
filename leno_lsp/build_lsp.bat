@@ -115,7 +115,7 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_init.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_resolve.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_install.c
 
-gcc -o build\leno_lsp.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32 -lgdi32 -luser32 -lcomdlg32
+gcc -o build\leno_lsp.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32 -lgdi32 -luser32 -lcomdlg32 -lwinmm
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed

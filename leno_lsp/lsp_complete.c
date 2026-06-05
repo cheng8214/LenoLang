@@ -1707,18 +1707,49 @@ static char* get_variable_type(const char* content, const char* var_name, const 
             result = strdup("number");
         } else if (strcmp(type_str, "string") == 0) {
             result = strdup("string");
-        } else if (strcmp(type_str, "array") == 0) {
+        } else if (strncmp(type_str, "Array", 5) == 0) {
             result = strdup("array");
-        } else if (strcmp(type_str, "dict") == 0) {
+        } else if (strncmp(type_str, "Dict", 4) == 0) {
             result = strdup("dict");
         } else if (strcmp(type_str, "bool") == 0) {
             result = strdup("bool");
         } else if (strcmp(type_str, "null") == 0) {
             result = strdup("null");
-        } else if (strcmp(type_str, "ptr") == 0) {
+        } else if (strncmp(type_str, "Ptr", 3) == 0) {
             result = strdup("ptr");
-        } else if (strcmp(type_str, "file") == 0) {
+        } else if (strcmp(type_str, "File") == 0) {
             result = strdup("file");
+        } else if (strcmp(type_str, "Win") == 0) {
+            result = strdup("win");
+        } else if (strcmp(type_str, "Draw") == 0) {
+            result = strdup("draw");
+        } else if (strcmp(type_str, "Event") == 0) {
+            result = strdup("event");
+        } else if (strcmp(type_str, "Image") == 0) {
+            result = strdup("image");
+        } else if (strcmp(type_str, "Font") == 0) {
+            result = strdup("font");
+        } else if (strncmp(type_str, "Style", 5) == 0) {
+            result = strdup("style");
+        } else if (strcmp(type_str, "Rgb") == 0) {
+            result = strdup("rgb");
+        } else if (strcmp(type_str, "thread") == 0) {
+            result = strdup("thread");
+        } else if (strcmp(type_str, "channel") == 0) {
+            result = strdup("channel");
+        } else {
+            // 尝试将类型名转为小写作为实例方法查找键
+            char lower[64];
+            int len = strlen(type_str);
+            if (len < 64) {
+                for (int i = 0; i <= len; i++) lower[i] = tolower((unsigned char)type_str[i]);
+                int test_count = 0;
+                char** test_methods = native_get_instance_methods(lower, &test_count);
+                if (test_methods && test_count > 0) {
+                    native_free_instance_method_list(test_methods, test_count);
+                    result = strdup(lower);
+                }
+            }
         }
         free(type_str);
         compiler_context_cleanup(&ctx);

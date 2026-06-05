@@ -125,33 +125,64 @@ bool compiler_get_symbol_info(CompilerContext* ctx, const char* name,
     return true;
 }
 
-// 获取所有符号
+// 递归收集作用域树中所有符号的辅助函数
+static void collect_scope_symbols(Scope* scope, char*** names, char*** types,
+                                   int* count, int* capacity) {
+    if (!scope) return;
+
+    // 收集当前作用域的符号
+    for (int i = 0; i < scope->sym_cnt; i++) {
+        Symbol* sym = scope->syms[i];
+        if (!sym || !sym->name) continue;
+
+        // 检查是否已存在同名符号（避免重复，优先保留外层作用域的）
+        bool duplicate = false;
+        for (int j = 0; j < *count; j++) {
+            if ((*names)[j] && strcmp((*names)[j], sym->name) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) continue;
+
+        // 扩容
+        if (*count >= *capacity) {
+            *capacity *= 2;
+            *names = (char**)realloc(*names, sizeof(char*) * (*capacity));
+            *types = (char**)realloc(*types, sizeof(char*) * (*capacity));
+        }
+
+        (*names)[*count] = strdup(sym->name);
+        (*types)[*count] = sym->type ? strdup(type_to_string(sym->type)) : strdup("unknown");
+        (*count)++;
+    }
+
+    // 递归遍历子作用域
+    for (int i = 0; i < scope->child_count; i++) {
+        collect_scope_symbols(scope->children[i], names, types, count, capacity);
+    }
+}
+
+// 获取所有符号（递归遍历所有子作用域，包括局部变量）
 int compiler_get_all_symbols(CompilerContext* ctx, char*** names_out, char*** types_out) {
     if (!ctx || !ctx->root_scope) return 0;
-    
-    Scope* scope = ctx->root_scope;
-    int count = scope->sym_cnt;
-    
-    if (count == 0) return 0;
-    
-    char** names = (char**)malloc(sizeof(char*) * count);
-    char** types = (char**)malloc(sizeof(char*) * count);
-    
+
+    int capacity = 64;
+    int count = 0;
+    char** names = (char**)malloc(sizeof(char*) * capacity);
+    char** types = (char**)malloc(sizeof(char*) * capacity);
+
     if (!names || !types) {
         free(names);
         free(types);
         return 0;
     }
-    
-    for (int i = 0; i < count; i++) {
-        Symbol* sym = scope->syms[i];
-        names[i] = strdup(sym->name);
-        types[i] = strdup(type_to_string(sym->type));
-    }
-    
+
+    collect_scope_symbols(ctx->root_scope, &names, &types, &count, &capacity);
+
     *names_out = names;
     *types_out = types;
-    
+
     return count;
 }
 
