@@ -12,6 +12,7 @@ typedef struct {
     int line;
     char filename[BUFFER_SMALL];  // 文件名
     char msg[BUFFER_MEDIUM];
+    int repeat_count;             // 重复次数（相同错误合并）
 } Error;
 
 typedef struct {

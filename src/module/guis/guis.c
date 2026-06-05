@@ -165,6 +165,8 @@ ObjArray* make_int_array2(int a, int b) {
     return arr;
 }
 
+static int g_last_closure_call_result = 0;
+
 Value call_leno_closure(Value callee, int arg_count, Value* args) {
     VM* vm_ptr = current_exec_vm ? current_exec_vm : &vm;
     int saved_sp = vm_ptr->sp;
@@ -176,6 +178,7 @@ Value call_leno_closure(Value callee, int arg_count, Value* args) {
     vm_stack_push(vm_ptr, callee);
 
     int call_result = vm_call_value(callee, arg_count, 0);
+    g_last_closure_call_result = call_result;
     Value ret_val = vm_ptr->last_return_value;
 
     if (call_result != 1) {
@@ -976,22 +979,31 @@ typedef struct {
     Value ren_val;
     Value win_val;
     ObjGUIRenderer* ren_obj;
+    int has_error;          /* 回调出错后标记，停止后续回调 */
 } LenoGUIRunState;
 
 /* C 语言渲染回调包装器 */
 static void leno_gui_render_callback(void* user_data) {
     LenoGUIRunState* state = (LenoGUIRunState*)user_data;
+    if (state->has_error) return;
     if (!val_is_null(state->on_draw)) {
         call_leno_closure(state->on_draw, 1, &state->ren_val);
+        if (g_last_closure_call_result != 1) {
+            state->has_error = 1;
+        }
     }
 }
 
 /* C 语言事件回调包装器 */
 static void leno_gui_event_callback(void* user_data, LenoGUIEvent* ev) {
     LenoGUIRunState* state = (LenoGUIRunState*)user_data;
+    if (state->has_error) return;
     if (!val_is_null(state->on_event)) {
         Value event_dict = event_to_dict(ev);
         call_leno_closure(state->on_event, 1, &event_dict);
+        if (g_last_closure_call_result != 1) {
+            state->has_error = 1;
+        }
     }
 }
 
@@ -1036,6 +1048,8 @@ Value win_run_func(int argc, Value* args) {
     /* 使用迭代回调机制（参考 SDL3） */
     int frame_count = 0;
     while (1) {
+        if (run_state.has_error) break;
+
         if (process_timers()) {
             leno_gui_platform_request_redraw();
         }

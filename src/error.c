@@ -20,6 +20,20 @@ const char* error_get_filename(void) {
 }
 
 void error_add(ErrorType type, int line, const char* msg) {
+    // 检查是否与最后一条错误相同（同类型、同文件、同行、同消息），相同则合并
+    if (errors.count > 0) {
+        Error* last = &errors.list[errors.count - 1];
+        if (last->type == type && last->line == line &&
+            strcmp(last->msg, msg) == 0 && last->filename[0] != '\0') {
+            // 比较文件名
+            const char* fname = current_filename[0] ? current_filename : "";
+            if (strcmp(last->filename, fname) == 0) {
+                last->repeat_count++;
+                return;
+            }
+        }
+    }
+
     if (errors.count >= MAX_ERRORS) {
         fprintf(stderr, "错误收集器已满，无法添加更多错误\n");
         return;
@@ -28,6 +42,7 @@ void error_add(ErrorType type, int line, const char* msg) {
     Error* err = &errors.list[errors.count++];
     err->type = type;
     err->line = line;
+    err->repeat_count = 1;
     strncpy(err->msg, msg, sizeof(err->msg) - 1);
     err->msg[sizeof(err->msg) - 1] = '\0';
     
@@ -55,7 +70,17 @@ void error_clear(void) {
 void error_print_all(void) {
     if (errors.count == 0) return;
     
-    fprintf(stderr, "\n=== 发现 %d 个错误 ===\n", errors.count);
+    // 计算实际错误总数（含重复）
+    int total = 0;
+    for (int i = 0; i < errors.count; i++) {
+        total += errors.list[i].repeat_count;
+    }
+    
+    fprintf(stderr, "\n=== 发现 %d 个错误", total);
+    if (total > errors.count) {
+        fprintf(stderr, "（%d 种，已合并重复）", errors.count);
+    }
+    fprintf(stderr, " ===\n");
     
     for (int i = 0; i < errors.count; i++) {
         Error* err = &errors.list[i];
@@ -74,10 +99,16 @@ void error_print_all(void) {
         
         // 如果有文件名，显示文件名
         if (err->filename[0]) {
-            fprintf(stderr, "[%s] %s 第 %d 行: %s\n", type_str, err->filename, err->line, err->msg);
+            fprintf(stderr, "[%s] %s 第 %d 行: %s", type_str, err->filename, err->line, err->msg);
         } else {
-            fprintf(stderr, "[%s] 第 %d 行: %s\n", type_str, err->line, err->msg);
+            fprintf(stderr, "[%s] 第 %d 行: %s", type_str, err->line, err->msg);
         }
+        
+        // 如果有重复，显示重复次数
+        if (err->repeat_count > 1) {
+            fprintf(stderr, " (重复 %d 次)", err->repeat_count);
+        }
+        fprintf(stderr, "\n");
     }
     
     fprintf(stderr, "===================\n\n");
