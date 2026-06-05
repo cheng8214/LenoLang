@@ -343,7 +343,7 @@ Value value_clone_for_channel(Value val) {
                     copy->count = arr->count;
                     copy->capacity = arr->count > 0 ? arr->count : 1;
                     copy->elements = NULL;
-                    copy->type_info = arr->type_info;
+                    copy->type_info = arr->type_info ? type_copy(arr->type_info) : NULL;
                     if (arr->count > 0) {
                         copy->elements = (Value*)malloc(copy->capacity * sizeof(Value));
                         if (!copy->elements) return val_null();

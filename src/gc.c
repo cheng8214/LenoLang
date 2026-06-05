@@ -172,6 +172,7 @@ Object* gc_alloc(size_t size, ObjType type) {
     }
 
     Object* obj = (Object*)malloc(size);
+    if (obj) memset(obj, 0, size);
 
     // 分配失败时尝试 Major GC 释放内存
     if (!obj && gc.enabled && !gc.running) {
@@ -680,6 +681,9 @@ static void mark_roots(void) {
     // 18. 标记 GUI 模块的额外根（定时器回调等）
     extern void guis_mark_extra_roots(void);
     guis_mark_extra_roots();
+
+    // 19. 标记字典 tombstone 哨兵字符串（防止 GC 回收导致字典操作崩溃）
+    if (tombstone) gc_mark_object((Object*)tombstone);
 }
 
 // 标记 remembered set 中的老年代对象（Minor GC 时作为额外根集合）

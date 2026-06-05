@@ -155,6 +155,7 @@ static Value arr_copy(int argc, Value* args) {
     copy->count = source->count;
     copy->capacity = source->count;
     copy->elements = NULL;
+    copy->type_info = source->type_info ? type_copy(source->type_info) : NULL;
     if (source->count > 0) {
         copy->elements = (Value*)malloc(source->count * sizeof(Value));
         if (!copy->elements) {
@@ -379,6 +380,7 @@ static Value arr_map(int argc, Value* args) {
     result->capacity = arr->count > 0 ? arr->count : 8;
     result->elements = (Value*)malloc(result->capacity * sizeof(Value));
     if (!result->elements) return val_null();
+    result->type_info = NULL;
     gc_track_memory((Object*)result, 0, result->capacity * sizeof(Value));
 
     for (int i = 0; i < arr->count; i++) {
@@ -412,6 +414,7 @@ static Value arr_filter(int argc, Value* args) {
     result->capacity = arr->count > 0 ? arr->count : 8;
     result->elements = (Value*)malloc(result->capacity * sizeof(Value));
     if (!result->elements) return val_null();
+    result->type_info = NULL;
     gc_track_memory((Object*)result, 0, result->capacity * sizeof(Value));
 
     for (int i = 0; i < arr->count; i++) {

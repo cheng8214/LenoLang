@@ -1509,7 +1509,7 @@ Value value_copy(Value v) {
                 copy->count = arr->count;
                 copy->capacity = arr->count;
                 copy->elements = NULL;
-                copy->type_info = arr->type_info;
+                copy->type_info = arr->type_info ? type_copy(arr->type_info) : NULL;
                 if (arr->count > 0) {
                     copy->elements = (Value*)malloc(arr->count * sizeof(Value));
                     if (!copy->elements) {

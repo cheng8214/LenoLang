@@ -199,6 +199,7 @@ static void dict_add_to_order(ObjDict* dict, ObjString* key) {
 
     // 直接追加到末尾 O(1)
     dict->order[dict->order_count++] = key;
+    gc_write_barrier_obj((Object*)dict, (Object*)key);
 }
 
 void dict_set(ObjDict* dict, ObjString* key, Value value) {
@@ -250,6 +251,7 @@ use_hash:
         // 新键
         dict->entries[index].key = key;
         dict->entries[index].value = value;
+        gc_write_barrier_obj((Object*)dict, (Object*)key);
         gc_write_barrier((Object*)dict, value);
         dict->count++;
         dict_add_to_order(dict, key);  // 添加到插入顺序
@@ -257,6 +259,7 @@ use_hash:
         // 复用 tombstone
         dict->entries[index].key = key;
         dict->entries[index].value = value;
+        gc_write_barrier_obj((Object*)dict, (Object*)key);
         gc_write_barrier((Object*)dict, value);
         dict->count++;
         dict->tombstone_count--;

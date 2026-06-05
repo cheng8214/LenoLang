@@ -866,6 +866,25 @@ static void clear_all_timers(void) {
 }
 
 void guis_mark_extra_roots(void) {
+    // 标记事件字符串键（防止 GC 回收这些全局 ObjString* 指针）
+    if (str_key_type) gc_mark_object((Object*)str_key_type);
+    if (str_key_window_id) gc_mark_object((Object*)str_key_window_id);
+    if (str_key_width) gc_mark_object((Object*)str_key_width);
+    if (str_key_height) gc_mark_object((Object*)str_key_height);
+    if (str_key_x) gc_mark_object((Object*)str_key_x);
+    if (str_key_y) gc_mark_object((Object*)str_key_y);
+    if (str_key_key) gc_mark_object((Object*)str_key_key);
+    if (str_key_scancode) gc_mark_object((Object*)str_key_scancode);
+    if (str_key_mod) gc_mark_object((Object*)str_key_mod);
+    if (str_key_repeat) gc_mark_object((Object*)str_key_repeat);
+    if (str_key_text) gc_mark_object((Object*)str_key_text);
+    if (str_key_xrel) gc_mark_object((Object*)str_key_xrel);
+    if (str_key_yrel) gc_mark_object((Object*)str_key_yrel);
+    if (str_key_button) gc_mark_object((Object*)str_key_button);
+    if (str_key_clicks) gc_mark_object((Object*)str_key_clicks);
+    if (str_key_wheel_x) gc_mark_object((Object*)str_key_wheel_x);
+    if (str_key_wheel_y) gc_mark_object((Object*)str_key_wheel_y);
+
     if (g_timers_initialized) {
         for (int i = 0; i < LENO_GUI_MAX_TIMERS; i++) {
             if (g_timers[i].active) {
