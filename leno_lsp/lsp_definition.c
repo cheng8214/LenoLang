@@ -301,8 +301,10 @@ static bool find_definition_in_module(const char* module_path, const char* curre
 
     if (!found_def) return false;
 
-    strncpy(out_full_path, full_path, full_path_len - 1);
-    out_full_path[full_path_len - 1] = '\0';
+    size_t copy_len = strlen(full_path);
+    if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
+    memcpy(out_full_path, full_path, copy_len);
+    out_full_path[copy_len] = '\0';
     return true;
 }
 

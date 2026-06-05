@@ -1002,32 +1002,54 @@ static char* detect_style_context(const char* content, LspPosition pos) {
     
     if (search_pos < 0) return NULL;
     
-    // 现在 search_pos 指向 Dict 的 '{'，向前查找 "Style["
+    // 现在 search_pos 指向 Dict 的 '{'，向前查找 "Style[xxx]"
+    // 格式: Style[xxx] varname = { 或 Style[xxx] varname={
     int style_pos = search_pos - 1;
-    while (style_pos >= 5) {
-        if (content[style_pos] == ']' && 
-            strncmp(content + style_pos - 5, "Style[", 6) == 0) {
-            // 找到了 Style[xxx]
-            // 提取 xxx
-            int target_start = style_pos - 5 + 6; // 跳过 "Style["
-            int target_end = style_pos; // 在 ']' 之前
-            
-            // 跳过空白
-            while (target_start < target_end && isspace((unsigned char)content[target_start])) target_start++;
-            while (target_end > target_start && isspace((unsigned char)content[target_end - 1])) target_end--;
-            
-            int target_len = target_end - target_start;
-            if (target_len > 0 && target_len < 64) {
-                char* target = (char*)malloc(target_len + 1);
-                if (target) {
-                    memcpy(target, content + target_start, target_len);
-                    target[target_len] = '\0';
-                    return target;
+    // 跳过 '{' 前的空白
+    while (style_pos >= 0 && isspace((unsigned char)content[style_pos])) style_pos--;
+    // 跳过 '=' 号
+    if (style_pos >= 0 && content[style_pos] == '=') style_pos--;
+    // 跳过 '=' 前的空白
+    while (style_pos >= 0 && isspace((unsigned char)content[style_pos])) style_pos--;
+    // 跳过变量名（如 "st"）
+    while (style_pos >= 0 && (isalnum((unsigned char)content[style_pos]) || content[style_pos] == '_')) style_pos--;
+    // 跳过变量名前的空白
+    while (style_pos >= 0 && isspace((unsigned char)content[style_pos])) style_pos--;
+    // 现在 style_pos 应该指向 ']'（Style[xxx] 的结束括号）
+    if (style_pos >= 0 && content[style_pos] == ']') {
+        // 向前查找匹配的 '['
+        int bracket_end = style_pos;
+        int bracket_start = bracket_end - 1;
+        while (bracket_start >= 0 && content[bracket_start] != '[') bracket_start--;
+        if (bracket_start >= 0 && content[bracket_start] == '[') {
+            // 检查 '[' 前面是否是 "Style"
+            int style_kw_end = bracket_start; // 指向 '['
+            int style_kw_start = style_kw_end - 1;
+            while (style_kw_start >= 0 && (isalnum((unsigned char)content[style_kw_start]) || content[style_kw_start] == '_')) {
+                style_kw_start--;
+            }
+            style_kw_start++; // 指向关键字首字母
+            int kw_len = style_kw_end - style_kw_start;
+            if (kw_len == 5 && strncmp(content + style_kw_start, "Style", 5) == 0) {
+                // 找到了 Style[xxx]
+                int target_start = bracket_start + 1; // 跳过 '['
+                int target_end = bracket_end; // 在 ']' 之前
+                
+                // 跳过空白
+                while (target_start < target_end && isspace((unsigned char)content[target_start])) target_start++;
+                while (target_end > target_start && isspace((unsigned char)content[target_end - 1])) target_end--;
+                
+                int target_len = target_end - target_start;
+                if (target_len > 0 && target_len < 64) {
+                    char* target = (char*)malloc(target_len + 1);
+                    if (target) {
+                        memcpy(target, content + target_start, target_len);
+                        target[target_len] = '\0';
+                        return target;
+                    }
                 }
             }
-            break;
         }
-        style_pos--;
     }
     
     return NULL;
@@ -1730,7 +1752,20 @@ static char* get_variable_type(const char* content, const char* var_name, const 
         } else if (strcmp(type_str, "Font") == 0) {
             result = strdup("font");
         } else if (strncmp(type_str, "Style", 5) == 0) {
-            result = strdup("style");
+            // Style[window] -> "style:window"，保留目标信息用于字段补全
+            if (type_str[5] == '[') {
+                const char* start = type_str + 6;
+                const char* end = strchr(start, ']');
+                if (end) {
+                    int len = (int)(end - start);
+                    char* buf = malloc(len + 8);
+                    memcpy(buf, "style:", 6);
+                    memcpy(buf + 6, start, len);
+                    buf[6 + len] = '\0';
+                    result = buf;
+                }
+            }
+            if (!result) result = strdup("style");
         } else if (strcmp(type_str, "Rgb") == 0) {
             result = strdup("rgb");
         } else if (strcmp(type_str, "thread") == 0) {
@@ -2232,6 +2267,10 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                             }
                         }
                     }
+                } else if (strncmp(var_type, "style:", 6) == 0) {
+                    // Style[window] 等类型的字段补全
+                    const char* style_target = var_type + 6;
+                    add_style_field_completions(style_target, &items, count, &capacity, prefix);
                 } else {
                     // 获取该类型的实例方法
                     int inst_method_count = 0;
@@ -2335,6 +2374,10 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                         }
                     }
                 }
+            } else if (strncmp(var_type, "style:", 6) == 0) {
+                // Style[window] 等类型的字段补全
+                const char* style_target = var_type + 6;
+                add_style_field_completions(style_target, &items, count, &capacity, prefix);
             } else {
                 // 获取该类型的实例方法
                 int method_count = 0;

@@ -10,6 +10,28 @@
 #include <ctype.h>
 #include <string.h>
 
+// Style 字段信息（来自 guis_style.c）
+typedef enum {
+    STYLE_TYPE_STRING,
+    STYLE_TYPE_INT,
+    STYLE_TYPE_FLOAT,
+    STYLE_TYPE_BOOL,
+    STYLE_TYPE_COLOR,
+    STYLE_TYPE_ENUM,
+} StyleFieldType;
+
+typedef struct {
+    const char* name;
+    StyleFieldType type;
+    const char* description;
+    const char* default_value;
+    const char** options;
+    int option_count;
+} StyleFieldInfo;
+
+extern StyleFieldInfo* guis_get_style_field_info(const char* target, const char* field_name);
+extern const char* guis_style_field_type_name(StyleFieldType type);
+
 // 检查指定位置是否在字符串字面量中
 static bool is_inside_string_literal(const char* content, int offset) {
     if (!content || offset < 0) return false;
@@ -1127,6 +1149,68 @@ static char* get_keyword_doc(const char* word) {
         return strdup("**Thread** - 线程类型\n\n"
                      "用于并发编程，通过 async 模块创建。");
     }
+    else if (strcmp(word, "Win") == 0) {
+        return strdup("**Win** - 窗口类型\n\n"
+                     "GUI 窗口对象，通过 guis.create_window() 创建。\n\n"
+                     "```leno\n"
+                     "Win win = guis.create_window(\"Title\", {width:800, height:600})\n"
+                     "win.run(draw_cb, event_cb)\n"
+                     "```");
+    }
+    else if (strcmp(word, "Draw") == 0) {
+        return strdup("**Draw** - 绘图类型\n\n"
+                     "GUI 绘图上下文，在窗口渲染回调中使用。\n\n"
+                     "```leno\n"
+                     "func draw(Draw d) {\n"
+                     "    d.set_color(_rgb(255,0,0))\n"
+                     "    d.line(10,10,100,100)\n"
+                     "    d.present()\n"
+                     "}\n"
+                     "```");
+    }
+    else if (strcmp(word, "Event") == 0) {
+        return strdup("**Event** - 事件类型\n\n"
+                     "GUI 事件对象，在窗口事件回调中使用。\n\n"
+                     "```leno\n"
+                     "win.run(draw, func(Event e) {\n"
+                     "    // 处理事件\n"
+                     "})\n"
+                     "```");
+    }
+    else if (strcmp(word, "Image") == 0) {
+        return strdup("**Image** - 图像类型\n\n"
+                     "GUI 图像对象，通过 guis.load_image() 加载。");
+    }
+    else if (strcmp(word, "Font") == 0) {
+        return strdup("**Font** - 字体类型\n\n"
+                     "GUI 字体对象，通过 guis.load_font() 加载。");
+    }
+    else if (strcmp(word, "Rgb") == 0) {
+        return strdup("**Rgb** - 颜色类型\n\n"
+                     "RGB 颜色值，通过 _rgb() 函数创建。\n\n"
+                     "```leno\n"
+                     "var red = _rgb(255, 0, 0)\n"
+                     "var blue = _rgb(0, 0, 255, 128)  // 带透明度\n"
+                     "```");
+    }
+    else if (strcmp(word, "Style") == 0) {
+        return strdup("**Style** - 样式类型\n\n"
+                     "GUI 样式对象，用于设置窗口和控件的外观。");
+    }
+    else if (strcmp(word, "File") == 0) {
+        return strdup("**File** - 文件类型\n\n"
+                     "文件对象，通过 io.open() 创建。\n\n"
+                     "```leno\n"
+                     "File f = io.open(\"test.txt\", \"r\")\n"
+                     "```");
+    }
+    else if (strcmp(word, "Ptr") == 0) {
+        return strdup("**Ptr** - 指针类型\n\n"
+                     "原始指针类型，用于 FFI 互操作。\n\n"
+                     "```leno\n"
+                     "Ptr[int] p = ffi.malloc(4)\n"
+                     "```");
+    }
     else if (strcmp(word, "Channel") == 0) {
         return strdup("**Channel** - Channel 类型\n\n"
                      "用于协程间通信，通过 async 模块创建。");
@@ -1626,7 +1710,7 @@ static char* get_enum_value_hover(const char* content, const char* word) {
 }
 
 // 根据变量名获取其类型（使用编译器分析）
-static const char* get_variable_type_from_compiler(const char* content, const char* var_name, const char* file_path) {
+static char* get_variable_type_from_compiler(const char* content, const char* var_name, const char* file_path) {
     if (!content || !var_name) return NULL;
     
     CompilerContext ctx;
@@ -1650,16 +1734,46 @@ static const char* get_variable_type_from_compiler(const char* content, const ch
     }
     
     // 解析类型字符串，提取基本类型
-    const char* result = NULL;
-    char* struct_result = NULL;
+    char* result = NULL;
     if (type_str) {
         // 检查类型字符串是否包含特定类型
         if (strstr(type_str, "string") != NULL) {
-            result = "string";
+            result = strdup("string");
         } else if (strstr(type_str, "Array") != NULL || strstr(type_str, "array") != NULL) {
-            result = "array";
+            result = strdup("array");
         } else if (strstr(type_str, "Dict") != NULL || strstr(type_str, "dict") != NULL) {
-            result = "dict";
+            result = strdup("dict");
+        } else if (strncmp(type_str, "Win", 3) == 0) {
+            result = strdup("win");
+        } else if (strncmp(type_str, "Draw", 4) == 0) {
+            result = strdup("draw");
+        } else if (strncmp(type_str, "Event", 5) == 0) {
+            result = strdup("event");
+        } else if (strncmp(type_str, "Image", 5) == 0) {
+            result = strdup("image");
+        } else if (strncmp(type_str, "Font", 4) == 0) {
+            result = strdup("font");
+        } else if (strncmp(type_str, "Rgb", 3) == 0) {
+            result = strdup("rgb");
+        } else if (strncmp(type_str, "Style", 5) == 0) {
+            // Style[window] -> "style:window"，保留目标信息用于字段悬停
+            if (type_str[5] == '[') {
+                const char* start = type_str + 6;
+                const char* end = strchr(start, ']');
+                if (end) {
+                    int len = (int)(end - start);
+                    char* buf = malloc(len + 8);
+                    memcpy(buf, "style:", 6);
+                    memcpy(buf + 6, start, len);
+                    buf[6 + len] = '\0';
+                    result = buf;
+                }
+            }
+            if (!result) result = strdup("style");
+        } else if (strncmp(type_str, "File", 4) == 0) {
+            result = strdup("file");
+        } else if (strncmp(type_str, "Ptr", 3) == 0) {
+            result = strdup("ptr");
         } else if (strstr(type_str, "struct") != NULL) {
             // 对于 struct 类型，提取 struct 名称
             const char* struct_ptr = strstr(type_str, "struct");
@@ -1667,17 +1781,11 @@ static const char* get_variable_type_from_compiler(const char* content, const ch
                 struct_ptr += 6; // 跳过 "struct"
                 while (*struct_ptr && isspace((unsigned char)*struct_ptr)) struct_ptr++;
                 if (*struct_ptr) {
-                    struct_result = strdup(struct_ptr);
+                    result = strdup(struct_ptr);
                 }
             }
         }
         free(type_str);
-    }
-    
-    // 如果是 struct 类型，返回 struct 名称（需要调用者释放）
-    if (struct_result) {
-        compiler_context_cleanup(&ctx);
-        return struct_result;
     }
     
     compiler_context_cleanup(&ctx);
@@ -1687,41 +1795,24 @@ static const char* get_variable_type_from_compiler(const char* content, const ch
 // 检查是否是实例方法名（如 add, insert, len 等）
 // 如果是，返回对应的类型名（如 "array", "string", "dict" 等）
 static const char* is_instance_method(const char* method_name) {
-    // 检查数组方法
+    // 按优先级检查各类型的实例方法
+    static const char* type_keys[] = {
+        "array", "string", "dict", "win", "draw", "event",
+        "image", "font", "file", "ptr", "rgb", "style", NULL
+    };
+    
     int count;
-    char** methods = native_get_instance_methods("array", &count);
-    if (methods) {
-        for (int i = 0; i < count; i++) {
-            if (strcmp(methods[i], method_name) == 0) {
-                native_free_instance_method_list(methods, count);
-                return "array";
+    for (int i = 0; type_keys[i] != NULL; i++) {
+        char** methods = native_get_instance_methods(type_keys[i], &count);
+        if (methods) {
+            for (int j = 0; j < count; j++) {
+                if (strcmp(methods[j], method_name) == 0) {
+                    native_free_instance_method_list(methods, count);
+                    return type_keys[i];
+                }
             }
+            native_free_instance_method_list(methods, count);
         }
-        native_free_instance_method_list(methods, count);
-    }
-    
-    // 检查字符串方法
-    methods = native_get_instance_methods("string", &count);
-    if (methods) {
-        for (int i = 0; i < count; i++) {
-            if (strcmp(methods[i], method_name) == 0) {
-                native_free_instance_method_list(methods, count);
-                return "string";
-            }
-        }
-        native_free_instance_method_list(methods, count);
-    }
-    
-    // 检查字典方法
-    methods = native_get_instance_methods("dict", &count);
-    if (methods) {
-        for (int i = 0; i < count; i++) {
-            if (strcmp(methods[i], method_name) == 0) {
-                native_free_instance_method_list(methods, count);
-                return "dict";
-            }
-        }
-        native_free_instance_method_list(methods, count);
     }
     
     return NULL;
@@ -1801,15 +1892,38 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             int offset = lsp_position_to_offset(content, pos);
             if (!is_inside_string_literal(content, offset) && !is_inside_comment(content, offset)) {
                 // 首先尝试使用编译器确定变量类型
-                const char* var_type = get_variable_type_from_compiler(content, module, file_path);
+                char* var_type = get_variable_type_from_compiler(content, module, file_path);
                 if (var_type) {
-                    int arity = native_get_instance_method_arity(var_type, method);
-                    if (arity >= 0) {
-                        info = generate_instance_method_doc(var_type, method);
+                    if (strncmp(var_type, "style:", 6) == 0) {
+                        // Style[window].field 字段悬停
+                        const char* style_target = var_type + 6;
+                        StyleFieldInfo* field_info = guis_get_style_field_info(style_target, method);
+                        if (field_info) {
+                            char doc[512];
+                            const char* type_name = guis_style_field_type_name(field_info->type);
+                            snprintf(doc, sizeof(doc),
+                                     "**%s.%s** : %s\n\n%s\n\n默认值: `%s`",
+                                     style_target, method, type_name,
+                                     field_info->description ? field_info->description : "",
+                                     field_info->default_value ? field_info->default_value : "");
+                            if (field_info->type == 5 && field_info->options && field_info->option_count > 0) {
+                                // STYLE_TYPE_ENUM = 5
+                                strncat(doc, "\n\n可选值:", sizeof(doc) - strlen(doc) - 1);
+                                for (int k = 0; k < field_info->option_count; k++) {
+                                    strncat(doc, " `", sizeof(doc) - strlen(doc) - 1);
+                                    strncat(doc, field_info->options[k], sizeof(doc) - strlen(doc) - 1);
+                                    strncat(doc, "`", sizeof(doc) - strlen(doc) - 1);
+                                }
+                            }
+                            info = strdup(doc);
+                        }
+                    } else {
+                        int arity = native_get_instance_method_arity(var_type, method);
+                        if (arity >= 0) {
+                            info = generate_instance_method_doc(var_type, method);
+                        }
                     }
-                    if (strcmp(var_type, "string") != 0 && strcmp(var_type, "array") != 0 && strcmp(var_type, "dict") != 0) {
-                        free((void*)var_type);
-                    }
+                    free(var_type);
                 }
 
                 // 如果编译器无法确定类型，使用启发式方法
@@ -1838,7 +1952,97 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         }
     }
     
-    // 4. 检查是否是实例方法名（如 add, insert, len 等）
+    // 4. 检查是否在 Style[xxx] = { } 字典初始化上下文中的字段
+    if (!info) {
+        int offset = lsp_position_to_offset(content, pos);
+        if (offset > 0 && !is_inside_string_literal(content, offset) && !is_inside_comment(content, offset)) {
+            // 检测光标是否在 Style[xxx] = { ... } 的字典内部
+            int search_pos = offset - 1;
+            int brace_depth = 0;
+            int in_str = 0;
+            char str_quote = 0;
+            
+            // 向前查找包含光标的 '{'
+            while (search_pos >= 0) {
+                char c = content[search_pos];
+                if (in_str) {
+                    if (c == str_quote) {
+                        int bc = 0;
+                        int ck = search_pos - 1;
+                        while (ck >= 0 && content[ck] == '\\') { bc++; ck--; }
+                        if (bc % 2 == 0) in_str = 0;
+                    }
+                } else {
+                    if (c == '"' || c == '\'') { in_str = 1; str_quote = c; }
+                    else if (c == '}') brace_depth++;
+                    else if (c == '{') {
+                        if (brace_depth == 0) break;
+                        brace_depth--;
+                    }
+                }
+                search_pos--;
+            }
+            
+            if (search_pos >= 0) {
+                // search_pos 指向 '{'，向前跳过空白、'='、变量名、空白，找到 ']' -> Style[xxx]
+                int sp = search_pos - 1;
+                while (sp >= 0 && isspace((unsigned char)content[sp])) sp--;
+                if (sp >= 0 && content[sp] == '=') sp--;
+                while (sp >= 0 && isspace((unsigned char)content[sp])) sp--;
+                while (sp >= 0 && (isalnum((unsigned char)content[sp]) || content[sp] == '_')) sp--;
+                while (sp >= 0 && isspace((unsigned char)content[sp])) sp--;
+                
+                if (sp >= 0 && content[sp] == ']') {
+                    int bracket_end = sp;
+                    int bracket_start = bracket_end - 1;
+                    while (bracket_start >= 0 && content[bracket_start] != '[') bracket_start--;
+                    if (bracket_start >= 0 && content[bracket_start] == '[') {
+                        int kw_end = bracket_start;
+                        int kw_start = kw_end - 1;
+                        while (kw_start >= 0 && (isalnum((unsigned char)content[kw_start]) || content[kw_start] == '_')) kw_start--;
+                        kw_start++;
+                        int kw_len = kw_end - kw_start;
+                        if (kw_len == 5 && strncmp(content + kw_start, "Style", 5) == 0) {
+                            int t_start = bracket_start + 1;
+                            int t_end = bracket_end;
+                            while (t_start < t_end && isspace((unsigned char)content[t_start])) t_start++;
+                            while (t_end > t_start && isspace((unsigned char)content[t_end - 1])) t_end--;
+                            int t_len = t_end - t_start;
+                            if (t_len > 0 && t_len < 64) {
+                                char* style_target = (char*)malloc(t_len + 1);
+                                if (style_target) {
+                                    memcpy(style_target, content + t_start, t_len);
+                                    style_target[t_len] = '\0';
+                                    StyleFieldInfo* field_info = guis_get_style_field_info(style_target, word);
+                                    if (field_info) {
+                                        const char* type_name = guis_style_field_type_name(field_info->type);
+                                        char doc[512];
+                                        snprintf(doc, sizeof(doc),
+                                                 "**%s.%s** : %s\n\n%s\n\n默认值: `%s`",
+                                                 style_target, word, type_name,
+                                                 field_info->description ? field_info->description : "",
+                                                 field_info->default_value ? field_info->default_value : "");
+                                        if (field_info->type == 5 && field_info->options && field_info->option_count > 0) {
+                                            strncat(doc, "\n\n可选值:", sizeof(doc) - strlen(doc) - 1);
+                                            for (int k = 0; k < field_info->option_count; k++) {
+                                                strncat(doc, " `", sizeof(doc) - strlen(doc) - 1);
+                                                strncat(doc, field_info->options[k], sizeof(doc) - strlen(doc) - 1);
+                                                strncat(doc, "`", sizeof(doc) - strlen(doc) - 1);
+                                            }
+                                        }
+                                        info = strdup(doc);
+                                    }
+                                    free(style_target);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 5. 检查是否是实例方法名（如 add, insert, len 等）
     // 但不在字符串字面量或注释中显示实例方法提示
     if (!info) {
         int offset = lsp_position_to_offset(content, pos);
@@ -1850,7 +2054,7 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         }
     }
     
-    // 5. 如果不是关键字、内置函数或实例方法，尝试从编译器获取符号信息
+    // 6. 如果不是关键字、内置函数或实例方法，尝试从编译器获取符号信息
     if (!info) {
         info = get_symbol_hover_from_compiler(content, word, pos, file_path);
     }

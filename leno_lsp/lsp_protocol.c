@@ -238,6 +238,8 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
         JsonValue* trigger_chars = json_array_new();
         json_array_add(trigger_chars, json_string_new("."));
         json_array_add(trigger_chars, json_string_new(":"));
+        json_array_add(trigger_chars, json_string_new("{"));
+        json_array_add(trigger_chars, json_string_new(","));
         json_object_set(completion, "triggerCharacters", trigger_chars);
         
         json_object_set(capabilities, "completionProvider", completion);
