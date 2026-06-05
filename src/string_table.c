@@ -318,6 +318,37 @@ void intern_mark_all(void) {
     }
 }
 
+// Major GC 后清理未被标记的内化字符串（只保留仍被其他对象引用的）
+void intern_sweep_unmarked(void) {
+    if (!string_table.entries) return;
+
+    for (int i = 0; i < string_table.capacity; i++) {
+        InternEntry** current = &string_table.entries[i];
+        while (*current) {
+            InternEntry* entry = *current;
+            if (entry->str && !entry->str->header.marked) {
+                // 未被标记，从内化表移除
+                *current = entry->next;
+                // 清除内化标志，让 GC 可以回收
+                entry->str->header.flags &= ~OBJ_FLAG_INTERNED;
+                // 清除缓存
+                int cache_idx = cache_index(entry->str->chars, entry->str->len);
+                StringCacheBucket* bucket = &string_cache[cache_idx];
+                for (int j = 0; j < STRCACHE_BUCKET_SIZE; j++) {
+                    if (bucket->entries[j] == entry->str) {
+                        bucket->entries[j] = NULL;
+                        break;
+                    }
+                }
+                free(entry);
+                string_table.count--;
+            } else {
+                current = &entry->next;
+            }
+        }
+    }
+}
+
 int intern_get_count(void) {
     return string_table.count;
 }

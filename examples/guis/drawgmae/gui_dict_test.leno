@@ -1,0 +1,64 @@
+// 最小 GUI + dict 压力测试
+import guis
+import times
+
+struct Item { int life; int id }
+
+main() {
+    Win win = guis.create_window("Test", {width: 400, height: 300})
+    var font = guis.load_font("Consolas", 14)
+
+    var items = {}
+    var ids = {}
+    var count = 0
+    var next_id = 0
+    var MAX = 5000
+    var frame = 0
+
+    win.run(
+        func(Draw ren) {
+            frame = frame + 1
+
+            // 更新 + 删除
+            var j = 0
+            while j < count {
+                var pid = ids["i" + _str(j)]
+                var it = items["p" + _str(pid)]
+                it.life = it.life - 1
+                if it.life <= 0 {
+                    var last = count - 1
+                    items.remove("p" + _str(pid))
+                    if j != last {
+                        ids["i" + _str(j)] = ids["i" + _str(last)]
+                    }
+                    ids.remove("i" + _str(last))
+                    count = count - 1
+                } else {
+                    j = j + 1
+                }
+            }
+
+            // 新增
+            if count < MAX {
+                for 0:49 to i {
+                    if count >= MAX { break }
+                    items["p" + _str(next_id)] = new Item(life=100, id=next_id)
+                    ids["i" + _str(count)] = next_id
+                    count = count + 1
+                    next_id = next_id + 1
+                }
+            }
+
+            ren.set_color(_rgb(10, 10, 20, 255))
+            ren.clear()
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.draw_text(font, "frame:" + frame + " count:" + count, 10, 10)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
+        }
+    )
+    font.close()
+    win.close()
+}

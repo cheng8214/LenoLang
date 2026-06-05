@@ -244,13 +244,13 @@ static Value gui_create_window_func(int argc, Value* args) {
 
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
         ObjDict* style = (ObjDict*)val_as_obj(args[1]);
-        ObjString* key_w = str_copy("width", 5);
-        ObjString* key_h = str_copy("height", 6);
-        ObjString* key_full = str_copy("fullscreen", 10);
-        ObjString* key_borderless = str_copy("borderless", 10);
-        ObjString* key_resizable = str_copy("resizable", 9);
-        ObjString* key_hidden = str_copy("visible", 7);
-        ObjString* key_always_on_top = str_copy("always_on_top", 13);
+        ObjString* key_w = intern_string("width", 5);
+        ObjString* key_h = intern_string("height", 6);
+        ObjString* key_full = intern_string("fullscreen", 10);
+        ObjString* key_borderless = intern_string("borderless", 10);
+        ObjString* key_resizable = intern_string("resizable", 9);
+        ObjString* key_hidden = intern_string("visible", 7);
+        ObjString* key_always_on_top = intern_string("always_on_top", 13);
 
         Value vw = dict_get(style, key_w);
         if (!val_is_null(vw)) w = val_as_int(vw);
@@ -726,7 +726,7 @@ static Value gui_file_dialog_func(int argc, Value* args) {
         ObjDict* opts = (ObjDict*)val_as_obj(args[2]);
         if (opts && opts->header.type == OBJ_DICT) {
             /* 读取 title */
-            ObjString* key_title = str_copy("title", 5);
+            ObjString* key_title = intern_string("title", 5);
             Value vtitle = dict_get(opts, key_title);
             if (!val_is_null(vtitle) && val_is_obj(vtitle)) {
                 Object* obj = val_as_obj(vtitle);
@@ -734,7 +734,7 @@ static Value gui_file_dialog_func(int argc, Value* args) {
             }
 
             /* 读取 default_path */
-            ObjString* key_path = str_copy("path", 4);
+            ObjString* key_path = intern_string("path", 4);
             Value vpath = dict_get(opts, key_path);
             if (!val_is_null(vpath) && val_is_obj(vpath)) {
                 Object* obj = val_as_obj(vpath);
@@ -742,12 +742,12 @@ static Value gui_file_dialog_func(int argc, Value* args) {
             }
 
             /* 读取 allow_many */
-            ObjString* key_many = str_copy("multiple", 8);
+            ObjString* key_many = intern_string("multiple", 8);
             Value vmany = dict_get(opts, key_many);
             if (!val_is_null(vmany) && val_as_bool(vmany)) allow_many = 1;
 
             /* 读取 filters */
-            ObjString* key_filters = str_copy("filters", 7);
+            ObjString* key_filters = intern_string("filters", 7);
             Value vfilters = dict_get(opts, key_filters);
             if (!val_is_null(vfilters) && val_is_obj(vfilters)) {
                 Object* obj = val_as_obj(vfilters);
@@ -761,8 +761,8 @@ static Value gui_file_dialog_func(int argc, Value* args) {
                             Value vf = fa->elements[i];
                             if (val_is_obj(vf) && val_as_obj(vf)->type == OBJ_DICT) {
                                 ObjDict* fd = (ObjDict*)val_as_obj(vf);
-                                ObjString* kn = str_copy("name", 4);
-                                ObjString* kp = str_copy("pattern", 7);
+                                ObjString* kn = intern_string("name", 4);
+                                ObjString* kp = intern_string("pattern", 7);
                                 Value vn = dict_get(fd, kn);
                                 Value vp = dict_get(fd, kp);
                                 if (!val_is_null(vn) && val_is_obj(vn)) {
@@ -778,7 +778,7 @@ static Value gui_file_dialog_func(int argc, Value* args) {
             }
 
             /* 读取 window（可选） */
-            ObjString* key_win = str_copy("window", 6);
+            ObjString* key_win = intern_string("window", 6);
             Value vwin = dict_get(opts, key_win);
             if (!val_is_null(vwin)) {
                 win = as_window(vwin)->platform;

@@ -750,6 +750,7 @@ void dict_set(ObjDict* dict, ObjString* key, Value value);
 Value dict_get(ObjDict* dict, ObjString* key);
 int dict_has(ObjDict* dict, ObjString* key);
 void dict_delete(ObjDict* dict, ObjString* key);
+void dict_try_shrink(ObjDict* dict);
 
 // 按索引获取字典键（static inline 供编译器内联优化）
 static inline ObjString* dict_get_key_by_index(ObjDict* dict, int index) {

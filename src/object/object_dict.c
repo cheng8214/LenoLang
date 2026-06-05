@@ -332,6 +332,27 @@ static void dict_remove_from_order(ObjDict* dict, ObjString* key) {
     }
 }
 
+// 缩容：当实际元素远小于容量时，缩小哈希表和 order 数组
+void dict_try_shrink(ObjDict* dict) {
+    // 哈希表缩容：当 count < capacity * 0.25 且 capacity > 16 时，缩到一半
+    if (dict->capacity > 16 && dict->count < dict->capacity * 0.25) {
+        int new_capacity = dict->capacity / 2;
+        if (new_capacity < 8) new_capacity = 8;
+        dict_resize(dict, new_capacity);
+    }
+
+    // order 数组缩容：当 order_count < order_capacity * 0.25 且 order_capacity > 16 时
+    if (dict->order_capacity > 16 && dict->order_count < dict->order_capacity / 4) {
+        int new_cap = dict->order_capacity / 2;
+        if (new_cap < 8) new_cap = 8;
+        ObjString** new_order = (ObjString**)realloc(dict->order, new_cap * sizeof(ObjString*));
+        if (new_order) {
+            dict->order = new_order;
+            dict->order_capacity = new_cap;
+        }
+    }
+}
+
 void dict_delete(ObjDict* dict, ObjString* key) {
     if (!dict || !key) return;
     
@@ -342,6 +363,7 @@ void dict_delete(ObjDict* dict, ObjString* key) {
             dict->array[array_index] = val_null();
             dict->acount--;
             dict_remove_from_order(dict, key);
+            dict_try_shrink(dict);
             return;
         }
     }
@@ -361,6 +383,7 @@ void dict_delete(ObjDict* dict, ObjString* key) {
         dict->count--;
         dict->tombstone_count++;
         dict_remove_from_order(dict, key);
+        dict_try_shrink(dict);
     }
 }
 

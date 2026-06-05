@@ -82,6 +82,7 @@ void intern_remove(ObjString* str);
 
 // 标记字符串表中的所有字符串（供 GC 使用）
 void intern_mark_all(void);
+void intern_sweep_unmarked(void);
 
 // 获取字符串表统计信息
 int intern_get_count(void);

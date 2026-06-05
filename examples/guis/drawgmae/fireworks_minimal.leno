@@ -1,0 +1,51 @@
+// 最小化测试：dict 存 struct，只增不减，看能否稳定运行
+import guis
+
+struct Item {
+    float x
+    float y
+    int life
+}
+
+main() {
+    Win win = guis.create_window("Minimal Test", {width: 800, height: 600})
+
+    var items = {}
+    var count = 0
+    var font = guis.load_font("Consolas", 14)
+
+    win.run(
+        func(Draw ren) {
+            // 每帧加 50 个 struct 进 dict
+            if count < 10000 {
+                for 0:49 to i {
+                    items[_str(count)] = new Item(x=((count * 7) % 800) as float, y=((count * 11) % 600) as float, life=100)
+                    count = count + 1
+                }
+            }
+
+            ren.set_color(_rgb(10, 10, 20, 255))
+            ren.clear()
+
+            var drawn = 0
+            for 0:count - 1 to i {
+                var it = items[_str(i)]
+                it.life = it.life - 1
+                if it.life > 0 {
+                    ren.set_color(_rgb(255, 200, 100, 200))
+                    ren.fill_rect(it.x as int, it.y as int, 2, 2)
+                    drawn = drawn + 1
+                }
+            }
+
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.draw_text(font, "count:" + count + " drawn:" + drawn, 10, 10)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
+        }
+    )
+    font.close()
+    win.close()
+}

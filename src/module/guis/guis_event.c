@@ -26,13 +26,10 @@
 #include "include/leno_value.h"
 #include "include/leno_vm.h"
 #include "leno_guis.h"
+#include "guis_internal.h"
 #include <string.h>
 
-/* Event 对象：内部持有 ObjDict 存储事件数据，独立类型避免与普通 Dict 冲突 */
-typedef struct {
-    Object header;
-    ObjDict* data;
-} ObjGUIEvent;
+/* ObjGUIEvent 已在 guis_internal.h 中定义 */
 
 /* ============================================================================
  * Event 事件实例方法（e.method() 风格）
@@ -49,15 +46,15 @@ static ObjDict* event_get_dict(Value event_val) {
 static int event_get_type(Value event_val) {
     ObjDict* d = event_get_dict(event_val);
     if (!d) return 0;
-    Value v = dict_get(d, str_copy("type", 4));
+    Value v = dict_get(d, str_key_type);
     return val_is_int(v) ? val_as_int(v) : 0;
 }
 
 /* 辅助：从事件字典中获取整数字段 */
-static int event_get_int(Value event_val, const char* key) {
+static int event_get_int(Value event_val, ObjString* key) {
     ObjDict* d = event_get_dict(event_val);
     if (!d) return 0;
-    Value v = dict_get(d, str_copy(key, (int)strlen(key)));
+    Value v = dict_get(d, key);
     if (val_is_int(v)) return val_as_int(v);
     if (val_is_float(v)) return (int)val_as_double(v);
     if (val_is_num(v)) return (int)val_as_num(v);
@@ -65,10 +62,10 @@ static int event_get_int(Value event_val, const char* key) {
 }
 
 /* 辅助：从事件字典中获取字符串字段 */
-static const char* event_get_string(Value event_val, const char* key) {
+static const char* event_get_string(Value event_val, ObjString* key) {
     ObjDict* d = event_get_dict(event_val);
     if (!d) return "";
-    Value v = dict_get(d, str_copy(key, (int)strlen(key)));
+    Value v = dict_get(d, key);
     if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
         return ((ObjString*)val_as_obj(v))->chars;
     }
@@ -198,98 +195,114 @@ static Value event_is_window_restored_func(int argc, Value* args) {
 /* e.key() - 获取按键码 */
 static Value event_key_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "key"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_key));
 }
 
 /* e.mouse_x() - 获取鼠标 X 坐标 */
 static Value event_mouse_x_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "x"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_x));
 }
 
 /* e.mouse_y() - 获取鼠标 Y 坐标 */
 static Value event_mouse_y_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "y"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_y));
 }
 
 /* e.mouse_button() - 获取鼠标按钮 */
 static Value event_mouse_button_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "button"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_button));
 }
 
 /* e.width() - 获取窗口宽度（resize 事件） */
 static Value event_width_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "width"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_width));
 }
 
 /* e.height() - 获取窗口高度（resize 事件） */
 static Value event_height_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "height"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_height));
 }
 
 /* e.text() - 获取输入文本（text_input 事件） */
 static Value event_text_func(int argc, Value* args) {
     (void)argc;
-    const char* text = event_get_string(args[0], "text");
+    init_event_string_keys();
+    const char* text = event_get_string(args[0], str_key_text);
     return val_obj((Object*)str_copy(text, (int)strlen(text)));
 }
 
 /* e.mod() - 获取修饰键标志 */
 static Value event_mod_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "mod"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_mod));
 }
 
 /* e.scancode() - 获取按键扫描码 */
 static Value event_scancode_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "scancode"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_scancode));
 }
 
 /* e.repeat() - 获取按键重复标志 */
 static Value event_repeat_func(int argc, Value* args) {
     (void)argc;
-    return val_bool(event_get_int(args[0], "repeat") != 0);
+    init_event_string_keys();
+    return val_bool(event_get_int(args[0], str_key_repeat) != 0);
 }
 
 /* e.wheel_x() - 获取水平滚轮增量 */
 static Value event_wheel_x_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "wheel_x"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_wheel_x));
 }
 
 /* e.wheel_y() - 获取垂直滚轮增量 */
 static Value event_wheel_y_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "wheel_y"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_wheel_y));
 }
 
 /* e.xrel() - 获取鼠标相对 X 移动 */
 static Value event_xrel_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "xrel"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_xrel));
 }
 
 /* e.yrel() - 获取鼠标相对 Y 移动 */
 static Value event_yrel_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "yrel"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_yrel));
 }
 
 /* e.clicks() - 获取鼠标点击次数 */
 static Value event_clicks_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "clicks"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_clicks));
 }
 
 /* e.window_id() - 获取窗口 ID */
 static Value event_window_id_func(int argc, Value* args) {
     (void)argc;
-    return val_int(event_get_int(args[0], "window_id"));
+    init_event_string_keys();
+    return val_int(event_get_int(args[0], str_key_window_id));
 }
 
 /* 注册 Event 实例方法 */

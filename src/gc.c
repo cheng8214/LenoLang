@@ -26,14 +26,10 @@
 #include "include/string_table.h"
 #include "include/native.h"
 #include "include/leno_vm.h"
+#include "module/guis/guis_internal.h"
+#include "module/guis/leno_guis.h"
 #include <stdlib.h>
 #include <stdio.h>
-
-/* 前向声明：Event 对象结构体（定义在 guis.c） */
-typedef struct {
-    Object header;
-    void* data;
-} ObjGUIEvent;
 #include <string.h>
 #include <stdint.h>
 
@@ -628,8 +624,7 @@ static void mark_roots(void) {
     cstruct_mark_methods();
     struct_mark_methods();
 
-    // 10. 标记内化字符串表
-    intern_mark_all();
+    // 10. 标记内化字符串表（仅 Minor GC 使用，Major GC 改用 intern_sweep_unmarked）
 
     // 11. 标记全局结构体定义表
     extern void struct_def_mark_all(void);
@@ -889,10 +884,38 @@ static void free_object_resources(Object* obj) {
             free(native->name);
             break;
         }
-        case OBJ_GUI_WINDOW:
-        case OBJ_GUI_RENDERER:
-        case OBJ_GUI_FONT:
-        case OBJ_GUI_IMAGE:
+        case OBJ_GUI_WINDOW: {
+            ObjGUIWindow* w = (ObjGUIWindow*)obj;
+            if (w->platform) {
+                leno_gui_platform_destroy_window(w->platform);
+                w->platform = NULL;
+            }
+            break;
+        }
+        case OBJ_GUI_RENDERER: {
+            ObjGUIRenderer* r = (ObjGUIRenderer*)obj;
+            if (r->platform) {
+                leno_gui_platform_destroy_renderer(r->platform);
+                r->platform = NULL;
+            }
+            break;
+        }
+        case OBJ_GUI_FONT: {
+            ObjGUIFont* f = (ObjGUIFont*)obj;
+            if (f->platform) {
+                leno_gui_platform_destroy_font(f->platform);
+                f->platform = NULL;
+            }
+            break;
+        }
+        case OBJ_GUI_IMAGE: {
+            ObjGUIImage* img = (ObjGUIImage*)obj;
+            if (img->platform) {
+                leno_gui_platform_destroy_image(img->platform);
+                img->platform = NULL;
+            }
+            break;
+        }
         case OBJ_GUI_EVENT:
             break;
         case OBJ_ARRAY: {
@@ -1202,6 +1225,8 @@ void gc_minor_collect(void) {
     clear_all_marks();
     mark_roots();
     mark_remembered_set();
+    // Minor GC：标记所有内化字符串，防止误回收
+    intern_mark_all();
 
     sweep_young();
 
@@ -1229,6 +1254,9 @@ void gc_major_collect(void) {
     clear_all_marks();
     mark_roots();
     mark_remembered_set();
+
+    // Major GC：在 sweep 之前清理无引用的内化字符串（此时 marked 标志仍有效）
+    intern_sweep_unmarked();
 
     sweep_young();
     sweep_old();
@@ -1260,12 +1288,8 @@ void gc_major_collect(void) {
 void gc_collect(void) {
     if (gc.running || !gc.enabled) return;
 
-    size_t total = gc.young_allocated + gc.old_allocated;
-    if (total > gc.old_threshold) {
-        gc_major_collect();
-    } else {
-        gc_minor_collect();
-    }
+    // 手动调用 gc_collect 时执行 Major GC，确保完整回收
+    gc_major_collect();
 }
 
 // ============================================================================
