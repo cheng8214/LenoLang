@@ -54,17 +54,35 @@ ObjString* str_new_nointern(const char* chars, int len) {
     return str;
 }
 
-// 创建字符串（优先内化短字符串）
-// 这是主要的字符串创建函数
+// 创建字符串（所有字符串由 GC 管理）
 ObjString* str_new(const char* chars, int len) {
-    // 尝试内化短字符串
-    if (intern_should_intern(len)) {
-        ObjString* interned = intern_string(chars, len);
-        if (interned) return interned;
+    // 先尝试在字符串表中查找已有的等价字符串（去重）
+    if (string_table.entries && string_table.capacity > 0) {
+        ObjString* existing = intern_find(chars, len);
+        if (existing) return existing;
     }
     
-    // 长字符串或内化失败，创建普通字符串
-    return str_new_nointern(chars, len);
+    // 创建新字符串，由 GC 管理
+    ObjString* str = (ObjString*)gc_alloc(sizeof(ObjString), OBJ_STRING);
+    if (!str) return NULL;
+    
+    str->chars = (char*)malloc(len + 1);
+    if (!str->chars) {
+        native_throw_error("内存分配失败");
+        return NULL;
+    }
+    
+    memcpy(str->chars, chars, len);
+    str->chars[len] = '\0';
+    str->len = len;
+    str->hash = hash_string(chars, len);
+    
+    // 将短字符串注册到字符串表（弱引用，不阻止 GC 回收）
+    if (intern_should_intern(len)) {
+        intern_register(str);
+    }
+    
+    return str;
 }
 
 // 复制字符串（现在直接使用 str_new，会自动处理内化）

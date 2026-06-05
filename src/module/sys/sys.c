@@ -95,6 +95,34 @@ static Value native_clear(int argCount, Value* args) {
     return val_null();
 }
 
+// _console(show) - 显示/隐藏控制台窗口（Windows）
+static Value native_console(int argCount, Value* args) {
+    #ifdef _WIN32
+        #include <windows.h>
+        if (argCount > 0) {
+            int show = 1;
+            if (val_is_bool(args[0])) {
+                show = val_as_bool(args[0]);
+            } else if (val_is_int(args[0])) {
+                show = (val_as_num(args[0]) != 0);
+            }
+            HWND hwnd = GetConsoleWindow();
+            if (hwnd != NULL) {
+                ShowWindow(hwnd, show ? SW_SHOW : SW_HIDE);
+            }
+        }
+        // 返回当前控制台窗口是否可见
+        HWND hwnd = GetConsoleWindow();
+        if (hwnd != NULL) {
+            return val_bool(IsWindowVisible(hwnd));
+        }
+        return val_bool(false);
+    #else
+        // 非 Windows 平台，控制台隐藏功能不可用
+        return val_bool(true);
+    #endif
+}
+
 // ==================== 初始化 ====================
 
 void sys_init_globals(void) {
@@ -115,4 +143,7 @@ void sys_init_globals(void) {
 
     // 注册全局 _clear 函数（清屏，0 个参数）
     vm_register_native("_clear", native_clear, 0, -1, -1, TYPE_NULL, NULL);
+
+    // 注册全局 _console 函数（控制台显示控制，0 或 1 个参数）
+    vm_register_native("_console", native_console, -1, 0, 1, TYPE_BOOL, NULL);
 }

@@ -2,6 +2,7 @@ import guis
 import times
 
 main() {
+_console(false)
     Style[window] w_style = {
         width: 800,
         height: 600,

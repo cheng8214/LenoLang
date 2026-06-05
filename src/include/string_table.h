@@ -80,6 +80,9 @@ uint32_t intern_hash_string(const char* str, int len);
 // 移除字符串表中的字符串（当字符串被 GC 回收时调用）
 void intern_remove(ObjString* str);
 
+// 将 GC 管理的字符串注册到字符串表（弱引用，不阻止 GC 回收）
+void intern_register(ObjString* str);
+
 // 标记字符串表中的所有字符串（供 GC 使用）
 void intern_mark_all(void);
 void intern_sweep_unmarked(void);

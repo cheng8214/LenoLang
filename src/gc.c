@@ -66,8 +66,6 @@ static int is_valid_obj_type(ObjType type) {
 
 // 将对象加入 remembered set（去重）
 static void remembered_set_add(Object* obj) {
-    // 内化字符串不加入，它们由字符串表根集合管理
-    if (obj->flags & OBJ_FLAG_INTERNED) return;
     // 动态扩容
     if (gc.remembered_count >= gc.remembered_capacity) {
         int new_cap = gc.remembered_capacity * 2;
@@ -160,13 +158,17 @@ void gc_pop_root(void) {
 // ============================================================================
 
 // 分配 GC 管理的对象，新对象分配到年轻代
-// GC 请求标志：由 gc_alloc 设置，由 VM 在安全点检查并执行
-static int gc_requested = 0;
-
 Object* gc_alloc(size_t size, ObjType type) {
-    // 年轻代分配超阈值时请求 GC（不在此处直接执行，避免在 VM 指令中间触发）
+    // 年轻代分配超阈值时直接触发 GC
+    // 此时 VM 状态一致：栈、帧、局部变量都是有效的，GC 可以正确标记所有根集合
     if (gc.enabled && gc.young_allocated + size > gc.young_threshold && !gc.running) {
-        gc_requested = 1;
+        gc_minor_collect();
+        // Minor GC 后仍超阈值，检查是否需要 Major GC
+        if (gc.young_allocated > gc.young_threshold) {
+            if (gc.old_allocated + gc.young_allocated > gc.old_threshold) {
+                gc_major_collect();
+            }
+        }
     }
 
     Object* obj = (Object*)malloc(size);
@@ -203,19 +205,20 @@ Object* gc_alloc(size_t size, ObjType type) {
 
 // VM 安全点 GC 检查：在指令边界调用，确保 VM 状态一致
 void gc_check_safe_point(void) {
-    if (gc_requested && gc.enabled && !gc.running) {
-        gc_requested = 0;
-        gc_minor_collect();
-        // Minor GC 后仍超阈值，检查是否需要 Major GC
+    if (gc.enabled && !gc.running) {
         if (gc.young_allocated > gc.young_threshold) {
-            if (gc.old_allocated + gc.young_allocated > gc.old_threshold) {
-                gc_major_collect();
+            gc_minor_collect();
+            if (gc.young_allocated > gc.young_threshold) {
+                if (gc.old_allocated + gc.young_allocated > gc.old_threshold) {
+                    gc_major_collect();
+                }
             }
         }
     }
 }
 
 // 跟踪非 GC 对象的内存变化（如动态数组扩容）
+// 同时更新 obj->size，确保分代晋升时内存计数正确转移
 void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
     if (new_size > old_size) {
         size_t diff = new_size - old_size;
@@ -224,6 +227,7 @@ void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
         } else {
             gc.young_allocated += diff;
         }
+        if (obj) obj->size += diff;
     } else if (old_size > new_size) {
         size_t diff = old_size - new_size;
         if (obj && obj->generation == GEN_OLD) {
@@ -231,18 +235,13 @@ void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
         } else {
             gc.young_allocated -= diff;
         }
+        if (obj) obj->size -= diff;
     }
 }
 
 // ============================================================================
 // 标记阶段（Mark Phase）
 // ============================================================================
-
-// 检查字符串是否为内化字符串（由字符串表管理生命周期）
-static inline int is_interned_string(ObjString* str) {
-    if (!str || str->header.type != OBJ_STRING) return 0;
-    return (str->header.flags & OBJ_FLAG_INTERNED) != 0;
-}
 
 // 递归标记对象及其所有可达引用
 void gc_mark_object(Object* obj) {
@@ -857,12 +856,11 @@ static void free_object_resources(Object* obj) {
     if (!obj) return;
 
     switch (obj->type) {
-        // 字符串：非内化字符串释放字符数组
+        // 字符串：释放字符数组，并从字符串表中移除
         case OBJ_STRING: {
             ObjString* str = (ObjString*)obj;
-            if (!is_interned_string(str)) {
-                free(str->chars);
-            }
+            intern_remove(str);
+            free(str->chars);
             break;
         }
         // 函数：释放名称和字节码块
@@ -920,12 +918,14 @@ static void free_object_resources(Object* obj) {
             break;
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;
+            type_free(arr->type_info);
             free(arr->elements);
             break;
         }
         // 字典：释放数组部分、哈希表和插入顺序数组
         case OBJ_DICT: {
             ObjDict* dict = (ObjDict*)obj;
+            type_free(dict->type_info);
             free(dict->array);
             free(dict->entries);
             free(dict->order);
@@ -1214,7 +1214,7 @@ static void clear_all_marks(void) {
 // ============================================================================
 
 // Minor GC：只收集年轻代
-// 流程：标记根集合 → 标记 remembered set → 清除年轻代 → 重建 remembered set
+// 流程：标记根集合 → 标记 remembered set → 清除年轻代 → 清理未引用的内化字符串 → 重建 remembered set
 void gc_minor_collect(void) {
     if (gc.running || !gc.enabled) return;
 
@@ -1225,8 +1225,6 @@ void gc_minor_collect(void) {
     clear_all_marks();
     mark_roots();
     mark_remembered_set();
-    // Minor GC：标记所有内化字符串，防止误回收
-    intern_mark_all();
 
     sweep_young();
 
@@ -1337,27 +1335,19 @@ void gc_free_all(void) {
         gc.vm->frame_capacity = 0;
     }
 
-    // 释放年轻代所有对象（跳过内化字符串，由字符串表统一释放）
+    // 释放年轻代所有对象
     Object* obj = gc.young_heap;
     while (obj) {
         Object* next = obj->next;
-        if (obj->type == OBJ_STRING && is_interned_string((ObjString*)obj)) {
-            obj = next;
-            continue;
-        }
         free_object_resources(obj);
         free(obj);
         obj = next;
     }
 
-    // 释放老年代所有对象（跳过内化字符串）
+    // 释放老年代所有对象
     obj = gc.old_heap;
     while (obj) {
         Object* next = obj->next;
-        if (obj->type == OBJ_STRING && is_interned_string((ObjString*)obj)) {
-            obj = next;
-            continue;
-        }
         free_object_resources(obj);
         free(obj);
         obj = next;

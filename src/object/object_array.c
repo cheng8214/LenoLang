@@ -15,6 +15,9 @@ ObjArray* arr_new(int capacity) {
         return NULL;
     }
     
+    // 追踪 elements 数组的内存占用，确保 GC 正确计算内存使用量
+    gc_track_memory((Object*)arr, 0, capacity * sizeof(Value));
+    
     arr->count = 0;
     arr->capacity = capacity;
     arr->type_info = NULL;  // 运行时类型信息初始为 NULL

@@ -1,13 +1,11 @@
  
+ 
  main()
  {
- var rng_seed =0
- func rand_next():float 
- {
-        rng_seed = (rng_seed * 1103515245 + 12345) & 0x7fffffff
-        return rng_seed / 2147483647.0
- }
- 
- 
- print(rand_next())
+   
+	for 100000000 to id
+	{
+	    var stars = {}
+		 stars[_str(id)] = id
+	}
  }

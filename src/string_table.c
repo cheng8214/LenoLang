@@ -75,7 +75,7 @@ void intern_table_init(void) {
 void intern_table_free(void) {
     if (!string_table.entries) return;
     
-    // 释放所有条目（但不释放字符串本身，由 GC 处理）
+    // 释放所有条目（字符串本身由 GC 管理，不需要在这里释放）
     for (int i = 0; i < string_table.capacity; i++) {
         InternEntry* entry = string_table.entries[i];
         while (entry) {
@@ -197,15 +197,17 @@ ObjString* intern_find(const char* chars, int len) {
     return NULL;
 }
 
+// 查找或创建字符串（所有字符串由 GC 管理）
+// 如果字符串已存在于表中，返回已有字符串；否则创建新字符串并加入表中
 ObjString* intern_string(const char* chars, int len) {
     // 长字符串不内化
     if (!intern_should_intern(len)) {
-        return NULL;  // 返回 NULL 表示需要创建非内化字符串
+        return str_new_nointern(chars, len);
     }
     
     // 检查字符串表是否已初始化
     if (!string_table.entries || string_table.capacity == 0) {
-        return NULL;  // 字符串表未初始化，返回 NULL 让调用者创建普通字符串
+        return str_new_nointern(chars, len);
     }
     
     // 首先尝试查找
@@ -216,23 +218,17 @@ ObjString* intern_string(const char* chars, int len) {
         return existing;
     }
     
-    // 检查是否需要扩容
-    if (string_table.count + 1 > string_table.capacity * INTERN_MAX_LOAD_FACTOR) {
-        intern_table_resize(string_table.capacity * 2);
-    }
-    
-    // 创建新字符串（不经过 GC，因为字符串表管理这些字符串）
-    ObjString* str = (ObjString*)malloc(sizeof(ObjString));
+    // 创建新字符串，由 GC 管理
+    ObjString* str = (ObjString*)gc_alloc(sizeof(ObjString), OBJ_STRING);
     if (!str) {
-        native_throw_error("字符串内化失败：内存分配错误");
+        native_throw_error("字符串创建失败：内存分配错误");
         return NULL;
     }
     
     // 分配字符数组
     str->chars = (char*)malloc(len + 1);
     if (!str->chars) {
-        free(str);
-        native_throw_error("字符串内化失败：字符数组分配错误");
+        native_throw_error("字符串创建失败：字符数组分配错误");
         return NULL;
     }
     
@@ -242,34 +238,8 @@ ObjString* intern_string(const char* chars, int len) {
     str->len = len;
     str->hash = intern_hash_string(chars, len);
     
-    // 设置对象头
-    str->header.type = OBJ_STRING;
-    str->header.marked = 0;
-    str->header.flags = OBJ_FLAG_INTERNED;  // 标记为内化字符串
-    str->header.size = sizeof(ObjString) + len + 1;
-    str->header.next = NULL;
-    
-    // 计算哈希桶索引
-    int index = str->hash & (string_table.capacity - 1);
-    
-    // 创建新条目
-    InternEntry* new_entry = (InternEntry*)malloc(sizeof(InternEntry));
-    if (!new_entry) {
-        free(str->chars);
-        free(str);
-        native_throw_error("字符串内化失败：条目分配错误");
-        return NULL;
-    }
-    
-    // 插入到链表头部
-    new_entry->str = str;
-    new_entry->next = string_table.entries[index];
-    string_table.entries[index] = new_entry;
-    
-    string_table.count++;
-    
-    // 更新缓存
-    update_cache(str);
+    // 注册到字符串表
+    intern_register(str);
     
     return str;
 }
@@ -303,22 +273,38 @@ void intern_remove(ObjString* str) {
     }
 }
 
-void intern_mark_all(void) {
-    if (!string_table.entries) return;
+// 将 GC 管理的字符串注册到字符串表（弱引用，不阻止 GC 回收）
+// 当 GC 回收字符串时，需调用 intern_remove 清理条目
+void intern_register(ObjString* str) {
+    if (!str || !string_table.entries || string_table.capacity == 0) return;
     
-    // 标记字符串表中的所有字符串
-    for (int i = 0; i < string_table.capacity; i++) {
-        InternEntry* entry = string_table.entries[i];
-        while (entry) {
-            if (entry->str) {
-                gc_mark_object((Object*)entry->str);
-            }
-            entry = entry->next;
-        }
+    // 检查是否需要扩容
+    if (string_table.count + 1 > string_table.capacity * INTERN_MAX_LOAD_FACTOR) {
+        intern_table_resize(string_table.capacity * 2);
     }
+    
+    int index = str->hash & (string_table.capacity - 1);
+    InternEntry* new_entry = (InternEntry*)malloc(sizeof(InternEntry));
+    if (!new_entry) return;
+    
+    new_entry->str = str;
+    new_entry->next = string_table.entries[index];
+    string_table.entries[index] = new_entry;
+    string_table.count++;
+    
+    update_cache(str);
 }
 
-// Major GC 后清理未被标记的内化字符串（只保留仍被其他对象引用的）
+// 标记字符串表中的所有字符串（供 GC 使用）
+// 注意：现在字符串由 GC 管理，不再需要 intern_mark_all
+// 保留此函数为空操作以兼容现有调用
+void intern_mark_all(void) {
+    // 不再标记所有内化字符串，字符串由 GC 正常管理
+}
+
+// GC 后清理字符串表中指向已回收对象的条目
+// 字符串现在由 GC 管理，GC 回收字符串时通过 free_object_resources -> intern_remove 清理
+// 此函数作为安全网，清理可能遗漏的条目（如字符串被 GC 回收但 intern_remove 未调用）
 void intern_sweep_unmarked(void) {
     if (!string_table.entries) return;
 
@@ -327,10 +313,8 @@ void intern_sweep_unmarked(void) {
         while (*current) {
             InternEntry* entry = *current;
             if (entry->str && !entry->str->header.marked) {
-                // 未被标记，从内化表移除
+                // 字符串未被标记（即将被 GC 回收），清理条目
                 *current = entry->next;
-                // 清除内化标志，让 GC 可以回收
-                entry->str->header.flags &= ~OBJ_FLAG_INTERNED;
                 // 清除缓存
                 int cache_idx = cache_index(entry->str->chars, entry->str->len);
                 StringCacheBucket* bucket = &string_cache[cache_idx];
@@ -340,6 +324,7 @@ void intern_sweep_unmarked(void) {
                         break;
                     }
                 }
+                // 只释放 InternEntry，字符串由 GC 的 sweep 释放
                 free(entry);
                 string_table.count--;
             } else {
