@@ -40,6 +40,7 @@ static int ast_has_try(Ast* ast) {
         case AST_FUNC_DEF:
             // 不检查嵌套函数，因为每个函数有自己的 has_try 标记
             return 0;
+        case AST_CLIB_DEF:
         default:
             return 0;
     }

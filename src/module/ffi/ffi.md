@@ -6,6 +6,7 @@
 
 - [使用方式](#使用方式)
 - [核心概念](#核心概念)
+- [clib 声明式调用](#clib-声明式调用)
 - [动态库操作](#动态库操作)
 - [函数调用](#函数调用)
 - [回调函数](#回调函数)
@@ -86,6 +87,66 @@ ffi.free(ptr)  // 释放
 | `bool` | `int` (0/1) | 布尔值转为整数 |
 | `null` / FFI 指针 | `void*` | 指针参数 |
 | FFI 回调对象 | `void*` | 回调函数指针 |
+
+### clib 声明式调用
+
+除了 `ffi.call_*` 动态调用方式，Leno 还支持 `clib` 声明式调用，具有类型安全、编译期检查等优势：
+
+```leno
+import ffi
+import io
+
+// 声明 C 库函数签名
+clib msvcrt {
+    i32 strlen(str8 s)
+    i32 strcmp(str8 a, str8 b)
+    f64 pow(f64 base, f64 exp)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    i32 len = lib.strlen("hello")
+    io.print("strlen: " + (len as int))
+}
+```
+
+**clib 声明中允许的 C 布局类型：**
+
+| 类型 | C 对应 | 大小 | 说明 |
+|------|--------|------|------|
+| `i32` | `int32_t` | 4 | 有符号 32 位整数 |
+| `u32` | `uint32_t` | 4 | 无符号 32 位整数 |
+| `i64` | `int64_t` | 8 | 有符号 64 位整数 |
+| `u64` | `uint64_t` | 8 | 无符号 64 位整数 |
+| `f32` | `float` | 4 | 单精度浮点 |
+| `f64` | `double` | 8 | 双精度浮点 |
+| `str8` | `char*` | 8 | C 字符串指针（UTF-8） |
+| `str16` | `wchar_t*` | 8 | 宽字符串指针（UTF-16） |
+| `Ptr` | `void*` | 8 | 泛型指针 |
+| `bool` | `int` | 4 | 布尔值（0/1） |
+| `void` | `void` | - | 无返回值 |
+
+> **注意**：clib 声明中**不允许**使用 Leno 类型（`int`、`float`、`string`），必须使用 C 布局类型。clib 函数返回值需要显式转换（如 `as int`、`as float`）才能赋值给 Leno 变量。
+
+**clib 参数自动转换规则：**
+
+| clib 参数类型 | 可接受的 Leno 实参 | 说明 |
+|--------------|-------------------|------|
+| `str8` | `string` | Leno 字符串自动转为 C `char*` |
+| `str16` | `string` | Leno 字符串自动转为 C `wchar_t*` |
+| `i32` / `i64` | `int` | Leno int 自动转为对应 C 整数 |
+| `f64` | `float` | Leno float 自动转为 C double |
+| `Ptr` | `Ptr`、`null` | 指针和 null |
+
+**两种调用方式对比：**
+
+| 特性 | `ffi.call_*` 动态调用 | `clib` 声明式调用 |
+|------|----------------------|-------------------|
+| 类型安全 | 无编译期检查 | 编译期参数和返回类型检查 |
+| 调用方式 | `ffi.call_int(lib, "strlen", s)` | `lib.strlen(s)` |
+| 返回值 | 直接是 Leno 类型 | C 布局类型，需显式转换 |
+| 适用场景 | 快速原型、动态调用 | 正式项目、类型安全要求高 |
 
 ---
 
@@ -1481,12 +1542,34 @@ main() {
 | `utf8_to_utf16(str)` | string | ptr | 将 UTF-8 字符串转换为 UTF-16 宽字符（Windows） |
 | `utf16_to_utf8(ptr)` | ptr | string | 将 UTF-16 宽字符指针转换为 UTF-8 字符串（Windows） |
 
+### clib 声明类型
+
+| clib 类型 | C 对应 | 大小 | 说明 |
+|-----------|--------|------|------|
+| `i32` | `int32_t` | 4 | 有符号 32 位整数 |
+| `u32` | `uint32_t` | 4 | 无符号 32 位整数 |
+| `i64` | `int64_t` | 8 | 有符号 64 位整数 |
+| `u64` | `uint64_t` | 8 | 无符号 64 位整数 |
+| `f32` | `float` | 4 | 单精度浮点 |
+| `f64` | `double` | 8 | 双精度浮点 |
+| `str8` | `char*` | 8 | C 字符串指针（UTF-8） |
+| `str16` | `wchar_t*` | 8 | 宽字符串指针（UTF-16） |
+| `Ptr` | `void*` | 8 | 泛型指针 |
+| `bool` | `int` | 4 | 布尔值（0/1） |
+| `void` | `void` | - | 无返回值 |
+
 ---
 
-*文档版本: 2.3*
-*最后更新: 2026-05-24*
+*文档版本: 2.4*
+*最后更新: 2026-06-06*
 
 ### 更新记录
+
+- **v2.4** (2026-06-06):
+  - 新增 `clib` 声明式调用语法文档
+  - 新增 `str8`（C `char*`）和 `str16`（C `wchar_t*`）类型说明
+  - 新增 clib 参数自动转换规则（`string` → `str8`/`str16`，`int` → `i32`/`i64`，`float` → `f64`）
+  - 修正 `ffi.free()` 返回值为 `null`（非 `true`）
 
 - **v2.3** (2026-05-24):
   - 新增 `ffi.read_uint64(ptr, off)` — 读取 uint64，支持 `0x8000000000000000` ~ `0xFFFFFFFFFFFFFFFF` 范围值正确显示为正数

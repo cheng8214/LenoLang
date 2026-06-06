@@ -1,6 +1,8 @@
 // 最终版多线程回调测试
 import ffi
 
+cfunc WorkCallback(Ptr instance, Ptr context, Ptr work): void
+
 var callback_value = 0
 
 // Windows ThreadPoolWork 回调签名：
@@ -21,8 +23,8 @@ main() {
     var context = ffi.malloc(8)
     ffi.write_int(context, 0, 999)
 
-    // 使用 3 个参数的回调签名
-    var cb = ffi.callback(work_callback, "void", ["pointer", "pointer", "pointer"])
+    // 使用 cfunc 声明的回调签名
+    var cb = ffi.callback(work_callback, WorkCallback)
     var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, context, ffi.nullptr())
 
     ffi.call_void(kernel32, "SubmitThreadpoolWork", work)

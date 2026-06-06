@@ -2,6 +2,11 @@
 
 import ffi
 
+// cfunc 回调签名声明
+cfunc Compare(Ptr a, Ptr b): i32
+cfunc AddOne(i32 x): i32
+cfunc MultiplyTwo(i32 x): i32
+
 // 测试 1: 基本回调 - 使用 C 标准库的 qsort
 func compare(Ptr a, Ptr b): int {
     int va = ffi.read_int(a, 0)
@@ -11,7 +16,7 @@ func compare(Ptr a, Ptr b): int {
     return 0
 }
 
-var cb = ffi.callback(compare, "int", ["pointer", "pointer"])
+var cb = ffi.callback(compare, Compare)
 assert_eq(ffi.is_ptr(cb), true)
 
 // 测试 2: 使用 msvcrt 的 qsort 排序整数数组
@@ -43,13 +48,13 @@ func add_one(int x): int {
     return x + 1
 }
 
-var add_cb = ffi.callback(add_one, "int", ["int"])
+var add_cb = ffi.callback(add_one, AddOne)
 
 // 测试 4: 多个回调同时存在
 func multiply_two(int x): int {
     return x * 2
 }
 
-var mul_cb = ffi.callback(multiply_two, "int", ["int"])
+var mul_cb = ffi.callback(multiply_two, MultiplyTwo)
 
 print("test_ffi_callback passed")

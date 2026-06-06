@@ -69,6 +69,50 @@ void visit(Semantic* s, Ast* ast) {
                 }
             }
 
+            // 预注册所有 clib 定义（确保变量类型声明可以正确解析）
+            for (int i = 0; i < ast->u.block.count; i++) {
+                Ast* stmt = ast->u.block.items[i];
+                if (stmt->kind == AST_CLIB_DEF) {
+                    if (s->current) {
+                        Symbol* existing = scope_resolve_local(s->current, stmt->u.clib_def.name);
+                        if (!existing) {
+                            Symbol* sym = scope_define(s->current, stmt->u.clib_def.name, SYM_CLIB);
+                            if (sym) {
+                                TypeInfo* clib_type = type_new(TYPE_CLIB);
+                                clib_type->struct_name = strdup(stmt->u.clib_def.name);
+                                sym->type = clib_type;
+                                stmt->u.clib_def.ref.kind = sym->kind;
+                                stmt->u.clib_def.ref.index = sym->index;
+                                stmt->u.clib_def.ref.name = strdup(sym->name);
+                                stmt->u.clib_def.ref.type_kind = TYPE_CLIB;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 预注册所有 cfunc 定义
+            for (int i = 0; i < ast->u.block.count; i++) {
+                Ast* stmt = ast->u.block.items[i];
+                if (stmt->kind == AST_CFUNC_DECL) {
+                    if (s->current) {
+                        Symbol* existing = scope_resolve_local(s->current, stmt->u.cfunc_decl.name);
+                        if (!existing) {
+                            Symbol* sym = scope_define(s->current, stmt->u.cfunc_decl.name, SYM_CFUNC);
+                            if (sym) {
+                                TypeInfo* cfunc_type = type_new(TYPE_CFUNC);
+                                cfunc_type->struct_name = strdup(stmt->u.cfunc_decl.name);
+                                sym->type = cfunc_type;
+                                stmt->u.cfunc_decl.ref.kind = sym->kind;
+                                stmt->u.cfunc_decl.ref.index = sym->index;
+                                stmt->u.cfunc_decl.ref.name = strdup(sym->name);
+                                stmt->u.cfunc_decl.ref.type_kind = TYPE_CFUNC;
+                            }
+                        }
+                    }
+                }
+            }
+
             // 第一轮：收集所有命名函数定义
             for (int i = 0; i < ast->u.block.count; i++) {
                 Ast* stmt = ast->u.block.items[i];
@@ -224,9 +268,34 @@ void visit(Semantic* s, Ast* ast) {
             if (ast->u.var_decl.init) {
                 visit(s, ast->u.var_decl.init);
 
-                // 检查声明的类型是否存在（对于自定义 struct/cstruct 类型）
-                if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_STRUCT &&
+                // 检查声明的类型是否存在（对于自定义 struct/cstruct/clib 类型）
+                if ((ast->u.var_decl.type->kind == TYPE_STRUCT || ast->u.var_decl.type->kind == TYPE_CLIB) &&
                     ast->u.var_decl.type->struct_name) {
+                    const char* type_name = ast->u.var_decl.type->struct_name;
+                    if (face_def_find(type_name)) {
+                        ast->u.var_decl.type->kind = TYPE_FACE;
+                    } else {
+                        Symbol* struct_def = scope_resolve(s->current, type_name);
+                        if (!struct_def) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
+                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                        } else if (struct_def->type->kind == TYPE_CLIB) {
+                            // 如果是 clib 类型，更新为 TYPE_CLIB
+                            ast->u.var_decl.type->kind = TYPE_CLIB;
+                        } else if (struct_def->type->kind == TYPE_CSTRUCT) {
+                            // 如果实际是 cstruct，更新类型为 TYPE_CSTRUCT
+                            ast->u.var_decl.type->kind = TYPE_CSTRUCT;
+                        } else if (struct_def->type->kind != TYPE_STRUCT &&
+                                   struct_def->type->kind != TYPE_FACE) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
+                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                        }
+                    }
+                } else if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_STRUCT &&
+                           ast->u.var_decl.type->struct_name) {
+                    // 保持原有的 struct 检查路径（当 type->kind 明确是 TYPE_STRUCT 时）
                     const char* type_name = ast->u.var_decl.type->struct_name;
                     if (face_def_find(type_name)) {
                         ast->u.var_decl.type->kind = TYPE_FACE;
@@ -1296,6 +1365,56 @@ void visit(Semantic* s, Ast* ast) {
                 break;
             }
             
+            // 处理 clib 调用：lib.func(args)
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_FIELD_ACCESS) {
+                Ast* field_access = ast->u.call.callee;
+                visit(s, field_access->u.field_access.obj);
+                visit_list(s, &ast->u.call.args);
+
+                // 检查是否是 clib 类型的方法调用
+                TypeInfo* obj_type = infer_expr_type(s, field_access->u.field_access.obj);
+                if (obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+                    // 查找 clib 符号以获取函数签名
+                    Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                    if (clib_sym && clib_sym->clib_func_count > 0) {
+                        const char* func_name = field_access->u.field_access.field_name;
+                        int func_found = 0;
+
+                        for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                            if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
+                                func_found = 1;
+                                int expected_params = clib_sym->clib_func_param_counts[i];
+                                int actual_params = ast->u.call.args.count;
+
+                                // 检查参数数量
+                                if (actual_params != expected_params) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg), "clib '%s' 的函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                             obj_type->struct_name, func_name, expected_params, actual_params);
+                                    error_add(ERR_SEMANTIC, ast->line, msg);
+                                }
+
+                                // 设置缓存类型为返回类型
+                                TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                                if (!ast->cached_type) {
+                                    ast->cached_type = type_copy(ret_type);
+                                }
+                                break;
+                            }
+                        }
+
+                        if (!func_found) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                     obj_type->struct_name, func_name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
+                    }
+                }
+                if (obj_type) type_free(obj_type);
+                break;
+            }
+
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR) {
                 func_name = ast->u.call.callee->u.var.name;
                 // 使用resolve_variable_with_upvalue处理函数调用，支持闭包
@@ -2148,6 +2267,10 @@ void visit(Semantic* s, Ast* ast) {
                         if (expected_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
                             type_compatible = true;
                         }
+                        // 允许 cfunc 类型匹配
+                        if (expected_type == TYPE_CFUNC && arg_type->kind == TYPE_CFUNC) {
+                            type_compatible = true;
+                        }
                         if (!type_compatible) {
                             char msg[BUFFER_MEDIUM];
                             const char* hint = get_type_conversion_hint(expected_type, arg_type->kind);
@@ -2228,6 +2351,86 @@ void visit(Semantic* s, Ast* ast) {
                     temp_var->u.var.ref.type_kind = ref.type_kind;
                     temp_var->cached_type = NULL;  // 确保 cached_type 为 NULL
                     TypeInfo* obj_type = infer_expr_type(s, temp_var);
+
+                    // 检查类型是否是 clib
+                    int is_clib_call = 0;
+                    if (!is_struct_method && obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+                        // 查找 clib 符号
+                        Symbol* clib_sym = scope_resolve_tree_bfs(s->root_scope, obj_type->struct_name);
+                        if (!clib_sym) {
+                            clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                        }
+                        if (clib_sym && clib_sym->clib_func_count > 0) {
+                            for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
+                                if (strcmp(clib_sym->clib_func_names[fi], method_name) == 0) {
+                                    is_clib_call = 1;
+                                    // 检查参数数量
+                                    int expected_count = clib_sym->clib_func_param_counts[fi];
+                                    int actual_count = ast->u.module_call.args.count;
+                                    if (actual_count != expected_count) {
+                                        char msg[BUFFER_MEDIUM];
+                                        snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                                 obj_type->struct_name, method_name, expected_count, actual_count);
+                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                    }
+                                    // 检查每个参数类型
+                                    for (int pi = 0; pi < actual_count && pi < expected_count; pi++) {
+                                        TypeInfo* expected_param = clib_sym->clib_func_param_types[fi][pi];
+                                        Ast* arg = ast->u.module_call.args.items[pi];
+                                        TypeInfo* arg_type = infer_expr_type(s, arg);
+                                        if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
+                                            if (!(expected_param->kind == TYPE_FLOAT && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_NULL) &&
+                                                !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_STRING) &&
+                                                !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_NULL) &&
+                                                !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_STRING) &&
+                                                !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_NULL) &&
+                                                !(expected_param->kind == TYPE_I32 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_I64 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_F64 && arg_type->kind == TYPE_FLOAT)) {
+                                                char msg[BUFFER_MEDIUM];
+                                                format_type_error(msg, sizeof(msg),
+                                                    "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",
+                                                    expected_param, arg_type,
+                                                    obj_type->struct_name, method_name);
+                                                // 追加参数序号
+                                                char final_msg[BUFFER_MEDIUM];
+                                                snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
+                                                error_add(ERR_TYPE_MISMATCH, ast->line, final_msg);
+                                            }
+                                        }
+                                        if (arg_type) type_free(arg_type);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        if (!is_clib_call) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                     obj_type->struct_name, method_name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        } else {
+                            // clib 调用验证通过，标记 cached_type 让 codegen 识别
+                            ast->cached_type = type_new(TYPE_CLIB);
+                            ast->cached_type->struct_name = strdup(obj_type->struct_name);
+                            // 同时保存 lib 变量的 ref 信息
+                            ast->u.module_call.lib_ref = ref;
+                            if (ref.name) ast->u.module_call.lib_ref.name = strdup(ref.name);
+                        }
+                    }
+
+                    // clib 调用不继续走 struct 检查
+                    if (is_clib_call) {
+                        // 释放临时对象
+                        if (obj_type) type_free(obj_type);
+                        free(temp_var->u.var.name);
+                        if (temp_var->u.var.ref.name) free(temp_var->u.var.ref.name);
+                        free(temp_var);
+                        break;
+                    }
 
                     // 检查类型是否是 struct 或 cstruct
                     if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) && obj_type->struct_name) {
@@ -3285,6 +3488,274 @@ void visit(Semantic* s, Ast* ast) {
             }
             break;
 
+        case AST_CLIB_DEF:
+            // 注册 clib 类型并存储函数签名信息
+            {
+                // 1. 验证函数签名中的类型是否有效（clib 只允许 C 布局类型）
+                for (int i = 0; i < ast->u.clib_def.func_count; i++) {
+                    TypeInfo* ret_type = ast->u.clib_def.func_return_types[i];
+                    // 允许 TYPE_NULL (void), TYPE_I32, TYPE_U32, TYPE_I64, TYPE_U64, TYPE_F32, TYPE_F64,
+                    // TYPE_PTR, TYPE_PTR_GENERIC, TYPE_BOOL, TYPE_STR8, TYPE_STR16
+                    // 不允许 TYPE_INT, TYPE_FLOAT, TYPE_STRING 等 Leno 类型
+                    if (ret_type->kind == TYPE_INT) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型不能使用 'int'，请使用 'i32' 或 'i64'",
+                                 ast->u.clib_def.func_names[i]);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ret_type->kind == TYPE_FLOAT) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型不能使用 'float'，请使用 'f32' 或 'f64'",
+                                 ast->u.clib_def.func_names[i]);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ret_type->kind == TYPE_STRING) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'",
+                                 ast->u.clib_def.func_names[i]);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ret_type->kind == TYPE_STRUCT && ret_type->struct_name) {
+                        // 可能是自定义类型名（如 Ptr 被解析为 TYPE_STRUCT 带 struct_name="Ptr"）
+                        if (strcmp(ret_type->struct_name, "Ptr") == 0) {
+                            type_free(ret_type);
+                            ast->u.clib_def.func_return_types[i] = type_new(TYPE_PTR);
+                            ast->u.clib_def.func_return_types[i]->struct_name = strdup("Ptr");
+                        } else if (strcmp(ret_type->struct_name, "string") == 0 ||
+                                   strcmp(ret_type->struct_name, "String") == 0) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'",
+                                     ast->u.clib_def.func_names[i]);
+                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        } else if (strcmp(ret_type->struct_name, "str8") == 0 ||
+                                   strcmp(ret_type->struct_name, "Str8") == 0) {
+                            type_free(ret_type);
+                            ast->u.clib_def.func_return_types[i] = type_new(TYPE_STR8);
+                        } else if (strcmp(ret_type->struct_name, "str16") == 0 ||
+                                   strcmp(ret_type->struct_name, "Str16") == 0) {
+                            type_free(ret_type);
+                            ast->u.clib_def.func_return_types[i] = type_new(TYPE_STR16);
+                        } else if (strcmp(ret_type->struct_name, "winbool") == 0 ||
+                                   strcmp(ret_type->struct_name, "Winbool") == 0) {
+                            type_free(ret_type);
+                            ast->u.clib_def.func_return_types[i] = type_new(TYPE_BOOL);
+                        } else {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
+                                     ast->u.clib_def.func_names[i], ret_type->struct_name);
+                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        }
+                    }
+
+                    // 验证参数类型
+                    for (int j = 0; j < ast->u.clib_def.func_param_counts[i]; j++) {
+                        TypeInfo* param_type = ast->u.clib_def.func_param_types[i][j];
+                        if (param_type->kind == TYPE_INT) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型不能使用 'int'，请使用 'i32' 或 'i64'",
+                                     ast->u.clib_def.func_names[i], j + 1);
+                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        } else if (param_type->kind == TYPE_FLOAT) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型不能使用 'float'，请使用 'f32' 或 'f64'",
+                                     ast->u.clib_def.func_names[i], j + 1);
+                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        } else if (param_type->kind == TYPE_STRING) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型不能使用 'string'，请使用 'str8' 或 'ptr'",
+                                     ast->u.clib_def.func_names[i], j + 1);
+                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        } else if (param_type->kind == TYPE_STRUCT && param_type->struct_name) {
+                            if (strcmp(param_type->struct_name, "Ptr") == 0) {
+                                type_free(param_type);
+                                ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_PTR);
+                                ast->u.clib_def.func_param_types[i][j]->struct_name = strdup("Ptr");
+                            } else if (strcmp(param_type->struct_name, "string") == 0 ||
+                                       strcmp(param_type->struct_name, "String") == 0) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型不能使用 'string'，请使用 'str8' 或 'ptr'",
+                                         ast->u.clib_def.func_names[i], j + 1);
+                                error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                            } else if (strcmp(param_type->struct_name, "str8") == 0 ||
+                                       strcmp(param_type->struct_name, "Str8") == 0) {
+                                type_free(param_type);
+                                ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_STR8);
+                            } else if (strcmp(param_type->struct_name, "str16") == 0 ||
+                                       strcmp(param_type->struct_name, "Str16") == 0) {
+                                type_free(param_type);
+                                ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_STR16);
+                            } else if (strcmp(param_type->struct_name, "winbool") == 0 ||
+                                       strcmp(param_type->struct_name, "Winbool") == 0) {
+                                type_free(param_type);
+                                ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_BOOL);
+                            } else {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
+                                         ast->u.clib_def.func_names[i], j + 1, param_type->struct_name);
+                                error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                            }
+                        }
+                    }
+                }
+
+                // 2. 注册到符号表（更新已预注册的符号）
+                TypeInfo* clib_type = type_new(TYPE_CLIB);
+                clib_type->struct_name = strdup(ast->u.clib_def.name);
+
+                // 先检查是否已经预注册
+                Symbol* sym = scope_resolve_local(s->current, ast->u.clib_def.name);
+                if (sym && sym->type && sym->type->kind == TYPE_CLIB) {
+                    // 已预注册，更新现有符号
+                    type_free(sym->type);
+                    sym->type = clib_type;
+                } else {
+                    // 未注册，创建新符号（不应发生，因为预注册已处理）
+                    sym = scope_define(s->current, ast->u.clib_def.name, SYM_CLIB);
+                }
+
+                if (sym) {
+                    sym->type = clib_type;
+                    ast->u.clib_def.ref.kind = sym->kind;
+                    ast->u.clib_def.ref.index = sym->index;
+                    ast->u.clib_def.ref.name = strdup(sym->name);
+                    ast->u.clib_def.ref.type_kind = TYPE_CLIB;
+
+                    // 存储 clib 函数签名信息
+                    sym->clib_func_count = ast->u.clib_def.func_count;
+                    sym->clib_func_names = (char**)malloc(sizeof(char*) * ast->u.clib_def.func_count);
+                    sym->clib_func_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.clib_def.func_count);
+                    sym->clib_func_param_counts = (int*)malloc(sizeof(int) * ast->u.clib_def.func_count);
+                    sym->clib_func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * ast->u.clib_def.func_count);
+
+                    for (int i = 0; i < ast->u.clib_def.func_count; i++) {
+                        sym->clib_func_names[i] = strdup(ast->u.clib_def.func_names[i]);
+                        sym->clib_func_return_types[i] = type_copy(ast->u.clib_def.func_return_types[i]);
+                        sym->clib_func_param_counts[i] = ast->u.clib_def.func_param_counts[i];
+                        sym->clib_func_param_types[i] = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.clib_def.func_param_counts[i]);
+                        for (int j = 0; j < ast->u.clib_def.func_param_counts[i]; j++) {
+                            sym->clib_func_param_types[i][j] = type_copy(ast->u.clib_def.func_param_types[i][j]);
+                        }
+                    }
+                } else {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "clib '%s' 重复定义", ast->u.clib_def.name);
+                    error_add(ERR_DUPLICATE_VAR, ast->line, msg);
+                }
+            }
+            break;
+
+        case AST_CFUNC_DECL:
+            // 注册 cfunc 回调签名类型
+            {
+                // 1. 验证返回类型（cfunc 只允许 C 布局类型）
+                TypeInfo* ret_type = ast->u.cfunc_decl.return_type;
+                if (ret_type) {
+                    if (ret_type->kind == TYPE_INT) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型不能使用 'int'，请使用 'i32' 或 'i64'", ast->u.cfunc_decl.name);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ret_type->kind == TYPE_FLOAT) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型不能使用 'float'，请使用 'f32' 或 'f64'", ast->u.cfunc_decl.name);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ret_type->kind == TYPE_STRING) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'", ast->u.cfunc_decl.name);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ret_type->kind == TYPE_STRUCT && ret_type->struct_name) {
+                        if (strcmp(ret_type->struct_name, "Ptr") == 0) {
+                            type_free(ret_type);
+                            ast->u.cfunc_decl.return_type = type_new(TYPE_PTR);
+                            ast->u.cfunc_decl.return_type->struct_name = strdup("Ptr");
+                        } else if (strcmp(ret_type->struct_name, "str8") == 0 || strcmp(ret_type->struct_name, "Str8") == 0) {
+                            type_free(ret_type);
+                            ast->u.cfunc_decl.return_type = type_new(TYPE_STR8);
+                        } else if (strcmp(ret_type->struct_name, "str16") == 0 || strcmp(ret_type->struct_name, "Str16") == 0) {
+                            type_free(ret_type);
+                            ast->u.cfunc_decl.return_type = type_new(TYPE_STR16);
+                        } else if (strcmp(ret_type->struct_name, "winbool") == 0 || strcmp(ret_type->struct_name, "Winbool") == 0) {
+                            type_free(ret_type);
+                            ast->u.cfunc_decl.return_type = type_new(TYPE_BOOL);
+                        } else {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型 '%s' 不是有效的 C 布局类型", ast->u.cfunc_decl.name, ret_type->struct_name);
+                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        }
+                    }
+                }
+
+                // 2. 验证参数类型
+                for (int j = 0; j < ast->u.cfunc_decl.param_count; j++) {
+                    TypeInfo* ptype = ast->u.cfunc_decl.param_types[j];
+                    if (ptype->kind == TYPE_INT) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "cfunc '%s' 参数 %d 类型不能使用 'int'，请使用 'i32' 或 'i64'", ast->u.cfunc_decl.name, j + 1);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ptype->kind == TYPE_FLOAT) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "cfunc '%s' 参数 %d 类型不能使用 'float'，请使用 'f32' 或 'f64'", ast->u.cfunc_decl.name, j + 1);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ptype->kind == TYPE_STRING) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "cfunc '%s' 参数 %d 类型不能使用 'string'，请使用 'str8' 或 'ptr'", ast->u.cfunc_decl.name, j + 1);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    } else if (ptype->kind == TYPE_STRUCT && ptype->struct_name) {
+                        if (strcmp(ptype->struct_name, "Ptr") == 0) {
+                            type_free(ptype);
+                            ast->u.cfunc_decl.param_types[j] = type_new(TYPE_PTR);
+                            ast->u.cfunc_decl.param_types[j]->struct_name = strdup("Ptr");
+                        } else if (strcmp(ptype->struct_name, "str8") == 0 || strcmp(ptype->struct_name, "Str8") == 0) {
+                            type_free(ptype);
+                            ast->u.cfunc_decl.param_types[j] = type_new(TYPE_STR8);
+                        } else if (strcmp(ptype->struct_name, "str16") == 0 || strcmp(ptype->struct_name, "Str16") == 0) {
+                            type_free(ptype);
+                            ast->u.cfunc_decl.param_types[j] = type_new(TYPE_STR16);
+                        } else if (strcmp(ptype->struct_name, "winbool") == 0 || strcmp(ptype->struct_name, "Winbool") == 0) {
+                            type_free(ptype);
+                            ast->u.cfunc_decl.param_types[j] = type_new(TYPE_BOOL);
+                        } else {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "cfunc '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型", ast->u.cfunc_decl.name, j + 1, ptype->struct_name);
+                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        }
+                    }
+                }
+
+                // 3. 注册到符号表
+                Symbol* sym = scope_resolve_local(s->current, ast->u.cfunc_decl.name);
+                if (sym && sym->type && sym->type->kind == TYPE_CFUNC) {
+                    // 已预注册，更新签名信息
+                    type_free(sym->type);
+                    TypeInfo* cfunc_type = type_new(TYPE_CFUNC);
+                    cfunc_type->struct_name = strdup(ast->u.cfunc_decl.name);
+                    sym->type = cfunc_type;
+                } else {
+                    sym = scope_define(s->current, ast->u.cfunc_decl.name, SYM_CFUNC);
+                    if (sym) {
+                        TypeInfo* cfunc_type = type_new(TYPE_CFUNC);
+                        cfunc_type->struct_name = strdup(ast->u.cfunc_decl.name);
+                        sym->type = cfunc_type;
+                    }
+                }
+
+                if (sym) {
+                    ast->u.cfunc_decl.ref.kind = sym->kind;
+                    ast->u.cfunc_decl.ref.index = sym->index;
+                    ast->u.cfunc_decl.ref.name = strdup(sym->name);
+                    ast->u.cfunc_decl.ref.type_kind = TYPE_CFUNC;
+
+                    // 存储 cfunc 签名信息
+                    sym->cfunc_param_count = ast->u.cfunc_decl.param_count;
+                    sym->cfunc_param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.cfunc_decl.param_count);
+                    for (int j = 0; j < ast->u.cfunc_decl.param_count; j++) {
+                        sym->cfunc_param_types[j] = type_copy(ast->u.cfunc_decl.param_types[j]);
+                    }
+                    sym->cfunc_return_type = ast->u.cfunc_decl.return_type ? type_copy(ast->u.cfunc_decl.return_type) : NULL;
+                } else {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "cfunc '%s' 重复定义", ast->u.cfunc_decl.name);
+                    error_add(ERR_DUPLICATE_VAR, ast->line, msg);
+                }
+            }
+            break;
+
         case AST_ENUM_DEF:
             // 注册 enum 类型
             {
@@ -3449,8 +3920,33 @@ void visit(Semantic* s, Ast* ast) {
             if (ast->u.field_access.obj) {
                 visit(s, ast->u.field_access.obj);
 
-                // 检查 struct/cstruct 字段是否存在，并设置字段索引
+                // 检查 clib 类型的函数调用
                 TypeInfo* obj_type = infer_expr_type(s, ast->u.field_access.obj);
+                if (obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+                    // 检查 clib 函数是否存在
+                    Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                    if (clib_sym && clib_sym->clib_func_count > 0) {
+                        const char* func_name = ast->u.field_access.field_name;
+                        int func_found = 0;
+                        for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                            if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
+                                func_found = 1;
+                                ast->u.field_access.field_index = i;
+                                break;
+                            }
+                        }
+                        if (!func_found) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                     obj_type->struct_name, func_name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
+                    }
+                    type_free(obj_type);
+                    break;
+                }
+
+                // 检查 struct/cstruct 字段是否存在，并设置字段索引
                 if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE)) {
                     const char* field_name = ast->u.field_access.field_name;
                     Symbol* struct_sym = NULL;

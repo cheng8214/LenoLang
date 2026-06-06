@@ -112,7 +112,10 @@ typedef enum {
     TOK_C_SIZE, TOK_C_SSIZE,  // c_size, c_ssize
     // C struct 关键字
     TOK_CSTRUCT,         // cstruct
+    TOK_CLIB,            // clib - C 库函数签名声明
+    TOK_CFUNC,           // cfunc - C 回调函数签名声明
     // 字符串类型关键字
+    TOK_STR8,           // str8 - C char* 字符串指针
     TOK_STR16,           // str16 - UTF-16 字符串数组
     // 字符串插值 - 简化设计
     TOK_INTERP_STRING,   // $" 开始
@@ -167,6 +170,9 @@ typedef enum {
     TYPE_C_LONGLONG, TYPE_C_ULONGLONG,  // c_longlong, c_ulonglong
     TYPE_C_SIZE, TYPE_C_SSIZE,  // c_size, c_ssize
     TYPE_CSTRUCT,               // cstruct
+    TYPE_CLIB,                  // clib - C 库函数签名类型
+    TYPE_CFUNC,                 // cfunc - C 回调函数签名类型
+    TYPE_STR8,                 // str8 - C char* 字符串指针
     TYPE_STR16,                 // str16 - UTF-16 字符串数组
     TYPE_PTR_GENERIC,           // 泛型指针 Ptr[T]
     TYPE_THREAD,                // 线程类型
@@ -226,6 +232,8 @@ typedef enum {
     SYM_TYPE,        // 类型定义（enum、struct），不占用运行时索引
     SYM_STRUCT,      // struct 类型定义
     SYM_CSTRUCT,     // cstruct 类型定义
+    SYM_CLIB,        // clib 类型定义
+    SYM_CFUNC,       // cfunc 回调签名定义
     SYM_ENUM,        // enum 类型定义
 } SymKind;
 

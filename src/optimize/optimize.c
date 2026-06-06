@@ -439,6 +439,8 @@ static void fold_expr(Ast* ast) {
         case AST_BREAK:
         case AST_CONTINUE:
         case AST_ENUM_DEF:
+        case AST_CLIB_DEF:
+        case AST_CFUNC_DECL:
         case AST_CSTRUCT_DEF:
             break;
     }
@@ -800,6 +802,8 @@ static int dce_expr(Ast* ast) {
         case AST_USE:
         case AST_MODULE_ACCESS:
         case AST_ENUM_DEF:
+        case AST_CLIB_DEF:
+        case AST_CFUNC_DECL:
         case AST_CSTRUCT_DEF:
             return 0;
     }

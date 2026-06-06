@@ -1,0 +1,21 @@
+// 测试 cfunc 声明式回调
+import ffi
+
+// 声明 cfunc 回调签名
+cfunc Compare(Ptr a, Ptr b): i32
+
+// 实现比较函数
+func my_compare(Ptr a, Ptr b): int {
+    int va = a as int
+    int vb = b as int
+    if va < vb { return -1 }
+    if va > vb { return 1 }
+    return 0
+}
+
+main() {
+    // 使用 cfunc 签名创建回调
+    var cb = ffi.callback(my_compare, Compare)
+    print("cfunc callback created: " + (cb != null))
+    print("done")
+}

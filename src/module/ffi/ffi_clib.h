@@ -19,6 +19,16 @@ extern "C" {
  */
 Value ffi_clib_call(int argc, Value* args, int ret_type, const int* arg_types);
 
+/**
+ * 使用编译期 cfunc 签名创建回调（供 OP_CFUNC_CALLBACK 使用）
+ * func_val: Leno 函数值
+ * ret_type: FFIType 枚举值
+ * param_count: 参数数量
+ * param_types: 参数的 FFIType 枚举值数组
+ * 返回 ObjFFICallback 对象
+ */
+Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count, const uint8_t* param_types);
+
 #ifdef __cplusplus
 }
 #endif

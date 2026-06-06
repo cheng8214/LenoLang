@@ -318,6 +318,19 @@ const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
         }
     }
     
+    // clib 返回类型（i32/u32/i64/u64）转 int
+    if (expected == TYPE_INT &&
+        (actual == TYPE_I32 || actual == TYPE_U32 ||
+         actual == TYPE_I64 || actual == TYPE_U64)) {
+        return "提示：clib 函数返回值需要显式转换，使用 _int(value) 或 value as int";
+    }
+
+    // clib 返回类型（f32/f64）转 float
+    if (expected == TYPE_FLOAT &&
+        (actual == TYPE_F32 || actual == TYPE_F64)) {
+        return "提示：clib 函数返回值需要显式转换，使用 _float(value) 或 value as float";
+    }
+
     // float 转 int（需要截断）
     if (actual == TYPE_FLOAT && expected == TYPE_INT) {
         return "提示：float 转 int 会截断小数部分，使用 _int(value) 显式转换";

@@ -1,4 +1,4 @@
-﻿import ffi
+import ffi
 
 main()
 {

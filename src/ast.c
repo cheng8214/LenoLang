@@ -323,6 +323,33 @@ void ast_free(Ast* ast) {
         case AST_AWAIT:
             ast_free(ast->u.await.expr);
             break;
+        case AST_CLIB_DEF:
+            free(ast->u.clib_def.name);
+            for (int i = 0; i < ast->u.clib_def.func_count; i++) {
+                free(ast->u.clib_def.func_names[i]);
+                type_free(ast->u.clib_def.func_return_types[i]);
+                for (int j = 0; j < ast->u.clib_def.func_param_counts[i]; j++) {
+                    type_free(ast->u.clib_def.func_param_types[i][j]);
+                }
+                free(ast->u.clib_def.func_param_types[i]);
+            }
+            free(ast->u.clib_def.func_names);
+            free(ast->u.clib_def.func_return_types);
+            free(ast->u.clib_def.func_param_types);
+            free(ast->u.clib_def.func_param_counts);
+            free(ast->u.clib_def.ref.name);
+            break;
+        case AST_CFUNC_DECL:
+            free(ast->u.cfunc_decl.name);
+            for (int i = 0; i < ast->u.cfunc_decl.param_count; i++) {
+                type_free(ast->u.cfunc_decl.param_types[i]);
+                free(ast->u.cfunc_decl.param_names[i]);
+            }
+            free(ast->u.cfunc_decl.param_types);
+            free(ast->u.cfunc_decl.param_names);
+            if (ast->u.cfunc_decl.return_type) type_free(ast->u.cfunc_decl.return_type);
+            free(ast->u.cfunc_decl.ref.name);
+            break;
         // AST_BREAK, AST_CONTINUE, AST_BOOL, AST_NULL 不需要特殊处理（没有动态分配的成员）
         default:
             break;

@@ -3,6 +3,20 @@
 
 import ffi
 
+// ========== cfunc 回调签名声明 ==========
+cfunc Compare(Ptr a, Ptr b): i32
+cfunc CompareAsc(Ptr a, Ptr b): i32
+cfunc CompareDesc(Ptr a, Ptr b): i32
+cfunc TrackCall(i32 x): i32
+cfunc IntParam(i32 x): i32
+cfunc FloatParam(f64 x): f64
+cfunc PtrParam(Ptr p): i32
+cfunc BoolParam(bool b): i32
+cfunc Dummy(i32 x): i32
+cfunc ComparePoints(Ptr a, Ptr b): i32
+cfunc RiskyCompare(Ptr a, Ptr b): i32
+cfunc Identity(i32 x): i32
+
 // ========== 测试 1: 基本回调功能 ==========
 func test_basic_callback() {
     print("=== 测试 1: 基本回调功能 ===")
@@ -15,7 +29,7 @@ func test_basic_callback() {
         return 0
     }
 
-    var cb = ffi.callback(compare, "int", ["pointer", "pointer"])
+    var cb = ffi.callback(compare, Compare)
     assert(ffi.is_ptr(cb), "回调对象应该被识别为指针")
 
     var libc = ffi.load("msvcrt.dll")
@@ -62,8 +76,8 @@ func test_multiple_callbacks() {
         return 0
     }
 
-    var cb_asc = ffi.callback(compare_asc, "int", ["pointer", "pointer"])
-    var cb_desc = ffi.callback(compare_desc, "int", ["pointer", "pointer"])
+    var cb_asc = ffi.callback(compare_asc, CompareAsc)
+    var cb_desc = ffi.callback(compare_desc, CompareDesc)
 
     assert(ffi.is_ptr(cb_asc), "升序回调应该有效")
     assert(ffi.is_ptr(cb_desc), "降序回调应该有效")
@@ -114,12 +128,8 @@ func test_callback_with_closure() {
         return x * 2
     }
 
-    var cb = ffi.callback(track_call, "int", ["int"])
+    var cb = ffi.callback(track_call, TrackCall)
     assert(ffi.is_ptr(cb), "闭包回调应该有效")
-
-    // 注意：这里只是创建回调，不实际调用
-    // 因为 C 库调用回调时，闭包变量的修改可能不可见
-    // 这取决于具体实现
 
     ffi.free(cb)
 
@@ -134,7 +144,7 @@ func test_callback_param_types() {
     func int_param(int x): int {
         return x + 1
     }
-    var cb_int = ffi.callback(int_param, "int", ["int"])
+    var cb_int = ffi.callback(int_param, IntParam)
     assert(ffi.is_ptr(cb_int), "int参数回调应该有效")
     ffi.free(cb_int)
 
@@ -142,7 +152,7 @@ func test_callback_param_types() {
     func float_param(float x): float {
         return x * 2.0
     }
-    var cb_float = ffi.callback(float_param, "float", ["float"])
+    var cb_float = ffi.callback(float_param, FloatParam)
     assert(ffi.is_ptr(cb_float), "float参数回调应该有效")
     ffi.free(cb_float)
 
@@ -151,7 +161,7 @@ func test_callback_param_types() {
         if not p { return 0 }
         return ffi.read_int(p, 0)
     }
-    var cb_ptr = ffi.callback(ptr_param, "int", ["pointer"])
+    var cb_ptr = ffi.callback(ptr_param, PtrParam)
     assert(ffi.is_ptr(cb_ptr), "pointer参数回调应该有效")
     ffi.free(cb_ptr)
 
@@ -160,7 +170,7 @@ func test_callback_param_types() {
         if b { return 1 }
         return 0
     }
-    var cb_bool = ffi.callback(bool_param, "int", ["bool"])
+    var cb_bool = ffi.callback(bool_param, BoolParam)
     assert(ffi.is_ptr(cb_bool), "bool参数回调应该有效")
     ffi.free(cb_bool)
 
@@ -178,7 +188,7 @@ func test_callback_resource_management() {
     // 创建多个回调
     var callbacks = []
     for 0 : 9 to i {
-        var cb = ffi.callback(dummy, "int", ["int"])
+        var cb = ffi.callback(dummy, Dummy)
         callbacks.add(cb)
     }
 
@@ -219,7 +229,7 @@ func test_callback_with_cstruct() {
         return 0
     }
 
-    var cb = ffi.callback(compare_points, "int", ["pointer", "pointer"])
+    var cb = ffi.callback(compare_points, ComparePoints)
     assert(ffi.is_ptr(cb), "cstruct回调应该有效")
 
     var libc = ffi.load("msvcrt.dll")
@@ -265,16 +275,13 @@ func test_callback_with_cstruct() {
 func test_callback_error_handling() {
     print("=== 测试 7: 回调异常处理 ===")
 
-    // 测试回调中访问无效内存（应该被捕获或安全处理）
     func risky_compare(Ptr a, Ptr b): int {
-        // 这里假设指针有效，但如果传入无效指针可能会出问题
-        // 实际测试中我们只使用有效指针
         int va = ffi.read_int(a, 0)
         int vb = ffi.read_int(b, 0)
         return va - vb
     }
 
-    var cb = ffi.callback(risky_compare, "int", ["pointer", "pointer"])
+    var cb = ffi.callback(risky_compare, RiskyCompare)
     assert(ffi.is_ptr(cb), "风险回调应该被创建")
 
     // 正常使用
@@ -305,7 +312,7 @@ func test_massive_callbacks() {
 
     // 创建并立即释放大量回调，测试资源管理
     for 0 : 49 to i {
-        var cb = ffi.callback(identity, "int", ["int"])
+        var cb = ffi.callback(identity, Identity)
         assert(ffi.is_ptr(cb), "回调 " + i + " 应该有效")
         ffi.free(cb)
     }
@@ -317,7 +324,6 @@ func test_massive_callbacks() {
 func test_nested_callback_usage() {
     print("=== 测试 9: 回调嵌套调用场景 ===")
 
-    // 模拟一个场景：排序后使用另一个回调处理结果
     func compare(Ptr a, Ptr b): int {
         int va = ffi.read_int(a, 0)
         int vb = ffi.read_int(b, 0)
@@ -326,7 +332,7 @@ func test_nested_callback_usage() {
         return 0
     }
 
-    var cb_sort = ffi.callback(compare, "int", ["pointer", "pointer"])
+    var cb_sort = ffi.callback(compare, Compare)
 
     var libc = ffi.load("msvcrt.dll")
 
@@ -361,7 +367,7 @@ func test_callback_library_lifecycle() {
         return va - vb
     }
 
-    var cb = ffi.callback(compare, "int", ["pointer", "pointer"])
+    var cb = ffi.callback(compare, Compare)
 
     // 多次加载和释放库，回调保持有效
     for 0 : 2 to i {

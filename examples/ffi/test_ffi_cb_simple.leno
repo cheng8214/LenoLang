@@ -1,10 +1,12 @@
 import ffi
 
+cfunc SimpleCb(): i32
+
 func simple_cb(): int {
     return 42
 }
 
-var cb = ffi.callback(simple_cb, "int", [])
+var cb = ffi.callback(simple_cb, SimpleCb)
 print("callback created: " + _str(ffi.is_ptr(cb)))
 
 var libc = ffi.load("msvcrt.dll")

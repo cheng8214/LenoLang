@@ -135,6 +135,8 @@ int is_entry_function_def(Parser* p);
 Ast* parse_struct_stmt(Parser* p);
 Ast* parse_face_stmt(Parser* p);
 Ast* parse_cstruct_stmt(Parser* p);
+Ast* parse_clib_stmt(Parser* p);
+Ast* parse_cfunc_stmt(Parser* p);
 Ast* parse_enum_stmt(Parser* p);
 
 // ============================================================================

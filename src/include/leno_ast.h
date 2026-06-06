@@ -49,6 +49,8 @@ typedef enum {
     AST_STRUCT_DEF,    // struct 定义
     AST_FACE_DEF,      // face 定义
     AST_CSTRUCT_DEF,   // cstruct 定义（C 布局结构体）
+    AST_CLIB_DEF,       // clib 定义（C 库函数签名声明）
+    AST_CFUNC_DECL,     // cfunc 声明（C 回调函数签名）
     AST_ENUM_DEF,      // enum 定义
     AST_STRUCT_INIT,   // struct 构造函数调用
     AST_FIELD_ACCESS,  // 字段访问: obj.field
@@ -210,7 +212,7 @@ struct Ast {
         struct { char* module_name; char* alias; char* file_path; } import;
         struct { Ast* decl; } export;
         struct { char* module_name; char* symbol_name; } use;
-        struct { char* module_name; char* method_name; AstList args; } module_call;
+        struct { char* module_name; char* method_name; AstList args; SymRef lib_ref; } module_call;
         struct { char* module_name; char* member_name; SymRef ref; } module_access;
         struct {
             char** parts;      // 字符串片段数组
@@ -261,6 +263,23 @@ struct Ast {
             int* field_array_dims; // 字段数组维度（0 表示非数组，>0 表示数组大小）
             SymRef ref;        // 符号引用信息
         } cstruct_def;
+        struct {
+            char* name;        // clib 名称
+            char** func_names; // 函数名称数组
+            TypeInfo** func_return_types; // 函数返回类型数组
+            TypeInfo*** func_param_types; // 函数参数类型数组（二维）
+            int* func_param_counts;       // 函数参数数量数组
+            int func_count;     // 函数数量
+            SymRef ref;        // 符号引用信息
+        } clib_def;
+        struct {
+            char* name;           // cfunc 名称
+            TypeInfo** param_types; // 参数类型数组
+            char** param_names;     // 参数名数组
+            int param_count;        // 参数数量
+            TypeInfo* return_type;  // 返回类型
+            SymRef ref;           // 符号引用信息
+        } cfunc_decl;
         struct {
             char* name;        // enum 名称
             char** member_names; // 成员名称数组

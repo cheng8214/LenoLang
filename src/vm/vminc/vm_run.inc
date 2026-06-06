@@ -173,6 +173,7 @@
         [OP_ASYNC_CALL] = &&LABEL(OP_ASYNC_CALL),
         [OP_INIT_LENOMODULE] = &&LABEL(OP_INIT_LENOMODULE),
         [OP_CLIB_CALL] = &&LABEL(OP_CLIB_CALL),
+        [OP_CFUNC_CALLBACK] = &&LABEL(OP_CFUNC_CALLBACK),
     };
 
     // 宏定义：取指令并分发
@@ -294,6 +295,9 @@
 
             // clib 调用操作码
             #include "op_clib_call.inc"
+
+            // cfunc 回调创建操作码
+            #include "op_cfunc_callback.inc"
 
             // 模块常量获取操作码
             #include "op_get_module_const.inc"

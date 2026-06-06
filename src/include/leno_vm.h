@@ -152,6 +152,7 @@ typedef enum {
     OP_INIT_LENOMODULE, // 初始化 .leno 模块（延迟执行 init_chunk）
     // clib 调用指令（栈上: lib, func_name, args... -> 结果）
     OP_CLIB_CALL,       // 调用 C 库函数（通过 FFI）
+    OP_CFUNC_CALLBACK,  // 创建 cfunc 回调（编译期签名，无需字符串）
 } OpCode;
 
 // ============================================================================
@@ -260,6 +261,10 @@ struct Symbol {
     int* clib_func_param_counts;    // 函数参数数量数组
     TypeInfo*** clib_func_param_types; // 函数参数类型数组（二维）
     int clib_func_count;            // 函数数量
+    // cfunc 回调签名信息（仅当类型为 cfunc 时使用）
+    TypeInfo** cfunc_param_types;   // 参数类型数组
+    int cfunc_param_count;          // 参数数量
+    TypeInfo* cfunc_return_type;    // 返回类型
 };
 
 struct Scope {

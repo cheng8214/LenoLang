@@ -2047,49 +2047,23 @@ static void* create_callback_trampoline(int cb_id, FFIType ret_type) {
     return (void*)code;
 }
 
-static FFIType parse_ffi_type(const char* name) {
-    if (!name) return FFI_TYPE_INT;
-    if (strcmp(name, "void") == 0)    return FFI_TYPE_VOID;
-    if (strcmp(name, "int") == 0)     return FFI_TYPE_INT;
-    if (strcmp(name, "int8") == 0)    return FFI_TYPE_INT8;
-    if (strcmp(name, "uint8") == 0 || strcmp(name, "byte") == 0) return FFI_TYPE_UINT8;
-    if (strcmp(name, "int16") == 0)   return FFI_TYPE_INT16;
-    if (strcmp(name, "uint16") == 0)  return FFI_TYPE_UINT16;
-    if (strcmp(name, "int32") == 0)   return FFI_TYPE_INT32;
-    if (strcmp(name, "uint32") == 0)  return FFI_TYPE_UINT32;
-    if (strcmp(name, "int64") == 0)   return FFI_TYPE_INT;
-    if (strcmp(name, "double") == 0)  return FFI_TYPE_DOUBLE;
-    if (strcmp(name, "float") == 0)   return FFI_TYPE_FLOAT;
-    if (strcmp(name, "pointer") == 0 || strcmp(name, "ptr") == 0) return FFI_TYPE_POINTER;
-    if (strcmp(name, "bool") == 0)    return FFI_TYPE_BOOL;
-    return FFI_TYPE_INT;
+/* ==================== 兼容函数（语义分析需要，运行时报错） ==================== */
+
+static Value ffi_callback_compat_func(int argc, Value* args) {
+    (void)argc;
+    (void)args;
+    native_throw_error("ffi.callback 必须使用 cfunc 声明式回调，例如: cfunc Compare(Ptr a, Ptr b): i32; ffi.callback(func, Compare)");
+    return val_null();
 }
 
-static Value ffi_callback_func(int argc, Value* args) {
-    (void)argc;
-    if (!val_is_obj(args[0]) ||
-        (val_as_obj(args[0])->type != OBJ_CLOSURE &&
-         val_as_obj(args[0])->type != OBJ_FUNCTION)) {
+/* ==================== cfunc 回调创建（编译期签名） ==================== */
+
+Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count, const uint8_t* param_types) {
+    if (!val_is_obj(func_val) ||
+        (val_as_obj(func_val)->type != OBJ_CLOSURE &&
+         val_as_obj(func_val)->type != OBJ_FUNCTION)) {
         native_throw_error("ffi.callback 第一个参数必须是函数");
         return val_null();
-    }
-
-    const char* ret_type_str = ((ObjString*)val_as_obj(args[1]))->chars;
-    FFIType ret_type = parse_ffi_type(ret_type_str);
-
-    int nargs = 0;
-    FFIType arg_types[FFI_MAX_ARGS];
-    if (argc > 2 && val_is_obj(args[2]) && val_as_obj(args[2])->type == OBJ_ARRAY) {
-        ObjArray* arr = (ObjArray*)val_as_obj(args[2]);
-        nargs = arr->count > FFI_MAX_ARGS ? FFI_MAX_ARGS : arr->count;
-        for (int i = 0; i < nargs; i++) {
-            Value elem = arr->elements[i];
-            if (val_is_string(elem)) {
-                arg_types[i] = parse_ffi_type(((ObjString*)val_as_obj(elem))->chars);
-            } else {
-                arg_types[i] = FFI_TYPE_INT;
-            }
-        }
     }
 
     int cb_id = -1;
@@ -2109,18 +2083,20 @@ static Value ffi_callback_func(int argc, Value* args) {
         native_throw_error("内存不足");
         return val_null();
     }
-    sig->ret_type = ret_type;
-    sig->nargs = nargs;
-    memcpy(sig->arg_types, arg_types, sizeof(FFIType) * nargs);
+    sig->ret_type = (FFIType)ret_type;
+    sig->nargs = param_count;
+    for (int i = 0; i < param_count; i++) {
+        sig->arg_types[i] = (FFIType)param_types[i];
+    }
 
-    void* trampoline = create_callback_trampoline(cb_id, ret_type);
+    void* trampoline = create_callback_trampoline(cb_id, (FFIType)ret_type);
     if (!trampoline) {
         free(sig);
         native_throw_error("无法分配可执行内存");
         return val_null();
     }
 
-    g_callback_registry[cb_id].func_val = args[0];
+    g_callback_registry[cb_id].func_val = func_val;
     g_callback_registry[cb_id].sig = sig;
     g_callback_registry[cb_id].active = 1;
     g_callback_count++;
@@ -2136,7 +2112,7 @@ static Value ffi_callback_func(int argc, Value* args) {
     cb->callback_id = cb_id;
     cb->sig = sig;
     cb->trampoline = trampoline;
-    cb->func_val = args[0];
+    cb->func_val = func_val;
 
     return val_obj((Object*)cb);
 }
@@ -2266,6 +2242,7 @@ void ffi_init_module(void) {
     native_register_module_method("ffi", "alignof",     ffi_alignof_func,     1, -1, -1, TYPE_INT, TYPE_UNKNOWN, type_name_params);
 
     /* ===== 回调函数 ===== */
-    TypeKind callback_params[] = {TYPE_ANY, TYPE_STRING};
-    native_register_module_method("ffi", "callback", ffi_callback_func, -1, 2, -1, TYPE_PTR, TYPE_UNKNOWN, callback_params);
+    // ffi.callback(func, CfuncName) - 第二个参数必须是 cfunc 类型
+    TypeKind callback_params[] = {TYPE_ANY, TYPE_CFUNC};
+    native_register_module_method("ffi", "callback", ffi_callback_compat_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, callback_params);
 }

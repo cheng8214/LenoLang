@@ -1111,6 +1111,62 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
 
             if (native_is_module(actual_module)) {
+                // 检测 ffi.callback(func, CfuncName) - 使用 cfunc 签名创建回调
+                if (strcmp(actual_module, "ffi") == 0 && strcmp(ast->u.module_call.method_name, "callback") == 0 &&
+                    ast->u.module_call.args.count == 2) {
+                    Ast* second_arg = ast->u.module_call.args.items[1];
+                    if (second_arg->kind == AST_VAR) {
+                        Symbol* cfunc_sym = scope_resolve(gen->sem->current, second_arg->u.var.name);
+                        if (!cfunc_sym) cfunc_sym = scope_resolve(gen->sem->root_scope, second_arg->u.var.name);
+                        if (cfunc_sym && cfunc_sym->type && cfunc_sym->type->kind == TYPE_CFUNC) {
+                            // 生成: 先压入函数参数
+                            gen_expr(gen, ast->u.module_call.args.items[0]);
+
+                            // 计算返回类型的 FFIType
+                            int ffi_ret_type = 1;
+                            TypeInfo* ret = cfunc_sym->cfunc_return_type;
+                            if (!ret || ret->kind == TYPE_NULL) ffi_ret_type = 0;
+                            else if (ret->kind == TYPE_F32) ffi_ret_type = 10;
+                            else if (ret->kind == TYPE_F64 || ret->kind == TYPE_FLOAT) ffi_ret_type = 2;
+                            else if (ret->kind == TYPE_PTR || ret->kind == TYPE_PTR_GENERIC || ret->kind == TYPE_STR8 || ret->kind == TYPE_STR16) ffi_ret_type = 3;
+                            else if (ret->kind == TYPE_BOOL) ffi_ret_type = 11;
+                            else if (ret->kind == TYPE_I8) ffi_ret_type = 5;
+                            else if (ret->kind == TYPE_U8) ffi_ret_type = 4;
+                            else if (ret->kind == TYPE_I16) ffi_ret_type = 7;
+                            else if (ret->kind == TYPE_U16) ffi_ret_type = 6;
+                            else if (ret->kind == TYPE_I32) ffi_ret_type = 9;
+                            else if (ret->kind == TYPE_U32) ffi_ret_type = 8;
+
+                            int cfunc_param_count = cfunc_sym->cfunc_param_count;
+                            uint8_t ffi_param_types[12];
+                            for (int j = 0; j < cfunc_param_count && j < 12; j++) {
+                                TypeInfo* pt = cfunc_sym->cfunc_param_types[j];
+                                int ft = 1;
+                                if (pt->kind == TYPE_F32) ft = 10;
+                                else if (pt->kind == TYPE_F64 || pt->kind == TYPE_FLOAT) ft = 2;
+                                else if (pt->kind == TYPE_PTR || pt->kind == TYPE_PTR_GENERIC || pt->kind == TYPE_STR8 || pt->kind == TYPE_STR16) ft = 3;
+                                else if (pt->kind == TYPE_BOOL) ft = 11;
+                                else if (pt->kind == TYPE_I8) ft = 5;
+                                else if (pt->kind == TYPE_U8) ft = 4;
+                                else if (pt->kind == TYPE_I16) ft = 7;
+                                else if (pt->kind == TYPE_U16) ft = 6;
+                                else if (pt->kind == TYPE_I32) ft = 9;
+                                else if (pt->kind == TYPE_U32) ft = 8;
+                                ffi_param_types[j] = (uint8_t)ft;
+                            }
+
+                            // OP_CFUNC_CALLBACK: ret_type(1) param_count(1) param_types[param_count]
+                            emit_byte(gen, OP_CFUNC_CALLBACK, ast->line);
+                            emit_byte(gen, (uint8_t)ffi_ret_type, ast->line);
+                            emit_byte(gen, (uint8_t)cfunc_param_count, ast->line);
+                            for (int j = 0; j < cfunc_param_count; j++) {
+                                emit_byte(gen, ffi_param_types[j], ast->line);
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 for (int i = 0; i < ast->u.module_call.args.count; i++) {
                     gen_expr(gen, ast->u.module_call.args.items[i]);
                 }

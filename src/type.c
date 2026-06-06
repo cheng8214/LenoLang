@@ -126,6 +126,7 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
         case TYPE_CSTRUCT:
         case TYPE_FACE:
         case TYPE_CLIB:
+        case TYPE_CFUNC:
             if (a->struct_name && b->struct_name) {
                 return strcmp(a->struct_name, b->struct_name) == 0;
             }
@@ -174,6 +175,7 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_FACE:
         case TYPE_CSTRUCT:
         case TYPE_CLIB:
+        case TYPE_CFUNC:
         case TYPE_ENUM:
             if (type->struct_name) {
                 copy->struct_name = strdup(type->struct_name);
@@ -382,9 +384,10 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             }
             break;
         }
-        case TYPE_CLIB: {
-            // clib TypeName
-            const char* prefix = "clib";
+        case TYPE_CLIB:
+        case TYPE_CFUNC: {
+            // clib/cfunc TypeName
+            const char* prefix = (type->kind == TYPE_CFUNC) ? "cfunc" : "clib";
             size_t prefix_len = strlen(prefix);
             if (*offset + prefix_len < buf_size - 1) {
                 memcpy(buf + *offset, prefix, prefix_len);
@@ -504,6 +507,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_C_SSIZE:  return "c_ssize";
         case TYPE_CSTRUCT:  return "cstruct";
         case TYPE_CLIB:     return "clib";
+        case TYPE_CFUNC:    return "cfunc";
         case TYPE_STR8:     return "str8";
         case TYPE_STR16:    return "str16";
         default:            return "unknown";

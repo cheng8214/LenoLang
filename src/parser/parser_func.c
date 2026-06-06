@@ -118,6 +118,10 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_U64);
     }
+    if (p->lex.current.type == TOK_STR8) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_STR8);
+    }
     if (p->lex.current.type == TOK_STR16) {
         lexer_next(&p->lex);
         return type_new(TYPE_STR16);
@@ -1486,6 +1490,278 @@ Ast* parse_cstruct_stmt(Parser* p) {
     ast->u.cstruct_def.ref.index = -1;
     ast->u.cstruct_def.ref.name = strdup(cstruct_name);
     ast->u.cstruct_def.ref.type_kind = TYPE_CSTRUCT;
+
+    return ast;
+}
+
+// ============================================================================
+// clib 定义解析 - C 库函数签名声明
+// ============================================================================
+
+Ast* parse_clib_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'clib'
+
+    // 期望 clib 名称
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望 clib 名称");
+        return NULL;
+    }
+
+    char* clib_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 期望 '{'
+    if (!consume(p, TOK_LBRACE, "期望 '{' 开始 clib 定义")) {
+        free(clib_name);
+        return NULL;
+    }
+
+    // 动态数组存储函数签名
+    char** func_names = NULL;
+    TypeInfo** func_return_types = NULL;
+    TypeInfo*** func_param_types = NULL;
+    int* func_param_counts = NULL;
+    int func_count = 0;
+    int func_capacity = 8;
+
+    func_names = (char**)malloc(sizeof(char*) * func_capacity);
+    func_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * func_capacity);
+    func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * func_capacity);
+    func_param_counts = (int*)malloc(sizeof(int) * func_capacity);
+
+    // 解析函数签名列表
+    while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        if (p->lex.current.type == TOK_SEMI) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        // 解析返回类型
+        TypeInfo* return_type = parse_type(p);
+        if (!return_type) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "clib 函数缺少返回类型");
+            break;
+        }
+
+        // 支持 void 返回类型 - "void" 被 parse_type 解析为 TYPE_STRUCT
+        if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+            (strcmp(return_type->struct_name, "void") == 0 ||
+             strcmp(return_type->struct_name, "void") == 0)) {
+            type_free(return_type);
+            return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+        }
+
+        // 期望函数名
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "期望函数名");
+            type_free(return_type);
+            break;
+        }
+
+        char* func_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+
+        // 期望 '('
+        if (!consume(p, TOK_LPAREN, "期望 '(' 开始参数列表")) {
+            free(func_name);
+            type_free(return_type);
+            break;
+        }
+
+        // 解析参数列表
+        int param_cap = 4;
+        TypeInfo** params = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_cap);
+        int param_count = 0;
+
+        while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+            if (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex);
+                continue;
+            }
+
+            // 解析参数类型
+            TypeInfo* param_type = parse_type(p);
+            if (!param_type) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望参数类型");
+                break;
+            }
+
+            // 解析参数名（可选）
+            if (p->lex.current.type == TOK_IDENT) {
+                lexer_next(&p->lex); // 消费参数名
+            }
+
+            // 扩容
+            if (param_count >= param_cap) {
+                param_cap *= 2;
+                params = (TypeInfo**)realloc(params, sizeof(TypeInfo*) * param_cap);
+            }
+            params[param_count] = param_type;
+            param_count++;
+        }
+
+        // 期望 ')'
+        if (p->lex.current.type == TOK_RPAREN) {
+            lexer_next(&p->lex);
+        } else {
+            error_add(ERR_SYNTAX, p->lex.current.line, "期望 ')' 结束参数列表");
+        }
+
+        // 扩容函数数组
+        if (func_count >= func_capacity) {
+            func_capacity *= 2;
+            func_names = (char**)realloc(func_names, sizeof(char*) * func_capacity);
+            func_return_types = (TypeInfo**)realloc(func_return_types, sizeof(TypeInfo*) * func_capacity);
+            func_param_types = (TypeInfo***)realloc(func_param_types, sizeof(TypeInfo**) * func_capacity);
+            func_param_counts = (int*)realloc(func_param_counts, sizeof(int) * func_capacity);
+        }
+
+        func_names[func_count] = func_name;
+        func_return_types[func_count] = return_type;
+        func_param_types[func_count] = params;
+        func_param_counts[func_count] = param_count;
+        func_count++;
+
+        // 可选的分号
+        if (p->lex.current.type == TOK_SEMI) {
+            lexer_next(&p->lex);
+        }
+    }
+
+    // 期望 '}'
+    if (!consume(p, TOK_RBRACE, "期望 '}' 结束 clib 定义")) {
+        for (int i = 0; i < func_count; i++) {
+            free(func_names[i]);
+            type_free(func_return_types[i]);
+            for (int j = 0; j < func_param_counts[i]; j++) {
+                type_free(func_param_types[i][j]);
+            }
+            free(func_param_types[i]);
+        }
+        free(func_names);
+        free(func_return_types);
+        free(func_param_types);
+        free(func_param_counts);
+        free(clib_name);
+        return NULL;
+    }
+
+    // 创建 clib 定义 AST 节点
+    Ast* ast = ast_new(AST_CLIB_DEF, line);
+    ast->u.clib_def.name = clib_name;
+    ast->u.clib_def.func_names = func_names;
+    ast->u.clib_def.func_return_types = func_return_types;
+    ast->u.clib_def.func_param_types = func_param_types;
+    ast->u.clib_def.func_param_counts = func_param_counts;
+    ast->u.clib_def.func_count = func_count;
+    ast->u.clib_def.ref.kind = SYM_CLIB;
+    ast->u.clib_def.ref.index = -1;
+    ast->u.clib_def.ref.name = strdup(clib_name);
+    ast->u.clib_def.ref.type_kind = TYPE_CLIB;
+
+    return ast;
+}
+
+// ============================================================================
+// cfunc 声明解析（C 回调函数签名）
+// 语法: cfunc Name(param_type param_name, ...): return_type
+// ============================================================================
+Ast* parse_cfunc_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'cfunc'
+
+    // 期望 cfunc 名称
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望 cfunc 名称");
+        return NULL;
+    }
+
+    char* cfunc_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 期望 '('
+    if (!consume(p, TOK_LPAREN, "期望 '(' 开始参数列表")) {
+        free(cfunc_name);
+        return NULL;
+    }
+
+    // 解析参数列表
+    int param_cap = 4;
+    TypeInfo** param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_cap);
+    char** param_names = (char**)malloc(sizeof(char*) * param_cap);
+    int param_count = 0;
+
+    while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+        if (p->lex.current.type == TOK_COMMA) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        // 解析参数类型
+        TypeInfo* ptype = parse_type(p);
+        if (!ptype) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "cfunc 期望参数类型");
+            break;
+        }
+
+        // 解析参数名
+        char* pname = NULL;
+        if (p->lex.current.type == TOK_IDENT) {
+            pname = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+        }
+
+        // 扩容
+        if (param_count >= param_cap) {
+            param_cap *= 2;
+            param_types = (TypeInfo**)realloc(param_types, sizeof(TypeInfo*) * param_cap);
+            param_names = (char**)realloc(param_names, sizeof(char*) * param_cap);
+        }
+        param_types[param_count] = ptype;
+        param_names[param_count] = pname;
+        param_count++;
+    }
+
+    // 期望 ')'
+    if (p->lex.current.type == TOK_RPAREN) {
+        lexer_next(&p->lex);
+    } else {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望 ')' 结束参数列表");
+    }
+
+    // 解析返回类型: ': return_type'
+    TypeInfo* return_type = NULL;
+    if (p->lex.current.type == TOK_COLON) {
+        lexer_next(&p->lex);
+        return_type = parse_type(p);
+        if (!return_type) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "cfunc 期望返回类型");
+        }
+        // void 返回类型处理
+        if (return_type && return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+            strcmp(return_type->struct_name, "void") == 0) {
+            type_free(return_type);
+            return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+        }
+    }
+
+    // 可选的分号
+    if (p->lex.current.type == TOK_SEMI) {
+        lexer_next(&p->lex);
+    }
+
+    // 创建 cfunc 声明 AST 节点
+    Ast* ast = ast_new(AST_CFUNC_DECL, line);
+    ast->u.cfunc_decl.name = cfunc_name;
+    ast->u.cfunc_decl.param_types = param_types;
+    ast->u.cfunc_decl.param_names = param_names;
+    ast->u.cfunc_decl.param_count = param_count;
+    ast->u.cfunc_decl.return_type = return_type;
+    ast->u.cfunc_decl.ref.kind = SYM_CFUNC;
+    ast->u.cfunc_decl.ref.index = -1;
+    ast->u.cfunc_decl.ref.name = strdup(cfunc_name);
+    ast->u.cfunc_decl.ref.type_kind = TYPE_CFUNC;
 
     return ast;
 }

@@ -104,6 +104,15 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_cstruct_stmt(p);
             break;
 
+        // clib 定义（C 库函数签名声明）
+        case TOK_CLIB:
+            stmt = parse_clib_stmt(p);
+            break;
+        // cfunc 声明（C 回调函数签名）
+        case TOK_CFUNC:
+            stmt = parse_cfunc_stmt(p);
+            break;
+
         // enum 定义
         case TOK_ENUM:
             stmt = parse_enum_stmt(p);

@@ -3,6 +3,9 @@
 
 import ffi
 
+// cfunc 回调签名声明
+cfunc OnDirectoryChanged(u32 errorCode, u32 bytesTransferred, Ptr overlapped): void
+
 // 定义需要的 Windows 常量
 var FILE_NOTIFY_CHANGE_FILE_NAME = 0x00000001
 var FILE_NOTIFY_CHANGE_DIR_NAME = 0x00000002
@@ -139,7 +142,7 @@ main() {
     g_overlapped.OffsetHigh = 0
 
     // 创建回调
-    var callback = ffi.callback(on_directory_changed, "void", ["uint32", "uint32", "pointer"])
+    var callback = ffi.callback(on_directory_changed, OnDirectoryChanged)
     print("回调对象创建成功: " + ffi.is_ptr(callback))
 
     // 启动监控

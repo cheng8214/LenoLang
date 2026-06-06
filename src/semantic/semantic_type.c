@@ -57,6 +57,22 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
     
     // 检查类型缓存，避免重复推断同一表达式
     if (ast->cached_type) {
+        // clib 调用的 cached_type 是 TYPE_CLIB（供 codegen 识别），
+        // 但表达式实际类型应该是函数的返回类型
+        if (ast->kind == AST_MODULE_CALL && ast->cached_type->kind == TYPE_CLIB && ast->cached_type->struct_name) {
+            Symbol* clib_sym = scope_resolve(s->root_scope, ast->cached_type->struct_name);
+            if (!clib_sym) {
+                clib_sym = scope_resolve(s->current, ast->cached_type->struct_name);
+            }
+            if (clib_sym && clib_sym->clib_func_count > 0) {
+                const char* func_name = ast->u.module_call.method_name;
+                for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                    if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
+                        return type_copy(clib_sym->clib_func_return_types[i]);
+                    }
+                }
+            }
+        }
         return type_copy(ast->cached_type);
     }
     
@@ -1149,6 +1165,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             result = type_function(return_type, param_types, ast->u.func.pcnt);
             break;
         }
+        case AST_CLIB_DEF:
         default:
             result = type_new(TYPE_ANY);
             break;

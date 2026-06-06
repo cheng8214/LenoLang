@@ -180,6 +180,20 @@ Ast* parse_export_stmt(Parser* p) {
         Ast* ast = ast_new(AST_EXPORT, line);
         ast->u.export.decl = decl;
         return ast;
+    } else if (p->lex.current.type == TOK_CLIB) {
+        Ast* decl = parse_clib_stmt(p);
+        if (!decl) return NULL;
+
+        Ast* ast = ast_new(AST_EXPORT, line);
+        ast->u.export.decl = decl;
+        return ast;
+    } else if (p->lex.current.type == TOK_CFUNC) {
+        Ast* decl = parse_cfunc_stmt(p);
+        if (!decl) return NULL;
+
+        Ast* ast = ast_new(AST_EXPORT, line);
+        ast->u.export.decl = decl;
+        return ast;
     } else if (p->lex.current.type == TOK_ENUM) {
         Ast* decl = parse_enum_stmt(p);
         if (!decl) return NULL;
@@ -188,7 +202,7 @@ Ast* parse_export_stmt(Parser* p) {
         ast->u.export.decl = decl;
         return ast;
     } else {
-        error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、func、struct、cstruct 或 enum");
+        error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、func、struct、cstruct、clib 或 enum");
         return NULL;
     }
 }

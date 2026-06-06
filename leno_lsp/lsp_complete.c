@@ -933,6 +933,14 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
                                            prefix);
                     }
                     break;
+                case SYM_CLIB:
+                    snprintf(detail, sizeof(detail), "%s.%s: clib", module_alias, sym->name);
+                    add_completion_item(items, count, capacity,
+                                       sym->name,
+                                       LSP_COMP_CLASS,
+                                       detail,
+                                       prefix);
+                    break;
                 case SYM_GLOBAL:
                 case SYM_MODULE:
                     snprintf(detail, sizeof(detail), "%s.%s: %s", module_alias, sym->name, type_str);
@@ -2444,7 +2452,8 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                 for (int i = 0; i < ctx.root_scope->sym_cnt; i++) {
                     Symbol* sym = ctx.root_scope->syms[i];
                     if (sym->kind == SYM_TYPE || sym->kind == SYM_STRUCT ||
-                        sym->kind == SYM_CSTRUCT || sym->kind == SYM_ENUM) {
+                        sym->kind == SYM_CSTRUCT || sym->kind == SYM_ENUM ||
+                        sym->kind == SYM_CLIB) {
                         const char* type_label = "type";
                         int comp_kind = LSP_COMP_CLASS;
                         if (sym->type) {
@@ -2453,6 +2462,7 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                                 case TYPE_CSTRUCT: type_label = "cstruct"; comp_kind = LSP_COMP_STRUCT; break;
                                 case TYPE_ENUM: type_label = "enum"; comp_kind = LSP_COMP_ENUM; break;
                                 case TYPE_FACE: type_label = "face"; comp_kind = LSP_COMP_INTERFACE; break;
+                                case TYPE_CLIB: type_label = "clib"; comp_kind = LSP_COMP_CLASS; break;
                                 default: break;
                             }
                         }

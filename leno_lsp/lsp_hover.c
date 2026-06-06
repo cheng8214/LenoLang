@@ -1524,6 +1524,19 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                     }
                     break;
                 }
+                case SYM_CLIB: {
+                    int len = 512 + strlen(word);
+                    result = (char*)malloc(len);
+                    if (result) {
+                        snprintf(result, len, "**%s**\n\n"
+                                 "```leno\n"
+                                 "clib %s\n"
+                                 "```\n\n"
+                                 "模块导出的 C 库类型",
+                                 word, symbol_name);
+                    }
+                    break;
+                }
                 case SYM_GLOBAL:
                 case SYM_LOCAL:
                 case SYM_MODULE: {

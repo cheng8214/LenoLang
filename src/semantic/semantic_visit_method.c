@@ -423,6 +423,7 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
             // 处理 await 表达式中的字段访问
             transform_method_body(ast->u.await.expr, field_names, field_count, method_names, method_count, struct_name);
             break;
+        case AST_CLIB_DEF:
         default:
             break;
     }

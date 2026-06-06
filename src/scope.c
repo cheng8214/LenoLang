@@ -408,6 +408,8 @@ void scope_print_tree(Scope* s, int indent) {
             case SYM_TYPE: kind_str = "TYPE"; break;
             case SYM_STRUCT: kind_str = "STRUCT"; break;
             case SYM_CSTRUCT: kind_str = "CSTRUCT"; break;
+            case SYM_CLIB: kind_str = "CLIB"; break;
+            case SYM_CFUNC: kind_str = "CFUNC"; break;
             case SYM_ENUM: kind_str = "ENUM"; break;
         }
         printf("- %s [%s, idx=%d, captured=%d]\n", 

@@ -50,7 +50,8 @@ static const char* opCodeNames[] = {
     // 模块初始化指令
     "OP_INIT_LENOMODULE",
     // clib 调用指令
-    "OP_CLIB_CALL"
+    "OP_CLIB_CALL",
+    "OP_CFUNC_CALLBACK"
 };
 
 // 反汇编单条指令
@@ -413,6 +414,18 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             }
             printf("]");
             return offset + 5 + user_arg_count;
+        }
+        case OP_CFUNC_CALLBACK: {
+            // OP_CFUNC_CALLBACK: ret_type(1) param_count(1) param_types[param_count](1 each)
+            int ret_type = chunk->code[offset + 1];
+            int param_count = chunk->code[offset + 2];
+            printf(" ret=%d params=%d types=[", ret_type, param_count);
+            for (int i = 0; i < param_count; i++) {
+                if (i > 0) printf(",");
+                printf("%d", chunk->code[offset + 3 + i]);
+            }
+            printf("]");
+            return offset + 3 + param_count;
         }
         default:
             return offset + 1;

@@ -12,7 +12,7 @@ main() {
     ffi.write_at(arr32, 2, 30)
     ffi.write_at(arr32, 3, 40)
     ffi.write_at(arr32, 4, 50)
-
+	print(ffi.read_at(arr32,0))
     if ffi.read_at(arr32, 0) as int == 10 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr32[0]") }
     if ffi.read_at(arr32, 2) as int == 30 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr32[2]") }
     if ffi.read_at(arr32, 4) as int == 50 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr32[4]") }
