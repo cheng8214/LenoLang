@@ -1,0 +1,12 @@
+import ffi
+import io
+
+// 测试 clib 语法解析 - 基本声明
+clib msvcrt {
+    i32 strlen(str8 s)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+    io.print("clib syntax test passed")
+}

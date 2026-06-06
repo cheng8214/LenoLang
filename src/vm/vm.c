@@ -1,6 +1,7 @@
 #include "../include/leno_vm_runtime.h"
 #include "../include/string_table.h"
 #include "../include/native.h"
+#include "../module/ffi/ffi_clib.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>

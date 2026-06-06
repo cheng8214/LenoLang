@@ -63,6 +63,7 @@ typedef union {
 typedef struct {
     FFIType  type;   /* 参数类型 */
     FFIValue value;  /* 参数值 */
+    int      owned;  /* 是否拥有指针内存（str16 自动转换时为 1，调用后需释放） */
 } FFIArg;
 
 /* ===== FFI 函数签名 ===== */

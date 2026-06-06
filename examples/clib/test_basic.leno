@@ -1,0 +1,12 @@
+import ffi
+import io
+
+clib msvcrt {
+    i32 strlen(string s)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+    lib.strlen("hello")
+    io.print("done")
+}

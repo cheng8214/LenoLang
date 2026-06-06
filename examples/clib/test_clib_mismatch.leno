@@ -1,0 +1,20 @@
+// 测试不同名 clib 类型互转应编译报错
+// 预期: 编译失败，提示类型不兼容
+
+import ffi
+import io
+
+clib msvcrt {
+    i32 strlen(str8 s)
+}
+
+clib user32 {
+    i32 MessageBoxA(Ptr, str8, str8, i32)
+}
+
+main() {
+    msvcrt lib1 = ffi.load("msvcrt.dll")
+    // 下面这行应该编译报错：不同名 clib 类型不能互转
+    user32 lib2 = lib1
+    io.print("ERROR: should not compile!")
+}

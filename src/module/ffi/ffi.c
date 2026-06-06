@@ -275,7 +275,7 @@ Value ffi_reload_library(const char* path) {
 /* ffi.call 的核心实现 - ret_type 指定返回值类型
  * 所有 ffi.call/ffi.call_double/ffi.call_void/ffi.call_ptr/ffi.call_bool 共用此函数
  */
-static Value ffi_call_impl(int argc, Value* args, FFIType ret_type) {
+static Value ffi_call_impl(int argc, Value* args, FFIType ret_type, const int* arg_types) {
     ObjFFILibrary* lib = val_as_ffi_lib(args[0]);
     CHECK_LIB_FREED(lib);
 
@@ -333,7 +333,26 @@ static Value ffi_call_impl(int argc, Value* args, FFIType ret_type) {
         else if (val_is_string(arg)) {
             sig.arg_types[i] = FFI_TYPE_POINTER;
             ffi_args[i].type = FFI_TYPE_POINTER;
-            ffi_args[i].value.p = ((ObjString*)val_as_obj(arg))->chars;
+            /* clib 声明为 str16 时，自动将 UTF-8 字符串转为 UTF-16 */
+            if (arg_types && arg_types[i] == TYPE_STR16) {
+#ifdef _WIN32
+                wchar_t* wstr = utf8_to_utf16(((ObjString*)val_as_obj(arg))->chars);
+                if (wstr) {
+                    ffi_args[i].value.p = wstr;
+                    ffi_args[i].owned = 1;  /* 标记需要释放 */
+                } else {
+                    ffi_args[i].value.p = NULL;
+                    ffi_args[i].owned = 0;
+                }
+#else
+                /* Linux/macOS: str16 按 UTF-8 传递 */
+                ffi_args[i].value.p = ((ObjString*)val_as_obj(arg))->chars;
+                ffi_args[i].owned = 0;
+#endif
+            } else {
+                ffi_args[i].value.p = ((ObjString*)val_as_obj(arg))->chars;
+                ffi_args[i].owned = 0;
+            }
         }
         else if (val_is_ffi_ptr(arg)) {
             ObjFFIPointer* p = val_as_ffi_ptr(arg);
@@ -374,6 +393,15 @@ static Value ffi_call_impl(int argc, Value* args, FFIType ret_type) {
     /* 调用函数 */
     FFIValue result = ffi_call(func, &sig, ffi_args);
 
+    /* 释放 str16 自动转换分配的临时 UTF-16 内存 */
+    for (int i = 0; i < sig.nargs; i++) {
+        if (ffi_args[i].owned && ffi_args[i].value.p) {
+            free(ffi_args[i].value.p);
+            ffi_args[i].value.p = NULL;
+            ffi_args[i].owned = 0;
+        }
+    }
+
     /* 根据返回类型转换结果 */
     switch (ret_type) {
         case FFI_TYPE_DOUBLE:
@@ -405,32 +433,32 @@ static Value ffi_call_impl(int argc, Value* args, FFIType ret_type) {
 
 /* ffi.call(lib, name, ...) - 调用库中的函数（返回 any，实际值为 int） */
 static Value ffi_call_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_INT);
+    return ffi_call_impl(argc, args, FFI_TYPE_INT, NULL);
 }
 
 /* ffi.call_int(lib, name, ...) - 调用库中的函数（明确返回 int） */
 static Value ffi_call_int_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_INT);
+    return ffi_call_impl(argc, args, FFI_TYPE_INT, NULL);
 }
 
 /* ffi.call_double(lib, name, ...) - 调用库中的函数（返回 double） */
 static Value ffi_call_double_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_DOUBLE);
+    return ffi_call_impl(argc, args, FFI_TYPE_DOUBLE, NULL);
 }
 
 /* ffi.call_void(lib, name, ...) - 调用库中的函数（无返回值） */
 static Value ffi_call_void_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_VOID);
+    return ffi_call_impl(argc, args, FFI_TYPE_VOID, NULL);
 }
 
 /* ffi.call_ptr(lib, name, ...) - 调用库中的函数（返回指针） */
 static Value ffi_call_ptr_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_POINTER);
+    return ffi_call_impl(argc, args, FFI_TYPE_POINTER, NULL);
 }
 
 /* ffi.call_bool(lib, name, ...) - 调用库中的函数（返回布尔值） */
 static Value ffi_call_bool_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_BOOL);
+    return ffi_call_impl(argc, args, FFI_TYPE_BOOL, NULL);
 }
 
 /* ==================== FFI 内存操作函数 ==================== */
@@ -1898,6 +1926,14 @@ static Value ffi_callback_func(int argc, Value* args) {
     cb->func_val = args[0];
 
     return val_obj((Object*)cb);
+}
+
+/* ==================== FFI Clib 公开接口 ==================== */
+
+#include "ffi_clib.h"
+
+Value ffi_clib_call(int argc, Value* args, int ret_type, const int* arg_types) {
+    return ffi_call_impl(argc, args, (FFIType)ret_type, arg_types);
 }
 
 /* ==================== 模块初始化 ==================== */

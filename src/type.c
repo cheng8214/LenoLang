@@ -125,6 +125,7 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
         case TYPE_STRUCT:
         case TYPE_CSTRUCT:
         case TYPE_FACE:
+        case TYPE_CLIB:
             if (a->struct_name && b->struct_name) {
                 return strcmp(a->struct_name, b->struct_name) == 0;
             }
@@ -172,6 +173,7 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_STRUCT:
         case TYPE_FACE:
         case TYPE_CSTRUCT:
+        case TYPE_CLIB:
         case TYPE_ENUM:
             if (type->struct_name) {
                 copy->struct_name = strdup(type->struct_name);
@@ -380,6 +382,28 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             }
             break;
         }
+        case TYPE_CLIB: {
+            // clib TypeName
+            const char* prefix = "clib";
+            size_t prefix_len = strlen(prefix);
+            if (*offset + prefix_len < buf_size - 1) {
+                memcpy(buf + *offset, prefix, prefix_len);
+                *offset += prefix_len;
+            }
+            if (type->struct_name) {
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = ' ';
+                    (*offset)++;
+                }
+                size_t name_len = strlen(type->struct_name);
+                if (*offset + name_len < buf_size - 1) {
+                    memcpy(buf + *offset, type->struct_name, name_len);
+                    *offset += name_len;
+                    buf[*offset] = '\0';
+                }
+            }
+            break;
+        }
         case TYPE_STYLE: {
             // Style[target]
             const char* prefix = "Style[";
@@ -479,6 +503,9 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_C_SIZE:   return "c_size";
         case TYPE_C_SSIZE:  return "c_ssize";
         case TYPE_CSTRUCT:  return "cstruct";
+        case TYPE_CLIB:     return "clib";
+        case TYPE_STR8:     return "str8";
+        case TYPE_STR16:    return "str16";
         default:            return "unknown";
     }
 }
@@ -617,6 +644,24 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
 
     // bigint 可以隐式转换为 float
     if (target->kind == TYPE_FLOAT && source->kind == TYPE_BIGINT) {
+        return 1;
+    }
+
+    // clib 类型与 Ptr 的兼容性
+    // ffi.load() 返回 Ptr，可以赋值给 clib 变量（Ptr → clib）
+    // clib 变量也可以赋值给 Ptr（clib → Ptr，向下兼容）
+    // 不同名的 clib 类型之间禁止互转，防止加载错误的库后调用不存在的函数
+    if (target->kind == TYPE_CLIB && source->kind == TYPE_PTR) {
+        return 1;
+    }
+    if (target->kind == TYPE_PTR && source->kind == TYPE_CLIB) {
+        return 1;
+    }
+    if (target->kind == TYPE_CLIB && source->kind == TYPE_CLIB) {
+        // 同名 clib 兼容，不同名不兼容
+        if (target->struct_name && source->struct_name) {
+            return strcmp(target->struct_name, source->struct_name) == 0;
+        }
         return 1;
     }
 
@@ -834,6 +879,8 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_C_ULONGLONG:   return TYPE_C_ULONGLONG;
         case TOK_C_SIZE:        return TYPE_C_SIZE;
         case TOK_C_SSIZE:       return TYPE_C_SSIZE;
+        case TOK_STR8:          return TYPE_STR8;
+        case TOK_STR16:         return TYPE_STR16;
         default:                return TYPE_INFER;
     }
 }
@@ -870,6 +917,7 @@ int c_layout_type_size(TypeKind kind) {
         case TYPE_C_SSIZE:  return sizeof(ssize_t);
         case TYPE_PTR:      return sizeof(void*);       // 32位: 4, 64位: 8
         case TYPE_PTR_GENERIC: return sizeof(void*);    // 与 TYPE_PTR 相同
+        case TYPE_STR8:     return sizeof(void*);       // str8 是 char* 指针
         case TYPE_STR16:    return 2;                   // str16 是 u16 数组，基本元素大小为 2
         default:            return 0;  // 未知类型
     }
@@ -903,6 +951,7 @@ int c_layout_is_valid_field_type(TypeKind kind) {
         case TYPE_PTR:
         case TYPE_PTR_GENERIC:
         case TYPE_CSTRUCT:
+        case TYPE_STR8:            // str8 - C char* 字符串指针
         case TYPE_STR16:           // str16 - UTF-16 字符串数组
             return 1;
         default:

@@ -1,0 +1,34 @@
+// 测试 MessageBoxA - 两种调用方式对比
+// 1. ffi.call_int 动态调用
+// 2. clib 声明式调用
+
+import ffi
+import io
+
+// clib 声明 user32 函数签名
+// MessageBoxA 用 ANSI 编码，中文会乱码
+// MessageBoxW 用 UTF-16 编码，支持中文
+clib user32 {
+    i32 MessageBoxA(Ptr hWnd, str8 lpText, str8 lpCaption, i32 uType)
+    i32 MessageBoxW(Ptr hWnd, str16 lpText, str16 lpCaption, i32 uType)
+}
+
+main() {
+    // ===== 方式 1: ffi.call_int 动态调用 (MessageBoxA - 乱码) =====
+    var lib1 = ffi.load("user32.dll")
+    int r1 = ffi.call_int(lib1, "MessageBoxA", 0, "Hello from ffi.call!", "Style1", 0)
+    io.print("call_int 返回: " + r1)
+    ffi.free(lib1)
+
+    // ===== 方式 2: clib 声明式调用 (MessageBoxA - 乱码) =====
+    user32 lib2 = ffi.load("user32.dll")
+    int r2 = _int(lib2.MessageBoxA(null, "Hello from clib!", "Style2", 0))
+    io.print("clib MessageBoxA 返回: " + r2)
+
+    // ===== 方式 3: clib 声明式调用 (MessageBoxW - 中文正常) =====
+    int r3 = _int(lib2.MessageBoxW(null, "你好，Leno！", "中文标题", 0))
+    io.print("clib MessageBoxW 返回: " + r3)
+    ffi.free(lib2)
+
+    io.print("MessageBox 测试完成!")
+}

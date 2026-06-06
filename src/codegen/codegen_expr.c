@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include "../semantic/semantic_internal.h"
+#include "../module/ffi/ffi_clib.h"
 
 static void gen_binary(CodeGen* gen, Ast* ast);
 static void gen_unary(CodeGen* gen, Ast* ast);
@@ -404,6 +405,70 @@ static void gen_default_value(CodeGen* gen, Ast* default_expr) {
 }
 
 static void gen_call(CodeGen* gen, Ast* ast) {
+    // 检测 clib 调用：lib.func(args)
+    // 生成 ffi.call_xxx 模块调用
+    if (ast->u.call.callee && ast->u.call.callee->kind == AST_FIELD_ACCESS) {
+        Ast* field_access = ast->u.call.callee;
+        TypeInfo* obj_type = infer_expr_type(gen->sem, field_access->u.field_access.obj);
+        if (obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+            // 查找 clib 符号
+            Symbol* clib_sym = scope_resolve(gen->sem->root_scope, obj_type->struct_name);
+            if (!clib_sym) {
+                clib_sym = scope_resolve(gen->sem->current, obj_type->struct_name);
+            }
+            if (clib_sym && clib_sym->clib_func_count > 0) {
+                const char* func_name = field_access->u.field_access.field_name;
+                for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                    if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
+                        // 获取返回类型
+                        TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+
+                        // 生成参数：先评估库对象
+                        gen_expr(gen, field_access->u.field_access.obj);
+
+                        // 生成函数名字符串参数（推入栈）
+                        ObjString* func_name_str = str_copy(func_name, (int)strlen(func_name));
+                        emit_constant(gen, val_obj((Object*)func_name_str), ast->line);
+
+                        // 生成用户参数
+                        for (int j = 0; j < ast->u.call.args.count; j++) {
+                            gen_expr(gen, ast->u.call.args.items[j]);
+                        }
+
+                        // 总参数数 = 库对象 + 函数名 + 用户参数
+                        int total_arg_count = 2 + ast->u.call.args.count;
+                        int user_arg_count = ast->u.call.args.count;
+
+                        // 使用 OP_CLIB_CALL 统一处理（支持 str16 自动转换）
+                        // 确定返回类型对应的 FFIType
+                        int ffi_ret_type = FFI_TYPE_INT;
+                        if (ret_type->kind == TYPE_NULL) ffi_ret_type = FFI_TYPE_VOID;
+                        else if (ret_type->kind == TYPE_FLOAT || ret_type->kind == TYPE_F32 || ret_type->kind == TYPE_F64) ffi_ret_type = FFI_TYPE_DOUBLE;
+                        else if (ret_type->kind == TYPE_PTR || ret_type->kind == TYPE_PTR_GENERIC || ret_type->kind == TYPE_STR8) ffi_ret_type = FFI_TYPE_POINTER;
+                        else if (ret_type->kind == TYPE_BOOL) ffi_ret_type = FFI_TYPE_BOOL;
+
+                        // OP_CLIB_CALL arg_count(2) ret_type(1) user_arg_count(1) arg_types[user_arg_count](1 each)
+                        emit_byte(gen, OP_CLIB_CALL, ast->line);
+                        emit_byte(gen, (total_arg_count >> 8) & 0xff, ast->line);
+                        emit_byte(gen, total_arg_count & 0xff, ast->line);
+                        emit_byte(gen, (uint8_t)ffi_ret_type, ast->line);
+                        emit_byte(gen, (uint8_t)user_arg_count, ast->line);
+                        // 编码每个用户参数的类型（TypeKind 枚举值）
+                        for (int ai = 0; ai < user_arg_count; ai++) {
+                            TypeInfo* param_type = clib_sym->clib_func_param_types[i][ai];
+                            int type_kind = param_type ? param_type->kind : 0;
+                            emit_byte(gen, (uint8_t)type_kind, ast->line);
+                        }
+
+                        type_free(obj_type);
+                        return;
+                    }
+                }
+            }
+        }
+        if (obj_type) type_free(obj_type);
+    }
+
     // 检测 arr.add(x) 模式并优化为 OP_ARRAY_APPEND
     // 注意：需要排除 struct 方法调用（如 self["add"]()）
     if (ast->u.call.callee->kind == AST_INDEX &&
@@ -976,6 +1041,73 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             gen_if(gen, ast);
             break;
         case AST_MODULE_CALL: {
+            // 检查是否是 clib 调用（semantic 阶段已标记 cached_type）
+            if (ast->cached_type && ast->cached_type->kind == TYPE_CLIB && ast->cached_type->struct_name) {
+                // 查找 clib 符号获取函数签名
+                Symbol* clib_sym = scope_resolve(gen->sem->root_scope, ast->cached_type->struct_name);
+                if (!clib_sym) {
+                    clib_sym = scope_resolve(gen->sem->current, ast->cached_type->struct_name);
+                }
+                if (clib_sym && clib_sym->clib_func_count > 0) {
+                    const char* func_name = ast->u.module_call.method_name;
+                    for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
+                        if (strcmp(clib_sym->clib_func_names[fi], func_name) == 0) {
+                            // 确定返回类型对应的 FFIType
+                            int ffi_ret_type = FFI_TYPE_INT;
+                            TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
+                            if (ret_type->kind == TYPE_NULL) ffi_ret_type = FFI_TYPE_VOID;
+                            else if (ret_type->kind == TYPE_FLOAT || ret_type->kind == TYPE_F32 || ret_type->kind == TYPE_F64) ffi_ret_type = FFI_TYPE_DOUBLE;
+                            else if (ret_type->kind == TYPE_PTR || ret_type->kind == TYPE_PTR_GENERIC || ret_type->kind == TYPE_STR8) ffi_ret_type = FFI_TYPE_POINTER;
+                            else if (ret_type->kind == TYPE_BOOL) ffi_ret_type = FFI_TYPE_BOOL;
+
+                            // 生成 lib 变量值到栈上（使用 semantic 阶段存好的 lib_ref）
+                            SymRef* lib_ref = &ast->u.module_call.lib_ref;
+                            switch (lib_ref->kind) {
+                                case SYM_LOCAL:
+                                case SYM_PARAM:
+                                    emit_bytes_2(gen, OP_GET_LOCAL, lib_ref->index, ast->line);
+                                    break;
+                                case SYM_GLOBAL:
+                                    emit_get_global(gen, lib_ref->index, ast->line);
+                                    break;
+                                case SYM_UPVALUE:
+                                    emit_bytes_2(gen, OP_GET_UPVALUE, lib_ref->index, ast->line);
+                                    break;
+                                default:
+                                    break;
+                            }
+
+                            // 生成函数名字符串
+                            ObjString* func_name_str = str_copy(func_name, (int)strlen(func_name));
+                            emit_constant(gen, val_obj((Object*)func_name_str), ast->line);
+
+                            // 生成用户参数
+                            for (int ai = 0; ai < ast->u.module_call.args.count; ai++) {
+                                gen_expr(gen, ast->u.module_call.args.items[ai]);
+                            }
+
+                            int total_arg_count = 2 + ast->u.module_call.args.count;
+                            int user_arg_count = ast->u.module_call.args.count;
+
+                            // OP_CLIB_CALL arg_count(2) ret_type(1) user_arg_count(1) arg_types[user_arg_count](1 each)
+                            emit_byte(gen, OP_CLIB_CALL, ast->line);
+                            emit_byte(gen, (total_arg_count >> 8) & 0xff, ast->line);
+                            emit_byte(gen, total_arg_count & 0xff, ast->line);
+                            emit_byte(gen, (uint8_t)ffi_ret_type, ast->line);
+                            emit_byte(gen, (uint8_t)user_arg_count, ast->line);
+                            // 编码每个用户参数的类型（TypeKind 枚举值）
+                            for (int ai = 0; ai < user_arg_count; ai++) {
+                                TypeInfo* param_type = clib_sym->clib_func_param_types[fi][ai];
+                                int type_kind = param_type ? param_type->kind : 0;
+                                emit_byte(gen, (uint8_t)type_kind, ast->line);
+                            }
+                            break;
+                        }
+                    }
+                    break;  // 跳出 AST_MODULE_CALL
+                }
+            }
+
             const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
 
             if (native_is_module(actual_module)) {
@@ -1323,6 +1455,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 case AST_TYPE_CHECK: ast_type_name = "AST_TYPE_CHECK"; break;
                 case AST_STRUCT_DEF: ast_type_name = "AST_STRUCT_DEF"; break;
                 case AST_CSTRUCT_DEF: ast_type_name = "AST_CSTRUCT_DEF"; break;
+                case AST_CLIB_DEF: ast_type_name = "AST_CLIB_DEF"; break;
                 case AST_ENUM_DEF: ast_type_name = "AST_ENUM_DEF"; break;
                 case AST_STRUCT_INIT: ast_type_name = "AST_STRUCT_INIT"; break;
                 case AST_FIELD_ACCESS: ast_type_name = "AST_FIELD_ACCESS"; break;

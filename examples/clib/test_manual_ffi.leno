@@ -1,0 +1,9 @@
+import ffi
+import io
+
+main() {
+    var libc = ffi.load("msvcrt.dll")
+    var len = ffi.call_int(libc, "strlen", "hello")
+    io.print("len: ")
+    io.print(len)
+}
