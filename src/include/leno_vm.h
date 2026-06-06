@@ -47,6 +47,7 @@ typedef enum {
     OP_CAST_FLOAT,  // 将 int 转换为 float
     OP_CAST_INT,    // 将 float 转换为 int（截断）
     OP_CAST_STRING, // 将值转换为 string（null 转为空字符串）
+    OP_SET_PTR_ELEM_TYPE, // 设置栈顶 FFI 指针的 element_type（Ptr[T] 声明时使用）
     OP_INC,  // ++ (栈顶值)
     OP_DEC,  // -- (栈顶值)
     OP_INC_LOCAL,  // 局部变量++，返回旧值
@@ -149,6 +150,8 @@ typedef enum {
     OP_ASYNC_CALL,     // 调用 async 函数，创建新协程并返回 Future
     // 模块初始化指令（运行时执行 .leno 模块的初始化字节码）
     OP_INIT_LENOMODULE, // 初始化 .leno 模块（延迟执行 init_chunk）
+    // clib 调用指令（栈上: lib, func_name, args... -> 结果）
+    OP_CLIB_CALL,       // 调用 C 库函数（通过 FFI）
 } OpCode;
 
 // ============================================================================
@@ -251,6 +254,12 @@ struct Symbol {
     int* cstruct_field_offsets; // cstruct 字段偏移量数组
     // Style 类型信息（仅当类型为 Style 时使用）
     char* style_target;         // Style 目标控件名（如 "window", "button"）
+    // clib 函数签名信息（仅当类型为 clib 时使用）
+    char** clib_func_names;         // 函数名称数组
+    TypeInfo** clib_func_return_types; // 函数返回类型数组
+    int* clib_func_param_counts;    // 函数参数数量数组
+    TypeInfo*** clib_func_param_types; // 函数参数类型数组（二维）
+    int clib_func_count;            // 函数数量
 };
 
 struct Scope {

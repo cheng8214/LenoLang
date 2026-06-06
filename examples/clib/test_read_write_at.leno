@@ -1,0 +1,64 @@
+// 测试 read_at / write_at - Ptr[T] 元素级访问
+import ffi
+
+main() {
+    int pass = 0
+    int fail = 0
+
+    // ===== 测试 1: Ptr[u32] 数组 =====
+    Ptr[u32] arr32 = ffi.malloc(20)  // 5 个 u32
+    ffi.write_at(arr32, 0, 10)
+    ffi.write_at(arr32, 1, 20)
+    ffi.write_at(arr32, 2, 30)
+    ffi.write_at(arr32, 3, 40)
+    ffi.write_at(arr32, 4, 50)
+
+    if ffi.read_at(arr32, 0) as int == 10 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr32[0]") }
+    if ffi.read_at(arr32, 2) as int == 30 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr32[2]") }
+    if ffi.read_at(arr32, 4) as int == 50 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr32[4]") }
+
+    // 验证与 write_int/read_int 字节偏移方式结果一致
+    if ffi.read_int(arr32, 0) == 10 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: read_int arr32[0]") }
+    if ffi.read_int(arr32, 8) == 30 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: read_int arr32[2]") }
+    ffi.free(arr32)
+
+    // ===== 测试 2: Ptr[u8] 字节数组 =====
+    Ptr[u8] arr8 = ffi.malloc(5)
+    ffi.write_at(arr8, 0, 65)  // 'A'
+    ffi.write_at(arr8, 1, 66)  // 'B'
+    ffi.write_at(arr8, 2, 67)  // 'C'
+    ffi.write_at(arr8, 3, 68)  // 'D'
+    ffi.write_at(arr8, 4, 69)  // 'E'
+
+    if ffi.read_at(arr8, 0) as int == 65 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr8[0]") }
+    if ffi.read_at(arr8, 4) as int == 69 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr8[4]") }
+    ffi.free(arr8)
+
+    // ===== 测试 3: Ptr[f64] 双精度浮点数组 =====
+    Ptr[f64] arrf = ffi.malloc(24)  // 3 个 f64
+    ffi.write_at(arrf, 0, 1.1)
+    ffi.write_at(arrf, 1, 2.2)
+    ffi.write_at(arrf, 2, 3.3)
+
+    float v0 = ffi.read_at(arrf, 0) as float
+    float v2 = ffi.read_at(arrf, 2) as float
+    if v0 > 1.0 and v0 < 1.2 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arrf[0] = " + v0) }
+    if v2 > 3.2 and v2 < 3.4 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arrf[2] = " + v2) }
+    ffi.free(arrf)
+
+    // ===== 测试 4: Ptr[u16] UTF-16 缓冲区 =====
+    Ptr[u16] arr16 = ffi.malloc(10)  // 5 个 u16
+    ffi.write_at(arr16, 0, 72)  // 'H'
+    ffi.write_at(arr16, 1, 105) // 'i'
+    if ffi.read_at(arr16, 0) as int == 72 { pass = pass + 1 } else { fail = fail + 1; print("FAIL: arr16[0]") }
+    ffi.free(arr16)
+
+    // ===== 测试 5: 裸 Ptr 应报错 =====
+    Ptr raw = ffi.malloc(16)
+    // 以下两行应运行时报错（read_at/write_at 不支持无类型 Ptr）
+    // ffi.read_at(raw, 0)   // 期望报错
+    // ffi.write_at(raw, 0, 42) // 期望报错
+    ffi.free(raw)
+
+    print("read_at/write_at 测试: " + pass + " PASS, " + fail + " FAIL")
+}

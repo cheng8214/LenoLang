@@ -105,3 +105,17 @@ OPCODE(OP_CAST_STRING) {
     }
     DISPATCH;
 }
+
+OPCODE(OP_SET_PTR_ELEM_TYPE) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    TypeKind elem_type = (TypeKind)READ_BYTE();
+    // 栈顶是 FFI 指针，设置其 element_type（不弹出，后续赋值操作会弹出）
+    Value top = vm_stack_peek(&vm, 0);
+    if (val_is_obj(top) && val_as_obj(top)->type == OBJ_FFI_POINTER) {
+        ObjFFIPointer* ptr = (ObjFFIPointer*)val_as_obj(top);
+        if (!ptr->freed) {
+            ptr->element_type = elem_type;
+        }
+    }
+    DISPATCH;
+}

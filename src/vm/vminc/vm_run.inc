@@ -70,6 +70,7 @@
         [OP_CAST_FLOAT] = &&LABEL(OP_CAST_FLOAT),
         [OP_CAST_INT] = &&LABEL(OP_CAST_INT),
         [OP_CAST_STRING] = &&LABEL(OP_CAST_STRING),
+        [OP_SET_PTR_ELEM_TYPE] = &&LABEL(OP_SET_PTR_ELEM_TYPE),
         [OP_INC] = &&LABEL(OP_INC),
         [OP_DEC] = &&LABEL(OP_DEC),
         [OP_INC_LOCAL] = &&LABEL(OP_INC_LOCAL),
@@ -171,6 +172,7 @@
         [OP_AWAIT] = &&LABEL(OP_AWAIT),
         [OP_ASYNC_CALL] = &&LABEL(OP_ASYNC_CALL),
         [OP_INIT_LENOMODULE] = &&LABEL(OP_INIT_LENOMODULE),
+        [OP_CLIB_CALL] = &&LABEL(OP_CLIB_CALL),
     };
 
     // 宏定义：取指令并分发
@@ -289,6 +291,9 @@
 
             // 模块调用类操作码
             #include "op_module_call.inc"
+
+            // clib 调用操作码
+            #include "op_clib_call.inc"
 
             // 模块常量获取操作码
             #include "op_get_module_const.inc"

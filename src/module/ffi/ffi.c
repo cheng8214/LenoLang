@@ -873,6 +873,219 @@ static Value ffi_read_bool_func(int argc, Value* args) {
     return val_bool(val != 0);
 }
 
+/* ffi.read_at(ptr, index) - 根据元素类型按索引读取（Ptr[T] 专用）
+ * byte_offset = index * sizeof(T)
+ * 要求 ptr 必须有 element_type（即 Ptr[T] 而非裸 Ptr）
+ */
+static Value ffi_read_at_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int index = val_as_int(args[1]);
+    CHECK_NULL_PTR(ptr);
+
+    TypeKind et = ptr->element_type;
+    if (et == TYPE_PTR || et == TYPE_ANY || et == TYPE_UNKNOWN) {
+        native_throw_error("read_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），不支持无类型 Ptr");
+        return val_null();
+    }
+
+    /* 根据元素类型计算大小和偏移 */
+    size_t elem_size = 0;
+    switch (et) {
+        case TYPE_U8:    case TYPE_I8:    case TYPE_BOOL:   elem_size = 1; break;
+        case TYPE_U16:   case TYPE_I16:                    elem_size = 2; break;
+        case TYPE_U32:   case TYPE_I32:   case TYPE_INT:   elem_size = 4; break;
+        case TYPE_U64:   case TYPE_I64:                    elem_size = 8; break;
+        case TYPE_F32:                                     elem_size = 4; break;
+        case TYPE_F64:   case TYPE_FLOAT:                  elem_size = 8; break;
+        case TYPE_PTR_GENERIC: case TYPE_PTR: case TYPE_STR8: case TYPE_STR16:
+            elem_size = sizeof(void*); break;
+        default:
+            native_throw_error("read_at 不支持的元素类型");
+            return val_null();
+    }
+
+    int offset = (int)(index * elem_size);
+    CHECK_BOUNDS(ptr, offset, elem_size);
+
+    /* 根据元素类型读取 */
+    char* addr = (char*)ptr->ptr + offset;
+    switch (et) {
+        case TYPE_U8: {
+            uint8_t val; memcpy(&val, addr, sizeof(val));
+            return val_int((int)val);
+        }
+        case TYPE_I8: {
+            int8_t val; memcpy(&val, addr, sizeof(val));
+            return val_int((int)val);
+        }
+        case TYPE_U16: {
+            uint16_t val; memcpy(&val, addr, sizeof(val));
+            return val_int((int)val);
+        }
+        case TYPE_I16: {
+            int16_t val; memcpy(&val, addr, sizeof(val));
+            return val_int((int)val);
+        }
+        case TYPE_U32: {
+            uint32_t val; memcpy(&val, addr, sizeof(val));
+            return val_int_safe((int64_t)val);
+        }
+        case TYPE_I32: case TYPE_INT: {
+            int32_t val; memcpy(&val, addr, sizeof(val));
+            return val_int((int)val);
+        }
+        case TYPE_U64: {
+            uint64_t val; memcpy(&val, addr, sizeof(val));
+            if (val <= INT32_MAX) return val_int((int)val);
+            return val_bigint_from_uint64(val);
+        }
+        case TYPE_I64: {
+            int64_t val; memcpy(&val, addr, sizeof(val));
+            return val_int_safe(val);
+        }
+        case TYPE_F32: {
+            float val; memcpy(&val, addr, sizeof(val));
+            return val_float((double)val);
+        }
+        case TYPE_F64: case TYPE_FLOAT: {
+            double val; memcpy(&val, addr, sizeof(val));
+            return val_float(val);
+        }
+        case TYPE_BOOL: {
+            int val; memcpy(&val, addr, sizeof(int));
+            return val_bool(val != 0);
+        }
+        case TYPE_PTR_GENERIC: case TYPE_PTR: case TYPE_STR8: case TYPE_STR16: {
+            void* val; memcpy(&val, addr, sizeof(void*));
+            if (val == NULL) return val_null();
+            ObjFFIPointer* ret_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+            if (!ret_ptr) { native_throw_error("内存不足"); return val_null(); }
+            ret_ptr->ptr = val;
+            ret_ptr->size = 0;
+            ret_ptr->owned = 0;
+            ret_ptr->freed = 0;
+            return val_obj((Object*)ret_ptr);
+        }
+        default:
+            native_throw_error("read_at 不支持的元素类型");
+            return val_null();
+    }
+}
+
+/* ffi.write_at(ptr, index, value) - 根据元素类型按索引写入（Ptr[T] 专用）
+ * byte_offset = index * sizeof(T)
+ * 要求 ptr 必须有 element_type（即 Ptr[T] 而非裸 Ptr）
+ */
+static Value ffi_write_at_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int index = val_as_int(args[1]);
+    CHECK_NULL_PTR(ptr);
+
+    TypeKind et = ptr->element_type;
+    if (et == TYPE_PTR || et == TYPE_ANY || et == TYPE_UNKNOWN) {
+        native_throw_error("write_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），不支持无类型 Ptr");
+        return val_null();
+    }
+
+    /* 根据元素类型计算大小和偏移 */
+    size_t elem_size = 0;
+    switch (et) {
+        case TYPE_U8:    case TYPE_I8:    case TYPE_BOOL:   elem_size = 1; break;
+        case TYPE_U16:   case TYPE_I16:                    elem_size = 2; break;
+        case TYPE_U32:   case TYPE_I32:   case TYPE_INT:   elem_size = 4; break;
+        case TYPE_U64:   case TYPE_I64:                    elem_size = 8; break;
+        case TYPE_F32:                                     elem_size = 4; break;
+        case TYPE_F64:   case TYPE_FLOAT:                  elem_size = 8; break;
+        case TYPE_PTR_GENERIC: case TYPE_PTR: case TYPE_STR8: case TYPE_STR16:
+            elem_size = sizeof(void*); break;
+        default:
+            native_throw_error("write_at 不支持的元素类型");
+            return val_null();
+    }
+
+    int offset = (int)(index * elem_size);
+    CHECK_BOUNDS(ptr, offset, elem_size);
+
+    /* 根据元素类型写入 */
+    char* addr = (char*)ptr->ptr + offset;
+    switch (et) {
+        case TYPE_U8: {
+            uint8_t val = (uint8_t)val_as_int(args[2]);
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_I8: {
+            int8_t val = (int8_t)val_as_int(args[2]);
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_U16: {
+            uint16_t val = (uint16_t)val_as_int(args[2]);
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_I16: {
+            int16_t val = (int16_t)val_as_int(args[2]);
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_U32: {
+            uint32_t val;
+            if (val_is_int(args[2])) val = (uint32_t)(uint64_t)val_as_int(args[2]);
+            else if (val_is_bigint(args[2])) {
+                ObjBigInt* bi = val_as_bigint(args[2]);
+                uint64_t raw = 0;
+                if (bi->limb_count >= 1) raw = (uint64_t)bi->limbs[0];
+                if (bi->limb_count >= 2) raw |= (uint64_t)bi->limbs[1] << 32;
+                val = (uint32_t)raw;
+            } else { native_throw_error("write_at: 需要 int 或 bigint"); return val_null(); }
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_I32: case TYPE_INT: {
+            int32_t val = (int32_t)val_as_int(args[2]);
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_U64: {
+            uint64_t val;
+            if (val_is_int(args[2])) val = (uint64_t)val_as_int(args[2]);
+            else if (val_is_bigint(args[2])) val = (uint64_t)bigint_to_int64(val_as_bigint(args[2]));
+            else { native_throw_error("write_at: 需要 int 或 bigint"); return val_null(); }
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_I64: {
+            int64_t val;
+            if (val_is_int(args[2])) val = (int64_t)val_as_int(args[2]);
+            else if (val_is_bigint(args[2])) val = bigint_to_int64(val_as_bigint(args[2]));
+            else { native_throw_error("write_at: 需要 int 或 bigint"); return val_null(); }
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_F32: {
+            float val = (float)val_as_num(args[2]);
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_F64: case TYPE_FLOAT: {
+            double val = val_as_num(args[2]);
+            memcpy(addr, &val, sizeof(val)); break;
+        }
+        case TYPE_BOOL: {
+            int val = val_is_truthy(args[2]) ? 1 : 0;
+            memcpy(addr, &val, sizeof(int)); break;
+        }
+        case TYPE_PTR_GENERIC: case TYPE_PTR: case TYPE_STR8: case TYPE_STR16: {
+            void* val = NULL;
+            if (val_is_ffi_ptr(args[2])) {
+                ObjFFIPointer* p = val_as_ffi_ptr(args[2]);
+                val = p->freed ? NULL : p->ptr;
+            } else if (val_is_null(args[2])) {
+                val = NULL;
+            }
+            memcpy(addr, &val, sizeof(void*)); break;
+        }
+        default:
+            native_throw_error("write_at 不支持的元素类型");
+            return val_null();
+    }
+    return val_null();
+}
+
 /* ffi.read_string(ptr, off) - 读取以 null 结尾的字符串 */
 static Value ffi_read_string_func(int argc, Value* args) {
     ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
@@ -2000,6 +2213,7 @@ void ffi_init_module(void) {
     native_register_module_method("ffi", "read_double",  ffi_read_double_func,  2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, read_params);
     native_register_module_method("ffi", "read_ptr",     ffi_read_ptr_func,     2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, read_params);
     native_register_module_method("ffi", "read_bool",    ffi_read_bool_func,    2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, read_params);
+    native_register_module_method("ffi", "read_at",      ffi_read_at_func,      2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, read_params);  // Ptr[T] 按索引读取
     native_register_module_method("ffi", "read_string",  ffi_read_string_func,  2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, read_params);
 
     TypeKind read_str_n_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, length
@@ -2024,6 +2238,10 @@ void ffi_init_module(void) {
 
     TypeKind write_str_params[] = {TYPE_PTR, TYPE_INT, TYPE_STRING};  // ptr, offset, string
     native_register_module_method("ffi", "write_string", ffi_write_string_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_str_params);
+
+    /* ===== Ptr[T] 元素级访问 ===== */
+    TypeKind at_params[] = {TYPE_PTR, TYPE_INT, TYPE_ANY};  // ptr, index, value
+    native_register_module_method("ffi", "write_at",     ffi_write_at_func,     3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, at_params);
 
     /* ===== 字符串工具函数 ===== */
     TypeKind string_params[] = {TYPE_STRING};

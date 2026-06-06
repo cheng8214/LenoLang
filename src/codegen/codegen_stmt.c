@@ -632,6 +632,13 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         }
     }
 
+    // Ptr[T] 类型：在赋值前设置运行时 element_type（此时栈顶是值）
+    if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_PTR_GENERIC &&
+        ast->u.var_decl.type->element_type) {
+        emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
+        emit_byte(gen, (uint8_t)ast->u.var_decl.type->element_type->kind, ast->line);
+    }
+
     SymRef* ref = &ast->u.var_decl.ref;
     if (!ref->name) {
         error_add(ERR_SEMANTIC, ast->line, "未解析的变量声明");
@@ -1543,6 +1550,10 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             }
             break;
         }
+        case AST_CLIB_DEF:
+            // clib 定义是纯编译期语法糖，不生成运行时指令
+            // 所有函数签名信息已在语义分析阶段存入 Symbol
+            break;
         case AST_ENUM_DEF: {
             // 生成 enum 定义指令
             // 将 enum 名称作为常量
@@ -1948,6 +1959,9 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
             break;
         case AST_CSTRUCT_DEF:
             gen_stmt(gen, ast);  // cstruct 定义在 gen_stmt 中处理
+            break;
+        case AST_CLIB_DEF:
+            // clib 定义是纯编译期语法糖，不生成运行时指令
             break;
         case AST_ENUM_DEF:
             gen_enum_module(gen, ast);

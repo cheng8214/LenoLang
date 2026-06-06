@@ -8,7 +8,7 @@ static const char* opCodeNames[] = {
     "OP_GET_UPVALUE", "OP_SET_UPVALUE", "OP_CLOSE_UPVALUE", "OP_DEFINE_GLOBAL",
     "OP_GET_GLOBAL_FUNC", "OP_DEFINE_GLOBAL_FUNC", "OP_GET_NATIVE",
     "OP_ADD", "OP_SUB", "OP_MUL", "OP_DIV", "OP_MOD", "OP_BITAND", "OP_BITOR", "OP_BITXOR", "OP_BITNOT", "OP_SHL", "OP_SHR", "OP_NEG", "OP_NOT",
-    "OP_CAST_FLOAT", "OP_CAST_INT", "OP_CAST_STRING",
+    "OP_CAST_FLOAT", "OP_CAST_INT", "OP_CAST_STRING", "OP_SET_PTR_ELEM_TYPE",
     "OP_INC", "OP_DEC", "OP_INC_LOCAL", "OP_DEC_LOCAL", "OP_PRE_INC_LOCAL", "OP_PRE_DEC_LOCAL",
     "OP_EQ", "OP_NEQ", "OP_LT", "OP_GT", "OP_LE", "OP_GE", "OP_IN", "OP_RANGE",
     "OP_JUMP", "OP_JUMP_IF_FALSE", "OP_JUMP_IF_TRUE", "OP_LOOP",
@@ -17,6 +17,7 @@ static const char* opCodeNames[] = {
     "OP_DICT", "OP_DICT_GET", "OP_DICT_SET", "OP_DICT_GET_KEY",
     "OP_LOAD_NATIVE_MODULE",
     "OP_MODULE_CALL",
+    "OP_GET_MODULE_CONST",
     "OP_STRING_ADD",
     "OP_INDEX",
     "OP_INDEX_SET",
@@ -47,7 +48,9 @@ static const char* opCodeNames[] = {
     // 协程相关指令
     "OP_AWAIT", "OP_ASYNC_CALL",
     // 模块初始化指令
-    "OP_INIT_LENOMODULE"
+    "OP_INIT_LENOMODULE",
+    // clib 调用指令
+    "OP_CLIB_CALL"
 };
 
 // 反汇编单条指令
@@ -397,6 +400,19 @@ int disassembleInstruction(Chunk* chunk, int offset) {
         case OP_INIT_LENOMODULE: {
             printf(" (init .leno module)");
             return offset + 1;
+        }
+        case OP_CLIB_CALL: {
+            // OP_CLIB_CALL: arg_count(2), ret_type(1), user_arg_count(1), arg_types[user_arg_count](1 each)
+            int arg_count = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int ret_type = chunk->code[offset + 3];
+            int user_arg_count = chunk->code[offset + 4];
+            printf(" args=%d ret=%d user_args=%d types=[", arg_count, ret_type, user_arg_count);
+            for (int i = 0; i < user_arg_count; i++) {
+                if (i > 0) printf(",");
+                printf("%d", chunk->code[offset + 5 + i]);
+            }
+            printf("]");
+            return offset + 5 + user_arg_count;
         }
         default:
             return offset + 1;
