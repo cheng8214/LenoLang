@@ -3532,10 +3532,6 @@ void visit(Semantic* s, Ast* ast) {
                                    strcmp(ret_type->struct_name, "Str16") == 0) {
                             type_free(ret_type);
                             ast->u.clib_def.func_return_types[i] = type_new(TYPE_STR16);
-                        } else if (strcmp(ret_type->struct_name, "winbool") == 0 ||
-                                   strcmp(ret_type->struct_name, "Winbool") == 0) {
-                            type_free(ret_type);
-                            ast->u.clib_def.func_return_types[i] = type_new(TYPE_BOOL);
                         } else {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
@@ -3581,10 +3577,6 @@ void visit(Semantic* s, Ast* ast) {
                                        strcmp(param_type->struct_name, "Str16") == 0) {
                                 type_free(param_type);
                                 ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_STR16);
-                            } else if (strcmp(param_type->struct_name, "winbool") == 0 ||
-                                       strcmp(param_type->struct_name, "Winbool") == 0) {
-                                type_free(param_type);
-                                ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_BOOL);
                             } else {
                                 char msg[BUFFER_MEDIUM];
                                 snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
@@ -3670,9 +3662,6 @@ void visit(Semantic* s, Ast* ast) {
                         } else if (strcmp(ret_type->struct_name, "str16") == 0 || strcmp(ret_type->struct_name, "Str16") == 0) {
                             type_free(ret_type);
                             ast->u.cfunc_decl.return_type = type_new(TYPE_STR16);
-                        } else if (strcmp(ret_type->struct_name, "winbool") == 0 || strcmp(ret_type->struct_name, "Winbool") == 0) {
-                            type_free(ret_type);
-                            ast->u.cfunc_decl.return_type = type_new(TYPE_BOOL);
                         } else {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型 '%s' 不是有效的 C 布局类型", ast->u.cfunc_decl.name, ret_type->struct_name);
@@ -3707,9 +3696,6 @@ void visit(Semantic* s, Ast* ast) {
                         } else if (strcmp(ptype->struct_name, "str16") == 0 || strcmp(ptype->struct_name, "Str16") == 0) {
                             type_free(ptype);
                             ast->u.cfunc_decl.param_types[j] = type_new(TYPE_STR16);
-                        } else if (strcmp(ptype->struct_name, "winbool") == 0 || strcmp(ptype->struct_name, "Winbool") == 0) {
-                            type_free(ptype);
-                            ast->u.cfunc_decl.param_types[j] = type_new(TYPE_BOOL);
                         } else {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "cfunc '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型", ast->u.cfunc_decl.name, j + 1, ptype->struct_name);
