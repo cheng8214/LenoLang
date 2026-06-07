@@ -2422,7 +2422,14 @@ void visit(Semantic* s, Ast* ast) {
                                                 !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_NULL) &&
                                                 !(expected_param->kind == TYPE_I32 && arg_type->kind == TYPE_INT) &&
                                                 !(expected_param->kind == TYPE_I64 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_F64 && arg_type->kind == TYPE_FLOAT)) {
+                                                !(expected_param->kind == TYPE_U32 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_U64 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_I8 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_U8 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_I16 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_U16 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_F64 && arg_type->kind == TYPE_FLOAT) &&
+                                                !(expected_param->kind == TYPE_F32 && arg_type->kind == TYPE_FLOAT)) {
                                                 char msg[BUFFER_MEDIUM];
                                                 format_type_error(msg, sizeof(msg),
                                                     "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",

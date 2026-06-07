@@ -1,0 +1,45 @@
+// 测试 f64/f32 浮点参数和返回值（零摩擦）
+import ffi
+
+clib msvcrt {
+    f64 pow(f64 x, f64 y)
+    f64 sqrt(f64 x)
+    f64 floor(f64 x)
+    f64 ceil(f64 x)
+    f64 fabs(f64 x)
+    f64 fmod(f64 x, f64 y)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // 测试 1: f64 返回值 → float
+    float s = lib.sqrt(144.0)
+    if s == 12.0 { print("  PASS: sqrt(144) = " + s) } else { print("  FAIL: 期望 12.0, 实际 " + s) }
+
+    // 测试 2: floor
+    float f = lib.floor(3.7)
+    if f == 3.0 { print("  PASS: floor(3.7) = " + f) } else { print("  FAIL: 期望 3.0, 实际 " + f) }
+
+    // 测试 3: ceil
+    float c = lib.ceil(3.2)
+    if c == 4.0 { print("  PASS: ceil(3.2) = " + c) } else { print("  FAIL: 期望 4.0, 实际 " + c) }
+
+    // 测试 4: fabs
+    float a = lib.fabs(-99.5)
+    if a == 99.5 { print("  PASS: fabs(-99.5) = " + a) } else { print("  FAIL: 期望 99.5, 实际 " + a) }
+
+    // 测试 5: fmod
+    float m = lib.fmod(10.0, 3.0)
+    if m == 1.0 { print("  PASS: fmod(10, 3) = " + m) } else { print("  FAIL: 期望 1.0, 实际 " + m) }
+
+    // 测试 6: pow 大数
+    float p = lib.pow(2.0, 32.0)
+    if p == 4294967296.0 { print("  PASS: pow(2, 32) = " + p) } else { print("  FAIL: 期望 4294967296.0, 实际 " + p) }
+
+    // 测试 7: f64 参数接受 float 字面量
+    float p2 = lib.pow(3.0, 2.0)
+    if p2 == 9.0 { print("  PASS: f64 参数接受 float") } else { print("  FAIL: 期望 9.0, 实际 " + p2) }
+
+    print("浮点类型测试完成")
+}

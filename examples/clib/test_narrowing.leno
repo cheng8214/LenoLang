@@ -1,0 +1,42 @@
+// 测试参数窄化：Leno int → C 窄类型，超范围报错
+import ffi
+
+clib msvcrt {
+    i32 abs(i32 n)
+    i32 strlen(str8 s)
+    Ptr malloc(i32 size)
+    void free(Ptr p)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // 测试 1: 正常 i32 范围内的值
+    int a = lib.abs(-100)
+    if a == 100 { print("  PASS: i32 正常范围") } else { print("  FAIL") }
+
+    // 测试 2: i32 边界值
+    int b = lib.abs(2147483647)   // INT32_MAX
+    if b == 2147483647 { print("  PASS: i32 MAX 边界") } else { print("  FAIL: 实际 " + b) }
+
+    // 测试 3: malloc 接受 i32 size
+    Ptr p = lib.malloc(256)
+    if p != null { print("  PASS: malloc(256)") } else { print("  FAIL") }
+    lib.free(p)
+
+    // 测试 4: Leno 大整数传给 i32（运行时检查）
+    // 2147483648 = INT32_MAX + 1，应报错
+    try {
+        int big = 2147483648
+        lib.abs(big)
+        print("  FAIL: 应该抛出异常但没抛")
+    } catch e{
+        print("  PASS: i32 溢出正确报错"+e)
+    }
+
+    // 测试 5: 负数传给 i32
+    int c = lib.abs(-1)
+    if c == 1 { print("  PASS: 负数传给 i32") } else { print("  FAIL") }
+
+    print("参数窄化测试完成")
+}

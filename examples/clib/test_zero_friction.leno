@@ -12,7 +12,6 @@ clib msvcrt {
 }
 
 main() {
-    _gc(false)
     msvcrt lib = ffi.load("msvcrt.dll")
 
     // 测试 1: i32 返回值 → int，零摩擦
@@ -42,5 +41,4 @@ main() {
     if r > 0 { print("  PASS: void 调用 + i32 返回") } else { print("  FAIL") }
 
     print("零摩擦测试完成")
-    _gc(true)
 }

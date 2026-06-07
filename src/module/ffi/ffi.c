@@ -63,6 +63,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 
 #include "leno_ffi.h"
 
@@ -76,6 +77,9 @@ typedef struct {
 
 static FFICallbackEntry g_callback_registry[MAX_FFI_CALLBACKS];
 static int g_callback_count = 0;
+
+/* ===== 上次 FFI 调用的错误码缓存 ===== */
+static int64_t g_last_error = 0;
 
 static void free_executable_memory(void* ptr, size_t size);
 
@@ -328,14 +332,7 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
     }
 
     /* 推导 FFI 返回类型 */
-    FFIType ffi_ret_type;
-    if (ret_type_kind >= 0) {
-        /* clib 路径：从 TypeKind 推导 */
-        ffi_ret_type = typekind_to_ffitype((TypeKind)ret_type_kind);
-    } else {
-        /* 旧路径：使用默认 FFI_TYPE_INT */
-        ffi_ret_type = FFI_TYPE_INT;
-    }
+    FFIType ffi_ret_type = typekind_to_ffitype((TypeKind)ret_type_kind);
 
     /* 构建 FFI 签名和参数 */
     FFISignature sig;
@@ -430,11 +427,51 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
         else if (val_is_bigint(arg)) {
             int64_t ival = bigint_to_int64(val_as_bigint(arg));
             switch (param_tk) {
+                case TYPE_I8:
+                    if (ival < INT8_MIN || ival > INT8_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i8 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_INT8; ffi_args[i].type = FFI_TYPE_INT8;
+                    ffi_args[i].value.i = (int64_t)(int8_t)ival;
+                    break;
+                case TYPE_U8:
+                    if (ival < 0 || ival > UINT8_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u8 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_UINT8; ffi_args[i].type = FFI_TYPE_UINT8;
+                    ffi_args[i].value.i = (int64_t)(uint8_t)ival;
+                    break;
+                case TYPE_I16:
+                    if (ival < INT16_MIN || ival > INT16_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i16 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_INT16; ffi_args[i].type = FFI_TYPE_INT16;
+                    ffi_args[i].value.i = (int64_t)(int16_t)ival;
+                    break;
+                case TYPE_U16:
+                    if (ival < 0 || ival > UINT16_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u16 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_UINT16; ffi_args[i].type = FFI_TYPE_UINT16;
+                    ffi_args[i].value.i = (int64_t)(uint16_t)ival;
+                    break;
                 case TYPE_I32:
+                    if (ival < INT32_MIN || ival > INT32_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i32 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
                     sig.arg_types[i] = FFI_TYPE_INT32; ffi_args[i].type = FFI_TYPE_INT32;
                     ffi_args[i].value.i = (int64_t)(int32_t)ival;
                     break;
                 case TYPE_U32:
+                    if (ival < 0 || ival > UINT32_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u32 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
                     sig.arg_types[i] = FFI_TYPE_UINT32; ffi_args[i].type = FFI_TYPE_UINT32;
                     ffi_args[i].value.i = (int64_t)(uint32_t)ival;
                     break;
@@ -525,6 +562,13 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
     /* 调用函数 */
     FFIValue result = ffi_call(func, &sig, ffi_args);
 
+    /* 立即缓存错误码（在 Leno 内部操作覆盖之前） */
+#ifdef _WIN32
+    g_last_error = (int64_t)GetLastError();
+#else
+    g_last_error = (int64_t)errno;
+#endif
+
     /* 释放 str16 自动转换分配的临时 UTF-16 内存 */
     for (int i = 0; i < sig.nargs; i++) {
         if (ffi_args[i].owned && ffi_args[i].value.p) {
@@ -587,33 +631,8 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
         }
     }
 
-    /* 旧路径：根据 FFIType 转换（兼容 ffi.call_xxx） */
-    switch (ffi_ret_type) {
-        case FFI_TYPE_DOUBLE:
-        case FFI_TYPE_FLOAT:
-            return val_float(result.d);
-        case FFI_TYPE_BOOL:
-            return val_bool(result.i != 0);
-        case FFI_TYPE_POINTER: {
-            if (result.p == NULL) return val_null();
-            ObjFFIPointer* ret_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
-            if (!ret_ptr) {
-                native_throw_error("内存不足");
-                return val_null();
-            }
-            ret_ptr->ptr = result.p;
-            ret_ptr->size = 0;
-            ret_ptr->owned = 0;
-            ret_ptr->freed = 0;
-            ret_ptr->element_type = TYPE_PTR;
-            return val_obj((Object*)ret_ptr);
-        }
-        case FFI_TYPE_VOID:
-            return val_null();
-        case FFI_TYPE_INT:
-        default:
-            return val_int((int)result.i);
-    }
+    /* 不会到达这里：ret_type_kind 现在总是 >= 0 */
+    return val_int_safe(result.i);
 }
 
 /* ffi.call(lib, name, ...) - 调用库中的函数（返回 int） */
@@ -644,6 +663,17 @@ static Value ffi_call_ptr_func(int argc, Value* args) {
 /* ffi.call_bool(lib, name, ...) - 调用库中的函数（返回布尔值） */
 static Value ffi_call_bool_func(int argc, Value* args) {
     return ffi_call_impl(argc, args, TYPE_BOOL, NULL);
+}
+
+/* ffi.last_error() - 获取上次 FFI 调用后的错误码
+ * Windows: 返回 GetLastError() 的缓存值
+ * Linux:   返回 errno 的缓存值
+ * 在每次 ffi.call_xxx 或 clib 调用后立即缓存，避免 Leno 内部操作覆盖
+ */
+static Value ffi_last_error_func(int argc, Value* args) {
+    (void)argc;
+    (void)args;
+    return val_int_safe(g_last_error);
 }
 
 /* ==================== FFI 内存操作函数 ==================== */
@@ -1358,6 +1388,18 @@ static Value ffi_write_int16_func(int argc, Value* args) {
     return val_null();
 }
 
+/* ffi.write_uint16(ptr, off, val) - 写入 uint16 */
+static Value ffi_write_uint16_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    uint16_t value = (uint16_t)val_as_int(args[2]);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, sizeof(uint16_t));
+    memcpy((char*)ptr->ptr + offset, &value, sizeof(value));
+    return val_null();
+}
+
 /* ffi.write_int(ptr, off, val) - 写入 int32 */
 static Value ffi_write_int_func(int argc, Value* args) {
     (void)argc;
@@ -1501,6 +1543,18 @@ static Value ffi_write_ptr_func(int argc, Value* args) {
     CHECK_NULL_PTR(ptr);
     CHECK_BOUNDS(ptr, offset, sizeof(void*));
     memcpy((char*)ptr->ptr + offset, &value, sizeof(value));
+    return val_null();
+}
+
+/* ffi.write_bool(ptr, off, val) - 写入 bool（1 字节，0 或 1） */
+static Value ffi_write_bool_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    uint8_t value = val_is_truthy(args[2]) ? 1 : 0;
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, sizeof(uint8_t));
+    *((uint8_t*)((char*)ptr->ptr + offset)) = value;
     return val_null();
 }
 
@@ -2327,6 +2381,9 @@ void ffi_init_module(void) {
     native_register_module_method("ffi", "call_ptr", ffi_call_ptr_func, -1, 2, -1, TYPE_PTR, TYPE_UNKNOWN, call_params);
     native_register_module_method("ffi", "call_bool", ffi_call_bool_func, -1, 2, -1, TYPE_BOOL, TYPE_UNKNOWN, call_params);
 
+    /* ===== 错误码 ===== */
+    native_register_module_method("ffi", "last_error", ffi_last_error_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, NULL);
+
     /* ===== 内存操作函数 ===== */
     TypeKind malloc_params[] = {TYPE_INT};
     native_register_module_method("ffi", "malloc", ffi_malloc_func, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, malloc_params);
@@ -2385,6 +2442,7 @@ void ffi_init_module(void) {
     native_register_module_method("ffi", "write_byte",   ffi_write_byte_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_int8",   ffi_write_int8_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_int16",  ffi_write_int16_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
+    native_register_module_method("ffi", "write_uint16", ffi_write_uint16_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_int",    ffi_write_int_func,    3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_uint",   ffi_write_uint_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_int64",  ffi_write_int64_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
@@ -2396,6 +2454,9 @@ void ffi_init_module(void) {
 
     TypeKind write_ptr_params[] = {TYPE_PTR, TYPE_INT, TYPE_PTR};  // ptr, offset, value
     native_register_module_method("ffi", "write_ptr",    ffi_write_ptr_func,    3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_ptr_params);
+
+    TypeKind write_bool_params[] = {TYPE_PTR, TYPE_INT, TYPE_ANY};  // ptr, offset, value (接受 bool 和 int)
+    native_register_module_method("ffi", "write_bool",   ffi_write_bool_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_bool_params);
 
     TypeKind write_str_params[] = {TYPE_PTR, TYPE_INT, TYPE_STRING};  // ptr, offset, string
     native_register_module_method("ffi", "write_string", ffi_write_string_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_str_params);
