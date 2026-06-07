@@ -1,0 +1,46 @@
+// 测试 clib 返回值零摩擦：C 类型自动展开为 Leno 类型
+import ffi
+
+clib msvcrt {
+    i32 strlen(str8 s)
+    f64 pow(f64 x, f64 y)
+    i32 abs(i32 n)
+    Ptr malloc(i32 size)
+    void free(Ptr p)
+    void srand(i32 seed)
+    i32 rand()
+}
+
+main() {
+    _gc(false)
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // 测试 1: i32 返回值 → int，零摩擦
+    int len = lib.strlen("hello")
+    print("strlen('hello') = " + len)
+    if len == 5 { print("  PASS: i32 → int 零摩擦") } else { print("  FAIL: 期望 5, 实际 " + len) }
+
+    // 测试 2: f64 返回值 → float，零摩擦
+    float p = lib.pow(2.0, 10.0)
+    print("pow(2, 10) = " + p)
+    if p == 1024.0 { print("  PASS: f64 → float 零摩擦") } else { print("  FAIL: 期望 1024.0, 实际 " + p) }
+
+    // 测试 3: i32 参数窄化
+    int n = lib.abs(-42)
+    print("abs(-42) = " + n)
+    if n == 42 { print("  PASS: i32 参数 + 返回值") } else { print("  FAIL: 期望 42, 实际 " + n) }
+
+    // 测试 4: Ptr 返回值
+    Ptr buf = lib.malloc(100)
+    if buf != null { print("  PASS: Ptr 返回值") } else { print("  FAIL: Ptr 返回 null") }
+    lib.free(buf)
+
+    // 测试 5: void 返回值
+    lib.srand(42)
+    int r = lib.rand()
+    print("rand() = " + r)
+    if r > 0 { print("  PASS: void 调用 + i32 返回") } else { print("  FAIL") }
+
+    print("零摩擦测试完成")
+    _gc(true)
+}

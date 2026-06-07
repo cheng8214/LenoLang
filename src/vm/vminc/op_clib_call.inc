@@ -1,14 +1,15 @@
 // ============================================================================
 // clib 调用操作码 (OP_CLIB_CALL)
-// 格式: OP_CLIB_CALL, arg_count(2), ret_type(1), user_arg_count(1), arg_types[user_arg_count](1 each)
+// 格式: OP_CLIB_CALL, arg_count(2), ret_type_kind(1), user_arg_count(1), arg_types[user_arg_count](1 each)
 // 栈上参数: [lib_obj, func_name_str, user_arg1, user_arg2, ...]
+// ret_type_kind: TypeKind 枚举值，VM 端根据 TypeKind 做返回值自动展开
 // 结果压栈
 // ============================================================================
 
 OPCODE(OP_CLIB_CALL) {
     frame = &vm.frames[vm.frame_cnt - 1];
     int arg_count = READ_SHORT();
-    int ret_type = READ_BYTE();
+    int ret_type_kind = READ_BYTE();
     int user_arg_count = READ_BYTE();
 
     // 读取参数类型
@@ -21,8 +22,8 @@ OPCODE(OP_CLIB_CALL) {
     // 栈上已有参数: [lib, func_name, user_args...]
     Value* call_args = vm.stack + vm.sp - arg_count;
 
-    // 调用 FFI（传递参数类型用于 str16 自动转换）
-    Value result = ffi_clib_call(arg_count, call_args, ret_type, arg_types);
+    // 调用 FFI（传递 TypeKind 用于返回值自动展开和参数窄化）
+    Value result = ffi_clib_call(arg_count, call_args, ret_type_kind, arg_types);
 
     // 检查是否有异常
     if (vm.has_exception) {

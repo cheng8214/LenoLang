@@ -272,10 +272,35 @@ Value ffi_reload_library(const char* path) {
 
 /* ==================== FFI 函数调用 ==================== */
 
+/* TypeKind → FFIType 映射（用于 clib 调用时推导 libffi 签名） */
+static FFIType typekind_to_ffitype(TypeKind tk) {
+    switch (tk) {
+        case TYPE_NULL:      return FFI_TYPE_VOID;
+        case TYPE_BOOL:      return FFI_TYPE_BOOL;
+        case TYPE_I8:        return FFI_TYPE_INT8;
+        case TYPE_U8:        return FFI_TYPE_UINT8;
+        case TYPE_I16:       return FFI_TYPE_INT16;
+        case TYPE_U16:       return FFI_TYPE_UINT16;
+        case TYPE_I32:       return FFI_TYPE_INT32;
+        case TYPE_U32:       return FFI_TYPE_UINT32;
+        case TYPE_I64:       return FFI_TYPE_INT;     /* int64_t */
+        case TYPE_U64:       return FFI_TYPE_INT;     /* uint64_t 用 int64_t 传递 */
+        case TYPE_F32:       return FFI_TYPE_FLOAT;
+        case TYPE_F64:       return FFI_TYPE_DOUBLE;
+        case TYPE_FLOAT:     return FFI_TYPE_DOUBLE;
+        case TYPE_PTR:       return FFI_TYPE_POINTER;
+        case TYPE_PTR_GENERIC: return FFI_TYPE_POINTER;
+        case TYPE_STR8:      return FFI_TYPE_POINTER;
+        case TYPE_STR16:     return FFI_TYPE_POINTER;
+        default:             return FFI_TYPE_INT;
+    }
+}
+
 /* ffi.call 的核心实现 - ret_type 指定返回值类型
  * 所有 ffi.call/ffi.call_double/ffi.call_void/ffi.call_ptr/ffi.call_bool 共用此函数
+ * ret_type_kind: TypeKind 枚举值（clib 路径），-1 表示旧路径（使用 ret_ffitype）
  */
-static Value ffi_call_impl(int argc, Value* args, FFIType ret_type, const int* arg_types) {
+static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* arg_types) {
     ObjFFILibrary* lib = val_as_ffi_lib(args[0]);
     CHECK_LIB_FREED(lib);
 
@@ -302,33 +327,140 @@ static Value ffi_call_impl(int argc, Value* args, FFIType ret_type, const int* a
         return val_null();
     }
 
+    /* 推导 FFI 返回类型 */
+    FFIType ffi_ret_type;
+    if (ret_type_kind >= 0) {
+        /* clib 路径：从 TypeKind 推导 */
+        ffi_ret_type = typekind_to_ffitype((TypeKind)ret_type_kind);
+    } else {
+        /* 旧路径：使用默认 FFI_TYPE_INT */
+        ffi_ret_type = FFI_TYPE_INT;
+    }
+
     /* 构建 FFI 签名和参数 */
     FFISignature sig;
-    sig.ret_type = ret_type;
+    sig.ret_type = ffi_ret_type;
     sig.nargs = argc - arg_start;
     if (sig.nargs > FFI_MAX_ARGS) sig.nargs = FFI_MAX_ARGS;
 
     FFIArg ffi_args[FFI_MAX_ARGS];
     memset(ffi_args, 0, sizeof(ffi_args));
 
-    /* 将 Leno 值转换为 FFI 参数 */
+    /* 将 Leno 值转换为 FFI 参数（根据 arg_types 做窄化和类型感知转换） */
     for (int i = 0; i < sig.nargs; i++) {
         Value arg = args[i + arg_start];
+        TypeKind param_tk = (arg_types && i < FFI_MAX_ARGS) ? (TypeKind)arg_types[i] : TYPE_UNKNOWN;
 
         if (val_is_int(arg)) {
-            sig.arg_types[i] = FFI_TYPE_INT;
-            ffi_args[i].type = FFI_TYPE_INT;
-            ffi_args[i].value.i = (int64_t)val_as_int(arg);
+            int64_t ival = (int64_t)val_as_int(arg);
+
+            /* 参数窄化：根据 clib 声明的参数类型做范围检查和 FFI 签名设置 */
+            switch (param_tk) {
+                case TYPE_I8:
+                    if (ival < INT8_MIN || ival > INT8_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i8 范围 [-128, 127]", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_INT8; ffi_args[i].type = FFI_TYPE_INT8;
+                    ffi_args[i].value.i = (int64_t)(int8_t)ival;
+                    break;
+                case TYPE_U8:
+                    if (ival < 0 || ival > UINT8_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u8 范围 [0, 255]", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_UINT8; ffi_args[i].type = FFI_TYPE_UINT8;
+                    ffi_args[i].value.i = (int64_t)(uint8_t)ival;
+                    break;
+                case TYPE_I16:
+                    if (ival < INT16_MIN || ival > INT16_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i16 范围 [-32768, 32767]", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_INT16; ffi_args[i].type = FFI_TYPE_INT16;
+                    ffi_args[i].value.i = (int64_t)(int16_t)ival;
+                    break;
+                case TYPE_U16:
+                    if (ival < 0 || ival > UINT16_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u16 范围 [0, 65535]", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_UINT16; ffi_args[i].type = FFI_TYPE_UINT16;
+                    ffi_args[i].value.i = (int64_t)(uint16_t)ival;
+                    break;
+                case TYPE_I32:
+                    if (ival < INT32_MIN || ival > INT32_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i32 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_INT32; ffi_args[i].type = FFI_TYPE_INT32;
+                    ffi_args[i].value.i = (int64_t)(int32_t)ival;
+                    break;
+                case TYPE_U32:
+                    if (ival < 0 || (uint64_t)ival > UINT32_MAX) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u32 范围", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_UINT32; ffi_args[i].type = FFI_TYPE_UINT32;
+                    ffi_args[i].value.i = (int64_t)(uint32_t)ival;
+                    break;
+                case TYPE_I64:
+                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
+                    ffi_args[i].value.i = ival;
+                    break;
+                case TYPE_U64:
+                    if (ival < 0) {
+                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 负值 %lld 不能传给 u64", i+1, (long long)ival);
+                        native_throw_error(msg); return val_null();
+                    }
+                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
+                    ffi_args[i].value.i = ival;
+                    break;
+                case TYPE_BOOL:
+                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
+                    ffi_args[i].value.i = ival ? 1 : 0;
+                    break;
+                default:
+                    /* 旧路径或未知类型，默认 FFI_TYPE_INT */
+                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
+                    ffi_args[i].value.i = ival;
+                    break;
+            }
         }
         else if (val_is_bigint(arg)) {
-            sig.arg_types[i] = FFI_TYPE_INT;
-            ffi_args[i].type = FFI_TYPE_INT;
-            ffi_args[i].value.i = bigint_to_int64(val_as_bigint(arg));
+            int64_t ival = bigint_to_int64(val_as_bigint(arg));
+            switch (param_tk) {
+                case TYPE_I32:
+                    sig.arg_types[i] = FFI_TYPE_INT32; ffi_args[i].type = FFI_TYPE_INT32;
+                    ffi_args[i].value.i = (int64_t)(int32_t)ival;
+                    break;
+                case TYPE_U32:
+                    sig.arg_types[i] = FFI_TYPE_UINT32; ffi_args[i].type = FFI_TYPE_UINT32;
+                    ffi_args[i].value.i = (int64_t)(uint32_t)ival;
+                    break;
+                case TYPE_I64:
+                case TYPE_U64:
+                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
+                    ffi_args[i].value.i = ival;
+                    break;
+                default:
+                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
+                    ffi_args[i].value.i = ival;
+                    break;
+            }
         }
         else if (val_is_float(arg)) {
-            sig.arg_types[i] = FFI_TYPE_DOUBLE;
-            ffi_args[i].type = FFI_TYPE_DOUBLE;
-            ffi_args[i].value.d = val_as_num(arg);
+            double dval = val_as_num(arg);
+            switch (param_tk) {
+                case TYPE_F32:
+                    sig.arg_types[i] = FFI_TYPE_FLOAT; ffi_args[i].type = FFI_TYPE_FLOAT;
+                    ffi_args[i].value.d = dval;  /* libffi 会自动截断为 float */
+                    break;
+                default:
+                    sig.arg_types[i] = FFI_TYPE_DOUBLE; ffi_args[i].type = FFI_TYPE_DOUBLE;
+                    ffi_args[i].value.d = dval;
+                    break;
+            }
         }
         else if (val_is_string(arg)) {
             sig.arg_types[i] = FFI_TYPE_POINTER;
@@ -402,8 +534,61 @@ static Value ffi_call_impl(int argc, Value* args, FFIType ret_type, const int* a
         }
     }
 
-    /* 根据返回类型转换结果 */
-    switch (ret_type) {
+    /* 根据返回类型自动展开（C → Leno 零摩擦） */
+    if (ret_type_kind >= 0) {
+        /* clib 路径：根据 TypeKind 做精确转换 */
+        switch ((TypeKind)ret_type_kind) {
+            case TYPE_NULL:   return val_null();  /* void */
+            case TYPE_BOOL:   return val_bool(result.i != 0);
+            case TYPE_I8:     return val_int_safe((int64_t)(int8_t)result.i);
+            case TYPE_U8:     return val_int_safe((int64_t)(uint8_t)result.i);
+            case TYPE_I16:    return val_int_safe((int64_t)(int16_t)result.i);
+            case TYPE_U16:    return val_int_safe((int64_t)(uint16_t)result.i);
+            case TYPE_I32:    return val_int_safe((int64_t)(int32_t)result.i);
+            case TYPE_U32:    return val_int_safe((int64_t)(uint32_t)result.i);
+            case TYPE_I64:    return val_int_safe(result.i);
+            case TYPE_U64: {
+                uint64_t uval = (uint64_t)result.i;
+                if (uval <= INT64_MAX) return val_int_safe((int64_t)uval);
+                return val_bigint_from_uint64(uval);
+            }
+            case TYPE_F32:    return val_float((double)result.f);
+            case TYPE_F64:
+            case TYPE_FLOAT:  return val_float(result.d);
+            case TYPE_PTR:
+            case TYPE_PTR_GENERIC: {
+                if (result.p == NULL) return val_null();
+                ObjFFIPointer* ret_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+                if (!ret_ptr) { native_throw_error("内存不足"); return val_null(); }
+                ret_ptr->ptr = result.p; ret_ptr->size = 0; ret_ptr->owned = 0; ret_ptr->freed = 0;
+                ret_ptr->element_type = TYPE_PTR;
+                return val_obj((Object*)ret_ptr);
+            }
+            case TYPE_STR8: {
+                /* char* → string 自动转换 */
+                if (result.p == NULL) return val_null();
+                return val_obj((Object*)str_copy((const char*)result.p, (int)strlen((const char*)result.p)));
+            }
+            case TYPE_STR16: {
+                /* wchar_t* → string 自动转换（UTF-16 → UTF-8） */
+                if (result.p == NULL) return val_null();
+#ifdef _WIN32
+                char* utf8 = utf16_to_utf8((const wchar_t*)result.p);
+                if (utf8) {
+                    Value ret = val_obj((Object*)str_copy(utf8, (int)strlen(utf8)));
+                    free(utf8);
+                    return ret;
+                }
+#endif
+                return val_null();
+            }
+            default:
+                return val_int_safe(result.i);
+        }
+    }
+
+    /* 旧路径：根据 FFIType 转换（兼容 ffi.call_xxx） */
+    switch (ffi_ret_type) {
         case FFI_TYPE_DOUBLE:
         case FFI_TYPE_FLOAT:
             return val_float(result.d);
@@ -431,34 +616,34 @@ static Value ffi_call_impl(int argc, Value* args, FFIType ret_type, const int* a
     }
 }
 
-/* ffi.call(lib, name, ...) - 调用库中的函数（返回 any，实际值为 int） */
+/* ffi.call(lib, name, ...) - 调用库中的函数（返回 int） */
 static Value ffi_call_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_INT, NULL);
+    return ffi_call_impl(argc, args, TYPE_I32, NULL);
 }
 
 /* ffi.call_int(lib, name, ...) - 调用库中的函数（明确返回 int） */
 static Value ffi_call_int_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_INT, NULL);
+    return ffi_call_impl(argc, args, TYPE_I32, NULL);
 }
 
 /* ffi.call_double(lib, name, ...) - 调用库中的函数（返回 double） */
 static Value ffi_call_double_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_DOUBLE, NULL);
+    return ffi_call_impl(argc, args, TYPE_F64, NULL);
 }
 
 /* ffi.call_void(lib, name, ...) - 调用库中的函数（无返回值） */
 static Value ffi_call_void_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_VOID, NULL);
+    return ffi_call_impl(argc, args, TYPE_NULL, NULL);
 }
 
 /* ffi.call_ptr(lib, name, ...) - 调用库中的函数（返回指针） */
 static Value ffi_call_ptr_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_POINTER, NULL);
+    return ffi_call_impl(argc, args, TYPE_PTR, NULL);
 }
 
 /* ffi.call_bool(lib, name, ...) - 调用库中的函数（返回布尔值） */
 static Value ffi_call_bool_func(int argc, Value* args) {
-    return ffi_call_impl(argc, args, FFI_TYPE_BOOL, NULL);
+    return ffi_call_impl(argc, args, TYPE_BOOL, NULL);
 }
 
 /* ==================== FFI 内存操作函数 ==================== */
@@ -2121,8 +2306,8 @@ Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count
 
 #include "ffi_clib.h"
 
-Value ffi_clib_call(int argc, Value* args, int ret_type, const int* arg_types) {
-    return ffi_call_impl(argc, args, (FFIType)ret_type, arg_types);
+Value ffi_clib_call(int argc, Value* args, int ret_type_kind, const int* arg_types) {
+    return ffi_call_impl(argc, args, ret_type_kind, arg_types);
 }
 
 /* ==================== 模块初始化 ==================== */

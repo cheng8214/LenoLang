@@ -1394,10 +1394,43 @@ void visit(Semantic* s, Ast* ast) {
                                     error_add(ERR_SEMANTIC, ast->line, msg);
                                 }
 
-                                // 设置缓存类型为返回类型
+                                // 设置缓存类型：C 类型映射为 Leno 类型（零摩擦）
+                                // i32/u32/i64/u64/i8/u8/i16/u16 → int
+                                // f32/f64 → float
+                                // str8/str16 → string
+                                // Ptr → Ptr
+                                // bool → bool
+                                // void → null
                                 TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
                                 if (!ast->cached_type) {
-                                    ast->cached_type = type_copy(ret_type);
+                                    TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
+                                    switch (rk) {
+                                        case TYPE_I8: case TYPE_U8:
+                                        case TYPE_I16: case TYPE_U16:
+                                        case TYPE_I32: case TYPE_U32:
+                                        case TYPE_I64: case TYPE_U64:
+                                            ast->cached_type = type_new(TYPE_INT);
+                                            break;
+                                        case TYPE_F32: case TYPE_F64:
+                                            ast->cached_type = type_new(TYPE_FLOAT);
+                                            break;
+                                        case TYPE_STR8: case TYPE_STR16:
+                                            ast->cached_type = type_new(TYPE_STRING);
+                                            break;
+                                        case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                            ast->cached_type = type_new(TYPE_PTR);
+                                            ast->cached_type->struct_name = strdup("Ptr");
+                                            break;
+                                        case TYPE_BOOL:
+                                            ast->cached_type = type_new(TYPE_BOOL);
+                                            break;
+                                        case TYPE_NULL:
+                                            ast->cached_type = type_new(TYPE_NULL);
+                                            break;
+                                        default:
+                                            ast->cached_type = type_copy(ret_type);
+                                            break;
+                                    }
                                 }
                                 break;
                             }

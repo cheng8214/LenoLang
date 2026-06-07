@@ -440,18 +440,14 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                         int user_arg_count = ast->u.call.args.count;
 
                         // 使用 OP_CLIB_CALL 统一处理（支持 str16 自动转换）
-                        // 确定返回类型对应的 FFIType
-                        int ffi_ret_type = FFI_TYPE_INT;
-                        if (ret_type->kind == TYPE_NULL) ffi_ret_type = FFI_TYPE_VOID;
-                        else if (ret_type->kind == TYPE_FLOAT || ret_type->kind == TYPE_F32 || ret_type->kind == TYPE_F64) ffi_ret_type = FFI_TYPE_DOUBLE;
-                        else if (ret_type->kind == TYPE_PTR || ret_type->kind == TYPE_PTR_GENERIC || ret_type->kind == TYPE_STR8) ffi_ret_type = FFI_TYPE_POINTER;
-                        else if (ret_type->kind == TYPE_BOOL) ffi_ret_type = FFI_TYPE_BOOL;
+                        // 返回类型直接编码 TypeKind，VM 端根据 TypeKind 做自动展开
+                        int ret_type_kind = ret_type ? ret_type->kind : TYPE_NULL;
 
-                        // OP_CLIB_CALL arg_count(2) ret_type(1) user_arg_count(1) arg_types[user_arg_count](1 each)
+                        // OP_CLIB_CALL arg_count(2) ret_type_kind(1) user_arg_count(1) arg_types[user_arg_count](1 each)
                         emit_byte(gen, OP_CLIB_CALL, ast->line);
                         emit_byte(gen, (total_arg_count >> 8) & 0xff, ast->line);
                         emit_byte(gen, total_arg_count & 0xff, ast->line);
-                        emit_byte(gen, (uint8_t)ffi_ret_type, ast->line);
+                        emit_byte(gen, (uint8_t)ret_type_kind, ast->line);
                         emit_byte(gen, (uint8_t)user_arg_count, ast->line);
                         // 编码每个用户参数的类型（TypeKind 枚举值）
                         for (int ai = 0; ai < user_arg_count; ai++) {
@@ -1052,13 +1048,9 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                     const char* func_name = ast->u.module_call.method_name;
                     for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
                         if (strcmp(clib_sym->clib_func_names[fi], func_name) == 0) {
-                            // 确定返回类型对应的 FFIType
-                            int ffi_ret_type = FFI_TYPE_INT;
+                            // 返回类型直接编码 TypeKind，VM 端根据 TypeKind 做自动展开
                             TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
-                            if (ret_type->kind == TYPE_NULL) ffi_ret_type = FFI_TYPE_VOID;
-                            else if (ret_type->kind == TYPE_FLOAT || ret_type->kind == TYPE_F32 || ret_type->kind == TYPE_F64) ffi_ret_type = FFI_TYPE_DOUBLE;
-                            else if (ret_type->kind == TYPE_PTR || ret_type->kind == TYPE_PTR_GENERIC || ret_type->kind == TYPE_STR8) ffi_ret_type = FFI_TYPE_POINTER;
-                            else if (ret_type->kind == TYPE_BOOL) ffi_ret_type = FFI_TYPE_BOOL;
+                            int ret_type_kind = ret_type ? ret_type->kind : TYPE_NULL;
 
                             // 生成 lib 变量值到栈上（使用 semantic 阶段存好的 lib_ref）
                             SymRef* lib_ref = &ast->u.module_call.lib_ref;
@@ -1089,11 +1081,11 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                             int total_arg_count = 2 + ast->u.module_call.args.count;
                             int user_arg_count = ast->u.module_call.args.count;
 
-                            // OP_CLIB_CALL arg_count(2) ret_type(1) user_arg_count(1) arg_types[user_arg_count](1 each)
+                            // OP_CLIB_CALL arg_count(2) ret_type_kind(1) user_arg_count(1) arg_types[user_arg_count](1 each)
                             emit_byte(gen, OP_CLIB_CALL, ast->line);
                             emit_byte(gen, (total_arg_count >> 8) & 0xff, ast->line);
                             emit_byte(gen, total_arg_count & 0xff, ast->line);
-                            emit_byte(gen, (uint8_t)ffi_ret_type, ast->line);
+                            emit_byte(gen, (uint8_t)ret_type_kind, ast->line);
                             emit_byte(gen, (uint8_t)user_arg_count, ast->line);
                             // 编码每个用户参数的类型（TypeKind 枚举值）
                             for (int ai = 0; ai < user_arg_count; ai++) {

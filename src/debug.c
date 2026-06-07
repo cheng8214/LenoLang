@@ -403,11 +403,11 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             return offset + 1;
         }
         case OP_CLIB_CALL: {
-            // OP_CLIB_CALL: arg_count(2), ret_type(1), user_arg_count(1), arg_types[user_arg_count](1 each)
+            // OP_CLIB_CALL: arg_count(2), ret_type_kind(1), user_arg_count(1), arg_types[user_arg_count](1 each)
             int arg_count = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
-            int ret_type = chunk->code[offset + 3];
+            int ret_type_kind = chunk->code[offset + 3];
             int user_arg_count = chunk->code[offset + 4];
-            printf(" args=%d ret=%d user_args=%d types=[", arg_count, ret_type, user_arg_count);
+            printf(" args=%d ret_kind=%d user_args=%d types=[", arg_count, ret_type_kind, user_arg_count);
             for (int i = 0; i < user_arg_count; i++) {
                 if (i > 0) printf(",");
                 printf("%d", chunk->code[offset + 5 + i]);

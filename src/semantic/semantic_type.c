@@ -58,7 +58,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
     // 检查类型缓存，避免重复推断同一表达式
     if (ast->cached_type) {
         // clib 调用的 cached_type 是 TYPE_CLIB（供 codegen 识别），
-        // 但表达式实际类型应该是函数的返回类型
+        // 但表达式实际类型应该是映射后的 Leno 类型（零摩擦）
         if (ast->kind == AST_MODULE_CALL && ast->cached_type->kind == TYPE_CLIB && ast->cached_type->struct_name) {
             Symbol* clib_sym = scope_resolve(s->root_scope, ast->cached_type->struct_name);
             if (!clib_sym) {
@@ -68,7 +68,31 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 const char* func_name = ast->u.module_call.method_name;
                 for (int i = 0; i < clib_sym->clib_func_count; i++) {
                     if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
-                        return type_copy(clib_sym->clib_func_return_types[i]);
+                        TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                        TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
+                        // C 类型 → Leno 类型映射
+                        switch (rk) {
+                            case TYPE_I8: case TYPE_U8:
+                            case TYPE_I16: case TYPE_U16:
+                            case TYPE_I32: case TYPE_U32:
+                            case TYPE_I64: case TYPE_U64:
+                                return type_new(TYPE_INT);
+                            case TYPE_F32: case TYPE_F64:
+                                return type_new(TYPE_FLOAT);
+                            case TYPE_STR8: case TYPE_STR16:
+                                return type_new(TYPE_STRING);
+                            case TYPE_PTR: case TYPE_PTR_GENERIC: {
+                                TypeInfo* t = type_new(TYPE_PTR);
+                                t->struct_name = strdup("Ptr");
+                                return t;
+                            }
+                            case TYPE_BOOL:
+                                return type_new(TYPE_BOOL);
+                            case TYPE_NULL:
+                                return type_new(TYPE_NULL);
+                            default:
+                                return type_copy(ret_type);
+                        }
                     }
                 }
             }
