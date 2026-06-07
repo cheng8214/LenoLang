@@ -55,6 +55,13 @@ OPCODE(OP_CSTRUCT_DEF) {
 
         // 计算字段大小（单个元素的大小）
         int field_size = c_layout_type_size((TypeKind)field_type);
+        // 嵌套 cstruct 字段：从已注册的定义获取实际大小
+        if (field_type == TYPE_CSTRUCT && struct_name) {
+            ObjCStructDef* nested_def = cstruct_def_find(struct_name);
+            if (nested_def) {
+                field_size = nested_def->total_size;
+            }
+        }
 
         // 设置字段信息
         cstruct_def_set_field(def, i, field_name->chars, (TypeKind)field_type, field_offset, field_size, array_dim, struct_name, element_type);

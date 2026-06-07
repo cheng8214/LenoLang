@@ -532,9 +532,9 @@ static Value cstruct_method_debug(int argc, Value* args) {
                                field->size * field->array_dim, field->array_dim);
         } else if (field->type == TYPE_CSTRUCT && field->struct_name) {
             offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-                               "  %-6d 0x%08X %-20s %-10s %-10s %-10s\n",
+                               "  %-6d 0x%08X %-20s %-10s %-10d %-10s\n",
                                i, field->offset, field->struct_name, field->name,
-                               "嵌套", "-");
+                               field->size, "-");
         } else {
             offset += snprintf(buffer + offset, sizeof(buffer) - offset,
                                "  %-6d 0x%08X %-20s %-10s %-10d %-10s\n",
@@ -551,16 +551,17 @@ static Value cstruct_method_debug(int argc, Value* args) {
     for (int i = 0; i < def->field_count; i++) {
         CStructFieldInfo* field = &def->fields[i];
         int field_end = field->offset + (field->array_dim > 0 ? field->size * field->array_dim : field->size) - 1;
+        const char* display_type = (field->type == TYPE_CSTRUCT && field->struct_name) ? field->struct_name : type_kind_to_string(field->type);
         
         if (field->array_dim > 0) {
             offset += snprintf(buffer + offset, sizeof(buffer) - offset,
                                "  0x%04X-0x%04X  %s %s[%d]\n",
-                               field->offset, field_end, type_kind_to_string(field->type),
+                               field->offset, field_end, display_type,
                                field->name, field->array_dim);
         } else {
             offset += snprintf(buffer + offset, sizeof(buffer) - offset,
                                "  0x%04X-0x%04X  %s %s\n",
-                               field->offset, field_end, type_kind_to_string(field->type),
+                               field->offset, field_end, display_type,
                                field->name);
         }
     }
@@ -627,10 +628,12 @@ static Value cstruct_method_debug(int argc, Value* args) {
                         offset += snprintf(buffer + offset, sizeof(buffer) - offset,
                                            "  %s = %p (ptr)\n", field->name, *(void**)field_addr);
                         break;
-                    default:
+                    default: {
+                        const char* dt = (field->type == TYPE_CSTRUCT && field->struct_name) ? field->struct_name : type_kind_to_string(field->type);
                         offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-                                           "  %s = [...] (%s)\n", field->name, type_kind_to_string(field->type));
+                                           "  %s = [...] (%s)\n", field->name, dt);
                         break;
+                    }
                 }
             }
         }

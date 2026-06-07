@@ -50,6 +50,10 @@ main() {
 
     // 测试 4: 也可以手动传 Ptr（兼容旧写法）
     Ptr pt_ptr = pt.to_ptr()
+    POINT p=POINT.from_ptr(pt_ptr)
+    print(p)
+    print(p.debug())
+    print(p.to_str())
     int ok4 = lib.GetCursorPos(pt_ptr)
     if ok4 != 0 {
         print("  PASS: 手动 to_ptr() 仍然可用")
