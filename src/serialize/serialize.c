@@ -576,7 +576,8 @@ static int serialize_scope_data(WriteBuffer* wb, Scope* scope) {
         if (sym->kind == SYM_GLOBAL || sym->kind == SYM_GLOBAL_FUNC ||
             sym->kind == SYM_NATIVE || sym->kind == SYM_TYPE ||
             sym->kind == SYM_STRUCT || sym->kind == SYM_CSTRUCT ||
-            sym->kind == SYM_ENUM) {
+            sym->kind == SYM_ENUM || sym->kind == SYM_CLIB ||
+            sym->kind == SYM_CFUNC) {
             sym_count++;
         }
     }
@@ -587,7 +588,8 @@ static int serialize_scope_data(WriteBuffer* wb, Scope* scope) {
         if (sym->kind != SYM_GLOBAL && sym->kind != SYM_GLOBAL_FUNC &&
             sym->kind != SYM_NATIVE && sym->kind != SYM_TYPE &&
             sym->kind != SYM_STRUCT && sym->kind != SYM_CSTRUCT &&
-            sym->kind != SYM_ENUM) {
+            sym->kind != SYM_ENUM && sym->kind != SYM_CLIB &&
+            sym->kind != SYM_CFUNC) {
             continue;
         }
 
@@ -611,6 +613,50 @@ static int serialize_scope_data(WriteBuffer* wb, Scope* scope) {
             }
         } else {
             wb_write_u8(wb, 0);
+        }
+
+        // 序列化 clib 函数签名信息
+        if (sym->kind == SYM_CLIB) {
+            wb_write_u32(wb, (uint32_t)sym->clib_func_count);
+            for (int j = 0; j < sym->clib_func_count; j++) {
+                wb_write_string(wb, sym->clib_func_names[j],
+                                (uint32_t)strlen(sym->clib_func_names[j]));
+                // 返回类型
+                if (sym->clib_func_return_types[j]) {
+                    wb_write_u8(wb, (uint8_t)sym->clib_func_return_types[j]->kind);
+                } else {
+                    wb_write_u8(wb, (uint8_t)TYPE_INFER);
+                }
+                // 参数数量
+                wb_write_u32(wb, (uint32_t)sym->clib_func_param_counts[j]);
+                // 参数类型
+                for (int k = 0; k < sym->clib_func_param_counts[j]; k++) {
+                    if (sym->clib_func_param_types[j][k]) {
+                        wb_write_u8(wb, (uint8_t)sym->clib_func_param_types[j][k]->kind);
+                    } else {
+                        wb_write_u8(wb, (uint8_t)TYPE_INFER);
+                    }
+                }
+            }
+        }
+
+        // 序列化 cfunc 回调签名信息
+        if (sym->kind == SYM_CFUNC) {
+            wb_write_u32(wb, (uint32_t)sym->cfunc_param_count);
+            // 返回类型
+            if (sym->cfunc_return_type) {
+                wb_write_u8(wb, (uint8_t)sym->cfunc_return_type->kind);
+            } else {
+                wb_write_u8(wb, (uint8_t)TYPE_INFER);
+            }
+            // 参数类型
+            for (int j = 0; j < sym->cfunc_param_count; j++) {
+                if (sym->cfunc_param_types[j]) {
+                    wb_write_u8(wb, (uint8_t)sym->cfunc_param_types[j]->kind);
+                } else {
+                    wb_write_u8(wb, (uint8_t)TYPE_INFER);
+                }
+            }
         }
     }
 
@@ -1292,6 +1338,67 @@ static Scope* deserialize_scope_data(DeserializeCtx* ctx) {
                 if (!dk) return NULL;
                 if (sym) symbol_add_dict_key(sym, dk);
                 free(dk);
+            }
+        }
+
+        // 反序列化 clib 函数签名信息
+        if ((SymKind)kind == SYM_CLIB && sym) {
+            uint32_t func_count;
+            if (!ctx_read_u32(ctx, &func_count)) return NULL;
+            sym->clib_func_count = (int)func_count;
+            sym->clib_func_names = (char**)malloc(func_count * sizeof(char*));
+            sym->clib_func_return_types = (TypeInfo**)malloc(func_count * sizeof(TypeInfo*));
+            sym->clib_func_param_counts = (int*)malloc(func_count * sizeof(int));
+            sym->clib_func_param_types = (TypeInfo***)malloc(func_count * sizeof(TypeInfo**));
+            for (uint32_t j = 0; j < func_count; j++) {
+                uint32_t fname_len;
+                char* fname = ctx_read_string(ctx, &fname_len);
+                if (!fname) return NULL;
+                sym->clib_func_names[j] = fname;
+                uint8_t ret_kind;
+                if (!ctx_read_u8(ctx, &ret_kind)) return NULL;
+                if ((TypeKind)ret_kind != TYPE_INFER) {
+                    sym->clib_func_return_types[j] = type_new((TypeKind)ret_kind);
+                } else {
+                    sym->clib_func_return_types[j] = NULL;
+                }
+                uint32_t param_count;
+                if (!ctx_read_u32(ctx, &param_count)) return NULL;
+                sym->clib_func_param_counts[j] = (int)param_count;
+                sym->clib_func_param_types[j] = (TypeInfo**)malloc(param_count * sizeof(TypeInfo*));
+                for (uint32_t k = 0; k < param_count; k++) {
+                    uint8_t pkind;
+                    if (!ctx_read_u8(ctx, &pkind)) return NULL;
+                    if ((TypeKind)pkind != TYPE_INFER) {
+                        sym->clib_func_param_types[j][k] = type_new((TypeKind)pkind);
+                    } else {
+                        sym->clib_func_param_types[j][k] = NULL;
+                    }
+                }
+            }
+        }
+
+        // 反序列化 cfunc 回调签名信息
+        if ((SymKind)kind == SYM_CFUNC && sym) {
+            uint32_t param_count;
+            if (!ctx_read_u32(ctx, &param_count)) return NULL;
+            sym->cfunc_param_count = (int)param_count;
+            uint8_t ret_kind;
+            if (!ctx_read_u8(ctx, &ret_kind)) return NULL;
+            if ((TypeKind)ret_kind != TYPE_INFER) {
+                sym->cfunc_return_type = type_new((TypeKind)ret_kind);
+            } else {
+                sym->cfunc_return_type = NULL;
+            }
+            sym->cfunc_param_types = (TypeInfo**)malloc(param_count * sizeof(TypeInfo*));
+            for (uint32_t j = 0; j < param_count; j++) {
+                uint8_t pkind;
+                if (!ctx_read_u8(ctx, &pkind)) return NULL;
+                if ((TypeKind)pkind != TYPE_INFER) {
+                    sym->cfunc_param_types[j] = type_new((TypeKind)pkind);
+                } else {
+                    sym->cfunc_param_types[j] = NULL;
+                }
             }
         }
     }

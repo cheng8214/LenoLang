@@ -40,4 +40,5 @@ main() {
 
     ffi.free(arr)
     print("done")
+    input()
 }
