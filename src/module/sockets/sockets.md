@@ -6,13 +6,18 @@
 
 - [使用方式](#使用方式)
 - [核心概念](#核心概念)
+- [模块方法（工厂方法）](#模块方法工厂方法)
+- [实例方法](#实例方法)
 - [TCP 客户端](#tcp-客户端)
 - [TCP 服务器](#tcp-服务器)
 - [UDP 通信](#udp-通信)
 - [非阻塞 IO](#非阻塞-io)
+- [连接信息与错误处理](#连接信息与错误处理)
 - [示例代码](#示例代码)
 - [与 asyncs 模块配合使用](#与-asyncs-模块配合使用)
 - [注意事项](#注意事项)
+- [完整 API 速查表](#完整-api-速查表)
+- [字节序转换](#字节序转换)
 
 ---
 
@@ -23,13 +28,13 @@ import sockets
 import io
 
 main() {
-    // TCP 客户端示例
-    var conn = sockets.connect("www.example.com", 80)
+    // TCP 客户端示例 - 面向对象风格
+    Socket conn = sockets.connect("www.example.com", 80)
     if conn != null {
-        sockets.send(conn, "GET / HTTP/1.0\r\n\r\n")
-        var response = sockets.recv(conn, 1024)
+        conn.send("GET / HTTP/1.0\r\n\r\n")
+        var response = conn.recv(1024)
         io.print(response)
-        sockets.close(conn)
+        conn.close()
     }
 }
 ```
@@ -40,28 +45,34 @@ main() {
 
 ### Socket 对象
 
-Socket 对象是网络连接的内部表示，通过 `sockets.connect()`、`sockets.listen()` 或 `sockets.udp_bind()` 创建：
+Socket 对象是网络连接的封装，通过模块工厂方法创建，通过实例方法操作：
 
 ```leno
 // TCP 客户端 socket
-var tcp_conn = sockets.connect("127.0.0.1", 8080)
+Socket conn = sockets.connect("127.0.0.1", 8080)
 
 // TCP 服务器 socket
-var server = sockets.listen("0.0.0.0", 8080)
+Socket server = sockets.listen("0.0.0.0", 8080)
 
 // UDP socket
-var udp = sockets.udp_bind("0.0.0.0", 9999)
+Socket udp = sockets.udp_bind("0.0.0.0", 9999)
 ```
 
-**注意**: Socket 对象需要通过 `sockets.close()` 显式关闭。
+**设计模式**: `sockets` 模块采用**工厂方法 + 实例方法**的面向对象设计：
+- **模块方法**（`sockets.xxx`）：创建 Socket 对象或执行模块级操作
+- **实例方法**（`sock.xxx`）：操作具体的 Socket 连接
+
+**注意**: Socket 对象需要通过 `sock.close()` 显式关闭。
 
 ---
 
-## TCP 客户端
+## 模块方法（工厂方法）
 
-### `connect(host, port)`
+模块方法通过 `sockets.xxx()` 调用，用于创建 Socket 对象或执行模块级操作。
 
-连接到指定的 TCP 服务器。
+### `sockets.connect(host, port)`
+
+连接到指定的 TCP 服务器，返回 Socket 对象。
 
 **参数**:
 - `host` (string): 主机名或 IP 地址
@@ -72,81 +83,13 @@ var udp = sockets.udp_bind("0.0.0.0", 9999)
 - 失败: `null`
 
 ```leno
-// 连接到本地服务器
-var conn = sockets.connect("127.0.0.1", 8080)
-
-// 连接到远程服务器（支持 DNS 解析）
-var conn = sockets.connect("www.example.com", 443)
+Socket conn = sockets.connect("127.0.0.1", 8080)
+Socket conn = sockets.connect("www.example.com", 443)  // 支持 DNS 解析
 ```
 
 ---
 
-### `send(socket, data)`
-
-通过 TCP 连接发送数据。
-
-**参数**:
-- `socket`: Socket 对象
-- `data` (string): 要发送的数据
-
-**返回**: `bool` - 是否发送成功
-
-```leno
-var conn = sockets.connect("127.0.0.1", 8080)
-if conn != null {
-    var sent = sockets.send(conn, "Hello, Server!")
-    io.print("发送成功: " + sent)
-}
-```
-
----
-
-### `recv(socket, max_bytes)`
-
-从 TCP 连接接收数据。
-
-**参数**:
-- `socket`: Socket 对象
-- `max_bytes` (int): 最大接收字节数（最大 65536）
-
-**返回**: 
-- 成功: 接收到的字符串数据
-- 失败/连接关闭: `null`
-
-```leno
-var conn = sockets.connect("127.0.0.1", 8080)
-if conn != null {
-    sockets.send(conn, "Hello")
-    var data = sockets.recv(conn, 1024)
-    if data != null {
-        io.print("收到: " + data)
-    }
-    sockets.close(conn)
-}
-```
-
----
-
-### `close(socket)`
-
-关闭 Socket 连接。
-
-**参数**:
-- `socket`: Socket 对象
-
-**返回**: `null`
-
-```leno
-var conn = sockets.connect("127.0.0.1", 8080)
-// ... 使用连接 ...
-sockets.close(conn)  // 显式关闭
-```
-
----
-
-## TCP 服务器
-
-### `listen(host, port)`
+### `sockets.listen(host, port)`
 
 创建 TCP 服务器并监听指定端口。
 
@@ -159,8 +102,7 @@ sockets.close(conn)  // 显式关闭
 - 失败: `null`
 
 ```leno
-// 创建监听 8080 端口的服务器
-var server = sockets.listen("0.0.0.0", 8080)
+Socket server = sockets.listen("0.0.0.0", 8080)
 if server != null {
     io.print("服务器已启动")
 }
@@ -168,36 +110,7 @@ if server != null {
 
 ---
 
-### `accept(server_socket)`
-
-接受客户端连接（阻塞模式）。
-
-**参数**:
-- `server_socket`: 服务器 Socket 对象
-
-**返回**: 
-- 成功: 客户端 Socket 对象
-- 失败: `null`
-
-```leno
-var server = sockets.listen("0.0.0.0", 8080)
-if server != null {
-    io.print("等待连接...")
-    var client = sockets.accept(server)
-    if client != null {
-        io.print("客户端已连接")
-        var data = sockets.recv(client, 1024)
-        sockets.send(client, "Hello, Client!")
-        sockets.close(client)
-    }
-}
-```
-
----
-
-## UDP 通信
-
-### `udp_bind(host, port)`
+### `sockets.udp_bind(host, port)`
 
 创建 UDP Socket 并绑定到指定地址。
 
@@ -210,97 +123,14 @@ if server != null {
 - 失败: `null`
 
 ```leno
-// 创建 UDP socket
-var udp = sockets.udp_bind("0.0.0.0", 9999)
-if udp != null {
-    io.print("UDP socket 已创建")
-}
+Socket udp = sockets.udp_bind("0.0.0.0", 9999)
 ```
 
 ---
 
-### `sendto(socket, data, addr, port)`
+### `sockets.select(sockets_array, timeout_ms)`
 
-向指定地址发送 UDP 数据包。
-
-**参数**:
-- `socket`: UDP Socket 对象
-- `data` (string): 要发送的数据
-- `addr` (string): 目标 IP 地址
-- `port` (int): 目标端口
-
-**返回**: `bool` - 是否发送成功
-
-```leno
-var udp = sockets.udp_bind("0.0.0.0", 0)  // 绑定到随机端口
-if udp != null {
-    var sent = sockets.sendto(udp, "Hello UDP", "127.0.0.1", 9999)
-    io.print("发送成功: " + sent)
-}
-```
-
----
-
-### `recvfrom(socket, max_bytes)`
-
-接收 UDP 数据包。
-
-**参数**:
-- `socket`: UDP Socket 对象
-- `max_bytes` (int): 最大接收字节数
-
-**返回**: 
-- 成功: 数组 `[data, addr, port]`
-- 失败: `null`
-
-```leno
-var udp = sockets.udp_bind("0.0.0.0", 9999)
-if udp != null {
-    var result = sockets.recvfrom(udp, 1024)
-    if result != null {
-        var data = result[0]   // 接收到的数据
-        var addr = result[1]   // 发送方地址
-        var port = result[2]   // 发送方端口
-        io.print("从 " + addr + ":" + port + " 收到: " + data)
-    }
-}
-```
-
----
-
-## 非阻塞 IO
-
-从 V2 版本开始，sockets 模块支持非阻塞 IO 操作，可以实现单线程多客户端并发处理。
-
-### `set_nonblocking(socket, nonblocking)`
-
-设置 socket 为非阻塞模式。
-
-**参数**:
-- `socket`: Socket 对象
-- `nonblocking` (bool): `true` 开启非阻塞模式，`false` 恢复阻塞模式
-
-**返回**: `bool` - 是否设置成功
-
-```leno
-var server = sockets.listen("127.0.0.1", 8888)
-if server != null {
-    // 设置为非阻塞模式
-    var result = sockets.set_nonblocking(server, true)
-    io.print("非阻塞模式: " + result)
-}
-```
-
-**说明**:
-- 非阻塞模式下，`accept()` 和 `recv()` 会立即返回
-- 如果没有数据可读，返回 `null`
-- 需要配合 `select()` 使用来检测可读 socket
-
----
-
-### `select(sockets_array, timeout_ms)`
-
-等待多个 socket 可读，返回可读的 socket 数组。
+等待多个 socket 可读，返回可读的 socket 数组（模块级静态方法）。
 
 **参数**:
 - `sockets_array` (array): 要监听的 socket 对象数组
@@ -309,15 +139,10 @@ if server != null {
 **返回**: 数组 - 包含可读的 socket 对象
 
 ```leno
-var clients = []  // 存储多个客户端 socket
-
-// 等待有数据的 socket，超时 100ms
 var ready = sockets.select(clients, 100)
-
 var i = 0
 while i < ready.len() {
-    var sock = ready[i]
-    var data = sockets.recv(sock, 1024)
+    var data = ready[i].recv(1024)
     if data != null {
         io.print("收到: " + data)
     }
@@ -325,10 +150,505 @@ while i < ready.len() {
 }
 ```
 
-**说明**:
-- `select` 可以同时监视多个 socket 的可读状态
-- 在非阻塞模式下非常有用，避免频繁轮询
-- 返回的数组只包含当前有数据可读的 socket
+---
+
+### `sockets.resolve(host)`
+
+DNS 解析，将域名转换为 IP 地址。
+
+**参数**:
+- `host` (string): 域名
+
+**返回**: 
+- 成功: IP 地址字符串
+- 失败: `null`
+
+```leno
+var ip = sockets.resolve("www.baidu.com")
+io.print("baidu.com -> " + ip)  // 例如: 39.156.70.239
+```
+
+---
+
+### 字节序转换
+
+```leno
+var port_be = sockets.htons(8080)   // 主机序 -> 网络序 (16位)
+var addr_be = sockets.htonl(0x7f000001)  // 主机序 -> 网络序 (32位)
+var port_h  = sockets.ntohs(port_be)     // 网络序 -> 主机序 (16位)
+var addr_h  = sockets.ntohl(addr_be)     // 网络序 -> 主机序 (32位)
+```
+
+---
+
+## 实例方法
+
+实例方法通过 `sock.xxx()` 调用，操作具体的 Socket 连接。
+
+### `sock.send(data)`
+
+通过 TCP 连接发送数据。
+
+**参数**:
+- `data` (string): 要发送的数据
+
+**返回**: `bool` - 是否发送成功
+
+```leno
+Socket conn = sockets.connect("127.0.0.1", 8080)
+if conn != null {
+    var sent = conn.send("Hello, Server!")
+    io.print("发送成功: " + sent)
+}
+```
+
+---
+
+### `sock.recv(max_bytes)`
+
+从 TCP 连接接收数据。
+
+**参数**:
+- `max_bytes` (int): 最大接收字节数（最大 65536）
+
+**返回**: 
+- 成功: 接收到的字符串数据
+- 失败/连接关闭: `null`
+
+```leno
+var data = conn.recv(1024)
+if data != null {
+    io.print("收到: " + data)
+}
+```
+
+---
+
+### `sock.close()`
+
+关闭 Socket 连接。
+
+**返回**: `null`
+
+```leno
+conn.close()
+```
+
+---
+
+### `sock.accept()`
+
+接受客户端连接（阻塞模式，仅用于服务器 Socket）。
+
+**返回**: 
+- 成功: 客户端 Socket 对象
+- 失败: `null`
+
+```leno
+Socket server = sockets.listen("0.0.0.0", 8080)
+Socket client = server.accept()
+if client != null {
+    io.print("客户端来自: " + client.peer_addr() + ":" + client.peer_port())
+}
+```
+
+---
+
+### `sock.sendto(data, addr, port)`
+
+向指定地址发送 UDP 数据包。
+
+**参数**:
+- `data` (string): 要发送的数据
+- `addr` (string): 目标 IP 地址
+- `port` (int): 目标端口
+
+**返回**: `bool` - 是否发送成功
+
+```leno
+Socket udp = sockets.udp_bind("0.0.0.0", 0)
+udp.sendto("Hello UDP", "127.0.0.1", 9999)
+```
+
+---
+
+### `sock.recvfrom(max_bytes)`
+
+接收 UDP 数据包。
+
+**参数**:
+- `max_bytes` (int): 最大接收字节数
+
+**返回**: 
+- 成功: 数组 `[data, addr, port]`
+- 失败: `null`
+
+```leno
+var result = udp.recvfrom(1024)
+if result != null {
+    io.print("从 " + result[1] + ":" + result[2] + " 收到: " + result[0])
+}
+```
+
+---
+
+### `sock.set_nonblocking(flag)`
+
+设置 socket 为非阻塞模式。
+
+**参数**:
+- `flag` (bool): `true` 开启非阻塞模式，`false` 恢复阻塞模式
+
+**返回**: `bool` - 是否设置成功
+
+```leno
+server.set_nonblocking(true)
+```
+
+---
+
+### `sock.peer_addr()`
+
+获取对端（远程）IP 地址。
+
+**返回**: 
+- 成功: IP 地址字符串
+- 失败: `null`
+
+```leno
+Socket client = server.accept()
+io.print("客户端IP: " + client.peer_addr())  // 例如: "192.168.1.100"
+```
+
+---
+
+### `sock.peer_port()`
+
+获取对端（远程）端口号。
+
+**返回**: 
+- 成功: 端口号 (int)
+- 失败: `null`
+
+```leno
+io.print("客户端端口: " + client.peer_port())  // 例如: 52341
+```
+
+---
+
+### `sock.local_addr()`
+
+获取本地 IP 地址。
+
+**返回**: 
+- 成功: IP 地址字符串
+- 失败: `null`
+
+```leno
+io.print("本地IP: " + conn.local_addr())  // 例如: "192.168.10.13"
+```
+
+---
+
+### `sock.local_port()`
+
+获取本地端口号。
+
+**返回**: 
+- 成功: 端口号 (int)
+- 失败: `null`
+
+```leno
+io.print("本地端口: " + conn.local_port())  // 例如: 13169
+```
+
+---
+
+### `sock.error()`
+
+获取最后一次操作的错误码。
+
+**返回**: `int` - 错误码（0 表示无错误）
+
+```leno
+var data = conn.recv(1024)
+if data == null {
+    io.print("接收失败，错误码: " + conn.error())
+}
+```
+
+**说明**: 每次 `send`、`recv`、`sendto`、`recvfrom`、`accept` 等操作失败时会自动记录错误码。
+
+---
+
+### `sock.shutdown(how)`
+
+优雅关闭连接（不释放文件描述符）。
+
+**参数**:
+- `how` (int): 关闭方式
+  - `0` - 关闭读取端（SHUT_RD）
+  - `1` - 关闭写入端（SHUT_WR）
+  - `2` - 关闭两端（SHUT_RDWR）
+
+**返回**: `bool` - 是否成功
+
+```leno
+// 关闭写入端，发送 EOF 给对端，但仍可接收
+conn.shutdown(1)
+var last = conn.recv(1024)  // 仍可读取对端数据
+conn.close()
+```
+
+---
+
+### `sock.set_timeout(ms)`
+
+设置 socket 收发超时时间。
+
+**参数**:
+- `ms` (int): 超时时间（毫秒），0 表示无超时
+
+**返回**: `bool` - 是否设置成功
+
+```leno
+Socket conn = sockets.connect("www.example.com", 80)
+conn.set_timeout(5000)  // 设置5秒超时
+var data = conn.recv(1024)  // 5秒内无数据将返回 null
+```
+
+**说明**: 同时设置接收超时（SO_RCVTIMEO）和发送超时（SO_SNDTIMEO）。
+
+---
+
+## TCP 客户端
+
+完整的 TCP 客户端流程：
+
+```leno
+import sockets
+import io
+
+main() {
+    // 1. 连接服务器
+    Socket conn = sockets.connect("www.example.com", 80)
+    if conn == null {
+        io.print("连接失败")
+        return
+    }
+    
+    io.print("已连接到 " + conn.peer_addr() + ":" + conn.peer_port())
+    io.print("本地地址: " + conn.local_addr() + ":" + conn.local_port())
+    
+    // 2. 设置超时
+    conn.set_timeout(5000)
+    
+    // 3. 发送请求
+    var request = "GET / HTTP/1.0\r\nHost: www.example.com\r\n\r\n"
+    if !conn.send(request) {
+        io.print("发送失败，错误码: " + conn.error())
+        conn.close()
+        return
+    }
+    
+    // 4. 接收响应
+    var response = ""
+    while true {
+        var chunk = conn.recv(4096)
+        if chunk == null {
+            break
+        }
+        response = response + chunk
+    }
+    
+    io.print("响应长度: " + response.len())
+    
+    // 5. 优雅关闭
+    conn.shutdown(2)
+    conn.close()
+}
+```
+
+---
+
+## TCP 服务器
+
+完整的 TCP 服务器流程：
+
+```leno
+import sockets
+import io
+
+main() {
+    // 1. 创建服务器
+    Socket server = sockets.listen("0.0.0.0", 8080)
+    if server == null {
+        io.print("启动服务器失败")
+        return
+    }
+    
+    io.print("服务器运行在 " + server.local_addr() + ":" + server.local_port())
+    
+    // 2. 接受连接
+    Socket client = server.accept()
+    if client != null {
+        io.print("客户端来自: " + client.peer_addr() + ":" + client.peer_port())
+        
+        // 3. 通信
+        var data = client.recv(1024)
+        if data != null {
+            client.send("Echo: " + data)
+        } else {
+            io.print("接收失败，错误码: " + client.error())
+        }
+        
+        // 4. 关闭客户端
+        client.close()
+    }
+    
+    // 5. 关闭服务器
+    server.close()
+}
+```
+
+---
+
+## UDP 通信
+
+```leno
+import sockets
+import io
+
+main() {
+    // 创建 UDP socket
+    Socket udp = sockets.udp_bind("0.0.0.0", 9999)
+    if udp == null {
+        io.print("绑定失败")
+        return
+    }
+    
+    io.print("UDP 本地端口: " + udp.local_port())
+    
+    // 发送
+    udp.sendto("Hello!", "127.0.0.1", 9998)
+    
+    // 接收
+    var result = udp.recvfrom(1024)
+    if result != null {
+        io.print("从 " + result[1] + ":" + result[2] + " 收到: " + result[0])
+    }
+    
+    udp.close()
+}
+```
+
+---
+
+## 非阻塞 IO
+
+### 基本用法
+
+```leno
+import sockets
+import io
+
+main() {
+    Socket server = sockets.listen("127.0.0.1", 8888)
+    server.set_nonblocking(true)
+    
+    var clients = []
+    
+    while true {
+        // 非阻塞 accept
+        Socket client = server.accept()
+        if client != null {
+            client.set_nonblocking(true)
+            clients.add(client)
+            io.print("新客户端: " + client.peer_addr())
+        }
+        
+        // 使用 select 检测可读的 socket
+        if clients.len() > 0 {
+            var ready = sockets.select(clients, 100)
+            
+            var i = 0
+            while i < ready.len() {
+                var data = ready[i].recv(1024)
+                if data == null {
+                    io.print("客户端断开，错误码: " + ready[i].error())
+                    ready[i].close()
+                    // 从列表移除...
+                } else {
+                    io.print("收到: " + data)
+                }
+                i = i + 1
+            }
+        }
+    }
+}
+```
+
+---
+
+## 连接信息与错误处理
+
+### 获取连接信息
+
+```leno
+Socket conn = sockets.connect("www.baidu.com", 80)
+if conn != null {
+    // 对端信息（服务器地址）
+    io.print("对端: " + conn.peer_addr() + ":" + conn.peer_port())
+    
+    // 本地信息（客户端地址）
+    io.print("本地: " + conn.local_addr() + ":" + conn.local_port())
+    
+    conn.close()
+}
+```
+
+### 错误处理模式
+
+```leno
+Socket conn = sockets.connect("www.example.com", 80)
+if conn == null {
+    io.print("连接失败")
+    return
+}
+
+conn.set_timeout(3000)  // 3秒超时
+
+var data = conn.recv(1024)
+if data == null {
+    var err = conn.error()
+    if err != 0 {
+        io.print("接收出错，错误码: " + err)
+    } else {
+        io.print("连接已正常关闭")
+    }
+}
+
+conn.close()
+```
+
+### 优雅关闭
+
+```leno
+// 半关闭模式：关闭写入端，通知对端数据已发完，但仍可接收剩余数据
+conn.shutdown(1)   // SHUT_WR
+
+// 继续接收对端数据
+while true {
+    var data = conn.recv(1024)
+    if data == null {
+        break
+    }
+    process(data)
+}
+
+// 完全关闭
+conn.close()
+```
 
 ---
 
@@ -340,32 +660,34 @@ while i < ready.len() {
 import sockets
 import io
 
-// 简单的 HTTP GET 请求
 func http_get(string host, string path) -> string {
-    var conn = sockets.connect(host, 80)
+    Socket conn = sockets.connect(host, 80)
     if conn == null {
         return ""
     }
     
-    // 构造 HTTP 请求
+    conn.set_timeout(5000)
+    
     var request = "GET " + path + " HTTP/1.0\r\n"
     request = request + "Host: " + host + "\r\n"
     request = request + "Connection: close\r\n\r\n"
     
-    // 发送请求
-    sockets.send(conn, request)
+    if !conn.send(request) {
+        io.print("发送失败: " + conn.error())
+        conn.close()
+        return ""
+    }
     
-    // 接收响应
     var response = ""
     while true {
-        var chunk = sockets.recv(conn, 4096)
+        var chunk = conn.recv(4096)
         if chunk == null {
             break
         }
         response = response + chunk
     }
     
-    sockets.close(conn)
+    conn.close()
     return response
 }
 
@@ -385,37 +707,32 @@ main() {
 import sockets
 import io
 
-// 简单的 Echo 服务器
 main() {
-    var server = sockets.listen("127.0.0.1", 8080)
+    Socket server = sockets.listen("127.0.0.1", 8080)
     if server == null {
         io.print("启动服务器失败")
         return
     }
     
     io.print("Echo 服务器运行在 127.0.0.1:8080")
-    io.print("按 Ctrl+C 停止")
     
-    // 只处理一个连接（简化版）
-    var client = sockets.accept(server)
+    Socket client = server.accept()
     if client != null {
-        io.print("客户端已连接")
+        io.print("客户端来自: " + client.peer_addr() + ":" + client.peer_port())
         
-        // 读取数据并回显
         while true {
-            var data = sockets.recv(client, 1024)
+            var data = client.recv(1024)
             if data == null {
                 break
             }
-            io.print("收到: " + data)
-            sockets.send(client, "Echo: " + data)
+            client.send("Echo: " + data)
         }
         
         io.print("客户端已断开")
-        sockets.close(client)
+        client.close()
     }
     
-    sockets.close(server)
+    server.close()
 }
 ```
 
@@ -427,109 +744,46 @@ main() {
 import sockets
 import io
 
-// 简单的 UDP 聊天
 main() {
     var port = 9999
     var peer_port = 9998
     
-    // 创建 UDP socket
-    var udp = sockets.udp_bind("127.0.0.1", port)
+    Socket udp = sockets.udp_bind("127.0.0.1", port)
     if udp == null {
         io.print("绑定失败")
         return
     }
     
-    io.print("UDP 聊天已启动 (端口 " + port + ")")
-    io.print("输入消息，对方在端口 " + peer_port)
+    io.print("UDP 聊天已启动 (端口 " + udp.local_port() + ")")
     
-    // 发送消息
-    var msg = "Hello!"
-    sockets.sendto(udp, msg, "127.0.0.1", peer_port)
+    udp.sendto("Hello!", "127.0.0.1", peer_port)
     
-    // 接收消息
-    var result = sockets.recvfrom(udp, 1024)
+    var result = udp.recvfrom(1024)
     if result != null {
         io.print("对方说: " + result[0])
     }
     
-    sockets.close(udp)
+    udp.close()
 }
 ```
 
 ---
 
-### 4. 网络爬虫（基础版）
+### 4. 非阻塞多客户端聊天服务器
 
 ```leno
 import sockets
 import io
 
-// 下载网页内容
-func fetch_url(string url) -> string {
-    // 简单解析 URL（假设格式: host/path）
-    var parts = url.split("/")
-    var host = parts[0]
-    var path = "/"
-    
-    if parts.len() > 1 {
-        path = "/" + parts[1]
-    }
-    
-    // 连接并获取
-    var conn = sockets.connect(host, 80)
-    if conn == null {
-        return ""
-    }
-    
-    var request = "GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\n\r\n"
-    sockets.send(conn, request)
-    
-    var response = ""
-    while true {
-        var chunk = sockets.recv(conn, 4096)
-        if chunk == null {
-            break
-        }
-        response = response + chunk
-    }
-    
-    sockets.close(conn)
-    return response
-}
-
-main() {
-    var content = fetch_url("www.baidu.com/")
-    io.print("获取到 " + content.len() + " 字节")
-    
-    // 提取标题（简化版）
-    var title_start = content.find("<title>")
-    var title_end = content.find("</title>")
-    if title_start != null && title_end != null {
-        var title = content.slice(title_start + 6, title_end)
-        io.print("页面标题: " + title)
-    }
-}
-```
-
----
-
-### 5. 非阻塞多客户端聊天服务器
-
-```leno
-import sockets
-import io
-
-// V2: 非阻塞多客户端聊天服务器
 var clients = []
 var client_names = []
 var client_counter = 0
 
-// 广播消息给所有客户端（排除发送者）
 func broadcast(string msg, var exclude) {
     var i = 0
     while i < clients.len() {
         if clients[i] != exclude {
-            sockets.send(clients[i], msg)
+            clients[i].send(msg)
         }
         i = i + 1
     }
@@ -540,49 +794,41 @@ main() {
     
     io.print("=== 非阻塞聊天服务器 ===")
     
-    var server = sockets.listen("127.0.0.1", port)
+    Socket server = sockets.listen("127.0.0.1", port)
     if server == null {
         io.print("启动失败")
         return
     }
     
-    // 设置为非阻塞模式
-    sockets.set_nonblocking(server, true)
+    server.set_nonblocking(true)
     io.print("服务器运行在 127.0.0.1:" + port)
-    io.print("")
     
     while true {
         // 接受新连接
-        var client = sockets.accept(server)
+        Socket client = server.accept()
         if client != null {
             client_counter = client_counter + 1
             var name = "User" + client_counter
             
-            io.print("新客户端: " + name)
+            io.print("新客户端: " + name + " (" + client.peer_addr() + ")")
             
-            // 设置客户端为非阻塞模式
-            sockets.set_nonblocking(client, true)
-            sockets.send(client, "Welcome " + name + "!\n")
+            client.set_nonblocking(true)
+            client.send("Welcome " + name + "!\n")
             
-            // 添加到客户端列表
             clients.add(client)
             client_names.add(name)
             
-            // 广播新用户加入
             broadcast("[系统] " + name + " 加入\n", client)
-            io.print("当前客户端: " + clients.len())
         }
         
-        // 处理现有客户端的消息
+        // 处理现有客户端
         if clients.len() > 0 {
-            // 等待有消息的客户端
             var ready = sockets.select(clients, 100)
             
             var idx = 0
             while idx < ready.len() {
                 var sock = ready[idx]
                 
-                // 找到对应的客户端索引
                 var client_idx = 0
                 while client_idx < clients.len() {
                     if clients[client_idx] == sock {
@@ -591,15 +837,12 @@ main() {
                     client_idx = client_idx + 1
                 }
                 
-                // 接收消息
-                var data = sockets.recv(sock, 1024)
+                var data = sock.recv(1024)
                 
                 if data == null {
-                    // 客户端断开
-                    io.print("[" + client_names[client_idx] + "] 断开")
-                    sockets.close(sock)
+                    io.print("[" + client_names[client_idx] + "] 断开 (错误码: " + sock.error() + ")")
+                    sock.close()
                     
-                    // 从列表中移除
                     var new_clients = []
                     var new_names = []
                     var j = 0
@@ -613,13 +856,10 @@ main() {
                     clients = new_clients
                     client_names = new_names
                 } else {
-                    // 处理消息
                     var msg = data.trim()
                     if msg.len() > 0 {
                         var n = client_names[client_idx]
                         io.print("[" + n + "]: " + msg)
-                        
-                        // 广播给其他客户端
                         broadcast("[" + n + "]: " + msg + "\n", sock)
                     }
                 }
@@ -628,98 +868,78 @@ main() {
             }
         }
     }
-    
-    sockets.close(server)
 }
 ```
 
-**说明**:
-- 使用 `set_nonblocking()` 开启非阻塞模式
-- 使用 `select()` 同时监视多个客户端
-- 单线程即可处理多个并发连接
+---
+
+### 5. DNS 解析
+
+```leno
+import sockets
+import io
+
+main() {
+    var ip = sockets.resolve("www.baidu.com")
+    if ip != null {
+        io.print("baidu.com -> " + ip)
+    } else {
+        io.print("DNS 解析失败")
+    }
+}
+```
 
 ---
 
 ## 与 asyncs 模块配合使用
 
-sockets 模块可以与 asyncs 异步模块配合使用，实现并发网络操作。
-
-### 并发 HTTP 请求示例
+### 并发 HTTP 请求
 
 ```leno
 import sockets
 import asyncs
 import io
 
-// 异步 HTTP 请求
 async func fetch_http(string host, string path):string {
-    var conn = sockets.connect(host, 80)
+    Socket conn = sockets.connect(host, 80)
     if conn == null {
         return ""
     }
     
     var request = "GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\n\r\n"
-    sockets.send(conn, request)
+    conn.send(request)
     
-    // 让出执行权，允许其他协程运行
     await asyncs.yield()
     
     var response = ""
     while true {
-        var chunk = sockets.recv(conn, 4096)
+        var chunk = conn.recv(4096)
         if chunk == null {
             break
         }
         response = response + chunk
-        await asyncs.yield()  // 每次接收后让出
+        await asyncs.yield()
     }
     
-    sockets.close(conn)
+    conn.close()
     return response
 }
 
-// 并发请求多个网站
 async func fetch_multiple() {
-    // 同时启动三个请求
     var f1 = fetch_http("www.example.com", "/")
     var f2 = fetch_http("www.baidu.com", "/")
-    var f3 = fetch_http("www.taobao.com", "/")
     
-    // 等待所有请求完成
     await f1
     await f2
-    await f3
     
-    // 收集结果
-    var results = asyncs.all([f1, f2, f3])
-    
+    var results = asyncs.all([f1, f2])
     io.print("example.com: " + results[0].len() + " 字节")
     io.print("baidu.com: " + results[1].len() + " 字节")
-    io.print("taobao.com: " + results[2].len() + " 字节")
 }
 
 main() {
     fetch_multiple()
-    asyncs.run()  // 启动事件循环
-}
-```
-
-### 带超时的网络请求
-
-```leno
-import sockets
-import asyncs
-import io
-
-async func fetch_with_timeout(string host, int timeout_ms) {
-    var task = fetch_http(host, "/")
-    var result = await asyncs.timeout(task, timeout_ms)
-    
-    if result != null {
-        io.print("请求成功，收到 " + result.len() + " 字节")
-    } else {
-        io.print("请求超时!")
-    }
+    asyncs.run()
 }
 ```
 
@@ -730,29 +950,27 @@ import sockets
 import asyncs
 import io
 
-// 异步处理客户端连接
-async func handle_client(var client, int id) {
-    var data = sockets.recv(client, 1024)
+async func handle_client(Socket client, int id) {
+    io.print("处理客户端 " + id + " (" + client.peer_addr() + ")")
+    
+    var data = client.recv(1024)
     if data != null {
-        sockets.send(client, "Echo: " + data)
+        client.send("Echo: " + data)
     }
-    sockets.close(client)
-    io.print("客户端 " + id + " 已处理")
+    client.close()
 }
 
-// 启动服务器
 async func start_server(int port) {
-    var server = sockets.listen("127.0.0.1", port)
+    Socket server = sockets.listen("127.0.0.1", port)
     if server == null {
         return
     }
     
     var client_id = 0
     while true {
-        var client = sockets.accept(server)
+        Socket client = server.accept()
         if client != null {
             client_id = client_id + 1
-            // 异步处理每个客户端
             handle_client(client, client_id)
             await asyncs.yield()
         }
@@ -770,67 +988,88 @@ main() {
 ## 注意事项
 
 1. **阻塞操作**
-   - `connect()` 是阻塞的，直到连接建立或失败
-   - 默认情况下 `accept()`、`recv()` 和 `recvfrom()` 是阻塞的
-   - 使用 `set_nonblocking()` 可以设置为非阻塞模式
+   - `sockets.connect()` 是阻塞的，直到连接建立或失败
+   - 默认情况下 `sock.accept()`、`sock.recv()` 和 `sock.recvfrom()` 是阻塞的
+   - 使用 `sock.set_nonblocking(true)` 可以设置为非阻塞模式
 
 2. **资源管理**
-   - 每个创建的 socket 都应该通过 `close()` 关闭
+   - 每个创建的 socket 都应该通过 `sock.close()` 关闭
    - 服务器 socket 和客户端 socket 需要分别关闭
+   - `sock.shutdown()` 不释放资源，仍需调用 `sock.close()`
 
 3. **错误处理**
    - 所有操作都可能失败，应该检查返回值
-   - `connect()` 返回 `null` 表示连接失败
-   - `recv()` 返回 `null` 表示连接已关闭或出错（非阻塞模式下也表示无数据）
+   - `sockets.connect()` 返回 `null` 表示连接失败
+   - `sock.recv()` 返回 `null` 表示连接已关闭或出错
+   - 使用 `sock.error()` 获取具体错误码
 
-4. **缓冲区限制**
-   - `recv()` 和 `recvfrom()` 的 `max_bytes` 最大为 65536
+4. **超时控制**
+   - 使用 `sock.set_timeout(ms)` 设置收发超时
+   - 超时后 `recv()` 返回 `null`，`sock.error()` 可查看错误码
+
+5. **缓冲区限制**
+   - `sock.recv()` 和 `sock.recvfrom()` 的 `max_bytes` 最大为 65536
    - 超过限制的数据会被截断
 
-5. **字符编码**
+6. **字符编码**
    - 所有数据以字符串形式传输
    - 二进制数据需要自行编码/解码
 
-6. **DNS 解析**
-   - `connect()` 支持域名和 IP 地址
+7. **DNS 解析**
+   - `sockets.connect()` 支持域名和 IP 地址
+   - 使用 `sockets.resolve()` 单独进行 DNS 解析
    - 域名解析失败会返回 `null`
 
-7. **端口绑定**
-   - `listen()` 和 `udp_bind()` 需要指定端口
+8. **端口绑定**
+   - `sockets.listen()` 和 `sockets.udp_bind()` 需要指定端口
    - 端口 0 表示让系统自动分配
 
-8. **地址格式**
+9. **地址格式**
    - IPv4 地址格式: "127.0.0.1"
    - "0.0.0.0" 表示监听所有网络接口
    - "127.0.0.1" 表示仅本地访问
 
-9. **非阻塞模式注意事项**
-   - 设置非阻塞后，`recv()` 会立即返回，无数据时返回 `null`
-   - `accept()` 会立即返回，无连接时返回 `null`
-   - 需要配合 `select()` 或循环轮询使用
-   - 单线程可以实现多客户端并发，但客户端 `input()` 仍会阻塞
+10. **非阻塞模式注意事项**
+    - 设置非阻塞后，`sock.recv()` 会立即返回，无数据时返回 `null`
+    - `sock.accept()` 会立即返回，无连接时返回 `null`
+    - 需要配合 `sockets.select()` 或循环轮询使用
 
 ---
 
 ## 完整 API 速查表
 
-| 函数 | 参数 | 返回 | 说明 |
+### 模块方法（`sockets.xxx`）
+
+| 方法 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `connect(host, port)` | string, int | Socket\|null | TCP 连接 |
-| `send(sock, data)` | Socket, string | bool | TCP 发送 |
-| `recv(sock, max)` | Socket, int | string\|null | TCP 接收 |
-| `close(sock)` | Socket | null | 关闭连接 |
-| `listen(host, port)` | string, int | Socket\|null | TCP 监听 |
-| `accept(server)` | Socket | Socket\|null | 接受连接 |
-| `udp_bind(host, port)` | string, int | Socket\|null | UDP 绑定 |
-| `sendto(sock, data, addr, port)` | Socket, string, string, int | bool | UDP 发送 |
-| `recvfrom(sock, max)` | Socket, int | array\|null | UDP 接收 |
-| `set_nonblocking(sock, flag)` | Socket, bool | bool | 设置非阻塞模式 |
-| `select(socks, timeout_ms)` | array, int | array | 等待多个 socket 可读 |
-| `htons(host_short)` | int | int | 主机字节序转网络字节序 (16位) |
-| `htonl(host_long)` | int | int | 主机字节序转网络字节序 (32位) |
-| `ntohs(net_short)` | int | int | 网络字节序转主机字节序 (16位) |
-| `ntohl(net_long)` | int | int | 网络字节序转主机字节序 (32位) |
+| `sockets.connect(host, port)` | string, int | Socket\|null | TCP 连接 |
+| `sockets.listen(host, port)` | string, int | Socket\|null | TCP 监听 |
+| `sockets.udp_bind(host, port)` | string, int | Socket\|null | UDP 绑定 |
+| `sockets.select(socks, timeout_ms)` | array, int | array | 等待多个 socket 可读 |
+| `sockets.resolve(host)` | string | string\|null | DNS 解析 |
+| `sockets.htons(host_short)` | int | int | 主机序 -> 网络序 (16位) |
+| `sockets.htonl(host_long)` | int | int | 主机序 -> 网络序 (32位) |
+| `sockets.ntohs(net_short)` | int | int | 网络序 -> 主机序 (16位) |
+| `sockets.ntohl(net_long)` | int | int | 网络序 -> 主机序 (32位) |
+
+### 实例方法（`sock.xxx`）
+
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `sock.send(data)` | string | bool | TCP 发送 |
+| `sock.recv(max)` | int | string\|null | TCP 接收 |
+| `sock.close()` | - | null | 关闭连接 |
+| `sock.accept()` | - | Socket\|null | 接受连接（服务器） |
+| `sock.sendto(data, addr, port)` | string, string, int | bool | UDP 发送 |
+| `sock.recvfrom(max)` | int | array\|null | UDP 接收 |
+| `sock.set_nonblocking(flag)` | bool | bool | 设置非阻塞模式 |
+| `sock.peer_addr()` | - | string\|null | 获取对端IP |
+| `sock.peer_port()` | - | int\|null | 获取对端端口 |
+| `sock.local_addr()` | - | string\|null | 获取本地IP |
+| `sock.local_port()` | - | int\|null | 获取本地端口 |
+| `sock.error()` | - | int | 获取最后错误码 |
+| `sock.shutdown(how)` | int | bool | 优雅关闭 (0=读/1=写/2=双向) |
+| `sock.set_timeout(ms)` | int | bool | 设置收发超时 |
 
 ---
 
@@ -846,7 +1085,7 @@ sockets 模块提供字节序转换函数，用于处理网络协议中的多字
 
 网络协议统一使用大端序（网络字节序），因此需要进行转换。
 
-### `htons(host_short)`
+### `sockets.htons(host_short)`
 
 将 16 位整数从主机字节序转换为网络字节序。
 
@@ -863,7 +1102,7 @@ io.print("端口 " + port + " 的网络字节序: " + port_be)  // 36895
 
 ---
 
-### `htonl(host_long)`
+### `sockets.htonl(host_long)`
 
 将 32 位整数从主机字节序转换为网络字节序。
 
@@ -873,14 +1112,13 @@ io.print("端口 " + port + " 的网络字节序: " + port_be)  // 36895
 **返回**: 网络字节序的 32 位整数
 
 ```leno
-var addr = 0x7F000001  // 127.0.0.1
+var addr = 0x7f000001  // 127.0.0.1
 var addr_be = sockets.htonl(addr)
-io.print("地址的网络字节序: 0x" + addr_be)  // 0x16777343
 ```
 
 ---
 
-### `ntohs(net_short)`
+### `sockets.ntohs(net_short)`
 
 将 16 位整数从网络字节序转换为主机字节序。
 
@@ -889,15 +1127,9 @@ io.print("地址的网络字节序: 0x" + addr_be)  // 0x16777343
 
 **返回**: 主机字节序的 16 位整数
 
-```leno
-var port_be = 36895  // 网络字节序
-var port = sockets.ntohs(port_be)
-io.print("主机字节序端口: " + port)  // 8080
-```
-
 ---
 
-### `ntohl(net_long)`
+### `sockets.ntohl(net_long)`
 
 将 32 位整数从网络字节序转换为主机字节序。
 
@@ -906,101 +1138,6 @@ io.print("主机字节序端口: " + port)  // 8080
 
 **返回**: 主机字节序的 32 位整数
 
-```leno
-var addr_be = 0x16777343  // 网络字节序
-var addr = sockets.ntohl(addr_be)
-io.print("主机字节序地址: 0x" + addr)  // 0x7F000001 (127.0.0.1)
-```
-
 ---
 
-### 使用场景
-
-#### 1. 构造自定义网络协议
-
-```leno
-import sockets
-import io
-
-// 构造一个简单的协议头
-func create_header(int cmd, int len) -> string {
-    // 使用 cstruct 定义协议头
-    cstruct ProtocolHeader {
-        u16 magic      // 魔数
-        u16 command    // 命令码
-        u32 length     // 数据长度
-    }
-    
-    var header = ProtocolHeader.malloc()
-    header.magic = sockets.htons(0x1234)    // 网络字节序
-    header.command = sockets.htons(cmd)      // 网络字节序
-    header.length = sockets.htonl(len)       // 网络字节序
-    
-    // 获取字节数据
-    var ptr = header.to_ptr()
-    // ... 发送数据 ...
-    
-    header.free()
-    return "header_bytes"
-}
-```
-
-#### 2. 解析二进制协议数据
-
-```leno
-// 解析收到的协议头
-func parse_header(Ptr data) -> map {
-    // 读取网络字节序的数据
-    var magic_be = ffi.read_int(data, 0)      // 假设使用 ffi
-    var cmd_be = ffi.read_int(data, 2)
-    var len_be = ffi.read_int(data, 4)
-    
-    // 转换为主机字节序
-    return {
-        magic: sockets.ntohs(magic_be),
-        command: sockets.ntohs(cmd_be),
-        length: sockets.ntohl(len_be)
-    }
-}
-```
-
-#### 3. 处理原始 IP 地址和端口
-
-```leno
-// 将 IP 地址和端口打包为网络字节序
-func pack_addr(string ip, int port) -> map {
-    var parts = ip.split(".")
-    var addr = 0
-    addr = addr + parts[0].to_int() * 256 * 256 * 256
-    addr = addr + parts[1].to_int() * 256 * 256
-    addr = addr + parts[2].to_int() * 256
-    addr = addr + parts[3].to_int()
-    
-    return {
-        addr: sockets.htonl(addr),    // 网络字节序 IP
-        port: sockets.htons(port)     // 网络字节序端口
-    }
-}
-```
-
----
-
-## 注意事项
-
-1. **字节序转换只影响多字节数据**
-   - 8 位数据（单字节）不需要转换
-   - 16 位数据（short）使用 `htons`/`ntohs`
-   - 32 位数据（int/long）使用 `htonl`/`ntohl`
-
-2. **往返转换**
-   - `ntohs(htons(x)) == x`
-   - `ntohl(htonl(x)) == x`
-
-3. **与 cstruct 配合使用**
-   - cstruct 字段可以直接赋值网络字节序值
-   - 适合构造和解析二进制协议
-
----
-
-*文档版本: 2.1*  
-*最后更新: 2026-05-16*
+*最后更新: 2026-06-08*

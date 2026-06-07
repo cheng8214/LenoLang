@@ -92,6 +92,29 @@ void sockets_init_instance_methods(void) {
     /* sock.set_nonblocking(nonblocking) -> bool */
     TypeKind set_nonblocking_params[] = {TYPE_BOOL};
     native_register_instance_method_meta_with_params("socket", "set_nonblocking", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_nonblocking_params);
+
+    /* sock.peer_addr() -> string|null */
+    native_register_instance_method_meta_with_params("socket", "peer_addr", 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+
+    /* sock.peer_port() -> int|null */
+    native_register_instance_method_meta_with_params("socket", "peer_port", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+
+    /* sock.local_addr() -> string|null */
+    native_register_instance_method_meta_with_params("socket", "local_addr", 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+
+    /* sock.local_port() -> int|null */
+    native_register_instance_method_meta_with_params("socket", "local_port", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+
+    /* sock.error() -> int */
+    native_register_instance_method_meta_with_params("socket", "error", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+
+    /* sock.shutdown(how) -> bool */
+    TypeKind shutdown_params[] = {TYPE_INT};
+    native_register_instance_method_meta_with_params("socket", "shutdown", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, shutdown_params);
+
+    /* sock.set_timeout(ms) -> bool */
+    TypeKind set_timeout_params[] = {TYPE_INT};
+    native_register_instance_method_meta_with_params("socket", "set_timeout", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_timeout_params);
 }
 
 // ============================================================================
@@ -125,6 +148,7 @@ static ObjSocket* create_socket_obj(socket_fd_t fd, int type) {
     sock->is_connected = 0;
     sock->is_listening = 0;
     sock->is_nonblocking = 0;
+    sock->last_error = 0;
 
     return sock;
 }
@@ -151,7 +175,11 @@ static Value socket_send_func(int argc, Value* args) {
     }
 
     int sent = send(sock->fd, data->chars, (int)data->len, 0);
-    return val_bool(sent != SOCKET_ERROR_VAL);
+    if (sent == SOCKET_ERROR_VAL) {
+        sock->last_error = GET_ERROR();
+        return val_bool(false);
+    }
+    return val_bool(true);
 }
 
 /* sock.recv(max_bytes) -> string|null */
@@ -177,8 +205,9 @@ static Value socket_recv_func(int argc, Value* args) {
 
     if (received <= 0) {
         // 在非阻塞模式下，EWOULDBLOCK/EAGAIN 表示没有数据可读
-        if (received < 0 && sock->is_nonblocking) {
+        if (received < 0) {
             int err = GET_ERROR();
+            sock->last_error = err;
 #ifdef _WIN32
             if (err == WSAEWOULDBLOCK) {
 #else
@@ -264,7 +293,11 @@ static Value socket_sendto_func(int argc, Value* args) {
     int sent = sendto(sock->fd, data->chars, (int)data->len, 0,
                       (struct sockaddr*)&addr, sizeof(addr));
 
-    return val_bool(sent != SOCKET_ERROR_VAL);
+    if (sent == SOCKET_ERROR_VAL) {
+        sock->last_error = GET_ERROR();
+        return val_bool(false);
+    }
+    return val_bool(true);
 }
 
 /* sock.recvfrom(max_bytes) -> [data, addr, port]|null */
@@ -289,8 +322,9 @@ static Value socket_recvfrom_func(int argc, Value* args) {
 
     if (received <= 0) {
         // 处理非阻塞模式
-        if (received < 0 && sock->is_nonblocking) {
+        if (received < 0) {
             int err = GET_ERROR();
+            sock->last_error = err;
 #ifdef _WIN32
             if (err == WSAEWOULDBLOCK) {
 #else
@@ -377,6 +411,161 @@ static Value socket_set_nonblocking_func(int argc, Value* args) {
     }
 
     return val_bool(result == 0);
+}
+
+/* sock.peer_addr() -> string|null  获取对端IP地址 */
+static Value socket_peer_addr_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+
+    if (!socket_is_valid(sock)) return val_null();
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+
+    if (getpeername(sock->fd, (struct sockaddr*)&addr, &addr_len) != 0) {
+        sock->last_error = GET_ERROR();
+        return val_null();
+    }
+
+    char buf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(buf));
+    return val_obj((Object*)str_copy(buf, (int)strlen(buf)));
+}
+
+/* sock.peer_port() -> int|null  获取对端端口 */
+static Value socket_peer_port_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+
+    if (!socket_is_valid(sock)) return val_null();
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+
+    if (getpeername(sock->fd, (struct sockaddr*)&addr, &addr_len) != 0) {
+        sock->last_error = GET_ERROR();
+        return val_null();
+    }
+
+    return val_int(ntohs(addr.sin_port));
+}
+
+/* sock.local_addr() -> string|null  获取本地IP地址 */
+static Value socket_local_addr_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+
+    if (!socket_is_valid(sock)) return val_null();
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+
+    if (getsockname(sock->fd, (struct sockaddr*)&addr, &addr_len) != 0) {
+        sock->last_error = GET_ERROR();
+        return val_null();
+    }
+
+    char buf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(buf));
+    return val_obj((Object*)str_copy(buf, (int)strlen(buf)));
+}
+
+/* sock.local_port() -> int|null  获取本地端口 */
+static Value socket_local_port_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+
+    if (!socket_is_valid(sock)) return val_null();
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+
+    if (getsockname(sock->fd, (struct sockaddr*)&addr, &addr_len) != 0) {
+        sock->last_error = GET_ERROR();
+        return val_null();
+    }
+
+    return val_int(ntohs(addr.sin_port));
+}
+
+/* sock.error() -> int  获取最后一次错误码 */
+static Value socket_error_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+    return val_int(sock->last_error);
+}
+
+/* sock.shutdown(how) -> bool  优雅关闭连接
+   how: 0=关闭读取端, 1=关闭写入端, 2=关闭两端 */
+static Value socket_shutdown_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+    int how = val_as_int(args[1]);
+
+    if (!socket_is_valid(sock)) return val_bool(false);
+
+    // 限制 how 值范围
+    if (how < 0) how = 0;
+    if (how > 2) how = 2;
+
+    int result = shutdown(sock->fd, how);
+    if (result != 0) {
+        sock->last_error = GET_ERROR();
+        return val_bool(false);
+    }
+
+    return val_bool(true);
+}
+
+/* sock.set_timeout(ms) -> bool  设置收发超时（毫秒） */
+static Value socket_set_timeout_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+    int timeout_ms = val_as_int(args[1]);
+
+    if (!socket_is_valid(sock)) return val_bool(false);
+
+#ifdef _WIN32
+    DWORD tv = (DWORD)timeout_ms;
+#else
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+#endif
+
+    int rcv_result = setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO,
+                                (const char*)&tv, sizeof(tv));
+    int snd_result = setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO,
+                                (const char*)&tv, sizeof(tv));
+
+    if (rcv_result != 0 || snd_result != 0) {
+        sock->last_error = GET_ERROR();
+        return val_bool(false);
+    }
+
+    return val_bool(true);
+}
+
+/* sockets.resolve(host) -> string|null  DNS解析，返回IP地址 */
+static Value sockets_resolve_func(int argc, Value* args) {
+    (void)argc;
+
+    if (!init_sockets()) return val_null();
+
+    ObjString* host = (ObjString*)val_as_obj(args[0]);
+
+    struct hostent* he = gethostbyname(host->chars);
+    if (!he || !he->h_addr_list[0]) {
+        return val_null();
+    }
+
+    struct in_addr addr;
+    memcpy(&addr, he->h_addr_list[0], sizeof(addr));
+
+    char buf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr, buf, sizeof(buf));
+    return val_obj((Object*)str_copy(buf, (int)strlen(buf)));
 }
 
 /* sockets.select(sockets_array, timeout_ms) -> array (模块级静态方法) */
@@ -683,6 +872,29 @@ void sockets_init_module(void) {
     TypeKind set_nonblocking_params[] = {TYPE_BOOL};
     socket_register_method_with_params("set_nonblocking", make_native(socket_set_nonblocking_func, 2, "set_nonblocking"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_nonblocking_params);
 
+    /* sock.peer_addr() -> string|null */
+    socket_register_method_with_params("peer_addr", make_native(socket_peer_addr_func, 1, "peer_addr"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+
+    /* sock.peer_port() -> int|null */
+    socket_register_method_with_params("peer_port", make_native(socket_peer_port_func, 1, "peer_port"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+
+    /* sock.local_addr() -> string|null */
+    socket_register_method_with_params("local_addr", make_native(socket_local_addr_func, 1, "local_addr"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+
+    /* sock.local_port() -> int|null */
+    socket_register_method_with_params("local_port", make_native(socket_local_port_func, 1, "local_port"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+
+    /* sock.error() -> int */
+    socket_register_method_with_params("error", make_native(socket_error_func, 1, "error"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+
+    /* sock.shutdown(how) -> bool */
+    TypeKind shutdown_params[] = {TYPE_INT};
+    socket_register_method_with_params("shutdown", make_native(socket_shutdown_func, 2, "shutdown"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, shutdown_params);
+
+    /* sock.set_timeout(ms) -> bool */
+    TypeKind set_timeout_params[] = {TYPE_INT};
+    socket_register_method_with_params("set_timeout", make_native(socket_set_timeout_func, 2, "set_timeout"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_timeout_params);
+
     // =====================================================
     // 注册模块工厂方法（sockets.xxx）
     // =====================================================
@@ -711,6 +923,10 @@ void sockets_init_module(void) {
 
     TypeKind ntohl_params[] = {TYPE_INT};
     native_register_module_method("sockets", "ntohl", sockets_ntohl_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, ntohl_params);
+
+    // DNS 解析
+    TypeKind resolve_params[] = {TYPE_STRING};
+    native_register_module_method("sockets", "resolve", sockets_resolve_func, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, resolve_params);
 
     // select（模块级静态方法，不属于某个 socket 实例）
     TypeKind select_params[] = {TYPE_ARRAY, TYPE_INT};

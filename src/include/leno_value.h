@@ -452,6 +452,7 @@ typedef struct {
     int is_connected;   // TCP 是否已连接
     int is_listening;   // TCP 是否在监听
     int is_nonblocking; // 是否非阻塞模式
+    int last_error;     // 最后一次错误码
 } ObjSocket;
 
 // 结构体字段信息
