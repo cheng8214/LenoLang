@@ -23,6 +23,7 @@ static inline const char* value_type_desc(Value val) {
                 case OBJ_NATIVE: return "native";
                 case OBJ_BIGINT: return "bigint";
                 case OBJ_MODULE: return "module";
+                case OBJ_SOCKET: return "socket";
                 default: return "object";
             }
         }

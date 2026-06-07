@@ -1,7 +1,7 @@
 import sockets
 import io
 
-// 聊天客户端 - V2 改进版（使用 select）
+// 聊天客户端 V2 - 面向对象风格（使用 select）
 
 main() {
     var host = "127.0.0.1"
@@ -29,10 +29,10 @@ main() {
     io.print("已连接！")
 
     // 设置非阻塞模式
-    sockets.set_nonblocking(conn, true)
+    conn.set_nonblocking(true)
 
     // 接收欢迎消息
-    var welcome = sockets.recv(conn, 1024)
+    var welcome = conn.recv(1024)
     if welcome != null {
         io.print(welcome)
     }
@@ -46,12 +46,12 @@ main() {
     while true {
         // 检查是否有新消息（使用 select）
         var socks = [conn]
-        var ready = sockets.select(socks, 50)  // 50ms 超时
+        var ready = sockets.select(socks, 50)
 
         // 接收所有可用消息
         var idx = 0
         while idx < ready.len() {
-            var msg = sockets.recv(conn, 1024)
+            var msg = conn.recv(1024)
             if msg != null {
                 io.print(msg)
             }
@@ -68,7 +68,7 @@ main() {
 
         // 发送消息
         var full_msg = input_msg + "\n"
-        var sent = sockets.send(conn, full_msg)
+        var sent = conn.send(full_msg)
 
         if not sent {
             io.print("[系统] 发送失败")
@@ -80,14 +80,14 @@ main() {
             break
         }
 
-        // 发送后立即检查响应（给其他客户端发送消息的时间）
+        // 发送后立即检查响应
         var check_count = 0
         while check_count < 10 {
             var response_socks = [conn]
-            var response_ready = sockets.select(response_socks, 100)  // 100ms
+            var response_ready = sockets.select(response_socks, 100)
 
             if response_ready.len() > 0 {
-                var reply = sockets.recv(conn, 1024)
+                var reply = conn.recv(1024)
                 if reply != null {
                     io.print(reply)
                 }
@@ -96,7 +96,7 @@ main() {
         }
     }
 
-    sockets.close(conn)
+    conn.close()
     io.print("")
     io.print("客户端已退出")
 }

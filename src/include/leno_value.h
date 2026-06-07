@@ -48,6 +48,7 @@ typedef enum {
     OBJ_GUI_FONT,     // GUI 字体对象
     OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
     OBJ_GUI_IMAGE,    // GUI 图像对象
+    OBJ_SOCKET,       // Socket 对象
     OBJ_RGB,          // RGB 颜色对象
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
@@ -430,6 +431,28 @@ typedef struct {
     ObjString* mode;    // 打开模式（使用 ObjString 便于 GC 管理）
     int is_closed;      // 是否已关闭
 } ObjFile;
+
+// 跨平台 socket 类型（不依赖 winsock2.h，使用通用整数类型）
+#ifdef _WIN32
+    typedef uintptr_t socket_fd_t;
+    #define INVALID_SOCKET_FD ((socket_fd_t)(~((uintptr_t)0)))
+#else
+    typedef int socket_fd_t;
+    #define INVALID_SOCKET_FD (-1)
+#endif
+
+#define SOCKET_TYPE_TCP 1
+#define SOCKET_TYPE_UDP 2
+
+// Socket 对象
+typedef struct {
+    Object header;
+    socket_fd_t fd;
+    int type;           // SOCKET_TYPE_TCP 或 SOCKET_TYPE_UDP
+    int is_connected;   // TCP 是否已连接
+    int is_listening;   // TCP 是否在监听
+    int is_nonblocking; // 是否非阻塞模式
+} ObjSocket;
 
 // 结构体字段信息
 typedef struct {
@@ -1268,6 +1291,17 @@ void image_register_method_with_params(const char* name, ObjNative* method, int 
 ImageMethodEntry image_find_method_meta(const char* name);
 TypeKind image_get_method_param_type(const char* method_name, int param_index);
 ObjNative* image_find_method(const char* name);
+
+// ============================================================================
+// Socket 方法系统 API
+// ============================================================================
+
+void socket_init_methods(void);
+void socket_mark_methods(void);
+void socket_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                         int min_arity, int max_arity,
+                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+ObjNative* socket_find_method(const char* name);
 
 // ============================================================================
 // Font 字体方法系统 API

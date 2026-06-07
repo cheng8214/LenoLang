@@ -16,6 +16,7 @@ static inline const char* obj_type_to_name(ObjType type) {
         case OBJ_BOUND_METHOD: return "bound_method";
         case OBJ_MODULE: return "module";
         case OBJ_FILE: return "file";
+        case OBJ_SOCKET: return "socket";
         default: return "object";
     }
 }

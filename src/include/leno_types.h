@@ -100,6 +100,7 @@ typedef enum {
     TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_WIN_TYPE, TOK_DRAW_TYPE, TOK_EVENT_TYPE, TOK_RGB_TYPE, 
     TOK_IMAGE_TYPE, TOK_FONT_TYPE,  // File, Ptr, Win, Draw, Event, Rgb, Image, Font 类型
     TOK_STYLE_TYPE,      // Style 类型（用于 GUI 样式定义）
+    TOK_SOCKET_TYPE,     // Socket 类型
     // C 布局类型关键字
     TOK_I8, TOK_U8,           // i8, u8
     TOK_I16, TOK_U16,         // i16, u16
@@ -177,6 +178,7 @@ typedef enum {
     TYPE_PTR_GENERIC,           // 泛型指针 Ptr[T]
     TYPE_THREAD,                // 线程类型
     TYPE_CHANNEL,               // Channel 类型
+    TYPE_SOCKET,                // Socket 类型
 } TypeKind;
 
 typedef struct TypeInfo TypeInfo;

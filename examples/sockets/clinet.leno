@@ -1,7 +1,7 @@
 import sockets
 import io
 
-// 聊天客户端 - V2 非阻塞版本
+// 聊天客户端 - 面向对象风格
 
 main() {
     var host = "127.0.0.1"
@@ -29,10 +29,10 @@ main() {
     io.print("已连接！")
 
     // 设置非阻塞模式
-    sockets.set_nonblocking(conn, true)
+    conn.set_nonblocking(true)
 
     // 接收欢迎消息（阻塞一次）
-    var welcome = sockets.recv(conn, 1024)
+    var welcome = conn.recv(1024)
     if welcome != null {
         io.print(welcome)
     }
@@ -46,7 +46,7 @@ main() {
     // 主循环
     while true {
         // 先检查是否有新消息（非阻塞）
-        var msg = sockets.recv(conn, 1024)
+        var msg = conn.recv(1024)
         if msg != null {
             io.print(msg)
         }
@@ -61,7 +61,7 @@ main() {
 
         // 发送消息
         var full_msg = input_msg + "\n"
-        var sent = sockets.send(conn, full_msg)
+        var sent = conn.send(full_msg)
 
         if not sent {
             io.print("[系统] 发送失败")
@@ -73,10 +73,10 @@ main() {
             break
         }
 
-        // 发送后尝试接收消息（显示其他用户的回复）
+        // 发送后尝试接收消息
         var retry = 0
         while retry < 5 {
-            var reply = sockets.recv(conn, 1024)
+            var reply = conn.recv(1024)
             if reply != null {
                 io.print(reply)
             }
@@ -84,7 +84,7 @@ main() {
         }
     }
 
-    sockets.close(conn)
+    conn.close()
     io.print("")
     io.print("客户端已退出")
 }

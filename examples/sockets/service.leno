@@ -1,22 +1,21 @@
 import sockets
 import io
 
-// 聊天服务器 - 支持中文
+// 聊天服务器 - 面向对象风格
 
 // 处理单个客户端
 func handle_client(var client, string name) {
     io.print("[" + name + "] 连接成功")
 
-    // 发送欢迎消息（使用简单ASCII避免编码问题）
-    var welcome = "Welcome " + name + "!\n"
-    if not sockets.send(client, welcome) {
+    // 发送欢迎消息
+    if not client.send("Welcome " + name + "!\n") {
         io.print("Send welcome failed")
         return
     }
 
     // 循环接收消息
     while true {
-        var data = sockets.recv(client, 1024)
+        var data = client.recv(1024)
 
         if data == null {
             io.print("[" + name + "] disconnected")
@@ -24,8 +23,6 @@ func handle_client(var client, string name) {
         }
 
         var msg = data.trim()
-        
-        // 显示接收到的消息（原始字节）
         io.print("[" + name + "] recv: " + msg.len() + " bytes")
 
         if msg.len() == 0 {
@@ -34,21 +31,21 @@ func handle_client(var client, string name) {
 
         // 退出命令
         if msg == "/quit" {
-            sockets.send(client, "Bye!\n")
+            client.send("Bye!\n")
             break
         }
 
         // 回显消息
         var reply = name + ": " + msg + "\n"
-        var sent = sockets.send(client, reply)
-        
+        var sent = client.send(reply)
+
         if not sent {
             io.print("Send reply failed")
             break
         }
     }
 
-    sockets.close(client)
+    client.close()
     io.print("[" + name + "] closed")
 }
 
@@ -74,7 +71,7 @@ main() {
     while true {
         io.print("Waiting for client...")
 
-        var client = sockets.accept(server)
+        var client = server.accept()
 
         if client == null {
             io.print("Accept failed")
@@ -93,5 +90,5 @@ main() {
         io.print("")
     }
 
-    sockets.close(server)
+    server.close()
 }

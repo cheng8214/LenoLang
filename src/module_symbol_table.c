@@ -324,6 +324,7 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "Event") == 0) return TYPE_EVENT;
     if (strcmp(type_str, "Image") == 0) return TYPE_IMAGE;
     if (strcmp(type_str, "Font") == 0) return TYPE_FONT;
+    if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
     if (strcmp(type_str, "any") == 0) return TYPE_ANY;
     if (strcmp(type_str, "Ptr") == 0) return TYPE_PTR;
     return TYPE_ANY;  // 未知类型，可能是自定义 struct

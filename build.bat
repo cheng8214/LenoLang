@@ -39,6 +39,7 @@ set SOURCES=!SOURCES! src\object\object_draw.c
 set SOURCES=!SOURCES! src\object\object_window.c
 set SOURCES=!SOURCES! src\object\object_event.c
 set SOURCES=!SOURCES! src\object\object_image.c
+set SOURCES=!SOURCES! src\object\object_socket.c
 set SOURCES=!SOURCES! src\object\object_font.c
 set SOURCES=!SOURCES! src\object\object_struct.c
 set SOURCES=!SOURCES! src\object\object_face.c

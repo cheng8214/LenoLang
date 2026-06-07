@@ -182,6 +182,10 @@ OPCODE(OP_AS_CAST) {
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
             break;
+        case TYPE_SOCKET:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
+            break;
         case TYPE_PTR:
             (void)READ_BYTE();
             matches = (val_is_obj(value) &&

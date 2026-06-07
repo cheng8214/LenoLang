@@ -61,6 +61,10 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_IMAGE);
     }
+    if (p->lex.current.type == TOK_SOCKET_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_SOCKET);
+    }
     if (p->lex.current.type == TOK_FONT_TYPE) {
         lexer_next(&p->lex);
         return type_new(TYPE_FONT);

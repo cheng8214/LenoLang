@@ -22,6 +22,11 @@
 //   gc_collect() → 根据总内存自动选择 Minor/Major GC
 // ============================================================================
 
+/* Socket 资源释放所需的平台头文件（必须在 windows.h 之前） */
+#ifdef _WIN32
+    #include <winsock2.h>
+#endif
+
 #include "include/lenolang.h"
 #include "include/string_table.h"
 #include "include/native.h"
@@ -291,6 +296,8 @@ void gc_mark_object(Object* obj) {
         case OBJ_GUI_FONT:
             break;
         case OBJ_GUI_IMAGE:
+            break;
+        case OBJ_SOCKET:
             break;
         case OBJ_GUI_EVENT: {
             /* Event 对象内部持有 ObjDict*，需要标记 */
@@ -605,6 +612,7 @@ static void mark_roots(void) {
     extern void window_mark_methods(void);
     extern void event_mark_methods(void);
     extern void image_mark_methods(void);
+    extern void socket_mark_methods(void);
     extern void font_mark_methods(void);
     extern void number_mark_methods(void);
     extern void cstruct_mark_methods(void);
@@ -617,6 +625,7 @@ static void mark_roots(void) {
     window_mark_methods();
     event_mark_methods();
     image_mark_methods();
+    socket_mark_methods();
     font_mark_methods();
     number_mark_methods();
     thread_mark_methods();
@@ -735,6 +744,7 @@ static size_t get_object_size(Object* obj) {
         case OBJ_MODULE: return sizeof(ObjModule);
         case OBJ_BOUND_METHOD: return sizeof(ObjBoundMethod);
         case OBJ_FILE: return sizeof(ObjFile);
+        case OBJ_SOCKET: return sizeof(ObjSocket);
         case OBJ_RANGE: return sizeof(ObjRange);
         case OBJ_UPVALUE: return sizeof(Upvalue);
         case OBJ_STRUCT_DEF: {
@@ -967,6 +977,19 @@ static void free_object_resources(Object* obj) {
             ObjFile* file = (ObjFile*)obj;
             if (file->fp && !file->is_closed) {
                 fclose(file->fp);
+            }
+            break;
+        }
+        // Socket 对象：关闭 socket 描述符
+        case OBJ_SOCKET: {
+            ObjSocket* sock = (ObjSocket*)obj;
+            if (sock->fd != INVALID_SOCKET_FD) {
+#ifdef _WIN32
+                closesocket(sock->fd);
+#else
+                close(sock->fd);
+#endif
+                sock->fd = INVALID_SOCKET_FD;
             }
             break;
         }

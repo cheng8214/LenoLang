@@ -404,6 +404,8 @@ static Value native_type(int argCount, Value* args) {
                 typeStr = str_copy("event", 5);
             } else if (val_as_obj(value)->type == OBJ_RGB) {
                 typeStr = str_copy("rgb", 3);
+            } else if (val_as_obj(value)->type == OBJ_SOCKET) {
+                typeStr = str_copy("socket", 6);
             } else {
                 typeStr = str_copy("object", 6);
             }
@@ -588,6 +590,10 @@ static Value native_to_str(int argCount, Value* args) {
                 char* bigStr = bigint_to_string(big);
                 result = str_copy(bigStr, (int)strlen(bigStr));
                 free(bigStr);
+            } else if (val_as_obj(value)->type == OBJ_SOCKET) {
+                ObjSocket* sock = (ObjSocket*)val_as_obj(value);
+                snprintf(buf, sizeof(buf), "<Socket fd=%d>", (int)sock->fd);
+                result = str_copy(buf, (int)strlen(buf));
             } else {
                 snprintf(buf, sizeof(buf), "<%s>", "object");
                 result = str_copy(buf, (int)strlen(buf));

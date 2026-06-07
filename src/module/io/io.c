@@ -159,6 +159,11 @@ static void print_value_internal(Value value) {
                     printf("}");
                     break;
                 }
+                case OBJ_SOCKET: {
+                    ObjSocket* sock = (ObjSocket*)obj;
+                    printf("<Socket fd=%d>", (int)sock->fd);
+                    break;
+                }
                 default:
                     printf("<object>");
                     break;
@@ -240,6 +245,11 @@ static void print_value_quoted(Value value) {
                 }
                 case OBJ_FILE: {
                     printf("<file>");
+                    break;
+                }
+                case OBJ_SOCKET: {
+                    ObjSocket* sock = (ObjSocket*)obj;
+                    printf("<Socket fd=%d>", (int)sock->fd);
                     break;
                 }
                 default:

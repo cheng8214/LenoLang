@@ -1414,6 +1414,8 @@ void guis_init_window_instance_methods(void);
 void guis_init_image_instance_methods(void);
 // 前向声明：Font 实例方法初始化（在 guis_font.c 中定义）
 void guis_init_font_instance_methods(void);
+// 前向声明：Socket 实例方法初始化（在 sockets.c 中定义）
+void sockets_init_instance_methods(void);
 
 void native_register_all_instance_method_metas(void) {
     native_reset_instance_method_metas();
@@ -1430,6 +1432,7 @@ void native_register_all_instance_method_metas(void) {
     structs_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
+    sockets_init_instance_methods();
 }
 
 // 根据 TypeKind 获取类型名称（编译时调用）
@@ -1450,6 +1453,7 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_CSTRUCT: return "cstruct";
         case TYPE_THREAD:  return "thread";
         case TYPE_CHANNEL: return "channel";
+        case TYPE_SOCKET:  return "socket";
         case TYPE_INT:
         case TYPE_FLOAT:  return "number";
         default:          return NULL;

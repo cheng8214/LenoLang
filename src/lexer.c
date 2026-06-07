@@ -123,6 +123,7 @@ static void init_keyword_table(void) {
         {"Image", TOK_IMAGE_TYPE},
         {"Font", TOK_FONT_TYPE},
         {"Style", TOK_STYLE_TYPE},
+        {"Socket", TOK_SOCKET_TYPE},
         {"Ptr", TOK_PTR_TYPE},
         {"async", TOK_ASYNC},
         {"await", TOK_AWAIT},

@@ -114,6 +114,9 @@ OPCODE(OP_MODULE_CALL) {
                     case TYPE_STYLE:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_DICT);
                         break;
+                    case TYPE_SOCKET:
+                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_SOCKET);
+                        break;
                     case TYPE_PTR:
                         if (val_is_obj(arg) &&
                             (val_as_obj(arg)->type == OBJ_FFI_POINTER ||

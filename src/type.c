@@ -480,6 +480,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_IMAGE:    return "Image";
         case TYPE_FONT:     return "Font";
         case TYPE_STYLE:    return "Style";
+        case TYPE_SOCKET:   return "Socket";
         case TYPE_PTR:      return "Ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
         case TYPE_ANY:      return "any";
@@ -587,6 +588,8 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type_new(TYPE_PTR);
             } else if (val_as_obj(*v)->type == OBJ_FFI_CALLBACK) {
                 return type_new(TYPE_PTR);
+            } else if (val_as_obj(*v)->type == OBJ_SOCKET) {
+                return type_new(TYPE_SOCKET);
             }
             return type_new(TYPE_ANY);
         default:
@@ -862,6 +865,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_IMAGE_TYPE:    return TYPE_IMAGE;
         case TOK_FONT_TYPE:     return TYPE_FONT;
         case TOK_STYLE_TYPE:    return TYPE_STYLE;
+        case TOK_SOCKET_TYPE:   return TYPE_SOCKET;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;
         // C 布局类型
