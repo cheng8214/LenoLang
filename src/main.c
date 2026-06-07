@@ -53,30 +53,29 @@ static void printVersion(void) {
 
 // 打印帮助信息
 static void printHelp(const char* program) {
-    printf("用法: %s [选项] [文件]\n\n", program);
+    printf("LenoLang Compiler %s\n\n", LENO_VERSION);
+    printf("用法: %s [选项] <文件>\n\n", program);
     printf("选项:\n");
-    printf("  --version     显示版本信息\n");
-    printf("  --help        显示帮助信息\n");
-    printf("  --pause       执行完毕后暂停\n");
-    printf("  --debug       启用调试模式（输出字节码）\n");
-    printf("  --compile     编译为二进制文件（.lenb），不执行\n");
-    printf("  --pack        编译并打包为独立 exe（嵌入 leno_vm.exe）\n");
-    printf("  --init [路径] 在当前目录创建新 Leno 包项目\n");
-    printf("  --install     安装包或依赖到全局缓存\n");
+    printf("  -h, --help        显示帮助信息\n");
+    printf("  -v, --version     显示版本信息\n");
+    printf("  --pause           执行完毕后暂停\n");
+    printf("  --debug           启用调试模式（输出字节码）\n");
+    printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
+    printf("  -p, --pack        编译并打包为独立 exe（嵌入 leno_vm.exe）\n");
+    printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
+    printf("  --install         安装包或依赖到全局缓存\n");
     printf("\n");
     printf("示例:\n");
-    printf("  %s                    启动交互式解释器\n", program);
-    printf("  %s script.leno        运行脚本\n", program);
-    printf("  %s script.lenb        运行编译后的二进制\n", program);
-    printf("  %s --compile test.leno  编译为二进制\n", program);
-    printf("  %s --pack test.leno    打包为独立 exe\n", program);
-    printf("  %s --debug test.leno  调试模式运行\n", program);
-    printf("  %s --init             在当前目录创建新包\n", program);
-    printf("  %s --install          安装包依赖到全局缓存\n", program);
-    printf("  %s --install <路径>   安装指定包目录到全局缓存\n", program);
-    printf("  %s --install <git源>  从 Git 远程安装包\n", program);
-    printf("                        如: gitee:user/repo/pkg-a  (monorepo子包)\n");
-    printf("                        如: gitee:user/repo        (整个仓库)\n");
+    printf("  %s script.leno       运行脚本\n", program);
+    printf("  %s script.lenb       运行编译后的二进制\n", program);
+    printf("  %s -c test.leno      编译为二进制\n", program);
+    printf("  %s -p test.leno      打包为独立 exe\n", program);
+    printf("  %s --debug test.leno 调试模式运行\n", program);
+    printf("  %s --init my-package 创建新包\n", program);
+    printf("  %s --install         安装当前项目依赖\n", program);
+    printf("  %s --install <路径>  安装指定包目录\n", program);
+    printf("  %s --install <git源> 从 Git 远程安装包\n", program);
+    printf("                       如: gitee:user/repo/pkg-a\n");
 }
 
 // 主执行流程
@@ -168,64 +167,7 @@ fail:
     return -1;
 }
 
-// REPL交互式解释器
-void lenolang_repl(void) {
-    char line[BUFFER_XLARGE];
-    
-    printf("LenoLang %s - 交互式解释器\n", LENO_VERSION);
-    printf("输入 'exit' 或按 Ctrl+D 退出\n");
-    printf("输入 'help' 获取帮助\n\n");
-    
-    while (1) {
-        printf(">>> ");
-        fflush(stdout);
-        
-        if (!fgets(line, sizeof(line), stdin)) {
-            printf("\n");
-            break;
-        }
-        
-        // 去除换行符
-        size_t len = strlen(line);
-        if (len > 0 && line[len-1] == '\n') {
-            line[len-1] = '\0';
-        }
-        
-        // 处理特殊命令
-        if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
-            printf("再见!\n");
-            break;
-        }
-        
-        if (strcmp(line, "help") == 0) {
-            printf("REPL 命令:\n");
-            printf("  exit, quit  退出解释器\n");
-            printf("  help        显示此帮助\n");
-            printf("  version     显示版本信息\n");
-            printf("  clear       清屏\n\n");
-            continue;
-        }
-        
-        if (strcmp(line, "version") == 0) {
-            printVersion();
-            continue;
-        }
-        
-        if (strcmp(line, "clear") == 0) {
-#ifdef _WIN32
-            system("cls");
-#else
-            system("clear");
-#endif
-            continue;
-        }
-        
-        // 执行代码
-        if (strlen(line) > 0) {
-            lenolang_run(line);
-        }
-    }
-}
+
 
 static ObjModule** fix_visited = NULL;
 static int fix_visited_count = 0;
@@ -946,8 +888,12 @@ static int main_logic(int argc, char** argv) {
             return package_install_deps(toml_path);
         }
     } else if (filePath == NULL) {
-        // REPL 模式
-        lenolang_repl();
+        // 没有文件参数，显示帮助信息
+        printHelp(argv[0]);
+        // 暂停以便用户查看帮助信息
+        printf("\n按任意键继续...");
+        getchar();
+        return 0;
     } else {
         // 文件模式
         return lenolang_run_file(filePath);
