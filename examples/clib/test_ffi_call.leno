@@ -3,8 +3,8 @@ import io
 
 // 测试 clib FFI 调用 - 多函数
 clib msvcrt {
-    i32 strlen(string s)
-    i32 printf(string fmt)
+    i32 strlen(str8 s)
+    i32 printf(str8 fmt)
     Ptr malloc(i32 size)
     void free(Ptr ptr)
 }

@@ -2416,6 +2416,7 @@ void visit(Semantic* s, Ast* ast) {
                                                 !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR) &&
                                                 !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
                                                 !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_NULL) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
                                                 !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_STRING) &&
                                                 !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_NULL) &&
                                                 !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_STRING) &&
@@ -2429,7 +2430,12 @@ void visit(Semantic* s, Ast* ast) {
                                                 !(expected_param->kind == TYPE_I16 && arg_type->kind == TYPE_INT) &&
                                                 !(expected_param->kind == TYPE_U16 && arg_type->kind == TYPE_INT) &&
                                                 !(expected_param->kind == TYPE_F64 && arg_type->kind == TYPE_FLOAT) &&
-                                                !(expected_param->kind == TYPE_F32 && arg_type->kind == TYPE_FLOAT)) {
+                                                !(expected_param->kind == TYPE_F32 && arg_type->kind == TYPE_FLOAT) &&
+                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_CSTRUCT) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_CSTRUCT) &&
+                                                !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_CSTRUCT) &&
+                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_PTR) &&
+                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_NULL)) {
                                                 char msg[BUFFER_MEDIUM];
                                                 format_type_error(msg, sizeof(msg),
                                                     "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",
@@ -3572,11 +3578,27 @@ void visit(Semantic* s, Ast* ast) {
                                    strcmp(ret_type->struct_name, "Str16") == 0) {
                             type_free(ret_type);
                             ast->u.clib_def.func_return_types[i] = type_new(TYPE_STR16);
+                        } else if (cstruct_def_find(ret_type->struct_name)) {
+                            // cstruct 类型名 — 修正为 TYPE_CSTRUCT
+                            char* name = strdup(ret_type->struct_name);
+                            type_free(ret_type);
+                            ast->u.clib_def.func_return_types[i] = type_new(TYPE_CSTRUCT);
+                            ast->u.clib_def.func_return_types[i]->struct_name = name;
                         } else {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
-                                     ast->u.clib_def.func_names[i], ret_type->struct_name);
-                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                            // 尝试从符号表查找（cstruct 可能尚未注册到 cstruct_def_table）
+                            Symbol* sym = scope_resolve(s->current, ret_type->struct_name);
+                            if (!sym) sym = scope_resolve(s->root_scope, ret_type->struct_name);
+                            if (sym && sym->type && sym->type->kind == TYPE_CSTRUCT) {
+                                char* name = strdup(ret_type->struct_name);
+                                type_free(ret_type);
+                                ast->u.clib_def.func_return_types[i] = type_new(TYPE_CSTRUCT);
+                                ast->u.clib_def.func_return_types[i]->struct_name = name;
+                            } else {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
+                                         ast->u.clib_def.func_names[i], ret_type->struct_name);
+                                error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                            }
                         }
                     }
 
@@ -3617,11 +3639,27 @@ void visit(Semantic* s, Ast* ast) {
                                        strcmp(param_type->struct_name, "Str16") == 0) {
                                 type_free(param_type);
                                 ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_STR16);
+                            } else if (cstruct_def_find(param_type->struct_name)) {
+                                // cstruct 类型名 — 修正为 TYPE_CSTRUCT，语义为传指针
+                                char* name = strdup(param_type->struct_name);
+                                type_free(param_type);
+                                ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_CSTRUCT);
+                                ast->u.clib_def.func_param_types[i][j]->struct_name = name;
                             } else {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
-                                         ast->u.clib_def.func_names[i], j + 1, param_type->struct_name);
-                                error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                                // 尝试从符号表查找（cstruct 可能尚未注册到 cstruct_def_table）
+                                Symbol* sym = scope_resolve(s->current, param_type->struct_name);
+                                if (!sym) sym = scope_resolve(s->root_scope, param_type->struct_name);
+                                if (sym && sym->type && sym->type->kind == TYPE_CSTRUCT) {
+                                    char* name = strdup(param_type->struct_name);
+                                    type_free(param_type);
+                                    ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_CSTRUCT);
+                                    ast->u.clib_def.func_param_types[i][j]->struct_name = name;
+                                } else {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
+                                             ast->u.clib_def.func_names[i], j + 1, param_type->struct_name);
+                                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                                }
                             }
                         }
                     }

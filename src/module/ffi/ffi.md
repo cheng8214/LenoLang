@@ -88,33 +88,51 @@ ffi.free(ptr)  // 释放
 | `null` / FFI 指针 | `void*` | 指针参数 |
 | FFI 回调对象 | `void*` | 回调函数指针 |
 
-### clib 声明式调用
+### clib 声明式调用（零摩擦 FFI）
 
-除了 `ffi.call_*` 动态调用方式，Leno 还支持 `clib` 声明式调用，具有类型安全、编译期检查等优势：
+除了 `ffi.call_*` 动态调用方式，Leno 还支持 `clib` 声明式调用，具有**零摩擦**类型转换、编译期检查和运行时安全保障：
 
 ```leno
 import ffi
-import io
 
 // 声明 C 库函数签名
 clib msvcrt {
     i32 strlen(str8 s)
     i32 strcmp(str8 a, str8 b)
     f64 pow(f64 base, f64 exp)
+    str8 strerror(i32 errnum)
 }
 
 main() {
     msvcrt lib = ffi.load("msvcrt.dll")
 
-    i32 len = lib.strlen("hello")
-    io.print("strlen: " + (len as int))
+    // 返回值自动展开：i32 → int，无需 as 转换
+    int len = lib.strlen("hello")
+    print("strlen: " + len)
+
+    // str8 → string 零摩擦
+    string msg = lib.strerror(2)
+    print("strerror(2): " + msg)
+
+    // f64 → float 零摩擦
+    float result = lib.pow(2.0, 10.0)
+    print("pow(2,10): " + result)
 }
 ```
+
+**核心设计原则：C 的窄类型是 ABI 约束，Leno 的 int 是数学约束。ABI 在调用边界处理，数学在语言内部处理。**
+
+- **返回值方向（C→Leno）**：自动展开，C 窄类型无缝升级为 Leno 宽类型
+- **参数方向（Leno→C）**：自动窄化，Leno 宽类型安全塞入 C 窄类型，超范围报错
 
 **clib 声明中允许的 C 布局类型：**
 
 | 类型 | C 对应 | 大小 | 说明 |
 |------|--------|------|------|
+| `i8` | `int8_t` | 1 | 有符号 8 位整数 |
+| `u8` | `uint8_t` | 1 | 无符号 8 位整数 |
+| `i16` | `int16_t` | 2 | 有符号 16 位整数 |
+| `u16` | `uint16_t` | 2 | 无符号 16 位整数 |
 | `i32` | `int32_t` | 4 | 有符号 32 位整数 |
 | `u32` | `uint32_t` | 4 | 无符号 32 位整数 |
 | `i64` | `int64_t` | 8 | 有符号 64 位整数 |
@@ -125,19 +143,98 @@ main() {
 | `str16` | `wchar_t*` | 8 | 宽字符串指针（UTF-16） |
 | `Ptr` | `void*` | 8 | 泛型指针 |
 | `bool` | `int` | 4 | 布尔值（0/1） |
+| `cstruct名` | `struct*` | 8 | cstruct 实例自动传指针（如 `POINT` → `POINT*`） |
 | `void` | `void` | - | 无返回值 |
 
-> **注意**：clib 声明中**不允许**使用 Leno 类型（`int`、`float`、`string`），必须使用 C 布局类型。clib 函数返回值需要显式转换（如 `as int`、`as float`）才能赋值给 Leno 变量。
+> **注意**：clib 声明中**不允许**使用 Leno 类型（`int`、`float`、`string`），必须使用 C 布局类型。但调用时返回值会自动转换为 Leno 类型，无需手动 `as` 转换。
+> **cstruct 参数说明**：clib 声明中可直接使用已定义的 cstruct 名称作为参数类型，调用时 cstruct 实例会自动转换为指针传递给 C 函数，无需手动调用 `to_ptr()`。例如 `i32 GetCursorPos(POINT pt)` 等价于 C 的 `int GetCursorPos(POINT* pt)`。
 
-**clib 参数自动转换规则：**
+#### 返回值自动展开（C→Leno 零摩擦）
 
-| clib 参数类型 | 可接受的 Leno 实参 | 说明 |
-|--------------|-------------------|------|
-| `str8` | `string` | Leno 字符串自动转为 C `char*` |
-| `str16` | `string` | Leno 字符串自动转为 C `wchar_t*` |
-| `i32` / `i64` | `int` | Leno int 自动转为对应 C 整数 |
-| `f64` | `float` | Leno float 自动转为 C double |
+clib 函数的返回值根据 C 类型自动转换为 Leno 原生类型：
+
+| clib 返回类型 | Leno 类型 | 说明 |
+|--------------|----------|------|
+| `i8` / `u8` / `i16` / `u16` / `i32` / `u32` / `i64` | `int` | 所有 C 整数自动展开为 Leno int |
+| `u64` | `int` / `BigInt` | 值 ≤ int64 最大值时为 `int`，超出时自动升级为 `BigInt` |
+| `f32` / `f64` | `float` | C 浮点数自动展开为 Leno float |
+| `str8` | `string` | C `char*` 自动转为 Leno string（深拷贝，安全） |
+| `str16` | `string` | C `wchar_t*` 自动 UTF-16→UTF-8 转为 Leno string |
+| `bool` | `bool` | C BOOL 自动转为 Leno bool |
+| `Ptr` | `Ptr` / `null` | 指针原样返回，NULL 返回 null |
+| `void` | `null` | 无返回值 |
+
+```leno
+clib msvcrt {
+    i32 abs(i32 x)
+    u64 _strtoui64(str8 s, Ptr end, i32 base)
+    str8 strerror(i32 errnum)
+}
+
+msvcrt lib = ffi.load("msvcrt.dll")
+
+// i32 → int，直接赋值，无需 as
+int n = lib.abs(-42)
+
+// u64 → int（值在范围内时）
+int big = lib._strtoui64("9999999999", null, 10)
+
+// str8 → string，零摩擦
+string msg = lib.strerror(2)
+```
+
+#### 参数自动窄化（Leno→C 安全转换）
+
+Leno `int` 可以直接传给任何 C 整数类型参数，编译器和运行时会自动处理：
+
+| clib 参数类型 | 可接受的 Leno 实参 | 窄化行为 |
+|--------------|-------------------|---------|
+| `i8` | `int` | 运行时检查 [-128, 127]，超范围抛异常 |
+| `u8` | `int` | 运行时检查 [0, 255]，超范围抛异常 |
+| `i16` | `int` | 运行时检查 [-32768, 32767]，超范围抛异常 |
+| `u16` | `int` | 运行时检查 [0, 65535]，超范围抛异常 |
+| `i32` | `int` | 运行时检查 [-2147483648, 2147483647]，超范围抛异常 |
+| `u32` | `int` | 运行时检查 [0, 4294967295]，超范围抛异常 |
+| `i64` | `int` | 直接传递（Leno int 就是 int64） |
+| `u64` | `int` | 运行时检查非负，超 int64 范围抛异常 |
+| `f32` | `float` | double→float 窄化，精度损失不报错 |
+| `f64` | `float` | 直接传递 |
+| `str8` | `string` | Leno string 自动转为 C `char*`（临时缓冲，调用后释放） |
+| `str16` | `string` | Leno string 自动 UTF-8→UTF-16 转换 |
 | `Ptr` | `Ptr`、`null` | 指针和 null |
+| `bool` | `bool` | true→1, false→0 |
+| `cstruct名` | cstruct 实例 | 自动调用 `to_ptr()` 传指针，也兼容 `Ptr` 和 `null` |
+
+```leno
+clib msvcrt {
+    i32 abs(i32 x)
+}
+
+msvcrt lib = ffi.load("msvcrt.dll")
+
+// 正常：42 在 i32 范围内
+int result = lib.abs(-42)
+
+// 运行时报错：2147483648 超出 i32 范围
+try {
+    lib.abs(2147483648)
+} catch {
+    print("参数超出 i32 范围，正确报错")
+}
+```
+
+**设计理念**：C 的窄类型是 ABI 约束（决定寄存器/栈布局），Leno 的 int 是数学约束（任意精度）。参数窄化在调用边界做范围检查，比 C 的静默截断更安全，比 Go/Rust 的手动转换更方便。
+
+#### `as` 的使用场景
+
+`as` 仅用于**显式截断**——当你确实想要丢弃高位时：
+
+```leno
+int big = 0x123456789ABC
+int truncated = big as int32  // 显式截断，丢弃高位
+```
+
+普通 clib 调用完全不需要 `as`，返回值和参数都是自动转换的。
 
 **两种调用方式对比：**
 
@@ -145,7 +242,8 @@ main() {
 |------|----------------------|-------------------|
 | 类型安全 | 无编译期检查 | 编译期参数和返回类型检查 |
 | 调用方式 | `ffi.call_int(lib, "strlen", s)` | `lib.strlen(s)` |
-| 返回值 | 直接是 Leno 类型 | C 布局类型，需显式转换 |
+| 返回值 | 直接是 Leno 类型 | 自动展开为 Leno 类型（零摩擦） |
+| 参数转换 | 自动推断 | 自动窄化 + 运行时范围检查 |
 | 适用场景 | 快速原型、动态调用 | 正式项目、类型安全要求高 |
 
 ---
@@ -327,6 +425,51 @@ var result = ffi.call(kernel32, "GetCurrentProcessId")
 int pid = _int(result)  // 转换为 int
 
 ffi.free(kernel32)
+```
+
+---
+
+### 错误码缓存
+
+#### `last_error()`
+
+获取最近一次 FFI 调用（`ffi.call_*` 或 `clib` 调用）后的系统错误码。
+
+**参数**: 无
+**返回**: `int` - 错误码值
+
+**说明**:
+- 每次 FFI 调用返回后，立即缓存 `GetLastError()`（Windows）或 `errno`（Linux/macOS）
+- 避免后续 Leno 内部操作覆盖线程错误码，确保获取到的是 FFI 调用那一刻的错误码
+- 成功的 API 调用**不一定**重置错误码为 0（取决于具体 API 行为）
+
+```leno
+import ffi
+
+clib kernel32 {
+    Ptr OpenProcess(i32 access, i32 inherit, i32 pid)
+    i32 CloseHandle(Ptr h)
+    i32 GetCurrentProcessId()
+}
+
+main() {
+    kernel32 k32 = ffi.load("kernel32.dll")
+
+    // 成功调用
+    int pid = k32.GetCurrentProcessId()
+    int err1 = ffi.last_error()
+    // err1 通常为 0
+
+    // 失败调用
+    Ptr h = k32.OpenProcess(0x0400, 0, 9999999)
+    int err2 = ffi.last_error()
+    // err2 为非零错误码（如 87 = ERROR_INVALID_PARAMETER）
+
+    if h != null {
+        k32.CloseHandle(h)
+    }
+    ffi.free(k32)
+}
 ```
 
 ---
@@ -955,9 +1098,11 @@ ffi.free(buf)
 
 | 函数 | 值类型 | C 类型 | 大小 |
 |------|--------|--------|------|
+| `write_bool(ptr, off, val)` | `bool`/`int` | `_Bool` | 1 字节 |
 | `write_byte(ptr, off, val)` | `int` | `uint8_t` | 1 字节 |
 | `write_int8(ptr, off, val)` | `int` | `int8_t` | 1 字节 |
 | `write_int16(ptr, off, val)` | `int` | `int16_t` | 2 字节 |
+| `write_uint16(ptr, off, val)` | `int` | `uint16_t` | 2 字节 |
 | `write_int(ptr, off, val)` | `int` | `int32_t` | 4 字节 |
 | `write_uint(ptr, off, val)` | `int`/`BigInt` | `uint32_t` | 4 字节 |
 | `write_int64(ptr, off, val)` | `int` | `int64_t` | 8 字节 |
@@ -999,6 +1144,30 @@ ffi.free(buf)
 ffi.write_uint(buf, 0, 0x80000002)    // HKEY_LOCAL_MACHINE
 ffi.write_uint(buf, 4, 0xFFFFFFFF)    // MAX_UINT32
 ffi.write_uint(buf, 8, 0xF003F)       // KEY_ALL_ACCESS
+```
+
+**`write_bool` 说明**:
+
+`write_bool` 写入 1 字节布尔值（0 或 1），与 `read_bool` 对称。接受 `bool` 和 `int` 类型参数，非零值视为 `true`。
+
+```leno
+ffi.write_bool(buf, 0, true)       // 写入 1
+ffi.write_bool(buf, 1, false)      // 写入 0
+ffi.write_bool(buf, 2, 42)         // 非零整数视为 true，写入 1
+
+bool b = ffi.read_bool(buf, 0)     // true
+```
+
+**`write_uint16` 说明**:
+
+`write_uint16` 写入 2 字节无符号 16 位整数，与 `read_uint16` 对称。
+
+```leno
+ffi.write_uint16(buf, 0, 0)        // 写入 0
+ffi.write_uint16(buf, 2, 65535)    // 写入 0xFFFF
+ffi.write_uint16(buf, 4, 1000)     // 写入 1000
+
+int v = ffi.read_uint16(buf, 2)    // 65535
 ```
 
 ### 浮点写入
@@ -1469,6 +1638,7 @@ main() {
 | `call_void(lib, name, ...)` | lib, string, ... | null | 调用（无返回值） |
 | `call_ptr(lib, name, ...)` | lib, string, ... | ptr | 调用（返回指针） |
 | `call_bool(lib, name, ...)` | lib, string, ... | bool | 调用（返回布尔） |
+| `last_error()` | 无 | int | 获取最近一次 FFI 调用后的系统错误码 |
 
 ### 内存管理
 
@@ -1522,9 +1692,11 @@ main() {
 
 | 函数 | 参数 | 返回 | 大小 |
 |------|------|------|------|
+| `write_bool(ptr, off, val)` | ptr, int, bool/int | null | 1 |
 | `write_byte(ptr, off, val)` | ptr, int, int | null | 1 |
 | `write_int8(ptr, off, val)` | ptr, int, int | null | 1 |
 | `write_int16(ptr, off, val)` | ptr, int, int | null | 2 |
+| `write_uint16(ptr, off, val)` | ptr, int, int | null | 2 |
 | `write_int(ptr, off, val)` | ptr, int, int | null | 4 |
 | `write_uint(ptr, off, val)` | ptr, int, int/BigInt | null | 4 |
 | `write_int64(ptr, off, val)` | ptr, int, int | null | 8 |
@@ -1556,14 +1728,35 @@ main() {
 | `str16` | `wchar_t*` | 8 | 宽字符串指针（UTF-16） |
 | `Ptr` | `void*` | 8 | 泛型指针 |
 | `bool` | `int` | 4 | 布尔值（0/1） |
+| `cstruct名` | `struct*` | 8 | cstruct 实例自动传指针 |
 | `void` | `void` | - | 无返回值 |
 
 ---
 
-*文档版本: 2.4*
-*最后更新: 2026-06-06*
+*文档版本: 3.2*
+*最后更新: 2026-06-07*
 
 ### 更新记录
+
+- **v3.2** (2026-06-07):
+  - **clib 支持 cstruct 参数**：clib 声明中可直接使用 cstruct 名称作为参数类型，调用时 cstruct 实例自动转换为指针传递，无需手动 `to_ptr()`
+  - 语义分析增强：`TYPE_STRUCT` + cstruct 名自动修正为 `TYPE_CSTRUCT`，参数兼容性检查支持 `TYPE_CSTRUCT ↔ TYPE_PTR` 双向转换
+  - clib 参数窄化表新增 `cstruct名` 类型行
+
+- **v3.1** (2026-06-07):
+  - 新增 `ffi.last_error()` — 获取最近一次 FFI 调用后的系统错误码（Windows: GetLastError, Linux: errno）
+  - 新增 `ffi.write_bool(ptr, off, val)` — 写入 1 字节布尔值，与 `read_bool` 对称
+  - 新增 `ffi.write_uint16(ptr, off, val)` — 写入 2 字节无符号 16 位整数，与 `read_uint16` 对称
+
+- **v3.0** (2026-06-07):
+  - **零摩擦 FFI**：clib 返回值自动展开，无需 `as` 转换（i32→int, f64→float, str8→string, str16→string）
+  - **参数自动窄化**：Leno int 可直接传给 i8/u8/i16/u16/i32/u32/i64/u64 参数，运行时范围检查，超范围抛异常
+  - **新增 C 布局类型**：`i8`、`u8`、`i16`、`u16`（之前仅支持 i32/u32/i64/u64/f32/f64）
+  - **u64 返回值智能升级**：值 ≤ int64 最大值时返回 `int`，超出时自动升级为 `BigInt`
+  - **bigint 参数范围检查**：BigInt 传给窄整数类型时做运行时范围检查
+  - **语义分析增强**：clib 参数兼容性检查，int 可传给所有 C 整数类型，float 可传给 f32/f64
+  - **清理死代码**：移除旧路径 FFIType 返回值处理（已统一走 TypeKind 路径）
+  - 更新对比表：clib 返回值从"需显式转换"改为"自动展开为 Leno 类型"
 
 - **v2.4** (2026-06-06):
   - 新增 `clib` 声明式调用语法文档

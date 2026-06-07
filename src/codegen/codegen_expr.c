@@ -1051,6 +1051,8 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                             // 返回类型直接编码 TypeKind，VM 端根据 TypeKind 做自动展开
                             TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
                             int ret_type_kind = ret_type ? ret_type->kind : TYPE_NULL;
+                            // cstruct 返回值暂按 Ptr 处理（返回裸指针）
+                            if (ret_type_kind == TYPE_CSTRUCT) ret_type_kind = TYPE_PTR;
 
                             // 生成 lib 变量值到栈上（使用 semantic 阶段存好的 lib_ref）
                             SymRef* lib_ref = &ast->u.module_call.lib_ref;
@@ -1091,6 +1093,8 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                             for (int ai = 0; ai < user_arg_count; ai++) {
                                 TypeInfo* param_type = clib_sym->clib_func_param_types[fi][ai];
                                 int type_kind = param_type ? param_type->kind : 0;
+                                // cstruct 参数在 C 端传指针，编码为 TYPE_PTR
+                                if (type_kind == TYPE_CSTRUCT) type_kind = TYPE_PTR;
                                 emit_byte(gen, (uint8_t)type_kind, ast->line);
                             }
                             break;
