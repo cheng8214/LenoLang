@@ -1,0 +1,52 @@
+import dirs
+import files
+// 测试 dirs.delete
+print("=== dirs.delete ===")
+var test_file = "test_delete_tmp.txt"
+
+files.write(test_file, "hello")
+print("文件存在:", dirs.exists(test_file))
+var ok = dirs.delete(test_file)
+print("删除结果:", ok)
+print("删除后存在:", dirs.exists(test_file))
+
+// 测试 dirs.walk 递归遍历
+print("")
+print("=== dirs.walk 递归遍历 ===")
+
+// 创建测试目录结构
+var base = "test_walk_tmp"
+dirs.mkdir_p(dirs.join(base, "sub1", "deep"))
+dirs.mkdir_p(dirs.join(base, "sub2"))
+files.write(dirs.join(base, "root.txt"), "root")
+files.write(dirs.join(base, "sub1", "a.txt"), "a")
+files.write(dirs.join(base, "sub1", "deep", "b.txt"), "b")
+files.write(dirs.join(base, "sub2", "c.txt"), "c")
+
+var result = dirs.walk(base)
+print("遍历层数:", result.len())
+
+for result to var entry {
+    var root = entry[0]
+    var d = entry[1]
+    var f = entry[2]
+    print("目录:", root)
+    if d.len() > 0 {
+        print("  子目录:", d)
+    }
+    if f.len() > 0 {
+        print("  文件:", f)
+    }
+}
+
+// 清理测试目录
+dirs.delete(dirs.join(base, "root.txt"))
+dirs.delete(dirs.join(base, "sub1", "a.txt"))
+dirs.delete(dirs.join(base, "sub1", "deep", "b.txt"))
+dirs.delete(dirs.join(base, "sub2", "c.txt"))
+dirs.rmdir(dirs.join(base, "sub1", "deep"))
+dirs.rmdir(dirs.join(base, "sub1"))
+dirs.rmdir(dirs.join(base, "sub2"))
+dirs.rmdir(base)
+print("")
+print("清理完成")

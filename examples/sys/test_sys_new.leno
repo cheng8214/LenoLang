@@ -1,0 +1,80 @@
+main() {
+    print("=== Sys 新功能测试 ===")
+    print("")
+
+    // 测试 _env()
+    print("--- _env ---")
+    var path = _env("PATH")
+    if path != null {
+        print("PATH 存在: true (长度: " + path.len() + ")")
+    } else {
+        print("PATH 不存在")
+    }
+
+    var test_key = _env("LENO_TEST_KEY")
+    print("LENO_TEST_KEY (未设置): " + test_key)
+
+    var set_ok = _env("LENO_TEST_KEY", "hello_leno")
+    print("设置 LENO_TEST_KEY: " + set_ok)
+
+    var val = _env("LENO_TEST_KEY")
+    print("LENO_TEST_KEY (已设置): " + val)
+
+    // 清理
+    _env("LENO_TEST_KEY", "")
+    print("")
+
+    // 测试 _pid()
+    print("--- _pid ---")
+    print("进程ID: " + _pid())
+    print("")
+
+    // 测试 _arch()
+    print("--- _arch ---")
+    print("CPU架构: " + _arch())
+    print("")
+
+    // 测试 _username()
+    print("--- _username ---")
+    print("用户名: " + _username())
+    print("")
+
+    // 测试 _homedir()
+    print("--- _homedir ---")
+    print("主目录: " + _homedir())
+    print("")
+
+    // 测试 _tmpdir()
+    print("--- _tmpdir ---")
+    print("临时目录: " + _tmpdir())
+    print("")
+
+    // 测试 _sep()
+    print("--- _sep ---")
+    print("路径分隔符: " + _sep())
+    print("")
+
+    // 测试 _exec()
+    print("--- _exec ---")
+    var os = _os()
+    if os == "windows" {
+        var output = _exec("echo hello from exec")
+        print("exec 输出: " + output)
+    } else {
+        var output = _exec("echo hello from exec")
+        print("exec 输出: " + output)
+    }
+    print("")
+
+    // 综合信息
+    print("=== 系统信息汇总 ===")
+    print("OS: " + _os())
+    print("Arch: " + _arch())
+    print("PID: " + _pid())
+    print("User: " + _username())
+    print("Home: " + _homedir())
+    print("Tmp: " + _tmpdir())
+    print("Sep: " + _sep())
+    print("")
+    print("=== 测试完成 ===")
+}

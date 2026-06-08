@@ -255,7 +255,7 @@ dirs.rmdir("non_empty")         // false (目录非空)
 
 ## 文件操作
 
-### `remove(path)`
+### `delete(path)`
 
 删除文件。
 
@@ -265,8 +265,8 @@ dirs.rmdir("non_empty")         // false (目录非空)
 **返回**: `bool` - 是否删除成功
 
 ```leno
-dirs.remove("old_file.txt")     // true
-dirs.remove("not_exist.txt")    // false
+dirs.delete("old_file.txt")     // true
+dirs.delete("not_exist.txt")    // false
 ```
 
 ---
@@ -523,7 +523,7 @@ main() {
         
         for temp_patterns to pattern {
             if ext == pattern {
-                if dirs.remove(f) {
+                if dirs.delete(f) {
                     removed = removed + 1
                     io.print("删除: " + f)
                 }

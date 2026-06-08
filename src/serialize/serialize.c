@@ -40,6 +40,19 @@ static void clear_serialized_modules(void) {
 }
 
 // ============================================================================
+// XOR 字符串编码密钥
+// ============================================================================
+
+static const uint8_t XOR_KEY[] = {0x4C, 0x45, 0x4E, 0x4F}; // "LENO"
+#define XOR_KEY_LEN 4
+
+static void xor_encode_decode(uint8_t* data, uint32_t len) {
+    for (uint32_t i = 0; i < len; i++) {
+        data[i] ^= XOR_KEY[i % XOR_KEY_LEN];
+    }
+}
+
+// ============================================================================
 // 内部辅助：写入缓冲区
 // ============================================================================
 
@@ -110,7 +123,16 @@ static void wb_write_double(WriteBuffer* wb, double val) {
 static void wb_write_string(WriteBuffer* wb, const char* str, uint32_t len) {
     wb_write_u32(wb, len);
     if (len > 0) {
-        wb_write(wb, str, len);
+        // XOR 编码字符串
+        uint8_t* encoded = (uint8_t*)malloc(len);
+        if (encoded) {
+            memcpy(encoded, str, len);
+            xor_encode_decode(encoded, len);
+            wb_write(wb, encoded, len);
+            free(encoded);
+        } else {
+            wb_write(wb, str, len);
+        }
     }
 }
 
@@ -183,6 +205,8 @@ static char* ctx_read_string(DeserializeCtx* ctx, uint32_t* out_len) {
     memcpy(str, ctx->data + ctx->pos, len);
     str[len] = '\0';
     ctx->pos += len;
+    // XOR 解码字符串
+    xor_encode_decode((uint8_t*)str, len);
     return str;
 }
 
