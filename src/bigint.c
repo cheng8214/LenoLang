@@ -276,7 +276,7 @@ Value bigint_add(ObjBigInt* a, ObjBigInt* b) {
             result_limbs[result_count++] = (uint32_t)carry;
         }
 
-        Value result = val_bigint_from_limbs(result_limbs, result_count, a->is_negative);
+        Value result = bigint_compact_to_int(val_bigint_from_limbs(result_limbs, result_count, a->is_negative));
         free(result_limbs);
         return result;
     } else {
@@ -307,7 +307,7 @@ Value bigint_add(ObjBigInt* a, ObjBigInt* b) {
             result_limbs[i] = (uint32_t)diff;
         }
 
-        Value result = val_bigint_from_limbs(result_limbs, larger->limb_count, result_negative);
+        Value result = bigint_compact_to_int(val_bigint_from_limbs(result_limbs, larger->limb_count, result_negative));
         free(result_limbs);
         return result;
     }
@@ -353,7 +353,7 @@ Value bigint_mul(ObjBigInt* a, ObjBigInt* b) {
         result_count--;
     }
 
-    Value result = val_bigint_from_limbs(result_limbs, result_count, result_is_negative);
+    Value result = bigint_compact_to_int(val_bigint_from_limbs(result_limbs, result_count, result_is_negative));
     free(result_limbs);
     return result;
 }
@@ -362,7 +362,7 @@ Value bigint_neg(ObjBigInt* a) {
     if (a->limb_count == 1 && a->limbs[0] == 0) {
         return val_int(0);
     }
-    return val_bigint_from_limbs(a->limbs, a->limb_count, !a->is_negative);
+    return bigint_compact_to_int(val_bigint_from_limbs(a->limbs, a->limb_count, !a->is_negative));
 }
 
 // 辅助函数：复制 ObjBigInt（浅拷贝 limbs 引用）
@@ -756,6 +756,18 @@ char* bigint_to_string(ObjBigInt* bigint) {
 }
 
 Value val_bigint_from_limbs(const uint32_t* limbs, int limb_count, int is_negative) {
+    // 如果值在 int32 范围内，直接返回 int（避免不必要的大数分配和类型不兼容问题）
+    if (limb_count == 0) {
+        return val_int(0);
+    }
+    if (limb_count == 1) {
+        if (!is_negative && limbs[0] <= (uint32_t)INT32_MAX) {
+            return val_int((int)limbs[0]);
+        }
+        if (is_negative && limbs[0] <= (uint32_t)(-(int64_t)INT32_MIN)) {
+            return val_int(-(int)limbs[0]);
+        }
+    }
     ObjBigInt* bigint = bigint_new(limbs, limb_count, is_negative);
     if (!bigint) return val_null();
     return val_obj((Object*)bigint);
@@ -866,7 +878,7 @@ Value bigint_and(ObjBigInt* a, ObjBigInt* b) {
     free(result_limbs);
 
     if (!result) return val_null();
-    return val_obj((Object*)result);
+    return bigint_compact_to_int(val_obj((Object*)result));
 }
 
 Value bigint_or(ObjBigInt* a, ObjBigInt* b) {
@@ -912,7 +924,7 @@ Value bigint_or(ObjBigInt* a, ObjBigInt* b) {
     free(result_limbs);
 
     if (!result) return val_null();
-    return val_obj((Object*)result);
+    return bigint_compact_to_int(val_obj((Object*)result));
 }
 
 Value bigint_xor(ObjBigInt* a, ObjBigInt* b) {
@@ -958,7 +970,7 @@ Value bigint_xor(ObjBigInt* a, ObjBigInt* b) {
     free(result_limbs);
 
     if (!result) return val_null();
-    return val_obj((Object*)result);
+    return bigint_compact_to_int(val_obj((Object*)result));
 }
 
 Value bigint_not(ObjBigInt* a) {
@@ -1017,7 +1029,7 @@ Value bigint_shl(ObjBigInt* a, int shift) {
     free(result_arr);
 
     if (!result) return val_null();
-    return val_obj((Object*)result);
+    return bigint_compact_to_int(val_obj((Object*)result));
 }
 
 Value bigint_shr(ObjBigInt* a, int shift) {

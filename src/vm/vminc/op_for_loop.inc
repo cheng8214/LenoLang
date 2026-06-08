@@ -87,15 +87,11 @@ OPCODE(OP_FOR_LOOP) {
         
         // 更新 loop_var += step
         Value new_loop = bigint_add(loop_big, step_big);
-        if (!val_is_bigint(new_loop)) {
-            // 结果不是 BigInt（可能是 0），转换为 int
-            frame->locals[loop_var_slot] = val_int(0);
-        } else {
-            frame->locals[loop_var_slot] = new_loop;
-        }
+        frame->locals[loop_var_slot] = new_loop;
         
         // 检查是否继续循环
-        int cmp = bigint_compare(val_as_bigint(new_loop), end_big);
+        ObjBigInt* new_loop_big = get_bigint_operand(new_loop);
+        int cmp = bigint_compare(new_loop_big, end_big);
         int should_continue = 0;
         int step_cmp = bigint_compare(step_big, bigint_from_int64(0));
         

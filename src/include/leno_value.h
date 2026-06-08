@@ -840,6 +840,20 @@ Value val_bigint_from_limbs(const uint32_t* limbs, int limb_count, int is_negati
 // 检查 int 是否溢出，溢出时返回 bigint Value
 Value val_int_safe(int64_t value);
 
+// 如果 bigint 的值在 int32 范围内，将其转为 int Value（减少不必要的 bigint 传播）
+static inline Value bigint_compact_to_int(Value v) {
+    if (val_is_bigint(v)) {
+        ObjBigInt* bi = val_as_bigint(v);
+        if (bigint_fits_in_int64(bi)) {
+            int64_t i64 = bigint_to_int64(bi);
+            if (i64 >= INT32_MIN && i64 <= INT32_MAX) {
+                return val_int((int)i64);
+            }
+        }
+    }
+    return v;
+}
+
 // BigInt 运算
 Value bigint_add(ObjBigInt* a, ObjBigInt* b);
 Value bigint_sub(ObjBigInt* a, ObjBigInt* b);

@@ -162,12 +162,19 @@ int lenolang_run_lenb(const char* filename) {
     // 注册 struct/face/enum 定义到全局表
     register_defs_from_chunk(&chunk);
 
+    // 初始化 GC
+    gc_init();
+
+    // 修复模块函数指针
+    fix_module_function_ptrs(&chunk);
+
     // 初始化 VM 并执行
     runtime_type_check = 1;
     vm_init_with_scope(scope);
 
     int ret = vm_run_chunk(&chunk);
     chunk_free(&chunk);
+    gc_free_all();
     return ret;
 }
 

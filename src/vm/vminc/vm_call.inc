@@ -8,9 +8,9 @@ static inline int value_matches_type(Value value, TypeKind expected) {
         case TYPE_STRING:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING);
         case TYPE_INT:
-            return val_is_int(value);
+            return val_is_int(value) || val_is_bigint(value);
         case TYPE_FLOAT:
-            return val_is_float(value);
+            return val_is_float(value) || val_is_int(value) || val_is_bigint(value);
         case TYPE_BOOL:
             return val_is_bool(value);
         case TYPE_ARRAY:

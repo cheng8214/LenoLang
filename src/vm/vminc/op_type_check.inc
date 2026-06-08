@@ -26,7 +26,7 @@ OPCODE(OP_TYPE_CHECK) {
         // --- 简单类型: 仅检查值类型，消费 codegen 发出的 element_type 字节 ---
         case TYPE_INT:
             (void)READ_BYTE(); // 消费 element_type 字节 (codegen 总会发出)
-            matches = val_is_int(value);
+            matches = val_is_int(value) || val_is_bigint(value);
             break;
         case TYPE_FLOAT:
             (void)READ_BYTE();
@@ -60,7 +60,7 @@ OPCODE(OP_TYPE_CHECK) {
                     int elem_matches = 0;
                     switch (expected_elem_type) {
                         case TYPE_INT:
-                            elem_matches = val_is_int(elem);
+                            elem_matches = val_is_int(elem) || val_is_bigint(elem);
                             break;
                         case TYPE_FLOAT:
                             elem_matches = val_is_float(elem);

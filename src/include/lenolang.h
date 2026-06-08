@@ -26,4 +26,11 @@ extern int runtime_type_check;
 int lenolang_run(const char* source);
 void lenolang_repl(void);
 
+// ============================================================================
+// 模块函数指针修复（反序列化后需要调用）
+// ============================================================================
+
+void fix_module_function_ptrs(Chunk* chunk);
+void fix_single_module(ObjModule* mod);
+
 #endif // LENOLANG_H

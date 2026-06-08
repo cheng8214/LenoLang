@@ -29,6 +29,16 @@ OPCODE(OP_AS_CAST) {
             (void)READ_BYTE();
             if (val_is_int(value)) {
                 matches = 1;
+            } else if (val_is_bigint(value)) {
+                // bigint 在 int32 范围内 → 转为 int，否则保持原值
+                ObjBigInt* bi = val_as_bigint(value);
+                if (bigint_fits_in_int64(bi)) {
+                    int64_t i64 = bigint_to_int64(bi);
+                    if (i64 >= INT32_MIN && i64 <= INT32_MAX) {
+                        value = val_int((int)i64);
+                    }
+                }
+                matches = 1;
             } else if (val_is_float(value)) {
                 // float 转换为 int（截断小数）
                 value = val_num((int64_t)val_as_double(value));
@@ -45,6 +55,10 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_int(value)) {
                 // int 转换为 float
                 value = val_float((double)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                // bigint 转换为 float
+                value = val_float(bigint_to_double(val_as_bigint(value)));
                 matches = 1;
             } else {
                 matches = 0;
@@ -75,7 +89,7 @@ OPCODE(OP_AS_CAST) {
                     int elem_matches = 0;
                     switch (expected_elem_type) {
                         case TYPE_INT:
-                            elem_matches = val_is_int(elem);
+                            elem_matches = val_is_int(elem) || val_is_bigint(elem);
                             break;
                         case TYPE_FLOAT:
                             elem_matches = val_is_float(elem);
