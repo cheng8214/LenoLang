@@ -38,6 +38,12 @@ static Value struct_method_copy(int argc, Value* args) {
     return struct_copy_recursive(source);
 }
 
+static Value struct_method_len(int argc, Value* args) {
+    (void)argc;
+    ObjStruct* source = (ObjStruct*)val_as_obj(args[0]);
+    return val_int(source->def->field_count);
+}
+
 // ==================== 初始化 ====================
 
 void structs_init_instance_methods(void) {
@@ -47,4 +53,9 @@ void structs_init_instance_methods(void) {
     TypeKind copy_params[] = {};
     struct_register_method_with_params("copy", make_native(struct_method_copy, 1, "copy"),
                                        0, -1, -1, TYPE_STRUCT, TYPE_UNKNOWN, copy_params);
+
+    // 注册 len 方法（迭代器协议：返回字段数量）
+    TypeKind len_params[] = {};
+    struct_register_method_with_params("len", make_native(struct_method_len, 1, "len"),
+                                       0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
 }
