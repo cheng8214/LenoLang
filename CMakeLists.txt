@@ -44,6 +44,10 @@ set(LENO_SOURCES
     src/object/object_thread.c
     src/object/object_image.c
     src/object/object_socket.c
+    src/object/object_draw.c
+    src/object/object_window.c
+    src/object/object_event.c
+    src/object/object_font.c
     src/bound_method.c
     src/coroutine.c
     src/vm/vm.c
@@ -59,6 +63,8 @@ set(LENO_SOURCES
     src/native.c
     src/bigint.c
     src/module_loader.c
+    src/module_dispatch.c
+    src/module_compiler.c
     src/module_symbol_table.c
     src/module.c
     src/module/io/io.c
@@ -83,6 +89,13 @@ set(LENO_SOURCES
     src/module/regexs/regexs.c
     src/module/guis/guis.c
     src/module/guis/guis_constants.c
+    src/module/guis/guis_draw.c
+    src/module/guis/guis_window.c
+    src/module/guis/guis_style.c
+    src/module/guis/guis_event.c
+    src/module/guis/guis_image.c
+    src/module/guis/guis_font.c
+    src/module/guis/leno_guis_log.c
     src/platform/platform_thread.c
     src/serialize/serialize.c
     src/package/package_platform.c
