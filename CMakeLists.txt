@@ -138,9 +138,9 @@ else()
     endif()
 endif()
 
-add_executable(test_runner test/test_runner.c)
+add_executable(test_runner assert/test_runner.c)
 
-set(LENO_TEST_DIR "${CMAKE_SOURCE_DIR}/test")
+set(LENO_TEST_DIR "${CMAKE_SOURCE_DIR}/assert")
 
 add_custom_target(test
     COMMAND test_runner $<TARGET_FILE:leno> ${LENO_TEST_DIR}
