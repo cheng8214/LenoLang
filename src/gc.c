@@ -25,6 +25,11 @@
 /* Socket 资源释放所需的平台头文件（必须在 windows.h 之前） */
 #ifdef _WIN32
     #include <winsock2.h>
+    #ifdef _MSC_VER
+        #pragma comment(lib, "ws2_32.lib")
+    #endif
+#else
+    #include <unistd.h>
 #endif
 
 #include "include/lenolang.h"

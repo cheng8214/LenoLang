@@ -1,14 +1,10 @@
 // struct 带方法的迭代器测试
-struct Msg
-{
-	string name
-	int x=10
-}
+
 struct Point
 {
     int x = 0
     int y = 0
-	Msg msg
+
     func move(int dx, int dy)
     {
         x = x + dx
@@ -26,6 +22,10 @@ main()
     var p = new Point()
     p.x = 3
     p.y = 4
+
+    // len() 只返回字段数量，不包含方法
+    assert_eq(p.len(), 2)
+
     // 遍历只遍历字段，不遍历方法
     var keys = []
     var vals = []
@@ -33,6 +33,17 @@ main()
         keys.add(name)
         vals.add(val)
     }
-  print(keys)
-  print(vals)
+    assert_eq(keys.len(), 2)
+    assert_eq(keys[0], "x")
+    assert_eq(keys[1], "y")
+    assert_eq(vals[0], 3)
+    assert_eq(vals[1], 4)
+
+    // 方法仍然可以正常调用
+    p.move(1, 2)
+    assert_eq(p.x, 4)
+    assert_eq(p.y, 6)
+    assert_eq(p.distance(), 52)
+
+    print("test_struct_iterator_with_methods passed")
 }

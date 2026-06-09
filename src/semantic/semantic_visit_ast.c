@@ -882,6 +882,9 @@ void visit(Semantic* s, Ast* ast) {
                                 if (iterable_type->kind == TYPE_DICT) {
                                     // 字典遍历，键是 string 类型
                                     sym->type = type_new(TYPE_STRING);
+                                } else if (iterable_type->kind == TYPE_STRUCT) {
+                                    // struct 遍历，键是字段名（string 类型）
+                                    sym->type = type_new(TYPE_STRING);
                                 } else if (iterable_type->kind == TYPE_ARRAY && iterable_type->element_type) {
                                     // 数组遍历，元素类型
                                     sym->type = type_copy(iterable_type->element_type);
@@ -930,6 +933,9 @@ void visit(Semantic* s, Ast* ast) {
                                 } else {
                                     idx_sym->type = type_new(TYPE_ANY);
                                 }
+                            } else if (iterable_type && iterable_type->kind == TYPE_STRUCT) {
+                                // struct 遍历：第二个变量是字段值（类型未知，设为 any）
+                                idx_sym->type = type_new(TYPE_ANY);
                             } else {
                                 // 数组/字符串遍历：第二个变量是索引（int）
                                 idx_sym->type = type_new(TYPE_INT);

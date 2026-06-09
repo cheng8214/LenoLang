@@ -348,11 +348,11 @@ static void gen_for_iter(CodeGen* gen, Ast* ast, int loop_var_slot) {
     
     // 如果存在索引变量，将当前索引赋值给它
     if (ast->u.for_.index_var_name) {
-        // 检查是否是字典遍历
+        // 检查是否是字典/struct遍历
         int is_dict_iter = is_dict_expr(ast->u.for_.end);
         if (!is_dict_iter && ast->u.for_.end->kind == AST_VAR) {
             TypeKind var_type = ast->u.for_.end->u.var.ref.type_kind;
-            if (var_type == TYPE_DICT) {
+            if (var_type == TYPE_DICT || var_type == TYPE_STRUCT) {
                 is_dict_iter = 1;
             }
         }

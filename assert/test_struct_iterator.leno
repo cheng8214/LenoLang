@@ -1,0 +1,56 @@
+// struct 迭代器协议测试
+
+struct Point
+{
+    int x = 0
+    int y = 0
+}
+
+struct Person
+{
+    string name = ""
+    int age = 0
+    bool active = true
+}
+
+main()
+{
+    // 测试1: for struct to key - 遍历字段名
+    var p = new Point()
+    p.x = 10
+    p.y = 20
+
+    var keys = []
+    for p to key {
+        keys.add(key)
+    }
+    assert_eq(keys.len(), 2)
+    assert_eq(keys[0], "x")
+    assert_eq(keys[1], "y")
+
+    // 测试2: for struct to key, val - 遍历字段名和值
+    var person = new Person()
+    person.name = "Alice"
+    person.age = 30
+    person.active = false
+
+    var field_names = []
+    var field_values = []
+    for person to name, val {
+        field_names.add(name)
+        field_values.add(val)
+    }
+    assert_eq(field_names.len(), 3)
+    assert_eq(field_names[0], "name")
+    assert_eq(field_names[1], "age")
+    assert_eq(field_names[2], "active")
+    assert_eq(field_values[0], "Alice")
+    assert_eq(field_values[1], 30)
+    assert_eq(field_values[2], false)
+
+    // 测试3: len() 支持 struct
+    assert_eq(p.len(), 2)
+    assert_eq(person.len(), 3)
+
+    print("test_struct_iterator passed")
+}

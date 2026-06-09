@@ -435,6 +435,11 @@ OPCODE(OP_LENGTH) {
             vm_stack_push(&vm, val_int(array->count));
             break;
         }
+        case OBJ_STRUCT: {
+            ObjStruct* struct_obj = (ObjStruct*)val_as_obj(obj_val);
+            vm_stack_push(&vm, val_int(struct_obj->def->field_count));
+            break;
+        }
         default:
             throw_runtime_error("不支持的LENGTH类型", GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
@@ -522,6 +527,19 @@ OPCODE(OP_ITER_GET) {
             }
             // 返回枚举成员的值
             vm_stack_push(&vm, val_int((int)enum_def->members[index].value));
+            break;
+        }
+        case OBJ_STRUCT: {
+            ObjStruct* struct_obj = (ObjStruct*)val_as_obj(obj_val);
+            if (index < 0 || index >= struct_obj->def->field_count) {
+                throw_runtime_error("结构体字段索引越界", GET_CURRENT_LINE());
+                frame = &vm.frames[vm.frame_cnt - 1];
+                break;
+            }
+            // 返回字段名（与字典迭代一致：ITER_GET 返回 key）
+            ObjString* field_name = str_copy(struct_obj->def->fields[index].name,
+                                              strlen(struct_obj->def->fields[index].name));
+            vm_stack_push(&vm, val_obj((Object*)field_name));
             break;
         }
         default:

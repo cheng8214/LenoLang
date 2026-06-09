@@ -104,7 +104,14 @@ ObjStructDef* struct_def_find(const char* name) {
 
 ObjStruct* struct_instance_new(ObjStructDef* def);
 
-ObjStruct* struct_instance_new(ObjStructDef* def) {
+// 最大嵌套实例化深度，防止循环引用导致无限递归
+#define STRUCT_INSTANCE_MAX_DEPTH 16
+
+ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
+    if (depth > STRUCT_INSTANCE_MAX_DEPTH) {
+        return NULL;
+    }
+
     ObjStruct* obj = (ObjStruct*)gc_alloc(sizeof(ObjStruct), OBJ_STRUCT);
     obj->def = def;
     obj->field_values = (Value*)calloc(def->field_count, sizeof(Value));
@@ -113,14 +120,29 @@ ObjStruct* struct_instance_new(ObjStructDef* def) {
     for (int i = 0; i < def->field_count; i++) {
         if (def->fields[i].has_default) {
             obj->field_values[i] = def->fields[i].default_value;
+        } else if (def->fields[i].type == TYPE_STRUCT && def->fields[i].struct_type_name) {
+            // 嵌套 struct 类型：递归创建实例
+            ObjStructDef* nested_def = struct_def_find(def->fields[i].struct_type_name);
+            if (nested_def) {
+                ObjStruct* nested_obj = struct_instance_new_depth(nested_def, depth + 1);
+                if (nested_obj) {
+                    obj->field_values[i] = val_obj((Object*)nested_obj);
+                } else {
+                    obj->field_values[i] = val_null();
+                }
+            } else {
+                obj->field_values[i] = val_null();
+            }
         } else {
-            // 嵌套 struct 类型不再自动创建实例，以避免循环引用导致的无限递归
-            // 用户需要显式赋值，如: A a = new A(b_field = new B(...))
             obj->field_values[i] = val_null();
         }
     }
 
     return obj;
+}
+
+ObjStruct* struct_instance_new(ObjStructDef* def) {
+    return struct_instance_new_depth(def, 0);
 }
 
 int struct_get_field_index(ObjStructDef* def, const char* name) {
@@ -153,7 +175,8 @@ void struct_set_field(ObjStruct* obj, int index, Value value) {
 
 #define STRUCT_METHOD_TABLE_INITIAL_CAPACITY 16
 #define STRUCT_METHOD_TABLE_MAX_LOAD 0.75
-/* 方法哈希表条目 */
+
+/* 方法哈希表条目 */
 typedef struct StructMethodHashEntry {
     char* name;
     ObjNative* method;

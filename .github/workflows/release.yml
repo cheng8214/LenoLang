@@ -1,10 +1,9 @@
-name: LenoC CI
+name: LenoC Release
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    tags:
+      - 'v*'
 
 jobs:
   build-windows:
@@ -69,3 +68,32 @@ jobs:
         with:
           name: leno-macos-x64
           path: build/leno
+
+  release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: leno-windows-x64
+          path: artifacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: leno-linux-x64
+          path: artifacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: leno-macos-x64
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/leno.exe
+            artifacts/leno
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

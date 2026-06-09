@@ -500,10 +500,14 @@ int lenolang_run_file(const char* path) {
         strcpy(vm_exe, "leno_vm");
 #endif
 
-        // 读取 leno_vm.exe
+        // 读取 leno_vm 文件
+#ifdef _WIN32
         wchar_t wvm_exe[MAX_PATH_LEN];
         MultiByteToWideChar(CP_UTF8, 0, vm_exe, -1, wvm_exe, MAX_PATH_LEN);
         FILE* vm_fp = _wfopen(wvm_exe, L"rb");
+#else
+        FILE* vm_fp = fopen(vm_exe, "rb");
+#endif
         if (!vm_fp) {
             fprintf(stderr, "[错误] 找不到 leno_vm.exe: %s\n", vm_exe);
             fprintf(stderr, "请先运行 build_vm.bat 构建 VM 运行时\n");
@@ -523,9 +527,13 @@ int lenolang_run_file(const char* path) {
         fclose(vm_fp);
 
         // 读取编译好的 .lenb 文件
+#ifdef _WIN32
         wchar_t wlenb_path[MAX_PATH_LEN];
         MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wlenb_path, MAX_PATH_LEN);
         FILE* lenb_fp = _wfopen(wlenb_path, L"rb");
+#else
+        FILE* lenb_fp = fopen(bin_path, "rb");
+#endif
         if (!lenb_fp) {
             fprintf(stderr, "[错误] 无法读取编译产物: %s\n", bin_path);
             free(vm_data);
@@ -545,10 +553,14 @@ int lenolang_run_file(const char* path) {
         fread(lenb_data, 1, lenb_size, lenb_fp);
         fclose(lenb_fp);
 
-        // 写入输出 exe: [vm 数据] [lenb 数据] [4字节 lenb_size] [4字节 LENB_MAGIC]
+        // 写入输出文件: [vm 数据] [lenb 数据] [4字节 lenb_size] [4字节 LENB_MAGIC]
+#ifdef _WIN32
         wchar_t wout_exe[MAX_PATH_LEN];
         MultiByteToWideChar(CP_UTF8, 0, out_exe, -1, wout_exe, MAX_PATH_LEN);
         FILE* out_fp = _wfopen(wout_exe, L"wb");
+#else
+        FILE* out_fp = fopen(out_exe, "wb");
+#endif
         if (!out_fp) {
             fprintf(stderr, "[错误] 无法创建输出文件: %s\n", out_exe);
             free(lenb_data);
