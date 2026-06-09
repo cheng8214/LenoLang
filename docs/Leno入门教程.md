@@ -252,12 +252,14 @@ main() {
 
     // 泛型字典（大写 Dict）
     Dict[string, int] dict1 = {"a": 1, "b": 2}
-    Dict[string, int] dict2       // 空的 Dict[string, int]
-    Dict[string, int] dict3 = {}  // 等同于上面，也是空的 Dict[string, int]
+    Dict[int, string] dict2 = {1: "one", 2: "two"}
+    Dict[string, int] dict3       // 空的 Dict[string, int]
+    Dict[int, string] dict4 = {}  // 等同于上面，也是空的 Dict[int, string]
 
     // 类型推断
     var inferred_arr = [1, 2, 3]      // 推断为 Array[int]
     var inferred_dict = {"x": 10}     // 推断为 Dict[string, int]
+    var inferred_int_dict = {1: "一", 2: "二"}  // 推断为 Dict[int, string]
 }
 ```
 
@@ -392,6 +394,9 @@ main() {
 
     var dict = {"a": 1}
     print(type(dict))       // "Dict[string, int]"
+
+    var id_map = {1: "一"}
+    print(type(id_map))     // "Dict[int, string]"
 
     int b = null
     print(type(b))          // "null"（值是 null，不是 int）
@@ -589,6 +594,12 @@ main() {
     }
     if "z" not in dict {
         print("键 'z' 不存在")
+    }
+
+    // int 键字典成员检查
+    var id_map = {1: "张三", 2: "李四"}
+    if 1 in id_map {
+        print("键 1 存在")
     }
 
     // 字符串子串检查
@@ -1011,6 +1022,20 @@ main() {
     for dict to key, value {
         print($"{key}: {value}")
     }
+}
+```
+
+**int 键字典遍历：**
+
+```leno
+main() {
+    var id_map = {1: "张三", 2: "李四", 3: "王五"}
+
+    // 遍历 int 键字典
+    for id_map to id, name {
+        print($"{id}: {name}")
+    }
+    // 输出顺序: 1:张三, 2:李四, 3:王五（按插入顺序）
 }
 ```
 
@@ -1839,8 +1864,11 @@ main() {
 
 ```leno
 main() {
-    // 基本字典
+    // 基本字典（string 键）
     var dict = {name: "cheng", age: 25}
+
+    // int 键字典
+    var id_map = {1: "张三", 2: "李四", 3: "王五"}
 
     // 复杂字典（嵌套数组和字典）
     var user = {
@@ -1882,6 +1910,38 @@ main() {
 
     // set 方法
     user.set("city", "上海")
+}
+```
+
+**int 键字典：**
+
+```leno
+main() {
+    // 创建 int 键字典
+    var id_map = {1: "张三", 2: "李四", 3: "王五"}
+
+    // 索引访问（int 键）
+    print(id_map[1])        // 张三
+    print(id_map[2])        // 李四
+
+    // 索引修改
+    id_map[1] = "张三丰"
+    id_map[4] = "赵六"      // 添加新键
+
+    // set 方法
+    id_map.set(5, "孙七")
+
+    // has 检查
+    print(id_map.has(3))    // true
+    print(id_map.has(99))   // false
+
+    // remove 删除
+    id_map.remove(2)
+
+    // 遍历 int 键字典
+    for id_map to id, name {
+        print($"{id}: {name}")
+    }
 }
 ```
 
@@ -2878,7 +2938,7 @@ lenolang program.leno
 | 功能    | 语法                                            |
 | ----- | --------------------------------------------- |
 | 泛型数组  | `Array[int]`, `Array[Array[int]]`             |
-| 泛型字典  | `Dict[string, int]`                           |
+| 泛型字典  | `Dict[string, int]`, `Dict[int, string]`                           |
 | 数组切片  | `arr[2:8]`, `arr[:5]`, `arr[3:]`              |
 | 数组比较  | `[1,2] == [1,2]`                              |
 | 类型转换  | `_int(x)`, `_float(x)`, `_str(x)`, `_bool(x)` |
