@@ -31,7 +31,7 @@ static Value ast_default_to_value(Ast* expr) {
                 ObjString* key = str_copy(expr->u.dict.entries[i].key,
                                           strlen(expr->u.dict.entries[i].key));
                 Value val = ast_default_to_value(expr->u.dict.entries[i].value);
-                dict_set(dict, key, val);
+                dict_set(dict, val_obj((Object*)key), val);
             }
             return val_obj((Object*)dict);
         }
@@ -1624,7 +1624,7 @@ static void gen_func_module(CodeGen* gen, Ast* ast) {
     // 如果全局函数字典存在，从中获取函数对象
     if (g_func_dict) {
         ObjString* key = str_copy(ast->u.func.name, (int)strlen(ast->u.func.name));
-        Value func_val = dict_get(g_func_dict, key);
+        Value func_val = dict_get(g_func_dict, val_obj((Object*)key));
         if (!val_is_null(func_val)) {
             int func_const = make_constant(gen, func_val);
             emit_closure(gen, func_const, ast->line);
@@ -1690,7 +1690,7 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
                 
                 // 如果全局函数字典存在，从中获取函数对象
                 if (g_func_dict) {
-                    Value func_val = dict_get(g_func_dict, method_name);
+                    Value func_val = dict_get(g_func_dict, val_obj((Object*)method_name));
                     if (!val_is_null(func_val)) {
                         method_func_consts[i] = make_constant(gen, func_val);
                     } else {

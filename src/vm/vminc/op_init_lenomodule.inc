@@ -48,18 +48,18 @@ OPCODE(OP_INIT_LENOMODULE) {
             for (int i = 0; i < module->export_mapping_count; i++) {
                 ExportGlobalMapping* mapping = &module->export_mappings[i];
                 ObjString* key = str_copy(mapping->name, (int)strlen(mapping->name));
-                Value current_val = dict_get(module->exports, key);
+                Value current_val = dict_get(module->exports, val_obj((Object*)key));
                 if (val_is_null(current_val)) {
                     if (mapping->global_index >= 0 && mapping->global_index < module->global_count) {
                         Value actual_val = module->globals[mapping->global_index];
                         if (!val_is_null(actual_val)) {
-                            dict_set(module->exports, key, actual_val);
+                            dict_set(module->exports, val_obj((Object*)key), actual_val);
                         }
                     } else if (mapping->global_index == -2) {
                         extern ObjStructDef* struct_def_find(const char* name);
                         ObjStructDef* def = struct_def_find(mapping->name);
                         if (def) {
-                            dict_set(module->exports, key, val_obj((Object*)def));
+                            dict_set(module->exports, val_obj((Object*)key), val_obj((Object*)def));
                         }
                     }
                 }

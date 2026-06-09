@@ -9,8 +9,6 @@ OPCODE(OP_DICT) {
     if (!dict) return -1;
 
     // 先收集所有键值对（从栈中弹出，顺序是反的）
-    // 栈顺序: key1, value1, key2, value2, ... (key1 在栈底)
-    // 弹出顺序: valueN, keyN, ..., value1, key1
     Value* keys = (Value*)malloc(count * sizeof(Value));
     Value* values = (Value*)malloc(count * sizeof(Value));
     if (!keys || !values) {
@@ -23,15 +21,9 @@ OPCODE(OP_DICT) {
         keys[i] = vm_stack_pop(&vm);
     }
 
-    // 按正序插入字典
+    // 按正序插入字典（键支持 int、string、float、bool 等类型）
     for (int i = 0; i < count; i++) {
-        if (!val_is_obj(keys[i]) || val_as_obj(keys[i])->type != OBJ_STRING) {
-            runtime_error("字典键必须是字符串", GET_CURRENT_LINE());
-            free(keys);
-            free(values);
-            return -1;
-        }
-        dict_set(dict, (ObjString*)val_as_obj(keys[i]), values[i]);
+        dict_set(dict, keys[i], values[i]);
     }
 
     free(keys);
@@ -51,15 +43,8 @@ OPCODE(OP_DICT_GET) {
         DISPATCH;
     }
 
-    if (!val_is_obj(key_val) || val_as_obj(key_val)->type != OBJ_STRING) {
-        throw_runtime_error("字典键必须是字符串", GET_CURRENT_LINE());
-        frame = &vm.frames[vm.frame_cnt - 1];
-        DISPATCH;
-    }
-
     ObjDict* dict = (ObjDict*)val_as_obj(dict_val);
-    ObjString* key = (ObjString*)val_as_obj(key_val);
-    Value result = dict_get(dict, key);
+    Value result = dict_get(dict, key_val);
     vm_stack_push(&vm, result);
     DISPATCH;
 }
@@ -76,17 +61,9 @@ OPCODE(OP_DICT_SET) {
         DISPATCH;
     }
 
-    if (!val_is_obj(key_val) || val_as_obj(key_val)->type != OBJ_STRING) {
-        throw_runtime_error("字典键必须是字符串", GET_CURRENT_LINE());
-        frame = &vm.frames[vm.frame_cnt - 1];
-        DISPATCH;
-    }
-
     ObjDict* dict = (ObjDict*)val_as_obj(dict_val);
-    ObjString* key = (ObjString*)val_as_obj(key_val);
 
-    // 直接调用 dict_set（和 OP_INDEX_SET 保持一致）
-    dict_set(dict, key, value);
+    dict_set(dict, key_val, value);
     vm_stack_push(&vm, dict_val);  // 返回字典，支持链式操作
     DISPATCH;
 }
@@ -111,18 +88,16 @@ OPCODE(OP_DICT_GET_KEY) {
     int index = (int)value_to_double(index_val);
     ObjDict* dict = (ObjDict*)val_as_obj(dict_val);
     
-    if (index < 0 || index >= dict->count) {
+    // count = 数组部分 + 哈希部分条目数
+    (void)(dict->acount + dict->count);  // 保留语义，消除 unused 警告
+    if (index < 0 || index >= dict->order_count) {
         throw_runtime_error("字典键索引越界", GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
     
-    // 按索引获取键
-    ObjString* key = dict_get_key_by_index(dict, index);
-    if (key) {
-        vm_stack_push(&vm, val_obj((Object*)key));
-    } else {
-        vm_stack_push(&vm, val_null());
-    }
+    // 按索引获取键（返回 Value，可能为 int/string/float 等）
+    Value key = dict_get_key_by_index(dict, index);
+    vm_stack_push(&vm, key);
     DISPATCH;
 }

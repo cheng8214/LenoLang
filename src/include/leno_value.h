@@ -302,7 +302,7 @@ typedef struct {
 
 // 字典条目（使用开放寻址法的哈希表）
 typedef struct {
-    ObjString* key;   // NULL 表示空槽，tombstone 表示已删除
+    Value key;        // 键（支持 int/string/float/bool），NULL_VAL 表示空槽
     Value value;
 } ObjDictEntry;
 
@@ -330,7 +330,7 @@ typedef struct {
     TypeInfo* type_info;    // 运行时类型信息（键值类型），NULL 表示未指定泛型类型
 
     // 插入顺序维护（用于保持输出顺序）
-    ObjString** order;      // 插入顺序的键数组
+    Value* order;           // 插入顺序的键数组
     int order_count;        // 当前顺序数组元素数
     int order_capacity;     // 顺序数组容量
 } ObjDict;
@@ -769,20 +769,26 @@ static inline Value arr_read(ObjArray* arr, int index) {
 }
 
 // 字典操作
+// 用于标记已删除哈希表条目的 Value 哨兵值
+#define DICT_TOMBSTONE_VAL ((Value)(QNAN | SIGN_BIT | TAG_TRUE | 0x1))
+
 ObjDict* dict_new(int capacity);
-void dict_set(ObjDict* dict, ObjString* key, Value value);
-Value dict_get(ObjDict* dict, ObjString* key);
-int dict_has(ObjDict* dict, ObjString* key);
-void dict_delete(ObjDict* dict, ObjString* key);
+void dict_set(ObjDict* dict, Value key, Value value);
+Value dict_get(ObjDict* dict, Value key);
+int dict_has(ObjDict* dict, Value key);
+void dict_delete(ObjDict* dict, Value key);
 void dict_try_shrink(ObjDict* dict);
+int dict_get_array_size(ObjDict* dict);  // 获取数组部分大小（用于迭代）
+int dict_get_hash_count(ObjDict* dict);  // 获取哈希部分条目数（用于迭代）
+ObjString* dict_key_to_string(Value key); // 将键转为字符串表示
 
 // 按索引获取字典键（static inline 供编译器内联优化）
-static inline ObjString* dict_get_key_by_index(ObjDict* dict, int index) {
-    if (!dict || index < 0) return NULL;
+static inline Value dict_get_key_by_index(ObjDict* dict, int index) {
+    if (!dict || index < 0) return NULL_VAL;
     if (dict->order && index < dict->order_count) {
         return dict->order[index];
     }
-    return NULL;
+    return NULL_VAL;
 }
 
 Value dict_get_value_by_index(ObjDict* dict, int index);  // 按索引获取值（用于for循环同时获取键值）

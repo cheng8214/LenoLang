@@ -48,9 +48,6 @@
 // GC 全局实例（线程局部存储）
 THREAD_LOCAL GC gc = {0};
 
-// 字符串字典的墓碑标记（用于区分空槽和已删除槽）
-extern _Thread_local ObjString* tombstone;
-
 // 安全的字符串长度计算（防止野指针导致崩溃）
 static size_t safe_strlen(const char* str) {
     if (!str) return 0;
@@ -327,15 +324,18 @@ void gc_mark_object(Object* obj) {
                 gc_mark_value(dict->array[i]);
             }
             for (int i = 0; i < dict->capacity; i++) {
-                ObjString* key = dict->entries[i].key;
-                if (key != NULL && key != tombstone) {
-                    gc_mark_object((Object*)key);
+                Value entry_key = dict->entries[i].key;
+                if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
+                    if (val_is_obj(entry_key)) {
+                        gc_mark_object(val_as_obj(entry_key));
+                    }
                     gc_mark_value(dict->entries[i].value);
                 }
             }
             for (int i = 0; i < dict->order_count; i++) {
-                if (dict->order[i] != NULL) {
-                    gc_mark_object((Object*)dict->order[i]);
+                Value order_key = dict->order[i];
+                if (val_is_obj(order_key)) {
+                    gc_mark_object(val_as_obj(order_key));
                 }
             }
             break;
@@ -696,8 +696,8 @@ static void mark_roots(void) {
     extern void guis_mark_extra_roots(void);
     guis_mark_extra_roots();
 
-    // 19. 标记字典 tombstone 哨兵字符串（防止 GC 回收导致字典操作崩溃）
-    if (tombstone) gc_mark_object((Object*)tombstone);
+    // 19. 标记字典 tombstone 哨兵字符串已不再需要（已改用 Value 哨兵值）
+    // DICT_TOMBSTONE_VAL 是 NaN-boxed 值，不涉及 GC 管理的对象
 }
 
 // 标记 remembered set 中的老年代对象（Minor GC 时作为额外根集合）

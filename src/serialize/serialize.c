@@ -327,9 +327,9 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             }
             wb_write_u32(wb, entry_count);
             for (int i = 0; i < dict->order_count; i++) {
-                ObjString* key = dict->order[i];
-                if (!key) continue;
-                if (!serialize_constant(wb, val_obj((Object*)key))) return 0;
+                Value key = dict->order[i];
+                if (val_is_null(key)) continue;
+                if (!serialize_constant(wb, key)) return 0;
                 Value value = dict_get(dict, key);
                 if (!serialize_constant(wb, value)) return 0;
             }
@@ -477,9 +477,9 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                 }
                 wb_write_u32(wb, entry_count);
                 for (int i = 0; i < dict->order_count; i++) {
-                    ObjString* key = dict->order[i];
-                    if (!key) continue;
-                    if (!serialize_constant(wb, val_obj((Object*)key))) return 0;
+                    Value key = dict->order[i];
+                    if (val_is_null(key)) continue;
+                    if (!serialize_constant(wb, key)) return 0;
                     Value value = dict_get(dict, key);
                     if (!serialize_constant(wb, value)) return 0;
                 }
@@ -822,9 +822,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             Value key_val, val;
             if (!deserialize_constant(ctx, &key_val)) return 0;
             if (!deserialize_constant(ctx, &val)) return 0;
-            if (val_is_string(key_val)) {
-                dict_set(dict, (ObjString*)val_as_obj(key_val), val);
-            }
+            dict_set(dict, key_val, val);
         }
         *out_val = val_obj((Object*)dict);
         return 1;
@@ -1136,9 +1134,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             Value key_val, val;
             if (!deserialize_constant(ctx, &key_val)) return 0;
             if (!deserialize_constant(ctx, &val)) return 0;
-            if (val_is_string(key_val)) {
-                dict_set(mod->exports, (ObjString*)val_as_obj(key_val), val);
-            }
+            dict_set(mod->exports, key_val, val);
         }
 
         {

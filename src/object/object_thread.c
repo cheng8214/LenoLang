@@ -368,8 +368,9 @@ Value value_clone_for_channel(Value val) {
                         }
                     }
                     for (int i = 0; i < dict->capacity; i++) {
-                        if (dict->entries[i].key != NULL) {
-                            dict_set(copy, dict->entries[i].key,
+                        Value entry_key = dict->entries[i].key;
+                        if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
+                            dict_set(copy, entry_key,
                                     value_clone_for_channel(dict->entries[i].value));
                         }
                     }

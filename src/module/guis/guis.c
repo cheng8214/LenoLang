@@ -145,16 +145,16 @@ void init_event_string_keys(void) {
 }
 
 void dict_add_int_key(ObjDict* d, ObjString* key, int value) {
-    dict_set(d, key, val_int(value));
+    dict_set(d, val_obj((Object*)key), val_int(value));
 }
 
 void dict_add_float_key(ObjDict* d, ObjString* key, float value) {
-    dict_set(d, key, val_float((double)value));
+    dict_set(d, val_obj((Object*)key), val_float((double)value));
 }
 
 void dict_add_string_key(ObjDict* d, ObjString* key, const char* value) {
     ObjString* v = str_copy(value, (int)strlen(value));
-    dict_set(d, key, val_obj((Object*)v));
+    dict_set(d, val_obj((Object*)key), val_obj((Object*)v));
 }
 
 ObjArray* make_int_array2(int a, int b) {
@@ -255,33 +255,33 @@ static Value gui_create_window_func(int argc, Value* args) {
         ObjString* key_hidden = intern_string("visible", 7);
         ObjString* key_always_on_top = intern_string("always_on_top", 13);
 
-        Value vw = dict_get(style, key_w);
+        Value vw = dict_get(style, val_obj((Object*)key_w));
         if (!val_is_null(vw)) w = val_as_int(vw);
 
-        Value vh = dict_get(style, key_h);
+        Value vh = dict_get(style, val_obj((Object*)key_h));
         if (!val_is_null(vh)) h = val_as_int(vh);
 
-        Value vfull = dict_get(style, key_full);
+        Value vfull = dict_get(style, val_obj((Object*)key_full));
         if (!val_is_null(vfull) && val_as_bool(vfull)) {
             flags |= LENO_GUI_WIN_FULLSCREEN;
         }
 
-        Value vborderless = dict_get(style, key_borderless);
+        Value vborderless = dict_get(style, val_obj((Object*)key_borderless));
         if (!val_is_null(vborderless) && val_as_bool(vborderless)) {
             flags |= LENO_GUI_WIN_BORDERLESS;
         }
 
-        Value vresizable = dict_get(style, key_resizable);
+        Value vresizable = dict_get(style, val_obj((Object*)key_resizable));
         if (!val_is_null(vresizable) && val_as_bool(vresizable)) {
             flags |= LENO_GUI_WIN_RESIZABLE;
         }
 
-        Value vhidden = dict_get(style, key_hidden);
+        Value vhidden = dict_get(style, val_obj((Object*)key_hidden));
         if (!val_is_null(vhidden) && !val_as_bool(vhidden)) {
             flags |= LENO_GUI_WIN_HIDDEN;
         }
 
-        Value vtop = dict_get(style, key_always_on_top);
+        Value vtop = dict_get(style, val_obj((Object*)key_always_on_top));
         if (!val_is_null(vtop) && val_as_bool(vtop)) {
             flags |= LENO_GUI_WIN_ALWAYS_ON_TOP;
         }
@@ -393,7 +393,7 @@ static Value gui_load_image_ex_func(int argc, Value* args) {
         if (obj->type == OBJ_DICT) {
             ObjDict* opts = (ObjDict*)obj;
             ObjString* key = intern_string("flip_vertical", 13);
-            Value flip_val = dict_get(opts, key);
+            Value flip_val = dict_get(opts, val_obj((Object*)key));
             flip_vertical = val_is_truthy(flip_val);
         }
     }
@@ -730,7 +730,7 @@ static Value gui_file_dialog_func(int argc, Value* args) {
         if (opts && opts->header.type == OBJ_DICT) {
             /* 读取 title */
             ObjString* key_title = intern_string("title", 5);
-            Value vtitle = dict_get(opts, key_title);
+            Value vtitle = dict_get(opts, val_obj((Object*)key_title));
             if (!val_is_null(vtitle) && val_is_obj(vtitle)) {
                 Object* obj = val_as_obj(vtitle);
                 if (obj->type == OBJ_STRING) title = ((ObjString*)obj)->chars;
@@ -738,7 +738,7 @@ static Value gui_file_dialog_func(int argc, Value* args) {
 
             /* 读取 default_path */
             ObjString* key_path = intern_string("path", 4);
-            Value vpath = dict_get(opts, key_path);
+            Value vpath = dict_get(opts, val_obj((Object*)key_path));
             if (!val_is_null(vpath) && val_is_obj(vpath)) {
                 Object* obj = val_as_obj(vpath);
                 if (obj->type == OBJ_STRING) default_path = ((ObjString*)obj)->chars;
@@ -746,12 +746,12 @@ static Value gui_file_dialog_func(int argc, Value* args) {
 
             /* 读取 allow_many */
             ObjString* key_many = intern_string("multiple", 8);
-            Value vmany = dict_get(opts, key_many);
+            Value vmany = dict_get(opts, val_obj((Object*)key_many));
             if (!val_is_null(vmany) && val_as_bool(vmany)) allow_many = 1;
 
             /* 读取 filters */
             ObjString* key_filters = intern_string("filters", 7);
-            Value vfilters = dict_get(opts, key_filters);
+            Value vfilters = dict_get(opts, val_obj((Object*)key_filters));
             if (!val_is_null(vfilters) && val_is_obj(vfilters)) {
                 Object* obj = val_as_obj(vfilters);
                 if (obj->type == OBJ_ARRAY) {
@@ -766,8 +766,8 @@ static Value gui_file_dialog_func(int argc, Value* args) {
                                 ObjDict* fd = (ObjDict*)val_as_obj(vf);
                                 ObjString* kn = intern_string("name", 4);
                                 ObjString* kp = intern_string("pattern", 7);
-                                Value vn = dict_get(fd, kn);
-                                Value vp = dict_get(fd, kp);
+                                Value vn = dict_get(fd, val_obj((Object*)kn));
+                                Value vp = dict_get(fd, val_obj((Object*)kp));
                                 if (!val_is_null(vn) && val_is_obj(vn)) {
                                     filters[i].name = ((ObjString*)val_as_obj(vn))->chars;
                                 }
@@ -782,7 +782,7 @@ static Value gui_file_dialog_func(int argc, Value* args) {
 
             /* 读取 window（可选） */
             ObjString* key_win = intern_string("window", 6);
-            Value vwin = dict_get(opts, key_win);
+            Value vwin = dict_get(opts, val_obj((Object*)key_win));
             if (!val_is_null(vwin)) {
                 win = as_window(vwin)->platform;
             }

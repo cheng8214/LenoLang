@@ -72,7 +72,7 @@ OPCODE(OP_GET_PROPERTY) {
 
             if (receiver_type == OBJ_DICT) {
                 ObjDict* dict = (ObjDict*)val_as_obj(receiver);
-                Value value = dict_get(dict, name);
+                Value value = dict_get(dict, val_obj((Object*)name));
                 vm_stack_push(&vm, value);
                 DISPATCH;
             }
@@ -266,7 +266,7 @@ OPCODE(OP_GET_PROPERTY) {
 
             if (receiver_type == OBJ_DICT) {
                 ObjDict* dict = (ObjDict*)val_as_obj(receiver);
-                Value value = dict_get(dict, name);
+                Value value = dict_get(dict, val_obj((Object*)name));
                 vm_stack_push(&vm, value);
                 DISPATCH;
             }
@@ -349,7 +349,7 @@ OPCODE(OP_GET_PROPERTY) {
 
     if (val_is_obj(receiver) && val_as_obj(receiver)->type == OBJ_MODULE) {
         ObjModule* module = (ObjModule*)val_as_obj(receiver);
-        Value value = dict_get(module->exports, name);
+        Value value = dict_get(module->exports, val_obj((Object*)name));
         vm_stack_push(&vm, value);
         DISPATCH;
     }

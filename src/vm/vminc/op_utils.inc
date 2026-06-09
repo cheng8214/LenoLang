@@ -39,16 +39,8 @@ OPCODE(OP_INDEX) {
             break;
         }
         case OBJ_DICT: {
-            if (!val_is_obj(index_val) || val_as_obj(index_val)->type != OBJ_STRING) {
-                char msg[256];
-                snprintf(msg, sizeof(msg), "字典键必须是字符串，但实际类型为 '%s'", value_type_desc(index_val));
-                throw_runtime_error(msg, GET_CURRENT_LINE());
-                frame = &vm.frames[vm.frame_cnt - 1];
-                break;
-            }
             ObjDict* dict = (ObjDict*)val_as_obj(obj_val);
-            ObjString* key = (ObjString*)val_as_obj(index_val);
-            Value result = dict_get(dict, key);
+            Value result = dict_get(dict, index_val);
             vm_stack_push(&vm, result);
             break;
         }
@@ -80,8 +72,7 @@ OPCODE(OP_INDEX) {
                 break;
             }
             ObjModule* module = (ObjModule*)val_as_obj(obj_val);
-            ObjString* key = (ObjString*)val_as_obj(index_val);
-            Value result = dict_get(module->exports, key);
+            Value result = dict_get(module->exports, index_val);
             vm_stack_push(&vm, result);
             break;
         }
@@ -510,9 +501,9 @@ OPCODE(OP_ITER_GET) {
                 frame = &vm.frames[vm.frame_cnt - 1];
                 break;
             }
-            ObjString* key = dict_get_key_by_index(dict, index);
-            if (key) {
-                vm_stack_push(&vm, val_obj((Object*)key));
+            Value key = dict_get_key_by_index(dict, index);
+            if (!val_is_null(key)) {
+                vm_stack_push(&vm, key);
             } else {
                 vm_stack_push(&vm, val_null());
             }

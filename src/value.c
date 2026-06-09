@@ -144,22 +144,15 @@ char* value_to_string(Value v) {
                 // 先计算需要的总长度
                 int total_len = 2; // "{}"
                 int entry_count = 0;
-                // 使用插入顺序数组（字符串键）
+                // 使用插入顺序数组
                 for (int i = 0; i < dict->order_count; i++) {
-                    ObjString* key = dict->order[i];
-                    // 检查键是否仍然存在
+                    Value key = dict->order[i];
                     if (!dict_has(dict, key)) continue;
-                    // 跳过纯数字键
-                    int is_numeric = 1;
-                    for (int j = 0; j < key->len; j++) {
-                        if (key->chars[j] < '0' || key->chars[j] > '9') {
-                            is_numeric = 0;
-                            break;
-                        }
-                    }
-                    if (is_numeric) continue;
+                    // 跳过纯数字键（整数键）
+                    if (val_is_int(key)) continue;
                     entry_count++;
-                    total_len += key->len + 2; // key + ": "
+                    ObjString* key_str = dict_key_to_string(key);
+                    total_len += key_str->len + 2; // key + ": "
                     Value val = dict_get(dict, key);
                     char* val_str = value_to_string(val);
                     total_len += (int)strlen(val_str);
@@ -184,22 +177,17 @@ char* value_to_string(Value v) {
                 int pos = 1;
                 int printed = 0;
                 for (int i = 0; i < dict->order_count; i++) {
-                    ObjString* key = dict->order[i];
+                    Value key = dict->order[i];
                     if (!dict_has(dict, key)) continue;
-                    int is_numeric = 1;
-                    for (int j = 0; j < key->len; j++) {
-                        if (key->chars[j] < '0' || key->chars[j] > '9') {
-                            is_numeric = 0;
-                            break;
-                        }
-                    }
-                    if (is_numeric) continue;
+                    // 跳过纯数字键（整数键）
+                    if (val_is_int(key)) continue;
                     if (printed > 0) {
                         result[pos++] = ',';
                         result[pos++] = ' ';
                     }
-                    memcpy(result + pos, key->chars, key->len);
-                    pos += key->len;
+                    ObjString* key_str = dict_key_to_string(key);
+                    memcpy(result + pos, key_str->chars, key_str->len);
+                    pos += key_str->len;
                     result[pos++] = ':';
                     result[pos++] = ' ';
                     Value val = dict_get(dict, key);

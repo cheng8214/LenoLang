@@ -1549,8 +1549,9 @@ Value value_copy(Value v) {
                 }
                 // 拷贝哈希部分
                 for (int i = 0; i < dict->capacity; i++) {
-                    if (dict->entries[i].key != NULL) {
-                        dict_set(copy, dict->entries[i].key,
+                    Value entry_key = dict->entries[i].key;
+                    if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
+                        dict_set(copy, entry_key,
                                 value_copy(dict->entries[i].value));
                     }
                 }

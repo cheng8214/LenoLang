@@ -53,7 +53,7 @@ void update_module_function_ptrs(ObjModule* src_module, ObjModule* dst_module) {
     if (dst_module->exports) {
         for (int i = 0; i < dst_module->exports->capacity; i++) {
             ObjDictEntry* entry = &dst_module->exports->entries[i];
-            if (entry->key != NULL && !val_is_null(entry->value)) {
+            if (!val_is_null(entry->key) && entry->key != DICT_TOMBSTONE_VAL && !val_is_null(entry->value)) {
                 if (val_is_obj(entry->value)) {
                     Object* obj = val_as_obj(entry->value);
                     if (obj->type == OBJ_CLOSURE) {

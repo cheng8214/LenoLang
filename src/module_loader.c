@@ -485,7 +485,7 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
     // 这样循环依赖中的其他模块可以看到本模块的导出（虽然值暂时为null）
     for (int i = 0; i < exports.count; i++) {
         ObjString* key = str_copy(exports.names[i], (int)strlen(exports.names[i]));
-        dict_set(placeholder_module->exports, key, val_null());
+        dict_set(placeholder_module->exports, val_obj((Object*)key), val_null());
     }
     
     // 提前添加到已加载列表，防止循环导入
@@ -503,8 +503,9 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         ObjDict* exports_dict = module->exports;
         for (int i = 0; i < exports_dict->capacity; i++) {
             ObjDictEntry* entry = &exports_dict->entries[i];
-            if (entry->key != NULL) {
-                dict_set(placeholder_module->exports, entry->key, entry->value);
+            Value entry_key = entry->key;
+            if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
+                dict_set(placeholder_module->exports, entry_key, entry->value);
             }
         }
         // 复制全局变量表

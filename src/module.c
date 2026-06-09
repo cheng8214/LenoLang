@@ -260,8 +260,8 @@ static void fix_single_module_impl(ObjModule* mod) {
     }
     if (mod->exports) {
         for (int j = 0; j < mod->exports->order_count; j++) {
-            ObjString* key = mod->exports->order[j];
-            if (!key) continue;
+            Value key = mod->exports->order[j];
+            if (val_is_null(key)) continue;
             Value ev = dict_get(mod->exports, key);
             if (val_is_obj(ev)) {
                 Object* obj = val_as_obj(ev);

@@ -2774,7 +2774,7 @@ void visit(Semantic* s, Ast* ast) {
                                             expected_param_type = elem_type->kind;
                                             expected_type_for_check = elem_type;
                                         }
-                                    } else if (obj_sym->type->kind == TYPE_DICT) {
+                                    } else if (obj_sym->type->kind == TYPE_DICT && i > 0) {
                                         TypeInfo* value_type = obj_sym->type->value_type;
                                         if (value_type && value_type->kind != TYPE_ANY) {
                                             expected_param_type = value_type->kind;

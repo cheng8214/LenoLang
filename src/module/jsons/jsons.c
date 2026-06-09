@@ -5,6 +5,9 @@
 #include <ctype.h>
 #include <stdbool.h>
 
+// 前向声明
+extern ObjString* dict_key_to_string(Value key);
+
 // StringBuilder for dynamic string construction
 
 typedef struct {
@@ -345,7 +348,7 @@ static Value json_parse_object(JsonParser* parser) {
         }
         
         Value value = json_parse_value(parser);
-        dict_set(dict, key, value);
+        dict_set(dict, val_obj((Object*)key), value);
         
         if (json_parser_match(parser, JSON_TOKEN_COMMA)) {
             continue;
@@ -525,16 +528,30 @@ static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool 
     int total = dict->count;
     
     for (int i = 0; i < dict->order_count; i++) {
-        ObjString* key = dict->order[i];
-        if (!key) continue;
+        Value order_key = dict->order[i];
+        if (val_is_null(order_key)) continue;
         
-        Value value = dict_get(dict, key);
+        Value value = dict_get(dict, order_key);
         
         if (pretty) {
             json_encode_indent(sb, indent + 2);
         }
         
-        json_encode_string(sb, key->chars);
+        // 获取键的字符串表示
+        const char* key_chars = NULL;
+        char key_buf[32];
+        if (val_is_obj(order_key) && val_as_obj(order_key)->type == OBJ_STRING) {
+            key_chars = ((ObjString*)val_as_obj(order_key))->chars;
+        } else {
+            ObjString* ks = dict_key_to_string(order_key);
+            if (ks) {
+                snprintf(key_buf, sizeof(key_buf), "%s", ks->chars);
+                key_chars = key_buf;
+            } else {
+                key_chars = "";
+            }
+        }
+        json_encode_string(sb, key_chars);
         
         sb_append_char(sb, ':');
         if (pretty) {

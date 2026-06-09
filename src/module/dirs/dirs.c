@@ -784,50 +784,50 @@ static Value native_dirs_stat(int argCount, Value* args) {
     }
     
     // 前向声明 dict_set
-    extern void dict_set(ObjDict* dict, ObjString* key, Value value);
+    extern void dict_set(ObjDict* dict, Value key, Value value);
     
     // 初始化默认值
-    dict_set(dict, str_copy("exists", 6), val_bool(0));
-    dict_set(dict, str_copy("size", 4), val_int(0));
-    dict_set(dict, str_copy("is_file", 7), val_bool(0));
-    dict_set(dict, str_copy("is_dir", 6), val_bool(0));
-    dict_set(dict, str_copy("mtime", 5), val_int(0));
+    dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(0));
+    dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int(0));
+    dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(0));
+    dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(0));
+    dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
     
 #ifdef _WIN32
     WIN32_FILE_ATTRIBUTE_DATA attrData;
     if (GetFileAttributesExA(path, GetFileExInfoStandard, &attrData)) {
         // 文件存在，更新信息
-        dict_set(dict, str_copy("exists", 6), val_bool(1));
+        dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
         
         // size
         LARGE_INTEGER size;
         size.LowPart = attrData.nFileSizeLow;
         size.HighPart = attrData.nFileSizeHigh;
-        dict_set(dict, str_copy("size", 4), val_int((int)size.QuadPart));
+        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int)size.QuadPart));
         
         // is_file, is_dir
         int is_dir = attrData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
-        dict_set(dict, str_copy("is_file", 7), val_bool(!is_dir));
-        dict_set(dict, str_copy("is_dir", 6), val_bool(is_dir));
+        dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(!is_dir));
+        dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(is_dir));
         
         // mtime (简化版，返回 0)
-        dict_set(dict, str_copy("mtime", 5), val_int(0));
+        dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
     }
 #else
     struct stat st;
     if (stat(path, &st) == 0) {
         // 文件存在，更新信息
-        dict_set(dict, str_copy("exists", 6), val_bool(1));
+        dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
         
         // size
-        dict_set(dict, str_copy("size", 4), val_int((int)st.st_size));
+        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int)st.st_size));
         
         // is_file, is_dir
-        dict_set(dict, str_copy("is_file", 7), val_bool(S_ISREG(st.st_mode)));
-        dict_set(dict, str_copy("is_dir", 6), val_bool(S_ISDIR(st.st_mode)));
+        dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(S_ISREG(st.st_mode)));
+        dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(S_ISDIR(st.st_mode)));
         
         // mtime
-        dict_set(dict, str_copy("mtime", 5), val_int((int)st.st_mtime));
+        dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int((int)st.st_mtime));
     }
 #endif
     

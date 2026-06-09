@@ -101,7 +101,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                         func->module = module;
                         
                         ObjString* key = str_copy(func_name, (int)strlen(func_name));
-                        dict_set(func_dict, key, func_val);
+                        dict_set(func_dict, val_obj((Object*)key), func_val);
                     }
                 }
                 
@@ -143,7 +143,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                             
                             Value method_val = val_obj((Object*)func);
                             ObjString* key = str_copy(method_key, (int)strlen(method_key));
-                            dict_set(func_dict, key, method_val);
+                            dict_set(func_dict, val_obj((Object*)key), method_val);
                         }
                         
                         chunk_free(&method_chunk);
@@ -156,11 +156,11 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     // 5. 将导出的项添加到模块导出表
     for (int i = 0; i < export_count; i++) {
         ObjString* key = str_copy(export_names[i], (int)strlen(export_names[i]));
-        Value func_val = dict_get(func_dict, key);
+        Value func_val = dict_get(func_dict, val_obj((Object*)key));
         if (!val_is_null(func_val)) {
-            dict_set(module->exports, key, func_val);
+            dict_set(module->exports, val_obj((Object*)key), func_val);
         } else {
-            dict_set(module->exports, key, val_null());
+            dict_set(module->exports, val_obj((Object*)key), val_null());
         }
     }
 
@@ -206,7 +206,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
         
         if (func_ast && func_name) {
             ObjString* key = str_copy(func_name, (int)strlen(func_name));
-            Value func_val = dict_get(func_dict, key);
+            Value func_val = dict_get(func_dict, val_obj((Object*)key));
             if (!val_is_null(func_val)) {
                 int index = func_ast->u.func.ref.index;
                 if (index >= 0 && index < 256) {
@@ -250,7 +250,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                     snprintf(method_key, sizeof(method_key), "%s::%s", struct_name, method_ast->u.func.name);
                     
                     ObjString* key = str_copy(method_key, (int)strlen(method_key));
-                    Value method_val = dict_get(func_dict, key);
+                    Value method_val = dict_get(func_dict, val_obj((Object*)key));
                     if (!val_is_null(method_val)) {
                         int index = method_ast->u.func.ref.index;
                         if (index >= 0 && index < 256) {
@@ -302,7 +302,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     // 7. 处理导出的变量（直接从 AST 获取初始值）
     for (int i = 0; i < export_count; i++) {
         ObjString* key = str_copy(export_names[i], (int)strlen(export_names[i]));
-        Value current_val = dict_get(module->exports, key);
+        Value current_val = dict_get(module->exports, val_obj((Object*)key));
         if (val_is_null(current_val)) {
             for (int j = 0; j < parser.root->u.block.count; j++) {
                 Ast* stmt = parser.root->u.block.items[j];
@@ -338,7 +338,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                                 }
                             }
                             if (!val_is_null(var_val)) {
-                                dict_set(module->exports, key, var_val);
+                                dict_set(module->exports, val_obj((Object*)key), var_val);
                                 int var_index = var_decl->u.var_decl.ref.index;
                                 if (var_index >= 0) {
                                     if (var_index >= module->global_count) {

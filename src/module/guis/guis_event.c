@@ -46,7 +46,7 @@ static ObjDict* event_get_dict(Value event_val) {
 static int event_get_type(Value event_val) {
     ObjDict* d = event_get_dict(event_val);
     if (!d) return 0;
-    Value v = dict_get(d, str_key_type);
+    Value v = dict_get(d, val_obj((Object*)str_key_type));
     return val_is_int(v) ? val_as_int(v) : 0;
 }
 
@@ -54,7 +54,7 @@ static int event_get_type(Value event_val) {
 static int event_get_int(Value event_val, ObjString* key) {
     ObjDict* d = event_get_dict(event_val);
     if (!d) return 0;
-    Value v = dict_get(d, key);
+    Value v = dict_get(d, val_obj((Object*)key));
     if (val_is_int(v)) return val_as_int(v);
     if (val_is_float(v)) return (int)val_as_double(v);
     if (val_is_num(v)) return (int)val_as_num(v);
@@ -65,7 +65,7 @@ static int event_get_int(Value event_val, ObjString* key) {
 static const char* event_get_string(Value event_val, ObjString* key) {
     ObjDict* d = event_get_dict(event_val);
     if (!d) return "";
-    Value v = dict_get(d, key);
+    Value v = dict_get(d, val_obj((Object*)key));
     if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
         return ((ObjString*)val_as_obj(v))->chars;
     }

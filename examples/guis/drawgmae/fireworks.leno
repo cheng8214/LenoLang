@@ -136,42 +136,42 @@ main() {
         )
 
         var id = next_pid
-        particles[_str(id)] = p
-        particle_ids[_str(particle_count)] = id
+        particles[id] = p
+        particle_ids[particle_count] = id
         particle_count = particle_count + 1
         next_pid = next_pid + 1
     }
 
     func remove_particle(int index) {
         var last = particle_count - 1
-        var pid = particle_ids[_str(index)]
-        particles.remove(_str(pid))
+        var pid = particle_ids[index]
+        particles.remove(pid)
         if index != last {
-            particle_ids[_str(index)] = particle_ids[_str(last)]
+            particle_ids[index] = particle_ids[last]
         }
-        particle_ids.remove(_str(last))
+        particle_ids.remove(last)
         particle_count = particle_count - 1
     }
 
     func remove_firework(int index) {
         var last = firework_count - 1
-        var fid = firework_ids[_str(index)]
-        fireworks.remove(_str(fid))
+        var fid = firework_ids[index]
+        fireworks.remove(fid)
         if index != last {
-            firework_ids[_str(index)] = firework_ids[_str(last)]
+            firework_ids[index] = firework_ids[last]
         }
-        firework_ids.remove(_str(last))
+        firework_ids.remove(last)
         firework_count = firework_count - 1
     }
 
     func remove_ground(int index) {
         var last = ground_count - 1
-        var gid = ground_ids[_str(index)]
-        ground_sparks.remove(_str(gid))
+        var gid = ground_ids[index]
+        ground_sparks.remove(gid)
         if index != last {
-            ground_ids[_str(index)] = ground_ids[_str(last)]
+            ground_ids[index] = ground_ids[last]
         }
-        ground_ids.remove(_str(last))
+        ground_ids.remove(last)
         ground_count = ground_count - 1
     }
 
@@ -194,8 +194,8 @@ main() {
             gs.max_life = gs.life
 
             var gid = next_gid
-            ground_sparks[_str(gid)] = gs
-            ground_ids[_str(ground_count)] = gid
+            ground_sparks[gid] = gs
+            ground_ids[ground_count] = gid
             ground_count = ground_count + 1
             next_gid = next_gid + 1
         }
@@ -235,8 +235,8 @@ main() {
         )
 
         var id = next_fid
-        fireworks[_str(id)] = fw
-        firework_ids[_str(firework_count)] = id
+        fireworks[id] = fw
+        firework_ids[firework_count] = id
         firework_count = firework_count + 1
         next_fid = next_fid + 1
 
@@ -454,8 +454,8 @@ main() {
             b=rands.ints(180, 255)
         )
         var sid = next_sid
-        stars[_str(sid)] = s
-        star_ids[_str(star_count)] = sid
+        stars[sid] = s
+        star_ids[star_count] = sid
         star_count = star_count + 1
         next_sid = next_sid + 1
     }
@@ -500,8 +500,8 @@ main() {
 
             // ===== 绘制星空 =====
             for 0:star_count - 1 to si {
-                var sid = star_ids[_str(si)]
-                var s = stars[_str(sid)]
+                var sid = star_ids[si]
+                var s = stars[sid]
                 s.twinkle = s.twinkle + s.twinkle_speed
                 if s.twinkle > 6.28318 { s.twinkle = s.twinkle - 6.28318 }
                 var sa = 80 + (maths.sin(s.twinkle) * 70) as int
@@ -518,8 +518,8 @@ main() {
             // ===== 更新烟花 =====
             var fi = 0
             while fi < firework_count {
-                var fid = firework_ids[_str(fi)]
-                var fw = fireworks[_str(fid)]
+                var fid = firework_ids[fi]
+                var fw = fireworks[fid]
                 var removed = false
 				
                 if fw.state == 0 {
@@ -550,8 +550,8 @@ main() {
             // ===== 更新粒子 =====
             var pj = 0
             while pj < particle_count {
-                var pid = particle_ids[_str(pj)]
-                var p = particles[_str(pid)]
+                var pid = particle_ids[pj]
+                var p = particles[pid]
 
                 p.life = p.life - 1
                 if p.life <= 0 {
@@ -597,8 +597,8 @@ main() {
             // ===== 更新地面火花 =====
             var gj = 0
             while gj < ground_count {
-                var gid = ground_ids[_str(gj)]
-                var gs = ground_sparks[_str(gid)]
+                var gid = ground_ids[gj]
+                var gs = ground_sparks[gid]
 
                 gs.life = gs.life - 1
                 if gs.life <= 0 {
@@ -617,8 +617,8 @@ main() {
 
             // ===== 绘制粒子 =====
             for 0:particle_count - 1 to pk {
-                var pid = particle_ids[_str(pk)]
-                var p = particles[_str(pid)]
+                var pid = particle_ids[pk]
+                var p = particles[pid]
 
                 if p.x >= -20.0 and p.x <= (screen_w + 20) and p.y >= -20.0 and p.y <= (screen_h + 20) {
                     var px = p.x as int
@@ -646,8 +646,8 @@ main() {
 
             // ===== 绘制地面火花 =====
             for 0:ground_count - 1 to gk {
-                var gid = ground_ids[_str(gk)]
-                var gs = ground_sparks[_str(gid)]
+                var gid = ground_ids[gk]
+                var gs = ground_sparks[gid]
                 if gs.x >= 0.0 and gs.x <= screen_w and gs.y >= 0.0 and gs.y <= screen_h {
                     ren.set_color(_rgb(gs.r, gs.g, gs.b, gs.a))
                     ren.fill_rect(gs.x as int, gs.y as int, gs.size, gs.size)

@@ -276,29 +276,39 @@ static void print_dict_internal(ObjDict* dict) {
     printf("{");
     int printed = 0;
 
-    // 优先使用插入顺序数组（字符串键）
+    // 优先使用插入顺序数组
     for (int i = 0; i < dict->order_count; i++) {
-        ObjString* key = dict->order[i];
+        Value order_key = dict->order[i];
+        if (val_is_null(order_key)) continue;
         // 检查键是否仍然存在（未被删除）
-        Value value = dict_get(dict, key);
-        // 通过检查值类型来判断键是否存在（注意：值本身可能是 null）
-        // 使用 dict_has 来检查键是否存在
-        if (!dict_has(dict, key)) continue;
+        Value value = dict_get(dict, order_key);
+        if (!dict_has(dict, order_key)) continue;
 
-        // 跳过纯数字键（这些应该在数组部分处理）
-        int is_numeric = 1;
-        for (int j = 0; j < key->len; j++) {
-            if (key->chars[j] < '0' || key->chars[j] > '9') {
-                is_numeric = 0;
-                break;
+        // 跳过整数键（这些应该在数组部分处理）
+        if (val_is_int(order_key)) continue;
+        // 跳过纯数字字符串键
+        if (val_is_obj(order_key) && val_as_obj(order_key)->type == OBJ_STRING) {
+            ObjString* ks = (ObjString*)val_as_obj(order_key);
+            int is_numeric = 1;
+            for (int j = 0; j < ks->len; j++) {
+                if (ks->chars[j] < '0' || ks->chars[j] > '9') {
+                    is_numeric = 0;
+                    break;
+                }
             }
+            if (is_numeric) continue;
         }
-        if (is_numeric) continue;
 
         if (printed > 0) {
             printf(", ");
         }
-        printf("%s: ", key->chars);
+        // 输出键名
+        if (val_is_obj(order_key) && val_as_obj(order_key)->type == OBJ_STRING) {
+            printf("%s: ", ((ObjString*)val_as_obj(order_key))->chars);
+        } else {
+            ObjString* ks = dict_key_to_string(order_key);
+            printf("%s: ", ks ? ks->chars : "");
+        }
         print_value_quoted(value);
         printed++;
     }

@@ -36,14 +36,8 @@ OPCODE(OP_INDEX_SET) {
         }
         vm_stack_push(&vm, obj_val);
     } else if (obj->type == OBJ_DICT) {
-        if (!val_is_obj(index_val) || val_as_obj(index_val)->type != OBJ_STRING) {
-            throw_runtime_error("字典键必须是字符串", GET_CURRENT_LINE());
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH;
-        }
         ObjDict* dict = (ObjDict*)obj;
-        ObjString* key = (ObjString*)val_as_obj(index_val);
-        dict_set(dict, key, value);
+        dict_set(dict, index_val, value);
         vm_stack_push(&vm, obj_val);
     } else if (obj->type == OBJ_STRUCT) {
         if (!val_is_obj(index_val) || val_as_obj(index_val)->type != OBJ_STRING) {

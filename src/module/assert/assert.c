@@ -72,8 +72,9 @@ static int value_deep_equal(Value a, Value b, int depth) {
                 // 哈希部分
                 for (int i = 0; i < dict_a->capacity; i++) {
                     ObjDictEntry* entry = &dict_a->entries[i];
-                    if (entry->key == NULL || entry->key == (ObjString*)(uintptr_t)1) continue;
-                    Value vb = dict_get(dict_b, entry->key);
+                    Value entry_key = entry->key;
+                    if (val_is_null(entry_key) || entry_key == DICT_TOMBSTONE_VAL) continue;
+                    Value vb = dict_get(dict_b, entry_key);
                     if (!value_deep_equal(entry->value, vb, depth + 1)) return 0;
                 }
                 return 1;

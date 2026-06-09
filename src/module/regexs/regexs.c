@@ -15,7 +15,7 @@ extern int arr_grow(ObjArray* arr);
 
 // 前向声明：字典操作
 extern ObjDict* dict_new(int capacity);
-extern void dict_set(ObjDict* dict, ObjString* key, Value value);
+extern void dict_set(ObjDict* dict, Value key, Value value);
 
 // 辅助函数：向数组添加元素
 static void arr_push_custom(ObjArray* arr, Value value) {
@@ -471,17 +471,17 @@ static Value regex_find_all(int argc, Value* args) {
         
         // 起始位置（1-based）
         ObjString* key_start = str_copy("start", 5);
-        dict_set(match_info, key_start, val_int((int)(start - str->chars + 1)));
+        dict_set(match_info, val_obj((Object*)key_start), val_int((int)(start - str->chars + 1)));
         
         // 结束位置（1-based，不包含）
         ObjString* key_end = str_copy("end", 3);
-        dict_set(match_info, key_end, val_int((int)(end - str->chars + 1)));
+        dict_set(match_info, val_obj((Object*)key_end), val_int((int)(end - str->chars + 1)));
         
         // 匹配内容
         int match_len = (int)(end - start);
         ObjString* matched_str = str_copy(start, match_len);
         ObjString* key_text = str_copy("text", 4);
-        dict_set(match_info, key_text, val_obj((Object*)matched_str));
+        dict_set(match_info, val_obj((Object*)key_text), val_obj((Object*)matched_str));
         
         arr_push_custom(result, val_obj((Object*)match_info));
         

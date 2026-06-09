@@ -37,9 +37,7 @@ OPCODE(OP_IN) {
             }
             case OBJ_DICT: {
                 ObjDict* dict = (ObjDict*)val_as_obj(collection);
-                if (val_is_obj(item) && val_as_obj(item)->type == OBJ_STRING) {
-                    found = dict_has(dict, (ObjString*)val_as_obj(item));
-                }
+                found = dict_has(dict, item);
                 break;
             }
             case OBJ_STRING: {

@@ -177,7 +177,7 @@ static ObjString* infer_dict_type_internal(ObjDict* dict) {
     // 检查哈希部分（字符串键存储在这里）
     for (int i = 0; i < dict->capacity; i++) {
         ObjDictEntry* entry = &dict->entries[i];
-        if (entry->key == NULL) continue;  // 空槽
+        if (val_is_null(entry->key) || entry->key == DICT_TOMBSTONE_VAL) continue;  // 空槽或墓碑
 
         Value val = entry->value;
         TypeKind currType = get_value_type(val);

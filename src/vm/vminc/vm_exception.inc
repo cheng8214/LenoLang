@@ -72,7 +72,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
         runtime_error(msg, line);
         return;
     }
-    dict_set(err_dict, msg_key, val_obj((Object*)msg_val));
+    dict_set(err_dict, val_obj((Object*)msg_key), val_obj((Object*)msg_val));
 
     // 添加 line 属性
     ObjString* line_key = str_copy("line", 4);
@@ -80,7 +80,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
         runtime_error(msg, line);
         return;
     }
-    dict_set(err_dict, line_key, val_int(line));
+    dict_set(err_dict, val_obj((Object*)line_key), val_int(line));
 
     // 添加 file 属性（当前文件名）
     CallFrame* current_frame = &vm.frames[vm.frame_cnt - 1];
@@ -88,7 +88,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
     ObjString* file_key = str_copy("file", 4);
     ObjString* file_val = str_copy(filename, strlen(filename));
     if (file_key && file_val) {
-        dict_set(err_dict, file_key, val_obj((Object*)file_val));
+        dict_set(err_dict, val_obj((Object*)file_key), val_obj((Object*)file_val));
     }
 
     // 添加 stack 属性（调用栈）
@@ -111,7 +111,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
         }
         ObjString* stack_key = str_copy("stack", 5);
         if (stack_key) {
-            dict_set(err_dict, stack_key, val_obj((Object*)stack_arr));
+            dict_set(err_dict, val_obj((Object*)stack_key), val_obj((Object*)stack_arr));
         }
     }
 
