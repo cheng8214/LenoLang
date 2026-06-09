@@ -28,10 +28,9 @@ static Value ast_default_to_value(Ast* expr) {
         case AST_DICT: {
             ObjDict* dict = dict_new(expr->u.dict.count > 0 ? expr->u.dict.count : 8);
             for (int i = 0; i < expr->u.dict.count; i++) {
-                ObjString* key = str_copy(expr->u.dict.entries[i].key,
-                                          strlen(expr->u.dict.entries[i].key));
+                Value key_val = ast_default_to_value(expr->u.dict.entries[i].key);
                 Value val = ast_default_to_value(expr->u.dict.entries[i].value);
-                dict_set(dict, val_obj((Object*)key), val);
+                dict_set(dict, key_val, val);
             }
             return val_obj((Object*)dict);
         }

@@ -90,7 +90,7 @@ typedef struct {
 
 // 字典键值对结构
 typedef struct {
-    char* key;
+    Ast* key;
     Ast* value;
 } DictEntry;
 

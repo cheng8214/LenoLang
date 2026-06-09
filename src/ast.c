@@ -96,7 +96,7 @@ void ast_free(Ast* ast) {
             break;
         case AST_DICT:
             for (int i = 0; i < ast->u.dict.count; i++) {
-                free(ast->u.dict.entries[i].key);
+                ast_free(ast->u.dict.entries[i].key);
                 ast_free(ast->u.dict.entries[i].value);
             }
             free(ast->u.dict.entries);

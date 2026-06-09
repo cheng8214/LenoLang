@@ -209,9 +209,29 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 // 空字典返回 NULL 键值类型（类似空数组），允许后续类型推断
                 result = type_dict(NULL, NULL);
             } else {
-                TypeInfo* key_type = type_new(TYPE_STRING);
+                TypeInfo* key_type = NULL;
                 TypeInfo* value_type = NULL;
                 for (int i = 0; i < ast->u.dict.count; i++) {
+                    // 推断键类型
+                    Ast* key_ast = ast->u.dict.entries[i].key;
+                    TypeInfo* curr_key = NULL;
+                    if (key_ast->kind == AST_NUM) {
+                        curr_key = type_new(TYPE_INT);
+                    } else {
+                        // AST_STRING（标识符也转为字符串）或其他
+                        curr_key = type_new(TYPE_STRING);
+                    }
+                    if (!key_type) {
+                        key_type = curr_key;
+                    } else if (!type_equals(key_type, curr_key)) {
+                        type_free(key_type);
+                        type_free(curr_key);
+                        key_type = type_new(TYPE_ANY);
+                    } else {
+                        type_free(curr_key);
+                    }
+
+                    // 推断值类型
                     TypeInfo* curr_value = infer_expr_type(s, ast->u.dict.entries[i].value);
                     if (!value_type) {
                         value_type = curr_value;
@@ -223,6 +243,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         type_free(curr_value);
                     }
                 }
+                if (!key_type) key_type = type_new(TYPE_STRING);
                 if (!value_type) value_type = type_new(TYPE_ANY);
                 result = type_dict(key_type, value_type);
             }

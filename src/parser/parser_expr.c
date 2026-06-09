@@ -362,14 +362,22 @@ Ast* parse_dict(Parser* p) {
     
     // 解析字典键值对
     while (1) {
-        // 键必须是字符串或标识符
-        char* key = NULL;
+        // 键: 字符串、标识符(转为字符串)、整数
+        Ast* key_ast = NULL;
         if (p->lex.current.type == TOK_STRING) {
-            key = process_escape_sequences(p->lex.current.text, p->lex.current.len, NULL);
+            char* key_str = process_escape_sequences(p->lex.current.text, p->lex.current.len, NULL);
+            key_ast = ast_new(AST_STRING, line);
+            key_ast->u.string.value = key_str;
             lexer_next(&p->lex);
         } else if (p->lex.current.type == TOK_IDENT) {
-            key = copy_string(p->lex.current.text, p->lex.current.len);
+            // 标识符键转为字符串键（向后兼容 {name: value} 语法）
+            char* key_str = copy_string(p->lex.current.text, p->lex.current.len);
+            key_ast = ast_new(AST_STRING, line);
+            key_ast->u.string.value = key_str;
             lexer_next(&p->lex);
+        } else if (p->lex.current.type == TOK_NUM) {
+            // 整数键（通过 parse_number 解析，自动处理 int/float/bigint）
+            key_ast = parse_number(p);
         } else {
             if (is_type_keyword(p->lex.current.type)) {
                 char msg[64];
@@ -377,14 +385,14 @@ Ast* parse_dict(Parser* p) {
                          p->lex.current.len, p->lex.current.text);
                 error_add(ERR_SYNTAX, p->lex.current.line, msg);
             } else {
-                error_add(ERR_SYNTAX, p->lex.current.line, "字典键必须是字符串或标识符");
+                error_add(ERR_SYNTAX, p->lex.current.line, "字典键必须是字符串、标识符或整数");
             }
             break;
         }
         
         // 期望 ':'
         if (!consume(p, TOK_COLON, "期望 ':'")) {
-            free(key);
+            ast_free(key_ast);
             break;
         }
         
@@ -396,14 +404,14 @@ Ast* parse_dict(Parser* p) {
             int new_capacity = ast->u.dict.capacity == 0 ? 8 : ast->u.dict.capacity * 2;
             DictEntry* new_entries = (DictEntry*)realloc(ast->u.dict.entries, sizeof(DictEntry) * new_capacity);
             if (!new_entries) {
-                free(key);
+                ast_free(key_ast);
                 error_add(ERR_RUNTIME, line, "内存分配失败");
                 break;
             }
             ast->u.dict.entries = new_entries;
             ast->u.dict.capacity = new_capacity;
         }
-        ast->u.dict.entries[ast->u.dict.count].key = key;
+        ast->u.dict.entries[ast->u.dict.count].key = key_ast;
         ast->u.dict.entries[ast->u.dict.count].value = value;
         ast->u.dict.count++;
         

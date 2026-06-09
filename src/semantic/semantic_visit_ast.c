@@ -359,7 +359,10 @@ void visit(Semantic* s, Ast* ast) {
 
                 if (ast->u.var_decl.init->kind == AST_DICT && sym) {
                     for (int i = 0; i < ast->u.var_decl.init->u.dict.count; i++) {
-                        symbol_add_dict_key(sym, ast->u.var_decl.init->u.dict.entries[i].key);
+                        Ast* key_ast = ast->u.var_decl.init->u.dict.entries[i].key;
+                        if (key_ast->kind == AST_STRING) {
+                            symbol_add_dict_key(sym, key_ast->u.string.value);
+                        }
                     }
                 }
 
@@ -1920,6 +1923,7 @@ void visit(Semantic* s, Ast* ast) {
 
         case AST_DICT:
             for (int i = 0; i < ast->u.dict.count; i++) {
+                visit(s, ast->u.dict.entries[i].key);
                 visit(s, ast->u.dict.entries[i].value);
             }
             break;

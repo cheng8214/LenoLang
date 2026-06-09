@@ -193,29 +193,15 @@ static void dict_resize(ObjDict* dict, int new_capacity) {
     }
 }
 
-// 从字符串键提取数组索引（用于兼容旧的字符串键行为）
-static int key_to_array_index_str(const char* chars, int len) {
-    if (len == 0) return -1;
-    for (int i = 0; i < len; i++) {
-        if (chars[i] < '0' || chars[i] > '9') return -1;
-    }
-    int index = 0;
-    for (int i = 0; i < len; i++) {
-        index = index * 10 + (chars[i] - '0');
-    }
-    return index;
-}
+
 
 // 检查 Value 键是否可以通过数组部分索引
+// 只有整数键（非负）才映射到数组部分，字符串键始终走哈希表
 // 返回 >= 0 表示数组索引，-1 表示需要走哈希表
 static int key_to_array_index(Value key) {
     if (val_is_int(key)) {
         int n = val_as_int(key);
         return n >= 0 ? n : -1;
-    }
-    if (val_is_obj(key) && val_as_obj(key)->type == OBJ_STRING) {
-        ObjString* str = (ObjString*)val_as_obj(key);
-        return key_to_array_index_str(str->chars, str->len);
     }
     return -1;
 }

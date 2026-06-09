@@ -164,8 +164,22 @@ static ObjString* infer_dict_type_internal(ObjDict* dict) {
         return str_copy("Dict", 4);  // 空字典返回 Dict
     }
 
-    // 键类型固定为 string（字典键总是字符串）
+    // 键类型推断：检测字典中是否有整数键
     const char* keyTypeName = "string";
+    // 检查数组部分（整数键存储在这里）
+    int has_hash_entries = 0;
+    for (int i = 0; i < dict->capacity; i++) {
+        ObjDictEntry* entry = &dict->entries[i];
+        if (!val_is_null(entry->key) && entry->key != DICT_TOMBSTONE_VAL) {
+            has_hash_entries = 1;
+            break;
+        }
+    }
+    if (dict->acount > 0 && has_hash_entries) {
+        keyTypeName = "any";  // 混合键类型（int + string）
+    } else if (dict->acount > 0) {
+        keyTypeName = "int";  // 仅有整数键
+    }
 
     // 推断值类型
     TypeKind valueType = TYPE_ANY;

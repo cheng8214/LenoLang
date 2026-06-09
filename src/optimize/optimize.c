@@ -290,6 +290,7 @@ static void fold_expr(Ast* ast) {
 
         case AST_DICT:
             for (int i = 0; i < ast->u.dict.count; i++) {
+                fold_expr(ast->u.dict.entries[i].key);
                 fold_expr(ast->u.dict.entries[i].value);
             }
             break;
@@ -673,9 +674,10 @@ static int dce_expr(Ast* ast) {
             }
             return 0;
 
-        // 字典字面量：递归处理所有值（键是字符串字面量，无需处理）
+        // 字典字面量：递归处理所有键和值
         case AST_DICT:
             for (int i = 0; i < ast->u.dict.count; i++) {
+                dce_expr(ast->u.dict.entries[i].key);
                 dce_expr(ast->u.dict.entries[i].value);
             }
             return 0;

@@ -413,7 +413,7 @@ OPCODE(OP_LENGTH) {
         }
         case OBJ_DICT: {
             ObjDict* dict = (ObjDict*)val_as_obj(obj_val);
-            vm_stack_push(&vm, val_int(dict->count));
+            vm_stack_push(&vm, val_int(dict->order_count));
             break;
         }
         case OBJ_ENUM_DEF: {
@@ -496,7 +496,7 @@ OPCODE(OP_ITER_GET) {
         }
         case OBJ_DICT: {
             ObjDict* dict = (ObjDict*)val_as_obj(obj_val);
-            if (index < 0 || index >= dict->count) {
+            if (index < 0 || index >= dict->order_count) {
                 throw_runtime_error("字典键索引越界", GET_CURRENT_LINE());
                 frame = &vm.frames[vm.frame_cnt - 1];
                 break;

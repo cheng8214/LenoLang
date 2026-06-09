@@ -26,7 +26,7 @@ OPCODE(OP_ITER_GET_VALUE) {
     switch (val_as_obj(obj_val)->type) {
         case OBJ_DICT: {
             ObjDict* dict = (ObjDict*)val_as_obj(obj_val);
-            if (index < 0 || index >= dict->count) {
+            if (index < 0 || index >= dict->order_count) {
                 throw_runtime_error("字典值索引越界", GET_CURRENT_LINE());
                 frame = &vm.frames[vm.frame_cnt - 1];
                 DISPATCH;

@@ -912,17 +912,13 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 
                 // 按顺序生成 key-value 对（从临时变量加载 value）
                 for (int i = 0; i < count; i++) {
-                    ObjString* key = str_copy(ast->u.dict.entries[i].key,
-                                              (int)strlen(ast->u.dict.entries[i].key));
-                    emit_constant(gen, val_obj((Object*)key), ast->line);
+                    gen_expr(gen, ast->u.dict.entries[i].key);
                     emit_bytes_2(gen, OP_GET_LOCAL, temp_slot_base + i, ast->line);
                 }
             } else {
                 // 简单情况：直接生成 key-value 对
                 for (int i = 0; i < ast->u.dict.count; i++) {
-                    ObjString* key = str_copy(ast->u.dict.entries[i].key,
-                                              (int)strlen(ast->u.dict.entries[i].key));
-                    emit_constant(gen, val_obj((Object*)key), ast->line);
+                    gen_expr(gen, ast->u.dict.entries[i].key);
                     gen_expr(gen, ast->u.dict.entries[i].value);
                 }
             }
