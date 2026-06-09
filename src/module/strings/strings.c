@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <limits.h>
 
 // 前向声明：字符串实例方法支持函数（定义在 object_string.c）
 extern void string_init_methods(void);

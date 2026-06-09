@@ -23,7 +23,13 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #define MAX_PATH_LEN 512
 #define MAX_TESTS 1024
@@ -67,6 +73,9 @@ static void run_test(const char* leno_exe, const char* test_path) {
     strncpy(result->name, get_filename(test_path), 255);
 
     char cmd[MAX_PATH_LEN * 2];
+    char output[MAX_OUTPUT] = {0};
+
+#ifdef _WIN32
     snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" 2>&1", leno_exe, test_path);
 
     SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
@@ -98,7 +107,6 @@ static void run_test(const char* leno_exe, const char* test_path) {
         return;
     }
 
-    char output[MAX_OUTPUT] = {0};
     DWORD total_read = 0;
     char buf[4096];
     DWORD bytes_read;
@@ -120,6 +128,35 @@ static void run_test(const char* leno_exe, const char* test_path) {
     GetExitCodeProcess(pi.hProcess, &exit_code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+#else
+    // POSIX: 使用 popen 捕获输出
+    snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" 2>&1", leno_exe, test_path);
+    FILE* pipe = popen(cmd, "r");
+    if (!pipe) {
+        result->error = 1;
+        snprintf(result->message, sizeof(result->message),
+                 "无法启动进程: %s", cmd);
+        return;
+    }
+
+    size_t total_read = 0;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), pipe) && total_read < MAX_OUTPUT - 1) {
+        size_t len = strlen(buf);
+        if (total_read + len >= MAX_OUTPUT - 1) {
+            len = MAX_OUTPUT - 1 - total_read;
+        }
+        memcpy(output + total_read, buf, len);
+        total_read += len;
+    }
+    output[total_read] = '\0';
+
+    int status = pclose(pipe);
+    int exit_code = 1;
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    }
+#endif
 
     if (exit_code == 0) {
         char expected_path[MAX_PATH_LEN];
@@ -170,7 +207,7 @@ static void run_test(const char* leno_exe, const char* test_path) {
         size_t msg_len = nl ? (size_t)(nl - output) : strlen(output);
         if (msg_len > 200) msg_len = 200;
         snprintf(result->message, sizeof(result->message),
-                 "退出码 %lu: %.*s", exit_code, (int)msg_len, first_line);
+                 "退出码 %d: %.*s", exit_code, (int)msg_len, first_line);
     }
 }
 
