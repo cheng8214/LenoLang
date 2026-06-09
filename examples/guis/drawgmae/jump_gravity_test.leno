@@ -47,28 +47,28 @@ main() {
     })
     
     // 加载字体
-    var font_fps = guis.load_font("Arial", 16)
+    Font font_fps = guis.load_font("Arial", 16)
     
     // 窗口尺寸
-    var screen_w = 800
+    int screen_w = 800
     var screen_h = 600
     
     // 地面高度
     var ground_y = 450
     
     // 玩家（初始化结构体）
-    var player = new Player(x=100, y=ground_y - 64)
+    Player player = new Player(x=100, y=ground_y - 64)
     
     // 场景滚动
-    var camera_x = 0
-    var player_screen_x = 100
+    int camera_x = 0
+    int player_screen_x = 100
     var gravity = 1
     
     // 状态
     var key_left = false
     var key_right = false
     var key_space = false
-    var space_pressed = false
+    bool space_pressed = false
     
     // 动画
     var anim_frame = 0
@@ -84,7 +84,7 @@ main() {
     var target_frame_ms = 16
     
     // 平台列表 - 更长的关卡
-    var platforms = [
+    Array platforms = [
         // 第一区域
         new Platform(x=300, y=380, w=100, h=20),
         new Platform(x=500, y=320, w=100, h=20),

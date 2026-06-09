@@ -1,11 +1,38 @@
- 
- 
- main()
- {
-   
-	for 100000000 to id
-	{
-	    var stars = {}
-		 stars[_str(id)] = id
-	}
- }
+// struct 带方法的迭代器测试
+struct Msg
+{
+	string name
+	int x=10
+}
+struct Point
+{
+    int x = 0
+    int y = 0
+	Msg msg
+    func move(int dx, int dy)
+    {
+        x = x + dx
+        y = y + dy
+    }
+
+    func distance()
+    {
+        return x * x + y * y
+    }
+}
+
+main()
+{
+    var p = new Point()
+    p.x = 3
+    p.y = 4
+    // 遍历只遍历字段，不遍历方法
+    var keys = []
+    var vals = []
+    for p to name, val {
+        keys.add(name)
+        vals.add(val)
+    }
+  print(keys)
+  print(vals)
+}
