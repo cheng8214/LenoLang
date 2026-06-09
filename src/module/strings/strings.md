@@ -441,16 +441,16 @@ format("Char: %c", 65)                      // "Char: A"
 
 **参数**:
 
-- `pos` (int, 可选): 字符位置（1-based，默认为1）
+- `pos` (int, 可选): 字符位置（0-based，默认为0）
 
 **返回**: `int | null` - ASCII 码值，越界返回 null
 
-**说明**: 支持负数索引，-1 表示最后一个字符。
+**说明**: 使用 0-based 索引。支持负数索引，-1 表示最后一个字符。
 
 ```leno
-"Hello".byte(1)     // 72  ('H')
-"Hello".byte(2)     // 101 ('e')
-"Hello".byte(5)     // 111 ('o')
+"Hello".byte(0)     // 72  ('H')
+"Hello".byte(1)     // 101 ('e')
+"Hello".byte(4)     // 111 ('o')
 "Hello".byte(-1)    // 111 ('o', 最后一个字符)
 "Hello".byte(10)    // null (越界)
 ```
@@ -566,7 +566,7 @@ main() {
     
     // 字符编码操作
     var codes = []
-    for 1:text.len() to i {
+    for 0:text.len() - 1 to i {
         codes.add(text.byte(i))
     }
     print(codes)  // 打印所有字符的ASCII码

@@ -20,9 +20,9 @@ main() {
     
     // 测试 byte - 获取字符ASCII码
     print("\n=== 测试 byte 获取ASCII码 ===")
-    print(strings.byte("Hello", 1))      // 预期: 72 (H)
-    print(strings.byte("Hello", 2))      // 预期: 101 (e)
-    print(strings.byte("Hello", 5))      // 预期: 111 (o)
+    print(strings.byte("Hello", 0))      // 预期: 72 (H)
+    print(strings.byte("Hello", 1))      // 预期: 101 (e)
+    print(strings.byte("Hello", 4))      // 预期: 111 (o)
     print(strings.byte("Hello", -1))     // 预期: 111 (o, 负数索引)
     print(strings.byte("Hello", 10))     // 预期: null (越界)
     

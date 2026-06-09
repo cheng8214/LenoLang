@@ -1,0 +1,194 @@
+// Base64 编码/解码 —— 纯 LenoC 实现
+// 展示 LenoC 的位运算、字符串操作能力
+
+import strings
+
+// Base64 编码表
+var ENCODE_TABLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// 位掩码常量
+int MASK_3F = 0x3F
+int MASK_FF = 0xFF
+
+// Base64 解码表（通过编码表构建）
+func build_decode_table():Dict[string, int] {
+    Dict[string, int] table = {}
+    int i = 0
+    while (i < 64) {
+        var ch = ENCODE_TABLE.slice(i, i + 1)
+        table[ch] = i
+        i = i + 1
+    }
+    return table
+}
+
+var DECODE_TABLE = build_decode_table()
+
+// 从编码表取一个字符（0-based 索引）
+func table_char(int index):string {
+    return ENCODE_TABLE.slice(index, index + 1)
+}
+
+// Base64 编码
+func base64_encode(string input):string {
+    var result = ""
+    int i = 0
+    int len = input.len()
+
+    // 每次处理 3 个字节
+    while (i + 2 < len) {
+        // byte() 是 0-based 索引
+        int b0 = input.byte(i)
+        int b1 = input.byte(i + 1)
+        int b2 = input.byte(i + 2)
+
+        // 拼成 24 位
+        int n = (b0 << 16) | (b1 << 8) | b2
+
+        // 拆成 4 个 6 位单元，查表
+        result += table_char((n >> 18) & MASK_3F)
+        result += table_char((n >> 12) & MASK_3F)
+        result += table_char((n >> 6) & MASK_3F)
+        result += table_char(n & MASK_3F)
+
+        i = i + 3
+    }
+
+    // 处理剩余字节
+    int remain = len - i
+    if (remain == 1) {
+        int b0 = input.byte(i)
+        int n = b0 << 16
+        result += table_char((n >> 18) & MASK_3F)
+        result += table_char((n >> 12) & MASK_3F)
+        result += "=="
+    } else if (remain == 2) {
+        int b0 = input.byte(i)
+        int b1 = input.byte(i + 1)
+        int n = (b0 << 16) | (b1 << 8)
+        result += table_char((n >> 18) & MASK_3F)
+        result += table_char((n >> 12) & MASK_3F)
+        result += table_char((n >> 6) & MASK_3F)
+        result += "="
+    }
+
+    return result
+}
+
+// Base64 解码
+func base64_decode(string input):string {
+    var result = ""
+    int len = input.len()
+
+    // 检查 padding（'=' 的 ASCII 码是 61）
+    int pad = 0
+    if (len > 0 and input.byte(len - 1) == 61) {
+        pad = 1
+        if (len > 1 and input.byte(len - 2) == 61) {
+            pad = 2
+        }
+    }
+
+    int i = 0
+    while (i + 3 < len) {
+        int c0 = base64_char_value(input.slice(i, i + 1))
+        int c1 = base64_char_value(input.slice(i + 1, i + 2))
+        int c2 = base64_char_value(input.slice(i + 2, i + 3))
+        int c3 = base64_char_value(input.slice(i + 3, i + 4))
+
+        int n = (c0 << 18) | (c1 << 12) | (c2 << 6) | c3
+
+        result += strings.char((n >> 16) & MASK_FF)
+        result += strings.char((n >> 8) & MASK_FF)
+        result += strings.char(n & MASK_FF)
+
+        i = i + 4
+    }
+
+    // 处理带 padding 的尾部
+    if (pad == 1) {
+        int c0 = base64_char_value(input.slice(i, i + 1))
+        int c1 = base64_char_value(input.slice(i + 1, i + 2))
+        int c2 = base64_char_value(input.slice(i + 2, i + 3))
+
+        int n = (c0 << 18) | (c1 << 12) | (c2 << 6)
+
+        result += strings.char((n >> 16) & MASK_FF)
+        result += strings.char((n >> 8) & MASK_FF)
+    } else if (pad == 2) {
+        int c0 = base64_char_value(input.slice(i, i + 1))
+        int c1 = base64_char_value(input.slice(i + 1, i + 2))
+
+        int n = (c0 << 18) | (c1 << 12)
+
+        result += strings.char((n >> 16) & MASK_FF)
+    }
+
+    return result
+}
+
+// 获取 Base64 字符对应的 6 位值
+func base64_char_value(string ch):int {
+    if (DECODE_TABLE.has(ch)) {
+        return DECODE_TABLE[ch]
+    }
+    return 0
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== Base64 编码/解码测试 ===")
+    print("")
+
+    // 测试 1：标准测试向量
+    var tests = ["", "f", "fo", "foo", "foob", "fooba", "foobar"]
+    var expected = ["", "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "Zm9vYmFy"]
+
+    int pass = 0
+    int i = 0
+    while (i < tests.len()) {
+        var encoded = base64_encode(tests[i])
+        var decoded = base64_decode(encoded)
+
+        int ok = 1
+        if (encoded != expected[i]) {
+            ok = 0
+        }
+        if (decoded != tests[i]) {
+            ok = 0
+        }
+
+        if (ok == 1) {
+            pass += 1
+        } else {
+            print("FAIL: input=" + tests[i])
+            print("  encode: got " + encoded + ", expect " + expected[i])
+            print("  decode: got " + decoded + ", expect " + tests[i])
+        }
+
+        i += 1
+    }
+
+    print("标准测试: " + _str(pass) + "/" + _str(tests.len()) + " 通过")
+    print("")
+
+    // 测试 2：Hello World
+    var hello = "Hello, World!"
+    var enc = base64_encode(hello)
+    var dec = base64_decode(enc)
+    print("原文: " + hello)
+    print("编码: " + enc)
+    print("解码: " + dec)
+    print("往返: " + if dec == hello then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：中文 UTF-8 字节
+    var cn = "你好LenoC"
+    var enc_cn = base64_encode(cn)
+    var dec_cn = base64_decode(enc_cn)
+    print("原文: " + cn)
+    print("编码: " + enc_cn)
+    print("解码: " + dec_cn)
+    print("往返: " + if dec_cn == cn then "OK" else "FAIL")
+}

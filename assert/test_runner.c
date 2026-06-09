@@ -72,62 +72,33 @@ static void run_test(const char* leno_exe, const char* test_path) {
     strncpy(result->path, test_path, MAX_PATH_LEN - 1);
     strncpy(result->name, get_filename(test_path), 255);
 
-    char cmd[MAX_PATH_LEN * 2];
+    char cmd[MAX_PATH_LEN * 3];
     char output[MAX_OUTPUT] = {0};
 
 #ifdef _WIN32
-    snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" 2>&1", leno_exe, test_path);
-
-    SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
-    HANDLE hRead, hWrite;
-    CreatePipe(&hRead, &hWrite, &sa, 0);
-    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
-
-    STARTUPINFOA si = { sizeof(STARTUPINFOA) };
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = hWrite;
-    si.hStdError = hWrite;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-
-    PROCESS_INFORMATION pi = {0};
-
-    BOOL ok = CreateProcessA(
-        NULL, cmd, NULL, NULL, TRUE,
-        CREATE_NO_WINDOW,
-        NULL, NULL, &si, &pi
-    );
-
-    CloseHandle(hWrite);
-
-    if (!ok) {
-        result->error = 1;
-        snprintf(result->message, sizeof(result->message),
-                 "无法启动进程: %s", cmd);
-        CloseHandle(hRead);
-        return;
+    // 使用临时文件捕获输出，避免管道句柄继承问题
+    char temp_file[MAX_PATH_LEN];
+    GetTempPathA(MAX_PATH_LEN - 1, temp_file);
+    strncat(temp_file, "leno_test_output.txt", MAX_PATH_LEN - strlen(temp_file) - 1);
+    
+    // 使用 _spawnlp 来正确执行命令
+    snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", leno_exe, test_path);
+    
+    // 构建重定向命令
+    char cmd_with_redirect[MAX_PATH_LEN * 4];
+    snprintf(cmd_with_redirect, sizeof(cmd_with_redirect), "cmd /c \"%s > \"%s\" 2>&1\"", cmd, temp_file);
+    
+    int ret = system(cmd_with_redirect);
+    DWORD exit_code = (DWORD)ret;
+    
+    // 读取临时文件内容
+    FILE* f = fopen(temp_file, "r");
+    if (f) {
+        size_t n = fread(output, 1, MAX_OUTPUT - 1, f);
+        output[n] = '\0';
+        fclose(f);
     }
-
-    DWORD total_read = 0;
-    char buf[4096];
-    DWORD bytes_read;
-
-    while (ReadFile(hRead, buf, sizeof(buf) - 1, &bytes_read, NULL) && bytes_read > 0) {
-        buf[bytes_read] = '\0';
-        size_t remaining = MAX_OUTPUT - total_read - 1;
-        if (remaining > 0) {
-            size_t to_copy = bytes_read < remaining ? bytes_read : remaining;
-            memcpy(output + total_read, buf, to_copy);
-            total_read += to_copy;
-        }
-    }
-    output[total_read] = '\0';
-    CloseHandle(hRead);
-
-    WaitForSingleObject(pi.hProcess, 30000);
-    DWORD exit_code = 1;
-    GetExitCodeProcess(pi.hProcess, &exit_code);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
+    DeleteFileA(temp_file);
 #else
     // POSIX: 使用 popen 捕获输出
     snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" 2>&1", leno_exe, test_path);
@@ -202,12 +173,16 @@ static void run_test(const char* leno_exe, const char* test_path) {
     } else {
         result->failed = 1;
         total_failed++;
-        char* first_line = output;
-        char* nl = strchr(output, '\n');
-        size_t msg_len = nl ? (size_t)(nl - output) : strlen(output);
-        if (msg_len > 200) msg_len = 200;
-        snprintf(result->message, sizeof(result->message),
-                 "退出码 %d: %.*s", exit_code, (int)msg_len, first_line);
+        // 截取输出的前300个字符作为错误信息
+        size_t msg_len = strlen(output);
+        if (msg_len > 300) msg_len = 300;
+        if (msg_len == 0) {
+            snprintf(result->message, sizeof(result->message),
+                     "退出码 %lu (无输出)", (unsigned long)exit_code);
+        } else {
+            snprintf(result->message, sizeof(result->message),
+                     "退出码 %lu: %.*s", (unsigned long)exit_code, (int)msg_len, output);
+        }
     }
 }
 

@@ -54,7 +54,6 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_draw.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_window.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_event.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_image.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_socket.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_font.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_struct.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_cstruct.c

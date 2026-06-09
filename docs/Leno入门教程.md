@@ -2373,7 +2373,7 @@ main() {
     print(strings.rep("ha", 3))         // hahaha
     
     // 获取字符 ASCII 码
-    print(strings.byte("Hello", 1))     // 72 (H)
+    print(strings.byte("Hello", 0))     // 72 (H)
     print(strings.byte("Hello", -1))    // 111 (o, 负数索引)
     
     // 从 ASCII 码创建字符串

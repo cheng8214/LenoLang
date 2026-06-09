@@ -340,24 +340,21 @@ static Value str_byte(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     int len = str->len;
     
-    // 默认获取第1个字符
-    int pos = 1;
+    // 默认获取第1个字符（0-based索引）
+    int pos = 0;
     if (argc >= 2) {
         pos = val_as_int(args[1]);
     }
     
     // 处理负数索引（-1表示最后一个字符）
-    if (pos < 0) pos = len + pos + 1;
-    
-    // 转换为0-based索引
-    int idx = pos - 1;
+    if (pos < 0) pos = len + pos;
     
     // 边界检查
-    if (idx < 0 || idx >= len) {
+    if (pos < 0 || pos >= len) {
         return val_null();  // 越界返回null
     }
     
-    return val_int((unsigned char)str->chars[idx]);
+    return val_int((unsigned char)str->chars[pos]);
 }
 
 // 9. 新增：从ASCII码创建字符串

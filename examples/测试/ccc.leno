@@ -1,38 +1,46 @@
-// struct 带方法的迭代器测试
-struct Msg
-{
-	string name
-	int x=10
-}
-struct Point
-{
-    int x = 0
-    int y = 0
-	Msg msg
-    func move(int dx, int dy)
-    {
-        x = x + dx
-        y = y + dy
-    }
+// 测试闭包
 
-    func distance()
-    {
-        return x * x + y * y
+main() {
+    // 基本闭包
+    var x = 10
+    func test1() {
+        assert(x == 10)
     }
-}
-
-main()
-{
-    var p = new Point()
-    p.x = 3
-    p.y = 4
-    // 遍历只遍历字段，不遍历方法
-    var keys = []
-    var vals = []
-    for p to name, val {
-        keys.add(name)
-        vals.add(val)
+    test1()
+    
+    // 嵌套函数 - 同名变量遮蔽
+    var a = 1
+    func outer() {
+        var a = 2
+        func inner() {
+            assert(a == 2)
+        }
+        inner()
+        assert(a == 2)
     }
-  print(keys)
-  print(vals)
+    outer()
+    assert(a == 1)
+    
+    // 闭包捕获并修改外部变量
+    var count = 0
+    func increment() {
+        count = count + 1
+    }
+    increment()
+    increment()
+    increment()
+    assert(count == 3)
+    
+    // 函数返回函数（闭包工厂）
+    func make_adder(int n) {
+        return func(int x) {
+            return x + n
+        }
+    }
+    var add5 = make_adder(5)
+    var add10 = make_adder(10)
+    assert(add5(3) == 8)
+    assert(add10(3) == 13)
+    
+    print("test_closure passed")
 }
