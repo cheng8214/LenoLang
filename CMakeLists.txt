@@ -87,15 +87,6 @@ set(LENO_SOURCES
     src/module/assert/assert.c
     src/module/sys/sys.c
     src/module/regexs/regexs.c
-    src/module/guis/guis.c
-    src/module/guis/guis_constants.c
-    src/module/guis/guis_draw.c
-    src/module/guis/guis_window.c
-    src/module/guis/guis_style.c
-    src/module/guis/guis_event.c
-    src/module/guis/guis_image.c
-    src/module/guis/guis_font.c
-    src/module/guis/leno_guis_log.c
     src/platform/platform_thread.c
     src/serialize/serialize.c
     src/package/package_platform.c
@@ -105,21 +96,37 @@ set(LENO_SOURCES
     src/package/package_install.c
 )
 
+# GUI 模块源文件（需要平台后端提供 leno_gui_platform_* 函数）
+set(GUI_SOURCES
+    src/module/guis/guis.c
+    src/module/guis/guis_constants.c
+    src/module/guis/guis_draw.c
+    src/module/guis/guis_window.c
+    src/module/guis/guis_style.c
+    src/module/guis/guis_event.c
+    src/module/guis/guis_image.c
+    src/module/guis/guis_font.c
+    src/module/guis/leno_guis_log.c
+)
+
 if(WIN32)
     list(APPEND LENO_SOURCES src/module/ffi/leno_ffi_win64.c)
     list(APPEND LENO_SOURCES src/module/guis/leno_guis_win32.c)
+    list(APPEND LENO_SOURCES ${GUI_SOURCES})
 else()
     list(APPEND LENO_SOURCES src/module/ffi/leno_ffi_linux.c)
     if(APPLE)
         list(APPEND LENO_SOURCES src/module/guis/leno_guis_macos.c)
+        list(APPEND LENO_SOURCES ${GUI_SOURCES})
     else()
-        # 检查 X11 开发库是否可用
+        # Linux: 检查 X11 开发库是否可用
         find_path(X11_INCLUDE_DIR NAMES X11/Xlib.h)
         find_library(X11_LIBRARY NAMES X11)
         if(X11_INCLUDE_DIR AND X11_LIBRARY)
             target_include_directories(leno PRIVATE ${X11_INCLUDE_DIR})
             target_link_libraries(leno PRIVATE ${X11_LIBRARY})
             list(APPEND LENO_SOURCES src/module/guis/leno_guis_linux.c)
+            list(APPEND LENO_SOURCES ${GUI_SOURCES})
         endif()
     endif()
 endif()
@@ -127,6 +134,11 @@ endif()
 add_executable(leno ${LENO_SOURCES})
 
 target_include_directories(leno PRIVATE src)
+
+# 定义 GUI 可用性宏
+if(WIN32 OR APPLE OR (UNIX AND X11_INCLUDE_DIR AND X11_LIBRARY))
+    target_compile_definitions(leno PRIVATE LENO_HAS_GUI=1)
+endif()
 
 if(MSVC)
     target_compile_options(leno PRIVATE /W4)

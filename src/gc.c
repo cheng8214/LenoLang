@@ -900,35 +900,43 @@ static void free_object_resources(Object* obj) {
             break;
         }
         case OBJ_GUI_WINDOW: {
+#ifdef LENO_HAS_GUI
             ObjGUIWindow* w = (ObjGUIWindow*)obj;
             if (w->platform) {
                 leno_gui_platform_destroy_window(w->platform);
                 w->platform = NULL;
             }
+#endif
             break;
         }
         case OBJ_GUI_RENDERER: {
+#ifdef LENO_HAS_GUI
             ObjGUIRenderer* r = (ObjGUIRenderer*)obj;
             if (r->platform) {
                 leno_gui_platform_destroy_renderer(r->platform);
                 r->platform = NULL;
             }
+#endif
             break;
         }
         case OBJ_GUI_FONT: {
+#ifdef LENO_HAS_GUI
             ObjGUIFont* f = (ObjGUIFont*)obj;
             if (f->platform) {
                 leno_gui_platform_destroy_font(f->platform);
                 f->platform = NULL;
             }
+#endif
             break;
         }
         case OBJ_GUI_IMAGE: {
+#ifdef LENO_HAS_GUI
             ObjGUIImage* img = (ObjGUIImage*)obj;
             if (img->platform) {
                 leno_gui_platform_destroy_image(img->platform);
                 img->platform = NULL;
             }
+#endif
             break;
         }
         case OBJ_GUI_EVENT:
