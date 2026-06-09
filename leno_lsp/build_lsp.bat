@@ -58,6 +58,7 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_font.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_struct.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_cstruct.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_face.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_socket.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_thread.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/bound_method.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/coroutine.c
