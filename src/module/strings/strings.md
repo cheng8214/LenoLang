@@ -391,7 +391,7 @@ strings.join(["path", "to", "file"], "/") // "path/to/file"
 
 #### `format(fmt, ...)`
 
-格式化字符串，支持类似 C 语言 printf 的格式说明符。
+格式化字符串，支持类似 C 语言 printf 的格式说明符，包括宽度、精度和标志位控制。
 
 **参数**:
 
@@ -406,11 +406,38 @@ strings.join(["path", "to", "file"], "/") // "path/to/file"
 |--------|------|------|
 | `%s` | 字符串 | `format("Hello %s", "World")` → `"Hello World"` |
 | `%d` 或 `%i` | 整数 | `format("Age: %d", 25)` → `"Age: 25"` |
+| `%u` | 无符号整数 | `format("%u", -1)` → `"4294967295"` |
 | `%f` | 浮点数 | `format("Pi = %f", 3.14)` → `"Pi = 3.140000"` |
+| `%e` 或 `%E` | 科学计数法 | `format("%e", 1234.5)` → `"1.234500e+03"` |
+| `%g` 或 `%G` | 自动选择 %f/%e | `format("%g", 1234.5)` → `"1234.5"` |
 | `%c` | 字符 | `format("Char: %c", 65)` → `"Char: A"` |
 | `%x` | 十六进制(小写) | `format("Hex: %x", 255)` → `"Hex: ff"` |
 | `%X` | 十六进制(大写) | `format("Hex: %X", 255)` → `"Hex: FF"` |
+| `%o` | 八进制 | `format("Oct: %o", 8)` → `"Oct: 10"` |
+| `%b` | 二进制 | `format("Bin: %b", 10)` → `"Bin: 1010"` |
+| `%t` | 布尔值 | `format("Flag: %t", true)` → `"Flag: true"` |
 | `%%` | 百分号 | `format("100%%")` → `"100%"` |
+
+**标志位**:
+
+| 标志 | 含义 | 示例 |
+|------|------|------|
+| `-` | 左对齐（默认右对齐） | `format("%-10s", "hi")` → `"hi        "` |
+| `0` | 零填充（数值类型） | `format("%05d", 42)` → `"00042"` |
+| `+` | 显示正号 | `format("%+d", 42)` → `"+42"` |
+| ` ` | 正数前加空格 | `format("% d", 42)` → `" 42"` |
+| `#` | 替代形式（%#b 加 0b 前缀，%#o 加 0 前缀，%#x 加 0x 前缀） | `format("%#b", 10)` → `"0b1010"` |
+
+**宽度和精度**:
+
+| 语法 | 含义 | 示例 |
+|------|------|------|
+| `%Nd` | 最小宽度 N | `format("%5d", 42)` → `"   42"` |
+| `%-Nd` | 左对齐，最小宽度 N | `format("%-5d", 42)` → `"42   "` |
+| `%0Nd` | 零填充，最小宽度 N | `format("%05d", 42)` → `"00042"` |
+| `%.Nf` | 小数点后 N 位 | `format("%.2f", 3.14159)` → `"3.14"` |
+| `%N.Mf` | 最小宽度 N，小数点后 M 位 | `format("%8.2f", 3.14)` → `"    3.14"` |
+| `%.Ns` | 截取前 N 个字符 | `format("%.3s", "Hello")` → `"Hel"` |
 
 **使用示例**:
 
@@ -419,6 +446,44 @@ strings.join(["path", "to", "file"], "/") // "path/to/file"
 format("Name: %s, Age: %d", "Leno", 5)     // "Name: Leno, Age: 5"
 format("Pi = %f", 3.14159)                  // "Pi = 3.141590"
 format("Hex: %x / %X", 255, 255)            // "Hex: ff / FF"
+
+// 宽度与对齐
+format("%10s", "hi")                         // "        hi"
+format("%-10s", "hi")                        // "hi        "
+format("%5d", 42)                            // "   42"
+format("%-5d", 42)                           // "42   "
+format("%05d", 42)                           // "00042"
+
+// 精度控制
+format("%.2f", 3.14159)                      // "3.14"
+format("%.0f", 3.14159)                      // "3"
+format("%8.2f", 3.14)                        // "    3.14"
+format("%.3s", "Hello")                      // "Hel"
+
+// 进制转换
+format("Oct: %o", 8)                         // "Oct: 10"
+format("Bin: %b", 10)                        // "Bin: 1010"
+format("%#x", 255)                           // "0xff"
+format("%#o", 8)                             // "010"
+format("%#b", 10)                            // "0b1010"
+
+// 科学计数法与自动格式
+format("%e", 1234.5)                         // "1.234500e+03"
+format("%E", 1234.5)                         // "1.234500E+03"
+format("%g", 1234.5)                         // "1234.5"
+format("%.2e", 1234.5)                       // "1.23e+03"
+
+// 布尔值
+format("Flag: %t", true)                     // "Flag: true"
+format("Active: %t", false)                  // "Active: false"
+format("%10t", true)                         // "      true"
+
+// 无符号整数
+format("%u", 42)                             // "42"
+
+// 正号显示
+format("%+d", 42)                            // "+42"
+format("%+d", -42)                           // "-42"
 
 // 多个参数
 format("%s %s %s", "a", "b", "c")          // "a b c"
@@ -429,7 +494,11 @@ format("100%% complete")                    // "100% complete"
 format("Char: %c", 65)                      // "Char: A"
 ```
 
-**注意**: `format` 既可以作为全局函数使用，也可以通过 `strings.format` 模块调用。
+**注意**:
+- `format` 既可以作为全局函数使用，也可以通过 `strings.format` 模块调用
+- `%s` 对非字符串参数会尝试自动转换（int/float/bool），无法转换的显示 `<value>`
+- 类型不匹配时（如 `%d` 传入字符串）显示 `<type_error>`
+- 参数不足时显示 `<missing>`
 
 ---
 

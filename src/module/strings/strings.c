@@ -469,140 +469,503 @@ static Value str_format(int argc, Value* args) {
     int result_len = 0;
     int arg_idx = 1;  // 从第二个参数开始
     
+    // 辅助宏：确保 result 缓冲区有足够空间
+    #define ENSURE_BUF(need) do { \
+        while (result_len + (need) >= buf_size) { \
+            buf_size *= 2; \
+            char* _nb = (char*)realloc(result, buf_size); \
+            if (!_nb) { free(result); return val_null(); } \
+            result = _nb; \
+        } \
+    } while(0)
+    
+    // 辅助宏：将 temp_buf 内容追加到 result
+    #define APPEND_TEMP() do { \
+        ENSURE_BUF(temp_len); \
+        memcpy(result + result_len, temp_buf, temp_len); \
+        result_len += temp_len; \
+    } while(0)
+    
+    // 辅助函数：将字符串直接写入 result（不经过 temp_buf，避免截断）
+    // 追加一段已知长度的字符串到 result
+    #define APPEND_STR(s, slen) do { \
+        ENSURE_BUF(slen); \
+        memcpy(result + result_len, (s), slen); \
+        result_len += slen; \
+    } while(0)
+    
     for (int i = 0; i < fmt_len; i++) {
         if (fmt_str[i] != '%') {
             // 普通字符，直接复制
-            if (result_len + 1 >= buf_size) {
-                buf_size *= 2;
-                char* new_buf = (char*)realloc(result, buf_size);
-                if (!new_buf) {
-                    free(result);
-                    return val_null();
-                }
-                result = new_buf;
-            }
+            ENSURE_BUF(1);
             result[result_len++] = fmt_str[i];
-        } else {
-            // 遇到格式符
+            continue;
+        }
+        
+        // 遇到 %，解析格式说明符
+        i++;
+        if (i >= fmt_len) break;
+        
+        // 解析标志位：'-'(左对齐), '0'(零填充), '+'(显示正号), ' '(空格替代正号), '#'(替代形式)
+        bool flag_minus = false;
+        bool flag_zero = false;
+        bool flag_plus = false;
+        bool flag_space = false;
+        bool flag_hash = false;
+        
+        while (i < fmt_len) {
+            switch (fmt_str[i]) {
+                case '-': flag_minus = true; i++; continue;
+                case '0': flag_zero = true; i++; continue;
+                case '+': flag_plus = true; i++; continue;
+                case ' ': flag_space = true; i++; continue;
+                case '#': flag_hash = true; i++; continue;
+                default: break;
+            }
+            break;
+        }
+        if (i >= fmt_len) break;
+        
+        // 左对齐时忽略零填充
+        if (flag_minus) flag_zero = false;
+        
+        // 解析宽度
+        int width = 0;
+        bool has_width = false;
+        while (i < fmt_len && fmt_str[i] >= '0' && fmt_str[i] <= '9') {
+            has_width = true;
+            width = width * 10 + (fmt_str[i] - '0');
             i++;
-            if (i >= fmt_len) break;
-            
-            char spec = fmt_str[i];
-            char temp_buf[256];
-            int temp_len = 0;
-            
-            switch (spec) {
-                case 's': {
-                    // 字符串
-                    if (arg_idx < argc && val_is_obj(args[arg_idx]) &&
-                        val_as_obj(args[arg_idx])->type == OBJ_STRING) {
-                        ObjString* s = (ObjString*)val_as_obj(args[arg_idx]);
-                        temp_len = s->len;
-                        if (temp_len > 255) temp_len = 255;
-                        memcpy(temp_buf, s->chars, temp_len);
-                    } else if (arg_idx < argc) {
-                        // 非字符串参数，转为字符串表示
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<value>");
-                    } else {
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+        }
+        if (i >= fmt_len) break;
+        
+        // 解析精度
+        int precision = -1;  // -1 表示未指定
+        if (fmt_str[i] == '.') {
+            i++;
+            precision = 0;
+            while (i < fmt_len && fmt_str[i] >= '0' && fmt_str[i] <= '9') {
+                precision = precision * 10 + (fmt_str[i] - '0');
+                i++;
+            }
+        }
+        if (i >= fmt_len) break;
+        
+        char spec = fmt_str[i];
+        
+        // 构造 printf 风格的格式字符串
+        char printf_fmt[64];
+        int pf_len = 0;
+        printf_fmt[pf_len++] = '%';
+        if (flag_minus) printf_fmt[pf_len++] = '-';
+        if (flag_plus) printf_fmt[pf_len++] = '+';
+        if (flag_space) printf_fmt[pf_len++] = ' ';
+        if (flag_hash) printf_fmt[pf_len++] = '#';
+        if (flag_zero) printf_fmt[pf_len++] = '0';
+        if (has_width) {
+            pf_len += snprintf(printf_fmt + pf_len, sizeof(printf_fmt) - pf_len, "%d", width);
+        }
+        if (precision >= 0) {
+            pf_len += snprintf(printf_fmt + pf_len, sizeof(printf_fmt) - pf_len, ".%d", precision);
+        }
+        // 预留1字节给 spec + '\0'
+        if (pf_len + 2 > (int)sizeof(printf_fmt)) {
+            // 格式串太长，回退简单输出
+            ENSURE_BUF(2);
+            result[result_len++] = '%';
+            result[result_len++] = spec;
+            continue;
+        }
+        
+        // 用于格式化输出的临时缓冲区（足够大以容纳宽格式化结果）
+        char temp_buf[1024];
+        int temp_len = 0;
+        
+        switch (spec) {
+            case 's': {
+                // 字符串
+                if (arg_idx < argc && val_is_obj(args[arg_idx]) &&
+                    val_as_obj(args[arg_idx])->type == OBJ_STRING) {
+                    ObjString* s = (ObjString*)val_as_obj(args[arg_idx]);
+                    int slen = s->len;
+                    const char* schars = s->chars;
+                    
+                    // 精度限制字符串长度
+                    if (precision >= 0 && slen > precision) {
+                        slen = precision;
                     }
-                    arg_idx++;
-                    break;
-                }
-                
-                case 'd':
-                case 'i': {
-                    // 整数
-                    if (arg_idx < argc) {
-                        int val = val_as_int(args[arg_idx]);
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "%d", val);
-                    } else {
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
-                    }
-                    arg_idx++;
-                    break;
-                }
-                
-                case 'f': {
-                    // 浮点数（支持 int、float 和 BigInt）
-                    if (arg_idx < argc) {
-                        double val;
-                        if (val_is_int(args[arg_idx])) {
-                            val = (double)val_as_int(args[arg_idx]);
-                        } else if (val_is_float(args[arg_idx])) {
-                            val = val_as_num(args[arg_idx]);
-                        } else if (val_is_bigint(args[arg_idx])) {
-                            val = bigint_to_double(val_as_bigint(args[arg_idx]));
+                    
+                    // 宽度填充
+                    if (has_width && slen < width) {
+                        int pad = width - slen;
+                        if (flag_minus) {
+                            // 左对齐：先字符串后空格
+                            APPEND_STR(schars, slen);
+                            for (int p = 0; p < pad; p++) {
+                                ENSURE_BUF(1);
+                                result[result_len++] = ' ';
+                            }
                         } else {
-                            val = 0;
+                            // 右对齐：先空格后字符串
+                            for (int p = 0; p < pad; p++) {
+                                ENSURE_BUF(1);
+                                result[result_len++] = ' ';
+                            }
+                            APPEND_STR(schars, slen);
                         }
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "%f", val);
                     } else {
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                        APPEND_STR(schars, slen);
                     }
-                    arg_idx++;
-                    break;
-                }
-                
-                case 'c': {
-                    // 字符
-                    if (arg_idx < argc) {
-                        int val = val_as_int(args[arg_idx]);
-                        temp_buf[0] = (char)val;
-                        temp_len = 1;
+                } else if (arg_idx < argc) {
+                    // 非字符串参数，尝试数值转字符串
+                    if (val_is_int(args[arg_idx])) {
+                        printf_fmt[pf_len++] = 'd';
+                        printf_fmt[pf_len] = '\0';
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_int(args[arg_idx]));
+                        APPEND_TEMP();
+                    } else if (val_is_float(args[arg_idx])) {
+                        printf_fmt[pf_len++] = 'f';
+                        printf_fmt[pf_len] = '\0';
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_num(args[arg_idx]));
+                        APPEND_TEMP();
+                    } else if (val_is_bool(args[arg_idx])) {
+                        const char* bs = val_as_bool(args[arg_idx]) ? "true" : "false";
+                        int blen = val_as_bool(args[arg_idx]) ? 4 : 5;
+                        if (precision >= 0 && blen > precision) blen = precision;
+                        if (has_width && blen < width) {
+                            int pad = width - blen;
+                            if (flag_minus) {
+                                APPEND_STR(bs, blen);
+                                for (int p = 0; p < pad; p++) { ENSURE_BUF(1); result[result_len++] = ' '; }
+                            } else {
+                                for (int p = 0; p < pad; p++) { ENSURE_BUF(1); result[result_len++] = ' '; }
+                                APPEND_STR(bs, blen);
+                            }
+                        } else {
+                            APPEND_STR(bs, blen);
+                        }
                     } else {
-                        temp_buf[0] = '?';
-                        temp_len = 1;
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<value>");
+                        APPEND_TEMP();
                     }
-                    arg_idx++;
-                    break;
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                    APPEND_TEMP();
                 }
-                
-                case 'x':
-                case 'X': {
-                    // 十六进制
-                    if (arg_idx < argc) {
-                        int val = val_as_int(args[arg_idx]);
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), 
-                                          spec == 'x' ? "%x" : "%X", val);
-                    } else {
-                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
-                    }
-                    arg_idx++;
-                    break;
-                }
-                
-                case '%': {
-                    // 转义的百分号
-                    temp_buf[0] = '%';
-                    temp_len = 1;
-                    break;
-                }
-                
-                default: {
-                    // 未知的格式符，原样输出
-                    temp_buf[0] = '%';
-                    temp_buf[1] = spec;
-                    temp_len = 2;
-                    break;
-                }
+                arg_idx++;
+                break;
             }
             
-            // 确保缓冲区足够
-            while (result_len + temp_len >= buf_size) {
-                buf_size *= 2;
-                char* new_buf = (char*)realloc(result, buf_size);
-                if (!new_buf) {
-                    free(result);
-                    return val_null();
+            case 'd':
+            case 'i': {
+                // 整数
+                printf_fmt[pf_len++] = 'd';
+                printf_fmt[pf_len] = '\0';
+                if (arg_idx < argc) {
+                    if (val_is_int(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_int(args[arg_idx]));
+                    } else if (val_is_float(args[arg_idx])) {
+                        // float → int 截断
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (int)val_as_num(args[arg_idx]));
+                    } else if (val_is_bool(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_bool(args[arg_idx]) ? 1 : 0);
+                    } else {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                    }
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
                 }
-                result = new_buf;
+                APPEND_TEMP();
+                arg_idx++;
+                break;
             }
             
-            memcpy(result + result_len, temp_buf, temp_len);
-            result_len += temp_len;
+            case 'u': {
+                // 无符号整数
+                printf_fmt[pf_len++] = 'u';
+                printf_fmt[pf_len] = '\0';
+                if (arg_idx < argc) {
+                    if (val_is_int(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (unsigned int)val_as_int(args[arg_idx]));
+                    } else if (val_is_float(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (unsigned int)val_as_num(args[arg_idx]));
+                    } else {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                    }
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                }
+                APPEND_TEMP();
+                arg_idx++;
+                break;
+            }
+            
+            case 'f': {
+                // 浮点数（支持 int、float 和 BigInt）
+                printf_fmt[pf_len++] = 'f';
+                printf_fmt[pf_len] = '\0';
+                if (arg_idx < argc) {
+                    double val;
+                    if (val_is_int(args[arg_idx])) {
+                        val = (double)val_as_int(args[arg_idx]);
+                    } else if (val_is_float(args[arg_idx])) {
+                        val = val_as_num(args[arg_idx]);
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        val = bigint_to_double(val_as_bigint(args[arg_idx]));
+                    } else if (val_is_bool(args[arg_idx])) {
+                        val = val_as_bool(args[arg_idx]) ? 1.0 : 0.0;
+                    } else {
+                        val = 0;
+                    }
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val);
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                }
+                APPEND_TEMP();
+                arg_idx++;
+                break;
+            }
+            
+            case 'e':
+            case 'E': {
+                // 科学计数法
+                printf_fmt[pf_len++] = spec;
+                printf_fmt[pf_len] = '\0';
+                if (arg_idx < argc) {
+                    double val;
+                    if (val_is_int(args[arg_idx])) {
+                        val = (double)val_as_int(args[arg_idx]);
+                    } else if (val_is_float(args[arg_idx])) {
+                        val = val_as_num(args[arg_idx]);
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        val = bigint_to_double(val_as_bigint(args[arg_idx]));
+                    } else if (val_is_bool(args[arg_idx])) {
+                        val = val_as_bool(args[arg_idx]) ? 1.0 : 0.0;
+                    } else {
+                        val = 0;
+                    }
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val);
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                }
+                APPEND_TEMP();
+                arg_idx++;
+                break;
+            }
+            
+            case 'g':
+            case 'G': {
+                // 自动选择 %f 或 %e
+                printf_fmt[pf_len++] = spec;
+                printf_fmt[pf_len] = '\0';
+                if (arg_idx < argc) {
+                    double val;
+                    if (val_is_int(args[arg_idx])) {
+                        val = (double)val_as_int(args[arg_idx]);
+                    } else if (val_is_float(args[arg_idx])) {
+                        val = val_as_num(args[arg_idx]);
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        val = bigint_to_double(val_as_bigint(args[arg_idx]));
+                    } else if (val_is_bool(args[arg_idx])) {
+                        val = val_as_bool(args[arg_idx]) ? 1.0 : 0.0;
+                    } else {
+                        val = 0;
+                    }
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val);
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                }
+                APPEND_TEMP();
+                arg_idx++;
+                break;
+            }
+            
+            case 'c': {
+                // 字符
+                if (arg_idx < argc) {
+                    int val = 0;
+                    if (val_is_int(args[arg_idx])) {
+                        val = val_as_int(args[arg_idx]);
+                    } else if (val_is_float(args[arg_idx])) {
+                        val = (int)val_as_num(args[arg_idx]);
+                    }
+                    ENSURE_BUF(1);
+                    result[result_len++] = (char)val;
+                } else {
+                    ENSURE_BUF(1);
+                    result[result_len++] = '?';
+                }
+                arg_idx++;
+                break;
+            }
+            
+            case 'x':
+            case 'X': {
+                // 十六进制
+                printf_fmt[pf_len++] = spec;
+                printf_fmt[pf_len] = '\0';
+                if (arg_idx < argc) {
+                    if (val_is_int(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_int(args[arg_idx]));
+                    } else if (val_is_float(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (int)val_as_num(args[arg_idx]));
+                    } else {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                    }
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                }
+                APPEND_TEMP();
+                arg_idx++;
+                break;
+            }
+            
+            case 'o': {
+                // 八进制
+                printf_fmt[pf_len++] = 'o';
+                printf_fmt[pf_len] = '\0';
+                if (arg_idx < argc) {
+                    if (val_is_int(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_int(args[arg_idx]));
+                    } else if (val_is_float(args[arg_idx])) {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (int)val_as_num(args[arg_idx]));
+                    } else {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                    }
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                }
+                APPEND_TEMP();
+                arg_idx++;
+                break;
+            }
+            
+            case 'b': {
+                // 二进制
+                if (arg_idx < argc) {
+                    unsigned int val = 0;
+                    if (val_is_int(args[arg_idx])) {
+                        val = (unsigned int)val_as_int(args[arg_idx]);
+                    } else if (val_is_float(args[arg_idx])) {
+                        val = (unsigned int)val_as_num(args[arg_idx]);
+                    } else {
+                        temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                        APPEND_TEMP();
+                        arg_idx++;
+                        break;
+                    }
+                    
+                    // 计算二进制位数
+                    if (val == 0) {
+                        temp_buf[0] = '0';
+                        temp_len = 1;
+                    } else {
+                        temp_len = 0;
+                        unsigned int v = val;
+                        while (v > 0) { temp_len++; v >>= 1; }
+                        // 写入二进制（从高位到低位）
+                        for (int bit = temp_len - 1; bit >= 0; bit--) {
+                            temp_buf[bit] = (val & 1) ? '1' : '0';
+                            val >>= 1;
+                        }
+                    }
+                    
+                    // # 标志：添加 0b 前缀
+                    int prefix_len = flag_hash ? 2 : 0;
+                    // 宽度填充
+                    if (has_width && temp_len + prefix_len < width) {
+                        int pad = width - temp_len - prefix_len;
+                        if (flag_minus) {
+                            // 左对齐
+                            if (flag_hash) { APPEND_STR("0b", 2); }
+                            APPEND_TEMP();
+                            for (int p = 0; p < pad; p++) { ENSURE_BUF(1); result[result_len++] = ' '; }
+                        } else {
+                            // 右对齐
+                            char fill_char = flag_zero ? '0' : ' ';
+                            if (flag_zero && flag_hash) {
+                                APPEND_STR("0b", 2);
+                            }
+                            for (int p = 0; p < pad; p++) { ENSURE_BUF(1); result[result_len++] = fill_char; }
+                            if (!flag_zero && flag_hash) {
+                                APPEND_STR("0b", 2);
+                            }
+                            APPEND_TEMP();
+                        }
+                    } else {
+                        if (flag_hash) { APPEND_STR("0b", 2); }
+                        APPEND_TEMP();
+                    }
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                    APPEND_TEMP();
+                }
+                arg_idx++;
+                break;
+            }
+            
+            case 't': {
+                // 布尔值
+                if (arg_idx < argc) {
+                    const char* bs;
+                    int blen;
+                    if (val_is_bool(args[arg_idx])) {
+                        bs = val_as_bool(args[arg_idx]) ? "true" : "false";
+                        blen = val_as_bool(args[arg_idx]) ? 4 : 5;
+                    } else {
+                        // 非布尔值，按真值判断
+                        bool truthy = false;
+                        if (val_is_int(args[arg_idx])) truthy = (val_as_int(args[arg_idx]) != 0);
+                        else if (val_is_float(args[arg_idx])) truthy = (val_as_num(args[arg_idx]) != 0.0);
+                        else truthy = true;
+                        bs = truthy ? "true" : "false";
+                        blen = truthy ? 4 : 5;
+                    }
+                    
+                    // 精度限制
+                    if (precision >= 0 && blen > precision) blen = precision;
+                    
+                    // 宽度填充
+                    if (has_width && blen < width) {
+                        int pad = width - blen;
+                        if (flag_minus) {
+                            APPEND_STR(bs, blen);
+                            for (int p = 0; p < pad; p++) { ENSURE_BUF(1); result[result_len++] = ' '; }
+                        } else {
+                            for (int p = 0; p < pad; p++) { ENSURE_BUF(1); result[result_len++] = ' '; }
+                            APPEND_STR(bs, blen);
+                        }
+                    } else {
+                        APPEND_STR(bs, blen);
+                    }
+                } else {
+                    temp_len = snprintf(temp_buf, sizeof(temp_buf), "<missing>");
+                    APPEND_TEMP();
+                }
+                arg_idx++;
+                break;
+            }
+            
+            case '%': {
+                // 转义的百分号
+                ENSURE_BUF(1);
+                result[result_len++] = '%';
+                break;
+            }
+            
+            default: {
+                // 未知的格式符，原样输出
+                ENSURE_BUF(2);
+                result[result_len++] = '%';
+                result[result_len++] = spec;
+                break;
+            }
         }
     }
+    
+    #undef ENSURE_BUF
+    #undef APPEND_TEMP
+    #undef APPEND_STR
     
     result[result_len] = '\0';
     
