@@ -657,140 +657,84 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
 void gen_assign(CodeGen* gen, Ast* ast) {
     int left_count = ast->u.assign.name_count;
     
-    // 并行赋值：先计算所有右侧值，再依次赋值
+    // 并行赋值：先求所有右值存到临时槽位，再逐个赋值
     if (left_count > 1) {
-        // 为每个右侧值分配独立的临时槽位
-        int* temp_slots = (int*)malloc(sizeof(int) * left_count);
+        int orig_max = gen->max_local_slot;
         
-        // 保存原始 max_local_slot，确保所有并行赋值共用同一个临时基底
-        int orig_max_slot = gen->max_local_slot;
+        // 临时槽位：从 orig_max+1 开始，每次 gen_assign 固定复用同一区域
+        // value_slots[0..left_count-1] 存右值
+        // aux_slot                    复用槽位（INDEX/FIELD_ACCESS 时临时保存 value）
+        int slot_base = orig_max + 1;
+        int aux_slot  = slot_base + left_count;
+        int needed    = aux_slot;  // 需要的最大槽位号
         
-        // 计算已声明局部变量的最大索引
-        // 方法1：从左侧目标的 refs 中找（覆盖简单变量赋值的情况）
-        int max_local_index = -1;
+        if (needed > gen->max_local_slot) {
+            gen->max_local_slot = needed;
+        }
+        if (needed > gen->peak_local_slot) {
+            gen->peak_local_slot = needed;
+        }
+        
+        // 阶段1：求所有右值 → 写入临时槽位
+        Ast* arr = ast->u.assign.value;
+        int right_count = (arr && arr->kind == AST_ARRAY) ? arr->u.array.count : 0;
+        
         for (int i = 0; i < left_count; i++) {
-            if (ast->u.assign.refs[i].kind == SYM_LOCAL || ast->u.assign.refs[i].kind == SYM_PARAM) {
-                if (ast->u.assign.refs[i].index > max_local_index) {
-                    max_local_index = ast->u.assign.refs[i].index;
-                }
+            if (arr && arr->kind == AST_ARRAY && i < right_count) {
+                gen_expr(gen, arr->u.array.items[i]);
+            } else if (!(arr && arr->kind == AST_ARRAY) && i == 0) {
+                gen_expr(gen, ast->u.assign.value);
+            } else {
+                emit_byte(gen, OP_NULL, ast->line);
             }
-        }
-        // 方法2：orig_max_slot 跟踪了当前函数所有已声明局部变量的最大索引
-        // 必须同时考虑两者：当左侧都是索引表达式时，refs 可能只覆盖部分变量
-        int temp_slot_base = max_local_index + 1;
-        if (orig_max_slot + 1 > temp_slot_base) {
-            temp_slot_base = orig_max_slot + 1;
-        }
-        
-        // 计算需要多少个临时槽位（left_count 存右侧值 + index_count 存索引赋值中间值）
-        int index_count = 0;
-        for (int i = 0; i < left_count; i++) {
-            if (ast->u.assign.targets[i]->kind == AST_INDEX) {
-                index_count++;
-            }
-        }
-        int needed_slots = temp_slot_base + left_count + index_count - 1;
-        if (needed_slots > gen->max_local_slot) {
-            gen->max_local_slot = needed_slots;
-        }
-        // 临时槽位起始位置固定为 temp_slot_base（基于 orig_max_slot 计算），
-        // 确保循环中多次并行赋值共用同一块临时区域，不随迭代增长
-        
-        // 先生成所有右侧表达式，保存到临时变量
-        if (ast->u.assign.value->kind == AST_ARRAY) {
-            Ast* arr = ast->u.assign.value;
-            int right_count = arr->u.array.count;
-            
-            for (int i = 0; i < left_count; i++) {
-                if (i < right_count) {
-                    gen_expr(gen, arr->u.array.items[i]);
-                } else {
-                    // 右侧值不足，使用 null
-                    emit_byte(gen, OP_NULL, ast->line);
-                }
-                // 保存到临时槽位
-                temp_slots[i] = temp_slot_base + i;
-                emit_bytes_2(gen, OP_SET_LOCAL, temp_slots[i], ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-            }
-        } else {
-            // 右侧是单个表达式
-            gen_expr(gen, ast->u.assign.value);
-            temp_slots[0] = temp_slot_base;
-            emit_bytes_2(gen, OP_SET_LOCAL, temp_slots[0], ast->line);
+            emit_bytes_2(gen, OP_SET_LOCAL, slot_base + i, ast->line);
             emit_byte(gen, OP_POP, ast->line);
         }
         
-        // 从临时变量赋值给左侧目标（从左到右）
+        // 阶段2：逐个加载右值 → 赋值给左目标
         for (int i = 0; i < left_count; i++) {
             Ast* target = ast->u.assign.targets[i];
-            
-            // 从临时槽位加载值
-            emit_bytes_2(gen, OP_GET_LOCAL, temp_slots[i], ast->line);
+            SymRef* ref  = &ast->u.assign.refs[i];
+            int val_slot = slot_base + i;
             
             if (target->kind == AST_FIELD_ACCESS) {
-                // struct 字段赋值: obj.field = value
-                // 值已经在栈上，需要生成 obj，然后调用 OP_SET_FIELD
-                
-                // 保存 value 到新的临时槽位
-                int value_slot = temp_slot_base + left_count + i;
-                if (value_slot > gen->max_local_slot) {
-                    gen->max_local_slot = value_slot;
-                }
-                emit_bytes_2(gen, OP_SET_LOCAL, value_slot, ast->line);
+                // 保存 value → aux，生成 obj，重载 value，SET_FIELD
+                emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
+                emit_bytes_2(gen, OP_SET_LOCAL, aux_slot, ast->line);
                 emit_byte(gen, OP_POP, ast->line);
                 
-                // 生成 obj
                 gen_expr(gen, target->u.field_access.obj);
+                emit_bytes_2(gen, OP_GET_LOCAL, aux_slot, ast->line);
                 
-                // 重新加载 value
-                emit_bytes_2(gen, OP_GET_LOCAL, value_slot, ast->line);
-                
-                // 使用编译期确定的字段索引（优化：避免运行时线性搜索）
                 int field_idx = target->u.field_access.field_index;
-                
                 if (field_idx < 0) {
                     error_add(ERR_SEMANTIC, ast->line, "无法确定字段索引，struct 类型可能未定义");
-                    field_idx = 0; // 使用 0 作为默认值，避免生成无效字节码
+                    field_idx = 0;
                 }
-                
-                // 调用 OP_SET_FIELD
                 emit_byte(gen, OP_SET_FIELD, ast->line);
                 emit_byte(gen, (uint8_t)field_idx, ast->line);
-                emit_byte(gen, OP_POP, ast->line); // 弹出 OP_SET_FIELD 的结果
-            } else if (target->kind == AST_INDEX) {
-                // 索引赋值: obj[index] = value
-                // 值已经在栈上，需要生成 obj 和 index，然后调用 OP_INDEX_SET
-                // 但顺序应该是: obj, index, value
-                // 目前栈顶是 value，我们需要先保存 value
-                
-                // 保存 value 到新的临时槽位（每个索引目标独立）
-                int value_slot = temp_slot_base + left_count + i;
-                if (value_slot > gen->max_local_slot) {
-                    gen->max_local_slot = value_slot;
-                }
-                emit_bytes_2(gen, OP_SET_LOCAL, value_slot, ast->line);
                 emit_byte(gen, OP_POP, ast->line);
                 
-                // 生成 obj 和 index
+            } else if (target->kind == AST_INDEX) {
+                // 保存 value → aux，生成 obj+index，重载 value，INDEX_SET
+                emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
+                emit_bytes_2(gen, OP_SET_LOCAL, aux_slot, ast->line);
+                emit_byte(gen, OP_POP, ast->line);
+                
                 gen_expr(gen, target->u.index.obj);
                 gen_expr(gen, target->u.index.index);
+                emit_bytes_2(gen, OP_GET_LOCAL, aux_slot, ast->line);
                 
-                // 重新加载 value
-                emit_bytes_2(gen, OP_GET_LOCAL, value_slot, ast->line);
-                
-                // 调用索引赋值指令
                 emit_byte(gen, OP_INDEX_SET, ast->line);
-                emit_byte(gen, OP_POP, ast->line); // 弹出 OP_INDEX_SET 的结果
+                emit_byte(gen, OP_POP, ast->line);
+                
             } else if (target->kind == AST_VAR) {
-                // 简单变量赋值
-                SymRef* ref = &ast->u.assign.refs[i];
+                emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
+                
                 if (!ref->name) {
                     error_add(ERR_SEMANTIC, ast->line, "未解析的赋值目标");
-                    free(temp_slots);
                     return;
                 }
-                
                 switch (ref->kind) {
                     case SYM_LOCAL:
                     case SYM_PARAM:
@@ -803,7 +747,6 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                         emit_bytes_2(gen, OP_SET_UPVALUE, ref->index, ast->line);
                         break;
                     case SYM_MODULE:
-                        // 模块变量赋值
                         emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
                         emit_byte(gen, OP_POP, ast->line);
                         break;
@@ -811,28 +754,22 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                     case SYM_STRUCT:
                     case SYM_CSTRUCT:
                     case SYM_ENUM:
-                        // 类型定义不能赋值
                         error_add(ERR_SEMANTIC, ast->line, "类型定义不能赋值");
-                        free(temp_slots);
                         return;
                     default:
                         error_add(ERR_SEMANTIC, ast->line, "未知的符号类型");
-                        free(temp_slots);
                         return;
                 }
                 emit_byte(gen, OP_POP, ast->line);
             } else {
                 error_add(ERR_SEMANTIC, ast->line, "不支持的赋值目标类型");
-                free(temp_slots);
                 return;
             }
         }
         
-        // 释放临时槽位数组
-        free(temp_slots);
-        
         // 最后一个值留在栈上作为赋值表达式的结果
         if (left_count > 0) {
+            int last_val_slot = slot_base + left_count - 1;
             Ast* last_target = ast->u.assign.targets[left_count - 1];
             if (last_target->kind == AST_VAR) {
                 SymRef* last_ref = &ast->u.assign.refs[left_count - 1];
@@ -851,10 +788,16 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                         emit_bytes_2(gen, OP_GET_MODULE_VAR, last_ref->index, ast->line);
                         break;
                     default:
-                    break;
+                        break;
                 }
+            } else if (last_target->kind == AST_INDEX || last_target->kind == AST_FIELD_ACCESS) {
+                // INDEX/FIELD_ACCESS 赋值后，从临时槽位取回值
+                emit_bytes_2(gen, OP_GET_LOCAL, last_val_slot, ast->line);
             }
         }
+        
+        // 恢复 max_local_slot，下次 gen_assign 从同一基底开始（槽位复用，不级联膨胀）
+        gen->max_local_slot = orig_max;
     } else {
         // 单个赋值
         Ast* target = ast->u.assign.targets[0];

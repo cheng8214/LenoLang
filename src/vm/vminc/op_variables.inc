@@ -19,6 +19,7 @@ OPCODE(OP_GET_LOCAL) {
 }
 
 OPCODE(OP_SET_LOCAL) {
+    frame = &vm.frames[vm.frame_cnt - 1];
     uint16_t slot = READ_SHORT();
     if (frame->locals != NULL) {
         if (slot < frame->local_count) {
@@ -34,6 +35,7 @@ OPCODE(OP_SET_LOCAL) {
 }
 
 OPCODE(OP_SET_LOCAL_POP) {
+    frame = &vm.frames[vm.frame_cnt - 1];
     uint16_t slot = READ_SHORT();
     if (frame->locals != NULL) {
         if (slot < frame->local_count) {
@@ -77,6 +79,7 @@ OPCODE(OP_SET_GLOBAL) {
 }
 
 OPCODE(OP_GET_UPVALUE) {
+    frame = &vm.frames[vm.frame_cnt - 1];
     uint16_t slot = READ_SHORT();
     if (frame->closure == NULL) {
         runtime_error("没有闭包环境", GET_CURRENT_LINE());
@@ -87,6 +90,7 @@ OPCODE(OP_GET_UPVALUE) {
 }
 
 OPCODE(OP_SET_UPVALUE) {
+    frame = &vm.frames[vm.frame_cnt - 1];
     uint16_t slot = READ_SHORT();
     if (frame->closure == NULL) {
         runtime_error("没有闭包环境", GET_CURRENT_LINE());

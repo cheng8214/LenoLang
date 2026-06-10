@@ -7,6 +7,7 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
     gen->loop_count = 0;
     gen->current_func = NULL;
     gen->max_local_slot = -1;
+    gen->peak_local_slot = -1;
 }
 
 void codegen(CodeGen* gen, Ast* ast) {

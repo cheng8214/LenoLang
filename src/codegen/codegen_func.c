@@ -76,6 +76,7 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     Chunk* prev_chunk = gen->chunk;
     ObjFunction* prev_func = gen->current_func;
     int prev_max_slot = gen->max_local_slot;
+    int prev_peak_slot = gen->peak_local_slot;
 
     if (prev_chunk && prev_chunk->filename) {
         func->chunk->filename = strdup(prev_chunk->filename);
@@ -84,6 +85,7 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     gen->chunk = func->chunk;
     gen->current_func = func;
     gen->max_local_slot = func->local_count - 1;  // 初始最大槽位是当前局部变量数-1
+    gen->peak_local_slot = func->local_count - 1; // 峰值初始为声明变量数-1
 
     gen->scope_depth++;
 
@@ -93,9 +95,14 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     gen_block(gen, ast->u.func.body);
     gen->scope_depth--;
 
-    // 更新函数的 local_count 以包含临时槽位
-    if (gen->max_local_slot >= func->local_count) {
-        func->local_count = gen->max_local_slot + 1;
+    // 更新函数的 local_count：使用峰值为准（覆盖 gen_assign 临时槽位需求）
+    // peak_local_slot 避免了 gen_assign 级联膨胀问题，只记录真实需要的最大槽位
+    int effective_max = gen->max_local_slot;
+    if (gen->peak_local_slot > effective_max) {
+        effective_max = gen->peak_local_slot;
+    }
+    if (effective_max >= func->local_count) {
+        func->local_count = effective_max + 1;
     }
 
     emit_byte(gen, OP_NULL, ast->line);
@@ -104,6 +111,7 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     gen->chunk = prev_chunk;
     gen->current_func = prev_func;
     gen->max_local_slot = prev_max_slot;
+    gen->peak_local_slot = prev_peak_slot;
 
     return func;
 }

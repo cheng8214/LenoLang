@@ -29,6 +29,7 @@ typedef struct {
     int loop_count;           // 当前循环嵌套深度
     ObjFunction* current_func; // 当前正在生成的函数（用于更新 local_count）
     int max_local_slot;       // 最大使用的局部变量槽位（包括临时槽位）
+    int peak_local_slot;      // 真正的槽位峰值（不受 gen_assign 临时槽位级联影响）
 } CodeGen;
 
 void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);
