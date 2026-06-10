@@ -1,0 +1,367 @@
+// ChaCha20 流加密 —— 纯 LenoC 实现
+// 展示 LenoC 的 32 位运算、QR (Quarter Round) 混合函数能力
+//
+// ChaCha20 是 Daniel J. Bernstein 设计的现代流加密算法：
+//   - 256 位密钥 + 96 位 nonce + 32 位计数器
+//   - 20 轮 QR 混合（10 轮列 + 10 轮对角线）
+//   - 被广泛用于 TLS 1.3、WireGuard、SSH 等
+//   - 比 AES 在软件实现上更快更安全
+
+import strings
+
+// ==================== ChaCha20 核心 ====================
+
+// 将 int32 转为无符号表示（0 ~ 0xFFFFFFFF）
+func to_u32(int v):int {
+    v = _int32(v)
+    if (v < 0) { return v + 0x100000000 }
+    return v
+}
+
+// 将无符号表示转回 int32
+func from_u32(int v):int {
+    return _int32(v)
+}
+
+// 32 位循环左移
+func rotl32(int v, int n):int {
+    int uv = to_u32(v)
+    int left = _int32(uv << n)
+    int right = uv >> (32 - n)
+    return from_u32(left | right)
+}
+
+// 32 位 XOR
+func xor32(int a, int b):int {
+    return _int32(to_u32(a) ^ to_u32(b))
+}
+
+// 32 位 ADD
+func add32(int a, int b):int {
+    return _int32(to_u32(a) + to_u32(b))
+}
+
+// Quarter Round: ChaCha20 的基本混合单元
+func qr(int a, int b, int c, int d):Array[int] {
+    a = add32(a, b); d = xor32(d, a); d = rotl32(d, 16)
+    c = add32(c, d); b = xor32(b, c); b = rotl32(b, 12)
+    a = add32(a, b); d = xor32(d, a); d = rotl32(d, 8)
+    c = add32(c, d); b = xor32(b, c); b = rotl32(b, 7)
+    return [a, b, c, d]
+}
+
+// ChaCha20 核心块函数：生成 64 字节密钥流块
+// 输入 16 个 uint32，输出 16 个 uint32
+func chacha20_block(Array[int] state):Array[int] {
+    // 工作状态副本
+    Array[int] working = [state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7], state[8], state[9], state[10], state[11], state[12], state[13], state[14], state[15]]
+
+    // 20 轮（10 轮双轮）
+    for 10 {
+        // 列轮
+        Array[int] r0 = qr(working[0], working[4], working[8],  working[12])
+        working[0] = r0[0]; working[4] = r0[1]; working[8] = r0[2]; working[12] = r0[3]
+
+        Array[int] r1 = qr(working[1], working[5], working[9],  working[13])
+        working[1] = r1[0]; working[5] = r1[1]; working[9] = r1[2]; working[13] = r1[3]
+
+        Array[int] r2 = qr(working[2], working[6], working[10], working[14])
+        working[2] = r2[0]; working[6] = r2[1]; working[10] = r2[2]; working[14] = r2[3]
+
+        Array[int] r3 = qr(working[3], working[7], working[11], working[15])
+        working[3] = r3[0]; working[7] = r3[1]; working[11] = r3[2]; working[15] = r3[3]
+
+        // 对角线轮
+        Array[int] d0 = qr(working[0], working[5], working[10], working[15])
+        working[0] = d0[0]; working[5] = d0[1]; working[10] = d0[2]; working[15] = d0[3]
+
+        Array[int] d1 = qr(working[1], working[6], working[11], working[12])
+        working[1] = d1[0]; working[6] = d1[1]; working[11] = d1[2]; working[12] = d1[3]
+
+        Array[int] d2 = qr(working[2], working[7], working[8],  working[13])
+        working[2] = d2[0]; working[7] = d2[1]; working[8] = d2[2]; working[13] = d2[3]
+
+        Array[int] d3 = qr(working[3], working[4], working[9],  working[14])
+        working[3] = d3[0]; working[4] = d3[1]; working[9] = d3[2]; working[14] = d3[3]
+    }
+
+    // 加上初始状态
+    var result = []
+    for 0:15 to i {
+        result.add(add32(working[i], state[i]))
+    }
+    return result
+}
+
+// ==================== 状态构建 ====================
+
+// 从字符串读取小端序 uint32
+func read_le32(string data, int offset):int {
+    int b0 = data.byte(offset)
+    int b1 = data.byte(offset + 1)
+    int b2 = data.byte(offset + 2)
+    int b3 = data.byte(offset + 3)
+    return _int32(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+}
+
+// 将 uint32 写为小端序 4 字节
+func write_le32(int value):string {
+    return strings.char(
+        _int32(value) & 0xFF,
+        _int32(value >> 8) & 0xFF,
+        _int32(value >> 16) & 0xFF,
+        _int32(value >> 24) & 0xFF
+    )
+}
+
+// 构建 ChaCha20 初始状态
+// state[0..3]  = "expand 32-byte k" 常量
+// state[4..11] = 256 位密钥
+// state[12]    = 计数器
+// state[13..15]= 96 位 nonce
+func chacha20_init_state(string key, int counter, string nonce):Array[int] {
+    // 常量 "expand 32-byte k"
+    int c0 = read_le32("expa", 0)
+    int c1 = read_le32("nd 3", 0)
+    int c2 = read_le32("2-by", 0)
+    int c3 = read_le32("te k", 0)
+
+    // 密钥 8 个 uint32（小端序）
+    int k0 = read_le32(key, 0)
+    int k1 = read_le32(key, 4)
+    int k2 = read_le32(key, 8)
+    int k3 = read_le32(key, 12)
+    int k4 = read_le32(key, 16)
+    int k5 = read_le32(key, 20)
+    int k6 = read_le32(key, 24)
+    int k7 = read_le32(key, 28)
+
+    // Nonce 3 个 uint32（小端序）
+    int n0 = read_le32(nonce, 0)
+    int n1 = read_le32(nonce, 4)
+    int n2 = read_le32(nonce, 8)
+
+    return [c0, c1, c2, c3, k0, k1, k2, k3, k4, k5, k6, k7, counter, n0, n1, n2]
+}
+
+// ==================== ChaCha20 加密/解密 ====================
+
+// ChaCha20 加密，返回 hex 字符串（避免 null 字节截断问题）
+func chacha20_encrypt(string key, int counter, string nonce, string plaintext):string {
+    var result = ""
+    int i = 0
+
+    while (i < plaintext.len()) {
+        Array[int] state = chacha20_init_state(key, counter, nonce)
+        Array[int] block = chacha20_block(state)
+
+        // 将密钥流块与明文异或，输出为 hex
+        int j = 0
+        while (j < 64 and i + j < plaintext.len()) {
+            int word_idx = j / 4
+            int byte_idx = j % 4
+            int shift = byte_idx * 8
+            int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
+            int pt_byte = plaintext.byte(i + j)
+            result += byte_to_hex(key_byte ^ pt_byte)
+            j += 1
+        }
+
+        i += 64
+        counter += 1
+    }
+
+    return result
+}
+
+// ChaCha20 解密，输入 hex 字符串
+func chacha20_decrypt(string key, int counter, string nonce, string hex_ciphertext):string {
+    var result = ""
+    int i = 0
+    int total = hex_ciphertext.len() / 2
+
+    while (i < total) {
+        Array[int] state = chacha20_init_state(key, counter, nonce)
+        Array[int] block = chacha20_block(state)
+
+        int j = 0
+        while (j < 64 and i + j < total) {
+            int word_idx = j / 4
+            int byte_idx = j % 4
+            int shift = byte_idx * 8
+            int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
+            int ct_byte = hex_val(hex_ciphertext, (i + j) * 2)
+            result += strings.char(key_byte ^ ct_byte)
+            j += 1
+        }
+
+        i += 64
+        counter += 1
+    }
+
+    return result
+}
+
+// 从 hex 字符串读取一个字节值
+func hex_val(string hex, int pos):int {
+    return (hex_nibble(hex.byte(pos)) << 4) | hex_nibble(hex.byte(pos + 1))
+}
+
+func hex_nibble(int b):int {
+    if (b >= 48 and b <= 57) { return b - 48 }       // '0'-'9'
+    if (b >= 97 and b <= 102) { return b - 87 }      // 'a'-'f'
+    if (b >= 65 and b <= 70) { return b - 55 }       // 'A'-'F'
+    return 0
+}
+
+// ==================== Hex 工具 ====================
+
+func byte_to_hex(int b):string {
+    b = b & 0xFF
+    var hex_chars = "0123456789abcdef"
+    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
+}
+
+func to_hex(string input):string {
+    var result = ""
+    for 0:input.len() - 1 to i {
+        result += byte_to_hex(input.byte(i))
+    }
+    return result
+}
+
+func hex_char_val(int b):int {
+    if (b >= 48 and b <= 57) { return b - 48 }
+    if (b >= 97 and b <= 102) { return b - 87 }
+    if (b >= 65 and b <= 70) { return b - 55 }
+    throw "Invalid hex character"
+}
+
+func from_hex(string hex_str):string {
+    var result = ""
+    int i = 0
+    while (i + 1 < hex_str.len()) {
+        int hi = hex_char_val(hex_str.byte(i))
+        int lo = hex_char_val(hex_str.byte(i + 1))
+        result += strings.char((hi << 4) | lo)
+        i += 2
+    }
+    return result
+}
+
+// ==================== 便捷接口 ====================
+
+// encrypt 已返回 hex，decrypt 接收 hex，这两个便捷接口保持兼容
+func chacha20_encrypt_hex(string key, int counter, string nonce, string plaintext):string {
+    return chacha20_encrypt(key, counter, nonce, plaintext)
+}
+
+func chacha20_decrypt_hex(string key, int counter, string nonce, string hex_ct):string {
+    return chacha20_decrypt(key, counter, nonce, hex_ct)
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== ChaCha20 流加密测试 ===")
+    print("")
+
+    // 测试 1：RFC 8439 Section 2.1.1 QR 测试向量
+    // 输入: a=0x11111111, b=0x01020304, c=0x9b8d6f43, d=0x01234567
+    // 预期: a=0xea2a92f4, b=0xcb1cf8ce, c=0x4581472e, d=0x5881c4bb
+    print("--- QR 函数测试 ---")
+    Array[int] qr_in = [0x11111111, 0x01020304, 0x9b8d6f43, 0x01234567]
+    Array[int] qr_out = qr(qr_in[0], qr_in[1], qr_in[2], qr_in[3])
+    print("QR 输出: " + _str(qr_out[0]) + " " + _str(qr_out[1]) + " " + _str(qr_out[2]) + " " + _str(qr_out[3]))
+    int exp_a = _int32(0xea2a92f4)
+    int exp_b = _int32(0xcb1cf8ce)
+    int exp_c = _int32(0x4581472e)
+    int exp_d = _int32(0x5881c4bb)
+    print("QR 验证: " + if qr_out[0] == exp_a and qr_out[1] == exp_b and qr_out[2] == exp_c and qr_out[3] == exp_d then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：字符串加解密往返
+    print("--- 字符串加解密 ---")
+    // 32 字节密钥 + 12 字节 nonce
+    var key = "01234567890123456789012345678901"
+    var nonce = "012345678901"
+    var text1 = "Hello, ChaCha20!"
+    var enc1 = chacha20_encrypt(key, 0, nonce, text1)
+    var dec1 = chacha20_decrypt(key, 0, nonce, enc1)
+    print("密钥: " + key)
+    print("Nonce: " + nonce)
+    print("明文: " + text1)
+    print("密文(hex): " + enc1)
+    print("解密: " + dec1)
+    print("往返: " + if dec1 == text1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：不同计数器产生不同密文
+    print("--- 不同计数器 ---")
+    Array[int] st0 = chacha20_init_state(key, 0, nonce)
+    Array[int] st1 = chacha20_init_state(key, 1, nonce)
+    Array[int] blk0 = chacha20_block(st0)
+    Array[int] blk1 = chacha20_block(st1)
+    print("block[0] c0=" + _str(blk0[0]) + " c1=" + _str(blk1[0]))
+    var enc_c0 = chacha20_encrypt(key, 0, nonce, "AAAA")
+    var enc_c1 = chacha20_encrypt(key, 1, nonce, "AAAA")
+    print("counter=0: " + enc_c0)
+    print("counter=1: " + enc_c1)
+    print("不同: " + if enc_c0 != enc_c1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 4：不同 nonce 产生不同密文
+    print("--- 不同 nonce ---")
+    var enc_n0 = chacha20_encrypt(key, 0, "nonce1234567", "AAAA")
+    var enc_n1 = chacha20_encrypt(key, 0, "nonce7654321", "AAAA")
+    print("不同nonce: " + if enc_n0 != enc_n1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 5：中文加解密
+    print("--- 中文加解密 ---")
+    var cn_text = "你好，ChaCha20加密世界！"
+    var cn_enc = chacha20_encrypt(key, 0, nonce, cn_text)
+    var cn_dec = chacha20_decrypt(key, 0, nonce, cn_enc)
+    print("原文: " + cn_text)
+    print("解密: " + cn_dec)
+    print("往返: " + if cn_dec == cn_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 6：长文本（超过 64 字节，需要多个块）
+    print("--- 长文本测试 ---")
+    var long_text = "This is a longer message that spans more than one 64-byte ChaCha20 block, testing multi-block encryption and decryption."
+    var long_enc = chacha20_encrypt(key, 0, nonce, long_text)
+    var long_dec = chacha20_decrypt(key, 0, nonce, long_enc)
+    print("明文 len: " + _str(long_text.len()) + " 密文 len: " + _str(long_enc.len()) + " 解密 len: " + _str(long_dec.len()))
+    if (long_dec != long_text) {
+        // 找第一个不同的位置
+        int min_len = if long_dec.len() < long_text.len() then long_dec.len() else long_text.len()
+        for 0:min_len - 1 to i {
+            if (long_text.byte(i) != long_dec.byte(i)) {
+                print("第一个不同在 byte " + _str(i) + ": expected " + _str(long_text.byte(i)) + " got " + _str(long_dec.byte(i)))
+                break
+            }
+        }
+        if (long_dec.len() != long_text.len()) {
+            print("长度不同: dec=" + _str(long_dec.len()) + " text=" + _str(long_text.len()))
+        }
+    }
+    print("往返: " + if long_dec == long_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 7：Hex 便捷接口
+    print("--- Hex 便捷接口 ---")
+    var hex_enc = chacha20_encrypt_hex(key, 0, nonce, "Hex test!")
+    var hex_dec = chacha20_decrypt_hex(key, 0, nonce, hex_enc)
+    print("往返: " + if hex_dec == "Hex test!" then "OK" else "FAIL")
+    print("")
+
+    // 测试 8：错误密钥
+    print("--- 错误密钥 ---")
+    var wrong_key = "10987654321098765432109876543210"
+    var wrong_dec = chacha20_decrypt(wrong_key, 0, nonce, chacha20_encrypt(key, 0, nonce, "test data"))
+    print("非原文: " + if wrong_dec != "test data" then "OK" else "FAIL")
+
+    print("")
+    print("=== ChaCha20 测试完成 ===")
+}

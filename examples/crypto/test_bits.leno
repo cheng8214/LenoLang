@@ -1,0 +1,34 @@
+main() {
+    var key = "01234567890123456789012345678901"
+    var nonce = "012345678901"
+
+    // 65 字节文本（需要2个块）
+    var text = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    print("text len = " + _str(text.len()))
+
+    var enc = chacha20_encrypt(key, 0, nonce, text)
+    print("enc len = " + _str(enc.len()))
+
+    var dec = chacha20_decrypt(key, 0, nonce, enc)
+    print("dec len = " + _str(dec.len()))
+    print("dec == text: " + _str(dec == text))
+
+    // 逐字节比较
+    int mismatches = 0
+    for 0:text.len() - 1 to i {
+        if (i < dec.len()) {
+            if (text.byte(i) != dec.byte(i)) {
+                mismatches += 1
+                if (mismatches <= 3) {
+                    print("mismatch at " + _str(i) + ": expected " + _str(text.byte(i)) + " got " + _str(dec.byte(i)))
+                }
+            }
+        } else {
+            mismatches += 1
+            if (mismatches <= 3) {
+                print("missing at " + _str(i))
+            }
+        }
+    }
+    print("total mismatches: " + _str(mismatches))
+}
