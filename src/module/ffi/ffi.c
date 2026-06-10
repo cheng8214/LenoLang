@@ -2195,38 +2195,53 @@ static void* create_callback_trampoline(int cb_id, FFIType ret_type) {
     // Integer args: RDI, RSI, RDX, RCX, R8, R9
     // Float args: XMM0-XMM7
     // No shadow space required
+    //
+    // CallbackRegState layout (C struct, addresses grow upward):
+    //   offset 0:  int_args[0]  (RDI)
+    //   offset 8:  int_args[1]  (RSI)
+    //   offset 16: int_args[2]  (RDX)
+    //   offset 24: int_args[3]  (RCX)
+    //   offset 32: int_args[4]  (R8)
+    //   offset 40: int_args[5]  (R9)
+    //   offset 48: float_args[0] (XMM0)
+    //   ...
+    //   offset 104: float_args[7] (XMM7)
+    //   Total: 112 bytes
+    //
+    // Strategy: use [rbp-0x78] as the base of CallbackRegState.
+    //   [rbp-0x78+0]  = [rbp-0x78] = int_args[0] = RDI
+    //   [rbp-0x78+8]  = [rbp-0x70] = int_args[1] = RSI
+    //   [rbp-0x78+16] = [rbp-0x68] = int_args[2] = RDX
+    //   [rbp-0x78+24] = [rbp-0x60] = int_args[3] = RCX
+    //   [rbp-0x78+32] = [rbp-0x58] = int_args[4] = R8
+    //   [rbp-0x78+40] = [rbp-0x50] = int_args[5] = R9
+    //   [rbp-0x78+48] = [rbp-0x48] = float_args[0] = XMM0
+    //   [rbp-0x78+56] = [rbp-0x40] = float_args[1] = XMM1
+    //   [rbp-0x78+64] = [rbp-0x38] = float_args[2] = XMM2
+    //   [rbp-0x78+72] = [rbp-0x30] = float_args[3] = XMM3
+    //   [rbp-0x78+80] = [rbp-0x28] = float_args[4] = XMM4
+    //   [rbp-0x78+88] = [rbp-0x20] = float_args[5] = XMM5
+    //   [rbp-0x78+96] = [rbp-0x18] = float_args[6] = XMM6
+    //   [rbp-0x78+104]=[rbp-0x10] = float_args[7] = XMM7
+    //   [rbp-0x08] = free (used for alignment)
 
-    // Save integer argument registers
-    // [rbp-0x08] = RDI (arg1)
-    // [rbp-0x10] = RSI (arg2)
-    // [rbp-0x18] = RDX (arg3)
-    // [rbp-0x20] = RCX (arg4)
-    // [rbp-0x28] = R8  (arg5)
-    // [rbp-0x30] = R9  (arg6)
-    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x7D; code[pos++] = 0xF8; // mov [rbp-8], rdi
-    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x75; code[pos++] = 0xF0; // mov [rbp-16], rsi
-    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x55; code[pos++] = 0xE8; // mov [rbp-24], rdx
-    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0xE0; // mov [rbp-32], rcx
-    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x45; code[pos++] = 0xD8; // mov [rbp-40], r8
-    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0xD0; // mov [rbp-48], r9
+    // Save integer argument registers to CallbackRegState layout
+    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x7D; code[pos++] = 0x88; // mov [rbp-0x78], rdi
+    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x75; code[pos++] = 0x90; // mov [rbp-0x70], rsi
+    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x55; code[pos++] = 0x98; // mov [rbp-0x68], rdx
+    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0xA0; // mov [rbp-0x60], rcx
+    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x45; code[pos++] = 0xA8; // mov [rbp-0x58], r8
+    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0xB0; // mov [rbp-0x50], r9
 
-    // Save float argument registers (XMM0-XMM7)
-    // [rbp-0x38] = XMM0
-    // [rbp-0x40] = XMM1
-    // [rbp-0x48] = XMM2
-    // [rbp-0x50] = XMM3
-    // [rbp-0x58] = XMM4
-    // [rbp-0x60] = XMM5
-    // [rbp-0x68] = XMM6
-    // [rbp-0x70] = XMM7
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x45; code[pos++] = 0xC8; // movsd [rbp-56], xmm0
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x4D; code[pos++] = 0xC0; // movsd [rbp-64], xmm1
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x55; code[pos++] = 0xB8; // movsd [rbp-72], xmm2
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x5D; code[pos++] = 0xB0; // movsd [rbp-80], xmm3
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x65; code[pos++] = 0xA8; // movsd [rbp-88], xmm4
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x6D; code[pos++] = 0xA0; // movsd [rbp-96], xmm5
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x75; code[pos++] = 0x98; // movsd [rbp-104], xmm6
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x7D; code[pos++] = 0x90; // movsd [rbp-112], xmm7
+    // Save float argument registers to CallbackRegState layout
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x45; code[pos++] = 0xB8; // movsd [rbp-0x48], xmm0
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x4D; code[pos++] = 0xC0; // movsd [rbp-0x40], xmm1
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x55; code[pos++] = 0xC8; // movsd [rbp-0x38], xmm2
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x5D; code[pos++] = 0xD0; // movsd [rbp-0x30], xmm3
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x65; code[pos++] = 0xD8; // movsd [rbp-0x28], xmm4
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x6D; code[pos++] = 0xE0; // movsd [rbp-0x20], xmm5
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x75; code[pos++] = 0xE8; // movsd [rbp-0x18], xmm6
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x7D; code[pos++] = 0xF0; // movsd [rbp-0x10], xmm7
 
     // mov rdi, cb_id (immediate) - first arg for callback_dispatch
     code[pos++] = 0x48; code[pos++] = 0xBF;
@@ -2234,8 +2249,8 @@ static void* create_callback_trampoline(int cb_id, FFIType ret_type) {
     memcpy(code + pos, &cb_id_ext_linux, sizeof(int64_t));
     pos += 8;
 
-    // lea rsi, [rbp-0x08]  (pointer to saved register state) - second arg
-    code[pos++] = 0x48; code[pos++] = 0x8D; code[pos++] = 0x75; code[pos++] = 0xF8;
+    // lea rsi, [rbp-0x78]  (pointer to CallbackRegState) - second arg
+    code[pos++] = 0x48; code[pos++] = 0x8D; code[pos++] = 0x75; code[pos++] = 0x88;
 
     // No shadow space needed for System V AMD64 ABI
     // But we need to maintain 16-byte stack alignment

@@ -84,6 +84,7 @@ void ast_free(Ast* ast) {
         case AST_VAR:
             free(ast->u.var.name);
             free(ast->u.var.ref.name);
+            free(ast->u.var.ref.struct_name);
             break;
         case AST_NUM:
             free(ast->u.num.bigint_str);
@@ -165,13 +166,26 @@ void ast_free(Ast* ast) {
             free(ast->u.func.ref.name);
             for (int i = 0; i < ast->u.func.pcnt; i++) {
                 free(ast->u.func.params[i]);
+                if (ast->u.func.param_types && ast->u.func.param_types[i])
+                    type_free(ast->u.func.param_types[i]);
+                if (ast->u.func.param_defaults && ast->u.func.param_defaults[i])
+                    ast_free(ast->u.func.param_defaults[i]);
             }
             free(ast->u.func.params);
+            free(ast->u.func.param_types);
+            free(ast->u.func.param_defaults);
+            if (ast->u.func.return_type) type_free(ast->u.func.return_type);
             ast_free(ast->u.func.body);
             // 释放闭包信息
+            if (ast->u.func.upvalue_names) {
+                for (int i = 0; i < ast->u.func.upvalue_count; i++) {
+                    free(ast->u.func.upvalue_names[i]);
+                }
+            }
             free(ast->u.func.upvalue_names);
             free(ast->u.func.upvalue_indices);
             free(ast->u.func.upvalue_is_local);
+            free(ast->u.func.upvalue_is_value_capture);
             break;
         case AST_RETURN:
             ast_free(ast->u.ret);
@@ -353,6 +367,12 @@ void ast_free(Ast* ast) {
         // AST_BREAK, AST_CONTINUE, AST_BOOL, AST_NULL 不需要特殊处理（没有动态分配的成员）
         default:
             break;
+    }
+
+    // 释放缓存的类型信息
+    if (ast->cached_type) {
+        type_free(ast->cached_type);
+        ast->cached_type = NULL;
     }
 
     free(ast);

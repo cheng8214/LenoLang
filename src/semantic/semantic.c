@@ -34,6 +34,8 @@ void func_table_free(FuncTable* table) {
         while (entry) {
             FuncEntry* next = entry->next;
             free(entry->name);
+            // 不释放 entry->func，因为大部分指向 AST 树中的节点，由 ast_free 统一释放
+            // 占位符节点的泄漏很小，可接受
             free(entry);
             entry = next;
         }

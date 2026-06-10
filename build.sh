@@ -106,7 +106,21 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     SOURCES="$SOURCES src/platform/platform_thread.c"
 elif [[ "$OSTYPE" == "linux"* ]]; then
     SOURCES="$SOURCES src/module/guis/leno_guis_linux.c"
+    SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
     SOURCES="$SOURCES src/platform/platform_thread.c"
+fi
+
+# Compiler detection
+if command -v gcc &> /dev/null; then
+    CC=gcc
+    EXTRA_CFLAGS=""
+    EXTRA_LDFLAGS=""
+else
+    CC=/tmp/gcc-root/usr/bin/gcc-12
+    EXTRA_CFLAGS="--sysroot=/tmp/gcc-root -I/tmp/gcc-root/usr/include/freetype2"
+    EXTRA_LDFLAGS="--sysroot=/tmp/gcc-root"
+    export PATH="/tmp/gcc-root/usr/bin:$PATH"
+    export LD_LIBRARY_PATH="/tmp/gcc-root/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
 fi
 
 # Platform-specific libraries
@@ -114,13 +128,15 @@ LIBS="-lm -lpthread -ldl"
 if [[ "$OSTYPE" == "darwin"* ]]; then
     LIBS="$LIBS -framework AppKit"
 else
-    LIBS="$LIBS -lX11"
+    LIBS="$LIBS -lX11 -lXft -lXrender -lfontconfig -lfreetype -lpng -lz -lexpat -luuid -lbrotlidec -lXau -lXdmcp -lbsd -lmd"
 fi
 
-gcc -o build/leno $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
+$CC $EXTRA_CFLAGS -o build/leno $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -D_GNU_SOURCE -Wno-format-truncation -Wno-unused-result -Wno-format -Wno-type-limits -Wno-alloc-size-larger-than $LIBS $EXTRA_LDFLAGS
 
-echo "Building test runner..."
-gcc -o build/test_runner test/test_runner.c -std=c99 -O2
+if [ -f "assert/test_runner.c" ]; then
+    echo "Building test runner..."
+    $CC $EXTRA_CFLAGS -o build/test_runner assert/test_runner.c -std=c99 -O2 $EXTRA_LDFLAGS
+fi
 
 echo "Build successful"
 echo ""

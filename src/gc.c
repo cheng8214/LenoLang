@@ -46,7 +46,7 @@
 
 
 // GC 全局实例（线程局部存储）
-THREAD_LOCAL GC gc = {0};
+THREAD_LOCAL LenoGC gc = {0};
 
 // 安全的字符串长度计算（防止野指针导致崩溃）
 static size_t safe_strlen(const char* str) {
@@ -112,8 +112,8 @@ void gc_write_barrier_obj(Object* holder, Object* value_obj) {
 // ============================================================================
 
 void gc_init(void) {
-    gc.young_heap = NULL;
-    gc.old_heap = NULL;
+    // 注意：不清零 young_heap/old_heap，因为 semantic 阶段可能已经通过 gc_alloc 分配了对象
+    // 这些对象会被 gc_free_all 正确释放
     gc.young_allocated = 0;
     gc.old_allocated = 0;
     gc.young_threshold = GC_YOUNG_THRESHOLD;
@@ -122,12 +122,10 @@ void gc_init(void) {
     gc.mode = GC_MODE_FULL;
     gc.vm = NULL;
     gc.enabled = 1;
-    gc.remembered_set = NULL;
     gc.remembered_count = 0;
     gc.remembered_capacity = 0;
     gc.promote_age = GC_PROMOTE_AGE;
     gc.minor_gc_count = 0;
-    gc.extra_roots = NULL;
     gc.extra_root_count = 0;
     gc.extra_root_capacity = 0;
 }
@@ -886,6 +884,7 @@ static void free_object_resources(Object* obj) {
         case OBJ_FUNCTION: {
             ObjFunction* func = (ObjFunction*)obj;
             free(func->name);
+            free(func->param_types);
             if (func->chunk) {
                 chunk_free(func->chunk);
                 free(func->chunk);
@@ -1361,10 +1360,31 @@ void gc_free_all(void) {
         }
         gc.vm->stack_capacity = 0;
         if (gc.vm->frames) {
+            // 释放每个帧中动态分配的 locals
+            for (int i = 0; i < gc.vm->frame_cnt; i++) {
+                CallFrame* frame = &gc.vm->frames[i];
+                if (frame->locals_is_dynamic && frame->locals) {
+                    free(frame->locals);
+                    frame->locals = NULL;
+                }
+            }
             free(gc.vm->frames);
             gc.vm->frames = NULL;
         }
         gc.vm->frame_capacity = 0;
+        // 释放全局变量和全局函数数组
+        if (gc.vm->globals) {
+            free(gc.vm->globals);
+            gc.vm->globals = NULL;
+        }
+        gc.vm->global_count = 0;
+        gc.vm->global_capacity = 0;
+        if (gc.vm->global_funcs) {
+            free(gc.vm->global_funcs);
+            gc.vm->global_funcs = NULL;
+        }
+        gc.vm->global_func_count = 0;
+        gc.vm->global_func_capacity = 0;
     }
 
     // 释放年轻代所有对象

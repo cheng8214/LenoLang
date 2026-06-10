@@ -126,6 +126,8 @@ static Value native_console(int argCount, Value* args) {
         return val_bool(false);
     #else
         // 非 Windows 平台，控制台隐藏功能不可用
+        (void)argCount;
+        (void)args;
         return val_bool(true);
     #endif
 }

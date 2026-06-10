@@ -1,0 +1,227 @@
+// Linux FFI 综合测试 — 调用 libc / libm / libdl 原生库
+import ffi
+
+// ==================== cfunc 声明 ====================
+cfunc CmpFunc(Ptr a, Ptr b): i32
+
+// ==================== 1. libc 基础调用 ====================
+func test_libc() {
+    print("--- 1. libc 基础调用 ---")
+
+    var libc = ffi.load("libc.so.6")
+
+    // getenv: 获取环境变量
+    var home = ffi.call_ptr(libc, "getenv", "HOME")
+    print("HOME = " + ffi.read_string(home, 0))
+
+    // getpid: 获取进程 ID
+    var pid = ffi.call_int(libc, "getpid")
+    print("PID = " + pid)
+
+    // getuid: 获取用户 ID
+    var uid = ffi.call_int(libc, "getuid")
+    print("UID = " + uid)
+
+    // time: 获取当前时间戳
+    var t = ffi.call_int(libc, "time", ffi.nullptr())
+    print("Timestamp = " + t)
+
+    print("")
+}
+
+// ==================== 2. libm 数学函数 ====================
+func test_libm() {
+    print("--- 2. libm 数学函数 ---")
+
+    var libm = ffi.load("libm.so.6")
+
+    // sqrt
+    var sq = ffi.call_double(libm, "sqrt", 144.0)
+    print("sqrt(144) = " + sq)
+
+    // sin
+    var s = ffi.call_double(libm, "sin", 3.14159265)
+    print("sin(pi) = " + s)
+
+    // cos
+    var c = ffi.call_double(libm, "cos", 0.0)
+    print("cos(0) = " + c)
+
+    // fabs
+    var f = ffi.call_double(libm, "fabs", -42.5)
+    print("fabs(-42.5) = " + f)
+
+    // ceil / floor
+    var ce = ffi.call_double(libm, "ceil", 3.14)
+    var fl = ffi.call_double(libm, "floor", 3.14)
+    print("ceil(3.14) = " + ce + ", floor(3.14) = " + fl)
+
+    print("")
+}
+
+// ==================== 3. qsort 回调排序 ====================
+func compare(Ptr a, Ptr b): int {
+    int va = ffi.read_int(a, 0)
+    int vb = ffi.read_int(b, 0)
+    if va < vb { return -1 }
+    if va > vb { return 1 }
+    return 0
+}
+
+func test_qsort() {
+    print("--- 3. qsort 回调排序 ---")
+
+    var libc = ffi.load("libc.so.6")
+    var cb = ffi.callback(compare, CmpFunc)
+
+    var arr = ffi.malloc(20)
+    ffi.write_int(arr, 0, 42)
+    ffi.write_int(arr, 4, 7)
+    ffi.write_int(arr, 8, 19)
+    ffi.write_int(arr, 12, 3)
+    ffi.write_int(arr, 16, 25)
+
+    print("排序前: 42 7 19 3 25")
+
+    ffi.call_void(libc, "qsort", arr, 5, 4, cb)
+
+    var v0 = ffi.read_int(arr, 0)
+    var v1 = ffi.read_int(arr, 4)
+    var v2 = ffi.read_int(arr, 8)
+    var v3 = ffi.read_int(arr, 12)
+    var v4 = ffi.read_int(arr, 16)
+    print("排序后: " + v0 + " " + v1 + " " + v2 + " " + v3 + " " + v4)
+
+    var ok = (v0 <= v1) and (v1 <= v2) and (v2 <= v3) and (v3 <= v4)
+    print("排序验证: " + if ok then "PASS" else "FAIL")
+
+    ffi.free(arr)
+    print("")
+}
+
+// ==================== 4. 内存操作 ====================
+func test_memory() {
+    print("--- 4. 内存操作 ---")
+
+    // 使用 ffi 内置的内存操作
+    var buf = ffi.malloc(16)
+
+    // 写入 4 个 int
+    ffi.write_int(buf, 0, 10)
+    ffi.write_int(buf, 4, 20)
+    ffi.write_int(buf, 8, 30)
+    ffi.write_int(buf, 12, 40)
+
+    // 读取验证
+    var v0 = ffi.read_int(buf, 0)
+    var v1 = ffi.read_int(buf, 4)
+    var v2 = ffi.read_int(buf, 8)
+    var v3 = ffi.read_int(buf, 12)
+    print("写入: 10 20 30 40")
+    print("读取: " + v0 + " " + v1 + " " + v2 + " " + v3)
+
+    var ok = (v0 == 10) and (v1 == 20) and (v2 == 30) and (v3 == 40)
+    print("内存读写: " + if ok then "PASS" else "FAIL")
+
+    ffi.free(buf)
+    print("")
+}
+
+// ==================== 5. 字符串操作 ====================
+func test_string() {
+    print("--- 5. 字符串操作 ---")
+
+    var libc = ffi.load("libc.so.6")
+
+    // strlen: 先分配内存写入字符串
+    var str_buf = ffi.malloc(64)
+    ffi.write_string(str_buf, 0, "Hello, LenoLang FFI!")
+    var len = ffi.call_int(libc, "strlen", str_buf)
+    print("strlen = " + len)
+
+    // strdup
+    var dup = ffi.call_ptr(libc, "strdup", str_buf)
+    print("strdup: " + ffi.read_string(dup, 0))
+
+    // atoi
+    var num_buf = ffi.malloc(32)
+    ffi.write_string(num_buf, 0, "12345")
+    var num = ffi.call_int(libc, "atoi", num_buf)
+    print("atoi('12345') = " + num)
+
+    ffi.free(str_buf)
+    ffi.free(dup)
+    ffi.free(num_buf)
+    print("")
+}
+
+// ==================== 6. libdl 动态加载 ====================
+func test_libdl() {
+    print("--- 6. libdl 动态加载 ---")
+
+    var libdl = ffi.load("libdl.so.2")
+
+    // dlopen / dlclose
+    var handle = ffi.call_ptr(libdl, "dlopen", "libc.so.6", 1)  // RTLD_LAZY = 1
+    if ffi.read_ptr(handle, 0) != 0 {
+        print("dlopen libc.so.6: 成功")
+
+        // dlerror
+        var err = ffi.call_ptr(libdl, "dlerror")
+
+        // dlclose
+        ffi.call_int(libdl, "dlclose", handle)
+        print("dlclose: 成功")
+    } else {
+        print("dlopen: 失败")
+    }
+
+    print("")
+}
+
+// ==================== 7. 系统信息 ====================
+func test_sysinfo() {
+    print("--- 7. 系统信息 ---")
+
+    var libc = ffi.load("libc.so.6")
+
+    // gethostname
+    var host_buf = ffi.malloc(256)
+    ffi.call_int(libc, "gethostname", host_buf, 255)
+    print("Hostname: " + ffi.read_string(host_buf, 0))
+
+    // getcwd
+    var cwd_buf = ffi.malloc(4096)
+    ffi.call_ptr(libc, "getcwd", cwd_buf, 4095)
+    print("CWD: " + ffi.read_string(cwd_buf, 0))
+
+    // rand / srand
+    ffi.call_void(libc, "srand", 42)
+    var r1 = ffi.call_int(libc, "rand")
+    var r2 = ffi.call_int(libc, "rand")
+    print("rand() x2: " + r1 + ", " + r2)
+
+    ffi.free(host_buf)
+    ffi.free(cwd_buf)
+    print("")
+}
+
+// ==================== 主函数 ====================
+main() {
+    print("========================================")
+    print("  Linux FFI 综合测试")
+    print("========================================")
+    print("")
+
+    test_libc()
+    test_libm()
+    test_qsort()
+    test_memory()
+    test_string()
+    test_libdl()
+    test_sysinfo()
+
+    print("========================================")
+    print("  所有 Linux FFI 测试完成!")
+    print("========================================")
+}

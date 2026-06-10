@@ -715,9 +715,9 @@ typedef struct {
     Value** extra_roots;
     int extra_root_count;
     int extra_root_capacity;
-} GC;
+} LenoGC;
 
-extern THREAD_LOCAL GC gc;
+extern THREAD_LOCAL LenoGC gc;
 
 void gc_init(void);
 void gc_mark_value(Value v);

@@ -815,6 +815,13 @@ Ast* parse_dot(Parser* p, Ast* left) {
             ast->u.module_call.module_name = left->u.var.name;
             ast->u.module_call.method_name = name;
             ast_list_init(&ast->u.module_call.args);
+
+            // 释放原始 AST_VAR 节点（name 已转移，需置 NULL 避免双重释放）
+            left->u.var.name = NULL;
+            free(left->u.var.ref.name);
+            left->u.var.ref.name = NULL;
+            if (left->cached_type) { type_free(left->cached_type); left->cached_type = NULL; }
+            free(left);
             
             lexer_next(&p->lex); // 消费 '('
             
@@ -868,6 +875,14 @@ Ast* parse_dot(Parser* p, Ast* left) {
         ast->u.module_access.ref.kind = SYM_GLOBAL;
         ast->u.module_access.ref.index = -1;
         ast->u.module_access.ref.name = NULL;
+
+        // 释放原始 AST_VAR 节点（name 已转移，需置 NULL 避免双重释放）
+        left->u.var.name = NULL;
+        free(left->u.var.ref.name);
+        left->u.var.ref.name = NULL;
+        if (left->cached_type) { type_free(left->cached_type); left->cached_type = NULL; }
+        free(left);
+
         return ast;
     }
     

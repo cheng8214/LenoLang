@@ -155,17 +155,22 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 ast->u.func.ref.name = strdup(sym->name);
                 // 设置函数符号的类型为函数类型
                 TypeInfo* return_type = (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER)
-                    ? ast->u.func.return_type : NULL;
+                    ? type_copy(ast->u.func.return_type) : NULL;
                 TypeInfo** param_types = NULL;
                 if (ast->u.func.pcnt > 0) {
                     param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.func.pcnt);
                     for (int i = 0; i < ast->u.func.pcnt; i++) {
                         param_types[i] = (ast->u.func.param_types[i] && ast->u.func.param_types[i]->kind != TYPE_INFER)
-                            ? ast->u.func.param_types[i] : NULL;
+                            ? type_copy(ast->u.func.param_types[i]) : NULL;
                     }
                 }
                 sym->type = type_function(return_type, param_types, ast->u.func.pcnt);
-                if (param_types) free(param_types);
+                if (param_types) {
+                    for (int i = 0; i < ast->u.func.pcnt; i++) {
+                        type_free(param_types[i]);
+                    }
+                    free(param_types);
+                }
                 ast->u.func.ref.type_kind = TYPE_FUNCTION;
             }
         } else {
@@ -177,17 +182,23 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             }
             // 设置函数类型（即使预扫描阶段已设置，也要更新为完整的类型信息）
             TypeInfo* return_type = (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER)
-                ? ast->u.func.return_type : NULL;
+                ? type_copy(ast->u.func.return_type) : NULL;
             TypeInfo** param_types = NULL;
             if (ast->u.func.pcnt > 0) {
                 param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.func.pcnt);
                 for (int i = 0; i < ast->u.func.pcnt; i++) {
                     param_types[i] = (ast->u.func.param_types[i] && ast->u.func.param_types[i]->kind != TYPE_INFER)
-                        ? ast->u.func.param_types[i] : NULL;
+                        ? type_copy(ast->u.func.param_types[i]) : NULL;
                 }
             }
+            if (existing->type) type_free(existing->type);
             existing->type = type_function(return_type, param_types, ast->u.func.pcnt);
-            if (param_types) free(param_types);
+            if (param_types) {
+                for (int i = 0; i < ast->u.func.pcnt; i++) {
+                    type_free(param_types[i]);
+                }
+                free(param_types);
+            }
             ast->u.func.ref.type_kind = TYPE_FUNCTION;
         }
     }
@@ -239,6 +250,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                     sym->index = allocate_local_index(s);
                     stmt->u.func.ref.kind = sym->kind;
                     stmt->u.func.ref.index = sym->index;
+                    free(stmt->u.func.ref.name);
                     stmt->u.func.ref.name = strdup(sym->name);
                 }
             }

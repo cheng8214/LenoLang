@@ -18,6 +18,7 @@
 //   Results: 42 passed, 3 failed, 1 error
 // ============================================================================
 
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,7 @@
 #else
 #include <sys/wait.h>
 #include <unistd.h>
+#include <stdio.h>
 #endif
 
 #define MAX_PATH_LEN 512
@@ -41,7 +43,7 @@ typedef struct {
     int passed;
     int failed;
     int error;
-    char message[512];
+    char message[4608];
 } TestResult;
 
 static TestResult results[MAX_TESTS];

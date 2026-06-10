@@ -24,6 +24,8 @@
 #include <X11/keysym.h>
 #include <X11/XKBlib.h>
 #include <X11/Xatom.h>
+/* 保存 X11 的 GC 类型别名，避免与 LenoLang 的 GC（垃圾回收器）类型冲突 */
+typedef GC X11GC;
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -235,16 +237,7 @@ static void window_list_remove(LenoGUIPlatformWindow* win) {
     }
 }
 
-static LenoGUIPlatformWindow* window_list_find(Window xwindow) {
-    for (int i = 0; i < g_window_count; i++) {
-        if (g_window_list[i] && g_window_list[i]->xwindow == xwindow) {
-            return g_window_list[i];
-        }
-    }
-    return NULL;
-}
-
-/* ===== 平台窗口结构 ===== */
+/* ===== 平台窗口结构（前向声明，供 window_list_find 使用） ===== */
 
 struct LenoGUIPlatformWindow {
     Window xwindow;
@@ -268,6 +261,15 @@ struct LenoGUIPlatformWindow {
     int click_count[3];                 /* 当前点击计数（用于双击检测） */
 };
 
+static LenoGUIPlatformWindow* window_list_find(Window xwindow) {
+    for (int i = 0; i < g_window_count; i++) {
+        if (g_window_list[i] && g_window_list[i]->xwindow == xwindow) {
+            return g_window_list[i];
+        }
+    }
+    return NULL;
+}
+
 /* ===== 平台渲染器结构 ===== */
 
 struct LenoGUIPlatformRenderer {
@@ -276,11 +278,12 @@ struct LenoGUIPlatformRenderer {
     uint32_t* pixels;
     int width;
     int height;
+    int pitch;
     uint8_t draw_r;
     uint8_t draw_g;
     uint8_t draw_b;
     uint8_t draw_a;
-    GC gc;
+    X11GC gc;
     /* 视口偏移和尺寸（参考 SDL3 SDL_SetRenderViewport） */
     int vp_x, vp_y, vp_w, vp_h;
     /* 裁剪矩形（参考 SDL3 SDL_SetRenderClipRect） */
@@ -296,6 +299,10 @@ struct LenoGUIPlatformImage {
     int width;
     int height;
     int pitch;
+    int access;
+    void* target_dc;
+    void* target_bitmap;
+    void* old_bitmap;
 };
 
 #include "leno_guis_swrender.c"
@@ -417,9 +424,7 @@ int leno_gui_platform_init(void) {
     g_screen = DefaultScreen(g_display);
     g_wm_delete_window = XInternAtom(g_display, "WM_DELETE_WINDOW", False);
 
-    g_event_head = 0;
-    g_event_tail = 0;
-    g_event_count = 0;
+    /* 事件队列已改为链表实现，无需初始化 head/tail */
 
     g_gui_initialized = 1;
     return 1;
@@ -950,25 +955,6 @@ static void pump_x11_events(void) {
                 }
                 break;
             }
-            case ConfigureNotify: {
-                /* 参考 SDL3 ConfigureNotify 处理：发送 RESIZE 和 MOVE 事件 */
-                if (win) {
-                    int new_w = xev.xconfigure.width;
-                    int new_h = xev.xconfigure.height;
-                    int new_x = xev.xconfigure.x;
-                    int new_y = xev.xconfigure.y;
-                    /* 检测大小变化 */
-                    if (new_w != win->width || new_h != win->height) {
-                        win->width = new_w;
-                        win->height = new_h;
-                        ev.type = LENO_GUI_EVT_WINDOW_RESIZE;
-                        ev.data1 = new_w;
-                        ev.data2 = new_h;
-                        event_queue_push(&ev);
-                    }
-                }
-                break;
-            }
         }
     }
 }
@@ -1263,11 +1249,13 @@ struct LenoGUIPlatformFont {
 
 LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size) {
     if (!g_display || size <= 0) size = 16;
-    XftFont* xft_font = XftFontOpenName(g_display, g_screen, name, size);
+    char font_spec[512];
+    snprintf(font_spec, sizeof(font_spec), "%s-%d", name, size);
+    XftFont* xft_font = XftFontOpenName(g_display, g_screen, font_spec);
     if (!xft_font) {
         char fallback[256];
         snprintf(fallback, sizeof(fallback), "sans-%d", size);
-        xft_font = XftFontOpenName(g_display, g_screen, fallback, size);
+        xft_font = XftFontOpenName(g_display, g_screen, fallback);
     }
     if (!xft_font) return NULL;
     LenoGUIPlatformFont* font = (LenoGUIPlatformFont*)calloc(1, sizeof(LenoGUIPlatformFont));
@@ -1645,6 +1633,53 @@ float leno_gui_platform_get_display_dpi(void) {
     /* DPI = 像素数 / (毫米数 / 25.4) */
     float dpi = (float)width_px / ((float)width_mm / 25.4f);
     return dpi;
+}
+
+/* ===== 缺失的平台函数 stub 实现 ===== */
+
+#include <X11/cursorfont.h>
+
+void leno_gui_platform_set_system_cursor(int cursor_type) {
+    (void)cursor_type;
+    /* Linux X11 光标设置暂未实现 */
+}
+
+int leno_gui_platform_create_custom_cursor(const uint32_t* pixels, int w, int h, int hot_x, int hot_y) {
+    (void)pixels; (void)w; (void)h; (void)hot_x; (void)hot_y;
+    return 0;
+}
+
+void leno_gui_platform_set_logical_size(LenoGUIPlatformRenderer* ren, int w, int h) {
+    if (!ren) return;
+    (void)w; (void)h;
+}
+
+void leno_gui_platform_get_logical_size(LenoGUIPlatformRenderer* ren, int* w, int* h) {
+    if (!ren) return;
+    if (w) *w = ren->width;
+    if (h) *h = ren->height;
+}
+
+void leno_gui_platform_set_logical_presentation(LenoGUIPlatformRenderer* ren, int mode) {
+    if (!ren) return;
+    (void)mode;
+}
+
+int leno_gui_platform_get_logical_presentation(LenoGUIPlatformRenderer* ren) {
+    (void)ren;
+    return 0;
+}
+
+void leno_gui_platform_get_logical_viewport(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h) {
+    if (!ren) return;
+    if (x) *x = ren->vp_x;
+    if (y) *y = ren->vp_y;
+    if (w) *w = ren->vp_w;
+    if (h) *h = ren->vp_h;
+}
+
+void leno_gui_platform_reset_logical_size(LenoGUIPlatformRenderer* ren) {
+    if (!ren) return;
 }
 
 #endif /* __linux__ */

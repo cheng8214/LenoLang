@@ -128,11 +128,13 @@ void visit(Semantic* s, Ast* ast) {
                                     sym->index = allocate_local_index(s);
                                 }
                                 stmt->u.func.ref.index = sym->index;
+                                free(stmt->u.func.ref.name);
                                 stmt->u.func.ref.name = strdup(sym->name);
                             }
                         } else {
                             stmt->u.func.ref.kind = existing->kind;
                             stmt->u.func.ref.index = existing->index;
+                            free(stmt->u.func.ref.name);
                             stmt->u.func.ref.name = strdup(existing->name);
                         }
                     }
@@ -427,6 +429,7 @@ void visit(Semantic* s, Ast* ast) {
             if (sym) {
                 ast->u.var_decl.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                 if (sym->type && sym->type->struct_name) {
+                    free(ast->u.var_decl.ref.struct_name);
                     ast->u.var_decl.ref.struct_name = strdup(sym->type->struct_name);
                 }
             }
@@ -442,6 +445,7 @@ void visit(Semantic* s, Ast* ast) {
             } else {
                 ast->u.var.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                 if (sym->type && sym->type->struct_name) {
+                    free(ast->u.var.ref.struct_name);
                     ast->u.var.ref.struct_name = strdup(sym->type->struct_name);
                 }
                 if (sym->type && !ast->cached_type) {
@@ -1616,11 +1620,14 @@ void visit(Semantic* s, Ast* ast) {
                 }
             }
             
-            infer_expr_type(s, ast);
+            {
+                TypeInfo* t = infer_expr_type(s, ast);
+                if (t) type_free(t);
+            }
             break;
         }
-            
-        case AST_INDEX:
+
+            case AST_INDEX:
             visit(s, ast->u.index.obj);
             visit(s, ast->u.index.index);
 
@@ -3812,6 +3819,7 @@ void visit(Semantic* s, Ast* ast) {
                 if (sym) {
                     ast->u.cfunc_decl.ref.kind = sym->kind;
                     ast->u.cfunc_decl.ref.index = sym->index;
+                    free(ast->u.cfunc_decl.ref.name);
                     ast->u.cfunc_decl.ref.name = strdup(sym->name);
                     ast->u.cfunc_decl.ref.type_kind = TYPE_CFUNC;
 

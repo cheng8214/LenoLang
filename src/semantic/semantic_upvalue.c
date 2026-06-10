@@ -214,7 +214,9 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
         ref->kind = target_sym->kind;
         ref->index = target_sym->index;
     }
+    free(ref->name);
     ref->name = strdup(name);
+    free(ref->struct_name);
     ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
     ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
     return target_sym;
