@@ -317,21 +317,28 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
             break;
         }
         case AST_COMPOUND_ASSIGN: {
-            // 检查是否是字段名的复合赋值
-            for (int j = 0; j < field_count; j++) {
-                if (strcmp(ast->u.compound_assign.name, field_names[j]) == 0) {
-                    // 将字段复合赋值转换为 self.字段名 的复合赋值
-                    free(ast->u.compound_assign.name);
-                    ast->u.compound_assign.name = strdup(field_names[j]);
-                    // 标记为需要通过 self 访问（使用 ref.name 存储标记）
-                    free(ast->u.compound_assign.ref.name);
-                    ast->u.compound_assign.ref.name = strdup("__self_field__");
-                    // 存储字段索引，供代码生成器使用（优化：避免运行时线性搜索）
-                    ast->u.compound_assign.ref.index = j;
-                    break;
+            // 检查是否是字段名的复合赋值（仅对简单变量目标）
+            if (ast->u.compound_assign.name) {
+                for (int j = 0; j < field_count; j++) {
+                    if (strcmp(ast->u.compound_assign.name, field_names[j]) == 0) {
+                        // 将字段复合赋值转换为 self.字段名 的复合赋值
+                        free(ast->u.compound_assign.name);
+                        ast->u.compound_assign.name = strdup(field_names[j]);
+                        // 标记为需要通过 self 访问（使用 ref.name 存储标记）
+                        free(ast->u.compound_assign.ref.name);
+                        ast->u.compound_assign.ref.name = strdup("__self_field__");
+                        // 存储字段索引，供代码生成器使用（优化：避免运行时线性搜索）
+                        ast->u.compound_assign.ref.index = j;
+                        break;
+                    }
                 }
             }
+            // 递归转换右侧表达式
             transform_method_body(ast->u.compound_assign.value, field_names, field_count, method_names, method_count, struct_name);
+            // 递归转换索引目标中的表达式
+            if (ast->u.compound_assign.target) {
+                transform_method_body(ast->u.compound_assign.target, field_names, field_count, method_names, method_count, struct_name);
+            }
             break;
         }
         case AST_SWITCH: {

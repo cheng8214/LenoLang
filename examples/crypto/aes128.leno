@@ -70,49 +70,44 @@ func gf_mul(int a, int b):int {
 
 // SubBytes：字节替换
 func sub_bytes(Array[int] state):Array[int] {
-    var result = []
+    var result = state.copy()
     for 0:15 to i {
-        result.add(SBOX[state[i]])
+        result[i] = SBOX[state[i]]
     }
     return result
 }
 
 // InvSubBytes：逆字节替换
 func inv_sub_bytes(Array[int] state):Array[int] {
-    var result = []
+    var result = state.copy()
     for 0:15 to i {
-        result.add(INV_SBOX[state[i]])
+        result[i] = INV_SBOX[state[i]]
     }
     return result
 }
 
-// ShiftRows：行移位
-// state 按 4x4 矩阵排列（列优先）
+// ShiftRows：行移位（列优先 4x4 矩阵）
 // 行0: 不移, 行1: 左移1, 行2: 左移2, 行3: 左移3
 func shift_rows(Array[int] state):Array[int] {
-    // 列优先索引: state[row + 4*col]
+    Array[int] s = state.copy()
     // 行1: [1,5,9,13] -> [5,9,13,1]
+    s[1], s[5], s[9], s[13] = state[5], state[9], state[13], state[1]
     // 行2: [2,6,10,14] -> [10,14,2,6]
+    s[2], s[6], s[10], s[14] = state[10], state[14], state[2], state[6]
     // 行3: [3,7,11,15] -> [15,3,7,11]
-    Array[int] s = [state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7], state[8], state[9], state[10], state[11], state[12], state[13], state[14], state[15]]
-    // 行1
-    s[1] = state[5]; s[5] = state[9]; s[9] = state[13]; s[13] = state[1]
-    // 行2
-    s[2] = state[10]; s[6] = state[14]; s[10] = state[2]; s[14] = state[6]
-    // 行3
-    s[3] = state[15]; s[7] = state[3]; s[11] = state[7]; s[15] = state[11]
+    s[3], s[7], s[11], s[15] = state[15], state[3], state[7], state[11]
     return s
 }
 
 // InvShiftRows：逆行移位
 func inv_shift_rows(Array[int] state):Array[int] {
-    Array[int] s = [state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7], state[8], state[9], state[10], state[11], state[12], state[13], state[14], state[15]]
+    Array[int] s = state.copy()
     // 行1: 右移1
-    s[1] = state[13]; s[5] = state[1]; s[9] = state[5]; s[13] = state[9]
+    s[1], s[5], s[9], s[13] = state[13], state[1], state[5], state[9]
     // 行2: 右移2
-    s[2] = state[10]; s[6] = state[14]; s[10] = state[2]; s[14] = state[6]
+    s[2], s[6], s[10], s[14] = state[10], state[14], state[2], state[6]
     // 行3: 右移3
-    s[3] = state[7]; s[7] = state[11]; s[11] = state[15]; s[15] = state[3]
+    s[3], s[7], s[11], s[15] = state[7], state[11], state[15], state[3]
     return s
 }
 
@@ -152,9 +147,9 @@ func inv_mix_columns(Array[int] state):Array[int] {
 
 // AddRoundKey：轮密钥加
 func add_round_key(Array[int] state, Array[int] round_key):Array[int] {
-    var result = []
+    var result = state.copy()
     for 0:15 to i {
-        result.add(state[i] ^ round_key[i])
+        result[i] = state[i] ^ round_key[i]
     }
     return result
 }
@@ -163,25 +158,19 @@ func add_round_key(Array[int] state, Array[int] round_key):Array[int] {
 
 // AES-128 密钥扩展：16 字节 -> 176 字节 (11 个轮密钥)
 func key_expansion(Array[int] key):Array[int] {
-    var w = []
-    // 复制原始密钥
-    for 0:15 to i { w.add(key[i]) }
+    var w = key.copy()
 
     int i = 4
     while (i < 44) {
-        // 获取前一个字
+        // 获取前一个字（4 字节）
         int t0 = w[(i - 1) * 4]
         int t1 = w[(i - 1) * 4 + 1]
         int t2 = w[(i - 1) * 4 + 2]
         int t3 = w[(i - 1) * 4 + 3]
 
         if (i % 4 == 0) {
-            // RotWord
-            int tmp = t0
-            t0 = t1; t1 = t2; t2 = t3; t3 = tmp
-            // SubWord
-            t0 = SBOX[t0]; t1 = SBOX[t1]; t2 = SBOX[t2]; t3 = SBOX[t3]
-            // Rcon
+            // RotWord + SubWord + Rcon
+            t0, t1, t2, t3 = SBOX[t1], SBOX[t2], SBOX[t3], SBOX[t0]
             t0 = t0 ^ RCON[i / 4 - 1]
         }
 
@@ -195,10 +184,9 @@ func key_expansion(Array[int] key):Array[int] {
     return w
 }
 
-// 获取第 r 轮的轮密钥（16 字节）
+// 获取第 r 轮的轮密钥（16 字节），用切片
 func get_round_key(Array[int] w, int r):Array[int] {
-    int offset = r * 16
-    return [w[offset], w[offset + 1], w[offset + 2], w[offset + 3], w[offset + 4], w[offset + 5], w[offset + 6], w[offset + 7], w[offset + 8], w[offset + 9], w[offset + 10], w[offset + 11], w[offset + 12], w[offset + 13], w[offset + 14], w[offset + 15]]
+    return w[r * 16:r * 16 + 15]
 }
 
 // ==================== AES 加密/解密 ====================
@@ -361,7 +349,7 @@ func aes128_decrypt(string key, string hex_ciphertext):string {
     var result = ""
     int i = 0
     while (i + 15 < ct_bytes.len()) {
-        Array[int] block = [ct_bytes[i], ct_bytes[i + 1], ct_bytes[i + 2], ct_bytes[i + 3], ct_bytes[i + 4], ct_bytes[i + 5], ct_bytes[i + 6], ct_bytes[i + 7], ct_bytes[i + 8], ct_bytes[i + 9], ct_bytes[i + 10], ct_bytes[i + 11], ct_bytes[i + 12], ct_bytes[i + 13], ct_bytes[i + 14], ct_bytes[i + 15]]
+        Array[int] block = ct_bytes[i:i + 15]
         Array[int] decrypted = aes_decrypt_block(block, key_bytes)
         result += block_to_str(decrypted)
         i = i + 16

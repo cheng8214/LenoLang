@@ -1004,8 +1004,8 @@ Ast* parse_assignment(Parser* p, Ast* left) {
         return ast;
     }
 
-    if (left->kind != AST_VAR) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "赋值目标必须是变量");
+    if (left->kind != AST_VAR && left->kind != AST_INDEX) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "赋值目标必须是变量或数组索引");
         return NULL;
     }
 
@@ -1015,14 +1015,17 @@ Ast* parse_assignment(Parser* p, Ast* left) {
         op == TOK_SHLEQ || op == TOK_SHREQ) {
         // 创建复合赋值节点
         Ast* ast = ast_new(AST_COMPOUND_ASSIGN, line);
-        ast->u.compound_assign.name = strdup(left->u.var.name);
+        if (left->kind == AST_VAR) {
+            ast->u.compound_assign.name = strdup(left->u.var.name);
+        } else {
+            ast->u.compound_assign.name = NULL; // 索引目标没有变量名
+        }
         ast->u.compound_assign.value = value;
         ast->u.compound_assign.op = op;
+        ast->u.compound_assign.target = left; // 保存完整目标表达式
         // ref 信息在语义分析时填充
         
-        // 释放临时变量节点
-        free(left->u.var.name);
-        free(left);
+        // 不释放 left，因为它被 target 引用
         
         return ast;
     }

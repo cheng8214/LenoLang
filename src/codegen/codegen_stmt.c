@@ -662,16 +662,11 @@ void gen_assign(CodeGen* gen, Ast* ast) {
         // 为每个右侧值分配独立的临时槽位
         int* temp_slots = (int*)malloc(sizeof(int) * left_count);
         
-        // 计算局部变量的最大索引，临时槽位从最大索引+1开始分配
-        int max_local_index = -1;
-        for (int i = 0; i < left_count; i++) {
-            if (ast->u.assign.refs[i].kind == SYM_LOCAL || ast->u.assign.refs[i].kind == SYM_PARAM) {
-                if (ast->u.assign.refs[i].index > max_local_index) {
-                    max_local_index = ast->u.assign.refs[i].index;
-                }
-            }
-        }
-        int temp_slot_base = max_local_index + 1;
+        // 计算临时槽位的起始位置，必须超过所有已使用的局部变量槽位
+        // 使用 gen->max_local_slot + 1，因为它跟踪了当前函数中所有局部变量的最大索引
+        // 不能只看左侧目标中的变量引用，否则当左侧都是索引表达式时
+        // (如 arr[i], arr[j] = ...)，临时槽位会从 0 开始，覆盖已有的局部变量
+        int temp_slot_base = gen->max_local_slot + 1;
         
         // 更新全局最大槽位（用于调整函数的 local_count）
         // 需要为每个索引目标额外分配一个槽位来保存值
@@ -918,12 +913,79 @@ void gen_assign(CodeGen* gen, Ast* ast) {
 
 void gen_compound_assign(CodeGen* gen, Ast* ast) {
     SymRef* ref = &ast->u.compound_assign.ref;
+    Ast* target = ast->u.compound_assign.target;
+    LenoTokenType op = ast->u.compound_assign.op;
+
+    // 检查是否是数组索引复合赋值：arr[i] += value
+    if (target && target->kind == AST_INDEX) {
+        // arr[i] += value 等价于：
+        //   temp = arr[i] + value
+        //   arr[i] = temp
+        // OP_INDEX_SET 栈顺序: obj, index, value (弹出: value, index, obj)
+        // OP_SET_LOCAL: 保存栈顶到槽位但不弹出
+        // OP_SET_LOCAL_POP: 保存栈顶到槽位并弹出
+
+        int temp_base = gen->max_local_slot + 1;
+        // 更新 max_local_slot 以包含临时槽位，确保帧大小足够
+        gen->max_local_slot = temp_base + 2;
+
+        // 1. 加载 obj (arr) 和 index (i)，保存到临时槽位
+        gen_expr(gen, target->u.index.obj);     // 栈: [obj]
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_base, ast->line);     // 保存 obj 并弹出
+        gen_expr(gen, target->u.index.index);   // 栈: [index]
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_base + 1, ast->line); // 保存 index 并弹出
+
+        // 2. 读取 arr[i] 的当前值
+        emit_bytes_2(gen, OP_GET_LOCAL, temp_base, ast->line);      // obj
+        emit_bytes_2(gen, OP_GET_LOCAL, temp_base + 1, ast->line);  // index
+        emit_byte(gen, OP_INDEX, ast->line);                         // arr[i]
+
+        // 3. 加载右侧表达式值
+        gen_expr(gen, ast->u.compound_assign.value);
+
+        // 4. 执行运算
+        TypeKind elem_type = TYPE_ANY;
+        TypeInfo* obj_type = infer_expr_type(gen->sem, target->u.index.obj);
+        if (obj_type && obj_type->kind == TYPE_ARRAY && obj_type->element_type) {
+            elem_type = obj_type->element_type->kind;
+        }
+        if (obj_type) type_free(obj_type);
+        TypeKind value_type = get_expr_type_kind(ast->u.compound_assign.value);
+        int is_int_op = (elem_type == TYPE_INT && value_type == TYPE_INT);
+
+        switch (op) {
+            case TOK_PLUSEQ:   emit_byte(gen, is_int_op ? OP_ADD_INT : OP_ADD, ast->line); break;
+            case TOK_MINUSEQ:  emit_byte(gen, is_int_op ? OP_SUB_INT : OP_SUB, ast->line); break;
+            case TOK_STAREQ:   emit_byte(gen, is_int_op ? OP_MUL_INT : OP_MUL, ast->line); break;
+            case TOK_SLASHEQ:  emit_byte(gen, is_int_op ? OP_DIV_INT : OP_DIV, ast->line); break;
+            case TOK_MODEQ:    emit_byte(gen, is_int_op ? OP_MOD_INT : OP_MOD, ast->line); break;
+            case TOK_BITANDEQ: emit_byte(gen, OP_BITAND, ast->line); break;
+            case TOK_BITOREQ:  emit_byte(gen, OP_BITOR, ast->line); break;
+            case TOK_BITXOREQ: emit_byte(gen, OP_BITXOR, ast->line); break;
+            case TOK_SHLEQ:    emit_byte(gen, OP_SHL, ast->line); break;
+            case TOK_SHREQ:    emit_byte(gen, OP_SHR, ast->line); break;
+            default:
+                error_add(ERR_SEMANTIC, ast->line, "未知的复合赋值运算符");
+                return;
+        }
+
+        // 5. 保存计算结果到临时槽位
+        //    栈: [result]
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_base + 2, ast->line);
+
+        // 6. 执行 OP_INDEX_SET: obj, index, value
+        emit_bytes_2(gen, OP_GET_LOCAL, temp_base, ast->line);      // obj
+        emit_bytes_2(gen, OP_GET_LOCAL, temp_base + 1, ast->line);  // index
+        emit_bytes_2(gen, OP_GET_LOCAL, temp_base + 2, ast->line);  // result
+        emit_byte(gen, OP_INDEX_SET, ast->line);
+        emit_byte(gen, OP_POP, ast->line); // OP_INDEX_SET 会 push obj，弹出
+        return;
+    }
+
     if (!ref->name) {
         error_add(ERR_SEMANTIC, ast->line, "未解析的复合赋值目标");
         return;
     }
-
-    LenoTokenType op = ast->u.compound_assign.op;
 
     // 检查是否是 struct 字段（通过 __self_field__ 标记）
     int is_self_field = (strcmp(ref->name, "__self_field__") == 0);

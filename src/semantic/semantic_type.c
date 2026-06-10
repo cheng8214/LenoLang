@@ -956,14 +956,26 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return result;
         }
         case AST_COMPOUND_ASSIGN: {
-            // 使用resolve_variable_with_upvalue处理复合赋值，支持闭包
-            SymRef ref;
-            memset(&ref, 0, sizeof(ref));
-            Symbol* sym = resolve_variable_with_upvalue(s, ast->u.compound_assign.name, &ref);
-            if (sym && sym->type) {
-                result = type_new(sym->type->kind);
-            } else {
-                result = infer_expr_type(s, ast->u.compound_assign.value);
+            Ast* target = ast->u.compound_assign.target;
+            if (target && target->kind == AST_INDEX) {
+                // 数组索引复合赋值：推断数组元素类型
+                TypeInfo* obj_type = infer_expr_type(s, target->u.index.obj);
+                if (obj_type && obj_type->kind == TYPE_ARRAY && obj_type->element_type) {
+                    result = type_copy(obj_type->element_type);
+                } else {
+                    result = infer_expr_type(s, ast->u.compound_assign.value);
+                }
+                if (obj_type) type_free(obj_type);
+            } else if (ast->u.compound_assign.name) {
+                // 使用resolve_variable_with_upvalue处理复合赋值，支持闭包
+                SymRef ref;
+                memset(&ref, 0, sizeof(ref));
+                Symbol* sym = resolve_variable_with_upvalue(s, ast->u.compound_assign.name, &ref);
+                if (sym && sym->type) {
+                    result = type_new(sym->type->kind);
+                } else {
+                    result = infer_expr_type(s, ast->u.compound_assign.value);
+                }
             }
             break;
         }
