@@ -1,0 +1,295 @@
+import strings
+
+// ==================== Caesar 凯撒密码 ====================
+// 最古老的替换密码之一，由尤利乌斯·凯撒使用
+// 将每个字母在字母表中偏移固定位置
+
+// 凯撒加密
+// shift: 偏移量 (0-25)
+// preserve_case: 保留大小写
+// preserve_non_alpha: 保留非字母字符
+func caesar_encrypt(string plaintext, int shift, bool preserve_case, bool preserve_non_alpha):string {
+    shift = ((shift % 26) + 26) % 26  // 归一化到 0-25
+    var result = ""
+
+    for 0:plaintext.len() - 1 to i {
+        int c = plaintext.byte(i)
+
+        if (c >= 65 and c <= 90) {
+            // 大写字母
+            int enc = (c - 65 + shift) % 26 + 65
+            result += strings.char(enc)
+        } else if (c >= 97 and c <= 122) {
+            // 小写字母
+            int enc = (c - 97 + shift) % 26 + 97
+            if (preserve_case) {
+                result += strings.char(enc)
+            } else {
+                result += strings.char(enc - 32)  // 转大写
+            }
+        } else {
+            // 非字母字符
+            if (preserve_non_alpha) {
+                result += strings.char(c)
+            }
+        }
+    }
+
+    return result
+}
+
+// 凯撒解密
+func caesar_decrypt(string ciphertext, int shift, bool preserve_case, bool preserve_non_alpha):string {
+    return caesar_encrypt(ciphertext, -shift, preserve_case, preserve_non_alpha)
+}
+
+// ==================== 便捷接口 ====================
+
+// 标准凯撒加密（偏移3，保留大小写和非字母字符）
+func caesar_enc3(string plaintext):string {
+    return caesar_encrypt(plaintext, 3, true, true)
+}
+
+func caesar_dec3(string ciphertext):string {
+    return caesar_decrypt(ciphertext, 3, true, true)
+}
+
+// 自定义偏移
+func caesar_enc(string plaintext, int shift):string {
+    return caesar_encrypt(plaintext, shift, true, true)
+}
+
+func caesar_dec(string ciphertext, int shift):string {
+    return caesar_decrypt(ciphertext, shift, true, true)
+}
+
+// ROT13（凯撒偏移13，加密即解密）
+func rot13(string text):string {
+    return caesar_encrypt(text, 13, true, true)
+}
+
+// ==================== 暴力破译 ====================
+
+// 列出所有 26 种可能的偏移解密
+func caesar_bruteforce(string ciphertext):Array[string] {
+    Array[string] results = []
+    for 0:25 to shift {
+        results.add(caesar_decrypt(ciphertext, shift, true, true))
+    }
+    return results
+}
+
+// 基于频率分析自动破译凯撒密码
+// 返回最可能的偏移量
+func caesar_crack(string ciphertext):int {
+    // 英文字母标准频率
+    Array[float] eng_freq = [0.08167, 0.01492, 0.02782, 0.04253, 0.12702, 0.02228, 0.02015, 0.06094, 0.06966, 0.00153, 0.00772, 0.04025, 0.02406, 0.06749, 0.07507, 0.01929, 0.00095, 0.05987, 0.06327, 0.09056, 0.02758, 0.00978, 0.02360, 0.00150, 0.01974, 0.00074]
+
+    int best_shift = 0
+    float best_score = 0.0
+
+    for 0:25 to shift {
+        var decrypted = caesar_decrypt(ciphertext, shift, false, false)
+        // 统计频率
+        Array[int] freq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        int total = 0
+        for 0:decrypted.len() - 1 to i {
+            int c = decrypted.byte(i)
+            if (c >= 65 and c <= 90) {
+                freq[c - 65] = freq[c - 65] + 1
+                total = total + 1
+            }
+        }
+
+        if (total == 0) { continue }
+
+        // 卡方检验得分（越低越接近英文）
+        float score = 0.0
+        for 0:25 to j {
+            float expected = eng_freq[j] * _float(total)
+            float diff = _float(freq[j]) - expected
+            score = score + diff * diff / expected
+        }
+
+        // 取得分最低的（最接近英文频率分布）
+        if (best_shift == 0 or score < best_score) {
+            best_score = score
+            best_shift = shift
+        }
+    }
+
+    return best_shift
+}
+
+// ==================== Affine 仿射密码 ====================
+// 凯撒密码的推广，使用 E(x) = (ax + b) mod 26
+// a 必须与 26 互素（a ∈ {1,3,5,7,9,11,15,17,19,21,23,25}）
+
+// 求最大公约数
+func gcd(int a, int b):int {
+    a = if a < 0 then -a else a
+    b = if b < 0 then -b else b
+    while (b != 0) {
+        int t = b
+        b = a % b
+        a = t
+    }
+    return a
+}
+
+// 模逆元：求 a^-1 mod m（扩展欧几里得算法）
+func mod_inverse(int a, int m):int {
+    a = ((a % m) + m) % m
+    for 1:m - 1 to x {
+        if ((a * x) % m == 1) { return x }
+    }
+    return -1  // 不存在逆元
+}
+
+// 仿射加密
+func affine_encrypt(string plaintext, int a, int b):string {
+    if (gcd(a, 26) != 1) { throw "a must be coprime with 26" }
+
+    var result = ""
+    for 0:plaintext.len() - 1 to i {
+        int c = plaintext.byte(i)
+        if (c >= 65 and c <= 90) {
+            int enc = (a * (c - 65) + b) % 26 + 65
+            result += strings.char(enc)
+        } else if (c >= 97 and c <= 122) {
+            int enc = (a * (c - 97) + b) % 26 + 97
+            result += strings.char(enc)
+        } else {
+            result += strings.char(c)
+        }
+    }
+    return result
+}
+
+// 仿射解密
+func affine_decrypt(string ciphertext, int a, int b):string {
+    int a_inv = mod_inverse(a, 26)
+    if (a_inv < 0) { throw "a has no modular inverse mod 26" }
+
+    var result = ""
+    for 0:ciphertext.len() - 1 to i {
+        int c = ciphertext.byte(i)
+        if (c >= 65 and c <= 90) {
+            int dec = (a_inv * ((c - 65) - b + 260)) % 26 + 65
+            result += strings.char(dec)
+        } else if (c >= 97 and c <= 122) {
+            int dec = (a_inv * ((c - 97) - b + 260)) % 26 + 97
+            result += strings.char(dec)
+        } else {
+            result += strings.char(c)
+        }
+    }
+    return result
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== Caesar 凯撒密码测试 ===")
+    print("")
+
+    // 测试 1：经典凯撒（偏移3）
+    print("--- 经典凯撒 (shift=3) ---")
+    var p1 = "ATTACKATDAWN"
+    var c1 = caesar_enc3(p1)
+    var d1 = caesar_dec3(c1)
+    print("明文: " + p1)
+    print("密文: " + c1)
+    print("解密: " + d1)
+    print("经典验证: " + if c1 == "DWWDFNDWGDZQ" then "OK" else "FAIL")
+    print("往返: " + if d1 == p1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：保留大小写
+    print("--- 保留大小写 ---")
+    var p2 = "Hello, World!"
+    var c2 = caesar_enc(p2, 13)
+    var d2 = caesar_dec(c2, 13)
+    print("明文: " + p2)
+    print("密文: " + c2)
+    print("解密: " + d2)
+    print("往返: " + if d2 == p2 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：ROT13
+    print("--- ROT13 ---")
+    var p3 = "Hello, ROT13!"
+    var c3 = rot13(p3)
+    var d3 = rot13(c3)  // ROT13 加密即解密
+    print("明文: " + p3)
+    print("密文: " + c3)
+    print("再加密: " + d3)
+    print("自逆: " + if d3 == p3 then "OK" else "FAIL")
+    print("")
+
+    // 测试 4：各种偏移量
+    print("--- 各种偏移量 ---")
+    var p4 = "CAESAR"
+    for 0:25 to s {
+        var enc = caesar_enc(p4, s)
+        var dec = caesar_dec(enc, s)
+        if (dec != p4) {
+            print("FAIL at shift " + _str(s))
+        }
+    }
+    print("26种偏移全部往返: OK")
+    print("")
+
+    // 测试 5：暴力破译
+    print("--- 暴力破译 ---")
+    var secret_shift = 17
+    var p5 = "THE SECRET MESSAGE"
+    var c5 = caesar_enc(p5, secret_shift)
+    int cracked_shift = caesar_crack(c5)
+    var cracked = caesar_dec(c5, cracked_shift)
+    print("原始偏移: " + _str(secret_shift))
+    print("密文: " + c5)
+    print("破译偏移: " + _str(cracked_shift))
+    print("破译明文: " + cracked)
+    print("破译成功: " + if cracked == p5 then "OK" else "PARTIAL")
+    print("")
+
+    // 测试 6：仿射密码
+    print("--- 仿射密码 ---")
+    var p6 = "HELLO AFFINE"
+    var c6 = affine_encrypt(p6, 5, 8)
+    var d6 = affine_decrypt(c6, 5, 8)
+    print("明文: " + p6)
+    print("密文 (a=5,b=8): " + c6)
+    print("解密: " + d6)
+    print("往返: " + if d6 == p6 then "OK" else "FAIL")
+    print("")
+
+    // 测试 7：仿射密码各种密钥
+    print("--- 仿射密码多密钥 ---")
+    Array[int] a_vals = [1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25]
+    var p7 = "AFFINECIPHERTEST"
+    int fails = 0
+    for 0:a_vals.len() - 1 to idx {
+        int a = a_vals[idx]
+        for 0:25 to b {
+            var enc = affine_encrypt(p7, a, b)
+            var dec = affine_decrypt(enc, a, b)
+            if (dec != p7) { fails = fails + 1 }
+        }
+    }
+    print("12*26=312 种密钥组合，失败: " + _str(fails))
+    print("")
+
+    // 测试 8：中文混合
+    print("--- 中文混合 ---")
+    var p8 = "Hello你好World世界"
+    var c8 = caesar_enc(p8, 7)
+    var d8 = caesar_dec(c8, 7)
+    print("密文: " + c8)
+    print("解密: " + d8)
+    print("往返: " + if d8 == p8 then "OK" else "FAIL")
+
+    print("")
+    print("=== Caesar 测试完成 ===")
+}

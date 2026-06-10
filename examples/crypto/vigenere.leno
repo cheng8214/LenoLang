@@ -1,0 +1,359 @@
+import strings
+
+// ==================== Vigenere 维吉尼亚密码 ====================
+// 古典多表替换密码，由 Blaise de Vigenere 于 16 世纪发明
+// 使用关键词重复地对明文字母进行不同偏移的凯撒替换
+
+// 将字符转换为大写字母索引 (A=0, B=1, ..., Z=25)
+// 非字母字符返回 -1
+func char_to_index(int c):int {
+    if (c >= 65 and c <= 90) { return c - 65 }       // A-Z
+    if (c >= 97 and c <= 122) { return c - 97 }      // a-z
+    return -1
+}
+
+// 将字母索引转回大写字符
+func index_to_char(int idx):int {
+    return ((idx % 26) + 26) % 26 + 65
+}
+
+// 将字母索引转回小写字符
+func index_to_char_lower(int idx):int {
+    return ((idx % 26) + 26) % 26 + 97
+}
+
+// Vigenere 加密
+// key: 关键词（仅字母有效，忽略大小写）
+// plaintext: 明文
+// preserve_case: 是否保留大小写
+// preserve_non_alpha: 是否保留非字母字符
+func vigenere_encrypt(string key, string plaintext, bool preserve_case, bool preserve_non_alpha):string {
+    if (key.len() == 0) { return plaintext }
+
+    // 预处理密钥：提取有效字母索引
+    var key_indices = []
+    for 0:key.len() - 1 to i {
+        int idx = char_to_index(key.byte(i))
+        if (idx >= 0) { key_indices.add(idx) }
+    }
+    if (key_indices.len() == 0) { return plaintext }
+
+    var result = ""
+    int key_pos = 0
+
+    for 0:plaintext.len() - 1 to i {
+        int c = plaintext.byte(i)
+        int p_idx = char_to_index(c)
+
+        if (p_idx < 0) {
+            // 非字母字符
+            if (preserve_non_alpha) {
+                result += strings.char(c)
+            }
+            continue
+        }
+
+        // 获取当前密钥偏移
+        int shift = key_indices[key_pos % key_indices.len()]
+        key_pos += 1
+
+        // 加密: C = (P + K) mod 26
+        int enc_idx = (p_idx + shift) % 26
+
+        // 输出
+        if (preserve_case and c >= 97 and c <= 122) {
+            result += strings.char(index_to_char_lower(enc_idx))
+        } else {
+            result += strings.char(index_to_char(enc_idx))
+        }
+    }
+
+    return result
+}
+
+// Vigenere 解密
+func vigenere_decrypt(string key, string ciphertext, bool preserve_case, bool preserve_non_alpha):string {
+    if (key.len() == 0) { return ciphertext }
+
+    // 预处理密钥
+    var key_indices = []
+    for 0:key.len() - 1 to i {
+        int idx = char_to_index(key.byte(i))
+        if (idx >= 0) { key_indices.add(idx) }
+    }
+    if (key_indices.len() == 0) { return ciphertext }
+
+    var result = ""
+    int key_pos = 0
+
+    for 0:ciphertext.len() - 1 to i {
+        int c = ciphertext.byte(i)
+        int c_idx = char_to_index(c)
+
+        if (c_idx < 0) {
+            if (preserve_non_alpha) {
+                result += strings.char(c)
+            }
+            continue
+        }
+
+        int shift = key_indices[key_pos % key_indices.len()]
+        key_pos += 1
+
+        // 解密: P = (C - K) mod 26
+        int dec_idx = ((c_idx - shift) % 26 + 26) % 26
+
+        if (preserve_case and c >= 97 and c <= 122) {
+            result += strings.char(index_to_char_lower(dec_idx))
+        } else {
+            result += strings.char(index_to_char(dec_idx))
+        }
+    }
+
+    return result
+}
+
+// ==================== 便捷接口 ====================
+
+// 标准模式：保留大小写和非字母字符
+func vigenere_enc(string key, string plaintext):string {
+    return vigenere_encrypt(key, plaintext, true, true)
+}
+
+func vigenere_dec(string key, string ciphertext):string {
+    return vigenere_decrypt(key, ciphertext, true, true)
+}
+
+// 严格模式：仅处理字母，丢弃非字母字符，输出大写
+func vigenere_enc_strict(string key, string plaintext):string {
+    return vigenere_encrypt(key, plaintext, false, false)
+}
+
+func vigenere_dec_strict(string key, string ciphertext):string {
+    return vigenere_decrypt(key, ciphertext, false, false)
+}
+
+// ==================== 自动破译工具 ====================
+
+// 计算字符串中字母的频率分布（返回 26 个字母的计数）
+func frequency_count(string text):Array[int] {
+    Array[int] freq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for 0:text.len() - 1 to i {
+        int idx = char_to_index(text.byte(i))
+        if (idx >= 0) { freq[idx] = freq[idx] + 1 }
+    }
+    return freq
+}
+
+// 计算重合指数 (Index of Coincidence)
+// 英文 IC ≈ 0.0667，随机文本 IC ≈ 0.0385
+func index_of_coincidence(string text):float {
+    Array[int] freq = frequency_count(text)
+    int total = 0
+    for 0:25 to i { total += freq[i] }
+    if (total < 2) { return 0.0 }
+
+    float sum = 0.0
+    for 0:25 to i {
+        sum += _float(freq[i] * (freq[i] - 1))
+    }
+    return sum / _float(total * (total - 1))
+}
+
+// Kasiski 测试：查找重复子串来猜测密钥长度
+// 返回最可能的密钥长度
+func kasiski_test(string text, int min_len, int max_len):int {
+    // 提取纯字母文本
+    var alpha = ""
+    for 0:text.len() - 1 to i {
+        int idx = char_to_index(text.byte(i))
+        if (idx >= 0) { alpha += strings.char(index_to_char(idx)) }
+    }
+
+    // 对每个候选密钥长度，计算 IC
+    int best_len = 1
+    float best_ic = 0.0
+
+    for min_len:max_len to kl {
+        // 将文本按密钥长度分组
+        float total_ic = 0.0
+        int valid_groups = 0
+
+        for 0:kl - 1 to g {
+            var group = ""
+            int pos = g
+            while (pos < alpha.len()) {
+                group += strings.char(alpha.byte(pos))
+                pos += kl
+            }
+            if (group.len() >= 2) {
+                total_ic += index_of_coincidence(group)
+                valid_groups += 1
+            }
+        }
+
+        if (valid_groups > 0) {
+            float avg_ic = total_ic / _float(valid_groups)
+            if (avg_ic > best_ic) {
+                best_ic = avg_ic
+                best_len = kl
+            }
+        }
+    }
+
+    return best_len
+}
+
+// 基于频率分析自动破译 Vigenere 密码
+// 返回推测的密钥
+func vigenere_crack(string ciphertext, int key_length):string {
+    // 提取纯字母文本
+    var alpha = ""
+    for 0:ciphertext.len() - 1 to i {
+        int idx = char_to_index(ciphertext.byte(i))
+        if (idx >= 0) { alpha += strings.char(index_to_char(idx)) }
+    }
+
+    // 英文字母标准频率
+    Array[float] eng_freq = [0.08167, 0.01492, 0.02782, 0.04253, 0.12702, 0.02228, 0.02015, 0.06094, 0.06966, 0.00153, 0.00772, 0.04025, 0.02406, 0.06749, 0.07507, 0.01929, 0.00095, 0.05987, 0.06327, 0.09056, 0.02758, 0.00978, 0.02360, 0.00150, 0.01974, 0.00074]
+
+    var key = ""
+
+    for 0:key_length - 1 to g {
+        // 提取该组的字母
+        var group = ""
+        int pos = g
+        while (pos < alpha.len()) {
+            group += strings.char(alpha.byte(pos))
+            pos += key_length
+        }
+
+        // 对每个可能的偏移，计算与英文频率的相关性
+        int best_shift = 0
+        float best_score = 0.0
+
+        for 0:25 to shift {
+            Array[int] freq = frequency_count(vigenere_decrypt(group, strings.char(65 + shift), false, false))
+            int total = 0
+            for 0:25 to i { total += freq[i] }
+            if (total == 0) { continue }
+
+            float score = 0.0
+            for 0:25 to i {
+                float contribution = eng_freq[i] * _float(freq[i]) / _float(total)
+                score = score + contribution
+            }
+
+            if (score > best_score) {
+                best_score = score
+                best_shift = shift
+            }
+        }
+
+        key += strings.char(65 + best_shift)
+    }
+
+    return key
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== Vigenere 维吉尼亚密码测试 ===")
+    print("")
+
+    // 测试 1：基本加解密
+    print("--- 基本加解密 ---")
+    var key1 = "LEMON"
+    var plain1 = "ATTACKATDAWN"
+    var cipher1 = vigenere_enc(key1, plain1)
+    var dec1 = vigenere_dec(key1, cipher1)
+    print("密钥: " + key1)
+    print("明文: " + plain1)
+    print("密文: " + cipher1)
+    print("解密: " + dec1)
+    // 经典测试: LEMON + ATTACKATDAWN = LXFOPVEFRNHR
+    print("经典验证: " + if cipher1 == "LXFOPVEFRNHR" then "OK" else "FAIL")
+    print("往返验证: " + if dec1 == plain1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：保留大小写和非字母字符
+    print("--- 保留大小写 ---")
+    var plain2 = "Hello, World!"
+    var cipher2 = vigenere_enc("KEY", plain2)
+    var dec2 = vigenere_dec("KEY", cipher2)
+    print("明文: " + plain2)
+    print("密文: " + cipher2)
+    print("解密: " + dec2)
+    print("往返: " + if dec2 == plain2 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：严格模式
+    print("--- 严格模式 ---")
+    var plain3 = "Hello, World!"
+    var cipher3 = vigenere_enc_strict("KEY", plain3)
+    var dec3 = vigenere_dec_strict("KEY", cipher3)
+    print("明文: " + plain3)
+    print("密文(严格): " + cipher3)
+    print("解密(严格): " + dec3)
+    print("")
+
+    // 测试 4：中文混合
+    print("--- 中文混合 ---")
+    var plain4 = "Hello你好World世界"
+    var cipher4 = vigenere_enc("SECRET", plain4)
+    var dec4 = vigenere_dec("SECRET", cipher4)
+    print("明文: " + plain4)
+    print("密文: " + cipher4)
+    print("解密: " + dec4)
+    print("往返: " + if dec4 == plain4 then "OK" else "FAIL")
+    print("")
+
+    // 测试 5：长文本
+    print("--- 长文本 ---")
+    var plain5 = "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG"
+    var cipher5 = vigenere_enc("CRYPTO", plain5)
+    var dec5 = vigenere_dec("CRYPTO", cipher5)
+    print("密文: " + cipher5)
+    print("往返: " + if dec5 == plain5 then "OK" else "FAIL")
+    print("")
+
+    // 测试 6：重合指数
+    print("--- 重合指数 ---")
+    var ic1 = index_of_coincidence("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG")
+    var ic2 = index_of_coincidence("XMCKLQWTAPZRVMHFGDISNBYUKQJEXO")
+    print("英文文本 IC: " + _str(ic1))
+    print("随机文本 IC: " + _str(ic2))
+    print("英文 IC 接近 0.0667: " + if ic1 > 0.05 then "OK" else "LOW")
+    print("")
+
+    // 测试 7：自动破译
+    print("--- 自动破译 ---")
+    var secret_key = "CIPHER"
+    var long_plain = "THEVIGENERECIPHERISAMETHODOENCRYPTINGALPHABETICTEXTBYUSINGASERIESOFINTERLOCKINGCAESARCIPHERS"
+    var long_cipher = vigenere_enc_strict(secret_key, long_plain)
+    print("原始密钥: " + secret_key)
+    print("密文: " + long_cipher)
+    int guessed_len = kasiski_test(long_cipher, 2, 10)
+    print("猜测密钥长度: " + _str(guessed_len))
+    var cracked_key = vigenere_crack(long_cipher, guessed_len)
+    print("破译密钥: " + cracked_key)
+    var cracked_plain = vigenere_dec_strict(cracked_key, long_cipher)
+    print("破译明文: " + cracked_plain)
+    print("破译成功: " + if cracked_plain == long_plain then "OK" else "PARTIAL")
+    print("")
+
+    // 测试 8：不同密钥长度
+    print("--- 不同密钥长度 ---")
+    var test_plain = "REPEATABILITYISTHEENEMYOFSECURITY"
+    for 1:8 to kl {
+        var tk = ""
+        for 0:kl - 1 to j { tk += strings.char(65 + (j * 7 + 3) % 26) }
+        var tc = vigenere_enc_strict(tk, test_plain)
+        var td = vigenere_dec_strict(tk, tc)
+        print("key=" + tk + " 往返: " + if td == test_plain then "OK" else "FAIL")
+    }
+
+    print("")
+    print("=== Vigenere 测试完成 ===")
+}
