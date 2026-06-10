@@ -615,6 +615,9 @@ int lenolang_run_file(const char* path) {
 static int main_logic(int argc, char** argv) {
     setupConsole();
 
+    // 注册模块编译器函数指针（解耦 module_loader 和编译器）
+    set_module_compile_func(compile_module_new);
+
     // 保存命令行参数，供 _args() 全局函数使用
     g_argc = argc;
     g_argv = argv;
