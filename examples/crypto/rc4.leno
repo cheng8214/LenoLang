@@ -1,0 +1,234 @@
+// RC4 流加密 —— 纯 LenoC 实现
+// 展示 LenoC 的位运算、数组操作、加密算法能力
+//
+// RC4 是对称流密码，加密和解密使用相同操作（密钥流 XOR）
+// 安全提示：RC4 已不被推荐用于生产环境，仅作学习演示
+
+import strings
+
+// ==================== RC4 核心 ====================
+
+// KSA（Key Scheduling Algorithm）密钥调度
+// 根据密钥初始化 S-box 置换表
+func rc4_ksa(string key):Array[int] {
+    Array[int] S = []
+    for 0:255 to i {
+        S.add(i)
+    }
+
+    int j = 0
+    int key_len = key.len()
+    for 0:255 to i {
+        j = (j + S[i] + key.byte(i % key_len)) & 0xFF
+        // 交换 S[i] 和 S[j]
+        int tmp = S[i]
+        S[i] = S[j]
+        S[j] = tmp
+    }
+
+    return S
+}
+
+// PRGA（Pseudo-Random Generation Algorithm）伪随机生成
+// 根据 S-box 生成密钥流，与输入逐字节 XOR
+func rc4_prga(Array[int] S, string input):string {
+    // 复制 S-box，避免修改原始表
+    Array[int] box = []
+    for 0:255 to i {
+        box.add(S[i])
+    }
+
+    var result = ""
+    int i = 0
+    int j = 0
+    int len = input.len()
+
+    for len to n {
+        i = (i + 1) & 0xFF
+        j = (j + box[i]) & 0xFF
+
+        // 交换 box[i] 和 box[j]
+        int tmp = box[i]
+        box[i] = box[j]
+        box[j] = tmp
+
+        // 生成密钥流字节
+        int K = box[(box[i] + box[j]) & 0xFF]
+
+        // XOR 加密/解密
+        result += strings.char(input.byte(n) ^ K)
+    }
+
+    return result
+}
+
+// RC4 加密（与解密操作相同）
+func rc4(string key, string input):string {
+    if (key.len() == 0) {
+        throw "RC4: key must not be empty"
+    }
+    Array[int] S = rc4_ksa(key)
+    return rc4_prga(S, input)
+}
+
+// ==================== Hex 工具 ====================
+
+// 字节转两位十六进制字符串
+func byte_to_hex(int b):string {
+    b = b & 0xFF
+    int hi = (b >> 4) & 0xF
+    int lo = b & 0xF
+
+    var hex_chars = "0123456789abcdef"
+    return hex_chars.slice(hi, hi + 1) + hex_chars.slice(lo, lo + 1)
+}
+
+// 字符串转十六进制表示（用于显示密文）
+func to_hex(string input):string {
+    var result = ""
+    for 0:input.len() - 1 to i {
+        result += byte_to_hex(input.byte(i))
+    }
+    return result
+}
+
+// 十六进制字符转数值
+func hex_char_val(int b):int {
+    // '0'-'9' : 48-57
+    if (b >= 48 and b <= 57) {
+        return b - 48
+    }
+    // 'a'-'f' : 97-102
+    if (b >= 97 and b <= 102) {
+        return b - 87
+    }
+    // 'A'-'F' : 65-70
+    if (b >= 65 and b <= 70) {
+        return b - 55
+    }
+    throw "Invalid hex character: " + strings.char(b)
+}
+
+// 十六进制字符串还原为原始字节
+func from_hex(string hex_str):string {
+    int len = hex_str.len()
+    if (len % 2 != 0) {
+        throw "Hex string length must be even"
+    }
+
+    var result = ""
+    int i = 0
+    while (i + 1 < len) {
+        int hi = hex_char_val(hex_str.byte(i))
+        int lo = hex_char_val(hex_str.byte(i + 1))
+        result += strings.char((hi << 4) | lo)
+        i += 2
+    }
+
+    return result
+}
+
+// ==================== 便捷接口 ====================
+
+// RC4 加密并返回十六进制字符串（方便显示和传输）
+func rc4_encrypt_hex(string key, string plaintext):string {
+    var encrypted = rc4(key, plaintext)
+    return to_hex(encrypted)
+}
+
+// 从十六进制密文解密
+func rc4_decrypt_hex(string key, string hex_ciphertext):string {
+    var ciphertext = from_hex(hex_ciphertext)
+    return rc4(key, ciphertext)
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== RC4 流加密测试 ===")
+    print("")
+
+    // 测试 1：RFC 6229 测试向量
+    // Key = "Key", Plaintext = "Plaintext"
+    var key1 = "Key"
+    var pt1 = "Plaintext"
+    var ct1 = rc4(key1, pt1)
+    var ct1_hex = to_hex(ct1)
+    print("密钥: " + key1)
+    print("明文: " + pt1)
+    print("密文(hex): " + ct1_hex)
+
+    // 解密验证（RC4 加解密同一操作）
+    var dt1 = rc4(key1, ct1)
+    print("解密: " + dt1)
+    print("往返: " + if dt1 == pt1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：Wiki 测试向量
+    // Key = "Wiki", Plaintext = "pedia"
+    var key2 = "Wiki"
+    var pt2 = "pedia"
+    var ct2 = rc4(key2, pt2)
+    var ct2_hex = to_hex(ct2)
+    print("密钥: " + key2)
+    print("明文: " + pt2)
+    print("密文(hex): " + ct2_hex)
+    var dt2 = rc4(key2, ct2)
+    print("解密: " + dt2)
+    print("往返: " + if dt2 == pt2 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：Secret 测试向量
+    // Key = "Secret", Plaintext = "Attack at dawn"
+    var key3 = "Secret"
+    var pt3 = "Attack at dawn"
+    var ct3 = rc4(key3, pt3)
+    var ct3_hex = to_hex(ct3)
+    print("密钥: " + key3)
+    print("明文: " + pt3)
+    print("密文(hex): " + ct3_hex)
+    var dt3 = rc4(key3, ct3)
+    print("解密: " + dt3)
+    print("往返: " + if dt3 == pt3 then "OK" else "FAIL")
+    print("")
+
+    // 测试 4：hex 便捷接口
+    print("--- Hex 便捷接口测试 ---")
+    var hex_ct = rc4_encrypt_hex("password", "Hello, LenoC!")
+    print("加密(hex): " + hex_ct)
+    var hex_pt = rc4_decrypt_hex("password", hex_ct)
+    print("解密: " + hex_pt)
+    print("往返: " + if hex_pt == "Hello, LenoC!" then "OK" else "FAIL")
+    print("")
+
+    // 测试 5：中文加解密
+    print("--- 中文加解密测试 ---")
+    var cn_key = "密钥"
+    var cn_text = "你好，LenoC加密世界！"
+    var cn_enc = rc4(cn_key, cn_text)
+    var cn_dec = rc4(cn_key, cn_enc)
+    print("原文: " + cn_text)
+    print("密文(hex): " + to_hex(cn_enc))
+    print("解密: " + cn_dec)
+    print("往返: " + if cn_dec == cn_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 6：空字符串
+    var empty_enc = rc4("key", "")
+    print("空字符串加密: '" + empty_enc + "' (长度=" + _str(empty_enc.len()) + ")")
+    print("空字符串往返: " + if rc4("key", empty_enc) == "" then "OK" else "FAIL")
+    print("")
+
+    // 测试 7：多次加密同一密钥，不同明文产生不同密文
+    var enc_a = rc4("same_key", "AAAA")
+    var enc_b = rc4("same_key", "BBBB")
+    print("不同明文密文不同: " + if to_hex(enc_a) != to_hex(enc_b) then "OK" else "FAIL")
+
+    // 测试 8：同一密钥同一明文，结果一致
+    var enc1 = rc4("test_key", "same_input")
+    var enc2 = rc4("test_key", "same_input")
+    print("相同输入结果一致: " + if to_hex(enc1) == to_hex(enc2) then "OK" else "FAIL")
+
+    print("")
+    print("=== RC4 测试完成 ===")
+}

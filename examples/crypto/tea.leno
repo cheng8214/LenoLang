@@ -1,0 +1,272 @@
+// TEA (Tiny Encryption Algorithm) —— 纯 LenoC 实现
+// 展示 LenoC 的位运算、Feistel 网络加密能力
+//
+// TEA 是一种微型块加密算法：
+//   - 64 位数据块（两个 32 位半块）
+//   - 128 位密钥（四个 32 位子密钥）
+//   - 32 轮 Feistel 网络
+//   - 使用加法 + 异或 + 移位，无需 S-box
+//
+// 安全提示：TEA 存在等价密钥问题，生产环境请使用 XTEA 或 AES
+
+import strings
+
+// ==================== TEA 核心 ====================
+
+// 黄金比例常数 δ = (√5 - 1) * 2^31 ≈ 0x9E3779B9
+int DELTA = -0x61C88647
+
+// TEA 加密一个 64 位块（v0, v1），使用 128 位密钥（k0-k3）
+func tea_encrypt_block(int v0, int v1, int k0, int k1, int k2, int k3):Array[int] {
+    int sum = 0
+    for 32 {
+        sum = _int32(sum + DELTA)
+        v0 = _int32(v0 + (_int32(_int32(v1 << 4) + k0) ^ _int32(v1 + sum) ^ _int32(_int32(v1 >> 5) + k1)))
+        v1 = _int32(v1 + (_int32(_int32(v0 << 4) + k2) ^ _int32(v0 + sum) ^ _int32(_int32(v0 >> 5) + k3)))
+    }
+    return [v0, v1]
+}
+
+// TEA 解密一个 64 位块
+func tea_decrypt_block(int v0, int v1, int k0, int k1, int k2, int k3):Array[int] {
+    // 计算初始 sum = δ * 32（通过累加避免乘法溢出）
+    int sum = 0
+    for 32 { sum = _int32(sum + DELTA) }
+
+    for 32 {
+        v1 = _int32(v1 - (_int32(_int32(v0 << 4) + k2) ^ _int32(v0 + sum) ^ _int32(_int32(v0 >> 5) + k3)))
+        v0 = _int32(v0 - (_int32(_int32(v1 << 4) + k0) ^ _int32(v1 + sum) ^ _int32(_int32(v1 >> 5) + k1)))
+        sum = _int32(sum - DELTA)
+    }
+    return [v0, v1]
+}
+
+// ==================== 字符串 <-> 块 转换 ====================
+
+// 从字符串的指定位置读取 4 个字节组成一个 32 位整数（大端序）
+func read_be32(string data, int offset):int {
+    int b0 = data.byte(offset)
+    int b1 = data.byte(offset + 1)
+    int b2 = data.byte(offset + 2)
+    int b3 = data.byte(offset + 3)
+    return _int32((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+}
+
+// 将 32 位整数写入 4 字节（大端序）
+func write_be32(int value):string {
+    return strings.char(
+        _int32(value >> 24) & 0xFF,
+        _int32(value >> 16) & 0xFF,
+        _int32(value >> 8) & 0xFF,
+        _int32(value) & 0xFF
+    )
+}
+
+// ==================== PKCS7 填充 ====================
+
+// PKCS7 填充：将数据填充到 8 字节的倍数
+func pkcs7_pad(string data):string {
+    int pad_len = 8 - (data.len() % 8)
+    var padding = ""
+    for pad_len to i {
+        padding += strings.char(pad_len)
+    }
+    return data + padding
+}
+
+// PKCS7 去填充
+func pkcs7_unpad(string data):string {
+    int pad_len = data.byte(data.len() - 1)
+    if (pad_len < 1 or pad_len > 8) {
+        throw "Invalid PKCS7 padding"
+    }
+    return data.slice(0, data.len() - pad_len)
+}
+
+// ==================== TEA 字符串加密/解密 ====================
+
+// 从密钥字符串生成 4 个 32 位子密钥
+// 密钥不足 16 字节用零填充，超过 16 字节截断
+func key_to_subkeys(string key):Array[int] {
+    // 用空格填充到 16 字节（避免 null 字节导致字符串截断问题）
+    while (key.len() < 16) {
+        key += " "
+    }
+    return [
+        read_be32(key, 0),
+        read_be32(key, 4),
+        read_be32(key, 8),
+        read_be32(key, 12)
+    ]
+}
+
+// TEA ECB 模式加密字符串
+func tea_encrypt(string key, string plaintext):string {
+    var padded = pkcs7_pad(plaintext)
+    Array[int] subkeys = key_to_subkeys(key)
+
+    var result = ""
+    int i = 0
+    while (i + 7 < padded.len()) {
+        int v0 = read_be32(padded, i)
+        int v1 = read_be32(padded, i + 4)
+
+        Array[int] encrypted = tea_encrypt_block(v0, v1, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+        result += write_be32(encrypted[0])
+        result += write_be32(encrypted[1])
+        i += 8
+    }
+
+    return result
+}
+
+// TEA ECB 模式解密字符串
+func tea_decrypt(string key, string ciphertext):string {
+    Array[int] subkeys = key_to_subkeys(key)
+
+    var result = ""
+    int i = 0
+    while (i + 7 < ciphertext.len()) {
+        int v0 = read_be32(ciphertext, i)
+        int v1 = read_be32(ciphertext, i + 4)
+
+        Array[int] decrypted = tea_decrypt_block(v0, v1, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+        result += write_be32(decrypted[0])
+        result += write_be32(decrypted[1])
+        i += 8
+    }
+
+    return pkcs7_unpad(result)
+}
+
+// ==================== Hex 工具 ====================
+
+func byte_to_hex(int b):string {
+    b = b & 0xFF
+    var hex_chars = "0123456789abcdef"
+    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
+}
+
+func to_hex(string input):string {
+    var result = ""
+    for 0:input.len() - 1 to i {
+        result += byte_to_hex(input.byte(i))
+    }
+    return result
+}
+
+func hex_char_val(int b):int {
+    if (b >= 48 and b <= 57) { return b - 48 }
+    if (b >= 97 and b <= 102) { return b - 87 }
+    if (b >= 65 and b <= 70) { return b - 55 }
+    throw "Invalid hex character"
+}
+
+func from_hex(string hex_str):string {
+    var result = ""
+    int i = 0
+    while (i + 1 < hex_str.len()) {
+        int hi = hex_char_val(hex_str.byte(i))
+        int lo = hex_char_val(hex_str.byte(i + 1))
+        result += strings.char((hi << 4) | lo)
+        i += 2
+    }
+    return result
+}
+
+// ==================== 便捷接口 ====================
+
+func tea_encrypt_hex(string key, string plaintext):string {
+    return to_hex(tea_encrypt(key, plaintext))
+}
+
+func tea_decrypt_hex(string key, string hex_ct):string {
+    return tea_decrypt(key, from_hex(hex_ct))
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== TEA 块加密测试 ===")
+    print("")
+
+    // 测试 1：块级加解密往返
+    print("--- 块级测试 ---")
+    Array[int] ct = tea_encrypt_block(0, 0, 0, 0, 0, 0)
+    print("加密 (0,0) key=[0,0,0,0]: v0=" + _str(ct[0]) + " v1=" + _str(ct[1]))
+    Array[int] pt = tea_decrypt_block(ct[0], ct[1], 0, 0, 0, 0)
+    print("解密回: v0=" + _str(pt[0]) + " v1=" + _str(pt[1]))
+    print("往返: " + if pt[0] == 0 and pt[1] == 0 then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：字符串加解密
+    print("--- 字符串加解密 ---")
+    var key = "0123456789abcdef"
+    var text1 = "Hello, TEA!"
+    var enc1 = tea_encrypt(key, text1)
+    var dec1 = tea_decrypt(key, enc1)
+    print("密钥: " + key)
+    print("明文: " + text1)
+    print("密文(hex): " + to_hex(enc1))
+    print("解密: " + dec1)
+    print("往返: " + if dec1 == text1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：短密钥（自动填充）
+    print("--- 短密钥测试 ---")
+    var short_key = "secret"
+    var text2 = "TEA encryption test"
+    var enc2 = tea_encrypt(short_key, text2)
+    var dec2 = tea_decrypt(short_key, enc2)
+    print("密钥: " + short_key + " (自动填充到16字节)")
+    print("明文: " + text2)
+    print("密文(hex): " + to_hex(enc2))
+    print("解密: " + dec2)
+    print("往返: " + if dec2 == text2 then "OK" else "FAIL")
+    print("")
+
+    // 测试 4：中文加解密
+    print("--- 中文加解密 ---")
+    var cn_key = "LenoC密钥"
+    var cn_text = "你好，TEA加密世界！"
+    var cn_enc = tea_encrypt(cn_key, cn_text)
+    var cn_dec = tea_decrypt(cn_key, cn_enc)
+    print("原文: " + cn_text)
+    print("密文(hex): " + to_hex(cn_enc))
+    print("解密: " + cn_dec)
+    print("往返: " + if cn_dec == cn_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 5：Hex 便捷接口
+    print("--- Hex 便捷接口 ---")
+    var hex_enc = tea_encrypt_hex("my_secret_key16", "Hex interface test!")
+    var hex_dec = tea_decrypt_hex("my_secret_key16", hex_enc)
+    print("加密(hex): " + hex_enc)
+    print("解密: " + hex_dec)
+    print("往返: " + if hex_dec == "Hex interface test!" then "OK" else "FAIL")
+    print("")
+
+    // 测试 6：恰好 8 字节对齐
+    print("--- 恰好8字节对齐 ---")
+    var exact = "12345678"
+    var exact_enc = tea_encrypt("key12345key12345", exact)
+    var exact_dec = tea_decrypt("key12345key12345", exact_enc)
+    print("明文(8字节): " + exact)
+    print("解密: " + exact_dec)
+    print("往返: " + if exact_dec == exact then "OK" else "FAIL")
+    print("")
+
+    // 测试 7：错误密钥解密应得到乱码或抛异常
+    print("--- 错误密钥 ---")
+    try {
+        var wrong_dec = tea_decrypt("wrong_key!!!!!!!", tea_encrypt("correct_key_16b", "test data here"))
+        print("非原文: " + if wrong_dec != "test data here" then "OK" else "FAIL")
+    } catch {
+        print("解密失败(预期行为): OK")
+    }
+
+    print("")
+    print("=== TEA 测试完成 ===")
+}

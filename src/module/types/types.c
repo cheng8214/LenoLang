@@ -643,6 +643,74 @@ static Value native_to_ptr(int argCount, Value* args) {
     native_throw_error("无法将该类型转换为指针");
     return val_null();
 }
+
+// _int32(value) - 将整数截断为 32 位有符号整数（环绕语义）
+// 用于加密算法、网络协议等需要固定位宽运算的场景
+static Value native_to_int32(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_int(0);
+    }
+
+    Value value = args[0];
+
+    // 获取 int64 值
+    int64_t i64_val;
+    if (val_is_int(value)) {
+        i64_val = (int64_t)val_as_int(value);
+    } else if (val_is_bigint(value)) {
+        i64_val = bigint_to_int64(val_as_bigint(value));
+    } else if (val_is_float(value)) {
+        i64_val = (int64_t)val_as_num(value);
+    } else if (val_is_bool(value)) {
+        i64_val = val_as_bool(value) ? 1 : 0;
+    } else if (val_is_null(value)) {
+        return val_int(0);
+    } else {
+        native_throw_error("无法将该类型转换为 int32");
+        return val_int(0);
+    }
+
+    // 截断为 32 位有符号整数（环绕语义）
+    int32_t result = (int32_t)(i64_val & 0xFFFFFFFF);
+    return val_int((int)result);
+}
+
+// _int64(value) - 将整数截断为 64 位有符号整数（环绕语义）
+// 用于需要 64 位固定位宽运算的场景
+static Value native_to_int64(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_int(0);
+    }
+
+    Value value = args[0];
+
+    // 获取值并截断为 64 位环绕
+    if (val_is_int(value)) {
+        // int32 值本身就在 int64 范围内，直接返回
+        return value;
+    } else if (val_is_bigint(value)) {
+        ObjBigInt* big = val_as_bigint(value);
+        // 环绕语义：取低 64 位，再解释为有符号数
+        uint64_t low64 = 0;
+        for (int i = 0; i < big->limb_count && i < 2; i++) {
+            low64 |= ((uint64_t)big->limbs[i]) << (i * 32);
+        }
+        int64_t result = (int64_t)low64;
+        // 如果结果在 int32 范围内，返回 VAL_INT，否则返回 BigInt
+        return val_int_safe(result);
+    } else if (val_is_float(value)) {
+        int64_t result = (int64_t)val_as_num(value);
+        return val_int_safe(result);
+    } else if (val_is_bool(value)) {
+        return val_int(val_as_bool(value) ? 1 : 0);
+    } else if (val_is_null(value)) {
+        return val_int(0);
+    } else {
+        native_throw_error("无法将该类型转换为 int64");
+        return val_int(0);
+    }
+}
+
 // ==================== 初始化 ====================
 
 void types_init_globals(void) {
@@ -657,6 +725,8 @@ void types_init_globals(void) {
     vm_register_native("_bool", native_to_bool, 1, -1, -1, TYPE_BOOL, convert_params);
     vm_register_native("_str", native_to_str, 1, -1, -1, TYPE_STRING, convert_params);
     vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, convert_params);
+    vm_register_native("_int32", native_to_int32, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_int64", native_to_int64, 1, -1, -1, TYPE_INT, convert_params);
 }
 
 // types 模块通过全局 type() 函数提供服务
