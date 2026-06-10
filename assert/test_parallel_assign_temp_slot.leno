@@ -1,0 +1,82 @@
+// 测试：并行赋值时临时槽位不覆盖后面声明的局部变量
+// Bug 场景：左侧都是索引表达式时，max_local_index 只计算左侧变量索引，
+//          如果后面声明了更高槽位的局部变量，临时槽位会覆盖它们
+
+func test_parallel_array_index():int {
+    // working 在槽位 0（参数后的第一个局部变量）
+    Array[int] working = [0, 0, 0, 0]
+    // 后面声明的变量有更大的槽位
+    Array[int] r0 = [1, 2, 3, 4]
+    // 这就意味着 result 在更高槽位
+    var result = 0
+    
+    // 并行赋值：所有左侧都是 working 的索引，refs 只覆盖 working 的槽位
+    // 临时槽位必须从所有已声明变量的最大槽位+1 开始，不能覆盖 result
+    working[0], working[1], working[2], working[3] = r0[0], r0[1], r0[2], r0[3]
+    
+    result = working[0] + working[1] + working[2] + working[3]
+    return result
+}
+
+// 混合场景：左侧有简单变量也有索引表达式
+func test_mixed_assign():int {
+    var a = 10
+    var b = 20
+    Array[int] arr = [30, 40]
+    // arr 和 a, b 的槽位关系需要正确：临时槽位不能覆盖任何已有变量
+    arr[0], a, arr[1], b = 1, 2, 3, 4
+    return arr[0] + a + arr[1] + b
+}
+
+// 多次并行赋值在同一函数中
+func test_multi_parallel():int {
+    Array[int] data = [0, 0, 0, 0]
+    Array[int] x1 = [1, 2, 3, 4]
+    Array[int] x2 = [5, 6, 7, 8]
+    Array[int] x3 = [9, 10, 11, 12]
+    var result = 0
+    
+    data[0], data[1], data[2], data[3] = x1[0], x1[1], x1[2], x1[3]
+    data[0], data[1], data[2], data[3] = x2[0], x2[1], x2[2], x2[3]
+    data[0], data[1], data[2], data[3] = x3[0], x3[1], x3[2], x3[3]
+    
+    result = data[0] + data[1] + data[2] + data[3]
+    return result
+}
+
+main() {
+    // 测试 1：索引表达式并行赋值不覆盖后续变量
+    var r1 = test_parallel_array_index()
+    print("Test 1: " + if r1 == 10 then "PASS" else "FAIL (expected 10, got " + _str(r1) + ")")
+    
+    // 测试 2：混合简单变量和索引表达式
+    var r2 = test_mixed_assign()
+    print("Test 2: " + if r2 == 10 then "PASS" else "FAIL (expected 10, got " + _str(r2) + ")")
+    
+    // 测试 3：多次并行赋值不累积错误
+    var r3 = test_multi_parallel()
+    print("Test 3: " + if r3 == 42 then "PASS" else "FAIL (expected 42, got " + _str(r3) + ")")
+    
+    // 测试 4：模拟 ChaCha20 场景 - QR 结果赋值给 working 数组
+    // working[0,4,8,12] = r0[0..3] = 1,2,3,4
+    // working[1,5,9,13] = r1[0..3] = 5,6,7,8
+    // sum = 1+2+3+4+5+6+7+8 = 36
+    var t4 = test_chacha20_style()
+    print("Test 4: " + if t4 == 36 then "PASS" else "FAIL (expected 36, got " + _str(t4) + ")")
+}
+
+func test_chacha20_style():int {
+    Array[int] working = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    // 声明多个临时数组（模拟 qr 函数返回），它们都有较高的槽位
+    Array[int] r0 = [1, 2, 3, 4]
+    Array[int] r1 = [5, 6, 7, 8]
+    var result = 0
+    
+    // 并行赋值到 working 的多个索引位置
+    working[0], working[4], working[8], working[12] = r0[0], r0[1], r0[2], r0[3]
+    working[1], working[5], working[9], working[13] = r1[0], r1[1], r1[2], r1[3]
+    
+    result = working[0] + working[4] + working[8] + working[12]
+         + working[1] + working[5] + working[9] + working[13]
+    return result
+}

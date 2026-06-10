@@ -662,7 +662,11 @@ void gen_assign(CodeGen* gen, Ast* ast) {
         // 为每个右侧值分配独立的临时槽位
         int* temp_slots = (int*)malloc(sizeof(int) * left_count);
         
-        // 计算局部变量的最大索引，临时槽位从最大索引+1开始分配
+        // 保存原始 max_local_slot，确保所有并行赋值共用同一个临时基底
+        int orig_max_slot = gen->max_local_slot;
+        
+        // 计算已声明局部变量的最大索引
+        // 方法1：从左侧目标的 refs 中找（覆盖简单变量赋值的情况）
         int max_local_index = -1;
         for (int i = 0; i < left_count; i++) {
             if (ast->u.assign.refs[i].kind == SYM_LOCAL || ast->u.assign.refs[i].kind == SYM_PARAM) {
@@ -671,20 +675,26 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 }
             }
         }
+        // 方法2：orig_max_slot 跟踪了当前函数所有已声明局部变量的最大索引
+        // 必须同时考虑两者：当左侧都是索引表达式时，refs 可能只覆盖部分变量
         int temp_slot_base = max_local_index + 1;
+        if (orig_max_slot + 1 > temp_slot_base) {
+            temp_slot_base = orig_max_slot + 1;
+        }
         
-        // 更新全局最大槽位（用于调整函数的 local_count）
-        // 需要为每个索引目标额外分配一个槽位来保存值
+        // 计算需要多少个临时槽位（left_count 存右侧值 + index_count 存索引赋值中间值）
         int index_count = 0;
         for (int i = 0; i < left_count; i++) {
             if (ast->u.assign.targets[i]->kind == AST_INDEX) {
                 index_count++;
             }
         }
-        int max_temp_slot = temp_slot_base + left_count + index_count - 1;
-        if (max_temp_slot > gen->max_local_slot) {
-            gen->max_local_slot = max_temp_slot;
+        int needed_slots = temp_slot_base + left_count + index_count - 1;
+        if (needed_slots > gen->max_local_slot) {
+            gen->max_local_slot = needed_slots;
         }
+        // 临时槽位起始位置固定为 temp_slot_base（基于 orig_max_slot 计算），
+        // 确保循环中多次并行赋值共用同一块临时区域，不随迭代增长
         
         // 先生成所有右侧表达式，保存到临时变量
         if (ast->u.assign.value->kind == AST_ARRAY) {
