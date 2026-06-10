@@ -8,15 +8,9 @@ import strings
 
 // ==================== MD5 辅助函数 ====================
 
-// 将 32 位有符号整数转为 64 位无符号值（用于逻辑右移）
-func to_unsigned(int x):int {
-    if x < 0 { return x + 0x100000000 }
-    return x
-}
-
-// 32 位循环左移（注意：LenoC 算术右移会符号扩展，需先转无符号再右移）
+// 32 位循环左移（使用 _uint32 将值转为无符号再右移，避免符号扩展）
 func left_rotate(int x, int c):int {
-    int ux = to_unsigned(x)
+    int ux = _uint32(x)
     return _int32((ux << c) | (ux >> (32 - c)))
 }
 
@@ -43,11 +37,11 @@ func le_bytes_to_int(Array[int] arr, int offset):int {
 
 // ==================== MD5 核心 ====================
 
-// MD5 基本函数（所有位运算先转无符号，避免 64 位符号扩展问题）
-func F(int x, int y, int z):int { return _int32((to_unsigned(x) & to_unsigned(y)) | (to_unsigned(_int32(~x)) & to_unsigned(z))) }
-func G(int x, int y, int z):int { return _int32((to_unsigned(x) & to_unsigned(z)) | (to_unsigned(y) & to_unsigned(_int32(~z)))) }
-func H(int x, int y, int z):int { return _int32(to_unsigned(x) ^ to_unsigned(y) ^ to_unsigned(z)) }
-func I(int x, int y, int z):int { return _int32(to_unsigned(y) ^ (to_unsigned(x) | to_unsigned(_int32(~z)))) }
+// MD5 基本函数（使用 _uint32 进行无符号位运算，避免 64 位符号扩展问题）
+func F(int x, int y, int z):int { return _int32((_uint32(x) & _uint32(y)) | (_uint32(~x) & _uint32(z))) }
+func G(int x, int y, int z):int { return _int32((_uint32(x) & _uint32(z)) | (_uint32(y) & _uint32(~z))) }
+func H(int x, int y, int z):int { return _int32(_uint32(x) ^ _uint32(y) ^ _uint32(z)) }
+func I(int x, int y, int z):int { return _int32(_uint32(y) ^ (_uint32(x) | _uint32(~z))) }
 
 // ==================== MD5 主算法 ====================
 

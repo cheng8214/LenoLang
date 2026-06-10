@@ -711,6 +711,38 @@ static Value native_to_int64(int argCount, Value* args) {
     }
 }
 
+// _uint32(value) - 将整数截断为 32 位无符号整数
+// 等效于 to_unsigned(_int32(x))，用于加密/网络等需要将值解释为 32 位无符号数的场景
+static Value native_to_uint32(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_int(0);
+    }
+
+    Value value = args[0];
+
+    int64_t i64_val;
+    if (val_is_int(value)) {
+        i64_val = (int64_t)val_as_int(value);
+    } else if (val_is_bigint(value)) {
+        i64_val = bigint_to_int64(val_as_bigint(value));
+    } else if (val_is_float(value)) {
+        i64_val = (int64_t)val_as_num(value);
+    } else if (val_is_bool(value)) {
+        i64_val = val_as_bool(value) ? 1 : 0;
+    } else if (val_is_null(value)) {
+        return val_int(0);
+    } else {
+        native_throw_error("无法将该类型转换为 uint32");
+        return val_int(0);
+    }
+
+    // 截断为 32 位无符号整数
+    uint32_t result = (uint32_t)(i64_val & 0xFFFFFFFF);
+    // 结果在 0 ~ 4294967295 范围内
+    // val_int_safe 自动处理：<= INT32_MAX 返回 VAL_INT，> INT32_MAX 返回 BigInt
+    return val_int_safe((int64_t)result);
+}
+
 // ==================== 初始化 ====================
 
 void types_init_globals(void) {
@@ -727,6 +759,7 @@ void types_init_globals(void) {
     vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, convert_params);
     vm_register_native("_int32", native_to_int32, 1, -1, -1, TYPE_INT, convert_params);
     vm_register_native("_int64", native_to_int64, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_uint32", native_to_uint32, 1, -1, -1, TYPE_INT, convert_params);
 }
 
 // types 模块通过全局 type() 函数提供服务
