@@ -444,6 +444,8 @@ static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth)
     printf("代码长度: %d bytes\n", chunk->len);
     for (int i = 0; i < depth; i++) printf("  ");
     printf("常量数量: %d\n", chunk->const_cnt);
+    for (int i = 0; i < depth; i++) printf("  ");
+    printf("局部变量槽位数: %d\n", chunk->local_count);
     printf("\n");
     
     for (int i = 0; i < depth; i++) printf("  ");

@@ -11,34 +11,22 @@ import strings
 
 // ==================== ChaCha20 核心 ====================
 
-// 将 int32 转为无符号表示（0 ~ 0xFFFFFFFF）
-func to_u32(int v):int {
-    v = _int32(v)
-    if (v < 0) { return v + 0x100000000 }
-    return v
-}
-
-// 将无符号表示转回 int32
-func from_u32(int v):int {
-    return _int32(v)
-}
-
-// 32 位循环左移
+// 32 位循环左移（使用 _uint32 转为无符号，避免算术右移符号扩展）
 func rotl32(int v, int n):int {
-    int uv = to_u32(v)
+    int uv = _uint32(v)
     int left = _int32(uv << n)
     int right = uv >> (32 - n)
-    return from_u32(left | right)
+    return _int32(left | right)
 }
 
-// 32 位 XOR
+// 32 位 XOR（无符号语义）
 func xor32(int a, int b):int {
-    return _int32(to_u32(a) ^ to_u32(b))
+    return _int32(_uint32(a) ^ _uint32(b))
 }
 
-// 32 位 ADD
+// 32 位 ADD（无符号语义）
 func add32(int a, int b):int {
-    return _int32(to_u32(a) + to_u32(b))
+    return _int32(_uint32(a) + _uint32(b))
 }
 
 // Quarter Round: ChaCha20 的基本混合单元
@@ -58,6 +46,7 @@ func chacha20_block(Array[int] state):Array[int] {
 
     // 20 轮（10 轮双轮）
     for 10 {
+        // 列轮
         // 列轮
         Array[int] r0 = qr(working[0], working[4], working[8],  working[12])
         working[0] = r0[0]; working[4] = r0[1]; working[8] = r0[2]; working[12] = r0[3]
@@ -97,10 +86,10 @@ func chacha20_block(Array[int] state):Array[int] {
 
 // 从字符串读取小端序 uint32
 func read_le32(string data, int offset):int {
-    int b0 = data.byte(offset)
-    int b1 = data.byte(offset + 1)
-    int b2 = data.byte(offset + 2)
-    int b3 = data.byte(offset + 3)
+    int b0 = strings.byte(data, offset)
+    int b1 = strings.byte(data, offset + 1)
+    int b2 = strings.byte(data, offset + 2)
+    int b3 = strings.byte(data, offset + 3)
     return _int32(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
 }
 
@@ -161,8 +150,8 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
             int word_idx = j / 4
             int byte_idx = j % 4
             int shift = byte_idx * 8
-            int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
-            int pt_byte = plaintext.byte(i + j)
+            int key_byte = _uint32(block[word_idx]) >> shift & 0xFF
+            int pt_byte = strings.byte(plaintext, i + j)
             result += byte_to_hex(key_byte ^ pt_byte)
             j += 1
         }
@@ -189,7 +178,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string hex_cipherte
             int word_idx = j / 4
             int byte_idx = j % 4
             int shift = byte_idx * 8
-            int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
+            int key_byte = _uint32(block[word_idx]) >> shift & 0xFF
             int ct_byte = hex_val(hex_ciphertext, (i + j) * 2)
             result += strings.char(key_byte ^ ct_byte)
             j += 1
@@ -204,7 +193,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string hex_cipherte
 
 // 从 hex 字符串读取一个字节值
 func hex_val(string hex, int pos):int {
-    return (hex_nibble(hex.byte(pos)) << 4) | hex_nibble(hex.byte(pos + 1))
+    return (hex_nibble(strings.byte(hex, pos)) << 4) | hex_nibble(strings.byte(hex, pos + 1))
 }
 
 func hex_nibble(int b):int {
@@ -225,7 +214,7 @@ func byte_to_hex(int b):string {
 func to_hex(string input):string {
     var result = ""
     for 0:input.len() - 1 to i {
-        result += byte_to_hex(input.byte(i))
+        result += byte_to_hex(strings.byte(input, i))
     }
     return result
 }
@@ -241,8 +230,8 @@ func from_hex(string hex_str):string {
     var result = ""
     int i = 0
     while (i + 1 < hex_str.len()) {
-        int hi = hex_char_val(hex_str.byte(i))
-        int lo = hex_char_val(hex_str.byte(i + 1))
+        int hi = hex_char_val(strings.byte(hex_str, i))
+        int lo = hex_char_val(strings.byte(hex_str, i + 1))
         result += strings.char((hi << 4) | lo)
         i += 2
     }
@@ -337,8 +326,8 @@ main() {
         // 找第一个不同的位置
         int min_len = if long_dec.len() < long_text.len() then long_dec.len() else long_text.len()
         for 0:min_len - 1 to i {
-            if (long_text.byte(i) != long_dec.byte(i)) {
-                print("第一个不同在 byte " + _str(i) + ": expected " + _str(long_text.byte(i)) + " got " + _str(long_dec.byte(i)))
+            if (strings.byte(long_text, i) != strings.byte(long_dec, i)) {
+                print("第一个不同在 byte " + _str(i) + ": expected " + _str(strings.byte(long_text, i)) + " got " + _str(strings.byte(long_dec, i)))
                 break
             }
         }
