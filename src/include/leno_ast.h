@@ -206,7 +206,7 @@ struct Ast {
             Ast* value;           // 右侧表达式（可能是元组/列表）
             SymRef* refs;         // 符号引用数组
         } assign;
-        struct { char* name; Ast* value; SymRef ref; LenoTokenType op; Ast* target; } compound_assign;  // 复合赋值（target支持索引表达式）
+        struct { char* name; Ast* value; SymRef ref; LenoTokenType op; } compound_assign;  // 复合赋值
         struct { char* name; Ast* init; SymRef ref; TypeInfo* type; } var_decl;
         struct { Ast* expr; } expr_stmt;
         struct { char* module_name; char* alias; char* file_path; } import;

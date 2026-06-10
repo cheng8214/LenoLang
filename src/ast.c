@@ -200,7 +200,6 @@ void ast_free(Ast* ast) {
             free(ast->u.compound_assign.name);
             free(ast->u.compound_assign.ref.name);
             ast_free(ast->u.compound_assign.value);
-            ast_free(ast->u.compound_assign.target);
             break;
         case AST_VAR_DECL:
             free(ast->u.var_decl.name);

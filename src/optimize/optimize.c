@@ -370,9 +370,6 @@ static void fold_expr(Ast* ast) {
 
         case AST_COMPOUND_ASSIGN:
             fold_expr(ast->u.compound_assign.value);
-            if (ast->u.compound_assign.target) {
-                fold_expr(ast->u.compound_assign.target);
-            }
             break;
 
         case AST_VAR_DECL:
@@ -727,7 +724,6 @@ static int dce_expr(Ast* ast) {
         // 复合赋值：递归处理赋值表达式
         case AST_COMPOUND_ASSIGN:
             dce_expr(ast->u.compound_assign.value);
-            if (ast->u.compound_assign.target) dce_expr(ast->u.compound_assign.target);
             return 0;
 
         // 变量声明：递归处理初始化表达式

@@ -568,45 +568,35 @@ void visit(Semantic* s, Ast* ast) {
         }
         
         case AST_COMPOUND_ASSIGN: {
-            Ast* target = ast->u.compound_assign.target;
-            
-            if (target && target->kind == AST_INDEX) {
-                // 数组索引复合赋值：arr[i] += value
-                // 访问索引节点进行语义分析
-                visit(s, target);
-                visit(s, ast->u.compound_assign.value);
-            } else if (ast->u.compound_assign.name) {
-                // 简单变量复合赋值：x += value
-                Symbol* sym = resolve_variable_with_upvalue(s, ast->u.compound_assign.name, &ast->u.compound_assign.ref);
-                if (!sym) {
-                    // 检查是否是 struct 字段（通过 __self_field__ 标记）
-                    if (ast->u.compound_assign.ref.name && strcmp(ast->u.compound_assign.ref.name, "__self_field__") == 0) {
-                        // struct 字段的复合赋值，标记为已处理
-                        // 类型将在后续从 struct 定义推断
-                        ast->u.compound_assign.ref.type_kind = TYPE_ANY;
-                    } else {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.compound_assign.name);
-                        error_add(ERR_UNDEFINED_VAR, ast->line, msg);
-                    }
+            Symbol* sym = resolve_variable_with_upvalue(s, ast->u.compound_assign.name, &ast->u.compound_assign.ref);
+            if (!sym) {
+                // 检查是否是 struct 字段（通过 __self_field__ 标记）
+                if (ast->u.compound_assign.ref.name && strcmp(ast->u.compound_assign.ref.name, "__self_field__") == 0) {
+                    // struct 字段的复合赋值，标记为已处理
+                    // 类型将在后续从 struct 定义推断
+                    ast->u.compound_assign.ref.type_kind = TYPE_ANY;
                 } else {
-                    ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.compound_assign.name);
+                    error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                 }
-                visit(s, ast->u.compound_assign.value);
+            } else {
+                ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
+            }
+            visit(s, ast->u.compound_assign.value);
 
-                // 复合赋值类型检查
-                if (sym && sym->type) {
-                    TypeInfo* value_type = infer_expr_type(s, ast->u.compound_assign.value);
-                    if (value_type) {
-                        if (!type_is_compatible(sym->type, value_type)) {
-                            char msg[BUFFER_MEDIUM];
-                            format_detailed_type_error(msg, sizeof(msg),
-                                sym->type, value_type,
-                                "复合赋值类型不匹配");
-                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
-                        }
-                        type_free(value_type);
+            // 复合赋值类型检查
+            if (sym && sym->type) {
+                TypeInfo* value_type = infer_expr_type(s, ast->u.compound_assign.value);
+                if (value_type) {
+                    if (!type_is_compatible(sym->type, value_type)) {
+                        char msg[BUFFER_MEDIUM];
+                        format_detailed_type_error(msg, sizeof(msg),
+                            sym->type, value_type,
+                            "复合赋值类型不匹配");
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                     }
+                    type_free(value_type);
                 }
             }
             break;

@@ -835,9 +835,9 @@ Ast* parse_expression_stmt(Parser* p) {
                     return NULL;
                 }
                 
-                // 复合赋值支持简单变量和索引表达式（如 arr[i] += 1）
-                if (left_targets[0]->kind != AST_VAR && left_targets[0]->kind != AST_INDEX) {
-                    error_add(ERR_SYNTAX, line, "复合赋值只支持简单变量或数组索引");
+                // 复合赋值只支持简单变量，不支持索引
+                if (left_targets[0]->kind != AST_VAR) {
+                    error_add(ERR_SYNTAX, line, "复合赋值只支持简单变量");
                     return NULL;
                 }
                 
@@ -848,17 +848,14 @@ Ast* parse_expression_stmt(Parser* p) {
                 
                 // 创建复合赋值节点
                 Ast* ast = ast_new(AST_COMPOUND_ASSIGN, line);
-                if (left_targets[0]->kind == AST_VAR) {
-                    ast->u.compound_assign.name = strdup(left_targets[0]->u.var.name);
-                } else {
-                    ast->u.compound_assign.name = NULL; // 索引目标没有变量名
-                }
+                ast->u.compound_assign.name = strdup(left_targets[0]->u.var.name);
                 ast->u.compound_assign.value = value;
                 ast->u.compound_assign.op = op;
-                ast->u.compound_assign.target = left_targets[0]; // 保存完整目标表达式
                 // ref 信息在语义分析时填充
                 
-                // 不释放 left_targets[0]，因为它被 target 引用
+                // 释放临时变量节点
+                free(left_targets[0]->u.var.name);
+                free(left_targets[0]);
                 free(left_targets);
                 
                 // 包装成表达式语句
