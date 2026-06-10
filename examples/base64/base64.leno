@@ -16,23 +16,23 @@ func table_char(int index):string {
     return strings.char(ENCODE_TABLE.byte(index))
 }
 
-// 合法 Base64 字符集合
-func build_valid_set():Dict[string, int] {
-    Dict[string, int] s = {}
+// 合法 Base64 字符集合（用 byte 值作 int 键，O(1) 数组查找）
+func build_valid_set():Dict[int, int] {
+    Dict[int, int] s = {}
     for 0:63 to i {
-        s[table_char(i)] = 1
+        s[ENCODE_TABLE.byte(i)] = 1
     }
-    s["="] = 1
+    s[61] = 1  // '=' 的 ASCII 值
     return s
 }
 
 var VALID_SET = build_valid_set()
 
-// Base64 解码表（通过编码表构建）
-func build_decode_table():Dict[string, int] {
-    Dict[string, int] table = {}
+// Base64 解码表（byte 值 -> 6 位索引，int 键 O(1) 数组查找）
+func build_decode_table():Dict[int, int] {
+    Dict[int, int] table = {}
     for 0:63 to i {
-        table[table_char(i)] = i
+        table[ENCODE_TABLE.byte(i)] = i
     }
     return table
 }
@@ -42,9 +42,8 @@ var DECODE_TABLE = build_decode_table()
 // 检查字符串是否为合法的 Base64 字符
 func is_valid_base64(string input):bool {
     int len = input.len()
-    for 0:len - 1 to i {
-        var ch = strings.char(input.byte(i))
-        if (not VALID_SET.has(ch)) {
+    for len to i {
+        if (not VALID_SET.has(input.byte(i))) {
             return false
         }
     }
@@ -58,7 +57,7 @@ func base64_encode(string input):string {
     int len = input.len()
 
     // 每次处理 3 个字节
-    while (i + 2 < len) {
+    while i + 2 < len {
         // byte() 是 0-based 索引
         int b0 = input.byte(i)
         int b1 = input.byte(i + 1)
@@ -119,10 +118,10 @@ func base64_decode(string input):string {
 
     int i = 0
     while (i + 4 <= valid_len) {
-        int c0 = DECODE_TABLE[strings.char(input.byte(i))]
-        int c1 = DECODE_TABLE[strings.char(input.byte(i + 1))]
-        int c2 = DECODE_TABLE[strings.char(input.byte(i + 2))]
-        int c3 = DECODE_TABLE[strings.char(input.byte(i + 3))]
+        int c0 = DECODE_TABLE[input.byte(i)]
+        int c1 = DECODE_TABLE[input.byte(i + 1)]
+        int c2 = DECODE_TABLE[input.byte(i + 2)]
+        int c3 = DECODE_TABLE[input.byte(i + 3)]
 
         int n = (c0 << 18) | (c1 << 12) | (c2 << 6) | c3
 
@@ -135,17 +134,17 @@ func base64_decode(string input):string {
 
     // 处理带 padding 的尾部
     if (pad == 1) {
-        int c0 = DECODE_TABLE[strings.char(input.byte(i))]
-        int c1 = DECODE_TABLE[strings.char(input.byte(i + 1))]
-        int c2 = DECODE_TABLE[strings.char(input.byte(i + 2))]
+        int c0 = DECODE_TABLE[input.byte(i)]
+        int c1 = DECODE_TABLE[input.byte(i + 1)]
+        int c2 = DECODE_TABLE[input.byte(i + 2)]
 
         int n = (c0 << 18) | (c1 << 12) | (c2 << 6)
 
         result += strings.char((n >> 16) & MASK_FF)
         result += strings.char((n >> 8) & MASK_FF)
     } else if (pad == 2) {
-        int c0 = DECODE_TABLE[strings.char(input.byte(i))]
-        int c1 = DECODE_TABLE[strings.char(input.byte(i + 1))]
+        int c0 = DECODE_TABLE[input.byte(i)]
+        int c1 = DECODE_TABLE[input.byte(i + 1)]
 
         int n = (c0 << 18) | (c1 << 12)
 
@@ -155,10 +154,11 @@ func base64_decode(string input):string {
     return result
 }
 
-// 获取 Base64 字符对应的 6 位值（外部接口，内部热路径用 BYTE_DECODE）
+// 获取 Base64 字符对应的 6 位值
 func base64_char_value(string ch):int {
-    if (DECODE_TABLE.has(ch)) {
-        return DECODE_TABLE[ch]
+    int b = ch.byte(0)
+    if (DECODE_TABLE.has(b)) {
+        return DECODE_TABLE[b]
     }
     throw "Invalid Base64 character: " + ch
 }
