@@ -1,0 +1,280 @@
+// MD5 哈希算法 —— 纯 LenoC 实现
+// RFC 1321 标准实现，支持任意长度字符串的 MD5 摘要
+//
+// MD5 生成 128 位（16 字节）哈希值，广泛用于校验和、指纹识别
+// 安全提示：MD5 已不推荐用于安全场景（如密码存储、数字签名），仅作学习演示
+
+import strings
+
+// ==================== MD5 辅助函数 ====================
+
+// 将 32 位有符号整数转为 64 位无符号值（用于逻辑右移）
+func to_unsigned(int x):int {
+    if x < 0 { return x + 0x100000000 }
+    return x
+}
+
+// 32 位循环左移（注意：LenoC 算术右移会符号扩展，需先转无符号再右移）
+func left_rotate(int x, int c):int {
+    int ux = to_unsigned(x)
+    return _int32((ux << c) | (ux >> (32 - c)))
+}
+
+// 字节转两位十六进制字符串
+func byte_to_hex(int b):string {
+    var hex_chars = "0123456789abcdef"
+    int hi = (b >> 4) & 0x0F
+    int lo = b & 0x0F
+    return strings.char(hex_chars.byte(hi)) + strings.char(hex_chars.byte(lo))
+}
+
+// 32 位整数转小端序 4 字节（追加到字节数组）
+func append_le32(Array[int] arr, int v) {
+    arr.add(v & 0xFF)
+    arr.add((v >> 8) & 0xFF)
+    arr.add((v >> 16) & 0xFF)
+    arr.add((v >> 24) & 0xFF)
+}
+
+// 小端序 4 字节转 32 位整数
+func le_bytes_to_int(Array[int] arr, int offset):int {
+    return _int32(arr[offset] | (arr[offset + 1] << 8) | (arr[offset + 2] << 16) | (arr[offset + 3] << 24))
+}
+
+// ==================== MD5 核心 ====================
+
+// MD5 基本函数（所有位运算先转无符号，避免 64 位符号扩展问题）
+func F(int x, int y, int z):int { return _int32((to_unsigned(x) & to_unsigned(y)) | (to_unsigned(_int32(~x)) & to_unsigned(z))) }
+func G(int x, int y, int z):int { return _int32((to_unsigned(x) & to_unsigned(z)) | (to_unsigned(y) & to_unsigned(_int32(~z)))) }
+func H(int x, int y, int z):int { return _int32(to_unsigned(x) ^ to_unsigned(y) ^ to_unsigned(z)) }
+func I(int x, int y, int z):int { return _int32(to_unsigned(y) ^ (to_unsigned(x) | to_unsigned(_int32(~z)))) }
+
+// ==================== MD5 主算法 ====================
+
+func md5(string input):string {
+    // 初始哈希值（RFC 1321）
+    int a0 = 0x67452301
+    int b0 = 0xEFCDAB89
+    int c0 = 0x98BADCFE
+    int d0 = 0x10325476
+
+    // 每轮移位量（RFC 1321）
+    var s = [
+        7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,
+        5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,
+        4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,
+        6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21
+    ]
+
+    // 预计算 T 表：T[i] = floor(2^32 * abs(sin(i+1)))
+    var K = [
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
+        0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+        0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
+        0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+        0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
+        0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+        0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
+        0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+        0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
+        0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
+        0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
+        0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391
+    ]
+
+    // ===== 消息填充（使用字节数组，避免 0x00 字符串拼接问题）=====
+    int orig_len = input.len()
+    var msg = []  // Array[int] 字节数组
+
+    // 复制原始消息字节
+    for orig_len to i {
+        msg.add(input.byte(i))
+    }
+
+    // 追加 0x80
+    msg.add(0x80)
+
+    // 填充 0x00 直到长度 ≡ 56 (mod 64)
+    int pad_len = (56 - msg.len() % 64 + 64) % 64
+    for pad_len to i {
+        msg.add(0)
+    }
+
+    // 追加原始长度（位数为单位，小端序 64 位）
+    int bit_len = _int32(orig_len * 8)
+    append_le32(msg, bit_len)
+    append_le32(msg, 0)  // 高 32 位
+
+    // ===== 处理每个 512 位（64 字节）块 =====
+    int num_blocks = msg.len() / 64
+    for 0:(num_blocks - 1) to block_idx {
+        // 提取 16 个 32 位字（小端序）
+        var M = []
+        for 0:15 to j {
+            M.add(le_bytes_to_int(msg, block_idx * 64 + j * 4))
+        }
+
+        // 初始化本轮工作变量
+        int A = a0
+        int B = b0
+        int C = c0
+        int D = d0
+
+        // 第 1 轮：F 函数
+        A = _int32(B + left_rotate(_int32(A + F(B, C, D) + M[0]  + K[0]),  s[0]))
+        D = _int32(A + left_rotate(_int32(D + F(A, B, C) + M[1]  + K[1]),  s[1]))
+        C = _int32(D + left_rotate(_int32(C + F(D, A, B) + M[2]  + K[2]),  s[2]))
+        B = _int32(C + left_rotate(_int32(B + F(C, D, A) + M[3]  + K[3]),  s[3]))
+        A = _int32(B + left_rotate(_int32(A + F(B, C, D) + M[4]  + K[4]),  s[4]))
+        D = _int32(A + left_rotate(_int32(D + F(A, B, C) + M[5]  + K[5]),  s[5]))
+        C = _int32(D + left_rotate(_int32(C + F(D, A, B) + M[6]  + K[6]),  s[6]))
+        B = _int32(C + left_rotate(_int32(B + F(C, D, A) + M[7]  + K[7]),  s[7]))
+        A = _int32(B + left_rotate(_int32(A + F(B, C, D) + M[8]  + K[8]),  s[8]))
+        D = _int32(A + left_rotate(_int32(D + F(A, B, C) + M[9]  + K[9]),  s[9]))
+        C = _int32(D + left_rotate(_int32(C + F(D, A, B) + M[10] + K[10]), s[10]))
+        B = _int32(C + left_rotate(_int32(B + F(C, D, A) + M[11] + K[11]), s[11]))
+        A = _int32(B + left_rotate(_int32(A + F(B, C, D) + M[12] + K[12]), s[12]))
+        D = _int32(A + left_rotate(_int32(D + F(A, B, C) + M[13] + K[13]), s[13]))
+        C = _int32(D + left_rotate(_int32(C + F(D, A, B) + M[14] + K[14]), s[14]))
+        B = _int32(C + left_rotate(_int32(B + F(C, D, A) + M[15] + K[15]), s[15]))
+
+        // 第 2 轮：G 函数
+        A = _int32(B + left_rotate(_int32(A + G(B, C, D) + M[1]  + K[16]), s[16]))
+        D = _int32(A + left_rotate(_int32(D + G(A, B, C) + M[6]  + K[17]), s[17]))
+        C = _int32(D + left_rotate(_int32(C + G(D, A, B) + M[11] + K[18]), s[18]))
+        B = _int32(C + left_rotate(_int32(B + G(C, D, A) + M[0]  + K[19]), s[19]))
+        A = _int32(B + left_rotate(_int32(A + G(B, C, D) + M[5]  + K[20]), s[20]))
+        D = _int32(A + left_rotate(_int32(D + G(A, B, C) + M[10] + K[21]), s[21]))
+        C = _int32(D + left_rotate(_int32(C + G(D, A, B) + M[15] + K[22]), s[22]))
+        B = _int32(C + left_rotate(_int32(B + G(C, D, A) + M[4]  + K[23]), s[23]))
+        A = _int32(B + left_rotate(_int32(A + G(B, C, D) + M[9]  + K[24]), s[24]))
+        D = _int32(A + left_rotate(_int32(D + G(A, B, C) + M[14] + K[25]), s[25]))
+        C = _int32(D + left_rotate(_int32(C + G(D, A, B) + M[3]  + K[26]), s[26]))
+        B = _int32(C + left_rotate(_int32(B + G(C, D, A) + M[8]  + K[27]), s[27]))
+        A = _int32(B + left_rotate(_int32(A + G(B, C, D) + M[13] + K[28]), s[28]))
+        D = _int32(A + left_rotate(_int32(D + G(A, B, C) + M[2]  + K[29]), s[29]))
+        C = _int32(D + left_rotate(_int32(C + G(D, A, B) + M[7]  + K[30]), s[30]))
+        B = _int32(C + left_rotate(_int32(B + G(C, D, A) + M[12] + K[31]), s[31]))
+
+        // 第 3 轮：H 函数
+        A = _int32(B + left_rotate(_int32(A + H(B, C, D) + M[5]  + K[32]), s[32]))
+        D = _int32(A + left_rotate(_int32(D + H(A, B, C) + M[8]  + K[33]), s[33]))
+        C = _int32(D + left_rotate(_int32(C + H(D, A, B) + M[11] + K[34]), s[34]))
+        B = _int32(C + left_rotate(_int32(B + H(C, D, A) + M[14] + K[35]), s[35]))
+        A = _int32(B + left_rotate(_int32(A + H(B, C, D) + M[1]  + K[36]), s[36]))
+        D = _int32(A + left_rotate(_int32(D + H(A, B, C) + M[4]  + K[37]), s[37]))
+        C = _int32(D + left_rotate(_int32(C + H(D, A, B) + M[7]  + K[38]), s[38]))
+        B = _int32(C + left_rotate(_int32(B + H(C, D, A) + M[10] + K[39]), s[39]))
+        A = _int32(B + left_rotate(_int32(A + H(B, C, D) + M[13] + K[40]), s[40]))
+        D = _int32(A + left_rotate(_int32(D + H(A, B, C) + M[0]  + K[41]), s[41]))
+        C = _int32(D + left_rotate(_int32(C + H(D, A, B) + M[3]  + K[42]), s[42]))
+        B = _int32(C + left_rotate(_int32(B + H(C, D, A) + M[6]  + K[43]), s[43]))
+        A = _int32(B + left_rotate(_int32(A + H(B, C, D) + M[9]  + K[44]), s[44]))
+        D = _int32(A + left_rotate(_int32(D + H(A, B, C) + M[12] + K[45]), s[45]))
+        C = _int32(D + left_rotate(_int32(C + H(D, A, B) + M[15] + K[46]), s[46]))
+        B = _int32(C + left_rotate(_int32(B + H(C, D, A) + M[2]  + K[47]), s[47]))
+
+        // 第 4 轮：I 函数
+        A = _int32(B + left_rotate(_int32(A + I(B, C, D) + M[0]  + K[48]), s[48]))
+        D = _int32(A + left_rotate(_int32(D + I(A, B, C) + M[7]  + K[49]), s[49]))
+        C = _int32(D + left_rotate(_int32(C + I(D, A, B) + M[14] + K[50]), s[50]))
+        B = _int32(C + left_rotate(_int32(B + I(C, D, A) + M[5]  + K[51]), s[51]))
+        A = _int32(B + left_rotate(_int32(A + I(B, C, D) + M[12] + K[52]), s[52]))
+        D = _int32(A + left_rotate(_int32(D + I(A, B, C) + M[3]  + K[53]), s[53]))
+        C = _int32(D + left_rotate(_int32(C + I(D, A, B) + M[10] + K[54]), s[54]))
+        B = _int32(C + left_rotate(_int32(B + I(C, D, A) + M[1]  + K[55]), s[55]))
+        A = _int32(B + left_rotate(_int32(A + I(B, C, D) + M[8]  + K[56]), s[56]))
+        D = _int32(A + left_rotate(_int32(D + I(A, B, C) + M[15] + K[57]), s[57]))
+        C = _int32(D + left_rotate(_int32(C + I(D, A, B) + M[6]  + K[58]), s[58]))
+        B = _int32(C + left_rotate(_int32(B + I(C, D, A) + M[13] + K[59]), s[59]))
+        A = _int32(B + left_rotate(_int32(A + I(B, C, D) + M[4]  + K[60]), s[60]))
+        D = _int32(A + left_rotate(_int32(D + I(A, B, C) + M[11] + K[61]), s[61]))
+        C = _int32(D + left_rotate(_int32(C + I(D, A, B) + M[2]  + K[62]), s[62]))
+        B = _int32(C + left_rotate(_int32(B + I(C, D, A) + M[9]  + K[63]), s[63]))
+
+        // 累加到哈希状态
+        a0 = _int32(a0 + A)
+        b0 = _int32(b0 + B)
+        c0 = _int32(c0 + C)
+        d0 = _int32(d0 + D)
+    }
+
+    // ===== 输出 128 位哈希（小端序字节 → 十六进制）=====
+    var digest = ""
+    Array[int] a_bytes = []
+    append_le32(a_bytes, a0)
+    for a_bytes.len() to i { digest += byte_to_hex(a_bytes[i]) }
+    Array[int] b_bytes = []
+    append_le32(b_bytes, b0)
+    for b_bytes.len() to i { digest += byte_to_hex(b_bytes[i]) }
+    Array[int] c_bytes = []
+    append_le32(c_bytes, c0)
+    for c_bytes.len() to i { digest += byte_to_hex(c_bytes[i]) }
+    Array[int] d_bytes = []
+    append_le32(d_bytes, d0)
+    for d_bytes.len() to i { digest += byte_to_hex(d_bytes[i]) }
+
+    return digest
+}
+
+// ==================== 测试 ====================
+
+main() {
+    // RFC 1321 标准测试向量
+    print("=== MD5 标准测试向量 ===")
+    print("")
+
+    // 测试 1：空字符串
+    var h1 = md5("")
+    print("md5(\"\")       = " + h1)
+    print("期望:           d41d8cd98f00b204e9800998ecf8427e")
+    print("结果:           " + if h1 == "d41d8cd98f00b204e9800998ecf8427e" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 2："a"
+    var h2 = md5("a")
+    print("md5(\"a\")       = " + h2)
+    print("期望:           0cc175b9c0f1b6a831c399e269772661")
+    print("结果:           " + if h2 == "0cc175b9c0f1b6a831c399e269772661" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 3："abc"
+    var h3 = md5("abc")
+    print("md5(\"abc\")     = " + h3)
+    print("期望:           900150983cd24fb0d6963f7d28e17f72")
+    print("结果:           " + if h3 == "900150983cd24fb0d6963f7d28e17f72" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 4："message digest"
+    var h4 = md5("message digest")
+    print("md5(\"message digest\") = " + h4)
+    print("期望:                  f96b697d7cb7938d525a2f31aaf161d0")
+    print("结果:                  " + if h4 == "f96b697d7cb7938d525a2f31aaf161d0" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 5："abcdefghijklmnopqrstuvwxyz"
+    var h5 = md5("abcdefghijklmnopqrstuvwxyz")
+    print("md5(\"abcdefghijklmnopqrstuvwxyz\") = " + h5)
+    print("期望:                               c3fcd3d76192e4007dfb496cca67e13b")
+    print("结果:                               " + if h5 == "c3fcd3d76192e4007dfb496cca67e13b" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 6：长字符串（跨块边界）
+    var h6 = md5("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+    print("md5(62 chars)  = " + h6)
+    print("期望:           d174ab98d277d9f5a5611c2c9f419d9f")
+    print("结果:           " + if h6 == "d174ab98d277d9f5a5611c2c9f419d9f" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 7：重复字符串（RFC 1321: "1234567890" x 8 = 80 chars）
+    var long_str = ""
+    for 8 to i { long_str += "1234567890" }
+    var h7 = md5(long_str)
+    print("md5(\"1234567890\" x 8)  = " + h7)
+    print("期望:                    57edf4a22be3c955ac49da2e2107b67a")
+    print("结果:                    " + if h7 == "57edf4a22be3c955ac49da2e2107b67a" then "PASS" else "FAIL")
+}

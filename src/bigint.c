@@ -975,9 +975,7 @@ Value bigint_xor(ObjBigInt* a, ObjBigInt* b) {
 
 Value bigint_not(ObjBigInt* a) {
     // ~a = -a - 1
-    ObjBigInt temp = *a;
-    temp.is_negative = !a->is_negative;
-    Value negated = bigint_neg(&temp);
+    Value negated = bigint_neg(a);
 
     if (val_is_bigint(negated)) {
         ObjBigInt* neg = val_as_bigint(negated);
