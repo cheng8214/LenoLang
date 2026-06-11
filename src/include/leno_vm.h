@@ -133,6 +133,8 @@ typedef enum {
     OP_LE_INT_IMM,     // int <= imm（立即数小于等于）
     OP_GE_INT_IMM,     // int >= imm（立即数大于等于）
     OP_EQ_INT_IMM,     // int == imm（立即数等于）
+    OP_SHL_IMM,        // int << imm（立即数左移）
+    OP_SHR_IMM,        // int >> imm（立即数右移）
     // struct 相关指令
     OP_STRUCT_DEF,     // 定义结构体
     OP_STRUCT_INIT,    // 创建结构体实例
@@ -153,6 +155,9 @@ typedef enum {
     // clib 调用指令（栈上: lib, func_name, args... -> 结果）
     OP_CLIB_CALL,       // 调用 C 库函数（通过 FFI）
     OP_CFUNC_CALLBACK,  // 创建 cfunc 回调（编译期签名，无需字符串）
+    // 原生函数调用合并指令（省掉 OP_GET_NATIVE + OP_CALL/TAIL_CALL 配对）
+    OP_CALL_NATIVE,      // 直接调用原生函数: name_const(2) arg_count(2)
+    OP_TAIL_CALL_NATIVE, // 尾调用原生函数: name_const(2) arg_count(2)
 } OpCode;
 
 // ============================================================================

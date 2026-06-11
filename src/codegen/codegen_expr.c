@@ -146,8 +146,22 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
         case TOK_BITAND: gen_expr(gen, ast->u.binop.r); emit_byte(gen, OP_BITAND, ast->line); break;
         case TOK_BITOR:  gen_expr(gen, ast->u.binop.r); emit_byte(gen, OP_BITOR, ast->line); break;
         case TOK_BITXOR: gen_expr(gen, ast->u.binop.r); emit_byte(gen, OP_BITXOR, ast->line); break;
-        case TOK_SHL:    gen_expr(gen, ast->u.binop.r); emit_byte(gen, OP_SHL, ast->line); break;
-        case TOK_SHR:    gen_expr(gen, ast->u.binop.r); emit_byte(gen, OP_SHR, ast->line); break;
+        case TOK_SHL:
+            if (can_use_imm && imm_val >= 0) {
+                emit_byte_imm(gen, OP_SHL_IMM, imm_val, ast->line);
+            } else {
+                gen_expr(gen, ast->u.binop.r);
+                emit_byte(gen, OP_SHL, ast->line);
+            }
+            break;
+        case TOK_SHR:
+            if (can_use_imm && imm_val >= 0) {
+                emit_byte_imm(gen, OP_SHR_IMM, imm_val, ast->line);
+            } else {
+                gen_expr(gen, ast->u.binop.r);
+                emit_byte(gen, OP_SHR, ast->line);
+            }
+            break;
         case TOK_EQEQ:
             if (can_use_imm && left_type == TYPE_INT) {
                 emit_byte_imm(gen, OP_EQ_INT_IMM, imm_val, ast->line);
@@ -787,6 +801,18 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 // 不应发生：语义分析已确保默认值存在
                 emit_byte(gen, OP_NULL, ast->line);
             }
+        }
+    }
+
+    // 检测原生函数调用，合并为 OP_CALL_NATIVE
+    if (ast->u.call.callee->kind == AST_VAR && !func_def) {
+        Symbol* callee_sym = scope_resolve(gen->sem->current, ast->u.call.callee->u.var.name);
+        if (callee_sym && callee_sym->kind == SYM_NATIVE) {
+            ObjString* nameStr = str_copy(callee_sym->name, (int)strlen(callee_sym->name));
+            int name_const = make_constant(gen, val_obj((Object*)nameStr));
+            int total_args = ast->u.call.args.count;
+            emit_call_native(gen, name_const, total_args, ast->line);
+            return;
         }
     }
 

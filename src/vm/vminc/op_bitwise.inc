@@ -181,6 +181,74 @@ OPCODE(OP_SHR) {
     DISPATCH;
 }
 
+OPCODE(OP_SHL_IMM) {
+    uint8_t imm = READ_BYTE();
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int << imm（最常见，imm < 32）
+    if (likely(val_is_int(a))) {
+        if (likely(imm < 32)) {
+            vm_stack_push(&vm, val_int(val_as_int(a) << imm));
+            DISPATCH;
+        }
+        ObjBigInt* ba = promote_to_bigint(a);
+        Value result = bigint_shl(ba, imm);
+        vm_stack_push(&vm, result);
+        DISPATCH;
+    }
+
+    // null 不能参与位移运算
+    if (unlikely(val_is_null(a))) {
+        throw_runtime_error("null 不能参与位移运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 位移
+    if (unlikely(val_is_bigint(a) || imm >= 32)) {
+        ObjBigInt* ba = promote_to_bigint(a);
+        Value result = bigint_shl(ba, imm);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}
+
+OPCODE(OP_SHR_IMM) {
+    uint8_t imm = READ_BYTE();
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int >> imm（最常见）
+    if (likely(val_is_int(a))) {
+        vm_stack_push(&vm, val_int(val_as_int(a) >> imm));
+        DISPATCH;
+    }
+
+    // null 不能参与位移运算
+    if (unlikely(val_is_null(a))) {
+        throw_runtime_error("null 不能参与位移运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 位移
+    if (unlikely(val_is_bigint(a))) {
+        ObjBigInt* ba = val_as_bigint(a);
+        Value result = bigint_shr(ba, imm);
+        vm_stack_push(&vm, result);
+        DISPATCH;
+    }
+
+    throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+    frame = &vm.frames[vm.frame_cnt - 1];
+    DISPATCH;
+}
+
 OPCODE(OP_BITNOT) {
     frame = &vm.frames[vm.frame_cnt - 1];
     Value a = vm_stack_pop(&vm);

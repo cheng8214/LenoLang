@@ -37,6 +37,7 @@ static const char* opCodeNames[] = {
     // 立即数操作码
     "OP_ADD_INT_IMM", "OP_SUB_INT_IMM", "OP_MUL_INT_IMM",
     "OP_LT_INT_IMM", "OP_GT_INT_IMM", "OP_LE_INT_IMM", "OP_GE_INT_IMM", "OP_EQ_INT_IMM",
+    "OP_SHL_IMM", "OP_SHR_IMM",
     // struct 相关指令
     "OP_STRUCT_DEF", "OP_STRUCT_INIT", "OP_GET_FIELD", "OP_SET_FIELD", "OP_GET_METHOD",
     // enum 相关指令
@@ -51,7 +52,9 @@ static const char* opCodeNames[] = {
     "OP_INIT_LENOMODULE",
     // clib 调用指令
     "OP_CLIB_CALL",
-    "OP_CFUNC_CALLBACK"
+    "OP_CFUNC_CALLBACK",
+    // 原生函数调用合并指令
+    "OP_CALL_NATIVE", "OP_TAIL_CALL_NATIVE"
 };
 
 // 反汇编单条指令
@@ -100,6 +103,15 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int arg_count = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
             printf(" %d", arg_count);
             return offset + 3;
+        }
+        case OP_CALL_NATIVE:
+        case OP_TAIL_CALL_NATIVE: {
+            int name_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" %d (%s) args=%d", name_idx,
+                   name_idx < chunk->const_cnt ? val_to_string(chunk->constants[name_idx]) : "?",
+                   arg_count);
+            return offset + 5;
         }
         case OP_ARRAY_GET:
         case OP_ARRAY_SET:
@@ -387,6 +399,13 @@ int disassembleInstruction(Chunk* chunk, int offset) {
         case OP_EQ_INT_IMM: {
             int8_t imm = (int8_t)chunk->code[offset + 1];
             printf(" %d", imm);
+            return offset + 2;
+        }
+        // 位移立即数操作码（单字节无符号立即数）
+        case OP_SHL_IMM:
+        case OP_SHR_IMM: {
+            uint8_t imm = chunk->code[offset + 1];
+            printf(" %u", (unsigned int)imm);
             return offset + 2;
         }
         case OP_AWAIT: {

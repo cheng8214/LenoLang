@@ -137,3 +137,19 @@ void emit_tail_call(CodeGen* gen, int arg_count, int line) {
     emit_byte(gen, (arg_count >> 8) & 0xff, line);
     emit_byte(gen, arg_count & 0xff, line);
 }
+
+void emit_call_native(CodeGen* gen, int name_const, int arg_count, int line) {
+    emit_byte(gen, OP_CALL_NATIVE, line);
+    emit_byte(gen, (name_const >> 8) & 0xff, line);
+    emit_byte(gen, name_const & 0xff, line);
+    emit_byte(gen, (arg_count >> 8) & 0xff, line);
+    emit_byte(gen, arg_count & 0xff, line);
+}
+
+void emit_tail_call_native(CodeGen* gen, int name_const, int arg_count, int line) {
+    emit_byte(gen, OP_TAIL_CALL_NATIVE, line);
+    emit_byte(gen, (name_const >> 8) & 0xff, line);
+    emit_byte(gen, name_const & 0xff, line);
+    emit_byte(gen, (arg_count >> 8) & 0xff, line);
+    emit_byte(gen, arg_count & 0xff, line);
+}

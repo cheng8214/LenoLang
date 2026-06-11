@@ -214,23 +214,23 @@ main() {
     print("")
 
     // 测试 3：40 次迭代（含性能统计）
-    var t_start = times.ms()
+    var t_start = times.ns()
     var h3 = pbkdf2_hmac_sha256("password", "salt", 40, 32)
-    var t_end = times.ms()
+    var t_end = times.ns()
     print("PBKDF2(password, salt, 40, 32) = " + h3)
     print("期望:                          d90c2ecd1c924876e2483650a349729383d63407de535e0d87d9f3fdab0faf1d")
     print("结果:                          " + if h3 == "d90c2ecd1c924876e2483650a349729383d63407de535e0d87d9f3fdab0faf1d" then "PASS" else "FAIL")
-    print("耗时: " + (t_end - t_start) + " ms")
+    print("耗时: " + ((t_end - t_start) / 1000000.0) + " ms")
     print("")
 
     // 测试 4：长密码和长盐，短输出
-    t_start = times.ms()
+    t_start = times.ns()
     var h4 = pbkdf2_hmac_sha256("passwordPASSWORDpassword", "saltSALTsaltSALTsaltSALTsaltSALTsalt", 4, 25)
-    t_end = times.ms()
+    t_end = times.ns()
      
     print("PBKDF2(long, long, 4, 25) = " + h4)
     print("期望:                         420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c")
     print("结果:                         " + if h4 == "420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c" then "PASS" else "FAIL")
-	print("耗时: " + (t_end - t_start) + " ms")
+	print("耗时: " + ((t_end - t_start) / 1000000.0) + " ms")
     print("=== PBKDF2-HMAC-SHA256 测试完成 ===")
 }

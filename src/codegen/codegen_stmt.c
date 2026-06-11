@@ -1008,6 +1008,19 @@ static void gen_tail_call_expr(CodeGen* gen, Ast* ast) {
         gen_expr(gen, ast->u.call.args.items[i]);
     }
     
+    // 检测原生函数尾调用，合并为 OP_TAIL_CALL_NATIVE
+    if (ast->u.call.callee->kind == AST_VAR) {
+        Symbol* callee_sym = scope_resolve(gen->sem->current, ast->u.call.callee->u.var.name);
+        if (callee_sym && callee_sym->kind == SYM_NATIVE) {
+            ObjString* nameStr = str_copy(callee_sym->name, (int)strlen(callee_sym->name));
+            int name_const = make_constant(gen, val_obj((Object*)nameStr));
+            int total_args = ast->u.call.args.count;
+            emit_tail_call_native(gen, name_const, total_args, ast->line);
+            ast->u.call.is_tail_call = 1;
+            return;
+        }
+    }
+    
     // 生成被调用的函数
     gen_expr(gen, ast->u.call.callee);
     

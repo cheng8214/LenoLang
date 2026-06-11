@@ -60,6 +60,8 @@ void emit_get_global_func(CodeGen* gen, int index, int line);
 void emit_define_global_func(CodeGen* gen, int index, int line);
 void emit_call(CodeGen* gen, int arg_count, int line);
 void emit_tail_call(CodeGen* gen, int arg_count, int line);
+void emit_call_native(CodeGen* gen, int name_const, int arg_count, int line);
+void emit_tail_call_native(CodeGen* gen, int name_const, int arg_count, int line);
 
 // 工具函数声明
 int bigint_str_fits_in_int32(const char* str);

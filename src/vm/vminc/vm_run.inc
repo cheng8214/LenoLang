@@ -156,6 +156,8 @@
         [OP_LE_INT_IMM] = &&LABEL(OP_LE_INT_IMM),
         [OP_GE_INT_IMM] = &&LABEL(OP_GE_INT_IMM),
         [OP_EQ_INT_IMM] = &&LABEL(OP_EQ_INT_IMM),
+        [OP_SHL_IMM] = &&LABEL(OP_SHL_IMM),
+        [OP_SHR_IMM] = &&LABEL(OP_SHR_IMM),
         // struct 相关操作码
         [OP_STRUCT_DEF] = &&LABEL(OP_STRUCT_DEF),
         [OP_STRUCT_INIT] = &&LABEL(OP_STRUCT_INIT),
@@ -174,6 +176,8 @@
         [OP_INIT_LENOMODULE] = &&LABEL(OP_INIT_LENOMODULE),
         [OP_CLIB_CALL] = &&LABEL(OP_CLIB_CALL),
         [OP_CFUNC_CALLBACK] = &&LABEL(OP_CFUNC_CALLBACK),
+        [OP_CALL_NATIVE] = &&LABEL(OP_CALL_NATIVE),
+        [OP_TAIL_CALL_NATIVE] = &&LABEL(OP_TAIL_CALL_NATIVE),
     };
 
     // 宏定义：取指令并分发
