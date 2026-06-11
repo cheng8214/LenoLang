@@ -159,6 +159,9 @@ OPCODE(OP_GET_NATIVE) {
         runtime_error("native 函数名必须是字符串", GET_CURRENT_LINE());
         return -1;
     }
+
+#ifdef VM_USE_THREAD_LOCAL
+    // 子线程：不使用内联缓存
     const char* name = ((ObjString*)val_as_obj(name_val))->chars;
     ObjNative* native = native_find_function(name);
     if (!native) {
@@ -166,5 +169,35 @@ OPCODE(OP_GET_NATIVE) {
         return -1;
     }
     vm_stack_push(&vm, val_obj((Object*)native));
+#else
+    // 主线程：使用内联缓存
+    uint8_t* ip_before = frame->ip - 3;  // OP_GET_NATIVE = 3 字节 (opcode + 2)
+    int cache_idx = ((uintptr_t)ip_before >> 2) & (IC_NATIVE_CACHE_SIZE - 1);
+    InlineNativeCacheEntry* cache = &vm.ic_native_cache[cache_idx];
+    uint32_t name_hash = ((ObjString*)val_as_obj(name_val))->hash;
+
+    // 检查缓存是否命中
+    if (cache->valid && cache->name_hash == name_hash) {
+        vm.ic_hits++;
+        vm_stack_push(&vm, val_obj((Object*)cache->fn));
+        DISPATCH;
+    }
+
+    // 缓存未命中，查找 native 函数
+    vm.ic_misses++;
+    const char* name = ((ObjString*)val_as_obj(name_val))->chars;
+    ObjNative* native = native_find_function(name);
+    if (!native) {
+        runtime_error("未找到 native 函数", GET_CURRENT_LINE());
+        return -1;
+    }
+
+    // 更新缓存
+    cache->valid = 1;
+    cache->name_hash = name_hash;
+    cache->fn = native;
+
+    vm_stack_push(&vm, val_obj((Object*)native));
+#endif
     DISPATCH;
 }

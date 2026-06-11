@@ -22,7 +22,34 @@ OPCODE(OP_MODULE_CALL) {
     const char* method_name = ((ObjString*)val_as_obj(method_val))->chars;
 
     // 查找模块方法
+#ifdef VM_USE_THREAD_LOCAL
+    // 子线程：不使用内联缓存
     ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
+#else
+    // 主线程：使用内联缓存
+    uint8_t* ip_before = frame->ip - 7;  // OP_MODULE_CALL = 7 字节 (opcode + 2+2+2)
+    int cache_idx = ((uintptr_t)ip_before >> 2) & (IC_MODULE_CACHE_SIZE - 1);
+    InlineModuleCallCacheEntry* cache = &vm.ic_module_cache[cache_idx];
+    uint32_t combined_hash = ((ObjString*)val_as_obj(module_val))->hash
+                           ^ (((ObjString*)val_as_obj(method_val))->hash << 1);
+
+    ModuleMethodMeta* meta;
+    if (cache->valid && cache->combined_hash == combined_hash) {
+        // 缓存命中
+        vm.ic_hits++;
+        meta = (ModuleMethodMeta*)cache->meta;
+    } else {
+        // 缓存未命中
+        vm.ic_misses++;
+        meta = native_find_module_method(module_name, method_name);
+        if (meta) {
+            cache->valid = 1;
+            cache->combined_hash = combined_hash;
+            cache->meta = (void*)meta;
+        }
+    }
+#endif
+
     if (!meta) {
         char msg[BUFFER_MEDIUM];
         snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s", module_name, method_name);

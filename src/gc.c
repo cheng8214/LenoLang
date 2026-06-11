@@ -43,6 +43,9 @@
 #include <string.h>
 #include <stdint.h>
 
+// 数组对象回收（object/object_array.c）
+extern int arr_try_recycle(ObjArray* arr);
+
 
 
 // GC 全局实例（线程局部存储）
@@ -1188,6 +1191,10 @@ static void sweep_young(void) {
             Object* unreached = *obj;
             *obj = unreached->next;
             gc.young_allocated -= unreached->size;
+            // 尝试回收小数组到 free_list（保留元素缓冲区避免重复 malloc）
+            if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
+                continue;
+            }
             free_object_resources(unreached);
             free(unreached);
         } else {
@@ -1227,6 +1234,10 @@ static void sweep_old(void) {
             Object* unreached = *obj;
             *obj = unreached->next;
             gc.old_allocated -= unreached->size;
+            // 尝试回收小数组到 free_list
+            if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
+                continue;
+            }
             free_object_resources(unreached);
             free(unreached);
         } else {

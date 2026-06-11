@@ -42,6 +42,14 @@ static void* thread_entry_point_fixed(void* arg) {
         local_vm.ic_cache[i].receiver_type = 0;
         local_vm.ic_cache[i].method = NULL;
     }
+    for (int i = 0; i < IC_NATIVE_CACHE_SIZE; i++) {
+        local_vm.ic_native_cache[i].valid = 0;
+        local_vm.ic_native_cache[i].fn = NULL;
+    }
+    for (int i = 0; i < IC_MODULE_CACHE_SIZE; i++) {
+        local_vm.ic_module_cache[i].valid = 0;
+        local_vm.ic_module_cache[i].meta = NULL;
+    }
 
     local_vm.global_scope = NULL;
     local_vm.open_upvalues = NULL;

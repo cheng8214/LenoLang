@@ -224,10 +224,13 @@ main() {
     print("")
 
     // 测试 4：长密码和长盐，短输出
+    t_start = times.ms()
     var h4 = pbkdf2_hmac_sha256("passwordPASSWORDpassword", "saltSALTsaltSALTsaltSALTsaltSALTsalt", 4, 25)
+    t_end = times.ms()
+     
     print("PBKDF2(long, long, 4, 25) = " + h4)
     print("期望:                         420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c")
     print("结果:                         " + if h4 == "420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c" then "PASS" else "FAIL")
-
+	print("耗时: " + (t_end - t_start) + " ms")
     print("=== PBKDF2-HMAC-SHA256 测试完成 ===")
 }

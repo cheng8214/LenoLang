@@ -347,6 +347,32 @@ typedef struct {
 #define IC_CACHE_SIZE 4096  // 缓存表大小（必须是 2 的幂），增大以减少冲突
 
 // ============================================================================
+// 内联缓存：全局 Native 函数 (OP_GET_NATIVE)
+// 缓存 name_hash → ObjNative* 的映射，避免每次调用都线性扫描 native 函数表
+// ============================================================================
+typedef struct {
+    int valid;
+    uint32_t name_hash;     // native 函数名的 FNV-1a 哈希
+    ObjNative* fn;          // 缓存的 native 函数对象
+} InlineNativeCacheEntry;
+
+#define IC_NATIVE_CACHE_SIZE 2048  // 必须是 2 的幂
+
+// ============================================================================
+// 内联缓存：模块方法调用 (OP_MODULE_CALL)
+// 缓存 hash(module, method) → ModuleMethodMeta* 的映射
+// 避免每次调用都做哈希表查找
+// 注意：ModuleMethodMeta 在 native.h 中定义，此处用 void* 避免循环依赖
+// ============================================================================
+typedef struct {
+    int valid;
+    uint32_t combined_hash;         // hash(module_name, method_name) 组合哈希
+    void* meta;                     // 实际类型为 ModuleMethodMeta*（在 native.h 中定义）
+} InlineModuleCallCacheEntry;
+
+#define IC_MODULE_CACHE_SIZE 2048   // 必须是 2 的幂
+
+// ============================================================================
 // 虚拟机
 // ============================================================================
 
@@ -378,7 +404,9 @@ typedef struct VM {
     int exception_line;       // 异常发生时的行号
     int current_line;         // 当前执行行号（供原生函数使用）
     // 内联缓存
-    InlineCacheEntry ic_cache[IC_CACHE_SIZE];  // 属性访问缓存表
+    InlineCacheEntry ic_cache[IC_CACHE_SIZE];           // 属性访问缓存表 (OP_GET_PROPERTY)
+    InlineNativeCacheEntry ic_native_cache[IC_NATIVE_CACHE_SIZE];   // 全局 Native 函数缓存 (OP_GET_NATIVE)
+    InlineModuleCallCacheEntry ic_module_cache[IC_MODULE_CACHE_SIZE]; // 模块方法缓存 (OP_MODULE_CALL)
     int ic_hits;               // 缓存命中次数（统计用）
     int ic_misses;             // 缓存未命中次数（统计用）
     // 协程系统

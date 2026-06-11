@@ -35,6 +35,16 @@ void vm_init_with_scope(Scope* global_scope) {
         vm.ic_cache[i].name_hash = 0;
         vm.ic_cache[i].method = NULL;
     }
+    for (int i = 0; i < IC_NATIVE_CACHE_SIZE; i++) {
+        vm.ic_native_cache[i].valid = 0;
+        vm.ic_native_cache[i].name_hash = 0;
+        vm.ic_native_cache[i].fn = NULL;
+    }
+    for (int i = 0; i < IC_MODULE_CACHE_SIZE; i++) {
+        vm.ic_module_cache[i].valid = 0;
+        vm.ic_module_cache[i].combined_hash = 0;
+        vm.ic_module_cache[i].meta = NULL;
+    }
     vm.ic_hits = 0;
     vm.ic_misses = 0;
 

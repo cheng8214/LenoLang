@@ -4,8 +4,61 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ============================================================================
+// 数组对象 Free List（小数组复用，减少 malloc 调用）
+// ============================================================================
+#define ARRAY_FREE_LIST_MAX_CAP  64    // 最大缓存容量
+#define ARRAY_FREE_LIST_MAX_COUNT 32   // 最多缓存 32 个数组
+
+typedef struct ArrayFreeSlot {
+    ObjArray* array;
+    int capacity;
+    struct ArrayFreeSlot* next;
+} ArrayFreeSlot;
+
+static THREAD_LOCAL ArrayFreeSlot* array_free_list = NULL;
+static THREAD_LOCAL int array_free_count = 0;
+
 // 数组操作
 ObjArray* arr_new(int capacity) {
+    // 小容量数组优先从 free_list 获取
+    if (capacity <= ARRAY_FREE_LIST_MAX_CAP && array_free_list) {
+        ArrayFreeSlot** prev = &array_free_list;
+        ArrayFreeSlot* slot = array_free_list;
+        while (slot) {
+            if (slot->capacity == capacity) {
+                *prev = slot->next;
+                ObjArray* arr = slot->array;
+                free(slot);
+                array_free_count--;
+                
+                // 清零元素并重新注册到 GC
+                for (int i = 0; i < capacity; i++) {
+                    arr->elements[i] = val_null();
+                }
+                arr->count = 0;
+                arr->capacity = capacity;
+                arr->type_info = NULL;
+                
+                // 重新链接到 GC 年轻代
+                arr->header.type = OBJ_ARRAY;
+                arr->header.marked = 1;
+                arr->header.flags = 0;
+                arr->header.generation = GEN_YOUNG;
+                arr->header.survived = 0;
+                arr->header.size = sizeof(ObjArray) + capacity * sizeof(Value);
+                arr->header.next = gc.young_heap;
+                gc.young_heap = (Object*)arr;
+                gc.young_allocated += arr->header.size;
+                
+                return arr;
+            }
+            prev = &slot->next;
+            slot = slot->next;
+        }
+    }
+    
+    // 正常分配
     ObjArray* arr = (ObjArray*)gc_alloc(sizeof(ObjArray), OBJ_ARRAY);
     if (!arr) return NULL;
     
@@ -28,6 +81,38 @@ ObjArray* arr_new(int capacity) {
     }
     
     return arr;
+}
+
+// GC sweep 时调用：尝试回收小数组到 free_list
+// 返回 1 表示已回收（调用者不应 free），返回 0 表示正常释放
+int arr_try_recycle(ObjArray* arr) {
+    if (!arr || arr->capacity > ARRAY_FREE_LIST_MAX_CAP) return 0;
+    if (array_free_count >= ARRAY_FREE_LIST_MAX_COUNT) return 0;
+    
+    // 先分配 slot，失败则回退到正常 free 路径
+    ArrayFreeSlot* slot = (ArrayFreeSlot*)malloc(sizeof(ArrayFreeSlot));
+    if (!slot) return 0;
+    
+    // 清理数组内容但保留 elements 缓冲区
+    for (int i = 0; i < arr->count; i++) {
+        arr->elements[i] = val_null();
+    }
+    arr->count = 0;
+    
+    // 释放 type_info
+    if (arr->type_info) {
+        type_free(arr->type_info);
+        arr->type_info = NULL;
+    }
+    
+    // 加入 free_list
+    slot->array = arr;
+    slot->capacity = arr->capacity;
+    slot->next = array_free_list;
+    array_free_list = slot;
+    array_free_count++;
+    
+    return 1;  // 已回收，元素缓冲区和对象结构体均保留
 }
 
 // 注意：arr_read, arr_write 已在 leno_value.h 中内联
