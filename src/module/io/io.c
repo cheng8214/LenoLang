@@ -46,7 +46,7 @@ static void print_value_internal(Value value) {
             printf(val_as_bool(value) ? "true" : "false");
             break;
         case VAL_INT:
-            printf("%d", (int)val_as_num(value));
+            printf("%lld", (long long)val_as_int(value));
             break;
         case VAL_FLOAT: {
             char fbuf[64];
@@ -183,7 +183,7 @@ static void print_value_quoted(Value value) {
             printf(val_as_bool(value) ? "true" : "false");
             break;
         case VAL_INT:
-            printf("%d", (int)val_as_num(value));
+            printf("%lld", (long long)val_as_int(value));
             break;
         case VAL_FLOAT: {
             char fbuf[64];

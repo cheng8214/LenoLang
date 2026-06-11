@@ -3,19 +3,20 @@ main()
     print("取模测试:")
     
     // 测试 1: 普通整数取模
-    var x = 123 % 100
+    int x = 123 % 100
     print("123 % 100 = " + x)
     
-    // 测试 2: BigInt 取模（但结果在 int32 范围内）
-    var big = 123456789012345
-    var result = big % 1000
+    // 测试 2: 大整数取模（结果在 int 范围内）
+    int big = 123456789012345
+    int result = big % 1000
     print("123456789012345 % 1000 = " + result)
     print("预期: 345")
+    print("type(big) = " + type(big))
     
-    // 测试 3: 之前的测试
+    // 测试 3: 更大的整数取模
     print("")
-    var big2 = 12345678901234567890
-    var mod_result = big2 % 1000000000
+    int big2 = 12345678901234567890
+    int mod_result = big2 % 1000000000
     print("12345678901234567890 % 1000000000 = " + mod_result)
     print("预期: 234567890")
 }

@@ -6,7 +6,8 @@ func fib_iterative(int n) {
     } 
     var a = 0 
     var b = 1 
-    for 2:n to var i { 
+    var limit = n
+    for 2:limit to var i { 
         var temp = a + b 
         a = b 
         b = temp 
@@ -23,6 +24,7 @@ main() {
     var result = fib_iterative(1000)
     var t2 = time.ms()
     print(result)
+    print("type(result) = " + type(result))
     print("")
     print("耗时: " + (t2 - t1) + "ms")
     print("")

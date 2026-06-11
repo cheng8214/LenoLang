@@ -193,7 +193,6 @@ func pbkdf2_hmac_sha256(string password, string salt, int iterations, int dk_len
 // ==================== 测试 ====================
 
 main() {
-  // _gc(false)
     print("=== PBKDF2-HMAC-SHA256 标准测试向量 ===")
     print("")
 

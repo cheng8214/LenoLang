@@ -189,12 +189,11 @@ int bigint_is_int(ObjBigInt* bigint) {
     int64_t val = bigint->limbs[0];
     if (bigint->is_negative) val = -val;
 
-    return val >= INT32_MIN && val <= INT32_MAX;
+    return val >= INT48_MIN && val <= INT48_MAX;
 }
 
 int bigint_to_int(ObjBigInt* bigint) {
-    int val = (int)bigint->limbs[0];
-    return bigint->is_negative ? -val : val;
+    return (int)bigint_to_int64(bigint);
 }
 
 int64_t bigint_to_int64(ObjBigInt* bigint) {
@@ -245,8 +244,8 @@ Value val_bigint_from_string(const char* str) {
 }
 
 Value val_int_safe(int64_t value) {
-    if (value >= INT32_MIN && value <= INT32_MAX) {
-        return val_int((int)value);
+    if (value >= INT48_MIN && value <= INT48_MAX) {
+        return val_int(value);
     }
     return val_bigint_from_int64(value);
 }
@@ -756,16 +755,22 @@ char* bigint_to_string(ObjBigInt* bigint) {
 }
 
 Value val_bigint_from_limbs(const uint32_t* limbs, int limb_count, int is_negative) {
-    // 如果值在 int32 范围内，直接返回 int（避免不必要的大数分配和类型不兼容问题）
+    // 如果值在 int48 范围内，直接返回 int（避免不必要的大数分配和类型不兼容问题）
     if (limb_count == 0) {
         return val_int(0);
     }
-    if (limb_count == 1) {
-        if (!is_negative && limbs[0] <= (uint32_t)INT32_MAX) {
-            return val_int((int)limbs[0]);
+    if (limb_count <= 2) {
+        // 对于 1-2 个 limb，检查是否在 int48 范围内
+        uint64_t abs_val = limbs[0];
+        if (limb_count == 2) {
+            abs_val |= ((uint64_t)limbs[1] << 32);
         }
-        if (is_negative && limbs[0] <= (uint32_t)(-(int64_t)INT32_MIN)) {
-            return val_int(-(int)limbs[0]);
+        if (!is_negative && abs_val <= (uint64_t)INT48_MAX) {
+            return val_int((int64_t)abs_val);
+        }
+        // INT48_MIN 绝对值是 2^47 = 0x800000000000
+        if (is_negative && abs_val <= 0x800000000000ULL) {
+            return val_int(-(int64_t)abs_val);
         }
     }
     ObjBigInt* bigint = bigint_new(limbs, limb_count, is_negative);

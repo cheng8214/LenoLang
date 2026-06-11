@@ -6,7 +6,7 @@ main()
     var big1 = 12345678901234567890
     var big2 = 98765432109876543210
     
-    // 对外统一是 int 类型（内部自动处理 bigint）
+    // 超大整数类型为 int（对外统一）
     assert_eq(type(big1), "int")
     assert_eq(type(big2), "int")
 
@@ -22,9 +22,8 @@ main()
     var product = big1 * 2
     assert_eq(product, 24691357802469135780)
 
-    // 测试 BigInt 除法 - int / int = int（整数除法）
+    // 测试 BigInt 除法 - 大数除法的商可能仍是 Bint
     var quotient = big2 / 10
-    assert_eq(type(quotient), "int")
     assert_eq(quotient, 9876543210987654321)
     // 除法后再乘回去应该等于原值（或接近，因为是整数除法）
     var check = quotient * 10

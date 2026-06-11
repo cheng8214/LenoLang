@@ -7,18 +7,19 @@ main()
     
     // 测试1: 小数字取模（应该正确）
     print("--- 测试1: 小数字取模 ---")
-    var a1 = 1234567890123456789
-    var b1 = 100
-    var r1 = a1 % b1
+    int a1 = 1234567890123456789
+    int b1 = 100
+    int r1 = a1 % b1
     print($"{a1} % {b1} = {r1}, 期望: 89")
+    print("type(a1) = " + type(a1))
     
     // 测试2: 超大数取模
     print("")
     print("--- 测试2: 超大数取模 ---")
     // 超过 int64 范围的大数
-    var big_a = 1234567890123456789012345678901234567890
-    var big_b = 100
-    var r2 = big_a % big_b
+    int big_a = 1234567890123456789012345678901234567890
+    int big_b = 100
+    int r2 = big_a % big_b
     print($"超大数 % 100 = {r2}")
     print("注意：超大数取模可能返回近似值")
     
@@ -26,11 +27,11 @@ main()
     print("")
     print("--- 测试3: 验证超大数取模 ---")
     // 使用数学性质验证：(a * b + c) % b == c
-    var base = 123456789012345678901234567890
-    var divisor = 7
-    var remainder = 3
-    var dividend = base * divisor + remainder
-    var result = dividend % divisor
+    int base = 123456789012345678901234567890
+    int divisor = 7
+    int remainder = 3
+    int dividend = base * divisor + remainder
+    int result = dividend % divisor
     print($"({base} * {divisor} + {remainder}) % {divisor} = {result}")
     print($"期望: {remainder}")
     

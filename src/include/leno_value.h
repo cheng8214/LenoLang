@@ -101,8 +101,10 @@ typedef struct ObjFFIPointer {
 //   000: NULL   - 载荷 = 0
 //   001: FALSE  - 载荷 = 0
 //   010: TRUE   - 载荷 = 0
-//   011: INT    - 载荷 = 有符号 32 位整数（bits 31-0）
+//   011: INT    - 载荷 = 有符号 48 位整数（bits 47-0），溢出回绕
 //   100: OBJ    - 载荷 = 48 位对象指针
+//
+// int 范围：[-2^47, 2^47-1] = [-140737488355328, 140737488355327]
 // ============================================================================
 
 typedef enum {
@@ -189,8 +191,8 @@ static inline ValueType val_get_type(Value v) {
     return VAL_NULL;
 }
 
-static inline Value val_int(int n) {
-    return QNAN | SIGN_BIT | TAG_INT | (uint32_t)n;
+static inline Value val_int(int64_t n) {
+    return QNAN | SIGN_BIT | TAG_INT | ((uint64_t)n & PAYLOAD_MASK);
 }
 
 static inline Value val_float(double n) {
@@ -217,8 +219,18 @@ static inline int val_as_bool(Value v) {
     return v == TRUE_VAL;
 }
 
-static inline int val_as_int(Value v) {
-    return (int32_t)(v & 0xFFFFFFFF);
+// 48 位有符号整数，范围 [-2^47, 2^47-1]
+#define INT48_SIGN_BIT  ((uint64_t)0x0000800000000000ULL)  // bit 47
+#define INT48_MAX   ((int64_t)0x00007FFFFFFFFFFFULL)  // 2^47 - 1
+#define INT48_MIN   ((int64_t)0xFFFF800000000000ULL)  // -2^47
+
+static inline int64_t val_as_int(Value v) {
+    int64_t val = (int64_t)(v & PAYLOAD_MASK);
+    // sign-extend from bit 47
+    if (val & INT48_SIGN_BIT) {
+        val |= 0xFFFF000000000000ULL;
+    }
+    return val;
 }
 
 static inline double val_as_double(Value v) {
@@ -230,8 +242,8 @@ static inline Object* val_as_obj(Value v) {
 }
 
 static inline Value val_num(double n) {
-    if (n == (int)n && n >= INT32_MIN && n <= INT32_MAX) {
-        return val_int((int)n);
+    if (n == (int64_t)n && n >= (double)INT48_MIN && n <= (double)INT48_MAX) {
+        return val_int((int64_t)n);
     } else {
         return val_float(n);
     }
@@ -846,14 +858,14 @@ Value val_bigint_from_limbs(const uint32_t* limbs, int limb_count, int is_negati
 // 检查 int 是否溢出，溢出时返回 bigint Value
 Value val_int_safe(int64_t value);
 
-// 如果 bigint 的值在 int32 范围内，将其转为 int Value（减少不必要的 bigint 传播）
+// 如果 bigint 的值在 int48 范围内，将其压缩为 int Value
 static inline Value bigint_compact_to_int(Value v) {
     if (val_is_bigint(v)) {
         ObjBigInt* bi = val_as_bigint(v);
         if (bigint_fits_in_int64(bi)) {
             int64_t i64 = bigint_to_int64(bi);
-            if (i64 >= INT32_MIN && i64 <= INT32_MAX) {
-                return val_int((int)i64);
+            if (i64 >= INT48_MIN && i64 <= INT48_MAX) {
+                return val_int(i64);
             }
         }
     }
@@ -943,13 +955,13 @@ static inline int val_is_num_ex(Value v) {
     return val_is_int(v) || val_is_float(v) || val_is_bigint(v);
 }
 
-static inline int val_as_int_ex(Value v) {
+static inline int64_t val_as_int_ex(Value v) {
     if (val_is_int(v)) {
         return val_as_int(v);
     }
     if (val_is_bigint(v)) {
         ObjBigInt* bigint = val_as_bigint(v);
-        return (int)(bigint_to_int64(bigint) & 0xFFFFFFFF);
+        return bigint_to_int64(bigint);
     }
     return 0;
 }

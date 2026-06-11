@@ -79,6 +79,7 @@ static ParseRule rules[] = {
     [TOK_BOOL_TYPE] = {NULL,     NULL,   PREC_NONE},
     [TOK_ARRAY_TYPE] = {NULL,    NULL,   PREC_NONE},
     [TOK_DICT_TYPE] = {NULL,     NULL,   PREC_NONE},
+    // [TOK_BINT]      = {NULL,     NULL,   PREC_NONE},  // 已移除
     // 错误 token - 用于错误恢复
     [TOK_ERROR]     = {NULL,     NULL,   PREC_NONE},
 };

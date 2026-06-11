@@ -37,6 +37,11 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_ANY);
     }
+    // TOK_BINT 已移除：对外统一用 int，Bint 不再作为独立类型关键字
+    // if (p->lex.current.type == TOK_BINT) {
+    //     lexer_next(&p->lex);
+    //     return type_new(TYPE_BIGINT);
+    // }
     if (p->lex.current.type == TOK_FILE_TYPE) {
         lexer_next(&p->lex);
         return type_new(TYPE_FILE);

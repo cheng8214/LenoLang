@@ -3,18 +3,19 @@ main()
     print("BigInt 加法测试:")
     
     // 测试 1: 普通整数加法
-    var x = 1 + 2
+    int x = 1 + 2
     print("1 + 2 = " + x)
     
     // 测试 2: 溢出加法
-    var y = 2000000000 + 2000000000  // 会溢出 int32
+    int y = 2000000000 + 2000000000  // 会溢出 int48
     print("2000000000 + 2000000000 = " + y)
     
-    // 测试 3: 手动 BigInt
-    var big_a = 9999999999999999999
-    var big_b = 1
-    var big_result = big_a + big_b
+    // 测试 3: 大整数
+    int big_a = 9999999999999999999
+    int big_b = 1
+    int big_result = big_a + big_b
     print("9999999999999999999 + 1 = " + big_result)
+    print("type(big_a) = " + type(big_a))
     
     // 测试 4: 模拟斐波那契
     print("")
@@ -34,5 +35,6 @@ main()
     
     print("")
     print("最终 b = " + b)
+    print("type(b) = " + type(b))
     print("预期 fib(100) = 354224848179261915075")
 }

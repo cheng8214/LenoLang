@@ -3,8 +3,8 @@ main() {
     print("=== 测试重构后的错误处理 ===\n")
     
     // 测试 1: 正常计算
-    var a = 10
-    var b = 20
+    int a = 10
+    int b = 20
     print("10 + 20 = " + (a + b))
     print("10 - 20 = " + (a - b))
     print("10 * 20 = " + (a * b))
@@ -23,8 +23,8 @@ main() {
     
     // 测试 3: 大数计算
     print("\n=== 测试大数计算 ===")
-    var big1 = 12200160415121876738
-    var big2 = 19740274219868223167
+    int big1 = 12200160415121876738
+    int big2 = 19740274219868223167
     print("big1 + big2 = " + (big1 + big2))
     print("big2 - big1 = " + (big2 - big1))
     print("big1 * 2 = " + (big1 * 2))
@@ -33,12 +33,13 @@ main() {
     print("\n=== 测试 fib(100) ===")
     var f1 = 0
     var f2 = 1
-    for 2:100 to i {
+    for 2:100 to var i {
         var temp = f1 + f2
         f1 = f2
         f2 = temp
     }
     print("fib(100) = " + f2)
+    print("type(f2) = " + type(f2))
     if f2 == 354224848179261915075 {
         print("结果: PASS")
     } else {

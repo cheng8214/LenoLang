@@ -316,7 +316,8 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "bool") == 0) return TYPE_BOOL;
     if (strcmp(type_str, "Array") == 0) return TYPE_ARRAY;
     if (strcmp(type_str, "Dict") == 0) return TYPE_DICT;
-    if (strcmp(type_str, "bigint") == 0) return TYPE_BIGINT;
+    // "Bint" 已移除：对外统一用 int
+    // if (strcmp(type_str, "Bint") == 0) return TYPE_BIGINT;
     if (strcmp(type_str, "null") == 0) return TYPE_NULL;
     if (strcmp(type_str, "File") == 0) return TYPE_FILE;
     if (strcmp(type_str, "Win") == 0) return TYPE_WIN;

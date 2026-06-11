@@ -470,7 +470,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_BOOL:     return "bool";
         case TYPE_ARRAY:    return "Array";
         case TYPE_DICT:     return "Dict";
-        case TYPE_BIGINT:   return "bigint";
+        case TYPE_BIGINT:   return "int";  // 对外统一为 int
         case TYPE_NULL:     return "null";
         case TYPE_FILE:     return "File";
         case TYPE_WIN:      return "Win";
@@ -643,13 +643,13 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     }
 
     // int 和 bigint 之间允许双向隐式转换
-    // 运行时 int 会自动提升为 bigint 存储
+    // int48 与 Bint 互相兼容（int 内联值 → Bint 堆值）
     if ((target->kind == TYPE_BIGINT && source->kind == TYPE_INT) ||
         (target->kind == TYPE_INT && source->kind == TYPE_BIGINT)) {
         return 1;
     }
 
-    // bigint 可以隐式转换为 float
+    // Bint 可以隐式转换为 float
     if (target->kind == TYPE_FLOAT && source->kind == TYPE_BIGINT) {
         return 1;
     }
@@ -857,6 +857,8 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_BOOL_TYPE:     return TYPE_BOOL;
         case TOK_ARRAY_TYPE:    return TYPE_ARRAY;
         case TOK_DICT_TYPE:     return TYPE_DICT;
+        // case TOK_BINT:          return TYPE_BIGINT;  // 已移除：对外统一用 int
+        case TOK_ANY_TYPE:      return TYPE_ANY;
         case TOK_FILE_TYPE:     return TYPE_FILE;
         case TOK_WIN_TYPE:      return TYPE_WIN;
         case TOK_DRAW_TYPE:     return TYPE_DRAW;

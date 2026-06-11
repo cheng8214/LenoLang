@@ -8,7 +8,7 @@ static inline const char* obj_type_to_name(ObjType type) {
         case OBJ_ARRAY: return "array";
         case OBJ_DICT: return "dict";
         case OBJ_STRING: return "string";
-        case OBJ_BIGINT: return "bigint";
+        case OBJ_BIGINT: return "int";
         case OBJ_FUNCTION: return "func";
         case OBJ_NATIVE: return "native";
         case OBJ_CLOSURE: return "closure";

@@ -1,12 +1,13 @@
-// 新建文件: Untitled.leno
+// 超大整数阶乘测试
 main()
 {
-	var b=221212123
-	var i=1
-	while i<10000
+	int b = 221212123
+	int i = 1
+	while i < 10000
 	{
-		b=b*i
+		b = b * i
 		i++
 	}
 	print(b)
+	print("type(b) = " + type(b))
 }

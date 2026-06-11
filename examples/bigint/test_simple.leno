@@ -1,27 +1,28 @@
 main() 
 { 
     // 测试简单的取模
-    var a = 12345678901234567890
-    var b = 1000000000
+    int a = 12345678901234567890
+    int b = 1000000000
     
     print("a = " + a)
     print("b = " + b)
+    print("type(a) = " + type(a))
     
     // 检查 a 的 limb 数量
     // 12345678901234567890 = 0xAB54A98CEB1F0AD2
     // limb0 = 0xEB1F0AD2 = 3944680146
     // limb1 = 0xAB54A98C = 2874452364
     
-    var result = a % b
+    int result = a % b
     print("a % b = " + result)
     print("预期 = 234567890")
     
     // 手动计算验证
     // 12345678901234567890 / 1000000000 = 12345678901.234567890
     // 12345678901234567890 - 12345678901 * 1000000000 = ?
-    var quotient = 12345678901
-    var product = quotient * b
+    int quotient = 12345678901
+    int product = quotient * b
     print("quotient * b = " + product)
-    var expected = a - product
+    int expected = a - product
     print("a - quotient * b = " + expected)
 }

@@ -77,6 +77,7 @@ Ast* parse_statement(Parser* p) {
         case TOK_BOOL_TYPE:
         case TOK_ARRAY_TYPE:
         case TOK_DICT_TYPE:
+        // case TOK_BINT:  // 已移除：对外统一用 int
         case TOK_FILE_TYPE:
         case TOK_WIN_TYPE:
         case TOK_DRAW_TYPE:

@@ -1,23 +1,23 @@
 main()
 {
-    print("=== 测试 BigInt 左移优化 ===")
+    print("=== 测试左移优化 ===")
     print("")
     
     // 1. 测试小位移
     print("1. 测试小位移:")
-    var a = 1 << 10
+    int a = 1 << 10
     print($"   1 << 10 = {a}")
     
-    var b = 5 << 3
+    int b = 5 << 3
     print($"   5 << 3 = {b}")
     
     // 2. 测试位移的数学性质
     print("")
     print("2. 测试数学性质 (x << n == x * 2^n):")
-    var x = 123
-    var shift = 8
-    var left_shift = x << shift
-    var multiply = x * (1 << shift)
+    int x = 123
+    int shift = 8
+    int left_shift = x << shift
+    int multiply = x * (1 << shift)
     print($"   123 << 8 = {left_shift}")
     print($"   123 * 256 = {multiply}")
     if left_shift == multiply {
@@ -27,13 +27,13 @@ main()
     // 3. 测试多 limb 的数左移
     print("")
     print("3. 测试多 limb 数左移 (32位对齐):")
-    var big = 12345678901234567890
-    var shifted = big << 32
+    int big = 12345678901234567890
+    int shifted = big << 32
     print($"   原始: {big}")
     print($"   << 32: {shifted}")
     
     // 验证：左移32位应该等于乘以 2^32 (4294967296)
-    var expected = big * 4294967296
+    int expected = big * 4294967296
     if shifted == expected {
         print("   ✓ 验证通过!")
     } else {
@@ -43,26 +43,26 @@ main()
     // 4. 测试非32位对齐的位移
     print("")
     print("4. 测试非对齐位移 (左移 36 位):")
-    var shifted2 = big << 36
+    int shifted2 = big << 36
     print($"   原始: {big}")
     print($"   << 36: {shifted2}")
     
-    var expected2 = big * 68719476736  // 2^36
+    int expected2 = big * 68719476736  // 2^36
     if shifted2 == expected2 {
         print("   ✓ 验证通过!")
     } else {
         print($"   期望: {expected2}")
     }
     
-    // 5. 测试大位移（使用大数触发 BigInt 路径）
+    // 5. 测试大位移（使用大数触发 int 底层 BigInt 路径）
     print("")
     print("5. 测试大位移 (大数 << 100):")
-    var big2 = 12345678901234567890
-    var c = big2 << 100
+    int big2 = 12345678901234567890
+    int c = big2 << 100
     print($"   12345678901234567890 << 100 = {c}")
     
     // 验证
-    var expected3 = big2 * 1267650600228229401496703205376  // 2^100
+    int expected3 = big2 * 1267650600228229401496703205376  // 2^100
     if c == expected3 {
         print("   ✓ 验证通过!")
     } else {
@@ -72,7 +72,7 @@ main()
     // 6. 测试超大位移
     print("")
     print("6. 测试超大位移 (大数 << 1000):")
-    var d = big2 << 1000
+    int d = big2 << 1000
     print($"   结果高位: {d / 1000000000000000000000000000000}")
     print($"   (2^1000 是一个非常大的数)")
     

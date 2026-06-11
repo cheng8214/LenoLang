@@ -8,19 +8,19 @@ OPCODE(OP_NEG) {
     frame = &vm.frames[vm.frame_cnt - 1];
     Value a = vm_stack_pop(&vm);
 
-    // 快速路径：int 取反（最常见）
+    // int 取反：int48 回绕
     if (likely(val_is_int(a))) {
         vm_stack_push(&vm, val_int(-val_as_int(a)));
         DISPATCH;
     }
 
-    // 快速路径：float 取反
+    // float 取反
     if (val_is_float(a)) {
         vm_stack_push(&vm, val_float(-val_as_num(a)));
         DISPATCH;
     }
 
-    // BigInt 取反（罕见）
+    // BigInt 取反
     if (unlikely(val_is_bigint(a))) {
         ObjBigInt* ba = val_as_bigint(a);
         Value result = bigint_neg(ba);
@@ -67,19 +67,19 @@ OPCODE(OP_CAST_FLOAT) {
 OPCODE(OP_CAST_INT) {
     frame = &vm.frames[vm.frame_cnt - 1];
     Value a = vm_stack_pop(&vm);
-    // 先检查 BigInt，因为 val_is_num 也包含 BigInt
     if (val_is_bigint(a)) {
+        // BigInt 转 int48
         ObjBigInt* bigint = val_as_bigint(a);
-        if (bigint_is_int(bigint)) {
-            vm_stack_push(&vm, val_int(bigint_to_int(bigint)));
+        int64_t val = bigint_to_int64(bigint);
+        if (val >= INT48_MIN && val <= INT48_MAX) {
+            vm_stack_push(&vm, val_int(val));
         } else {
-            // BigInt 超出 int 范围，保持原值
+            // BigInt 超出 int48 范围，保持原值
             vm_stack_push(&vm, a);
         }
     } else if (val_is_num(a)) {
-        vm_stack_push(&vm, val_int((int)val_as_num(a)));
+        vm_stack_push(&vm, val_int((int64_t)val_as_num(a)));
     } else if (val_is_null(a)) {
-        // null 保持为 null
         vm_stack_push(&vm, a);
     } else {
         throw_runtime_error("CAST_INT 操作数必须是数字", GET_CURRENT_LINE());

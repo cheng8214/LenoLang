@@ -22,6 +22,7 @@ static TypeKind get_value_type(Value value) {
             else if (val_as_obj(value)->type == OBJ_GUI_EVENT) return TYPE_EVENT;
             else if (val_as_obj(value)->type == OBJ_GUI_IMAGE) return TYPE_IMAGE;
             else if (val_as_obj(value)->type == OBJ_GUI_FONT) return TYPE_FONT;
+            else if (val_as_obj(value)->type == OBJ_BIGINT) return TYPE_BIGINT;
             else if (val_as_obj(value)->type == OBJ_RGB) return TYPE_RGB;
             return TYPE_ANY;
         default: return TYPE_ANY;
@@ -146,7 +147,7 @@ static ObjString* infer_array_type(ObjArray* arr) {
         case TYPE_BOOL: typeName = "bool"; break;
         case TYPE_STRING: typeName = "string"; break;
         case TYPE_DICT: typeName = "Dict"; break;
-        case TYPE_BIGINT: typeName = "int"; break;
+        case TYPE_BIGINT: typeName = "int"; break;  // 对外统一为 int
         default: typeName = "any"; break;
     }
     
@@ -345,7 +346,7 @@ mixed_type:
             case TYPE_FLOAT: valueTypeName = "float"; break;
             case TYPE_BOOL: valueTypeName = "bool"; break;
             case TYPE_STRING: valueTypeName = "string"; break;
-            case TYPE_BIGINT: valueTypeName = "int"; break;
+            case TYPE_BIGINT: valueTypeName = "Bint"; break;
             default: valueTypeName = "any"; break;
         }
         snprintf(buf, sizeof(buf), "Dict[%s, %s]", keyTypeName, valueTypeName);
@@ -387,7 +388,7 @@ static Value native_type(int argCount, Value* args) {
             } else if (val_as_obj(value)->type == OBJ_NATIVE) {
                 typeStr = str_copy("native", 6);
             } else if (val_as_obj(value)->type == OBJ_BIGINT) {
-                typeStr = str_copy("int", 3);
+                typeStr = str_copy("int", 3);  // 对外统一为 int
             } else if (val_as_obj(value)->type == OBJ_ARRAY) {
                 typeStr = infer_array_type((ObjArray*)val_as_obj(value));
             } else if (val_as_obj(value)->type == OBJ_DICT) {
@@ -675,42 +676,6 @@ static Value native_to_int32(int argCount, Value* args) {
     return val_int((int)result);
 }
 
-// _int64(value) - 将整数截断为 64 位有符号整数（环绕语义）
-// 用于需要 64 位固定位宽运算的场景
-static Value native_to_int64(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_int(0);
-    }
-
-    Value value = args[0];
-
-    // 获取值并截断为 64 位环绕
-    if (val_is_int(value)) {
-        // int32 值本身就在 int64 范围内，直接返回
-        return value;
-    } else if (val_is_bigint(value)) {
-        ObjBigInt* big = val_as_bigint(value);
-        // 环绕语义：取低 64 位，再解释为有符号数
-        uint64_t low64 = 0;
-        for (int i = 0; i < big->limb_count && i < 2; i++) {
-            low64 |= ((uint64_t)big->limbs[i]) << (i * 32);
-        }
-        int64_t result = (int64_t)low64;
-        // 如果结果在 int32 范围内，返回 VAL_INT，否则返回 BigInt
-        return val_int_safe(result);
-    } else if (val_is_float(value)) {
-        int64_t result = (int64_t)val_as_num(value);
-        return val_int_safe(result);
-    } else if (val_is_bool(value)) {
-        return val_int(val_as_bool(value) ? 1 : 0);
-    } else if (val_is_null(value)) {
-        return val_int(0);
-    } else {
-        native_throw_error("无法将该类型转换为 int64");
-        return val_int(0);
-    }
-}
-
 // _uint32(value) - 将整数截断为 32 位无符号整数
 // 等效于 to_unsigned(_int32(x))，用于加密/网络等需要将值解释为 32 位无符号数的场景
 static Value native_to_uint32(int argCount, Value* args) {
@@ -758,7 +723,6 @@ void types_init_globals(void) {
     vm_register_native("_str", native_to_str, 1, -1, -1, TYPE_STRING, convert_params);
     vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, convert_params);
     vm_register_native("_int32", native_to_int32, 1, -1, -1, TYPE_INT, convert_params);
-    vm_register_native("_int64", native_to_int64, 1, -1, -1, TYPE_INT, convert_params);
     vm_register_native("_uint32", native_to_uint32, 1, -1, -1, TYPE_INT, convert_params);
 }
 

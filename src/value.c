@@ -22,7 +22,7 @@ const char* val_to_string(Value v) {
         case VAL_BOOL:
             return val_as_bool(v) ? "true" : "false";
         case VAL_INT:
-            snprintf(buffer, sizeof(buffer), "%d", (int)val_as_num(v));
+            snprintf(buffer, sizeof(buffer), "%lld", (long long)val_as_int(v));
             return buffer;
         case VAL_FLOAT:
             snprintf(buffer, sizeof(buffer), "%.17g", val_as_num(v));
@@ -88,7 +88,7 @@ char* value_to_string(Value v) {
             break;
         case VAL_INT: {
             char buffer[32];
-            snprintf(buffer, sizeof(buffer), "%d", (int)val_as_num(v));
+            snprintf(buffer, sizeof(buffer), "%lld", (long long)val_as_int(v));
             result = strdup(buffer);
             break;
         }

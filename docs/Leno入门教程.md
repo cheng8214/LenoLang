@@ -107,7 +107,7 @@ main() {
 
 | 类型       | 说明                | 示例                      |
 | -------- | ----------------- | ----------------------- |
-| `int`    | 整数（任意精度，无溢出）      | `int a = 10`            |
+| `int`    | 整数（任意精度，自动溢出保护） | `int a = 10`            |
 | `float`  | 浮点数（IEEE 754 双精度） | `float b = 3.14`        |
 | `string` | 字符串               | `string s = "hello"`    |
 | `bool`   | 布尔值               | `bool flag = true`      |
@@ -115,7 +115,125 @@ main() {
 | `var`    | 类型推断              | `var x = 10`            |
 | `Ptr`    | FFI 指针类型          | `Ptr p = ffi.malloc(8)` |
 
-### 变量声明
+### 深入理解 int
+
+Leno 的 `int` 是**任意精度**大整数，永远不会溢出。背后有一个巧妙的双层设计：
+
+- **int48（48 位内联存储）**：值在 ±140 万亿（约 ±1.4×10¹⁴）范围内时，直接内联存储在 Value 中，性能极高，零开销。
+- **BigInt（堆分配存储）**：值超出 int48 范围时，**自动升级**为堆分配的 BigInt 对象，精度无上限。
+
+对外统一为 `int` 类型，`type()` 始终返回 `"int"`，用户无需关心底层存储形式。
+
+```leno
+main() {
+    // int48 范围内：轻量级内联存储
+    var a = 42                  // type(a) → "int"
+    var b = 2000000000          // type(b) → "int"（在 int48 范围内）
+    var c = b + b               // c = 4000000000，仍在 int48 范围内
+    print(type(c))              // "int"
+
+    // 超出 int48 范围：自动升级为 BigInt，对外仍是 int
+    var big = 100000000000000000000  // type(big) → "int"
+    print(type(big))                 // "int"
+
+    // 运算溢出时自动升级
+    var fib100 = 354224848179261915075  // 第 100 项斐波那契数
+    print(type(fib100))                  // "int"（自动升级）
+
+    // 任意精度整数运算完全透明
+    var x = 1000000000000000     // 仍在 int48 范围内
+    var y = x * x               // 结果超出 int48，自动升级
+    print(type(y))              // "int"
+    var z = y + 1               // 自动处理
+}
+```
+
+> **💡 int48 范围有多大？**
+>
+> int48 的范围是 **-140,737,488,355,327 ~ 140,737,488,355,327**（约 ±140 万亿）。
+>
+> | 参考值 | 是否在 int48 内 |
+> |--------|:---:|
+> | 42 | ✅ |
+> | INT32_MAX（约 21 亿） | ✅ |
+> | 地球人口（约 80 亿） | ✅ |
+> | 全球 GDP（约 100 万亿） | ✅ |
+> | 100000000000000000000（100 垓） | ❌ → BigInt |
+> | fib(100) ≈ 3.5×10²⁰ | ❌ → BigInt |
+
+> **⚠️ 注意：`type()` 始终返回 `"int"`**
+>
+> ```leno
+> int a = 10
+> print(type(a))      // "int"（当前是 int48）
+>
+> a = 100000000000000000000
+> print(type(a))      // "int"（底层自动升级，对外无变化）
+> ```
+>
+> 变量声明为 `int`，底层运算自动处理溢出升级，`type()` 始终返回 `"int"`，对用户完全透明。
+
+> **🔧 int 自动升级的运算**
+>
+> 以下运算在结果超出 int48 范围时会**自动升级**为 BigInt：
+>
+> ```leno
+> // 加法、减法、乘法：自动检测溢出并升级
+> var a = 1000000000000000
+> var b = a + a                  // 自动升级
+> var c = a * a                  // 自动升级
+> var d = -140737488355328       // INT48_MIN 取负超出范围，自动升级
+>
+> // 超过 int64 范围也能正确处理
+> var huge = 100000000000000000000 * 100000000000000000000
+> print(type(huge))              // "int"
+>
+> // 除法规则
+> int / int → int                // 整数除法
+> int / float → float            // 浮点除法
+> ```
+>
+> 从用户角度看，`int` 就是任意精度整数 — 你不需要关心底层细节，语言已经替你处理好了。
+
+### 理解 var 类型推断
+
+`var` 是 Leno 的类型推断关键字。编译器根据**初始值**推断类型：
+
+```leno
+main() {
+    var x = 10          // 推断为 int
+    var y = 3.14        // 推断为 float
+    var s = "hello"     // 推断为 string
+    var b = true        // 推断为 bool
+
+    // var 推断的 int 同样享受自动溢出保护
+    var a = 1000000000000000
+    var result = a * a          // 结果超出 int48，自动升级
+    print(type(result))         // "int"
+
+    // var 多变量声明（用逗号分隔，每个变量独立赋值）
+    var a1 = 10, b1, c1 = 1    // a1=10(int), b1=null, c1=1(int)
+    int x1, y1, z1             // 三个 int 变量（均为 null）
+    float f1, f2 = 3.14        // f1=null, f2=3.14
+}
+```
+
+> **⚠️ 注意：`int` 声明 vs `var` 推断 — 行为一致**
+>
+> 无论你用 `int x = 10` 还是 `var x = 10`，运算溢出保护的行为完全相同：
+>
+> ```leno
+> int a = 2000000000
+> var b = 2000000000
+> print(a + b)        // 4000000000，正确
+> print(type(a + b))  // "int"（4000000000 仍在 int48 范围内）
+>
+> // 更大的运算
+> var huge1 = 10000000000000 * 10000000000000
+> print(type(huge1))  // "int"（超出 int48 范围自动升级）
+> ```
+
+### 变量声明总结
 
 ```leno
 main() {
@@ -123,16 +241,16 @@ main() {
     int a = 10
     float b = 3.14
     string name = "Leno"
+    bool flag = true
 
     // 类型推断（使用 var）
-    var x = 10        // 推断为 int
-    var y = 3.14      // 推断为 float
-    var s = "hello"   // 推断为 string
+    var x = 10          // 推断为 int（值为 10）
+    var y = 3.14        // 推断为 float
+    var s = "hello"     // 推断为 string
 
-    // 多变量声明（用逗号分隔，每个变量独立赋值）
-    var a1 = 10, b1, c1 = 1    // a1=10, b1=null, c1=1
-    int x1, y1, z1             // 三个 int 变量（均为 null）
-    float f1, f2 = 3.14        // f1=null, f2=3.14
+    // 大数值的 var 推断
+    var big = 100000000000000000000   // 推断为 int（底层自动升级）
+    print(type(big))                   // "int"
 }
 ```
 
@@ -504,6 +622,9 @@ main() {
     var x = 10
     print(type(x))          // "int"
 
+    var big = 100000000000000000000
+    print(type(big))        // "int"（值超出 int48 范围，底层自动升级为 BigInt）
+
     var arr = [1, 2, 3]
     print(type(arr))        // "Array[int]"
 
@@ -528,7 +649,11 @@ main() {
 > print(type(a))    // "null"（因为当前值是 null）
 > a = 10
 > print(type(a))    // "int"（值变成了 10）
+> a = 100000000000000000000
+> print(type(a))    // "int"（值超出 int48，底层自动升级，对外不变）
 > ```
+>
+> **type() 对 int 始终返回 `"int"`**，无论底层是 int48 还是 BigInt 存储，对用户完全透明。
 
 ***
 
@@ -558,11 +683,8 @@ main() {
 > | 操作数类型             | 结果类型     | 示例                     |
 > | ----------------- | -------- | ---------------------- |
 > | `int / int`       | `int`    | `5 / 2 = 2`            |
-> | `bigint / int`    | `bigint` | `big / 10 = bigint`    |
-> | `bigint / bigint` | `bigint` | `big1 / big2 = bigint` |
 > | `int / float`     | `float`  | `5 / 2.0 = 2.5`        |
 > | `float / int`     | `float`  | `5.0 / 2 = 2.5`        |
-> | `bigint / float`  | `float`  | `big / 2.0 = float`    |
 
 ### 位运算符
 
@@ -3232,13 +3354,14 @@ lenolang program.leno
 
 | 功能    | 语法                                            |
 | ----- | --------------------------------------------- |
+| int 类型 | `int` — 任意精度整数，int48 内联存储，超出自动升级为 BigInt |
 | 泛型数组  | `Array[int]`, `Array[Array[int]]`             |
 | 泛型字典  | `Dict[string, int]`, `Dict[int, string]`                           |
 | 数组切片  | `arr[2:8]`, `arr[:5]`, `arr[3:]`              |
 | 数组比较  | `[1,2] == [1,2]`                              |
 | 类型转换  | `_int(x)`, `_float(x)`, `_str(x)`, `_bool(x)`, `_int32(x)`, `_int64(x)`, `_uint32(x)` |
 | 安全转换  | `x as Type`（匹配返回原值，不匹配返回 null；int↔float 数值转换） |
-| 类型检查  | `type(x)`                                     |
+| 类型检查  | `type(x)` — int 始终返回 `"int"`              |
 | 字符串插值 | `$"Hello {name}"`                             |
 | 原始字符串 | `@"raw string"`                               |
 | 格式化字符串 | `format("%s %d %.2f", "hi", 42, 3.14)`        |

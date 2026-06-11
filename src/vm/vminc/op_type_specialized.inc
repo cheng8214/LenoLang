@@ -1,22 +1,33 @@
 // ============================================================================
 // 类型特化指令（编译器已知类型时的快速路径）
 // ============================================================================
-// 说明：这些指令假设操作数已经是正确的类型，跳过运行时类型检查。
-// int 运算溢出时自动提升为 bigint（对外仍表现为 int 类型值）。
-// 注意：由于 bigint 对外表现为 int 类型，这些指令需要处理可能是 bigint 的 int 类型值。
-// 优化策略：先快速检查是否有 bigint，如果没有就直接用 int 运算（热点路径）
+// int 为 48 位内联表示。运算结果超出 int48 范围时自动提升为 BigInt。
 
 OPCODE(OP_ADD_INT) {
     Value vb = vm_stack_pop_fast(&vm);
     Value va = vm_stack_pop_fast(&vm);
 
-    // 快速路径：都不是 bigint
+    // 快速路径：两个 int 相加
     if (likely(!val_is_bigint(va) && !val_is_bigint(vb))) {
-        int64_t a = (int64_t)val_as_int(va);
-        int64_t b = (int64_t)val_as_int(vb);
-        PUSH_SAFE_INT64_ADD_FAST(a, b);
+        int64_t a = val_as_int(va);
+        int64_t b = val_as_int(vb);
+        // 检测 int64 溢出
+        if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) {
+            ObjBigInt* ba = bigint_from_int64(a);
+            ObjBigInt* bb = bigint_from_int64(b);
+            Value result = bigint_add(ba, bb);
+            vm_stack_push_fast(&vm, result);
+        } else {
+            int64_t sum = a + b;
+            // 检测 int48 溢出，超出则提升为 BigInt
+            if (sum < INT48_MIN || sum > INT48_MAX) {
+                vm_stack_push_fast(&vm, val_bigint_from_int64(sum));
+            } else {
+                vm_stack_push_fast(&vm, val_int(sum));
+            }
+        }
     } else {
-        // 任一操作数是 BigInt，使用 BigInt 运算
+        // BigInt 运算（显式 Bint 类型）
         Value result = bigint_add(get_bigint_operand(va), get_bigint_operand(vb));
         vm_stack_push_fast(&vm, result);
     }
@@ -28,11 +39,24 @@ OPCODE(OP_SUB_INT) {
     Value va = vm_stack_pop_fast(&vm);
 
     if (likely(!val_is_bigint(va) && !val_is_bigint(vb))) {
-        int64_t a = (int64_t)val_as_int(va);
-        int64_t b = (int64_t)val_as_int(vb);
-        PUSH_SAFE_INT64_SUB_FAST(a, b);
+        int64_t a = val_as_int(va);
+        int64_t b = val_as_int(vb);
+        // 检测 int64 溢出
+        if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) {
+            ObjBigInt* ba = bigint_from_int64(a);
+            ObjBigInt* bb = bigint_from_int64(b);
+            Value result = bigint_sub(ba, bb);
+            vm_stack_push_fast(&vm, result);
+        } else {
+            int64_t diff = a - b;
+            // 检测 int48 溢出，超出则提升为 BigInt
+            if (diff < INT48_MIN || diff > INT48_MAX) {
+                vm_stack_push_fast(&vm, val_bigint_from_int64(diff));
+            } else {
+                vm_stack_push_fast(&vm, val_int(diff));
+            }
+        }
     } else {
-        // 任一操作数是 BigInt，使用 BigInt 运算
         Value result = bigint_sub(get_bigint_operand(va), get_bigint_operand(vb));
         vm_stack_push_fast(&vm, result);
     }
@@ -44,11 +68,27 @@ OPCODE(OP_MUL_INT) {
     Value va = vm_stack_pop_fast(&vm);
 
     if (likely(!val_is_bigint(va) && !val_is_bigint(vb))) {
-        int64_t a = (int64_t)val_as_int(va);
-        int64_t b = (int64_t)val_as_int(vb);
-        PUSH_SAFE_INT64_MUL_FAST(a, b);
+        int64_t a = val_as_int(va);
+        int64_t b = val_as_int(vb);
+        // 检测 int64 溢出（通过除法回验）
+        if (a == 0 || b == 0) {
+            vm_stack_push_fast(&vm, val_int(0));
+        } else {
+            int64_t result = a * b;
+            if (result / a != b) {
+                // int64 溢出，使用 BigInt
+                ObjBigInt* ba = bigint_from_int64(a);
+                ObjBigInt* bb = bigint_from_int64(b);
+                Value r = bigint_mul(ba, bb);
+                vm_stack_push_fast(&vm, r);
+            } else if (result < INT48_MIN || result > INT48_MAX) {
+                // int48 溢出，提升为 BigInt
+                vm_stack_push_fast(&vm, val_bigint_from_int64(result));
+            } else {
+                vm_stack_push_fast(&vm, val_int(result));
+            }
+        }
     } else {
-        // 任一操作数是 BigInt，使用 BigInt 运算
         Value result = bigint_mul(get_bigint_operand(va), get_bigint_operand(vb));
         vm_stack_push_fast(&vm, result);
     }
@@ -72,12 +112,10 @@ OPCODE(OP_DIV_INT) {
     }
 
     if (likely(!val_is_bigint(va) && !val_is_bigint(vb))) {
-        // int / int = int（整数除法）
-        int a = val_as_int(va);
-        int b = val_as_int(vb);
+        int64_t a = val_as_int(va);
+        int64_t b = val_as_int(vb);
         vm_stack_push_fast(&vm, val_int(a / b));
     } else {
-        // BigInt / BigInt = int/bigint（整数除法）
         ObjBigInt* ba = get_bigint_operand(va);
         ObjBigInt* bb = get_bigint_operand(vb);
         Value result = bigint_div(ba, bb);
@@ -90,7 +128,6 @@ OPCODE(OP_MOD_INT) {
     Value vb = vm_stack_pop_fast(&vm);
     Value va = vm_stack_pop_fast(&vm);
 
-    // 检查除零
     if (val_is_bigint(vb)) {
         ObjBigInt* bb = val_as_bigint(vb);
         if (bb->limb_count == 1 && bb->limbs[0] == 0) {
@@ -103,11 +140,10 @@ OPCODE(OP_MOD_INT) {
     }
 
     if (likely(!val_is_bigint(va) && !val_is_bigint(vb))) {
-        int a = val_as_int(va);
-        int b = val_as_int(vb);
+        int64_t a = val_as_int(va);
+        int64_t b = val_as_int(vb);
         vm_stack_push_fast(&vm, val_int(a % b));
     } else {
-        // 任一操作数是 BigInt，使用 BigInt 运算
         ObjBigInt* ba = get_bigint_operand(va);
         ObjBigInt* bb = get_bigint_operand(vb);
         Value result = bigint_mod(ba, bb);
@@ -152,14 +188,14 @@ OPCODE(OP_NEG_INT) {
     Value va = vm_stack_pop_fast(&vm);
 
     if (likely(!val_is_bigint(va))) {
-        int a = val_as_int(va);
-        if (unlikely(a == INT32_MIN)) {
-            vm_stack_push_fast(&vm, val_bigint_from_int64(-(int64_t)a));
+        int64_t a = val_as_int(va);
+        // 检测 INT48_MIN 取负会超出 int48 范围
+        if (a == INT48_MIN) {
+            vm_stack_push_fast(&vm, val_bigint_from_int64(-(int64_t)INT48_MIN));
         } else {
             vm_stack_push_fast(&vm, val_int(-a));
         }
     } else {
-        // 值是 BigInt，使用 BigInt 运算
         Value result = bigint_neg(val_as_bigint(va));
         vm_stack_push_fast(&vm, result);
     }
@@ -268,7 +304,7 @@ OPCODE(OP_GE_FLOAT) {
 }
 
 // ============================================================================
-// 立即数操作码（避免加载小常量开销，imm 范围为 -128 到 127）
+// 立即数操作码（imm 范围为 -128 到 127）
 // ============================================================================
 
 OPCODE(OP_ADD_INT_IMM) {
@@ -276,9 +312,14 @@ OPCODE(OP_ADD_INT_IMM) {
     Value va = vm_stack_pop_fast(&vm);
 
     if (likely(!val_is_bigint(va))) {
-        int64_t a = (int64_t)val_as_int(va);
-        int64_t b = (int64_t)imm;
-        PUSH_SAFE_INT64_ADD_FAST(a, b);
+        int64_t a = val_as_int(va);
+        // imm 在 [-128, 127] 范围内，不会导致 int64 溢出
+        int64_t sum = a + imm;
+        if (sum < INT48_MIN || sum > INT48_MAX) {
+            vm_stack_push_fast(&vm, val_bigint_from_int64(sum));
+        } else {
+            vm_stack_push_fast(&vm, val_int(sum));
+        }
     } else {
         ObjBigInt* bimm = bigint_from_int64(imm);
         Value result = bigint_add(val_as_bigint(va), bimm);
@@ -292,9 +333,14 @@ OPCODE(OP_SUB_INT_IMM) {
     Value va = vm_stack_pop_fast(&vm);
 
     if (likely(!val_is_bigint(va))) {
-        int64_t a = (int64_t)val_as_int(va);
-        int64_t b = (int64_t)imm;
-        PUSH_SAFE_INT64_SUB_FAST(a, b);
+        int64_t a = val_as_int(va);
+        // imm 在 [-128, 127] 范围内，不会导致 int64 溢出
+        int64_t diff = a - imm;
+        if (diff < INT48_MIN || diff > INT48_MAX) {
+            vm_stack_push_fast(&vm, val_bigint_from_int64(diff));
+        } else {
+            vm_stack_push_fast(&vm, val_int(diff));
+        }
     } else {
         ObjBigInt* bimm = bigint_from_int64(imm);
         Value result = bigint_sub(val_as_bigint(va), bimm);
@@ -308,9 +354,23 @@ OPCODE(OP_MUL_INT_IMM) {
     Value va = vm_stack_pop_fast(&vm);
 
     if (likely(!val_is_bigint(va))) {
-        int64_t a = (int64_t)val_as_int(va);
-        int64_t b = (int64_t)imm;
-        PUSH_SAFE_INT64_MUL_FAST(a, b);
+        int64_t a = val_as_int(va);
+        if (a == 0 || imm == 0) {
+            vm_stack_push_fast(&vm, val_int(0));
+        } else {
+            int64_t result = a * imm;
+            // 通过除法回验检测 int64 溢出
+            if (result / a != imm) {
+                ObjBigInt* ba = bigint_from_int64(a);
+                ObjBigInt* bimm = bigint_from_int64(imm);
+                Value r = bigint_mul(ba, bimm);
+                vm_stack_push_fast(&vm, r);
+            } else if (result < INT48_MIN || result > INT48_MAX) {
+                vm_stack_push_fast(&vm, val_bigint_from_int64(result));
+            } else {
+                vm_stack_push_fast(&vm, val_int(result));
+            }
+        }
     } else {
         ObjBigInt* bimm = bigint_from_int64(imm);
         Value result = bigint_mul(val_as_bigint(va), bimm);

@@ -107,6 +107,7 @@ static int is_statement_start(LenoTokenType type) {
            type == TOK_INT_TYPE || type == TOK_FLOAT_TYPE ||
            type == TOK_STRING_TYPE || type == TOK_BOOL_TYPE ||
            type == TOK_ARRAY_TYPE || type == TOK_DICT_TYPE ||
+           // TOK_BINT 已移除
            type == TOK_IDENT || type == TOK_LBRACE;
 }
 
@@ -137,6 +138,7 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_BOOL_TYPE ||
            type == TOK_ARRAY_TYPE ||
            type == TOK_DICT_TYPE ||
+           // TOK_BINT 已移除
            type == TOK_FILE_TYPE ||
            type == TOK_WIN_TYPE ||
            type == TOK_DRAW_TYPE ||

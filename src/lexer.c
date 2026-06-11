@@ -115,6 +115,7 @@ static void init_keyword_table(void) {
         {"Array", TOK_ARRAY_TYPE},
         {"Dict", TOK_DICT_TYPE},
         {"any", TOK_ANY_TYPE},
+        // {"Bint", TOK_BINT},  // 已移除：对外统一用 int
         {"File", TOK_FILE_TYPE},
         {"Win", TOK_WIN_TYPE},
         {"Draw", TOK_DRAW_TYPE},
