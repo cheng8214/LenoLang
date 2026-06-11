@@ -327,6 +327,7 @@ LenoC/
 - [Maths 使用指南](docs/maths使用指南.md) — 数学模块
 - [Threads 使用指南](docs/threads使用指南.md) — 多线程
 - [包管理与安装使用指南](docs/包管理与安装使用指南.md) — 包管理详解
+- [加密算法示例指南](docs/加密算法示例指南.md) — Base64 / AES / RSA / SHA 等纯 LenoC 实现
 
 ## 许可证
 
