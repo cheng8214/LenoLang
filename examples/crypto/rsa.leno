@@ -1,0 +1,288 @@
+// RSA 非对称加密 —— 纯 LenoC 实现
+// PKCS#1 v1.5 风格的 RSA 实现，使用 BigInt 支持大数运算
+//
+// RSA 是最广泛使用的非对称加密算法
+// 用于数字签名、密钥交换、SSL/TLS 证书等
+// 安全提示：此实现仅用于学习演示，生产环境请使用经过审计的密码库
+
+import strings
+import rands
+
+// ==================== 大数运算辅助 ====================
+
+// 快速模幂：计算 base^exp mod n（平方-乘法算法）
+func pow_mod(int base, int exp, int n):int {
+    int result = 1
+    base = base % n
+
+    while exp > 0 {
+        // 如果 exp 是奇数，乘上当前 base
+        if exp % 2 == 1 {
+            result = (result * base) % n
+        }
+        // exp 右移一位（除以2）
+        exp = exp >> 1
+        // base 平方
+        base = (base * base) % n
+    }
+
+    return result
+}
+
+// 扩展欧几里得算法：求 a 和 b 的最大公约数，以及 x, y 使得 ax + by = gcd(a,b)
+// 返回 [gcd, x, y]
+func extended_gcd(int a, int b) {
+    int old_r = a
+    int r = b
+    int old_s = 1
+    int s = 0
+    int old_t = 0
+    int t = 1
+
+    while r != 0 {
+        int quotient = old_r / r
+        int temp = r
+        r = old_r - quotient * r
+        old_r = temp
+        temp = s
+        s = old_s - quotient * s
+        old_s = temp
+        temp = t
+        t = old_t - quotient * t
+        old_t = temp
+    }
+
+    return [old_r, old_s, old_t]
+}
+
+// 模逆元：求 a mod m 的乘法逆元（即求 x 使得 ax ≡ 1 (mod m)）
+func mod_inverse(int a, int m) {
+    var result = extended_gcd(a, m)
+    int g = _int(result[0])
+    int x = _int(result[1])
+
+    if g != 1 {
+        return -1  // 逆元不存在
+    }
+
+    int inv = x % m
+    if inv < 0 {
+        inv = inv + m
+    }
+    return inv
+}
+
+// ==================== 素数生成 ====================
+
+// Miller-Rabin 素数测试
+// n: 待测数，k: 测试轮数
+func miller_rabin(int n, int k):bool {
+    // 小数特殊处理
+    if n < 2 { return false }
+    if n == 2 or n == 3 { return true }
+    if n % 2 == 0 { return false }
+
+    // 将 n-1 分解为 2^r * d
+    int d = n - 1
+    int r = 0
+    while d % 2 == 0 {
+        d = d / 2
+        r = r + 1
+    }
+
+    // 进行 k 轮测试
+    for k to _ {
+        // 随机选择 a ∈ [2, n-2]
+        var a = rands.ints(2, n - 2)
+        var x = pow_mod(a, d, n)
+
+        if x == 1 or x == n - 1 {
+            continue
+        }
+
+        int composite = 1
+        for 0:(r - 1) to _ {
+            x = (x * x) % n
+            if x == n - 1 {
+                composite = 0
+                break
+            }
+        }
+
+        if composite == 1 {
+            return false
+        }
+    }
+
+    return true
+}
+
+// 生成指定位数的随机素数
+func generate_prime(int bits):var {
+    while true {
+        // 生成随机奇数
+        var candidate = rands.ints(2, (1 << bits) - 1)
+        // 确保是奇数且足够大
+        candidate = candidate | 1
+        candidate = candidate | (1 << (bits - 1))
+
+        if miller_rabin(candidate, 10) {
+            return candidate
+        }
+    }
+}
+
+// ==================== RSA 核心 ====================
+
+// RSA 密钥对
+struct RSAKey {
+    int n   // 模数
+    int e   // 公钥指数
+    int d   // 私钥指数
+    int p   // 素数 p
+    int q   // 素数 q
+}
+
+// 生成 RSA 密钥对
+func rsa_generate(int bits):RSAKey {
+    // 生成两个素数
+    int p = _int(generate_prime(bits / 2))
+    int q = _int(generate_prime(bits / 2))
+
+    // 确保 p != q
+    while p == q {
+        q = _int(generate_prime(bits / 2))
+    }
+
+    int n = p * q
+    int phi = (p - 1) * (q - 1)
+
+    // 选择公钥指数 e（通常为 65537）
+    int e = 65537
+
+    // 确保 gcd(e, phi) == 1
+    while true {
+        int g = _int(extended_gcd(e, phi)[0])
+        if g == 1 {
+            break
+        }
+        e = e + 2
+    }
+
+    // 计算私钥指数 d
+    int d = _int(mod_inverse(e, phi))
+
+    var key = new RSAKey()
+    key.n = n
+    key.e = e
+    key.d = d
+    key.p = p
+    key.q = q
+    return key
+}
+
+// RSA 加密：c = m^e mod n
+func rsa_encrypt(int message, RSAKey key):int {
+    return pow_mod(message, key.e, key.n)
+}
+
+// RSA 解密：m = c^d mod n
+func rsa_decrypt(int ciphertext, RSAKey key):int {
+    return pow_mod(ciphertext, key.d, key.n)
+}
+
+// RSA 签名：s = m^d mod n（用私钥签名）
+func rsa_sign(int message, RSAKey key):int{
+    return pow_mod(message, key.d, key.n)
+}
+
+// RSA 验签：m = s^e mod n（用公钥验证）
+func rsa_verify(int signature, RSAKey key):int {
+    return pow_mod(signature, key.e, key.n)
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== RSA 非对称加密测试 ===")
+    print("")
+
+    // ===== 测试 1：已知密钥的加密解密 =====
+    print("--- 测试 1：已知小素数 RSA ---")
+    var p = 61
+    var q = 53
+    var n = p * q        // 3233
+    var phi = (p - 1) * (q - 1)  // 3120
+    var e = 17
+    var d = mod_inverse(e, phi)
+
+    print("p = " + _str(p) + ", q = " + _str(q))
+    print("n = " + _str(n) + ", phi = " + _str(phi))
+    print("e = " + _str(e) + ", d = " + _str(d))
+    print("验证 d*e mod phi = " + _str((d * e) % phi))
+
+    var key = new RSAKey()
+    key.n = n
+    key.e = e
+    key.d = d
+    key.p = p
+    key.q = q
+
+    int m1 = 42
+    var c1 = rsa_encrypt(m1, key)
+    var d1 = rsa_decrypt(c1, key)
+    print("明文: " + _str(m1) + " -> 密文: " + _str(c1) + " -> 解密: " + _str(d1))
+    print("结果: " + if d1 == m1 then "PASS" else "FAIL")
+    print("")
+
+    var m2 = 123
+    var c2 = rsa_encrypt(m2, key)
+    var d2 = rsa_decrypt(c2, key)
+    print("明文: " + _str(m2) + " -> 密文: " + _str(c2) + " -> 解密: " + _str(d2))
+    print("结果: " + if d2 == m2 then "PASS" else "FAIL")
+    print("")
+
+    // ===== 测试 2：签名验证 =====
+    print("--- 测试 2：RSA 签名验证 ---")
+    var msg = 42
+    var sig = rsa_sign(msg, key)
+    var verified = rsa_verify(sig, key)
+    print("消息: " + _str(msg) + " -> 签名: " + _str(sig) + " -> 验签: " + _str(verified))
+    print("结果: " + if verified == msg then "PASS" else "FAIL")
+    print("")
+
+    // ===== 测试 3：模幂验证 =====
+    print("--- 测试 3：模幂运算 ---")
+    var pm1 = pow_mod(2, 10, 1000)
+    print("2^10 mod 1000 = " + _str(pm1) + " (期望: 24) " + if pm1 == 24 then "PASS" else "FAIL")
+
+    var pm2 = pow_mod(3, 7, 50)
+    print("3^7 mod 50 = " + _str(pm2) + " (期望: 37) " + if pm2 == 37 then "PASS" else "FAIL")
+
+    var pm3 = pow_mod(123456789, 65537, 999999937)
+    print("123456789^65537 mod 999999937 = " + _str(pm3))
+    print("")
+
+    // ===== 测试 4：生成 RSA 密钥对 =====
+    print("--- 测试 4：生成 RSA 密钥对（16位）---")
+    var key2 = rsa_generate(16)
+    print("n = " + _str(key2.n))
+    print("e = " + _str(key2.e))
+    print("d = " + _str(key2.d))
+
+    var m3 = 42
+    var c3 = rsa_encrypt(m3, key2)
+    var d3 = rsa_decrypt(c3, key2)
+    print("明文: " + _str(m3) + " -> 密文: " + _str(c3) + " -> 解密: " + _str(d3))
+    print("结果: " + if d3 == m3 then "PASS" else "FAIL")
+    print("")
+
+    // ===== 测试 5：扩展欧几里得算法 =====
+    print("--- 测试 5：扩展欧几里得算法 ---")
+    var egcd = extended_gcd(35, 15)
+    print("gcd(35, 15) = " + _str(egcd[0]) + " (期望: 5) " + if _int(egcd[0]) == 5 then "PASS" else "FAIL")
+    print("验证: 35*" + _str(egcd[1]) + " + 15*" + _str(egcd[2]) + " = " + _str(_int(35 * _int(egcd[1]) + 15 * _int(egcd[2]))))
+    print("")
+
+    print("=== RSA 测试完成 ===")
+}

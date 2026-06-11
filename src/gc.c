@@ -196,8 +196,10 @@ Object* gc_alloc(size_t size, ObjType type) {
 
     // 初始化对象头部，新对象默认为年轻代
     obj->type = type;
-    // GC运行期间分配的对象自动标记为存活，避免被误回收
-    obj->marked = gc.running ? 1 : 0;
+    // 所有新对象标记为存活，避免 GC 误回收刚分配但尚未存入根集合的对象。
+    // 存活对象在下轮 GC 时会被 mark_roots 重新标记；已失效对象会被 clear_all_marks
+    // 清零后在下轮 sweep 中回收。额外的存活一个 GC 周期不会导致明显的内存浪费。
+    obj->marked = 1;
     obj->flags = 0;
     obj->generation = GEN_YOUNG;
     obj->survived = 0;
@@ -534,12 +536,28 @@ static void mark_roots(void) {
     if (!gc.vm) return;
 
     // 1. 标记操作数栈上的所有值
-    // 安全检查：确保栈指针在有效范围内
     int sp = gc.vm->sp;
     if (sp < 0) sp = 0;
     if (sp > gc.vm->stack_capacity) sp = gc.vm->stack_capacity;
     for (int i = 0; i < sp; i++) {
         gc_mark_value(gc.vm->stack[i]);
+    }
+    
+    // 1.5 对所有活跃帧的栈帧区域做保守扫描
+    // 确保帧的 stack_base ~ stack_base+slot_count 范围内的所有值也被标记。
+    // 不截断到 sp：因为当函数调用返回或参数出栈后，sp 可能回退到帧范围内的局部变量之下，
+    // 此时 sp 之上的局部变量在步骤 1 中不会被扫描到。
+    // val_is_obj 通过 NaN-boxing 标签过滤，对 int/float/bool 无副作用。
+    for (int fi = 0; fi < gc.vm->frame_cnt; fi++) {
+        CallFrame* f = &gc.vm->frames[fi];
+        int start = f->stack_base;
+        int end = f->stack_base + f->slot_count;
+        if (start < 0) start = 0;
+        if (end > gc.vm->stack_capacity) end = gc.vm->stack_capacity;
+        for (int i = start; i < end; i++) {
+            Value v = gc.vm->stack[i];
+            if (val_is_obj(v)) gc_mark_object(val_as_obj(v));
+        }
     }
 
     // 2. 标记所有调用帧（闭包、常量池、局部变量、try 返回值、模块）

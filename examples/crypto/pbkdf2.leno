@@ -1,0 +1,234 @@
+// PBKDF2 密钥派生函数 —— 纯 LenoC 实现
+// RFC 2898 标准实现，基于 HMAC-SHA256
+//
+// PBKDF2 用于从密码派生密钥，通过加盐和多次迭代抵抗暴力破解
+// 广泛用于密码存储、磁盘加密、Wi-Fi WPA2 等
+
+import strings
+import times
+
+// ==================== 依赖：SHA-256 + HMAC ====================
+
+func right_rotate(int x, int c):int {
+    int ux = _uint32(x)
+    return _int32((ux >> c) | (ux << (32 - c)))
+}
+
+func byte_to_hex(int b):string {
+    var hex_chars = "0123456789abcdef"
+    int hi = (b >> 4) & 0x0F
+    int lo = b & 0x0F
+    return strings.char(hex_chars.byte(hi)) + strings.char(hex_chars.byte(lo))
+}
+
+func append_be32(Array[int] arr, int v) {
+    arr.add((_uint32(v) >> 24) & 0xFF)
+    arr.add((_uint32(v) >> 16) & 0xFF)
+    arr.add((_uint32(v) >> 8) & 0xFF)
+    arr.add(v & 0xFF)
+}
+
+func be_bytes_to_int(Array[int] arr, int offset):int {
+    return _int32((_uint32(arr[offset]) << 24) | (_uint32(arr[offset + 1]) << 16) | (_uint32(arr[offset + 2]) << 8) | _uint32(arr[offset + 3]))
+}
+
+func ch(int x, int y, int z):int { return _int32((_uint32(x) & _uint32(y)) ^ (_uint32(~x) & _uint32(z))) }
+func maj(int x, int y, int z):int { return _int32((_uint32(x) & _uint32(y)) ^ (_uint32(x) & _uint32(z)) ^ (_uint32(y) & _uint32(z))) }
+func sigma0(int x):int { return _int32(right_rotate(x, 2) ^ right_rotate(x, 13) ^ right_rotate(x, 22)) }
+func sigma1(int x):int { return _int32(right_rotate(x, 6) ^ right_rotate(x, 11) ^ right_rotate(x, 25)) }
+func gamma0(int x):int { return _int32(right_rotate(x, 7) ^ right_rotate(x, 18) ^ (_uint32(x) >> 3)) }
+func gamma1(int x):int { return _int32(right_rotate(x, 17) ^ right_rotate(x, 19) ^ (_uint32(x) >> 10)) }
+
+func sha256_bytes(Array[int] msg):Array[int] {
+    int h0 = 0x6a09e667
+    int h1 = 0xbb67ae85
+    int h2 = 0x3c6ef372
+    int h3 = 0xa54ff53a
+    int h4 = 0x510e527f
+    int h5 = 0x9b05688c
+    int h6 = 0x1f83d9ab
+    int h7 = 0x5be0cd19
+
+    var K = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+        0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+        0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+        0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ]
+
+    int orig_len = msg.len()
+    var padded = []
+    for orig_len to i { padded.add(msg[i]) }
+    padded.add(0x80)
+
+    int pad_len = (56 - padded.len() % 64 + 64) % 64
+    for pad_len to i { padded.add(0) }
+
+    int bit_len = orig_len * 8
+    append_be32(padded, 0)
+    append_be32(padded, _int32(bit_len))
+
+    int num_blocks = padded.len() / 64
+    for 0:(num_blocks - 1) to block_idx {
+        var W = []
+        for 0:15 to j { W.add(be_bytes_to_int(padded, block_idx * 64 + j * 4)) }
+        for 16:63 to j {
+            W.add(_int32(gamma1(W[j - 2]) + W[j - 7] + gamma0(W[j - 15]) + W[j - 16]))
+        }
+
+        int a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7
+        for 0:63 to i {
+            int T1 = _int32(h + sigma1(e) + ch(e, f, g) + K[i] + W[i])
+            int T2 = _int32(sigma0(a) + maj(a, b, c))
+            h = g; g = f; f = e; e = _int32(d + T1)
+            d = c; c = b; b = a; a = _int32(T1 + T2)
+        }
+        h0 = _int32(h0 + a); h1 = _int32(h1 + b); h2 = _int32(h2 + c); h3 = _int32(h3 + d)
+        h4 = _int32(h4 + e); h5 = _int32(h5 + f); h6 = _int32(h6 + g); h7 = _int32(h7 + h)
+    }
+
+    var result = []
+    append_be32(result, h0); append_be32(result, h1); append_be32(result, h2); append_be32(result, h3)
+    append_be32(result, h4); append_be32(result, h5); append_be32(result, h6); append_be32(result, h7)
+    return result
+}
+
+// HMAC-SHA256 字节数组接口（返回字节数组，PBKDF2 内部使用）
+func hmac_sha256_raw(Array[int] key_bytes, Array[int] msg_bytes):Array[int] {
+    int block_size = 64
+
+    Array[int] k = []
+    for key_bytes.len() to i { k.add(key_bytes[i]) }
+    if (k.len() > block_size) {
+        k = sha256_bytes(k)
+    }
+    while (k.len() < block_size) { k.add(0) }
+
+    // 直接构造 inner_data = (k ^ ipad) || msg
+    Array[int] inner_data = []
+    for 0:(block_size - 1) to i { inner_data.add(k[i] ^ 0x36) }
+    for msg_bytes.len() to i { inner_data.add(msg_bytes[i]) }
+    Array[int] inner_hash = sha256_bytes(inner_data)
+
+    // 直接构造 outer_data = (k ^ opad) || inner_hash
+    Array[int] outer_data = []
+    for 0:(block_size - 1) to i { outer_data.add(k[i] ^ 0x5C) }
+    for inner_hash.len() to i { outer_data.add(inner_hash[i]) }
+    return sha256_bytes(outer_data)
+}
+
+// 字节数组异或（原地修改 a）
+func xor_bytes_inplace(Array[int] a, Array[int] b) {
+    for a.len() to i { a[i] = a[i] ^ b[i] }
+}
+
+// 字节数组转十六进制字符串
+func bytes_to_hex(Array[int] bytes):string {
+    var result = ""
+    for bytes.len() to i { result += byte_to_hex(bytes[i]) }
+    return result
+}
+
+// 字符串转字节数组
+func str_to_bytes(string s):Array[int] {
+    var result = []
+    for s.len() to i { result.add(s.byte(i)) }
+    return result
+}
+
+// ==================== PBKDF2 核心 ====================
+
+// PBKDF2-HMAC-SHA256 实现（RFC 2898）
+// password: 密码字符串
+// salt: 盐字符串
+// iterations: 迭代次数
+// dk_len: 派生密钥长度（字节数）
+func pbkdf2_hmac_sha256(string password, string salt, int iterations, int dk_len):string {
+    Array[int] P = str_to_bytes(password)
+    Array[int] S = str_to_bytes(salt)
+    int h_len = 32  // SHA-256 输出 32 字节
+
+    // 计算需要的块数
+    int num_blocks = (dk_len + h_len - 1) / h_len
+    var dk = []
+
+    for 1:num_blocks to block_num {
+        // 构造 U1 = HMAC(P, S || INT_32_BE(block_num))
+        Array[int] S_block = []
+        for S.len() to i { S_block.add(S[i]) }
+        append_be32(S_block, block_num)
+
+        Array[int] U = hmac_sha256_raw(P, S_block)
+        Array[int] T = []
+        for U.len() to i { T.add(U[i]) }
+
+        // 迭代计算 U2 ... Uc（还需 iterations-1 次）
+        for iterations - 1 to j {
+            U = hmac_sha256_raw(P, U)
+            xor_bytes_inplace(T, U)
+        }
+
+        // 追加到结果
+        for T.len() to i { dk.add(T[i]) }
+    }
+
+    // 截取到 dk_len 字节
+    var result = []
+    for dk_len to i { result.add(dk[i]) }
+    return bytes_to_hex(result)
+}
+
+// ==================== 测试 ====================
+
+main() {
+  // _gc(false)
+    print("=== PBKDF2-HMAC-SHA256 标准测试向量 ===")
+    print("")
+
+    // 测试向量来源：RFC 6070 / RFC 7914（PBKDF2-HMAC-SHA256）
+    // 验证工具：Node.js crypto.pbkdf2Sync / Python hashlib.pbkdf2_hmac
+
+    // 测试 1：1 次迭代
+    var h1 = pbkdf2_hmac_sha256("password", "salt", 1, 32)
+    print("PBKDF2(password, salt, 1, 32) = " + h1)
+    print("期望:                          120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b")
+    print("结果:                          " + if h1 == "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 2：2 次迭代
+    var h2 = pbkdf2_hmac_sha256("password", "salt", 2, 32)
+    print("PBKDF2(password, salt, 2, 32) = " + h2)
+    print("期望:                          ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43")
+    print("结果:                          " + if h2 == "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 3：40 次迭代（含性能统计）
+    var t_start = times.ms()
+    var h3 = pbkdf2_hmac_sha256("password", "salt", 40, 32)
+    var t_end = times.ms()
+    print("PBKDF2(password, salt, 40, 32) = " + h3)
+    print("期望:                          d90c2ecd1c924876e2483650a349729383d63407de535e0d87d9f3fdab0faf1d")
+    print("结果:                          " + if h3 == "d90c2ecd1c924876e2483650a349729383d63407de535e0d87d9f3fdab0faf1d" then "PASS" else "FAIL")
+    print("耗时: " + (t_end - t_start) + " ms")
+    print("")
+
+    // 测试 4：长密码和长盐，短输出
+    var h4 = pbkdf2_hmac_sha256("passwordPASSWORDpassword", "saltSALTsaltSALTsaltSALTsaltSALTsalt", 4, 25)
+    print("PBKDF2(long, long, 4, 25) = " + h4)
+    print("期望:                         420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c")
+    print("结果:                         " + if h4 == "420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c" then "PASS" else "FAIL")
+
+    print("=== PBKDF2-HMAC-SHA256 测试完成 ===")
+}

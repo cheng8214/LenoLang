@@ -1,0 +1,233 @@
+// HMAC 消息认证码 —— 纯 LenoC 实现
+// RFC 2104 标准实现，基于 SHA-256 哈希函数
+//
+// HMAC 用于验证消息的完整性和真实性
+// 广泛用于 API 签名、JWT、OAuth 等场景
+
+import strings
+
+// ==================== 依赖：SHA-256 ====================
+// 内嵌 SHA-256 实现（独立运行，无需 import）
+
+func right_rotate(int x, int c):int {
+    int ux = _uint32(x)
+    return _int32((ux >> c) | (ux << (32 - c)))
+}
+
+func byte_to_hex(int b):string {
+    var hex_chars = "0123456789abcdef"
+    int hi = (b >> 4) & 0x0F
+    int lo = b & 0x0F
+    return strings.char(hex_chars.byte(hi)) + strings.char(hex_chars.byte(lo))
+}
+
+func append_be32(Array[int] arr, int v) {
+    arr.add((_uint32(v) >> 24) & 0xFF)
+    arr.add((_uint32(v) >> 16) & 0xFF)
+    arr.add((_uint32(v) >> 8) & 0xFF)
+    arr.add(v & 0xFF)
+}
+
+func be_bytes_to_int(Array[int] arr, int offset):int {
+    return _int32((_uint32(arr[offset]) << 24) | (_uint32(arr[offset + 1]) << 16) | (_uint32(arr[offset + 2]) << 8) | _uint32(arr[offset + 3]))
+}
+
+func ch(int x, int y, int z):int { return _int32((_uint32(x) & _uint32(y)) ^ (_uint32(~x) & _uint32(z))) }
+func maj(int x, int y, int z):int { return _int32((_uint32(x) & _uint32(y)) ^ (_uint32(x) & _uint32(z)) ^ (_uint32(y) & _uint32(z))) }
+func sigma0(int x):int { return _int32(right_rotate(x, 2) ^ right_rotate(x, 13) ^ right_rotate(x, 22)) }
+func sigma1(int x):int { return _int32(right_rotate(x, 6) ^ right_rotate(x, 11) ^ right_rotate(x, 25)) }
+func gamma0(int x):int { return _int32(right_rotate(x, 7) ^ right_rotate(x, 18) ^ (_uint32(x) >> 3)) }
+func gamma1(int x):int { return _int32(right_rotate(x, 17) ^ right_rotate(x, 19) ^ (_uint32(x) >> 10)) }
+
+func sha256_bytes(Array[int] msg):Array[int] {
+    int h0 = 0x6a09e667
+    int h1 = 0xbb67ae85
+    int h2 = 0x3c6ef372
+    int h3 = 0xa54ff53a
+    int h4 = 0x510e527f
+    int h5 = 0x9b05688c
+    int h6 = 0x1f83d9ab
+    int h7 = 0x5be0cd19
+
+    var K = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+        0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+        0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+        0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ]
+
+    int orig_len = msg.len()
+    var padded = []
+    for orig_len to i { padded.add(msg[i]) }
+    padded.add(0x80)
+
+    int pad_len = (56 - padded.len() % 64 + 64) % 64
+    for pad_len to i { padded.add(0) }
+
+    int bit_len = orig_len * 8
+    append_be32(padded, 0)
+    append_be32(padded, _int32(bit_len))
+
+    int num_blocks = padded.len() / 64
+    for 0:(num_blocks - 1) to block_idx {
+        var W = []
+        for 0:15 to j { W.add(be_bytes_to_int(padded, block_idx * 64 + j * 4)) }
+        for 16:63 to j {
+            W.add(_int32(gamma1(W[j - 2]) + W[j - 7] + gamma0(W[j - 15]) + W[j - 16]))
+        }
+
+        int a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7
+        for 0:63 to i {
+            int T1 = _int32(h + sigma1(e) + ch(e, f, g) + K[i] + W[i])
+            int T2 = _int32(sigma0(a) + maj(a, b, c))
+            h = g; g = f; f = e; e = _int32(d + T1)
+            d = c; c = b; b = a; a = _int32(T1 + T2)
+        }
+        h0 = _int32(h0 + a); h1 = _int32(h1 + b); h2 = _int32(h2 + c); h3 = _int32(h3 + d)
+        h4 = _int32(h4 + e); h5 = _int32(h5 + f); h6 = _int32(h6 + g); h7 = _int32(h7 + h)
+    }
+
+    var result = []
+    append_be32(result, h0); append_be32(result, h1); append_be32(result, h2); append_be32(result, h3)
+    append_be32(result, h4); append_be32(result, h5); append_be32(result, h6); append_be32(result, h7)
+    return result
+}
+
+// SHA-256 字符串接口
+func sha256(string input):string {
+    var msg = []
+    for input.len() to i { msg.add(input.byte(i)) }
+    var hash = sha256_bytes(msg)
+    var digest = ""
+    for hash.len() to i { digest += byte_to_hex(hash[i]) }
+    return digest
+}
+
+// ==================== HMAC 核心 ====================
+
+// 字符串转字节数组
+func str_to_bytes(string s):Array[int] {
+    var result = []
+    for s.len() to i { result.add(s.byte(i)) }
+    return result
+}
+
+// 字节数组转十六进制字符串
+func bytes_to_hex(Array[int] bytes):string {
+    var result = ""
+    for bytes.len() to i { result += byte_to_hex(bytes[i]) }
+    return result
+}
+
+// HMAC-SHA256 实现（RFC 2104）
+// H(K ^ opad || H(K ^ ipad || message))
+// key_bytes: 密钥字节数组
+// message: 消息字符串
+func hmac_sha256_bytes(Array[int] key_bytes, string message):string {
+    int block_size = 64  // SHA-256 块大小
+
+    // 如果密钥太长，先哈希
+    Array[int] k = []
+    for key_bytes.len() to i { k.add(key_bytes[i]) }
+    if (k.len() > block_size) {
+        k = sha256_bytes(k)
+    }
+
+    // 填充密钥到 block_size
+    while (k.len() < block_size) {
+        k.add(0)
+    }
+
+    // 生成 ipad 和 opad
+    Array[int] ipad_data = []
+    Array[int] opad_data = []
+    for 0:(block_size - 1) to i {
+        ipad_data.add(k[i] ^ 0x36)
+        opad_data.add(k[i] ^ 0x5C)
+    }
+
+    // 内部哈希：H(K ^ ipad || message)
+    Array[int] inner_data = []
+    for ipad_data.len() to i { inner_data.add(ipad_data[i]) }
+    Array[int] msg_bytes = str_to_bytes(message)
+    for msg_bytes.len() to i { inner_data.add(msg_bytes[i]) }
+    Array[int] inner_hash = sha256_bytes(inner_data)
+
+    // 外部哈希：H(K ^ opad || inner_hash)
+    Array[int] outer_data = []
+    for opad_data.len() to i { outer_data.add(opad_data[i]) }
+    for inner_hash.len() to i { outer_data.add(inner_hash[i]) }
+    Array[int] outer_hash = sha256_bytes(outer_data)
+
+    return bytes_to_hex(outer_hash)
+}
+
+// 便捷接口：字符串密钥
+func hmac_sha256(string key, string message):string {
+    return hmac_sha256_bytes(str_to_bytes(key), message)
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== HMAC-SHA256 标准测试向量 ===")
+    print("")
+
+    // RFC 4231 测试向量
+
+    // 测试 1：RFC 4231 Test Case 1（20 字节 0x0b 密钥）
+    Array[int] key1_bytes = []
+    for 20 to i { key1_bytes.add(0x0b) }
+    var data1 = "Hi There"
+    var h1 = hmac_sha256_bytes(key1_bytes, data1)
+    print("HMAC-SHA256(Test 1) = " + h1)
+    print("期望:                b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+    print("结果:                " + if h1 == "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 2："Jefe" 密钥
+    var key2 = "Jefe"
+    var data2 = "what do ya want for nothing?"
+    var h2 = hmac_sha256(key2, data2)
+    print("HMAC-SHA256(Test 2) = " + h2)
+    print("期望:                5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+    print("结果:                " + if h2 == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 3：简单密钥和消息
+    var key3 = "key"
+    var data3 = "The quick brown fox jumps over the lazy dog"
+    var h3 = hmac_sha256(key3, data3)
+    print("HMAC-SHA256(Test 3) = " + h3)
+    print("期望:                f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
+    print("结果:                " + if h3 == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8" then "PASS" else "FAIL")
+    print("")
+
+    // 测试 4：空消息
+    var h4 = hmac_sha256("secret", "")
+    print("HMAC-SHA256(empty)  = " + h4)
+    print("(验证不崩溃即可)")
+    print("")
+
+    // 测试 5：长密钥（超过 64 字节块大小）
+    var long_key = ""
+    for 10 to i { long_key += "abcdefghijklmnopqrstuvwxyz0123456789ABCDEF" }
+    var h5 = hmac_sha256(long_key, "test long key")
+    print("HMAC-SHA256(long key) = " + h5)
+    print("(验证长密钥不崩溃)")
+    print("")
+
+    print("=== HMAC-SHA256 测试完成 ===")
+}
