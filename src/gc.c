@@ -125,6 +125,7 @@ void gc_init(void) {
     gc.mode = GC_MODE_FULL;
     gc.vm = NULL;
     gc.enabled = 1;
+    gc.deferred_gc = 0;            // 延迟 GC 标志
     gc.remembered_count = 0;
     gc.remembered_capacity = 0;
     gc.promote_age = GC_PROMOTE_AGE;
@@ -166,17 +167,13 @@ void gc_pop_root(void) {
 // ============================================================================
 
 // 分配 GC 管理的对象，新对象分配到年轻代
+// 注意：不再同步触发 GC，仅设置 deferred_gc 标志。
+// 由 GUI 事件循环在帧间（draw callback 返回后）调用 gc_try_collect_deferred() 执行。
+// 这样一帧内创建几百个对象时不会产生多次 GC 暂停。
 Object* gc_alloc(size_t size, ObjType type) {
-    // 年轻代分配超阈值时直接触发 GC
-    // 此时 VM 状态一致：栈、帧、局部变量都是有效的，GC 可以正确标记所有根集合
+    // 年轻代分配超阈值时设置延迟 GC 标志（不在此处同步执行）
     if (gc.enabled && gc.young_allocated + size > gc.young_threshold && !gc.running) {
-        gc_minor_collect();
-        // Minor GC 后仍超阈值，检查是否需要 Major GC
-        if (gc.young_allocated > gc.young_threshold) {
-            if (gc.old_allocated + gc.young_allocated > gc.old_threshold) {
-                gc_major_collect();
-            }
-        }
+        gc.deferred_gc = 1;
     }
 
     Object* obj = (Object*)malloc(size);
@@ -215,15 +212,11 @@ Object* gc_alloc(size_t size, ObjType type) {
 }
 
 // VM 安全点 GC 检查：在指令边界调用，确保 VM 状态一致
+// 同样使用延迟模式：只置标志，不同步触发
 void gc_check_safe_point(void) {
     if (gc.enabled && !gc.running) {
         if (gc.young_allocated > gc.young_threshold) {
-            gc_minor_collect();
-            if (gc.young_allocated > gc.young_threshold) {
-                if (gc.old_allocated + gc.young_allocated > gc.old_threshold) {
-                    gc_major_collect();
-                }
-            }
+            gc.deferred_gc = 1;
         }
     }
 }
@@ -1273,8 +1266,26 @@ static void clear_all_marks(void) {
 // GC 收集入口
 // ============================================================================
 
-// Minor GC：只收集年轻代
-// 流程：标记根集合 → 标记 remembered set → 清除年轻代 → 清理未引用的内化字符串 → 重建 remembered set
+// 延迟 GC 执行：由事件循环在帧间空闲时调用
+// 检查 deferred_gc 标志，若置位则执行 Minor（或 Major）GC 并清除标志。
+// 这确保 GC 不会在帧中途（如 draw callback 创建几百个粒子时）触发暂停。
+void gc_try_collect_deferred(void) {
+    if (!gc.deferred_gc || gc.running || !gc.enabled) return;
+    gc.deferred_gc = 0;
+
+    // 使用与原 gc_alloc 相同的判断逻辑：先 Minor，不够再 Major
+    if (gc.young_allocated > gc.young_threshold) {
+        gc_minor_collect();
+        if (gc.young_allocated > gc.young_threshold) {
+            if (gc.old_allocated + gc.young_allocated > gc.old_threshold) {
+                gc_major_collect();
+            }
+        }
+    }
+}
+
+// Minor GC：只收集年轻代，若老年代堆积超阈值则顺带清扫
+// 流程：标记根集合 → 标记 remembered set → 清除年轻代 → [清除老年代] → 重建 remembered set
 void gc_minor_collect(void) {
     if (gc.running || !gc.enabled) return;
 
@@ -1282,11 +1293,22 @@ void gc_minor_collect(void) {
     gc.mode = GC_MODE_MINOR;
     gc.minor_gc_count++;
 
+    // 老年代堆积超过 2MB 时升级为含 old sweep 的轻量完整回收
+    int do_old_sweep = (gc.old_allocated > GC_OLD_FLUSH_THRESHOLD);
+    if (do_old_sweep) {
+        gc.mode = GC_MODE_FULL;  // 确保 sweep_young 中晋升对象保持 marked=1
+    }
+
     clear_all_marks();
     mark_roots();
     mark_remembered_set();
 
     sweep_young();
+
+    if (do_old_sweep) {
+        sweep_old();
+        gc.mode = GC_MODE_MINOR;
+    }
 
     rebuild_remembered_set();
 

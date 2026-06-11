@@ -705,6 +705,7 @@ typedef struct {
 
 #define GC_YOUNG_THRESHOLD   (1024 * 1024 * 8)   // 8MB
 #define GC_OLD_THRESHOLD     (1024 * 1024 * 32)  // 32MB
+#define GC_OLD_FLUSH_THRESHOLD (1024 * 1024 * 2)  // 2MB：Minor GC 时老年代超此阈值顺带清扫
 #define GC_PROMOTE_AGE       2
 #define GC_REMEMBERED_INIT   256
 
@@ -719,6 +720,7 @@ typedef struct {
     int mode;
     struct VM* vm;
     int enabled;
+    int deferred_gc;              // 延迟 GC 标志：gc_alloc 置位，由事件循环在帧间执行
     Object** remembered_set;
     int remembered_count;
     int remembered_capacity;
@@ -745,6 +747,7 @@ void gc_write_barrier_obj(Object* holder, Object* value_obj);
 
 void gc_set_enabled(int enabled);
 int gc_get_enabled(void);
+void gc_try_collect_deferred(void);
 void gc_check_safe_point(void);
 void gc_push_root(Value* ptr);
 void gc_pop_root(void);

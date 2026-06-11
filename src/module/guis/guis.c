@@ -1059,11 +1059,16 @@ Value win_run_func(int argc, Value* args) {
 
         if (!leno_gui_platform_iterate_main_callbacks()) break;
 
-        /* 每 60 帧触发 GC */
+        /* 帧间执行延迟 GC：gc_alloc 在帧中途（如创建粒子时）只置标志不触发，
+         * 等到此处（draw callback 返回后、下一帧开始前）才真正执行。
+         * 避免一帧内因大量分配触发多次 GC 暂停导致卡顿。 */
+        gc_try_collect_deferred();
+
+        /* 每 60 帧触发一次周期性 Minor GC（兜底清理） */
         frame_count++;
         if (frame_count >= 60) {
             frame_count = 0;
-            gc_collect();
+            gc_minor_collect();
         }
 
 #ifdef _WIN32

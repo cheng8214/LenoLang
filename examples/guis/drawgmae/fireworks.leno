@@ -6,6 +6,7 @@ import guis
 import times
 import maths
 import rands
+//_gc(false)
 // ---- 粒子 ----
 struct Particle {
     float x
