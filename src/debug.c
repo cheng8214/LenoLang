@@ -13,7 +13,7 @@ static const char* opCodeNames[] = {
     "OP_EQ", "OP_NEQ", "OP_LT", "OP_GT", "OP_LE", "OP_GE", "OP_IN", "OP_RANGE",
     "OP_JUMP", "OP_JUMP_IF_FALSE", "OP_JUMP_IF_TRUE", "OP_LOOP",
     "OP_CALL", "OP_TAIL_CALL", "OP_CLOSURE", "OP_RETURN",
-    "OP_ARRAY", "OP_ARRAY_GET", "OP_ARRAY_SET", "OP_ARRAY_APPEND",
+    "OP_ARRAY", "OP_ARRAY_GET", "OP_ARRAY_SET", "OP_ARRAY_APPEND", "OP_ARRAY_APPEND_NOPUSH",
     "OP_DICT", "OP_DICT_GET", "OP_DICT_SET", "OP_DICT_GET_KEY",
     "OP_LOAD_NATIVE_MODULE",
     "OP_MODULE_CALL",
@@ -119,6 +119,7 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             // 无操作数，从栈读取值
             return offset + 1;
         case OP_ARRAY_APPEND:
+        case OP_ARRAY_APPEND_NOPUSH:
         case OP_DICT_SET:
             return offset + 1;
         case OP_ARRAY:

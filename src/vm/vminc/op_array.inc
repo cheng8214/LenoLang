@@ -176,3 +176,31 @@ OPCODE(OP_ARRAY_APPEND) {
     vm_stack_push(&vm, val_int(arr->count));
     DISPATCH;
 }
+
+OPCODE(OP_ARRAY_APPEND_NOPUSH) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value value = vm_stack_pop(&vm);
+    Value arr_val = vm_stack_pop(&vm);
+
+    if (!val_is_obj(arr_val) || val_as_obj(arr_val)->type != OBJ_ARRAY) {
+        throw_runtime_error("append 操作需要数组", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    ObjArray* arr = (ObjArray*)val_as_obj(arr_val);
+
+    // 扩容检查
+    if (arr->count >= arr->capacity) {
+        if (!arr_grow(arr)) {
+            throw_runtime_error("数组扩容失败", GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH;
+        }
+    }
+
+    arr->elements[arr->count++] = value;
+    gc_write_barrier((Object*)arr, value);
+    // 不压栈结果 - 用于表达式语句场景，省掉一次 OP_POP
+    DISPATCH;
+}

@@ -73,7 +73,8 @@ typedef enum {
     OP_ARRAY,
     OP_ARRAY_GET,
     OP_ARRAY_SET,
-    OP_ARRAY_APPEND,   // 数组追加元素
+    OP_ARRAY_APPEND,        // 数组追加元素（压入新长度，表达式用）
+    OP_ARRAY_APPEND_NOPUSH, // 数组追加元素（不压栈，语句用）
     OP_DICT,
     OP_DICT_GET,
     OP_DICT_SET,

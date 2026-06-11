@@ -905,6 +905,20 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         }
     }
 
+    // 检测 shift-imm 复合赋值：x <<= N / x >>= N，N 为小正整数字面量
+    int shift_imm = 0;
+    uint8_t shift_val = 0;
+    if ((op == TOK_SHLEQ || op == TOK_SHREQ) &&
+        ast->u.compound_assign.value->kind == AST_NUM &&
+        !ast->u.compound_assign.value->u.num.is_float &&
+        !ast->u.compound_assign.value->u.num.is_bigint) {
+        double val = ast->u.compound_assign.value->u.num.value;
+        if (val >= 0 && val <= 127 && val == (double)(int)val) {
+            shift_imm = 1;
+            shift_val = (uint8_t)(int)val;
+        }
+    }
+
     if (!is_self_field) {
         if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
             emit_bytes_2(gen, OP_GET_LOCAL, ref->index, ast->line);
@@ -920,7 +934,10 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         }
     }
 
-    gen_expr(gen, ast->u.compound_assign.value);
+    // shift-imm 优化：跳过 RHS 的 OP_CONST 生成
+    if (!shift_imm) {
+        gen_expr(gen, ast->u.compound_assign.value);
+    }
 
     // 类型特化：检查变量类型和值类型
     TypeKind var_type = ref->type_kind;
@@ -946,8 +963,14 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         case TOK_BITANDEQ: emit_byte(gen, OP_BITAND, ast->line); break;
         case TOK_BITOREQ:  emit_byte(gen, OP_BITOR, ast->line); break;
         case TOK_BITXOREQ: emit_byte(gen, OP_BITXOR, ast->line); break;
-        case TOK_SHLEQ:    emit_byte(gen, OP_SHL, ast->line); break;
-        case TOK_SHREQ:    emit_byte(gen, OP_SHR, ast->line); break;
+        case TOK_SHLEQ:
+            if (shift_imm) emit_byte_imm(gen, OP_SHL_IMM, shift_val, ast->line);
+            else           emit_byte(gen, OP_SHL, ast->line);
+            break;
+        case TOK_SHREQ:
+            if (shift_imm) emit_byte_imm(gen, OP_SHR_IMM, shift_val, ast->line);
+            else           emit_byte(gen, OP_SHR, ast->line);
+            break;
         default:
             error_add(ERR_SEMANTIC, ast->line, "未知的复合赋值运算符");
             return;
@@ -1060,7 +1083,24 @@ static void gen_return(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
-    gen_expr(gen, ast->u.expr_stmt.expr);
+    Ast* expr = ast->u.expr_stmt.expr;
+
+    // 检测 arr.add(x) 模式：表达式语句直接用 OP_ARRAY_APPEND_NOPUSH 省掉 OP_POP
+    if (expr->kind == AST_CALL &&
+        expr->u.call.callee->kind == AST_INDEX &&
+        expr->u.call.callee->u.index.index->kind == AST_STRING &&
+        expr->u.call.args.count == 1 &&
+        strcmp(expr->u.call.callee->u.index.index->u.string.value, "add") == 0) {
+        TypeInfo* receiver_type = infer_expr_type(gen->sem, expr->u.call.callee->u.index.obj);
+        int is_array_type = (receiver_type && receiver_type->kind == TYPE_ARRAY);
+        if (receiver_type) type_free(receiver_type);
+        if (is_array_type) {
+            gen_array_add(gen, expr->u.call.callee->u.index.obj, expr->u.call.args.items[0], 0, ast->line);
+            return;
+        }
+    }
+
+    gen_expr(gen, expr);
     emit_byte(gen, OP_POP, ast->line);
 }
 

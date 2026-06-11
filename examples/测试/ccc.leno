@@ -1,7 +1,9 @@
 // 测试闭包
 
 main() {
-   int a=100000000000000000000
+  	Array a=[]
+  	a.add(1)
+  	print(a.add(2))
    print(a)
    print(type(a))
 }

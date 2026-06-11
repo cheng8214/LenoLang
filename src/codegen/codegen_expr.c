@@ -10,18 +10,20 @@ static void gen_call(CodeGen* gen, Ast* ast);
 // 生成数组 add 操作（公共函数）
 // receiver_ast: 数组表达式
 // arg_ast: 要添加的元素表达式
+// need_result: 是否需要返回值（表达式用 OP_ARRAY_APPEND，语句用 OP_ARRAY_APPEND_NOPUSH）
 // line: 行号
-static void gen_array_add(CodeGen* gen, Ast* receiver_ast, Ast* arg_ast, int line) {
+void gen_array_add(CodeGen* gen, Ast* receiver_ast, Ast* arg_ast, int need_result, int line) {
     gen_expr(gen, receiver_ast);
     gen_expr(gen, arg_ast);
-    emit_byte(gen, OP_ARRAY_APPEND, line);
+    emit_byte(gen, need_result ? OP_ARRAY_APPEND : OP_ARRAY_APPEND_NOPUSH, line);
 }
 
 // 通过变量符号生成数组 add 操作（公共函数）
 // var_sym: 数组变量符号
 // arg_ast: 要添加的元素表达式
+// need_result: 是否需要返回值
 // line: 行号
-static void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast, int line) {
+void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast, int need_result, int line) {
     switch (var_sym->kind) {
         case SYM_LOCAL:
         case SYM_PARAM:
@@ -38,7 +40,7 @@ static void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast,
             return;
     }
     gen_expr(gen, arg_ast);
-    emit_byte(gen, OP_ARRAY_APPEND, line);
+    emit_byte(gen, need_result ? OP_ARRAY_APPEND : OP_ARRAY_APPEND_NOPUSH, line);
 }
 
 static TypeKind get_expr_type_kind(Ast* ast) {
@@ -491,8 +493,8 @@ static void gen_call(CodeGen* gen, Ast* ast) {
         if (receiver_type) type_free(receiver_type);
         
         if (is_array_type) {
-            // 使用公共函数生成数组 add 操作
-            gen_array_add(gen, ast->u.call.callee->u.index.obj, ast->u.call.args.items[0], ast->line);
+            // 使用公共函数生成数组 add 操作（表达式上下文，需要返回值）
+            gen_array_add(gen, ast->u.call.callee->u.index.obj, ast->u.call.args.items[0], 1, ast->line);
             return;
         }
     }
@@ -1218,8 +1220,8 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 if (var_sym && var_sym->type && var_sym->type->kind == TYPE_ARRAY &&
                     strcmp(ast->u.module_call.method_name, "add") == 0 &&
                     ast->u.module_call.args.count == 1) {
-                    // 使用公共函数生成数组 add 操作
-                    gen_array_add_by_symbol(gen, var_sym, ast->u.module_call.args.items[0], ast->line);
+                    // 使用公共函数生成数组 add 操作（表达式上下文，需要返回值）
+                    gen_array_add_by_symbol(gen, var_sym, ast->u.module_call.args.items[0], 1, ast->line);
                     break;
                 }
 
