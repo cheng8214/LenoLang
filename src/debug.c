@@ -4,7 +4,8 @@
 // 指令名称表（用于调试）- 必须与 leno_vm.h 中的 OpCode 枚举完全一致
 static const char* opCodeNames[] = {
     "OP_CONST", "OP_NULL", "OP_TRUE", "OP_FALSE", "OP_ZERO", "OP_ONE", "OP_POP", "OP_DUP",
-    "OP_GET_LOCAL", "OP_SET_LOCAL", "OP_SET_LOCAL_POP", "OP_GET_GLOBAL", "OP_SET_GLOBAL",
+    "OP_GET_LOCAL", "OP_SET_LOCAL", "OP_SET_LOCAL_POP", "OP_MOVE_LOCAL",
+    "OP_GET_GLOBAL", "OP_SET_GLOBAL",
     "OP_GET_UPVALUE", "OP_SET_UPVALUE", "OP_CLOSE_UPVALUE", "OP_DEFINE_GLOBAL",
     "OP_GET_GLOBAL_FUNC", "OP_DEFINE_GLOBAL_FUNC", "OP_GET_NATIVE",
     "OP_ADD", "OP_SUB", "OP_MUL", "OP_DIV", "OP_MOD", "OP_BITAND", "OP_BITOR", "OP_BITXOR", "OP_BITNOT", "OP_SHL", "OP_SHR", "OP_NEG", "OP_NOT",
@@ -135,6 +136,12 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
             printf(" %d", idx);
             return offset + 3;
+        }
+        case OP_MOVE_LOCAL: {
+            int src_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int dst_idx = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" %d->%d", src_idx, dst_idx);
+            return offset + 5;
         }
         case OP_GET_LOCAL:
         case OP_SET_LOCAL:

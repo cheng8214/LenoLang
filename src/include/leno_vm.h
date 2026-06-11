@@ -22,6 +22,7 @@ typedef enum {
     OP_GET_LOCAL,
     OP_SET_LOCAL,
     OP_SET_LOCAL_POP,   // 设置局部变量并弹出栈顶（合并 OP_SET_LOCAL + OP_POP）
+    OP_MOVE_LOCAL,      // 局部变量间直接复制：src→dst，并压栈（合并 OP_GET_LOCAL + OP_SET_LOCAL）
     OP_GET_GLOBAL,
     OP_SET_GLOBAL,
     OP_GET_UPVALUE,

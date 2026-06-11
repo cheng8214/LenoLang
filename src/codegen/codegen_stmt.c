@@ -826,14 +826,29 @@ void gen_assign(CodeGen* gen, Ast* ast) {
             gen_expr(gen, ast->u.assign.value);
             emit_byte(gen, OP_INDEX_SET, ast->line);
         } else if (target->kind == AST_VAR) {
-            // 普通变量赋值
-            gen_expr(gen, ast->u.assign.value);
-
             SymRef* ref = &ast->u.assign.refs[0];
             if (!ref->name) {
                 error_add(ERR_SEMANTIC, ast->line, "未解析的赋值目标");
                 return;
             }
+
+            // 优化: a = b (两个局部变量) → OP_MOVE_LOCAL
+            if (ast->u.assign.value->kind == AST_VAR &&
+                (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM)) {
+                SymRef* src_ref = &ast->u.assign.value->u.var.ref;
+                if (src_ref->name &&
+                    (src_ref->kind == SYM_LOCAL || src_ref->kind == SYM_PARAM)) {
+                    emit_byte(gen, OP_MOVE_LOCAL, ast->line);
+                    emit_byte(gen, (uint8_t)(src_ref->index >> 8), ast->line);
+                    emit_byte(gen, (uint8_t)(src_ref->index & 0xFF), ast->line);
+                    emit_byte(gen, (uint8_t)(ref->index >> 8), ast->line);
+                    emit_byte(gen, (uint8_t)(ref->index & 0xFF), ast->line);
+                    return;
+                }
+            }
+
+            // 普通变量赋值
+            gen_expr(gen, ast->u.assign.value);
 
             switch (ref->kind) {
                 case SYM_LOCAL:
