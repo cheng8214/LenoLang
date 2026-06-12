@@ -160,7 +160,8 @@ win.close()
   - `y` (int): 窗口位置 Y
   - `fullscreen` (bool): 是否全屏
   - `borderless` (bool): 是否无边框
-  - `resizable` (bool): 是否可调整大小
+  - `resizable` (bool): 是否可拖拽边缘调整大小，默认 true（独立于 maximizable）
+  - `maximizable` (bool): 是否显示最大化按钮，默认 true（独立于 resizable）
   - `opacity` (float): 透明度 0.0~1.0
   - `visible` (bool): 是否可见
   - `always_on_top` (bool): 是否置顶

@@ -1,0 +1,431 @@
+// ============================================================
+// 测试窗口实例方法新特性 - win.method() 风格
+// 覆盖: center(), set_min_size(), set_max_size(),
+//        set_maximized(), set_bg_color(), clear_bg_color(),
+//        set_vsync(), set_icon(), set_pos(), set_size()
+// ============================================================
+
+import guis
+
+// -------------------- 测试 1: win.center() 动态居中 --------------------
+func test_center_method() {
+    print("=== 测试 1: win.center() ===")
+    Style[window] w_style = {
+        width: 600,
+        height: 400,
+        x: 50,
+        y: 50,
+        resizable: true
+    }
+    var win = guis.create_window("测试方法 - center()", w_style)
+    print("窗口创建在 (50,50)")
+
+    // 运行时居中
+    win.center()
+    print("调用 win.center() 后窗口居中")
+
+    var pos = win.get_pos()
+    print("当前位置: (" + _str(pos[0]) + ", " + _str(pos[1]) + ")")
+
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(40, 40, 60, 255))
+            ren.clear()
+            ren.set_color(_rgb(100, 255, 150, 255))
+            ren.fill_rect(200, 150, 200, 100)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() or e.is_key_down() {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 2: win.set_min_size() / win.set_max_size() --------------------
+func test_min_max_size_methods() {
+    print("=== 测试 2: set_min_size() / set_max_size() ===")
+    Style[window] w_style = {
+        width: 500,
+        height: 400,
+        center: true,
+        resizable: true
+    }
+    var win = guis.create_window("测试方法 - 尺寸限制", w_style)
+    print("窗口创建成功")
+
+    // 运行时设置尺寸限制
+    win.set_min_size(300, 200)
+    print("设置最小尺寸: 300x200")
+
+    win.set_max_size(1000, 800)
+    print("设置最大尺寸: 1000x800")
+
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(60, 60, 80, 255))
+            ren.clear()
+            ren.set_color(_rgb(255, 180, 50, 255))
+            ren.fill_rect(50, 50, 400, 300)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() or e.is_key_down() {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 3: win.set_maximized() 动态最大化 --------------------
+func test_maximized_method() {
+    print("=== 测试 3: set_maximized() ===")
+    Style[window] w_style = {
+        width: 700,
+        height: 500,
+        center: true,
+        resizable: true
+    }
+    var win = guis.create_window("测试方法 - set_maximized()", w_style)
+    print("窗口创建成功, 按空格键切换最大化")
+
+    var is_max = false
+
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(45, 45, 65, 255))
+            ren.clear()
+            ren.set_color(_rgb(255, 140, 0, 255))
+            ren.fill_rect(250, 220, 200, 60)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == 32 {
+                    // 空格键切换最大化
+                    is_max = not is_max
+                    win.set_maximized(is_max)
+                    print("切换最大化: " + _str(is_max))
+                } else {
+                    win.set_should_close(true)
+                }
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 4: win.set_bg_color() / win.clear_bg_color() --------------------
+func test_bg_color_methods() {
+    print("=== 测试 4: set_bg_color() / clear_bg_color() ===")
+    Style[window] w_style = {
+        width: 600,
+        height: 400,
+        center: true,
+        resizable: true
+    }
+    var win = guis.create_window("测试方法 - 背景色", w_style)
+    print("窗口创建成功, 无背景色")
+
+    // 运行时设置背景色
+    win.set_bg_color(_rgb(20, 30, 50, 255))
+    print("设置背景色: rgb(20,30,50)")
+
+    win.run(
+        func(Draw ren) {
+            // 背景色由引擎自动填充
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.fill_rect(250, 180, 100, 40)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == 99 {
+                    // 按键 'c' 清除背景色
+                    win.clear_bg_color()
+                    print("清除背景色 (clear_bg_color)")
+                }
+                if e.key() == 98 {
+                    // 按键 'b' 重新设置
+                    win.set_bg_color(_rgb(20, 30, 50, 255))
+                    print("恢复背景色 (set_bg_color)")
+                }
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 5: win.set_vsync() 动态切换 --------------------
+func test_vsync_method() {
+    print("=== 测试 5: set_vsync() ===")
+    Style[window] w_style = {
+        width: 500,
+        height: 400,
+        center: true,
+        vsync: true,
+        resizable: true,
+        bg_color: _rgb(35, 35, 55, 255)
+    }
+    var win = guis.create_window("测试方法 - vsync", w_style)
+    print("窗口创建成功, vsync=true")
+
+    var vsync_on = true
+    var frame_count = 0
+
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(35, 35, 55, 255))
+            ren.clear()
+            ren.set_color(_rgb(0, 255, 0, 255))
+            ren.fill_rect(50, 50, frame_count % 400, 20)
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.fill_rect(20, 350, 460, 30)
+            ren.present()
+            frame_count = frame_count + 1
+            if frame_count > 1000 {
+                frame_count = 0
+            }
+        },
+        func(Event e) {
+            if e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == 118 {
+                    // 'v' 键切换 vsync
+                    vsync_on = not vsync_on
+                    win.set_vsync(vsync_on)
+                    print("VSync 切换: " + _str(vsync_on))
+                } else {
+                    win.set_should_close(true)
+                }
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 6: 位置/尺寸方法组合 --------------------
+func test_position_methods() {
+    print("=== 测试 6: 位置方法组合 ===")
+    Style[window] w_style = {
+        width: 550,
+        height: 380,
+        resizable: true
+    }
+    var win = guis.create_window("测试方法 - 位置", w_style)
+    print("窗口创建成功")
+
+    win.set_pos(200, 150)
+    print("设置位置: (200, 150)")
+
+    var pos = win.get_pos()
+    print("确认位置: (" + _str(pos[0]) + ", " + _str(pos[1]) + ")")
+
+    win.set_size(600, 420)
+    print("设置尺寸: 600x420")
+
+    var sz = win.get_size()
+    print("确认尺寸: (" + _str(sz[0]) + ", " + _str(sz[1]) + ")")
+
+    win.center()
+    print("居中窗口")
+
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(70, 70, 90, 255))
+            ren.clear()
+            ren.set_color(_rgb(150, 250, 150, 255))
+            ren.fill_rect(100, 100, 350, 180)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() or e.is_key_down() {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 7: 透明度 + 标题修改 --------------------
+func test_opacity_title() {
+    print("=== 测试 7: 透明度 + 标题修改 ===")
+    Style[window] w_style = {
+        width: 500,
+        height: 350,
+        center: true,
+        opacity: 0.95,
+        bg_color: _rgb(25, 25, 45, 255)
+    }
+    var win = guis.create_window("初始标题", w_style)
+    print("窗口创建成功")
+
+    // 运行时修改透明度
+    win.set_opacity(0.75)
+    print("设置透明度: 0.75")
+
+    // 修改标题
+    win.set_title("新标题 - 已修改")
+    print("修改标题成功")
+
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(25, 25, 45, 255))
+            ren.clear()
+            ren.set_color(_rgb(255, 220, 100, 255))
+            ren.fill_rect(150, 120, 200, 110)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() or e.is_key_down() {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 8: 窗口隐藏/显示 --------------------
+func test_show_hide() {
+    print("=== 测试 8: 窗口显示/隐藏 ===")
+    Style[window] w_style = {
+        width: 400,
+        height: 300,
+        center: true,
+        resizable: true,
+        bg_color: _rgb(30, 45, 30, 255)
+    }
+    var win = guis.create_window("测试方法 - 显示/隐藏", w_style)
+    print("窗口创建成功")
+
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(30, 45, 30, 255))
+            ren.clear()
+            ren.set_color(_rgb(100, 255, 100, 255))
+            ren.fill_rect(100, 80, 200, 140)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == 104 {
+                    // 'h' 键隐藏
+                    win.hide()
+                    print("窗口已隐藏 (hide)")
+                }
+                if e.key() == 115 {
+                    // 's' 键显示
+                    win.show()
+                    print("窗口已显示 (show)")
+                }
+                if e.key() == 27 {
+                    // ESC 关闭
+                    win.set_should_close(true)
+                }
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 9: win.set_maximizable() 动态切换最大化按钮 --------------------
+func test_maximizable_method() {
+    print("=== 测试 9: set_maximizable() ===")
+    Style[window] w_style = {
+        width: 500,
+        height: 400,
+        center: true,
+        resizable: false,
+        bg_color: _rgb(45, 20, 45, 255)
+    }
+    var win = guis.create_window("测试方法 - maximizable", w_style)
+    print("窗口创建成功, maximizable=true(默认)")
+
+    var maximizable_on = true
+    win.run(
+        func(Draw ren) {
+            ren.set_color(_rgb(45, 20, 45, 255))
+            ren.clear()
+            ren.set_color(_rgb(255, 200, 255, 255))
+            ren.fill_rect(150, 120, 200, 160)
+            ren.present()
+        },
+        func(Event e) {
+            if e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == 109 {
+                    // 'm' 键切换 maximizable
+                    maximizable_on = not maximizable_on
+                    win.set_maximizable(maximizable_on)
+                    if maximizable_on {
+                        print("允许最大化")
+                    }
+                    if not maximizable_on {
+                        print("禁止最大化")
+                    }
+                }
+                if e.key() == 27 {
+                    win.set_should_close(true)
+                }
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 主入口 --------------------
+main() {
+    print("========================================")
+    print("窗口实例方法新特性测试 - win.method()")
+    print("========================================")
+    print("")
+    print("新增方法:")
+    print("  win.center()          - 窗口居中")
+    print("  win.set_min_size()    - 设置最小尺寸")
+    print("  win.set_max_size()    - 设置最大尺寸")
+    print("  win.set_maximized()   - 最大化/恢复")
+    print("  win.set_bg_color()    - 设置背景色")
+    print("  win.clear_bg_color()  - 清除背景色")
+    print("  win.set_vsync()       - 切换垂直同步")
+    print("  win.set_maximizable() - 切换最大化按钮")
+    print("")
+    print("已有方法(也覆盖):")
+    print("  win.set_pos()         - 设置位置")
+    print("  win.get_pos()         - 获取位置")
+    print("  win.set_size()        - 设置尺寸")
+    print("  win.get_size()        - 获取尺寸")
+    print("  win.set_opacity()     - 设置透明度")
+    print("  win.set_title()       - 设置标题")
+    print("  win.show() / hide()   - 显示/隐藏")
+    print("")
+
+    // 逐个测试（取消注释来运行）
+    // test_center_method()
+    // test_min_max_size_methods()
+    // test_maximized_method()
+    // test_bg_color_methods()
+    // test_vsync_method()
+    // test_position_methods()
+    // test_opacity_title()
+    // test_show_hide()
+     test_maximizable_method()
+
+    print("取消注释需要运行的测试函数")
+    print("========================================")
+}

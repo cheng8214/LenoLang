@@ -12,6 +12,10 @@
 typedef struct {
     Object header;
     LenoGUIPlatformWindow* platform;
+    /* 窗口背景色（创建时从 style 读取，在渲染循环中应用） */
+    int bg_r, bg_g, bg_b, bg_a;
+    int use_bg_color;       /* 是否使用自定义背景色 */
+    int vsync_enabled;      /* 是否启用帧率限制（垂直同步模拟） */
 } ObjGUIWindow;
 
 typedef struct {

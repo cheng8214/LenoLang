@@ -1,9 +1,18 @@
-// 测试闭包
+import times
 
 main() {
-  	Array a=[]
-  	a.add(1)
-  	print(a.add(2))
-   print(a)
-   print(type(a))
+
+    int count = 10000000
+    print("测试次数: " + count)
+	_gc(false)
+    int total = 0
+    for 1:10 to round {
+        var arr = []
+        int start = times.ms()
+        for 1:count { arr.add("test") }
+        int elapsed = times.ms() - start
+        total += elapsed
+        printf(format("第%d次: %d ms, 大小: %d, 平均: %d ms\n", round, elapsed, arr.len(), total / round))
+    }
+    print("总平均: " + (total / 10) + " ms")
 }

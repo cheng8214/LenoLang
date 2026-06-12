@@ -262,6 +262,19 @@ int leno_gui_platform_zlib_decode_noheader_buffer(char* obuffer, int olen, const
     return stbi_zlib_decode_noheader_buffer(obuffer, olen, ibuffer, ilen);
 }
 
+/* ===== 原始像素数据加载（供外部调用，如设置窗口图标） ===== */
+
+/* 从文件加载 RGBA 像素数据 */
+unsigned char* leno_gui_platform_load_raw_pixels(const char* path, int* w, int* h) {
+    int n;
+    return stbi_load(path, w, h, &n, 4);
+}
+
+/* 释放由 leno_gui_platform_load_raw_pixels 返回的内存 */
+void leno_gui_platform_free_raw_pixels(void* data) {
+    stbi_image_free(data);
+}
+
 /* 恢复警告设置 */
 #ifdef __GNUC__
 #pragma GCC diagnostic pop

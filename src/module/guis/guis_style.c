@@ -37,17 +37,31 @@ static const char* cursor_options[] = {
 };
 
 static StyleFieldInfo window_style_fields[] = {
+    // ===== 尺寸 =====
     { "width",        STYLE_TYPE_INT,    "窗口宽度",                    "800",       NULL, 0 },
     { "height",       STYLE_TYPE_INT,    "窗口高度",                    "600",       NULL, 0 },
+    { "min_width",    STYLE_TYPE_INT,    "最小宽度（0=不限制）",          "0",         NULL, 0 },
+    { "min_height",   STYLE_TYPE_INT,    "最小高度（0=不限制）",          "0",         NULL, 0 },
+    { "max_width",    STYLE_TYPE_INT,    "最大宽度（0=不限制）",          "0",         NULL, 0 },
+    { "max_height",   STYLE_TYPE_INT,    "最大高度（0=不限制）",          "0",         NULL, 0 },
+    // ===== 位置 =====
     { "x",            STYLE_TYPE_INT,    "窗口X坐标（屏幕位置）",        "0",         NULL, 0 },
     { "y",            STYLE_TYPE_INT,    "窗口Y坐标（屏幕位置）",        "0",         NULL, 0 },
+    { "center",       STYLE_TYPE_BOOL,   "是否居中显示（优先于x/y）",     "false",     NULL, 0 },
+    // ===== 外观 =====
     { "title",        STYLE_TYPE_STRING, "窗口标题",                    "\"LenoC\"",  NULL, 0 },
+    { "icon",         STYLE_TYPE_STRING, "窗口图标路径（空=不使用）",      "\"\"",      NULL, 0 },
+    { "bg_color",     STYLE_TYPE_COLOR,  "窗口背景颜色",                 "_rgb(255,255,255)", NULL, 0 },
     { "fullscreen",   STYLE_TYPE_BOOL,   "是否全屏",                    "false",     NULL, 0 },
     { "borderless",   STYLE_TYPE_BOOL,   "是否无边框",                  "false",     NULL, 0 },
-    { "resizable",    STYLE_TYPE_BOOL,   "是否可调整大小",               "true",      NULL, 0 },
+    { "resizable",    STYLE_TYPE_BOOL,   "是否可拖拽边缘调整大小（独立于 maximizable）", "true", NULL, 0 },
     { "opacity",      STYLE_TYPE_FLOAT,  "窗口透明度 (0.0~1.0)",        "1.0",       NULL, 0 },
+    // ===== 行为 =====
     { "visible",      STYLE_TYPE_BOOL,   "是否可见",                    "true",      NULL, 0 },
     { "always_on_top",STYLE_TYPE_BOOL,   "是否始终置顶",                 "false",     NULL, 0 },
+    { "maximized",    STYLE_TYPE_BOOL,   "是否最大化启动",               "false",     NULL, 0 },
+    { "maximizable",  STYLE_TYPE_BOOL,   "是否允许最大化按钮（独立于 resizable）", "true",  NULL, 0 },
+    { "vsync",        STYLE_TYPE_BOOL,   "是否垂直同步（帧率限制60fps）", "true",      NULL, 0 },
     { "cursor",       STYLE_TYPE_ENUM,   "鼠标光标样式",                 "\"arrow\"", cursor_options, 6 },
 };
 

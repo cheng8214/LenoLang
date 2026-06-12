@@ -10,7 +10,14 @@
  *   win.get_size() -> [w, h]            获取窗口大小
  *   win.set_pos(x, y)                   设置窗口位置
  *   win.get_pos() -> [x, y]            获取窗口位置
+ *   win.center()                        窗口居中显示
+ *   win.set_min_size(w, h)              设置最小尺寸
+ *   win.set_max_size(w, h)              设置最大尺寸
  *   win.set_fullscreen(bool)            设置全屏
+ *   win.set_maximized(bool)             设置最大化
+ *   win.set_icon(path)                  设置窗口图标
+ *   win.set_bg_color(rgb)               设置背景颜色
+ *   win.set_vsync(bool)                 设置垂直同步
  *   win.should_close() -> bool          是否应该关闭
  *   win.set_should_close(bool)          设置关闭标志
  *   win.set_opacity(opacity)            设置透明度
@@ -155,6 +162,123 @@ static Value win_clear_drag_area_func(int argc, Value* args) {
     return val_null();
 }
 
+/* win.center() - 居中窗口到屏幕中央 */
+static Value win_center_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (!win || !win->platform) return val_null();
+
+    int display_w = 0, display_h = 0;
+    leno_gui_platform_get_display_size(&display_w, &display_h);
+
+    int ww = 0, wh = 0;
+    leno_gui_platform_get_window_size(win->platform, &ww, &wh);
+
+    int cx = (display_w - ww) / 2;
+    int cy = (display_h - wh) / 2;
+    leno_gui_platform_set_window_position(win->platform, cx, cy);
+    return val_null();
+}
+
+/* win.set_min_size(w, h) */
+static Value win_set_min_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int min_w = val_as_int(args[1]);
+    int min_h = val_as_int(args[2]);
+    if (win && win->platform) leno_gui_platform_set_window_minimum_size(win->platform, min_w, min_h);
+    return val_null();
+}
+
+/* win.set_max_size(w, h) */
+static Value win_set_max_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int max_w = val_as_int(args[1]);
+    int max_h = val_as_int(args[2]);
+    if (win && win->platform) leno_gui_platform_set_window_maximum_size(win->platform, max_w, max_h);
+    return val_null();
+}
+
+/* win.set_maximized(bool) */
+static Value win_set_maximized_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int maximized = val_as_bool(args[1]) ? 1 : 0;
+    if (win && win->platform) {
+        if (maximized) {
+            leno_gui_platform_show_window(win->platform);  /* SDL3: SDL_MaximizeWindow */
+        }
+        /* 注意: 平台层目前通过 WS_MAXIMIZE 样式的 create_window 支持最大化，
+         * 运行时最大化需要在平台层添加对应的 leno_gui_platform_maximize_window 函数。
+         * 这里先通过设置 fullscreen 变通实现，后续应添加专门的 maximize 平台函数。 */
+        leno_gui_platform_set_window_fullscreen(win->platform, maximized);
+    }
+    return val_null();
+}
+
+/* win.set_icon(path) - 设置窗口图标 */
+
+static Value win_set_icon_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    ObjString* path = (ObjString*)val_as_obj(args[1]);
+    if (!win || !win->platform || !path || !path->chars) return val_null();
+
+    int icon_w = 0, icon_h = 0;
+    unsigned char* icon_data = leno_gui_platform_load_raw_pixels(path->chars, &icon_w, &icon_h);
+    if (icon_data) {
+        leno_gui_platform_set_window_icon(win->platform, (uint32_t*)icon_data, icon_w, icon_h);
+        leno_gui_platform_free_raw_pixels(icon_data);
+    }
+    return val_null();
+}
+
+/* win.set_bg_color(rgb) */
+static Value win_set_bg_color_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (!win) return val_null();
+
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_RGB) {
+        ObjRgb* rgb = (ObjRgb*)val_as_obj(args[1]);
+        win->bg_r = rgb->r;
+        win->bg_g = rgb->g;
+        win->bg_b = rgb->b;
+        win->bg_a = rgb->a;
+        win->use_bg_color = 1;
+    }
+    return val_null();
+}
+
+/* win.clear_bg_color() - 清除自定义背景色 */
+static Value win_clear_bg_color_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (win) win->use_bg_color = 0;
+    return val_null();
+}
+
+/* win.set_vsync(bool) */
+static Value win_set_vsync_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int enabled = val_as_bool(args[1]) ? 1 : 0;
+    if (win) win->vsync_enabled = enabled;
+    return val_null();
+}
+
+/* win.set_maximizable(bool) - 设置是否允许最大化 */
+static Value win_set_maximizable_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    int allow = val_as_bool(args[1]) ? 1 : 0;
+    if (win && win->platform) {
+        leno_gui_platform_set_window_maximizable(win->platform, allow);
+    }
+    return val_null();
+}
+
 /* ============================================================================
  * 注册 Win 实例方法
  * ============================================================================ */
@@ -179,6 +303,7 @@ void guis_init_window_instance_methods(void) {
     TypeKind bool_1[] = {TYPE_BOOL};
     TypeKind float_1[] = {TYPE_FLOAT};
     TypeKind func_2[] = {TYPE_ANY, TYPE_ANY};
+    TypeKind any_1[] = {TYPE_ANY};
 
     window_register_method_with_params("show", make_native(win_show_func, 1, "show"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("hide", make_native(win_hide_func, 1, "hide"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
@@ -188,6 +313,15 @@ void guis_init_window_instance_methods(void) {
     window_register_method_with_params("get_size", make_native(win_get_size_func, 1, "get_size"), 0, -1, -1, TYPE_ARRAY, TYPE_INT, no_params);
     window_register_method_with_params("set_pos", make_native(win_set_pos_func, 3, "set_pos"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
     window_register_method_with_params("get_pos", make_native(win_get_pos_func, 1, "get_pos"), 0, -1, -1, TYPE_ARRAY, TYPE_INT, no_params);
+    window_register_method_with_params("center", make_native(win_center_func, 1, "center"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    window_register_method_with_params("set_min_size", make_native(win_set_min_size_func, 3, "set_min_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
+    window_register_method_with_params("set_max_size", make_native(win_set_max_size_func, 3, "set_max_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
+    window_register_method_with_params("set_maximized", make_native(win_set_maximized_func, 2, "set_maximized"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
+    window_register_method_with_params("set_icon", make_native(win_set_icon_func, 2, "set_icon"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_1);
+    window_register_method_with_params("set_bg_color", make_native(win_set_bg_color_func, 2, "set_bg_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    window_register_method_with_params("clear_bg_color", make_native(win_clear_bg_color_func, 1, "clear_bg_color"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    window_register_method_with_params("set_vsync", make_native(win_set_vsync_func, 2, "set_vsync"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
+    window_register_method_with_params("set_maximizable", make_native(win_set_maximizable_func, 2, "set_maximizable"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
     window_register_method_with_params("set_fullscreen", make_native(win_set_fullscreen_func, 2, "set_fullscreen"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
     window_register_method_with_params("should_close", make_native(win_should_close_func, 1, "should_close"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("set_should_close", make_native(win_set_should_close_func, 2, "set_should_close"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);

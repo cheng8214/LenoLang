@@ -58,6 +58,8 @@
 #include "guis_constants.h"
 #include <string.h>
 
+/* leno_gui_platform_load_raw_pixels 已通过 leno_guis.h 声明 */
+
 
 
 ObjGUIWindow* create_window_obj(LenoGUIPlatformWindow* pw) {
@@ -244,6 +246,13 @@ static Value gui_create_window_func(int argc, Value* args) {
 
     ObjString* title = (ObjString*)val_as_obj(args[0]);
     int w = 800, h = 600, flags = 0;
+    int pos_x = 0, pos_y = 0, use_center = 0;
+    int min_w = 0, min_h = 0, max_w = 0, max_h = 0;
+    float opacity = 1.0f;
+    int bg_r = 255, bg_g = 255, bg_b = 255, bg_a = 255;
+    int use_bg_color = 0;
+    int vsync_enabled = 1;
+    const char* icon_path = NULL;
 
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
         ObjDict* style = (ObjDict*)val_as_obj(args[1]);
@@ -285,6 +294,89 @@ static Value gui_create_window_func(int argc, Value* args) {
         if (!val_is_null(vtop) && val_as_bool(vtop)) {
             flags |= LENO_GUI_WIN_ALWAYS_ON_TOP;
         }
+
+        /* ===== 新增样式字段解析 ===== */
+
+        /* center */
+        ObjString* key_center = intern_string("center", 6);
+        Value vcenter = dict_get(style, val_obj((Object*)key_center));
+        if (!val_is_null(vcenter) && val_as_bool(vcenter)) {
+            use_center = 1;
+        }
+
+        /* x / y */
+        ObjString* key_x = intern_string("x", 1);
+        ObjString* key_y = intern_string("y", 1);
+        Value vx = dict_get(style, val_obj((Object*)key_x));
+        Value vy = dict_get(style, val_obj((Object*)key_y));
+        if (!val_is_null(vx)) pos_x = val_as_int(vx);
+        if (!val_is_null(vy)) pos_y = val_as_int(vy);
+
+        /* maximized */
+        ObjString* key_maximized = intern_string("maximized", 9);
+        Value vmaximized = dict_get(style, val_obj((Object*)key_maximized));
+        if (!val_is_null(vmaximized) && val_as_bool(vmaximized)) {
+            flags |= LENO_GUI_WIN_MAXIMIZED;
+        }
+
+        /* maximizable: false=禁止最大化 */
+        ObjString* key_maximizable = intern_string("maximizable", 11);
+        Value vmaximizable = dict_get(style, val_obj((Object*)key_maximizable));
+        if (!val_is_null(vmaximizable) && !val_as_bool(vmaximizable)) {
+            flags |= LENO_GUI_WIN_NO_MAXIMIZE;
+        }
+
+        /* min_width / min_height */
+        ObjString* key_min_w = intern_string("min_width", 9);
+        ObjString* key_min_h = intern_string("min_height", 10);
+        Value vmin_w = dict_get(style, val_obj((Object*)key_min_w));
+        Value vmin_h = dict_get(style, val_obj((Object*)key_min_h));
+        if (!val_is_null(vmin_w)) min_w = val_as_int(vmin_w);
+        if (!val_is_null(vmin_h)) min_h = val_as_int(vmin_h);
+
+        /* max_width / max_height */
+        ObjString* key_max_w = intern_string("max_width", 9);
+        ObjString* key_max_h = intern_string("max_height", 10);
+        Value vmax_w = dict_get(style, val_obj((Object*)key_max_w));
+        Value vmax_h = dict_get(style, val_obj((Object*)key_max_h));
+        if (!val_is_null(vmax_w)) max_w = val_as_int(vmax_w);
+        if (!val_is_null(vmax_h)) max_h = val_as_int(vmax_h);
+
+        /* opacity */
+        ObjString* key_opacity = intern_string("opacity", 7);
+        Value vopacity = dict_get(style, val_obj((Object*)key_opacity));
+        if (!val_is_null(vopacity)) opacity = (float)val_as_double(vopacity);
+
+        /* bg_color */
+        ObjString* key_bg = intern_string("bg_color", 8);
+        Value vbg = dict_get(style, val_obj((Object*)key_bg));
+        if (!val_is_null(vbg) && val_is_obj(vbg)) {
+            Object* obj = val_as_obj(vbg);
+            if (obj->type == OBJ_RGB) {
+                ObjRgb* rgb = (ObjRgb*)obj;
+                bg_r = rgb->r;
+                bg_g = rgb->g;
+                bg_b = rgb->b;
+                bg_a = rgb->a;
+                use_bg_color = 1;
+            }
+        }
+
+        /* vsync */
+        ObjString* key_vsync = intern_string("vsync", 5);
+        Value vvsync = dict_get(style, val_obj((Object*)key_vsync));
+        if (!val_is_null(vvsync)) vsync_enabled = val_as_bool(vvsync) ? 1 : 0;
+
+        /* icon */
+        ObjString* key_icon = intern_string("icon", 4);
+        Value vicon = dict_get(style, val_obj((Object*)key_icon));
+        if (!val_is_null(vicon) && val_is_obj(vicon)) {
+            Object* icon_obj = val_as_obj(vicon);
+            if (icon_obj->type == OBJ_STRING) {
+                icon_path = ((ObjString*)icon_obj)->chars;
+                if (icon_path && icon_path[0] == '\0') icon_path = NULL;
+            }
+        }
     }
 
     if (!leno_gui_platform_init()) return val_null();
@@ -297,6 +389,53 @@ static Value gui_create_window_func(int argc, Value* args) {
         leno_gui_platform_destroy_window(pw);
         return val_null();
     }
+
+    /* ===== 应用窗口属性 ===== */
+
+    /* center: 居中优先于 x/y */
+    if (use_center) {
+        int display_w = 0, display_h = 0;
+        leno_gui_platform_get_display_size(&display_w, &display_h);
+        pos_x = (display_w - w) / 2;
+        pos_y = (display_h - h) / 2;
+    }
+    if (pos_x != 0 || pos_y != 0) {
+        leno_gui_platform_set_window_position(pw, pos_x, pos_y);
+    }
+
+    /* 最小/最大尺寸 */
+    if (min_w > 0 || min_h > 0) {
+        leno_gui_platform_set_window_minimum_size(pw, min_w, min_h);
+    }
+    if (max_w > 0 || max_h > 0) {
+        leno_gui_platform_set_window_maximum_size(pw, max_w, max_h);
+    }
+
+    /* 透明度 */
+    if (opacity < 1.0f) {
+        leno_gui_platform_set_window_opacity(pw, opacity);
+    }
+
+    /* 背景色 */
+    obj->bg_r = bg_r;
+    obj->bg_g = bg_g;
+    obj->bg_b = bg_b;
+    obj->bg_a = bg_a;
+    obj->use_bg_color = use_bg_color;
+
+    /* vsync */
+    obj->vsync_enabled = vsync_enabled;
+
+    /* 图标 */
+    if (icon_path) {
+        int icon_w = 0, icon_h = 0;
+        unsigned char* icon_data = leno_gui_platform_load_raw_pixels(icon_path, &icon_w, &icon_h);
+        if (icon_data) {
+            leno_gui_platform_set_window_icon(pw, (uint32_t*)icon_data, icon_w, icon_h);
+            leno_gui_platform_free_raw_pixels(icon_data);
+        }
+    }
+
     return val_obj((Object*)obj);
 }
 
@@ -986,6 +1125,18 @@ typedef struct {
 static void leno_gui_render_callback(void* user_data) {
     LenoGUIRunState* state = (LenoGUIRunState*)user_data;
     if (state->has_error) return;
+
+    /* 应用窗口背景色 */
+    ObjGUIWindow* win = state->ren_obj->window;
+    if (win && win->use_bg_color) {
+        LenoGUIPlatformRenderer* pr = state->ren_obj->platform;
+        leno_gui_platform_set_draw_color(pr, (uint8_t)win->bg_r, (uint8_t)win->bg_g,
+                                         (uint8_t)win->bg_b, (uint8_t)win->bg_a);
+        int rw = 0, rh = 0;
+        leno_gui_platform_get_renderer_size(pr, &rw, &rh);
+        leno_gui_platform_render_fill_rect(pr, 0, 0, rw, rh);
+    }
+
     if (!val_is_null(state->on_draw)) {
         call_leno_closure(state->on_draw, 1, &state->ren_val);
         if (g_last_closure_call_result != 1) {
@@ -1047,8 +1198,24 @@ Value win_run_func(int argc, Value* args) {
 
     /* 使用迭代回调机制（参考 SDL3） */
     int frame_count = 0;
+    /* vsync 帧率控制 */
+    int vsync = win->vsync_enabled;
+    uint64_t last_frame_time = leno_gui_platform_get_ticks();
+    const uint64_t TARGET_FRAME_MS = 16;  /* ~60 FPS */
+
     while (1) {
         if (run_state.has_error) break;
+
+        /* vsync: 帧率限制 */
+        if (vsync) {
+            uint64_t now = leno_gui_platform_get_ticks();
+            uint64_t elapsed = now - last_frame_time;
+            if (elapsed < TARGET_FRAME_MS) {
+                uint64_t sleep_ms = TARGET_FRAME_MS - elapsed;
+                leno_gui_platform_delay((uint32_t)sleep_ms);
+            }
+            last_frame_time = leno_gui_platform_get_ticks();
+        }
 
         if (process_timers()) {
             leno_gui_platform_request_redraw();
@@ -1071,12 +1238,14 @@ Value win_run_func(int argc, Value* args) {
             gc_minor_collect();
         }
 
+        if (!vsync) {
 #ifdef _WIN32
-        Sleep(1);
+            Sleep(1);
 #else
-        struct timespec ts = {0, 1000000};
-        nanosleep(&ts, NULL);
+            struct timespec ts = {0, 1000000};
+            nanosleep(&ts, NULL);
 #endif
+        }
     }
 
     gc_pop_root();

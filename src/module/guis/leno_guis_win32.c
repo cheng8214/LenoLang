@@ -230,6 +230,7 @@ struct LenoGUIPlatformWindow {
     int min_h;                          /* 最小高度 */
     int max_w;                          /* 最大宽度 */
     int max_h;                          /* 最大高度 */
+    int no_maximize;                    /* 禁止最大化（移除按钮+阻止行为） */
     HCURSOR custom_cursor;              /* 自定义光标句柄 */
     /* 键盘状态跟踪（参考 SDL3 prev/curr 按键状态） */
     uint8_t prev_keys[256];             /* 上一帧按键状态 */
@@ -657,13 +658,17 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
         case WM_GETMINMAXINFO: {
             if (win) {
                 MINMAXINFO* mmi = (MINMAXINFO*)lparam;
-                if (win->min_w > 0 && win->min_h > 0) {
-                    mmi->ptMinTrackSize.x = win->min_w;
-                    mmi->ptMinTrackSize.y = win->min_h;
-                }
-                if (win->max_w > 0 && win->max_h > 0) {
-                    mmi->ptMaxTrackSize.x = win->max_w;
-                    mmi->ptMaxTrackSize.y = win->max_h;
+                if (win->min_w > 0) mmi->ptMinTrackSize.x = win->min_w;
+                if (win->min_h > 0) mmi->ptMinTrackSize.y = win->min_h;
+                if (win->max_w > 0) mmi->ptMaxTrackSize.x = win->max_w;
+                if (win->max_h > 0) mmi->ptMaxTrackSize.y = win->max_h;
+                if (win->no_maximize) {
+                    /* 阻止最大化：将最大化尺寸限制为当前窗口尺寸 */
+                    RECT wr;
+                    if (GetWindowRect(win->hwnd, &wr)) {
+                        mmi->ptMaxSize.x = wr.right - wr.left;
+                        mmi->ptMaxSize.y = wr.bottom - wr.top;
+                    }
                 }
             }
             return 0;
@@ -846,16 +851,25 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     win->min_h = 0;
     win->max_w = 0;
     win->max_h = 0;
+    win->no_maximize = (flags & LENO_GUI_WIN_NO_MAXIMIZE) ? 1 : 0;
     win->custom_cursor = NULL;
 
-    DWORD style = WS_OVERLAPPEDWINDOW;
+    DWORD style;
     if (flags & LENO_GUI_WIN_BORDERLESS) {
         style = WS_POPUP;
         if (flags & LENO_GUI_WIN_RESIZABLE) {
             style |= WS_THICKFRAME;
         }
+    } else {
+        /* 显式组装窗口样式，避免 WS_OVERLAPPEDWINDOW 宏的隐式行为 */
+        style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        if (flags & LENO_GUI_WIN_RESIZABLE) {
+            style |= WS_THICKFRAME;
+        }
+        if (!(flags & LENO_GUI_WIN_NO_MAXIMIZE)) {
+            style |= WS_MAXIMIZEBOX;
+        }
     }
-    if (!(flags & LENO_GUI_WIN_RESIZABLE)) style &= ~WS_THICKFRAME;
     if (flags & LENO_GUI_WIN_MINIMIZED) style |= WS_MINIMIZE;
     if (flags & LENO_GUI_WIN_MAXIMIZED) style |= WS_MAXIMIZE;
     if (flags & LENO_GUI_WIN_HIDDEN) style &= ~WS_VISIBLE;
@@ -890,6 +904,12 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     }
 
     SetWindowLongPtrW(win->hwnd, GWLP_USERDATA, (LONG_PTR)win);
+
+    /* 如果禁用最大化，需强制刷新窗口框架以生效 */
+    if (flags & LENO_GUI_WIN_NO_MAXIMIZE) {
+        SetWindowPos(win->hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
 
     if (flags & LENO_GUI_WIN_ALWAYS_ON_TOP) {
         SetWindowPos(win->hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
@@ -1878,6 +1898,22 @@ void leno_gui_platform_set_window_icon(LenoGUIPlatformWindow* win, const uint32_
     free(mask_bits);
     DeleteDC(mem_dc);
     ReleaseDC(NULL, screen_dc);
+}
+
+/* ===== 窗口最大化控制 ===== */
+
+void leno_gui_platform_set_window_maximizable(LenoGUIPlatformWindow* win, int allow) {
+    if (!win || !win->hwnd) return;
+    win->no_maximize = allow ? 0 : 1;
+    DWORD style = GetWindowLongW(win->hwnd, GWL_STYLE);
+    if (allow) {
+        style |= WS_MAXIMIZEBOX;
+    } else {
+        style &= ~WS_MAXIMIZEBOX;
+    }
+    SetWindowLongW(win->hwnd, GWL_STYLE, style);
+    SetWindowPos(win->hwnd, NULL, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 }
 
 /* ===== 文件对话框（参考 SDL3 SDL_ShowFileDialogWithProperties） ===== */

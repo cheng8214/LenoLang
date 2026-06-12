@@ -43,7 +43,8 @@ type Win  // 窗口对象类型
 | `height` | int | 600 | 窗口高度 |
 | `x` | int | 居中 | 窗口位置X |
 | `y` | int | 居中 | 窗口位置Y |
-| `resizable` | bool | false | 是否可调整大小 |
+| `resizable` | bool | true | 是否可拖拽边缘调整大小 |
+| `maximizable` | bool | true | 是否显示最大化按钮（独立于 resizable） |
 | `fullscreen` | bool | false | 是否全屏 |
 | `borderless` | bool | false | 是否无边框 |
 | `hidden` | bool | false | 初始是否隐藏 |

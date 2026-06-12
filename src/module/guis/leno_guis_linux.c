@@ -35,6 +35,14 @@ typedef GC X11GC;
 #include <pthread.h>
 #include <unistd.h>
 
+/* MWM (Motif Window Manager) hints - 用于控制窗口功能 */
+#define MWM_FUNC_ALL       (1L << 0)
+#define MWM_FUNC_RESIZE    (1L << 1)
+#define MWM_FUNC_MOVE      (1L << 2)
+#define MWM_FUNC_MINIMIZE  (1L << 3)
+#define MWM_FUNC_MAXIMIZE  (1L << 4)
+#define MWM_FUNC_CLOSE     (1L << 5)
+
 /* ===== 事件队列（借鉴 SDL3：链表 + 对象池）===== */
 
 typedef struct LenoGUIEventEntry {
@@ -247,6 +255,7 @@ struct LenoGUIPlatformWindow {
     int should_close;
     int is_fullscreen;
     int is_borderless;
+    int is_maximized;       /* 跟踪最大化状态 */
     int is_minimized;       /* 跟踪最小化状态（参考 SDL3） */
     int is_hiding;          /* 区分 UnmapNotify 是最小化还是隐藏（参考 SDL3） */
     int drag_area_enabled;
@@ -254,6 +263,10 @@ struct LenoGUIPlatformWindow {
     int drag_area_y;
     int drag_area_w;
     int drag_area_h;
+    int min_w;              /* 最小宽度（0=不限制） */
+    int min_h;              /* 最小高度（0=不限制） */
+    int max_w;              /* 最大宽度（0=不限制） */
+    int max_h;              /* 最大高度（0=不限制） */
     /* 双击检测状态 */
     unsigned long last_click_time[3];   /* 上次点击时间（毫秒，索引0=左键,1=中键,2=右键） */
     int last_click_x[3];                /* 上次点击X坐标 */
@@ -455,7 +468,14 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     win->should_close = 0;
     win->is_fullscreen = 0;
     win->is_borderless = (flags & LENO_GUI_WIN_BORDERLESS) ? 1 : 0;
+    win->is_maximized = 0;
+    win->is_minimized = 0;
+    win->is_hiding = 0;
     win->drag_area_enabled = 0;
+    win->min_w = 0;
+    win->min_h = 0;
+    win->max_w = 0;
+    win->max_h = 0;
 
     Window root = RootWindow(g_display, g_screen);
     unsigned long bg = BlackPixel(g_display, g_screen);
@@ -466,7 +486,7 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
     swa.background_pixel = bg;
     swa.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask |
                      ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
-                     StructureNotifyMask | FocusChangeMask;
+                     StructureNotifyMask | FocusChangeMask | PropertyChangeMask;
 
     if (flags & LENO_GUI_WIN_BORDERLESS) {
         swa.override_redirect = True;
@@ -487,32 +507,100 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
 
     XStoreName(g_display, win->xwindow, title);
 
-    if (flags & LENO_GUI_WIN_RESIZABLE) {
+    /* 禁止最大化：使用 MWM (Motif) hints 移除最大化功能 */
+    if (flags & LENO_GUI_WIN_NO_MAXIMIZE) {
+        Atom mwm_hints_atom = XInternAtom(g_display, "_MOTIF_WM_HINTS", True);
+        if (mwm_hints_atom != None) {
+            struct {
+                unsigned long flags;
+                unsigned long functions;
+                unsigned long decorations;
+                long input_mode;
+                unsigned long status;
+            } mwm_hints;
+            memset(&mwm_hints, 0, sizeof(mwm_hints));
+            mwm_hints.flags = 1L << 1;  /* MWM_HINTS_FUNCTIONS */
+            mwm_hints.functions = MWM_FUNC_ALL | MWM_FUNC_RESIZE |
+                                  MWM_FUNC_MOVE | MWM_FUNC_MINIMIZE |
+                                  MWM_FUNC_CLOSE;  /* 不含 MAXIMIZE */
+            XChangeProperty(g_display, win->xwindow,
+                            mwm_hints_atom, mwm_hints_atom, 32,
+                            PropModeReplace,
+                            (unsigned char*)&mwm_hints, 5);
+        }
+    }
+
+    /* 设置尺寸提示（XSizeHints） */
+    {
         XSizeHints* hints = XAllocSizeHints();
         if (hints) {
             hints->flags = PSize;
             hints->width = w;
             hints->height = h;
-            XSetWMNormalHints(g_display, win->xwindow, hints);
-            XFree(hints);
-        }
-    } else {
-        XSizeHints* hints = XAllocSizeHints();
-        if (hints) {
-            hints->flags = PSize | PMinSize | PMaxSize;
-            hints->width = w;
-            hints->height = h;
-            hints->min_width = w;
-            hints->min_height = h;
-            hints->max_width = w;
-            hints->max_height = h;
+
+            if (flags & LENO_GUI_WIN_RESIZABLE) {
+                /* 可调整大小：设置 min/max 提示 */
+                if (win->min_w > 0 || win->min_h > 0) {
+                    hints->flags |= PMinSize;
+                    hints->min_width = win->min_w > 0 ? win->min_w : w;
+                    hints->min_height = win->min_h > 0 ? win->min_h : h;
+                }
+                if (win->max_w > 0 || win->max_h > 0) {
+                    hints->flags |= PMaxSize;
+                    hints->max_width = win->max_w > 0 ? win->max_w : w;
+                    hints->max_height = win->max_h > 0 ? win->max_h : h;
+                }
+            } else {
+                /* 不可调整大小：锁定尺寸 */
+                hints->flags |= PMinSize | PMaxSize;
+                hints->min_width = w;
+                hints->min_height = h;
+                hints->max_width = w;
+                hints->max_height = h;
+            }
+
             XSetWMNormalHints(g_display, win->xwindow, hints);
             XFree(hints);
         }
     }
 
+    /* always_on_top: 使用 _NET_WM_STATE_ABOVE */
+    if (flags & LENO_GUI_WIN_ALWAYS_ON_TOP) {
+        Atom net_wm_state = XInternAtom(g_display, "_NET_WM_STATE", True);
+        Atom net_wm_state_above = XInternAtom(g_display, "_NET_WM_STATE_ABOVE", True);
+        if (net_wm_state != None && net_wm_state_above != None) {
+            XChangeProperty(g_display, win->xwindow,
+                            net_wm_state, XA_ATOM, 32,
+                            PropModeReplace,
+                            (unsigned char*)&net_wm_state_above, 1);
+        }
+    }
+
     if (!(flags & LENO_GUI_WIN_HIDDEN)) {
         XMapWindow(g_display, win->xwindow);
+    }
+
+    /* maximized: 发送 _NET_WM_STATE 客户端消息请求最大化 */
+    if (flags & LENO_GUI_WIN_MAXIMIZED) {
+        win->is_maximized = 1;
+        Atom net_wm_state = XInternAtom(g_display, "_NET_WM_STATE", True);
+        Atom net_wm_state_maxv = XInternAtom(g_display, "_NET_WM_STATE_MAXIMIZED_VERT", True);
+        Atom net_wm_state_maxh = XInternAtom(g_display, "_NET_WM_STATE_MAXIMIZED_HORZ", True);
+        if (net_wm_state != None && net_wm_state_maxv != None) {
+            XEvent ev;
+            memset(&ev, 0, sizeof(ev));
+            ev.xclient.type = ClientMessage;
+            ev.xclient.window = win->xwindow;
+            ev.xclient.message_type = net_wm_state;
+            ev.xclient.format = 32;
+            ev.xclient.data.l[0] = 1;  /* _NET_WM_STATE_ADD */
+            ev.xclient.data.l[1] = (long)net_wm_state_maxv;
+            ev.xclient.data.l[2] = (long)net_wm_state_maxh;
+            ev.xclient.data.l[3] = 0;
+            ev.xclient.data.l[4] = 0;
+            XSendEvent(g_display, RootWindow(g_display, g_screen), False,
+                       SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+        }
     }
 
     window_list_add(win);
@@ -777,6 +865,30 @@ static void pump_x11_events(void) {
                 break;
             }
             case ConfigureNotify: {
+                /* 检测最大化/恢复 */
+                if (win) {
+                    int was_maximized = win->is_maximized;
+                    /* 判断是否最大化：对比窗口尺寸和屏幕尺寸 */
+                    int screen_w = DisplayWidth(g_display, g_screen);
+                    int screen_h = DisplayHeight(g_display, g_screen);
+                    int cw = xev.xconfigure.width;
+                    int ch = xev.xconfigure.height;
+                    int is_now_maximized = (cw >= screen_w - 10 && ch >= screen_h - 10);
+
+                    if (is_now_maximized && !was_maximized) {
+                        win->is_maximized = 1;
+                        ev.type = LENO_GUI_EVT_WINDOW_MAXIMIZED;
+                        ev.data1 = cw;
+                        ev.data2 = ch;
+                        event_queue_push(&ev);
+                    } else if (!is_now_maximized && was_maximized) {
+                        win->is_maximized = 0;
+                        ev.type = LENO_GUI_EVT_WINDOW_RESTORED;
+                        ev.data1 = cw;
+                        ev.data2 = ch;
+                        event_queue_push(&ev);
+                    }
+                }
                 ev.type = LENO_GUI_EVT_WINDOW_RESIZE;
                 ev.data1 = xev.xconfigure.width;
                 ev.data2 = xev.xconfigure.height;
@@ -1680,6 +1792,144 @@ void leno_gui_platform_get_logical_viewport(LenoGUIPlatformRenderer* ren, int* x
 
 void leno_gui_platform_reset_logical_size(LenoGUIPlatformRenderer* ren) {
     if (!ren) return;
+}
+
+/* ===== 窗口 should_close ===== */
+
+int leno_gui_platform_window_should_close(LenoGUIPlatformWindow* win) {
+    return win ? win->should_close : 0;
+}
+
+void leno_gui_platform_set_window_should_close(LenoGUIPlatformWindow* win, int val) {
+    if (win) win->should_close = val;
+}
+
+/* ===== 获取窗口大小 ===== */
+
+void leno_gui_platform_get_window_size(LenoGUIPlatformWindow* win, int* w, int* h) {
+    if (!win || !g_display || !win->xwindow) { if (w) *w = 0; if (h) *h = 0; return; }
+    XWindowAttributes attr;
+    if (XGetWindowAttributes(g_display, win->xwindow, &attr)) {
+        if (w) *w = attr.width;
+        if (h) *h = attr.height;
+    } else {
+        if (w) *w = win->width;
+        if (h) *h = win->height;
+    }
+}
+
+/* ===== 窗口最小/最大尺寸限制 ===== */
+
+void leno_gui_platform_set_window_minimum_size(LenoGUIPlatformWindow* win, int min_w, int min_h) {
+    if (!win || !g_display || !win->xwindow) return;
+    win->min_w = min_w;
+    win->min_h = min_h;
+
+    XSizeHints* hints = XAllocSizeHints();
+    if (!hints) return;
+
+    long supplied;
+    if (XGetWMNormalHints(g_display, win->xwindow, hints, &supplied)) {
+        hints->flags |= PMinSize;
+        hints->min_width = min_w;
+        hints->min_height = min_h;
+        if (min_w == 0 && min_h == 0) hints->flags &= ~PMinSize;
+        XSetWMNormalHints(g_display, win->xwindow, hints);
+    }
+    XFree(hints);
+}
+
+void leno_gui_platform_set_window_maximum_size(LenoGUIPlatformWindow* win, int max_w, int max_h) {
+    if (!win || !g_display || !win->xwindow) return;
+    win->max_w = max_w;
+    win->max_h = max_h;
+
+    XSizeHints* hints = XAllocSizeHints();
+    if (!hints) return;
+
+    long supplied;
+    if (XGetWMNormalHints(g_display, win->xwindow, hints, &supplied)) {
+        hints->flags |= PMaxSize;
+        hints->max_width = max_w;
+        hints->max_height = max_h;
+        if (max_w == 0 && max_h == 0) hints->flags &= ~PMaxSize;
+        XSetWMNormalHints(g_display, win->xwindow, hints);
+    }
+    XFree(hints);
+}
+
+/* ===== 窗口图标（使用 _NET_WM_ICON） ===== */
+
+void leno_gui_platform_set_window_icon(LenoGUIPlatformWindow* win, const uint32_t* pixels, int w, int h) {
+    if (!win || !g_display || !win->xwindow || !pixels || w <= 0 || h <= 0) return;
+
+    /* _NET_WM_ICON 格式: 一个 unsigned long 数组
+     * [w, h, ARGB_Pixel1, ARGB_Pixel2, ...]
+     * 其中 ARGB 格式为 (A << 24) | (R << 16) | (G << 8) | B
+     */
+    int num_elems = 2 + w * h;
+    unsigned long* icon_data = (unsigned long*)malloc(num_elems * sizeof(unsigned long));
+    if (!icon_data) return;
+
+    icon_data[0] = (unsigned long)w;
+    icon_data[1] = (unsigned long)h;
+    for (int i = 0; i < w * h; i++) {
+        // pixels 存的是 0xAARRGGBB，需转为 X11 格式
+        uint32_t p = pixels[i];
+        uint8_t a = (uint8_t)(p >> 24);
+        uint8_t r = (uint8_t)(p >> 16);
+        uint8_t g = (uint8_t)(p >> 8);
+        uint8_t b = (uint8_t)(p);
+        icon_data[2 + i] = ((unsigned long)a << 24) | ((unsigned long)r << 16) |
+                            ((unsigned long)g << 8) | (unsigned long)b;
+    }
+
+    Atom net_wm_icon = XInternAtom(g_display, "_NET_WM_ICON", True);
+    if (net_wm_icon != None) {
+        XChangeProperty(g_display, win->xwindow,
+                        net_wm_icon, XA_CARDINAL, 32,
+                        PropModeReplace,
+                        (unsigned char*)icon_data, num_elems);
+    }
+    free(icon_data);
+    XFlush(g_display);
+}
+
+/* ===== 窗口最大化控制（运行时修改 MWM hints） ===== */
+
+void leno_gui_platform_set_window_maximizable(LenoGUIPlatformWindow* win, int allow) {
+    if (!win || !g_display || !win->xwindow) return;
+
+    Atom mwm_hints_atom = XInternAtom(g_display, "_MOTIF_WM_HINTS", True);
+    if (mwm_hints_atom == None) return;
+
+    struct {
+        unsigned long flags;
+        unsigned long functions;
+        unsigned long decorations;
+        long input_mode;
+        unsigned long status;
+    } mwm_hints;
+    memset(&mwm_hints, 0, sizeof(mwm_hints));
+
+    mwm_hints.flags = 1L << 1;  /* MWM_HINTS_FUNCTIONS */
+    if (allow) {
+        /* 允许所有功能（包括最大化） */
+        mwm_hints.functions = MWM_FUNC_ALL | MWM_FUNC_RESIZE |
+                              MWM_FUNC_MOVE | MWM_FUNC_MINIMIZE |
+                              MWM_FUNC_MAXIMIZE | MWM_FUNC_CLOSE;
+    } else {
+        /* 禁止最大化 */
+        mwm_hints.functions = MWM_FUNC_ALL | MWM_FUNC_RESIZE |
+                              MWM_FUNC_MOVE | MWM_FUNC_MINIMIZE |
+                              MWM_FUNC_CLOSE;
+    }
+
+    XChangeProperty(g_display, win->xwindow,
+                    mwm_hints_atom, mwm_hints_atom, 32,
+                    PropModeReplace,
+                    (unsigned char*)&mwm_hints, 5);
+    XFlush(g_display);
 }
 
 #endif /* __linux__ */

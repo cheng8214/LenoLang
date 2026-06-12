@@ -40,6 +40,7 @@ extern "C" {
 #define LENO_GUI_WIN_ALWAYS_ON_TOP 0x0010
 #define LENO_GUI_WIN_MINIMIZED     0x0020
 #define LENO_GUI_WIN_MAXIMIZED     0x0040
+#define LENO_GUI_WIN_NO_MAXIMIZE   0x0080  /* 禁止最大化 */
 
 /* ===== 事件类型（参考 SDL3 分段编码） ===== */
 #define LENO_GUI_EVT_QUIT              0x100
@@ -366,10 +367,17 @@ void   leno_gui_platform_show_file_dialog(int type, LenoGUIFileDialogCallback ca
 
 /* ===== 窗口图标（参考 SDL_SetWindowIcon） ===== */
 void   leno_gui_platform_set_window_icon(LenoGUIPlatformWindow* win, const uint32_t* pixels, int w, int h);
+/* 从文件加载原始像素数据（返回 RGBA，用于图标等） */
+unsigned char* leno_gui_platform_load_raw_pixels(const char* path, int* w, int* h);
+/* 释放由 leno_gui_platform_load_raw_pixels 返回的内存 */
+void   leno_gui_platform_free_raw_pixels(void* data);
 
 /* ===== 窗口最小/最大尺寸限制（参考 SDL_SetWindowMinimumSize / SDL_SetWindowMaximumSize） ===== */
 void   leno_gui_platform_set_window_minimum_size(LenoGUIPlatformWindow* win, int min_w, int min_h);
 void   leno_gui_platform_set_window_maximum_size(LenoGUIPlatformWindow* win, int max_w, int max_h);
+
+/* ===== 窗口控制选项 ===== */
+void   leno_gui_platform_set_window_maximizable(LenoGUIPlatformWindow* win, int allow);
 
 /* ===== 消息框（参考 SDL_ShowSimpleMessageBox） ===== */
 int    leno_gui_platform_show_message_box(const char* title, const char* message, int type);
