@@ -4,7 +4,7 @@
 import guis
 
 main() {
-    Win win = guis.create_window("Sprite Animation Test", {
+    GWin win = guis.create_window("Sprite Animation Test", {
         width: 800,
         height: 600
     })
@@ -35,7 +35,7 @@ main() {
     var move_x = 2
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // 清空背景
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.clear()
@@ -122,10 +122,8 @@ main() {
                     test_img.draw_src(ren, 0, 0, 32, 32, 750, 10, 32, 32)
                 }
             }
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

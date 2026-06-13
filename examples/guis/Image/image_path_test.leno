@@ -1,9 +1,9 @@
-import guis
+﻿import guis
 
 main() {
     // 测试1：相对路径（已知能工作）
     print("=== 测试1: 相对路径 ===")
-    Image img1 = guis.load_image("icons/leno_logo.png")
+    GImage img1 = guis.load_image("icons/leno_logo.png")
     if img1 == null {
         print("  失败!")
     } else {
@@ -12,7 +12,7 @@ main() {
 
     // 测试2：绝对路径，单反斜杠
     print("=== 测试2: 绝对路径（单反斜杠） ===")
-    Image img2 = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
+    GImage img2 = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
     if img2 == null {
         print("  失败!")
     } else {
@@ -21,7 +21,7 @@ main() {
 
     // 测试3：绝对路径，正斜杠
     print("=== 测试3: 绝对路径（正斜杠） ===")
-    Image img3 = guis.load_image("D:/CLeno/LenoC/icons/leno_logo.png")
+    GImage img3 = guis.load_image("D:/CLeno/LenoC/icons/leno_logo.png")
     if img3 == null {
         print("  失败!")
     } else {

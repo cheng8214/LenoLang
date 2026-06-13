@@ -1,6 +1,6 @@
 # LenoC GUI Image 模块
 
-本文档详细说明 `Image` 图像对象提供的所有操作。
+本文档详细说明 `GImage` 图像对象提供的所有操作。
 
 ## 目录
 
@@ -16,7 +16,7 @@
 
 ## 概述
 
-`Image` 是 LenoC GUI 模块的图像对象，支持从文件或内存加载图片，并提供丰富的绘制功能。
+`GImage` 是 LenoC GUI 模块的图像对象，支持从文件或内存加载图片，并提供丰富的绘制功能。
 
 ### 支持的格式
 
@@ -29,7 +29,7 @@
 ### 类型定义
 
 ```leno
-type Image  // 图像对象类型
+type GImage  // 图像对象类型
 ```
 
 ---
@@ -43,7 +43,7 @@ type Image  // 图像对象类型
 **参数**:
 - `path` (string): 图像文件路径
 
-**返回**: `Image` - 图像对象，失败返回 `null`
+**返回**: `GImage` - 图像对象，失败返回 `null`
 
 ```leno
 import guis
@@ -65,7 +65,7 @@ if img == null {
 - `options` (Dict): 选项字典
   - `flip_vertical` (bool): 是否垂直翻转
 
-**返回**: `Image` - 图像对象
+**返回**: `GImage` - 图像对象
 
 ```leno
 // 垂直翻转加载（OpenGL纹理坐标兼容）
@@ -81,7 +81,7 @@ var img = guis.load_image_ex("texture.png", {flip_vertical: true})
 **参数**:
 - `data` (string): 图像二进制数据（字节字符串）
 
-**返回**: `Image` - 图像对象
+**返回**: `GImage` - 图像对象
 
 ```leno
 import files
@@ -160,7 +160,7 @@ if guis.is_hdr("scene.hdr") {
 在指定位置绘制图像（原始大小）。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `x`, `y` (int): 绘制位置
 
 ```leno
@@ -174,7 +174,7 @@ img.draw(ren, 100, 100)
 缩放绘制图像到目标矩形。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `x`, `y` (int): 目标位置
 - `w`, `h` (int): 目标宽度和高度
 
@@ -190,7 +190,7 @@ img.draw_scaled(ren, 100, 100, 200, 150)
 从图像中取子区域绘制到目标位置（可缩放）。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `sx`, `sy`, `sw`, `sh` (int): 源图像区域（x, y, 宽, 高）
 - `dx`, `dy`, `dw`, `dh` (int): 目标绘制区域（x, y, 宽, 高）
 
@@ -206,7 +206,7 @@ img.draw_src(ren, 0, 0, 64, 64, 100, 100, 128, 128)
 旋转/翻转绘制图像（原始尺寸）。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `x`, `y` (int): 中心点位置
 - `angle` (float): 旋转角度（度，顺时针）
 - `flip` (int): 翻转标志
@@ -229,7 +229,7 @@ img.draw_rotated(ren, 400, 300, 90.0, guis.FLIP_VERTICAL)
 旋转+缩放绘制图像。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `x`, `y` (int): 中心点位置
 - `w`, `h` (int): 目标宽度和高度
 - `angle` (float): 旋转角度
@@ -246,7 +246,7 @@ img.draw_rotated_scaled(ren, 400, 300, 200, 200, 30.0)
 翻转绘制图像（原始尺寸）。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `x`, `y` (int): 绘制位置
 - `flip` (int): 翻转标志
 
@@ -268,7 +268,7 @@ img.draw_flipped(ren, 100, 100, guis.FLIP_BOTH)
 翻转+缩放绘制图像。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `x`, `y` (int): 绘制位置
 - `w`, `h` (int): 目标宽度和高度
 - `flip` (int): 翻转标志
@@ -369,7 +369,7 @@ img.close()  // 释放资源
 import guis
 
 main() {
-    Win win = guis.create_window("Image Demo", {width: 800, height: 600})
+    GWin win = guis.create_window("Image Demo", {width: 800, height: 600})
     
     var img = guis.load_image("assets/logo.png")
     if img == null {
@@ -378,7 +378,7 @@ main() {
     }
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
             
@@ -387,10 +387,8 @@ main() {
             var x = (800 - size[0]) / 2
             var y = (600 - size[1]) / 2
             img.draw(ren, x, y)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -410,7 +408,7 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("Sprite Animation", {width: 800, height: 600})
+    GWin win = guis.create_window("Sprite Animation", {width: 800, height: 600})
     
     // 加载精灵表
     var sprite_sheet = guis.load_image("assets/character.png")
@@ -421,7 +419,7 @@ main() {
     var anim_timer = 0
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(100, 150, 200, 255))
             ren.clear()
             
@@ -436,10 +434,8 @@ main() {
             var sx = current_frame * frame_w
             sprite_sheet.draw_src(ren, sx, 0, frame_w, frame_h, 
                                   368, 268, frame_w * 2, frame_h * 2)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() {
                 win.set_should_close(true)
             }
@@ -459,7 +455,7 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("Transform Demo", {width: 800, height: 600})
+    GWin win = guis.create_window("Transform Demo", {width: 800, height: 600})
     
     var img = guis.load_image("assets/arrow.png")
     var angle = 0.0
@@ -467,7 +463,7 @@ main() {
     var scale_dir = 0.01
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
             
@@ -487,10 +483,8 @@ main() {
             
             // 旋转+缩放绘制
             img.draw_rotated_scaled(ren, 400, 300, w, h, angle)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() {
                 win.set_should_close(true)
             }
@@ -510,7 +504,7 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("Flip Demo", {width: 800, height: 600})
+    GWin win = guis.create_window("Flip Demo", {width: 800, height: 600})
     
     var img = guis.load_image("assets/player.png")
     var facing_right = true
@@ -518,17 +512,15 @@ main() {
     var player_y = 300
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(50, 50, 70, 255))
             ren.clear()
             
             // 根据朝向翻转绘制
             var flip = if facing_right then guis.FLIP_NONE else guis.FLIP_HORIZONTAL
             img.draw_flipped(ren, player_x, player_y, flip)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() {
                 win.set_should_close(true)
             }
@@ -560,7 +552,7 @@ main() {
 import guis
 
 // 绘制可缩放的UI元素（如按钮背景）
-func draw_nine_slice(Image img, Draw ren, int x, int y, int w, int h, int border) {
+func draw_nine_slice(GImage img, GDraw ren, int x, int y, int w, int h, int border) {
     var iw = img.width()
     var ih = img.height()
     
@@ -581,12 +573,12 @@ func draw_nine_slice(Image img, Draw ren, int x, int y, int w, int h, int border
 }
 
 main() {
-    Win win = guis.create_window("Nine Slice", {width: 800, height: 600})
+    GWin win = guis.create_window("Nine Slice", {width: 800, height: 600})
     
     var button_bg = guis.load_image("assets/button_bg.png")
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
             
@@ -594,10 +586,8 @@ main() {
             draw_nine_slice(button_bg, ren, 100, 100, 200, 60, 10)
             draw_nine_slice(button_bg, ren, 100, 200, 300, 80, 10)
             draw_nine_slice(button_bg, ren, 100, 320, 150, 50, 10)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() {
                 win.set_should_close(true)
             }
@@ -617,9 +607,9 @@ main() {
 
 | 方法 | 参数 | 返回值 | 说明 |
 |------|------|--------|------|
-| `load_image(path)` | string | Image/null | 加载图像 |
-| `load_image_ex(path, opts)` | string, Dict | Image | 带选项加载 |
-| `load_image_from_memory(data)` | string | Image | 从内存加载 |
+| `load_image(path)` | string | GImage/null | 加载图像 |
+| `load_image_ex(path, opts)` | string, Dict | GImage | 带选项加载 |
+| `load_image_from_memory(data)` | string | GImage | 从内存加载 |
 | `image_info(path)` | string | Dict/null | 获取图像信息 |
 | `image_info_from_memory(data)` | string | Dict/null | 从内存获取信息 |
 | `is_16_bit(path)` | string | bool | 是否16位 |
@@ -631,13 +621,13 @@ main() {
 
 | 方法 | 参数 | 返回值 | 说明 |
 |------|------|--------|------|
-| `draw(ren, x, y)` | Draw, int, int | null | 绘制图像 |
-| `draw_scaled(ren, x, y, w, h)` | Draw, int x4 | null | 缩放绘制 |
-| `draw_src(ren, sx, sy, sw, sh, dx, dy, dw, dh)` | Draw, int x8 | null | 子区域绘制 |
-| `draw_rotated(ren, x, y, angle, flip)` | Draw, int, int, float, int | null | 旋转绘制 |
-| `draw_rotated_scaled(ren, x, y, w, h, angle)` | Draw, int x4, float | null | 旋转+缩放 |
-| `draw_flipped(ren, x, y, flip)` | Draw, int, int, int | null | 翻转绘制 |
-| `draw_flipped_scaled(ren, x, y, w, h, flip)` | Draw, int x4, int | null | 翻转+缩放 |
+| `draw(ren, x, y)` | GDraw, int, int | null | 绘制图像 |
+| `draw_scaled(ren, x, y, w, h)` | GDraw, int x4 | null | 缩放绘制 |
+| `draw_src(ren, sx, sy, sw, sh, dx, dy, dw, dh)` | GDraw, int x8 | null | 子区域绘制 |
+| `draw_rotated(ren, x, y, angle, flip)` | GDraw, int, int, float, int | null | 旋转绘制 |
+| `draw_rotated_scaled(ren, x, y, w, h, angle)` | GDraw, int x4, float | null | 旋转+缩放 |
+| `draw_flipped(ren, x, y, flip)` | GDraw, int, int, int | null | 翻转绘制 |
+| `draw_flipped_scaled(ren, x, y, w, h, flip)` | GDraw, int x4, int | null | 翻转+缩放 |
 | `width()` | - | int | 获取宽度 |
 | `height()` | - | int | 获取高度 |
 | `size()` | - | [w,h] | 获取尺寸 |

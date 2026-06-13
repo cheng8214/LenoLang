@@ -25,6 +25,7 @@
  */
 #include "include/native.h"
 #include "include/leno_value.h"
+#include "include/string_table.h"
 #include "guis_internal.h"
 #include <string.h>
 
@@ -279,6 +280,206 @@ static Value win_set_maximizable_func(int argc, Value* args) {
     return val_null();
 }
 
+/* win.add_button(style) -> GButton - 创建按钮并添加到窗口 */
+static Value win_add_button_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (!win) return val_null();
+
+    /* 默认值 */
+    int x = 0, y = 0, width = 100, height = 36;
+    char* text = strdup("Button");
+    int bg_r = 70, bg_g = 130, bg_b = 180, bg_a = 255;
+    int hover_r = 100, hover_g = 160, hover_b = 210, hover_a = 255;
+    int press_r = 50, press_g = 110, press_b = 160, press_a = 255;
+    int text_r = 255, text_g = 255, text_b = 255, text_a = 255;
+    char* font_name = strdup("Arial");
+    int font_size = 16;
+    int radius = 6;
+    int opacity = 255;
+    int border_width = 0;
+    int border_r = 0, border_g = 0, border_b = 0, border_a = 255;
+    int shadow_offset_x = 0, shadow_offset_y = 2;
+    int shadow_radius = 0;
+    int shadow_r = 0, shadow_g = 0, shadow_b = 0, shadow_a = 80;
+
+    /* 解析 style 字典 */
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
+        ObjDict* style = (ObjDict*)val_as_obj(args[1]);
+
+        /* x, y, width, height */
+        ObjString* key = intern_string("x", 1);
+        Value v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) x = val_as_int(v);
+        key = intern_string("y", 1);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) y = val_as_int(v);
+        key = intern_string("width", 5);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) width = val_as_int(v);
+        key = intern_string("height", 6);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) height = val_as_int(v);
+
+        /* text */
+        key = intern_string("text", 4);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            free(text);
+            text = strdup(((ObjString*)val_as_obj(v))->chars);
+        }
+
+        /* bg_color */
+        key = intern_string("bg_color", 8);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            bg_r = rgb->r; bg_g = rgb->g; bg_b = rgb->b; bg_a = rgb->a;
+        }
+
+        /* hover_color */
+        key = intern_string("hover_color", 11);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            hover_r = rgb->r; hover_g = rgb->g; hover_b = rgb->b; hover_a = rgb->a;
+        }
+
+        /* press_color */
+        key = intern_string("press_color", 11);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            press_r = rgb->r; press_g = rgb->g; press_b = rgb->b; press_a = rgb->a;
+        }
+
+        /* text_color */
+        key = intern_string("text_color", 10);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            text_r = rgb->r; text_g = rgb->g; text_b = rgb->b; text_a = rgb->a;
+        }
+
+        /* font */
+        key = intern_string("font", 4);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            free(font_name);
+            font_name = strdup(((ObjString*)val_as_obj(v))->chars);
+        }
+
+        /* font_size */
+        key = intern_string("font_size", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) font_size = val_as_int(v);
+
+        /* radius */
+        key = intern_string("radius", 6);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) radius = val_as_int(v);
+
+        /* opacity (0~255) */
+        key = intern_string("opacity", 7);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) opacity = val_as_int(v);
+
+        /* border_width */
+        key = intern_string("border_width", 12);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) border_width = val_as_int(v);
+
+        /* border_color */
+        key = intern_string("border_color", 12);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            border_r = rgb->r; border_g = rgb->g; border_b = rgb->b; border_a = rgb->a;
+        }
+
+        /* shadow_offset_x */
+        key = intern_string("shadow_offset_x", 15);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) shadow_offset_x = val_as_int(v);
+
+        /* shadow_offset_y */
+        key = intern_string("shadow_offset_y", 15);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) shadow_offset_y = val_as_int(v);
+
+        /* shadow_radius */
+        key = intern_string("shadow_radius", 13);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) shadow_radius = val_as_int(v);
+
+        /* shadow_color */
+        key = intern_string("shadow_color", 12);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            shadow_r = rgb->r; shadow_g = rgb->g; shadow_b = rgb->b; shadow_a = rgb->a;
+        }
+    }
+
+    /* 创建按钮对象 */
+    ObjGUIButton* btn = (ObjGUIButton*)gc_alloc(sizeof(ObjGUIButton), OBJ_GUI_BUTTON);
+    if (!btn) {
+        free(text);
+        free(font_name);
+        return val_null();
+    }
+
+    btn->window = win;
+    btn->next = NULL;
+    btn->x = x;
+    btn->y = y;
+    btn->width = width;
+    btn->height = height;
+    btn->text = text;
+    btn->bg_r = bg_r; btn->bg_g = bg_g; btn->bg_b = bg_b; btn->bg_a = bg_a;
+    btn->hover_r = hover_r; btn->hover_g = hover_g; btn->hover_b = hover_b; btn->hover_a = hover_a;
+    btn->press_r = press_r; btn->press_g = press_g; btn->press_b = press_b; btn->press_a = press_a;
+    btn->text_r = text_r; btn->text_g = text_g; btn->text_b = text_b; btn->text_a = text_a;
+    btn->font_name = font_name;
+    btn->font_size = font_size;
+    btn->font = NULL;
+    btn->radius = radius;
+    btn->opacity = opacity;
+    btn->border_width = border_width;
+    btn->border_r = border_r; btn->border_g = border_g; btn->border_b = border_b; btn->border_a = border_a;
+    btn->shadow_offset_x = shadow_offset_x;
+    btn->shadow_offset_y = shadow_offset_y;
+    btn->shadow_radius = shadow_radius;
+    btn->shadow_r = shadow_r; btn->shadow_g = shadow_g; btn->shadow_b = shadow_b; btn->shadow_a = shadow_a;
+    btn->visible = 1;
+    btn->enabled = 1;
+    btn->hovered = 0;
+    btn->pressed = 0;
+    btn->on_click = val_null();
+
+    /* 加载字体 */
+    LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);
+    if (pf) {
+        ObjGUIFont* font_obj = (ObjGUIFont*)gc_alloc(sizeof(ObjGUIFont), OBJ_GUI_FONT);
+        if (font_obj) {
+            font_obj->platform = pf;
+            btn->font = font_obj;
+        } else {
+            leno_gui_platform_destroy_font(pf);
+        }
+    }
+
+    /* 写屏障：保护 btn->window 引用 */
+    gc_write_barrier_obj((Object*)btn, (Object*)win);
+
+    /* 添加到窗口的按钮链表 */
+    btn->next = (struct ObjGUIButton*)win->buttons;
+    win->buttons = btn;
+    win->button_count++;
+
+    return val_obj((Object*)btn);
+}
+
 /* ============================================================================
  * 注册 Win 实例方法
  * ============================================================================ */
@@ -331,4 +532,8 @@ void guis_init_window_instance_methods(void) {
 
     /* win.run(on_draw, on_event) - 事件循环 */
     window_register_method_with_params("run", make_native(win_run_func, 3, "run"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, func_2);
+
+    /* win.add_button(style) -> GButton */
+    TypeKind dict_1[] = {TYPE_DICT};
+    window_register_method_with_params("add_button", make_native(win_add_button_func, 2, "add_button"), 1, -1, -1, TYPE_BUTTON, TYPE_UNKNOWN, dict_1);
 }

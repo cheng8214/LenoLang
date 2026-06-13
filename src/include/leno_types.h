@@ -102,8 +102,9 @@ typedef enum {
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
     // TOK_BINT 已移除（int 统一对外，Bint 仅作为内部 TYPE_BIGINT 存在）
-    TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_WIN_TYPE, TOK_DRAW_TYPE, TOK_EVENT_TYPE, TOK_RGB_TYPE, 
-    TOK_IMAGE_TYPE, TOK_FONT_TYPE,  // File, Ptr, Win, Draw, Event, Rgb, Image, Font 类型
+    TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_WIN_TYPE, TOK_DRAW_TYPE, TOK_EVENT_TYPE, TOK_RGB_TYPE,
+    TOK_IMAGE_TYPE, TOK_FONT_TYPE,  // File, Ptr, GWin, GDraw, GEvent, GRgb, GImage, GFont 类型
+    TOK_BUTTON_TYPE,  // GButton 类型
     TOK_STYLE_TYPE,      // Style 类型（用于 GUI 样式定义）
     TOK_SOCKET_TYPE,     // Socket 类型
     // C 布局类型关键字
@@ -152,12 +153,13 @@ typedef enum {
     TYPE_BIGINT,    // 大整数
     TYPE_NULL,      // null 类型
     TYPE_FILE,      // 文件类型
-    TYPE_WIN,       // GUI 窗口类型
-    TYPE_DRAW,      // GUI 渲染器类型
-    TYPE_EVENT,     // GUI 事件类型（Dict 别名）
-    TYPE_RGB,       // RGB 颜色类型
-    TYPE_IMAGE,     // GUI 图像类型
-    TYPE_FONT,      // GUI 字体类型
+    TYPE_WIN,       // GUI 窗口类型 (GWin)
+    TYPE_DRAW,      // GUI 渲染器类型 (GDraw)
+    TYPE_EVENT,     // GUI 事件类型 (GEvent)
+    TYPE_RGB,       // RGB 颜色类型 (GRgb)
+    TYPE_IMAGE,     // GUI 图像类型 (GImage)
+    TYPE_FONT,      // GUI 字体类型 (GFont)
+    TYPE_BUTTON,    // GUI 按钮类型 (GButton)
     TYPE_STYLE,     // GUI 样式类型（Style[window], Style[button] 等）
     TYPE_ANY,       // 任意类型
     TYPE_FUNCTION,  // 函数类型

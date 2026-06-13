@@ -8,7 +8,7 @@
 #include "include/leno_value.h"
 #include "leno_guis.h"
 
-/* GUI 对象类型定义 */
+/* GUI 对象类型定义 (GWin, GDraw, GFont, GImage, GEvent, GRgb, GButton) */
 typedef struct {
     Object header;
     LenoGUIPlatformWindow* platform;
@@ -16,6 +16,9 @@ typedef struct {
     int bg_r, bg_g, bg_b, bg_a;
     int use_bg_color;       /* 是否使用自定义背景色 */
     int vsync_enabled;      /* 是否启用帧率限制（垂直同步模拟） */
+    /* 按钮列表 */
+    struct ObjGUIButton* buttons;      /* 按钮链表头 */
+    int button_count;
 } ObjGUIWindow;
 
 typedef struct {
@@ -39,11 +42,50 @@ typedef struct {
     ObjDict* data;
 } ObjGUIEvent;
 
+/* GButton 按钮对象 - 自绘按钮 */
+typedef struct ObjGUIButton {
+    Object header;
+    struct ObjGUIButton* next;     /* 链表下一个按钮 */
+    ObjGUIWindow* window;          /* 所属窗口 */
+    /* 位置和尺寸 */
+    int x, y, width, height;
+    /* 文字 */
+    char* text;
+    /* 颜色 */
+    int bg_r, bg_g, bg_b, bg_a;           /* 背景色 */
+    int hover_r, hover_g, hover_b, hover_a; /* 悬停色 */
+    int press_r, press_g, press_b, press_a; /* 按下色 */
+    int text_r, text_g, text_b, text_a;     /* 文字色 */
+    /* 字体 */
+    char* font_name;
+    int font_size;
+    ObjGUIFont* font;              /* 缓存的字体对象 */
+    /* 圆角 */
+    int radius;
+    /* 透明度 (0~255, 255=不透明) */
+    int opacity;
+    /* 边框 */
+    int border_width;              /* 边框宽度 (0=无边框) */
+    int border_r, border_g, border_b, border_a; /* 边框颜色 */
+    /* 阴影 */
+    int shadow_offset_x, shadow_offset_y; /* 阴影偏移 */
+    int shadow_radius;             /* 阴影模糊半径 (0=无阴影) */
+    int shadow_r, shadow_g, shadow_b, shadow_a; /* 阴影颜色 */
+    /* 状态 */
+    int visible;
+    int enabled;
+    int hovered;                   /* 鼠标是否悬停 */
+    int pressed;                   /* 鼠标是否按下 */
+    /* 回调 */
+    Value on_click;                /* 点击回调闭包 */
+} ObjGUIButton;
+
 /* 辅助函数 */
 ObjGUIWindow* as_window(Value v);
 ObjGUIRenderer* as_renderer(Value v);
 ObjGUIFont* as_font(Value v);
 ObjGUIImage* as_image(Value v);
+ObjGUIButton* as_button(Value v);
 ObjArray* make_int_array2(int a, int b);
 ObjGUIWindow* as_window_from_platform(LenoGUIPlatformWindow* pw);
 
@@ -80,6 +122,11 @@ ObjGUIRenderer* create_renderer_obj(LenoGUIPlatformRenderer* pr, ObjGUIWindow* w
 
 /* 调用 Leno 闭包 */
 Value call_leno_closure(Value callee, int arg_count, Value* args);
+
+/* GButton 按钮绘制和事件处理 */
+void gui_button_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
+int gui_button_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
+void gui_button_free_all(ObjGUIWindow* win);
 
 /* 文件对话框结果处理（由平台层调用，确保在主线程中执行） */
 void process_filedialog_callback(const char* const* files, int nfiles, int filter_index);

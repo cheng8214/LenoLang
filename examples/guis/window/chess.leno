@@ -6,7 +6,7 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("Chess", w_style)
+    GWin win = guis.create_window("Chess", w_style)
 
     var font = guis.load_font("Arial", 36)
     var font_sm = guis.load_font("Arial", 16)
@@ -20,7 +20,7 @@ main() {
     var selected_col = -1
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(40, 40, 55, 255))
             ren.clear()
 
@@ -87,10 +87,8 @@ main() {
 
             ren.set_color(_rgb(120, 120, 140, 255))
             ren.draw_text(font_sm, "Click to select  |  ESC to quit", 190, 670)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

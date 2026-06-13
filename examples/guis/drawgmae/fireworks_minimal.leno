@@ -8,14 +8,14 @@ struct Item {
 }
 
 main() {
-    Win win = guis.create_window("Minimal Test", {width: 800, height: 600})
+    GWin win = guis.create_window("Minimal Test", {width: 800, height: 600})
 
     var items = {}
     var count = 0
     var font = guis.load_font("Consolas", 14)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // 每帧加 50 个 struct 进 dict
             if count < 10000 {
                 for 0:49 to i {
@@ -40,9 +40,8 @@ main() {
 
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.draw_text(font, "count:" + count + " drawn:" + drawn, 10, 10)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
         }
     )

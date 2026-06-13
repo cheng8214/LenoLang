@@ -39,13 +39,13 @@ main() {
         height: 400,
         resizable: false
     }
-    Win win = guis.create_window("load_image_ex 测试 - 左:普通 右:垂直翻转", w_style)
+    GWin win = guis.create_window("load_image_ex 测试 - 左:普通 右:垂直翻转", w_style)
     
     var font = guis.load_font("SimSun", 16)
     
     // 加载两张图片
-    Image img1 = guis.load_image_ex(png_path, {flip_vertical: false})
-    Image img2 = guis.load_image_ex(png_path, {flip_vertical: true})
+    GImage img1 = guis.load_image_ex(png_path, {flip_vertical: false})
+    GImage img2 = guis.load_image_ex(png_path, {flip_vertical: true})
     
     if img1 == null or img2 == null {
         print($"   ✗ 图片加载失败")
@@ -60,7 +60,7 @@ main() {
     print($"")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.clear()
 
@@ -76,10 +76,8 @@ main() {
 
             // 绘制说明
             ren.draw_text(font, "注意：翻转后图片上下颠倒", 450, 60 + h * scale + 20)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

@@ -6,9 +6,9 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("LenoC GUI - Image Zoom", w_style)
+    GWin win = guis.create_window("LenoC GUI - GImage Zoom", w_style)
 
-    Image img = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
+    GImage img = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
     if img == null {
         print("加载图片失败")
         return
@@ -16,7 +16,7 @@ main() {
 
     int img_w = img.width()
     int img_h = img.height()
-    print("Image size:", img_w, "x", img_h)
+    print("GImage size:", img_w, "x", img_h)
 
     // 缩放因子，1.0 = 原始大小
     var scale = 1.0
@@ -24,7 +24,7 @@ main() {
     var max_scale = 5.0
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -47,10 +47,8 @@ main() {
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.draw_text(font, info, 10, 10)
             font.close()
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -77,5 +75,5 @@ main() {
 
     img.close()
     win.close()
-    print("image zoom test done!")
+    print("GImage zoom test done!")
 }

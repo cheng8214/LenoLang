@@ -320,11 +320,11 @@ static TypeKind parse_base_type(const char* type_str) {
     // if (strcmp(type_str, "Bint") == 0) return TYPE_BIGINT;
     if (strcmp(type_str, "null") == 0) return TYPE_NULL;
     if (strcmp(type_str, "File") == 0) return TYPE_FILE;
-    if (strcmp(type_str, "Win") == 0) return TYPE_WIN;
-    if (strcmp(type_str, "Draw") == 0) return TYPE_DRAW;
-    if (strcmp(type_str, "Event") == 0) return TYPE_EVENT;
-    if (strcmp(type_str, "Image") == 0) return TYPE_IMAGE;
-    if (strcmp(type_str, "Font") == 0) return TYPE_FONT;
+    if (strcmp(type_str, "GWin") == 0) return TYPE_WIN;
+    if (strcmp(type_str, "GDraw") == 0) return TYPE_DRAW;
+    if (strcmp(type_str, "GEvent") == 0) return TYPE_EVENT;
+    if (strcmp(type_str, "GImage") == 0) return TYPE_IMAGE;
+    if (strcmp(type_str, "GFont") == 0) return TYPE_FONT;
     if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
     if (strcmp(type_str, "any") == 0) return TYPE_ANY;
     if (strcmp(type_str, "Ptr") == 0) return TYPE_PTR;

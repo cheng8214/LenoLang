@@ -10,16 +10,15 @@ main() {
 
     
     win.run(Draw1,Event1)
-func Draw1(Draw ren)
+func Draw1(GDraw ren)
     {
             // onDraw: 每帧调用，ren 是自动创建的渲染器
              ren.set_color(_rgb( 30, 30, 46, 255))
              ren.clear()
              ren.set_color(_rgb( 255, 0, 0, 255))
              ren.fill_rect(100, 100, 200, 150)
-             ren.present()
      }
-    func Event1(Event event)
+    func Event1(GEvent event)
     {
             // onEvent: 每个事件调用
             if event.is_window_close() or event.is_key_down()

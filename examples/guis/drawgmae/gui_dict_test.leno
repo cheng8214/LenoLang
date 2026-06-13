@@ -5,7 +5,7 @@ import times
 struct Item { int life; int id }
 
 main() {
-    Win win = guis.create_window("Test", {width: 400, height: 300})
+    GWin win = guis.create_window("Test", {width: 400, height: 300})
     var font = guis.load_font("Consolas", 14)
 
     var items = {}
@@ -16,7 +16,7 @@ main() {
     var frame = 0
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             frame = frame + 1
 
             // 更新 + 删除
@@ -53,9 +53,8 @@ main() {
             ren.clear()
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.draw_text(font, "frame:" + frame + " count:" + count, 10, 10)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
         }
     )

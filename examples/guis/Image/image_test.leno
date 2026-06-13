@@ -5,12 +5,12 @@ main() {
         height: 540,
         resizable: true
     }
-    Win win = guis.create_window("LenoC GUI - Image Test", w_style)
+    GWin win = guis.create_window("LenoC GUI - GImage Test", w_style)
 
     var font = guis.load_font("SimSun", 14)
 	
-    Image logo_png = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
-    Image logo_jpg = guis.load_image("D:\CLeno\LenoC\icons\leno_logo_2.jpg")
+    GImage logo_png = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
+    GImage logo_jpg = guis.load_image("D:\CLeno\LenoC\icons\leno_logo_2.jpg")
 	if logo_jpg==null{
 	print("加载图片失败")
 	win.close()
@@ -33,7 +33,7 @@ main() {
     var start_y = 20
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -105,10 +105,8 @@ main() {
 
             ren.draw_text(font, "18) rotated 180 scaled", start_x + gap_x*5, start_y + gap_y*2)
             logo_png.draw_rotated_scaled(ren, start_x + gap_x*5, start_y + gap_y*2 + 18, thumb_w, thumb_h, 180.0)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -122,5 +120,5 @@ main() {
     logo_jpg.close()
     font.close()
     win.close()
-    print("image test done!")
+    print("GImage test done!")
 }

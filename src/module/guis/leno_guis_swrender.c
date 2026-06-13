@@ -36,6 +36,36 @@ static void sw_draw_line(LenoGUIPlatformRenderer* ren, int x0, int y0, int x1, i
     }
 }
 
+/* ===== 抗锯齿辅助函数 ===== */
+
+/* 抗锯齿绘制单个像素，alpha 范围 [0, 255] */
+static void sw_draw_point_aa(LenoGUIPlatformRenderer* ren, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t alpha) {
+    int px = x + ren->vp_x;
+    int py = y + ren->vp_y;
+    if (px < ren->vp_x || px >= ren->vp_x + ren->vp_w) return;
+    if (py < ren->vp_y || py >= ren->vp_y + ren->vp_h) return;
+    if (ren->clip_enabled) {
+        if (px < ren->clip_x || px >= ren->clip_x + ren->clip_w) return;
+        if (py < ren->clip_y || py >= ren->clip_y + ren->clip_h) return;
+    }
+    if (px < 0 || px >= ren->width || py < 0 || py >= ren->height) return;
+    if (alpha == 0) return;
+    if (alpha == 255) {
+        ren->pixels[py * ren->width + px] = LENO_GUI_PIXEL(r, g, b, 255);
+        return;
+    }
+    /* Alpha 混合 */
+    uint32_t dst = ren->pixels[py * ren->width + px];
+    uint8_t dr = (dst >> 16) & 0xFF;
+    uint8_t dg = (dst >> 8) & 0xFF;
+    uint8_t db = dst & 0xFF;
+    uint8_t inv = 255 - alpha;
+    dr = (uint8_t)((r * alpha + dr * inv) / 255);
+    dg = (uint8_t)((g * alpha + dg * inv) / 255);
+    db = (uint8_t)((b * alpha + db * inv) / 255);
+    ren->pixels[py * ren->width + px] = LENO_GUI_PIXEL(dr, dg, db, 255);
+}
+
 static void sw_draw_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, uint32_t color) {
     for (int i = 0; i < w; i++) {
         sw_draw_point(ren, x + i, y, color);
@@ -256,28 +286,224 @@ void leno_gui_platform_render_fill_rounded_rect(LenoGUIPlatformRenderer* ren, in
         leno_gui_platform_render_fill_rect(ren, x, y, w, h);
         return;
     }
+
+    uint8_t cr = ren->draw_r, cg = ren->draw_g, cb = ren->draw_b, ca = ren->draw_a;
+
+    /* 中间矩形区域（不含圆角部分）直接填充 */
     leno_gui_platform_render_fill_rect(ren, x, y + radius, w, h - 2 * radius);
     leno_gui_platform_render_fill_rect(ren, x + radius, y, w - 2 * radius, radius);
     leno_gui_platform_render_fill_rect(ren, x + radius, y + h - radius, w - 2 * radius, radius);
-    int ax = 0, ay = radius;
-    int dd = 3 - 2 * radius;
-    while (ax <= ay) {
-        sw_draw_line(ren, x + radius - ay, y + radius - ax, x + radius - 1, y + radius - ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + radius - ax, y + radius - ay, x + radius - 1, y + radius - ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + w - radius, y + radius - ax, x + w - radius + ay - 1, y + radius - ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + w - radius, y + radius - ay, x + w - radius + ax - 1, y + radius - ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + radius - ay, y + h - radius + ax, x + radius - 1, y + h - radius + ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + radius - ax, y + h - radius + ay, x + radius - 1, y + h - radius + ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + w - radius, y + h - radius + ax, x + w - radius + ay - 1, y + h - radius + ax, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        sw_draw_line(ren, x + w - radius, y + h - radius + ay, x + w - radius + ax - 1, y + h - radius + ay, LENO_GUI_PIXEL(ren->draw_r, ren->draw_g, ren->draw_b, ren->draw_a));
-        if (dd < 0) {
-            dd += 4 * ax + 6;
-        } else {
-            dd += 4 * (ax - ay) + 10;
-            ay--;
+
+    /* 抗锯齿圆角：使用浮点距离计算边缘 alpha */
+    /* 对每个圆角区域，逐像素计算到圆心的距离，据此决定 alpha */
+    int cx_l = x + radius;          /* 左上/左下圆心 x */
+    int cx_r = x + w - radius;      /* 右上/右下圆心 x */
+    int cy_t = y + radius;          /* 左上/右上圆心 y */
+    int cy_b = y + h - radius;      /* 左下/右下圆心 y */
+
+    /* 遍历四个圆角区域的包围盒 */
+    for (int iy = 0; iy < radius; iy++) {
+        for (int ix = 0; ix < radius; ix++) {
+            /* 计算到圆弧的理想距离 */
+            float dist = sqrtf((float)(ix * ix + iy * iy)) - (float)(radius - 1);
+            if (dist > 1.0f) continue;  /* 完全在圆外 */
+
+            int alpha;
+            if (dist <= 0.0f) {
+                alpha = 255;  /* 完全在圆内 */
+            } else {
+                alpha = (int)(255.0f * (1.0f - dist));  /* 抗锯齿过渡 */
+            }
+
+            /* 左上角 */
+            int px = cx_l - 1 - ix;
+            int py = cy_t - 1 - iy;
+            sw_draw_point_aa(ren, px, py, cr, cg, cb, (uint8_t)((alpha * ca) / 255));
+
+            /* 右上角 */
+            px = cx_r + ix;
+            py = cy_t - 1 - iy;
+            sw_draw_point_aa(ren, px, py, cr, cg, cb, (uint8_t)((alpha * ca) / 255));
+
+            /* 左下角 */
+            px = cx_l - 1 - ix;
+            py = cy_b + iy;
+            sw_draw_point_aa(ren, px, py, cr, cg, cb, (uint8_t)((alpha * ca) / 255));
+
+            /* 右下角 */
+            px = cx_r + ix;
+            py = cy_b + iy;
+            sw_draw_point_aa(ren, px, py, cr, cg, cb, (uint8_t)((alpha * ca) / 255));
         }
-        ax++;
     }
+}
+
+/* ===== 高斯模糊阴影（参考 SDL3 两遍可分离模糊） ===== */
+
+/* 在临时缓冲区中绘制圆角矩形形状（仅 alpha 通道） */
+static void shadow_draw_rounded_rect(uint8_t* buf, int bw, int bh,
+                                      int rx, int ry, int rw, int rh, int radius) {
+    if (radius > rw / 2) radius = rw / 2;
+    if (radius > rh / 2) radius = rh / 2;
+    if (radius <= 0) {
+        for (int y = ry; y < ry + rh && y < bh; y++)
+            for (int x = rx; x < rx + rw && x < bw; x++)
+                buf[y * bw + x] = 255;
+        return;
+    }
+    /* 中间矩形 */
+    for (int y = ry + radius; y < ry + rh - radius && y < bh; y++)
+        for (int x = rx; x < rx + rw && x < bw; x++)
+            if (x >= 0 && y >= 0) buf[y * bw + x] = 255;
+    /* 上下矩形 */
+    for (int y = ry; y < ry + radius && y < bh; y++)
+        for (int x = rx + radius; x < rx + rw - radius && x < bw; x++)
+            if (x >= 0 && y >= 0) buf[y * bw + x] = 255;
+    for (int y = ry + rh - radius; y < ry + rh && y < bh; y++)
+        for (int x = rx + radius; x < rx + rw - radius && x < bw; x++)
+            if (x >= 0 && y >= 0) buf[y * bw + x] = 255;
+    /* 四个圆角 - 用距离场 */
+    int corners[4][2] = {
+        {rx + radius, ry + radius},
+        {rx + rw - radius, ry + radius},
+        {rx + radius, ry + rh - radius},
+        {rx + rw - radius, ry + rh - radius}
+    };
+    for (int c = 0; c < 4; c++) {
+        int cx = corners[c][0], cy = corners[c][1];
+        for (int dy = -(radius); dy <= radius; dy++) {
+            for (int dx = -(radius); dx <= radius; dx++) {
+                int px = cx + dx, py = cy + dy;
+                if (px < 0 || py < 0 || px >= bw || py >= bh) continue;
+                float dist = sqrtf((float)(dx * dx + dy * dy)) - (float)(radius - 1);
+                if (dist <= 0.0f) {
+                    buf[py * bw + px] = 255;
+                } else if (dist < 1.0f) {
+                    uint8_t a = buf[py * bw + px];
+                    uint8_t na = (uint8_t)(255.0f * (1.0f - dist));
+                    if (na > a) buf[py * bw + px] = na;
+                }
+            }
+        }
+    }
+}
+
+/* 水平方向 box blur（参考 SDL3 的可分离模糊） */
+static void blur_h(uint8_t* dst, const uint8_t* src, int w, int h, int radius) {
+    if (radius <= 0) { memcpy(dst, src, w * h); return; }
+    int diam = radius * 2 + 1;
+    for (int y = 0; y < h; y++) {
+        int sum = 0;
+        /* 初始化窗口 */
+        for (int x = -radius; x <= radius; x++) {
+            int sx = x < 0 ? 0 : (x >= w ? w - 1 : x);
+            sum += src[y * w + sx];
+        }
+        dst[y * w + 0] = (uint8_t)(sum / diam);
+        for (int x = 1; x < w; x++) {
+            int add_x = x + radius; if (add_x >= w) add_x = w - 1;
+            int rem_x = x - radius - 1; if (rem_x < 0) rem_x = 0;
+            sum += src[y * w + add_x] - src[y * w + rem_x];
+            dst[y * w + x] = (uint8_t)(sum / diam);
+        }
+    }
+}
+
+/* 垂直方向 box blur */
+static void blur_v(uint8_t* dst, const uint8_t* src, int w, int h, int radius) {
+    if (radius <= 0) { memcpy(dst, src, w * h); return; }
+    int diam = radius * 2 + 1;
+    for (int x = 0; x < w; x++) {
+        int sum = 0;
+        for (int y = -radius; y <= radius; y++) {
+            int sy = y < 0 ? 0 : (y >= h ? h - 1 : y);
+            sum += src[sy * w + x];
+        }
+        dst[0 * w + x] = (uint8_t)(sum / diam);
+        for (int y = 1; y < h; y++) {
+            int add_y = y + radius; if (add_y >= h) add_y = h - 1;
+            int rem_y = y - radius - 1; if (rem_y < 0) rem_y = 0;
+            sum += src[add_y * w + x] - src[rem_y * w + x];
+            dst[y * w + x] = (uint8_t)(sum / diam);
+        }
+    }
+}
+
+/* 绘制圆角矩形阴影（box-shadow 风格，参考 SDL3）
+ * 流程：1. 在临时缓冲区绘制圆角矩形形状
+ *       2. 三遍 box blur 近似高斯模糊
+ *       3. 将模糊结果 alpha 混合到主缓冲区 */
+void leno_gui_platform_render_draw_shadow(LenoGUIPlatformRenderer* ren,
+    int x, int y, int w, int h, int radius,
+    int offset_x, int offset_y, int blur_radius,
+    uint8_t sr, uint8_t sg, uint8_t sb, uint8_t sa) {
+    if (!ren || !ren->pixels || blur_radius <= 0 || sa <= 0) return;
+
+    /* 阴影矩形区域（含模糊扩展） */
+    int sx = x + offset_x - blur_radius;
+    int sy = y + offset_y - blur_radius;
+    int sw = w + 2 * blur_radius;
+    int sh = h + 2 * blur_radius;
+
+    /* 限制缓冲区大小，防止内存爆炸 */
+    if (sw > 2000) sw = 2000;
+    if (sh > 2000) sh = 2000;
+    if (sw <= 0 || sh <= 0) return;
+
+    int buf_size = sw * sh;
+    uint8_t* buf_a = (uint8_t*)malloc(buf_size);   /* alpha 缓冲区 */
+    uint8_t* buf_b = (uint8_t*)malloc(buf_size);   /* 临时缓冲区 */
+    if (!buf_a || !buf_b) { free(buf_a); free(buf_b); return; }
+    memset(buf_a, 0, buf_size);
+
+    /* 1. 在临时缓冲区中绘制圆角矩形形状 */
+    int shape_x = blur_radius;   /* 形状在缓冲区中的位置 */
+    int shape_y = blur_radius;
+    shadow_draw_rounded_rect(buf_a, sw, sh, shape_x, shape_y, w, h, radius);
+
+    /* 2. 三遍 box blur 近似高斯模糊（参考 SDL3） */
+    int blur_r = blur_radius / 3;
+    if (blur_r < 1) blur_r = 1;
+    /* Pass 1: H */
+    blur_h(buf_b, buf_a, sw, sh, blur_r);
+    /* Pass 2: V */
+    blur_v(buf_a, buf_b, sw, sh, blur_r);
+    /* Pass 3: H */
+    blur_h(buf_b, buf_a, sw, sh, blur_r);
+    /* Pass 4: V (最终结果在 buf_b) */
+    blur_v(buf_a, buf_b, sw, sh, blur_r);
+
+    /* 3. 将模糊结果 alpha 混合到主帧缓冲区 */
+    for (int by = 0; by < sh; by++) {
+        int py = sy + by + ren->vp_y;
+        if (py < 0 || py >= ren->height) continue;
+        if (ren->clip_enabled && (py < ren->clip_y || py >= ren->clip_y + ren->clip_h)) continue;
+        for (int bx = 0; bx < sw; bx++) {
+            int px = sx + bx + ren->vp_x;
+            if (px < 0 || px >= ren->width) continue;
+            if (ren->clip_enabled && (px < ren->clip_x || px >= ren->clip_x + ren->clip_w)) continue;
+
+            uint8_t alpha = buf_a[by * sw + bx];
+            if (alpha == 0) continue;
+            /* 应用阴影颜色的 alpha */
+            uint8_t final_a = (uint8_t)((alpha * sa) / 255);
+            if (final_a == 0) continue;
+
+            /* Alpha 混合到主缓冲区 */
+            uint32_t dst = ren->pixels[py * ren->width + px];
+            uint8_t dr = (dst >> 16) & 0xFF;
+            uint8_t dg = (dst >> 8) & 0xFF;
+            uint8_t db = dst & 0xFF;
+            uint8_t inv = 255 - final_a;
+            dr = (uint8_t)((sr * final_a + dr * inv) / 255);
+            dg = (uint8_t)((sg * final_a + dg * inv) / 255);
+            db = (uint8_t)((sb * final_a + db * inv) / 255);
+            ren->pixels[py * ren->width + px] = LENO_GUI_PIXEL(dr, dg, db, 255);
+        }
+    }
+
+    free(buf_a);
+    free(buf_b);
 }
 
 /* ===== 几何图形扩展（椭圆、三角形、多边形、圆弧） ===== */

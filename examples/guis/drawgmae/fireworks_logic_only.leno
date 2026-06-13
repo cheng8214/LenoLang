@@ -20,7 +20,7 @@ struct Firework {
 }
 
 main() {
-    Win win = guis.create_window("Logic Only", {width: 960, height: 680})
+    GWin win = guis.create_window("Logic Only", {width: 960, height: 680})
     var font = guis.load_font("Consolas", 14)
     var screen_w = 960; var screen_h = 680
 
@@ -106,7 +106,7 @@ main() {
     var peak_particles = 0
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             frame_count = frame_count + 1
             var now = times.ms()
             if now - last_fps_time >= 1000 {
@@ -185,9 +185,8 @@ main() {
 
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.draw_text(font, "FPS:" + fps + " 粒子:" + particle_count + " 峰值:" + peak_particles, 10, 10)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
             if e.is_key_down() {
                 if e.key() == guis.KEY_SPACE {

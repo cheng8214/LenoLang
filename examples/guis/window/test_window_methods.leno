@@ -28,14 +28,13 @@ func test_center_method() {
     print("当前位置: (" + _str(pos[0]) + ", " + _str(pos[1]) + ")")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.clear()
             ren.set_color(_rgb(100, 255, 150, 255))
             ren.fill_rect(200, 150, 200, 100)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -64,14 +63,13 @@ func test_min_max_size_methods() {
     print("设置最大尺寸: 1000x800")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(60, 60, 80, 255))
             ren.clear()
             ren.set_color(_rgb(255, 180, 50, 255))
             ren.fill_rect(50, 50, 400, 300)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -95,14 +93,13 @@ func test_maximized_method() {
     var is_max = false
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(45, 45, 65, 255))
             ren.clear()
             ren.set_color(_rgb(255, 140, 0, 255))
             ren.fill_rect(250, 220, 200, 60)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -135,16 +132,15 @@ func test_bg_color_methods() {
 
     // 运行时设置背景色
     win.set_bg_color(_rgb(20, 30, 50, 255))
-    print("设置背景色: rgb(20,30,50)")
+    print("设置背景色: GRgb(20,30,50)")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // 背景色由引擎自动填充
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.fill_rect(250, 180, 100, 40)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -183,20 +179,19 @@ func test_vsync_method() {
     var frame_count = 0
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(35, 35, 55, 255))
             ren.clear()
             ren.set_color(_rgb(0, 255, 0, 255))
             ren.fill_rect(50, 50, frame_count % 400, 20)
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.fill_rect(20, 350, 460, 30)
-            ren.present()
             frame_count = frame_count + 1
             if frame_count > 1000 {
                 frame_count = 0
             }
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -242,14 +237,13 @@ func test_position_methods() {
     print("居中窗口")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(70, 70, 90, 255))
             ren.clear()
             ren.set_color(_rgb(150, 250, 150, 255))
             ren.fill_rect(100, 100, 350, 180)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -280,14 +274,13 @@ func test_opacity_title() {
     print("修改标题成功")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(25, 25, 45, 255))
             ren.clear()
             ren.set_color(_rgb(255, 220, 100, 255))
             ren.fill_rect(150, 120, 200, 110)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -310,14 +303,13 @@ func test_show_hide() {
     print("窗口创建成功")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 45, 30, 255))
             ren.clear()
             ren.set_color(_rgb(100, 255, 100, 255))
             ren.fill_rect(100, 80, 200, 140)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -357,14 +349,13 @@ func test_maximizable_method() {
 
     var maximizable_on = true
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(45, 20, 45, 255))
             ren.clear()
             ren.set_color(_rgb(255, 200, 255, 255))
             ren.fill_rect(150, 120, 200, 160)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() {
                 win.set_should_close(true)
             }

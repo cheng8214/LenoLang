@@ -8,7 +8,7 @@ _console(false)
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("LenoC Timer & Clock", w_style)
+    GWin win = guis.create_window("LenoC Timer & Clock", w_style)
 
     var font_title = guis.load_font("Arial", 32)
     var font_large = guis.load_font("Arial", 24)
@@ -24,7 +24,7 @@ _console(false)
     })
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -54,10 +54,8 @@ _console(false)
 
             ren.set_color(_rgb(180, 100, 255, 255))
             ren.draw_text(font_small, "Press ESC to quit", 50, 350)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

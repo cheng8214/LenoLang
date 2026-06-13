@@ -1,6 +1,6 @@
 # LenoC GUI Window 模块
 
-本文档详细说明 `Win` 窗口对象提供的所有操作。
+本文档详细说明 `GWin` 窗口对象提供的所有操作。
 
 ## 目录
 
@@ -16,12 +16,12 @@
 
 ## 概述
 
-`Win` 是 LenoC GUI 模块的窗口对象，封装了跨平台的窗口管理功能。
+`GWin` 是 LenoC GUI 模块的窗口对象，封装了跨平台的窗口管理功能。
 
 ### 类型定义
 
 ```leno
-type Win  // 窗口对象类型
+type GWin  // 窗口对象类型
 ```
 
 ---
@@ -52,7 +52,7 @@ type Win  // 窗口对象类型
 | `opacity` | float | 1.0 | 透明度 0.0~1.0 |
 | `visible` | bool | true | 初始是否可见 |
 
-**返回**: `Win` - 窗口对象
+**返回**: `GWin` - 窗口对象
 
 ```leno
 import guis
@@ -65,10 +65,10 @@ main() {
         resizable: true,
         opacity: 0.95
     }
-    Win win = guis.create_window("My Application", w_style)
+    GWin win = guis.create_window("My Application", w_style)
     
     // 方式二：使用字典（简洁）
-    Win win2 = guis.create_window("Quick Window", {
+    GWin win2 = guis.create_window("Quick Window", {
         width: 800,
         height: 600,
         fullscreen: false
@@ -232,13 +232,13 @@ win.set_opacity(0.8)   // 80% 不透明
 
 ## 事件循环
 
-### `win.run(on_draw, on_event)`
+### `win.run(on_draw, on_GEvent)`
 
 运行窗口事件循环。这是 GUI 应用的核心机制。
 
 **参数**:
-- `on_draw` (func(Draw)): 渲染回调，每帧调用
-- `on_event` (func(Event)): 事件回调，每个事件调用
+- `on_draw` (func(GDraw)): 渲染回调，每帧调用
+- `on_event` (func(GEvent)): 事件回调，每个事件调用
 
 **工作流程**:
 1. 创建渲染器
@@ -248,7 +248,7 @@ win.set_opacity(0.8)   // 80% 不透明
 
 ```leno
 win.run(
-    func(Draw ren) {
+    func(GDraw ren) {
         // 每帧渲染
         ren.set_color(_rgb(30, 30, 46, 255))
         ren.clear()
@@ -256,10 +256,8 @@ win.run(
         // 绘制内容...
         ren.set_color(_rgb(255, 255, 255, 255))
         ren.fill_rect(100, 100, 200, 150)
-        
-        ren.present()
     },
-    func(Event e) {
+    func(GEvent e) {
         // 事件处理
         if e.is_quit() or e.is_window_close() {
             win.set_should_close(true)
@@ -312,15 +310,14 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("基础窗口", style)
+    GWin win = guis.create_window("基础窗口", style)
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -339,7 +336,7 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("无边框窗口", {
+    GWin win = guis.create_window("无边框窗口", {
         width: 600,
         height: 400,
         borderless: true,
@@ -350,7 +347,7 @@ main() {
     win.set_drag_area(0, 0, 600, 40)
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // 绘制自定义标题栏
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.fill_rect(0, 0, 600, 40)
@@ -358,10 +355,8 @@ main() {
             // 绘制内容区域
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.fill_rect(0, 40, 600, 360)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() {
                 win.set_should_close(true)
             }
@@ -384,7 +379,7 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("自适应窗口", {
+    GWin win = guis.create_window("自适应窗口", {
         width: 800,
         height: 600,
         resizable: true
@@ -394,7 +389,7 @@ main() {
     var win_h = 600
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
             
@@ -406,10 +401,8 @@ main() {
             
             ren.set_color(_rgb(100, 150, 255, 255))
             ren.fill_rect(x, y, rect_w, rect_h)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -433,7 +426,7 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("全屏演示", {
+    GWin win = guis.create_window("全屏演示", {
         width: 800,
         height: 600,
         resizable: true
@@ -442,17 +435,15 @@ main() {
     var is_fullscreen = false
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(0, 0, 0, 255))
             ren.clear()
             
             ren.set_color(_rgb(255, 255, 255, 255))
             var size = win.get_size()
             ren.fill_rect(size[0]/2 - 50, size[1]/2 - 50, 100, 100)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() {
                 win.set_should_close(true)
             }
@@ -493,4 +484,4 @@ main() {
 | `should_close()` | - | bool | 查询关闭标志 |
 | `set_drag_area(x,y,w,h)` | int x4 | null | 设置拖拽区域 |
 | `clear_drag_area()` | - | null | 清除拖拽区域 |
-| `run(draw, event)` | func, func | null | 运行事件循环 |
+| `run(GDraw, GEvent)` | func, func | null | 运行事件循环 |

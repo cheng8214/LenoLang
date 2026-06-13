@@ -6,21 +6,21 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("LenoC GUI - Font Test", w_style)
+    GWin win = guis.create_window("LenoC GUI - GFont Test", w_style)
 
     var font_arial = guis.load_font("Arial", 24)
     var font_consolas = guis.load_font("Consolas", 18)
     var font_simhei = guis.load_font("SimHei", 28)
-    Font font_yahei = guis.load_font("Microsoft YaHei", 20)
+    GFont font_yahei = guis.load_font("Microsoft YaHei", 20)
     var font_small = guis.load_font("Arial", 16)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text(font_small, "System Font Test:", 30, 20)
+            ren.draw_text(font_small, "System GFont Test:", 30, 20)
             ren.draw_text(font_small, "Hello, LenoC GUI!", 30, 50)
 
             ren.set_color(_rgb(100, 255, 100, 255))
@@ -41,10 +41,8 @@ main() {
 
             ren.set_color(_rgb(150, 150, 150, 255))
             ren.draw_text(font_small, "Press ESC to quit", 30, 560)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -60,5 +58,5 @@ main() {
     font_yahei.close()
     font_small.close()
     win.close()
-    print("font test done!")
+    print("GFont test done!")
 }

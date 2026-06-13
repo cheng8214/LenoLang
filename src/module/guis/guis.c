@@ -2,16 +2,16 @@
  * 将平台抽象层连接到 LenoC VM
  *
  * 类型关键字:
- *   Win     - 窗口对象 (OBJ_GUI_WINDOW)
- *   Draw    - 渲染器对象 (OBJ_GUI_RENDERER)
- *   Event   - 事件对象 (OBJ_GUI_EVENT )
- *   Image   - 图像对象 (OBJ_GUI_IMAGE)
- *   Font    - 字体对象 (OBJ_GUI_FONT)
- *   Rgb     - 颜色对象 (_rgb(r, g, b, a?))
+ *   GWin    - 窗口对象 (OBJ_GUI_WINDOW)
+ *   GDraw   - 渲染器对象 (OBJ_GUI_RENDERER)
+ *   GEvent  - 事件对象 (OBJ_GUI_EVENT )
+ *   GImage  - 图像对象 (OBJ_GUI_IMAGE)
+ *   GFont   - 字体对象 (OBJ_GUI_FONT)
+ *   GRgb    - 颜色对象 (_rgb(r, g, b, a?))
  *
  * 模块级 API:
- *   guis.create_window(title, style_dict) -> Win          Style 方式创建窗口
- *   guis.load_font(name, size) -> Font                    加载系统字体
+ *   guis.create_window(title, style_dict) -> GWin         Style 方式创建窗口
+ *   guis.load_font(name, size) -> GFont                   加载系统字体
  *   font.close()                                          关闭字体
  *   ren.draw_text(font, text, x, y)                       使用字体绘制文字
  *   ren.text_size(font, text) -> [w, h]                   计算字体文字尺寸
@@ -33,9 +33,9 @@
  *   ren.reset_logical_size()                             重置逻辑尺寸
  *
  * 图片加载 API:
- *   guis.load_image(path) -> Image                        从文件加载图片
- *   guis.load_image_ex(path, options) -> Image            带选项加载（翻转等）
- *   guis.load_image_from_memory(data) -> Image            从内存加载图片
+ *   guis.load_image(path) -> GImage                       从文件加载图片
+ *   guis.load_image_ex(path, options) -> GImage           带选项加载（翻转等）
+ *   guis.load_image_from_memory(data) -> GImage           从内存加载图片
  *   guis.image_info(path) -> {width, height, channels}    获取图片信息
  *   guis.image_info_from_memory(data) -> {...}            从内存获取图片信息
  *   guis.is_16_bit(path) -> bool                          检查是否为16位图片
@@ -425,6 +425,10 @@ static Value gui_create_window_func(int argc, Value* args) {
 
     /* vsync */
     obj->vsync_enabled = vsync_enabled;
+
+    /* 按钮列表 */
+    obj->buttons = NULL;
+    obj->button_count = 0;
 
     /* 图标 */
     if (icon_path) {
@@ -1143,12 +1147,27 @@ static void leno_gui_render_callback(void* user_data) {
             state->has_error = 1;
         }
     }
+
+    /* 自动绘制窗口上的所有按钮 */
+    if (win) {
+        gui_button_draw_all(win, state->ren_obj);
+    }
+
+    /* 自动 present：用户无需手动调用 ren.present() */
+    leno_gui_platform_render_present(state->ren_obj->platform);
 }
 
 /* C 语言事件回调包装器 */
 static void leno_gui_event_callback(void* user_data, LenoGUIEvent* ev) {
     LenoGUIRunState* state = (LenoGUIRunState*)user_data;
     if (state->has_error) return;
+
+    /* 先处理按钮事件 */
+    ObjGUIWindow* win = state->ren_obj->window;
+    if (win) {
+        gui_button_handle_event(win, ev);
+    }
+
     if (!val_is_null(state->on_event)) {
         Value event_dict = event_to_dict(ev);
         call_leno_closure(state->on_event, 1, &event_dict);
@@ -1352,13 +1371,14 @@ static Value gui_log_critical_func(int argc, Value* args) {
     return val_null();
 }
 
-/* 前向声明：Draw / Win / Image 实例方法注册 */
+/* 前向声明：Draw / Win / Image / Button 实例方法注册 */
 void guis_init_instance_methods(void);
 
-/* 外部声明：Win / Image / Font 实例方法注册 */
+/* 外部声明：Win / Image / Font / Button 实例方法注册 */
 extern void guis_init_window_instance_methods(void);
 extern void guis_init_image_instance_methods(void);
 extern void guis_init_font_instance_methods(void);
+extern void guis_init_button_instance_methods(void);
 
 void guis_init_module(void) {
     TypeKind no_params[] = {};
@@ -1461,6 +1481,9 @@ void guis_init_module(void) {
 
     /* 注册 Font 实例方法 */
     guis_init_font_instance_methods();
+
+    /* 注册 GButton 实例方法 */
+    guis_init_button_instance_methods();
 }
 
 /* 注册全局函数（不需要 import guis） */

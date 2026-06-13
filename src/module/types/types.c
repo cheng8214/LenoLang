@@ -412,13 +412,15 @@ static Value native_type(int argCount, Value* args) {
                     typeStr = str_copy("cstruct", 7);
                 }
             } else if (val_as_obj(value)->type == OBJ_GUI_WINDOW) {
-                typeStr = str_copy("win", 3);
+                typeStr = str_copy("gwin", 4);
             } else if (val_as_obj(value)->type == OBJ_GUI_RENDERER) {
-                typeStr = str_copy("draw", 4);
+                typeStr = str_copy("gdraw", 5);
             } else if (val_as_obj(value)->type == OBJ_GUI_EVENT) {
-                typeStr = str_copy("event", 5);
+                typeStr = str_copy("gevent", 6);
+            } else if (val_as_obj(value)->type == OBJ_GUI_BUTTON) {
+                typeStr = str_copy("gbutton", 7);
             } else if (val_as_obj(value)->type == OBJ_RGB) {
-                typeStr = str_copy("rgb", 3);
+                typeStr = str_copy("grgb", 4);
             } else if (val_as_obj(value)->type == OBJ_SOCKET) {
                 typeStr = str_copy("socket", 6);
             } else {

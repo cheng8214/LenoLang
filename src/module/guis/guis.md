@@ -9,11 +9,11 @@
 - [窗口标志](#窗口标志)
 - [模块方法](#模块方法)
 - [窗口操作](#窗口操作)
-- [渲染器方法（Draw 实例方法）](#渲染器方法draw-实例方法)
-- [事件方法（Event 实例方法）](#事件方法event-实例方法)
+- [渲染器方法（GDraw 实例方法）](#渲染器方法draw-实例方法)
+- [事件方法（GEvent 实例方法）](#事件方法event-实例方法)
 - [图片加载](#图片加载)
 - [zlib 解压](#zlib-解压)
-- [Image 实例方法](#image-实例方法)
+- [GImage 实例方法](#image-实例方法)
 - [事件循环](#事件循环)
 - [剪贴板](#剪贴板)
 - [光标与透明度](#光标与透明度)
@@ -54,12 +54,12 @@ guis.c               - LenoC 模块注册
 
 | 类型 | 说明 |
 |------|------|
-| `Win` | 窗口对象 |
-| `Draw` | 渲染器对象 |
-| `Event` | 事件对象 |
-| `Image` | 图像对象 |
-| `Font` | 字体对象 |
-| `Rgb` | 颜色对象（通过 `_rgb(r, g, b, a?)` 创建） |
+| `GWin` | 窗口对象 |
+| `GDraw` | 渲染器对象 |
+| `GEvent` | 事件对象 |
+| `GImage` | 图像对象 |
+| `GFont` | 字体对象 |
+| `GRgb` | 颜色对象（通过 `_rgb(r, g, b, a?)` 创建） |
 
 ---
 
@@ -75,20 +75,19 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("Hello", w_style)
+    GWin win = guis.create_window("Hello", w_style)
 
     // 方式二：直接传入 Dict（简洁，适合快速原型）
-    // Win win = guis.create_window("Hello", {width: 800, height: 600})
+    // GWin win = guis.create_window("Hello", {width: 800, height: 600})
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
             ren.set_color(_rgb(255, 0, 0, 255))
             ren.fill_rect(100, 100, 200, 150)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -166,7 +165,7 @@ win.close()
   - `visible` (bool): 是否可见
   - `always_on_top` (bool): 是否置顶
 
-**返回**: `Win` - 窗口对象
+**返回**: `GWin` - 窗口对象
 
 ```leno
 // 方式一：显式 Style 类型（推荐，支持 IDE 字段补全）
@@ -175,32 +174,31 @@ Style[window] w_style = {
     height: 768,
     resizable: true
 }
-Win win = guis.create_window("My App", w_style)
+GWin win = guis.create_window("My App", w_style)
 
 // 方式二：直接传入 Dict（简洁，适合快速原型）
-Win win = guis.create_window("My App", {width: 800, height: 600})
+GWin win = guis.create_window("My App", {width: 800, height: 600})
 ```
 
 ---
 
 ### `win.run(onDraw, onEvent)`
 
-Win 实例方法：回调式事件循环（推荐使用方式）。自动创建渲染器，循环处理事件和渲染，直到窗口关闭。
+GWin 实例方法：回调式事件循环（推荐使用方式）。自动创建渲染器，循环处理事件和渲染，直到窗口关闭。
 
 **参数**:
-- `onDraw` (func(Draw)): 渲染回调，每帧调用
-- `onEvent` (func(Event)): 事件回调，每个事件调用
+- `onDraw` (func(GDraw)): 渲染回调，每帧调用
+- `onEvent` (func(GEvent)): 事件回调，每个事件调用
 
 **返回**: `null`
 
 ```leno
 win.run(
-    func(Draw ren) {
+    func(GDraw ren) {
         ren.set_color(_rgb(0, 0, 0, 255))
         ren.clear()
-        ren.present()
     },
-    func(Event e) {
+    func(GEvent e) {
         if e.is_quit() {
             win.set_should_close(true)
         }
@@ -210,9 +208,9 @@ win.run(
 
 ---
 
-## 窗口操作（Win 实例方法）
+## 窗口操作（GWin 实例方法）
 
-Win 类型支持实例方法调用，使用 `win.method()` 风格：
+GWin 类型支持实例方法调用，使用 `win.method()` 风格：
 
 ### `win.show()` / `win.hide()`
 
@@ -295,16 +293,16 @@ win.set_opacity(0.85)
 
 ---
 
-## 渲染器方法（Draw 实例方法）
+## 渲染器方法（GDraw 实例方法）
 
-渲染器通过 `win.run()` 的 onDraw 回调参数获取，或通过 `guis.create_renderer(win)` 手动创建。
+渲染器通过 `win.run()` 的 onDraw 回调参数获取，或通过 `guis.create_renderer(GWin)` 手动创建。
 
-### `ren.set_color(Rgb)`
+### `ren.set_color(GRgb)`
 
 设置绘制颜色。
 
 **参数**:
-- `color` (Rgb): RGB 颜色对象，通过 `_rgb(r, g, b, a)` 创建
+- `color` (GRgb): RGB 颜色对象，通过 `_rgb(r, g, b, a)` 创建
 
 ```leno
 var c = _rgb(255, 100, 50, 255)
@@ -320,16 +318,6 @@ ren.set_color(c)
 ```leno
 ren.set_color(_rgb(30, 30, 46, 255))
 ren.clear()
-```
-
----
-
-### `ren.present()`
-
-将渲染缓冲区内容呈现到窗口。每帧绘制完成后必须调用。
-
-```leno
-ren.present()
 ```
 
 ---
@@ -458,7 +446,7 @@ ren.no_clip()
 
 ---
 
-## 事件方法（Event 实例方法）
+## 事件方法（GEvent 实例方法）
 
 事件通过 `win.run()` 的 onEvent 回调参数获取，或通过 `guis.poll()` 获取。
 
@@ -521,7 +509,7 @@ ren.no_clip()
 | A-Z | `65-90` | 0-9 | `48-57` |
 
 ```leno
-func(Event e) {
+func(GEvent e) {
     if e.is_key_down() {
         var key = e.key()
         if key == 0x1B {
@@ -549,7 +537,7 @@ func(Event e) {
 **参数**:
 - `path` (string): 图片文件路径
 
-**返回**: `Image` - 图片对象，失败返回 `null`
+**返回**: `GImage` - 图片对象，失败返回 `null`
 
 ```leno
 var img = guis.load_image("photo.png")
@@ -570,7 +558,7 @@ if img != null {
 - `options` (Dict): 选项字典
   - `flip_vertical` (bool): 是否垂直翻转（OpenGL兼容）
 
-**返回**: `Image` - 图片对象
+**返回**: `GImage` - 图片对象
 
 ```leno
 // 垂直翻转加载（OpenGL纹理坐标兼容）
@@ -586,7 +574,7 @@ var img = guis.load_image_ex("texture.png", {flip_vertical: true})
 **参数**:
 - `data` (string): 图片二进制数据（字节字符串）
 
-**返回**: `Image` - 图片对象
+**返回**: `GImage` - 图片对象
 
 ```leno
 import files
@@ -682,7 +670,7 @@ var raw = guis.zlib_decode_noheader(compressed_data)
 
 ---
 
-## Image 实例方法
+## GImage 实例方法
 
 ### `image.close()`
 
@@ -758,7 +746,7 @@ img.draw_rotated_scaled(ren, 400, 300, 200, 150, 45.0)
 从图像中取子区域绘制到目标位置（可缩放）。
 
 **参数**:
-- `ren` (Draw): 渲染器对象
+- `ren` (GDraw): 渲染器对象
 - `sx`, `sy`, `sw`, `sh`: 源图像区域（x, y, 宽, 高）
 - `dx`, `dy`, `dw`, `dh`: 目标绘制区域（x, y, 宽, 高）
 
@@ -827,14 +815,13 @@ var mode = img.access()
 
 ```leno
 win.run(
-    func(Draw ren) {
+    func(GDraw ren) {
         // 每帧渲染
         ren.set_color(_rgb(0, 0, 0, 255))
         ren.clear()
         // ... 绘制内容
-        ren.present()
     },
-    func(Event e) {
+    func(GEvent e) {
         // 事件处理
         if e.is_quit() or e.is_window_close() {
             win.set_should_close(true)
@@ -941,7 +928,7 @@ guis.set_cursor(0)  // 恢复默认
   - `path` (string): 默认路径
   - `multiple` (bool): 是否允许多选
   - `filters` (array): 文件过滤器数组，每个元素为 `{name: "显示名", pattern: "匹配模式"}`
-  - `window` (Win): 父窗口（Windows 下为模态对话框）
+  - `window` (GWin): 父窗口（Windows 下为模态对话框）
 
 ```leno
 // 打开文件对话框
@@ -996,7 +983,7 @@ guis.file_dialog(2, func(file_list, filter_index) {
 - `name` (string): 字体名称，如 `"Arial"`、`"Consolas"`、`"SimSun"` 等
 - `size` (int): 字体大小（像素）
 
-**返回**: `Font` 或 `null`（加载失败时）
+**返回**: `GFont` 或 `null`（加载失败时）
 
 ```leno
 var font = guis.load_font("Consolas", 16)
@@ -1019,7 +1006,7 @@ font.close()
 使用指定字体绘制文字。
 
 **参数**:
-- `font` (Font): 字体对象
+- `font` (GFont): 字体对象
 - `text` (string): 要绘制的文本
 - `x`, `y` (int): 绘制位置
 
@@ -1037,7 +1024,7 @@ font.close()
 计算指定字体的文字尺寸。
 
 **参数**:
-- `font` (Font): 字体对象
+- `font` (GFont): 字体对象
 - `text` (string): 要计算的文本
 
 **返回**: `[宽度, 高度]` 数组
@@ -1231,17 +1218,16 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("Hello LenoC", w_style)
+    GWin win = guis.create_window("Hello LenoC", w_style)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
             ren.set_color(_rgb(255, 100, 100, 255))
             ren.fill_rect(100, 100, 200, 150)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -1265,13 +1251,13 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("FPS Counter", w_style)
+    GWin win = guis.create_window("FPS Counter", w_style)
 
     var frame = 0
     var start_ticks = guis.get_ticks()
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(0, 0, 0, 255))
             ren.clear()
 
@@ -1281,10 +1267,8 @@ main() {
                 var fps = frame * 1000 / elapsed
                 print("FPS: " + _str(fps))
             }
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -1308,14 +1292,14 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("Mouse Demo", w_style)
+    GWin win = guis.create_window("Mouse Demo", w_style)
 
     var mx = 0
     var my = 0
     var clicked = false
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
 
@@ -1325,10 +1309,8 @@ main() {
                 ren.set_color(_rgb(100, 255, 100, 255))
             }
             ren.fill_circle(mx, my, 30)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -1362,10 +1344,10 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("Viewport & Clip", w_style)
+    GWin win = guis.create_window("Viewport & Clip", w_style)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -1382,10 +1364,8 @@ main() {
             ren.set_color(_rgb(80, 40, 40, 255))
             ren.fill_rect(500, 0, 350, 350)
             ren.no_clip()
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -1409,10 +1389,10 @@ main() {
         resizable: true,
         opacity: 0.95
     }
-    Win win = guis.create_window("LenoC GUI - Draw Test", w_style)
+    GWin win = guis.create_window("LenoC GUI - Draw Test", w_style)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -1430,10 +1410,8 @@ main() {
 
             ren.set_color(_rgb(255, 255, 0, 255))
             ren.line(300, 450, 500, 550)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -1465,13 +1443,13 @@ var win = guis.create_window("App", {width: 800, height: 600})
 
 ### 2. 渲染循环
 
-每帧必须按 `clear()` → 绘制 → `present()` 的顺序操作。缺少 `present()` 会导致画面不更新。
+每帧按 `clear()` → 绘制的顺序操作即可，引擎会在每帧结束后自动将内容显示到窗口。
 
 ```leno
 ren.set_color(_rgb(0, 0, 0, 255))
 ren.clear()           // 1. 清除
 ren.fill_rect(...)    // 2. 绘制
-ren.present()         // 3. 呈现
+                       // 3. 引擎自动 present
 ```
 
 ### 3. 窗口大小变化
@@ -1498,7 +1476,7 @@ ren.present()         // 3. 呈现
 
 1. **始终处理退出事件**
    ```leno
-   func(Event e) {
+   func(GEvent e) {
        if e.is_quit() or e.is_window_close() {
            win.set_should_close(true)
        }

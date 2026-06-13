@@ -1414,6 +1414,8 @@ void guis_init_window_instance_methods(void);
 void guis_init_image_instance_methods(void);
 // 前向声明：Font 实例方法初始化（在 guis_font.c 中定义）
 void guis_init_font_instance_methods(void);
+// 前向声明：GButton 实例方法初始化（在 guis_button.c 中定义）
+void guis_init_button_instance_methods(void);
 // 前向声明：Socket 实例方法初始化（在 sockets.c 中定义）
 void sockets_init_instance_methods(void);
 
@@ -1429,6 +1431,7 @@ void native_register_all_instance_method_metas(void) {
     guis_init_event_methods();
     guis_init_image_instance_methods();
     guis_init_font_instance_methods();
+    guis_init_button_instance_methods();
     structs_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
@@ -1442,12 +1445,13 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_STRING: return "string";
         case TYPE_DICT:   return "dict";
         case TYPE_FILE:   return "file";
-        case TYPE_WIN:    return "win";
-        case TYPE_DRAW:   return "draw";
-        case TYPE_EVENT:  return "event";
-        case TYPE_RGB:    return "rgb";
-        case TYPE_IMAGE:  return "image";
-        case TYPE_FONT:   return "font";
+        case TYPE_WIN:    return "gwin";
+        case TYPE_DRAW:   return "gdraw";
+        case TYPE_EVENT:  return "gevent";
+        case TYPE_RGB:    return "grgb";
+        case TYPE_IMAGE:  return "gimage";
+        case TYPE_FONT:   return "gfont";
+        case TYPE_BUTTON: return "gbutton";
         case TYPE_STYLE:  return "style";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";

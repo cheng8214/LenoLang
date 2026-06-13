@@ -1,0 +1,75 @@
+import guis
+
+main() {
+    Style[window] w_style = {
+        width: 700,
+        height: 500,
+        center: true,
+        bg_color: _rgb(25, 25, 40, 255),
+        resizable: true
+    }
+    var win = guis.create_window("Shadow+Border+Opacity", w_style)
+
+    GButton btn1 = win.add_button({
+        x: 50,
+        y: 50,
+        width: 200,
+        height: 50,
+        text: "Shadow",
+        bg_color: _rgb(70, 130, 180, 255),
+        hover_color: _rgb(100, 160, 210, 255),
+        press_color: _rgb(50, 100, 150, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10,
+        shadow_offset_x: 0,
+        shadow_offset_y: 4,
+        shadow_radius: 8,
+        shadow_color: _rgb(0, 0, 0, 100)
+    })
+
+    GButton btn2 = win.add_button({
+        x: 50,
+        y: 130,
+        width: 200,
+        height: 50,
+        text: "Border",
+        bg_color: _rgb(50, 50, 70, 255),
+        hover_color: _rgb(70, 70, 90, 255),
+        press_color: _rgb(30, 30, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10,
+        border_width: 2,
+        border_color: _rgb(100, 200, 255, 255)
+    })
+
+    GButton btn3 = win.add_button({
+        x: 50,
+        y: 210,
+        width: 200,
+        height: 50,
+        text: "Opacity 150",
+        bg_color: _rgb(200, 80, 80, 255),
+        hover_color: _rgb(230, 110, 110, 255),
+        press_color: _rgb(160, 50, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10,
+        opacity: 150
+    })
+
+    btn1.on_click(func() { print("shadow!") })
+    btn2.on_click(func() { print("border!") })
+    btn3.on_click(func() { print("opacity!") })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(25, 25, 40, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}

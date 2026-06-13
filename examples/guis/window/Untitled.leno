@@ -1,11 +1,11 @@
-import guis
+﻿import guis
 
 main() {
 for 10
 {
     var font = guis.load_font("SimSun", 16)
-    print("font created")
+    print("GFont created")
     font.close()
-    print("font closed")
+    print("GFont closed")
     }
 }

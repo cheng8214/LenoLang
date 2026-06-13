@@ -7,9 +7,9 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("LenoC GUI - Image Rotate", w_style)
+    GWin win = guis.create_window("LenoC GUI - GImage Rotate", w_style)
 
-    Image img = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
+    GImage img = guis.load_image("D:\CLeno\LenoC\icons\leno_logo.png")
     if img == null {
         print("加载图片失败")
         return
@@ -17,7 +17,7 @@ main() {
 
     int img_w = img.width()
     int img_h = img.height()
-    print("Image size:", img_w, "x", img_h)
+    print("GImage size:", img_w, "x", img_h)
 
     // 缩放因子
     var scale = 1.0
@@ -41,7 +41,7 @@ main() {
     )
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -66,10 +66,8 @@ main() {
             ren.set_color(_rgb(150, 150, 200, 255))
             ren.draw_text(font, hint, 10, 580)
             font.close()
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -117,5 +115,5 @@ main() {
 
     img.close()
     win.close()
-    print("image rotate test done!")
+    print("GImage rotate test done!")
 }

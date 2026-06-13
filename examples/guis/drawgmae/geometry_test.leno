@@ -9,13 +9,13 @@ main() {
         height: 700,
         resizable: true
     }
-    Win win = guis.create_window("LenoC GUI - 几何图形扩展测试", w_style)
+    GWin win = guis.create_window("LenoC GUI - 几何图形扩展测试", w_style)
     
     // 动画变量
     var angle = 0.0
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // 深色背景
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
@@ -85,10 +85,8 @@ main() {
             if angle > 360.0 {
                 angle = 0.0
             }
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

@@ -146,6 +146,7 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_RGB_TYPE ||
            type == TOK_IMAGE_TYPE ||
            type == TOK_FONT_TYPE ||
+           type == TOK_BUTTON_TYPE ||
            type == TOK_STYLE_TYPE ||
            type == TOK_SOCKET_TYPE ||
            type == TOK_PTR_TYPE;

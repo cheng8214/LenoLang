@@ -37,7 +37,7 @@ struct Firework {
 }
 
 main() {
-    Win win = guis.create_window("🎆 Fireworks Demo", {
+    GWin win = guis.create_window("🎆 Fireworks Demo", {
         width: 800,
         height: 600
     })
@@ -150,7 +150,7 @@ main() {
     }
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // FPS
             frame_count = frame_count + 1
             var now = times.ms()
@@ -248,9 +248,6 @@ main() {
             // FPS 显示
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.draw_text(font_fps, "FPS: " + fps + " | Particles: " + particle_count, 10, 10)
-
-            ren.present()
-
             // 帧率限制
             var elapsed = times.ms() - frame_start
             if elapsed < target_frame_ms {
@@ -258,7 +255,7 @@ main() {
             }
             frame_start = times.ms()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

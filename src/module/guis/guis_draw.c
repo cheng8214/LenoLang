@@ -4,7 +4,6 @@
  * Draw 实例方法 (ren.method()):
  *   ren.set_color(_Rgb)              设置绘制颜色（影响后续所有绘制）
  *   ren.clear()                            用当前颜色清空画布
- *   ren.present()                          将绘制内容显示到窗口
  *   ren.point(x, y)                        绘制单个像素点
  *   ren.line(x1, y1, x2, y2)               绘制直线
  *   ren.rect(x, y, w, h)                   绘制矩形边框
@@ -51,14 +50,6 @@ static Value gui_render_clear_func(int argc, Value* args) {
     (void)argc;
     ObjGUIRenderer* ren = as_renderer(args[0]);
     if (ren && ren->platform) leno_gui_platform_render_clear(ren->platform);
-    return val_null();
-}
-
-/* ren.present() */
-static Value gui_render_present_func(int argc, Value* args) {
-    (void)argc;
-    ObjGUIRenderer* ren = as_renderer(args[0]);
-    if (ren && ren->platform) leno_gui_platform_render_present(ren->platform);
     return val_null();
 }
 
@@ -486,7 +477,6 @@ void guis_init_instance_methods(void) {
     TypeKind rgb_1[] = {TYPE_RGB};
     draw_register_method_with_params("set_color", make_native(gui_set_color_func, 2, "set_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, rgb_1);
     draw_register_method_with_params("clear", make_native(gui_render_clear_func, 1, "clear"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
-    draw_register_method_with_params("present", make_native(gui_render_present_func, 1, "present"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
     draw_register_method_with_params("point", make_native(gui_render_draw_point_func, 3, "point"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
     draw_register_method_with_params("line", make_native(gui_render_draw_line_func, 5, "line"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4);
     draw_register_method_with_params("rect", make_native(gui_render_draw_rect_func, 5, "rect"), 4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_4_rect);

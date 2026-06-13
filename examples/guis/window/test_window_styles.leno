@@ -19,16 +19,15 @@ func test_basic_center() {
     print("窗口创建成功, center=true")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
             ren.set_color(_rgb(0, 255, 100, 255))
             ren.fill_rect(50, 50, 200, 150)
             ren.set_color(_rgb(255, 200, 0, 255))
             ren.fill_rect(300, 50, 200, 150)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -55,14 +54,13 @@ func test_min_max_size() {
     print("窗口创建成功, min=400x300, max=1200x900")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(50, 50, 70, 255))
             ren.clear()
             ren.set_color(_rgb(255, 100, 100, 255))
             ren.fill_rect(10, 10, 580, 380)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -87,14 +85,13 @@ func test_opacity_vsync() {
     print("窗口创建成功, opacity=0.85, vsync=false")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.clear()
             ren.set_color(_rgb(100, 200, 255, 255))
             ren.fill_rect(100, 100, 300, 200)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -117,7 +114,7 @@ func test_maximized_always_on_top() {
     print("窗口创建成功, maximized=true, always_on_top=true")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(20, 20, 40, 255))
             ren.clear()
             ren.set_color(_rgb(255, 255, 255, 255))
@@ -125,9 +122,8 @@ func test_maximized_always_on_top() {
             var cx = sz[0] / 2
             var cy = sz[1] / 2
             ren.fill_rect(cx - 100, cy - 50, 200, 100)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -150,16 +146,15 @@ func test_borderless() {
     print("窗口创建成功, borderless=true")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(20, 25, 35, 255))
             ren.clear()
             ren.set_color(_rgb(255, 80, 80, 255))
             ren.fill_rect(20, 20, 100, 40)
             ren.set_color(_rgb(255, 255, 255, 255))
             ren.fill_rect(300, 200, 200, 200)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -194,7 +189,7 @@ func test_full_style() {
     print("窗口创建成功! 全部字段已应用")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(34, 40, 49, 255))
             ren.clear()
             ren.set_color(_rgb(255, 99, 71, 255))
@@ -205,9 +200,8 @@ func test_full_style() {
             ren.fill_rect(450, 50, 150, 100)
             ren.set_color(_rgb(255, 215, 0, 255))
             ren.fill_rect(650, 50, 150, 100)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -234,14 +228,13 @@ func test_center_priority() {
     print("实际位置: (" + _str(pos[0]) + ", " + _str(pos[1]) + ")")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.clear()
             ren.set_color(_rgb(100, 255, 150, 255))
             ren.fill_rect(150, 100, 300, 200)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -269,14 +262,13 @@ func test_nonresizable_hidden() {
     print("调用 win.show() 显示窗口")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(60, 30, 40, 255))
             ren.clear()
             ren.set_color(_rgb(255, 180, 200, 255))
             ren.fill_rect(100, 80, 200, 140)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }
@@ -301,14 +293,13 @@ func test_no_maximize() {
     print("注意: 最大化和最小化按钮应该被禁用")
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(50, 20, 20, 255))
             ren.clear()
             ren.set_color(_rgb(255, 255, 100, 255))
             ren.fill_rect(200, 150, 200, 100)
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_window_close() or e.is_key_down() {
                 win.set_should_close(true)
             }

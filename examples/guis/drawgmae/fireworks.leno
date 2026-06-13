@@ -52,7 +52,7 @@ struct Star {
 
 main() {
 //_gc(false)
-    Win win = guis.create_window("🎆 烟花绚烂 - 压力测试版", {
+    GWin win = guis.create_window("🎆 烟花绚烂 - 压力测试版", {
         width: 960,
         height: 680
     })
@@ -465,7 +465,7 @@ main() {
     // 主渲染循环
     // ========================================================================
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             frame_count = frame_count + 1
             var now = times.ms()
             if now - last_fps_time >= 1000 {
@@ -665,9 +665,6 @@ main() {
             ren.draw_text(font_info,
                 "SPACE=齐射  |  CLICK=点击发射  |  R=重置峰值",
                 10, 28)
-
-            ren.present()
-
             // 帧率限制
             var elapsed = times.ms() - frame_start
             if elapsed < target_frame_ms {
@@ -675,7 +672,7 @@ main() {
             }
             frame_start = times.ms()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

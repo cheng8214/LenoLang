@@ -7,7 +7,7 @@ main() {
         borderless: true,
         resizable: true
     }
-    Win win = guis.create_window("Borderless", w_style)
+    GWin win = guis.create_window("Borderless", w_style)
 
     // 限制只有顶部标题栏区域可拖动（可选）
     // 如果不调用，整个窗口都可拖动
@@ -15,10 +15,10 @@ main() {
    win.set_drag_area(0, 0, 800, 40)
 
     // 加载中文字体（Windows 系统字体）
-    Font font = guis.load_font("Microsoft YaHei", 16)
+    GFont font = guis.load_font("Microsoft YaHei", 16)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -38,10 +38,8 @@ main() {
                 // 字体加载失败，使用内置字体（不支持中文）
                 ren.draw_text("Borderless Window", 50, 12, 2)
             }
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

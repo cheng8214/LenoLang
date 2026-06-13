@@ -48,6 +48,7 @@ typedef enum {
     OBJ_GUI_FONT,     // GUI 字体对象
     OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
     OBJ_GUI_IMAGE,    // GUI 图像对象
+    OBJ_GUI_BUTTON,   // GUI 按钮对象
     OBJ_SOCKET,       // Socket 对象
     OBJ_RGB,          // RGB 颜色对象
     OBJ_NONE,       // 无效/空类型标记
@@ -1361,6 +1362,28 @@ void font_register_method_with_params(const char* name, ObjNative* method, int a
 FontMethodEntry font_find_method_meta(const char* name);
 TypeKind font_get_method_param_type(const char* method_name, int param_index);
 ObjNative* font_find_method(const char* name);
+
+// ============================================================================
+// GButton 按钮方法系统 API
+// ============================================================================
+
+typedef struct {
+    const char* name;
+    ObjNative* method;
+    int arity;
+    TypeKind return_type;
+    TypeKind return_element_type;
+    TypeKind param_types[MAX_METHOD_PARAMS];
+} ButtonMethodEntry;
+
+void button_init_methods(void);
+void button_mark_methods(void);
+void button_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                        int min_arity, int max_arity,
+                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+ButtonMethodEntry button_find_method_meta(const char* name);
+TypeKind button_get_method_param_type(const char* method_name, int param_index);
+ObjNative* button_find_method(const char* name);
 
 // ============================================================================
 // Dict 字典方法系统 API

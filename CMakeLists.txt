@@ -48,6 +48,7 @@ set(LENO_SOURCES
     src/object/object_window.c
     src/object/object_event.c
     src/object/object_font.c
+    src/object/object_button.c
     src/bound_method.c
     src/coroutine.c
     src/vm/vm.c
@@ -91,6 +92,7 @@ set(LENO_SOURCES
     src/module/guis/guis_constants.c
     src/module/guis/guis_draw.c
     src/module/guis/guis_window.c
+    src/module/guis/guis_button.c
     src/module/guis/guis_style.c
     src/module/guis/guis_event.c
     src/module/guis/guis_image.c

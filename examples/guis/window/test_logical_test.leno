@@ -6,14 +6,14 @@ main() {
         width: 800,
         height: 600
     }
-    Win win = guis.create_window("调试", w_style)
+    GWin win = guis.create_window("调试", w_style)
 
     var font = guis.load_font("Arial", 16)
 
     var frame = 0
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             frame = frame + 1
 
             // 只在第一帧设置
@@ -54,14 +54,12 @@ main() {
             ren.draw_text(font, "Frame " + frame, 10, 10)
 
             // 关键：调用 present() 显示内容！
-            ren.present()
-
             // 10秒后退出
             if frame > 600 {
                 win.set_should_close(true)
             }
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

@@ -148,7 +148,7 @@ void font_register_method_with_params(const char* name, ObjNative* method, int a
     fontMethodTable.count++;
 
     /* 同时注册编译期元信息 */
-    native_register_instance_method_meta_with_params("font", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    native_register_instance_method_meta_with_params("gfont", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 /* 获取 Font 方法的参数类型 */

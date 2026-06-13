@@ -13,7 +13,7 @@ main() {
         height: 480,
         resizable: true
     }
-    Win win = guis.create_window("File Dialog Test", w_style)
+    GWin win = guis.create_window("File Dialog Test", w_style)
 
     var font = guis.load_font("SimSun", 20)
     var font_small = guis.load_font("SimSun", 14)
@@ -47,7 +47,7 @@ main() {
     }
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(34, 34, 34, 255))
             ren.clear()
 
@@ -87,10 +87,8 @@ main() {
                     break
                 }
             }
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

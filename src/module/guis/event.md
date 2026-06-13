@@ -1,6 +1,6 @@
 # LenoC GUI Event 模块
 
-本文档详细说明 `Event` 事件对象提供的所有操作。
+本文档详细说明 `GEvent` 事件对象提供的所有操作。
 
 ## 目录
 
@@ -18,19 +18,19 @@
 
 ## 概述
 
-`Event` 是 LenoC GUI 模块的事件对象，封装了所有用户输入和窗口状态变化事件。
+`GEvent` 是 LenoC GUI 模块的事件对象，封装了所有用户输入和窗口状态变化事件。
 
-### 获取 Event 对象
+### 获取 GEvent 对象
 
 事件通过 `win.run()` 的回调函数获取：
 
 ```leno
 win.run(
-    func(Draw ren) {
+    func(GDraw ren) {
         // 渲染回调
     },
-    func(Event e) {
-        // 事件回调 - e 就是 Event 对象
+    func(GEvent e) {
+        // 事件回调 - e 就是 GEvent 对象
         if e.is_key_down() {
             print("按键: " + e.key())
         }
@@ -400,7 +400,7 @@ if e.is_key_down() and e.key() == guis.KEY_ESCAPE {
 | `guis.MOD_CTRL` | 1 | Ctrl 按下 |
 | `guis.MOD_SHIFT` | 2 | Shift 按下 |
 | `guis.MOD_ALT` | 4 | Alt 按下 |
-| `guis.MOD_SUPER` | 8 | Win/Cmd 按下 |
+| `guis.MOD_SUPER` | 8 | GWin/Cmd 按下 |
 
 ```leno
 if e.is_key_down() {
@@ -426,14 +426,14 @@ if e.is_key_down() {
 import guis
 
 main() {
-    Win win = guis.create_window("Event Demo", {width: 800, height: 600})
+    GWin win = guis.create_window("Event Demo", {width: 800, height: 600})
     
     var mouse_x = 0
     var mouse_y = 0
     var key_log = ""
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
             
@@ -443,10 +443,8 @@ main() {
             
             // 显示按键记录
             // ren.draw_text(font, "Keys: " + key_log, 10, 40)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             // 退出处理
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
@@ -522,7 +520,7 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("Drag Demo", {width: 800, height: 600})
+    GWin win = guis.create_window("Drag Demo", {width: 800, height: 600})
     
     var dragging = false
     var drag_start_x = 0
@@ -531,17 +529,15 @@ main() {
     var win_start_y = 0
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(40, 40, 60, 255))
             ren.clear()
             
             // 绘制可拖拽区域
             ren.set_color(_rgb(100, 150, 255, 255))
             ren.fill_rect(0, 0, 800, 40)
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() {
                 win.set_should_close(true)
             }
@@ -584,14 +580,14 @@ main() {
 import guis
 
 main() {
-    Win win = guis.create_window("Input Demo", {width: 400, height: 200})
+    GWin win = guis.create_window("Input Demo", {width: 400, height: 200})
     
     var text = ""
     var cursor_visible = true
     var cursor_timer = 0
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 30, 255))
             ren.clear()
             
@@ -613,10 +609,8 @@ main() {
                 // var text_w = ren.text_size(font, text)[0]
                 // ren.fill_rect(30 + text_w, 90, 2, 20)
             }
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

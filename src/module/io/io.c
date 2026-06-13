@@ -120,20 +120,24 @@ static void print_value_internal(Value value) {
                     break;
                 }
                 case OBJ_GUI_WINDOW: {
-                    printf("<win>");
+                    printf("<gwin>");
                     break;
                 }
                 case OBJ_GUI_RENDERER: {
-                    printf("<draw>");
+                    printf("<gdraw>");
                     break;
                 }
                 case OBJ_GUI_EVENT: {
-                    printf("<event>");
+                    printf("<gevent>");
+                    break;
+                }
+                case OBJ_GUI_BUTTON: {
+                    printf("<gbutton>");
                     break;
                 }
                 case OBJ_RGB: {
                     ObjRgb* rgb = (ObjRgb*)obj;
-                    printf("Rgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
+                    printf("GRgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
                     break;
                 }
                 case OBJ_CSTRUCT_DEF: {

@@ -8,13 +8,13 @@ main() {
         resizable: true,
         opacity: 0.95
     }
-    Win win = guis.create_window("LenoC GUI - Event 方法测试", w_style)
+    GWin win = guis.create_window("LenoC GUI - Event 方法测试", w_style)
 
     var frame = 0
     var start_ticks = guis.get_ticks()
 	guis.msg_box("234")
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -58,10 +58,8 @@ main() {
                 var fps = frame * 1000 / elapsed
                 print("FPS: " + _str(fps))
             }
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             /* Event 方法风格 - 比 event["type"] 直观多了 */
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)

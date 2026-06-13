@@ -16,7 +16,7 @@ main() {
         height: 400,
         resizable: true
     }
-    Win win = guis.create_window("Event 新功能测试", w_style)
+    GWin win = guis.create_window("Event 新功能测试", w_style)
 
     /* 启用文本输入（用于 IME 测试） */
     guis.start_text_input()
@@ -31,7 +31,7 @@ main() {
     var font = guis.load_font("SimSun", 16)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(bg)
             ren.clear()
 
@@ -44,10 +44,8 @@ main() {
             ren.draw_text(font, "测试: 文本输入 -> 输入中文/英文（需要 IME）", 10, 90)
             ren.set_color(green)
             ren.draw_text(font, "按 ESC 或关闭窗口退出测试", 10, 120)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             /* ---- 退出 ---- */
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)

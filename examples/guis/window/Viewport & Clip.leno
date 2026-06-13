@@ -6,10 +6,10 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("Viewport & Clip", w_style)
+    GWin win = guis.create_window("Viewport & Clip", w_style)
 	
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -26,9 +26,8 @@ main() {
             ren.set_color(_rgb(80, 40, 40, 255))
             ren.fill_rect(500, 0, 350, 350)
             ren.no_clip()
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

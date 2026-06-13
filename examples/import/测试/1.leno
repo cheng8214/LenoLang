@@ -1,12 +1,12 @@
 import guis
 main()
 {
-    Win win=guis.create_window("Leno", {width: 800, height: 600})
-    func On_Draw(Draw e)
+    GWin win=guis.create_window("Leno", {width: 800, height: 600})
+    func On_Draw(GDraw e)
     {
 
     }
-    func On_Event(Event e)
+    func On_Event(GEvent e)
     {
         
     }

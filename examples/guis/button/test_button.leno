@@ -1,0 +1,494 @@
+// ============================================================
+// GButton 按钮测试 - win.add_button(style) 风格
+// 测试: 创建按钮、样式、悬停/按下颜色、点击回调、
+//       动态修改文字/位置/尺寸、可见性、启用/禁用、移除
+// ============================================================
+
+import guis
+
+// -------------------- 测试 1: 基本按钮 + 点击回调 --------------------
+func test_basic_button() {
+    print("=== 测试 1: 基本按钮 + 点击回调 ===")
+    Style[window] w_style = {
+        width: 600,
+        height: 400,
+        center: true,
+        bg_color: _rgb(30, 30, 46, 255),
+        resizable: true
+    }
+    var win = guis.create_window("GButton 基本测试", w_style)
+
+    var click_count = 0
+
+    GButton btn = win.add_button({
+        x: 200,
+        y: 160,
+        width: 200,
+        height: 50,
+        text: "Click Me",
+        bg_color: _rgb(70, 130, 180, 255),
+        hover_color: _rgb(100, 160, 210, 255),
+        press_color: _rgb(50, 100, 150, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10
+    })
+
+    btn.on_click(func() {
+        click_count = click_count + 1
+        print("按钮被点击! 次数: " + _str(click_count))
+        btn.set_text("Clicked: " + _str(click_count))
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(30, 30, 46, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 2: 多按钮 + 不同样式 --------------------
+func test_multi_buttons() {
+    print("=== 测试 2: 多按钮 + 不同样式 ===")
+    Style[window] w_style = {
+        width: 700,
+        height: 500,
+        center: true,
+        bg_color: _rgb(25, 25, 40, 255),
+        resizable: true
+    }
+    var win = guis.create_window("GButton 多按钮测试", w_style)
+
+    // 红色按钮
+    GButton btn_red = win.add_button({
+        x: 50,
+        y: 50,
+        width: 180,
+        height: 45,
+        text: "Red Button",
+        bg_color: _rgb(200, 50, 50, 255),
+        hover_color: _rgb(240, 80, 80, 255),
+        press_color: _rgb(150, 30, 30, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+
+    // 绿色按钮
+    GButton btn_green = win.add_button({
+        x: 260,
+        y: 50,
+        width: 180,
+        height: 45,
+        text: "Green Button",
+        bg_color: _rgb(50, 180, 80, 255),
+        hover_color: _rgb(80, 220, 110, 255),
+        press_color: _rgb(30, 130, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+
+    // 蓝色按钮
+    GButton btn_blue = win.add_button({
+        x: 470,
+        y: 50,
+        width: 180,
+        height: 45,
+        text: "Blue Button",
+        bg_color: _rgb(50, 100, 200, 255),
+        hover_color: _rgb(80, 140, 240, 255),
+        press_color: _rgb(30, 70, 150, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+
+    btn_red.on_click(func() {
+        print("红色按钮被点击!")
+    })
+    btn_green.on_click(func() {
+        print("绿色按钮被点击!")
+    })
+    btn_blue.on_click(func() {
+        print("蓝色按钮被点击!")
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(25, 25, 40, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 3: 动态修改按钮属性 --------------------
+func test_dynamic_properties() {
+    print("=== 测试 3: 动态修改按钮属性 ===")
+    Style[window] w_style = {
+        width: 600,
+        height: 450,
+        center: true,
+        bg_color: _rgb(35, 35, 55, 255),
+        resizable: true
+    }
+    var win = guis.create_window("GButton 动态属性测试", w_style)
+
+    GButton btn = win.add_button({
+        x: 200,
+        y: 100,
+        width: 200,
+        height: 50,
+        text: "Press Keys",
+        bg_color: _rgb(100, 80, 160, 255),
+        hover_color: _rgb(130, 110, 200, 255),
+        press_color: _rgb(70, 50, 120, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 12
+    })
+
+    var pos_x = 200
+    var pos_y = 100
+
+    btn.on_click(func() {
+        print("按钮被点击!")
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(35, 35, 55, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                if e.key() == 27 {
+                    win.set_should_close(true)
+                }
+                if e.key() == 84 {
+                    // 'T' 修改文字
+                    btn.set_text("Text Changed!")
+                    print("修改按钮文字")
+                }
+                if e.key() == 80 {
+                    // 'P' 修改位置
+                    pos_x = pos_x + 30
+                    if pos_x > 400 { pos_x = 50 }
+                    btn.set_pos(pos_x, pos_y)
+                    print("移动按钮到 (" + _str(pos_x) + ", " + _str(pos_y) + ")")
+                }
+                if e.key() == 83 {
+                    // 'S' 修改尺寸
+                    btn.set_size(250, 60)
+                    print("修改按钮尺寸: 250x60")
+                }
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 4: 可见性 + 启用/禁用 --------------------
+func test_visible_enabled() {
+    print("=== 测试 4: 可见性 + 启用/禁用 ===")
+    Style[window] w_style = {
+        width: 600,
+        height: 400,
+        center: true,
+        bg_color: _rgb(40, 40, 50, 255),
+        resizable: true
+    }
+    var win = guis.create_window("GButton 可见性/禁用测试", w_style)
+
+    GButton btn1 = win.add_button({
+        x: 50,
+        y: 50,
+        width: 200,
+        height: 45,
+        text: "Toggle Me",
+        bg_color: _rgb(60, 140, 200, 255),
+        hover_color: _rgb(90, 170, 230, 255),
+        press_color: _rgb(40, 100, 160, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 6
+    })
+
+    GButton btn2 = win.add_button({
+        x: 50,
+        y: 120,
+        width: 200,
+        height: 45,
+        text: "Disable Me",
+        bg_color: _rgb(200, 160, 50, 255),
+        hover_color: _rgb(230, 190, 80, 255),
+        press_color: _rgb(160, 120, 30, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 6
+    })
+
+    var btn1_visible = true
+    var btn2_enabled = true
+
+    btn1.on_click(func() {
+        btn1_visible = not btn1_visible
+        btn1.set_visible(btn1_visible)
+        if btn1_visible {
+            print("btn1 显示")
+        }
+        if not btn1_visible {
+            print("btn1 隐藏")
+        }
+    })
+
+    btn2.on_click(func() {
+        btn2_enabled = not btn2_enabled
+        btn2.set_enabled(btn2_enabled)
+        if btn2_enabled {
+            print("btn2 启用")
+        }
+        if not btn2_enabled {
+            print("btn2 禁用")
+        }
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(40, 40, 50, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 5: 按钮移除 (btn.close) --------------------
+func test_button_close() {
+    print("=== 测试 5: 按钮移除 (btn.close) ===")
+    Style[window] w_style = {
+        width: 500,
+        height: 350,
+        center: true,
+        bg_color: _rgb(30, 30, 45, 255),
+        resizable: true
+    }
+    var win = guis.create_window("GButton 移除测试", w_style)
+
+    GButton btn = win.add_button({
+        x: 150,
+        y: 130,
+        width: 200,
+        height: 50,
+        text: "Click to Remove",
+        bg_color: _rgb(180, 60, 60, 255),
+        hover_color: _rgb(220, 90, 90, 255),
+        press_color: _rgb(140, 40, 40, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+
+    btn.on_click(func() {
+        print("按钮即将移除...")
+        btn.close()
+        print("按钮已移除!")
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(30, 30, 45, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 测试 6: 阴影 + 边框 + 透明度 --------------------
+func test_shadow_border_opacity() {
+    print("=== 测试 6: 阴影 + 边框 + 透明度 ===")
+    Style[window] w_style = {
+        width: 700,
+        height: 500,
+        center: true,
+        bg_color: _rgb(25, 25, 40, 255),
+        resizable: true
+    }
+    var win = guis.create_window("GButton 阴影/边框/透明度", w_style)
+
+    // 带阴影的按钮
+    GButton btn_shadow = win.add_button({
+        x: 50,
+        y: 50,
+        width: 200,
+        height: 50,
+        text: "Shadow Button",
+        bg_color: _rgb(70, 130, 180, 255),
+        hover_color: _rgb(100, 160, 210, 255),
+        press_color: _rgb(50, 100, 150, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10,
+        shadow_offset_x: 0,
+        shadow_offset_y: 4,
+        shadow_radius: 8,
+        shadow_color: _rgb(0, 0, 0, 100)
+    })
+
+    // 带边框的按钮
+    GButton btn_border = win.add_button({
+        x: 50,
+        y: 130,
+        width: 200,
+        height: 50,
+        text: "Border Button",
+        bg_color: _rgb(50, 50, 70, 255),
+        hover_color: _rgb(70, 70, 90, 255),
+        press_color: _rgb(30, 30, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10,
+        border_width: 2,
+        border_color: _rgb(100, 200, 255, 255)
+    })
+
+    // 半透明按钮
+    GButton btn_opacity = win.add_button({
+        x: 50,
+        y: 210,
+        width: 200,
+        height: 50,
+        text: "Opacity 150",
+        bg_color: _rgb(200, 80, 80, 255),
+        hover_color: _rgb(230, 110, 110, 255),
+        press_color: _rgb(160, 50, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10,
+        opacity: 150
+    })
+
+    // 阴影 + 边框组合
+    GButton btn_combo = win.add_button({
+        x: 50,
+        y: 290,
+        width: 200,
+        height: 50,
+        text: "Shadow+Border",
+        bg_color: _rgb(80, 160, 80, 255),
+        hover_color: _rgb(110, 200, 110, 255),
+        press_color: _rgb(50, 120, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 12,
+        border_width: 2,
+        border_color: _rgb(200, 255, 200, 255),
+        shadow_offset_x: 0,
+        shadow_offset_y: 4,
+        shadow_radius: 10,
+        shadow_color: _rgb(0, 0, 0, 120)
+    })
+
+    // 全特效按钮
+    GButton btn_full = win.add_button({
+        x: 300,
+        y: 50,
+        width: 250,
+        height: 60,
+        text: "Full Effects",
+        bg_color: _rgb(120, 60, 180, 255),
+        hover_color: _rgb(150, 90, 210, 255),
+        press_color: _rgb(90, 40, 140, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 14,
+        opacity: 220,
+        border_width: 2,
+        border_color: _rgb(200, 160, 255, 255),
+        shadow_offset_x: 2,
+        shadow_offset_y: 6,
+        shadow_radius: 12,
+        shadow_color: _rgb(60, 0, 120, 140)
+    })
+
+    var opacity_val = 220
+
+    btn_shadow.on_click(func() { print("阴影按钮被点击!") })
+    btn_border.on_click(func() { print("边框按钮被点击!") })
+    btn_opacity.on_click(func() { print("透明度按钮被点击!") })
+    btn_combo.on_click(func() { print("组合按钮被点击!") })
+    btn_full.on_click(func() {
+        opacity_val = opacity_val - 40
+        if opacity_val < 40 { opacity_val = 255 }
+        btn_full.set_opacity(opacity_val)
+        print("全特效按钮透明度: " + _str(opacity_val))
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(25, 25, 40, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
+
+// -------------------- 主入口 --------------------
+main() {
+    print("========================================")
+    print("GButton 按钮测试 - win.add_button(style)")
+    print("========================================")
+    print("")
+    print("GButton 方法:")
+    print("  btn.set_text(text)     - 设置按钮文字")
+    print("  btn.set_pos(x, y)      - 设置按钮位置")
+    print("  btn.set_size(w, h)     - 设置按钮尺寸")
+    print("  btn.set_visible(bool)  - 设置可见性")
+    print("  btn.set_enabled(bool)  - 设置启用状态")
+    print("  btn.set_opacity(val)   - 设置透明度 (0~255)")
+    print("  btn.on_click(callback) - 设置点击回调")
+    print("  btn.close()            - 移除按钮")
+    print("")
+    print("Style 字段:")
+    print("  x, y, width, height    - 位置和尺寸")
+    print("  text                   - 按钮文字")
+    print("  bg_color               - 背景色 (GRgb)")
+    print("  hover_color            - 悬停色 (GRgb)")
+    print("  press_color            - 按下色 (GRgb)")
+    print("  text_color             - 文字色 (GRgb)")
+    print("  radius                 - 圆角半径")
+    print("  opacity                - 透明度 (0~255)")
+    print("  border_width           - 边框宽度")
+    print("  border_color           - 边框颜色 (GRgb)")
+    print("  shadow_offset_x/y      - 阴影偏移")
+    print("  shadow_radius          - 阴影模糊半径")
+    print("  shadow_color           - 阴影颜色 (GRgb)")
+    print("")
+
+    // 逐个测试（取消注释来运行）
+    // test_basic_button()
+    // test_multi_buttons()
+    // test_dynamic_properties()
+    // test_visible_enabled()
+    // test_button_close()
+    test_shadow_border_opacity()
+
+    print("========================================")
+}

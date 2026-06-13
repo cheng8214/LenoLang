@@ -295,6 +295,16 @@ void gc_mark_object(Object* obj) {
             break;
         case OBJ_GUI_IMAGE:
             break;
+        case OBJ_GUI_BUTTON: {
+            ObjGUIButton* btn = (ObjGUIButton*)obj;
+            if (btn->window) gc_mark_object((Object*)btn->window);
+            if (btn->font) gc_mark_object((Object*)btn->font);
+            if (!val_is_null(btn->on_click) && val_is_obj(btn->on_click))
+                gc_mark_object(val_as_obj(btn->on_click));
+            /* 标记链表中下一个按钮 */
+            if (btn->next) gc_mark_object((Object*)btn->next);
+            break;
+        }
         case OBJ_SOCKET:
             break;
         case OBJ_GUI_EVENT: {
@@ -753,6 +763,7 @@ static size_t get_object_size(Object* obj) {
         case OBJ_GUI_RENDERER: return sizeof(Object) + sizeof(void*) + sizeof(void*);
         case OBJ_GUI_FONT: return sizeof(Object) + sizeof(void*);
         case OBJ_GUI_IMAGE: return sizeof(Object) + sizeof(void*);
+        case OBJ_GUI_BUTTON: return sizeof(ObjGUIButton);
         case OBJ_GUI_EVENT: return sizeof(Object) + sizeof(void*);
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
@@ -944,6 +955,12 @@ static void free_object_resources(Object* obj) {
                 leno_gui_platform_destroy_image(img->platform);
                 img->platform = NULL;
             }
+            break;
+        }
+        case OBJ_GUI_BUTTON: {
+            ObjGUIButton* btn = (ObjGUIButton*)obj;
+            if (btn->text) { free(btn->text); btn->text = NULL; }
+            if (btn->font_name) { free(btn->font_name); btn->font_name = NULL; }
             break;
         }
         case OBJ_GUI_EVENT:

@@ -473,12 +473,13 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_BIGINT:   return "int";  // 对外统一为 int
         case TYPE_NULL:     return "null";
         case TYPE_FILE:     return "File";
-        case TYPE_WIN:      return "Win";
-        case TYPE_DRAW:     return "Draw";
-        case TYPE_EVENT:    return "Event";
-        case TYPE_RGB:      return "Rgb";
-        case TYPE_IMAGE:    return "Image";
-        case TYPE_FONT:     return "Font";
+        case TYPE_WIN:      return "GWin";
+        case TYPE_DRAW:     return "GDraw";
+        case TYPE_EVENT:    return "GEvent";
+        case TYPE_RGB:      return "GRgb";
+        case TYPE_IMAGE:    return "GImage";
+        case TYPE_FONT:     return "GFont";
+        case TYPE_BUTTON:   return "GButton";
         case TYPE_STYLE:    return "Style";
         case TYPE_SOCKET:   return "Socket";
         case TYPE_PTR:      return "Ptr";
@@ -575,6 +576,8 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type_new(TYPE_IMAGE);
             } else if (val_as_obj(*v)->type == OBJ_GUI_FONT) {
                 return type_new(TYPE_FONT);
+            } else if (val_as_obj(*v)->type == OBJ_GUI_BUTTON) {
+                return type_new(TYPE_BUTTON);
             } else if (val_as_obj(*v)->type == OBJ_DICT) {
                 return type_new(TYPE_DICT);
             } else if (val_as_obj(*v)->type == OBJ_FFI_POINTER) {
@@ -866,6 +869,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_RGB_TYPE:      return TYPE_RGB;
         case TOK_IMAGE_TYPE:    return TYPE_IMAGE;
         case TOK_FONT_TYPE:     return TYPE_FONT;
+        case TOK_BUTTON_TYPE:   return TYPE_BUTTON;
         case TOK_STYLE_TYPE:    return TYPE_STYLE;
         case TOK_SOCKET_TYPE:   return TYPE_SOCKET;
         case TOK_PTR_TYPE:      return TYPE_PTR;

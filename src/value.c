@@ -59,15 +59,15 @@ const char* val_to_string(Value v) {
             } else if (val_as_obj(v)->type == OBJ_ENUM_DEF) {
                 return "[enum_def]";
             } else if (val_as_obj(v)->type == OBJ_GUI_WINDOW) {
-                return "[win]";
+                return "[gwin]";
             } else if (val_as_obj(v)->type == OBJ_GUI_RENDERER) {
-                return "[draw]";
+                return "[gdraw]";
             } else if (val_as_obj(v)->type == OBJ_GUI_EVENT) {
-                return "[event]";
+                return "[gevent]";
             } else if (val_as_obj(v)->type == OBJ_GUI_IMAGE) {
-                return "[image]";
+                return "[gimage]";
             } else if (val_as_obj(v)->type == OBJ_RGB) {
-                return "[rgb]";
+                return "[grgb]";
             }
             return "[object]";
         default:
@@ -409,17 +409,17 @@ char* value_to_string(Value v) {
                 result[pos++] = '}';
                 result[pos] = '\0';
             } else if (val_as_obj(v)->type == OBJ_GUI_WINDOW) {
-                result = strdup("<win>");
+                result = strdup("<gwin>");
             } else if (val_as_obj(v)->type == OBJ_GUI_RENDERER) {
-                result = strdup("<draw>");
+                result = strdup("<gdraw>");
             } else if (val_as_obj(v)->type == OBJ_GUI_EVENT) {
-                result = strdup("<event>");
+                result = strdup("<gevent>");
             } else if (val_as_obj(v)->type == OBJ_GUI_IMAGE) {
-                result = strdup("<image>");
+                result = strdup("<gimage>");
             } else if (val_as_obj(v)->type == OBJ_RGB) {
                 ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
                 char buf[64];
-                snprintf(buf, sizeof(buf), "Rgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
+                snprintf(buf, sizeof(buf), "GRgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
                 result = strdup(buf);
             } else {
                 result = strdup("[object]");

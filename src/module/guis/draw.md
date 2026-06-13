@@ -1,6 +1,6 @@
 # LenoC GUI Draw 模块
 
-本文档详细说明 `Draw` 渲染器提供的所有绘图功能。
+本文档详细说明 `GDraw` 渲染器提供的所有绘图功能。
 
 ## 目录
 
@@ -17,24 +17,23 @@
 
 ## 概述
 
-`Draw` 是 LenoC GUI 模块的 2D 渲染器，提供丰富的软件渲染绘图 API。所有绘制操作都在内存中的像素缓冲区执行，最后通过 `present()` 显示到窗口。
+`GDraw` 是 LenoC GUI 模块的 2D 渲染器，提供丰富的软件渲染绘图 API。所有绘制操作都在内存中的像素缓冲区执行，每帧结束后引擎自动将内容显示到窗口，无需手动调用 present。
 
-### 获取 Draw 对象
+### 获取 GDraw 对象
 
 ```leno
 import guis
 
 main() {
-    Win win = guis.create_window("Draw Test", {width: 800, height: 600})
+    GWin win = guis.create_window("Draw Test", {width: 800, height: 600})
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // 使用 ren 进行绘制
             ren.set_color(_rgb(0, 0, 0, 255))
             ren.clear()
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() { win.set_should_close(true) }
         }
     )
@@ -45,12 +44,12 @@ main() {
 
 ## 基础绘制
 
-### `ren.set_color(Rgb)`
+### `ren.set_color(GRgb)`
 
 设置当前绘制颜色，影响后续所有绘制操作。
 
 **参数**:
-- `color` (Rgb): 颜色对象，通过 `_rgb(r, g, b, a)` 创建
+- `color` (GRgb): 颜色对象，通过 `_rgb(r, g, b, a)` 创建
 
 ```leno
 ren.set_color(_rgb(255, 0, 0, 255))     // 红色不透明
@@ -66,17 +65,6 @@ ren.set_color(_rgb(0, 255, 0, 128))     // 绿色半透明
 ```leno
 ren.set_color(_rgb(30, 30, 46, 255))    // 深色背景
 ren.clear()
-```
-
----
-
-### `ren.present()`
-
-将渲染缓冲区的内容显示到窗口。每帧绘制完成后必须调用。
-
-```leno
-// 绘制代码...
-ren.present()  // 显示到屏幕
 ```
 
 ---
@@ -456,7 +444,7 @@ ren.reset_logical_size()
 使用指定字体绘制文字。
 
 **参数**:
-- `font` (Font): 字体对象
+- `font` (GFont): 字体对象
 - `text` (string): 要绘制的文本
 - `x`, `y` (int): 绘制位置
 
@@ -473,7 +461,7 @@ ren.draw_text(font, "Hello Leno!", 100, 100)
 计算文字尺寸。
 
 **参数**:
-- `font` (Font): 字体对象
+- `font` (GFont): 字体对象
 - `text` (string): 文本
 
 **返回**: `[w, h]` - 文字宽度和高度
@@ -493,7 +481,7 @@ print("文字大小: " + size[0] + "x" + size[1])
 import guis
 
 main() {
-    Win win = guis.create_window("Draw Shapes Demo", {
+    GWin win = guis.create_window("Draw Shapes Demo", {
         width: 900,
         height: 700,
         resizable: true
@@ -502,7 +490,7 @@ main() {
     var angle = 0.0
     
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             // 深色背景
             ren.set_color(_rgb(20, 20, 30, 255))
             ren.clear()
@@ -540,10 +528,8 @@ main() {
             // 更新动画
             angle = angle + 2.0
             if angle > 360.0 { angle = 0.0 }
-            
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
@@ -560,7 +546,7 @@ main() {
 
 ```leno
 // 绘制饼图
-func draw_pie_chart(Draw ren, int cx, int cy, int r, array data) {
+func draw_pie_chart(GDraw ren, int cx, int cy, int r, array data) {
     var colors = [
         _rgb(255, 100, 100, 255),
         _rgb(100, 255, 100, 255),

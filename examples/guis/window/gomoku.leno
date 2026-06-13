@@ -7,9 +7,9 @@ main() {
         height: 800,
         resizable: true
     }
-    Win win = guis.create_window("Gomoku", w_style)
+    GWin win = guis.create_window("Gomoku", w_style)
 
-    Font font_title = guis.load_font("SimSun", 28)
+    GFont font_title = guis.load_font("SimSun", 28)
     var font_info = guis.load_font("SimSun", 18)
 
     var board_size = 15
@@ -237,7 +237,7 @@ main() {
     }
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
 
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
@@ -311,10 +311,8 @@ main() {
 
             ren.set_color(_rgb(150, 150, 150, 255))
             ren.draw_text(font_info, "ESC 退出  |  R 重新开始", 240, 740)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }

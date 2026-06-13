@@ -6,7 +6,7 @@ main() {
         height: 600,
         resizable: true
     }
-    Win win = guis.create_window("LenoC GUI - Text Test", w_style)
+    GWin win = guis.create_window("LenoC GUI - Text Test", w_style)
 
     var font_large = guis.load_font("Arial", 32)
     var font_medium = guis.load_font("Arial", 20)
@@ -14,7 +14,7 @@ main() {
     var font_tiny = guis.load_font("Arial", 10)
 
     win.run(
-        func(Draw ren) {
+        func(GDraw ren) {
             ren.set_color(_rgb(30, 30, 46, 255))
             ren.clear()
 
@@ -38,10 +38,8 @@ main() {
 
             ren.set_color(_rgb(180, 100, 255, 255))
             ren.draw_text(font_medium, "Press ESC to quit", 50, 300)
-
-            ren.present()
         },
-        func(Event e) {
+        func(GEvent e) {
             if e.is_quit() or e.is_window_close() {
                 win.set_should_close(true)
             }
