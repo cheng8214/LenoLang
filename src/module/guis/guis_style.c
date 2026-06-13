@@ -33,7 +33,9 @@ typedef struct {
 /* ===== Window 样式字段定义 ===== */
 
 static const char* cursor_options[] = {
-    "arrow", "hand", "ibeam", "crosshair", "wait", "none"
+    "arrow", "hand", "ibeam", "crosshair", "wait",
+    "progress", "resize_nwse", "resize_nesw", "resize_ew", "resize_ns",
+    "move", "not_allowed", "none"
 };
 
 static StyleFieldInfo window_style_fields[] = {
@@ -62,23 +64,65 @@ static StyleFieldInfo window_style_fields[] = {
     { "maximized",    STYLE_TYPE_BOOL,   "是否最大化启动",               "false",     NULL, 0 },
     { "maximizable",  STYLE_TYPE_BOOL,   "是否允许最大化按钮（独立于 resizable）", "true",  NULL, 0 },
     { "vsync",        STYLE_TYPE_BOOL,   "是否垂直同步（帧率限制60fps）", "true",      NULL, 0 },
-    { "cursor",       STYLE_TYPE_ENUM,   "鼠标光标样式",                 "\"arrow\"", cursor_options, 6 },
+    { "cursor",       STYLE_TYPE_ENUM,   "鼠标光标样式",                 "\"arrow\"", cursor_options, 13 },
 };
 
 /* ===== Button 样式字段定义 ===== */
 
+static const char* text_align_options[] = { "left", "center", "right" };
+static const char* border_style_options[] = { "solid", "dashed", "dotted" };
+static const char* text_decoration_options[] = { "none", "underline", "strikethrough", "overline" };
+
 static StyleFieldInfo button_style_fields[] = {
-    { "bk_color",      STYLE_TYPE_COLOR,  "背景颜色",                    "_rgb(200,200,200)", NULL, 0 },
-    { "text",          STYLE_TYPE_STRING, "按钮文本",                    "\"Button\"",        NULL, 0 },
-    { "text_color",    STYLE_TYPE_COLOR,  "文本颜色",                    "_rgb(0,0,0)",       NULL, 0 },
-    { "text_size",     STYLE_TYPE_INT,    "文本大小",                    "16",                NULL, 0 },
-    { "width",         STYLE_TYPE_INT,    "按钮宽度",                    "100",               NULL, 0 },
-    { "height",        STYLE_TYPE_INT,    "按钮高度",                    "40",                NULL, 0 },
-    { "x",             STYLE_TYPE_INT,    "X坐标",                       "0",                 NULL, 0 },
-    { "y",             STYLE_TYPE_INT,    "Y坐标",                       "0",                 NULL, 0 },
-    { "border_radius", STYLE_TYPE_INT,    "圆角半径",                    "4",                 NULL, 0 },
-    { "hover_color",   STYLE_TYPE_COLOR,  "悬停颜色",                    "_rgb(220,220,220)", NULL, 0 },
-    { "active_color",  STYLE_TYPE_COLOR,  "按下颜色",                    "_rgb(180,180,180)", NULL, 0 },
+    /* ===== 位置和尺寸 ===== */
+    { "x",              STYLE_TYPE_INT,    "X坐标",                       "0",                 NULL, 0 },
+    { "y",              STYLE_TYPE_INT,    "Y坐标",                       "0",                 NULL, 0 },
+    { "width",          STYLE_TYPE_INT,    "按钮宽度",                    "100",               NULL, 0 },
+    { "height",         STYLE_TYPE_INT,    "按钮高度",                    "40",                NULL, 0 },
+    /* ===== 文本 ===== */
+    { "text",           STYLE_TYPE_STRING, "按钮文本",                    "\"Button\"",        NULL, 0 },
+    { "text_color",     STYLE_TYPE_COLOR,  "文本颜色",                    "_rgb(0,0,0)",       NULL, 0 },
+    { "font",           STYLE_TYPE_STRING, "字体名称（空=使用默认字体）",  "\"\"",              NULL, 0 },
+    { "font_size",      STYLE_TYPE_INT,    "字体大小",                    "16",                NULL, 0 },
+    { "font_bold",      STYLE_TYPE_BOOL,   "是否粗体",                    "false",             NULL, 0 },
+    { "text_align",     STYLE_TYPE_ENUM,   "文本对齐方式",                "\"center\"",        text_align_options, 3 },
+    { "letter_spacing", STYLE_TYPE_INT,    "字间距（像素）",              "0",                 NULL, 0 },
+    { "text_decoration",STYLE_TYPE_ENUM,   "文字装饰线",                  "\"none\"",          text_decoration_options, 4 },
+    /* ===== 颜色 ===== */
+    { "bg_color",       STYLE_TYPE_COLOR,  "背景颜色",                    "_rgb(200,200,200)", NULL, 0 },
+    { "hover_color",    STYLE_TYPE_COLOR,  "悬停颜色（未设置则默认变淡）", "_rgb(220,220,220)", NULL, 0 },
+    { "press_color",    STYLE_TYPE_COLOR,  "按下颜色",                    "_rgb(180,180,180)", NULL, 0 },
+    { "opacity",        STYLE_TYPE_INT,    "整体不透明度 (0~255)",        "255",               NULL, 0 },
+    /* ===== 圆角 ===== */
+    { "radius",         STYLE_TYPE_INT,    "圆角半径（统一）",            "4",                 NULL, 0 },
+    { "radius_tl",      STYLE_TYPE_INT,    "左上圆角半径",                "4",                 NULL, 0 },
+    { "radius_tr",      STYLE_TYPE_INT,    "右上圆角半径",                "4",                 NULL, 0 },
+    { "radius_bl",      STYLE_TYPE_INT,    "左下圆角半径",                "4",                 NULL, 0 },
+    { "radius_br",      STYLE_TYPE_INT,    "右下圆角半径",                "4",                 NULL, 0 },
+    /* ===== 渐变 ===== */
+    { "gradient",       STYLE_TYPE_COLOR,  "渐变颜色数组 [c1, c2, ...]",  "[]",                NULL, 0 },
+    { "gradient_radial",STYLE_TYPE_BOOL,   "是否径向渐变",                "false",             NULL, 0 },
+    /* ===== 边框 ===== */
+    { "border_width",   STYLE_TYPE_INT,    "边框宽度",                    "0",                 NULL, 0 },
+    { "border_color",   STYLE_TYPE_COLOR,  "边框颜色",                    "_rgb(0,0,0)",       NULL, 0 },
+    { "border_style",   STYLE_TYPE_ENUM,   "边框样式",                    "\"solid\"",         border_style_options, 3 },
+    /* ===== 阴影 ===== */
+    { "shadow_offset_x",STYLE_TYPE_INT,    "阴影水平偏移",                "0",                 NULL, 0 },
+    { "shadow_offset_y",STYLE_TYPE_INT,    "阴影垂直偏移",                "0",                 NULL, 0 },
+    { "shadow_radius",  STYLE_TYPE_INT,    "阴影模糊半径",                "0",                 NULL, 0 },
+    { "shadow_color",   STYLE_TYPE_COLOR,  "阴影颜色",                    "_rgb(0,0,0,0)",     NULL, 0 },
+    /* ===== 内边距 ===== */
+    { "padding_x",      STYLE_TYPE_INT,    "水平内边距",                  "0",                 NULL, 0 },
+    { "padding_y",      STYLE_TYPE_INT,    "垂直内边距",                  "0",                 NULL, 0 },
+    /* ===== 焦点 ===== */
+    { "focus_width",    STYLE_TYPE_INT,    "焦点边框宽度",                "0",                 NULL, 0 },
+    { "focus_color",    STYLE_TYPE_COLOR,  "焦点边框颜色",                "_rgb(100,180,255)", NULL, 0 },
+    /* ===== 其他 ===== */
+    { "hover_scale",    STYLE_TYPE_FLOAT,  "悬停缩放比例 (1.0=不变)",      "1.0",               NULL, 0 },
+    { "loading",        STYLE_TYPE_BOOL,   "是否显示加载状态",            "false",             NULL, 0 },
+    { "cursor",         STYLE_TYPE_ENUM,   "悬停时光标样式",              "\"arrow\"",         cursor_options, 13 },
+    { "press_effect",   STYLE_TYPE_BOOL,   "是否启用默认按下效果",        "true",              NULL, 0 },
+    { "press_offset",   STYLE_TYPE_INT,    "按下时偏移像素数",            "1",                 NULL, 0 },
 };
 
 static StyleDef style_defs[] = {

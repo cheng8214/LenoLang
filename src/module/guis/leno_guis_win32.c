@@ -299,6 +299,7 @@ static int g_gui_initialized = 0;
 static HCURSOR g_system_cursors[LENO_GUI_CURSOR_COUNT] = { NULL };
 static HCURSOR g_custom_cursor = NULL;
 static int g_custom_cursor_id = 0;
+static int g_current_system_cursor = LENO_GUI_CURSOR_DEFAULT;
 
 /* 初始化系统光标表 */
 static void init_system_cursors(void) {
@@ -720,8 +721,9 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
                     return TRUE;
                 }
                 /* 使用当前系统光标 */
-                if (g_system_cursors[LENO_GUI_CURSOR_DEFAULT]) {
-                    SetCursor(g_system_cursors[LENO_GUI_CURSOR_DEFAULT]);
+                init_system_cursors();
+                if (g_system_cursors[g_current_system_cursor]) {
+                    SetCursor(g_system_cursors[g_current_system_cursor]);
                     return TRUE;
                 }
             }
@@ -1729,6 +1731,7 @@ void leno_gui_platform_set_system_cursor(int cursor_type) {
     init_system_cursors();
     g_custom_cursor = NULL;
     g_custom_cursor_id = 0;
+    g_current_system_cursor = cursor_type;
     if (g_system_cursors[cursor_type]) {
         /* 将系统光标设为全局默认，WM_SETCURSOR 会使用它 */
         /* 也可以直接调用 SetCursor */

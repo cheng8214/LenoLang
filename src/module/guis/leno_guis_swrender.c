@@ -16,8 +16,24 @@ static void sw_draw_point(LenoGUIPlatformRenderer* ren, int x, int y, uint32_t c
         if (px < ren->clip_x || px >= ren->clip_x + ren->clip_w) return;
         if (py < ren->clip_y || py >= ren->clip_y + ren->clip_h) return;
     }
-    if (px >= 0 && px < ren->width && py >= 0 && py < ren->height) {
+    if (px < 0 || px >= ren->width || py < 0 || py >= ren->height) return;
+
+    uint8_t a = (color >> 24) & 0xFF;
+    if (a == 255) {
         ren->pixels[py * ren->width + px] = color;
+    } else if (a > 0) {
+        uint8_t r = (color >> 16) & 0xFF;
+        uint8_t g = (color >> 8) & 0xFF;
+        uint8_t b = color & 0xFF;
+        uint32_t dst = ren->pixels[py * ren->width + px];
+        uint8_t dr = (dst >> 16) & 0xFF;
+        uint8_t dg = (dst >> 8) & 0xFF;
+        uint8_t db = dst & 0xFF;
+        uint8_t inv = 255 - a;
+        dr = (uint8_t)((r * a + dr * inv) / 255);
+        dg = (uint8_t)((g * a + dg * inv) / 255);
+        db = (uint8_t)((b * a + db * inv) / 255);
+        ren->pixels[py * ren->width + px] = LENO_GUI_PIXEL(dr, dg, db, 255);
     }
 }
 
@@ -95,10 +111,32 @@ static void sw_fill_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int 
     if (x2 > ren->width) x2 = ren->width;
     if (y2 > ren->height) y2 = ren->height;
     if (x1 >= x2 || y1 >= y2) return;
-    for (int row = y1; row < y2; row++) {
-        uint32_t* row_ptr = ren->pixels + row * ren->width;
-        for (int col = x1; col < x2; col++) {
-            row_ptr[col] = color;
+
+    uint8_t a = (color >> 24) & 0xFF;
+    if (a == 255) {
+        for (int row = y1; row < y2; row++) {
+            uint32_t* row_ptr = ren->pixels + row * ren->width;
+            for (int col = x1; col < x2; col++) {
+                row_ptr[col] = color;
+            }
+        }
+    } else if (a > 0) {
+        uint8_t r = (color >> 16) & 0xFF;
+        uint8_t g = (color >> 8) & 0xFF;
+        uint8_t b = color & 0xFF;
+        uint8_t inv = 255 - a;
+        for (int row = y1; row < y2; row++) {
+            uint32_t* row_ptr = ren->pixels + row * ren->width;
+            for (int col = x1; col < x2; col++) {
+                uint32_t dst = row_ptr[col];
+                uint8_t dr = (dst >> 16) & 0xFF;
+                uint8_t dg = (dst >> 8) & 0xFF;
+                uint8_t db = dst & 0xFF;
+                dr = (uint8_t)((r * a + dr * inv) / 255);
+                dg = (uint8_t)((g * a + dg * inv) / 255);
+                db = (uint8_t)((b * a + db * inv) / 255);
+                row_ptr[col] = LENO_GUI_PIXEL(dr, dg, db, 255);
+            }
         }
     }
 }
@@ -504,6 +542,213 @@ void leno_gui_platform_render_draw_shadow(LenoGUIPlatformRenderer* ren,
 
     free(buf_a);
     free(buf_b);
+}
+
+/* ===== 渐变填充 ===== */
+
+/* 水平线性渐变矩形填充 */
+void leno_gui_platform_render_fill_gradient_rect(LenoGUIPlatformRenderer* ren,
+    int x, int y, int w, int h,
+    int count, const uint8_t* r, const uint8_t* g, const uint8_t* b, const uint8_t* a,
+    int opacity) {
+    if (!ren || !ren->pixels || w <= 0 || h <= 0 || count < 2) return;
+
+    /* 计算有效区域 */
+    int x1 = x + ren->vp_x;
+    int y1 = y + ren->vp_y;
+    int x2 = x1 + w;
+    int y2 = y1 + h;
+    if (x1 < ren->vp_x) x1 = ren->vp_x;
+    if (y1 < ren->vp_y) y1 = ren->vp_y;
+    if (x2 > ren->vp_x + ren->vp_w) x2 = ren->vp_x + ren->vp_w;
+    if (y2 > ren->vp_y + ren->vp_h) y2 = ren->vp_y + ren->vp_h;
+    if (ren->clip_enabled) {
+        if (x1 < ren->clip_x) x1 = ren->clip_x;
+        if (y1 < ren->clip_y) y1 = ren->clip_y;
+        if (x2 > ren->clip_x + ren->clip_w) x2 = ren->clip_x + ren->clip_w;
+        if (y2 > ren->clip_y + ren->clip_h) y2 = ren->clip_y + ren->clip_h;
+    }
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 > ren->width) x2 = ren->width;
+    if (y2 > ren->height) y2 = ren->height;
+    if (x1 >= x2 || y1 >= y2) return;
+
+    int segments = count - 1;
+    float seg_w = (float)w / segments;
+
+    for (int row = y1; row < y2; row++) {
+        uint32_t* row_ptr = ren->pixels + row * ren->width;
+        for (int col = x1; col < x2; col++) {
+            /* 计算当前列在渐变中的位置 [0, segments] */
+            float pos = (float)(col - x - ren->vp_x) / seg_w;
+            if (pos < 0) pos = 0;
+            if (pos > segments) pos = segments;
+
+            int idx = (int)pos;
+            if (idx >= segments) idx = segments - 1;
+            float t = pos - idx;
+
+            uint8_t rr = (uint8_t)(r[idx] * (1 - t) + r[idx + 1] * t);
+            uint8_t gg = (uint8_t)(g[idx] * (1 - t) + g[idx + 1] * t);
+            uint8_t bb = (uint8_t)(b[idx] * (1 - t) + b[idx + 1] * t);
+            uint8_t aa = (uint8_t)(a[idx] * (1 - t) + a[idx + 1] * t);
+
+            if (opacity < 255) aa = (aa * opacity) / 255;
+
+            if (aa == 255) {
+                row_ptr[col] = LENO_GUI_PIXEL(rr, gg, bb, 255);
+            } else if (aa > 0) {
+                uint32_t dst = row_ptr[col];
+                uint8_t dr = (dst >> 16) & 0xFF;
+                uint8_t dg = (dst >> 8) & 0xFF;
+                uint8_t db = dst & 0xFF;
+                uint8_t inv = 255 - aa;
+                dr = (uint8_t)((rr * aa + dr * inv) / 255);
+                dg = (uint8_t)((gg * aa + dg * inv) / 255);
+                db = (uint8_t)((bb * aa + db * inv) / 255);
+                row_ptr[col] = LENO_GUI_PIXEL(dr, dg, db, 255);
+            }
+        }
+    }
+}
+
+/* ===== 圆角渐变填充 ===== */
+
+/* 辅助：计算渐变颜色并 alpha 混合到单个像素 */
+static void sw_gradient_pixel(LenoGUIPlatformRenderer* ren, int px, int py,
+    int count, const uint8_t* r, const uint8_t* g, const uint8_t* b, const uint8_t* a,
+    float pos, int opacity) {
+    if (pos < 0) pos = 0;
+    int segments = count - 1;
+    if (pos > segments) pos = segments;
+    int idx = (int)pos;
+    if (idx >= segments) idx = segments - 1;
+    float t = pos - idx;
+    uint8_t rr = (uint8_t)(r[idx] * (1.0f - t) + r[idx + 1] * t);
+    uint8_t gg = (uint8_t)(g[idx] * (1.0f - t) + g[idx + 1] * t);
+    uint8_t bb = (uint8_t)(b[idx] * (1.0f - t) + b[idx + 1] * t);
+    uint8_t aa = (uint8_t)(a[idx] * (1.0f - t) + a[idx + 1] * t);
+    if (opacity < 255) aa = (aa * opacity) / 255;
+    if (aa == 0) return;
+    if (aa == 255) {
+        ren->pixels[py * ren->width + px] = LENO_GUI_PIXEL(rr, gg, bb, 255);
+    } else {
+        uint32_t dst = ren->pixels[py * ren->width + px];
+        uint8_t dr = (dst >> 16) & 0xFF;
+        uint8_t dg = (dst >> 8) & 0xFF;
+        uint8_t db = dst & 0xFF;
+        uint8_t inv = 255 - aa;
+        dr = (uint8_t)((rr * aa + dr * inv) / 255);
+        dg = (uint8_t)((gg * aa + dg * inv) / 255);
+        db = (uint8_t)((bb * aa + db * inv) / 255);
+        ren->pixels[py * ren->width + px] = LENO_GUI_PIXEL(dr, dg, db, 255);
+    }
+}
+
+/* 圆角线性渐变矩形（vertical=0 水平，vertical=1 垂直） */
+void leno_gui_platform_render_fill_gradient_rounded_rect(LenoGUIPlatformRenderer* ren,
+    int x, int y, int w, int h, int radius,
+    int count, const uint8_t* r, const uint8_t* g, const uint8_t* b, const uint8_t* a,
+    int opacity, int vertical) {
+    if (!ren || !ren->pixels || w <= 0 || h <= 0 || count < 2) return;
+    if (radius > w / 2) radius = w / 2;
+    if (radius > h / 2) radius = h / 2;
+
+    int x1 = x + ren->vp_x, y1 = y + ren->vp_y;
+    int x2 = x1 + w, y2 = y1 + h;
+    if (x1 < ren->vp_x) x1 = ren->vp_x;
+    if (y1 < ren->vp_y) y1 = ren->vp_y;
+    if (x2 > ren->vp_x + ren->vp_w) x2 = ren->vp_x + ren->vp_w;
+    if (y2 > ren->vp_y + ren->vp_h) y2 = ren->vp_y + ren->vp_h;
+    if (ren->clip_enabled) {
+        if (x1 < ren->clip_x) x1 = ren->clip_x;
+        if (y1 < ren->clip_y) y1 = ren->clip_y;
+        if (x2 > ren->clip_x + ren->clip_w) x2 = ren->clip_x + ren->clip_w;
+        if (y2 > ren->clip_y + ren->clip_h) y2 = ren->clip_y + ren->clip_h;
+    }
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 > ren->width) x2 = ren->width;
+    if (y2 > ren->height) y2 = ren->height;
+    if (x1 >= x2 || y1 >= y2) return;
+
+    int segments = count - 1;
+    float seg_len = vertical ? (float)h / segments : (float)w / segments;
+    int cx_l = x + ren->vp_x + radius, cx_r = x + ren->vp_x + w - radius;
+    int cy_t = y + ren->vp_y + radius, cy_b = y + ren->vp_y + h - radius;
+
+    for (int row = y1; row < y2; row++) {
+        for (int col = x1; col < x2; col++) {
+            if (radius > 0) {
+                int in_corner = 0, ix = 0, iy = 0;
+                if (col < cx_l && row < cy_t) { ix = cx_l - 1 - col; iy = cy_t - 1 - row; in_corner = 1; }
+                else if (col >= cx_r && row < cy_t) { ix = col - cx_r; iy = cy_t - 1 - row; in_corner = 1; }
+                else if (col < cx_l && row >= cy_b) { ix = cx_l - 1 - col; iy = row - cy_b; in_corner = 1; }
+                else if (col >= cx_r && row >= cy_b) { ix = col - cx_r; iy = row - cy_b; in_corner = 1; }
+                if (in_corner) {
+                    float dist = sqrtf((float)(ix * ix + iy * iy)) - (float)(radius - 1);
+                    if (dist > 1.0f) continue;
+                }
+            }
+            float pos = vertical ? (float)(row - y - ren->vp_y) / seg_len : (float)(col - x - ren->vp_x) / seg_len;
+            sw_gradient_pixel(ren, col, row, count, r, g, b, a, pos, opacity);
+        }
+    }
+}
+
+/* 径向渐变矩形 */
+void leno_gui_platform_render_fill_gradient_radial_rect(LenoGUIPlatformRenderer* ren,
+    int x, int y, int w, int h, int radius,
+    int count, const uint8_t* r, const uint8_t* g, const uint8_t* b, const uint8_t* a,
+    int opacity) {
+    if (!ren || !ren->pixels || w <= 0 || h <= 0 || count < 2) return;
+    if (radius > w / 2) radius = w / 2;
+    if (radius > h / 2) radius = h / 2;
+
+    int x1 = x + ren->vp_x, y1 = y + ren->vp_y;
+    int x2 = x1 + w, y2 = y1 + h;
+    if (x1 < ren->vp_x) x1 = ren->vp_x;
+    if (y1 < ren->vp_y) y1 = ren->vp_y;
+    if (x2 > ren->vp_x + ren->vp_w) x2 = ren->vp_x + ren->vp_w;
+    if (y2 > ren->vp_y + ren->vp_h) y2 = ren->vp_y + ren->vp_h;
+    if (ren->clip_enabled) {
+        if (x1 < ren->clip_x) x1 = ren->clip_x;
+        if (y1 < ren->clip_y) y1 = ren->clip_y;
+        if (x2 > ren->clip_x + ren->clip_w) x2 = ren->clip_x + ren->clip_w;
+        if (y2 > ren->clip_y + ren->clip_h) y2 = ren->clip_y + ren->clip_h;
+    }
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 > ren->width) x2 = ren->width;
+    if (y2 > ren->height) y2 = ren->height;
+    if (x1 >= x2 || y1 >= y2) return;
+
+    int segments = count - 1;
+    int cx = x + ren->vp_x + w / 2, cy = y + ren->vp_y + h / 2;
+    float max_dist = sqrtf((float)(w * w + h * h)) / 2.0f;
+    int cx_l = x + ren->vp_x + radius, cx_r = x + ren->vp_x + w - radius;
+    int cy_t = y + ren->vp_y + radius, cy_b = y + ren->vp_y + h - radius;
+
+    for (int row = y1; row < y2; row++) {
+        for (int col = x1; col < x2; col++) {
+            if (radius > 0) {
+                int in_corner = 0, ix = 0, iy = 0;
+                if (col < cx_l && row < cy_t) { ix = cx_l - 1 - col; iy = cy_t - 1 - row; in_corner = 1; }
+                else if (col >= cx_r && row < cy_t) { ix = col - cx_r; iy = cy_t - 1 - row; in_corner = 1; }
+                else if (col < cx_l && row >= cy_b) { ix = cx_l - 1 - col; iy = row - cy_b; in_corner = 1; }
+                else if (col >= cx_r && row >= cy_b) { ix = col - cx_r; iy = row - cy_b; in_corner = 1; }
+                if (in_corner) {
+                    float dist = sqrtf((float)(ix * ix + iy * iy)) - (float)(radius - 1);
+                    if (dist > 1.0f) continue;
+                }
+            }
+            float dxx = (float)(col - cx), dyy = (float)(row - cy);
+            float dist = sqrtf(dxx * dxx + dyy * dyy);
+            float pos = (dist / max_dist) * segments;
+            sw_gradient_pixel(ren, col, row, count, r, g, b, a, pos, opacity);
+        }
+    }
 }
 
 /* ===== 几何图形扩展（椭圆、三角形、多边形、圆弧） ===== */

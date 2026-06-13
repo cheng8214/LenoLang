@@ -211,6 +211,9 @@ void   leno_gui_platform_render_fill_circle(LenoGUIPlatformRenderer* ren, int cx
 void   leno_gui_platform_render_draw_rounded_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius);
 void   leno_gui_platform_render_fill_rounded_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius);
 void   leno_gui_platform_render_draw_shadow(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius, int offset_x, int offset_y, int blur_radius, uint8_t sr, uint8_t sg, uint8_t sb, uint8_t sa);
+void   leno_gui_platform_render_fill_gradient_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int count, const uint8_t* r, const uint8_t* g, const uint8_t* b, const uint8_t* a, int opacity);
+void   leno_gui_platform_render_fill_gradient_rounded_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius, int count, const uint8_t* r, const uint8_t* g, const uint8_t* b, const uint8_t* a, int opacity, int vertical);
+void   leno_gui_platform_render_fill_gradient_radial_rect(LenoGUIPlatformRenderer* ren, int x, int y, int w, int h, int radius, int count, const uint8_t* r, const uint8_t* g, const uint8_t* b, const uint8_t* a, int opacity);
 void   leno_gui_platform_get_renderer_size(LenoGUIPlatformRenderer* ren, int* w, int* h);
 
 /* ===== 几何图形扩展（椭圆、三角形、多边形、圆弧） ===== */

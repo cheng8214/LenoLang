@@ -284,8 +284,16 @@ void gc_mark_object(Object* obj) {
         // 原生函数：无子引用
         case OBJ_NATIVE:
             break;
-        case OBJ_GUI_WINDOW:
+        case OBJ_GUI_WINDOW: {
+            /* 标记窗口的按钮链表，防止按钮和字体被 GC 回收 */
+            ObjGUIWindow* w = (ObjGUIWindow*)obj;
+            struct ObjGUIButton* btn = (struct ObjGUIButton*)w->buttons;
+            while (btn) {
+                gc_mark_object((Object*)btn);
+                btn = btn->next;
+            }
             break;
+        }
         case OBJ_GUI_RENDERER: {
             extern void guis_mark_renderer_refs(Object* obj);
             guis_mark_renderer_refs(obj);

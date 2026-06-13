@@ -295,13 +295,30 @@ static Value win_add_button_func(int argc, Value* args) {
     int text_r = 255, text_g = 255, text_b = 255, text_a = 255;
     char* font_name = strdup("Arial");
     int font_size = 16;
+    int padding_x = 0, padding_y = 0;
+    int text_align = 1;  /* 默认居中 */
+    int font_bold = 0;
+    int letter_spacing = 0;
     int radius = 6;
+    int radius_tl = 0, radius_tr = 0, radius_bl = 0, radius_br = 0;
     int opacity = 255;
+    int gradient_count = 0;
+    int gradient_r[4] = {0}, gradient_g[4] = {0}, gradient_b[4] = {0}, gradient_a[4] = {0};
+    int gradient_radial = 0;
     int border_width = 0;
     int border_r = 0, border_g = 0, border_b = 0, border_a = 255;
+    int border_style = 0;  /* solid */
     int shadow_offset_x = 0, shadow_offset_y = 2;
     int shadow_radius = 0;
     int shadow_r = 0, shadow_g = 0, shadow_b = 0, shadow_a = 80;
+    int text_decoration = 0;
+    int focus_width = 0;
+    int focus_r = 100, focus_g = 180, focus_b = 255, focus_a = 255;
+    float hover_scale = 1.0f;
+    int loading = 0;
+    char* cursor = strdup("");
+    int press_effect = 1;   /* 默认开启按下效果 */
+    int press_offset = 1;   /* 默认偏移1像素 */
 
     /* 解析 style 字典 */
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
@@ -335,6 +352,8 @@ static Value win_add_button_func(int argc, Value* args) {
         if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
             ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
             bg_r = rgb->r; bg_g = rgb->g; bg_b = rgb->b; bg_a = rgb->a;
+            /* 默认 press_color = bg_color，未设置时模拟按下而不是跳变色 */
+            press_r = bg_r; press_g = bg_g; press_b = bg_b; press_a = bg_a;
         }
 
         /* hover_color */
@@ -419,6 +438,148 @@ static Value win_add_button_func(int argc, Value* args) {
             ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
             shadow_r = rgb->r; shadow_g = rgb->g; shadow_b = rgb->b; shadow_a = rgb->a;
         }
+
+        /* padding */
+        key = intern_string("padding_x", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) padding_x = val_as_int(v);
+        key = intern_string("padding_y", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) padding_y = val_as_int(v);
+
+        /* text_align */
+        key = intern_string("text_align", 10);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            char* s = ((ObjString*)val_as_obj(v))->chars;
+            if (strcmp(s, "left") == 0) text_align = 0;
+            else if (strcmp(s, "right") == 0) text_align = 2;
+            else text_align = 1;
+        }
+
+        /* font_bold */
+        key = intern_string("font_bold", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) font_bold = val_as_bool(v) ? 1 : 0;
+
+        /* letter_spacing */
+        key = intern_string("letter_spacing", 14);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) letter_spacing = val_as_int(v);
+
+        /* 独立圆角 */
+        key = intern_string("radius_tl", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) radius_tl = val_as_int(v);
+        key = intern_string("radius_tr", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) radius_tr = val_as_int(v);
+        key = intern_string("radius_bl", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) radius_bl = val_as_int(v);
+        key = intern_string("radius_br", 9);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) radius_br = val_as_int(v);
+
+        /* gradient */
+        key = intern_string("gradient", 8);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) {
+            if (val_is_obj(v) && val_as_obj(v)->type == OBJ_ARRAY) {
+                /* 简写: gradient: [color1, color2] */
+                ObjArray* arr = (ObjArray*)val_as_obj(v);
+                gradient_count = arr->count < 4 ? (int)arr->count : 4;
+                for (int i = 0; i < gradient_count; i++) {
+                    Value cv = arr->elements[i];
+                    if (val_is_obj(cv) && val_as_obj(cv)->type == OBJ_RGB) {
+                        ObjRgb* rgb = (ObjRgb*)val_as_obj(cv);
+                        gradient_r[i] = rgb->r; gradient_g[i] = rgb->g;
+                        gradient_b[i] = rgb->b; gradient_a[i] = rgb->a;
+                    }
+                }
+                gradient_radial = 0;
+            } else if (val_is_obj(v) && val_as_obj(v)->type == OBJ_DICT) {
+                /* 完整写法: gradient: { colors: [...], radial: true } */
+                ObjDict* grad = (ObjDict*)val_as_obj(v);
+                ObjString* ckey = intern_string("colors", 6);
+                Value cv = dict_get(grad, val_obj((Object*)ckey));
+                if (!val_is_null(cv) && val_is_obj(cv) && val_as_obj(cv)->type == OBJ_ARRAY) {
+                    ObjArray* arr = (ObjArray*)val_as_obj(cv);
+                    gradient_count = arr->count < 4 ? (int)arr->count : 4;
+                    for (int i = 0; i < gradient_count; i++) {
+                        Value gv = arr->elements[i];
+                        if (val_is_obj(gv) && val_as_obj(gv)->type == OBJ_RGB) {
+                            ObjRgb* rgb = (ObjRgb*)val_as_obj(gv);
+                            gradient_r[i] = rgb->r; gradient_g[i] = rgb->g;
+                            gradient_b[i] = rgb->b; gradient_a[i] = rgb->a;
+                        }
+                    }
+                }
+                ObjString* rkey = intern_string("radial", 6);
+                Value rv = dict_get(grad, val_obj((Object*)rkey));
+                if (!val_is_null(rv)) gradient_radial = val_as_bool(rv) ? 1 : 0;
+            }
+        }
+
+        /* border_style */
+        key = intern_string("border_style", 12);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            char* s = ((ObjString*)val_as_obj(v))->chars;
+            if (strcmp(s, "dashed") == 0) border_style = 1;
+            else if (strcmp(s, "dotted") == 0) border_style = 2;
+            else border_style = 0;
+        }
+
+        /* text_decoration */
+        key = intern_string("text_decoration", 15);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            char* s = ((ObjString*)val_as_obj(v))->chars;
+            if (strcmp(s, "underline") == 0) text_decoration = 1;
+            else if (strcmp(s, "strikethrough") == 0) text_decoration = 2;
+            else if (strcmp(s, "overline") == 0) text_decoration = 3;
+            else text_decoration = 0;
+        }
+
+        /* focus_width, focus_color */
+        key = intern_string("focus_width", 11);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) focus_width = val_as_int(v);
+        key = intern_string("focus_color", 11);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            focus_r = rgb->r; focus_g = rgb->g; focus_b = rgb->b; focus_a = rgb->a;
+        }
+
+        /* hover_scale */
+        key = intern_string("hover_scale", 11);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) hover_scale = (float)val_as_double(v);
+
+        /* loading */
+        key = intern_string("loading", 7);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) loading = val_as_bool(v) ? 1 : 0;
+
+        /* cursor */
+        key = intern_string("cursor", 6);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            free(cursor);
+            cursor = strdup(((ObjString*)val_as_obj(v))->chars);
+        }
+
+        /* press_effect */
+        key = intern_string("press_effect", 12);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) press_effect = val_as_bool(v) ? 1 : 0;
+
+        /* press_offset */
+        key = intern_string("press_offset", 12);
+        v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) press_offset = val_as_int(v);
     }
 
     /* 创建按钮对象 */
@@ -426,6 +587,7 @@ static Value win_add_button_func(int argc, Value* args) {
     if (!btn) {
         free(text);
         free(font_name);
+        free(cursor);
         return val_null();
     }
 
@@ -443,18 +605,45 @@ static Value win_add_button_func(int argc, Value* args) {
     btn->font_name = font_name;
     btn->font_size = font_size;
     btn->font = NULL;
+    btn->padding_x = padding_x;
+    btn->padding_y = padding_y;
+    btn->text_align = text_align;
+    btn->font_bold = font_bold;
+    btn->letter_spacing = letter_spacing;
     btn->radius = radius;
+    btn->radius_tl = radius_tl;
+    btn->radius_tr = radius_tr;
+    btn->radius_bl = radius_bl;
+    btn->radius_br = radius_br;
     btn->opacity = opacity;
+    btn->gradient_count = gradient_count;
+    for (int i = 0; i < 4; i++) {
+        btn->gradient_r[i] = gradient_r[i];
+        btn->gradient_g[i] = gradient_g[i];
+        btn->gradient_b[i] = gradient_b[i];
+        btn->gradient_a[i] = gradient_a[i];
+    }
+    btn->gradient_radial = gradient_radial;
     btn->border_width = border_width;
     btn->border_r = border_r; btn->border_g = border_g; btn->border_b = border_b; btn->border_a = border_a;
+    btn->border_style = border_style;
     btn->shadow_offset_x = shadow_offset_x;
     btn->shadow_offset_y = shadow_offset_y;
     btn->shadow_radius = shadow_radius;
     btn->shadow_r = shadow_r; btn->shadow_g = shadow_g; btn->shadow_b = shadow_b; btn->shadow_a = shadow_a;
+    btn->text_decoration = text_decoration;
+    btn->focus_width = focus_width;
+    btn->focus_r = focus_r; btn->focus_g = focus_g; btn->focus_b = focus_b; btn->focus_a = focus_a;
+    btn->hover_scale = hover_scale;
+    btn->loading = loading;
+    btn->cursor = cursor;
+    btn->press_effect = press_effect;
+    btn->press_offset = press_offset;
     btn->visible = 1;
     btn->enabled = 1;
     btn->hovered = 0;
     btn->pressed = 0;
+    btn->focused = 0;
     btn->on_click = val_null();
 
     /* 加载字体 */

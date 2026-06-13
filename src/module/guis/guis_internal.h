@@ -60,22 +60,53 @@ typedef struct ObjGUIButton {
     char* font_name;
     int font_size;
     ObjGUIFont* font;              /* 缓存的字体对象 */
+    /* 内边距 */
+    int padding_x;                 /* 水平内边距 */
+    int padding_y;                 /* 垂直内边距 */
+    /* 文字对齐: 0=左, 1=中, 2=右 */
+    int text_align;
+    /* 字体粗细 */
+    int font_bold;                 /* 0=正常, 1=粗体 */
+    /* 字间距 */
+    int letter_spacing;
     /* 圆角 */
     int radius;
+    int radius_tl, radius_tr, radius_bl, radius_br; /* 独立圆角 (0=使用 radius) */
     /* 透明度 (0~255, 255=不透明) */
     int opacity;
+    /* 渐变背景 */
+    int gradient_count;            /* 渐变颜色数量 (0=无渐变) */
+    int gradient_r[4], gradient_g[4], gradient_b[4], gradient_a[4]; /* 最多4个渐变停止点 */
+    int gradient_radial;           /* 0=线性, 1=径向 */
     /* 边框 */
     int border_width;              /* 边框宽度 (0=无边框) */
     int border_r, border_g, border_b, border_a; /* 边框颜色 */
+    int border_style;              /* 0=solid, 1=dashed, 2=dotted */
     /* 阴影 */
     int shadow_offset_x, shadow_offset_y; /* 阴影偏移 */
     int shadow_radius;             /* 阴影模糊半径 (0=无阴影) */
     int shadow_r, shadow_g, shadow_b, shadow_a; /* 阴影颜色 */
+    /* 文字装饰: 0=none, 1=underline, 2=strikethrough, 3=overline */
+    int text_decoration;
+    /* 焦点样式 */
+    int focus_width;
+    int focus_r, focus_g, focus_b, focus_a;
+    /* 悬停缩放 */
+    float hover_scale;
+    /* 加载状态 */
+    int loading;
+    /* 悬停光标 */
+    char* cursor;
+    /* 按下效果: 0=关闭, 1=开启默认效果(偏移+变暗) */
+    int press_effect;
+    /* 按下偏移像素数 (默认1) */
+    int press_offset;
     /* 状态 */
     int visible;
     int enabled;
     int hovered;                   /* 鼠标是否悬停 */
     int pressed;                   /* 鼠标是否按下 */
+    int focused;                   /* 是否获得焦点 */
     /* 回调 */
     Value on_click;                /* 点击回调闭包 */
 } ObjGUIButton;
