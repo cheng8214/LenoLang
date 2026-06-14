@@ -751,19 +751,47 @@ face Writer {
 
 ### 10.2 struct 实现 face
 
-**隐式满足**（不声明，只要方法签名匹配就自动满足）：
+Leno 采用**名义类型（nominal typing）**——struct 必须**显式声明 `impl`** 才算实现 face，仅方法签名匹配不算实现：
 
 ```leno
+// ❌ 错误：没有 impl 声明，即使方法签名匹配也不能作为 Speaker 使用
 struct Dog {
     string name = ""
     func speak():string { return "woof" }
 }
-// Dog 自动满足 Speaker（有 speak():string 方法）
+// Dog 有 speak():string 方法，但未声明 impl Speaker，不能传给 Speaker 参数
+
+// ✅ 正确：显式声明 impl
+struct Cat impl Speaker {
+    func speak():string { return "meow" }
+}
 ```
 
-**显式声明**（编译器检查是否真的满足，不满足则报错）：
+**为什么必须显式 impl？**
+
+名义类型防止**意外满足**接口。例如：
 
 ```leno
+face Serializable { func serialize():string }
+
+struct Password {
+    string value = ""
+    func serialize():string { return value }    // 只是碰巧签名相同
+}
+
+func save(Serializable s) { ... }
+
+main() {
+    var p = new Password()
+    save(p)    // ❌ 编译错误：Password 未 impl Serializable
+    // 防止意外把密码当 Serializable 传入！
+}
+```
+
+**显式声明语法：**
+
+```leno
+// 单个 face
 struct Cat impl Speaker {
     func speak():string { return "meow" }
 }
@@ -792,6 +820,23 @@ face Adder {
 
 struct BadAdder impl Adder {
     func add(int a):int { return a }    // face 声明 2 个参数，实际只有 1 个
+}
+```
+
+**未 impl 但传给 face 参数时的错误提示：**
+
+```leno
+struct Dog {
+    func speak():string { return "woof" }
+}
+
+func make_sound(Speaker s) { ... }
+
+main() {
+    var d = new Dog()
+    make_sound(d)    // ❌ 编译错误：
+    // make_sound 第 1 个参数类型不匹配: 期望 face Speaker, 实际 struct Dog
+    // (struct 'Dog' 未实现 face 'Speaker'，请添加 impl: struct Dog impl Speaker { ... })
 }
 ```
 
@@ -829,7 +874,7 @@ print(s.speak())     // meow
 
 ### 10.5 face 类型守卫
 
-使用 `is` 运算符在**运行时**检查 struct 实例是否实现了某个 face（包括显式 `impl` 声明和隐式鸭子类型）：
+使用 `is` 运算符在**运行时**检查 struct 实例是否实现了某个 face（仅检查显式 `impl` 声明）：
 
 ```leno
 var obj = new Dog()
@@ -847,24 +892,24 @@ if rock not is Speaker {
 }
 ```
 
-**类型守卫的两种检查方式：**
+**类型守卫检查规则：**
 
 | 检查方式 | 说明 | 示例 |
 |---------|------|------|
-| 显式 impl | struct 用 `impl Face` 声明 | `struct Dog impl Speaker` |
-| 隐式满足 | struct 有 face 要求的所有方法签名（鸭子类型） | `struct Duck { func speak():string }` |
+| 显式 impl | struct 用 `impl Face` 声明 | `struct Dog impl Speaker` → `d is Speaker` 为 `true` |
+| 无 impl | struct 未声明 `impl Face` | `struct Duck { func speak():string }` → `duck is Speaker` 为 `false` |
 
 ```leno
 face Speaker {
     func speak():string
 }
 
-// 显式声明
+// 显式声明 impl
 struct Dog impl Speaker {
     func speak():string { return "woof" }
 }
 
-// 隐式满足（鸭子类型）
+// 没有 impl 声明，即使方法签名匹配也不算实现
 struct Duck {
     func speak():string { return "quack" }
 }
@@ -877,7 +922,7 @@ main() {
         print("Dog is Speaker")        // ✅ 输出
     }
     if duck is Speaker {
-        print("Duck is Speaker")       // ✅ 输出（鸭子类型）
+        print("Duck is Speaker")       // ❌ 不会输出（Duck 未 impl Speaker）
     }
 }
 ```
@@ -1064,6 +1109,65 @@ main() {
 }
 ```
 
+### 10.10 face 数组类型推断
+
+当数组中包含多个实现了同一 face 的 struct 时，编译器会自动推断数组元素类型为该 face：
+
+```leno
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    func speak():string { return "woof" }
+}
+
+struct Cat impl Speaker {
+    func speak():string { return "meow" }
+}
+
+main() {
+    // 同类型 struct → Array[Dog]
+    var dogs = [new Dog(), new Dog()]
+    print(type(dogs))    // Array[Dog]
+
+    // 不同 struct，有公共 face → Array[Speaker]
+    var animals = [new Dog(), new Cat()]
+    print(type(animals))    // Array[Speaker]
+
+    // 遍历时元素类型为 Speaker，可调用 face 方法
+    for animals to s {
+        print(s.speak())    // woof, meow
+    }
+}
+```
+
+**混合 struct 和 face 变量：**
+
+```leno
+main() {
+    Speaker a = new Dog()    // face 类型变量
+    var d = new Dog()        // struct 类型变量
+
+    // face + struct → Array[Speaker]
+    var mixed = [a, d]
+    print(type(mixed))    // Array[Speaker]
+}
+```
+
+**推断规则：**
+
+| 数组元素 | 推断结果 | 说明 |
+|---------|---------|------|
+| `[Dog, Dog]` | `Array[Dog]` | 同类型，保持原类型 |
+| `[Dog, Cat]`（都 impl Speaker） | `Array[Speaker]` | 不同 struct，找公共 face |
+| `[Dog, Fish]`（Fish 无 impl） | `Array[any]` | 无公共 face，退化为 any |
+| `[Speaker, Cat]` | `Array[Speaker]` | face + impl struct → face |
+| `[Dog, Speaker]` | `Array[Speaker]` | struct + face → face |
+| `[Speaker, Speaker]` | `Array[Speaker]` | face + face → face |
+
+> **⚠️ 注意：** 数组类型推断基于**显式 impl 声明**。如果 struct 没有 `impl` 声明，即使方法签名匹配，也不会被推断为该 face 类型。
+
 ***
 
 ## 11. 总结
@@ -1077,12 +1181,12 @@ main() {
 | 嵌套 | 支持，自引用必须设 null 默认值 |
 | null 检查 | 编译时警告访问可能为 null 的字段 |
 | face | `face 名称 { func 签名 }` 定义接口 |
-| impl | `struct 名称 impl Face1, Face2` 显式声明 |
+| impl | `struct 名称 impl Face1, Face2` 显式声明（必须，名义类型） |
 | impl 检查 | 编译期检查方法缺失、返回类型、参数数量 |
-| 多态 | face 参数/变量接受任何满足的 struct |
-| 类型守卫 | `if obj is FaceName` 运行时检查是否满足 face |
+| 多态 | face 参数/变量只接受显式 impl 的 struct |
+| 类型守卫 | `if obj is FaceName` 运行时检查是否 impl 了 face |
 | 安全转型 | `var c = obj as StructName` 匹配返回原值，不匹配返回 null |
-| 鸭子类型 | 未声明 impl 但有匹配方法，is 检查也返回 true |
+| 数组推断 | 不同 struct 有公共 face 时推断为 Array[FaceName] |
 | 跨模块 face | import 模块中的 face 可用于 impl、参数、变量 |
 | 性能 | 字段索引编译期确定，O(1) 访问 |
 | use 导入 | 支持 `use module.Struct` 和 `use module.Face` 导入 |
@@ -1094,12 +1198,11 @@ main() {
 | 表达式 | 条件 | 结果 |
 |--------|------|------|
 | `obj is Face` | struct 显式 `impl Face` | `true` |
-| `obj is Face` | struct 有 Face 所有方法（鸭子类型） | `true` |
-| `obj is Face` | struct 不满足 Face | `false` |
+| `obj is Face` | struct 未 `impl Face`（即使方法签名匹配） | `false` |
 | `obj not is Face` | 上述条件的否定 | 相反结果 |
 | `obj as StructName` | obj 是指定 struct | 原值（struct 实例） |
 | `obj as StructName` | obj 不是指定 struct | `null` |
-| `obj as Face` | obj 实现了指定 face | 原值（struct 实例） |
+| `obj as Face` | obj 实现了指定 face（显式 impl） | 原值（struct 实例） |
 | `obj as Face` | obj 未实现指定 face | `null` |
 
 ***

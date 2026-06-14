@@ -14,15 +14,16 @@
 4. [控制流](#控制流)
 5. [函数](#函数)
 6. [结构体（Struct）](#结构体struct)
-7. [枚举（Enum）](#枚举enum)
-8. [数组](#数组)
-9. [字典](#字典)
-10. [字符串](#字符串)
-11. [模块系统](#模块系统)
-12. [异步编程](#异步编程)
-13. [FFI 外部函数接口](#ffi-外部函数接口)
-14. [高级特性](#高级特性)
-15. [语法速查表](#语法速查表)
+7. [face（接口）](#face接口)
+8. [枚举（Enum）](#枚举enum)
+9. [数组](#数组)
+10. [字典](#字典)
+11. [字符串](#字符串)
+12. [模块系统](#模块系统)
+13. [异步编程](#异步编程)
+14. [FFI 外部函数接口](#ffi-外部函数接口)
+15. [高级特性](#高级特性)
+16. [语法速查表](#语法速查表)
 
 ***
 
@@ -1798,6 +1799,236 @@ var p = new Person(
 print(p.name)           // 张三
 print(p.addr.city)      // 北京
 print(p.addr.street)    // 朝阳路
+```
+
+***
+
+## face（接口）
+
+face 用于定义方法签名契约，让不同 struct 实现相同的行为，实现多态。Leno 采用**名义类型（nominal typing）**——struct 必须**显式声明 `impl`** 才算实现 face。
+
+### 定义 face
+
+```leno
+face 名称 {
+    func 方法名(参数列表):返回类型
+    ...
+}
+```
+
+face 体只含方法签名，不含字段、不含方法体：
+
+```leno
+face Speaker {
+    func speak():string
+}
+
+face Writer {
+    func write(string content)
+    func flush()
+}
+```
+
+### struct 实现 face
+
+struct 必须**显式声明 `impl`** 才算实现 face，仅方法签名匹配不算实现：
+
+```leno
+face Speaker {
+    func speak():string
+}
+
+// ✅ 正确：显式声明 impl
+struct Dog impl Speaker {
+    string name = ""
+    func speak():string { return "woof" }
+}
+
+// ❌ 错误：没有 impl 声明，即使方法签名匹配也不能作为 Speaker 使用
+struct Cat {
+    func speak():string { return "meow" }
+}
+// Cat 有 speak():string 方法，但未声明 impl Speaker，不能传给 Speaker 参数
+```
+
+**为什么必须显式 impl？** 防止意外满足接口：
+
+```leno
+face Serializable { func serialize():string }
+
+struct Password {
+    string value = ""
+    func serialize():string { return value }    // 只是碰巧签名相同
+}
+
+func save(Serializable s) { ... }
+
+main() {
+    var p = new Password()
+    save(p)    // ❌ 编译错误：Password 未 impl Serializable
+}
+```
+
+**多个 face 用逗号分隔：**
+
+```leno
+struct FileLogger impl Writer, Speaker {
+    func write(string content) { }
+    func flush() { }
+    func speak():string { return "FileLogger" }
+}
+```
+
+**impl 编译期检查：**
+
+```leno
+// ❌ 编译错误：声明了但缺少方法
+struct Fish impl Speaker {
+    func swim() { }    // 缺少 speak() 方法
+}
+
+// ❌ 编译错误：返回类型不匹配
+struct BadSpeaker impl Speaker {
+    func speak():int { return 42 }    // face 声明返回 string
+}
+```
+
+### face 作为参数类型
+
+```leno
+func make_sound(Speaker s) {
+    print(s.speak())
+}
+
+var d = new Dog()
+make_sound(d)    // 输出: woof
+```
+
+### face 作为变量类型
+
+```leno
+Speaker s = new Dog()
+print(s.speak())     // woof
+
+s = new Cat()        // ❌ 编译错误：Cat 未 impl Speaker
+```
+
+### face 类型守卫
+
+使用 `is` 运算符在运行时检查 struct 是否实现了某个 face（仅检查显式 `impl` 声明）：
+
+```leno
+var obj = new Dog()
+if obj is Speaker {
+    print(obj.speak())     // 守卫内 obj 视为 Speaker 类型
+}
+
+// not is 否定检查
+if obj not is Speaker {
+    print("不是 Speaker")
+}
+```
+
+### as 安全类型转换
+
+`as` 运算符用于安全向下转型，匹配返回原值，不匹配返回 `null`：
+
+```leno
+face Shape {
+    func area():float
+}
+
+struct Circle impl Shape {
+    float radius = 1.0
+    func area():float { return 3.14159 * radius * radius }
+}
+
+func describe(Shape s) {
+    var c = s as Circle
+    if c != null {
+        print("Circle radius=" + _str(c.radius))    // ✅ 安全访问 Circle 字段
+    }
+}
+```
+
+### face 数组类型推断
+
+当数组中包含多个实现了同一 face 的 struct 时，编译器自动推断为该 face 类型：
+
+```leno
+struct Dog impl Speaker {
+    func speak():string { return "woof" }
+}
+
+struct Cat impl Speaker {
+    func speak():string { return "meow" }
+}
+
+main() {
+    var animals = [new Dog(), new Cat()]
+    print(type(animals))    // Array[Speaker]
+
+    for animals to s {
+        print(s.speak())    // woof, meow
+    }
+}
+```
+
+| 数组元素 | 推断结果 | 说明 |
+|---------|---------|------|
+| `[Dog, Dog]` | `Array[Dog]` | 同类型，保持原类型 |
+| `[Dog, Cat]`（都 impl Speaker） | `Array[Speaker]` | 不同 struct，找公共 face |
+| `[Dog, Fish]`（Fish 无 impl） | `Array[any]` | 无公共 face，退化为 any |
+
+### face 不能实例化
+
+```leno
+Speaker s = new Speaker()    // ❌ 错误：face 不能实例化
+```
+
+### 完整示例
+
+```leno
+face Shape {
+    func area():float
+    func perimeter():float
+}
+
+struct Rectangle impl Shape {
+    int width = 0
+    int height = 0
+
+    func area():float { return width * height }
+    func perimeter():float { return 2 * (width + height) }
+}
+
+struct Circle impl Shape {
+    int radius = 0
+
+    func area():float { return 3.14159 * radius * radius }
+    func perimeter():float { return 2 * 3.14159 * radius }
+}
+
+func print_shape_info(Shape s) {
+    print($"面积: {s.area()}")
+    print($"周长: {s.perimeter()}")
+}
+
+main() {
+    var r = new Rectangle()
+    r.width = 10
+    r.height = 5
+
+    var c = new Circle()
+    c.radius = 3
+
+    print_shape_info(r)
+    print_shape_info(c)
+
+    // 数组推断
+    var shapes = [r, c]
+    print(type(shapes))    // Array[Shape]
+}
 ```
 
 ***
