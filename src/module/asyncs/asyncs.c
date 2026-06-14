@@ -55,6 +55,38 @@ static Value native_async_run(int arg_count, Value* args) {
     
     event_loop_run(target_vm->event_loop);
     
+    // 检查是否有失败的协程
+    EventLoop* loop = target_vm->event_loop;
+    if (loop->error_count > 0) {
+        if (loop->error_count == 1) {
+            // 单个错误：直接设置异常，让 try-catch 捕获
+            Value err = loop->errors[0];
+            loop->error_count = 0;
+            target_vm->exception = err;
+            target_vm->has_exception = 1;
+            target_vm->exception_line = native_get_current_line();
+            return val_null();
+        } else {
+            // 多个错误：汇总为字符串异常
+            char buf[512];
+            int offset = snprintf(buf, sizeof(buf), "%d 个协程失败: ", loop->error_count);
+            for (int i = 0; i < loop->error_count && offset < (int)sizeof(buf) - 64; i++) {
+                if (i > 0) {
+                    offset += snprintf(buf + offset, sizeof(buf) - offset, "; ");
+                }
+                char* err_str = value_to_string(loop->errors[i]);
+                offset += snprintf(buf + offset, sizeof(buf) - offset, "%s", err_str);
+                free(err_str);
+            }
+            loop->error_count = 0;
+            ObjString* err_obj = str_copy(buf, strlen(buf));
+            target_vm->exception = val_obj((Object*)err_obj);
+            target_vm->has_exception = 1;
+            target_vm->exception_line = native_get_current_line();
+            return val_null();
+        }
+    }
+    
     return val_null();
 }
 

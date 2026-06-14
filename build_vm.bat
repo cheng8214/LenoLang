@@ -27,6 +27,7 @@ set SOURCES=!SOURCES! src\object\object_window.c
 set SOURCES=!SOURCES! src\object\object_font.c
 set SOURCES=!SOURCES! src\object\object_image.c
 set SOURCES=!SOURCES! src\object\object_socket.c
+set SOURCES=!SOURCES! src\object\object_button.c
 set SOURCES=!SOURCES! src\bound_method.c
 set SOURCES=!SOURCES! src\coroutine.c
 set SOURCES=!SOURCES! src\vm\vm.c
@@ -68,6 +69,7 @@ set SOURCES=!SOURCES! src\module\guis\guis_font.c
 set SOURCES=!SOURCES! src\module\guis\guis_image.c
 set SOURCES=!SOURCES! src\module\guis\leno_guis_log.c
 set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
+set SOURCES=!SOURCES! src\module\guis\guis_button.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 

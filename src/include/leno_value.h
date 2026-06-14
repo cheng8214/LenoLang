@@ -622,6 +622,7 @@ typedef struct ObjCoroutine {
     int await_count;                   // await 次数
     struct ObjFuture* waiting_for;     // 正在等待的 Future
     struct ObjFuture* task_future;     // task 返回给调用者的 Future（协程完成时需要触发）
+    int error_propagated;             // 错误是否已通过 Future 传播给等待者
     struct ObjCoroutine* next;         // 就绪队列链表指针
     // 初始参数（用于协程启动时传递给 locals）
     Value* initial_args;               // 参数数组（动态分配）
@@ -693,6 +694,10 @@ typedef struct {
     int ready_count;
     int ready_capacity;
     int running;                       // 是否正在运行
+    // 失败协程收集
+    Value* errors;                     // 失败协程的错误信息数组
+    int error_count;                   // 失败协程数量
+    int error_capacity;                // 错误数组容量
 } EventLoop;
 
 // 最大协程数量

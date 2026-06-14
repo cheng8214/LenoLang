@@ -374,6 +374,10 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
             co->state = COROUTINE_FAILED;
             co->result = vm_ptr->exception;
             if (co->task_future && !co->task_future->completed) {
+                // 如果有等待者，标记错误已传播
+                if (co->task_future->waiter) {
+                    co->error_propagated = 1;
+                }
                 future_fail(co->task_future, vm_ptr->exception);
             }
             // 释放初始参数内存
@@ -516,6 +520,10 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
             co->state = COROUTINE_FAILED;
             co->result = vm_ptr->exception;
             if (co->task_future && !co->task_future->completed) {
+                // 如果有等待者，标记错误已传播
+                if (co->task_future->waiter) {
+                    co->error_propagated = 1;
+                }
                 future_fail(co->task_future, vm_ptr->exception);
             }
             // 释放初始参数内存

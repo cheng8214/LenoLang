@@ -543,8 +543,8 @@ main() {
    - `sleep()` 会自动让出执行权
 
 5. **异常处理**
-   - 当前版本协程内异常可能导致未定义行为
-   - 建议在协程内使用 try-catch 捕获异常
+   - 协程内异常有三种传播路径（见下方「异常传播路径」）
+   - 未被捕获的异常会被 `asyncs.run()` 收集并抛出
 
 6. **内存管理**
    - Future 对象会被自动回收
@@ -600,27 +600,15 @@ main() {
 
 ### 异常传播路径
 
-协程内的异常**不会传播到调用者**，而是在协程内部处理：
+协程异常有三种传播路径，与线程模块的异常传播设计对齐：
 
-```leno
-async func risky() {
-    throw "协程出错"  // 异常在协程内部抛出
-}
+#### 路径1：协程内部 try-catch 捕获
 
-main() {
-    var f = risky()
-    // 不 await 的话，异常在 run() 时触发，可能导致未定义行为
-    
-    asyncs.run()
-}
-```
-
-**当前版本建议**：在协程内部使用 `try-catch` 捕获所有异常，不要让异常逃出协程：
+协程内使用 `try-catch` 直接捕获异常，最安全的方式：
 
 ```leno
 async func safe_task() {
     try {
-        // 可能出错的逻辑
         await asyncs.sleep(100)
         throw "错误"
     } catch e {
@@ -629,6 +617,60 @@ async func safe_task() {
     }
 }
 ```
+
+#### 路径2：await 失败的 Future 时传播
+
+当被 await 的协程抛出异常时，异常通过 Future 传播到 await 方：
+
+```leno
+async func risky() {
+    throw "子协程出错"
+}
+
+async func caller() {
+    try {
+        var result = await risky()  // await 检测到 Future 错误，抛出异常
+    } catch e {
+        io.print("await 捕获: " + e)  // 输出: await 捕获: 子协程出错
+    }
+}
+```
+
+- 异常通过 `Future.error` 传播，`await` 检测到错误时在当前协程抛出异常
+- 已通过 await 传播的异常不会被 `asyncs.run()` 重复收集
+
+#### 路径3：asyncs.run() 收集未捕获异常
+
+没有被任何 try-catch 或 await 捕获的异常，会被 `asyncs.run()` 收集并在主线程抛出：
+
+```leno
+async func risky() {
+    throw "未捕获异常"
+}
+
+main() {
+    risky()          // 创建协程，不 await
+    try {
+        asyncs.run()  // 协程失败，run() 收集异常并抛出
+    } catch e {
+        io.print("run() 捕获: " + e)  // 输出: run() 捕获: 未捕获异常
+    }
+}
+```
+
+- 单个协程失败：`run()` 抛出该协程的异常
+- 多个协程失败：`run()` 抛出汇总异常，格式为 `"N 个协程失败: 错误1; 错误2; ..."`
+- 可以用 `try-catch` 包裹 `asyncs.run()` 来处理
+
+#### 异常传播优先级
+
+```
+协程内 try-catch > await 传播 > asyncs.run() 收集
+```
+
+- 如果协程内部有 try-catch，异常在内部处理，不传播
+- 如果协程被 await，异常通过 Future 传播给等待者，`run()` 不重复收集
+- 如果异常未被任何方式捕获，`run()` 统一收集并抛出
 
 ### asyncs.run() 的事件循环语义
 
@@ -698,5 +740,5 @@ main() {
 
 ---
 
-*文档版本: 1.0*  
-*最后更新: 2026-05-07*
+*文档版本: 1.1*  
+*最后更新: 2026-06-14*

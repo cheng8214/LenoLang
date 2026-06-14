@@ -69,6 +69,10 @@ void future_fail(ObjFuture* future, Value error) {
     if (future->waiter && g_event_loop) {
         future->waiter->state = COROUTINE_RUNNING;
         event_loop_add_ready(g_event_loop, future->waiter);
+        // 标记错误已传播给等待者（通过 task_future 关联的协程）
+        // 遍历就绪队列查找关联此 future 的协程，设置 error_propagated
+        // 注意：这里我们无法直接获取 task_future 对应的协程
+        // 改为在 event_loop_run 中检查
         future->waiter = NULL;
     }
 }
@@ -92,6 +96,7 @@ ObjCoroutine* coroutine_new(ObjClosure* closure) {
     co->await_count = 0;
     co->waiting_for = NULL;
     co->task_future = NULL;  // task 返回的 Future，由 OP_ASYNC_CALL 设置
+    co->error_propagated = 0;  // 初始未传播
     co->next = NULL;
     co->initial_args = NULL;
     co->initial_arg_count = 0;
@@ -113,6 +118,11 @@ void event_loop_init(EventLoop* loop) {
     loop->ready_capacity = MAX_COROUTINES;
     
     loop->running = 0;
+    
+    // 初始化错误收集
+    loop->errors = (Value*)malloc(sizeof(Value) * 16);
+    loop->error_count = 0;
+    loop->error_capacity = 16;
 }
 
 // 添加协程到就绪队列
@@ -215,6 +225,8 @@ extern int vm_run_coroutine(ObjCoroutine* co);
 // 运行事件循环直到所有协程完成
 void event_loop_run(EventLoop* loop) {
     loop->running = 1;
+    // 重置错误收集
+    loop->error_count = 0;
     
     while (loop->running) {
         // 1. 检查并处理到期的定时器
@@ -235,6 +247,16 @@ void event_loop_run(EventLoop* loop) {
                 target_vm->current_coroutine = co;
                 vm_run_coroutine(co);
                 target_vm->current_coroutine = NULL;
+                
+                // 收集失败的协程错误
+                // 只收集未被 await 传播的错误
+                if (co->state == COROUTINE_FAILED && !co->error_propagated) {
+                    if (loop->error_count >= loop->error_capacity) {
+                        loop->error_capacity *= 2;
+                        loop->errors = (Value*)realloc(loop->errors, sizeof(Value) * loop->error_capacity);
+                    }
+                    loop->errors[loop->error_count++] = co->result;
+                }
             }
         }
         
