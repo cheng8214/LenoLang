@@ -357,16 +357,15 @@ Value value_clone_for_channel(Value val) {
                     ObjDict* dict = (ObjDict*)obj;
                     ObjDict* copy = dict_new(dict->capacity > 0 ? dict->capacity : 8);
                     if (!copy) return val_null();
-                    for (int i = 0; i < dict->asize; i++) {
-                        if (dict->array && i < dict->asize) {
-                            while (copy->asize <= i) {
-                                if (copy->asize >= copy->capacity) break;
-                                copy->array[copy->asize] = value_clone_for_channel(dict->array[i]);
-                                copy->asize++;
-                                copy->acount++;
-                            }
+                    // 拷贝数组部分
+                    if (dict->array && dict->asize > 0) {
+                        for (int i = 0; i < dict->asize && i < copy->capacity; i++) {
+                            copy->array[i] = value_clone_for_channel(dict->array[i]);
+                            copy->asize++;
+                            copy->acount++;
                         }
                     }
+                    // 拷贝哈希表部分
                     for (int i = 0; i < dict->capacity; i++) {
                         Value entry_key = dict->entries[i].key;
                         if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
@@ -562,8 +561,47 @@ static void* thread_entry_point(void* arg) {
     extern void threads_init_instance_methods(void);
     threads_init_instance_methods();
 
+    // 为闭包创建子线程专用的副本（深拷贝 upvalue 值）
+    // 原始闭包的 upvalue 指向主线程栈，子线程不能直接访问
+    ObjClosure* child_closure = closure;
+    if (closure->upvalue_count > 0) {
+        child_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+        if (!child_closure) {
+            platform_mutex_lock(&thread_obj->mutex);
+            thread_obj->state = THREAD_ERROR;
+            thread_obj->error_msg = strdup("Failed to allocate closure for thread");
+            thread_obj->has_result = 0;
+            platform_cond_signal(&thread_obj->done_cond);
+            platform_mutex_unlock(&thread_obj->mutex);
+            if (saved_globals) free(saved_globals);
+            if (saved_global_funcs) free(saved_global_funcs);
+            if (thread_initial_args) free(thread_initial_args);
+            if (child_vm.frames) free(child_vm.frames);
+            if (child_vm.stack) free(child_vm.stack);
+            if (child_vm.globals) free(child_vm.globals);
+            if (child_vm.global_funcs) free(child_vm.global_funcs);
+            return NULL;
+        }
+        child_closure->function = closure->function;
+        child_closure->upvalue_count = closure->upvalue_count;
+        for (int i = 0; i < closure->upvalue_count; i++) {
+            // 读取原始 upvalue 的当前值，创建 closed upvalue
+            Value upval = *closure->upvalues[i]->location;
+            Value cloned = value_clone_for_channel(upval);
+            Upvalue* uv = (Upvalue*)gc_alloc(sizeof(Upvalue), OBJ_UPVALUE);
+            if (!uv) {
+                child_closure->upvalue_count = i;  // 部分初始化
+                break;
+            }
+            uv->location = &uv->closed;
+            uv->closed = cloned;
+            uv->next = NULL;
+            child_closure->upvalues[i] = uv;
+        }
+    }
+
     // 创建协程对象来执行函数
-    ObjCoroutine* co = coroutine_new(closure);
+    ObjCoroutine* co = coroutine_new(child_closure);
     if (!co) {
         platform_mutex_lock(&thread_obj->mutex);
         thread_obj->state = THREAD_ERROR;
@@ -647,6 +685,7 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
     thread->result = val_null();
     thread->error_msg = NULL;
     thread->has_result = 0;
+    thread->joined = 0;
 
     platform_mutex_init(&thread->mutex);
     platform_cond_init(&thread->done_cond);
@@ -722,7 +761,26 @@ Value thread_join(ObjThread* thread) {
     }
     platform_mutex_unlock(&thread->mutex);
 
-    platform_thread_join(thread->os_thread, NULL);
+    if (!thread->joined) {
+        platform_thread_join(thread->os_thread, NULL);
+        thread->joined = 1;
+    }
+
+    // 从 active_threads 中移除
+    extern THREAD_LOCAL VM* current_exec_vm;
+    extern VM vm;
+    VM* target_vm = current_exec_vm ? current_exec_vm : &vm;
+    if (target_vm->active_threads) {
+        for (int i = 0; i < target_vm->active_thread_count; i++) {
+            if (target_vm->active_threads[i] == thread) {
+                target_vm->active_threads[i] = target_vm->active_thread_count > 1
+                    ? target_vm->active_threads[target_vm->active_thread_count - 1]
+                    : NULL;
+                target_vm->active_thread_count--;
+                break;
+            }
+        }
+    }
 
     if (thread->state == THREAD_ERROR) {
         char msg[256];
@@ -819,16 +877,6 @@ int channel_send(ObjChannel* channel, Value value) {
     if (channel->closed) {
         platform_mutex_unlock(&channel->mutex);
         return -1;
-    }
-
-    if (channel->capacity <= 1 && channel->count == 0) {
-        while (channel->count >= channel->capacity && !channel->closed) {
-            platform_cond_wait(&channel->not_full, &channel->mutex);
-        }
-        if (channel->closed) {
-            platform_mutex_unlock(&channel->mutex);
-            return -1;
-        }
     }
 
     while (channel->count >= channel->capacity && !channel->closed) {

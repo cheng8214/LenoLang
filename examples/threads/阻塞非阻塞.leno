@@ -3,7 +3,7 @@
 import threads
 
 // 线程函数：计算累加和
-func sum_worker(var n) {
+func sum_worker(int n) {
     var sum = 0
     for n to var i {
         sum = sum + i

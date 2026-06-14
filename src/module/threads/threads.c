@@ -1,6 +1,7 @@
 #include "../../include/native.h"
 #include "../../include/leno_value.h"
 #include "../../include/platform_thread.h"
+#include "../../include/platform.h"
 #include <string.h>
 
 extern ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_arg_count);
@@ -89,6 +90,21 @@ static Value channel_method_try_receive(int argc, Value* args) {
     return channel_try_receive(channel);
 }
 
+static Value channel_method_is_closed(int argc, Value* args) {
+    (void)argc;
+    ObjChannel* channel = (ObjChannel*)val_as_obj(args[0]);
+    return val_bool(channel->closed);
+}
+
+static Value channel_method_len(int argc, Value* args) {
+    (void)argc;
+    ObjChannel* channel = (ObjChannel*)val_as_obj(args[0]);
+    platform_mutex_lock(&channel->mutex);
+    int count = channel->count;
+    platform_mutex_unlock(&channel->mutex);
+    return val_num(count);
+}
+
 // ==================== 模块静态方法 ====================
 
 static Value threads_start(int argc, Value* args) {
@@ -98,11 +114,6 @@ static Value threads_start(int argc, Value* args) {
     }
 
     ObjClosure* closure = (ObjClosure*)val_as_obj(args[0]);
-
-    if (closure->upvalue_count > 0) {
-        native_throw_error("MVP: closures with captured variables are not supported");
-        return val_null();
-    }
 
     Value* call_args = NULL;
     int call_arg_count = argc - 1;
@@ -114,8 +125,8 @@ static Value threads_start(int argc, Value* args) {
     }
 
     ObjThread* thread = thread_new_with_args(closure, call_args, call_arg_count);
+    if (call_args) free(call_args);
     if (!thread) {
-        if (call_args) free(call_args);
         native_throw_error("Failed to create thread");
         return val_null();
     }
@@ -140,6 +151,17 @@ static Value threads_channel(int argc, Value* args) {
     return val_obj((Object*)channel);
 }
 
+static Value threads_sleep(int argc, Value* args) {
+    if (argc < 1 || !val_is_int(args[0])) {
+        native_throw_error("threads.sleep() requires an integer milliseconds argument");
+        return val_null();
+    }
+    int ms = (int)val_as_num(args[0]);
+    if (ms < 0) ms = 0;
+    platform_sleep_ms((uint64_t)ms);
+    return val_null();
+}
+
 // ==================== 实例方法初始化 ====================
 
 void threads_init_instance_methods(void) {
@@ -159,6 +181,8 @@ void threads_init_instance_methods(void) {
     channel_register_method_with_params("close", make_native(channel_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     channel_register_method_with_params("try_send", make_native(channel_method_try_send, 2, "try_send"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, any_params);
     channel_register_method_with_params("try_receive", make_native(channel_method_try_receive, 1, "try_receive"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    channel_register_method_with_params("is_closed", make_native(channel_method_is_closed, 1, "is_closed"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    channel_register_method_with_params("len", make_native(channel_method_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
 }
 
 // ==================== 模块初始化 ====================
@@ -169,6 +193,9 @@ void threads_init_module(void) {
 
     TypeKind channel_params[] = {TYPE_INT};
     native_register_module_method("threads", "channel", threads_channel, 1, -1, -1, TYPE_CHANNEL, TYPE_UNKNOWN, channel_params);
+
+    TypeKind sleep_params[] = {TYPE_INT};
+    native_register_module_method("threads", "sleep", threads_sleep, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, sleep_params);
 
     // 调用 threads_init_instance_methods 注册线程和通道实例方法
     threads_init_instance_methods();

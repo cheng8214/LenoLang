@@ -1,6 +1,6 @@
 # threads 模块
 
-线程模块提供多线程编程支持，包括线程创建和通道（Channel）通信。
+线程模块提供多线程编程支持，包括线程创建、闭包捕获和通道（Channel）通信。
 
 ## 模块函数
 
@@ -9,28 +9,42 @@
 创建并启动一个新线程，执行指定的函数。
 
 **参数:**
-- `func`: 要执行的函数（闭包）
+- `func`: 要执行的函数（闭包），支持捕获外部变量
 - `...args`: 传递给函数的参数（可选）
 
 **返回值:**
 - 返回 Thread 对象
 
-**注意:**
-- MVP 版本不支持捕获变量的闭包
-- 线程函数不能访问外部变量
+**闭包捕获:**
+- 支持捕获外部变量，捕获的值会深拷贝到子线程
+- 每个线程拥有独立的变量副本，互不影响
+- 修改捕获变量不会影响主线程或其他线程
 
 **示例:**
 ```leno
 import threads
 
+// 顶层函数
 func worker(var x, var y) {
     return x + y
 }
 
+// 闭包捕获
+var name = "Leno"
+var t1 = threads.start(func(){
+    print("hello " + name)  // 捕获外部变量
+})
+
+// 闭包捕获 + 参数传递
+var prefix = "result"
+var t2 = threads.start(func(int n){
+    return prefix + "_" + n
+}, 42)
+
 main() {
-    var t = threads.start(worker, 10, 20)
-    var result = t.join()
-    print("结果: " + result)  // 输出: 结果: 30
+    t1.join()
+    var r = t2.join()
+    print(r)  // 输出: result_42
 }
 ```
 
@@ -59,6 +73,24 @@ main() {
     var msg = ch.receive()
     print(msg)  // 输出: hello
     t.join()
+}
+```
+
+### `threads.sleep(ms)`
+
+当前线程休眠指定毫秒数。
+
+**参数:**
+- `ms`: 休眠时间（毫秒），必须为整数
+
+**示例:**
+```leno
+import threads
+
+main() {
+    print("start")
+    threads.sleep(1000)
+    print("1 second later")
 }
 ```
 
@@ -92,7 +124,7 @@ print(result)  // 输出: 42
 **示例:**
 ```leno
 var t = threads.start(func() {
-    sleep(100)
+    threads.sleep(100)
 })
 print(t.state())  // 输出: running
 t.join()
@@ -129,7 +161,7 @@ ch.send([1, 2, 3])
 
 **注意:**
 - 如果通道为空且未关闭，会阻塞等待
-- 如果通道已关闭且为空，行为未定义
+- 如果通道已关闭且为空，返回 `null`
 
 **示例:**
 ```leno
@@ -199,19 +231,67 @@ ch.close()
 // ch.send("more")  // 错误：不能向已关闭的通道发送
 ```
 
+### `channel.is_closed()`
+
+检查通道是否已关闭。
+
+**返回值:**
+- `true`: 通道已关闭
+- `false`: 通道未关闭
+
+**示例:**
+```leno
+var ch = threads.channel(5)
+print(ch.is_closed())  // 输出: false
+ch.close()
+print(ch.is_closed())  // 输出: true
+```
+
+### `channel.len()`
+
+获取通道缓冲区中当前的消息数量（线程安全）。
+
+**返回值:**
+- 缓冲区中的消息数量（整数）
+
+**示例:**
+```leno
+var ch = threads.channel(10)
+print(ch.len())  // 输出: 0
+ch.send(1)
+ch.send(2)
+print(ch.len())  // 输出: 2
+ch.receive()
+print(ch.len())  // 输出: 1
+```
+
 ## 完整示例
 
-### 基本线程
+### 闭包捕获 + Channel 通信
 ```leno
 import threads
 
 main() {
-    var t1 = threads.start(func() {
-        return 1 + 2 + 3 + 4 + 5
+    var ch = threads.channel(10)
+    var msg = "hello"
+
+    var producer = threads.start(func(){
+        for 5 to i {
+            ch.send(msg + "_" + i)
+        }
+        ch.close()
     })
 
-    var r1 = t1.join()
-    print("result: " + r1)  // 输出: result: 15
+    var consumer = threads.start(func(){
+        while true {
+            var val = ch.receive()
+            if val == null { break }
+            print("received: " + val)
+        }
+    })
+
+    producer.join()
+    consumer.join()
 }
 ```
 
@@ -229,6 +309,7 @@ func producer(var ch) {
 func consumer(var ch) {
     while true {
         var msg = ch.receive()
+        if msg == null { break }
         print("收到: " + msg)
     }
 }
@@ -242,14 +323,15 @@ main() {
 }
 ```
 
-## 限制
+## 注意事项
 
-1. **MVP 版本不支持闭包捕获变量**
+1. **闭包捕获变量是深拷贝**
+   - 捕获的变量值会深拷贝到子线程，各线程拥有独立副本
+   - 修改捕获变量不会影响主线程或其他线程
    ```leno
-   // 错误示例
    var x = 10
-   var t = threads.start(func() {
-       print(x)  // 错误：不能捕获外部变量
+   var t = threads.start(func(){
+       print(x)  // ✅ 输出: 10（深拷贝）
    })
    ```
 
@@ -260,3 +342,12 @@ main() {
 3. **错误处理**
    - 线程中的异常不会传播到主线程
    - 使用 `thread.state()` 检查线程是否出错
+
+4. **print 是线程安全的**
+   - 单次 `print()` 调用是原子的，不会与其他线程的输出交错
+   - 但多次 `print()` 调用之间可能被其他线程插入
+
+5. **避免忙等待**
+   - 使用 `ch.receive()`（阻塞）而非 `ch.try_receive()` + 循环轮询
+   - `is_closed()` + `len()` + `try_receive()` 的组合会产生忙等待，浪费 CPU
+   - 推荐模式：`while true { var val = ch.receive(); if val == null { break } }`

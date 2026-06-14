@@ -1,0 +1,22 @@
+import threads
+
+// 测试闭包捕获
+var x = 42
+var t = threads.start(func(){
+    print("captured: " + x)
+})
+t.join()
+
+// 测试 sleep
+print("before sleep")
+threads.sleep(200)
+print("after sleep")
+
+// 测试 channel 新方法
+var ch = threads.channel(5)
+ch.send(1)
+ch.send(2)
+print("len: " + ch.len())
+print("closed: " + ch.is_closed())
+ch.close()
+print("closed after close: " + ch.is_closed())

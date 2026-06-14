@@ -19,10 +19,9 @@ Leno 提供基于 **隔离 VM + Channel** 的多线程支持，参考 Go 语言�
 | `ch.try_send(value)` | 非阻塞发送，成功返回 true |
 | `ch.try_receive()` | 非阻塞接收，成功返回值，失败返回 null |
 | `ch.close()` | 关闭通道 |
-
----
-
-## 快速开始
+| `ch.is_closed()` | 检查通道是否已关闭，返回 bool |
+| `ch.len()` | 获取缓冲区当前消息数量 |
+| `threads.sleep(ms)` | 当前线程休眠指定毫秒数 |
 
 ### 1. 创建线程
 
@@ -498,24 +497,34 @@ main() {
 
 ## 注意事项
 
-### 1. 不支持闭包捕获
+### 1. 闭包捕获变量（深拷贝）
 
-`threads.start()` 目前只支持顶层函数，不支持带捕获变量的闭包：
+`threads.start()` 支持闭包捕获外部变量，捕获的值会深拷贝到子线程，各线程拥有独立副本：
 
 ```leno
 var x = 10
-threads.start(func() {
-    print(x)    // ❌ 错误：不支持闭包捕获
+var t = threads.start(func() {
+    print(x)    // ✅ 输出: 10（深拷贝）
 })
+t.join()
 ```
 
-替代方案：通过参数传递
+多个线程捕获同一变量时，各自拥有独立副本，互不影响：
 
 ```leno
-func worker(var x) {
-    print(x)    // ✅ 通过参数传递
-}
-threads.start(worker, 10)
+var shared = 100
+var t1 = threads.start(func(){ return shared })
+var t2 = threads.start(func(){ return shared })
+print(t1.join())  // 100
+print(t2.join())  // 100
+```
+
+闭包捕获 + 参数传递：
+
+```leno
+var prefix = "hello"
+var t = threads.start(func(int n){ return prefix + " " + n }, 42)
+print(t.join())  // hello 42
 ```
 
 ### 2. 全局变量是独立的
@@ -598,7 +607,41 @@ main() {
 - 需要 C 库回调 Leno → 确保回调由**单一线程**顺序触发，或在回调中只进行**无状态/只读操作**
 - 不要混用两者：避免在 `ffi.callback()` 中调用 `threads.start()`，或在线程函数中使用 FFI 回调
 
-### 6. 线程生命周期
+### 6. print 是线程安全的
+
+单次 `print()` 调用是原子的，不会与其他线程的输出交错。但多次 `print()` 调用之间可能被其他线程插入：
+
+```leno
+// 线程1
+print("A")  // 原子，不会交错
+print("B")  // 原子，但 B 可能在其他线程输出之后
+
+// 线程2
+print("C")
+```
+
+可能输出：`A C B` 或 `A B C`，但不会出现 `AC` 这样的交错。
+
+### 7. 避免忙等待
+
+使用 `ch.receive()`（阻塞）而非 `ch.try_receive()` + 循环轮询：
+
+```leno
+// ❌ 忙等待，浪费 CPU
+while not ch.is_closed() or ch.len() > 0 {
+    var val = ch.try_receive()
+    ...
+}
+
+// ✅ 阻塞等待，不浪费 CPU
+while true {
+    var val = ch.receive()
+    if val == null { break }
+    ...
+}
+```
+
+### 8. 线程生命周期
 
 - 线程函数返回后，线程自动结束
 - `t.join()` 会阻塞等待线程结束
@@ -614,6 +657,7 @@ main() {
 |------|------|--------|
 | `threads.start(func, args...)` | 启动新线程 | `Thread` |
 | `threads.channel(capacity)` | 创建通道 | `Channel` |
+| `threads.sleep(ms)` | 当前线程休眠 | `null` |
 
 ### Thread 方法
 
@@ -630,3 +674,5 @@ main() {
 | `ch.try_send(value)` | 非阻塞发送，成功返回 true | ❌ 不阻塞 |
 | `ch.try_receive()` | 非阻塞接收，成功返回值，空返回 null | ❌ 不阻塞 |
 | `ch.close()` | 关闭通道 | ❌ 不阻塞 |
+| `ch.is_closed()` | 检查通道是否已关闭 | ❌ 不阻塞 |
+| `ch.len()` | 获取缓冲区消息数量 | ❌ 不阻塞 |

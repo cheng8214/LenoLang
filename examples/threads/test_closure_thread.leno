@@ -1,0 +1,57 @@
+import threads
+
+// 测试1: 多线程各自捕获不同变量
+var a = 10
+var b = 20
+var c = 30
+
+var t1 = threads.start(func(){ print("t1: a=" + a) })
+var t2 = threads.start(func(){ print("t2: b=" + b) })
+var t3 = threads.start(func(){ print("t3: c=" + c) })
+t1.join()
+t2.join()
+t3.join()
+
+// 测试2: 多线程捕获同一变量（各自深拷贝，互不影响）
+var shared = 100
+var t4 = threads.start(func(){ print("t4: shared=" + shared) })
+var t5 = threads.start(func(){ print("t5: shared=" + shared) })
+t4.join()
+t5.join()
+
+// 测试3: 闭包捕获 + 参数传递
+var prefix = "hello"
+var t6 = threads.start(func(int n){ print(prefix + " " + n) }, 42)
+t6.join()
+
+// 测试4: 多线程闭包通过 channel 通信
+var ch = threads.channel(10)
+var msg = "from_main"
+
+var producer = threads.start(func(){
+    for 0:5 to i {
+        ch.send(msg + "_" + i)
+    }
+    ch.close()
+})
+
+var consumer = threads.start(func(){
+    while true {
+        var val = ch.receive()
+        if val == null { break }
+        print("received: " + val)
+    }
+})
+
+producer.join()
+consumer.join()
+
+// 测试5: 嵌套闭包捕获
+var outer = "OUTER"
+var t7 = threads.start(func(){
+    var inner = "INNER"
+    print(outer + " + " + inner)
+})
+t7.join()
+
+print("all tests passed")

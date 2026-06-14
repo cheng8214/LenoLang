@@ -660,6 +660,7 @@ typedef struct ObjThread {
     Value result;
     char* error_msg;
     int has_result;
+    int joined;
 } ObjThread;
 
 // Channel 对象
