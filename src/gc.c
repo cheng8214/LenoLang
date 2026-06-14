@@ -428,6 +428,9 @@ void gc_mark_object(Object* obj) {
                     gc_mark_value(struct_obj->field_values[i]);
                 }
             }
+            if (struct_obj->declared_face) {
+                gc_mark_object((Object*)struct_obj->declared_face);
+            }
             break;
         }
         // 协程：标记闭包、结果、等待对象、链表下一个、保存的帧和初始参数

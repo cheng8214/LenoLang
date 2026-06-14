@@ -115,6 +115,7 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
     ObjStruct* obj = (ObjStruct*)gc_alloc(sizeof(ObjStruct), OBJ_STRUCT);
     obj->def = def;
     obj->field_values = (Value*)calloc(def->field_count, sizeof(Value));
+    obj->declared_face = NULL;
 
     // 使用默认值初始化字段
     for (int i = 0; i < def->field_count; i++) {

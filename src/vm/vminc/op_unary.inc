@@ -119,3 +119,17 @@ OPCODE(OP_SET_PTR_ELEM_TYPE) {
     }
     DISPATCH;
 }
+
+OPCODE(OP_SET_DECLARED_FACE) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t name_const = READ_SHORT();
+    Value name_val = frame->chunk->constants[name_const];
+    // 栈顶是 struct 实例，设置其 declared_face
+    Value top = vm_stack_peek(&vm, 0);
+    if (val_is_obj(name_val) && val_as_obj(name_val)->type == OBJ_STRING
+        && val_is_obj(top) && val_as_obj(top)->type == OBJ_STRUCT) {
+        ObjStruct* obj = (ObjStruct*)val_as_obj(top);
+        obj->declared_face = (ObjString*)val_as_obj(name_val);
+    }
+    DISPATCH;
+}

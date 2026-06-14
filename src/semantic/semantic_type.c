@@ -147,10 +147,19 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 result = type_array(NULL);
             } else {
                 TypeInfo* element_type = NULL;
+                // 记录当前元素类型已知的公共 face 名称（用于 struct 类型推断）
+                char* common_face_name = NULL;
                 for (int i = 0; i < ast->u.array.count; i++) {
                     TypeInfo* elem_type = infer_expr_type(s, ast->u.array.items[i]);
                     if (!element_type) {
                         element_type = elem_type;
+                        // 如果第一个元素是 struct，初始化公共 face 集合
+                        if (element_type && element_type->kind == TYPE_STRUCT && element_type->struct_name) {
+                            ObjStructDef* sdef = struct_def_find(element_type->struct_name);
+                            if (sdef && sdef->impl_count > 0) {
+                                common_face_name = strdup(sdef->impl_names[0]);
+                            }
+                        }
                     } else if (type_equals(element_type, elem_type)) {
                         // 类型相同，继续
                         type_free(elem_type);
@@ -183,11 +192,86 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             type_free(elem_type);
                             promoted = 1;
                         }
+                        // struct + struct：查找公共 face
+                        else if (element_type->kind == TYPE_STRUCT && elem_type->kind == TYPE_STRUCT
+                                 && element_type->struct_name && elem_type->struct_name) {
+                            ObjStructDef* cur_sdef = struct_def_find(elem_type->struct_name);
+                            if (cur_sdef && cur_sdef->impl_count > 0 && common_face_name) {
+                                // 检查当前 struct 是否也实现了公共 face
+                                int found = 0;
+                                for (int fi = 0; fi < cur_sdef->impl_count; fi++) {
+                                    if (strcmp(cur_sdef->impl_names[fi], common_face_name) == 0) {
+                                        found = 1;
+                                        break;
+                                    }
+                                }
+                                if (found) {
+                                    // 公共 face 仍有效，提升为 face 类型
+                                    type_free(element_type);
+                                    type_free(elem_type);
+                                    element_type = type_new(TYPE_FACE);
+                                    element_type->struct_name = strdup(common_face_name);
+                                    promoted = 1;
+                                } else {
+                                    // 公共 face 不匹配，尝试找新的公共 face
+                                    // 遍历当前 struct 的 impl，看是否与之前所有 struct 都匹配
+                                    free(common_face_name);
+                                    common_face_name = NULL;
+                                }
+                            } else {
+                                // 没有 impl 或没有公共 face，无法提升
+                                free(common_face_name);
+                                common_face_name = NULL;
+                            }
+                        }
+                        // face + struct：检查 struct 是否实现该 face
+                        else if (element_type->kind == TYPE_FACE && elem_type->kind == TYPE_STRUCT
+                                 && element_type->struct_name && elem_type->struct_name) {
+                            ObjStructDef* cur_sdef = struct_def_find(elem_type->struct_name);
+                            if (cur_sdef && struct_implements_face(cur_sdef, face_def_find(element_type->struct_name))) {
+                                type_free(elem_type);
+                                promoted = 1;
+                            } else {
+                                free(common_face_name);
+                                common_face_name = NULL;
+                            }
+                        }
+                        // struct + face：检查 struct 是否实现该 face，提升为 face 类型
+                        else if (element_type->kind == TYPE_STRUCT && elem_type->kind == TYPE_FACE
+                                 && element_type->struct_name && elem_type->struct_name) {
+                            ObjStructDef* cur_sdef = struct_def_find(element_type->struct_name);
+                            ObjFaceDef* fdef = face_def_find(elem_type->struct_name);
+                            if (cur_sdef && struct_implements_face(cur_sdef, fdef)) {
+                                free(common_face_name);
+                                common_face_name = strdup(elem_type->struct_name);
+                                type_free(element_type);
+                                type_free(elem_type);
+                                element_type = type_new(TYPE_FACE);
+                                element_type->struct_name = strdup(common_face_name);
+                                promoted = 1;
+                            } else {
+                                free(common_face_name);
+                                common_face_name = NULL;
+                            }
+                        }
+                        // face + face：检查是否同一个 face
+                        else if (element_type->kind == TYPE_FACE && elem_type->kind == TYPE_FACE
+                                 && element_type->struct_name && elem_type->struct_name) {
+                            if (strcmp(element_type->struct_name, elem_type->struct_name) == 0) {
+                                type_free(elem_type);
+                                promoted = 1;
+                            } else {
+                                free(common_face_name);
+                                common_face_name = NULL;
+                            }
+                        }
                         
                         if (!promoted) {
                             // 无法类型提升，返回 any[]
                             type_free(elem_type);
                             type_free(element_type);
+                            free(common_face_name);
+                            common_face_name = NULL;
                             result = type_array(type_new(TYPE_ANY));
                             break;
                         }
@@ -199,6 +283,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     result = type_array(element_type);
                 }
+                free(common_face_name);
             }
             ast->cached_type = type_copy(result);
             return result;

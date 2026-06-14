@@ -574,6 +574,7 @@ typedef struct {
     Object header;
     ObjStructDef* def;             // 结构体定义
     Value* field_values;           // 字段值数组
+    ObjString* declared_face;      // 声明时的 face 类型名称（如 "Speaker"），NULL 表示未通过 face 声明
 } ObjStruct;
 
 // face 方法签名

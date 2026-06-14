@@ -17,6 +17,7 @@ static TypeKind get_value_type(Value value) {
             if (val_as_obj(value)->type == OBJ_STRING) return TYPE_STRING;
             else if (val_as_obj(value)->type == OBJ_DICT) return TYPE_DICT;
             else if (val_as_obj(value)->type == OBJ_ARRAY) return TYPE_ARRAY;
+            else if (val_as_obj(value)->type == OBJ_STRUCT) return TYPE_STRUCT;
             else if (val_as_obj(value)->type == OBJ_GUI_WINDOW) return TYPE_WIN;
             else if (val_as_obj(value)->type == OBJ_GUI_RENDERER) return TYPE_DRAW;
             else if (val_as_obj(value)->type == OBJ_GUI_EVENT) return TYPE_EVENT;
@@ -112,11 +113,39 @@ static ObjString* infer_array_type(ObjArray* arr) {
 
     // 基本类型处理 - 支持类型提升
     TypeKind elemType = get_value_type(first);
+    // struct 类型：记录 struct 名称和公共 face
+    const char* struct_name = NULL;
+    char* common_face_name = NULL;
+    if (elemType == TYPE_STRUCT && val_is_obj(first) && val_as_obj(first)->type == OBJ_STRUCT) {
+        ObjStruct* obj = (ObjStruct*)val_as_obj(first);
+        if (obj->def) {
+            // 如果有 declared_face，说明该变量声明为 face 类型
+            if (obj->declared_face) {
+                elemType = TYPE_FACE;
+                struct_name = obj->declared_face->chars;
+                common_face_name = strdup(obj->declared_face->chars);
+            } else {
+                struct_name = obj->def->name;
+                if (obj->def->impl_count > 0) {
+                    common_face_name = strdup(obj->def->impl_names[0]);
+                }
+            }
+        }
+    }
     
     // 检查所有元素类型，支持类型提升
     for (int i = 1; i < arr->count; i++) {
         Value elem = arr->elements[i];
         TypeKind currType = get_value_type(elem);
+        // 如果 struct 实例有 declared_face，视为 face 类型
+        const char* elem_face_name = NULL;
+        if (currType == TYPE_STRUCT && val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRUCT) {
+            ObjStruct* obj = (ObjStruct*)val_as_obj(elem);
+            if (obj->declared_face) {
+                currType = TYPE_FACE;
+                elem_face_name = obj->declared_face->chars;
+            }
+        }
         
         if (currType != elemType) {
             // 尝试类型提升
@@ -132,27 +161,127 @@ static ObjString* infer_array_type(ObjArray* arr) {
                      (elemType == TYPE_BIGINT && currType == TYPE_FLOAT)) {
                 elemType = TYPE_BIGINT;  // 提升为 bigint
             }
+            // struct + struct：查找公共 face
+            else if (elemType == TYPE_STRUCT && currType == TYPE_STRUCT
+                     && val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRUCT) {
+                ObjStruct* obj = (ObjStruct*)val_as_obj(elem);
+                if (obj->def && obj->def->impl_count > 0 && common_face_name) {
+                    int found = 0;
+                    for (int fi = 0; fi < obj->def->impl_count; fi++) {
+                        if (strcmp(obj->def->impl_names[fi], common_face_name) == 0) {
+                            found = 1;
+                            break;
+                        }
+                    }
+                    if (found) {
+                        // 公共 face 有效，提升为 face 类型
+                        elemType = TYPE_FACE;
+                        struct_name = common_face_name;
+                    } else {
+                        free(common_face_name);
+                        common_face_name = NULL;
+                    }
+                } else {
+                    free(common_face_name);
+                    common_face_name = NULL;
+                }
+            }
+            // face + struct：检查 struct 是否实现该 face
+            else if (elemType == TYPE_FACE && currType == TYPE_STRUCT
+                     && val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRUCT) {
+                ObjStruct* obj = (ObjStruct*)val_as_obj(elem);
+                if (obj->def && struct_name) {
+                    ObjFaceDef* fdef = face_def_find(struct_name);
+                    if (fdef && struct_implements_face(obj->def, fdef)) {
+                        // struct 实现了该 face，保持 face 类型
+                    } else {
+                        free(common_face_name);
+                        common_face_name = NULL;
+                        elemType = TYPE_ANY;
+                    }
+                } else {
+                    free(common_face_name);
+                    common_face_name = NULL;
+                    elemType = TYPE_ANY;
+                }
+            }
+            // struct + face：检查 struct 是否实现该 face，提升为 face 类型
+            else if (elemType == TYPE_STRUCT && currType == TYPE_FACE
+                     && elem_face_name && struct_name) {
+                // 第一个元素是 struct，当前元素是 face 变量
+                ObjStructDef* first_sdef = struct_def_find(struct_name);
+                ObjFaceDef* fdef = face_def_find(elem_face_name);
+                if (first_sdef && fdef && struct_implements_face(first_sdef, fdef)) {
+                    free(common_face_name);
+                    common_face_name = strdup(elem_face_name);
+                    struct_name = common_face_name;
+                    elemType = TYPE_FACE;
+                } else {
+                    free(common_face_name);
+                    common_face_name = NULL;
+                    elemType = TYPE_ANY;
+                }
+            }
+            // face + face：检查是否同一个 face
+            else if (elemType == TYPE_FACE && currType == TYPE_FACE
+                     && struct_name && elem_face_name) {
+                if (strcmp(struct_name, elem_face_name) == 0) {
+                    // 同一个 face，保持
+                } else {
+                    free(common_face_name);
+                    common_face_name = NULL;
+                    elemType = TYPE_ANY;
+                }
+            }
             // 无法类型提升
             else {
+                free(common_face_name);
                 return str_copy("Array[any]", 10);  // 返回 Array[any]
+            }
+        } else if (elemType == TYPE_STRUCT && val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRUCT) {
+            // 相同类型 struct，检查是否同名
+            ObjStruct* obj = (ObjStruct*)val_as_obj(elem);
+            if (obj->def && struct_name && strcmp(obj->def->name, struct_name) != 0) {
+                // 不同名的 struct，查找公共 face
+                if (obj->def->impl_count > 0 && common_face_name) {
+                    int found = 0;
+                    for (int fi = 0; fi < obj->def->impl_count; fi++) {
+                        if (strcmp(obj->def->impl_names[fi], common_face_name) == 0) {
+                            found = 1;
+                            break;
+                        }
+                    }
+                    if (found) {
+                        elemType = TYPE_FACE;
+                        struct_name = common_face_name;
+                    } else {
+                        free(common_face_name);
+                        common_face_name = NULL;
+                        elemType = TYPE_ANY;
+                    }
+                } else {
+                    free(common_face_name);
+                    common_face_name = NULL;
+                    elemType = TYPE_ANY;
+                }
             }
         }
     }
     
     // 根据最终类型构建类型字符串
-    const char* typeName;
+    char buf[128];
     switch (elemType) {
-        case TYPE_INT: typeName = "int"; break;
-        case TYPE_FLOAT: typeName = "float"; break;
-        case TYPE_BOOL: typeName = "bool"; break;
-        case TYPE_STRING: typeName = "string"; break;
-        case TYPE_DICT: typeName = "Dict"; break;
-        case TYPE_BIGINT: typeName = "int"; break;  // 对外统一为 int
-        default: typeName = "any"; break;
+        case TYPE_INT: snprintf(buf, sizeof(buf), "Array[int]"); break;
+        case TYPE_FLOAT: snprintf(buf, sizeof(buf), "Array[float]"); break;
+        case TYPE_BOOL: snprintf(buf, sizeof(buf), "Array[bool]"); break;
+        case TYPE_STRING: snprintf(buf, sizeof(buf), "Array[string]"); break;
+        case TYPE_DICT: snprintf(buf, sizeof(buf), "Array[Dict]"); break;
+        case TYPE_BIGINT: snprintf(buf, sizeof(buf), "Array[int]"); break;  // 对外统一为 int
+        case TYPE_STRUCT: snprintf(buf, sizeof(buf), "Array[%s]", struct_name ? struct_name : "struct"); break;
+        case TYPE_FACE: snprintf(buf, sizeof(buf), "Array[%s]", struct_name ? struct_name : "face"); break;
+        default: snprintf(buf, sizeof(buf), "Array[any]"); break;
     }
-    
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Array[%s]", typeName);
+    free(common_face_name);
     return str_copy(buf, (int)strlen(buf));
 }
 

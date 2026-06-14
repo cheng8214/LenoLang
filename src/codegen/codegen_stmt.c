@@ -638,6 +638,17 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         emit_byte(gen, (uint8_t)ast->u.var_decl.type->element_type->kind, ast->line);
     }
 
+    // face 类型：设置运行时 declared_face（此时栈顶是 struct 实例）
+    if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_FACE &&
+        ast->u.var_decl.type->struct_name) {
+        ObjString* face_name_str = str_copy(ast->u.var_decl.type->struct_name,
+                                             strlen(ast->u.var_decl.type->struct_name));
+        int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
+        emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
+        emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
+        emit_byte(gen, face_name_const & 0xff, ast->line);
+    }
+
     SymRef* ref = &ast->u.var_decl.ref;
     if (!ref->name) {
         error_add(ERR_SEMANTIC, ast->line, "未解析的变量声明");

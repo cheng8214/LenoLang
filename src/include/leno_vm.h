@@ -49,6 +49,7 @@ typedef enum {
     OP_CAST_INT,    // 将 float 转换为 int（截断）
     OP_CAST_STRING, // 将值转换为 string（null 转为空字符串）
     OP_SET_PTR_ELEM_TYPE, // 设置栈顶 FFI 指针的 element_type（Ptr[T] 声明时使用）
+    OP_SET_DECLARED_FACE, // 设置栈顶 struct 实例的 declared_face（face 类型变量声明时使用）
     OP_INC,  // ++ (栈顶值)
     OP_DEC,  // -- (栈顶值)
     OP_INC_LOCAL,  // 局部变量++，返回旧值
