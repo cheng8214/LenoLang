@@ -576,6 +576,12 @@ LenoGUIPlatformWindow* leno_gui_platform_create_window(const char* title, int w,
         }
     }
 
+    /* 设置默认光标 */
+    init_system_cursors_x11();
+    if (g_system_cursors[LENO_GUI_CURSOR_DEFAULT] != None) {
+        XDefineCursor(g_display, win->xwindow, g_system_cursors[LENO_GUI_CURSOR_DEFAULT]);
+    }
+
     if (!(flags & LENO_GUI_WIN_HIDDEN)) {
         XMapWindow(g_display, win->xwindow);
     }
@@ -1747,13 +1753,45 @@ float leno_gui_platform_get_display_dpi(void) {
     return dpi;
 }
 
-/* ===== 缺失的平台函数 stub 实现 ===== */
+/* ===== 系统光标管理（参考 SDL3） ===== */
 
 #include <X11/cursorfont.h>
 
+static Cursor g_system_cursors[LENO_GUI_CURSOR_COUNT] = { None };
+static int g_current_system_cursor = LENO_GUI_CURSOR_DEFAULT;
+static int g_system_cursors_initialized = 0;
+
+static void init_system_cursors_x11(void) {
+    if (g_system_cursors_initialized || !g_display) return;
+    g_system_cursors[LENO_GUI_CURSOR_DEFAULT]     = XCreateFontCursor(g_display, XC_left_ptr);
+    g_system_cursors[LENO_GUI_CURSOR_TEXT]        = XCreateFontCursor(g_display, XC_xterm);
+    g_system_cursors[LENO_GUI_CURSOR_WAIT]        = XCreateFontCursor(g_display, XC_watch);
+    g_system_cursors[LENO_GUI_CURSOR_CROSSHAIR]   = XCreateFontCursor(g_display, XC_crosshair);
+    g_system_cursors[LENO_GUI_CURSOR_PROGRESS]    = XCreateFontCursor(g_display, XC_watch);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_NWSE] = XCreateFontCursor(g_display, XC_fleur);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_NESW] = XCreateFontCursor(g_display, XC_fleur);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_EW]   = XCreateFontCursor(g_display, XC_sb_h_double_arrow);
+    g_system_cursors[LENO_GUI_CURSOR_RESIZE_NS]   = XCreateFontCursor(g_display, XC_sb_v_double_arrow);
+    g_system_cursors[LENO_GUI_CURSOR_MOVE]        = XCreateFontCursor(g_display, XC_fleur);
+    g_system_cursors[LENO_GUI_CURSOR_NOT_ALLOWED] = XCreateFontCursor(g_display, XC_circle);
+    g_system_cursors[LENO_GUI_CURSOR_POINTER]     = XCreateFontCursor(g_display, XC_hand2);
+    g_system_cursors_initialized = 1;
+}
+
 void leno_gui_platform_set_system_cursor(int cursor_type) {
-    (void)cursor_type;
-    /* Linux X11 光标设置暂未实现 */
+    if (cursor_type < 0 || cursor_type >= LENO_GUI_CURSOR_COUNT) return;
+    if (!g_display) return;
+    init_system_cursors_x11();
+    g_current_system_cursor = cursor_type;
+    Cursor c = g_system_cursors[cursor_type];
+    if (c == None) c = g_system_cursors[LENO_GUI_CURSOR_DEFAULT];
+    /* 应用到所有窗口 */
+    for (int i = 0; i < g_window_count; i++) {
+        if (g_window_list[i] && g_window_list[i]->xwindow) {
+            XDefineCursor(g_display, g_window_list[i]->xwindow, c);
+        }
+    }
+    XFlush(g_display);
 }
 
 int leno_gui_platform_create_custom_cursor(const uint32_t* pixels, int w, int h, int hot_x, int hot_y) {
