@@ -625,12 +625,32 @@ void visit(Semantic* s, Ast* ast) {
                         ast->u.if_.guard_type->kind = TYPE_FACE;
                     }
                 }
+                // 修正数组元素类型中的 face（如 Array[Speaker] 中 Speaker 被解析为 struct）
+                if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_ARRAY &&
+                    ast->u.if_.guard_type->element_type &&
+                    ast->u.if_.guard_type->element_type->kind == TYPE_STRUCT &&
+                    ast->u.if_.guard_type->element_type->struct_name) {
+                    Symbol* sym = scope_resolve(s->current, ast->u.if_.guard_type->element_type->struct_name);
+                    if (sym && sym->type && sym->type->kind == TYPE_FACE) {
+                        ast->u.if_.guard_type->element_type->kind = TYPE_FACE;
+                    }
+                }
                 for (int gi = 0; gi < ast->u.if_.guard_conds.count; gi++) {
                     TypeGuardCond* gc = &ast->u.if_.guard_conds.items[gi];
                     if (gc->guard_type && gc->guard_type->kind == TYPE_STRUCT && gc->guard_type->struct_name) {
                         Symbol* sym = scope_resolve(s->current, gc->guard_type->struct_name);
                         if (sym && sym->type && sym->type->kind == TYPE_FACE) {
                             gc->guard_type->kind = TYPE_FACE;
+                        }
+                    }
+                    // 修正数组元素类型中的 face
+                    if (gc->guard_type && gc->guard_type->kind == TYPE_ARRAY &&
+                        gc->guard_type->element_type &&
+                        gc->guard_type->element_type->kind == TYPE_STRUCT &&
+                        gc->guard_type->element_type->struct_name) {
+                        Symbol* sym = scope_resolve(s->current, gc->guard_type->element_type->struct_name);
+                        if (sym && sym->type && sym->type->kind == TYPE_FACE) {
+                            gc->guard_type->element_type->kind = TYPE_FACE;
                         }
                     }
                 }

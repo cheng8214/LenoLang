@@ -2,15 +2,15 @@ face Speaker {
     func speak():string
 }
 
-struct Dog {
+struct Dog impl Speaker{
     func speak():string { return "woof" }
 }
 
-struct Cat {
+struct Cat impl Speaker{
     func speak():string { return "meow" }
 }
 
-struct Bird {
+struct Bird impl Speaker{
     func speak():string { return "tweet" }
 }
 
@@ -20,14 +20,20 @@ func face_compile_time(Speaker s, int n) {
 }
 
 // 运行时确定类型的 face 调用（从数组取）
-func face_runtime(Array[Speaker] speakers, int n) {
-    for 0:n to i {
+func face_runtime(var speakers, int n) {
    
-        for speakers to s {
-            s.speak()
-        
-    }
-    }
+            print("cs:"+speakers)
+            if speakers is Array[Speaker]
+            {
+            for n{
+	            for  speakers to i
+	            {
+	            	
+	            	i.speak()
+	            }
+            }
+            }
+       
 }
 
 // 直接调用
@@ -40,7 +46,7 @@ main() {
     var dog = new Dog()
     var cat = new Cat()
     var bird = new Bird()
-	print(type(dog))
+
     // 编译期 face 调用
     var t1 = times.ns()
     face_compile_time(dog, 1000000)
