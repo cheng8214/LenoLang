@@ -1,0 +1,80 @@
+
+face Speaker {
+    func speak():string
+}
+
+struct S0 impl Speaker { func speak():string { return "s0" } }
+struct S1 impl Speaker { func speak():string { return "s1" } }
+struct S2 impl Speaker { func speak():string { return "s2" } }
+struct S3 impl Speaker { func speak():string { return "s3" } }
+struct S4 impl Speaker { func speak():string { return "s4" } }
+struct S5 impl Speaker { func speak():string { return "s5" } }
+struct S6 impl Speaker { func speak():string { return "s6" } }
+struct S7 impl Speaker { func speak():string { return "s7" } }
+struct S8 impl Speaker { func speak():string { return "s8" } }
+struct S9 impl Speaker { func speak():string { return "s9" } }
+
+func face_random(Array[Speaker] speakers, int n) {
+    import rands
+    for 0:n to i {
+        var idx = rands.ints(0, speakers.len() - 1)
+        speakers[idx].speak()
+    }
+}
+
+func face_sequential(Array[Speaker] speakers, int n) {
+    for 0:n to i {
+        var idx = i % speakers.len()
+        speakers[idx].speak()
+    }
+}
+
+func face_single(Speaker s, int n) {
+    for 0:n to i { s.speak() }
+}
+
+main() {
+    import times
+    import rands
+
+    var arr = [
+        new S0(), new S1(), new S2(), new S3(), new S4(),
+        new S5(), new S6(), new S7(), new S8(), new S9()
+    ]
+
+    // 固定单类型
+    var t1 = times.ns()
+    face_single(arr[0], 1000000)
+    var t2 = times.ns()
+    print("固定单类型: " + (t2 - t1) + " ns")
+
+    // 顺序切换（10个类型循环，分支预测友好）
+    var t3 = times.ns()
+    face_sequential(arr, 1000000)
+    var t4 = times.ns()
+    print("顺序切换10类: " + (t4 - t3) + " ns")
+
+    // 随机切换（10个类型随机，分支预测崩溃）
+    rands.seed(12345)
+    var t5 = times.ns()
+    face_random(arr, 1000000)
+    var t6 = times.ns()
+    print("随机切换10类: " + (t6 - t5) + " ns")
+
+    // 对比：直接调用 S0
+    var t7 = times.ns()
+    var s0 = new S0()
+    for 0:1000000 to i { s0.speak() }
+    var t8 = times.ns()
+    print("直接调用S0: " + (t8 - t7) + " ns")
+
+    // 验证随机分布
+    rands.seed(12345)
+    var counts = {s0:0, s1:0, s2:0, s3:0, s4:0, s5:0, s6:0, s7:0, s8:0, s9:0}
+    for 0:100 to i {
+        var idx = rands.ints(0, 9)
+        var key = "s" + idx
+        counts[key] = counts[key] + 1
+    }
+    print("随机分布: " + counts)
+}
