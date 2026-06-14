@@ -49,25 +49,14 @@ ObjFaceDef* face_def_find(const char* name) {
 int struct_implements_face(ObjStructDef* struct_def, ObjFaceDef* face_def) {
     if (!struct_def || !face_def) return 0;
 
+    // 名义类型检查：必须通过 impl 显式声明实现 face
     for (int i = 0; i < struct_def->impl_count; i++) {
         if (strcmp(struct_def->impl_names[i], face_def->name) == 0) {
             return 1;
         }
     }
 
-    for (int i = 0; i < face_def->method_count; i++) {
-        const char* mname = face_def->methods[i].name;
-        int found = 0;
-        for (int j = 0; j < struct_def->method_count; j++) {
-            if (strcmp(struct_def->methods[j].name, mname) == 0) {
-                found = 1;
-                break;
-            }
-        }
-        if (!found) return 0;
-    }
-
-    return 1;
+    return 0;
 }
 
 int struct_def_has_face_method(const char* struct_name, const char* method_name, int* out_param_count, TypeKind* out_return_type) {

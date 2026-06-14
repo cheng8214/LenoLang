@@ -326,6 +326,15 @@ void visit(Semantic* s, Ast* ast) {
                                      ast->u.var_decl.name);
                             format_detailed_type_error(msg, sizeof(msg),
                                 ast->u.var_decl.type, init_type, context);
+                            // 如果是 struct 未实现 face，追加提示
+                            if (ast->u.var_decl.type->kind == TYPE_FACE && init_type->kind == TYPE_STRUCT
+                                && ast->u.var_decl.type->struct_name && init_type->struct_name) {
+                                char hint[256];
+                                snprintf(hint, sizeof(hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
+                                    init_type->struct_name, ast->u.var_decl.type->struct_name,
+                                    init_type->struct_name, ast->u.var_decl.type->struct_name);
+                                strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
+                            }
                             error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                             sym->type = type_copy(ast->u.var_decl.type);
                         } else {
@@ -908,8 +917,8 @@ void visit(Semantic* s, Ast* ast) {
                                     // 浮点简写循环：for 5.0 to i
                                     sym->type = type_new(TYPE_FLOAT);
                                 } else if (iterable_type->kind == TYPE_ANY) {
-                                    // any 类型：运行时可能是数字，保持向后兼容推断为 int
-                                    sym->type = type_new(TYPE_INT);
+                                    // any 类型：编译期无法确定，推断为 any
+                                    sym->type = type_new(TYPE_ANY);
                                 } else {
                                     // 默认为 any
                                     sym->type = type_new(TYPE_ANY);
@@ -1611,6 +1620,15 @@ void visit(Semantic* s, Ast* ast) {
                                         "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
                                         expected_type, arg_type,
                                         func_name, idx_str);
+                                    // 如果是 struct 未实现 face，追加提示
+                                    if (expected_type->kind == TYPE_FACE && arg_type->kind == TYPE_STRUCT
+                                        && expected_type->struct_name && arg_type->struct_name) {
+                                        char hint[256];
+                                        snprintf(hint, sizeof(hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
+                                            arg_type->struct_name, expected_type->struct_name,
+                                            arg_type->struct_name, expected_type->struct_name);
+                                        strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
+                                    }
                                     error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                                 }
                             }
