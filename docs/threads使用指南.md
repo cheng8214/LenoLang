@@ -647,6 +647,98 @@ while true {
 - `t.join()` 会阻塞等待线程结束
 - 未 `join()` 的线程在主线程退出时可能被强制终止
 
+### 9. 子线程异常与 join() 行为
+
+子线程中的异常**不会自动传播到主线程**，但会在 `join()` 时体现：
+
+- 子线程正常运行：`t.join()` 返回线程函数的返回值
+- 子线程抛出异常：`t.state()` 返回 `"error"`，`t.join()` 会在主线程**抛出异常**，错误信息格式为 `"Thread error: <子线程错误信息>"`
+
+```leno
+var t = threads.start(func(){
+    throw "子线程出错"
+})
+
+try {
+    t.join()  // 抛出: Thread error: 子线程出错
+} catch e {
+    print("捕获: " + e)  // 捕获: Thread error: 子线程出错
+}
+```
+
+**注意：`state()` 是快照，不是锁。** 在 `state()` 和 `join()` 之间存在竞态窗口——线程状态可能在检查后立即改变。因此不建议依赖 `state()` 来决定是否 `join()`，更安全的做法是直接用 `try-catch` 包裹 `join()`：
+
+```leno
+// ❌ 依赖 state() 快照，存在竞态窗口
+if t.state() == "done" {
+    var result = t.join()  // state() 返回后线程可能已变为 "error"
+}
+
+// ✅ 直接 try-catch，无竞态问题
+try {
+    var result = t.join()
+} catch e {
+    print("线程出错: " + e)
+}
+```
+
+### 10. threads 与 async 的交互规则
+
+Leno 提供两种并发机制，**不应混用**：
+
+| 机制 | 模型 | 调度方式 | 内存模型 |
+|------|------|---------|---------|
+| `threads.start()` | OS 线程 + 隔离 VM | 抢占式，真正并行 | 独立内存，Channel 通信 |
+| `async func` + `await` | 协程 + 事件循环 | 协作式，单线程内调度 | 共享内存，无数据竞争 |
+
+**交互规则：**
+
+- **不要在子线程中使用 `async`/`await`**：子线程有独立 VM 和事件循环，`asyncs.run()` 不会跨线程调度
+- **不要在 `async` 函数中调用 `threads.start()`**：协程是协作式调度，启动 OS 线程会打破协程的执行假设
+- **需要 CPU 并行** → 用 `threads.start()` + Channel
+- **需要 I/O 并发** → 用 `async func` + `await` + `asyncs.run()`
+
+> 关于 async 的完整边界定义（返回值类型、不 await 行为、异常传播、事件循环语义），参见 `src/module/asyncs/asyncs.md`。
+
+```leno
+// ❌ 错误：混用 threads 和 async
+async func bad() {
+    var t = threads.start(func(){ ... })  // 不要这样做
+    await asyncs.sleep(100)
+}
+
+// ✅ 正确：选择一种模型
+// 方案1：纯线程
+func worker(var ch) { ... }
+var t = threads.start(worker, ch)
+
+// 方案2：纯协程
+async func worker() { ... }
+var f = worker()
+asyncs.run()
+```
+
+### 11. type() 的语义约定
+
+`type()` 返回的是**运行时值的类型**，而非变量的声明类型：
+
+```leno
+var a: int = null
+print(type(a))  // "null"（不是 "int"）
+
+var b = 42
+print(type(b))  // "int"
+
+b = "hello"
+print(type(b))  // "string"（类型随值变化）
+```
+
+Leno 的变量是动态类型的，声明类型（如 `int`）只是编译期提示，`type()` 反映的是运行时实际值的类型。这意味着：
+
+- `null` 值的 `type()` 始终返回 `"null"`，无论变量声明为什么类型
+- BigInt 和普通 int 的 `type()` 都返回 `"int"`（对外统一）
+- 子线程中 `type()` 的行为与主线程一致
+
 ---
 
 ## API 参考
@@ -663,7 +755,8 @@ while true {
 
 | 方法 | 说明 | 阻塞 |
 |------|------|------|
-| `t.join()` | 等待线程结束，获取返回值 | ✅ 阻塞 |
+| `t.join()` | 等待线程结束，获取返回值；子线程出错时抛异常 | ✅ 阻塞 |
+| `t.state()` | 获取线程状态：`"running"` / `"done"` / `"error"` | ❌ 不阻塞 |
 
 ### Channel 方法
 

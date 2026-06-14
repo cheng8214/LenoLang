@@ -351,3 +351,19 @@ main() {
    - 使用 `ch.receive()`（阻塞）而非 `ch.try_receive()` + 循环轮询
    - `is_closed()` + `len()` + `try_receive()` 的组合会产生忙等待，浪费 CPU
    - 推荐模式：`while true { var val = ch.receive(); if val == null { break } }`
+
+6. **子线程异常与 join() 行为**
+   - 子线程抛出异常时，`t.state()` 返回 `"error"`
+   - 调用 `t.join()` 会在主线程抛出异常，格式为 `"Thread error: <子线程错误信息>"`
+   - 可用 `try-catch` 包裹 `join()`，或先检查 `t.state()` 再 join
+
+7. **threads 与 async 不应混用**
+   - `threads.start()` 是 OS 线程 + 隔离 VM，真正并行
+   - `async func` 是协程 + 事件循环，协作式调度
+   - 不要在子线程中使用 `async`/`await`，也不要在 `async` 函数中调用 `threads.start()`
+   - CPU 并行用 threads，I/O 并发用 async
+
+8. **type() 返回运行时值的类型**
+   - `type()` 反映运行时实际值的类型，而非变量声明类型
+   - `var a: int = null` 时 `type(a)` 返回 `"null"`，不是 `"int"`
+   - BigInt 和普通 int 的 `type()` 都返回 `"int"`

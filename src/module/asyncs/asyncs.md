@@ -556,6 +556,122 @@ main() {
 
 ---
 
+## 边界行为定义
+
+### async 函数的返回值类型
+
+`async func` 调用后返回一个 **Future 对象**，不是直接返回函数结果：
+
+```leno
+async func compute():int {
+    await asyncs.sleep(100)
+    return 42
+}
+
+var f = compute()   // f 是 Future，不是 42
+print(type(f))      // "object"（Future 对象）
+
+var result = await f  // await 获取实际结果
+print(result)         // 42
+```
+
+- `async func` 的返回类型注解（如 `:int`）描述的是 Future 完成后的值类型
+- 不使用 `await` 时，Future 不会自动执行——它只是被注册到事件循环等待调度
+
+### 不 await 时的行为
+
+如果创建了 Future 但不 `await`，协程仍会在 `asyncs.run()` 时执行，但结果会被丢弃：
+
+```leno
+async func task() {
+    io.print("执行了")
+    return 42
+}
+
+main() {
+    task()          // 创建 Future，不 await
+    asyncs.run()    // 协程仍会执行，输出 "执行了"
+    // 但返回值 42 无法获取
+}
+```
+
+- 不 `await` 不会阻止协程执行，只是无法获取结果
+- 如果协程有副作用（如修改全局变量），即使不 `await` 也会生效
+
+### 异常传播路径
+
+协程内的异常**不会传播到调用者**，而是在协程内部处理：
+
+```leno
+async func risky() {
+    throw "协程出错"  // 异常在协程内部抛出
+}
+
+main() {
+    var f = risky()
+    // 不 await 的话，异常在 run() 时触发，可能导致未定义行为
+    
+    asyncs.run()
+}
+```
+
+**当前版本建议**：在协程内部使用 `try-catch` 捕获所有异常，不要让异常逃出协程：
+
+```leno
+async func safe_task() {
+    try {
+        // 可能出错的逻辑
+        await asyncs.sleep(100)
+        throw "错误"
+    } catch e {
+        io.print("协程内捕获: " + e)
+        return null  // 返回默认值
+    }
+}
+```
+
+### asyncs.run() 的事件循环语义
+
+`asyncs.run()` 的行为：
+
+- **单次运行**：调用后阻塞，直到所有协程完成（就绪队列和定时器队列都为空）后返回
+- **不能嵌套**：不支持在协程内部再次调用 `asyncs.run()`
+- **阻塞主线程**：`run()` 返回前，主线程代码不会继续执行
+
+```leno
+main() {
+    task1()   // 注册协程
+    task2()   // 注册协程
+    
+    asyncs.run()  // 阻塞，直到 task1 和 task2 都完成
+    
+    io.print("所有协程完成")  // run() 返回后才执行
+}
+```
+
+事件循环的调度顺序：
+1. 检查并处理到期的定时器（将协程加入就绪队列）
+2. 从就绪队列取出协程执行，直到协程挂起（`await`）或完成
+3. 如果没有就绪协程但有定时器，休眠到最近的定时器触发时间
+4. 就绪队列和定时器队列都为空时，退出循环
+
+### async 与 threads 的交互
+
+`async` 和 `threads` 是两套独立的并发模型，**不应混用**：
+
+| 特性 | async 协程 | threads 线程 |
+|------|-----------|-------------|
+| 执行模型 | 协作式调度，单线程 | 抢占式调度，OS 线程 |
+| 内存模型 | 共享 VM 内存 | 隔离 VM，Channel 通信 |
+| 适用场景 | I/O 并发、异步等待 | CPU 并行、真正多线程 |
+
+- **不要在 `async` 函数中调用 `threads.start()`**：协程是协作式调度，启动 OS 线程会打破执行假设
+- **不要在子线程中使用 `async`/`await`**：子线程有独立 VM，`asyncs.run()` 不会跨线程调度
+- 需要 CPU 并行 → 用 `threads.start()` + Channel
+- 需要 I/O 并发 → 用 `async func` + `await` + `asyncs.run()`
+
+---
+
 ## 性能提示
 
 | 场景 | 建议 |
