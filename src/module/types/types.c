@@ -115,10 +115,13 @@ static ObjString* infer_array_type(ObjArray* arr) {
     TypeKind elemType = get_value_type(first);
     // struct 类型：记录 struct 名称和公共 face
     const char* struct_name = NULL;
+    const char* first_struct_def_name = NULL;  // 第一个元素的 struct 定义名
     char* common_face_name = NULL;
+    int all_same_struct = 1;  // 假设所有元素都是同一个 struct 类型
     if (elemType == TYPE_STRUCT && val_is_obj(first) && val_as_obj(first)->type == OBJ_STRUCT) {
         ObjStruct* obj = (ObjStruct*)val_as_obj(first);
         if (obj->def) {
+            first_struct_def_name = obj->def->name;
             // 如果有 declared_face，说明该变量声明为 face 类型
             if (obj->declared_face) {
                 elemType = TYPE_FACE;
@@ -141,6 +144,10 @@ static ObjString* infer_array_type(ObjArray* arr) {
         const char* elem_face_name = NULL;
         if (currType == TYPE_STRUCT && val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRUCT) {
             ObjStruct* obj = (ObjStruct*)val_as_obj(elem);
+            // 检查是否与第一个元素同属一个 struct 定义
+            if (obj->def && first_struct_def_name && strcmp(obj->def->name, first_struct_def_name) != 0) {
+                all_same_struct = 0;
+            }
             if (obj->declared_face) {
                 currType = TYPE_FACE;
                 elem_face_name = obj->declared_face->chars;
@@ -266,6 +273,12 @@ static ObjString* infer_array_type(ObjArray* arr) {
                 }
             }
         }
+    }
+    
+    // 如果所有元素都是同一个 struct 定义，优先使用 struct 名而非 face 名
+    if (all_same_struct && first_struct_def_name) {
+        elemType = TYPE_STRUCT;
+        struct_name = first_struct_def_name;
     }
     
     // 根据最终类型构建类型字符串
