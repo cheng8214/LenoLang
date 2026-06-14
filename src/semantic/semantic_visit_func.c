@@ -37,6 +37,12 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 }
             }
         }
+        // 修正数组元素类型中的 face（如 Array[Speaker] 中 Speaker 被解析为 struct）
+        if (pt && pt->kind == TYPE_ARRAY && pt->element_type && pt->element_type->kind == TYPE_STRUCT && pt->element_type->struct_name) {
+            if (face_def_find(pt->element_type->struct_name)) {
+                pt->element_type->kind = TYPE_FACE;
+            }
+        }
     }
 
     if (ast->u.func.return_type && ast->u.func.return_type->kind == TYPE_STRUCT && ast->u.func.return_type->struct_name) {
