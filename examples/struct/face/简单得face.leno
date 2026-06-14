@@ -13,7 +13,7 @@ face Speaker {
     func speak():string
 }
 
-struct Dog impl Speaker {
+struct Dog {
     string name = ""
     func speak():string { return "woof" }
 }

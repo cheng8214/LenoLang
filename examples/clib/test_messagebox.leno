@@ -26,7 +26,7 @@ main() {
     io.print("clib MessageBoxA 返回: " + r2)
 
     // ===== 方式 3: clib 声明式调用 (MessageBoxW - 中文正常) =====
-    int r3 = _int(lib2.MessageBoxW(null, "你好，Leno！", "中文标题", 0))
+    int r3 = lib2.MessageBoxW(null, "你好，Leno！", "中文标题", 0)
     io.print("clib MessageBoxW 返回: " + r3)
     ffi.free(lib2)
 

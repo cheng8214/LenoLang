@@ -5,8 +5,10 @@ import threads
 // 线程函数：计算累加和
 func sum_worker(var n) {
     var sum = 0
-    for n to var i {
-        sum = sum + i
+    if n is int {
+        for n to var i {
+            sum = sum + i
+        }
     }
     return sum
 }
