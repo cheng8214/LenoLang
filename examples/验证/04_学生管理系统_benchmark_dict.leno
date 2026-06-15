@@ -15,7 +15,6 @@ main() {
         }
         students.add(s)
     }
-    
     var create_time = times.ms() - start
     
     // 测试计算 1000 次
@@ -24,14 +23,14 @@ main() {
         // 计算平均年龄
         int totalAge = 0
         for students to s {
-            totalAge = totalAge + _int(s.age)
+            totalAge = totalAge + s.age
         }
         var avgAge = totalAge / students.len()
         
         // 计算平均分数
         int totalScore = 0
         for students to s {
-            totalScore = totalScore + _int(s.score)
+            totalScore = totalScore + s.score
         }
         var avgScore = totalScore / students.len()
     }

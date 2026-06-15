@@ -75,7 +75,7 @@ static void fold_binary(Ast* ast) {
             case TOK_SLASH:
                 if (rv == 0.0) return;
                 if (!result_is_float) {
-                    result = (double)((int)lv / (int)rv);
+                    result = (double)((long long)lv / (long long)rv);
                 } else {
                     result = lv / rv;
                 }
@@ -83,8 +83,8 @@ static void fold_binary(Ast* ast) {
             case TOK_MOD:
                 if (rv == 0.0) return;
                 if (!result_is_float) {
-                    int li = (int)lv;
-                    int ri = (int)rv;
+                    long long li = (long long)lv;
+                    long long ri = (long long)rv;
                     result = (double)(li % ri);
                 } else {
                     result = fmod(lv, rv);
@@ -92,23 +92,25 @@ static void fold_binary(Ast* ast) {
                 break;
             case TOK_BITAND:
                 if (result_is_float) return;
-                result = (double)((int)lv & (int)rv);
+                result = (double)((long long)lv & (long long)rv);
                 break;
             case TOK_BITOR:
                 if (result_is_float) return;
-                result = (double)((int)lv | (int)rv);
+                result = (double)((long long)lv | (long long)rv);
                 break;
             case TOK_BITXOR:
                 if (result_is_float) return;
-                result = (double)((int)lv ^ (int)rv);
+                result = (double)((long long)lv ^ (long long)rv);
                 break;
             case TOK_SHL:
                 if (result_is_float) return;
-                result = (double)((int)lv << (int)rv);
+                if ((int)rv >= 32) return; // 移位量>=32时不折叠，交给VM的BigInt路径处理
+                result = (double)((long long)lv << (int)rv);
                 break;
             case TOK_SHR:
                 if (result_is_float) return;
-                result = (double)((int)lv >> (int)rv);
+                if ((int)rv >= 32) return; // 移位量>=32时不折叠，交给VM的BigInt路径处理
+                result = (double)((long long)lv >> (int)rv);
                 break;
             case TOK_EQEQ:
                 ast_free(l);
