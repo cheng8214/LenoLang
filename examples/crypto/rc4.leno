@@ -19,7 +19,7 @@ func rc4_ksa(string key):Array[int] {
     int j = 0
     int key_len = key.len()
     for 0:255 to i {
-        j = (j + S[i] + key.byte(i % key_len)) & 0xFF
+        j = _uint8(j + S[i] + key.byte(i % key_len))
         // 交换 S[i] 和 S[j]
         int tmp = S[i]
         S[i] = S[j]
@@ -44,8 +44,8 @@ func rc4_prga(Array[int] S, string input):string {
     int len = input.len()
 
     for len to n {
-        i = (i + 1) & 0xFF
-        j = (j + box[i]) & 0xFF
+        i = _uint8(i + 1)
+        j = _uint8(j + box[i])
 
         // 交换 box[i] 和 box[j]
         int tmp = box[i]
@@ -53,7 +53,7 @@ func rc4_prga(Array[int] S, string input):string {
         box[j] = tmp
 
         // 生成密钥流字节
-        int K = box[(box[i] + box[j]) & 0xFF]
+        int K = box[_uint8(box[i] + box[j])]
 
         // XOR 加密/解密
         result += strings.char(input.byte(n) ^ K)
@@ -75,8 +75,8 @@ func rc4(string key, string input):string {
 
 // 字节转两位十六进制字符串
 func byte_to_hex(int b):string {
-    b = b & 0xFF
-    int hi = (b >> 4) & 0xF
+    b = _uint8(b)
+    int hi = _uint8(b >> 4) & 0xF
     int lo = b & 0xF
 
     var hex_chars = "0123456789abcdef"

@@ -24,10 +24,10 @@ func byte_to_hex(int b):string {
 
 // 32 位整数转小端序 4 字节（追加到字节数组）
 func append_le32(Array[int] arr, int v) {
-    arr.add(v & 0xFF)
-    arr.add((v >> 8) & 0xFF)
-    arr.add((v >> 16) & 0xFF)
-    arr.add((v >> 24) & 0xFF)
+    arr.add(_uint8(v))
+    arr.add(_uint8(v >> 8))
+    arr.add(_uint8(v >> 16))
+    arr.add(_uint8(v >> 24))
 }
 
 // 小端序 4 字节转 32 位整数

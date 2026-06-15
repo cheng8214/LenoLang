@@ -108,10 +108,10 @@ func read_le32(string data, int offset):int {
 // 将 uint32 写为小端序 4 字节
 func write_le32(int value):string {
     return strings.char(
-        _int32(value) & 0xFF,
-        _int32(value >> 8) & 0xFF,
-        _int32(value >> 16) & 0xFF,
-        _int32(value >> 24) & 0xFF
+        _uint8(value),
+        _uint8(value >> 8),
+        _uint8(value >> 16),
+        _uint8(value >> 24)
     )
 }
 
@@ -162,7 +162,7 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
             int word_idx = j / 4
             int byte_idx = j % 4
             int shift = byte_idx * 8
-            int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
+            int key_byte = _uint8(to_u32(block[word_idx]) >> shift)
             int pt_byte = plaintext.byte(i + j)
             result += byte_to_hex(key_byte ^ pt_byte)
             j += 1
@@ -190,7 +190,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string hex_cipherte
             int word_idx = j / 4
             int byte_idx = j % 4
             int shift = byte_idx * 8
-            int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
+            int key_byte = _uint8(to_u32(block[word_idx]) >> shift)
             int ct_byte = hex_val(hex_ciphertext, (i + j) * 2)
             result += strings.char(key_byte ^ ct_byte)
             j += 1
@@ -218,9 +218,9 @@ func hex_nibble(int b):int {
 // ==================== Hex 工具 ====================
 
 func byte_to_hex(int b):string {
-    b = b & 0xFF
+    b = _uint8(b)
     var hex_chars = "0123456789abcdef"
-    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
+    return hex_chars.slice(_uint8(b >> 4) & 0xF, (_uint8(b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
 }
 
 func to_hex(string input):string {
