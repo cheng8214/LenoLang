@@ -30,5 +30,15 @@ main()
     var remainder = dividend % divisor  // 2
     assert_eq(quotient * divisor + remainder, dividend)
 
+    // 测试6: BigInt 取模
+    var big1 = 1267650600228229401496703205376  // 2^100
+    assert_eq(big1 % 1000000007, 976371285)
+    var big2 = 10000000000000000000
+    assert_eq(big2 % 97, 17)
+
+    // 测试7: 常量折叠取模（大数）
+    assert_eq(10000000000 % 7, 4)
+    assert_eq(999999999999 % 13, 0)
+
     print("test_modulo passed")
 }
