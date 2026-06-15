@@ -8,7 +8,7 @@ static const char* opCodeNames[] = {
     "OP_GET_GLOBAL", "OP_SET_GLOBAL",
     "OP_GET_UPVALUE", "OP_SET_UPVALUE", "OP_CLOSE_UPVALUE", "OP_DEFINE_GLOBAL",
     "OP_GET_GLOBAL_FUNC", "OP_DEFINE_GLOBAL_FUNC", "OP_GET_NATIVE",
-    "OP_ADD", "OP_SUB", "OP_MUL", "OP_DIV", "OP_MOD", "OP_BITAND", "OP_BITOR", "OP_BITXOR", "OP_BITNOT", "OP_SHL", "OP_SHR", "OP_NEG", "OP_NOT",
+    "OP_ADD", "OP_SUB", "OP_MUL", "OP_DIV", "OP_MOD", "OP_BITAND", "OP_BITOR", "OP_BITXOR", "OP_BITNOT", "OP_SHL", "OP_SHR", "OP_USHR", "OP_NEG", "OP_NOT",
     "OP_CAST_FLOAT", "OP_CAST_INT", "OP_CAST_STRING", "OP_SET_PTR_ELEM_TYPE", "OP_SET_DECLARED_FACE",
     "OP_INC", "OP_DEC", "OP_INC_LOCAL", "OP_DEC_LOCAL", "OP_PRE_INC_LOCAL", "OP_PRE_DEC_LOCAL",
     "OP_EQ", "OP_NEQ", "OP_LT", "OP_GT", "OP_LE", "OP_GE", "OP_IN", "OP_RANGE",
@@ -38,7 +38,7 @@ static const char* opCodeNames[] = {
     // 立即数操作码
     "OP_ADD_INT_IMM", "OP_SUB_INT_IMM", "OP_MUL_INT_IMM",
     "OP_LT_INT_IMM", "OP_GT_INT_IMM", "OP_LE_INT_IMM", "OP_GE_INT_IMM", "OP_EQ_INT_IMM",
-    "OP_SHL_IMM", "OP_SHR_IMM",
+    "OP_SHL_IMM", "OP_SHR_IMM", "OP_USHR_IMM",
     // struct 相关指令
     "OP_STRUCT_DEF", "OP_STRUCT_INIT", "OP_GET_FIELD", "OP_SET_FIELD", "OP_GET_METHOD",
     // enum 相关指令
@@ -411,7 +411,8 @@ int disassembleInstruction(Chunk* chunk, int offset) {
         }
         // 位移立即数操作码（单字节无符号立即数）
         case OP_SHL_IMM:
-        case OP_SHR_IMM: {
+        case OP_SHR_IMM:
+        case OP_USHR_IMM: {
             uint8_t imm = chunk->code[offset + 1];
             printf(" %u", (unsigned int)imm);
             return offset + 2;

@@ -1,0 +1,308 @@
+// RC5-32/12/16 —— 纯 LenoC 实现
+// RC5 是 Ron Rivest 设计的对称块密码，以数据依赖旋转著称
+//
+// RC5-32/12/16 参数：
+//   - 32 位字长（w=32），64 位数据块（两个 32 位字）
+//   - 12 轮（r=12）
+//   - 16 字节密钥（b=16，即 128 位）
+//   - 运算：加法、异或、循环左移（数据依赖旋转量）
+
+import strings
+
+// ==================== 循环移位 ====================
+
+// 使用 >>> 逻辑右移运算符实现 32 位循环移位
+// 注意：LenoC int 是 48 位，_int32 返回符号扩展值
+// 所以逻辑右移需要先 & 0xFFFFFFFF 截断为 32 位无符号值
+func rotl32(int x, int n):int {
+    n = _int32(n) & 31
+    if (n == 0) { return _int32(x) }
+    return _int32((_int32(x) << n) | ((_int32(x) & 0xFFFFFFFF) >>> (32 - n)))
+}
+
+func rotr32(int x, int n):int {
+    return rotl32(x, 32 - (_int32(n) & 31))
+}
+
+// ==================== RC5 常量 ====================
+
+int P32 = -0x484E8D9D  // 0xB7E15163
+int Q32 = -0x61C88647  // 0x9E3779B9
+
+// ==================== RC5 密钥扩展 ====================
+
+func rc5_key_schedule(int k0, int k1, int k2, int k3):Array[int] {
+    int t = 26  // 2 * 12 + 2
+    Array[int] S = []
+    S.add(P32)
+    for 1:t - 1 to i {
+        S.add(_int32(S[i - 1] + Q32))
+    }
+
+    Array[int] L = [k0, k1, k2, k3]
+
+    int a = 0
+    int b = 0
+    int ii = 0
+    int jj = 0
+    int n = 78  // max(26, 4) * 3 = 78
+
+    for n to idx {
+        int sum_ab = _int32(a + b)
+        a = rotl32(_int32(S[ii] + a + b), 3)
+        S[ii] = a
+        b = rotl32(_int32(L[jj] + a + b), sum_ab)
+        L[jj] = b
+        ii = (ii + 1) % t
+        jj = (jj + 1) % 4
+    }
+
+    return S
+}
+
+// ==================== RC5 核心 ====================
+
+func rc5_encrypt_block(int a, int b, int k0, int k1, int k2, int k3):Array[int] {
+    Array[int] S = rc5_key_schedule(k0, k1, k2, k3)
+
+    a = _int32(a + S[0])
+    b = _int32(b + S[1])
+
+    for 1:12 to i {
+        a = _int32(rotl32(_int32(a ^ b), b) + S[2 * i])
+        b = _int32(rotl32(_int32(b ^ a), a) + S[2 * i + 1])
+    }
+
+    return [a, b]
+}
+
+func rc5_decrypt_block(int a, int b, int k0, int k1, int k2, int k3):Array[int] {
+    Array[int] S = rc5_key_schedule(k0, k1, k2, k3)
+
+    for 12:1 to i {
+        b = rotr32(_int32(_int32(b - S[2 * i + 1])), a) ^ a
+        a = rotr32(_int32(_int32(a - S[2 * i])), b) ^ b
+    }
+
+    b = _int32(b - S[1])
+    a = _int32(a - S[0])
+
+    return [a, b]
+}
+
+// ==================== 字符串 <-> 块 转换 ====================
+
+func read_be32(string data, int offset):int {
+    int b0 = data.byte(offset)
+    int b1 = data.byte(offset + 1)
+    int b2 = data.byte(offset + 2)
+    int b3 = data.byte(offset + 3)
+    return _int32((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+}
+
+func write_be32(int value):string {
+    return strings.char(
+        _int32(value >> 24) & 0xFF,
+        _int32(value >> 16) & 0xFF,
+        _int32(value >> 8) & 0xFF,
+        _int32(value) & 0xFF
+    )
+}
+
+// ==================== PKCS7 填充 ====================
+
+func pkcs7_pad(string data):string {
+    int pad_len = 8 - (data.len() % 8)
+    var padding = ""
+    for pad_len to i {
+        padding += strings.char(pad_len)
+    }
+    return data + padding
+}
+
+func pkcs7_unpad(string data):string {
+    int pad_len = data.byte(data.len() - 1)
+    if (pad_len < 1 or pad_len > 8) {
+        throw "Invalid PKCS7 padding"
+    }
+    return data.slice(0, data.len() - pad_len)
+}
+
+// ==================== RC5 字符串加密/解密 ====================
+
+func key_to_subkeys(string key):Array[int] {
+    while (key.len() < 16) {
+        key += " "
+    }
+    return [
+        read_be32(key, 0),
+        read_be32(key, 4),
+        read_be32(key, 8),
+        read_be32(key, 12)
+    ]
+}
+
+func rc5_encrypt(string key, string plaintext):string {
+    var padded = pkcs7_pad(plaintext)
+    Array[int] subkeys = key_to_subkeys(key)
+
+    var result = ""
+    int i = 0
+    while (i + 7 < padded.len()) {
+        int a = read_be32(padded, i)
+        int b = read_be32(padded, i + 4)
+
+        Array[int] encrypted = rc5_encrypt_block(a, b, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+        result += write_be32(encrypted[0])
+        result += write_be32(encrypted[1])
+        i += 8
+    }
+
+    return result
+}
+
+func rc5_decrypt(string key, string ciphertext):string {
+    Array[int] subkeys = key_to_subkeys(key)
+
+    var result = ""
+    int i = 0
+    while (i + 7 < ciphertext.len()) {
+        int a = read_be32(ciphertext, i)
+        int b = read_be32(ciphertext, i + 4)
+
+        Array[int] decrypted = rc5_decrypt_block(a, b, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+        result += write_be32(decrypted[0])
+        result += write_be32(decrypted[1])
+        i += 8
+    }
+
+    return pkcs7_unpad(result)
+}
+
+// ==================== Hex 工具 ====================
+
+func byte_to_hex(int b):string {
+    b = b & 0xFF
+    var hex_chars = "0123456789abcdef"
+    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
+}
+
+func to_hex(string input):string {
+    var result = ""
+    for 0:input.len() - 1 to i {
+        result += byte_to_hex(input.byte(i))
+    }
+    return result
+}
+
+func hex_char_val(int b):int {
+    if (b >= 48 and b <= 57) { return b - 48 }
+    if (b >= 97 and b <= 102) { return b - 87 }
+    if (b >= 65 and b <= 70) { return b - 55 }
+    throw "Invalid hex character"
+}
+
+func from_hex(string hex_str):string {
+    var result = ""
+    int i = 0
+    while (i + 1 < hex_str.len()) {
+        int hi = hex_char_val(hex_str.byte(i))
+        int lo = hex_char_val(hex_str.byte(i + 1))
+        result += strings.char((hi << 4) | lo)
+        i += 2
+    }
+    return result
+}
+
+// ==================== 便捷接口 ====================
+
+func rc5_encrypt_hex(string key, string plaintext):string {
+    return to_hex(rc5_encrypt(key, plaintext))
+}
+
+func rc5_decrypt_hex(string key, string hex_ct):string {
+    return rc5_decrypt(key, from_hex(hex_ct))
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== RC5-32/12/16 块加密测试 ===")
+    print("")
+
+    // 测试 1：全零往返
+    print("--- 全零测试向量 ---")
+    Array[int] ct = rc5_encrypt_block(0, 0, 0, 0, 0, 0)
+    print("加密 (0,0) key=[0,0,0,0]: [0x" + _str(ct[0]) + ", 0x" + _str(ct[1]) + "]")
+    Array[int] pt = rc5_decrypt_block(ct[0], ct[1], 0, 0, 0, 0)
+    print("解密回: [0x" + _str(pt[0]) + ", 0x" + _str(pt[1]) + "]")
+    print("往返: " + if pt[0] == 0 and pt[1] == 0 then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：非零往返
+    print("--- 非零往返测试 ---")
+    Array[int] rfc_ct = rc5_encrypt_block(0x656d6974, 0x68732077, 0x01020304, 0x05060708, 0x09101112, 0x13141516)
+    print("密文: [0x" + _str(rfc_ct[0]) + ", 0x" + _str(rfc_ct[1]) + "]")
+    Array[int] rfc_pt = rc5_decrypt_block(rfc_ct[0], rfc_ct[1], 0x01020304, 0x05060708, 0x09101112, 0x13141516)
+    print("解密回: [0x" + _str(rfc_pt[0]) + ", 0x" + _str(rfc_pt[1]) + "]")
+    print("往返: " + if rfc_pt[0] == 0x656d6974 and rfc_pt[1] == 0x68732077 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：字符串加解密
+    print("--- 字符串加解密 ---")
+    var key = "0123456789abcdef"
+    var text1 = "Hello, RC5!"
+    var enc1 = rc5_encrypt(key, text1)
+    var dec1 = rc5_decrypt(key, enc1)
+    print("密钥: " + key)
+    print("明文: " + text1)
+    print("密文(hex): " + to_hex(enc1))
+    print("解密: " + dec1)
+    print("往返: " + if dec1 == text1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 4：短密钥
+    print("--- 短密钥测试 ---")
+    var short_key = "rc5key"
+    var text2 = "RC5 data-dependent rotation"
+    var enc2 = rc5_encrypt(short_key, text2)
+    var dec2 = rc5_decrypt(short_key, enc2)
+    print("明文: " + text2)
+    print("解密: " + dec2)
+    print("往返: " + if dec2 == text2 then "OK" else "FAIL")
+    print("")
+
+    // 测试 5：中文加解密
+    print("--- 中文加解密 ---")
+    var cn_key = "LenoC密钥"
+    var cn_text = "你好，RC5数据依赖旋转加密！"
+    var cn_enc = rc5_encrypt(cn_key, cn_text)
+    var cn_dec = rc5_decrypt(cn_key, cn_enc)
+    print("原文: " + cn_text)
+    print("解密: " + cn_dec)
+    print("往返: " + if cn_dec == cn_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 6：Hex 便捷接口
+    print("--- Hex 便捷接口 ---")
+    var hex_enc = rc5_encrypt_hex("my_secret_key16", "Hex interface test!")
+    var hex_dec = rc5_decrypt_hex("my_secret_key16", hex_enc)
+    print("加密(hex): " + hex_enc)
+    print("解密: " + hex_dec)
+    print("往返: " + if hex_dec == "Hex interface test!" then "OK" else "FAIL")
+    print("")
+
+    // 测试 7：错误密钥
+    print("--- 错误密钥 ---")
+    try {
+        var wrong_dec = rc5_decrypt("wrong_key!!!!!!!", rc5_encrypt("correct_key_16b", "test data here"))
+        print("非原文: " + if wrong_dec != "test data here" then "OK" else "FAIL")
+    } catch {
+        print("解密失败(预期行为): OK")
+    }
+
+    print("")
+    print("=== RC5-32/12/16 测试完成 ===")
+}

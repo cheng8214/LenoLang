@@ -1133,3 +1133,42 @@ Value bigint_shr(ObjBigInt* a, int shift) {
     if (!result) return val_null();
     return val_obj((Object*)result);
 }
+
+// BigInt 逻辑右移（无符号右移，高位补 0）
+Value bigint_ushr(ObjBigInt* a, int shift) {
+    if (shift < 0) {
+        return bigint_shl(a, -shift);
+    }
+    if (shift == 0) {
+        return val_obj((Object*)bigint_new(a->limbs, a->limb_count, a->is_negative));
+    }
+
+    int limb_shift = shift / BASE_BITS;
+    int bit_shift = shift % BASE_BITS;
+
+    // 计算结果需要的 limb 数量
+    int result_limbs = a->limb_count - limb_shift;
+
+    // 逻辑右移：无论正负，高位都补 0
+    if (result_limbs <= 0) {
+        return val_int(0);
+    }
+
+    uint32_t* result_arr = (uint32_t*)calloc(result_limbs, sizeof(uint32_t));
+    if (!result_arr) return val_null();
+
+    // 右移（逻辑右移，高位补 0）
+    for (int i = limb_shift; i < a->limb_count; i++) {
+        uint64_t val = ((uint64_t)a->limbs[i] >> bit_shift);
+        result_arr[i - limb_shift] |= (uint32_t)val;
+        if (bit_shift > 0 && i > limb_shift) {
+            result_arr[i - limb_shift - 1] |= (uint32_t)(a->limbs[i] << (BASE_BITS - bit_shift));
+        }
+    }
+
+    ObjBigInt* result = bigint_new(result_arr, result_limbs, 0);
+    free(result_arr);
+
+    if (!result) return val_null();
+    return val_obj((Object*)result);
+}

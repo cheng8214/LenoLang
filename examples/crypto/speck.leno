@@ -1,0 +1,330 @@
+// Speck64/128 —— 纯 LenoC 实现
+// Speck 是 NSA 设计的轻量级块密码，专为软件和硬件优化
+//
+// Speck64/128 参数：
+//   - 64 位数据块（两个 32 位字）
+//   - 128 位密钥
+//   - 27 轮
+//   - 运算：模 2^32 加法、循环移位、异或（ARX 结构）
+
+import strings
+
+// ==================== 循环移位 ====================
+
+// 使用 >>> 逻辑右移运算符实现 32 位循环移位
+// 注意：LenoC int 是 48 位，_int32 返回符号扩展值
+// 所以逻辑右移需要先 & 0xFFFFFFFF 截断为 32 位无符号值
+func rotl32(int x, int n):int {
+    n = _int32(n) & 31
+    if (n == 0) { return _int32(x) }
+    return _int32((_int32(x) << n) | ((_int32(x) & 0xFFFFFFFF) >>> (32 - n)))
+}
+
+func rotr32(int x, int n):int {
+    return rotl32(x, 32 - (_int32(n) & 31))
+}
+
+// ==================== Speck64/128 核心 ====================
+
+int ROUNDS = 27
+
+// Speck64/128 加密一个 64 位块
+// 遵循 NSA 官方实现：密钥 K=[k0,k1,k2,k3], A=k0, B=k1, C=k2, D=k3
+// 加密对 (x, y) 操作，x 是高位字，y 是低位字
+func speck_encrypt_block(int x, int y, int k0, int k1, int k2, int k3):Array[int] {
+    int a = k0
+    int b = k1
+    int c = k2
+    int d = k3
+
+    for 0:ROUNDS - 1 to i {
+        // 加密轮：使用当前轮密钥 a
+        x = _int32(rotr32(x, 8) + y) ^ a
+        y = rotl32(y, 3) ^ x
+
+        // 密钥扩展：按 C, B, D 顺序循环
+        int mode = i % 3
+        if (mode == 0) {
+            c = _int32(rotr32(c, 8) + a) ^ i
+            a = rotl32(a, 3) ^ c
+        } else if (mode == 1) {
+            b = _int32(rotr32(b, 8) + a) ^ i
+            a = rotl32(a, 3) ^ b
+        } else {
+            d = _int32(rotr32(d, 8) + a) ^ i
+            a = rotl32(a, 3) ^ d
+        }
+    }
+
+    return [x, y]
+}
+
+// Speck64/128 解密一个 64 位块
+func speck_decrypt_block(int x, int y, int k0, int k1, int k2, int k3):Array[int] {
+    // 先做密钥扩展，收集所有轮密钥
+    Array[int] rk = []
+    int a = k0
+    int b = k1
+    int c = k2
+    int d = k3
+
+    for 0:ROUNDS - 1 to i {
+        rk.add(a)
+
+        int mode = i % 3
+        if (mode == 0) {
+            c = _int32(rotr32(c, 8) + a) ^ i
+            a = rotl32(a, 3) ^ c
+        } else if (mode == 1) {
+            b = _int32(rotr32(b, 8) + a) ^ i
+            a = rotl32(a, 3) ^ b
+        } else {
+            d = _int32(rotr32(d, 8) + a) ^ i
+            a = rotl32(a, 3) ^ d
+        }
+    }
+
+    // 从最后一轮倒序解密
+    for ROUNDS - 1:0 to i {
+        y = rotr32(_int32(y ^ x), 3)
+        x = rotl32(_int32((_int32(x ^ rk[i]) - y)), 8)
+    }
+
+    return [x, y]
+}
+
+// ==================== 字符串 <-> 块 转换 ====================
+
+func read_be32(string data, int offset):int {
+    int b0 = data.byte(offset)
+    int b1 = data.byte(offset + 1)
+    int b2 = data.byte(offset + 2)
+    int b3 = data.byte(offset + 3)
+    return _int32((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+}
+
+func write_be32(int value):string {
+    return strings.char(
+        _int32(value >> 24) & 0xFF,
+        _int32(value >> 16) & 0xFF,
+        _int32(value >> 8) & 0xFF,
+        _int32(value) & 0xFF
+    )
+}
+
+// ==================== Hex 工具 ====================
+
+func byte_to_hex(int b):string {
+    b = b & 0xFF
+    var hex_chars = "0123456789abcdef"
+    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
+}
+
+func hex_char_val(int b):int {
+    if (b >= 48 and b <= 57) { return b - 48 }
+    if (b >= 97 and b <= 102) { return b - 87 }
+    if (b >= 65 and b <= 70) { return b - 55 }
+    throw "Invalid hex character"
+}
+
+func from_hex(string hex_str):string {
+    var result = ""
+    int i = 0
+    while (i + 1 < hex_str.len()) {
+        int hi = hex_char_val(hex_str.byte(i))
+        int lo = hex_char_val(hex_str.byte(i + 1))
+        result += strings.char((hi << 4) | lo)
+        i += 2
+    }
+    return result
+}
+
+// ==================== PKCS7 填充 ====================
+
+func pkcs7_pad(string data):string {
+    int pad_len = 8 - (data.len() % 8)
+    var padding = ""
+    for pad_len to i {
+        padding += strings.char(pad_len)
+    }
+    return data + padding
+}
+
+func pkcs7_unpad(string data):string {
+    int pad_len = data.byte(data.len() - 1)
+    if (pad_len < 1 or pad_len > 8) {
+        throw "Invalid PKCS7 padding"
+    }
+    return data.slice(0, data.len() - pad_len)
+}
+
+// ==================== Speck 字符串加密/解密 ====================
+
+func key_to_subkeys(string key):Array[int] {
+    while (key.len() < 16) {
+        key += " "
+    }
+    return [
+        read_be32(key, 0),
+        read_be32(key, 4),
+        read_be32(key, 8),
+        read_be32(key, 12)
+    ]
+}
+
+// Speck 加密字符串，返回 hex 编码密文
+func speck_encrypt(string key, string plaintext):string {
+    var padded = pkcs7_pad(plaintext)
+    Array[int] subkeys = key_to_subkeys(key)
+
+    var result = ""
+    int i = 0
+    while (i + 7 < padded.len()) {
+        int x = read_be32(padded, i)
+        int y = read_be32(padded, i + 4)
+
+        Array[int] encrypted = speck_encrypt_block(x, y, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+        // 使用 hex 编码避免 null 字节问题
+        result += byte_to_hex(_int32(encrypted[0] >> 24) & 0xFF)
+        result += byte_to_hex(_int32(encrypted[0] >> 16) & 0xFF)
+        result += byte_to_hex(_int32(encrypted[0] >> 8) & 0xFF)
+        result += byte_to_hex(_int32(encrypted[0]) & 0xFF)
+        result += byte_to_hex(_int32(encrypted[1] >> 24) & 0xFF)
+        result += byte_to_hex(_int32(encrypted[1] >> 16) & 0xFF)
+        result += byte_to_hex(_int32(encrypted[1] >> 8) & 0xFF)
+        result += byte_to_hex(_int32(encrypted[1]) & 0xFF)
+        i += 8
+    }
+
+    return result
+}
+
+// Speck 解密字符串，输入 hex 编码密文
+func speck_decrypt(string key, string hex_ct):string {
+    Array[int] subkeys = key_to_subkeys(key)
+
+    var result = ""
+    int i = 0
+    while (i + 15 < hex_ct.len()) {
+        // 从 hex 还原 x, y
+        int b0 = hex_char_val(hex_ct.byte(i))
+        int b1 = hex_char_val(hex_ct.byte(i + 1))
+        int b2 = hex_char_val(hex_ct.byte(i + 2))
+        int b3 = hex_char_val(hex_ct.byte(i + 3))
+        int b4 = hex_char_val(hex_ct.byte(i + 4))
+        int b5 = hex_char_val(hex_ct.byte(i + 5))
+        int b6 = hex_char_val(hex_ct.byte(i + 6))
+        int b7 = hex_char_val(hex_ct.byte(i + 7))
+        int x = _int32((b0 << 28) | (b1 << 24) | (b2 << 20) | (b3 << 16) | (b4 << 12) | (b5 << 8) | (b6 << 4) | b7)
+
+        int b8 = hex_char_val(hex_ct.byte(i + 8))
+        int b9 = hex_char_val(hex_ct.byte(i + 9))
+        int b10 = hex_char_val(hex_ct.byte(i + 10))
+        int b11 = hex_char_val(hex_ct.byte(i + 11))
+        int b12 = hex_char_val(hex_ct.byte(i + 12))
+        int b13 = hex_char_val(hex_ct.byte(i + 13))
+        int b14 = hex_char_val(hex_ct.byte(i + 14))
+        int b15 = hex_char_val(hex_ct.byte(i + 15))
+        int y = _int32((b8 << 28) | (b9 << 24) | (b10 << 20) | (b11 << 16) | (b12 << 12) | (b13 << 8) | (b14 << 4) | b15)
+
+        Array[int] decrypted = speck_decrypt_block(x, y, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+        result += write_be32(decrypted[0])
+        result += write_be32(decrypted[1])
+        i += 16
+    }
+
+    return pkcs7_unpad(result)
+}
+
+// ==================== 便捷接口 ====================
+
+func speck_encrypt_hex(string key, string plaintext):string {
+    return speck_encrypt(key, plaintext)
+}
+
+func speck_decrypt_hex(string key, string hex_ct):string {
+    return speck_decrypt(key, hex_ct)
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== Speck64/128 轻量级块加密测试 ===")
+    print("")
+
+    // 测试 1：块级加解密往返
+    print("--- 块级加解密往返 ---")
+    Array[int] ct = speck_encrypt_block(0x656d6974, 0x68732077, 0x01020304, 0x090a0b0c, 0x11121314, 0x191a1b1c)
+    print("密文: [0x" + _str(ct[0]) + ", 0x" + _str(ct[1]) + "]")
+    Array[int] pt = speck_decrypt_block(ct[0], ct[1], 0x01020304, 0x090a0b0c, 0x11121314, 0x191a1b1c)
+    print("解密回: [0x" + _str(pt[0]) + ", 0x" + _str(pt[1]) + "]")
+    print("往返: " + if pt[0] == 0x656d6974 and pt[1] == 0x68732077 then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：全零测试
+    print("--- 全零测试 ---")
+    Array[int] zero_ct = speck_encrypt_block(0, 0, 0, 0, 0, 0)
+    print("加密 (0,0) key=[0,0,0,0]: [0x" + _str(zero_ct[0]) + ", 0x" + _str(zero_ct[1]) + "]")
+    Array[int] zero_pt = speck_decrypt_block(zero_ct[0], zero_ct[1], 0, 0, 0, 0)
+    print("往返: " + if zero_pt[0] == 0 and zero_pt[1] == 0 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：字符串加解密
+    print("--- 字符串加解密 ---")
+    var key = "0123456789abcdef"
+    var text1 = "Hello, Speck!"
+    var enc1 = speck_encrypt(key, text1)
+    var dec1 = speck_decrypt(key, enc1)
+    print("密钥: " + key)
+    print("明文: " + text1)
+    print("密文(hex): " + enc1)
+    print("解密: " + dec1)
+    print("往返: " + if dec1 == text1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 4：短密钥
+    print("--- 短密钥测试 ---")
+    var short_key = "speck"
+    var text2 = "Speck lightweight"
+    var enc2 = speck_encrypt(short_key, text2)
+    var dec2 = speck_decrypt(short_key, enc2)
+    print("明文: " + text2)
+    print("解密: " + dec2)
+    print("往返: " + if dec2 == text2 then "OK" else "FAIL")
+    print("")
+
+    // 测试 5：中文加解密
+    print("--- 中文加解密 ---")
+    var cn_key = "LenoC密钥"
+    var cn_text = "你好，Speck轻量加密！"
+    var cn_enc = speck_encrypt(cn_key, cn_text)
+    var cn_dec = speck_decrypt(cn_key, cn_enc)
+    print("原文: " + cn_text)
+    print("解密: " + cn_dec)
+    print("往返: " + if cn_dec == cn_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 6：Hex 便捷接口
+    print("--- Hex 便捷接口 ---")
+    var hex_enc = speck_encrypt_hex("my_secret_key16", "Hex interface test!")
+    var hex_dec = speck_decrypt_hex("my_secret_key16", hex_enc)
+    print("加密(hex): " + hex_enc)
+    print("解密: " + hex_dec)
+    print("往返: " + if hex_dec == "Hex interface test!" then "OK" else "FAIL")
+    print("")
+
+    // 测试 7：错误密钥
+    print("--- 错误密钥 ---")
+    try {
+        var wrong_enc = speck_encrypt("correct_key_16b", "test data here")
+        var wrong_dec = speck_decrypt("wrong_key!!!!!!!", wrong_enc)
+        print("非原文: " + if wrong_dec != "test data here" then "OK" else "FAIL")
+    } catch {
+        print("解密失败(预期行为): OK")
+    }
+
+    print("")
+    print("=== Speck64/128 测试完成 ===")
+}

@@ -35,6 +35,7 @@ static ParseRule rules[] = {
     [TOK_BITXOREQ]  = {NULL,     parse_assignment, PREC_ASSIGNMENT},
     [TOK_SHLEQ]     = {NULL,     parse_assignment, PREC_ASSIGNMENT},
     [TOK_SHREQ]     = {NULL,     parse_assignment, PREC_ASSIGNMENT},
+    [TOK_USHREQ]    = {NULL,     parse_assignment, PREC_ASSIGNMENT},  // >>>=
     [TOK_SEMI]      = {NULL,     NULL,   PREC_NONE},
     [TOK_SLASH]     = {NULL,     parse_binary, PREC_FACTOR},
     [TOK_STAR]      = {NULL,     parse_binary, PREC_FACTOR},
@@ -45,6 +46,7 @@ static ParseRule rules[] = {
     [TOK_BITNOT]    = {parse_unary, NULL,       PREC_NONE},
     [TOK_SHL]       = {NULL,     parse_binary, PREC_SHIFT},
     [TOK_SHR]       = {NULL,     parse_binary, PREC_SHIFT},
+    [TOK_USHR]      = {NULL,     parse_binary, PREC_SHIFT},  // >>>
     [TOK_EQ]        = {NULL,     parse_assignment, PREC_ASSIGNMENT},
     [TOK_EQEQ]      = {NULL,     parse_binary, PREC_EQUALITY},
     [TOK_NEQ]       = {NULL,     parse_binary, PREC_EQUALITY},
@@ -913,7 +915,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
         // 处理复合赋值运算符: += -= *= /= %= &= |= ^= <<= >>=
         if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
             op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
-            op == TOK_SHLEQ || op == TOK_SHREQ) {
+            op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
             // 创建二元运算: obj[index] + value
             Ast* binop = ast_new(AST_BINOP, line);
             // 创建新的 AST_INDEX 节点，避免与 left 共享指针导致双重释放
@@ -933,6 +935,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
                 case TOK_BITXOREQ: binop->u.binop.op = TOK_BITXOR; break;
                 case TOK_SHLEQ:    binop->u.binop.op = TOK_SHL; break;
                 case TOK_SHREQ:    binop->u.binop.op = TOK_SHR; break;
+                case TOK_USHREQ:   binop->u.binop.op = TOK_USHR; break;
                 default: break;
             }
             value = binop;
@@ -956,19 +959,19 @@ Ast* parse_assignment(Parser* p, Ast* left) {
         // 处理复合赋值运算符
         if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
             op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
-            op == TOK_SHLEQ || op == TOK_SHREQ) {
+            op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
             // 创建变量节点作为对象
             Ast* obj = ast_new(AST_VAR, line);
             obj->u.var.name = strdup(left->u.module_access.module_name);
-            
+
             // 创建索引访问节点用于二元运算
             Ast* index = ast_new(AST_STRING, line);
             index->u.string.value = strdup(left->u.module_access.member_name);
-            
+
             Ast* index_access = ast_new(AST_INDEX, line);
             index_access->u.index.obj = obj;
             index_access->u.index.index = index;
-            
+
             // 创建二元运算: obj["prop"] + value
             Ast* binop = ast_new(AST_BINOP, line);
             binop->u.binop.l = index_access;
@@ -984,6 +987,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
                 case TOK_BITXOREQ: binop->u.binop.op = TOK_BITXOR; break;
                 case TOK_SHLEQ:    binop->u.binop.op = TOK_SHL; break;
                 case TOK_SHREQ:    binop->u.binop.op = TOK_SHR; break;
+                case TOK_USHREQ:   binop->u.binop.op = TOK_USHR; break;
                 default: break;
             }
             
@@ -1028,7 +1032,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
     // 处理复合赋值运算符: += -= *= /= %= &= |= ^= <<= >>=
     if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
         op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
-        op == TOK_SHLEQ || op == TOK_SHREQ) {
+        op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
         // 创建复合赋值节点
         Ast* ast = ast_new(AST_COMPOUND_ASSIGN, line);
         ast->u.compound_assign.name = strdup(left->u.var.name);

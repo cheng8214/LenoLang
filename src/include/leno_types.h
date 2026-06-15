@@ -85,7 +85,9 @@ typedef enum {
     TOK_BITAND, TOK_BITOR, TOK_BITXOR, TOK_BITNOT,  // & | ^ ~
     TOK_BITANDEQ, TOK_BITOREQ, TOK_BITXOREQ,  // &= |= ^=
     TOK_SHL, TOK_SHR,  // << >>
+    TOK_USHR,  // >>> (逻辑右移/无符号右移)
     TOK_SHLEQ, TOK_SHREQ,  // <<= >>=
+    TOK_USHREQ,  // >>>= (逻辑右移复合赋值)
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE,
     TOK_LBRACKET, TOK_RBRACKET,
     TOK_COMMA, TOK_SEMI, TOK_COLON, TOK_DOT,

@@ -1,0 +1,358 @@
+// XXTEA (Corrected Block TEA) —— 纯 LenoC 实现
+// XXTEA 是 TEA/XTEA 的改进版，支持可变长度数据块加密
+//
+// 与 TEA/XTEA 的区别：
+//   - 可变数据块长度（n 个 32 位字，不再限于 2 个）
+//   - 128 位密钥（四个 32 位子密钥）
+//   - 轮数 = 6 + 52/n，自适应数据长度
+//   - 修复了 TEA 等价密钥问题和 XTEA 相关密钥攻击
+//   - 整条消息作为一个块加密，扩散性更好
+
+import strings
+
+// ==================== XXTEA 核心 ====================
+
+// 黄金比例常数 δ
+int DELTA = -0x61C88647
+
+// MX 混合函数
+func mx(int z, int y, int sum, int p, int e, int k0, int k1, int k2, int k3):int {
+    Array[int] key = [k0, k1, k2, k3]
+    int idx = _int32(p & 3) ^ e
+    int part1 = _int32(_int32((_int32(z) & 0xFFFFFFFF) >>> 5) ^ _int32(y << 2))
+    int part2 = _int32(_int32((_int32(y) & 0xFFFFFFFF) >>> 3) ^ _int32(z << 4))
+    int part3 = _int32(part1 + part2)
+    int part4 = _int32(sum ^ y)
+    int part5 = _int32(key[idx] ^ z)
+    int part6 = _int32(part4 + part5)
+    return _int32(part3 ^ part6)
+}
+
+// XXTEA 加密（对 n 个 32 位字的数组进行加密）
+func xxtea_encrypt_block(Array[int] v, int k0, int k1, int k2, int k3):Array[int] {
+    int n = v.len()
+    if (n < 2) { throw "XXTEA: block must have at least 2 words" }
+
+    int rounds = 6 + 52 / n
+    int sum = 0
+    int z = v[n - 1]
+
+    for rounds to r {
+        sum = _int32(sum + DELTA)
+        int e = _int32(sum >> 2) & 3
+
+        int p = 0
+        while (p < n - 1) {
+            int y = v[p + 1]
+            v[p] = _int32(v[p] + mx(z, y, sum, p, e, k0, k1, k2, k3))
+            z = v[p]
+            p += 1
+        }
+
+        int y = v[0]
+        v[n - 1] = _int32(v[n - 1] + mx(z, y, sum, n - 1, e, k0, k1, k2, k3))
+        z = v[n - 1]
+    }
+
+    return v
+}
+
+// XXTEA 解密
+func xxtea_decrypt_block(Array[int] v, int k0, int k1, int k2, int k3):Array[int] {
+    int n = v.len()
+    if (n < 2) { throw "XXTEA: block must have at least 2 words" }
+
+    int rounds = 6 + 52 / n
+
+    // 计算 sum = δ * rounds
+    int sum = 0
+    for rounds to r { sum = _int32(sum + DELTA) }
+
+    int y = v[0]
+
+    for rounds to r {
+        int e = _int32(sum >> 2) & 3
+
+        int p = n - 1
+        while (p > 0) {
+            int z = v[p - 1]
+            v[p] = _int32(v[p] - mx(z, y, sum, p, e, k0, k1, k2, k3))
+            y = v[p]
+            p -= 1
+        }
+
+        int z = v[n - 1]
+        v[0] = _int32(v[0] - mx(z, y, sum, 0, e, k0, k1, k2, k3))
+        y = v[0]
+
+        sum = _int32(sum - DELTA)
+    }
+
+    return v
+}
+
+// ==================== 字符串 <-> 字数组 转换 ====================
+
+func read_be32(string data, int offset):int {
+    int b0 = data.byte(offset)
+    int b1 = data.byte(offset + 1)
+    int b2 = data.byte(offset + 2)
+    int b3 = data.byte(offset + 3)
+    return _int32((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+}
+
+func write_be32(int value):string {
+    return strings.char(
+        _int32(value >> 24) & 0xFF,
+        _int32(value >> 16) & 0xFF,
+        _int32(value >> 8) & 0xFF,
+        _int32(value) & 0xFF
+    )
+}
+
+// 字符串转 32 位字数组
+func str_to_words(string data):Array[int] {
+    Array[int] words = []
+    int i = 0
+    while (i + 4 <= data.len()) {
+        words.add(read_be32(data, i))
+        i += 4
+    }
+    return words
+}
+
+// 字数组转字符串
+func words_to_str(Array[int] words):string {
+    var result = ""
+    for 0:words.len() - 1 to i {
+        result += write_be32(words[i])
+    }
+    return result
+}
+
+// ==================== Hex 工具 ====================
+
+func byte_to_hex(int b):string {
+    b = b & 0xFF
+    var hex_chars = "0123456789abcdef"
+    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
+}
+
+func to_hex(string input):string {
+    var result = ""
+    for 0:input.len() - 1 to i {
+        result += byte_to_hex(input.byte(i))
+    }
+    return result
+}
+
+func hex_char_val(int b):int {
+    if (b >= 48 and b <= 57) { return b - 48 }
+    if (b >= 97 and b <= 102) { return b - 87 }
+    if (b >= 65 and b <= 70) { return b - 55 }
+    throw "Invalid hex character"
+}
+
+func from_hex(string hex_str):string {
+    var result = ""
+    int i = 0
+    while (i + 1 < hex_str.len()) {
+        int hi = hex_char_val(hex_str.byte(i))
+        int lo = hex_char_val(hex_str.byte(i + 1))
+        result += strings.char((hi << 4) | lo)
+        i += 2
+    }
+    return result
+}
+
+// 字数组转 hex 字符串（避免 null 字节导致字符串拼接截断）
+func words_to_hex(Array[int] words):string {
+    var result = ""
+    for 0:words.len() - 1 to i {
+        result += byte_to_hex(_int32(words[i] >> 24) & 0xFF)
+        result += byte_to_hex(_int32(words[i] >> 16) & 0xFF)
+        result += byte_to_hex(_int32(words[i] >> 8) & 0xFF)
+        result += byte_to_hex(_int32(words[i]) & 0xFF)
+    }
+    return result
+}
+
+// hex 字符串转字数组
+func hex_to_words(string hex_str):Array[int] {
+    Array[int] words = []
+    int i = 0
+    while (i + 7 < hex_str.len()) {
+        int b0 = hex_char_val(hex_str.byte(i))
+        int b1 = hex_char_val(hex_str.byte(i + 1))
+        int b2 = hex_char_val(hex_str.byte(i + 2))
+        int b3 = hex_char_val(hex_str.byte(i + 3))
+        int b4 = hex_char_val(hex_str.byte(i + 4))
+        int b5 = hex_char_val(hex_str.byte(i + 5))
+        int b6 = hex_char_val(hex_str.byte(i + 6))
+        int b7 = hex_char_val(hex_str.byte(i + 7))
+        int w = _int32((b0 << 28) | (b1 << 24) | (b2 << 20) | (b3 << 16) | (b4 << 12) | (b5 << 8) | (b6 << 4) | b7)
+        words.add(w)
+        i += 8
+    }
+    return words
+}
+
+// ==================== PKCS7 填充 ====================
+
+func pkcs7_pad(string data):string {
+    int pad_len = 4 - (data.len() % 4)
+    if (pad_len == 0) { pad_len = 4 }
+    var padding = ""
+    for pad_len to i {
+        padding += strings.char(pad_len)
+    }
+    return data + padding
+}
+
+func pkcs7_unpad(string data):string {
+    int pad_len = data.byte(data.len() - 1)
+    if (pad_len < 1 or pad_len > 4) {
+        throw "Invalid PKCS7 padding"
+    }
+    return data.slice(0, data.len() - pad_len)
+}
+
+// ==================== XXTEA 字符串加密/解密 ====================
+
+func key_to_subkeys(string key):Array[int] {
+    while (key.len() < 16) {
+        key += " "
+    }
+    return [
+        read_be32(key, 0),
+        read_be32(key, 4),
+        read_be32(key, 8),
+        read_be32(key, 12)
+    ]
+}
+
+// XXTEA 整块加密字符串，返回 hex 编码密文
+func xxtea_encrypt(string key, string plaintext):string {
+    var padded = pkcs7_pad(plaintext)
+    Array[int] subkeys = key_to_subkeys(key)
+
+    Array[int] words = str_to_words(padded)
+    xxtea_encrypt_block(words, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+    return words_to_hex(words)
+}
+
+// XXTEA 整块解密字符串，输入 hex 编码密文
+func xxtea_decrypt(string key, string hex_ct):string {
+    Array[int] subkeys = key_to_subkeys(key)
+
+    Array[int] words = hex_to_words(hex_ct)
+    xxtea_decrypt_block(words, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+    return pkcs7_unpad(words_to_str(words))
+}
+
+// ==================== 便捷接口 ====================
+
+func xxtea_encrypt_hex(string key, string plaintext):string {
+    return xxtea_encrypt(key, plaintext)
+}
+
+func xxtea_decrypt_hex(string key, string hex_ct):string {
+    return xxtea_decrypt(key, hex_ct)
+}
+
+// ==================== 测试 ====================
+
+main() {
+    print("=== XXTEA 块加密测试 ===")
+    print("")
+
+    // 测试 1：2 字块加解密（与 TEA/XTEA 相同的 64 位块）
+    print("--- 2 字块测试 ---")
+    Array[int] block = [0, 0]
+    Array[int] ct = xxtea_encrypt_block(block, 0, 0, 0, 0)
+    print("加密 [0,0] key=[0,0,0,0]: [" + _str(ct[0]) + ", " + _str(ct[1]) + "]")
+    Array[int] pt = xxtea_decrypt_block(ct, 0, 0, 0, 0)
+    print("解密回: [" + _str(pt[0]) + ", " + _str(pt[1]) + "]")
+    print("往返: " + if pt[0] == 0 and pt[1] == 0 then "OK" else "FAIL")
+    print("")
+
+    // 测试 2：4 字块加解密（128 位块）
+    print("--- 4 字块测试 ---")
+    Array[int] block4 = [0x01020304, 0x05060708, 0x09101112, 0x13141516]
+    Array[int] ct4 = xxtea_encrypt_block(block4, 0x41424344, 0x45464748, 0x494A4B4C, 0x4D4E4F50)
+    print("加密 4 字块: [" + _str(ct4[0]) + ", " + _str(ct4[1]) + ", " + _str(ct4[2]) + ", " + _str(ct4[3]) + "]")
+    Array[int] pt4 = xxtea_decrypt_block(ct4, 0x41424344, 0x45464748, 0x494A4B4C, 0x4D4E4F50)
+    print("解密回: [" + _str(pt4[0]) + ", " + _str(pt4[1]) + ", " + _str(pt4[2]) + ", " + _str(pt4[3]) + "]")
+    print("往返: " + if pt4[0] == 0x01020304 and pt4[1] == 0x05060708 and pt4[2] == 0x09101112 and pt4[3] == 0x13141516 then "OK" else "FAIL")
+    print("")
+
+    // 测试 3：字符串加解密
+    print("--- 字符串加解密 ---")
+    var key = "0123456789abcdef"
+    var text1 = "Hello, XXTEA!"
+    var enc1 = xxtea_encrypt(key, text1)
+    var dec1 = xxtea_decrypt(key, enc1)
+    print("密钥: " + key)
+    print("明文: " + text1)
+    print("密文(hex): " + enc1)
+    print("解密: " + dec1)
+    print("往返: " + if dec1 == text1 then "OK" else "FAIL")
+    print("")
+
+    // 测试 4：长文本（XXTEA 的优势：整块加密扩散更好）
+    print("--- 长文本加解密 ---")
+    var long_text = "XXTEA 可以将整条消息作为一个块加密，扩散性比 TEA/XTEA 的 ECB 模式好得多！"
+    var long_enc = xxtea_encrypt("long_key_16bytes", long_text)
+    var long_dec = xxtea_decrypt("long_key_16bytes", long_enc)
+    print("原文: " + long_text)
+    print("密文(hex): " + long_enc)
+    print("解密: " + long_dec)
+    print("往返: " + if long_dec == long_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 5：短密钥
+    print("--- 短密钥测试 ---")
+    var short_key = "secret"
+    var text2 = "XXTEA encryption"
+    var enc2 = xxtea_encrypt(short_key, text2)
+    var dec2 = xxtea_decrypt(short_key, enc2)
+    print("明文: " + text2)
+    print("解密: " + dec2)
+    print("往返: " + if dec2 == text2 then "OK" else "FAIL")
+    print("")
+
+    // 测试 6：中文加解密
+    print("--- 中文加解密 ---")
+    var cn_key = "LenoC密钥"
+    var cn_text = "你好，XXTEA加密世界！"
+    var cn_enc = xxtea_encrypt(cn_key, cn_text)
+    var cn_dec = xxtea_decrypt(cn_key, cn_enc)
+    print("原文: " + cn_text)
+    print("解密: " + cn_dec)
+    print("往返: " + if cn_dec == cn_text then "OK" else "FAIL")
+    print("")
+
+    // 测试 7：Hex 便捷接口
+    print("--- Hex 便捷接口 ---")
+    var hex_enc = xxtea_encrypt_hex("my_secret_key16", "Hex interface test!")
+    var hex_dec = xxtea_decrypt_hex("my_secret_key16", hex_enc)
+    print("加密(hex): " + hex_enc)
+    print("解密: " + hex_dec)
+    print("往返: " + if hex_dec == "Hex interface test!" then "OK" else "FAIL")
+    print("")
+
+    // 测试 8：错误密钥
+    print("--- 错误密钥 ---")
+    try {
+        var wrong_enc = xxtea_encrypt("correct_key_16b", "test data here")
+        var wrong_dec = xxtea_decrypt("wrong_key!!!!!!!", wrong_enc)
+        print("非原文: " + if wrong_dec != "test data here" then "OK" else "FAIL")
+    } catch {
+        print("解密失败(预期行为): OK")
+    }
+
+    print("")
+    print("=== XXTEA 测试完成 ===")
+}

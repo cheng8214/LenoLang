@@ -1,0 +1,80 @@
+// >>> 逻辑右移运算符测试
+// LenoC 的 int 是 48 位有符号整数
+// >>> 对 48 位值做逻辑右移（高位补 0）
+// >> 是算术右移（高位补符号位）
+
+main() {
+    // 测试 1: 正数 >>> 与 >> 结果相同
+    var a = 256
+    assert_eq(a >>> 8, 1, "256 >>> 8 == 1")
+    assert_eq(a >>> 8, a >> 8, "正数 >>> == >>")
+
+    // 测试 2: 0 逻辑右移
+    assert_eq(0 >>> 8, 0, "0 >>> 8 == 0")
+    assert_eq(0 >>> 1, 0, "0 >>> 1 == 0")
+
+    // 测试 3: -1 逻辑右移（48 位）
+    // -1 在 48 位中是 0xFFFFFFFFFFFF
+    // -1 >>> 8 = 0x00FFFFFFFFFFFF = 1099511627775
+    // -1 >>> 1 = 0x7FFFFFFFFFFF = 140737488355327
+    var minus_one = -1
+    assert_eq(minus_one >>> 8, 1099511627775, "-1 >>> 8")
+    assert_eq(minus_one >>> 1, 140737488355327, "-1 >>> 1")
+
+    // 测试 4: 负数 >>> 与 >> 不同
+    var neg = -256
+    // -256 >>> 8: 48 位逻辑右移，高位补 0
+    // -256 >> 8: 算术右移，高位补 1，结果为 -1
+    assert_ne(neg >>> 8, neg >> 8, "-256 >>> 8 != -256 >> 8")
+    assert_eq(neg >> 8, -1, "-256 >> 8 == -1")
+
+    // 测试 5: >>> 复合赋值 >>>=
+    var x = -1
+    x >>>= 8
+    assert_eq(x, 1099511627775, "-1 >>>= 8")
+
+    var y = 256
+    y >>>= 4
+    assert_eq(y, 16, "256 >>>= 4 == 16")
+
+    // 测试 6: 变量作为移位量
+    var val = 0xFF00
+    var n = 8
+    assert_eq(val >>> n, 0xFF, "0xFF00 >>> 8 == 0xFF")
+
+    // 测试 7: 32 位场景下的逻辑右移
+    // _int32 返回符号扩展到 48 位的值
+    // 要实现 32 位逻辑右移，需要先 & 0xFFFFFFFF 截断
+    var neg32 = 0x856d6974  // _int32 后为负数（符号扩展）
+    var int32_val = _int32(neg32)
+    // 32 位逻辑右移: (_int32(x) & 0xFFFFFFFF) >>> n
+    var lshr_result = _int32((int32_val & 0xFFFFFFFF) >>> 8)
+    assert_eq(lshr_result, 8744297, "32 位逻辑右移 0x856d6974 >>> 8")
+
+    // 测试 8: 32 位循环移位用 >>>
+    func rotl32(int x, int n):int {
+        n = _int32(n) & 31
+        if (n == 0) { return _int32(x) }
+        return _int32((_int32(x) << n) | ((_int32(x) & 0xFFFFFFFF) >>> (32 - n)))
+    }
+    func rotr32(int x, int n):int {
+        return rotl32(x, 32 - (_int32(n) & 31))
+    }
+
+    // rotl32(0x856d6974, 3) = 0x2B6B4BA4 = 728452004
+    assert_eq(rotl32(0x856d6974, 3), 728452004, "rotl32")
+    // rotr32(0x856d6974, 8) = 0x74856D69 = 1954901353
+    assert_eq(rotr32(0x856d6974, 8), 1954901353, "rotr32")
+
+    // 测试 9: 移位量为 0
+    // 注意：>>> 0 对 48 位值做逻辑右移 0 位
+    // -1 的 48 位无符号值是 0xFFFFFFFFFFFF = 281474976710655
+    assert_eq(42 >>> 0, 42, "42 >>> 0 == 42")
+    assert_eq((-1) >>> 0, 281474976710655, "-1 >>> 0 == 0xFFFFFFFFFFFF")
+
+    // 测试 10: 大数逻辑右移
+    var big = 0x7FFFFFFFFFFF  // INT48_MAX = 140737488355327
+    assert_eq(big >>> 1, 70368744177663, "INT48_MAX >>> 1")
+
+    print("test_ushr passed")
+}

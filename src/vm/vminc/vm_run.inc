@@ -66,6 +66,7 @@
         [OP_BITNOT] = &&LABEL(OP_BITNOT),
         [OP_SHL] = &&LABEL(OP_SHL),
         [OP_SHR] = &&LABEL(OP_SHR),
+        [OP_USHR] = &&LABEL(OP_USHR),
         [OP_NEG] = &&LABEL(OP_NEG),
         [OP_NOT] = &&LABEL(OP_NOT),
         [OP_CAST_FLOAT] = &&LABEL(OP_CAST_FLOAT),
@@ -161,6 +162,7 @@
         [OP_EQ_INT_IMM] = &&LABEL(OP_EQ_INT_IMM),
         [OP_SHL_IMM] = &&LABEL(OP_SHL_IMM),
         [OP_SHR_IMM] = &&LABEL(OP_SHR_IMM),
+        [OP_USHR_IMM] = &&LABEL(OP_USHR_IMM),
         // struct 相关操作码
         [OP_STRUCT_DEF] = &&LABEL(OP_STRUCT_DEF),
         [OP_STRUCT_INIT] = &&LABEL(OP_STRUCT_INIT),

@@ -655,7 +655,16 @@ void lexer_next(Lexer* lex) {
             if (peek_next(lex) == '>') {
                 advance(lex);
                 advance(lex);
-                if (peek(lex) == '=') {
+                if (peek(lex) == '>') {
+                    // >>> 逻辑右移
+                    advance(lex);
+                    if (peek(lex) == '=') {
+                        lex->current = make_token(lex, TOK_USHREQ);
+                        advance(lex);
+                    } else {
+                        lex->current = make_token(lex, TOK_USHR);
+                    }
+                } else if (peek(lex) == '=') {
                     lex->current = make_token(lex, TOK_SHREQ);
                     advance(lex);
                 } else {

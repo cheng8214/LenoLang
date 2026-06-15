@@ -249,6 +249,99 @@ OPCODE(OP_SHR_IMM) {
     DISPATCH;
 }
 
+// >>> 逻辑右移（无符号右移，高位补 0）
+OPCODE(OP_USHR) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value b = vm_stack_pop(&vm);
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int >>> int（最常见）
+    if (likely(val_is_int(a) && val_is_int(b))) {
+        int64_t va = val_as_int(a);
+        int64_t vb = val_as_int(b);
+        // LenoC 的 int 是 48 位有符号整数
+        // 逻辑右移：先转为 48 位无符号值，再右移，高位补 0
+        uint64_t uva = (uint64_t)va & PAYLOAD_MASK;  // 截断为 48 位无符号
+        uint64_t shifted = uva >> vb;
+        // 检查结果是否在 48 位 int 范围内
+        if ((int64_t)shifted >= INT48_MIN && (int64_t)shifted <= INT48_MAX) {
+            vm_stack_push(&vm, val_int((int64_t)shifted));
+        } else {
+            // 超出 int48 范围，转为 BigInt
+            vm_stack_push(&vm, val_bigint_from_int64((int64_t)shifted));
+        }
+        DISPATCH;
+    }
+
+    // null 不能参与位移运算
+    if (unlikely(val_is_null(a) || val_is_null(b))) {
+        throw_runtime_error("null 不能参与位移运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 逻辑右移
+    if (unlikely(val_is_bigint(a) || val_is_bigint(b))) {
+        ObjBigInt* ba = promote_to_bigint(a);
+        int shift;
+        if (!value_to_index(b, &shift)) {
+            throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH;
+        }
+        Value result = bigint_ushr(ba, shift);
+        vm_stack_push(&vm, result);
+    } else {
+        throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    DISPATCH;
+}
+
+// >>> 立即数逻辑右移
+OPCODE(OP_USHR_IMM) {
+    uint8_t imm = READ_BYTE();
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value a = vm_stack_pop(&vm);
+
+    // 快速路径：int >>> imm（最常见）
+    if (likely(val_is_int(a))) {
+        int64_t va = val_as_int(a);
+        // LenoC 的 int 是 48 位有符号整数
+        // 逻辑右移：先转为 48 位无符号值，再右移，高位补 0
+        uint64_t uva = (uint64_t)va & PAYLOAD_MASK;  // 截断为 48 位无符号
+        uint64_t shifted = uva >> imm;
+        // 检查结果是否在 48 位 int 范围内
+        if ((int64_t)shifted >= INT48_MIN && (int64_t)shifted <= INT48_MAX) {
+            vm_stack_push(&vm, val_int((int64_t)shifted));
+        } else {
+            // 超出 int48 范围，转为 BigInt
+            vm_stack_push(&vm, val_bigint_from_int64((int64_t)shifted));
+        }
+        DISPATCH;
+    }
+
+    // null 不能参与位移运算
+    if (unlikely(val_is_null(a))) {
+        throw_runtime_error("null 不能参与位移运算", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    // BigInt 逻辑右移
+    if (unlikely(val_is_bigint(a))) {
+        ObjBigInt* ba = val_as_bigint(a);
+        Value result = bigint_ushr(ba, imm);
+        vm_stack_push(&vm, result);
+        DISPATCH;
+    }
+
+    throw_runtime_error("位移操作数必须是整数", GET_CURRENT_LINE());
+    frame = &vm.frames[vm.frame_cnt - 1];
+    DISPATCH;
+}
+
 OPCODE(OP_BITNOT) {
     frame = &vm.frames[vm.frame_cnt - 1];
     Value a = vm_stack_pop(&vm);

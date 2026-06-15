@@ -896,6 +896,7 @@ Value bigint_xor(ObjBigInt* a, ObjBigInt* b);
 Value bigint_not(ObjBigInt* a);
 Value bigint_shl(ObjBigInt* a, int shift);
 Value bigint_shr(ObjBigInt* a, int shift);
+Value bigint_ushr(ObjBigInt* a, int shift);
 int bigint_compare(ObjBigInt* a, ObjBigInt* b);
 
 // BigInt 工具函数

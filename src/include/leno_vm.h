@@ -42,7 +42,8 @@ typedef enum {
     OP_BITXOR,  // 按位异或
     OP_BITNOT,  // 按位非
     OP_SHL,     // 左移
-    OP_SHR,     // 右移
+    OP_SHR,     // 右移（算术右移）
+    OP_USHR,    // 逻辑右移（无符号右移 >>>）
     OP_NEG,
     OP_NOT,
     OP_CAST_FLOAT,  // 将 int 转换为 float
@@ -137,7 +138,8 @@ typedef enum {
     OP_GE_INT_IMM,     // int >= imm（立即数大于等于）
     OP_EQ_INT_IMM,     // int == imm（立即数等于）
     OP_SHL_IMM,        // int << imm（立即数左移）
-    OP_SHR_IMM,        // int >> imm（立即数右移）
+    OP_SHR_IMM,        // int >> imm（立即数算术右移）
+    OP_USHR_IMM,       // int >>> imm（立即数逻辑右移）
     // struct 相关指令
     OP_STRUCT_DEF,     // 定义结构体
     OP_STRUCT_INIT,    // 创建结构体实例

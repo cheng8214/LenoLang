@@ -828,15 +828,15 @@ Ast* parse_expression_stmt(Parser* p) {
             p->lex.current.type == TOK_SLASHEQ || p->lex.current.type == TOK_MODEQ ||
             p->lex.current.type == TOK_BITANDEQ || p->lex.current.type == TOK_BITOREQ ||
             p->lex.current.type == TOK_BITXOREQ || p->lex.current.type == TOK_SHLEQ ||
-            p->lex.current.type == TOK_SHREQ) {
+            p->lex.current.type == TOK_SHREQ || p->lex.current.type == TOK_USHREQ) {
             
             // 是赋值语句
             LenoTokenType op = p->lex.current.type;
             
-            // 处理复合赋值运算符 (+= -= *= /= %= &= |= ^= <<= >>=)
+            // 处理复合赋值运算符 (+= -= *= /= %= &= |= ^= <<= >>= >>>=)
             if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
                 op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
-                op == TOK_SHLEQ || op == TOK_SHREQ) {
+                op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
                 
                 // 复合赋值只支持单个变量
                 if (left_count != 1) {

@@ -931,10 +931,10 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         }
     }
 
-    // 检测 shift-imm 复合赋值：x <<= N / x >>= N，N 为小正整数字面量
+    // 检测 shift-imm 复合赋值：x <<= N / x >>= N / x >>>= N，N 为小正整数字面量
     int shift_imm = 0;
     uint8_t shift_val = 0;
-    if ((op == TOK_SHLEQ || op == TOK_SHREQ) &&
+    if ((op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) &&
         ast->u.compound_assign.value->kind == AST_NUM &&
         !ast->u.compound_assign.value->u.num.is_float &&
         !ast->u.compound_assign.value->u.num.is_bigint) {
@@ -996,6 +996,10 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         case TOK_SHREQ:
             if (shift_imm) emit_byte_imm(gen, OP_SHR_IMM, shift_val, ast->line);
             else           emit_byte(gen, OP_SHR, ast->line);
+            break;
+        case TOK_USHREQ:
+            if (shift_imm) emit_byte_imm(gen, OP_USHR_IMM, shift_val, ast->line);
+            else           emit_byte(gen, OP_USHR, ast->line);
             break;
         default:
             error_add(ERR_SEMANTIC, ast->line, "未知的复合赋值运算符");

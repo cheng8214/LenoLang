@@ -488,6 +488,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 case TOK_BITXOR:
                 case TOK_SHL:
                 case TOK_SHR:
+                case TOK_USHR:
                     // bool 参与位运算/取模 -> 编译错误
                     if (left && right &&
                         (left->kind == TYPE_BOOL || right->kind == TYPE_BOOL)) {

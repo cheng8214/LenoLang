@@ -164,6 +164,14 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, OP_SHR, ast->line);
             }
             break;
+        case TOK_USHR:
+            if (can_use_imm && imm_val >= 0) {
+                emit_byte_imm(gen, OP_USHR_IMM, imm_val, ast->line);
+            } else {
+                gen_expr(gen, ast->u.binop.r);
+                emit_byte(gen, OP_USHR, ast->line);
+            }
+            break;
         case TOK_EQEQ:
             if (can_use_imm && left_type == TYPE_INT) {
                 emit_byte_imm(gen, OP_EQ_INT_IMM, imm_val, ast->line);
