@@ -375,7 +375,7 @@ void native_free_module_const_list(char** consts, int count) {
 }
 
 // 编译时和运行时共用的元信息表
-#define MAX_NATIVE_FUNCTIONS 64
+#define MAX_NATIVE_FUNCTIONS 128
 
 static THREAD_LOCAL NativeFunctionMeta functionRegistry[MAX_NATIVE_FUNCTIONS];
 static THREAD_LOCAL int functionCount = 0;

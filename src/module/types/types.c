@@ -852,6 +852,100 @@ static Value native_to_uint32(int argCount, Value* args) {
     return val_int_safe((int64_t)result);
 }
 
+// _int64(value) - 将值截断为 64 位有符号整数
+static Value native_to_int64(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_int(0);
+    }
+
+    Value value = args[0];
+
+    if (val_is_int(value)) {
+        return value;  // Leno int 就是 int64，直接返回
+    } else if (val_is_bigint(value)) {
+        int64_t i64 = bigint_to_int64(val_as_bigint(value));
+        return val_int_safe(i64);
+    } else if (val_is_float(value)) {
+        int64_t i64 = (int64_t)val_as_num(value);
+        return val_int_safe(i64);
+    } else if (val_is_bool(value)) {
+        return val_int(val_as_bool(value) ? 1 : 0);
+    } else if (val_is_null(value)) {
+        return val_int(0);
+    } else {
+        native_throw_error("无法将该类型转换为 int64");
+        return val_int(0);
+    }
+}
+
+// _uint64(value) - 将值截断为 64 位无符号整数
+static Value native_to_uint64(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_int(0);
+    }
+
+    Value value = args[0];
+
+    int64_t i64_val;
+    if (val_is_int(value)) {
+        i64_val = val_as_int(value);
+    } else if (val_is_bigint(value)) {
+        i64_val = bigint_to_int64(val_as_bigint(value));
+    } else if (val_is_float(value)) {
+        i64_val = (int64_t)val_as_num(value);
+    } else if (val_is_bool(value)) {
+        i64_val = val_as_bool(value) ? 1 : 0;
+    } else if (val_is_null(value)) {
+        return val_int(0);
+    } else {
+        native_throw_error("无法将该类型转换为 uint64");
+        return val_int(0);
+    }
+
+    // 截断为 64 位无符号整数
+    uint64_t result = (uint64_t)i64_val;
+    // 如果值在 int64 范围内，用 val_int_safe 自动处理 int48/BigInt
+    if (result <= (uint64_t)INT64_MAX) {
+        return val_int_safe((int64_t)result);
+    }
+    // 超过 INT64_MAX，需要 BigInt
+    return val_bigint_from_uint64(result);
+}
+
+// _uint8(value) - 将值截断为 8 位无符号整数
+static Value native_to_uint8(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_int(0);
+    }
+
+    Value value = args[0];
+
+    int64_t i64_val;
+    if (val_is_int(value)) {
+        i64_val = val_as_int(value);
+    } else if (val_is_bigint(value)) {
+        i64_val = bigint_to_int64(val_as_bigint(value));
+    } else if (val_is_float(value)) {
+        i64_val = (int64_t)val_as_num(value);
+    } else if (val_is_bool(value)) {
+        i64_val = val_as_bool(value) ? 1 : 0;
+    } else if (val_is_null(value)) {
+        return val_int(0);
+    } else {
+        native_throw_error("无法将该类型转换为 uint8");
+        return val_int(0);
+    }
+
+    // 截断为 8 位无符号整数
+    uint8_t result = (uint8_t)(i64_val & 0xFF);
+    return val_int((int)result);
+}
+
+// _byte(value) - _uint8 的别名，语义更清晰
+static Value native_to_byte(int argCount, Value* args) {
+    return native_to_uint8(argCount, args);
+}
+
 // ==================== 初始化 ====================
 
 void types_init_globals(void) {
@@ -868,6 +962,10 @@ void types_init_globals(void) {
     vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, convert_params);
     vm_register_native("_int32", native_to_int32, 1, -1, -1, TYPE_INT, convert_params);
     vm_register_native("_uint32", native_to_uint32, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_int64", native_to_int64, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_uint64", native_to_uint64, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_uint8", native_to_uint8, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_byte", native_to_byte, 1, -1, -1, TYPE_INT, convert_params);
 }
 
 // types 模块通过全局 type() 函数提供服务
