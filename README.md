@@ -25,7 +25,7 @@ Leno 诞生于对编程语言设计的热爱与探索，虽非完美，但乐在
 - **正则表达式** — `regexs` 模块内置正则支持
 - **JSON** — `jsons` 模块内置 JSON 编解码
 - **垃圾回收** — 内置 GC，自动内存管理
-- **跨平台** — 支持 Windows / Linux / macOS
+- **跨平台** — 支持 Windows / Linux（guis 模块在 Linux 下编译可能存在问题，其余模块暂未发现问题）；macOS 暂不支持
 
 ## 快速开始
 
