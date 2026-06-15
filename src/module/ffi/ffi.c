@@ -1593,7 +1593,7 @@ static Value ffi_string_bytes_func(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
 
-    size_t byte_len = strlen(str->chars);
+    size_t byte_len = (size_t)str->len;
     return val_int((int)byte_len);
 }
 

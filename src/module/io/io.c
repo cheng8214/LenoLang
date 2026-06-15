@@ -65,9 +65,11 @@ static void print_value_internal(Value value) {
         case VAL_OBJ: {
             Object* obj = val_as_obj(value);
             switch (obj->type) {
-                case OBJ_STRING:
-                    printf("%s", ((ObjString*)obj)->chars);
+                case OBJ_STRING: {
+                    ObjString* s = (ObjString*)obj;
+                    fwrite(s->chars, 1, s->len, stdout);
                     break;
+                }
                 case OBJ_ARRAY:
                     print_array_internal((ObjArray*)obj);
                     break;
@@ -206,9 +208,13 @@ static void print_value_quoted(Value value) {
         case VAL_OBJ: {
             Object* obj = val_as_obj(value);
             switch (obj->type) {
-                case OBJ_STRING:
-                    printf("\"%s\"", ((ObjString*)obj)->chars);
+                case OBJ_STRING: {
+                    ObjString* s = (ObjString*)obj;
+                    printf("\"");
+                    fwrite(s->chars, 1, s->len, stdout);
+                    printf("\"");
                     break;
+                }
                 case OBJ_ARRAY:
                     print_array_internal((ObjArray*)obj);
                     break;
@@ -308,10 +314,15 @@ static void print_dict_internal(ObjDict* dict) {
         }
         // 输出键名
         if (val_is_obj(order_key) && val_as_obj(order_key)->type == OBJ_STRING) {
-            printf("%s: ", ((ObjString*)val_as_obj(order_key))->chars);
+            ObjString* ks = (ObjString*)val_as_obj(order_key);
+            fwrite(ks->chars, 1, ks->len, stdout);
+            printf(": ");
         } else {
             ObjString* ks = dict_key_to_string(order_key);
-            printf("%s: ", ks ? ks->chars : "");
+            if (ks) {
+                fwrite(ks->chars, 1, ks->len, stdout);
+            }
+            printf(": ");
         }
         print_value_quoted(value);
         printed++;

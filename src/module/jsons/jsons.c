@@ -457,10 +457,11 @@ static Value jsons_decode_func(int argc, Value* args) {
 
 static void json_encode_value(StringBuilder* sb, Value value, int indent, bool pretty);
 
-static void json_encode_string(StringBuilder* sb, const char* str) {
+static void json_encode_string(StringBuilder* sb, const char* str, int len) {
     sb_append_char(sb, '"');
-    for (const char* p = str; *p; p++) {
-        switch (*p) {
+    for (int i = 0; i < len; i++) {
+        unsigned char ch = (unsigned char)str[i];
+        switch (ch) {
             case '"': sb_append_cstr(sb, "\\\""); break;
             case '\\': sb_append_cstr(sb, "\\\\"); break;
             case '\b': sb_append_cstr(sb, "\\b"); break;
@@ -469,12 +470,12 @@ static void json_encode_string(StringBuilder* sb, const char* str) {
             case '\r': sb_append_cstr(sb, "\\r"); break;
             case '\t': sb_append_cstr(sb, "\\t"); break;
             default:
-                if ((unsigned char)*p < 0x20) {
+                if (ch < 0x20) {
                     char buf[7];
-                    snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)*p);
+                    snprintf(buf, sizeof(buf), "\\u%04x", ch);
                     sb_append_cstr(sb, buf);
                 } else {
-                    sb_append_char(sb, *p);
+                    sb_append_char(sb, ch);
                 }
         }
     }
@@ -539,19 +540,26 @@ static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool 
         
         // 获取键的字符串表示
         const char* key_chars = NULL;
+        int key_len = 0;
         char key_buf[32];
         if (val_is_obj(order_key) && val_as_obj(order_key)->type == OBJ_STRING) {
-            key_chars = ((ObjString*)val_as_obj(order_key))->chars;
+            ObjString* ks = (ObjString*)val_as_obj(order_key);
+            key_chars = ks->chars;
+            key_len = ks->len;
         } else {
             ObjString* ks = dict_key_to_string(order_key);
             if (ks) {
-                snprintf(key_buf, sizeof(key_buf), "%s", ks->chars);
+                int copy_len = ks->len < (int)sizeof(key_buf) - 1 ? ks->len : (int)sizeof(key_buf) - 1;
+                memcpy(key_buf, ks->chars, copy_len);
+                key_buf[copy_len] = '\0';
                 key_chars = key_buf;
+                key_len = copy_len;
             } else {
                 key_chars = "";
+                key_len = 0;
             }
         }
-        json_encode_string(sb, key_chars);
+        json_encode_string(sb, key_chars, key_len);
         
         sb_append_char(sb, ':');
         if (pretty) {
@@ -594,7 +602,7 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
         case VAL_OBJ:
             switch (val_as_obj(value)->type) {
                 case OBJ_STRING:
-                    json_encode_string(sb, ((ObjString*)val_as_obj(value))->chars);
+                    json_encode_string(sb, ((ObjString*)val_as_obj(value))->chars, ((ObjString*)val_as_obj(value))->len);
                     break;
                 case OBJ_ARRAY:
                     json_encode_array(sb, (ObjArray*)val_as_obj(value), indent, pretty);
