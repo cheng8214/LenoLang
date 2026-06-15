@@ -163,6 +163,7 @@ Ast* parse_string(Parser* p) {
     Ast* ast = ast_new(AST_STRING, p->lex.current.line);
     int processed_len;
     ast->u.string.value = process_escape_sequences(p->lex.current.text, p->lex.current.len, &processed_len);
+    ast->u.string.len = processed_len;
     lexer_next(&p->lex);
     return ast;
 }
@@ -171,7 +172,9 @@ Ast* parse_string(Parser* p) {
 Ast* parse_raw_string(Parser* p) {
     Ast* ast = ast_new(AST_STRING, p->lex.current.line);
     // 原始字符串处理 "" 转义
-    ast->u.string.value = process_raw_string(p->lex.current.text, p->lex.current.len, NULL);
+    int raw_len;
+    ast->u.string.value = process_raw_string(p->lex.current.text, p->lex.current.len, &raw_len);
+    ast->u.string.len = raw_len;
     lexer_next(&p->lex);
     return ast;
 }
@@ -368,15 +371,18 @@ Ast* parse_dict(Parser* p) {
         // 键: 字符串、标识符(转为字符串)、整数
         Ast* key_ast = NULL;
         if (p->lex.current.type == TOK_STRING) {
-            char* key_str = process_escape_sequences(p->lex.current.text, p->lex.current.len, NULL);
+            int key_len;
+            char* key_str = process_escape_sequences(p->lex.current.text, p->lex.current.len, &key_len);
             key_ast = ast_new(AST_STRING, line);
             key_ast->u.string.value = key_str;
+            key_ast->u.string.len = key_len;
             lexer_next(&p->lex);
         } else if (p->lex.current.type == TOK_IDENT) {
             // 标识符键转为字符串键（向后兼容 {name: value} 语法）
             char* key_str = copy_string(p->lex.current.text, p->lex.current.len);
             key_ast = ast_new(AST_STRING, line);
             key_ast->u.string.value = key_str;
+            key_ast->u.string.len = (int)strlen(key_str);
             lexer_next(&p->lex);
         } else if (p->lex.current.type == TOK_NUM) {
             // 整数键（通过 parse_number 解析，自动处理 int/float/bigint）
@@ -843,7 +849,8 @@ Ast* parse_dot(Parser* p, Ast* left) {
             // 创建为 CALL，callee 是 INDEX 节点 (expr)["method"]
             Ast* method_str = ast_new(AST_STRING, line);
             method_str->u.string.value = name;
-            
+            method_str->u.string.len = (int)strlen(name);
+
             Ast* index_ast = ast_new(AST_INDEX, line);
             index_ast->u.index.obj = left;
             index_ast->u.index.index = method_str;
@@ -893,7 +900,8 @@ Ast* parse_dot(Parser* p, Ast* left) {
     // 将属性名转换为字符串作为索引
     Ast* index = ast_new(AST_STRING, line);
     index->u.string.value = name;
-    
+    index->u.string.len = (int)strlen(name);
+
     Ast* ast = ast_new(AST_INDEX, line);
     ast->u.index.obj = left;
     ast->u.index.index = index;
@@ -967,6 +975,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
             // 创建索引访问节点用于二元运算
             Ast* index = ast_new(AST_STRING, line);
             index->u.string.value = strdup(left->u.module_access.member_name);
+            index->u.string.len = (int)strlen(left->u.module_access.member_name);
 
             Ast* index_access = ast_new(AST_INDEX, line);
             index_access->u.index.obj = obj;
@@ -994,6 +1003,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
             // 创建索引赋值节点
             Ast* index_ast = ast_new(AST_STRING, line);
             index_ast->u.string.value = strdup(left->u.module_access.member_name);
+            index_ast->u.string.len = (int)strlen(left->u.module_access.member_name);
             
             Ast* obj_ast = ast_new(AST_VAR, line);
             obj_ast->u.var.name = strdup(left->u.module_access.module_name);

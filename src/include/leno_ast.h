@@ -123,7 +123,7 @@ struct Ast {
     TypeInfo* cached_type;  // 类型推断缓存，避免重复推断同一表达式
     union {
         struct { double value; int is_bigint; char* bigint_str; int is_float; } num;
-        struct { char* value; } string;
+        struct { char* value; int len; } string;
         int boolean;
         AstList array;
         DictEntryList dict;

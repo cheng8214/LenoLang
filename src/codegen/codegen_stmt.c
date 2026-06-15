@@ -10,7 +10,7 @@ static Value ast_default_to_value(Ast* expr) {
             if (expr->u.num.is_float) return val_float(expr->u.num.value);
             return val_num(expr->u.num.value);
         case AST_STRING: {
-            ObjString* str = str_copy(expr->u.string.value, strlen(expr->u.string.value));
+            ObjString* str = str_copy(expr->u.string.value, expr->u.string.len);
             return val_obj((Object*)str);
         }
         case AST_BOOL:

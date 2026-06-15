@@ -19,19 +19,33 @@ OPCODE(OP_ADD) {
     // 检查是否是字符串拼接
     if ((val_is_obj(a) && val_as_obj(a)->type == OBJ_STRING) ||
         (val_is_obj(b) && val_as_obj(b)->type == OBJ_STRING)) {
-        char* strA = value_to_string(a);
-        char* strB = value_to_string(b);
-        int lenA = (int)strlen(strA);
-        int lenB = (int)strlen(strB);
-        char* buf = (char*)malloc(lenA + lenB + 1);
-        memcpy(buf, strA, lenA);
-        memcpy(buf + lenA, strB, lenB);
-        buf[lenA + lenB] = '\0';
-        ObjString* result = str_new(buf, lenA + lenB);
-        free(buf);
-        free(strA);
-        free(strB);
-        vm_stack_push(&vm, val_obj((Object*)result));
+        // 快速路径：两个操作数都是 ObjString，直接使用 str_concat（正确处理 null 字节）
+        if (val_is_obj(a) && val_as_obj(a)->type == OBJ_STRING &&
+            val_is_obj(b) && val_as_obj(b)->type == OBJ_STRING) {
+            ObjString* result = str_concat((ObjString*)val_as_obj(a), (ObjString*)val_as_obj(b));
+            vm_stack_push(&vm, val_obj((Object*)result));
+        } else {
+            // 一个操作数是 ObjString，另一个需要转换（转换结果不含 null 字节，strlen 安全）
+            bool a_is_str = val_is_obj(a) && val_as_obj(a)->type == OBJ_STRING;
+            ObjString* str_obj = a_is_str ? (ObjString*)val_as_obj(a) : (ObjString*)val_as_obj(b);
+            Value other = a_is_str ? b : a;
+            char* other_str = value_to_string(other);
+            int other_len = (int)strlen(other_str);
+            int total_len = str_obj->len + other_len;
+            char* buf = (char*)malloc(total_len + 1);
+            if (a_is_str) {
+                memcpy(buf, str_obj->chars, str_obj->len);
+                memcpy(buf + str_obj->len, other_str, other_len);
+            } else {
+                memcpy(buf, other_str, other_len);
+                memcpy(buf + other_len, str_obj->chars, str_obj->len);
+            }
+            buf[total_len] = '\0';
+            ObjString* result = str_new(buf, total_len);
+            free(buf);
+            free(other_str);
+            vm_stack_push(&vm, val_obj((Object*)result));
+        }
         DISPATCH;
     }
 

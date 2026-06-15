@@ -147,7 +147,7 @@ func chacha20_init_state(string key, int counter, string nonce):Array[int] {
 
 // ==================== ChaCha20 加密/解密 ====================
 
-// ChaCha20 加密，返回 hex 字符串（避免 null 字节截断问题）
+// ChaCha20 加密，返回二进制字符串（含 null 字节，LenoC 已正确处理）
 func chacha20_encrypt(string key, int counter, string nonce, string plaintext):string {
     var result = ""
     int i = 0
@@ -156,7 +156,7 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
         Array[int] state = chacha20_init_state(key, counter, nonce)
         Array[int] block = chacha20_block(state)
 
-        // 将密钥流块与明文异或，输出为 hex
+        // 将密钥流块与明文异或，直接输出二进制字节
         int j = 0
         while (j < 64 and i + j < plaintext.len()) {
             int word_idx = j / 4
@@ -164,7 +164,7 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
             int shift = byte_idx * 8
             int key_byte = _uint8(to_u32(block[word_idx]) >> shift)
             int pt_byte = plaintext.byte(i + j)
-            result += byte_to_hex(key_byte ^ pt_byte)
+            result += strings.char(key_byte ^ pt_byte)
             j += 1
         }
 
@@ -175,11 +175,11 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
     return result
 }
 
-// ChaCha20 解密，输入 hex 字符串
-func chacha20_decrypt(string key, int counter, string nonce, string hex_ciphertext):string {
+// ChaCha20 解密，输入二进制字符串
+func chacha20_decrypt(string key, int counter, string nonce, string ciphertext):string {
     var result = ""
     int i = 0
-    int total = hex_ciphertext.len() / 2
+    int total = ciphertext.len()
 
     while (i < total) {
         Array[int] state = chacha20_init_state(key, counter, nonce)
@@ -191,7 +191,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string hex_cipherte
             int byte_idx = j % 4
             int shift = byte_idx * 8
             int key_byte = _uint8(to_u32(block[word_idx]) >> shift)
-            int ct_byte = hex_val(hex_ciphertext, (i + j) * 2)
+            int ct_byte = ciphertext.byte(i + j)
             result += strings.char(key_byte ^ ct_byte)
             j += 1
         }
@@ -252,13 +252,14 @@ func from_hex(string hex_str):string {
 
 // ==================== 便捷接口 ====================
 
-// encrypt 已返回 hex，decrypt 接收 hex，这两个便捷接口保持兼容
+// encrypt 返回二进制字符串，decrypt 接收二进制字符串
+// hex 便捷接口：加密后转 hex 显示，解密前从 hex 还原
 func chacha20_encrypt_hex(string key, int counter, string nonce, string plaintext):string {
-    return chacha20_encrypt(key, counter, nonce, plaintext)
+    return to_hex(chacha20_encrypt(key, counter, nonce, plaintext))
 }
 
 func chacha20_decrypt_hex(string key, int counter, string nonce, string hex_ct):string {
-    return chacha20_decrypt(key, counter, nonce, hex_ct)
+    return chacha20_decrypt(key, counter, nonce, from_hex(hex_ct))
 }
 
 // ==================== 测试 ====================
@@ -292,7 +293,7 @@ main() {
     print("密钥: " + key)
     print("Nonce: " + nonce)
     print("明文: " + text1)
-    print("密文(hex): " + enc1)
+    print("密文(len=" + enc1.len() + "): " + to_hex(enc1))
     print("解密: " + dec1)
     print("往返: " + if dec1 == text1 then "OK" else "FAIL")
     print("")
@@ -306,8 +307,8 @@ main() {
     print("block[0] c0=" + _str(blk0[0]) + " c1=" + _str(blk1[0]))
     var enc_c0 = chacha20_encrypt(key, 0, nonce, "AAAA")
     var enc_c1 = chacha20_encrypt(key, 1, nonce, "AAAA")
-    print("counter=0: " + enc_c0)
-    print("counter=1: " + enc_c1)
+    print("counter=0: " + to_hex(enc_c0))
+    print("counter=1: " + to_hex(enc_c1))
     print("不同: " + if enc_c0 != enc_c1 then "OK" else "FAIL")
     print("")
 

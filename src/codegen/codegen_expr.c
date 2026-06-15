@@ -411,7 +411,7 @@ static void gen_default_value(CodeGen* gen, Ast* default_expr) {
             }
             break;
         case AST_STRING: {
-            ObjString* str = str_copy(default_expr->u.string.value, strlen(default_expr->u.string.value));
+            ObjString* str = str_copy(default_expr->u.string.value, default_expr->u.string.len);
             emit_constant(gen, val_obj((Object*)str), default_expr->line);
             break;
         }
@@ -864,7 +864,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             }
             break;
         case AST_STRING: {
-            ObjString* str = str_copy(ast->u.string.value, strlen(ast->u.string.value));
+            ObjString* str = str_copy(ast->u.string.value, ast->u.string.len);
             emit_constant(gen, val_obj((Object*)str), ast->line);
             break;
         }
@@ -997,7 +997,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                     emit_byte(gen, OP_INDEX, ast->line);
                 } else {
                     ObjString* prop_name = str_copy(ast->u.index.index->u.string.value,
-                                                    (int)strlen(ast->u.index.index->u.string.value));
+                                                    ast->u.index.index->u.string.len);
                     int const_idx = make_constant(gen, val_obj((Object*)prop_name));
                     emit_byte(gen, OP_GET_PROPERTY, ast->line);
                     emit_byte(gen, (const_idx >> 8) & 0xff, ast->line);

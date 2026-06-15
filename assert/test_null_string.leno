@@ -1,0 +1,69 @@
+// 测试 LenoC 字符串中 null 字节是否导致截断
+import files
+import strings
+
+main() {
+    // 测试 1：\0 转义 + 字符串拼接
+    var s1 = "AB" + "\0" + "CD"
+    assert_eq(s1.len(), 5)
+    assert_eq(s1.byte(0), 65)   // 'A'
+    assert_eq(s1.byte(1), 66)   // 'B'
+    assert_eq(s1.byte(2), 0)    // '\0'
+    assert_eq(s1.byte(3), 67)   // 'C'
+    assert_eq(s1.byte(4), 68)   // 'D'
+
+    // 测试 2：strings.char(0) 拼接
+    var s2 = "A" + strings.char(0) + "B"
+    assert_eq(s2.len(), 3)
+    assert_eq(s2.byte(0), 65)
+    assert_eq(s2.byte(1), 0)
+    assert_eq(s2.byte(2), 66)
+
+    // 测试 3：连续 null 字节
+    var s3 = strings.char(0, 0, 0, 0)
+    assert_eq(s3.len(), 4)
+
+    // 测试 4：开头为 null
+    var s4 = "\0ABC"
+    assert_eq(s4.len(), 4)
+    assert_eq(s4.byte(0), 0)
+    assert_eq(s4.byte(1), 65)
+
+    // 测试 5：文件读写含 null 字节
+    var test_data = "Hello" + strings.char(0) + "World"
+    assert_eq(test_data.len(), 11)
+
+    var f = files.open("d:\\test_null.bin", "wb")
+    f.write(test_data)
+    f.close()
+
+    var f2 = files.open("d:\\test_null.bin", "rb")
+    var read_data = f2.read()
+    f2.close()
+    assert_eq(read_data.len(), 11)
+
+    // 逐字节验证
+    for 0:10 to i {
+        assert_eq(test_data.byte(i), read_data.byte(i))
+    }
+    files.delete("d:\\test_null.bin")
+
+    // 测试 6：整数转字符串（模拟加密场景）
+    // 0x41004243 = 'A' '\0' 'B' 'C'
+    int val = 0x41004243
+    var s6 = strings.char((val >> 24) & 0xFF, (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF)
+    assert_eq(s6.len(), 4)
+    assert_eq(s6.byte(0), 0x41)
+    assert_eq(s6.byte(1), 0x00)
+    assert_eq(s6.byte(2), 0x42)
+    assert_eq(s6.byte(3), 0x43)
+
+    // 测试 7：大量 null 字节
+    var s7 = ""
+    for 0:99 to i {
+        s7 += strings.char(0)
+    }
+    assert_eq(s7.len(), 100)
+
+    print("test_null_string passed")
+}

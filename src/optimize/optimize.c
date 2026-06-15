@@ -44,13 +44,14 @@ static void replace_with_bool(Ast* ast, int value) {
     ast->u.boolean = value;
 }
 
-static void replace_with_string(Ast* ast, char* value) {
+static void replace_with_string(Ast* ast, char* value, int len) {
     if (ast->cached_type) {
         type_free(ast->cached_type);
     }
     ast->cached_type = type_new(TYPE_STRING);
     ast->kind = AST_STRING;
     ast->u.string.value = value;
+    ast->u.string.len = len;
 }
 
 static void fold_binary(Ast* ast) {
@@ -174,13 +175,14 @@ static void fold_binary(Ast* ast) {
     }
 
     if (op == TOK_PLUS && is_const_string(l) && is_const_string(r)) {
-        int new_len = (int)strlen(l->u.string.value) + (int)strlen(r->u.string.value);
+        int new_len = l->u.string.len + r->u.string.len;
         char* new_str = (char*)malloc(new_len + 1);
-        strcpy(new_str, l->u.string.value);
-        strcat(new_str, r->u.string.value);
+        memcpy(new_str, l->u.string.value, l->u.string.len);
+        memcpy(new_str + l->u.string.len, r->u.string.value, r->u.string.len);
+        new_str[new_len] = '\0';
         ast_free(l);
         ast_free(r);
-        replace_with_string(ast, new_str);
+        replace_with_string(ast, new_str, new_len);
         return;
     }
 

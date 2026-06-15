@@ -2690,6 +2690,7 @@ void visit(Semantic* s, Ast* ast) {
                         // 创建方法名字符串节点
                         Ast* method_str = ast_new(AST_STRING, ast->line);
                         method_str->u.string.value = strdup(method_name);
+                        method_str->u.string.len = (int)strlen(method_name);
 
                         // 创建 INDEX 节点：self["method"]
                         Ast* index_ast = ast_new(AST_INDEX, ast->line);
@@ -2956,6 +2957,7 @@ void visit(Semantic* s, Ast* ast) {
 
                     Ast* method_str = ast_new(AST_STRING, ast->line);
                     method_str->u.string.value = strdup(ast->u.module_call.method_name);
+                    method_str->u.string.len = (int)strlen(ast->u.module_call.method_name);
 
                     Ast* prop_access = ast_new(AST_INDEX, ast->line);
                     prop_access->u.index.obj = obj_var;
@@ -3052,6 +3054,7 @@ void visit(Semantic* s, Ast* ast) {
                     // 普通属性访问：转换为 AST_INDEX
                     Ast* index_ast = ast_new(AST_STRING, ast->line);
                     index_ast->u.string.value = strdup(ast->u.module_access.member_name);
+                    index_ast->u.string.len = (int)strlen(ast->u.module_access.member_name);
 
                     ast->kind = AST_INDEX;
                     ast->u.index.obj = var_ast;

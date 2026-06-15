@@ -324,8 +324,8 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                                         }
                                         break;
                                     case AST_STRING:
-                                        var_val = val_obj((Object*)str_copy(init->u.string.value, 
-                                            (int)strlen(init->u.string.value)));
+                                        var_val = val_obj((Object*)str_copy(init->u.string.value,
+                                            init->u.string.len));
                                         break;
                                     case AST_BOOL:
                                         var_val = val_bool(init->u.boolean);

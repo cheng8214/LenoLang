@@ -109,7 +109,11 @@ char* value_to_string(Value v) {
         case VAL_OBJ:
             if (val_as_obj(v)->type == OBJ_STRING) {
                 ObjString* str = (ObjString*)val_as_obj(v);
-                result = strdup(str->chars);
+                result = (char*)malloc(str->len + 1);
+                if (result) {
+                    memcpy(result, str->chars, str->len);
+                    result[str->len] = '\0';
+                }
             } else if (val_as_obj(v)->type == OBJ_BIGINT) {
                 ObjBigInt* bigint = (ObjBigInt*)val_as_obj(v);
                 result = bigint_to_string(bigint);

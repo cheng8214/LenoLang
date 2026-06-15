@@ -35,6 +35,7 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
                     // 创建字段名字符串节点
                     Ast* field_str = ast_new(AST_STRING, line);
                     field_str->u.string.value = strdup(field_names[i]);
+                    field_str->u.string.len = (int)strlen(field_names[i]);
                     ast->u.index.index = field_str;
 
                     break;
@@ -69,6 +70,7 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
                         // 创建字段名字符串节点
                         Ast* field_str = ast_new(AST_STRING, ast->line);
                         field_str->u.string.value = strdup(field_names[j]);
+                        field_str->u.string.len = (int)strlen(field_names[j]);
                         ast->u.index_assign.index = field_str;
 
                         // 设置 value（已经处理过其中的字段访问）
@@ -111,6 +113,7 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
                         ast->u.call.callee->u.index.obj = self_var;
                         Ast* method_str = ast_new(AST_STRING, line);
                         method_str->u.string.value = saved_method_name;
+                        method_str->u.string.len = (int)strlen(saved_method_name);
                         ast->u.call.callee->u.index.index = method_str;
                         is_struct_method_call = 1;
                         break;
@@ -243,12 +246,14 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
                 self_field->u.index.obj = self_var;
                 Ast* field_str = ast_new(AST_STRING, line);
                 field_str->u.string.value = field_name;
+                field_str->u.string.len = (int)strlen(field_name);
                 self_field->u.index.index = field_str;
-                
+
                 // 创建 ["method"]
                 callee->u.index.obj = self_field;
                 Ast* method_str = ast_new(AST_STRING, line);
                 method_str->u.string.value = method_name;
+                method_str->u.string.len = (int)strlen(method_name);
                 callee->u.index.index = method_str;
                 
                 ast->u.call.callee = callee;
@@ -284,8 +289,9 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
                 callee->u.index.obj = self_var;
                 Ast* method_str = ast_new(AST_STRING, line);
                 method_str->u.string.value = method_name;
+                method_str->u.string.len = (int)strlen(method_name);
                 callee->u.index.index = method_str;
-                
+
                 ast->u.call.callee = callee;
                 
                 // 创建新的参数列表，self 作为第一个参数
@@ -398,6 +404,7 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 
                     Ast* field_str = ast_new(AST_STRING, line);
                     field_str->u.string.value = strdup(field_names[i]);
+                    field_str->u.string.len = (int)strlen(field_names[i]);
 
                     Ast* index_obj = ast_new(AST_INDEX, line);
                     index_obj->u.index.obj = self_var;
@@ -408,6 +415,7 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
                     // 创建 member_name 作为 index
                     Ast* member_str = ast_new(AST_STRING, line);
                     member_str->u.string.value = member_name;
+                    member_str->u.string.len = (int)strlen(member_name);
                     ast->u.index.index = member_str;
 
                     break;
