@@ -1,0 +1,5 @@
+main() {
+    var s = "A" + "\0" + "B"
+    print("len=" + s.len())
+    print(s)
+}

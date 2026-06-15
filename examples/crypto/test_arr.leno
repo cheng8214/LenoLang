@@ -1,0 +1,18 @@
+import files
+import strings
+
+main() {
+    // 创建一个小测试文件
+    var f = files.open("d:\\test_small.txt", "wb")
+    f.write("Hello, World! This is a test file for XXTEA encryption.")
+    f.close()
+    
+    print("小文件测试:")
+    var f2 = files.open("d:\\test_small.txt", "rb")
+    var content = f2.read()
+    print("原始大小: " + content.len())
+    f2.close()
+    
+    files.delete("d:\\test_small.txt")
+    print("测试完成!")
+}

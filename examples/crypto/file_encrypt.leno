@@ -1,0 +1,372 @@
+// XXTEA 文件加密解密工具（流式分块版）
+// 使用 XXTEA 分块模式，流式读写，内存占用极低
+// 文件格式：[4字节原始大小(大端)] + [分块加密数据]
+// 每个块：256 个字 (1024 字节)，XXTEA 独立加密
+
+import files
+import strings
+
+// ==================== XXTEA 核心 ====================
+
+int DELTA = -0x61C88647
+
+func mx(int z, int y, int sum, int p, int e, int k0, int k1, int k2, int k3):int {
+    int idx = _int32(p & 3) ^ e
+    int part1 = _int32(_int32((_int32(z) & 0xFFFFFFFF) >>> 5) ^ _int32(y << 2))
+    int part2 = _int32(_int32((_int32(y) & 0xFFFFFFFF) >>> 3) ^ _int32(z << 4))
+    int part3 = _int32(part1 + part2)
+    int part4 = _int32(sum ^ y)
+    int part5 = _int32(k0 ^ z)
+    if (idx == 1) { part5 = _int32(k1 ^ z) }
+    if (idx == 2) { part5 = _int32(k2 ^ z) }
+    if (idx == 3) { part5 = _int32(k3 ^ z) }
+    int part6 = _int32(part4 + part5)
+    return _int32(part3 ^ part6)
+}
+
+func xxtea_encrypt_block(Array[int] v, int k0, int k1, int k2, int k3):Array[int] {
+    int n = v.len()
+    if (n < 2) { throw "XXTEA: block must have at least 2 words" }
+    int rounds = 6 + 52 / n
+    int sum = 0
+    int z = v[n - 1]
+    for rounds to r {
+        sum = _int32(sum + DELTA)
+        int e = _int32(sum >> 2) & 3
+        int p = 0
+        while (p < n - 1) {
+            int y = v[p + 1]
+            v[p] = _int32(v[p] + mx(z, y, sum, p, e, k0, k1, k2, k3))
+            z = v[p]
+            p += 1
+        }
+        int y = v[0]
+        v[n - 1] = _int32(v[n - 1] + mx(z, y, sum, n - 1, e, k0, k1, k2, k3))
+        z = v[n - 1]
+    }
+    return v
+}
+
+func xxtea_decrypt_block(Array[int] v, int k0, int k1, int k2, int k3):Array[int] {
+    int n = v.len()
+    if (n < 2) { throw "XXTEA: block must have at least 2 words" }
+    int rounds = 6 + 52 / n
+    int sum = 0
+    for rounds to r { sum = _int32(sum + DELTA) }
+    int y = v[0]
+    for rounds to r {
+        int e = _int32(sum >> 2) & 3
+        int p = n - 1
+        while (p > 0) {
+            int z = v[p - 1]
+            v[p] = _int32(v[p] - mx(z, y, sum, p, e, k0, k1, k2, k3))
+            y = v[p]
+            p -= 1
+        }
+        int z = v[n - 1]
+        v[0] = _int32(v[0] - mx(z, y, sum, 0, e, k0, k1, k2, k3))
+        y = v[0]
+        sum = _int32(sum - DELTA)
+    }
+    return v
+}
+
+// ==================== 字节转换工具 ====================
+
+func read_be32(string data, int offset):int {
+    int b0 = data.byte(offset)
+    int b1 = data.byte(offset + 1)
+    int b2 = data.byte(offset + 2)
+    int b3 = data.byte(offset + 3)
+    return _int32((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+}
+
+// 将一个 32 位字写为 4 字节大端字符串
+func word_to_str(int value):string {
+    return strings.char(_uint8(value >> 24), _uint8(value >> 16), _uint8(value >> 8), _uint8(value))
+}
+
+// 将一个 32 位字的部分字节写为字符串
+func word_to_str_partial(int value, int byte_count):string {
+    if (byte_count == 1) { return strings.char(_uint8(value >> 24)) }
+    if (byte_count == 2) { return strings.char(_uint8(value >> 24), _uint8(value >> 16)) }
+    if (byte_count == 3) { return strings.char(_uint8(value >> 24), _uint8(value >> 16), _uint8(value >> 8)) }
+    return ""
+}
+
+// 从字符串读取 n 个 32 位字到数组
+func str_to_words(string data, int n):Array[int] {
+    Array[int] words = []
+    for 0:n - 1 to i {
+        words.add(read_be32(data, i * 4))
+    }
+    return words
+}
+
+// 将字数组写为字符串
+func words_to_str(Array[int] words):string {
+    var result = ""
+    for 0:words.len() - 1 to i {
+        result += word_to_str(words[i])
+    }
+    return result
+}
+
+// ==================== 密钥处理 ====================
+
+func key_to_subkeys(string key):Array[int] {
+    while (key.len() < 16) {
+        key += " "
+    }
+    return [
+        read_be32(key, 0),
+        read_be32(key, 4),
+        read_be32(key, 8),
+        read_be32(key, 12)
+    ]
+}
+
+// ==================== 流式分块加密/解密 ====================
+
+// 块大小：256 个字 = 1024 字节
+int CHUNK_BYTES = 1024
+
+// 加密文件：流式分块读取 -> 分块 XXTEA 加密 -> 流式写入
+func encrypt_file(string src_path, string dst_path, string key) {
+    if not files.exists(src_path) {
+        throw "文件不存在: " + src_path
+    }
+
+    var f_in = files.open(src_path, "rb")
+    int orig_len = f_in.len()
+    f_in.close()
+
+    print("原始文件大小: " + orig_len + " 字节")
+
+    // PKCS7 填充长度
+    int pad_len = 4 - (orig_len % 4)
+    if (pad_len == 0) { pad_len = 4 }
+    int padded_len = orig_len + pad_len
+
+    Array[int] subkeys = key_to_subkeys(key)
+
+    // 写入密文头：4 字节原始大小
+    var f_out = files.open(dst_path, "wb")
+    f_out.write(word_to_str(orig_len))
+
+    // 流式分块处理
+    var f_in2 = files.open(src_path, "rb")
+    int bytes_read = 0
+    int chunk_idx = 0
+
+    while (bytes_read < padded_len) {
+        // 读取一个块
+        int to_read = CHUNK_BYTES
+        if (bytes_read + to_read > padded_len) {
+            to_read = padded_len - bytes_read
+        }
+
+        var chunk_data = f_in2.read(to_read)
+        int chunk_len = chunk_data.len()
+
+        // 如果读取不足一个块（文件末尾），需要 PKCS7 填充
+        if (bytes_read + chunk_len == orig_len and chunk_len < to_read) {
+            // 这是最后一块，需要填充
+            int remaining_data = chunk_len
+            int words_in_chunk = to_read / 4
+            Array[int] block = []
+
+            // 先处理完整的数据字
+            int i = 0
+            while (i + 4 <= remaining_data) {
+                block.add(read_be32(chunk_data, i))
+                i += 4
+            }
+
+            // 处理末尾不足 4 字节的部分 + PKCS7 填充
+            int data_remaining = remaining_data - i
+            if (data_remaining == 0) {
+                // 数据刚好 4 的倍数，添加一个完整填充字
+                block.add(_int32((pad_len << 24) | (pad_len << 16) | (pad_len << 8) | pad_len))
+            } else if (data_remaining == 1) {
+                block.add(_int32((chunk_data.byte(i) << 24) | (pad_len << 16) | (pad_len << 8) | pad_len))
+            } else if (data_remaining == 2) {
+                block.add(_int32((chunk_data.byte(i) << 24) | (chunk_data.byte(i + 1) << 16) | (pad_len << 8) | pad_len))
+            } else if (data_remaining == 3) {
+                block.add(_int32((chunk_data.byte(i) << 24) | (chunk_data.byte(i + 1) << 16) | (chunk_data.byte(i + 2) << 8) | pad_len))
+            }
+
+            // 补充填充字到满块
+            while (block.len() < words_in_chunk) {
+                block.add(_int32((pad_len << 24) | (pad_len << 16) | (pad_len << 8) | pad_len))
+            }
+
+            // XXTEA 加密
+            xxtea_encrypt_block(block, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+            // 写入
+            for 0:block.len() - 1 to i {
+                f_out.write(word_to_str(block[i]))
+            }
+
+            bytes_read = padded_len
+        } else {
+            // 正常块，直接转换
+            int words_in_chunk = chunk_len / 4
+            Array[int] block = str_to_words(chunk_data, words_in_chunk)
+
+            // XXTEA 加密
+            xxtea_encrypt_block(block, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+            // 写入
+            for 0:block.len() - 1 to i {
+                f_out.write(word_to_str(block[i]))
+            }
+
+            bytes_read += chunk_len
+        }
+
+        chunk_idx += 1
+        if (chunk_idx % 2000 == 0) {
+            int progress = bytes_read * 100 / padded_len
+            print("加密进度: " + progress + "%")
+        }
+    }
+
+    f_in2.close()
+    f_out.close()
+    print("加密完成: " + dst_path)
+    print("密文大小: " + (4 + padded_len) + " 字节")
+}
+
+// 解密文件：流式分块读取 -> 分块 XXTEA 解密 -> 流式写入
+func decrypt_file(string src_path, string dst_path, string key) {
+    if not files.exists(src_path) {
+        throw "文件不存在: " + src_path
+    }
+
+    // 先读取头部获取原始大小
+    var f_head = files.open(src_path, "rb")
+    var header = f_head.read(4)
+    int orig_len = read_be32(header, 0)
+    f_head.close()
+
+    print("原始文件大小: " + orig_len + " 字节")
+
+    Array[int] subkeys = key_to_subkeys(key)
+
+    // 流式分块解密
+    var f_in = files.open(src_path, "rb")
+    f_in.read(4)  // 跳过头部
+
+    var f_out = files.open(dst_path, "wb")
+    int bytes_remaining = orig_len
+    int chunk_idx = 0
+
+    while (bytes_remaining > 0) {
+        // 读取一个加密块
+        var chunk_data = f_in.read(CHUNK_BYTES)
+        if (chunk_data.len() == 0) { break }
+
+        int words_in_chunk = chunk_data.len() / 4
+        Array[int] block = str_to_words(chunk_data, words_in_chunk)
+
+        // XXTEA 解密
+        xxtea_decrypt_block(block, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
+
+        // 写入解密后的数据（去除末尾填充）
+        for 0:block.len() - 1 to i {
+            if (bytes_remaining >= 4) {
+                f_out.write(word_to_str(block[i]))
+                bytes_remaining -= 4
+            } else if (bytes_remaining > 0) {
+                f_out.write(word_to_str_partial(block[i], bytes_remaining))
+                bytes_remaining = 0
+            }
+        }
+
+        chunk_idx += 1
+        if (chunk_idx % 2000 == 0) {
+            int progress = (orig_len - bytes_remaining) * 100 / orig_len
+            print("解密进度: " + progress + "%")
+        }
+    }
+
+    f_in.close()
+    f_out.close()
+    print("解密完成: " + dst_path)
+    print("解密大小: " + orig_len + " 字节")
+}
+
+// ==================== 主程序 ====================
+
+main() {
+    var src_file = "d:\\1.zip"
+    var enc_file = "d:\\1.zip.enc"
+    var dec_file = "d:\\1_dec.zip"
+    var key = "MySecretKey12345"
+
+    print("=== XXTEA 文件加密解密测试（流式版）===")
+    print("")
+
+    if not files.exists(src_file) {
+        print("错误: 源文件不存在: " + src_file)
+        return
+    }
+
+    var f_check = files.open(src_file, "rb")
+    int src_size = f_check.len()
+    f_check.close()
+    print("源文件: " + src_file)
+    print("文件大小: " + src_size + " 字节")
+    print("密钥: " + key)
+    print("块大小: " + CHUNK_BYTES + " 字节")
+    print("")
+
+    // 步骤 1：加密
+    print("--- 加密 ---")
+    encrypt_file(src_file, enc_file, key)
+    print("")
+
+    // 步骤 2：解密
+    print("--- 解密 ---")
+    decrypt_file(enc_file, dec_file, key)
+    print("")
+
+    // 步骤 3：验证
+    print("--- 验证 ---")
+    if not files.exists(dec_file) {
+        print("解密文件不存在!")
+        return
+    }
+
+    var f_orig = files.open(src_file, "rb")
+    var orig_data = f_orig.read()
+    f_orig.close()
+
+    var f_dec = files.open(dec_file, "rb")
+    var dec_data = f_dec.read()
+    f_dec.close()
+
+    if (orig_data.len() != dec_data.len()) {
+        print("大小不匹配: 原始=" + orig_data.len() + " 解密=" + dec_data.len())
+        return
+    }
+
+    // 逐字节比较
+    int diff_count = 0
+    for 0:orig_data.len() - 1 to i {
+        if (orig_data.byte(i) != dec_data.byte(i)) {
+            diff_count += 1
+        }
+    }
+
+    if (diff_count == 0) {
+        print("验证通过: 加密解密往返一致，文件完全相同!")
+    } else {
+        print("验证失败: " + diff_count + " 个字节不同")
+    }
+
+    print("")
+    print("=== 测试完成 ===")
+}
