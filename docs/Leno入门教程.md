@@ -20,10 +20,12 @@
 10. [字典](#字典)
 11. [字符串](#字符串)
 12. [模块系统](#模块系统)
-13. [异步编程](#异步编程)
-14. [FFI 外部函数接口](#ffi-外部函数接口)
-15. [高级特性](#高级特性)
-16. [语法速查表](#语法速查表)
+13. [异常处理（try-catch-finally）](#异常处理try-catch-finally)
+14. [线程与并发](#线程与并发)
+15. [异步编程](#异步编程)
+16. [FFI 外部函数接口](#ffi-外部函数接口)
+17. [高级特性](#高级特性)
+18. [语法速查表](#语法速查表)
 
 ***
 
@@ -3316,6 +3318,698 @@ import "myfile.leno" as mymod    // ✅ 正确
 
 ***
 
+## 异常处理（try-catch-finally）
+
+Leno 提供了 `try`-`catch`-`finally` 异常处理机制，与 Java/Python 等语言语义一致。
+
+### 基本用法
+
+```leno
+main() {
+    try {
+        print("try block")
+        throw "error message"     // 抛出异常（可以是任何类型的值）
+    } catch e {
+        print($"caught: {e}")     // e 是捕获到的异常值
+    } finally {
+        print("finally block")    // 无论是否出错都执行
+    }
+}
+```
+
+### try-catch
+
+最基本的异常捕获形式：
+
+```leno
+main() {
+    try {
+        throw "something went wrong"
+    } catch e {
+        print($"捕获异常: {e}")    // 捕获异常: something went wrong
+    }
+}
+```
+
+### try-finally（无 catch）
+
+没有 `catch` 时，`finally` 仍会执行，但异常会继续向外传播：
+
+```leno
+main() {
+    try {
+        throw "unhandled"
+    } finally {
+        print("cleanup")         // 始终执行
+    }
+    // 程序在此处因未捕获异常而终止
+}
+```
+
+> **⚠️ 注意：try-finally 无 catch 时异常不会被吞掉**
+>
+> `finally` 块执行完毕后，异常会继续向上传播。如果外层没有 `catch`，程序将因未捕获异常而终止。
+
+### try-catch-finally
+
+`catch` 和 `finally` 可以同时使用：
+
+```leno
+main() {
+    try {
+        throw "error"
+    } catch e {
+        print($"caught: {e}")     // caught: error
+    } finally {
+        print("cleanup")         // 始终执行
+    }
+}
+```
+
+执行顺序：
+1. `try` 块中抛出异常
+2. `catch` 块捕获并处理异常
+3. `finally` 块始终执行
+
+> **⚠️ 注意：finally 块只会执行一次**
+>
+> ```leno
+> var count = 0
+> try {
+>     throw "error"
+> } catch e {
+>     // 处理异常
+> } finally {
+>     count = count + 1
+> }
+> print(count)   // 1（不是 2）
+> ```
+
+### throw 语句
+
+`throw` 可以抛出任何类型的值：
+
+```leno
+main() {
+    // 抛出字符串
+    throw "字符串错误"
+
+    // 抛出整数
+    throw 404
+
+    // 抛出字典
+    throw {code: 500, msg: "server error"}
+}
+```
+
+### 异常对象属性
+
+当运行时错误（如除零、越界等）被捕获时，`e` 是一个异常对象，包含以下属性：
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `e.msg` | `string` | 错误消息 |
+| `e.file` | `string` | 发生错误的文件路径 |
+| `e.stack` | `string` | 调用栈信息 |
+
+```leno
+main() {
+    try {
+        var a = 1 / 0           // 除零错误
+    } catch e {
+        print(e.msg)            // 除零错误
+        print(e.file)           // 文件路径
+        print(e.stack)          // 调用栈
+    }
+}
+```
+
+> **⚠️ 注意：throw 字符串和运行时错误的 e 不同**
+>
+> - `throw "message"` 抛出的是字符串值，`e` 就是字符串本身，没有 `.msg` 等属性
+> - 运行时错误（除零、越界等）抛出的是异常对象，有 `.msg`、`.file`、`.stack` 属性
+>
+> ```leno
+> // throw 字符串
+> try { throw "error" } catch e { print(e) }        // "error"（字符串）
+>
+> // 运行时错误
+> try { var a = 1/0 } catch e { print(e.msg) }      // "除零错误"（异常对象）
+> ```
+
+### 函数内异常传播
+
+函数内部抛出的异常会自动传播到调用者的 `try-catch`：
+
+```leno
+func divide(int a, int b):int {
+    return a / b               // b=0 时抛出除零异常
+}
+
+main() {
+    try {
+        var result = divide(10, 0)
+    } catch e {
+        print(e.msg)            // 除零错误
+    }
+}
+```
+
+多层函数调用时，异常会逐层传播直到被捕获：
+
+```leno
+func inner() {
+    var a = 1 / 0               // 除零异常
+}
+
+func middle() {
+    inner()                     // 异常传播到 middle
+}
+
+func outer() {
+    middle()                    // 异常传播到 outer
+}
+
+main() {
+    try {
+        outer()                 // 异常传播到 main 的 catch
+    } catch e {
+        print(e.msg)            // 除零错误
+    }
+}
+```
+
+### 嵌套 try-catch
+
+`try-catch` 可以嵌套使用，内层 `catch` 处理不了的异常可以重新 `throw`：
+
+```leno
+main() {
+    try {
+        try {
+            throw "inner error"
+        } catch e {
+            print($"内层捕获: {e}")    // 内层捕获: inner error
+            throw "rethrown"          // 重新抛出
+        }
+    } catch e {
+        print($"外层捕获: {e}")        // 外层捕获: rethrown
+    }
+}
+```
+
+> **⚠️ 注意：catch 块中 throw 后 finally 仍会执行**
+>
+> ```leno
+> var finally_ran = false
+> try {
+>     try {
+>         throw "first"
+>     } catch e {
+>         throw "second"         // catch 中重新 throw
+>     } finally {
+>         finally_ran = true     // ✅ 仍然执行
+>     }
+> } catch e {
+>     print(e)                    // second
+> }
+> print(finally_ran)              // true
+> ```
+>
+> 执行顺序：try → catch（throw）→ finally → 外层 catch
+
+### 常见运行时异常
+
+以下操作会自动抛出异常，可以被 `try-catch` 捕获：
+
+| 异常场景 | 错误消息示例 |
+|---------|-----------|
+| 整数除零 | `除零错误` |
+| 浮点除零 | `除零错误` |
+| 取模零 | `除零错误` |
+| 数组越界 | `数组索引越界` |
+| 字符串越界 | `字符串索引越界` |
+| 字典键不存在 | `键 'xxx' 不存在` |
+| null 值操作 | `null 不能参与算术运算` |
+| 类型错误 | `类型错误` |
+
+```leno
+main() {
+    // 数组越界
+    try {
+        var arr = [1, 2, 3]
+        var v = arr[100]
+    } catch e {
+        print(e.msg)            // 数组索引越界
+    }
+
+    // 字符串越界
+    try {
+        var s = "hello"
+        var c = s[100]
+    } catch e {
+        print(e.msg)            // 字符串索引越界
+    }
+}
+```
+
+### 异常处理最佳实践
+
+1. **只捕获你能处理的异常**：不要用空的 `catch e {}` 吞掉所有异常
+2. **finally 用于资源清理**：关闭文件、通道等资源放在 `finally` 中
+3. **避免在 finally 中 throw**：`finally` 块中抛出异常会覆盖原始异常
+4. **利用异常对象属性调试**：`e.msg`、`e.file`、`e.stack` 提供完整的错误上下文
+
+```leno
+// ✅ 推荐：finally 用于清理
+import threads
+
+main() {
+    var ch = threads.channel(10)
+    try {
+        ch.send("data")
+        // ... 业务逻辑
+    } catch e {
+        print($"错误: {e.msg}")
+    } finally {
+        ch.close()              // 确保通道关闭
+    }
+}
+```
+
+***
+
+## 线程与并发
+
+Leno 通过 `threads` 模块提供线程和通道（Channel）支持，实现并发编程。
+
+### 导入模块
+
+```leno
+import threads
+```
+
+### 创建线程
+
+使用 `threads.start()` 创建新线程，返回线程对象：
+
+```leno
+import threads
+
+main() {
+    var t = threads.start(func(){
+        print("子线程运行")
+    })
+    t.join()                    // 等待子线程结束
+    print("主线程继续")
+}
+```
+
+### 线程传参
+
+`threads.start()` 的第二个参数开始传递给线程函数的参数：
+
+```leno
+import threads
+
+main() {
+    var t = threads.start(func(var name, var age){
+        print($"name={name}, age={age}")
+    }, "Leno", 3)
+    t.join()
+}
+```
+
+### 等待线程结束（join）
+
+`join()` 阻塞当前线程，等待目标线程执行完毕：
+
+```leno
+import threads
+
+main() {
+    var t = threads.start(func(){
+        threads.sleep(100)
+        return 42
+    })
+    var result = t.join()       // result = 42
+    print(result)               // 42
+}
+```
+
+### 线程状态
+
+`state()` 返回线程当前状态：
+
+| 状态 | 说明 |
+|------|------|
+| `"running"` | 线程正在执行 |
+| `"done"` | 线程正常结束 |
+| `"error"` | 线程因异常终止 |
+
+```leno
+import threads
+
+main() {
+    var t = threads.start(func(){
+        return 1
+    })
+    t.join()
+    print(t.state())            // "done"
+}
+```
+
+### 线程异常传播
+
+**子线程中未捕获的异常会通过 `join()` 传播到主线程**：
+
+```leno
+import threads
+
+main() {
+    var t = threads.start(func(){
+        throw "子线程出错"
+    })
+
+    try {
+        t.join()                // join() 会将子线程异常传播到此处
+    } catch e {
+        print($"捕获子线程异常: {e}")   // 捕获子线程异常: 子线程出错
+    }
+}
+```
+
+> **⚠️ 注意：子线程异常必须通过 join() 获取**
+>
+> - 子线程中的异常不会自动传播到主线程，必须调用 `join()` 时才会触发
+> - 如果不调用 `join()`，子线程异常会被静默忽略
+> - `join()` 传播异常后，线程状态变为 `"error"`
+
+```leno
+import threads
+
+main() {
+    var t = threads.start(func(){
+        throw "子线程出错"
+    })
+    threads.sleep(100)
+    print(t.state())            // "error"
+
+    try {
+        t.join()                // 传播异常
+    } catch e {
+        print(e)                // 子线程出错
+    }
+}
+```
+
+### 子线程运行时异常传播
+
+子线程中的运行时错误（除零、越界等）同样会通过 `join()` 传播：
+
+```leno
+import threads
+
+main() {
+    var t = threads.start(func(){
+        var a = 1 / 0           // 除零错误
+    })
+
+    try {
+        t.join()
+    } catch e {
+        print(e.msg)            // 除零错误
+        print(e.stack)          // 子线程调用栈
+    }
+}
+```
+
+### 通道（Channel）
+
+通道是线程间通信的核心机制，遵循 Go 语言的 CSP 模型。
+
+#### 创建通道
+
+```leno
+import threads
+
+main() {
+    // 有缓冲通道（缓冲区大小为 10）
+    var ch = threads.channel(10)
+
+    // 无缓冲通道（同步通道，缓冲区大小为 0）
+    var sync_ch = threads.channel(0)
+}
+```
+
+#### 发送和接收
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(10)
+
+    // 发送数据
+    ch.send("hello")
+    ch.send(42)
+    ch.send(3.14)
+
+    // 接收数据
+    print(ch.receive())         // hello
+    print(ch.receive())         // 42
+    print(ch.receive())         // 3.14
+
+    ch.close()
+}
+```
+
+#### 通道在线程间通信
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(10)
+
+    // 子线程发送数据
+    var t = threads.start(func(var ch){
+        ch.send("from child")
+        ch.close()
+    }, ch)
+
+    // 主线程接收数据
+    print(ch.receive())         // from child
+    t.join()
+}
+```
+
+#### 无缓冲通道
+
+无缓冲通道（`channel(0)`）是同步通道：发送方必须等待接收方就绪，反之亦然：
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(0)
+
+    // 子线程发送（会阻塞直到主线程接收）
+    var t = threads.start(func(var ch){
+        ch.send(42)
+    }, ch)
+
+    // 主线程接收（会阻塞直到子线程发送）
+    var value = _int(ch.receive())
+    print(value)                // 42
+    t.join()
+}
+```
+
+#### 非阻塞接收（try_receive）
+
+`try_receive()` 从通道中尝试接收数据，如果通道为空则立即返回 `null`：
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(10)
+    ch.send("data")
+
+    var msg = ch.try_receive()  // "data"
+    var empty = ch.try_receive() // null（通道已空）
+    ch.close()
+}
+```
+
+#### 通道长度
+
+`len()` 返回通道缓冲区中的消息数量：
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(10)
+    ch.send("a")
+    ch.send("b")
+    print(ch.len())             // 2
+    ch.close()
+}
+```
+
+#### 关闭通道
+
+`close()` 关闭通道，关闭后不能再 `send()`：
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(10)
+    ch.send("data")
+    ch.close()
+
+    // 向已关闭的通道发送会抛出异常
+    try {
+        ch.send("should fail")
+    } catch e {
+        print("通道已关闭")      // 通道已关闭
+    }
+}
+```
+
+> **⚠️ 注意：关闭通道后仍可接收剩余数据**
+>
+> ```leno
+> var ch = threads.channel(10)
+> ch.send("a")
+> ch.send("b")
+> ch.close()
+> print(ch.receive())          // "a"（仍可接收缓冲区中的数据）
+> print(ch.receive())          // "b"
+> // ch.receive()              // 通道为空且已关闭，返回 null
+> ```
+
+### 通道传递 null 值
+
+通道可以传递 `null` 值，但需要注意区分"通道返回 null 是因为值为 null 还是因为通道为空"：
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(10)
+    ch.send(null)               // 发送 null 值
+    ch.send("real_value")
+
+    var m1 = ch.receive()       // null（这是发送的 null 值）
+    var m2 = ch.receive()       // "real_value"
+    ch.close()
+}
+```
+
+> **⚠️ 注意：区分 null 值和空通道**
+>
+> - `receive()` 在通道为空且已关闭时返回 `null`
+> - 如果业务需要传递 `null`，建议用字典包装：`ch.send({value: null})`
+> - 或者使用 `try_receive()` + `len()` 判断通道状态
+
+### 全局变量隔离
+
+**每个线程拥有独立的全局变量副本**，子线程修改全局变量不影响主线程：
+
+```leno
+import threads
+
+var counter = 100
+
+main() {
+    var t = threads.start(func(){
+        counter = 999           // 修改子线程的全局变量副本
+        print($"子线程: {counter}")  // 子线程: 999
+    })
+    t.join()
+    print($"主线程: {counter}")     // 主线程: 100（不受影响）
+}
+```
+
+> **⚠️ 注意：线程间共享数据请使用通道**
+>
+> 全局变量是线程隔离的，不能通过全局变量在线程间传递数据。使用通道（Channel）进行线程间通信。
+
+### 线程休眠
+
+`threads.sleep(ms)` 让当前线程休眠指定毫秒数：
+
+```leno
+import threads
+
+main() {
+    print("开始")
+    threads.sleep(1000)         // 休眠 1 秒
+    print("1 秒后")
+}
+```
+
+### 多线程并发写通道
+
+多个线程可以同时向同一个通道发送数据：
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(100)
+
+    var t1 = threads.start(func(var ch){
+        for 10 to var i { ch.send("A" + i) }
+    }, ch)
+
+    var t2 = threads.start(func(var ch){
+        for 10 to var i { ch.send("B" + i) }
+    }, ch)
+
+    t1.join()
+    t2.join()
+
+    // 通道中有 20 条消息
+    print(ch.len())             // 20
+    ch.close()
+}
+```
+
+### 线程与异常处理注意事项
+
+1. **子线程异常不会自动传播**：必须通过 `join()` 获取
+2. **join() 传播异常后线程状态为 `"error"`**
+3. **子线程中未捕获的运行时异常**（除零、越界等）也会通过 `join()` 传播
+4. **通道操作可能抛异常**：向已关闭通道 `send()` 会抛异常，用 `try-catch` 处理
+5. **全局变量线程隔离**：不要依赖全局变量在线程间共享状态
+
+```leno
+import threads
+
+main() {
+    // 完整的线程异常处理模式
+    var t = threads.start(func(){
+        // 子线程业务逻辑
+        var a = 1 / 0
+    })
+
+    try {
+        t.join()
+    } catch e {
+        // 处理子线程异常
+        print($"线程异常: {e.msg}")
+        print($"线程状态: {t.state()}")   // error
+    }
+}
+```
+
+***
+
 ## 异步编程
 
 Leno 支持 `async`/`await` 语法进行异步编程，配合 `asyncs` 模块实现非阻塞操作。
@@ -3617,29 +4311,6 @@ main() {
 }
 ```
 
-### 错误处理
-
-```leno
-main() {
-    try {
-        print("try block")
-        throw "error message"     // 抛出错误（可以是任何类型的值）
-    } catch e {
-        print($"caught: {e}")     // e 是捕获到的错误值
-    } finally {
-        print("finally block")    // 无论是否出错都执行
-    }
-}
-```
-
-> **⚠️ 注意：`throw`** **可以抛出任何类型的值**
->
-> ```leno
-> throw "字符串错误"
-> throw 404
-> throw {code: 500, msg: "server error"}
-> ```
-
 ***
 
 ## 运行程序
@@ -3794,11 +4465,33 @@ lenolang program.leno
 
 ### 异常处理
 
-| 功能        | 语法                                |
-| --------- | --------------------------------- |
-| try-catch | `try { } catch e { }`             |
-| finally   | `try { } catch e { } finally { }` |
-| 抛出错误      | `throw "error"`                   |
+| 功能 | 语法 |
+|------|------|
+| try-catch | `try { } catch e { }` |
+| try-finally | `try { } finally { }` |
+| try-catch-finally | `try { } catch e { } finally { }` |
+| 抛出异常 | `throw "error"` |
+| 异常对象属性 | `e.msg`, `e.file`, `e.stack` |
+| 嵌套 try-catch | 内层 catch 中 `throw` 重新抛出 |
+
+### 线程与并发
+
+| 功能 | 语法 |
+|------|------|
+| 导入线程模块 | `import threads` |
+| 创建线程 | `threads.start(func(){ })` |
+| 线程传参 | `threads.start(func(var x){ }, x)` |
+| 等待线程 | `t.join()` |
+| 线程状态 | `t.state()` → `"running"` / `"done"` / `"error"` |
+| 线程休眠 | `threads.sleep(ms)` |
+| 创建通道 | `threads.channel(10)` |
+| 无缓冲通道 | `threads.channel(0)` |
+| 发送数据 | `ch.send(value)` |
+| 接收数据 | `ch.receive()` |
+| 非阻塞接收 | `ch.try_receive()` |
+| 通道长度 | `ch.len()` |
+| 关闭通道 | `ch.close()` |
+| 线程异常传播 | `join()` 传播子线程异常到主线程 |
 
 ### 其他
 
