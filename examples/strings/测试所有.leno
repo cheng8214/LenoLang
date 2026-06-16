@@ -32,12 +32,12 @@ main() {
     print(strings.char(72, 101, 108, 108, 111))  // 预期: Hello
     print(strings.char(65, 66, 67))      // 预期: ABC
     
-    // 测试 find - 查找子串位置
+    // 测试 find - 查找子串位置（0-indexed，未找到返回 -1）
     print("\n=== 测试 find 查找子串 ===")
     var text = "Hello, World! Hello!"
-    print(strings.find(text, "Hello"))      // 预期: 1
-    print(strings.find(text, "World"))      // 预期: 8
-    print(strings.find(text, "Hello", 2))   // 预期: 15 (从位置2开始找)
-    print(strings.find(text, "xyz"))        // 预期: null (未找到)
+    print(strings.find(text, "Hello"))      // 预期: 0
+    print(strings.find(text, "World"))      // 预期: 7
+    print(strings.find(text, "Hello", 1))   // 预期: 14 (从位置1开始找)
+    print(strings.find(text, "xyz"))        // 预期: -1 (未找到)
     print(strings.find(text, "", 5))        // 预期: 5 (空模式)
 }

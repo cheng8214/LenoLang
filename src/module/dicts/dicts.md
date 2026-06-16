@@ -253,6 +253,31 @@ for values to value {
 
 ---
 
+### `clear()`
+
+清空字典中的所有键值对。
+
+**参数**: 无  
+**返回**: `null`
+
+```leno
+var dict = {"a": 1, "b": 2, "c": 3}
+dict.clear()
+print(dict.len())  // 0
+print(dict)        // {}
+```
+
+**注意**: `clear()` 会移除所有键值对，但不会释放字典对象本身。清空后可以继续添加新的键值对。
+
+```leno
+var dict = {"x": 10}
+dict.clear()
+dict.set("y", 20)
+print(dict)  // {y: 20}
+```
+
+---
+
 ### 遍历键值对
 
 使用 `keys()` 和 `get()` 配合遍历：
@@ -285,6 +310,7 @@ for dict.keys() to key {
 | `dict.remove(key)` | `dicts.remove(dict, key)` | 删除键值对 |
 | `dict.keys()` | `dicts.keys(dict)` | 获取所有键 |
 | `dict.values()` | `dicts.values(dict)` | 获取所有值 |
+| `dict.clear()` | `dicts.clear(dict)` | 清空所有键值对 |
 
 ### 选择建议
 

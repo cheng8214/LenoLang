@@ -1,0 +1,45 @@
+main()
+{
+    // 测试1: 两个独立 try 块中同名变量
+    try {
+        var s = "hello"
+        print(s)
+    } catch e {
+        print(e)
+    }
+
+    try {
+        var s = "world"
+        print(s)
+    } catch e {
+        print(e)
+    }
+
+    // 测试2: try 块内变量不能在外部访问
+    try {
+        var inner_var = 42
+    } catch e {
+        print(e)
+    }
+    // inner_var 在这里不可访问（作用域已结束）
+
+    // 测试3: catch 块内变量不能在外部访问
+    try {
+        throw "test"
+    } catch e {
+        var catch_var = 100
+        print(catch_var)
+    }
+    // catch_var 在这里不可访问
+
+    // 测试4: finally 块内变量不能在外部访问
+    try {
+        print("try")
+    } finally {
+        var fin_var = "finally"
+        print(fin_var)
+    }
+    // fin_var 在这里不可访问
+
+    print("all scope tests passed")
+}

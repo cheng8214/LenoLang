@@ -3131,12 +3131,20 @@ void visit(Semantic* s, Ast* ast) {
             break;
 
         case AST_TRY: {
-            // 访问 try 体
-            visit(s, ast->u.try_.try_body);
+            // 访问 try 体（创建独立子作用域）
+            {
+                Scope* try_scope = scope_new(s->current, 0);
+                s->current = try_scope;
+                visit(s, ast->u.try_.try_body);
+                s->current = try_scope->parent;
+                if (!s->is_lsp_mode) {
+                    scope_detach_child(s->current, try_scope);
+                    scope_free(try_scope);
+                }
+            }
             
-            // 访问 catch 体（如果有）
+            // 访问 catch 体（如果有，创建独立子作用域）
             if (ast->u.try_.catch_body) {
-                // 创建新的作用域用于 catch 变量
                 Scope* catch_scope = scope_new(s->current, 0);
                 s->current = catch_scope;
                 
@@ -3157,11 +3165,22 @@ void visit(Semantic* s, Ast* ast) {
                 
                 visit(s, ast->u.try_.catch_body);
                 s->current = catch_scope->parent;
+                if (!s->is_lsp_mode) {
+                    scope_detach_child(s->current, catch_scope);
+                    scope_free(catch_scope);
+                }
             }
             
-            // 访问 finally 体（如果有）
+            // 访问 finally 体（如果有，创建独立子作用域）
             if (ast->u.try_.finally_body) {
+                Scope* finally_scope = scope_new(s->current, 0);
+                s->current = finally_scope;
                 visit(s, ast->u.try_.finally_body);
+                s->current = finally_scope->parent;
+                if (!s->is_lsp_mode) {
+                    scope_detach_child(s->current, finally_scope);
+                    scope_free(finally_scope);
+                }
             }
             break;
         }

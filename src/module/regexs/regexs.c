@@ -427,10 +427,10 @@ static Value regex_find(int argc, Value* args) {
     re_free_all();
     
     if (start) {
-        // 返回 1-based 位置
-        return val_int((int)(start - str->chars + 1));
+        // 返回 0-based 位置
+        return val_int((int)(start - str->chars));
     }
-    return val_null();
+    return val_int(-1);
 }
 
 // 3. 查找所有匹配位置
@@ -469,13 +469,13 @@ static Value regex_find_all(int argc, Value* args) {
         ObjDict* match_info = dict_new(4);
         if (!match_info) break;
         
-        // 起始位置（1-based）
+        // 起始位置（0-based）
         ObjString* key_start = str_copy("start", 5);
-        dict_set(match_info, val_obj((Object*)key_start), val_int((int)(start - str->chars + 1)));
+        dict_set(match_info, val_obj((Object*)key_start), val_int((int)(start - str->chars)));
         
-        // 结束位置（1-based，不包含）
+        // 结束位置（0-based，不包含）
         ObjString* key_end = str_copy("end", 3);
-        dict_set(match_info, val_obj((Object*)key_end), val_int((int)(end - str->chars + 1)));
+        dict_set(match_info, val_obj((Object*)key_end), val_int((int)(end - str->chars)));
         
         // 匹配内容
         int match_len = (int)(end - start);

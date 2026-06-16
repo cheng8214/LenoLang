@@ -24,15 +24,15 @@ main() {
     // ========== 测试 find ==========
     print("\n--- 测试 find ---")
 
-    // 基本查找
-    assert_eq(regexs.find("Hello, World!", "World"), 8)
-    assert_eq(regexs.find("abc123def", "[0-9]+"), 4)
+    // 基本查找（0-indexed，未找到返回 -1）
+    assert_eq(regexs.find("Hello, World!", "World"), 7)
+    assert_eq(regexs.find("abc123def", "[0-9]+"), 3)
 
     // 未找到
-    assert_eq(regexs.find("Hello", "xyz"), null)
+    assert_eq(regexs.find("Hello", "xyz"), -1)
 
     // 查找开头
-    assert_eq(regexs.find("Hello", "^Hello"), 1)
+    assert_eq(regexs.find("Hello", "^Hello"), 0)
 
     print("find 测试通过!")
 
@@ -42,8 +42,8 @@ main() {
     var matches = regexs.find_all("abc123def456", "[0-9]+")
     assert_eq(matches.len(), 2)
     assert_eq(matches[0]["text"], "123")
-    assert_eq(matches[0]["start"], 4)
-    assert_eq(matches[0]["end"], 7)
+    assert_eq(matches[0]["start"], 3)
+    assert_eq(matches[0]["end"], 6)
     assert_eq(matches[1]["text"], "456")
 
     // 无匹配

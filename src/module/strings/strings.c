@@ -389,8 +389,8 @@ static Value str_find(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern = (ObjString*)val_as_obj(args[1]);
     
-    // 起始位置（可选，默认为1）
-    int start = 1;
+    // 起始位置（可选，默认为0，0-indexed）
+    int start = 0;
     if (argc >= 3) {
         start = val_as_int(args[2]);
     }
@@ -403,13 +403,11 @@ static Value str_find(int argc, Value* args) {
     
     // 处理负数起始位置
     int len = str->len;
-    if (start < 0) start = len + start + 1;
-    if (start < 1) start = 1;
+    if (start < 0) start = len + start;
+    if (start < 0) start = 0;
     
-    // 转换为0-based索引
-    int pos = start - 1;
-    if (pos >= len) {
-        return val_null();
+    if (start > len) {
+        return val_int(-1);
     }
     
     if (pattern->len == 0) {
@@ -419,34 +417,34 @@ static Value str_find(int argc, Value* args) {
     
     if (plain) {
         // 纯文本查找（不使用模式匹配）
-        const char* found = strstr(str->chars + pos, pattern->chars);
+        const char* found = strstr(str->chars + start, pattern->chars);
         if (found) {
-            return val_int((int)(found - str->chars) + 1);
+            return val_int((int)(found - str->chars));
         }
     } else {
         // 简单模式匹配（支持 ^ 开头和 $ 结尾）
         if (pattern->len == 2 && pattern->chars[0] == '^') {
             // 匹配开头
             char target = pattern->chars[1];
-            if (pos < len && str->chars[pos] == target) {
-                return val_int(pos + 1);
+            if (start < len && str->chars[start] == target) {
+                return val_int(start);
             }
         } else if (pattern->len == 2 && pattern->chars[1] == '$') {
             // 匹配结尾
             char target = pattern->chars[0];
             if (len > 0 && str->chars[len - 1] == target) {
-                return val_int(len);
+                return val_int(len - 1);
             }
         } else {
             // 普通子串查找
-            const char* found = strstr(str->chars + pos, pattern->chars);
+            const char* found = strstr(str->chars + start, pattern->chars);
             if (found) {
-                return val_int((int)(found - str->chars) + 1);
+                return val_int((int)(found - str->chars));
             }
         }
     }
     
-    return val_null();  // 未找到
+    return val_int(-1);  // 未找到返回 -1
 }
 
 // 11. 新增：字符串格式化

@@ -209,16 +209,16 @@ strings.len("abc")   // 返回 3
 **参数**:
 
 - `pattern` (string): 要查找的子串
-- `start` (int, 可选): 开始查找的位置（1-based，默认为1）
+- `start` (int, 可选): 开始查找的位置（0-based，默认为0）
 - `plain` (bool, 可选): 是否使用纯文本匹配（默认为false）
 
-**返回**: `int | null` - 找到的位置（1-based），未找到返回 null
+**返回**: `int` - 找到的位置（0-based），未找到返回 -1
 
 ```leno
-"Hello, World! Hello!".find("Hello")        // 1
-"Hello, World! Hello!".find("World")        // 8
-"Hello, World! Hello!".find("Hello", 2)     // 15 (从位置2开始找)
-"Hello, World! Hello!".find("xyz")          // null
+"Hello, World! Hello!".find("Hello")        // 0
+"Hello, World! Hello!".find("World")        // 7
+"Hello, World! Hello!".find("Hello", 1)     // 14 (从位置1开始找)
+"Hello, World! Hello!".find("xyz")          // -1
 ```
 
 ---
@@ -544,21 +544,16 @@ strings.char(65, 66, 67)                   // "ABC"
 
 ## 索引说明
 
-LenoC 字符串操作中的索引分为两种：
-
-### 1-based 索引
-
-以下方法使用 1-based 索引（与 Lua 保持一致）：
-
-- `find()` - 返回的位置是 1-based
-- `byte()` - pos 参数是 1-based
+LenoC 字符串操作统一使用 **0-based 索引**，与大多数编程语言保持一致。
 
 ### 0-based 索引
 
-以下方法使用 0-based 索引（与大多数编程语言一致）：
+以下方法使用 0-based 索引：
 
+- `find()` - 返回的位置和 start 参数都是 0-based
 - `slice()` - start 和 end 参数
 - `sub_str()` - start 参数
+- `byte()` - pos 参数
 
 ### 负数索引
 
@@ -614,9 +609,9 @@ main() {
     
     // 查找和提取
     var pos = text.find("Leno")
-    if (pos != null) {
+    if (pos != -1) {
         print("找到位置: " + pos)
-        var extracted = text.slice(pos-1, pos+4)  // 注意索引转换
+        var extracted = text.slice(pos, pos + 4)
         print("提取内容: " + extracted)
     }
     

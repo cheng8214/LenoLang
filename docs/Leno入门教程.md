@@ -3052,11 +3052,11 @@ main() {
     // 从 ASCII 码创建字符串
     print(strings.char(72, 101, 108, 108, 111))  // Hello
     
-    // 查找子串位置
+    // 查找子串位置（0-indexed，未找到返回 -1）
     var text = "Hello, World! Hello!"
-    print(strings.find(text, "Hello"))      // 1
-    print(strings.find(text, "Hello", 2))   // 15 (从位置2开始找)
-    print(strings.find(text, "xyz"))        // null (未找到)
+    print(strings.find(text, "Hello"))      // 0
+    print(strings.find(text, "Hello", 1))   // 14 (从位置1开始找)
+    print(strings.find(text, "xyz"))        // -1 (未找到)
 }
 ```
 

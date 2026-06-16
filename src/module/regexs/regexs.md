@@ -63,12 +63,12 @@ regexs.match("Hello123", "^[a-z]+$")      // false (大写H不匹配)
 - `str` (string): 要查找的字符串
 - `pattern` (string): 正则表达式模式
 
-**返回**: `int | null` - 匹配的起始位置（1-based），未找到返回 null
+**返回**: `int` - 匹配的起始位置（0-based），未找到返回 -1
 
 ```leno
-regexs.find("Hello, World!", "World")     // 8
-regexs.find("Hello, World!", "xyz")       // null
-regexs.find("abc123def", "[0-9]+")        // 4
+regexs.find("Hello, World!", "World")     // 7
+regexs.find("Hello, World!", "xyz")       // -1
+regexs.find("abc123def", "[0-9]+")        // 3
 ```
 
 #### `find_all(str, pattern)`
@@ -84,8 +84,8 @@ regexs.find("abc123def", "[0-9]+")        // 4
 ```leno
 var matches = regexs.find_all("abc123def456", "[0-9]+")
 // [
-//   {start: 4, end: 7, text: "123"},
-//   {start: 10, end: 13, text: "456"}
+//   {start: 3, end: 6, text: "123"},
+//   {start: 9, end: 12, text: "456"}
 // ]
 ```
 
