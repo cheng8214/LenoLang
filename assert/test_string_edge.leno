@@ -93,7 +93,7 @@ main()
 
     // 测试14: 字符串方法 - replace
     assert_eq("hello".replace("l", "r"), "herro")
-    assert_eq("hello".replace("", "-"), "hello")   // 空字符串替换不做任何操作
+    assert_eq("hello".replace("", "-"), "-h-e-l-l-o-")   // 空字符串替换：在每个字符间插入
     assert_eq("hello".replace("z", "x"), "hello")
     assert_eq("aaa".replace("a", "bb"), "bbbbbb")
 

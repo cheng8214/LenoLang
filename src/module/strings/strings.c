@@ -174,8 +174,29 @@ static Value str_replace(int argc, Value* args) {
     ObjString* new_str = (ObjString*)val_as_obj(args[2]);
     
     if (old_str->len == 0) {
-        // 如果 old_str 为空，直接返回原字符串
-        return val_obj((Object*)str);
+        // 空字符串替换：在每个字符之间插入 new_str
+        // "hello".replace("", "-") → "-h-e-l-l-o-"
+        if (str->len == 0) {
+            return val_obj((Object*)new_str);
+        }
+        int new_len = str->len + (str->len + 1) * new_str->len;
+        char* result = (char*)malloc(new_len + 1);
+        if (!result) {
+            native_throw_error("内存分配失败");
+            return val_null();
+        }
+        char* p = result;
+        memcpy(p, new_str->chars, new_str->len);
+        p += new_str->len;
+        for (int i = 0; i < str->len; i++) {
+            *p++ = str->chars[i];
+            memcpy(p, new_str->chars, new_str->len);
+            p += new_str->len;
+        }
+        *p = '\0';
+        ObjString* res = str_copy(result, new_len);
+        free(result);
+        return val_obj((Object*)res);
     }
     
     // 计算替换后的长度
