@@ -268,7 +268,7 @@ func hex_nibble(int b):int {
 func hex_to_bytes(string hex):Array[int] {
     var result = []
     int i = 0
-    while (i + 1 < hex.len()) {
+    while (i + 1 < hex.byte_len()) {
         int hi = hex_nibble(hex.byte(i))
         int lo = hex_nibble(hex.byte(i + 1))
         result.add((hi << 4) | lo)
@@ -287,7 +287,7 @@ func bytes_to_hex(Array[int] bytes):string {
 
 // PKCS7 填充
 func pkcs7_pad(string data, int block_size):string {
-    int pad_len = block_size - (data.len() % block_size)
+    int pad_len = block_size - (data.byte_len() % block_size)
     var result = data
     for 0:pad_len - 1 to i {
         result += strings.char(pad_len)
@@ -296,21 +296,21 @@ func pkcs7_pad(string data, int block_size):string {
 }
 
 func pkcs7_unpad(string data):string {
-    if (data.len() == 0) { return data }
-    int pad_len = data.byte(data.len() - 1)
-    if (pad_len > data.len() or pad_len == 0) { return data }
+    if (data.byte_len() == 0) { return data }
+    int pad_len = data.byte(data.byte_len() - 1)
+    if (pad_len > data.byte_len() or pad_len == 0) { return data }
     // 验证填充
     for 0:pad_len - 1 to i {
-        if (data.byte(data.len() - 1 - i) != pad_len) { return data }
+        if (data.byte(data.byte_len() - 1 - i) != pad_len) { return data }
     }
-    return data.slice(0, data.len() - pad_len)
+    return data.byte_slice(0, data.byte_len() - pad_len)
 }
 
 // 字符串转字节块（16 字节）
 func str_to_block(string s, int offset):Array[int] {
     var block = []
     for 0:15 to i {
-        if (offset + i < s.len()) {
+        if (offset + i < s.byte_len()) {
             block.add(s.byte(offset + i))
         } else {
             block.add(0)
@@ -341,7 +341,7 @@ func aes128_encrypt(string key, string plaintext):string {
 
     var result = ""
     int i = 0
-    while (i < padded.len()) {
+    while (i < padded.byte_len()) {
         Array[int] block = str_to_block(padded, i)
         Array[int] encrypted = aes_encrypt_block(block, key_bytes)
         result += bytes_to_hex(encrypted)
@@ -414,8 +414,8 @@ main() {
     var long_pt = "This is a longer message for AES-128 encryption test, more than one block!"
     var long_ct = aes128_encrypt(aes_key, long_pt)
     var long_dec = aes128_decrypt(aes_key, long_ct)
-    print("明文长度: " + _str(long_pt.len()))
-    print("密文长度: " + _str(long_ct.len()))
+    print("明文长度: " + _str(long_pt.byte_len()))
+    print("密文长度: " + _str(long_ct.byte_len()))
     print("往返: " + if long_dec == long_pt then "OK" else "FAIL")
     print("")
 

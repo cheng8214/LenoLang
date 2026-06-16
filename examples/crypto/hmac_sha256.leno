@@ -108,7 +108,7 @@ func sha256_bytes(Array[int] msg):Array[int] {
 // SHA-256 字符串接口
 func sha256(string input):string {
     var msg = []
-    for input.len() to i { msg.add(input.byte(i)) }
+    for input.byte_len() to i { msg.add(input.byte(i)) }
     var hash = sha256_bytes(msg)
     var digest = ""
     for hash.len() to i { digest += byte_to_hex(hash[i]) }
@@ -120,7 +120,7 @@ func sha256(string input):string {
 // 字符串转字节数组
 func str_to_bytes(string s):Array[int] {
     var result = []
-    for s.len() to i { result.add(s.byte(i)) }
+    for s.byte_len() to i { result.add(s.byte(i)) }
     return result
 }
 

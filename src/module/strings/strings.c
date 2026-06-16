@@ -22,6 +22,12 @@ extern uint32_t hash_string(const char* key, int length);
 static Value str_len(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
+    return val_int(str->char_len);
+}
+
+static Value str_byte_len(int argc, Value* args) {
+    (void)argc;
+    ObjString* str = (ObjString*)val_as_obj(args[0]);
     return val_int(str->len);
 }
 
@@ -39,6 +45,7 @@ static Value str_to_upper(int argc, Value* args) {
         result->chars[i] = (char)toupper((unsigned char)str->chars[i]);
     }
     result->chars[len] = '\0';
+    result->char_len = str->char_len;
     result->hash = hash_string(result->chars, len);
     
     return val_obj((Object*)result);
@@ -56,6 +63,7 @@ static Value str_to_lower(int argc, Value* args) {
         result->chars[i] = (char)tolower((unsigned char)str->chars[i]);
     }
     result->chars[len] = '\0';
+    result->char_len = str->char_len;
     result->hash = hash_string(result->chars, len);
     
     return val_obj((Object*)result);
@@ -175,26 +183,32 @@ static Value str_replace(int argc, Value* args) {
     
     if (old_str->len == 0) {
         // 空字符串替换：在每个字符之间插入 new_str
-        // "hello".replace("", "-") → "-h-e-l-l-o-"
+        // "你好".replace("", "-") → "-你-好-"
         if (str->len == 0) {
             return val_obj((Object*)new_str);
         }
-        int new_len = str->len + (str->len + 1) * new_str->len;
+        int char_len = str->char_len;
+        int new_len = str->len + (char_len + 1) * new_str->len;
         char* result = (char*)malloc(new_len + 1);
         if (!result) {
             native_throw_error("内存分配失败");
             return val_null();
         }
         char* p = result;
+        // 前缀
         memcpy(p, new_str->chars, new_str->len);
         p += new_str->len;
-        for (int i = 0; i < str->len; i++) {
-            *p++ = str->chars[i];
+        // 按字符遍历
+        for (int i = 0; i < char_len; i++) {
+            int byte_offset = utf8_char_offset(str->chars, str->len, i);
+            int char_bytes = utf8_char_byte_len(str->chars, str->len, byte_offset);
+            memcpy(p, str->chars + byte_offset, char_bytes);
+            p += char_bytes;
             memcpy(p, new_str->chars, new_str->len);
             p += new_str->len;
         }
         *p = '\0';
-        ObjString* res = str_copy(result, new_len);
+        ObjString* res = str_copy(result, (int)(p - result));
         free(result);
         return val_obj((Object*)res);
     }
@@ -250,26 +264,29 @@ static Value str_replace(int argc, Value* args) {
 static Value str_slice(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
-    int len = str->len;
+    int char_len = str->char_len;
     
     int start = val_as_int(args[1]);
     int end = val_as_int(args[2]);
     
     // 处理负数索引
-    if (start < 0) start = len + start;
-    if (end < 0) end = len + end;
+    if (start < 0) start = char_len + start;
+    if (end < 0) end = char_len + end;
     
     // 边界检查
     if (start < 0) start = 0;
-    if (end > len) end = len;
+    if (end > char_len) end = char_len;
     if (start > end) start = end;
     
-    int new_len = end - start;
-    if (new_len <= 0) {
+    if (start >= end) {
         return val_obj((Object*)str_copy("", 0));
     }
     
-    ObjString* result = str_copy(str->chars + start, new_len);
+    int byte_start = utf8_char_offset(str->chars, str->len, start);
+    int byte_end = utf8_char_offset(str->chars, str->len, end);
+    int new_len = byte_end - byte_start;
+    
+    ObjString* result = str_copy(str->chars + byte_start, new_len);
     if (!result) return val_null();
     
     return val_obj((Object*)result);
@@ -278,25 +295,58 @@ static Value str_slice(int argc, Value* args) {
 static Value str_sub_str(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
-    int len = str->len;
+    int char_len = str->char_len;
     
     int start = val_as_int(args[1]);
     int length = val_as_int(args[2]);
     
     // 处理负数索引
-    if (start < 0) start = len + start;
+    if (start < 0) start = char_len + start;
     
     // 边界检查
     if (start < 0) start = 0;
-    if (start > len) start = len;
+    if (start > char_len) start = char_len;
     if (length < 0) length = 0;
-    if (start + length > len) length = len - start;
+    if (start + length > char_len) length = char_len - start;
     
     if (length <= 0) {
         return val_obj((Object*)str_copy("", 0));
     }
     
-    ObjString* result = str_copy(str->chars + start, length);
+    int byte_start = utf8_char_offset(str->chars, str->len, start);
+    int byte_end = utf8_char_offset(str->chars, str->len, start + length);
+    int new_len = byte_end - byte_start;
+    
+    ObjString* result = str_copy(str->chars + byte_start, new_len);
+    if (!result) return val_null();
+    
+    return val_obj((Object*)result);
+}
+
+// 5b. 字节级切片：按字节偏移量截取子串（用于二进制数据处理）
+static Value str_byte_slice(int argc, Value* args) {
+    (void)argc;
+    ObjString* str = (ObjString*)val_as_obj(args[0]);
+    int byte_len = str->len;
+    
+    int start = val_as_int(args[1]);
+    int end = val_as_int(args[2]);
+    
+    // 处理负数索引（基于字节长度）
+    if (start < 0) start = byte_len + start;
+    if (end < 0) end = byte_len + end;
+    
+    // 边界检查
+    if (start < 0) start = 0;
+    if (end > byte_len) end = byte_len;
+    if (start > end) start = end;
+    
+    if (start >= end) {
+        return val_obj((Object*)str_copy("", 0));
+    }
+    
+    int new_len = end - start;
+    ObjString* result = str_copy(str->chars + start, new_len);
     if (!result) return val_null();
     
     return val_obj((Object*)result);
@@ -307,20 +357,27 @@ static Value str_sub_str(int argc, Value* args) {
 static Value str_reverse(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
-    int len = str->len;
+    int byte_len = str->len;
+    int char_len = str->char_len;
     
-    if (len == 0) {
+    if (byte_len == 0 || char_len == 0) {
         return val_obj((Object*)str_copy("", 0));
     }
     
-    ObjString* result = str_alloc(len);
+    ObjString* result = str_alloc(byte_len);
     if (!result) return val_null();
     
-    for (int i = 0; i < len; i++) {
-        result->chars[i] = str->chars[len - i - 1];
+    // 按字符反转：从后往前遍历每个 Unicode 字符
+    char* dst = result->chars;
+    for (int i = char_len - 1; i >= 0; i--) {
+        int byte_offset = utf8_char_offset(str->chars, byte_len, i);
+        int char_bytes = utf8_char_byte_len(str->chars, byte_len, byte_offset);
+        memcpy(dst, str->chars + byte_offset, char_bytes);
+        dst += char_bytes;
     }
-    result->chars[len] = '\0';
-    result->hash = hash_string(result->chars, len);
+    *dst = '\0';
+    result->char_len = char_len;
+    result->hash = hash_string(result->chars, byte_len);
     
     return val_obj((Object*)result);
 }
@@ -349,6 +406,7 @@ static Value str_rep(int argc, Value* args) {
         memcpy(result->chars + i * str->len, str->chars, str->len);
     }
     result->chars[(int)total_len] = '\0';
+    result->char_len = str->char_len * n;
     result->hash = hash_string(result->chars, (int)total_len);
     
     return val_obj((Object*)result);
@@ -398,6 +456,7 @@ static Value str_char(int argc, Value* args) {
         result->chars[i] = (char)code;
     }
     result->chars[argc] = '\0';
+    result->char_len = argc;  // ASCII字符数 = 字节数
     result->hash = hash_string(result->chars, argc);
     
     return val_obj((Object*)result);
@@ -410,7 +469,7 @@ static Value str_find(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern = (ObjString*)val_as_obj(args[1]);
     
-    // 起始位置（可选，默认为0，0-indexed）
+    // 起始位置（可选，默认为0，0-indexed，字符索引）
     int start = 0;
     if (argc >= 3) {
         start = val_as_int(args[2]);
@@ -422,12 +481,12 @@ static Value str_find(int argc, Value* args) {
         plain = val_as_bool(args[3]);
     }
     
-    // 处理负数起始位置
-    int len = str->len;
-    if (start < 0) start = len + start;
+    // 处理负数起始位置（字符索引）
+    int char_len = str->char_len;
+    if (start < 0) start = char_len + start;
     if (start < 0) start = 0;
     
-    if (start > len) {
+    if (start > char_len) {
         return val_int(-1);
     }
     
@@ -436,31 +495,38 @@ static Value str_find(int argc, Value* args) {
         return val_int(start);
     }
     
+    // 将字符起始位置转换为字节偏移
+    int byte_start = utf8_char_offset(str->chars, str->len, start);
+    
     if (plain) {
         // 纯文本查找（不使用模式匹配）
-        const char* found = strstr(str->chars + start, pattern->chars);
+        const char* found = strstr(str->chars + byte_start, pattern->chars);
         if (found) {
-            return val_int((int)(found - str->chars));
+            int byte_pos = (int)(found - str->chars);
+            // 将字节偏移转换为字符索引
+            return val_int(utf8_char_len(str->chars, byte_pos));
         }
     } else {
         // 简单模式匹配（支持 ^ 开头和 $ 结尾）
         if (pattern->len == 2 && pattern->chars[0] == '^') {
             // 匹配开头
             char target = pattern->chars[1];
-            if (start < len && str->chars[start] == target) {
+            if (byte_start < str->len && str->chars[byte_start] == target) {
                 return val_int(start);
             }
         } else if (pattern->len == 2 && pattern->chars[1] == '$') {
             // 匹配结尾
             char target = pattern->chars[0];
-            if (len > 0 && str->chars[len - 1] == target) {
-                return val_int(len - 1);
+            if (str->len > 0 && str->chars[str->len - 1] == target) {
+                return val_int(char_len - 1);
             }
         } else {
             // 普通子串查找
-            const char* found = strstr(str->chars + start, pattern->chars);
+            const char* found = strstr(str->chars + byte_start, pattern->chars);
             if (found) {
-                return val_int((int)(found - str->chars));
+                int byte_pos = (int)(found - str->chars);
+                // 将字节偏移转换为字符索引
+                return val_int(utf8_char_len(str->chars, byte_pos));
             }
         }
     }
@@ -1182,6 +1248,7 @@ static Value str_pad_start(int argc, Value* args) {
     // 复制原字符串
     memcpy(result->chars + pad_len, str->chars, str->len);
     result->chars[target_len] = '\0';
+    result->char_len = utf8_char_len(result->chars, target_len);
     result->hash = hash_string(result->chars, target_len);
     
     return val_obj((Object*)result);
@@ -1221,6 +1288,7 @@ static Value str_pad_end(int argc, Value* args) {
     }
     
     result->chars[target_len] = '\0';
+    result->char_len = utf8_char_len(result->chars, target_len);
     result->hash = hash_string(result->chars, target_len);
     
     return val_obj((Object*)result);
@@ -1239,6 +1307,7 @@ void strings_init_module(void) {
     // 注册字符串模块方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
     TypeKind len_params[] = {TYPE_STRING};
     native_register_module_method("strings", "len", str_len, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
+    native_register_module_method("strings", "byte_len", str_byte_len, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
 
     // 1. 大小写转换
     TypeKind upper_params[] = {TYPE_STRING};
@@ -1270,6 +1339,10 @@ void strings_init_module(void) {
 
     TypeKind substr_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
     native_register_module_method("strings", "sub_str", str_sub_str, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, substr_params);
+
+    // 5b. 字节级切片
+    TypeKind byte_slice_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
+    native_register_module_method("strings", "byte_slice", str_byte_slice, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, byte_slice_params);
 
     // 6. 新增：字符串反转
     TypeKind reverse_params[] = {TYPE_STRING};
@@ -1329,6 +1402,7 @@ void strings_init_instance_methods(void) {
     // 注册实例方法：方法名, 方法对象, 参数个数(不含receiver), 返回类型, 参数类型
     TypeKind len_params[] = {};
     string_register_method_with_params("len", make_native(str_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
+    string_register_method_with_params("byte_len", make_native(str_byte_len, 1, "byte_len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
 
     // 1. 大小写转换
     TypeKind empty_params[] = {};
@@ -1353,6 +1427,7 @@ void strings_init_instance_methods(void) {
     TypeKind int2_params[] = {TYPE_INT, TYPE_INT};
     string_register_method_with_params("slice", make_native(str_slice, 3, "slice"), 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, int2_params);
     string_register_method_with_params("sub_str", make_native(str_sub_str, 3, "sub_str"), 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, int2_params);
+    string_register_method_with_params("byte_slice", make_native(str_byte_slice, 3, "byte_slice"), 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, int2_params);
 
     // 6. 新增：字符串反转（无参数实例方法）
     string_register_method_with_params("reverse", make_native(str_reverse, 1, "reverse"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, empty_params);
@@ -1367,7 +1442,7 @@ void strings_init_instance_methods(void) {
 
     // 10. 新增：查找子串位置
     TypeKind str_int_bool_params[] = {TYPE_STRING, TYPE_INT, TYPE_BOOL};
-    string_register_method_with_params("find", make_native(str_find, 4, "find"), 3, -1, -1, TYPE_INT, TYPE_UNKNOWN, str_int_bool_params);
+    string_register_method_with_params("find", make_native(str_find, 4, "find"), -1, 1, 3, TYPE_INT, TYPE_UNKNOWN, str_int_bool_params);
 
     // 12. 新增：字符串分割（实例方法）
     TypeKind split_sep_params[] = {TYPE_STRING};

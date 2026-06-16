@@ -300,7 +300,8 @@ TypeInfo* type_infer_from_value(Value* v);
 typedef struct {
     Object header;
     char* chars;
-    int len;
+    int len;          // UTF-8 字节长度
+    int char_len;     // Unicode 字符数（缓存，O(1) 访问）
     uint32_t hash;
 } ObjString;
 
@@ -818,6 +819,9 @@ Value dict_get_value_by_index(ObjDict* dict, int index);  // 按索引获取值�
 
 // 字符串操作
 uint32_t hash_string(const char* key, int length);
+int utf8_char_len(const char* chars, int byte_len);
+int utf8_char_offset(const char* chars, int byte_len, int char_index);
+int utf8_char_byte_len(const char* chars, int byte_len, int offset);
 ObjString* str_alloc(int len);
 ObjString* str_new(const char* chars, int len);
 ObjString* str_new_nointern(const char* chars, int len);  // 创建非内化字符串（用于长字符串）

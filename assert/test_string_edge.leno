@@ -40,14 +40,17 @@ main()
     assert_eq(one.len(), 1)
     assert_eq(one[0], "x")
 
-    // 测试6: Unicode 字符串（按字节索引）
+    // 测试6: Unicode 字符串（按字符索引）
     var uni = "你好世界"
-    assert_eq(uni.len(), 12)        // 4个中文字 × 3字节 = 12字节
-    // 注意：字符串索引是按字节的，中文字符占3字节
+    assert_eq(uni.len(), 4)         // 4个中文字符
+    assert_eq(uni.byte_len(), 12)   // 4个中文字 × 3字节 = 12字节
+    assert_eq(uni[0], "你")         // 按字符索引
+    assert_eq(uni[3], "界")
 
     // 测试7: 混合 ASCII 和 Unicode
     var mixed = "hi你好"
-    assert_eq(mixed.len(), 8)       // 2 ASCII + 2中文×3字节 = 8字节
+    assert_eq(mixed.len(), 4)       // 4个字符: h, i, 你, 好
+    assert_eq(mixed.byte_len(), 8)  // 2 ASCII + 2中文×3字节 = 8字节
 
     // 测试8: 字符串拼接边界
     assert_eq("" + "a", "a")
@@ -135,10 +138,12 @@ main()
     assert_eq("aaa".count("a"), 3)
     assert_eq("".count("a"), 0)
 
-    // 测试20: 字符串方法 - find（0-indexed，找不到返回 -1）
+    // 测试20: 字符串方法 - find（0-indexed，字符索引，找不到返回 -1）
     assert_eq("hello world".find("world", 0, true), 6)
     assert_eq("hello world".find("hello", 0, true), 0)
     assert_eq("hello world".find("xyz", 0, true), -1)
+    // Unicode find 测试
+    assert_eq("你好世界".find("世界"), 2)  // 字符索引
 
     // 测试21: 字符串方法 - pad_start / pad_end
     assert_eq("5".pad_start(3, "0"), "005")

@@ -46,7 +46,7 @@ func sha1(string input):string {
     int h4 = 0xC3D2E1F0
 
     // ===== 消息填充 =====
-    int orig_len = input.len()
+    int orig_len = input.byte_len()
     var msg = []  // Array[int] 字节数组
 
     for orig_len to i {

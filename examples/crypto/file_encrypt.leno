@@ -115,7 +115,7 @@ func words_to_str(Array[int] words):string {
 // ==================== 密钥处理 ====================
 
 func key_to_subkeys(string key):Array[int] {
-    while (key.len() < 16) {
+    while (key.byte_len() < 16) {
         key += " "
     }
     return [
@@ -167,7 +167,7 @@ func encrypt_file(string src_path, string dst_path, string key) {
         }
 
         var chunk_data = f_in2.read(to_read)
-        int chunk_len = chunk_data.len()
+        int chunk_len = chunk_data.byte_len()
 
         // 如果读取不足一个块（文件末尾），需要 PKCS7 填充
         if (bytes_read + chunk_len == orig_len and chunk_len < to_read) {
@@ -266,9 +266,9 @@ func decrypt_file(string src_path, string dst_path, string key) {
     while (bytes_remaining > 0) {
         // 读取一个加密块
         var chunk_data = f_in.read(CHUNK_BYTES)
-        if (chunk_data.len() == 0) { break }
+        if (chunk_data.byte_len() == 0) { break }
 
-        int words_in_chunk = chunk_data.len() / 4
+        int words_in_chunk = chunk_data.byte_len() / 4
         Array[int] block = str_to_words(chunk_data, words_in_chunk)
 
         // XXTEA 解密
@@ -348,14 +348,14 @@ main() {
     var dec_data = f_dec.read()
     f_dec.close()
 
-    if (orig_data.len() != dec_data.len()) {
-        print("大小不匹配: 原始=" + orig_data.len() + " 解密=" + dec_data.len())
+    if (orig_data.byte_len() != dec_data.byte_len()) {
+        print("大小不匹配: 原始=" + orig_data.byte_len() + " 解密=" + dec_data.byte_len())
         return
     }
 
     // 逐字节比较
     int diff_count = 0
-    for 0:orig_data.len() - 1 to i {
+    for 0:orig_data.byte_len() - 1 to i {
         if (orig_data.byte(i) != dec_data.byte(i)) {
             diff_count += 1
         }

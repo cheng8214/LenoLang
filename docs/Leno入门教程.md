@@ -1387,6 +1387,12 @@ main() {
     for str to char, index {
         print($"{index}: {char}")
     }
+
+    // Unicode 字符串遍历（按字符，非按字节）
+    var cn = "你好世界"
+    for cn to ch {
+        print(ch)        // 依次输出：你、好、世、界
+    }
 }
 ```
 
@@ -2640,12 +2646,93 @@ main() {
     var version = 1.0
     print($"Welcome to {name} version {version}!")
 
-    // 访问单个字符
+    // 访问单个字符（Unicode 字符索引）
     var str = "cheng8214"
+    print(str[0])           // "c"
+    print(str[4])           // "8"
+
+    // Unicode 字符串索引
+    var cn = "你好世界"
+    print(cn[0])            // "你"
+    print(cn.len())         // 4（4个字符）
+    print(cn.byte_len())    // 12（4个中文字×3字节）
+
+    // 遍历字符
     for str to a {
         print(a)        // 逐个输出字符
     }
 }
+```
+
+> **Unicode 索引说明**：LenoC 字符串按 **Unicode 字符** 索引，而非 UTF-8 字节。`len()` 返回字符数，`byte_len()` 返回字节数。这与 Python 3、Java 等现代语言一致。
+
+### 字符索引 vs 字节索引（重要）
+
+LenoC 字符串内部使用 UTF-8 编码，但对外提供**两套 API**：按字符操作和按字节操作。理解这个区别对正确处理中文和二进制数据至关重要。
+
+#### 字符级 API（日常使用）
+
+以下方法按 **Unicode 字符** 工作，适合处理文本：
+
+| 方法 | 说明 | 示例 |
+|------|------|------|
+| `len()` | 返回字符数 | `"你好".len()` → 2 |
+| `str[i]` | 按字符索引 | `"你好"[0]` → "你" |
+| `slice(start, end)` | 按字符位置切片 | `"你好世界".slice(0,2)` → "你好" |
+| `sub_str(start, len)` | 按字符位置截取 | `"你好世界".sub_str(1,2)` → "好世" |
+| `reverse()` | 按字符反转 | `"你好".reverse()` → "好你" |
+| `find(sub)` | 返回字符位置 | `"你好世界".find("世界")` → 2 |
+
+#### 字节级 API（二进制数据处理）
+
+以下方法按 **UTF-8 字节** 工作，适合处理加密、协议等二进制数据：
+
+| 方法 | 说明 | 示例 |
+|------|------|------|
+| `byte_len()` | 返回字节数 | `"你好".byte_len()` → 6 |
+| `byte(i)` | 获取某字节的值(0-255) | `"A".byte(0)` → 65 |
+| `byte_slice(start, end)` | 按字节位置切片 | `"你好".byte_slice(0,3)` → "你" |
+
+#### 何时用 `slice` 何时用 `byte_slice`
+
+```leno
+main() {
+    var text = "你好世界"
+
+    // ✅ 处理文本：用 slice（按字符）
+    print(text.slice(0, 2))        // "你好"
+    print(text.sub_str(1, 2))      // "好世"
+
+    // ✅ 处理二进制数据：用 byte_slice（按字节）
+    // 例如：加密解密后去除 PKCS7 填充
+    var padded = some_decrypt_result
+    var unpadded = padded.byte_slice(0, padded.byte_len() - pad_len)
+
+    // ❌ 错误示范：对二进制数据用 slice
+    // 二进制数据中可能包含多字节字符的片段，用字符索引会出错
+    // padded.slice(0, padded.len() - pad_len)  // 可能截断到字符中间！
+}
+```
+
+#### 注意事项
+
+1. **ASCII 字符串无区别**：纯英文/数字时，`len()` == `byte_len()`，`slice()` == `byte_slice()`，用哪个都行。
+
+2. **中文等多字节字符**：一个中文字符占 3 个 UTF-8 字节，`len()` 和 `byte_len()` 结果不同：
+   ```leno
+   var s = "你好ab"
+   print(s.len())       // 4（4个字符）
+   print(s.byte_len())  // 8（2×3 + 2×1 = 8字节）
+   print(s[0])          // "你"
+   print(s[2])          // "a"
+   ```
+
+3. **加密/解密等二进制操作必须用字节级 API**：加密算法操作的是原始字节，填充长度、偏移量都是字节数，必须使用 `byte_len()`、`byte_slice()`、`byte()`。
+
+4. **`for str to ch` 遍历按字符**：遍历字符串时，每次迭代得到一个完整的 Unicode 字符，不是字节。
+
+5. **`strings.char()` 创建单字节字符**：`strings.char(65)` 创建 "A"，`strings.char(0xE4)` 创建单个字节，适合构造二进制数据。
+
 ```
 
 ### 原始字符串
@@ -2670,6 +2757,15 @@ print(""Hello, TinyLang!"");"
 main() {
     var s = "Hello World"
 
+    // 长度（字符数）
+    print(s.len())           // 11（字符数）
+    print(s.byte_len())      // 11（字节数，纯ASCII时与len相同）
+
+    // Unicode 字符串长度
+    var cn = "你好世界"
+    print(cn.len())          // 4（4个字符）
+    print(cn.byte_len())     // 12（4个中文字×3字节）
+
     // 大小写转换
     print(s.to_upper())     // HELLO WORLD
     print(s.to_lower())     // hello world
@@ -2689,11 +2785,21 @@ main() {
     var s4 = "hello world hello"
     print(s4.replace("hello", "hi"))    // hi world hi
 
-    // 子串提取
+    // 子串提取（字符索引）
     var s5 = "hello world"
     print(s5.slice(0, 5))       // hello
     print(s5.sub_str(0, 5))     // hello
     print(s5.sub_str(6, 5))     // world
+
+    // Unicode 子串提取
+    var cn2 = "你好世界hello"
+    print(cn2.slice(0, 2))       // "你好"
+    print(cn2.sub_str(2, 2))    // "世界"
+
+    // 字节级切片（用于二进制数据处理）
+    var bin = "你好"
+    print(bin.byte_slice(0, 3))  // "你"（取前3个字节=1个中文字符）
+    print(bin.byte_slice(3, 6))  // "好"（取第3-6字节=第2个中文字符）
 }
 ```
 
@@ -3052,11 +3158,21 @@ main() {
     // 从 ASCII 码创建字符串
     print(strings.char(72, 101, 108, 108, 111))  // Hello
     
-    // 查找子串位置（0-indexed，未找到返回 -1）
+    // 查找子串位置（0-indexed 字符索引，未找到返回 -1）
     var text = "Hello, World! Hello!"
     print(strings.find(text, "Hello"))      // 0
     print(strings.find(text, "Hello", 1))   // 14 (从位置1开始找)
     print(strings.find(text, "xyz"))        // -1 (未找到)
+
+    // Unicode 字符串查找
+    var cn = "你好世界"
+    print(strings.find(cn, "世界"))         // 2（字符索引）
+    print(strings.len(cn))                   // 4（字符数）
+    print(strings.byte_len(cn))              // 12（字节数）
+
+    // 字节级切片（用于二进制数据处理）
+    print(strings.byte_slice(cn, 0, 3))     // "你"（取前3个字节）
+    print(strings.byte_slice(cn, 3, 6))     // "好"（取第3-6字节）
 }
 ```
 
@@ -4346,7 +4462,7 @@ lenolang program.leno
 | for 计数循环  | `for 5 to i`, `for 0:5 to i`, `for 0:5:2 to i` |
 | for 遍历数组  | `for arr to item`, `for arr to item, index`    |
 | for 遍历字典  | `for dict to key`, `for dict to key, value`    |
-| for 遍历字符串 | `for str to char`, `for str to char, index`    |
+| for 遍历字符串 | `for str to char`, `for str to char, index`（按 Unicode 字符遍历） |
 | while 循环  | `while i < 10 { }`                             |
 | switch    | `switch x { case v { } case is Type { } default { } }` |
 

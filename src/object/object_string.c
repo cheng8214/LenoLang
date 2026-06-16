@@ -6,6 +6,62 @@
 #include <string.h>
 #include <stdint.h>
 
+// 计算 UTF-8 字符串的 Unicode 字符数
+int utf8_char_len(const char* chars, int byte_len) {
+    int count = 0;
+    int i = 0;
+    while (i < byte_len) {
+        unsigned char c = (unsigned char)chars[i];
+        if (c < 0x80) {
+            i += 1;      // ASCII: 1 字节
+        } else if ((c & 0xE0) == 0xC0) {
+            i += 2;      // 2 字节 UTF-8
+        } else if ((c & 0xF0) == 0xE0) {
+            i += 3;      // 3 字节 UTF-8（中文在此范围）
+        } else if ((c & 0xF8) == 0xF0) {
+            i += 4;      // 4 字节 UTF-8（emoji 等）
+        } else {
+            i += 1;      // 无效 UTF-8，跳过1字节
+        }
+        count++;
+    }
+    return count;
+}
+
+// 获取 UTF-8 字符串中第 char_index 个字符的字节偏移
+// 返回字节偏移，如果越界返回 byte_len
+int utf8_char_offset(const char* chars, int byte_len, int char_index) {
+    int count = 0;
+    int i = 0;
+    while (i < byte_len && count < char_index) {
+        unsigned char c = (unsigned char)chars[i];
+        if (c < 0x80) {
+            i += 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            i += 4;
+        } else {
+            i += 1;
+        }
+        count++;
+    }
+    return i;
+}
+
+// 获取 UTF-8 字符串中从字节偏移 offset 开始的一个字符的字节长度
+int utf8_char_byte_len(const char* chars, int byte_len, int offset) {
+    if (offset >= byte_len) return 0;
+    unsigned char c = (unsigned char)chars[offset];
+    if (c < 0x80) return 1;
+    else if ((c & 0xE0) == 0xC0) return 2;
+    else if ((c & 0xF0) == 0xE0) return 3;
+    else if ((c & 0xF8) == 0xF0) return 4;
+    return 1; // 无效 UTF-8
+}
+
 // 计算字符串哈希值（保持与 string_table.c 兼容）
 uint32_t hash_string(const char* key, int length) {
     uint32_t hash = 2166136261u;
@@ -29,6 +85,7 @@ ObjString* str_alloc(int len) {
     }
 
     str->len = len;
+    str->char_len = 0;  // 调用者需在填充内容后设置
     str->hash = 0;
     str->chars[0] = '\0';
     return str;
@@ -49,6 +106,7 @@ ObjString* str_new_nointern(const char* chars, int len) {
     memcpy(str->chars, chars, len);
     str->chars[len] = '\0';
     str->len = len;
+    str->char_len = utf8_char_len(chars, len);
     str->hash = hash_string(chars, len);
     
     return str;
@@ -75,6 +133,7 @@ ObjString* str_new(const char* chars, int len) {
     memcpy(str->chars, chars, len);
     str->chars[len] = '\0';
     str->len = len;
+    str->char_len = utf8_char_len(chars, len);
     str->hash = hash_string(chars, len);
     
     // 将短字符串注册到字符串表（弱引用，不阻止 GC 回收）
@@ -110,6 +169,8 @@ ObjString* str_concat(ObjString* a, ObjString* b) {
     free(buffer);
     return result;
 }
+
+// 注意：str_concat 使用 str_new，char_len 已在 str_new 中自动计算
 
 // ============================================================================
 // 字符串方法注册表（哈希表实现 - O(1) 查找）

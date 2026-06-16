@@ -17,7 +17,7 @@ func rc4_ksa(string key):Array[int] {
     }
 
     int j = 0
-    int key_len = key.len()
+    int key_len = key.byte_len()
     for 0:255 to i {
         j = _uint8(j + S[i] + key.byte(i % key_len))
         // 交换 S[i] 和 S[j]
@@ -41,7 +41,7 @@ func rc4_prga(Array[int] S, string input):string {
     var result = ""
     int i = 0
     int j = 0
-    int len = input.len()
+    int len = input.byte_len()
 
     for len to n {
         i = _uint8(i + 1)
@@ -64,7 +64,7 @@ func rc4_prga(Array[int] S, string input):string {
 
 // RC4 加密（与解密操作相同）
 func rc4(string key, string input):string {
-    if (key.len() == 0) {
+    if (key.byte_len() == 0) {
         throw "RC4: key must not be empty"
     }
     Array[int] S = rc4_ksa(key)
@@ -86,7 +86,7 @@ func byte_to_hex(int b):string {
 // 字符串转十六进制表示（用于显示密文）
 func to_hex(string input):string {
     var result = ""
-    for 0:input.len() - 1 to i {
+    for 0:input.byte_len() - 1 to i {
         result += byte_to_hex(input.byte(i))
     }
     return result
@@ -111,7 +111,7 @@ func hex_char_val(int b):int {
 
 // 十六进制字符串还原为原始字节
 func from_hex(string hex_str):string {
-    int len = hex_str.len()
+    int len = hex_str.byte_len()
     if (len % 2 != 0) {
         throw "Hex string length must be even"
     }
@@ -215,7 +215,7 @@ main() {
 
     // 测试 6：空字符串
     var empty_enc = rc4("key", "")
-    print("空字符串加密: '" + empty_enc + "' (长度=" + _str(empty_enc.len()) + ")")
+    print("空字符串加密: '" + empty_enc + "' (长度=" + _str(empty_enc.byte_len()) + ")")
     print("空字符串往返: " + if rc4("key", empty_enc) == "" then "OK" else "FAIL")
     print("")
 

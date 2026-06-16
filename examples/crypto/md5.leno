@@ -81,7 +81,7 @@ func md5(string input):string {
     ]
 
     // ===== 消息填充（使用字节数组，避免 0x00 字符串拼接问题）=====
-    int orig_len = input.len()
+    int orig_len = input.byte_len()
     var msg = []  // Array[int] 字节数组
 
     // 复制原始消息字节

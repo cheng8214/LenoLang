@@ -12,7 +12,7 @@ func caesar_encrypt(string plaintext, int shift, bool preserve_case, bool preser
     shift = ((shift % 26) + 26) % 26  // 归一化到 0-25
     var result = ""
 
-    for 0:plaintext.len() - 1 to i {
+    for 0:plaintext.byte_len() - 1 to i {
         int c = plaintext.byte(i)
 
         if (c >= 65 and c <= 90) {
@@ -93,7 +93,7 @@ func caesar_crack(string ciphertext):int {
         // 统计频率
         Array[int] freq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         int total = 0
-        for 0:decrypted.len() - 1 to i {
+        for 0:decrypted.byte_len() - 1 to i {
             int c = decrypted.byte(i)
             if (c >= 65 and c <= 90) {
                 freq[c - 65] = freq[c - 65] + 1
@@ -151,7 +151,7 @@ func affine_encrypt(string plaintext, int a, int b):string {
     if (gcd(a, 26) != 1) { throw "a must be coprime with 26" }
 
     var result = ""
-    for 0:plaintext.len() - 1 to i {
+    for 0:plaintext.byte_len() - 1 to i {
         int c = plaintext.byte(i)
         if (c >= 65 and c <= 90) {
             int enc = (a * (c - 65) + b) % 26 + 65
@@ -172,7 +172,7 @@ func affine_decrypt(string ciphertext, int a, int b):string {
     if (a_inv < 0) { throw "a has no modular inverse mod 26" }
 
     var result = ""
-    for 0:ciphertext.len() - 1 to i {
+    for 0:ciphertext.byte_len() - 1 to i {
         int c = ciphertext.byte(i)
         if (c >= 65 and c <= 90) {
             int dec = (a_inv * ((c - 65) - b + 260)) % 26 + 65

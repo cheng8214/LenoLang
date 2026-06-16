@@ -114,7 +114,7 @@ func write_be32(int value):string {
 func str_to_words(string data):Array[int] {
     Array[int] words = []
     int i = 0
-    while (i + 4 <= data.len()) {
+    while (i + 4 <= data.byte_len()) {
         words.add(read_be32(data, i))
         i += 4
     }
@@ -140,7 +140,7 @@ func byte_to_hex(int b):string {
 
 func to_hex(string input):string {
     var result = ""
-    for 0:input.len() - 1 to i {
+    for 0:input.byte_len() - 1 to i {
         result += byte_to_hex(input.byte(i))
     }
     return result
@@ -156,7 +156,7 @@ func hex_char_val(int b):int {
 func from_hex(string hex_str):string {
     var result = ""
     int i = 0
-    while (i + 1 < hex_str.len()) {
+    while (i + 1 < hex_str.byte_len()) {
         int hi = hex_char_val(hex_str.byte(i))
         int lo = hex_char_val(hex_str.byte(i + 1))
         result += strings.char((hi << 4) | lo)
@@ -181,7 +181,7 @@ func words_to_hex(Array[int] words):string {
 func hex_to_words(string hex_str):Array[int] {
     Array[int] words = []
     int i = 0
-    while (i + 7 < hex_str.len()) {
+    while (i + 7 < hex_str.byte_len()) {
         int b0 = hex_char_val(hex_str.byte(i))
         int b1 = hex_char_val(hex_str.byte(i + 1))
         int b2 = hex_char_val(hex_str.byte(i + 2))
@@ -200,7 +200,7 @@ func hex_to_words(string hex_str):Array[int] {
 // ==================== PKCS7 填充 ====================
 
 func pkcs7_pad(string data):string {
-    int pad_len = 4 - (data.len() % 4)
+    int pad_len = 4 - (data.byte_len() % 4)
     if (pad_len == 0) { pad_len = 4 }
     var padding = ""
     for pad_len to i {
@@ -210,17 +210,17 @@ func pkcs7_pad(string data):string {
 }
 
 func pkcs7_unpad(string data):string {
-    int pad_len = data.byte(data.len() - 1)
+    int pad_len = data.byte(data.byte_len() - 1)
     if (pad_len < 1 or pad_len > 4) {
         throw "Invalid PKCS7 padding"
     }
-    return data.slice(0, data.len() - pad_len)
+    return data.byte_slice(0, data.byte_len() - pad_len)
 }
 
 // ==================== XXTEA 字符串加密/解密 ====================
 
 func key_to_subkeys(string key):Array[int] {
-    while (key.len() < 16) {
+    while (key.byte_len() < 16) {
         key += " "
     }
     return [

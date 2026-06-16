@@ -130,7 +130,7 @@ func hex_char_val(int b):int {
 func from_hex(string hex_str):string {
     var result = ""
     int i = 0
-    while (i + 1 < hex_str.len()) {
+    while (i + 1 < hex_str.byte_len()) {
         int hi = hex_char_val(hex_str.byte(i))
         int lo = hex_char_val(hex_str.byte(i + 1))
         result += strings.char((hi << 4) | lo)
@@ -142,7 +142,7 @@ func from_hex(string hex_str):string {
 // ==================== PKCS7 填充 ====================
 
 func pkcs7_pad(string data):string {
-    int pad_len = 8 - (data.len() % 8)
+    int pad_len = 8 - (data.byte_len() % 8)
     var padding = ""
     for pad_len to i {
         padding += strings.char(pad_len)
@@ -151,17 +151,17 @@ func pkcs7_pad(string data):string {
 }
 
 func pkcs7_unpad(string data):string {
-    int pad_len = data.byte(data.len() - 1)
+    int pad_len = data.byte(data.byte_len() - 1)
     if (pad_len < 1 or pad_len > 8) {
         throw "Invalid PKCS7 padding"
     }
-    return data.slice(0, data.len() - pad_len)
+    return data.byte_slice(0, data.byte_len() - pad_len)
 }
 
 // ==================== Speck 字符串加密/解密 ====================
 
 func key_to_subkeys(string key):Array[int] {
-    while (key.len() < 16) {
+    while (key.byte_len() < 16) {
         key += " "
     }
     return [
@@ -179,7 +179,7 @@ func speck_encrypt(string key, string plaintext):string {
 
     var result = ""
     int i = 0
-    while (i + 7 < padded.len()) {
+    while (i + 7 < padded.byte_len()) {
         int x = read_be32(padded, i)
         int y = read_be32(padded, i + 4)
 
@@ -206,7 +206,7 @@ func speck_decrypt(string key, string hex_ct):string {
 
     var result = ""
     int i = 0
-    while (i + 15 < hex_ct.len()) {
+    while (i + 15 < hex_ct.byte_len()) {
         // 从 hex 还原 x, y
         int b0 = hex_char_val(hex_ct.byte(i))
         int b1 = hex_char_val(hex_ct.byte(i + 1))

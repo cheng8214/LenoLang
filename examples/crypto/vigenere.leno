@@ -28,11 +28,11 @@ func index_to_char_lower(int idx):int {
 // preserve_case: 是否保留大小写
 // preserve_non_alpha: 是否保留非字母字符
 func vigenere_encrypt(string key, string plaintext, bool preserve_case, bool preserve_non_alpha):string {
-    if (key.len() == 0) { return plaintext }
+    if (key.byte_len() == 0) { return plaintext }
 
     // 预处理密钥：提取有效字母索引
     var key_indices = []
-    for 0:key.len() - 1 to i {
+    for 0:key.byte_len() - 1 to i {
         int idx = char_to_index(key.byte(i))
         if (idx >= 0) { key_indices.add(idx) }
     }
@@ -41,7 +41,7 @@ func vigenere_encrypt(string key, string plaintext, bool preserve_case, bool pre
     var result = ""
     int key_pos = 0
 
-    for 0:plaintext.len() - 1 to i {
+    for 0:plaintext.byte_len() - 1 to i {
         int c = plaintext.byte(i)
         int p_idx = char_to_index(c)
 
@@ -73,11 +73,11 @@ func vigenere_encrypt(string key, string plaintext, bool preserve_case, bool pre
 
 // Vigenere 解密
 func vigenere_decrypt(string key, string ciphertext, bool preserve_case, bool preserve_non_alpha):string {
-    if (key.len() == 0) { return ciphertext }
+    if (key.byte_len() == 0) { return ciphertext }
 
     // 预处理密钥
     var key_indices = []
-    for 0:key.len() - 1 to i {
+    for 0:key.byte_len() - 1 to i {
         int idx = char_to_index(key.byte(i))
         if (idx >= 0) { key_indices.add(idx) }
     }
@@ -86,7 +86,7 @@ func vigenere_decrypt(string key, string ciphertext, bool preserve_case, bool pr
     var result = ""
     int key_pos = 0
 
-    for 0:ciphertext.len() - 1 to i {
+    for 0:ciphertext.byte_len() - 1 to i {
         int c = ciphertext.byte(i)
         int c_idx = char_to_index(c)
 
@@ -138,7 +138,7 @@ func vigenere_dec_strict(string key, string ciphertext):string {
 // 计算字符串中字母的频率分布（返回 26 个字母的计数）
 func frequency_count(string text):Array[int] {
     Array[int] freq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    for 0:text.len() - 1 to i {
+    for 0:text.byte_len() - 1 to i {
         int idx = char_to_index(text.byte(i))
         if (idx >= 0) { freq[idx] = freq[idx] + 1 }
     }
@@ -165,7 +165,7 @@ func index_of_coincidence(string text):float {
 func kasiski_test(string text, int min_len, int max_len):int {
     // 提取纯字母文本
     var alpha = ""
-    for 0:text.len() - 1 to i {
+    for 0:text.byte_len() - 1 to i {
         int idx = char_to_index(text.byte(i))
         if (idx >= 0) { alpha += strings.char(index_to_char(idx)) }
     }
@@ -209,7 +209,7 @@ func kasiski_test(string text, int min_len, int max_len):int {
 func vigenere_crack(string ciphertext, int key_length):string {
     // 提取纯字母文本
     var alpha = ""
-    for 0:ciphertext.len() - 1 to i {
+    for 0:ciphertext.byte_len() - 1 to i {
         int idx = char_to_index(ciphertext.byte(i))
         if (idx >= 0) { alpha += strings.char(index_to_char(idx)) }
     }

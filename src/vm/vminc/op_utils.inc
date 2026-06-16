@@ -54,14 +54,16 @@ OPCODE(OP_INDEX) {
             }
             int index = (int)value_to_double(index_val);
             ObjString* str = (ObjString*)val_as_obj(obj_val);
-            if (index < 0 || index >= str->len) {
+            if (index < 0 || index >= str->char_len) {
                 char msg[256];
-                snprintf(msg, sizeof(msg), "字符串索引越界: 索引=%d, 字符串长度=%d", index, str->len);
+                snprintf(msg, sizeof(msg), "字符串索引越界: 索引=%d, 字符串长度=%d", index, str->char_len);
                 throw_runtime_error(msg, GET_CURRENT_LINE());
                 frame = &vm.frames[vm.frame_cnt - 1];
                 break;
             }
-            ObjString* result = str_new(&str->chars[index], 1);
+            int byte_offset = utf8_char_offset(str->chars, str->len, index);
+            int char_bytes = utf8_char_byte_len(str->chars, str->len, byte_offset);
+            ObjString* result = str_new(&str->chars[byte_offset], char_bytes);
             vm_stack_push(&vm, val_obj((Object*)result));
             break;
         }
@@ -403,7 +405,7 @@ OPCODE(OP_LENGTH) {
     switch (val_as_obj(obj_val)->type) {
         case OBJ_STRING: {
             ObjString* str = (ObjString*)val_as_obj(obj_val);
-            vm_stack_push(&vm, val_int(str->len));
+            vm_stack_push(&vm, val_int(str->char_len));
             break;
         }
         case OBJ_ARRAY: {
@@ -485,12 +487,14 @@ OPCODE(OP_ITER_GET) {
         }
         case OBJ_STRING: {
             ObjString* str = (ObjString*)val_as_obj(obj_val);
-            if (index < 0 || index >= str->len) {
-                throw_runtime_error("字符串索引越界", GET_CURRENT_LINE());
+            if (index < 0 || index >= str->char_len) {
+                throw_runtime_error("字符串迭代索引越界", GET_CURRENT_LINE());
                 frame = &vm.frames[vm.frame_cnt - 1];
                 break;
             }
-            ObjString* result = str_new(&str->chars[index], 1);
+            int byte_offset = utf8_char_offset(str->chars, str->len, index);
+            int char_bytes = utf8_char_byte_len(str->chars, str->len, byte_offset);
+            ObjString* result = str_new(&str->chars[byte_offset], char_bytes);
             vm_stack_push(&vm, val_obj((Object*)result));
             break;
         }

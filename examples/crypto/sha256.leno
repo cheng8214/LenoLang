@@ -77,7 +77,7 @@ func sha256(string input):string {
     ]
 
     // ===== 消息填充 =====
-    int orig_len = input.len()
+    int orig_len = input.byte_len()
     var msg = []
 
     for orig_len to i {

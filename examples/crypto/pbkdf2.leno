@@ -144,7 +144,7 @@ func bytes_to_hex(Array[int] bytes):string {
 // 字符串转字节数组
 func str_to_bytes(string s):Array[int] {
     var result = []
-    for s.len() to i { result.add(s.byte(i)) }
+    for s.byte_len() to i { result.add(s.byte(i)) }
     return result
 }
 

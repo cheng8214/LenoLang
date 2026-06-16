@@ -63,7 +63,7 @@ func write_be32(int value):string {
 // ==================== PKCS7 填充 ====================
 
 func pkcs7_pad(string data):string {
-    int pad_len = 8 - (data.len() % 8)
+    int pad_len = 8 - (data.byte_len() % 8)
     var padding = ""
     for pad_len to i {
         padding += strings.char(pad_len)
@@ -72,17 +72,17 @@ func pkcs7_pad(string data):string {
 }
 
 func pkcs7_unpad(string data):string {
-    int pad_len = data.byte(data.len() - 1)
+    int pad_len = data.byte(data.byte_len() - 1)
     if (pad_len < 1 or pad_len > 8) {
         throw "Invalid PKCS7 padding"
     }
-    return data.slice(0, data.len() - pad_len)
+    return data.byte_slice(0, data.byte_len() - pad_len)
 }
 
 // ==================== XTEA 字符串加密/解密 ====================
 
 func key_to_subkeys(string key):Array[int] {
-    while (key.len() < 16) {
+    while (key.byte_len() < 16) {
         key += " "
     }
     return [
@@ -100,7 +100,7 @@ func xtea_encrypt(string key, string plaintext):string {
 
     var result = ""
     int i = 0
-    while (i + 7 < padded.len()) {
+    while (i + 7 < padded.byte_len()) {
         int v0 = read_be32(padded, i)
         int v1 = read_be32(padded, i + 4)
 
@@ -120,7 +120,7 @@ func xtea_decrypt(string key, string ciphertext):string {
 
     var result = ""
     int i = 0
-    while (i + 7 < ciphertext.len()) {
+    while (i + 7 < ciphertext.byte_len()) {
         int v0 = read_be32(ciphertext, i)
         int v1 = read_be32(ciphertext, i + 4)
 
@@ -144,7 +144,7 @@ func byte_to_hex(int b):string {
 
 func to_hex(string input):string {
     var result = ""
-    for 0:input.len() - 1 to i {
+    for 0:input.byte_len() - 1 to i {
         result += byte_to_hex(input.byte(i))
     }
     return result
@@ -160,7 +160,7 @@ func hex_char_val(int b):int {
 func from_hex(string hex_str):string {
     var result = ""
     int i = 0
-    while (i + 1 < hex_str.len()) {
+    while (i + 1 < hex_str.byte_len()) {
         int hi = hex_char_val(hex_str.byte(i))
         int lo = hex_char_val(hex_str.byte(i + 1))
         result += strings.char((hi << 4) | lo)

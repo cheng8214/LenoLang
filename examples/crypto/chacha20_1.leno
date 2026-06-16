@@ -151,13 +151,13 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
     var result = ""
     int i = 0
 
-    while (i < plaintext.len()) {
+    while (i < plaintext.byte_len()) {
         Array[int] state = chacha20_init_state(key, counter, nonce)
         Array[int] block = chacha20_block(state)
 
         // 将密钥流块与明文异或，输出为 hex
         int j = 0
-        while (j < 64 and i + j < plaintext.len()) {
+        while (j < 64 and i + j < plaintext.byte_len()) {
             int word_idx = j / 4
             int byte_idx = j % 4
             int shift = byte_idx * 8
@@ -178,7 +178,7 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
 func chacha20_decrypt(string key, int counter, string nonce, string hex_ciphertext):string {
     var result = ""
     int i = 0
-    int total = hex_ciphertext.len() / 2
+    int total = hex_ciphertext.byte_len() / 2
 
     while (i < total) {
         Array[int] state = chacha20_init_state(key, counter, nonce)
@@ -224,7 +224,7 @@ func byte_to_hex(int b):string {
 
 func to_hex(string input):string {
     var result = ""
-    for 0:input.len() - 1 to i {
+    for 0:input.byte_len() - 1 to i {
         result += byte_to_hex(input.byte(i))
     }
     return result
@@ -240,7 +240,7 @@ func hex_char_val(int b):int {
 func from_hex(string hex_str):string {
     var result = ""
     int i = 0
-    while (i + 1 < hex_str.len()) {
+    while (i + 1 < hex_str.byte_len()) {
         int hi = hex_char_val(hex_str.byte(i))
         int lo = hex_char_val(hex_str.byte(i + 1))
         result += strings.char((hi << 4) | lo)
@@ -332,18 +332,18 @@ main() {
     var long_text = "This is a longer message that spans more than one 64-byte ChaCha20 block, testing multi-block encryption and decryption."
     var long_enc = chacha20_encrypt(key, 0, nonce, long_text)
     var long_dec = chacha20_decrypt(key, 0, nonce, long_enc)
-    print("明文 len: " + _str(long_text.len()) + " 密文 len: " + _str(long_enc.len()) + " 解密 len: " + _str(long_dec.len()))
+    print("明文 len: " + _str(long_text.byte_len()) + " 密文 len: " + _str(long_enc.byte_len()) + " 解密 len: " + _str(long_dec.byte_len()))
     if (long_dec != long_text) {
         // 找第一个不同的位置
-        int min_len = if long_dec.len() < long_text.len() then long_dec.len() else long_text.len()
+        int min_len = if long_dec.byte_len() < long_text.byte_len() then long_dec.byte_len() else long_text.byte_len()
         for 0:min_len - 1 to i {
             if (long_text.byte(i) != long_dec.byte(i)) {
                 print("第一个不同在 byte " + _str(i) + ": expected " + _str(long_text.byte(i)) + " got " + _str(long_dec.byte(i)))
                 break
             }
         }
-        if (long_dec.len() != long_text.len()) {
-            print("长度不同: dec=" + _str(long_dec.len()) + " text=" + _str(long_text.len()))
+        if (long_dec.byte_len() != long_text.byte_len()) {
+            print("长度不同: dec=" + _str(long_dec.byte_len()) + " text=" + _str(long_text.byte_len()))
         }
     }
     print("往返: " + if long_dec == long_text then "OK" else "FAIL")

@@ -55,15 +55,29 @@ print(msg)  // "Hello Leno, you have 5 messages"
 
 #### `len()`
 
-获取字符串长度。
+获取字符串的 Unicode 字符数。
 
 **参数**: 无  
-**返回**: `int` - 字符串长度
+**返回**: `int` - 字符串的字符数
 
 ```leno
 "Hello".len()        // 返回 5
 "".len()             // 返回 0
+"你好世界".len()      // 返回 4（4个中文字符）
 strings.len("abc")   // 返回 3
+```
+
+#### `byte_len()`
+
+获取字符串的 UTF-8 字节长度。
+
+**参数**: 无  
+**返回**: `int` - 字符串的字节长度
+
+```leno
+"Hello".byte_len()       // 返回 5
+"你好世界".byte_len()     // 返回 12（4个中文字 × 3字节）
+"hi你好".byte_len()      // 返回 8（2 ASCII + 2中文×3字节）
 ```
 
 ---
@@ -544,16 +558,29 @@ strings.char(65, 66, 67)                   // "ABC"
 
 ## 索引说明
 
-LenoC 字符串操作统一使用 **0-based 索引**，与大多数编程语言保持一致。
+LenoC 字符串操作统一使用 **0-based Unicode 字符索引**，与 Python 3、Java 等现代语言保持一致。
+
+### Unicode 字符索引
+
+字符串索引按 **Unicode 字符** 计数，而非 UTF-8 字节：
+
+```leno
+var s = "你好cheng"
+print(s[0])          // "你" - 第0个字符
+print(s[1])          // "好" - 第1个字符
+print(s[2])          // "c"  - 第2个字符
+print(s.len())       // 6    - 6个字符
+print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
+```
 
 ### 0-based 索引
 
 以下方法使用 0-based 索引：
 
-- `find()` - 返回的位置和 start 参数都是 0-based
-- `slice()` - start 和 end 参数
-- `sub_str()` - start 参数
-- `byte()` - pos 参数
+- `find()` - 返回的位置和 start 参数都是 0-based 字符索引
+- `slice()` - start 和 end 参数为字符索引
+- `sub_str()` - start 参数为字符索引
+- `byte()` - pos 参数为字节偏移
 
 ### 负数索引
 
@@ -645,5 +672,5 @@ main() {
 
 ---
 
-*文档版本: 1.3*  
-*最后更新: 2026-05-01*
+*文档版本: 1.4*  
+*最后更新: 2026-06-17*

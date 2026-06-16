@@ -29,7 +29,7 @@
 #include <string.h>
 
 /* UTF-8 辅助：计算单个字符的字节长度 */
-static int utf8_char_len(const char* s) {
+static int utf8_single_char_len(const char* s) {
     unsigned char c = (unsigned char)*s;
     if ((c & 0x80) == 0) return 1;
     if ((c & 0xE0) == 0xC0) return 2;
@@ -42,7 +42,7 @@ static int utf8_char_len(const char* s) {
 static int utf8_char_count(const char* s) {
     int count = 0;
     while (*s) {
-        s += utf8_char_len(s);
+        s += utf8_single_char_len(s);
         count++;
     }
     return count;
@@ -414,7 +414,7 @@ static void gui_button_draw_one(ObjGUIButton* btn, ObjGUIRenderer* ren) {
             int cx = tx;
             const char* p = btn->text;
             while (*p) {
-                int clen = utf8_char_len(p);
+                int clen = utf8_single_char_len(p);
                 char ch[5] = {0};
                 memcpy(ch, p, clen);
                 int cw = 0, chh = 0;
