@@ -268,7 +268,22 @@ void visit(Semantic* s, Ast* ast) {
             }
 
             if (ast->u.var_decl.init) {
+                // 在访问初始化表达式前临时设置声明的类型，以便初始化表达式中引用自身时能获得正确类型
+                // 保存原始 sym->type，visit 后恢复以避免后续代码覆盖时内存泄漏
+                TypeInfo* saved_type = sym ? sym->type : NULL;
+                if (sym && ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
+                    sym->type = type_copy(ast->u.var_decl.type);
+                }
+                // 标记变量正在初始化，防止初始化表达式中引用自身
+                if (sym) sym->is_initialized = 2;
                 visit(s, ast->u.var_decl.init);
+                // 标记变量已初始化
+                if (sym) sym->is_initialized = 1;
+                // 恢复原始 type（后续类型推断会重新设置正确的类型）
+                if (sym && ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
+                    type_free(sym->type);
+                    sym->type = saved_type;
+                }
 
                 // 检查声明的类型是否存在（对于自定义 struct/cstruct/clib 类型）
                 if ((ast->u.var_decl.type->kind == TYPE_STRUCT || ast->u.var_decl.type->kind == TYPE_CLIB) &&
@@ -414,6 +429,7 @@ void visit(Semantic* s, Ast* ast) {
                 }
             } else {
                 // 变量没有初始化，使用声明的类型或 ANY
+                if (sym) sym->is_initialized = 1;
                 if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
                     sym->type = type_copy(ast->u.var_decl.type);
                     
@@ -451,6 +467,22 @@ void visit(Semantic* s, Ast* ast) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.var.name);
                 error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+            } else if (sym->is_initialized == 2) {
+                // 变量正在初始化中，不允许引用自身
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "变量 '%s' 在初始化前使用", ast->u.var.name);
+                error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                // 但仍然设置类型信息（从声明的类型获取），避免后续类型推断产生级联错误
+                if (sym->type) {
+                    ast->u.var.ref.type_kind = sym->type->kind;
+                    if (sym->type->struct_name) {
+                        free(ast->u.var.ref.struct_name);
+                        ast->u.var.ref.struct_name = strdup(sym->type->struct_name);
+                    }
+                    if (!ast->cached_type) {
+                        ast->cached_type = type_copy(sym->type);
+                    }
+                }
             } else {
                 ast->u.var.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                 if (sym->type && sym->type->struct_name) {
