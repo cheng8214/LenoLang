@@ -273,6 +273,32 @@ strings.len("abc")   // 返回 3
 "Hello".sub_str(-2, 2)  // "lo" (负数索引)
 ```
 
+#### `byte_slice(start, end)`
+
+按 **UTF-8 字节偏移** 提取子串。适用于加密、协议解析等二进制数据处理场景。
+
+**参数**:
+
+- `start` (int): 开始字节偏移（0-based）
+- `end` (int): 结束字节偏移（0-based，不包含）
+
+**返回**: `string` - 提取的子串
+
+**注意**: `start` 和 `end` 是字节偏移量，不是字符索引。如果截断到多字节字符中间，可能产生无效 UTF-8。请确保偏移量对齐字符边界。
+
+```leno
+"Hello".byte_slice(0, 3)      // "Hel"（ASCII，字节=字符）
+"你好世界".byte_slice(0, 3)     // "你"（前3字节=1个中文字符）
+"你好世界".byte_slice(3, 6)     // "好"（第3-6字节=第2个中文字符）
+"hi你好".byte_slice(0, 4)      // "hi你"（2 ASCII + 3字节中文前3字节）
+```
+
+**典型用途**：加密解密后去除 PKCS7 填充：
+
+```leno
+var unpadded = decrypted.byte_slice(0, decrypted.byte_len() - pad_len)
+```
+
 ---
 
 ### 字符串变换
@@ -581,6 +607,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 - `slice()` - start 和 end 参数为字符索引
 - `sub_str()` - start 参数为字符索引
 - `byte()` - pos 参数为字节偏移
+- `byte_slice()` - start 和 end 参数为字节偏移
 
 ### 负数索引
 
@@ -672,5 +699,5 @@ main() {
 
 ---
 
-*文档版本: 1.4*  
+*文档版本: 1.5*  
 *最后更新: 2026-06-17*
