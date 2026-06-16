@@ -25,21 +25,17 @@ OPCODE(OP_CATCH) {
     frame = &vm.frames[vm.frame_cnt - 1];
     // 清除异常状态，表示异常已被捕获
     vm.has_exception = 0;
-    // 交换 catch_ip 和 prev_catch_ip，这样可以：
-    // 1. 清除当前的 catch_ip，防止在同一个 catch 块中无限循环
-    // 2. 保留外层的 catch_ip 到 prev_catch_ip，以便 throw 可以跳转到外层 catch
-    uint8_t* temp_catch = frame->catch_ip;
-    uint8_t* temp_finally = frame->finally_ip;
-    frame->catch_ip = frame->prev_catch_ip;
-    frame->finally_ip = frame->prev_finally_ip;
-    frame->prev_catch_ip = temp_catch;
-    frame->prev_finally_ip = temp_finally;
+    // 清除 catch_ip：当前块的 catch 已被处理，防止 catch 块中的 throw 无限循环
+    // 保留 prev_catch_ip（外层的 catch），这样 catch 块中的 throw 可以跳转到外层
+    // （OP_THROW 查找时会使用 prev_catch_ip 作为 fallback）
+    frame->catch_ip = NULL;
+    // 不交换 finally_ip，保持指向当前块的 finally 块，
+    // 这样 OP_RETURN 在 try-catch-finally 中可以正确跳转到当前块的 finally
     DISPATCH;
 }
 
 OPCODE(OP_FINALLY) {
     frame = &vm.frames[vm.frame_cnt - 1];
-    // finally 块开始
     // 如果没有待传播的异常，清除当前异常状态
     // 这样 finally 中的 throw 不会误抛出已处理的异常
     if (!vm.pending_exception) {
@@ -53,6 +49,13 @@ OPCODE(OP_FINALLY) {
 OPCODE(OP_END_TRY) {
     frame = &vm.frames[vm.frame_cnt - 1];
     // 恢复之前的异常处理状态（用于嵌套 try-catch）
+    // OP_CATCH 只交换了 catch_ip/prev_catch_ip，所以：
+    // - 如果经过了 OP_CATCH：catch_ip = 外层的值，prev_catch_ip = 当前块的值
+    //   恢复 catch_ip = prev_catch_ip 会错误地指向当前块，所以需要清除
+    // - 如果没有经过 OP_CATCH：catch_ip = 当前块的值，prev_catch_ip = 外层的值
+    //   恢复 catch_ip = prev_catch_ip 是正确的（恢复到外层）
+    //
+    // 统一处理：恢复 prev_catch_ip/prev_finally_ip（外层的值），然后清除 prev
     frame->catch_ip = frame->prev_catch_ip;
     frame->finally_ip = frame->prev_finally_ip;
     frame->prev_catch_ip = NULL;
@@ -64,8 +67,22 @@ OPCODE(OP_END_TRY) {
     if (vm.pending_exception) {
         vm.pending_exception = 0;
         // 继续传播异常
-        if (vm.frame_cnt > 1) {
-            // 返回到上层调用
+        // 检查当前帧（已恢复 catch_ip/finally_ip）是否有异常处理器
+        if (frame->catch_ip) {
+            // 当前帧有 catch 处理器，直接跳转
+            frame->ip = frame->catch_ip;
+            vm_stack_push(&vm, vm.exception);
+            // 清除 catch_ip，防止重复捕获
+            frame->catch_ip = NULL;
+            vm.has_exception = 0;
+            // 不 return，让 DISPATCH 继续执行
+        } else if (frame->finally_ip) {
+            // 当前帧有 finally 处理器，跳转到 finally
+            vm.pending_exception = 1;
+            frame->ip = frame->finally_ip;
+            vm.has_exception = 0;
+        } else if (vm.frame_cnt > 1) {
+            // 当前帧没有异常处理器，返回到上层调用
             CallFrame* prev_frame = &vm.frames[vm.frame_cnt - 2];
             if (prev_frame->catch_ip || prev_frame->finally_ip) {
                 // 上层有异常处理
@@ -73,12 +90,18 @@ OPCODE(OP_END_TRY) {
                 vm_stack_push(&vm, vm.exception);
                 return -1;  // 触发调用栈回退
             }
+            // 上层也没有异常处理，输出错误并退出
+            char* msg = value_to_string(vm.exception);
+            runtime_error(msg, vm.exception_line);
+            free(msg);
+            return -1;
+        } else {
+            // 没有上层异常处理，输出错误并退出
+            char* msg = value_to_string(vm.exception);
+            runtime_error(msg, vm.exception_line);  // 使用保存的异常行号
+            free(msg);
+            return -1;
         }
-        // 没有上层异常处理，输出错误并退出
-        char* msg = value_to_string(vm.exception);
-        runtime_error(msg, vm.exception_line);  // 使用保存的异常行号
-        free(msg);
-        return -1;
     }
 
     // 检查是否有 try 中保存的返回值需要处理
@@ -178,8 +201,15 @@ OPCODE(OP_THROW) {
             // 恢复栈指针到目标帧的stack_base
             vm.sp = target_frame->stack_base;
 
-            // 处理异常
-            if (target_catch_ip) {
+            // 如果当前帧有 finally 块且 catch 已处理（catch_ip 被清除），
+            // 优先执行 finally，这确保 catch 块中 throw 时 finally 仍会执行
+            if (target_frame->finally_ip && !target_frame->in_finally && !target_frame->catch_ip) {
+                // 先执行 finally，标记需要在 finally 后传播异常
+                vm.pending_exception = 1;
+                target_frame->ip = target_frame->finally_ip;
+                vm.has_exception = 0;
+                frame = target_frame;
+            } else if (target_catch_ip) {
                 // 跳转到 catch 块
                 target_frame->ip = target_catch_ip;
                 // 更新 frame 变量为目标帧，这样 DISPATCH 会使用正确的 ip
@@ -194,7 +224,7 @@ OPCODE(OP_THROW) {
                     target_frame->prev_catch_ip = NULL;
                 }
             } else {
-                // 没有 catch，但有 finally，先执行 finally
+                // 没有 catch，但有 finally（通过 prev_finally_ip），先执行 finally
                 // 标记需要在 finally 后传播异常
                 vm.pending_exception = 1;
                 target_frame->ip = target_finally_ip;

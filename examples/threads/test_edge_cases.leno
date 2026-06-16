@@ -1,0 +1,113 @@
+import threads
+
+// ===== 测试1: 子线程异常 → join() 在主线程抛异常 =====
+print("=== 测试1: 子线程异常传播 ===")
+var t1 = threads.start(func(){
+    throw "子线程出错"
+})
+var caught = false
+try {
+    t1.join()
+} catch e {
+    caught = true
+    print("捕获异常: " + e)
+}
+assert_eq(caught, true)
+print("测试1通过")
+
+// ===== 测试2: t.state() == "error" =====
+print("\n=== 测试2: 子线程异常后 state ===")
+var t2 = threads.start(func(){
+    throw "error state test"
+})
+threads.sleep(100)
+var s = t2.state()
+print("异常线程 state: " + s)
+assert_eq(s, "error")
+print("测试2通过")
+
+// ===== 测试3: 全局变量隔离 =====
+print("\n=== 测试3: 全局变量隔离 ===")
+var global_x = 100
+var t3 = threads.start(func(){
+    global_x = 999
+    print("子线程 global_x: " + global_x)
+})
+t3.join()
+print("主线程 global_x: " + global_x)
+assert_eq(global_x, 100)
+print("测试3通过")
+
+// ===== 测试4: 向已关闭通道 send() 抛异常 =====
+print("\n=== 测试4: 向已关闭通道 send 抛异常 ===")
+var ch6 = threads.channel(10)
+ch6.close()
+var send_err = false
+try {
+    ch6.send("should fail")
+} catch e {
+    send_err = true
+    print("send 到关闭通道异常: " + e)
+}
+assert_eq(send_err, true)
+print("测试4通过")
+
+// ===== 测试5: 无缓冲通道 channel(0) 同步通讯 =====
+print("\n=== 测试5: 无缓冲通道 ===")
+var ch5 = threads.channel(0)
+var received_val = 0
+var t5 = threads.start(func(var ch){
+    ch.send(42)
+    ch.close()
+}, ch5)
+received_val = _int(ch5.receive())
+print("无缓冲通道收到: " + received_val)
+assert_eq(received_val, 42)
+t5.join()
+print("测试5通过")
+
+// ===== 测试6: Channel 传递 null 值 =====
+print("\n=== 测试6: Channel 传递 null 值 ===")
+var ch7 = threads.channel(10)
+var t7 = threads.start(func(var ch){
+    ch.send(null)
+    ch.send("real_value")
+    ch.send(null)
+    ch.close()
+}, ch7)
+var m1 = ch7.receive()
+var m2 = ch7.receive()
+var m3 = ch7.receive()
+var m4 = ch7.receive()
+print("m1=null: " + (m1 == null))
+print("m2: " + m2)
+print("m3=null: " + (m3 == null))
+print("m4=null(关闭): " + (m4 == null))
+assert_eq(m1 == null, true)
+assert_eq(m2, "real_value")
+assert_eq(m3 == null, true)
+t7.join()
+print("测试6通过")
+
+// ===== 测试7: 多线程并发写同一 Channel =====
+print("\n=== 测试7: 多线程并发写 Channel ===")
+var ch10 = threads.channel(100)
+var t10a = threads.start(func(var ch){
+    for 10 to var i { ch.send("A" + i) }
+}, ch10)
+var t10b = threads.start(func(var ch){
+    for 10 to var i { ch.send("B" + i) }
+}, ch10)
+t10a.join()
+t10b.join()
+var count = 0
+while ch10.len() > 0 {
+    ch10.try_receive()
+    count = count + 1
+}
+print("并发写入收到消息数: " + count)
+assert_eq(count, 20)
+ch10.close()
+print("测试7通过")
+
+print("\n===== 所有边界测试通过 =====")

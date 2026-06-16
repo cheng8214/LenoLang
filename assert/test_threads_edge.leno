@@ -1,0 +1,110 @@
+// 线程边界情况回归测试
+// 覆盖：子线程异常传播、全局变量隔离、通道关闭异常、无缓冲通道、null值传递
+
+import threads
+
+main()
+{
+    // 测试1: 子线程异常通过 join() 传播到主线程 try-catch
+    var t1 = threads.start(func(){
+        throw "子线程出错"
+    })
+    var caught = false
+    try {
+        t1.join()
+    } catch e {
+        caught = true
+    }
+    assert_eq(caught, true)
+
+    // 测试2: 子线程异常后 state == "error"
+    var t2 = threads.start(func(){
+        throw "error state test"
+    })
+    threads.sleep(100)
+    assert_eq(t2.state(), "error")
+
+    // 测试3: 全局变量隔离（子线程修改不影响主线程）
+    var global_x = 100
+    var t3 = threads.start(func(){
+        global_x = 999
+    })
+    t3.join()
+    assert_eq(global_x, 100)
+
+    // 测试4: 向已关闭通道 send() 抛异常
+    var ch4 = threads.channel(10)
+    ch4.close()
+    var send_err = false
+    try {
+        ch4.send("should fail")
+    } catch e {
+        send_err = true
+    }
+    assert_eq(send_err, true)
+
+    // 测试5: 无缓冲通道 channel(0) 同步通讯
+    var ch5 = threads.channel(0)
+    var t5 = threads.start(func(var ch){
+        ch.send(42)
+        ch.close()
+    }, ch5)
+    var received = _int(ch5.receive())
+    assert_eq(received, 42)
+    t5.join()
+
+    // 测试6: Channel 传递 null 值
+    var ch6 = threads.channel(10)
+    var t6 = threads.start(func(var ch){
+        ch.send(null)
+        ch.send("real_value")
+        ch.send(null)
+        ch.close()
+    }, ch6)
+    var m1 = ch6.receive()
+    var m2 = ch6.receive()
+    var m3 = ch6.receive()
+    assert_eq(m1 == null, true)
+    assert_eq(m2, "real_value")
+    assert_eq(m3 == null, true)
+    t6.join()
+
+    // 测试7: 多线程并发写同一 Channel
+    var ch7 = threads.channel(100)
+    var t7a = threads.start(func(var ch){
+        for 10 to var i { ch.send("A" + i) }
+    }, ch7)
+    var t7b = threads.start(func(var ch){
+        for 10 to var i { ch.send("B" + i) }
+    }, ch7)
+    t7a.join()
+    t7b.join()
+    var count = 0
+    while ch7.len() > 0 {
+        ch7.try_receive()
+        count = count + 1
+    }
+    assert_eq(count, 20)
+    ch7.close()
+
+    // 测试8: 正常线程 join 返回值
+    var t8 = threads.start(func(){
+        return 42
+    })
+    assert_eq(t8.join(), 42)
+
+    // 测试9: 线程完成后 state == "done"
+    var t9 = threads.start(func(){
+        return 1
+    })
+    t9.join()
+    assert_eq(t9.state(), "done")
+
+    // 测试10: try_receive 从空通道返回 null
+    var ch10 = threads.channel(5)
+    var r10 = ch10.try_receive()
+    assert_eq(r10 == null, true)
+    ch10.close()
+
+    print("test_threads_edge passed")
+}

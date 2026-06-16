@@ -53,6 +53,9 @@ OPCODE(OP_GET_PROPERTY) {
                         throw_runtime_error(msg, GET_CURRENT_LINE());
                         free(msg);
                         frame = &vm.frames[vm.frame_cnt - 1];
+                        if (frame->catch_ip || frame->finally_ip) {
+                            DISPATCH;
+                        }
                         return -1;
                     }
 
@@ -193,6 +196,9 @@ OPCODE(OP_GET_PROPERTY) {
                         throw_runtime_error(msg, GET_CURRENT_LINE());
                         free(msg);
                         frame = &vm.frames[vm.frame_cnt - 1];
+                        if (frame->catch_ip || frame->finally_ip) {
+                            DISPATCH;
+                        }
                         return -1;
                     }
 
@@ -247,6 +253,9 @@ OPCODE(OP_GET_PROPERTY) {
                         throw_runtime_error(msg, GET_CURRENT_LINE());
                         free(msg);
                         frame = &vm.frames[vm.frame_cnt - 1];
+                        if (frame->catch_ip || frame->finally_ip) {
+                            DISPATCH;
+                        }
                         return -1;
                     }
 

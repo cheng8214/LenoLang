@@ -1,0 +1,145 @@
+// try-catch-finally 边界情况回归测试
+// 覆盖：finally不重复执行、函数内异常传播、嵌套try-catch、OP_CATCH不交换finally_ip
+
+main()
+{
+    // 测试1: try-catch-finally 中 finally 只执行一次
+    var finally_count = 0
+    try {
+        throw "error"
+    } catch e {
+        assert_eq(e, "error")
+    } finally {
+        finally_count = finally_count + 1
+    }
+    assert_eq(finally_count, 1)
+
+    // 测试2: 函数内除零错误被外层 try-catch 捕获
+    func div_zero() {
+        var a = 1 / 0
+    }
+    var caught_div_zero = false
+    try {
+        div_zero()
+    } catch e {
+        caught_div_zero = true
+        assert_eq(e.msg, "除零错误")
+    }
+    assert_eq(caught_div_zero, true)
+
+    // 测试3: 多层函数调用中异常传播
+    func inner() {
+        var a = 1 / 0
+    }
+    func middle() {
+        inner()
+    }
+    func outer() {
+        middle()
+    }
+    var caught_deep = false
+    try {
+        outer()
+    } catch e {
+        caught_deep = true
+        assert_eq(e.msg, "除零错误")
+    }
+    assert_eq(caught_deep, true)
+
+    // 测试4: 嵌套 try-catch，内层 catch 重新 throw
+    var outer_caught = false
+    var inner_caught = false
+    try {
+        try {
+            throw "inner"
+        } catch e {
+            inner_caught = true
+            assert_eq(e, "inner")
+            throw "rethrown"
+        }
+    } catch e {
+        outer_caught = true
+        assert_eq(e, "rethrown")
+    }
+    assert_eq(inner_caught, true)
+    assert_eq(outer_caught, true)
+
+    // 测试5: try-catch-finally 无异常时 finally 只执行一次
+    var count_no_exc = 0
+    try {
+        var x = 10
+    } catch e {
+        count_no_exc = count_no_exc + 100
+    } finally {
+        count_no_exc = count_no_exc + 1
+    }
+    assert_eq(count_no_exc, 1)
+
+    // 测试6: 数组越界被 try-catch 捕获
+    var caught_oob = false
+    try {
+        var arr = [1, 2, 3]
+        var v = arr[100]
+    } catch e {
+        caught_oob = true
+    }
+    assert_eq(caught_oob, true)
+
+    // 测试7: 字符串索引越界被 try-catch 捕获
+    var caught_str_oob = false
+    try {
+        var s = "hello"
+        var c = s[100]
+    } catch e {
+        caught_str_oob = true
+    }
+    assert_eq(caught_str_oob, true)
+
+    // 测试8: 异常对象属性 e.msg, e.file, e.stack
+    var e_info = null
+    try {
+        var a = 1 / 0
+    } catch e {
+        e_info = e
+    }
+    assert_eq(e_info.msg, "除零错误")
+    assert_eq(e_info.file != null, true)
+    assert_eq(e_info.stack != null, true)
+
+    // 测试9: 嵌套 try-catch-finally
+    var nested_finally_count = 0
+    try {
+        try {
+            throw "inner error"
+        } catch e {
+            assert_eq(e, "inner error")
+        } finally {
+            nested_finally_count = nested_finally_count + 1
+        }
+    } catch e {
+        nested_finally_count = nested_finally_count + 100
+    } finally {
+        nested_finally_count = nested_finally_count + 10
+    }
+    assert_eq(nested_finally_count, 11)
+
+    // 测试10: catch 块中 throw 后 finally 仍执行
+    var finally_after_rethrow = false
+    var rethrow_caught = false
+    try {
+        try {
+            throw "first"
+        } catch e {
+            throw "second"
+        } finally {
+            finally_after_rethrow = true
+        }
+    } catch e {
+        rethrow_caught = true
+        assert_eq(e, "second")
+    }
+    assert_eq(finally_after_rethrow, true)
+    assert_eq(rethrow_caught, true)
+
+    print("test_try_catch_edge passed")
+}

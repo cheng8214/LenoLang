@@ -104,10 +104,12 @@ OPCODE(OP_DIV_INT) {
         ObjBigInt* bb = val_as_bigint(vb);
         if (bb->limb_count == 1 && bb->limbs[0] == 0) {
             throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
     } else if (val_is_int(vb) && val_as_int(vb) == 0) {
         throw_runtime_error("除零错误", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
 
@@ -132,10 +134,12 @@ OPCODE(OP_MOD_INT) {
         ObjBigInt* bb = val_as_bigint(vb);
         if (bb->limb_count == 1 && bb->limbs[0] == 0) {
             throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
     } else if (val_is_int(vb) && val_as_int(vb) == 0) {
         throw_runtime_error("除零错误", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
 
@@ -178,6 +182,7 @@ OPCODE(OP_DIV_FLOAT) {
     double a = val_as_num_ex(vm_stack_pop_fast(&vm));
     if (b == 0.0) {
         throw_runtime_error("除零错误", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
     vm_stack_push_fast(&vm, val_float(a / b));
