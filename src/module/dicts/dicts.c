@@ -96,6 +96,28 @@ static Value dict_method_values(int argc, Value* args) {
     return val_obj((Object*)arr);
 }
 
+static Value dict_method_clear(int argc, Value* args) {
+    (void)argc;
+    ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
+    if (!dict) return val_null();
+
+    // 清空数组部分
+    dict->acount = 0;
+    dict->last_index = 0;
+
+    // 清空哈希部分
+    dict->count = 0;
+    dict->tombstone_count = 0;
+    if (dict->entries) {
+        memset(dict->entries, 0, dict->capacity * sizeof(ObjDictEntry));
+    }
+
+    // 清空插入序
+    dict->order_count = 0;
+
+    return val_null();
+}
+
 // ==================== 初始化 ====================
 
 void dicts_init_instance_methods(void) {
@@ -115,6 +137,9 @@ void dicts_init_instance_methods(void) {
 
     TypeKind remove_params[] = {TYPE_ANY};
     dict_register_method_with_params("remove", make_native(dict_method_remove, 2, "remove"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, remove_params);
+
+    TypeKind clear_params[] = {};
+    dict_register_method_with_params("clear", make_native(dict_method_clear, 1, "clear"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, clear_params);
 
     TypeKind keys_params[] = {};
     dict_register_method_with_params("keys", make_native(dict_method_keys, 1, "keys"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, keys_params);
