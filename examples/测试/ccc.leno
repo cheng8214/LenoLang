@@ -1,7 +1,12 @@
-main()
-{
-	string a="你好cheng8214"
-	print("这是一个字节:"+a[0])
-	string b=a[0]+a[1]+a[2]
-	print("这是三个字节:"+b)
+func sum(Array arr) {   // 想接受任何数组
+    var total = 0
+    if arr is Array[int]
+    {
+    for arr to item {
+        total = total + item 
+    }
+    return total
+    }
 }
+
+print(sum([1, 2, 3]))   // ❌ 报错！Array[int] 不能传给 Array

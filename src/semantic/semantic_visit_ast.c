@@ -775,7 +775,13 @@ void visit(Semantic* s, Ast* ast) {
                                     // 类型兼容，正常收窄
                                     if (original_sym && original_sym->type && original_sym->type->kind == TYPE_ARRAY &&
                                         cond->guard_type && cond->guard_type->kind == TYPE_ARRAY) {
-                                        guard_sym->type = type_copy(original_sym->type);
+                                        // 守卫类型有具体元素类型时，使用守卫类型（更具体）
+                                        // 否则保持原始类型（如 Array[int] + is Array，保持 Array[int]）
+                                        if (cond->guard_type->element_type) {
+                                            guard_sym->type = type_copy(cond->guard_type);
+                                        } else {
+                                            guard_sym->type = type_copy(original_sym->type);
+                                        }
                                     } else if (cond->guard_type) {
                                         guard_sym->type = type_copy(cond->guard_type);
                                     } else {
