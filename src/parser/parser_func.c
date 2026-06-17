@@ -513,6 +513,31 @@ Ast* parse_var_decl_internal(Parser* p) {
 
 // 解析函数体和创建函数定义 AST
 Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
+    // 解析泛型类型参数: func name[T, U](...)
+    char** type_params = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        type_params = (char**)malloc(sizeof(char*) * 8);
+        int tp_capacity = 8;
+        
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            type_param_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+        
+        consume(p, TOK_RBRACKET, "期望 ']'");
+    }
+    
     consume(p, TOK_LPAREN, "期望 '('");
 
     // 参数列表 - 新设计：每个参数有自己的完整类型
@@ -605,6 +630,8 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
     ast->u.func.pcnt = pcnt;
     ast->u.func.return_type = return_type;
     ast->u.func.body = body;
+    ast->u.func.type_params = type_params;
+    ast->u.func.type_param_count = type_param_count;
     
     // 统计有默认值的参数数量
     ast->u.func.default_count = 0;

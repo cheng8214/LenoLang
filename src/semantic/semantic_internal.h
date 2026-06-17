@@ -35,6 +35,8 @@ void visit(Semantic* s, Ast* ast);
 void visit_list(Semantic* s, AstList* list);
 void visit_func(Semantic* s, Ast* ast);
 void visit_func_as_struct_method(Semantic* s, Ast* ast);
+void infer_generic_bindings(TypeInfo* param_type, TypeInfo* arg_type,
+                            char** param_names, TypeInfo** inferred, int count);
 
 // ============================================================================
 // 前置声明 - struct 方法字段访问转换

@@ -106,6 +106,15 @@ OPCODE(OP_CAST_STRING) {
     DISPATCH;
 }
 
+OPCODE(OP_U8_TO_F64) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value a = vm_stack_pop(&vm);
+    // u8 范围 0-255，截取低 8 位转换为 f64
+    double result = (double)((uint8_t)(val_as_num(a) & 0xFF));
+    vm_stack_push(&vm, val_float(result));
+    DISPATCH;
+}
+
 OPCODE(OP_SET_PTR_ELEM_TYPE) {
     frame = &vm.frames[vm.frame_cnt - 1];
     TypeKind elem_type = (TypeKind)READ_BYTE();

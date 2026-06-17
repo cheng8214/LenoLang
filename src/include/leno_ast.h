@@ -131,7 +131,8 @@ struct Ast {
         struct { char* name; SymRef ref; } var;
         struct { Ast* l; Ast* r; LenoTokenType op; } binop;
         struct { Ast* operand; LenoTokenType op; int is_postfix; } unary;
-        struct { Ast* callee; AstList args; int is_tail_call; } call;
+        struct { Ast* callee; AstList args; int is_tail_call;
+                 char** generic_type_names; TypeInfo** generic_type_args; int generic_type_count; } call;
         struct { Ast* obj; Ast* index; } index;
         struct { Ast* obj; Ast* start; Ast* end; } slice;  // 切片：arr[start:end]
         struct { Ast* obj; Ast* index; Ast* value; int field_index; } index_assign;
@@ -197,6 +198,9 @@ struct Ast {
             int default_count;         // 有默认值的参数数量
             // 协程信息
             int is_async;              // 是否是 async 函数（1=是，0=否）
+            // 泛型类型参数
+            char** type_params;        // 类型参数名数组（如 ["T", "U"]）
+            int type_param_count;      // 类型参数数量
         } func;
         Ast* ret;
         struct {

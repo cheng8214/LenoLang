@@ -183,6 +183,7 @@
         [OP_CFUNC_CALLBACK] = &&LABEL(OP_CFUNC_CALLBACK),
         [OP_CALL_NATIVE] = &&LABEL(OP_CALL_NATIVE),
         [OP_TAIL_CALL_NATIVE] = &&LABEL(OP_TAIL_CALL_NATIVE),
+        [OP_U8_TO_F64] = &&LABEL(OP_U8_TO_F64),
     };
 
     // 宏定义：取指令并分发

@@ -1,6 +1,66 @@
 #include "semantic_internal.h"
 
 // ============================================================================
+// 泛型类型推断辅助
+// ============================================================================
+
+// 从实参类型推断泛型参数的绑定
+static void infer_generic_from_type(TypeInfo* generic_type, TypeInfo* concrete_type,
+                                     char** param_names, TypeInfo** inferred, int count) {
+    if (!generic_type || !concrete_type) return;
+    
+    // 如果是泛型参数，记录绑定
+    if (generic_type->kind == TYPE_GENERIC_PARAM && generic_type->type_param_name) {
+        for (int i = 0; i < count; i++) {
+            if (strcmp(generic_type->type_param_name, param_names[i]) == 0) {
+                if (!inferred[i]) {
+                    inferred[i] = type_copy(concrete_type);
+                }
+                return;
+            }
+        }
+        return;
+    }
+    
+    // 类型不匹配，无法推断子类型
+    if (generic_type->kind != concrete_type->kind) return;
+    
+    // 递归进入子类型
+    switch (generic_type->kind) {
+        case TYPE_ARRAY:
+            infer_generic_from_type(generic_type->element_type, concrete_type->element_type,
+                                    param_names, inferred, count);
+            break;
+        case TYPE_DICT:
+            infer_generic_from_type(generic_type->key_type, concrete_type->key_type,
+                                    param_names, inferred, count);
+            infer_generic_from_type(generic_type->value_type, concrete_type->value_type,
+                                    param_names, inferred, count);
+            break;
+        case TYPE_FUNCTION:
+            for (int i = 0; i < generic_type->param_count && i < concrete_type->param_count; i++) {
+                infer_generic_from_type(generic_type->param_types[i], concrete_type->param_types[i],
+                                        param_names, inferred, count);
+            }
+            infer_generic_from_type(generic_type->return_type, concrete_type->return_type,
+                                    param_names, inferred, count);
+            break;
+        case TYPE_PTR_GENERIC:
+            infer_generic_from_type(generic_type->element_type, concrete_type->element_type,
+                                    param_names, inferred, count);
+            break;
+        default:
+            break;
+    }
+}
+
+// 从实参推断泛型参数绑定（入口函数，兼容不同结构）
+void infer_generic_bindings(TypeInfo* param_type, TypeInfo* arg_type,
+                            char** param_names, TypeInfo** inferred, int count) {
+    infer_generic_from_type(param_type, arg_type, param_names, inferred, count);
+}
+
+// ============================================================================
 // 访问者模式 - 单遍处理
 // ============================================================================
 
@@ -1677,6 +1737,44 @@ void visit(Semantic* s, Ast* ast) {
                 Ast* func_def = func_table_find(&s->func_table, func_name);
                 
                 if (func_def && func_def->kind == AST_FUNC_DEF) {
+                    // 泛型类型参数推断
+                    int is_generic = (func_def->u.func.type_param_count > 0);
+                    char** inferred_names = NULL;
+                    TypeInfo** inferred_types = NULL;
+                    
+                    if (is_generic) {
+                        inferred_names = (char**)malloc(sizeof(char*) * func_def->u.func.type_param_count);
+                        inferred_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * func_def->u.func.type_param_count);
+                        
+                        // 从实参中推断类型参数
+                        for (int i = 0; i < func_def->u.func.type_param_count; i++) {
+                            inferred_names[i] = func_def->u.func.type_params[i];
+                            inferred_types[i] = NULL;
+                        }
+                        
+                        // 遍历实参，匹配泛型参数类型
+                        for (int i = 0; i < ast->u.call.args.count && i < func_def->u.func.pcnt; i++) {
+                            TypeInfo* param_type = func_def->u.func.param_types[i];
+                            TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
+                            if (param_type && arg_type) {
+                                // 递归匹配类型中的泛型参数
+                                infer_generic_bindings(param_type, arg_type, inferred_names, inferred_types, func_def->u.func.type_param_count);
+                            }
+                        }
+                        
+                        // 为未推断的类型参数填默认 any
+                        for (int i = 0; i < func_def->u.func.type_param_count; i++) {
+                            if (!inferred_types[i]) {
+                                inferred_types[i] = type_new(TYPE_ANY);
+                            }
+                        }
+                        
+                        // 存储特化信息
+                        ast->u.call.generic_type_names = inferred_names;
+                        ast->u.call.generic_type_args = inferred_types;
+                        ast->u.call.generic_type_count = func_def->u.func.type_param_count;
+                    }
+                    
                     int expected_cnt = func_def->u.func.pcnt;
                     int actual_cnt = ast->u.call.args.count;
                     int default_cnt = func_def->u.func.default_count;
@@ -1699,10 +1797,22 @@ void visit(Semantic* s, Ast* ast) {
                             TypeInfo* expected_type = func_def->u.func.param_types[i];
                             if (!expected_type || expected_type->kind == TYPE_INFER) continue; // 类型推断模式，跳过检查
 
+                            // 泛型函数：用推断的类型替换泛型参数
+                            TypeInfo* check_type = expected_type;
+                            if (is_generic && inferred_types) {
+                                check_type = expected_type;
+                                for (int p = 0; p < func_def->u.func.type_param_count; p++) {
+                                    TypeInfo* sub = type_substitute(check_type, func_def->u.func.type_params[p], inferred_types[p]);
+                                    if (sub != check_type) {
+                                        check_type = sub;  // 使用替换后的类型
+                                    }
+                                }
+                            }
+
                             TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
                             if (arg_type) {
                                 // 使用类型兼容性检查
-                                if (!type_is_compatible(expected_type, arg_type)) {
+                                if (!type_is_compatible(check_type, arg_type)) {
                                     char msg[BUFFER_MEDIUM];
                                     char idx_str[16];
                                     snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
@@ -1723,6 +1833,8 @@ void visit(Semantic* s, Ast* ast) {
                                 }
                             }
                             if (arg_type) type_free(arg_type);
+                            // 清理泛型替换产生的临时类型
+                            if (check_type != expected_type) type_free(check_type);
                         }
                     }
                 }

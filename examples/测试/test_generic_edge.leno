@@ -1,0 +1,62 @@
+// 边界测试
+
+// 1. 多个泛型参数，不同类型
+func zip[T, U](T a, U b) {
+    print(a)
+    print(b)
+}
+
+// 2. 泛型嵌套类型 Dict[K,V]
+func get_keys[K, V](Dict[K, V] d):Array[K] {
+    var result = []
+    for d to k, v {
+        result.add(k)
+    }
+    return result
+}
+
+// 3. 泛型函数作为参数传入泛型函数
+func double(int x):int { return x * 2 }
+
+func map[T, U](Array[T] arr, func(T):U fn):Array[U] {
+    var result = []
+    for arr to item {
+        result.add(fn(item))
+    }
+    return result
+}
+
+// 4. 泛型函数调用另一个泛型函数
+func chain[T](Array[T] arr):Array[T] {
+    return arr
+}
+
+// 5. 多个泛型函数互相调用
+func compose[T](Array[T] data):bool {
+    // 测试泛型函数内调用泛型函数
+    var chained = chain(data)
+    return chained.len() == data.len()
+}
+
+main() {
+    // 测试 zip
+    zip(42, "hello")
+    
+    // 测试 Dict[K,V] 泛型
+    var d = {"a": 1, "b": 2, "c": 3}
+    var keys = get_keys(d)
+    print(keys)       // ["a", "b", "c"]
+    
+    // 测试 int key dict
+    var idict = {1: "one", 2: "two"}
+    var ikeys = get_keys(idict)
+    print(ikeys)      // [1, 2]
+    
+    // 测试 compose
+    var arr = [1, 2, 3]
+    print(compose(arr)) // true
+    
+    // map 已经测试过
+    var doubled = map(arr, double)
+    print(doubled)    // [2, 4, 6]
+}

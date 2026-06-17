@@ -188,6 +188,7 @@ typedef enum {
     TYPE_THREAD,                // 线程类型
     TYPE_CHANNEL,               // Channel 类型
     TYPE_SOCKET,                // Socket 类型
+    TYPE_GENERIC_PARAM,         // 泛型类型参数（如 T、U）
 } TypeKind;
 
 typedef struct TypeInfo TypeInfo;
@@ -202,9 +203,11 @@ struct TypeInfo {
     TypeInfo** param_types;  // 函数参数类型数组
     int param_count;         // 函数参数数量
     // 结构体类型相关
-    char* struct_name;       // 结构体名称
+    char* struct_name;       // 结构体名称 / face 名称 / cstruct/clib/cfunc 名称
     // 样式类型相关
     char* style_target;      // Style 目标控件名（如 "window", "button"）
+    // 泛型类型参数
+    char* type_param_name;   // 泛型类型参数名（如 "T", "U"）
 };
 
 // 类型系统 API
@@ -214,6 +217,9 @@ TypeInfo* type_dict(TypeInfo* key_type, TypeInfo* value_type);
 TypeInfo* type_ptr_generic(TypeInfo* element_type);
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count);
 TypeInfo* type_style(const char* target);
+TypeInfo* type_generic_param(const char* name);  // 创建泛型类型参数 T, U 等
+int type_has_generic(TypeInfo* type);             // 类型是否包含泛型参数
+TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* concrete);  // 类型替换
 void type_free(TypeInfo* type);
 int type_equals(TypeInfo* a, TypeInfo* b);
 TypeInfo* type_copy(TypeInfo* type);

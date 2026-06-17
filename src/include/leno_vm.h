@@ -163,6 +163,8 @@ typedef enum {
     // 原生函数调用合并指令（省掉 OP_GET_NATIVE + OP_CALL/TAIL_CALL 配对）
     OP_CALL_NATIVE,      // 直接调用原生函数: name_const(2) arg_count(2)
     OP_TAIL_CALL_NATIVE, // 尾调用原生函数: name_const(2) arg_count(2)
+    // C 布局类型转换指令
+    OP_U8_TO_F64,        // u8 → f64（0-255 无符号整数转双精度浮点）
 } OpCode;
 
 // ============================================================================

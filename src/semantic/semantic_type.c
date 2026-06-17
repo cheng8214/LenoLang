@@ -604,13 +604,28 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 // 首先检查变量符号的类型（可能是函数类型）
                 Symbol* sym = scope_resolve(s->current, func_name);
                 if (sym && sym->type && sym->type->kind == TYPE_FUNCTION) {
-                    // 从函数类型中获取返回类型
+                    TypeInfo* ret = NULL;
                     if (sym->type->return_type) {
-                        ast->cached_type = type_copy(sym->type->return_type);
-                        return type_copy(ast->cached_type);
+                        ret = type_copy(sym->type->return_type);
+                    } else {
+                        ret = type_new(TYPE_ANY);
                     }
-                    ast->cached_type = type_new(TYPE_ANY);
-                    return type_copy(ast->cached_type);
+                    
+                    // 泛型函数调用：用推断的类型参数替换泛型参数
+                    if (ast->u.call.generic_type_count > 0 && ast->u.call.generic_type_names && ast->u.call.generic_type_args) {
+                        for (int p = 0; p < ast->u.call.generic_type_count; p++) {
+                            TypeInfo* sub = type_substitute(ret,
+                                ast->u.call.generic_type_names[p],
+                                ast->u.call.generic_type_args[p]);
+                            if (sub != ret) {
+                                type_free(ret);
+                                ret = sub;
+                            }
+                        }
+                    }
+                    
+                    ast->cached_type = type_copy(ret);
+                    return ret;
                 }
 
                 // 使用哈希表 O(1) 查找函数定义

@@ -1629,7 +1629,62 @@ var ops = {
 print(ops["double"](5)) // 10
 ```
 
-### 闭包（Closure）
+### 泛型函数（Generic Functions）
+
+Leno 支持函数级泛型，通过在函数名后添加 `[T, U, ...]` 声明类型参数，编译器会根据调用时的实参**自动推断**具体类型：
+
+```leno
+// === 单类型参数 ===
+func identity[T](T val):T {
+    return val
+}
+
+print(identity(42))        // 42（T 推断为 int）
+print(identity("hello"))   // hello（T 推断为 string）
+
+// === 多类型参数 ===
+func pair[T, U](T a, U b) {
+    print(a)
+    print(b)
+}
+pair(42, "hello")  // 42, hello
+
+// === 泛型容器操作 ===
+func map[T, U](Array[T] arr, func(T):U fn):Array[U] {
+    var result = []
+    for arr to item {
+        result.add(fn(item))
+    }
+    return result
+}
+
+func filter[T](Array[T] arr, func(T):bool pred):Array[T] {
+    var result = []
+    for arr to item {
+        if pred(item) {
+            result.add(item)
+        }
+    }
+    return result
+}
+
+// 使用示例
+func double(int x):int { return x * 2 }
+func is_even(int x):bool { return x % 2 == 0 }
+
+var nums = [1, 2, 3, 4, 5, 6]
+print(map(nums, double))     // [2, 4, 6, 8, 10, 12]
+print(filter(nums, is_even)) // [2, 4, 6]
+```
+
+> **⚠️ 注意事项**：
+> 
+> 1. **类型推断在调用时发生**：编译器从实参类型自动推断，无需手动指定 `T=int`
+> 2. **泛型参数可用于参数和返回类型**：`Array[T]`、`func(T):U`、`Dict[K, V]` 等均可
+> 3. **函数体内类型参数是动态的**：用 `T` 声明的变量在体内是灵活类型，参与运算由运行时检查
+> 4. **泛型不支持 struct/face**：当前仅支持函数级泛型，无法在 struct 或 face 上使用类型参数
+
+
 
 Leno 支持闭包，内部函数可以访问外部函数的变量：
 

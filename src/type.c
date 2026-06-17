@@ -80,6 +80,15 @@ TypeInfo* type_style(const char* target) {
     return type;
 }
 
+// 创建泛型类型参数 (如 T, U)
+TypeInfo* type_generic_param(const char* name) {
+    TypeInfo* type = type_new(TYPE_GENERIC_PARAM);
+    if (type && name) {
+        type->type_param_name = strdup(name);
+    }
+    return type;
+}
+
 // 释放类型信息
 void type_free(TypeInfo* type) {
     if (!type) return;
@@ -98,6 +107,9 @@ void type_free(TypeInfo* type) {
     }
     if (type->style_target) {
         free(type->style_target);
+    }
+    if (type->type_param_name) {
+        free(type->type_param_name);
     }
     free(type);
 }
@@ -136,6 +148,11 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
                 return strcmp(a->style_target, b->style_target) == 0;
             }
             return a->style_target == b->style_target;
+        case TYPE_GENERIC_PARAM:
+            if (a->type_param_name && b->type_param_name) {
+                return strcmp(a->type_param_name, b->type_param_name) == 0;
+            }
+            return a->type_param_name == b->type_param_name;
         default:
             return 1;
     }
@@ -184,6 +201,11 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_STYLE:
             if (type->style_target) {
                 copy->style_target = strdup(type->style_target);
+            }
+            break;
+        case TYPE_GENERIC_PARAM:
+            if (type->type_param_name) {
+                copy->type_param_name = strdup(type->type_param_name);
             }
             break;
         default:
@@ -429,6 +451,17 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             }
             break;
         }
+        case TYPE_GENERIC_PARAM: {
+            // 输出泛型参数名 (T, U 等)
+            const char* name = type->type_param_name ? type->type_param_name : "T";
+            size_t len = strlen(name);
+            if (*offset + len < buf_size - 1) {
+                memcpy(buf + *offset, name, len);
+                *offset += len;
+                buf[*offset] = '\0';
+            }
+            break;
+        }
         default: {
             // 基础类型
             const char* type_str = type_kind_to_string(type->kind);
@@ -512,6 +545,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_CFUNC:    return "cfunc";
         case TYPE_STR8:     return "str8";
         case TYPE_STR16:    return "str16";
+        case TYPE_GENERIC_PARAM: return "generic";
         default:            return "unknown";
     }
 }
@@ -633,6 +667,9 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (!target || !source) return 1;  // 任意类型都可以
     if (target->kind == TYPE_ANY) return 1;  // any 可以接受任何类型
     if (target->kind == TYPE_INFER) return 1;  // 推断类型接受任何值
+    // 泛型类型参数：兼容任何类型（用于泛型函数体内部和类型推断）
+    if (target->kind == TYPE_GENERIC_PARAM) return 1;
+    if (source->kind == TYPE_GENERIC_PARAM) return 1;
 
     // null 可以赋值给任何类型（允许 int b = null, string c = null）
     if (source->kind == TYPE_NULL) return 1;
@@ -897,6 +934,64 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_STR16:         return TYPE_STR16;
         default:                return TYPE_INFER;
     }
+}
+
+// 检查类型是否包含泛型参数（递归）
+int type_has_generic(TypeInfo* type) {
+    if (!type) return 0;
+    if (type->kind == TYPE_GENERIC_PARAM) return 1;
+    if (type_has_generic(type->element_type)) return 1;
+    if (type_has_generic(type->key_type)) return 1;
+    if (type_has_generic(type->value_type)) return 1;
+    if (type_has_generic(type->return_type)) return 1;
+    if (type->param_types) {
+        for (int i = 0; i < type->param_count; i++) {
+            if (type_has_generic(type->param_types[i])) return 1;
+        }
+    }
+    return 0;
+}
+
+// 类型替换：将泛型参数替换为具体类型（深拷贝后替换，不修改原类型）
+TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* concrete) {
+    if (!type) return NULL;
+    
+    // 如果是泛型参数且名字匹配，返回具体类型的拷贝
+    if (type->kind == TYPE_GENERIC_PARAM && type->type_param_name &&
+        strcmp(type->type_param_name, param_name) == 0) {
+        return type_copy(concrete);
+    }
+    
+    // 递归替换子类型
+    TypeInfo* result = type_copy(type);
+    if (result->element_type) {
+        TypeInfo* substituted = type_substitute(result->element_type, param_name, concrete);
+        type_free(result->element_type);
+        result->element_type = substituted;
+    }
+    if (result->key_type) {
+        TypeInfo* substituted = type_substitute(result->key_type, param_name, concrete);
+        type_free(result->key_type);
+        result->key_type = substituted;
+    }
+    if (result->value_type) {
+        TypeInfo* substituted = type_substitute(result->value_type, param_name, concrete);
+        type_free(result->value_type);
+        result->value_type = substituted;
+    }
+    if (result->return_type) {
+        TypeInfo* substituted = type_substitute(result->return_type, param_name, concrete);
+        type_free(result->return_type);
+        result->return_type = substituted;
+    }
+    if (result->param_types) {
+        for (int i = 0; i < result->param_count; i++) {
+            TypeInfo* substituted = type_substitute(result->param_types[i], param_name, concrete);
+            type_free(result->param_types[i]);
+            result->param_types[i] = substituted;
+        }
+    }
+    return result;
 }
 
 #endif // LENO_VM_ONLY
