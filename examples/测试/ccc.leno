@@ -1,12 +1,2 @@
-func sum(Array arr) {   // 想接受任何数组
-    var total = 0
-    if arr is Array[int]
-    {
-    for arr to item {
-        total = total + item 
-    }
-    return total
-    }
-}
-
-print(sum([1, 2, 3]))   // ❌ 报错！Array[int] 不能传给 Array
+var a = 10
+var c = a + 20

@@ -55,7 +55,9 @@ static const char* opCodeNames[] = {
     "OP_CLIB_CALL",
     "OP_CFUNC_CALLBACK",
     // 原生函数调用合并指令
-    "OP_CALL_NATIVE", "OP_TAIL_CALL_NATIVE"
+    "OP_CALL_NATIVE", "OP_TAIL_CALL_NATIVE",
+    // C 布局类型转换
+    "OP_U8_TO_F64"
 };
 
 // 反汇编单条指令
