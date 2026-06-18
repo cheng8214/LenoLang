@@ -23,6 +23,7 @@ typedef struct {
     const char* src;
     int pos;
     int line;
+    int line_start;     // 当前行起始位置（用于计算列号）
     Token current;
     // 插值字符串状态
     int in_interp;      // 是否在插值字符串中

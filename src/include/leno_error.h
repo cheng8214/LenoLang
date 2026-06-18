@@ -10,6 +10,7 @@
 typedef struct {
     ErrorType type;
     int line;
+    int column;                   // 列号（-1 表示未知）
     char filename[BUFFER_SMALL];  // 文件名
     char msg[BUFFER_MEDIUM];
     int repeat_count;             // 重复次数（相同错误合并）
@@ -23,6 +24,7 @@ typedef struct {
 extern ErrorCollector errors;
 
 void error_set_filename(const char* filename);
+void error_set_column(int column);
 const char* error_get_filename(void);
 void error_add(ErrorType type, int line, const char* msg);
 int error_has_any(void);

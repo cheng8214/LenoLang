@@ -204,7 +204,10 @@ static char advance(Lexer* lex) {
     char c = lex->src[lex->pos];
     if (c != '\0') {
         lex->pos++;
-        if (c == '\n') lex->line++;
+        if (c == '\n') {
+            lex->line++;
+            lex->line_start = lex->pos;
+        }
     }
     return c;
 }
@@ -466,6 +469,7 @@ void lexer_init(Lexer* lex, const char* source) {
     lex->src = source;
     lex->pos = 0;
     lex->line = 1;
+    lex->line_start = 0;
     lex->in_interp = 0;
     lex->in_expr = 0;
     lex->brace_depth = 0;
@@ -473,6 +477,7 @@ void lexer_init(Lexer* lex, const char* source) {
         (unsigned char)source[1] == 0xBB &&
         (unsigned char)source[2] == 0xBF) {
         lex->pos = 3;
+        lex->line_start = 3;
     }
     lexer_next(lex);
 }
@@ -482,6 +487,9 @@ void lexer_next(Lexer* lex) {
     if (!(lex->in_interp && !lex->in_expr)) {
         skip_whitespace(lex);
     }
+    
+    // 更新当前列号（1-based，用于错误报告）
+    error_set_column(lex->pos - lex->line_start + 1);
 
     char c = peek(lex);
 

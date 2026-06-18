@@ -5,6 +5,8 @@ ErrorCollector errors = {0};
 
 // 当前文件名（用于错误报告）
 static char current_filename[BUFFER_SMALL] = "";
+// 当前列号（词法分析时更新，-1 表示未知）
+static int current_column = -1;
 
 void error_set_filename(const char* filename) {
     if (filename) {
@@ -13,6 +15,10 @@ void error_set_filename(const char* filename) {
     } else {
         current_filename[0] = '\0';
     }
+}
+
+void error_set_column(int column) {
+    current_column = column;
 }
 
 const char* error_get_filename(void) {
@@ -42,6 +48,7 @@ void error_add(ErrorType type, int line, const char* msg) {
     Error* err = &errors.list[errors.count++];
     err->type = type;
     err->line = line;
+    err->column = current_column;
     err->repeat_count = 1;
     strncpy(err->msg, msg, sizeof(err->msg) - 1);
     err->msg[sizeof(err->msg) - 1] = '\0';
@@ -90,16 +97,23 @@ void error_print_all(void) {
             case ERR_SYNTAX:        type_str = "语法错误"; break;
             case ERR_SEMANTIC:      type_str = "语义错误"; break;
             case ERR_UNDEFINED_VAR: type_str = "未定义变量"; break;
+            case ERR_UNDEFINED_FUNC:type_str = "未定义函数"; break;
             case ERR_DUPLICATE_VAR: type_str = "重复定义"; break;
-            case ERR_CLOSURE:       type_str = "闭包错误"; break;
             case ERR_RUNTIME:       type_str = "运行时错误"; break;
             case ERR_TYPE_MISMATCH: type_str = "类型不匹配"; break;
             default: break;
         }
         
-        // 如果有文件名，显示文件名
-        if (err->filename[0]) {
-            fprintf(stderr, "[%s] %s 第 %d 行: %s", type_str, err->filename, err->line, err->msg);
+        // 如果有文件名，显示文件名；如果有列号，显示列号
+        if (err->filename[0] && err->column > 0) {
+            fprintf(stderr, "[%s] %s 第 %d 行第 %d 列: %s",
+                    type_str, err->filename, err->line, err->column, err->msg);
+        } else if (err->filename[0]) {
+            fprintf(stderr, "[%s] %s 第 %d 行: %s",
+                    type_str, err->filename, err->line, err->msg);
+        } else if (err->column > 0) {
+            fprintf(stderr, "[%s] 第 %d 行第 %d 列: %s",
+                    type_str, err->line, err->column, err->msg);
         } else {
             fprintf(stderr, "[%s] 第 %d 行: %s", type_str, err->line, err->msg);
         }

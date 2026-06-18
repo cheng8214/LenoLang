@@ -98,8 +98,9 @@ static int is_statement_start(LenoTokenType type) {
            type == TOK_IF || type == TOK_EIF ||
            type == TOK_WHILE || type == TOK_FOR || type == TOK_SWITCH ||
            type == TOK_FUNC || type == TOK_ASYNC ||
-           type == TOK_STRUCT || type == TOK_FACE ||
-           type == TOK_CSTRUCT || type == TOK_ENUM ||
+           type == TOK_STRUCT || type == TOK_FACE || type == TOK_ALIAS ||
+           type == TOK_CSTRUCT || type == TOK_CLIB || type == TOK_CFUNC ||
+           type == TOK_ENUM ||
            type == TOK_VAR || type == TOK_RETURN ||
            type == TOK_BREAK || type == TOK_CONTINUE ||
            type == TOK_THROW || type == TOK_TRY ||
@@ -107,7 +108,18 @@ static int is_statement_start(LenoTokenType type) {
            type == TOK_INT_TYPE || type == TOK_FLOAT_TYPE ||
            type == TOK_STRING_TYPE || type == TOK_BOOL_TYPE ||
            type == TOK_ARRAY_TYPE || type == TOK_DICT_TYPE ||
-           // TOK_BINT 已移除
+           type == TOK_PTR_TYPE || type == TOK_STYLE_TYPE ||
+           type == TOK_FILE_TYPE || type == TOK_WIN_TYPE ||
+           type == TOK_DRAW_TYPE || type == TOK_EVENT_TYPE ||
+           type == TOK_RGB_TYPE || type == TOK_IMAGE_TYPE ||
+           type == TOK_FONT_TYPE || type == TOK_BUTTON_TYPE ||
+           type == TOK_SOCKET_TYPE ||
+           type == TOK_I8 || type == TOK_U8 || type == TOK_I16 || type == TOK_U16 ||
+           type == TOK_I32 || type == TOK_U32 || type == TOK_I64 || type == TOK_U64 ||
+           type == TOK_F32 || type == TOK_F64 ||
+           type == TOK_C_INT || type == TOK_C_UINT ||
+           type == TOK_C_LONG || type == TOK_C_ULONG ||
+           type == TOK_C_LONGLONG || type == TOK_C_ULONGLONG ||
            type == TOK_IDENT || type == TOK_LBRACE;
 }
 
