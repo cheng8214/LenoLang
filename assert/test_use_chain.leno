@@ -1,0 +1,11 @@
+// use 链式传导测试 - D→C→B→A→测试端
+import "use_chain_a.leno" as a
+use a.Vec3
+
+main() {
+    Vec3 v = new a.Vec3(x = 1, y = 2, z = 3)
+    assert_eq(v.x, 1)
+    assert_eq(v.y, 2)
+    assert_eq(v.z, 3)
+    print("test_use_chain passed")
+}

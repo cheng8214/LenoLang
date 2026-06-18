@@ -521,6 +521,106 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
             continue;
         }
 
+        // 查找 use 语句（跨模块类型链式传递）
+        if (strncmp(p, "use", 3) == 0 && (p[3] == ' ' || p[3] == '\t' || p[3] == '\n' || p[3] == '\r')) {
+            p += 3;
+            while (*p && (*p == ' ' || *p == '\t')) p++;
+            
+            // 读模块别名
+            const char* alias_start = p;
+            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+            int alias_len = (int)(p - alias_start);
+            
+            if (alias_len > 0 && alias_len < 64 && *p == '.') {
+                char alias_name[64];
+                memcpy(alias_name, alias_start, alias_len);
+                alias_name[alias_len] = '\0';
+                p++; // skip '.'
+                
+                // 读类型名
+                const char* type_start = p;
+                while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+                int type_len = (int)(p - type_start);
+                
+                if (type_len > 0 && type_len < 64) {
+                    char type_name[64];
+                    memcpy(type_name, type_start, type_len);
+                    type_name[type_len] = '\0';
+                    
+                    // 在源码中反向查找 import "path" as alias 来解析模块路径
+                    char* import_search = source;
+                    char resolved_path[1024] = {0};
+                    while (import_search < p) {
+                        if (strncmp(import_search, "import", 6) == 0 && (import_search[6] == ' ' || import_search[6] == '\t' || import_search[6] == '\"')) {
+                            import_search += 6;
+                            while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                            if (*import_search == '"') {
+                                import_search++;
+                                const char* path_start = import_search;
+                                while (*import_search && *import_search != '"') import_search++;
+                                int path_len = (int)(import_search - path_start);
+                                import_search++; // skip closing "
+                                
+                                // 检查 as alias
+                                while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                                if (strncmp(import_search, "as", 2) == 0 && (import_search[2] == ' ' || import_search[2] == '\t')) {
+                                    import_search += 2;
+                                    while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                                    const char* as_start = import_search;
+                                    while (*import_search && (isalnum((unsigned char)*import_search) || *import_search == '_')) import_search++;
+                                    int as_len = (int)(import_search - as_start);
+                                    if (as_len == alias_len && strncmp(as_start, alias_name, alias_len) == 0) {
+                                        // 找到匹配的 import
+                                        if (path_len > 0 && path_len < 1023) {
+                                            memcpy(resolved_path, path_start, path_len);
+                                            resolved_path[path_len] = '\0';
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (*import_search) import_search++;
+                    }
+                    
+                    // 扫描目标模块，查找类型
+                    if (resolved_path[0]) {
+                        ModuleSymbolTable* dep_table = module_symbol_table_create(resolved_path);
+                        if (dep_table) {
+                            if (module_symbol_table_scan(dep_table, current_file) == 0) {
+                                // 查找 struct
+                                ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
+                                if (s_sym && !module_symbol_table_find_struct(table, type_name)) {
+                                    module_symbol_table_add_struct(table, type_name,
+                                        s_sym->field_count, s_sym->fields,
+                                        s_sym->method_count, s_sym->methods,
+                                        s_sym->is_cstruct);
+                                    if (s_sym->impl_count > 0) {
+                                        ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
+                                        if (new_sym) {
+                                            new_sym->impl_count = s_sym->impl_count;
+                                            new_sym->impl_names = (char**)malloc(sizeof(char*) * s_sym->impl_count);
+                                            for (int ii = 0; ii < s_sym->impl_count; ii++) {
+                                                new_sym->impl_names[ii] = strdup(s_sym->impl_names[ii]);
+                                            }
+                                        }
+                                    }
+                                }
+                                // 查找 face
+                                ModuleFaceSymbol* f_sym = module_symbol_table_find_face(dep_table, type_name);
+                                if (f_sym && !module_symbol_table_find_face(table, type_name)) {
+                                    module_symbol_table_add_face(table, type_name,
+                                        f_sym->method_count, f_sym->methods);
+                                }
+                            }
+                            module_symbol_table_destroy(dep_table);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
         // 查找 export 关键字
         if (strncmp(p, "export", 6) == 0 && (p[6] == ' ' || p[6] == '\t' || p[6] == '\n' || p[6] == '\r' || p[6] == '\0')) {
             char* after_export = p + 6;

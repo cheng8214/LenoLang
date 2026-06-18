@@ -1,0 +1,2 @@
+import "use_chain_b.leno" as b
+use b.Vec3

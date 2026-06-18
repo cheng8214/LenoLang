@@ -1305,6 +1305,7 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         case AST_USE:
             // use 语句是编译时指令，不需要生成字节码
             // 符号已经在语义分析阶段注册到当前作用域
+            // 在 gen_stmt / gen_stmt_module 中都只是 break
             break;
 
         case AST_TRY: {
@@ -2027,6 +2028,7 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
             break;
         case AST_CFUNC_DECL:
         case AST_ALIAS:
+        case AST_USE:
             // 纯编译期语法糖，不生成运行时指令
             break;
         case AST_ENUM_DEF:
