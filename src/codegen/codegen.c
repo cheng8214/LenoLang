@@ -4,10 +4,20 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
     gen->chunk = chunk;
     gen->sem = sem;
     gen->scope_depth = 0;
+    gen->loop_head = NULL;
     gen->loop_count = 0;
     gen->current_func = NULL;
     gen->max_local_slot = -1;
     gen->peak_local_slot = -1;
+}
+
+void codegen_cleanup(CodeGen* gen) {
+    while (gen->loop_head) {
+        LoopContextNode* node = gen->loop_head;
+        gen->loop_head = node->prev;
+        free(node);
+    }
+    gen->loop_count = 0;
 }
 
 void codegen(CodeGen* gen, Ast* ast) {

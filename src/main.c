@@ -135,6 +135,7 @@ int lenolang_run(const char* source) {
     int ret = vm_run();
 
     // 5. 释放
+    codegen_cleanup(&gen);
     ast_free(parser.root);
     // 释放语义分析中的资源（函数名列表）
     semantic_cleanup(&sem);
@@ -156,6 +157,7 @@ fail:
         printf("debug模式:编译失败\n");
     }
     error_print_all();
+    codegen_cleanup(&gen);
     ast_free(parser.root);
     // 编译失败时释放 root_scope（VM 未初始化）
     if (sem.root_scope) {
@@ -250,6 +252,7 @@ int lenolang_compile(const char* source, const char* output_path) {
     SerializeResult result = chunk_serialize(output_path, &chunk, sem.root_scope);
     if (result != SERIALIZE_OK) {
         fprintf(stderr, "写入二进制文件失败: %s (错误码: %d)\n", output_path, result);
+        codegen_cleanup(&gen);
         ast_free(parser.root);
         semantic_cleanup(&sem);
         chunk_free(&chunk);
@@ -259,6 +262,7 @@ int lenolang_compile(const char* source, const char* output_path) {
 
     printf("编译成功: %s -> %s\n", chunk.filename ? chunk.filename : "stdin", output_path);
 
+    codegen_cleanup(&gen);
     ast_free(parser.root);
     semantic_cleanup(&sem);
     chunk_free(&chunk);
@@ -267,6 +271,7 @@ int lenolang_compile(const char* source, const char* output_path) {
 
 compile_fail:
     error_print_all();
+    codegen_cleanup(&gen);
     ast_free(parser.root);
     if (sem.root_scope) {
         scope_free(sem.root_scope);

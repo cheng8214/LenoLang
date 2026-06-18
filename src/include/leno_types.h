@@ -31,7 +31,6 @@
 
 #define MAX_BREAK_JUMPS 256   // 单个循环中最大 break 数量
 #define MAX_CONTINUE_JUMPS 256 // 单个循环中最大 continue 数量
-#define MAX_LOOP_NESTING 256   // 最大循环嵌套深度
 
 // ============================================================================
 // 缓冲区大小常量

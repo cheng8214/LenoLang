@@ -320,19 +320,26 @@ char* read_module_file(const char* file_path, const char* current_file) {
 }
 
 // 编译模块 - 通过函数指针调用，实现编译器与加载器解耦
+// 编译模块 - 通过函数指针调用，实现编译器与加载器解耦
 static ObjModule* compile_module_dispatch(const char* source, const char* module_name, ExportList* exports) {
     ModuleCompileFunc compile_func = get_module_compile_func();
     if (!compile_func) {
         fprintf(stderr, "[错误] 模块编译器未注册\n");
         return NULL;
     }
-    // 将 ExportList 转换为 char[][64] 格式
-    char export_names[MAX_EXPORTS][64];
+    // 将 ExportList 转换为 char[][64] 格式（堆分配避免栈溢出）
+    char (*export_names)[64] = (char(*)[64])malloc(exports->count * 64);
+    if (!export_names) {
+        fprintf(stderr, "[错误] 内存分配失败\n");
+        return NULL;
+    }
     for (int i = 0; i < exports->count && i < MAX_EXPORTS; i++) {
         strncpy(export_names[i], exports->names[i], 63);
         export_names[i][63] = '\0';
     }
-    return compile_func(source, module_name, export_names, exports->count);
+    ObjModule* result = compile_func(source, module_name, export_names, exports->count);
+    free(export_names);
+    return result;
 }
 
 // 重置已加载模块列表
@@ -456,8 +463,12 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         extract_module_name(file_path, module_name, MAX_MODULE_NAME);
     }
 
-    ExportList exports;
-    extract_exports(source, &exports);
+    ExportList* exports = (ExportList*)malloc(sizeof(ExportList));
+    if (!exports) {
+        free(source);
+        return NULL;
+    }
+    extract_exports(source, exports);
 
     // 保存原始文件名（在设置模块文件名之前）
     const char* original_filename_ptr = error_get_filename();
@@ -477,26 +488,28 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
     if (!placeholder_module) {
         error_set_filename(original_filename[0] ? original_filename : NULL);
         free(source);
+        free(exports);
         return NULL;
     }
     placeholder_module->source_path = strdup(file_path);
     
     // 将导出项添加到占位符模块的导出表
     // 这样循环依赖中的其他模块可以看到本模块的导出（虽然值暂时为null）
-    for (int i = 0; i < exports.count; i++) {
-        ObjString* key = str_copy(exports.names[i], (int)strlen(exports.names[i]));
+    for (int i = 0; i < exports->count; i++) {
+        ObjString* key = str_copy(exports->names[i], (int)strlen(exports->names[i]));
         dict_set(placeholder_module->exports, val_obj((Object*)key), val_null());
     }
     
     // 提前添加到已加载列表，防止循环导入
     add_loaded_module(full_path, placeholder_module);
 
-    ObjModule* module = compile_module_dispatch(source, module_name, &exports);
+    ObjModule* module = compile_module_dispatch(source, module_name, exports);
 
     // 恢复原始文件名
     error_set_filename(original_filename[0] ? original_filename : NULL);
 
     free(source);
+    free(exports);
 
     if (module) {
         // 编译成功，将编译后的模块内容复制到占位符模块
@@ -567,6 +580,7 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         if (transferred_name) free(transferred_name);
         return placeholder_module;
     } else {
+        // exports already freed above
         return NULL;
     }
 }

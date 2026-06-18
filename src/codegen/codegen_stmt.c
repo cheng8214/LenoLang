@@ -1,6 +1,30 @@
 #include "codegen.h"
 #include <stdio.h>
 
+// 链式循环上下文操作（堆分配，无嵌套深度限制）
+static LoopContext* loop_push(CodeGen* gen) {
+    LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
+    if (!node) return NULL;
+    node->ctx.break_count = 0;
+    node->ctx.continue_count = 0;
+    node->prev = gen->loop_head;
+    gen->loop_head = node;
+    gen->loop_count++;
+    return &node->ctx;
+}
+
+static void loop_pop(CodeGen* gen) {
+    if (!gen->loop_head) return;
+    LoopContextNode* node = gen->loop_head;
+    gen->loop_head = node->prev;
+    free(node);
+    gen->loop_count--;
+}
+
+static LoopContext* loop_current(CodeGen* gen) {
+    return gen->loop_head ? &gen->loop_head->ctx : NULL;
+}
+
 static Value ast_default_to_value(Ast* expr);
 
 static Value ast_default_to_value(Ast* expr) {
@@ -266,13 +290,14 @@ void gen_if(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_while(CodeGen* gen, Ast* ast) {
-    if (gen->loop_count >= 64) {
-        error_add(ERR_RUNTIME, ast->line, "循环嵌套太深");
-        return;
-    }
-    LoopContext* loop = &gen->loops[gen->loop_count++];
-    loop->break_count = 0;
-    loop->continue_count = 0;
+    LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
+    if (!node) return;
+    node->ctx.break_count = 0;
+    node->ctx.continue_count = 0;
+    node->prev = gen->loop_head;
+    gen->loop_head = node;
+    gen->loop_count++;
+    LoopContext* loop = &node->ctx;
 
     int loop_start = gen->chunk->len;
     loop->continue_target = gen->chunk->len;
@@ -286,14 +311,14 @@ static void gen_while(CodeGen* gen, Ast* ast) {
         for (int i = 0; i < loop->break_count; i++) {
             patch_jump(gen, loop->break_jumps[i]);
         }
-        gen->loop_count--;
+        loop_pop(gen);
         return;
     }
 
     // 优化: while false { } - 永不执行的循环，直接跳过
     if (ast->u.while_.cond->kind == AST_BOOL && ast->u.while_.cond->u.boolean == 0) {
         // 循环体永不执行，直接跳过
-        gen->loop_count--;
+        loop_pop(gen);
         return;
     }
 
@@ -311,11 +336,11 @@ static void gen_while(CodeGen* gen, Ast* ast) {
         patch_jump(gen, loop->break_jumps[i]);
     }
 
-    gen->loop_count--;
+    loop_pop(gen);
 }
 
 static void gen_for_iter(CodeGen* gen, Ast* ast, int loop_var_slot) {
-    LoopContext* loop = &gen->loops[gen->loop_count - 1];
+    LoopContext* loop = loop_current(gen);
 
     gen_expr(gen, ast->u.for_.end);
 
@@ -395,13 +420,8 @@ static void gen_for_iter(CodeGen* gen, Ast* ast, int loop_var_slot) {
 }
 
 static void gen_for(CodeGen* gen, Ast* ast) {
-    if (gen->loop_count >= 64) {
-        error_add(ERR_RUNTIME, ast->line, "循环嵌套太深");
-        return;
-    }
-    LoopContext* loop = &gen->loops[gen->loop_count++];
-    loop->break_count = 0;
-    loop->continue_count = 0;
+    LoopContext* loop = loop_push(gen);
+    if (!loop) return;
 
     int loop_var_slot = ast->u.for_.loop_var_index;
     int end_slot = ast->u.for_.end_index;
@@ -444,7 +464,7 @@ static void gen_for(CodeGen* gen, Ast* ast) {
             for (int i = 0; i < loop->break_count; i++) {
                 patch_jump(gen, loop->break_jumps[i]);
             }
-            gen->loop_count--;
+            loop_pop(gen);
             return;
         }
     }
@@ -595,7 +615,7 @@ static void gen_for(CodeGen* gen, Ast* ast) {
         patch_jump(gen, loop->break_jumps[i]);
     }
 
-    gen->loop_count--;
+    loop_pop(gen);
 }
 
 static void gen_var_decl(CodeGen* gen, Ast* ast) {
@@ -1229,11 +1249,11 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             gen_return(gen, ast);
             break;
         case AST_BREAK: {
-            if (gen->loop_count == 0) {
+            if (!gen->loop_head) {
                 error_add(ERR_SYNTAX, ast->line, "break 只能在循环中使用");
                 return;
             }
-            LoopContext* loop = &gen->loops[gen->loop_count - 1];
+            LoopContext* loop = &gen->loop_head->ctx;
             if (loop->break_count >= MAX_BREAK_JUMPS) {
                 error_add(ERR_RUNTIME, ast->line, "break 太多");
                 return;
@@ -1242,11 +1262,11 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             break;
         }
         case AST_CONTINUE: {
-            if (gen->loop_count == 0) {
+            if (!gen->loop_head) {
                 error_add(ERR_SYNTAX, ast->line, "continue 只能在循环中使用");
                 return;
             }
-            LoopContext* loop = &gen->loops[gen->loop_count - 1];
+            LoopContext* loop = &gen->loop_head->ctx;
             // 对于需要回填的循环（如 for to），使用占位符
             if (loop->continue_count >= MAX_CONTINUE_JUMPS) {
                 error_add(ERR_RUNTIME, ast->line, "continue 太多");

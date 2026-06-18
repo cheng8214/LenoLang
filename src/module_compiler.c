@@ -105,6 +105,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                     }
                 }
                 
+                codegen_cleanup(&func_gen);
                 chunk_free(&func_chunk);
             }
             
@@ -146,6 +147,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                             dict_set(func_dict, val_obj((Object*)key), method_val);
                         }
                         
+                        codegen_cleanup(&method_gen);
                         chunk_free(&method_chunk);
                     }
                 }
@@ -293,6 +295,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     }
     
     if (error_has_any()) {
+        codegen_cleanup(&gen);
         ast_free(parser.root);
         semantic_cleanup(&sem);
         chunk_free(&chunk);
@@ -433,6 +436,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     }
 
     // 10. 释放 AST 和语义分析资源（init_chunk 已转移到模块对象，不再释放）
+    codegen_cleanup(&gen);
     ast_free(parser.root);
     semantic_cleanup(&sem);
     return module;
