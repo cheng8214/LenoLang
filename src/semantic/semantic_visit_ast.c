@@ -2595,7 +2595,7 @@ void visit(Semantic* s, Ast* ast) {
                     module_symbol_table_destroy(sym_table);
                 }
                 
-                // 如果不是 struct，检查是否是函数
+                // 如果不是 struct，检查是否是函数，并推断返回类型
                 if (!is_struct) {
                     int has_method = module_has_method(module_info->file_path, current_file, 
                                                        ast->u.module_call.method_name);
@@ -2604,6 +2604,16 @@ void visit(Semantic* s, Ast* ast) {
                         snprintf(msg, sizeof(msg), "模块 '%s' 中没有方法 '%s'",
                                  ast->u.module_call.module_name, ast->u.module_call.method_name);
                         error_add(ERR_SEMANTIC, ast->line, msg);
+                    } else if (module_info->sym_table) {
+                        // 从模块符号表推断返回类型
+                        ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
+                            module_info->sym_table, ast->u.module_call.method_name);
+                        if (func_sym && func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
+                            ast->cached_type = type_new(func_sym->return_type);
+                            if (func_sym->return_struct_name) {
+                                ast->cached_type->struct_name = strdup(func_sym->return_struct_name);
+                            }
+                        }
                     }
                 }
             } else {

@@ -137,6 +137,9 @@ Ast* parse_import_stmt(Parser* p) {
         const char* current_file = error_get_filename();
         char* module_source = read_module_file(module_name, current_file);
         if (module_source) {
+            // 本地别名解析表（支持 alias B = A 链式引用）
+            struct { char* name; TypeInfo* type; } local_aliases[32] = {{0}};
+            int local_cnt = 0;
             char* s = module_source;
             while (*s) {
                 // 跳过空白
@@ -182,9 +185,25 @@ Ast* parse_import_stmt(Parser* p) {
                                 
                                 if (ti > 0) {
                                     extern TypeInfo* parse_type_from_string(const char* type_str);
-                                    TypeInfo* ti_ptr = parse_type_from_string(type_str);
+                                    TypeInfo* ti_ptr = NULL;
+                                    // 先检查是否是本地别名引用
+                                    if (!strchr(type_str, '[') && !strchr(type_str, ',')) {
+                                        for (int _la = 0; _la < local_cnt; _la++) {
+                                            if (strcmp(local_aliases[_la].name, type_str) == 0) {
+                                                ti_ptr = type_copy(local_aliases[_la].type);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (!ti_ptr) ti_ptr = parse_type_from_string(type_str);
                                     if (ti_ptr) {
                                         add_alias(p, alias_name, ti_ptr);
+                                        // 添加到本地表
+                                        if (local_cnt < 32) {
+                                            local_aliases[local_cnt].name = strdup(alias_name);
+                                            local_aliases[local_cnt].type = type_copy(ti_ptr);
+                                            local_cnt++;
+                                        }
                                         type_free(ti_ptr);
                                     }
                                 }
@@ -193,6 +212,11 @@ Ast* parse_import_stmt(Parser* p) {
                     }
                 }
                 if (*s) s++;
+            }
+            // 清理本地别名表
+            for (int _la = 0; _la < local_cnt; _la++) {
+                free(local_aliases[_la].name);
+                type_free(local_aliases[_la].type);
             }
             free(module_source);
         }

@@ -599,6 +599,20 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
     // 第二遍：解析所有符号（struct 和函数）
     p = source;
 
+    // 本地别名解析表（支持 alias B = A 链式引用）
+    char* local_alias_names[32] = {0};
+    TypeInfo* local_alias_types[32] = {0};
+    int local_alias_count = 0;
+
+    // 查找本地别名
+    #define FIND_LOCAL_ALIAS(n) ({ \
+        TypeInfo* _r = NULL; \
+        for (int _i = 0; _i < local_alias_count; _i++) { \
+            if (strcmp(local_alias_names[_i], n) == 0) { _r = local_alias_types[_i]; break; } \
+        } \
+        _r; \
+    })
+
     while (*p) {
         // 跳过空白、注释、字符串
         while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
@@ -1559,7 +1573,15 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                         type_str[ti] = '\0';
 
                         if (ti > 0) {
-                            TypeInfo* ti_ptr = parse_type_from_string(type_str);
+                            TypeInfo* ti_ptr = NULL;
+                            // 先检查是否是本地别名引用（如 alias B = A）
+                            if (!strchr(type_str, '[') && !strchr(type_str, ',')) {
+                                ti_ptr = FIND_LOCAL_ALIAS(type_str);
+                                if (ti_ptr) ti_ptr = type_copy(ti_ptr);
+                            }
+                            if (!ti_ptr) {
+                                ti_ptr = parse_type_from_string(type_str);
+                            }
                             if (ti_ptr) {
                                 // 如果是简单 STRUCT 类型，检查 struct 是否已知
                                 if (ti_ptr->kind == TYPE_STRUCT && ti_ptr->struct_name) {
@@ -1568,6 +1590,12 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                     }
                                 }
                                 module_symbol_table_add_alias(table, alias_name, ti_ptr);
+                                // 添加到本地解析表
+                                if (local_alias_count < 32) {
+                                    local_alias_names[local_alias_count] = strdup(alias_name);
+                                    local_alias_types[local_alias_count] = type_copy(ti_ptr);
+                                    local_alias_count++;
+                                }
                                 type_free(ti_ptr);
                             }
                         }
@@ -1581,6 +1609,13 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
 
         p++;
     }
+
+    // 释放本地别名表
+    for (int i = 0; i < local_alias_count; i++) {
+        free(local_alias_names[i]);
+        type_free(local_alias_types[i]);
+    }
+    #undef FIND_LOCAL_ALIAS
 
     // 释放 struct 名称数组
     for (int i = 0; i < struct_name_count; i++) {
