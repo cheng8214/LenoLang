@@ -15,10 +15,10 @@ int version = 1
 struct Point {
     int x = 0
     int y = 0
-    func length():float { return maths.sqrt(x * x + y * y) }
+    func dist():float { return maths.sqrt(x * x + y * y) }
 }
 var p = new Point(x = 3, y = 4)
-print(p.length())    // 5.0
+print(p.dist())    // 5.0
 
 // 接口 + 多态
 face Shape {
@@ -29,29 +29,39 @@ struct Circle impl Shape {
     func area():float { return 3.14 * r * r }
 }
 
-// 模块导入 + 类型别名
-import "math.leno" as m
-use m.Vec3
-export alias Size = int
+// 类型别名
+alias Size = int
+alias IntList = Array[int]
+Size s = 100
+IntList arr = [1, 2, 3]
 
-// 泛型 + 高阶函数
-func map[T,U](Array[T] arr, func(T):U fn):Array[U] { ... }
-var doubled = [1, 2, 3].map(func(x) { return x * 2 })
+// 泛型函数 + 匿名函数
+func map_int(Array[int] arr, func(var x):int fn):Array[int] {
+    var result = []
+    for arr to v { result.add(fn(v)) }
+    return result
+}
+var doubled = map_int([1, 2, 3], func(var x):int { return x * 2 })
 
-// 闭包 + 一等函数
+// 闭包
 func make_counter(int start) {
     int count = start
-    return func() { count = count + 1; return count }
+    return func():int { count = count + 1; return count }
 }
 
 // 异步协程
-async func fetch() {
+async func fetch():string {
+    import asyncs
     await asyncs.sleep(100)
     return "done"
 }
 
 // 异常处理
-try { throw "出错了" } catch e { print(e) } finally { cleanup() }
+try {
+    var a = 1 / 0
+} catch e {
+    print("出错: " + e.msg)
+}
 ```
 
 ## 特性
@@ -89,7 +99,7 @@ try { throw "出错了" } catch e { print(e) } finally { cleanup() }
 **并发编程**
 - **多线程** — `threads` 模块，`start()`/`join()`/通道通信，线程间全局变量隔离
 - **异步协程** — `async`/`await` + 事件循环，轻量并发
-- **Channal 通道** — 有缓冲/无缓冲，Go 风格 CSP 模型
+- **Channel 通道** — 有缓冲/无缓冲，Go 风格 CSP 模型
 
 **底层能力**
 - **FFI** — 直接调用 C 动态库和系统 API，无需绑定
@@ -135,24 +145,18 @@ leno hello.leno
 
 ```leno
 main() {
-    // 类型推断 + 模块使用
+    // 类型推断
     var name = "Leno"
     var features = ["静态类型", "协程", "FFI", "模块系统"]
 
     // 结构体（命名参数构造）
     var p = new Point(x = 3, y = 4)
-    print("距离 = " + p.length())
-
-    // 异步请求
-    async func fetch_data() {
-        await asyncs.sleep(100)
-        return "done"
-    }
+    print("距离 = " + p.dist())
 
     // 链式集合操作
     var result = [1, 2, 3, 4, 5]
-        .filter(func(x) { return x % 2 == 0 })
-        .map(func(x) { return x * 10 })
+        .filter(func(var x, var i) { return x % 2 == 0 })
+        .map(func(var x, var i) { return x * 10 })
     print(result)  // [20, 40]
 
     // 异常处理
@@ -166,7 +170,7 @@ main() {
 struct Point {
     int x = 0
     int y = 0
-    func length():float { return maths.sqrt(x * x + y * y) }
+    func dist():float { return maths.sqrt(x * x + y * y) }
 }
 ```
 
