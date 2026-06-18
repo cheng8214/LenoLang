@@ -103,6 +103,11 @@ int lenolang_run(const char* source) {
     // 2. 语义分析（单遍）
     Semantic sem;
     semantic_init(&sem, parser.root);
+    // 提前初始化 CodeGen，确保 fail 路径上 codegen_cleanup 安全
+    Chunk chunk;
+    chunk_init(&chunk);
+    CodeGen gen;
+    codegen_init(&gen, &chunk, &sem);
     semantic_analyze(&sem, parser.root);
     if (error_has_any()) goto fail;
 
@@ -116,10 +121,6 @@ int lenolang_run(const char* source) {
          printf("debug模式:开始生成字节码\n");
      }
     // 3. 生成字节码
-    Chunk chunk;
-    chunk_init(&chunk);
-    CodeGen gen;
-    codegen_init(&gen, &chunk, &sem);
     codegen(&gen, parser.root);
     if (error_has_any()) goto fail;
 
@@ -232,16 +233,16 @@ int lenolang_compile(const char* source, const char* output_path) {
 
     Semantic sem;
     semantic_init(&sem, parser.root);
+    Chunk chunk;
+    chunk_init(&chunk);
+    CodeGen gen;
+    codegen_init(&gen, &chunk, &sem);
     semantic_analyze(&sem, parser.root);
     if (error_has_any()) goto compile_fail;
 
     optimize_constant_fold(parser.root);
     optimize_dead_code_elimination(parser.root);
 
-    Chunk chunk;
-    chunk_init(&chunk);
-    CodeGen gen;
-    codegen_init(&gen, &chunk, &sem);
     codegen(&gen, parser.root);
     if (error_has_any()) goto compile_fail;
 

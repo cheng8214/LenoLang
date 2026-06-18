@@ -1,0 +1,16 @@
+// use struct 测试
+import "use_test_mod.leno" as m
+use m.Point
+
+main() {
+    // use 之后用 Point 声明变量
+    Point p = new m.Point(x = 3, y = 4)
+    assert_eq(p.x, 3)
+    assert_eq(p.y, 4)
+
+    // var 接 use 后的类型
+    var p2 = new m.Point(x = 10, y = 20)
+    assert_eq(p2.x, 10)
+
+    print("test_use_struct passed")
+}
