@@ -1,0 +1,8 @@
+// 深度嵌套测试 - Level 1
+import "deep_l2.leno" as l2
+
+export var deep1_value = 1
+
+export func deep1_func() {
+    return "L1->" + l2.deep2_func()
+}

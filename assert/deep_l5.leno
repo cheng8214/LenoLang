@@ -1,0 +1,7 @@
+// 深度嵌套测试 - 最底层模块 (Level 5)
+
+export var deep5_value = 5
+
+export func deep5_func() {
+    return "L5"
+}

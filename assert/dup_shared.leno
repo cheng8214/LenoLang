@@ -1,0 +1,10 @@
+// 共享模块 - 测试重复导入（同一模块被多次引用只加载一次）
+export var counter = 0
+
+export func increment() {
+    counter = counter + 1
+}
+
+export func get_count() {
+    return counter
+}

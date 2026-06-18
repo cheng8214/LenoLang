@@ -1,0 +1,12 @@
+// 深度嵌套模块导入测试 - 5层调用链
+import "deep_l1.leno" as l1
+
+main() {
+    // 测试变量传递
+    assert_eq(l1.deep1_value, 1)
+
+    // 测试5层函数调用链
+    assert_eq(l1.deep1_func(), "L1->L2->L3->L4->L5")
+
+    print("test_import_deep passed")
+}

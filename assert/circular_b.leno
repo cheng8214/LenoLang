@@ -1,0 +1,12 @@
+// 循环依赖测试 - 模块 B（导入模块 A）
+import "circular_a.leno" as a
+
+export var b_value = 20
+
+export func b_func() {
+    return "B" + a.a_func()
+}
+
+export func b_get_own() {
+    return b_value
+}

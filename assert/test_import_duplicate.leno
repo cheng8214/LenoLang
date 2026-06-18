@@ -1,0 +1,24 @@
+// 重复导入/模块缓存测试
+// 同一个模块被多个模块导入，确保只加载一次，状态共享
+import "dup_a.leno" as a
+import "dup_b.leno" as b
+import "dup_shared.leno" as direct
+
+main() {
+    // A 调用 increment，计数器变成 1
+    assert_eq(a.use_shared(), 1)
+
+    // B 调用 increment，计数器变成 2（共享同一个实例）
+    assert_eq(b.use_shared(), 2)
+
+    // 直接访问共享模块，计数器应该还是 2
+    assert_eq(direct.get_count(), 2)
+
+    // 再通过 A 调用一次
+    assert_eq(a.use_shared(), 3)
+
+    // B 也看到最新值
+    assert_eq(b.use_shared(), 4)
+
+    print("test_import_duplicate passed")
+}
