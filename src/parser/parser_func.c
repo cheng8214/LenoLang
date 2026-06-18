@@ -222,6 +222,13 @@ static TypeInfo* parse_base_type(Parser* p) {
         
         lexer_next(&p->lex);
         
+        // 检查是否是类型别名
+        TypeInfo* alias_type = find_alias(p, type_name);
+        if (alias_type) {
+            free(type_name);
+            return type_copy(alias_type);
+        }
+        
         TypeInfo* struct_type;
         if (face_def_find(type_name)) {
             struct_type = type_new(TYPE_FACE);
@@ -422,6 +429,45 @@ static TypeInfo* parse_type_internal(Parser* p) {
 // 公共接口：解析类型
 TypeInfo* parse_type(Parser* p) {
     return parse_type_internal(p);
+}
+
+// ============================================================================
+// 类型别名解析
+// ============================================================================
+
+Ast* parse_alias_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 跳过 alias
+
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望别名名称");
+        return NULL;
+    }
+
+    char* name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    if (!match(p, TOK_EQ)) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望 '='");
+        free(name);
+        return NULL;
+    }
+
+    TypeInfo* type = parse_type(p);
+    if (!type) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望类型");
+        free(name);
+        return NULL;
+    }
+
+    Ast* ast = ast_new(AST_ALIAS, line);
+    ast->u.alias.name = name;
+    ast->u.alias.type = type;
+    
+    // 注册到解析器别名表，使后续类型解析可识别
+    add_alias(p, name, type_copy(type));
+    
+    return ast;
 }
 
 // ============================================================================

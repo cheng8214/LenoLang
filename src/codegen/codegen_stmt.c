@@ -1593,6 +1593,9 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             // cfunc 声明是纯编译期语法糖，不生成运行时指令
             // 签名信息在语义分析阶段存入 Symbol，供 ffi.callback 调用时使用
             break;
+        case AST_ALIAS:
+            // 类型别名是纯编译期语法糖，不生成运行时指令
+            break;
         case AST_ENUM_DEF: {
             // 生成 enum 定义指令
             // 将 enum 名称作为常量
@@ -2003,7 +2006,8 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
             // clib 定义是纯编译期语法糖，不生成运行时指令
             break;
         case AST_CFUNC_DECL:
-            // cfunc 声明是纯编译期语法糖，不生成运行时指令
+        case AST_ALIAS:
+            // 纯编译期语法糖，不生成运行时指令
             break;
         case AST_ENUM_DEF:
             gen_enum_module(gen, ast);

@@ -422,6 +422,7 @@ static void fold_expr(Ast* ast) {
             }
             break;
         case AST_FACE_DEF:
+        case AST_ALIAS:
             break;
 
         case AST_STRUCT_INIT:
@@ -784,6 +785,7 @@ static int dce_expr(Ast* ast) {
             return 0;
 
         case AST_FACE_DEF:
+        case AST_ALIAS:
             return 0;
 
         // 结构体实例化：递归处理字段值

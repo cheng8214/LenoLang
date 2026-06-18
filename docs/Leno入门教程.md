@@ -272,6 +272,60 @@ main() {
 > // 不是：a=10, b=10, c=1
 > ```
 
+### 类型别名（alias）
+
+使用 `alias` 为复杂类型起简短名字，减少重复书写：
+
+```leno
+alias IntList = Array[int]
+alias StrDict = Dict[string, string]
+alias Callback = func(int):bool
+
+IntList nums = [1, 2, 3]    // 等价于 Array[int] nums
+StrDict d = {"a": "hi"}     // 等价于 Dict[string, string] d
+```
+
+**别名链**——别名可以引用另一个别名：
+
+```leno
+alias A = int
+alias B = A                 // B → A → int
+func add(A x, B y):B { return x + y }
+```
+
+**嵌套别名**——支持任意深度组合：
+
+```leno
+alias IntMatrix = Array[IntList]           // Array[Array[int]]
+alias NamedMap  = Dict[string, StrDict]    // Dict[string, Dict[string, string]]
+```
+
+**函数参数和返回值**：
+
+```leno
+alias IntList = Array[int]
+func sum(IntList arr):int { ... }     // 参数
+func make_list():IntList { ... }      // 返回类型
+```
+
+**局部别名**——在函数体内定义，作用域限于该函数：
+
+```leno
+func test() {
+    alias Words = Array[string]
+    Words w = ["hello", "world"]
+}
+```
+
+**与泛型配合**：
+
+```leno
+alias IntArr = Array[int]
+var doubled = map(IntArr nums, double)   // 等价于 map(nums, double)
+```
+
+> **⚠️ 注意**：别名在编译期展开为实际类型，`type()` 返回的是展开后的真实类型而非别名。
+
 ### int/float 自动升级
 
 `int` 是任意精度大整数，永远不会溢出。`float` 是 IEEE 754 双精度浮点数。

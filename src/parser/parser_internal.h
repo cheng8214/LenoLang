@@ -65,6 +65,10 @@ void parser_synchronize(Parser* p);
 // struct 前向引用支持（在 parser.c 中实现）
 int is_struct_name(Parser* p, const char* name);
 
+// 类型别名支持（在 parser.c 中实现）
+void add_alias(Parser* p, const char* name, TypeInfo* type);
+TypeInfo* find_alias(Parser* p, const char* name);
+
 // ============================================================================
 // 表达式解析函数声明（在 parser_expr.c 中实现）
 // ============================================================================
@@ -138,6 +142,7 @@ Ast* parse_cstruct_stmt(Parser* p);
 Ast* parse_clib_stmt(Parser* p);
 Ast* parse_cfunc_stmt(Parser* p);
 Ast* parse_enum_stmt(Parser* p);
+Ast* parse_alias_stmt(Parser* p);
 
 // ============================================================================
 // 模块导入导出（在 parser_module.c 中实现）

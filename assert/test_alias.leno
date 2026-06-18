@@ -1,0 +1,20 @@
+// 类型别名测试
+alias IntList = Array[int]
+alias StrDict = Dict[string, string]
+
+func sum(IntList arr):int {
+    var total = 0
+    for arr to item {
+        total = total + item
+    }
+    return total
+}
+
+IntList arr = [1, 2, 3, 4, 5]
+assert_eq(sum(arr), 15)
+
+StrDict d = {"a": "hello", "b": "world"}
+assert_eq(d["a"], "hello")
+assert_eq(d["b"], "world")
+
+assert_eq(type(arr), "Array[int]")

@@ -46,6 +46,7 @@ typedef enum {
     AST_THROW,         // throw 语句
     AST_TYPE_CHECK,    // 类型检查表达式: a is int
     AST_AS_CAST,       // 安全类型转换: a as TypeName
+    AST_ALIAS,         // 类型别名: alias Name = Type
     AST_STRUCT_DEF,    // struct 定义
     AST_FACE_DEF,      // face 定义
     AST_CSTRUCT_DEF,   // cstruct 定义（C 布局结构体）
@@ -237,6 +238,10 @@ struct Ast {
             Ast* expr;         // 被检查的表达式
             TypeInfo* type;    // 检查的类型
         } type_check;
+        struct {
+            char* name;        // 别名名称
+            TypeInfo* type;    // 别名指向的类型
+        } alias;
         struct {
             char* name;        // struct 名称
             char** field_names; // 字段名称数组

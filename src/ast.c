@@ -312,6 +312,11 @@ void ast_free(Ast* ast) {
             free(ast->u.face_def.method_param_types);
             free(ast->u.face_def.method_param_counts);
             break;
+        case AST_ALIAS:
+            free(ast->u.alias.name);
+            type_free(ast->u.alias.type);
+            break;
+
         case AST_ENUM_DEF:
             free(ast->u.enum_def.name);
             for (int i = 0; i < ast->u.enum_def.member_count; i++) {

@@ -4131,6 +4131,10 @@ void visit(Semantic* s, Ast* ast) {
             }
             break;
 
+        case AST_ALIAS:
+            // 类型别名已在解析阶段注册到解析器别名表，无需运行时处理
+            break;
+
         case AST_STRUCT_INIT:
             // 处理 struct 构造函数调用
             {

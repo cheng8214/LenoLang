@@ -1,0 +1,19 @@
+alias IntList = Array[int]
+alias StrDict = Dict[string, string]
+
+func sum(IntList arr):int {
+    var total = 0
+    for arr to item {
+        total = total + item
+    }
+    return total
+}
+
+main() {
+    IntList arr = [1, 2, 3, 4, 5]
+    print(sum(arr))
+
+    StrDict d = {"a": "hello", "b": "world"}
+    print(d)
+    print(type(arr))
+}

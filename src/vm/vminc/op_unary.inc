@@ -109,9 +109,9 @@ OPCODE(OP_CAST_STRING) {
 OPCODE(OP_U8_TO_F64) {
     frame = &vm.frames[vm.frame_cnt - 1];
     Value a = vm_stack_pop(&vm);
-    // u8 范围 0-255，截取低 8 位转换为 f64
-    double result = (double)((uint8_t)(val_as_num(a) & 0xFF));
-    vm_stack_push(&vm, val_float(result));
+    // u8 范围 0-255，转换为 f64
+    uint8_t u8val = (uint8_t)val_as_int(a);
+    vm_stack_push(&vm, val_float((double)u8val));
     DISPATCH;
 }
 

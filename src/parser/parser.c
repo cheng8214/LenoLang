@@ -121,6 +121,11 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_enum_stmt(p);
             break;
 
+        // 类型别名
+        case TOK_ALIAS:
+            stmt = parse_alias_stmt(p);
+            break;
+
         // 代码块
         case TOK_LBRACE:
             stmt = parse_block_internal(p);
@@ -199,6 +204,10 @@ void parser_init(Parser* p, const char* src) {
     p->struct_names = NULL;
     p->struct_count = 0;
     p->struct_capacity = 0;
+    p->alias_names = NULL;
+    p->alias_types = NULL;
+    p->alias_count = 0;
+    p->alias_capacity = 0;
 }
 
 // 添加 struct 名称到集合
@@ -228,6 +237,28 @@ int is_struct_name(Parser* p, const char* name) {
         }
     }
     return 0;
+}
+
+// 添加别名到表
+void add_alias(Parser* p, const char* name, TypeInfo* type) {
+    if (p->alias_count >= p->alias_capacity) {
+        p->alias_capacity = p->alias_capacity == 0 ? 8 : p->alias_capacity * 2;
+        p->alias_names = realloc(p->alias_names, sizeof(char*) * p->alias_capacity);
+        p->alias_types = realloc(p->alias_types, sizeof(TypeInfo*) * p->alias_capacity);
+    }
+    p->alias_names[p->alias_count] = strdup(name);
+    p->alias_types[p->alias_count] = type;
+    p->alias_count++;
+}
+
+// 查找别名
+TypeInfo* find_alias(Parser* p, const char* name) {
+    for (int i = 0; i < p->alias_count; i++) {
+        if (strcmp(p->alias_names[i], name) == 0) {
+            return p->alias_types[i];
+        }
+    }
+    return NULL;
 }
 
 // 预扫描收集所有 struct 定义

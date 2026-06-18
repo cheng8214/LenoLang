@@ -18,6 +18,11 @@ typedef struct {
     char** struct_names;
     int struct_count;
     int struct_capacity;
+    // 类型别名表
+    char** alias_names;
+    TypeInfo** alias_types;
+    int alias_count;
+    int alias_capacity;
 } Parser;
 
 void parser_init(Parser* p, const char* src);

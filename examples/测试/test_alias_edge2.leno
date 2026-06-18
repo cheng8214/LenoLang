@@ -1,0 +1,70 @@
+// 更刁钻的 alias 测试
+alias A = int
+alias B = A                // 别名链 B = A = int
+alias C = Array[int]
+alias D = Array[C]         // D = Array[Array[int]]
+alias E = func(C):D        // 函数类型别名
+alias F = Dict[string, C]  // Dict 别名
+
+// 1. 别名链（B→A→int）
+func add(A x, B y):B {     // 等价于 add(int, int):int
+    return x + y
+}
+
+// 2. 函数类型别名
+func apply_op(C arr, E fn):D {
+    return fn(arr)
+}
+
+// 3. Dict 别名
+func get_all(F d, string k):C {
+    return d[k]
+}
+
+// 4. 局部别名
+func test_local() {
+    alias localT = Array[string]
+    localT words = ["hello", "world"]
+    print(words)
+}
+
+// 5. 泛型 + 别名混合
+func map[T, U](Array[T] arr, func(T):U fn):Array[U] {
+    var result = []
+    for arr to item { result.add(fn(item)) }
+    return result
+}
+
+func double(int x):int { return x * 2 }
+
+// 6. 别名作为泛型 map 的参数
+alias IntArr = Array[int]
+func sum_alias(IntArr arr):int {
+    var total = 0
+    for arr to item { total = total + item }
+    return total
+}
+
+main() {
+    // 别名链
+    print(add(3, 4))             // 7
+
+    // 函数类型别名
+    C numbers = [1, 2, 3]
+    var doubled = map(numbers, double)
+    print(doubled)               // [2, 4, 6]
+
+    // Dict 别名
+    F mydict = {"x": [10, 20], "y": [30, 40]}
+    print(get_all(mydict, "x"))  // [10, 20]
+
+    // 局部别名
+    test_local()
+    
+    // 别名 + 泛型混合
+    IntArr nums = [1, 2, 3, 4, 5]
+    print(sum_alias(nums))       // 15
+
+    // 验证 type
+    print(type(mydict))          // Dict[string, Array[int]]
+}
