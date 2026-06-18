@@ -293,6 +293,20 @@ alias B = A                 // B → A → int
 func add(A x, B y):B { return x + y }
 ```
 
+**模块导出别名链**——`export alias` 也支持链式引用：
+
+```leno
+// types.leno
+export alias A = int
+export alias B = A          // B → A → int
+
+// main.leno
+import "types.leno" as t
+B val = 42                  // B 最终解析为 int
+```
+
+**与泛型配合**：
+
 **嵌套别名**——支持任意深度组合：
 
 ```leno
@@ -3010,6 +3024,22 @@ main() {
 
 `use` 的类型可以**跨模块链式传导**，A→B→C→D 都能用到最底层 D 定义的类型，无需每层手动重导出。
 
+`use` 也支持 **face 类型**导入：
+```leno
+// shape.leno
+export face Shape {
+    func area():float
+}
+
+// main.leno
+import "shape.leno" as sm
+use sm.Shape
+
+func print_area(Shape s) {  // use 之后可直接用 face 名
+    print(s.area())
+}
+```
+
 ### io 模块使用
 
 ```leno
@@ -4725,6 +4755,8 @@ lenolang program.leno
 | 导出函数    | `export func name() { }`                             |
 | 导出枚举    | `export enum Color { ... }`                          |
 | 导出别名    | `export alias Size = int`, `export alias IntList = Array[int]` |
+| 别名链     | `export alias B = A` — 别名引用模板内其他别名 |
+| 导出 face  | `export face Shape { }` — 导出接口定义 |
 | use 类型   | `use module.Point` — 导入 struct/face 类型到当前作用域 |
 | use 链式传导 | D→C→B→A 链式传递，无需手动重导出 |
 | 循环依赖    | 支持 A→B→A 相互导入                                        |

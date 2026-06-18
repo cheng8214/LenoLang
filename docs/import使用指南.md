@@ -215,6 +215,51 @@ main() {
 
 支持的复杂类型：`Array[T]`、`Dict[K,V]`、自定义 struct 名等。
 
+**别名链**——`export alias` 可以引用同模块内的其他别名：
+
+```leno
+// types.leno
+export alias A = int
+export alias B = A          // B → A → int
+
+// main.leno
+import "types.leno" as t
+B val = 42                  // B 最终解析为 int
+```
+
+### 3.5 导出 face 类型
+
+模块可以导出 `face` 定义，供调用方实现或作为参数类型：
+
+```leno
+// shape.leno
+export face Shape {
+    func area():float
+    func name():string
+}
+
+export struct Circle impl Shape {
+    int r = 0
+    func area():float { return 3.14 * r * r }
+    func name():string { return "Circle" }
+}
+```
+
+```leno
+// main.leno
+import "shape.leno" as sm
+use sm.Shape
+
+func print_info(Shape s) {
+    print(s.name() + " 面积=" + s.area())
+}
+
+main() {
+    var c = new sm.Circle(r = 3)
+    print_info(c)
+}
+```
+
 ***
 
 ## 4. 循环依赖处理
