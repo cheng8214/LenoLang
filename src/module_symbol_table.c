@@ -29,6 +29,9 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     table->vars = NULL;
     table->var_count = 0;
     table->var_capacity = 0;
+    table->aliases = NULL;
+    table->alias_count = 0;
+    table->alias_capacity = 0;
 
     return table;
 }
@@ -91,6 +94,13 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         free(table->vars[i].struct_name);
     }
     free(table->vars);
+
+    // 释放别名符号
+    for (int i = 0; i < table->alias_count; i++) {
+        free(table->aliases[i].name);
+        free(table->aliases[i].struct_name);
+    }
+    free(table->aliases);
 
     free(table);
 }
@@ -306,6 +316,37 @@ void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, Typ
     var->name = strdup(name);
     var->type = type;
     var->struct_name = struct_name ? strdup(struct_name) : NULL;
+}
+
+// 查找别名符号
+ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, const char* alias_name) {
+    if (!table || !alias_name) return NULL;
+
+    for (int i = 0; i < table->alias_count; i++) {
+        if (strcmp(table->aliases[i].name, alias_name) == 0) {
+            return &table->aliases[i];
+        }
+    }
+    return NULL;
+}
+
+// 添加别名符号
+void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name) {
+    if (!table || !name) return;
+
+    // 扩容
+    if (table->alias_count >= table->alias_capacity) {
+        int new_capacity = table->alias_capacity == 0 ? INITIAL_CAPACITY : table->alias_capacity * 2;
+        ModuleAliasSymbol* new_aliases = (ModuleAliasSymbol*)realloc(table->aliases, sizeof(ModuleAliasSymbol) * new_capacity);
+        if (!new_aliases) return;
+        table->aliases = new_aliases;
+        table->alias_capacity = new_capacity;
+    }
+
+    ModuleAliasSymbol* alias = &table->aliases[table->alias_count++];
+    alias->name = strdup(name);
+    alias->type = type;
+    alias->struct_name = struct_name ? strdup(struct_name) : NULL;
 }
 
 // 基本类型解析 - 只识别内置类型，其他返回 TYPE_ANY
@@ -1278,6 +1319,56 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                 }
 
                 p = after_var;
+                continue;
+            }
+
+            // 检查是否是 alias 定义
+            if (strncmp(after_export, "alias", 5) == 0 && (after_export[5] == ' ' || after_export[5] == '\t' || after_export[5] == '\n' || after_export[5] == '\r' || after_export[5] == '\0')) {
+                char* after_alias = after_export + 5;
+                while (*after_alias && (*after_alias == ' ' || *after_alias == '\t')) after_alias++;
+
+                const char* name_start = after_alias;
+                while (*after_alias && (isalnum((unsigned char)*after_alias) || *after_alias == '_')) after_alias++;
+                int name_len = (int)(after_alias - name_start);
+
+                if (name_len > 0 && name_len < 64) {
+                    char alias_name[64];
+                    strncpy(alias_name, name_start, name_len);
+                    alias_name[name_len] = '\0';
+
+                    // 跳过空白和 =
+                    while (*after_alias && (*after_alias == ' ' || *after_alias == '\t')) after_alias++;
+                    if (*after_alias == '=') {
+                        after_alias++;
+                        while (*after_alias && (*after_alias == ' ' || *after_alias == '\t')) after_alias++;
+
+                        const char* type_start = after_alias;
+                        while (*after_alias && (isalnum((unsigned char)*after_alias) || *after_alias == '_')) after_alias++;
+                        int type_len = (int)(after_alias - type_start);
+
+                        if (type_len > 0 && type_len < 64) {
+                            char type_str[64];
+                            strncpy(type_str, type_start, type_len);
+                            type_str[type_len] = '\0';
+
+                            TypeKind alias_type = parse_base_type(type_str);
+                            char alias_struct[64] = {0};
+
+                            if (alias_type == TYPE_ANY) {
+                                if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                    alias_type = TYPE_STRUCT;
+                                    strncpy(alias_struct, type_str, sizeof(alias_struct) - 1);
+                                    alias_struct[sizeof(alias_struct) - 1] = '\0';
+                                }
+                            }
+
+                            module_symbol_table_add_alias(table, alias_name, alias_type,
+                                alias_struct[0] ? alias_struct : NULL);
+                        }
+                    }
+                }
+
+                p = after_alias;
                 continue;
             }
         }

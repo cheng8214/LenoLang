@@ -2,6 +2,7 @@
 #include "../include/native.h"
 #include "../include/leno_package.h"
 #include <string.h>
+#include <ctype.h>
 
 // ============================================================================
 // import 语句解析（支持原生模块和文件模块）
@@ -126,9 +127,74 @@ Ast* parse_import_stmt(Parser* p) {
     ast->u.import.module_name = module_name;
     ast->u.import.alias = alias;  // 如果没有别名，alias 为 NULL
     
-    // 如果是文件模块（包含 .leno），保存文件路径
+    // 如果是文件模块（包含 .leno），保存文件路径并预加载 export alias
     if (strstr(module_name, ".leno") != NULL) {
         ast->u.import.file_path = copy_string(module_name, strlen(module_name));
+        
+        // 解析期快速扫描模块的 export alias，注册到解析器别名表
+        // 这样 parse_type 才能在后续代码中识别别名
+        extern char* read_module_file(const char* file_path, const char* current_file);
+        const char* current_file = error_get_filename();
+        char* module_source = read_module_file(module_name, current_file);
+        if (module_source) {
+            char* s = module_source;
+            while (*s) {
+                // 跳过空白
+                while (*s && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')) s++;
+                if (!*s) break;
+                
+                // 跳过注释
+                if (*s == '/' && *(s+1) == '/') { while (*s && *s != '\n') s++; continue; }
+                
+                // 查找 export alias
+                if (strncmp(s, "export", 6) == 0 && !isalnum((unsigned char)s[6]) && s[6] != '_') {
+                    s += 6;
+                    while (*s && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')) s++;
+                    if (strncmp(s, "alias", 5) == 0 && !isalnum((unsigned char)s[5]) && s[5] != '_') {
+                        s += 5;
+                        while (*s && (*s == ' ' || *s == '\t')) s++;
+                        
+                        const char* name_start = s;
+                        while (*s && (isalnum((unsigned char)*s) || *s == '_')) s++;
+                        int name_len = (int)(s - name_start);
+                        
+                        if (name_len > 0 && name_len < 64) {
+                            char alias_name[64];
+                            memcpy(alias_name, name_start, name_len);
+                            alias_name[name_len] = '\0';
+                            
+                            while (*s && (*s == ' ' || *s == '\t')) s++;
+                            if (*s == '=') {
+                                s++;
+                                while (*s && (*s == ' ' || *s == '\t')) s++;
+                                
+                                // 只处理简单类型名
+                                const char* type_start = s;
+                                while (*s && (isalnum((unsigned char)*s) || *s == '_')) s++;
+                                int type_len = (int)(s - type_start);
+                                
+                                if (type_len > 0 && type_len < 64) {
+                                    char type_str[64];
+                                    memcpy(type_str, type_start, type_len);
+                                    type_str[type_len] = '\0';
+                                    
+                                    TypeKind kind = TYPE_ANY;
+                                    if (strcmp(type_str, "int") == 0) kind = TYPE_INT;
+                                    else if (strcmp(type_str, "float") == 0) kind = TYPE_FLOAT;
+                                    else if (strcmp(type_str, "string") == 0) kind = TYPE_STRING;
+                                    else if (strcmp(type_str, "bool") == 0) kind = TYPE_BOOL;
+                                    
+                                    TypeInfo* ti = type_new(kind);
+                                    add_alias(p, alias_name, ti);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (*s) s++;
+            }
+            free(module_source);
+        }
     } else {
         ast->u.import.file_path = NULL;
     }
@@ -201,8 +267,15 @@ Ast* parse_export_stmt(Parser* p) {
         Ast* ast = ast_new(AST_EXPORT, line);
         ast->u.export.decl = decl;
         return ast;
+    } else if (p->lex.current.type == TOK_ALIAS) {
+        Ast* decl = parse_alias_stmt(p);
+        if (!decl) return NULL;
+
+        Ast* ast = ast_new(AST_EXPORT, line);
+        ast->u.export.decl = decl;
+        return ast;
     } else {
-        error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、func、struct、cstruct、clib 或 enum");
+        error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、func、struct、cstruct、clib、enum 或 alias");
         return NULL;
     }
 }

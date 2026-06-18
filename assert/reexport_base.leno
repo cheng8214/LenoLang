@@ -1,0 +1,11 @@
+// 基础模块 - 导出原始值，供重导出测试
+export var the_value = 42
+export var PI = 3.14
+
+export func add(var a, var b) {
+    return a + b
+}
+
+export func greet(var name) {
+    return "Hello, " + name
+}

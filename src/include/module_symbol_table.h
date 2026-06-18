@@ -65,6 +65,13 @@ typedef struct {
     char* struct_name;          // 如果类型是 struct，存储 struct 名称
 } ModuleVarSymbol;
 
+// 模块类型别名符号
+typedef struct {
+    char* name;                 // 别名
+    TypeKind type;              // 实际类型
+    char* struct_name;          // 如果类型是 struct，存储 struct 名称
+} ModuleAliasSymbol;
+
 // 模块符号表
 typedef struct {
     char* module_path;          // 模块文件路径
@@ -83,6 +90,9 @@ typedef struct {
     ModuleVarSymbol* vars;      // 变量符号数组
     int var_count;              // 变量数量
     int var_capacity;           // 变量数组容量
+    ModuleAliasSymbol* aliases; // 类型别名符号数组
+    int alias_count;            // 别名数量
+    int alias_capacity;         // 别名数组容量
 } ModuleSymbolTable;
 
 // 创建模块符号表
@@ -128,5 +138,11 @@ ModuleVarSymbol* module_symbol_table_find_var(ModuleSymbolTable* table, const ch
 
 // 添加变量符号
 void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name);
+
+// 查找别名符号
+ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, const char* alias_name);
+
+// 添加别名符号
+void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name);
 
 #endif // MODULE_SYMBOL_TABLE_H

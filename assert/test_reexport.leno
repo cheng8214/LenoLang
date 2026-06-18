@@ -1,0 +1,23 @@
+// 重导出 + 多模块 alias 测试
+// 测试通过包装模块访问重导出的值，以及 import as 别名机制
+import "reexport_wrapper.leno" as wrap
+import "reexport_base.leno" as origin
+
+main() {
+    // 通过包装模块访问重导出的变量
+    assert_eq(wrap.the_value, 42)
+    assert_eq(wrap.PI, 3.14)
+
+    // 通过包装模块访问重导出的函数
+    assert_eq(wrap.add(1, 2), 3)
+    assert_eq(wrap.greet("World"), "Hello, World")
+
+    // 包装模块自己的函数
+    assert_eq(wrap.wrapper_mul(3, 4), 12)
+
+    // 对比原始模块的值应该一致
+    assert_eq(wrap.the_value, origin.the_value)
+    assert_eq(wrap.add(5, 6), origin.add(5, 6))
+
+    print("test_reexport passed")
+}

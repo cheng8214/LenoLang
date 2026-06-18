@@ -1,0 +1,20 @@
+// 重导出包装模块 - 手动 re-export 基础模块的内容
+import "reexport_base.leno" as base
+
+// 直接重导出变量
+export var the_value = base.the_value
+export var PI = base.PI
+
+// 包装后重导出函数
+export func add(var a, var b) {
+    return base.add(a, b)
+}
+
+export func greet(var name) {
+    return base.greet(name)
+}
+
+// 新增自己的导出
+export func wrapper_mul(var a, var b) {
+    return a * b
+}
