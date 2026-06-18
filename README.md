@@ -4,28 +4,114 @@ Leno 是一门带静态类型检查的脚本语言，介于 Python（纯动态�
 
 Leno 诞生于对编程语言设计的热爱与探索，虽非完美，但乐在其中。
 
+## 一分钟速览
+
+```leno
+// 类型推断 + 静态检查
+var name = "Leno"
+int version = 1
+
+// 结构体 + 方法
+struct Point {
+    int x = 0
+    int y = 0
+    func length():float { return maths.sqrt(x * x + y * y) }
+}
+var p = new Point(x = 3, y = 4)
+print(p.length())    // 5.0
+
+// 接口 + 多态
+face Shape {
+    func area():float
+}
+struct Circle impl Shape {
+    int r = 0
+    func area():float { return 3.14 * r * r }
+}
+
+// 模块导入 + 类型别名
+import "math.leno" as m
+use m.Vec3
+export alias Size = int
+
+// 泛型 + 高阶函数
+func map[T,U](Array[T] arr, func(T):U fn):Array[U] { ... }
+var doubled = [1, 2, 3].map(func(x) { return x * 2 })
+
+// 闭包 + 一等函数
+func make_counter(int start) {
+    int count = start
+    return func() { count = count + 1; return count }
+}
+
+// 异步协程
+async func fetch() {
+    await asyncs.sleep(100)
+    return "done"
+}
+
+// 异常处理
+try { throw "出错了" } catch e { print(e) } finally { cleanup() }
+```
+
 ## 特性
 
+**类型系统**
 - **静态类型 + 类型推断** — 显式声明或 `var` 自动推断，类型一旦确定不可更改
-- **任意精度整数** — `int` 无溢出，大整数运算开箱即用
-- **结构体与接口** — `struct` 定义数据结构，`face` 定义接口，支持 `impl` 实现
-- **枚举** — `enum` 定义枚举类型
-- **泛型容器** — `Array[T]`、`Dict[K, V]` 内置泛型数组与字典
-- **异步协程** — `async`/`await` + 事件循环，轻量并发
-- **FFI 外部函数接口** — 直接调用 C 动态库和系统 API，零摩擦互操作
-- **CStruct** — 声明式定义 C 结构体布局，与 FFI 无缝配合
-- **模块系统** — `import` 导入文件模块或包，`export` 控制可见性
-- **包管理** — `leno.toml` 配置、`leno --init` 创建包、`leno --install` 安装依赖
-- **闭包与高阶函数** — 匿名函数、闭包捕获、函数作为一等公民
-- **类型守卫** — `is` 类型检查 + if 块内自动类型收窄
+- **任意精度整数** — `int` 无溢出，int48 内联存储 + BigInt 自动升级，对外完全透明
+- **`alias` 类型别名** — 支持简单类型、`Array[T]`、`Dict[K,V]`、别名链等复杂组合
+- **类型守卫** — `is` 类型检查 + if/switch 块内自动类型收窄
 - **安全类型转换** — `as` 操作符，不匹配返回 `null` 而非崩溃
-- **字符串插值** — `"Hello, {name}!"` 内嵌表达式
+
+**结构体与面向对象**
+- **`struct` 结构体** — 字段、方法、嵌套、自引用，堪比轻量级 class
+- **`self` 关键字** — 方法内显式引用当前实例，参数名冲突时必备
+- **`face` 接口** — 名义类型，必须显式 `impl` 声明，编译期检查方法完整性
+- **`enum` 枚举** — 自增值或显式值，本质为 `int`
+
+**函数式编程**
+- **一等函数** — 函数赋值给变量、作为参数传递、作为返回值
+- **匿名函数 / Lambda** — `func(x) { return x * 2 }` 内联定义，支持 IIFE
+- **闭包** — 捕获外部变量，状态保持，多实例独立
+- **泛型函数** — `func map[T, U](Array[T] arr, func(T):U fn):Array[U]`
+- **默认参数** — `func add(int x, int y = 10):int`
+
+**模块系统**
+- **`import` 导入** — 文件模块、内置包、相对路径、中文/空格路径
+- **`export` 控制** — 变量/函数/struct/enum/face/alias 显式导出
+- **`export alias`** — 模块导出类型别名，支持复杂类型和别名链
+- **`use` 类型导入** — `use module.Struct` 导入 struct/face 到当前作用域
+- **`use` 链式传导** — D→C→B→A 自动传递类型，无需每层重导出
+- **循环依赖支持** — A↔B 相互导入，占位符机制防止无限递归
+- **模块缓存 / 单例** — 同模块多次导入共享同一实例，状态全局一致
+- **包管理** — `leno.toml` 配置、`leno --init` 创建、`leno --install` 安装
+
+**并发编程**
+- **多线程** — `threads` 模块，`start()`/`join()`/通道通信，线程间全局变量隔离
+- **异步协程** — `async`/`await` + 事件循环，轻量并发
+- **Channal 通道** — 有缓冲/无缓冲，Go 风格 CSP 模型
+
+**底层能力**
+- **FFI** — 直接调用 C 动态库和系统 API，无需绑定
+- **CStruct** — 声明式定义 C 结构体布局，与 FFI 无缝配合
+
+**异常处理**
+- **`try-catch-finally`** — 完整异常机制，支持嵌套和 `throw` 重抛
+- **异常对象** — `e.msg`/`e.file`/`e.stack` 完整诊断信息
+- **线程异常传播** — 子线程异常通过 `join()` 传播到调用方
+
+**其他**
+- **泛型容器** — `Array[T]`、`Dict[K, V]` 内置泛型数组与字典，支持 `map`/`filter`/`reduce`
+- **字符串插值** — `$"Hello, {name}!"` 内嵌表达式
+- **格式化输出** — `format("%02d: %-10s", i, name)` C 风格格式控制
+- **`as` 安全转换** — 不匹配返回 `null` 而非崩溃
+- **`>>>` 逻辑右移** — 高位补 0，适合加密算法位运算
 - **GUI 支持** — 内置窗口、绘图、图片、字体、事件系统
-- **多线程** — `threads` 模块支持多线程编程
-- **正则表达式** — `regexs` 模块内置正则支持
-- **JSON** — `jsons` 模块内置 JSON 编解码
+- **正则表达式** — `regexs` 模块
+- **JSON** — `jsons` 模块编解码
 - **垃圾回收** — 内置 GC，自动内存管理
-- **跨平台** — 支持 Windows / Linux（guis 模块在 Linux 下编译可能存在问题，其余模块暂未发现问题）；macOS 暂不支持
+- **字节码编译** — 源码 → `.lenb` 字节码 → 独立 exe 打包
+- **跨平台** — Windows / Linux（guis 在 Linux 下可能有问题）；macOS 暂不支持
 
 ## 快速开始
 
@@ -49,33 +135,38 @@ leno hello.leno
 
 ```leno
 main() {
-    // 类型推断
+    // 类型推断 + 模块使用
     var name = "Leno"
-    var version = 1.0
-    var features = ["静态类型", "协程", "FFI"]
+    var features = ["静态类型", "协程", "FFI", "模块系统"]
 
-    // 结构体
-    var p = new Point(3, 4)
-    print("距离 = " + p.distance())
+    // 结构体（命名参数构造）
+    var p = new Point(x = 3, y = 4)
+    print("距离 = " + p.length())
 
-    // 异步
-    async func fetch() {
-        await asyncs.sleep(1000)
+    // 异步请求
+    async func fetch_data() {
+        await asyncs.sleep(100)
         return "done"
     }
 
-    // 集合操作
-    var result = [1, 2, 3, 4, 5].map(func(x) { return x * 2 })
-    print(result)  // [2, 4, 6, 8, 10]
+    // 链式集合操作
+    var result = [1, 2, 3, 4, 5]
+        .filter(func(x) { return x % 2 == 0 })
+        .map(func(x) { return x * 10 })
+    print(result)  // [20, 40]
+
+    // 异常处理
+    try {
+        var val = 1 / 0
+    } catch e {
+        print("出错: " + e.msg)
+    }
 }
 
 struct Point {
     int x = 0
     int y = 0
-
-    func distance():float {
-        return maths.sqrt(x * x + y * y)
-    }
+    func length():float { return maths.sqrt(x * x + y * y) }
 }
 ```
 
@@ -191,6 +282,16 @@ export func hello() {
 
 export var VERSION = "0.1.0"
 
+// 导出类型别名
+export alias UserID = int
+export alias StrList = Array[string]
+
+// 导出 struct
+export struct Config {
+    string host = "localhost"
+    int port = 8080
+}
+
 // 不加 export = 私有，外部不可见
 func _internal() {
     return "private"
@@ -243,11 +344,11 @@ root = "lib"
 ## 运行测试
 
 ```bash
+# 使用测试运行器（当前 95 个测试全部通过）
+build/test_runner build/leno assert
+
 # 使用 CMake
 cmake --build build --target test
-
-# 或直接使用测试运行器
-build/test_runner build/leno assert
 ```
 
 ## 命令参考
