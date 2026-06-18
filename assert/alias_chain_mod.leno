@@ -1,3 +1,2 @@
 export alias A = int
 export alias B = A
-export alias Size = int

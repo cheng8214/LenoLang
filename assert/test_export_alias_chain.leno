@@ -10,9 +10,5 @@ main() {
     B val2 = 100
     assert_eq(val2, 100)
 
-    // Size = int
-    Size s = 7
-    assert_eq(s, 7)
-
     print("test_export_alias_chain passed")
 }

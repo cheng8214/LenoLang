@@ -78,22 +78,27 @@ static void run_test(const char* leno_exe, const char* test_path) {
     char output[MAX_OUTPUT] = {0};
 
 #ifdef _WIN32
-    // 使用临时文件捕获输出，避免管道句柄继承问题
+    // 使用唯一临时文件避免并发冲突
     char temp_file[MAX_PATH_LEN];
     GetTempPathA(MAX_PATH_LEN - 1, temp_file);
-    strncat(temp_file, "leno_test_output.txt", MAX_PATH_LEN - strlen(temp_file) - 1);
+    DWORD pid = GetCurrentProcessId();
+    DWORD tid = GetCurrentThreadId();
+    snprintf(temp_file + strlen(temp_file), 
+             MAX_PATH_LEN - strlen(temp_file) - 1,
+             "leno_test_%lu_%lu_%d.txt", pid, tid, test_count);
     
-    // 使用 _spawnlp 来正确执行命令
-    snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", leno_exe, test_path);
+    // 构建完整命令行（含重定向）
+    snprintf(cmd, sizeof(cmd), "cmd /c \"\"%s\" \"%s\" > \"%s\" 2>&1\"",
+             leno_exe, test_path, temp_file);
     
-    // 构建重定向命令
-    char cmd_with_redirect[MAX_PATH_LEN * 4];
-    snprintf(cmd_with_redirect, sizeof(cmd_with_redirect), "cmd /c \"%s > \"%s\" 2>&1\"", cmd, temp_file);
-    
-    int ret = system(cmd_with_redirect);
+    // 等待进程完成（不设超时）
+    int ret = system(cmd);
     DWORD exit_code = (DWORD)ret;
     
-    // 读取临时文件内容
+    // 等待确保文件写入完成
+    Sleep(10);
+    
+    // 读取输出
     FILE* f = fopen(temp_file, "r");
     if (f) {
         size_t n = fread(output, 1, MAX_OUTPUT - 1, f);
