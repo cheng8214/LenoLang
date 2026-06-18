@@ -1,0 +1,10 @@
+// export alias + use 组合测试
+import "alias_complex_mod.leno" as m
+
+main() {
+    // Size = int（和 test_export_alias 不同，这里用 IntList）
+    IntList arr = [10, 20, 30]
+    assert_eq(arr.len(), 3)
+
+    print("test_export_alias_chain passed")
+}

@@ -1,0 +1,6 @@
+export var name = "deep"
+export var value = 999
+
+export func get_info():string {
+    return "deep=" + name + " val=" + value
+}

@@ -1,0 +1,22 @@
+// 边界测试：多模块组合导入
+import "face_chain_d.leno" as shapes
+import "deep_l1.leno" as l1
+import "circular_a.leno" as ca
+import "reexport_wrapper.leno" as rw
+import "alias_complex_mod.leno" as ac
+import "use_mod_a.leno" as ua
+import "use_mod_b.leno" as ub
+
+main() {
+    var c = new shapes.Circle(r = 2)
+    assert_eq(c.name(), "Circle")
+
+    assert_eq(l1.deep1_value, 1)
+    assert_eq(ca.a_value, 10)
+    assert_eq(rw.the_value, 42)
+
+    var p = new ua.Point(x = 5, y = 5)
+    assert_eq(p.x, 5)
+
+    print("test_import_edge passed")
+}

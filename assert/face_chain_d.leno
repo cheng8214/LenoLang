@@ -1,0 +1,11 @@
+export face Shape {
+    func area():int
+    func name():string
+}
+
+export struct Circle impl Shape {
+    int r = 0
+
+    func area():int { return 3 * r * r }
+    func name():string { return "Circle" }
+}

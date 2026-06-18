@@ -1,0 +1,16 @@
+// 子目录嵌套导入测试
+import "sub/test_deep_module.leno" as dm
+import "use_chain_d.leno" as d
+
+main() {
+    // 子目录模块
+    assert_eq(dm.name, "deep")
+    assert_eq(dm.value, 999)
+    assert_eq(dm.get_info(), "deep=deep val=999")
+
+    // 同级目录模块也正常
+    var v = new d.Vec3(x = 1, y = 2, z = 3)
+    assert_eq(v.x, 1)
+
+    print("test_import_subdir passed")
+}
