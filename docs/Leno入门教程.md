@@ -2957,13 +2957,58 @@ func helper() {
 
 ```leno
 // main.leno
-import "test.leno"
+import "math_utils.leno" as math
 
 main() {
-    print(test.PI)
-    print(test.add(1, 2))
+    print(math.PI)
+    print(math.add(1, 2))
 }
 ```
+
+### 导出类型别名（export alias）
+
+可以用 `export alias` 在模块中导出类型别名，调用方导入后可直接用别名声明变量：
+
+```leno
+// types.leno
+export alias Size = int
+export alias IntList = Array[int]
+export alias StrDict = Dict[string, string]
+```
+
+```leno
+// main.leno
+import "types.leno" as t
+
+main() {
+    Size s = 100              // Size 即 int
+    IntList arr = [1, 2, 3]   // IntList 即 Array[int]
+    StrDict d = {"k": "v"}    // StrDict 即 Dict[string,string]
+}
+```
+
+### 使用 use 导入类型
+
+`use` 可以将模块中的 struct/face 类型导入当前作用域，之后直接用类型名声明变量：
+
+```leno
+// shape.leno
+export struct Point {
+    int x = 0
+    int y = 0
+}
+
+// main.leno
+import "shape.leno" as shape
+use shape.Point
+
+main() {
+    Point p = new shape.Point(x = 3, y = 4)
+    print(p.x)    // 3
+}
+```
+
+`use` 的类型可以**跨模块链式传导**，A→B→C→D 都能用到最底层 D 定义的类型，无需每层手动重导出。
 
 ### io 模块使用
 
@@ -4679,6 +4724,9 @@ lenolang program.leno
 | 导出变量    | `export var PI = 3.14`                               |
 | 导出函数    | `export func name() { }`                             |
 | 导出枚举    | `export enum Color { ... }`                          |
+| 导出别名    | `export alias Size = int`, `export alias IntList = Array[int]` |
+| use 类型   | `use module.Point` — 导入 struct/face 类型到当前作用域 |
+| use 链式传导 | D→C→B→A 链式传递，无需手动重导出 |
 | 循环依赖    | 支持 A→B→A 相互导入                                        |
 | 随机数     | `rands.ints(1,6)`, `rands.choice(arr)`               |
 | 数学函数    | `maths.sqrt(x)`, `maths.sin(x)`                      |

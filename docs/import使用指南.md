@@ -173,13 +173,12 @@ import "math.leno" as math
 import "string.leno" as str
 import "array.leno" as arr
 
-// 重导出
-var math_add = math.add
-var str_format = str.format
-var arr_sort = arr.sort
+// 重导出变量
+export var math_add = math.add
+export var PI = math.PI
 
-// 或者包装后导出
-func enhanced_add(int a, int b):int {
+// 包装后导出
+export func enhanced_add(int a, int b):int {
     print("计算中...")
     return math.add(a, b)
 }
@@ -191,6 +190,30 @@ func enhanced_add(int a, int b):int {
 import "core.leno" as core
 core.enhanced_add(1, 2)
 ```
+
+### 3.4 导出类型别名（export alias）
+
+模块可以通过 `export alias` 导出类型别名，让调用方直接使用别名类型：
+
+```leno
+// types.leno
+export alias Size = int
+export alias IntList = Array[int]
+export alias StrDict = Dict[string, string]
+```
+
+```leno
+// main.leno
+import "types.leno" as t
+
+main() {
+    Size w = 100              // Size 被识别为 int
+    IntList arr = [1, 2, 3]   // IntList 被识别为 Array[int]
+    StrDict d = {"a": "hi"}   // StrDict 被识别为 Dict[string,string]
+}
+```
+
+支持的复杂类型：`Array[T]`、`Dict[K,V]`、自定义 struct 名等。
 
 ***
 
@@ -493,15 +516,99 @@ main() {
 | 用法 | 支持 | 说明 |
 |------|------|------|
 | `use module.Struct` | ✅ | 导入 struct 类型到当前作用域 |
+| `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
 | `use module.func` | ❌ | 函数必须通过模块名访问 |
 | `use module.var` | ❌ | 变量必须通过模块名访问 |
 | `use module.enum` | ❌ | enum 成员通过模块名访问（如 `module.enum.member`） |
 
-**为什么 use 只支持 struct？**
+**为什么 use 只支持 struct/face？**
 
 - **struct**：编译时类型，需要用于变量声明（如 `Point p`）
+- **face**：编译时类型，需要用于函数参数（如 `func printArea(Shape s)`）
 - **func/var**：运行时实体，必须通过模块名访问（如 `module.func()`）
 - **enum**：成员访问本身就是通过模块名（如 `module.enum.member`）
+
+### 8.3 use 类型链式传导
+
+`use` 的类型可以通过模块链自动传递，无需手动重导出：
+
+```leno
+// d.leno - 最底层定义类型
+export struct Vec3 {
+    int x = 0
+    int y = 0
+    int z = 0
+}
+
+// c.leno - use d 的类型
+import "d.leno" as d
+use d.Vec3
+
+// b.leno - use c 中传递的类型
+import "c.leno" as c
+use c.Vec3
+
+// a.leno - use b 中传递的类型
+import "b.leno" as b
+use b.Vec3
+```
+
+```leno
+// main.leno - 最终使用端
+import "a.leno" as a
+use a.Vec3
+
+main() {
+    Vec3 v = new a.Vec3(x = 1, y = 2, z = 3)
+    print(v.x)    // 1
+}
+```
+
+**多个模块的类型可以同时 use**：
+
+```leno
+import "point_mod.leno" as pm
+import "color_mod.leno" as cm
+use pm.Point
+use cm.Color
+
+main() {
+    Point p = new pm.Point(x = 10, y = 20)
+    Color c = new cm.Color(r = 255, g = 128, b = 0)
+}
+```
+
+### 8.4 use face 类型
+
+```leno
+// shape_mod.leno
+export face Shape {
+    func area():float
+    func name():string
+}
+
+export struct Circle impl Shape {
+    int r = 0
+    func area():float { return 3.14 * r * r }
+    func name():string { return "Circle" }
+}
+```
+
+```leno
+// main.leno
+import "shape_mod.leno" as sm
+use sm.Shape
+
+// use 之后 face 可直接作为参数类型
+func print_info(Shape s) {
+    print(s.name() + " 面积=" + s.area())
+}
+
+main() {
+    var c = new sm.Circle(r = 2)
+    print_info(c)
+}
+```
 
 ### 8.3 类型守卫与跨模块类型
 
