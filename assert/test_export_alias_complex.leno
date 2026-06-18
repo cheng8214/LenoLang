@@ -1,0 +1,19 @@
+// export alias 复杂类型测试
+import "alias_complex_mod.leno" as m
+
+main() {
+    // Size = int 简单类型
+    Size s = 100
+    assert_eq(s, 100)
+
+    // IntList = Array[int] 
+    IntList arr = [1, 2, 3, 4, 5]
+    assert_eq(arr.len(), 5)
+    assert_eq(arr[0], 1)
+
+    // StrDict = Dict[string,string]
+    StrDict d = {"key": "value", "x": "y"}
+    assert_eq(d["key"], "value")
+
+    print("test_export_alias_complex passed")
+}

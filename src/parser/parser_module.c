@@ -168,24 +168,25 @@ Ast* parse_import_stmt(Parser* p) {
                                 s++;
                                 while (*s && (*s == ' ' || *s == '\t')) s++;
                                 
-                                // 只处理简单类型名
-                                const char* type_start = s;
-                                while (*s && (isalnum((unsigned char)*s) || *s == '_')) s++;
-                                int type_len = (int)(s - type_start);
+                                // 收集完整类型字符串（支持 Array[int] 等）
+                                char type_str[256] = {0};
+                                int ti = 0;
+                                while (*s && ti < 255 && *s != '\n' && *s != '\r' &&
+                                       *s != ';' && *s != '{' && *s != '/') {
+                                    if (!(*s == '_' || isalnum((unsigned char)*s) ||
+                                          *s == '[' || *s == ']' || *s == ',' ||
+                                          *s == ':' || *s == '(' || *s == ')')) break;
+                                    type_str[ti++] = *s++;
+                                }
+                                type_str[ti] = '\0';
                                 
-                                if (type_len > 0 && type_len < 64) {
-                                    char type_str[64];
-                                    memcpy(type_str, type_start, type_len);
-                                    type_str[type_len] = '\0';
-                                    
-                                    TypeKind kind = TYPE_ANY;
-                                    if (strcmp(type_str, "int") == 0) kind = TYPE_INT;
-                                    else if (strcmp(type_str, "float") == 0) kind = TYPE_FLOAT;
-                                    else if (strcmp(type_str, "string") == 0) kind = TYPE_STRING;
-                                    else if (strcmp(type_str, "bool") == 0) kind = TYPE_BOOL;
-                                    
-                                    TypeInfo* ti = type_new(kind);
-                                    add_alias(p, alias_name, ti);
+                                if (ti > 0) {
+                                    extern TypeInfo* parse_type_from_string(const char* type_str);
+                                    TypeInfo* ti_ptr = parse_type_from_string(type_str);
+                                    if (ti_ptr) {
+                                        add_alias(p, alias_name, ti_ptr);
+                                        type_free(ti_ptr);
+                                    }
                                 }
                             }
                         }

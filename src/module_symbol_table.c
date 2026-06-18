@@ -98,7 +98,9 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
     // 释放别名符号
     for (int i = 0; i < table->alias_count; i++) {
         free(table->aliases[i].name);
-        free(table->aliases[i].struct_name);
+        if (table->aliases[i].type_info) {
+            type_free(table->aliases[i].type_info);
+        }
     }
     free(table->aliases);
 
@@ -331,7 +333,7 @@ ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, cons
 }
 
 // 添加别名符号
-void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name) {
+void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeInfo* type_info) {
     if (!table || !name) return;
 
     // 扩容
@@ -345,31 +347,132 @@ void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, T
 
     ModuleAliasSymbol* alias = &table->aliases[table->alias_count++];
     alias->name = strdup(name);
-    alias->type = type;
-    alias->struct_name = struct_name ? strdup(struct_name) : NULL;
+    alias->type_info = type_info ? type_copy(type_info) : NULL;
 }
 
-// 基本类型解析 - 只识别内置类型，其他返回 TYPE_ANY
+// ============================================================================
+// 类型字符串解析器 — 支持 Array[T]、Dict[K,V] 等复杂类型
+// ============================================================================
+
+// 前向声明（递归用）
+static TypeInfo* parse_type_from_string_inner(const char** p);
+
+// 跳过空白
+static void skip_ws(const char** p) {
+    while (**p && (**p == ' ' || **p == '\t')) (*p)++;
+}
+
+// 读一个标识符/类型名
+static int read_ident(const char* text, int max_len, const char** end) {
+    const char* s = text;
+    while (*s && (isalnum((unsigned char)*s) || *s == '_')) s++;
+    int len = (int)(s - text);
+    if (end) *end = s;
+    return len < max_len ? len : max_len - 1;
+}
+
+// 解析一个基本类型名（int/float/string/bool 等内置类型 或 自定义 struct 名）
+static TypeInfo* parse_simple_type_str(const char* s, int len) {
+    char buf[64];
+    int n = len < 63 ? len : 63;
+    memcpy(buf, s, n);
+    buf[n] = '\0';
+    
+    if (strcmp(buf, "int") == 0)    return type_new(TYPE_INT);
+    if (strcmp(buf, "float") == 0)  return type_new(TYPE_FLOAT);
+    if (strcmp(buf, "string") == 0) return type_new(TYPE_STRING);
+    if (strcmp(buf, "bool") == 0)   return type_new(TYPE_BOOL);
+    if (strcmp(buf, "var") == 0)    return type_new(TYPE_INFER);
+    if (strcmp(buf, "any") == 0)    return type_new(TYPE_ANY);
+    if (strcmp(buf, "null") == 0)   return type_new(TYPE_NULL);
+    if (strcmp(buf, "ptr") == 0)    return type_new(TYPE_PTR);
+    // 自定义类型名（struct 等）→ TYPE_STRUCT
+    TypeInfo* ti = type_new(TYPE_STRUCT);
+    ti->struct_name = strdup(buf);
+    return ti;
+}
+
+// 递归解析类型字符串
+static TypeInfo* parse_type_from_string_inner(const char** p) {
+    skip_ws(p);
+    if (!**p) return NULL;
+    
+    // 读标识符
+    const char* name_start = *p;
+    const char* name_end;
+    int name_len = read_ident(name_start, 64, &name_end);
+    if (name_len == 0) return NULL;
+    *p = name_end;
+    skip_ws(p);
+    
+    // 检查泛型后缀 [T] 或 [K,V]
+    if (**p == '[') {
+        (*p)++; // skip '['
+        skip_ws(p);
+        
+        // 解析第一个参数类型
+        TypeInfo* param1 = parse_type_from_string_inner(p);
+        if (!param1) return NULL;
+        
+        skip_ws(p);
+        
+        // 检查是否是 Dict[K, V] (有逗号)
+        if (**p == ',') {
+            (*p)++; // skip ','
+            skip_ws(p);
+            
+            TypeInfo* param2 = parse_type_from_string_inner(p);
+            if (!param2) { type_free(param1); return NULL; }
+            
+            skip_ws(p);
+            if (**p != ']') { type_free(param1); type_free(param2); return NULL; }
+            (*p)++; // skip ']'
+            
+            // Dict[K, V]
+            TypeInfo* dict = type_new(TYPE_DICT);
+            dict->element_type = param2; // 值类型
+            // 键类型存储在 param1 中，暂时只用 element_type 表示值类型
+            type_free(param1); // TODO: 后续支持 dict key type
+            return dict;
+        }
+        
+        // Array[T] — 只有单个参数
+        if (**p != ']') { type_free(param1); return NULL; }
+        (*p)++; // skip ']'
+        
+        TypeInfo* arr = type_new(TYPE_ARRAY);
+        arr->element_type = param1;
+        return arr;
+    }
+    
+    // 简单类型
+    return parse_simple_type_str(name_start, name_len);
+}
+
+// 公开接口：从字符串解析完整类型
+TypeInfo* parse_type_from_string(const char* type_str) {
+    if (!type_str) return NULL;
+    const char* p = type_str;
+    return parse_type_from_string_inner(&p);
+}
+
+// 基本类型解析 - 只识别内置类型（用于 struct 字段/函数参数扫描）
 static TypeKind parse_base_type(const char* type_str) {
-    if (strcmp(type_str, "int") == 0) return TYPE_INT;
-    if (strcmp(type_str, "float") == 0) return TYPE_FLOAT;
+    if (strcmp(type_str, "int") == 0)    return TYPE_INT;
+    if (strcmp(type_str, "float") == 0)  return TYPE_FLOAT;
     if (strcmp(type_str, "string") == 0) return TYPE_STRING;
-    if (strcmp(type_str, "bool") == 0) return TYPE_BOOL;
-    if (strcmp(type_str, "Array") == 0) return TYPE_ARRAY;
-    if (strcmp(type_str, "Dict") == 0) return TYPE_DICT;
-    // "Bint" 已移除：对外统一用 int
-    // if (strcmp(type_str, "Bint") == 0) return TYPE_BIGINT;
-    if (strcmp(type_str, "null") == 0) return TYPE_NULL;
-    if (strcmp(type_str, "File") == 0) return TYPE_FILE;
-    if (strcmp(type_str, "GWin") == 0) return TYPE_WIN;
-    if (strcmp(type_str, "GDraw") == 0) return TYPE_DRAW;
+    if (strcmp(type_str, "bool") == 0)   return TYPE_BOOL;
+    if (strcmp(type_str, "any") == 0)    return TYPE_ANY;
+    if (strcmp(type_str, "null") == 0)   return TYPE_NULL;
+    if (strcmp(type_str, "File") == 0)   return TYPE_FILE;
+    if (strcmp(type_str, "GWin") == 0)   return TYPE_WIN;
+    if (strcmp(type_str, "GDraw") == 0)  return TYPE_DRAW;
     if (strcmp(type_str, "GEvent") == 0) return TYPE_EVENT;
     if (strcmp(type_str, "GImage") == 0) return TYPE_IMAGE;
-    if (strcmp(type_str, "GFont") == 0) return TYPE_FONT;
+    if (strcmp(type_str, "GFont") == 0)  return TYPE_FONT;
     if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
-    if (strcmp(type_str, "any") == 0) return TYPE_ANY;
-    if (strcmp(type_str, "Ptr") == 0) return TYPE_PTR;
-    return TYPE_ANY;  // 未知类型，可能是自定义 struct
+    if (strcmp(type_str, "Ptr") == 0)    return TYPE_PTR;
+    return TYPE_ANY;
 }
 
 // 检查类型是否是已知的 struct 类型
@@ -1433,7 +1536,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
 
                 if (name_len > 0 && name_len < 64) {
                     char alias_name[64];
-                    strncpy(alias_name, name_start, name_len);
+                    memcpy(alias_name, name_start, name_len);
                     alias_name[name_len] = '\0';
 
                     // 跳过空白和 =
@@ -1442,28 +1545,31 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                         after_alias++;
                         while (*after_alias && (*after_alias == ' ' || *after_alias == '\t')) after_alias++;
 
-                        const char* type_start = after_alias;
-                        while (*after_alias && (isalnum((unsigned char)*after_alias) || *after_alias == '_')) after_alias++;
-                        int type_len = (int)(after_alias - type_start);
+                        // 收集完整类型字符串（支持 Array[int]、Dict[string,string] 等）
+                        char type_str[256] = {0};
+                        int ti = 0;
+                        while (*after_alias && ti < 255 && *after_alias != '\n' && *after_alias != '\r' &&
+                               *after_alias != ';' && *after_alias != '{' && *after_alias != '/') {
+                            if (!(*after_alias == '_' || isalnum((unsigned char)*after_alias) ||
+                                  *after_alias == '[' || *after_alias == ']' ||
+                                  *after_alias == ',' || *after_alias == ':' ||
+                                  *after_alias == '(' || *after_alias == ')')) break;
+                            type_str[ti++] = *after_alias++;
+                        }
+                        type_str[ti] = '\0';
 
-                        if (type_len > 0 && type_len < 64) {
-                            char type_str[64];
-                            strncpy(type_str, type_start, type_len);
-                            type_str[type_len] = '\0';
-
-                            TypeKind alias_type = parse_base_type(type_str);
-                            char alias_struct[64] = {0};
-
-                            if (alias_type == TYPE_ANY) {
-                                if (is_known_struct(type_str, struct_names, struct_name_count)) {
-                                    alias_type = TYPE_STRUCT;
-                                    strncpy(alias_struct, type_str, sizeof(alias_struct) - 1);
-                                    alias_struct[sizeof(alias_struct) - 1] = '\0';
+                        if (ti > 0) {
+                            TypeInfo* ti_ptr = parse_type_from_string(type_str);
+                            if (ti_ptr) {
+                                // 如果是简单 STRUCT 类型，检查 struct 是否已知
+                                if (ti_ptr->kind == TYPE_STRUCT && ti_ptr->struct_name) {
+                                    if (!is_known_struct(ti_ptr->struct_name, struct_names, struct_name_count)) {
+                                        // 不是本模块的 struct，保留为 TYPE_STRUCT（可能来自 use）
+                                    }
                                 }
+                                module_symbol_table_add_alias(table, alias_name, ti_ptr);
+                                type_free(ti_ptr);
                             }
-
-                            module_symbol_table_add_alias(table, alias_name, alias_type,
-                                alias_struct[0] ? alias_struct : NULL);
                         }
                     }
                 }

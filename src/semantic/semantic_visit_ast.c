@@ -2229,11 +2229,8 @@ void visit(Semantic* s, Ast* ast) {
                             ModuleAliasSymbol* alias_sym = &info->sym_table->aliases[ai];
                             // 注册为类型符号，让后续 parse_type 能识别
                             Symbol* sym = scope_define(s->current, alias_sym->name, SYM_TYPE);
-                            if (sym) {
-                                sym->type = type_new(alias_sym->type);
-                                if (alias_sym->struct_name) {
-                                    sym->type->struct_name = strdup(alias_sym->struct_name);
-                                }
+                            if (sym && alias_sym->type_info) {
+                                sym->type = type_copy(alias_sym->type_info);
                             }
                         }
 

@@ -68,8 +68,7 @@ typedef struct {
 // 模块类型别名符号
 typedef struct {
     char* name;                 // 别名
-    TypeKind type;              // 实际类型
-    char* struct_name;          // 如果类型是 struct，存储 struct 名称
+    TypeInfo* type_info;        // 完整类型信息（支持 Array[T]/Dict[K,V] 等复杂类型）
 } ModuleAliasSymbol;
 
 // 模块符号表
@@ -143,6 +142,9 @@ void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, Typ
 ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, const char* alias_name);
 
 // 添加别名符号
-void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name);
+void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeInfo* type_info);
+
+// 从字符串解析完整类型（支持 int/float/string/bool 及 Array[T]/Dict[K,V]）
+TypeInfo* parse_type_from_string(const char* type_str);
 
 #endif // MODULE_SYMBOL_TABLE_H
