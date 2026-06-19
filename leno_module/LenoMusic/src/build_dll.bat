@@ -1,14 +1,13 @@
 @echo off
-
 echo Building miniaudio.dll...
 
-if not exist ..\build mkdir ..\build
-
-gcc -shared -o ..\build\miniaudio.dll miniaudio_dll.c -O2 -Wall -lwinmm -lole32 -lksuser -lm
-
+gcc -shared -o miniaudio.dll miniaudio_dll.c -O2 -Wall -lwinmm -lole32 -lksuser -lm
 if %ERRORLEVEL% neq 0 (
     echo Build failed
     exit /b 1
 )
 
-echo Build successful
+echo Copying to lib\ and native\...
+copy /Y miniaudio.dll ..\lib\miniaudio.dll >nul
+copy /Y miniaudio.dll ..\native\miniaudio.dll >nul
+echo Done

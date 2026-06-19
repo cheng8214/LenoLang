@@ -1,0 +1,14 @@
+[package]
+name = "LenoMusic"
+version = "1.0.0"
+description = "Leno 音频播放模块，基于 miniaudio"
+authors = ""
+license = "MIT"
+
+[modules]
+root = "lib"
+
+[native-libs.miniaudio]
+win   = "lib/miniaudio.dll"
+linux = "native/libminiaudio.so"
+mac   = "native/libminiaudio.dylib"
