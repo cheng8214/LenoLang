@@ -1651,6 +1651,136 @@ main() {
 }
 ```
 
+### 8.4 常见陷阱与注意事项
+
+本章汇总开发 Leno FFI 模块（如 LenoMusic）过程中发现的实际问题，避免踩坑。
+
+#### 陷阱 1：`as int` 在字符串拼接中的优先级问题
+
+`as` 运算符在早期版本中优先级低于 `+`，导致 `"str" + x as int + "%"` 被解析为 `("str" + x) as int + "%"`，结果变成 `null%`。**现已修复**（v1.x+），`as` 优先级高于 `+`。
+
+```leno
+// ✅ 现在正确: 先 as int 再拼接
+var s = "x=" + (99.9 as int) + "%"   // → "x=99%"
+
+// ✅ 更推荐: 使用 _int() 显式转换，避免歧义
+int p = _int(pct * 100)
+var bar = "[" + filled + "] " + p + "%"
+```
+
+> **建议**：字符串拼接中涉及类型转换时，优先用 `_int()`/`_float()` 先赋值给变量，再参与拼接，代码更清晰。
+
+#### 陷阱 2：clib 类型跨函数传递
+
+`clib` 类型经过函数返回值时，之前会丢失类型信息（被当作 `struct`）。**现已修复**。
+
+```leno
+clib kernel32 { i32 GetTickCount() }
+
+// ✅ 现在可用（已修复）
+func get_k32(): kernel32 { return ffi.load("kernel32.dll") }
+var t = get_k32().GetTickCount()  // 链式调用
+
+// ✅ 开发时推荐: 直接声明，避免不必要的包装
+kernel32 k = ffi.load("kernel32.dll")
+var t = k.GetTickCount()
+```
+
+#### 陷阱 3：buffer 大小计算
+
+`ffi.malloc` 分配的是**字节数**，必须根据元素大小和数量计算：
+
+```leno
+// ❌ 错误: 1024 帧 × 2 通道 × 4 字节(f32) = 8192 字节，4096 不够！
+var buf = ffi.malloc(4096)
+w.read(buf, 1024)  // 堆溢出！ffi.free 崩溃
+
+// ✅ 正确: 手动计算所需字节数
+int frames = 1024
+int ch = 2
+int bytes = frames * ch * 4  // f32 = 4 字节
+var buf = ffi.malloc(bytes)
+w.read(buf, frames)
+
+// ✅ 更稳妥: 预留足够空间
+var buf = ffi.malloc(4800 * 4 * 2)  // 38400 字节
+```
+
+> **关键**：`ffi.malloc` 溢出不会立即报错，而是在后续 `ffi.free` 时崩溃，极难排查。
+
+#### 陷阱 4：`f32` vs `f64` 精度
+
+clib 声明中使用 `f32` 参数时，Leno `float`（即 f64）到 `f32` 的转换由 C 编译器自动截断，精度损失不报错。但某些平台（如 x64 Windows 混合参数回退策略）可能产生异常值：
+
+```leno
+clib miniaudio {
+    // ❌ 之前: f32 参数在混合参数回退时精度异常
+    // void set_volume(Ptr h, f32 v)
+
+    // ✅ 推荐: 用 f64/f32 均可，但建议直接匹配 DLL 实际类型
+    void set_volume(Ptr h, f64 v)
+    f64 get_volume(Ptr h)
+}
+```
+
+> **建议**：DLL 函数签名尽量使用 `double`/`f64`，避免 f32 在不同调用约定下的精度问题。
+
+#### 陷阱 5：`Ptr` 大小写
+
+clib/cfunc 声明中必须使用大写 `Ptr`，小写 `ptr` 会报编译错误：
+
+```leno
+// ❌ 编译错误: 未知类型 'ptr'，您是否想使用 'Ptr'？
+clib test { ptr func() }
+
+// ✅ 正确
+clib test { Ptr func() }
+```
+
+#### 陷阱 6：`files.exists()` vs `files.open()`
+
+检测文件是否存在时，用 `files.exists()`。`files.open(path, "r")` 在文件不存在时会**抛出运行时异常**而非返回 null：
+
+```leno
+// ❌ 错误: 文件不存在时抛异常，流程中断
+var f = files.open("miniaudio.dll", "r")
+
+// ✅ 正确: 安全检测
+if files.exists("miniaudio.dll") {
+    g_path = "miniaudio.dll"
+}
+```
+
+#### 陷阱 7：clib 声明中不允许使用 Leno 类型
+
+```leno
+// ❌ 编译错误
+clib test {
+    int func(float x, string s)
+}
+
+// ✅ 正确: 使用 C 布局类型
+clib test {
+    i32 func(f64 x, str8 s)
+}
+```
+
+#### 陷阱 8：`ffi.free` 统一释放原则
+
+`ffi.free` 统一释放指针、库句柄、回调对象：
+
+```leno
+// ✅ 统一用 ffi.free
+ffi.free(buf)      // 释放内存
+ffi.free(lib)      // 释放动态库
+ffi.free(cb)       // 释放回调
+
+// ❌ 错误: offset 返回的视图不需要释放
+var view = ffi.offset(base, 10)
+// ffi.free(view)  ← 不要！只释放 base
+ffi.free(base)
+```
+
 ---
 
 ## 附录：完整 API 速查表
@@ -1781,10 +1911,14 @@ main() {
 
 ---
 
-*文档版本: 3.2*
-*最后更新: 2026-06-07*
+*文档版本: 3.3*
+*最后更新: 2026-06-19*
 
 ### 更新记录
+
+- **v3.3** (2026-06-19):
+  - 新增 **8.4 常见陷阱与注意事项**：汇总 LenoMusic 开发中的 8 个实战踩坑：
+    `as int` 优先级、clib 链式调用、buffer 大小计算、f32/f64 精度、Ptr 大小写、files.exists/open 区别、clib 类型限制、ffi.free 统一释放
 
 - **v3.2** (2026-06-07):
   - **clib 支持 cstruct 参数**：clib 声明中可直接使用 cstruct 名称作为参数类型，调用时 cstruct 实例自动转换为指针传递，无需手动 `to_ptr()`
