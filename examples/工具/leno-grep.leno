@@ -62,10 +62,8 @@ func grep_dir(string dirpath, string pattern) {
     for walks to w {
         var root = w[0]
         var fnames = w[2]
-        int n = _int(fnames.len())
-        for 0 : n - 1 to i {
-            var fname = _str(fnames[i])
-            grep_file(root + sep + fname, pattern)
+        for fnames to f {
+            grep_file(root + sep + f, pattern)
         }
     }
 }
