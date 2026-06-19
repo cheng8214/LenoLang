@@ -1,0 +1,16 @@
+import ffi
+
+clib kernel32 { u32 GetTickCount() }
+
+func get_k32(): kernel32 { return ffi.load("kernel32.dll") }
+
+main() {
+    kernel32 k1 = ffi.load("kernel32.dll")
+    print("direct=" + k1.GetTickCount())
+
+    kernel32 k2 = get_k32()
+    print("wrap=" + k2.GetTickCount())
+
+    // 链式调用测试
+    print("chain=" + get_k32().GetTickCount())
+}

@@ -1,0 +1,25 @@
+import ffi
+
+clib miniaudio {
+    i32 ma_dll_engine_init()
+    Ptr ma_dll_sound_create(str8 path)
+    i32 ma_dll_sound_start(Ptr h)
+    i32 ma_dll_sound_stop(Ptr h)
+    void ma_dll_sound_destroy(Ptr h)
+    void ma_dll_engine_uninit()
+}
+
+main() {
+    miniaudio lib = ffi.load("d:\\CLeno\\LenoC\\leno_module\\LenoMusic\\build\\miniaudio.dll")
+    print("init=" + lib.ma_dll_engine_init())
+    var h = lib.ma_dll_sound_create("d:\\1.flac")
+    print("h=" + h)
+    if h != null {
+        print("start=" + lib.ma_dll_sound_start(h))
+        sleep(3000)
+        print("stop=" + lib.ma_dll_sound_stop(h))
+        lib.ma_dll_sound_destroy(h)
+    }
+    lib.ma_dll_engine_uninit()
+    print("done")
+}

@@ -1,0 +1,21 @@
+import "../src/audio.leno" as audio
+main() {
+    audio.audio_module_init("d:\\CLeno\\LenoC\\leno_module\\LenoMusic\\build\\miniaudio.dll")
+    print("load s1...")
+    var s1 = audio.createSound("d:\\1.flac")
+    print("s1=" + s1.isInit())
+    print("load s2...")
+    var s2 = audio.createSound("d:\\1.flac")
+    print("s2=" + s2.isInit())
+    print("play both...")
+    s1.play(); s2.play()
+    print("vol s2=0.5")
+    s2.setVolume(0.5)
+    sleep(3000); print("stop s1")
+    s1.stop()
+    sleep(3000); print("stop s2")
+    s2.stop()
+    s1.uninit(); s2.uninit()
+    audio.audio_module_uninit()
+    print("done")
+}
