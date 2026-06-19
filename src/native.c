@@ -404,7 +404,7 @@ static THREAD_LOCAL int moduleAliasCount = 0;
 
 // 编译时注册 native 函数元信息
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void native_register_meta(const char* name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind* param_types) {
+void native_register_meta(const char* name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     if (functionCount >= MAX_NATIVE_FUNCTIONS) return;
 
     // 检查是否已存在同名函数
@@ -420,6 +420,7 @@ void native_register_meta(const char* name, int arity, int min_arity, int max_ar
     meta->min_arity = min_arity;
     meta->max_arity = max_arity;
     meta->return_type = return_type;
+    meta->return_element_type = return_element_type;
 
     // 复制参数类型
     if (param_types && arity > 0) {
@@ -451,6 +452,16 @@ TypeKind native_get_return_type(const char* name) {
         }
     }
     return TYPE_ANY;
+}
+
+// 获取全局函数的返回数组元素类型
+TypeKind native_get_return_element_type(const char* name) {
+    for (int i = 0; i < functionCount; i++) {
+        if (strcmp(functionRegistry[i].name, name) == 0) {
+            return functionRegistry[i].return_element_type;
+        }
+    }
+    return TYPE_UNKNOWN;
 }
 
 // 获取全局函数的参数类型
@@ -507,9 +518,9 @@ static void register_native_internal(const char* name, NativeFn function, int ar
 
 // 运行时注册 native 函数
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void vm_register_native(const char* name, NativeFn function, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind* param_types) {
+void vm_register_native(const char* name, NativeFn function, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
     // 先注册元信息（编译时和运行时都需要）
-    native_register_meta(name, arity, min_arity, max_arity, return_type, param_types);
+    native_register_meta(name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 
     // 如果 VM 已初始化，注册函数到 VM
     extern int vm_initialized;

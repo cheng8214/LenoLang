@@ -951,21 +951,21 @@ static Value native_to_byte(int argCount, Value* args) {
 void types_init_globals(void) {
     // 注册全局 type 函数（返回 string，1 个参数）
     TypeKind type_params[] = {TYPE_ANY};
-    vm_register_native("type", native_type, 1, -1, -1, TYPE_STRING, type_params);
+    vm_register_native("type", native_type, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, type_params);
 
     // 注册类型转换函数
     TypeKind convert_params[] = {TYPE_ANY};
-    vm_register_native("_int", native_to_int, 1, -1, -1, TYPE_INT, convert_params);
-    vm_register_native("_float", native_to_float, 1, -1, -1, TYPE_FLOAT, convert_params);
-    vm_register_native("_bool", native_to_bool, 1, -1, -1, TYPE_BOOL, convert_params);
-    vm_register_native("_str", native_to_str, 1, -1, -1, TYPE_STRING, convert_params);
-    vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, convert_params);
-    vm_register_native("_int32", native_to_int32, 1, -1, -1, TYPE_INT, convert_params);
-    vm_register_native("_uint32", native_to_uint32, 1, -1, -1, TYPE_INT, convert_params);
-    vm_register_native("_int64", native_to_int64, 1, -1, -1, TYPE_INT, convert_params);
-    vm_register_native("_uint64", native_to_uint64, 1, -1, -1, TYPE_INT, convert_params);
-    vm_register_native("_uint8", native_to_uint8, 1, -1, -1, TYPE_INT, convert_params);
-    vm_register_native("_byte", native_to_byte, 1, -1, -1, TYPE_INT, convert_params);
+    vm_register_native("_int", native_to_int, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_float", native_to_float, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_bool", native_to_bool, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_str", native_to_str, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_int32", native_to_int32, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_uint32", native_to_uint32, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_int64", native_to_int64, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_uint64", native_to_uint64, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_uint8", native_to_uint8, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_byte", native_to_byte, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
 }
 
 // types 模块通过全局 type() 函数提供服务

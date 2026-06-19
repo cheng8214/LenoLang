@@ -10,6 +10,7 @@ typedef struct {
     int min_arity;          // 最小参数个数（仅 arity == -1 时有效，-1 表示不限制）
     int max_arity;          // 最大参数个数（仅 arity == -1 时有效，-1 表示不限制）
     TypeKind return_type;
+    TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
 } NativeFunctionMeta;
 
@@ -29,7 +30,8 @@ typedef struct {
 
 // 编译时注册 native 函数元信息（供模块使用）
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void native_register_meta(const char* name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind* param_types);
+// return_element_type: 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
+void native_register_meta(const char* name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 
 // 获取所有注册的 native 函数元信息（编译时使用）
 const NativeFunctionMeta* native_get_all_functions(int* count);
@@ -37,12 +39,15 @@ const NativeFunctionMeta* native_get_all_functions(int* count);
 // 根据函数名获取返回类型
 TypeKind native_get_return_type(const char* name);
 
+// 获取全局函数的返回数组元素类型（编译时调用）
+TypeKind native_get_return_element_type(const char* name);
+
 // 获取全局函数的参数类型
 TypeKind native_get_global_function_param_type(const char* name, int param_index);
 
 // 运行时注册 native 函数
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void vm_register_native(const char* name, NativeFn function, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind* param_types);
+void vm_register_native(const char* name, NativeFn function, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 
 // 获取 native 函数的返回类型（运行时使用）
 TypeKind vm_get_native_return_type(const char* name);

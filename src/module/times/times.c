@@ -173,7 +173,7 @@ static Value native_times_datetime(int argCount, Value* args) {
 void times_init_globals(void) {
     // 注册全局 sleep 函数（1 个参数）
     TypeKind sleep_params[] = {TYPE_INT};
-    vm_register_native("sleep", native_sleep, 1, -1, -1, TYPE_NULL, sleep_params);
+    vm_register_native("sleep", native_sleep, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, sleep_params);
 }
 
 // 初始化 times 模块（import times 时调用）

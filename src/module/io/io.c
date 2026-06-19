@@ -415,13 +415,13 @@ static Value native_input(int argCount, Value* args) {
 
 void io_init_globals(void) {
     // 注册全局 print 函数（返回 null/void，可变参数，0~∞）
-    vm_register_native("print", native_print, -1, 0, -1, TYPE_ANY, NULL);
+    vm_register_native("print", native_print, -1, 0, -1, TYPE_ANY, TYPE_UNKNOWN, NULL);
 
     // 注册全局 printf 函数（返回 null/void，可变参数，0~∞）
-    vm_register_native("printf", native_printf, -1, 0, -1, TYPE_ANY, NULL);
+    vm_register_native("printf", native_printf, -1, 0, -1, TYPE_ANY, TYPE_UNKNOWN, NULL);
 
     // 注册全局 input 函数（返回 string，0 或 1 个参数）
-    vm_register_native("input", native_input, -1, 0, 1, TYPE_STRING, NULL);
+    vm_register_native("input", native_input, -1, 0, 1, TYPE_STRING, TYPE_UNKNOWN, NULL);
 }
 
 // 初始化 io 模块（import io 时调用）

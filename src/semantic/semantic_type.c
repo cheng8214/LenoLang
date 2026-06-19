@@ -647,8 +647,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 }
 
                 TypeKind return_type = native_get_return_type(func_name);
-                ast->cached_type = type_new(return_type);
-                return type_copy(ast->cached_type);
+                TypeInfo* ret_type = type_new(return_type);
+                // 如果是数组类型，补充元素类型信息
+                if (return_type == TYPE_ARRAY) {
+                    TypeKind elem = native_get_return_element_type(func_name);
+                    if (elem != TYPE_UNKNOWN) {
+                        ret_type->element_type = type_new(elem);
+                    }
+                }
+                ast->cached_type = type_copy(ret_type);
+                return ret_type;
             }
             // 处理实例方法调用：obj.method()
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_INDEX) {

@@ -184,15 +184,15 @@ static Value assert_null_func(int argc, Value* args) {
 
 void assert_init_globals(void) {
     // assert(value, [msg]) - 1 或 2 个参数
-    vm_register_native("assert", assert_func, -1, 1, 2, TYPE_BOOL, NULL);
+    vm_register_native("assert", assert_func, -1, 1, 2, TYPE_BOOL, TYPE_UNKNOWN, NULL);
     // assert_eq(a, b, [msg]) - 2 或 3 个参数
-    vm_register_native("assert_eq", assert_eq_func, -1, 2, 3, TYPE_BOOL, NULL);
+    vm_register_native("assert_eq", assert_eq_func, -1, 2, 3, TYPE_BOOL, TYPE_UNKNOWN, NULL);
     // assert_ne(a, b, [msg]) - 2 或 3 个参数
-    vm_register_native("assert_ne", assert_ne_func, -1, 2, 3, TYPE_BOOL, NULL);
+    vm_register_native("assert_ne", assert_ne_func, -1, 2, 3, TYPE_BOOL, TYPE_UNKNOWN, NULL);
     // assert_true(value, [msg]) - 1 或 2 个参数
-    vm_register_native("assert_true", assert_true_func, -1, 1, 2, TYPE_BOOL, NULL);
+    vm_register_native("assert_true", assert_true_func, -1, 1, 2, TYPE_BOOL, TYPE_UNKNOWN, NULL);
     // assert_false(value, [msg]) - 1 或 2 个参数
-    vm_register_native("assert_false", assert_false_func, -1, 1, 2, TYPE_BOOL, NULL);
+    vm_register_native("assert_false", assert_false_func, -1, 1, 2, TYPE_BOOL, TYPE_UNKNOWN, NULL);
     // assert_null(value, [msg]) - 1 或 2 个参数
-    vm_register_native("assert_null", assert_null_func, -1, 1, 2, TYPE_BOOL, NULL);
+    vm_register_native("assert_null", assert_null_func, -1, 1, 2, TYPE_BOOL, TYPE_UNKNOWN, NULL);
 }

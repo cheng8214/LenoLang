@@ -1488,7 +1488,7 @@ void guis_init_module(void) {
 
 /* 注册全局函数（不需要 import guis） */
 void guis_init_globals(void) {
-    vm_register_native("_rgb", gui_rgb_func, -1, 3, 4, TYPE_RGB, NULL);
+    vm_register_native("_rgb", gui_rgb_func, -1, 3, 4, TYPE_RGB, TYPE_UNKNOWN, NULL);
 }
 
 
