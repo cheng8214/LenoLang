@@ -1,77 +1,44 @@
-// 使用新的 audio 模块（全局单例模式）
+// 使用新音频模块（全局单例模式）— v2 clib
 import "../src/audio.leno" as audio
 
 main() {
     print("================================")
-    print("Audio 模块测试 - 全局单例模式")
+    print("Audio 模块测试 - 全局单例模式 v2")
     print("================================")
-    print("")
 
-    // 1. 全局初始化（只调用一次）
-    print("[1/6] 全局初始化音频模块...")
-    bool inited = audio.audio_module_init("../build/miniaudio.dll")
-    if not inited {
-        print("[错误] 音频模块初始化失败")
-        return
+    print("[1/7] 初始化...")
+    if not audio.audio_module_init("../build/miniaudio.dll") {
+        print("[错误] 初始化失败"); return
     }
-    print("")
 
-    // 2. 获取版本
-    print("[2/6] 获取版本...")
-    int version = audio.getVersion()
-    print("      miniaudio 版本: " + version)
-    print("")
+    print("[2/7] 版本: " + audio.getVersion())
 
-    // 3. 获取音频信息
-    print("[3/6] 获取音频信息...")
+    print("[3/7] 音频信息...")
     audio.getInfo("d:\\1.flac")
-    print("")
 
-    // 4. 使用 Engine 播放
-    print("[4/6] 使用 Engine 播放...")
+    print("[4/7] Engine 播放...")
     var engine = audio.createEngine()
-
     if engine.isInit() {
-        print("      引擎采样率: " + engine.getEngineSampleRate() + " Hz")
-        print("      引擎通道数: " + engine.getEngineChannels())
-
-        print("      开始播放...")
+        print("      采样率: " + engine.getSampleRate() + " Hz")
+        print("      通道数: " + engine.getChannels())
         engine.play("d:\\1.flac")
-
-        // 显示进度
-        for 0 : 9 to i {
-            sleep(1000)
-            int progress = (i + 1) * 10
-            print("      进度: " + progress + "%")
-        }
-
-        engine.stop()
-        engine.uninit()
+        for 0 : 9 to i { sleep(1000); print("      进度: " + ((i + 1) * 10) + "%") }
+        engine.stop(); engine.uninit()
     }
-    print("")
 
-    // 5. 使用 Decoder
-    print("[5/6] 使用 Decoder...")
+    print("[5/7] Decoder...")
     var decoder = audio.createDecoder("d:\\1.flac")
     if decoder.isOpen() {
         print("      采样率: " + decoder.getSampleRate())
-        print("      通道数: " + decoder.getChannels())
         print("      时长: " + decoder.getDuration() + " 秒")
-        print("      总帧数: " + decoder.getLengthInFrames())
         decoder.close()
     }
-    print("")
 
-    // 6. 快速播放
-    print("[6/6] 快速播放 3 秒...")
+    print("[6/7] 快速播放 3 秒...")
     audio.quickPlay("d:\\1.flac", 3)
-    print("")
 
-    // 7. 全局销毁（程序退出前调用）
-    print("[*] 全局销毁音频模块...")
+    print("[7/7] 全局销毁...")
     audio.audio_module_uninit()
-    print("")
-
     print("================================")
     print("测试完成!")
     print("================================")

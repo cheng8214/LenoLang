@@ -1,75 +1,39 @@
-// 测试波形生成器和噪声生成器
+// 波形/噪声生成器测试 — v2 clib
 import "../src/audio.leno" as audio
 import ffi
 
 main() {
-    print("================================")
-    print("波形和噪声生成器测试")
-    print("================================")
-    print("")
+    print("=== 波形/噪声生成器测试 v2 ===")
 
-    // 1. 测试波形生成器
-    print("[1/3] 测试波形生成器...")
+    // 1. 波形
+    print("[1/3] 正弦波 440Hz...")
     var wf = audio.createWaveform(audio.FORMAT_F32, 2, 48000, audio.WAVEFORM_SINE, 0.5, 440.0)
-
     if wf.isInit() {
-        // 分配缓冲区
-        Ptr buffer = ffi.malloc(4800 * 4 * 2)  // 100ms @ 48kHz, f32, 2ch
-
-        // 读取波形数据
-        int framesRead = wf.read(buffer, 4800)
-        print("      读取了 " + framesRead + " 帧波形数据")
-
-        // 测试修改频率
-        print("      修改频率为 880Hz...")
-        wf.setFrequency(880.0)
-
-        // 测试修改波形类型
-        print("      修改为方波...")
+        Ptr buf = ffi.malloc(4800 * 4 * 2)
+        print("      读取 " + wf.read(buf, 4800) + " 帧")
+        wf.setFreq(880.0)
         wf.setType(audio.WAVEFORM_SQUARE)
-
-        ffi.free(buffer)
-        wf.uninit()
+        ffi.free(buf); wf.uninit()
     }
-    print("")
 
-    // 2. 测试噪声生成器
-    print("[2/3] 测试噪声生成器...")
+    // 2. 噪声
+    print("[2/3] 粉噪声...")
     var noise = audio.createNoise(audio.FORMAT_F32, 2, audio.NOISE_PINK, 12345, 0.3)
-
     if noise.isInit() {
-        Ptr buffer = ffi.malloc(4800 * 4 * 2)
-
-        int framesRead = noise.read(buffer, 4800)
-        print("      读取了 " + framesRead + " 帧粉噪声数据")
-
-        // 测试修改振幅
-        print("      修改振幅为 0.5...")
-        noise.setAmplitude(0.5)
-
-        ffi.free(buffer)
-        noise.uninit()
+        Ptr buf = ffi.malloc(4800 * 4 * 2)
+        print("      读取 " + noise.read(buf, 4800) + " 帧")
+        noise.setAmp(0.5)
+        ffi.free(buf); noise.uninit()
     }
-    print("")
 
-    // 3. 测试各种波形类型
-    print("[3/3] 测试各种波形类型...")
+    // 3. 四种波形
+    print("[3/3] 遍历波形类型...")
     var types = [audio.WAVEFORM_SINE, audio.WAVEFORM_SQUARE, audio.WAVEFORM_TRIANGLE, audio.WAVEFORM_SAWTOOTH]
-    var names = ["正弦波", "方波", "三角波", "锯齿波"]
-
     for 0 : 3 to i {
-        var wf2 = audio.createWaveform(audio.FORMAT_F32, 1, 48000, types[i], 0.3, 220.0)
-        if wf2.isInit() {
-            Ptr buf = ffi.malloc(2400 * 4)  // 50ms, mono
-            wf2.read(buf, 2400)
-            ffi.free(buf)
-            wf2.uninit()
-        }
+        var w = audio.createWaveform(audio.FORMAT_F32, 1, 48000, types[i], 0.3, 220.0)
+        if w.isInit() { Ptr b = ffi.malloc(2400 * 4); w.read(b, 2400); ffi.free(b); w.uninit() }
         sleep(100)
     }
-    print("")
 
-    print("================================")
-    print("测试完成!")
-    print("================================")
+    print("=== 测试完成! ===")
 }

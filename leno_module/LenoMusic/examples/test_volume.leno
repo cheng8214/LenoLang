@@ -1,65 +1,31 @@
-// Test volume control and stop functionality
+// 音量控制测试 — v2 clib
 import "../src/audio.leno" as audio
 
 main() {
-    print("================================")
-    print("Volume Control Test")
-    print("================================")
-    print("")
-
-    // Global initialization
+    print("=== 音量控制测试 v2 ===")
     audio.audio_module_init("../build/miniaudio.dll")
 
-    // Create engine
     var engine = audio.createEngine()
-    if not engine.isInit() {
-        print("Failed to create engine")
-        return
+    if not engine.isInit() { print("引擎初始化失败"); return }
+
+    print("[1/4] 设置音量 0.5...")
+    engine.setVolume(0.5)
+    print("      当前音量: " + engine.getVolume())
+
+    print("[2/4] 开始播放...")
+    engine.play("d:\\1.flac")
+
+    print("[3/4] 逐步降低音量...")
+    for 0 : 4 to i {
+        var vol = 1.0 - i * 0.2
+        engine.setVolume(vol)
+        print("      音量: " + vol)
+        sleep(500)
     }
 
-    // Test volume control
-    print("[1/4] Testing volume control...")
-    engine.setVolume(0.5)
-    print("      Volume set to 0.5")
-    sleep(500)
-    
-    float vol = engine.getVolume()
-    print("      Current volume: " + vol)
-    print("")
-
-    // Start playback
-    print("[2/4] Starting playback...")
-    engine.play("d:\\1.flac")
-    print("")
-
-    // Change volume during playback
-    print("[3/4] Changing volume during playback...")
-    sleep(2000)
-    
-    engine.setVolume(0.3)
-    print("      Volume set to 0.3 (quieter)")
-    sleep(2000)
-    
-    engine.setVolume(0.8)
-    print("      Volume set to 0.8 (louder)")
-    sleep(2000)
-    
-    engine.setVolume(1.0)
-    print("      Volume set to 1.0 (max)")
-    sleep(2000)
-    print("")
-
-    // Test stop
-    print("[4/4] Testing stop...")
+    print("[4/4] 停止...")
     engine.stop()
-    print("      Playback stopped")
-    print("")
-
-    // Cleanup
     engine.uninit()
     audio.audio_module_uninit()
-
-    print("================================")
-    print("Test completed!")
-    print("================================")
+    print("=== 测试结束 ===")
 }

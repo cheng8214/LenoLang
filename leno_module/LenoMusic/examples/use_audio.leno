@@ -1,47 +1,36 @@
-// 使用新的 audio 模块
+// 使用新的 audio 模块 — v2 clib
 import "../src/audio.leno" as audio
 
 main() {
     print("================================")
-    print("Audio 模块完整测试")
+    print("Audio 模块完整测试 v2")
     print("================================")
-    print("")
 
-    // 1. 获取版本
+    // 1. 版本
     print("[1/6] 获取版本...")
-    int version = audio.getVersion()
-    print("      miniaudio 版本: " + version)
-    print("")
+    print("      miniaudio 版本: " + audio.getVersion())
 
-    // 2. 获取音频信息
+    // 2. 音频信息
     print("[2/6] 获取音频信息...")
     audio.getInfo("d:\\1.flac")
-    print("")
 
-    // 3. 使用 Engine 播放
+    // 3. Engine 播放
     print("[3/6] 使用 Engine 播放...")
     var engine = audio.createEngine()
-
     if engine.isInit() {
-        print("      引擎采样率: " + engine.getEngineSampleRate() + " Hz")
-        print("      引擎通道数: " + engine.getEngineChannels())
-
+        print("      采样率: " + engine.getSampleRate() + " Hz")
+        print("      通道数: " + engine.getChannels())
         print("      开始播放...")
         engine.play("d:\\1.flac")
-
-        // 显示进度
         for 0 : 9 to i {
             sleep(1000)
-            int progress = (i + 1) * 10
-            print("      进度: " + progress + "%")
+            print("      进度: " + ((i + 1) * 10) + "%")
         }
-
         engine.stop()
         engine.uninit()
     }
-    print("")
 
-    // 4. 使用 Decoder
+    // 4. Decoder
     print("[4/6] 使用 Decoder...")
     var decoder = audio.createDecoder("d:\\1.flac")
     if decoder.isOpen() {
@@ -51,19 +40,16 @@ main() {
         print("      总帧数: " + decoder.getLengthInFrames())
         decoder.close()
     }
-    print("")
 
     // 5. 快速播放
     print("[5/6] 快速播放 3 秒...")
     audio.quickPlay("d:\\1.flac", 3)
-    print("")
 
     // 6. 时间格式化
     print("[6/6] 时间格式化测试...")
     print("      60秒 = " + audio.formatTime(60))
     print("      125秒 = " + audio.formatTime(125))
     print("      355秒 = " + audio.formatTime(355))
-    print("")
 
     print("================================")
     print("测试完成!")
