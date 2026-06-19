@@ -1,4 +1,4 @@
-// leno-grep v2  - 正则 + 递归
+// leno-grep v2  — 正则 + 递归 + 大文件检测
 // 用法: leno leno-grep.leno [line] [icase] [regex] [recursive] pattern file/dir...
 import files
 import strings
@@ -18,9 +18,28 @@ func is_match(string line, string pattern):bool {
     return if opt_regex then regexs.match(l, p) else strings.has(l, p)
 }
 
+// 检查文件大小（不读取内容）
+func file_size(string path):int {
+    var f = files.open(path, "r")
+    if f == null { return -1 }
+    var sz = f.len()
+    f.close()
+    return sz
+}
+
 func grep_file(string path, string pattern) {
+    // 大文件检测（先看大小，不读内容）
+    var sz = file_size(path)
+    if sz < 0 {
+        print("  skip " + path)
+        return
+    }
+    if sz > 52428800 {
+        print("  large " + path + " (" + (sz / 1048576) + " MB)")
+    }
+
     var content = files.read(path)
-    if content == null { print("  skip " + path); return }
+    if content == null { return }
 
     int found = 0
     int ln = 1
@@ -39,8 +58,8 @@ func grep_dir(string dirpath, string pattern) {
     var walks = dirs.walk(dirpath)
     for walks to w {
         var root = w[0]
-        var files = w[2]
-        for files to f {
+        var fnames = w[2]
+        for fnames to f {
             grep_file(root + "\\" + f, pattern)
         }
     }
@@ -73,5 +92,7 @@ main() {
         else           { grep_file(target, pat) }
         i = i + 1
     }
-    if files_done >= 1 { print("--- " + matched + " matches in " + files_done + " files") }
+    if files_done >= 1 {
+        print("--- " + matched + " matches in " + files_done + " files")
+    }
 }
