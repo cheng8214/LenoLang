@@ -919,7 +919,7 @@ Ast* parse_expression_stmt(Parser* p) {
                 
                 // 复合赋值只支持简单变量，不支持索引
                 if (left_targets[0]->kind != AST_VAR) {
-                    error_add(ERR_SYNTAX, line, "复合赋值只支持简单变量");
+                    error_add(ERR_SYNTAX, line, "复合赋值只支持简单变量，请用 arr[i] = arr[i] + val 替代");
                     return NULL;
                 }
                 

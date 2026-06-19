@@ -112,7 +112,10 @@ static Value assert_eq_func(int argc, Value* args) {
             ObjString* msg = (ObjString*)val_as_obj(args[2]);
             native_throw_error(msg->chars);
         } else {
-            native_throw_error("断言失败 (assert_eq): 值不相等");
+            char buf[BUFFER_MEDIUM];
+            snprintf(buf, sizeof(buf), "断言失败 (assert_eq): 期望 %s, 实际 %s",
+                     val_to_string(b), val_to_string(a));
+            native_throw_error(buf);
         }
     }
 
@@ -130,7 +133,10 @@ static Value assert_ne_func(int argc, Value* args) {
             ObjString* msg = (ObjString*)val_as_obj(args[2]);
             native_throw_error(msg->chars);
         } else {
-            native_throw_error("断言失败 (assert_ne): 值相等");
+            char buf[BUFFER_MEDIUM];
+            snprintf(buf, sizeof(buf), "断言失败 (assert_ne): 值相等 (都是 %s)",
+                     val_to_string(a));
+            native_throw_error(buf);
         }
     }
 

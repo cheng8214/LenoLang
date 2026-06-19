@@ -773,7 +773,13 @@ void lexer_next(Lexer* lex) {
                     }
                 }
             } else {
-                error_add(ERR_SYNTAX, lex->line, "意外的字符");
+                char err_msg[64];
+                if (c >= 32 && c < 127) {
+                    snprintf(err_msg, sizeof(err_msg), "意外的字符 '%c'", c);
+                } else {
+                    snprintf(err_msg, sizeof(err_msg), "意外的字符 (0x%02X)", (unsigned char)c);
+                }
+                error_add(ERR_SYNTAX, lex->line, err_msg);
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }

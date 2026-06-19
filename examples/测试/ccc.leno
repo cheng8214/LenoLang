@@ -1,2 +1,6 @@
-var a = 10
-var c = a + 20
+main()
+{
+	var arr=[1,2,3,4]
+	arr[0]+=1
+	print(arr)
+}
