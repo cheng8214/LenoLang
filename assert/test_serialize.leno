@@ -25,5 +25,9 @@ main() {
     assert_true(strings.has(output, "hello_from_lenb"))
     assert_true(strings.has(output, "7"))
 
+    // 5. 清理临时文件
+    files.delete(tmp_leno)
+    files.delete(tmp_lenb)
+
     print("test_serialize passed")
 }
