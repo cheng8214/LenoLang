@@ -16,7 +16,8 @@ string sep       = if _os() == "windows" then "\\" else "/"
 func is_match(string line, string pattern):bool {
     var l = if opt_icase then strings.to_lower(line)   else line
     var p = if opt_icase then strings.to_lower(pattern) else pattern
-    return if opt_regex then regexs.match(l, p) else strings.has(l, p)
+    if opt_regex { return regexs.find(l, p) >= 0 }    // find 搜索子串，match 只锚定开头
+    return strings.has(l, p)
 }
 
 // 检查文件大小（不读取内容）
