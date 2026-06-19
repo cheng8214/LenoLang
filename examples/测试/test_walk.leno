@@ -1,0 +1,9 @@
+import dirs
+
+main() {
+    var r = dirs.walk("d:\\CLeno\\LenoC\\src")
+    for r to w {
+        print("root=" + w[0] + " files=" + w[2].len())
+    }
+    print("done")
+}
