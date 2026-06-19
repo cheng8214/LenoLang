@@ -10,10 +10,9 @@ int match_count   = 0
 int file_count    = 0
 
 func matches(string line, string pattern):bool {
-    if opt_ignore_case {
-        return strings.has(strings.to_lower(line), strings.to_lower(pattern))
-    }
-    return strings.has(line, pattern)
+    var l = if opt_ignore_case then strings.to_lower(line)   else line
+    var p = if opt_ignore_case then strings.to_lower(pattern) else pattern
+    return strings.has(l, p)
 }
 
 func search(string filepath, string pattern) {
@@ -26,11 +25,7 @@ func search(string filepath, string pattern) {
     for lines to line {
         if matches(line, pattern) {
             found = found + 1
-            if opt_line_num {
-                print(filepath + ":" + ln + ": " + line)
-            } else {
-                print(filepath + ": " + line)
-            }
+            print(filepath + ":" + (if opt_line_num then ln + ": " else "") + line)
         }
         ln = ln + 1
     }
@@ -65,7 +60,5 @@ main() {
         i = i + 1
     }
 
-    if file_count > 1 {
-        print("--- " + match_count + " matches in " + file_count + " files")
-    }
+    print("--- " + match_count + " matches in " + file_count + " files")
 }
