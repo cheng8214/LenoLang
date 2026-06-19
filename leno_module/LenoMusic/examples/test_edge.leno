@@ -1,0 +1,63 @@
+// LenoMusic 边界测试
+import "../lib/LenoMusic.leno" as audio
+
+main() {
+    print("=== 边界测试 ===")
+    int ok = 0; int ng = 0
+
+    // 1. 未播放就 stop/seek/setVolume
+    print("[1] 未播放操作...")
+    var s = audio.createSound("d:\\1.flac")
+    s.stop()
+    s.seek(5.0)
+    s.setVolume(0.5)
+    s.uninit(); ok = ok + 1
+
+    // 2. 双 stop
+    print("[2] 双 stop...")
+    var s2 = audio.createSound("d:\\1.flac")
+    s2.play(); sleep(200); s2.stop(); s2.stop(); s2.uninit(); ok = ok + 1
+
+    // 3. 双 play
+    print("[3] 双 play...")
+    var s3 = audio.createSound("d:\\1.flac")
+    s3.play(); s3.play(); sleep(200); s3.stop(); s3.uninit(); ok = ok + 1
+
+    // 4. seek 边界
+    print("[4] seek 边界...")
+    var s4 = audio.createSound("d:\\1.flac")
+    var d = s4.getDuration()
+    s4.seek(d - 2)
+    s4.play(); sleep(1500); s4.stop()
+    sleep(200)
+    if s4.isPlaying() { print("  WARN: still playing"); ng = ng + 1 }
+    s4.uninit(); ok = ok + 1
+
+    // 5. 非法音量
+    print("[5] 非法音量...")
+    var s5 = audio.createSound("d:\\1.flac")
+    s5.setVolume(-1.0); s5.setVolume(2.0)
+    s5.play(); sleep(200); s5.stop(); s5.uninit(); ok = ok + 1
+
+    // 6. 创建后立即 uninit (不播放)
+    print("[6] 快速创建/销毁...")
+    for 0 : 9 to i { var sx = audio.createSound("d:\\1.flac"); sx.uninit() }
+    ok = ok + 1
+
+    // 7. 多解码器
+    print("[7] 多解码器...")
+    var d1 = audio.createDecoder("d:\\1.flac")
+    var d2 = audio.createDecoder("d:\\1.flac")
+    if d1.isOpen() and d2.isOpen() { ok = ok + 1 } else { print("  FAIL"); ng = ng + 1 }
+    d1.close(); d2.close(); ok = ok + 1
+
+    // 8. Engine 重用
+    print("[8] Engine 重用...")
+    var e1 = audio.createEngine()
+    e1.uninit()
+    var e2 = audio.createEngine()
+    if e2.isInit() { ok = ok + 1 } else { print("  FAIL"); ng = ng + 1 }
+    e2.uninit(); ok = ok + 1
+
+    print("\n===== " + ok + "/" + (ok+ng) + " passed =====")
+}

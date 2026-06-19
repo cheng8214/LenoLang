@@ -1,0 +1,95 @@
+// LenoMusic 综合边界测试
+import "../lib/LenoMusic.leno" as audio
+
+main() {
+    print("=== LenoMusic 综合测试 ===")
+    int passed = 0; int failed = 0
+
+    // ====== 1. 文件信息 ======
+    print("\n[1] Decoder 信息...")
+    var d = audio.createDecoder("d:\\1.flac")
+    if d.isOpen() {
+        if d.getSampleRate() > 0 { passed = passed + 1 } else { print("  FAIL: SR"); failed = failed + 1 }
+        if d.getChannels() > 0    { passed = passed + 1 } else { print("  FAIL: CH"); failed = failed + 1 }
+        if d.getDuration() > 0    { passed = passed + 1 } else { print("  FAIL: DUR"); failed = failed + 1 }
+        if d.getFormat() >= 0     { passed = passed + 1 } else { print("  FAIL: FMT"); failed = failed + 1 }
+        if d.getLengthInFrames()>0{ passed = passed + 1 } else { print("  FAIL: FRAMES"); failed = failed + 1 }
+        d.close()
+    }
+    if not d.isOpen() { passed = passed + 1 } else { print("  FAIL: close"); failed = failed + 1 }
+
+    // ====== 2. Engine 基础 ======
+    print("[2] Engine...")
+    var e = audio.createEngine()
+    if e.isInit()           { passed = passed + 1 } else { print("  FAIL: init"); failed = failed + 1 }
+    if e.getSampleRate()>0  { passed = passed + 1 } else { print("  FAIL: SR"); failed = failed + 1 }
+    if e.getChannels()>0    { passed = passed + 1 } else { print("  FAIL: CH"); failed = failed + 1 }
+    // volume
+    e.setVolume(0.7)
+    var v = e.getVolume()
+    if v > 0.6 and v < 0.8 { passed = passed + 1 } else { print("  FAIL: vol=" + v); failed = failed + 1 }
+    e.uninit()
+
+    // ====== 3. Sound 单实例 ======
+    print("[3] Sound 单实例...")
+    var s = audio.createSound("d:\\1.flac")
+    if s.isInit()           { passed = passed + 1 } else { print("  FAIL: init"); failed = failed + 1 }
+    var dur = s.getDuration()
+    if dur > 0              { passed = passed + 1 } else { print("  FAIL: dur"); failed = failed + 1 }
+    if s.getPosition() >= 0 { passed = passed + 1 } else { print("  FAIL: pos"); failed = failed + 1 }
+    // play/stop
+    s.play()
+    sleep(1000)
+    var pos = s.getPosition()
+    if pos > 0.5 and pos < 2.0 { passed = passed + 1 } else { print("  FAIL: pos=" + pos); failed = failed + 1 }
+    if s.isPlaying()        { passed = passed + 1 } else { print("  FAIL: playing"); failed = failed + 1 }
+    s.stop()
+    sleep(200)
+    if not s.isPlaying()    { passed = passed + 1 } else { print("  FAIL: stop"); failed = failed + 1 }
+    // seek
+    s.play()
+    s.seek(10.0)
+    sleep(500)
+    var pos2 = s.getPosition()
+    if pos2 > 9 and pos2 < 12 { passed = passed + 1 } else { print("  FAIL: seek pos=" + pos2); failed = failed + 1 }
+    s.stop()
+    // volume
+    s.setVolume(0.3)
+    if s.getVolume() > 0.2 and s.getVolume() < 0.4 { passed = passed + 1 } else { print("  FAIL: vol=" + s.getVolume()); failed = failed + 1 }
+    s.uninit()
+
+    // ====== 4. Sound 多实例 ======
+    print("[4] Sound 多实例...")
+    var s1 = audio.createSound("d:\\1.flac")
+    var s2 = audio.createSound("d:\\1.flac")
+    if s1.isInit() and s2.isInit() { passed = passed + 1 } else { print("  FAIL: multi init"); failed = failed + 1 }
+    s1.setVolume(0.8)
+    s2.setVolume(0.2)
+    s1.play(); s2.play()
+    sleep(500)
+    if s1.isPlaying() and s2.isPlaying() { passed = passed + 1 } else { print("  FAIL: multi play"); failed = failed + 1 }
+    s1.stop()
+    sleep(200)
+    if not s1.isPlaying() and s2.isPlaying() { passed = passed + 1 } else { print("  FAIL: multi stop"); failed = failed + 1 }
+    s2.stop()
+    s1.uninit(); s2.uninit()
+
+    // ====== 5. 版本 ======
+    print("[5] 版本...")
+    var ver = audio.getVersion()
+    if ver >= 0 { passed = passed + 1 } else { print("  FAIL: ver"); failed = failed + 1 }
+
+    // ====== 6. quickPlay ======
+    print("[6] quickPlay...")
+    if audio.quickPlay("d:\\1.flac", 1) { passed = passed + 1 } else { print("  FAIL: quickPlay"); failed = failed + 1 }
+
+    // ====== 7. 空文件/不存在文件 ======
+    print("[7] 错误处理...")
+    var bad1 = audio.createSound("d:\\no_such_file.mp3")
+    if not bad1.isInit() { passed = passed + 1 } else { print("  FAIL: bad file"); failed = failed + 1 }
+    var bad2 = audio.createDecoder("d:\\no_such_file.mp3")
+    if not bad2.isOpen() { passed = passed + 1 } else { print("  FAIL: bad2"); failed = failed + 1 }
+
+    // ====== 结果 ======
+    print("\n===== " + passed + "/" + (passed+failed) + " passed =====")
+}
