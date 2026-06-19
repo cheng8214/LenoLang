@@ -86,7 +86,7 @@ main() {
         // 每 10 秒显示详细信息
         if i % 10 == 0 and i > 0 {
             int ipos = _int(pos)
-            print("  └─ 定位:" + ipos + "s | 剩余:" + fmt_time(r))
+            print("  └─ 定位:" + ipos + "s | 剩余:" + fmt_time(r) + " | 音量:" + s.getVolume())
         }
 
         if not s.isPlaying() { break }

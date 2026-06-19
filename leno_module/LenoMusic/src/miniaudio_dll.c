@@ -94,13 +94,13 @@ DLLEXPORT int ma_dll_sound_is_playing(SoundHandle* h) {
     return ma_sound_is_playing(h->sound) ? 1 : 0;
 }
 
-DLLEXPORT void ma_dll_sound_set_volume(SoundHandle* h, float v) {
-    if (h && h->sound) ma_sound_set_volume(h->sound, v);
+DLLEXPORT void ma_dll_sound_set_volume(SoundHandle* h, double v) {
+    if (h && h->sound) ma_sound_set_volume(h->sound, (float)v);
 }
 
-DLLEXPORT float ma_dll_sound_get_volume(SoundHandle* h) {
-    if (!h || !h->sound) return 0.0f;
-    return ma_sound_get_volume(h->sound);
+DLLEXPORT double ma_dll_sound_get_volume(SoundHandle* h) {
+    if (!h || !h->sound) return 0.0;
+    return (double)ma_sound_get_volume(h->sound);
 }
 
 DLLEXPORT int ma_dll_sound_seek(SoundHandle* h, double sec) {

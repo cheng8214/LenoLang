@@ -1443,6 +1443,37 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             break;
         }
         case AST_FIELD_ACCESS: {
+            // 检查是否 clib 函数调用（无参数，如 get_k32().GetTickCount()）
+            TypeInfo* obj_type = infer_expr_type(gen->sem, ast->u.field_access.obj);
+            if (obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+                Symbol* clib_sym = scope_resolve(gen->sem->root_scope, obj_type->struct_name);
+                if (!clib_sym) {
+                    clib_sym = scope_resolve(gen->sem->current, obj_type->struct_name);
+                }
+                if (clib_sym && clib_sym->clib_func_count > 0 && ast->u.field_access.field_index >= 0) {
+                    int fi = ast->u.field_access.field_index;
+                    TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
+                    const char* func_name = ast->u.field_access.field_name;
+
+                    // 生成库对象
+                    gen_expr(gen, ast->u.field_access.obj);
+                    // 生成函数名字符串
+                    ObjString* func_name_str = str_copy(func_name, (int)strlen(func_name));
+                    emit_constant(gen, val_obj((Object*)func_name_str), ast->line);
+
+                    int ret_type_kind = ret_type ? ret_type->kind : TYPE_NULL;
+                    // OP_CLIB_CALL: arg_count(2) ret_type_kind(1) user_arg_count(1) arg_types(0)
+                    emit_byte(gen, OP_CLIB_CALL, ast->line);
+                    emit_byte(gen, 0, ast->line);
+                    emit_byte(gen, 2, ast->line);  // total_arg_count = 库 + 函数名 = 2
+                    emit_byte(gen, (uint8_t)ret_type_kind, ast->line);
+                    emit_byte(gen, 0, ast->line);  // user_arg_count = 0
+                    if (obj_type) type_free(obj_type);
+                    break;
+                }
+            }
+            if (obj_type) type_free(obj_type);
+
             // 生成对象表达式
             gen_expr(gen, ast->u.field_access.obj);
 

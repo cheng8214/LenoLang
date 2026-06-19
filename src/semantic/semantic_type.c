@@ -1291,6 +1291,42 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     result = type_new(TYPE_ANY);
                 }
             }
+            else if (obj_type && obj_type->kind == TYPE_CLIB) {
+                const char* field_name = ast->u.field_access.field_name;
+                if (obj_type->struct_name) {
+                    Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                    if (clib_sym && clib_sym->clib_func_count > 0) {
+                        for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                            if (strcmp(clib_sym->clib_func_names[i], field_name) == 0) {
+                                TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                                TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
+                                switch (rk) {
+                                    case TYPE_I8: case TYPE_U8:
+                                    case TYPE_I16: case TYPE_U16:
+                                    case TYPE_I32: case TYPE_U32:
+                                    case TYPE_I64: case TYPE_U64:
+                                        result = type_new(TYPE_INT); break;
+                                    case TYPE_F32: case TYPE_F64:
+                                        result = type_new(TYPE_FLOAT); break;
+                                    case TYPE_STR8: case TYPE_STR16:
+                                        result = type_new(TYPE_STRING); break;
+                                    case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                        result = type_new(TYPE_PTR);
+                                        result->struct_name = strdup("Ptr"); break;
+                                    case TYPE_BOOL:
+                                        result = type_new(TYPE_BOOL); break;
+                                    case TYPE_NULL:
+                                        result = type_new(TYPE_NULL); break;
+                                    default:
+                                        result = ret_type ? type_copy(ret_type) : type_new(TYPE_ANY); break;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!result) result = type_new(TYPE_ANY);
+            }
             else {
                 result = type_new(TYPE_ANY);
             }

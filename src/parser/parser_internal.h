@@ -26,6 +26,7 @@ typedef enum {
     PREC_COMPARISON,  // < > <= >=
     PREC_TERM,        // + -
     PREC_FACTOR,      // * / %
+    PREC_AS,          // as (类型转换)
     PREC_UNARY,       // not, !, -, ~, ++, -- (前缀)
     PREC_POSTFIX,     // ++ -- (后缀)
     PREC_CALL,        // () .
