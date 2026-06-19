@@ -1,0 +1,29 @@
+// 测试 .lenb 序列化往返（编译 → 加载 → 结果一致）
+
+import files
+import strings
+
+main() {
+    // 1. 写一个简单测试程序
+    var test_code = "main() { print(\"hello_from_lenb\"); print(1 + 2 * 3) }"
+    var tmp_leno = "test_serialize_tmp.leno"
+    files.write(tmp_leno, test_code)
+
+    // 2. 编译为 .lenb
+    var cr = _exec("leno.exe -c " + tmp_leno)
+    assert_ne(cr, null)
+    assert_eq(cr[1], 0)
+
+    // 3. 执行 .lenb
+    var tmp_lenb = "test_serialize_tmp.lenb"
+    var rr = _exec("leno.exe " + tmp_lenb)
+    assert_ne(rr, null)
+    assert_eq(rr[1], 0)
+
+    // 4. 验证输出
+    var output = rr[0]
+    assert_true(strings.has(output, "hello_from_lenb"))
+    assert_true(strings.has(output, "7"))
+
+    print("test_serialize passed")
+}
