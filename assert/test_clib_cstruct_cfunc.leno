@@ -1,0 +1,77 @@
+// clib + cstruct + cfunc 综合测试
+import ffi
+
+cstruct POINT {
+    i32 x
+    i32 y
+}
+
+cfunc Compare(Ptr a, Ptr b): i32
+
+func my_cmp(Ptr a, Ptr b):int {
+    var va = ffi.read_int(a, 0)
+    var vb = ffi.read_int(b, 0)
+    if va < vb { return -1 }
+    if va > vb { return 1 }
+    return 0
+}
+
+clib msvcrt {
+    void qsort(Ptr base, i32 nmemb, i32 size, Ptr compar)
+}
+
+clib kernel32 {
+    u32 GetTickCount()
+    void Sleep(u32 ms)
+}
+
+main() {
+    // === clib 基本调用 ===
+    kernel32 k32 = ffi.load("kernel32.dll")
+    var tick = k32.GetTickCount()
+    print("tick=" + tick)
+    assert_true(tick > 0)
+
+    // clib Sleep
+    var before = k32.GetTickCount()
+    k32.Sleep(10)
+    var after = k32.GetTickCount()
+    assert_true(after - before >= 5)
+    print("Sleep OK")
+
+    // === cstruct ===
+    var pt = POINT.malloc()
+    pt.x = 42
+    pt.y = 88
+    assert_eq(pt.x, 42)
+    assert_eq(pt.y, 88)
+
+    // === cfunc + clib qsort ===
+    msvcrt lib = ffi.load("msvcrt.dll")
+    var cb = ffi.callback(my_cmp, Compare)
+    int n = 5
+    Ptr arr = ffi.malloc(n * 4)
+    ffi.write_int(arr, 0,  50)
+    ffi.write_int(arr, 4,  20)
+    ffi.write_int(arr, 8,  40)
+    ffi.write_int(arr, 12, 10)
+    ffi.write_int(arr, 16, 30)
+    lib.qsort(arr, n, 4, cb)
+    assert_eq(ffi.read_int(arr, 0), 10)
+    assert_eq(ffi.read_int(arr, 16), 50)
+    print("qsort OK")
+
+    // === ffi.memcpy cstruct ===
+    Ptr dst = ffi.malloc(8)
+    ffi.memcpy(dst, pt.to_ptr(), 8)
+    var pt2 = POINT.from_ptr(dst)
+    assert_eq(pt2.x, 42)
+    assert_eq(pt2.y, 88)
+    print("memcpy OK")
+
+    ffi.free(pt)
+    ffi.free(arr)
+    ffi.free(dst)
+    ffi.free(cb)
+    print("=== clib+cstruct+cfunc 全部通过 ===")
+}

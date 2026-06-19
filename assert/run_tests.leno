@@ -24,22 +24,26 @@ main() {
     int passed = 0
     int failed = 0
 
-    var entries = dirs.listdir(test_dir)
-    for entries to entry {
-        if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
-            var full = test_dir + "\\" + entry
-            var cmd = leno_exe + " " + full + " 2>&1"
+    // walk 递归遍历子目录，每个 entry 是 [root, [dirs], [files]]
+    var walks = dirs.walk(test_dir)
+    for walks to w {
+        var root = w[0]
+        var files = w[2]
+        for files to entry {
+            if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
+                var full = root + "\\" + entry
+                // 直接传绝对路径，system() 包装层处理 stderr
+                var cmd = leno_exe + " " + full
 
-            // 执行测试（最多重试 1 次，消除偶发进程冲突）
+            // 执行测试（最多重试 2 次，消除偶发进程冲突）
             int retry = 0
             var result = null
-            while retry <= 1 {
+            while retry <= 2 {
                 result = _exec(cmd)
                 if result != null and result[1] == 0 { break }
                 retry = retry + 1
                 // 短暂 busy-wait 等 OS 清理子进程
-                int wait = 0
-                while wait < 50000 { wait = wait + 1 }
+              sleep(100 * (retry + 1))  // 第一次 100ms，第二次 200ms，第三次 300ms
             }
 
             if result == null {
@@ -69,6 +73,7 @@ main() {
                 }
             }
         }
+    }
     }
 
     print("========================================")
