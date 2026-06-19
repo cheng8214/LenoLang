@@ -4,6 +4,7 @@ import files
 import strings
 import regexs
 import dirs
+import times
 
 int opt_line     = 0
 int opt_icase    = 0
@@ -90,13 +91,15 @@ main() {
     i = i + 1
     if i >= args.len() { print("no file/dir"); return }
 
+    var t0 = times.ms()
     while i < args.len() {
         var target = args[i]
         if opt_recurse { grep_dir(target, pat) }
         else           { grep_file(target, pat) }
         i = i + 1
     }
+    var elapsed = times.ms() - t0
     if files_done >= 1 {
-        print("--- " + matched + " matches in " + files_done + " files")
+        print("--- " + matched + " matches in " + files_done + " files (" + elapsed + "ms)")
     }
 }
