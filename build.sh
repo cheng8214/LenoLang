@@ -136,4 +136,4 @@ $CC $EXTRA_CFLAGS -o build/leno $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -D_GNU
 echo "Build successful"
 echo ""
 echo "Usage: build/leno <file.leno>"
-echo "Tests:  python assert/run_tests.py build/leno assert"
+echo "Tests:  build/leno assert/run_tests.leno build/leno assert"

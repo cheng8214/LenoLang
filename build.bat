@@ -116,4 +116,4 @@ if %ERRORLEVEL% neq 0 (
 echo Build successful
 echo.
 echo Usage: build\leno.exe ^<file.leno^>
-echo Tests:  python assert\run_tests.py build\leno.exe assert
+echo Tests:  build\leno.exe assert\run_tests.leno build\leno.exe assert
