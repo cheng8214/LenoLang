@@ -1,5 +1,6 @@
 // Audio Module v3 — heap handles, multi-instance Sound
 import ffi
+import strings
 
 clib miniaudio {
     i32 ma_dll_engine_init()
@@ -50,7 +51,22 @@ clib miniaudio {
 }
 
 string g_path = ""; var g_ok = false
-export func audio_module_init(string p): bool { if g_ok{return true}; g_path=p;g_ok=true;return true }
+export func audio_module_init(string dll): bool {
+    if g_ok { return true }
+    if strings.has(dll, ":") {
+        g_path = dll
+    } else {
+        var scr = _script()
+        if scr == null { return false }
+        var parts = strings.split(scr, "\\")
+        var last = parts.len() - 2  // 去掉文件名
+        // 从入口目录往上两级 = LenoMusic/ (/leno_module/LenoMusic/examples → /leno_module/LenoMusic)
+        var root = parts[0]
+        for 1 : last - 1 to i { root = root + "\\" + parts[i] }
+        g_path = root + "\\build\\" + dll
+    }
+    g_ok = true; return true
+}
 export func audio_module_uninit() { g_path="";g_ok=false }
 func lib(): miniaudio { return ffi.load(g_path) }
 
