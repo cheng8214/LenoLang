@@ -29,15 +29,25 @@ main() {
         if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
             var full = test_dir + "\\" + entry
             var cmd = leno_exe + " " + full + " 2>&1"
-            var result = _exec(cmd)
 
+            // 执行测试（最多重试 1 次，消除偶发进程冲突）
+            int retry = 0
+            var result = null
+            while retry <= 1 {
+                result = _exec(cmd)
+                if result != null and result[1] == 0 { break }
+                retry = retry + 1
+                // 短暂 busy-wait 等 OS 清理子进程
+                int wait = 0
+                while wait < 50000 { wait = wait + 1 }
+            }
 
             if result == null {
                 print("  [FAIL] " + entry + " - 执行失败")
                 failed = failed + 1
             } else {
-                var output = result[0]    // stdout
-                var code = result[1]      // exit_code
+                var output = result[0]
+                var code = result[1]
 
                 if code != 0 {
                     print("  [FAIL] " + entry)

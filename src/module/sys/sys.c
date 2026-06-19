@@ -232,72 +232,79 @@ static Value native_arch(int argCount, Value* args) {
     #endif
 }
 
-// _exec(cmd) - 执行系统命令并返回输出
+// _exec(cmd) - 执行系统命令并返回 [stdout, exit_code]
+// 使用 system() + 临时文件避免 _popen 在大量并发调用时不稳定的问题
 static Value native_exec(int argCount, Value* args) {
     if (argCount < 1 || !val_is_string(args[0])) {
         return val_null();
     }
-
     ObjString* cmd = (ObjString*)val_as_obj(args[0]);
 
-    #ifdef _WIN32
-        FILE* fp = _popen(cmd->chars, "r");
-    #else
-        FILE* fp = popen(cmd->chars, "r");
-    #endif
-    if (fp == NULL) {
-        return val_null();
-    }
+#ifdef _WIN32
+    // Windows: system() 重定向到临时文件
+    char tmp_path[MAX_PATH];
+    DWORD len = GetTempPathA(MAX_PATH, tmp_path);
+    if (len == 0 || len >= MAX_PATH - 64) return val_null();
+    snprintf(tmp_path + len, MAX_PATH - len, "leno_exec_%lu.txt", GetCurrentProcessId());
 
-    // 读取命令输出
+    // 构建命令: cmd /c "command" > tmp 2>&1
+    size_t cmd_len = strlen(cmd->chars) + strlen(tmp_path) + 32;
+    char* full_cmd = malloc(cmd_len);
+    snprintf(full_cmd, cmd_len, "cmd /c %s > \"%s\" 2>&1", cmd->chars, tmp_path);
+    int rc = system(full_cmd);
+    free(full_cmd);
+
+    // 读取临时文件
+    FILE* f = fopen(tmp_path, "rb");
+    if (!f) { DeleteFileA(tmp_path); return val_null(); }
+    fseek(f, 0, SEEK_END);
+    long flen = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* output = malloc(flen + 1);
+    if (!output) { fclose(f); DeleteFileA(tmp_path); return val_null(); }
+    fread(output, 1, flen, f);
+    output[flen] = '\0';
+    fclose(f);
+    DeleteFileA(tmp_path);
+
+    ObjArray* result = arr_new(2);
+    arr_write(result, 0, val_obj((Object*)str_copy(output, (int)flen)));
+    arr_write(result, 1, val_int(rc));
+    result->count = 2;
+    free(output);
+    return val_obj((Object*)result);
+#else
+    FILE* fp = popen(cmd->chars, "r");
+    if (!fp) return val_null();
+
     char buffer[256];
-    size_t capacity = 1024;
-    size_t len = 0;
-    char* output = (char*)malloc(capacity);
-    if (output == NULL) {
-        #ifdef _WIN32
-            _pclose(fp);
-        #else
-            pclose(fp);
-        #endif
-        return val_null();
-    }
+    size_t capacity = 1024, len = 0;
+    char* output = malloc(capacity);
+    if (!output) { pclose(fp); return val_null(); }
     output[0] = '\0';
 
-    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-        size_t buf_len = strlen(buffer);
-        if (len + buf_len + 1 > capacity) {
-            capacity = (len + buf_len + 1) * 2;
-            char* new_output = (char*)realloc(output, capacity);
-            if (new_output == NULL) {
-                free(output);
-                #ifdef _WIN32
-                    _pclose(fp);
-                #else
-                    pclose(fp);
-                #endif
-                return val_null();
-            }
-            output = new_output;
+    while (fgets(buffer, sizeof(buffer), fp)) {
+        size_t bl = strlen(buffer);
+        if (len + bl + 1 > capacity) {
+            capacity = (len + bl + 1) * 2;
+            char* newer = realloc(output, capacity);
+            if (!newer) { free(output); pclose(fp); return val_null(); }
+            output = newer;
         }
-        memcpy(output + len, buffer, buf_len);
-        len += buf_len;
+        memcpy(output + len, buffer, bl);
+        len += bl;
         output[len] = '\0';
     }
+    int status = pclose(fp);
+    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 
-    #ifdef _WIN32
-        int rc = _pclose(fp);
-    #else
-        int status = pclose(fp);
-        int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
-    #endif
-    // 返回 [stdout_string, exit_code] 数组
     ObjArray* result = arr_new(2);
     arr_write(result, 0, val_obj((Object*)str_copy(output, (int)len)));
     arr_write(result, 1, val_int(rc));
     result->count = 2;
     free(output);
     return val_obj((Object*)result);
+#endif
 }
 
 // _username() - 返回当前登录用户名
