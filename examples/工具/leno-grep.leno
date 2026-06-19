@@ -1,4 +1,4 @@
-// leno-grep v2  — 正则 + 递归 + 大文件检测
+// leno-grep v2  — 正则 + 递归 + 大文件检测 + 跨平台路径
 // 用法: leno leno-grep.leno [line] [icase] [regex] [recursive] pattern file/dir...
 import files
 import strings
@@ -11,6 +11,7 @@ int opt_regex    = 0
 int opt_recurse  = 0
 int matched      = 0
 int files_done   = 0
+string sep       = if _os() == "windows" then "\\" else "/"
 
 func is_match(string line, string pattern):bool {
     var l = if opt_icase then strings.to_lower(line)   else line
@@ -60,7 +61,7 @@ func grep_dir(string dirpath, string pattern) {
         var root = w[0]
         var fnames = w[2]
         for fnames to f {
-            grep_file(root + "\\" + f, pattern)
+            grep_file(root + sep + f, pattern)
         }
     }
 }
