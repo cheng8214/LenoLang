@@ -748,6 +748,43 @@ ffi.free(ptr)
 
 ---
 
+### `assert_size(ptr, min_bytes)`
+
+运行时断言指针指向的缓冲区至少为指定的最小字节数。用于在调用 C 函数前验证输出缓冲区大小，避免堆溢出后崩溃。
+
+**参数**:
+- `ptr`: FFI 指针对象
+- `min_bytes` (int): 所需的最小字节数
+
+**返回**: `bool` — 成功返回 `true`
+
+**异常**:
+- 指针大小 < `min_bytes` → 抛出 `缓冲区溢出！需要 X 字节，实际只有 Y 字节`
+- 指针大小未知（非 `ffi.malloc`/`calloc` 分配，如 `ffi.ptr_from_int`）→ 抛出 `缓冲区大小未知（非 ffi.malloc/calloc 分配），无法验证`
+
+```leno
+var buf = ffi.malloc(4096)
+
+// ✅ 安全：4096 >= 1024
+ffi.assert_size(buf, 1024)
+w.read(buf, 256)
+
+// ❌ 报错：4096 < 8192
+try {
+    ffi.assert_size(buf, 8192)
+} catch {
+    print("缓冲区太小!")  // "缓冲区溢出！需要 8192 字节，实际只有 4096 字节"
+}
+
+// ❌ 报错：大小未知
+var p = ffi.ptr_from_int(0x12345678)
+ffi.assert_size(p, 100)  // "缓冲区大小未知"
+```
+
+> **典型用法**：在调用 clib 函数前，用 `assert_size` 验证输出缓冲区 ≥ 需要的大小，在溢出发生前即时报错。
+
+---
+
 ### `nullptr()`
 
 返回一个空指针（`NULL`）。
@@ -1650,6 +1687,7 @@ main() {
 | `realloc(ptr, size)` | ptr, int | ptr | 重新分配 |
 | `free(x)` | ptr/lib/callback | null | 统一释放 FFI 资源 |
 | `sizeof(ptr)` | ptr | int | 获取内存大小 |
+| `assert_size(ptr, min)` | ptr, int | bool | 断言缓冲区 ≥ min 字节（不足抛错） |
 | `nullptr()` | 无 | ptr | 返回空指针 |
 | `memcpy(dest, src, size)` | ptr, ptr, int | null | 内存拷贝 |
 | `memset(ptr, value, size)` | ptr, int, int | null | 内存填充 |

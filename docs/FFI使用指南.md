@@ -1688,25 +1688,48 @@ var t = k.GetTickCount()
 
 #### 陷阱 3：buffer 大小计算
 
-`ffi.malloc` 分配的是**字节数**，必须根据元素大小和数量计算：
+`ffi.malloc` 分配的是**字节数**，必须根据元素大小和数量计算。Leno 的 `ffi.malloc` 会**自动追踪**分配大小，可用 `ffi.assert_size()` 在调用前验证：
 
 ```leno
 // ❌ 错误: 1024 帧 × 2 通道 × 4 字节(f32) = 8192 字节，4096 不够！
 var buf = ffi.malloc(4096)
-w.read(buf, 1024)  // 堆溢出！ffi.free 崩溃
+w.read(buf, 1024)  // 堆溢出！ffi.free 崩溃，极难排查
 
-// ✅ 正确: 手动计算所需字节数
-int frames = 1024
-int ch = 2
+// ✅ 方案 1: 用 ffi.assert_size 提前检测（推荐）
+var buf = ffi.malloc(4096)
+ffi.assert_size(buf, 1024 * 2 * 4)  // 抛出: "缓冲区溢出！需要 8192 字节，实际只有 4096 字节"
+
+// ✅ 方案 2: 手动计算所需字节数
+int frames = 1024; int ch = 2
 int bytes = frames * ch * 4  // f32 = 4 字节
 var buf = ffi.malloc(bytes)
+ffi.assert_size(buf, bytes)  // 不会报错
 w.read(buf, frames)
 
-// ✅ 更稳妥: 预留足够空间
+// ✅ 方案 3: 预留足够空间
 var buf = ffi.malloc(4800 * 4 * 2)  // 38400 字节
 ```
 
-> **关键**：`ffi.malloc` 溢出不会立即报错，而是在后续 `ffi.free` 时崩溃，极难排查。
+> **关键**：`ffi.assert_size(ptr, min)` 在缓冲区不足时立即抛出明确错误，而非等到 `ffi.free` 时崩溃。
+
+#### `ffi.assert_size` 详解
+
+```leno
+// 基本用法
+ffi.assert_size(ptr, min_bytes)
+
+// 用于 clib 调用前验证
+var buf = ffi.malloc(4096)
+ffi.assert_size(buf, 1024 * 2 * 4)  // 1024帧×2通道×4字节
+w.read(buf, 1024)  // 安全
+ffi.free(buf)
+```
+
+**行为：**
+- 指针大小已知且 ≥ `min_bytes` → 返回 true，继续执行
+- 指针大小已知但 < `min_bytes` → **抛出明确错误** "缓冲区溢出！需要 X 字节，实际只有 Y 字节"
+- 指针大小未知（非 ffi.malloc/calloc 分配，如 `ffi.ptr_from_int`）→ 抛出 "缓冲区大小未知"
+- 指针有符号类型 `Ptr[T]` → `sizeof` 返回分配字节数，不受元素类型影响
 
 #### 陷阱 4：`f32` vs `f64` 精度
 
@@ -1818,7 +1841,8 @@ ffi.free(base)
 | `memcpy(dest, src, size)` | Ptr, Ptr, int | null | 内存拷贝 |
 | `memset(ptr, value, size)` | Ptr, int, int | null | 内存填充 |
 | `nullptr()` | 无 | Ptr | 空指针 |
-| `sizeof(ptr)` | Ptr | int | 内存大小 |
+| `sizeof(ptr)` | Ptr | int | 返回分配大小（字节） |
+| `assert_size(ptr, min)` | Ptr, int | bool | 断言缓冲区 ≥ min 字节（不足抛错） |
 
 ### 内存读写
 

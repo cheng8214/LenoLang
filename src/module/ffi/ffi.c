@@ -825,6 +825,28 @@ static Value ffi_sizeof_func(int argc, Value* args) {
     return val_int((int)ptr->size);
 }
 
+/* ffi.assert_size(ptr, min_bytes) - 运行时断言缓冲区足够大
+ * 如果 ptr 大小未知(size=0)或不足 min_bytes，抛出明确错误。
+ * 用于在调用 clib 函数前验证输出缓冲区，避免堆溢出后崩溃。
+ */
+static Value ffi_assert_size_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    size_t min_bytes = (size_t)val_as_int(args[1]);
+
+    if (ptr->size == 0) {
+        native_throw_error("缓冲区大小未知（非 ffi.malloc/calloc 分配），无法验证");
+        return val_null();
+    }
+    if (ptr->size < min_bytes) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "缓冲区溢出！需要 %zu 字节，实际只有 %zu 字节", min_bytes, ptr->size);
+        native_throw_error(msg);
+        return val_null();
+    }
+    return val_bool(1);
+}
+
 /* ffi.nullptr() - 返回一个空指针值（可用于传参） */
 static Value ffi_nullptr_func(int argc, Value* args) {
     (void)argc; (void)args;
@@ -2417,6 +2439,9 @@ void ffi_init_module(void) {
 
     TypeKind sizeof_params[] = {TYPE_PTR};
     native_register_module_method("ffi", "sizeof", ffi_sizeof_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, sizeof_params);
+
+    TypeKind assert_size_params[] = {TYPE_PTR, TYPE_INT};
+    native_register_module_method("ffi", "assert_size", ffi_assert_size_func, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, assert_size_params);
 
     native_register_module_method("ffi", "nullptr", ffi_nullptr_func, 0, -1, -1, TYPE_PTR, TYPE_UNKNOWN, NULL);
 
