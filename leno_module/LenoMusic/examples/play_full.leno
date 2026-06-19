@@ -5,17 +5,15 @@ main() {
     var filepath = "d:\\1.flac"
     int duration = 355
 
-    print("=== FLAC 完整播放器 v2 ===")
+    print("=== FLAC 完整播放器 ===")
     print("文件: " + filepath)
-    print("时长: " + duration + " 秒 (" + (duration / 60) + " 分)")
-
-    audio.audio_module_init("../build/miniaudio.dll")
 
     var engine = audio.createEngine()
     if not engine.isInit() { print("[错误] 引擎初始化失败"); return }
 
     print("采样率: " + engine.getSampleRate() + " Hz")
     print("通道数: " + engine.getChannels())
+    print("时长: " + duration + " 秒 (" + (duration / 60) + " 分)")
 
     print("开始播放...")
     engine.play(filepath)
@@ -32,6 +30,5 @@ main() {
 
     print("播放完成!")
     engine.uninit()
-    audio.audio_module_uninit()
     print("=== 感谢收听! ===")
 }

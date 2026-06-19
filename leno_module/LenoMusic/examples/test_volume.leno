@@ -2,8 +2,7 @@
 import "../src/audio.leno" as audio
 
 main() {
-    print("=== 音量控制测试 v2 ===")
-    audio.audio_module_init("../build/miniaudio.dll")
+    print("=== 音量控制测试 ===")
 
     var engine = audio.createEngine()
     if not engine.isInit() { print("引擎初始化失败"); return }
@@ -26,6 +25,5 @@ main() {
     print("[4/4] 停止...")
     engine.stop()
     engine.uninit()
-    audio.audio_module_uninit()
     print("=== 测试结束 ===")
 }

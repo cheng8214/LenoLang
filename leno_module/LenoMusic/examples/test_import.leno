@@ -1,4 +1,0 @@
-import "../src/audio.leno" as audio
-main() {
-    print("init=" + audio.audio_module_init("miniaudio.dll"))
-}

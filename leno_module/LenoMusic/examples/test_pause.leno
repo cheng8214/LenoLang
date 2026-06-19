@@ -1,28 +1,22 @@
-// 暂停/恢复测试 — v2 clib (使用 Sound)
+// 播放/停止/跳转测试
 import "../src/audio.leno" as audio
 
 main() {
-    print("=== 暂停/恢复测试 v2 ===")
-    audio.audio_module_init("../build/miniaudio.dll")
+    print("=== 播放控制测试 ===")
 
-    var sound = audio.createSound("d:\\1.flac")
-    if not sound.isInit() { print("Sound 初始化失败"); return }
+    var s = audio.createSound("d:\\1.flac")
+    if not s.isInit() { print("加载失败"); return }
 
-    print("播放 3 秒...")
-    sound.play()
-    sleep(3000)
+    print("时长: " + s.getDuration() + "s")
+    print("播放 2 秒..."); s.play(); sleep(2000)
+    print("位置: " + s.getPosition() + "s")
 
-    print("暂停 2 秒...")
-    sound.pause()
-    sleep(2000)
+    print("跳到 10 秒..."); s.seek(10); sleep(500)
+    print("位置: " + s.getPosition() + "s")
 
-    print("恢复播放 3 秒...")
-    sound.resume()
-    sleep(3000)
+    print("播放 2 秒..."); sleep(2000)
+    print("位置: " + s.getPosition() + "s")
 
-    print("停止...")
-    sound.stop()
-    sound.uninit()
-    audio.audio_module_uninit()
+    print("停止..."); s.stop(); s.uninit()
     print("=== 测试结束 ===")
 }

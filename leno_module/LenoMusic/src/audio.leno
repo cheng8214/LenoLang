@@ -78,7 +78,6 @@ export var NOISE_WHITE=0;export var NOISE_PINK=1;export var NOISE_BROWNIAN=2
 export struct Sound {
     Ptr h; bool ok
     func load(string p): bool {
-        if not g_ok{return false}
         miniaudio l=lib(); l.ma_dll_engine_init()
         h=l.ma_dll_sound_create(p) as Ptr
         if h==null{l.ma_dll_engine_uninit();return false}
@@ -99,7 +98,7 @@ export struct Sound {
 // === Engine ===
 export struct Engine {
     bool ok
-    func init(): bool { if not g_ok{return false};miniaudio l=lib();if l.ma_dll_engine_init()!=0{return false};ok=true;return true }
+    func init(): bool { miniaudio l=lib();if l.ma_dll_engine_init()!=0{return false};ok=true;return true }
     func play(string p): bool { if not ok{return false};miniaudio l=lib();return l.ma_dll_engine_play_sound(p)==0 }
     func stop() { if ok{miniaudio l=lib();l.ma_dll_engine_stop()} }
     func setVolume(float v) { if ok{miniaudio l=lib();l.ma_dll_engine_set_volume(v)} }
@@ -113,7 +112,7 @@ export struct Engine {
 // === Decoder ===
 export struct Decoder {
     Ptr d; bool open
-    func open(string p): bool { if not g_ok{return false};miniaudio l=lib();d=l.ma_dll_decoder_open(p) as Ptr;open=d!=null;return open }
+    func open(string p): bool { miniaudio l=lib();d=l.ma_dll_decoder_open(p) as Ptr;open=d!=null;return open }
     func getSampleRate(): int { if not open{return 0};miniaudio l=lib();return l.ma_dll_decoder_get_sample_rate(d) }
     func getChannels(): int { if not open{return 0};miniaudio l=lib();return l.ma_dll_decoder_get_channels(d) }
     func getFormat(): int { if not open{return -1};miniaudio l=lib();return l.ma_dll_decoder_get_format(d) }
@@ -127,7 +126,7 @@ export struct Decoder {
 export struct Waveform {
     Ptr h; bool ok
     func init(int f,int c,int s,int t,float a,float fr): bool {
-        if not g_ok{return false};miniaudio l=lib();h=l.ma_dll_waveform_create(f,c,s,t,a,fr) as Ptr;ok=h!=null;return ok
+        miniaudio l=lib();h=l.ma_dll_waveform_create(f,c,s,t,a,fr) as Ptr;ok=h!=null;return ok
     }
     func read(Ptr b,int n): int { if not ok{return 0};miniaudio l=lib();return l.ma_dll_waveform_read(h,b,n) }
     func setAmp(float v): bool { if not ok{return false};miniaudio l=lib();return l.ma_dll_waveform_set_amplitude(h,v)==0 }
@@ -141,7 +140,7 @@ export struct Waveform {
 export struct Noise {
     Ptr h; bool ok
     func init(int f,int c,int t,int s,float a): bool {
-        if not g_ok{return false};miniaudio l=lib();h=l.ma_dll_noise_create(f,c,t,s,a) as Ptr;ok=h!=null;return ok
+        miniaudio l=lib();h=l.ma_dll_noise_create(f,c,t,s,a) as Ptr;ok=h!=null;return ok
     }
     func read(Ptr b,int n): int { if not ok{return 0};miniaudio l=lib();return l.ma_dll_noise_read(h,b,n) }
     func setAmp(float v): bool { if not ok{return false};miniaudio l=lib();return l.ma_dll_noise_set_amplitude(h,v)==0 }
@@ -154,7 +153,7 @@ export struct Noise {
 export struct LPF {
     Ptr h; bool ok; int fmt; int ch; int sr
     func init(int f,int c,int s,float cf,int o): bool {
-        if not g_ok{return false};miniaudio l=lib();h=l.ma_dll_lpf_create(f,c,s,cf,o) as Ptr;ok=h!=null;fmt=f;ch=c;sr=s;return ok
+        miniaudio l=lib();h=l.ma_dll_lpf_create(f,c,s,cf,o) as Ptr;ok=h!=null;fmt=f;ch=c;sr=s;return ok
     }
     func process(Ptr o,Ptr i,int n): int { if not ok{return 0};miniaudio l=lib();return l.ma_dll_lpf_process(h,o,i,n) }
     func reinit(float cf,int o): bool { if not ok{return false};miniaudio l=lib();return l.ma_dll_lpf_reinit(h,fmt,ch,sr,cf,o)==0 }
@@ -164,7 +163,7 @@ export struct LPF {
 export struct HPF {
     Ptr h; bool ok; int fmt; int ch; int sr
     func init(int f,int c,int s,float cf,int o): bool {
-        if not g_ok{return false};miniaudio l=lib();h=l.ma_dll_hpf_create(f,c,s,cf,o) as Ptr;ok=h!=null;fmt=f;ch=c;sr=s;return ok
+        miniaudio l=lib();h=l.ma_dll_hpf_create(f,c,s,cf,o) as Ptr;ok=h!=null;fmt=f;ch=c;sr=s;return ok
     }
     func process(Ptr o,Ptr i,int n): int { if not ok{return 0};miniaudio l=lib();return l.ma_dll_hpf_process(h,o,i,n) }
     func reinit(float cf,int o): bool { if not ok{return false};miniaudio l=lib();return l.ma_dll_hpf_reinit(h,fmt,ch,sr,cf,o)==0 }

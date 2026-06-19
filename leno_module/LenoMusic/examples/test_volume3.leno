@@ -4,8 +4,6 @@ import "../src/audio.leno" as audio
 main() {
     print("=== 音量测试（播放前设置）===")
     
-    audio.audio_module_init("../build/miniaudio.dll")
-    
     var engine = audio.createEngine()
     if not engine.isInit() {
         print("引擎初始化失败")
@@ -41,6 +39,5 @@ main() {
     engine2.stop()
     engine2.uninit()
     
-    audio.audio_module_uninit()
     print("\n=== 测试结束 ===")
 }

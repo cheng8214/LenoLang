@@ -1,44 +1,45 @@
-// 使用新音频模块（全局单例模式）— v2 clib
+// 全局单例模式 — 零配置
 import "../src/audio.leno" as audio
 
 main() {
     print("================================")
-    print("Audio 模块测试 - 全局单例模式 v2")
+    print("Audio 模块 - 全局单例")
     print("================================")
 
-    print("[1/7] 初始化...")
-    if not audio.audio_module_init("../build/miniaudio.dll") {
-        print("[错误] 初始化失败"); return
-    }
+    print("[1/6] 版本: " + audio.getVersion())
 
-    print("[2/7] 版本: " + audio.getVersion())
-
-    print("[3/7] 音频信息...")
+    print("[2/6] 音频信息...")
     audio.getInfo("d:\\1.flac")
 
-    print("[4/7] Engine 播放...")
+    print("[3/6] Engine 播放...")
     var engine = audio.createEngine()
     if engine.isInit() {
-        print("      采样率: " + engine.getSampleRate() + " Hz")
-        print("      通道数: " + engine.getChannels())
+        print("      SR:" + engine.getSampleRate() + "Hz CH:" + engine.getChannels())
         engine.play("d:\\1.flac")
-        for 0 : 9 to i { sleep(1000); print("      进度: " + ((i + 1) * 10) + "%") }
+        for 0 : 9 to i { sleep(1000); print("      " + ((i + 1) * 10) + "%") }
         engine.stop(); engine.uninit()
     }
 
-    print("[5/7] Decoder...")
+    print("[4/6] Decoder...")
     var decoder = audio.createDecoder("d:\\1.flac")
     if decoder.isOpen() {
-        print("      采样率: " + decoder.getSampleRate())
-        print("      时长: " + decoder.getDuration() + " 秒")
+        print("      SR:" + decoder.getSampleRate() + " DUR:" + decoder.getDuration() + "s")
         decoder.close()
     }
 
-    print("[6/7] 快速播放 3 秒...")
+    print("[5/6] 快速播放 3 秒...")
     audio.quickPlay("d:\\1.flac", 3)
 
-    print("[7/7] 全局销毁...")
-    audio.audio_module_uninit()
+    print("[6/6] Sound 多实例...")
+    var s1 = audio.createSound("d:\\1.flac")
+    var s2 = audio.createSound("d:\\1.flac")
+    if s1.isInit() and s2.isInit() {
+        s1.setVolume(0.8); s2.setVolume(0.4)
+        s1.play(); s2.play()
+        sleep(2000); s1.stop(); s2.stop()
+        s1.uninit(); s2.uninit()
+    }
+
     print("================================")
     print("测试完成!")
     print("================================")
