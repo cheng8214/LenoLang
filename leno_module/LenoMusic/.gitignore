@@ -1,0 +1,8 @@
+# build
+*.lenb
+*.exe
+
+# IDE
+.vscode/
+.idea/
+project.json
