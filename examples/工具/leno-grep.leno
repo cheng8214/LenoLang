@@ -83,12 +83,12 @@ main() {
         else { break }
     }
     if i >= args.len() { print("no pattern"); return }
-    var pat = args[i] as string
+    var pat = args[i]
     i = i + 1
     if i >= args.len() { print("no file/dir"); return }
 
     while i < args.len() {
-        var target = args[i] as string
+        var target = args[i]
         if opt_recurse { grep_dir(target, pat) }
         else           { grep_file(target, pat) }
         i = i + 1

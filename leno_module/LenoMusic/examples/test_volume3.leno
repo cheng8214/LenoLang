@@ -1,0 +1,46 @@
+// 测试音量问题 - 在播放前设置音量
+import "../src/audio.leno" as audio
+
+main() {
+    print("=== 音量测试（播放前设置）===")
+    
+    audio.audio_module_init("../build/miniaudio.dll")
+    
+    var engine = audio.createEngine()
+    if not engine.isInit() {
+        print("引擎初始化失败")
+        return
+    }
+    
+    // 测试1：先设置音量，再播放
+    print("\n[测试1] 先设置音量0.5，再播放...")
+    engine.setVolume(0.5)
+    print("音量已设置为 0.5")
+    engine.play("d:\\1.flac")
+    print("播放 3 秒...")
+    sleep(3000)
+    engine.stop()
+    
+    // 测试2：设置最大音量，再播放
+    print("\n[测试2] 先设置音量1.0，再播放...")
+    engine.setVolume(1.0)
+    print("音量已设置为 1.0")
+    engine.play("d:\\1.flac")
+    print("播放 3 秒...")
+    sleep(3000)
+    engine.stop()
+    
+    // 测试3：不设置音量（默认），直接播放
+    print("\n[测试3] 不设置音量，直接播放...")
+    // 创建新引擎，不设置音量
+    engine.uninit()
+    var engine2 = audio.createEngine()
+    engine2.play("d:\\1.flac")
+    print("播放 3 秒...")
+    sleep(3000)
+    engine2.stop()
+    engine2.uninit()
+    
+    audio.audio_module_uninit()
+    print("\n=== 测试结束 ===")
+}

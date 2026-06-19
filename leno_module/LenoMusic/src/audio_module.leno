@@ -1,0 +1,208 @@
+// 音频模块 - 封装 miniaudio DLL 功能
+
+import ffi
+
+// 定义音频播放器接口
+export face AudioPlayer {
+    func play(string filepath): bool
+    func stop()
+    func isPlaying(): bool
+    func getVolume(): float
+    func setVolume(float vol)
+}
+
+// 音频引擎实现
+export struct MiniAudioEngine impl AudioPlayer {
+    Ptr ma
+    Ptr kernel32
+    bool isInit
+    string currentFile
+    bool playing
+
+    func init(): bool {
+        // 加载DLL
+        ma = ffi.load("../build/miniaudio.dll")
+        if ma == null {
+            print("[错误] 无法加载 miniaudio.dll")
+            return false
+        }
+
+        // 初始化引擎
+        int result = ffi.call_int(ma, "ma_dll_engine_init")
+        if result != 0 {
+            print("[错误] 引擎初始化失败")
+            ffi.free(ma)
+            ma = null
+            return false
+        }
+
+        kernel32 = ffi.load("kernel32.dll")
+        isInit = true
+
+        int sampleRate = ffi.call_int(ma, "ma_dll_engine_get_sample_rate")
+        int channels = ffi.call_int(ma, "ma_dll_engine_get_channels")
+        print("音频引擎已启动 (" + sampleRate + "Hz, " + channels + "ch)")
+
+        return true
+    }
+
+    func play(string filepath): bool {
+        if not isInit {
+            print("[错误] 引擎未初始化")
+            return false
+        }
+
+        int result = ffi.call_int(ma, "ma_dll_engine_play_sound", filepath)
+        if result != 0 {
+            print("[错误] 播放失败: " + filepath)
+            return false
+        }
+
+        currentFile = filepath
+        playing = true
+        return true
+    }
+
+    func stop() {
+        if isInit {
+            ffi.call_void(ma, "ma_dll_engine_uninit")
+            ffi.call_int(ma, "ma_dll_engine_init")  // 重新初始化
+            playing = false
+        }
+    }
+
+    func isPlaying(): bool {
+        return playing
+    }
+
+    func getVolume(): float {
+        // miniaudio引擎API没有直接获取音量的功能
+        return 1.0
+    }
+
+    func setVolume(float vol) {
+        // miniaudio引擎API没有直接设置音量的功能
+        // 可以通过其他方式实现
+    }
+
+    func uninit() {
+        if isInit {
+            ffi.call_void(ma, "ma_dll_engine_uninit")
+            ffi.free(ma)
+            if kernel32 != null {
+                ffi.free(kernel32)
+            }
+            isInit = false
+            playing = false
+        }
+    }
+
+    func sleep(int ms) {
+        if kernel32 != null {
+            ffi.call_void(kernel32, "Sleep", ms)
+        }
+    }
+}
+
+// 音频解码器
+export struct AudioDecoder {
+    Ptr ma
+    Ptr decoder
+    bool isOpen
+
+    func open(string filepath): bool {
+        ma = ffi.load("../build/miniaudio.dll")
+        if ma == null {
+            return false
+        }
+
+        decoder = ffi.call_ptr(ma, "ma_dll_decoder_open", filepath)
+        if decoder == null {
+            print("[错误] 无法打开文件: " + filepath)
+            ffi.free(ma)
+            ma = null
+            return false
+        }
+
+        isOpen = true
+        return true
+    }
+
+    func getSampleRate(): int {
+        if not isOpen { return 0 }
+        return ffi.call_int(ma, "ma_dll_decoder_get_sample_rate", decoder)
+    }
+
+    func getChannels(): int {
+        if not isOpen { return 0 }
+        return ffi.call_int(ma, "ma_dll_decoder_get_channels", decoder)
+    }
+
+    func getDuration(): int {
+        if not isOpen { return 0 }
+        int frames = ffi.call_int(ma, "ma_dll_decoder_get_length_in_pcm_frames", decoder)
+        int sampleRate = getSampleRate()
+        if sampleRate > 0 {
+            return frames / sampleRate  // 返回秒数
+        }
+        return 0
+    }
+
+    func close() {
+        if isOpen {
+            ffi.call_void(ma, "ma_dll_decoder_close", decoder)
+            ffi.free(ma)
+            isOpen = false
+        }
+    }
+}
+
+// 工厂函数
+export func createEngine(): MiniAudioEngine {
+    var engine = MiniAudioEngine()
+    engine.init()
+    return engine
+}
+
+export func createDecoder(string filepath): AudioDecoder {
+    var decoder = AudioDecoder()
+    decoder.open(filepath)
+    return decoder
+}
+
+// 便捷函数
+export func playSound(string filepath): bool {
+    var engine = createEngine()
+    if not engine.isInit {
+        return false
+    }
+
+    bool result = engine.play(filepath)
+    if result {
+        print("正在播放: " + filepath)
+        print("等待5秒...")
+        engine.sleep(5000)
+    }
+
+    engine.uninit()
+    return result
+}
+
+// 获取音频信息
+export func getAudioInfo(string filepath) {
+    print("===== 音频文件信息 =====")
+    print("文件: " + filepath)
+
+    var decoder = createDecoder(filepath)
+    if not decoder.isOpen {
+        print("无法读取文件信息")
+        return
+    }
+
+    print("采样率: " + decoder.getSampleRate() + " Hz")
+    print("通道数: " + decoder.getChannels())
+    print("时长: " + decoder.getDuration() + " 秒")
+
+    decoder.close()
+    print("========================")
+}

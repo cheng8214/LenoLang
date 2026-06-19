@@ -1,0 +1,32 @@
+// 调试音量问题
+import "../src/audio.leno" as audio
+
+main() {
+    print("=== 音量调试 ===")
+    
+    audio.audio_module_init("../build/miniaudio.dll")
+    
+    var engine = audio.createEngine()
+    
+    // 测试不同的音量值
+    print("\n测试音量 0.0:")
+    engine.setVolume(0.0)
+    print("获取音量: " + engine.getVolume())
+    
+    print("\n测试音量 0.5:")
+    engine.setVolume(0.5)
+    print("获取音量: " + engine.getVolume())
+    
+    print("\n测试音量 1.0:")
+    engine.setVolume(1.0)
+    print("获取音量: " + engine.getVolume())
+    
+    print("\n测试音量 0.8:")
+    engine.setVolume(0.8)
+    print("获取音量: " + engine.getVolume())
+    
+    engine.uninit()
+    audio.audio_module_uninit()
+    
+    print("\n=== 调试结束 ===")
+}

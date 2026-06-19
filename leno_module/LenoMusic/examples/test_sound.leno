@@ -1,0 +1,37 @@
+// 简单声音测试
+import "../src/audio.leno" as audio
+
+main() {
+    print("=== 声音测试 ===")
+    
+    // 初始化
+    audio.audio_module_init("../build/miniaudio.dll")
+    
+    // 创建引擎
+    var engine = audio.createEngine()
+    if not engine.isInit() {
+        print("引擎初始化失败")
+        return
+    }
+    
+    // 检查系统音量
+    print("系统音量: " + engine.getEngineSampleRate() + " Hz")
+    print("通道数: " + engine.getEngineChannels())
+    
+    // 播放前设置最大音量
+    print("设置音量为 1.0")
+    engine.setVolume(1.0)
+    
+    print("开始播放...")
+    engine.play("d:\\1.flac")
+    
+    print("播放 5 秒...")
+    sleep(5000)
+    
+    print("停止")
+    engine.stop()
+    engine.uninit()
+    audio.audio_module_uninit()
+    
+    print("=== 测试结束 ===")
+}

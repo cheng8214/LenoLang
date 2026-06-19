@@ -1,0 +1,106 @@
+/*
+ * 完整播放FLAC音频文件 (355秒)
+ *
+ * 使用方法:
+ *   d:\CLeno\LenoC\build\leno.exe play_full.leno
+ */
+
+import ffi
+import files
+
+main() {
+    string filepath = "d:\\1.flac"
+    int duration = 355  // 文件时长(秒)
+
+    print("================================")
+    print("FLAC 完整播放器")
+    print("================================")
+    print("")
+    print("文件路径: " + filepath)
+
+    // 检查文件是否存在
+    if not files.exists(filepath) {
+        print("[错误] 文件不存在: " + filepath)
+        return
+    }
+
+    print("文件存在")
+    print("时长: " + duration + " 秒 (约 " + (duration / 60) + " 分 " + (duration % 60) + " 秒)")
+    print("")
+
+    // 加载DLL
+    print("[1/3] 加载 miniaudio.dll...")
+    var ma = ffi.load("../build/miniaudio.dll")
+    if ma == null {
+        print("[错误] 无法加载 miniaudio.dll")
+        return
+    }
+    print("      加载成功!")
+    print("")
+
+    // 初始化引擎
+    print("[2/3] 初始化音频引擎...")
+    int result = ffi.call_int(ma, "ma_dll_engine_init")
+    if result != 0 {
+        print("[错误] 引擎初始化失败")
+        ffi.free(ma)
+        return
+    }
+
+    int sampleRate = ffi.call_int(ma, "ma_dll_engine_get_sample_rate")
+    int channels = ffi.call_int(ma, "ma_dll_engine_get_channels")
+    print("      引擎已启动")
+    print("      采样率: " + sampleRate + " Hz")
+    print("      通道数: " + channels)
+    print("")
+
+    // 播放文件
+    print("[3/3] 播放音频文件...")
+    result = ffi.call_int(ma, "ma_dll_engine_play_sound", filepath)
+    if result != 0 {
+        print("[错误] 播放失败")
+        ffi.call_void(ma, "ma_dll_engine_uninit")
+        ffi.free(ma)
+        return
+    }
+
+    print("      正在播放...")
+    print("      按Ctrl+C可随时停止")
+    print("")
+
+    // 等待播放完成
+    var kernel32 = ffi.load("kernel32.dll")
+
+    print("      完整播放 " + duration + " 秒...")
+
+    int minutes = 0
+    int seconds = 0
+
+    for 0 : duration - 1 to i {
+        ffi.call_void(kernel32, "Sleep", 1000)
+
+        seconds = seconds + 1
+        if seconds >= 60 {
+            seconds = 0
+            minutes = minutes + 1
+        }
+
+        // 每10秒显示一次进度
+        if (i + 1) % 10 == 0 {
+            int progress = ((i + 1) * 100) / duration
+            print("      进度: " + minutes + "分" + seconds + "秒 (" + progress + "%)")
+        }
+    }
+
+    // 清理
+    print("")
+    print("播放完成!")
+    ffi.call_void(ma, "ma_dll_engine_uninit")
+    ffi.free(ma)
+    ffi.free(kernel32)
+
+    print("")
+    print("================================")
+    print("感谢收听!")
+    print("================================")
+}

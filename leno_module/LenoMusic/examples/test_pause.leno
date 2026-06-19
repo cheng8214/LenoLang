@@ -1,0 +1,74 @@
+// 测试 Sound 对象的暂停/恢复功能
+import "../src/audio.leno" as audio
+
+main() {
+    print("================================")
+    print("Sound 暂停/恢复功能测试")
+    print("================================")
+    print("")
+
+    // 创建 Sound 对象
+    print("[1/5] 加载音频文件...")
+    var sound = audio.createSound("d:\\1.flac")
+
+    if not sound.isInit() {
+        print("[错误] 无法加载音频文件")
+        return
+    }
+
+    print("      时长: " + sound.getDuration() + " 秒")
+    print("      音量: " + sound.getVolume())
+    print("")
+
+    // 开始播放
+    print("[2/5] 开始播放...")
+    sound.play()
+    print("      播放中...")
+
+    // 等待3秒
+    sleep(3000)
+    print("")
+
+    // 暂停
+    print("[3/5] 暂停播放...")
+    sound.pause()
+    float pos = sound.getPosition()
+    print("      暂停位置: " + pos + " 秒")
+    print("      是否暂停: " + sound.isPaused())
+
+    // 等待2秒（静音期间）
+    print("      等待2秒...")
+    sleep(2000)
+    print("")
+
+    // 恢复
+    print("[4/5] 恢复播放...")
+    sound.resume()
+    print("      恢复播放...")
+
+    // 再播放3秒
+    sleep(3000)
+    print("")
+
+    // 停止
+    print("[5/5] 停止播放...")
+    sound.stop()
+    print("      已停止")
+    print("")
+
+    // 测试音量控制
+    print("--- 音量控制测试 ---")
+    sound.setVolume(0.5)
+    print("音量设置为: " + sound.getVolume())
+
+    sound.setVolume(1.0)
+    print("音量设置为: " + sound.getVolume())
+    print("")
+
+    // 清理
+    sound.uninit()
+
+    print("================================")
+    print("测试完成!")
+    print("================================")
+}

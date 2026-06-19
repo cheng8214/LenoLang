@@ -1,0 +1,41 @@
+// 测试设置音量后播放
+import "../src/audio.leno" as audio
+
+main() {
+    print("=== 设置音量后播放测试 ===")
+    
+    audio.audio_module_init("../build/miniaudio.dll")
+    
+    // 测试1: 音量 0.5
+    print("\n[测试1] 音量 0.5")
+    var engine1 = audio.createEngine()
+    engine1.setVolume(0.5)
+    print("音量设置: " + engine1.getVolume())
+    engine1.play("d:\\1.flac")
+    sleep(3000)
+    engine1.stop()
+    engine1.uninit()
+    
+    // 测试2: 音量 1.0
+    print("\n[测试2] 音量 1.0")
+    var engine2 = audio.createEngine()
+    engine2.setVolume(1.0)
+    print("音量设置: " + engine2.getVolume())
+    engine2.play("d:\\1.flac")
+    sleep(3000)
+    engine2.stop()
+    engine2.uninit()
+    
+    // 测试3: 音量 0.8
+    print("\n[测试3] 音量 0.8")
+    var engine3 = audio.createEngine()
+    engine3.setVolume(0.8)
+    print("音量设置: " + engine3.getVolume())
+    engine3.play("d:\\1.flac")
+    sleep(3000)
+    engine3.stop()
+    engine3.uninit()
+    
+    audio.audio_module_uninit()
+    print("\n=== 测试结束 ===")
+}

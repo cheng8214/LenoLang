@@ -1,0 +1,65 @@
+// Test volume control and stop functionality
+import "../src/audio.leno" as audio
+
+main() {
+    print("================================")
+    print("Volume Control Test")
+    print("================================")
+    print("")
+
+    // Global initialization
+    audio.audio_module_init("../build/miniaudio.dll")
+
+    // Create engine
+    var engine = audio.createEngine()
+    if not engine.isInit() {
+        print("Failed to create engine")
+        return
+    }
+
+    // Test volume control
+    print("[1/4] Testing volume control...")
+    engine.setVolume(0.5)
+    print("      Volume set to 0.5")
+    sleep(500)
+    
+    float vol = engine.getVolume()
+    print("      Current volume: " + vol)
+    print("")
+
+    // Start playback
+    print("[2/4] Starting playback...")
+    engine.play("d:\\1.flac")
+    print("")
+
+    // Change volume during playback
+    print("[3/4] Changing volume during playback...")
+    sleep(2000)
+    
+    engine.setVolume(0.3)
+    print("      Volume set to 0.3 (quieter)")
+    sleep(2000)
+    
+    engine.setVolume(0.8)
+    print("      Volume set to 0.8 (louder)")
+    sleep(2000)
+    
+    engine.setVolume(1.0)
+    print("      Volume set to 1.0 (max)")
+    sleep(2000)
+    print("")
+
+    // Test stop
+    print("[4/4] Testing stop...")
+    engine.stop()
+    print("      Playback stopped")
+    print("")
+
+    // Cleanup
+    engine.uninit()
+    audio.audio_module_uninit()
+
+    print("================================")
+    print("Test completed!")
+    print("================================")
+}

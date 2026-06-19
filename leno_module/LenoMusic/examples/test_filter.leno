@@ -1,0 +1,102 @@
+// 测试滤波器功能
+import "../src/audio.leno" as audio
+import ffi
+
+main() {
+    print("================================")
+    print("滤波器功能测试")
+    print("================================")
+    print("")
+
+    // 1. 测试低通滤波器 (LPF)
+    print("[1/3] 测试低通滤波器 (LPF)...")
+    var lpf = audio.createLPF(audio.FORMAT_F32, 2, 48000, 1000.0, 2)
+
+    if lpf.isInit() {
+        // 分配输入输出缓冲区
+        Ptr inputBuffer = ffi.malloc(4800 * 4 * 2)   // 100ms, f32, 2ch
+        Ptr outputBuffer = ffi.malloc(4800 * 4 * 2)
+
+        // 生成一些测试数据（正弦波）
+        var wf = audio.createWaveform(audio.FORMAT_F32, 2, 48000, audio.WAVEFORM_SINE, 0.5, 440.0)
+        wf.read(inputBuffer, 4800)
+        wf.uninit()
+
+        // 应用低通滤波
+        int framesProcessed = lpf.process(outputBuffer, inputBuffer, 4800)
+        print("      已处理 " + framesProcessed + " 帧 (低通滤波)")
+
+        // 修改截止频率
+        print("      修改截止频率为 500Hz...")
+        lpf.reinit(500.0, 2)
+
+        ffi.free(inputBuffer)
+        ffi.free(outputBuffer)
+        lpf.uninit()
+    }
+    print("")
+
+    // 2. 测试高通滤波器 (HPF)
+    print("[2/3] 测试高通滤波器 (HPF)...")
+    var hpf = audio.createHPF(audio.FORMAT_F32, 2, 48000, 500.0, 2)
+
+    if hpf.isInit() {
+        Ptr inputBuffer = ffi.malloc(4800 * 4 * 2)
+        Ptr outputBuffer = ffi.malloc(4800 * 4 * 2)
+
+        // 生成测试数据
+        var wf2 = audio.createWaveform(audio.FORMAT_F32, 2, 48000, audio.WAVEFORM_SQUARE, 0.5, 220.0)
+        wf2.read(inputBuffer, 4800)
+        wf2.uninit()
+
+        // 应用高通滤波
+        int framesProcessed = hpf.process(outputBuffer, inputBuffer, 4800)
+        print("      已处理 " + framesProcessed + " 帧 (高通滤波)")
+
+        // 修改截止频率
+        print("      修改截止频率为 1000Hz...")
+        hpf.reinit(1000.0, 2)
+
+        ffi.free(inputBuffer)
+        ffi.free(outputBuffer)
+        hpf.uninit()
+    }
+    print("")
+
+    // 3. 测试滤波器组合
+    print("[3/3] 测试滤波器组合 (带通效果)...")
+
+    // 创建低通和高通滤波器，组合成带通
+    var lpf2 = audio.createLPF(audio.FORMAT_F32, 1, 48000, 2000.0, 2)
+    var hpf2 = audio.createHPF(audio.FORMAT_F32, 1, 48000, 200.0, 2)
+
+    if lpf2.isInit() and hpf2.isInit() {
+        Ptr buffer1 = ffi.malloc(2400 * 4)   // 50ms, mono
+        Ptr buffer2 = ffi.malloc(2400 * 4)
+        Ptr buffer3 = ffi.malloc(2400 * 4)
+
+        // 生成噪声
+        var noise = audio.createNoise(audio.FORMAT_F32, 1, audio.NOISE_WHITE, 12345, 0.5)
+        noise.read(buffer1, 2400)
+        noise.uninit()
+
+        // 先高通滤波
+        hpf2.process(buffer2, buffer1, 2400)
+        // 再低通滤波
+        lpf2.process(buffer3, buffer2, 2400)
+
+        print("      带通滤波完成 (200Hz ~ 2000Hz)")
+
+        ffi.free(buffer1)
+        ffi.free(buffer2)
+        ffi.free(buffer3)
+
+        lpf2.uninit()
+        hpf2.uninit()
+    }
+    print("")
+
+    print("================================")
+    print("测试完成!")
+    print("================================")
+}
