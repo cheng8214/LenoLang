@@ -1,0 +1,7 @@
+import files
+main() {
+    var a = _args()
+    var s = "len=" + a.len()
+    for a to x { s = s + " " + x }
+    files.write("d:\\CLeno\\LenoC\\build\\args_debug.txt", s)
+}
