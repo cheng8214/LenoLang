@@ -61,8 +61,6 @@ string g_path = ""
 var   g_ok   = false
 export func audio_module_init(string p): bool { if g_ok { return true }; g_path = p; g_ok = true; return true }
 export func audio_module_uninit() { g_path = ""; g_ok = false }
-
-// clib 实例获取
 func ma(): miniaudio { return ffi.load(g_path) }
 
 export var FORMAT_F32=0; export var FORMAT_S16=1; export var FORMAT_S24=2; export var FORMAT_S32=3; export var FORMAT_U8=4
@@ -85,6 +83,8 @@ export struct Engine impl Player {
     func init(): bool { if not g_ok { return false }; miniaudio l = ma(); if l.ma_dll_engine_init()!=0{return false}; ok=true;play=false;vol=1.0;return true }
     func play(string p): bool { if not ok { return false }; miniaudio l = ma(); if l.ma_dll_engine_play_sound(p)!=0{return false}; play=true;return true }
     func stop() { if ok { miniaudio l = ma(); l.ma_dll_engine_stop(); play = false } }
+
+
     func pause() { stop() }
     func resume() {}
     func isPlaying(): bool { return play }
@@ -93,93 +93,96 @@ export struct Engine impl Player {
     func setVolume(float v) { if ok { vol=v; miniaudio l=ma(); l.ma_dll_engine_set_volume(v) } }
     func getVolume(): float { if not ok { return 0.0 }; miniaudio l=ma(); return _float(l.ma_dll_engine_get_volume()) }
     func uninit() { if ok { miniaudio l=ma(); l.ma_dll_engine_uninit(); ok=false;play=false } }
+
+
     func isInit(): bool { return ok }
     func getSampleRate(): int { if not ok { return 0 }; miniaudio l=ma(); return l.ma_dll_engine_get_sample_rate() }
     func getChannels(): int { if not ok { return 0 }; miniaudio l=ma(); return l.ma_dll_engine_get_channels() }
+
 }
 
 // Decoder
 export struct Decoder {
     Ptr dec; bool open
-    func open(string p): bool { if not g_ok { return false }; miniaudio l=ma(); dec=l.ma_dll_decoder_open(p); if dec==null{return false}; open=true;return true }
-    func getSampleRate(): int { if not open { return 0 }; miniaudio l=ma(); return l.ma_dll_decoder_get_sample_rate(dec) }
-    func getChannels(): int { if not open { return 0 }; miniaudio l=ma(); return l.ma_dll_decoder_get_channels(dec) }
-    func getFormat(): int { if not open { return -1 }; miniaudio l=ma(); return l.ma_dll_decoder_get_format(dec) }
-    func getLengthInFrames(): int { if not open { return 0 }; miniaudio l=ma(); return l.ma_dll_decoder_get_length_in_pcm_frames(dec) }
+    func open(string p): bool { if not g_ok { return false }; miniaudio l=ffi.load(g_path); dec=l.ma_dll_decoder_open(p); if dec==null{return false}; open=true;return true }
+    func getSampleRate(): int { if not open { return 0 }; miniaudio l=ffi.load(g_path); return l.ma_dll_decoder_get_sample_rate(dec) }
+    func getChannels(): int { if not open { return 0 }; miniaudio l=ffi.load(g_path); return l.ma_dll_decoder_get_channels(dec) }
+    func getFormat(): int { if not open { return -1 }; miniaudio l=ffi.load(g_path); return l.ma_dll_decoder_get_format(dec) }
+    func getLengthInFrames(): int { if not open { return 0 }; miniaudio l=ffi.load(g_path); return l.ma_dll_decoder_get_length_in_pcm_frames(dec) }
     func getDuration(): int { if not open { return 0 }; var sr=getSampleRate(); return if sr>0 then getLengthInFrames()/sr else 0 }
-    func close() { if open { miniaudio l=ma(); l.ma_dll_decoder_close(dec); dec=null;open=false } }
+    func close() { if open { miniaudio l=ffi.load(g_path); l.ma_dll_decoder_close(dec); dec=null;open=false } }
     func isOpen(): bool { return open }
 }
 
 // Device
 export struct DeviceLowLevel impl Device {
     bool ok; int f; int c; int s
-    func init(int fmt, int ch, int sr): bool { if not g_ok { return false }; miniaudio l=ma(); if l.ma_dll_init_device(fmt,ch,sr)!=0{return false}; f=fmt;c=ch;s=sr;ok=true;return true }
-    func start(): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_start()==0 }
-    func stop(): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_stop()==0 }
-    func uninit() { if ok { miniaudio l=ma(); l.ma_dll_uninit(); ok=false } }
+    func init(int fmt, int ch, int sr): bool { if not g_ok { return false }; miniaudio l=ffi.load(g_path); if l.ma_dll_init_device(fmt,ch,sr)!=0{return false}; f=fmt;c=ch;s=sr;ok=true;return true }
+    func start(): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_start()==0 }
+    func stop(): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_stop()==0 }
+    func uninit() { if ok { miniaudio l=ffi.load(g_path); l.ma_dll_uninit(); ok=false } }
     func isInit(): bool { return ok }
-    func getSampleRate(): int { if not ok { return 0 }; miniaudio l=ma(); return l.ma_dll_get_sample_rate() }
-    func getChannels(): int { if not ok { return 0 }; miniaudio l=ma(); return l.ma_dll_get_channels() }
+    func getSampleRate(): int { if not ok { return 0 }; miniaudio l=ffi.load(g_path); return l.ma_dll_get_sample_rate() }
+    func getChannels(): int { if not ok { return 0 }; miniaudio l=ffi.load(g_path); return l.ma_dll_get_channels() }
 }
 
 // Sound
 export struct Sound {
     bool ok; string p; float vol; bool paused
-    func load(string path): bool { if not g_ok { return false }; miniaudio l=ma(); if l.ma_dll_engine_init()!=0{return false}; if l.ma_dll_sound_init_from_file(path)!=0{l.ma_dll_engine_uninit();return false}; p=path;ok=true;vol=1.0;paused=false;return true }
-    func play(): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_sound_start()==0 }
-    func pause(): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_sound_pause()==0 }
-    func resume(): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_sound_resume()==0 }
-    func stop(): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_sound_stop()==0 }
-    func isPlaying(): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_sound_is_playing()==1 }
+    func load(string path): bool { if not g_ok { return false }; miniaudio l=ffi.load(g_path); if l.ma_dll_engine_init()!=0{return false}; if l.ma_dll_sound_init_from_file(path)!=0{l.ma_dll_engine_uninit();return false}; p=path;ok=true;vol=1.0;paused=false;return true }
+    func play(): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_sound_start()==0 }
+    func pause(): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_sound_pause()==0 }
+    func resume(): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_sound_resume()==0 }
+    func stop(): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_sound_stop()==0 }
+    func isPlaying(): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_sound_is_playing()==1 }
     func isPaused(): bool { return paused }
-    func setVolume(float v) { if ok { vol=v; miniaudio l=ma(); l.ma_dll_sound_set_volume(v) } }
-    func getVolume(): float { if not ok { return 0.0 }; miniaudio l=ma(); return _float(l.ma_dll_sound_get_volume()) }
-    func getPosition(): float { if not ok { return 0.0 }; miniaudio l=ma(); return _float(l.ma_dll_sound_get_position()) }
-    func getDuration(): float { if not ok { return 0.0 }; miniaudio l=ma(); return _float(l.ma_dll_sound_get_duration()) }
-    func seek(float sec): bool { if not ok { return false }; miniaudio l=ma(); return l.ma_dll_sound_seek_to_second(sec)==0 }
-    func uninit() { if ok { miniaudio l=ma(); l.ma_dll_sound_uninit(); l.ma_dll_engine_uninit(); ok=false } }
+    func setVolume(float v) { if ok { vol=v; miniaudio l=ffi.load(g_path); l.ma_dll_sound_set_volume(v) } }
+    func getVolume(): float { if not ok { return 0.0 }; miniaudio l=ffi.load(g_path); return _float(l.ma_dll_sound_get_volume()) }
+    func getPosition(): float { if not ok { return 0.0 }; miniaudio l=ffi.load(g_path); return _float(l.ma_dll_sound_get_position()) }
+    func getDuration(): float { if not ok { return 0.0 }; miniaudio l=ffi.load(g_path); return _float(l.ma_dll_sound_get_duration()) }
+    func seek(float sec): bool { if not ok { return false }; miniaudio l=ffi.load(g_path); return l.ma_dll_sound_seek_to_second(sec)==0 }
+    func uninit() { if ok { miniaudio l=ffi.load(g_path); l.ma_dll_sound_uninit(); l.ma_dll_engine_uninit(); ok=false } }
     func isInit(): bool { return ok }
 }
 
 // Waveform
 export struct Waveform {
     bool ok; int f; int c; int s; int t; float a; float fr
-    func init(int cf, int cc, int cs, int ct, float ca, float cfr): bool { if not g_ok{return false}; miniaudio l=ma(); if l.ma_dll_waveform_init(cf,cc,cs,ct,ca,cfr)!=0{return false}; f=cf;c=cc;s=cs;t=ct;a=ca;fr=cfr;ok=true;return true }
-    func read(Ptr b, int n): int { if not ok{return 0}; miniaudio l=ma(); return l.ma_dll_waveform_read_pcm_frames(b,n) }
-    func setAmp(float va): bool { a=va; if not ok{return false}; miniaudio l=ma(); return l.ma_dll_waveform_set_amplitude(va)==0 }
-    func setFreq(float vf): bool { fr=vf; if not ok{return false}; miniaudio l=ma(); return l.ma_dll_waveform_set_frequency(vf)==0 }
-    func setType(int vt): bool { t=vt; if not ok{return false}; miniaudio l=ma(); return l.ma_dll_waveform_set_type(vt)==0 }
-    func uninit() { if ok { miniaudio l=ma(); l.ma_dll_waveform_uninit(); ok=false } }
+    func init(int cf, int cc, int cs, int ct, float ca, float cfr): bool { if not g_ok{return false}; miniaudio l=ffi.load(g_path); if l.ma_dll_waveform_init(cf,cc,cs,ct,ca,cfr)!=0{return false}; f=cf;c=cc;s=cs;t=ct;a=ca;fr=cfr;ok=true;return true }
+    func read(Ptr b, int n): int { if not ok{return 0}; miniaudio l=ffi.load(g_path); return l.ma_dll_waveform_read_pcm_frames(b,n) }
+    func setAmp(float va): bool { a=va; if not ok{return false}; miniaudio l=ffi.load(g_path); return l.ma_dll_waveform_set_amplitude(va)==0 }
+    func setFreq(float vf): bool { fr=vf; if not ok{return false}; miniaudio l=ffi.load(g_path); return l.ma_dll_waveform_set_frequency(vf)==0 }
+    func setType(int vt): bool { t=vt; if not ok{return false}; miniaudio l=ffi.load(g_path); return l.ma_dll_waveform_set_type(vt)==0 }
+    func uninit() { if ok { miniaudio l=ffi.load(g_path); l.ma_dll_waveform_uninit(); ok=false } }
     func isInit(): bool { return ok }
 }
 
 // Noise
 export struct Noise {
     bool ok; int f; int c; int t; int seed; float a
-    func init(int cf, int cc, int ct, int cs, float ca): bool { if not g_ok{return false}; miniaudio l=ma(); if l.ma_dll_noise_init(cf,cc,ct,cs,ca)!=0{return false}; f=cf;c=cc;t=ct;seed=cs;a=ca;ok=true;return true }
-    func read(Ptr b, int n): int { if not ok{return 0}; miniaudio l=ma(); return l.ma_dll_noise_read_pcm_frames(b,n) }
-    func setAmp(float va): bool { a=va; if not ok{return false}; miniaudio l=ma(); return l.ma_dll_noise_set_amplitude(va)==0 }
-    func setSeed(int vs): bool { seed=vs; if not ok{return false}; miniaudio l=ma(); return l.ma_dll_noise_set_seed(vs)==0 }
-    func uninit() { if ok { miniaudio l=ma(); l.ma_dll_noise_uninit(); ok=false } }
+    func init(int cf, int cc, int ct, int cs, float ca): bool { if not g_ok{return false}; miniaudio l=ffi.load(g_path); if l.ma_dll_noise_init(cf,cc,ct,cs,ca)!=0{return false}; f=cf;c=cc;t=ct;seed=cs;a=ca;ok=true;return true }
+    func read(Ptr b, int n): int { if not ok{return 0}; miniaudio l=ffi.load(g_path); return l.ma_dll_noise_read_pcm_frames(b,n) }
+    func setAmp(float va): bool { a=va; if not ok{return false}; miniaudio l=ffi.load(g_path); return l.ma_dll_noise_set_amplitude(va)==0 }
+    func setSeed(int vs): bool { seed=vs; if not ok{return false}; miniaudio l=ffi.load(g_path); return l.ma_dll_noise_set_seed(vs)==0 }
+    func uninit() { if ok { miniaudio l=ffi.load(g_path); l.ma_dll_noise_uninit(); ok=false } }
     func isInit(): bool { return ok }
 }
 
 // LPF/HPF
 export struct LPF {
     bool ok; int f; int c; int s; int o; float cf
-    func init(int vf, int vc, int vs, float vcf, int vo): bool { if not g_ok{return false}; miniaudio l=ma(); if l.ma_dll_lpf_init(vf,vc,vs,vcf,vo)!=0{return false}; f=vf;c=vc;s=vs;cf=vcf;o=vo;ok=true;return true }
-    func process(Ptr out, Ptr inp, int n): int { if not ok{return 0}; miniaudio l=ma(); return l.ma_dll_lpf_process_pcm_frames(out,inp,n) }
-    func reinit(float vcf, int vo): bool { cf=vcf;o=vo; if not ok{return false}; miniaudio l=ma(); return l.ma_dll_lpf_reinit(f,c,s,vcf,vo)==0 }
-    func uninit() { if ok { miniaudio l=ma(); l.ma_dll_lpf_uninit(); ok=false } }
+    func init(int vf, int vc, int vs, float vcf, int vo): bool { if not g_ok{return false}; miniaudio l=ffi.load(g_path); if l.ma_dll_lpf_init(vf,vc,vs,vcf,vo)!=0{return false}; f=vf;c=vc;s=vs;cf=vcf;o=vo;ok=true;return true }
+    func process(Ptr out, Ptr inp, int n): int { if not ok{return 0}; miniaudio l=ffi.load(g_path); return l.ma_dll_lpf_process_pcm_frames(out,inp,n) }
+    func reinit(float vcf, int vo): bool { cf=vcf;o=vo; if not ok{return false}; miniaudio l=ffi.load(g_path); return l.ma_dll_lpf_reinit(f,c,s,vcf,vo)==0 }
+    func uninit() { if ok { miniaudio l=ffi.load(g_path); l.ma_dll_lpf_uninit(); ok=false } }
     func isInit(): bool { return ok }
 }
 export struct HPF {
     bool ok; int f; int c; int s; int o; float cf
-    func init(int vf, int vc, int vs, float vcf, int vo): bool { if not g_ok{return false}; miniaudio l=ma(); if l.ma_dll_hpf_init(vf,vc,vs,vcf,vo)!=0{return false}; f=vf;c=vc;s=vs;cf=vcf;o=vo;ok=true;return true }
-    func process(Ptr out, Ptr inp, int n): int { if not ok{return 0}; miniaudio l=ma(); return l.ma_dll_hpf_process_pcm_frames(out,inp,n) }
-    func reinit(float vcf, int vo): bool { cf=vcf;o=vo; if not ok{return false}; miniaudio l=ma(); return l.ma_dll_hpf_reinit(f,c,s,vcf,vo)==0 }
-    func uninit() { if ok { miniaudio l=ma(); l.ma_dll_hpf_uninit(); ok=false } }
+    func init(int vf, int vc, int vs, float vcf, int vo): bool { if not g_ok{return false}; miniaudio l=ffi.load(g_path); if l.ma_dll_hpf_init(vf,vc,vs,vcf,vo)!=0{return false}; f=vf;c=vc;s=vs;cf=vcf;o=vo;ok=true;return true }
+    func process(Ptr out, Ptr inp, int n): int { if not ok{return 0}; miniaudio l=ffi.load(g_path); return l.ma_dll_hpf_process_pcm_frames(out,inp,n) }
+    func reinit(float vcf, int vo): bool { cf=vcf;o=vo; if not ok{return false}; miniaudio l=ffi.load(g_path); return l.ma_dll_hpf_reinit(f,c,s,vcf,vo)==0 }
+    func uninit() { if ok { miniaudio l=ffi.load(g_path); l.ma_dll_hpf_uninit(); ok=false } }
     func isInit(): bool { return ok }
 }
 

@@ -173,6 +173,8 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             }
             if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                 ast->u.func.return_type->kind = TYPE_CSTRUCT;
+            } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
+                ast->u.func.return_type->kind = TYPE_CLIB;
             }
         }
     }
