@@ -1,0 +1,7 @@
+main() {
+    var r = _exec("build\\leno.exe assert\\test_basic_types.leno 2>&1")
+    print("exit_code:")
+    print(r[1])
+    print("output:")
+    print(r[0])
+}

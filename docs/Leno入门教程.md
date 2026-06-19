@@ -1753,6 +1753,45 @@ print(filter(nums, is_even)) // [2, 4, 6]
 > 4. **泛型不支持 struct/face**：当前仅支持函数级泛型，无法在 struct 或 face 上使用类型参数
 
 
+### 三种参数模式对比
+
+Leno 提供三种参数声明方式，按需选择：
+
+| 模式 | 语法 | 类型检查 | 适用场景 |
+|------|------|:---:|------|
+| **var** | `func f(var x)` | ❌ 编译期不检查 | 任意类型输入，运行时自行处理 |
+| **泛型 [T]** | `func f[T](T x)` | ✅ 调用时推断 | 多类型但需类型安全 |
+| **具体类型** | `func f(int x)` | ✅ 编译期严格 | 确定类型，无须多态 |
+
+```leno
+// var: 完全动态，接受任何类型
+func print_any(var x) {
+    print(type(x))           // 运行时才能知道类型
+}
+print_any(42)                // int
+print_any("hello")           // string
+
+// [T]: 类型安全 + 多态
+func id[T](T val):T {
+    return val               // T 在函数体内保持类型一致
+}
+print(id(42))                // 42，返回值也是 int
+print(id("world"))           // world，返回值也是 string
+
+// 具体类型: 最严格的类型检查
+func add(int a, int b):int {
+    return a + b
+}
+add(3, 4)                    // ✅ OK
+add("x", "y")                // ❌ 编译错误
+```
+
+> **💡 选择口诀**
+>
+> - **"什么类型都可能"** → 用 `var`
+> - **"类型要安全，但不止一种"** → 用 `[T]`
+> - **"就这个类型，别的不接受"** → 用具体类型
+
 
 Leno 支持闭包，内部函数可以访问外部函数的变量：
 
@@ -4524,6 +4563,54 @@ main() {
 > - 注意内存对齐和类型大小
 > - 调用外部函数时注意参数类型匹配
 > - Windows API 通常使用 UTF-16，需要 `utf8_to_utf16` 转换
+
+***
+
+## 自举：Leno 测试自己的代码
+
+Leno 可以用自己写的测试运行器来跑测试——"吃自己的狗粮"：
+
+```leno
+// assert/run_tests.leno — Leno 写的测试运行器
+import dirs
+import strings
+
+func get_arg(int idx, string fallback) {
+    var args = _args()
+    if idx < args.len() { return args[idx] }
+    return fallback
+}
+
+main() {
+    var leno = get_arg(0, "build\\leno.exe")
+    var dir  = get_arg(1, "assert")
+    
+    int passed = 0
+    int failed = 0
+    
+    var entries = dirs.listdir(dir)
+    for entries to entry {
+        if entry.starts_with("test_") and entry.ends_with(".leno") {
+            var result = _exec(leno + " " + dir + "\\" + entry + " 2>&1")
+            if result[1] == 0 {
+                print("  [PASS] " + entry)
+                passed = passed + 1
+            } else {
+                print("  [FAIL] " + entry)
+                failed = failed + 1
+            }
+        }
+    }
+    
+    print("Results: " + passed + " passed, " + failed + " failed")
+}
+```
+
+运行：`leno assert\run_tests.leno build\leno.exe assert`
+
+> **💡 用到的能力**：`dirs` 目录遍历、`strings` 字符串过滤、`_exec()` 执行外部命令、`_args()` 命令行参数
+
+> **⚠️ Windows `_exec` 注意事项**：路径中使用引号 `\"...\"` 可能导致 `_popen` 返回错误，建议直接拼接无空格路径：`_exec(leno + " " + test)` 而非 `_exec("\"" + leno + "\"")`
 
 ***
 

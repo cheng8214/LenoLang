@@ -112,16 +112,8 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo Building test runner...
-if not exist build mkdir build
-gcc -o build\test_runner.exe assert\test_runner.c -std=c99 -O2
-
-if %ERRORLEVEL% neq 0 (
-    echo Test runner build failed
-    exit /b 1
-)
 
 echo Build successful
 echo.
 echo Usage: build\leno.exe ^<file.leno^>
-echo Tests:  build\test_runner.exe build\leno.exe assert
+echo Tests:  python assert\run_tests.py build\leno.exe assert

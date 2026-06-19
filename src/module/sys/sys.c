@@ -16,16 +16,31 @@
 extern int g_argc;
 extern char** g_argv;
 
-// _args() - 返回命令行参数数组
+// _args() - 返回脚本命令行参数数组（不包含解释器路径和脚本路径）
 static Value native_args(int argCount, Value* args) {
     (void)argCount;
     (void)args;
 
-    ObjArray* arr = arr_new(g_argc);
-    for (int i = 0; i < g_argc; i++) {
-        arr_write(arr, i, val_obj((Object*)str_copy(g_argv[i], (int)strlen(g_argv[i]))));
+    // 找到脚本路径的位置（第一个非选项参数）
+    int script_idx = 0;
+    for (int i = 1; i < g_argc; i++) {
+        if (g_argv[i][0] != '-') {
+            script_idx = i;
+            break;
+        }
     }
-    arr->count = g_argc;
+    
+    // 从脚本之后开始收集参数
+    int real_argc = g_argc - script_idx - 1;
+    if (real_argc < 0) real_argc = 0;
+    
+    ObjArray* arr = arr_new(real_argc);
+    for (int i = 0; i < real_argc; i++) {
+        arr_write(arr, i, val_obj((Object*)str_copy(
+            g_argv[script_idx + 1 + i], 
+            (int)strlen(g_argv[script_idx + 1 + i]))));
+    }
+    arr->count = real_argc;
     return val_obj((Object*)arr);
 }
 
@@ -262,11 +277,16 @@ static Value native_exec(int argCount, Value* args) {
     }
 
     #ifdef _WIN32
-        _pclose(fp);
+        int rc = _pclose(fp);
     #else
-        pclose(fp);
+        int status = pclose(fp);
+        int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
     #endif
-    ObjString* result = str_copy(output, (int)len);
+    // 返回 [stdout_string, exit_code] 数组
+    ObjArray* result = arr_new(2);
+    arr_write(result, 0, val_obj((Object*)str_copy(output, (int)len)));
+    arr_write(result, 1, val_int(rc));
+    result->count = 2;
     free(output);
     return val_obj((Object*)result);
 }
@@ -402,8 +422,8 @@ void sys_init_globals(void) {
     // 注册全局 _arch 函数（CPU架构，0 个参数）
     vm_register_native("_arch", native_arch, 0, -1, -1, TYPE_STRING, NULL);
 
-    // 注册全局 _exec 函数（执行系统命令，1 个参数）
-    vm_register_native("_exec", native_exec, 1, -1, -1, TYPE_STRING, NULL);
+    // 注册全局 _exec 函数（返回 [stdout_string, exit_code] 数组）
+    vm_register_native("_exec", native_exec, 1, -1, -1, TYPE_ARRAY, NULL);
 
     // 注册全局 _username 函数（用户名，0 个参数）
     vm_register_native("_username", native_username, 0, -1, -1, TYPE_STRING, NULL);

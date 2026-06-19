@@ -133,12 +133,7 @@ fi
 
 $CC $EXTRA_CFLAGS -o build/leno $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -D_GNU_SOURCE -Wno-format-truncation -Wno-unused-result -Wno-format -Wno-type-limits -Wno-alloc-size-larger-than $LIBS $EXTRA_LDFLAGS
 
-if [ -f "assert/test_runner.c" ]; then
-    echo "Building test runner..."
-    $CC $EXTRA_CFLAGS -o build/test_runner assert/test_runner.c -std=c99 -O2 $EXTRA_LDFLAGS
-fi
-
 echo "Build successful"
 echo ""
 echo "Usage: build/leno <file.leno>"
-echo "Tests:  build/test_runner build/leno test"
+echo "Tests:  python assert/run_tests.py build/leno assert"

@@ -1,0 +1,70 @@
+// Leno 自举测试运行器
+// 用法：build\leno.exe assert\run_tests.leno [解释器] [测试目录]
+
+import dirs
+import strings
+
+func get_arg(int idx, string fallback) {
+    var args = _args()
+    if idx < args.len() {
+        return args[idx]
+    }
+    return fallback
+}
+
+main() {
+    var leno_exe = get_arg(0, "build\\leno.exe")
+    var test_dir = get_arg(1, "assert")
+
+    print("LenoC 自举测试运行器")
+    print("解释器: " + leno_exe)
+    print("测试目录: " + test_dir)
+    print("========================================")
+
+    int passed = 0
+    int failed = 0
+
+    var entries = dirs.listdir(test_dir)
+    for entries to entry {
+        if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
+            var full = test_dir + "\\" + entry
+            // 注意：_popen 在 Windows 上对带引号的路径处理有问题，直接传路径
+            var result = _exec(leno_exe + " " + full + " 2>&1")
+
+
+            if result == null {
+                print("  [FAIL] " + entry + " - 执行失败")
+                failed = failed + 1
+            } else {
+                var output = result[0]    // stdout
+                var code = result[1]      // exit_code
+
+                if code != 0 {
+                    print("  [FAIL] " + entry)
+                    failed = failed + 1
+                    if output != null and output.len() > 0 {
+                        var lines = strings.split(output, "\n")
+                        int shown = 0
+                        for lines to line {
+                            if shown >= 3 { break }
+                            if strings.has(line, "错误") or strings.has(line, "error") {
+                                print("         " + strings.trim(line))
+                                shown = shown + 1
+                            }
+                        }
+                    }
+                } else {
+                    print("  [PASS] " + entry)
+                    passed = passed + 1
+                }
+            }
+        }
+    }
+
+    print("========================================")
+    print("Results: " + passed + " passed, " + failed + " failed (total " + (passed + failed) + ")")
+
+    if failed > 0 {
+        _exit(1)
+    }
+}

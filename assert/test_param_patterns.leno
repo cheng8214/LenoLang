@@ -1,0 +1,30 @@
+// 断言测试：三种参数模式对比
+
+// var: any
+func get_type(var x):string {
+    return type(x)
+}
+
+// [T]: 泛型
+func id[T](T val):T {
+    return val
+}
+
+// 具体类型
+func add(int a, int b):int {
+    return a + b
+}
+
+// var 接受任何类型
+assert_eq(get_type(42), "int")
+assert_eq(get_type("hi"), "string")
+assert_eq(get_type(3.14), "float")
+assert_eq(get_type(true), "bool")
+
+// [T] 类型安全 + 多类型
+assert_eq(id(42), 42)
+assert_eq(id("hello"), "hello")
+assert_eq(id(3.14), 3.14)
+
+// 具体类型
+assert_eq(add(3, 4), 7)

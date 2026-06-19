@@ -23,7 +23,7 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 
 | 函数 | 说明 | 返回值 |
 |------|------|--------|
-| `_args()` | 获取命令行参数数组 | `Array` |
+| `_args()` | 获取脚本命令行参数数组 | `Array` |
 | `_script()` | 获取当前脚本路径 | `String` / `null` |
 | `_executable()` | 获取可执行文件路径 | `String` / `null` |
 | `_gc(enabled)` | 控制 GC 开关 | `Bool` |
@@ -33,7 +33,7 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 | `_env(name)` | 获取环境变量 | `String` / `null` |
 | `_env(name, value)` | 设置环境变量 | `Bool` |
 | `_exit(code)` | 以指定退出码终止程序 | 无 |
-| `_exec(cmd)` | 执行系统命令并返回输出 | `String` / `null` |
+| `_exec(cmd)` | 执行系统命令并返回 [输出,退出码] | `[String, Int]` / `null` |
 | `_username()` | 获取当前登录用户名 | `String` / `null` |
 | `_homedir()` | 获取用户主目录路径 | `String` / `null` |
 | `_tmpdir()` | 获取系统临时目录路径 | `String` / `null` |
@@ -47,15 +47,15 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 
 ### `_args()`
 
-获取所有命令行参数，包括可执行文件路径。
+获取脚本自身的命令行参数数组（不包含解释器路径和脚本路径）。
 
 **参数**: 无  
-**返回**: `Array` - 参数数组
+**返回**: `Array` - 参数数组（只包含脚本自身的参数）
 
 ```leno
 main() {
     var args = _args()
-    print("参数个数:", args.len())
+    print("参数个数: ", args.len())
     for args to var arg {
         print("  " + arg)
     }
@@ -64,12 +64,12 @@ main() {
 
 运行 `leno script.leno --port 8080` 输出：
 ```
-参数个数: 3
-  D:\Leno\build\leno.exe
-  script.leno
+参数个数: 2
   --port
   8080
 ```
+
+> ⚠️ `_args()` 只返回脚本参数。如需解释器路径用 `_executable()`，脚本路径用 `_script()`。
 
 ---
 
@@ -420,36 +420,33 @@ var path = "folder" + _sep() + "subfolder" + _sep() + "file.txt"
 
 ### `_exec(cmd)`
 
-执行系统命令并返回输出。
+执行系统命令并返回 `[标准输出, 退出码]` 数组。
 
 **参数**:
 - `cmd` (String): 要执行的命令
 
-**返回**: `String` / `null` - 命令的标准输出内容，执行失败返回 `null`
+**返回**: `[String, Int]` / `null` - 索引 0 是标准输出内容，索引 1 是退出码；执行失败返回 `null`
 
 ```leno
-// 执行命令并获取输出
-var output = _exec("echo hello")
-print("输出:", output)
+// 执行命令并获取输出和退出码
+var r = _exec("echo hello")
+print("输出:", r[0])
+print("退出码:", r[1])
 
-// 获取系统信息
-if _os() == "windows" {
-    var info = _exec("systeminfo | findstr /B /C:\"OS Name\"")
-    print("系统信息:", info)
+// 检查命令是否成功
+var result = _exec("leno.exe test.leno")
+if result[1] == 0 {
+    print("测试通过")
 } else {
-    var info = _exec("uname -a")
-    print("系统信息:", info)
+    print("测试失败: " + result[0])
 }
-
-// 列出目录内容
-var files = _exec("ls")
-print("文件列表:", files)
 ```
 
 **注意**:
 - `_exec()` 会等待命令执行完毕后返回
-- 仅返回标准输出，不包含标准错误输出
-- 执行失败时返回 `null`
+- 返回值是 `[stdout_string, exit_code]` 数组，可同时获取输出和退出码
+- 如需获取 stderr，在命令中加 `2>&1` 重定向：`_exec("mycmd 2>&1")`
+- **Windows `_popen` 路径问题**：如果命令路径中包含引号 `"`，`_popen` 可能返回错误。建议不使用引号包裹路径，直接拼接：`_exec(leno + " " + test_file)` 而非 `_exec("\"" + leno + "\" \"" + test_file + "\"")`
 
 ---
 
@@ -461,11 +458,11 @@ print("文件列表:", files)
 main() {
     var args = _args()
 
-    // 跳过可执行文件和脚本路径
-    for 2 : args.len() - 1 to var i {
-        if args[i] == "--port" && i + 1 < args.len() {
-            print("端口:", args[i + 1])
-        } else if args[i] == "--debug" {
+    for args to var arg {
+        if arg == "--port" {
+            // 解析方式取决于实际参数排列
+            print("检测到 --port")
+        } else if arg == "--debug" {
             print("调试模式已启用")
         }
     }
@@ -620,16 +617,20 @@ main() {
 
 ### 1. 参数顺序
 
-`_args()` 返回的数组中：
-- 索引 0：可执行文件路径
-- 索引 1：脚本路径（如果是文件模式）
-- 索引 2+：用户传入的参数
+`_args()` 只返回脚本自身的命令行参数：
+- 不包含解释器路径（用 `_executable()` 获取）
+- 不包含脚本路径（用 `_script()` 获取）
+
+运行 `leno.exe --flag script.leno arg1 arg2` 时：
+- `_executable()` = `"leno.exe"`
+- `_script()` = `"script.leno"`
+- `_args()` = `["arg1", "arg2"]`
 
 ### 2. REPL 模式
 
 在 REPL 模式下：
 - `_script()` 返回 `null`
-- `_args()` 只包含可执行文件路径
+- `_args()` 返回空数组
 
 ### 3. GC 控制
 
@@ -669,5 +670,6 @@ _gc(true)
 
 ---
 
-*文档版本: 1.2*  
-*最后更新: 2026-06-08*
+*文档版本: 1.3*  
+*最后更新: 2026-06-19*
+*变更: `_exec()` 返回 `[stdout, exit_code]` 数组；`_args()` 只返回脚本参数*

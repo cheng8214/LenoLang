@@ -1,0 +1,41 @@
+// 三种参数模式的对比测试
+// 变量 type(x) 需要 _str 或直接 print 输出
+
+// ============ 模式1: var = any ============
+func print_any(var x) {
+    print("var 模式: " + type(x))
+}
+
+// ============ 模式2: [T] = 泛型 ============
+func id[T](T val):T {
+    return val
+}
+
+func double[T](T val, func(T):T op):T {
+    return op(val)
+}
+
+// ============ 模式3: 具体类型 ============
+func add(int a, int b):int {
+    return a + b
+}
+
+main() {
+    // 模式1 var: 接受任何类型
+    print_any(42)
+    print_any("hello")
+    print_any(3.14)
+
+    // 模式2 [T]: 类型安全 + 多类型支持
+    var i = id(42)
+    var s = id("world")
+    print(i)                       // 42
+    print(s)                       // world
+
+    // 泛型 + 函数类型参数
+    func inc(int x):int { return x + 1 }
+    print(double(5, inc))          // 6
+
+    // 模式3 具体类型: 严格类型检查
+    print(add(3, 4))               // 7
+}

@@ -155,15 +155,15 @@ else()
     endif()
 endif()
 
-add_executable(test_runner assert/test_runner.c)
+find_program(PYTHON_EXE python3 python NAMES python3 python)
 
 set(LENO_TEST_DIR "${CMAKE_SOURCE_DIR}/assert")
 
 add_custom_target(test
-    COMMAND test_runner $<TARGET_FILE:leno> ${LENO_TEST_DIR}
-    DEPENDS leno test_runner
+    COMMAND ${PYTHON_EXE} assert/run_tests.py $<TARGET_FILE:leno> ${LENO_TEST_DIR}
+    DEPENDS leno
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMENT "Running Leno test suite"
+    COMMENT "Running Leno test suite (Python)"
 )
 
 install(TARGETS leno RUNTIME DESTINATION bin)
