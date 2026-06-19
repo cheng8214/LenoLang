@@ -683,12 +683,15 @@ static Value ffi_malloc_func(int argc, Value* args) {
     (void)argc;
     size_t size = (size_t)val_as_int(args[0]);
 
-    void* ptr = malloc(size);
+    // 多分配 8 字节放哨兵值，用于 free 时检测堆溢出
+    void* ptr = malloc(size + 8);
     if (!ptr) {
         native_throw_error("内存不足");
         return val_null();
     }
     memset(ptr, 0, size);
+    // 尾部哨兵: 0xDEADBEEFDEADBEEF，被覆盖说明溢出
+    *(uint64_t*)((char*)ptr + size) = 0xDEADBEEFDEADBEEFULL;
 
     ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
     if (!ffi_ptr) {
@@ -711,12 +714,15 @@ static Value ffi_calloc_func(int argc, Value* args) {
     (void)argc;
     size_t count = (size_t)val_as_int(args[0]);
     size_t size  = (size_t)val_as_int(args[1]);
+    size_t total  = count * size;
 
-    void* ptr = calloc(count, size);
+    void* ptr = malloc(total + 8);
     if (!ptr) {
         native_throw_error("内存不足");
         return val_null();
     }
+    memset(ptr, 0, total);
+    *(uint64_t*)((char*)ptr + total) = 0xDEADBEEFDEADBEEFULL;
 
     ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
     if (!ffi_ptr) {
@@ -726,7 +732,7 @@ static Value ffi_calloc_func(int argc, Value* args) {
     }
 
     ffi_ptr->ptr = ptr;
-    ffi_ptr->size = count * size;
+    ffi_ptr->size = total;
     ffi_ptr->owned = 1;
     ffi_ptr->freed = 0;
     ffi_ptr->element_type = TYPE_PTR;
@@ -746,7 +752,7 @@ static Value ffi_realloc_func(int argc, Value* args) {
 
     size_t new_size = (size_t)val_as_int(args[1]);
 
-    void* new_ptr = realloc(ffi_ptr->ptr, new_size);
+    void* new_ptr = realloc(ffi_ptr->ptr, new_size + 8);
     if (!new_ptr && new_size > 0) {
         native_throw_error("内存不足");
         return val_null();
@@ -754,6 +760,8 @@ static Value ffi_realloc_func(int argc, Value* args) {
 
     ffi_ptr->ptr = new_ptr;
     ffi_ptr->size = new_size;
+    // 重置哨兵
+    *(uint64_t*)((char*)new_ptr + new_size) = 0xDEADBEEFDEADBEEFULL;
 
     return val_obj((Object*)ffi_ptr);
 }
@@ -769,6 +777,15 @@ static Value ffi_free_func(int argc, Value* args) {
         ObjFFIPointer* ptr = (ObjFFIPointer*)obj;
         if (ptr->freed) return val_null();
         if (ptr->owned && ptr->ptr) {
+            // 检查尾部哨兵，检测堆溢出
+            if (ptr->size > 0) {
+                uint64_t sentinel = *(uint64_t*)((char*)ptr->ptr + ptr->size);
+                if (sentinel != 0xDEADBEEFDEADBEEFULL) {
+                    native_throw_error("堆缓冲区溢出！尾部哨兵被破坏。请用 ffi.assert_size() 检查缓冲区大小");
+                    ptr->freed = 1;  // 标记已释放，避免重复检测
+                    return val_null();
+                }
+            }
             free(ptr->ptr);
             ptr->ptr = NULL;
             ptr->size = 0;
@@ -1638,6 +1655,9 @@ static Value ffi_memcpy_func(int argc, Value* args) {
         native_throw_error("memcpy 大小不能为负数");
         return val_null();
     }
+
+    CHECK_BOUNDS(dest, 0, (size_t)size);
+    CHECK_BOUNDS(src, 0, (size_t)size);
     
     memcpy(dest->ptr, src->ptr, (size_t)size);
     return val_null();
@@ -1756,13 +1776,14 @@ static Value ffi_new_func(int argc, Value* args) {
         return val_null();
     }
 
-    /* 分配内存 */
-    void* ptr = malloc(size);
+    /* 分配内存 +8 哨兵 */
+    void* ptr = malloc(size + 8);
     if (!ptr) {
         native_throw_error("内存不足");
         return val_null();
     }
     memset(ptr, 0, size);
+    *(uint64_t*)((char*)ptr + size) = 0xDEADBEEFDEADBEEFULL;
 
     /* 如果提供了初始值，写入 */
     if (argc >= 2 && !val_is_null(args[1])) {
