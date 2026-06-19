@@ -364,7 +364,9 @@ static Value native_files_open(int argCount, Value* args) {
 
     FILE* fp = fopen(path->chars, mode->chars);
     if (!fp) {
-        native_throw_error("无法打开文件");
+        char msg[128];
+        snprintf(msg, sizeof(msg), "无法打开文件 '%s'", path->chars);
+        native_throw_error(msg);
         return val_null();
     }
 
