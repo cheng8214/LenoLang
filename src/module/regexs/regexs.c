@@ -866,7 +866,7 @@ void regexs_init_module(void) {
     native_register_module_method("regexs", "groups", regex_groups, 2, -1, -1, TYPE_ARRAY, TYPE_STRING, str_params);
 
     // 返回数组的方法
-    native_register_module_method("regexs", "find_all", regex_find_all, 2, -1, -1, TYPE_ARRAY, TYPE_STRING, str_params);
+    native_register_module_method("regexs", "find_all", regex_find_all, 2, -1, -1, TYPE_ARRAY, TYPE_DICT, str_params);
     native_register_module_method("regexs", "extract_all", regex_extract_all, 2, -1, -1, TYPE_ARRAY, TYPE_STRING, str_params);
     native_register_module_method("regexs", "replace_all", regex_replace_all, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, str3_params);
 
