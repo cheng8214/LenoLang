@@ -1,13 +1,7 @@
 import "../src/audio.leno" as audio
 main() {
-    print("1")
-    audio.audio_module_init("miniaudio.dll")
-    print("2")
     var s = audio.createSound("d:\\1.flac")
-    print("3")
     if not s.isInit() { print("fail"); return }
-    print("play")
     s.play(); sleep(3000); s.stop(); s.uninit()
-    audio.audio_module_uninit()
     print("done")
 }

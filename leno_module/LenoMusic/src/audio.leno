@@ -68,7 +68,7 @@ export func audio_module_init(string dll): bool {
     g_ok = true; return true
 }
 export func audio_module_uninit() { g_path="";g_ok=false }
-func lib(): miniaudio { return ffi.load(g_path) }
+func lib(): miniaudio { if not g_ok{audio_module_init("miniaudio.dll")}; return ffi.load(g_path) }
 
 export var FORMAT_F32=0;export var FORMAT_S16=1;export var FORMAT_S24=2;export var FORMAT_S32=3;export var FORMAT_U8=4
 export var WAVEFORM_SINE=0;export var WAVEFORM_SQUARE=1;export var WAVEFORM_TRIANGLE=2;export var WAVEFORM_SAWTOOTH=3

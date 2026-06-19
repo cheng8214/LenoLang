@@ -1,23 +1,6 @@
-// 简单声音测试 — v2 clib
 import "../src/audio.leno" as audio
-
 main() {
-    print("=== 声音测试 v2 ===")
-
-    audio.audio_module_init("d:\\CLeno\\LenoC\\leno_module\\LenoMusic\\build\\miniaudio.dll")
-
-    var engine = audio.createEngine()
-    if not engine.isInit() { print("引擎初始化失败"); return }
-
-    print("采样率: " + engine.getSampleRate() + " Hz")
-    print("通道数: " + engine.getChannels())
-    engine.setVolume(1.0)
-
-    print("开始播放...")
-    engine.play("d:\\1.flac")
-    sleep(5000)
-    engine.stop()
-    engine.uninit()
-    audio.audio_module_uninit()
-    print("=== 测试结束 ===")
+    var s = audio.createSound("d:\\1.flac")
+    s.play(); sleep(3000); s.stop(); s.uninit()
+    print("done")
 }
