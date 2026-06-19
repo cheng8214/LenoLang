@@ -1,64 +1,77 @@
-// leno-grep  - Leno 实现的 grep 工具
-// 用法: leno leno-grep.leno [line] [icase] pattern file [file2...]
-
+// leno-grep v2  - 正则 + 递归
+// 用法: leno leno-grep.leno [line] [icase] [regex] [recursive] pattern file/dir...
 import files
 import strings
+import regexs
+import dirs
 
-int opt_line_num  = 0
-int opt_ignore_case = 0
-int match_count   = 0
-int file_count    = 0
+int opt_line     = 0
+int opt_icase    = 0
+int opt_regex    = 0
+int opt_recurse  = 0
+int matched      = 0
+int files_done   = 0
 
-func matches(string line, string pattern):bool {
-    var l = if opt_ignore_case then strings.to_lower(line)   else line
-    var p = if opt_ignore_case then strings.to_lower(pattern) else pattern
-    return strings.has(l, p)
+func is_match(string line, string pattern):bool {
+    var l = if opt_icase then strings.to_lower(line)   else line
+    var p = if opt_icase then strings.to_lower(pattern) else pattern
+    return if opt_regex then regexs.match(l, p) else strings.has(l, p)
 }
 
-func search(string filepath, string pattern) {
-    var content = files.read(filepath)
-    if content == null { return }
+func grep_file(string path, string pattern) {
+    var content = files.read(path)
+    if content == null { print("  skip " + path); return }
 
-    var lines = strings.split(content, "\n")
     int found = 0
     int ln = 1
+    var lines = strings.split(content, "\n")
     for lines to line {
-        if matches(line, pattern) {
+        if is_match(line, pattern) {
             found = found + 1
-            print(filepath + ":" + (if opt_line_num then ln + ": " else "") + line)
+            print(path + ":" + (if opt_line then ln + ": " else "") + line)
         }
         ln = ln + 1
     }
-    if found > 0 {
-        file_count = file_count + 1
-        match_count = match_count + found
+    if found > 0 { files_done = files_done + 1; matched = matched + found }
+}
+
+func grep_dir(string dirpath, string pattern) {
+    var walks = dirs.walk(dirpath)
+    for walks to w {
+        var root = w[0]
+        var files = w[2]
+        for files to f {
+            grep_file(root + "\\" + f, pattern)
+        }
     }
 }
 
 main() {
     var args = _args()
     if args.len() < 1 {
-        print("usage: leno leno-grep.leno [line] [icase] pattern file...")
+        print("用法: leno leno-grep.leno [line] [icase] [regex] [recursive] pattern file/dir...")
         return
     }
 
     int i = 0
     while i < args.len() {
-        var arg = args[i]
-        if arg == "line" { opt_line_num = 1; i = i + 1 }
-        else if arg == "icase" { opt_ignore_case = 1; i = i + 1 }
+        var a = args[i]
+        if a == "line"      { opt_line = 1;   i = i + 1 }
+        else if a == "icase" { opt_icase = 1;  i = i + 1 }
+        else if a == "regex" { opt_regex = 1;  i = i + 1 }
+        else if a == "recursive" { opt_recurse = 1; i = i + 1 }
         else { break }
     }
-
     if i >= args.len() { print("no pattern"); return }
-    var pattern = args[i] as string
+    var pat = args[i] as string
     i = i + 1
-    if i >= args.len() { print("no files"); return }
+    if i >= args.len() { print("no file/dir"); return }
 
     while i < args.len() {
-        search(args[i] as string, pattern)
+        var target = args[i] as string
+        if opt_recurse { grep_dir(target, pat) }
+        else           { grep_file(target, pat) }
         i = i + 1
     }
-
-    print("--- " + match_count + " matches in " + file_count + " files")
+    if files_done >= 1 { print("--- " + matched + " matches in " + files_done + " files") }
 }
