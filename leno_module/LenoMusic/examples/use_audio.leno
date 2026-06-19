@@ -1,5 +1,5 @@
 // Audio 模块完整功能测试
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 
 main() {
     print("================================")

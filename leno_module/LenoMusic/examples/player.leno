@@ -2,7 +2,7 @@
 // LenoMusic Player — 完整播放器
 // 零配置，import 即用
 // ==================================
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 import strings
 
 string g_path = "d:\\1.flac"

@@ -1,5 +1,5 @@
 // 音量控制测试 — v2 clib
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 
 main() {
     print("=== 音量控制测试 ===")

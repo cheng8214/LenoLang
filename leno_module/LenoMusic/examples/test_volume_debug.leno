@@ -1,5 +1,5 @@
 // 调试音量问题
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 
 main() {
     print("=== 音量调试 ===")

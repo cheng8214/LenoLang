@@ -1,5 +1,5 @@
 // 播放/停止/跳转测试
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 
 main() {
     print("=== 播放控制测试 ===")

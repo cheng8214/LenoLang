@@ -1,5 +1,5 @@
 // 多轨道同时播放
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 main() {
     audio.audio_module_init("miniaudio.dll")
     var s1 = audio.createSound("d:\\1.flac")

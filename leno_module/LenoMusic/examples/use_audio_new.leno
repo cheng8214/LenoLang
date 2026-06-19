@@ -1,5 +1,5 @@
 // 全局单例模式 — 零配置
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 
 main() {
     print("================================")

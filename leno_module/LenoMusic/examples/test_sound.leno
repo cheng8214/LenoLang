@@ -1,4 +1,4 @@
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 main() {
     var s = audio.createSound("d:\\1.flac")
     s.play(); sleep(3000); s.stop(); s.uninit()

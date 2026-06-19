@@ -1,5 +1,5 @@
 // 波形/噪声生成器测试 — v2 clib
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 import ffi
 
 main() {

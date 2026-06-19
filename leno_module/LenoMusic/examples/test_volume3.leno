@@ -1,5 +1,5 @@
 // 测试音量问题 - 在播放前设置音量
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 
 main() {
     print("=== 音量测试（播放前设置）===")

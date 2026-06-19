@@ -1,5 +1,5 @@
 // 完整播放FLAC音频 — v2 clib
-import "../src/audio.leno" as audio
+import "../lib/LenoMusic.leno" as audio
 
 main() {
     var filepath = "d:\\1.flac"
