@@ -21,8 +21,8 @@ func is_match(string line, string pattern):bool {
 
 // 检查文件大小（不读取内容）
 func file_size(string path):int {
-    var f = files.open(path, "r")
-    if f == null { return -1 }
+    if not files.exists(path) { return -1 }
+    var f = files.open(path, "r")  // exists 已确认，不会抛异常
     var sz = f.len()
     f.close()
     return sz
