@@ -4,7 +4,7 @@ import "../src/audio.leno" as audio
 main() {
     print("=== 声音测试 v2 ===")
 
-    audio.audio_module_init("../build/miniaudio.dll")
+    audio.audio_module_init("d:\\CLeno\\LenoC\\leno_module\\LenoMusic\\build\\miniaudio.dll")
 
     var engine = audio.createEngine()
     if not engine.isInit() { print("引擎初始化失败"); return }
