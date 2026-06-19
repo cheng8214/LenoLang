@@ -667,6 +667,48 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // 推断对象类型
                     TypeInfo* obj_type = infer_expr_type(s, index_ast->u.index.obj);
                     if (obj_type) {
+                        // 处理 clib 方法调用
+                        if (obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+                            Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                            if (clib_sym && clib_sym->clib_func_count > 0) {
+                                for (int ci = 0; ci < clib_sym->clib_func_count; ci++) {
+                                    if (strcmp(clib_sym->clib_func_names[ci], method_name) == 0) {
+                                        TypeInfo* ret_type = clib_sym->clib_func_return_types[ci];
+                                        TypeInfo* result2 = NULL;
+                                        if (ret_type) {
+                                            TypeKind rk = ret_type->kind;
+                                            switch (rk) {
+                                                case TYPE_I8: case TYPE_U8:
+                                                case TYPE_I16: case TYPE_U16:
+                                                case TYPE_I32: case TYPE_U32:
+                                                case TYPE_I64: case TYPE_U64:
+                                                    result2 = type_new(TYPE_INT); break;
+                                                case TYPE_F32: case TYPE_F64:
+                                                    result2 = type_new(TYPE_FLOAT); break;
+                                                case TYPE_STR8: case TYPE_STR16:
+                                                    result2 = type_new(TYPE_STRING); break;
+                                                case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                                    result2 = type_new(TYPE_PTR);
+                                                    result2->struct_name = strdup("Ptr"); break;
+                                                case TYPE_BOOL:
+                                                    result2 = type_new(TYPE_BOOL); break;
+                                                case TYPE_NULL:
+                                                    result2 = type_new(TYPE_NULL); break;
+                                                default:
+                                                    result2 = type_copy(ret_type); break;
+                                            }
+                                        } else {
+                                            result2 = type_new(TYPE_ANY);
+                                        }
+                                        ast->cached_type = type_copy(result2);
+                                        type_free(obj_type);
+                                        return result2;
+                                    }
+                                }
+                            }
+                            type_free(obj_type);
+                            return type_new(TYPE_ANY);
+                        }
                         // 处理 struct/cstruct 类型的方法调用
                         if (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) {
                             if (obj_type->kind == TYPE_FACE) {
@@ -1043,6 +1085,45 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // 如果值超过 int 范围，运行时会自动处理为 bigint
                     type_free(obj_type);
                     ast->cached_type = type_new(TYPE_INT);
+                    return type_copy(ast->cached_type);
+                } else if (obj_type->kind == TYPE_CLIB && ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
+                    // clib 方法调用：obj.method()
+                    const char* func_name = ast->u.index.index->u.string.value;
+                    if (obj_type->struct_name) {
+                        Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                        if (clib_sym && clib_sym->clib_func_count > 0) {
+                            for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                                if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
+                                    TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                                    TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
+                                    switch (rk) {
+                                        case TYPE_I8: case TYPE_U8:
+                                        case TYPE_I16: case TYPE_U16:
+                                        case TYPE_I32: case TYPE_U32:
+                                        case TYPE_I64: case TYPE_U64:
+                                            result = type_new(TYPE_INT); break;
+                                        case TYPE_F32: case TYPE_F64:
+                                            result = type_new(TYPE_FLOAT); break;
+                                        case TYPE_STR8: case TYPE_STR16:
+                                            result = type_new(TYPE_STRING); break;
+                                        case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                            result = type_new(TYPE_PTR);
+                                            result->struct_name = strdup("Ptr"); break;
+                                        case TYPE_BOOL:
+                                            result = type_new(TYPE_BOOL); break;
+                                        case TYPE_NULL:
+                                            result = type_new(TYPE_NULL); break;
+                                        default:
+                                            result = ret_type ? type_copy(ret_type) : type_new(TYPE_ANY); break;
+                                    }
+                                    type_free(obj_type);
+                                    return result;
+                                }
+                            }
+                        }
+                    }
+                    type_free(obj_type);
+                    ast->cached_type = type_new(TYPE_ANY);
                     return type_copy(ast->cached_type);
                 }
                 type_free(obj_type);
