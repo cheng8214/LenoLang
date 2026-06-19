@@ -60,23 +60,23 @@ export func audio_module_init(string dll): bool {
 export func audio_module_uninit() { g_path="";g_ok=false }
 
 func find_dll() {
-    // 1: CWD (模块打包后 DLL 与入口同目录)
-    var f = files.open("miniaudio.dll", "r")
-    if f != null { f.close(); g_path = "miniaudio.dll"; return }
-    // 2: lib/ (开发时从项目根运行)
-    f = files.open("lib/miniaudio.dll", "r")
-    if f != null { f.close(); g_path = "lib/miniaudio.dll"; return }
-    // 3: _script() 推导 (开发时从任意目录)
+    // 1: 全局缓存 ~/.leno/pkgs/LenoMusic/lib/ (包安装后，优先)
+    var cache = _homedir() + "\\.leno\\pkgs\\LenoMusic\\lib\\miniaudio.dll"
+    if files.exists(cache) { g_path = cache; return }
+    // 2: CWD (模块打包后 DLL 与入口同目录)
+    if files.exists("miniaudio.dll") { g_path = "miniaudio.dll"; return }
+    // 3: lib/ (开发时从项目根运行)
+    if files.exists("lib/miniaudio.dll") { g_path = "lib/miniaudio.dll"; return }
+    // 4: _script() 推导 (开发时从任意目录)
     var scr = _script()
     if scr != null {
         var parts = strings.split(scr, "\\")
         var p = parts[0]
         for 1 : parts.len() - 2 to i { p = p + "\\" + parts[i] }
         var path = p + "\\lib\\miniaudio.dll"
-        f = files.open(path, "r")
-        if f != null { f.close(); g_path = path; return }
+        if files.exists(path) { g_path = path; return }
     }
-    g_path = "miniaudio.dll"  // 兜底
+    g_path = "miniaudio.dll"
 }
 
 func lib(): miniaudio { if not g_ok{find_dll();g_ok=true}; return ffi.load(g_path) }

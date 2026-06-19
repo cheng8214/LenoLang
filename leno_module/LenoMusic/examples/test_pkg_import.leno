@@ -1,0 +1,17 @@
+// 测试: import "LenoMusic" 包导入 + 播放
+import "LenoMusic" as audio
+
+main() {
+    print("=== LenoMusic 包导入测试 ===")
+
+    audio.getInfo("d:\\1.flac")
+
+    var s = audio.createSound("d:\\1.flac")
+    if not s.isInit() { print("加载失败"); return }
+    s.play()
+    sleep(3000)
+    s.stop()
+    s.uninit()
+
+    print("=== 测试完成 ===")
+}
