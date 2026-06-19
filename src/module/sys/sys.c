@@ -22,7 +22,7 @@ static Value native_args(int argCount, Value* args) {
     (void)args;
 
     // 找到脚本路径的位置（第一个非选项参数）
-    int script_idx = 0;
+    int script_idx = 1;
     for (int i = 1; i < g_argc; i++) {
         if (g_argv[i][0] != '-') {
             script_idx = i;
@@ -30,15 +30,24 @@ static Value native_args(int argCount, Value* args) {
         }
     }
     
-    // 从脚本之后开始收集参数
-    int real_argc = g_argc - script_idx - 1;
+    // 检查是否是打包版（第一个非选项参数是 .exe 本身）
+    int is_packaged = 0;
+    if (script_idx < g_argc) {
+        const char* first_arg = g_argv[script_idx];
+        int len = (int)strlen(first_arg);
+        is_packaged = (len > 4 && strcmp(first_arg + len - 4, ".exe") == 0);
+    }
+    
+    // 打包版：跳过 exe 自身即可；普通模式：跳过解释器+脚本
+    int start_idx = is_packaged ? 1 : script_idx + 1;
+    int real_argc = g_argc - start_idx;
     if (real_argc < 0) real_argc = 0;
     
     ObjArray* arr = arr_new(real_argc);
     for (int i = 0; i < real_argc; i++) {
         arr_write(arr, i, val_obj((Object*)str_copy(
-            g_argv[script_idx + 1 + i], 
-            (int)strlen(g_argv[script_idx + 1 + i]))));
+            g_argv[start_idx + i], 
+            (int)strlen(g_argv[start_idx + i]))));
     }
     arr->count = real_argc;
     return val_obj((Object*)arr);

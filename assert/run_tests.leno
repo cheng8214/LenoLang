@@ -28,8 +28,8 @@ main() {
     for entries to entry {
         if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
             var full = test_dir + "\\" + entry
-            // 注意：_popen 在 Windows 上对带引号的路径处理有问题，直接传路径
-            var result = _exec(leno_exe + " " + full + " 2>&1")
+            var cmd = leno_exe + " " + full + " 2>&1"
+            var result = _exec(cmd)
 
 
             if result == null {
