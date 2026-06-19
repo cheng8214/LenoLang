@@ -175,6 +175,12 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 ast->u.func.return_type->kind = TYPE_CSTRUCT;
             } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
                 ast->u.func.return_type->kind = TYPE_CLIB;
+                // 同步更新符号类型（pre-scan 时可能已用 TYPE_STRUCT 注册）
+                Symbol* sym = scope_resolve_local(s->current, ast->u.func.name);
+                if (!sym && s->current) sym = scope_resolve(s->current, ast->u.func.name);
+                if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
+                    sym->type->return_type->kind = TYPE_CLIB;
+                }
             }
         }
     }

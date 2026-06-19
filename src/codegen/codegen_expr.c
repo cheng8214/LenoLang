@@ -429,11 +429,26 @@ static void gen_default_value(CodeGen* gen, Ast* default_expr) {
 }
 
 static void gen_call(CodeGen* gen, Ast* ast) {
-    // 检测 clib 调用：lib.func(args)
+    // 检测 clib 调用：lib.func(args) 或 expr.method(args)
     // 生成 ffi.call_xxx 模块调用
+    int is_clib_call = 0;
+    Ast* clib_obj_ast = NULL;
+    const char* clib_func_name = NULL;
+
     if (ast->u.call.callee && ast->u.call.callee->kind == AST_FIELD_ACCESS) {
         Ast* field_access = ast->u.call.callee;
-        TypeInfo* obj_type = infer_expr_type(gen->sem, field_access->u.field_access.obj);
+        clib_obj_ast = field_access->u.field_access.obj;
+        clib_func_name = field_access->u.field_access.field_name;
+    } else if (ast->u.call.callee && ast->u.call.callee->kind == AST_INDEX) {
+        Ast* index_ast = ast->u.call.callee;
+        if (index_ast->u.index.index && index_ast->u.index.index->kind == AST_STRING) {
+            clib_obj_ast = index_ast->u.index.obj;
+            clib_func_name = index_ast->u.index.index->u.string.value;
+        }
+    }
+
+    if (clib_obj_ast && clib_func_name) {
+        TypeInfo* obj_type = infer_expr_type(gen->sem, clib_obj_ast);
         if (obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
             // 查找 clib 符号
             Symbol* clib_sym = scope_resolve(gen->sem->root_scope, obj_type->struct_name);
@@ -441,14 +456,14 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 clib_sym = scope_resolve(gen->sem->current, obj_type->struct_name);
             }
             if (clib_sym && clib_sym->clib_func_count > 0) {
-                const char* func_name = field_access->u.field_access.field_name;
+                const char* func_name = clib_func_name;
                 for (int i = 0; i < clib_sym->clib_func_count; i++) {
                     if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
                         // 获取返回类型
                         TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
 
                         // 生成参数：先评估库对象
-                        gen_expr(gen, field_access->u.field_access.obj);
+                        gen_expr(gen, clib_obj_ast);
 
                         // 生成函数名字符串参数（推入栈）
                         ObjString* func_name_str = str_copy(func_name, (int)strlen(func_name));

@@ -237,6 +237,8 @@ void visit(Semantic* s, Ast* ast) {
                             }
                             if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                                 stmt->u.func.return_type->kind = TYPE_CSTRUCT;
+                            } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
+                                stmt->u.func.return_type->kind = TYPE_CLIB;
                             }
                         }
                     }
