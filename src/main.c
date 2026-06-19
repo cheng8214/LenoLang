@@ -559,6 +559,9 @@ int lenolang_run_file(const char* path) {
         fread(lenb_data, 1, lenb_size, lenb_fp);
         fclose(lenb_fp);
 
+        // 删除临时 .lenb 文件（已读入内存）
+        remove(bin_path);
+
         // 写入输出文件: [vm 数据] [lenb 数据] [4字节 lenb_size] [4字节 LENB_MAGIC]
 #ifdef _WIN32
         wchar_t wout_exe[MAX_PATH_LEN];
