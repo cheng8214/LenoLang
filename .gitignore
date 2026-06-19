@@ -14,3 +14,6 @@ build/
 *.tmp
 *.temp
 *.log
+test_serialize_tmp.*
+assert/run_tests.lenb
+assert/run_tests.exe
