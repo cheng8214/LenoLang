@@ -4463,6 +4463,31 @@ main() {
 }
 ```
 
+### clib 声明式调用（推荐）
+
+除了 `ffi.call()` 动态调用，Leno 还支持 `clib` 声明式调用，编译期类型检查，零摩擦参数转换：
+
+```leno
+import ffi
+
+// 声明 C 库函数签名
+clib kernel32 {
+    i32 GetTickCount()
+    void Sleep(i32 ms)
+}
+
+main() {
+    kernel32 lib = ffi.load("kernel32.dll")
+    
+    // 直接调用，i32 返回值自动转为 int
+    int tick = lib.GetTickCount()
+    print("运行时间: " + tick + "ms")
+    
+    lib.Sleep(1000)  // void 返回
+    ffi.free(lib)
+}
+```
+
 ### 内存操作
 
 ```leno
@@ -4543,6 +4568,7 @@ main() {
 | `ffi.ptr_from_int(n)`               | 整数转指针          | `ffi.ptr_from_int(0x80000000)`      |
 | `ffi.is_ptr(val)`                   | 判断是否为指针        | `ffi.is_ptr(x)`                     |
 | `ffi.sizeof(ptr)`                   | 获取指针大小         | `ffi.sizeof(ptr)`                   |
+| `ffi.assert_size(ptr, min)`         | 断言缓冲区 ≥ min 字节  | `ffi.assert_size(buf, 8192)`        |
 | `ffi.offset(ptr, n)`                | 指针偏移           | `ffi.offset(ptr, 8)`                |
 | `ffi.read_int(ptr, offset)`         | 读取 int         | `ffi.read_int(ptr, 0)`              |
 | `ffi.read_int64(ptr, offset)`       | 读取 int64       | `ffi.read_int64(ptr, 0)`            |
@@ -4560,7 +4586,8 @@ main() {
 > **⚠️ 注意：FFI 是底层操作，使用不当可能导致程序崩溃**
 >
 > - 确保分配的内存正确释放，避免内存泄漏
-> - 注意内存对齐和类型大小
+> - **缓冲区大小**：`ffi.malloc(4096)` 不够存 1024 帧×2通道×4字节(f32)=8192 字节。用 `ffi.assert_size(buf, bytes)` 提前验证
+> - Leno `write_*`/`memset`/`memcpy` 已内置边界检查，`ffi.free` 有哨兵检测 — 溢出报错而非崩溃
 > - 调用外部函数时注意参数类型匹配
 > - Windows API 通常使用 UTF-16，需要 `utf8_to_utf16` 转换
 
@@ -4814,6 +4841,7 @@ lenolang program.leno
 | 整数转指针          | `ffi.ptr_from_int(n)`               |
 | 判断指针           | `ffi.is_ptr(val)`                   |
 | 指针大小           | `ffi.sizeof(ptr)`                   |
+| 缓冲区断言         | `ffi.assert_size(ptr, min)`          |
 | 指针偏移           | `ffi.offset(ptr, n)`                |
 | 读取 int         | `ffi.read_int(ptr, offset)`         |
 | 读取 int64       | `ffi.read_int64(ptr, offset)`       |
