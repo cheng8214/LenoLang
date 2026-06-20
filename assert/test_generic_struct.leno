@@ -278,4 +278,50 @@ assert_eq(rng.contains(0), false)
 assert_eq(rng.contains(10), true)
 assert_eq(rng.contains(11), false)
 
+// --- 泛型函数 ---
+
+// 简单泛型函数
+func identity[T](T v): T {
+    return v
+}
+
+assert_eq(identity[int](42), 42)
+assert_eq(identity[string]("hello"), "hello")
+
+// 泛型函数：条件返回
+func max[T](T a, T b): T {
+    if a >= b {
+        return a
+    }
+    return b
+}
+
+assert_eq(max[int](3, 5), 5)
+assert_eq(max[int](10, 2), 10)
+assert_eq(max[string]("abc", "xyz"), "xyz")
+
+// 泛型函数：返回第一个非null值
+func coalesce[T](T a, T b): T {
+    if a != null {
+        return a
+    }
+    return b
+}
+
+assert_eq(coalesce[int](null, 42), 42)
+assert_eq(coalesce[int](10, 20), 10)
+assert_eq(coalesce[string](null, "default"), "default")
+
+// 泛型函数：两参数不同类型
+func firstOf[T, U](T a, U b): T {
+    return a
+}
+
+func secondOf[T, U](T a, U b): U {
+    return b
+}
+
+assert_eq(firstOf[int, string](1, "x"), 1)
+assert_eq(secondOf[int, string](1, "x"), "x")
+
 print("test_generic_struct passed")

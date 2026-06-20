@@ -1754,13 +1754,19 @@ void visit(Semantic* s, Ast* ast) {
                             inferred_types[i] = NULL;
                         }
                         
-                        // 遍历实参，匹配泛型参数类型
-                        for (int i = 0; i < ast->u.call.args.count && i < func_def->u.func.pcnt; i++) {
-                            TypeInfo* param_type = func_def->u.func.param_types[i];
-                            TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
-                            if (param_type && arg_type) {
-                                // 递归匹配类型中的泛型参数
-                                infer_generic_bindings(param_type, arg_type, inferred_names, inferred_types, func_def->u.func.type_param_count);
+                        // 如果调用时显式提供了泛型类型参数（如 identity[int](42)），优先使用
+                        if (ast->u.call.generic_type_count > 0 && ast->u.call.generic_type_args) {
+                            for (int i = 0; i < func_def->u.func.type_param_count && i < ast->u.call.generic_type_count; i++) {
+                                inferred_types[i] = type_copy(ast->u.call.generic_type_args[i]);
+                            }
+                        } else {
+                            // 从实参推断类型参数
+                            for (int i = 0; i < ast->u.call.args.count && i < func_def->u.func.pcnt; i++) {
+                                TypeInfo* param_type = func_def->u.func.param_types[i];
+                                TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
+                                if (param_type && arg_type) {
+                                    infer_generic_bindings(param_type, arg_type, inferred_names, inferred_types, func_def->u.func.type_param_count);
+                                }
                             }
                         }
                         

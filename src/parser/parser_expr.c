@@ -1,5 +1,20 @@
 #include "parser_internal.h"
 
+// 判断 token 类型是否是明确的类型关键字（不包括 TOK_IDENT，避免与变量名混淆）
+static int is_explicit_type_token(LenoTokenType type) {
+    switch (type) {
+        case TOK_INT_TYPE: case TOK_FLOAT_TYPE: case TOK_STRING_TYPE:
+        case TOK_BOOL_TYPE: case TOK_ANY_TYPE: case TOK_PTR_TYPE:
+        case TOK_ARRAY_TYPE: case TOK_DICT_TYPE: case TOK_STYLE_TYPE:
+        case TOK_FILE_TYPE: case TOK_WIN_TYPE: case TOK_DRAW_TYPE:
+        case TOK_EVENT_TYPE: case TOK_RGB_TYPE: case TOK_IMAGE_TYPE:
+        case TOK_SOCKET_TYPE: case TOK_FONT_TYPE: case TOK_BUTTON_TYPE:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 // ============================================================================
 // 前向声明
 // ============================================================================
@@ -584,6 +599,9 @@ Ast* parse_call(Parser* p, Ast* callee) {
     Ast* ast = ast_new(AST_CALL, line);
     ast->u.call.callee = callee;
     ast_list_init(&ast->u.call.args);
+    ast->u.call.generic_type_args = NULL;
+    ast->u.call.generic_type_count = 0;
+    ast->u.call.generic_type_names = NULL;
     
     lexer_next(&p->lex); // 消费 '('
     
@@ -777,7 +795,66 @@ Ast* parse_new(Parser* p) {
 Ast* parse_index(Parser* p, Ast* obj) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // 消费 '['
-    
+
+    // 检查是否是泛型函数调用：funcName[int, string](args)
+    // 条件：obj 是 AST_VAR，且 [ 后面是类型关键字或标识符（可能是类型名）
+    if (obj->kind == AST_VAR && is_explicit_type_token(p->lex.current.type)) {
+        // 尝试解析为泛型类型参数
+        TypeInfo** generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * 8);
+        char** generic_type_names = (char**)malloc(sizeof(char*) * 8);
+        int gt_capacity = 8;
+        int count = 0;
+
+        do {
+            if (count >= gt_capacity) {
+                gt_capacity *= 2;
+                generic_type_args = (TypeInfo**)realloc(generic_type_args, sizeof(TypeInfo*) * gt_capacity);
+                generic_type_names = (char**)realloc(generic_type_names, sizeof(char*) * gt_capacity);
+            }
+            TypeInfo* arg_type = parse_type(p);
+            if (!arg_type) break;
+            const char* tn = type_to_string(arg_type);
+            generic_type_names[count] = strdup(tn);
+            generic_type_args[count] = arg_type;
+            count++;
+        } while (p->lex.current.type == TOK_COMMA && (lexer_next(&p->lex), 1));
+
+        if (p->lex.current.type == TOK_RBRACKET) {
+            lexer_next(&p->lex); // 消费 ']'
+
+            // 检查后面是否跟 ( — 如果是，则为泛型函数调用
+            if (p->lex.current.type == TOK_LPAREN) {
+                Ast* ast = ast_new(AST_CALL, line);
+                ast->u.call.callee = obj;
+                ast_list_init(&ast->u.call.args);
+                ast->u.call.generic_type_args = generic_type_args;
+                ast->u.call.generic_type_count = count;
+                ast->u.call.generic_type_names = generic_type_names;
+
+                lexer_next(&p->lex); // 消费 '('
+                if (p->lex.current.type != TOK_RPAREN) {
+                    do {
+                        Ast* arg = parse_expression(p);
+                        ast_list_add(&ast->u.call.args, arg);
+                    } while (match(p, TOK_COMMA));
+                }
+                consume(p, TOK_RPAREN, "期望 ')'");
+                return ast;
+            }
+        }
+
+        // 不是泛型调用，清理
+        for (int i = 0; i < count; i++) {
+            type_free(generic_type_args[i]);
+            free(generic_type_names[i]);
+        }
+        free(generic_type_args);
+        free(generic_type_names);
+        // 此时已经消费了 [ 和类型参数，无法回退，报错
+        error_add(ERR_SYNTAX, line, "泛型类型参数后缺少函数调用");
+        return obj;
+    }
+
     // 检查是否是切片语法：arr[start:end]
     if (p->lex.current.type == TOK_COLON) {
         // 语法: arr[:end] - 从开头到end
