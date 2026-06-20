@@ -3491,6 +3491,16 @@ void visit(Semantic* s, Ast* ast) {
                         new_params[0] = strdup("self");
                         new_param_types[0] = type_new(TYPE_STRUCT);
                         new_param_types[0]->struct_name = strdup(ast->u.struct_def.name);
+                        // 携带泛型类型参数（如 Calc[T] 的 T）
+                        if (ast->u.struct_def.type_param_count > 0 && ast->u.struct_def.type_params) {
+                            new_param_types[0]->generic_count = ast->u.struct_def.type_param_count;
+                            new_param_types[0]->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.struct_def.type_param_count);
+                            for (int gi = 0; gi < ast->u.struct_def.type_param_count; gi++) {
+                                TypeInfo* gp = type_new(TYPE_GENERIC_PARAM);
+                                gp->type_param_name = strdup(ast->u.struct_def.type_params[gi]);
+                                new_param_types[0]->generic_args[gi] = gp;
+                            }
+                        }
                         new_param_defaults[0] = NULL;
 
                         for (int j = 0; j < method_ast->u.func.pcnt; j++) {

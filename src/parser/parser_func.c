@@ -236,6 +236,30 @@ static TypeInfo* parse_base_type(Parser* p) {
             struct_type = type_new(TYPE_STRUCT);
         }
         struct_type->struct_name = type_name;
+        
+        // 检查是否有泛型参数：Box[int], Pair[string, int] 等
+        if (p->lex.current.type == TOK_LBRACKET) {
+            lexer_next(&p->lex); // 消费 '['
+            
+            struct_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * 8); // 最多8个泛型参数
+            struct_type->generic_count = 0;
+            
+            do {
+                TypeInfo* arg_type = parse_type_internal(p);
+                if (!arg_type) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "泛型类型参数解析失败");
+                    break;
+                }
+                struct_type->generic_args[struct_type->generic_count++] = arg_type;
+            } while (p->lex.current.type == TOK_COMMA && (lexer_next(&p->lex), 1));
+            
+            if (p->lex.current.type != TOK_RBRACKET) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束泛型类型参数");
+            } else {
+                lexer_next(&p->lex); // 消费 ']'
+            }
+        }
+        
         return struct_type;
     }
     return NULL;

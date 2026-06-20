@@ -389,11 +389,15 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // 数值类型推导：int + int = int, int + float = float, float + float = float
                     // bigint + int/float/bigint = bigint
+                    // 泛型参数：T + T = T（运行时确定具体类型）
                     else if (left && right) {
                         if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
                             result = type_new(TYPE_BIGINT);
                         } else if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
                             result = type_new(TYPE_INT);
+                        } else if (type_equals(left, right)) {
+                            // 相同类型（包括泛型参数 TYPE_GENERIC_PARAM），结果保持该类型
+                            result = type_copy(left);
                         } else {
                             result = type_new(TYPE_FLOAT);
                         }
@@ -434,6 +438,8 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             result = type_new(TYPE_BIGINT);
                         } else if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
                             result = type_new(TYPE_INT);
+                        } else if (type_equals(left, right)) {
+                            result = type_copy(left);
                         } else {
                             result = type_new(TYPE_FLOAT);
                         }
@@ -477,6 +483,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     else if (left && right &&
                              (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT)) {
                         result = type_new(TYPE_BIGINT);
+                    }
+                    // 相同类型（包括泛型参数），结果保持该类型
+                    else if (left && right && type_equals(left, right)) {
+                        result = type_copy(left);
                     }
                     else {
                         result = type_new(TYPE_FLOAT);
@@ -526,14 +536,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         // 允许：string 和 string 比较
                         int left_is_string = (left->kind == TYPE_STRING);
                         int right_is_string = (right->kind == TYPE_STRING);
+                        // 允许：泛型参数参与比较（运行时确定具体类型）
+                        int left_is_generic = (left->kind == TYPE_GENERIC_PARAM);
+                        int right_is_generic = (right->kind == TYPE_GENERIC_PARAM);
                         // 检查不兼容的组合
                         if ((left_is_num && right_is_string) || (left_is_string && right_is_num)) {
                             error_add(ERR_TYPE_MISMATCH, ast->line,
                                       "数值类型不能和 string 类型进行大小比较");
                         } else if (left_is_string && right_is_string) {
                             // string 和 string 比较是允许的
-                        } else if (!left_is_num || !right_is_num) {
-                            // 其他不兼容类型
+                        } else if (!left_is_num && !right_is_num && !left_is_string && !right_is_string
+                                   && !left_is_generic && !right_is_generic) {
+                            // 其他不兼容类型（排除泛型参数）
                             error_add(ERR_TYPE_MISMATCH, ast->line,
                                       "不兼容的类型不能进行大小比较");
                         }
