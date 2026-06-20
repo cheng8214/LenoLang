@@ -431,7 +431,6 @@ static void gen_default_value(CodeGen* gen, Ast* default_expr) {
 static void gen_call(CodeGen* gen, Ast* ast) {
     // 检测 clib 调用：lib.func(args) 或 expr.method(args)
     // 生成 ffi.call_xxx 模块调用
-    int is_clib_call = 0;
     Ast* clib_obj_ast = NULL;
     const char* clib_func_name = NULL;
 

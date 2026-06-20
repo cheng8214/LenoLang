@@ -288,7 +288,38 @@ for dict to key, value {
 // age: 25
 ```
 
-### 9.3 类型推断
+### 9.3 遍历 any 类型（常见陷阱）
+
+当遍历对象的类型在编译期未知（`any` 类型）时，`for X to y` 可能**静默不迭代**（不报错也不循环）。通常发生在：
+
+- `dirs.walk()` 返回的元素（已修复，v1.x+ 正确标注为 Array）
+- 函数返回未注解类型的数组
+- 从模块导入的未类型化变量
+
+```leno
+// ❌ 可能静默失败：w[2] 是 any 类型（旧版 dirs.walk）
+var walks = dirs.walk("path")
+for walks to w {
+    var files = w[2]
+    for files to f { }  // 如果 files 是 any，不会迭代
+}
+
+// ✅ 已修复：dirs.walk 现在返回 Array[Array]
+for walks to w {
+    var files = w[2]
+    for files to f { print(f) }  // 正常迭代
+}
+
+// ✅ 通用修复：用 _int() + 索引循环替代 for-each
+int n = _int(files.len())
+for 0 : n - 1 to i {
+    var f = _str(files[i])
+}
+```
+
+> **提示**：Leno v1.x+ 已修复 `dirs.walk` 等模块的类型标注，大多数场景不再需要手动处理。若仍遇到 `for any to x` 不迭代，用上述索引循环作为 workaround。
+
+### 9.4 类型推断
 
 ```leno
 // 数组遍历

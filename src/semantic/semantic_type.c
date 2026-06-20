@@ -1235,8 +1235,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
 
                     if (!promoted) {
-                        // 无法类型提升，返回 any
-                        result = type_new(TYPE_ANY);
+                        // 兜底：如果 kind 相同，直接取该类型（如两个 bool、两个 int）
+                        if (then_type->kind == else_type->kind) {
+                            result = type_copy(then_type);
+                        } else {
+                            result = type_new(TYPE_ANY);
+                        }
                     }
                 }
             } else {
