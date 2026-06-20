@@ -1,7 +1,8 @@
 #include "parser_internal.h"
 
-// 判断 token 类型是否是明确的类型关键字（不包括 TOK_IDENT，避免与变量名混淆）
-static int is_explicit_type_token(LenoTokenType type) {
+// 判断 token 类型是否可能是泛型类型参数的起始 token
+// 包括明确的类型关键字和标识符（可能是自定义 struct 名）
+static int is_generic_type_start_token(LenoTokenType type) {
     switch (type) {
         case TOK_INT_TYPE: case TOK_FLOAT_TYPE: case TOK_STRING_TYPE:
         case TOK_BOOL_TYPE: case TOK_ANY_TYPE: case TOK_PTR_TYPE:
@@ -9,6 +10,7 @@ static int is_explicit_type_token(LenoTokenType type) {
         case TOK_FILE_TYPE: case TOK_WIN_TYPE: case TOK_DRAW_TYPE:
         case TOK_EVENT_TYPE: case TOK_RGB_TYPE: case TOK_IMAGE_TYPE:
         case TOK_SOCKET_TYPE: case TOK_FONT_TYPE: case TOK_BUTTON_TYPE:
+        case TOK_IDENT:
             return 1;
         default:
             return 0;
@@ -792,18 +794,23 @@ Ast* parse_new(Parser* p) {
 }
 
 // 解析索引表达式 arr[index] 或切片 arr[start:end]
+// 同时支持泛型函数调用：funcName[int](args) 或 funcName[Box](args)
 Ast* parse_index(Parser* p, Ast* obj) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // 消费 '['
 
-    // 检查是否是泛型函数调用：funcName[int, string](args)
+    // 检查是否是泛型函数调用：funcName[int, string](args) 或 funcName[Box](args)
     // 条件：obj 是 AST_VAR，且 [ 后面是类型关键字或标识符（可能是类型名）
-    if (obj->kind == AST_VAR && is_explicit_type_token(p->lex.current.type)) {
+    if (obj->kind == AST_VAR && is_generic_type_start_token(p->lex.current.type)) {
+        // 保存词法器状态，以便回退
+        Lexer saved_lex = p->lex;
+
         // 尝试解析为泛型类型参数
         TypeInfo** generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * 8);
         char** generic_type_names = (char**)malloc(sizeof(char*) * 8);
         int gt_capacity = 8;
         int count = 0;
+        int parse_ok = 1;
 
         do {
             if (count >= gt_capacity) {
@@ -812,14 +819,14 @@ Ast* parse_index(Parser* p, Ast* obj) {
                 generic_type_names = (char**)realloc(generic_type_names, sizeof(char*) * gt_capacity);
             }
             TypeInfo* arg_type = parse_type(p);
-            if (!arg_type) break;
+            if (!arg_type) { parse_ok = 0; break; }
             const char* tn = type_to_string(arg_type);
             generic_type_names[count] = strdup(tn);
             generic_type_args[count] = arg_type;
             count++;
         } while (p->lex.current.type == TOK_COMMA && (lexer_next(&p->lex), 1));
 
-        if (p->lex.current.type == TOK_RBRACKET) {
+        if (parse_ok && p->lex.current.type == TOK_RBRACKET) {
             lexer_next(&p->lex); // 消费 ']'
 
             // 检查后面是否跟 ( — 如果是，则为泛型函数调用
@@ -843,16 +850,16 @@ Ast* parse_index(Parser* p, Ast* obj) {
             }
         }
 
-        // 不是泛型调用，清理
+        // 不是泛型调用，清理泛型解析结果
         for (int i = 0; i < count; i++) {
             type_free(generic_type_args[i]);
             free(generic_type_names[i]);
         }
         free(generic_type_args);
         free(generic_type_names);
-        // 此时已经消费了 [ 和类型参数，无法回退，报错
-        error_add(ERR_SYNTAX, line, "泛型类型参数后缺少函数调用");
-        return obj;
+
+        // 回退词法器状态，按普通索引处理
+        p->lex = saved_lex;
     }
 
     // 检查是否是切片语法：arr[start:end]

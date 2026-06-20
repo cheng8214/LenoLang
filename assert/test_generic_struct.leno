@@ -324,4 +324,16 @@ func secondOf[T, U](T a, U b): U {
 assert_eq(firstOf[int, string](1, "x"), 1)
 assert_eq(secondOf[int, string](1, "x"), "x")
 
+// --- 泛型函数接受泛型 struct 参数 ---
+
+func unbox[T](Box[T] b): T {
+    return b.value
+}
+
+var boxed42 = new Box[int](value=42)
+assert_eq(unbox[int](boxed42), 42)
+
+var boxedHello = new Box[string](value="hello")
+assert_eq(unbox[string](boxedHello), "hello")
+
 print("test_generic_struct passed")
