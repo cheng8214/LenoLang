@@ -3,15 +3,29 @@
 // 基本泛型 struct: Box[T]
 struct Box[T] {
     T value
+
+    func get(): T {
+        return self.value
+    }
+
+    func set(T v) {
+        self.value = v
+    }
 }
 
 // 用 int 实例化
 var intBox = new Box[int](value=42)
 assert_eq(intBox.value, 42)
+assert_eq(intBox.get(), 42)
+intBox.set(100)
+assert_eq(intBox.get(), 100)
 
 // 用 string 实例化
 var strBox = new Box[string](value="hello")
 assert_eq(strBox.value, "hello")
+assert_eq(strBox.get(), "hello")
+strBox.set("world")
+assert_eq(strBox.get(), "world")
 
 // 用 float 实例化
 var floatBox = new Box[float](value=3.14)
@@ -21,15 +35,27 @@ assert_eq(floatBox.value, 3.14)
 struct Pair[K, V] {
     K key
     V val
+
+    func getKey(): K {
+        return self.key
+    }
+
+    func getVal(): V {
+        return self.val
+    }
 }
 
 var p1 = new Pair[string, int](key="age", val=25)
 assert_eq(p1.key, "age")
 assert_eq(p1.val, 25)
+assert_eq(p1.getKey(), "age")
+assert_eq(p1.getVal(), 25)
 
 var p2 = new Pair[int, string](key=1, val="one")
 assert_eq(p2.key, 1)
 assert_eq(p2.val, "one")
+assert_eq(p2.getKey(), 1)
+assert_eq(p2.getVal(), "one")
 
 // 泛型 struct 带默认值
 struct Container[T] {

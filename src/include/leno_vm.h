@@ -261,6 +261,9 @@ struct Symbol {
     int struct_field_count;
     char* struct_type_name;     // struct 类型名称（如 "Point"）
     int* struct_field_null_default;  // 字段默认值是否为 null（用于空指针检查）
+    // 泛型 struct 类型参数（仅当 struct 有泛型参数时使用）
+    char** struct_type_params;       // 类型参数名数组（如 ["T", "U"]）
+    int struct_type_param_count;     // 类型参数数量
     // cstruct 布局信息（仅当类型为 cstruct 时使用）
     int cstruct_size;           // cstruct 总大小
     int cstruct_alignment;      // cstruct 对齐要求

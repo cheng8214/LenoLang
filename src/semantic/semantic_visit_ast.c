@@ -3430,6 +3430,15 @@ void visit(Semantic* s, Ast* ast) {
                             sym->struct_field_null_default[i] = 0;
                         }
                     }
+
+                    // 存储泛型类型参数信息
+                    if (ast->u.struct_def.type_param_count > 0 && ast->u.struct_def.type_params) {
+                        sym->struct_type_param_count = ast->u.struct_def.type_param_count;
+                        sym->struct_type_params = (char**)malloc(sizeof(char*) * ast->u.struct_def.type_param_count);
+                        for (int i = 0; i < ast->u.struct_def.type_param_count; i++) {
+                            sym->struct_type_params[i] = strdup(ast->u.struct_def.type_params[i]);
+                        }
+                    }
                 } else {
                     char msg[BUFFER_MEDIUM];
                     // 检查是否已经被定义为其他类型（cstruct/enum）

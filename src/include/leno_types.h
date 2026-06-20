@@ -208,6 +208,9 @@ struct TypeInfo {
     char* style_target;      // Style 目标控件名（如 "window", "button"）
     // 泛型类型参数
     char* type_param_name;   // 泛型类型参数名（如 "T", "U"）
+    // 泛型 struct 实例化时的具体类型参数（如 Box[int] 的 int）
+    TypeInfo** generic_args; // 具体类型参数数组
+    int generic_count;       // 类型参数数量
 };
 
 // 类型系统 API

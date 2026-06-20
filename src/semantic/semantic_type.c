@@ -632,12 +632,26 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 Ast* func_def = func_table_find(&s->func_table, func_name);
 
                 if (func_def && func_def->kind == AST_FUNC_DEF) {
+                    TypeInfo* ret = NULL;
                     if (func_def->u.func.return_type) {
-                        ast->cached_type = type_copy(func_def->u.func.return_type);
-                        return type_copy(ast->cached_type);
+                        ret = type_copy(func_def->u.func.return_type);
+                    } else {
+                        ret = type_new(TYPE_ANY);
                     }
-                    ast->cached_type = type_new(TYPE_ANY);
-                    return type_copy(ast->cached_type);
+
+                    // 泛型函数调用：用推断的类型参数替换泛型参数
+                    if (ast->u.call.generic_type_count > 0 && ast->u.call.generic_type_names && ast->u.call.generic_type_args) {
+                        for (int p = 0; p < ast->u.call.generic_type_count; p++) {
+                            TypeInfo* sub = type_substitute(ret,
+                                ast->u.call.generic_type_names[p],
+                                ast->u.call.generic_type_args[p]);
+                            type_free(ret);
+                            ret = sub;
+                        }
+                    }
+
+                    ast->cached_type = type_copy(ret);
+                    return ret;
                 }
 
                 // 找不到函数定义时，检查变量符号的类型
@@ -768,24 +782,33 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             }
                             Ast* func_def = func_table_find(&s->func_table, method_key);
                             if (func_def && func_def->kind == AST_FUNC_DEF) {
+                                TypeInfo* ret = NULL;
                                 if (func_def->u.func.return_type && func_def->u.func.return_type->kind != TYPE_INFER) {
-                                    ast->cached_type = type_copy(func_def->u.func.return_type);
-                                    type_free(obj_type);
-                                    return type_copy(ast->cached_type);
+                                    ret = type_copy(func_def->u.func.return_type);
+                                } else if (func_def->u.func.body) {
+                                    // 尝试推断返回类型从 return 语句
+                                    ret = infer_return_type_from_body(s, func_def->u.func.body);
                                 }
-                                // 尝试推断返回类型从 return 语句
-                                if (func_def->u.func.body) {
-                                    TypeInfo* inferred_return = infer_return_type_from_body(s, func_def->u.func.body);
-                                    if (inferred_return) {
-                                        ast->cached_type = type_copy(inferred_return);
-                                        type_free(inferred_return);
-                                        type_free(obj_type);
-                                        return type_copy(ast->cached_type);
+                                if (!ret) {
+                                    ret = type_new(TYPE_ANY);
+                                }
+
+                                // 泛型参数替换：如果 obj_type 有具体泛型参数，替换返回类型中的泛型参数
+                                if (obj_type->generic_count > 0 && obj_type->generic_args) {
+                                    Symbol* struct_def_sym = scope_resolve(s->current, obj_type->struct_name);
+                                    if (struct_def_sym && struct_def_sym->struct_type_param_count > 0 && struct_def_sym->struct_type_params) {
+                                        for (int j = 0; j < struct_def_sym->struct_type_param_count && j < obj_type->generic_count; j++) {
+                                            TypeInfo* substituted = type_substitute(ret,
+                                                struct_def_sym->struct_type_params[j], obj_type->generic_args[j]);
+                                            type_free(ret);
+                                            ret = substituted;
+                                        }
                                     }
                                 }
-                                ast->cached_type = type_new(TYPE_ANY);
+
+                                ast->cached_type = type_copy(ret);
                                 type_free(obj_type);
-                                return type_copy(ast->cached_type);
+                                return ret;
                             }
                             
                             // 检查是否是原生方法（如 copy, malloc_array）
@@ -1271,6 +1294,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             // 处理模块限定的 struct 名称（如 "math.Point"），提取实际的 struct 名称
             const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
             struct_type->struct_name = strdup(dot_pos ? dot_pos + 1 : ast->u.struct_init.struct_name);
+            // 携带泛型类型参数（如 Box[int] 的 int）
+            if (ast->u.struct_init.generic_type_count > 0 && ast->u.struct_init.generic_type_args) {
+                struct_type->generic_count = ast->u.struct_init.generic_type_count;
+                struct_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_type->generic_count);
+                if (struct_type->generic_args) {
+                    for (int i = 0; i < struct_type->generic_count; i++) {
+                        struct_type->generic_args[i] = type_copy(ast->u.struct_init.generic_type_args[i]);
+                    }
+                }
+            }
             result = struct_type;
             break;
         }
@@ -1310,6 +1343,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             if (strcmp(struct_def_sym->struct_field_names[i], field_name) == 0) {
                                 result = type_copy(struct_def_sym->struct_field_types[i]);
                                 ast->u.field_access.field_index = i; // 存储字段索引
+
+                                // 泛型参数替换：如果 obj_type 有具体泛型参数，替换字段类型中的泛型参数
+                                if (obj_type->generic_count > 0 && obj_type->generic_args &&
+                                    struct_def_sym->struct_type_param_count > 0 && struct_def_sym->struct_type_params) {
+                                    for (int j = 0; j < struct_def_sym->struct_type_param_count && j < obj_type->generic_count; j++) {
+                                        TypeInfo* substituted = type_substitute(result,
+                                            struct_def_sym->struct_type_params[j], obj_type->generic_args[j]);
+                                        type_free(result);
+                                        result = substituted;
+                                    }
+                                }
                                 break;
                             }
                         }

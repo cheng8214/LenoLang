@@ -111,6 +111,12 @@ void type_free(TypeInfo* type) {
     if (type->type_param_name) {
         free(type->type_param_name);
     }
+    if (type->generic_args) {
+        for (int i = 0; i < type->generic_count; i++) {
+            type_free(type->generic_args[i]);
+        }
+        free(type->generic_args);
+    }
     free(type);
 }
 
@@ -140,9 +146,16 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
         case TYPE_CLIB:
         case TYPE_CFUNC:
             if (a->struct_name && b->struct_name) {
-                return strcmp(a->struct_name, b->struct_name) == 0;
+                if (strcmp(a->struct_name, b->struct_name) != 0) return 0;
+            } else if (a->struct_name != b->struct_name) {
+                return 0;
             }
-            return a->struct_name == b->struct_name;
+            // 比较泛型参数
+            if (a->generic_count != b->generic_count) return 0;
+            for (int i = 0; i < a->generic_count; i++) {
+                if (!type_equals(a->generic_args[i], b->generic_args[i])) return 0;
+            }
+            return 1;
         case TYPE_STYLE:
             if (a->style_target && b->style_target) {
                 return strcmp(a->style_target, b->style_target) == 0;
@@ -196,6 +209,16 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_ENUM:
             if (type->struct_name) {
                 copy->struct_name = strdup(type->struct_name);
+            }
+            // 深拷贝泛型参数
+            if (type->generic_count > 0 && type->generic_args) {
+                copy->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * type->generic_count);
+                if (copy->generic_args) {
+                    for (int i = 0; i < type->generic_count; i++) {
+                        copy->generic_args[i] = type_copy(type->generic_args[i]);
+                    }
+                    copy->generic_count = type->generic_count;
+                }
             }
             break;
         case TYPE_STYLE:
@@ -340,24 +363,51 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             break;
         }
         case TYPE_STRUCT: {
-            // struct TypeName 或 struct（无名称）
-            const char* prefix = "struct";
-            size_t prefix_len = strlen(prefix);
-            if (*offset + prefix_len < buf_size - 1) {
-                memcpy(buf + *offset, prefix, prefix_len);
-                *offset += prefix_len;
-            }
-            // 如果有 struct 名称，输出名称
-            if (type->struct_name) {
-                if (*offset + 1 < buf_size) {
-                    buf[*offset] = ' ';
-                    (*offset)++;
-                }
+            // struct TypeName 或 struct（无名称）或 TypeName[int]（有泛型参数时省略 struct 前缀）
+            if (type->generic_count > 0 && type->struct_name) {
+                // 有泛型参数时直接输出 TypeName[int, string]
                 size_t name_len = strlen(type->struct_name);
                 if (*offset + name_len < buf_size - 1) {
                     memcpy(buf + *offset, type->struct_name, name_len);
                     *offset += name_len;
+                }
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = '[';
+                    (*offset)++;
+                }
+                for (int i = 0; i < type->generic_count; i++) {
+                    if (i > 0) {
+                        if (*offset + 2 < buf_size) {
+                            buf[*offset] = ',';
+                            buf[*offset + 1] = ' ';
+                            *offset += 2;
+                        }
+                    }
+                    build_generic_type_string(type->generic_args[i], buf, buf_size, offset);
+                }
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = ']';
+                    (*offset)++;
                     buf[*offset] = '\0';
+                }
+            } else {
+                const char* prefix = "struct";
+                size_t prefix_len = strlen(prefix);
+                if (*offset + prefix_len < buf_size - 1) {
+                    memcpy(buf + *offset, prefix, prefix_len);
+                    *offset += prefix_len;
+                }
+                if (type->struct_name) {
+                    if (*offset + 1 < buf_size) {
+                        buf[*offset] = ' ';
+                        (*offset)++;
+                    }
+                    size_t name_len = strlen(type->struct_name);
+                    if (*offset + name_len < buf_size - 1) {
+                        memcpy(buf + *offset, type->struct_name, name_len);
+                        *offset += name_len;
+                        buf[*offset] = '\0';
+                    }
                 }
             }
             break;
@@ -989,6 +1039,14 @@ TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* conc
             TypeInfo* substituted = type_substitute(result->param_types[i], param_name, concrete);
             type_free(result->param_types[i]);
             result->param_types[i] = substituted;
+        }
+    }
+    // 替换泛型参数中的类型（如 Box[T] 的 T 被替换后，generic_args 中的 T 也需要替换）
+    if (result->generic_args) {
+        for (int i = 0; i < result->generic_count; i++) {
+            TypeInfo* substituted = type_substitute(result->generic_args[i], param_name, concrete);
+            type_free(result->generic_args[i]);
+            result->generic_args[i] = substituted;
         }
     }
     return result;
