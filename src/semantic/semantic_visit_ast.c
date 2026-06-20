@@ -3360,6 +3360,14 @@ void visit(Semantic* s, Ast* ast) {
                 TypeInfo* struct_type = type_new(TYPE_STRUCT);
                 struct_type->struct_name = strdup(ast->u.struct_def.name);
 
+                // 泛型 struct：将字段类型中的泛型参数标记为 TYPE_GENERIC_PARAM
+                if (ast->u.struct_def.type_param_count > 0 && ast->u.struct_def.type_params) {
+                    for (int i = 0; i < ast->u.struct_def.field_count; i++) {
+                        resolve_generic_in_type(ast->u.struct_def.field_types[i],
+                            ast->u.struct_def.type_params, ast->u.struct_def.type_param_count);
+                    }
+                }
+
                 // 先验证所有字段类型是否有效（在注册 struct 之前）
                 for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                     TypeInfo* field_type = ast->u.struct_def.field_types[i];
@@ -4232,17 +4240,51 @@ void visit(Semantic* s, Ast* ast) {
                             // 推断参数字段的类型
                             TypeInfo* actual_type = infer_expr_type(s, field_value);
                             
+                            // 泛型 struct：用具体类型参数替换字段类型中的泛型参数
+                            TypeInfo* check_type = expected_type;
+                            if (ast->u.struct_init.generic_type_count > 0) {
+                                // 查找 struct 定义获取 type_params
+                                Ast* struct_def_ast = NULL;
+                                // 遍历 root AST 查找
+                                if (s->root) {
+                                    for (int si = 0; si < s->root->u.block.count; si++) {
+                                        Ast* stmt = s->root->u.block.items[si];
+                                        if (stmt->kind == AST_STRUCT_DEF && 
+                                            stmt->u.struct_def.name &&
+                                            strcmp(stmt->u.struct_def.name, ast->u.struct_init.struct_name) == 0) {
+                                            struct_def_ast = stmt;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (struct_def_ast && struct_def_ast->u.struct_def.type_param_count > 0) {
+                                    // 用具体类型替换泛型参数
+                                    check_type = type_copy(expected_type);
+                                    for (int gi = 0; gi < struct_def_ast->u.struct_def.type_param_count && gi < ast->u.struct_init.generic_type_count; gi++) {
+                                        TypeInfo* sub = type_substitute(check_type, 
+                                            struct_def_ast->u.struct_def.type_params[gi],
+                                            ast->u.struct_init.generic_type_args[gi]);
+                                        type_free(check_type);
+                                        check_type = sub;
+                                    }
+                                }
+                            }
+                            
                             // 检查类型兼容性
                             if (actual_type) {
-                                if (!type_is_compatible(expected_type, actual_type)) {
+                                if (!type_is_compatible(check_type, actual_type)) {
                                     char msg[BUFFER_MEDIUM];
                                     format_type_error(msg, sizeof(msg),
                                         "字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
-                                        expected_type, actual_type,
+                                        check_type, actual_type,
                                         field_name, NULL);
                                     error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                                 }
                                 type_free(actual_type);
+                            }
+                            // 释放替换后的类型（如果做了替换）
+                            if (check_type != expected_type) {
+                                type_free(check_type);
                             }
                         }
                         

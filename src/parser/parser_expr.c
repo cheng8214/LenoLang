@@ -622,6 +622,30 @@ Ast* parse_new(Parser* p) {
     char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex); // 消费 struct 名称
 
+    // 解析可选的泛型类型参数: new Box[int](value: 42)
+    TypeInfo** generic_type_args = NULL;
+    int generic_type_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int gt_capacity = 8;
+        generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * gt_capacity);
+
+        do {
+            if (generic_type_count >= gt_capacity) {
+                gt_capacity *= 2;
+                generic_type_args = (TypeInfo**)realloc(generic_type_args, sizeof(TypeInfo*) * gt_capacity);
+            }
+            TypeInfo* type_arg = parse_type(p);
+            if (!type_arg) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数");
+                type_arg = type_new(TYPE_ANY);
+            }
+            generic_type_args[generic_type_count++] = type_arg;
+        } while (match(p, TOK_COMMA));
+
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
     // 支持 new module.StructName(...) 语法
     if (p->lex.current.type == TOK_DOT) {
         lexer_next(&p->lex); // 消费 '.'
@@ -653,6 +677,8 @@ Ast* parse_new(Parser* p) {
         ast->u.struct_init.field_names = NULL;
         ast->u.struct_init.field_values = NULL;
         ast->u.struct_init.field_count = 0;
+        ast->u.struct_init.generic_type_args = generic_type_args;
+        ast->u.struct_init.generic_type_count = generic_type_count;
 
         int capacity = 8;
         ast->u.struct_init.field_names = (char**)malloc(sizeof(char*) * capacity);
@@ -701,6 +727,8 @@ Ast* parse_new(Parser* p) {
     ast->u.struct_init.field_names = NULL;
     ast->u.struct_init.field_values = NULL;
     ast->u.struct_init.field_count = 0;
+    ast->u.struct_init.generic_type_args = generic_type_args;
+    ast->u.struct_init.generic_type_count = generic_type_count;
 
     int capacity = 8;
     ast->u.struct_init.field_names = (char**)malloc(sizeof(char*) * capacity);

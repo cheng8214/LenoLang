@@ -1045,6 +1045,31 @@ Ast* parse_struct_stmt(Parser* p) {
     char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex);
 
+    // 解析可选的泛型类型参数: struct Name[T, U] { ... }
+    char** type_params = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * tp_capacity);
+
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            type_param_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
     // 解析可选的 impl 声明: struct Name impl Face1, Face2 { ... }
     char** impl_names = NULL;
     int impl_count = 0;
@@ -1256,6 +1281,8 @@ Ast* parse_struct_stmt(Parser* p) {
     ast->u.struct_def.method_count = method_count;
     ast->u.struct_def.impl_names = impl_names;
     ast->u.struct_def.impl_count = impl_count;
+    ast->u.struct_def.type_params = type_params;
+    ast->u.struct_def.type_param_count = type_param_count;
 
     return ast;
 }

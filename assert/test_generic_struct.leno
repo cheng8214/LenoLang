@@ -1,0 +1,86 @@
+// 泛型 struct 测试
+
+// 基本泛型 struct: Box[T]
+struct Box[T] {
+    T value
+}
+
+// 用 int 实例化
+var intBox = new Box[int](value=42)
+assert_eq(intBox.value, 42)
+
+// 用 string 实例化
+var strBox = new Box[string](value="hello")
+assert_eq(strBox.value, "hello")
+
+// 用 float 实例化
+var floatBox = new Box[float](value=3.14)
+assert_eq(floatBox.value, 3.14)
+
+// 多个泛型参数: Pair[K, V]
+struct Pair[K, V] {
+    K key
+    V val
+}
+
+var p1 = new Pair[string, int](key="age", val=25)
+assert_eq(p1.key, "age")
+assert_eq(p1.val, 25)
+
+var p2 = new Pair[int, string](key=1, val="one")
+assert_eq(p2.key, 1)
+assert_eq(p2.val, "one")
+
+// 泛型 struct 带默认值
+struct Container[T] {
+    T item = null
+    string name = ""
+}
+
+var c1 = new Container[int](item=100, name="numbers")
+assert_eq(c1.item, 100)
+assert_eq(c1.name, "numbers")
+
+var c2 = new Container[string](name="empty")
+assert_eq(c2.name, "empty")
+
+// 泛型 struct 带方法
+struct Counter[T] {
+    T start
+    int count = 0
+
+    func increment() {
+        self.count = self.count + 1
+        return self.count
+    }
+
+    func reset() {
+        self.count = 0
+    }
+}
+
+var counter = new Counter[int](start=0)
+assert_eq(counter.start, 0)
+assert_eq(counter.count, 0)
+assert_eq(counter.increment(), 1)
+assert_eq(counter.increment(), 2)
+counter.reset()
+assert_eq(counter.count, 0)
+
+// 嵌套泛型类型: Box[Array[int]]
+var arrBox = new Box[Array[int]](value=[1, 2, 3])
+assert_eq(arrBox.value[0], 1)
+assert_eq(arrBox.value[1], 2)
+assert_eq(arrBox.value[2], 3)
+
+// 不带泛型参数的普通 struct 仍然正常工作
+struct SimplePoint {
+    int x
+    int y
+}
+
+var pt = new SimplePoint(x=10, y=20)
+assert_eq(pt.x, 10)
+assert_eq(pt.y, 20)
+
+print("test_generic_struct passed")

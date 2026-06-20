@@ -14,6 +14,7 @@
 4. [控制流](#控制流)
 5. [函数](#函数)
 6. [结构体（Struct）](#结构体struct)
+   - [泛型结构体](#泛型结构体)
 7. [face（接口）](#face接口)
 8. [枚举（Enum）](#枚举enum)
 9. [数组](#数组)
@@ -24,6 +25,7 @@
 14. [线程与并发](#线程与并发)
 15. [异步编程](#异步编程)
 16. [FFI 外部函数接口](#ffi-外部函数接口)
+    - [cstruct 线程支持](#cstruct-线程支持)
 17. [高级特性](#高级特性)
 18. [语法速查表](#语法速查表)
 
@@ -1365,64 +1367,105 @@ main() {
 
 ### for 循环（多种形式）
 
+Leno 的 `for` 循环支持多种遍历形式，包括数字范围遍历、数组遍历、字符串遍历和字典遍历。
+
+**重要规则**：
+- 范围语法中，`:` 表示**包含**结束值
+- `for 10` → 0 到 9（不包含10）
+- `for :10` → 0 到 10（包含10）
+
+#### 基本数字循环
+
 ```leno
 main() {
-    // 形式1: for n → 循环n次，变量从0到n-1
+    // 循环 n 次，i 从 0 开始到 n-1
     for 5 {
-        printf("cs ")        // 输出5次 "cs "
+        print("cs")  // 输出 5 次 "cs"
     }
-    print("")
 
-    // 形式2: for n to var → 迭代0到n-1
+    // 带变量名：循环 5 次，num 从 0 到 4
     for 5 to num {
-        printf(num + " ")   // 输出: 0 1 2 3 4
+        print(num)  // 输出: 0 1 2 3 4
     }
-    print("")
-
-    // 形式3: for :n → 包含n（闭区间）
-    for :5 to num {
-        printf(num + " ")   // 输出: 0 1 2 3 4 5
-    }
-    print("")
-
-    // 形式4: for start:end → 闭区间
-    for 0:5 to num {
-        printf(num + " ")   // 输出: 0 1 2 3 4 5
-    }
-    print("")
-
-    for 2:5 to num {
-        printf(num + " ")   // 输出: 2 3 4 5
-    }
-    print("")
-
-    // 形式5: for start:end:step → 带步进
-    for 0:5:2 to num {
-        printf(num + " ")   // 输出: 0 2 4
-    }
-    print("")
-
-    // 小数步进
-    for 0:1:0.1 to num {
-        printf(num + " ")   // 输出: 0.0 0.1 0.2 ... 1.0
-    }
-    print("")
-
-    // 反向迭代
-    for 5:0 to num {
-        printf(num + " ")   // 输出: 5 4 3 2 1 0
-    }
-    print("")
-
-    // 反向带步进
-    for 5:0:-2 to num {
-        printf(num + " ")   // 输出: 5 3 1
-    }
-    print("")
 }
 ```
 
-### 遍历数组
+#### 范围循环
+
+**不包含结束值（默认）**：
+
+```leno
+// 从 0 到 4（不包含 5）
+for 5 to num {
+    print(num)  // 输出: 0 1 2 3 4
+}
+```
+
+**包含结束值（使用冒号）**：
+
+⚠️ 重要：在 Leno 中，`:` 表示范围包含结束值
+
+```leno
+// 包含语法：从 0 到 5（包含 5）
+for :5 to num {
+    print(num)  // 输出: 0 1 2 3 4 5
+}
+
+// 完整写法：从 0 到 5（包含 5）
+for 0:5 to num {
+    print(num)  // 输出: 0 1 2 3 4 5
+}
+
+// 从 2 到 5（包含 5）
+for 2:5 to num {
+    print(num)  // 输出: 2 3 4 5
+}
+```
+
+**使用变量作为范围**：
+
+```leno
+var a = 5
+var b = 10
+
+// 从 a 到 b（包含 b）
+for a:b to i {
+    print(i)  // 输出: 5 6 7 8 9 10
+}
+```
+
+#### 带步进值的循环
+
+```leno
+// 正序步进：从 0 到 5，步进 2（包含 5）
+for 0:5:2 to num {
+    print(num)  // 输出: 0 2 4
+}
+
+// 小数步进：从 0 到 1，步进 0.1（包含 1）
+for 0:1:0.1 to num {
+    print(num)
+    // 输出: 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+}
+```
+
+#### 倒序遍历
+
+当起始值大于结束值时，自动倒序：
+
+```leno
+// 自动倒序：从 5 到 0（包含 0）
+for 5:0 to num {
+    print(num)  // 输出: 5 4 3 2 1 0
+}
+
+// 指定负步进：从 5 到 0，步进 -2（包含 0）
+for 5:0:-2 to num {
+    print(num)  // 输出: 5 3 1
+}
+```
+
+#### 遍历数组
 
 ```leno
 main() {
@@ -1440,7 +1483,25 @@ main() {
 }
 ```
 
-### 遍历字符串
+在排序算法中使用：
+
+```leno
+func bubble_sort(var arr) {
+    var n = arr.len()
+    for n - 1 to var i {
+        for n - i - 1 to var j {
+            if arr[j] > arr[j + 1] {
+                var temp = arr[j]
+                arr[j] = arr[j+1]
+                arr[j+1] = temp
+            }
+        }
+    }
+    return arr
+}
+```
+
+#### 遍历字符串
 
 ```leno
 main() {
@@ -1464,7 +1525,7 @@ main() {
 }
 ```
 
-### 遍历字典
+#### 遍历字典
 
 ```leno
 main() {
@@ -1482,17 +1543,29 @@ main() {
 }
 ```
 
-**int 键字典遍历：**
+**int 键字典遍历**：
 
 ```leno
 main() {
     var id_map = {1: "张三", 2: "李四", 3: "王五"}
 
-    // 遍历 int 键字典
     for id_map to id, name {
         print($"{id}: {name}")
     }
     // 输出顺序: 1:张三, 2:李四, 3:王五（按插入顺序）
+}
+```
+
+**带类型注解的字典遍历**：
+
+```leno
+Dict[string, string] d = {id: "11", name: "23"}
+
+for d to key, value {
+    // key 类型: string
+    // value 类型: string
+    string s = value  // 类型安全
+    print($"{key}: {s}")
 }
 ```
 
@@ -1506,6 +1579,38 @@ main() {
 > for str to char, index    // index 是 int 索引
 > for dict to key, value    // value 是键对应的值
 > ```
+
+> **⚠️ 注意：遍历 any 类型（常见陷阱）**
+>
+> 当遍历对象的类型在编译期未知（`any` 类型）时，`for X to y` 可能**静默不迭代**（不报错也不循环）：
+>
+> ```leno
+> // ❌ 可能静默失败：files 是 any 类型
+> for files to f { }  // 如果 files 是 any，不会迭代
+>
+> // ✅ 通用修复：用索引循环替代 for-each
+> int n = _int(files.len())
+> for 0 : n - 1 to i {
+>     var f = _str(files[i])
+> }
+> ```
+
+#### for 循环快速参考表
+
+| 语法 | 说明 | 包含 | 示例输出 |
+|------|------|------|---------|
+| `for 5` | 循环5次，i从0到4 | 不含 | 0 1 2 3 4 |
+| `for 5 to i` | 循环5次，i从0到4 | 不含 | 0 1 2 3 4 |
+| `for :5 to i` | i从0到5 | ✅ 包含 | 0 1 2 3 4 5 |
+| `for 2:5 to i` | i从2到5 | ✅ 包含 | 2 3 4 5 |
+| `for 0:5:2 to i` | i从0到5，步进2 | ✅ 包含 | 0 2 4 |
+| `for 5:0 to i` | i从5到0（倒序） | ✅ 包含 | 5 4 3 2 1 0 |
+| `for arr to item` | 遍历数组 | — | 数组元素 |
+| `for arr to item, idx` | 遍历数组带索引 | — | 元素+索引 |
+| `for str to char` | 遍历字符串 | — | 每个字符 |
+| `for str to char, idx` | 遍历字符串带索引 | — | 字符+索引 |
+| `for dict to key` | 遍历字典（键） | — | 每个键 |
+| `for dict to key, value` | 遍历字典（键值对） | — | 键+值 |
 
 ***
 
@@ -1843,6 +1948,24 @@ main() {
 
 Leno 的 struct 不仅是数据结构，还支持面向对象编程：字段、方法、类型守卫等。
 
+**快速入门：**
+
+```leno
+// 定义一个 struct
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+// 创建实例
+main() {
+    var p = new Point()    // 创建 Point 实例
+    p.x = 10            // 访问字段
+    p.y = 20
+    print(p)            // 输出: Point{x=10, y=20}
+}
+```
+
 ### 定义结构体
 
 ```leno
@@ -1859,6 +1982,26 @@ struct Rectangle {
     int height
 }
 ```
+
+> **💡 建议：使用有意义的默认值**
+>
+> ```leno
+> // ✅ 好的设计：合理的默认值
+> struct ServerConfig {
+>     string host = "localhost"
+>     int port = 8080
+>     int timeout = 30
+>     bool enableLog = true
+> }
+>
+> // ❌ 不推荐：所有字段都是 0/空值
+> struct ServerConfig {
+>     string host = ""
+>     int port = 0
+>     int timeout = 0
+>     bool enableLog = false
+> }
+> ```
 
 ### 创建结构体实例
 
@@ -1884,7 +2027,7 @@ var rect2 = new Rectangle() // x = 0, y = 0, width = null, height = null
 ```leno
 var p = new Point(x = 10, y = 20)
 
-// 访问字段
+// 使用点号访问（推荐，O(1) 直接索引）
 print(p.x)      // 10
 print(p.y)      // 20
 
@@ -1892,6 +2035,63 @@ print(p.y)      // 20
 p.x = 100
 p.y = 200
 print(p.x)      // 100
+
+// 使用索引访问（等价于点号，但较慢，O(n) 字符串查找）
+var x2 = p["x"]
+var y2 = p["y"]
+```
+
+> **💡 性能提示**：优先使用 `obj.field` 而不是 `obj["field"]`。点号访问在编译期确定字段索引，运行时直接定位；索引访问需要运行时字符串查找。
+
+### null 默认值与编译时检查
+
+**⚠️ 重要：默认值为 null 的字段，访问其成员会有编译时警告**
+
+```leno
+struct Container {
+    dict data = null      // 默认 null
+    array items = null    // 默认 null
+}
+
+struct Outer {
+    Container inner = null
+}
+
+main() {
+    var c = new Container()
+
+    // ✅ 获取 null 本身 - 不警告
+    var d = c.data
+
+    // ❌ 访问 null 字段的成员 - 编译时警告
+    var v = c.data["key"]     // [语义错误] 字段 'c.data' 默认值为 null...
+    var item = c.items[0]     // [语义错误] 字段 'c.items' 默认值为 null...
+
+    // ❌ 链式访问 null 字段
+    var o = new Outer()
+    var x = o.inner.data      // [语义错误] 字段 'o.inner' 默认值为 null...
+}
+```
+
+**在方法中访问 null 字段**：
+
+```leno
+struct LinkedList {
+    Node head = null
+
+    func getFirst():int {
+        // ❌ 编译时警告：访问可能为 null 的字段
+        return head.value
+    }
+
+    func safeGetFirst():int {
+        // ✅ 先检查再访问
+        if (head != null) {
+            return head.value
+        }
+        return 0
+    }
+}
 ```
 
 ### 结构体方法
@@ -1937,6 +2137,50 @@ print(p1.distance_to(p2))           // 5.0
 
 p1.move(10, 20)
 p1.print_coord()                    // Point(10, 20)
+```
+
+**方法调用其他方法**：
+
+```leno
+struct Calculator {
+    int value = 0
+
+    func add(int n) {
+        value = value + n
+    }
+
+    func double() {
+        add(value)    // 调用同 struct 的其他方法
+    }
+}
+```
+
+**使用插值字符串输出 struct**：
+
+推荐使用 `$"..."` 来格式化输出，比字符串拼接更简洁：
+
+```leno
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+main() {
+    var p = new Point()
+    p.x = 10
+    p.y = 20
+
+    // ❌ 字符串拼接，需要显式转换
+    print("(" + _str(p.x) + ", " + _str(p.y) + ")")
+
+    // ✅ 插值字符串，自动转换
+    print($"({p.x}, {p.y})")   // 输出: (10, 20)
+
+    // 也可以使用 format 方法
+    import strings
+    print(strings.format("坐标: ({0}, {1})", p.x, p.y))
+}
+}
 ```
 
 ### self 关键字
@@ -2005,6 +2249,36 @@ func process_points(var points) {
 process_points(points)
 ```
 
+**struct 与类型守卫结合使用**：
+
+当使用 `var` 接收 struct 实例时，类型守卫可以收窄类型，安全访问字段：
+
+```leno
+struct Student {
+    string name = ""
+    int age = 0
+}
+
+func process(var obj) {
+    // ❌ 直接访问会报错：var 无法识别字段
+    // print(obj.name)
+
+    // ✅ 使用类型守卫收窄类型
+    if obj is Student {
+        // 守卫块内 obj 被视为 Student 类型
+        print(obj.name)   // 可以访问字段
+        print(obj.age)
+    }
+}
+
+main() {
+    var s = new Student()
+    s.name = "张三"
+    s.age = 18
+    process(s)   // 输出: 张三  18
+}
+```
+
 ### 结构体作为类
 
 Leno 的 struct 具备类的所有特性：
@@ -2060,6 +2334,58 @@ list.print_list()   // 链表 (共 3 个): 10 -> 20 -> 30
 
 ### 嵌套结构体
 
+struct 字段可以是另一个 struct 类型：
+
+```leno
+struct Point {
+    int x = 0
+    int y = 0
+}
+
+struct Size {
+    int width = 100
+    int height = 100
+}
+
+struct Rect {
+    Point position      // 嵌套 Point
+    Size size           // 嵌套 Size
+}
+
+main() {
+    var r = new Rect()
+    // 嵌套对象自动初始化
+    print(r)  // Rect{position=Point{x=0, y=0}, size=Size{width=100, height=100}}
+
+    // 访问嵌套字段
+    r.position.x = 10
+    r.position.y = 20
+    r.size.width = 200
+    r.size.height = 150
+
+    print(r.position.x)  // 10
+    print(r.size.width)  // 200
+}
+```
+
+**自引用 struct 必须设 null 默认值**：
+
+```leno
+// ❌ 错误：会导致栈溢出（无限递归）
+struct Node {
+    int value
+    Node next    // 没有默认值，会无限创建 Node
+}
+
+// ✅ 正确：设置 null 默认值
+struct Node {
+    int value
+    Node next = null    // 默认为 null，避免递归
+}
+```
+
+也可以用另一种嵌套方式：
+
 ```leno
 struct Address {
     string city
@@ -2082,6 +2408,356 @@ print(p.name)           // 张三
 print(p.addr.city)      // 北京
 print(p.addr.street)    // 朝阳路
 ```
+
+### 泛型结构体
+
+Leno 支持泛型 struct，可以用类型参数定义通用的数据结构：
+
+#### 定义泛型 struct
+
+在 struct 名称后用 `[T]` 声明类型参数：
+
+```leno
+// 单个类型参数
+struct Box[T] {
+    T value
+}
+
+// 多个类型参数
+struct Pair[K, V] {
+    K key
+    V val
+}
+```
+
+#### 实例化泛型 struct
+
+使用 `new StructName[具体类型](...)` 创建实例：
+
+```leno
+// 用 int 实例化
+var intBox = new Box[int](value = 42)
+print(intBox.value)     // 42
+
+// 用 string 实例化
+var strBox = new Box[string](value = "hello")
+print(strBox.value)     // hello
+
+// 多个类型参数
+var p = new Pair[string, int](key = "age", val = 25)
+print(p.key)            // age
+print(p.val)            // 25
+```
+
+#### 泛型 struct 带默认值和方法
+
+```leno
+struct Container[T] {
+    T item = null
+    string name = ""
+}
+
+var c = new Container[int](item = 100, name = "numbers")
+print(c.item)           // 100
+print(c.name)           // numbers
+
+// 泛型 struct 带方法
+struct Counter[T] {
+    T start
+    int count = 0
+
+    func increment():int {
+        self.count = self.count + 1
+        return self.count
+    }
+
+    func reset() {
+        self.count = 0
+    }
+}
+
+var counter = new Counter[int](start = 0)
+counter.increment()
+counter.increment()
+print(counter.count)    // 2
+counter.reset()
+print(counter.count)    // 0
+```
+
+#### 嵌套泛型类型
+
+泛型参数可以是复合类型，如 `Array[int]`、`Dict[string, int]` 等：
+
+```leno
+// Box 中存放数组
+var arrBox = new Box[Array[int]](value = [1, 2, 3])
+print(arrBox.value[0])  // 1
+
+// Pair 中存放字典
+var dictPair = new Pair[string, Dict[string, int]](key = "scores", val = {"math": 90})
+print(dictPair.val["math"])  // 90
+```
+
+> **⚠️ 注意：泛型参数仅用于编译期类型检查**
+>
+> 泛型参数在编译期完成类型检查后会被擦除，运行时 `Box[int]` 和 `Box[string]` 共享同一个 struct 定义。这意味着：
+>
+> - `type(intBox)` 返回 `"Box"`，不包含类型参数信息
+> - 泛型不会产生代码膨胀，零运行时开销
+
+### struct 完整示例
+
+#### 学生管理系统
+
+```leno
+struct Student {
+    string name = ""
+    int age = 0
+    Array[int] scores = []
+
+    func averageScore():float {
+        if (scores.len() == 0) {
+            return 0.0
+        }
+        int total = 0
+        for scores to score {
+            total = total + score
+        }
+        return total / scores.len()
+    }
+}
+
+struct Class {
+    string name = ""
+    Array[Student] students = []
+
+    func addStudent(Student s) {
+        students.add(s)
+    }
+
+    func getAverageAge():float {
+        if (students.len() == 0) {
+            return 0.0
+        }
+        int total = 0
+        for students to s {
+            total = total + s.age
+        }
+        return total / students.len()
+    }
+}
+
+main() {
+    var mathClass = new Class()
+    mathClass.name = "数学一班"
+
+    var s1 = new Student()
+    s1.name = "张三"
+    s1.age = 18
+    s1.scores = [85, 90, 78]
+
+    var s2 = new Student()
+    s2.name = "李四"
+    s2.age = 19
+    s2.scores = [92, 88, 95]
+
+    mathClass.addStudent(s1)
+    mathClass.addStudent(s2)
+
+    print("班级: " + mathClass.name)
+    print("平均年龄: " + mathClass.getAverageAge())
+    print("张三平均分: " + s1.averageScore())
+}
+```
+
+#### 二叉搜索树
+
+```leno
+struct TreeNode {
+    int value
+    TreeNode left = null
+    TreeNode right = null
+}
+
+struct BST {
+    TreeNode root = null
+
+    func insert(int val) {
+        root = insertNode(root, val)
+    }
+
+    func insertNode(TreeNode node, int val):TreeNode {
+        if (node == null) {
+            var newNode = new TreeNode()
+            newNode.value = val
+            return newNode
+        }
+        if (val < node.value) {
+            node.left = insertNode(node.left, val)
+        } else if (val > node.value) {
+            node.right = insertNode(node.right, val)
+        }
+        return node
+    }
+
+    func inorder() {
+        inorderTraversal(root)
+    }
+
+    func inorderTraversal(TreeNode node) {
+        if (node == null) {
+            return
+        }
+        inorderTraversal(node.left)
+        print(node.value)
+        print(" ")
+        inorderTraversal(node.right)
+    }
+}
+
+main() {
+    var tree = new BST()
+    tree.insert(50)
+    tree.insert(30)
+    tree.insert(70)
+    tree.insert(20)
+    tree.insert(40)
+
+    print("中序遍历: ")
+    tree.inorder()    // 输出: 20 30 40 50 70
+}
+```
+
+### struct 性能优化
+
+LenoC 对 struct 字段访问进行了优化，编译期确定字段索引，运行时直接访问，避免线性搜索。
+
+**性能数据（100万次访问）**：
+
+| 访问方式 | 耗时 | 说明 |
+|---------|------|------|
+| `p.y` | ~47ms | O(1) 直接索引访问 |
+| `p["y"]` | ~62ms | O(n) 字符串查找 |
+
+**优化建议**：
+
+1. **优先使用字段访问** `obj.field` 而不是 `obj["field"]`
+2. **在方法内直接访问字段**，编译器会自动优化为直接索引
+3. **字段数量无性能担忧**，即使 struct 有几十个字段，访问速度仍然是 O(1)
+
+**字段较多时的性能对比**：
+
+```leno
+struct BigStruct {
+    int field0
+    int field1
+    // ... 更多字段
+    int field19
+}
+
+main() {
+    var obj = new BigStruct(field19 = 100)
+
+    // 访问第 20 个字段：
+    // - 字段访问：O(1)，直接定位
+    // - 索引访问：O(n)，需要遍历比较字段名
+    var val = obj.field19
+}
+```
+
+### struct 常见问题
+
+**Q: 为什么自引用 struct 必须设 null 默认值？**
+
+A: 否则会无限递归创建实例，导致栈溢出：
+
+```leno
+// ❌ 错误
+struct Node {
+    Node next    // 创建 Node 时要创建 next，创建 next 时要创建 next.next...
+}
+
+// ✅ 正确
+struct Node {
+    Node next = null    // 默认为 null，停止递归
+}
+```
+
+**Q: 为什么 var 参数不能访问 struct 字段？**
+
+A: `var` 参数类型为 `any`，编译器不知道具体类型，无法生成字段访问指令：
+
+```leno
+func test(var list) {
+    list.head = null    // ❌ 编译器不知道 list 是什么类型
+}
+
+// 应该使用具体类型
+func test(LinkedList list) {
+    list.head = null    // ✅ 编译器知道是 LinkedList
+}
+```
+
+**Q: 如何检查 null 字段？**
+
+A: 使用 `!= null` 或 `== null` 检查：
+
+```leno
+struct Container {
+    dict data = null
+}
+
+func safeAccess(Container c) {
+    if (c.data != null) {
+        // 安全访问
+        var v = c.data["key"]
+    }
+}
+```
+
+**Q: 未定义的 struct 类型会报什么错？**
+
+A: 编译器会提示未定义的 struct 类型名：
+
+```leno
+UndefinedType x    // [未定义变量] 未定义的 struct 类型: UndefinedType
+```
+
+**Q: 类型名拼写错误会怎样？**
+
+A: 编译器会提示未定义的 struct 类型：
+
+```leno
+dic13412t a    // [未定义变量] 未定义的 struct 类型: dic13412t
+arry b         // [未定义变量] 未定义的 struct 类型: arry
+
+// ✅ 正确的类型名
+Dict d
+Array arr
+```
+
+**struct 特性总结：**
+
+| 特性 | 说明 |
+|------|------|
+| 定义 | `struct 名称 { 类型 字段 = 默认值 }` |
+| 创建 | `var obj = new StructName()` |
+| 访问 | `obj.field`（推荐）或 `obj["field"]` |
+| 方法 | 在 struct 内定义，直接访问字段 |
+| 嵌套 | 支持，自引用必须设 null 默认值 |
+| null 检查 | 编译时警告访问可能为 null 的字段 |
+| face | `face 名称 { func 签名 }` 定义接口 |
+| impl | `struct 名称 impl Face1, Face2` 显式声明（必须，名义类型） |
+| impl 检查 | 编译期检查方法缺失、返回类型、参数数量 |
+| 多态 | face 参数/变量只接受显式 impl 的 struct |
+| 类型守卫 | `if obj is FaceName` 运行时检查是否 impl 了 face |
+| 安全转型 | `var c = obj as StructName` 匹配返回原值，不匹配返回 null |
+| 数组推断 | 不同 struct 有公共 face 时推断为 Array[FaceName] |
+| 跨模块 face | import 模块中的 face 可用于 impl、参数、变量 |
+| 性能 | 字段索引编译期确定，O(1) 访问 |
+| use 导入 | 支持 `use module.Struct` 和 `use module.Face` 导入 |
+
+> **核心原则**：自引用设 null，访问先检查，参数用具体类型或 face，优先用字段访问！
 
 ***
 
@@ -2173,6 +2849,63 @@ struct Fish impl Speaker {
 struct BadSpeaker impl Speaker {
     func speak():int { return 42 }    // face 声明返回 string
 }
+
+// ❌ 编译错误：参数数量不匹配
+face Adder {
+    func add(int a, int b):int
+}
+
+struct BadAdder impl Adder {
+    func add(int a):int { return a }    // face 声明 2 个参数，实际只有 1 个
+}
+```
+
+**编译期 impl 检查规则：**
+
+| 检查项 | 说明 | 示例 |
+|--------|------|------|
+| 方法缺失 | struct 必须实现 face 声明的所有方法 | `impl Speaker` 但没有 `speak()` → 报错 |
+| 返回类型匹配 | 方法返回类型必须与 face 声明一致 | face 声明 `:int`，struct 返回 `:string` → 报错 |
+| 参数数量匹配 | 方法参数数量（不含 self）必须与 face 一致 | face 声明 2 个参数，struct 只有 1 个 → 报错 |
+| 跨模块 face | 导入模块的 face 同样适用以上检查 | `use pm.ProcessManager` 后 `impl ProcessManager` → 检查 |
+
+**未 impl 但传给 face 参数时的错误提示：**
+
+```leno
+struct Dog {
+    func speak():string { return "woof" }
+}
+
+func make_sound(Speaker s) { ... }
+
+main() {
+    var d = new Dog()
+    make_sound(d)    // ❌ 编译错误：
+    // make_sound 第 1 个参数类型不匹配: 期望 face Speaker, 实际 struct Dog
+    // (struct 'Dog' 未实现 face 'Speaker'，请添加 impl: struct Dog impl Speaker { ... })
+}
+```
+
+**空 face（标记接口）：**
+
+face 可以不声明任何方法，作为标记接口使用：
+
+```leno
+face Empty {
+}
+
+struct Thing impl Empty {
+    string name = ""
+}
+
+func check(Empty e) {
+    print("got empty face")
+}
+
+main() {
+    var t = new Thing()
+    check(t)    // 输出: got empty face
+}
 ```
 
 ### face 作为参数类型
@@ -2211,6 +2944,48 @@ if obj not is Speaker {
 }
 ```
 
+**显式 impl vs 无 impl 的区别**：
+
+```leno
+face Speaker {
+    func speak():string
+}
+
+// 显式声明 impl
+struct Dog impl Speaker {
+    func speak():string { return "woof" }
+}
+
+// 没有 impl 声明，即使方法签名匹配也不算实现
+struct Duck {
+    func speak():string { return "quack" }
+}
+
+main() {
+    var d = new Dog()
+    var duck = new Duck()
+
+    if d is Speaker {
+        print("Dog is Speaker")        // ✅ 输出
+    }
+    if duck is Speaker {
+        print("Duck is Speaker")       // ❌ 不会输出（Duck 未 impl Speaker）
+    }
+}
+```
+
+**face 类型守卫速查表**：
+
+| 表达式 | 条件 | 结果 |
+|--------|------|------|
+| `obj is Face` | struct 显式 `impl Face` | `true` |
+| `obj is Face` | struct 未 `impl Face`（即使方法签名匹配） | `false` |
+| `obj not is Face` | 上述条件的否定 | 相反结果 |
+| `obj as StructName` | obj 是指定 struct | 原值（struct 实例） |
+| `obj as StructName` | obj 不是指定 struct | `null` |
+| `obj as Face` | obj 实现了指定 face（显式 impl） | 原值（struct 实例） |
+| `obj as Face` | obj 未实现指定 face | `null` |
+
 ### as 安全类型转换
 
 `as` 运算符用于安全向下转型，匹配返回原值，不匹配返回 `null`：
@@ -2233,6 +3008,25 @@ func describe(Shape s) {
 }
 ```
 
+**`as` 与 `is` 的区别：**
+
+| 特性 | `is` | `as` |
+|------|------|------|
+| 返回值 | `bool`（true/false） | 原值或 `null` |
+| 用途 | 条件判断 | 安全转型 + null 检查 |
+| 典型场景 | `if x is Dog { ... }` | `var d = s as Dog; if d != null { ... }` |
+
+**`as` 与类型转换函数的区别：**
+
+| 写法 | 语义 | 结果 |
+|------|------|------|
+| `42 as float` | 类型检查 | `null`（42 不是 float 实例） |
+| `_float(42)` | 类型转换 | `42.0`（int→float 转换） |
+| `"abc" as int` | 类型检查 | `null`（不匹配） |
+| `_int("abc")` | 类型转换 | 运行时错误（解析失败） |
+
+> **核心区别**：`as` 是安全类型检查，不做转换，不匹配返回 `null`；`_int()`/`_float()` 等是类型转换，转换失败抛出运行时错误。
+
 ### face 数组类型推断
 
 当数组中包含多个实现了同一 face 的 struct 时，编译器自动推断为该 face 类型：
@@ -2247,20 +3041,46 @@ struct Cat impl Speaker {
 }
 
 main() {
+    // 同类型 struct → Array[Dog]
+    var dogs = [new Dog(), new Dog()]
+    print(type(dogs))    // Array[Dog]
+
+    // 不同 struct，有公共 face → Array[Speaker]
     var animals = [new Dog(), new Cat()]
     print(type(animals))    // Array[Speaker]
 
+    // 遍历时元素类型为 Speaker，可调用 face 方法
     for animals to s {
         print(s.speak())    // woof, meow
     }
 }
 ```
 
+**混合 struct 和 face 变量**：
+
+```leno
+main() {
+    Speaker a = new Dog()    // face 类型变量
+    var d = new Dog()        // struct 类型变量
+
+    // face + struct → Array[Speaker]
+    var mixed = [a, d]
+    print(type(mixed))    // Array[Speaker]
+}
+```
+
+**推断规则：**
+
 | 数组元素 | 推断结果 | 说明 |
 |---------|---------|------|
 | `[Dog, Dog]` | `Array[Dog]` | 同类型，保持原类型 |
 | `[Dog, Cat]`（都 impl Speaker） | `Array[Speaker]` | 不同 struct，找公共 face |
 | `[Dog, Fish]`（Fish 无 impl） | `Array[any]` | 无公共 face，退化为 any |
+| `[Speaker, Cat]` | `Array[Speaker]` | face + impl struct → face |
+| `[Dog, Speaker]` | `Array[Speaker]` | struct + face → face |
+| `[Speaker, Speaker]` | `Array[Speaker]` | face + face → face |
+
+> **⚠️ 注意：** 数组类型推断基于**显式 impl 声明**。如果 struct 没有 `impl` 声明，即使方法签名匹配，也不会被推断为该 face 类型。
 
 ### face 不能实例化
 
@@ -3078,6 +3898,20 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
     print(s.area())
 }
 ```
+
+**use 与 import 的区别：**
+
+| 特性 | `import` | `use` |
+|------|----------|-------|
+| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/face 导入当前作用域 |
+| 语法 | `import "路径" as 别名` | `use 别名.名称` |
+| 适用范围 | 模块中的所有导出内容 | 仅 struct 和 face 类型 |
+| 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` |
+
+> **重要说明：**
+> - `use` 只能导入 **struct** 和 **face** 类型
+> - **func**、**var**、**enum** 必须通过模块名访问（如 `math.distance()`）
+> - struct 实例仍需通过模块构造函数创建（如 `new math.Point(x=1, y=2)`）
 
 ### io 模块使用
 
@@ -4590,6 +5424,73 @@ main() {
 > - Leno `write_*`/`memset`/`memcpy` 已内置边界检查，`ffi.free` 有哨兵检测 — 溢出报错而非崩溃
 > - 调用外部函数时注意参数类型匹配
 > - Windows API 通常使用 UTF-16，需要 `utf8_to_utf16` 转换
+
+### cstruct 线程支持
+
+cstruct 定义可以在多线程环境中安全使用。由于 cstruct 定义是**编译时确定的只读类型元数据**，多个线程可以共享这些定义而不会产生竞争条件。
+
+**在线程中使用 cstruct：**
+
+```leno
+import ffi
+import threads
+
+cstruct TEST_STRUCT {
+    u32 field1
+    u32 field2
+}
+
+// 在线程中使用 cstruct
+func thread_worker(var ch) {
+    try {
+        var s = TEST_STRUCT.malloc()
+        s.field1 = 100
+        s.field2 = 200
+        ch.send({type: "ok", f1: s.field1, f2: s.field2})
+        s.free()
+    } catch e {
+        ch.send({type: "error", msg: e})
+    }
+}
+
+main() {
+    var ch = threads.channel(1)
+    var t = threads.start(thread_worker, ch)
+    var result = ch.receive()
+    print("field1=" + result.f1 + ", field2=" + result.f2)
+    t.join()
+}
+```
+
+**线程安全说明：**
+
+| 特性 | 说明 |
+|------|------|
+| cstruct 定义 | 线程安全，只读共享 |
+| cstruct 实例 | 每个线程独立，不共享 |
+| `malloc()`/`free()` | 每个线程独立管理自己的实例 |
+| `from_ptr()` | 可以安全使用，但只在当前线程有效 |
+
+**注意事项：**
+
+1. **不要在线程间传递 cstruct 实例**：实例不能跨线程共享，每个线程应独立 `malloc()`
+2. **FFI 资源独立管理**：每个线程加载的 DLL、分配的内存都是独立的
+3. **通过 Channel 传递数据**：使用基本类型（int、float、string 等）或 Dict/Array 在线程间传递数据
+
+```leno
+// ✅ 正确：每个线程独立使用 cstruct
+func worker(var ch) {
+    var s = TEST_STRUCT.malloc()  // 子线程独立分配
+    s.field1 = 123
+    ch.send(s.field1)  // 发送数据，不是实例
+    s.free()
+}
+
+// ❌ 错误：不要尝试共享实例
+func bad_worker(var s, var ch) {
+    s.field1 = 123  // 不要传递实例到线程
+}
+```
 
 ***
 

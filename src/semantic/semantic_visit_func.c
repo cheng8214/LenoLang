@@ -5,7 +5,7 @@
 // ============================================================================
 
 // 解析单个 TypeInfo 中的泛型参数
-static void resolve_generic_in_type(TypeInfo* type, char** type_params, int count) {
+void resolve_generic_in_type(TypeInfo* type, char** type_params, int count) {
     if (!type) return;
     if (type->kind == TYPE_STRUCT && type->struct_name) {
         for (int i = 0; i < count; i++) {
