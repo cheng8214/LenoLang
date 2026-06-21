@@ -1706,15 +1706,26 @@ static Value ffi_utf8_to_utf16_func(int argc, Value* args) {
     size_t wlen = wcslen(wstr) + 1;
     size_t byte_size = wlen * sizeof(wchar_t);
     
-    // 使用 GC 分配 ObjFFIPointer
-    ObjFFIPointer* ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
-    if (!ptr) {
+    // 重新分配内存，加上 8 字节哨兵（与 ffi.malloc 一致，用于 ffi.free 溢出检测）
+    void* buf = malloc(byte_size + 8);
+    if (!buf) {
         free(wstr);
         native_throw_error("内存分配失败");
         return val_null();
     }
+    memcpy(buf, wstr, byte_size);
+    *(uint64_t*)((char*)buf + byte_size) = 0xDEADBEEFDEADBEEFULL;
+    free(wstr);
     
-    ptr->ptr = wstr;  // 直接保存 wchar_t* 指针
+    // 使用 GC 分配 ObjFFIPointer
+    ObjFFIPointer* ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+    if (!ptr) {
+        free(buf);
+        native_throw_error("内存分配失败");
+        return val_null();
+    }
+    
+    ptr->ptr = buf;
     ptr->size = byte_size;
     ptr->owned = 1;   // 标记为 owned，ffi.free 时会释放
     ptr->freed = 0;
