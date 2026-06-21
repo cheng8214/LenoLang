@@ -217,7 +217,7 @@ struct Ast {
         struct { char* module_name; char* alias; char* file_path; } import;
         struct { Ast* decl; } export;
         struct { char* module_name; char* symbol_name; } use;
-        struct { char* module_name; char* method_name; AstList args; SymRef lib_ref; } module_call;
+        struct { char* module_name; char* method_name; AstList args; SymRef lib_ref; TypeInfo** generic_type_args; int generic_type_count; char** generic_type_names; } module_call;
         struct { char* module_name; char* member_name; SymRef ref; } module_access;
         struct {
             char** parts;      // 字符串片段数组
@@ -263,6 +263,8 @@ struct Ast {
             TypeInfo*** method_param_types; // 方法参数类型数组
             int* method_param_counts;      // 方法参数数量数组
             int method_count;        // 方法数量
+            char** type_params;      // 类型参数名数组（如 ["T"]）
+            int type_param_count;    // 类型参数数量
         } face_def;
         struct {
             char* name;        // cstruct 名称

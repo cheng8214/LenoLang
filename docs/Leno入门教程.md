@@ -16,6 +16,7 @@
 6. [结构体（Struct）](#结构体struct)
    - [泛型结构体](#泛型结构体)
 7. [face（接口）](#face接口)
+   - [泛型 face](#泛型-face)
 8. [枚举（Enum）](#枚举enum)
 9. [数组](#数组)
 10. [字典](#字典)
@@ -426,6 +427,8 @@ main() {
 
 ### 泛型类型
 
+Leno 的泛型类型不仅支持内置的 `Array`、`Dict`、`Ptr` 等，还支持自定义 struct 的泛型类型注解：
+
 ```leno
 main() {
     // 泛型数组（大写 Array）
@@ -447,6 +450,14 @@ main() {
     Dict[string, int] dict3       // 空的 Dict[string, int]
     Dict[int, string] dict4 = {}  // 等同于上面，也是空的 Dict[int, string]
 
+    // 自定义泛型 struct 类型注解
+    // 假设已定义 struct Box[T] { T value }
+    Box[int] intBox = new Box[int](value=42)
+    Box[string] strBox = new Box[string](value="hello")
+
+    // 嵌套泛型 struct
+    Box[Array[int]] nestedBox = new Box[Array[int]](value=[1,2,3])
+
     // 类型推断
     var inferred_arr = [1, 2, 3]      // 推断为 Array[int]
     var inferred_dict = {"x": 10}     // 推断为 Dict[string, int]
@@ -463,6 +474,13 @@ main() {
 > Array[int] arr = []         // 类型已确定为 Array[int]，等同于 Array[int] arr
 > arr.add(1)                  // ✅ 直接添加
 > ```
+
+> **⚠️ 注意：泛型类型注解与类型擦除**
+>
+> 泛型参数仅在编译期用于类型检查，运行时会被擦除：
+> - `type(intBox)` 返回 `"Box"`，不包含 `[int]` 信息
+> - `Box[int]` 和 `Box[string]` 运行时共享同一个 struct 定义
+> - 泛型不会产生代码膨胀，零运行时开销
 
 ### 文件级别变量
 
@@ -1804,7 +1822,11 @@ print(ops["double"](5)) // 10
 
 ### 泛型函数（Generic Functions）
 
-Leno 支持函数级泛型，通过在函数名后添加 `[T, U, ...]` 声明类型参数，编译器会根据调用时的实参**自动推断**具体类型：
+Leno 支持函数级泛型，通过在函数名后添加 `[T, U, ...]` 声明类型参数：
+
+#### 自动推断类型参数
+
+编译器会根据调用时的实参**自动推断**具体类型：
 
 ```leno
 // === 单类型参数 ===
@@ -1821,41 +1843,98 @@ func pair[T, U](T a, U b) {
     print(b)
 }
 pair(42, "hello")  // 42, hello
+```
 
-// === 泛型容器操作 ===
-func map[T, U](Array[T] arr, func(T):U fn):Array[U] {
-    var result = []
-    for arr to item {
-        result.add(fn(item))
-    }
-    return result
+#### 显式指定类型参数
+
+当自动推断不够准确时（如参数为 `null`），可以用 `funcName[类型](args)` 显式指定：
+
+```leno
+func identity[T](T v): T {
+    return v
 }
 
-func filter[T](Array[T] arr, func(T):bool pred):Array[T] {
-    var result = []
-    for arr to item {
-        if pred(item) {
-            result.add(item)
-        }
-    }
-    return result
+// 显式指定类型参数
+var a = identity[int](42)           // T = int
+var b = identity[string]("hello")   // T = string
+
+// 多个类型参数
+func first[T, U](T a, U b): T {
+    return a
 }
 
-// 使用示例
-func double(int x):int { return x * 2 }
-func is_even(int x):bool { return x % 2 == 0 }
+var r1 = first[int, string](1, "x")    // T=int, U=string → 返回 1
+var r2 = first[string, float]("pi", 3.14)  // T=string, U=float → 返回 "pi"
+```
 
-var nums = [1, 2, 3, 4, 5, 6]
-print(map(nums, double))     // [2, 4, 6, 8, 10, 12]
-print(filter(nums, is_even)) // [2, 4, 6]
+> **💡 何时使用显式类型参数？**
+>
+> - 参数为 `null` 时，编译器无法推断类型，必须显式指定
+> - 需要确保返回值的具体类型时
+> - 代码可读性要求高的场景
+>
+> ```leno
+> func coalesce[T](T a, T b): T {
+>     if a != null { return a }
+>     return b
+> }
+>
+> // ❌ coalesce(null, 42) — 无法推断 T
+> // ✅ 必须显式指定：
+> var val = coalesce[int](null, 42)    // T = int
+> ```
+
+#### 泛型函数接受泛型 struct 参数
+
+泛型函数的参数类型可以是泛型 struct，实现类型安全的容器操作：
+
+```leno
+struct Box[T] {
+    T value
+}
+
+// 从 Box 中提取值
+func unbox[T](Box[T] b): T {
+    return b.value
+}
+
+var intBox = new Box[int](value=42)
+var strBox = new Box[string](value="hello")
+
+assert_eq(unbox[int](intBox), 42)
+assert_eq(unbox[string](strBox), "hello")
+
+// 创建 Box
+func makeBox[T](T v): Box[T] {
+    return new Box[T](value=v)
+}
+
+var boxed = makeBox[int](100)
+assert_eq(boxed.value, 100)
+```
+
+#### 泛型函数与比较操作
+
+泛型参数支持 `==`、`!=`、`>=`、`<=`、`>`、`<` 等比较操作：
+
+```leno
+func max[T](T a, T b): T {
+    if a >= b {
+        return a
+    }
+    return b
+}
+
+assert_eq(max[int](3, 5), 5)
+assert_eq(max[string]("abc", "xyz"), "xyz")
 ```
 
 > **⚠️ 注意事项**：
 > 
 > 1. **类型推断在调用时发生**：编译器从实参类型自动推断，无需手动指定 `T=int`
-> 2. **泛型参数可用于参数和返回类型**：`Array[T]`、`func(T):U`、`Dict[K, V]` 等均可
-> 3. **函数体内类型参数是动态的**：用 `T` 声明的变量在体内是灵活类型，参与运算由运行时检查
-> 4. **泛型不支持 struct/face**：当前仅支持函数级泛型，无法在 struct 或 face 上使用类型参数
+> 2. **显式类型参数优先**：如果调用时写了 `funcName[int](args)`，则使用显式指定的类型，不再推断
+> 3. **泛型参数可用于参数和返回类型**：`Array[T]`、`Box[T]`、`Dict[K, V]` 等均可
+> 4. **泛型参数是编译期的**：用 `T` 声明的变量在编译期完成类型替换和检查，运行时无额外开销
 
 
 ### 三种参数模式对比
@@ -2484,6 +2563,227 @@ counter.reset()
 print(counter.count)    // 0
 ```
 
+#### 泛型 struct 方法的类型推断
+
+泛型 struct 的方法会自动从 `self` 的类型参数推断字段类型，无需额外声明：
+
+```leno
+struct Box[T] {
+    T value
+
+    // 方法内可以直接使用 self.value，类型自动推断为 T 的具体类型
+    func get(): T {
+        return self.value
+    }
+
+    func set(T v) {
+        self.value = v
+    }
+
+    // 方法间调用也能正确推断类型
+    func unwrapOrDefault(T defaultVal): T {
+        if self.value != null {
+            return self.value
+        }
+        return defaultVal
+    }
+}
+
+var intBox = new Box[int](value=42)
+intBox.set(100)                         // ✅ 参数类型推断为 int
+assert_eq(intBox.get(), 100)
+assert_eq(intBox.unwrapOrDefault(0), 100)
+
+var strBox = new Box[string](value="hi")
+strBox.set("world")                     // ✅ 参数类型推断为 string
+assert_eq(strBox.get(), "world")
+assert_eq(strBox.unwrapOrDefault("empty"), "world")
+```
+
+> **💡 方法类型推断规则**
+>
+> - `self` 的类型自动携带泛型参数（如 `Box[int]` 的 `self.value` 类型为 `int`）
+> - 方法参数中引用泛型参数 `T` 会自动替换为实例化时的具体类型
+> - 方法返回类型中的 `T` 也会正确替换
+> - 方法间互相调用（如 `self.method()`）也能正确传播类型
+
+#### 泛型 struct 的泛型方法
+
+泛型 struct 的方法也可以有自己的泛型参数，与 struct 级别的泛型参数独立：
+
+```leno
+struct Box[T] {
+    T value
+
+    // U 是方法级别的泛型参数，与 struct 的 T 独立
+    func map[U](func(T):U fn): Box[U] {
+        return new Box[U](value=fn(self.value))
+    }
+
+    func set(T v) {
+        self.value = v
+    }
+}
+
+func doubleInt(int n): int { return n * 2 }
+func intToStr(int n): string { return n == 0 ? "zero" : "nonzero" }
+
+var intBox = new Box[int](value=42)
+
+// int -> int 映射
+var doubled = intBox.map[int](doubleInt)
+print(doubled.value)    // 84
+
+// int -> string 映射
+var strBox = intBox.map[string](intToStr)
+print(strBox.value)     // "nonzero"
+
+// 链式调用
+var chained = intBox.map[int](doubleInt).map[int](doubleInt)
+print(chained.value)    // 168
+```
+
+> **💡 泛型方法的类型参数规则**
+>
+> - struct 级泛型参数（`T`）由实例化类型决定（如 `Box[int]` 的 `T = int`）
+> - 方法级泛型参数（`U`）由调用时的显式指定或推断决定（如 `.map[string](...)` 的 `U = string`）
+> - 方法内可以同时使用 `T` 和 `U`，编译器会正确替换两者
+> - 链式泛型方法调用也支持：`obj.map[A](f1).map[B](f2)`
+
+#### 泛型常见踩坑
+
+> **⚠️ 坑 1：方法参数类型不匹配会被编译器报错**
+>
+> 泛型 struct 的方法参数类型会根据实例化类型进行检查。如果传入类型不匹配，编译器会报错：
+>
+> ```leno
+> struct Box[T] {
+>     T value
+>     func set(T v) { self.value = v }
+> }
+>
+> var intBox = new Box[int](value=42)
+> intBox.set("wrong")    // ❌ 编译错误：set 第 1 个参数类型不匹配: 期望 int, 实际 string
+>
+> var strBox = new Box[string](value="hi")
+> strBox.set(123)        // ❌ 编译错误：set 第 1 个参数类型不匹配: 期望 string, 实际 int
+> ```
+>
+> 多泛型参数时，每个参数都会独立检查：
+>
+> ```leno
+> struct Pair[K, V] {
+>     K key
+>     V val
+>     func setBoth(K k, V v) { self.key = k; self.val = v }
+> }
+>
+> var p = new Pair[string, int](key="x", val=1)
+> p.setBoth(1, "x")      // ❌ 两个参数都报错：第1个期望 string 实际 int，第2个期望 int 实际 string
+> ```
+
+> **⚠️ 坑 2：泛型类型擦除导致不同实例共享状态**
+>
+> 泛型参数在编译期检查后会被擦除，`Box[int]` 和 `Box[string]` 运行时共享同一个 struct 定义。如果 struct 内部使用了可变的引用类型字段（如数组），不同实例化类型之间可能意外共享数据：
+>
+> ```leno
+> struct Container[T] {
+>     Array items = []     // ⚠️ 所有 Container 实例共享同一个默认数组！
+> }
+>
+> var c1 = new Container[int]()
+> var c2 = new Container[string]()
+> c1.items.add(42)
+> print(c2.items.len())   // ⚠️ 可能输出 1，而非 0
+> ```
+>
+> **解决办法**：在构造后重新初始化可变字段，或避免在泛型 struct 中使用带默认值的引用类型字段：
+>
+> ```leno
+> struct Container[T] {
+>     Array items          // 不给默认值
+>
+>     func init() {
+>         self.items = []  // 在方法中初始化，每次创建独立实例
+>     }
+> }
+>
+> var c1 = new Container[int]()
+> c1.init()
+> var c2 = new Container[string]()
+> c2.init()
+> ```
+
+> **⚠️ 坑 3：泛型函数调用时 `[` 可能被误解析为数组索引**
+>
+> 当函数名同时也是变量名时，`funcName[Type](args)` 可能被解析为数组索引。Leno 编译器会自动区分这两种情况，但在复杂表达式中可能出现歧义。建议：
+>
+> - 优先使用类型推断，省略显式类型参数：`identity(42)` 而非 `identity[int](42)`
+> - 只在推断失败时才显式指定：`empty[int]()`
+
+> **⚠️ 坑 4：泛型函数参数类型不一致时不会自动转换**
+>
+> 显式指定类型参数后，编译器会严格检查参数类型，不会做隐式转换：
+>
+> ```leno
+> func strict[T](T a, T b): T { return a }
+>
+> strict[int](1, 2)          // ✅ OK
+> strict[int](1, "x")        // ❌ 编译错误：第 2 个参数类型不匹配
+> strict[string]("a", "b")   // ✅ OK
+> ```
+>
+> 如果需要灵活类型，使用 `var` 参数：
+> ```leno
+> func flexible(var a, var b) { ... }   // 接受任意类型组合
+> ```
+
+> **⚠️ 坑 5：方法参数数量不匹配也会报错**
+>
+> 非 泛型 struct 的方法同样会检查参数数量和类型：
+>
+> ```leno
+> struct Point {
+>     int x
+>     int y
+>     func setXY(int a, int b) { self.x = a; self.y = b }
+> }
+>
+> var pt = new Point(x=1, y=2)
+> pt.setXY(1)              // ❌ 方法 'setXY' 参数数量不匹配: 期望 2, 实际 1
+> pt.setXY(1, 2, 3)        // ❌ 方法 'setXY' 参数数量不匹配: 期望 2, 实际 3
+> pt.setXY("x", 10)        // ❌ setXY 第 1 个参数类型不匹配: 期望 int, 实际 string
+> ```
+
+> **⚠️ 坑 6：泛型函数中 `func(T):void` 返回类型的匹配**
+>
+> 当泛型函数的参数类型是函数类型且返回 `void` 时，传入的具体函数也必须返回 `void`（或不声明返回类型）：
+>
+> ```leno
+> func make_printer[T](T prefix): func(T):void {
+>     func inner(T val):void {    // ✅ 正确：显式声明 :void
+>         print(prefix)
+>         print(val)
+>     }
+>     return inner
+> }
+> ```
+>
+> 注意：`func(T):void` 中的 `void` 是特殊关键字，表示无返回值。不要写成 `func(T):null` 或省略。
+
+> **⚠️ 坑 7：泛型参数参与算术运算时保持泛型类型**
+>
+> 泛型参数参与算术运算（如 `n - 1`、`n * 2`）时，结果类型仍保持泛型参数类型，不会退化为 `float`：
+>
+> ```leno
+> func factorial[T](T n): T {
+>     if n <= 1 { return 1 }
+>     return n * factorial(n - 1)   // n-1 的类型仍为 T，不会变成 float
+> }
+>
+> print(factorial[int](5))   // 120
+> ```
+
 #### 嵌套泛型类型
 
 泛型参数可以是复合类型，如 `Array[int]`、`Dict[string, int]` 等：
@@ -2498,12 +2798,47 @@ var dictPair = new Pair[string, Dict[string, int]](key = "scores", val = {"math"
 print(dictPair.val["math"])  // 90
 ```
 
+#### 泛型 struct 完整示例：Range
+
+```leno
+struct Range[T] {
+    T lo
+    T hi
+
+    func contains(T val): bool {
+        return val >= self.lo and val <= self.hi
+    }
+
+    func clamp(T val): T {
+        if val < self.lo { return self.lo }
+        if val > self.hi { return self.hi }
+        return val
+    }
+}
+
+var intRange = new Range[int](lo=1, hi=10)
+assert_eq(intRange.contains(5), true)
+assert_eq(intRange.contains(0), false)
+assert_eq(intRange.clamp(15), 10)
+assert_eq(intRange.clamp(-5), 1)
+```
+
 > **⚠️ 注意：泛型参数仅用于编译期类型检查**
 >
 > 泛型参数在编译期完成类型检查后会被擦除，运行时 `Box[int]` 和 `Box[string]` 共享同一个 struct 定义。这意味着：
 >
 > - `type(intBox)` 返回 `"Box"`，不包含类型参数信息
 > - 泛型不会产生代码膨胀，零运行时开销
+
+> **⚠️ 注意：泛型 struct 与普通 struct 的区别**
+>
+> | 特性 | 普通 struct | 泛型 struct |
+> |------|-----------|------------|
+> | 定义 | `struct Point { ... }` | `struct Box[T] { ... }` |
+> | 实例化 | `new Point(...)` | `new Box[int](...)` |
+> | 类型注解 | `Point p` | `Box[int] p` |
+> | 方法类型 | 固定 | 随类型参数变化 |
+> | 字段类型 | 固定 | 由类型参数决定 |
 
 ### struct 完整示例
 
@@ -2786,6 +3121,49 @@ face Writer {
     func flush()
 }
 ```
+
+### 泛型 face
+
+face 也支持泛型类型参数，在名称后添加 `[T, U, ...]`：
+
+```leno
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+face Convertible[T, U] {
+    func convert(T input): U
+}
+```
+
+struct 实现泛型 face 时，方法签名中的泛型参数会被替换为具体类型：
+
+```leno
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct IntBox impl Comparable[int] {
+    int value
+
+    func compareTo(int other): int {
+        if self.value < other { return -1 }
+        if self.value > other { return 1 }
+        return 0
+    }
+}
+
+var box = new IntBox(value=42)
+print(box.compareTo(10))    // 1
+print(box.compareTo(42))    // 0
+print(box.compareTo(100))   // -1
+```
+
+> **💡 泛型 face 的类型参数**
+>
+> - 泛型 face 的类型参数在 struct `impl` 时确定具体类型
+> - 方法签名中的泛型参数（如 `T other`）会被替换为 impl 声明中的具体类型
+> - 同一个 face 可以被不同 struct 以不同类型参数实现（如 `impl Comparable[int]`、`impl Comparable[string]`）
 
 ### struct 实现 face
 

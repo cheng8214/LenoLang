@@ -1,0 +1,72 @@
+// 泛型栈（Stack）- 后进先出数据结构
+struct Stack[T] {
+    Array items
+    int size = 0
+
+    func init() {
+        self.items = []
+    }
+
+    // 压入元素
+    func push(T val) {
+        self.items.add(val)
+        self.size = self.size + 1
+    }
+
+    // 弹出栈顶元素
+    func pop(): T {
+        if self.size == 0 { return null }
+        self.size = self.size - 1
+        return self.items.pop()
+    }
+
+    // 查看栈顶
+    func peek(): T {
+        if self.size == 0 { return null }
+        return self.items[self.size - 1]
+    }
+
+    // 是否为空
+    func isEmpty(): bool {
+        return self.size == 0
+    }
+}
+
+// 整数栈
+var intStack = new Stack[int]()
+intStack.init()
+intStack.push(10)
+intStack.push(20)
+intStack.push(30)
+print(intStack.pop())      // 30
+print(intStack.peek())     // 20
+print(intStack.size)       // 2
+
+// 字符串栈
+var strStack = new Stack[string]()
+strStack.init()
+strStack.push("hello")
+strStack.push("world")
+print(strStack.pop())      // world
+print(strStack.peek())     // hello
+
+// 用栈反转数组
+func reverse[T](Array[T] arr): Array[T] {
+    var s = new Stack[T]()
+    s.init()
+    for arr to item {
+        s.push(item)
+    }
+    var result = []
+    while not s.isEmpty() {
+        result.add(s.pop())
+    }
+    return result
+}
+
+var original = [1, 2, 3, 4, 5]
+var reversed = reverse[int](original)
+print(reversed)            // [5, 4, 3, 2, 1]
+
+var words = ["a", "b", "c"]
+print(reverse[string](words))  // ["c", "b", "a"]

@@ -1533,6 +1533,96 @@ void visit(Semantic* s, Ast* ast) {
                                 }
                             }
                         }
+                        // 自定义 struct 方法的参数类型检查
+                        else if (receiver_type->kind == TYPE_STRUCT && receiver_type->struct_name) {
+                            // 在 AST 中查找 struct 定义
+                            Ast* struct_def_ast = NULL;
+                            for (int si = 0; si < s->root->u.block.count; si++) {
+                                Ast* stmt = s->root->u.block.items[si];
+                                if (stmt->kind == AST_STRUCT_DEF && strcmp(stmt->u.struct_def.name, receiver_type->struct_name) == 0) {
+                                    struct_def_ast = stmt;
+                                    break;
+                                }
+                            }
+                            if (struct_def_ast) {
+                                // 查找方法定义
+                                for (int mi = 0; mi < struct_def_ast->u.struct_def.method_count; mi++) {
+                                    Ast* method_ast = struct_def_ast->u.struct_def.methods[mi];
+                                    if (method_ast && method_ast->kind == AST_FUNC_DEF &&
+                                        strcmp(method_ast->u.func.name, method_name) == 0) {
+                                        // 找到方法，检查参数类型
+                                        int actual_arity = ast->u.call.args.count;
+                                        // 方法参数从第1个开始（第0个是 self）
+                                        int method_param_count = method_ast->u.func.pcnt - 1;
+                                        if (method_param_count >= 0 && actual_arity != method_param_count) {
+                                            char msg[BUFFER_MEDIUM];
+                                            snprintf(msg, sizeof(msg), "方法 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                                     method_name, method_param_count, actual_arity);
+                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                        } else {
+                                            // 构建泛型参数替换表
+                                            char** gp_names = NULL;
+                                            TypeInfo** gp_types = NULL;
+                                            int gp_count = 0;
+
+                                            if (receiver_type->generic_count > 0 && receiver_type->generic_args) {
+                                                gp_count = receiver_type->generic_count;
+                                                gp_names = (char**)malloc(sizeof(char*) * gp_count);
+                                                gp_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * gp_count);
+                                                if (struct_def_ast->u.struct_def.type_params) {
+                                                    for (int gi = 0; gi < gp_count; gi++) {
+                                                        gp_names[gi] = struct_def_ast->u.struct_def.type_params[gi];
+                                                        gp_types[gi] = type_copy(receiver_type->generic_args[gi]);
+                                                    }
+                                                }
+                                            }
+
+                                            for (int i = 0; i < actual_arity; i++) {
+                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + 1]; // +1 跳过 self
+                                                if (!expected_type) continue;
+
+                                                // 替换泛型参数
+                                                TypeInfo* check_type = expected_type;
+                                                if (gp_count > 0) {
+                                                    for (int gi = 0; gi < gp_count; gi++) {
+                                                        TypeInfo* sub = type_substitute(check_type, gp_names[gi], gp_types[gi]);
+                                                        if (sub != check_type) {
+                                                            check_type = sub;
+                                                        }
+                                                    }
+                                                }
+
+                                                TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
+                                                if (arg_type && arg_type->kind != TYPE_ANY && check_type->kind != TYPE_ANY) {
+                                                    if (!type_is_compatible(check_type, arg_type)) {
+                                                        char msg[BUFFER_MEDIUM];
+                                                        char idx_str[16];
+                                                        snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
+                                                        format_type_error(msg, sizeof(msg),
+                                                            "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                                            check_type, arg_type,
+                                                            method_name, idx_str);
+                                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                                    }
+                                                }
+                                                if (arg_type) type_free(arg_type);
+                                                if (check_type != expected_type) type_free(check_type);
+                                            }
+
+                                            // 清理泛型参数替换表
+                                            if (gp_types) {
+                                                for (int gi = 0; gi < gp_count; gi++) {
+                                                    type_free(gp_types[gi]);
+                                                }
+                                                free(gp_types);
+                                                free(gp_names);
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         type_free(receiver_type);
                     }
                 }
@@ -1826,15 +1916,15 @@ void visit(Semantic* s, Ast* ast) {
                                     snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
                                     format_type_error(msg, sizeof(msg),
                                         "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                        expected_type, arg_type,
+                                        check_type, arg_type,
                                         func_name, idx_str);
                                     // 如果是 struct 未实现 face，追加提示
-                                    if (expected_type->kind == TYPE_FACE && arg_type->kind == TYPE_STRUCT
-                                        && expected_type->struct_name && arg_type->struct_name) {
+                                    if (check_type->kind == TYPE_FACE && arg_type->kind == TYPE_STRUCT
+                                        && check_type->struct_name && arg_type->struct_name) {
                                         char hint[256];
                                         snprintf(hint, sizeof(hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
-                                            arg_type->struct_name, expected_type->struct_name,
-                                            arg_type->struct_name, expected_type->struct_name);
+                                            arg_type->struct_name, check_type->struct_name,
+                                            arg_type->struct_name, check_type->struct_name);
                                         strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
                                     }
                                     error_add(ERR_TYPE_MISMATCH, ast->line, msg);
@@ -2839,6 +2929,110 @@ void visit(Semantic* s, Ast* ast) {
                         }
                     }
                     if (is_struct_method) {
+                        // 自定义 struct 方法的参数类型检查
+                        if (obj_type && obj_type->kind == TYPE_STRUCT && obj_type->struct_name) {
+                            Ast* struct_def_ast = NULL;
+                            for (int si = 0; si < s->root->u.block.count; si++) {
+                                Ast* stmt = s->root->u.block.items[si];
+                                if (stmt->kind == AST_STRUCT_DEF && strcmp(stmt->u.struct_def.name, obj_type->struct_name) == 0) {
+                                    struct_def_ast = stmt;
+                                    break;
+                                }
+                            }
+                            if (struct_def_ast) {
+                                for (int mi = 0; mi < struct_def_ast->u.struct_def.method_count; mi++) {
+                                    Ast* method_ast = struct_def_ast->u.struct_def.methods[mi];
+                                    if (method_ast && method_ast->kind == AST_FUNC_DEF &&
+                                        strcmp(method_ast->u.func.name, method_name) == 0) {
+                                        int actual_arity = ast->u.module_call.args.count;
+                                        int method_param_count = method_ast->u.func.pcnt - 1;
+                                        if (method_param_count >= 0 && actual_arity != method_param_count) {
+                                            char msg[BUFFER_MEDIUM];
+                                            snprintf(msg, sizeof(msg), "方法 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                                     method_name, method_param_count, actual_arity);
+                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                        } else {
+                                            // 构建泛型参数替换表（包含 struct 的泛型参数和方法的泛型参数）
+                                            char** gp_names = NULL;
+                                            TypeInfo** gp_types = NULL;
+                                            int gp_count = 0;
+
+                                            // struct 的泛型参数（如 Box[T] 的 T）
+                                            if (obj_type->generic_count > 0 && obj_type->generic_args) {
+                                                gp_count = obj_type->generic_count;
+                                                gp_names = (char**)malloc(sizeof(char*) * (gp_count + method_ast->u.func.type_param_count));
+                                                gp_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * (gp_count + method_ast->u.func.type_param_count));
+                                                if (struct_def_ast->u.struct_def.type_params) {
+                                                    for (int gi = 0; gi < gp_count; gi++) {
+                                                        gp_names[gi] = struct_def_ast->u.struct_def.type_params[gi];
+                                                        gp_types[gi] = type_copy(obj_type->generic_args[gi]);
+                                                    }
+                                                }
+                                            } else {
+                                                gp_names = (char**)malloc(sizeof(char*) * method_ast->u.func.type_param_count);
+                                                gp_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * method_ast->u.func.type_param_count);
+                                                gp_count = 0;
+                                            }
+
+                                            // 方法的泛型参数（如 map[U] 的 U）
+                                            if (method_ast->u.func.type_param_count > 0 && method_ast->u.func.type_params) {
+                                                for (int gi = 0; gi < method_ast->u.func.type_param_count; gi++) {
+                                                    int idx = gp_count;
+                                                    gp_names[idx] = method_ast->u.func.type_params[gi];
+                                                    if (ast->u.module_call.generic_type_args && gi < ast->u.module_call.generic_type_count) {
+                                                        gp_types[idx] = type_copy(ast->u.module_call.generic_type_args[gi]);
+                                                    } else {
+                                                        gp_types[idx] = type_new(TYPE_ANY);
+                                                    }
+                                                    gp_count++;
+                                                }
+                                            }
+
+                                            for (int i = 0; i < actual_arity; i++) {
+                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + 1];
+                                                if (!expected_type) continue;
+
+                                                TypeInfo* check_type = expected_type;
+                                                if (gp_count > 0) {
+                                                    for (int gi = 0; gi < gp_count; gi++) {
+                                                        TypeInfo* sub = type_substitute(check_type, gp_names[gi], gp_types[gi]);
+                                                        if (sub != check_type) {
+                                                            check_type = sub;
+                                                        }
+                                                    }
+                                                }
+
+                                                TypeInfo* arg_type = infer_expr_type(s, ast->u.module_call.args.items[i]);
+                                                if (arg_type && arg_type->kind != TYPE_ANY && check_type->kind != TYPE_ANY) {
+                                                    if (!type_is_compatible(check_type, arg_type)) {
+                                                        char msg[BUFFER_MEDIUM];
+                                                        char idx_str[16];
+                                                        snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
+                                                        format_type_error(msg, sizeof(msg),
+                                                            "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                                            check_type, arg_type,
+                                                            method_name, idx_str);
+                                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                                    }
+                                                }
+                                                if (arg_type) type_free(arg_type);
+                                                if (check_type != expected_type) type_free(check_type);
+                                            }
+
+                                            if (gp_types) {
+                                                for (int gi = 0; gi < gp_count; gi++) {
+                                                    type_free(gp_types[gi]);
+                                                }
+                                                free(gp_types);
+                                                free(gp_names);
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         // 保存原始对象名（用于创建 self 参数）
                         char* original_obj_name = strdup(ast->u.module_call.module_name);
                         // 将 AST_MODULE_CALL 转换为 AST_CALL，callee 为 INDEX(self, "method")

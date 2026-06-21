@@ -418,6 +418,12 @@ static TypeInfo* parse_function_type(Parser* p) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "期望返回类型");
                 return_type = type_new(TYPE_ANY);
             }
+            // void 返回类型转换为 TYPE_NULL
+            if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+                strcmp(return_type->struct_name, "void") == 0) {
+                type_free(return_type);
+                return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+            }
         }
     }
     
@@ -685,6 +691,12 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
         if (parsed_return) {
             type_free(return_type);
             return_type = parsed_return;
+            // void 返回类型转换为 TYPE_NULL
+            if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+                strcmp(return_type->struct_name, "void") == 0) {
+                type_free(return_type);
+                return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+            }
         } else {
             error_add(ERR_SYNTAX, p->lex.current.line, "期望返回类型");
         }
@@ -1327,7 +1339,34 @@ Ast* parse_face_stmt(Parser* p) {
     char* face_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex);
 
+    // 解析可选的泛型类型参数: face Name[T, U]
+    char** type_params = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * tp_capacity);
+
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            type_param_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
     if (!consume(p, TOK_LBRACE, "期望 '{' 开始 face 定义")) {
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
         free(face_name);
         return NULL;
     }
@@ -1436,6 +1475,8 @@ Ast* parse_face_stmt(Parser* p) {
         free(method_return_types);
         free(method_param_types);
         free(method_param_counts);
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
         free(face_name);
         return NULL;
     }
@@ -1447,6 +1488,8 @@ Ast* parse_face_stmt(Parser* p) {
     ast->u.face_def.method_param_types = method_param_types;
     ast->u.face_def.method_param_counts = method_param_counts;
     ast->u.face_def.method_count = method_count;
+    ast->u.face_def.type_params = type_params;
+    ast->u.face_def.type_param_count = type_param_count;
 
     return ast;
 }

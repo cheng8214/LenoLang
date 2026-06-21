@@ -391,7 +391,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // bigint + int/float/bigint = bigint
                     // 泛型参数：T + T = T（运行时确定具体类型）
                     else if (left && right) {
-                        if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
+                        // 泛型参数参与运算：T + 1 = T（保持泛型类型）
+                        if (left->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (right->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
                             result = type_new(TYPE_BIGINT);
                         } else if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
                             result = type_new(TYPE_INT);
@@ -434,7 +439,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // 数值类型推导
                     else if (left && right) {
-                        if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
+                        // 泛型参数参与运算：T - 1 = T, T * 2 = T（保持泛型类型）
+                        if (left->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (right->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
                             result = type_new(TYPE_BIGINT);
                         } else if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
                             result = type_new(TYPE_INT);
@@ -468,6 +478,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         error_add(ERR_TYPE_MISMATCH, ast->line,
                                   "string 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
+                    }
+                    // 泛型参数参与运算：T / 1 = T（保持泛型类型）
+                    else if (left && right &&
+                             (left->kind == TYPE_GENERIC_PARAM || right->kind == TYPE_GENERIC_PARAM)) {
+                        result = (left->kind == TYPE_GENERIC_PARAM) ? type_copy(left) : type_copy(left);
                     }
                     // int / int = int
                     else if (left && right &&

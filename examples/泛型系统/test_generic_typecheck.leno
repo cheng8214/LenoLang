@@ -1,0 +1,47 @@
+// 泛型编译期类型检查测试
+
+// --- 1. 泛型函数参数类型不匹配应报错 ---
+func strict[T](T a, T b): T {
+    return a
+}
+
+// 两个参数类型必须一致
+strict[int](1, 2)        // ✅ OK
+strict[string]("a", "b") // ✅ OK
+
+// --- 2. 泛型 struct 方法参数类型检查 ---
+struct Box[T] {
+    T value
+
+    func set(T v) {
+        self.value = v
+    }
+}
+
+var intBox = new Box[int](value=42)
+intBox.set(100)          // ✅ OK: int -> T=int
+
+var strBox = new Box[string](value="hi")
+strBox.set("world")      // ✅ OK: string -> T=string
+
+// --- 3. 泛型 struct 字段访问类型推断 ---
+assert_eq(intBox.value, 100)
+assert_eq(strBox.value, "world")
+
+// --- 4. 泛型函数无参数时必须显式指定类型 ---
+func empty[T](): T {
+    return null
+}
+
+var e1 = empty[int]()     // ✅ OK: 显式指定
+var e2 = empty[string]()  // ✅ OK: 显式指定
+
+// --- 5. 泛型函数返回类型正确 ---
+func wrap[T](T v): Box[T] {
+    return new Box[T](value=v)
+}
+
+var wrapped = wrap[int](42)
+assert_eq(wrapped.value, 42)
+
+print("test_generic_typecheck passed")

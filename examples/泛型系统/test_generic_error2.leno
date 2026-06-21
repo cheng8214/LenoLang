@@ -1,0 +1,10 @@
+struct Box[T] {
+    T value
+
+    func set(T v) {
+        self.value = v
+    }
+}
+
+var intBox = new Box[int](value=42)
+intBox.set("wrong")

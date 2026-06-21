@@ -1,0 +1,86 @@
+// 泛型 Result 类型 - 错误处理模式
+struct Result[T] {
+    T data = null
+    string error = ""
+    bool ok = true
+
+    func isOk(): bool {
+        return self.ok
+    }
+
+    func isError(): bool {
+        return not self.ok
+    }
+
+    // 获取数据，出错时返回默认值
+    func unwrapOr(T defaultVal): T {
+        if self.ok { return self.data }
+        return defaultVal
+    }
+
+    // 获取错误信息
+    func getError(): string {
+        return self.error
+    }
+}
+
+// 构造成功结果
+func Ok[T](T val): Result[T] {
+    return new Result[T](data=val, ok=true)
+}
+
+// 构造错误结果
+func Err[T](string msg): Result[T] {
+    return new Result[T](ok=false, error=msg)
+}
+
+// --- 使用示例：安全除法 ---
+func safeDivide(int a, int b): Result[float] {
+    if b == 0 {
+        return Err[float]("division by zero")
+    }
+    return Ok[float](a / b)
+}
+
+var r1 = safeDivide(10, 3)
+if r1.isOk() {
+    print("结果: " + r1.unwrapOr(0.0))
+} else {
+    print("错误: " + r1.getError())
+}
+
+var r2 = safeDivide(10, 0)
+if r2.isError() {
+    print("错误: " + r2.getError())    // 错误: division by zero
+}
+
+// --- 使用示例：安全查找 ---
+func safeGetInt(Array[int] arr, int index): Result[int] {
+    if index < 0 or index >= arr.len() {
+        return Err[int]("index out of range")
+    }
+    return Ok[int](arr[index])
+}
+
+var nums = [10, 20, 30]
+var r3 = safeGetInt(nums, 1)
+print(r3.unwrapOr(-1))     // 20
+
+var r4 = safeGetInt(nums, 10)
+print(r4.getError())        // index out of range
+
+// --- 链式 Result 操作 ---
+func parseInt(string s): Result[int] {
+    // 简化版：只处理纯数字字符串
+    if s == "0" { return Ok[int](0) }
+    if s == "1" { return Ok[int](1) }
+    if s == "42" { return Ok[int](42) }
+    return Err[int]("cannot parse: " + s)
+}
+
+var p1 = parseInt("42")
+print(p1.unwrapOr(-1))     // 42
+
+var p2 = parseInt("abc")
+print(p2.getError())        // cannot parse: abc
+print(p2.unwrapOr(-1))     // -1（使用默认值）

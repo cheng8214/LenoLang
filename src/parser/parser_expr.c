@@ -799,9 +799,16 @@ Ast* parse_index(Parser* p, Ast* obj) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // 消费 '['
 
-    // 检查是否是泛型函数调用：funcName[int, string](args) 或 funcName[Box](args)
-    // 条件：obj 是 AST_VAR，且 [ 后面是类型关键字或标识符（可能是类型名）
-    if (obj->kind == AST_VAR && is_generic_type_start_token(p->lex.current.type)) {
+    // 检查是否是泛型函数调用：funcName[int, string](args) 或 obj.method[Type](args)
+    // 条件：obj 是 AST_VAR、AST_FIELD_ACCESS、AST_MODULE_ACCESS
+    //       或 AST_INDEX（属性访问 expr["method"]，index 是字符串字面量）
+    //       且 [ 后面是类型关键字或标识符
+    int is_generic_call_candidate = (obj->kind == AST_VAR || obj->kind == AST_FIELD_ACCESS || obj->kind == AST_MODULE_ACCESS);
+    // 也支持 (expr).method[Type](args) 模式：obj 是 AST_INDEX，index 是字符串字面量
+    if (obj->kind == AST_INDEX && obj->u.index.index && obj->u.index.index->kind == AST_STRING) {
+        is_generic_call_candidate = 1;
+    }
+    if (is_generic_call_candidate && is_generic_type_start_token(p->lex.current.type)) {
         // 保存词法器状态，以便回退
         Lexer saved_lex = p->lex;
 
@@ -831,6 +838,37 @@ Ast* parse_index(Parser* p, Ast* obj) {
 
             // 检查后面是否跟 ( — 如果是，则为泛型函数调用
             if (p->lex.current.type == TOK_LPAREN) {
+                // 如果 obj 是 MODULE_ACCESS（如 intBox.map），创建 MODULE_CALL
+                if (obj->kind == AST_MODULE_ACCESS) {
+                    Ast* ast = ast_new(AST_MODULE_CALL, line);
+                    ast->u.module_call.module_name = obj->u.module_access.module_name;
+                    ast->u.module_call.method_name = obj->u.module_access.member_name;
+                    ast_list_init(&ast->u.module_call.args);
+                    ast->u.module_call.lib_ref.kind = SYM_GLOBAL;
+                    ast->u.module_call.lib_ref.index = -1;
+                    ast->u.module_call.lib_ref.name = NULL;
+                    ast->u.module_call.generic_type_args = generic_type_args;
+                    ast->u.module_call.generic_type_count = count;
+                    ast->u.module_call.generic_type_names = generic_type_names;
+
+                    // 释放原始 MODULE_ACCESS（name 已转移，需置 NULL 避免双重释放）
+                    obj->u.module_access.module_name = NULL;
+                    obj->u.module_access.member_name = NULL;
+                    free(obj->u.module_access.ref.name);
+                    obj->u.module_access.ref.name = NULL;
+                    free(obj);
+
+                    lexer_next(&p->lex); // 消费 '('
+                    if (p->lex.current.type != TOK_RPAREN) {
+                        do {
+                            Ast* arg = parse_expression(p);
+                            ast_list_add(&ast->u.module_call.args, arg);
+                        } while (match(p, TOK_COMMA));
+                    }
+                    consume(p, TOK_RPAREN, "期望 ')'");
+                    return ast;
+                }
+
                 Ast* ast = ast_new(AST_CALL, line);
                 ast->u.call.callee = obj;
                 ast_list_init(&ast->u.call.args);
@@ -936,6 +974,9 @@ Ast* parse_dot(Parser* p, Ast* left) {
             ast->u.module_call.module_name = left->u.var.name;
             ast->u.module_call.method_name = name;
             ast_list_init(&ast->u.module_call.args);
+            ast->u.module_call.generic_type_args = NULL;
+            ast->u.module_call.generic_type_count = 0;
+            ast->u.module_call.generic_type_names = NULL;
 
             // 释放原始 AST_VAR 节点（name 已转移，需置 NULL 避免双重释放）
             left->u.var.name = NULL;
