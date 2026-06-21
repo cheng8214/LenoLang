@@ -1,0 +1,339 @@
+// 泛型 struct 测试
+
+// 基本泛型 struct: Box[T]
+struct Box[T] {
+    T value
+
+    func get(): T {
+        return self.value
+    }
+
+    func set(T v) {
+        self.value = v
+    }
+}
+
+// 用 int 实例化
+var intBox = new Box[int](value=42)
+assert_eq(intBox.value, 42)
+assert_eq(intBox.get(), 42)
+intBox.set(100)
+assert_eq(intBox.get(), 100)
+
+// 用 string 实例化
+var strBox = new Box[string](value="hello")
+assert_eq(strBox.value, "hello")
+assert_eq(strBox.get(), "hello")
+strBox.set("world")
+assert_eq(strBox.get(), "world")
+
+// 用 float 实例化
+var floatBox = new Box[float](value=3.14)
+assert_eq(floatBox.value, 3.14)
+
+// 多个泛型参数: Pair[K, V]
+struct Pair[K, V] {
+    K key
+    V val
+
+    func getKey(): K {
+        return self.key
+    }
+
+    func getVal(): V {
+        return self.val
+    }
+}
+
+var p1 = new Pair[string, int](key="age", val=25)
+assert_eq(p1.key, "age")
+assert_eq(p1.val, 25)
+assert_eq(p1.getKey(), "age")
+assert_eq(p1.getVal(), 25)
+
+var p2 = new Pair[int, string](key=1, val="one")
+assert_eq(p2.key, 1)
+assert_eq(p2.val, "one")
+assert_eq(p2.getKey(), 1)
+assert_eq(p2.getVal(), "one")
+
+// 泛型 struct 带默认值
+struct Container[T] {
+    T item = null
+    string name = ""
+}
+
+var c1 = new Container[int](item=100, name="numbers")
+assert_eq(c1.item, 100)
+assert_eq(c1.name, "numbers")
+
+var c2 = new Container[string](name="empty")
+assert_eq(c2.name, "empty")
+
+// 泛型 struct 带方法
+struct Counter[T] {
+    T start
+    int count = 0
+
+    func increment() {
+        self.count = self.count + 1
+        return self.count
+    }
+
+    func reset() {
+        self.count = 0
+    }
+}
+
+var counter = new Counter[int](start=0)
+assert_eq(counter.start, 0)
+assert_eq(counter.count, 0)
+assert_eq(counter.increment(), 1)
+assert_eq(counter.increment(), 2)
+counter.reset()
+assert_eq(counter.count, 0)
+
+// 嵌套泛型类型: Box[Array[int]]
+var arrBox = new Box[Array[int]](value=[1, 2, 3])
+assert_eq(arrBox.value[0], 1)
+assert_eq(arrBox.value[1], 2)
+assert_eq(arrBox.value[2], 3)
+
+// 不带泛型参数的普通 struct 仍然正常工作
+struct SimplePoint {
+    int x
+    int y
+}
+
+var pt = new SimplePoint(x=10, y=20)
+assert_eq(pt.x, 10)
+assert_eq(pt.y, 20)
+
+// --- 边界测试 ---
+
+// 同一泛型 struct 不同实例化互不干扰
+var ib = new Box[int](value=1)
+var sb = new Box[string](value="hi")
+ib.value = 100
+sb.value = "world"
+assert_eq(ib.value, 100)
+assert_eq(sb.value, "world")
+
+// 泛型 struct 带数组字段
+struct ListHolder[T] {
+    Array[T] items
+}
+var lh = new ListHolder[int](items=[10, 20, 30])
+assert_eq(lh.items[0], 10)
+assert_eq(lh.items[2], 30)
+
+// 同类型参数多次使用
+struct Duo[T] {
+    T first
+    T second
+}
+var duo = new Duo[string](first="a", second="b")
+assert_eq(duo.first, "a")
+assert_eq(duo.second, "b")
+duo.first = "x"
+duo.second = "y"
+assert_eq(duo.first, "x")
+assert_eq(duo.second, "y")
+
+// 泛型 struct 方法修改自身字段
+struct Accumulator[T] {
+    T total
+
+    func add(T v) {
+        self.total = self.total + v
+    }
+}
+var acc = new Accumulator[int](total=0)
+acc.add(10)
+acc.add(20)
+assert_eq(acc.total, 30)
+
+// float 泛型实例化
+var facc = new Accumulator[float](total=0.0)
+facc.add(1.5)
+facc.add(2.5)
+assert_eq(facc.total, 4.0)
+
+// 三个泛型参数
+struct Triple[A, B, C] {
+    A first
+    B second
+    C third
+}
+var t = new Triple[int, string, float](first=1, second="two", third=3.0)
+assert_eq(t.first, 1)
+assert_eq(t.second, "two")
+assert_eq(t.third, 3.0)
+
+// 泛型 struct 方法返回非泛型类型
+struct Holder[T] {
+    T data
+
+    func isNull(): bool {
+        return self.data == null
+    }
+}
+var hn = new Holder[int](data=null)
+var hv = new Holder[int](data=10)
+assert_eq(hn.isNull(), true)
+assert_eq(hv.isNull(), false)
+
+// 泛型 struct 嵌套泛型数组字段
+struct Matrix[T] {
+    Array[T] row
+}
+var mat = new Matrix[int](row=[1, 2, 3])
+assert_eq(mat.row[0], 1)
+mat.row[0] = 99
+assert_eq(mat.row[0], 99)
+
+// 泛型 struct 方法链式调用
+struct Chain[T] {
+    T val
+
+    func put(T v): T {
+        self.val = v
+        return self.val
+    }
+}
+var ch = new Chain[int](val=0)
+assert_eq(ch.put(5), 5)
+assert_eq(ch.val, 5)
+
+// --- 泛型类型作为函数参数和返回类型 ---
+
+// 泛型类型作为函数参数
+func unwrap(Box[int] b): int {
+    return b.value
+}
+
+// 泛型类型作为函数返回类型
+func makeBox(int v): Box[int] {
+    return new Box[int](value=v)
+}
+
+var b1 = new Box[int](value=42)
+assert_eq(unwrap(b1), 42)
+
+var b2 = makeBox(99)
+assert_eq(b2.value, 99)
+
+// 多泛型参数类型作为返回类型
+func makePair(string k, int v): Pair[string, int] {
+    return new Pair[string, int](key=k, val=v)
+}
+
+var mp = makePair("age", 25)
+assert_eq(mp.key, "age")
+assert_eq(mp.val, 25)
+
+// --- 嵌套泛型类型 ---
+
+struct Wrapper[T] {
+    T inner
+}
+
+var nested = new Wrapper[Box[int]](inner=new Box[int](value=77))
+assert_eq(nested.inner.value, 77)
+nested.inner.value = 100
+assert_eq(nested.inner.value, 100)
+
+// --- 泛型方法互相调用 ---
+
+struct Calc[T] {
+    T base
+
+    func add(T v): T {
+        return self.base + v
+    }
+
+    func double(): T {
+        return self.add(self.base)
+    }
+}
+
+var calc = new Calc[int](base=5)
+assert_eq(calc.add(3), 8)
+assert_eq(calc.double(), 10)
+
+// --- 泛型参数比较操作 ---
+
+struct Range[T] {
+    T lo
+    T hi
+
+    func contains(T v): bool {
+        return v >= self.lo and v <= self.hi
+    }
+}
+
+var rng = new Range[int](lo=1, hi=10)
+assert_eq(rng.contains(5), true)
+assert_eq(rng.contains(0), false)
+assert_eq(rng.contains(10), true)
+assert_eq(rng.contains(11), false)
+
+// --- 泛型函数 ---
+
+// 简单泛型函数
+func identity[T](T v): T {
+    return v
+}
+
+assert_eq(identity[int](42), 42)
+assert_eq(identity[string]("hello"), "hello")
+
+// 泛型函数：条件返回
+func max[T](T a, T b): T {
+    if a >= b {
+        return a
+    }
+    return b
+}
+
+assert_eq(max[int](3, 5), 5)
+assert_eq(max[int](10, 2), 10)
+assert_eq(max[string]("abc", "xyz"), "xyz")
+
+// 泛型函数：返回第一个非null值
+func coalesce[T](T a, T b): T {
+    if a != null {
+        return a
+    }
+    return b
+}
+
+assert_eq(coalesce[int](null, 42), 42)
+assert_eq(coalesce[int](10, 20), 10)
+assert_eq(coalesce[string](null, "default"), "default")
+
+// 泛型函数：两参数不同类型
+func firstOf[T, U](T a, U b): T {
+    return a
+}
+
+func secondOf[T, U](T a, U b): U {
+    return b
+}
+
+assert_eq(firstOf[int, string](1, "x"), 1)
+assert_eq(secondOf[int, string](1, "x"), "x")
+
+// --- 泛型函数接受泛型 struct 参数 ---
+
+func unbox[T](Box[T] b): T {
+    return b.value
+}
+
+var boxed42 = new Box[int](value=42)
+assert_eq(unbox[int](boxed42), 42)
+
+var boxedHello = new Box[string](value="hello")
+assert_eq(unbox[string](boxedHello), "hello")
+
+print("test_generic_struct passed")

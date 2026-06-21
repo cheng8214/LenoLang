@@ -217,7 +217,7 @@ struct Ast {
         struct { char* module_name; char* alias; char* file_path; } import;
         struct { Ast* decl; } export;
         struct { char* module_name; char* symbol_name; } use;
-        struct { char* module_name; char* method_name; AstList args; SymRef lib_ref; } module_call;
+        struct { char* module_name; char* method_name; AstList args; SymRef lib_ref; TypeInfo** generic_type_args; int generic_type_count; char** generic_type_names; } module_call;
         struct { char* module_name; char* member_name; SymRef ref; } module_access;
         struct {
             char** parts;      // 字符串片段数组
@@ -252,6 +252,9 @@ struct Ast {
             int method_count;   // 方法数量
             char** impl_names;  // impl 声明的 face 名称数组
             int impl_count;     // impl 声明数量
+            // 泛型类型参数
+            char** type_params;        // 类型参数名数组（如 ["T", "U"]）
+            int type_param_count;      // 类型参数数量
         } struct_def;
         struct {
             char* name;              // face 名称
@@ -260,6 +263,8 @@ struct Ast {
             TypeInfo*** method_param_types; // 方法参数类型数组
             int* method_param_counts;      // 方法参数数量数组
             int method_count;        // 方法数量
+            char** type_params;      // 类型参数名数组（如 ["T"]）
+            int type_param_count;    // 类型参数数量
         } face_def;
         struct {
             char* name;        // cstruct 名称
@@ -301,6 +306,9 @@ struct Ast {
             char** field_names; // 字段名称数组（命名参数）
             Ast** field_values; // 字段值表达式数组
             int field_count;    // 字段数量
+            // 泛型类型参数（实例化时提供，如 new Box[int]{value: 42}）
+            TypeInfo** generic_type_args;   // 具体类型参数数组（如 [TYPE_INT]）
+            int generic_type_count;         // 类型参数数量
         } struct_init;
         struct {
             Ast* obj;          // 对象表达式

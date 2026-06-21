@@ -5,7 +5,7 @@
 // ============================================================================
 
 // 解析单个 TypeInfo 中的泛型参数
-static void resolve_generic_in_type(TypeInfo* type, char** type_params, int count) {
+void resolve_generic_in_type(TypeInfo* type, char** type_params, int count) {
     if (!type) return;
     if (type->kind == TYPE_STRUCT && type->struct_name) {
         for (int i = 0; i < count; i++) {
@@ -191,6 +191,36 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             resolve_generic_in_type(ast->u.func.param_types[i], ast->u.func.type_params, ast->u.func.type_param_count);
         }
         resolve_generic_in_type(ast->u.func.return_type, ast->u.func.type_params, ast->u.func.type_param_count);
+    }
+
+    // struct 方法：从 self 参数类型获取 struct 的泛型参数并解析
+    if (is_struct_method && ast->u.func.pcnt > 0 && ast->u.func.param_types[0]) {
+        TypeInfo* self_type = ast->u.func.param_types[0];
+        if (self_type->kind == TYPE_STRUCT && self_type->generic_count > 0 && self_type->generic_args) {
+            // 构建泛型参数名数组
+            int gp_count = self_type->generic_count;
+            char** gp_names = (char**)malloc(sizeof(char*) * gp_count);
+            for (int i = 0; i < gp_count; i++) {
+                if (self_type->generic_args[i]->kind == TYPE_GENERIC_PARAM && self_type->generic_args[i]->type_param_name) {
+                    gp_names[i] = strdup(self_type->generic_args[i]->type_param_name);
+                } else {
+                    gp_names[i] = NULL;
+                }
+            }
+            // 解析方法参数和返回类型中的泛型参数
+            for (int i = 1; i < ast->u.func.pcnt; i++) {
+                resolve_generic_in_type(ast->u.func.param_types[i], gp_names, gp_count);
+            }
+            resolve_generic_in_type(ast->u.func.return_type, gp_names, gp_count);
+            // 保存到 ast 以便后续 resolve_generic_in_ast 使用
+            if (!ast->u.func.type_params && !ast->u.func.type_param_count) {
+                ast->u.func.type_param_count = gp_count;
+                ast->u.func.type_params = gp_names;
+            } else {
+                for (int i = 0; i < gp_count; i++) free(gp_names[i]);
+                free(gp_names);
+            }
+        }
     }
 
     // ========== 默认参数语义检查 ==========

@@ -522,19 +522,27 @@ static void gen_call(CodeGen* gen, Ast* ast) {
     }
 
     // 检测 dict.set(key, value) 模式并优化为 OP_DICT_SET
+    // 注意：struct 方法调用时 self 会被加入 args，导致 args.count==2，需要排除 struct/face receiver
     if (ast->u.call.callee->kind == AST_INDEX &&
         ast->u.call.callee->u.index.index->kind == AST_STRING &&
         ast->u.call.args.count == 2 &&
         strcmp(ast->u.call.callee->u.index.index->u.string.value, "set") == 0) {
-        // 生成字典对象
-        gen_expr(gen, ast->u.call.callee->u.index.obj);
-        // 生成键参数
-        gen_expr(gen, ast->u.call.args.items[0]);
-        // 生成值参数
-        gen_expr(gen, ast->u.call.args.items[1]);
-        // 使用专用字节码
-        emit_byte(gen, OP_DICT_SET, ast->line);
-        return;
+        // 检查 receiver 是否是 struct/face，如果是则跳过 dict.set 优化
+        TypeInfo* receiver_type = infer_expr_type(gen->sem, ast->u.call.callee->u.index.obj);
+        int is_struct_or_face = (receiver_type && (receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_FACE || receiver_type->kind == TYPE_CSTRUCT));
+        if (receiver_type) type_free(receiver_type);
+
+        if (!is_struct_or_face) {
+            // 生成字典对象
+            gen_expr(gen, ast->u.call.callee->u.index.obj);
+            // 生成键参数
+            gen_expr(gen, ast->u.call.args.items[0]);
+            // 生成值参数
+            gen_expr(gen, ast->u.call.args.items[1]);
+            // 使用专用字节码
+            emit_byte(gen, OP_DICT_SET, ast->line);
+            return;
+        }
     }
 
     // 检测 struct 方法调用: obj.method(args)

@@ -1,0 +1,99 @@
+// 泛型 face 与多态
+
+// 可排序接口（非泛型 face）
+face Sortable {
+    func sortKey(): float
+}
+
+// 可描述接口
+face Describable {
+    func describe(): string
+}
+
+// --- 实现 Sortable 的 struct ---
+
+struct Student impl Sortable, Describable {
+    string name
+    float score
+
+    func sortKey(): float {
+        return self.score
+    }
+
+    func describe(): string {
+        return self.name + ": " + self.score
+    }
+}
+
+struct Product impl Sortable, Describable {
+    string name
+    float price
+
+    func sortKey(): float {
+        return self.price
+    }
+
+    func describe(): string {
+        return self.name + " $ " + self.price
+    }
+}
+
+// 泛型函数：按排序键找最优
+func best(Sortable a, Sortable b): Sortable {
+    if a.sortKey() >= b.sortKey() { return a }
+    return b
+}
+
+var stu1 = new Student(name="Alice", score=85.0)
+var stu2 = new Student(name="Bob", score=92.0)
+var topStu = best(stu1, stu2)
+print(topStu.name)              // Bob
+
+var prod1 = new Product(name="Book", price=29.9)
+var prod2 = new Product(name="Pen", price=5.5)
+var expensive = best(prod1, prod2)
+print(expensive.name)           // Book
+
+// face 类型守卫
+var items = [stu1, prod1, stu2, prod2]
+for items to item {
+    if item is Student {
+        var s = item
+        print("Student: " + s.name)
+    }
+    if item is Product {
+        var p = item
+        print("Product: " + p.name)
+    }
+}
+
+// --- 泛型 face 定义（目前仅支持定义，impl 尚不支持带泛型参数） ---
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+// 可以定义泛型 face，struct 方法签名匹配即可使用
+struct IntBox {
+    int value
+
+    func compareTo(int other): int {
+        if self.value < other { return -1 }
+        if self.value > other { return 1 }
+        return 0
+    }
+}
+
+var box = new IntBox(value=42)
+print(box.compareTo(10))        // 1
+print(box.compareTo(42))        // 0
+print(box.compareTo(100))       // -1
+
+// --- 泛型函数 + face 参数 ---
+func printAll(Describable a, Describable b) {
+    print(a.describe())
+    print(b.describe())
+}
+
+printAll(stu1, prod1)
+// Alice: 85
+// Book $ 29.9

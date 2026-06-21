@@ -1,0 +1,19 @@
+// 泛型 face 测试
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct IntBox {
+    int value
+
+    func compareTo(int other): int {
+        if self.value < other { return -1 }
+        if self.value > other { return 1 }
+        return 0
+    }
+}
+
+var box = new IntBox(value=42)
+print(box.compareTo(10))
+print(box.compareTo(42))
+print(box.compareTo(100))

@@ -1,8 +1,9 @@
 // export alias 断言测试
-import "alias_export_mod.leno" as m
+alias Size = int
+alias Name = string
 
 main() {
-    // Size = int 被正确导入
+    // Size = int 被正确使用
     Size a = 10
     assert_eq(a, 10)
 

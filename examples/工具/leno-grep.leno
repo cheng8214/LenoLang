@@ -4,7 +4,6 @@ import files
 import strings
 import regexs
 import dirs
-import times
 
 int opt_line     = 0
 int opt_icase    = 0
@@ -17,14 +16,13 @@ string sep       = if _os() == "windows" then "\\" else "/"
 func is_match(string line, string pattern):bool {
     var l = if opt_icase then strings.to_lower(line)   else line
     var p = if opt_icase then strings.to_lower(pattern) else pattern
-    if opt_regex { return regexs.find(l, p) >= 0 }    // find 搜索子串，match 只锚定开头
-    return strings.has(l, p)
+    return if opt_regex then regexs.match(l, p) else strings.has(l, p)
 }
 
 // 检查文件大小（不读取内容）
 func file_size(string path):int {
-    if not files.exists(path) { return -1 }
-    var f = files.open(path, "r")  // exists 已确认，不会抛异常
+    var f = files.open(path, "r")
+    if f == null { return -1 }
     var sz = f.len()
     f.close()
     return sz
@@ -89,15 +87,13 @@ main() {
     i = i + 1
     if i >= args.len() { print("no file/dir"); return }
 
-    var t0 = times.ms()
     while i < args.len() {
         var target = args[i]
         if opt_recurse { grep_dir(target, pat) }
         else           { grep_file(target, pat) }
         i = i + 1
     }
-    var elapsed = times.ms() - t0
     if files_done >= 1 {
-        print("--- " + matched + " matches in " + files_done + " files (" + elapsed + "ms)")
+        print("--- " + matched + " matches in " + files_done + " files")
     }
 }

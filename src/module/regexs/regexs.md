@@ -36,20 +36,33 @@ var result = regexs.match(text, "Hello.*")  // true
 
 #### `match(str, pattern)`
 
-检查字符串是否完全匹配正则表达式。
+**锚定匹配**：从字符串开头开始匹配，等价于 `^pattern`。不搜索子串。
+
+> ⚠️ **注意**：`match` 不是全文搜索！要搜索字符串中任意位置的匹配，请用 `find()`。例如：
+> - `match("abc set_volume", "set_")` → `false`（不以 "set_" 开头）
+> - `find("abc set_volume", "set_") >= 0` → `true`（搜索到子串）
 
 **参数**:
 - `str` (string): 要检查的字符串
 - `pattern` (string): 正则表达式模式
 
-**返回**: `bool` - 是否匹配
+**返回**: `bool` - 是否从开头匹配
 
 ```leno
-regexs.match("hello123", "[a-z]+")        // true
-regexs.match("hello123", "[a-z]+[0-9]+")  // true
-regexs.match("hello", "^[a-z]+$")         // true
+regexs.match("hello123", "[a-z]+")        // true (以字母开头)
+regexs.match("hello123", "\\d+")          // false (不以数字开头)
+regexs.match("hello", "^[a-z]+$")         // true (全字匹配)
 regexs.match("Hello123", "^[a-z]+$")      // false (大写H不匹配)
 ```
+
+---
+
+#### `match` vs `find` 对比
+
+| 函数 | 行为 | 等价于 | 适用场景 |
+|------|------|--------|---------|
+| `match` | 从开头匹配 | `^pattern` | 验证字符串格式、前缀匹配 |
+| `find >= 0` | 搜索子串 | 全文搜索 | grep 搜索、提取子串 |
 
 ---
 

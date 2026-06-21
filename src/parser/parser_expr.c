@@ -1,5 +1,22 @@
 #include "parser_internal.h"
 
+// 判断 token 类型是否可能是泛型类型参数的起始 token
+// 包括明确的类型关键字和标识符（可能是自定义 struct 名）
+static int is_generic_type_start_token(LenoTokenType type) {
+    switch (type) {
+        case TOK_INT_TYPE: case TOK_FLOAT_TYPE: case TOK_STRING_TYPE:
+        case TOK_BOOL_TYPE: case TOK_ANY_TYPE: case TOK_PTR_TYPE:
+        case TOK_ARRAY_TYPE: case TOK_DICT_TYPE: case TOK_STYLE_TYPE:
+        case TOK_FILE_TYPE: case TOK_WIN_TYPE: case TOK_DRAW_TYPE:
+        case TOK_EVENT_TYPE: case TOK_RGB_TYPE: case TOK_IMAGE_TYPE:
+        case TOK_SOCKET_TYPE: case TOK_FONT_TYPE: case TOK_BUTTON_TYPE:
+        case TOK_IDENT:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 // ============================================================================
 // 前向声明
 // ============================================================================
@@ -584,6 +601,9 @@ Ast* parse_call(Parser* p, Ast* callee) {
     Ast* ast = ast_new(AST_CALL, line);
     ast->u.call.callee = callee;
     ast_list_init(&ast->u.call.args);
+    ast->u.call.generic_type_args = NULL;
+    ast->u.call.generic_type_count = 0;
+    ast->u.call.generic_type_names = NULL;
     
     lexer_next(&p->lex); // 消费 '('
     
@@ -622,6 +642,30 @@ Ast* parse_new(Parser* p) {
     char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex); // 消费 struct 名称
 
+    // 解析可选的泛型类型参数: new Box[int](value: 42)
+    TypeInfo** generic_type_args = NULL;
+    int generic_type_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int gt_capacity = 8;
+        generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * gt_capacity);
+
+        do {
+            if (generic_type_count >= gt_capacity) {
+                gt_capacity *= 2;
+                generic_type_args = (TypeInfo**)realloc(generic_type_args, sizeof(TypeInfo*) * gt_capacity);
+            }
+            TypeInfo* type_arg = parse_type(p);
+            if (!type_arg) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数");
+                type_arg = type_new(TYPE_ANY);
+            }
+            generic_type_args[generic_type_count++] = type_arg;
+        } while (match(p, TOK_COMMA));
+
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
     // 支持 new module.StructName(...) 语法
     if (p->lex.current.type == TOK_DOT) {
         lexer_next(&p->lex); // 消费 '.'
@@ -653,6 +697,8 @@ Ast* parse_new(Parser* p) {
         ast->u.struct_init.field_names = NULL;
         ast->u.struct_init.field_values = NULL;
         ast->u.struct_init.field_count = 0;
+        ast->u.struct_init.generic_type_args = generic_type_args;
+        ast->u.struct_init.generic_type_count = generic_type_count;
 
         int capacity = 8;
         ast->u.struct_init.field_names = (char**)malloc(sizeof(char*) * capacity);
@@ -701,6 +747,8 @@ Ast* parse_new(Parser* p) {
     ast->u.struct_init.field_names = NULL;
     ast->u.struct_init.field_values = NULL;
     ast->u.struct_init.field_count = 0;
+    ast->u.struct_init.generic_type_args = generic_type_args;
+    ast->u.struct_init.generic_type_count = generic_type_count;
 
     int capacity = 8;
     ast->u.struct_init.field_names = (char**)malloc(sizeof(char*) * capacity);
@@ -746,10 +794,112 @@ Ast* parse_new(Parser* p) {
 }
 
 // 解析索引表达式 arr[index] 或切片 arr[start:end]
+// 同时支持泛型函数调用：funcName[int](args) 或 funcName[Box](args)
 Ast* parse_index(Parser* p, Ast* obj) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // 消费 '['
-    
+
+    // 检查是否是泛型函数调用：funcName[int, string](args) 或 obj.method[Type](args)
+    // 条件：obj 是 AST_VAR、AST_FIELD_ACCESS、AST_MODULE_ACCESS
+    //       或 AST_INDEX（属性访问 expr["method"]，index 是字符串字面量）
+    //       且 [ 后面是类型关键字或标识符
+    int is_generic_call_candidate = (obj->kind == AST_VAR || obj->kind == AST_FIELD_ACCESS || obj->kind == AST_MODULE_ACCESS);
+    // 也支持 (expr).method[Type](args) 模式：obj 是 AST_INDEX，index 是字符串字面量
+    if (obj->kind == AST_INDEX && obj->u.index.index && obj->u.index.index->kind == AST_STRING) {
+        is_generic_call_candidate = 1;
+    }
+    if (is_generic_call_candidate && is_generic_type_start_token(p->lex.current.type)) {
+        // 保存词法器状态，以便回退
+        Lexer saved_lex = p->lex;
+
+        // 尝试解析为泛型类型参数
+        TypeInfo** generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * 8);
+        char** generic_type_names = (char**)malloc(sizeof(char*) * 8);
+        int gt_capacity = 8;
+        int count = 0;
+        int parse_ok = 1;
+
+        do {
+            if (count >= gt_capacity) {
+                gt_capacity *= 2;
+                generic_type_args = (TypeInfo**)realloc(generic_type_args, sizeof(TypeInfo*) * gt_capacity);
+                generic_type_names = (char**)realloc(generic_type_names, sizeof(char*) * gt_capacity);
+            }
+            TypeInfo* arg_type = parse_type(p);
+            if (!arg_type) { parse_ok = 0; break; }
+            const char* tn = type_to_string(arg_type);
+            generic_type_names[count] = strdup(tn);
+            generic_type_args[count] = arg_type;
+            count++;
+        } while (p->lex.current.type == TOK_COMMA && (lexer_next(&p->lex), 1));
+
+        if (parse_ok && p->lex.current.type == TOK_RBRACKET) {
+            lexer_next(&p->lex); // 消费 ']'
+
+            // 检查后面是否跟 ( — 如果是，则为泛型函数调用
+            if (p->lex.current.type == TOK_LPAREN) {
+                // 如果 obj 是 MODULE_ACCESS（如 intBox.map），创建 MODULE_CALL
+                if (obj->kind == AST_MODULE_ACCESS) {
+                    Ast* ast = ast_new(AST_MODULE_CALL, line);
+                    ast->u.module_call.module_name = obj->u.module_access.module_name;
+                    ast->u.module_call.method_name = obj->u.module_access.member_name;
+                    ast_list_init(&ast->u.module_call.args);
+                    ast->u.module_call.lib_ref.kind = SYM_GLOBAL;
+                    ast->u.module_call.lib_ref.index = -1;
+                    ast->u.module_call.lib_ref.name = NULL;
+                    ast->u.module_call.generic_type_args = generic_type_args;
+                    ast->u.module_call.generic_type_count = count;
+                    ast->u.module_call.generic_type_names = generic_type_names;
+
+                    // 释放原始 MODULE_ACCESS（name 已转移，需置 NULL 避免双重释放）
+                    obj->u.module_access.module_name = NULL;
+                    obj->u.module_access.member_name = NULL;
+                    free(obj->u.module_access.ref.name);
+                    obj->u.module_access.ref.name = NULL;
+                    free(obj);
+
+                    lexer_next(&p->lex); // 消费 '('
+                    if (p->lex.current.type != TOK_RPAREN) {
+                        do {
+                            Ast* arg = parse_expression(p);
+                            ast_list_add(&ast->u.module_call.args, arg);
+                        } while (match(p, TOK_COMMA));
+                    }
+                    consume(p, TOK_RPAREN, "期望 ')'");
+                    return ast;
+                }
+
+                Ast* ast = ast_new(AST_CALL, line);
+                ast->u.call.callee = obj;
+                ast_list_init(&ast->u.call.args);
+                ast->u.call.generic_type_args = generic_type_args;
+                ast->u.call.generic_type_count = count;
+                ast->u.call.generic_type_names = generic_type_names;
+
+                lexer_next(&p->lex); // 消费 '('
+                if (p->lex.current.type != TOK_RPAREN) {
+                    do {
+                        Ast* arg = parse_expression(p);
+                        ast_list_add(&ast->u.call.args, arg);
+                    } while (match(p, TOK_COMMA));
+                }
+                consume(p, TOK_RPAREN, "期望 ')'");
+                return ast;
+            }
+        }
+
+        // 不是泛型调用，清理泛型解析结果
+        for (int i = 0; i < count; i++) {
+            type_free(generic_type_args[i]);
+            free(generic_type_names[i]);
+        }
+        free(generic_type_args);
+        free(generic_type_names);
+
+        // 回退词法器状态，按普通索引处理
+        p->lex = saved_lex;
+    }
+
     // 检查是否是切片语法：arr[start:end]
     if (p->lex.current.type == TOK_COLON) {
         // 语法: arr[:end] - 从开头到end
@@ -824,6 +974,9 @@ Ast* parse_dot(Parser* p, Ast* left) {
             ast->u.module_call.module_name = left->u.var.name;
             ast->u.module_call.method_name = name;
             ast_list_init(&ast->u.module_call.args);
+            ast->u.module_call.generic_type_args = NULL;
+            ast->u.module_call.generic_type_count = 0;
+            ast->u.module_call.generic_type_names = NULL;
 
             // 释放原始 AST_VAR 节点（name 已转移，需置 NULL 避免双重释放）
             left->u.var.name = NULL;
