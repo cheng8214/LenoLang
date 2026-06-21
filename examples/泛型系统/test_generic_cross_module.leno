@@ -1,0 +1,25 @@
+// 测试4: 多模块交叉导入泛型
+import "generic_module2.leno" as gm
+import "generic_helper.leno" as gh
+use gm.Box
+use gh.Wrapper
+
+// 从两个不同模块导入的泛型 struct 交互
+var box = new Box[int](value=42)
+var wrapper = new Wrapper[string](inner="hello")
+
+assert(box.get() == 42)
+assert(wrapper.unwrap() == "hello")
+
+// 使用另一个模块的泛型函数
+var wrapped = gh.wrap[int](100)
+assert(wrapped.unwrap() == 100)
+
+// 交叉使用：Box 里放 Wrapper
+var wrappedStr = gh.wrap[string]("world")
+var boxOfWrapper = new Box[Wrapper[string]](value=wrappedStr)
+var inner = boxOfWrapper.get()
+var w = inner as Wrapper[string]
+assert(w.unwrap() == "world")
+
+print("test_generic_cross_module: ALL PASSED")

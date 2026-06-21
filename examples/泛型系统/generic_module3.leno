@@ -1,0 +1,12 @@
+// 导出泛型模块 - 用 get1 避免冲突
+export struct Box[T] {
+    T value
+
+    func get1(): T {
+        return self.value
+    }
+
+    func set1(T v): void {
+        self.value = v
+    }
+}

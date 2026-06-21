@@ -1,0 +1,12 @@
+// 导出泛型模块
+export struct Box[T] {
+    T value
+
+    func get(): T {
+        return self.value
+    }
+}
+
+export func identity[T](T v): T {
+    return v
+}

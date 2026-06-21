@@ -1,0 +1,14 @@
+// 测试泛型方法链调用
+import "generic_module3.leno" as gm
+use gm.Box
+
+var inner = new Box[int](value=42)
+var outer = new Box[Box[int]](value=inner)
+
+// 直接链式调用
+print(outer.get1().get1())
+
+// 分步调用
+var result = outer.get1()
+print(type(result))
+print(result.get1())

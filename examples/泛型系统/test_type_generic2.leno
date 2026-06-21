@@ -1,0 +1,25 @@
+// 测试泛型 struct 类型参数的 type()
+struct Box[T] {
+    T value
+
+    func getType(): string {
+        return type(self.value)
+    }
+}
+
+var ib = new Box[int](value=42)
+print(ib.getType())
+
+// 嵌套泛型
+var inner = new Box[int](value=42)
+var outer = new Box[Box[int]](value=inner)
+print(outer.getType())
+print(outer.value.getType())
+
+// 泛型函数中 type() 对泛型 struct 参数
+func unbox[T](Box[T] b): T {
+    print(type(b))
+    return b.value
+}
+
+unbox[int](new Box[int](value=42))

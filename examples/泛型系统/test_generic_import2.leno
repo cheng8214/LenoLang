@@ -1,0 +1,41 @@
+// 测试1: 多类型参数泛型模块导入
+import "generic_module2.leno" as gm
+use gm.Box
+use gm.Pair
+use gm.Container
+
+// 单类型参数 struct
+var intBox = new Box[int](value=42)
+assert(intBox.get() == 42)
+intBox.set(100)
+assert(intBox.get() == 100)
+
+var strBox = new Box[string](value="hello")
+assert(strBox.get() == "hello")
+
+// 双类型参数 struct
+var pair = new Pair[string, int](key="age", val=25)
+assert(pair.getKey() == "age")
+assert(pair.getVal() == 25)
+
+var pair2 = new Pair[int, string](key=1, val="one")
+assert(pair2.getKey() == 1)
+assert(pair2.getVal() == "one")
+
+// 泛型函数
+assert(gm.identity[int](42) == 42)
+assert(gm.identity[string]("hi") == "hi")
+
+// 双类型参数泛型函数
+var p = gm.makePair[string, int]("x", 10)
+assert(p.getKey() == "x")
+assert(p.getVal() == 10)
+
+// Container 带默认值
+var c = new Container[int]()
+assert(c.isEmpty() == true)
+c.put(99)
+assert(c.isEmpty() == false)
+assert(c.get() == 99)
+
+print("test_generic_import2: ALL PASSED")

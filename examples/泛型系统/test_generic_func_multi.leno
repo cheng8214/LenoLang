@@ -1,0 +1,20 @@
+// 测试5: 泛型函数多类型参数 + type() 调试
+import "generic_module2.leno" as gm
+use gm.Box
+use gm.Pair
+
+var intBox = new Box[int](value=1)
+var strBox = new Box[string](value="x")
+var p1 = gm.makePair[string, int]("key", 100)
+
+print("type(intBox) = " + type(intBox))
+print("type(strBox) = " + type(strBox))
+print("type(p1) = " + type(p1))
+
+// 测试核心功能
+assert(intBox.get() == 1)
+assert(strBox.get() == "x")
+assert(p1.getKey() == "key")
+assert(p1.getVal() == 100)
+
+print("test_generic_func_multi: CORE PASSED")

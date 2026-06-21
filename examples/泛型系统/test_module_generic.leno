@@ -1,0 +1,14 @@
+// 测试模块导入泛型 struct 的方法调用
+import "generic_module_doc.leno" as gm
+use gm.Box
+
+var inner = new Box[int](value=42)
+print(inner.get1())          // 42
+print(inner.add(8))          // 50
+print(inner.double())        // 84
+
+// 链式调用
+var outer = new Box[Box[int]](value=inner)
+print(outer.get1().get1())   // 42
+print(type(outer))           // Box[Box[int]]
+print(type(outer.get1()))    // Box[int]

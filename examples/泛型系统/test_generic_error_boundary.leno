@@ -1,0 +1,12 @@
+// 测试6: 泛型边界 - 错误场景
+import "generic_module2.leno" as gm
+use gm.Box
+
+// 测试：use 不存在的泛型 struct
+// use gm.NotExist  // 应该报错
+
+// 测试：泛型 struct 不带类型参数
+var box = new Box(value=42)  // 不带 [int] 能否工作？
+print(box.get())
+
+print("test_generic_error_boundary: done")

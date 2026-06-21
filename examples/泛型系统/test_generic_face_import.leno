@@ -1,0 +1,15 @@
+// 测试3: 泛型 face impl 导入 - 只测试 struct
+import "generic_face_module.leno" as gfm
+use gfm.IntVal
+
+var x = new IntVal(val=3)
+var y = new IntVal(val=5)
+
+// 调用 impl 的方法
+assert(x.compareTo(3) == 0)
+assert(y.compareTo(3) == 1)
+
+// type 测试
+assert(type(x) == "IntVal")
+
+print("test_generic_face_import: PASSED (struct only)")

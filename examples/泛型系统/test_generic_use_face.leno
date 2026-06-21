@@ -1,0 +1,20 @@
+// 测试8: use 导入泛型 face
+import "generic_face_module.leno" as gfm
+use gfm.IntVal
+use gfm.Comparable
+
+var x = new IntVal(val=3)
+var y = new IntVal(val=5)
+
+// 调用 impl 的方法
+assert(x.compareTo(3) == 0)
+assert(y.compareTo(3) == 1)
+
+// face 类型变量
+var c = x as Comparable
+assert(c.compareTo(3) == 0)
+
+// type 测试
+assert(type(x) == "IntVal")
+
+print("test_generic_use_face: ALL PASSED")
