@@ -252,6 +252,8 @@ struct Ast {
             int method_count;   // 方法数量
             char** impl_names;  // impl 声明的 face 名称数组
             int impl_count;     // impl 声明数量
+            TypeInfo*** impl_type_args;  // impl 声明的 face 泛型参数（如 impl Comparable[int] 中的 [int]）
+            int* impl_type_arg_counts;   // 每个 impl 的泛型参数数量
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
             int type_param_count;      // 类型参数数量

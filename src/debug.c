@@ -300,9 +300,10 @@ int disassembleInstruction(Chunk* chunk, int offset) {
         case OP_STRUCT_INIT: {
             int name_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
             int arg_count = chunk->code[offset + 3];
-            printf(" name=%d args=%d", name_idx, arg_count);
-            // 跳过指令头 (4字节) + 字段索引 (每个1字节)
-            return offset + 4 + arg_count;
+            int generic_count = chunk->code[offset + 4];
+            printf(" name=%d args=%d generics=%d", name_idx, arg_count, generic_count);
+            // 跳过指令头 (5字节) + 泛型参数 (每个2字节) + 字段索引 (每个1字节)
+            return offset + 5 + generic_count * 2 + arg_count;
         }
         case OP_GET_FIELD:
         case OP_SET_FIELD: {

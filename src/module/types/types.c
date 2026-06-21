@@ -541,7 +541,25 @@ static Value native_type(int argCount, Value* args) {
                 ObjStruct* struct_obj = (ObjStruct*)val_as_obj(value);
                 ObjStructDef* struct_def = struct_obj->def;
                 if (struct_def && struct_def->name) {
-                    typeStr = str_copy(struct_def->name, (int)strlen(struct_def->name));
+                    if (struct_obj->generic_type_arg_count > 0 && struct_obj->generic_type_args) {
+                        // 泛型实例：返回 "Box[int]" 格式
+                        int total_len = (int)strlen(struct_def->name) + 2; // name + "[]"
+                        for (int i = 0; i < struct_obj->generic_type_arg_count; i++) {
+                            total_len += (int)strlen(struct_obj->generic_type_args[i]);
+                            if (i > 0) total_len += 2; // ", "
+                        }
+                        char* buf = (char*)malloc(total_len + 1);
+                        int offset = snprintf(buf, total_len + 1, "%s[", struct_def->name);
+                        for (int i = 0; i < struct_obj->generic_type_arg_count; i++) {
+                            if (i > 0) offset += snprintf(buf + offset, total_len + 1 - offset, ", ");
+                            offset += snprintf(buf + offset, total_len + 1 - offset, "%s", struct_obj->generic_type_args[i]);
+                        }
+                        snprintf(buf + offset, total_len + 1 - offset, "]");
+                        typeStr = str_copy(buf, (int)strlen(buf));
+                        free(buf);
+                    } else {
+                        typeStr = str_copy(struct_def->name, (int)strlen(struct_def->name));
+                    }
                 } else {
                     typeStr = str_copy("struct", 6);
                 }

@@ -166,6 +166,22 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
         }
     }
 
+    // 5.1 将 struct 方法也添加到模块导出表（key 为 StructName::methodName）
+    // 这样 VM 在 OP_GET_METHOD 中可以通过模块 exports 查找方法
+    {
+        for (int ei = 0; ei < func_dict->capacity; ei++) {
+            ObjDictEntry* entry = &func_dict->entries[ei];
+            if (entry && !val_is_null(entry->key) && val_is_obj(entry->key) &&
+                val_as_obj(entry->key)->type == OBJ_STRING) {
+                ObjString* key = (ObjString*)val_as_obj(entry->key);
+                // 只添加包含 :: 的 key（即 struct 方法）
+                if (key && key->chars && strstr(key->chars, "::")) {
+                    dict_set(module->exports, entry->key, entry->value);
+                }
+            }
+        }
+    }
+
     // 5.5 预分配模块全局变量表空间
     if (sem.root_scope && sem.root_scope->global_var_index > 0) {
         int needed_count = sem.root_scope->global_var_index;

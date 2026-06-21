@@ -568,6 +568,7 @@ typedef struct {
     int method_count;              // 方法数量
     char** impl_names;             // impl 声明的 face 名称数组
     int impl_count;                // impl 声明数量
+    int type_param_count;          // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
 } ObjStructDef;
 
 // 结构体实例对象
@@ -576,6 +577,8 @@ typedef struct {
     ObjStructDef* def;             // 结构体定义
     Value* field_values;           // 字段值数组
     ObjString* declared_face;      // 声明时的 face 类型名称（如 "Speaker"），NULL 表示未通过 face 声明
+    char** generic_type_args;      // 泛型参数类型名数组（如 ["int"]），NULL 表示非泛型实例
+    int generic_type_arg_count;    // 泛型参数数量
 } ObjStruct;
 
 // face 方法签名

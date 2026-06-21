@@ -25,6 +25,7 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
     def->methods = (StructMethodInfo*)calloc(method_count, sizeof(StructMethodInfo));
     def->impl_names = NULL;
     def->impl_count = 0;
+    def->type_param_count = 0;
     return def;
 }
 
@@ -116,6 +117,8 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
     obj->def = def;
     obj->field_values = (Value*)calloc(def->field_count, sizeof(Value));
     obj->declared_face = NULL;
+    obj->generic_type_args = NULL;
+    obj->generic_type_arg_count = 0;
 
     // 使用默认值初始化字段
     for (int i = 0; i < def->field_count; i++) {

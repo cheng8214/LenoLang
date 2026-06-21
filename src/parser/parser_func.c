@@ -1106,14 +1106,18 @@ Ast* parse_struct_stmt(Parser* p) {
         consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
     }
 
-    // 解析可选的 impl 声明: struct Name impl Face1, Face2 { ... }
+    // 解析可选的 impl 声明: struct Name impl Face1, Face2[Type] { ... }
     char** impl_names = NULL;
+    TypeInfo*** impl_type_args = NULL;
+    int* impl_type_arg_counts = NULL;
     int impl_count = 0;
     int impl_capacity = 4;
 
     if (p->lex.current.type == TOK_IMPL) {
         lexer_next(&p->lex); // 消费 'impl'
         impl_names = (char**)malloc(sizeof(char*) * impl_capacity);
+        impl_type_args = (TypeInfo***)malloc(sizeof(TypeInfo**) * impl_capacity);
+        impl_type_arg_counts = (int*)malloc(sizeof(int) * impl_capacity);
 
         while (1) {
             if (p->lex.current.type != TOK_IDENT) {
@@ -1123,11 +1127,36 @@ Ast* parse_struct_stmt(Parser* p) {
             char* iface_name = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
 
+            // 解析可选的泛型参数: impl Comparable[int]
+            TypeInfo** type_args = NULL;
+            int type_arg_count = 0;
+            if (p->lex.current.type == TOK_LBRACKET) {
+                int type_arg_capacity = 4;
+                type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * type_arg_capacity);
+                lexer_next(&p->lex); // 消费 '['
+                do {
+                    TypeInfo* arg_type = parse_type(p);
+                    if (arg_type) {
+                        if (type_arg_count >= type_arg_capacity) {
+                            type_arg_capacity *= 2;
+                            type_args = (TypeInfo**)realloc(type_args, sizeof(TypeInfo*) * type_arg_capacity);
+                        }
+                        type_args[type_arg_count++] = arg_type;
+                    }
+                } while (match(p, TOK_COMMA));
+                consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+            }
+
             if (impl_count >= impl_capacity) {
                 impl_capacity *= 2;
                 impl_names = (char**)realloc(impl_names, sizeof(char*) * impl_capacity);
+                impl_type_args = (TypeInfo***)realloc(impl_type_args, sizeof(TypeInfo**) * impl_capacity);
+                impl_type_arg_counts = (int*)realloc(impl_type_arg_counts, sizeof(int) * impl_capacity);
             }
-            impl_names[impl_count++] = iface_name;
+            impl_names[impl_count] = iface_name;
+            impl_type_args[impl_count] = type_args;
+            impl_type_arg_counts[impl_count] = type_arg_count;
+            impl_count++;
 
             if (p->lex.current.type == TOK_COMMA) {
                 lexer_next(&p->lex);
@@ -1317,6 +1346,8 @@ Ast* parse_struct_stmt(Parser* p) {
     ast->u.struct_def.method_count = method_count;
     ast->u.struct_def.impl_names = impl_names;
     ast->u.struct_def.impl_count = impl_count;
+    ast->u.struct_def.impl_type_args = impl_type_args;
+    ast->u.struct_def.impl_type_arg_counts = impl_type_arg_counts;
     ast->u.struct_def.type_params = type_params;
     ast->u.struct_def.type_param_count = type_param_count;
 

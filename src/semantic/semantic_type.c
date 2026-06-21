@@ -823,14 +823,23 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 }
 
                                 // 泛型参数替换：如果 obj_type 有具体泛型参数，替换返回类型中的泛型参数
-                                if (obj_type->generic_count > 0 && obj_type->generic_args) {
-                                    Symbol* struct_def_sym = scope_resolve(s->current, obj_type->struct_name);
-                                    if (struct_def_sym && struct_def_sym->struct_type_param_count > 0 && struct_def_sym->struct_type_params) {
-                                        for (int j = 0; j < struct_def_sym->struct_type_param_count && j < obj_type->generic_count; j++) {
-                                            TypeInfo* substituted = type_substitute(ret,
-                                                struct_def_sym->struct_type_params[j], obj_type->generic_args[j]);
-                                            type_free(ret);
-                                            ret = substituted;
+                                if (obj_type->generic_count > 0 && obj_type->generic_args && obj_type->struct_name) {
+                                    // 从模块符号表查找 struct 的泛型参数名
+                                    for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                        ImportedModuleInfo* info = &s->imported_modules[mi];
+                                        if (info->sym_table) {
+                                            ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
+                                            if (ssym && ssym->type_param_count > 0 && ssym->type_param_names) {
+                                                // 用 type_substitute 逐个替换泛型参数
+                                                TypeInfo* substituted = ret;
+                                                for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
+                                                    TypeInfo* new_ret = type_substitute(substituted, ssym->type_param_names[gi], obj_type->generic_args[gi]);
+                                                    type_free(substituted);
+                                                    substituted = new_ret;
+                                                }
+                                                ret = substituted;
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -868,9 +877,26 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                         ModuleStructMethod* method = module_symbol_table_find_struct_method(
                                             info->sym_table, obj_type->struct_name, method_name);
                                         if (method) {
-                                            TypeInfo* result = type_new(method->return_type);
-                                            if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
-                                                result->struct_name = strdup(method->return_struct_name);
+                                            TypeInfo* result = NULL;
+                                            // 如果返回类型是泛型参数，用 type_substitute 替换
+                                            if (method->return_type == TYPE_GENERIC_PARAM && method->return_type_param_name &&
+                                                obj_type->generic_count > 0 && obj_type->generic_args) {
+                                                ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
+                                                if (ssym && ssym->type_param_names) {
+                                                    // 找到泛型参数名对应的索引
+                                                    for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
+                                                        if (strcmp(ssym->type_param_names[gi], method->return_type_param_name) == 0) {
+                                                            result = type_copy(obj_type->generic_args[gi]);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if (!result) {
+                                                result = type_new(method->return_type);
+                                                if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
+                                                    result->struct_name = strdup(method->return_struct_name);
+                                                }
                                             }
                                             type_free(obj_type);
                                             return result;

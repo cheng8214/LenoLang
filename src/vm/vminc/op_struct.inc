@@ -180,26 +180,55 @@ OPCODE(OP_FACE_DEF) {
 OPCODE(OP_STRUCT_INIT) {
     frame = &vm.frames[vm.frame_cnt - 1];
     // 创建结构体实例
-    // 操作数：2字节结构体名称常量索引 + 1字节参数字段数量
+    // 操作数：2字节结构体名称常量索引 + 1字节参数字段数量 + 1字节泛型参数数量 + 泛型参数常量索引
     // 每个参数：1字节字段索引（编译期确定，避免运行时线性搜索）
     uint16_t name_idx = READ_SHORT();
     uint8_t arg_count = READ_BYTE();
-    
+
+    // 读取泛型参数信息
+    uint8_t generic_type_count = READ_BYTE();
+    char** generic_type_args = NULL;
+    if (generic_type_count > 0) {
+        generic_type_args = (char**)malloc(sizeof(char*) * generic_type_count);
+        for (int gi = 0; gi < generic_type_count; gi++) {
+            uint16_t type_name_idx = READ_SHORT();
+            Value type_name_val = frame->chunk->constants[type_name_idx];
+            if (val_is_obj(type_name_val) && val_as_obj(type_name_val)->type == OBJ_STRING) {
+                ObjString* type_name = (ObjString*)val_as_obj(type_name_val);
+                generic_type_args[gi] = strdup(type_name->chars);
+            } else {
+                generic_type_args[gi] = strdup("unknown");
+            }
+        }
+    }
+
     Value name_val = frame->chunk->constants[name_idx];
     if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
         runtime_error("结构体名称必须是字符串", GET_CURRENT_LINE());
+        if (generic_type_args) {
+            for (int gi = 0; gi < generic_type_count; gi++) free(generic_type_args[gi]);
+            free(generic_type_args);
+        }
         return -1;
     }
     ObjString* name = (ObjString*)val_as_obj(name_val);
-    
+
     ObjStructDef* def = struct_def_find(name->chars);
     if (!def) {
         runtime_error("未定义的结构体", GET_CURRENT_LINE());
+        if (generic_type_args) {
+            for (int gi = 0; gi < generic_type_count; gi++) free(generic_type_args[gi]);
+            free(generic_type_args);
+        }
         return -1;
     }
-    
+
     // 创建实例
     ObjStruct* obj = struct_instance_new(def);
+
+    // 设置泛型参数信息
+    obj->generic_type_args = generic_type_args;
+    obj->generic_type_arg_count = generic_type_count;
     
     // 设置参数字段
     for (int i = 0; i < arg_count; i++) {

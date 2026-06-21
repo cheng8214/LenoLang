@@ -8,6 +8,7 @@ typedef struct {
     char* name;                 // 函数名
     TypeKind return_type;       // 返回类型
     char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
+    int type_param_count;       // 泛型类型参数数量（如 identity[T] 的 type_param_count=1）
 } ModuleFuncSymbol;
 
 // 模块 struct 字段
@@ -22,6 +23,7 @@ typedef struct {
     char* name;                 // 方法名
     TypeKind return_type;       // 返回类型
     char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
+    char* return_type_param_name; // 如果返回类型是泛型参数（如 T），存储参数名
     int param_count;            // 参数数量（不包括 self）
     TypeKind* param_types;      // 参数类型数组（不包括 self）
 } ModuleStructMethod;
@@ -36,6 +38,8 @@ typedef struct {
     int is_cstruct;             // 是否是 cstruct (1 = 是, 0 = 否)
     int impl_count;             // 实现的 face 数量
     char** impl_names;          // 实现的 face 名称数组
+    int type_param_count;       // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
+    char** type_param_names;    // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
 } ModuleStructSymbol;
 
 // 模块 enum 符号
@@ -56,6 +60,7 @@ typedef struct {
     char* name;                 // face 名称
     int method_count;           // 方法数量
     ModuleFaceMethodSymbol* methods; // 方法数组
+    int type_param_count;       // 泛型类型参数数量（如 Comparable[T] 的 type_param_count=1）
 } ModuleFaceSymbol;
 
 // 模块变量符号
@@ -112,10 +117,10 @@ ModuleFuncSymbol* module_symbol_table_find_func(ModuleSymbolTable* table, const 
 ModuleStructSymbol* module_symbol_table_find_struct(ModuleSymbolTable* table, const char* struct_name);
 
 // 添加函数符号
-void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name);
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count);
 
 // 添加 struct 符号
-void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct);
+void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);
 
 // 查找 struct 方法
 ModuleStructMethod* module_symbol_table_find_struct_method(ModuleSymbolTable* table, const char* struct_name, const char* method_name);
@@ -130,7 +135,7 @@ void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name);
 ModuleFaceSymbol* module_symbol_table_find_face(ModuleSymbolTable* table, const char* face_name);
 
 // 添加 face 符号
-void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, int method_count, ModuleFaceMethodSymbol* methods);
+void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, int method_count, ModuleFaceMethodSymbol* methods, int type_param_count);
 
 // 查找变量符号
 ModuleVarSymbol* module_symbol_table_find_var(ModuleSymbolTable* table, const char* var_name);

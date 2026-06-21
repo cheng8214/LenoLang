@@ -1336,10 +1336,46 @@ void visit(Semantic* s, Ast* ast) {
                             int expected_arity;
                             TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &expected_arity);
 
+                            // 当原生方法表找不到时，回退到 func_table 查找模块导入的 struct 方法
+                            if (return_type == TYPE_ANY && expected_arity == -1 && receiver_type->struct_name) {
+                                char full_method_name[256];
+                                snprintf(full_method_name, sizeof(full_method_name), "%s::%s", receiver_type->struct_name, method_name);
+                                Ast* func_def = func_table_find(&s->func_table, full_method_name);
+                                if (func_def && func_def->kind == AST_FUNC_DEF) {
+                                    // 从占位符函数获取参数数量和返回类型
+                                    expected_arity = func_def->u.func.pcnt - 1; // 减去 self
+                                    if (func_def->u.func.return_type) {
+                                        return_type = func_def->u.func.return_type->kind;
+                                    }
+                                } else {
+                                    // 回退到模块符号表查找
+                                    for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                        ImportedModuleInfo* minfo = &s->imported_modules[mi];
+                                        if (minfo->sym_table) {
+                                            ModuleStructMethod* msym = module_symbol_table_find_struct_method(
+                                                minfo->sym_table, receiver_type->struct_name, method_name);
+                                            if (msym) {
+                                                expected_arity = msym->param_count;
+                                                return_type = msym->return_type;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // 当 return_type == TYPE_ANY 且 expected_arity == -1 时表示方法不存在
                             if (!(return_type == TYPE_ANY && expected_arity == -1)) {
                                 // 是实例方法，检查参数
                                 int actual_arity = ast->u.call.args.count;
+                                // 如果第一个参数是 self（方法内部调用 self["method"](self, ...)），
+                                // self 已经被 func_table 的 pcnt 计入了，需要从 actual_arity 中减去
+                                if (actual_arity > 0 && ast->u.call.args.items[0] &&
+                                    ast->u.call.args.items[0]->kind == AST_VAR &&
+                                    ast->u.call.args.items[0]->u.var.name &&
+                                    strcmp(ast->u.call.args.items[0]->u.var.name, "self") == 0) {
+                                    actual_arity--;
+                                }
                                 const InstanceMethodMeta* meta = native_find_instance_method(type_name, method_name);
 
                                 // arity >= 0: 固定参数数量
@@ -2384,6 +2420,9 @@ void visit(Semantic* s, Ast* ast) {
                             if (!struct_sym->is_cstruct && !struct_def_find(struct_sym->name)) {
                                 ObjStructDef* sdef = struct_def_new(struct_sym->name, struct_sym->field_count, struct_sym->method_count);
                                 if (sdef) {
+                                    // 设置泛型类型参数数量
+                                    sdef->type_param_count = struct_sym->type_param_count;
+
                                     // 设置 struct 方法名
                                     for (int mi = 0; mi < struct_sym->method_count; mi++) {
                                         const char* full_method_name = struct_sym->methods[mi].name;
@@ -2481,11 +2520,22 @@ void visit(Semantic* s, Ast* ast) {
                         sym->struct_field_names[i] = strdup(struct_sym->fields[i].name);
                         sym->struct_field_types[i] = type_new(struct_sym->fields[i].type);
                     }
+                    // 设置泛型类型参数信息
+                    sym->struct_type_param_count = struct_sym->type_param_count;
+                    if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                        sym->struct_type_params = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                        for (int i = 0; i < struct_sym->type_param_count; i++) {
+                            sym->struct_type_params[i] = strdup(struct_sym->type_param_names[i]);
+                        }
+                    }
                 }
                 // 同时注册 struct 定义到全局表，用于类型检查（face 实现检查）
                 if (!struct_sym->is_cstruct && !struct_def_find(symbol_name)) {
                     ObjStructDef* sdef = struct_def_new(symbol_name, struct_sym->field_count, struct_sym->method_count);
                     if (sdef) {
+                        // 设置泛型类型参数数量
+                        sdef->type_param_count = struct_sym->type_param_count;
+
                         // 设置 struct 方法名（用于方法查找）
                         for (int i = 0; i < struct_sym->method_count; i++) {
                             // 方法名在模块符号表中是 "StructName::method_name" 格式
@@ -2530,6 +2580,9 @@ void visit(Semantic* s, Ast* ast) {
                             placeholder->u.func.return_type = type_new(struct_sym->methods[mi].return_type);
                             if (struct_sym->methods[mi].return_struct_name) {
                                 placeholder->u.func.return_type->struct_name = strdup(struct_sym->methods[mi].return_struct_name);
+                            }
+                            if (struct_sym->methods[mi].return_type == TYPE_GENERIC_PARAM && struct_sym->methods[mi].return_type_param_name) {
+                                placeholder->u.func.return_type->type_param_name = strdup(struct_sym->methods[mi].return_type_param_name);
                             }
                             placeholder->u.func.default_count = 0;
                             func_table_add(&s->func_table, full_method_name, placeholder);
@@ -4455,6 +4508,13 @@ void visit(Semantic* s, Ast* ast) {
                             sym->type = type_new(TYPE_STRUCT);
                             sym->type->struct_name = strdup(struct_name_part);
                             sym->struct_field_count = mod_struct->field_count;
+                            sym->struct_type_param_count = mod_struct->type_param_count;
+                            if (mod_struct->type_param_count > 0 && mod_struct->type_param_names) {
+                                sym->struct_type_params = (char**)malloc(sizeof(char*) * mod_struct->type_param_count);
+                                for (int ti = 0; ti < mod_struct->type_param_count; ti++) {
+                                    sym->struct_type_params[ti] = strdup(mod_struct->type_param_names[ti]);
+                                }
+                            }
                             if (mod_struct->field_count > 0) {
                                 sym->struct_field_names = (char**)malloc(sizeof(char*) * mod_struct->field_count);
                                 sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * mod_struct->field_count);
@@ -4482,6 +4542,11 @@ void visit(Semantic* s, Ast* ast) {
                 } else if (sym->type->kind != TYPE_STRUCT) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "'%s' 不是 struct 类型", ast->u.struct_init.struct_name);
+                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                } else if (sym->struct_type_param_count > 0 && ast->u.struct_init.generic_type_count == 0) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "泛型 struct '%s' 需要类型参数（如 %s[类型]）",
+                             ast->u.struct_init.struct_name, ast->u.struct_init.struct_name);
                     error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                 } else {
                     // 检查字段类型

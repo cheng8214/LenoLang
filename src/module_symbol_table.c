@@ -60,6 +60,7 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         for (int j = 0; j < table->structs[i].method_count; j++) {
             free(table->structs[i].methods[j].name);
             free(table->structs[i].methods[j].return_struct_name);
+            free(table->structs[i].methods[j].return_type_param_name);
             free(table->structs[i].methods[j].param_types);
         }
         free(table->structs[i].methods);
@@ -68,6 +69,11 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
             free(table->structs[i].impl_names[j]);
         }
         free(table->structs[i].impl_names);
+        // 释放泛型参数名数组
+        for (int j = 0; j < table->structs[i].type_param_count; j++) {
+            free(table->structs[i].type_param_names[j]);
+        }
+        free(table->structs[i].type_param_names);
     }
     free(table->structs);
 
@@ -108,7 +114,7 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
 }
 
 // 添加函数符号
-void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name) {
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count) {
     if (!table || !name) return;
 
     // 扩容
@@ -124,10 +130,11 @@ void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, Ty
     func->name = strdup(name);
     func->return_type = return_type;
     func->return_struct_name = return_struct_name ? strdup(return_struct_name) : NULL;
+    func->type_param_count = type_param_count;
 }
 
 // 添加 struct 符号
-void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct) {
+void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names) {
     if (!table || !name) return;
 
     // 扩容
@@ -148,6 +155,14 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
     st->is_cstruct = is_cstruct;
     st->impl_count = 0;
     st->impl_names = NULL;
+    st->type_param_count = type_param_count;
+    st->type_param_names = NULL;
+    if (type_param_count > 0 && type_param_names) {
+        st->type_param_names = (char**)malloc(sizeof(char*) * type_param_count);
+        for (int i = 0; i < type_param_count; i++) {
+            st->type_param_names[i] = strdup(type_param_names[i]);
+        }
+    }
 
     if (field_count > 0 && fields) {
         st->fields = (ModuleStructField*)malloc(sizeof(ModuleStructField) * field_count);
@@ -164,6 +179,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             st->methods[i].name = strdup(methods[i].name);
             st->methods[i].return_type = methods[i].return_type;
             st->methods[i].return_struct_name = methods[i].return_struct_name ? strdup(methods[i].return_struct_name) : NULL;
+            st->methods[i].return_type_param_name = methods[i].return_type_param_name ? strdup(methods[i].return_type_param_name) : NULL;
             st->methods[i].param_count = methods[i].param_count;
             st->methods[i].param_types = NULL;
             if (methods[i].param_count > 0 && methods[i].param_types) {
@@ -260,7 +276,7 @@ ModuleFaceSymbol* module_symbol_table_find_face(ModuleSymbolTable* table, const 
 }
 
 // 添加 face 符号
-void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, int method_count, ModuleFaceMethodSymbol* methods) {
+void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, int method_count, ModuleFaceMethodSymbol* methods, int type_param_count) {
     if (!table || !name) return;
 
     // 扩容
@@ -275,6 +291,7 @@ void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, in
     ModuleFaceSymbol* face = &table->faces[table->face_count++];
     face->name = strdup(name);
     face->method_count = method_count;
+    face->type_param_count = type_param_count;
     // 深拷贝 methods 数组
     if (method_count > 0 && methods) {
         face->methods = (ModuleFaceMethodSymbol*)malloc(sizeof(ModuleFaceMethodSymbol) * method_count);
@@ -711,7 +728,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                     module_symbol_table_add_struct(table, type_name,
                                         s_sym->field_count, s_sym->fields,
                                         s_sym->method_count, s_sym->methods,
-                                        s_sym->is_cstruct);
+                                        s_sym->is_cstruct, s_sym->type_param_count, s_sym->type_param_names);
                                     if (s_sym->impl_count > 0) {
                                         ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
                                         if (new_sym) {
@@ -727,7 +744,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                 ModuleFaceSymbol* f_sym = module_symbol_table_find_face(dep_table, type_name);
                                 if (f_sym && !module_symbol_table_find_face(table, type_name)) {
                                     module_symbol_table_add_face(table, type_name,
-                                        f_sym->method_count, f_sym->methods);
+                                        f_sym->method_count, f_sym->methods, f_sym->type_param_count);
                                 }
                             }
                             module_symbol_table_destroy(dep_table);
@@ -757,6 +774,31 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                     strncpy(struct_name, name_start, name_len);
                     struct_name[name_len] = '\0';
 
+                    // 解析泛型参数 [T] 或 [K, V]
+                    int type_param_count = 0;
+                    char* type_param_names[16] = {NULL};
+                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                    if (*after_struct == '[') {
+                        after_struct++; // skip '['
+                        while (*after_struct && *after_struct != ']') {
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            if (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) {
+                                const char* tp_name_start = after_struct;
+                                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                                int tp_name_len = (int)(after_struct - tp_name_start);
+                                if (tp_name_len > 0 && tp_name_len < 64 && type_param_count < 16) {
+                                    type_param_names[type_param_count] = (char*)malloc(tp_name_len + 1);
+                                    strncpy(type_param_names[type_param_count], tp_name_start, tp_name_len);
+                                    type_param_names[type_param_count][tp_name_len] = '\0';
+                                }
+                                type_param_count++;
+                            }
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            if (*after_struct == ',') after_struct++;
+                        }
+                        if (*after_struct == ']') after_struct++; // skip ']'
+                    }
+
                     while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
 
                     // 解析 impl 声明
@@ -777,6 +819,18 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                 strncpy(impl_names[impl_count], face_name_start, face_name_len);
                                 impl_names[impl_count][face_name_len] = '\0';
                                 impl_count++;
+                            }
+
+                            // 跳过泛型参数 [TypeArg]（如 Comparable[int]）
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            if (*after_struct == '[') {
+                                after_struct++; // skip '['
+                                int bracket_depth = 1;
+                                while (*after_struct && bracket_depth > 0) {
+                                    if (*after_struct == '[') bracket_depth++;
+                                    else if (*after_struct == ']') bracket_depth--;
+                                    after_struct++;
+                                }
                             }
 
                             // 跳过空白
@@ -922,6 +976,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                         // 解析返回类型
                                         TypeKind method_return_type = TYPE_ANY;
                                         char method_return_struct[64] = {0};
+                                        char method_return_type_param[64] = {0};
 
                                         if (*after_func == ':') {
                                             after_func++;
@@ -937,13 +992,26 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                                 ret_type_str[ret_type_len] = '\0';
                                                 method_return_type = parse_base_type(ret_type_str);
                                                 if (method_return_type == TYPE_ANY) {
-                                                    // 检查是否是已知的 struct 类型
-                                                    if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
-                                                        method_return_type = TYPE_STRUCT;
-                                                        size_t copy_len = strlen(ret_type_str);
-                                                        if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
-                                                        memcpy(method_return_struct, ret_type_str, copy_len);
-                                                        method_return_struct[copy_len] = '\0';
+                                                    // 检查是否是泛型参数名（如 T, U, K, V）
+                                                    int is_type_param = 0;
+                                                    for (int tpi = 0; tpi < type_param_count; tpi++) {
+                                                        if (type_param_names[tpi] && strcmp(ret_type_str, type_param_names[tpi]) == 0) {
+                                                            is_type_param = 1;
+                                                            strncpy(method_return_type_param, ret_type_str, sizeof(method_return_type_param) - 1);
+                                                            method_return_type_param[sizeof(method_return_type_param) - 1] = '\0';
+                                                            method_return_type = TYPE_GENERIC_PARAM;
+                                                            break;
+                                                        }
+                                                    }
+                                                    if (!is_type_param) {
+                                                        // 检查是否是已知的 struct 类型
+                                                        if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
+                                                            method_return_type = TYPE_STRUCT;
+                                                            size_t copy_len = strlen(ret_type_str);
+                                                            if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
+                                                            memcpy(method_return_struct, ret_type_str, copy_len);
+                                                            method_return_struct[copy_len] = '\0';
+                                                        }
                                                     }
                                                 }
                                             }
@@ -967,6 +1035,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                         methods[method_count].name[method_key_len] = '\0';
                                         methods[method_count].return_type = method_return_type;
                                         methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
+                                        methods[method_count].return_type_param_name = method_return_type_param[0] ? strdup(method_return_type_param) : NULL;
                                         methods[method_count].param_count = param_count;
                                         methods[method_count].param_types = NULL;
                                         if (param_count > 0) {
@@ -1034,7 +1103,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                         }
 
                         // 添加 struct 到符号表（包括字段和方法）
-                        module_symbol_table_add_struct(table, struct_name, field_count, fields, method_count, methods, 0);
+                        module_symbol_table_add_struct(table, struct_name, field_count, fields, method_count, methods, 0, type_param_count, type_param_names);
 
                         // 设置 impl 信息
                         ModuleStructSymbol* added_struct = module_symbol_table_find_struct(table, struct_name);
@@ -1052,12 +1121,16 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                         }
 
                         // 释放临时分配的内存
+                        for (int i = 0; i < type_param_count; i++) {
+                            free(type_param_names[i]);
+                        }
                         for (int i = 0; i < field_count; i++) {
                             free(fields[i].name);
                         }
                         for (int i = 0; i < method_count; i++) {
                             free(methods[i].name);
                             free(methods[i].return_struct_name);
+                            free(methods[i].return_type_param_name);
                             free(methods[i].param_types);
                         }
 
@@ -1195,7 +1268,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                         }
 
                         // 添加 cstruct 到符号表（包括字段和方法）
-                        module_symbol_table_add_struct(table, cstruct_name, field_count, fields, method_count, methods, 1);
+                        module_symbol_table_add_struct(table, cstruct_name, field_count, fields, method_count, methods, 1, 0, NULL);
 
                         // 释放临时分配的内存
                         for (int i = 0; i < field_count; i++) {
@@ -1229,6 +1302,23 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                     char face_name[64];
                     strncpy(face_name, name_start, name_len);
                     face_name[name_len] = '\0';
+
+                    // 跳过泛型参数 [T] 或 [K, V]，并计算参数数量
+                    int face_type_param_count = 0;
+                    while (*after_face && (*after_face == ' ' || *after_face == '\t')) after_face++;
+                    if (*after_face == '[') {
+                        after_face++; // skip '['
+                        while (*after_face && *after_face != ']') {
+                            while (*after_face && (*after_face == ' ' || *after_face == '\t')) after_face++;
+                            if (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) {
+                                face_type_param_count++;
+                                while (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) after_face++;
+                            }
+                            while (*after_face && (*after_face == ' ' || *after_face == '\t')) after_face++;
+                            if (*after_face == ',') after_face++;
+                        }
+                        if (*after_face == ']') after_face++; // skip ']'
+                    }
 
                     while (*after_face && (*after_face == ' ' || *after_face == '\t' || *after_face == '\n' || *after_face == '\r')) after_face++;
 
@@ -1328,7 +1418,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                         }
 
                         // 添加 face 到符号表
-                        module_symbol_table_add_face(table, face_name, method_count, methods);
+                        module_symbol_table_add_face(table, face_name, method_count, methods, face_type_param_count);
 
                         // 释放临时分配的内存（add_face 已复制数据）
                         for (int i = 0; i < method_count; i++) {
@@ -1393,6 +1483,23 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                     strncpy(func_name, name_start, name_len);
                     func_name[name_len] = '\0';
 
+                    // 解析泛型参数 [T] 或 [K, V]
+                    int func_type_param_count = 0;
+                    while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                    if (*after_func == '[') {
+                        after_func++; // skip '['
+                        while (*after_func && *after_func != ']') {
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
+                                func_type_param_count++;
+                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                            }
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            if (*after_func == ',') after_func++;
+                        }
+                        if (*after_func == ']') after_func++; // skip ']'
+                    }
+
                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                     if (*after_func == '(') {
                         after_func++;
@@ -1438,7 +1545,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                         }
 
                         module_symbol_table_add_func(table, func_name, return_type,
-                            return_struct_name[0] ? return_struct_name : NULL);
+                            return_struct_name[0] ? return_struct_name : NULL, func_type_param_count);
                     }
                 }
 

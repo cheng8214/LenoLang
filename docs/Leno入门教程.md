@@ -477,8 +477,8 @@ main() {
 
 > **⚠️ 注意：泛型类型注解与类型擦除**
 >
-> 泛型参数仅在编译期用于类型检查，运行时会被擦除：
-> - `type(intBox)` 返回 `"Box"`，不包含 `[int]` 信息
+> 泛型参数在编译期完成类型检查，运行时部分信息保留：
+> - `type(intBox)` 返回 `"Box[int]"`，包含类型参数信息
 > - `Box[int]` 和 `Box[string]` 运行时共享同一个 struct 定义
 > - 泛型不会产生代码膨胀，零运行时开销
 
@@ -2511,7 +2511,7 @@ struct Pair[K, V] {
 
 #### 实例化泛型 struct
 
-使用 `new StructName[具体类型](...)` 创建实例：
+使用 `new StructName[具体类型](...)` 创建实例，**类型参数不可省略**：
 
 ```leno
 // 用 int 实例化
@@ -2526,7 +2526,14 @@ print(strBox.value)     // hello
 var p = new Pair[string, int](key = "age", val = 25)
 print(p.key)            // age
 print(p.val)            // 25
+
+// ❌ 省略类型参数会报错
+// var bad = new Box(value = 42)    // 编译错误：泛型 struct 'Box' 需要类型参数（如 Box[类型]）
 ```
+
+> **⚠️ 注意：泛型 struct 必须指定类型参数**
+>
+> 泛型 struct 实例化时必须提供所有类型参数，编译器不会自动推断。这是因为不同类型参数产生不同的类型，省略会导致歧义。
 
 #### 泛型 struct 带默认值和方法
 
@@ -2587,11 +2594,22 @@ struct Box[T] {
         }
         return defaultVal
     }
+
+    // 方法互相调用：self.add() 的返回类型也会正确推断
+    func add(T v): T {
+        return self.value + v
+    }
+
+    func double(): T {
+        return self.add(self.value)   // ✅ self.add 返回 T，正确推断
+    }
 }
 
 var intBox = new Box[int](value=42)
 intBox.set(100)                         // ✅ 参数类型推断为 int
 assert_eq(intBox.get(), 100)
+assert_eq(intBox.add(8), 108)           // ✅ 方法调用
+assert_eq(intBox.double(), 200)         // ✅ 方法互相调用
 assert_eq(intBox.unwrapOrDefault(0), 100)
 
 var strBox = new Box[string](value="hi")
@@ -2606,6 +2624,7 @@ assert_eq(strBox.unwrapOrDefault("empty"), "world")
 > - 方法参数中引用泛型参数 `T` 会自动替换为实例化时的具体类型
 > - 方法返回类型中的 `T` 也会正确替换
 > - 方法间互相调用（如 `self.method()`）也能正确传播类型
+> - 链式方法调用（如 `outer.get().get()`）也能正确推断每一步的返回类型
 
 #### 泛型 struct 的泛型方法
 
@@ -2784,6 +2803,21 @@ print(chained.value)    // 168
 > print(factorial[int](5))   // 120
 > ```
 
+> **⚠️ 坑 8：泛型 struct 省略类型参数会报错**
+>
+> 泛型 struct 实例化时必须提供类型参数，省略会导致编译错误：
+>
+> ```leno
+> struct Box[T] {
+>     T value
+> }
+>
+> var b = new Box(value=42)       // ❌ 编译错误：泛型 struct 'Box' 需要类型参数（如 Box[类型]）
+> var b = new Box[int](value=42)  // ✅ 正确
+> ```
+>
+> 这与内置泛型类型（`Array`、`Dict`）不同——内置类型可以省略类型参数，编译器会从初始值推断。但自定义泛型 struct 必须显式指定。
+
 #### 嵌套泛型类型
 
 泛型参数可以是复合类型，如 `Array[int]`、`Dict[string, int]` 等：
@@ -2823,11 +2857,13 @@ assert_eq(intRange.clamp(15), 10)
 assert_eq(intRange.clamp(-5), 1)
 ```
 
-> **⚠️ 注意：泛型参数仅用于编译期类型检查**
+> **⚠️ 注意：泛型参数与 type()**
 >
-> 泛型参数在编译期完成类型检查后会被擦除，运行时 `Box[int]` 和 `Box[string]` 共享同一个 struct 定义。这意味着：
+> 泛型参数在编译期完成类型检查，运行时 `type()` 会返回带类型参数的名称：
 >
-> - `type(intBox)` 返回 `"Box"`，不包含类型参数信息
+> - `type(intBox)` 返回 `"Box[int]"`，包含类型参数信息
+> - `type(strBox)` 返回 `"Box[string]"`
+> - 嵌套泛型也正确显示：`type(outer)` 返回 `"Box[Box[int]]"`
 > - 泛型不会产生代码膨胀，零运行时开销
 
 > **⚠️ 注意：泛型 struct 与普通 struct 的区别**
@@ -2835,10 +2871,11 @@ assert_eq(intRange.clamp(-5), 1)
 > | 特性 | 普通 struct | 泛型 struct |
 > |------|-----------|------------|
 > | 定义 | `struct Point { ... }` | `struct Box[T] { ... }` |
-> | 实例化 | `new Point(...)` | `new Box[int](...)` |
+> | 实例化 | `new Point(...)` | `new Box[int](...)`（类型参数不可省略） |
 > | 类型注解 | `Point p` | `Box[int] p` |
 > | 方法类型 | 固定 | 随类型参数变化 |
 > | 字段类型 | 固定 | 由类型参数决定 |
+> | `type()` 返回 | `"Point"` | `"Box[int]"`（含类型参数） |
 
 ### struct 完整示例
 
@@ -4320,6 +4357,50 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 > - `use` 只能导入 **struct** 和 **face** 类型
 > - **func**、**var**、**enum** 必须通过模块名访问（如 `math.distance()`）
 > - struct 实例仍需通过模块构造函数创建（如 `new math.Point(x=1, y=2)`）
+
+### 导入泛型 struct 并调用方法
+
+模块中导出的泛型 struct 可以通过 `use` 导入类型，然后直接实例化和调用方法：
+
+```leno
+// container.leno
+export struct Box[T] {
+    T value
+
+    func get(): T {
+        return self.value
+    }
+
+    func add(T v): T {
+        return self.value + v
+    }
+}
+```
+
+```leno
+// main.leno
+import "container.leno" as cm
+use cm.Box
+
+var intBox = new Box[int](value=42)
+print(intBox.get())        // 42
+print(intBox.add(8))       // 50
+
+// 链式方法调用
+var outer = new Box[Box[int]](value=intBox)
+print(outer.get().get())   // 42
+
+// type() 正确显示泛型类型
+print(type(intBox))        // Box[int]
+print(type(outer))         // Box[Box[int]]
+```
+
+> **💡 泛型 struct 方法调用要点**
+>
+> - `use` 导入泛型 struct 后，可以直接用 `new Box[int](...)` 实例化
+> - 方法调用时，编译器会根据实例化的类型参数正确推断方法返回类型
+> - 链式调用（如 `outer.get().get()`）每一步的返回类型都能正确推断
+> - `type()` 返回带类型参数的名称（如 `"Box[int]"`），嵌套泛型也能正确显示
 
 ### io 模块使用
 
@@ -6098,7 +6179,7 @@ lenolang program.leno
 | 数组比较  | `[1,2] == [1,2]`                              |
 | 类型转换  | `_int(x)`, `_float(x)`, `_str(x)`, `_bool(x)`, `_int32(x)`, `_int64(x)`, `_uint32(x)`, `_uint64(x)`, `_uint8(x)`, `_byte(x)` |
 | 安全转换  | `x as Type`（匹配返回原值，不匹配返回 null；int↔float 数值转换） |
-| 类型检查  | `type(x)` — int 始终返回 `"int"`              |
+| 类型检查  | `type(x)` — int 返回 `"int"`，泛型 struct 返回 `"Box[int]"` |
 | 字符串插值 | `$"Hello {name}"`                             |
 | 原始字符串 | `@"raw string"`                               |
 | 格式化字符串 | `format("%s %d %.2f", "hi", 42, 3.14)`        |
@@ -6108,10 +6189,13 @@ lenolang program.leno
 | 功能       | 语法                                |
 | -------- | --------------------------------- |
 | 定义结构体    | `struct Point { int x, int y }`   |
+| 定义泛型结构体  | `struct Box[T] { T value }`       |
 | 创建实例     | `new Point(x=10, y=20)`           |
+| 创建泛型实例   | `new Box[int](value=42)`（类型参数不可省略） |
 | 访问字段     | `p.x`, `p.y`                      |
 | 定义方法     | `func method():type { }`          |
 | self 关键字 | `self.field`, `self.method()`     |
+| 方法链式调用   | `outer.get().get()`               |
 | 定义枚举     | `enum Color { red, green, blue }` |
 | 枚举值      | `Color.red`, `Color.green`        |
 

@@ -1446,6 +1446,17 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
             emit_byte(gen, name_const & 0xff, ast->line);
             emit_byte(gen, ast->u.struct_init.field_count, ast->line);
+
+            // 泛型参数信息（如 Box[int] 中的 [int]）
+            int gt_count = ast->u.struct_init.generic_type_count;
+            emit_byte(gen, (uint8_t)gt_count, ast->line);
+            for (int gi = 0; gi < gt_count; gi++) {
+                // 将泛型参数类型名作为常量写入
+                const char* type_name_str = type_to_string(ast->u.struct_init.generic_type_args[gi]);
+                int type_name_const = make_constant(gen, val_obj((Object*)str_copy(type_name_str, (int)strlen(type_name_str))));
+                emit_byte(gen, (type_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, type_name_const & 0xff, ast->line);
+            }
             
             // 参数字段索引（反序生成，与栈顺序匹配）
             // 编译期确定字段索引，避免运行时线性搜索
