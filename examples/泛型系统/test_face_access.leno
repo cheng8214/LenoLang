@@ -1,0 +1,24 @@
+// 测试 face 变量是否能访问底层 struct 的字段
+
+face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+    int age
+
+    func speak(): string {
+        return "woof from " + self.name
+    }
+}
+
+var d = new Dog(name="Rex", age=3)
+
+// face 类型变量
+Speaker s = d
+
+// 能否通过 face 变量访问 struct 特有字段？
+print(s.speak())       // 应该可以：face 定义的方法
+print(s.name)          // 能否访问？face 没定义 name
+print(s.age)           // 能否访问？face 没定义 age

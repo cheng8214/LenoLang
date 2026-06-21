@@ -1,0 +1,35 @@
+// 测试 face 访问限制的完整场景
+
+face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+    int age
+
+    func speak(): string {
+        return "woof from " + self.name
+    }
+
+    func getAge(): int {
+        return self.age
+    }
+}
+
+var d = new Dog(name="Rex", age=3)
+Speaker s = d
+
+// ✅ face 定义的方法
+print(s.speak())
+
+// ❌ face 未定义的字段
+// print(s.name)  -- 编译报错
+
+// ❌ face 未定义的方法
+// print(s.getAge())  -- 编译报错
+
+// ✅ 通过 as 转型后可以访问
+var dog = s as Dog
+print(dog.name)
+print(dog.getAge())

@@ -1217,6 +1217,28 @@ void visit(Semantic* s, Ast* ast) {
             // 获取被赋值对象的类型（支持嵌套字段访问如 r.position.x）
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index_assign.obj);
 
+            // face 类型限制：不能给 face 变量的底层 struct 字段赋值
+            if (obj_type && obj_type->kind == TYPE_FACE && obj_type->struct_name &&
+                ast->u.index_assign.index->kind == AST_STRING) {
+                const char* field_name = ast->u.index_assign.index->u.string.value;
+                ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
+                if (fdef && fdef->method_count > 0) {
+                    int is_face_method = 0;
+                    for (int i = 0; i < fdef->method_count; i++) {
+                        if (strcmp(fdef->methods[i].name, field_name) == 0) {
+                            is_face_method = 1;
+                            break;
+                        }
+                    }
+                    if (!is_face_method) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "face '%s' 没有字段 '%s'（使用 'as' 转型访问底层 struct）",
+                                 obj_type->struct_name, field_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                }
+            }
+
             if (obj_type && obj_type->kind == TYPE_STRUCT) {
                 if (ast->u.index_assign.index->kind == AST_STRING) {
                     char* field_name = ast->u.index_assign.index->u.string.value;
@@ -1951,6 +1973,29 @@ void visit(Semantic* s, Ast* ast) {
 
             // 编译时检查数组索引类型
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index.obj);
+
+            // face 类型限制：obj["field"] 中 obj 是 face 类型时，只能访问 face 定义的方法
+            if (obj_type && obj_type->kind == TYPE_FACE && obj_type->struct_name &&
+                ast->u.index.index->kind == AST_STRING) {
+                const char* field_name = ast->u.index.index->u.string.value;
+                ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
+                if (fdef && fdef->method_count > 0) {
+                    int is_face_method = 0;
+                    for (int i = 0; i < fdef->method_count; i++) {
+                        if (strcmp(fdef->methods[i].name, field_name) == 0) {
+                            is_face_method = 1;
+                            break;
+                        }
+                    }
+                    if (!is_face_method) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "face '%s' 没有字段或方法 '%s'（使用 'as' 转型访问底层 struct）",
+                                 obj_type->struct_name, field_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                }
+            }
+
             if (obj_type && obj_type->kind == TYPE_ARRAY) {
                 TypeInfo* index_type = infer_expr_type(s, ast->u.index.index);
                 if (index_type && index_type->kind != TYPE_INT && index_type->kind != TYPE_ANY) {
@@ -3393,18 +3438,21 @@ void visit(Semantic* s, Ast* ast) {
                     var_ast->cached_type = type_copy(var_sym->type);
                 }
                 
-                // 检查变量是否是 struct 或 cstruct 类型
+                // 检查变量是否是 struct、cstruct 或 face 类型
                 int is_struct_type = 0;
                 int is_cstruct_type = 0;
+                int is_face_type = 0;
                 if (var_sym && var_sym->type) {
                     if (var_sym->type->kind == TYPE_STRUCT) {
                         is_struct_type = 1;
                     } else if (var_sym->type->kind == TYPE_CSTRUCT) {
                         is_cstruct_type = 1;
+                    } else if (var_sym->type->kind == TYPE_FACE) {
+                        is_face_type = 1;
                     }
                 }
 
-                if (is_struct_type || is_cstruct_type) {
+                if (is_struct_type || is_cstruct_type || is_face_type) {
                     // struct/cstruct 字段访问：转换为 AST_FIELD_ACCESS
                     char* field_name = strdup(ast->u.module_access.member_name);
                     char* module_name = ast->u.module_access.module_name;
@@ -4561,6 +4609,30 @@ void visit(Semantic* s, Ast* ast) {
                     const char* field_name = ast->u.field_access.field_name;
                     Symbol* struct_sym = NULL;
                     const char* var_name = NULL;
+
+                    // face 类型限制：只能访问 face 中定义的方法，不能访问底层 struct 的字段
+                    if (obj_type->kind == TYPE_FACE && obj_type->struct_name) {
+                        // 使用 face_def_find 获取 face 的方法列表（比 scope_resolve 更可靠）
+                        ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
+                        if (fdef && fdef->method_count > 0) {
+                            // 检查字段是否是 face 定义的方法
+                            int is_face_method = 0;
+                            for (int i = 0; i < fdef->method_count; i++) {
+                                if (strcmp(fdef->methods[i].name, field_name) == 0) {
+                                    is_face_method = 1;
+                                    break;
+                                }
+                            }
+                            if (!is_face_method) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "face '%s' 没有字段或方法 '%s'（使用 'as' 转型访问底层 struct）",
+                                         obj_type->struct_name, field_name);
+                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                type_free(obj_type);
+                                break;
+                            }
+                        }
+                    }
 
                     // 获取变量名（支持嵌套访问）
                     if (ast->u.field_access.obj->kind == AST_VAR) {

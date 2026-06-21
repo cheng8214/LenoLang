@@ -3301,10 +3301,40 @@ make_sound(d)    // 输出: woof
 
 ```leno
 Speaker s = new Dog()
-print(s.speak())     // woof
+print(s.speak())     // ✅ 可以调用 face 定义的方法
 
 s = new Cat()        // ❌ 编译错误：Cat 未 impl Speaker
 ```
+
+**face 变量的访问限制**：face 变量只能访问 face 中定义的方法，不能访问底层 struct 的字段或非 face 方法：
+
+```leno
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    string name
+    int age
+
+    func speak():string { return "woof from " + self.name }
+    func getAge():int { return self.age }
+}
+
+var d = new Dog(name="Rex", age=3)
+Speaker s = d
+
+print(s.speak())     // ✅ face 定义的方法
+print(s.name)        // ❌ 编译错误：face 'Speaker' 没有字段或方法 'name'
+print(s.getAge())    // ❌ 编译错误：face 'Speaker' 没有字段或方法 'getAge'
+
+// 需要通过 as 转型访问底层 struct
+var dog = s as Dog
+print(dog.name)      // ✅ 转型后可以访问
+print(dog.getAge())  // ✅ 转型后可以调用
+```
+
+> **💡 设计理念**：face 是编译期契约，不是运行时包装。类型擦除后底层就是 struct，但编译器会确保 face 变量只使用 face 契约中声明的成员。需要访问底层实现时，用 `as` 转型明确意图。
 
 ### face 类型守卫
 
