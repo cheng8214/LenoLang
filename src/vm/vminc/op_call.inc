@@ -200,7 +200,7 @@ OPCODE(OP_TAIL_CALL) {
         frame->module = function->module;
 
         // 应用待处理的泛型类型参数到 closure
-        if (vm.pending_type_args && vm.pending_type_arg_count > 0) {
+        if (function->type_param_count > 0 && vm.pending_type_args) {
             closure->type_param_count = vm.pending_type_arg_count;
             closure->type_param_args = vm.pending_type_args;
             vm.pending_type_args = NULL;
@@ -261,7 +261,7 @@ OPCODE(OP_TAIL_CALL) {
         frame->module = func->module;
 
         // 应用待处理的泛型类型参数到 closure
-        if (vm.pending_type_args && vm.pending_type_arg_count > 0) {
+        if (func->type_param_count > 0 && vm.pending_type_args) {
             closure->type_param_count = vm.pending_type_arg_count;
             closure->type_param_args = vm.pending_type_args;
             vm.pending_type_args = NULL;
