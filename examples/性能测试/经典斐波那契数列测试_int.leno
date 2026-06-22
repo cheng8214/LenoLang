@@ -3,10 +3,10 @@ import times
 
 main() {
   
-    var t1=times.ms()
+    var t1=times.us()
     print(fib(30)) 
-    var t2=times.ms()
-    print((t2-t1)+"ms")
+    var t2=times.us()
+    print((t2-t1)+"us")
 }
 
 func fib(int n):int{

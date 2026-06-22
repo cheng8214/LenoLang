@@ -1413,6 +1413,15 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
             emit_byte(gen, name_const & 0xff, ast->line);
             emit_byte(gen, ast->u.face_def.method_count, ast->line);
+            // 泛型类型参数
+            emit_byte(gen, ast->u.face_def.type_param_count, ast->line);
+            for (int tp = 0; tp < ast->u.face_def.type_param_count; tp++) {
+                ObjString* tp_name = str_copy(ast->u.face_def.type_params[tp],
+                    strlen(ast->u.face_def.type_params[tp]));
+                int tp_const = make_constant(gen, val_obj((Object*)tp_name));
+                emit_byte(gen, (tp_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, tp_const & 0xff, ast->line);
+            }
             for (int i = 0; i < ast->u.face_def.method_count; i++) {
                 ObjString* mname = str_copy(ast->u.face_def.method_names[i],
                                             strlen(ast->u.face_def.method_names[i]));

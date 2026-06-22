@@ -1,0 +1,39 @@
+// 泛型别名测试
+struct Box[T] {
+    T value
+    func get(): T { return self.value }
+}
+alias MyBox[T] = Box[T]
+
+struct Pair[K, V] {
+    K key
+    V val
+}
+alias MyPair[K, V] = Pair[K, V]
+
+main() {
+    // 1. 基本泛型别名
+    var ibox = new MyBox[int](value=42)
+    assert_eq(ibox.value, 42)
+
+    // 2. 字符串类型
+    var sbox = new MyBox[string](value="hello")
+    assert_eq(sbox.value, "hello")
+
+    // 3. 多参数泛型别名
+    var p = new MyPair[string, int](key="k", val=1)
+    assert_eq(p.key, "k")
+    assert_eq(p.val, 1)
+
+    // 4. 多参数浮点
+    var pf = new MyPair[int, float](key=1, val=2.5)
+    assert_eq(pf.key, 1)
+    assert_eq(pf.val == 2.5, true)
+
+    // 5. 类型兼容 - 别名可以赋值给原类型
+    var direct = new Box[float](value=3.14)
+    var aliased = direct
+    assert_eq(aliased.value, 3.14)
+
+    print("test_generic_alias: ALL PASSED")
+}

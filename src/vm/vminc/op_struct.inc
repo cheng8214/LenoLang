@@ -148,6 +148,7 @@ OPCODE(OP_FACE_DEF) {
     frame = &vm.frames[vm.frame_cnt - 1];
     uint16_t name_idx = READ_SHORT();
     uint8_t method_count = READ_BYTE();
+    uint8_t type_param_count = READ_BYTE();
 
     Value name_val = frame->chunk->constants[name_idx];
     if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
@@ -157,6 +158,23 @@ OPCODE(OP_FACE_DEF) {
     ObjString* name = (ObjString*)val_as_obj(name_val);
 
     ObjFaceDef* def = face_def_new(name->chars, method_count);
+
+    // 读取泛型类型参数
+    if (type_param_count > 0) {
+        char** tp_names = (char**)malloc(sizeof(char*) * type_param_count);
+        for (int tp = 0; tp < type_param_count; tp++) {
+            uint16_t tp_name_idx = READ_SHORT();
+            Value tp_name_val = frame->chunk->constants[tp_name_idx];
+            if (val_is_obj(tp_name_val) && val_as_obj(tp_name_val)->type == OBJ_STRING) {
+                tp_names[tp] = strdup(((ObjString*)val_as_obj(tp_name_val))->chars);
+            } else {
+                tp_names[tp] = strdup("T");
+            }
+        }
+        face_def_set_type_params(def, type_param_count, tp_names, NULL);
+        for (int tp = 0; tp < type_param_count; tp++) free(tp_names[tp]);
+        free(tp_names);
+    }
 
     for (int i = 0; i < method_count; i++) {
         uint16_t mname_idx = READ_SHORT();

@@ -206,6 +206,8 @@ void parser_init(Parser* p, const char* src) {
     p->struct_capacity = 0;
     p->alias_names = NULL;
     p->alias_types = NULL;
+    p->alias_type_params = NULL;
+    p->alias_type_param_counts = NULL;
     p->alias_count = 0;
     p->alias_capacity = 0;
 }
@@ -241,13 +243,29 @@ int is_struct_name(Parser* p, const char* name) {
 
 // 添加别名到表
 void add_alias(Parser* p, const char* name, TypeInfo* type) {
+    add_alias_with_params(p, name, type, 0, NULL);
+}
+
+void add_alias_with_params(Parser* p, const char* name, TypeInfo* type, int tp_count, char** tp_names) {
     if (p->alias_count >= p->alias_capacity) {
         p->alias_capacity = p->alias_capacity == 0 ? 8 : p->alias_capacity * 2;
         p->alias_names = realloc(p->alias_names, sizeof(char*) * p->alias_capacity);
         p->alias_types = realloc(p->alias_types, sizeof(TypeInfo*) * p->alias_capacity);
+        p->alias_type_params = realloc(p->alias_type_params, sizeof(char**) * p->alias_capacity);
+        p->alias_type_param_counts = realloc(p->alias_type_param_counts, sizeof(int) * p->alias_capacity);
     }
     p->alias_names[p->alias_count] = strdup(name);
     p->alias_types[p->alias_count] = type;
+    if (tp_count > 0 && tp_names) {
+        p->alias_type_params[p->alias_count] = (char**)malloc(sizeof(char*) * tp_count);
+        for (int i = 0; i < tp_count; i++) {
+            p->alias_type_params[p->alias_count][i] = strdup(tp_names[i]);
+        }
+        p->alias_type_param_counts[p->alias_count] = tp_count;
+    } else {
+        p->alias_type_params[p->alias_count] = NULL;
+        p->alias_type_param_counts[p->alias_count] = 0;
+    }
     p->alias_count++;
 }
 
@@ -255,6 +273,18 @@ void add_alias(Parser* p, const char* name, TypeInfo* type) {
 TypeInfo* find_alias(Parser* p, const char* name) {
     for (int i = 0; i < p->alias_count; i++) {
         if (strcmp(p->alias_names[i], name) == 0) {
+            return p->alias_types[i];
+        }
+    }
+    return NULL;
+}
+
+// 查找别名并获取类型参数信息
+TypeInfo* find_alias_with_params(Parser* p, const char* name, char*** out_params, int* out_param_count) {
+    for (int i = 0; i < p->alias_count; i++) {
+        if (strcmp(p->alias_names[i], name) == 0) {
+            if (out_params) *out_params = p->alias_type_params[i];
+            if (out_param_count) *out_param_count = p->alias_type_param_counts[i];
             return p->alias_types[i];
         }
     }

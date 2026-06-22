@@ -1,0 +1,4 @@
+src\parser\parser_func.c: In function 'parse_alias_stmt':
+src\parser\parser_func.c:565:9: error: implicit declaration of function 'resolve_generic_in_type' [-Wimplicit-function-declaration]
+  565 |         resolve_generic_in_type(type, type_params, NULL, type_param_count);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~

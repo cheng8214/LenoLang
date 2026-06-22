@@ -68,7 +68,9 @@ int is_struct_name(Parser* p, const char* name);
 
 // 类型别名支持（在 parser.c 中实现）
 void add_alias(Parser* p, const char* name, TypeInfo* type);
+void add_alias_with_params(Parser* p, const char* name, TypeInfo* type, int tp_count, char** tp_names);
 TypeInfo* find_alias(Parser* p, const char* name);
+TypeInfo* find_alias_with_params(Parser* p, const char* name, char*** out_params, int* out_param_count);
 
 // ============================================================================
 // 表达式解析函数声明（在 parser_expr.c 中实现）

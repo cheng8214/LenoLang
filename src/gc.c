@@ -1123,6 +1123,18 @@ static void free_object_resources(Object* obj) {
                 }
                 free(def->methods);
             }
+            if (def->type_param_names) {
+                for (int i = 0; i < def->type_param_count; i++) {
+                    free(def->type_param_names[i]);
+                }
+                free(def->type_param_names);
+            }
+            if (def->type_param_constraints) {
+                for (int i = 0; i < def->type_param_count; i++) {
+                    free(def->type_param_constraints[i]);
+                }
+                free(def->type_param_constraints);
+            }
             break;
         }
         // 结构体实例：释放字段值数组和泛型类型参数

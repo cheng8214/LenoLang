@@ -7,6 +7,36 @@
 // 前向声明
 static TypeInfo* parse_type_internal(Parser* p);
 
+// 本地辅助：将 TypeInfo 树中匹配 param_names 的 TYPE_STRUCT 节点转换为 TYPE_GENERIC_PARAM
+static void convert_to_generic_params(TypeInfo* type, char** param_names, int count) {
+    if (!type || count <= 0) return;
+    if (type->kind == TYPE_STRUCT && type->struct_name) {
+        for (int i = 0; i < count; i++) {
+            if (param_names[i] && strcmp(type->struct_name, param_names[i]) == 0) {
+                free(type->struct_name);
+                type->struct_name = NULL;
+                type->kind = TYPE_GENERIC_PARAM;
+                type->type_param_name = strdup(param_names[i]);
+                return;
+            }
+        }
+    }
+    convert_to_generic_params(type->element_type, param_names, count);
+    convert_to_generic_params(type->key_type, param_names, count);
+    convert_to_generic_params(type->value_type, param_names, count);
+    convert_to_generic_params(type->return_type, param_names, count);
+    if (type->param_types) {
+        for (int i = 0; i < type->param_count; i++) {
+            convert_to_generic_params(type->param_types[i], param_names, count);
+        }
+    }
+    if (type->generic_args) {
+        for (int i = 0; i < type->generic_count; i++) {
+            convert_to_generic_params(type->generic_args[i], param_names, count);
+        }
+    }
+}
+
 // 解析基础类型 (int, float, string, bool, var, null) 或自定义 struct 类型
 static TypeInfo* parse_base_type(Parser* p) {
     if (p->lex.current.type == TOK_INT_TYPE) {
@@ -223,8 +253,45 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         
         // 检查是否是类型别名
-        TypeInfo* alias_type = find_alias(p, type_name);
+        char** alias_tp_names = NULL;
+        int alias_tp_count = 0;
+        TypeInfo* alias_type = find_alias_with_params(p, type_name, &alias_tp_names, &alias_tp_count);
         if (alias_type) {
+            // 检查是否有泛型参数：MyBox[int], MyPair[string, float] 等
+            if (p->lex.current.type == TOK_LBRACKET && alias_tp_count > 0) {
+                lexer_next(&p->lex); // 消费 '['
+                TypeInfo* result = type_copy(alias_type);
+                // 先将别名体中的 TYPE_STRUCT 引用转为 TYPE_GENERIC_PARAM
+                convert_to_generic_params(result, alias_tp_names, alias_tp_count);
+                
+                // 解析泛型参数并依次替换
+                for (int tp = 0; tp < alias_tp_count; tp++) {
+                    TypeInfo* arg_type = parse_type_internal(p);
+                    if (!arg_type) {
+                        error_add(ERR_SYNTAX, p->lex.current.line, "泛型类型参数解析失败");
+                        type_free(result);
+                        free(type_name);
+                        return type_new(TYPE_ANY);
+                    }
+                    TypeInfo* substituted = type_substitute(result, alias_tp_names[tp], arg_type);
+                    type_free(result);
+                    type_free(arg_type);
+                    result = substituted;
+                    if (tp + 1 < alias_tp_count && p->lex.current.type == TOK_COMMA) {
+                        lexer_next(&p->lex);
+                    }
+                }
+                
+                if (p->lex.current.type != TOK_RBRACKET) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束泛型别名参数");
+                    type_free(result);
+                    free(type_name);
+                    return type_new(TYPE_ANY);
+                }
+                lexer_next(&p->lex); // 消费 ']'
+                free(type_name);
+                return result;
+            }
             free(type_name);
             return type_copy(alias_type);
         }
@@ -482,9 +549,36 @@ Ast* parse_alias_stmt(Parser* p) {
     char* name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex);
 
+    // 解析可选的泛型类型参数: alias MyBox[T, U] = Box[T, U]
+    char** type_params = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * tp_capacity);
+        
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            type_param_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+        
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
     if (!match(p, TOK_EQ)) {
         error_add(ERR_SYNTAX, p->lex.current.line, "期望 '='");
         free(name);
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
         return NULL;
     }
 
@@ -492,15 +586,20 @@ Ast* parse_alias_stmt(Parser* p) {
     if (!type) {
         error_add(ERR_SYNTAX, p->lex.current.line, "期望类型");
         free(name);
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
         return NULL;
     }
 
+    // 泛型别名：NOTE: 类型体中的泛型参数名在语义分析阶段转换为 TYPE_GENERIC_PARAM
     Ast* ast = ast_new(AST_ALIAS, line);
     ast->u.alias.name = name;
     ast->u.alias.type = type;
+    ast->u.alias.type_params = type_params;
+    ast->u.alias.type_param_count = type_param_count;
     
     // 注册到解析器别名表，使后续类型解析可识别
-    add_alias(p, name, type_copy(type));
+    add_alias_with_params(p, name, type_copy(type), type_param_count, type_params);
     
     return ast;
 }

@@ -242,6 +242,8 @@ struct Ast {
         struct {
             char* name;        // 别名名称
             TypeInfo* type;    // 别名指向的类型
+            char** type_params;        // 泛型类型参数名（如 ["T"]），NULL 表示非泛型别名
+            int type_param_count;      // 泛型类型参数数量
         } alias;
         struct {
             char* name;        // struct 名称

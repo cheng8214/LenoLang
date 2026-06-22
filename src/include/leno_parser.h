@@ -21,6 +21,8 @@ typedef struct {
     // 类型别名表
     char** alias_names;
     TypeInfo** alias_types;
+    char*** alias_type_params;  // 每个别名的泛型参数名数组
+    int* alias_type_param_counts; // 每个别名的泛型参数数量
     int alias_count;
     int alias_capacity;
 } Parser;

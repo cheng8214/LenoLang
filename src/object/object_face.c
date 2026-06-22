@@ -11,6 +11,9 @@ ObjFaceDef* face_def_new(const char* name, int method_count) {
 
     def->name = strdup(name);
     def->method_count = method_count;
+    def->type_param_count = 0;
+    def->type_param_names = NULL;
+    def->type_param_constraints = NULL;
 
     if (method_count > 0) {
         def->methods = (FaceMethodInfo*)calloc(method_count, sizeof(FaceMethodInfo));
@@ -19,6 +22,19 @@ ObjFaceDef* face_def_new(const char* name, int method_count) {
     }
 
     return def;
+}
+
+void face_def_set_type_params(ObjFaceDef* def, int count, char** names, char** constraints) {
+    if (!def || count <= 0) return;
+    def->type_param_count = count;
+    def->type_param_names = (char**)malloc(sizeof(char*) * count);
+    def->type_param_constraints = (char**)calloc(count, sizeof(char*));
+    for (int i = 0; i < count; i++) {
+        def->type_param_names[i] = strdup(names[i]);
+        if (constraints && constraints[i]) {
+            def->type_param_constraints[i] = strdup(constraints[i]);
+        }
+    }
 }
 
 void face_def_register(ObjFaceDef* def) {

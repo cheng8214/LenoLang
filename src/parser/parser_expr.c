@@ -642,6 +642,16 @@ Ast* parse_new(Parser* p) {
     char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex); // 消费 struct 名称
 
+    // 检查是否是别名，如果是则解析为底层 struct 名
+    char** alias_tp_names = NULL;
+    int alias_tp_count = 0;
+    TypeInfo* resolved_alias_type = find_alias_with_params(p, struct_name, &alias_tp_names, &alias_tp_count);
+    if (resolved_alias_type && alias_tp_count > 0 && resolved_alias_type->kind == TYPE_STRUCT && resolved_alias_type->struct_name) {
+        // 泛型别名：替换为底层 struct 名
+        free(struct_name);
+        struct_name = strdup(resolved_alias_type->struct_name);
+    }
+
     // 解析可选的泛型类型参数: new Box[int](value: 42)
     TypeInfo** generic_type_args = NULL;
     int generic_type_count = 0;

@@ -1051,6 +1051,7 @@ void struct_def_update_method_modules(ObjModule* old_module, ObjModule* new_modu
 // ============================================================================
 
 ObjFaceDef* face_def_new(const char* name, int method_count);
+void face_def_set_type_params(ObjFaceDef* def, int count, char** names, char** constraints);
 void face_def_register(ObjFaceDef* def);
 ObjFaceDef* face_def_find(const char* name);
 int struct_implements_face(ObjStructDef* struct_def, ObjFaceDef* face_def);
