@@ -2003,12 +2003,96 @@ struct Pair[K, V: Comparable] {
 > - 多个类型参数可以分别约束：`[K, V: Comparable]`
 > - 未约束的泛型参数（如 `K`）仍可接受任意类型
 
+**多 face 实现：**
+
+一个 struct 可以同时实现多个 face，用逗号分隔：
+
+```leno
+face Comparable {
+    func compare(Comparable other): int
+}
+
+face Hashable {
+    func hash(): int
+}
+
+struct Key impl Comparable, Hashable {
+    int id
+    func compare(Comparable other): int {
+        var o = other as Key
+        return self.id - o.id
+    }
+    func hash(): int { return self.id }
+}
+
+func maxBy[T: Comparable](T a, T b): T {
+    if a.compare(b) >= 0 { return a }
+    return b
+}
+
+func getHash[T: Hashable](T item): int {
+    return item.hash()
+}
+
+main() {
+    var k1 = new Key(id=10)
+    var k2 = new Key(id=20)
+    var r = maxBy(k1, k2)     // Key 实现了 Comparable，可以作为 T: Comparable
+    var ri = r as Key
+    print(ri.id)               // 20
+    print(getHash(k1))         // 10
+}
+```
+
+**编译期约束校验：**
+
+如果传入的类型没有实现约束 face，编译器会报错：
+
+```leno
+struct NotComparable {
+    int value
+}
+
+main() {
+    var a = new NotComparable(value=1)
+    var b = new NotComparable(value=2)
+    var r = maxBy(a, b)    // ❌ 编译错误：类型 'NotComparable' 不满足约束 'Comparable'
+}
+```
+
+**约束方法作为值传递（方法引用）：**
+
+泛型约束的方法可以作为值传递，返回绑定方法的函数类型：
+
+```leno
+face Printable {
+    func format(): string
+}
+
+struct Named impl Printable {
+    string name
+    func format(): string { return "Name: " + self.name }
+}
+
+func getFormatter[T: Printable](T item): func():string {
+    return item.format    // 方法引用，返回绑定方法
+}
+
+main() {
+    var n = new Named(name="Leno")
+    var fmt = getFormatter(n)
+    print(fmt())           // Name: Leno
+}
+```
+
 > **⚠️ 注意事项**：
 > 
 > 1. **类型推断在调用时发生**：编译器从实参类型自动推断，无需手动指定 `T=int`
 > 2. **显式类型参数优先**：如果调用时写了 `funcName[int](args)`，则使用显式指定的类型，不再推断
 > 3. **泛型参数可用于参数和返回类型**：`Array[T]`、`Box[T]`、`Dict[K, V]` 等均可
 > 4. **泛型参数是编译期的**：用 `T` 声明的变量在编译期完成类型替换和检查，运行时无额外开销
+> 5. **编译期校验**：传入未实现约束 face 的类型会在编译期报错，而非运行时
+> 6. **方法引用返回绑定方法**：`item.method` 返回已绑定 `self` 的函数，调用时无需再传 self
 
 
 ### 三种参数模式对比
@@ -6326,6 +6410,8 @@ lenolang program.leno
 | 定义结构体    | `struct Point { int x, int y }`   |
 | 定义泛型结构体  | `struct Box[T] { T value }`       |
 | 泛型约束     | `func f[T: Comparable](T a, T b)`  |
+| 多 face 实现 | `struct Key impl Comparable, Hashable { }` |
+| 约束方法引用   | `return item.format`（返回绑定方法）      |
 | 创建实例     | `new Point(x=10, y=20)`           |
 | 创建泛型实例   | `new Box[int](value=42)`（类型参数不可省略） |
 | 访问字段     | `p.x`, `p.y`                      |
