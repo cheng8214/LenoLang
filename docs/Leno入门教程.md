@@ -2818,38 +2818,28 @@ print(chained.value)    // 168
 >
 > 这与内置泛型类型（`Array`、`Dict`）不同——内置类型可以省略类型参数，编译器会从初始值推断。但自定义泛型 struct 必须显式指定。
 
-> **⚠️ 坑 9：泛型函数体内创建泛型 struct — 类型参数的运行时推断与局限**
+> **⚠️ 坑 9：泛型函数体内创建泛型 struct — 类型参数如何传递**
 >
-> 在泛型函数（如 `func Ok[T](T val)`）内部创建泛型 struct（如 `new Result[T]()`）时，类型参数 `T` 在编译期是泛型占位符，到**运行时**才通过函数参数的实际值推断具体类型。这有两个关键限制：
->
-> **✅ 能推断的场景** — 泛型参数作为函数参数出现：
+> 在泛型函数（如 `func Ok[T](T val)`）内部创建泛型 struct（如 `new Result[T]()`）时，类型参数 `T` 会通过调用链自动传递：
 >
 > ```leno
 > func Ok[T](T val): Result[T] {
->     return new Result[T](data=val, ok=true)    // ✅ T 可从 val 的运行时类型推断
+>     return new Result[T](data=val, ok=true)    // ✅ T 由调用方 Ok[float] 传入，closure 携带
+> }
+>
+> func Err[T](string msg): Result[T] {
+>     return new Result[T](ok=false, error=msg)  // ✅ T 同样通过调用链传递，无需 dummy 参数
 > }
 >
 > func reverse[T](Array[T] arr): Array[T] {
->     var s = new Stack[T]()                       // ✅ T 可从 arr 的元素类型推断
+>     var s = new Stack[T]()                       // ✅ T 由调用方 reverse[int] 传入
 >     ...
 > }
 > ```
 >
-> **❌ 不能推断的场景** — 泛型参数不在函数参数中：
+> **原理**：调用泛型函数时（如 `Ok[float](...)`），编译器生成 `OP_PUSH_TYPE_ARGS` 指令将类型参数编码为常量。`OP_CALL` 创建 closure 时将这些类型参数存入 `closure.type_param_args`。函数体内创建泛型 struct 时，`OP_STRUCT_INIT` 直接从 closure 读取解析，**不再依赖运行时值推断**。
 >
-> ```leno
-> func Err[T](string msg): Result[T] {
->     return new Result[T](ok=false, error=msg)  // ❌ T 无法推断（只有 string 参数）
-> }
->
-> // Err[int]("some error") 调用时 T=int，但函数体内无法获取该类型信息
-> ```
->
-> **解决办法**：
-> - 让泛型参数在函数形参中出现（添加一个 dummy 参数）：`func Err[T](string msg, T dummy)`
-> - 或在调用侧先创建结果再返回（需要 struct 类型已知）
->
-> 这个限制源于 Leno 的泛型实现采用单一函数体 + 运行时类型推断，而非 C++ 的模板单态化。
+> 这个机制保证了无论函数参数是否携带泛型类型（如 `Err[T](string msg)` 只有 string 参数），都能正确获取 T 的具体类型。
 
 > **⚠️ 坑 10：`int / int = int` 整数除法在泛型上下文中的陷阱**
 >
