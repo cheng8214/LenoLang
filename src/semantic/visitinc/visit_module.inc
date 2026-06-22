@@ -1,0 +1,1309 @@
+        case AST_IMPORT: {
+            if (strstr(ast->u.import.module_name, ".leno") != NULL) {
+                const char* alias = ast->u.import.alias;
+                char* module_name = NULL;
+                // 在模块上下文中使用 SYM_MODULE，否则使用 SYM_GLOBAL
+                SymKind module_sym_kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                if (!alias) {
+                    alias = strrchr(ast->u.import.module_name, '/');
+                    if (!alias) alias = strrchr(ast->u.import.module_name, '\\');
+                    if (alias) alias++;
+                    else alias = ast->u.import.module_name;
+                    
+                    module_name = strdup(alias);
+                    char* dot = strrchr(module_name, '.');
+                    if (dot) *dot = '\0';
+                    
+                    Symbol* sym = scope_define(s->current, module_name, module_sym_kind);
+                    if (sym) {
+                        sym->type = type_new(TYPE_DICT);
+                    }
+                } else {
+                    module_name = strdup(alias);
+                    
+                    Symbol* sym = scope_define(s->current, alias, module_sym_kind);
+                    if (sym) {
+                        sym->type = type_new(TYPE_DICT);
+                    }
+                }
+                
+                if (s->imported_module_count < 64 && ast->u.import.file_path) {
+                    ImportedModuleInfo* info = &s->imported_modules[s->imported_module_count++];
+                    info->alias = module_name;
+                    info->file_path = strdup(ast->u.import.file_path);
+
+                    // 创建模块符号表并扫描模块文件
+                    info->sym_table = module_symbol_table_create(ast->u.import.file_path);
+                    if (info->sym_table) {
+                        const char* current_file = error_get_filename();
+                        module_symbol_table_scan(info->sym_table, current_file);
+
+                        // 注意：不再将模块中的 struct 定义注册到当前作用域
+                        // struct 必须通过模块名访问，例如：new module.Point()
+                        // 这样可以保持与 func 和 var 的一致性
+
+                        // 但是，需要将模块中的 face 定义注册到全局表
+                        // 这样模块中的 struct 可以实现这些 face
+                        for (int fi = 0; fi < info->sym_table->face_count; fi++) {
+                            ModuleFaceSymbol* face_sym = &info->sym_table->faces[fi];
+                            if (!face_def_find(face_sym->name)) {
+                                ObjFaceDef* fdef = face_def_new(face_sym->name, face_sym->method_count);
+                                if (fdef) {
+                                    for (int mi = 0; mi < face_sym->method_count; mi++) {
+                                        fdef->methods[mi].name = strdup(face_sym->methods[mi].name);
+                                        fdef->methods[mi].return_type = type_new(face_sym->methods[mi].return_type);
+                                        fdef->methods[mi].param_count = face_sym->methods[mi].param_count;
+                                    }
+                                    face_def_register(fdef);
+                                }
+                            }
+                        }
+
+                        // 将模块中的 alias 定义注册到当前作用域
+                        for (int ai = 0; ai < info->sym_table->alias_count; ai++) {
+                            ModuleAliasSymbol* alias_sym = &info->sym_table->aliases[ai];
+                            // 注册为类型符号，让后续 parse_type 能识别
+                            Symbol* sym = scope_define(s->current, alias_sym->name, SYM_TYPE);
+                            if (sym && alias_sym->type_info) {
+                                sym->type = type_copy(alias_sym->type_info);
+                            }
+                        }
+
+                        // 将模块中的 struct 定义注册到全局表
+                        // 这样类型检查时可以验证 struct 是否实现了 face
+                        for (int si = 0; si < info->sym_table->struct_count; si++) {
+                            ModuleStructSymbol* struct_sym = &info->sym_table->structs[si];
+                            if (!struct_sym->is_cstruct && !struct_def_find(struct_sym->name)) {
+                                ObjStructDef* sdef = struct_def_new(struct_sym->name, struct_sym->field_count, struct_sym->method_count);
+                                if (sdef) {
+                                    // 设置泛型类型参数数量
+                                    sdef->type_param_count = struct_sym->type_param_count;
+                                    // 设置泛型类型参数名称
+                                    if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                                        sdef->type_param_names = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                                        for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                            sdef->type_param_names[tpi] = strdup(struct_sym->type_param_names[tpi]);
+                                        }
+                                    }
+
+                                    // 设置 struct 方法名
+                                    for (int mi = 0; mi < struct_sym->method_count; mi++) {
+                                        const char* full_method_name = struct_sym->methods[mi].name;
+                                        const char* method_name = full_method_name;
+                                        const char* sep = strstr(full_method_name, "::");
+                                        if (sep) {
+                                            method_name = sep + 2;
+                                        }
+                                        sdef->methods[mi].name = strdup(method_name);
+                                    }
+
+                                    // 设置 impl 信息
+                                    if (struct_sym->impl_count > 0) {
+                                        sdef->impl_count = struct_sym->impl_count;
+                                        sdef->impl_names = (char**)malloc(sizeof(char*) * struct_sym->impl_count);
+                                        for (int ii = 0; ii < struct_sym->impl_count; ii++) {
+                                            sdef->impl_names[ii] = strdup(struct_sym->impl_names[ii]);
+                                        }
+                                    }
+
+                                    struct_def_register(sdef);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    free(module_name);
+                }
+            } else {
+                // 原生模块：运行时通过 OP_LOAD_NATIVE_MODULE 加载
+                // 记录原生模块导入，用于编译时检查
+                const char* alias = ast->u.import.alias ? ast->u.import.alias : ast->u.import.module_name;
+                if (s->imported_module_count < 64) {
+                    ImportedModuleInfo* info = &s->imported_modules[s->imported_module_count++];
+                    info->alias = strdup(alias);
+                    info->file_path = NULL;  // 原生模块没有文件路径
+                }
+
+                // 注册模块别名（如果有显式别名）
+                if (ast->u.import.alias) {
+                    native_register_module_alias(ast->u.import.alias, ast->u.import.module_name);
+                }
+                
+                // 将别名或模块名定义为一个全局符号，以便在模块调用时可以解析
+                // 在模块上下文中使用 SYM_MODULE，否则使用 SYM_GLOBAL
+                SymKind module_sym_kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                Symbol* sym = scope_define(s->current, alias, module_sym_kind);
+                if (sym) {
+                    sym->type = type_new(TYPE_DICT);
+                }
+            }
+            break;
+        }
+
+        case AST_USE: {
+            // use 语句：将模块中的 struct 类型导入到当前作用域
+            // 注意：use 只支持 struct 类型，不支持 func、var 和 enum
+            // - struct：编译时类型，需要用于变量声明（如 Point p）
+            // - func/var：运行时实体，必须通过模块名访问（如 module.func()）
+            // - enum：成员访问通过模块名（如 module.enum.member），不需要 use
+            const char* module_name = ast->u.use.module_name;
+            const char* symbol_name = ast->u.use.symbol_name;
+
+            // 查找导入的模块
+            ImportedModuleInfo* module_info = find_imported_module(s, module_name);
+            if (!module_info) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入", module_name);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+                break;
+            }
+
+            if (!module_info->sym_table) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 没有符号表", module_name);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+                break;
+            }
+
+            // 尝试查找 struct 定义
+            ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(module_info->sym_table, symbol_name);
+            if (struct_sym) {
+                // 将 struct/cstruct 定义注册到当前作用域
+                SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                Symbol* sym = scope_define(s->current, symbol_name, kind);
+                if (!sym) {
+                    // scope_define 返回 NULL 可能是因为同名冲突
+                    Symbol* existing = scope_resolve_local(s->current, symbol_name);
+                    if (existing && existing->type && (existing->type->kind == TYPE_STRUCT || existing->type->kind == TYPE_CSTRUCT)) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "use 错误：'%s' 已在当前作用域中定义（来自其他模块的 use），请使用模块名限定访问",
+                                 symbol_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                    break;
+                }
+                if (sym) {
+                    // 根据 is_cstruct 标记决定类型
+                    TypeKind struct_type = struct_sym->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT;
+                    sym->type = type_new(struct_type);
+                    sym->type->struct_name = strdup(symbol_name);
+                    sym->struct_field_count = struct_sym->field_count;
+                    sym->struct_field_names = (char**)malloc(sizeof(char*) * struct_sym->field_count);
+                    sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->field_count);
+                    for (int i = 0; i < struct_sym->field_count; i++) {
+                        sym->struct_field_names[i] = strdup(struct_sym->fields[i].name);
+                        sym->struct_field_types[i] = type_new(struct_sym->fields[i].type);
+                    }
+                    // 设置泛型类型参数信息
+                    sym->struct_type_param_count = struct_sym->type_param_count;
+                    if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                        sym->struct_type_params = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                        for (int i = 0; i < struct_sym->type_param_count; i++) {
+                            sym->struct_type_params[i] = strdup(struct_sym->type_param_names[i]);
+                        }
+                    }
+                }
+                // 同时注册 struct 定义到全局表，用于类型检查（face 实现检查）
+                if (!struct_sym->is_cstruct && !struct_def_find(symbol_name)) {
+                    ObjStructDef* sdef = struct_def_new(symbol_name, struct_sym->field_count, struct_sym->method_count);
+                    if (sdef) {
+                        // 设置泛型类型参数数量
+                        sdef->type_param_count = struct_sym->type_param_count;
+                        // 设置泛型类型参数名称
+                        if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                            sdef->type_param_names = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                            for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                sdef->type_param_names[tpi] = strdup(struct_sym->type_param_names[tpi]);
+                            }
+                        }
+
+                        // 设置 struct 方法名（用于方法查找）
+                        for (int i = 0; i < struct_sym->method_count; i++) {
+                            // 方法名在模块符号表中是 "StructName::method_name" 格式
+                            // 需要提取出纯方法名部分
+                            const char* full_method_name = struct_sym->methods[i].name;
+                            const char* method_name = full_method_name;
+                            // 查找 :: 分隔符
+                            const char* sep = strstr(full_method_name, "::");
+                            if (sep) {
+                                method_name = sep + 2;  // 跳过 "::"
+                            }
+                            sdef->methods[i].name = strdup(method_name);
+                        }
+
+                        // 设置 impl 信息（face 实现）
+                        if (struct_sym->impl_count > 0) {
+                            sdef->impl_count = struct_sym->impl_count;
+                            sdef->impl_names = (char**)malloc(sizeof(char*) * struct_sym->impl_count);
+                            for (int i = 0; i < struct_sym->impl_count; i++) {
+                                sdef->impl_names[i] = strdup(struct_sym->impl_names[i]);
+                            }
+                        }
+
+                        struct_def_register(sdef);
+                    }
+                }
+
+                // 将 struct 方法注册到 func_table，以便方法调用时能正确解析
+                // 注意：即使 struct 定义已存在，也需要注册方法到 func_table
+                for (int mi = 0; mi < struct_sym->method_count; mi++) {
+                    const char* full_method_name = struct_sym->methods[mi].name;
+                    // 检查是否已注册
+                    Ast* existing = func_table_find(&s->func_table, full_method_name);
+                    if (!existing) {
+                        // 创建一个占位符函数定义 AST
+                        Ast* placeholder = ast_new(AST_FUNC_DEF, 0);
+                        if (placeholder) {
+                            placeholder->u.func.name = strdup(full_method_name);
+                            // pcnt = 参数数量 + 1 (self) + param_count (其他参数)
+                            // struct 方法的 pcnt 包含 self 参数
+                            placeholder->u.func.pcnt = 1 + struct_sym->methods[mi].param_count;
+                            placeholder->u.func.return_type = type_new(struct_sym->methods[mi].return_type);
+                            if (struct_sym->methods[mi].return_struct_name) {
+                                placeholder->u.func.return_type->struct_name = strdup(struct_sym->methods[mi].return_struct_name);
+                            }
+                            if (struct_sym->methods[mi].return_type == TYPE_GENERIC_PARAM && struct_sym->methods[mi].return_type_param_name) {
+                                placeholder->u.func.return_type->type_param_name = strdup(struct_sym->methods[mi].return_type_param_name);
+                            }
+                            // 设置返回类型的泛型参数（如 Holder[K] 中的 [K]）
+                            if (struct_sym->methods[mi].return_generic_count > 0 && struct_sym->methods[mi].return_generic_param_names) {
+                                placeholder->u.func.return_type->generic_count = struct_sym->methods[mi].return_generic_count;
+                                placeholder->u.func.return_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->methods[mi].return_generic_count);
+                                for (int gi = 0; gi < struct_sym->methods[mi].return_generic_count; gi++) {
+                                    // 检查是否是泛型参数名（如 K, V）
+                                    int is_type_param = 0;
+                                    for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                        if (struct_sym->type_param_names[tpi] && strcmp(struct_sym->methods[mi].return_generic_param_names[gi], struct_sym->type_param_names[tpi]) == 0) {
+                                            is_type_param = 1;
+                                            placeholder->u.func.return_type->generic_args[gi] = type_new(TYPE_GENERIC_PARAM);
+                                            placeholder->u.func.return_type->generic_args[gi]->type_param_name = strdup(struct_sym->methods[mi].return_generic_param_names[gi]);
+                                            break;
+                                        }
+                                    }
+                                    if (!is_type_param) {
+                                        // 具体类型（如 int, string 等）—— 简单判断
+                                        TypeInfo* arg_type = type_new(TYPE_ANY);
+                                        if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "int") == 0) arg_type = type_new(TYPE_INT);
+                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "float") == 0) arg_type = type_new(TYPE_FLOAT);
+                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "string") == 0) arg_type = type_new(TYPE_STRING);
+                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "bool") == 0) arg_type = type_new(TYPE_BOOL);
+                                        placeholder->u.func.return_type->generic_args[gi] = arg_type;
+                                    }
+                                }
+                            }
+                            // 设置参数类型（包括泛型参数名）
+                            int total_pcnt = 1 + struct_sym->methods[mi].param_count;
+                            placeholder->u.func.param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * total_pcnt);
+                            // self 参数类型
+                            placeholder->u.func.param_types[0] = type_new(TYPE_STRUCT);
+                            placeholder->u.func.param_types[0]->struct_name = strdup(struct_sym->name);
+                            if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                                placeholder->u.func.param_types[0]->generic_count = struct_sym->type_param_count;
+                                placeholder->u.func.param_types[0]->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->type_param_count);
+                                for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                    placeholder->u.func.param_types[0]->generic_args[tpi] = type_new(TYPE_GENERIC_PARAM);
+                                    placeholder->u.func.param_types[0]->generic_args[tpi]->type_param_name = strdup(struct_sym->type_param_names[tpi]);
+                                }
+                            }
+                            // 其他参数类型
+                            for (int pi = 0; pi < struct_sym->methods[mi].param_count; pi++) {
+                                if (struct_sym->methods[mi].param_generic_names && struct_sym->methods[mi].param_generic_names[pi]) {
+                                    placeholder->u.func.param_types[1 + pi] = type_new(TYPE_GENERIC_PARAM);
+                                    placeholder->u.func.param_types[1 + pi]->type_param_name = strdup(struct_sym->methods[mi].param_generic_names[pi]);
+                                } else {
+                                    placeholder->u.func.param_types[1 + pi] = type_new(struct_sym->methods[mi].param_types[pi]);
+                                }
+                            }
+                            // 设置泛型类型参数（用于 resolve_generic_in_type）
+                            if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                                placeholder->u.func.type_param_count = struct_sym->type_param_count;
+                                placeholder->u.func.type_params = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                                for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                    placeholder->u.func.type_params[tpi] = strdup(struct_sym->type_param_names[tpi]);
+                                }
+                            }
+                            placeholder->u.func.default_count = 0;
+                            func_table_add(&s->func_table, full_method_name, placeholder);
+                        }
+                    }
+                }
+                break;
+            }
+
+            // 尝试查找 face 定义
+            ModuleFaceSymbol* face_sym = module_symbol_table_find_face(module_info->sym_table, symbol_name);
+            if (face_sym) {
+                // 将 face 定义注册到当前作用域
+                // face 类型使用 SYM_TYPE，不占用运行时索引
+                Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
+                if (sym) {
+                    sym->type = type_new(TYPE_FACE);
+                    sym->type->struct_name = strdup(symbol_name);
+                }
+                // 同时注册 face 定义到全局表，用于类型检查
+                if (!face_def_find(symbol_name)) {
+                    ObjFaceDef* fdef = face_def_new(symbol_name, face_sym->method_count);
+                    if (fdef) {
+                        for (int i = 0; i < face_sym->method_count; i++) {
+                            fdef->methods[i].name = strdup(face_sym->methods[i].name);
+                            fdef->methods[i].return_type = type_new(face_sym->methods[i].return_type);
+                            fdef->methods[i].param_count = 0;
+                            fdef->methods[i].param_types = NULL;
+                        }
+                        face_def_register(fdef);
+                    }
+                }
+                break;
+            }
+
+            // 没有找到 struct 或 face
+            char msg[BUFFER_MEDIUM];
+            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct 或 face 类型 '%s'", module_name, symbol_name);
+            error_add(ERR_SEMANTIC, ast->line, msg);
+            break;
+        }
+
+        case AST_MODULE_CALL: {
+            visit_list(s, &ast->u.module_call.args);
+            const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
+
+            int is_native_module = native_is_module(actual_module);
+
+            int is_imported_module = 0;
+            ImportedModuleInfo* module_info = find_imported_module(s, ast->u.module_call.module_name);
+            if (module_info) {
+                is_imported_module = 1;
+            }
+
+            // 检查模块是否已导入：原生模块必须显式导入，用户模块也必须导入
+            if (is_native_module && !is_imported_module) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "模块 '%s' 未导入，请先使用 'import %s' 导入模块",
+                         ast->u.module_call.module_name, ast->u.module_call.module_name);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+                break;
+            }
+
+            if (is_native_module) {
+                // 原生模块调用，检查方法是否存在
+                // 先检查方法是否存在（通过查找元信息）
+                extern ModuleMethodMeta* native_find_module_method(const char* module_name, const char* method_name);
+                ModuleMethodMeta* meta = native_find_module_method(actual_module, ast->u.module_call.method_name);
+                
+                if (!meta) {
+                    // 方法不存在
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s",
+                             actual_module, ast->u.module_call.method_name);
+                    error_add(ERR_SEMANTIC, ast->line, msg);
+                } else {
+                    // 方法存在，检查参数数量
+                    int expected_arity = meta->arity;
+                    int actual_arity = ast->u.module_call.args.count;
+
+                    // arity >= 0: 固定参数数量
+                    if (expected_arity >= 0 && actual_arity != expected_arity) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "%s.%s 参数数量不匹配: 期望 %d, 实际 %d",
+                                 actual_module, ast->u.module_call.method_name, expected_arity, actual_arity);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                    // arity < 0: 可变参数，检查是否少于 min_arity
+                    else if (expected_arity < 0 && meta->min_arity >= 0 && actual_arity < meta->min_arity) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "%s.%s 参数过少: 最少 %d 个, 实际 %d",
+                                 actual_module, ast->u.module_call.method_name, meta->min_arity, actual_arity);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                    // arity < 0: 可变参数，检查是否超过 max_arity
+                    else if (expected_arity < 0 && meta->max_arity >= 0 && actual_arity > meta->max_arity) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "%s.%s 参数过多: 最多 %d 个, 实际 %d",
+                                 actual_module, ast->u.module_call.method_name, meta->max_arity, actual_arity);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                    
+                    // 检查参数类型
+                    // 先找到第一个数组参数及其元素类型
+                    TypeInfo* array_elem_type = NULL;
+                    for (int j = 0; j < actual_arity; j++) {
+                        TypeKind param_type = native_get_module_method_param_type(actual_module, ast->u.module_call.method_name, j);
+                        if (param_type == TYPE_ARRAY) {
+                            Ast* arg = ast->u.module_call.args.items[j];
+                            TypeInfo* arg_type = infer_expr_type(s, arg);
+                            if (arg_type && arg_type->kind == TYPE_ARRAY && arg_type->element_type) {
+                                array_elem_type = arg_type->element_type;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    for (int i = 0; i < actual_arity; i++) {
+                        TypeKind expected_type = native_get_module_method_param_type(actual_module, ast->u.module_call.method_name, i);
+                        Ast* arg = ast->u.module_call.args.items[i];
+                        TypeInfo* arg_type = infer_expr_type(s, arg);
+                        
+                        // 如果注册表中是 TYPE_ANY，且已知数组元素类型，则用元素类型检查
+                        if (expected_type == TYPE_ANY && array_elem_type) {
+                            expected_type = array_elem_type->kind;
+                        }
+                        
+                        // 处理数组元素修改方法（add/insert）：向空数组添加第一个元素时更新类型
+                        const char* method_name = ast->u.module_call.method_name;
+                        if (type_utils_is_array_element_mutator(method_name)) {
+                        int elem_param_idx = type_utils_get_array_element_param_index(method_name, 1); // 1 = 模块调用
+                        if (i == elem_param_idx) {
+                            // 获取第一个参数（数组）
+                            Ast* arr_arg = ast->u.module_call.args.items[0];
+                            Symbol* arr_sym = type_utils_resolve_var_symbol(s, arr_arg);
+                            if (type_utils_try_update_array_element_type(arr_sym, arg_type)) {
+                                // 类型已更新，同时更新期望参数类型
+                                expected_type = arg_type->kind;
+                            }
+                        }
+                    }
+                    
+                    if (expected_type != TYPE_ANY && arg_type && arg_type->kind != TYPE_ANY && arg_type->kind != expected_type) {
+                        // 允许 int -> float, bigint -> int, bigint -> float 的隐式转换
+                        bool type_compatible = false;
+                        if ((expected_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
+                            (expected_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
+                            (expected_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT)) {
+                            type_compatible = true;
+                        }
+                        // 允许 Ptr[T] <-> Ptr 之间的隐式转换
+                        if ((expected_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
+                            (expected_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
+                            type_compatible = true;
+                        }
+                        // 允许 Style[xxx] 传给 Dict 参数
+                        if (expected_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
+                            type_compatible = true;
+                        }
+                        // 允许 cfunc 类型匹配
+                        if (expected_type == TYPE_CFUNC && arg_type->kind == TYPE_CFUNC) {
+                            type_compatible = true;
+                        }
+                        if (!type_compatible) {
+                            char msg[BUFFER_MEDIUM];
+                            const char* hint = get_type_conversion_hint(expected_type, arg_type->kind);
+                            if (hint) {
+                                snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'\n%s",
+                                         actual_module, ast->u.module_call.method_name, i + 1,
+                                         type_kind_to_string(expected_type), type_to_string(arg_type), hint);
+                            } else {
+                                snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
+                                         actual_module, ast->u.module_call.method_name, i + 1,
+                                         type_kind_to_string(expected_type), type_to_string(arg_type));
+                            }
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
+                    }
+                    
+                    if (arg_type) type_free(arg_type);
+                } // 关闭 for 循环
+                } // 关闭 else 块（方法存在时的处理）
+                
+                // 如果返回类型是 TYPE_ANY，方法可能不存在，但不做错误报告
+                // 因为某些原生方法可能返回 TYPE_ANY
+            } else if (is_imported_module && module_info && module_info->file_path) {
+                // 用户模块调用，检查方法是否存在
+                const char* current_file = error_get_filename();
+                
+                // 首先检查是否是 struct 定义
+                ModuleSymbolTable* sym_table = module_symbol_table_create(module_info->file_path);
+                int is_struct = 0;
+                if (sym_table) {
+                    if (module_symbol_table_scan(sym_table, current_file) == 0) {
+                        ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(sym_table, ast->u.module_call.method_name);
+                        if (struct_sym) {
+                            is_struct = 1;
+                            // 是 struct 定义，提示使用 new 关键字
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "struct '%s.%s' 需要使用 new 关键字实例化，例如: new %s.%s()",
+                                    ast->u.module_call.module_name, struct_sym->name,
+                                    ast->u.module_call.module_name, struct_sym->name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
+                    }
+                    module_symbol_table_destroy(sym_table);
+                }
+                
+                // 如果不是 struct，检查是否是函数，并推断返回类型
+                if (!is_struct) {
+                    int has_method = module_has_method(module_info->file_path, current_file, 
+                                                       ast->u.module_call.method_name);
+                    if (has_method == 0) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "模块 '%s' 中没有方法 '%s'",
+                                 ast->u.module_call.module_name, ast->u.module_call.method_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    } else if (module_info->sym_table) {
+                        // 从模块符号表推断返回类型
+                        ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
+                            module_info->sym_table, ast->u.module_call.method_name);
+                        if (func_sym && func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
+                            ast->cached_type = type_new(func_sym->return_type);
+                            if (func_sym->return_struct_name) {
+                                ast->cached_type->struct_name = strdup(func_sym->return_struct_name);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 不是模块调用，可能是实例方法调用
+                // 使用resolve_variable_with_upvalue处理变量，支持闭包
+                SymRef ref;
+                memset(&ref, 0, sizeof(ref));
+                Symbol* obj_sym = resolve_variable_with_upvalue(s, ast->u.module_call.module_name, &ref);
+                if (obj_sym) {
+                    const char* method_name = ast->u.module_call.method_name;
+                    int expected_arity = -1;
+                    TypeKind return_type;
+
+                    // 检查是否是 struct 方法调用
+                    int is_struct_method = 0;
+                    Ast* method_def = NULL;
+
+                    // 使用 infer_expr_type 获取对象类型（更准确）
+                    Ast* temp_var = ast_new(AST_VAR, ast->line);
+                    temp_var->u.var.name = strdup(ast->u.module_call.module_name);
+                    temp_var->u.var.ref.kind = ref.kind;
+                    temp_var->u.var.ref.index = ref.index;
+                    temp_var->u.var.ref.name = ref.name ? strdup(ref.name) : NULL;
+                    temp_var->u.var.ref.type_kind = ref.type_kind;
+                    temp_var->cached_type = NULL;  // 确保 cached_type 为 NULL
+                    TypeInfo* obj_type = infer_expr_type(s, temp_var);
+
+                    // 检查类型是否是 clib
+                    int is_clib_call = 0;
+                    if (!is_struct_method && obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+                        // 查找 clib 符号
+                        Symbol* clib_sym = scope_resolve_tree_bfs(s->root_scope, obj_type->struct_name);
+                        if (!clib_sym) {
+                            clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                        }
+                        if (clib_sym && clib_sym->clib_func_count > 0) {
+                            for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
+                                if (strcmp(clib_sym->clib_func_names[fi], method_name) == 0) {
+                                    is_clib_call = 1;
+                                    // 检查参数数量
+                                    int expected_count = clib_sym->clib_func_param_counts[fi];
+                                    int actual_count = ast->u.module_call.args.count;
+                                    if (actual_count != expected_count) {
+                                        char msg[BUFFER_MEDIUM];
+                                        snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                                 obj_type->struct_name, method_name, expected_count, actual_count);
+                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                    }
+                                    // 检查每个参数类型
+                                    for (int pi = 0; pi < actual_count && pi < expected_count; pi++) {
+                                        TypeInfo* expected_param = clib_sym->clib_func_param_types[fi][pi];
+                                        Ast* arg = ast->u.module_call.args.items[pi];
+                                        TypeInfo* arg_type = infer_expr_type(s, arg);
+                                        if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
+                                            if (!(expected_param->kind == TYPE_FLOAT && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_NULL) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
+                                                !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_STRING) &&
+                                                !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_NULL) &&
+                                                !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_STRING) &&
+                                                !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_NULL) &&
+                                                !(expected_param->kind == TYPE_I32 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_I64 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_U32 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_U64 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_I8 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_U8 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_I16 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_U16 && arg_type->kind == TYPE_INT) &&
+                                                !(expected_param->kind == TYPE_F64 && arg_type->kind == TYPE_FLOAT) &&
+                                                !(expected_param->kind == TYPE_F32 && arg_type->kind == TYPE_FLOAT) &&
+                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_CSTRUCT) &&
+                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_CSTRUCT) &&
+                                                !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_CSTRUCT) &&
+                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_PTR) &&
+                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_NULL)) {
+                                                char msg[BUFFER_MEDIUM];
+                                                format_type_error(msg, sizeof(msg),
+                                                    "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",
+                                                    expected_param, arg_type,
+                                                    obj_type->struct_name, method_name);
+                                                // 追加参数序号
+                                                char final_msg[BUFFER_MEDIUM];
+                                                snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
+                                                error_add(ERR_TYPE_MISMATCH, ast->line, final_msg);
+                                            }
+                                        }
+                                        if (arg_type) type_free(arg_type);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        if (!is_clib_call) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                     obj_type->struct_name, method_name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        } else {
+                            // clib 调用验证通过，标记 cached_type 让 codegen 识别
+                            ast->cached_type = type_new(TYPE_CLIB);
+                            ast->cached_type->struct_name = strdup(obj_type->struct_name);
+                            // 同时保存 lib 变量的 ref 信息
+                            ast->u.module_call.lib_ref = ref;
+                            if (ref.name) ast->u.module_call.lib_ref.name = strdup(ref.name);
+                        }
+                    }
+
+                    // clib 调用不继续走 struct 检查
+                    if (is_clib_call) {
+                        // 释放临时对象
+                        if (obj_type) type_free(obj_type);
+                        free(temp_var->u.var.name);
+                        if (temp_var->u.var.ref.name) free(temp_var->u.var.ref.name);
+                        free(temp_var);
+                        break;
+                    }
+
+                    // 检查类型是否是 struct 或 cstruct
+                    if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) && obj_type->struct_name) {
+                        if (obj_type->kind == TYPE_FACE) {
+                            ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
+                            if (fdef) {
+                                for (int fi = 0; fi < fdef->method_count; fi++) {
+                                    if (strcmp(fdef->methods[fi].name, method_name) == 0) {
+                                        is_struct_method = 1;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // face 可能定义在导入的模块中，从模块符号表查找
+                                ImportedModuleInfo* mod_info = find_imported_module(s, ast->u.module_call.module_name);
+                                if (mod_info && mod_info->sym_table) {
+                                    ModuleFaceSymbol* face_sym = module_symbol_table_find_face(mod_info->sym_table, obj_type->struct_name);
+                                    if (face_sym) {
+                                        for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                            if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                                                is_struct_method = 1;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                // 也检查其他导入的模块
+                                if (!is_struct_method) {
+                                    for (int mi = 0; mi < s->imported_module_count && !is_struct_method; mi++) {
+                                        ImportedModuleInfo* m = &s->imported_modules[mi];
+                                        if (m && m->sym_table) {
+                                            ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_type->struct_name);
+                                            if (face_sym) {
+                                                for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                                    if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                                                        is_struct_method = 1;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            char method_key[256];
+                            snprintf(method_key, sizeof(method_key), "%s::%s", obj_type->struct_name, method_name);
+                            method_def = func_table_find(&s->func_table, method_key);
+                            if (method_def && method_def->kind == AST_FUNC_DEF) {
+                                is_struct_method = 1;
+                            }
+
+                            if (!is_struct_method) {
+                                int face_param_count = 0;
+                                TypeKind face_return_type = TYPE_ANY;
+                                if (struct_def_has_face_method(obj_type->struct_name, method_name, &face_param_count, &face_return_type)) {
+                                    is_struct_method = 1;
+                                }
+                            }
+
+                            if (!is_struct_method) {
+                                for (int mi = 0; mi < s->imported_module_count && !is_struct_method; mi++) {
+                                    ImportedModuleInfo* m = &s->imported_modules[mi];
+                                    if (m && m->sym_table) {
+                                        ModuleStructMethod* mod_method = module_symbol_table_find_struct_method(
+                                            m->sym_table, obj_type->struct_name, method_name);
+                                        if (mod_method) {
+                                            is_struct_method = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!is_struct_method) {
+                                for (int mi = 0; mi < s->imported_module_count && !is_struct_method; mi++) {
+                                    ImportedModuleInfo* m = &s->imported_modules[mi];
+                                    if (m && m->sym_table) {
+                                        ObjStructDef* sd = struct_def_find(obj_type->struct_name);
+                                        if (sd && sd->impl_count > 0) {
+                                            for (int ii = 0; ii < sd->impl_count && !is_struct_method; ii++) {
+                                                ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, sd->impl_names[ii]);
+                                                if (face_sym) {
+                                                    for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                                        if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                                                            is_struct_method = 1;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (is_struct_method) {
+                        // 自定义 struct 方法的参数类型检查
+                        if (obj_type && obj_type->kind == TYPE_STRUCT && obj_type->struct_name) {
+                            Ast* struct_def_ast = NULL;
+                            for (int si = 0; si < s->root->u.block.count; si++) {
+                                Ast* stmt = s->root->u.block.items[si];
+                                if (stmt->kind == AST_STRUCT_DEF && strcmp(stmt->u.struct_def.name, obj_type->struct_name) == 0) {
+                                    struct_def_ast = stmt;
+                                    break;
+                                }
+                            }
+                            if (struct_def_ast) {
+                                for (int mi = 0; mi < struct_def_ast->u.struct_def.method_count; mi++) {
+                                    Ast* method_ast = struct_def_ast->u.struct_def.methods[mi];
+                                    if (method_ast && method_ast->kind == AST_FUNC_DEF &&
+                                        strcmp(method_ast->u.func.name, method_name) == 0) {
+                                        int actual_arity = ast->u.module_call.args.count;
+                                        int method_param_count = method_ast->u.func.pcnt - 1;
+                                        if (method_param_count >= 0 && actual_arity != method_param_count) {
+                                            char msg[BUFFER_MEDIUM];
+                                            snprintf(msg, sizeof(msg), "方法 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                                     method_name, method_param_count, actual_arity);
+                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                        } else {
+                                            // 构建泛型参数替换表（包含 struct 的泛型参数和方法的泛型参数）
+                                            char** gp_names = NULL;
+                                            TypeInfo** gp_types = NULL;
+                                            int gp_count = 0;
+
+                                            // struct 的泛型参数（如 Box[T] 的 T）
+                                            if (obj_type->generic_count > 0 && obj_type->generic_args) {
+                                                gp_count = obj_type->generic_count;
+                                                gp_names = (char**)malloc(sizeof(char*) * (gp_count + method_ast->u.func.type_param_count));
+                                                gp_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * (gp_count + method_ast->u.func.type_param_count));
+                                                if (struct_def_ast->u.struct_def.type_params) {
+                                                    for (int gi = 0; gi < gp_count; gi++) {
+                                                        gp_names[gi] = struct_def_ast->u.struct_def.type_params[gi];
+                                                        gp_types[gi] = type_copy(obj_type->generic_args[gi]);
+                                                    }
+                                                }
+                                            } else {
+                                                gp_names = (char**)malloc(sizeof(char*) * method_ast->u.func.type_param_count);
+                                                gp_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * method_ast->u.func.type_param_count);
+                                                gp_count = 0;
+                                            }
+
+                                            // 方法的泛型参数（如 map[U] 的 U）
+                                            if (method_ast->u.func.type_param_count > 0 && method_ast->u.func.type_params) {
+                                                for (int gi = 0; gi < method_ast->u.func.type_param_count; gi++) {
+                                                    int idx = gp_count;
+                                                    gp_names[idx] = method_ast->u.func.type_params[gi];
+                                                    if (ast->u.module_call.generic_type_args && gi < ast->u.module_call.generic_type_count) {
+                                                        gp_types[idx] = type_copy(ast->u.module_call.generic_type_args[gi]);
+                                                    } else {
+                                                        gp_types[idx] = type_new(TYPE_ANY);
+                                                    }
+                                                    gp_count++;
+                                                }
+                                            }
+
+                                            for (int i = 0; i < actual_arity; i++) {
+                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + 1];
+                                                if (!expected_type) continue;
+
+                                                TypeInfo* check_type = expected_type;
+                                                if (gp_count > 0) {
+                                                    for (int gi = 0; gi < gp_count; gi++) {
+                                                        TypeInfo* sub = type_substitute(check_type, gp_names[gi], gp_types[gi]);
+                                                        if (sub != check_type) {
+                                                            check_type = sub;
+                                                        }
+                                                    }
+                                                }
+
+                                                TypeInfo* arg_type = infer_expr_type(s, ast->u.module_call.args.items[i]);
+                                                if (arg_type && arg_type->kind != TYPE_ANY && check_type->kind != TYPE_ANY) {
+                                                    if (!type_is_compatible(check_type, arg_type)) {
+                                                        char msg[BUFFER_MEDIUM];
+                                                        char idx_str[16];
+                                                        snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
+                                                        format_type_error(msg, sizeof(msg),
+                                                            "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                                            check_type, arg_type,
+                                                            method_name, idx_str);
+                                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                                    }
+                                                }
+                                                if (arg_type) type_free(arg_type);
+                                                if (check_type != expected_type) type_free(check_type);
+                                            }
+
+                                            if (gp_types) {
+                                                for (int gi = 0; gi < gp_count; gi++) {
+                                                    type_free(gp_types[gi]);
+                                                }
+                                                free(gp_types);
+                                                free(gp_names);
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 保存原始对象名（用于创建 self 参数）
+                        char* original_obj_name = strdup(ast->u.module_call.module_name);
+                        // 将 AST_MODULE_CALL 转换为 AST_CALL，callee 为 INDEX(self, "method")
+                        free(ast->u.module_call.module_name);
+
+                        // 创建 self 变量节点
+                        Ast* self_var = ast_new(AST_VAR, ast->line);
+                        self_var->u.var.name = original_obj_name;
+                        if (ref.name) {
+                            self_var->u.var.ref.kind = ref.kind;
+                            self_var->u.var.ref.index = ref.index;
+                            self_var->u.var.ref.name = strdup(ref.name);
+                            self_var->u.var.ref.type_kind = ref.type_kind;
+                            self_var->u.var.ref.struct_name = (ref.struct_name) ? strdup(ref.struct_name) : NULL;
+                        } else if (obj_sym) {
+                            self_var->u.var.ref.kind = obj_sym->kind;
+                            self_var->u.var.ref.index = obj_sym->index;
+                            self_var->u.var.ref.name = strdup(obj_sym->name);
+                            self_var->u.var.ref.type_kind = obj_sym->type ? obj_sym->type->kind : TYPE_ANY;
+                            self_var->u.var.ref.struct_name = (obj_sym->type && obj_sym->type->struct_name) ? strdup(obj_sym->type->struct_name) : NULL;
+                        }
+                        if (obj_type) {
+                            self_var->cached_type = type_copy(obj_type);
+                        }
+
+                        // 创建方法名字符串节点
+                        Ast* method_str = ast_new(AST_STRING, ast->line);
+                        method_str->u.string.value = strdup(method_name);
+                        method_str->u.string.len = (int)strlen(method_name);
+
+                        // 创建 INDEX 节点：self["method"]
+                        Ast* index_ast = ast_new(AST_INDEX, ast->line);
+                        index_ast->u.index.obj = self_var;
+                        index_ast->u.index.index = method_str;
+
+                        // 将 self 参数添加到参数列表开头
+                        AstList new_args;
+                        ast_list_init(&new_args);
+                        Ast* self_arg = ast_new(AST_VAR, ast->line);
+                        self_arg->u.var.name = strdup(original_obj_name);
+                        if (ref.name) {
+                            self_arg->u.var.ref.kind = ref.kind;
+                            self_arg->u.var.ref.index = ref.index;
+                            self_arg->u.var.ref.name = strdup(ref.name);
+                            self_arg->u.var.ref.type_kind = ref.type_kind;
+                            self_arg->u.var.ref.struct_name = (ref.struct_name) ? strdup(ref.struct_name) : NULL;
+                        } else if (obj_sym) {
+                            self_arg->u.var.ref.kind = obj_sym->kind;
+                            self_arg->u.var.ref.index = obj_sym->index;
+                            self_arg->u.var.ref.name = strdup(obj_sym->name);
+                            self_arg->u.var.ref.type_kind = obj_sym->type ? obj_sym->type->kind : TYPE_ANY;
+                            self_arg->u.var.ref.struct_name = (obj_sym->type && obj_sym->type->struct_name) ? strdup(obj_sym->type->struct_name) : NULL;
+                        }
+                        ast_list_add(&new_args, self_arg);
+                        for (int i = 0; i < ast->u.module_call.args.count; i++) {
+                            ast_list_add(&new_args, ast->u.module_call.args.items[i]);
+                        }
+                        free(ast->u.module_call.args.items);
+
+                        // 转换 AST 类型
+                        ast->kind = AST_CALL;
+                        ast->u.call.callee = index_ast;
+                        ast->u.call.args = new_args;
+                        ast->u.call.is_tail_call = 0;
+                    }
+
+                    // 释放临时对象
+                    if (obj_type) type_free(obj_type);
+                    free(temp_var->u.var.name);
+                    if (temp_var->u.var.ref.name) free(temp_var->u.var.ref.name);
+                    free(temp_var);
+
+                    if (!is_struct_method) {
+                        // 根据对象类型确定类型名称
+                        const char* obj_type_name = NULL;
+                        if (obj_sym->type) {
+                            obj_type_name = native_get_type_name(obj_sym->type->kind);
+                        }
+
+                        // 根据对象类型名称和方法名查找方法
+                        if (obj_type_name) {
+                            return_type = native_get_instance_method_return_type(obj_type_name, method_name, &expected_arity);
+                        } else {
+                            // 如果无法确定对象类型，尝试全局查找（向后兼容）
+                            obj_type_name = native_find_instance_method_type(method_name, &expected_arity, &return_type);
+                        }
+
+                        // 判断方法是否找到：当 return_type == TYPE_ANY 且 expected_arity == -1 时表示方法不存在
+                        int method_found = !(return_type == TYPE_ANY && expected_arity == -1);
+
+                        // 如果没找到，检查是否是从模块导入的 struct/cstruct 的方法
+                        if (!method_found && obj_sym->type &&
+                            (obj_sym->type->kind == TYPE_STRUCT || obj_sym->type->kind == TYPE_CSTRUCT) &&
+                            obj_sym->type->struct_name) {
+                            for (int i = 0; i < s->imported_module_count; i++) {
+                                ImportedModuleInfo* info = &s->imported_modules[i];
+                                if (info->sym_table) {
+                                    ModuleStructMethod* method = module_symbol_table_find_struct_method(
+                                        info->sym_table, obj_sym->type->struct_name, method_name);
+                                    if (method) {
+                                        method_found = 1;
+                                        return_type = method->return_type;
+                                        expected_arity = method->param_count;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (method_found) {
+                        // 方法在该类型的注册表中存在
+                        int actual_arity = ast->u.module_call.args.count;
+                        const InstanceMethodMeta* inst_meta = NULL;
+                        if (obj_type_name) {
+                            inst_meta = native_find_instance_method(obj_type_name, method_name);
+                        }
+
+                        // arity >= 0: 固定参数数量
+                        if (expected_arity >= 0 && actual_arity != expected_arity) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
+                                     method_name, expected_arity, actual_arity);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
+                        // arity < 0: 可变参数，检查是否少于 min_arity
+                        else if (expected_arity < 0 && inst_meta && inst_meta->min_arity >= 0 && actual_arity < inst_meta->min_arity) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过少: 最少 %d 个, 实际 %d",
+                                     method_name, inst_meta->min_arity, actual_arity);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
+                        // arity < 0: 可变参数，检查是否超过 max_arity
+                        else if (expected_arity < 0 && inst_meta && inst_meta->max_arity >= 0 && actual_arity > inst_meta->max_arity) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
+                                     method_name, inst_meta->max_arity, actual_arity);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
+
+                        // 检查参数类型（仅当参数数量匹配或可变参数时）
+                        if (obj_type_name && (expected_arity == -1 || actual_arity == expected_arity)) {
+                            for (int i = 0; i < actual_arity; i++) {
+                                TypeKind expected_param_type = native_get_instance_method_param_type(obj_type_name, method_name, i);
+                                TypeInfo* arg_type = infer_expr_type(s, ast->u.module_call.args.items[i]);
+                                
+                                // 处理数组/字典元素修改方法的类型更新和检查
+                                TypeInfo* expected_type_for_check = NULL;
+                                
+                                // 处理数组元素修改方法（add/insert）
+                                if (type_utils_is_array_element_mutator(method_name)) {
+                                    int elem_param_idx = type_utils_get_array_element_param_index(method_name, 0); // 0 = 实例方法
+                                    if (i == elem_param_idx) {
+                                        // 首先尝试更新数组元素类型（如果是第一次 add）
+                                        if (type_utils_try_update_array_element_type(obj_sym, arg_type)) {
+                                            // 类型已更新，同时更新期望参数类型
+                                            expected_param_type = arg_type->kind;
+                                        } else if (obj_sym->type && obj_sym->type->kind == TYPE_ARRAY) {
+                                            // 数组已有具体元素类型，检查是否匹配
+                                            TypeInfo* elem_type = obj_sym->type->element_type;
+                                            if (elem_type && elem_type->kind != TYPE_ANY) {
+                                                expected_param_type = elem_type->kind;
+                                                // 保存完整类型信息用于嵌套类型检查
+                                                expected_type_for_check = elem_type;
+                                            }
+                                        }
+                                    }
+                                }
+                                // 处理字典 set 方法的值类型更新和检查
+                                else if (type_utils_is_dict_element_mutator(method_name)) {
+                                    int elem_param_idx = type_utils_get_dict_element_param_index(method_name);
+                                    if (i == elem_param_idx) {
+                                        // 首先尝试更新字典值类型（如果是第一次 set）
+                                        if (type_utils_try_update_dict_value_type(obj_sym, arg_type)) {
+                                            // 类型已更新，同时更新期望参数类型
+                                            expected_param_type = arg_type->kind;
+                                        } else if (obj_sym->type && obj_sym->type->kind == TYPE_DICT) {
+                                            // 字典已有具体值类型，检查是否匹配
+                                            TypeInfo* value_type = obj_sym->type->value_type;
+                                            if (value_type && value_type->kind != TYPE_ANY) {
+                                                expected_param_type = value_type->kind;
+                                                // 保存完整类型信息用于嵌套类型检查
+                                                expected_type_for_check = value_type;
+                                            }
+                                        }
+                                    }
+                                }
+                                // 对于其他方法，如果注册表中是 TYPE_ANY，但容器有具体元素类型，则用该类型检查
+                                else if (expected_param_type == TYPE_ANY && obj_sym->type) {
+                                    if (obj_sym->type->kind == TYPE_ARRAY) {
+                                        TypeInfo* elem_type = obj_sym->type->element_type;
+                                        if (elem_type && elem_type->kind != TYPE_ANY) {
+                                            expected_param_type = elem_type->kind;
+                                            expected_type_for_check = elem_type;
+                                        }
+                                    } else if (obj_sym->type->kind == TYPE_DICT && i > 0) {
+                                        TypeInfo* value_type = obj_sym->type->value_type;
+                                        if (value_type && value_type->kind != TYPE_ANY) {
+                                            expected_param_type = value_type->kind;
+                                            expected_type_for_check = value_type;
+                                        }
+                                    }
+                                }
+                                
+                                // 类型检查：简单类型比较 kind，复杂类型使用 type_equals 深度比较
+                                if (arg_type && arg_type->kind != TYPE_ANY) {
+                                    if (expected_type_for_check) {
+                                        // 有完整类型信息，进行深度类型比较（支持嵌套类型）
+                                        if (!type_is_compatible(expected_type_for_check, arg_type)) {
+                                            char msg[BUFFER_MEDIUM];
+                                            // 先保存字符串避免 buffer 覆盖
+                                            const char* exp_str = type_to_string(expected_type_for_check);
+                                            char exp_buf[BUFFER_SMALL];
+                                            strncpy(exp_buf, exp_str, sizeof(exp_buf) - 1);
+                                            exp_buf[sizeof(exp_buf) - 1] = '\0';
+                                            const char* hint = get_type_conversion_hint(expected_type_for_check->kind, arg_type->kind);
+                                            if (hint) {
+                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                         i + 1, exp_buf, type_to_string(arg_type), hint);
+                                            } else {
+                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
+                                                         i + 1, exp_buf, type_to_string(arg_type));
+                                            }
+                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                        }
+                                    } else if (expected_param_type != TYPE_ANY) {
+                                        // 只有 kind 信息，进行简单类型比较
+                                        if (arg_type->kind != expected_param_type) {
+                                            // 允许 int -> float, bigint -> int, bigint -> float 的隐式转换
+                                            bool type_compatible = false;
+                                            if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
+                                                (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
+                                                (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT)) {
+                                                type_compatible = true;
+                                            }
+                                            // 允许 Ptr[T] <-> Ptr 之间的隐式转换
+                                            if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
+                                                (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
+                                                type_compatible = true;
+                                            }
+                                            // 允许 Style[xxx] 传给 Dict 参数
+                                            if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
+                                                type_compatible = true;
+                                            }
+                                            if (!type_compatible) {
+                                                char msg[BUFFER_MEDIUM];
+                                                const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
+                                                if (hint) {
+                                                    snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                             i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type), hint);
+                                                } else {
+                                                    snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
+                                                             i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                }
+                                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if (arg_type) type_free(arg_type);
+                            }
+                        }
+                    } else if (!obj_sym->type || obj_sym->type->kind == TYPE_ANY) {
+                        // 未初始化变量
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "不能对未初始化的变量 '%s' 调用方法 '%s'",
+                                 ast->u.module_call.module_name, method_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    } else {
+                        // 方法不存在于该类型
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
+                                 type_to_string(obj_sym->type), method_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+
+                    // 转换为实例方法调用：obj.method(args) -> obj["method"](args)
+                    // 创建属性访问节点 obj["method"]
+                    Ast* obj_var = ast_new(AST_VAR, ast->line);
+                    obj_var->u.var.name = strdup(ast->u.module_call.module_name);
+                    // 使用ref（由resolve_variable_with_upvalue填充）来支持闭包
+                    if (ref.name) {
+                        obj_var->u.var.ref.kind = ref.kind;
+                        obj_var->u.var.ref.index = ref.index;
+                        obj_var->u.var.ref.name = strdup(ref.name);
+                        obj_var->u.var.ref.type_kind = ref.type_kind;
+                    } else if (obj_sym) {
+                        obj_var->u.var.ref.kind = obj_sym->kind;
+                        obj_var->u.var.ref.index = obj_sym->index;
+                        obj_var->u.var.ref.name = strdup(obj_sym->name);
+                        obj_var->u.var.ref.type_kind = obj_sym->type ? obj_sym->type->kind : TYPE_ANY;
+                    }
+
+                    Ast* method_str = ast_new(AST_STRING, ast->line);
+                    method_str->u.string.value = strdup(ast->u.module_call.method_name);
+                    method_str->u.string.len = (int)strlen(ast->u.module_call.method_name);
+
+                    Ast* prop_access = ast_new(AST_INDEX, ast->line);
+                    prop_access->u.index.obj = obj_var;
+                    prop_access->u.index.index = method_str;
+
+                    // 转换为普通函数调用
+                    ast->kind = AST_CALL;
+                    ast->u.call.callee = prop_access;
+                    // 参数列表已经解析好了，直接使用
+                    AstList args = ast->u.module_call.args;
+                    ast->u.call.args = args;
+                }
+            } else {
+                // 模块和变量都未定义
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "未定义的模块或变量: %s", ast->u.module_call.module_name);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+            }
+            }
+            break;
+        }
+
+        case AST_MODULE_ACCESS: {
+            Symbol* module_sym = scope_resolve(s->current, ast->u.module_access.module_name);
+            int is_module = 0;
+            
+            if (module_sym) {
+                for (int i = 0; i < s->imported_module_count; i++) {
+                    if (strcmp(s->imported_modules[i].alias, ast->u.module_access.module_name) == 0) {
+                        is_module = 1;
+                        break;
+                    }
+                }
+            }
+            
+            if (!is_module) {
+                // 使用resolve_variable_with_upvalue处理变量，支持闭包
+                SymRef ref;
+                memset(&ref, 0, sizeof(ref));
+                Symbol* var_sym = resolve_variable_with_upvalue(s, ast->u.module_access.module_name, &ref);
+
+                Ast* var_ast = ast_new(AST_VAR, ast->line);
+                var_ast->u.var.name = strdup(ast->u.module_access.module_name);
+                if (ref.name) {
+                    var_ast->u.var.ref.kind = ref.kind;
+                    var_ast->u.var.ref.index = ref.index;
+                    var_ast->u.var.ref.name = strdup(ref.name);
+                    var_ast->u.var.ref.type_kind = ref.type_kind;
+                    var_ast->u.var.ref.struct_name = ref.struct_name ? strdup(ref.struct_name) : NULL;
+                } else if (var_sym) {
+                    var_ast->u.var.ref.kind = var_sym->kind;
+                    var_ast->u.var.ref.index = var_sym->index;
+                    var_ast->u.var.ref.name = strdup(var_sym->name);
+                    var_ast->u.var.ref.type_kind = var_sym->type ? var_sym->type->kind : TYPE_ANY;
+                    var_ast->u.var.ref.struct_name = (var_sym->type && var_sym->type->struct_name) ? strdup(var_sym->type->struct_name) : NULL;
+                } else {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.module_access.module_name);
+                    error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                }
+                if (var_sym && var_sym->type) {
+                    var_ast->cached_type = type_copy(var_sym->type);
+                }
+                
+                // 检查变量是否是 struct、cstruct 或 face 类型
+                int is_struct_type = 0;
+                int is_cstruct_type = 0;
+                int is_face_type = 0;
+                if (var_sym && var_sym->type) {
+                    if (var_sym->type->kind == TYPE_STRUCT) {
+                        is_struct_type = 1;
+                    } else if (var_sym->type->kind == TYPE_CSTRUCT) {
+                        is_cstruct_type = 1;
+                    } else if (var_sym->type->kind == TYPE_FACE) {
+                        is_face_type = 1;
+                    }
+                }
+
+                if (is_struct_type || is_cstruct_type || is_face_type) {
+                    // struct/cstruct 字段访问：转换为 AST_FIELD_ACCESS
+                    char* field_name = strdup(ast->u.module_access.member_name);
+                    char* module_name = ast->u.module_access.module_name;
+                    char* member_name = ast->u.module_access.member_name;
+
+                    ast->kind = AST_FIELD_ACCESS;
+                    ast->u.field_access.obj = var_ast;
+                    ast->u.field_access.field_name = field_name;
+                    ast->u.field_access.field_index = -1;
+
+                    // 释放旧的内存
+                    free(member_name);
+                    free(module_name);
+
+                    // 继续访问转换后的节点
+                    visit(s, ast);
+                } else {
+                    // 普通属性访问：转换为 AST_INDEX
+                    Ast* index_ast = ast_new(AST_STRING, ast->line);
+                    index_ast->u.string.value = strdup(ast->u.module_access.member_name);
+                    index_ast->u.string.len = (int)strlen(ast->u.module_access.member_name);
+
+                    ast->kind = AST_INDEX;
+                    ast->u.index.obj = var_ast;
+                    ast->u.index.index = index_ast;
+
+                    visit(s, index_ast);
+                }
+            } else {
+                // 检查是否是原生模块的常量访问
+                const char* actual_module = native_resolve_module_alias(ast->u.module_access.module_name);
+                if (native_is_module(actual_module)) {
+                    bool found = false;
+                    native_find_module_const(actual_module, ast->u.module_access.member_name, &found);
+                    if (!found) {
+                        // 不是常量，可能是方法名被误解析为 MODULE_ACCESS
+                        // 报告错误
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "模块 '%s' 中没有常量 '%s'，如果是方法调用请加括号 ()",
+                                 actual_module, ast->u.module_access.member_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                    // 原生模块常量：保留 AST_MODULE_ACCESS，设置类型为 TYPE_INT
+                    ast->u.module_access.ref.kind = SYM_MODULE;
+                    ast->u.module_access.ref.index = 0;
+                    ast->u.module_access.ref.name = strdup(ast->u.module_access.module_name);
+                    ast->u.module_access.ref.type_kind = TYPE_INT;
+                } else {
+                    // .leno 用户模块：按原有逻辑处理
+                    ast->u.module_access.ref.kind = module_sym->kind;
+                    ast->u.module_access.ref.index = module_sym->index;
+                    ast->u.module_access.ref.name = strdup(module_sym->name);
+                    ast->u.module_access.ref.type_kind = module_sym->type ? module_sym->type->kind : TYPE_ANY;
+                }
+            }
+            break;
+        }
+
+        case AST_EXPORT:
+            if (ast->u.export.decl) {
+                visit(s, ast->u.export.decl);
+            }
+            break;
