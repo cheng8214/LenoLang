@@ -1,0 +1,77 @@
+// 泛型约束测试 - 验证 T: FaceName 语法解析及基础设施
+// 注：约束参数调用 face 方法尚未集成，测试约束不破坏现有功能
+
+// --- 1. 无约束泛型函数仍正常工作 ---
+func identity[T](T v): T {
+    return v
+}
+
+// --- 2. 带约束的泛型函数可以定义（只做算术，不调 face 方法） ---
+face Comparable {
+    func compare(Comparable other): int
+}
+
+func maxBy[T: Comparable](T a, T b): T {
+    // 暂时只测算术比较（方法调用待集成）
+    if a >= b { return a }
+    return b
+}
+
+// --- 3. struct 带约束定义 ---
+struct SortedBox[T: Comparable] {
+    T value
+}
+
+// --- 4. 多约束（一个约束一个不约束） ---
+struct Pair[K, V: Comparable] {
+    K key
+    V val
+}
+
+// --- 5. 约束函数配合无约束泛型调用 ---
+func wrap[T: Comparable](T v): T {
+    return identity[T](v)  // T 传给无约束泛型
+}
+
+// --- 6. face 带泛型参数约束 ---
+face Container[T] {
+    func put(T item)
+    func get(): T
+}
+
+// face 自身带参数，可约束
+struct IntBox {
+    int value
+    func put(int item) { self.value = item }
+    func get(): int { return self.value }
+}
+
+// --- 执行测试 ---
+main() {
+    // 1. 无约束泛型不变
+    assert_eq(identity[int](42), 42)
+    assert_eq(identity[string]("hello"), "hello")
+
+    // 2. 带约束函数基本调用
+    assert_eq(maxBy[int](10, 20), 20)
+    assert_eq(maxBy[float](3.5, 1.2), 3.5)
+
+    // 3. 约束 struct 实例化
+    var box = new SortedBox[int](value=100)
+    assert_eq(box.value, 100)
+
+    // 4. 混合约束 struct
+    var p = new Pair[string, float](key="key", val=3.14)
+    assert_eq(p.key, "key")
+    assert_eq(p.val, 3.14)
+
+    // 5. 约束函数调用无约束函数
+    assert_eq(wrap[int](42), 42)
+    assert_eq(wrap[string]("test"), "test")
+
+    // 6. 非约束泛型嵌套在约束里
+    var strBox = new SortedBox[string](value="abc")
+    assert_eq(strBox.value, "abc")
+
+    print("test_generic_constraint: ALL PASSED")
+}
