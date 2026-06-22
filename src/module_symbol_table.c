@@ -66,6 +66,13 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
             }
             free(table->structs[i].methods[j].return_generic_param_names);
             free(table->structs[i].methods[j].param_types);
+            // 释放泛型参数名
+            if (table->structs[i].methods[j].param_generic_names) {
+                for (int pi = 0; pi < table->structs[i].methods[j].param_count; pi++) {
+                    free(table->structs[i].methods[j].param_generic_names[pi]);
+                }
+                free(table->structs[i].methods[j].param_generic_names);
+            }
         }
         free(table->structs[i].methods);
         // 释放 impl 名称数组
@@ -194,10 +201,25 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             }
             st->methods[i].param_count = methods[i].param_count;
             st->methods[i].param_types = NULL;
+            st->methods[i].param_generic_names = NULL;
             if (methods[i].param_count > 0 && methods[i].param_types) {
                 st->methods[i].param_types = (TypeKind*)malloc(sizeof(TypeKind) * methods[i].param_count);
                 for (int j = 0; j < methods[i].param_count; j++) {
                     st->methods[i].param_types[j] = methods[i].param_types[j];
+                }
+            }
+            // 深拷贝泛型参数名
+            if (methods[i].param_count > 0 && methods[i].param_generic_names) {
+                int has_generic = 0;
+                for (int j = 0; j < methods[i].param_count; j++) {
+                    if (methods[i].param_generic_names[j]) { has_generic = 1; break; }
+                }
+                if (has_generic) {
+                    st->methods[i].param_generic_names = (char**)malloc(sizeof(char*) * methods[i].param_count);
+                    for (int j = 0; j < methods[i].param_count; j++) {
+                        st->methods[i].param_generic_names[j] = methods[i].param_generic_names[j]
+                            ? strdup(methods[i].param_generic_names[j]) : NULL;
+                    }
                 }
             }
         }
@@ -519,7 +541,11 @@ extern char* read_module_file(const char* file_path, const char* current_file);
 
 // 扫描模块文件，提取所有符号信息
 // 两遍扫描：第一遍收集所有 struct 名称，第二遍解析所有符号
-int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file) {
+// max_depth: 递归深度限制，防止循环 use 依赖导致栈溢出
+#define MODULE_SCAN_MAX_DEPTH 32
+
+static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* current_file, int depth) {
+    if (depth > MODULE_SCAN_MAX_DEPTH) return -1;
     if (!table || !table->module_path) return -1;
 
     // 只读取一次文件
@@ -733,7 +759,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                     if (resolved_path[0]) {
                         ModuleSymbolTable* dep_table = module_symbol_table_create(resolved_path);
                         if (dep_table) {
-                            if (module_symbol_table_scan(dep_table, current_file) == 0) {
+                            if (module_symbol_table_scan_depth(dep_table, current_file, depth + 1) == 0) {
                                 // 查找 struct
                                 ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
                                 if (s_sym && !module_symbol_table_find_struct(table, type_name)) {
@@ -1027,8 +1053,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                                     for (int tpi = 0; tpi < type_param_count; tpi++) {
                                                         if (type_param_names[tpi] && strcmp(ret_type_str, type_param_names[tpi]) == 0) {
                                                             is_type_param = 1;
-                                                            strncpy(method_return_type_param, ret_type_str, sizeof(method_return_type_param) - 1);
-                                                            method_return_type_param[sizeof(method_return_type_param) - 1] = '\0';
+                                                            memcpy(method_return_type_param, ret_type_str, ret_type_len + 1);
                                                             method_return_type = TYPE_GENERIC_PARAM;
                                                             break;
                                                         }
@@ -1211,6 +1236,13 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                             }
                             free(methods[i].return_generic_param_names);
                             free(methods[i].param_types);
+                            // 释放泛型参数名
+                            if (methods[i].param_generic_names) {
+                                for (int pi = 0; pi < methods[i].param_count; pi++) {
+                                    free(methods[i].param_generic_names[pi]);
+                                }
+                                free(methods[i].param_generic_names);
+                            }
                         }
 
                         while (*after_struct && *after_struct != '}') after_struct++;
@@ -1810,4 +1842,9 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
 
     free(source);
     return 0;
+}
+
+// 公开接口，从深度 0 开始扫描
+int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file) {
+    return module_symbol_table_scan_depth(table, current_file, 0);
 }

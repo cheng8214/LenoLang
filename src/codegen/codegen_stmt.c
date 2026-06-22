@@ -1758,8 +1758,13 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
                 method_name_consts[i] = make_constant(gen, val_obj((Object*)method_name));
                 
                 // 如果全局函数字典存在，从中获取函数对象
+                // 注意：func_dict 中以 "StructName::methodName" 格式存储方法
                 if (g_func_dict) {
-                    Value func_val = dict_get(g_func_dict, val_obj((Object*)method_name));
+                    char method_key[256];
+                    snprintf(method_key, sizeof(method_key), "%s::%s",
+                             ast->u.struct_def.name, method_ast->u.func.name);
+                    ObjString* dict_key = str_copy(method_key, (int)strlen(method_key));
+                    Value func_val = dict_get(g_func_dict, val_obj((Object*)dict_key));
                     if (!val_is_null(func_val)) {
                         method_func_consts[i] = make_constant(gen, func_val);
                     } else {
