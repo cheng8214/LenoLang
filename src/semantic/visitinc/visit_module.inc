@@ -959,6 +959,44 @@
                         // 判断方法是否找到：当 return_type == TYPE_ANY 且 expected_arity == -1 时表示方法不存在
                         int method_found = !(return_type == TYPE_ANY && expected_arity == -1);
 
+                        // 如果没找到，检查是否是泛型约束类型参数（如 T: Comparable）
+                        if (!method_found && obj_sym->type &&
+                            obj_sym->type->kind == TYPE_GENERIC_PARAM &&
+                            obj_sym->type->constraint_name) {
+                            ObjFaceDef* constraint_face = face_def_find(obj_sym->type->constraint_name);
+                            if (constraint_face) {
+                                for (int mi = 0; mi < constraint_face->method_count; mi++) {
+                                    if (strcmp(constraint_face->methods[mi].name, method_name) == 0) {
+                                        method_found = 1;
+                                        return_type = constraint_face->methods[mi].return_type
+                                            ? constraint_face->methods[mi].return_type->kind : TYPE_ANY;
+                                        expected_arity = constraint_face->methods[mi].param_count;
+                                        break;
+                                    }
+                                }
+                            }
+                            // 约束 face 可能在导入的模块中
+                            if (!method_found) {
+                                for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                    ImportedModuleInfo* m = &s->imported_modules[mi];
+                                    if (m && m->sym_table) {
+                                        ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_sym->type->constraint_name);
+                                        if (face_sym) {
+                                            for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                                if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                                                    method_found = 1;
+                                                    return_type = face_sym->methods[fi].return_type;
+                                                    expected_arity = face_sym->methods[fi].param_count;
+                                                    break;
+                                                }
+                                            }
+                                            if (method_found) break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // 如果没找到，检查是否是从模块导入的 struct/cstruct 的方法
                         if (!method_found && obj_sym->type &&
                             (obj_sym->type->kind == TYPE_STRUCT || obj_sym->type->kind == TYPE_CSTRUCT) &&

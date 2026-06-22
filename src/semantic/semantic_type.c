@@ -752,6 +752,46 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             type_free(obj_type);
                             return type_new(TYPE_ANY);
                         }
+                        // 处理泛型约束类型参数的方法调用（如 T: Comparable）
+                        if (obj_type->kind == TYPE_GENERIC_PARAM && obj_type->constraint_name) {
+                            ObjFaceDef* constraint_face = face_def_find(obj_type->constraint_name);
+                            if (constraint_face) {
+                                for (int mi = 0; mi < constraint_face->method_count; mi++) {
+                                    if (strcmp(constraint_face->methods[mi].name, method_name) == 0) {
+                                        if (constraint_face->methods[mi].return_type) {
+                                            ast->cached_type = type_copy(constraint_face->methods[mi].return_type);
+                                        } else {
+                                            ast->cached_type = type_new(TYPE_ANY);
+                                        }
+                                        type_free(obj_type);
+                                        return type_copy(ast->cached_type);
+                                    }
+                                }
+                            }
+                            // 约束 face 可能在导入的模块中
+                            for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                ImportedModuleInfo* m = &s->imported_modules[mi];
+                                if (m && m->sym_table) {
+                                    ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_type->constraint_name);
+                                    if (face_sym) {
+                                        for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                            if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                                                TypeInfo* ret_type = type_new(face_sym->methods[fi].return_type);
+                                                if (face_sym->methods[fi].return_type == TYPE_STRUCT && face_sym->methods[fi].return_struct_name) {
+                                                    ret_type->struct_name = strdup(face_sym->methods[fi].return_struct_name);
+                                                }
+                                                ast->cached_type = ret_type;
+                                                type_free(obj_type);
+                                                return type_copy(ast->cached_type);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            type_free(obj_type);
+                            return type_new(TYPE_ANY);
+                        }
+
                         // 处理 struct/cstruct 类型的方法调用
                         if (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) {
                             if (obj_type->kind == TYPE_FACE) {
