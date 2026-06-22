@@ -1,0 +1,99 @@
+// 测试：泛型类型参数通过函数链传递（OP_PUSH_TYPE_ARGS 机制）
+// 覆盖 Ok[T]/Err[T] 模式，确保类型参数正确传递到 struct 实例
+
+// ===== Result 模式 =====
+
+struct Result[T] {
+    T data
+    string error
+    bool ok
+}
+
+func Ok[T](T val): Result[T] {
+    return new Result[T](data=val, ok=true)
+}
+
+func Err[T](string msg): Result[T] {
+    return new Result[T](ok=false, error=msg)
+}
+
+// 测试 Ok[T] — T 通过 val 参数传递
+var r1 = Ok[int](42)
+assert(r1.ok == true)
+assert(r1.data == 42)           // 直接取字段验证 T=int
+
+var r2 = Ok[string]("hello")
+assert(r2.ok == true)
+assert(r2.data == "hello")      // 验证 T=string
+
+var r3 = Ok[float](3.14)
+assert(r3.ok == true)
+assert(r3.data > 3.13)          // 验证 T=float
+assert(r3.data < 3.15)
+
+// 测试 Err[T] — T 无参数，靠 OP_PUSH_TYPE_ARGS 传递
+var e1 = Err[int]("something wrong")
+assert(e1.ok == false)
+assert(e1.data == null)          // OK 时才有 data
+
+var e2 = Err[string]("not found")
+assert(e2.ok == false)
+assert(e2.error == "not found")  // error 字段正常
+
+// ===== 泛型函数内创建泛型 struct =====
+
+struct Container[T] {
+    T value
+
+    func get(): T { return self.value }
+    func set(T v) { self.value = v }
+}
+
+func makeContainer[T](T v): Container[T] {
+    return new Container[T](value=v)
+}
+
+var c1 = makeContainer[int](42)
+assert(c1.get() == 42)
+
+var c2 = makeContainer[string]("world")
+assert(c2.get() == "world")
+
+// 验证 T 正确解析：直接改写字段
+c1.value = 100
+assert(c1.value == 100)
+
+c2.value = "hello"
+assert(c2.value == "hello")
+
+// ===== 泛型链：容器泛型参数来自数组元素 =====
+
+func wrapEach[T](Array[T] arr): Array[Container[T]] {
+    var result = []
+    for arr to item {
+        result.add(makeContainer[T](item))
+    }
+    return result
+}
+
+var wrapped = wrapEach[int]([1, 2, 3])
+assert(wrapped.len() == 3)
+assert(wrapped[0].get() == 1)
+assert(wrapped[2].get() == 3)
+
+// ===== 嵌套泛型：泛型 struct 包含另一个泛型 struct =====
+
+struct Pair[K, V] {
+    K key
+    V val
+}
+
+func makePair[K, V](K k, V v): Pair[K, V] {
+    return new Pair[K, V](key=k, val=v)
+}
+
+var p = makePair[string, int]("age", 25)
+assert(p.key == "age")
+assert(p.val == 25)
+
+print("test_generic_type_chain passed")
