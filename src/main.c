@@ -517,6 +517,11 @@ int lenolang_run_file(const char* path) {
         if (!vm_fp) {
             fprintf(stderr, "[错误] 找不到 leno_vm.exe: %s\n", vm_exe);
             fprintf(stderr, "请先运行 build_vm.bat 构建 VM 运行时\n");
+#ifdef _WIN32
+            { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+            remove(bin_path);
+#endif
             free(bin_path);
             return -1;
         }
@@ -543,6 +548,11 @@ int lenolang_run_file(const char* path) {
         if (!lenb_fp) {
             fprintf(stderr, "[错误] 无法读取编译产物: %s\n", bin_path);
             free(vm_data);
+#ifdef _WIN32
+            { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+            remove(bin_path);
+#endif
             free(bin_path);
             return -1;
         }
@@ -553,6 +563,11 @@ int lenolang_run_file(const char* path) {
         if (!lenb_data) {
             fclose(lenb_fp);
             free(vm_data);
+#ifdef _WIN32
+            { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+            remove(bin_path);
+#endif
             free(bin_path);
             return -1;
         }
@@ -560,7 +575,11 @@ int lenolang_run_file(const char* path) {
         fclose(lenb_fp);
 
         // 删除临时 .lenb 文件（已读入内存）
+#ifdef _WIN32
+        { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
         remove(bin_path);
+#endif
 
         // 写入输出文件: [vm 数据] [lenb 数据] [4字节 lenb_size] [4字节 LENB_MAGIC]
 #ifdef _WIN32
