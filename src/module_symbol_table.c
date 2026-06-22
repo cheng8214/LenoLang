@@ -429,6 +429,7 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     memcpy(buf, s, n);
     buf[n] = '\0';
     
+    // 基础类型
     if (strcmp(buf, "int") == 0)    return type_new(TYPE_INT);
     if (strcmp(buf, "float") == 0)  return type_new(TYPE_FLOAT);
     if (strcmp(buf, "string") == 0) return type_new(TYPE_STRING);
@@ -436,7 +437,39 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     if (strcmp(buf, "var") == 0)    return type_new(TYPE_INFER);
     if (strcmp(buf, "any") == 0)    return type_new(TYPE_ANY);
     if (strcmp(buf, "null") == 0)   return type_new(TYPE_NULL);
-    if (strcmp(buf, "ptr") == 0)    return type_new(TYPE_PTR);
+    // GUI/文件/网络类型
+    if (strcmp(buf, "File") == 0)   return type_new(TYPE_FILE);
+    if (strcmp(buf, "GWin") == 0)   return type_new(TYPE_WIN);
+    if (strcmp(buf, "GDraw") == 0)  return type_new(TYPE_DRAW);
+    if (strcmp(buf, "GEvent") == 0) return type_new(TYPE_EVENT);
+    if (strcmp(buf, "GRgb") == 0)   return type_new(TYPE_RGB);
+    if (strcmp(buf, "GImage") == 0) return type_new(TYPE_IMAGE);
+    if (strcmp(buf, "GFont") == 0)  return type_new(TYPE_FONT);
+    if (strcmp(buf, "GButton") == 0) return type_new(TYPE_BUTTON);
+    if (strcmp(buf, "Socket") == 0) return type_new(TYPE_SOCKET);
+    // 指针类型
+    if (strcmp(buf, "ptr") == 0 || strcmp(buf, "Ptr") == 0) return type_new(TYPE_PTR);
+    // C 布局类型
+    if (strcmp(buf, "i8") == 0)     return type_new(TYPE_I8);
+    if (strcmp(buf, "u8") == 0)     return type_new(TYPE_U8);
+    if (strcmp(buf, "i16") == 0)    return type_new(TYPE_I16);
+    if (strcmp(buf, "u16") == 0)    return type_new(TYPE_U16);
+    if (strcmp(buf, "i32") == 0)    return type_new(TYPE_I32);
+    if (strcmp(buf, "u32") == 0)    return type_new(TYPE_U32);
+    if (strcmp(buf, "i64") == 0)    return type_new(TYPE_I64);
+    if (strcmp(buf, "u64") == 0)    return type_new(TYPE_U64);
+    if (strcmp(buf, "f32") == 0)    return type_new(TYPE_F32);
+    if (strcmp(buf, "f64") == 0)    return type_new(TYPE_F64);
+    if (strcmp(buf, "c_int") == 0)  return type_new(TYPE_C_INT);
+    if (strcmp(buf, "c_uint") == 0) return type_new(TYPE_C_UINT);
+    if (strcmp(buf, "c_long") == 0) return type_new(TYPE_C_LONG);
+    if (strcmp(buf, "c_ulong") == 0) return type_new(TYPE_C_ULONG);
+    if (strcmp(buf, "c_longlong") == 0)  return type_new(TYPE_C_LONGLONG);
+    if (strcmp(buf, "c_ulonglong") == 0) return type_new(TYPE_C_ULONGLONG);
+    if (strcmp(buf, "c_size") == 0) return type_new(TYPE_C_SIZE);
+    if (strcmp(buf, "c_ssize") == 0) return type_new(TYPE_C_SSIZE);
+    if (strcmp(buf, "str8") == 0)   return type_new(TYPE_STR8);
+    if (strcmp(buf, "str16") == 0)  return type_new(TYPE_STR16);
     // 自定义类型名（struct 等）→ TYPE_STRUCT
     TypeInfo* ti = type_new(TYPE_STRUCT);
     ti->struct_name = strdup(buf);
@@ -507,22 +540,49 @@ TypeInfo* parse_type_from_string(const char* type_str) {
     return parse_type_from_string_inner(&p);
 }
 
-// 基本类型解析 - 只识别内置类型（用于 struct 字段/函数参数扫描）
+// 基本类型解析 - 识别所有内置类型（用于 struct 字段/函数参数扫描）
 static TypeKind parse_base_type(const char* type_str) {
+    // 基础类型
     if (strcmp(type_str, "int") == 0)    return TYPE_INT;
     if (strcmp(type_str, "float") == 0)  return TYPE_FLOAT;
     if (strcmp(type_str, "string") == 0) return TYPE_STRING;
     if (strcmp(type_str, "bool") == 0)   return TYPE_BOOL;
     if (strcmp(type_str, "any") == 0)    return TYPE_ANY;
     if (strcmp(type_str, "null") == 0)   return TYPE_NULL;
+    // GUI 类型
     if (strcmp(type_str, "File") == 0)   return TYPE_FILE;
     if (strcmp(type_str, "GWin") == 0)   return TYPE_WIN;
     if (strcmp(type_str, "GDraw") == 0)  return TYPE_DRAW;
     if (strcmp(type_str, "GEvent") == 0) return TYPE_EVENT;
+    if (strcmp(type_str, "GRgb") == 0)   return TYPE_RGB;
     if (strcmp(type_str, "GImage") == 0) return TYPE_IMAGE;
     if (strcmp(type_str, "GFont") == 0)  return TYPE_FONT;
+    if (strcmp(type_str, "GButton") == 0) return TYPE_BUTTON;
+    if (strcmp(type_str, "Style") == 0)  return TYPE_STYLE;
+    // 网络/指针类型
     if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
     if (strcmp(type_str, "Ptr") == 0)    return TYPE_PTR;
+    // C 布局类型
+    if (strcmp(type_str, "i8") == 0)     return TYPE_I8;
+    if (strcmp(type_str, "u8") == 0)     return TYPE_U8;
+    if (strcmp(type_str, "i16") == 0)    return TYPE_I16;
+    if (strcmp(type_str, "u16") == 0)    return TYPE_U16;
+    if (strcmp(type_str, "i32") == 0)    return TYPE_I32;
+    if (strcmp(type_str, "u32") == 0)    return TYPE_U32;
+    if (strcmp(type_str, "i64") == 0)    return TYPE_I64;
+    if (strcmp(type_str, "u64") == 0)    return TYPE_U64;
+    if (strcmp(type_str, "f32") == 0)    return TYPE_F32;
+    if (strcmp(type_str, "f64") == 0)    return TYPE_F64;
+    if (strcmp(type_str, "c_int") == 0)  return TYPE_C_INT;
+    if (strcmp(type_str, "c_uint") == 0) return TYPE_C_UINT;
+    if (strcmp(type_str, "c_long") == 0) return TYPE_C_LONG;
+    if (strcmp(type_str, "c_ulong") == 0) return TYPE_C_ULONG;
+    if (strcmp(type_str, "c_longlong") == 0)  return TYPE_C_LONGLONG;
+    if (strcmp(type_str, "c_ulonglong") == 0) return TYPE_C_ULONGLONG;
+    if (strcmp(type_str, "c_size") == 0) return TYPE_C_SIZE;
+    if (strcmp(type_str, "c_ssize") == 0) return TYPE_C_SSIZE;
+    if (strcmp(type_str, "str8") == 0)   return TYPE_STR8;
+    if (strcmp(type_str, "str16") == 0)  return TYPE_STR16;
     return TYPE_ANY;
 }
 

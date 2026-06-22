@@ -142,26 +142,7 @@ OPCODE(OP_TAIL_CALL) {
                         for (int pi = 0; pi < self_def->type_param_count && pi < self_obj->generic_type_arg_count; pi++) {
                             if (self_def->type_param_names[pi] && strcmp(self_def->type_param_names[pi], generic_name) == 0) {
                                 const char* actual_type = self_obj->generic_type_args[pi];
-                                int type_match = 0;
-                                if (strcmp(actual_type, "int") == 0) {
-                                    type_match = val_is_int(arg) || val_is_bigint(arg);
-                                } else if (strcmp(actual_type, "float") == 0) {
-                                    type_match = val_is_float(arg) || val_is_int(arg) || val_is_bigint(arg);
-                                } else if (strcmp(actual_type, "string") == 0) {
-                                    type_match = val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRING;
-                                } else if (strcmp(actual_type, "bool") == 0) {
-                                    type_match = val_is_bool(arg);
-                                } else if (strncmp(actual_type, "struct ", 7) == 0) {
-                                    type_match = val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRUCT;
-                                } else {
-                                    if (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRUCT) {
-                                        ObjStruct* arg_struct = (ObjStruct*)val_as_obj(arg);
-                                        if (arg_struct->def->name && strcmp(arg_struct->def->name, actual_type) == 0) {
-                                            type_match = 1;
-                                        }
-                                    }
-                                }
-                                if (!type_match) {
+                                if (!value_matches_generic_type(arg, actual_type)) {
                                     char msg[BUFFER_MEDIUM];
                                     char* arg_str = value_to_string(arg);
                                     snprintf(msg, sizeof(msg),

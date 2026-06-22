@@ -45,6 +45,99 @@ static inline int value_matches_type(Value value, TypeKind expected) {
     }
 }
 
+// 辅助函数：从运行时值推断泛型类型名（返回线程本地缓冲区指针）
+// 返回值如 "int"/"float"/"string"/"bool" 或 "struct FooName"
+// 返回 NULL 表示无法推断
+static inline const char* value_to_generic_type_name(Value value) {
+#ifdef _MSC_VER
+    static __declspec(thread) char buf[64];
+#else
+    static __thread char buf[64];
+#endif
+    if (val_is_int(value) || val_is_bigint(value)) {
+        return "int";
+    }
+    if (val_is_float(value)) {
+        return "float";
+    }
+    if (val_is_bool(value)) {
+        return "bool";
+    }
+    if (val_is_obj(value)) {
+        ObjType ot = val_as_obj(value)->type;
+        if (ot == OBJ_STRING) {
+            return "string";
+        }
+        if (ot == OBJ_STRUCT) {
+            ObjStruct* arg_s = (ObjStruct*)val_as_obj(value);
+            if (arg_s->def && arg_s->def->name) {
+                snprintf(buf, sizeof(buf), "struct %s", arg_s->def->name);
+                return buf;
+            }
+            return "struct";
+        }
+        if (ot == OBJ_ARRAY) {
+            return "array";
+        }
+    }
+    return NULL;
+}
+
+// 辅助函数：从 TypeInfo 推断泛型类型名
+static inline const char* typeinfo_to_generic_type_name(TypeInfo* type) {
+#ifdef _MSC_VER
+    static __declspec(thread) char buf[64];
+#else
+    static __thread char buf[64];
+#endif
+    if (!type) return NULL;
+    switch (type->kind) {
+        case TYPE_INT:    return "int";
+        case TYPE_FLOAT:  return "float";
+        case TYPE_STRING: return "string";
+        case TYPE_BOOL:   return "bool";
+        case TYPE_STRUCT:
+            if (type->struct_name) {
+                snprintf(buf, sizeof(buf), "struct %s", type->struct_name);
+                return buf;
+            }
+            return "struct";
+        default: return NULL;
+    }
+}
+
+// 辅助函数：检查值是否匹配泛型类型名（用于运行时泛型类型检查）
+// actual_type 格式：基础类型如 "int"/"float"/"string"/"bool"，
+// 或带前缀的结构体类型如 "struct Foo"
+static inline int value_matches_generic_type(Value value, const char* actual_type) {
+    if (strcmp(actual_type, "int") == 0) {
+        return val_is_int(value) || val_is_bigint(value);
+    }
+    if (strcmp(actual_type, "float") == 0) {
+        return val_is_float(value) || val_is_int(value) || val_is_bigint(value);
+    }
+    if (strcmp(actual_type, "string") == 0) {
+        return val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING;
+    }
+    if (strcmp(actual_type, "bool") == 0) {
+        return val_is_bool(value);
+    }
+    if (strncmp(actual_type, "struct ", 7) == 0) {
+        // 带 "struct " 前缀的结构体类型：检查是否为 struct，并验证名称匹配
+        if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
+            ObjStruct* arg_struct = (ObjStruct*)val_as_obj(value);
+            return arg_struct->def->name && strcmp(arg_struct->def->name, actual_type + 7) == 0;
+        }
+        return 0;
+    }
+    // 无前缀但可能是结构体名称
+    if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
+        ObjStruct* arg_struct = (ObjStruct*)val_as_obj(value);
+        return arg_struct->def->name && strcmp(arg_struct->def->name, actual_type) == 0;
+    }
+    return 0;
+}
+
 // 调用闭包函数
 static inline int call(ObjClosure* closure, int arg_count, int line) {
     if (runtime_type_check && arg_count != closure->function->arity) {
@@ -136,26 +229,7 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
                     for (int pi = 0; pi < self_def->type_param_count && pi < self_obj->generic_type_arg_count; pi++) {
                         if (self_def->type_param_names[pi] && strcmp(self_def->type_param_names[pi], generic_name) == 0) {
                             const char* actual_type = self_obj->generic_type_args[pi];
-                            int type_match = 0;
-                            if (strcmp(actual_type, "int") == 0) {
-                                type_match = val_is_int(arg) || val_is_bigint(arg);
-                            } else if (strcmp(actual_type, "float") == 0) {
-                                type_match = val_is_float(arg) || val_is_int(arg) || val_is_bigint(arg);
-                            } else if (strcmp(actual_type, "string") == 0) {
-                                type_match = val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRING;
-                            } else if (strcmp(actual_type, "bool") == 0) {
-                                type_match = val_is_bool(arg);
-                            } else if (strncmp(actual_type, "struct ", 7) == 0) {
-                                type_match = val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRUCT;
-                            } else {
-                                if (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRUCT) {
-                                    ObjStruct* arg_struct = (ObjStruct*)val_as_obj(arg);
-                                    if (arg_struct->def->name && strcmp(arg_struct->def->name, actual_type) == 0) {
-                                        type_match = 1;
-                                    }
-                                }
-                            }
-                            if (!type_match) {
+                            if (!value_matches_generic_type(arg, actual_type)) {
                                 char msg[BUFFER_MEDIUM];
                                 char* arg_str = value_to_string(arg);
                                 snprintf(msg, sizeof(msg),

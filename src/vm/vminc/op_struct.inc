@@ -313,30 +313,7 @@ OPCODE(OP_STRUCT_INIT) {
                             // 参数直接是泛型类型（如 Ok[T](T val) 中的 val）
                             if (func->param_generic_names && func->param_generic_names[ai] &&
                                 pure_name && strcmp(func->param_generic_names[ai], pure_name) == 0) {
-                                const char* inferred = NULL;
-                                char buf[32];
-                                if (val_is_int(arg_val) || val_is_bigint(arg_val)) {
-                                    inferred = "int";
-                                } else if (val_is_float(arg_val)) {
-                                    inferred = "float";
-                                } else if (val_is_bool(arg_val)) {
-                                    inferred = "bool";
-                                } else if (val_is_obj(arg_val)) {
-                                    ObjType ot = val_as_obj(arg_val)->type;
-                                    if (ot == OBJ_STRING) {
-                                        inferred = "string";
-                                    } else if (ot == OBJ_STRUCT) {
-                                        ObjStruct* arg_s = (ObjStruct*)val_as_obj(arg_val);
-                                        if (arg_s->def && arg_s->def->name) {
-                                            snprintf(buf, sizeof(buf), "struct %s", arg_s->def->name);
-                                            inferred = buf;
-                                        } else {
-                                            inferred = "struct";
-                                        }
-                                    } else if (ot == OBJ_ARRAY) {
-                                        inferred = "array";
-                                    }
-                                }
+                                const char* inferred = value_to_generic_type_name(arg_val);
                                 if (inferred) {
                                     free(generic_type_args[gi]);
                                     generic_type_args[gi] = strdup(inferred);
@@ -350,17 +327,7 @@ OPCODE(OP_STRUCT_INIT) {
                                 if (ot == OBJ_ARRAY) {
                                     ObjArray* arr = (ObjArray*)val_as_obj(arg_val);
                                     if (arr->type_info && arr->type_info->element_type) {
-                                        TypeInfo* elem = arr->type_info->element_type;
-                                        const char* inferred = NULL;
-                                        char buf[32];
-                                        if (elem->kind == TYPE_INT) inferred = "int";
-                                        else if (elem->kind == TYPE_FLOAT) inferred = "float";
-                                        else if (elem->kind == TYPE_STRING) inferred = "string";
-                                        else if (elem->kind == TYPE_BOOL) inferred = "bool";
-                                        else if (elem->kind == TYPE_STRUCT && elem->struct_name) {
-                                            snprintf(buf, sizeof(buf), "struct %s", elem->struct_name);
-                                            inferred = buf;
-                                        }
+                                        const char* inferred = typeinfo_to_generic_type_name(arr->type_info->element_type);
                                         if (inferred) {
                                             free(generic_type_args[gi]);
                                             generic_type_args[gi] = strdup(inferred);

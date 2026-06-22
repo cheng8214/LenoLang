@@ -27,33 +27,24 @@ OPCODE(OP_ARRAY) {
         }
         
         if (all_same) {
-            const char* elem_type_name = NULL;
+            // 直接从 Value 类型映射到 TypeKind，避免字符串往返
+            TypeKind elem_kind = TYPE_ANY;
             switch (val_get_type(first)) {
-                case VAL_NULL: elem_type_name = "null"; break;
-                case VAL_BOOL: elem_type_name = "bool"; break;
-                case VAL_INT: elem_type_name = "int"; break;
-                case VAL_FLOAT: elem_type_name = "float"; break;
+                case VAL_NULL:  elem_kind = TYPE_NULL; break;
+                case VAL_BOOL:  elem_kind = TYPE_BOOL; break;
+                case VAL_INT:   elem_kind = TYPE_INT; break;
+                case VAL_FLOAT: elem_kind = TYPE_FLOAT; break;
                 case VAL_OBJ: {
-                    if (val_as_obj(first)->type == OBJ_STRING) {
-                        elem_type_name = "string";
-                    } else if (val_as_obj(first)->type == OBJ_ARRAY) {
-                        elem_type_name = "Array";
-                    } else if (val_as_obj(first)->type == OBJ_DICT) {
-                        elem_type_name = "Dict";
+                    switch (val_as_obj(first)->type) {
+                        case OBJ_STRING: elem_kind = TYPE_STRING; break;
+                        case OBJ_ARRAY:  elem_kind = TYPE_ARRAY; break;
+                        case OBJ_DICT:   elem_kind = TYPE_DICT; break;
+                        default: break;  // 其他对象类型不设置类型信息
                     }
                     break;
                 }
             }
-            if (elem_type_name) {
-                // 根据元素类型创建 TypeInfo
-                TypeKind elem_kind = TYPE_ANY;
-                if (strcmp(elem_type_name, "int") == 0) elem_kind = TYPE_INT;
-                else if (strcmp(elem_type_name, "float") == 0) elem_kind = TYPE_FLOAT;
-                else if (strcmp(elem_type_name, "string") == 0) elem_kind = TYPE_STRING;
-                else if (strcmp(elem_type_name, "bool") == 0) elem_kind = TYPE_BOOL;
-                else if (strcmp(elem_type_name, "Array") == 0) elem_kind = TYPE_ARRAY;
-                else if (strcmp(elem_type_name, "Dict") == 0) elem_kind = TYPE_DICT;
-                
+            if (elem_kind != TYPE_ANY) {
                 TypeInfo* elem_type = type_new(elem_kind);
                 arr->type_info = type_array(elem_type);
             }
