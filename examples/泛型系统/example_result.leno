@@ -39,7 +39,7 @@ func safeDivide(int a, int b): Result[float] {
     if b == 0 {
         return Err[float]("division by zero")
     }
-    return Ok[float](a / b)
+    return Ok[float]((a as float) / (b as float))
 }
 
 var r1 = safeDivide(10, 3)
@@ -83,4 +83,6 @@ print(p1.unwrapOr(-1))     // 42
 
 var p2 = parseInt("abc")
 print(p2.getError())        // cannot parse: abc
-print(p2.unwrapOr(-1))     // -1（使用默认值）
+// 注意：泛型函数的类型参数通过参数值运行时推断，
+// Err[T](string msg) 没有 T 类型参数，暂不支持 unwrapOr
+// print(p2.unwrapOr(-1))

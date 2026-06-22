@@ -47,12 +47,15 @@ func best(Sortable a, Sortable b): Sortable {
 var stu1 = new Student(name="Alice", score=85.0)
 var stu2 = new Student(name="Bob", score=92.0)
 var topStu = best(stu1, stu2)
-print(topStu.name)              // Bob
+// face 类型不能直接访问底层字段，使用 as 转型访问
+var topStudent = topStu as Student
+print(topStudent.name)         // Bob
 
 var prod1 = new Product(name="Book", price=29.9)
 var prod2 = new Product(name="Pen", price=5.5)
 var expensive = best(prod1, prod2)
-print(expensive.name)           // Book
+var expProduct = expensive as Product
+print(expProduct.name)         // Book
 
 // face 类型守卫
 var items = [stu1, prod1, stu2, prod2]

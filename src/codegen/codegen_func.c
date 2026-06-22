@@ -62,6 +62,17 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     func->param_generic_names = NULL;
     func->param_generic_count = 0;
     func->module = g_current_module;  // 设置函数所属模块
+    func->type_param_count = 0;
+    func->type_param_names = NULL;
+
+    // 存储函数级泛型类型参数（如 func f[T, U] 中的 T, U）
+    if (ast->u.func.type_param_count > 0 && ast->u.func.type_params) {
+        func->type_param_count = ast->u.func.type_param_count;
+        func->type_param_names = (char**)malloc(sizeof(char*) * ast->u.func.type_param_count);
+        for (int i = 0; i < ast->u.func.type_param_count; i++) {
+            func->type_param_names[i] = strdup(ast->u.func.type_params[i]);
+        }
+    }
     
     // 存储参数类型用于运行时类型检查
     if (func->arity > 0 && ast->u.func.param_types) {

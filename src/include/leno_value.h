@@ -362,6 +362,8 @@ typedef struct {
     TypeKind* param_types;  // 参数类型数组（可选，用于运行时类型检查）
     char** param_generic_names;  // 参数泛型类型参数名（如 "T", "K"），用于泛型方法参数类型检查
     int param_generic_count;     // 有泛型参数名的参数数量
+    int type_param_count;        // 函数级泛型类型参数数量（如 func f[T] 的 type_param_count=1）
+    char** type_param_names;     // 函数级泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
 } ObjFunction;
 
 // 原生函数类型
@@ -389,6 +391,8 @@ typedef struct ObjClosure {
     ObjFunction* function;
     Upvalue* upvalues[MAX_UPVALUES];
     int upvalue_count;
+    int type_param_count;        // 泛型函数调用时传入的类型参数数量
+    char** type_param_args;      // 泛型函数调用时传入的类型参数（如 ["int"] 或 ["float"]）
 } ObjClosure;
 
 // BigInt 对象（大整数）- 使用 base-1e9 存储，支持任意精度

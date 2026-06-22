@@ -2818,6 +2818,93 @@ print(chained.value)    // 168
 >
 > 这与内置泛型类型（`Array`、`Dict`）不同——内置类型可以省略类型参数，编译器会从初始值推断。但自定义泛型 struct 必须显式指定。
 
+> **⚠️ 坑 9：泛型函数体内创建泛型 struct — 类型参数的运行时推断与局限**
+>
+> 在泛型函数（如 `func Ok[T](T val)`）内部创建泛型 struct（如 `new Result[T]()`）时，类型参数 `T` 在编译期是泛型占位符，到**运行时**才通过函数参数的实际值推断具体类型。这有两个关键限制：
+>
+> **✅ 能推断的场景** — 泛型参数作为函数参数出现：
+>
+> ```leno
+> func Ok[T](T val): Result[T] {
+>     return new Result[T](data=val, ok=true)    // ✅ T 可从 val 的运行时类型推断
+> }
+>
+> func reverse[T](Array[T] arr): Array[T] {
+>     var s = new Stack[T]()                       // ✅ T 可从 arr 的元素类型推断
+>     ...
+> }
+> ```
+>
+> **❌ 不能推断的场景** — 泛型参数不在函数参数中：
+>
+> ```leno
+> func Err[T](string msg): Result[T] {
+>     return new Result[T](ok=false, error=msg)  // ❌ T 无法推断（只有 string 参数）
+> }
+>
+> // Err[int]("some error") 调用时 T=int，但函数体内无法获取该类型信息
+> ```
+>
+> **解决办法**：
+> - 让泛型参数在函数形参中出现（添加一个 dummy 参数）：`func Err[T](string msg, T dummy)`
+> - 或在调用侧先创建结果再返回（需要 struct 类型已知）
+>
+> 这个限制源于 Leno 的泛型实现采用单一函数体 + 运行时类型推断，而非 C++ 的模板单态化。
+
+> **⚠️ 坑 10：`int / int = int` 整数除法在泛型上下文中的陷阱**
+>
+> Leno 中 `int / int` 执行整数除法（向零取整），结果也是 `int`：
+>
+> ```leno
+> var a = 10 / 3      // a = 3（int），而不是 3.333
+> var b = 10.0 / 3    // b = 3.333...（float）
+> ```
+>
+> 这在与泛型组合时尤为危险。例如 `Result[float]` 的构造：
+>
+> ```leno
+> func safeDivide(int a, int b): Result[float] {
+>     return Ok[float](a / b)     // ❌ a/b = 3（int），泛型推断为 int，与 float 不匹配
+> }
+> ```
+>
+> **正确做法**：
+> ```leno
+> func safeDivide(int a, int b): Result[float] {
+>     return Ok[float]((a as float) / (b as float))  // ✅ 显式转为浮点除法
+> }
+> ```
+
+> **⚠️ 坑 11：face 变量不能直接访问底层 struct 的字段和非 face 方法**
+>
+> face 类型的变量**只能调用 face 中声明的方法**，不能访问底层 struct 的字段或未声明的方法：
+>
+> ```leno
+> face Sortable {
+>     func sortKey(): float
+> }
+>
+> struct Student impl Sortable {
+>     string name
+>     float score
+>     func sortKey(): float { return self.score }
+> }
+>
+> var s = new Student(name="Alice", score=85.0)
+> Sortable face_s = s
+>
+> face_s.sortKey()       // ✅ face 声明的方法
+> face_s.name            // ❌ 语义错误：face 'Sortable' 没有字段 'name'
+> ```
+>
+> **解决办法**：使用 `as` 转型访问底层 struct：
+> ```leno
+> var student = face_s as Student
+> print(student.name)    // ✅
+> ```
+>
+> 这是 Leno 的类型安全设计——保证通过 face 变量只能看到接口约定的行为，而非具体实现的内部细节。
+
 #### 嵌套泛型类型
 
 泛型参数可以是复合类型，如 `Array[int]`、`Dict[string, int]` 等：

@@ -219,8 +219,10 @@ OPCODE(OP_STRUCT_INIT) {
     }
 
     // 泛型参数替换：如果泛型参数名是类型参数（如 K, V, T），
-    // 从调用栈中查找 self 实例的实际泛型参数进行替换
+    // 1) 从调用栈中查找 self 实例的实际泛型参数进行替换
+    // 2) 若仍未解析，从闭包函数参数运行时值推断具体类型
     if (generic_type_count > 0 && generic_type_args) {
+        int resolved = 0;
         // 遍历调用栈帧，查找 self（struct 实例）
         for (int fi = vm.frame_cnt - 1; fi >= 1 && generic_type_count > 0; fi--) {
             CallFrame* check_frame = &vm.frames[fi];
@@ -229,13 +231,9 @@ OPCODE(OP_STRUCT_INIT) {
                 if (val_is_obj(self_val) && val_as_obj(self_val)->type == OBJ_STRUCT) {
                     ObjStruct* self_obj = (ObjStruct*)val_as_obj(self_val);
                     ObjStructDef* self_def = self_obj->def;
-                    // 检查 self 的 struct 定义是否有泛型类型参数
                     if (self_def->type_param_count > 0 && self_def->type_param_names &&
                         self_obj->generic_type_arg_count > 0 && self_obj->generic_type_args) {
-                        // 对每个泛型参数，检查是否是类型参数名
                         for (int gi = 0; gi < generic_type_count; gi++) {
-                            // generic_args 可能是 "struct K" 格式（parse_type 将 K 解析为 TYPE_STRUCT）
-                            // 提取纯名称用于匹配
                             const char* arg_name = generic_type_args[gi];
                             const char* pure_name = arg_name;
                             if (strncmp(arg_name, "struct ", 7) == 0) {
@@ -244,15 +242,113 @@ OPCODE(OP_STRUCT_INIT) {
                             for (int pi = 0; pi < self_def->type_param_count && pi < self_obj->generic_type_arg_count; pi++) {
                                 if (self_def->type_param_names[pi] && pure_name &&
                                     strcmp(self_def->type_param_names[pi], pure_name) == 0) {
-                                    // 替换为实际类型
                                     free(generic_type_args[gi]);
                                     generic_type_args[gi] = strdup(self_obj->generic_type_args[pi]);
+                                    resolved = 1;
                                     break;
                                 }
                             }
                         }
                     }
-                    break; // 找到最近的 self 就停止
+                    if (resolved) break;
+                }
+            }
+        }
+        
+        // 2) struct self 未解析全部类型参数时，尝试从闭包函数参数推断
+        if (!resolved) {
+            for (int fi = vm.frame_cnt - 1; fi >= 1; fi--) {
+                CallFrame* check_frame = &vm.frames[fi];
+                if (check_frame->closure && check_frame->closure->function &&
+                    check_frame->closure->function->type_param_count > 0 &&
+                    check_frame->closure->function->type_param_names &&
+                    check_frame->locals && check_frame->local_count > 0) {
+                    ObjFunction* func = check_frame->closure->function;
+                    int any_resolved = 0;
+                    for (int gi = 0; gi < generic_type_count; gi++) {
+                        const char* arg_name = generic_type_args[gi];
+                        const char* pure_name = arg_name;
+                        if (strncmp(arg_name, "struct ", 7) == 0) {
+                            pure_name = arg_name + 7;
+                        }
+                        // 检查是否匹配函数级类型参数名
+                        int matched_param_idx = -1;
+                        for (int pi = 0; pi < func->type_param_count; pi++) {
+                            if (func->type_param_names[pi] && pure_name &&
+                                strcmp(func->type_param_names[pi], pure_name) == 0) {
+                                matched_param_idx = pi;
+                                break;
+                            }
+                        }
+                        if (matched_param_idx < 0) continue;
+                        // 从函数参数推断：查找哪个参数使用了这个类型参数
+                        for (int ai = 0; ai < func->arity && ai < check_frame->local_count; ai++) {
+                            Value arg_val = check_frame->locals[ai];
+                            if (val_is_null(arg_val)) continue;
+                            // 参数直接是泛型类型（如 Ok[T](T val) 中的 val）
+                            if (func->param_generic_names && func->param_generic_names[ai] &&
+                                pure_name && strcmp(func->param_generic_names[ai], pure_name) == 0) {
+                                const char* inferred = NULL;
+                                char buf[32];
+                                if (val_is_int(arg_val) || val_is_bigint(arg_val)) {
+                                    inferred = "int";
+                                } else if (val_is_float(arg_val)) {
+                                    inferred = "float";
+                                } else if (val_is_bool(arg_val)) {
+                                    inferred = "bool";
+                                } else if (val_is_obj(arg_val)) {
+                                    ObjType ot = val_as_obj(arg_val)->type;
+                                    if (ot == OBJ_STRING) {
+                                        inferred = "string";
+                                    } else if (ot == OBJ_STRUCT) {
+                                        ObjStruct* arg_s = (ObjStruct*)val_as_obj(arg_val);
+                                        if (arg_s->def && arg_s->def->name) {
+                                            snprintf(buf, sizeof(buf), "struct %s", arg_s->def->name);
+                                            inferred = buf;
+                                        } else {
+                                            inferred = "struct";
+                                        }
+                                    } else if (ot == OBJ_ARRAY) {
+                                        inferred = "array";
+                                    }
+                                }
+                                if (inferred) {
+                                    free(generic_type_args[gi]);
+                                    generic_type_args[gi] = strdup(inferred);
+                                    any_resolved = 1;
+                                    break;
+                                }
+                            }
+                            // 参数是容器类型（如 reverse[T](Array[T] arr)），从 type_info 推断
+                            if (val_is_obj(arg_val)) {
+                                ObjType ot = val_as_obj(arg_val)->type;
+                                if (ot == OBJ_ARRAY) {
+                                    ObjArray* arr = (ObjArray*)val_as_obj(arg_val);
+                                    if (arr->type_info && arr->type_info->element_type) {
+                                        TypeInfo* elem = arr->type_info->element_type;
+                                        const char* inferred = NULL;
+                                        char buf[32];
+                                        if (elem->kind == TYPE_INT) inferred = "int";
+                                        else if (elem->kind == TYPE_FLOAT) inferred = "float";
+                                        else if (elem->kind == TYPE_STRING) inferred = "string";
+                                        else if (elem->kind == TYPE_BOOL) inferred = "bool";
+                                        else if (elem->kind == TYPE_STRUCT && elem->struct_name) {
+                                            snprintf(buf, sizeof(buf), "struct %s", elem->struct_name);
+                                            inferred = buf;
+                                        }
+                                        if (inferred) {
+                                            free(generic_type_args[gi]);
+                                            generic_type_args[gi] = strdup(inferred);
+                                            any_resolved = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (any_resolved) resolved = 1;
+                    if (resolved) break;
                 }
             }
         }

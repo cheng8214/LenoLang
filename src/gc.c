@@ -939,15 +939,29 @@ static void free_object_resources(Object* obj) {
                 }
                 free(func->param_generic_names);
             }
+            if (func->type_param_names) {
+                for (int i = 0; i < func->type_param_count; i++) {
+                    free(func->type_param_names[i]);
+                }
+                free(func->type_param_names);
+            }
             if (func->chunk) {
                 chunk_free(func->chunk);
                 free(func->chunk);
             }
             break;
         }
-        // 闭包：无额外资源
-        case OBJ_CLOSURE:
+        // 闭包：释放类型参数
+        case OBJ_CLOSURE: {
+            ObjClosure* closure = (ObjClosure*)obj;
+            if (closure->type_param_args) {
+                for (int i = 0; i < closure->type_param_count; i++) {
+                    free(closure->type_param_args[i]);
+                }
+                free(closure->type_param_args);
+            }
             break;
+        }
         // 原生函数：释放名称
         case OBJ_NATIVE: {
             ObjNative* native = (ObjNative*)obj;
