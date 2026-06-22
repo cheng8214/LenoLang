@@ -199,6 +199,14 @@ OPCODE(OP_TAIL_CALL) {
         frame->has_try_return = 0;
         frame->module = function->module;
 
+        // 应用待处理的泛型类型参数到 closure
+        if (vm.pending_type_args && vm.pending_type_arg_count > 0) {
+            closure->type_param_count = vm.pending_type_arg_count;
+            closure->type_param_args = vm.pending_type_args;
+            vm.pending_type_args = NULL;
+            vm.pending_type_arg_count = 0;
+        }
+
         // 弹出 callee
         vm.sp--;
 
@@ -251,6 +259,14 @@ OPCODE(OP_TAIL_CALL) {
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
         frame->module = func->module;
+
+        // 应用待处理的泛型类型参数到 closure
+        if (vm.pending_type_args && vm.pending_type_arg_count > 0) {
+            closure->type_param_count = vm.pending_type_arg_count;
+            closure->type_param_args = vm.pending_type_args;
+            vm.pending_type_args = NULL;
+            vm.pending_type_arg_count = 0;
+        }
 
         // 弹出 callee
         vm.sp--;

@@ -860,6 +860,18 @@ static void gen_call(CodeGen* gen, Ast* ast) {
         emit_byte(gen, (total_args >> 8) & 0xff, ast->line);
         emit_byte(gen, total_args & 0xff, ast->line);
     } else {
+        // 泛型类型参数传递：在 OP_CALL 前发射 OP_PUSH_TYPE_ARGS
+        int gt_count = ast->u.call.generic_type_count;
+        if (gt_count > 0 && ast->u.call.generic_type_args) {
+            emit_byte(gen, OP_PUSH_TYPE_ARGS, ast->line);
+            emit_byte(gen, (uint8_t)gt_count, ast->line);
+            for (int gi = 0; gi < gt_count; gi++) {
+                const char* type_str = type_kind_to_string(ast->u.call.generic_type_args[gi]->kind);
+                int type_const = make_constant(gen, val_obj((Object*)str_copy(type_str, (int)strlen(type_str))));
+                emit_byte(gen, (type_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, type_const & 0xff, ast->line);
+            }
+        }
         // 普通函数使用 OP_CALL
         emit_call(gen, total_args, ast->line);
     }

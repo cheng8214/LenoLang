@@ -165,6 +165,8 @@ typedef enum {
     OP_TAIL_CALL_NATIVE, // 尾调用原生函数: name_const(2) arg_count(2)
     // C 布局类型转换指令
     OP_U8_TO_F64,        // u8 → f64（0-255 无符号整数转双精度浮点）
+    // 泛型函数调用类型参数传递
+    OP_PUSH_TYPE_ARGS,   // 将泛型类型参数推入 VM 待处理区: count(1) [const(2)]...
 } OpCode;
 
 // ============================================================================
@@ -434,6 +436,9 @@ typedef struct VM {
     int active_thread_count;
     int active_thread_capacity;
     int stop_frame_cnt;          // 回调执行时：帧数降到此值时停止
+    // 泛型类型参数传递：OP_PUSH_TYPE_ARGS → OP_CALL 间的桥接
+    char** pending_type_args;    // 待处理的泛型类型参数
+    int pending_type_arg_count;  // 待处理数量
 } VM;
 
 // 主线程使用全局 VM（效率第一）

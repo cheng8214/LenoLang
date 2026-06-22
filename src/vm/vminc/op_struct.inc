@@ -255,15 +255,40 @@ OPCODE(OP_STRUCT_INIT) {
             }
         }
         
-        // 2) struct self 未解析全部类型参数时，尝试从闭包函数参数推断
+        // 2) struct self 未解析时，依次尝试：
+        //    a. closure type_param_args（泛型函数调用时传入的精准类型参数）
+        //    b. 从闭包函数参数运行时值推断
         if (!resolved) {
             for (int fi = vm.frame_cnt - 1; fi >= 1; fi--) {
                 CallFrame* check_frame = &vm.frames[fi];
-                if (check_frame->closure && check_frame->closure->function &&
-                    check_frame->closure->function->type_param_count > 0 &&
-                    check_frame->closure->function->type_param_names &&
+                if (!check_frame->closure || !check_frame->closure->function) continue;
+                ObjFunction* func = check_frame->closure->function;
+                ObjClosure* clo = check_frame->closure;
+                
+                // a: 优先使用 closure type_param_args（精准，来自调用方）
+                if (clo->type_param_count > 0 && clo->type_param_args &&
+                    func->type_param_count > 0 && func->type_param_names) {
+                    int any_resolved = 0;
+                    for (int gi = 0; gi < generic_type_count; gi++) {
+                        const char* arg_name = generic_type_args[gi];
+                        const char* pure_name = arg_name;
+                        if (strncmp(arg_name, "struct ", 7) == 0) pure_name = arg_name + 7;
+                        for (int pi = 0; pi < func->type_param_count && pi < clo->type_param_count; pi++) {
+                            if (func->type_param_names[pi] && pure_name &&
+                                strcmp(func->type_param_names[pi], pure_name) == 0) {
+                                free(generic_type_args[gi]);
+                                generic_type_args[gi] = strdup(clo->type_param_args[pi]);
+                                any_resolved = 1;
+                                break;
+                            }
+                        }
+                    }
+                    if (any_resolved) { resolved = 1; break; }
+                }
+                
+                // b: 回退到运行时值推断
+                if (func->type_param_count > 0 && func->type_param_names &&
                     check_frame->locals && check_frame->local_count > 0) {
-                    ObjFunction* func = check_frame->closure->function;
                     int any_resolved = 0;
                     for (int gi = 0; gi < generic_type_count; gi++) {
                         const char* arg_name = generic_type_args[gi];

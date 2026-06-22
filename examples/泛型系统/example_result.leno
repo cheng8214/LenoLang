@@ -83,6 +83,4 @@ print(p1.unwrapOr(-1))     // 42
 
 var p2 = parseInt("abc")
 print(p2.getError())        // cannot parse: abc
-// 注意：泛型函数的类型参数通过参数值运行时推断，
-// Err[T](string msg) 没有 T 类型参数，暂不支持 unwrapOr
-// print(p2.unwrapOr(-1))
+print(p2.unwrapOr(-1))     // -1（使用默认值）

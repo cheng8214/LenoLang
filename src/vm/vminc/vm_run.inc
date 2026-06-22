@@ -184,6 +184,7 @@
         [OP_CALL_NATIVE] = &&LABEL(OP_CALL_NATIVE),
         [OP_TAIL_CALL_NATIVE] = &&LABEL(OP_TAIL_CALL_NATIVE),
         [OP_U8_TO_F64] = &&LABEL(OP_U8_TO_F64),
+        [OP_PUSH_TYPE_ARGS] = &&LABEL(OP_PUSH_TYPE_ARGS),
     };
 
     // 宏定义：取指令并分发
@@ -311,6 +312,9 @@
 
             // 模块常量获取操作码
             #include "op_get_module_const.inc"
+
+            // 泛型类型参数传递
+            #include "op_type_args.inc"
 
             // 属性获取类操作码
             #include "op_property.inc"

@@ -57,7 +57,9 @@ static const char* opCodeNames[] = {
     // 原生函数调用合并指令
     "OP_CALL_NATIVE", "OP_TAIL_CALL_NATIVE",
     // C 布局类型转换
-    "OP_U8_TO_F64"
+    "OP_U8_TO_F64",
+    // 泛型类型参数传递
+    "OP_PUSH_TYPE_ARGS"
 };
 
 // 反汇编单条指令
@@ -457,6 +459,11 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             }
             printf("]");
             return offset + 3 + param_count;
+        }
+        case OP_PUSH_TYPE_ARGS: {
+            int count = chunk->code[offset + 1];
+            printf(" count=%d", count);
+            return offset + 1 + 1 + count * 2;
         }
         default:
             return offset + 1;
