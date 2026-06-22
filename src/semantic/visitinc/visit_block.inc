@@ -34,6 +34,11 @@
                             for (int j = 0; j < stmt->u.face_def.method_count; j++) {
                                 early_fdef->methods[j].name = strdup(stmt->u.face_def.method_names[j]);
                                 early_fdef->methods[j].param_count = stmt->u.face_def.method_param_counts[j];
+                                if (stmt->u.face_def.method_return_types && stmt->u.face_def.method_return_types[j]) {
+                                    early_fdef->methods[j].return_type = type_copy(stmt->u.face_def.method_return_types[j]);
+                                } else {
+                                    early_fdef->methods[j].return_type = NULL;
+                                }
                             }
                             face_def_register(early_fdef);
                         }

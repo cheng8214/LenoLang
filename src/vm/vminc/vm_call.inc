@@ -369,6 +369,24 @@ static inline int call_value(Value callee, int arg_count, int line) {
             }
             case OBJ_BOUND_METHOD: {
                 ObjBoundMethod* bound = (ObjBoundMethod*)val_as_obj(callee);
+
+                // 处理绑定闭包方法（用户自定义 struct 方法通过 OP_GET_PROPERTY 获取）
+                if (bound->closure) {
+                    // 将 receiver 插入到参数列表开头
+                    // 栈布局: [...][arg1][arg2][bound_method]
+                    // 需要变为: [...][receiver][arg1][arg2][closure]
+                    vm.sp--;
+                    for (int i = 0; i < arg_count; i++) {
+                        vm.stack[vm.sp - i] = vm.stack[vm.sp - i - 1];
+                    }
+                    vm.stack[vm.sp - arg_count] = bound->receiver;
+                    vm.sp++;
+
+                    // 压入闭包并调用
+                    vm_stack_push(&vm, val_obj((Object*)bound->closure));
+                    return call(bound->closure, arg_count + 1, line);
+                }
+
                 ObjNative* native = bound->method;
 
 #ifndef LENO_RELEASE

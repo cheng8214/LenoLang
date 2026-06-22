@@ -84,6 +84,61 @@ OPCODE(OP_GET_PROPERTY) {
                 ObjStruct* struct_obj = (ObjStruct*)val_as_obj(receiver);
                 ObjStructDef* def = struct_obj->def;
 
+                // 先查找用户自定义方法（如 struct impl face 中定义的方法）
+                for (int i = 0; i < def->method_count; i++) {
+                    if (strcmp(def->methods[i].name, name->chars) == 0) {
+                        ObjClosure* pre_closure = def->methods[i].closure;
+                        ObjFunction* func = def->methods[i].func;
+                        if (func) {
+                            // 获取或创建闭包
+                            ObjClosure* method_closure = pre_closure;
+                            if (!method_closure) {
+                                method_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                                if (!method_closure) {
+                                    runtime_error("内存不足，无法创建方法闭包", GET_CURRENT_LINE());
+                                    return -1;
+                                }
+                                method_closure->function = func;
+                                method_closure->upvalue_count = func->upvalue_count;
+                                for (int ui = 0; ui < func->upvalue_count; ui++) {
+                                    method_closure->upvalues[ui] = NULL;
+                                }
+                            }
+
+                            // ===== 窥孔优化：检测下一条指令是否是 OP_CALL =====
+                            if (*frame->ip == OP_CALL) {
+                                uint16_t arg_count = ((uint16_t)frame->ip[1] << 8) | frame->ip[2];
+                                frame->ip += 3;
+
+                                // 将 receiver 插入到参数列表开头
+                                int arg_start = vm.sp - arg_count;
+                                for (int j = arg_count - 1; j >= 0; j--) {
+                                    vm.stack[arg_start + j + 1] = vm.stack[arg_start + j];
+                                }
+                                vm.stack[arg_start] = receiver;
+                                vm.sp++;
+
+                                // 压入闭包并调用
+                                vm_stack_push(&vm, val_obj((Object*)method_closure));
+                                if (!call(method_closure, arg_count + 1, GET_CURRENT_LINE())) {
+                                    if (!vm.has_exception) {
+                                        return -1;
+                                    }
+                                }
+                                frame = &vm.frames[vm.frame_cnt - 1];
+                                DISPATCH;
+                            }
+
+                            // 非直接调用场景：创建绑定闭包方法
+                            vm_stack_push(&vm, receiver);
+                            ObjBoundMethod* bound = bound_closure_method_new(receiver, method_closure);
+                            vm_stack_pop(&vm);
+                            vm_stack_push(&vm, val_obj((Object*)bound));
+                            DISPATCH;
+                        }
+                    }
+                }
+
                 int field_idx = struct_get_field_index(def, name->chars);
                 if (field_idx >= 0) {
                     Value value = struct_get_field(struct_obj, field_idx);
@@ -283,6 +338,61 @@ OPCODE(OP_GET_PROPERTY) {
             if (receiver_type == OBJ_STRUCT) {
                 ObjStruct* struct_obj = (ObjStruct*)val_as_obj(receiver);
                 ObjStructDef* def = struct_obj->def;
+
+                // 先查找用户自定义方法（如 struct impl face 中定义的方法）
+                for (int i = 0; i < def->method_count; i++) {
+                    if (strcmp(def->methods[i].name, name->chars) == 0) {
+                        ObjClosure* pre_closure = def->methods[i].closure;
+                        ObjFunction* func = def->methods[i].func;
+                        if (func) {
+                            // 获取或创建闭包
+                            ObjClosure* method_closure = pre_closure;
+                            if (!method_closure) {
+                                method_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                                if (!method_closure) {
+                                    runtime_error("内存不足，无法创建方法闭包", GET_CURRENT_LINE());
+                                    return -1;
+                                }
+                                method_closure->function = func;
+                                method_closure->upvalue_count = func->upvalue_count;
+                                for (int ui = 0; ui < func->upvalue_count; ui++) {
+                                    method_closure->upvalues[ui] = NULL;
+                                }
+                            }
+
+                            // ===== 窥孔优化：检测下一条指令是否是 OP_CALL =====
+                            if (*frame->ip == OP_CALL) {
+                                uint16_t arg_count = ((uint16_t)frame->ip[1] << 8) | frame->ip[2];
+                                frame->ip += 3;
+
+                                // 将 receiver 插入到参数列表开头
+                                int arg_start = vm.sp - arg_count;
+                                for (int j = arg_count - 1; j >= 0; j--) {
+                                    vm.stack[arg_start + j + 1] = vm.stack[arg_start + j];
+                                }
+                                vm.stack[arg_start] = receiver;
+                                vm.sp++;
+
+                                // 压入闭包并调用
+                                vm_stack_push(&vm, val_obj((Object*)method_closure));
+                                if (!call(method_closure, arg_count + 1, GET_CURRENT_LINE())) {
+                                    if (!vm.has_exception) {
+                                        return -1;
+                                    }
+                                }
+                                frame = &vm.frames[vm.frame_cnt - 1];
+                                DISPATCH;
+                            }
+
+                            // 非直接调用场景：创建绑定闭包方法
+                            vm_stack_push(&vm, receiver);
+                            ObjBoundMethod* bound = bound_closure_method_new(receiver, method_closure);
+                            vm_stack_pop(&vm);
+                            vm_stack_push(&vm, val_obj((Object*)bound));
+                            DISPATCH;
+                        }
+                    }
+                }
 
                 int field_idx = struct_get_field_index(def, name->chars);
                 if (field_idx >= 0) {

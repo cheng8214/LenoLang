@@ -728,6 +728,29 @@
                             }
                         }
                         
+                        // 编译期约束校验：检查推断出的类型是否满足 T: Face 约束
+                        if (func_def->u.func.type_param_constraints) {
+                            for (int i = 0; i < func_def->u.func.type_param_count; i++) {
+                                const char* constraint = func_def->u.func.type_param_constraints[i];
+                                if (!constraint) continue;  // 无约束
+                                TypeInfo* inferred = inferred_types[i];
+                                if (!inferred || inferred->kind == TYPE_ANY) continue;  // 无法推断，跳过
+                                
+                                // 只有 struct 类型需要检查 impl
+                                if (inferred->kind == TYPE_STRUCT && inferred->struct_name) {
+                                    ObjStructDef* sdef = struct_def_find(inferred->struct_name);
+                                    ObjFaceDef* fdef = face_def_find(constraint);
+                                    if (sdef && fdef && !struct_implements_face(sdef, fdef)) {
+                                        char msg[BUFFER_MEDIUM];
+                                        snprintf(msg, sizeof(msg),
+                                            "类型 '%s' 不满足约束 '%s': 需要实现 face '%s'",
+                                            inferred->struct_name, constraint, constraint);
+                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                    }
+                                }
+                            }
+                        }
+                        
                         // 存储特化信息
                         ast->u.call.generic_type_names = inferred_names;
                         ast->u.call.generic_type_args = inferred_types;

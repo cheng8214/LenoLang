@@ -340,6 +340,11 @@
                     for (int i = 0; i < ast->u.face_def.method_count; i++) {
                         fdef->methods[i].name = strdup(ast->u.face_def.method_names[i]);
                         fdef->methods[i].param_count = ast->u.face_def.method_param_counts[i];
+                        if (ast->u.face_def.method_return_types && ast->u.face_def.method_return_types[i]) {
+                            fdef->methods[i].return_type = type_copy(ast->u.face_def.method_return_types[i]);
+                        } else {
+                            fdef->methods[i].return_type = NULL;
+                        }
                     }
                     face_def_register(fdef);
                 }

@@ -752,7 +752,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             type_free(obj_type);
                             return type_new(TYPE_ANY);
                         }
-                        // 处理泛型约束类型参数的方法调用（如 T: Comparable）
+                        // 处理泛型约束类型参数的方法调用（如 T: Printable，调用 T.format()）
                         if (obj_type->kind == TYPE_GENERIC_PARAM && obj_type->constraint_name) {
                             ObjFaceDef* constraint_face = face_def_find(obj_type->constraint_name);
                             if (constraint_face) {
@@ -1237,6 +1237,41 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                     type_free(obj_type);
                                     return result;
                                 }
+                            }
+                        }
+                    }
+                    type_free(obj_type);
+                    ast->cached_type = type_new(TYPE_ANY);
+                    return type_copy(ast->cached_type);
+                } else if (obj_type->kind == TYPE_GENERIC_PARAM && obj_type->constraint_name
+                           && ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
+                    // 泛型约束类型参数的方法引用（如 T: Comparable，T.compare 作为值）
+                    // 返回绑定方法类型（不含 self，因为 self 已绑定到 receiver）
+                    const char* method_name = ast->u.index.index->u.string.value;
+                    ObjFaceDef* constraint_face = face_def_find(obj_type->constraint_name);
+                    if (constraint_face) {
+                        for (int mi = 0; mi < constraint_face->method_count; mi++) {
+                            if (strcmp(constraint_face->methods[mi].name, method_name) == 0) {
+                                // 绑定方法类型：func(param1, ...) -> returnType（不含 self）
+                                TypeInfo* func_type = type_new(TYPE_FUNCTION);
+                                func_type->param_count = constraint_face->methods[mi].param_count;
+                                func_type->param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * (func_type->param_count > 0 ? func_type->param_count : 1));
+                                for (int pi = 0; pi < constraint_face->methods[mi].param_count; pi++) {
+                                    if (constraint_face->methods[mi].param_types && constraint_face->methods[mi].param_types[pi]) {
+                                        func_type->param_types[pi] = type_copy(constraint_face->methods[mi].param_types[pi]);
+                                    } else {
+                                        // 参数类型未指定时，使用约束名称作为 struct 类型
+                                        // （face 名称在函数签名中被解析为 TYPE_STRUCT）
+                                        func_type->param_types[pi] = type_new(TYPE_STRUCT);
+                                        func_type->param_types[pi]->struct_name = strdup(obj_type->constraint_name);
+                                    }
+                                }
+                                func_type->return_type = constraint_face->methods[mi].return_type
+                                    ? type_copy(constraint_face->methods[mi].return_type)
+                                    : type_new(TYPE_ANY);
+                                ast->cached_type = func_type;
+                                type_free(obj_type);
+                                return type_copy(ast->cached_type);
                             }
                         }
                     }

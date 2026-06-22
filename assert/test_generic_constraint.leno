@@ -1,76 +1,109 @@
-// 泛型约束完整测试 - T: FaceName 语法 + 基本用法
+// 泛型约束测试 - 验证 T: FaceName 语法解析及基础设施
 
-// 基础结构
+// --- 1. 无约束泛型函数仍正常工作 ---
+func identity[T](T v): T {
+    return v
+}
+
+// --- 2. 带约束的泛型函数可以定义（只做算术，不调 face 方法） ---
 face Comparable {
     func compare(Comparable other): int
 }
 
-struct IntBox impl Comparable {
+func maxBy[T: Comparable](T a, T b): T {
+    if a.compare(b) >= 0 { return a }
+    return b
+}
+
+// --- 3. struct 带约束定义 ---
+struct SortedBox[T: Comparable] {
+    T value
+}
+
+// --- 4. 多约束（一个约束一个不约束） ---
+struct Pair[K, V: Comparable] {
+    K key
+    V val
+}
+
+// --- 5. 约束函数配合无约束泛型调用 ---
+func wrap[T: Comparable](T v): T {
+    return identity[T](v)  // T 传给无约束泛型
+}
+
+// --- 6. face 带泛型参数约束 ---
+face Container[T] {
+    func put(T item)
+    func get(): T
+}
+
+// face 自身带参数，可约束
+struct IntBox {
+    int value
+    func put(int item) { self.value = item }
+    func get(): int { return self.value }
+}
+
+// --- 7. struct impl Comparable，泛型约束调用 face 方法 ---
+struct OrdInt impl Comparable {
     int value
     func compare(Comparable other): int {
-        var o = other as IntBox
+        var o = other as OrdInt
         if self.value < o.value { return -1 }
         if self.value > o.value { return 1 }
         return 0
     }
 }
 
-// --- 1. 带约束的泛型函数（算术运算，不调 face 方法） ---
-func maxBy[T: Comparable](T a, T b): T {
-    if a >= b { return a }
-    return b
+struct OrdStr impl Comparable {
+    string value
+    func compare(Comparable other): int {
+        var o = other as OrdStr
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
 }
 
-// --- 2. 约束 struct 实例化 ---
-struct SortedBox[T: Comparable] {
-    T value
-}
-
-// --- 3. 混合约束（一个约束一个不约束） ---
-struct Pair[K, V: Comparable] {
-    K key
-    V val
-}
-
-// --- 4. 约束函数调用无约束泛型 ---
-func identity[T](T v): T { return v }
-func wrap[T: Comparable](T v): T {
-    return identity[T](v)
-}
-
-// --- 5. face 自身带泛型参数 ---
-face Container[T] {
-    func put(T item)
-    func get(): T
-}
-
+// --- 执行测试 ---
 main() {
     // 1. 无约束泛型不变
     assert_eq(identity[int](42), 42)
     assert_eq(identity[string]("hello"), "hello")
 
-    // 2. 带约束函数算术比较
-    assert_eq(maxBy[int](10, 20), 20)
-    assert_eq(maxBy[float](3.5, 1.2), 3.5)
+    // 2. 带约束函数调用 struct impl Comparable 的 face 方法
+    var a1 = new OrdInt(value=10)
+    var b1 = new OrdInt(value=20)
+    var r1 = maxBy(a1, b1)
+    var ri1 = r1 as OrdInt
+    assert_eq(ri1.value, 20)
 
-    // 3. 约束 struct
+    var a2 = new OrdInt(value=50)
+    var b2 = new OrdInt(value=30)
+    var r2 = maxBy(a2, b2)
+    var ri2 = r2 as OrdInt
+    assert_eq(ri2.value, 50)
+
+    var s1 = new OrdStr(value="apple")
+    var s2 = new OrdStr(value="banana")
+    var rs = maxBy(s1, s2)
+    var ris = rs as OrdStr
+    assert_eq(ris.value, "banana")
+
+    // 3. 约束 struct 实例化
     var box = new SortedBox[int](value=100)
     assert_eq(box.value, 100)
 
     // 4. 混合约束 struct
-    var p = new Pair[string, float](key="k", val=3.14)
-    assert_eq(p.key, "k")
+    var p = new Pair[string, float](key="key", val=3.14)
+    assert_eq(p.key, "key")
     assert_eq(p.val, 3.14)
 
-    // 5. 约束函数调无约束
+    // 5. 约束函数调用无约束函数
     assert_eq(wrap[int](42), 42)
+    assert_eq(wrap[string]("test"), "test")
 
-    // 6. struct 实例调用自己方法（直接在 main，不在泛型内）
-    var a = new IntBox(value=10)
-    var b = new IntBox(value=20)
-    assert_eq(a.compare(b), -1)
-
-    // 7. 约束兼容 - SortedBox[string] 正常
+    // 6. 非约束泛型嵌套在约束里
     var strBox = new SortedBox[string](value="abc")
     assert_eq(strBox.value, "abc")
 

@@ -909,6 +909,14 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         return 0;
     }
 
+    // struct 目标 + face 源同名时兼容（用于泛型约束方法引用类型推断，如 func(Comparable):int 中的 Comparable 是 struct 类型）
+    if (target->kind == TYPE_STRUCT && source->kind == TYPE_FACE) {
+        if (target->struct_name && source->struct_name) {
+            return strcmp(target->struct_name, source->struct_name) == 0;
+        }
+        return 0;
+    }
+
     // Style 类型兼容性检查：Style[xxx] 可以接受 Dict
     if (target->kind == TYPE_STYLE) {
         if (source->kind == TYPE_DICT || source->kind == TYPE_STYLE) {

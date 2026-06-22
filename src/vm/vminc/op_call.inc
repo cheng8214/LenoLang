@@ -289,6 +289,91 @@ OPCODE(OP_TAIL_CALL) {
 
     } else if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_BOUND_METHOD) {
         ObjBoundMethod* bound = (ObjBoundMethod*)val_as_obj(callee);
+
+        // 处理绑定闭包方法（用户自定义 struct 方法通过 OP_GET_PROPERTY 获取）
+        if (bound->closure) {
+            // 将 receiver 插入到参数列表开头
+            Value* args_start = vm.stack + vm.sp - arg_count - 1;
+            for (int i = arg_count - 1; i >= 0; i--) {
+                args_start[i + 1] = args_start[i];
+            }
+            args_start[0] = bound->receiver;
+            vm.sp = old_stack_base + arg_count + 1;
+
+            // 关闭当前帧的 upvalues
+            if (frame->locals != NULL && frame->local_count > 0) {
+                close_upvalues(frame->locals, frame->local_count, 1);
+            }
+
+            // 释放当前帧的 locals 数组
+            if (frame->locals != NULL && frame->locals_is_dynamic) {
+                free(frame->locals);
+                frame->locals = NULL;
+            }
+
+            // 调用闭包（复用当前帧）
+            ObjClosure* closure = bound->closure;
+            ObjFunction* func = closure->function;
+
+            frame->closure = closure;
+            frame->chunk = func->chunk;
+            frame->ip = func->chunk->code;
+
+            int local_count = func->local_count;
+            if (local_count <= INLINE_LOCALS_MAX) {
+                frame->locals = frame->inline_locals;
+                frame->locals_is_dynamic = 0;
+            } else {
+                frame->locals = (Value*)malloc(local_count * sizeof(Value));
+                if (!frame->locals) {
+                    runtime_error("局部变量内存分配失败", GET_CURRENT_LINE());
+                    return -1;
+                }
+                frame->locals_is_dynamic = 1;
+            }
+
+            for (int i = 0; i < arg_count + 1 && i < local_count; i++) {
+                Value arg = vm.stack[old_stack_base + i];
+                if (func->param_types && i < func->arity) {
+                    TypeKind expected_type = func->param_types[i];
+                    if (expected_type == TYPE_FLOAT && val_is_int(arg)) {
+                        arg = val_float((double)val_as_int(arg));
+                    } else if (expected_type == TYPE_FLOAT && val_is_bigint(arg)) {
+                        arg = val_float(bigint_to_double(val_as_bigint(arg)));
+                    } else if (expected_type == TYPE_INT && val_is_float(arg)) {
+                        arg = val_int((int)val_as_num(arg));
+                    }
+                }
+                frame->locals[i] = arg;
+            }
+            for (int i = arg_count + 1; i < local_count; i++) {
+                frame->locals[i] = val_null();
+            }
+
+            frame->local_count = local_count;
+            frame->slot_count = local_count;
+            frame->catch_ip = NULL;
+            frame->finally_ip = NULL;
+            frame->prev_catch_ip = NULL;
+            frame->prev_finally_ip = NULL;
+            frame->in_finally = 0;
+            frame->try_return_value = val_null();
+            frame->has_try_return = 0;
+            frame->module = func->module;
+            frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+
+            // 应用待处理的泛型类型参数到 closure
+            if (func->type_param_count > 0 && vm.pending_type_args) {
+                closure->type_param_count = vm.pending_type_arg_count;
+                closure->type_param_args = vm.pending_type_args;
+                vm.pending_type_args = NULL;
+                vm.pending_type_arg_count = 0;
+            }
+
+            vm.sp--;
+            DISPATCH;
+        }
+
         ObjNative* native = bound->method;
 
 #ifndef LENO_RELEASE

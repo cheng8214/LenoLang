@@ -433,7 +433,8 @@ typedef struct {
 typedef struct {
     Object header;
     Value receiver;       // 接收者（如数组、字符串等）
-    ObjNative* method;    // 方法（原生函数）
+    ObjNative* method;    // 方法（原生函数），非闭包方法时使用
+    ObjClosure* closure;  // 闭包方法（用户自定义 struct 方法），非 NULL 时优先使用
 } ObjBoundMethod;
 
 // 范围对象
@@ -1133,6 +1134,7 @@ void struct_mark_methods(void);
 
 // 创建绑定方法
 ObjBoundMethod* bound_method_new(Value receiver, ObjNative* method);
+ObjBoundMethod* bound_closure_method_new(Value receiver, ObjClosure* closure);
 
 // 查找数组方法
 ObjNative* array_find_method(const char* name);

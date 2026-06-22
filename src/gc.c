@@ -390,7 +390,8 @@ void gc_mark_object(Object* obj) {
         case OBJ_BOUND_METHOD: {
             ObjBoundMethod* bound = (ObjBoundMethod*)obj;
             gc_mark_value(bound->receiver);
-            gc_mark_object((Object*)bound->method);
+            if (bound->method) gc_mark_object((Object*)bound->method);
+            if (bound->closure) gc_mark_object((Object*)bound->closure);
             break;
         }
         // 文件对象：标记路径和模式字符串

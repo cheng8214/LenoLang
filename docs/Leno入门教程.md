@@ -13,6 +13,7 @@
 3. [运算符](#运算符)
 4. [控制流](#控制流)
 5. [函数](#函数)
+   - [泛型约束（T: Face）](#泛型约束t-face)
 6. [结构体（Struct）](#结构体struct)
    - [泛型结构体](#泛型结构体)
 7. [face（接口）](#face接口)
@@ -1928,6 +1929,79 @@ func max[T](T a, T b): T {
 assert_eq(max[int](3, 5), 5)
 assert_eq(max[string]("abc", "xyz"), "xyz")
 ```
+
+#### 泛型约束（T: Face）
+
+泛型参数可以用 `T: FaceName` 语法约束为必须实现某个 face 的类型，从而在函数体内调用 face 定义的方法：
+
+```leno
+face Comparable {
+    func compare(Comparable other): int
+}
+
+func maxBy[T: Comparable](T a, T b): T {
+    if a.compare(b) >= 0 { return a }
+    return b
+}
+```
+
+**struct 实现 face 后即可作为约束类型参数使用：**
+
+```leno
+struct IntBox impl Comparable {
+    int value
+    func compare(Comparable other): int {
+        var o = other as IntBox
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
+}
+
+struct StrBox impl Comparable {
+    string value
+    func compare(Comparable other): int {
+        var o = other as StrBox
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
+}
+
+main() {
+    var a = new IntBox(value=10)
+    var b = new IntBox(value=20)
+    var r = maxBy(a, b)
+    var ri = r as IntBox
+    print(ri.value)           // 20
+
+    var s1 = new StrBox(value="apple")
+    var s2 = new StrBox(value="banana")
+    var rs = maxBy(s1, s2)
+    var ris = rs as StrBox
+    print(ris.value)          // banana
+}
+```
+
+**泛型约束也可用于 struct 定义：**
+
+```leno
+struct SortedBox[T: Comparable] {
+    T value
+}
+
+struct Pair[K, V: Comparable] {
+    K key
+    V val
+}
+```
+
+> **💡 泛型约束要点**
+>
+> - `T: Face` 要求传入的类型必须**显式 `impl`** 该 face
+> - 约束后可在函数体内调用 face 定义的方法（如 `a.compare(b)`）
+> - 多个类型参数可以分别约束：`[K, V: Comparable]`
+> - 未约束的泛型参数（如 `K`）仍可接受任意类型
 
 > **⚠️ 注意事项**：
 > 
@@ -6251,6 +6325,7 @@ lenolang program.leno
 | -------- | --------------------------------- |
 | 定义结构体    | `struct Point { int x, int y }`   |
 | 定义泛型结构体  | `struct Box[T] { T value }`       |
+| 泛型约束     | `func f[T: Comparable](T a, T b)`  |
 | 创建实例     | `new Point(x=10, y=20)`           |
 | 创建泛型实例   | `new Box[int](value=42)`（类型参数不可省略） |
 | 访问字段     | `p.x`, `p.y`                      |
