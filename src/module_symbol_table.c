@@ -61,6 +61,10 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
             free(table->structs[i].methods[j].name);
             free(table->structs[i].methods[j].return_struct_name);
             free(table->structs[i].methods[j].return_type_param_name);
+            for (int gi = 0; gi < table->structs[i].methods[j].return_generic_count; gi++) {
+                free(table->structs[i].methods[j].return_generic_param_names[gi]);
+            }
+            free(table->structs[i].methods[j].return_generic_param_names);
             free(table->structs[i].methods[j].param_types);
         }
         free(table->structs[i].methods);
@@ -180,6 +184,14 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             st->methods[i].return_type = methods[i].return_type;
             st->methods[i].return_struct_name = methods[i].return_struct_name ? strdup(methods[i].return_struct_name) : NULL;
             st->methods[i].return_type_param_name = methods[i].return_type_param_name ? strdup(methods[i].return_type_param_name) : NULL;
+            st->methods[i].return_generic_count = methods[i].return_generic_count;
+            st->methods[i].return_generic_param_names = NULL;
+            if (methods[i].return_generic_count > 0 && methods[i].return_generic_param_names) {
+                st->methods[i].return_generic_param_names = (char**)malloc(sizeof(char*) * methods[i].return_generic_count);
+                for (int gi = 0; gi < methods[i].return_generic_count; gi++) {
+                    st->methods[i].return_generic_param_names[gi] = strdup(methods[i].return_generic_param_names[gi]);
+                }
+            }
             st->methods[i].param_count = methods[i].param_count;
             st->methods[i].param_types = NULL;
             if (methods[i].param_count > 0 && methods[i].param_types) {
@@ -886,6 +898,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                     int param_count = 0;
                                     TypeKind param_types[64] = {0};
                                     char param_struct_names[64][64] = {{0}};
+                                    char* param_generic_names[64] = {NULL};  // 泛型参数名（如 T, K, V）
 
                                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                                     if (*after_func == '(') {
@@ -922,6 +935,16 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                                     // 检查是否是已知类型
                                                     TypeKind param_type = parse_base_type(token);
                                                     char param_struct_name[64] = {0};
+                                                    char* param_generic_name = NULL;
+
+                                                    // 检查是否是泛型类型参数（如 T, K, V）
+                                                    for (int tpi = 0; tpi < type_param_count; tpi++) {
+                                                        if (type_param_names[tpi] && strcmp(token, type_param_names[tpi]) == 0) {
+                                                            param_type = TYPE_GENERIC_PARAM;
+                                                            param_generic_name = strdup(type_param_names[tpi]);
+                                                            break;
+                                                        }
+                                                    }
 
                                                     // 跳过空白
                                                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
@@ -939,11 +962,16 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
 
                                                     if (has_param && param_count < 64) {
                                                         param_types[param_count] = param_type;
+                                                        param_generic_names[param_count] = param_generic_name;
+                                                        param_generic_name = NULL;  // 转移所有权
                                                         if (param_struct_name[0]) {
                                                             strncpy(param_struct_names[param_count], param_struct_name, 63);
                                                             param_struct_names[param_count][63] = '\0';
                                                         }
                                                         param_count++;
+                                                    } else if (param_generic_name) {
+                                                        free(param_generic_name);
+                                                        param_generic_name = NULL;
                                                     }
 
                                                     // 跳过默认值（如果有）
@@ -977,6 +1005,8 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                         TypeKind method_return_type = TYPE_ANY;
                                         char method_return_struct[64] = {0};
                                         char method_return_type_param[64] = {0};
+                                        int method_return_generic_count = 0;
+                                        char* method_return_generic_params[8] = {NULL};
 
                                         if (*after_func == ':') {
                                             after_func++;
@@ -1014,6 +1044,29 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                                         }
                                                     }
                                                 }
+
+                                                // 解析泛型返回类型的类型参数（如 Holder[K] 中的 [K]）
+                                                while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                                if (*after_func == '[' && (method_return_type == TYPE_STRUCT || method_return_type == TYPE_PTR)) {
+                                                    after_func++; // skip '['
+                                                    while (*after_func && *after_func != ']') {
+                                                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                                        if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
+                                                            const char* gp_start = after_func;
+                                                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                                            int gp_len = (int)(after_func - gp_start);
+                                                            if (gp_len > 0 && gp_len < 64 && method_return_generic_count < 8) {
+                                                                method_return_generic_params[method_return_generic_count] = (char*)malloc(gp_len + 1);
+                                                                strncpy(method_return_generic_params[method_return_generic_count], gp_start, gp_len);
+                                                                method_return_generic_params[method_return_generic_count][gp_len] = '\0';
+                                                                method_return_generic_count++;
+                                                            }
+                                                        }
+                                                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                                        if (*after_func == ',') after_func++;
+                                                    }
+                                                    if (*after_func == ']') after_func++; // skip ']'
+                                                }
                                             }
                                         }
 
@@ -1036,12 +1089,34 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                                         methods[method_count].return_type = method_return_type;
                                         methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
                                         methods[method_count].return_type_param_name = method_return_type_param[0] ? strdup(method_return_type_param) : NULL;
+                                        methods[method_count].return_generic_count = method_return_generic_count;
+                                        methods[method_count].return_generic_param_names = NULL;
+                                        if (method_return_generic_count > 0) {
+                                            methods[method_count].return_generic_param_names = (char**)malloc(sizeof(char*) * method_return_generic_count);
+                                            for (int gi = 0; gi < method_return_generic_count; gi++) {
+                                                methods[method_count].return_generic_param_names[gi] = method_return_generic_params[gi];
+                                                method_return_generic_params[gi] = NULL; // 转移所有权
+                                            }
+                                        }
                                         methods[method_count].param_count = param_count;
                                         methods[method_count].param_types = NULL;
+                                        methods[method_count].param_generic_names = NULL;
                                         if (param_count > 0) {
                                             methods[method_count].param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
                                             for (int pi = 0; pi < param_count; pi++) {
                                                 methods[method_count].param_types[pi] = param_types[pi];
+                                            }
+                                            // 设置泛型参数名
+                                            int has_generic = 0;
+                                            for (int pi = 0; pi < param_count; pi++) {
+                                                if (param_generic_names[pi]) has_generic = 1;
+                                            }
+                                            if (has_generic) {
+                                                methods[method_count].param_generic_names = (char**)malloc(sizeof(char*) * param_count);
+                                                for (int pi = 0; pi < param_count; pi++) {
+                                                    methods[method_count].param_generic_names[pi] = param_generic_names[pi];
+                                                    param_generic_names[pi] = NULL;  // 转移所有权
+                                                }
                                             }
                                         }
                                         method_count++;
@@ -1131,6 +1206,10 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                             free(methods[i].name);
                             free(methods[i].return_struct_name);
                             free(methods[i].return_type_param_name);
+                            for (int gi = 0; gi < methods[i].return_generic_count; gi++) {
+                                free(methods[i].return_generic_param_names[gi]);
+                            }
+                            free(methods[i].return_generic_param_names);
                             free(methods[i].param_types);
                         }
 

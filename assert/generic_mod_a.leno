@@ -1,0 +1,16 @@
+// 泛型模块A：容器类
+export struct Container[T] {
+    T item
+
+    func get(): T {
+        return self.item
+    }
+
+    func set(T v) {
+        self.item = v
+    }
+
+    func add(T v): T {
+        return self.item + v
+    }
+}

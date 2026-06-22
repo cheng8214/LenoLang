@@ -59,6 +59,8 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     func->local_count = ast->u.func.local_count;
     func->has_try = ast_has_try(ast->u.func.body);  // 检测函数体是否包含 try
     func->param_types = NULL;
+    func->param_generic_names = NULL;
+    func->param_generic_count = 0;
     func->module = g_current_module;  // 设置函数所属模块
     
     // 存储参数类型用于运行时类型检查
@@ -67,6 +69,24 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
         if (func->param_types) {
             for (int i = 0; i < func->arity; i++) {
                 func->param_types[i] = ast->u.func.param_types[i]->kind;
+            }
+        }
+        // 存储泛型参数名（如 T, K, V），用于运行时泛型方法参数类型检查
+        int generic_count = 0;
+        for (int i = 0; i < func->arity; i++) {
+            if (ast->u.func.param_types[i]->kind == TYPE_GENERIC_PARAM && ast->u.func.param_types[i]->type_param_name) {
+                generic_count++;
+            }
+        }
+        if (generic_count > 0) {
+            func->param_generic_names = (char**)malloc(sizeof(char*) * func->arity);
+            func->param_generic_count = generic_count;
+            for (int i = 0; i < func->arity; i++) {
+                if (ast->u.func.param_types[i]->kind == TYPE_GENERIC_PARAM && ast->u.func.param_types[i]->type_param_name) {
+                    func->param_generic_names[i] = strdup(ast->u.func.param_types[i]->type_param_name);
+                } else {
+                    func->param_generic_names[i] = NULL;
+                }
             }
         }
     }

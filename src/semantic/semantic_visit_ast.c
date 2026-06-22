@@ -80,6 +80,13 @@ void visit(Semantic* s, Ast* ast) {
                         ObjStructDef* early_def = struct_def_new(stmt->u.struct_def.name, stmt->u.struct_def.field_count, stmt->u.struct_def.method_count);
                         if (early_def) {
                             early_def->impl_count = stmt->u.struct_def.impl_count;
+                            early_def->type_param_count = stmt->u.struct_def.type_param_count;
+                            if (early_def->type_param_count > 0 && stmt->u.struct_def.type_params) {
+                                early_def->type_param_names = (char**)malloc(sizeof(char*) * early_def->type_param_count);
+                                for (int j = 0; j < early_def->type_param_count; j++) {
+                                    early_def->type_param_names[j] = strdup(stmt->u.struct_def.type_params[j]);
+                                }
+                            }
                             if (early_def->impl_count > 0) {
                                 early_def->impl_names = (char**)malloc(sizeof(char*) * early_def->impl_count);
                                 for (int j = 0; j < early_def->impl_count; j++) {
@@ -2422,6 +2429,13 @@ void visit(Semantic* s, Ast* ast) {
                                 if (sdef) {
                                     // 设置泛型类型参数数量
                                     sdef->type_param_count = struct_sym->type_param_count;
+                                    // 设置泛型类型参数名称
+                                    if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                                        sdef->type_param_names = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                                        for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                            sdef->type_param_names[tpi] = strdup(struct_sym->type_param_names[tpi]);
+                                        }
+                                    }
 
                                     // 设置 struct 方法名
                                     for (int mi = 0; mi < struct_sym->method_count; mi++) {
@@ -2508,6 +2522,17 @@ void visit(Semantic* s, Ast* ast) {
                 // 将 struct/cstruct 定义注册到当前作用域
                 SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
                 Symbol* sym = scope_define(s->current, symbol_name, kind);
+                if (!sym) {
+                    // scope_define 返回 NULL 可能是因为同名冲突
+                    Symbol* existing = scope_resolve_local(s->current, symbol_name);
+                    if (existing && existing->type && (existing->type->kind == TYPE_STRUCT || existing->type->kind == TYPE_CSTRUCT)) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "use 错误：'%s' 已在当前作用域中定义（来自其他模块的 use），请使用模块名限定访问",
+                                 symbol_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+                    break;
+                }
                 if (sym) {
                     // 根据 is_cstruct 标记决定类型
                     TypeKind struct_type = struct_sym->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT;
@@ -2535,6 +2560,13 @@ void visit(Semantic* s, Ast* ast) {
                     if (sdef) {
                         // 设置泛型类型参数数量
                         sdef->type_param_count = struct_sym->type_param_count;
+                        // 设置泛型类型参数名称
+                        if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                            sdef->type_param_names = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                            for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                sdef->type_param_names[tpi] = strdup(struct_sym->type_param_names[tpi]);
+                            }
+                        }
 
                         // 设置 struct 方法名（用于方法查找）
                         for (int i = 0; i < struct_sym->method_count; i++) {
@@ -2583,6 +2615,63 @@ void visit(Semantic* s, Ast* ast) {
                             }
                             if (struct_sym->methods[mi].return_type == TYPE_GENERIC_PARAM && struct_sym->methods[mi].return_type_param_name) {
                                 placeholder->u.func.return_type->type_param_name = strdup(struct_sym->methods[mi].return_type_param_name);
+                            }
+                            // 设置返回类型的泛型参数（如 Holder[K] 中的 [K]）
+                            if (struct_sym->methods[mi].return_generic_count > 0 && struct_sym->methods[mi].return_generic_param_names) {
+                                placeholder->u.func.return_type->generic_count = struct_sym->methods[mi].return_generic_count;
+                                placeholder->u.func.return_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->methods[mi].return_generic_count);
+                                for (int gi = 0; gi < struct_sym->methods[mi].return_generic_count; gi++) {
+                                    // 检查是否是泛型参数名（如 K, V）
+                                    int is_type_param = 0;
+                                    for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                        if (struct_sym->type_param_names[tpi] && strcmp(struct_sym->methods[mi].return_generic_param_names[gi], struct_sym->type_param_names[tpi]) == 0) {
+                                            is_type_param = 1;
+                                            placeholder->u.func.return_type->generic_args[gi] = type_new(TYPE_GENERIC_PARAM);
+                                            placeholder->u.func.return_type->generic_args[gi]->type_param_name = strdup(struct_sym->methods[mi].return_generic_param_names[gi]);
+                                            break;
+                                        }
+                                    }
+                                    if (!is_type_param) {
+                                        // 具体类型（如 int, string 等）—— 简单判断
+                                        TypeInfo* arg_type = type_new(TYPE_ANY);
+                                        if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "int") == 0) arg_type = type_new(TYPE_INT);
+                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "float") == 0) arg_type = type_new(TYPE_FLOAT);
+                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "string") == 0) arg_type = type_new(TYPE_STRING);
+                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "bool") == 0) arg_type = type_new(TYPE_BOOL);
+                                        placeholder->u.func.return_type->generic_args[gi] = arg_type;
+                                    }
+                                }
+                            }
+                            // 设置参数类型（包括泛型参数名）
+                            int total_pcnt = 1 + struct_sym->methods[mi].param_count;
+                            placeholder->u.func.param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * total_pcnt);
+                            // self 参数类型
+                            placeholder->u.func.param_types[0] = type_new(TYPE_STRUCT);
+                            placeholder->u.func.param_types[0]->struct_name = strdup(struct_sym->name);
+                            if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                                placeholder->u.func.param_types[0]->generic_count = struct_sym->type_param_count;
+                                placeholder->u.func.param_types[0]->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->type_param_count);
+                                for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                    placeholder->u.func.param_types[0]->generic_args[tpi] = type_new(TYPE_GENERIC_PARAM);
+                                    placeholder->u.func.param_types[0]->generic_args[tpi]->type_param_name = strdup(struct_sym->type_param_names[tpi]);
+                                }
+                            }
+                            // 其他参数类型
+                            for (int pi = 0; pi < struct_sym->methods[mi].param_count; pi++) {
+                                if (struct_sym->methods[mi].param_generic_names && struct_sym->methods[mi].param_generic_names[pi]) {
+                                    placeholder->u.func.param_types[1 + pi] = type_new(TYPE_GENERIC_PARAM);
+                                    placeholder->u.func.param_types[1 + pi]->type_param_name = strdup(struct_sym->methods[mi].param_generic_names[pi]);
+                                } else {
+                                    placeholder->u.func.param_types[1 + pi] = type_new(struct_sym->methods[mi].param_types[pi]);
+                                }
+                            }
+                            // 设置泛型类型参数（用于 resolve_generic_in_type）
+                            if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
+                                placeholder->u.func.type_param_count = struct_sym->type_param_count;
+                                placeholder->u.func.type_params = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
+                                for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                    placeholder->u.func.type_params[tpi] = strdup(struct_sym->type_param_names[tpi]);
+                                }
                             }
                             placeholder->u.func.default_count = 0;
                             func_table_add(&s->func_table, full_method_name, placeholder);
@@ -3941,6 +4030,13 @@ void visit(Semantic* s, Ast* ast) {
                     early_def = struct_def_new(ast->u.struct_def.name, ast->u.struct_def.field_count, ast->u.struct_def.method_count);
                     if (early_def) {
                         early_def->impl_count = ast->u.struct_def.impl_count;
+                        early_def->type_param_count = ast->u.struct_def.type_param_count;
+                        if (early_def->type_param_count > 0 && ast->u.struct_def.type_params) {
+                            early_def->type_param_names = (char**)malloc(sizeof(char*) * early_def->type_param_count);
+                            for (int i = 0; i < early_def->type_param_count; i++) {
+                                early_def->type_param_names[i] = strdup(ast->u.struct_def.type_params[i]);
+                            }
+                        }
                         if (early_def->impl_count > 0) {
                             early_def->impl_names = (char**)malloc(sizeof(char*) * early_def->impl_count);
                             for (int i = 0; i < early_def->impl_count; i++) {

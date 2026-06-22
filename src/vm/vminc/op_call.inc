@@ -125,6 +125,60 @@ OPCODE(OP_TAIL_CALL) {
                     arg = val_int((int)val_as_num(arg));
                 }
             }
+
+            // 泛型参数类型检查：如果参数类型是泛型类型参数（如 T, K, V），
+            // 从参数栈中获取 self 实例，查找实际类型进行匹配
+#ifndef LENO_RELEASE
+            if (runtime_type_check && function->param_generic_names &&
+                i < function->arity && function->param_generic_names[i]) {
+                const char* generic_name = function->param_generic_names[i];
+                // self 是第一个参数
+                Value self_val = vm.stack[frame->stack_base + 0];
+                if (val_is_obj(self_val) && val_as_obj(self_val)->type == OBJ_STRUCT) {
+                    ObjStruct* self_obj = (ObjStruct*)val_as_obj(self_val);
+                    ObjStructDef* self_def = self_obj->def;
+                    if (self_def->type_param_count > 0 && self_def->type_param_names &&
+                        self_obj->generic_type_arg_count > 0 && self_obj->generic_type_args) {
+                        for (int pi = 0; pi < self_def->type_param_count && pi < self_obj->generic_type_arg_count; pi++) {
+                            if (self_def->type_param_names[pi] && strcmp(self_def->type_param_names[pi], generic_name) == 0) {
+                                const char* actual_type = self_obj->generic_type_args[pi];
+                                int type_match = 0;
+                                if (strcmp(actual_type, "int") == 0) {
+                                    type_match = val_is_int(arg) || val_is_bigint(arg);
+                                } else if (strcmp(actual_type, "float") == 0) {
+                                    type_match = val_is_float(arg) || val_is_int(arg) || val_is_bigint(arg);
+                                } else if (strcmp(actual_type, "string") == 0) {
+                                    type_match = val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRING;
+                                } else if (strcmp(actual_type, "bool") == 0) {
+                                    type_match = val_is_bool(arg);
+                                } else if (strncmp(actual_type, "struct ", 7) == 0) {
+                                    type_match = val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRUCT;
+                                } else {
+                                    if (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_STRUCT) {
+                                        ObjStruct* arg_struct = (ObjStruct*)val_as_obj(arg);
+                                        if (arg_struct->def->name && strcmp(arg_struct->def->name, actual_type) == 0) {
+                                            type_match = 1;
+                                        }
+                                    }
+                                }
+                                if (!type_match) {
+                                    char msg[BUFFER_MEDIUM];
+                                    char* arg_str = value_to_string(arg);
+                                    snprintf(msg, sizeof(msg),
+                                        "泛型参数类型不匹配: 方法 '%s' 参数 %d 期望类型 %s (泛型参数 %s), 实际传入 '%s'",
+                                        function->name ? function->name : "unknown", i, actual_type, generic_name, arg_str);
+                                    free(arg_str);
+                                    throw_runtime_error(msg, GET_CURRENT_LINE());
+                                    frame = &vm.frames[vm.frame_cnt - 1];
+                                    DISPATCH;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+#endif
             
             frame->locals[i] = arg;
         }

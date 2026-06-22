@@ -1,0 +1,31 @@
+// 跨模块泛型 struct 测试
+import "generic_mod_a.leno" as ma
+import "generic_mod_b.leno" as mb
+use ma.Container
+use mb.Wrapper
+
+// 不同模块的不同泛型 struct
+var c = new Container[int](item=10)
+var w = new Wrapper[string](data="hello")
+
+assert_eq(c.get(), 10)
+assert_eq(w.unwrap(), "hello")
+
+// 方法调用
+c.set(20)
+assert_eq(c.get(), 20)
+assert_eq(c.add(5), 25)
+
+w.wrap("world")
+assert_eq(w.unwrap(), "world")
+assert_eq(w.map("test"), "test")
+
+// 类型检查
+assert_eq(type(c), "Container[int]")
+assert_eq(type(w), "Wrapper[string]")
+
+// 嵌套泛型：Container[Wrapper]
+var cw = new Container[Wrapper[string]](item=w)
+assert_eq(cw.get().unwrap(), "world")
+
+print("test_generic_multi_use passed")

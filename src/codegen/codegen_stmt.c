@@ -1478,6 +1478,16 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, impl_name_const & 0xff, ast->line);
             }
 
+            // 编码泛型类型参数信息
+            emit_byte(gen, ast->u.struct_def.type_param_count, ast->line);
+            for (int i = 0; i < ast->u.struct_def.type_param_count && ast->u.struct_def.type_params; i++) {
+                ObjString* param_name = str_copy(ast->u.struct_def.type_params[i],
+                                                  strlen(ast->u.struct_def.type_params[i]));
+                int param_name_const = make_constant(gen, val_obj((Object*)param_name));
+                emit_byte(gen, (param_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, param_name_const & 0xff, ast->line);
+            }
+
             // 为每个字段生成信息
             for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                 // 字段名
@@ -1796,6 +1806,16 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
         int impl_name_const = make_constant(gen, val_obj((Object*)impl_name));
         emit_byte(gen, (impl_name_const >> 8) & 0xff, ast->line);
         emit_byte(gen, impl_name_const & 0xff, ast->line);
+    }
+
+    // 编码泛型类型参数信息
+    emit_byte(gen, ast->u.struct_def.type_param_count, ast->line);
+    for (int i = 0; i < ast->u.struct_def.type_param_count && ast->u.struct_def.type_params; i++) {
+        ObjString* param_name = str_copy(ast->u.struct_def.type_params[i],
+                                          strlen(ast->u.struct_def.type_params[i]));
+        int param_name_const = make_constant(gen, val_obj((Object*)param_name));
+        emit_byte(gen, (param_name_const >> 8) & 0xff, ast->line);
+        emit_byte(gen, param_name_const & 0xff, ast->line);
     }
 
     // 为每个字段生成信息

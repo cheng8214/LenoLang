@@ -360,6 +360,8 @@ typedef struct {
     void* module;  // 所属模块（如果是模块函数），使用 void* 避免循环依赖
     int has_try;  // 是否包含 try-catch-finally 语句
     TypeKind* param_types;  // 参数类型数组（可选，用于运行时类型检查）
+    char** param_generic_names;  // 参数泛型类型参数名（如 "T", "K"），用于泛型方法参数类型检查
+    int param_generic_count;     // 有泛型参数名的参数数量
 } ObjFunction;
 
 // 原生函数类型
@@ -569,6 +571,7 @@ typedef struct {
     char** impl_names;             // impl 声明的 face 名称数组
     int impl_count;                // impl 声明数量
     int type_param_count;          // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
+    char** type_param_names;       // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
 } ObjStructDef;
 
 // 结构体实例对象

@@ -803,6 +803,12 @@ static size_t get_object_size(Object* obj) {
                     if (def->methods[i].name) size += safe_strlen(def->methods[i].name) + 1;
                 }
             }
+            if (def->type_param_names) {
+                size += def->type_param_count * sizeof(char*);
+                for (int i = 0; i < def->type_param_count; i++) {
+                    if (def->type_param_names[i]) size += safe_strlen(def->type_param_names[i]) + 1;
+                }
+            }
             return size;
         }
         case OBJ_FACE_DEF: {
@@ -822,6 +828,12 @@ static size_t get_object_size(Object* obj) {
             size_t size = sizeof(ObjStruct);
             if (struct_obj->def) {
                 size += struct_obj->def->field_count * sizeof(Value);
+            }
+            if (struct_obj->generic_type_args) {
+                size += struct_obj->generic_type_arg_count * sizeof(char*);
+                for (int i = 0; i < struct_obj->generic_type_arg_count; i++) {
+                    if (struct_obj->generic_type_args[i]) size += safe_strlen(struct_obj->generic_type_args[i]) + 1;
+                }
             }
             return size;
         }
@@ -921,6 +933,12 @@ static void free_object_resources(Object* obj) {
             ObjFunction* func = (ObjFunction*)obj;
             free(func->name);
             free(func->param_types);
+            if (func->param_generic_names) {
+                for (int i = 0; i < func->arity; i++) {
+                    free(func->param_generic_names[i]);
+                }
+                free(func->param_generic_names);
+            }
             if (func->chunk) {
                 chunk_free(func->chunk);
                 free(func->chunk);
@@ -1062,6 +1080,12 @@ static void free_object_resources(Object* obj) {
                 }
                 free(def->methods);
             }
+            if (def->type_param_names) {
+                for (int i = 0; i < def->type_param_count; i++) {
+                    free(def->type_param_names[i]);
+                }
+                free(def->type_param_names);
+            }
             break;
         }
         case OBJ_FACE_DEF: {
@@ -1075,10 +1099,16 @@ static void free_object_resources(Object* obj) {
             }
             break;
         }
-        // 结构体实例：释放字段值数组
+        // 结构体实例：释放字段值数组和泛型类型参数
         case OBJ_STRUCT: {
             ObjStruct* struct_obj = (ObjStruct*)obj;
             free(struct_obj->field_values);
+            if (struct_obj->generic_type_args) {
+                for (int i = 0; i < struct_obj->generic_type_arg_count; i++) {
+                    free(struct_obj->generic_type_args[i]);
+                }
+                free(struct_obj->generic_type_args);
+            }
             break;
         }
         // 协程：释放保存的调用帧副本和初始参数

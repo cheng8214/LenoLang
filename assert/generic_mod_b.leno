@@ -1,0 +1,16 @@
+// 泛型模块B：包装类
+export struct Wrapper[T] {
+    T data
+
+    func unwrap(): T {
+        return self.data
+    }
+
+    func wrap(T v) {
+        self.data = v
+    }
+
+    func map(T v): T {
+        return v
+    }
+}

@@ -187,6 +187,13 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                     ObjStructDef* early_def = struct_def_new(stmt->u.struct_def.name, stmt->u.struct_def.field_count, stmt->u.struct_def.method_count);
                     if (early_def) {
                         early_def->impl_count = stmt->u.struct_def.impl_count;
+                        early_def->type_param_count = stmt->u.struct_def.type_param_count;
+                        if (early_def->type_param_count > 0 && stmt->u.struct_def.type_params) {
+                            early_def->type_param_names = (char**)malloc(sizeof(char*) * early_def->type_param_count);
+                            for (int j = 0; j < early_def->type_param_count; j++) {
+                                early_def->type_param_names[j] = strdup(stmt->u.struct_def.type_params[j]);
+                            }
+                        }
                         if (early_def->impl_count > 0) {
                             early_def->impl_names = (char**)malloc(sizeof(char*) * early_def->impl_count);
                             for (int j = 0; j < early_def->impl_count; j++) {
@@ -238,6 +245,13 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                         ObjStructDef* early_def = struct_def_new(decl->u.struct_def.name, decl->u.struct_def.field_count, decl->u.struct_def.method_count);
                         if (early_def) {
                             early_def->impl_count = decl->u.struct_def.impl_count;
+                            early_def->type_param_count = decl->u.struct_def.type_param_count;
+                            if (early_def->type_param_count > 0 && decl->u.struct_def.type_params) {
+                                early_def->type_param_names = (char**)malloc(sizeof(char*) * early_def->type_param_count);
+                                for (int j = 0; j < early_def->type_param_count; j++) {
+                                    early_def->type_param_names[j] = strdup(decl->u.struct_def.type_params[j]);
+                                }
+                            }
                             if (early_def->impl_count > 0) {
                                 early_def->impl_names = (char**)malloc(sizeof(char*) * early_def->impl_count);
                                 for (int j = 0; j < early_def->impl_count; j++) {
@@ -416,6 +430,13 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                         ObjStructDef* early_def = struct_def_new(decl->u.struct_def.name, decl->u.struct_def.field_count, decl->u.struct_def.method_count);
                         if (early_def) {
                             early_def->impl_count = decl->u.struct_def.impl_count;
+                            early_def->type_param_count = decl->u.struct_def.type_param_count;
+                            if (early_def->type_param_count > 0 && decl->u.struct_def.type_params) {
+                                early_def->type_param_names = (char**)malloc(sizeof(char*) * early_def->type_param_count);
+                                for (int j = 0; j < early_def->type_param_count; j++) {
+                                    early_def->type_param_names[j] = strdup(decl->u.struct_def.type_params[j]);
+                                }
+                            }
                             if (early_def->impl_count > 0) {
                                 early_def->impl_names = (char**)malloc(sizeof(char*) * early_def->impl_count);
                                 for (int j = 0; j < early_def->impl_count; j++) {

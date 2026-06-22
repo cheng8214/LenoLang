@@ -24,8 +24,11 @@ typedef struct {
     TypeKind return_type;       // 返回类型
     char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
     char* return_type_param_name; // 如果返回类型是泛型参数（如 T），存储参数名
+    int return_generic_count;   // 返回类型的泛型参数数量（如 Holder[K] 的 return_generic_count=1）
+    char** return_generic_param_names; // 返回类型的泛型参数名数组（如 ["K"]）
     int param_count;            // 参数数量（不包括 self）
     TypeKind* param_types;      // 参数类型数组（不包括 self）
+    char** param_generic_names; // 参数泛型类型参数名（如 "T", "K"），用于泛型方法参数类型检查
 } ModuleStructMethod;
 
 // 模块 struct 符号

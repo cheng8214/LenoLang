@@ -39,6 +39,22 @@ OPCODE(OP_STRUCT_DEF) {
         }
     }
 
+    // 读取泛型类型参数信息
+    uint8_t type_param_count = READ_BYTE();
+    def->type_param_count = type_param_count;
+    if (type_param_count > 0) {
+        def->type_param_names = (char**)malloc(sizeof(char*) * type_param_count);
+        for (int i = 0; i < type_param_count; i++) {
+            uint16_t param_name_idx = READ_SHORT();
+            Value param_name_val = frame->chunk->constants[param_name_idx];
+            if (val_is_obj(param_name_val) && val_as_obj(param_name_val)->type == OBJ_STRING) {
+                def->type_param_names[i] = strdup(((ObjString*)val_as_obj(param_name_val))->chars);
+            } else {
+                def->type_param_names[i] = strdup("T");
+            }
+        }
+    }
+
     // 读取字段信息
     for (int i = 0; i < field_count; i++) {
         uint16_t field_name_idx = READ_SHORT();
@@ -198,6 +214,46 @@ OPCODE(OP_STRUCT_INIT) {
                 generic_type_args[gi] = strdup(type_name->chars);
             } else {
                 generic_type_args[gi] = strdup("unknown");
+            }
+        }
+    }
+
+    // 泛型参数替换：如果泛型参数名是类型参数（如 K, V, T），
+    // 从调用栈中查找 self 实例的实际泛型参数进行替换
+    if (generic_type_count > 0 && generic_type_args) {
+        // 遍历调用栈帧，查找 self（struct 实例）
+        for (int fi = vm.frame_cnt - 1; fi >= 1 && generic_type_count > 0; fi--) {
+            CallFrame* check_frame = &vm.frames[fi];
+            if (check_frame->locals && check_frame->local_count > 0) {
+                Value self_val = check_frame->locals[0];
+                if (val_is_obj(self_val) && val_as_obj(self_val)->type == OBJ_STRUCT) {
+                    ObjStruct* self_obj = (ObjStruct*)val_as_obj(self_val);
+                    ObjStructDef* self_def = self_obj->def;
+                    // 检查 self 的 struct 定义是否有泛型类型参数
+                    if (self_def->type_param_count > 0 && self_def->type_param_names &&
+                        self_obj->generic_type_arg_count > 0 && self_obj->generic_type_args) {
+                        // 对每个泛型参数，检查是否是类型参数名
+                        for (int gi = 0; gi < generic_type_count; gi++) {
+                            // generic_args 可能是 "struct K" 格式（parse_type 将 K 解析为 TYPE_STRUCT）
+                            // 提取纯名称用于匹配
+                            const char* arg_name = generic_type_args[gi];
+                            const char* pure_name = arg_name;
+                            if (strncmp(arg_name, "struct ", 7) == 0) {
+                                pure_name = arg_name + 7;
+                            }
+                            for (int pi = 0; pi < self_def->type_param_count && pi < self_obj->generic_type_arg_count; pi++) {
+                                if (self_def->type_param_names[pi] && pure_name &&
+                                    strcmp(self_def->type_param_names[pi], pure_name) == 0) {
+                                    // 替换为实际类型
+                                    free(generic_type_args[gi]);
+                                    generic_type_args[gi] = strdup(self_obj->generic_type_args[pi]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break; // 找到最近的 self 就停止
+                }
             }
         }
     }

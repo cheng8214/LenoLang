@@ -1,0 +1,21 @@
+// 跨模块泛型 struct 方法返回类型推断测试
+import "generic_mod_cross.leno" as me
+use me.Holder
+use me.Pair
+
+var p = new Pair[string, int](first="hello", second=42)
+assert_eq(p.getFirst(), "hello")
+assert_eq(p.getSecond(), 42)
+
+// 方法返回另一个泛型 struct，类型参数正确替换
+var h = p.toHolder()
+assert_eq(h.getContent(), "hello")
+assert_eq(type(h), "Holder[string]")
+
+// int 类型的 Pair
+var p2 = new Pair[int, string](first=99, second="world")
+var h2 = p2.toHolder()
+assert_eq(h2.getContent(), 99)
+assert_eq(type(h2), "Holder[int]")
+
+print("test_generic_cross_struct passed")
