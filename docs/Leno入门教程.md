@@ -2701,36 +2701,20 @@ print(chained.value)    // 168
 > p.setBoth(1, "x")      // ❌ 两个参数都报错：第1个期望 string 实际 int，第2个期望 int 实际 string
 > ```
 
-> **⚠️ 坑 2：泛型类型擦除导致不同实例共享状态**
+> **⚠️ 坑 2：Array/Dict 默认值已深拷贝（已修复）**
 >
-> 泛型参数在编译期检查后会被擦除，`Box[int]` 和 `Box[string]` 运行时共享同一个 struct 定义。如果 struct 内部使用了可变的引用类型字段（如数组），不同实例化类型之间可能意外共享数据：
+> ~~泛型参数在编译期检查后会被擦除，`Box[int]` 和 `Box[string]` 运行时共享同一个 struct 定义。如果 struct 内部使用了可变的引用类型字段（如数组），不同实例化类型之间可能意外共享数据。~~
+>
+> **已修复**：`struct_instance_new` 在初始化时对 Array/Dict/Struct 类型的默认值自动深拷贝，每个实例拥有独立副本。
 >
 > ```leno
 > struct Container[T] {
->     Array items = []     // ⚠️ 所有 Container 实例共享同一个默认数组！
+>     Array items = []     // ✅ 每个实例独立的 []
 > }
->
 > var c1 = new Container[int]()
 > var c2 = new Container[string]()
 > c1.items.add(42)
-> print(c2.items.len())   // ⚠️ 可能输出 1，而非 0
-> ```
->
-> **解决办法**：在构造后重新初始化可变字段，或避免在泛型 struct 中使用带默认值的引用类型字段：
->
-> ```leno
-> struct Container[T] {
->     Array items          // 不给默认值
->
->     func init() {
->         self.items = []  // 在方法中初始化，每次创建独立实例
->     }
-> }
->
-> var c1 = new Container[int]()
-> c1.init()
-> var c2 = new Container[string]()
-> c2.init()
+> print(c2.items.len())   // 0（不再共享）
 > ```
 
 > **⚠️ 坑 3：泛型函数调用时 `[` 可能被误解析为数组索引**

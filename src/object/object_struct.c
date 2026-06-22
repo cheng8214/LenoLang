@@ -124,7 +124,16 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
     // 使用默认值初始化字段
     for (int i = 0; i < def->field_count; i++) {
         if (def->fields[i].has_default) {
-            obj->field_values[i] = def->fields[i].default_value;
+            // 深拷贝引用类型的默认值（Array、Dict），避免所有实例共享同一对象
+            Value dv = def->fields[i].default_value;
+            if (val_is_obj(dv)) {
+                Object* dobj = val_as_obj(dv);
+                if (dobj->type == OBJ_ARRAY || dobj->type == OBJ_DICT || dobj->type == OBJ_STRUCT) {
+                    obj->field_values[i] = value_copy(dv);
+                    continue;
+                }
+            }
+            obj->field_values[i] = dv;
         } else if (def->fields[i].type == TYPE_STRUCT && def->fields[i].struct_type_name) {
             // 嵌套 struct 类型：递归创建实例
             ObjStructDef* nested_def = struct_def_find(def->fields[i].struct_type_name);
