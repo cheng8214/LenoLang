@@ -364,6 +364,7 @@ typedef struct {
     int param_generic_count;     // 有泛型参数名的参数数量
     int type_param_count;        // 函数级泛型类型参数数量（如 func f[T] 的 type_param_count=1）
     char** type_param_names;     // 函数级泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
+    char** type_param_constraints; // 函数级泛型类型参数约束 face 名数组（如 ["Comparable"]，NULL 表示无约束）
 } ObjFunction;
 
 // 原生函数类型
@@ -576,6 +577,7 @@ typedef struct {
     int impl_count;                // impl 声明数量
     int type_param_count;          // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
     char** type_param_names;       // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
+    char** type_param_constraints;  // 泛型类型参数约束 face 名数组
 } ObjStructDef;
 
 // 结构体实例对象
@@ -602,6 +604,9 @@ typedef struct {
     char* name;                    // face 名称
     FaceMethodInfo* methods;       // 方法签名数组
     int method_count;              // 方法数量
+    int type_param_count;          // 泛型类型参数数量
+    char** type_param_names;       // 泛型类型参数名称数组
+    char** type_param_constraints;  // 泛型类型参数约束 face 名数组
 } ObjFaceDef;
 
 // ============================================================================

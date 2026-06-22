@@ -8,7 +8,7 @@
                 if (ast->u.struct_def.type_param_count > 0 && ast->u.struct_def.type_params) {
                     for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                         resolve_generic_in_type(ast->u.struct_def.field_types[i],
-                            ast->u.struct_def.type_params, ast->u.struct_def.type_param_count);
+                            ast->u.struct_def.type_params, ast->u.struct_def.type_param_constraints, ast->u.struct_def.type_param_count);
                     }
                 }
 

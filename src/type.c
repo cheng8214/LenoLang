@@ -89,6 +89,16 @@ TypeInfo* type_generic_param(const char* name) {
     return type;
 }
 
+// 创建带约束的泛型类型参数 (如 T: Comparable)
+TypeInfo* type_generic_param_constrained(const char* name, const char* constraint) {
+    TypeInfo* type = type_new(TYPE_GENERIC_PARAM);
+    if (type) {
+        if (name) type->type_param_name = strdup(name);
+        if (constraint) type->constraint_name = strdup(constraint);
+    }
+    return type;
+}
+
 // 释放类型信息
 void type_free(TypeInfo* type) {
     if (!type) return;
@@ -110,6 +120,9 @@ void type_free(TypeInfo* type) {
     }
     if (type->type_param_name) {
         free(type->type_param_name);
+    }
+    if (type->constraint_name) {
+        free(type->constraint_name);
     }
     if (type->generic_args) {
         for (int i = 0; i < type->generic_count; i++) {
@@ -242,6 +255,9 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_GENERIC_PARAM:
             if (type->type_param_name) {
                 copy->type_param_name = strdup(type->type_param_name);
+            }
+            if (type->constraint_name) {
+                copy->constraint_name = strdup(type->constraint_name);
             }
             break;
         default:

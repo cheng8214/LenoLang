@@ -5,7 +5,7 @@
 // ============================================================================
 
 // 解析单个 TypeInfo 中的泛型参数
-void resolve_generic_in_type(TypeInfo* type, char** type_params, int count) {
+void resolve_generic_in_type(TypeInfo* type, char** type_params, char** type_param_constraints, int count) {
     if (!type) return;
     if (type->kind == TYPE_STRUCT && type->struct_name) {
         for (int i = 0; i < count; i++) {
@@ -14,102 +14,105 @@ void resolve_generic_in_type(TypeInfo* type, char** type_params, int count) {
                 type->struct_name = NULL;
                 type->kind = TYPE_GENERIC_PARAM;
                 type->type_param_name = strdup(type_params[i]);
+                if (type_param_constraints && type_param_constraints[i]) {
+                    type->constraint_name = strdup(type_param_constraints[i]);
+                }
                 return;
             }
         }
     }
     // 递归处理子类型
-    resolve_generic_in_type(type->element_type, type_params, count);
-    resolve_generic_in_type(type->key_type, type_params, count);
-    resolve_generic_in_type(type->value_type, type_params, count);
-    resolve_generic_in_type(type->return_type, type_params, count);
+    resolve_generic_in_type(type->element_type, type_params, type_param_constraints, count);
+    resolve_generic_in_type(type->key_type, type_params, type_param_constraints, count);
+    resolve_generic_in_type(type->value_type, type_params, type_param_constraints, count);
+    resolve_generic_in_type(type->return_type, type_params, type_param_constraints, count);
     if (type->param_types) {
         for (int i = 0; i < type->param_count; i++) {
-            resolve_generic_in_type(type->param_types[i], type_params, count);
+            resolve_generic_in_type(type->param_types[i], type_params, type_param_constraints, count);
         }
     }
 }
 
 // 递归遍历 AST 树，解析所有类型中的泛型参数
-static void resolve_generic_in_ast(Semantic* s, Ast* ast, char** type_params, int count) {
+static void resolve_generic_in_ast(Semantic* s, Ast* ast, char** type_params, char** type_param_constraints, int count) {
     if (!ast) return;
     
     switch (ast->kind) {
         case AST_VAR_DECL:
-            resolve_generic_in_type(ast->u.var_decl.type, type_params, count);
-            if (ast->u.var_decl.init) resolve_generic_in_ast(s, ast->u.var_decl.init, type_params, count);
+            resolve_generic_in_type(ast->u.var_decl.type, type_params, type_param_constraints, count);
+            if (ast->u.var_decl.init) resolve_generic_in_ast(s, ast->u.var_decl.init, type_params, type_param_constraints, count);
             break;
         case AST_FUNC_DEF:
             // 嵌套函数：解析其参数和返回类型中的泛型
             for (int i = 0; i < ast->u.func.pcnt; i++) {
-                resolve_generic_in_type(ast->u.func.param_types[i], type_params, count);
+                resolve_generic_in_type(ast->u.func.param_types[i], type_params, type_param_constraints, count);
             }
-            resolve_generic_in_type(ast->u.func.return_type, type_params, count);
-            if (ast->u.func.body) resolve_generic_in_ast(s, ast->u.func.body, type_params, count);
+            resolve_generic_in_type(ast->u.func.return_type, type_params, type_param_constraints, count);
+            if (ast->u.func.body) resolve_generic_in_ast(s, ast->u.func.body, type_params, type_param_constraints, count);
             break;
         case AST_IF:
             if (ast->u.if_.guard_type) {
-                resolve_generic_in_type(ast->u.if_.guard_type, type_params, count);
+                resolve_generic_in_type(ast->u.if_.guard_type, type_params, type_param_constraints, count);
             }
             if (ast->u.if_.guard_conds.count > 0) {
                 for (int gi = 0; gi < ast->u.if_.guard_conds.count; gi++) {
-                    resolve_generic_in_type(ast->u.if_.guard_conds.items[gi].guard_type, type_params, count);
+                    resolve_generic_in_type(ast->u.if_.guard_conds.items[gi].guard_type, type_params, type_param_constraints, count);
                 }
             }
-            if (ast->u.if_.cond) resolve_generic_in_ast(s, ast->u.if_.cond, type_params, count);
-            if (ast->u.if_.then) resolve_generic_in_ast(s, ast->u.if_.then, type_params, count);
-            if (ast->u.if_.else_) resolve_generic_in_ast(s, ast->u.if_.else_, type_params, count);
+            if (ast->u.if_.cond) resolve_generic_in_ast(s, ast->u.if_.cond, type_params, type_param_constraints, count);
+            if (ast->u.if_.then) resolve_generic_in_ast(s, ast->u.if_.then, type_params, type_param_constraints, count);
+            if (ast->u.if_.else_) resolve_generic_in_ast(s, ast->u.if_.else_, type_params, type_param_constraints, count);
             break;
         case AST_SWITCH:
-            if (ast->u.switch_.expr) resolve_generic_in_ast(s, ast->u.switch_.expr, type_params, count);
+            if (ast->u.switch_.expr) resolve_generic_in_ast(s, ast->u.switch_.expr, type_params, type_param_constraints, count);
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 if (ast->u.switch_.cases[i].match_type) {
-                    resolve_generic_in_type(ast->u.switch_.cases[i].match_type, type_params, count);
+                    resolve_generic_in_type(ast->u.switch_.cases[i].match_type, type_params, type_param_constraints, count);
                 }
                 if (ast->u.switch_.cases[i].body) {
-                    resolve_generic_in_ast(s, ast->u.switch_.cases[i].body, type_params, count);
+                    resolve_generic_in_ast(s, ast->u.switch_.cases[i].body, type_params, type_param_constraints, count);
                 }
             }
-            if (ast->u.switch_.default_body) resolve_generic_in_ast(s, ast->u.switch_.default_body, type_params, count);
+            if (ast->u.switch_.default_body) resolve_generic_in_ast(s, ast->u.switch_.default_body, type_params, type_param_constraints, count);
             break;
         case AST_BLOCK:
             for (int i = 0; i < ast->u.block.count; i++) {
-                resolve_generic_in_ast(s, ast->u.block.items[i], type_params, count);
+                resolve_generic_in_ast(s, ast->u.block.items[i], type_params, type_param_constraints, count);
             }
             break;
         case AST_RETURN:
-            if (ast->u.ret) resolve_generic_in_ast(s, ast->u.ret, type_params, count);
+            if (ast->u.ret) resolve_generic_in_ast(s, ast->u.ret, type_params, type_param_constraints, count);
             break;
         case AST_CALL: {
             Ast* callee = ast->u.call.callee;
-            if (callee) resolve_generic_in_ast(s, callee, type_params, count);
+            if (callee) resolve_generic_in_ast(s, callee, type_params, type_param_constraints, count);
             for (int i = 0; i < ast->u.call.args.count; i++) {
-                resolve_generic_in_ast(s, ast->u.call.args.items[i], type_params, count);
+                resolve_generic_in_ast(s, ast->u.call.args.items[i], type_params, type_param_constraints, count);
             }
             break;
         }
         case AST_EXPR_STMT:
-            resolve_generic_in_ast(s, ast->u.expr_stmt.expr, type_params, count);
+            resolve_generic_in_ast(s, ast->u.expr_stmt.expr, type_params, type_param_constraints, count);
             break;
         case AST_BINOP:
-            if (ast->u.binop.l) resolve_generic_in_ast(s, ast->u.binop.l, type_params, count);
-            if (ast->u.binop.r) resolve_generic_in_ast(s, ast->u.binop.r, type_params, count);
+            if (ast->u.binop.l) resolve_generic_in_ast(s, ast->u.binop.l, type_params, type_param_constraints, count);
+            if (ast->u.binop.r) resolve_generic_in_ast(s, ast->u.binop.r, type_params, type_param_constraints, count);
             break;
         case AST_UNARY:
-            if (ast->u.unary.operand) resolve_generic_in_ast(s, ast->u.unary.operand, type_params, count);
+            if (ast->u.unary.operand) resolve_generic_in_ast(s, ast->u.unary.operand, type_params, type_param_constraints, count);
             break;
         case AST_FOR:
-            if (ast->u.for_.start) resolve_generic_in_ast(s, ast->u.for_.start, type_params, count);
-            if (ast->u.for_.end) resolve_generic_in_ast(s, ast->u.for_.end, type_params, count);
-            if (ast->u.for_.body) resolve_generic_in_ast(s, ast->u.for_.body, type_params, count);
+            if (ast->u.for_.start) resolve_generic_in_ast(s, ast->u.for_.start, type_params, type_param_constraints, count);
+            if (ast->u.for_.end) resolve_generic_in_ast(s, ast->u.for_.end, type_params, type_param_constraints, count);
+            if (ast->u.for_.body) resolve_generic_in_ast(s, ast->u.for_.body, type_params, type_param_constraints, count);
             break;
         case AST_TRY:
-            if (ast->u.try_.try_body) resolve_generic_in_ast(s, ast->u.try_.try_body, type_params, count);
-            if (ast->u.try_.catch_body) resolve_generic_in_ast(s, ast->u.try_.catch_body, type_params, count);
-            if (ast->u.try_.finally_body) resolve_generic_in_ast(s, ast->u.try_.finally_body, type_params, count);
+            if (ast->u.try_.try_body) resolve_generic_in_ast(s, ast->u.try_.try_body, type_params, type_param_constraints, count);
+            if (ast->u.try_.catch_body) resolve_generic_in_ast(s, ast->u.try_.catch_body, type_params, type_param_constraints, count);
+            if (ast->u.try_.finally_body) resolve_generic_in_ast(s, ast->u.try_.finally_body, type_params, type_param_constraints, count);
             break;
         case AST_ASSIGN:
-            if (ast->u.assign.value) resolve_generic_in_ast(s, ast->u.assign.value, type_params, count);
+            if (ast->u.assign.value) resolve_generic_in_ast(s, ast->u.assign.value, type_params, type_param_constraints, count);
             break;
         default:
             // 对于其他节点（字面量等），不需要处理
@@ -188,9 +191,9 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     // 将解析为 struct 的泛型类型参数转换为 TYPE_GENERIC_PARAM（递归处理嵌套类型如 Array[T]）
     if (ast->u.func.type_param_count > 0 && ast->u.func.type_params) {
         for (int i = 0; i < ast->u.func.pcnt; i++) {
-            resolve_generic_in_type(ast->u.func.param_types[i], ast->u.func.type_params, ast->u.func.type_param_count);
+            resolve_generic_in_type(ast->u.func.param_types[i], ast->u.func.type_params, ast->u.func.type_param_constraints, ast->u.func.type_param_count);
         }
-        resolve_generic_in_type(ast->u.func.return_type, ast->u.func.type_params, ast->u.func.type_param_count);
+        resolve_generic_in_type(ast->u.func.return_type, ast->u.func.type_params, ast->u.func.type_param_constraints, ast->u.func.type_param_count);
     }
 
     // struct 方法：从 self 参数类型获取 struct 的泛型参数并解析
@@ -209,9 +212,9 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             }
             // 解析方法参数和返回类型中的泛型参数
             for (int i = 1; i < ast->u.func.pcnt; i++) {
-                resolve_generic_in_type(ast->u.func.param_types[i], gp_names, gp_count);
+                resolve_generic_in_type(ast->u.func.param_types[i], gp_names, NULL, gp_count);
             }
-            resolve_generic_in_type(ast->u.func.return_type, gp_names, gp_count);
+            resolve_generic_in_type(ast->u.func.return_type, gp_names, NULL, gp_count);
             // 保存到 ast 以便后续 resolve_generic_in_ast 使用
             if (!ast->u.func.type_params && !ast->u.func.type_param_count) {
                 ast->u.func.type_param_count = gp_count;
@@ -438,7 +441,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
 
     // 将函数体中的泛型类型参数名解析为 TYPE_GENERIC_PARAM
     if (ast->u.func.type_param_count > 0) {
-        resolve_generic_in_ast(s, ast->u.func.body, ast->u.func.type_params, ast->u.func.type_param_count);
+        resolve_generic_in_ast(s, ast->u.func.body, ast->u.func.type_params, ast->u.func.type_param_constraints, ast->u.func.type_param_count);
     }
 
     // 处理函数体（单遍完成所有分析）

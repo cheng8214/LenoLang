@@ -44,6 +44,7 @@ OPCODE(OP_STRUCT_DEF) {
     def->type_param_count = type_param_count;
     if (type_param_count > 0) {
         def->type_param_names = (char**)malloc(sizeof(char*) * type_param_count);
+        def->type_param_constraints = (char**)calloc(type_param_count, sizeof(char*));
         for (int i = 0; i < type_param_count; i++) {
             uint16_t param_name_idx = READ_SHORT();
             Value param_name_val = frame->chunk->constants[param_name_idx];

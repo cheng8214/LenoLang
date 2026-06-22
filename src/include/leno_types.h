@@ -208,6 +208,7 @@ struct TypeInfo {
     char* style_target;      // Style 目标控件名（如 "window", "button"）
     // 泛型类型参数
     char* type_param_name;   // 泛型类型参数名（如 "T", "U"）
+    char* constraint_name;   // 泛型约束 face 名（如 "Comparable"），NULL 表示无约束
     // 泛型 struct 实例化时的具体类型参数（如 Box[int] 的 int）
     TypeInfo** generic_args; // 具体类型参数数组
     int generic_count;       // 类型参数数量
@@ -221,6 +222,7 @@ TypeInfo* type_ptr_generic(TypeInfo* element_type);
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count);
 TypeInfo* type_style(const char* target);
 TypeInfo* type_generic_param(const char* name);  // 创建泛型类型参数 T, U 等
+TypeInfo* type_generic_param_constrained(const char* name, const char* constraint);  // 创建带约束的泛型类型参数
 int type_has_generic(TypeInfo* type);             // 类型是否包含泛型参数
 TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* concrete);  // 类型替换
 void type_free(TypeInfo* type);

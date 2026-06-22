@@ -201,6 +201,7 @@ struct Ast {
             int is_async;              // 是否是 async 函数（1=是，0=否）
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
+            char** type_param_constraints; // 类型参数约束 face 名（如 ["Comparable", NULL]）
             int type_param_count;      // 类型参数数量
         } func;
         Ast* ret;
@@ -256,6 +257,7 @@ struct Ast {
             int* impl_type_arg_counts;   // 每个 impl 的泛型参数数量
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
+            char** type_param_constraints; // 类型参数约束 face 名
             int type_param_count;      // 类型参数数量
         } struct_def;
         struct {
@@ -266,6 +268,7 @@ struct Ast {
             int* method_param_counts;      // 方法参数数量数组
             int method_count;        // 方法数量
             char** type_params;      // 类型参数名数组（如 ["T"]）
+            char** type_param_constraints; // 类型参数约束 face 名
             int type_param_count;    // 类型参数数量
         } face_def;
         struct {

@@ -945,6 +945,12 @@ static void free_object_resources(Object* obj) {
                 }
                 free(func->type_param_names);
             }
+            if (func->type_param_constraints) {
+                for (int i = 0; i < func->type_param_count; i++) {
+                    free(func->type_param_constraints[i]);
+                }
+                free(func->type_param_constraints);
+            }
             if (func->chunk) {
                 chunk_free(func->chunk);
                 free(func->chunk);
@@ -1099,6 +1105,12 @@ static void free_object_resources(Object* obj) {
                     free(def->type_param_names[i]);
                 }
                 free(def->type_param_names);
+            }
+            if (def->type_param_constraints) {
+                for (int i = 0; i < def->type_param_count; i++) {
+                    free(def->type_param_constraints[i]);
+                }
+                free(def->type_param_constraints);
             }
             break;
         }
