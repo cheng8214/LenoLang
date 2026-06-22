@@ -282,6 +282,12 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             for (uint32_t i = 0; i < param_count; i++) {
                 wb_write_u8(wb, (uint8_t)func->param_types[i]);
             }
+            // 函数级泛型类型参数
+            wb_write_u32(wb, (uint32_t)func->type_param_count);
+            for (int i = 0; i < func->type_param_count && func->type_param_names; i++) {
+                wb_write_string(wb, func->type_param_names[i],
+                    (uint32_t)strlen(func->type_param_names[i]));
+            }
             if (!serialize_chunk(wb, func->chunk)) return 0;
             return 1;
         }
@@ -518,6 +524,12 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             wb_write_u8(wb, CONST_TAG_CLOSURE);
             if (!serialize_constant(wb, val_obj((Object*)closure->function))) return 0;
             wb_write_u32(wb, (uint32_t)closure->upvalue_count);
+            // 泛型类型参数（运行时传递）
+            wb_write_u32(wb, (uint32_t)closure->type_param_count);
+            for (int i = 0; i < closure->type_param_count && closure->type_param_args; i++) {
+                wb_write_string(wb, closure->type_param_args[i],
+                    (uint32_t)strlen(closure->type_param_args[i]));
+            }
             return 1;
         }
         case OBJ_FFI_LIBRARY: {
@@ -763,6 +775,31 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             }
         } else {
             func->param_types = NULL;
+        }
+
+        // 函数级泛型类型参数
+        uint32_t tp_count;
+        if (!ctx_read_u32(ctx, &tp_count)) {
+            free(name);
+            return 0;
+        }
+        func->type_param_count = (int)tp_count;
+        func->type_param_names = NULL;
+        if (tp_count > 0) {
+            func->type_param_names = (char**)malloc(sizeof(char*) * tp_count);
+            for (uint32_t i = 0; i < tp_count; i++) {
+                uint32_t tp_name_len;
+                char* tp_name = ctx_read_string(ctx, &tp_name_len);
+                if (!tp_name) {
+                    for (uint32_t j = 0; j < i; j++) free(func->type_param_names[j]);
+                    free(func->type_param_names);
+                    func->type_param_names = NULL;
+                    func->type_param_count = 0;
+                    free(name);
+                    return 0;
+                }
+                func->type_param_names[i] = tp_name;
+            }
         }
 
         func->chunk = (Chunk*)malloc(sizeof(Chunk));
@@ -1229,6 +1266,26 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         closure->upvalue_count = (int)upvalue_count;
         for (int i = 0; i < (int)upvalue_count && i < MAX_UPVALUES; i++) {
             closure->upvalues[i] = NULL;
+        }
+        // 泛型类型参数
+        uint32_t tp_count;
+        if (!ctx_read_u32(ctx, &tp_count)) return 0;
+        closure->type_param_count = (int)tp_count;
+        closure->type_param_args = NULL;
+        if (tp_count > 0) {
+            closure->type_param_args = (char**)malloc(sizeof(char*) * tp_count);
+            for (uint32_t i = 0; i < tp_count; i++) {
+                uint32_t tp_len;
+                char* tp_str = ctx_read_string(ctx, &tp_len);
+                if (!tp_str) {
+                    for (uint32_t j = 0; j < i; j++) free(closure->type_param_args[j]);
+                    free(closure->type_param_args);
+                    closure->type_param_args = NULL;
+                    closure->type_param_count = 0;
+                    return 0;
+                }
+                closure->type_param_args[i] = tp_str;
+            }
         }
         *out_val = val_obj((Object*)closure);
         return 1;
