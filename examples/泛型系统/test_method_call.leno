@@ -1,11 +1,19 @@
 // 最简单测试：泛型 struct 方法 set(T)
 struct Cell[T] {
     T value
-    func set(T v) { self.value = v }
+    func set1(T v) { 
+    var value=1000
+    value = v 
+    }
     func get(): T { return self.value }
 }
 main() {
     var c1 = new Cell[int](value=10)
-    c1.set(99)
+    var b=c1.value
+    string c=b as string//安全转换失败null
+    string c2=_str(b)//如果失败抛出异常
+    print($"{c} and {c2}")
+    print(b)
+    c1.set1(99)
     print(c1.get())
 }
