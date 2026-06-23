@@ -1,6 +1,7 @@
 import guis
 
 main() {
+  	_console(false)
     Style[window] w_style = {
         width: 700,
         height: 500,

@@ -217,11 +217,16 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                 if (stmt->u.face_def.name && !face_def_find(stmt->u.face_def.name)) {
                     ObjFaceDef* early_fdef = face_def_new(stmt->u.face_def.name, stmt->u.face_def.method_count);
                     if (early_fdef) {
+                        face_def_set_type_params(early_fdef, stmt->u.face_def.type_param_count,
+                            stmt->u.face_def.type_params, stmt->u.face_def.type_param_constraints);
                         for (int j = 0; j < stmt->u.face_def.method_count; j++) {
                             early_fdef->methods[j].name = strdup(stmt->u.face_def.method_names[j]);
                             early_fdef->methods[j].param_count = stmt->u.face_def.method_param_counts[j];
                             if (stmt->u.face_def.method_return_types && stmt->u.face_def.method_return_types[j]) {
                                 early_fdef->methods[j].return_type = type_copy(stmt->u.face_def.method_return_types[j]);
+                                resolve_generic_in_type(early_fdef->methods[j].return_type,
+                                    stmt->u.face_def.type_params, stmt->u.face_def.type_param_constraints,
+                                    stmt->u.face_def.type_param_count);
                             } else {
                                 early_fdef->methods[j].return_type = NULL;
                             }
@@ -407,11 +412,16 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                 if (!face_def_find(stmt->u.face_def.name)) {
                     ObjFaceDef* early_fdef = face_def_new(stmt->u.face_def.name, stmt->u.face_def.method_count);
                     if (early_fdef) {
+                        face_def_set_type_params(early_fdef, stmt->u.face_def.type_param_count,
+                            stmt->u.face_def.type_params, stmt->u.face_def.type_param_constraints);
                         for (int j = 0; j < stmt->u.face_def.method_count; j++) {
                             early_fdef->methods[j].name = strdup(stmt->u.face_def.method_names[j]);
                             early_fdef->methods[j].param_count = stmt->u.face_def.method_param_counts[j];
                             if (stmt->u.face_def.method_return_types && stmt->u.face_def.method_return_types[j]) {
                                 early_fdef->methods[j].return_type = type_copy(stmt->u.face_def.method_return_types[j]);
+                                resolve_generic_in_type(early_fdef->methods[j].return_type,
+                                    stmt->u.face_def.type_params, stmt->u.face_def.type_param_constraints,
+                                    stmt->u.face_def.type_param_count);
                             } else {
                                 early_fdef->methods[j].return_type = NULL;
                             }

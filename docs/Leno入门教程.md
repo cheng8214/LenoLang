@@ -4007,12 +4007,34 @@ print(box.compareTo(100))   // -1
 
 > **💡 泛型 face 的类型参数**
 >
-> - 泛型 face 的类型参数在 struct `impl` 时确定具体类型
-> - 方法签名中的泛型参数（如 `T other`）会被替换为 impl 声明中的具体类型
-> - 同一个 face 可以被不同 struct 以不同类型参数实现（如 `impl Comparable[int]`、`impl Comparable[string]`）
-> - **泛型 face 的约束检查完全支持**：`func f[T: Comparable](T a, T b)` 可以约束 T 为实现了 `Comparable` 的类型
+> - 泛型 face 的类型参数在 struct `impl` 时确定具体类型，**参数和返回类型都会被替换**
+> - 同一个 face 可以被不同 struct 以不同类型参数实现
+> - **泛型 face impl 完全支持**，含 T 在参数和返回类型位置
+> - **约束检查完全支持**：`func f[T: Comparable](T a, T b)` 可以约束 T
 >
 > ```leno
+> // 泛型 face：T 在返回类型
+> face Box[T] {
+>     func unwrap(): T
+>     func wrap(T v)
+> }
+>
+> struct IntBox impl Box[int] {
+>     int value = 0
+>     func unwrap(): int { return self.value }
+>     func wrap(int v) { self.value = v }
+> }
+>
+> struct StrBox impl Box[string] {
+>     string value = ""
+>     func unwrap(): string { return self.value }
+>     func wrap(string v) { self.value = v }
+> }
+>
+> var ib = new IntBox(value=42)
+> assert_eq(ib.unwrap(), 42)  // ✅ T 被替换为 int
+>
+> // 泛型 face：T 在参数位置
 > face Comparable[T] {
 >     func compareTo(T other): int
 > }
@@ -4022,13 +4044,11 @@ print(box.compareTo(100))   // -1
 >     func compareTo(int other): int { ... }
 > }
 >
+> // 泛型约束
 > func maxBy[T: Comparable](T a, T b): T {
->     // T: Comparable 约束确保 a 和 b 都实现了 Comparable
->     return a
+>     if a.compareTo(b) >= 0 { return a }
+>     return b
 > }
->
-> var a = new OrdInt(value=10)
-> var r = maxBy(a, a)  // ✅ T=OrdInt, OrdInt impl Comparable[int]
 > ```
 
 ### struct 实现 face

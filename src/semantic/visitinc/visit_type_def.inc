@@ -246,12 +246,31 @@
                             if (strcmp(ast->u.struct_def.methods[k]->u.func.name, mname) == 0) {
                                 found = 1;
                                 if (fdef->methods[j].return_type && ast->u.struct_def.methods[k]->u.func.return_type) {
-                                    if (fdef->methods[j].return_type->kind != TYPE_ANY &&
-                                        fdef->methods[j].return_type->kind != ast->u.struct_def.methods[k]->u.func.return_type->kind) {
+                                    // 泛型 face impl：如果返回类型是泛型参数，替换为 impl 提供的具体类型
+                                    TypeKind expected_kind = fdef->methods[j].return_type->kind;
+                                    if (expected_kind == TYPE_GENERIC_PARAM &&
+                                        fdef->type_param_count > 0 &&
+                                        ast->u.struct_def.impl_type_args &&
+                                        i < ast->u.struct_def.impl_count &&
+                                        ast->u.struct_def.impl_type_args[i]) {
+                                        const char* gp_name = fdef->methods[j].return_type->type_param_name;
+                                        if (gp_name) {
+                                            for (int gi = 0; gi < fdef->type_param_count; gi++) {
+                                                if (fdef->type_param_names[gi] &&
+                                                    strcmp(fdef->type_param_names[gi], gp_name) == 0 &&
+                                                    gi < ast->u.struct_def.impl_type_arg_counts[i]) {
+                                                    expected_kind = ast->u.struct_def.impl_type_args[i][gi]->kind;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (expected_kind != TYPE_ANY &&
+                                        expected_kind != ast->u.struct_def.methods[k]->u.func.return_type->kind) {
                                         char msg[256];
                                         snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
                                                  ast->u.struct_def.name, mname, face_name,
-                                                 type_kind_to_string(fdef->methods[j].return_type->kind),
+                                                 type_kind_to_string(expected_kind),
                                                  type_kind_to_string(ast->u.struct_def.methods[k]->u.func.return_type->kind));
                                         error_add(ERR_SEMANTIC, ast->line, msg);
                                     }
@@ -328,6 +347,9 @@
                             sym->struct_field_names[i] = strdup(ast->u.face_def.method_names[i]);
                             if (ast->u.face_def.method_return_types[i]) {
                                 sym->struct_field_types[i] = type_copy(ast->u.face_def.method_return_types[i]);
+                                resolve_generic_in_type(sym->struct_field_types[i],
+                                    ast->u.face_def.type_params, ast->u.face_def.type_param_constraints,
+                                    ast->u.face_def.type_param_count);
                             } else {
                                 sym->struct_field_types[i] = type_new(TYPE_ANY);
                             }
@@ -346,6 +368,9 @@
                         fdef->methods[i].param_count = ast->u.face_def.method_param_counts[i];
                         if (ast->u.face_def.method_return_types && ast->u.face_def.method_return_types[i]) {
                             fdef->methods[i].return_type = type_copy(ast->u.face_def.method_return_types[i]);
+                            resolve_generic_in_type(fdef->methods[i].return_type,
+                                ast->u.face_def.type_params, ast->u.face_def.type_param_constraints,
+                                ast->u.face_def.type_param_count);
                         } else {
                             fdef->methods[i].return_type = NULL;
                         }

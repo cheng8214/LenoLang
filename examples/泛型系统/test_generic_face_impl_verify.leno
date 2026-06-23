@@ -1,0 +1,71 @@
+// ============================================================
+// 验证泛型 face impl 支持程度
+// ============================================================
+
+// --- 1. T 在参数位置（应该通过） ---
+face Sink[T] {
+    func take(T v)
+}
+
+struct IntSink impl Sink[int] {
+    func take(int v) { print("int: " + _str(v)) }
+}
+
+struct StrSink impl Sink[string] {
+    func take(string v) { print("str: " + v) }
+}
+
+var isink = new IntSink()
+isink.take(42)
+var ssink = new StrSink()
+ssink.take("hello")
+print("1. ok")
+
+// --- 2. T 在参数和返回类型（期望通过但实际可能失败） ---
+face Getter[T] {
+    func get(): T
+}
+
+struct IntGetter impl Getter[int] {
+    int data = 99
+    func get(): int { return self.data }
+}
+
+// 如果这行报错 "期望 struct, 实际 int" 说明 T 没有被替换
+assert_eq((new IntGetter()).get(), 99)
+print("2. ok")
+
+// --- 3. 已有的通过用例：T 只在参数 ---
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct OrdInt impl Comparable[int] {
+    int value = 0
+    func compareTo(int other): int {
+        if self.value < other { return -1 }
+        return 0
+    }
+}
+
+assert_eq((new OrdInt(value=10)).compareTo(20), -1)
+print("3. ok")
+
+// --- 4. 泛型约束 + 泛型 face ---
+face Adder[T] {
+    func add(T other): int
+}
+
+struct NumAdder impl Adder[int] {
+    int base = 0
+    func add(int other): int { return self.base + other }
+}
+
+// T: Adder 约束
+func do_add[T: Adder](T a, T b): int { return a.add(b) }
+var na = new NumAdder(base=5)
+var nb = new NumAdder(base=10)
+print("add = " + _str(do_add(na, nb)))
+print("4. ok")
+
+print("ALL PASS")

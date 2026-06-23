@@ -70,7 +70,7 @@ for items to item {
     }
 }
 
-// --- 泛型 face 定义（目前仅支持定义，impl 尚不支持带泛型参数） ---
+// --- 泛型 face 定义 + impl（完全支持，含 T 在返回类型） ---
 face Comparable[T] {
     func compareTo(T other): int
 }

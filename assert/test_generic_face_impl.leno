@@ -1,0 +1,113 @@
+// 测试泛型 face impl 完整支持（含 T 在返回类型）
+// 修复：face 方法泛型参数 resolve_generic_in_type
+
+// ========== 1. 泛型 face + T 在返回类型 ==========
+face Getter[T] {
+    func get(): T
+    func set(T v)
+}
+
+struct IntGetter impl Getter[int] {
+    int data = 99
+    func get(): int { return self.data }
+    func set(int v) { self.data = v }
+}
+
+struct StrGetter impl Getter[string] {
+    string data = "hello"
+    func get(): string { return self.data }
+    func set(string v) { self.data = v }
+}
+
+var ig = new IntGetter(data=42)
+assert_eq(ig.get(), 42)
+ig.set(100)
+assert_eq(ig.get(), 100)
+
+var sg = new StrGetter()
+assert_eq(sg.get(), "hello")
+sg.set("world")
+assert_eq(sg.get(), "world")
+
+// ========== 2. 多参数泛型 face ==========
+face Pair[K, V] {
+    func key(): K
+    func val(): V
+}
+
+struct StrIntPair impl Pair[string, int] {
+    string _key = ""
+    int _val = 0
+    func key(): string { return self._key }
+    func val(): int { return self._val }
+}
+
+var p = new StrIntPair(_key="name", _val=42)
+assert_eq(p.key(), "name")
+assert_eq(p.val(), 42)
+
+// ========== 3. 两个 struct impl 同一个泛型 face，不同类型 ==========
+face Box[T] {
+    func unwrap(): T
+}
+
+struct IntBox impl Box[int] {
+    int value = 0
+    func unwrap(): int { return self.value }
+}
+
+struct StrBox impl Box[string] {
+    string value = ""
+    func unwrap(): string { return self.value }
+}
+
+var ib = new IntBox(value=999)
+assert_eq(ib.unwrap(), 999)
+
+var sb = new StrBox(value="boxed")
+assert_eq(sb.unwrap(), "boxed")
+
+// ========== 4. 泛型约束 + 泛型 face impl ==========
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct OrdInt impl Comparable[int] {
+    int val = 0
+    func compareTo(int other): int {
+        if self.val < other { return -1 }
+        if self.val > other { return 1 }
+        return 0
+    }
+}
+
+func max_val[T: Comparable](T a, T b): T {
+    if a.compareTo(b) >= 0 { return a }
+    return b
+}
+
+var m1 = new OrdInt(val=10)
+var m2 = new OrdInt(val=20)
+var r = max_val(m1, m2) as OrdInt
+assert_eq(r.val, 20)
+
+// ========== 5. T 同时在参数和返回类型 ==========
+face Converter[T, U] {
+    func convert(T input): U
+}
+
+struct IntToStr impl Converter[int, string] {
+    func convert(int input): string { return "n=" + _str(input) }
+}
+
+var conv = new IntToStr()
+assert_eq(conv.convert(42), "n=42")
+
+// ========== 6. 错误检测：类型不匹配应被拒绝 ==========
+// struct BadBox impl Box[int] {
+//     int value = 0
+//     func unwrap(): string { return "wrong" }  // ❌ 返回 string，但 Box[int] 期望 int
+// }
+// 期望：编译报错
+
+print("ALL PASS")
