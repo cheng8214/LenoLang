@@ -455,7 +455,17 @@
 
                                                 TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
                                                 if (arg_type && arg_type->kind != TYPE_ANY && check_type->kind != TYPE_ANY) {
-                                                    if (!type_is_compatible(check_type, arg_type)) {
+                                                    // 泛型方法参数可能是 TYPE_STRUCT "T" 而非 TYPE_GENERIC_PARAM
+                                                    int is_generic = 0;
+                                                    if (check_type->kind == TYPE_STRUCT && check_type->struct_name &&
+                                                        struct_def_ast && struct_def_ast->u.struct_def.type_params) {
+                                                        for (int tp = 0; tp < struct_def_ast->u.struct_def.type_param_count; tp++) {
+                                                            if (strcmp(check_type->struct_name, struct_def_ast->u.struct_def.type_params[tp]) == 0) {
+                                                                is_generic = 1; break;
+                                                            }
+                                                        }
+                                                    }
+                                                    if (!is_generic && !type_is_compatible(check_type, arg_type)) {
                                                         char msg[BUFFER_MEDIUM];
                                                         char idx_str[16];
                                                         snprintf(idx_str, sizeof(idx_str), "%d", i + 1);

@@ -1,0 +1,73 @@
+// 泛型边界测试 - 覆盖各种边缘场景
+import "constraint_module.leno" as cm
+use cm.Comparable
+
+// ===== 1. 泛型约束混合：一个约束一个不约束 =====
+func mixConstrained[K: Comparable, V](K k, V v): V {
+    return v
+}
+
+// ===== 2. 泛型函数返回泛型 struct + 字段操作 =====
+struct Cell[T] {
+    T value
+    func get(): T { return self.value }
+}
+func newCell[T](T v): Cell[T] { return new Cell[T](value=v) }
+
+// ===== 3. 嵌套泛型默认值：struct 字段是另一个泛型 struct =====
+struct Wrapper[T] {
+    Cell[T] inner
+    func getInnerValue(): T { return self.inner.value }
+}
+
+// ===== 4. 闭包捕获泛型参数 =====
+func makePrinter[T](T prefix) {
+    func inner(T val) {
+    }
+    return inner
+}
+
+// ===== 5. 约束无参泛型 + 返回 null =====
+struct EmptyBox impl Comparable {
+    func compare(Comparable other): int { return 0 }
+}
+func newEmpty[T: Comparable](): T { return null }
+
+// ===== 6. 约束 struct 嵌套泛型 =====
+struct ConstrainedHolder[T: Comparable] {
+    int extra
+    func getExtra(): int { return self.extra }
+}
+
+// ===== main =====
+main() {
+    print("=== 1: 约束混合 [K:Face, V] ===")
+    var m = mixConstrained[string, int]("key", 42)
+    assert(m == 42)
+
+    print("=== 2: 返回泛型 struct ===")
+    var c = newCell[int](10)
+    c.value = 99
+    assert(c.value == 99)
+    assert(c.get() == 99)
+
+    print("=== 3: 嵌套泛型 struct ===")
+    var w = new Wrapper[int](inner=new Cell[int](value=77))
+    assert(w.getInnerValue() == 77)
+    assert(w.inner.value == 77)
+
+    print("=== 4: 闭包捕获泛型 ===")
+    var p = makePrinter[string]("INFO")
+    assert(p != null)
+
+    print("=== 5: 约束无参 newEmpty ===")
+    var eb = newEmpty[EmptyBox]()
+    assert(eb == null)
+
+    print("=== 6: 约束 struct 实例化 ===")
+    var ch = new ConstrainedHolder[int](extra=100)
+    assert(ch.extra == 100)
+    assert(ch.getExtra() == 100)
+
+    print("ALL EDGE TESTS PASSED")
+}
