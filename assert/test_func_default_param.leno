@@ -1,0 +1,26 @@
+// func 默认参数断言
+print("=== 基本默认参数 ===")
+func add(int x, int y = 10):int { return x + y }
+assert_eq(add(1), 11)
+assert_eq(add(1, 20), 21)
+
+print("=== 多个默认参数 ===")
+func test(int x, int y = 10, string z = "hi"):string {
+    return $"x={x} y={y} z={z}"
+}
+assert_eq(test(1), "x=1 y=10 z=hi")
+assert_eq(test(1, 20), "x=1 y=20 z=hi")
+assert_eq(test(1, 20, "hey"), "x=1 y=20 z=hey")
+
+print("=== var 默认值推断为 int ===")
+func test_var(var a, var b = 0) {
+    assert_eq(type(b), "int")
+}
+test_var(42)
+
+print("=== 默认值类型匹配 ===")
+func match_test(int x, string s = "default"):string { return s }
+assert_eq(match_test(1), "default")
+assert_eq(match_test(1, "custom"), "custom")
+
+print("test_func_default_param passed")
