@@ -32,18 +32,27 @@ struct Circle impl Shape {
 // 类型别名
 alias Size = int
 alias IntList = Array[int]
-Size s = 100
-IntList arr = [1, 2, 3]
 
-// 泛型函数 + 匿名函数
-func map_int(Array[int] arr, func(var x):int fn):Array[int] {
-    var result = []
-    for arr to v { result.add(fn(v)) }
-    return result
+// 泛型 struct（类型参数运行时精准传递）
+struct Result[T] {
+    T data
+    bool ok = false
 }
-var doubled = map_int([1, 2, 3], func(var x):int { return x * 2 })
+func Ok[T](T val): Result[T] { return new Result[T](data=val, ok=true) }
+func Err[T](string msg): Result[T] { return new Result[T](ok=false) }
+var r = Ok[int](42)
+print(r.data)     // 42
 
-// 闭包
+// 泛型约束 [T: Face]（编译期检查方法完整性）
+face Comparable {
+    func compare(Comparable other): int
+}
+func maxBy[T: Comparable](T a, T b): T {
+    if a.compare(b) >= 0 { return a }
+    return b
+}
+
+// 匿名函数 + 闭包
 func make_counter(int start) {
     int count = start
     return func():int { count = count + 1; return count }
@@ -75,8 +84,10 @@ try {
 
 **结构体与面向对象**
 - **`struct` 结构体** — 字段、方法、嵌套、自引用，堪比轻量级 class
-- **`self` 关键字** — 方法内显式引用当前实例，参数名冲突时必备
-- **`face` 接口** — 名义类型，必须显式 `impl` 声明，编译期检查方法完整性
+- **泛型 struct** — `struct Stack[T]`、`struct Result[T]`，类型参数沿调用链精准传递
+- **`self` 关键字** — 方法内显式引用当前实例，`self` 可选但冲突时必备
+- **`face` 接口** — 名义类型，显式 `impl` 声明，编译期检查方法完整性，支持 `export face`
+- **泛型约束** — `func maxBy[T: Comparable](T a, T b): T`，T 必须实现指定 face
 - **`enum` 枚举** — 自增值或显式值，本质为 `int`
 
 **函数式编程**
@@ -348,7 +359,7 @@ root = "lib"
 ## 运行测试
 
 ```bash
-# 使用测试运行器（当前 95 个测试全部通过）
+# 使用测试运行器（当前 112 个测试全部通过）
 build/test_runner build/leno assert
 
 # 使用 CMake
