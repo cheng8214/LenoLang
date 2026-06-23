@@ -1,0 +1,42 @@
+// 泛型边界探索测试（跳过已知bug: alias new）
+// #2: 泛型 face、#3: 约束违规报错、#4: 泛型运算
+
+// === #2: face 自身带泛型参数 ===
+face Container {
+    func get(): int
+}
+struct Box impl Container {
+    int val
+    func get(): int { return self.val }
+}
+var b = new Box(val=7)
+print("face basic: " + b.get())
+
+// === #3: 约束函数 ===
+face Comparable {
+    func compare(Comparable other): int
+}
+struct OrdInt impl Comparable {
+    int value
+    func compare(Comparable other): int {
+        var o = other as OrdInt
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
+}
+func id[T: Comparable](T a): T { return a }
+var o1 = new OrdInt(value=10)
+var r1 = id(o1)
+print("constraint ok: " + r1.value)
+
+// === #4: 泛型运算 ===
+func double[T](T x): T { return x + x }
+var d = double[int](21)
+print("double: " + d)
+
+// === #5: is 类型守卫（泛型无关，确认基础）===
+var ok = b is Box
+print("is Box: " + ok)
+
+print("border tests done")

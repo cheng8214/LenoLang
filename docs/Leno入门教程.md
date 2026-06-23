@@ -3077,6 +3077,30 @@ print(chained.value)    // 168
 > struct OrdInt impl Comparable { ... }
 > var r = cm.maxBy(a, b)  // ✅ 跨模块约束泛型调用
 > ```
+>
+> **完整可运行示例**：
+>
+> ```leno
+> face Comparable {
+>     func compare(Comparable other): int
+> }
+> struct OrdInt impl Comparable {
+>     int value
+>     func compare(Comparable other): int {
+>         var o = other as OrdInt
+>         if self.value < o.value { return -1 }
+>         if self.value > o.value { return 1 }
+>         return 0
+>     }
+> }
+> func id[T: Comparable](T a): T { return a }
+>
+> main() {
+>     var o1 = new OrdInt(value=10)
+>     var r1 = id(o1)
+>     print(r1.value)     // 10
+> }
+> ```
 
 > **⚠️ 注意 13：泛型 struct 的方法调用 —— `c.set(99)` 直接生效**
 >
