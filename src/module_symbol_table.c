@@ -872,7 +872,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     strncpy(struct_name, name_start, name_len);
                     struct_name[name_len] = '\0';
 
-                    // 解析泛型参数 [T] 或 [K, V]
+                    // 解析泛型参数 [T] 或 [K, V] 或 [T: Face, K]
                     int type_param_count = 0;
                     char* type_param_names[16] = {NULL};
                     while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
@@ -892,6 +892,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 type_param_count++;
                             }
                             while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            // 跳过约束语法 T: FaceName
+                            if (*after_struct == ':') {
+                                after_struct++; // skip ':'
+                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                            }
                             if (*after_struct == ',') after_struct++;
                         }
                         if (*after_struct == ']') after_struct++; // skip ']'
@@ -1654,7 +1660,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     strncpy(func_name, name_start, name_len);
                     func_name[name_len] = '\0';
 
-                    // 解析泛型参数 [T] 或 [K, V]
+                    // 解析泛型参数 [T] 或 [K, V] 或 [T: Face]
                     int func_type_param_count = 0;
                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                     if (*after_func == '[') {
@@ -1666,6 +1672,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
                             }
                             while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            // 跳过约束语法 T: FaceName
+                            if (*after_func == ':') {
+                                after_func++; // skip ':'
+                                while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                            }
                             if (*after_func == ',') after_func++;
                         }
                         if (*after_func == ']') after_func++; // skip ']'

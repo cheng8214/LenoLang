@@ -1,0 +1,20 @@
+// 跨模块：定义带约束的泛型函数
+
+face Comparable {
+    func compare(Comparable other): int
+}
+
+struct OrdInt impl Comparable {
+    int value
+    func compare(Comparable other): int {
+        var o = other as OrdInt
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
+}
+
+export func maxBy[T: Comparable](T a, T b): T {
+    if a.compare(b) >= 0 { return a }
+    return b
+}
