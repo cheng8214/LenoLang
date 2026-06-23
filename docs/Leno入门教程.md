@@ -1730,12 +1730,17 @@ main() {
 > 1. 默认参数必须在必选参数**后面**
 > 2. 默认值只能是**字面量常量**（int、float、string、bool、null）
 > 3. 默认值类型必须**匹配参数类型**（遵循升级不降级规则）
-> 4. `var b = 0` 推断为 `int`（不是 `any`）
+> 4. `var a` 无默认值时类型为 `any`，`var b = 0` 推断为 `int`
 >
 > ```leno
 > func bad(int x = 10, int y) { }      // ❌ 默认参数不能在必选参数前面
 > func bad2(int x, int y = 3.14) { }   // ❌ float 不能赋给 int（降级）
-> func bad3(int x, var y = 0) { }      // ❌ var 参数不能有默认值
+>
+> // var 有默认值时推断具体类型
+> func ok(var a, var b = 10) {
+>     type(a)   // "any" — 无默认值
+>     type(b)   // "int" — 从默认值 10 推断
+> }
 > ```
 
 ### 函数作为值
