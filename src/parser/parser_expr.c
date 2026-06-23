@@ -642,19 +642,28 @@ Ast* parse_new(Parser* p) {
     char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex); // 消费 struct 名称
 
+    // 解析可选的泛型类型参数: new Box[int](value: 42)
+    TypeInfo** generic_type_args = NULL;
+    int generic_type_count = 0;
+
     // 检查是否是别名，如果是则解析为底层 struct 名
     char** alias_tp_names = NULL;
     int alias_tp_count = 0;
     TypeInfo* resolved_alias_type = find_alias_with_params(p, struct_name, &alias_tp_names, &alias_tp_count);
-    if (resolved_alias_type && alias_tp_count > 0 && resolved_alias_type->kind == TYPE_STRUCT && resolved_alias_type->struct_name) {
-        // 泛型别名：替换为底层 struct 名
+    if (resolved_alias_type && resolved_alias_type->kind == TYPE_STRUCT && resolved_alias_type->struct_name) {
+        // 别名指向 struct：替换为底层 struct 名
         free(struct_name);
         struct_name = strdup(resolved_alias_type->struct_name);
+        // 如果别名已内嵌泛型参数（如 alias IntCell = Cell[int]），注入到 generic_type_args
+        if (alias_tp_count == 0 && resolved_alias_type->generic_count > 0 && resolved_alias_type->generic_args) {
+            generic_type_count = resolved_alias_type->generic_count;
+            generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * generic_type_count);
+            for (int gi = 0; gi < generic_type_count; gi++) {
+                generic_type_args[gi] = type_copy(resolved_alias_type->generic_args[gi]);
+            }
+        }
     }
 
-    // 解析可选的泛型类型参数: new Box[int](value: 42)
-    TypeInfo** generic_type_args = NULL;
-    int generic_type_count = 0;
     if (p->lex.current.type == TOK_LBRACKET) {
         lexer_next(&p->lex);  // 跳过 '['
         int gt_capacity = 8;
