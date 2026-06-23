@@ -3037,6 +3037,47 @@ print(chained.value)    // 168
 >
 > 这是 Leno 的类型安全设计——保证通过 face 变量只能看到接口约定的行为，而非具体实现的内部细节。
 
+> **⚠️ 注意 12：泛型约束语法 `[T: FaceName]`**
+>
+> 可以用 `: FaceName` 为泛型类型参数添加约束，限制 T 必须实现了某个 face：
+>
+> ```leno
+> face Comparable {
+>     func compare(Comparable other): int
+> }
+>
+> // T: Comparable — T 必须实现了 Comparable
+> func maxBy[T: Comparable](T a, T b): T {
+>     if a.compare(b) >= 0 { return a }
+>     return b
+> }
+>
+> struct OrdInt impl Comparable {
+>     int value
+>     func compare(Comparable other): int {
+>         var o = other as OrdInt
+>         if self.value < o.value { return -1 }
+>         if self.value > o.value { return 1 }
+>         return 0
+>     }
+> }
+> ```
+>
+> 约束也支持跨模块使用：
+>
+> ```leno
+> // constraint_module.leno
+> export face Comparable { ... }
+> export func maxBy[T: Comparable](T a, T b): T { ... }
+>
+> // main.leno
+> import "constraint_module.leno" as cm
+> use cm.Comparable
+>
+> struct OrdInt impl Comparable { ... }
+> var r = cm.maxBy(a, b)  // ✅ 跨模块约束泛型调用
+> ```
+
 #### 嵌套泛型类型
 
 泛型参数可以是复合类型，如 `Array[int]`、`Dict[string, int]` 等：

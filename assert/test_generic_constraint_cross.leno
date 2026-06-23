@@ -1,0 +1,47 @@
+// 跨模块约束泛型函数测试
+
+import "../examples/泛型系统/constraint_module.leno" as cm
+use cm.Comparable
+
+struct OrdInt impl Comparable {
+    int value
+    func compare(Comparable other): int {
+        var o = other as OrdInt
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
+}
+
+struct OrdStr impl Comparable {
+    string value
+    func compare(Comparable other): int {
+        var o = other as OrdStr
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
+}
+
+main() {
+    // int 比较
+    var a = new OrdInt(value=10)
+    var b = new OrdInt(value=20)
+    var r1 = cm.maxBy(a, b)
+    var ri1 = r1 as OrdInt
+    assert_eq(ri1.value, 20)
+
+    // 反向
+    var r2 = cm.maxBy(b, a)
+    var ri2 = r2 as OrdInt
+    assert_eq(ri2.value, 20)
+
+    // string 比较
+    var s1 = new OrdStr(value="apple")
+    var s2 = new OrdStr(value="banana")
+    var rs = cm.maxBy(s1, s2)
+    var ris = rs as OrdStr
+    assert_eq(ris.value, "banana")
+
+    print("test_generic_constraint_cross: ALL PASSED")
+}
