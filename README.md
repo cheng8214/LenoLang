@@ -435,15 +435,13 @@ LenoC/
 
 - [Leno 入门教程](docs/Leno入门教程.md) — 语言完整语法参考
 - [类型使用指南](docs/类型使用指南.md) — 类型系统详解
-- [Struct 使用指南](docs/struct使用指南.md) — 结构体详解
 - [Import 使用指南](docs/import使用指南.md) — 模块导入详解
-- [For 循环使用指南](docs/for循环使用指南.md) — 循环语法
 - [Async/Await 入门指南](docs/async_await入门指南.md) — 异步编程
 - [FFI 使用指南](docs/FFI使用指南.md) — 外部函数接口
-- [Maths 使用指南](docs/maths使用指南.md) — 数学模块
 - [Threads 使用指南](docs/threads使用指南.md) — 多线程
 - [包管理与安装使用指南](docs/包管理与安装使用指南.md) — 包管理详解
 - [加密算法示例指南](docs/加密算法示例指南.md) — Base64 / AES / RSA / SHA 等纯 LenoC 实现
+- [性能优化记录](docs/性能优化记录.md) — 性能优化历史
 
 ## 许可证
 
