@@ -22,6 +22,7 @@ static const char* leno_keywords[] = {
     "return",
     // 声明
     "var", "func", "struct", "cstruct", "enum", "face", "impl",
+    "alias", "clib", "cfunc",
     // 实例化
     "new",
     // 模块
@@ -43,7 +44,7 @@ static const char* leno_types[] = {
     "Array", "Dict", "File", "Ptr", "any", "face",
     "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
     "c_int", "c_uint", "c_long", "c_ulong", "c_longlong", "c_ulonglong", "c_size", "c_ssize",
-    "bigint", "str16", "Thread", "Channel",
+    "bigint", "str8", "str16", "Thread", "Channel",
     NULL
 };
 
@@ -869,7 +870,9 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
         Symbol* sym = scope_resolve_tree_bfs(ctx.root_scope, member_name);
         bool is_type_symbol = (sym && sym->kind == SYM_TYPE) ||
                               (sym && sym->kind == SYM_MODULE && sym->type &&
-                               (sym->type->kind == TYPE_STRUCT || sym->type->kind == TYPE_ENUM));
+                               (sym->type->kind == TYPE_STRUCT || sym->type->kind == TYPE_ENUM ||
+                                sym->type->kind == TYPE_FACE || sym->type->kind == TYPE_CLIB ||
+                                sym->type->kind == TYPE_CFUNC));
         if (is_type_symbol) {
             if (sym->type && sym->type->kind == TYPE_ENUM) {
                 char detail[256];
@@ -929,6 +932,20 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
                         add_completion_item(items, count, capacity,
                                            sym->name,
                                            LSP_COMP_ENUM,
+                                           detail,
+                                           prefix);
+                    } else if (sym->type && sym->type->kind == TYPE_FACE) {
+                        snprintf(detail, sizeof(detail), "%s.%s: face", module_alias, sym->name);
+                        add_completion_item(items, count, capacity,
+                                           sym->name,
+                                           LSP_COMP_INTERFACE,
+                                           detail,
+                                           prefix);
+                    } else if (sym->type && sym->type->kind == TYPE_CLIB) {
+                        snprintf(detail, sizeof(detail), "%s.%s: clib", module_alias, sym->name);
+                        add_completion_item(items, count, capacity,
+                                           sym->name,
+                                           LSP_COMP_CLASS,
                                            detail,
                                            prefix);
                     }
@@ -1250,6 +1267,13 @@ static bool is_type_annotation_context(const char* content, int cursor_offset) {
         }
     }
 
+    // 检测 "is" 后的类型上下文 (type guard: `x is int`)
+    if (pos >= 2 && content[pos - 2] == 'i' && content[pos - 1] == 's') {
+        if (pos == 2 || (!isalnum((unsigned char)content[pos - 3]) && content[pos - 3] != '_')) {
+            return true;
+        }
+    }
+
     if (content[pos] == '(' || content[pos] == ',') {
         if (content[pos] == '(') {
             int check = pos - 1;
@@ -1307,12 +1331,15 @@ static bool is_type_annotation_context(const char* content, int cursor_offset) {
         if (trimmed[0] == '\0') {
             is_type_context = true;
         } else {
-            static const char* type_prefixes[] = {
-                "func ", "export func ", "struct ", "export struct ",
-                "cstruct ", "export cstruct ", "enum ", "export enum ",
-                "face ", "export face ",
-                NULL
-            };
+        static const char* type_prefixes[] = {
+            "func ", "export func ", "struct ", "export struct ",
+            "cstruct ", "export cstruct ", "enum ", "export enum ",
+            "face ", "export face ",
+            "alias ", "export alias ",
+            "clib ", "export clib ",
+            "cfunc ", "export cfunc ",
+            NULL
+        };
             for (int i = 0; type_prefixes[i]; i++) {
                 if (strncmp(trimmed, type_prefixes[i], strlen(type_prefixes[i])) == 0) {
                     is_type_context = true;
@@ -1569,27 +1596,38 @@ static void add_symbols_from_compiler(const char* content, LspCompletionItem** i
     for (int i = 0; i < sym_count; i++) {
         if (!names[i]) continue;
         
-        // 确定符号类型
+        // 确定符号类型（使用更精确的分类）
         int kind = LSP_COMP_VARIABLE;
         if (types && types[i]) {
             if (strstr(types[i], "func") != NULL) {
                 kind = LSP_COMP_FUNCTION;
-            } else if (strstr(types[i], "struct") != NULL) {
+            } else if (strstr(types[i], "struct") != NULL || strstr(types[i], "cstruct") != NULL) {
                 kind = LSP_COMP_STRUCT;
+            } else if (strstr(types[i], "face") != NULL) {
+                kind = LSP_COMP_INTERFACE;
+            } else if (strstr(types[i], "enum") != NULL) {
+                kind = LSP_COMP_ENUM;
+            } else if (strstr(types[i], "alias") != NULL) {
+                kind = LSP_COMP_CLASS;  // alias 显示为类型
             }
         }
         
         // 构建详细信息
         char detail[256];
         if (types && types[i]) {
-            snprintf(detail, sizeof(detail), "%s: %s", 
-                     kind == LSP_COMP_FUNCTION ? "function" : 
-                     kind == LSP_COMP_STRUCT ? "struct" : "variable",
-                     types[i]);
+            const char* category = "variable";
+            if (kind == LSP_COMP_FUNCTION) category = "function";
+            else if (kind == LSP_COMP_STRUCT) category = "struct";
+            else if (kind == LSP_COMP_INTERFACE) category = "face";
+            else if (kind == LSP_COMP_ENUM) category = "enum";
+            snprintf(detail, sizeof(detail), "%s: %s", category, types[i]);
         } else {
-            snprintf(detail, sizeof(detail), "%s",
-                     kind == LSP_COMP_FUNCTION ? "function" : 
-                     kind == LSP_COMP_STRUCT ? "struct" : "variable");
+            const char* category = "variable";
+            if (kind == LSP_COMP_FUNCTION) category = "function";
+            else if (kind == LSP_COMP_STRUCT) category = "struct";
+            else if (kind == LSP_COMP_INTERFACE) category = "face";
+            else if (kind == LSP_COMP_ENUM) category = "enum";
+            snprintf(detail, sizeof(detail), "%s", category);
         }
         
         add_completion_item(items, count, capacity, names[i], kind, detail, prefix);
@@ -2023,6 +2061,30 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             }
             native_free_module_method_metas(metas);
         }
+
+        // 添加模块常量
+        {
+            int const_count = 0;
+            char** consts = native_get_module_consts(actual_mod, &const_count);
+            if (consts && const_count > 0) {
+                for (int i = 0; i < const_count; i++) {
+                    bool found = false;
+                    int val = native_find_module_const(actual_mod, consts[i], &found);
+                    char detail[256];
+                    if (found) {
+                        snprintf(detail, sizeof(detail), "%s.%s = %d", use_module, consts[i], val);
+                    } else {
+                        snprintf(detail, sizeof(detail), "%s.%s", use_module, consts[i]);
+                    }
+                    add_completion_item(&items, count, &capacity,
+                                       consts[i],
+                                       LSP_COMP_CONSTANT,
+                                       detail,
+                                       use_prefix);
+                }
+                native_free_module_const_list(consts, const_count);
+            }
+        }
     } else if (is_string_literal) {
         // 字符串字面量实例方法补全
         const char* display_name = "\"\"";  // 显示为 ""
@@ -2091,8 +2153,9 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
         // 从编译器获取该模块的所有方法元数据（包含参数类型）
         int method_count = 0;
         ModuleMethodMeta* metas = native_get_module_method_metas(actual_module, &method_count);
+        bool has_methods = (metas && method_count > 0);
 
-        if (metas && method_count > 0) {
+        if (has_methods) {
             // 是模块方法调用
             for (int i = 0; i < method_count; i++) {
                 // 构建详细的签名和文档
@@ -2136,7 +2199,33 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                                    NULL);
             }
             native_free_module_method_metas(metas);
-        } else if (!is_leno_module) {
+        }
+
+        // 添加模块常量（如 guis.KEY_RETURN = 13）
+        {
+            int const_count = 0;
+            char** consts = native_get_module_consts(actual_module, &const_count);
+            if (consts && const_count > 0) {
+                for (int i = 0; i < const_count; i++) {
+                    bool found = false;
+                    int val = native_find_module_const(actual_module, consts[i], &found);
+                    char detail[256];
+                    if (found) {
+                        snprintf(detail, sizeof(detail), "%s.%s = %d", module_alias, consts[i], val);
+                    } else {
+                        snprintf(detail, sizeof(detail), "%s.%s", module_alias, consts[i]);
+                    }
+                    add_completion_item(&items, count, &capacity,
+                                       consts[i],
+                                       LSP_COMP_CONSTANT,
+                                       detail,
+                                       NULL);
+                }
+                native_free_module_const_list(consts, const_count);
+            }
+        }
+
+        if (!has_methods && !is_leno_module) {
             char* var_type = get_variable_type(content, module_alias, file_path);
 
             if (var_type) {
@@ -2453,7 +2542,7 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                     Symbol* sym = ctx.root_scope->syms[i];
                     if (sym->kind == SYM_TYPE || sym->kind == SYM_STRUCT ||
                         sym->kind == SYM_CSTRUCT || sym->kind == SYM_ENUM ||
-                        sym->kind == SYM_CLIB) {
+                        sym->kind == SYM_CLIB || sym->kind == SYM_CFUNC) {
                         const char* type_label = "type";
                         int comp_kind = LSP_COMP_CLASS;
                         if (sym->type) {
@@ -2463,6 +2552,7 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                                 case TYPE_ENUM: type_label = "enum"; comp_kind = LSP_COMP_ENUM; break;
                                 case TYPE_FACE: type_label = "face"; comp_kind = LSP_COMP_INTERFACE; break;
                                 case TYPE_CLIB: type_label = "clib"; comp_kind = LSP_COMP_CLASS; break;
+                                case TYPE_CFUNC: type_label = "cfunc"; comp_kind = LSP_COMP_CLASS; break;
                                 default: break;
                             }
                         }
@@ -2578,10 +2668,16 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                 char** consts = native_get_module_consts(modules[m], &const_count);
                 if (consts && const_count > 0) {
                     for (int i = 0; i < const_count; i++) {
+                        bool found = false;
+                        int val = native_find_module_const(modules[m], consts[i], &found);
                         char full_name[256];
                         snprintf(full_name, sizeof(full_name), "%s.%s", modules[m], consts[i]);
                         char detail[256];
-                        snprintf(detail, sizeof(detail), "%s.%s (const)", modules[m], consts[i]);
+                        if (found) {
+                            snprintf(detail, sizeof(detail), "%s.%s = %d", modules[m], consts[i], val);
+                        } else {
+                            snprintf(detail, sizeof(detail), "%s.%s", modules[m], consts[i]);
+                        }
                         add_completion_item(&items, count, &capacity, full_name,
                                            LSP_COMP_CONSTANT, detail, prefix);
                     }

@@ -1499,16 +1499,29 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                     break;
                 }
                 case SYM_TYPE: {
-                    if (sym->type && sym->type->kind == TYPE_STRUCT) {
-                        int len = 512 + strlen(word);
+                    if (sym->type) {
+                        int len = 512 + strlen(word) + (symbol_name ? strlen(symbol_name) : 0);
+                        const char* kind_label = "type";
+                        const char* kind_desc = "模块导出的类型";
+                        if (sym->type->kind == TYPE_STRUCT) {
+                            kind_label = "struct"; kind_desc = "模块导出的 struct";
+                        } else if (sym->type->kind == TYPE_FACE) {
+                            kind_label = "face"; kind_desc = "模块导出的 face";
+                        } else if (sym->type->kind == TYPE_ENUM) {
+                            kind_label = "enum"; kind_desc = "模块导出的 enum";
+                        } else if (sym->type->kind == TYPE_CLIB) {
+                            kind_label = "clib"; kind_desc = "模块导出的 clib";
+                        } else if (sym->type->kind == TYPE_CFUNC) {
+                            kind_label = "cfunc"; kind_desc = "模块导出的 cfunc";
+                        }
                         result = (char*)malloc(len);
                         if (result) {
                             snprintf(result, len, "**%s**\n\n"
                                  "```leno\n"
-                                 "struct %s\n"
+                                 "%s %s\n"
                                  "```\n\n"
-                                 "模块导出的 struct",
-                                 word, symbol_name);
+                                 "%s",
+                                 word, kind_label, symbol_name, kind_desc);
                         }
                     } else {
                         int len = 512 + strlen(word);

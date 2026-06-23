@@ -621,9 +621,9 @@ int lenolang_run_file(const char* path) {
     // 输出源代码
    if (!debugMode) 
     {
-        printf("===== 源代码 =====\n");
-         printf("%s", source);
-         printf("\n===== 执行结果 =====\n\n");
+        // printf("===== 源代码 =====\n");
+        //  printf("%s", source);
+        //  printf("\n===== 执行结果 =====\n\n");
     }
     
     int result = lenolang_run(source);
