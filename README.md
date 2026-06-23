@@ -433,8 +433,7 @@ LenoC/
 
 ## 文档
 
-- [Leno 入门教程](docs/Leno入门教程.md) — 语言完整语法参考
-- [类型使用指南](docs/类型使用指南.md) — 类型系统详解
+- [Leno 入门教程](docs/Leno入门教程.md) — 语言完整语法参考（含类型系统详解）
 - [Import 使用指南](docs/import使用指南.md) — 模块导入详解
 - [Async/Await 入门指南](docs/async_await入门指南.md) — 异步编程
 - [FFI 使用指南](docs/FFI使用指南.md) — 外部函数接口

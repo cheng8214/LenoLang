@@ -1254,6 +1254,134 @@ main() {
 > }
 > ```
 
+#### Dict 字段访问类型守卫
+
+类型守卫支持对 Dict 字段进行收窄，语法为 `obj.field is Type`：
+
+```leno
+var s = {name: "张三", age: 25, scores: [85, 90, 78]}
+
+// 单个字段守卫
+if s.age is int {
+    int age = s.age        // ✅ s.age 被收窄为 int
+    print(age)
+}
+
+// 多个字段守卫（and 连接）
+if s.name is string and s.age is int {
+    string name = s.name   // ✅ s.name 被收窄为 string
+    int age = s.age        // ✅ s.age 被收窄为 int
+}
+
+// 循环内的字段守卫
+int totalAge = 0
+for students to s {
+    if s.age is int {
+        totalAge = totalAge + s.age   // ✅ s.age 被收窄为 int
+    }
+}
+```
+
+**嵌套字段守卫**：对于嵌套字段（如 `data.inner.count`），需要通过中间变量逐层守卫：
+
+```leno
+var data = {inner: {count: 5}}
+
+// ❌ 不支持直接嵌套字段守卫
+if data.inner.count is int {
+    int n = data.inner.count   // ❌ 仍然是 any
+}
+
+// ✅ 使用中间变量逐层守卫
+if data.inner is Dict {
+    var inner = data.inner
+    if inner.count is int {
+        int count = inner.count   // ✅ 被收窄为 int
+    }
+}
+```
+
+**字段守卫收窄规则：**
+
+| 写法 | 是否收窄 | 说明 |
+|------|---------|------|
+| `if x is int` | ✅ 收窄 `x` | 简单变量守卫 |
+| `if s.age is int` | ✅ 收窄 `s.age` | Dict 字段守卫 |
+| `if s.name is string and s.age is int` | ✅ 同时收窄 | 多字段守卫 |
+| `if data.inner.count is int` | ❌ 不收窄 | 嵌套字段暂不支持 |
+| `if s.age is int or s.name is string` | ❌ 不收窄 | or 条件不收窄 |
+
+#### 类型守卫的无效场景
+
+以下场景中类型守卫**不会**收窄类型：
+
+**1. `is` 表达式赋值给变量后不能收窄：**
+
+```leno
+func test(var b) {
+    var is_int = b is int   // is_int 是 bool 变量
+    if is_int {
+        int n = b           // ❌ 无法收窄，b 仍是 any
+    }
+}
+```
+
+**2. 函数返回的 bool 不能用于收窄：**
+
+```leno
+func check_type(var x):bool {
+    return x is string
+}
+
+func test(var c) {
+    if check_type(c) {
+        string s = c        // ❌ 无法收窄，c 仍是 any
+    }
+}
+```
+
+**3. 闭包内 var 参数保持 any（无守卫时不收窄）：**
+
+```leno
+func test(var x) {
+    func inner() {
+        print(type(x))      // "any"
+        int a = x           // ❌ 错误：无法将 any 赋值给 int
+    }
+    inner()
+}
+test(42)
+```
+
+> **原因**：闭包捕获 `var` 参数时，如果没有类型守卫，`x` 保持 `any` 类型。
+
+#### `is Array` 的特殊行为
+
+`is Array` 匹配**所有数组类型**（包括 `Array[int]`、`Array[string]` 等），但**不会收窄类型**：
+
+```leno
+var arr = [1, 2, 3]      // arr 是 Array[int]
+if arr is Array {         // ✅ 匹配成功
+    arr.add("hello")      // ❌ 错误：期望 int，传入 string
+}
+```
+
+原因：`is Array` 只确认是数组，不确认元素类型，所以保持原类型 `Array[int]`。
+
+**多分支数组类型守卫**（用泛型数组类型收窄）：
+
+```leno
+func process(var arr) {
+    if arr is Array[int] {           // 检查是否为 int 数组
+        arr.add(1)                   // ✅ 可以添加 int
+    } else if arr is Array[string] { // 检查是否为 string 数组
+        arr.add("hello")             // ✅ 可以添加 string
+    } else {
+        print("其他类型")
+    }
+}
+```
+
 ### 三元表达式
 
 使用 `if ... then ... else`：
@@ -1825,6 +1953,118 @@ func fib(var n) {        // n 是 any，但运行时实际是 int
 }
 fib(10)  // 正常工作，返回 55
 ```
+
+### 类型决策流程
+
+写函数时问自己两个问题：
+
+```
+1. 参数类型确定吗？
+   → 确定：写 int/string/Array[int] 等
+   → 不确定：用 var，但内部要处理
+
+2. 返回类型重要吗？
+   → 重要：写 :int/:string
+   → 不重要：省略，但后续需要转换
+```
+
+### 常见错误及修复
+
+#### ❌ 错误 1：var 参数直接赋给具体类型
+
+```leno
+func test(var c) {
+    int a = c    // 报错：any 不能赋给 int
+}
+```
+
+**✅ 修复方案：**
+
+```leno
+// 方案1：显式转换（确保你知道 c 是什么）
+func test(var c) {
+    int a = _int(c)
+}
+
+// 方案2：参数写类型（推荐，安全）
+func test(int c) {
+    int a = c
+}
+```
+
+#### ❌ 错误 2：省略返回类型导致后续麻烦
+
+```leno
+func getValue() {      // 返回 any
+    return 42
+}
+
+int x = getValue()     // ❌ 报错：any 不能赋给 int
+int y = _int(getValue())  // ✅ 每次调用都要转换
+```
+
+**✅ 修复：声明返回类型**
+
+```leno
+func getValue():int {  // 返回 int
+    return 42
+}
+
+int x = getValue()     // ✅ 直接可用
+```
+
+### 最佳实践
+
+**核心原则**：**边界明确，内部简洁**。
+
+- **边界明确**：函数参数、返回类型 = 显式声明（对外接口清晰）
+- **内部简洁**：局部变量 = `var` 推断（代码简洁）
+
+```leno
+// ✅ 最佳实践：函数签名写清楚
+func add(int a, int b):int { return a + b }
+
+// ✅ 内部变量用 var（简洁）
+func process(Array[int] arr):int {
+    var total = 0        // 推断为 int
+    for arr to item {    // item 推断为 int
+        total += item
+    }
+    return total
+}
+
+// ✅ 字典遍历：支持 key, value 双变量（键类型自动推断）
+func process_dict(Dict[string, int] d) {
+    for d to key, value {      // key 推断为 string，value 推断为 int
+        print($"{key}: {value}")
+    }
+}
+```
+
+**for 循环类型推断速查表：**
+
+| 遍历类型 | 变量1类型 | 变量2类型 | 示例 |
+|---------|----------|----------|------|
+| `Array[T]` | `T`（元素） | `int`（索引） | `for arr to item, idx` |
+| `string` | `string`（字符） | `int`（索引） | `for str to char, idx` |
+| `Dict[string, V]` | `string`（键） | `V`（值） | `for dict to key, value` |
+| `Dict[int, V]` | `int`（键） | `V`（值） | `for dict to id, name` |
+| `Dict[any, V]` | `any`（键） | `V`（值） | `for dict to key, value` |
+
+**核心原则总结：**
+
+> **从确定到不确定，必须显式跨过边界**
+>
+> **编译时检查赋值，运行时检查运算**
+>
+> - 赋值：`int x = any_value` ❌ 需要 `_int()` 转换
+> - 运算：`any_value + 1` ✅ 运行时自动处理
+
+| 方向 | 示例 | 是否需要显式处理 |
+| -------- | ----------- | ------------- |
+| 确定 → 确定 | `int → int` | ❌ 不需要 |
+| 确定 → 不确定 | `int → var` | ❌ 不需要 |
+| 不确定 → 确定 | `var → int` | ✅ 需要 `_int()` |
 
 ### 函数作为值
 
@@ -2804,6 +3044,47 @@ print(p.addr.street)    // 朝阳路
 | 字典 | 15 ms | 6031 ms |
 
 **struct 快 2.5 倍**，因为直接字段访问（编译期偏移量）无需运行时查找。
+
+### struct 字段使用空数组/字典默认值
+
+struct 字段可以使用 `[]` 和 `{}` 作为默认值，避免 null 检查：
+
+```leno
+struct Student {
+    string name = ""
+    int age = 0
+    Array[int] scores = []    // ✅ 空数组作为默认值
+}
+
+struct Class {
+    string name = ""
+    Array[Student] students = []    // ✅ 空数组作为默认值
+    Dict[string, string] metadata = {}   // ✅ 空字典作为默认值
+
+    func addStudent(Student s) {
+        students.add(s)     // ✅ 可以直接使用，不需要检查 null
+    }
+
+    func getAverageAge():float {
+        if (students.len() == 0) { return 0.0 }
+        int total = 0
+        for students to s { total = total + s.age }
+        float result = total
+        return result / students.len()
+    }
+}
+```
+
+**重要区别：**
+
+| 写法 | 结果 | 说明 |
+|------|------|------|
+| `Array[int] arr = []` | ✅ 空数组 | 可直接使用 `add()` 等方法 |
+| `Array[int] arr = null` | ⚠️ null | 使用前必须检查 `is null` |
+| `Dict[string, int] d = {}` | ✅ 空字典 | 可直接使用 `set()` 等方法 |
+| `Dict[string, int] d = null` | ⚠️ null | 使用前必须检查 `is null` |
+
+> **建议**：如果字段是需要经常操作的集合类型，使用 `[]` 或 `{}` 作为默认值，避免 null 检查。
 
 ### 为什么 struct 参数不能用 var？
 
@@ -4333,6 +4614,27 @@ arr[0] = "bad"       // ❌ 报错：期望 int
 
 **只读操作**（如 `len()`, `pop()`, `remove()`, `has()`, `copy()`）不影响类型检查。
 
+#### Array 与 Array[any] 的区别
+
+`Array`（无类型参数）和 `Array[any]`（显式 any）**语义不同**：
+
+| 目标类型 | 接受 `Array[int]`? | 接受 `[]`? | 语义 |
+|----------|:---:|:---:|------|
+| `Array` | ✅ | ✅ | "我不关心元素类型，只要是数组就行" |
+| `Array[any]` | ❌ | ✅ | "我要求元素类型是 any" |
+| `Array[int]` | ✅ | ✅ | 相同元素类型 |
+
+```leno
+var arr = [1, 2, 3]        // arr 是 Array[int]
+Array[int] bb = arr        // ✅ 相同类型
+
+Array any_arr = arr        // ✅ 允许：Array 是通配符，接受任何数组
+Array[int] arr2 = []       // ✅ 允许：空数组可以赋值给任何元素类型的 Array
+Array[any] any_arr2 = arr  // ❌ 错误：Array[int] 不能赋给 Array[any]
+```
+
+> **设计意图**：`Array`（裸类型）放弃元素类型信息，接收任意数组用于通用操作（遍历、长度等）；`Array[any]` 是明确要求元素为 any 类型，拒绝具体类型数组以防止类型约束丢失。
+
 ### 数组访问与修改
 
 ```leno
@@ -5692,6 +5994,51 @@ import "myfile.leno" as io       // ❌ 错误：io 是内部模块
 import "myfile.leno" as if       // ❌ 错误：if 是关键字
 import "myfile.leno" as mymod    // ✅ 正确
 ```
+
+### 模块在数组中的类型行为
+
+导入的模块放入数组后，类型会变为 `Dict`，这是**设计上的选择**：
+
+```leno
+import math, string_utils
+
+var modules = [math, string_utils]  // 类型: Array[Dict[string, any]]
+
+// ✅ 直接索引访问 - 正常工作
+modules[0].add(1, 2)           // 可以调用
+modules[1].trim("  hello  ")   // 可以调用
+
+// ❌ 赋值给变量后丢失类型信息
+var m = modules[0]             // 类型: Dict[unknown, unknown]
+m.add(1, 2)                    // 错误：无法识别 add 方法
+
+// ❌ for 循环中同样丢失类型
+for modules to mod {
+    mod.add(1, 2)              // 错误：无法识别 add 方法
+}
+```
+
+**原因**：模块本质上是"名字→值"的字典映射。当模块放入数组时，编译器将其统一处理为 `Dict` 类型，以简化类型系统。直接索引访问时，编译器可以通过上下文推断具体类型；但赋值给变量或遍历时，类型信息丢失。
+
+**解决方案：**
+
+```leno
+// 方案1：直接使用索引（推荐）
+modules[0].add(1, 2)
+
+// 方案2：使用函数数组代替模块数组
+var adders = [math.add, string_utils.pad_start]
+adders[0](1, 2)                // ✅ 正常工作
+
+// 方案3：使用 struct 封装
+struct MathOps {
+    func add: func(int, int):int
+}
+var ops = [new MathOps(add = math.add)]
+ops[0].add(1, 2)               // ✅ 正常工作
+```
+
+> **设计原则**：模块放入数组的场景较少见。如需动态选择模块功能，推荐使用**函数数组**或 **struct 数组**，它们提供更好的类型安全和代码清晰度。
 
 ***
 
