@@ -3078,6 +3078,23 @@ print(chained.value)    // 168
 > var r = cm.maxBy(a, b)  // ✅ 跨模块约束泛型调用
 > ```
 
+> **⚠️ 注意 13：泛型 struct 的方法调用 —— `c.set(99)` 直接生效**
+>
+> 泛型 struct 的方法参数中 `T` 在编译期被解析为 struct 类型（`TYPE_STRUCT "T"`），但语义检查器会识别出它是 struct 的泛型参数名，跳过编译期类型比对，交给运行时处理：
+>
+> ```leno
+> struct Cell[T] {
+>     T value
+>     func set(T v) { self.value = v }
+> }
+>
+> var c1 = new Cell[int](value=42)
+> c1.set(99)              // ✅ runtime: T=int, 99 是 int，正确
+> print(c1.value)          // 99
+> ```
+>
+> 这种设计使得泛型方法在保持编译期解析简单的前提下，在运行时获得正确的类型检查，兼顾了性能和灵活性。
+
 #### 嵌套泛型类型
 
 泛型参数可以是复合类型，如 `Array[int]`、`Dict[string, int]` 等：
