@@ -1,0 +1,68 @@
+// 回归测试：struct 方法内 var 声明应遮蔽同名字段
+// 修复前：value = v 错误赋值给 self.value（输出 99）
+// 修复后：value = v 正确赋值给局部变量（self.value 保持 10）
+
+struct Cell[T] {
+    T value
+    func set1(T v) {
+        var value=1000
+        value = v       // 应赋值给局部 value，非 self.value
+    }
+    func get(): T { return self.value }
+}
+
+// 测试局部遮蔽 + 显式 self 仍可访问
+struct Counter {
+    int count
+    func inc() {
+        var count=999
+        self.count = self.count + 1  // 显式 self 不受遮蔽影响
+    }
+    func val(): int { return self.count }
+}
+
+// 测试无局部遮蔽时，直接写字段名仍转为 self.field
+struct Point {
+    int x
+    int y
+    func move(int dx, int dy) {
+        x = x + dx      // 无遮蔽，x → self.x
+        y = y + dy
+    }
+    func sum(): int { return self.x + self.y }
+}
+
+// 测试遮蔽后 self 赋值独立
+struct Holder {
+    string name
+    func test() {
+        var name = "local"
+        self.name = "hello"
+    }
+    func get_name(): string { return self.name }
+}
+
+main() {
+    // 测试1：set1 不改变 self.value（局部遮蔽）
+    var c1 = new Cell[int](value=10)
+    c1.set1(99)
+    assert(c1.get() == 10)
+
+    // 测试2：局部遮蔽后，显式 self 仍可修改字段
+    var c2 = new Counter(count=0)
+    c2.inc()
+    c2.inc()
+    assert(c2.val() == 2)
+
+    // 测试3：无局部遮蔽时，直接写字段名仍转为 self.field
+    var p = new Point(x=10, y=20)
+    p.move(5, 3)
+    assert(p.sum() == 38)  // 15 + 23 = 38
+
+    // 测试4：遮蔽后 self.name 赋值独立于局部 name
+    var h = new Holder(name="")
+    h.test()
+    assert(h.get_name() == "hello")
+
+    print("test_struct_local_shadow: ALL PASSED")
+}
