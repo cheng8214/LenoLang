@@ -58,10 +58,51 @@
                     snprintf(msg, sizeof(msg), "'%s' 不是 struct 类型", ast->u.struct_init.struct_name);
                     error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                 } else if (sym->struct_type_param_count > 0 && ast->u.struct_init.generic_type_count == 0) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "泛型 struct '%s' 需要类型参数（如 %s[类型]）",
-                             ast->u.struct_init.struct_name, ast->u.struct_init.struct_name);
-                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    // 检查是否有默认类型参数
+                    int found_defaults = 0;
+                    Ast* struct_def_ast = NULL;
+                    if (s->root) {
+                        for (int si = 0; si < s->root->u.block.count; si++) {
+                            Ast* stmt = s->root->u.block.items[si];
+                            if (stmt->kind == AST_STRUCT_DEF &&
+                                stmt->u.struct_def.name &&
+                                strcmp(stmt->u.struct_def.name, ast->u.struct_init.struct_name) == 0) {
+                                struct_def_ast = stmt;
+                                break;
+                            }
+                        }
+                    }
+                    if (struct_def_ast && struct_def_ast->u.struct_def.type_param_defaults) {
+                        found_defaults = 1;
+                        for (int tp = 0; tp < sym->struct_type_param_count; tp++) {
+                            if (!struct_def_ast->u.struct_def.type_param_defaults[tp]) {
+                                found_defaults = 0;
+                                break;
+                            }
+                        }
+                        if (found_defaults) {
+                            ast->u.struct_init.generic_type_count = sym->struct_type_param_count;
+                            ast->u.struct_init.generic_type_args = (TypeInfo**)malloc(
+                                sizeof(TypeInfo*) * sym->struct_type_param_count);
+                            for (int tp = 0; tp < sym->struct_type_param_count; tp++) {
+                                const char* dft = struct_def_ast->u.struct_def.type_param_defaults[tp];
+                                if (strcmp(dft, "int") == 0) ast->u.struct_init.generic_type_args[tp] = type_new(TYPE_INT);
+                                else if (strcmp(dft, "float") == 0) ast->u.struct_init.generic_type_args[tp] = type_new(TYPE_FLOAT);
+                                else if (strcmp(dft, "string") == 0) ast->u.struct_init.generic_type_args[tp] = type_new(TYPE_STRING);
+                                else if (strcmp(dft, "bool") == 0) ast->u.struct_init.generic_type_args[tp] = type_new(TYPE_BOOL);
+                                else {
+                                    ast->u.struct_init.generic_type_args[tp] = type_new(TYPE_STRUCT);
+                                    ast->u.struct_init.generic_type_args[tp]->struct_name = strdup(dft);
+                                }
+                            }
+                        }
+                    }
+                    if (!found_defaults) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "泛型 struct '%s' 需要类型参数（如 %s[类型]）",
+                                 ast->u.struct_init.struct_name, ast->u.struct_init.struct_name);
+                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    }
                 } else {
                     // 检查字段类型
                     for (int i = 0; i < ast->u.struct_init.field_count; i++) {

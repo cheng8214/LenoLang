@@ -202,6 +202,7 @@ struct Ast {
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
             char** type_param_constraints; // 类型参数约束 face 名（如 ["Comparable", NULL]）
+            char** type_param_defaults;    // 类型参数默认值（如 ["int", NULL]），NULL=无默认
             int type_param_count;      // 类型参数数量
         } func;
         Ast* ret;
@@ -260,6 +261,7 @@ struct Ast {
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
             char** type_param_constraints; // 类型参数约束 face 名
+            char** type_param_defaults;    // 类型参数默认值（如 ["int", NULL]）
             int type_param_count;      // 类型参数数量
         } struct_def;
         struct {

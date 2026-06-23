@@ -1838,6 +1838,24 @@ var ops = {
 print(ops["double"](5)) // 10
 ```
 
+#### 泛型匿名函数
+
+匿名函数也支持泛型类型参数，与命名函数语法一致：
+
+```leno
+// 泛型匿名函数
+var id = func[T](T x): T { return x }
+print(id[int](42))        // 42
+print(id[string]("hi"))   // hi
+
+// 多类型参数
+var pair = func[K, V](K k, V v): Pair[K, V] {
+    return new Pair[K, V](key=k, val=v)
+}
+```
+
+> **⚠️ 注意**：泛型匿名函数调用时必须显式指定类型参数（如 `id[int](42)`），编译器不会自动推断匿名函数的类型参数。
+
 ### 泛型函数（Generic Functions）
 
 Leno 支持函数级泛型，通过在函数名后添加 `[T, U, ...]` 声明类型参数：
@@ -6578,6 +6596,7 @@ lenolang program.leno
 | 匿名函数作为参数  | `apply(func(x) { return x * 2 }, 5)`                 |
 | 匿名函数作为返回值 | `return func(x) { return x + n }`                    |
 | 立即执行匿名函数  | `var r = func() { return 100 }()`                    |
+| 泛型匿名函数    | `var id = func[T](T x): T { return x }`              |
 | 闭包（嵌套函数）  | `func outer() { func inner() { ... } return inner }` |
 | 闭包（匿名函数）  | `func outer() { return func() { ... } }`             |
 | 闭包修改外部变量  | 内部函数可以修改外部函数的变量                                      |

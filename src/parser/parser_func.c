@@ -693,22 +693,26 @@ Ast* parse_var_decl_internal(Parser* p) {
 
 // 解析函数体和创建函数定义 AST
 Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
-    // 解析泛型类型参数: func name[T, U](...) 或 func name[T: FaceName](...)
+    // 解析泛型类型参数: func name[T, U](...) 或 func name[T: FaceName = int](...)
     char** type_params = NULL;
     char** type_param_constraints = NULL;
+    char** type_param_defaults = NULL;
     int type_param_count = 0;
     if (p->lex.current.type == TOK_LBRACKET) {
         lexer_next(&p->lex);  // 跳过 '['
         int tp_capacity = 8;
         type_params = (char**)malloc(sizeof(char*) * tp_capacity);
         type_param_constraints = (char**)calloc(tp_capacity, sizeof(char*));
+        type_param_defaults = (char**)calloc(tp_capacity, sizeof(char*));
         
         do {
             if (type_param_count >= tp_capacity) {
                 tp_capacity *= 2;
                 type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
                 type_param_constraints = (char**)realloc(type_param_constraints, sizeof(char*) * tp_capacity);
+                type_param_defaults = (char**)realloc(type_param_defaults, sizeof(char*) * tp_capacity);
                 memset(&type_param_constraints[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
+                memset(&type_param_defaults[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
             }
             if (p->lex.current.type != TOK_IDENT) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
@@ -722,13 +726,24 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
                 lexer_next(&p->lex); // 跳过 ':'
                 if (p->lex.current.type != TOK_IDENT) {
                     error_add(ERR_SYNTAX, p->lex.current.line, "期望约束类型名（face 名称）");
-                    type_param_constraints[type_param_count] = NULL;
                 } else {
                     type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
                 }
-            } else {
-                type_param_constraints[type_param_count] = NULL;
+            }
+            // 解析可选的默认值: T = int
+            if (p->lex.current.type == TOK_EQ) {
+                lexer_next(&p->lex); // 跳过 '='
+                if (p->lex.current.type != TOK_IDENT &&
+                    p->lex.current.type != TOK_INT_TYPE &&
+                    p->lex.current.type != TOK_FLOAT_TYPE &&
+                    p->lex.current.type != TOK_STRING_TYPE &&
+                    p->lex.current.type != TOK_BOOL_TYPE) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "期望默认类型名");
+                } else {
+                    type_param_defaults[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);
+                }
             }
             type_param_count++;
         } while (match(p, TOK_COMMA));
@@ -836,6 +851,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
     ast->u.func.body = body;
     ast->u.func.type_params = type_params;
     ast->u.func.type_param_constraints = type_param_constraints;
+    ast->u.func.type_param_defaults = type_param_defaults;
     ast->u.func.type_param_count = type_param_count;
     
     // 统计有默认值的参数数量
@@ -1204,22 +1220,26 @@ Ast* parse_struct_stmt(Parser* p) {
     char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex);
 
-    // 解析可选的泛型类型参数: struct Name[T, U] { ... } 或 struct Name[T: FaceName]
+    // 解析可选的泛型类型参数: struct Name[T, U] { ... } 或 struct Name[T: FaceName = int]
     char** type_params = NULL;
     char** type_param_constraints = NULL;
+    char** type_param_defaults = NULL;
     int type_param_count = 0;
     if (p->lex.current.type == TOK_LBRACKET) {
         lexer_next(&p->lex);  // 跳过 '['
         int tp_capacity = 8;
         type_params = (char**)malloc(sizeof(char*) * tp_capacity);
         type_param_constraints = (char**)calloc(tp_capacity, sizeof(char*));
+        type_param_defaults = (char**)calloc(tp_capacity, sizeof(char*));
 
         do {
             if (type_param_count >= tp_capacity) {
                 tp_capacity *= 2;
                 type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
                 type_param_constraints = (char**)realloc(type_param_constraints, sizeof(char*) * tp_capacity);
+                type_param_defaults = (char**)realloc(type_param_defaults, sizeof(char*) * tp_capacity);
                 memset(&type_param_constraints[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
+                memset(&type_param_defaults[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
             }
             if (p->lex.current.type != TOK_IDENT) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
@@ -1233,13 +1253,24 @@ Ast* parse_struct_stmt(Parser* p) {
                 lexer_next(&p->lex);
                 if (p->lex.current.type != TOK_IDENT) {
                     error_add(ERR_SYNTAX, p->lex.current.line, "期望约束类型名（face 名称）");
-                    type_param_constraints[type_param_count] = NULL;
                 } else {
                     type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
                 }
-            } else {
-                type_param_constraints[type_param_count] = NULL;
+            }
+            // 解析可选的默认值: T = int
+            if (p->lex.current.type == TOK_EQ) {
+                lexer_next(&p->lex);
+                if (p->lex.current.type != TOK_IDENT &&
+                    p->lex.current.type != TOK_INT_TYPE &&
+                    p->lex.current.type != TOK_FLOAT_TYPE &&
+                    p->lex.current.type != TOK_STRING_TYPE &&
+                    p->lex.current.type != TOK_BOOL_TYPE) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "期望默认类型名");
+                } else {
+                    type_param_defaults[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);
+                }
             }
             type_param_count++;
         } while (match(p, TOK_COMMA));
@@ -1491,6 +1522,7 @@ Ast* parse_struct_stmt(Parser* p) {
     ast->u.struct_def.impl_type_arg_counts = impl_type_arg_counts;
     ast->u.struct_def.type_params = type_params;
     ast->u.struct_def.type_param_constraints = type_param_constraints;
+    ast->u.struct_def.type_param_defaults = type_param_defaults;
     ast->u.struct_def.type_param_count = type_param_count;
 
     return ast;
