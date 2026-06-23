@@ -1736,10 +1736,9 @@ main() {
 > func bad(int x = 10, int y) { }      // ❌ 默认参数不能在必选参数前面
 > func bad2(int x, int y = 3.14) { }   // ❌ float 不能赋给 int（降级）
 >
-> // var 有默认值时推断具体类型
 > func ok(var a, var b = 10) {
->     type(a)   // "any" — 无默认值
->     type(b)   // "int" — 从默认值 10 推断
+>     a         // 编译期 any（无默认值，不推断）
+>     b         // 编译期 int（从默认值 10 推断）
 > }
 > ```
 
