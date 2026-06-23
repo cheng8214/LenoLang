@@ -1,10 +1,41 @@
         case AST_BINOP: {
             visit(s, ast->u.binop.l);
             visit(s, ast->u.binop.r);
-            // 触发类型推断并缓存到 AST 节点，供代码生成器使用
             TypeInfo* binop_type = infer_expr_type(s, ast);
-            if (binop_type) {
-                type_free(binop_type);
+            if (binop_type) { type_free(binop_type); }
+            // 泛型运算符无约束警告
+            {
+                TypeInfo* lt = ast->u.binop.l ? ast->u.binop.l->cached_type : NULL;
+                TypeInfo* rt = ast->u.binop.r ? ast->u.binop.r->cached_type : NULL;
+                if ((lt && lt->kind == TYPE_GENERIC_PARAM) || (rt && rt->kind == TYPE_GENERIC_PARAM)) {
+                    if (s->current_func && s->current_func->u.func.type_param_count > 0) {
+                        int op = ast->u.binop.op;
+                        int is_arith = (op == TOK_PLUS || op == TOK_MINUS || op == TOK_STAR ||
+                                        op == TOK_SLASH || op == TOK_MOD || op == TOK_BITAND ||
+                                        op == TOK_BITOR || op == TOK_BITXOR || op == TOK_SHL ||
+                                        op == TOK_SHR || op == TOK_USHR);
+                        int is_cmp = (op == TOK_LT || op == TOK_GT || op == TOK_LE || op == TOK_GE);
+                        if (is_arith || is_cmp) {
+                            const char* gname = (lt && lt->kind == TYPE_GENERIC_PARAM) ? lt->type_param_name :
+                                                (rt && rt->kind == TYPE_GENERIC_PARAM) ? rt->type_param_name : NULL;
+                            if (gname) {
+                                int has_c = 0;
+                                for (int tp = 0; tp < s->current_func->u.func.type_param_count; tp++) {
+                                    if (s->current_func->u.func.type_params[tp] &&
+                                        strcmp(s->current_func->u.func.type_params[tp], gname) == 0) {
+                                        if (s->current_func->u.func.type_param_constraints &&
+                                            s->current_func->u.func.type_param_constraints[tp]) has_c = 1;
+                                        break;
+                                    }
+                                }
+                                if (!has_c) {
+                                    fprintf(stderr, "[WARN] %s:%d: 泛型参数 '%s' 参与%s运算无约束\n",
+                                        error_get_filename(), ast->line, gname, is_arith ? "算术" : "比较");
+                                }
+                            }
+                        }
+                    }
+                }
             }
             break;
         }

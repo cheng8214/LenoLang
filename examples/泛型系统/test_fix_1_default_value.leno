@@ -1,0 +1,19 @@
+// 测试：泛型 struct 默认值共享 bug 已修复
+print("=== 默认值隔离 ===")
+
+struct Container[T] {
+    Array items = []
+}
+
+var c1 = new Container[int]()
+var c2 = new Container[string]()
+
+c1.items.add(42)
+assert_eq(c1.items.len(), 1)
+assert_eq(c2.items.len(), 0)
+
+c2.items.add("hello")
+assert_eq(c1.items.len(), 1)
+assert_eq(c2.items.len(), 1)
+
+print("PASS")

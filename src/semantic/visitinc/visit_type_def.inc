@@ -337,6 +337,10 @@
 
                 ObjFaceDef* fdef = face_def_new(ast->u.face_def.name, ast->u.face_def.method_count);
                 if (fdef) {
+                    if (ast->u.face_def.type_param_count > 0 && ast->u.face_def.type_params) {
+                        face_def_set_type_params(fdef, ast->u.face_def.type_param_count,
+                            ast->u.face_def.type_params, ast->u.face_def.type_param_constraints);
+                    }
                     for (int i = 0; i < ast->u.face_def.method_count; i++) {
                         fdef->methods[i].name = strdup(ast->u.face_def.method_names[i]);
                         fdef->methods[i].param_count = ast->u.face_def.method_param_counts[i];

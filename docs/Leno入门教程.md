@@ -1842,6 +1842,30 @@ print(ops["double"](5)) // 10
 
 Leno 支持函数级泛型，通过在函数名后添加 `[T, U, ...]` 声明类型参数：
 
+> **💡 类型参数命名**
+>
+> 类型参数名是**任意标识符**，可以自由命名，没有语法限制。常见的命名习惯：
+>
+> | 名称 | 含义 | 示例 |
+> |------|------|------|
+> | `T` | Type（通用类型） | `func id[T](T v): T` |
+> | `U` | 第二个通用类型 | `func map[T, U](Array[T] arr, func(T):U fn): Array[U]` |
+> | `K` | Key（键类型） | `struct Pair[K, V] { K key; V val }` |
+> | `V` | Value（值类型） | `func get[K, V](Dict[K, V] d, K k): V` |
+> | `R` | Return/Result（返回类型） | `func cast[T, R](T v): R` |
+>
+> 你也可以用 `A`、`X`、`Item`、`Element` 等任意名称：
+>
+> ```leno
+> func swap[A, B](A a, B b): Pair[B, A] { return new Pair[B, A](key=b, val=a) }
+>
+> struct List[Item] { Item data; List next }
+>
+> func select[Src, Dst](Src input): Dst { ... }
+> ```
+>
+> **类型参数名只在定义作用域内有效**，不同函数/struct 之间互不影响。
+
 #### 自动推断类型参数
 
 编译器会根据调用时的实参**自动推断**具体类型：
@@ -2110,6 +2134,7 @@ main() {
 > 4. **泛型参数是编译期的**：用 `T` 声明的变量在编译期完成类型替换和检查，运行时无额外开销
 > 5. **编译期校验**：传入未实现约束 face 的类型会在编译期报错，而非运行时
 > 6. **方法引用返回绑定方法**：`item.method` 返回已绑定 `self` 的函数，调用时无需再传 self
+> 7. **运算符约束建议**：无约束的泛型参数用于算术/比较运算时，编译器会输出 stderr 警告（不阻塞编译）。建议使用 `T: FaceName` 约束代替直接运算符，或忽略警告（运行时检查）
 
 
 ### 三种参数模式对比
@@ -3519,6 +3544,26 @@ print(box.compareTo(100))   // -1
 > - 泛型 face 的类型参数在 struct `impl` 时确定具体类型
 > - 方法签名中的泛型参数（如 `T other`）会被替换为 impl 声明中的具体类型
 > - 同一个 face 可以被不同 struct 以不同类型参数实现（如 `impl Comparable[int]`、`impl Comparable[string]`）
+> - **泛型 face 的约束检查完全支持**：`func f[T: Comparable](T a, T b)` 可以约束 T 为实现了 `Comparable` 的类型
+>
+> ```leno
+> face Comparable[T] {
+>     func compareTo(T other): int
+> }
+>
+> struct OrdInt impl Comparable[int] {
+>     int value
+>     func compareTo(int other): int { ... }
+> }
+>
+> func maxBy[T: Comparable](T a, T b): T {
+>     // T: Comparable 约束确保 a 和 b 都实现了 Comparable
+>     return a
+> }
+>
+> var a = new OrdInt(value=10)
+> var r = maxBy(a, a)  // ✅ T=OrdInt, OrdInt impl Comparable[int]
+> ```
 
 ### struct 实现 face
 
