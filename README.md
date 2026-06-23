@@ -359,7 +359,7 @@ root = "lib"
 ## 运行测试
 
 ```bash
-# 使用测试运行器（当前 112 个测试全部通过）
+# 使用测试运行器（当前 113 个测试全部通过）
 build/test_runner build/leno assert
 
 # 使用 CMake

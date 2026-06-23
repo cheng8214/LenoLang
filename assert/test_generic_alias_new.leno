@@ -1,0 +1,29 @@
+// 回归测试：alias 泛型别名 + new 实例化
+// 修复前：alias IntCell = Cell[int] → new IntCell(v=42) 报错"未定义 struct"
+
+struct Cell[T] {
+    T value
+    func get(): T { return self.value }
+}
+
+// 测试1：单参数别名
+alias IntCell = Cell[int]
+var ic = new IntCell(value=42)
+assert(ic.value == 42)
+assert(ic.get() == 42)
+
+// 测试2：多参数别名
+struct Pair[K, V] {
+    K key
+    V val
+}
+alias StrIntPair = Pair[string, int]
+var p = new StrIntPair(key="hello", val=99)
+assert(p.key == "hello")
+assert(p.val == 99)
+
+// 测试3：原始 struct 仍可用
+var c = new Cell[string](value="world")
+assert(c.value == "world")
+
+print("test_generic_alias_new: ALL PASSED")

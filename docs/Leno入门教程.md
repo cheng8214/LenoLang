@@ -326,6 +326,23 @@ func sum(IntList arr):int { ... }     // 参数
 func make_list():IntList { ... }      // 返回类型
 ```
 
+**泛型 struct 别名 + new 实例化**——别名可直接用于 `new`：
+
+```leno
+struct Cell[T] { T value }
+alias IntCell = Cell[int]
+
+var ic = new IntCell(value=42)
+print(ic.value)     // 42
+
+// 多参数泛型别名
+struct Pair[K, V] { K key; V val }
+alias StrIntPair = Pair[string, int]
+
+var p = new StrIntPair(key="name", val=100)
+print(p.key)        // name
+```
+
 **局部别名**——在函数体内定义，作用域限于该函数：
 
 ```leno
