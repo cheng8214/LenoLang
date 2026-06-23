@@ -2712,7 +2712,7 @@ Leno 支持泛型 struct，可以用类型参数定义通用的数据结构：
 
 #### 定义泛型 struct
 
-在 struct 名称后用 `[T]` 声明类型参数：
+在 struct 名称后用 `[T]` 声明类型参数，可以用 `= 类型` 为类型参数设置默认值：
 
 ```leno
 // 单个类型参数
@@ -2725,11 +2725,37 @@ struct Pair[K, V] {
     K key
     V val
 }
+
+// 带默认值的类型参数
+struct Box[T = int] {
+    T value
+}
+
+struct DictWrapper[K = string, V = int] {
+    K key
+    V val
+}
 ```
+
+> **💡 默认类型参数**
+>
+> 当**所有类型参数都有默认值**时，实例化可以省略类型参数：
+>
+> ```leno
+> var b1 = new Box[int](value=42)   // 显式指定
+> var b2 = new Box(value=100)       // 省略，T 默认 int
+> ```
+>
+> 如果**部分参数无默认值**，仍然必须显式指定：
+>
+> ```leno
+> struct Cache[K, V = int] { K key; V val }
+> new Cache[string](key="name", val=1)   // K 必须指定
+> ```
 
 #### 实例化泛型 struct
 
-使用 `new StructName[具体类型](...)` 创建实例，**类型参数不可省略**：
+使用 `new StructName[具体类型](...)` 创建实例，**除非所有类型参数都有默认值，否则不可省略**：
 
 ```leno
 // 用 int 实例化
