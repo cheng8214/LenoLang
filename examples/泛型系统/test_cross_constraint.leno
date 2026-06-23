@@ -1,12 +1,24 @@
 // 跨模块调用带约束泛型函数
+
 import "constraint_module.leno" as cm
+use cm.Comparable
+
+struct OrdInt impl Comparable {
+    int value
+    func compare(Comparable other): int {
+        var o = other as OrdInt
+        if self.value < o.value { return -1 }
+        if self.value > o.value { return 1 }
+        return 0
+    }
+}
 
 main() {
-    var a = new cm.OrdInt(value=10)
-    var b = new cm.OrdInt(value=20)
+    var a = new OrdInt(value=10)
+    var b = new OrdInt(value=20)
     var r = cm.maxBy(a, b)
-    var ri = r as cm.OrdInt
+    var ri = r as OrdInt
     print("max = " + ri.value)
     assert(ri.value == 20)
-    print("test_cross_constraint: OK")
+    print("cross_module constrained generic: OK")
 }

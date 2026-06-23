@@ -2041,6 +2041,8 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
                 } else if (ast->u.export.decl->kind == AST_ENUM_DEF) {
                     // enum 定义在模块中生成
                     gen_enum_module(gen, ast->u.export.decl);
+                } else if (ast->u.export.decl->kind == AST_FACE_DEF) {
+                    gen_stmt(gen, ast->u.export.decl);
                 }
             }
             break;
@@ -2053,6 +2055,9 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
             break;
         case AST_STRUCT_DEF:
             gen_struct_module(gen, ast);
+            break;
+        case AST_FACE_DEF:
+            gen_stmt(gen, ast);  // face 定义在 gen_stmt 中处理
             break;
         case AST_CSTRUCT_DEF:
             gen_stmt(gen, ast);  // cstruct 定义在 gen_stmt 中处理
