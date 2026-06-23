@@ -110,6 +110,38 @@ main() {
 
 ## 变量与类型
 
+### 快速口诀
+
+| 场景 | 推荐 | 口诀 |
+| -- | -------------------------- | ----------- |
+| 变量 | `var x = 值` | "右边有值用 var" |
+| 参数 | `int x` / `Array[int] arr` | "参数写清楚" |
+| 默认参数 | `int y = 10` | "默认值放末尾" |
+| 返回 | `:int` / `:Array[int]` | "返回要声明" |
+
+**⚠️ 重要：`var` 含义完全不同！**
+
+| 场景 | 写法 | 实际类型 | 说明 |
+| -------- | --------------- | ----- | ------------------------- |
+| **变量声明** | `var x = 1` | `int` | ✅ 根据右边推断为具体类型 |
+| **函数参数** | `func f(var x)` | `any` | ⚠️ 参数 `var` 保持 `any`，不推断！ |
+| **函数返回** | `func f()` | `any` | 省略 `:type` 则返回 `any` |
+
+**关键区别**：
+
+- 变量 `var` = **推断模式**：右边是什么，`var` 就是什么
+- 参数 `var` = **动态模式**：永远是 `any`，不根据调用推断
+
+```leno
+var x = 1              // x 是 int（推断）
+func test(var x) {     // x 是 any（不推断！）
+    var y = x          // y 也是 any（因为 x 是 any）
+}
+
+test(1)                // 调用时 x 仍是 any，不会变成 int
+test("hello")          // x 仍然是 any
+```
+
 ### 基本类型
 
 | 类型       | 说明                | 示例                      |
@@ -4241,6 +4273,66 @@ main() {
 > var arr3 = [1, "hello"]       // Array[any]（混合类型，可以添加任何类型）
 > ```
 
+**数组类型推断规则：**
+
+| 数组形式 | 推断类型 | 说明 |
+| -------------------- | ------------ | ----------- |
+| `[]` | `Array` | 空数组，元素类型未指定 |
+| `[1, 2, 3]` | `Array[int]` | 同类型元素数组 |
+| `[1, "hello", true]` | `Array[any]` | 混合类型数组 |
+
+```leno
+// 空数组：类型为 Array（未指定）
+var arr = []
+print(type(arr))    // "Array"
+arr.add(1)          // 添加 int 后变为 Array[int]
+print(type(arr))    // "Array[int]"
+arr.add("hello")    // ❌ 错误：期望 int，传入 string
+
+// 混合类型数组：类型为 Array[any]
+var mixed = [1, "hello", true]
+print(type(mixed))  // "Array[any]"
+mixed.add(42)       // ✅ 可以添加 int
+mixed.add("world")  // ✅ 可以添加 string
+print(type(mixed))  // "Array[any]"（保持 any 类型）
+```
+
+**重要区别**：
+
+- `Array`（空数组）：添加第一个元素后**更新**为具体类型
+- `Array[any]`（混合数组）：保持 `any` 类型，**可以添加任何类型**
+
+**建议**：尽量初始化时就明确元素类型：
+
+```leno
+var arr = [1,2,3]   // ✅ 明确为 Array[int]
+
+// 或者直接声明空数组类型
+Array[int] arr      // ✅ 空的 Array[int]
+Array[int] arr2 = []   // ✅ 等同于上面
+```
+
+**数组类型检查覆盖：**
+
+所有**修改**数组元素的操作都会进行类型检查：
+
+| 操作 | 示例 | 类型检查 |
+| -------- | ------------------ | -------- |
+| `add` | `arr.add(1)` | ✅ 检查元素类型 |
+| `insert` | `arr.insert(0, 1)` | ✅ 检查元素类型 |
+| 索引赋值 | `arr[0] = 1` | ✅ 检查元素类型 |
+
+```leno
+var arr = []
+arr.add(1)           // ✅ 类型变为 Array[int]
+arr.insert(0, 2)     // ✅ 正确
+arr[0] = 3           // ✅ 正确
+arr.add("bad")       // ❌ 报错：期望 int
+arr[0] = "bad"       // ❌ 报错：期望 int
+```
+
+**只读操作**（如 `len()`, `pop()`, `remove()`, `has()`, `copy()`）不影响类型检查。
+
 ### 数组访问与修改
 
 ```leno
@@ -4448,6 +4540,75 @@ main() {
 }
 ```
 
+**字典类型推断规则：**
+
+| 字典形式 | 推断类型 | 说明 |
+| -------- | -------- | ---- |
+| `{}` | `Dict` | 空字典，键/值类型未指定 |
+| `{"a": 1, "b": 2}` | `Dict[string, int]` | 字符串键，同类型值 |
+| `{"a": 1, "b": "hello"}` | `Dict[string, any]` | 字符串键，混合类型值 |
+| `{1: "one", 2: "two"}` | `Dict[int, string]` | 整数键，同类型值 |
+| `{1: 100, "a": 200}` | `Dict[any, int]` | 混合键，同类型值 |
+
+```leno
+// 空字典：类型为 Dict（未指定）
+var dict = {}
+print(type(dict))    // "Dict"
+dict.set("key", 1)   // 添加 string 键后变为 Dict[string, int]
+print(type(dict))    // "Dict[string, int]"
+dict.set("key2", "hello")  // ❌ 错误：期望 int，传入 string
+
+// 混合类型字典：类型为 Dict[string, any]
+var mixed = {"a": 1, "b": "hello", "c": true}
+print(type(mixed))   // "Dict[string, any]"
+mixed.set("d", 42)   // ✅ 可以添加 int
+mixed.set("e", "world")  // ✅ 可以添加 string
+print(type(mixed))   // "Dict[string, any]"（保持 any 类型）
+
+// int 键字典：类型为 Dict[int, string]
+var int_keys = {1: "one", 2: "two"}
+print(type(int_keys))  // "Dict[int, string]"
+int_keys.set(3, "three")   // ✅ 可以添加 int 键
+int_keys.set("4", "four")  // ❌ 错误：期望 int 键，传入 string
+```
+
+**重要区别**：
+
+- `Dict`（空字典）：添加第一个值后**更新**为具体类型
+- `Dict[string, any]`（混合字典）：保持 `any` 类型，**可以添加任何类型值**
+
+**建议**：尽量初始化时就明确键和值类型：
+
+```leno
+var dict = {"a": 1, "b": 2}      // ✅ 明确为 Dict[string, int]
+var id_map = {100: "张三", 200: "李四"}  // ✅ 明确为 Dict[int, string]
+
+// 或者直接声明空字典类型
+Dict[string, int] dict           // ✅ 空的 Dict[string, int]
+Dict[int, string] id_map2 = {}   // ✅ 空的 Dict[int, string]
+```
+
+**字典类型检查覆盖：**
+
+所有**修改**字典值的操作都会进行类型检查：
+
+| 操作 | 示例 | 类型检查 |
+| ---- | ---- | -------- |
+| `set` | `dict.set("key", 1)` | ✅ 检查值类型 |
+| 索引赋值 | `dict["key"] = 1` | ✅ 检查值类型 |
+| 点号赋值 | `dict.key = 1` | ✅ 检查值类型 |
+
+```leno
+var dict = {}
+dict.set("a", 1)     // ✅ 类型变为 Dict[string, int]
+dict["b"] = 2        // ✅ 正确
+dict.c = 3           // ✅ 正确（点号访问）
+dict.set("d", "bad") // ❌ 报错：期望 int
+dict["e"] = "bad"    // ❌ 报错：期望 int
+```
+
+**只读操作**（如 `len()`, `has()`, `keys()`, `copy()`）不影响类型检查。
+
 ### 字典访问与修改
 
 ```leno
@@ -4578,6 +4739,35 @@ main() {
 | 推荐 | - | ✅ 更快更直观 |
 
 > **建议**：优先用 `d["key"] = value`，性能更好且直观。`set()` 主要用于方法引用场景。
+
+### 嵌套类型
+
+数组和字典可以互相嵌套，类型精确推断：
+
+```leno
+// 数组包含字典
+var arrDict = [{"name": "a"}, {"name": "b"}]
+print(type(arrDict))  // Array[Dict[string, string]]
+
+// 字典包含数组
+var dictArr = {"items": [1, 2, 3]}
+print(type(dictArr))  // Dict[string, Array[int]]
+
+// int 键字典包含数组
+var id_items = {1: [10, 20], 2: [30, 40]}
+print(type(id_items))  // Dict[int, Array[int]]
+
+// 深层嵌套字典
+var deep = {"level1": {"level2": {"level3": "value"}}}
+print(type(deep))     // Dict[string, Dict[string, Dict[string, string]]]
+
+// 显式声明嵌套类型
+Dict[string, Dict[string, int]] nested = {
+    level1: {a: 1, b: 2}
+}
+nested.set("level2", {c: 3})     // ✅ 正常
+nested.set("level3", {d: "bad"}) // ❌ 错误：期望 Dict[string, int]
+```
 
 ***
 
