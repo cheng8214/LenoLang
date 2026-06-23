@@ -1761,6 +1761,39 @@ main() {
 | 默认参数 | `int y = 10` | "默认值放末尾" |
 | 返回 | `:int` / `:Array[int]` | "返回要声明" |
 
+**var 参数 vs 具体类型参数：**
+
+| 特性 | 具体类型 | var |
+|------|:---:|:---:|
+| 类型检查 | 编译期 | 运行期 |
+| 字段访问 | ✅ | ❌ |
+| 方法调用 | ✅ | ✅（运行时查找） |
+| 索引访问 | ✅ | ✅ |
+| 比较运算 | ✅ | ✅ |
+
+> 需要访问 struct 字段 → 具体类型。只需打印/比较 → 可用 var。
+
+**`any` 的编译时 vs 运行时：**
+
+`any` 类型的关键区别——**编译时检查赋值，运行时检查运算**：
+
+| 场景 | 代码 | 结果 | 说明 |
+|------|------|:--:|------|
+| `any` 直接运算 | `n - 2` | ✅ | 运行时检查，数值可运算 |
+| `any` 赋给 `int` | `int a = n` | ❌ | 编译时检查，any 不能隐式转 int |
+| `any` 运算后赋给 `int` | `int a = n - 2` | ❌ | 运算结果还是 any |
+| `any` 显式转换后赋值 | `int a = _int(n)` | ✅ | 显式转换通过编译 |
+
+```leno
+func fib(var n) {        // n 是 any，但运行时实际是 int
+    if n <= 1 {          // ✅ 可以比较，运行时检查
+        return n
+    }
+    return fib(n-2) + fib(n-1)  // ✅ 可以算术运算
+}
+fib(10)  // 正常工作，返回 55
+```
+
 ### 函数作为值
 
 Leno 支持函数作为一等公民，可以像普通值一样赋值给变量、传递给参数、作为返回值：
@@ -2750,6 +2783,37 @@ print(p.addr.street)    // 朝阳路
 | `var list` | ❌ | `any` 类型，没有 struct 定义，无法识别 `.head` |
 
 需要访问 struct 字段 → 用**具体类型**参数。只需要打印、比较、索引 → 可以用 `var`。
+
+#### 链表示例
+
+利用 struct 自引用实现完整数据结构：
+
+```leno
+struct Node {
+    int value
+    Node next = null       // 必须 null，否则无限递归
+}
+
+struct LinkedList {
+    Node head = null
+    int count = 0
+}
+
+func list_add(LinkedList list, int value) {
+    var new_node = new Node()
+    new_node.value = value
+    if list.head == null {
+        list.head = new_node
+    } else {
+        var current = list.head
+        while current.next != null { current = current.next }
+        current.next = new_node
+    }
+    list.count = list.count + 1
+}
+
+// ❌ func list_add(var list, int value) — 不行！list.head 无法识别
+```
 
 ### 泛型结构体
 
@@ -4505,6 +4569,15 @@ main() {
 > print(a.name)      // "li"（a 也被修改了）
 > // 需要独立副本请使用 .copy()
 > ```
+
+### `set()` 与 `d[key] = value` 性能对比
+
+| 特性 | `d.set(key, value)` | `d[key] = value` |
+|------|:---:|:---:|
+| 性能（10万次） | ~150ms | **~100ms**（快 1.5 倍） |
+| 推荐 | - | ✅ 更快更直观 |
+
+> **建议**：优先用 `d["key"] = value`，性能更好且直观。`set()` 主要用于方法引用场景。
 
 ***
 
