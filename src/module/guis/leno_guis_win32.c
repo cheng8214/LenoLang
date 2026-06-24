@@ -1752,7 +1752,7 @@ void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatf
     if (!wtext) { SelectObject(ren->back_dc, old_font); return; }
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, wlen);
     RECT rc = { x + ren->vp_x, y + ren->vp_y, ren->width, ren->height };
-    DrawTextW(ren->back_dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_NOCLIP);
+    DrawTextW(ren->back_dc, wtext, -1, &rc, DT_LEFT | DT_TOP);
     free(wtext);
     SelectObject(ren->back_dc, old_font);
 }

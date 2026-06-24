@@ -75,6 +75,21 @@ static void tb_grow(ObjGUITextBox* tb, int need) {
     if (!nb) return;
     tb->text = nb; tb->text_cap = nc;
 }
+/* 保证光标在可见区域内，超出时水平滚动 */
+static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
+    int cx = tc_text_width_to(tb, tb->text, tb->cursor_pos);
+    int visible_w = tb->width - 2 * tb->border_width - 2 * tb->padding_x;
+    if (visible_w < 1) visible_w = 1;
+    if (cx < tb->scroll_x) {
+        tb->scroll_x = cx;
+    } else if (cx > tb->scroll_x + visible_w) {
+        tb->scroll_x = cx - visible_w;
+    }
+    int total_w = tc_text_width_to(tb, tb->text, tb->text_len);
+    if (total_w <= visible_w) tb->scroll_x = 0;
+    else if (tb->scroll_x > total_w - visible_w) tb->scroll_x = total_w - visible_w;
+    if (tb->scroll_x < 0) tb->scroll_x = 0;
+}
 static void tb_del_sel(ObjGUITextBox* tb) {
     if (tb->sel_start < 0 || tb->sel_len <= 0) return;
     int ds = tb->sel_start, dl = tb->sel_len;
@@ -83,6 +98,7 @@ static void tb_del_sel(ObjGUITextBox* tb) {
     memmove(tb->text + ds, tb->text + ds + dl, tb->text_len - ds - dl + 1);
     tb->text_len -= dl; tb->cursor_pos = ds;
     tb->sel_start = -1; tb->sel_len = 0;
+    tb_ensure_cursor_visible(tb);
 }
 static void tb_insert(ObjGUITextBox* tb, const char* s) {
     if (!s || !s[0]) return;
@@ -93,6 +109,7 @@ static void tb_insert(ObjGUITextBox* tb, const char* s) {
     memmove(tb->text + tb->cursor_pos + sl, tb->text + tb->cursor_pos, tb->text_len - tb->cursor_pos + 1);
     memcpy(tb->text + tb->cursor_pos, s, sl);
     tb->text_len += sl; tb->text[tb->text_len] = '\0'; tb->cursor_pos += sl;
+    tb_ensure_cursor_visible(tb);
 }
 static void tb_backspace(ObjGUITextBox* tb) {
     if (!tb || tb->cursor_pos <= 0) return;
@@ -100,6 +117,7 @@ static void tb_backspace(ObjGUITextBox* tb) {
     int ln = tb->cursor_pos - pv;
     memmove(tb->text + pv, tb->text + tb->cursor_pos, tb->text_len - tb->cursor_pos + 1);
     tb->text_len -= ln; tb->cursor_pos = pv;
+    tb_ensure_cursor_visible(tb);
 }
 static void tb_del(ObjGUITextBox* tb) {
     if (!tb || tb->cursor_pos >= tb->text_len) return;
@@ -107,6 +125,7 @@ static void tb_del(ObjGUITextBox* tb) {
     int ln = nx - tb->cursor_pos;
     memmove(tb->text + tb->cursor_pos, tb->text + nx, tb->text_len - nx + 1);
     tb->text_len -= ln;
+    tb_ensure_cursor_visible(tb);
 }
 static int tb_mx2cp(ObjGUITextBox* tb, float mx) {
     int rx = (int)(mx - tb->x - tb->padding_x);
@@ -181,8 +200,17 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
             leno_gui_platform_set_draw_color(r, tb->border_r, tb->border_g, tb->border_b, tb->border_a);
         leno_gui_platform_render_draw_rounded_rect(r, dx, dy, dw, dh, rad);
     }
+    /* 设置裁剪区域为文本框内部，防止文字/光标/选区超出边框 */
+    int clip_x = dx + tb->border_width;
+    int clip_y = dy + tb->border_width;
+    int clip_w = dw - 2 * tb->border_width;
+    int clip_h = dh - 2 * tb->border_width;
+    if (clip_w < 1) clip_w = 1;
+    if (clip_h < 1) clip_h = 1;
+    leno_gui_platform_set_clip_rect(r, clip_x, clip_y, clip_w, clip_h);
+
     /* selection highlight */
-    int tx = dx + tb->padding_x, ty = dy + (dh - tb->font_size) / 2;
+    int tx = dx + tb->padding_x - tb->scroll_x, ty = dy + (dh - tb->font_size) / 2;
     if (tb->focused && tb->sel_start >= 0 && tb->sel_len > 0) {
         int sx = tx + tc_text_width_to(tb, tb->text, tb->sel_start);
         int sw = tc_text_width_to(tb, tb->text + tb->sel_start, tb->sel_len);
@@ -209,6 +237,8 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
         leno_gui_platform_set_draw_color(r, tb->cursor_r, tb->cursor_g, tb->cursor_b, tb->cursor_a);
         leno_gui_platform_render_fill_rect(r, cx, dy + 4, 2, dh - 8);
     }
+
+    leno_gui_platform_disable_clip_rect(r);
 }
 
 void gui_textbox_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren) {
@@ -241,6 +271,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         if (hit) {
             hit->focused = 1; hit->blink_visible = 1; hit->last_blink = leno_gui_platform_get_ticks();
             hit->cursor_pos = tb_mx2cp(hit, ev->mouse_x); hit->sel_start = -1; hit->sel_len = 0;
+            tb_ensure_cursor_visible(hit);
             win->focused_textbox = hit;
             /* 设置 IME 候选窗/合成窗位置为文本框左下角（参考 SDL3） */
             leno_gui_platform_set_ime_caret_pos(hit->x + hit->padding_x, hit->y + hit->height);
@@ -278,13 +309,13 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
             tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
         case LENO_GUI_KEY_LEFT:
             if (ctrl) tb->cursor_pos = 0; else tb->cursor_pos = tc_prev(tb->text, tb->cursor_pos);
-            tb->sel_start = -1; tb->sel_len = 0; return 1;
+            tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
         case LENO_GUI_KEY_RIGHT:
             if (ctrl) tb->cursor_pos = tb->text_len;
             else { tb->cursor_pos = tc_next(tb->text, tb->cursor_pos); if (tb->cursor_pos > tb->text_len) tb->cursor_pos = tb->text_len; }
-            tb->sel_start = -1; tb->sel_len = 0; return 1;
-        case LENO_GUI_KEY_HOME: tb->cursor_pos = 0; tb->sel_start = -1; tb->sel_len = 0; return 1;
-        case LENO_GUI_KEY_END:  tb->cursor_pos = tb->text_len; tb->sel_start = -1; tb->sel_len = 0; return 1;
+            tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
+        case LENO_GUI_KEY_HOME: tb->cursor_pos = 0; tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
+        case LENO_GUI_KEY_END:  tb->cursor_pos = tb->text_len; tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
         case LENO_GUI_KEY_RETURN:
             if (!val_is_null(tb->on_submit)) { call_leno_closure(tb->on_submit, 0, NULL); }
             return 1;
@@ -293,7 +324,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         /* Ctrl shortcuts */
         if (ctrl) {
             switch (ev->key) {
-            case 'A': case 'a': tb->sel_start = 0; tb->sel_len = tb->text_len; tb->cursor_pos = tb->text_len; return 1;
+            case 'A': case 'a': tb->sel_start = 0; tb->sel_len = tb->text_len; tb->cursor_pos = tb->text_len; tb_ensure_cursor_visible(tb); return 1;
             case 'C': case 'c': {
                 if (tb->sel_start >= 0 && tb->sel_len > 0) {
                     char c = tb->text[tb->sel_start + tb->sel_len]; tb->text[tb->sel_start + tb->sel_len] = '\0';

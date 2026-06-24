@@ -973,6 +973,16 @@ void leno_gui_platform_set_clip_rect(LenoGUIPlatformRenderer* ren, int x, int y,
     ren->clip_w = w;
     ren->clip_h = h;
     ren->clip_enabled = 1;
+#ifdef _WIN32
+    if (ren->back_dc) {
+        int cx = x + ren->vp_x, cy = y + ren->vp_y;
+        HRGN rgn = CreateRectRgn(cx, cy, cx + w, cy + h);
+        if (rgn) {
+            SelectClipRgn(ren->back_dc, rgn);
+            DeleteObject(rgn);
+        }
+    }
+#endif
 }
 
 void leno_gui_platform_get_clip_rect(LenoGUIPlatformRenderer* ren, int* x, int* y, int* w, int* h) {
@@ -986,6 +996,11 @@ void leno_gui_platform_get_clip_rect(LenoGUIPlatformRenderer* ren, int* x, int* 
 void leno_gui_platform_disable_clip_rect(LenoGUIPlatformRenderer* ren) {
     if (!ren) return;
     ren->clip_enabled = 0;
+#ifdef _WIN32
+    if (ren->back_dc) {
+        SelectClipRgn(ren->back_dc, NULL);
+    }
+#endif
 }
 
 /* ===== 图像操作 ===== */

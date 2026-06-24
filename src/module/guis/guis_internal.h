@@ -134,6 +134,7 @@ typedef struct ObjGUITextBox {
     int cursor_pos;                /* 光标字节位置 */
     int sel_start;                 /* 选区起始（-1=无选区） */
     int sel_len;                   /* 选区长度 */
+    int scroll_x;                  /* 水平滚动偏移（像素） */
     /* 颜色 */
     int bg_r, bg_g, bg_b, bg_a;
     int border_r, border_g, border_b, border_a;

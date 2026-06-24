@@ -787,6 +787,7 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->cursor_pos = 0;
     tb->sel_start = -1;
     tb->sel_len = 0;
+    tb->scroll_x = 0;
 
     tb->bg_r = bg_r; tb->bg_g = bg_g; tb->bg_b = bg_b; tb->bg_a = bg_a;
     tb->border_r = border_r; tb->border_g = border_g; tb->border_b = border_b; tb->border_a = border_a;
