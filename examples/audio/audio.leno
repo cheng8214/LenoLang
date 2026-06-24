@@ -1,0 +1,331 @@
+// ============================================================
+// Leno Music Player - 音乐播放器
+// 功能: 播放/暂停/停止、进度条、音量控制、时间显示、键盘快捷键
+// ============================================================
+import guis
+import "LenoMusic.leno" as audio
+import times
+import strings
+
+main() {
+
+    // ==================== 音频文件路径 (修改此处切换歌曲) ====================
+    string g_path = "D:/1.flac"
+
+    // ==================== 加载音频 ====================
+    print("正在加载: " + g_path)
+    var s = audio.createSound(g_path)
+    if not s.isInit() {
+        print("X Sound 加载失败: " + g_path)
+        return
+    }
+    print("加载成功!")
+
+    var duration = s.getDuration()
+    var is_playing = false
+    var volume = 0.8
+
+    s.setVolume(volume)
+    s.play()
+    is_playing = true
+
+    // ==================== 创建窗口 ====================
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        center: true,
+        bg_color: _rgb(24, 24, 37, 255),
+        resizable: true,
+        title: "Leno Music Player"
+    }
+    GWin win = guis.create_window("Leno Music Player", w_style)
+
+    // ==================== 加载字体 ====================
+    var font_title  = guis.load_font("Arial", 32)
+    var font_large  = guis.load_font("Arial", 22)
+    var font_medium = guis.load_font("Arial", 16)
+    var font_small  = guis.load_font("Arial", 13)
+
+    // ==================== 控制按钮 ====================
+    // 播放/暂停按钮
+    GButton btn_play = win.add_button({
+        x: 290, y: 420,
+        width: 100, height: 45,
+        text: "Pause",
+        bg_color: _rgb(70, 180, 120, 255),
+        hover_color: _rgb(100, 210, 150, 255),
+        press_color: _rgb(50, 130, 80, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10
+    })
+
+    // 停止按钮
+    GButton btn_stop = win.add_button({
+        x: 410, y: 420,
+        width: 100, height: 45,
+        text: "Stop",
+        bg_color: _rgb(200, 70, 70, 255),
+        hover_color: _rgb(230, 100, 100, 255),
+        press_color: _rgb(150, 40, 40, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 10
+    })
+
+    // 音量减
+    GButton btn_vol_down = win.add_button({
+        x: 180, y: 510,
+        width: 40, height: 32,
+        text: "-",
+        bg_color: _rgb(70, 70, 110, 255),
+        hover_color: _rgb(100, 100, 150, 255),
+        press_color: _rgb(45, 45, 70, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 6
+    })
+
+    // 音量加
+    GButton btn_vol_up = win.add_button({
+        x: 580, y: 510,
+        width: 40, height: 32,
+        text: "+",
+        bg_color: _rgb(70, 70, 110, 255),
+        hover_color: _rgb(100, 100, 150, 255),
+        press_color: _rgb(45, 45, 70, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 6
+    })
+
+    // ==================== 定时器：更新播放状态 ====================
+    var tid = guis.add_timer(100, func(int id, int interval) {
+        if is_playing {
+            if not s.isPlaying() {
+                is_playing = false
+                btn_play.set_text("Play")
+            }
+        }
+        return interval
+    })
+
+    // ==================== 按钮回调 ====================
+    btn_play.on_click(func() {
+        if is_playing {
+            s.stop()
+            is_playing = false
+            btn_play.set_text("Play")
+        } else {
+            s.play()
+            is_playing = true
+            btn_play.set_text("Pause")
+        }
+    })
+
+    btn_stop.on_click(func() {
+        s.stop()
+        s.seek(0.0)
+        is_playing = false
+        btn_play.set_text("Play")
+    })
+
+    btn_vol_down.on_click(func() {
+        volume = volume - 0.1
+        if volume < 0.0 { volume = 0.0 }
+        s.setVolume(volume)
+    })
+
+    btn_vol_up.on_click(func() {
+        volume = volume + 0.1
+        if volume > 1.0 { volume = 1.0 }
+        s.setVolume(volume)
+    })
+
+    // ==================== 提取文件名 ====================
+    func getFileName(string path): string {
+        var normalized = strings.replace(path, "\\", "/")
+        var parts = strings.split(normalized, "/")
+        return parts[parts.len() - 1]
+    }
+
+    // ==================== 格式化时间为 mm:ss ====================
+    func formatTime(float total_sec): string {
+        var t = _int(total_sec)
+        if t < 0 { t = 0 }
+        var min = t / 60
+        var sec = t - (min * 60)
+        var s_str = _str(sec)
+        if sec < 10 { s_str = "0" + _str(sec) }
+        return _str(min) + ":" + s_str
+    }
+
+    // ==================== 主渲染循环 ====================
+    win.run(
+        func(GDraw ren) {
+            // 背景
+            ren.set_color(_rgb(24, 24, 37, 255))
+            ren.clear()
+
+            // ---- 顶部装饰条 ----
+            ren.set_color(_rgb(70, 180, 120, 200))
+            ren.fill_rect(0, 0, 800, 4)
+
+            // ---- 标题 ----
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.draw_text(font_title, "Leno Music Player", 50, 30)
+
+            // ---- 歌曲文件名 ----
+            ren.set_color(_rgb(180, 180, 210, 255))
+            var file_name = getFileName(g_path)
+            ren.draw_text(font_medium, "Song: " + file_name, 50, 85)
+
+            // ---- 时长信息 ----
+            ren.set_color(_rgb(140, 140, 170, 255))
+            ren.draw_text(font_medium, "Duration: " + formatTime(duration), 50, 115)
+
+            // ---- 进度条背景 ----
+            var bar_x = 50
+            var bar_y = 200
+            var bar_w = 700
+            var bar_h = 10
+
+            ren.set_color(_rgb(50, 50, 75, 255))
+            ren.fill_rect(bar_x, bar_y, bar_w, bar_h)
+
+            // ---- 进度条前景 ----
+            var pos = s.getPosition()
+            if pos < 0.0 { pos = 0.0 }
+            if pos > duration { pos = duration }
+            var progress = 0.0
+            if duration > 0.0 { progress = pos / duration }
+            if progress > 1.0 { progress = 1.0 }
+
+            var fill_w = _int(progress * bar_w)
+            ren.set_color(_rgb(70, 180, 120, 255))
+            ren.fill_rect(bar_x, bar_y, fill_w, bar_h)
+
+            // ---- 进度圆点 ----
+            var dot_x = bar_x + fill_w - 4
+            if dot_x < bar_x { dot_x = bar_x }
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.fill_rect(dot_x, bar_y - 3, 8, bar_h + 6)
+
+            // ---- 时间显示 ----
+            ren.set_color(_rgb(220, 220, 240, 255))
+            var time_str = formatTime(pos) + " / " + formatTime(duration)
+            ren.draw_text(font_large, time_str, 50, 240)
+
+            // ---- 播放状态 ----
+            var status_col = _rgb(70, 180, 120, 255)
+            var status_txt = "Playing..."
+            if not is_playing {
+                status_col = _rgb(200, 170, 80, 255)
+                status_txt = "Paused"
+            }
+            ren.set_color(status_col)
+            ren.draw_text(font_large, status_txt, 50, 290)
+
+            // ---- 可视化频谱 (简易) ----
+            var vis_y = 330
+            ren.set_color(_rgb(40, 40, 60, 255))
+            ren.fill_rect(50, vis_y, 700, 50)
+
+            if is_playing {
+                var band_count = 32
+                var band_w = 700 / band_count
+                var j = 0
+                while j < band_count {
+                    var h = (j * 7 + times.ms() / 30) % 45
+                    if h < 5 { h = 5 }
+                    ren.set_color(_rgb(70 + j * 4, 160 + j * 2, 220, 200))
+                    ren.fill_rect(50 + j * band_w + 2, vis_y + 50 - h, band_w - 4, h)
+                    j = j + 1
+                }
+            }
+
+            // ---- 音量条背景 ----
+            var vol_x = 230
+            var vol_y = 518
+            var vol_w = 340
+            var vol_h = 10
+
+            ren.set_color(_rgb(50, 50, 75, 255))
+            ren.fill_rect(vol_x, vol_y, vol_w, vol_h)
+
+            // ---- 音量条前景 ----
+            var vol_fill = _int(volume * vol_w)
+            ren.set_color(_rgb(100, 150, 255, 255))
+            ren.fill_rect(vol_x, vol_y, vol_fill, vol_h)
+
+            // ---- 音量文字 ----
+            ren.set_color(_rgb(200, 200, 220, 255))
+            var vol_pct = _int(volume * 100)
+            ren.draw_text(font_small, "Volume: " + _str(vol_pct) + "%", 50, 513)
+
+            // ---- 快捷键提示 ----
+            ren.set_color(_rgb(90, 90, 120, 255))
+            ren.draw_text(font_small, "Space: Play/Pause  |  S: Stop  |  Left/Right: Seek  |  Up/Down: Volume  |  ESC: Quit", 50, 565)
+        },
+        func(GEvent e) {
+            // 窗口关闭
+            if e.is_window_close() {
+                win.set_should_close(true)
+            }
+            if e.is_key_down() {
+                // ESC - 退出
+                if e.key() == 27 {
+                    win.set_should_close(true)
+                }
+                // Space - 播放/暂停
+                if e.key() == 32 {
+                    if is_playing {
+                        s.stop()
+                        is_playing = false
+                        btn_play.set_text("Play")
+                    } else {
+                        s.play()
+                        is_playing = true
+                        btn_play.set_text("Pause")
+                    }
+                }
+                // S - 停止
+                if e.key() == 83 {
+                    s.stop()
+                    s.seek(0.0)
+                    is_playing = false
+                    btn_play.set_text("Play")
+                }
+                // 左箭头 - 快退
+                if e.key() == 37 {
+                    var new_pos = s.getPosition() - 5.0
+                    if new_pos < 0.0 { new_pos = 0.0 }
+                    s.seek(new_pos)
+                }
+                // 右箭头 - 快进
+                if e.key() == 39 {
+                    var new_pos = s.getPosition() + 5.0
+                    if new_pos > duration { new_pos = duration }
+                    s.seek(new_pos)
+                }
+                // 上箭头 - 音量加
+                if e.key() == 38 {
+                    volume = volume + 0.05
+                    if volume > 1.0 { volume = 1.0 }
+                    s.setVolume(volume)
+                }
+                // 下箭头 - 音量减
+                if e.key() == 40 {
+                    volume = volume - 0.05
+                    if volume < 0.0 { volume = 0.0 }
+                    s.setVolume(volume)
+                }
+            }
+        }
+    )
+
+    // ==================== 清理资源 ====================
+    s.uninit()
+    font_title.close()
+    font_large.close()
+    font_medium.close()
+    font_small.close()
+    win.close()
+    print("Music Player closed.")
+}
