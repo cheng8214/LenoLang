@@ -19,6 +19,10 @@ typedef struct {
     /* 按钮列表 */
     struct ObjGUIButton* buttons;      /* 按钮链表头 */
     int button_count;
+    /* 文本框列表 */
+    struct ObjGUITextBox* textboxes;   /* 文本框链表头 */
+    int textbox_count;
+    struct ObjGUITextBox* focused_textbox; /* 当前焦点文本框 */
 } ObjGUIWindow;
 
 typedef struct {
@@ -115,12 +119,62 @@ typedef struct ObjGUIButton {
     int anchor_margin_y;           /* 锚点垂直边距 */
 } ObjGUIButton;
 
+/* GTextBox 文本框对象 */
+typedef struct ObjGUITextBox {
+    Object header;
+    struct ObjGUITextBox* next;    /* 链表下一个 */
+    ObjGUIWindow* window;          /* 所属窗口 */
+    /* 位置和尺寸 */
+    int x, y, width, height;
+    /* 文字缓冲区 */
+    char* text;                    /* 当前文本内容 */
+    char* placeholder;             /* 占位提示文字 */
+    int text_len;                  /* 文本字节长度 */
+    int text_cap;                  /* 缓冲区容量 */
+    int cursor_pos;                /* 光标字节位置 */
+    int sel_start;                 /* 选区起始（-1=无选区） */
+    int sel_len;                   /* 选区长度 */
+    /* 颜色 */
+    int bg_r, bg_g, bg_b, bg_a;
+    int border_r, border_g, border_b, border_a;
+    int focus_r, focus_g, focus_b, focus_a;
+    int text_r, text_g, text_b, text_a;
+    int placeholder_r, placeholder_g, placeholder_b, placeholder_a;
+    int cursor_r, cursor_g, cursor_b, cursor_a;
+    int sel_r, sel_g, sel_b, sel_a;
+    int border_width;
+    int radius;
+    /* 字体 */
+    char* font_name;
+    int font_size;
+    ObjGUIFont* font;
+    int padding_x, padding_y;
+    /* 状态 */
+    int visible;
+    int enabled;
+    int focused;                   /* 键盘焦点 */
+    int hovered;                   /* 鼠标悬停 */
+    int password;                  /* 密码模式 */
+    int max_length;                /* 最大字符数 (0=无限制) */
+    /* 光标闪烁 */
+    int blink_visible;
+    uint64_t last_blink;
+    /* 锚点布局 */
+    int anchor;
+    int anchor_margin_x;
+    int anchor_margin_y;
+    /* 回调 */
+    Value on_change;               /* 文本改变回调 */
+    Value on_submit;               /* 回车提交回调 */
+} ObjGUITextBox;
+
 /* 辅助函数 */
 ObjGUIWindow* as_window(Value v);
 ObjGUIRenderer* as_renderer(Value v);
 ObjGUIFont* as_font(Value v);
 ObjGUIImage* as_image(Value v);
 ObjGUIButton* as_button(Value v);
+ObjGUITextBox* as_textbox(Value v);
 ObjArray* make_int_array2(int a, int b);
 ObjGUIWindow* as_window_from_platform(LenoGUIPlatformWindow* pw);
 
@@ -163,6 +217,14 @@ void gui_button_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
 int gui_button_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
 void gui_button_free_all(ObjGUIWindow* win);
 void gui_button_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
+
+/* GTextBox 文本框绘制和事件处理 */
+void gui_textbox_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
+int  gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
+void gui_textbox_free_all(ObjGUIWindow* win);
+void gui_textbox_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
+void gui_textbox_register_methods(void);
+extern void guis_init_textbox_instance_methods(void);
 
 /* 文件对话框结果处理（由平台层调用，确保在主线程中执行） */
 void process_filedialog_callback(const char* const* files, int nfiles, int filter_index);

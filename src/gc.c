@@ -309,8 +309,18 @@ void gc_mark_object(Object* obj) {
             if (btn->font) gc_mark_object((Object*)btn->font);
             if (!val_is_null(btn->on_click) && val_is_obj(btn->on_click))
                 gc_mark_object(val_as_obj(btn->on_click));
-            /* 标记链表中下一个按钮 */
             if (btn->next) gc_mark_object((Object*)btn->next);
+            break;
+        }
+        case OBJ_GUI_TEXTBOX: {
+            ObjGUITextBox* tb = (ObjGUITextBox*)obj;
+            if (tb->window) gc_mark_object((Object*)tb->window);
+            if (tb->font) gc_mark_object((Object*)tb->font);
+            if (!val_is_null(tb->on_change) && val_is_obj(tb->on_change))
+                gc_mark_object(val_as_obj(tb->on_change));
+            if (!val_is_null(tb->on_submit) && val_is_obj(tb->on_submit))
+                gc_mark_object(val_as_obj(tb->on_submit));
+            if (tb->next) gc_mark_object((Object*)tb->next);
             break;
         }
         case OBJ_SOCKET:

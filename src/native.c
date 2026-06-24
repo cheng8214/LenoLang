@@ -1427,6 +1427,8 @@ void guis_init_image_instance_methods(void);
 void guis_init_font_instance_methods(void);
 // 前向声明：GButton 实例方法初始化（在 guis_button.c 中定义）
 void guis_init_button_instance_methods(void);
+// 前向声明：GTextBox 实例方法初始化（在 guis_textbox.c 中定义）
+void guis_init_textbox_instance_methods(void);
 // 前向声明：Socket 实例方法初始化（在 sockets.c 中定义）
 void sockets_init_instance_methods(void);
 
@@ -1443,6 +1445,7 @@ void native_register_all_instance_method_metas(void) {
     guis_init_image_instance_methods();
     guis_init_font_instance_methods();
     guis_init_button_instance_methods();
+    guis_init_textbox_instance_methods();
     structs_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
@@ -1463,6 +1466,7 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_IMAGE:  return "gimage";
         case TYPE_FONT:   return "gfont";
         case TYPE_BUTTON: return "gbutton";
+        case TYPE_TEXTBOX: return "gtextbox";
         case TYPE_STYLE:  return "style";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";

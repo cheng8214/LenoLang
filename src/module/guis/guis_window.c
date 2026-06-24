@@ -29,6 +29,8 @@
 #include "guis_internal.h"
 #include <string.h>
 
+#define TEXTBOX_DEFAULT_CAP 256
+
 /* ============================================================================
  * Win 窗口实例方法（win.method() 风格）
  * ============================================================================ */
@@ -678,6 +680,166 @@ static Value win_add_button_func(int argc, Value* args) {
     return val_obj((Object*)btn);
 }
 
+/* win.add_textbox(style) -> GTextBox - 创建文本框并添加到窗口 */
+static Value win_add_textbox_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (!win) return val_null();
+
+    /* 默认值 */
+    int x = 0, y = 0, width = 200, height = 36;
+    int bg_r = 255, bg_g = 255, bg_b = 255, bg_a = 255;
+    int border_r = 180, border_g = 180, border_b = 180, border_a = 255;
+    int focus_r = 70, focus_g = 130, focus_b = 220, focus_a = 255;
+    int text_r = 30, text_g = 30, text_b = 30, text_a = 255;
+    int placeholder_r = 160, placeholder_g = 160, placeholder_b = 160, placeholder_a = 255;
+    int cursor_r = 0, cursor_g = 0, cursor_b = 0, cursor_a = 255;
+    int sel_r = 70, sel_g = 130, sel_b = 220, sel_a = 100;
+    int border_width = 1;
+    int radius = 4;
+    char* font_name = strdup("Consolas");
+    int font_size = 16;
+    int padding_x = 8, padding_y = 4;
+    int max_length = 0;  /* 0=无限制 */
+    int password = 0;
+
+    /* 解析 style 字典 */
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
+        ObjDict* style = (ObjDict*)val_as_obj(args[1]);
+        ObjString* key;
+        Value v;
+
+        key = intern_string("x", 1); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) x = val_as_int(v);
+        key = intern_string("y", 1); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) y = val_as_int(v);
+        key = intern_string("width", 5); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) width = val_as_int(v);
+        key = intern_string("height", 6); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) height = val_as_int(v);
+
+        key = intern_string("bg_color", 8); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            bg_r = rgb->r; bg_g = rgb->g; bg_b = rgb->b; bg_a = rgb->a;
+        }
+        key = intern_string("border_color", 12); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            border_r = rgb->r; border_g = rgb->g; border_b = rgb->b; border_a = rgb->a;
+        }
+        key = intern_string("focus_color", 11); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            focus_r = rgb->r; focus_g = rgb->g; focus_b = rgb->b; focus_a = rgb->a;
+        }
+        key = intern_string("text_color", 10); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            text_r = rgb->r; text_g = rgb->g; text_b = rgb->b; text_a = rgb->a;
+        }
+
+        key = intern_string("placeholder", 11); v = dict_get(style, val_obj((Object*)key));
+        /* placeholder 在下面单独处理 */
+
+        key = intern_string("font", 4); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            free(font_name);
+            font_name = strdup(((ObjString*)val_as_obj(v))->chars);
+        }
+        key = intern_string("font_size", 9); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) font_size = val_as_int(v);
+        key = intern_string("padding_x", 9); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) padding_x = val_as_int(v);
+        key = intern_string("padding_y", 9); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) padding_y = val_as_int(v);
+        key = intern_string("border_width", 12); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) border_width = val_as_int(v);
+        key = intern_string("radius", 6); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) radius = val_as_int(v);
+        key = intern_string("max_length", 10); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) max_length = val_as_int(v);
+        key = intern_string("password", 8); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) password = val_as_bool(v) ? 1 : 0;
+    }
+
+    /* 创建文本框对象 */
+    ObjGUITextBox* tb = (ObjGUITextBox*)gc_alloc(sizeof(ObjGUITextBox), OBJ_GUI_TEXTBOX);
+    if (!tb) { free(font_name); return val_null(); }
+
+    tb->window = win;
+    tb->next = NULL;
+    tb->x = x; tb->y = y; tb->width = width; tb->height = height;
+    tb->text = (char*)malloc(TEXTBOX_DEFAULT_CAP);
+    tb->text[0] = '\0';
+    tb->text_len = 0;
+    tb->text_cap = TEXTBOX_DEFAULT_CAP;
+    tb->placeholder = NULL;
+    /* 解析 placeholder */
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
+        ObjDict* style = (ObjDict*)val_as_obj(args[1]);
+        ObjString* key = intern_string("placeholder", 11);
+        Value v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+            tb->placeholder = strdup(((ObjString*)val_as_obj(v))->chars);
+        }
+    }
+    tb->cursor_pos = 0;
+    tb->sel_start = -1;
+    tb->sel_len = 0;
+
+    tb->bg_r = bg_r; tb->bg_g = bg_g; tb->bg_b = bg_b; tb->bg_a = bg_a;
+    tb->border_r = border_r; tb->border_g = border_g; tb->border_b = border_b; tb->border_a = border_a;
+    tb->focus_r = focus_r; tb->focus_g = focus_g; tb->focus_b = focus_b; tb->focus_a = focus_a;
+    tb->text_r = text_r; tb->text_g = text_g; tb->text_b = text_b; tb->text_a = text_a;
+    tb->placeholder_r = placeholder_r; tb->placeholder_g = placeholder_g; tb->placeholder_b = placeholder_b; tb->placeholder_a = placeholder_a;
+    tb->cursor_r = cursor_r; tb->cursor_g = cursor_g; tb->cursor_b = cursor_b; tb->cursor_a = cursor_a;
+    tb->sel_r = sel_r; tb->sel_g = sel_g; tb->sel_b = sel_b; tb->sel_a = sel_a;
+    tb->border_width = border_width;
+    tb->radius = radius;
+    tb->font_name = font_name;
+    tb->font_size = font_size;
+    tb->font = NULL;
+    tb->padding_x = padding_x;
+    tb->padding_y = padding_y;
+    tb->visible = 1;
+    tb->enabled = 1;
+    tb->focused = 0;
+    tb->hovered = 0;
+    tb->password = password;
+    tb->max_length = max_length;
+    tb->blink_visible = 0;
+    tb->last_blink = 0;
+    tb->anchor = 0;
+    tb->anchor_margin_x = 0;
+    tb->anchor_margin_y = 0;
+    tb->on_change = val_null();
+    tb->on_submit = val_null();
+
+    /* 加载字体 */
+    LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);
+    if (pf) {
+        ObjGUIFont* font_obj = (ObjGUIFont*)gc_alloc(sizeof(ObjGUIFont), OBJ_GUI_FONT);
+        if (font_obj) { font_obj->platform = pf; tb->font = font_obj; }
+        else { leno_gui_platform_destroy_font(pf); }
+    }
+
+    gc_write_barrier_obj((Object*)tb, (Object*)win);
+
+    /* 添加到窗口的文本框链表 */
+    tb->next = win->textboxes;
+    win->textboxes = tb;
+    win->textbox_count++;
+
+    if (tb->anchor > 0 && win->platform) {
+        int ww, wh;
+        leno_gui_platform_get_window_size(win->platform, &ww, &wh);
+        gui_textbox_update_anchors(win, ww, wh);
+    }
+
+    return val_obj((Object*)tb);
+}
+
 /* ============================================================================
  * 注册 Win 实例方法
  * ============================================================================ */
@@ -734,4 +896,7 @@ void guis_init_window_instance_methods(void) {
     /* win.add_button(style) -> GButton */
     TypeKind dict_1[] = {TYPE_DICT};
     window_register_method_with_params("add_button", make_native(win_add_button_func, 2, "add_button"), 1, -1, -1, TYPE_BUTTON, TYPE_UNKNOWN, dict_1);
+
+    /* win.add_textbox(style) -> GTextBox */
+    window_register_method_with_params("add_textbox", make_native(win_add_textbox_func, 2, "add_textbox"), 1, -1, -1, TYPE_TEXTBOX, TYPE_UNKNOWN, dict_1);
 }
