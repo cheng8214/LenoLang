@@ -260,7 +260,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
     if (!win || !ev) return 0;
     ObjGUITextBox* tb;
 
-    /* mouse down: set focus */
+    /* mouse down: set focus / start drag selection */
     if (ev->type == LENO_GUI_EVT_MOUSE_DOWN && ev->mouse_button == LENO_GUI_MOUSE_LEFT) {
         if (win->focused_textbox) { win->focused_textbox->focused = 0; win->focused_textbox->blink_visible = 0; }
         tb = win->textboxes; ObjGUITextBox* hit = NULL;
@@ -270,7 +270,17 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         }
         if (hit) {
             hit->focused = 1; hit->blink_visible = 1; hit->last_blink = leno_gui_platform_get_ticks();
-            hit->cursor_pos = tb_mx2cp(hit, ev->mouse_x); hit->sel_start = -1; hit->sel_len = 0;
+            int cp = tb_mx2cp(hit, ev->mouse_x);
+            if (ev->mod_flags & LENO_GUI_MOD_SHIFT) {
+                /* Shift+点击：从当前光标位置扩展到点击位置 */
+                int start = hit->cursor_pos < cp ? hit->cursor_pos : cp;
+                int end = hit->cursor_pos < cp ? cp : hit->cursor_pos;
+                hit->sel_start = start; hit->sel_len = end - start; hit->cursor_pos = cp;
+                hit->dragging = 0;
+            } else {
+                hit->cursor_pos = cp; hit->sel_start = -1; hit->sel_len = 0;
+                hit->dragging = 1; hit->drag_start_cp = cp;
+            }
             tb_ensure_cursor_visible(hit);
             win->focused_textbox = hit;
             /* 设置 IME 候选窗/合成窗位置为文本框左下角（参考 SDL3） */
@@ -285,8 +295,25 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
     if (ev->type == LENO_GUI_EVT_MOUSE_MOVE) {
         tb = win->textboxes;
         while (tb) { tb->hovered = tbox_hit(tb, ev->mouse_x, ev->mouse_y); tb = tb->next; }
+        if (win->focused_textbox && win->focused_textbox->dragging) {
+            ObjGUITextBox* dtb = win->focused_textbox;
+            int cp = tb_mx2cp(dtb, ev->mouse_x);
+            if (cp < dtb->drag_start_cp) {
+                dtb->sel_start = cp; dtb->sel_len = dtb->drag_start_cp - cp; dtb->cursor_pos = cp;
+            } else {
+                dtb->sel_start = dtb->drag_start_cp; dtb->sel_len = cp - dtb->drag_start_cp; dtb->cursor_pos = cp;
+            }
+            tb_ensure_cursor_visible(dtb);
+            return 1;
+        }
+        return 0;
+    }
+
+    /* mouse up: end drag selection */
+    if (ev->type == LENO_GUI_EVT_MOUSE_UP && ev->mouse_button == LENO_GUI_MOUSE_LEFT) {
         if (win->focused_textbox) {
-            /* drag selection could go here */
+            win->focused_textbox->dragging = 0;
+            return 1;
         }
         return 0;
     }

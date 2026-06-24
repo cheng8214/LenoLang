@@ -135,6 +135,8 @@ typedef struct ObjGUITextBox {
     int sel_start;                 /* 选区起始（-1=无选区） */
     int sel_len;                   /* 选区长度 */
     int scroll_x;                  /* 水平滚动偏移（像素） */
+    int dragging;                  /* 鼠标拖拽选择中 */
+    int drag_start_cp;             /* 拖拽起始光标字节位置 */
     /* 颜色 */
     int bg_r, bg_g, bg_b, bg_a;
     int border_r, border_g, border_b, border_a;
