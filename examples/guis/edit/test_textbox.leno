@@ -14,7 +14,7 @@ main() {
         bg_color: _rgb(28, 28, 44, 255), resizable: true
     }
     var win = guis.create_window("GTextBox 测试", w_style)
-    GFont font = guis.load_font("Consolas", 16)
+    GFont font = guis.load_font("Microsoft YaHei", 16)
 
     // 普通文本框
     GTextBox tb1 = win.add_textbox({
@@ -25,7 +25,7 @@ main() {
         focus_color: _rgb(70,130,220,255),
         text_color: _rgb(30,30,30,255),
         radius: 6, border_width: 1,
-        font: "Consolas", font_size: 15, padding_x: 10
+        font: "Microsoft YaHei", font_size: 15, padding_x: 10
     })
     tb1.on_change(func() { print("用户名已改变") })
     tb1.on_submit(func() { print("用户名已提交!") })
@@ -40,7 +40,7 @@ main() {
         focus_color: _rgb(70,130,220,255),
         text_color: _rgb(30,30,30,255),
         radius: 6, border_width: 1,
-        font: "Consolas", font_size: 15, padding_x: 10
+        font: "Microsoft YaHei", font_size: 15, padding_x: 10
     })
     tb2.on_change(func() { print("密码已改变") })
     tb2.on_submit(func() { print("密码已提交!") })
@@ -50,7 +50,7 @@ main() {
         x: 0, y: 0, width: 220, height: 34,
         placeholder: "右下角锚点",
         radius: 4, border_width: 1,
-        font: "Consolas", font_size: 13, padding_x: 8
+        font: "Microsoft YaHei", font_size: 13, padding_x: 8
     })
     tb3.set_anchor(4, 10, 10)
 

@@ -1196,6 +1196,10 @@ int leno_gui_platform_is_text_input_active(void) {
     return g_linux_text_input_active;
 }
 
+void leno_gui_platform_set_ime_caret_pos(int x, int y) {
+    (void)x; (void)y;
+}
+
 /* 查询鼠标状态：位置和按钮（使用 XQueryPointer，参考 SDL_x11mouse.c） */
 int leno_gui_platform_get_mouse_state(int* x, int* y, int* buttons) {
     if (!g_display) {

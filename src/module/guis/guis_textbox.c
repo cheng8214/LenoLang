@@ -41,21 +41,27 @@ static int tc_next(const char* s, int bp) {
     if (!s || bp < 0) return bp;
     return bp + tc_blen((unsigned char)s[bp]);
 }
-static int tc_bytetochar(const char* s, int bp) {
-    int cc = 0, p = 0; if (!s) return 0;
-    while (p < bp && s[p]) { cc++; p = tc_next(s, p); } return cc;
-}
-static int tc_chartobyte(const char* s, int ci) {
-    int p = 0, i = 0; if (!s) return 0;
-    while (s[p] && i < ci) { p = tc_next(s, p); i++; } return p;
-}
 
 /* ===== Helpers ===== */
 ObjGUITextBox* as_textbox(Value v) {
     if (!val_is_obj(v)) return NULL;
     return (ObjGUITextBox*)val_as_obj(v);
 }
-static int tc_cw(ObjGUITextBox* tb) { return (tb->font_size * 6) / 10; }
+/* 单个 UTF-8 字符宽度：ASCII 半角，CJK 全角 */
+static int tc_char_width(ObjGUITextBox* tb, const char* s, int bp) {
+    unsigned char c = (unsigned char)s[bp];
+    if (c < 0x80) return (tb->font_size * 6) / 10;
+    return tb->font_size;
+}
+/* 计算从开头到字节位置 bp 的像素宽度 */
+static int tc_text_width_to(ObjGUITextBox* tb, const char* s, int bp) {
+    int x = 0, p = 0;
+    while (s[p] && p < bp) {
+        x += tc_char_width(tb, s, p);
+        p = tc_next(s, p);
+    }
+    return x;
+}
 static int tbox_hit(ObjGUITextBox* tb, float mx, float my) {
     return mx >= tb->x && mx <= tb->x + tb->width &&
            my >= tb->y && my <= tb->y + tb->height;
@@ -104,10 +110,15 @@ static void tb_del(ObjGUITextBox* tb) {
 }
 static int tb_mx2cp(ObjGUITextBox* tb, float mx) {
     int rx = (int)(mx - tb->x - tb->padding_x);
-    int cw = tc_cw(tb); if (cw <= 0) cw = 1;
-    int ci = rx / cw; if (ci < 0) ci = 0;
-    int tc = tc_strlen(tb->text); if (ci > tc) ci = tc;
-    return tc_chartobyte(tb->text, ci);
+    if (rx <= 0) return 0;
+    int p = 0, x = 0;
+    while (tb->text[p]) {
+        int cw = tc_char_width(tb, tb->text, p);
+        if (x + cw / 2 >= rx) return p;
+        x += cw;
+        p = tc_next(tb->text, p);
+    }
+    return tb->text_len;
 }
 
 /* ===== Instance methods ===== */
@@ -171,10 +182,10 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
         leno_gui_platform_render_draw_rounded_rect(r, dx, dy, dw, dh, rad);
     }
     /* selection highlight */
-    int tx = dx + tb->padding_x, ty = dy + (dh - tb->font_size) / 2, cw = tc_cw(tb);
+    int tx = dx + tb->padding_x, ty = dy + (dh - tb->font_size) / 2;
     if (tb->focused && tb->sel_start >= 0 && tb->sel_len > 0) {
-        int sx = tx + tc_bytetochar(tb->text, tb->sel_start) * cw;
-        int sw = tc_bytetochar(tb->text + tb->sel_start, tb->sel_len) * cw;
+        int sx = tx + tc_text_width_to(tb, tb->text, tb->sel_start);
+        int sw = tc_text_width_to(tb, tb->text + tb->sel_start, tb->sel_len);
         leno_gui_platform_set_draw_color(r, tb->sel_r, tb->sel_g, tb->sel_b, tb->sel_a);
         leno_gui_platform_render_fill_rect(r, sx, dy + 2, sw, dh - 4);
     }
@@ -194,7 +205,7 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
     }
     /* cursor */
     if (tb->focused && tb->blink_visible) {
-        int cx = tx + tc_bytetochar(tb->text, tb->cursor_pos) * cw;
+        int cx = tx + tc_text_width_to(tb, tb->text, tb->cursor_pos);
         leno_gui_platform_set_draw_color(r, tb->cursor_r, tb->cursor_g, tb->cursor_b, tb->cursor_a);
         leno_gui_platform_render_fill_rect(r, cx, dy + 4, 2, dh - 8);
     }
@@ -230,7 +241,11 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         if (hit) {
             hit->focused = 1; hit->blink_visible = 1; hit->last_blink = leno_gui_platform_get_ticks();
             hit->cursor_pos = tb_mx2cp(hit, ev->mouse_x); hit->sel_start = -1; hit->sel_len = 0;
-            win->focused_textbox = hit; leno_gui_platform_start_text_input(); return 1;
+            win->focused_textbox = hit;
+            /* 设置 IME 候选窗/合成窗位置为文本框左下角（参考 SDL3） */
+            leno_gui_platform_set_ime_caret_pos(hit->x + hit->padding_x, hit->y + hit->height);
+            leno_gui_platform_start_text_input();
+            return 1;
         }
         win->focused_textbox = NULL; leno_gui_platform_stop_text_input(); return 0;
     }
@@ -309,8 +324,9 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
 
     /* text input */
     if (ev->type == LENO_GUI_EVT_TEXT_INPUT && ev->text[0]) {
-        if (ev->text[0] == '\r' || ev->text[0] == '\n') return 1; /* handled by KEY_RETURN */
-        if (ev->text[0] >= 0x20) {
+        unsigned char c0 = (unsigned char)ev->text[0];
+        if (c0 == '\r' || c0 == '\n') return 1; /* handled by KEY_RETURN */
+        if (c0 >= 0x20) {
             tb_insert(tb, ev->text);
             if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
             tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks();

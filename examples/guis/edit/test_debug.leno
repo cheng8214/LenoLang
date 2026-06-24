@@ -1,0 +1,45 @@
+import guis
+
+main() {
+    print("=== 渲染诊断 ===")
+
+    Style[window] w_style = {
+        width: 500, height: 300, center: true,
+        bg_color: _rgb(40, 40, 40, 255)
+    }
+    var win = guis.create_window("诊断", w_style)
+    GFont font = guis.load_font("Microsoft YaHei", 24)
+
+    GTextBox tb = win.add_textbox({
+        x: 50, y: 60, width: 380, height: 50,
+        placeholder: "输入文字...",
+        bg_color: _rgb(255, 255, 255, 255),
+        text_color: _rgb(255, 0, 0, 255),
+        border_color: _rgb(0, 255, 0, 255),
+        border_width: 3,
+        radius: 0,
+        font: "Microsoft YaHei",
+        font_size: 24,
+        padding_x: 10
+    })
+
+    tb.on_change(func() {
+        print("[change] text_len should be > 0")
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(40, 40, 40, 255))
+            ren.clear()
+            // 画一个白色方块在文本框位置上方做参照
+            ren.set_color(_rgb(255, 255, 0, 100))
+            ren.fill_rect(50, 55, 380, 60)
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}

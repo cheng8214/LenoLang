@@ -11,6 +11,7 @@
 #ifdef _WIN32
 
 #include <windows.h>
+#include <imm.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -289,6 +290,14 @@ struct LenoGUIPlatformImage {
 /* ===== 文本输入控制（参考 SDL_StartTextInput） ===== */
 static int g_text_input_active = 0;
 
+/* ===== IME 状态（参考 SDL3 Windows IME） ===== */
+static int g_ime_composing = 0;
+static int g_ime_caret_x = 0;
+static int g_ime_caret_y = 0;
+#define IME_RESULT_BUF 16
+static WCHAR g_ime_result_chars[IME_RESULT_BUF] = { 0 };
+static int g_ime_result_count = 0;
+
 /* ===== 窗口类注册 ===== */
 
 static const wchar_t* LENO_GUI_CLASS = L"LenoGUIWindow";
@@ -549,24 +558,94 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             return 0;
         }
         case WM_CHAR: {
-            /* 使用 WideCharToMultiByte 将 UTF-16 转为 UTF-8（参考 SDL3） */
-            LenoGUIEvent ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = LENO_GUI_EVT_TEXT_INPUT;
-            ev.timestamp = GetTickCount64();
-            ev.window_id = win ? win->window_id : 0;
-            if (wparam >= 0x20 || wparam == '\t' || wparam == '\r' || wparam == '\n') {
-                WCHAR wc = (WCHAR)wparam;
-                int len = WideCharToMultiByte(CP_UTF8, 0, &wc, 1, ev.text, sizeof(ev.text) - 1, NULL, NULL);
-                if (len > 0) {
-                    ev.text[len] = '\0';
-                } else {
-                    ev.text[0] = '\0';
+            /* 参考 SDL3：IME 合成期间由 WM_IME_COMPOSITION/GCS_RESULTSTR 负责输入，
+               忽略 WM_CHAR 避免重复或插入拼音字符 */
+            if (g_ime_composing) {
+                return 0;
+            }
+            /* 抑制 IME 确认结果后紧跟的重复 WM_CHAR（微软拼音等会再发一次） */
+            if (g_ime_result_count > 0) {
+                int i;
+                for (i = 0; i < g_ime_result_count; i++) {
+                    if (g_ime_result_chars[i] == (WCHAR)wparam) {
+                        g_ime_result_chars[i] = g_ime_result_chars[--g_ime_result_count];
+                        return 0;
+                    }
                 }
             }
-            event_queue_push(&ev);
+            /* 非合成字符输入：英文、数字、符号等 */
+            if (wparam >= 0x20 || wparam == '\t') {
+                LenoGUIEvent ev;
+                memset(&ev, 0, sizeof(ev));
+                ev.type = LENO_GUI_EVT_TEXT_INPUT;
+                ev.timestamp = GetTickCount64();
+                ev.window_id = win ? win->window_id : 0;
+                WCHAR wc = (WCHAR)wparam;
+                int len = WideCharToMultiByte(CP_UTF8, 0, &wc, 1, ev.text, sizeof(ev.text) - 1, NULL, NULL);
+                ev.text[len > 0 ? len : 0] = '\0';
+                event_queue_push(&ev);
+            }
             return 0;
         }
+        /* ===== IME 中文输入法支持（参考 SDL3）===== */
+        case WM_IME_SETCONTEXT:
+            /* 当前未实现自绘候选窗，保留系统默认 IME UI 以便用户看到输入法 */
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        case WM_IME_STARTCOMPOSITION: {
+            g_ime_composing = 1;
+            HIMC himc = ImmGetContext(hwnd);
+            if (himc) {
+                COMPOSITIONFORM cf;
+                memset(&cf, 0, sizeof(cf));
+                cf.dwStyle = CFS_POINT;
+                cf.ptCurrentPos.x = g_ime_caret_x;
+                cf.ptCurrentPos.y = g_ime_caret_y;
+                ImmSetCompositionWindow(himc, &cf);
+                ImmReleaseContext(hwnd, himc);
+            }
+            break;
+        }
+        case WM_IME_COMPOSITION: {
+            HIMC himc = ImmGetContext(hwnd);
+            if (!himc) break;
+            /* GCS_RESULTSTR：输入法已确认的最终中文字符串 */
+            if (wparam & GCS_RESULTSTR) {
+                LONG len = ImmGetCompositionStringW(himc, GCS_RESULTSTR, NULL, 0);
+                if (len > 0) {
+                    int nchars = len / sizeof(WCHAR);
+                    WCHAR* wstr = (WCHAR*)malloc((nchars + 1) * sizeof(WCHAR));
+                    if (wstr) {
+                        LONG got = ImmGetCompositionStringW(himc, GCS_RESULTSTR, wstr, len);
+                        if (got == len) {
+                            wstr[nchars] = L'\0';
+                            /* 记录 IME 结果字符，用于抑制紧跟的重复 WM_CHAR */
+                            g_ime_result_count = 0;
+                            int k;
+                            for (k = 0; k < nchars && k < IME_RESULT_BUF; k++) {
+                                g_ime_result_chars[g_ime_result_count++] = wstr[k];
+                            }
+                            LenoGUIEvent ev;
+                            memset(&ev, 0, sizeof(ev));
+                            ev.type = LENO_GUI_EVT_TEXT_INPUT;
+                            ev.timestamp = GetTickCount64();
+                            ev.window_id = win ? win->window_id : 0;
+                            int ul = WideCharToMultiByte(CP_UTF8, 0, wstr, -1,
+                                ev.text, sizeof(ev.text) - 1, NULL, NULL);
+                            if (ul > 0) {
+                                ev.text[ul - 1] = '\0';
+                                event_queue_push(&ev);
+                            }
+                        }
+                        free(wstr);
+                    }
+                }
+            }
+            ImmReleaseContext(hwnd, himc);
+            break;
+        }
+        case WM_IME_ENDCOMPOSITION:
+            g_ime_composing = 0;
+            break;
         case WM_MOUSEMOVE: {
             float x = (float)(short)LOWORD(lparam);
             float y = (float)(short)HIWORD(lparam);
@@ -726,12 +805,14 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
                     SetCursor(g_system_cursors[g_current_system_cursor]);
                     return TRUE;
                 }
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
             }
             return DefWindowProcW(hwnd, msg, wparam, lparam);
         }
         default:
             return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 /* ===== DIB Section 创建 ===== */
@@ -1500,6 +1581,19 @@ int leno_gui_platform_is_key_released(int key) {
 
 void leno_gui_platform_start_text_input(void) {
     g_text_input_active = 1;
+    /* 参考 SDL3：显式关联默认 IME 上下文到当前焦点窗口，确保 IME 可接收输入 */
+    HWND hwnd = GetForegroundWindow();
+    if (hwnd) {
+        HIMC himc = ImmGetContext(hwnd);
+        if (!himc) {
+            himc = ImmCreateContext();
+            if (himc) {
+                ImmAssociateContext(hwnd, himc);
+            }
+        } else {
+            ImmReleaseContext(hwnd, himc);
+        }
+    }
 }
 
 void leno_gui_platform_stop_text_input(void) {
@@ -1508,6 +1602,11 @@ void leno_gui_platform_stop_text_input(void) {
 
 int leno_gui_platform_is_text_input_active(void) {
     return g_text_input_active;
+}
+
+void leno_gui_platform_set_ime_caret_pos(int x, int y) {
+    g_ime_caret_x = x;
+    g_ime_caret_y = y;
 }
 
 /* 查询鼠标状态：位置和按钮 */
@@ -1612,23 +1711,23 @@ struct LenoGUIPlatformFont {
 
 LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size) {
     if (size <= 0) size = 16;
-    int wsize = MultiByteToWideChar(CP_UTF8, 0, name, -1, NULL, 0);
-    wchar_t* wname = (wchar_t*)malloc(wsize * sizeof(wchar_t));
-    if (!wname) return NULL;
-    MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, wsize);
-    HFONT hfont = CreateFontW(
-        -size, 0,
-        0, 0,
-        FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE,
-        wname
-    );
-    free(wname);
-    if (!hfont) return NULL;
+    HFONT hfont = NULL;
+    /* 尝试列表：用户指定的 → 系统备选 */
+    const char* fallbacks[] = { name, "Consolas", "Arial", "Segoe UI", NULL };
+    for (int i = 0; fallbacks[i] && !hfont; i++) {
+        int wsize = MultiByteToWideChar(CP_UTF8, 0, fallbacks[i], -1, NULL, 0);
+        if (wsize <= 0) continue;
+        wchar_t* wname = (wchar_t*)malloc(wsize * sizeof(wchar_t));
+        if (!wname) continue;
+        MultiByteToWideChar(CP_UTF8, 0, fallbacks[i], -1, wname, wsize);
+        hfont = CreateFontW(
+            -size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, wname
+        );
+        free(wname);
+    }
+    if (!hfont) { fprintf(stderr, "[FONT] FAIL: %s (size %d)\n", name, size); return NULL; }
     LenoGUIPlatformFont* font = (LenoGUIPlatformFont*)calloc(1, sizeof(LenoGUIPlatformFont));
     if (!font) { DeleteObject(hfont); return NULL; }
     font->hfont = hfont;

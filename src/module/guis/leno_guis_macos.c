@@ -1127,6 +1127,10 @@ int leno_gui_platform_is_text_input_active(void) {
     return g_macos_text_input_active;
 }
 
+void leno_gui_platform_set_ime_caret_pos(int x, int y) {
+    (void)x; (void)y;
+}
+
 /* ===== 剪贴板（参考 SDL3 SDL_cocoaclipboard.m） ===== */
 
 /* 获取剪贴板文本内容（使用 NSPasteboard） */

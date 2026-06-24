@@ -316,6 +316,7 @@ int    leno_gui_platform_is_key_released(int key);
 void   leno_gui_platform_start_text_input(void);
 void   leno_gui_platform_stop_text_input(void);
 int    leno_gui_platform_is_text_input_active(void);
+void   leno_gui_platform_set_ime_caret_pos(int x, int y);
 
 /* ===== 剪贴板（参考 SDL_GetClipboardText / SDL_SetClipboardText） ===== */
 char*  leno_gui_platform_get_clipboard_text(void);

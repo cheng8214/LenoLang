@@ -697,7 +697,7 @@ static Value win_add_textbox_func(int argc, Value* args) {
     int sel_r = 70, sel_g = 130, sel_b = 220, sel_a = 100;
     int border_width = 1;
     int radius = 4;
-    char* font_name = strdup("Consolas");
+    char* font_name = strdup("Microsoft YaHei");  /* 默认支持中文 */
     int font_size = 16;
     int padding_x = 8, padding_y = 4;
     int max_length = 0;  /* 0=无限制 */
@@ -822,6 +822,8 @@ static Value win_add_textbox_func(int argc, Value* args) {
         ObjGUIFont* font_obj = (ObjGUIFont*)gc_alloc(sizeof(ObjGUIFont), OBJ_GUI_FONT);
         if (font_obj) { font_obj->platform = pf; tb->font = font_obj; }
         else { leno_gui_platform_destroy_font(pf); }
+    } else {
+        fprintf(stderr, "[TEXTBOX] font load failed: '%s' %d\n", font_name, font_size);
     }
 
     gc_write_barrier_obj((Object*)tb, (Object*)win);
