@@ -308,6 +308,51 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
 
 // 获取类型转换建议
 // 根据期望类型和实际类型，返回转换建议字符串
+// 简单编辑距离（Levenshtein），用于拼写建议
+static int levenshtein(const char* a, const char* b) {
+    int la = (int)strlen(a), lb = (int)strlen(b);
+    if (la > 50 || lb > 50) return 999;
+    int d[51][51];
+    for (int i = 0; i <= la; i++) d[i][0] = i;
+    for (int j = 0; j <= lb; j++) d[0][j] = j;
+    for (int i = 1; i <= la; i++)
+        for (int j = 1; j <= lb; j++)
+            d[i][j] = (a[i-1] == b[j-1]) ? d[i-1][j-1]
+                     : 1 + ((d[i-1][j] < d[i][j-1]) ?
+                        (d[i-1][j] < d[i-1][j-1] ? d[i-1][j] : d[i-1][j-1]) :
+                        (d[i][j-1] < d[i-1][j-1] ? d[i][j-1] : d[i-1][j-1]));
+    return d[la][lb];
+}
+
+// 在当前作用域查找最相似的变量名，返回提示字符串（静态缓冲区）
+const char* get_similar_name_hint(Scope* scope, const char* name) {
+    static char hint[256];
+    hint[0] = '\0';
+    if (!scope || !name || !name[0]) return hint;
+
+    const char* best = NULL;
+    int best_dist = 3;  // 最多允许 3 个编辑距离
+
+    for (Scope* s = scope; s; s = s->parent) {
+        for (int i = 0; i < s->sym_cnt; i++) {
+            Symbol* sym = s->syms[i];
+            if (!sym || !sym->name) continue;
+            int dist = levenshtein(name, sym->name);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = sym->name;
+                if (dist == 0) break;
+            }
+        }
+        if (best_dist == 0) break;
+    }
+
+    if (best && strcmp(best, name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  \xf0\x9f\x92\xa1 提示: 是否想输入 '%s'？", best);
+    }
+    return hint;
+}
+
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
     // any 转具体类型
     if (actual == TYPE_ANY) {

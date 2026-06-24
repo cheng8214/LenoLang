@@ -406,6 +406,11 @@
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "%s.%s 参数数量不匹配: 期望 %d, 实际 %d",
                                  actual_module, ast->u.module_call.method_name, expected_arity, actual_arity);
+                        if (strcmp(ast->u.module_call.method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2) {
+                            strncat(msg, "\n  \xf0\x9f\x92\xa1 提示: .map() 会传递 (item, index) 两个参数，\n"
+                                    "     函数签名需加第二个参数，如 func compress(string w, int _): string",
+                                    sizeof(msg) - strlen(msg) - 1);
+                        }
                         error_add(ERR_SEMANTIC, ast->line, msg);
                     }
                     // arity < 0: 可变参数，检查是否少于 min_arity
@@ -786,6 +791,11 @@
                                             char msg[BUFFER_MEDIUM];
                                             snprintf(msg, sizeof(msg), "方法 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
                                                      method_name, method_param_count, actual_arity);
+                                            if (strcmp(method_name, "map") == 0 && actual_arity == 1 && method_param_count == 2) {
+                                                strncat(msg, "\n  \xf0\x9f\x92\xa1 提示: .map() 会传递 (item, index) 两个参数，\n"
+                                                        "     函数签名需加第二个参数，如 func compress(string w, int _): string",
+                                                        sizeof(msg) - strlen(msg) - 1);
+                                            }
                                             error_add(ERR_SEMANTIC, ast->line, msg);
                                         } else {
                                             // 构建泛型参数替换表（包含 struct 的泛型参数和方法的泛型参数）
@@ -1261,6 +1271,8 @@
                 } else {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.module_access.module_name);
+                    const char* hint = get_similar_name_hint(s->current, ast->u.module_access.module_name);
+                    if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
                     error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                 }
                 if (var_sym && var_sym->type) {

@@ -232,6 +232,8 @@
             if (!sym) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.var.name);
+                const char* hint = get_similar_name_hint(s->current, ast->u.var.name);
+                if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
                 error_add(ERR_UNDEFINED_VAR, ast->line, msg);
             } else if (sym->is_initialized == 2) {
                 // 变量正在初始化中，不允许引用自身
@@ -315,6 +317,8 @@
                     if (!sym) {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.assign.names[i]);
+                        const char* hint = get_similar_name_hint(s->current, ast->u.assign.names[i]);
+                        if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
                         error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                     } else {
                         ast->u.assign.refs[i].type_kind = sym->type ? sym->type->kind : TYPE_ANY;
@@ -389,6 +393,8 @@
                 } else {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.compound_assign.name);
+                    const char* hint = get_similar_name_hint(s->current, ast->u.compound_assign.name);
+                    if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
                     error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                 }
             } else {

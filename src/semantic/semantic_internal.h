@@ -67,6 +67,7 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
 
 // 获取类型转换建议
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual);
+const char* get_similar_name_hint(Scope* scope, const char* name);
 
 // 生成详细的类型错误信息（包含转换建议）
 void format_detailed_type_error(char* buf, size_t buf_size,
