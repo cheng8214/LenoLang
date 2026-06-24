@@ -136,6 +136,40 @@ static Value btn_set_opacity_func(int argc, Value* args) {
     return val_null();
 }
 
+/* btn.set_anchor(anchor, margin_x, margin_y) - 设置锚点布局 */
+/* anchor: 0=无, 1=左上, 2=右上, 3=左下, 4=右下, 5=居中, 6=上中, 7=下中 */
+static Value btn_set_anchor_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIButton* btn = as_button(args[0]);
+    if (!btn) return val_null();
+    btn->anchor = val_as_int(args[1]);
+    btn->anchor_margin_x = val_as_int(args[2]);
+    btn->anchor_margin_y = val_as_int(args[3]);
+    return val_null();
+}
+
+/* 根据锚点重新计算按钮位置（窗口 resize 时调用） */
+void gui_button_update_anchors(ObjGUIWindow* win, int win_w, int win_h) {
+    if (!win) return;
+    ObjGUIButton* btn = (ObjGUIButton*)win->buttons;
+    while (btn) {
+        if (btn->anchor > 0) {
+            int mx = btn->anchor_margin_x;
+            int my = btn->anchor_margin_y;
+            switch (btn->anchor) {
+                case 1: /* 左上 */     btn->x = mx; btn->y = my; break;
+                case 2: /* 右上 */     btn->x = win_w - btn->width - mx; btn->y = my; break;
+                case 3: /* 左下 */     btn->x = mx; btn->y = win_h - btn->height - my; break;
+                case 4: /* 右下 */     btn->x = win_w - btn->width - mx; btn->y = win_h - btn->height - my; break;
+                case 5: /* 居中 */     btn->x = (win_w - btn->width) / 2; btn->y = (win_h - btn->height) / 2; break;
+                case 6: /* 上中 */     btn->x = (win_w - btn->width) / 2; btn->y = my; break;
+                case 7: /* 下中 */     btn->x = (win_w - btn->width) / 2; btn->y = win_h - btn->height - my; break;
+            }
+        }
+        btn = btn->next;
+    }
+}
+
 /* btn.on_click(callback) - 设置点击回调 */
 static Value btn_on_click_func(int argc, Value* args) {
     (void)argc;
@@ -593,4 +627,8 @@ void guis_init_button_instance_methods(void) {
     button_register_method_with_params("set_opacity", make_native(btn_set_opacity_func, 2, "set_opacity"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
     button_register_method_with_params("on_click", make_native(btn_on_click_func, 2, "on_click"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
     button_register_method_with_params("close", make_native(btn_close_func, 1, "close"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+
+    /* 锚点布局 */
+    TypeKind anchor_params[] = {TYPE_INT, TYPE_INT, TYPE_INT};  /* anchor, margin_x, margin_y */
+    button_register_method_with_params("set_anchor", make_native(btn_set_anchor_func, 4, "set_anchor"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, anchor_params);
 }

@@ -639,6 +639,9 @@ static Value win_add_button_func(int argc, Value* args) {
     btn->cursor = cursor;
     btn->press_effect = press_effect;
     btn->press_offset = press_offset;
+    btn->anchor = 0;
+    btn->anchor_margin_x = 0;
+    btn->anchor_margin_y = 0;
     btn->visible = 1;
     btn->enabled = 1;
     btn->hovered = 0;
@@ -665,6 +668,12 @@ static Value win_add_button_func(int argc, Value* args) {
     btn->next = (struct ObjGUIButton*)win->buttons;
     win->buttons = btn;
     win->button_count++;
+    /* 有锚点时计算初始位置 */
+    if (btn->anchor > 0 && win->platform) {
+        int ww, wh;
+        leno_gui_platform_get_window_size(win->platform, &ww, &wh);
+        gui_button_update_anchors(win, ww, wh);
+    }
 
     return val_obj((Object*)btn);
 }

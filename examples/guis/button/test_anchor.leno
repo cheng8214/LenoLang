@@ -1,0 +1,141 @@
+// ============================================================
+// GButton 锚点布局测试
+// 锚点值: 0=无 1=左上 2=右上 3=左下 4=右下 5=居中 6=上中 7=下中
+// 拖动窗口边框缩放 → 按钮自动跟随锚点重新定位
+// ============================================================
+
+import guis
+
+main() {
+    print("=== GButton 锚点布局测试 ===")
+    print("拖动窗口边框缩放，观察按钮是否跟随锚点移动")
+
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        center: true,
+        bg_color: _rgb(25, 25, 40, 255),
+        resizable: true
+    }
+    var win = guis.create_window("GButton 锚点布局 - 缩放窗口看效果", w_style)
+
+    GFont font = guis.load_font("Consolas", 16)
+
+    // ---------- 四角锚点 ----------
+    // 左上
+    GButton btn_tl = win.add_button({
+        x: 0, y: 0, width: 140, height: 40,
+        text: "左上 (anchor=1)",
+        bg_color: _rgb(70, 130, 180, 255),
+        hover_color: _rgb(100, 160, 210, 255),
+        press_color: _rgb(50, 100, 150, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+    btn_tl.set_anchor(1, 10, 10)  // 左上角，距边 10px
+
+    // 右上
+    GButton btn_tr = win.add_button({
+        x: 0, y: 0, width: 140, height: 40,
+        text: "右上 (anchor=2)",
+        bg_color: _rgb(180, 70, 70, 255),
+        hover_color: _rgb(210, 100, 100, 255),
+        press_color: _rgb(150, 50, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+    btn_tr.set_anchor(2, 10, 10)  // 右上角
+
+    // 左下
+    GButton btn_bl = win.add_button({
+        x: 0, y: 0, width: 140, height: 40,
+        text: "左下 (anchor=3)",
+        bg_color: _rgb(70, 180, 70, 255),
+        hover_color: _rgb(100, 210, 100, 255),
+        press_color: _rgb(50, 150, 50, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+    btn_bl.set_anchor(3, 10, 10)  // 左下角
+
+    // 右下
+    GButton btn_br = win.add_button({
+        x: 0, y: 0, width: 140, height: 40,
+        text: "右下 (anchor=4)",
+        bg_color: _rgb(180, 160, 50, 255),
+        hover_color: _rgb(210, 190, 80, 255),
+        press_color: _rgb(150, 130, 30, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+    btn_br.set_anchor(4, 10, 10)  // 右下角
+
+    // ---------- 中间锚点 ----------
+    // 居中
+    GButton btn_center = win.add_button({
+        x: 0, y: 0, width: 160, height: 50,
+        text: "居中 (anchor=5)",
+        bg_color: _rgb(120, 60, 180, 255),
+        hover_color: _rgb(150, 90, 210, 255),
+        press_color: _rgb(90, 40, 140, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 12
+    })
+    btn_center.set_anchor(5, 0, 0)  // 窗口正中央
+
+    // 上中
+    GButton btn_top = win.add_button({
+        x: 0, y: 0, width: 160, height: 40,
+        text: "上中 (anchor=6)",
+        bg_color: _rgb(50, 150, 200, 255),
+        hover_color: _rgb(80, 180, 230, 255),
+        press_color: _rgb(30, 120, 170, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+    btn_top.set_anchor(6, 0, 60)  // 顶部居中，距顶 60px
+
+    // 下中
+    GButton btn_bot = win.add_button({
+        x: 0, y: 0, width: 160, height: 40,
+        text: "下中 (anchor=7)",
+        bg_color: _rgb(200, 100, 50, 255),
+        hover_color: _rgb(230, 130, 80, 255),
+        press_color: _rgb(170, 70, 30, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        radius: 8
+    })
+    btn_bot.set_anchor(7, 0, 10)  // 底部居中
+
+    // 点击回调
+    btn_tl.on_click(func() { print("左上被点击!") })
+    btn_tr.on_click(func() { print("右上被点击!") })
+    btn_bl.on_click(func() { print("左下被点击!") })
+    btn_br.on_click(func() { print("右下被点击!") })
+    btn_center.on_click(func() { print("居中按钮被点击!") })
+    btn_top.on_click(func() { print("上中按钮被点击!") })
+    btn_bot.on_click(func() { print("下中按钮被点击!") })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(25, 25, 40, 255))
+            ren.clear()
+
+            // 中央提示文字
+            if font != null {
+                ren.set_color(_rgb(100, 200, 100, 200))
+                ren.draw_text(font, "← 拖动窗口边框缩放 →", 240, 280)
+                ren.set_color(_rgb(150, 150, 150, 150))
+                ren.draw_text(font, "按钮应该跟随锚点自动调整位置", 210, 310)
+            }
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+
+    print("锚点测试结束")
+}

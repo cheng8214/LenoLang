@@ -1148,8 +1148,11 @@ static void leno_gui_render_callback(void* user_data) {
         }
     }
 
-    /* 自动绘制窗口上的所有按钮 */
+    /* 自动更新锚点布局 + 绘制窗口上的所有按钮 */
     if (win) {
+        int ww, wh;
+        leno_gui_platform_get_window_size(win->platform, &ww, &wh);
+        gui_button_update_anchors(win, ww, wh);
         gui_button_draw_all(win, state->ren_obj);
     }
 

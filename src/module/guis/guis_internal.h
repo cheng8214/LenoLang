@@ -109,6 +109,10 @@ typedef struct ObjGUIButton {
     int focused;                   /* 是否获得焦点 */
     /* 回调 */
     Value on_click;                /* 点击回调闭包 */
+    /* 锚点布局: 0=无, 1=左上, 2=右上, 3=左下, 4=右下, 5=中, 6=上中, 7=下中 */
+    int anchor;
+    int anchor_margin_x;           /* 锚点水平边距 */
+    int anchor_margin_y;           /* 锚点垂直边距 */
 } ObjGUIButton;
 
 /* 辅助函数 */
@@ -158,6 +162,7 @@ Value call_leno_closure(Value callee, int arg_count, Value* args);
 void gui_button_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
 int gui_button_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
 void gui_button_free_all(ObjGUIWindow* win);
+void gui_button_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
 
 /* 文件对话框结果处理（由平台层调用，确保在主线程中执行） */
 void process_filedialog_callback(const char* const* files, int nfiles, int filter_index);
