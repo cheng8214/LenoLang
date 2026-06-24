@@ -67,6 +67,24 @@ static Value gui_image_draw_rotated_func(int argc, Value* args) {
     return val_null();
 }
 
+/* image.draw_src_flipped(ren, sx, sy, sw, sh, dx, dy, dw, dh) - 水平翻转 */
+static Value gui_image_draw_src_flipped_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIImage* tex = as_image(args[0]);
+    ObjGUIRenderer* ren = as_renderer(args[1]);
+    if (!ren || !ren->platform || !tex || !tex->platform) return val_null();
+    int sx = val_as_int(args[2]);
+    int sy = val_as_int(args[3]);
+    int sw = val_as_int(args[4]);
+    int sh = val_as_int(args[5]);
+    int dx = val_as_int(args[6]);
+    int dy = val_as_int(args[7]);
+    int dw = val_as_int(args[8]);
+    int dh = val_as_int(args[9]);
+    leno_gui_platform_render_image_src_flipped(ren->platform, tex->platform, sx, sy, sw, sh, dx, dy, dw, dh);
+    return val_null();
+}
+
 /* image.width() -> int */
 static Value gui_image_width_func(int argc, Value* args) {
     (void)argc;
@@ -232,6 +250,10 @@ void guis_init_image_instance_methods(void) {
     /* image.draw_rotated_scaled(ren, x, y, w, h, angle) */
     TypeKind draw_rotated_scaled_params[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_ANY};
     image_register_method_with_params("draw_rotated_scaled", make_native(gui_image_draw_rotated_scaled_func, 7, "draw_rotated_scaled"), 6, -1, -1, TYPE_NULL, TYPE_UNKNOWN, draw_rotated_scaled_params);
+
+    /* image.draw_src_flipped(ren, sx, sy, sw, sh, dx, dy, dw, dh) - 水平翻转 */
+    TypeKind draw_src_flipped_params[] = {TYPE_ANY, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT};
+    image_register_method_with_params("draw_src_flipped", make_native(gui_image_draw_src_flipped_func, 10, "draw_src_flipped"), 9, -1, -1, TYPE_NULL, TYPE_UNKNOWN, draw_src_flipped_params);
 
     /* image.close() */
     image_register_method_with_params("close", make_native(gui_image_close_func, 1, "close"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);

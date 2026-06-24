@@ -245,6 +245,8 @@ void   leno_gui_platform_destroy_image(LenoGUIPlatformImage* tex);
 void   leno_gui_platform_render_image(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex, int x, int y);
 void   leno_gui_platform_render_image_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                              int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh);
+void   leno_gui_platform_render_image_src_flipped(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
+                                             int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh);
 void   leno_gui_platform_render_image_rotated(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                                   int x, int y, double angle, int flip);
 void   leno_gui_platform_render_image_rotated_src(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,

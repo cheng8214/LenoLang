@@ -2,11 +2,19 @@
  * miniaudio DLL 包装器 v2 — heap-allocated handles for multi-instance support
  * 编译: gcc -shared -o miniaudio.dll miniaudio_dll.c -O2 -lwinmm -lole32 -lksuser
  */
+#define STB_VORBIS_NO_INTEGER_CONVERSION   /* 避免与 windows.h 的 PLAYBACK_* 冲突 */
+#include "stb_vorbis.c"
+
+#ifndef STB_VORBIS_INCLUDE_STB_VORBIS_H
+#define STB_VORBIS_INCLUDE_STB_VORBIS_H     /* 确保 miniaudio 启用 Vorbis */
+#endif
+
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 #include <math.h>
 
 #ifdef _WIN32
+    #include <windows.h>
     #define DLLEXPORT __declspec(dllexport)
 #else
     #define DLLEXPORT __attribute__((visibility("default")))
@@ -26,9 +34,31 @@ DLLEXPORT unsigned int ma_dll_get_version(void) {
     return (MA_VERSION_MAJOR << 16) | (MA_VERSION_MINOR << 8) | MA_VERSION_REVISION;
 }
 
+DLLEXPORT int ma_dll_has_vorbis(void) {
+#ifdef MA_HAS_VORBIS
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 /* ==================== Engine (单例 + 引用计数 — 多 Sound 共享) ==================== */
 static ma_engine g_engine;
 static int g_engine_ref = 0;
+
+/* 安全退出钩子 — DLL 卸载前停止引擎线程，防止访问已卸载代码崩溃 */
+#ifdef _WIN32
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
+    if (fdwReason == DLL_PROCESS_DETACH) {
+        if (g_engine_ref > 0) {
+            ma_engine_stop(&g_engine);
+            ma_engine_uninit(&g_engine);
+            g_engine_ref = 0;
+        }
+    }
+    return TRUE;
+}
+#endif
 
 DLLEXPORT int ma_dll_engine_init(void) {
     if (g_engine_ref > 0) { g_engine_ref++; return 0; }
@@ -40,7 +70,10 @@ DLLEXPORT int ma_dll_engine_init(void) {
 DLLEXPORT void ma_dll_engine_uninit(void) {
     if (g_engine_ref <= 0) return;
     g_engine_ref--;
-    if (g_engine_ref == 0) { ma_engine_uninit(&g_engine); }
+    if (g_engine_ref == 0) {
+        ma_engine_stop(&g_engine);   // 必须先停止引擎
+        ma_engine_uninit(&g_engine);
+    }
 }
 
 DLLEXPORT unsigned int ma_dll_engine_get_sample_rate(void) { return g_engine_ref ? ma_engine_get_sample_rate(&g_engine) : 0; }
@@ -66,7 +99,7 @@ DLLEXPORT SoundHandle* ma_dll_sound_create(const char* path) {
     if (!h) return NULL;
     h->sound = (ma_sound*)malloc(sizeof(ma_sound));
     if (!h->sound) { free(h); return NULL; }
-    if (ma_sound_init_from_file(&g_engine, path, 0, NULL, NULL, h->sound) != MA_SUCCESS) {
+    if (ma_sound_init_from_file(&g_engine, path, MA_SOUND_FLAG_DECODE, NULL, NULL, h->sound) != MA_SUCCESS) {
         free(h->sound); free(h); return NULL;
     }
     h->owned = 1;
@@ -75,47 +108,53 @@ DLLEXPORT SoundHandle* ma_dll_sound_create(const char* path) {
 
 DLLEXPORT void ma_dll_sound_destroy(SoundHandle* h) {
     if (!h) return;
-    if (h->owned && h->sound) { ma_sound_uninit(h->sound); free(h->sound); }
+    if (h->owned && h->sound) {
+        if (g_engine_ref > 0) {
+            ma_sound_stop(h->sound);    // 先停止再释放
+            ma_sound_uninit(h->sound);
+        }
+        free(h->sound);
+    }
     free(h);
 }
 
 DLLEXPORT int ma_dll_sound_start(SoundHandle* h) {
-    if (!h || !h->sound) return -1;
+    if (!h || !h->sound || g_engine_ref <= 0) return -1;
     return ma_sound_start(h->sound) == MA_SUCCESS ? 0 : -1;
 }
 
 DLLEXPORT int ma_dll_sound_stop(SoundHandle* h) {
-    if (!h || !h->sound) return -1;
+    if (!h || !h->sound || g_engine_ref <= 0) return -1;
     return ma_sound_stop(h->sound) == MA_SUCCESS ? 0 : -1;
 }
 
 DLLEXPORT int ma_dll_sound_is_playing(SoundHandle* h) {
-    if (!h || !h->sound) return 0;
+    if (!h || !h->sound || g_engine_ref <= 0) return 0;
     return ma_sound_is_playing(h->sound) ? 1 : 0;
 }
 
 DLLEXPORT void ma_dll_sound_set_volume(SoundHandle* h, double v) {
-    if (h && h->sound) ma_sound_set_volume(h->sound, (float)v);
+    if (h && h->sound && g_engine_ref > 0) ma_sound_set_volume(h->sound, (float)v);
 }
 
 DLLEXPORT double ma_dll_sound_get_volume(SoundHandle* h) {
-    if (!h || !h->sound) return 0.0;
+    if (!h || !h->sound || g_engine_ref <= 0) return 0.0;
     return (double)ma_sound_get_volume(h->sound);
 }
 
 DLLEXPORT int ma_dll_sound_seek(SoundHandle* h, double sec) {
-    if (!h || !h->sound) return -1;
+    if (!h || !h->sound || g_engine_ref <= 0) return -1;
     return ma_sound_seek_to_pcm_frame(h->sound, (ma_uint64)(sec * 48000)) == MA_SUCCESS ? 0 : -1;
 }
 
 DLLEXPORT float ma_dll_sound_get_position(SoundHandle* h) {
-    if (!h || !h->sound) return 0.0f;
+    if (!h || !h->sound || g_engine_ref <= 0) return 0.0f;
     float cursor;
     return ma_sound_get_cursor_in_seconds(h->sound, &cursor) == MA_SUCCESS ? cursor : 0.0f;
 }
 
 DLLEXPORT float ma_dll_sound_get_duration(SoundHandle* h) {
-    if (!h || !h->sound) return 0.0f;
+    if (!h || !h->sound || g_engine_ref <= 0) return 0.0f;
     float len;
     return ma_sound_get_length_in_seconds(h->sound, &len) == MA_SUCCESS ? len : 0.0f;
 }

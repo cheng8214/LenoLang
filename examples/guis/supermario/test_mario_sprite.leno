@@ -1,0 +1,63 @@
+// 马里奥精灵表查看器
+import guis
+
+main() {
+    GWin win = guis.create_window("Mario Sprite Test", {
+        width: 800, height: 600, resizable: false
+    })
+    
+    GImage img = guis.load_image("examples/guis/supermario/resources/graphics/mario_bros.png")
+    
+    if img == null {
+        print("图片加载失败!")
+        return
+    }
+    
+    var iw = img.width()
+    var ih = img.height()
+    print("mario_bros.png: " + iw + " x " + ih)
+    
+    var font = guis.load_font("SimSun", 12)
+    
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(40, 50, 60, 255))
+            ren.clear()
+            
+            // 网格：从 (sx,sy) 取 16x16，放大到 48x48 显示
+            var scale = 3
+            for 0:13 to row {
+                for 0:9 to col {
+                    var sx = col * 16
+                    var sy = row * 16
+                    if sx + 16 > iw or sy + 16 > ih { continue }
+                    
+                    var dx = 10 + col * 80
+                    var dy = 10 + row * 50
+                    img.draw_src(ren, sx, sy, 16, 16, dx, dy, 48, 48)
+                    
+                    ren.set_color(_rgb(150, 150, 150, 100))
+                    ren.rect(dx, dy, 48, 48)
+                }
+            }
+            
+            // 右下角：缩小显示整张图
+            var sw = 150
+            var sh = ih * sw / iw
+            img.draw_src(ren, 0, 0, iw, ih, 630, 440, sw, sh)
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.rect(630, 440, sw, sh)
+            if font != null {
+                ren.draw_text(font, "Full", 630, 440 + sh + 4)
+            }
+            
+            sleep(100)
+        },
+        func(GEvent e) {
+            if e.is_quit() { win.set_should_close(true) }
+        }
+    )
+    
+    font.close()
+    win.close()
+}

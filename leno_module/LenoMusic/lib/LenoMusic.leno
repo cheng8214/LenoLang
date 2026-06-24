@@ -48,16 +48,26 @@ clib miniaudio {
     i32 ma_dll_hpf_process(Ptr h,Ptr o,Ptr i,i32 n)
     i32 ma_dll_hpf_reinit(Ptr h,i32 f,i32 c,i32 sr,f32 cf,i32 o)
     i32 ma_dll_get_version()
+    i32 ma_dll_has_vorbis()
     void ma_dll_generate_sine_f32(Ptr b,i32 n,i32 ch,f32 f,f32 a,Ptr ph)
 }
 
 string g_path = ""; var g_ok = false
+miniaudio g_lib = null  // 全局缓存 clib 句柄，防止 GC 卸载 DLL 导致引擎崩溃
 export func audio_module_init(string dll): bool {
     if g_ok { return true }
     if strings.has(dll, ":") { g_path = dll; g_ok = true; return true }
     g_path = dll; g_ok = true; return true
 }
-export func audio_module_uninit() { g_path="";g_ok=false }
+export func audio_module_uninit() {
+    if g_lib != null {
+        g_lib.ma_dll_engine_stop()
+        g_lib.ma_dll_engine_uninit()
+    }
+    g_lib = null
+    g_path = ""
+    g_ok = false
+}
 
 func find_dll() {
     // 1: 全局缓存 ~/.leno/pkgs/LenoMusic/lib/ (包安装后，优先)
@@ -79,7 +89,13 @@ func find_dll() {
     g_path = "miniaudio.dll"
 }
 
-func lib(): miniaudio { if not g_ok{find_dll();g_ok=true}; return ffi.load(g_path) }
+func lib(): miniaudio {
+    if g_lib == null {
+        if not g_ok { find_dll(); g_ok = true }
+        g_lib = ffi.load(g_path)
+    }
+    return g_lib
+}
 
 export var FORMAT_F32=0;export var FORMAT_S16=1;export var FORMAT_S24=2;export var FORMAT_S32=3;export var FORMAT_U8=4
 export var WAVEFORM_SINE=0;export var WAVEFORM_SQUARE=1;export var WAVEFORM_TRIANGLE=2;export var WAVEFORM_SAWTOOTH=3

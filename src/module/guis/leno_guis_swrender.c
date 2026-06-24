@@ -1071,6 +1071,43 @@ void leno_gui_platform_render_image_src(LenoGUIPlatformRenderer* ren, LenoGUIPla
     }
 }
 
+/* 简单位图源矩形翻转绘制 - 水平翻转 */
+void leno_gui_platform_render_image_src_flipped(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
+                                                  int sx, int sy, int sw, int sh,
+                                                  int dx, int dy, int dw, int dh) {
+    if (!ren || !ren->pixels || !tex || !tex->pixels) return;
+    if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+    float x_scale = (float)sw / (float)dw;
+    float y_scale = (float)sh / (float)dh;
+    int src_pitch_int = tex->pitch / 4;
+    for (int row = 0; row < dh; row++) {
+        int src_y = sy + (int)(row * y_scale);
+        if (src_y < 0 || src_y >= tex->height) continue;
+        for (int col = 0; col < dw; col++) {
+            int src_x = sx + (int)((dw - 1 - col) * x_scale);
+            if (src_x < 0 || src_x >= tex->width) continue;
+            uint32_t src_pixel = tex->pixels[src_y * src_pitch_int + src_x];
+            uint8_t sa = (src_pixel >> 24) & 0xFF;
+            if (sa == 0) continue;
+            if (sa == 255) {
+                int px = dx + col + ren->vp_x;
+                int py = dy + row + ren->vp_y;
+                if (px >= ren->vp_x && px < ren->vp_x + ren->vp_w &&
+                    py >= ren->vp_y && py < ren->vp_y + ren->vp_h) {
+                    if (!ren->clip_enabled || (px >= ren->clip_x && px < ren->clip_x + ren->clip_w &&
+                                                py >= ren->clip_y && py < ren->clip_y + ren->clip_h)) {
+                        if (px >= 0 && px < ren->width && py >= 0 && py < ren->height) {
+                            ren->pixels[py * ren->width + px] = src_pixel;
+                        }
+                    }
+                }
+            } else {
+                sw_draw_point(ren, dx + col, dy + row, src_pixel);
+            }
+        }
+    }
+}
+
 void leno_gui_platform_render_image_rotated(LenoGUIPlatformRenderer* ren, LenoGUIPlatformImage* tex,
                                                int x, int y, double angle, int flip) {
     int w = tex ? tex->width : 0;

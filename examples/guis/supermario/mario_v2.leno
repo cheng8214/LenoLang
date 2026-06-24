@@ -1,0 +1,181 @@
+// 最简：只画地图+马里奥
+import guis
+import times
+import dirs
+import "LenoMusic" as audio
+main() {
+    GWin win = guis.create_window("Mario", {width: 800, height: 600})
+   var path=dirs.script_dir()
+    GImage img = guis.load_image(path+"/resources/graphics/mario_bros.png")
+    GImage tile = guis.load_image(path+"/resources/graphics/tile_set.png")
+   
+    var T = 48  // tile pixel
+ 
+    int px = 10 * T   // 靠近第一个平台
+    int py = 5 * T - 10  // 微调上移到地面之上
+    var ph = T * 2    // 玩家高度
+    int vx = 0; int vy = 0
+    int key_l = 0; int key_r = 0
+    bool on_ground = false
+    bool face_r = true
+    int cam = 0
+    int anim_t = 0      // 动画计时器
+    int anim_f = 0      // 动画帧(0/1)
+    int coin_x = 0; int coin_y = 0; int coin_t = 0  // 金币特效
+    
+    // 8行地图 - 只保留1行地面(第7行) + 1行草皮(第6行)
+    var M = [
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,1,2,1,0,0,0,0,0,0,0,0,0,0,0,1,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,5,0,0,0,0,0,0,0,0,0,0,0,0,4,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,6,7,0,0,0,0,0,0,0,0,0,0,0,0,6,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [3,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3]
+    ]
+    var COLS = 80
+    
+    func get(int c, int r): int {
+        if c < 0 or c >= COLS or r < 0 or r >= 8 { return 0 }
+        return M[r][c]
+    }
+    
+    var fr = times.ms()
+    
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(107, 140, 255, 255))
+            ren.clear()
+            
+            // 地面瓦片 - 整体下移让地面贴屏幕底
+            var y_offset = 600 - 8 * T  // 216px 下移
+            var sc = cam / T; if sc < 0 { sc = 0 }
+            var ec = (cam + 800) / T + 1; if ec > COLS - 1 { ec = COLS - 1 }
+            for sc:ec to c {
+                for 0:7 to r {
+                    var t = M[r][c]
+                    if t == 0 { continue }
+                    var sx = c * T - cam
+                    var sy = r * T + y_offset
+                    if tile != null {
+                        var tx = 0; var ty = 0
+                        if t == 1 { tx = 32; ty = 0 }
+                        else if t == 2 { tx = 48; ty = 0 }
+                        else if t == 9 { tx = 0; ty = 48 }
+                        else if t == 10 { tx = 16; ty = 48 }
+                        else if t == 3 { tx = 0; ty = 0; if r == 6 { tx = 16; ty = 0 } }
+                        else if t == 4 { tx = 0; ty = 16 }
+                        else if t == 5 { tx = 16; ty = 16 }
+                        else if t == 6 { tx = 0; ty = 32 }
+                        else if t == 7 { tx = 16; ty = 32 }
+                        tile.draw_src(ren, tx, ty, 16, 16, sx, sy, T, T)
+                    } else {
+                        ren.set_color(_rgb(200, 100, 50, 255))
+                        ren.fill_rect(sx, sy, T, T)
+                    }
+                }
+            }
+            
+            // 物理
+            vy = vy + 1; if vy > 16 { vy = 16 }
+            if key_l == 1 { vx = vx - 2; if vx < -4 { vx = -4 } }
+            if key_r == 1 { vx = vx + 2; if vx > 4 { vx = 4 } }
+            if key_l == 0 and key_r == 0 { vx = vx * 8 / 10 }
+            px = px + vx
+            
+            py = py + vy
+            on_ground = false
+            
+            // 上升时：头部撞到障碍物（只查头部中心点）
+            if vy < 0 {
+                var rt = py / T
+                if rt >= 0 and rt < 8 {
+                    var ct = (px + T/2) / T
+                    if ct >= 0 and ct < COLS {
+                        var tt = get(ct, rt)
+                        if tt > 0 {
+                            py = (rt + 1) * T
+                            vy = 0
+                            // 问号砖块 → 撞击出金币
+                            if tt == 1 or tt == 2 {
+                                M[rt][ct] = tt + 8  // 1→9  2→10  变成已使用砖块
+                                coin_x = ct * T
+                                coin_y = (rt + 1) * T
+                                coin_t = 14
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 下落时：脚底撞到障碍物（只查脚底中心点）
+            if vy >= 0 {
+                var rb = (py + ph) / T
+                var cb = (px + T/2) / T
+                if cb >= 0 and cb < COLS and get(cb, rb) > 0 {
+                    py = rb * T - ph
+                    vy = 0
+                    on_ground = true
+                }
+            }
+            if py > 8 * T + 100 { py = 5 * T; px = 10 * T; vy = 0; vx = 0 }
+            
+            cam = px - 266
+            if cam < 0 { cam = 0 }
+            if cam > COLS * T - 800 { cam = COLS * T - 800 }
+            
+            // 马里奥 - 动画选择
+            var dx = px - cam
+            var dy = py + y_offset
+            
+            // 96=站R(sy=0),112=站L, 144/176=走L(sy=0), 128/160=走R(sy=32), 192/208=跳(sy=0)
+            var spx = 96
+            if not on_ground {
+                spx = 192
+            } else if vx != 0 {
+                anim_t = anim_t + 1
+                if anim_t > 6 { anim_t = 0; anim_f = 1 - anim_f }
+                if anim_f == 0 { spx = 96 } else { spx = 112 }
+            }
+            
+            if img != null {
+                if face_r {
+                    img.draw_src(ren, spx, 0, 16, 32, dx, dy, T, ph)
+                } else {
+                    img.draw_src_flipped(ren, spx, 0, 16, 32, dx, dy, T, ph)
+                }
+            }
+            ren.set_color(_rgb(255, 0, 0, 80))
+            ren.rect(dx, dy, T, ph)
+            
+            // 金币动画
+            if coin_t > 0 {
+                coin_t = coin_t - 1
+                var cx = coin_x - cam + T/2 - 10
+                var cy = coin_y + y_offset - coin_t * 4 - 10
+                ren.set_color(_rgb(255, 215, 0, 255))
+                ren.fill_rect(cx, cy, 20, 20)
+            }
+            
+            var e = times.ms() - fr
+            if e < 16 { sleep(16 - e) }
+            fr = times.ms()
+        },
+        func(GEvent e) {
+            if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
+            if e.is_key_down() {
+                var k = e.key()
+                if k == guis.KEY_LEFT { key_l = 1; face_r = false }
+                if k == guis.KEY_RIGHT { key_r = 1; face_r = true }
+                if k == guis.KEY_SPACE and on_ground { vy = -22 }
+            }
+            if e.is_key_up() {
+                var k = e.key()
+                if k == guis.KEY_LEFT { key_l = 0 }
+                if k == guis.KEY_RIGHT { key_r = 0 }
+            }
+        }
+    )
+    win.close()
+}
