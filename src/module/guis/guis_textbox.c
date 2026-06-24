@@ -62,6 +62,50 @@ static int tc_text_width_to(ObjGUITextBox* tb, const char* s, int bp) {
     }
     return x;
 }
+/* ===== 多行辅助函数（基于单字符串中的 \n） ===== */
+static int tb_count_lines(const char* text) {
+    if (!text || !text[0]) return 1;
+    int n = 1; for (int i = 0; text[i]; i++) if (text[i] == '\n') n++; return n;
+}
+static int tb_line_start(const char* text, int line) {
+    int ln = 0, p = 0;
+    while (text[p] && ln < line) { if (text[p] == '\n') ln++; p++; }
+    return p;
+}
+/* 返回某行结束的字节位置（指向换行符或字符串末尾） */
+static int tb_line_end(const char* text, int line) {
+    int p = tb_line_start(text, line);
+    while (text[p] && text[p] != '\n') p++;
+    return p;
+}
+static int tb_current_line(const char* text, int pos) {
+    int ln = 0;
+    for (int i = 0; i < pos && text[i]; i++) if (text[i] == '\n') ln++;
+    return ln;
+}
+static void tb_pos_to_line_col(const char* text, int pos, int* line, int* col) {
+    int ln = 0, c = 0;
+    for (int i = 0; i < pos && text[i]; i++) {
+        if (text[i] == '\n') { ln++; c = 0; }
+        else c++;
+    }
+    if (line) *line = ln;
+    if (col) *col = c;
+}
+static int tb_line_col_to_pos(const char* text, int line, int col) {
+    int ln = 0, c = 0, p = 0;
+    while (text[p]) {
+        if (ln == line && c == col) return p;
+        if (text[p] == '\n') { ln++; c = 0; }
+        else c++;
+        if (ln > line) return p;
+        p++;
+    }
+    return p;
+}
+static int tb_line_y(ObjGUITextBox* tb, int line) {
+    return tb->y + tb->border_width + tb->padding_y + line * tb->font_size - tb->scroll_y;
+}
 static int tbox_hit(ObjGUITextBox* tb, float mx, float my) {
     return mx >= tb->x && mx <= tb->x + tb->width &&
            my >= tb->y && my <= tb->y + tb->height;
@@ -75,7 +119,7 @@ static void tb_grow(ObjGUITextBox* tb, int need) {
     if (!nb) return;
     tb->text = nb; tb->text_cap = nc;
 }
-/* 保证光标在可见区域内，超出时水平滚动 */
+/* 保证光标在可见区域内，超出时滚动 */
 static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
     int cx = tc_text_width_to(tb, tb->text, tb->cursor_pos);
     int visible_w = tb->width - 2 * tb->border_width - 2 * tb->padding_x;
@@ -89,6 +133,22 @@ static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
     if (total_w <= visible_w) tb->scroll_x = 0;
     else if (tb->scroll_x > total_w - visible_w) tb->scroll_x = total_w - visible_w;
     if (tb->scroll_x < 0) tb->scroll_x = 0;
+
+    if (tb->multiline) {
+        int line = tb_current_line(tb->text, tb->cursor_pos);
+        int cy = line * tb->font_size;
+        int visible_h = tb->height - 2 * tb->border_width - 2 * tb->padding_y;
+        if (visible_h < 1) visible_h = 1;
+        if (cy < tb->scroll_y) {
+            tb->scroll_y = cy;
+        } else if (cy + tb->font_size > tb->scroll_y + visible_h) {
+            tb->scroll_y = cy + tb->font_size - visible_h;
+        }
+        int total_h = tb_count_lines(tb->text) * tb->font_size;
+        if (total_h <= visible_h) tb->scroll_y = 0;
+        else if (tb->scroll_y > total_h - visible_h) tb->scroll_y = total_h - visible_h;
+        if (tb->scroll_y < 0) tb->scroll_y = 0;
+    }
 }
 static void tb_del_sel(ObjGUITextBox* tb) {
     if (tb->sel_start < 0 || tb->sel_len <= 0) return;
@@ -127,17 +187,37 @@ static void tb_del(ObjGUITextBox* tb) {
     tb->text_len -= ln;
     tb_ensure_cursor_visible(tb);
 }
-static int tb_mx2cp(ObjGUITextBox* tb, float mx) {
-    int rx = (int)(mx - tb->x - tb->padding_x);
-    if (rx <= 0) return 0;
-    int p = 0, x = 0;
-    while (tb->text[p]) {
+static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
+    if (!tb->multiline) {
+        int rx = (int)(mx - tb->x - tb->padding_x) + tb->scroll_x;
+        if (rx <= 0) return 0;
+        int p = 0, x = 0;
+        while (tb->text[p]) {
+            int cw = tc_char_width(tb, tb->text, p);
+            if (x + cw / 2 >= rx) return p;
+            x += cw;
+            p = tc_next(tb->text, p);
+        }
+        return tb->text_len;
+    }
+    /* 多行：先确定行 */
+    int ry = (int)(my - tb->y - tb->border_width - tb->padding_y) + tb->scroll_y;
+    int line = ry / tb->font_size;
+    if (line < 0) line = 0;
+    int total_lines = tb_count_lines(tb->text);
+    if (line >= total_lines) line = total_lines - 1;
+    int start = tb_line_start(tb->text, line);
+    int end = tb_line_end(tb->text, line);
+    int rx = (int)(mx - tb->x - tb->border_width - tb->padding_x) + tb->scroll_x;
+    if (rx <= 0) return start;
+    int p = start, x = 0;
+    while (p < end && tb->text[p]) {
         int cw = tc_char_width(tb, tb->text, p);
         if (x + cw / 2 >= rx) return p;
         x += cw;
         p = tc_next(tb->text, p);
     }
-    return tb->text_len;
+    return end;
 }
 
 /* ===== Instance methods ===== */
@@ -209,36 +289,117 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
     if (clip_h < 1) clip_h = 1;
     leno_gui_platform_set_clip_rect(r, clip_x, clip_y, clip_w, clip_h);
 
-    /* selection highlight */
-    int tx = dx + tb->padding_x - tb->scroll_x, ty = dy + (dh - tb->font_size) / 2;
-    if (tb->focused && tb->sel_start >= 0 && tb->sel_len > 0) {
-        int sx = tx + tc_text_width_to(tb, tb->text, tb->sel_start);
-        int sw = tc_text_width_to(tb, tb->text + tb->sel_start, tb->sel_len);
-        leno_gui_platform_set_draw_color(r, tb->sel_r, tb->sel_g, tb->sel_b, tb->sel_a);
-        leno_gui_platform_render_fill_rect(r, sx, dy + 2, sw, dh - 4);
-    }
-    /* text or placeholder */
-    if (tb->text_len > 0 && tb->font) {
-        leno_gui_platform_set_draw_color(r, tb->text_r, tb->text_g, tb->text_b, tb->text_a);
-        if (tb->password) {
-            char pwd[128] = {0}; int n = tc_strlen(tb->text); if (n > 120) n = 120;
-            for (int i = 0; i < n; i++) pwd[i] = '*';
-            leno_gui_platform_draw_text_font(r, tb->font->platform, pwd, tx, ty);
-        } else {
-            leno_gui_platform_draw_text_font(r, tb->font->platform, tb->text, tx, ty);
+    if (!tb->multiline) {
+        /* selection highlight */
+        int tx = dx + tb->padding_x - tb->scroll_x, ty = dy + (dh - tb->font_size) / 2;
+        if (tb->focused && tb->sel_start >= 0 && tb->sel_len > 0) {
+            int sx = tx + tc_text_width_to(tb, tb->text, tb->sel_start);
+            int sw = tc_text_width_to(tb, tb->text + tb->sel_start, tb->sel_len);
+            leno_gui_platform_set_draw_color(r, tb->sel_r, tb->sel_g, tb->sel_b, tb->sel_a);
+            leno_gui_platform_render_fill_rect(r, sx, dy + 2, sw, dh - 4);
         }
-    } else if (tb->placeholder && tb->placeholder[0] && tb->font) {
-        leno_gui_platform_set_draw_color(r, tb->placeholder_r, tb->placeholder_g, tb->placeholder_b, tb->placeholder_a);
-        leno_gui_platform_draw_text_font(r, tb->font->platform, tb->placeholder, tx, ty);
-    }
-    /* cursor */
-    if (tb->focused && tb->blink_visible) {
-        int cx = tx + tc_text_width_to(tb, tb->text, tb->cursor_pos);
-        leno_gui_platform_set_draw_color(r, tb->cursor_r, tb->cursor_g, tb->cursor_b, tb->cursor_a);
-        leno_gui_platform_render_fill_rect(r, cx, dy + 4, 2, dh - 8);
+        /* text or placeholder */
+        if (tb->text_len > 0 && tb->font) {
+            leno_gui_platform_set_draw_color(r, tb->text_r, tb->text_g, tb->text_b, tb->text_a);
+            if (tb->password) {
+                char pwd[128] = {0}; int n = tc_strlen(tb->text); if (n > 120) n = 120;
+                for (int i = 0; i < n; i++) pwd[i] = '*';
+                leno_gui_platform_draw_text_font(r, tb->font->platform, pwd, tx, ty);
+            } else {
+                leno_gui_platform_draw_text_font(r, tb->font->platform, tb->text, tx, ty);
+            }
+        } else if (tb->placeholder && tb->placeholder[0] && tb->font) {
+            leno_gui_platform_set_draw_color(r, tb->placeholder_r, tb->placeholder_g, tb->placeholder_b, tb->placeholder_a);
+            leno_gui_platform_draw_text_font(r, tb->font->platform, tb->placeholder, tx, ty);
+        }
+        /* cursor */
+        if (tb->focused && tb->blink_visible) {
+            int cx = tx + tc_text_width_to(tb, tb->text, tb->cursor_pos);
+            leno_gui_platform_set_draw_color(r, tb->cursor_r, tb->cursor_g, tb->cursor_b, tb->cursor_a);
+            leno_gui_platform_render_fill_rect(r, cx, dy + 4, 2, dh - 8);
+        }
+    } else {
+        /* ===== 多行绘制 ===== */
+        int tx = dx + tb->border_width + tb->padding_x - tb->scroll_x;
+        int total_lines = tb_count_lines(tb->text);
+        int sel_end = tb->sel_start + tb->sel_len;
+        for (int line = 0; line < total_lines; line++) {
+            int ly = tb_line_y(tb, line);
+            if (ly + tb->font_size < clip_y || ly > clip_y + clip_h) continue;
+            int ls = tb_line_start(tb->text, line);
+            int le = tb_line_end(tb->text, line);
+            /* 选区高亮 */
+            if (tb->focused && tb->sel_start >= 0 && tb->sel_len > 0 && sel_end > ls && tb->sel_start < le) {
+                int ss = tb->sel_start > ls ? tb->sel_start : ls;
+                int se = sel_end < le ? sel_end : le;
+                int sx = tx + tc_text_width_to(tb, tb->text + ls, ss - ls);
+                int sw = tc_text_width_to(tb, tb->text + ss, se - ss);
+                leno_gui_platform_set_draw_color(r, tb->sel_r, tb->sel_g, tb->sel_b, tb->sel_a);
+                leno_gui_platform_render_fill_rect(r, sx, ly, sw, tb->font_size);
+            }
+            /* 文本 */
+            if (tb->text_len > 0 && tb->font && ls < le) {
+                char save = tb->text[le];
+                tb->text[le] = '\0';
+                leno_gui_platform_set_draw_color(r, tb->text_r, tb->text_g, tb->text_b, tb->text_a);
+                leno_gui_platform_draw_text_font(r, tb->font->platform, tb->text + ls, tx, ly);
+                tb->text[le] = save;
+            }
+            /* 光标 */
+            if (tb->focused && tb->blink_visible && tb->cursor_pos >= ls && tb->cursor_pos <= le) {
+                int cx = tx + tc_text_width_to(tb, tb->text + ls, tb->cursor_pos - ls);
+                leno_gui_platform_set_draw_color(r, tb->cursor_r, tb->cursor_g, tb->cursor_b, tb->cursor_a);
+                leno_gui_platform_render_fill_rect(r, cx, ly + 2, 2, tb->font_size - 4);
+            }
+        }
+        /* placeholder */
+        if (tb->text_len == 0 && tb->placeholder && tb->placeholder[0] && tb->font) {
+            int ty = dy + tb->border_width + tb->padding_y;
+            leno_gui_platform_set_draw_color(r, tb->placeholder_r, tb->placeholder_g, tb->placeholder_b, tb->placeholder_a);
+            leno_gui_platform_draw_text_font(r, tb->font->platform, tb->placeholder, tx, ty);
+        }
     }
 
     leno_gui_platform_disable_clip_rect(r);
+
+    /* scrollbars */
+    int sb_size = 8;
+    int inner_w = dw - 2 * tb->border_width;
+    int inner_h = dh - 2 * tb->border_width;
+    int text_w = tc_text_width_to(tb, tb->text, tb->text_len);
+    int text_h = tb->multiline ? tb_count_lines(tb->text) * tb->font_size : tb->font_size;
+    int need_h = text_w > inner_w - (text_h > inner_h ? sb_size : 0);
+    int need_v = text_h > inner_h - (text_w > inner_w ? sb_size : 0);
+    int avail_w = inner_w - (need_v ? sb_size : 0);
+    int avail_h = inner_h - (need_h ? sb_size : 0);
+    if (need_h) {
+        int track_x = dx + tb->border_width;
+        int track_y = dy + dh - tb->border_width - sb_size;
+        int track_w = avail_w;
+        leno_gui_platform_set_draw_color(r, 220, 220, 220, 255);
+        leno_gui_platform_render_fill_rect(r, track_x, track_y, track_w, sb_size);
+        if (text_w > avail_w) {
+            int thumb_w = (avail_w * avail_w) / text_w; if (thumb_w < sb_size) thumb_w = sb_size;
+            int max = text_w - avail_w;
+            int thumb_x = track_x + (max > 0 ? (tb->scroll_x * (avail_w - thumb_w)) / max : 0);
+            leno_gui_platform_set_draw_color(r, 150, 150, 150, 255);
+            leno_gui_platform_render_fill_rect(r, thumb_x, track_y, thumb_w, sb_size);
+        }
+    }
+    if (need_v) {
+        int track_x = dx + dw - tb->border_width - sb_size;
+        int track_y = dy + tb->border_width;
+        int track_h = avail_h;
+        leno_gui_platform_set_draw_color(r, 220, 220, 220, 255);
+        leno_gui_platform_render_fill_rect(r, track_x, track_y, sb_size, track_h);
+        if (text_h > avail_h) {
+            int thumb_h = (avail_h * avail_h) / text_h; if (thumb_h < sb_size) thumb_h = sb_size;
+            int max = text_h - avail_h;
+            int thumb_y = track_y + (max > 0 ? (tb->scroll_y * (avail_h - thumb_h)) / max : 0);
+            leno_gui_platform_set_draw_color(r, 150, 150, 150, 255);
+            leno_gui_platform_render_fill_rect(r, track_x, thumb_y, sb_size, thumb_h);
+        }
+    }
 }
 
 void gui_textbox_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren) {
@@ -270,7 +431,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         }
         if (hit) {
             hit->focused = 1; hit->blink_visible = 1; hit->last_blink = leno_gui_platform_get_ticks();
-            int cp = tb_mx2cp(hit, ev->mouse_x);
+            int cp = tb_mx2cp(hit, ev->mouse_x, ev->mouse_y);
             if (ev->mod_flags & LENO_GUI_MOD_SHIFT) {
                 /* Shift+点击：从当前光标位置扩展到点击位置 */
                 int start = hit->cursor_pos < cp ? hit->cursor_pos : cp;
@@ -297,7 +458,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         while (tb) { tb->hovered = tbox_hit(tb, ev->mouse_x, ev->mouse_y); tb = tb->next; }
         if (win->focused_textbox && win->focused_textbox->dragging) {
             ObjGUITextBox* dtb = win->focused_textbox;
-            int cp = tb_mx2cp(dtb, ev->mouse_x);
+            int cp = tb_mx2cp(dtb, ev->mouse_x, ev->mouse_y);
             if (cp < dtb->drag_start_cp) {
                 dtb->sel_start = cp; dtb->sel_len = dtb->drag_start_cp - cp; dtb->cursor_pos = cp;
             } else {
@@ -316,6 +477,20 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
             return 1;
         }
         return 0;
+    }
+
+    /* mouse wheel: vertical scroll for multiline */
+    if (ev->type == LENO_GUI_EVT_MOUSE_WHEEL && win->focused_textbox && win->focused_textbox->multiline) {
+        ObjGUITextBox* tb = win->focused_textbox;
+        int visible_h = tb->height - 2 * tb->border_width - 2 * tb->padding_y;
+        int total_h = tb_count_lines(tb->text) * tb->font_size;
+        if (total_h > visible_h) {
+            int delta = (int)(ev->wheel_y * tb->font_size * 3);
+            tb->scroll_y += delta;
+            if (tb->scroll_y < 0) tb->scroll_y = 0;
+            if (tb->scroll_y > total_h - visible_h) tb->scroll_y = total_h - visible_h;
+        }
+        return 1;
     }
 
     /* keyboard: forward to focused */
@@ -341,9 +516,35 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
             if (ctrl) tb->cursor_pos = tb->text_len;
             else { tb->cursor_pos = tc_next(tb->text, tb->cursor_pos); if (tb->cursor_pos > tb->text_len) tb->cursor_pos = tb->text_len; }
             tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
-        case LENO_GUI_KEY_HOME: tb->cursor_pos = 0; tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
-        case LENO_GUI_KEY_END:  tb->cursor_pos = tb->text_len; tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
+        case LENO_GUI_KEY_HOME:
+            if (tb->multiline) {
+                int line = tb_current_line(tb->text, tb->cursor_pos);
+                tb->cursor_pos = tb_line_start(tb->text, line);
+            } else { tb->cursor_pos = 0; }
+            tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
+        case LENO_GUI_KEY_END:
+            if (tb->multiline) {
+                int line = tb_current_line(tb->text, tb->cursor_pos);
+                tb->cursor_pos = tb_line_end(tb->text, line);
+            } else { tb->cursor_pos = tb->text_len; }
+            tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
+        case LENO_GUI_KEY_UP:
+        case LENO_GUI_KEY_DOWN:
+            if (tb->multiline) {
+                int line, col;
+                tb_pos_to_line_col(tb->text, tb->cursor_pos, &line, &col);
+                int total = tb_count_lines(tb->text);
+                if (ev->key == LENO_GUI_KEY_UP) { if (line > 0) line--; } else { if (line + 1 < total) line++; }
+                tb->cursor_pos = tb_line_col_to_pos(tb->text, line, col);
+                tb->sel_start = -1; tb->sel_len = 0; tb_ensure_cursor_visible(tb); return 1;
+            }
+            return 1;
         case LENO_GUI_KEY_RETURN:
+            if (tb->multiline) {
+                tb_insert(tb, "\n");
+                if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
+                tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
+            }
             if (!val_is_null(tb->on_submit)) { call_leno_closure(tb->on_submit, 0, NULL); }
             return 1;
         default: break;
@@ -383,7 +584,14 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
     /* text input */
     if (ev->type == LENO_GUI_EVT_TEXT_INPUT && ev->text[0]) {
         unsigned char c0 = (unsigned char)ev->text[0];
-        if (c0 == '\r' || c0 == '\n') return 1; /* handled by KEY_RETURN */
+        if (c0 == '\r' || c0 == '\n') {
+            if (tb->multiline) {
+                tb_insert(tb, "\n");
+                if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
+                tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks();
+            }
+            return 1;
+        }
         if (c0 >= 0x20) {
             tb_insert(tb, ev->text);
             if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);

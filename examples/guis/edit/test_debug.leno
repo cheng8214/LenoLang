@@ -2,31 +2,38 @@ import guis
 
 main() {
     Style[window] w_style = {
-        width: 500, height: 300, center: true,
+        width: 700, height: 500, center: true,
         bg_color: _rgb(40, 40, 40, 255)
     }
-    var win = guis.create_window("诊断", w_style)
+    var win = guis.create_window("多行文本框测试", w_style)
 
     GTextBox tb = win.add_textbox({
-        x: 50, y: 60, width: 380, height: 50,
-        placeholder: "输入文字...",
+        x: 50, y: 50, width: 600, height: 360,
+        multiline: true,
+        placeholder: "请输入多行文本...",
         bg_color: _rgb(255, 255, 255, 255),
-        text_color: _rgb(255, 0, 0, 255),
-        border_color: _rgb(0, 255, 0, 255),
-        border_width: 3,
-        radius: 0,
-        font: "Microsoft YaHei",
-        font_size: 24,
-        padding_x: 10
+        text_color: _rgb(30, 30, 30, 255),
+        border_color: _rgb(180, 180, 180, 255),
+        focus_color: _rgb(70, 130, 220, 255),
+        border_width: 2,
+        radius: 6,
+        font_size: 18,
+        padding_x: 10,
+        padding_y: 10
+    })
+
+    tb.set_text("第一行中文测试\n第二行 English 123\n第三行，继续输入更多内容用于测试垂直滚动和水平滚动条。\n")
+
+    tb.on_change(func() {
+        print("[change] text changed")
     })
 
     win.run(
         func(GDraw ren) {
             ren.set_color(_rgb(40, 40, 40, 255))
             ren.clear()
-            // 画一个白色方块在文本框位置上方做参照
-            ren.set_color(_rgb(255, 255, 0, 100))
-            ren.fill_rect(50, 55, 380, 60)
+            // 底部提示
+            ren.set_color(_rgb(200, 200, 200, 255))
         },
         func(GEvent e) {
             if e.is_window_close() or (e.is_key_down() and e.key() == 27) {

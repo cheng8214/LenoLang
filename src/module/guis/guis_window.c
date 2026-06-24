@@ -702,6 +702,7 @@ static Value win_add_textbox_func(int argc, Value* args) {
     int padding_x = 8, padding_y = 4;
     int max_length = 0;  /* 0=无限制 */
     int password = 0;
+    int multiline = 0;
 
     /* 解析 style 字典 */
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
@@ -761,6 +762,8 @@ static Value win_add_textbox_func(int argc, Value* args) {
         if (!val_is_null(v)) max_length = val_as_int(v);
         key = intern_string("password", 8); v = dict_get(style, val_obj((Object*)key));
         if (!val_is_null(v)) password = val_as_bool(v) ? 1 : 0;
+        key = intern_string("multiline", 9); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) multiline = val_as_bool(v) ? 1 : 0;
     }
 
     /* 创建文本框对象 */
@@ -788,8 +791,10 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->sel_start = -1;
     tb->sel_len = 0;
     tb->scroll_x = 0;
+    tb->scroll_y = 0;
     tb->dragging = 0;
     tb->drag_start_cp = 0;
+    tb->multiline = multiline;
 
     tb->bg_r = bg_r; tb->bg_g = bg_g; tb->bg_b = bg_b; tb->bg_a = bg_a;
     tb->border_r = border_r; tb->border_g = border_g; tb->border_b = border_b; tb->border_a = border_a;
