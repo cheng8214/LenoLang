@@ -125,6 +125,7 @@ static void init_keyword_table(void) {
         {"GImage", TOK_IMAGE_TYPE},
         {"GFont", TOK_FONT_TYPE},
         {"GButton", TOK_BUTTON_TYPE},
+        {"GTextBox", TOK_TEXTBOX_TYPE},
         {"Style", TOK_STYLE_TYPE},
         {"Socket", TOK_SOCKET_TYPE},
         {"Ptr", TOK_PTR_TYPE},
