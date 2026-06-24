@@ -1,0 +1,78 @@
+// ============================================================
+// GTextBox 文本框测试
+// 功能: 文本输入、光标、占位符、密码模式、锚点、Ctrl+A/C/V/X
+// ============================================================
+
+import guis
+
+main() {
+    print("=== GTextBox 文本框测试 ===")
+    print("点击文本框获得焦点，输入文字 | Ctrl+A/C/V/X | 回车提交 | 拖动窗口缩放")
+
+    Style[window] w_style = {
+        width: 700, height: 450, center: true,
+        bg_color: _rgb(28, 28, 44, 255), resizable: true
+    }
+    var win = guis.create_window("GTextBox 测试", w_style)
+    GFont font = guis.load_font("Consolas", 16)
+
+    // 普通文本框
+    GTextBox tb1 = win.add_textbox({
+        x: 50, y: 70, width: 300, height: 38,
+        placeholder: "请输入用户名...",
+        bg_color: _rgb(255,255,255,255),
+        border_color: _rgb(160,160,160,255),
+        focus_color: _rgb(70,130,220,255),
+        text_color: _rgb(30,30,30,255),
+        radius: 6, border_width: 1,
+        font: "Consolas", font_size: 15, padding_x: 10
+    })
+    tb1.on_change(func() { print("用户名已改变") })
+    tb1.on_submit(func() { print("用户名已提交!") })
+
+    // 密码框
+    GTextBox tb2 = win.add_textbox({
+        x: 50, y: 140, width: 300, height: 38,
+        placeholder: "请输入密码...",
+        password: true,
+        bg_color: _rgb(255,255,255,255),
+        border_color: _rgb(160,160,160,255),
+        focus_color: _rgb(70,130,220,255),
+        text_color: _rgb(30,30,30,255),
+        radius: 6, border_width: 1,
+        font: "Consolas", font_size: 15, padding_x: 10
+    })
+    tb2.on_change(func() { print("密码已改变") })
+    tb2.on_submit(func() { print("密码已提交!") })
+
+    // 右下角锚点
+    GTextBox tb3 = win.add_textbox({
+        x: 0, y: 0, width: 220, height: 34,
+        placeholder: "右下角锚点",
+        radius: 4, border_width: 1,
+        font: "Consolas", font_size: 13, padding_x: 8
+    })
+    tb3.set_anchor(4, 10, 10)
+
+    tb3.on_submit(func() { print("锚点框提交!") })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(28, 28, 44, 255))
+            ren.clear()
+            if font != null {
+                ren.set_color(_rgb(180, 180, 180, 200))
+                ren.draw_text(font, "用户名:", 50, 45)
+                ren.draw_text(font, "密码:", 50, 118)
+                ren.set_color(_rgb(80, 200, 80, 180))
+                ren.draw_text(font, "Ctrl+A/C/V/X | 回车提交 | 拖窗口看锚点", 50, 220)
+            }
+        },
+        func(GEvent e) {
+            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+                win.set_should_close(true)
+            }
+        }
+    )
+    win.close()
+}
