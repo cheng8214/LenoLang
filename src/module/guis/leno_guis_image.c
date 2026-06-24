@@ -13,6 +13,7 @@
 
 /* ===== stb_image 配置（参考 SDL3） ===== */
 #define STB_IMAGE_STATIC
+#define STBI_WINDOWS_UTF8  /* Windows 上支持 UTF-8 中文路径 */
 #define STBI_NO_THREAD_LOCALS
 #define STBI_FAILURE_USERMSG
 #define STBI_ONLY_PNG
@@ -54,10 +55,10 @@
 static LenoGUIPlatformImage* sw_load_image(const char* filepath) {
     int w = 0, h = 0, channels = 0;
 
-    /* 加载图片为 RGBA 格式（stbi_load 自动转换为 4 通道） */
+    /* 加载图片为 RGBA 格式（stbi_load 自动转换为 4 通道）
+     * STBI_WINDOWS_UTF8 使 Windows 上自动转换 UTF-8 路径为宽字符 */
     unsigned char* img_data = stbi_load(filepath, &w, &h, &channels, 4);
     if (!img_data) {
-        /* stbi_failure_reason() 返回失败原因 */
         return NULL;
     }
 
