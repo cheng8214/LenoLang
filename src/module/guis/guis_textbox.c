@@ -160,7 +160,6 @@ static int tc_text_width_to(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int
 static void tb_lines_ensure(ObjGUITextBox* tb) {
     if (!tb->text_is_dirty) return;
     int tlen = gb_len(&tb->gb);
-    if (tlen == 0) { tb->line_count = 1; return; }
     int need = 1;
     for (int i = 0; i < tlen; i++)
         if (gb_at(&tb->gb, i) == '\n') need++;
@@ -402,6 +401,17 @@ static int tbox_hit(ObjGUITextBox* tb, float mx, float my) {
     return mx >= tb->x && mx <= tb->x + tb->width &&
            my >= tb->y && my <= tb->y + tb->height;
 }
+/* 根据当前光标位置更新 IME 候选窗/合成窗坐标 */
+static void tb_update_ime_pos(ObjGUITextBox* tb) {
+    if (!tb->focused) return;
+    int line = tb_current_line_tb(tb, tb->cursor_pos);
+    int cx = tb_cursor_x(tb, NULL);
+    int cy = line * tb->font_size;
+    int ime_x = tb->x + tb->padding_x - tb->scroll_x + cx;
+    int ime_y = tb->y + tb->padding_y - tb->scroll_y + cy + tb->font_size;
+    leno_gui_platform_set_ime_caret_pos(ime_x, ime_y);
+}
+
 /* 保证光标在可见区域内，超出时滚动
  * 性能关键：大文本时用缓存避免每次击键扫描全文+调 GDI */
 static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
@@ -431,6 +441,7 @@ static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
         else if (tb->scroll_y > total_h - visible_h) tb->scroll_y = total_h - visible_h;
         if (tb->scroll_y < 0) tb->scroll_y = 0;
     }
+    tb_update_ime_pos(tb);
 }
 static void tb_del_sel(ObjGUITextBox* tb) {
     if (tb->sel_start < 0 || tb->sel_len <= 0) return;
@@ -1092,8 +1103,8 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
             }
             tb_ensure_cursor_visible(hit);
             win->focused_textbox = hit;
-            /* 设置 IME 候选窗/合成窗位置为文本框左下角（参考 SDL3） */
-            leno_gui_platform_set_ime_caret_pos(hit->x + hit->padding_x, hit->y + hit->height);
+            /* 设置 IME 候选窗/合成窗位置为当前光标处 */
+            tb_update_ime_pos(hit);
             leno_gui_platform_start_text_input();
             return 1;
         }

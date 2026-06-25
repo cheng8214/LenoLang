@@ -1607,6 +1607,23 @@ int leno_gui_platform_is_text_input_active(void) {
 void leno_gui_platform_set_ime_caret_pos(int x, int y) {
     g_ime_caret_x = x;
     g_ime_caret_y = y;
+    /* 如果已经在合成中，立即更新 IME 候选窗/合成窗位置 */
+    if (g_ime_composing) {
+        HWND hwnd = GetFocus();
+        if (!hwnd) hwnd = GetForegroundWindow();
+        if (hwnd) {
+            HIMC himc = ImmGetContext(hwnd);
+            if (himc) {
+                COMPOSITIONFORM cf;
+                memset(&cf, 0, sizeof(cf));
+                cf.dwStyle = CFS_POINT;
+                cf.ptCurrentPos.x = x;
+                cf.ptCurrentPos.y = y;
+                ImmSetCompositionWindow(himc, &cf);
+                ImmReleaseContext(hwnd, himc);
+            }
+        }
+    }
 }
 
 /* 查询鼠标状态：位置和按钮 */
