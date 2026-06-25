@@ -47,9 +47,10 @@ ObjGUITextBox* as_textbox(Value v) {
     if (!val_is_obj(v)) return NULL;
     return (ObjGUITextBox*)val_as_obj(v);
 }
-/* 单个 UTF-8 字符宽度：ASCII 半角，CJK 全角 */
+/* 单个 UTF-8 字符宽度：ASCII 半角，CJK 全角，换行符宽度为 0 */
 static int tc_char_width(ObjGUITextBox* tb, const char* s, int bp) {
     unsigned char c = (unsigned char)s[bp];
+    if (c == '\n' || c == '\r') return 0;
     if (c < 0x80) return (tb->font_size * 6) / 10;
     return tb->font_size;
 }
@@ -106,6 +107,25 @@ static int tb_line_col_to_pos(const char* text, int line, int col) {
 static int tb_line_y(ObjGUITextBox* tb, int line) {
     return tb->y + tb->border_width + tb->padding_y + line * tb->font_size - tb->scroll_y;
 }
+/* 多行时返回最宽行的像素宽度，单行时返回整段文本宽度 */
+static int tb_text_total_width(ObjGUITextBox* tb) {
+    if (!tb->multiline) return tc_text_width_to(tb, tb->text, tb->text_len);
+    int max_w = 0, total = tb_count_lines(tb->text);
+    for (int i = 0; i < total; i++) {
+        int ls = tb_line_start(tb->text, i);
+        int le = tb_line_end(tb->text, i);
+        int w = tc_text_width_to(tb, tb->text + ls, le - ls);
+        if (w > max_w) max_w = w;
+    }
+    return max_w;
+}
+/* 返回光标在当前行内的 x 像素坐标 */
+static int tb_cursor_x(ObjGUITextBox* tb) {
+    if (!tb->multiline) return tc_text_width_to(tb, tb->text, tb->cursor_pos);
+    int line = tb_current_line(tb->text, tb->cursor_pos);
+    int ls = tb_line_start(tb->text, line);
+    return tc_text_width_to(tb, tb->text + ls, tb->cursor_pos - ls);
+}
 static int tbox_hit(ObjGUITextBox* tb, float mx, float my) {
     return mx >= tb->x && mx <= tb->x + tb->width &&
            my >= tb->y && my <= tb->y + tb->height;
@@ -121,15 +141,15 @@ static void tb_grow(ObjGUITextBox* tb, int need) {
 }
 /* 保证光标在可见区域内，超出时滚动 */
 static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
-    int cx = tc_text_width_to(tb, tb->text, tb->cursor_pos);
     int visible_w = tb->width - 2 * tb->border_width - 2 * tb->padding_x;
     if (visible_w < 1) visible_w = 1;
+    int cx = tb_cursor_x(tb);
     if (cx < tb->scroll_x) {
         tb->scroll_x = cx;
     } else if (cx > tb->scroll_x + visible_w) {
         tb->scroll_x = cx - visible_w;
     }
-    int total_w = tc_text_width_to(tb, tb->text, tb->text_len);
+    int total_w = tb_text_total_width(tb);
     if (total_w <= visible_w) tb->scroll_x = 0;
     else if (tb->scroll_x > total_w - visible_w) tb->scroll_x = total_w - visible_w;
     if (tb->scroll_x < 0) tb->scroll_x = 0;
@@ -366,7 +386,7 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
     int sb_size = 8;
     int inner_w = dw - 2 * tb->border_width;
     int inner_h = dh - 2 * tb->border_width;
-    int text_w = tc_text_width_to(tb, tb->text, tb->text_len);
+    int text_w = tb_text_total_width(tb);
     int text_h = tb->multiline ? tb_count_lines(tb->text) * tb->font_size : tb->font_size;
     int need_h = text_w > inner_w - (text_h > inner_h ? sb_size : 0);
     int need_v = text_h > inner_h - (text_w > inner_w ? sb_size : 0);
