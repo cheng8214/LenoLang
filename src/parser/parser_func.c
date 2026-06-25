@@ -418,7 +418,7 @@ static TypeInfo* parse_style_type(Parser* p) {
     lexer_next(&p->lex); // 消费 'Style'
     
     if (p->lex.current.type != TOK_LBRACKET) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要指定目标控件: Style[window] 或 Style[button]");
+        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要指定目标控件: Style[window]、Style[button] 或 Style[edit]");
         return type_style("");
     }
     
@@ -426,7 +426,7 @@ static TypeInfo* parse_style_type(Parser* p) {
     
     // 解析目标控件名（标识符）
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要有效的控件名称，如 window 或 button");
+        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要有效的控件名称，如 window、button 或 edit");
         // 尝试跳过到 ]
         while (p->lex.current.type != TOK_RBRACKET && p->lex.current.type != TOK_EOF) {
             lexer_next(&p->lex);

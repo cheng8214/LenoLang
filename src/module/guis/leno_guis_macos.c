@@ -1227,6 +1227,14 @@ LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size) {
     return font;
 }
 
+int leno_gui_platform_font_internal_leading(LenoGUIPlatformFont* font) {
+    (void)font; return 0;
+}
+
+int leno_gui_platform_text_width_utf8(LenoGUIPlatformFont* font, const char* text, int byte_len) {
+    (void)font; (void)text; (void)byte_len; return 0;
+}
+
 void leno_gui_platform_destroy_font(LenoGUIPlatformFont* font) {
     if (!font) return;
     free(font);

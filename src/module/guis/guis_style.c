@@ -125,9 +125,56 @@ static StyleFieldInfo button_style_fields[] = {
     { "press_offset",   STYLE_TYPE_INT,    "按下时偏移像素数",            "1",                 NULL, 0 },
 };
 
+/* ===== Edit/Textbox 样式字段定义 ===== */
+
+static StyleFieldInfo edit_style_fields[] = {
+    /* ===== 位置和尺寸 ===== */
+    { "x",              STYLE_TYPE_INT,    "X坐标",                       "0",                 NULL, 0 },
+    { "y",              STYLE_TYPE_INT,    "Y坐标",                       "0",                 NULL, 0 },
+    { "width",          STYLE_TYPE_INT,    "文本框宽度",                  "200",               NULL, 0 },
+    { "height",         STYLE_TYPE_INT,    "文本框高度",                  "36",                NULL, 0 },
+    /* ===== 锚点布局 ===== */
+    { "anchor",         STYLE_TYPE_INT,    "锚点:0=无,1=左上,2=右上,3=左下,4=右下,5=居中,6=上中,7=下中", "0", NULL, 0 },
+    { "anchor_margin_x",STYLE_TYPE_INT,    "锚点水平边距",                "0",                 NULL, 0 },
+    { "anchor_margin_y",STYLE_TYPE_INT,    "锚点垂直边距",                "0",                 NULL, 0 },
+    /* ===== 颜色 ===== */
+    { "bg_color",       STYLE_TYPE_COLOR,  "背景色",                      "_rgb(255,255,255)", NULL, 0 },
+    { "border_color",   STYLE_TYPE_COLOR,  "边框颜色",                    "_rgb(180,180,180)", NULL, 0 },
+    { "focus_color",    STYLE_TYPE_COLOR,  "聚焦时边框颜色",               "_rgb(70,130,220)",  NULL, 0 },
+    { "text_color",     STYLE_TYPE_COLOR,  "文本颜色",                    "_rgb(30,30,30)",    NULL, 0 },
+    { "placeholder_color",STYLE_TYPE_COLOR,"占位提示文字颜色",             "_rgb(160,160,160)", NULL, 0 },
+    { "cursor_color",   STYLE_TYPE_COLOR,  "光标颜色",                    "_rgb(0,0,0)",       NULL, 0 },
+    { "selection_color",STYLE_TYPE_COLOR,  "选区高亮颜色（别名sel_color）","_rgb(70,130,220,100)",NULL,0 },
+    /* ===== 边框 ===== */
+    { "border_width",   STYLE_TYPE_INT,    "边框宽度（像素）",            "1",                 NULL, 0 },
+    { "radius",         STYLE_TYPE_INT,    "圆角半径（像素）",            "4",                 NULL, 0 },
+    /* ===== 字体 ===== */
+    { "font",           STYLE_TYPE_STRING, "字体名称（空=Microsoft YaHei）","\"\"",              NULL, 0 },
+    { "font_size",      STYLE_TYPE_INT,    "字体大小（像素）",            "16",                NULL, 0 },
+    { "letter_spacing", STYLE_TYPE_INT,    "字符间距（像素，0=默认）",    "0",                 NULL, 0 },
+    { "placeholder_font_size",STYLE_TYPE_INT,"placeholder字体大小（0=跟随）","0",               NULL, 0 },
+    /* ===== 滚动条 ===== */
+    { "sb_track_color",       STYLE_TYPE_COLOR, "滚动条轨道颜色",         "_rgb(220,220,220)", NULL, 0 },
+    { "sb_thumb_color",       STYLE_TYPE_COLOR, "滚动条滑块颜色",         "_rgb(150,150,150)", NULL, 0 },
+    { "sb_thumb_hover_color", STYLE_TYPE_COLOR, "滚动条滑块悬停颜色",     "_rgb(110,110,110)", NULL, 0 },
+    { "sb_thumb_press_color", STYLE_TYPE_COLOR, "滚动条滑块按下颜色",     "_rgb(80,80,80)",    NULL, 0 },
+    /* ===== 内边距 ===== */
+    { "padding_x",      STYLE_TYPE_INT,    "水平内边距",                  "8",                 NULL, 0 },
+    { "padding_y",      STYLE_TYPE_INT,    "垂直内边距",                  "4",                 NULL, 0 },
+    /* ===== 文本 ===== */
+    { "placeholder",    STYLE_TYPE_STRING, "占位提示文字",                "\"\"",              NULL, 0 },
+    { "max_length",     STYLE_TYPE_INT,    "最大字符数（0=无限制）",      "0",                 NULL, 0 },
+    { "password",       STYLE_TYPE_BOOL,   "密码模式（显示为*）",         "false",             NULL, 0 },
+    { "multiline",      STYLE_TYPE_BOOL,   "多行模式",                    "false",             NULL, 0 },
+    /* ===== 状态 ===== */
+    { "visible",        STYLE_TYPE_BOOL,   "是否可见",                    "true",              NULL, 0 },
+    { "enabled",        STYLE_TYPE_BOOL,   "是否启用",                    "true",              NULL, 0 },
+};
+
 static StyleDef style_defs[] = {
     { "window", window_style_fields, sizeof(window_style_fields) / sizeof(window_style_fields[0]) },
     { "button", button_style_fields, sizeof(button_style_fields) / sizeof(button_style_fields[0]) },
+    { "edit",   edit_style_fields,   sizeof(edit_style_fields)   / sizeof(edit_style_fields[0])   },
 };
 
 /* ===== 查询接口 ===== */

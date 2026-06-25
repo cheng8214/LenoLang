@@ -139,6 +139,13 @@ typedef struct ObjGUITextBox {
     int dragging;                  /* 鼠标拖拽选择中 */
     int drag_start_cp;             /* 拖拽起始光标字节位置 */
     int multiline;                 /* 是否多行 */
+    /* 滚动条拖拽 */
+    int sb_h_dragging;             /* 正在拖拽水平滚动条 */
+    int sb_v_dragging;             /* 正在拖拽垂直滚动条 */
+    int sb_drag_start_mx;          /* 拖拽起始鼠标 X */
+    int sb_drag_start_my;          /* 拖拽起始鼠标 Y */
+    int sb_drag_start_sx;          /* 拖拽起始 scroll_x */
+    int sb_drag_start_sy;          /* 拖拽起始 scroll_y */
     /* 颜色 */
     int bg_r, bg_g, bg_b, bg_a;
     int border_r, border_g, border_b, border_a;
@@ -154,6 +161,19 @@ typedef struct ObjGUITextBox {
     int font_size;
     ObjGUIFont* font;
     int padding_x, padding_y;
+    /* placeholder 独立字体（0=跟随主字体大小） */
+    int placeholder_font_size;
+    char* placeholder_font_name;
+    ObjGUIFont* placeholder_font;
+    /* 字间距 */
+    int letter_spacing;            /* 字符间距（像素，0=默认） */
+    /* 滚动条颜色 */
+    int sb_track_r, sb_track_g, sb_track_b, sb_track_a;           /* 轨道 */
+    int sb_thumb_r, sb_thumb_g, sb_thumb_b, sb_thumb_a;           /* 滑块 */
+    int sb_thumb_hover_r, sb_thumb_hover_g, sb_thumb_hover_b, sb_thumb_hover_a;   /* 悬停 */
+    int sb_thumb_press_r, sb_thumb_press_g, sb_thumb_press_b, sb_thumb_press_a;   /* 按下 */
+    int sb_h_hovered;              /* 水平滚动条被悬停 */
+    int sb_v_hovered;              /* 垂直滚动条被悬停 */
     /* 状态 */
     int visible;
     int enabled;
@@ -161,6 +181,9 @@ typedef struct ObjGUITextBox {
     int hovered;                   /* 鼠标悬停 */
     int password;                  /* 密码模式 */
     int max_length;                /* 最大字符数 (0=无限制) */
+    /* 缓存：避免每帧遍历测量（参考 Scintilla 行缓存设计） */
+    int text_is_dirty;             /* 文本已修改，需重测宽度 */
+    int cached_max_text_width;     /* 最宽行像素宽度 */
     /* 光标闪烁 */
     int blink_visible;
     uint64_t last_blink;
@@ -228,6 +251,7 @@ void gui_textbox_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
 int  gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
 void gui_textbox_free_all(ObjGUIWindow* win);
 void gui_textbox_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
+void gui_textbox_update_placeholder_font(ObjGUITextBox* tb);
 void gui_textbox_register_methods(void);
 extern void guis_init_textbox_instance_methods(void);
 

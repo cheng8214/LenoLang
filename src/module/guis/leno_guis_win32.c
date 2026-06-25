@@ -1707,6 +1707,7 @@ void leno_gui_platform_set_window_opacity(LenoGUIPlatformWindow* win, float opac
 struct LenoGUIPlatformFont {
     HFONT hfont;
     int size;
+    int internal_leading;   /* 字体内聚留白，光标需跳过 */
 };
 
 LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size) {
@@ -1732,7 +1733,49 @@ LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size) {
     if (!font) { DeleteObject(hfont); return NULL; }
     font->hfont = hfont;
     font->size = size;
+    /* 测量字体内聚留白 */
+    {
+        HDC dc = GetDC(NULL);
+        HFONT old_f = (HFONT)SelectObject(dc, hfont);
+        TEXTMETRICW tm;
+        if (GetTextMetricsW(dc, &tm)) {
+            font->internal_leading = tm.tmInternalLeading;
+        } else {
+            font->internal_leading = size / 8;  /* 回退估算 */
+        }
+        SelectObject(dc, old_f);
+        ReleaseDC(NULL, dc);
+    }
     return font;
+}
+
+int leno_gui_platform_font_internal_leading(LenoGUIPlatformFont* font) {
+    return font ? font->internal_leading : 0;
+}
+
+int leno_gui_platform_text_width_utf8(LenoGUIPlatformFont* font, const char* text, int byte_len) {
+    if (!font || !font->hfont || !text || byte_len <= 0) return 0;
+    /* 临时截取子串为以 null 结尾的缓冲 */
+    char* sub = (char*)malloc((size_t)byte_len + 1);
+    if (!sub) return 0;
+    memcpy(sub, text, (size_t)byte_len);
+    sub[byte_len] = '\0';
+    /* 转 WCHAR */
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, sub, -1, NULL, 0);
+    if (wlen <= 1) { free(sub); return 0; }
+    wchar_t* wtext = (wchar_t*)malloc((size_t)wlen * sizeof(wchar_t));
+    if (!wtext) { free(sub); return 0; }
+    MultiByteToWideChar(CP_UTF8, 0, sub, -1, wtext, wlen);
+    free(sub);
+    /* GetTextExtentExPointW: 一次调用得到完整累积宽度 */
+    HDC dc = GetDC(NULL);
+    HFONT old_f = (HFONT)SelectObject(dc, font->hfont);
+    SIZE sz = {0, 0};
+    GetTextExtentExPointW(dc, wtext, wlen - 1, INT_MAX, NULL, NULL, &sz);
+    SelectObject(dc, old_f);
+    ReleaseDC(NULL, dc);
+    free(wtext);
+    return sz.cx;
 }
 
 void leno_gui_platform_destroy_font(LenoGUIPlatformFont* font) {
@@ -1765,8 +1808,9 @@ void leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* tex
     wchar_t* wtext = (wchar_t*)malloc(wlen * sizeof(wchar_t));
     if (!wtext) { SelectObject(dc, old_font); ReleaseDC(NULL, dc); if (w) *w = 0; if (h) *h = 0; return; }
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, wlen);
+    /* 与渲染一致，使用 DrawTextW；DT_NOPREFIX 防止 & 被解释 */
     RECT rc = {0, 0, 0, 0};
-    DrawTextW(dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_CALCRECT);
+    DrawTextW(dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_CALCRECT | DT_NOPREFIX);
     free(wtext);
     SelectObject(dc, old_font);
     ReleaseDC(NULL, dc);

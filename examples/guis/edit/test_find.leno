@@ -1,0 +1,175 @@
+// ============================================================
+// GTextBox - 查找功能测试
+// 测试: find（中文/英文/数字）+ select 选中高亮
+// ============================================================
+
+import guis
+
+main() {
+    _console(false)
+
+    Style[window] w_style = {
+        width: 750,
+        height: 550,
+        center: true,
+        bg_color: _rgb(26, 26, 42, 255),
+        resizable: true
+    }
+    GWin win = guis.create_window("GTextBox 查找 & 选中测试", w_style)
+
+    var font_title = guis.load_font("Arial", 20)
+    var font_info  = guis.load_font("Arial", 13)
+
+    // ===== 主编辑框 =====
+    Style[edit] s_edit = {
+        x: 30, y: 55, width: 690, height: 260,
+        placeholder: "预置了中英文混合文本...",
+        multiline: true,
+        font_size: 15, radius: 6,
+        cursor_color: _rgb(100, 200, 255, 255),
+        selection_color: _rgb(255, 200, 60, 160),
+        focus_color: _rgb(100, 180, 240, 255)
+    }
+    GTextBox tb = win.add_textbox(s_edit)
+    tb.set_text("LenoC is a modern programming language.\n\nLeno语言是一种现代编程语言。\n支持中文和英文混合文本。\n\nHello World! 你好世界！\n0123456789 数字也可以查找\n\nLenoC - 快速、简洁、高效\nfind function testing now!\n\nABCDEFG abcdefg\nABCDEFG 第二次出现")
+
+    // ===== 按钮 =====
+    var by = 340
+
+    GButton btn_chinese = win.add_button({
+        x: 30, y: by, width: 120, height: 40,
+        text: "查找'语言'", bg_color: _rgb(160, 120, 60, 255),
+        hover_color: _rgb(200, 160, 90, 255), press_color: _rgb(120, 80, 30, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+    GButton btn_english = win.add_button({
+        x: 160, y: by, width: 120, height: 40,
+        text: "查找'LenoC'", bg_color: _rgb(80, 120, 200, 255),
+        hover_color: _rgb(110, 150, 230, 255), press_color: _rgb(50, 80, 150, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+    GButton btn_digit = win.add_button({
+        x: 290, y: by, width: 120, height: 40,
+        text: "查找'0123'", bg_color: _rgb(140, 80, 180, 255),
+        hover_color: _rgb(180, 110, 220, 255), press_color: _rgb(100, 50, 140, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+    GButton btn_world = win.add_button({
+        x: 420, y: by, width: 120, height: 40,
+        text: "查找'World'", bg_color: _rgb(60, 160, 100, 255),
+        hover_color: _rgb(90, 200, 130, 255), press_color: _rgb(40, 110, 60, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+    GButton btn_select = win.add_button({
+        x: 550, y: by, width: 120, height: 40,
+        text: "选中第1行", bg_color: _rgb(180, 80, 80, 255),
+        hover_color: _rgb(220, 110, 110, 255), press_color: _rgb(130, 50, 50, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+
+    // ===== 查找第2次出现 =====
+    GButton btn_next1 = win.add_button({
+        x: 30, y: 395, width: 160, height: 40,
+        text: "找第2个'LenoC'", bg_color: _rgb(80, 120, 200, 255),
+        hover_color: _rgb(110, 150, 230, 255), press_color: _rgb(50, 80, 150, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+    GButton btn_next2 = win.add_button({
+        x: 200, y: 395, width: 160, height: 40,
+        text: "找第2个'ABCDEFG'", bg_color: _rgb(140, 80, 180, 255),
+        hover_color: _rgb(180, 110, 220, 255), press_color: _rgb(100, 50, 140, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+    GButton btn_clear = win.add_button({
+        x: 370, y: 395, width: 100, height: 40,
+        text: "清除选中", bg_color: _rgb(100, 100, 120, 255),
+        hover_color: _rgb(140, 140, 160, 255), press_color: _rgb(60, 60, 80, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+
+    // ===== 状态 =====
+    var result_msg = "点击按钮测试查找和选中功能"
+    var last_found = 0
+
+    // ===== 回调 =====
+    btn_chinese.on_click(func() {
+        var pos = tb.find("语言", 0)
+        if pos >= 0 { last_found = pos; result_msg = "找到 '语言' 位置: " + _str(pos) }
+        else { result_msg = "未找到 '语言'" }
+    })
+    btn_english.on_click(func() {
+        var pos = tb.find("LenoC", 0)
+        if pos >= 0 { last_found = pos; result_msg = "找到 'LenoC' 位置: " + _str(pos) }
+        else { result_msg = "未找到 'LenoC'" }
+    })
+    btn_digit.on_click(func() {
+        var pos = tb.find("0123", 0)
+        if pos >= 0 { last_found = pos; result_msg = "找到 '0123' 位置: " + _str(pos) }
+        else { result_msg = "未找到 '0123'" }
+    })
+    btn_world.on_click(func() {
+        var pos = tb.find("World", 0)
+        if pos >= 0 { last_found = pos; result_msg = "找到 'World' 位置: " + _str(pos) }
+        else { result_msg = "未找到 'World'" }
+    })
+
+    btn_select.on_click(func() {
+        // 选中第一行: "LenoC is a modern programming language." = 38 个字符
+        tb.select(0, 38)
+        result_msg = "选中第一行 38 个字符"
+    })
+
+    btn_next1.on_click(func() {
+        var pos1 = tb.find("LenoC", 0)
+        if pos1 < 0 { result_msg = "未找到 LenoC"; return }
+        var pos2 = tb.find("LenoC", pos1 + 1)
+        if pos2 < 0 { result_msg = "没有第二个 LenoC"; return }
+        last_found = pos2
+        result_msg = "第2个 LenoC 位置: " + _str(pos2)
+    })
+    btn_next2.on_click(func() {
+        var pos1 = tb.find("ABCDEFG", 0)
+        if pos1 < 0 { result_msg = "未找到 ABCDEFG"; return }
+        var pos2 = tb.find("ABCDEFG", pos1 + 1)
+        if pos2 < 0 { result_msg = "没有第二个 ABCDEFG"; return }
+        last_found = pos2
+        result_msg = "第2个 ABCDEFG 位置: " + _str(pos2)
+    })
+
+    btn_clear.on_click(func() {
+        tb.select(-1, 0)
+        result_msg = "已清除选中"
+        last_found = 0
+    })
+
+    // ===== 渲染 =====
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(26, 26, 42, 255))
+            ren.clear()
+
+            ren.set_color(_rgb(255, 255, 255, 255))
+            ren.draw_text(font_title, "查找 & 选中测试 (find / select)", 30, 22)
+
+            ren.set_color(_rgb(150, 150, 190, 255))
+            ren.draw_text(font_info, "文本区 (含中英文数字混合):", 30, 42)
+
+            // 结果
+            if result_msg != "" {
+                ren.set_color(_rgb(255, 220, 100, 255))
+                ren.draw_text(font_info, result_msg, 30, 455)
+            }
+
+            ren.set_color(_rgb(110, 110, 150, 255))
+            ren.draw_text(font_info, "点击按钮: 查找中文/英文/数字 → 黄色高亮选中 | select 手动高亮", 30, 520)
+        },
+        func(GEvent e) {
+            if e.is_window_close() { win.set_should_close(true) }
+            if e.is_key_down() and e.key() == 27 { win.set_should_close(true) }
+        }
+    )
+
+    font_title.close()
+    font_info.close()
+    win.close()
+}

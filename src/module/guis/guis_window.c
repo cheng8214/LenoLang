@@ -703,6 +703,13 @@ static Value win_add_textbox_func(int argc, Value* args) {
     int max_length = 0;  /* 0=无限制 */
     int password = 0;
     int multiline = 0;
+    int placeholder_font_size = 0;  /* 0=跟随主字体 */
+    int letter_spacing = 0;
+    /* 滚动条颜色默认值 */
+    int sb_track_r = 220, sb_track_g = 220, sb_track_b = 220, sb_track_a = 255;
+    int sb_thumb_r = 150, sb_thumb_g = 150, sb_thumb_b = 150, sb_thumb_a = 255;
+    int sb_thumb_hover_r = 110, sb_thumb_hover_g = 110, sb_thumb_hover_b = 110, sb_thumb_hover_a = 255;
+    int sb_thumb_press_r = 80, sb_thumb_press_g = 80, sb_thumb_press_b = 80, sb_thumb_press_a = 255;
 
     /* 解析 style 字典 */
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
@@ -764,6 +771,46 @@ static Value win_add_textbox_func(int argc, Value* args) {
         if (!val_is_null(v)) password = val_as_bool(v) ? 1 : 0;
         key = intern_string("multiline", 9); v = dict_get(style, val_obj((Object*)key));
         if (!val_is_null(v)) multiline = val_as_bool(v) ? 1 : 0;
+        key = intern_string("placeholder_color", 17); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            placeholder_r = rgb->r; placeholder_g = rgb->g; placeholder_b = rgb->b; placeholder_a = rgb->a;
+        }
+        key = intern_string("placeholder_font_size", 21); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) placeholder_font_size = val_as_int(v);
+        key = intern_string("cursor_color", 12); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            cursor_r = rgb->r; cursor_g = rgb->g; cursor_b = rgb->b; cursor_a = rgb->a;
+        }
+        key = intern_string("selection_color", 15); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            sel_r = rgb->r; sel_g = rgb->g; sel_b = rgb->b; sel_a = rgb->a;
+        }
+        key = intern_string("letter_spacing", 14); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) letter_spacing = val_as_int(v);
+        /* 滚动条颜色 */
+        key = intern_string("sb_track_color", 14); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            sb_track_r = rgb->r; sb_track_g = rgb->g; sb_track_b = rgb->b; sb_track_a = rgb->a;
+        }
+        key = intern_string("sb_thumb_color", 14); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            sb_thumb_r = rgb->r; sb_thumb_g = rgb->g; sb_thumb_b = rgb->b; sb_thumb_a = rgb->a;
+        }
+        key = intern_string("sb_thumb_hover_color", 20); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            sb_thumb_hover_r = rgb->r; sb_thumb_hover_g = rgb->g; sb_thumb_hover_b = rgb->b; sb_thumb_hover_a = rgb->a;
+        }
+        key = intern_string("sb_thumb_press_color", 20); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
+            sb_thumb_press_r = rgb->r; sb_thumb_press_g = rgb->g; sb_thumb_press_b = rgb->b; sb_thumb_press_a = rgb->a;
+        }
     }
 
     /* 创建文本框对象 */
@@ -816,6 +863,9 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->hovered = 0;
     tb->password = password;
     tb->max_length = max_length;
+    tb->placeholder_font_size = placeholder_font_size;
+    tb->placeholder_font_name = NULL;
+    tb->placeholder_font = NULL;
     tb->blink_visible = 0;
     tb->last_blink = 0;
     tb->anchor = 0;
@@ -833,6 +883,19 @@ static Value win_add_textbox_func(int argc, Value* args) {
     } else {
         fprintf(stderr, "[TEXTBOX] font load failed: '%s' %d\n", font_name, font_size);
     }
+
+    /* 加载 placeholder 独立字体 */
+    if (placeholder_font_size > 0 && placeholder_font_size != font_size) {
+        gui_textbox_update_placeholder_font(tb);
+    }
+
+    /* 字间距 & 滚动条颜色 */
+    tb->letter_spacing = letter_spacing;
+    tb->sb_track_r = sb_track_r; tb->sb_track_g = sb_track_g; tb->sb_track_b = sb_track_b; tb->sb_track_a = sb_track_a;
+    tb->sb_thumb_r = sb_thumb_r; tb->sb_thumb_g = sb_thumb_g; tb->sb_thumb_b = sb_thumb_b; tb->sb_thumb_a = sb_thumb_a;
+    tb->sb_thumb_hover_r = sb_thumb_hover_r; tb->sb_thumb_hover_g = sb_thumb_hover_g; tb->sb_thumb_hover_b = sb_thumb_hover_b; tb->sb_thumb_hover_a = sb_thumb_hover_a;
+    tb->sb_thumb_press_r = sb_thumb_press_r; tb->sb_thumb_press_g = sb_thumb_press_g; tb->sb_thumb_press_b = sb_thumb_press_b; tb->sb_thumb_press_a = sb_thumb_press_a;
+    tb->sb_h_hovered = 0; tb->sb_v_hovered = 0;
 
     gc_write_barrier_obj((Object*)tb, (Object*)win);
 
