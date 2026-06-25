@@ -181,9 +181,11 @@ typedef struct ObjGUITextBox {
     int hovered;                   /* 鼠标悬停 */
     int password;                  /* 密码模式 */
     int max_length;                /* 最大字符数 (0=无限制) */
-    /* 缓存：避免每帧遍历测量（参考 Scintilla 行缓存设计） */
+    /* 缓存：避免每帧遍历测量 */
     int text_is_dirty;             /* 文本已修改，需重测宽度 */
     int cached_max_text_width;     /* 最宽行像素宽度 */
+    int cached_cursor_x;           /* 缓存光标 X（仅移动时重算） */
+    int cached_cursor_pos;         /* 缓存时的 cursor_pos */
     /* 光标闪烁 */
     int blink_visible;
     uint64_t last_blink;
@@ -191,6 +193,10 @@ typedef struct ObjGUITextBox {
     int anchor;
     int anchor_margin_x;
     int anchor_margin_y;
+    /* 颜色范围（语法高亮等） */
+    #define TB_MAX_COLOR_RANGES 2048
+    struct { int start; int len; int r, g, b, a; } color_ranges[2048];
+    int color_range_count;
     /* 回调 */
     Value on_change;               /* 文本改变回调 */
     Value on_submit;               /* 回车提交回调 */

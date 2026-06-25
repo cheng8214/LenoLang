@@ -48,10 +48,9 @@ ObjGUITextBox* as_textbox(Value v) {
     if (!val_is_obj(v)) return NULL;
     return (ObjGUITextBox*)val_as_obj(v);
 }
-/* 精确测量 UTF-8 文本前 bp 字节的像素宽度（GetTextExtentExPointW，与渲染一致） */
+/* 测量文本宽度（DrawTextW DT_CALCRECT，与渲染一致） */
 static int tc_text_width_to(ObjGUITextBox* tb, const char* s, int bp) {
     if (bp <= 0 || !s || !s[0] || !tb->font || !tb->font->platform) return 0;
-    /* 密码模式：测量 '*' 掩码宽度，与渲染保持一致 */
     if (tb->password) {
         int n = 0, i = 0;
         while (s[i] && i < bp) { n++; i = tc_next(s, i); }
@@ -59,9 +58,15 @@ static int tc_text_width_to(ObjGUITextBox* tb, const char* s, int bp) {
         char mask[256];
         memset(mask, '*', (size_t)n);
         mask[n] = '\0';
-        return leno_gui_platform_text_width_utf8(tb->font->platform, mask, n);
+        int w = 0, h = 0;
+        leno_gui_platform_text_size_font(tb->font->platform, mask, &w, &h);
+        return w;
     }
-    return leno_gui_platform_text_width_utf8(tb->font->platform, s, bp);
+    char save = s[bp]; ((char*)s)[bp] = '\0';
+    int w = 0, h = 0;
+    leno_gui_platform_text_size_font(tb->font->platform, s, &w, &h);
+    ((char*)s)[bp] = save;
+    return w;
 }
 /* ===== 多行辅助函数（基于单字符串中的 \n） ===== */
 static int tb_count_lines(const char* text) {
@@ -108,7 +113,10 @@ static int tb_line_y(ObjGUITextBox* tb, int line) {
     return tb->y + tb->border_width + tb->padding_y + line * tb->font_size - tb->scroll_y;
 }
 /* 标记文本缓存失效（文本修改时调用） */
-static void tb_mark_dirty(ObjGUITextBox* tb) { tb->text_is_dirty = 1; }
+static void tb_mark_dirty(ObjGUITextBox* tb) {
+    tb->text_is_dirty = 1;
+    tb->cached_cursor_pos = -1;  /* 文本变了，光标缓存失效 */
+}
 
 /* 多行时返回最宽行的像素宽度，单行时返回整段文本宽度。
    参考 Scintilla：缓存结果，只在文本变更时重算，避免每帧遍历 N 行调用 GDI */
@@ -128,10 +136,17 @@ static int tb_text_total_width(ObjGUITextBox* tb) {
 }
 /* 返回光标在当前行内的 x 像素坐标 */
 static int tb_cursor_x(ObjGUITextBox* tb) {
-    if (!tb->multiline) return tc_text_width_to(tb, tb->text, tb->cursor_pos);
-    int line = tb_current_line(tb->text, tb->cursor_pos);
-    int ls = tb_line_start(tb->text, line);
-    return tc_text_width_to(tb, tb->text + ls, tb->cursor_pos - ls);
+    if (tb->cached_cursor_pos == tb->cursor_pos) return tb->cached_cursor_x;
+    int cx;
+    if (!tb->multiline) cx = tc_text_width_to(tb, tb->text, tb->cursor_pos);
+    else {
+        int line = tb_current_line(tb->text, tb->cursor_pos);
+        int ls = tb_line_start(tb->text, line);
+        cx = tc_text_width_to(tb, tb->text + ls, tb->cursor_pos - ls);
+    }
+    tb->cached_cursor_x = cx;
+    tb->cached_cursor_pos = tb->cursor_pos;
+    return cx;
 }
 static int tbox_hit(ObjGUITextBox* tb, float mx, float my) {
     return mx >= tb->x && mx <= tb->x + tb->width &&
@@ -418,18 +433,45 @@ static Value tb_find(int argc, Value* args) {
     if (argc >= 3) start = val_as_int(args[2]);
     if (start < 0) start = 0;
     if (start >= tb->text_len) return val_int(-1);
-    int nlen = (int)strlen(needle);
     char* pos = strstr(tb->text + start, needle);
     if (!pos) return val_int(-1);
-    int found = (int)(pos - tb->text);
-    /* 选中找到的文本 */
-    tb->sel_start = found;
-    tb->sel_len = nlen;
-    tb->cursor_pos = found + nlen;
-    tb->blink_visible = 1;
-    tb->last_blink = leno_gui_platform_get_ticks();
-    tb_ensure_cursor_visible(tb);
-    return val_int(found);
+    return val_int((int)(pos - tb->text));
+}
+static Value tb_set_range_color(int argc, Value* args) {
+    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    int start = val_as_int(args[1]);
+    int len = val_as_int(args[2]);
+    if (start < 0 || len <= 0) return val_null();
+    int r = 255, g = 0, b = 0, a = 255;
+    if (val_is_obj(args[3]) && val_as_obj(args[3])->type == OBJ_RGB) {
+        ObjRgb* rgb = (ObjRgb*)val_as_obj(args[3]);
+        r = rgb->r; g = rgb->g; b = rgb->b; a = rgb->a;
+    }
+    /* 尝试合并到相邻同色范围 */
+    for (int i = 0; i < tb->color_range_count; i++) {
+        if (tb->color_ranges[i].r == r && tb->color_ranges[i].g == g &&
+            tb->color_ranges[i].b == b && tb->color_ranges[i].a == a) {
+            int range_end = tb->color_ranges[i].start + tb->color_ranges[i].len;
+            if (start == range_end) {
+                tb->color_ranges[i].len += len; return val_null();
+            }
+            if (start + len == tb->color_ranges[i].start) {
+                tb->color_ranges[i].start = start;
+                tb->color_ranges[i].len += len; return val_null();
+            }
+        }
+    }
+    if (tb->color_range_count >= TB_MAX_COLOR_RANGES) return val_null();
+    int idx = tb->color_range_count++;
+    tb->color_ranges[idx].start = start;
+    tb->color_ranges[idx].len = len;
+    tb->color_ranges[idx].r = r; tb->color_ranges[idx].g = g;
+    tb->color_ranges[idx].b = b; tb->color_ranges[idx].a = a;
+    return val_null();
+}
+static Value tb_clear_colors(int argc, Value* args) {
+    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    tb->color_range_count = 0; return val_null();
 }
 static Value tb_select(int argc, Value* args) {
     (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
@@ -445,6 +487,57 @@ static Value tb_select(int argc, Value* args) {
     tb->last_blink = leno_gui_platform_get_ticks();
     tb_ensure_cursor_visible(tb);
     return val_null();
+}
+
+/* 按颜色范围分段渲染文本（不修改原文本，避免测量冲突） */
+static void tb_draw_text_colored(ObjGUITextBox* tb, LenoGUIPlatformRenderer* r,
+    LenoGUIPlatformFont* font, const char* text, int text_len, int tx, int ty) {
+    if (text_len <= 0) return;
+    int p = 0, seg_start = 0;
+    int cur_r = tb->text_r, cur_g = tb->text_g, cur_b = tb->text_b, cur_a = tb->text_a;
+    /* 先测量段起始 x */
+    int seg_x = 0;
+    while (p < text_len) {
+        int cr = tb->text_r, cg = tb->text_g, cb = tb->text_b, ca = tb->text_a;
+        int abs_p = (int)(text - tb->text) + p;
+        for (int i = 0; i < tb->color_range_count; i++) {
+            if (abs_p >= tb->color_ranges[i].start && abs_p < tb->color_ranges[i].start + tb->color_ranges[i].len) {
+                cr = tb->color_ranges[i].r; cg = tb->color_ranges[i].g;
+                cb = tb->color_ranges[i].b; ca = tb->color_ranges[i].a;
+                break;
+            }
+        }
+        int next = tc_next(text, p);
+        if ((cr != cur_r || cg != cur_g || cb != cur_b || ca != cur_a) && p > seg_start) {
+            /* 绘制前一段（用 tc_text_width_to 测量，不修改文本） */
+            leno_gui_platform_set_draw_color(r, cur_r, cur_g, cur_b, cur_a);
+            /* 复制段文本到临时缓冲 */
+            int slen = p - seg_start;
+            char* buf = (char*)malloc((size_t)slen + 1);
+            if (buf) {
+                memcpy(buf, text + seg_start, (size_t)slen);
+                buf[slen] = '\0';
+                leno_gui_platform_draw_text_font(r, font, buf, tx + seg_x, ty);
+                free(buf);
+            }
+            seg_start = p;
+            seg_x = tc_text_width_to(tb, text, p);
+            cur_r = cr; cur_g = cg; cur_b = cb; cur_a = ca;
+        }
+        p = next;
+    }
+    /* 最后一段 */
+    if (p > seg_start) {
+        int slen = p - seg_start;
+        char* buf = (char*)malloc((size_t)slen + 1);
+        if (buf) {
+            memcpy(buf, text + seg_start, (size_t)slen);
+            buf[slen] = '\0';
+            leno_gui_platform_set_draw_color(r, cur_r, cur_g, cur_b, cur_a);
+            leno_gui_platform_draw_text_font(r, font, buf, tx + seg_x, ty);
+            free(buf);
+        }
+    }
 }
 
 /* ===== Draw ===== */
@@ -493,6 +586,8 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
                 char pwd[128] = {0}; int n = tc_strlen(tb->text); if (n > 120) n = 120;
                 for (int i = 0; i < n; i++) pwd[i] = '*';
                 leno_gui_platform_draw_text_font(r, tb->font->platform, pwd, tx, ty);
+            } else if (tb->color_range_count > 0) {
+                tb_draw_text_colored(tb, r, tb->font->platform, tb->text, tb->text_len, tx, ty);
             } else {
                 leno_gui_platform_draw_text_font(r, tb->font->platform, tb->text, tx, ty);
             }
@@ -508,7 +603,7 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
         }
         /* cursor */
         if (tb->focused && tb->blink_visible) {
-            int cx = tx + tc_text_width_to(tb, tb->text, tb->cursor_pos);
+            int cx = tx + tb_cursor_x(tb);
             leno_gui_platform_set_draw_color(r, tb->cursor_r, tb->cursor_g, tb->cursor_b, tb->cursor_a);
             leno_gui_platform_render_fill_rect(r, cx, ty + lead, 2, tb->font_size);
         }
@@ -535,13 +630,17 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
             if (tb->text_len > 0 && tb->font && ls < le) {
                 char save = tb->text[le];
                 tb->text[le] = '\0';
-                leno_gui_platform_set_draw_color(r, tb->text_r, tb->text_g, tb->text_b, tb->text_a);
-                leno_gui_platform_draw_text_font(r, tb->font->platform, tb->text + ls, tx, ly);
+                if (tb->color_range_count > 0) {
+                    tb_draw_text_colored(tb, r, tb->font->platform, tb->text + ls, le - ls, tx, ly);
+                } else {
+                    leno_gui_platform_set_draw_color(r, tb->text_r, tb->text_g, tb->text_b, tb->text_a);
+                    leno_gui_platform_draw_text_font(r, tb->font->platform, tb->text + ls, tx, ly);
+                }
                 tb->text[le] = save;
             }
             /* 光标 */
             if (tb->focused && tb->blink_visible && tb->cursor_pos >= ls && tb->cursor_pos <= le) {
-                int cx = tx + tc_text_width_to(tb, tb->text + ls, tb->cursor_pos - ls);
+                int cx = tx + tb_cursor_x(tb);
                 leno_gui_platform_set_draw_color(r, tb->cursor_r, tb->cursor_g, tb->cursor_b, tb->cursor_a);
                 leno_gui_platform_render_fill_rect(r, cx, ly + lead, 2, tb->font_size);
             }
@@ -1081,4 +1180,7 @@ void guis_init_textbox_instance_methods(void) {
     textbox_register_method_with_params("get_text", make_native(tb_get_text, 1, "get_text"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
     textbox_register_method_with_params("find", make_native(tb_find, 3, "find"), 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, find_params);
     textbox_register_method_with_params("select", make_native(tb_select, 3, "select"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
+    /* 颜色范围 */
+    textbox_register_method_with_params("set_range_color", make_native(tb_set_range_color, 4, "set_range_color"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    textbox_register_method_with_params("clear_colors", make_native(tb_clear_colors, 1, "clear_colors"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
 }

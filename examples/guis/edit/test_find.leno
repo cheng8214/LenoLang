@@ -80,9 +80,21 @@ main() {
         hover_color: _rgb(180, 110, 220, 255), press_color: _rgb(100, 50, 140, 255),
         text_color: _rgb(255, 255, 255, 255), radius: 6
     })
+    GButton btn_color = win.add_button({
+        x: 30, y: 450, width: 160, height: 36,
+        text: "着色'语言'红色", bg_color: _rgb(200, 60, 60, 255),
+        hover_color: _rgb(240, 90, 90, 255), press_color: _rgb(150, 30, 30, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
+    GButton btn_color2 = win.add_button({
+        x: 200, y: 450, width: 160, height: 36,
+        text: "着色'World'绿色", bg_color: _rgb(50, 160, 80, 255),
+        hover_color: _rgb(80, 200, 110, 255), press_color: _rgb(30, 110, 50, 255),
+        text_color: _rgb(255, 255, 255, 255), radius: 6
+    })
     GButton btn_clear = win.add_button({
-        x: 370, y: 395, width: 100, height: 40,
-        text: "清除选中", bg_color: _rgb(100, 100, 120, 255),
+        x: 370, y: 450, width: 100, height: 36,
+        text: "清除", bg_color: _rgb(100, 100, 120, 255),
         hover_color: _rgb(140, 140, 160, 255), press_color: _rgb(60, 60, 80, 255),
         text_color: _rgb(255, 255, 255, 255), radius: 6
     })
@@ -94,27 +106,26 @@ main() {
     // ===== 回调 =====
     btn_chinese.on_click(func() {
         var pos = tb.find("语言", 0)
-        if pos >= 0 { last_found = pos; result_msg = "找到 '语言' 位置: " + _str(pos) }
+        if pos >= 0 { tb.select(pos, 6); result_msg = "找到 '语言'" }
         else { result_msg = "未找到 '语言'" }
     })
     btn_english.on_click(func() {
         var pos = tb.find("LenoC", 0)
-        if pos >= 0 { last_found = pos; result_msg = "找到 'LenoC' 位置: " + _str(pos) }
+        if pos >= 0 { tb.select(pos, 5); result_msg = "找到 'LenoC'" }
         else { result_msg = "未找到 'LenoC'" }
     })
     btn_digit.on_click(func() {
         var pos = tb.find("0123", 0)
-        if pos >= 0 { last_found = pos; result_msg = "找到 '0123' 位置: " + _str(pos) }
+        if pos >= 0 { tb.select(pos, 4); result_msg = "找到 '0123'" }
         else { result_msg = "未找到 '0123'" }
     })
     btn_world.on_click(func() {
         var pos = tb.find("World", 0)
-        if pos >= 0 { last_found = pos; result_msg = "找到 'World' 位置: " + _str(pos) }
+        if pos >= 0 { tb.select(pos, 5); result_msg = "找到 'World'" }
         else { result_msg = "未找到 'World'" }
     })
 
     btn_select.on_click(func() {
-        // 选中第一行: "LenoC is a modern programming language." = 38 个字符
         tb.select(0, 38)
         result_msg = "选中第一行 38 个字符"
     })
@@ -124,21 +135,36 @@ main() {
         if pos1 < 0 { result_msg = "未找到 LenoC"; return }
         var pos2 = tb.find("LenoC", pos1 + 1)
         if pos2 < 0 { result_msg = "没有第二个 LenoC"; return }
-        last_found = pos2
-        result_msg = "第2个 LenoC 位置: " + _str(pos2)
+        tb.select(pos2, 5)
+        result_msg = "第2个 LenoC"
     })
     btn_next2.on_click(func() {
         var pos1 = tb.find("ABCDEFG", 0)
         if pos1 < 0 { result_msg = "未找到 ABCDEFG"; return }
         var pos2 = tb.find("ABCDEFG", pos1 + 1)
         if pos2 < 0 { result_msg = "没有第二个 ABCDEFG"; return }
-        last_found = pos2
-        result_msg = "第2个 ABCDEFG 位置: " + _str(pos2)
+        tb.select(pos2, 7)
+        result_msg = "第2个 ABCDEFG"
     })
 
+    btn_color.on_click(func() {
+        var pos = tb.find("语言", 0)
+        if pos >= 0 {
+            tb.set_range_color(pos, 6, _rgb(255, 80, 80, 255))
+            result_msg = "所有'语言'已着红色"
+        }
+    })
+    btn_color2.on_click(func() {
+        var pos = tb.find("World", 0)
+        if pos >= 0 {
+            tb.set_range_color(pos, 5, _rgb(80, 255, 120, 255))
+            result_msg = "第一个'World'已着绿色"
+        }
+    })
     btn_clear.on_click(func() {
         tb.select(-1, 0)
-        result_msg = "已清除选中"
+        tb.clear_colors()
+        result_msg = "已清除选中和着色"
         last_found = 0
     })
 
