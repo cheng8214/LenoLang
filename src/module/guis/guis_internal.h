@@ -127,6 +127,17 @@ typedef struct {
     int gap_end;    /* 间隙结束索引（exclusive） */
 } GapBuffer;
 
+/* Scintilla 风格行布局缓存 —— 缓存每行字符的像素偏移，避免每帧重测 */
+typedef struct {
+    int line;           /* 逻辑行号 */
+    int start;          /* 行起始字节偏移 */
+    int len;            /* 行长度（字节） */
+    int char_count;     /* UTF-8 字符数 */
+    int total_width;    /* 整行像素宽度 */
+    int* offsets;       /* 每个字符结束位置的 x 偏移（相对于行首），长度 = char_count */
+    int valid;          /* 是否有效 */
+} LineLayout;
+
 /* GTextBox 文本框对象 */
 typedef struct ObjGUITextBox {
     Object header;
@@ -190,12 +201,16 @@ typedef struct ObjGUITextBox {
     /* 缓存：避免每帧遍历测量 */
     int text_is_dirty;             /* 文本已修改，需重测宽度 */
     int cached_max_text_width;     /* 最宽行像素宽度 */
+    int cached_max_text_width_line;/* 最宽行所在行号（-1=未知） */
     int cached_cursor_x;           /* 缓存光标 X（仅移动时重算） */
     int cached_cursor_pos;         /* 缓存时的 cursor_pos */
     /* Scintilla 风格行索引：避免每次 O(n) 扫描全文找换行 */
     int* line_starts;              /* 动态数组，每行的字节偏移 */
     int line_count;                /* 当前行数 */
     int line_cap;                  /* line_starts 容量 */
+    /* Scintilla View 层：行布局缓存 */
+    LineLayout* layouts;           /* 每行布局缓存，长度 = line_count */
+    int layout_cap;                /* layouts 容量 */
     /* 光标闪烁 */
     int blink_visible;
     uint64_t last_blink;

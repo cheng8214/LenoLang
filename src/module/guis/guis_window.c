@@ -873,6 +873,9 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->anchor_margin_y = 0;
     tb->on_change = val_null();
     tb->on_submit = val_null();
+    tb->cached_max_text_width = 0;
+    tb->cached_max_text_width_line = -1;
+    tb->text_is_dirty = 1;
 
     /* 加载字体 */
     LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);

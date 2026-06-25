@@ -199,6 +199,8 @@ static int tb_current_line_tb(ObjGUITextBox* tb, int pos) {
     return lo;
 }
 
+static void tb_invalidate_layouts_from(ObjGUITextBox* tb, int line);
+
 /* 增量更新行索引：在 pos 处插入/删除 delta 字节后调用（delta 正为插入，负为删除） */
 static void tb_update_line_index(ObjGUITextBox* tb, int pos, int delta) {
     if (!tb->line_starts || tb->line_count == 0) {
@@ -219,18 +221,21 @@ static void tb_update_line_index(ObjGUITextBox* tb, int pos, int delta) {
             if (new_line < tb->line_count && tb->line_starts[new_line] == next_start) {
                 /* 与旧索引一致（已考虑 delta），后续无需再扫描 */
                 tb->line_count = new_line;
+                tb_invalidate_layouts_from(tb, line);
                 return;
             }
             if (new_line >= tb->line_cap) {
                 int nc = tb->line_cap * 2;
                 int* nl = (int*)realloc(tb->line_starts, nc * sizeof(int));
-                if (!nl) { tb->text_is_dirty = 1; return; }
+                if (!nl) { tb->text_is_dirty = 1; tb_invalidate_layouts_from(tb, line); return; }
                 tb->line_starts = nl; tb->line_cap = nc;
             }
             tb->line_starts[new_line++] = next_start;
         }
     }
     tb->line_count = new_line;
+    /* 增量失效：只有修改行及之后的 Layout 需要重算 */
+    tb_invalidate_layouts_from(tb, line);
 }
 
 static void tb_pos_to_line_col_ex(ObjGUITextBox* tb, int pos, int* line, int* col) {
@@ -246,26 +251,133 @@ static int tb_line_col_to_pos(ObjGUITextBox* tb, int line, int col) {
 static int tb_line_y(ObjGUITextBox* tb, int line) {
     return tb->y + tb->border_width + tb->padding_y + line * tb->font_size - tb->scroll_y;
 }
+/* ===== LineLayout 缓存管理（Scintilla View 层） ===== */
+static void tb_free_layouts(ObjGUITextBox* tb) {
+    if (!tb->layouts) return;
+    for (int i = 0; i < tb->layout_cap; i++) {
+        if (tb->layouts[i].offsets) { free(tb->layouts[i].offsets); tb->layouts[i].offsets = NULL; }
+        tb->layouts[i].valid = 0;
+    }
+    free(tb->layouts); tb->layouts = NULL;
+    tb->layout_cap = 0;
+}
+static void tb_ensure_layouts(ObjGUITextBox* tb) {
+    if (tb->layout_cap >= tb->line_count) return;
+    int nc = tb->layout_cap * 2; if (nc < tb->line_count) nc = tb->line_count + 16;
+    LineLayout* nl = (LineLayout*)realloc(tb->layouts, nc * sizeof(LineLayout));
+    if (!nl) return;
+    memset(nl + tb->layout_cap, 0, (nc - tb->layout_cap) * sizeof(LineLayout));
+    tb->layouts = nl; tb->layout_cap = nc;
+}
+static void tb_invalidate_layouts(ObjGUITextBox* tb) {
+    if (!tb->layouts) return;
+    for (int i = 0; i < tb->layout_cap; i++) {
+        tb->layouts[i].valid = 0;
+        if (tb->layouts[i].offsets) { free(tb->layouts[i].offsets); tb->layouts[i].offsets = NULL; }
+    }
+    tb->cached_max_text_width = 0;
+    tb->cached_max_text_width_line = -1;
+}
+static void tb_invalidate_layouts_from(ObjGUITextBox* tb, int line) {
+    if (!tb->layouts) return;
+    for (int i = line; i < tb->layout_cap; i++) {
+        tb->layouts[i].valid = 0;
+        if (tb->layouts[i].offsets) { free(tb->layouts[i].offsets); tb->layouts[i].offsets = NULL; }
+    }
+    /* 如果失效范围包含当前已知的最宽行，最大宽度缓存需要重新计算 */
+    if (tb->cached_max_text_width_line >= line) {
+        tb->cached_max_text_width = 0;
+        tb->cached_max_text_width_line = -1;
+    }
+}
+static void tb_layout_line(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line);
+static LineLayout* tb_get_layout(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line) {
+    if (line < 0 || line >= tb->line_count) return NULL;
+    tb_ensure_layouts(tb);
+    LineLayout* lo = &tb->layouts[line];
+    if (lo->valid && lo->line == line && lo->start == tb_line_start_tb(tb, line)) return lo;
+    tb_layout_line(tb, ren, line);
+    return lo->valid ? lo : NULL;
+}
+/* 行内第 col 个字符的结束 x 偏移（col 从 1 开始）；col=0 返回 0 */
+static int tb_line_char_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line, int col) {
+    if (col <= 0) return 0;
+    LineLayout* lo = tb_get_layout(tb, ren, line);
+    if (!lo || !lo->valid) return 0;
+    if (col > lo->char_count) col = lo->char_count;
+    return lo->offsets[col - 1];
+}
+/* 根据 x 像素坐标返回字符列（用于鼠标定位） */
+static int tb_line_col_from_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line, int x) {
+    if (x <= 0) return 0;
+    LineLayout* lo = tb_get_layout(tb, ren, line);
+    if (!lo || !lo->valid) return 0;
+    for (int i = 0; i < lo->char_count; i++) {
+        if (x <= lo->offsets[i]) return i + 1;
+    }
+    return lo->char_count;
+}
+/* 整行像素宽度 */
+static int tb_line_total_width(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line) {
+    LineLayout* lo = tb_get_layout(tb, ren, line);
+    if (!lo || !lo->valid) return 0;
+    return lo->total_width;
+}
+
 static void tb_mark_dirty(ObjGUITextBox* tb) {
     tb->text_is_dirty = 1;
     tb->cached_cursor_pos = -1;
-    tb->cached_max_text_width = 0;  /* 文本变了，宽度缓存也失效 */
+    /* cached_max_text_width 由 tb_layout_line / tb_invalidate_layouts_from 增量维护，
+       不再每次全量清零，避免大文本每次击键遍历所有行。 */
+}
+
+/* 计算指定行的 LineLayout：逐字符测量，填充 offsets 数组 */
+static void tb_layout_line(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line) {
+    if (line < 0 || line >= tb->line_count || !tb->layouts) return;
+    LineLayout* lo = &tb->layouts[line];
+    int ls = tb_line_start_tb(tb, line);
+    int le = tb_line_end_tb(tb, line);
+    int len = le - ls;
+    lo->line = line; lo->start = ls; lo->len = len;
+    lo->total_width = 0; lo->char_count = 0; lo->valid = 0;
+    if (len <= 0 || !tb->font || !tb->font->platform) { lo->valid = 1; return; }
+    /* 统计字符数 */
+    int cc = 0;
+    for (int i = 0; i < len; ) { cc++; i += tc_blen((unsigned char)gb_at(&tb->gb, ls + i)); }
+    lo->char_count = cc;
+    if (lo->offsets) { free(lo->offsets); lo->offsets = NULL; }
+    lo->offsets = (int*)malloc(sizeof(int) * cc);
+    if (!lo->offsets) return;
+    int x = 0, idx = 0;
+    for (int i = 0; i < len; ) {
+        int cl = tc_blen((unsigned char)gb_at(&tb->gb, ls + i));
+        int w = tc_text_width_to(tb, ren, ls + i, cl);
+        x += w;
+        lo->offsets[idx++] = x;
+        i += cl;
+    }
+    lo->total_width = x;
+    lo->valid = 1;
+    /* 增量维护最宽行缓存 */
+    if (x > tb->cached_max_text_width) {
+        tb->cached_max_text_width = x;
+        tb->cached_max_text_width_line = line;
+    }
 }
 
 /* 多行时返回最宽行的像素宽度（tb_lines_ensure 管理行索引，此处独立管理宽度缓存） */
-/* ren 非 NULL 时优先用绘制 DC 测量（Scintilla 架构，消除中文 1~2px 偏差），并更新缓存 */
+/* 优先用缓存，避免每帧绘制时全量扫描；ren 仅在缓存未命中时参与测量 */
 static int tb_text_total_width(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren) {
     if (!tb->multiline) return tc_text_width_to(tb, ren, 0, gb_len(&tb->gb));
     tb_lines_ensure(tb);
-    if (!ren && tb->cached_max_text_width > 0) return tb->cached_max_text_width;
+    if (tb->cached_max_text_width > 0) return tb->cached_max_text_width;
     int max_w = 0, total = tb->line_count;
     for (int i = 0; i < total; i++) {
-        int ls = tb_line_start_tb(tb, i);
-        int le = tb_line_end_tb(tb, i);
-        int w = tc_text_width_to(tb, ren, ls, le - ls);
+        int w = tb_line_total_width(tb, ren, i);
         if (w > max_w) max_w = w;
     }
     tb->cached_max_text_width = max_w;
+    tb->cached_max_text_width_line = (max_w > 0) ? 0 : -1; /* 简化：不再精确追踪最宽行行号，靠增量失效重建 */
     return max_w;
 }
 /* 返回光标在当前行内的 x 像素坐标 */
@@ -278,7 +390,9 @@ static int tb_cursor_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren) {
     else {
         int line = tb_current_line_tb(tb, tb->cursor_pos);
         int ls = tb_line_start_tb(tb, line);
-        cx = tc_text_width_to(tb, ren, ls, tb->cursor_pos - ls);
+        int col = 0;
+        for (int i = ls; i < tb->cursor_pos; ) { col++; i += tc_blen((unsigned char)gb_at(&tb->gb, i)); }
+        cx = tb_line_char_x(tb, ren, line, col);
     }
     tb->cached_cursor_x = cx;
     tb->cached_cursor_pos = tb->cursor_pos;
@@ -362,6 +476,21 @@ static void tb_del(ObjGUITextBox* tb) {
     tb_mark_dirty(tb);
     tb_ensure_cursor_visible(tb);
 }
+/* 将字节位置转为字符列（相对于行首，从 0 开始） */
+static int tb_pos_to_col(ObjGUITextBox* tb, int line, int pos) {
+    int ls = tb_line_start_tb(tb, line);
+    int col = 0;
+    for (int i = ls; i < pos; ) { col++; i += tc_blen((unsigned char)gb_at(&tb->gb, i)); }
+    return col;
+}
+/* 将字符列转为字节位置（col 从 0 开始） */
+static int tb_line_charcol_to_pos(ObjGUITextBox* tb, int line, int col) {
+    int ls = tb_line_start_tb(tb, line);
+    int le = tb_line_end_tb(tb, line);
+    int pos = ls;
+    for (int i = 0; i < col && pos < le; i++) pos += tc_blen((unsigned char)gb_at(&tb->gb, pos));
+    return pos;
+}
 static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
     tb_lines_ensure(tb);
     int tlen = gb_len(&tb->gb);
@@ -387,24 +516,10 @@ static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
     if (line < 0) line = 0;
     int total_lines = tb->line_count;
     if (line >= total_lines) line = total_lines - 1;
-    int start = tb_line_start_tb(tb, line);
-    int end = tb_line_end_tb(tb, line);
     int rx = (int)(mx - tb->x - tb->border_width - tb->padding_x) + tb->scroll_x;
-    if (rx <= 0) return start;
-    int lo2 = start, hi2 = end;
-    while (lo2 < hi2) {
-        int mid = (lo2 + hi2) / 2;
-        while (mid > start && (gb_at(&tb->gb, mid) & 0xC0) == 0x80) mid--;
-        int w = tc_text_width_to(tb, NULL, start, mid - start);
-        if (w < rx) {
-            int nxt = gb_next(&tb->gb, mid);
-            if (nxt > end) nxt = end;
-            lo2 = nxt;
-        } else {
-            hi2 = mid;
-        }
-    }
-    return lo2;
+    if (rx <= 0) return tb_line_start_tb(tb, line);
+    int col = tb_line_col_from_x(tb, NULL, line, rx);
+    return tb_line_charcol_to_pos(tb, line, col);
 }
 
 /* ===== Instance methods ===== */
@@ -417,7 +532,11 @@ static Value tb_set_text(int argc, Value* args) {
     gb_clear(&tb->gb);
     if (s && sl > 0) gb_insert(&tb->gb, 0, s, sl);
     tb->cursor_pos = gb_len(&tb->gb); tb->sel_start = -1; tb->sel_len = 0;
-    tb_mark_dirty(tb);
+    tb->text_is_dirty = 1;
+    tb->cached_cursor_pos = -1;
+    tb->cached_max_text_width = 0;
+    tb->cached_max_text_width_line = -1;
+    tb_invalidate_layouts(tb);
     return val_null();
 }
 static Value tb_set_ph(int argc, Value* args) {
@@ -762,12 +881,14 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
             if (ly + tb->font_size < clip_y || ly > clip_y + clip_h) continue;
             int ls = tb_line_start_tb(tb, line);
             int le = tb_line_end_tb(tb, line);
-            /* 选区高亮 */
+            /* 选区高亮（使用 LineLayout 缓存） */
             if (tb->sel_start >= 0 && tb->sel_len > 0 && sel_end > ls && tb->sel_start < le) {
                 int ss = tb->sel_start > ls ? tb->sel_start : ls;
                 int se = sel_end < le ? sel_end : le;
-                int sx = tx + tc_text_width_to(tb, r, ls, ss - ls);
-                int sw = tc_text_width_to(tb, r, ss, se - ss);
+                int col_s = tb_pos_to_col(tb, line, ss);
+                int col_e = tb_pos_to_col(tb, line, se);
+                int sx = tx + tb_line_char_x(tb, r, line, col_s);
+                int sw = tb_line_char_x(tb, r, line, col_e) - sx;
                 leno_gui_platform_set_draw_color(r, tb->sel_r, tb->sel_g, tb->sel_b, tb->sel_a);
                 leno_gui_platform_render_fill_rect(r, sx, ly + lead, sw, tb->font_size);
             }
@@ -1280,6 +1401,8 @@ void gui_textbox_free_all(ObjGUIWindow* win) {
             leno_gui_platform_destroy_font(tb->placeholder_font->platform);
             tb->placeholder_font->platform = NULL;
         }
+        if (tb->line_starts) { free(tb->line_starts); tb->line_starts = NULL; }
+        tb_free_layouts(tb);
         tb = n;
     }
     win->textboxes = NULL; win->textbox_count = 0; win->focused_textbox = NULL;
