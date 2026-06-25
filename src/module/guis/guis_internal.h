@@ -138,6 +138,33 @@ typedef struct {
     int valid;          /* 是否有效 */
 } LineLayout;
 
+/* Undo/Redo 动作类型 */
+typedef enum {
+    TB_UNDO_INSERT,     /* 在 pos 处插入 text */
+    TB_UNDO_DELETE,     /* 在 pos 处删除 text */
+    TB_UNDO_REPLACE     /* 在 pos 处用 text 替换原 old_text */
+} TBUndoType;
+
+/* 单个撤销动作 */
+typedef struct TBUndoAction {
+    TBUndoType type;
+    int pos;
+    char* text;         /* 插入/删除/替换后的文本 */
+    char* old_text;     /* 仅 REPLACE 时原文本 */
+    int cursor_before;  /* 撤销后恢复的光标位置 */
+    int cursor_after;   /* 重做后恢复的光标位置 */
+    int sel_start;
+    int sel_len;
+    int group;          /* 所属分组，同组一起撤销 */
+    struct TBUndoAction* next;
+} TBUndoAction;
+
+/* Undo/Redo 栈 */
+typedef struct {
+    TBUndoAction* top;
+    int count;
+} TBUndoStack;
+
 /* GTextBox 文本框对象 */
 typedef struct ObjGUITextBox {
     Object header;
@@ -222,6 +249,12 @@ typedef struct ObjGUITextBox {
     #define TB_MAX_COLOR_RANGES 2048
     struct { int start; int len; int r, g, b, a; } color_ranges[2048];
     int color_range_count;
+    /* Undo/Redo */
+    TBUndoStack undo_stack;
+    TBUndoStack redo_stack;
+    int undo_group;                /* 当前分组编号 */
+    int undo_grouping;             /* 是否处于分组中 */
+    int undo_enabled;              /* 是否启用 undo */
     /* 回调 */
     Value on_change;               /* 文本改变回调 */
     Value on_submit;               /* 回车提交回调 */

@@ -250,6 +250,129 @@ static int tb_line_col_to_pos(ObjGUITextBox* tb, int line, int col) {
 static int tb_line_y(ObjGUITextBox* tb, int line) {
     return tb->y + tb->border_width + tb->padding_y + line * tb->font_size - tb->scroll_y;
 }
+static void tb_mark_dirty(ObjGUITextBox* tb);
+static void tb_ensure_cursor_visible(ObjGUITextBox* tb);
+/* ===== Undo/Redo ===== */
+static void tb_undo_free_stack(TBUndoStack* stack) {
+    TBUndoAction* a = stack->top;
+    while (a) {
+        TBUndoAction* n = a->next;
+        if (a->text) free(a->text);
+        if (a->old_text) free(a->old_text);
+        free(a);
+        a = n;
+    }
+    stack->top = NULL;
+    stack->count = 0;
+}
+static void tb_undo_clear_redo(ObjGUITextBox* tb) {
+    tb_undo_free_stack(&tb->redo_stack);
+}
+static TBUndoAction* tb_undo_new_action(TBUndoType type, int pos, const char* text, const char* old_text,
+                                        int cursor_before, int cursor_after, int sel_start, int sel_len, int group) {
+    TBUndoAction* a = (TBUndoAction*)malloc(sizeof(TBUndoAction));
+    if (!a) return NULL;
+    a->type = type; a->pos = pos;
+    a->text = text ? strdup(text) : NULL;
+    a->old_text = old_text ? strdup(old_text) : NULL;
+    a->cursor_before = cursor_before; a->cursor_after = cursor_after;
+    a->sel_start = sel_start; a->sel_len = sel_len;
+    a->group = group; a->next = NULL;
+    return a;
+}
+static void tb_undo_push(ObjGUITextBox* tb, TBUndoType type, int pos, const char* text, const char* old_text,
+                         int cursor_before, int cursor_after, int sel_start, int sel_len) {
+    if (!tb->undo_enabled) return;
+    TBUndoAction* a = tb_undo_new_action(type, pos, text, old_text, cursor_before, cursor_after, sel_start, sel_len, tb->undo_group);
+    if (!a) return;
+    a->next = tb->undo_stack.top;
+    tb->undo_stack.top = a;
+    tb->undo_stack.count++;
+    tb_undo_clear_redo(tb);
+}
+static int tb_undo(ObjGUITextBox* tb) {
+    if (!tb->undo_stack.top) return 0;
+    int group = tb->undo_stack.top->group;
+    int any = 0;
+    while (tb->undo_stack.top && tb->undo_stack.top->group == group) {
+        TBUndoAction* a = tb->undo_stack.top;
+        tb->undo_stack.top = a->next;
+        tb->undo_stack.count--;
+        int delta = 0;
+        switch (a->type) {
+        case TB_UNDO_INSERT:
+            delta = a->text ? -(int)strlen(a->text) : 0;
+            gb_delete(&tb->gb, a->pos, a->text ? (int)strlen(a->text) : 0);
+            break;
+        case TB_UNDO_DELETE:
+            delta = a->text ? (int)strlen(a->text) : 0;
+            if (a->text) gb_insert(&tb->gb, a->pos, a->text, (int)strlen(a->text));
+            break;
+        case TB_UNDO_REPLACE:
+            delta = (a->old_text ? (int)strlen(a->old_text) : 0) - (a->text ? (int)strlen(a->text) : 0);
+            gb_delete(&tb->gb, a->pos, a->text ? (int)strlen(a->text) : 0);
+            if (a->old_text) gb_insert(&tb->gb, a->pos, a->old_text, (int)strlen(a->old_text));
+            break;
+        }
+        if (delta != 0) tb_update_line_index(tb, a->pos, delta);
+        tb->cursor_pos = a->cursor_before;
+        tb->sel_start = a->sel_start; tb->sel_len = a->sel_len;
+        a->next = tb->redo_stack.top;
+        tb->redo_stack.top = a;
+        tb->redo_stack.count++;
+        any = 1;
+    }
+    if (any) {
+        tb_mark_dirty(tb);
+        tb_ensure_cursor_visible(tb);
+    }
+    return any;
+}
+static int tb_redo(ObjGUITextBox* tb) {
+    if (!tb->redo_stack.top) return 0;
+    int group = tb->redo_stack.top->group;
+    int any = 0;
+    /* redo 需要按同一组原顺序执行，但栈是反的；先把整组弹到临时数组再正序执行 */
+    TBUndoAction* group_actions[64];
+    int count = 0;
+    while (tb->redo_stack.top && tb->redo_stack.top->group == group && count < 64) {
+        group_actions[count++] = tb->redo_stack.top;
+        tb->redo_stack.top = tb->redo_stack.top->next;
+        tb->redo_stack.count--;
+    }
+    for (int i = count - 1; i >= 0; i--) {
+        TBUndoAction* a = group_actions[i];
+        int delta = 0;
+        switch (a->type) {
+        case TB_UNDO_INSERT:
+            delta = a->text ? (int)strlen(a->text) : 0;
+            if (a->text) gb_insert(&tb->gb, a->pos, a->text, (int)strlen(a->text));
+            break;
+        case TB_UNDO_DELETE:
+            delta = a->text ? -(int)strlen(a->text) : 0;
+            gb_delete(&tb->gb, a->pos, a->text ? (int)strlen(a->text) : 0);
+            break;
+        case TB_UNDO_REPLACE:
+            delta = (a->text ? (int)strlen(a->text) : 0) - (a->old_text ? (int)strlen(a->old_text) : 0);
+            gb_delete(&tb->gb, a->pos, a->old_text ? (int)strlen(a->old_text) : 0);
+            if (a->text) gb_insert(&tb->gb, a->pos, a->text, (int)strlen(a->text));
+            break;
+        }
+        if (delta != 0) tb_update_line_index(tb, a->pos, delta);
+        a->next = tb->undo_stack.top;
+        tb->undo_stack.top = a;
+        tb->undo_stack.count++;
+        tb->cursor_pos = a->cursor_after;
+        tb->sel_start = a->sel_start; tb->sel_len = a->sel_len;
+        any = 1;
+    }
+    if (any) {
+        tb_mark_dirty(tb);
+        tb_ensure_cursor_visible(tb);
+    }
+    return any;
+}
+
 /* ===== LineLayout 缓存管理（Scintilla View 层） ===== */
 static void tb_free_layouts(ObjGUITextBox* tb) {
     if (!tb->layouts) return;
@@ -449,8 +572,12 @@ static void tb_del_sel(ObjGUITextBox* tb) {
     int tlen = gb_len(&tb->gb);
     if (ds > tlen) ds = tlen;
     if (ds + dl > tlen) dl = tlen - ds;
+    char* old = (char*)malloc(dl + 1);
+    if (old) { gb_get_range(&tb->gb, ds, dl, old); old[dl] = '\0'; }
     gb_delete(&tb->gb, ds, dl);
     tb_update_line_index(tb, ds, -dl);
+    tb_undo_push(tb, TB_UNDO_DELETE, ds, old, NULL, ds, ds, -1, 0);
+    if (old) free(old);
     tb->cursor_pos = ds;
     tb->sel_start = -1; tb->sel_len = 0;
     tb_mark_dirty(tb);
@@ -464,6 +591,7 @@ static void tb_insert(ObjGUITextBox* tb, const char* s) {
     int pos = tb->cursor_pos;
     gb_insert(&tb->gb, pos, s, sl);
     tb_update_line_index(tb, pos, sl);
+    tb_undo_push(tb, TB_UNDO_INSERT, pos, s, NULL, pos, pos + sl, -1, 0);
     tb->cursor_pos += sl;
     tb_mark_dirty(tb);
     tb_ensure_cursor_visible(tb);
@@ -472,8 +600,12 @@ static void tb_backspace(ObjGUITextBox* tb) {
     if (!tb || tb->cursor_pos <= 0) return;
     int pv = gb_prev(&tb->gb, tb->cursor_pos);
     int ln = tb->cursor_pos - pv;
+    char* old = (char*)malloc(ln + 1);
+    if (old) { gb_get_range(&tb->gb, pv, ln, old); old[ln] = '\0'; }
     gb_delete(&tb->gb, pv, ln);
     tb_update_line_index(tb, pv, -ln);
+    tb_undo_push(tb, TB_UNDO_DELETE, pv, old, NULL, pv, tb->cursor_pos, -1, 0);
+    if (old) free(old);
     tb->cursor_pos = pv;
     tb_mark_dirty(tb);
     tb_ensure_cursor_visible(tb);
@@ -482,8 +614,12 @@ static void tb_del(ObjGUITextBox* tb) {
     if (!tb || tb->cursor_pos >= gb_len(&tb->gb)) return;
     int nx = gb_next(&tb->gb, tb->cursor_pos);
     int ln = nx - tb->cursor_pos;
+    char* old = (char*)malloc(ln + 1);
+    if (old) { gb_get_range(&tb->gb, tb->cursor_pos, ln, old); old[ln] = '\0'; }
     gb_delete(&tb->gb, tb->cursor_pos, ln);
     tb_update_line_index(tb, tb->cursor_pos, -ln);
+    tb_undo_push(tb, TB_UNDO_DELETE, tb->cursor_pos, old, NULL, tb->cursor_pos, tb->cursor_pos, -1, 0);
+    if (old) free(old);
     tb_mark_dirty(tb);
     tb_ensure_cursor_visible(tb);
 }
@@ -540,14 +676,23 @@ static Value tb_set_text(int argc, Value* args) {
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING)
         s = ((ObjString*)val_as_obj(args[1]))->chars;
     int sl = s ? (int)strlen(s) : 0;
+    int old_len = gb_len(&tb->gb);
+    char* old_text = NULL;
+    if (old_len > 0) {
+        old_text = (char*)malloc(old_len + 1);
+        if (old_text) { gb_get_range(&tb->gb, 0, old_len, old_text); old_text[old_len] = '\0'; }
+    }
+    tb->undo_enabled = 0; /* set_text 程序化赋值不进入 undo */
     gb_clear(&tb->gb);
     if (s && sl > 0) gb_insert(&tb->gb, 0, s, sl);
+    tb->undo_enabled = 1;
     tb->cursor_pos = gb_len(&tb->gb); tb->sel_start = -1; tb->sel_len = 0;
     tb->text_is_dirty = 1;
     tb->cached_cursor_pos = -1;
     tb->cached_max_text_width = 0;
     tb->cached_max_text_width_line = -1;
     tb_invalidate_layouts(tb);
+    if (old_text) free(old_text);
     return val_null();
 }
 static Value tb_set_ph(int argc, Value* args) {
@@ -1255,11 +1400,15 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         int ctrl = (ev->mod_flags & LENO_GUI_MOD_CTRL) ? 1 : 0;
         switch (ev->key) {
         case LENO_GUI_KEY_BACKSPACE:
+            tb->undo_group++;
             if (tb->sel_start >= 0 && tb->sel_len > 0) tb_del_sel(tb); else tb_backspace(tb);
+            tb->undo_group++;
             if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
             tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
         case LENO_GUI_KEY_DELETE:
+            tb->undo_group++;
             if (tb->sel_start >= 0 && tb->sel_len > 0) tb_del_sel(tb); else tb_del(tb);
+            tb->undo_group++;
             if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
             tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
         case LENO_GUI_KEY_LEFT:
@@ -1294,7 +1443,9 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
             return 1;
         case LENO_GUI_KEY_RETURN:
             if (tb->multiline) {
+                tb->undo_group++;
                 tb_insert(tb, "\n");
+                tb->undo_group++;
                 if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
                 tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
             }
@@ -1331,13 +1482,16 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
                         char* p = clip;
                         while (*p) { if ((unsigned char)*p > 0x7F) *p = '\0'; else p++; }
                     }
+                    tb->undo_group++;
                     tb_insert(tb, clip);
+                    tb->undo_group++;
                     if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
                 }
                 if (clip) free(clip);
                 tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
             }
             case 'X': case 'x': {
+                tb->undo_group++;
                 if (tb->sel_start >= 0 && tb->sel_len > 0) {
                     char* buf = (char*)malloc(tb->sel_len + 1);
                     if (buf) {
@@ -1347,7 +1501,19 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
                     }
                 }
                 tb_del_sel(tb); if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
+                tb->undo_group++;
                 return 1;
+            }
+            case 'Z': case 'z': {
+                int shift = (ev->mod_flags & LENO_GUI_MOD_SHIFT) ? 1 : 0;
+                if (shift) tb_redo(tb); else tb_undo(tb);
+                if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
+                tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
+            }
+            case 'Y': case 'y': {
+                tb_redo(tb);
+                if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
+                tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks(); return 1;
             }
             default: break;
             }
@@ -1359,7 +1525,9 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         unsigned char c0 = (unsigned char)ev->text[0];
         if (c0 == '\r' || c0 == '\n') {
             if (tb->multiline) {
+                tb->undo_group++;
                 tb_insert(tb, "\n");
+                tb->undo_group++;
                 if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
                 tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks();
             }
@@ -1368,7 +1536,9 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         if (c0 >= 0x20) {
             /* 密码模式：只允许 ASCII 可打印字符，拒绝中文等多字节字符 */
             if (tb->password && c0 > 0x7F) return 1;
+            tb->undo_group++;
             tb_insert(tb, ev->text);
+            tb->undo_group++;
             if (!val_is_null(tb->on_change)) call_leno_closure(tb->on_change, 0, NULL);
             tb->blink_visible = 1; tb->last_blink = leno_gui_platform_get_ticks();
         }
@@ -1414,6 +1584,8 @@ void gui_textbox_free_all(ObjGUIWindow* win) {
         }
         if (tb->line_starts) { free(tb->line_starts); tb->line_starts = NULL; }
         tb_free_layouts(tb);
+        tb_undo_free_stack(&tb->undo_stack);
+        tb_undo_free_stack(&tb->redo_stack);
         tb = n;
     }
     win->textboxes = NULL; win->textbox_count = 0; win->focused_textbox = NULL;
