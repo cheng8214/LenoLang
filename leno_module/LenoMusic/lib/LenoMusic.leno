@@ -2,6 +2,7 @@
 import ffi
 import strings
 import files
+import dirs
 
 clib miniaudio {
     i32 ma_dll_engine_init()
@@ -77,13 +78,10 @@ func find_dll() {
     if files.exists("miniaudio.dll") { g_path = "miniaudio.dll"; return }
     // 3: lib/ (开发时从项目根运行)
     if files.exists("lib/miniaudio.dll") { g_path = "lib/miniaudio.dll"; return }
-    // 4: _script() 推导 (开发时从任意目录)
-    var scr = _script()
+    // 4: dirs.script_dir() 推导 (开发时从任意目录)
+    var scr = dirs.script_dir()
     if scr != null {
-        var parts = strings.split(scr, "\\")
-        var p = parts[0]
-        for 1 : parts.len() - 2 to i { p = p + "\\" + parts[i] }
-        var path = p + "\\lib\\miniaudio.dll"
+        var path = scr + "/miniaudio.dll"
         if files.exists(path) { g_path = path; return }
     }
     g_path = "miniaudio.dll"

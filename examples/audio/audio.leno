@@ -3,7 +3,7 @@
 // 功能: 播放/暂停/停止、进度条、音量控制、时间显示、键盘快捷键
 // ============================================================
 import guis
-import "LenoMusic.leno" as audio
+import "LenoMusic" as audio
 import times
 import strings
 
