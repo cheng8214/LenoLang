@@ -1426,7 +1426,8 @@ void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatf
     XFreePixmap(g_display, drawable);
 }
 
-void leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* text, int* w, int* h) {
+void leno_gui_platform_text_size_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int* w, int* h) {
+    (void)ren;
     if (!font || !font->xft_font || !text) { if (w) *w = 0; if (h) *h = 0; return; }
     XGlyphInfo extents;
     XftTextExtentsUtf8(g_display, font->xft_font, (const FcChar8*)text, strlen(text), &extents);

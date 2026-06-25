@@ -820,10 +820,10 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->window = win;
     tb->next = NULL;
     tb->x = x; tb->y = y; tb->width = width; tb->height = height;
-    tb->text = (char*)malloc(TEXTBOX_DEFAULT_CAP);
-    tb->text[0] = '\0';
-    tb->text_len = 0;
-    tb->text_cap = TEXTBOX_DEFAULT_CAP;
+    tb->gb.buf = (char*)malloc(TEXTBOX_DEFAULT_CAP);
+    tb->gb.cap = TEXTBOX_DEFAULT_CAP;
+    tb->gb.gap_start = 0;
+    tb->gb.gap_end = TEXTBOX_DEFAULT_CAP;
     tb->placeholder = NULL;
     /* 解析 placeholder */
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {

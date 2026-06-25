@@ -423,7 +423,7 @@ static void gui_button_draw_one(ObjGUIButton* btn, ObjGUIRenderer* ren) {
         int tw = 0, th = 0;
         int char_count = utf8_char_count(btn->text);
         int extra_spacing = btn->letter_spacing * (char_count > 0 ? char_count - 1 : 0);
-        leno_gui_platform_text_size_font(btn->font->platform, btn->text, &tw, &th);
+        leno_gui_platform_text_size_font(ren->platform, btn->font->platform, btn->text, &tw, &th);
         tw += extra_spacing;
 
         /* 根据对齐方式计算文字位置（考虑内边距） */
@@ -452,7 +452,7 @@ static void gui_button_draw_one(ObjGUIButton* btn, ObjGUIRenderer* ren) {
                 char ch[5] = {0};
                 memcpy(ch, p, clen);
                 int cw = 0, chh = 0;
-                leno_gui_platform_text_size_font(btn->font->platform, ch, &cw, &chh);
+                leno_gui_platform_text_size_font(ren->platform, btn->font->platform, ch, &cw, &chh);
                 leno_gui_platform_draw_text_font(ren->platform, btn->font->platform, ch, cx, ty);
                 cx += cw + btn->letter_spacing;
                 p += clen;

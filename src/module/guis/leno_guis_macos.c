@@ -1260,7 +1260,8 @@ void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatf
     objc_msgSend(str, sel_registerName("drawInRect:"), rect);
 }
 
-void leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* text, int* w, int* h) {
+void leno_gui_platform_text_size_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int* w, int* h) {
+    (void)ren;
     if (!font || !font->ns_font || !text) { if (w) *w = 0; if (h) *h = 0; return; }
     id ns_text = objc_msgSend((id)objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), text);
     id attrs = objc_msgSend((id)objc_getClass("NSMutableDictionary"), sel_registerName("alloc"));

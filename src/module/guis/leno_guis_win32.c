@@ -1755,27 +1755,25 @@ int leno_gui_platform_font_internal_leading(LenoGUIPlatformFont* font) {
 
 int leno_gui_platform_text_width_utf8(LenoGUIPlatformFont* font, const char* text, int byte_len) {
     if (!font || !font->hfont || !text || byte_len <= 0) return 0;
-    /* 临时截取子串为以 null 结尾的缓冲 */
     char* sub = (char*)malloc((size_t)byte_len + 1);
     if (!sub) return 0;
-    memcpy(sub, text, (size_t)byte_len);
-    sub[byte_len] = '\0';
-    /* 转 WCHAR */
+    memcpy(sub, text, (size_t)byte_len); sub[byte_len] = '\0';
     int wlen = MultiByteToWideChar(CP_UTF8, 0, sub, -1, NULL, 0);
     if (wlen <= 1) { free(sub); return 0; }
     wchar_t* wtext = (wchar_t*)malloc((size_t)wlen * sizeof(wchar_t));
     if (!wtext) { free(sub); return 0; }
     MultiByteToWideChar(CP_UTF8, 0, sub, -1, wtext, wlen);
     free(sub);
-    /* GetTextExtentExPointW: 一次调用得到完整累积宽度 */
+    /* Scintilla 方式：用 DrawTextW(DT_CALCRECT) 代替 GetTextExtentExPointW，
+       确保与绘制使用完全相同的布局引擎和 DC */
     HDC dc = GetDC(NULL);
     HFONT old_f = (HFONT)SelectObject(dc, font->hfont);
-    SIZE sz = {0, 0};
-    GetTextExtentExPointW(dc, wtext, wlen - 1, INT_MAX, NULL, NULL, &sz);
+    RECT rc = {0, 0, 0, 0};
+    DrawTextW(dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_CALCRECT | DT_NOPREFIX | DT_SINGLELINE);
     SelectObject(dc, old_f);
     ReleaseDC(NULL, dc);
     free(wtext);
-    return sz.cx;
+    return rc.right - rc.left;
 }
 
 void leno_gui_platform_destroy_font(LenoGUIPlatformFont* font) {
@@ -1794,26 +1792,28 @@ void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatf
     wchar_t* wtext = (wchar_t*)malloc(wlen * sizeof(wchar_t));
     if (!wtext) { SelectObject(ren->back_dc, old_font); return; }
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, wlen);
-    RECT rc = { x + ren->vp_x, y + ren->vp_y, ren->width, ren->height };
-    DrawTextW(ren->back_dc, wtext, -1, &rc, DT_LEFT | DT_TOP);
+    RECT rc = { x + ren->vp_x, y + ren->vp_y, 999999, 999999 };
+    DrawTextW(ren->back_dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_NOCLIP | DT_SINGLELINE | DT_NOPREFIX);
     free(wtext);
     SelectObject(ren->back_dc, old_font);
 }
 
-void leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* text, int* w, int* h) {
+void leno_gui_platform_text_size_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int* w, int* h) {
     if (!font || !font->hfont || !text) { if (w) *w = 0; if (h) *h = 0; return; }
-    HDC dc = GetDC(NULL);
+    /* Scintilla 架构：测量和绘制必须在同一个 DC 上进行，避免中文等字符出现 1~2px 偏差 */
+    HDC dc = (ren && ren->back_dc) ? ren->back_dc : GetDC(NULL);
+    int release_dc = (ren && ren->back_dc) ? 0 : 1;
     HFONT old_font = (HFONT)SelectObject(dc, font->hfont);
     int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
     wchar_t* wtext = (wchar_t*)malloc(wlen * sizeof(wchar_t));
-    if (!wtext) { SelectObject(dc, old_font); ReleaseDC(NULL, dc); if (w) *w = 0; if (h) *h = 0; return; }
+    if (!wtext) { SelectObject(dc, old_font); if (release_dc) ReleaseDC(NULL, dc); if (w) *w = 0; if (h) *h = 0; return; }
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, wlen);
-    /* 与渲染一致，使用 DrawTextW；DT_NOPREFIX 防止 & 被解释 */
+    /* 与渲染一致，使用 DrawTextW；DT_NOPREFIX 防止 & 被解释，DT_SINGLELINE 禁止空格处自动换行 */
     RECT rc = {0, 0, 0, 0};
-    DrawTextW(dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_CALCRECT | DT_NOPREFIX);
+    DrawTextW(dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_CALCRECT | DT_NOPREFIX | DT_SINGLELINE);
     free(wtext);
     SelectObject(dc, old_font);
-    ReleaseDC(NULL, dc);
+    if (release_dc) ReleaseDC(NULL, dc);
     if (w) *w = rc.right - rc.left;
     if (h) *h = rc.bottom - rc.top;
 }

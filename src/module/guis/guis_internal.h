@@ -119,6 +119,14 @@ typedef struct ObjGUIButton {
     int anchor_margin_y;           /* 锚点垂直边距 */
 } ObjGUIButton;
 
+/* 间隙缓冲区 —— 仿 Scintilla 文档模型，纯 C */
+typedef struct {
+    char* buf;      /* 底层缓冲区（包含间隙） */
+    int cap;        /* 总容量 */
+    int gap_start;  /* 间隙起始索引 */
+    int gap_end;    /* 间隙结束索引（exclusive） */
+} GapBuffer;
+
 /* GTextBox 文本框对象 */
 typedef struct ObjGUITextBox {
     Object header;
@@ -126,11 +134,9 @@ typedef struct ObjGUITextBox {
     ObjGUIWindow* window;          /* 所属窗口 */
     /* 位置和尺寸 */
     int x, y, width, height;
-    /* 文字缓冲区 */
-    char* text;                    /* 当前文本内容 */
+    /* 文字缓冲区 —— 间隙缓冲区 */
+    GapBuffer gb;                  /* 当前文本内容 */
     char* placeholder;             /* 占位提示文字 */
-    int text_len;                  /* 文本字节长度 */
-    int text_cap;                  /* 缓冲区容量 */
     int cursor_pos;                /* 光标字节位置 */
     int sel_start;                 /* 选区起始（-1=无选区） */
     int sel_len;                   /* 选区长度 */
@@ -186,6 +192,10 @@ typedef struct ObjGUITextBox {
     int cached_max_text_width;     /* 最宽行像素宽度 */
     int cached_cursor_x;           /* 缓存光标 X（仅移动时重算） */
     int cached_cursor_pos;         /* 缓存时的 cursor_pos */
+    /* Scintilla 风格行索引：避免每次 O(n) 扫描全文找换行 */
+    int* line_starts;              /* 动态数组，每行的字节偏移 */
+    int line_count;                /* 当前行数 */
+    int line_cap;                  /* line_starts 容量 */
     /* 光标闪烁 */
     int blink_visible;
     uint64_t last_blink;

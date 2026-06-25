@@ -136,7 +136,7 @@ static Value gui_text_size_func(int argc, Value* args) {
         if (obj->type == OBJ_STRING) text = ((ObjString*)obj)->chars;
     }
     int w = 0, h = 0;
-    leno_gui_platform_text_size_font(font->platform, text, &w, &h);
+    leno_gui_platform_text_size_font(NULL, font->platform, text, &w, &h);
     return val_obj((Object*)make_int_array2(w, h));
 }
 

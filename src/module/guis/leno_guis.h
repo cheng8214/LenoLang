@@ -277,7 +277,7 @@ typedef struct LenoGUIPlatformFont LenoGUIPlatformFont;
 LenoGUIPlatformFont* leno_gui_platform_load_font(const char* name, int size);
 void   leno_gui_platform_destroy_font(LenoGUIPlatformFont* font);
 void   leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int x, int y);
-void   leno_gui_platform_text_size_font(LenoGUIPlatformFont* font, const char* text, int* w, int* h);
+void   leno_gui_platform_text_size_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int* w, int* h);
 int    leno_gui_platform_font_internal_leading(LenoGUIPlatformFont* font);
 /* 精确测量 UTF-8 文本前 byte_len 字节的像素宽度 */
 int    leno_gui_platform_text_width_utf8(LenoGUIPlatformFont* font, const char* text, int byte_len);
