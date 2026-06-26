@@ -876,11 +876,15 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->cached_max_text_width = 0;
     tb->cached_max_text_width_line = -1;
     tb->text_is_dirty = 1;
-    tb->undo_stack.top = NULL; tb->undo_stack.count = 0;
-    tb->redo_stack.top = NULL; tb->redo_stack.count = 0;
+    tb->undo_stack.top = NULL; tb->undo_stack.count = 0; tb->undo_stack.total_size = 0;
+    tb->redo_stack.top = NULL; tb->redo_stack.count = 0; tb->redo_stack.total_size = 0;
     tb->undo_group = 1;
     tb->undo_grouping = 0;
     tb->undo_enabled = 1;
+    tb->undo_last_ticks = 0;
+    tb->undo_last_pos = 0;
+    tb->undo_last_type = TB_UNDO_INSERT;
+    tb->undo_last_group = 1;
 
     /* 加载字体 */
     LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);

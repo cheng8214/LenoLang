@@ -163,6 +163,7 @@ typedef struct TBUndoAction {
 typedef struct {
     TBUndoAction* top;
     int count;
+    size_t total_size;             /* 栈中 action 占用的总字节数 */
 } TBUndoStack;
 
 /* GTextBox 文本框对象 */
@@ -255,6 +256,10 @@ typedef struct ObjGUITextBox {
     int undo_group;                /* 当前分组编号 */
     int undo_grouping;             /* 是否处于分组中 */
     int undo_enabled;              /* 是否启用 undo */
+    uint64_t undo_last_ticks;      /* 上一次 undo 操作时间戳 */
+    int undo_last_pos;             /* 上一次 undo 操作结束光标位置 */
+    TBUndoType undo_last_type;     /* 上一次 undo 操作类型 */
+    int undo_last_group;           /* 上一次 undo 操作分组 */
     /* 回调 */
     Value on_change;               /* 文本改变回调 */
     Value on_submit;               /* 回车提交回调 */
