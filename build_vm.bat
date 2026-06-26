@@ -28,6 +28,8 @@ set SOURCES=!SOURCES! src\object\object_font.c
 set SOURCES=!SOURCES! src\object\object_image.c
 set SOURCES=!SOURCES! src\object\object_socket.c
 set SOURCES=!SOURCES! src\object\object_button.c
+set SOURCES=!SOURCES! src\object\object_label.c
+set SOURCES=!SOURCES! src\object\object_textbox.c
 set SOURCES=!SOURCES! src\bound_method.c
 set SOURCES=!SOURCES! src\coroutine.c
 set SOURCES=!SOURCES! src\vm\vm.c
@@ -71,10 +73,12 @@ set SOURCES=!SOURCES! src\module\guis\leno_guis_log.c
 set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\module\guis\guis_button.c
 set SOURCES=!SOURCES! src\module\guis\guis_label.c
+set SOURCES=!SOURCES! src\module\guis\guis_textbox.c
+set SOURCES=!SOURCES! src\module\guis\guis_style.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 
-gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -lm -municode -lws2_32 -lgdi32 -lcomdlg32 -lwinmm -DLENO_VM_ONLY
+gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -lm -municode -lws2_32 -lgdi32 -lcomdlg32 -lwinmm -limm32 -DLENO_VM_ONLY
 
 if %ERRORLEVEL% neq 0 (
     echo VM build failed
