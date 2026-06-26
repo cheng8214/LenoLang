@@ -26,7 +26,7 @@ main() {
         },
         func(GEvent e) {
             if e.window_close() { win.set_should_close(true) }
-            if e.window_resize() {
+            if e.window_resize() or e.window_maximized() or e.window_restored() {
                 var s = win.get_size()
                 edit.set_size(s.width - 20, s.height - 50)
             }

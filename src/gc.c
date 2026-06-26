@@ -292,6 +292,12 @@ void gc_mark_object(Object* obj) {
                 gc_mark_object((Object*)btn);
                 btn = btn->next;
             }
+            /* 标记窗口的文本框链表，防止文本框被 GC 回收 */
+            struct ObjGUITextBox* tb = (struct ObjGUITextBox*)w->textboxes;
+            while (tb) {
+                gc_mark_object((Object*)tb);
+                tb = tb->next;
+            }
             break;
         }
         case OBJ_GUI_RENDERER: {

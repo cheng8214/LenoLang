@@ -289,6 +289,7 @@ struct LenoGUIPlatformImage {
 
 /* ===== 文本输入控制（参考 SDL_StartTextInput） ===== */
 static int g_text_input_active = 0;
+static int g_in_sizemove = 0;  /* 是否正在拖拽调整窗口大小 */
 
 /* ===== IME 状态（参考 SDL3 Windows IME） ===== */
 static int g_ime_composing = 0;
@@ -473,10 +474,12 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             } else if (wparam == SIZE_MAXIMIZED) {
                 push_window_event(win, LENO_GUI_EVT_WINDOW_MAXIMIZED, (int)LOWORD(lparam), (int)HIWORD(lparam));
             } else if (wparam == SIZE_RESTORED) {
-                push_window_event(win, LENO_GUI_EVT_WINDOW_RESTORED, (int)LOWORD(lparam), (int)HIWORD(lparam));
-            } else {
-                push_window_event(win, LENO_GUI_EVT_WINDOW_RESIZE, (int)LOWORD(lparam), (int)HIWORD(lparam));
+                /* 拖拽过程中不发 WINDOW_RESTORED，避免用户在 DIB 未重建时修改布局导致越界 */
+                if (!g_in_sizemove) {
+                    push_window_event(win, LENO_GUI_EVT_WINDOW_RESTORED, (int)LOWORD(lparam), (int)HIWORD(lparam));
+                }
             }
+            /* WINDOW_RESIZE 由 WM_EXITSIZEMOVE 单独发送，避免冲突 */
             return 0;
         }
         case WM_MOVE: {
@@ -504,7 +507,8 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             return 0;
         }
         case WM_ENTERSIZEMOVE: {
-            /* 进入模态循环（拖动/调整大小） */
+            /* 进入拖拽调整大小，标记状态防止 WINDOW_RESTORED 触发用户修改布局 */
+            g_in_sizemove = 1;
             /* 启动定时器保持内容更新（参考 SDL3） */
             SetTimer(hwnd, 1, 33, NULL);  /* 约 30 FPS */
             return 0;
@@ -521,7 +525,9 @@ static LRESULT CALLBACK leno_gui_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
             return DefWindowProcW(hwnd, msg, wparam, lparam);
         }
         case WM_EXITSIZEMOVE: {
-            /* 退出模态循环，停止定时器 */
+            /* 退出拖拽调整大小 */
+            g_in_sizemove = 0;
+            /* 停止定时器 */
             KillTimer(hwnd, 1);
             /* 拖动结束，标记渲染器需要调整大小 */
             if (win && win->renderer) {
@@ -1160,6 +1166,12 @@ static int check_and_resize_renderer(LenoGUIPlatformRenderer* ren) {
     
     /* 如果大小没有变化且不需要调整，直接返回 */
     if (!ren->needs_resize && ren->width == new_width && ren->height == new_height) {
+        return 1;
+    }
+    
+    /* 拖拽过程中不重建 DIB，由 render_present 的 StretchBlt 处理缩放 */
+    /* 最大化/还原/程序化 resize 时正常重建 */
+    if (g_in_sizemove) {
         return 1;
     }
     

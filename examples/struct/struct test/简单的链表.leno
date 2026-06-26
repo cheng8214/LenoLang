@@ -25,5 +25,5 @@ main()
     
     print("head value: ")
     //会报错
-    print(list.head.value)
+   print(list.head.value)
 }
