@@ -187,8 +187,8 @@ main() {
             ren.draw_text(font, "FPS:" + fps + " 粒子:" + particle_count + " 峰值:" + peak_particles, 10, 10)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
-            if e.is_key_down() {
+            if e.quit() or e.window_close() { win.set_should_close(true) }
+            if e.key_down() {
                 if e.key() == guis.KEY_SPACE {
                     for 0:5 to bv {
                         launch_firework(rands.floats(80.0, screen_w - 80.0), screen_h - 30.0,

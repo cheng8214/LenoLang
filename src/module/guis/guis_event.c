@@ -3,17 +3,17 @@
  *
  * Event 实例方法 (e.method()):
  *   e.type() -> int                          获取事件类型码
- *   e.is_quit()                              是否为退出事件
- *   e.is_window_close()                      是否为窗口关闭事件
- *   e.is_window_resize()                     是否为窗口大小改变事件
- *   e.is_window_move()                       是否为窗口移动事件
- *   e.is_key_down()                          是否为按键按下事件
- *   e.is_key_up()                            是否为按键释放事件
- *   e.is_text_input()                        是否为文本输入事件
- *   e.is_mouse_move()                        是否为鼠标移动事件
- *   e.is_mouse_down()                        是否为鼠标按下事件
- *   e.is_mouse_up()                          是否为鼠标释放事件
- *   e.is_mouse_wheel()                       是否为鼠标滚轮事件
+ *   e.quit()                                 是否为退出事件
+ *   e.window_close()                         是否为窗口关闭事件
+ *   e.window_resize()                        是否为窗口大小改变事件
+ *   e.window_move()                          是否为窗口移动事件
+ *   e.key_down()                             是否为按键按下事件
+ *   e.key_up()                               是否为按键释放事件
+ *   e.text_input()                           是否为文本输入事件
+ *   e.mouse_move()                           是否为鼠标移动事件
+ *   e.mouse_down()                           是否为鼠标按下事件
+ *   e.mouse_up()                             是否为鼠标释放事件
+ *   e.mouse_wheel()                          是否为鼠标滚轮事件
  *   e.key() -> int                           获取按键码
  *   e.mouse_x() / e.mouse_y() -> int         获取鼠标坐标
  *   e.mouse_button() -> int                  获取鼠标按钮（1=左键, 2=中键, 3=右键）
@@ -78,116 +78,116 @@ static Value event_type_func(int argc, Value* args) {
     return val_int(event_get_type(args[0]));
 }
 
-/* e.is_quit() - 是否为退出事件 */
-static Value event_is_quit_func(int argc, Value* args) {
+/* e.quit() - 是否为退出事件 */
+static Value event_quit_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_QUIT);
 }
 
-/* e.is_window_close() - 是否为窗口关闭事件 */
-static Value event_is_window_close_func(int argc, Value* args) {
+/* e.window_close() - 是否为窗口关闭事件 */
+static Value event_window_close_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_CLOSE);
 }
 
-/* e.is_window_resize() - 是否为窗口大小改变事件 */
-static Value event_is_window_resize_func(int argc, Value* args) {
+/* e.window_resize() - 是否为窗口大小改变事件 */
+static Value event_window_resize_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_RESIZE);
 }
 
-/* e.is_window_move() - 是否为窗口移动事件 */
-static Value event_is_window_move_func(int argc, Value* args) {
+/* e.window_move() - 是否为窗口移动事件 */
+static Value event_window_move_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_MOVE);
 }
 
-/* e.is_key_down() - 是否为按键按下事件 */
-static Value event_is_key_down_func(int argc, Value* args) {
+/* e.key_down() - 是否为按键按下事件 */
+static Value event_key_down_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_KEY_DOWN);
 }
 
-/* e.is_key_up() - 是否为按键释放事件 */
-static Value event_is_key_up_func(int argc, Value* args) {
+/* e.key_up() - 是否为按键释放事件 */
+static Value event_key_up_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_KEY_UP);
 }
 
-/* e.is_text_input() - 是否为文本输入事件 */
-static Value event_is_text_input_func(int argc, Value* args) {
+/* e.text_input() - 是否为文本输入事件 */
+static Value event_text_input_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_TEXT_INPUT);
 }
 
-/* e.is_mouse_move() - 是否为鼠标移动事件 */
-static Value event_is_mouse_move_func(int argc, Value* args) {
+/* e.mouse_move() - 是否为鼠标移动事件 */
+static Value event_mouse_move_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_MOVE);
 }
 
-/* e.is_mouse_down() - 是否为鼠标按下事件 */
-static Value event_is_mouse_down_func(int argc, Value* args) {
+/* e.mouse_down() - 是否为鼠标按下事件 */
+static Value event_mouse_down_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_DOWN);
 }
 
-/* e.is_mouse_up() - 是否为鼠标释放事件 */
-static Value event_is_mouse_up_func(int argc, Value* args) {
+/* e.mouse_up() - 是否为鼠标释放事件 */
+static Value event_mouse_up_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_UP);
 }
 
-/* e.is_mouse_wheel() - 是否为鼠标滚轮事件 */
-static Value event_is_mouse_wheel_func(int argc, Value* args) {
+/* e.mouse_wheel() - 是否为鼠标滚轮事件 */
+static Value event_mouse_wheel_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_MOUSE_WHEEL);
 }
 
-/* e.is_window_focus() - 是否为窗口获得焦点事件 */
-static Value event_is_window_focus_func(int argc, Value* args) {
+/* e.window_focus() - 是否为窗口获得焦点事件 */
+static Value event_window_focus_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_FOCUS);
 }
 
-/* e.is_window_unfocus() - 是否为窗口失去焦点事件 */
-static Value event_is_window_unfocus_func(int argc, Value* args) {
+/* e.window_unfocus() - 是否为窗口失去焦点事件 */
+static Value event_window_unfocus_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_UNFOCUS);
 }
 
-/* e.is_window_show() - 是否为窗口显示事件 */
-static Value event_is_window_show_func(int argc, Value* args) {
+/* e.window_show() - 是否为窗口显示事件 */
+static Value event_window_show_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_SHOW);
 }
 
-/* e.is_window_hide() - 是否为窗口隐藏事件 */
-static Value event_is_window_hide_func(int argc, Value* args) {
+/* e.window_hide() - 是否为窗口隐藏事件 */
+static Value event_window_hide_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_HIDE);
 }
 
-/* e.is_window_exposed() - 是否为窗口暴露事件 */
-static Value event_is_window_exposed_func(int argc, Value* args) {
+/* e.window_exposed() - 是否为窗口暴露事件 */
+static Value event_window_exposed_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_EXPOSED);
 }
 
-/* e.is_window_minimized() - 是否为窗口最小化事件 */
-static Value event_is_window_minimized_func(int argc, Value* args) {
+/* e.window_minimized() - 是否为窗口最小化事件 */
+static Value event_window_minimized_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_MINIMIZED);
 }
 
-/* e.is_window_maximized() - 是否为窗口最大化事件 */
-static Value event_is_window_maximized_func(int argc, Value* args) {
+/* e.window_maximized() - 是否为窗口最大化事件 */
+static Value event_window_maximized_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_MAXIMIZED);
 }
 
-/* e.is_window_restored() - 是否为窗口恢复事件 */
-static Value event_is_window_restored_func(int argc, Value* args) {
+/* e.window_restored() - 是否为窗口恢复事件 */
+static Value event_window_restored_func(int argc, Value* args) {
     (void)argc;
     return val_bool(event_get_type(args[0]) == LENO_GUI_EVT_WINDOW_RESTORED);
 }
@@ -312,25 +312,25 @@ void guis_init_event_methods(void) {
     TypeKind no_params[] = {};
 
     event_register_method_with_params("type", make_native(event_type_func, 1, "type"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_quit", make_native(event_is_quit_func, 1, "is_quit"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_close", make_native(event_is_window_close_func, 1, "is_window_close"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_resize", make_native(event_is_window_resize_func, 1, "is_window_resize"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_move", make_native(event_is_window_move_func, 1, "is_window_move"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_focus", make_native(event_is_window_focus_func, 1, "is_window_focus"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_unfocus", make_native(event_is_window_unfocus_func, 1, "is_window_unfocus"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_show", make_native(event_is_window_show_func, 1, "is_window_show"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_hide", make_native(event_is_window_hide_func, 1, "is_window_hide"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_exposed", make_native(event_is_window_exposed_func, 1, "is_window_exposed"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_minimized", make_native(event_is_window_minimized_func, 1, "is_window_minimized"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_maximized", make_native(event_is_window_maximized_func, 1, "is_window_maximized"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_window_restored", make_native(event_is_window_restored_func, 1, "is_window_restored"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_key_down", make_native(event_is_key_down_func, 1, "is_key_down"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_key_up", make_native(event_is_key_up_func, 1, "is_key_up"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_text_input", make_native(event_is_text_input_func, 1, "is_text_input"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_mouse_move", make_native(event_is_mouse_move_func, 1, "is_mouse_move"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_mouse_down", make_native(event_is_mouse_down_func, 1, "is_mouse_down"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_mouse_up", make_native(event_is_mouse_up_func, 1, "is_mouse_up"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    event_register_method_with_params("is_mouse_wheel", make_native(event_is_mouse_wheel_func, 1, "is_mouse_wheel"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("quit", make_native(event_quit_func, 1, "quit"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_close", make_native(event_window_close_func, 1, "window_close"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_resize", make_native(event_window_resize_func, 1, "window_resize"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_move", make_native(event_window_move_func, 1, "window_move"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_focus", make_native(event_window_focus_func, 1, "window_focus"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_unfocus", make_native(event_window_unfocus_func, 1, "window_unfocus"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_show", make_native(event_window_show_func, 1, "window_show"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_hide", make_native(event_window_hide_func, 1, "window_hide"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_exposed", make_native(event_window_exposed_func, 1, "window_exposed"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_minimized", make_native(event_window_minimized_func, 1, "window_minimized"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_maximized", make_native(event_window_maximized_func, 1, "window_maximized"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("window_restored", make_native(event_window_restored_func, 1, "window_restored"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("key_down", make_native(event_key_down_func, 1, "key_down"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("key_up", make_native(event_key_up_func, 1, "key_up"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("text_input", make_native(event_text_input_func, 1, "text_input"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("mouse_move", make_native(event_mouse_move_func, 1, "mouse_move"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("mouse_down", make_native(event_mouse_down_func, 1, "mouse_down"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("mouse_up", make_native(event_mouse_up_func, 1, "mouse_up"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
+    event_register_method_with_params("mouse_wheel", make_native(event_mouse_wheel_func, 1, "mouse_wheel"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
     event_register_method_with_params("key", make_native(event_key_func, 1, "key"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
     event_register_method_with_params("mouse_x", make_native(event_mouse_x_func, 1, "mouse_x"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
     event_register_method_with_params("mouse_y", make_native(event_mouse_y_func, 1, "mouse_y"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);

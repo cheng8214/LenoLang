@@ -47,15 +47,15 @@ main() {
         },
         func(GEvent e) {
             /* ---- 退出 ---- */
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() and e.key() == 0x1B {
+            if e.key_down() and e.key() == 0x1B {
                 win.set_should_close(true)
             }
 
             /* ---- 测试 1: 键盘事件 ---- */
-            if e.is_key_down() {
+            if e.key_down() {
                 var key = e.key()
 
                 print("[KEY_DOWN] key=" + _str(key) +
@@ -68,7 +68,7 @@ main() {
                 test_count = test_count + 1
             }
 
-            if e.is_key_up() {
+            if e.key_up() {
                 var key = e.key()
 
                 print("[KEY_UP] key=" + _str(key))
@@ -79,7 +79,7 @@ main() {
             }
 
             /* ---- 测试 2: 鼠标滚轮事件 ---- */
-            if e.is_mouse_wheel() {
+            if e.mouse_wheel() {
                 var wx = e.wheel_x()
                 var wy = e.wheel_y()
                 var mx = e.mouse_x()
@@ -97,64 +97,64 @@ main() {
             }
 
             /* ---- 测试 3: 窗口事件回调 ---- */
-            if e.is_window_resize() {
+            if e.window_resize() {
                 print("[RESIZE] " + _str(e.width()) + "x" + _str(e.height()) +
                       " window_id=" + _str(e.window_id()))
                 pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 
-            if e.is_window_move() {
+            if e.window_move() {
                 print("[MOVE] x=" + _str(e.width()) + " y=" + _str(e.height()))
             }
 
-            if e.is_window_focus() {
+            if e.window_focus() {
                 print("[FOCUS] 窗口获得焦点 (OK)")
                 pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 
-            if e.is_window_unfocus() {
+            if e.window_unfocus() {
                 print("[UNFOCUS] 窗口失去焦点 (OK)")
                 pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 
-            if e.is_window_minimized() {
+            if e.window_minimized() {
                 print("[MINIMIZED] 窗口已最小化 " +
                       _str(e.width()) + "x" + _str(e.height()) + " (OK)")
                 pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 
-            if e.is_window_maximized() {
+            if e.window_maximized() {
                 print("[MAXIMIZED] 窗口已最大化 " +
                       _str(e.width()) + "x" + _str(e.height()) + " (OK)")
                 pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 
-            if e.is_window_restored() {
+            if e.window_restored() {
                 print("[RESTORED] 窗口已恢复 " +
                       _str(e.width()) + "x" + _str(e.height()) + " (OK)")
                 pass_count = pass_count + 1
                 test_count = test_count + 1
             }
 
-            if e.is_window_show() {
+            if e.window_show() {
                 print("[SHOW] 窗口显示")
             }
 
-            if e.is_window_hide() {
+            if e.window_hide() {
                 print("[HIDE] 窗口隐藏")
             }
 
-            if e.is_window_exposed() {
+            if e.window_exposed() {
                 print("[EXPOSED] 窗口需要重绘")
             }
 
             /* ---- 测试 4: 文本输入事件 (IME) ---- */
-            if e.is_text_input() {
+            if e.text_input() {
                 var t = e.text()
                 print("[TEXT_INPUT] text='" + t + "' (len=" + _str(strings.len(t)) + ")")
 
@@ -166,7 +166,7 @@ main() {
             }
 
             /* ---- 测试 5: 鼠标事件扩展 ---- */
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 var mx = e.mouse_x()
                 var my = e.mouse_y()
                 var mb = e.mouse_button()
@@ -175,7 +175,7 @@ main() {
                       " button=" + _str(mb) + " clicks=" + _str(cl))
             }
 
-            if e.is_mouse_move() {
+            if e.mouse_move() {
                 var xr = e.xrel()
                 var yr = e.yrel()
                 if xr != 0 or yr != 0 {

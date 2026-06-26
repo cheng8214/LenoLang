@@ -35,7 +35,7 @@ func test_center_method() {
             ren.fill_rect(200, 150, 200, 100)
         },
         func(GEvent e) {
-            if e.is_window_close() or e.is_key_down() {
+            if e.window_close() or e.key_down() {
                 win.set_should_close(true)
             }
         }
@@ -70,7 +70,7 @@ func test_min_max_size_methods() {
             ren.fill_rect(50, 50, 400, 300)
         },
         func(GEvent e) {
-            if e.is_window_close() or e.is_key_down() {
+            if e.window_close() or e.key_down() {
                 win.set_should_close(true)
             }
         }
@@ -100,10 +100,10 @@ func test_maximized_method() {
             ren.fill_rect(250, 220, 200, 60)
         },
         func(GEvent e) {
-            if e.is_window_close() {
+            if e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == 32 {
                     // 空格键切换最大化
                     is_max = not is_max
@@ -141,10 +141,10 @@ func test_bg_color_methods() {
             ren.fill_rect(250, 180, 100, 40)
         },
         func(GEvent e) {
-            if e.is_window_close() {
+            if e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == 99 {
                     // 按键 'c' 清除背景色
                     win.clear_bg_color()
@@ -192,10 +192,10 @@ func test_vsync_method() {
             }
         },
         func(GEvent e) {
-            if e.is_window_close() {
+            if e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == 118 {
                     // 'v' 键切换 vsync
                     vsync_on = not vsync_on
@@ -244,7 +244,7 @@ func test_position_methods() {
             ren.fill_rect(100, 100, 350, 180)
         },
         func(GEvent e) {
-            if e.is_window_close() or e.is_key_down() {
+            if e.window_close() or e.key_down() {
                 win.set_should_close(true)
             }
         }
@@ -281,7 +281,7 @@ func test_opacity_title() {
             ren.fill_rect(150, 120, 200, 110)
         },
         func(GEvent e) {
-            if e.is_window_close() or e.is_key_down() {
+            if e.window_close() or e.key_down() {
                 win.set_should_close(true)
             }
         }
@@ -310,10 +310,10 @@ func test_show_hide() {
             ren.fill_rect(100, 80, 200, 140)
         },
         func(GEvent e) {
-            if e.is_window_close() {
+            if e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == 104 {
                     // 'h' 键隐藏
                     win.hide()
@@ -356,10 +356,10 @@ func test_maximizable_method() {
             ren.fill_rect(150, 120, 200, 160)
         },
         func(GEvent e) {
-            if e.is_window_close() {
+            if e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == 109 {
                     // 'm' 键切换 maximizable
                     maximizable_on = not maximizable_on

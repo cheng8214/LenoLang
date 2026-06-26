@@ -55,7 +55,7 @@ main() {
             ren.draw_text(font, "frame:" + frame + " count:" + count, 10, 10)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
+            if e.quit() or e.window_close() { win.set_should_close(true) }
         }
     )
     font.close()

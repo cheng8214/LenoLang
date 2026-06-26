@@ -265,10 +265,10 @@ main() {
         },
         func(GEvent e) {
             // 窗口关闭
-            if e.is_window_close() {
+            if e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 // ESC - 退出
                 if e.key() == 27 {
                     win.set_should_close(true)

@@ -31,10 +31,10 @@ main() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+            if e.window_close() or (e.key_down() and e.key() == 27) {
                 win.set_should_close(true)
             }
-            if e.is_text_input() {
+            if e.text_input() {
                 print("[TEXT_INPUT] '" + e.text() + "'")
             }
         }

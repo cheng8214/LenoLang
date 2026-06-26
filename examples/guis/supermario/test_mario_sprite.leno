@@ -54,7 +54,7 @@ main() {
             sleep(100)
         },
         func(GEvent e) {
-            if e.is_quit() { win.set_should_close(true) }
+            if e.quit() { win.set_should_close(true) }
         }
     )
     

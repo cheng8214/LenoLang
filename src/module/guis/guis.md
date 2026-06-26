@@ -88,7 +88,7 @@ main() {
             ren.fill_rect(100, 100, 200, 150)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
         }
@@ -199,7 +199,7 @@ win.run(
         ren.clear()
     },
     func(GEvent e) {
-        if e.is_quit() {
+        if e.quit() {
             win.set_should_close(true)
         }
     }
@@ -454,22 +454,22 @@ ren.no_clip()
 
 | 方法 | 说明 |
 |------|------|
-| `e.is_quit()` | 是否为退出事件 |
-| `e.is_window_close()` | 是否为窗口关闭事件 |
-| `e.is_window_resize()` | 是否为窗口大小改变事件 |
-| `e.is_window_move()` | 是否为窗口移动事件 |
-| `e.is_window_focus()` | 是否为窗口获得焦点事件 |
-| `e.is_window_unfocus()` | 是否为窗口失去焦点事件 |
-| `e.is_window_show()` | 是否为窗口显示事件 |
-| `e.is_window_hide()` | 是否为窗口隐藏事件 |
-| `e.is_window_exposed()` | 是否为窗口暴露事件（需要重绘） |
-| `e.is_key_down()` | 是否为按键按下事件 |
-| `e.is_key_up()` | 是否为按键释放事件 |
-| `e.is_text_input()` | 是否为文本输入事件 |
-| `e.is_mouse_move()` | 是否为鼠标移动事件 |
-| `e.is_mouse_down()` | 是否为鼠标按下事件 |
-| `e.is_mouse_up()` | 是否为鼠标释放事件 |
-| `e.is_mouse_wheel()` | 是否为鼠标滚轮事件 |
+| `e.quit()` | 是否为退出事件 |
+| `e.window_close()` | 是否为窗口关闭事件 |
+| `e.window_resize()` | 是否为窗口大小改变事件 |
+| `e.window_move()` | 是否为窗口移动事件 |
+| `e.window_focus()` | 是否为窗口获得焦点事件 |
+| `e.window_unfocus()` | 是否为窗口失去焦点事件 |
+| `e.window_show()` | 是否为窗口显示事件 |
+| `e.window_hide()` | 是否为窗口隐藏事件 |
+| `e.window_exposed()` | 是否为窗口暴露事件（需要重绘） |
+| `e.key_down()` | 是否为按键按下事件 |
+| `e.key_up()` | 是否为按键释放事件 |
+| `e.text_input()` | 是否为文本输入事件 |
+| `e.mouse_move()` | 是否为鼠标移动事件 |
+| `e.mouse_down()` | 是否为鼠标按下事件 |
+| `e.mouse_up()` | 是否为鼠标释放事件 |
+| `e.mouse_wheel()` | 是否为鼠标滚轮事件 |
 | `e.is_drop_file()` | 是否为文件拖放事件 |
 | `e.is_drop_text()` | 是否为文本拖放事件 |
 
@@ -510,17 +510,17 @@ ren.no_clip()
 
 ```leno
 func(GEvent e) {
-    if e.is_key_down() {
+    if e.key_down() {
         var key = e.key()
         if key == 0x1B {
             win.set_should_close(true)
         }
         print("key: " + _str(key))
     }
-    if e.is_mouse_down() {
+    if e.mouse_down() {
         print("mouse at: " + _str(e.mouse_x()) + ", " + _str(e.mouse_y()))
     }
-    if e.is_window_resize() {
+    if e.window_resize() {
         print("resize: " + _str(e.width()) + "x" + _str(e.height()))
     }
 }
@@ -823,10 +823,10 @@ win.run(
     },
     func(GEvent e) {
         // 事件处理
-        if e.is_quit() or e.is_window_close() {
+        if e.quit() or e.window_close() {
             win.set_should_close(true)
         }
-        if e.is_key_down() and e.key() == 0x1B {
+        if e.key_down() and e.key() == 0x1B {
             win.set_should_close(true)
         }
     }
@@ -1228,7 +1228,7 @@ main() {
             ren.fill_rect(100, 100, 200, 150)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
         }
@@ -1269,7 +1269,7 @@ main() {
             }
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
         }
@@ -1311,17 +1311,17 @@ main() {
             ren.fill_circle(mx, my, 30)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_mouse_move() {
+            if e.mouse_move() {
                 mx = e.mouse_x()
                 my = e.mouse_y()
             }
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 clicked = true
             }
-            if e.is_mouse_up() {
+            if e.mouse_up() {
                 clicked = false
             }
         }
@@ -1366,7 +1366,7 @@ main() {
             ren.no_clip()
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
         }
@@ -1412,10 +1412,10 @@ main() {
             ren.line(300, 450, 500, 550)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 var key = e.key()
                 if key == 0x1B {
                     win.set_should_close(true)
@@ -1468,7 +1468,7 @@ ren.fill_rect(...)    // 2. 绘制
 
 ### 6. 事件处理
 
-在 `win.run()` 的事件回调中，必须处理 `is_quit()` 和 `is_window_close()` 事件并设置窗口关闭标志，否则窗口无法正常关闭。
+在 `win.run()` 的事件回调中，必须处理 `quit()` 和 `window_close()` 事件并设置窗口关闭标志，否则窗口无法正常关闭。
 
 ---
 
@@ -1477,7 +1477,7 @@ ren.fill_rect(...)    // 2. 绘制
 1. **始终处理退出事件**
    ```leno
    func(GEvent e) {
-       if e.is_quit() or e.is_window_close() {
+       if e.quit() or e.window_close() {
            win.set_should_close(true)
        }
    }

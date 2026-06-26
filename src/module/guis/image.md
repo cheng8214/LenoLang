@@ -389,7 +389,7 @@ main() {
             img.draw(ren, x, y)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
         }
@@ -436,7 +436,7 @@ main() {
                                   368, 268, frame_w * 2, frame_h * 2)
         },
         func(GEvent e) {
-            if e.is_quit() {
+            if e.quit() {
                 win.set_should_close(true)
             }
         }
@@ -485,7 +485,7 @@ main() {
             img.draw_rotated_scaled(ren, 400, 300, w, h, angle)
         },
         func(GEvent e) {
-            if e.is_quit() {
+            if e.quit() {
                 win.set_should_close(true)
             }
         }
@@ -521,12 +521,12 @@ main() {
             img.draw_flipped(ren, player_x, player_y, flip)
         },
         func(GEvent e) {
-            if e.is_quit() {
+            if e.quit() {
                 win.set_should_close(true)
             }
             
             // 左右移动改变朝向
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == 0x25 {  // 左箭头
                     facing_right = false
                     player_x = player_x - 10
@@ -588,7 +588,7 @@ main() {
             draw_nine_slice(button_bg, ren, 100, 320, 150, 50, 10)
         },
         func(GEvent e) {
-            if e.is_quit() {
+            if e.quit() {
                 win.set_should_close(true)
             }
         }

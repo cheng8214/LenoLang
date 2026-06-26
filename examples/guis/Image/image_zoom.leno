@@ -49,13 +49,13 @@ main() {
             font.close()
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() and e.key() == 0x1B {
+            if e.key_down() and e.key() == 0x1B {
                 win.set_should_close(true)
             }
-            if e.is_mouse_wheel() {
+            if e.mouse_wheel() {
                 var wy = e.wheel_y()
                 if wy > 0 {
                     scale = scale * 1.1

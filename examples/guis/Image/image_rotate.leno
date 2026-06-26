@@ -68,13 +68,13 @@ main() {
             font.close()
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() and e.key() == 0x1B {
+            if e.key_down() and e.key() == 0x1B {
                 win.set_should_close(true)
             }
-            if e.is_mouse_wheel() {
+            if e.mouse_wheel() {
                 var wy = e.wheel_y()
                 if wy > 0 {
                     scale = scale * 1.1
@@ -89,7 +89,7 @@ main() {
                     }
                 }
             }
-            if e.is_mouse_down() and e.mouse_button() == guis.MOUSE_LEFT {
+            if e.mouse_down() and e.mouse_button() == guis.MOUSE_LEFT {
                 // 使用底层双击检测：clicks() 返回点击次数（1=单击, 2=双击, 3=三击...）
                 if e.clicks() == 2 {
                     // 左键双击：加速
@@ -100,7 +100,7 @@ main() {
                     print("左键双击! 速度: x" + speed)
                 }
             }
-            if e.is_mouse_down() and e.mouse_button() == guis.MOUSE_RIGHT {
+            if e.mouse_down() and e.mouse_button() == guis.MOUSE_RIGHT {
                 if e.clicks() == 2 {
                     // 右键双击：减速
                     speed = speed - 1.0

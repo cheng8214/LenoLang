@@ -7,9 +7,9 @@
  *   win.close()                         关闭窗口（销毁 + 退出 GUI）
  *   win.set_title(title)                设置窗口标题
  *   win.set_size(w, h)                  设置窗口大小
- *   win.get_size() -> [w, h]            获取窗口大小
+ *   win.get_size() -> {width, height}   获取窗口大小
  *   win.set_pos(x, y)                   设置窗口位置
- *   win.get_pos() -> [x, y]            获取窗口位置
+ *   win.get_pos() -> {x, y}             获取窗口位置
  *   win.center()                        窗口居中显示
  *   win.set_min_size(w, h)              设置最小尺寸
  *   win.set_max_size(w, h)              设置最大尺寸
@@ -82,13 +82,18 @@ static Value win_set_size_func(int argc, Value* args) {
     return val_null();
 }
 
-/* win.get_size() -> [w, h] */
+/* win.get_size() -> {width: w, height: h} */
 static Value win_get_size_func(int argc, Value* args) {
     (void)argc;
     ObjGUIWindow* win = as_window(args[0]);
     int w = 0, h = 0;
     if (win && win->platform) leno_gui_platform_get_window_size(win->platform, &w, &h);
-    return val_obj((Object*)make_int_array2(w, h));
+    ObjDict* dict = dict_new(4);
+    if (!dict) return val_null();
+    extern void dict_set(ObjDict* dict, Value key, Value value);
+    dict_set(dict, val_obj((Object*)str_copy("width", 5)), val_int(w));
+    dict_set(dict, val_obj((Object*)str_copy("height", 6)), val_int(h));
+    return val_obj((Object*)dict);
 }
 
 /* win.set_pos(x, y) */
@@ -101,13 +106,18 @@ static Value win_set_pos_func(int argc, Value* args) {
     return val_null();
 }
 
-/* win.get_pos() -> [x, y] */
+/* win.get_pos() -> {x: x, y: y} */
 static Value win_get_pos_func(int argc, Value* args) {
     (void)argc;
     ObjGUIWindow* win = as_window(args[0]);
     int x = 0, y = 0;
     if (win && win->platform) leno_gui_platform_get_window_position(win->platform, &x, &y);
-    return val_obj((Object*)make_int_array2(x, y));
+    ObjDict* dict = dict_new(4);
+    if (!dict) return val_null();
+    extern void dict_set(ObjDict* dict, Value key, Value value);
+    dict_set(dict, val_obj((Object*)str_copy("x", 1)), val_int(x));
+    dict_set(dict, val_obj((Object*)str_copy("y", 1)), val_int(y));
+    return val_obj((Object*)dict);
 }
 
 /* win.set_fullscreen(bool) */
@@ -956,9 +966,9 @@ void guis_init_window_instance_methods(void) {
     window_register_method_with_params("close", make_native(win_close_func, 1, "close"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("set_title", make_native(win_set_title_func, 2, "set_title"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_1);
     window_register_method_with_params("set_size", make_native(win_set_size_func, 3, "set_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
-    window_register_method_with_params("get_size", make_native(win_get_size_func, 1, "get_size"), 0, -1, -1, TYPE_ARRAY, TYPE_INT, no_params);
+    window_register_method_with_params("get_size", make_native(win_get_size_func, 1, "get_size"), 0, -1, -1, TYPE_DICT, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("set_pos", make_native(win_set_pos_func, 3, "set_pos"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
-    window_register_method_with_params("get_pos", make_native(win_get_pos_func, 1, "get_pos"), 0, -1, -1, TYPE_ARRAY, TYPE_INT, no_params);
+    window_register_method_with_params("get_pos", make_native(win_get_pos_func, 1, "get_pos"), 0, -1, -1, TYPE_DICT, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("center", make_native(win_center_func, 1, "center"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
     window_register_method_with_params("set_min_size", make_native(win_set_min_size_func, 3, "set_min_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);
     window_register_method_with_params("set_max_size", make_native(win_set_max_size_func, 3, "set_max_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_2);

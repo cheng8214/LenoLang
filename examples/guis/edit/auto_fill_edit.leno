@@ -1,0 +1,37 @@
+import guis
+
+main() {
+    var bg = _rgb(28, 28, 44, 255)
+
+    GWin win = guis.create_window("Auto Fill Edit", {
+        width: 800,
+        height: 600,
+        resizable: true,
+        bg_color: bg
+    })
+
+    GTextBox edit = win.add_textbox({
+        x: 10, y: 40,
+        width: 780, height: 550,
+        multiline: true,
+        bg_color: bg,
+        text_color: _rgb(220, 220, 240, 255),      // 文字：浅灰白
+        cursor_color: _rgb(100, 200, 255, 255),    // 光标：亮蓝
+        placeholder_color: _rgb(120, 120, 160, 180) // placeholder：暗灰
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.window_close() { win.set_should_close(true) }
+            if e.window_resize() {
+                var s = win.get_size()
+                edit.set_size(s.width - 20, s.height - 50)
+            }
+        }
+    )
+
+    win.close()
+}

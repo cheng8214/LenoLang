@@ -89,13 +89,13 @@ main() {
             ren.draw_text(font_sm, "Click to select  |  ESC to quit", 190, 670)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() and e.key() == 0x1B {
+            if e.key_down() and e.key() == 0x1B {
                 win.set_should_close(true)
             }
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 var mx = e.mouse_x()
                 var my = e.mouse_y()
                 var c = (mx - board_x) / cell

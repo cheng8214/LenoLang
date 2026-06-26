@@ -313,10 +313,10 @@ main() {
             ren.draw_text(font_info, "ESC 退出  |  R 重新开始", 240, 740)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 var key = e.key()
                 if key == 0x1B {
                     win.set_should_close(true)
@@ -325,7 +325,7 @@ main() {
                     reset_game()
                 }
             }
-            if e.is_mouse_down() and not game_over and not ai_thinking and current_player == human_player {
+            if e.mouse_down() and not game_over and not ai_thinking and current_player == human_player {
                 int mx = e.mouse_x()
                 int my = e.mouse_y()
                 int c = _int(maths.round(_float(mx - board_x) / cell))

@@ -78,10 +78,10 @@ main() {
             ren.draw_text(font, "注意：翻转后图片上下颠倒", 450, 60 + h * scale + 20)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() and e.key() == guis.KEY_ESCAPE {
+            if e.key_down() and e.key() == guis.KEY_ESCAPE {
                 win.set_should_close(true)
             }
         }

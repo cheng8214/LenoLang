@@ -229,8 +229,8 @@ main() {
             ren.draw_text(font_btn, "Ctrl+V 粘贴代码 | 拖动滚动条 | 选中文本", 20, 685)
         },
         func(GEvent e) {
-            if e.is_window_close() { win.set_should_close(true) }
-            if e.is_key_down() and e.key() == 27 { win.set_should_close(true) }
+            if e.window_close() { win.set_should_close(true) }
+            if e.key_down() and e.key() == 27 { win.set_should_close(true) }
         }
     )
 

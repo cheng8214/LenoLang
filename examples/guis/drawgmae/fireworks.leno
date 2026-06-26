@@ -673,10 +673,10 @@ main() {
             frame_start = times.ms()
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == guis.KEY_SPACE {
                     // 齐射 6 发
                     for 0:5 to bv {
@@ -690,7 +690,7 @@ main() {
                     peak_particles = 0
                 }
             }
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 var mx = e.mouse_x()
                 var my = e.mouse_y()
                 if my > 50 {

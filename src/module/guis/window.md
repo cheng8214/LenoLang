@@ -259,10 +259,10 @@ win.run(
     },
     func(GEvent e) {
         // 事件处理
-        if e.is_quit() or e.is_window_close() {
+        if e.quit() or e.window_close() {
             win.set_should_close(true)
         }
-        if e.is_key_down() and e.key() == 0x1B {  // ESC键
+        if e.key_down() and e.key() == 0x1B {  // ESC键
             win.set_should_close(true)
         }
     }
@@ -318,7 +318,7 @@ main() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
         }
@@ -357,11 +357,11 @@ main() {
             ren.fill_rect(0, 40, 600, 360)
         },
         func(GEvent e) {
-            if e.is_quit() {
+            if e.quit() {
                 win.set_should_close(true)
             }
             // 双击标题栏关闭
-            if e.is_mouse_down() and e.mouse_y() < 40 and e.mouse_clicks() == 2 {
+            if e.mouse_down() and e.mouse_y() < 40 and e.mouse_clicks() == 2 {
                 win.set_should_close(true)
             }
         }
@@ -403,11 +403,11 @@ main() {
             ren.fill_rect(x, y, rect_w, rect_h)
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
             // 窗口大小改变时更新尺寸
-            if e.is_window_resize() {
+            if e.window_resize() {
                 win_w = e.width()
                 win_h = e.height()
             }
@@ -444,16 +444,16 @@ main() {
             ren.fill_rect(size[0]/2 - 50, size[1]/2 - 50, 100, 100)
         },
         func(GEvent e) {
-            if e.is_quit() {
+            if e.quit() {
                 win.set_should_close(true)
             }
             // F11 切换全屏
-            if e.is_key_down() and e.key() == 0x7A {  // F11
+            if e.key_down() and e.key() == 0x7A {  // F11
                 is_fullscreen = !is_fullscreen
                 win.set_fullscreen(is_fullscreen)
             }
             // ESC 退出全屏
-            if e.is_key_down() and e.key() == 0x1B and is_fullscreen {
+            if e.key_down() and e.key() == 0x1B and is_fullscreen {
                 is_fullscreen = false
                 win.set_fullscreen(false)
             }

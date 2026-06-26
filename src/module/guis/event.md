@@ -31,7 +31,7 @@ win.run(
     },
     func(GEvent e) {
         // 事件回调 - e 就是 GEvent 对象
-        if e.is_key_down() {
+        if e.key_down() {
             print("按键: " + e.key())
         }
     }
@@ -46,35 +46,35 @@ win.run(
 
 | 方法 | 说明 |
 |------|------|
-| `e.is_quit()` | 程序退出请求 |
-| `e.is_window_close()` | 窗口关闭按钮被点击 |
-| `e.is_window_resize()` | 窗口大小改变 |
-| `e.is_window_move()` | 窗口位置移动 |
-| `e.is_window_focus()` | 窗口获得焦点 |
-| `e.is_window_unfocus()` | 窗口失去焦点 |
-| `e.is_window_show()` | 窗口显示 |
-| `e.is_window_hide()` | 窗口隐藏 |
-| `e.is_window_exposed()` | 窗口暴露（需要重绘） |
-| `e.is_window_minimized()` | 窗口最小化 |
-| `e.is_window_maximized()` | 窗口最大化 |
-| `e.is_window_restored()` | 窗口从最小化/最大化恢复 |
+| `e.quit()` | 程序退出请求 |
+| `e.window_close()` | 窗口关闭按钮被点击 |
+| `e.window_resize()` | 窗口大小改变 |
+| `e.window_move()` | 窗口位置移动 |
+| `e.window_focus()` | 窗口获得焦点 |
+| `e.window_unfocus()` | 窗口失去焦点 |
+| `e.window_show()` | 窗口显示 |
+| `e.window_hide()` | 窗口隐藏 |
+| `e.window_exposed()` | 窗口暴露（需要重绘） |
+| `e.window_minimized()` | 窗口最小化 |
+| `e.window_maximized()` | 窗口最大化 |
+| `e.window_restored()` | 窗口从最小化/最大化恢复 |
 
 ### 键盘相关
 
 | 方法 | 说明 |
 |------|------|
-| `e.is_key_down()` | 按键按下 |
-| `e.is_key_up()` | 按键释放 |
-| `e.is_text_input()` | 文本输入（字符） |
+| `e.key_down()` | 按键按下 |
+| `e.key_up()` | 按键释放 |
+| `e.text_input()` | 文本输入（字符） |
 
 ### 鼠标相关
 
 | 方法 | 说明 |
 |------|------|
-| `e.is_mouse_move()` | 鼠标移动 |
-| `e.is_mouse_down()` | 鼠标按钮按下 |
-| `e.is_mouse_up()` | 鼠标按钮释放 |
-| `e.is_mouse_wheel()` | 鼠标滚轮滚动 |
+| `e.mouse_move()` | 鼠标移动 |
+| `e.mouse_down()` | 鼠标按钮按下 |
+| `e.mouse_up()` | 鼠标按钮释放 |
+| `e.mouse_wheel()` | 鼠标滚轮滚动 |
 
 ---
 
@@ -87,7 +87,7 @@ win.run(
 **返回**: `int` - 按键码
 
 ```leno
-if e.is_key_down() {
+if e.key_down() {
     var key = e.key()
     if key == 0x1B {           // ESC
         win.set_should_close(true)
@@ -108,7 +108,7 @@ if e.is_key_down() {
 
 ```leno
 // 使用扫描码处理 WASD（不受键盘布局影响）
-if e.is_key_down() {
+if e.key_down() {
     var scancode = e.scancode()
     if scancode == 17 { move_forward() }   // W位置
     if scancode == 31 { move_backward() }  // S位置
@@ -124,7 +124,7 @@ if e.is_key_down() {
 **返回**: `int` - 修饰键位掩码
 
 ```leno
-if e.is_key_down() {
+if e.key_down() {
     var mod = e.mod()
     if e.key() == 0x5A {  // Z键
         if mod & 0x01 {   // Ctrl
@@ -146,7 +146,7 @@ if e.is_key_down() {
 **返回**: `bool` - true=重复按键
 
 ```leno
-if e.is_key_down() {
+if e.key_down() {
     if !e.repeat() {   // 只处理首次按下
         fire()
     }
@@ -162,7 +162,7 @@ if e.is_key_down() {
 **返回**: `string` - 输入字符
 
 ```leno
-if e.is_text_input() {
+if e.text_input() {
     var ch = e.text()
     input_buffer = input_buffer + ch
 }
@@ -179,7 +179,7 @@ if e.is_text_input() {
 **返回**: `int` - X或Y坐标
 
 ```leno
-if e.is_mouse_move() {
+if e.mouse_move() {
     var x = e.mouse_x()
     var y = e.mouse_y()
     print("鼠标位置: (" + x + ", " + y + ")")
@@ -195,7 +195,7 @@ if e.is_mouse_move() {
 **返回**: `int` - 1=左键, 2=中键, 3=右键
 
 ```leno
-if e.is_mouse_down() {
+if e.mouse_down() {
     var btn = e.mouse_button()
     if btn == 1 { select() }      // 左键
     if btn == 2 { pan() }         // 中键
@@ -212,7 +212,7 @@ if e.is_mouse_down() {
 **返回**: `int` - 1=单击, 2=双击
 
 ```leno
-if e.is_mouse_down() {
+if e.mouse_down() {
     if e.clicks() == 2 {   // 双击
         open_file()
     } else {               // 单击
@@ -230,7 +230,7 @@ if e.is_mouse_down() {
 **返回**: `int` - 相对移动像素数
 
 ```leno
-if e.is_mouse_move() {
+if e.mouse_move() {
     var dx = e.xrel()
     var dy = e.yrel()
     camera.rotate(dx * 0.1, dy * 0.1)
@@ -246,7 +246,7 @@ if e.is_mouse_move() {
 **返回**: `int` - 滚动量（正=向上/右，负=向下/左）
 
 ```leno
-if e.is_mouse_wheel() {
+if e.mouse_wheel() {
     var dy = e.wheel_y()
     if dy > 0 { zoom_in() }
     if dy < 0 { zoom_out() }
@@ -264,7 +264,7 @@ if e.is_mouse_wheel() {
 **返回**: `int` - 新宽度或高度
 
 ```leno
-if e.is_window_resize() {
+if e.window_resize() {
     var w = e.width()
     var h = e.height()
     resize_viewport(w, h)
@@ -308,11 +308,11 @@ if wid == main_window_id {
 guis 模块提供了一系列按键常量，使用常量比直接使用数字更清晰：
 
 ```leno
-if e.is_key_down() and e.key() == guis.KEY_SPACE {
+if e.key_down() and e.key() == guis.KEY_SPACE {
     jump()
 }
 
-if e.is_key_down() and e.key() == guis.KEY_ESCAPE {
+if e.key_down() and e.key() == guis.KEY_ESCAPE {
     win.set_should_close(true)
 }
 ```
@@ -403,7 +403,7 @@ if e.is_key_down() and e.key() == guis.KEY_ESCAPE {
 | `guis.MOD_SUPER` | 8 | GWin/Cmd 按下 |
 
 ```leno
-if e.is_key_down() {
+if e.key_down() {
     var mod = e.mod()
     if e.key() == guis.KEY_Z {
         if mod & guis.MOD_CTRL {
@@ -446,12 +446,12 @@ main() {
         },
         func(GEvent e) {
             // 退出处理
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
             
             // 键盘事件
-            if e.is_key_down() {
+            if e.key_down() {
                 var key = e.key()
                 
                 // ESC 退出
@@ -472,13 +472,13 @@ main() {
             }
             
             // 鼠标移动
-            if e.is_mouse_move() {
+            if e.mouse_move() {
                 mouse_x = e.mouse_x()
                 mouse_y = e.mouse_y()
             }
             
             // 鼠标点击
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 var btn = e.mouse_button()
                 var clicks = e.clicks()
                 
@@ -488,21 +488,21 @@ main() {
             }
             
             // 滚轮
-            if e.is_mouse_wheel() {
+            if e.mouse_wheel() {
                 var dy = e.wheel_y()
                 print("滚轮: " + dy)
             }
             
             // 窗口大小改变
-            if e.is_window_resize() {
+            if e.window_resize() {
                 print("新大小: " + e.width() + "x" + e.height())
             }
             
             // 窗口焦点变化
-            if e.is_window_focus() {
+            if e.window_focus() {
                 print("窗口获得焦点")
             }
-            if e.is_window_unfocus() {
+            if e.window_unfocus() {
                 print("窗口失去焦点")
             }
         }
@@ -538,12 +538,12 @@ main() {
             ren.fill_rect(0, 0, 800, 40)
         },
         func(GEvent e) {
-            if e.is_quit() {
+            if e.quit() {
                 win.set_should_close(true)
             }
             
             // 在标题栏区域按下左键开始拖拽
-            if e.is_mouse_down() and e.mouse_button() == 1 {
+            if e.mouse_down() and e.mouse_button() == 1 {
                 if e.mouse_y() < 40 {
                     dragging = true
                     drag_start_x = e.mouse_x()
@@ -555,12 +555,12 @@ main() {
             }
             
             // 释放鼠标结束拖拽
-            if e.is_mouse_up() {
+            if e.mouse_up() {
                 dragging = false
             }
             
             // 拖拽中移动窗口
-            if dragging and e.is_mouse_move() {
+            if dragging and e.mouse_move() {
                 var dx = e.mouse_x() - drag_start_x
                 var dy = e.mouse_y() - drag_start_y
                 win.set_pos(win_start_x + dx, win_start_y + dy)
@@ -611,24 +611,24 @@ main() {
             }
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
             
             // 处理文本输入
-            if e.is_text_input() {
+            if e.text_input() {
                 text = text + e.text()
             }
             
             // 退格删除
-            if e.is_key_down() and e.key() == 0x08 {
+            if e.key_down() and e.key() == 0x08 {
                 if text.len() > 0 {
                     text = text[0:text.len()-1]
                 }
             }
             
             // Ctrl+A 全选（示例）
-            if e.is_key_down() and e.key() == 0x41 {
+            if e.key_down() and e.key() == 0x41 {
                 if e.mod() & 0x01 {  // Ctrl
                     print("全选: " + text)
                 }
@@ -646,19 +646,19 @@ main() {
 
 | 方法 | 返回值 | 适用事件 |
 |------|--------|----------|
-| `is_quit()` | bool | 所有 |
-| `is_window_close()` | bool | 所有 |
-| `is_window_resize()` | bool | 所有 |
-| `is_window_move()` | bool | 所有 |
-| `is_window_focus()` | bool | 所有 |
-| `is_window_unfocus()` | bool | 所有 |
-| `is_key_down()` | bool | 所有 |
-| `is_key_up()` | bool | 所有 |
-| `is_text_input()` | bool | 所有 |
-| `is_mouse_move()` | bool | 所有 |
-| `is_mouse_down()` | bool | 所有 |
-| `is_mouse_up()` | bool | 所有 |
-| `is_mouse_wheel()` | bool | 所有 |
+| `quit()` | bool | 所有 |
+| `window_close()` | bool | 所有 |
+| `window_resize()` | bool | 所有 |
+| `window_move()` | bool | 所有 |
+| `window_focus()` | bool | 所有 |
+| `window_unfocus()` | bool | 所有 |
+| `key_down()` | bool | 所有 |
+| `key_up()` | bool | 所有 |
+| `text_input()` | bool | 所有 |
+| `mouse_move()` | bool | 所有 |
+| `mouse_down()` | bool | 所有 |
+| `mouse_up()` | bool | 所有 |
+| `mouse_wheel()` | bool | 所有 |
 | `type()` | int | 所有 |
 | `window_id()` | int | 所有 |
 | `key()` | int | key_down/key_up |

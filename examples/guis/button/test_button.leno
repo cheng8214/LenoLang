@@ -45,7 +45,7 @@ func test_basic_button() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+            if e.window_close() or (e.key_down() and e.key() == 27) {
                 win.set_should_close(true)
             }
         }
@@ -123,7 +123,7 @@ func test_multi_buttons() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+            if e.window_close() or (e.key_down() and e.key() == 27) {
                 win.set_should_close(true)
             }
         }
@@ -169,10 +169,10 @@ func test_dynamic_properties() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_window_close() {
+            if e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 if e.key() == 27 {
                     win.set_should_close(true)
                 }
@@ -268,7 +268,7 @@ func test_visible_enabled() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+            if e.window_close() or (e.key_down() and e.key() == 27) {
                 win.set_should_close(true)
             }
         }
@@ -313,7 +313,7 @@ func test_button_close() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+            if e.window_close() or (e.key_down() and e.key() == 27) {
                 win.set_should_close(true)
             }
         }
@@ -442,7 +442,7 @@ func test_shadow_border_opacity() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_window_close() or (e.is_key_down() and e.key() == 27) {
+            if e.window_close() or (e.key_down() and e.key() == 27) {
                 win.set_should_close(true)
             }
         }

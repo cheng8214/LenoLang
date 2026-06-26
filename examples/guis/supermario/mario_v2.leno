@@ -806,8 +806,8 @@ main() {
             frame_start = times.ms()
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() { win.set_should_close(true) }
-            if e.is_key_down() {
+            if e.quit() or e.window_close() { win.set_should_close(true) }
+            if e.key_down() {
                 var k = e.key()
                 if k == guis.KEY_LEFT { key_l = 1; face_r = false }
                 if k == guis.KEY_RIGHT { key_r = 1; face_r = true }
@@ -820,7 +820,7 @@ main() {
                     if snd_fire.isInit() { snd_fire.seek(0); snd_fire.play() }
                 }
             }
-            if e.is_key_up() {
+            if e.key_up() {
                 var k = e.key()
                 if k == guis.KEY_LEFT { key_l = 0 }
                 if k == guis.KEY_RIGHT { key_r = 0 }

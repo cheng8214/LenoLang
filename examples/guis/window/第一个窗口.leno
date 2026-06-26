@@ -21,7 +21,7 @@ func Draw1(GDraw ren)
     func Event1(GEvent event)
     {
             // onEvent: 每个事件调用
-            if event.is_window_close() or event.is_key_down()
+            if event.window_close() or event.key_down()
             {
                 win.set_should_close(true)
             }

@@ -124,23 +124,23 @@ main() {
             }
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
             
             // 测试：打印所有按键事件
-            if e.is_key_down() {
+            if e.key_down() {
                 print("Key down: " + e.key())
             }
             
             // 按空格加速动画
-            if e.is_key_down() and e.key() == guis.KEY_SPACE {
+            if e.key_down() and e.key() == guis.KEY_SPACE {
                 print("Space pressed!")
                 anim_speed = if anim_speed == 5 then 2 else 5
             }
             
             // 按方向键控制移动速度
-            if e.is_key_down() {
+            if e.key_down() {
                 var key = e.key()
                 if key == guis.KEY_RIGHT {
                     print("Right arrow!")
@@ -153,7 +153,7 @@ main() {
             }
             
             // 鼠标点击测试
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 print("Mouse clicked at: " + e.mouse_x() + ", " + e.mouse_y())
             }
         }

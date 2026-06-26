@@ -61,20 +61,20 @@ main() {
         },
         func(GEvent e) {
             /* Event 方法风格 - 比 event["type"] 直观多了 */
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() {
+            if e.key_down() {
                 var key = e.key()
                 if key == 0x1B {
                     win.set_should_close(true)
                 }
                 print("key down: " + _str(key))
             }
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 print("mouse down at: " + _str(e.mouse_x()) + ", " + _str(e.mouse_y()) + " button: " + _str(e.mouse_button()))
             }
-            if e.is_window_resize() {
+            if e.window_resize() {
                 print("resize: " + _str(e.width()) + "x" + _str(e.height()))
             }
         }

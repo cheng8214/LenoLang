@@ -190,8 +190,8 @@ main() {
             ren.draw_text(font_info, "点击按钮: 查找中文/英文/数字 → 黄色高亮选中 | select 手动高亮", 30, 520)
         },
         func(GEvent e) {
-            if e.is_window_close() { win.set_should_close(true) }
-            if e.is_key_down() and e.key() == 27 { win.set_should_close(true) }
+            if e.window_close() { win.set_should_close(true) }
+            if e.key_down() and e.key() == 27 { win.set_should_close(true) }
         }
     )
 

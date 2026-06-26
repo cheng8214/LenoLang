@@ -40,15 +40,15 @@ main() {
             }
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
-            if e.is_key_down() and e.key() == 0x1B {
+            if e.key_down() and e.key() == 0x1B {
                 win.set_should_close(true)
             }
 
             // 点击关闭按钮
-            if e.is_mouse_down() {
+            if e.mouse_down() {
                 int mx = e.mouse_x()
                 int my = e.mouse_y()
                 print(mx,my)

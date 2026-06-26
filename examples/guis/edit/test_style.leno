@@ -191,8 +191,8 @@ main() {
             ren.draw_text(font_label, "10.全属性综合(21个字段)", 430, 305)
         },
         func(GEvent e) {
-            if e.is_window_close() { win.set_should_close(true) }
-            if e.is_key_down() and e.key() == 27 { win.set_should_close(true) }
+            if e.window_close() { win.set_should_close(true) }
+            if e.key_down() and e.key() == 27 { win.set_should_close(true) }
         }
     )
 

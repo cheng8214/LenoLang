@@ -34,7 +34,7 @@ main() {
             ren.clear()
         },
         func(GEvent e) {
-            if e.is_quit() { win.set_should_close(true) }
+            if e.quit() { win.set_should_close(true) }
         }
     )
 }
@@ -530,7 +530,7 @@ main() {
             if angle > 360.0 { angle = 0.0 }
         },
         func(GEvent e) {
-            if e.is_quit() or e.is_window_close() {
+            if e.quit() or e.window_close() {
                 win.set_should_close(true)
             }
         }
