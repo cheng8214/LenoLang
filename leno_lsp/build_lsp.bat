@@ -56,6 +56,8 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_event.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_image.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_font.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_button.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_textbox.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_label.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_struct.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_cstruct.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_face.c
@@ -105,6 +107,8 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_constants.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_draw.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_window.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_button.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_textbox.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_label.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_style.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_event.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_image.c
@@ -112,13 +116,14 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/guis_font.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/leno_guis_log.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/module/guis/leno_guis_win32.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/platform/platform_thread.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/serialize/serialize.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_platform.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_toml.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_init.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_resolve.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_install.c
 
-gcc -o build\leno_lsp.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32 -lgdi32 -luser32 -lcomdlg32 -lwinmm
+gcc -o build\leno_lsp.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32 -lgdi32 -luser32 -lcomdlg32 -lwinmm -limm32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed
