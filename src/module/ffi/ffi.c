@@ -2182,51 +2182,40 @@ static void* create_callback_trampoline(int cb_id, FFIType ret_type) {
     code[pos++] = 0x88; code[pos++] = 0x00; code[pos++] = 0x00; code[pos++] = 0x00;
 
 #ifdef _WIN32
-    // ========== Windows x64 calling convention ==========
-    // Integer args: RCX, RDX, R8, R9
-    // Float args: XMM0-XMM3
-    // Shadow space: 32 bytes required
+    // Windows x64 调用约定：
+    //   整数参数寄存器：RCX, RDX, R8, R9
+    //   浮点参数寄存器：XMM0-XMM3
+    //   调用 callback_dispatch 前需预留 32 字节 shadow space
+    //
+    // 在栈上构造 CallbackRegState，基址选在 rbp-0x80，不跨越 rbp 保存的帧指针和返回地址：
+    //   [rbp-0x80] = int_args[0] = RCX
+    //   [rbp-0x78] = int_args[1] = RDX
+    //   [rbp-0x70] = int_args[2] = R8
+    //   [rbp-0x68] = int_args[3] = R9
+    //   [rbp-0x60] .. [rbp-0x50]  int_args[4..5]（保留，Windows 不用）
+    //   [rbp-0x48] = float_args[0] = XMM0
+    //   [rbp-0x40] = float_args[1] = XMM1
+    //   [rbp-0x38] = float_args[2] = XMM2
+    //   [rbp-0x30] = float_args[3] = XMM3
+    // 之后把 regs 指针（= rbp-0x80）传给 callback_dispatch。
+    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0x80; // mov [rbp-0x80], rcx
+    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x55; code[pos++] = 0x88; // mov [rbp-0x78], rdx
+    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x45; code[pos++] = 0x90; // mov [rbp-0x70], r8
+    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0x98; // mov [rbp-0x68], r9
 
-    // Save integer argument registers to shadow space / stack
-    // 注意：regs 指向 [rbp-8]，所以 regs->int_args[0] = [rbp-8], regs->int_args[1] = [rbp]
-    // 为了让 regs->int_args[0] = RCX, regs->int_args[1] = RDX，我们需要：
-    // [rbp-0x10] = RCX (arg1) -> regs->int_args[0] (因为 regs = [rbp-8], [rbp-8] - 8 = [rbp-16])
-    // [rbp-0x08] = RDX (arg2) -> regs->int_args[1] (因为 regs + 8 = [rbp])
-    // 等等，这不对。让我重新计算：
-    // regs = [rbp-8] 的地址
-    // regs->int_args[0] = [rbp-8]
-    // regs->int_args[1] = [rbp]
-    // 所以 [rbp-8] 应该是 RCX，[rbp] 应该是 RDX
-    // 但 [rbp] 是旧的 RBP，不能覆盖
-    // 解决方案：让 regs 指向 [rbp-16]，这样 regs->int_args[0] = [rbp-16], regs->int_args[1] = [rbp-8]
-    // [rbp-0x10] = RCX (arg1)
-    // [rbp-0x08] = RDX (arg2)
-    // [rbp-0x18] = R8  (arg3)
-    // [rbp-0x20] = R9  (arg4)
-    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0xF0; // mov [rbp-16], rcx
-    code[pos++] = 0x48; code[pos++] = 0x89; code[pos++] = 0x55; code[pos++] = 0xF8; // mov [rbp-8], rdx
-    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x45; code[pos++] = 0xE8; // mov [rbp-24], r8
-    code[pos++] = 0x4C; code[pos++] = 0x89; code[pos++] = 0x4D; code[pos++] = 0xE0; // mov [rbp-32], r9
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x45; code[pos++] = 0xB8; // movsd [rbp-0x48], xmm0
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x4D; code[pos++] = 0xC0; // movsd [rbp-0x40], xmm1
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x55; code[pos++] = 0xC8; // movsd [rbp-0x38], xmm2
+    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x5D; code[pos++] = 0xD0; // movsd [rbp-0x30], xmm3
 
-    // Save float argument registers
-    // [rbp-0x28] = XMM0
-    // [rbp-0x30] = XMM1
-    // [rbp-0x38] = XMM2
-    // [rbp-0x40] = XMM3
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x45; code[pos++] = 0xD8; // movsd [rbp-40], xmm0
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x4D; code[pos++] = 0xD0; // movsd [rbp-48], xmm1
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x55; code[pos++] = 0xC8; // movsd [rbp-56], xmm2
-    code[pos++] = 0xF2; code[pos++] = 0x0F; code[pos++] = 0x11; code[pos++] = 0x5D; code[pos++] = 0xC0; // movsd [rbp-64], xmm3
-
-    // mov rcx, cb_id (immediate)
+    // mov rcx, cb_id
     code[pos++] = 0x48; code[pos++] = 0xB9;
     int64_t cb_id_ext = (int64_t)cb_id;
     memcpy(code + pos, &cb_id_ext, sizeof(int64_t));
     pos += 8;
 
-    // lea rdx, [rbp-0x10]  (pointer to saved register state)
-    // 让 regs 指向 [rbp-16]，这样 regs->int_args[0] = [rbp-16] = RCX, regs->int_args[1] = [rbp-8] = RDX
-    code[pos++] = 0x48; code[pos++] = 0x8D; code[pos++] = 0x55; code[pos++] = 0xF0;
+    // lea rdx, [rbp-0x80]
+    code[pos++] = 0x48; code[pos++] = 0x8D; code[pos++] = 0x55; code[pos++] = 0x80;
 
     // sub rsp, 0x28 (32 bytes shadow space + 8 bytes for alignment = 40)
     // This ensures stack is 16-byte aligned before call (RSP will be 16-byte aligned after push return address)
