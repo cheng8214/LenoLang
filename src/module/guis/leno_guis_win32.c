@@ -1877,15 +1877,15 @@ void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatf
     DrawTextW(tmp_dc, wtext, -1, &draw_rc, DT_LEFT | DT_TOP | DT_NOCLIP | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(tmp_dc, old_font_t);
 
-    /* 将临时位图 alpha 混合到主 pixels 缓冲区 */
-    /* 文字像素在 tmp_pixels 中有 alpha（GDI 文字渲染会在 DIB 上产生 alpha 通道），
-     * 但实际上 GDI DrawTextW 写入 DIB 时 alpha 通道为 0 或不确定，
-     * 所以我们用颜色匹配来判断哪些像素是文字 */
+    /* 将临时位图 alpha 混合到主 pixels 缓冲区
+     * GDI 在 32bpp DIB 上绘制文字时不会生成可靠的 alpha 通道，但 RGB 通道
+     * 已经是 文字颜色 * 覆盖率 的结果（抗锯齿灰度）。因此用像素亮度与
+     * 文字颜色亮度的比值来估算覆盖率，再做 alpha 混合，避免低透明度下
+     * 文字边缘发虚、变形。 */
     uint8_t src_r = ren->draw_r, src_g = ren->draw_g, src_b = ren->draw_b;
-    uint8_t src_a = ren->draw_a;  /* 文字的整体透明度 */
-    uint8_t inv_a = 255 - src_a;
+    uint8_t src_a = ren->draw_a;
+    uint8_t src_max = src_r > src_g ? (src_r > src_b ? src_r : src_b) : (src_g > src_b ? src_g : src_b);
 
-    /* 遍历临时位图中的文字区域，混合到主缓冲区 */
     for (int row = 0; row < tmp_h; row++) {
         int dst_y = py - margin + row;
         if (dst_y < 0 || dst_y >= ren->height) continue;
@@ -1898,20 +1898,26 @@ void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatf
             uint8_t tg = (tp >> 8) & 0xFF;
             uint8_t tb = tp & 0xFF;
 
-            /* GDI 文字在 DIB 上的特征：RGB 匹配文字颜色且不为背景色 (0,0,0) */
-            /* 更可靠的方法：检查像素是否与文字颜色匹配（允许微小色差） */
-            /* 由于透明背景 DIB 初始化为 0x00000000，文字像素会是非零的 */
-            if (tr == 0 && tg == 0 && tb == 0) continue;  /* 背景像素，跳过 */
+            uint8_t tmax = tr > tg ? (tr > tb ? tr : tb) : (tg > tb ? tg : tb);
+            if (tmax == 0) continue;  /* 背景像素 */
+            if (src_max == 0) continue; /* 文字颜色为黑色，无法估算覆盖率 */
 
-            /* 这是文字像素，做 alpha 混合 */
+            /* 估算该像素的文字覆盖率（0-255） */
+            uint8_t coverage = (tmax * 255) / src_max;
+            if (coverage == 0) continue;
+            uint8_t final_a = (coverage * src_a) / 255;
+            if (final_a == 0) continue;
+            uint8_t inv_fa = 255 - final_a;
+
             uint32_t dst = ren->pixels[dst_y * ren->width + dst_x];
             uint8_t dr = (dst >> 16) & 0xFF;
             uint8_t dg = (dst >> 8) & 0xFF;
             uint8_t db = dst & 0xFF;
 
-            dr = (uint8_t)((src_r * src_a + dr * inv_a) / 255);
-            dg = (uint8_t)((src_g * src_a + dg * inv_a) / 255);
-            db = (uint8_t)((src_b * src_a + db * inv_a) / 255);
+            /* tmp 像素已经是 src_color * coverage，所以直接用 tr/tg/tb 作为源 */
+            dr = (uint8_t)((tr * src_a + dr * inv_fa) / 255);
+            dg = (uint8_t)((tg * src_a + dg * inv_fa) / 255);
+            db = (uint8_t)((tb * src_a + db * inv_fa) / 255);
 
             ren->pixels[dst_y * ren->width + dst_x] = (255 << 24) | (dr << 16) | (dg << 8) | db;
         }
