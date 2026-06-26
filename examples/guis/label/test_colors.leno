@@ -1,0 +1,74 @@
+import guis
+
+main() {
+    var bg = _rgb(30, 30, 40, 255)
+
+    GWin win = guis.create_window("GLabel - Colors Test", {
+        width: 600,
+        height: 450,
+        resizable: true,
+        bg_color: bg
+    })
+
+    /* 各种文字颜色 */
+    win.add_label({ text: "Red Text",     x: 20, y: 20,  text_color: _rgb(255, 80, 80, 255),   font_size: 18 })
+    win.add_label({ text: "Green Text",   x: 20, y: 50,  text_color: _rgb(80, 255, 80, 255),   font_size: 18 })
+    win.add_label({ text: "Blue Text",    x: 20, y: 80,  text_color: _rgb(80, 120, 255, 255),  font_size: 18 })
+    win.add_label({ text: "Yellow Text",  x: 20, y: 110, text_color: _rgb(255, 255, 80, 255),  font_size: 18 })
+    win.add_label({ text: "Orange Text",  x: 20, y: 140, text_color: _rgb(255, 160, 40, 255),  font_size: 18 })
+    win.add_label({ text: "Pink Text",    x: 20, y: 170, text_color: _rgb(255, 100, 200, 255), font_size: 18 })
+    win.add_label({ text: "Cyan Text",    x: 20, y: 200, text_color: _rgb(80, 240, 240, 255),  font_size: 18 })
+    win.add_label({ text: "White Text",   x: 20, y: 230, text_color: _rgb(255, 255, 255, 255), font_size: 18 })
+
+    /* 带背景色的标签 */
+    win.add_label({
+        text: "With Background",
+        x: 250, y: 20,
+        text_color: _rgb(255, 255, 255, 255),
+        bg_color: _rgb(50, 80, 120, 255),
+        font_size: 18,
+        padding_x: 12, padding_y: 6,
+        radius: 6
+    })
+
+    win.add_label({
+        text: "Red Badge",
+        x: 250, y: 70,
+        text_color: _rgb(255, 255, 255, 255),
+        bg_color: _rgb(200, 40, 40, 255),
+        font_size: 16,
+        padding_x: 10, padding_y: 4,
+        radius: 10
+    })
+
+    win.add_label({
+        text: "Green Badge",
+        x: 250, y: 110,
+        text_color: _rgb(255, 255, 255, 255),
+        bg_color: _rgb(40, 160, 60, 255),
+        font_size: 16,
+        padding_x: 10, padding_y: 4,
+        radius: 10
+    })
+
+    /* 带边框的标签 */
+    win.add_label({
+        text: "Bordered Label",
+        x: 250, y: 250,
+        text_color: _rgb(200, 200, 220, 255),
+        border_width: 2,
+        border_color: _rgb(100, 120, 180, 255),
+        font_size: 16,
+        padding_x: 12, padding_y: 8,
+        radius: 4
+    })
+
+    win.run(
+        func(GDraw ren) { ren.clear() },
+        func(GEvent e) {
+            if e.window_close() { win.set_should_close(true) }
+        }
+    )
+
+    win.close()
+}

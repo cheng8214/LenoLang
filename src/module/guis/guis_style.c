@@ -171,10 +171,44 @@ static StyleFieldInfo edit_style_fields[] = {
     { "enabled",        STYLE_TYPE_BOOL,   "是否启用",                    "true",              NULL, 0 },
 };
 
+/* ===== Label 样式字段定义 ===== */
+static StyleFieldInfo label_style_fields[] = {
+    { "x",              STYLE_TYPE_INT,    "X坐标",                       "0",                 NULL, 0 },
+    { "y",              STYLE_TYPE_INT,    "Y坐标",                       "0",                 NULL, 0 },
+    { "width",          STYLE_TYPE_INT,    "宽度（0=自动）",              "0",                 NULL, 0 },
+    { "height",         STYLE_TYPE_INT,    "高度（0=自动）",              "0",                 NULL, 0 },
+    { "text",           STYLE_TYPE_STRING, "显示文本",                    "\"\"",              NULL, 0 },
+    { "text_color",     STYLE_TYPE_COLOR,  "文字颜色",                    "_rgb(255,255,255)", NULL, 0 },
+    { "bg_color",       STYLE_TYPE_COLOR,  "背景色(a=0则透明)",           "_rgb(0,0,0,0)",     NULL, 0 },
+    { "font_name",      STYLE_TYPE_STRING, "字体名称",                    "\"Microsoft YaHei\"", NULL, 0 },
+    { "font_size",      STYLE_TYPE_INT,    "字体大小",                    "16",                NULL, 0 },
+    { "font_bold",      STYLE_TYPE_BOOL,   "是否粗体",                    "false",             NULL, 0 },
+    { "padding_x",      STYLE_TYPE_INT,    "水平内边距",                  "4",                 NULL, 0 },
+    { "padding_y",      STYLE_TYPE_INT,    "垂直内边距",                  "2",                 NULL, 0 },
+    { "align",          STYLE_TYPE_ENUM,   "对齐:0=左,1=中,2=右",         "\"left\"",          text_align_options, 3 },
+    { "letter_spacing", STYLE_TYPE_INT,    "字间距",                      "0",                 NULL, 0 },
+    { "radius",         STYLE_TYPE_INT,    "圆角半径",                    "0",                 NULL, 0 },
+    { "border_width",   STYLE_TYPE_INT,    "边框宽度",                    "0",                 NULL, 0 },
+    { "border_color",   STYLE_TYPE_COLOR,  "边框颜色",                    "_rgb(0,0,0)",       NULL, 0 },
+    { "opacity",        STYLE_TYPE_INT,    "整体不透明度 (0~255)",        "255",               NULL, 0 },
+    /* ===== 阴影 ===== */
+    { "shadow_offset_x",STYLE_TYPE_INT,    "阴影水平偏移",                "0",                 NULL, 0 },
+    { "shadow_offset_y",STYLE_TYPE_INT,    "阴影垂直偏移",                "0",                 NULL, 0 },
+    { "shadow_radius",  STYLE_TYPE_INT,    "阴影模糊半径",                "0",                 NULL, 0 },
+    { "shadow_color",   STYLE_TYPE_COLOR,  "阴影颜色",                    "_rgb(0,0,0,0)",     NULL, 0 },
+    /* ===== 状态 ===== */
+    { "visible",        STYLE_TYPE_BOOL,   "是否可见",                    "true",              NULL, 0 },
+    { "enabled",        STYLE_TYPE_BOOL,   "是否启用",                    "true",              NULL, 0 },
+    { "anchor",         STYLE_TYPE_INT,    "锚点位置(1~9)",               "0",                 NULL, 0 },
+    { "anchor_margin_x",STYLE_TYPE_INT,    "锚点水平边距",                "0",                 NULL, 0 },
+    { "anchor_margin_y",STYLE_TYPE_INT,    "锚点垂直边距",                "0",                 NULL, 0 },
+};
+
 static StyleDef style_defs[] = {
     { "window", window_style_fields, sizeof(window_style_fields) / sizeof(window_style_fields[0]) },
     { "button", button_style_fields, sizeof(button_style_fields) / sizeof(button_style_fields[0]) },
     { "edit",   edit_style_fields,   sizeof(edit_style_fields)   / sizeof(edit_style_fields[0])   },
+    { "label",  label_style_fields,  sizeof(label_style_fields)  / sizeof(label_style_fields[0])  },
 };
 
 /* ===== 查询接口 ===== */

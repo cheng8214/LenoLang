@@ -108,6 +108,7 @@ typedef enum {
     TOK_IMAGE_TYPE, TOK_FONT_TYPE,  // File, Ptr, GWin, GDraw, GEvent, GRgb, GImage, GFont 类型
     TOK_BUTTON_TYPE,  // GButton 类型
     TOK_TEXTBOX_TYPE, // GTextBox 类型
+    TOK_LABEL_TYPE,   // GLabel 类型
     TOK_STYLE_TYPE,      // Style 类型（用于 GUI 样式定义）
     TOK_SOCKET_TYPE,     // Socket 类型
     // C 布局类型关键字
@@ -164,6 +165,7 @@ typedef enum {
     TYPE_FONT,      // GUI 字体类型 (GFont)
     TYPE_BUTTON,    // GUI 按钮类型 (GButton)
     TYPE_TEXTBOX,   // GUI 文本框类型 (GTextBox)
+    TYPE_LABEL,     // GUI 标签类型 (GLabel)
     TYPE_STYLE,     // GUI 样式类型（Style[window], Style[button] 等）
     TYPE_ANY,       // 任意类型
     TYPE_FUNCTION,  // 函数类型

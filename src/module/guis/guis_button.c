@@ -196,6 +196,9 @@ static Value btn_close_func(int argc, Value* args) {
         }
         pp = (ObjGUIButton**)&(*pp)->next;
     }
+    if (btn->text) { free(btn->text); btn->text = NULL; }
+    if (btn->font_name) { free(btn->font_name); btn->font_name = NULL; }
+    if (btn->cursor) { free(btn->cursor); btn->cursor = NULL; }
     btn->next = NULL;
     btn->window = NULL;
     return val_null();

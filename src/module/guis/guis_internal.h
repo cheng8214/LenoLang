@@ -23,6 +23,9 @@ typedef struct {
     struct ObjGUITextBox* textboxes;   /* 文本框链表头 */
     int textbox_count;
     struct ObjGUITextBox* focused_textbox; /* 当前焦点文本框 */
+    /* 标签列表 */
+    struct ObjGUILabel* labels;        /* 标签链表头 */
+    int label_count;
 } ObjGUIWindow;
 
 typedef struct {
@@ -265,6 +268,46 @@ typedef struct ObjGUITextBox {
     Value on_submit;               /* 回车提交回调 */
 } ObjGUITextBox;
 
+/* GLabel 标签对象 - 静态文本显示 */
+typedef struct ObjGUILabel {
+    Object header;
+    struct ObjGUILabel* next;      /* 链表下一个 */
+    ObjGUIWindow* window;          /* 所属窗口 */
+    /* 位置和尺寸 */
+    int x, y, width, height;
+    /* 文字 */
+    char* text;
+    /* 颜色 */
+    int text_r, text_g, text_b, text_a;     /* 文字色 */
+    int bg_r, bg_g, bg_b, bg_a;             /* 背景色 (a=0 则透明) */
+    /* 字体 */
+    char* font_name;
+    int font_size;
+    ObjGUIFont* font;
+    int font_bold;                          /* 0=正常, 1=粗体 */
+    /* 布局 */
+    int padding_x, padding_y;
+    int text_align;               /* 0=左, 1=中, 2=右 */
+    int letter_spacing;
+    int radius;
+    /* 边框 */
+    int border_width;
+    int border_r, border_g, border_b, border_a;
+    /* 透明度 */
+    int opacity;                  /* 整体不透明度 (0~255, 255=不透明) */
+    /* 阴影 */
+    int shadow_offset_x, shadow_offset_y;   /* 阴影偏移 */
+    int shadow_radius;                      /* 阴影模糊半径 (0=无阴影) */
+    int shadow_r, shadow_g, shadow_b, shadow_a; /* 阴影颜色 */
+    /* 状态 */
+    int visible;
+    int enabled;
+    /* 锚点布局 */
+    int anchor;
+    int anchor_margin_x;
+    int anchor_margin_y;
+} ObjGUILabel;
+
 /* 辅助函数 */
 ObjGUIWindow* as_window(Value v);
 ObjGUIRenderer* as_renderer(Value v);
@@ -272,6 +315,7 @@ ObjGUIFont* as_font(Value v);
 ObjGUIImage* as_image(Value v);
 ObjGUIButton* as_button(Value v);
 ObjGUITextBox* as_textbox(Value v);
+ObjGUILabel* as_label(Value v);
 ObjArray* make_int_array2(int a, int b);
 ObjGUIWindow* as_window_from_platform(LenoGUIPlatformWindow* pw);
 
@@ -323,6 +367,16 @@ void gui_textbox_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
 void gui_textbox_update_placeholder_font(ObjGUITextBox* tb);
 void gui_textbox_register_methods(void);
 extern void guis_init_textbox_instance_methods(void);
+
+/* TextBox 内部资源释放（供 GC free_object_resources 调用） */
+extern void tb_free_layouts(ObjGUITextBox* tb);
+extern void tb_undo_free_stack(TBUndoStack* stack);
+
+/* GLabel 标签绘制和锚点 */
+void gui_label_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
+void gui_label_free_all(ObjGUIWindow* win);
+void gui_label_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
+extern void guis_init_label_instance_methods(void);
 
 /* 文件对话框结果处理（由平台层调用，确保在主线程中执行） */
 void process_filedialog_callback(const char* const* files, int nfiles, int filter_index);

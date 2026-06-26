@@ -603,6 +603,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_FONT:     return "GFont";
         case TYPE_BUTTON:   return "GButton";
         case TYPE_TEXTBOX:  return "GTextBox";
+        case TYPE_LABEL:    return "GLabel";
         case TYPE_STYLE:    return "Style";
         case TYPE_SOCKET:   return "Socket";
         case TYPE_PTR:      return "Ptr";
@@ -1008,6 +1009,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_FONT_TYPE:     return TYPE_FONT;
         case TOK_BUTTON_TYPE:   return TYPE_BUTTON;
         case TOK_TEXTBOX_TYPE:  return TYPE_TEXTBOX;
+        case TOK_LABEL_TYPE:    return TYPE_LABEL;
         case TOK_STYLE_TYPE:    return TYPE_STYLE;
         case TOK_SOCKET_TYPE:   return TYPE_SOCKET;
         case TOK_PTR_TYPE:      return TYPE_PTR;

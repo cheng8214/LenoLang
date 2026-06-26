@@ -1,0 +1,82 @@
+import guis
+
+main() {
+    var bg = _rgb(28, 28, 44, 255)
+
+    GWin win = guis.create_window("GLabel - Methods Test", {
+        width: 600,
+        height: 400,
+        resizable: true,
+        bg_color: bg
+    })
+
+    /* 创建一个标签，后续用实例方法修改 */
+    GLabel lb = win.add_label({
+        text: "Original Text",
+        x: 20, y: 20,
+        text_color: _rgb(255, 255, 255, 255),
+        font_size: 20
+    })
+
+    var count = 0
+
+    /* 修改文字 */
+    lb.set_text("Modified by set_text()")
+
+    /* 修改位置 */
+    lb.set_pos(30, 50)
+    lb.set_text_color(_rgb(100, 200, 255, 255))
+
+    /* 创建第二个标签测试其他方法 */
+    GLabel lb2 = win.add_label({
+        text: "Click to change me!",
+        x: 20, y: 100,
+        text_color: _rgb(255, 255, 200, 255),
+        font_size: 20,
+        bg_color: _rgb(50, 50, 70, 255),
+        padding_x: 12, padding_y: 8,
+        radius: 8
+    })
+
+    GButton btn = win.add_button({
+        text: "Change Label Color",
+        x: 20, y: 160,
+        width: 200, height: 36
+    })
+    btn.on_click(func() {
+        count = count + 1
+        if count % 4 == 1 {
+            lb2.set_text_color(_rgb(255, 100, 100, 255))
+            lb2.set_bg_color(_rgb(80, 30, 30, 255))
+        } else if count % 4 == 2 {
+            lb2.set_text_color(_rgb(100, 255, 100, 255))
+            lb2.set_bg_color(_rgb(30, 80, 30, 255))
+        } else if count % 4 == 3 {
+            lb2.set_text_color(_rgb(100, 150, 255, 255))
+            lb2.set_bg_color(_rgb(30, 50, 80, 255))
+        } else {
+            lb2.set_text_color(_rgb(255, 255, 200, 255))
+            lb2.set_bg_color(_rgb(50, 50, 70, 255))
+        }
+        var prefix = "Changed "
+        lb2.set_text(prefix + count + " times!")
+    })
+
+    /* get_text 测试 */
+    var text = lb2.get_text()
+    GLabel lb3 = win.add_label({
+        text: "get_text() result: " + text,
+        x: 20, y: 220,
+        text_color: _rgb(180, 180, 200, 255),
+        font_size: 14
+    })
+
+    win.run(
+        func(GDraw ren) { ren.clear() },
+        func(GEvent e) {
+            if e.window_close() { win.set_should_close(true) }
+        }
+    )
+
+    win.close()
+}

@@ -137,6 +137,14 @@ static void print_value_internal(Value value) {
                     printf("<gbutton>");
                     break;
                 }
+                case OBJ_GUI_TEXTBOX: {
+                    printf("<gtextbox>");
+                    break;
+                }
+                case OBJ_GUI_LABEL: {
+                    printf("<glabel>");
+                    break;
+                }
                 case OBJ_RGB: {
                     ObjRgb* rgb = (ObjRgb*)obj;
                     printf("GRgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);

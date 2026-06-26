@@ -124,10 +124,3 @@ ObjNative* textbox_find_method(const char* name) {
 }
 
 void textbox_init_methods(void) { tbox_method_table_free(); tbox_method_table_init(); }
-
-void textbox_mark_methods(void) {
-    if (!tboxMethodTable.entries) return;
-    for (int i = 0; i < tboxMethodTable.capacity; i++)
-        for (TBoxMethodHashEntry* e = tboxMethodTable.entries[i]; e; e = e->next)
-            if (e->method) gc_mark_object((Object*)e->method);
-}

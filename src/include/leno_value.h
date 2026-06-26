@@ -50,6 +50,7 @@ typedef enum {
     OBJ_GUI_IMAGE,    // GUI 图像对象
     OBJ_GUI_BUTTON,   // GUI 按钮对象
     OBJ_GUI_TEXTBOX,  // GUI 文本框对象
+    OBJ_GUI_LABEL,    // GUI 标签对象
     OBJ_SOCKET,       // Socket 对象
     OBJ_RGB,          // RGB 颜色对象
     OBJ_NONE,       // 无效/空类型标记
@@ -1408,7 +1409,6 @@ typedef struct {
 } ButtonMethodEntry;
 
 void button_init_methods(void);
-void button_mark_methods(void);
 void button_register_method_with_params(const char* name, ObjNative* method, int arity,
                                         int min_arity, int max_arity,
                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
@@ -1418,11 +1418,17 @@ ObjNative* button_find_method(const char* name);
 
 /* GTextBox 方法注册 */
 void textbox_init_methods(void);
-void textbox_mark_methods(void);
 void textbox_register_method_with_params(const char* name, ObjNative* method, int arity,
                                         int min_arity, int max_arity,
                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 ObjNative* textbox_find_method(const char* name);
+
+/* GLabel 方法注册 */
+void label_init_methods(void);
+void label_register_method_with_params(const char* name, ObjNative* method, int arity,
+                                        int min_arity, int max_arity,
+                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+ObjNative* label_find_method(const char* name);
 
 // ============================================================================
 // Dict 字典方法系统 API

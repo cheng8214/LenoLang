@@ -298,6 +298,12 @@ void gc_mark_object(Object* obj) {
                 gc_mark_object((Object*)tb);
                 tb = tb->next;
             }
+            /* 标记窗口的标签链表，防止标签被 GC 回收 */
+            struct ObjGUILabel* lb = (struct ObjGUILabel*)w->labels;
+            while (lb) {
+                gc_mark_object((Object*)lb);
+                lb = lb->next;
+            }
             break;
         }
         case OBJ_GUI_RENDERER: {
@@ -322,11 +328,19 @@ void gc_mark_object(Object* obj) {
             ObjGUITextBox* tb = (ObjGUITextBox*)obj;
             if (tb->window) gc_mark_object((Object*)tb->window);
             if (tb->font) gc_mark_object((Object*)tb->font);
+            /* placeholder_font 是 calloc 分配，不参与 GC */
             if (!val_is_null(tb->on_change) && val_is_obj(tb->on_change))
                 gc_mark_object(val_as_obj(tb->on_change));
             if (!val_is_null(tb->on_submit) && val_is_obj(tb->on_submit))
                 gc_mark_object(val_as_obj(tb->on_submit));
             if (tb->next) gc_mark_object((Object*)tb->next);
+            break;
+        }
+        case OBJ_GUI_LABEL: {
+            ObjGUILabel* lb = (ObjGUILabel*)obj;
+            if (lb->window) gc_mark_object((Object*)lb->window);
+            if (lb->font) gc_mark_object((Object*)lb->font);
+            if (lb->next) gc_mark_object((Object*)lb->next);
             break;
         }
         case OBJ_SOCKET:
@@ -792,6 +806,7 @@ static size_t get_object_size(Object* obj) {
         case OBJ_GUI_FONT: return sizeof(Object) + sizeof(void*);
         case OBJ_GUI_IMAGE: return sizeof(Object) + sizeof(void*);
         case OBJ_GUI_BUTTON: return sizeof(ObjGUIButton);
+        case OBJ_GUI_LABEL: return sizeof(ObjGUILabel);
         case OBJ_GUI_EVENT: return sizeof(Object) + sizeof(void*);
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
@@ -1027,6 +1042,34 @@ static void free_object_resources(Object* obj) {
             ObjGUIButton* btn = (ObjGUIButton*)obj;
             if (btn->text) { free(btn->text); btn->text = NULL; }
             if (btn->font_name) { free(btn->font_name); btn->font_name = NULL; }
+            if (btn->cursor) { free(btn->cursor); btn->cursor = NULL; }
+            break;
+        }
+        case OBJ_GUI_LABEL: {
+            ObjGUILabel* lb = (ObjGUILabel*)obj;
+            if (lb->text) { free(lb->text); lb->text = NULL; }
+            if (lb->font_name) { free(lb->font_name); lb->font_name = NULL; }
+            break;
+        }
+        case OBJ_GUI_TEXTBOX: {
+            ObjGUITextBox* tb = (ObjGUITextBox*)obj;
+            if (tb->gb.buf) { free(tb->gb.buf); tb->gb.buf = NULL; }
+            if (tb->placeholder) { free(tb->placeholder); tb->placeholder = NULL; }
+            if (tb->font_name) { free(tb->font_name); tb->font_name = NULL; }
+            if (tb->placeholder_font_name) { free(tb->placeholder_font_name); tb->placeholder_font_name = NULL; }
+            /* placeholder_font 是 calloc 分配，需手动释放其 platform 和自身 */
+            if (tb->placeholder_font) {
+                if (tb->placeholder_font->platform) {
+                    leno_gui_platform_destroy_font(tb->placeholder_font->platform);
+                    tb->placeholder_font->platform = NULL;
+                }
+                free(tb->placeholder_font); tb->placeholder_font = NULL;
+            }
+            /* tb->font 是 GC 对象，由 GC 回收 */
+            if (tb->line_starts) { free(tb->line_starts); tb->line_starts = NULL; }
+            tb_free_layouts(tb);
+            tb_undo_free_stack(&tb->undo_stack);
+            tb_undo_free_stack(&tb->redo_stack);
             break;
         }
         case OBJ_GUI_EVENT:

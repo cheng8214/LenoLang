@@ -112,6 +112,10 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_TEXTBOX);
     }
+    if (p->lex.current.type == TOK_LABEL_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_LABEL);
+    }
     if (p->lex.current.type == TOK_PTR_TYPE) {
         lexer_next(&p->lex);
         // 检查是否有泛型参数 Ptr[T]

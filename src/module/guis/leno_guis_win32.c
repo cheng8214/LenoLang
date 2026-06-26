@@ -1812,19 +1812,115 @@ void leno_gui_platform_destroy_font(LenoGUIPlatformFont* font) {
 }
 
 void leno_gui_platform_draw_text_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int x, int y) {
-    if (!ren || !ren->back_dc || !font || !font->hfont || !text) return;
-    HFONT old_font = (HFONT)SelectObject(ren->back_dc, font->hfont);
-    COLORREF color = RGB(ren->draw_r, ren->draw_g, ren->draw_b);
-    SetTextColor(ren->back_dc, color);
-    SetBkMode(ren->back_dc, TRANSPARENT);
+    if (!ren || !ren->pixels || !font || !font->hfont || !text) return;
+    int px = x + ren->vp_x;
+    int py = y + ren->vp_y;
+
+    /* 如果 draw_a == 255，直接在主 DC 上绘制（最快路径） */
+    if (ren->draw_a == 255) {
+        HFONT old_font = (HFONT)SelectObject(ren->back_dc, font->hfont);
+        COLORREF color = RGB(ren->draw_r, ren->draw_g, ren->draw_b);
+        SetTextColor(ren->back_dc, color);
+        SetBkMode(ren->back_dc, TRANSPARENT);
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
+        wchar_t* wtext = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+        if (!wtext) { SelectObject(ren->back_dc, old_font); return; }
+        MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, wlen);
+        RECT rc = { px, py, 999999, 999999 };
+        DrawTextW(ren->back_dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_NOCLIP | DT_SINGLELINE | DT_NOPREFIX);
+        free(wtext);
+        SelectObject(ren->back_dc, old_font);
+        return;
+    }
+
+    /* draw_a < 255: 需要文字 alpha 混合 — 在临时位图上绘制，再手动混合到主 pixels */
+    if (ren->draw_a <= 0) return;
+
+    /* 计算文字尺寸以确定临时位图大小 */
+    HDC measure_dc = ren->back_dc;
+    HFONT old_font_m = (HFONT)SelectObject(measure_dc, font->hfont);
     int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
     wchar_t* wtext = (wchar_t*)malloc(wlen * sizeof(wchar_t));
-    if (!wtext) { SelectObject(ren->back_dc, old_font); return; }
+    if (!wtext) { SelectObject(measure_dc, old_font_m); return; }
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, wlen);
-    RECT rc = { x + ren->vp_x, y + ren->vp_y, 999999, 999999 };
-    DrawTextW(ren->back_dc, wtext, -1, &rc, DT_LEFT | DT_TOP | DT_NOCLIP | DT_SINGLELINE | DT_NOPREFIX);
+
+    RECT calc_rc = {0, 0, 0, 0};
+    DrawTextW(measure_dc, wtext, -1, &calc_rc, DT_LEFT | DT_TOP | DT_CALCRECT | DT_NOPREFIX | DT_SINGLELINE);
+    int tw = calc_rc.right - calc_rc.left;
+    int th = calc_rc.bottom - calc_rc.top;
+    if (tw <= 0 || th <= 0) { free(wtext); SelectObject(measure_dc, old_font_m); return; }
+
+    /* 增加边距避免裁剪 */
+    int margin = 2;
+    int tmp_w = tw + margin * 2;
+    int tmp_h = th + margin * 2;
+
+    /* 创建临时 DIB section */
+    HDC tmp_dc = NULL;
+    HBITMAP tmp_bitmap = NULL;
+    HBITMAP tmp_old_bitmap = NULL;
+    uint32_t* tmp_pixels = NULL;
+    if (!create_dib_section(tmp_w, tmp_h, &tmp_dc, &tmp_bitmap, &tmp_old_bitmap, &tmp_pixels)) {
+        free(wtext);
+        SelectObject(measure_dc, old_font_m);
+        return;
+    }
+
+    /* 在临时 DC 上绘制文字（透明背景） */
+    HFONT old_font_t = (HFONT)SelectObject(tmp_dc, font->hfont);
+    COLORREF color = RGB(ren->draw_r, ren->draw_g, ren->draw_b);
+    SetTextColor(tmp_dc, color);
+    SetBkMode(tmp_dc, TRANSPARENT);
+    /* 先清空临时位图为全透明 */
+    memset(tmp_pixels, 0, tmp_w * tmp_h * 4);
+    RECT draw_rc = { margin, margin, margin + tw, margin + th };
+    DrawTextW(tmp_dc, wtext, -1, &draw_rc, DT_LEFT | DT_TOP | DT_NOCLIP | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(tmp_dc, old_font_t);
+
+    /* 将临时位图 alpha 混合到主 pixels 缓冲区 */
+    /* 文字像素在 tmp_pixels 中有 alpha（GDI 文字渲染会在 DIB 上产生 alpha 通道），
+     * 但实际上 GDI DrawTextW 写入 DIB 时 alpha 通道为 0 或不确定，
+     * 所以我们用颜色匹配来判断哪些像素是文字 */
+    uint8_t src_r = ren->draw_r, src_g = ren->draw_g, src_b = ren->draw_b;
+    uint8_t src_a = ren->draw_a;  /* 文字的整体透明度 */
+    uint8_t inv_a = 255 - src_a;
+
+    /* 遍历临时位图中的文字区域，混合到主缓冲区 */
+    for (int row = 0; row < tmp_h; row++) {
+        int dst_y = py - margin + row;
+        if (dst_y < 0 || dst_y >= ren->height) continue;
+        for (int col = 0; col < tmp_w; col++) {
+            int dst_x = px - margin + col;
+            if (dst_x < 0 || dst_x >= ren->width) continue;
+
+            uint32_t tp = tmp_pixels[row * tmp_w + col];
+            uint8_t tr = (tp >> 16) & 0xFF;
+            uint8_t tg = (tp >> 8) & 0xFF;
+            uint8_t tb = tp & 0xFF;
+
+            /* GDI 文字在 DIB 上的特征：RGB 匹配文字颜色且不为背景色 (0,0,0) */
+            /* 更可靠的方法：检查像素是否与文字颜色匹配（允许微小色差） */
+            /* 由于透明背景 DIB 初始化为 0x00000000，文字像素会是非零的 */
+            if (tr == 0 && tg == 0 && tb == 0) continue;  /* 背景像素，跳过 */
+
+            /* 这是文字像素，做 alpha 混合 */
+            uint32_t dst = ren->pixels[dst_y * ren->width + dst_x];
+            uint8_t dr = (dst >> 16) & 0xFF;
+            uint8_t dg = (dst >> 8) & 0xFF;
+            uint8_t db = dst & 0xFF;
+
+            dr = (uint8_t)((src_r * src_a + dr * inv_a) / 255);
+            dg = (uint8_t)((src_g * src_a + dg * inv_a) / 255);
+            db = (uint8_t)((src_b * src_a + db * inv_a) / 255);
+
+            ren->pixels[dst_y * ren->width + dst_x] = (255 << 24) | (dr << 16) | (dg << 8) | db;
+        }
+    }
+
+    /* 清理临时位图 */
+    destroy_dib_section(&tmp_dc, &tmp_bitmap, &tmp_old_bitmap);
     free(wtext);
-    SelectObject(ren->back_dc, old_font);
+    SelectObject(measure_dc, old_font_m);
 }
 
 void leno_gui_platform_text_size_font(LenoGUIPlatformRenderer* ren, LenoGUIPlatformFont* font, const char* text, int* w, int* h) {

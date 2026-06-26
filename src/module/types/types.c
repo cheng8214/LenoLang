@@ -579,6 +579,8 @@ static Value native_type(int argCount, Value* args) {
                 typeStr = str_copy("gevent", 6);
             } else if (val_as_obj(value)->type == OBJ_GUI_BUTTON) {
                 typeStr = str_copy("gbutton", 7);
+            } else if (val_as_obj(value)->type == OBJ_GUI_LABEL) {
+                typeStr = str_copy("glabel", 6);
             } else if (val_as_obj(value)->type == OBJ_RGB) {
                 typeStr = str_copy("grgb", 4);
             } else if (val_as_obj(value)->type == OBJ_SOCKET) {

@@ -661,6 +661,12 @@ static Value win_add_button_func(int argc, Value* args) {
     btn->focused = 0;
     btn->on_click = val_null();
 
+
+    /* 先链接到窗口（确保字体 gc_alloc 触发 GC 时 btn 已可达） */
+    gc_write_barrier_obj((Object*)btn, (Object*)win);
+    btn->next = (struct ObjGUIButton*)win->buttons;
+    win->buttons = btn;
+
     /* 加载字体 */
     LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);
     if (pf) {
@@ -668,17 +674,11 @@ static Value win_add_button_func(int argc, Value* args) {
         if (font_obj) {
             font_obj->platform = pf;
             btn->font = font_obj;
+            gc_write_barrier_obj((Object*)btn, (Object*)font_obj);
         } else {
             leno_gui_platform_destroy_font(pf);
         }
     }
-
-    /* 写屏障：保护 btn->window 引用 */
-    gc_write_barrier_obj((Object*)btn, (Object*)win);
-
-    /* 添加到窗口的按钮链表 */
-    btn->next = (struct ObjGUIButton*)win->buttons;
-    win->buttons = btn;
     win->button_count++;
     /* 有锚点时计算初始位置 */
     if (btn->anchor > 0 && win->platform) {
@@ -896,11 +896,26 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->undo_last_type = TB_UNDO_INSERT;
     tb->undo_last_group = 1;
 
+    /* 字间距 & 滚动条颜色 */
+    tb->letter_spacing = letter_spacing;
+    tb->sb_track_r = sb_track_r; tb->sb_track_g = sb_track_g; tb->sb_track_b = sb_track_b; tb->sb_track_a = sb_track_a;
+    tb->sb_thumb_r = sb_thumb_r; tb->sb_thumb_g = sb_thumb_g; tb->sb_thumb_b = sb_thumb_b; tb->sb_thumb_a = sb_thumb_a;
+    tb->sb_thumb_hover_r = sb_thumb_hover_r; tb->sb_thumb_hover_g = sb_thumb_hover_g; tb->sb_thumb_hover_b = sb_thumb_hover_b; tb->sb_thumb_hover_a = sb_thumb_hover_a;
+    tb->sb_thumb_press_r = sb_thumb_press_r; tb->sb_thumb_press_g = sb_thumb_press_g; tb->sb_thumb_press_b = sb_thumb_press_b; tb->sb_thumb_press_a = sb_thumb_press_a;
+    tb->sb_h_hovered = 0; tb->sb_v_hovered = 0;
+
+    /* 先链接到窗口（确保字体 gc_alloc 触发 GC 时 tb 已可达） */
+    gc_write_barrier_obj((Object*)tb, (Object*)win);
+    tb->next = win->textboxes;
+    win->textboxes = tb;
+    win->textbox_count++;
+
     /* 加载字体 */
     LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);
     if (pf) {
         ObjGUIFont* font_obj = (ObjGUIFont*)gc_alloc(sizeof(ObjGUIFont), OBJ_GUI_FONT);
-        if (font_obj) { font_obj->platform = pf; tb->font = font_obj; }
+        if (font_obj) { font_obj->platform = pf; tb->font = font_obj;
+            gc_write_barrier_obj((Object*)tb, (Object*)font_obj); }
         else { leno_gui_platform_destroy_font(pf); }
     } else {
         fprintf(stderr, "[TEXTBOX] font load failed: '%s' %d\n", font_name, font_size);
@@ -911,21 +926,6 @@ static Value win_add_textbox_func(int argc, Value* args) {
         gui_textbox_update_placeholder_font(tb);
     }
 
-    /* 字间距 & 滚动条颜色 */
-    tb->letter_spacing = letter_spacing;
-    tb->sb_track_r = sb_track_r; tb->sb_track_g = sb_track_g; tb->sb_track_b = sb_track_b; tb->sb_track_a = sb_track_a;
-    tb->sb_thumb_r = sb_thumb_r; tb->sb_thumb_g = sb_thumb_g; tb->sb_thumb_b = sb_thumb_b; tb->sb_thumb_a = sb_thumb_a;
-    tb->sb_thumb_hover_r = sb_thumb_hover_r; tb->sb_thumb_hover_g = sb_thumb_hover_g; tb->sb_thumb_hover_b = sb_thumb_hover_b; tb->sb_thumb_hover_a = sb_thumb_hover_a;
-    tb->sb_thumb_press_r = sb_thumb_press_r; tb->sb_thumb_press_g = sb_thumb_press_g; tb->sb_thumb_press_b = sb_thumb_press_b; tb->sb_thumb_press_a = sb_thumb_press_a;
-    tb->sb_h_hovered = 0; tb->sb_v_hovered = 0;
-
-    gc_write_barrier_obj((Object*)tb, (Object*)win);
-
-    /* 添加到窗口的文本框链表 */
-    tb->next = win->textboxes;
-    win->textboxes = tb;
-    win->textbox_count++;
-
     if (tb->anchor > 0 && win->platform) {
         int ww, wh;
         leno_gui_platform_get_window_size(win->platform, &ww, &wh);
@@ -933,6 +933,184 @@ static Value win_add_textbox_func(int argc, Value* args) {
     }
 
     return val_obj((Object*)tb);
+}
+
+/* win.add_label(style) -> GLabel - 创建静态文本标签并添加到窗口 */
+static Value win_add_label_func(int argc, Value* args) {
+    (void)argc;
+    ObjGUIWindow* win = as_window(args[0]);
+    if (!win) return val_null();
+
+    /* 默认值 */
+    int x = 0, y = 0, width = 0, height = 0;
+    int text_r = 255, text_g = 255, text_b = 255, text_a = 255;
+    int bg_r = 0, bg_g = 0, bg_b = 0, bg_a = 0;        /* 默认透明背景 */
+    const char* text_str = "";
+    const char* font_name = "Microsoft YaHei";
+    int font_size = 16;
+    int padding_x = 4, padding_y = 2;
+    int text_align = 0;
+    int visible = 1;
+    int radius = 0;
+    int border_width = 0;
+    int border_r = 0, border_g = 0, border_b = 0, border_a = 255;
+    int letter_spacing = 0;
+    int font_bold = 0;
+    int opacity = 255;
+    int shadow_offset_x = 0, shadow_offset_y = 0, shadow_radius = 0;
+    int shadow_r = 0, shadow_g = 0, shadow_b = 0, shadow_a = 0;
+    int enabled = 1;
+    int anchor = 0, anchor_mx = 0, anchor_my = 0;
+
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
+        ObjDict* style = (ObjDict*)val_as_obj(args[1]);
+
+        /* 位置和尺寸 */
+        Value vx = dict_get(style, val_obj((Object*)intern_string("x", 1)));
+        Value vy = dict_get(style, val_obj((Object*)intern_string("y", 1)));
+        Value vw = dict_get(style, val_obj((Object*)intern_string("width", 5)));
+        Value vh = dict_get(style, val_obj((Object*)intern_string("height", 6)));
+        if (!val_is_null(vx)) x = val_as_int(vx);
+        if (!val_is_null(vy)) y = val_as_int(vy);
+        if (!val_is_null(vw)) width = val_as_int(vw);
+        if (!val_is_null(vh)) height = val_as_int(vh);
+
+        /* 文字 */
+        Value vt = dict_get(style, val_obj((Object*)intern_string("text", 4)));
+        if (!val_is_null(vt) && val_is_obj(vt) && val_as_obj(vt)->type == OBJ_STRING)
+            text_str = ((ObjString*)val_as_obj(vt))->chars;
+
+        /* 文字颜色 */
+        Value vtc = dict_get(style, val_obj((Object*)intern_string("text_color", 10)));
+        if (!val_is_null(vtc) && val_is_obj(vtc) && val_as_obj(vtc)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(vtc);
+            text_r = rgb->r; text_g = rgb->g; text_b = rgb->b; text_a = rgb->a;
+        }
+
+        /* 背景色 */
+        Value vbg = dict_get(style, val_obj((Object*)intern_string("bg_color", 8)));
+        if (!val_is_null(vbg) && val_is_obj(vbg) && val_as_obj(vbg)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(vbg);
+            bg_r = rgb->r; bg_g = rgb->g; bg_b = rgb->b; bg_a = rgb->a;
+        }
+
+        /* 字体 */
+        Value vfn = dict_get(style, val_obj((Object*)intern_string("font_name", 9)));
+        if (!val_is_null(vfn) && val_is_obj(vfn) && val_as_obj(vfn)->type == OBJ_STRING)
+            font_name = ((ObjString*)val_as_obj(vfn))->chars;
+
+        Value vfs = dict_get(style, val_obj((Object*)intern_string("font_size", 9)));
+        if (!val_is_null(vfs)) font_size = val_as_int(vfs);
+
+        /* 布局 */
+        Value vpx = dict_get(style, val_obj((Object*)intern_string("padding_x", 9)));
+        if (!val_is_null(vpx)) padding_x = val_as_int(vpx);
+        Value vpy = dict_get(style, val_obj((Object*)intern_string("padding_y", 9)));
+        if (!val_is_null(vpy)) padding_y = val_as_int(vpy);
+
+        Value va = dict_get(style, val_obj((Object*)intern_string("align", 5)));
+        if (!val_is_null(va)) text_align = val_as_int(va);
+
+        Value vvis = dict_get(style, val_obj((Object*)intern_string("visible", 7)));
+        if (!val_is_null(vvis)) visible = val_as_bool(vvis);
+
+        Value ven = dict_get(style, val_obj((Object*)intern_string("enabled", 7)));
+        if (!val_is_null(ven)) enabled = val_as_bool(ven) ? 1 : 0;
+
+        Value vra = dict_get(style, val_obj((Object*)intern_string("radius", 6)));
+        if (!val_is_null(vra)) radius = val_as_int(vra);
+
+        /* 边框 */
+        Value vbw = dict_get(style, val_obj((Object*)intern_string("border_width", 12)));
+        if (!val_is_null(vbw)) border_width = val_as_int(vbw);
+        Value vbc = dict_get(style, val_obj((Object*)intern_string("border_color", 12)));
+        if (!val_is_null(vbc) && val_is_obj(vbc) && val_as_obj(vbc)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(vbc);
+            border_r = rgb->r; border_g = rgb->g; border_b = rgb->b; border_a = rgb->a;
+        }
+
+        /* 字间距 */
+        Value vls = dict_get(style, val_obj((Object*)intern_string("letter_spacing", 14)));
+        if (!val_is_null(vls)) letter_spacing = val_as_int(vls);
+
+        /* font_bold */
+        Value vfb = dict_get(style, val_obj((Object*)intern_string("font_bold", 9)));
+        if (!val_is_null(vfb)) font_bold = val_as_bool(vfb) ? 1 : 0;
+
+        /* opacity */
+        Value vop = dict_get(style, val_obj((Object*)intern_string("opacity", 7)));
+        if (!val_is_null(vop)) opacity = val_as_int(vop);
+
+        /* 阴影 */
+        Value vsx = dict_get(style, val_obj((Object*)intern_string("shadow_offset_x", 15)));
+        if (!val_is_null(vsx)) shadow_offset_x = val_as_int(vsx);
+        Value vsy = dict_get(style, val_obj((Object*)intern_string("shadow_offset_y", 15)));
+        if (!val_is_null(vsy)) shadow_offset_y = val_as_int(vsy);
+        Value vsr = dict_get(style, val_obj((Object*)intern_string("shadow_radius", 13)));
+        if (!val_is_null(vsr)) shadow_radius = val_as_int(vsr);
+        Value vsc = dict_get(style, val_obj((Object*)intern_string("shadow_color", 12)));
+        if (!val_is_null(vsc) && val_is_obj(vsc) && val_as_obj(vsc)->type == OBJ_RGB) {
+            ObjRgb* rgb = (ObjRgb*)val_as_obj(vsc);
+            shadow_r = rgb->r; shadow_g = rgb->g; shadow_b = rgb->b; shadow_a = rgb->a;
+        }
+
+        /* 锚点 */
+        Value van = dict_get(style, val_obj((Object*)intern_string("anchor", 6)));
+        if (!val_is_null(van)) anchor = val_as_int(van);
+        Value vamx = dict_get(style, val_obj((Object*)intern_string("anchor_margin_x", 15)));
+        if (!val_is_null(vamx)) anchor_mx = val_as_int(vamx);
+        Value vamy = dict_get(style, val_obj((Object*)intern_string("anchor_margin_y", 15)));
+        if (!val_is_null(vamy)) anchor_my = val_as_int(vamy);
+    }
+
+    /* 创建标签对象（gc_alloc，参与 GC） */
+    ObjGUILabel* lb = (ObjGUILabel*)gc_alloc(sizeof(ObjGUILabel), OBJ_GUI_LABEL);
+    if (!lb) return val_null();
+
+    lb->window = win;
+    lb->x = x; lb->y = y; lb->width = width; lb->height = height;
+    lb->text = text_str && text_str[0] ? strdup(text_str) : NULL;
+    lb->text_r = text_r; lb->text_g = text_g; lb->text_b = text_b; lb->text_a = text_a;
+    lb->bg_r = bg_r; lb->bg_g = bg_g; lb->bg_b = bg_b; lb->bg_a = bg_a;
+    lb->font_name = strdup(font_name);
+    lb->font_size = font_size;
+    lb->font_bold = font_bold;
+    lb->padding_x = padding_x; lb->padding_y = padding_y;
+    lb->text_align = text_align;
+    lb->visible = visible;
+    lb->enabled = enabled;
+    lb->opacity = opacity;
+    lb->radius = radius;
+    lb->border_width = border_width;
+    lb->border_r = border_r; lb->border_g = border_g; lb->border_b = border_b; lb->border_a = border_a;
+    lb->letter_spacing = letter_spacing;
+    lb->shadow_offset_x = shadow_offset_x; lb->shadow_offset_y = shadow_offset_y;
+    lb->shadow_radius = shadow_radius;
+    lb->shadow_r = shadow_r; lb->shadow_g = shadow_g; lb->shadow_b = shadow_b; lb->shadow_a = shadow_a;
+    lb->anchor = anchor;
+    lb->anchor_margin_x = anchor_mx; lb->anchor_margin_y = anchor_my;
+
+    /* 先链接到窗口（确保字体 gc_alloc 触发 GC 时 lb 已可达） */
+    lb->next = win->labels;
+    win->labels = lb;
+    win->label_count++;
+
+    /* 加载字体（gc_alloc，参与 GC） */
+    LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);
+    if (pf) {
+        ObjGUIFont* f = (ObjGUIFont*)gc_alloc(sizeof(ObjGUIFont), OBJ_GUI_FONT);
+        if (f) { f->platform = pf; lb->font = f;
+            gc_write_barrier_obj((Object*)lb, (Object*)f); }
+        else { leno_gui_platform_destroy_font(pf); }
+    }
+
+    if (lb->anchor > 0 && win->platform) {
+        int ww, wh;
+        leno_gui_platform_get_window_size(win->platform, &ww, &wh);
+        gui_label_update_anchors(win, ww, wh);
+    }
+
+    return val_obj((Object*)lb);
 }
 
 /* ============================================================================
@@ -994,4 +1172,7 @@ void guis_init_window_instance_methods(void) {
 
     /* win.add_textbox(style) -> GTextBox */
     window_register_method_with_params("add_textbox", make_native(win_add_textbox_func, 2, "add_textbox"), 1, -1, -1, TYPE_TEXTBOX, TYPE_UNKNOWN, dict_1);
+
+    /* win.add_label(style) -> GLabel */
+    window_register_method_with_params("add_label", make_native(win_add_label_func, 2, "add_label"), 1, -1, -1, TYPE_LABEL, TYPE_UNKNOWN, dict_1);
 }

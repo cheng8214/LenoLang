@@ -1,0 +1,77 @@
+import guis
+
+main() {
+    var bg = _rgb(28, 28, 44, 255)
+
+    GWin win = guis.create_window("GLabel - Anchor Test", {
+        width: 600,
+        height: 400,
+        resizable: true,
+        bg_color: bg
+    })
+
+    /* 左上 (1) */
+    win.add_label({
+        text: "Top-Left",
+        x: 10, y: 10,
+        text_color: _rgb(255, 255, 255, 255),
+        font_size: 14,
+        anchor: 1, anchor_margin_x: 10, anchor_margin_y: 10
+    })
+
+    /* 右上 (2) */
+    win.add_label({
+        text: "Top-Right",
+        x: 10, y: 10,
+        text_color: _rgb(255, 255, 255, 255),
+        font_size: 14,
+        anchor: 2, anchor_margin_x: 10, anchor_margin_y: 10,
+        width: 80, height: 24,
+        bg_color: _rgb(50, 50, 70, 255),
+        padding_x: 8, padding_y: 4, radius: 4, align: 1
+    })
+
+    /* 左下 (3) */
+    win.add_label({
+        text: "Bottom-Left",
+        x: 10, y: 10,
+        text_color: _rgb(255, 255, 255, 255),
+        font_size: 14,
+        anchor: 3, anchor_margin_x: 10, anchor_margin_y: 10
+    })
+
+    /* 右下 (4) */
+    win.add_label({
+        text: "Bottom-Right",
+        x: 10, y: 10,
+        text_color: _rgb(255, 255, 255, 255),
+        font_size: 14,
+        anchor: 4, anchor_margin_x: 10, anchor_margin_y: 10,
+        width: 100, height: 24,
+        bg_color: _rgb(50, 50, 70, 255),
+        padding_x: 8, padding_y: 4, radius: 4, align: 1
+    })
+
+    /* 居中 (5) */
+    win.add_label({
+        text: "Center",
+        x: 0, y: 0,
+        text_color: _rgb(100, 200, 255, 255),
+        font_size: 28,
+        anchor: 5, anchor_margin_x: 0, anchor_margin_y: 0,
+        width: 200, height: 50,
+        bg_color: _rgb(40, 40, 60, 255),
+        padding_x: 16, padding_y: 8, radius: 8, align: 1,
+        border_width: 1,
+        border_color: _rgb(80, 120, 180, 255)
+    })
+
+    win.run(
+        func(GDraw ren) { ren.clear() },
+        func(GEvent e) {
+            if e.window_close() { win.set_should_close(true) }
+        }
+    )
+
+    win.close()
+}

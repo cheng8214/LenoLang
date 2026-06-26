@@ -265,7 +265,7 @@ static size_t tb_undo_action_size(TBUndoAction* a) {
     return s;
 }
 
-static void tb_undo_free_stack(TBUndoStack* stack) {
+void tb_undo_free_stack(TBUndoStack* stack) {
     TBUndoAction* a = stack->top;
     while (a) {
         TBUndoAction* n = a->next;
@@ -440,7 +440,7 @@ static int tb_redo(ObjGUITextBox* tb) {
 }
 
 /* ===== LineLayout 缓存管理（Scintilla View 层） ===== */
-static void tb_free_layouts(ObjGUITextBox* tb) {
+void tb_free_layouts(ObjGUITextBox* tb) {
     if (!tb->layouts) return;
     for (int i = 0; i < tb->layout_cap; i++) {
         if (tb->layouts[i].offsets) { free(tb->layouts[i].offsets); tb->layouts[i].offsets = NULL; }
