@@ -2522,18 +2522,10 @@ int leno_gui_platform_process_filedialog_result(void) {
     LeaveCriticalSection(&g_filedlg_result_cs);
     
     if (result) {
-        /* 构建 C 字符串数组 */
-        const char** files = (const char**)calloc((size_t)(result->nfiles + 1), sizeof(const char*));
-        if (files) {
-            for (int i = 0; i < result->nfiles; i++) {
-                files[i] = result->files[i];
-            }
-            files[result->nfiles] = NULL;
-            
-            /* 在主线程中调用 Leno 回调 */
-            process_filedialog_callback(files, result->nfiles, result->filter_index);
-            
-            free(files);
+        /* 在主线程中调用 Leno 回调（result->files 已由工作线程分配，直接使用） */
+        if (result->files && result->nfiles > 0) {
+            process_filedialog_callback((const char* const*)result->files,
+                                        result->nfiles, result->filter_index);
         }
         
         /* 清理结果 */

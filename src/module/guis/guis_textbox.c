@@ -67,10 +67,17 @@ static void gb_ensure_gap(GapBuffer* gb, int need) {
     int old_len = gb_len(gb);
     int new_cap = gb->cap * 2;
     if (new_cap < old_len + need + 64) new_cap = old_len + need + 64;
-    char* nb = (char*)realloc(gb->buf, new_cap);
-    if (!nb) return;
+
+    /* 新分配 + 拷贝 + 释放旧缓冲区，避免 realloc 失败时旧缓冲区被破坏 */
+    char* nb = (char*)malloc(new_cap);
+    if (!nb) return;  /* 分配失败，保持旧缓冲区不变 */
+    /* 拷贝 gap 之前的数据 */
+    if (gb->gap_start > 0) memcpy(nb, gb->buf, gb->gap_start);
+    /* 拷贝 gap 之后的数据到新缓冲区末尾 */
     int tail = gb->cap - gb->gap_end;
-    memmove(nb + new_cap - tail, nb + gb->gap_end, tail);
+    if (tail > 0) memcpy(nb + new_cap - tail, gb->buf + gb->gap_end, tail);
+    /* 释放旧缓冲区，切换到新缓冲区 */
+    free(gb->buf);
     gb->buf = nb;
     gb->gap_end = new_cap - tail;
     gb->cap = new_cap;
@@ -79,7 +86,9 @@ static void gb_insert(GapBuffer* gb, int pos, const char* s, int slen) {
     if (slen <= 0 || !s) return;
     gb_move_gap_to(gb, pos);
     gb_ensure_gap(gb, slen);
-    if (!gb->buf) return; /* realloc 失败，静默放弃 */
+    if (!gb->buf) return;
+    /* 再次检查 gap 是否足够，防止 ensure_gap 扩容失败 */
+    if (gb->gap_end - gb->gap_start < slen) return;
     memcpy(gb->buf + gb->gap_start, s, slen);
     gb->gap_start += slen;
 }

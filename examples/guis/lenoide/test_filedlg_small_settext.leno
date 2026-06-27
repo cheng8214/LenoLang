@@ -1,0 +1,99 @@
+/* 测试：文件对话框后读取文件，但只 set_text 前 10 个字符 */
+import guis
+import files
+
+var g_pending_path = ""
+
+main() {
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true,
+        title: "Test FileDialog Small SetText"
+    }
+    GWin win = guis.create_window("Test FileDialog Small SetText", w_style)
+
+    var btn = win.add_button({
+        x: 20,
+        y: 10,
+        width: 120,
+        height: 32,
+        text: "选择文件",
+        bg_color: _rgb(70, 130, 180, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        font_name: "SimSun",
+        font_size: 14,
+        radius: 4
+    })
+
+    var edit = win.add_textbox({
+        x: 20,
+        y: 52,
+        width: 760,
+        height: 520,
+        multiline: true,
+        line_spacing: 4,
+        bg_color: _rgb(255, 255, 255, 255),
+        text_color: _rgb(30, 30, 30, 255),
+        border_color: _rgb(180, 180, 180, 255),
+        focus_color: _rgb(70, 130, 220, 255),
+        font_name: "SimSun",
+        font_size: 14,
+        padding_x: 8,
+        padding_y: 6,
+        radius: 4,
+        border_width: 1,
+        placeholder: "点击选择文件..."
+    })
+
+    var opts = {
+        title: "选择 Leno 文件",
+        filters: [
+            { name: "Leno Files", pattern: "*.leno" },
+            { name: "All Files", pattern: "*.*" }
+        ],
+        multiple: false
+    }
+
+    btn.on_click(func() {
+        guis.file_dialog(0, func(var file_list, var idx) {
+            if file_list is Array and file_list.len() > 0 {
+                var path = file_list[0]
+                if path is string {
+                    g_pending_path = path
+                }
+            }
+        }, opts)
+    })
+
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(34, 34, 34, 255))
+            ren.clear()
+
+            if g_pending_path != "" {
+                var path = g_pending_path
+                g_pending_path = ""
+                print("main loop loading: " + path)
+                File fp = files.open(path, "r")
+                var content = fp.read()
+                fp.close()
+                if content is string {
+                    print("read length: " + _str(content.len()))
+                    var small = content.slice(0, 10)
+                    edit.set_text(small)
+                    print("set_text small done")
+                } else {
+                    print("read failed")
+                }
+            }
+        },
+        func(GEvent e) {
+            if e.quit() or e.window_close() {
+                win.set_should_close(true)
+            }
+        }
+    )
+
+    win.close()
+}

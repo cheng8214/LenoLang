@@ -124,3 +124,15 @@ ObjNative* textbox_find_method(const char* name) {
 }
 
 void textbox_init_methods(void) { tbox_method_table_free(); tbox_method_table_init(); }
+
+/* 标记所有 GTextBox 方法对象（供 GC 使用） */
+void textbox_mark_methods(void) {
+    if (!tboxMethodTable.entries) return;
+    for (int i = 0; i < tboxMethodTable.capacity; i++) {
+        TBoxMethodHashEntry* entry = tboxMethodTable.entries[i];
+        while (entry) {
+            if (entry->method) gc_mark_object((Object*)entry->method);
+            entry = entry->next;
+        }
+    }
+}

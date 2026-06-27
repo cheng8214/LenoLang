@@ -1663,16 +1663,10 @@ int leno_gui_platform_process_filedialog_result(void) {
     pthread_mutex_unlock(&g_filedlg_result_mutex);
 
     if (result) {
-        const char** c_files = (const char**)calloc((size_t)(result->nfiles + 1), sizeof(const char*));
-        if (c_files) {
-            for (int i = 0; i < result->nfiles; i++) {
-                c_files[i] = result->files[i];
-            }
-            c_files[result->nfiles] = NULL;
-
-            process_filedialog_callback(c_files, result->nfiles, result->filter_index);
-
-            free(c_files);
+        /* 在主线程中调用 Leno 回调（result->files 已由工作线程分配，直接使用） */
+        if (result->files && result->nfiles > 0) {
+            process_filedialog_callback((const char* const*)result->files,
+                                        result->nfiles, result->filter_index);
         }
 
         filedlg_result_free(result);

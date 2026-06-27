@@ -154,3 +154,15 @@ void label_init_methods(void) {
     label_method_table_free();
     label_method_table_init();
 }
+
+/* 标记所有 GLabel 方法对象（供 GC 使用） */
+void label_mark_methods(void) {
+    if (!labelMethodTable.entries) return;
+    for (int i = 0; i < labelMethodTable.capacity; i++) {
+        LabelMethodHashEntry* entry = labelMethodTable.entries[i];
+        while (entry) {
+            if (entry->method) gc_mark_object((Object*)entry->method);
+            entry = entry->next;
+        }
+    }
+}

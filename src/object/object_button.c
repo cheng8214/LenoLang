@@ -213,3 +213,15 @@ void button_init_methods(void) {
     button_method_table_free();
     button_method_table_init();
 }
+
+/* 标记所有 GButton 方法对象（供 GC 使用） */
+void button_mark_methods(void) {
+    if (!buttonMethodTable.entries) return;
+    for (int i = 0; i < buttonMethodTable.capacity; i++) {
+        ButtonMethodHashEntry* entry = buttonMethodTable.entries[i];
+        while (entry) {
+            if (entry->method) gc_mark_object((Object*)entry->method);
+            entry = entry->next;
+        }
+    }
+}

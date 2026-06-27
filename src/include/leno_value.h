@@ -1409,6 +1409,7 @@ typedef struct {
 } ButtonMethodEntry;
 
 void button_init_methods(void);
+void button_mark_methods(void);
 void button_register_method_with_params(const char* name, ObjNative* method, int arity,
                                         int min_arity, int max_arity,
                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
@@ -1418,6 +1419,7 @@ ObjNative* button_find_method(const char* name);
 
 /* GTextBox 方法注册 */
 void textbox_init_methods(void);
+void textbox_mark_methods(void);
 void textbox_register_method_with_params(const char* name, ObjNative* method, int arity,
                                         int min_arity, int max_arity,
                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
@@ -1425,6 +1427,7 @@ ObjNative* textbox_find_method(const char* name);
 
 /* GLabel 方法注册 */
 void label_init_methods(void);
+void label_mark_methods(void);
 void label_register_method_with_params(const char* name, ObjNative* method, int arity,
                                         int min_arity, int max_arity,
                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);

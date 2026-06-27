@@ -27,12 +27,24 @@ main() {
         radius: 4
     })
      /* 打开按钮 */
-    var btn_read = win.add_button({
-        x: 120,
+    var btn_open1 = win.add_button({
+        x: 140,
         y: 10,
         width: 100,
         height: 32,
-        text: "read文件",
+        text: "r打开文件1",
+        bg_color: _rgb(70, 130, 180, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        font_name: "SimSun",
+        font_size: 14,
+        radius: 4
+    })
+ var btn_open2 = win.add_button({
+          x: 260,
+        y: 10,
+        width: 100,
+        height: 32,
+        text: "r打开文件2",
         bg_color: _rgb(70, 130, 180, 255),
         text_color: _rgb(255, 255, 255, 255),
         font_name: "SimSun",
@@ -78,17 +90,38 @@ string content
                 File fp = files.open(path, "r")
                content  = fp.read()
                 fp.close()
-               
+              
+               edit.set_text(content)
+             
             }
         }, open_opts)
     })
     
-    btn_read.on_click(func() {
-    print(content )
-    File fp=files.open("d:\\1.txt","w")
-    fp.write(content)
-    fp.close()
+    btn_open1.on_click(func() {
+     
+                var path = "D:\\CLeno\\LenoC\\examples\\crypto\\aes128.leno"
+                File fp = files.open(path, "r")
+               var content  = fp.read()
+                fp.close()
+               edit.set_text(content)
+            
     })
+
+     btn_open2.on_click(test)
+     
+     func test()
+     {
+     	guis.file_dialog(0, func(var file_list, var idx) {
+            if file_list is Array and file_list.len() > 0 {
+                var path = file_list[0]
+                File fp = files.open(path, "r")
+               content  = fp.read()
+                fp.close()
+               edit.set_text(content)
+            }
+        }, open_opts)
+            
+     }
     
     win.run(
         func(GDraw ren) {

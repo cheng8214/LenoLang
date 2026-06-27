@@ -838,6 +838,11 @@ void process_filedialog_callback(const char* const* files, int nfiles, int filte
     ObjArray* arr = arr_new(8);
     Value arr_val = val_obj((Object*)arr);
     gc_push_root(&arr_val);  /* 保护数组，防止 str_copy 触发 GC 时被回收 */
+
+    /* 保护回调闭包，防止回调内部分配触发 GC 时
+     * 回调闭包及其 upvalue（如捕获的 edit/textbox 对象）被错误回收 */
+    gc_push_root(&g_filedlg_cb.callback);
+
     if (files && arr) {
         for (int i = 0; i < nfiles; i++) {
             ObjString* s = str_copy(files[i], (int)strlen(files[i]));
@@ -853,6 +858,7 @@ void process_filedialog_callback(const char* const* files, int nfiles, int filte
     args[1] = val_int(filter_index);
     call_leno_closure(g_filedlg_cb.callback, 2, args);
 
+    gc_pop_root();  /* g_filedlg_cb.callback */
     gc_pop_root();  /* arr_val */
 
     g_filedlg_cb.is_active = 0;

@@ -672,10 +672,10 @@ OPCODE(OP_CLOSURE) {
 
 OPCODE(OP_RETURN) {
     frame = &vm.frames[vm.frame_cnt - 1];
-    Value result = vm_stack_pop(&vm);
 
     // 函数返回是天然的 GC 安全点，每 256 次 return 检查一次延迟 GC
     // 使用计数器摊销开销，避免高频递归（如 fib）的性能回退
+    // 注意：GC 检查必须在 vm_stack_pop 之前，确保返回值仍在栈上被 GC 扫描到
     static int gc_return_counter = 0;
     if (unlikely(++gc_return_counter >= 256)) {
         gc_return_counter = 0;
@@ -683,6 +683,8 @@ OPCODE(OP_RETURN) {
             gc_try_collect_deferred();
         }
     }
+
+    Value result = vm_stack_pop(&vm);
 
     // 检查是否有 finally 块需要执行（且当前不在 finally 中）
     if (frame->finally_ip != NULL && !frame->in_finally) {
