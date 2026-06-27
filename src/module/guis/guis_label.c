@@ -110,6 +110,7 @@ static Value gl_set_font_size(int argc, Value* args) {
         if (!lb->font) {
             lb->font = (ObjGUIFont*)gc_alloc(sizeof(ObjGUIFont), OBJ_GUI_FONT);
             if (!lb->font) { leno_gui_platform_destroy_font(pf); return val_null(); }
+            gc_write_barrier_obj((Object*)lb, (Object*)lb->font);
         }
         lb->font->platform = pf;
     }
@@ -131,6 +132,7 @@ static Value gl_set_font_name(int argc, Value* args) {
         if (!lb->font) {
             lb->font = (ObjGUIFont*)gc_alloc(sizeof(ObjGUIFont), OBJ_GUI_FONT);
             if (!lb->font) { leno_gui_platform_destroy_font(pf); return val_null(); }
+            gc_write_barrier_obj((Object*)lb, (Object*)lb->font);
         }
         lb->font->platform = pf;
     }

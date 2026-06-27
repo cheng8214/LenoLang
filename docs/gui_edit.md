@@ -35,6 +35,9 @@ gui.run()
 | `set_placeholder_font_size(size)` | 设置占位符字体大小 | `edit.set_placeholder_font_size(12)` |
 | `set_password(bool)` | 是否密码模式 | `edit.set_password(true)` |
 | `set_max_length(n)` | 最大输入长度 | `edit.set_max_length(100)` |
+| `multiline` | 多行模式（创建时设置 `multiline: true`） | 显示换行、垂直滚动 |
+
+> **多行模式**：创建时设置 `multiline: true` 即可启用多行编辑。支持 `\n` 换行显示、方向键上下移动光标、`Enter` 插入换行、垂直滚动条。
 
 ### 事件
 
@@ -57,6 +60,7 @@ gui.run()
 | `set_radius(n)` | 圆角半径 | `edit.set_radius(4)` |
 | `set_font_size(n)` | 字体大小 | `edit.set_font_size(14)` |
 | `set_letter_spacing(n)` | 字间距 | `edit.set_letter_spacing(0)` |
+| `set_line_spacing(n)` | 行间额外间距（多行模式） | `edit.set_line_spacing(6)` |
 | `set_padding(x, y)` | 内边距 | `edit.set_padding(8, 6)` |
 | `set_pos(x, y)` | 设置位置 | `edit.set_pos(50, 100)` |
 | `set_size(w, h)` | 设置尺寸 | `edit.set_size(300, 120)` |

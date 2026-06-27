@@ -1,5 +1,6 @@
 #include "include/lenolang.h"
 #include "include/native.h"
+#include "include/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +14,9 @@ static ObjFile* file_new(FILE* fp, ObjString* path, ObjString* mode) {
 
     file->fp = fp;
     file->path = path;
+    gc_write_barrier((Object*)file, val_obj((Object*)path));
     file->mode = mode;
+    gc_write_barrier((Object*)file, val_obj((Object*)mode));
     file->is_closed = 0;
     return file;
 }
@@ -105,6 +108,28 @@ static Value file_method_read(int argCount, Value* args) {
 
         size_t read_size = fread(buffer, 1, n, file->fp);
         buffer[read_size] = '\0';
+
+        /* 确保 UTF-8 字符边界完整：若尾部截断了多字节序列，回退到上一个完整字符 */
+        if (read_size > 0) {
+            size_t safe_len = read_size;
+            unsigned char last = (unsigned char)buffer[safe_len - 1];
+            /* 尾字节(0x80-0xBF)说明多字节序列被截断，向前找到首字节 */
+            if (last >= 0x80 && last <= 0xBF) {
+                while (safe_len > 0 && (unsigned char)buffer[safe_len - 1] >= 0x80
+                       && (unsigned char)buffer[safe_len - 1] <= 0xBF) {
+                    safe_len--;
+                }
+                /* 首字节也去掉，这样剩余部分全是完整字符 */
+                if (safe_len > 0 && (unsigned char)buffer[safe_len - 1] >= 0xC0) {
+                    safe_len--;
+                }
+            }
+            /* 回退多读的字节：让文件指针退到完整字符边界 */
+            long rollback = (long)(read_size - safe_len);
+            if (rollback > 0) fseek(file->fp, -rollback, SEEK_CUR);
+            buffer[safe_len] = '\0';
+            read_size = safe_len;
+        }
 
         ObjString* result = str_copy(buffer, (int)read_size);
         free(buffer);
@@ -362,7 +387,19 @@ static Value native_files_open(int argCount, Value* args) {
     ObjString* path = (ObjString*)val_as_obj(args[0]);
     ObjString* mode = (ObjString*)val_as_obj(args[1]);
 
+#ifdef _WIN32
+    /* Windows: 使用 _wfopen 支持中文路径 */
+    wchar_t* wpath = utf8_to_utf16(path->chars);
+    wchar_t* wmode = utf8_to_utf16(mode->chars);
+    FILE* fp = NULL;
+    if (wpath && wmode) {
+        fp = _wfopen(wpath, wmode);
+    }
+    free(wpath);
+    free(wmode);
+#else
     FILE* fp = fopen(path->chars, mode->chars);
+#endif
     if (!fp) {
         char msg[128];
         snprintf(msg, sizeof(msg), "无法打开文件 '%s'", path->chars);
@@ -387,7 +424,16 @@ static Value native_files_exists(int argCount, Value* args) {
     }
 
     ObjString* path = (ObjString*)val_as_obj(args[0]);
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path->chars);
+    FILE* fp = NULL;
+    if (wpath) {
+        fp = _wfopen(wpath, L"r");
+    }
+    free(wpath);
+#else
     FILE* fp = fopen(path->chars, "r");
+#endif
     if (fp) {
         fclose(fp);
         return val_bool(1);
@@ -408,7 +454,16 @@ static Value native_files_delete(int argCount, Value* args) {
     }
 
     ObjString* path = (ObjString*)val_as_obj(args[0]);
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path->chars);
+    int result = -1;
+    if (wpath) {
+        result = _wremove(wpath);
+    }
+    free(wpath);
+#else
     int result = remove(path->chars);
+#endif
     return val_bool(result == 0);
 }
 
@@ -425,7 +480,16 @@ static Value native_files_read(int argCount, Value* args) {
     }
 
     ObjString* path = (ObjString*)val_as_obj(args[0]);
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path->chars);
+    FILE* fp = NULL;
+    if (wpath) {
+        fp = _wfopen(wpath, L"r");
+    }
+    free(wpath);
+#else
     FILE* fp = fopen(path->chars, "r");
+#endif
     if (!fp) {
         native_throw_error("无法打开文件");
         return val_null();
@@ -466,7 +530,16 @@ static Value native_files_write(int argCount, Value* args) {
     ObjString* path = (ObjString*)val_as_obj(args[0]);
     ObjString* content = value_to_objstring(args[1]);
 
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path->chars);
+    FILE* fp = NULL;
+    if (wpath) {
+        fp = _wfopen(wpath, L"w");
+    }
+    free(wpath);
+#else
     FILE* fp = fopen(path->chars, "w");
+#endif
     if (!fp) {
         native_throw_error("无法创建文件");
         return val_null();

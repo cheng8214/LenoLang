@@ -200,6 +200,7 @@ Value event_to_dict(LenoGUIEvent* ev) {
     gc_push_root(&d_val);  // 保护字典，防止 gc_alloc 时被回收
     ObjGUIEvent* event_obj = (ObjGUIEvent*)gc_alloc(sizeof(ObjGUIEvent), OBJ_GUI_EVENT);
     event_obj->data = d;
+    gc_write_barrier_obj((Object*)event_obj, (Object*)d);
     dict_add_int_key(d, str_key_type, ev->type);
     dict_add_int_key(d, str_key_window_id, ev->window_id);
 
@@ -835,6 +836,8 @@ void process_filedialog_callback(const char* const* files, int nfiles, int filte
 
     /* 构建文件列表数组 */
     ObjArray* arr = arr_new(8);
+    Value arr_val = val_obj((Object*)arr);
+    gc_push_root(&arr_val);  /* 保护数组，防止 str_copy 触发 GC 时被回收 */
     if (files && arr) {
         for (int i = 0; i < nfiles; i++) {
             ObjString* s = str_copy(files[i], (int)strlen(files[i]));
@@ -846,9 +849,11 @@ void process_filedialog_callback(const char* const* files, int nfiles, int filte
     }
 
     Value args[2];
-    args[0] = val_obj((Object*)arr);
+    args[0] = arr_val;
     args[1] = val_int(filter_index);
     call_leno_closure(g_filedlg_cb.callback, 2, args);
+
+    gc_pop_root();  /* arr_val */
 
     g_filedlg_cb.is_active = 0;
     g_filedlg_cb.callback = val_null();

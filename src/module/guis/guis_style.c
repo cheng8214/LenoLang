@@ -166,6 +166,7 @@ static StyleFieldInfo edit_style_fields[] = {
     { "max_length",     STYLE_TYPE_INT,    "最大字符数（0=无限制）",      "0",                 NULL, 0 },
     { "password",       STYLE_TYPE_BOOL,   "密码模式（显示为*）",         "false",             NULL, 0 },
     { "multiline",      STYLE_TYPE_BOOL,   "多行模式",                    "false",             NULL, 0 },
+    { "line_spacing",   STYLE_TYPE_INT,    "行间额外间距（像素）",        "4",                 NULL, 0 },
     /* ===== 状态 ===== */
     { "visible",        STYLE_TYPE_BOOL,   "是否可见",                    "true",              NULL, 0 },
     { "enabled",        STYLE_TYPE_BOOL,   "是否启用",                    "true",              NULL, 0 },

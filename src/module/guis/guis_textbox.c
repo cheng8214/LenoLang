@@ -20,6 +20,12 @@
 #define TB_CAP 256
 #define BLINK_MS 500
 
+/* 行高 = 字体大小 + 行间距（由用户设定，默认 4 像素） */
+static inline int tb_line_height(ObjGUITextBox* tb) {
+    int sp = tb->line_spacing > 0 ? tb->line_spacing : 4;
+    return tb->font_size + sp;
+}
+
 /* ===== UTF-8 helpers ===== */
 static int tc_blen(unsigned char c) {
     if (c < 0x80) return 1;
@@ -248,7 +254,7 @@ static int tb_line_col_to_pos(ObjGUITextBox* tb, int line, int col) {
     return ls + col;
 }
 static int tb_line_y(ObjGUITextBox* tb, int line) {
-    return tb->y + tb->border_width + tb->padding_y + line * tb->font_size - tb->scroll_y;
+    return tb->y + tb->border_width + tb->padding_y + line * tb_line_height(tb) - tb->scroll_y;
 }
 static void tb_mark_dirty(ObjGUITextBox* tb);
 static void tb_ensure_cursor_visible(ObjGUITextBox* tb);
@@ -595,7 +601,8 @@ static void tb_update_ime_pos(ObjGUITextBox* tb) {
     if (!tb->focused) return;
     int line = tb_current_line_tb(tb, tb->cursor_pos);
     int cx = tb_cursor_x(tb, NULL);
-    int cy = line * tb->font_size;
+    int lh = tb_line_height(tb);
+    int cy = line * lh;
     int ime_x = tb->x + tb->padding_x - tb->scroll_x + cx;
     int ime_y = tb->y + tb->padding_y - tb->scroll_y + cy + tb->font_size;
     leno_gui_platform_set_ime_caret_pos(ime_x, ime_y);
@@ -619,13 +626,14 @@ static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
 
     if (tb->multiline) {
         int line = tb_current_line_tb(tb, tb->cursor_pos);
-        int cy = line * tb->font_size;
+        int lh = tb_line_height(tb);
+        int cy = line * lh;
         int visible_h = tb->height - 2 * tb->border_width;
         if (visible_h < 1) visible_h = 1;
         if (cy < tb->scroll_y) tb->scroll_y = cy;
-        else if (cy + tb->font_size > tb->scroll_y + visible_h)
-            tb->scroll_y = cy + tb->font_size - visible_h;
-        int total_h = tb->padding_y + tb->line_count * tb->font_size + 2;
+        else if (cy + lh > tb->scroll_y + visible_h)
+            tb->scroll_y = cy + lh - visible_h;
+        int total_h = tb->padding_y + tb->line_count * lh + 2;
         if (total_h <= visible_h) tb->scroll_y = 0;
         else if (tb->scroll_y > total_h - visible_h) tb->scroll_y = total_h - visible_h;
         if (tb->scroll_y < 0) tb->scroll_y = 0;
@@ -725,7 +733,7 @@ static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
         return lo;
     }
     int ry = (int)(my - tb->y - tb->border_width - tb->padding_y) + tb->scroll_y;
-    int line = ry / tb->font_size;
+    int line = ry / tb_line_height(tb);
     if (line < 0) line = 0;
     int total_lines = tb->line_count;
     if (line >= total_lines) line = total_lines - 1;
@@ -739,9 +747,16 @@ static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
 static Value tb_set_text(int argc, Value* args) {
     (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
     const char* s = NULL;
-    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING)
-        s = ((ObjString*)val_as_obj(args[1]))->chars;
-    int sl = s ? (int)strlen(s) : 0;
+    int sl = 0;
+    char* s_buf = NULL;
+    /* 先将 Leno 字符串内容拷贝到独立的 C 堆缓冲区，
+     * 避免后续 GapBuffer 操作间接触发 GC 时裸指针失效崩溃 */
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING) {
+        ObjString* str = (ObjString*)val_as_obj(args[1]);
+        sl = (int)strlen(str->chars);
+        s_buf = (char*)malloc(sl + 1);
+        if (s_buf) { memcpy(s_buf, str->chars, sl + 1); s = s_buf; }
+    }
     int old_len = gb_len(&tb->gb);
     char* old_text = NULL;
     if (old_len > 0) {
@@ -759,6 +774,7 @@ static Value tb_set_text(int argc, Value* args) {
     tb->cached_max_text_width_line = -1;
     tb_invalidate_layouts(tb);
     if (old_text) free(old_text);
+    if (s_buf) free(s_buf);
     return val_null();
 }
 static Value tb_set_ph(int argc, Value* args) {
@@ -809,11 +825,11 @@ static Value tb_set_maxlen(int argc, Value* args) {
 }
 static Value tb_on_change(int argc, Value* args) {
     (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
-    tb->on_change = args[1]; return val_null();
+    tb->on_change = args[1]; gc_write_barrier((Object*)tb, args[1]); return val_null();
 }
 static Value tb_on_submit(int argc, Value* args) {
     (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
-    tb->on_submit = args[1]; return val_null();
+    tb->on_submit = args[1]; gc_write_barrier((Object*)tb, args[1]); return val_null();
 }
 static Value tb_set_anchor(int argc, Value* args) {
     (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
@@ -877,6 +893,10 @@ static Value tb_set_enabled(int argc, Value* args) {
 static Value tb_set_letter_spacing(int argc, Value* args) {
     (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
     tb->letter_spacing = val_as_int(args[1]); return val_null();
+}
+static Value tb_set_line_spacing(int argc, Value* args) {
+    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    tb->line_spacing = val_as_int(args[1]); return val_null();
 }
 /* 滚动条颜色 setter */
 TB_SET_COLOR(tb_set_sb_track,       sb_track_r, sb_track_g, sb_track_b, sb_track_a)
@@ -1149,7 +1169,7 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
     int inner_w = dw - 2 * tb->border_width;
     int inner_h = dh - 2 * tb->border_width;
     int text_w = tb_text_total_width(tb, r) + tb->padding_x;
-    int text_h = tb->multiline ? tb->padding_y + tb->line_count * tb->font_size + 2 : tb->font_size;
+    int text_h = tb->multiline ? tb->padding_y + tb->line_count * tb_line_height(tb) + 2 : tb->font_size;
     int need_h = text_w > inner_w - (text_h > inner_h ? sb_size : 0);
     int need_v = text_h > inner_h - (text_w > inner_w ? sb_size : 0);
     int avail_w = inner_w - (need_v ? sb_size : 0);
@@ -1218,7 +1238,7 @@ static int tb_scrollbar_hit(ObjGUITextBox* tb, float mx, float my, int* is_h, in
     int sb = 8, dw = tb->width, dh = tb->height;
     int inner_w = dw - 2 * tb->border_width, inner_h = dh - 2 * tb->border_width;
     int text_w = tb_text_total_width(tb, NULL) + tb->padding_x;
-    int text_h = tb->multiline ? tb->padding_y + tb->line_count * tb->font_size + 2 : tb->font_size;
+    int text_h = tb->multiline ? tb->padding_y + tb->line_count * tb_line_height(tb) + 2 : tb->font_size;
     int need_h = text_w > inner_w - (text_h > inner_h ? sb : 0);
     int need_v = text_h > inner_h - (text_w > inner_w ? sb : 0);
     int avail_w = inner_w - (need_v ? sb : 0), avail_h = inner_h - (need_h ? sb : 0);
@@ -1314,6 +1334,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
             }
             tb_ensure_cursor_visible(hit);
             win->focused_textbox = hit;
+            gc_write_barrier_obj((Object*)win, (Object*)hit);
             /* 设置 IME 候选窗/合成窗位置为当前光标处 */
             tb_update_ime_pos(hit);
             leno_gui_platform_start_text_input();
@@ -1333,7 +1354,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
                 int sb = 8, dw = tb->width, dh = tb->height;
                 int inner_w = dw - 2 * tb->border_width, inner_h = dh - 2 * tb->border_width;
                 int text_w = tb_text_total_width(tb, NULL) + tb->padding_x;
-                int text_h = tb->multiline ? tb->padding_y + tb->line_count * tb->font_size + 2 : tb->font_size;
+                int text_h = tb->multiline ? tb->padding_y + tb->line_count * tb_line_height(tb) + 2 : tb->font_size;
                 int need_h = text_w > inner_w - (text_h > inner_h ? sb : 0);
                 int need_v = text_h > inner_h - (text_w > inner_w ? sb : 0);
                 int mxi = (int)ev->mouse_x, myi = (int)ev->mouse_y;
@@ -1364,7 +1385,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
             ObjGUITextBox* ftb = win->focused_textbox;
             int sb = 8, inner_w = ftb->width - 2 * ftb->border_width;
             int text_w = tb_text_total_width(ftb, NULL) + ftb->padding_x;
-            int text_h = ftb->multiline ? ftb->padding_y + ftb->line_count * ftb->font_size + 2 : ftb->font_size;
+            int text_h = ftb->multiline ? ftb->padding_y + ftb->line_count * tb_line_height(ftb) + 2 : ftb->font_size;
             int inner_h2 = ftb->height - 2 * ftb->border_width;
             int need_v2 = text_h > inner_h2 - (text_w > inner_w ? sb : 0);
 
@@ -1437,12 +1458,12 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         tb_lines_ensure(wtb);
         int visible_h = wtb->height - 2 * wtb->border_width;
         int visible_w2 = wtb->width - 2 * wtb->border_width;
-        int total_h = wtb->multiline ? wtb->padding_y + wtb->line_count * wtb->font_size + 2 : wtb->font_size;
+        int total_h = wtb->multiline ? wtb->padding_y + wtb->line_count * tb_line_height(wtb) + 2 : wtb->font_size;
         int total_w2 = tb_text_total_width(wtb, NULL) + wtb->padding_x;
 
         /* 垂直滚动（Windows: 向前滚 wheel_y>0 → scroll_y 应减小） */
         if (ev->wheel_y != 0.0f && wtb->multiline && total_h > visible_h) {
-            int delta = (int)(ev->wheel_y * wtb->font_size * 3);
+            int delta = (int)(ev->wheel_y * tb_line_height(wtb) * 3);
             wtb->scroll_y -= delta;
             if (wtb->scroll_y < 0) wtb->scroll_y = 0;
             if (wtb->scroll_y > total_h - visible_h) wtb->scroll_y = total_h - visible_h;
@@ -1683,6 +1704,7 @@ void guis_init_textbox_instance_methods(void) {
     textbox_register_method_with_params("set_padding", make_native(tb_set_padding, 3, "set_padding"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
     textbox_register_method_with_params("set_font_size", make_native(tb_set_font_size, 2, "set_font_size"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
     textbox_register_method_with_params("set_letter_spacing", make_native(tb_set_letter_spacing, 2, "set_letter_spacing"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    textbox_register_method_with_params("set_line_spacing", make_native(tb_set_line_spacing, 2, "set_line_spacing"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
     textbox_register_method_with_params("set_enabled", make_native(tb_set_enabled, 2, "set_enabled"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
     /* 滚动条颜色 */
     textbox_register_method_with_params("set_sb_track", make_native(tb_set_sb_track, 2, "set_sb_track"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);

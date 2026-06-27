@@ -215,6 +215,8 @@ typedef struct ObjGUITextBox {
     ObjGUIFont* placeholder_font;
     /* 字间距 */
     int letter_spacing;            /* 字符间距（像素，0=默认） */
+    /* 行间距 */
+    int line_spacing;              /* 行间额外间距（像素，默认 4） */
     /* 滚动条颜色 */
     int sb_track_r, sb_track_g, sb_track_b, sb_track_a;           /* 轨道 */
     int sb_thumb_r, sb_thumb_g, sb_thumb_b, sb_thumb_a;           /* 滑块 */

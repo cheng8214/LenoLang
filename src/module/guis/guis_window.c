@@ -666,6 +666,7 @@ static Value win_add_button_func(int argc, Value* args) {
     gc_write_barrier_obj((Object*)btn, (Object*)win);
     btn->next = (struct ObjGUIButton*)win->buttons;
     win->buttons = btn;
+    gc_write_barrier_obj((Object*)win, (Object*)btn);
 
     /* 加载字体 */
     LenoGUIPlatformFont* pf = leno_gui_platform_load_font(font_name, font_size);
@@ -715,6 +716,7 @@ static Value win_add_textbox_func(int argc, Value* args) {
     int multiline = 0;
     int placeholder_font_size = 0;  /* 0=跟随主字体 */
     int letter_spacing = 0;
+    int line_spacing = 4;           /* 行间额外间距 */
     /* 滚动条颜色默认值 */
     int sb_track_r = 220, sb_track_g = 220, sb_track_b = 220, sb_track_a = 255;
     int sb_thumb_r = 150, sb_thumb_g = 150, sb_thumb_b = 150, sb_thumb_a = 255;
@@ -800,6 +802,8 @@ static Value win_add_textbox_func(int argc, Value* args) {
         }
         key = intern_string("letter_spacing", 14); v = dict_get(style, val_obj((Object*)key));
         if (!val_is_null(v)) letter_spacing = val_as_int(v);
+        key = intern_string("line_spacing", 12); v = dict_get(style, val_obj((Object*)key));
+        if (!val_is_null(v)) line_spacing = val_as_int(v);
         /* 滚动条颜色 */
         key = intern_string("sb_track_color", 14); v = dict_get(style, val_obj((Object*)key));
         if (!val_is_null(v) && val_is_obj(v) && val_as_obj(v)->type == OBJ_RGB) {
@@ -896,8 +900,9 @@ static Value win_add_textbox_func(int argc, Value* args) {
     tb->undo_last_type = TB_UNDO_INSERT;
     tb->undo_last_group = 1;
 
-    /* 字间距 & 滚动条颜色 */
+    /* 字间距 & 行间距 & 滚动条颜色 */
     tb->letter_spacing = letter_spacing;
+    tb->line_spacing = line_spacing;
     tb->sb_track_r = sb_track_r; tb->sb_track_g = sb_track_g; tb->sb_track_b = sb_track_b; tb->sb_track_a = sb_track_a;
     tb->sb_thumb_r = sb_thumb_r; tb->sb_thumb_g = sb_thumb_g; tb->sb_thumb_b = sb_thumb_b; tb->sb_thumb_a = sb_thumb_a;
     tb->sb_thumb_hover_r = sb_thumb_hover_r; tb->sb_thumb_hover_g = sb_thumb_hover_g; tb->sb_thumb_hover_b = sb_thumb_hover_b; tb->sb_thumb_hover_a = sb_thumb_hover_a;
@@ -908,6 +913,7 @@ static Value win_add_textbox_func(int argc, Value* args) {
     gc_write_barrier_obj((Object*)tb, (Object*)win);
     tb->next = win->textboxes;
     win->textboxes = tb;
+    gc_write_barrier_obj((Object*)win, (Object*)tb);
     win->textbox_count++;
 
     /* 加载字体 */
@@ -1068,6 +1074,7 @@ static Value win_add_label_func(int argc, Value* args) {
     if (!lb) return val_null();
 
     lb->window = win;
+    gc_write_barrier_obj((Object*)lb, (Object*)win);
     lb->x = x; lb->y = y; lb->width = width; lb->height = height;
     lb->text = text_str && text_str[0] ? strdup(text_str) : NULL;
     lb->text_r = text_r; lb->text_g = text_g; lb->text_b = text_b; lb->text_a = text_a;
@@ -1093,6 +1100,7 @@ static Value win_add_label_func(int argc, Value* args) {
     /* 先链接到窗口（确保字体 gc_alloc 触发 GC 时 lb 已可达） */
     lb->next = win->labels;
     win->labels = lb;
+    gc_write_barrier_obj((Object*)win, (Object*)lb);
     win->label_count++;
 
     /* 加载字体（gc_alloc，参与 GC） */

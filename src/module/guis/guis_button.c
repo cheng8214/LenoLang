@@ -176,6 +176,7 @@ static Value btn_on_click_func(int argc, Value* args) {
     ObjGUIButton* btn = as_button(args[0]);
     if (!btn) return val_null();
     btn->on_click = args[1];
+    gc_write_barrier((Object*)btn, args[1]);
     return val_null();
 }
 
