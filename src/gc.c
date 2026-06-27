@@ -162,6 +162,17 @@ static void remembered_set_add(Object* obj) {
     gc.remembered_set[gc.remembered_count++] = obj;
 }
 
+// 从 remembered set 移除对象（Major GC 释放老年代对象时调用）
+static void remembered_set_remove(Object* obj) {
+    if (!obj) return;
+    for (int i = 0; i < gc.remembered_count; i++) {
+        if (gc.remembered_set[i] == obj) {
+            gc.remembered_set[i] = gc.remembered_set[--gc.remembered_count];
+            return;
+        }
+    }
+}
+
 // 写屏障：老年代对象 holder 的 Value 字段被写入年轻代引用时调用
 void gc_write_barrier(Object* holder, Value value) {
     if (!val_is_obj(value)) return;
@@ -838,11 +849,10 @@ static void mark_roots(void) {
 static void mark_remembered_set(void) {
     for (int i = 0; i < gc.remembered_count; i++) {
         Object* obj = gc.remembered_set[i];
-        // 安全检查：验证对象是否有效
+        // 安全检查：验证对象是否有效且仍为老年代
         if (!obj || !is_valid_obj_type(obj->type)) continue;
-        if (obj->generation == GEN_OLD && !obj->marked) {
-            gc_mark_object(obj);
-        }
+        if (obj->generation != GEN_OLD || obj->marked) continue;
+        gc_mark_object(obj);
     }
 }
 
@@ -1466,6 +1476,7 @@ static void sweep_old(void) {
                 gc.old_allocated -= invalid->size;
             else
                 gc.old_allocated = 0;
+            remembered_set_remove(invalid);
             free(invalid);
             continue;
         }
@@ -1483,6 +1494,7 @@ static void sweep_old(void) {
             if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
                 continue;
             }
+            remembered_set_remove(unreached);
             free_object_resources(unreached);
             free(unreached);
         } else {
@@ -1493,9 +1505,18 @@ static void sweep_old(void) {
     if (freed_cnt > 0) gc_log_msg("SWEEP OLD done: freed=%d\n", freed_cnt);
 }
 
-// GC 后重建 remembered set（清除所有条目，由写屏障重新填充）
+// GC 后维护 remembered set。
+// 该集合是增量维护的：写屏障、对象晋升、老年代释放时都会更新它。
+// 这里只做压缩，清理可能残留的 NULL/无效/已非老年代的槽位。
 static void rebuild_remembered_set(void) {
-    gc.remembered_count = 0;
+    int j = 0;
+    for (int i = 0; i < gc.remembered_count; i++) {
+        Object* obj = gc.remembered_set[i];
+        if (obj && is_valid_obj_type(obj->type) && obj->generation == GEN_OLD) {
+            gc.remembered_set[j++] = obj;
+        }
+    }
+    gc.remembered_count = j;
 }
 
 // 清除老年代所有对象的 marked 标志（Minor GC 前调用）
