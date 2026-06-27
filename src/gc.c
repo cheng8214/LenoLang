@@ -1434,6 +1434,9 @@ static void sweep_young(void) {
                 promote->marked = (gc.mode == GC_MODE_FULL) ? 1 : 0;
                 promote->generation = GEN_OLD;
                 promote->survived = 0;
+                /* 晋升到老年代的对象可能仍持有年轻代引用，
+                 * 必须加入 remembered set，否则后续 Minor GC 会漏扫这些引用。 */
+                remembered_set_add(promote);
                 promote->next = gc.old_heap;
                 gc.old_heap = promote;
                 size_t obj_size = promote->size;
