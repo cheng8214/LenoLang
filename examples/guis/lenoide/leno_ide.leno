@@ -1,0 +1,106 @@
+/* Leno IDE - 简易编辑器
+ * - 点击"打开"按钮选择文件，内容加载到文本框中显示
+ * - 使用 guis.file_dialog 弹窗选择文件
+ */
+import guis
+import files
+main() {
+    Style[window] w_style = {
+        width: 800,
+        height: 600,
+        resizable: true,
+        title: "Leno IDE"
+    }
+    GWin win = guis.create_window("Leno IDE", w_style)
+
+    /* 打开按钮 */
+    var btn_open = win.add_button({
+        x: 20,
+        y: 10,
+        width: 100,
+        height: 32,
+        text: "打开文件",
+        bg_color: _rgb(70, 130, 180, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        font_name: "SimSun",
+        font_size: 14,
+        radius: 4
+    })
+     /* 打开按钮 */
+    var btn_read = win.add_button({
+        x: 120,
+        y: 10,
+        width: 100,
+        height: 32,
+        text: "read文件",
+        bg_color: _rgb(70, 130, 180, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        font_name: "SimSun",
+        font_size: 14,
+        radius: 4
+    })
+    /* 文本框 */
+    var edit = win.add_textbox({
+        x: 20,
+        y: 52,
+        width: 760,
+        height: 520,
+        multiline: true,
+        line_spacing: 4,
+        bg_color: _rgb(255, 255, 255, 255),
+        text_color: _rgb(30, 30, 30, 255),
+        border_color: _rgb(180, 180, 180, 255),
+        focus_color: _rgb(70, 130, 220, 255),
+        font_name: "SimSun",
+        font_size: 14,
+        padding_x: 8,
+        padding_y: 6,
+        radius: 4,
+        border_width: 1,
+        placeholder: "点击\"打开文件\"选择 .leno 文件..."
+    })
+
+    /* 文件对话框配置 */
+    var open_opts = {
+        title: "选择要打开的 Leno 文件",
+        filters: [
+            { name: "Leno Files", pattern: "*.leno" },
+            { name: "All Files", pattern: "*.*" }
+        ],
+        multiple: false
+    }
+string content 
+    /* 按钮点击 -> 打开文件对话框 -> 读取文件 -> 显示到文本框 */
+    btn_open.on_click(func() {
+        guis.file_dialog(0, func(var file_list, var idx) {
+            if file_list is Array and file_list.len() > 0 {
+                var path = file_list[0]
+                File fp = files.open(path, "r")
+               content  = fp.read()
+                fp.close()
+               
+            }
+        }, open_opts)
+    })
+    
+    btn_read.on_click(func() {
+    print(content )
+    File fp=files.open("d:\\1.txt","w")
+    fp.write(content)
+    fp.close()
+    })
+    
+    win.run(
+        func(GDraw ren) {
+            ren.set_color(_rgb(34, 34, 34, 255))
+            ren.clear()
+        },
+        func(GEvent e) {
+            if e.quit() or e.window_close() {
+                win.set_should_close(true)
+            }
+        }
+    )
+
+    win.close()
+}

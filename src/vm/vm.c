@@ -290,14 +290,10 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
 
         // 创建初始调用帧
         if (vm_ptr->frame_cnt >= vm_ptr->frame_capacity) {
-            int new_capacity = grow_capacity(vm_ptr->frame_capacity);
-            CallFrame* new_frames = (CallFrame*)realloc(vm_ptr->frames, new_capacity * sizeof(CallFrame));
-            if (!new_frames) {
+            if (!vm_grow_frames(vm_ptr)) {
                 vm_ptr->current_coroutine = saved_current;
                 return -1;
             }
-            vm_ptr->frames = new_frames;
-            vm_ptr->frame_capacity = new_capacity;
         }
         
         CallFrame* frame = &vm_ptr->frames[vm_ptr->frame_cnt++];
@@ -407,14 +403,10 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         if (co->has_saved_frame && co->saved_frame_copy) {
             // 确保有足够的空间
             if (vm_ptr->frame_cnt >= vm_ptr->frame_capacity) {
-                int new_capacity = grow_capacity(vm_ptr->frame_capacity);
-                CallFrame* new_frames = (CallFrame*)realloc(vm_ptr->frames, new_capacity * sizeof(CallFrame));
-                if (!new_frames) {
+                if (!vm_grow_frames(vm_ptr)) {
                     vm_ptr->current_coroutine = saved_current;
                     return -1;
                 }
-                vm_ptr->frames = new_frames;
-                vm_ptr->frame_capacity = new_capacity;
             }
             // 将 frame 副本复制到 vm.frames[vm.frame_cnt]
             memcpy(&vm_ptr->frames[vm_ptr->frame_cnt], co->saved_frame_copy, sizeof(CallFrame));

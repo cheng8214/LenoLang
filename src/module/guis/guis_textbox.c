@@ -79,6 +79,7 @@ static void gb_insert(GapBuffer* gb, int pos, const char* s, int slen) {
     if (slen <= 0 || !s) return;
     gb_move_gap_to(gb, pos);
     gb_ensure_gap(gb, slen);
+    if (!gb->buf) return; /* realloc 失败，静默放弃 */
     memcpy(gb->buf + gb->gap_start, s, slen);
     gb->gap_start += slen;
 }
@@ -746,16 +747,14 @@ static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
 /* ===== Instance methods ===== */
 static Value tb_set_text(int argc, Value* args) {
     (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
-    const char* s = NULL;
-    int sl = 0;
     char* s_buf = NULL;
-    /* 先将 Leno 字符串内容拷贝到独立的 C 堆缓冲区，
-     * 避免后续 GapBuffer 操作间接触发 GC 时裸指针失效崩溃 */
+    int sl = 0;
+    /* 将 Leno 字符串拷贝到独立 C 堆缓冲区，切断 GC 依赖 */
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING) {
         ObjString* str = (ObjString*)val_as_obj(args[1]);
         sl = (int)strlen(str->chars);
         s_buf = (char*)malloc(sl + 1);
-        if (s_buf) { memcpy(s_buf, str->chars, sl + 1); s = s_buf; }
+        if (s_buf) memcpy(s_buf, str->chars, sl + 1);
     }
     int old_len = gb_len(&tb->gb);
     char* old_text = NULL;
@@ -763,9 +762,9 @@ static Value tb_set_text(int argc, Value* args) {
         old_text = (char*)malloc(old_len + 1);
         if (old_text) { gb_get_range(&tb->gb, 0, old_len, old_text); old_text[old_len] = '\0'; }
     }
-    tb->undo_enabled = 0; /* set_text 程序化赋值不进入 undo */
+    tb->undo_enabled = 0;
     gb_clear(&tb->gb);
-    if (s && sl > 0) gb_insert(&tb->gb, 0, s, sl);
+    if (s_buf && sl > 0) gb_insert(&tb->gb, 0, s_buf, sl);
     tb->undo_enabled = 1;
     tb->cursor_pos = gb_len(&tb->gb); tb->sel_start = -1; tb->sel_len = 0;
     tb->text_is_dirty = 1;

@@ -150,20 +150,9 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
 
     // 需要扩容
     if (vm.frame_cnt >= vm.frame_capacity) {
-        int new_capacity = grow_capacity(vm.frame_capacity);
-        CallFrame* new_frames = (CallFrame*)realloc(vm.frames, new_capacity * sizeof(CallFrame));
-        if (!new_frames) {
+        if (!vm_grow_frames(current_exec_vm)) {
             runtime_error("调用栈内存分配失败", line);
             return 0;
-        }
-        vm.frames = new_frames;
-        vm.frame_capacity = new_capacity;
-        // realloc 后更新所有使用内联数组的帧的 locals 指针
-        for (int i = 0; i < vm.frame_cnt; i++) {
-            CallFrame* f = &vm.frames[i];
-            if (!f->locals_is_dynamic && f->local_count > 0) {
-                f->locals = f->inline_locals;
-            }
         }
     }
 

@@ -138,17 +138,6 @@ void vm_reset_stack(void) {
 // 调用帧管理
 // ============================================================================
 
-// 在 realloc 后更新所有使用内联数组的帧的 locals 指针
-static void update_inline_locals_pointers(void) {
-    extern VM vm;
-    for (int i = 0; i < vm.frame_cnt; i++) {
-        CallFrame* frame = &vm.frames[i];
-        if (!frame->locals_is_dynamic && frame->local_count > 0) {
-            frame->locals = frame->inline_locals;
-        }
-    }
-}
-
 void vm_load(Chunk* c) {
     extern VM vm;
     vm.chunk = c;
@@ -156,16 +145,10 @@ void vm_load(Chunk* c) {
 
     // 确保调用帧容量
     if (vm.frame_cnt >= vm.frame_capacity) {
-        int new_capacity = grow_capacity(vm.frame_capacity);
-        CallFrame* new_frames = (CallFrame*)realloc(vm.frames, new_capacity * sizeof(CallFrame));
-        if (!new_frames) {
+        if (!vm_grow_frames(&vm)) {
             error_add(ERR_RUNTIME, 0, "调用栈内存分配失败");
             return;
         }
-        vm.frames = new_frames;
-        vm.frame_capacity = new_capacity;
-        // realloc 后更新内联数组指针
-        update_inline_locals_pointers();
     }
 
     // 为主代码块分配locals数组（支持闭包捕获全局变量）
@@ -237,13 +220,7 @@ int vm_run_chunk(Chunk* chunk) {
     
     // 创建临时调用帧
     if (vm.frame_cnt >= vm.frame_capacity) {
-        int new_capacity = vm.frame_capacity ? vm.frame_capacity * 2 : 8;
-        CallFrame* new_frames = (CallFrame*)realloc(vm.frames, new_capacity * sizeof(CallFrame));
-        if (!new_frames) return -1;
-        vm.frames = new_frames;
-        vm.frame_capacity = new_capacity;
-        // realloc 后更新内联数组指针
-        update_inline_locals_pointers();
+        if (!vm_grow_frames(&vm)) return -1;
     }
     
     CallFrame* frame = &vm.frames[vm.frame_cnt++];

@@ -179,9 +179,12 @@ Ast* parse_if_stmt(Parser* p) {
             if (field_name) free(field_name);
 
             // 检查是否有 or/and 连接多个类型守卫条件
+            // 如果 or/and 后不是类型守卫，则回退并用普通表达式解析余下部分
+            int fallback_to_expr = 0;
             while (p->lex.current.type == TOK_OR || p->lex.current.type == TOK_AND) {
                 LenoTokenType op = p->lex.current.type;
                 lexer_next(&p->lex); // 消费 or/and
+                Lexer saved_after_op = p->lex; // or/and 之后的位置
 
                 // 解析下一个类型守卫条件
                 if (p->lex.current.type == TOK_IDENT) {
@@ -238,17 +241,29 @@ Ast* parse_if_stmt(Parser* p) {
                         binop->u.binop.op = (op == TOK_OR) ? TOK_OR : TOK_AND;
                         cond = binop;
                     } else {
-                        error_add(ERR_SYNTAX, p->lex.current.line, "类型守卫语法应为 '变量 is 类型' 或 '变量.字段 is 类型'");
+                        // or/and 后不是类型守卫，回退到 or/and 之后用普通表达式解析
                         free(next_var_name);
                         if (next_field_name) free(next_field_name);
-                        type_guard_list_free(&guard_conds);
-                        return NULL;
+                        p->lex = saved_after_op;
+                        fallback_to_expr = 1;
+                        break;
                     }
                 } else {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望变量名");
-                    type_guard_list_free(&guard_conds);
-                    return NULL;
+                    // or/and 后不是标识符，回退用普通表达式解析
+                    p->lex = saved_after_op;
+                    fallback_to_expr = 1;
+                    break;
                 }
+            }
+
+            // 回退：or/and 后跟的是普通表达式，放弃类型守卫路径，
+            // 恢复 lexer 到变量名前，用 parse_expression 重新解析整个条件
+            // 注意：var_name/field_name 已在前面 free（line 178-179），
+            //       guard_conds 中的拷本由 type_guard_list_free 负责释放
+            if (fallback_to_expr) {
+                type_guard_list_free(&guard_conds);
+                p->lex = saved_lex;
+                cond = parse_expression(p);
             }
         } else {
             // 不是类型守卫，恢复 lexer 位置并正常解析表达式

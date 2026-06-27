@@ -42,6 +42,76 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdarg.h>
+#include <time.h>
+
+/* ===== GC 调试日志 ===== */
+#define GC_DEBUG_LOG 1  /* 1=启用, 0=关闭 */
+static int gc_log_gc_index = 0;
+#if GC_DEBUG_LOG
+static FILE* gc_log = NULL;
+static void gc_log_open(void) {
+    if (!gc_log) { gc_log = fopen("gc_debug.log", "w"); }
+}
+static void gc_log_close(void) { if (gc_log) { fclose(gc_log); gc_log = NULL; } }
+static const char* gc_type_name(ObjType t) {
+    switch (t) {
+        case OBJ_STRING:      return "STRING";
+        case OBJ_ARRAY:       return "ARRAY";
+        case OBJ_DICT:        return "DICT";
+        case OBJ_CLOSURE:     return "CLOSURE";
+        case OBJ_FUNCTION:    return "FUNCTION";
+        case OBJ_NATIVE:      return "NATIVE";
+        case OBJ_GUI_WINDOW:  return "GUI_WINDOW";
+        case OBJ_GUI_RENDERER:return "GUI_RENDERER";
+        case OBJ_GUI_FONT:    return "GUI_FONT";
+        case OBJ_GUI_IMAGE:   return "GUI_IMAGE";
+        case OBJ_GUI_BUTTON:  return "GUI_BUTTON";
+        case OBJ_GUI_LABEL:   return "GUI_LABEL";
+        case OBJ_GUI_TEXTBOX: return "GUI_TEXTBOX";
+        case OBJ_GUI_EVENT:   return "GUI_EVENT";
+        case OBJ_RGB:         return "RGB";
+        case OBJ_BIGINT:      return "BIGINT";
+        case OBJ_MODULE:      return "MODULE";
+        case OBJ_BOUND_METHOD:return "BOUND_METHOD";
+        case OBJ_FILE:        return "FILE";
+        case OBJ_SOCKET:      return "SOCKET";
+        case OBJ_RANGE:       return "RANGE";
+        case OBJ_UPVALUE:     return "UPVALUE";
+        case OBJ_STRUCT_DEF:  return "STRUCT_DEF";
+        case OBJ_FACE_DEF:    return "FACE_DEF";
+        case OBJ_STRUCT:      return "STRUCT";
+        case OBJ_COROUTINE:   return "COROUTINE";
+        case OBJ_FUTURE:      return "FUTURE";
+        case OBJ_THREAD:      return "THREAD";
+        case OBJ_CHANNEL:     return "CHANNEL";
+        case OBJ_CSTRUCT_DEF: return "CSTRUCT_DEF";
+        case OBJ_CSTRUCT:     return "CSTRUCT";
+        case OBJ_CSTRUCT_ARRAY:return "CSTRUCT_ARRAY";
+        case OBJ_CSTRUCT_ARRAY_VIEW:return "CSTRUCT_ARRAY_VIEW";
+        case OBJ_ENUM_DEF:    return "ENUM_DEF";
+        case OBJ_FFI_LIBRARY: return "FFI_LIBRARY";
+        case OBJ_FFI_POINTER: return "FFI_POINTER";
+        case OBJ_FFI_CALLBACK:return "FFI_CALLBACK";
+        default:              return "?";
+    }
+}
+static void gc_log_msg(const char* fmt, ...) {
+    gc_log_open();
+    if (!gc_log) return;
+    time_t now = time(NULL);
+    struct tm* tm = localtime(&now);
+    fprintf(gc_log, "[%02d:%02d:%02d] ", tm->tm_hour, tm->tm_min, tm->tm_sec);
+    va_list ap; va_start(ap, fmt);
+    vfprintf(gc_log, fmt, ap);
+    va_end(ap);
+    fflush(gc_log);
+}
+#else
+#define gc_log_open()  ((void)0)
+#define gc_log_close() ((void)0)
+#define gc_log_msg(...) ((void)0)
+#endif
 
 // 数组对象回收（object/object_array.c）
 extern int arr_try_recycle(ObjArray* arr);
@@ -235,9 +305,9 @@ void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
     } else if (old_size > new_size) {
         size_t diff = old_size - new_size;
         if (obj && obj->generation == GEN_OLD) {
-            gc.old_allocated -= diff;
+            if (gc.old_allocated >= diff) gc.old_allocated -= diff; else gc.old_allocated = 0;
         } else {
-            gc.young_allocated -= diff;
+            if (gc.young_allocated >= diff) gc.young_allocated -= diff; else gc.young_allocated = 0;
         }
         if (obj) obj->size -= diff;
     }
@@ -1327,6 +1397,7 @@ static void free_object_resources(Object* obj) {
 // 清除年轻代：回收未标记对象，晋升存活次数达标的对象到老年代
 static void sweep_young(void) {
     Object** obj = &gc.young_heap;
+    int freed_cnt = 0, promote_cnt = 0;
     while (*obj) {
         // 安全检查：验证对象类型是否有效
         if (!is_valid_obj_type((*obj)->type)) {
@@ -1339,7 +1410,13 @@ static void sweep_young(void) {
         if (!(*obj)->marked) {
             Object* unreached = *obj;
             *obj = unreached->next;
-            gc.young_allocated -= unreached->size;
+            if (gc.young_allocated >= unreached->size)
+                gc.young_allocated -= unreached->size;
+            else
+                gc.young_allocated = 0;
+            gc_log_msg("SWEEP YOUNG free %s @%p size=%zu\n",
+                       gc_type_name(unreached->type), (void*)unreached, unreached->size);
+            freed_cnt++;
             // 尝试回收小数组到 free_list（保留元素缓冲区避免重复 malloc）
             if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
                 continue;
@@ -1351,6 +1428,8 @@ static void sweep_young(void) {
             if ((*obj)->survived >= gc.promote_age) {
                 Object* promote = *obj;
                 *obj = promote->next;
+                gc_log_msg("SWEEP YOUNG promote %s @%p\n", gc_type_name(promote->type), (void*)promote);
+                promote_cnt++;
                 // Major GC 时 sweep_old 紧接着执行，晋升对象必须保持 marked=1
                 promote->marked = (gc.mode == GC_MODE_FULL) ? 1 : 0;
                 promote->generation = GEN_OLD;
@@ -1358,7 +1437,10 @@ static void sweep_young(void) {
                 promote->next = gc.old_heap;
                 gc.old_heap = promote;
                 size_t obj_size = promote->size;
-                gc.young_allocated -= obj_size;
+                if (gc.young_allocated >= obj_size)
+                    gc.young_allocated -= obj_size;
+                else
+                    gc.young_allocated = 0;
                 gc.old_allocated += obj_size;
             } else {
                 (*obj)->marked = 0;
@@ -1366,23 +1448,34 @@ static void sweep_young(void) {
             }
         }
     }
+    gc_log_msg("SWEEP YOUNG done: freed=%d promoted=%d\n", freed_cnt, promote_cnt);
 }
 
 // 清除老年代：回收未标记的对象
 static void sweep_old(void) {
     Object** obj = &gc.old_heap;
+    int freed_cnt = 0;
     while (*obj) {
         if (!is_valid_obj_type((*obj)->type)) {
             Object* invalid = *obj;
             *obj = invalid->next;
-            gc.old_allocated -= invalid->size;
+            if (gc.old_allocated >= invalid->size)
+                gc.old_allocated -= invalid->size;
+            else
+                gc.old_allocated = 0;
             free(invalid);
             continue;
         }
         if (!(*obj)->marked) {
             Object* unreached = *obj;
             *obj = unreached->next;
-            gc.old_allocated -= unreached->size;
+            if (gc.old_allocated >= unreached->size)
+                gc.old_allocated -= unreached->size;
+            else
+                gc.old_allocated = 0;
+            gc_log_msg("SWEEP OLD free %s @%p size=%zu\n",
+                       gc_type_name(unreached->type), (void*)unreached, unreached->size);
+            freed_cnt++;
             // 尝试回收小数组到 free_list
             if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
                 continue;
@@ -1394,6 +1487,7 @@ static void sweep_old(void) {
             obj = &(*obj)->next;
         }
     }
+    if (freed_cnt > 0) gc_log_msg("SWEEP OLD done: freed=%d\n", freed_cnt);
 }
 
 // GC 后重建 remembered set（清除所有条目，由写屏障重新填充）
@@ -1448,6 +1542,10 @@ void gc_minor_collect(void) {
     gc.running = 1;
     gc.mode = GC_MODE_MINOR;
     gc.minor_gc_count++;
+    gc_log_gc_index++;
+
+    gc_log_msg("=== GC #%d MINOR START (young=%zuK old=%zuK) ===\n",
+               gc_log_gc_index, gc.young_allocated/1024, gc.old_allocated/1024);
 
     // 老年代堆积超过 2MB 时升级为含 old sweep 的轻量完整回收
     int do_old_sweep = (gc.old_allocated > GC_OLD_FLUSH_THRESHOLD);
@@ -1477,6 +1575,9 @@ void gc_minor_collect(void) {
     if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
         gc.young_threshold = GC_YOUNG_THRESHOLD;
     }
+
+    gc_log_msg("=== GC #%d MINOR END (young=%zuK old=%zuK) ===\n\n",
+               gc_log_gc_index, gc.young_allocated/1024, gc.old_allocated/1024);
 }
 
 // Major GC：收集全部（年轻代 + 老年代）
@@ -1486,6 +1587,9 @@ void gc_major_collect(void) {
 
     gc.running = 1;
     gc.mode = GC_MODE_FULL;
+    gc_log_gc_index++;
+    gc_log_msg("=== GC #%d MAJOR START (young=%zuK old=%zuK) ===\n",
+               gc_log_gc_index, gc.young_allocated/1024, gc.old_allocated/1024);
 
     clear_all_marks();
     mark_roots();
@@ -1518,6 +1622,9 @@ void gc_major_collect(void) {
     if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
         gc.young_threshold = GC_YOUNG_THRESHOLD;
     }
+
+    gc_log_msg("=== GC #%d MAJOR END (young=%zuK old=%zuK) ===\n\n",
+               gc_log_gc_index, gc.young_allocated/1024, gc.old_allocated/1024);
 }
 
 // 自动选择 Minor 或 Major GC

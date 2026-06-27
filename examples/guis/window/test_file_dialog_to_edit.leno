@@ -52,7 +52,7 @@ main() {
     /* 按钮点击 -> 打开文件对话框 */
     btn_open.on_click(func() {
     
-                    var path = "D:\\CLeno\\chacha20.leno"
+                    var path = "D:\\CLeno\\LenoC\\examples\\crypto\\aes128.leno"
                     /* 读取文件 */
                     File fp=files.open(path,"r")
                     string content=fp.read()

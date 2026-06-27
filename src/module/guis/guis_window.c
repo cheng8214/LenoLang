@@ -67,8 +67,19 @@ static Value win_close_func(int argc, Value* args) {
 static Value win_set_title_func(int argc, Value* args) {
     (void)argc;
     ObjGUIWindow* win = as_window(args[0]);
-    ObjString* title = (ObjString*)val_as_obj(args[1]);
-    if (win && win->platform) leno_gui_platform_set_window_title(win->platform, title->chars);
+    if (!win || !win->platform) return val_null();
+    /* 拷贝字符串，避免 GC 回收导致裸指针失效 */
+    char* title_buf = NULL;
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING) {
+        ObjString* ts = (ObjString*)val_as_obj(args[1]);
+        int tl = (int)strlen(ts->chars);
+        title_buf = (char*)malloc(tl + 1);
+        if (title_buf) memcpy(title_buf, ts->chars, tl + 1);
+    }
+    if (title_buf) {
+        leno_gui_platform_set_window_title(win->platform, title_buf);
+        free(title_buf);
+    }
     return val_null();
 }
 
