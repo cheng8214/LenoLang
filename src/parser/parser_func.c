@@ -108,9 +108,9 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_BUTTON);
     }
-    if (p->lex.current.type == TOK_TEXTBOX_TYPE) {
+    if (p->lex.current.type == TOK_EDIT_TYPE) {
         lexer_next(&p->lex);
-        return type_new(TYPE_TEXTBOX);
+        return type_new(TYPE_EDIT);
     }
     if (p->lex.current.type == TOK_LABEL_TYPE) {
         lexer_next(&p->lex);

@@ -702,7 +702,7 @@ static Value win_add_button_func(int argc, Value* args) {
     return val_obj((Object*)btn);
 }
 
-/* win.add_textbox(style) -> GTextBox - 创建文本框并添加到窗口 */
+/* win.add_edit(style) -> GEdit - 创建文本框并添加到窗口 */
 static Value win_add_textbox_func(int argc, Value* args) {
     (void)argc;
     ObjGUIWindow* win = as_window(args[0]);
@@ -839,7 +839,7 @@ static Value win_add_textbox_func(int argc, Value* args) {
     }
 
     /* 创建文本框对象 */
-    ObjGUITextBox* tb = (ObjGUITextBox*)gc_alloc(sizeof(ObjGUITextBox), OBJ_GUI_TEXTBOX);
+    ObjGUIEdit* tb = (ObjGUIEdit*)gc_alloc(sizeof(ObjGUIEdit), OBJ_GUI_EDIT);
     if (!tb) { free(font_name); return val_null(); }
 
     tb->window = win;
@@ -940,13 +940,13 @@ static Value win_add_textbox_func(int argc, Value* args) {
 
     /* 加载 placeholder 独立字体 */
     if (placeholder_font_size > 0 && placeholder_font_size != font_size) {
-        gui_textbox_update_placeholder_font(tb);
+        gui_edit_update_placeholder_font(tb);
     }
 
     if (tb->anchor > 0 && win->platform) {
         int ww, wh;
         leno_gui_platform_get_window_size(win->platform, &ww, &wh);
-        gui_textbox_update_anchors(win, ww, wh);
+        gui_edit_update_anchors(win, ww, wh);
     }
 
     return val_obj((Object*)tb);
@@ -1189,8 +1189,8 @@ void guis_init_window_instance_methods(void) {
     TypeKind dict_1[] = {TYPE_DICT};
     window_register_method_with_params("add_button", make_native(win_add_button_func, 2, "add_button"), 1, -1, -1, TYPE_BUTTON, TYPE_UNKNOWN, dict_1);
 
-    /* win.add_textbox(style) -> GTextBox */
-    window_register_method_with_params("add_textbox", make_native(win_add_textbox_func, 2, "add_textbox"), 1, -1, -1, TYPE_TEXTBOX, TYPE_UNKNOWN, dict_1);
+    /* win.add_edit(style) -> GEdit */
+    window_register_method_with_params("add_edit", make_native(win_add_textbox_func, 2, "add_edit"), 1, -1, -1, TYPE_EDIT, TYPE_UNKNOWN, dict_1);
 
     /* win.add_label(style) -> GLabel */
     window_register_method_with_params("add_label", make_native(win_add_label_func, 2, "add_label"), 1, -1, -1, TYPE_LABEL, TYPE_UNKNOWN, dict_1);

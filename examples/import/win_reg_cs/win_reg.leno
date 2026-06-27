@@ -1,4 +1,4 @@
-﻿// Windows 注册表操作模块（Unicode 版本）
+// Windows 注册表操作模块（Unicode 版本）
 
 import ffi
 

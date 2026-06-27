@@ -20,9 +20,9 @@ typedef struct {
     struct ObjGUIButton* buttons;      /* 按钮链表头 */
     int button_count;
     /* 文本框列表 */
-    struct ObjGUITextBox* textboxes;   /* 文本框链表头 */
+    struct ObjGUIEdit* textboxes;   /* 文本框链表头 */
     int textbox_count;
-    struct ObjGUITextBox* focused_textbox; /* 当前焦点文本框 */
+    struct ObjGUIEdit* focused_textbox; /* 当前焦点文本框 */
     /* 标签列表 */
     struct ObjGUILabel* labels;        /* 标签链表头 */
     int label_count;
@@ -169,10 +169,10 @@ typedef struct {
     size_t total_size;             /* 栈中 action 占用的总字节数 */
 } TBUndoStack;
 
-/* GTextBox 文本框对象 */
-typedef struct ObjGUITextBox {
+/* GEdit 文本框对象 */
+typedef struct ObjGUIEdit {
     Object header;
-    struct ObjGUITextBox* next;    /* 链表下一个 */
+    struct ObjGUIEdit* next;    /* 链表下一个 */
     ObjGUIWindow* window;          /* 所属窗口 */
     /* 位置和尺寸 */
     int x, y, width, height;
@@ -268,7 +268,7 @@ typedef struct ObjGUITextBox {
     /* 回调 */
     Value on_change;               /* 文本改变回调 */
     Value on_submit;               /* 回车提交回调 */
-} ObjGUITextBox;
+} ObjGUIEdit;
 
 /* GLabel 标签对象 - 静态文本显示 */
 typedef struct ObjGUILabel {
@@ -316,7 +316,7 @@ ObjGUIRenderer* as_renderer(Value v);
 ObjGUIFont* as_font(Value v);
 ObjGUIImage* as_image(Value v);
 ObjGUIButton* as_button(Value v);
-ObjGUITextBox* as_textbox(Value v);
+ObjGUIEdit* as_edit(Value v);
 ObjGUILabel* as_label(Value v);
 ObjArray* make_int_array2(int a, int b);
 ObjGUIWindow* as_window_from_platform(LenoGUIPlatformWindow* pw);
@@ -361,18 +361,18 @@ int gui_button_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
 void gui_button_free_all(ObjGUIWindow* win);
 void gui_button_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
 
-/* GTextBox 文本框绘制和事件处理 */
-void gui_textbox_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
-int  gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
-void gui_textbox_free_all(ObjGUIWindow* win);
-void gui_textbox_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
-void gui_textbox_update_placeholder_font(ObjGUITextBox* tb);
-void gui_textbox_register_methods(void);
-extern void guis_init_textbox_instance_methods(void);
+/* GEdit 文本框绘制和事件处理 */
+void gui_edit_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);
+int  gui_edit_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev);
+void gui_edit_free_all(ObjGUIWindow* win);
+void gui_edit_update_anchors(ObjGUIWindow* win, int win_w, int win_h);
+void gui_edit_update_placeholder_font(ObjGUIEdit* tb);
+void gui_edit_register_methods(void);
+extern void guis_init_edit_instance_methods(void);
 
 /* TextBox 内部资源释放（供 GC free_object_resources 调用） */
-extern void tb_free_layouts(ObjGUITextBox* tb);
-extern void tb_undo_free_stack(TBUndoStack* stack);
+extern void ed_free_layouts(ObjGUIEdit* tb);
+extern void ed_undo_free_stack(TBUndoStack* stack);
 
 /* GLabel 标签绘制和锚点 */
 void gui_label_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren);

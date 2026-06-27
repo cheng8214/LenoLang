@@ -1,4 +1,4 @@
-﻿// Windows 注册表操作模块（Unicode 版本）- 使用 Ptr 类型 + struct 结构体
+// Windows 注册表操作模块（Unicode 版本）- 使用 Ptr 类型 + struct 结构体
 // 功能：
 // 1. 基本键操作（打开、创建、关闭、删除）
 // 2. 值操作（读写字符串、DWORD、MULTI_SZ）

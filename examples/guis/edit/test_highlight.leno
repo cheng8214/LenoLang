@@ -1,5 +1,5 @@
 // ============================================================
-// GTextBox - 关键字高亮测试
+// GEdit - 关键字高亮测试
 // 自动高亮 for/if/else/func/import/var/return/while/true/false
 // 复制几百行代码进来测试性能
 // ============================================================
@@ -39,7 +39,7 @@ main() {
         sb_thumb_hover_color: _rgb(100, 120, 170, 255),
         sb_thumb_press_color: _rgb(50, 60, 90, 255)
     }
-    GTextBox tb = win.add_textbox(s_edit)
+    GEdit tb = win.add_edit(s_edit)
 
     // 预置示例代码
     var sample =

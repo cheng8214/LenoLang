@@ -49,7 +49,7 @@ typedef enum {
     OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
     OBJ_GUI_IMAGE,    // GUI 图像对象
     OBJ_GUI_BUTTON,   // GUI 按钮对象
-    OBJ_GUI_TEXTBOX,  // GUI 文本框对象
+    OBJ_GUI_EDIT,  // GUI 文本框对象
     OBJ_GUI_LABEL,    // GUI 标签对象
     OBJ_SOCKET,       // Socket 对象
     OBJ_RGB,          // RGB 颜色对象
@@ -1417,13 +1417,13 @@ ButtonMethodEntry button_find_method_meta(const char* name);
 TypeKind button_get_method_param_type(const char* method_name, int param_index);
 ObjNative* button_find_method(const char* name);
 
-/* GTextBox 方法注册 */
-void textbox_init_methods(void);
-void textbox_mark_methods(void);
-void textbox_register_method_with_params(const char* name, ObjNative* method, int arity,
+/* GEdit 方法注册 */
+void edit_init_methods(void);
+void edit_mark_methods(void);
+void edit_register_method_with_params(const char* name, ObjNative* method, int arity,
                                         int min_arity, int max_arity,
                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-ObjNative* textbox_find_method(const char* name);
+ObjNative* edit_find_method(const char* name);
 
 /* GLabel 方法注册 */
 void label_init_methods(void);

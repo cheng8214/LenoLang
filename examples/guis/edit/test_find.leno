@@ -1,5 +1,5 @@
 // ============================================================
-// GTextBox - 查找功能测试
+// GEdit - 查找功能测试
 // 测试: find（中文/英文/数字）+ select 选中高亮
 // ============================================================
 
@@ -15,7 +15,7 @@ main() {
         bg_color: _rgb(26, 26, 42, 255),
         resizable: true
     }
-    GWin win = guis.create_window("GTextBox 查找 & 选中测试", w_style)
+    GWin win = guis.create_window("GEdit 查找 & 选中测试", w_style)
 
     var font_title = guis.load_font("Arial", 20)
     var font_info  = guis.load_font("Arial", 13)
@@ -30,7 +30,7 @@ main() {
         selection_color: _rgb(255, 200, 60, 160),
         focus_color: _rgb(100, 180, 240, 255)
     }
-    GTextBox tb = win.add_textbox(s_edit)
+    GEdit tb = win.add_edit(s_edit)
     tb.set_text("LenoC is a modern programming language.\n\nLeno语言是一种现代编程语言。\n支持中文和英文混合文本。\n\nHello World! 你好世界！\n0123456789 数字也可以查找\n\nLenoC - 快速、简洁、高效\nfind function testing now!\n\nABCDEFG abcdefg\nABCDEFG 第二次出现")
 
     // ===== 按钮 =====

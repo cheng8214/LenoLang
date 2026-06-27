@@ -14,7 +14,7 @@ main() {
     var win = guis.create_window("诊断", w_style)
     GFont font = guis.load_font("Consolas", 16)
 
-    GTextBox tb = win.add_textbox({
+    GEdit tb = win.add_edit({
         x: 50, y: 80, width: 380, height: 40,
         placeholder: "点我，切中文输入法，打字",
         radius: 4, border_width: 1,

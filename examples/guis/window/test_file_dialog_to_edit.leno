@@ -29,7 +29,7 @@ main() {
         radius: 4
     })
     /* 文本框 */
-    var edit = win.add_textbox({
+    var edit = win.add_edit({
         x: 20,
         y: 70,
         width: 760,

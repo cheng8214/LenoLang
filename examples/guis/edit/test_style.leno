@@ -1,5 +1,5 @@
 // ============================================================
-// GTextBox - Style[edit] 样式声明测试
+// GEdit - Style[edit] 样式声明测试
 // 使用 Style[edit] 而非内联 dict，支持 IDE 自动补全
 // ============================================================
 
@@ -29,7 +29,7 @@ main() {
         selection_color: _rgb(255, 180, 60, 140),
         font_size: 15, radius: 6
     }
-    GTextBox tb1 = win.add_textbox(s_cursor)
+    GEdit tb1 = win.add_edit(s_cursor)
     tb1.set_text("选中文字看选区颜色")
 
     // ========== 2. 样式：蓝色主题全部颜色 ==========
@@ -43,7 +43,7 @@ main() {
         focus_color: _rgb(80, 160, 255, 255),
         font_size: 15, radius: 6
     }
-    win.add_textbox(s_blue)
+    win.add_edit(s_blue)
 
     // ========== 3. 样式：字间距 4px + 绿色主题 ==========
     Style[edit] s_green = {
@@ -57,7 +57,7 @@ main() {
         letter_spacing: 4,
         font_size: 16, radius: 6
     }
-    GTextBox tb3 = win.add_textbox(s_green)
+    GEdit tb3 = win.add_edit(s_green)
     tb3.set_text("G R E E N")
 
     // ========== 4. 样式：自定义滚动条颜色 ==========
@@ -71,7 +71,7 @@ main() {
         sb_thumb_hover_color: _rgb(180, 150, 240, 255),
         sb_thumb_press_color: _rgb(100, 60, 160, 255)
     }
-    GTextBox tb4 = win.add_textbox(s_scroll)
+    GEdit tb4 = win.add_edit(s_scroll)
     tb4.set_text("紫色滚动条\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10\nLine 11\nLine 12\nLine 13")
 
     // ========== 5. 样式：深色滚动条 + 亮色主题 ==========
@@ -91,7 +91,7 @@ main() {
         sb_thumb_hover_color: _rgb(90, 110, 160, 255),
         sb_thumb_press_color: _rgb(40, 50, 80, 255)
     }
-    GTextBox tb5 = win.add_textbox(s_dark)
+    GEdit tb5 = win.add_edit(s_dark)
     tb5.set_text("暗色主题滚动条\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10")
 
     // ========== 6. 样式：密码框 + placeholder 颜色 ==========
@@ -105,7 +105,7 @@ main() {
         focus_color: _rgb(220, 190, 60, 255),
         font_size: 15, radius: 6
     }
-    win.add_textbox(s_pwd)
+    win.add_edit(s_pwd)
 
     // ========== 7. 样式：圆角 + 粗边框 ==========
     Style[edit] s_round = {
@@ -119,7 +119,7 @@ main() {
         focus_color: _rgb(255, 160, 60, 255),
         font_size: 16
     }
-    win.add_textbox(s_round)
+    win.add_edit(s_round)
 
     // ========== 8. 样式：placeholder 独立字体大小 ==========
     Style[edit] s_ph = {
@@ -129,7 +129,7 @@ main() {
         placeholder_font_size: 11,
         font_size: 18, radius: 6
     }
-    win.add_textbox(s_ph)
+    win.add_edit(s_ph)
 
     // ========== 9. 样式：禁用状态 ==========
     Style[edit] s_disabled = {
@@ -138,7 +138,7 @@ main() {
         border_color: _rgb(120, 120, 140, 255),
         font_size: 15, radius: 6
     }
-    GTextBox tb9 = win.add_textbox(s_disabled)
+    GEdit tb9 = win.add_edit(s_disabled)
     tb9.set_enabled(false)
 
     // ========== 10. 样式：全属性综合 ==========
@@ -164,7 +164,7 @@ main() {
         sb_thumb_hover_color: _rgb(120, 140, 200, 255),
         sb_thumb_press_color: _rgb(60, 70, 110, 255)
     }
-    GTextBox tb10 = win.add_textbox(s_all)
+    GEdit tb10 = win.add_edit(s_all)
     tb10.set_text("全属性 Style[edit] 示例\n边框/圆角/颜色/滚动条\n字间距/placeholder/字体\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10\nLine 11\nLine 12\nLine 13\nLine 14\nLine 15\nLine 16\nLine 17\nLine 18\nLine 19\nLine 20")
 
     // ===== 渲染 =====

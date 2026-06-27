@@ -1,5 +1,5 @@
 // ============================================================
-// GTextBox - 大文本测试
+// GEdit - 大文本测试
 // 编辑框铺满窗口，Ctrl+V 粘贴代码，ESC 退出
 // ============================================================
 
@@ -38,7 +38,7 @@ main() {
         sb_thumb_hover_color: _rgb(100, 120, 170, 255),
         sb_thumb_press_color: _rgb(50, 60, 90, 255)
     }
-    GTextBox tb = win.add_textbox(s_edit)
+    GEdit tb = win.add_edit(s_edit)
 
     win.run(
         func(GDraw ren) {

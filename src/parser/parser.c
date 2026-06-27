@@ -86,7 +86,7 @@ Ast* parse_statement(Parser* p) {
         case TOK_IMAGE_TYPE:
         case TOK_FONT_TYPE:
         case TOK_BUTTON_TYPE:
-        case TOK_TEXTBOX_TYPE:
+        case TOK_EDIT_TYPE:
         case TOK_LABEL_TYPE:
         case TOK_STYLE_TYPE:
         case TOK_SOCKET_TYPE:

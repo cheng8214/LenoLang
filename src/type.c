@@ -602,7 +602,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_IMAGE:    return "GImage";
         case TYPE_FONT:     return "GFont";
         case TYPE_BUTTON:   return "GButton";
-        case TYPE_TEXTBOX:  return "GTextBox";
+        case TYPE_EDIT:  return "GEdit";
         case TYPE_LABEL:    return "GLabel";
         case TYPE_STYLE:    return "Style";
         case TYPE_SOCKET:   return "Socket";
@@ -703,8 +703,8 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type_new(TYPE_FONT);
             } else if (val_as_obj(*v)->type == OBJ_GUI_BUTTON) {
                 return type_new(TYPE_BUTTON);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_TEXTBOX) {
-                return type_new(TYPE_TEXTBOX);
+            } else if (val_as_obj(*v)->type == OBJ_GUI_EDIT) {
+                return type_new(TYPE_EDIT);
             } else if (val_as_obj(*v)->type == OBJ_DICT) {
                 return type_new(TYPE_DICT);
             } else if (val_as_obj(*v)->type == OBJ_FFI_POINTER) {
@@ -1008,7 +1008,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_IMAGE_TYPE:    return TYPE_IMAGE;
         case TOK_FONT_TYPE:     return TYPE_FONT;
         case TOK_BUTTON_TYPE:   return TYPE_BUTTON;
-        case TOK_TEXTBOX_TYPE:  return TYPE_TEXTBOX;
+        case TOK_EDIT_TYPE:  return TYPE_EDIT;
         case TOK_LABEL_TYPE:    return TYPE_LABEL;
         case TOK_STYLE_TYPE:    return TYPE_STYLE;
         case TOK_SOCKET_TYPE:   return TYPE_SOCKET;

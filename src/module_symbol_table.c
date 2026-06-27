@@ -446,7 +446,7 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     if (strcmp(buf, "GImage") == 0) return type_new(TYPE_IMAGE);
     if (strcmp(buf, "GFont") == 0)  return type_new(TYPE_FONT);
     if (strcmp(buf, "GButton") == 0) return type_new(TYPE_BUTTON);
-    if (strcmp(buf, "GTextBox") == 0) return type_new(TYPE_TEXTBOX);
+    if (strcmp(buf, "GEdit") == 0) return type_new(TYPE_EDIT);
     if (strcmp(buf, "GLabel") == 0) return type_new(TYPE_LABEL);
     if (strcmp(buf, "Socket") == 0) return type_new(TYPE_SOCKET);
     // 指针类型
@@ -560,7 +560,7 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "GImage") == 0) return TYPE_IMAGE;
     if (strcmp(type_str, "GFont") == 0)  return TYPE_FONT;
     if (strcmp(type_str, "GButton") == 0) return TYPE_BUTTON;
-    if (strcmp(type_str, "GTextBox") == 0) return TYPE_TEXTBOX;
+    if (strcmp(type_str, "GEdit") == 0) return TYPE_EDIT;
     if (strcmp(type_str, "GLabel") == 0) return TYPE_LABEL;
     if (strcmp(type_str, "Style") == 0)  return TYPE_STYLE;
     // 网络/指针类型

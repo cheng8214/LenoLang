@@ -1,5 +1,5 @@
 // ============================================================
-// GTextBox - placeholder 测试
+// GEdit - placeholder 测试
 // 测试：不同颜色、字体大小、多行、密码框等场景
 // ============================================================
 
@@ -15,13 +15,13 @@ main() {
         bg_color: _rgb(30, 30, 46, 255),
         resizable: true
     }
-    GWin win = guis.create_window("GTextBox Placeholder 测试", w_style)
+    GWin win = guis.create_window("GEdit Placeholder 测试", w_style)
 
     var font_title = guis.load_font("Arial", 24)
     var font_label = guis.load_font("Arial", 13)
 
     // ---- 1. 默认 placeholder ----
-    GTextBox tb1 = win.add_textbox({
+    GEdit tb1 = win.add_edit({
         x: 50, y: 70, width: 300, height: 36,
         placeholder: "请输入用户名...",
         font_size: 14,
@@ -29,7 +29,7 @@ main() {
     })
 
     // ---- 2. 自定义 placeholder 颜色 ----
-    GTextBox tb2 = win.add_textbox({
+    GEdit tb2 = win.add_edit({
         x: 50, y: 130, width: 300, height: 36,
         placeholder: "浅红色 placeholder",
         placeholder_color: _rgb(255, 120, 120, 180),
@@ -38,7 +38,7 @@ main() {
     })
 
     // ---- 3. placeholder 字体更小 ----
-    GTextBox tb3 = win.add_textbox({
+    GEdit tb3 = win.add_edit({
         x: 50, y: 190, width: 300, height: 40,
         placeholder: "Search something... (smaller)",
         placeholder_color: _rgb(140, 160, 200, 200),
@@ -48,7 +48,7 @@ main() {
     })
 
     // ---- 4. 密码框 placeholder ----
-    GTextBox tb4 = win.add_textbox({
+    GEdit tb4 = win.add_edit({
         x: 400, y: 70, width: 300, height: 36,
         placeholder: "输入密码",
         placeholder_color: _rgb(200, 200, 150, 200),
@@ -58,7 +58,7 @@ main() {
     })
 
     // ---- 5. 多行 placeholder ----
-    GTextBox tb5 = win.add_textbox({
+    GEdit tb5 = win.add_edit({
         x: 400, y: 130, width: 300, height: 120,
         placeholder: "多行编辑框...\n可以输入多行文字\n支持滚动条",
         placeholder_color: _rgb(120, 180, 140, 200),
@@ -68,7 +68,7 @@ main() {
     })
 
     // ---- 6. 深色背景 + 亮色 placeholder ----
-    GTextBox tb6 = win.add_textbox({
+    GEdit tb6 = win.add_edit({
         x: 50, y: 260, width: 300, height: 40,
         placeholder: "深色背景 placeholder",
         bg_color: _rgb(50, 55, 70, 255),
@@ -81,7 +81,7 @@ main() {
     })
 
     // ---- 7. 粗边框 + 大圆角 + placeholder ----
-    GTextBox tb7 = win.add_textbox({
+    GEdit tb7 = win.add_edit({
         x: 400, y: 280, width: 300, height: 44,
         placeholder: "大圆角 & 粗边框",
         border_width: 2,
@@ -105,7 +105,7 @@ main() {
             ren.clear()
 
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text(font_title, "GTextBox - Placeholder 测试", 50, 20)
+            ren.draw_text(font_title, "GEdit - Placeholder 测试", 50, 20)
 
             // 标签
             ren.set_color(_rgb(180, 180, 200, 255))

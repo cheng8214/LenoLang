@@ -1,23 +1,23 @@
 // ============================================================
-// GTextBox 文本框测试
+// GEdit 文本框测试
 // 功能: 文本输入、光标、占位符、密码模式、锚点、Ctrl+A/C/V/X
 // ============================================================
 
 import guis
 
 main() {
-    print("=== GTextBox 文本框测试 ===")
+    print("=== GEdit 文本框测试 ===")
     print("点击文本框获得焦点，输入文字 | Ctrl+A/C/V/X | 回车提交 | 拖动窗口缩放")
 
     Style[window] w_style = {
         width: 700, height: 450, center: true,
         bg_color: _rgb(28, 28, 44, 255), resizable: true
     }
-    var win = guis.create_window("GTextBox 测试", w_style)
+    var win = guis.create_window("GEdit 测试", w_style)
     GFont font = guis.load_font("Microsoft YaHei", 16)
 
     // 普通文本框
-    GTextBox tb1 = win.add_textbox({
+    GEdit tb1 = win.add_edit({
         x: 50, y: 70, width: 300, height: 38,
         placeholder: "请输入用户名...",
         bg_color: _rgb(255,255,255,255),
@@ -31,7 +31,7 @@ main() {
     tb1.on_submit(func() { print("用户名已提交!") })
 
     // 密码框
-    GTextBox tb2 = win.add_textbox({
+    GEdit tb2 = win.add_edit({
         x: 50, y: 140, width: 300, height: 38,
         placeholder: "请输入密码...",
         password: true,
@@ -46,7 +46,7 @@ main() {
     tb2.on_submit(func() { print("密码已提交!") })
 
     // 右下角锚点
-    GTextBox tb3 = win.add_textbox({
+    GEdit tb3 = win.add_edit({
         x: 0, y: 0, width: 220, height: 34,
         placeholder: "右下角锚点",
         radius: 4, border_width: 1,

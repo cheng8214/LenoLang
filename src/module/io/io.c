@@ -137,8 +137,8 @@ static void print_value_internal(Value value) {
                     printf("<gbutton>");
                     break;
                 }
-                case OBJ_GUI_TEXTBOX: {
-                    printf("<gtextbox>");
+                case OBJ_GUI_EDIT: {
+                    printf("<GEdit>");
                     break;
                 }
                 case OBJ_GUI_LABEL: {

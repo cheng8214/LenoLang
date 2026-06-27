@@ -306,7 +306,7 @@ void gc_mark_object(Object* obj) {
                 btn = btn->next;
             }
             /* 标记窗口的文本框链表，防止文本框被 GC 回收 */
-            struct ObjGUITextBox* tb = (struct ObjGUITextBox*)w->textboxes;
+            struct ObjGUIEdit* tb = (struct ObjGUIEdit*)w->textboxes;
             while (tb) {
                 gc_mark_object((Object*)tb);
                 tb = tb->next;
@@ -337,8 +337,8 @@ void gc_mark_object(Object* obj) {
             if (btn->next) gc_mark_object((Object*)btn->next);
             break;
         }
-        case OBJ_GUI_TEXTBOX: {
-            ObjGUITextBox* tb = (ObjGUITextBox*)obj;
+        case OBJ_GUI_EDIT: {
+            ObjGUIEdit* tb = (ObjGUIEdit*)obj;
             if (tb->window) gc_mark_object((Object*)tb->window);
             if (tb->font) gc_mark_object((Object*)tb->font);
             /* placeholder_font 是 calloc 分配，不参与 GC */
@@ -715,10 +715,10 @@ static void mark_roots(void) {
     cstruct_mark_methods();
     struct_mark_methods();
     extern void button_mark_methods(void);
-    extern void textbox_mark_methods(void);
+    extern void edit_mark_methods(void);
     extern void label_mark_methods(void);
     button_mark_methods();
-    textbox_mark_methods();
+    edit_mark_methods();
     label_mark_methods();
 
     // 10. 标记内化字符串表（仅 Minor GC 使用，Major GC 改用 intern_sweep_unmarked）
@@ -1069,8 +1069,8 @@ static void free_object_resources(Object* obj) {
             if (lb->font_name) { free(lb->font_name); lb->font_name = NULL; }
             break;
         }
-        case OBJ_GUI_TEXTBOX: {
-            ObjGUITextBox* tb = (ObjGUITextBox*)obj;
+        case OBJ_GUI_EDIT: {
+            ObjGUIEdit* tb = (ObjGUIEdit*)obj;
             if (tb->gb.buf) { free(tb->gb.buf); tb->gb.buf = NULL; }
             if (tb->placeholder) { free(tb->placeholder); tb->placeholder = NULL; }
             if (tb->font_name) { free(tb->font_name); tb->font_name = NULL; }
@@ -1085,9 +1085,9 @@ static void free_object_resources(Object* obj) {
             }
             /* tb->font 是 GC 对象，由 GC 回收 */
             if (tb->line_starts) { free(tb->line_starts); tb->line_starts = NULL; }
-            tb_free_layouts(tb);
-            tb_undo_free_stack(&tb->undo_stack);
-            tb_undo_free_stack(&tb->redo_stack);
+            ed_free_layouts(tb);
+            ed_undo_free_stack(&tb->undo_stack);
+            ed_undo_free_stack(&tb->redo_stack);
             break;
         }
         case OBJ_GUI_EVENT:

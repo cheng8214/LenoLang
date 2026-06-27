@@ -7,7 +7,7 @@ main() {
     }
     var win = guis.create_window("多行文本框测试", w_style)
 
-    GTextBox tb = win.add_textbox({
+    GEdit tb = win.add_edit({
         x: 50, y: 50, width: 600, height: 360,
         multiline: true,
         placeholder: "请输入多行文本...",

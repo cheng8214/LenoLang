@@ -73,7 +73,7 @@ set SOURCES=!SOURCES! src\module\guis\leno_guis_log.c
 set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\module\guis\guis_button.c
 set SOURCES=!SOURCES! src\module\guis\guis_label.c
-set SOURCES=!SOURCES! src\module\guis\guis_textbox.c
+set SOURCES=!SOURCES! src\module\guis\guis_edit.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 

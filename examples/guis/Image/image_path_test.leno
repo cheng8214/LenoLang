@@ -1,4 +1,4 @@
-﻿import guis
+import guis
 
 main() {
     // 测试1：相对路径（已知能工作）

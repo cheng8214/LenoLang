@@ -1164,10 +1164,10 @@ static void leno_gui_render_callback(void* user_data) {
         int ww, wh;
         leno_gui_platform_get_window_size(win->platform, &ww, &wh);
         gui_button_update_anchors(win, ww, wh);
-        gui_textbox_update_anchors(win, ww, wh);
+        gui_edit_update_anchors(win, ww, wh);
         gui_label_update_anchors(win, ww, wh);
         gui_button_draw_all(win, state->ren_obj);
-        gui_textbox_draw_all(win, state->ren_obj);
+        gui_edit_draw_all(win, state->ren_obj);
         gui_label_draw_all(win, state->ren_obj);
     }
 
@@ -1183,7 +1183,7 @@ static void leno_gui_event_callback(void* user_data, LenoGUIEvent* ev) {
     /* 先处理文本框事件（键盘输入优先），再处理按钮事件 */
     ObjGUIWindow* win = state->ren_obj->window;
     if (win) {
-        if (gui_textbox_handle_event(win, ev)) return;
+        if (gui_edit_handle_event(win, ev)) return;
         gui_button_handle_event(win, ev);
     }
 
@@ -1503,7 +1503,7 @@ void guis_init_module(void) {
 
     /* 注册 GButton 实例方法 */
     guis_init_button_instance_methods();
-    guis_init_textbox_instance_methods();
+    guis_init_edit_instance_methods();
     guis_init_label_instance_methods();
 }
 

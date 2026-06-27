@@ -1,5 +1,5 @@
 // ============================================================
-// GTextBox - 滚动条颜色 & 字间距测试
+// GEdit - 滚动条颜色 & 字间距测试
 // 测试：hover 变色、按下变深、字间距效果
 // ============================================================
 
@@ -14,13 +14,13 @@ main() {
         bg_color: _rgb(24, 24, 40, 255),
         resizable: true
     }
-    GWin win = guis.create_window("GTextBox 滚动条 & 字间距测试", w_style)
+    GWin win = guis.create_window("GEdit 滚动条 & 字间距测试", w_style)
 
     var font_title = guis.load_font("Arial", 22)
     var font_label = guis.load_font("Arial", 12)
 
     // ========== 1. 水平滚动条颜色（单行长文字） ==========
-    GTextBox tb_h = win.add_textbox({
+    GEdit tb_h = win.add_edit({
         x: 50, y: 70, width: 350, height: 40,
         placeholder: "水平滚动条...",
         font_size: 16, radius: 6
@@ -32,7 +32,7 @@ main() {
     tb_h.set_sb_thumb_press(_rgb(60, 100, 160, 255))
 
     // ========== 2. 垂直滚动条颜色（多行） ==========
-    GTextBox tb_v = win.add_textbox({
+    GEdit tb_v = win.add_edit({
         x: 50, y: 150, width: 350, height: 180,
         placeholder: "垂直滚动条...",
         multiline: true,
@@ -45,7 +45,7 @@ main() {
     tb_v.set_sb_thumb_press(_rgb(140, 80, 40, 255))
 
     // ========== 3. 字间距 3px ==========
-    GTextBox tb_sp1 = win.add_textbox({
+    GEdit tb_sp1 = win.add_edit({
         x: 50, y: 370, width: 350, height: 36,
         placeholder: "letter_spacing: 3px",
         font_size: 16, radius: 6
@@ -54,7 +54,7 @@ main() {
     tb_sp1.set_letter_spacing(3)
 
     // ========== 4. 字间距 6px（加大） ==========
-    GTextBox tb_sp2 = win.add_textbox({
+    GEdit tb_sp2 = win.add_edit({
         x: 50, y: 430, width: 350, height: 36,
         placeholder: "letter_spacing: 6px",
         font_size: 16, radius: 6
@@ -63,7 +63,7 @@ main() {
     tb_sp2.set_letter_spacing(6)
 
     // ========== 5. 深色主题滚动条 ==========
-    GTextBox tb_dark = win.add_textbox({
+    GEdit tb_dark = win.add_edit({
         x: 430, y: 70, width: 330, height: 200,
         placeholder: "深色主题",
         multiline: true,
@@ -83,7 +83,7 @@ main() {
     tb_dark.set_sb_thumb_press(_rgb(60, 70, 100, 255))
 
     // ========== 6. 绿色主题滚动条 ==========
-    GTextBox tb_green = win.add_textbox({
+    GEdit tb_green = win.add_edit({
         x: 430, y: 300, width: 330, height: 200,
         placeholder: "绿色主题",
         multiline: true,
@@ -101,7 +101,7 @@ main() {
     tb_green.set_sb_thumb_press(_rgb(30, 100, 50, 255))
 
     // ========== 7. 字间距 + 长文字（横向滚动 + 大间距） ==========
-    GTextBox tb_sp3 = win.add_textbox({
+    GEdit tb_sp3 = win.add_edit({
         x: 430, y: 540, width: 330, height: 36,
         placeholder: "spacing:4 + 长文字",
         font_size: 16, radius: 6

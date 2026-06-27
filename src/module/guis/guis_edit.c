@@ -1,13 +1,13 @@
-/* Leno GUI - GTextBox
+/* Leno GUI - GEdit
  *
- * GTextBox 实例方法 (tb.method()):
+ * GEdit 实例方法 (tb.method()):
  *   tb.set_text(text)    tb.set_placeholder(text)
  *   tb.set_password(bool) tb.set_max_length(n)
  *   tb.on_change(cb)     tb.on_submit(cb)
  *   tb.set_anchor(a, mx, my)
  *
  * 内部函数:
- *   gui_textbox_draw_all/event/anchor/free_all
+ *   gui_edit_draw_all/event/anchor/free_all
  */
 #include "include/native.h"
 #include "include/leno_value.h"
@@ -17,11 +17,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define TB_CAP 256
-#define BLINK_MS 500
+#define ED_CAP 256
+#define ED_BLINK_MS 500
 
 /* 行高 = 字体大小 + 行间距（由用户设定，默认 4 像素） */
-static inline int tb_line_height(ObjGUITextBox* tb) {
+static inline int tb_line_height(ObjGUIEdit* tb) {
     int sp = tb->line_spacing > 0 ? tb->line_spacing : 4;
     return tb->font_size + sp;
 }
@@ -142,13 +142,13 @@ static int gb_strlen(const GapBuffer* gb) {
 }
 
 /* ===== Helpers ===== */
-ObjGUITextBox* as_textbox(Value v) {
+ObjGUIEdit* as_edit(Value v) {
     if (!val_is_obj(v)) return NULL;
-    return (ObjGUITextBox*)val_as_obj(v);
+    return (ObjGUIEdit*)val_as_obj(v);
 }
 /* 测量文本宽度（DrawTextW DT_CALCRECT，与渲染一致） */
 /* start/len 为 GapBuffer 逻辑字节范围 */
-static int tc_text_width_to(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int start, int len) {
+static int tc_text_width_to(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren, int start, int len) {
     if (len <= 0 || !tb->font || !tb->font->platform) return 0;
     if (tb->password) {
         int n = 0, p = start;
@@ -173,7 +173,7 @@ static int tc_text_width_to(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int
     return w;
 }
 /* ===== 行索引 —— 每帧重建，零增量同步，杜绝 bug ===== */
-static void tb_lines_ensure(ObjGUITextBox* tb) {
+static void tb_lines_ensure(ObjGUIEdit* tb) {
     if (!tb->text_is_dirty) return;
     int tlen = gb_len(&tb->gb);
     int need = 1;
@@ -194,16 +194,16 @@ static void tb_lines_ensure(ObjGUITextBox* tb) {
 }
 
 /* ---- 行查询（基于 line_starts 数组，调用前须 tb_lines_ensure）---- */
-static int tb_line_start_tb(ObjGUITextBox* tb, int line) {
+static int tb_line_start_tb(ObjGUIEdit* tb, int line) {
     if (!tb->line_starts || line < 0) return 0;
     if (line >= tb->line_count) line = tb->line_count - 1;
     return tb->line_starts[line];
 }
-static int tb_line_end_tb(ObjGUITextBox* tb, int line) {
+static int tb_line_end_tb(ObjGUIEdit* tb, int line) {
     if (line + 1 < tb->line_count) return tb->line_starts[line + 1] - 1;
     return gb_len(&tb->gb);
 }
-static int tb_current_line_tb(ObjGUITextBox* tb, int pos) {
+static int tb_current_line_tb(ObjGUIEdit* tb, int pos) {
     if (!tb->line_starts || tb->line_count == 0) return 0;
     int lo = 0, hi = tb->line_count - 1;
     while (lo < hi) {
@@ -214,10 +214,10 @@ static int tb_current_line_tb(ObjGUITextBox* tb, int pos) {
     return lo;
 }
 
-static void tb_invalidate_layouts_from(ObjGUITextBox* tb, int line);
+static void tb_invalidate_layouts_from(ObjGUIEdit* tb, int line);
 
 /* 增量更新行索引：在 pos 处插入/删除 delta 字节后调用（delta 正为插入，负为删除） */
-static void tb_update_line_index(ObjGUITextBox* tb, int pos, int delta) {
+static void tb_update_line_index(ObjGUIEdit* tb, int pos, int delta) {
     if (!tb->line_starts || tb->line_count == 0) {
         tb->text_is_dirty = 1;
         return;
@@ -253,21 +253,21 @@ static void tb_update_line_index(ObjGUITextBox* tb, int pos, int delta) {
     tb_invalidate_layouts_from(tb, line);
 }
 
-static void tb_pos_to_line_col_ex(ObjGUITextBox* tb, int pos, int* line, int* col) {
+static void tb_pos_to_line_col_ex(ObjGUIEdit* tb, int pos, int* line, int* col) {
     int ln = tb_current_line_tb(tb, pos);
     int ls = tb_line_start_tb(tb, ln);
     if (line) *line = ln;
     if (col) *col = pos - ls;
 }
-static int tb_line_col_to_pos(ObjGUITextBox* tb, int line, int col) {
+static int tb_line_col_to_pos(ObjGUIEdit* tb, int line, int col) {
     int ls = tb_line_start_tb(tb, line);
     return ls + col;
 }
-static int tb_line_y(ObjGUITextBox* tb, int line) {
+static int tb_line_y(ObjGUIEdit* tb, int line) {
     return tb->y + tb->border_width + tb->padding_y + line * tb_line_height(tb) - tb->scroll_y;
 }
-static void tb_mark_dirty(ObjGUITextBox* tb);
-static void tb_ensure_cursor_visible(ObjGUITextBox* tb);
+static void tb_mark_dirty(ObjGUIEdit* tb);
+static void tb_ensure_cursor_visible(ObjGUIEdit* tb);
 
 /* ===== Undo/Redo ===== */
 #define TB_UNDO_MAX_ACTIONS 500
@@ -281,7 +281,7 @@ static size_t tb_undo_action_size(TBUndoAction* a) {
     return s;
 }
 
-void tb_undo_free_stack(TBUndoStack* stack) {
+void ed_undo_free_stack(TBUndoStack* stack) {
     TBUndoAction* a = stack->top;
     while (a) {
         TBUndoAction* n = a->next;
@@ -302,7 +302,7 @@ static int tb_undo_text_mergeable(const char* text, int len) {
     return 1;
 }
 
-static void tb_undo_drop_oldest(ObjGUITextBox* tb) {
+static void tb_undo_drop_oldest(ObjGUIEdit* tb) {
     if (!tb->undo_stack.top) return;
     TBUndoAction* bottom = NULL;
     TBUndoAction* prev = NULL;
@@ -323,8 +323,8 @@ static void tb_undo_drop_oldest(ObjGUITextBox* tb) {
     free(bottom);
 }
 
-static void tb_undo_clear_redo(ObjGUITextBox* tb) {
-    tb_undo_free_stack(&tb->redo_stack);
+static void tb_undo_clear_redo(ObjGUIEdit* tb) {
+    ed_undo_free_stack(&tb->redo_stack);
 }
 static TBUndoAction* tb_undo_new_action(TBUndoType type, int pos, const char* text, const char* old_text,
                                         int cursor_before, int cursor_after, int sel_start, int sel_len, int group) {
@@ -338,7 +338,7 @@ static TBUndoAction* tb_undo_new_action(TBUndoType type, int pos, const char* te
     a->group = group; a->next = NULL;
     return a;
 }
-static void tb_undo_push(ObjGUITextBox* tb, TBUndoType type, int pos, const char* text, const char* old_text,
+static void tb_undo_push(ObjGUIEdit* tb, TBUndoType type, int pos, const char* text, const char* old_text,
                          int cursor_before, int cursor_after, int sel_start, int sel_len) {
     if (!tb->undo_enabled) return;
     int text_len = text ? (int)strlen(text) : 0;
@@ -372,7 +372,7 @@ static void tb_undo_push(ObjGUITextBox* tb, TBUndoType type, int pos, const char
     tb->undo_last_type = type;
     tb->undo_last_group = tb->undo_group;
 }
-static int tb_undo(ObjGUITextBox* tb) {
+static int tb_undo(ObjGUIEdit* tb) {
     if (!tb->undo_stack.top) return 0;
     int group = tb->undo_stack.top->group;
     int any = 0;
@@ -410,7 +410,7 @@ static int tb_undo(ObjGUITextBox* tb) {
     }
     return any;
 }
-static int tb_redo(ObjGUITextBox* tb) {
+static int tb_redo(ObjGUIEdit* tb) {
     if (!tb->redo_stack.top) return 0;
     int group = tb->redo_stack.top->group;
     int any = 0;
@@ -456,7 +456,7 @@ static int tb_redo(ObjGUITextBox* tb) {
 }
 
 /* ===== LineLayout 缓存管理（Scintilla View 层） ===== */
-void tb_free_layouts(ObjGUITextBox* tb) {
+void ed_free_layouts(ObjGUIEdit* tb) {
     if (!tb->layouts) return;
     for (int i = 0; i < tb->layout_cap; i++) {
         if (tb->layouts[i].offsets) { free(tb->layouts[i].offsets); tb->layouts[i].offsets = NULL; }
@@ -465,7 +465,7 @@ void tb_free_layouts(ObjGUITextBox* tb) {
     free(tb->layouts); tb->layouts = NULL;
     tb->layout_cap = 0;
 }
-static void tb_ensure_layouts(ObjGUITextBox* tb) {
+static void tb_ensure_layouts(ObjGUIEdit* tb) {
     if (tb->layout_cap >= tb->line_count) return;
     int nc = tb->layout_cap * 2; if (nc < tb->line_count) nc = tb->line_count + 16;
     LineLayout* nl = (LineLayout*)realloc(tb->layouts, nc * sizeof(LineLayout));
@@ -473,7 +473,7 @@ static void tb_ensure_layouts(ObjGUITextBox* tb) {
     memset(nl + tb->layout_cap, 0, (nc - tb->layout_cap) * sizeof(LineLayout));
     tb->layouts = nl; tb->layout_cap = nc;
 }
-static void tb_invalidate_layouts(ObjGUITextBox* tb) {
+static void tb_invalidate_layouts(ObjGUIEdit* tb) {
     if (!tb->layouts) return;
     for (int i = 0; i < tb->layout_cap; i++) {
         tb->layouts[i].valid = 0;
@@ -482,7 +482,7 @@ static void tb_invalidate_layouts(ObjGUITextBox* tb) {
     tb->cached_max_text_width = 0;
     tb->cached_max_text_width_line = -1;
 }
-static void tb_invalidate_layouts_from(ObjGUITextBox* tb, int line) {
+static void tb_invalidate_layouts_from(ObjGUIEdit* tb, int line) {
     if (!tb->layouts) return;
     for (int i = line; i < tb->layout_cap; i++) {
         tb->layouts[i].valid = 0;
@@ -494,8 +494,8 @@ static void tb_invalidate_layouts_from(ObjGUITextBox* tb, int line) {
         tb->cached_max_text_width_line = -1;
     }
 }
-static void tb_layout_line(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line);
-static LineLayout* tb_get_layout(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line) {
+static void tb_layout_line(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren, int line);
+static LineLayout* tb_get_layout(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren, int line) {
     if (line < 0 || line >= tb->line_count) return NULL;
     tb_ensure_layouts(tb);
     LineLayout* lo = &tb->layouts[line];
@@ -504,7 +504,7 @@ static LineLayout* tb_get_layout(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren
     return lo->valid ? lo : NULL;
 }
 /* 行内第 col 个字符的结束 x 偏移（col 从 1 开始）；col=0 返回 0 */
-static int tb_line_char_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line, int col) {
+static int tb_line_char_x(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren, int line, int col) {
     if (col <= 0) return 0;
     LineLayout* lo = tb_get_layout(tb, ren, line);
     if (!lo || !lo->valid) return 0;
@@ -512,7 +512,7 @@ static int tb_line_char_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int l
     return lo->offsets[col - 1];
 }
 /* 根据 x 像素坐标返回字符列（用于鼠标定位） */
-static int tb_line_col_from_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line, int x) {
+static int tb_line_col_from_x(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren, int line, int x) {
     if (x <= 0) return 0;
     LineLayout* lo = tb_get_layout(tb, ren, line);
     if (!lo || !lo->valid) return 0;
@@ -522,13 +522,13 @@ static int tb_line_col_from_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, i
     return lo->char_count;
 }
 /* 整行像素宽度 */
-static int tb_line_total_width(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line) {
+static int tb_line_total_width(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren, int line) {
     LineLayout* lo = tb_get_layout(tb, ren, line);
     if (!lo || !lo->valid) return 0;
     return lo->total_width;
 }
 
-static void tb_mark_dirty(ObjGUITextBox* tb) {
+static void tb_mark_dirty(ObjGUIEdit* tb) {
     tb->text_is_dirty = 1;
     tb->cached_cursor_pos = -1;
     /* cached_max_text_width 由 tb_layout_line / tb_invalidate_layouts_from 增量维护，
@@ -536,7 +536,7 @@ static void tb_mark_dirty(ObjGUITextBox* tb) {
 }
 
 /* 计算指定行的 LineLayout：逐字符测量，填充 offsets 数组 */
-static void tb_layout_line(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int line) {
+static void tb_layout_line(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren, int line) {
     if (line < 0 || line >= tb->line_count || !tb->layouts) return;
     LineLayout* lo = &tb->layouts[line];
     int ls = tb_line_start_tb(tb, line);
@@ -571,7 +571,7 @@ static void tb_layout_line(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren, int 
 
 /* 多行时返回最宽行的像素宽度（tb_lines_ensure 管理行索引，此处独立管理宽度缓存） */
 /* 优先用缓存，避免每帧绘制时全量扫描；ren 仅在缓存未命中时参与测量 */
-static int tb_text_total_width(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren) {
+static int tb_text_total_width(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren) {
     if (!tb->multiline) return tc_text_width_to(tb, ren, 0, gb_len(&tb->gb));
     tb_lines_ensure(tb);
     if (tb->cached_max_text_width > 0) return tb->cached_max_text_width;
@@ -586,7 +586,7 @@ static int tb_text_total_width(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren) 
 }
 /* 返回光标在当前行内的 x 像素坐标 */
 /* ren 非 NULL 时用绘制 DC 测量，消除中文宽度偏差 */
-static int tb_cursor_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren) {
+static int tb_cursor_x(ObjGUIEdit* tb, LenoGUIPlatformRenderer* ren) {
     if (tb->cached_cursor_pos == tb->cursor_pos) return tb->cached_cursor_x;
     tb_lines_ensure(tb);
     int cx;
@@ -602,12 +602,12 @@ static int tb_cursor_x(ObjGUITextBox* tb, LenoGUIPlatformRenderer* ren) {
     tb->cached_cursor_pos = tb->cursor_pos;
     return cx;
 }
-static int tbox_hit(ObjGUITextBox* tb, float mx, float my) {
+static int tbox_hit(ObjGUIEdit* tb, float mx, float my) {
     return mx >= tb->x && mx <= tb->x + tb->width &&
            my >= tb->y && my <= tb->y + tb->height;
 }
 /* 根据当前光标位置更新 IME 候选窗/合成窗坐标 */
-static void tb_update_ime_pos(ObjGUITextBox* tb) {
+static void tb_update_ime_pos(ObjGUIEdit* tb) {
     if (!tb->focused) return;
     int line = tb_current_line_tb(tb, tb->cursor_pos);
     int cx = tb_cursor_x(tb, NULL);
@@ -620,7 +620,7 @@ static void tb_update_ime_pos(ObjGUITextBox* tb) {
 
 /* 保证光标在可见区域内，超出时滚动
  * 性能关键：大文本时用缓存避免每次击键扫描全文+调 GDI */
-static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
+static void tb_ensure_cursor_visible(ObjGUIEdit* tb) {
     tb_lines_ensure(tb);
     int visible_w = tb->width - 2 * tb->border_width;
     if (visible_w < 1) visible_w = 1;
@@ -650,7 +650,7 @@ static void tb_ensure_cursor_visible(ObjGUITextBox* tb) {
     }
     tb_update_ime_pos(tb);
 }
-static void tb_del_sel(ObjGUITextBox* tb) {
+static void tb_del_sel(ObjGUIEdit* tb) {
     if (tb->sel_start < 0 || tb->sel_len <= 0) return;
     int ds = tb->sel_start, dl = tb->sel_len;
     int tlen = gb_len(&tb->gb);
@@ -667,7 +667,7 @@ static void tb_del_sel(ObjGUITextBox* tb) {
     tb_mark_dirty(tb);
     tb_ensure_cursor_visible(tb);
 }
-static void tb_insert(ObjGUITextBox* tb, const char* s) {
+static void tb_insert(ObjGUIEdit* tb, const char* s) {
     if (!s || !s[0]) return;
     if (tb->sel_start >= 0 && tb->sel_len > 0) tb_del_sel(tb);
     int sl = (int)strlen(s);
@@ -680,7 +680,7 @@ static void tb_insert(ObjGUITextBox* tb, const char* s) {
     tb_mark_dirty(tb);
     tb_ensure_cursor_visible(tb);
 }
-static void tb_backspace(ObjGUITextBox* tb) {
+static void tb_backspace(ObjGUIEdit* tb) {
     if (!tb || tb->cursor_pos <= 0) return;
     int pv = gb_prev(&tb->gb, tb->cursor_pos);
     int ln = tb->cursor_pos - pv;
@@ -694,7 +694,7 @@ static void tb_backspace(ObjGUITextBox* tb) {
     tb_mark_dirty(tb);
     tb_ensure_cursor_visible(tb);
 }
-static void tb_del(ObjGUITextBox* tb) {
+static void tb_del(ObjGUIEdit* tb) {
     if (!tb || tb->cursor_pos >= gb_len(&tb->gb)) return;
     int nx = gb_next(&tb->gb, tb->cursor_pos);
     int ln = nx - tb->cursor_pos;
@@ -708,21 +708,21 @@ static void tb_del(ObjGUITextBox* tb) {
     tb_ensure_cursor_visible(tb);
 }
 /* 将字节位置转为字符列（相对于行首，从 0 开始） */
-static int tb_pos_to_col(ObjGUITextBox* tb, int line, int pos) {
+static int tb_pos_to_col(ObjGUIEdit* tb, int line, int pos) {
     int ls = tb_line_start_tb(tb, line);
     int col = 0;
     for (int i = ls; i < pos; ) { col++; i += tc_blen((unsigned char)gb_at(&tb->gb, i)); }
     return col;
 }
 /* 将字符列转为字节位置（col 从 0 开始） */
-static int tb_line_charcol_to_pos(ObjGUITextBox* tb, int line, int col) {
+static int tb_line_charcol_to_pos(ObjGUIEdit* tb, int line, int col) {
     int ls = tb_line_start_tb(tb, line);
     int le = tb_line_end_tb(tb, line);
     int pos = ls;
     for (int i = 0; i < col && pos < le; i++) pos += tc_blen((unsigned char)gb_at(&tb->gb, pos));
     return pos;
 }
-static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
+static int tb_mx2cp(ObjGUIEdit* tb, float mx, float my) {
     tb_lines_ensure(tb);
     int tlen = gb_len(&tb->gb);
     if (!tb->multiline) {
@@ -755,7 +755,7 @@ static int tb_mx2cp(ObjGUITextBox* tb, float mx, float my) {
 
 /* ===== Instance methods ===== */
 static Value tb_set_text(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     char* s_buf = NULL;
     int sl = 0;
     /* 将 Leno 字符串拷贝到独立 C 堆缓冲区，切断 GC 依赖 */
@@ -786,7 +786,7 @@ static Value tb_set_text(int argc, Value* args) {
     return val_null();
 }
 static Value tb_set_ph(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     const char* s = NULL;
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING)
         s = ((ObjString*)val_as_obj(args[1]))->chars;
@@ -795,7 +795,7 @@ static Value tb_set_ph(int argc, Value* args) {
     return val_null();
 }
 static Value tb_set_placeholder_color(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_RGB) {
         ObjRgb* rgb = (ObjRgb*)val_as_obj(args[1]);
         tb->placeholder_r = rgb->r; tb->placeholder_g = rgb->g;
@@ -803,7 +803,7 @@ static Value tb_set_placeholder_color(int argc, Value* args) {
     }
     return val_null();
 }
-void gui_textbox_update_placeholder_font(ObjGUITextBox* tb) {
+void gui_edit_update_placeholder_font(ObjGUIEdit* tb) {
     int fs = tb->placeholder_font_size > 0 ? tb->placeholder_font_size : tb->font_size;
     const char* fn = tb->placeholder_font_name ? tb->placeholder_font_name
                    : (tb->font_name ? tb->font_name : "Microsoft YaHei");
@@ -818,29 +818,29 @@ void gui_textbox_update_placeholder_font(ObjGUITextBox* tb) {
     }
 }
 static Value tb_set_placeholder_font_size(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->placeholder_font_size = val_as_int(args[1]);
-    gui_textbox_update_placeholder_font(tb);
+    gui_edit_update_placeholder_font(tb);
     return val_null();
 }
 static Value tb_set_pwd(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->password = val_as_bool(args[1]) ? 1 : 0; return val_null();
 }
 static Value tb_set_maxlen(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->max_length = val_as_int(args[1]); return val_null();
 }
 static Value tb_on_change(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->on_change = args[1]; gc_write_barrier((Object*)tb, args[1]); return val_null();
 }
 static Value tb_on_submit(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->on_submit = args[1]; gc_write_barrier((Object*)tb, args[1]); return val_null();
 }
 static Value tb_set_anchor(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->anchor = val_as_int(args[1]); tb->anchor_margin_x = val_as_int(args[2]); tb->anchor_margin_y = val_as_int(args[3]);
     return val_null();
 }
@@ -848,7 +848,7 @@ static Value tb_set_anchor(int argc, Value* args) {
 /* ----- 颜色 setter ----- */
 #define TB_SET_COLOR(name, field_r, field_g, field_b, field_a) \
 static Value name(int argc, Value* args) { \
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null(); \
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null(); \
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_RGB) { \
         ObjRgb* rgb = (ObjRgb*)val_as_obj(args[1]); \
         tb->field_r = rgb->r; tb->field_g = rgb->g; tb->field_b = rgb->b; tb->field_a = rgb->a; \
@@ -864,46 +864,46 @@ TB_SET_COLOR(tb_set_selection_color, sel_r,    sel_g,    sel_b,    sel_a)
 
 /* ----- 尺寸/样式 setter ----- */
 static Value tb_set_border_width(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->border_width = val_as_int(args[1]); return val_null();
 }
 static Value tb_set_radius(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->radius = val_as_int(args[1]); return val_null();
 }
 static Value tb_set_pos(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->x = val_as_int(args[1]); tb->y = val_as_int(args[2]); return val_null();
 }
 static Value tb_set_size(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->width = val_as_int(args[1]); tb->height = val_as_int(args[2]); return val_null();
 }
 static Value tb_set_padding(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->padding_x = val_as_int(args[1]); tb->padding_y = val_as_int(args[2]); return val_null();
 }
 static Value tb_set_font_size(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     int fs = val_as_int(args[1]);
     if (fs <= 0) return val_null();
     tb->font_size = fs;
     if (tb->font) { leno_gui_platform_destroy_font(tb->font->platform); tb->font->platform = NULL; }
     LenoGUIPlatformFont* pf = leno_gui_platform_load_font(tb->font_name ? tb->font_name : "Microsoft YaHei", fs);
     if (pf) tb->font->platform = pf;
-    gui_textbox_update_placeholder_font(tb);
+    gui_edit_update_placeholder_font(tb);
     return val_null();
 }
 static Value tb_set_enabled(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->enabled = val_as_bool(args[1]) ? 1 : 0; return val_null();
 }
 static Value tb_set_letter_spacing(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->letter_spacing = val_as_int(args[1]); return val_null();
 }
 static Value tb_set_line_spacing(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->line_spacing = val_as_int(args[1]); return val_null();
 }
 /* 滚动条颜色 setter */
@@ -914,7 +914,7 @@ TB_SET_COLOR(tb_set_sb_thumb_press, sb_thumb_press_r, sb_thumb_press_g, sb_thumb
 
 /* ----- 查找 & 选中 ----- */
 static Value tb_get_text(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     int tlen = gb_len(&tb->gb);
     if (tlen == 0) return val_obj((Object*)intern_string("", 0));
     char* tmp = gb_to_cstring(&tb->gb);
@@ -923,7 +923,7 @@ static Value tb_get_text(int argc, Value* args) {
     return val_obj((Object*)s);
 }
 static Value tb_find(int argc, Value* args) {
-    ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_int(-1);
+    ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_int(-1);
     const char* needle = NULL;
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING)
         needle = ((ObjString*)val_as_obj(args[1]))->chars;
@@ -944,7 +944,7 @@ static Value tb_find(int argc, Value* args) {
     return val_int(result);
 }
 static Value tb_set_range_color(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     int start = val_as_int(args[1]);
     int len = val_as_int(args[2]);
     if (start < 0 || len <= 0) return val_null();
@@ -979,11 +979,11 @@ static Value tb_set_range_color(int argc, Value* args) {
     return val_null();
 }
 static Value tb_clear_colors(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     tb->color_range_count = 0; return val_null();
 }
 static Value tb_select(int argc, Value* args) {
-    (void)argc; ObjGUITextBox* tb = as_textbox(args[0]); if (!tb) return val_null();
+    (void)argc; ObjGUIEdit* tb = as_edit(args[0]); if (!tb) return val_null();
     int start = val_as_int(args[1]);
     int len = val_as_int(args[2]);
     int tlen = gb_len(&tb->gb);
@@ -1002,7 +1002,7 @@ static Value tb_select(int argc, Value* args) {
 #define TB_DRAW_BUF 4096
 
 /* 辅助：从 GapBuffer 提取一段文本并绘制 */
-static void tb_draw_range(ObjGUITextBox* tb, LenoGUIPlatformRenderer* r,
+static void tb_draw_range(ObjGUIEdit* tb, LenoGUIPlatformRenderer* r,
     LenoGUIPlatformFont* font, int start, int len, int tx, int ty) {
     if (len <= 0) return;
     if (len < TB_DRAW_BUF) {
@@ -1020,7 +1020,7 @@ static void tb_draw_range(ObjGUITextBox* tb, LenoGUIPlatformRenderer* r,
 }
 
 /* 按颜色范围分段渲染文本（不修改原文本，避免测量冲突） */
-static void tb_draw_text_colored(ObjGUITextBox* tb, LenoGUIPlatformRenderer* r,
+static void tb_draw_text_colored(ObjGUIEdit* tb, LenoGUIPlatformRenderer* r,
     LenoGUIPlatformFont* font, int abs_start, int text_len, int tx, int ty) {
     if (text_len <= 0) return;
     int p = 0, seg_start = 0;
@@ -1053,7 +1053,7 @@ static void tb_draw_text_colored(ObjGUITextBox* tb, LenoGUIPlatformRenderer* r,
 }
 
 /* ===== Draw ===== */
-static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
+static void tb_draw_one(ObjGUIEdit* tb, ObjGUIRenderer* ren) {
     if (!tb->visible) return;
     tb_lines_ensure(tb);
     LenoGUIPlatformRenderer* r = ren->platform;
@@ -1226,12 +1226,12 @@ static void tb_draw_one(ObjGUITextBox* tb, ObjGUIRenderer* ren) {
     }
 }
 
-void gui_textbox_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren) {
+void gui_edit_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren) {
     if (!win || !ren) return;
     uint64_t now = leno_gui_platform_get_ticks();
-    ObjGUITextBox* tb = win->textboxes;
+    ObjGUIEdit* tb = win->textboxes;
     while (tb) {
-        if (tb->focused && now - tb->last_blink >= BLINK_MS) {
+        if (tb->focused && now - tb->last_blink >= ED_BLINK_MS) {
             tb->blink_visible = !tb->blink_visible; tb->last_blink = now;
         }
         tb = tb->next;
@@ -1242,7 +1242,7 @@ void gui_textbox_draw_all(ObjGUIWindow* win, ObjGUIRenderer* ren) {
 
 /* ===== Scrollbar hit-test ===== */
 /* 检测鼠标是否在滚动条滑块上；is_h/is_v 同时支持点击轨道跳转 */
-static int tb_scrollbar_hit(ObjGUITextBox* tb, float mx, float my, int* is_h, int* is_v) {
+static int tb_scrollbar_hit(ObjGUIEdit* tb, float mx, float my, int* is_h, int* is_v) {
     int sb = 8, dw = tb->width, dh = tb->height;
     int inner_w = dw - 2 * tb->border_width, inner_h = dh - 2 * tb->border_width;
     int text_w = tb_text_total_width(tb, NULL) + tb->padding_x;
@@ -1291,9 +1291,9 @@ static int tb_scrollbar_hit(ObjGUITextBox* tb, float mx, float my, int* is_h, in
 }
 
 /* ===== Event ===== */
-int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
+int gui_edit_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
     if (!win || !ev) return 0;
-    ObjGUITextBox* tb;
+    ObjGUIEdit* tb;
 
     /* mouse down: 优先检查滚动条点击，再处理文本框焦点 */
     if (ev->type == LENO_GUI_EVT_MOUSE_DOWN && ev->mouse_button == LENO_GUI_MOUSE_LEFT) {
@@ -1322,7 +1322,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         }
 
         if (win->focused_textbox) { win->focused_textbox->focused = 0; win->focused_textbox->blink_visible = 0; }
-        tb = win->textboxes; ObjGUITextBox* hit = NULL;
+        tb = win->textboxes; ObjGUIEdit* hit = NULL;
         while (tb) {
             if (tb->visible && tb->enabled && tbox_hit(tb, ev->mouse_x, ev->mouse_y)) { hit = tb; break; }
             tb = tb->next;
@@ -1390,7 +1390,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         }
         /* 滚动条拖拽优先 */
         if (win->focused_textbox) {
-            ObjGUITextBox* ftb = win->focused_textbox;
+            ObjGUIEdit* ftb = win->focused_textbox;
             int sb = 8, inner_w = ftb->width - 2 * ftb->border_width;
             int text_w = tb_text_total_width(ftb, NULL) + ftb->padding_x;
             int text_h = ftb->multiline ? ftb->padding_y + ftb->line_count * tb_line_height(ftb) + 2 : ftb->font_size;
@@ -1436,7 +1436,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
         }
         /* 文本选择拖拽 */
         if (win->focused_textbox && win->focused_textbox->dragging) {
-            ObjGUITextBox* dtb = win->focused_textbox;
+            ObjGUIEdit* dtb = win->focused_textbox;
             int cp = tb_mx2cp(dtb, ev->mouse_x, ev->mouse_y);
             if (cp < dtb->drag_start_cp) {
                 dtb->sel_start = cp; dtb->sel_len = dtb->drag_start_cp - cp; dtb->cursor_pos = cp;
@@ -1462,7 +1462,7 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
 
     /* mouse wheel: 垂直/水平滚动 */
     if (ev->type == LENO_GUI_EVT_MOUSE_WHEEL && win->focused_textbox) {
-        ObjGUITextBox* wtb = win->focused_textbox;
+        ObjGUIEdit* wtb = win->focused_textbox;
         tb_lines_ensure(wtb);
         int visible_h = wtb->height - 2 * wtb->border_width;
         int visible_w2 = wtb->width - 2 * wtb->border_width;
@@ -1629,9 +1629,9 @@ int gui_textbox_handle_event(ObjGUIWindow* win, LenoGUIEvent* ev) {
 }
 
 /* ===== Anchors ===== */
-void gui_textbox_update_anchors(ObjGUIWindow* win, int ww, int wh) {
+void gui_edit_update_anchors(ObjGUIWindow* win, int ww, int wh) {
     if (!win) return;
-    ObjGUITextBox* tb = win->textboxes;
+    ObjGUIEdit* tb = win->textboxes;
     while (tb) {
         if (tb->anchor > 0) {
             int mx = tb->anchor_margin_x, my = tb->anchor_margin_y;
@@ -1650,11 +1650,11 @@ void gui_textbox_update_anchors(ObjGUIWindow* win, int ww, int wh) {
 }
 
 /* ===== Free ===== */
-void gui_textbox_free_all(ObjGUIWindow* win) {
+void gui_edit_free_all(ObjGUIWindow* win) {
     if (!win) return;
-    ObjGUITextBox* tb = win->textboxes;
+    ObjGUIEdit* tb = win->textboxes;
     while (tb) {
-        ObjGUITextBox* n = tb->next;
+        ObjGUIEdit* n = tb->next;
         gb_free(&tb->gb);
         if (tb->placeholder) { free(tb->placeholder); tb->placeholder = NULL; }
         if (tb->font_name) { free(tb->font_name); tb->font_name = NULL; }
@@ -1664,22 +1664,22 @@ void gui_textbox_free_all(ObjGUIWindow* win) {
             tb->placeholder_font->platform = NULL;
         }
         if (tb->line_starts) { free(tb->line_starts); tb->line_starts = NULL; }
-        tb_free_layouts(tb);
-        tb_undo_free_stack(&tb->undo_stack);
-        tb_undo_free_stack(&tb->redo_stack);
+        ed_free_layouts(tb);
+        ed_undo_free_stack(&tb->undo_stack);
+        ed_undo_free_stack(&tb->redo_stack);
         tb = n;
     }
     win->textboxes = NULL; win->textbox_count = 0; win->focused_textbox = NULL;
 }
 
 /* ===== Register ===== */
-extern void textbox_register_method_with_params(const char* name, ObjNative* method, int arity,
+extern void edit_register_method_with_params(const char* name, ObjNative* method, int arity,
     int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
-extern void textbox_init_methods(void);
+extern void edit_init_methods(void);
 
-void guis_init_textbox_instance_methods(void) {
-    textbox_init_methods();
+void guis_init_edit_instance_methods(void) {
+    edit_init_methods();
     TypeKind str_1[] = {TYPE_STRING};
     TypeKind int_1[] = {TYPE_INT};
     TypeKind bool_1[] = {TYPE_BOOL};
@@ -1688,42 +1688,42 @@ void guis_init_textbox_instance_methods(void) {
     TypeKind find_params[] = {TYPE_STRING, TYPE_INT};
     TypeKind anchor_params[] = {TYPE_INT, TYPE_INT, TYPE_INT};
 
-    textbox_register_method_with_params("set_text", make_native(tb_set_text, 2, "set_text"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_1);
-    textbox_register_method_with_params("set_placeholder", make_native(tb_set_ph, 2, "set_placeholder"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_1);
-    textbox_register_method_with_params("set_placeholder_color", make_native(tb_set_placeholder_color, 2, "set_placeholder_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_placeholder_font_size", make_native(tb_set_placeholder_font_size, 2, "set_placeholder_font_size"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
-    textbox_register_method_with_params("set_password", make_native(tb_set_pwd, 2, "set_password"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
-    textbox_register_method_with_params("set_max_length", make_native(tb_set_maxlen, 2, "set_max_length"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
-    textbox_register_method_with_params("on_change", make_native(tb_on_change, 2, "on_change"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("on_submit", make_native(tb_on_submit, 2, "on_submit"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_anchor", make_native(tb_set_anchor, 4, "set_anchor"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, anchor_params);
+    edit_register_method_with_params("set_text", make_native(tb_set_text, 2, "set_text"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_1);
+    edit_register_method_with_params("set_placeholder", make_native(tb_set_ph, 2, "set_placeholder"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, str_1);
+    edit_register_method_with_params("set_placeholder_color", make_native(tb_set_placeholder_color, 2, "set_placeholder_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_placeholder_font_size", make_native(tb_set_placeholder_font_size, 2, "set_placeholder_font_size"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    edit_register_method_with_params("set_password", make_native(tb_set_pwd, 2, "set_password"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
+    edit_register_method_with_params("set_max_length", make_native(tb_set_maxlen, 2, "set_max_length"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    edit_register_method_with_params("on_change", make_native(tb_on_change, 2, "on_change"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("on_submit", make_native(tb_on_submit, 2, "on_submit"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_anchor", make_native(tb_set_anchor, 4, "set_anchor"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, anchor_params);
     /* 颜色 */
-    textbox_register_method_with_params("set_cursor_color", make_native(tb_set_cursor_color, 2, "set_cursor_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_text_color", make_native(tb_set_text_color, 2, "set_text_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_bg_color", make_native(tb_set_bg_color, 2, "set_bg_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_border_color", make_native(tb_set_border_color, 2, "set_border_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_focus_color", make_native(tb_set_focus_color, 2, "set_focus_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_selection_color", make_native(tb_set_selection_color, 2, "set_selection_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_cursor_color", make_native(tb_set_cursor_color, 2, "set_cursor_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_text_color", make_native(tb_set_text_color, 2, "set_text_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_bg_color", make_native(tb_set_bg_color, 2, "set_bg_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_border_color", make_native(tb_set_border_color, 2, "set_border_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_focus_color", make_native(tb_set_focus_color, 2, "set_focus_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_selection_color", make_native(tb_set_selection_color, 2, "set_selection_color"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
     /* 尺寸/位置 */
-    textbox_register_method_with_params("set_border_width", make_native(tb_set_border_width, 2, "set_border_width"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
-    textbox_register_method_with_params("set_radius", make_native(tb_set_radius, 2, "set_radius"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
-    textbox_register_method_with_params("set_pos", make_native(tb_set_pos, 3, "set_pos"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
-    textbox_register_method_with_params("set_size", make_native(tb_set_size, 3, "set_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
-    textbox_register_method_with_params("set_padding", make_native(tb_set_padding, 3, "set_padding"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
-    textbox_register_method_with_params("set_font_size", make_native(tb_set_font_size, 2, "set_font_size"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
-    textbox_register_method_with_params("set_letter_spacing", make_native(tb_set_letter_spacing, 2, "set_letter_spacing"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
-    textbox_register_method_with_params("set_line_spacing", make_native(tb_set_line_spacing, 2, "set_line_spacing"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
-    textbox_register_method_with_params("set_enabled", make_native(tb_set_enabled, 2, "set_enabled"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
+    edit_register_method_with_params("set_border_width", make_native(tb_set_border_width, 2, "set_border_width"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    edit_register_method_with_params("set_radius", make_native(tb_set_radius, 2, "set_radius"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    edit_register_method_with_params("set_pos", make_native(tb_set_pos, 3, "set_pos"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
+    edit_register_method_with_params("set_size", make_native(tb_set_size, 3, "set_size"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
+    edit_register_method_with_params("set_padding", make_native(tb_set_padding, 3, "set_padding"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
+    edit_register_method_with_params("set_font_size", make_native(tb_set_font_size, 2, "set_font_size"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    edit_register_method_with_params("set_letter_spacing", make_native(tb_set_letter_spacing, 2, "set_letter_spacing"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    edit_register_method_with_params("set_line_spacing", make_native(tb_set_line_spacing, 2, "set_line_spacing"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_1);
+    edit_register_method_with_params("set_enabled", make_native(tb_set_enabled, 2, "set_enabled"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, bool_1);
     /* 滚动条颜色 */
-    textbox_register_method_with_params("set_sb_track", make_native(tb_set_sb_track, 2, "set_sb_track"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_sb_thumb", make_native(tb_set_sb_thumb, 2, "set_sb_thumb"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_sb_thumb_hover", make_native(tb_set_sb_thumb_hover, 2, "set_sb_thumb_hover"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
-    textbox_register_method_with_params("set_sb_thumb_press", make_native(tb_set_sb_thumb_press, 2, "set_sb_thumb_press"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_sb_track", make_native(tb_set_sb_track, 2, "set_sb_track"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_sb_thumb", make_native(tb_set_sb_thumb, 2, "set_sb_thumb"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_sb_thumb_hover", make_native(tb_set_sb_thumb_hover, 2, "set_sb_thumb_hover"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
+    edit_register_method_with_params("set_sb_thumb_press", make_native(tb_set_sb_thumb_press, 2, "set_sb_thumb_press"), 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, any_1);
     /* 查找 & 选中 */
-    textbox_register_method_with_params("get_text", make_native(tb_get_text, 1, "get_text"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
-    textbox_register_method_with_params("find", make_native(tb_find, 3, "find"), 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, find_params);
-    textbox_register_method_with_params("select", make_native(tb_select, 3, "select"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
+    edit_register_method_with_params("get_text", make_native(tb_get_text, 1, "get_text"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    edit_register_method_with_params("find", make_native(tb_find, 3, "find"), 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, find_params);
+    edit_register_method_with_params("select", make_native(tb_select, 3, "select"), 2, -1, -1, TYPE_NULL, TYPE_UNKNOWN, int_params);
     /* 颜色范围 */
-    textbox_register_method_with_params("set_range_color", make_native(tb_set_range_color, 4, "set_range_color"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
-    textbox_register_method_with_params("clear_colors", make_native(tb_clear_colors, 1, "clear_colors"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    edit_register_method_with_params("set_range_color", make_native(tb_set_range_color, 4, "set_range_color"), 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    edit_register_method_with_params("clear_colors", make_native(tb_clear_colors, 1, "clear_colors"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
 }

@@ -10,7 +10,7 @@ main() {
         bg_color: bg
     })
 
-    GTextBox edit = win.add_textbox({
+    GEdit edit = win.add_edit({
         x: 10, y: 40,
         width: 780, height: 550,
         multiline: true,

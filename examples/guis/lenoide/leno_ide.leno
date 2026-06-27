@@ -1,139 +1,82 @@
-/* Leno IDE - 简易编辑器
- * - 点击"打开"按钮选择文件，内容加载到文本框中显示
- * - 使用 guis.file_dialog 弹窗选择文件
- */
 import guis
 import files
-main() {
-    Style[window] w_style = {
-        width: 800,
-        height: 600,
-        resizable: true,
-        title: "Leno IDE"
-    }
-    GWin win = guis.create_window("Leno IDE", w_style)
 
-    /* 打开按钮 */
-    var btn_open = win.add_button({
-        x: 20,
-        y: 10,
-        width: 100,
-        height: 32,
-        text: "打开文件",
-        bg_color: _rgb(70, 130, 180, 255),
-        text_color: _rgb(255, 255, 255, 255),
-        font_name: "SimSun",
-        font_size: 14,
-        radius: 4
+main() {
+    GWin win = guis.create_window("Leno IDE", {
+        width: 900, height: 650, resizable: true, title: "Leno IDE"
     })
-     /* 打开按钮 */
-    var btn_open1 = win.add_button({
-        x: 140,
-        y: 10,
-        width: 100,
-        height: 32,
-        text: "r打开文件1",
-        bg_color: _rgb(70, 130, 180, 255),
-        text_color: _rgb(255, 255, 255, 255),
-        font_name: "SimSun",
-        font_size: 14,
-        radius: 4
-    })
- var btn_open2 = win.add_button({
-          x: 260,
-        y: 10,
-        width: 100,
-        height: 32,
-        text: "r打开文件2",
-        bg_color: _rgb(70, 130, 180, 255),
-        text_color: _rgb(255, 255, 255, 255),
-        font_name: "SimSun",
-        font_size: 14,
-        radius: 4
-    })
-    /* 文本框 */
-    var edit = win.add_textbox({
-        x: 20,
-        y: 52,
-        width: 760,
-        height: 520,
-        multiline: true,
-        line_spacing: 4,
+
+    string current_path = ""
+
+    GEdit edit = win.add_edit({
+        x: 20, y: 52, width: 860, height: 570,
+        multiline: true, line_spacing: 4,
         bg_color: _rgb(255, 255, 255, 255),
         text_color: _rgb(30, 30, 30, 255),
         border_color: _rgb(180, 180, 180, 255),
         focus_color: _rgb(70, 130, 220, 255),
-        font_name: "SimSun",
-        font_size: 14,
-        padding_x: 8,
-        padding_y: 6,
-        radius: 4,
-        border_width: 1,
-        placeholder: "点击\"打开文件\"选择 .leno 文件..."
+        font_name: "SimSun", font_size: 14,
+        padding_x: 8, padding_y: 6,
+        radius: 4, border_width: 1,
+        placeholder: "打开 .leno 文件开始编辑"
     })
 
-    /* 文件对话框配置 */
-    var open_opts = {
-        title: "选择要打开的 Leno 文件",
-        filters: [
-            { name: "Leno Files", pattern: "*.leno" },
-            { name: "All Files", pattern: "*.*" }
-        ],
+    var btn_open = win.add_button({
+        x: 20, y: 10, width: 80, height: 32,
+        text: "打开",
+        bg_color: _rgb(70, 130, 180, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        font_name: "SimSun", font_size: 14, radius: 4
+    })
+
+    var btn_save = win.add_button({
+        x: 108, y: 10, width: 80, height: 32,
+        text: "保存",
+        bg_color: _rgb(70, 130, 180, 255),
+        text_color: _rgb(255, 255, 255, 255),
+        font_name: "SimSun", font_size: 14, radius: 4
+    })
+
+    var opts = {
+        title: "选择文件",
+        filters: [{name:"Leno",pattern:"*.leno"},{name:"All",pattern:"*.*"}],
         multiple: false
     }
-string content 
-    /* 按钮点击 -> 打开文件对话框 -> 读取文件 -> 显示到文本框 */
+
     btn_open.on_click(func() {
-        guis.file_dialog(0, func(var file_list, var idx) {
-            if file_list is Array and file_list.len() > 0 {
-                var path = file_list[0]
-                File fp = files.open(path, "r")
-               content  = fp.read()
+        guis.file_dialog(0, func(var fl, var _) {
+            if fl is Array[string] and fl.len() > 0 {
+                current_path = fl[0]
+                File fp = files.open(current_path, "r")
+                string content = fp.read()
                 fp.close()
-              
-               edit.set_text(content)
-             
+                edit.set_text(content)
             }
-        }, open_opts)
-    })
-    
-    btn_open1.on_click(func() {
-     
-                var path = "D:\\CLeno\\LenoC\\examples\\crypto\\aes128.leno"
-                File fp = files.open(path, "r")
-               var content  = fp.read()
-                fp.close()
-               edit.set_text(content)
-            
+        }, opts)
     })
 
-     btn_open2.on_click(test)
-     
-     func test()
-     {
-     	guis.file_dialog(0, func(var file_list, var idx) {
-            if file_list is Array and file_list.len() > 0 {
-                var path = file_list[0]
-                File fp = files.open(path, "r")
-               content  = fp.read()
-                fp.close()
-               edit.set_text(content)
-            }
-        }, open_opts)
-            
-     }
-    
-    win.run(
-        func(GDraw ren) {
-            ren.set_color(_rgb(34, 34, 34, 255))
-            ren.clear()
-        },
-        func(GEvent e) {
-            if e.quit() or e.window_close() {
-                win.set_should_close(true)
-            }
+    btn_save.on_click(func() {
+        if current_path != "" {
+            var content = edit.get_text()
+            File fp = files.open(current_path, "w")
+            fp.write(content)
+            fp.close()
+        } else {
+            guis.file_dialog(1, func(var fl, var _) {
+                if fl is Array[string] and fl.len() > 0 {
+                    current_path = fl[0]
+                    var content = edit.get_text()
+                    File fp = files.open(current_path, "w")
+                    fp.write(content)
+                    fp.close()
+                }
+            }, opts)
         }
-    )
+    })
 
+    win.run(
+        func(GDraw ren) { ren.set_color(_rgb(34,34,34,255)); ren.clear() },
+        func(GEvent e) { if e.quit() or e.window_close() { win.set_should_close(true) } }
+    )
     win.close()
 }

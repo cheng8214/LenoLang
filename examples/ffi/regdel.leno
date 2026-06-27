@@ -1,4 +1,4 @@
-﻿import ffi
+import ffi
 
 main() {
     print("=== 清理注册表测试键 ===")

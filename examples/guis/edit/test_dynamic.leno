@@ -1,5 +1,5 @@
 // ============================================================
-// GTextBox - 动态属性测试
+// GEdit - 动态属性测试
 // 测试所有 setter: 颜色/尺寸/位置/字体等
 // ============================================================
 
@@ -15,7 +15,7 @@ main() {
         bg_color: _rgb(28, 28, 44, 255),
         resizable: true
     }
-    GWin win = guis.create_window("GTextBox 动态属性测试", w_style)
+    GWin win = guis.create_window("GEdit 动态属性测试", w_style)
 
     var font_title = guis.load_font("Arial", 22)
     var font_label = guis.load_font("Arial", 12)
@@ -26,11 +26,11 @@ main() {
         placeholder: "点我输入，红色光标...",
         font_size: 15, radius: 6
     }
-    GTextBox tb_cursor = win.add_textbox(s1)
+    GEdit tb_cursor = win.add_edit(s1)
     tb_cursor.set_cursor_color(_rgb(255, 60, 60, 255))
 
     // ========== 2. 文字颜色测试 ==========
-    GTextBox tb_text = win.add_textbox({
+    GEdit tb_text = win.add_edit({
         x: 50, y: 130, width: 320, height: 36,
         placeholder: "蓝色文字",
         font_size: 15, radius: 6
@@ -39,7 +39,7 @@ main() {
     tb_text.set_cursor_color(_rgb(80, 160, 255, 255))
 
     // ========== 3. 背景色测试 ==========
-    GTextBox tb_bg = win.add_textbox({
+    GEdit tb_bg = win.add_edit({
         x: 50, y: 190, width: 320, height: 36,
         placeholder: "深色背景",
         font_size: 15, radius: 6
@@ -51,7 +51,7 @@ main() {
     tb_bg.set_focus_color(_rgb(100, 180, 255, 255))
 
     // ========== 4. 边框样式测试 ==========
-    GTextBox tb_border = win.add_textbox({
+    GEdit tb_border = win.add_edit({
         x: 50, y: 250, width: 320, height: 36,
         placeholder: "粗边框 + 大圆角",
         font_size: 15, radius: 6
@@ -62,7 +62,7 @@ main() {
     tb_border.set_focus_color(_rgb(255, 180, 60, 255))
 
     // ========== 5. 选区颜色测试 ==========
-    GTextBox tb_sel = win.add_textbox({
+    GEdit tb_sel = win.add_edit({
         x: 50, y: 310, width: 320, height: 36,
         placeholder: "Ctrl+A 看选区高亮颜色",
         font_size: 15, radius: 6
@@ -72,7 +72,7 @@ main() {
 
     // ========== 6. 动态尺寸：按钮切换大/小 ==========
     var is_big = false
-    GTextBox tb_pos = win.add_textbox({
+    GEdit tb_pos = win.add_edit({
         x: 430, y: 70, width: 160, height: 36,
         placeholder: "点按钮变大...",
         font_size: 14, radius: 6
@@ -98,7 +98,7 @@ main() {
     })
 
     // ========== 7. 字体大小测试 ==========
-    GTextBox tb_font = win.add_textbox({
+    GEdit tb_font = win.add_edit({
         x: 430, y: 130, width: 320, height: 48,
         placeholder: "大字体 (22px)",
         font_size: 22, radius: 6
@@ -106,7 +106,7 @@ main() {
     tb_font.set_cursor_color(_rgb(255, 200, 50, 255))
 
     // ========== 8. 内边距测试 ==========
-    GTextBox tb_pad = win.add_textbox({
+    GEdit tb_pad = win.add_edit({
         x: 430, y: 200, width: 320, height: 40,
         placeholder: "大内边距 padding",
         font_size: 14, radius: 6,
@@ -114,7 +114,7 @@ main() {
     })
 
     // ========== 9. 聚焦色测试 ==========
-    GTextBox tb_focus = win.add_textbox({
+    GEdit tb_focus = win.add_edit({
         x: 430, y: 260, width: 320, height: 36,
         placeholder: "点击看看聚焦边框...",
         font_size: 15, radius: 6
@@ -123,7 +123,7 @@ main() {
     tb_focus.set_border_width(2)
 
     // ========== 10. 密码框自定义光标 ==========
-    GTextBox tb_pwd = win.add_textbox({
+    GEdit tb_pwd = win.add_edit({
         x: 430, y: 320, width: 320, height: 36,
         placeholder: "密码框 - 绿色光标",
         password: true,
@@ -134,7 +134,7 @@ main() {
     tb_pwd.set_focus_color(_rgb(80, 255, 120, 255))
 
     // ========== 11. 禁用测试 ==========
-    GTextBox tb_disabled = win.add_textbox({
+    GEdit tb_disabled = win.add_edit({
         x: 50, y: 380, width: 320, height: 36,
         placeholder: "禁用状态",
         font_size: 15, radius: 6
@@ -142,7 +142,7 @@ main() {
     tb_disabled.set_enabled(false)
 
     // ========== 12. 综合：所有颜色自定义 ==========
-    GTextBox tb_all = win.add_textbox({
+    GEdit tb_all = win.add_edit({
         x: 50, y: 440, width: 700, height: 44,
         placeholder: "综合自定义: 所有属性独立设置",
         font_size: 18, radius: 8, border_width: 2
@@ -157,7 +157,7 @@ main() {
     tb_all.set_placeholder_font_size(13)
 
     // ========== 13. 多行 + 所有颜色 ==========
-    GTextBox tb_multi = win.add_textbox({
+    GEdit tb_multi = win.add_edit({
         x: 50, y: 510, width: 700, height: 130,
         placeholder: "多行编辑框\nCtrl+A 全选看选区颜色\n滚动看滚动条颜色",
         multiline: true,
@@ -175,7 +175,7 @@ main() {
             ren.clear()
 
             ren.set_color(_rgb(255, 255, 255, 255))
-            ren.draw_text(font_title, "GTextBox - 动态属性测试", 50, 25)
+            ren.draw_text(font_title, "GEdit - 动态属性测试", 50, 25)
 
             ren.set_color(_rgb(160, 160, 190, 255))
             ren.draw_text(font_label, "1.红色光标", 50, 58)
