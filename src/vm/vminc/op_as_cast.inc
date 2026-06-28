@@ -195,6 +195,188 @@ OPCODE(OP_AS_CAST) {
             (void)READ_BYTE();
             matches = 1;
             break;
+
+        /* 整数截断类型：as i8/u8/i16/u16/i32/u32/i64/u64 — 显式截断高位，始终成功 */
+        case TYPE_I8: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                value = val_int((int)(int8_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int8_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int8_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U8: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                value = val_int((int)(uint8_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(uint8_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint8_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_I16: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                value = val_int((int)(int16_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int16_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int16_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U16: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                value = val_int((int)(uint16_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(uint16_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint16_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_I32: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                value = val_int((int)(int32_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int32_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int32_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U32: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                value = val_int((int)(uint32_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(uint32_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint32_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_I64: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U64: {
+            (void)READ_BYTE();
+            if (val_is_int(value)) {
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int64_t)(uint64_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint64_t)val_as_double(value));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        /* 浮点窄化类型 */
+        case TYPE_F32: {
+            (void)READ_BYTE();
+            if (val_is_float(value)) {
+                /* float→f32: 始终可转换（可能损失精度） */
+                value = val_float((double)(float)val_as_double(value));
+                matches = 1;
+            } else if (val_is_int(value)) {
+                value = val_float((double)(float)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_float((double)(float)bigint_to_double(val_as_bigint(value)));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_F64: {
+            (void)READ_BYTE();
+            if (val_is_float(value)) {
+                matches = 1;
+            } else if (val_is_int(value)) {
+                value = val_float((double)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_float(bigint_to_double(val_as_bigint(value)));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        /* cstruct 类型 */
+        case TYPE_CSTRUCT: {
+            uint16_t cs_name_idx = READ_SHORT();
+            Value cs_name_val = frame->chunk->constants[cs_name_idx];
+            if (!val_is_obj(cs_name_val) || val_as_obj(cs_name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* cs_name = ((ObjString*)val_as_obj(cs_name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_CSTRUCT) {
+                ObjCStruct* obj = (ObjCStruct*)val_as_obj(value);
+                if (obj->def && obj->def->name) {
+                    matches = (strcmp(obj->def->name, cs_name) == 0);
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
+            break;
+        }
         default:
             (void)READ_BYTE();
             matches = 0;

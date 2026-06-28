@@ -2043,6 +2043,8 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
                     gen_enum_module(gen, ast->u.export.decl);
                 } else if (ast->u.export.decl->kind == AST_FACE_DEF) {
                     gen_stmt(gen, ast->u.export.decl);
+                } else if (ast->u.export.decl->kind == AST_CSTRUCT_DEF) {
+                    gen_stmt(gen, ast->u.export.decl);
                 }
             }
             break;

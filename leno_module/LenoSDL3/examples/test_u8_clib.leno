@@ -1,0 +1,32 @@
+// test_u8_clib.leno — 用两个 SDL3 模块版本对比 u8 vs i32 clib 参数
+// 这个测试需要 SDL3_u8.leno (u8版) 和 SDL3_i32.leno (i32版)
+
+import ffi
+
+main() {
+    var lib = ffi.load("SDL3.dll")
+    if lib == null { print("无法加载 SDL3.dll"); return }
+
+    // 初始化
+    var init_ok = ffi.call_bool(lib, "SDL_Init", 0x00000020)
+    if not init_ok { ffi.free(lib); return }
+
+    // 创建窗口和渲染器
+    var win = ffi.call_ptr(lib, "SDL_CreateWindow", "u8_vs_i32", 400, 300, 0)
+    var ren = ffi.call_ptr(lib, "SDL_CreateRenderer", win, ffi.nullptr())
+
+    // 测试1: 用 ffi.call_bool 直接调 SDL_SetRenderDrawColor (i32路径)
+    print("=== ffi.call_bool 路径 (蓝色) ===")
+    ffi.call_bool(lib, "SDL_SetRenderDrawColor", ren, 50, 100, 200, 255)
+    ffi.call_bool(lib, "SDL_RenderClear", ren)
+    ffi.call_bool(lib, "SDL_RenderPresent", ren)
+    ffi.call_void(lib, "SDL_Delay", 2000)
+
+    print("完成，请看窗口是否先显示蓝色")
+
+    // 清理
+    ffi.call_void(lib, "SDL_DestroyRenderer", ren)
+    ffi.call_void(lib, "SDL_DestroyWindow", win)
+    ffi.call_void(lib, "SDL_Quit")
+    ffi.free(lib)
+}

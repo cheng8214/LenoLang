@@ -1,0 +1,50 @@
+// test_u8_vs_i32.leno — 精确对比 u8 vs i32 参数传递
+import ffi
+
+// 用 ffi.call_bool 两次，一次带 u8 arg_types，一次不带
+// 直接测试 ffi_call_impl 的两条参数路径
+
+main() {
+    var lib = ffi.load("SDL3.dll")
+    if lib == null { print("无法加载 SDL3.dll"); return }
+
+    // 初始化 SDL
+    var init_ok = ffi.call_bool(lib, "SDL_Init", 0x00000020)
+    print("SDL_Init = " + init_ok)
+    if not init_ok { ffi.free(lib); return }
+
+    // 创建窗口
+    var win = ffi.call_ptr(lib, "SDL_CreateWindow", "test_u8", 400, 300, 0)
+    print("Window = " + (win != null))
+    if win == null { ffi.call_void(lib, "SDL_Quit"); ffi.free(lib); return }
+
+    // 创建渲染器
+    var ren = ffi.call_ptr(lib, "SDL_CreateRenderer", win, ffi.nullptr())
+    print("Renderer = " + (ren != null))
+    if ren == null { ffi.call_void(lib, "SDL_DestroyWindow", win); ffi.call_void(lib, "SDL_Quit"); ffi.free(lib); return }
+
+    // === 测试1: i32 参数路径 ===
+    print("--- 测试 i32 参数路径 ---")
+    var c1 = ffi.call_bool(lib, "SDL_SetRenderDrawColor", ren, 255, 0, 0, 255)
+    print("setColor(i32) = " + c1)
+    var cl1 = ffi.call_bool(lib, "SDL_RenderClear", ren)
+    print("clear = " + cl1)
+    ffi.call_bool(lib, "SDL_RenderPresent", ren)
+    ffi.call_void(lib, "SDL_Delay", 1000)
+
+    // === 测试2: 用 ffi.call_bool 传相同值（默认 TYPE_UNKNOWN → FFI_TYPE_INT） ===
+    print("--- 测试 FFI_TYPE_INT 路径 ---")
+    var c2 = ffi.call_bool(lib, "SDL_SetRenderDrawColor", ren, 50, 100, 200, 255)
+    print("setColor(int) = " + c2)
+    var cl2 = ffi.call_bool(lib, "SDL_RenderClear", ren)
+    print("clear = " + cl2)
+    ffi.call_bool(lib, "SDL_RenderPresent", ren)
+    ffi.call_void(lib, "SDL_Delay", 1000)
+
+    // 清理
+    ffi.call_void(lib, "SDL_DestroyRenderer", ren)
+    ffi.call_void(lib, "SDL_DestroyWindow", win)
+    ffi.call_void(lib, "SDL_Quit")
+    ffi.free(lib)
+    print("完成")
+}

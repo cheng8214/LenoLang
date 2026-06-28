@@ -1,0 +1,283 @@
+// LenoSDL3 - SDL3 绑定（clib + cstruct 直接调用 SDL3.dll）
+import ffi
+import strings
+import files
+import dirs
+
+// ============================================================================
+// cstruct — SDL3 核心数据结构
+// ============================================================================
+
+// 矩形（浮点坐标）
+export cstruct SDL_FRect {
+    f32 x
+    f32 y
+    f32 w
+    f32 h
+}
+
+// 矩形（整数坐标）
+export cstruct SDL_Rect {
+    i32 x
+    i32 y
+    i32 w
+    i32 h
+}
+
+// SDL_Event 联合体（只定义公共头部，事件数据通过偏移读取）
+cstruct SDL_Event {
+    u32 type
+    u32 _reserved
+    u64 _timestamp
+    u32 _window_id
+    u8  _data[108]
+}
+
+// ============================================================================
+// clib — SDL3.dll 导出函数
+// ============================================================================
+
+clib sdl3 {
+    // 初始化 / 退出
+    i32 SDL_Init(u32 flags)
+    void SDL_Quit()
+    str8 SDL_GetError()
+
+    // 窗口
+    Ptr SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
+    void SDL_DestroyWindow(Ptr window)
+
+    // 渲染器
+    Ptr SDL_CreateRenderer(Ptr window, str8 name)
+    void SDL_DestroyRenderer(Ptr renderer)
+    i32 SDL_RenderClear(Ptr renderer)
+    i32 SDL_RenderPresent(Ptr renderer)
+    i32 SDL_SetRenderDrawColor(Ptr renderer, u8 r, u8 g, u8 b, u8 a)
+    i32 SDL_SetRenderDrawColorFloat(Ptr renderer, f32 r, f32 g, f32 b, f32 a)
+    i32 SDL_RenderFillRect(Ptr renderer, Ptr rect)
+    i32 SDL_RenderRect(Ptr renderer, Ptr rect)
+    i32 SDL_RenderLine(Ptr renderer, f32 x1, f32 y1, f32 x2, f32 y2)
+    i32 SDL_RenderPoint(Ptr renderer, f32 x, f32 y)
+    i32 SDL_SetRenderVSync(Ptr renderer, i32 vsync)
+
+    // 事件
+    i32 SDL_PollEvent(SDL_Event event)
+
+    // 延时
+    void SDL_Delay(u32 ms)
+
+    // 窗口大小（int 输出参数用 Ptr）
+    i32 SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
+}
+
+// ============================================================================
+// 常量 — 用 var 定义
+// ============================================================================
+
+export var INIT_VIDEO       = 0x00000020
+export var INIT_AUDIO       = 0x00000010
+export var INIT_EVENTS      = 0x00004000
+
+export var WINDOW_RESIZABLE = 0x0000000000000020
+
+export var EVENT_QUIT                    = 0x100
+export var EVENT_KEY_DOWN                = 0x300
+export var EVENT_KEY_UP                  = 0x301
+export var EVENT_MOUSE_MOTION            = 0x400
+export var EVENT_MOUSE_BUTTON_DOWN       = 0x401
+export var EVENT_MOUSE_BUTTON_UP         = 0x402
+export var EVENT_WINDOW_CLOSE_REQUESTED  = 0x210
+export var EVENT_WINDOW_RESIZED          = 0x206
+
+export var SCANCODE_ESCAPE = 41
+export var SCANCODE_RETURN = 40
+export var SCANCODE_SPACE  = 44
+export var SCANCODE_A      = 4
+export var SCANCODE_W      = 26
+export var SCANCODE_S      = 22
+export var SCANCODE_D      = 7
+
+// ============================================================================
+// DLL 加载
+// ============================================================================
+
+sdl3 g_lib = null
+
+func lib(): sdl3 {
+    if g_lib == null {
+        // DLL 在 lib/ 目录（与 SDL3.leno 同目录）
+        var path = dirs.script_dir() + "/SDL3.dll"
+        if not files.exists(path) {
+            path = "SDL3.dll"  // 系统PATH搜索
+        }
+        g_lib = ffi.load(path)
+        if g_lib == null {
+            print("[LenoSDL3] 无法加载 SDL3.dll: " + path)
+        }
+    }
+    return g_lib
+}
+
+// ============================================================================
+// 初始化 / 退出
+// ============================================================================
+
+export func init(int flags): bool {
+    sdl3 l = lib()
+    if l == null { return false }
+    return l.SDL_Init(flags) != 0
+}
+
+export func initVideo(): bool { return init(INIT_VIDEO) }
+
+export func quit() {
+    if g_lib != null {
+        ffi.free(g_lib)
+        g_lib = null
+    }
+}
+
+export func getError(): string {
+    sdl3 l = lib()
+    if l == null { return "SDL3 not loaded" }
+    return l.SDL_GetError() as string
+}
+
+export func delay(int ms) { lib().SDL_Delay(ms) }
+
+// ============================================================================
+// Window — 窗口封装
+// ============================================================================
+
+export struct Window {
+    Ptr handle; bool ok
+
+    func init(string title, int w, int h, int flags): bool {
+        handle = lib().SDL_CreateWindow(title, w, h, flags)
+        ok = handle != null
+        if not ok { print("[LenoSDL3] 创建窗口失败: " + getError()) }
+        return ok
+    }
+
+    func destroy() {
+        if ok { lib().SDL_DestroyWindow(handle); handle = null; ok = false }
+    }
+}
+
+// ============================================================================
+// Renderer — 渲染器封装
+// ============================================================================
+
+export struct Renderer {
+    Ptr handle; bool ok
+
+    func initDefault(Ptr window): bool {
+        handle = lib().SDL_CreateRenderer(window, null as string)
+        ok = handle != null
+        if not ok { print("[LenoSDL3] 创建渲染器失败: " + getError()) }
+        return ok
+    }
+
+    func destroy() {
+        if ok { lib().SDL_DestroyRenderer(handle); handle = null; ok = false }
+    }
+
+    func clear(): bool  { return lib().SDL_RenderClear(handle) != 0 }
+    func present(): bool { return lib().SDL_RenderPresent(handle) != 0 }
+
+    func setColor(int r, int g, int b, int a): bool {
+        return lib().SDL_SetRenderDrawColor(handle, r, g, b, a) != 0
+    }
+
+    func setColorFloat(float r, float g, float b, float a): bool {
+        return lib().SDL_SetRenderDrawColorFloat(handle, r, g, b, a) != 0
+    }
+
+    func fillRect(float x, float y, float w, float h): bool {
+        var rect = SDL_FRect.malloc()
+        rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        var result = lib().SDL_RenderFillRect(handle, rect.to_ptr()) != 0
+        rect.free()
+        return result
+    }
+
+    func fillRectPtr(Ptr rect): bool {
+        return lib().SDL_RenderFillRect(handle, rect) != 0
+    }
+
+    func fillFull(): bool {
+        return lib().SDL_RenderFillRect(handle, null) != 0
+    }
+
+    func drawRect(float x, float y, float w, float h): bool {
+        var rect = SDL_FRect.malloc()
+        rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        var result = lib().SDL_RenderRect(handle, rect.to_ptr()) != 0
+        rect.free()
+        return result
+    }
+
+    func drawLine(float x1, float y1, float x2, float y2): bool {
+        return lib().SDL_RenderLine(handle, x1, y1, x2, y2) != 0
+    }
+
+    func drawPoint(float x, float y): bool {
+        return lib().SDL_RenderPoint(handle, x, y) != 0
+    }
+
+    func setVSync(int mode): bool {
+        return lib().SDL_SetRenderVSync(handle, mode) != 0
+    }
+}
+
+// ============================================================================
+// Event — 事件封装
+// ============================================================================
+
+export struct Event {
+    Ptr raw; bool has
+
+    func init(): bool {
+        raw = ffi.malloc(128)  // SDL_Event = 128 bytes
+        has = false
+        return true
+    }
+
+    func poll(): bool {
+        has = lib().SDL_PollEvent(raw) != 0
+        return has
+    }
+
+    func type(): int { return ffi.read_int(raw, 0) }
+
+    func isQuit(): bool        { return type() == EVENT_QUIT }
+    func isKeyDown(): bool     { return type() == EVENT_KEY_DOWN }
+    func isKeyUp(): bool       { return type() == EVENT_KEY_UP }
+    func isWindowClose(): bool { return type() == EVENT_WINDOW_CLOSE_REQUESTED }
+
+    func scancode(): int { return ffi.read_int(raw, 24) }
+
+    func uninit() {
+        if raw != null { ffi.free(raw); raw = null; has = false }
+    }
+}
+
+// ============================================================================
+// 工厂函数
+// ============================================================================
+
+export func createWindow(string title, int w, int h, int flags): Window {
+    var win = new Window(); win.init(title, w, h, flags); return win
+}
+
+export func createRenderer(Ptr window): Renderer {
+    var ren = new Renderer(); ren.initDefault(window); return ren
+}
+
+export func createEvent(): Event {
+    var ev = new Event(); ev.init(); return ev
+}
+
+// cstruct 大小（SDL_FRect = 4*f32 = 16 bytes, SDL_Rect = 4*i32 = 16 bytes）
+export var SDL_FRect_SIZE = 16
+export var SDL_Rect_SIZE = 16

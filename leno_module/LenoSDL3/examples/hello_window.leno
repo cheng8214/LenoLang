@@ -1,0 +1,41 @@
+// hello_window.leno — SDL3 窗口示例（蓝色清屏 + 红色矩形）
+import "../lib/SDL3.leno" as SDL3
+
+main() {
+    if not SDL3.initVideo() {
+        print("SDL3 init failed: " + SDL3.getError())
+        return
+    }
+
+    var win = SDL3.createWindow("Hello LenoSDL3!", 800, 600, 0)
+    if not win.ok { SDL3.quit(); return }
+
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { win.destroy(); SDL3.quit(); return }
+
+    var ev = SDL3.createEvent()
+    var running = true
+
+    while running {
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
+        }
+
+        // 蓝色背景
+        ren.setColor(30, 60, 150, 255)
+        ren.clear()
+
+        // 红色矩形
+        ren.setColor(220, 50, 50, 255)
+        ren.fillRect(200, 150, 400, 300)
+
+        ren.present()
+    }
+
+    ren.destroy()
+    win.destroy()
+    ev.uninit()
+    SDL3.quit()
+    print("退出成功")
+}
