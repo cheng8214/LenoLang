@@ -19,8 +19,6 @@ static inline int value_matches_type(Value value, TypeKind expected) {
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
         case TYPE_FILE:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
-        case TYPE_RGB:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_RGB);
         case TYPE_SOCKET:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
         case TYPE_PTR:

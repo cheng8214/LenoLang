@@ -79,7 +79,6 @@ Ast* parse_statement(Parser* p) {
         case TOK_DICT_TYPE:
         // case TOK_BINT:  // 已移除：对外统一用 int
         case TOK_FILE_TYPE:
-        case TOK_RGB_TYPE:
         case TOK_SOCKET_TYPE:
         case TOK_PTR_TYPE:
             stmt = parse_var_decl_internal(p);

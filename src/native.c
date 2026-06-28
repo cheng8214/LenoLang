@@ -180,7 +180,7 @@ static void module_method_table_resize(void) {
 }
 
 // ============================================================================
-// 模块常量哈希表（原生模块导出的 int 常量，如 guis.LOGICAL_PRESENTATION_STRETCH）
+// 模块常量哈希表（原生模块导出的 int 常量）
 // ============================================================================
 
 typedef struct ModuleConstEntry {
@@ -1428,7 +1428,6 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_STRING: return "string";
         case TYPE_DICT:   return "dict";
         case TYPE_FILE:   return "file";
-        case TYPE_RGB:    return "grgb";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";
         case TYPE_THREAD:  return "thread";

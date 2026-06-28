@@ -140,10 +140,6 @@ OPCODE(OP_TYPE_CHECK) {
             (void)READ_BYTE(); // 消费 element_type 字节
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
             break;
-        case TYPE_RGB:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_RGB);
-            break;
         case TYPE_SOCKET:
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);

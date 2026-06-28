@@ -298,8 +298,6 @@ void gc_mark_object(Object* obj) {
             break;
         case OBJ_SOCKET:
             break;
-        case OBJ_RGB:
-            break;
         /* 数组：标记所有元素 */
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;

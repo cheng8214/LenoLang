@@ -10,28 +10,6 @@
 #include <ctype.h>
 #include <string.h>
 
-// Style 字段信息（来自 guis_style.c）
-typedef enum {
-    STYLE_TYPE_STRING,
-    STYLE_TYPE_INT,
-    STYLE_TYPE_FLOAT,
-    STYLE_TYPE_BOOL,
-    STYLE_TYPE_COLOR,
-    STYLE_TYPE_ENUM,
-} StyleFieldType;
-
-typedef struct {
-    const char* name;
-    StyleFieldType type;
-    const char* description;
-    const char* default_value;
-    const char** options;
-    int option_count;
-} StyleFieldInfo;
-
-extern StyleFieldInfo* guis_get_style_field_info(const char* target, const char* field_name);
-extern const char* guis_style_field_type_name(StyleFieldType type);
-
 // 检查指定位置是否在字符串字面量中
 static bool is_inside_string_literal(const char* content, int offset) {
     if (!content || offset < 0) return false;
@@ -1149,54 +1127,6 @@ static char* get_keyword_doc(const char* word) {
         return strdup("**Thread** - 线程类型\n\n"
                      "用于并发编程，通过 async 模块创建。");
     }
-    else if (strcmp(word, "Win") == 0) {
-        return strdup("**Win** - 窗口类型\n\n"
-                     "GUI 窗口对象，通过 guis.create_window() 创建。\n\n"
-                     "```leno\n"
-                     "Win win = guis.create_window(\"Title\", {width:800, height:600})\n"
-                     "win.run(draw_cb, event_cb)\n"
-                     "```");
-    }
-    else if (strcmp(word, "Draw") == 0) {
-        return strdup("**Draw** - 绘图类型\n\n"
-                     "GUI 绘图上下文，在窗口渲染回调中使用。\n\n"
-                     "```leno\n"
-                     "func draw(Draw d) {\n"
-                     "    d.set_color(_rgb(255,0,0))\n"
-                     "    d.line(10,10,100,100)\n"
-                     "    d.present()\n"
-                     "}\n"
-                     "```");
-    }
-    else if (strcmp(word, "Event") == 0) {
-        return strdup("**Event** - 事件类型\n\n"
-                     "GUI 事件对象，在窗口事件回调中使用。\n\n"
-                     "```leno\n"
-                     "win.run(draw, func(Event e) {\n"
-                     "    // 处理事件\n"
-                     "})\n"
-                     "```");
-    }
-    else if (strcmp(word, "Image") == 0) {
-        return strdup("**Image** - 图像类型\n\n"
-                     "GUI 图像对象，通过 guis.load_image() 加载。");
-    }
-    else if (strcmp(word, "Font") == 0) {
-        return strdup("**Font** - 字体类型\n\n"
-                     "GUI 字体对象，通过 guis.load_font() 加载。");
-    }
-    else if (strcmp(word, "Rgb") == 0) {
-        return strdup("**Rgb** - 颜色类型\n\n"
-                     "RGB 颜色值，通过 _rgb() 函数创建。\n\n"
-                     "```leno\n"
-                     "var red = _rgb(255, 0, 0)\n"
-                     "var blue = _rgb(0, 0, 255, 128)  // 带透明度\n"
-                     "```");
-    }
-    else if (strcmp(word, "Style") == 0) {
-        return strdup("**Style** - 样式类型\n\n"
-                     "GUI 样式对象，用于设置窗口和控件的外观。");
-    }
     else if (strcmp(word, "File") == 0) {
         return strdup("**File** - 文件类型\n\n"
                      "文件对象，通过 io.open() 创建。\n\n"
@@ -1769,33 +1699,6 @@ static char* get_variable_type_from_compiler(const char* content, const char* va
             result = strdup("array");
         } else if (strstr(type_str, "Dict") != NULL || strstr(type_str, "dict") != NULL) {
             result = strdup("dict");
-        } else if (strncmp(type_str, "Win", 3) == 0) {
-            result = strdup("win");
-        } else if (strncmp(type_str, "Draw", 4) == 0) {
-            result = strdup("draw");
-        } else if (strncmp(type_str, "Event", 5) == 0) {
-            result = strdup("event");
-        } else if (strncmp(type_str, "Image", 5) == 0) {
-            result = strdup("image");
-        } else if (strncmp(type_str, "Font", 4) == 0) {
-            result = strdup("font");
-        } else if (strncmp(type_str, "Rgb", 3) == 0) {
-            result = strdup("rgb");
-        } else if (strncmp(type_str, "Style", 5) == 0) {
-            // Style[window] -> "style:window"，保留目标信息用于字段悬停
-            if (type_str[5] == '[') {
-                const char* start = type_str + 6;
-                const char* end = strchr(start, ']');
-                if (end) {
-                    int len = (int)(end - start);
-                    char* buf = malloc(len + 8);
-                    memcpy(buf, "style:", 6);
-                    memcpy(buf + 6, start, len);
-                    buf[6 + len] = '\0';
-                    result = buf;
-                }
-            }
-            if (!result) result = strdup("style");
         } else if (strncmp(type_str, "File", 4) == 0) {
             result = strdup("file");
         } else if (strncmp(type_str, "Ptr", 3) == 0) {
@@ -1823,8 +1726,7 @@ static char* get_variable_type_from_compiler(const char* content, const char* va
 static const char* is_instance_method(const char* method_name) {
     // 按优先级检查各类型的实例方法
     static const char* type_keys[] = {
-        "array", "string", "dict", "win", "draw", "event",
-        "image", "font", "file", "ptr", "rgb", "style", NULL
+        "array", "string", "dict", "file", "ptr", NULL
     };
     
     int count;
@@ -1920,34 +1822,9 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                 // 首先尝试使用编译器确定变量类型
                 char* var_type = get_variable_type_from_compiler(content, module, file_path);
                 if (var_type) {
-                    if (strncmp(var_type, "style:", 6) == 0) {
-                        // Style[window].field 字段悬停
-                        const char* style_target = var_type + 6;
-                        StyleFieldInfo* field_info = guis_get_style_field_info(style_target, method);
-                        if (field_info) {
-                            char doc[512];
-                            const char* type_name = guis_style_field_type_name(field_info->type);
-                            snprintf(doc, sizeof(doc),
-                                     "**%s.%s** : %s\n\n%s\n\n默认值: `%s`",
-                                     style_target, method, type_name,
-                                     field_info->description ? field_info->description : "",
-                                     field_info->default_value ? field_info->default_value : "");
-                            if (field_info->type == 5 && field_info->options && field_info->option_count > 0) {
-                                // STYLE_TYPE_ENUM = 5
-                                strncat(doc, "\n\n可选值:", sizeof(doc) - strlen(doc) - 1);
-                                for (int k = 0; k < field_info->option_count; k++) {
-                                    strncat(doc, " `", sizeof(doc) - strlen(doc) - 1);
-                                    strncat(doc, field_info->options[k], sizeof(doc) - strlen(doc) - 1);
-                                    strncat(doc, "`", sizeof(doc) - strlen(doc) - 1);
-                                }
-                            }
-                            info = strdup(doc);
-                        }
-                    } else {
-                        int arity = native_get_instance_method_arity(var_type, method);
-                        if (arity >= 0) {
-                            info = generate_instance_method_doc(var_type, method);
-                        }
+                    int arity = native_get_instance_method_arity(var_type, method);
+                    if (arity >= 0) {
+                        info = generate_instance_method_doc(var_type, method);
                     }
                     free(var_type);
                 }
@@ -2007,63 +1884,6 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                     }
                 }
                 search_pos--;
-            }
-            
-            if (search_pos >= 0) {
-                // search_pos 指向 '{'，向前跳过空白、'='、变量名、空白，找到 ']' -> Style[xxx]
-                int sp = search_pos - 1;
-                while (sp >= 0 && isspace((unsigned char)content[sp])) sp--;
-                if (sp >= 0 && content[sp] == '=') sp--;
-                while (sp >= 0 && isspace((unsigned char)content[sp])) sp--;
-                while (sp >= 0 && (isalnum((unsigned char)content[sp]) || content[sp] == '_')) sp--;
-                while (sp >= 0 && isspace((unsigned char)content[sp])) sp--;
-                
-                if (sp >= 0 && content[sp] == ']') {
-                    int bracket_end = sp;
-                    int bracket_start = bracket_end - 1;
-                    while (bracket_start >= 0 && content[bracket_start] != '[') bracket_start--;
-                    if (bracket_start >= 0 && content[bracket_start] == '[') {
-                        int kw_end = bracket_start;
-                        int kw_start = kw_end - 1;
-                        while (kw_start >= 0 && (isalnum((unsigned char)content[kw_start]) || content[kw_start] == '_')) kw_start--;
-                        kw_start++;
-                        int kw_len = kw_end - kw_start;
-                        if (kw_len == 5 && strncmp(content + kw_start, "Style", 5) == 0) {
-                            int t_start = bracket_start + 1;
-                            int t_end = bracket_end;
-                            while (t_start < t_end && isspace((unsigned char)content[t_start])) t_start++;
-                            while (t_end > t_start && isspace((unsigned char)content[t_end - 1])) t_end--;
-                            int t_len = t_end - t_start;
-                            if (t_len > 0 && t_len < 64) {
-                                char* style_target = (char*)malloc(t_len + 1);
-                                if (style_target) {
-                                    memcpy(style_target, content + t_start, t_len);
-                                    style_target[t_len] = '\0';
-                                    StyleFieldInfo* field_info = guis_get_style_field_info(style_target, word);
-                                    if (field_info) {
-                                        const char* type_name = guis_style_field_type_name(field_info->type);
-                                        char doc[512];
-                                        snprintf(doc, sizeof(doc),
-                                                 "**%s.%s** : %s\n\n%s\n\n默认值: `%s`",
-                                                 style_target, word, type_name,
-                                                 field_info->description ? field_info->description : "",
-                                                 field_info->default_value ? field_info->default_value : "");
-                                        if (field_info->type == 5 && field_info->options && field_info->option_count > 0) {
-                                            strncat(doc, "\n\n可选值:", sizeof(doc) - strlen(doc) - 1);
-                                            for (int k = 0; k < field_info->option_count; k++) {
-                                                strncat(doc, " `", sizeof(doc) - strlen(doc) - 1);
-                                                strncat(doc, field_info->options[k], sizeof(doc) - strlen(doc) - 1);
-                                                strncat(doc, "`", sizeof(doc) - strlen(doc) - 1);
-                                            }
-                                        }
-                                        info = strdup(doc);
-                                    }
-                                    free(style_target);
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }

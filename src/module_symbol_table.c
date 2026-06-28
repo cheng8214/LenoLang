@@ -439,7 +439,6 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     if (strcmp(buf, "null") == 0)   return type_new(TYPE_NULL);
     // 文件/网络类型
     if (strcmp(buf, "File") == 0)   return type_new(TYPE_FILE);
-    if (strcmp(buf, "GRgb") == 0)   return type_new(TYPE_RGB);
     if (strcmp(buf, "Socket") == 0) return type_new(TYPE_SOCKET);
     // 指针类型
     if (strcmp(buf, "ptr") == 0 || strcmp(buf, "Ptr") == 0) return type_new(TYPE_PTR);
@@ -545,7 +544,6 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "null") == 0)   return TYPE_NULL;
     // 文件/颜色类型
     if (strcmp(type_str, "File") == 0)   return TYPE_FILE;
-    if (strcmp(type_str, "GRgb") == 0)   return TYPE_RGB;
     // 网络/指针类型
     if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
     if (strcmp(type_str, "Ptr") == 0)    return TYPE_PTR;

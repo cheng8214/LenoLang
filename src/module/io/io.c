@@ -121,11 +121,6 @@ static void print_value_internal(Value value) {
                     printf("<file>");
                     break;
                 }
-                case OBJ_RGB: {
-                    ObjRgb* rgb = (ObjRgb*)obj;
-                    printf("GRgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
-                    break;
-                }
                 case OBJ_CSTRUCT_DEF: {
                     ObjCStructDef* def = (ObjCStructDef*)obj;
                     printf("cstruct %s{", def->name);

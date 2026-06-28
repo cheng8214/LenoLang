@@ -120,9 +120,6 @@ OPCODE(OP_MODULE_CALL) {
                     case TYPE_FILE:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_FILE);
                         break;
-                    case TYPE_RGB:
-                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_RGB);
-                        break;
                     case TYPE_SOCKET:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_SOCKET);
                         break;

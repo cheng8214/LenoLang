@@ -977,173 +977,6 @@ static void add_module_symbol_completions(const char* content, LspCompletionItem
     compiler_context_cleanup(&ctx);
 }
 
-// 检测光标是否在 Style[xxx] 变量的初始化 Dict 中
-// 返回 Style 目标控件名（如 "window", "button"），如果不是 Style 上下文则返回 NULL
-static char* detect_style_context(const char* content, LspPosition pos) {
-    if (!content) return NULL;
-    
-    int offset = lsp_position_to_offset(content, pos);
-    if (offset <= 0) return NULL;
-    
-    // 向前查找最近的 "Style[" 模式
-    int search_pos = offset - 1;
-    int brace_depth = 0;
-    int in_string = 0;
-    char string_quote = 0;
-    
-    // 先确定当前光标在 Dict 字面量内部（{...}）
-    while (search_pos >= 0) {
-        char c = content[search_pos];
-        
-        if (in_string) {
-            if (c == string_quote) {
-                // 检查是否是转义的
-                int backslash_count = 0;
-                int check = search_pos - 1;
-                while (check >= 0 && content[check] == '\\') {
-                    backslash_count++;
-                    check--;
-                }
-                if (backslash_count % 2 == 0) {
-                    in_string = 0;
-                }
-            }
-        } else {
-            if (c == '"' || c == '\'') {
-                in_string = 1;
-                string_quote = c;
-            } else if (c == '}') {
-                brace_depth++;
-            } else if (c == '{') {
-                if (brace_depth == 0) {
-                    // 找到了包含光标的 Dict 开始
-                    break;
-                }
-                brace_depth--;
-            }
-        }
-        search_pos--;
-    }
-    
-    if (search_pos < 0) return NULL;
-    
-    // 现在 search_pos 指向 Dict 的 '{'，向前查找 "Style[xxx]"
-    // 格式: Style[xxx] varname = { 或 Style[xxx] varname={
-    int style_pos = search_pos - 1;
-    // 跳过 '{' 前的空白
-    while (style_pos >= 0 && isspace((unsigned char)content[style_pos])) style_pos--;
-    // 跳过 '=' 号
-    if (style_pos >= 0 && content[style_pos] == '=') style_pos--;
-    // 跳过 '=' 前的空白
-    while (style_pos >= 0 && isspace((unsigned char)content[style_pos])) style_pos--;
-    // 跳过变量名（如 "st"）
-    while (style_pos >= 0 && (isalnum((unsigned char)content[style_pos]) || content[style_pos] == '_')) style_pos--;
-    // 跳过变量名前的空白
-    while (style_pos >= 0 && isspace((unsigned char)content[style_pos])) style_pos--;
-    // 现在 style_pos 应该指向 ']'（Style[xxx] 的结束括号）
-    if (style_pos >= 0 && content[style_pos] == ']') {
-        // 向前查找匹配的 '['
-        int bracket_end = style_pos;
-        int bracket_start = bracket_end - 1;
-        while (bracket_start >= 0 && content[bracket_start] != '[') bracket_start--;
-        if (bracket_start >= 0 && content[bracket_start] == '[') {
-            // 检查 '[' 前面是否是 "Style"
-            int style_kw_end = bracket_start; // 指向 '['
-            int style_kw_start = style_kw_end - 1;
-            while (style_kw_start >= 0 && (isalnum((unsigned char)content[style_kw_start]) || content[style_kw_start] == '_')) {
-                style_kw_start--;
-            }
-            style_kw_start++; // 指向关键字首字母
-            int kw_len = style_kw_end - style_kw_start;
-            if (kw_len == 5 && strncmp(content + style_kw_start, "Style", 5) == 0) {
-                // 找到了 Style[xxx]
-                int target_start = bracket_start + 1; // 跳过 '['
-                int target_end = bracket_end; // 在 ']' 之前
-                
-                // 跳过空白
-                while (target_start < target_end && isspace((unsigned char)content[target_start])) target_start++;
-                while (target_end > target_start && isspace((unsigned char)content[target_end - 1])) target_end--;
-                
-                int target_len = target_end - target_start;
-                if (target_len > 0 && target_len < 64) {
-                    char* target = (char*)malloc(target_len + 1);
-                    if (target) {
-                        memcpy(target, content + target_start, target_len);
-                        target[target_len] = '\0';
-                        return target;
-                    }
-                }
-            }
-        }
-    }
-    
-    return NULL;
-}
-
-// 复用 guis_style.c 中的字段定义
-extern const char** guis_get_style_fields(const char* target, int* count);
-extern void* guis_get_style_field_info(const char* target, const char* field_name);
-extern const char* guis_style_field_type_name(int type);
-
-typedef struct {
-    const char* name;
-    int type;
-    const char* description;
-    const char* default_value;
-    const char** options;
-    int option_count;
-} StyleFieldInfo;
-
-// 添加 Style 字段补全（带类型信息）
-static void add_style_field_completions(const char* target, LspCompletionItem** items,
-                                         int* count, int* capacity, const char* prefix) {
-    if (!target) return;
-    
-    int field_count = 0;
-    const char** fields = guis_get_style_fields(target, &field_count);
-    
-    if (fields && field_count > 0) {
-        for (int i = 0; i < field_count; i++) {
-            StyleFieldInfo* info = (StyleFieldInfo*)guis_get_style_field_info(target, fields[i]);
-            char detail[512];
-            
-            if (info) {
-                const char* type_name = guis_style_field_type_name(info->type);
-                if (info->type == 5 && info->options && info->option_count > 0) {
-                    // 枚举类型，显示可选值
-                    char options_str[256] = {0};
-                    int pos = 0;
-                    for (int j = 0; j < info->option_count && pos < 200; j++) {
-                        int len = strlen(info->options[j]);
-                        if (pos + len + 2 < (int)sizeof(options_str)) {
-                            if (j > 0) {
-                                options_str[pos++] = '|';
-                            }
-                            memcpy(options_str + pos, info->options[j], len);
-                            pos += len;
-                        }
-                    }
-                    options_str[pos] = '\0';
-                    snprintf(detail, sizeof(detail), "%s %s (%s) 默认:%s", 
-                            type_name, info->description, options_str, info->default_value);
-                } else {
-                    snprintf(detail, sizeof(detail), "%s %s 默认:%s", 
-                            type_name, info->description, info->default_value);
-                }
-            } else {
-                snprintf(detail, sizeof(detail), "Style[%s].%s", target, fields[i]);
-            }
-            
-            add_completion_item(items, count, capacity,
-                               fields[i],
-                               LSP_COMP_FIELD,
-                               detail,
-                               prefix);
-        }
-        free(fields);
-    }
-}
-
 // 检查是否是字符串字面量结尾（如 '"...".' 或 "'...'.", '"".', "''"）
 // 返回字符串开始的位置（不包括引号），如果不是字符串字面量则返回 -1
 static int is_string_literal_before_dot(const char* content, int dot_pos) {
@@ -1787,33 +1620,6 @@ static char* get_variable_type(const char* content, const char* var_name, const 
             result = strdup("ptr");
         } else if (strcmp(type_str, "File") == 0) {
             result = strdup("file");
-        } else if (strcmp(type_str, "Win") == 0) {
-            result = strdup("win");
-        } else if (strcmp(type_str, "Draw") == 0) {
-            result = strdup("draw");
-        } else if (strcmp(type_str, "Event") == 0) {
-            result = strdup("event");
-        } else if (strcmp(type_str, "Image") == 0) {
-            result = strdup("image");
-        } else if (strcmp(type_str, "Font") == 0) {
-            result = strdup("font");
-        } else if (strncmp(type_str, "Style", 5) == 0) {
-            // Style[window] -> "style:window"，保留目标信息用于字段补全
-            if (type_str[5] == '[') {
-                const char* start = type_str + 6;
-                const char* end = strchr(start, ']');
-                if (end) {
-                    int len = (int)(end - start);
-                    char* buf = malloc(len + 8);
-                    memcpy(buf, "style:", 6);
-                    memcpy(buf + 6, start, len);
-                    buf[6 + len] = '\0';
-                    result = buf;
-                }
-            }
-            if (!result) result = strdup("style");
-        } else if (strcmp(type_str, "Rgb") == 0) {
-            result = strdup("rgb");
         } else if (strcmp(type_str, "thread") == 0) {
             result = strdup("thread");
         } else if (strcmp(type_str, "channel") == 0) {
@@ -2201,7 +2007,7 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             native_free_module_method_metas(metas);
         }
 
-        // 添加模块常量（如 guis.KEY_RETURN = 13）
+        // 添加模块常量
         {
             int const_count = 0;
             char** consts = native_get_module_consts(actual_module, &const_count);
@@ -2364,10 +2170,6 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                             }
                         }
                     }
-                } else if (strncmp(var_type, "style:", 6) == 0) {
-                    // Style[window] 等类型的字段补全
-                    const char* style_target = var_type + 6;
-                    add_style_field_completions(style_target, &items, count, &capacity, prefix);
                 } else {
                     // 获取该类型的实例方法
                     int inst_method_count = 0;
@@ -2471,10 +2273,6 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                         }
                     }
                 }
-            } else if (strncmp(var_type, "style:", 6) == 0) {
-                // Style[window] 等类型的字段补全
-                const char* style_target = var_type + 6;
-                add_style_field_completions(style_target, &items, count, &capacity, prefix);
             } else {
                 // 获取该类型的实例方法
                 int method_count = 0;
@@ -2509,21 +2307,6 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             free(var_type);
         }
     } else {
-        // 检测是否在 Style[xxx] = { } 初始化上下文中
-        char* style_target = detect_style_context(content, pos);
-        if (style_target) {
-            add_style_field_completions(style_target, &items, count, &capacity, prefix);
-            free(style_target);
-            
-            free(prefix);
-            free(module_alias);
-            free(member_name);
-            free(use_module);
-            free(use_prefix);
-            free_import_aliases(import_aliases, import_count);
-            return items;
-        }
-        
         int type_ctx_offset = lsp_position_to_offset(content, pos);
         if (is_type_annotation_context(content, type_ctx_offset)) {
             for (int i = 0; leno_types[i]; i++) {

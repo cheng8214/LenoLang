@@ -52,11 +52,6 @@ LENO_SOURCES="$LENO_SOURCES ../src/object/object_array.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_dict.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_number.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_file.c"
-LENO_SOURCES="$LENO_SOURCES ../src/object/object_draw.c"
-LENO_SOURCES="$LENO_SOURCES ../src/object/object_window.c"
-LENO_SOURCES="$LENO_SOURCES ../src/object/object_event.c"
-LENO_SOURCES="$LENO_SOURCES ../src/object/object_image.c"
-LENO_SOURCES="$LENO_SOURCES ../src/object/object_font.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_struct.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_cstruct.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_face.c"
@@ -99,15 +94,6 @@ LENO_SOURCES="$LENO_SOURCES ../src/module/threads/threads.c"
 LENO_SOURCES="$LENO_SOURCES ../src/module/assert/assert.c"
 LENO_SOURCES="$LENO_SOURCES ../src/module/sys/sys.c"
 LENO_SOURCES="$LENO_SOURCES ../src/module/regexs/regexs.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis_constants.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis_draw.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis_window.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis_style.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis_event.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis_image.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/guis_font.c"
-LENO_SOURCES="$LENO_SOURCES ../src/module/guis/leno_guis_log.c"
 LENO_SOURCES="$LENO_SOURCES ../src/platform/platform_thread.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_platform.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_toml.c"
@@ -115,20 +101,8 @@ LENO_SOURCES="$LENO_SOURCES ../src/package/package_init.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_resolve.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_install.c"
 
-# Platform-specific sources
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    LENO_SOURCES="$LENO_SOURCES ../src/module/guis/leno_guis_macos.c"
-elif [[ "$OSTYPE" == "linux"* ]]; then
-    LENO_SOURCES="$LENO_SOURCES ../src/module/guis/leno_guis_linux.c"
-fi
-
 # Platform-specific libraries
 LIBS="-lm -lpthread -ldl"
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    LIBS="$LIBS -framework AppKit"
-else
-    LIBS="$LIBS -lX11"
-fi
 
 gcc -o build/leno_lsp $LSP_SOURCES $LENO_SOURCES -I../src -Wall -Wextra -std=c99 -O2 $LIBS
 

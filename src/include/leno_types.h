@@ -104,7 +104,7 @@ typedef enum {
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
     // TOK_BINT 已移除（int 统一对外，Bint 仅作为内部 TYPE_BIGINT 存在）
-    TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_RGB_TYPE,
+    TOK_FILE_TYPE, TOK_PTR_TYPE,
     TOK_SOCKET_TYPE,     // Socket 类型
     // C 布局类型关键字
     TOK_I8, TOK_U8,           // i8, u8
@@ -152,7 +152,6 @@ typedef enum {
     TYPE_BIGINT,    // 大整数
     TYPE_NULL,      // null 类型
     TYPE_FILE,      // 文件类型
-    TYPE_RGB,       // RGB 颜色类型 (GRgb)
     TYPE_ANY,       // 任意类型
     TYPE_FUNCTION,  // 函数类型
     TYPE_STRUCT,    // 结构体类型

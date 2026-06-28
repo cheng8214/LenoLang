@@ -84,7 +84,7 @@ typedef enum {
     OP_DICT_GET_KEY,   // 按索引获取字典键（用于for循环迭代）
     OP_LOAD_NATIVE_MODULE, // 加载原生模块（import 时执行，运行时调用 native_init_module）
     OP_MODULE_CALL,    // 模块方法调用
-    OP_GET_MODULE_CONST, // 获取原生模块常量（如 guis.LOGICAL_PRESENTATION_STRETCH）
+    OP_GET_MODULE_CONST, // 获取原生模块常量
     OP_STRING_ADD,     // 字符串拼接（自动转换类型）
     OP_INDEX,          // 通用索引访问（数组或字典）
     OP_INDEX_SET,      // 通用索引赋值（数组或字典）

@@ -76,10 +76,6 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_FILE);
     }
-    if (p->lex.current.type == TOK_RGB_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_RGB);
-    }
     if (p->lex.current.type == TOK_SOCKET_TYPE) {
         lexer_next(&p->lex);
         return type_new(TYPE_SOCKET);

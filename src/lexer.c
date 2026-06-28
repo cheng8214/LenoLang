@@ -118,7 +118,7 @@ static void init_keyword_table(void) {
         {"any", TOK_ANY_TYPE},
         // {"Bint", TOK_BINT},  // 已移除：对外统一用 int
         {"File", TOK_FILE_TYPE},
-        {"GRgb", TOK_RGB_TYPE},
+
         {"Socket", TOK_SOCKET_TYPE},
         {"Ptr", TOK_PTR_TYPE},
         {"async", TOK_ASYNC},

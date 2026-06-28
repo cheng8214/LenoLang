@@ -7,7 +7,7 @@ static int is_generic_type_start_token(LenoTokenType type) {
         case TOK_INT_TYPE: case TOK_FLOAT_TYPE: case TOK_STRING_TYPE:
         case TOK_BOOL_TYPE: case TOK_ANY_TYPE: case TOK_PTR_TYPE:
         case TOK_ARRAY_TYPE: case TOK_DICT_TYPE:
-        case TOK_FILE_TYPE: case TOK_RGB_TYPE:
+        case TOK_FILE_TYPE:
         case TOK_SOCKET_TYPE:
         case TOK_IDENT:
             return 1;

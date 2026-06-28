@@ -58,10 +58,9 @@ const char* val_to_string(Value v) {
                 return "[struct]";
             } else if (val_as_obj(v)->type == OBJ_ENUM_DEF) {
                 return "[enum_def]";
-            } else if (val_as_obj(v)->type == OBJ_RGB) {
-                return "[grgb]";
+            } else {
+                return "[object]";
             }
-            return "[object]";
         default:
             return "unknown";
     }
@@ -404,11 +403,6 @@ char* value_to_string(Value v) {
 
                 result[pos++] = '}';
                 result[pos] = '\0';
-            } else if (val_as_obj(v)->type == OBJ_RGB) {
-                ObjRgb* rgb = (ObjRgb*)val_as_obj(v);
-                char buf[64];
-                snprintf(buf, sizeof(buf), "GRgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);
-                result = strdup(buf);
             } else {
                 result = strdup("[object]");
             }

@@ -115,7 +115,7 @@ void io_init_module(void);
 
 // ========== 模块常量支持 ==========
 
-// 注册模块常量（原生模块可导出 int 常量，如 guis.LOGICAL_PRESENTATION_STRETCH）
+// 注册模块常量（原生模块可导出 int 常量）
 void native_register_module_const(const char* module_name, const char* const_name, int value);
 
 // 查找模块常量值，未找到返回 0 且 *found 设为 false
