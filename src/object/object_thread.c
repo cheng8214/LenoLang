@@ -137,7 +137,7 @@ void thread_register_method_with_params(const char* name, ObjNative* method, int
     new_entry->next = threadMethodTable.entries[index];
     threadMethodTable.entries[index] = new_entry;
     threadMethodTable.count++;
-    native_register_instance_method_meta_with_params("thread", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    native_register_instance_method_meta_with_params("Thread", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 ObjNative* thread_find_method(const char* name) {
@@ -284,7 +284,7 @@ void channel_register_method_with_params(const char* name, ObjNative* method, in
     new_entry->next = channelMethodTable.entries[index];
     channelMethodTable.entries[index] = new_entry;
     channelMethodTable.count++;
-    native_register_instance_method_meta_with_params("channel", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    native_register_instance_method_meta_with_params("Channel", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 ObjNative* channel_find_method(const char* name) {

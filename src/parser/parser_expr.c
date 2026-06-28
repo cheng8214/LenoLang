@@ -9,6 +9,8 @@ static int is_generic_type_start_token(LenoTokenType type) {
         case TOK_ARRAY_TYPE: case TOK_DICT_TYPE:
         case TOK_FILE_TYPE:
         case TOK_SOCKET_TYPE:
+        case TOK_CHANNEL_TYPE:
+        case TOK_THREAD_TYPE:
         case TOK_IDENT:
             return 1;
         default:

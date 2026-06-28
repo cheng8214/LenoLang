@@ -106,6 +106,8 @@ typedef enum {
     // TOK_BINT 已移除（int 统一对外，Bint 仅作为内部 TYPE_BIGINT 存在）
     TOK_FILE_TYPE, TOK_PTR_TYPE,
     TOK_SOCKET_TYPE,     // Socket 类型
+    TOK_CHANNEL_TYPE,    // Channel 类型
+    TOK_THREAD_TYPE,     // Thread 类型
     // C 布局类型关键字
     TOK_I8, TOK_U8,           // i8, u8
     TOK_I16, TOK_U16,         // i16, u16

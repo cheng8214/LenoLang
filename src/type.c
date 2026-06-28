@@ -552,6 +552,8 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_NULL:     return "null";
         case TYPE_FILE:     return "File";
         case TYPE_SOCKET:   return "Socket";
+        case TYPE_CHANNEL:  return "Channel";
+        case TYPE_THREAD:   return "Thread";
         case TYPE_PTR:      return "Ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
         case TYPE_ANY:      return "any";
@@ -926,6 +928,8 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_ANY_TYPE:      return TYPE_ANY;
         case TOK_FILE_TYPE:     return TYPE_FILE;
         case TOK_SOCKET_TYPE:   return TYPE_SOCKET;
+        case TOK_CHANNEL_TYPE:  return TYPE_CHANNEL;
+        case TOK_THREAD_TYPE:   return TYPE_THREAD;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;
         // C 布局类型

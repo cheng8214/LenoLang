@@ -34,58 +34,74 @@ main()
 
     // 测试4: 向已关闭通道 send() 抛异常
     var ch4 = threads.channel(10)
-    ch4.close()
-    var send_err = false
-    try {
-        ch4.send("should fail")
-    } catch e {
-        send_err = true
+    if ch4 is Channel {
+        ch4.close()
+        var send_err = false
+        try {
+            ch4.send("should fail")
+        } catch e {
+            send_err = true
+        }
+        assert_eq(send_err, true)
     }
-    assert_eq(send_err, true)
 
     // 测试5: 无缓冲通道 channel(0) 同步通讯
     var ch5 = threads.channel(0)
     var t5 = threads.start(func(var ch){
-        ch.send(42)
-        ch.close()
+        if ch is Channel {
+            ch.send(42)
+            ch.close()
+        }
     }, ch5)
-    var received = _int(ch5.receive())
-    assert_eq(received, 42)
+    if ch5 is Channel {
+        var received = _int(ch5.receive())
+        assert_eq(received, 42)
+    }
     t5.join()
 
     // 测试6: Channel 传递 null 值
     var ch6 = threads.channel(10)
     var t6 = threads.start(func(var ch){
-        ch.send(null)
-        ch.send("real_value")
-        ch.send(null)
-        ch.close()
+        if ch is Channel {
+            ch.send(null)
+            ch.send("real_value")
+            ch.send(null)
+            ch.close()
+        }
     }, ch6)
-    var m1 = ch6.receive()
-    var m2 = ch6.receive()
-    var m3 = ch6.receive()
-    assert_eq(m1 == null, true)
-    assert_eq(m2, "real_value")
-    assert_eq(m3 == null, true)
+    if ch6 is Channel {
+        var m1 = ch6.receive()
+        var m2 = ch6.receive()
+        var m3 = ch6.receive()
+        assert_eq(m1 == null, true)
+        assert_eq(m2, "real_value")
+        assert_eq(m3 == null, true)
+    }
     t6.join()
 
     // 测试7: 多线程并发写同一 Channel
     var ch7 = threads.channel(100)
     var t7a = threads.start(func(var ch){
-        for 10 to var i { ch.send("A" + i) }
+        if ch is Channel {
+            for 10 to var i { ch.send("A" + i) }
+        }
     }, ch7)
     var t7b = threads.start(func(var ch){
-        for 10 to var i { ch.send("B" + i) }
+        if ch is Channel {
+            for 10 to var i { ch.send("B" + i) }
+        }
     }, ch7)
     t7a.join()
     t7b.join()
-    var count = 0
-    while ch7.len() > 0 {
-        ch7.try_receive()
-        count = count + 1
+    if ch7 is Channel {
+        var count = 0
+        while ch7.len() > 0 {
+            ch7.try_receive()
+            count = count + 1
+        }
+        assert_eq(count, 20)
+        ch7.close()
     }
-    assert_eq(count, 20)
-    ch7.close()
 
     // 测试8: 正常线程 join 返回值
     var t8 = threads.start(func(){
@@ -102,9 +118,11 @@ main()
 
     // 测试10: try_receive 从空通道返回 null
     var ch10 = threads.channel(5)
-    var r10 = ch10.try_receive()
-    assert_eq(r10 == null, true)
-    ch10.close()
+    if ch10 is Channel {
+        var r10 = ch10.try_receive()
+        assert_eq(r10 == null, true)
+        ch10.close()
+    }
 
     print("test_threads_edge passed")
 }

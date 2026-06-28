@@ -658,7 +658,7 @@ void dict_register_method_with_params(const char* name, ObjNative* method, int a
                     entry->param_types[i] = TYPE_ANY;
                 }
             }
-            native_register_instance_method_meta_with_params("dict", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+            native_register_instance_method_meta_with_params("Dict", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
             return;
         }
         entry = entry->next;
@@ -692,7 +692,7 @@ void dict_register_method_with_params(const char* name, ObjNative* method, int a
     new_entry->next = dictMethodTable.entries[index];
     dictMethodTable.entries[index] = new_entry;
     dictMethodTable.count++;
-    native_register_instance_method_meta_with_params("dict", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    native_register_instance_method_meta_with_params("Dict", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 ObjNative* dict_find_method(const char* name) {

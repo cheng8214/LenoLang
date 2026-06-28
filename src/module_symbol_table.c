@@ -440,6 +440,8 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     // 文件/网络类型
     if (strcmp(buf, "File") == 0)   return type_new(TYPE_FILE);
     if (strcmp(buf, "Socket") == 0) return type_new(TYPE_SOCKET);
+    if (strcmp(buf, "Channel") == 0) return type_new(TYPE_CHANNEL);
+    if (strcmp(buf, "Thread") == 0) return type_new(TYPE_THREAD);
     // 指针类型
     if (strcmp(buf, "ptr") == 0 || strcmp(buf, "Ptr") == 0) return type_new(TYPE_PTR);
     // C 布局类型
@@ -546,6 +548,8 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "File") == 0)   return TYPE_FILE;
     // 网络/指针类型
     if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
+    if (strcmp(type_str, "Channel") == 0) return TYPE_CHANNEL;
+    if (strcmp(type_str, "Thread") == 0) return TYPE_THREAD;
     if (strcmp(type_str, "Ptr") == 0)    return TYPE_PTR;
     // C 布局类型
     if (strcmp(type_str, "i8") == 0)     return TYPE_I8;

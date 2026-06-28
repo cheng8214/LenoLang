@@ -80,6 +80,14 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_SOCKET);
     }
+    if (p->lex.current.type == TOK_CHANNEL_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_CHANNEL);
+    }
+    if (p->lex.current.type == TOK_THREAD_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_THREAD);
+    }
     if (p->lex.current.type == TOK_PTR_TYPE) {
         lexer_next(&p->lex);
         // 检查是否有泛型参数 Ptr[T]

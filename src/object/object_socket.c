@@ -145,7 +145,7 @@ void socket_register_method_with_params(const char* name, ObjNative* method, int
     socketMethodTable.count++;
 
     /* 同时注册编译期元信息 */
-    native_register_instance_method_meta_with_params("socket", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    native_register_instance_method_meta_with_params("Socket", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 /* 查找 Socket 方法（运行时 O(1) 查找） */

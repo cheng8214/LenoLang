@@ -69,52 +69,52 @@ void sockets_init_instance_methods(void) {
 
     /* sock.send(data) -> bool */
     TypeKind send_params[] = {TYPE_STRING};
-    native_register_instance_method_meta_with_params("socket", "send", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, send_params);
+    native_register_instance_method_meta_with_params("Socket", "send", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, send_params);
 
     /* sock.recv(max_bytes) -> string|null */
     TypeKind recv_params[] = {TYPE_INT};
-    native_register_instance_method_meta_with_params("socket", "recv", 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, recv_params);
+    native_register_instance_method_meta_with_params("Socket", "recv", 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, recv_params);
 
     /* sock.close() -> null */
-    native_register_instance_method_meta_with_params("socket", "close", 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "close", 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
 
     /* sock.accept() -> Socket|null */
-    native_register_instance_method_meta_with_params("socket", "accept", 0, -1, -1, TYPE_SOCKET, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "accept", 0, -1, -1, TYPE_SOCKET, TYPE_UNKNOWN, no_params);
 
     /* sock.sendto(data, addr, port) -> bool */
     TypeKind sendto_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
-    native_register_instance_method_meta_with_params("socket", "sendto", 3, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, sendto_params);
+    native_register_instance_method_meta_with_params("Socket", "sendto", 3, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, sendto_params);
 
     /* sock.recvfrom(max_bytes) -> string|null */
     TypeKind recvfrom_params[] = {TYPE_INT};
-    native_register_instance_method_meta_with_params("socket", "recvfrom", 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, recvfrom_params);
+    native_register_instance_method_meta_with_params("Socket", "recvfrom", 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, recvfrom_params);
 
     /* sock.set_nonblocking(nonblocking) -> bool */
     TypeKind set_nonblocking_params[] = {TYPE_BOOL};
-    native_register_instance_method_meta_with_params("socket", "set_nonblocking", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_nonblocking_params);
+    native_register_instance_method_meta_with_params("Socket", "set_nonblocking", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_nonblocking_params);
 
     /* sock.peer_addr() -> string|null */
-    native_register_instance_method_meta_with_params("socket", "peer_addr", 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "peer_addr", 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
 
     /* sock.peer_port() -> int|null */
-    native_register_instance_method_meta_with_params("socket", "peer_port", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "peer_port", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
 
     /* sock.local_addr() -> string|null */
-    native_register_instance_method_meta_with_params("socket", "local_addr", 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "local_addr", 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
 
     /* sock.local_port() -> int|null */
-    native_register_instance_method_meta_with_params("socket", "local_port", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "local_port", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
 
     /* sock.error() -> int */
-    native_register_instance_method_meta_with_params("socket", "error", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "error", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
 
     /* sock.shutdown(how) -> bool */
     TypeKind shutdown_params[] = {TYPE_INT};
-    native_register_instance_method_meta_with_params("socket", "shutdown", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, shutdown_params);
+    native_register_instance_method_meta_with_params("Socket", "shutdown", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, shutdown_params);
 
     /* sock.set_timeout(ms) -> bool */
     TypeKind set_timeout_params[] = {TYPE_INT};
-    native_register_instance_method_meta_with_params("socket", "set_timeout", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_timeout_params);
+    native_register_instance_method_meta_with_params("Socket", "set_timeout", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_timeout_params);
 }
 
 // ============================================================================

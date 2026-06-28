@@ -1424,15 +1424,15 @@ void native_register_all_instance_method_metas(void) {
 // 根据 TypeKind 获取类型名称（编译时调用）
 const char* native_get_type_name(TypeKind kind) {
     switch (kind) {
-        case TYPE_ARRAY:  return "array";
+        case TYPE_ARRAY:  return "Array";
         case TYPE_STRING: return "string";
-        case TYPE_DICT:   return "dict";
-        case TYPE_FILE:   return "file";
+        case TYPE_DICT:   return "Dict";
+        case TYPE_FILE:   return "File";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";
-        case TYPE_THREAD:  return "thread";
-        case TYPE_CHANNEL: return "channel";
-        case TYPE_SOCKET:  return "socket";
+        case TYPE_THREAD:  return "Thread";
+        case TYPE_CHANNEL: return "Channel";
+        case TYPE_SOCKET:  return "Socket";
         case TYPE_INT:
         case TYPE_FLOAT:  return "number";
         default:          return NULL;

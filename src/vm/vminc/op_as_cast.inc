@@ -172,6 +172,14 @@ OPCODE(OP_AS_CAST) {
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
             break;
+        case TYPE_CHANNEL:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_CHANNEL);
+            break;
+        case TYPE_THREAD:
+            (void)READ_BYTE();
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_THREAD);
+            break;
         case TYPE_PTR:
             (void)READ_BYTE();
             matches = (val_is_obj(value) &&
