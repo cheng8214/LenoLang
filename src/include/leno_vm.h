@@ -270,8 +270,6 @@ struct Symbol {
     int cstruct_size;           // cstruct 总大小
     int cstruct_alignment;      // cstruct 对齐要求
     int* cstruct_field_offsets; // cstruct 字段偏移量数组
-    // Style 类型信息（仅当类型为 Style 时使用）
-    char* style_target;         // Style 目标控件名（如 "window", "button"）
     // clib 函数签名信息（仅当类型为 clib 时使用）
     char** clib_func_names;         // 函数名称数组
     TypeInfo** clib_func_return_types; // 函数返回类型数组

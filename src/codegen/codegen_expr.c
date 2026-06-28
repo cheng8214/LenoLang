@@ -558,9 +558,8 @@ static void gen_call(CodeGen* gen, Ast* ast) {
         const char* native_type_name = NULL;
         if (receiver_type && (receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_FACE) && receiver_type->struct_name) {
             // struct/face 类型，已有 struct_name
-        } else if (receiver_type && (receiver_type->kind == TYPE_EVENT || receiver_type->kind == TYPE_DRAW 
-            || receiver_type->kind == TYPE_WIN || receiver_type->kind == TYPE_FILE 
-            || receiver_type->kind == TYPE_RGB || receiver_type->kind == TYPE_IMAGE || receiver_type->kind == TYPE_FONT 
+        } else if (receiver_type && (receiver_type->kind == TYPE_FILE
+            || receiver_type->kind == TYPE_RGB
             || receiver_type->kind == TYPE_SOCKET)) {
             // 原生对象类型（Event, Draw, Win, File 等）
             is_native_obj_type = 1;

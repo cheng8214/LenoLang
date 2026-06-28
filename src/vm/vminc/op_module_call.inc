@@ -120,26 +120,8 @@ OPCODE(OP_MODULE_CALL) {
                     case TYPE_FILE:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_FILE);
                         break;
-                    case TYPE_WIN:
-                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_WINDOW);
-                        break;
-                    case TYPE_DRAW:
-                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_RENDERER);
-                        break;
-                    case TYPE_EVENT:
-                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_EVENT);
-                        break;
                     case TYPE_RGB:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_RGB);
-                        break;
-                    case TYPE_IMAGE:
-                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_IMAGE);
-                        break;
-                    case TYPE_FONT:
-                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_GUI_FONT);
-                        break;
-                    case TYPE_STYLE:
-                        type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_DICT);
                         break;
                     case TYPE_SOCKET:
                         type_match = (val_is_obj(arg) && val_as_obj(arg)->type == OBJ_SOCKET);

@@ -18,11 +18,6 @@ static TypeKind get_value_type(Value value) {
             else if (val_as_obj(value)->type == OBJ_DICT) return TYPE_DICT;
             else if (val_as_obj(value)->type == OBJ_ARRAY) return TYPE_ARRAY;
             else if (val_as_obj(value)->type == OBJ_STRUCT) return TYPE_STRUCT;
-            else if (val_as_obj(value)->type == OBJ_GUI_WINDOW) return TYPE_WIN;
-            else if (val_as_obj(value)->type == OBJ_GUI_RENDERER) return TYPE_DRAW;
-            else if (val_as_obj(value)->type == OBJ_GUI_EVENT) return TYPE_EVENT;
-            else if (val_as_obj(value)->type == OBJ_GUI_IMAGE) return TYPE_IMAGE;
-            else if (val_as_obj(value)->type == OBJ_GUI_FONT) return TYPE_FONT;
             else if (val_as_obj(value)->type == OBJ_BIGINT) return TYPE_BIGINT;
             else if (val_as_obj(value)->type == OBJ_RGB) return TYPE_RGB;
             return TYPE_ANY;
@@ -571,16 +566,6 @@ static Value native_type(int argCount, Value* args) {
                 } else {
                     typeStr = str_copy("cstruct", 7);
                 }
-            } else if (val_as_obj(value)->type == OBJ_GUI_WINDOW) {
-                typeStr = str_copy("gwin", 4);
-            } else if (val_as_obj(value)->type == OBJ_GUI_RENDERER) {
-                typeStr = str_copy("gdraw", 5);
-            } else if (val_as_obj(value)->type == OBJ_GUI_EVENT) {
-                typeStr = str_copy("gevent", 6);
-            } else if (val_as_obj(value)->type == OBJ_GUI_BUTTON) {
-                typeStr = str_copy("gbutton", 7);
-            } else if (val_as_obj(value)->type == OBJ_GUI_LABEL) {
-                typeStr = str_copy("glabel", 6);
             } else if (val_as_obj(value)->type == OBJ_RGB) {
                 typeStr = str_copy("grgb", 4);
             } else if (val_as_obj(value)->type == OBJ_SOCKET) {

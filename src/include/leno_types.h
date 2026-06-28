@@ -104,12 +104,7 @@ typedef enum {
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
     // TOK_BINT 已移除（int 统一对外，Bint 仅作为内部 TYPE_BIGINT 存在）
-    TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_WIN_TYPE, TOK_DRAW_TYPE, TOK_EVENT_TYPE, TOK_RGB_TYPE,
-    TOK_IMAGE_TYPE, TOK_FONT_TYPE,  // File, Ptr, GWin, GDraw, GEvent, GRgb, GImage, GFont 类型
-    TOK_BUTTON_TYPE,  // GButton 类型
-    TOK_EDIT_TYPE, // GEdit 类型
-    TOK_LABEL_TYPE,   // GLabel 类型
-    TOK_STYLE_TYPE,      // Style 类型（用于 GUI 样式定义）
+    TOK_FILE_TYPE, TOK_PTR_TYPE, TOK_RGB_TYPE,
     TOK_SOCKET_TYPE,     // Socket 类型
     // C 布局类型关键字
     TOK_I8, TOK_U8,           // i8, u8
@@ -157,16 +152,7 @@ typedef enum {
     TYPE_BIGINT,    // 大整数
     TYPE_NULL,      // null 类型
     TYPE_FILE,      // 文件类型
-    TYPE_WIN,       // GUI 窗口类型 (GWin)
-    TYPE_DRAW,      // GUI 渲染器类型 (GDraw)
-    TYPE_EVENT,     // GUI 事件类型 (GEvent)
     TYPE_RGB,       // RGB 颜色类型 (GRgb)
-    TYPE_IMAGE,     // GUI 图像类型 (GImage)
-    TYPE_FONT,      // GUI 字体类型 (GFont)
-    TYPE_BUTTON,    // GUI 按钮类型 (GButton)
-    TYPE_EDIT,   // GUI 文本框类型 (GEdit)
-    TYPE_LABEL,     // GUI 标签类型 (GLabel)
-    TYPE_STYLE,     // GUI 样式类型（Style[window], Style[button] 等）
     TYPE_ANY,       // 任意类型
     TYPE_FUNCTION,  // 函数类型
     TYPE_STRUCT,    // 结构体类型
@@ -208,8 +194,6 @@ struct TypeInfo {
     int param_count;         // 函数参数数量
     // 结构体类型相关
     char* struct_name;       // 结构体名称 / face 名称 / cstruct/clib/cfunc 名称
-    // 样式类型相关
-    char* style_target;      // Style 目标控件名（如 "window", "button"）
     // 泛型类型参数
     char* type_param_name;   // 泛型类型参数名（如 "T", "U"）
     char* constraint_name;   // 泛型约束 face 名（如 "Comparable"），NULL 表示无约束
@@ -224,7 +208,6 @@ TypeInfo* type_array(TypeInfo* element_type);
 TypeInfo* type_dict(TypeInfo* key_type, TypeInfo* value_type);
 TypeInfo* type_ptr_generic(TypeInfo* element_type);
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count);
-TypeInfo* type_style(const char* target);
 TypeInfo* type_generic_param(const char* name);  // 创建泛型类型参数 T, U 等
 TypeInfo* type_generic_param_constrained(const char* name, const char* constraint);  // 创建带约束的泛型类型参数
 int type_has_generic(TypeInfo* type);             // 类型是否包含泛型参数

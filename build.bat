@@ -35,15 +35,7 @@ set SOURCES=!SOURCES! src\object\object_array.c
 set SOURCES=!SOURCES! src\object\object_dict.c
 set SOURCES=!SOURCES! src\object\object_number.c
 set SOURCES=!SOURCES! src\object\object_file.c
-set SOURCES=!SOURCES! src\object\object_draw.c
-set SOURCES=!SOURCES! src\object\object_window.c
-set SOURCES=!SOURCES! src\object\object_event.c
-set SOURCES=!SOURCES! src\object\object_image.c
 set SOURCES=!SOURCES! src\object\object_socket.c
-set SOURCES=!SOURCES! src\object\object_font.c
-set SOURCES=!SOURCES! src\object\object_button.c
-set SOURCES=!SOURCES! src\object\object_edit.c
-set SOURCES=!SOURCES! src\object\object_label.c
 set SOURCES=!SOURCES! src\object\object_struct.c
 set SOURCES=!SOURCES! src\object\object_face.c
 set SOURCES=!SOURCES! src\object\object_cstruct.c
@@ -88,19 +80,6 @@ set SOURCES=!SOURCES! src\module\threads\threads.c
 set SOURCES=!SOURCES! src\module\assert\assert.c
 set SOURCES=!SOURCES! src\module\sys\sys.c
 set SOURCES=!SOURCES! src\module\regexs\regexs.c
-set SOURCES=!SOURCES! src\module\guis\guis.c
-set SOURCES=!SOURCES! src\module\guis\guis_constants.c
-set SOURCES=!SOURCES! src\module\guis\guis_draw.c
-set SOURCES=!SOURCES! src\module\guis\guis_window.c
-set SOURCES=!SOURCES! src\module\guis\guis_button.c
-set SOURCES=!SOURCES! src\module\guis\guis_edit.c
-set SOURCES=!SOURCES! src\module\guis\guis_label.c
-set SOURCES=!SOURCES! src\module\guis\guis_style.c
-set SOURCES=!SOURCES! src\module\guis\guis_event.c
-set SOURCES=!SOURCES! src\module\guis\guis_image.c
-set SOURCES=!SOURCES! src\module\guis\guis_font.c
-set SOURCES=!SOURCES! src\module\guis\leno_guis_log.c
-set SOURCES=!SOURCES! src\module\guis\leno_guis_win32.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 set SOURCES=!SOURCES! src\package\package_platform.c
@@ -109,7 +88,7 @@ set SOURCES=!SOURCES! src\package\package_init.c
 set SOURCES=!SOURCES! src\package\package_resolve.c
 set SOURCES=!SOURCES! src\package\package_install.c
 
-gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32 -lgdi32 -luser32 -lcomdlg32 -lwinmm -limm32
+gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed

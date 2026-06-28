@@ -76,45 +76,13 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_FILE);
     }
-    if (p->lex.current.type == TOK_WIN_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_WIN);
-    }
-    if (p->lex.current.type == TOK_DRAW_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_DRAW);
-    }
-    if (p->lex.current.type == TOK_EVENT_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_EVENT);
-    }
     if (p->lex.current.type == TOK_RGB_TYPE) {
         lexer_next(&p->lex);
         return type_new(TYPE_RGB);
     }
-    if (p->lex.current.type == TOK_IMAGE_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_IMAGE);
-    }
     if (p->lex.current.type == TOK_SOCKET_TYPE) {
         lexer_next(&p->lex);
         return type_new(TYPE_SOCKET);
-    }
-    if (p->lex.current.type == TOK_FONT_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_FONT);
-    }
-    if (p->lex.current.type == TOK_BUTTON_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_BUTTON);
-    }
-    if (p->lex.current.type == TOK_EDIT_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_EDIT);
-    }
-    if (p->lex.current.type == TOK_LABEL_TYPE) {
-        lexer_next(&p->lex);
-        return type_new(TYPE_LABEL);
     }
     if (p->lex.current.type == TOK_PTR_TYPE) {
         lexer_next(&p->lex);
@@ -417,43 +385,6 @@ static TypeInfo* parse_array_type(Parser* p) {
     return type_array(element_type);
 }
 
-// 解析 Style 类型: Style[target]
-static TypeInfo* parse_style_type(Parser* p) {
-    lexer_next(&p->lex); // 消费 'Style'
-    
-    if (p->lex.current.type != TOK_LBRACKET) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要指定目标控件: Style[window]、Style[button] 或 Style[edit]");
-        return type_style("");
-    }
-    
-    lexer_next(&p->lex); // 消费 '['
-    
-    // 解析目标控件名（标识符）
-    if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Style 类型需要有效的控件名称，如 window、button 或 edit");
-        // 尝试跳过到 ]
-        while (p->lex.current.type != TOK_RBRACKET && p->lex.current.type != TOK_EOF) {
-            lexer_next(&p->lex);
-        }
-        if (p->lex.current.type == TOK_RBRACKET) {
-            lexer_next(&p->lex);
-        }
-        return type_style("");
-    }
-    
-    char* target_name = copy_string(p->lex.current.text, p->lex.current.len);
-    lexer_next(&p->lex); // 消费标识符
-    
-    if (p->lex.current.type != TOK_RBRACKET) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束 Style 类型");
-        free(target_name);
-        return type_style("");
-    }
-    lexer_next(&p->lex); // 消费 ']'
-    
-    return type_style(target_name);
-}
-
 // 解析函数类型: func 或 func():ReturnType 或 func(ParamType1, ParamType2):ReturnType
 static TypeInfo* parse_function_type(Parser* p) {
     lexer_next(&p->lex); // 消费 'func'
@@ -526,12 +457,7 @@ static TypeInfo* parse_type_internal(Parser* p) {
     if (p->lex.current.type == TOK_DICT_TYPE) {
         return parse_dict_type(p);
     }
-    
-    // 尝试解析 Style[target]
-    if (p->lex.current.type == TOK_STYLE_TYPE) {
-        return parse_style_type(p);
-    }
-    
+
     // 解析基础类型
     return parse_base_type(p);
 }

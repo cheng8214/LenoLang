@@ -108,12 +108,9 @@ static int is_statement_start(LenoTokenType type) {
            type == TOK_INT_TYPE || type == TOK_FLOAT_TYPE ||
            type == TOK_STRING_TYPE || type == TOK_BOOL_TYPE ||
            type == TOK_ARRAY_TYPE || type == TOK_DICT_TYPE ||
-           type == TOK_PTR_TYPE || type == TOK_STYLE_TYPE ||
-           type == TOK_FILE_TYPE || type == TOK_WIN_TYPE ||
-           type == TOK_DRAW_TYPE || type == TOK_EVENT_TYPE ||
-           type == TOK_RGB_TYPE || type == TOK_IMAGE_TYPE ||
-           type == TOK_FONT_TYPE || type == TOK_BUTTON_TYPE || type == TOK_EDIT_TYPE ||
-           type == TOK_LABEL_TYPE ||
+           type == TOK_PTR_TYPE ||
+           type == TOK_FILE_TYPE ||
+           type == TOK_RGB_TYPE ||
            type == TOK_SOCKET_TYPE ||
            type == TOK_I8 || type == TOK_U8 || type == TOK_I16 || type == TOK_U16 ||
            type == TOK_I32 || type == TOK_U32 || type == TOK_I64 || type == TOK_U64 ||
@@ -151,17 +148,8 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_BOOL_TYPE ||
            type == TOK_ARRAY_TYPE ||
            type == TOK_DICT_TYPE ||
-           // TOK_BINT 已移除
            type == TOK_FILE_TYPE ||
-           type == TOK_WIN_TYPE ||
-           type == TOK_DRAW_TYPE ||
-           type == TOK_EVENT_TYPE ||
            type == TOK_RGB_TYPE ||
-           type == TOK_IMAGE_TYPE ||
-           type == TOK_FONT_TYPE ||
-           type == TOK_BUTTON_TYPE || type == TOK_EDIT_TYPE ||
-           type == TOK_LABEL_TYPE ||
-           type == TOK_STYLE_TYPE ||
            type == TOK_SOCKET_TYPE ||
            type == TOK_PTR_TYPE;
 }

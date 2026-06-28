@@ -6,11 +6,9 @@ static int is_generic_type_start_token(LenoTokenType type) {
     switch (type) {
         case TOK_INT_TYPE: case TOK_FLOAT_TYPE: case TOK_STRING_TYPE:
         case TOK_BOOL_TYPE: case TOK_ANY_TYPE: case TOK_PTR_TYPE:
-        case TOK_ARRAY_TYPE: case TOK_DICT_TYPE: case TOK_STYLE_TYPE:
-        case TOK_FILE_TYPE: case TOK_WIN_TYPE: case TOK_DRAW_TYPE:
-        case TOK_EVENT_TYPE: case TOK_RGB_TYPE: case TOK_IMAGE_TYPE:
-        case TOK_SOCKET_TYPE: case TOK_FONT_TYPE: case TOK_BUTTON_TYPE: case TOK_EDIT_TYPE:
-        case TOK_LABEL_TYPE:
+        case TOK_ARRAY_TYPE: case TOK_DICT_TYPE:
+        case TOK_FILE_TYPE: case TOK_RGB_TYPE:
+        case TOK_SOCKET_TYPE:
         case TOK_IDENT:
             return 1;
         default:

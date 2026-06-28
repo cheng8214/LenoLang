@@ -437,17 +437,9 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     if (strcmp(buf, "var") == 0)    return type_new(TYPE_INFER);
     if (strcmp(buf, "any") == 0)    return type_new(TYPE_ANY);
     if (strcmp(buf, "null") == 0)   return type_new(TYPE_NULL);
-    // GUI/文件/网络类型
+    // 文件/网络类型
     if (strcmp(buf, "File") == 0)   return type_new(TYPE_FILE);
-    if (strcmp(buf, "GWin") == 0)   return type_new(TYPE_WIN);
-    if (strcmp(buf, "GDraw") == 0)  return type_new(TYPE_DRAW);
-    if (strcmp(buf, "GEvent") == 0) return type_new(TYPE_EVENT);
     if (strcmp(buf, "GRgb") == 0)   return type_new(TYPE_RGB);
-    if (strcmp(buf, "GImage") == 0) return type_new(TYPE_IMAGE);
-    if (strcmp(buf, "GFont") == 0)  return type_new(TYPE_FONT);
-    if (strcmp(buf, "GButton") == 0) return type_new(TYPE_BUTTON);
-    if (strcmp(buf, "GEdit") == 0) return type_new(TYPE_EDIT);
-    if (strcmp(buf, "GLabel") == 0) return type_new(TYPE_LABEL);
     if (strcmp(buf, "Socket") == 0) return type_new(TYPE_SOCKET);
     // 指针类型
     if (strcmp(buf, "ptr") == 0 || strcmp(buf, "Ptr") == 0) return type_new(TYPE_PTR);
@@ -551,18 +543,9 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "bool") == 0)   return TYPE_BOOL;
     if (strcmp(type_str, "any") == 0)    return TYPE_ANY;
     if (strcmp(type_str, "null") == 0)   return TYPE_NULL;
-    // GUI 类型
+    // 文件/颜色类型
     if (strcmp(type_str, "File") == 0)   return TYPE_FILE;
-    if (strcmp(type_str, "GWin") == 0)   return TYPE_WIN;
-    if (strcmp(type_str, "GDraw") == 0)  return TYPE_DRAW;
-    if (strcmp(type_str, "GEvent") == 0) return TYPE_EVENT;
     if (strcmp(type_str, "GRgb") == 0)   return TYPE_RGB;
-    if (strcmp(type_str, "GImage") == 0) return TYPE_IMAGE;
-    if (strcmp(type_str, "GFont") == 0)  return TYPE_FONT;
-    if (strcmp(type_str, "GButton") == 0) return TYPE_BUTTON;
-    if (strcmp(type_str, "GEdit") == 0) return TYPE_EDIT;
-    if (strcmp(type_str, "GLabel") == 0) return TYPE_LABEL;
-    if (strcmp(type_str, "Style") == 0)  return TYPE_STYLE;
     // 网络/指针类型
     if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
     if (strcmp(type_str, "Ptr") == 0)    return TYPE_PTR;

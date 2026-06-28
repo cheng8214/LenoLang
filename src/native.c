@@ -16,7 +16,6 @@ extern VM vm;
 static const char* builtin_module_names[] = {
     "io", "times", "arrays", "strings", "maths", "rands",
     "files", "asyncs", "dirs", "jsons", "sockets", "ffi", "threads", "regexs",
-    "guis",
     NULL
 };
 
@@ -45,7 +44,6 @@ extern void sockets_init_module(void);
 extern void ffi_init_module(void);
 extern void threads_init_module(void);
 extern void regexs_init_module(void);
-extern void guis_init_module(void);
 
 // 模块初始化函数映射表
 typedef void (*ModuleInitFunc)(void);
@@ -70,7 +68,6 @@ static ModuleInitEntry module_init_table[] = {
     {"ffi", ffi_init_module},
     {"threads", threads_init_module},
     {"regexs", regexs_init_module},
-    {"guis", guis_init_module},
     {NULL, NULL}
 };
 
@@ -567,8 +564,6 @@ void native_register_all_module_metas(void) {
     assert_init_globals();
     extern void sys_init_globals(void);
     sys_init_globals();
-    extern void guis_init_globals(void);
-    guis_init_globals();
 
     // 初始化模块方法表（用于编译期类型推断）
     // 注意：这里只注册方法元信息，不创建函数对象（运行时再做）
@@ -600,8 +595,6 @@ void native_register_all_module_metas(void) {
     threads_init_module();
     extern void regexs_init_module(void);
     regexs_init_module();
-    extern void guis_init_module(void);
-    guis_init_module();
 }
 
 // ============================================================================
@@ -1001,9 +994,6 @@ void native_register_globals(void) {
     assert_init_globals();
 
     sys_init_globals();
-
-    extern void guis_init_globals(void);
-    guis_init_globals();
 }
 
 // 检查模块名是否是原生模块（如 io, times, maths）
@@ -1409,28 +1399,12 @@ void maths_init_instance_methods(void);
 void dicts_init_instance_methods(void);
 // 前向声明：文件实例方法初始化（在 files.c 中定义）
 void files_init_instance_methods(void);
-// 前向声明：Draw 渲染器实例方法初始化（在 guis.c 中定义）
-void guis_init_instance_methods(void);
-// 前向声明：Event 事件实例方法初始化（在 guis_event.c 中定义）
-void guis_init_event_methods(void);
 // 前向声明：结构体实例方法初始化（在 structs.c 中定义）
 void structs_init_instance_methods(void);
 // 前向声明：cstruct 实例方法初始化（在 cstructs.c 中定义）
 void cstructs_init_methods(void);
 // 前向声明：线程实例方法初始化（在 threads.c 中定义）
 void threads_init_instance_methods(void);
-// 前向声明：Win 实例方法初始化（在 guis_window.c 中定义）
-void guis_init_window_instance_methods(void);
-// 前向声明：Image 实例方法初始化（在 guis_image.c 中定义）
-void guis_init_image_instance_methods(void);
-// 前向声明：Font 实例方法初始化（在 guis_font.c 中定义）
-void guis_init_font_instance_methods(void);
-// 前向声明：GButton 实例方法初始化（在 guis_button.c 中定义）
-void guis_init_button_instance_methods(void);
-// 前向声明：GEdit 实例方法初始化（在 guis_textbox.c 中定义）
-void guis_init_edit_instance_methods(void);
-// 前向声明：GLabel 实例方法初始化（在 guis_label.c 中定义）
-void guis_init_label_instance_methods(void);
 // 前向声明：Socket 实例方法初始化（在 sockets.c 中定义）
 void sockets_init_instance_methods(void);
 
@@ -1441,14 +1415,6 @@ void native_register_all_instance_method_metas(void) {
     maths_init_instance_methods();
     dicts_init_instance_methods();
     files_init_instance_methods();
-    guis_init_instance_methods();
-    guis_init_window_instance_methods();
-    guis_init_event_methods();
-    guis_init_image_instance_methods();
-    guis_init_font_instance_methods();
-    guis_init_button_instance_methods();
-    guis_init_edit_instance_methods();
-    guis_init_label_instance_methods();
     structs_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
@@ -1462,16 +1428,7 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_STRING: return "string";
         case TYPE_DICT:   return "dict";
         case TYPE_FILE:   return "file";
-        case TYPE_WIN:    return "gwin";
-        case TYPE_DRAW:   return "gdraw";
-        case TYPE_EVENT:  return "gevent";
         case TYPE_RGB:    return "grgb";
-        case TYPE_IMAGE:  return "gimage";
-        case TYPE_FONT:   return "gfont";
-        case TYPE_BUTTON: return "gbutton";
-        case TYPE_EDIT: return "GEdit";
-        case TYPE_LABEL:  return "glabel";
-        case TYPE_STYLE:  return "style";
         case TYPE_STRUCT: return "struct";
         case TYPE_CSTRUCT: return "cstruct";
         case TYPE_THREAD:  return "thread";

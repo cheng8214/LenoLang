@@ -481,10 +481,7 @@
                             (expected_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
                             type_compatible = true;
                         }
-                        // 允许 Style[xxx] 传给 Dict 参数
-                        if (expected_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
-                            type_compatible = true;
-                        }
+
                         // 允许 cfunc 类型匹配
                         if (expected_type == TYPE_CFUNC && arg_type->kind == TYPE_CFUNC) {
                             type_compatible = true;
@@ -1154,10 +1151,6 @@
                                             // 允许 Ptr[T] <-> Ptr 之间的隐式转换
                                             if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
                                                 (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
-                                                type_compatible = true;
-                                            }
-                                            // 允许 Style[xxx] 传给 Dict 参数
-                                            if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
                                                 type_compatible = true;
                                             }
                                             if (!type_compatible) {

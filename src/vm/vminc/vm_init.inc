@@ -108,8 +108,6 @@ void vm_init_with_scope(Scope* global_scope) {
     extern void maths_init_instance_methods(void);
     extern void dicts_init_instance_methods(void);
     extern void files_init_instance_methods(void);
-    extern void guis_init_instance_methods(void);
-    extern void guis_init_event_methods(void);
     extern void cstructs_init_methods(void);
     extern void threads_init_instance_methods(void);
     arrays_init_instance_methods();
@@ -117,8 +115,6 @@ void vm_init_with_scope(Scope* global_scope) {
     maths_init_instance_methods();
     dicts_init_instance_methods();
     files_init_instance_methods();
-    guis_init_instance_methods();
-    guis_init_event_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
 }

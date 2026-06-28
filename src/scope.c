@@ -109,10 +109,6 @@ void scope_free(Scope* scope) {
             if (sym->cfunc_return_type) {
                 type_free(sym->cfunc_return_type);
             }
-            // 释放 Style 目标控件名
-            if (sym->style_target) {
-                free(sym->style_target);
-            }
             free(sym);
         }
     }

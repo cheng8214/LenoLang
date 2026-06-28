@@ -140,33 +140,9 @@ OPCODE(OP_TYPE_CHECK) {
             (void)READ_BYTE(); // 消费 element_type 字节
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
             break;
-        case TYPE_WIN:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_WINDOW);
-            break;
-        case TYPE_DRAW:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_RENDERER);
-            break;
-        case TYPE_EVENT:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_EVENT);
-            break;
         case TYPE_RGB:
             (void)READ_BYTE();
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_RGB);
-            break;
-        case TYPE_IMAGE:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_IMAGE);
-            break;
-        case TYPE_FONT:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_FONT);
-            break;
-        case TYPE_STYLE:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
             break;
         case TYPE_SOCKET:
             (void)READ_BYTE();

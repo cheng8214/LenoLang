@@ -19,20 +19,8 @@ static inline int value_matches_type(Value value, TypeKind expected) {
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
         case TYPE_FILE:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
-        case TYPE_WIN:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_WINDOW);
-        case TYPE_DRAW:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_RENDERER);
-        case TYPE_EVENT:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_EVENT);
         case TYPE_RGB:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_RGB);
-        case TYPE_IMAGE:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_IMAGE);
-        case TYPE_FONT:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_GUI_FONT);
-        case TYPE_STYLE:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
         case TYPE_SOCKET:
             return (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
         case TYPE_PTR:

@@ -71,15 +71,6 @@ TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param
     return type;
 }
 
-// 创建样式类型 Style[target]
-TypeInfo* type_style(const char* target) {
-    TypeInfo* type = type_new(TYPE_STYLE);
-    if (type && target) {
-        type->style_target = strdup(target);
-    }
-    return type;
-}
-
 // 创建泛型类型参数 (如 T, U)
 TypeInfo* type_generic_param(const char* name) {
     TypeInfo* type = type_new(TYPE_GENERIC_PARAM);
@@ -114,9 +105,6 @@ void type_free(TypeInfo* type) {
     }
     if (type->struct_name) {
         free(type->struct_name);
-    }
-    if (type->style_target) {
-        free(type->style_target);
     }
     if (type->type_param_name) {
         free(type->type_param_name);
@@ -182,11 +170,6 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
                 if (!type_equals(a->generic_args[i], b->generic_args[i])) return 0;
             }
             return 1;
-        case TYPE_STYLE:
-            if (a->style_target && b->style_target) {
-                return strcmp(a->style_target, b->style_target) == 0;
-            }
-            return a->style_target == b->style_target;
         case TYPE_GENERIC_PARAM:
             if (a->type_param_name && b->type_param_name) {
                 return strcmp(a->type_param_name, b->type_param_name) == 0;
@@ -245,11 +228,6 @@ TypeInfo* type_copy(TypeInfo* type) {
                     }
                     copy->generic_count = type->generic_count;
                 }
-            }
-            break;
-        case TYPE_STYLE:
-            if (type->style_target) {
-                copy->style_target = strdup(type->style_target);
             }
             break;
         case TYPE_GENERIC_PARAM:
@@ -518,28 +496,6 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             }
             break;
         }
-        case TYPE_STYLE: {
-            // Style[target]
-            const char* prefix = "Style[";
-            size_t prefix_len = strlen(prefix);
-            if (*offset + prefix_len < buf_size - 1) {
-                memcpy(buf + *offset, prefix, prefix_len);
-                *offset += prefix_len;
-            }
-            if (type->style_target) {
-                size_t name_len = strlen(type->style_target);
-                if (*offset + name_len < buf_size - 1) {
-                    memcpy(buf + *offset, type->style_target, name_len);
-                    *offset += name_len;
-                }
-            }
-            if (*offset + 1 < buf_size) {
-                buf[*offset] = ']';
-                (*offset)++;
-                buf[*offset] = '\0';
-            }
-            break;
-        }
         case TYPE_GENERIC_PARAM: {
             // 输出泛型参数名 (T, U 等)
             const char* name = type->type_param_name ? type->type_param_name : "T";
@@ -595,16 +551,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_BIGINT:   return "int";  // 对外统一为 int
         case TYPE_NULL:     return "null";
         case TYPE_FILE:     return "File";
-        case TYPE_WIN:      return "GWin";
-        case TYPE_DRAW:     return "GDraw";
-        case TYPE_EVENT:    return "GEvent";
         case TYPE_RGB:      return "GRgb";
-        case TYPE_IMAGE:    return "GImage";
-        case TYPE_FONT:     return "GFont";
-        case TYPE_BUTTON:   return "GButton";
-        case TYPE_EDIT:  return "GEdit";
-        case TYPE_LABEL:    return "GLabel";
-        case TYPE_STYLE:    return "Style";
         case TYPE_SOCKET:   return "Socket";
         case TYPE_PTR:      return "Ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
@@ -691,20 +638,6 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type;
             } else if (val_as_obj(*v)->type == OBJ_FILE) {
                 return type_new(TYPE_FILE);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_WINDOW) {
-                return type_new(TYPE_WIN);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_RENDERER) {
-                return type_new(TYPE_DRAW);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_EVENT) {
-                return type_new(TYPE_EVENT);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_IMAGE) {
-                return type_new(TYPE_IMAGE);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_FONT) {
-                return type_new(TYPE_FONT);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_BUTTON) {
-                return type_new(TYPE_BUTTON);
-            } else if (val_as_obj(*v)->type == OBJ_GUI_EDIT) {
-                return type_new(TYPE_EDIT);
             } else if (val_as_obj(*v)->type == OBJ_DICT) {
                 return type_new(TYPE_DICT);
             } else if (val_as_obj(*v)->type == OBJ_FFI_POINTER) {
@@ -921,14 +854,6 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         return 0;
     }
 
-    // Style 类型兼容性检查：Style[xxx] 可以接受 Dict
-    if (target->kind == TYPE_STYLE) {
-        if (source->kind == TYPE_DICT || source->kind == TYPE_STYLE) {
-            return 1;
-        }
-        return 0;
-    }
-
     // face 类型兼容性检查
     if (target->kind == TYPE_FACE) {
         if (source->kind == TYPE_FACE) {
@@ -1001,16 +926,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         // case TOK_BINT:          return TYPE_BIGINT;  // 已移除：对外统一用 int
         case TOK_ANY_TYPE:      return TYPE_ANY;
         case TOK_FILE_TYPE:     return TYPE_FILE;
-        case TOK_WIN_TYPE:      return TYPE_WIN;
-        case TOK_DRAW_TYPE:     return TYPE_DRAW;
-        case TOK_EVENT_TYPE:    return TYPE_EVENT;
         case TOK_RGB_TYPE:      return TYPE_RGB;
-        case TOK_IMAGE_TYPE:    return TYPE_IMAGE;
-        case TOK_FONT_TYPE:     return TYPE_FONT;
-        case TOK_BUTTON_TYPE:   return TYPE_BUTTON;
-        case TOK_EDIT_TYPE:  return TYPE_EDIT;
-        case TOK_LABEL_TYPE:    return TYPE_LABEL;
-        case TOK_STYLE_TYPE:    return TYPE_STYLE;
         case TOK_SOCKET_TYPE:   return TYPE_SOCKET;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;

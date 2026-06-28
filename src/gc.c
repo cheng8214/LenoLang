@@ -36,8 +36,7 @@
 #include "include/string_table.h"
 #include "include/native.h"
 #include "include/leno_vm.h"
-#include "module/guis/guis_internal.h"
-#include "module/guis/leno_guis.h"
+// guis module removed
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -297,73 +296,8 @@ void gc_mark_object(Object* obj) {
         // 原生函数：无子引用
         case OBJ_NATIVE:
             break;
-        case OBJ_GUI_WINDOW: {
-            /* 标记窗口的按钮链表，防止按钮和字体被 GC 回收 */
-            ObjGUIWindow* w = (ObjGUIWindow*)obj;
-            struct ObjGUIButton* btn = (struct ObjGUIButton*)w->buttons;
-            while (btn) {
-                gc_mark_object((Object*)btn);
-                btn = btn->next;
-            }
-            /* 标记窗口的文本框链表，防止文本框被 GC 回收 */
-            struct ObjGUIEdit* tb = (struct ObjGUIEdit*)w->textboxes;
-            while (tb) {
-                gc_mark_object((Object*)tb);
-                tb = tb->next;
-            }
-            /* 标记窗口的标签链表，防止标签被 GC 回收 */
-            struct ObjGUILabel* lb = (struct ObjGUILabel*)w->labels;
-            while (lb) {
-                gc_mark_object((Object*)lb);
-                lb = lb->next;
-            }
-            break;
-        }
-        case OBJ_GUI_RENDERER: {
-            extern void guis_mark_renderer_refs(Object* obj);
-            guis_mark_renderer_refs(obj);
-            break;
-        }
-        case OBJ_GUI_FONT:
-            break;
-        case OBJ_GUI_IMAGE:
-            break;
-        case OBJ_GUI_BUTTON: {
-            ObjGUIButton* btn = (ObjGUIButton*)obj;
-            if (btn->window) gc_mark_object((Object*)btn->window);
-            if (btn->font) gc_mark_object((Object*)btn->font);
-            if (!val_is_null(btn->on_click) && val_is_obj(btn->on_click))
-                gc_mark_object(val_as_obj(btn->on_click));
-            if (btn->next) gc_mark_object((Object*)btn->next);
-            break;
-        }
-        case OBJ_GUI_EDIT: {
-            ObjGUIEdit* tb = (ObjGUIEdit*)obj;
-            if (tb->window) gc_mark_object((Object*)tb->window);
-            if (tb->font) gc_mark_object((Object*)tb->font);
-            /* placeholder_font 是 calloc 分配，不参与 GC */
-            if (!val_is_null(tb->on_change) && val_is_obj(tb->on_change))
-                gc_mark_object(val_as_obj(tb->on_change));
-            if (!val_is_null(tb->on_submit) && val_is_obj(tb->on_submit))
-                gc_mark_object(val_as_obj(tb->on_submit));
-            if (tb->next) gc_mark_object((Object*)tb->next);
-            break;
-        }
-        case OBJ_GUI_LABEL: {
-            ObjGUILabel* lb = (ObjGUILabel*)obj;
-            if (lb->window) gc_mark_object((Object*)lb->window);
-            if (lb->font) gc_mark_object((Object*)lb->font);
-            if (lb->next) gc_mark_object((Object*)lb->next);
-            break;
-        }
         case OBJ_SOCKET:
             break;
-        case OBJ_GUI_EVENT: {
-            /* Event 对象内部持有 ObjDict*，需要标记 */
-            ObjGUIEvent* ev = (ObjGUIEvent*)obj;
-            if (ev->data) gc_mark_object((Object*)ev->data);
-            break;
-        }
         case OBJ_RGB:
             break;
         /* 数组：标记所有元素 */
@@ -690,12 +624,7 @@ static void mark_roots(void) {
     extern void string_mark_methods(void);
     extern void dict_mark_methods(void);
     extern void file_mark_methods(void);
-    extern void draw_mark_methods(void);
-    extern void window_mark_methods(void);
-    extern void event_mark_methods(void);
-    extern void image_mark_methods(void);
     extern void socket_mark_methods(void);
-    extern void font_mark_methods(void);
     extern void number_mark_methods(void);
     extern void cstruct_mark_methods(void);
     extern void struct_mark_methods(void);
@@ -703,23 +632,12 @@ static void mark_roots(void) {
     string_mark_methods();
     dict_mark_methods();
     file_mark_methods();
-    draw_mark_methods();
-    window_mark_methods();
-    event_mark_methods();
-    image_mark_methods();
     socket_mark_methods();
-    font_mark_methods();
     number_mark_methods();
     thread_mark_methods();
     channel_mark_methods();
     cstruct_mark_methods();
     struct_mark_methods();
-    extern void button_mark_methods(void);
-    extern void edit_mark_methods(void);
-    extern void label_mark_methods(void);
-    button_mark_methods();
-    edit_mark_methods();
-    label_mark_methods();
 
     // 10. 标记内化字符串表（仅 Minor GC 使用，Major GC 改用 intern_sweep_unmarked）
 
@@ -775,10 +693,6 @@ static void mark_roots(void) {
         gc_mark_value(*gc.extra_roots[i]);
     }
 
-    // 18. 标记 GUI 模块的额外根（定时器回调等）
-    extern void guis_mark_extra_roots(void);
-    guis_mark_extra_roots();
-
     // 19. 标记字典 tombstone 哨兵字符串已不再需要（已改用 Value 哨兵值）
     // DICT_TOMBSTONE_VAL 是 NaN-boxed 值，不涉及 GC 管理的对象
 }
@@ -819,13 +733,7 @@ static size_t get_object_size(Object* obj) {
         case OBJ_CLOSURE: return sizeof(ObjClosure);
         case OBJ_FUNCTION: return sizeof(ObjFunction);
         case OBJ_NATIVE: return sizeof(ObjNative);
-        case OBJ_GUI_WINDOW: return sizeof(Object) + sizeof(int) + sizeof(void*);
-        case OBJ_GUI_RENDERER: return sizeof(Object) + sizeof(void*) + sizeof(void*);
-        case OBJ_GUI_FONT: return sizeof(Object) + sizeof(void*);
-        case OBJ_GUI_IMAGE: return sizeof(Object) + sizeof(void*);
-        case OBJ_GUI_BUTTON: return sizeof(ObjGUIButton);
-        case OBJ_GUI_LABEL: return sizeof(ObjGUILabel);
-        case OBJ_GUI_EVENT: return sizeof(Object) + sizeof(void*);
+        case OBJ_SOCKET: return sizeof(ObjSocket);
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
             return sizeof(ObjBigInt) + bigint->limb_count * sizeof(uint32_t);
@@ -833,7 +741,6 @@ static size_t get_object_size(Object* obj) {
         case OBJ_MODULE: return sizeof(ObjModule);
         case OBJ_BOUND_METHOD: return sizeof(ObjBoundMethod);
         case OBJ_FILE: return sizeof(ObjFile);
-        case OBJ_SOCKET: return sizeof(ObjSocket);
         case OBJ_RANGE: return sizeof(ObjRange);
         case OBJ_UPVALUE: return sizeof(Upvalue);
         case OBJ_STRUCT_DEF: {
@@ -1024,74 +931,6 @@ static void free_object_resources(Object* obj) {
             free(native->name);
             break;
         }
-        case OBJ_GUI_WINDOW: {
-            ObjGUIWindow* w = (ObjGUIWindow*)obj;
-            if (w->platform) {
-                leno_gui_platform_destroy_window(w->platform);
-                w->platform = NULL;
-            }
-            break;
-        }
-        case OBJ_GUI_RENDERER: {
-            ObjGUIRenderer* r = (ObjGUIRenderer*)obj;
-            if (r->platform) {
-                leno_gui_platform_destroy_renderer(r->platform);
-                r->platform = NULL;
-            }
-            break;
-        }
-        case OBJ_GUI_FONT: {
-            ObjGUIFont* f = (ObjGUIFont*)obj;
-            if (f->platform) {
-                leno_gui_platform_destroy_font(f->platform);
-                f->platform = NULL;
-            }
-            break;
-        }
-        case OBJ_GUI_IMAGE: {
-            ObjGUIImage* img = (ObjGUIImage*)obj;
-            if (img->platform) {
-                leno_gui_platform_destroy_image(img->platform);
-                img->platform = NULL;
-            }
-            break;
-        }
-        case OBJ_GUI_BUTTON: {
-            ObjGUIButton* btn = (ObjGUIButton*)obj;
-            if (btn->text) { free(btn->text); btn->text = NULL; }
-            if (btn->font_name) { free(btn->font_name); btn->font_name = NULL; }
-            if (btn->cursor) { free(btn->cursor); btn->cursor = NULL; }
-            break;
-        }
-        case OBJ_GUI_LABEL: {
-            ObjGUILabel* lb = (ObjGUILabel*)obj;
-            if (lb->text) { free(lb->text); lb->text = NULL; }
-            if (lb->font_name) { free(lb->font_name); lb->font_name = NULL; }
-            break;
-        }
-        case OBJ_GUI_EDIT: {
-            ObjGUIEdit* tb = (ObjGUIEdit*)obj;
-            if (tb->gb.buf) { free(tb->gb.buf); tb->gb.buf = NULL; }
-            if (tb->placeholder) { free(tb->placeholder); tb->placeholder = NULL; }
-            if (tb->font_name) { free(tb->font_name); tb->font_name = NULL; }
-            if (tb->placeholder_font_name) { free(tb->placeholder_font_name); tb->placeholder_font_name = NULL; }
-            /* placeholder_font 是 calloc 分配，需手动释放其 platform 和自身 */
-            if (tb->placeholder_font) {
-                if (tb->placeholder_font->platform) {
-                    leno_gui_platform_destroy_font(tb->placeholder_font->platform);
-                    tb->placeholder_font->platform = NULL;
-                }
-                free(tb->placeholder_font); tb->placeholder_font = NULL;
-            }
-            /* tb->font 是 GC 对象，由 GC 回收 */
-            if (tb->line_starts) { free(tb->line_starts); tb->line_starts = NULL; }
-            ed_free_layouts(tb);
-            ed_undo_free_stack(&tb->undo_stack);
-            ed_undo_free_stack(&tb->redo_stack);
-            break;
-        }
-        case OBJ_GUI_EVENT:
-            break;
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;
             type_free(arr->type_info);

@@ -676,19 +676,9 @@ OPCODE(OP_GET_METHOD) {
         return -1;
     }
     
-    // 处理原生对象类型（Event, Draw, Win 等）
+    // 处理原生对象类型（File, Socket 等）
     ObjNative* native_method = NULL;
-    if (obj->type == OBJ_GUI_EVENT) {
-        native_method = event_find_method(method_name->chars);
-    } else if (obj->type == OBJ_GUI_RENDERER) {
-        native_method = draw_find_method(method_name->chars);
-    } else if (obj->type == OBJ_GUI_WINDOW) {
-        native_method = window_find_method(method_name->chars);
-    } else if (obj->type == OBJ_GUI_IMAGE) {
-        native_method = image_find_method(method_name->chars);
-    } else if (obj->type == OBJ_GUI_FONT) {
-        native_method = font_find_method(method_name->chars);
-    } else if (obj->type == OBJ_FILE) {
+    if (obj->type == OBJ_FILE) {
         native_method = file_find_method(method_name->chars);
     } else if (obj->type == OBJ_SOCKET) {
         native_method = socket_find_method(method_name->chars);
@@ -702,8 +692,7 @@ OPCODE(OP_GET_METHOD) {
         DISPATCH;
     }
 
-    if (obj->type == OBJ_GUI_EVENT || obj->type == OBJ_GUI_RENDERER || obj->type == OBJ_GUI_WINDOW ||
-         obj->type == OBJ_GUI_IMAGE || obj->type == OBJ_GUI_FONT || obj->type == OBJ_FILE || obj->type == OBJ_SOCKET) {
+    if (obj->type == OBJ_FILE || obj->type == OBJ_SOCKET) {
         runtime_error("对象没有此方法", GET_CURRENT_LINE());
         return -1;
     }

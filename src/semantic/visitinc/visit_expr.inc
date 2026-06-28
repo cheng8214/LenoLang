@@ -312,10 +312,7 @@
                                                         (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
                                                         type_compatible = true;
                                                     }
-                                                    // 允许 Style[xxx] 传给 Dict 参数
-                                                    if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
-                                                        type_compatible = true;
-                                                    }
+
                                                     if (!type_compatible) {
                                                         char msg[BUFFER_MEDIUM];
                                                         char context[256];
@@ -405,10 +402,7 @@
                                                             (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
                                                             type_compatible = true;
                                                         }
-                                                        // 允许 Style[xxx] 传给 Dict 参数
-                                                        if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
-                                                            type_compatible = true;
-                                                        }
+
                                                         if (!type_compatible) {
                                                             char msg[BUFFER_MEDIUM];
                                                             const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
@@ -701,10 +695,6 @@
                                             // 允许 Ptr[T] <-> Ptr 之间的隐式转换
                                             if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
                                                 (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
-                                                type_compatible = true;
-                                            }
-                                            // 允许 Style[xxx] 传给 Dict 参数
-                                            if (expected_param_type == TYPE_DICT && arg_type->kind == TYPE_STYLE) {
                                                 type_compatible = true;
                                             }
                                             if (!type_compatible) {

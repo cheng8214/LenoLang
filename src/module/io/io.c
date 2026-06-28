@@ -121,30 +121,6 @@ static void print_value_internal(Value value) {
                     printf("<file>");
                     break;
                 }
-                case OBJ_GUI_WINDOW: {
-                    printf("<gwin>");
-                    break;
-                }
-                case OBJ_GUI_RENDERER: {
-                    printf("<gdraw>");
-                    break;
-                }
-                case OBJ_GUI_EVENT: {
-                    printf("<gevent>");
-                    break;
-                }
-                case OBJ_GUI_BUTTON: {
-                    printf("<gbutton>");
-                    break;
-                }
-                case OBJ_GUI_EDIT: {
-                    printf("<GEdit>");
-                    break;
-                }
-                case OBJ_GUI_LABEL: {
-                    printf("<glabel>");
-                    break;
-                }
                 case OBJ_RGB: {
                     ObjRgb* rgb = (ObjRgb*)obj;
                     printf("GRgb(%d,%d,%d,%d)", rgb->r, rgb->g, rgb->b, rgb->a);

@@ -43,14 +43,6 @@ typedef enum {
     OBJ_FFI_CALLBACK, // FFI 回调对象
     OBJ_THREAD,     // 线程对象
     OBJ_CHANNEL,    // Channel 对象
-    OBJ_GUI_WINDOW,   // GUI 窗口对象
-    OBJ_GUI_RENDERER, // GUI 渲染器对象
-    OBJ_GUI_FONT,     // GUI 字体对象
-    OBJ_GUI_EVENT,    // GUI 事件对象（独立类型，不与 OBJ_DICT 混用）
-    OBJ_GUI_IMAGE,    // GUI 图像对象
-    OBJ_GUI_BUTTON,   // GUI 按钮对象
-    OBJ_GUI_EDIT,  // GUI 文本框对象
-    OBJ_GUI_LABEL,    // GUI 标签对象
     OBJ_SOCKET,       // Socket 对象
     OBJ_RGB,          // RGB 颜色对象
     OBJ_NONE,       // 无效/空类型标记
@@ -1260,108 +1252,6 @@ FileMethodEntry file_find_method_meta(const char* name);
 TypeKind file_get_method_param_type(const char* method_name, int param_index);
 
 // ============================================================================
-// Draw 渲染器方法系统 API
-// ============================================================================
-
-// Draw 方法元信息（编译期类型检查用）
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} DrawMethodEntry;
-
-// 初始化 Draw 方法表
-void draw_init_methods(void);
-
-// 标记所有 Draw 方法对象（供 GC 使用）
-void draw_mark_methods(void);
-
-// 注册 Draw 方法（带参数类型）
-void draw_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                       int min_arity, int max_arity,
-                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-
-// 查找 Draw 方法的元信息
-DrawMethodEntry draw_find_method_meta(const char* name);
-
-// 查找 Draw 方法（运行时查找）
-ObjNative* draw_find_method(const char* name);
-
-// 获取 Draw 方法的参数类型
-TypeKind draw_get_method_param_type(const char* method_name, int param_index);
-
-// ============================================================================
-// Event 事件方法系统 API
-// ============================================================================
-
-// Event 方法元信息
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} EventMethodEntry;
-
-void event_init_methods(void);
-void event_mark_methods(void);
-void event_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-EventMethodEntry event_find_method_meta(const char* name);
-TypeKind event_get_method_param_type(const char* method_name, int param_index);
-ObjNative* event_find_method(const char* name);
-
-// ============================================================================
-// Win 窗口方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} WindowMethodEntry;
-
-void window_init_methods(void);
-void window_mark_methods(void);
-void window_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-WindowMethodEntry window_find_method_meta(const char* name);
-TypeKind window_get_method_param_type(const char* method_name, int param_index);
-ObjNative* window_find_method(const char* name);
-
-// ============================================================================
-// Image 图像方法系统 API
-// ============================================================================
-
-// Image 方法元信息
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} ImageMethodEntry;
-
-void image_init_methods(void);
-void image_mark_methods(void);
-void image_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-ImageMethodEntry image_find_method_meta(const char* name);
-TypeKind image_get_method_param_type(const char* method_name, int param_index);
-ObjNative* image_find_method(const char* name);
-
-// ============================================================================
 // Socket 方法系统 API
 // ============================================================================
 
@@ -1371,67 +1261,6 @@ void socket_register_method_with_params(const char* name, ObjNative* method, int
                                          int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 ObjNative* socket_find_method(const char* name);
-
-// ============================================================================
-// Font 字体方法系统 API
-// ============================================================================
-
-// Font 方法元信息
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} FontMethodEntry;
-
-void font_init_methods(void);
-void font_mark_methods(void);
-void font_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                       int min_arity, int max_arity,
-                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-FontMethodEntry font_find_method_meta(const char* name);
-TypeKind font_get_method_param_type(const char* method_name, int param_index);
-ObjNative* font_find_method(const char* name);
-
-// ============================================================================
-// GButton 按钮方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} ButtonMethodEntry;
-
-void button_init_methods(void);
-void button_mark_methods(void);
-void button_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-ButtonMethodEntry button_find_method_meta(const char* name);
-TypeKind button_get_method_param_type(const char* method_name, int param_index);
-ObjNative* button_find_method(const char* name);
-
-/* GEdit 方法注册 */
-void edit_init_methods(void);
-void edit_mark_methods(void);
-void edit_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-ObjNative* edit_find_method(const char* name);
-
-/* GLabel 方法注册 */
-void label_init_methods(void);
-void label_mark_methods(void);
-void label_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-ObjNative* label_find_method(const char* name);
 
 // ============================================================================
 // Dict 字典方法系统 API

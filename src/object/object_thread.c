@@ -552,10 +552,6 @@ static void* thread_entry_point(void* arg) {
     dicts_init_instance_methods();
     extern void files_init_instance_methods(void);
     files_init_instance_methods();
-    extern void guis_init_instance_methods(void);
-    guis_init_instance_methods();
-    extern void guis_init_event_methods(void);
-    guis_init_event_methods();
     extern void cstructs_init_methods(void);
     cstructs_init_methods();
     extern void threads_init_instance_methods(void);
