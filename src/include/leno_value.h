@@ -1155,10 +1155,6 @@ void threads_init_instance_methods(void);
 // 查找结构体方法
 ObjNative* struct_find_method(const char* name);
 
-// 注册数组方法（带类型信息，用于编译期检查）
-// 参数: 方法名, 方法对象, 参数个数(不含receiver), 返回类型
-void array_register_method(const char* name, ObjNative* method, int arity, TypeKind return_type);
-
 // 初始化数组方法表
 void array_init_methods(void);
 
@@ -1171,80 +1167,36 @@ void file_init_methods(void);
 // 标记所有文件方法对象（供 GC 使用）
 void file_mark_methods(void);
 
-// 数组方法元信息（用于编译期类型检查）
-#define MAX_METHOD_PARAMS 8
-typedef struct {
-    const char* name;       // 方法名
-    ObjNative* method;      // 方法实现
-    TypeKind return_type;   // 返回类型
-    TypeKind return_element_type; // 返回元素类型
-    int arity;              // 参数个数（不包括receiver）
-    TypeKind param_types[MAX_METHOD_PARAMS]; // 参数类型数组
-} ArrayMethodEntry;
+// ============================================================================
+// 通用方法注册表（所有内置类型共享）
+// ============================================================================
 
-// 注册数组方法（带参数类型）
+#include "method_table.h"
+
+// 方法注册/查找 API（各类型保留独立函数名，内部调用通用 method_table_* 函数）
+
+// Array
 void array_register_method_with_params(const char* name, ObjNative* method, int arity,
                                         int min_arity, int max_arity,
                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-
-// 查找数组方法的元信息（用于编译期类型检查）
 ArrayMethodEntry array_find_method_meta(const char* name);
-
-// 获取数组方法的参数类型
 TypeKind array_get_method_param_type(const char* method_name, int param_index);
 
-// ============================================================================
-// 字符串方法元信息
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} StringMethodEntry;
-
-// 注册字符串方法（带参数类型）
+// String
 void string_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-
-// 查找字符串方法的元信息
 StringMethodEntry string_find_method_meta(const char* name);
-
-// 获取字符串方法的参数类型
 TypeKind string_get_method_param_type(const char* method_name, int param_index);
 
-// ============================================================================
-// 文件方法元信息
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} FileMethodEntry;
-
-// 注册文件方法（带参数类型）
+// File
 void file_register_method_with_params(const char* name, ObjNative* method, int arity,
                                        int min_arity, int max_arity,
                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-
-// 查找文件方法的元信息
 FileMethodEntry file_find_method_meta(const char* name);
-
-// 获取文件方法的参数类型
 TypeKind file_get_method_param_type(const char* method_name, int param_index);
 
-// ============================================================================
-// Socket 方法系统 API
-// ============================================================================
-
+// Socket
 void socket_init_methods(void);
 void socket_mark_methods(void);
 void socket_register_method_with_params(const char* name, ObjNative* method, int arity,
@@ -1252,19 +1204,7 @@ void socket_register_method_with_params(const char* name, ObjNative* method, int
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 ObjNative* socket_find_method(const char* name);
 
-// ============================================================================
-// Dict 字典方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} DictMethodEntry;
-
+// Dict
 void dict_init_methods(void);
 void dict_mark_methods(void);
 void dict_register_method_with_params(const char* name, ObjNative* method, int arity,
@@ -1272,116 +1212,45 @@ void dict_register_method_with_params(const char* name, ObjNative* method, int a
                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 DictMethodEntry dict_find_method_meta(const char* name);
 TypeKind dict_get_method_param_type(const char* method_name, int param_index);
-ObjNative* dict_find_method(const char* name);
 
-// ============================================================================
-// Struct 结构体方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} StructMethodEntry;
-
+// Struct
 void struct_init_methods(void);
 void struct_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 StructMethodEntry struct_find_method_meta(const char* name);
-TypeKind struct_get_method_param_type(const char* method_name, int param_index);
-ObjNative* struct_find_method(const char* name);
 
-// ============================================================================
-// CStruct 方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} CStructMethodEntry;
-
+// CStruct
 void cstruct_init_methods(void);
 void cstruct_mark_methods(void);
 void cstruct_register_method_with_params(const char* name, ObjNative* method, int arity,
                                           int min_arity, int max_arity,
                                           TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 CStructMethodEntry cstruct_find_method_meta(const char* name);
-TypeKind cstruct_get_method_param_type(const char* method_name, int param_index);
-ObjNative* cstruct_find_method(const char* name);
 
-// ============================================================================
-// Thread 线程方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} ThreadMethodEntry;
-
+// Thread
 void thread_init_methods(void);
 void thread_mark_methods(void);
 void thread_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 ThreadMethodEntry thread_find_method_meta(const char* name);
-TypeKind thread_get_method_param_type(const char* method_name, int param_index);
-ObjNative* thread_find_method(const char* name);
 
-// ============================================================================
-// Channel 通道方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} ChannelMethodEntry;
-
+// Channel
 void channel_init_methods(void);
 void channel_mark_methods(void);
 void channel_register_method_with_params(const char* name, ObjNative* method, int arity,
                                           int min_arity, int max_arity,
                                           TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 ChannelMethodEntry channel_find_method_meta(const char* name);
-TypeKind channel_get_method_param_type(const char* method_name, int param_index);
-ObjNative* channel_find_method(const char* name);
 
-// ============================================================================
-// Number 数字方法系统 API
-// ============================================================================
-
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} NumberMethodEntry;
-
+// Number
 void number_init_methods(void);
 void number_mark_methods(void);
 void number_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 NumberMethodEntry number_find_method_meta(const char* name);
-TypeKind number_get_method_param_type(const char* method_name, int param_index);
-ObjNative* number_find_method(const char* name);
 
 // ============================================================================
 // 协程系统 API

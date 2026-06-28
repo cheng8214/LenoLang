@@ -2,6 +2,7 @@
 #include "include/native.h"
 #include "include/platform_thread.h"
 #include "include/leno_vm.h"
+#include "include/method_table.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,307 +13,55 @@
 extern int vm_run_coroutine(ObjCoroutine* co);
 
 // ============================================================================
-// Thread 方法注册表（哈希表实现）
+// Thread 方法注册表（使用通用 MethodTable）
 // ============================================================================
 
 #define THREAD_METHOD_TABLE_INITIAL_CAPACITY 16
-#define THREAD_METHOD_TABLE_MAX_LOAD 0.75
 
-static uint32_t thread_hash_string(const char* str) {
-    uint32_t hash = 2166136261u;
-    while (*str) {
-        hash ^= (unsigned char)(*str);
-        hash *= 16777619;
-        str++;
-    }
-    return hash;
-}
-
-typedef struct ThreadMethodHashEntry {
-    char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-    struct ThreadMethodHashEntry* next;
-} ThreadMethodHashEntry;
-
-typedef struct {
-    ThreadMethodHashEntry** entries;
-    int capacity;
-    int count;
-} ThreadMethodTable;
-
-static THREAD_LOCAL ThreadMethodTable threadMethodTable = {NULL, 0, 0};
-
-static void thread_method_table_init(void) {
-    threadMethodTable.capacity = THREAD_METHOD_TABLE_INITIAL_CAPACITY;
-    threadMethodTable.count = 0;
-    threadMethodTable.entries = (ThreadMethodHashEntry**)calloc(threadMethodTable.capacity, sizeof(ThreadMethodHashEntry*));
-}
-
-static void thread_method_table_free(void) {
-    if (!threadMethodTable.entries) return;
-    for (int i = 0; i < threadMethodTable.capacity; i++) {
-        ThreadMethodHashEntry* entry = threadMethodTable.entries[i];
-        while (entry) {
-            ThreadMethodHashEntry* next = entry->next;
-            free(entry->name);
-            free(entry);
-            entry = next;
-        }
-    }
-    free(threadMethodTable.entries);
-    threadMethodTable.entries = NULL;
-    threadMethodTable.capacity = 0;
-    threadMethodTable.count = 0;
-}
-
-static void thread_method_table_resize(void) {
-    int old_capacity = threadMethodTable.capacity;
-    ThreadMethodHashEntry** old_entries = threadMethodTable.entries;
-    int new_capacity = old_capacity * 2;
-    ThreadMethodHashEntry** new_entries = (ThreadMethodHashEntry**)calloc(new_capacity, sizeof(ThreadMethodHashEntry*));
-    if (!new_entries) return;
-    for (int i = 0; i < old_capacity; i++) {
-        ThreadMethodHashEntry* entry = old_entries[i];
-        while (entry) {
-            ThreadMethodHashEntry* next = entry->next;
-            uint32_t hash = thread_hash_string(entry->name);
-            int index = hash & (new_capacity - 1);
-            entry->next = new_entries[index];
-            new_entries[index] = entry;
-            entry = next;
-        }
-    }
-    free(old_entries);
-    threadMethodTable.entries = new_entries;
-    threadMethodTable.capacity = new_capacity;
-}
+static THREAD_LOCAL MethodTable threadMethodTable = {NULL, 0, 0};
 
 void thread_register_method_with_params(const char* name, ObjNative* method, int arity,
                                          int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    if (!threadMethodTable.entries) {
-        thread_method_table_init();
-    }
-    if (threadMethodTable.count >= threadMethodTable.capacity * THREAD_METHOD_TABLE_MAX_LOAD) {
-        thread_method_table_resize();
-    }
-    uint32_t hash = thread_hash_string(name);
-    int index = hash & (threadMethodTable.capacity - 1);
-    ThreadMethodHashEntry* entry = threadMethodTable.entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) {
-            entry->method = method;
-            entry->arity = arity;
-            entry->return_type = return_type;
-            entry->return_element_type = return_element_type;
-            if (param_types && arity > 0) {
-                int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-                for (int i = 0; i < count; i++) entry->param_types[i] = param_types[i];
-                for (int i = count; i < MAX_METHOD_PARAMS; i++) entry->param_types[i] = TYPE_ANY;
-            } else {
-                for (int i = 0; i < MAX_METHOD_PARAMS; i++) entry->param_types[i] = TYPE_ANY;
-            }
-            return;
-        }
-        entry = entry->next;
-    }
-    ThreadMethodHashEntry* new_entry = (ThreadMethodHashEntry*)malloc(sizeof(ThreadMethodHashEntry));
-    if (!new_entry) return;
-    new_entry->name = strdup(name);
-    new_entry->method = method;
-    new_entry->arity = arity;
-    new_entry->return_type = return_type;
-    new_entry->return_element_type = return_element_type;
-    if (param_types && arity > 0) {
-        int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-        for (int i = 0; i < count; i++) new_entry->param_types[i] = param_types[i];
-        for (int i = count; i < MAX_METHOD_PARAMS; i++) new_entry->param_types[i] = TYPE_ANY;
-    } else {
-        for (int i = 0; i < MAX_METHOD_PARAMS; i++) new_entry->param_types[i] = TYPE_ANY;
-    }
-    new_entry->next = threadMethodTable.entries[index];
-    threadMethodTable.entries[index] = new_entry;
-    threadMethodTable.count++;
-    native_register_instance_method_meta_with_params("Thread", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    method_table_register_with_params(&threadMethodTable, "Thread", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 ObjNative* thread_find_method(const char* name) {
-    if (!threadMethodTable.entries || threadMethodTable.count == 0) return NULL;
-    uint32_t hash = thread_hash_string(name);
-    int index = hash & (threadMethodTable.capacity - 1);
-    ThreadMethodHashEntry* entry = threadMethodTable.entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) return entry->method;
-        entry = entry->next;
-    }
-    return NULL;
+    return method_table_find(&threadMethodTable, name);
 }
 
 void thread_init_methods(void) {
-    thread_method_table_free();
-    thread_method_table_init();
+    method_table_init_methods(&threadMethodTable, THREAD_METHOD_TABLE_INITIAL_CAPACITY);
 }
 
 void thread_mark_methods(void) {
-    if (!threadMethodTable.entries) return;
-    for (int i = 0; i < threadMethodTable.capacity; i++) {
-        ThreadMethodHashEntry* entry = threadMethodTable.entries[i];
-        while (entry) {
-            if (entry->method) gc_mark_object((Object*)entry->method);
-            entry = entry->next;
-        }
-    }
+    method_table_mark(&threadMethodTable);
 }
 
 // ============================================================================
-// Channel 方法注册表（哈希表实现）
+// Channel 方法注册表（使用通用 MethodTable）
 // ============================================================================
 
 #define CHANNEL_METHOD_TABLE_INITIAL_CAPACITY 16
-#define CHANNEL_METHOD_TABLE_MAX_LOAD 0.75
 
-typedef struct ChannelMethodHashEntry {
-    char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-    struct ChannelMethodHashEntry* next;
-} ChannelMethodHashEntry;
-
-typedef struct {
-    ChannelMethodHashEntry** entries;
-    int capacity;
-    int count;
-} ChannelMethodTable;
-
-static THREAD_LOCAL ChannelMethodTable channelMethodTable = {NULL, 0, 0};
-
-static void channel_method_table_init(void) {
-    channelMethodTable.capacity = CHANNEL_METHOD_TABLE_INITIAL_CAPACITY;
-    channelMethodTable.count = 0;
-    channelMethodTable.entries = (ChannelMethodHashEntry**)calloc(channelMethodTable.capacity, sizeof(ChannelMethodHashEntry*));
-}
-
-static void channel_method_table_free(void) {
-    if (!channelMethodTable.entries) return;
-    for (int i = 0; i < channelMethodTable.capacity; i++) {
-        ChannelMethodHashEntry* entry = channelMethodTable.entries[i];
-        while (entry) {
-            ChannelMethodHashEntry* next = entry->next;
-            free(entry->name);
-            free(entry);
-            entry = next;
-        }
-    }
-    free(channelMethodTable.entries);
-    channelMethodTable.entries = NULL;
-    channelMethodTable.capacity = 0;
-    channelMethodTable.count = 0;
-}
-
-static void channel_method_table_resize(void) {
-    int old_capacity = channelMethodTable.capacity;
-    ChannelMethodHashEntry** old_entries = channelMethodTable.entries;
-    int new_capacity = old_capacity * 2;
-    ChannelMethodHashEntry** new_entries = (ChannelMethodHashEntry**)calloc(new_capacity, sizeof(ChannelMethodHashEntry*));
-    if (!new_entries) return;
-    for (int i = 0; i < old_capacity; i++) {
-        ChannelMethodHashEntry* entry = old_entries[i];
-        while (entry) {
-            ChannelMethodHashEntry* next = entry->next;
-            uint32_t hash = thread_hash_string(entry->name);
-            int index = hash & (new_capacity - 1);
-            entry->next = new_entries[index];
-            new_entries[index] = entry;
-            entry = next;
-        }
-    }
-    free(old_entries);
-    channelMethodTable.entries = new_entries;
-    channelMethodTable.capacity = new_capacity;
-}
+static THREAD_LOCAL MethodTable channelMethodTable = {NULL, 0, 0};
 
 void channel_register_method_with_params(const char* name, ObjNative* method, int arity,
                                           int min_arity, int max_arity,
                                           TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    if (!channelMethodTable.entries) {
-        channel_method_table_init();
-    }
-    if (channelMethodTable.count >= channelMethodTable.capacity * CHANNEL_METHOD_TABLE_MAX_LOAD) {
-        channel_method_table_resize();
-    }
-    uint32_t hash = thread_hash_string(name);
-    int index = hash & (channelMethodTable.capacity - 1);
-    ChannelMethodHashEntry* entry = channelMethodTable.entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) {
-            entry->method = method;
-            entry->arity = arity;
-            entry->return_type = return_type;
-            entry->return_element_type = return_element_type;
-            if (param_types && arity > 0) {
-                int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-                for (int i = 0; i < count; i++) entry->param_types[i] = param_types[i];
-                for (int i = count; i < MAX_METHOD_PARAMS; i++) entry->param_types[i] = TYPE_ANY;
-            } else {
-                for (int i = 0; i < MAX_METHOD_PARAMS; i++) entry->param_types[i] = TYPE_ANY;
-            }
-            return;
-        }
-        entry = entry->next;
-    }
-    ChannelMethodHashEntry* new_entry = (ChannelMethodHashEntry*)malloc(sizeof(ChannelMethodHashEntry));
-    if (!new_entry) return;
-    new_entry->name = strdup(name);
-    new_entry->method = method;
-    new_entry->arity = arity;
-    new_entry->return_type = return_type;
-    new_entry->return_element_type = return_element_type;
-    if (param_types && arity > 0) {
-        int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-        for (int i = 0; i < count; i++) new_entry->param_types[i] = param_types[i];
-        for (int i = count; i < MAX_METHOD_PARAMS; i++) new_entry->param_types[i] = TYPE_ANY;
-    } else {
-        for (int i = 0; i < MAX_METHOD_PARAMS; i++) new_entry->param_types[i] = TYPE_ANY;
-    }
-    new_entry->next = channelMethodTable.entries[index];
-    channelMethodTable.entries[index] = new_entry;
-    channelMethodTable.count++;
-    native_register_instance_method_meta_with_params("Channel", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    method_table_register_with_params(&channelMethodTable, "Channel", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 ObjNative* channel_find_method(const char* name) {
-    if (!channelMethodTable.entries || channelMethodTable.count == 0) return NULL;
-    uint32_t hash = thread_hash_string(name);
-    int index = hash & (channelMethodTable.capacity - 1);
-    ChannelMethodHashEntry* entry = channelMethodTable.entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) return entry->method;
-        entry = entry->next;
-    }
-    return NULL;
+    return method_table_find(&channelMethodTable, name);
 }
 
 void channel_init_methods(void) {
-    channel_method_table_free();
-    channel_method_table_init();
+    method_table_init_methods(&channelMethodTable, CHANNEL_METHOD_TABLE_INITIAL_CAPACITY);
 }
 
 void channel_mark_methods(void) {
-    if (!channelMethodTable.entries) return;
-    for (int i = 0; i < channelMethodTable.capacity; i++) {
-        ChannelMethodHashEntry* entry = channelMethodTable.entries[i];
-        while (entry) {
-            if (entry->method) gc_mark_object((Object*)entry->method);
-            entry = entry->next;
-        }
-    }
+    method_table_mark(&channelMethodTable);
 }
 
 // ============================================================================

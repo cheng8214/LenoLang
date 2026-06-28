@@ -15,7 +15,9 @@ typedef struct {
 } NativeFunctionMeta;
 
 // 模块方法元信息
+#ifndef MAX_METHOD_PARAMS
 #define MAX_METHOD_PARAMS 8  // 最大参数数量
+#endif
 typedef struct {
     char module_name[32];
     char method_name[32];

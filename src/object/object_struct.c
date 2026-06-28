@@ -1,6 +1,7 @@
 #include "../include/lenolang.h"
 #include "../include/native.h"
 #include "../include/platform_thread.h"
+#include "../include/method_table.h"
 #include <string.h>
 
 // ============================================================================
@@ -185,226 +186,36 @@ void struct_set_field(ObjStruct* obj, int index, Value value) {
 }
 
 // ============================================================================
-// 结构体方法表（运行时）- 类似 object_dict.c
+// 结构体方法表（运行时 - 使用通用 MethodTable）
 // ============================================================================
 
 #define STRUCT_METHOD_TABLE_INITIAL_CAPACITY 16
-#define STRUCT_METHOD_TABLE_MAX_LOAD 0.75
 
-/* 方法哈希表条目 */
-typedef struct StructMethodHashEntry {
-    char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-    struct StructMethodHashEntry* next;
-} StructMethodHashEntry;
-
-typedef struct {
-    StructMethodHashEntry** entries;
-    int capacity;
-    int count;
-} StructMethodTable;
-
-static THREAD_LOCAL StructMethodTable structMethodTable = {NULL, 0, 0};
-
-// 计算字符串哈希值（FNV-1a算法）
-static uint32_t struct_hash_string(const char* str) {
-    uint32_t hash = 2166136261u;
-    while (*str) {
-        hash ^= (unsigned char)(*str);
-        hash *= 16777619;
-        str++;
-    }
-    return hash;
-}
-
-// 初始化结构体方法表
-static void struct_method_table_init(void) {
-    structMethodTable.capacity = STRUCT_METHOD_TABLE_INITIAL_CAPACITY;
-    structMethodTable.count = 0;
-    structMethodTable.entries = (StructMethodHashEntry**)calloc(structMethodTable.capacity, sizeof(StructMethodHashEntry*));
-}
-
-// 释放结构体方法表
-static void struct_method_table_free(void) {
-    if (!structMethodTable.entries) return;
-    
-    for (int i = 0; i < structMethodTable.capacity; i++) {
-        StructMethodHashEntry* entry = structMethodTable.entries[i];
-        while (entry) {
-            StructMethodHashEntry* next = entry->next;
-            free(entry->name);
-            free(entry);
-            entry = next;
-        }
-    }
-    free(structMethodTable.entries);
-    structMethodTable.entries = NULL;
-    structMethodTable.capacity = 0;
-    structMethodTable.count = 0;
-}
-
-// 扩容结构体方法表
-static void struct_method_table_resize(void) {
-    int old_capacity = structMethodTable.capacity;
-    StructMethodHashEntry** old_entries = structMethodTable.entries;
-    
-    int new_capacity = old_capacity * 2;
-    StructMethodHashEntry** new_entries = (StructMethodHashEntry**)calloc(new_capacity, sizeof(StructMethodHashEntry*));
-    if (!new_entries) return;
-    
-    for (int i = 0; i < old_capacity; i++) {
-        StructMethodHashEntry* entry = old_entries[i];
-        while (entry) {
-            StructMethodHashEntry* next = entry->next;
-            uint32_t hash = struct_hash_string(entry->name);
-            int index = hash & (new_capacity - 1);
-            entry->next = new_entries[index];
-            new_entries[index] = entry;
-            entry = next;
-        }
-    }
-    
-    free(old_entries);
-    structMethodTable.entries = new_entries;
-    structMethodTable.capacity = new_capacity;
-}
+static THREAD_LOCAL MethodTable structMethodTable = {NULL, 0, 0};
 
 // 注册结构体方法（带参数类型）
 void struct_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    if (!structMethodTable.entries) {
-        struct_method_table_init();
-    }
-    
-    if (structMethodTable.count >= structMethodTable.capacity * STRUCT_METHOD_TABLE_MAX_LOAD) {
-        struct_method_table_resize();
-    }
-    
-    uint32_t hash = struct_hash_string(name);
-    int index = hash & (structMethodTable.capacity - 1);
-    
-    StructMethodHashEntry* entry = structMethodTable.entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) {
-            entry->method = method;
-            entry->arity = arity;
-            entry->return_type = return_type;
-            entry->return_element_type = return_element_type;
-            if (param_types && arity > 0) {
-                int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-                for (int i = 0; i < count; i++) {
-                    entry->param_types[i] = param_types[i];
-                }
-                for (int i = count; i < MAX_METHOD_PARAMS; i++) {
-                    entry->param_types[i] = TYPE_ANY;
-                }
-            } else {
-                for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-                    entry->param_types[i] = TYPE_ANY;
-                }
-            }
-            return;
-        }
-        entry = entry->next;
-    }
-    
-    StructMethodHashEntry* new_entry = (StructMethodHashEntry*)malloc(sizeof(StructMethodHashEntry));
-    if (!new_entry) {
-        native_throw_error("结构体方法注册内存分配失败");
-        return;
-    }
-    
-    new_entry->name = strdup(name);
-    new_entry->method = method;
-    new_entry->arity = arity;
-    new_entry->return_type = return_type;
-    new_entry->return_element_type = return_element_type;
-    if (param_types && arity > 0) {
-        int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-        for (int i = 0; i < count; i++) {
-            new_entry->param_types[i] = param_types[i];
-        }
-        for (int i = count; i < MAX_METHOD_PARAMS; i++) {
-            new_entry->param_types[i] = TYPE_ANY;
-        }
-    } else {
-        for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-            new_entry->param_types[i] = TYPE_ANY;
-        }
-    }
-    
-    new_entry->next = structMethodTable.entries[index];
-    structMethodTable.entries[index] = new_entry;
-    structMethodTable.count++;
-    
-    // 同时注册到编译期元信息表，避免重复维护
-    native_register_instance_method_meta_with_params("struct", name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    method_table_register_with_params(&structMethodTable, "struct", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
 }
 
 // 查找结构体方法的元信息（用于编译期类型检查）
 StructMethodEntry struct_find_method_meta(const char* name) {
-    StructMethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
-    if (!structMethodTable.entries || structMethodTable.count == 0) return result;
-    
-    uint32_t hash = struct_hash_string(name);
-    int index = hash & (structMethodTable.capacity - 1);
-    
-    StructMethodHashEntry* entry = structMethodTable.entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) {
-            result.name = entry->name;
-            result.method = entry->method;
-            result.arity = entry->arity;
-            result.return_type = entry->return_type;
-            result.return_element_type = entry->return_element_type;
-            for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-                result.param_types[i] = entry->param_types[i];
-            }
-            return result;
-        }
-        entry = entry->next;
-    }
-    return result;
+    return method_table_find_meta(&structMethodTable, name);
 }
 
 // 查找结构体方法
 ObjNative* struct_find_method(const char* name) {
-    if (!structMethodTable.entries || structMethodTable.count == 0) return NULL;
-    
-    uint32_t hash = struct_hash_string(name);
-    int index = hash & (structMethodTable.capacity - 1);
-    
-    StructMethodHashEntry* entry = structMethodTable.entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) {
-            return entry->method;
-        }
-        entry = entry->next;
-    }
-    return NULL;
+    return method_table_find(&structMethodTable, name);
 }
 
 // 标记 struct 方法表中的所有方法（供 GC 使用）
 void struct_mark_methods(void) {
-    if (!structMethodTable.entries) return;
-    for (int i = 0; i < structMethodTable.capacity; i++) {
-        StructMethodHashEntry* entry = structMethodTable.entries[i];
-        while (entry) {
-            if (entry->method) {
-                gc_mark_object((Object*)entry->method);
-            }
-            entry = entry->next;
-        }
-    }
+    method_table_mark(&structMethodTable);
 }
 
 void struct_init_methods(void) {
-    struct_method_table_free();
-    struct_method_table_init();
+    method_table_init_methods(&structMethodTable, STRUCT_METHOD_TABLE_INITIAL_CAPACITY);
 }
 
 // 标记所有结构体定义（供 GC 使用）

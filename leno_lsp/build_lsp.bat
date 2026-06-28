@@ -45,6 +45,7 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_type_utils.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/gc.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/value.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/string_table.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/object/method_table.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_string.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_array.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_dict.c

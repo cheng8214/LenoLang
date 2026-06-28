@@ -12,6 +12,7 @@ set SOURCES=!SOURCES! src\scope.c
 set SOURCES=!SOURCES! src\gc.c
 set SOURCES=!SOURCES! src\value.c
 set SOURCES=!SOURCES! src\string_table.c
+set SOURCES=!SOURCES! src\object\method_table.c
 set SOURCES=!SOURCES! src\object\object_string.c
 set SOURCES=!SOURCES! src\object\object_array.c
 set SOURCES=!SOURCES! src\object\object_dict.c
