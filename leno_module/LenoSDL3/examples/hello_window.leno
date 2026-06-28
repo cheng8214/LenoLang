@@ -1,4 +1,4 @@
-// hello_window.leno — SDL3 窗口示例（蓝色清屏 + 红色矩形）
+// hello_window.leno — SDL3 绘图示例（矩形、圆、线、混合模式）
 import "../lib/SDL3.leno" as SDL3
 
 main() {
@@ -7,7 +7,7 @@ main() {
         return
     }
 
-    var win = SDL3.createWindow("Hello LenoSDL3!", 800, 600, 0)
+    var win = SDL3.createWindow("Hello LenoSDL3 - 绘图演示", 800, 600, 0)
     if not win.ok { SDL3.quit(); return }
 
     var ren = SDL3.createRenderer(win.handle)
@@ -22,13 +22,64 @@ main() {
             if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
         }
 
-        // 蓝色背景
-        ren.setColor(30, 60, 150, 255)
+        // 深色背景
+        ren.setColor(20, 30, 50, 255)
         ren.clear()
 
-        // 红色矩形
-        ren.setColor(220, 50, 50, 255)
-        ren.fillRect(200, 150, 400, 300)
+        // ---- 1. 填充矩形 ----
+        ren.setColor(60, 120, 220, 255)
+        ren.fillRect(30, 30, 150, 100)
+
+        // ---- 2. 矩形轮廓 ----
+        ren.setColor(255, 255, 255, 255)
+        ren.drawRect(30, 30, 150, 100)
+
+        // ---- 3. 填充圆 ----
+        ren.setColor(220, 160, 50, 255)  // 橙色圆
+        ren.fillCircle(280, 80, 50)
+
+        // ---- 4. 圆轮廓 ----
+        ren.setColor(255, 255, 0, 255)   // 黄色圆环
+        ren.drawCircle(400, 80, 55)
+
+        // ---- 5. 十字线（中心交叉） ----
+        ren.setColor(200, 200, 200, 255)
+        ren.drawLine(400, 180, 400, 350)  // 竖线
+        ren.drawLine(250, 265, 550, 265)  // 横线（在竖线中点交叉）
+
+        // ---- 6. 对角线（X形） ----
+        ren.setColor(150, 150, 150, 255)
+        ren.drawLine(250, 180, 550, 350)
+        ren.drawLine(550, 180, 250, 350)
+
+        // ---- 7. 多个圆（模拟"气泡"） ----
+        ren.setColor(100, 200, 100, 180)
+        ren.fillCircle(100, 420, 30)
+        ren.fillCircle(170, 440, 25)
+        ren.fillCircle(240, 420, 30)
+        ren.fillCircle(310, 440, 25)
+
+        // ---- 8. 点阵 ----
+        ren.setColor(255, 255, 255, 255)
+        for 0:10 to i {
+            ren.drawPoint(500 + i * 22, 160)
+        }
+
+        // ---- 9. 矩形组 ----
+        ren.setColor(180, 80, 180, 255)
+        ren.fillRect(500, 250, 50, 80)
+        ren.fillRect(560, 230, 50, 100)
+        ren.fillRect(620, 250, 50, 80)
+
+        // ---- 10. 半透明混合演示 ----
+        ren.setBlendMode(SDL3.BLENDMODE_BLEND)
+        ren.setColor(255, 80, 80, 160)
+        ren.fillRect(500, 400, 80, 80)
+        ren.setColor(80, 80, 255, 160)
+        ren.fillRect(540, 410, 80, 80)
+        ren.setColor(80, 255, 80, 160)
+        ren.fillRect(560, 430, 80, 80)
+        ren.setBlendMode(SDL3.BLENDMODE_NONE)  // 恢复默认
 
         ren.present()
     }

@@ -489,10 +489,10 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
         else if (val_is_float(arg)) {
             double dval = val_as_num(arg);
             switch (param_tk) {
-                case TYPE_F32:
-                    sig.arg_types[i] = FFI_TYPE_FLOAT; ffi_args[i].type = FFI_TYPE_FLOAT;
-                    ffi_args[i].value.d = dval;  /* libffi 会自动截断为 float */
-                    break;
+        case TYPE_F32:
+            sig.arg_types[i] = FFI_TYPE_FLOAT; ffi_args[i].type = FFI_TYPE_FLOAT;
+            ffi_args[i].value.f = (float)dval;
+            break;
                 default:
                     sig.arg_types[i] = FFI_TYPE_DOUBLE; ffi_args[i].type = FFI_TYPE_DOUBLE;
                     ffi_args[i].value.d = dval;

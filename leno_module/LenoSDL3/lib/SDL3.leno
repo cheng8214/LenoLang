@@ -3,6 +3,7 @@ import ffi
 import strings
 import files
 import dirs
+import maths
 
 // ============================================================================
 // cstruct — SDL3 核心数据结构
@@ -22,6 +23,18 @@ export cstruct SDL_Rect {
     i32 y
     i32 w
     i32 h
+}
+
+// 浮点坐标点
+export cstruct SDL_FPoint {
+    f32 x
+    f32 y
+}
+
+// 整数坐标点
+export cstruct SDL_Point {
+    i32 x
+    i32 y
 }
 
 // SDL_Event 联合体（只定义公共头部，事件数据通过偏移读取）
@@ -60,6 +73,21 @@ clib sdl3 {
     i32 SDL_RenderPoint(Ptr renderer, f32 x, f32 y)
     i32 SDL_SetRenderVSync(Ptr renderer, i32 vsync)
 
+    // 绘图 — 批量
+    i32 SDL_RenderLines(Ptr renderer, Ptr points, i32 count)
+    i32 SDL_RenderPoints(Ptr renderer, Ptr points, i32 count)
+    i32 SDL_RenderRects(Ptr renderer, Ptr rects, i32 count)
+    i32 SDL_RenderFillRects(Ptr renderer, Ptr rects, i32 count)
+
+    // 渲染状态
+    i32 SDL_SetRenderScale(Ptr renderer, f32 scaleX, f32 scaleY)
+    i32 SDL_SetRenderDrawBlendMode(Ptr renderer, i32 blendMode)
+    i32 SDL_SetRenderClipRect(Ptr renderer, Ptr rect)
+    i32 SDL_SetRenderLogicalSize(Ptr renderer, i32 w, i32 h)
+
+    // 键盘状态
+    Ptr SDL_GetKeyboardState(Ptr numkeys)
+
     // 事件
     i32 SDL_PollEvent(SDL_Event event)
 
@@ -93,9 +121,78 @@ export var SCANCODE_ESCAPE = 41
 export var SCANCODE_RETURN = 40
 export var SCANCODE_SPACE  = 44
 export var SCANCODE_A      = 4
-export var SCANCODE_W      = 26
-export var SCANCODE_S      = 22
+export var SCANCODE_B      = 5
+export var SCANCODE_C      = 6
 export var SCANCODE_D      = 7
+export var SCANCODE_E      = 8
+export var SCANCODE_F      = 9
+export var SCANCODE_G      = 10
+export var SCANCODE_H      = 11
+export var SCANCODE_I      = 12
+export var SCANCODE_J      = 13
+export var SCANCODE_K      = 14
+export var SCANCODE_L      = 15
+export var SCANCODE_M      = 16
+export var SCANCODE_N      = 17
+export var SCANCODE_O      = 18
+export var SCANCODE_P      = 19
+export var SCANCODE_Q      = 20
+export var SCANCODE_R      = 21
+export var SCANCODE_S      = 22
+export var SCANCODE_T      = 23
+export var SCANCODE_U      = 24
+export var SCANCODE_V      = 25
+export var SCANCODE_W      = 26
+export var SCANCODE_X      = 27
+export var SCANCODE_Y      = 28
+export var SCANCODE_Z      = 29
+export var SCANCODE_1      = 30
+export var SCANCODE_2      = 31
+export var SCANCODE_3      = 32
+export var SCANCODE_4      = 33
+export var SCANCODE_5      = 34
+export var SCANCODE_6      = 35
+export var SCANCODE_7      = 36
+export var SCANCODE_8      = 37
+export var SCANCODE_9      = 38
+export var SCANCODE_0      = 39
+export var SCANCODE_UP     = 82
+export var SCANCODE_DOWN   = 81
+export var SCANCODE_LEFT   = 80
+export var SCANCODE_RIGHT  = 79
+export var SCANCODE_LSHIFT = 225
+export var SCANCODE_RSHIFT = 229
+export var SCANCODE_LCTRL  = 224
+export var SCANCODE_RCTRL  = 228
+export var SCANCODE_LALT   = 226
+export var SCANCODE_RALT   = 230
+export var SCANCODE_TAB    = 43
+export var SCANCODE_DELETE = 76
+export var SCANCODE_BACKSPACE = 42
+export var SCANCODE_F1     = 58
+export var SCANCODE_F2     = 59
+export var SCANCODE_F3     = 60
+export var SCANCODE_F4     = 61
+export var SCANCODE_F5     = 62
+export var SCANCODE_F6     = 63
+export var SCANCODE_F7     = 64
+export var SCANCODE_F8     = 65
+export var SCANCODE_F9     = 66
+export var SCANCODE_F10    = 67
+export var SCANCODE_F11    = 68
+export var SCANCODE_F12    = 69
+
+// 鼠标按钮
+export var MOUSE_LEFT   = 1
+export var MOUSE_MIDDLE = 2
+export var MOUSE_RIGHT  = 3
+
+// 混合模式
+export var BLENDMODE_NONE  = 0x00000000
+export var BLENDMODE_BLEND = 0x00000001
+export var BLENDMODE_ADD   = 0x00000002
+export var BLENDMODE_MOD   = 0x00000004
+export var BLENDMODE_MUL   = 0x00000008
 
 // ============================================================================
 // DLL 加载
@@ -212,7 +309,7 @@ export struct Renderer {
     func drawRect(float x, float y, float w, float h): bool {
         var rect = SDL_FRect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
-        var result = lib().SDL_RenderRect(handle, rect.to_ptr()) != 0
+        var result = lib().SDL_RenderRect(handle, rect) != 0
         rect.free()
         return result
     }
@@ -227,6 +324,81 @@ export struct Renderer {
 
     func setVSync(int mode): bool {
         return lib().SDL_SetRenderVSync(handle, mode) != 0
+    }
+
+    // 画圆（轮廓）— 用 SDL_RenderLines + maths 近似
+    func drawCircle(float cx, float cy, float radius): bool {
+        var segs = 64                     // 线段数
+        var pts  = segs + 1               // 点数（首尾相接需要 +1）
+        var buf  = ffi.malloc(pts * 8)    // 每个点 2 个 f32
+        if buf == null { return false }
+        var two_pi = 6.283185307
+        for 0 : segs to i {
+            var a = two_pi * _float(i) / _float(segs)
+            ffi.write_float(buf, i * 8,     cx + radius * maths.cos(a))
+            ffi.write_float(buf, i * 8 + 4, cy + radius * maths.sin(a))
+        }
+        var ok = lib().SDL_RenderLines(handle, buf, pts) != 0
+        ffi.free(buf)
+        return ok
+    }
+
+    // 画圆（填充）— 水平扫描线
+    func fillCircle(float cx, float cy, float radius): bool {
+        var ok = true
+        var r  = _int(radius)
+        for 0 : r * 2 to i {
+            var dy = i - r
+            var half = maths.sqrt(radius * radius - _float(dy * dy))
+            if not drawLine(cx - half, cy + _float(dy), cx + half, cy + _float(dy)) {
+                ok = false
+            }
+        }
+        return ok
+    }
+
+    // 画多条线（pts 是 SDL_FPoint 数组指针, count 为点数）
+    func drawLines(Ptr pts, int count): bool {
+        return lib().SDL_RenderLines(handle, pts, count) != 0
+    }
+
+    // 画多个点
+    func drawPoints(Ptr pts, int count): bool {
+        return lib().SDL_RenderPoints(handle, pts, count) != 0
+    }
+
+    // 画多个矩形轮廓
+    func drawRects(Ptr rects, int count): bool {
+        return lib().SDL_RenderRects(handle, rects, count) != 0
+    }
+
+    // 填充多个矩形
+    func fillRects(Ptr rects, int count): bool {
+        return lib().SDL_RenderFillRects(handle, rects, count) != 0
+    }
+
+    // 设置渲染缩放
+    func setScale(float scaleX, float scaleY): bool {
+        return lib().SDL_SetRenderScale(handle, scaleX, scaleY) != 0
+    }
+
+    // 设置混合模式
+    func setBlendMode(int mode): bool {
+        return lib().SDL_SetRenderDrawBlendMode(handle, mode) != 0
+    }
+
+    // 设置裁剪矩形；传 null 清除裁剪
+    func setClipRect(Ptr rect): bool {
+        return lib().SDL_SetRenderClipRect(handle, rect) != 0
+    }
+
+    func clearClip(): bool {
+        return lib().SDL_SetRenderClipRect(handle, null) != 0
+    }
+
+    // 设置逻辑分辨率
+    func setLogicalSize(int w, int h): bool {
+        return lib().SDL_SetRenderLogicalSize(handle, w, h) != 0
     }
 }
 
@@ -250,12 +422,26 @@ export struct Event {
 
     func type(): int { return ffi.read_int(raw, 0) }
 
-    func isQuit(): bool        { return type() == EVENT_QUIT }
-    func isKeyDown(): bool     { return type() == EVENT_KEY_DOWN }
-    func isKeyUp(): bool       { return type() == EVENT_KEY_UP }
-    func isWindowClose(): bool { return type() == EVENT_WINDOW_CLOSE_REQUESTED }
+    func isQuit(): bool           { return type() == EVENT_QUIT }
+    func isKeyDown(): bool        { return type() == EVENT_KEY_DOWN }
+    func isKeyUp(): bool          { return type() == EVENT_KEY_UP }
+    func isWindowClose(): bool    { return type() == EVENT_WINDOW_CLOSE_REQUESTED }
+    func isWindowResized(): bool  { return type() == EVENT_WINDOW_RESIZED }
+    func isMouseMotion(): bool    { return type() == EVENT_MOUSE_MOTION }
+    func isMouseButtonDown(): bool { return type() == EVENT_MOUSE_BUTTON_DOWN }
+    func isMouseButtonUp(): bool  { return type() == EVENT_MOUSE_BUTTON_UP }
 
     func scancode(): int { return ffi.read_int(raw, 24) }
+
+    // 鼠标事件 — 坐标偏移参考 SDL_MouseMotionEvent / SDL_MouseButtonEvent
+    func mouseX(): float     { return ffi.read_float(raw, 28) }
+    func mouseY(): float     { return ffi.read_float(raw, 32) }
+    func mouseDX(): float    { return ffi.read_float(raw, 36) } // 鼠标相对移动 x (仅 motion 有效)
+    func mouseDY(): float    { return ffi.read_float(raw, 40) } // 鼠标相对移动 y (仅 motion 有效)
+    func mouseButton(): int  { return ffi.read_int(raw, 24) }  // 按钮 (1=左,2=中,3=右)
+
+    // 窗口事件
+    func windowID(): int { return ffi.read_int(raw, 16) }
 
     func uninit() {
         if raw != null { ffi.free(raw); raw = null; has = false }
@@ -278,6 +464,8 @@ export func createEvent(): Event {
     var ev = new Event(); ev.init(); return ev
 }
 
-// cstruct 大小（SDL_FRect = 4*f32 = 16 bytes, SDL_Rect = 4*i32 = 16 bytes）
-export var SDL_FRect_SIZE = 16
-export var SDL_Rect_SIZE = 16
+// cstruct 大小
+export var SDL_FRect_SIZE  = 16   // 4 * f32
+export var SDL_Rect_SIZE   = 16   // 4 * i32
+export var SDL_FPoint_SIZE = 8    // 2 * f32
+export var SDL_Point_SIZE  = 8    // 2 * i32

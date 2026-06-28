@@ -69,6 +69,13 @@ typedef double  (*f_i_d_r)(int64_t, double);
 typedef double  (*f_d_i_r)(double, int64_t);
 typedef double  (*f_d_d_r)(double, double);
 
+/* float 版本 (f32) — 2 参数混合 */
+typedef int64_t (*f_i_F)(int64_t, float);
+typedef int64_t (*f_F_i)(float, int64_t);
+typedef double  (*f_i_F_r)(int64_t, float);
+typedef double  (*f_F_i_r)(float, int64_t);
+typedef double  (*f_F_F_r)(float, float);
+
 /* ========================================================================
  *  4. 混合参数的函数指针类型（3 参数）
  * ======================================================================== */
@@ -85,6 +92,14 @@ typedef double  (*f_d_d_i_r)(double, double, int64_t);
 typedef double  (*f_d_i_d_r)(double, int64_t, double);
 typedef double  (*f_i_d_d_r)(int64_t, double, double);
 
+/* float 版本 — 3 参数混合 */
+typedef int64_t (*f_i_i_F)(int64_t, int64_t, float);
+typedef int64_t (*f_i_F_i)(int64_t, float, int64_t);
+typedef int64_t (*f_F_i_i)(float, int64_t, int64_t);
+typedef int64_t (*f_F_F_i)(float, float, int64_t);
+typedef int64_t (*f_F_i_F)(float, int64_t, float);
+typedef int64_t (*f_i_F_F)(int64_t, float, float);
+
 /* ========================================================================
  *  5. 混合参数的函数指针类型（4 参数）
  * ======================================================================== */
@@ -96,11 +111,28 @@ typedef int64_t (*f_i_d_d_i)(int64_t, double, double, int64_t);
 typedef int64_t (*f_d_i_d_i)(double, int64_t, double, int64_t);
 typedef int64_t (*f_d_d_i_i)(double, double, int64_t, int64_t);
 
+/* float 版本 — 4 参数混合 */
+typedef int64_t (*f_i_i_i_F)(int64_t, int64_t, int64_t, float);
+typedef int64_t (*f_i_i_F_i)(int64_t, int64_t, float, int64_t);
+typedef int64_t (*f_i_F_i_i)(int64_t, float, int64_t, int64_t);
+typedef int64_t (*f_F_i_i_i)(float, int64_t, int64_t, int64_t);
+typedef int64_t (*f_i_F_F_F)(int64_t, float, float, float);
+typedef int64_t (*f_F_F_F_i)(float, float, float, int64_t);
+
+/* float 版本 — 5 参数（1 ptr + 4 f32，SDLRenderLine 等） */
+typedef int64_t (*f_i_F4)(int64_t, float, float, float, float);
+
 /* ========================================================================
  *  辅助函数：判断参数类型是否为浮点
  * ======================================================================== */
 static int is_float_type(FFIType t) {
     return t == FFI_TYPE_DOUBLE || t == FFI_TYPE_FLOAT;
+}
+static int is_double_type(FFIType t) {
+    return t == FFI_TYPE_DOUBLE;
+}
+static int is_float_only(FFIType t) {
+    return t == FFI_TYPE_FLOAT;
 }
 
 /* ========================================================================
@@ -161,42 +193,47 @@ static double call_pure_double(void* func, double* dargs, int count) {
  *  核心调用实现：混合参数分发（2~4 参数）
  *  根据 arg_types 数组中每个参数的实际类型选择对应函数指针
  * ======================================================================== */
-static int64_t call_mixed_int_ret(void* func, const FFIArg* args, int total) {
+/* 辅助函数: 取值 & 类型判断 */
+static inline int64_t  arg_i(const FFIArg* a, int n) { return a[n].value.i; }
+static inline double   arg_d(const FFIArg* a, int n) { return a[n].value.d; }
+static inline float    arg_f(const FFIArg* a, int n) { return a[n].value.f; }
+static inline int      argIsDbl(const FFIArg* a, int n) { return is_double_type(a[n].type); }
+static inline int      argIsF32(const FFIArg* a, int n) { return is_float_only(a[n].type); }
+
+static int64_t call_mixed_int_ret(void* func, const FFIArg* a, int total) {
     /* 2 参数混合 */
     if (total == 2) {
-        int d0 = is_float_type(args[0].type);
-        int d1 = is_float_type(args[1].type);
-        if (!d0 && d1)  return ((f_i_d)func)(args[0].value.i, args[1].value.d);
-        if (d0 && !d1)  return ((f_d_i)func)(args[0].value.d, args[1].value.i);
-        /* 两个同类型走纯路径 */
+        /* double */ if (!argIsDbl(a,0) && argIsDbl(a,1)) return ((f_i_d)func)(arg_i(a,0), arg_d(a,1));
+        /* double */ if (argIsDbl(a,0) && !argIsDbl(a,1)) return ((f_d_i)func)(arg_d(a,0), arg_i(a,1));
+        /* f32    */ if (!argIsF32(a,0) && argIsF32(a,1)) return ((f_i_F)func)(arg_i(a,0), arg_f(a,1));
+        /* f32    */ if (argIsF32(a,0) && !argIsF32(a,1)) return ((f_F_i)func)(arg_f(a,0), arg_i(a,1));
         return 0;
     }
     /* 3 参数混合 */
     if (total == 3) {
-        int d0 = is_float_type(args[0].type);
-        int d1 = is_float_type(args[1].type);
-        int d2 = is_float_type(args[2].type);
-        if (!d0 && !d1 && d2)  return ((f_i_i_d)func)(args[0].value.i, args[1].value.i, args[2].value.d);
-        if (!d0 && d1 && !d2)  return ((f_i_d_i)func)(args[0].value.i, args[1].value.d, args[2].value.i);
-        if (d0 && !d1 && !d2)  return ((f_d_i_i)func)(args[0].value.d, args[1].value.i, args[2].value.i);
-        if (!d0 && d1 && d2)   return ((f_i_d_d)func)(args[0].value.i, args[1].value.d, args[2].value.d);
-        if (d0 && !d1 && d2)   return ((f_d_i_d)func)(args[0].value.d, args[1].value.i, args[2].value.d);
-        if (d0 && d1 && !d2)   return ((f_d_d_i)func)(args[0].value.d, args[1].value.d, args[2].value.i);
+        /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)) return ((f_i_i_d)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2));
+        /* double */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_i_d_i)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2));
+        /* double */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_d_i_i)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2));
+        /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2)) return ((f_i_i_F)func)(arg_i(a,0),arg_i(a,1),arg_f(a,2));
+        /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2)) return ((f_i_F_i)func)(arg_i(a,0),arg_f(a,1),arg_i(a,2));
+        /* f32    */ if (argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)) return ((f_F_i_i)func)(arg_f(a,0),arg_i(a,1),arg_i(a,2));
+        /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&argIsF32(a,2))  return ((f_i_F_F)func)(arg_i(a,0),arg_f(a,1),arg_f(a,2));
+        /* f32    */ if (argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2))  return ((f_F_i_F)func)(arg_f(a,0),arg_i(a,1),arg_f(a,2));
+        /* f32    */ if (argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2))  return ((f_F_F_i)func)(arg_f(a,0),arg_f(a,1),arg_i(a,2));
         return 0;
     }
     /* 4 参数混合 */
     if (total == 4) {
-        int d0 = is_float_type(args[0].type);
-        int d1 = is_float_type(args[1].type);
-        int d2 = is_float_type(args[2].type);
-        int d3 = is_float_type(args[3].type);
-        if (!d0 && !d1 && !d2 && d3)  return ((f_i_i_i_d)func)(args[0].value.i, args[1].value.i, args[2].value.i, args[3].value.d);
-        if (!d0 && !d1 && d2 && !d3)  return ((f_i_i_d_i)func)(args[0].value.i, args[1].value.i, args[2].value.d, args[3].value.i);
-        if (!d0 && d1 && !d2 && !d3)  return ((f_i_d_i_i)func)(args[0].value.i, args[1].value.d, args[2].value.i, args[3].value.i);
-        if (d0 && !d1 && !d2 && !d3)  return ((f_d_i_i_i)func)(args[0].value.d, args[1].value.i, args[2].value.i, args[3].value.i);
-        if (!d0 && d1 && d2 && !d3)   return ((f_i_d_d_i)func)(args[0].value.i, args[1].value.d, args[2].value.d, args[3].value.i);
-        if (d0 && !d1 && d2 && !d3)   return ((f_d_i_d_i)func)(args[0].value.d, args[1].value.i, args[2].value.d, args[3].value.i);
-        if (d0 && d1 && !d2 && !d3)   return ((f_d_d_i_i)func)(args[0].value.d, args[1].value.d, args[2].value.i, args[3].value.i);
+        /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_i_i_i_d)func)(arg_i(a,0),arg_i(a,1),arg_i(a,2),arg_d(a,3));
+        /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_i_d_i)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2),arg_i(a,3));
+        /* double */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_d_i_i)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2),arg_i(a,3));
+        /* double */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_d_i_i_i)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2),arg_i(a,3));
+        /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)&&argIsF32(a,3)) return ((f_i_i_i_F)func)(arg_i(a,0),arg_i(a,1),arg_i(a,2),arg_f(a,3));
+        /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2)&&!argIsF32(a,3)) return ((f_i_i_F_i)func)(arg_i(a,0),arg_i(a,1),arg_f(a,2),arg_i(a,3));
+        /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2)&&!argIsF32(a,3)) return ((f_i_F_i_i)func)(arg_i(a,0),arg_f(a,1),arg_i(a,2),arg_i(a,3));
+        /* f32    */ if (argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)&&!argIsF32(a,3)) return ((f_F_i_i_i)func)(arg_f(a,0),arg_i(a,1),arg_i(a,2),arg_i(a,3));
+        /* f32×3  */if (!argIsF32(a,0)&&argIsF32(a,1)&&argIsF32(a,2)&&argIsF32(a,3))  return ((f_i_F_F_F)func)(arg_i(a,0),arg_f(a,1),arg_f(a,2),arg_f(a,3));
+        /* f32×3  */if (argIsF32(a,0)&&argIsF32(a,1)&&argIsF32(a,2)&&!argIsF32(a,3))  return ((f_F_F_F_i)func)(arg_f(a,0),arg_f(a,1),arg_f(a,2),arg_i(a,3));
         return 0;
     }
     return 0;
@@ -298,6 +335,21 @@ FFIValue ffi_call_win64(void* func, const FFISignature* sig, const FFIArg* args)
             result.i = call_mixed_int_ret(func, args, total);
         }
         return result;
+    }
+
+    /* ===== 路径 3.5: >4 参数 f32 专用 =====
+     * Ptr + f32×4 (SDL_RenderLine 等常见 5 参数模式) */
+    if (total == 5) {
+        int fcount = 0;
+        for (int i = 0; i < total; i++)
+            if (is_float_only(args[i].type)) fcount++;
+        /* (Ptr, f32, f32, f32, f32) — 5 参数，1 ptr + 4 f32 */
+        if (fcount == 4 && !is_float_type(args[0].type)) {
+            result.i = ((f_i_F4)func)(args[0].value.i,
+                args[1].value.f, args[2].value.f, args[3].value.f, args[4].value.f);
+            return result;
+        }
+        /* 其他 5 参数组合（含 double）见路径 4 */
     }
 
     /* ===== 路径 4: 混合参数回退策略 =====
