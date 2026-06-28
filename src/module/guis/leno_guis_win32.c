@@ -2481,7 +2481,11 @@ void leno_gui_platform_show_file_dialog(int type, LenoGUIFileDialogCallback call
 
 /* ===== 消息框（参考 SDL3 SDL_ShowSimpleMessageBox） ===== */
 
-/* 显示系统消息框：type 0=信息 1=警告 2=错误 */
+/* 显示系统消息框：
+ *   type 低 8 位：图标  0=信息 1=警告 2=错误 3=询问
+ *   type 8-15 位：按钮 0=OK 1=OK/Cancel 2=Yes/No 3=Yes/No/Cancel
+ *   返回值同 Windows MessageBox：IDOK=1, IDCANCEL=2, IDYES=6, IDNO=7
+ */
 int leno_gui_platform_show_message_box(const char* title, const char* message, int type) {
     /* UTF-8 转宽字符 */
     int wtlen = MultiByteToWideChar(CP_UTF8, 0, title, -1, NULL, 0);
@@ -2496,11 +2500,20 @@ int leno_gui_platform_show_message_box(const char* title, const char* message, i
         wmsg = (wchar_t*)malloc(wmlen * sizeof(wchar_t));
         MultiByteToWideChar(CP_UTF8, 0, message, -1, wmsg, wmlen);
     }
-    /* 根据类型选择图标 */
-    UINT mb_type = MB_OK;
-    switch (type) {
-        case 1: mb_type |= MB_ICONWARNING; break;
-        case 2: mb_type |= MB_ICONERROR; break;
+    /* 解析按钮和图标 */
+    int icon = type & 0xFF;
+    int buttons = (type >> 8) & 0xFF;
+    UINT mb_type = 0;
+    switch (buttons) {
+        case 1:  mb_type |= MB_OKCANCEL; break;
+        case 2:  mb_type |= MB_YESNO; break;
+        case 3:  mb_type |= MB_YESNOCANCEL; break;
+        default: mb_type |= MB_OK; break;
+    }
+    switch (icon) {
+        case 1:  mb_type |= MB_ICONWARNING; break;
+        case 2:  mb_type |= MB_ICONERROR; break;
+        case 3:  mb_type |= MB_ICONQUESTION; break;
         default: mb_type |= MB_ICONINFORMATION; break;
     }
     int result = MessageBoxW(NULL, wmsg, wtitle, mb_type);
