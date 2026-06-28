@@ -243,25 +243,6 @@ export func getError(): string {
 export func delay(int ms) { lib().SDL_Delay(ms) }
 
 // ============================================================================
-// Window — 窗口封装
-// ============================================================================
-
-export struct Window {
-    Ptr handle; bool ok
-
-    func init(string title, int w, int h, int flags): bool {
-        handle = lib().SDL_CreateWindow(title, w, h, flags)
-        ok = handle != null
-        if not ok { print("[LenoSDL3] 创建窗口失败: " + getError()) }
-        return ok
-    }
-
-    func destroy() {
-        if ok { lib().SDL_DestroyWindow(handle); handle = null; ok = false }
-    }
-}
-
-// ============================================================================
 // Renderer — 渲染器封装
 // ============================================================================
 
@@ -445,6 +426,54 @@ export struct Event {
 
     func uninit() {
         if raw != null { ffi.free(raw); raw = null; has = false }
+    }
+}
+
+// ============================================================================
+// Window — 窗口封装（自动 initVideo/quit）
+// ============================================================================
+
+export struct Window {
+    Ptr handle; bool ok
+
+    func init(string title, int w, int h, int flags): bool {
+        if not initVideo() {
+            print("[LenoSDL3] SDL3 初始化失败: " + getError())
+            return false
+        }
+        handle = lib().SDL_CreateWindow(title, w, h, flags)
+        ok = handle != null
+        if not ok { print("[LenoSDL3] 创建窗口失败: " + getError()) }
+        return ok
+    }
+
+    func destroy() {
+        if ok { lib().SDL_DestroyWindow(handle); handle = null; ok = false }
+        quit()
+    }
+
+    // win.run(func(Event e):bool {}, func(Renderer r) {})
+    func run(var onEvent, var onRender) {
+        var ren = new Renderer()
+        if not ren.initDefault(handle) { destroy(); return }
+        ren.setVSync(1)
+
+        var ev = new Event()
+        ev.init()
+
+        var running = true
+        while running {
+            while ev.poll() {
+                if ev.isQuit() or ev.isWindowClose() { running = false }
+                else if not onEvent(ev) { running = false }
+            }
+            onRender(ren)
+            ren.present()
+        }
+
+        ev.uninit()
+        ren.destroy()
+        destroy()
     }
 }
 

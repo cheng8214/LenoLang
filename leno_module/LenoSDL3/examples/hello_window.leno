@@ -13,6 +13,8 @@ main() {
     var ren = SDL3.createRenderer(win.handle)
     if not ren.ok { win.destroy(); SDL3.quit(); return }
 
+    ren.setVSync(1)  // 限制帧率 = 显示器刷新率，避免 CPU 空转
+
     var ev = SDL3.createEvent()
     var running = true
 

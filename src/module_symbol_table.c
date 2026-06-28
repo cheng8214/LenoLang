@@ -1254,7 +1254,8 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 }
                             }
 
-                            while (*after_struct && *after_struct != '\n' && *after_struct != '}') after_struct++;
+                            while (*after_struct && *after_struct != '\n' && *after_struct != '}' && *after_struct != ';') after_struct++;
+                            if (*after_struct == ';') after_struct++;
                         }
 
                         // 添加 struct 到符号表（包括字段和方法）

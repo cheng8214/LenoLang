@@ -1,0 +1,50 @@
+// test_anon2.leno — 匿名函数 + struct 类型参数
+import maths
+
+struct Point {
+    int x; int y
+
+    func move(int dx, int dy) {
+        x = x + dx
+        y = y + dy
+    }
+}
+
+main() {
+    // 测试1: struct 类型参数
+    var dist = func(Point a, Point b): float {
+        var dx = a.x - b.x
+        var dy = a.y - b.y
+        return maths.sqrt(_float(dx * dx + dy * dy))
+    }
+
+    var p1 = new Point()
+    p1.x = 0; p1.y = 0
+    var p2 = new Point()
+    p2.x = 3; p2.y = 4
+
+    print("dist = " + dist(p1, p2))
+
+    // 测试2: 回调修改 struct
+    var applyMove = func(var p, var fn) {
+        fn(p)
+    }
+
+    var p3 = new Point()
+    p3.x = 10; p3.y = 10
+
+    applyMove(p3, func(Point pt) {
+        pt.move(5, 3)
+    })
+    print("after move: (" + p3.x + "," + p3.y + ")")
+
+    // 测试3: 返回 struct
+    var makePoint = func(int x, int y): Point {
+        var p = new Point()
+        p.x = x
+        p.y = y
+        return p
+    }
+    var p4 = makePoint(7, 8)
+    print("makePoint: (" + p4.x + "," + p4.y + ")")
+}

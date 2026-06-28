@@ -1,0 +1,23 @@
+// simple_window.leno — 最简 SDL3 窗口（回调模式）
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow("Simple Window", 800, 600, 0)
+    if not win.ok { return }
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(20, 30, 50, 255)
+            r.clear()
+        }
+    )
+
+    print("退出成功")
+}

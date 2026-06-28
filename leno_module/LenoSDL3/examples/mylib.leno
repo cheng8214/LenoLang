@@ -1,0 +1,28 @@
+// mylib.leno — 模块，导出带回调的函数
+
+export struct Vec2 {
+    float x;float y
+}
+
+// 遍历 n 次，回调接收 Vec2
+export func forEachVec(int n, var fn) {
+    for 0 : n - 1 to i {
+        var v = new Vec2()
+        v.x = _float(i)
+        v.y = _float(i * 2)
+        fn(v)
+    }
+}
+
+// 回调返回 bool 控制循环
+export func findFirst(int n, var fn): Vec2 {
+    for 0 : n - 1 to i {
+        var v = new Vec2()
+        v.x = _float(i)
+        v.y = _float(i * 3)
+        if fn(v) { return v }
+    }
+    var v = new Vec2()
+    v.x = -1.0; v.y = -1.0
+    return v
+}

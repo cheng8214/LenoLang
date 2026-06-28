@@ -1,0 +1,34 @@
+// test_anon1.leno — 匿名函数基本类型参数
+main() {
+    // 测试1: int 参数
+    var add = func(int a, int b): int {
+        return a + b
+    }
+    print("add(3,5) = " + add(3, 5))
+
+    // 测试2: string 参数
+    var greet = func(string name): string {
+        return "Hello " + name
+    }
+    print(greet("Leno"))
+
+    // 测试3: 回调 — 传匿名函数
+    var loop = func(int n, var fn) {
+        for 0 : n - 1 to i {
+            fn(i)
+        }
+    }
+
+    var sum = 0
+    loop(5, func(int i) {
+        sum = sum + i
+    })
+    print("sum 0..4 = " + sum)
+
+    // 测试4: bool 返回值
+    var isEven = func(int n): bool {
+        return n % 2 == 0
+    }
+    print("4 even? " + isEven(4))
+    print("5 even? " + isEven(5))
+}
