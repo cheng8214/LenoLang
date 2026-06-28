@@ -85,6 +85,13 @@ clib sdl3 {
     i32 SDL_SetRenderClipRect(Ptr renderer, Ptr rect)
     i32 SDL_SetRenderLogicalSize(Ptr renderer, i32 w, i32 h)
 
+    // 视口
+    i32 SDL_SetRenderViewport(Ptr renderer, Ptr rect)
+
+    // 获取绘制颜色
+    i32 SDL_GetRenderDrawColor(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
+    i32 SDL_GetRenderDrawColorFloat(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
+
     // 键盘状态
     Ptr SDL_GetKeyboardState(Ptr numkeys)
 
@@ -93,6 +100,9 @@ clib sdl3 {
 
     // 延时
     void SDL_Delay(u32 ms)
+
+    // 计时
+    u64 SDL_GetTicks()
 
     // 窗口大小（int 输出参数用 Ptr）
     i32 SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
@@ -241,6 +251,7 @@ export func getError(): string {
 }
 
 export func delay(int ms) { lib().SDL_Delay(ms) }
+export func getTicks(): int { return lib().SDL_GetTicks() as int }
 
 // ============================================================================
 // Renderer — 渲染器封装
@@ -380,6 +391,15 @@ export struct Renderer {
     // 设置逻辑分辨率
     func setLogicalSize(int w, int h): bool {
         return lib().SDL_SetRenderLogicalSize(handle, w, h) != 0
+    }
+
+    // 设置视口
+    func setViewport(Ptr rect): bool {
+        return lib().SDL_SetRenderViewport(handle, rect) != 0
+    }
+
+    func resetViewport(): bool {
+        return lib().SDL_SetRenderViewport(handle, null) != 0
     }
 }
 
