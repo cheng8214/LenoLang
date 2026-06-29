@@ -127,12 +127,11 @@ try {
 - **格式化输出** — `format("%02d: %-10s", i, name)` C 风格格式控制
 - **`as` 安全转换** — 不匹配返回 `null` 而非崩溃
 - **`>>>` 逻辑右移** — 高位补 0，适合加密算法位运算
-- **GUI 支持** — 内置窗口、绘图、图片、字体、事件系统
 - **正则表达式** — `regexs` 模块
 - **JSON** — `jsons` 模块编解码
 - **垃圾回收** — 内置 GC，自动内存管理
 - **字节码编译** — 源码 → `.lenb` 字节码 → 独立 exe 打包
-- **跨平台** — Windows / Linux（guis 在 Linux 下可能有问题）；macOS 暂不支持
+- **跨平台** — Windows / Linux / macOS（通过 GitHub Actions 自动构建验证）
 
 ## 快速开始
 
@@ -190,9 +189,8 @@ struct Point {
 ### 前置要求
 
 - GCC 或 MinGW（C99 支持）
-- CMake 3.16+（可选，推荐）
 
-### 方式一：使用构建脚本
+### 使用构建脚本
 
 **Windows：**
 
@@ -207,27 +205,7 @@ chmod +x build.sh
 ./build.sh
 ```
 
-构建产物在 `build/` 目录下：
-
-| 文件 | 说明 |
-|------|------|
-| `build/leno` | 编译器 + VM（完整版） |
-| `build/leno_vm` | 纯 VM 运行时（仅运行 `.lenb` 字节码） |
-| `build/test_runner` | 测试运行器 |
-
-### 方式二：使用 CMake
-
-```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-```
-
-Windows 上如果使用 MinGW：
-
-```bash
-cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-```
+构建产物 `build/leno`（编译器 + VM）。
 
 ### 构建 VM 运行时（仅 Windows）
 
@@ -359,11 +337,8 @@ root = "lib"
 ## 运行测试
 
 ```bash
-# 使用测试运行器（当前 113 个测试全部通过）
-build/test_runner build/leno assert
-
-# 使用 CMake
-cmake --build build --target test
+# 运行断言测试
+build/leno assert/run_tests.leno build/leno assert
 ```
 
 ## 命令参考
@@ -400,7 +375,6 @@ cmake --build build --target test
 | `threads` | 多线程 |
 | `asyncs` | 异步协程 |
 | `regexs` | 正则表达式 |
-| `guis` | 图形界面 |
 | `sys` | 系统信息 |
 | `assert` | 断言测试 |
 
@@ -427,8 +401,7 @@ LenoC/
 ├── examples/                   # 示例代码
 ├── docs/                       # 文档
 ├── build.bat / build.sh        # 构建脚本
-├── build_vm.bat / build_vm.sh  # VM 构建脚本
-└── CMakeLists.txt              # CMake 配置
+└── build_vm.bat / build_vm.sh  # VM 构建脚本
 ```
 
 ## 文档
