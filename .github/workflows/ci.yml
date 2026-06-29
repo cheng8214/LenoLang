@@ -9,17 +9,57 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure CMake
-        run: cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
-        run: cmake --build build -j
+        run: |
+          mkdir -p build
+          gcc -o build/leno.exe \
+            src/main.c src/error.c src/lexer.c src/ast.c src/scope.c \
+            src/parser/parser.c src/parser/parser_utils.c src/parser/parser_expr.c \
+            src/parser/parser_stmt_control.c src/parser/parser_stmt_other.c \
+            src/parser/parser_func.c src/parser/parser_module.c \
+            src/semantic/semantic.c src/semantic/semantic_upvalue.c \
+            src/semantic/semantic_type.c src/semantic/semantic_visit.c \
+            src/semantic/semantic_visit_method.c src/semantic/semantic_visit_ast.c \
+            src/semantic/semantic_visit_func.c src/semantic/semantic_type_utils.c \
+            src/optimize/optimize.c src/gc.c src/value.c src/string_table.c \
+            src/object/object_string.c src/object/method_table.c \
+            src/object/object_array.c src/object/object_dict.c \
+            src/object/object_number.c src/object/object_file.c \
+            src/object/object_socket.c src/object/object_struct.c \
+            src/object/object_face.c src/object/object_cstruct.c \
+            src/object/object_thread.c \
+            src/bound_method.c src/coroutine.c src/vm/vm.c \
+            src/codegen/codegen.c src/codegen/codegen_emit.c \
+            src/codegen/codegen_expr.c src/codegen/codegen_stmt.c \
+            src/codegen/codegen_func.c src/codegen/codegen_import.c \
+            src/codegen/codegen_utils.c src/debug.c src/type.c src/native.c \
+            src/bigint.c src/module_loader.c src/module_dispatch.c \
+            src/module_compiler.c src/module_symbol_table.c src/module.c \
+            src/module/io/io.c src/module/types/types.c src/module/times/times.c \
+            src/module/arrays/arrays.c src/module/strings/strings.c \
+            src/module/maths/maths.c src/module/dicts/dicts.c \
+            src/module/structs/structs.c src/module/cstructs/cstructs.c \
+            src/module/rands/rands.c src/module/files/files.c \
+            src/module/asyncs/asyncs.c src/module/dirs/dirs.c \
+            src/module/jsons/jsons.c src/module/sockets/sockets.c \
+            src/module/ffi/ffi.c src/module/ffi/leno_ffi_win64.c \
+            src/module/threads/threads.c src/module/assert/assert.c \
+            src/module/sys/sys.c src/module/regexs/regexs.c \
+            src/platform/platform_thread.c \
+            src/serialize/serialize.c \
+            src/package/package_platform.c src/package/package_toml.c \
+            src/package/package_init.c src/package/package_resolve.c \
+            src/package/package_install.c \
+            -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 
       - name: Run tests
-        run: cmake --build build --target test
+        run: ./build/leno.exe assert/run_tests.leno ./build/leno.exe assert
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -33,16 +73,53 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc cmake libiconv-hook-dev
-
-      - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: sudo apt-get update && sudo apt-get install -y gcc
 
       - name: Build
-        run: cmake --build build -j
+        run: |
+          mkdir -p build
+          gcc -o build/leno \
+            src/main.c src/error.c src/lexer.c src/ast.c src/scope.c \
+            src/parser/parser.c src/parser/parser_utils.c src/parser/parser_expr.c \
+            src/parser/parser_stmt_control.c src/parser/parser_stmt_other.c \
+            src/parser/parser_func.c src/parser/parser_module.c \
+            src/semantic/semantic.c src/semantic/semantic_upvalue.c \
+            src/semantic/semantic_type.c src/semantic/semantic_visit.c \
+            src/semantic/semantic_visit_method.c src/semantic/semantic_visit_ast.c \
+            src/semantic/semantic_visit_func.c src/semantic/semantic_type_utils.c \
+            src/optimize/optimize.c src/gc.c src/value.c src/string_table.c \
+            src/object/object_string.c src/object/method_table.c \
+            src/object/object_array.c src/object/object_dict.c \
+            src/object/object_number.c src/object/object_file.c \
+            src/object/object_socket.c src/object/object_struct.c \
+            src/object/object_face.c src/object/object_cstruct.c \
+            src/object/object_thread.c \
+            src/bound_method.c src/coroutine.c src/vm/vm.c \
+            src/codegen/codegen.c src/codegen/codegen_emit.c \
+            src/codegen/codegen_expr.c src/codegen/codegen_stmt.c \
+            src/codegen/codegen_func.c src/codegen/codegen_import.c \
+            src/codegen/codegen_utils.c src/debug.c src/type.c src/native.c \
+            src/bigint.c src/module_loader.c src/module_dispatch.c \
+            src/module_compiler.c src/module_symbol_table.c src/module.c \
+            src/module/io/io.c src/module/types/types.c src/module/times/times.c \
+            src/module/arrays/arrays.c src/module/strings/strings.c \
+            src/module/maths/maths.c src/module/dicts/dicts.c \
+            src/module/structs/structs.c src/module/cstructs/cstructs.c \
+            src/module/rands/rands.c src/module/files/files.c \
+            src/module/asyncs/asyncs.c src/module/dirs/dirs.c \
+            src/module/jsons/jsons.c src/module/sockets/sockets.c \
+            src/module/ffi/ffi.c src/module/ffi/leno_ffi_linux.c \
+            src/module/threads/threads.c src/module/assert/assert.c \
+            src/module/sys/sys.c src/module/regexs/regexs.c \
+            src/platform/platform_thread.c \
+            src/serialize/serialize.c \
+            src/package/package_platform.c src/package/package_toml.c \
+            src/package/package_init.c src/package/package_resolve.c \
+            src/package/package_install.c \
+            -Isrc -Wall -Wextra -std=c99 -O2 -lm -lpthread -ldl
 
       - name: Run tests
-        run: cmake --build build --target test
+        run: ./build/leno assert/run_tests.leno ./build/leno assert
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -55,14 +132,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
-        run: cmake --build build -j
+        run: |
+          mkdir -p build
+          gcc -o build/leno \
+            src/main.c src/error.c src/lexer.c src/ast.c src/scope.c \
+            src/parser/parser.c src/parser/parser_utils.c src/parser/parser_expr.c \
+            src/parser/parser_stmt_control.c src/parser/parser_stmt_other.c \
+            src/parser/parser_func.c src/parser/parser_module.c \
+            src/semantic/semantic.c src/semantic/semantic_upvalue.c \
+            src/semantic/semantic_type.c src/semantic/semantic_visit.c \
+            src/semantic/semantic_visit_method.c src/semantic/semantic_visit_ast.c \
+            src/semantic/semantic_visit_func.c src/semantic/semantic_type_utils.c \
+            src/optimize/optimize.c src/gc.c src/value.c src/string_table.c \
+            src/object/object_string.c src/object/method_table.c \
+            src/object/object_array.c src/object/object_dict.c \
+            src/object/object_number.c src/object/object_file.c \
+            src/object/object_socket.c src/object/object_struct.c \
+            src/object/object_face.c src/object/object_cstruct.c \
+            src/object/object_thread.c \
+            src/bound_method.c src/coroutine.c src/vm/vm.c \
+            src/codegen/codegen.c src/codegen/codegen_emit.c \
+            src/codegen/codegen_expr.c src/codegen/codegen_stmt.c \
+            src/codegen/codegen_func.c src/codegen/codegen_import.c \
+            src/codegen/codegen_utils.c src/debug.c src/type.c src/native.c \
+            src/bigint.c src/module_loader.c src/module_dispatch.c \
+            src/module_compiler.c src/module_symbol_table.c src/module.c \
+            src/module/io/io.c src/module/types/types.c src/module/times/times.c \
+            src/module/arrays/arrays.c src/module/strings/strings.c \
+            src/module/maths/maths.c src/module/dicts/dicts.c \
+            src/module/structs/structs.c src/module/cstructs/cstructs.c \
+            src/module/rands/rands.c src/module/files/files.c \
+            src/module/asyncs/asyncs.c src/module/dirs/dirs.c \
+            src/module/jsons/jsons.c src/module/sockets/sockets.c \
+            src/module/ffi/ffi.c src/module/ffi/leno_ffi_linux.c \
+            src/module/threads/threads.c src/module/assert/assert.c \
+            src/module/sys/sys.c src/module/regexs/regexs.c \
+            src/platform/platform_thread.c \
+            src/serialize/serialize.c \
+            src/package/package_platform.c src/package/package_toml.c \
+            src/package/package_init.c src/package/package_resolve.c \
+            src/package/package_install.c \
+            -Isrc -Wall -Wextra -std=c99 -O2 -lm -lpthread -ldl
 
       - name: Run tests
-        run: cmake --build build --target test
+        run: ./build/leno assert/run_tests.leno ./build/leno assert
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
