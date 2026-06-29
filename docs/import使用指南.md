@@ -16,7 +16,7 @@ str.trim("  hello  ")  // 使用别名访问
 // 从子目录导入
 import "utils/array_helper.leno" as arr
 
-// 使用 use 导入类型（仅支持 struct）
+// 使用 use 导入类型（支持 struct、clib、face）
 import "point.leno" as pt
 use pt.Point      // 将 Point 类型导入当前作用域
 Point p = new pt.Point()  // 现在可以直接使用 Point 类型
@@ -561,14 +561,16 @@ main() {
 | 用法 | 支持 | 说明 |
 |------|------|------|
 | `use module.Struct` | ✅ | 导入 struct 类型到当前作用域 |
+| `use module.Clib` | ✅ | 导入 clib 类型到当前作用域（需模块有函数返回该 clib 类型） |
 | `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
 | `use module.func` | ❌ | 函数必须通过模块名访问 |
 | `use module.var` | ❌ | 变量必须通过模块名访问 |
 | `use module.enum` | ❌ | enum 成员通过模块名访问（如 `module.enum.member`） |
 
-**为什么 use 只支持 struct/face？**
+**为什么 use 只支持 struct/clib/face？**
 
 - **struct**：编译时类型，需要用于变量声明（如 `Point p`）
+- **clib**：FFI 库类型，需要用于变量声明（如 `core_lib c = module.loadCore()`）
 - **face**：编译时类型，需要用于函数参数（如 `func printArea(Shape s)`）
 - **func/var**：运行时实体，必须通过模块名访问（如 `module.func()`）
 - **enum**：成员访问本身就是通过模块名（如 `module.enum.member`）
@@ -655,7 +657,71 @@ main() {
 }
 ```
 
-### 8.3 类型守卫与跨模块类型
+### 8.5 clib 类型跨模块使用
+
+`use` 也支持导入其他模块定义的 clib 类型：
+
+```leno
+// sdl_base.leno - 底层模块定义 clib
+import ffi
+
+clib renderer_lib {
+    i32 do_something(i32 x)
+}
+
+renderer_lib g_renderer = null
+
+export func loadRenderer(): renderer_lib {
+    if g_renderer == null {
+        g_renderer = ffi.load("mylib.dll")
+    }
+    return g_renderer
+}
+```
+
+```leno
+// sdl_wrapper.leno - 中间层 use 底层 clib 并重新导出
+import "sdl_base.leno" as base
+use base.renderer_lib
+
+export func getRenderer(): renderer_lib {
+    return base.loadRenderer()
+}
+```
+
+```leno
+// main.leno - 最终使用端，只需感知中间层
+import "sdl_wrapper.leno" as sdl
+use sdl.renderer_lib
+
+main() {
+    // ✅ clib 类型正确推断
+    renderer_lib r = sdl.getRenderer()
+    var result = r.do_something(42) as int  // ⚠️ C返回类型需 as int 转换
+}
+
+```
+
+> **⚠️ 重要**：clib 函数返回的是 C 类型（`i32`、`i64`、`f32` 等），参与 Leno 运算时**必须用 `as int` / `as float` 显式转换**。
+
+**clib 类型可以用于 struct 字段**：
+
+```leno
+import "sdl_base.leno" as base
+use base.renderer_lib
+
+struct RendererHolder {
+    renderer_lib renderer = null
+    string       name     = ""
+}
+
+main() {
+    var h = new RendererHolder(renderer = base.loadRenderer(), name = "main")
+    var v = h.renderer.do_something(10) as int
+}
+```
+
+### 8.6 类型守卫与跨模块类型
 
 ```leno
 // shape.leno

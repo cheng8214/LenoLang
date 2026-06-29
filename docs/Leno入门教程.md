@@ -5420,7 +5420,7 @@ main() {
 
 ### 使用 use 导入类型
 
-`use` 可以将模块中的 struct/face 类型导入当前作用域，之后直接用类型名声明变量：
+`use` 可以将模块中的 struct/clib/face 类型导入当前作用域，之后直接用类型名声明变量：
 
 ```leno
 // shape.leno
@@ -5461,15 +5461,73 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 
 | 特性 | `import` | `use` |
 |------|----------|-------|
-| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/face 导入当前作用域 |
+| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/clib/face 导入当前作用域 |
 | 语法 | `import "路径" as 别名` | `use 别名.名称` |
-| 适用范围 | 模块中的所有导出内容 | 仅 struct 和 face 类型 |
+| 适用范围 | 模块中的所有导出内容 | struct、clib 和 face 类型 |
 | 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` |
 
 > **重要说明：**
-> - `use` 只能导入 **struct** 和 **face** 类型
+> - `use` 只能导入 **struct**、**clib** 和 **face** 类型
+> - clib 类型需要模块中存在**返回该 clib 类型的导出函数**
 > - **func**、**var**、**enum** 必须通过模块名访问（如 `math.distance()`）
 > - struct 实例仍需通过模块构造函数创建（如 `new math.Point(x=1, y=2)`）
+
+### clib 类型跨模块使用
+
+`use` 支持跨模块链式传递 clib 类型，适用于 FFI 库的多模块拆分：
+
+```leno
+// sdl_base.leno - 底层定义 clib
+import ffi
+clib renderer_lib {
+    i32 do_something(i32 x)
+}
+renderer_lib g_r = null
+export func loadRenderer(): renderer_lib {
+    if g_r == null { g_r = ffi.load("mylib.dll") }
+    return g_r
+}
+```
+
+```leno
+// sdl_wrapper.leno - 中间层 use 并重新导出
+import "sdl_base.leno" as base
+use base.renderer_lib
+export func getRenderer(): renderer_lib {
+    return base.loadRenderer()
+}
+```
+
+```leno
+// main.leno - 最终使用端
+import "sdl_wrapper.leno" as sdl
+use sdl.renderer_lib
+
+main() {
+    renderer_lib r = sdl.getRenderer()          // ✅ 类型正确推断
+    var v = r.do_something(42) as int            // ⚠️ C 类型需 as int 转换
+}
+```
+
+> **⚠️ 注意**：clib 函数返回的是 C 类型（`i32`、`i64`、`f32` 等），
+> 参与 Leno 运算时**必须**用 `as int` / `as float` 显式转换。
+
+clib 类型也可用于 **struct 字段**：
+
+```leno
+import "sdl_base.leno" as base
+use base.renderer_lib
+
+struct Holder {
+    renderer_lib r = null
+    string name = ""
+}
+
+main() {
+    var h = new Holder(r = base.loadRenderer(), name = "a")
+    var v = h.r.do_something(10) as int
+}
+```
 
 ### 导入泛型 struct 并调用方法
 
