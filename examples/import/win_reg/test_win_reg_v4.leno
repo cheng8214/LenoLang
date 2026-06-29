@@ -120,8 +120,10 @@ main() {
         print("6.10. 读取二进制值")
         var binaryResult = win_reg.readBinary(hKey, "TestBinary")
         if binaryResult.errorCode == win_reg.WinError.SUCCESS {
+            if binaryResult.data is Array {
             print("   读取成功，字节数: " + binaryResult.data.len())
             print("   数据: " + binaryResult.data)
+            }
         } else {
             print("   读取失败: " + win_reg.errorToString(binaryResult.errorCode))
         }
@@ -137,9 +139,13 @@ main() {
         print("6.12. 读取多字符串值")
         var multiResult = win_reg.readMultiString(hKey, "TestMulti")
         if multiResult.errorCode == win_reg.WinError.SUCCESS {
+            if multiResult.strings is Array {
             print("   读取成功，字符串数: " + multiResult.strings.len())
-            for multiResult.strings to str {
-                print("   - " + str)
+            for multiResult.strings to str1 {
+            if str1 is string {
+                print("   - " + str1)
+            }
+            }
             }
         } else {
             print("   读取失败: " + win_reg.errorToString(multiResult.errorCode))
@@ -168,10 +174,11 @@ main() {
         print("9. 枚举所有值")
         var enumValuesResult = win_reg.enumValues(hKey)
         if enumValuesResult.errorCode == win_reg.WinError.SUCCESS {
+            if enumValuesResult.values is Array {
             print("   找到 " + enumValuesResult.values.len() + " 个值:")
             for enumValuesResult.values to valueInfo {
-                // valueInfo 是 RegValueInfo 结构体
-                print("     - " + valueInfo.name + " (类型: " + valueInfo.typeName + ")")
+                print("     - " + valueInfo)
+            }
             }
         } else {
             print("   枚举失败: " + win_reg.errorToString(enumValuesResult.errorCode))
@@ -205,9 +212,13 @@ main() {
         print("11. 枚举子键")
         var enumSubKeysResult = win_reg.enumSubKeys(hKey)
         if enumSubKeysResult.errorCode == win_reg.WinError.SUCCESS {
+            if enumSubKeysResult.subKeys is Array {
             print("    找到 " + enumSubKeysResult.subKeys.len() + " 个子键:")
             for enumSubKeysResult.subKeys to subKeyName {
+            if subKeyName is string {
                 print("     - " + subKeyName)
+            }
+            }
             }
         } else {
             print("    枚举失败: " + win_reg.errorToString(enumSubKeysResult.errorCode))

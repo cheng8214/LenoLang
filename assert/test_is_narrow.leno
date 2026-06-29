@@ -1,0 +1,152 @@
+// 测试 is 类型收窄的边界场景
+// Bug: is 收窄对 Dict 字段、struct 字段可能收窄错误
+
+// ========== 测试1: 本地变量正常收窄 ==========
+func test_local_var() {
+    print("--- 测试1: 本地变量 ---")
+    var x = 42
+    if x is int {
+        print("  ✅ int 正常收窄")
+    }
+    if x is string {
+        print("  ❌ BUG: int 错误收窄成 string!")
+    } else {
+        print("  ✅ int is string 正确拒绝")
+    }
+}
+
+// ========== 测试2: struct 字段收窄 ==========
+struct TestStruct {
+    int intField
+    string strField
+    Array arrField
+}
+
+func test_struct_field() {
+    print("--- 测试2: struct 字段 ---")
+    var s = new TestStruct(intField = 10, strField = "hello", arrField = [1, 2, 3])
+
+    if s.intField is string {
+        print("  ❌ BUG: struct.int 字段错误收窄成 string!")
+    } else {
+        print("  ✅ struct.int is string 正确拒绝")
+    }
+
+    if s.arrField is string {
+        print("  ❌ BUG: struct.Array 字段错误收窄成 string!")
+    } else {
+        print("  ✅ struct.Array is string 正确拒绝")
+    }
+
+    if s.arrField is int {
+        print("  ❌ BUG: struct.Array 字段错误收窄成 int!")
+    } else {
+        print("  ✅ struct.Array is int 正确拒绝")
+    }
+
+    if s.arrField is Array {
+        print("  ✅ struct.Array is Array 正常收窄")
+    } else {
+        print("  ❌ BUG: struct.Array is Array 应该通过!")
+    }
+}
+
+// ========== 测试3: Dict 字段收窄（核心 bug） ==========
+func test_dict_field() {
+    print("--- 测试3: Dict 字段 ---")
+    var d = {intVal: 42, strVal: "hello", arrVal: [1, 2, 3]}
+
+    // 运行时检查：arrVal is string 应该 false
+    if d.arrVal is string {
+        print("  ❌ 严重 BUG: Dict.Array 字段错误收窄成 string!")
+        // 如果错误收窄，以下代码在编译期通过但运行时不一定
+        var t = d.arrVal
+        print("  arrVal 实际类型: " + type(t))
+    } else {
+        print("  ✅ Dict.Array is string 正确拒绝")
+    }
+
+    if d.arrVal is int {
+        print("  ❌ 严重 BUG: Dict.Array 字段错误收窄成 int!")
+    } else {
+        print("  ✅ Dict.Array is int 正确拒绝")
+    }
+
+    if d.intVal is string {
+        print("  ❌ BUG: Dict.int 字段错误收窄成 string!")
+    } else {
+        print("  ✅ Dict.int is string 正确拒绝")
+    }
+
+    if d.strVal is int {
+        print("  ❌ BUG: Dict.string 字段错误收窄成 int!")
+    } else {
+        print("  ✅ Dict.string is int 正确拒绝")
+    }
+}
+
+// ========== 测试4: 函数返回 Dict 的字段收窄 ==========
+func getDict():Dict {
+    return {count: 5, items: ["a", "b", "c"]}
+}
+
+func test_func_return_dict() {
+    print("--- 测试4: 函数返回 Dict 字段 ---")
+    var result = getDict()
+
+    if result.items is string {
+        print("  ❌ 严重 BUG: 返回Dict.Array 字段错误收窄成 string!")
+    } else {
+        print("  ✅ 返回Dict.Array is string 正确拒绝")
+    }
+
+    if result.items is int {
+        print("  ❌ BUG: 返回Dict.Array 字段错误收窄成 int!")
+    } else {
+        print("  ✅ 返回Dict.Array is int 正确拒绝")
+    }
+
+    if result.count is string {
+        print("  ❌ BUG: 返回Dict.int 字段错误收窄成 string!")
+    } else {
+        print("  ✅ 返回Dict.int is string 正确拒绝")
+    }
+}
+
+// ========== 测试5: 局部变量赋值后收窄 ==========
+func test_var_assign() {
+    print("--- 测试5: 局部变量赋值后收窄 ---")
+    var d = {arr: [1, 2, 3]}
+    var a = d.arr
+
+    if a is string {
+        print("  ❌ BUG: 提取的局部变量错误收窄成 string!")
+    } else {
+        print("  ✅ 提取的局部变量 is string 正确拒绝")
+    }
+
+    if a is Array {
+        print("  ✅ 提取的局部变量 Array 正常收窄")
+        if a is Array {
+            print("     .len = " + a.len())
+        }
+    } else {
+        print("  ❌ BUG: 提取的局部变量 is Array 应该通过!")
+    }
+}
+
+main() {
+    print("=== is 类型收窄边界测试 ===")
+    print("")
+    test_local_var()
+    print("")
+    test_struct_field()
+    print("")
+    test_dict_field()
+    print("")
+    test_func_return_dict()
+    print("")
+    test_var_assign()
+    print("")
+    print("=== 测试完成 ===")
+}

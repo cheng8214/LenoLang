@@ -1,0 +1,31 @@
+// 最小复现: is 收窄后 for 循环变量类型问题
+// 测试 struct 字段 is Array 收窄后 for 循环迭代变量是否还是 any
+
+// ========== 场景1: 本地 struct 字段 ==========
+struct LocalResult {
+    Array items
+    int code
+}
+
+func test_local_struct_for() {
+    print("--- 场景1: 本地 struct 字段 ---")
+    var r = new LocalResult(items = ["a", "b", "c"], code = 0)
+
+    if r.items is Array {
+        // items 收窄为 Array，但 for 迭代变量是什么类型？
+        for r.items to item {
+            // 如果不报错，说明 item 被正确推断
+            // 如果报 "不能在 any 类型上..." 说明 item 是 any
+            print("   item = " + item)  // 这里会崩吗？
+        }
+    }
+}
+
+
+main() {
+    print("=== is 收窄 + for 循环边界测试 ===")
+    print("")
+    test_local_struct_for()
+  
+    print("=== 测试完成 ===")
+}

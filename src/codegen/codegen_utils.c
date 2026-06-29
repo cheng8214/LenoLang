@@ -78,8 +78,8 @@ int is_dict_expr(Ast* ast) {
 }
 
 int is_var_expr(Ast* ast) {
-    // 支持变量、属性访问（如 d.statements）和模块访问
-    return ast && (ast->kind == AST_VAR || ast->kind == AST_INDEX || ast->kind == AST_MODULE_ACCESS);
+    // 支持变量、属性访问（如 d.statements）、字段访问（如 s.field）和模块访问
+    return ast && (ast->kind == AST_VAR || ast->kind == AST_INDEX || ast->kind == AST_MODULE_ACCESS || ast->kind == AST_FIELD_ACCESS);
 }
 
 // 检查表达式是否为数字类型（用于优化循环路径）

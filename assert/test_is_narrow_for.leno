@@ -1,0 +1,56 @@
+// 最小复现: is 收窄后 for 循环变量类型问题
+// 核心发现: for expr to var 会重新求值 expr，可能丢失 is 收窄
+
+struct LocalResult {
+    Array items
+    int code
+}
+
+main() {
+    print("=== is 收窄 + for 循环边界测试 ===")
+    print("")
+
+    // 场景1: struct 字段直接 for（crash）
+    var r = new LocalResult(items = ["a", "b", "c"], code = 0)
+    if r.items is Array {
+        // 先验证收窄有效
+        print("1a. is Array 生效: .len = " + r.items.len())
+
+        // for 重新求值 r.items — bug? 收窄丢失?
+        for r.items to item {
+        if item is string {
+            print("1b. item = " + item)
+        }
+        }
+    }
+
+    print("")
+
+    // 场景2: 提取局部变量 → is Array → for（对比）
+    var r2 = new LocalResult(items = ["x", "y", "z"], code = 0)
+    var extracted = r2.items
+    if extracted is Array {
+        print("2a. 提取变量: .len = " + extracted.len())
+        for extracted to item {
+        if item is string {
+            print("2b. item = " + item)
+        }
+        }
+    }
+
+    print("")
+
+    // 场景3: Dict 字段 → is Array → for（对比）
+    var d = {items: ["a", "b", "c"]}
+    if d.items is Array {
+        print("3a. Dict is Array: .len = " + d.items.len())
+        for d.items to item {
+        if item is string {
+            print("3b. item = " + item)
+        }
+        }
+    }
+
+    print("")
+    print("=== 测试完成 ===")
+}

@@ -11,8 +11,10 @@ func printProcessList(ProcessManager manager) {
         print("获取进程列表失败，错误码: " + result.errorCode)
         return
     }
-    
+    if result.processes is Array
+    {
     print("找到 " + result.processes.len() + " 个进程")
+    }
     print("")
     
     // 只显示前 5 个进程
@@ -22,9 +24,11 @@ func printProcessList(ProcessManager manager) {
         print("PID: " + proc.pid + " | 名称: " + proc.name)
         count = count + 1
     }
-    
+    if result.processes is Array
+    {
     if result.processes.len() > 5 {
-        print("... 还有 " + (result.processes.len() - 5) + " 个进程")
+        print("... 还有 " + (_int(result.processes.len()) - 5) + " 个进程")
+    }
     }
 }
 

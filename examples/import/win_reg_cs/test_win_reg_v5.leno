@@ -120,8 +120,11 @@ main() {
         print("6.10. 读取二进制值")
         var binaryResult = win_reg.readBinary(hKey, "TestBinary")
         if binaryResult.errorCode == win_reg.WinError.SUCCESS {
-            print("   读取成功，字节数: " + binaryResult.data.len())
+        if binaryResult.data is string
+        {
+            print("   读取成功，字节数: " + binaryResult.data.byte_len())
             print("   数据: " + binaryResult.data)
+            }
         } else {
             print("   读取失败: " + win_reg.errorToString(binaryResult.errorCode))
         }
@@ -137,10 +140,13 @@ main() {
         print("6.12. 读取多字符串值")
         var multiResult = win_reg.readMultiString(hKey, "TestMulti")
         if multiResult.errorCode == win_reg.WinError.SUCCESS {
+        if multiResult.strings is string 
+        {
             print("   读取成功，字符串数: " + multiResult.strings.len())
             for multiResult.strings to str {
                 print("   - " + str)
             }
+         }
         } else {
             print("   读取失败: " + win_reg.errorToString(multiResult.errorCode))
         }
