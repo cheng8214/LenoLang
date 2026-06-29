@@ -542,11 +542,15 @@ export struct Event {
 export struct Window {
     Ptr handle; bool ok
 
-    func init(string title, int w, int h, int flags): bool {
+    func init(Dict opts): bool {
         if not initVideo() {
             print("[LenoSDL3] SDL3 初始化失败: " + getError())
             return false
         }
+        var title = opts.get("title", "LenoSDL3") as string
+        var w     = opts.get("w", 800) as int 
+        var h     = opts.get("h", 600) as int
+        var flags = opts.get("flags", 0) as int
         handle = lib().SDL_CreateWindow(title, w, h, flags)
         ok = handle != null
         if not ok { print("[LenoSDL3] 创建窗口失败: " + getError()) }
@@ -586,8 +590,8 @@ export struct Window {
 // 工厂函数
 // ============================================================================
 
-export func createWindow(string title, int w, int h, int flags): Window {
-    var win = new Window(); win.init(title, w, h, flags); return win
+export func createWindow(Dict opts): Window {
+    var win = new Window(); win.init(opts); return win
 }
 
 export func createRenderer(Ptr window): Renderer {

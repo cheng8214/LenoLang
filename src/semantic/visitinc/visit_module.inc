@@ -975,8 +975,16 @@
                             return_type = TYPE_ANY;
                         }
 
-                        // 判断方法是否找到：当 return_type == TYPE_ANY 且 expected_arity == -1 时表示方法不存在
-                        int method_found = !(return_type == TYPE_ANY && expected_arity == -1);
+                        // 判断方法是否找到
+                        // 可变参数实例方法 arity=-1 但方法是存在的，用 inst_meta 判断
+                        int method_found = 0;
+                        if (!(return_type == TYPE_ANY && expected_arity == -1)) {
+                            method_found = 1;
+                        } else if (obj_type_name) {
+                            // 可变参数情况：再检查一次实例方法是否存在
+                            const InstanceMethodMeta* im = native_find_instance_method(obj_type_name, method_name);
+                            if (im) method_found = 1;
+                        }
 
                         // 如果没找到，检查是否是泛型约束类型参数（如 T: Comparable）
                         if (!method_found && obj_sym->type &&

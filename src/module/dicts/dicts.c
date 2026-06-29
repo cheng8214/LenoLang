@@ -23,9 +23,13 @@ static Value dict_method_has(int argc, Value* args) {
 }
 
 static Value dict_method_get(int argc, Value* args) {
-    (void)argc;
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
-    return dict_get(dict, args[1]);
+    Value key = args[1];
+    // 键存在则返回对应值，否则返回默认值（第2参数）或 null
+    if (dict_has(dict, key)) {
+        return dict_get(dict, key);
+    }
+    return argc >= 2 ? args[2] : val_null();
 }
 
 static Value dict_method_set(int argc, Value* args) {
@@ -129,8 +133,8 @@ void dicts_init_instance_methods(void) {
     TypeKind has_params[] = {TYPE_ANY};
     dict_register_method_with_params("has", make_native(dict_method_has, 2, "has"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, has_params);
 
-    TypeKind get_params[] = {TYPE_ANY};
-    dict_register_method_with_params("get", make_native(dict_method_get, 2, "get"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, get_params);
+    TypeKind get_params[] = {TYPE_ANY, TYPE_ANY};
+    dict_register_method_with_params("get", make_native(dict_method_get, 3, "get"), -1, 1, 2, TYPE_ANY, TYPE_UNKNOWN, get_params);
 
     TypeKind set_params[] = {TYPE_ANY, TYPE_ANY};
     dict_register_method_with_params("set", make_native(dict_method_set, 3, "set"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, set_params);

@@ -27,7 +27,7 @@ struct Star {
 }
 
 main() {
-    var win = SDL3.createWindow("Fireworks", 800, 600, 0)
+    var win = SDL3.createWindow({title: "Fireworks", w: 800, h: 600})
     if not win.ok { return }
 
     // 关 vsync 测真实帧率

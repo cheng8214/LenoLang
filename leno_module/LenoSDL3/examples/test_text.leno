@@ -7,7 +7,7 @@ import "../lib/SDL3.leno" as SDL3
 
 main() {
     // 创建窗口
-    var win = SDL3.createWindow("SDL3 文字显示测试", 800, 600, 0)
+    var win = SDL3.createWindow({title: "SDL3 文字显示测试", w: 800, h: 600})
     if not win.ok {
         print("创建窗口失败")
         return

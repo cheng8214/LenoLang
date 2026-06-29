@@ -4,7 +4,7 @@ use SDL3.Event
 use SDL3.Renderer
 
 main() {
-    var win = SDL3.createWindow("Simple Window", 800, 600, 0)
+    var win = SDL3.createWindow({title: "Simple Window", w: 800, h: 600})
     if not win.ok { return }
 
     win.run(
