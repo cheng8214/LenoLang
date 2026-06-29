@@ -1939,11 +1939,11 @@ main() {
 |------|:---:|:---:|
 | 类型检查 | 编译期 | 运行期 |
 | 字段访问 | ✅ | ❌ |
-| 方法调用 | ✅ | ✅（运行时查找） |
+| 方法调用 | ✅ | ❌（需 `is` 收窄） |
 | 索引访问 | ✅ | ✅ |
 | 比较运算 | ✅ | ✅ |
 
-> 需要访问 struct 字段 → 具体类型。只需打印/比较 → 可用 var。
+> 需要访问 struct 字段或调用方法 → 具体类型或 `is` 收窄。只需打印/比较 → 可用 var。
 
 **`any` 的编译时 vs 运行时：**
 
@@ -1955,6 +1955,8 @@ main() {
 | `any` 赋给 `int` | `int a = n` | ❌ | 编译时检查，any 不能隐式转 int |
 | `any` 运算后赋给 `int` | `int a = n - 2` | ❌ | 运算结果还是 any |
 | `any` 显式转换后赋值 | `int a = _int(n)` | ✅ | 显式转换通过编译 |
+| `any` 调用方法 | `x.add(1)` | ❌ | 编译时检查，any 不能调用方法 |
+| `any` 收窄后调用 | `if x is Array { x.add(1) }` | ✅ | `is` 守卫收窄后可用 |
 
 ```leno
 func fib(var n) {        // n 是 any，但运行时实际是 int
@@ -2025,6 +2027,44 @@ func getValue():int {  // 返回 int
 int x = getValue()     // ✅ 直接可用
 ```
 
+#### ❌ 错误 3：any 类型不能直接调用方法
+
+```leno
+func process(var obj) {
+    obj.add(1)           // ❌ 报错：不能在 any 类型上调用方法 'add'
+    obj.len()            // ❌ 报错：不能在 any 类型上调用方法 'len'
+}
+```
+
+**✅ 修复方案：**
+
+```leno
+// 方案1：使用 is 类型收窄（推荐，安全）
+func process(var obj) {
+    if obj is Array[int] {
+        obj.add(1)       // ✅ 守卫内 obj 是 Array[int]
+    }
+    if obj is string {
+        print(obj.len()) // ✅ 守卫内 obj 是 string
+    }
+}
+
+// 方案2：参数直接写具体类型（更简洁）
+func process(Array[int] obj) {
+    obj.add(1)           // ✅ 编译时已知类型
+}
+
+// 方案3：使用 _ 显式转换（临时方案，不推荐）
+func process(var obj) {
+    _int(obj)            // 只转值，不改变类型
+    // obj.add(1)         // ❌ obj 仍是 any
+}
+```
+
+> **为什么这么严格？** 旧版编译器会全局搜索同名方法、猜测类型、找到第一个就返回。
+> 这导致模块加载顺序不同就产生不同行为，极难调试。新版强制要求显式收窄，
+> 让类型路径**可见、可审计、可预期**。
+
 ### 最佳实践
 
 **核心原则**：**边界明确，内部简洁**。
@@ -2067,9 +2107,10 @@ func process_dict(Dict[string, int] d) {
 
 > **从确定到不确定，必须显式跨过边界**
 >
-> **编译时检查赋值，运行时检查运算**
+> **编译时检查赋值与方法调用，运行时检查运算**
 >
 > - 赋值：`int x = any_value` ❌ 需要 `_int()` 转换
+> - 调用：`any_value.method()` ❌ 需要 `if x is Type { }` 收窄
 > - 运算：`any_value + 1` ✅ 运行时自动处理
 
 | 方向 | 示例 | 是否需要显式处理 |
@@ -2077,6 +2118,7 @@ func process_dict(Dict[string, int] d) {
 | 确定 → 确定 | `int → int` | ❌ 不需要 |
 | 确定 → 不确定 | `int → var` | ❌ 不需要 |
 | 不确定 → 确定 | `var → int` | ✅ 需要 `_int()` |
+| `any` 调方法 | `any.add(1)` | ✅ 需要 `if x is Array { }` |
 
 ### 函数作为值
 
@@ -3888,6 +3930,27 @@ func test(var list) {
 // 应该使用具体类型
 func test(LinkedList list) {
     list.head = null    // ✅ 编译器知道是 LinkedList
+}
+```
+
+**Q: 为什么 `any` 类型不能调用方法？**
+
+A: `any` 类型在编译期没有类型信息，编译器无法验证方法是否存在、参数是否匹配。旧版会全局搜
+索同名方法碰运气，导致不确定性行为。新版强制要求显式收窄：
+
+```leno
+func test(var obj) {
+    obj.add(1)          // ❌ 编译错误：不能在 any 上调用方法
+
+    // 修复1：is 类型收窄
+    if obj is Array[int] {
+        obj.add(1)      // ✅ 守卫内 obj 是 Array[int]
+    }
+
+    // 修复2：参数显式声明类型
+}
+func test(Array[int] obj) {
+    obj.add(1)          // ✅
 }
 ```
 
