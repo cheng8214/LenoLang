@@ -311,7 +311,6 @@ export func ttfInit(): bool {
 
 export func ttfQuit() {
     if g_ttf_lib != null {
-        g_ttf_lib.TTF_Quit()
         ffi.free(g_ttf_lib)
         g_ttf_lib = null
     }
@@ -563,7 +562,6 @@ export struct Window {
     func run(var onEvent, var onRender) {
         var ren = new Renderer()
         if not ren.initDefault(handle) { destroy(); return }
-        ren.setVSync(1)
 
         var ev = new Event()
         ev.init()

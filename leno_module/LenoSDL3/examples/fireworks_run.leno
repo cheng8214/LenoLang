@@ -1,9 +1,10 @@
-// fireworks_run.leno — 烟花效果（win.run 回调模式）
+// fireworks_run.leno — 烟花效果（win.run 回调模式 + 文字统计覆盖）
 import "../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 import maths
 import rands
+import times
 
 struct Particle {
     float x; float y
@@ -30,6 +31,13 @@ main() {
     var win = SDL3.createWindow("Fireworks", 800, 600, 0)
     if not win.ok { return }
 
+    // 初始化 TTF 字体
+    SDL3.ttfInit()
+    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 16.0)
+    if not font.ok {
+        font = SDL3.createFont("C:/Windows/Fonts/consola.ttf", 16.0)
+    }
+
     var colors = [
         [255, 50, 50], [255, 140, 0], [255, 220, 0],
         [50, 255, 50], [0, 200, 255], [180, 50, 255],
@@ -54,6 +62,11 @@ main() {
 
     var frame = 0
     var peak = 0
+
+    // FPS 统计
+    var fps = 0
+    var fpsFrames = 0
+    var fpsStart = times.ns()
 
     // 星空
     for 0 : 99 to i {
@@ -116,6 +129,7 @@ main() {
     win.run(
         func(Event e): bool { return true },
         func(Renderer r) {
+            r.setVSync(1)
             frame = frame + 1
 
             r.setColor(2, 2, 15, 255)
@@ -199,8 +213,29 @@ main() {
                     i = i + 1
                 }
             }
+
+            // ---- FPS 计算 ----
+            fpsFrames = fpsFrames + 1
+            var now = times.ns()
+            if now - fpsStart >= 1000000000 {
+                fps = fpsFrames
+                fpsFrames = 0
+                fpsStart = now
+            }
+
+            // ---- 文字覆盖 ----
+            if font.ok {
+                var infoText = "FPS: " + fps + "  粒子: " + pc + "  峰值: " + peak
+                var tex = SDL3.createTextTexture(r.handle, font, infoText, 255, 255, 255)
+                if tex.ok {
+                    r.drawTextureAt(tex.texture, 10.0, 10.0, 280.0, 20.0)
+                    tex.destroy()
+                }
+            }
         }
     )
 
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
     print("帧数: " + frame + "  峰值粒子: " + peak)
 }
