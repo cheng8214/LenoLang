@@ -220,7 +220,7 @@ export func enableDebugPrivilege() {
 
 // ========== 进程枚举 ==========
 
-export func enumProcesses() {
+export func enumProcesses():Dict {
     if _kernel32 == null { init() }
 
     // 【优化】使用 Ptr[u32] 类型安全指针
@@ -336,7 +336,7 @@ export func terminate(int pid):Dict {
     }
 }
 
-export func run(string commandLine) {
+export func run(string commandLine):Dict {
     if _kernel32 == null { init() }
 
     var startupInfo = STARTUPINFO.malloc()
@@ -427,7 +427,7 @@ export func getProcessDetails(int pid):Dict {
     }
 }
 
-export func getSystemMemory() {
+export func getSystemMemory():Dict {
     if _kernel32 == null { init() }
 
     var memStatus = MEMORYSTATUSEX.malloc()
@@ -501,7 +501,7 @@ export func getSystemUptime():int {
     return uptime
 }
 
-export func getProcessorCount() {
+export func getProcessorCount():int {
     if _kernel32 == null { init() }
 
     var sysInfo = SYSTEM_INFO.malloc()
@@ -510,7 +510,7 @@ export func getProcessorCount() {
         // 【优化】直接传递 sysInfo，自动转指针
         ffi.call(_kernel32, "GetNativeSystemInfo", sysInfo)
 
-        return sysInfo.dwNumberOfProcessors
+        return _int(sysInfo.dwNumberOfProcessors)
     } finally {
         sysInfo.free()
     }
@@ -518,7 +518,7 @@ export func getProcessorCount() {
 
 // ========== 增强功能 ==========
 
-export func terminateForce(int pid) {
+export func terminateForce(int pid):Dict {
     if _kernel32 == null { init() }
 
     var result = terminate(pid)
@@ -546,7 +546,7 @@ export func terminateForce(int pid) {
     }
 }
 
-export func exists(int pid) {
+export func exists(int pid):bool {
     if _kernel32 == null { init() }
 
     // 【优化】使用 Ptr[u64] 类型安全指针
@@ -572,7 +572,7 @@ export func exists(int pid) {
     return exitCode == 259
 }
 
-export func getExitCode(int pid) {
+export func getExitCode(int pid):Dict {
     if _kernel32 == null { init() }
 
     // 【优化】使用 Ptr[u64] 类型安全指针
@@ -603,7 +603,7 @@ export func getExitCode(int pid) {
     }
 }
 
-export func getPriority(int pid) {
+export func getPriority(int pid):Dict {
     if _kernel32 == null { init() }
 
     // 【优化】使用 Ptr[u64] 类型安全指针
@@ -626,7 +626,7 @@ export func getPriority(int pid) {
     }
 }
 
-export func setPriority(int pid, int priorityClass) {
+export func setPriority(int pid, int priorityClass):Dict {
     if _kernel32 == null { init() }
 
     // 【优化】使用 Ptr[u64] 类型安全指针
@@ -645,7 +645,7 @@ export func setPriority(int pid, int priorityClass) {
     }
 }
 
-export func getProcessTimes(int pid) {
+export func getProcessTimes(int pid):Dict {
     if _kernel32 == null { init() }
 
     // 【优化】使用 Ptr[u64] 类型安全指针
@@ -691,7 +691,7 @@ export func getProcessTimes(int pid) {
 }
 
 // 【优化】使用 str16 自动转换获取父进程ID
-export func getParentPid(int pid) {
+export func getParentPid(int pid):Dict {
     if _kernel32 == null { init() }
 
     // 【优化】使用 Ptr[u64] 类型安全指针
@@ -814,7 +814,7 @@ export func getSystemInfo():Dict{
     }
 }
 
-export func getFullProcessInfo(int pid) {
+export func getFullProcessInfo(int pid):Dict {
     var name = _getProcessName(pid)
     if name == "" {
         return {success: false, errorCode: ERROR_ACCESS_DENIED}
