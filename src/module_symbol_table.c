@@ -1124,7 +1124,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                         param_generic_names[param_count] = param_generic_name;
                                                         param_generic_name = NULL;  // 转移所有权
                                                         if (param_struct_name[0]) {
-                                                            strncpy(param_struct_names[param_count], param_struct_name, 63);
+                                                            memcpy(param_struct_names[param_count], param_struct_name, 64);
                                                             param_struct_names[param_count][63] = '\0';
                                                         }
                                                         param_count++;

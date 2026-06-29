@@ -454,7 +454,35 @@ static void gen_call(CodeGen* gen, Ast* ast) {
             if (!clib_sym) {
                 clib_sym = scope_resolve(gen->sem->current, obj_type->struct_name);
             }
-            if (clib_sym && clib_sym->clib_func_count > 0) {
+            if (clib_sym) {
+                int is_imported_clib = (clib_sym->clib_func_count == 0);
+                if (is_imported_clib) {
+                    // 导入的 clib：生成 OP_CLIB_CALL（默认类型）
+                    gen_expr(gen, clib_obj_ast);
+
+                    ObjString* func_name_str = str_copy(clib_func_name, (int)strlen(clib_func_name));
+                    emit_constant(gen, val_obj((Object*)func_name_str), ast->line);
+
+                    for (int j = 0; j < ast->u.call.args.count; j++) {
+                        gen_expr(gen, ast->u.call.args.items[j]);
+                    }
+
+                    int total_arg_count = 2 + ast->u.call.args.count;
+                    int user_arg_count = ast->u.call.args.count;
+
+                    emit_byte(gen, OP_CLIB_CALL, ast->line);
+                    emit_byte(gen, (total_arg_count >> 8) & 0xff, ast->line);
+                    emit_byte(gen, total_arg_count & 0xff, ast->line);
+                    emit_byte(gen, (uint8_t)TYPE_I32, ast->line);
+                    emit_byte(gen, (uint8_t)user_arg_count, ast->line);
+                    for (int ai = 0; ai < user_arg_count; ai++) {
+                        emit_byte(gen, (uint8_t)TYPE_I32, ast->line);
+                    }
+
+                    type_free(obj_type);
+                    return;
+                }
+
                 const char* func_name = clib_func_name;
                 for (int i = 0; i < clib_sym->clib_func_count; i++) {
                     if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
@@ -1105,7 +1133,9 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             break;
         case AST_MODULE_CALL: {
             // 检查是否是 clib 调用（semantic 阶段已标记 cached_type）
-            if (ast->cached_type && ast->cached_type->kind == TYPE_CLIB && ast->cached_type->struct_name) {
+            // 但需要排除模块函数调用（如 ml.load() 返回 clib 类型）
+            int is_module_func_call = (find_imported_module(gen->sem, ast->u.module_call.module_name) != NULL);
+            if (!is_module_func_call && ast->cached_type && ast->cached_type->kind == TYPE_CLIB && ast->cached_type->struct_name) {
                 // 查找 clib 符号获取函数签名
                 Symbol* clib_sym = scope_resolve(gen->sem->root_scope, ast->cached_type->struct_name);
                 if (!clib_sym) {

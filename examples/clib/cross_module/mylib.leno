@@ -16,7 +16,7 @@ os_lib   g_os   = null
 // 加载库并返回 clib 类型
 export func load(): math_lib {
     if g_math == null {
-        g_math = ffi.load("kernel32.dll")
+        g_math = ffi.load("msvcrt.dll")
     }
     return g_math
 }
