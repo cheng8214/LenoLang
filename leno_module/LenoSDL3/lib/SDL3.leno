@@ -555,7 +555,6 @@ export struct Window {
 
     func destroy() {
         if ok { lib().SDL_DestroyWindow(handle); handle = null; ok = false }
-        quit()
     }
 
     // win.run(func(Event e):bool {}, func(Renderer r) {})
@@ -579,6 +578,7 @@ export struct Window {
         ev.uninit()
         ren.destroy()
         destroy()
+        quit()
     }
 }
 

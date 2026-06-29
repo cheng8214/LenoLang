@@ -117,13 +117,16 @@ static int val_is_ffi_ptr(Value v) {
 void ffi_library_free_resources(Object* obj) {
     ObjFFILibrary* lib = (ObjFFILibrary*)obj;
     free(lib->path);
+    lib->path = NULL;
     if (lib->handle) {
 #ifdef _WIN32
         FreeLibrary((HMODULE)lib->handle);
 #else
         dlclose(lib->handle);
 #endif
+        lib->handle = NULL;
     }
+    lib->freed = 1;
 }
 
 char* ffi_library_get_path(Object* obj) {
