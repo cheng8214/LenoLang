@@ -403,6 +403,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         } else if (type_equals(left, right)) {
                             // 相同类型（包括泛型参数 TYPE_GENERIC_PARAM），结果保持该类型
                             result = type_copy(left);
+                        } else if (left->kind == TYPE_CLIB || right->kind == TYPE_CLIB) {
+                            // clib 类型：返回的是 C 类型（i32/i64/f32 等），需要 as int/as float 显式转换
+                            error_add(ERR_TYPE_MISMATCH, ast->line,
+                                      "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
+                            result = type_new(TYPE_ANY);
                         } else {
                             result = type_new(TYPE_FLOAT);
                         }
@@ -450,6 +455,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             result = type_new(TYPE_INT);
                         } else if (type_equals(left, right)) {
                             result = type_copy(left);
+                        } else if (left->kind == TYPE_CLIB || right->kind == TYPE_CLIB) {
+                            error_add(ERR_TYPE_MISMATCH, ast->line,
+                                      "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
+                            result = type_new(TYPE_ANY);
                         } else {
                             result = type_new(TYPE_FLOAT);
                         }
@@ -502,6 +511,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // 相同类型（包括泛型参数），结果保持该类型
                     else if (left && right && type_equals(left, right)) {
                         result = type_copy(left);
+                    }
+                    else if (left && right &&
+                             (left->kind == TYPE_CLIB || right->kind == TYPE_CLIB)) {
+                        error_add(ERR_TYPE_MISMATCH, ast->line,
+                                  "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
+                        result = type_new(TYPE_ANY);
                     }
                     else {
                         result = type_new(TYPE_FLOAT);
