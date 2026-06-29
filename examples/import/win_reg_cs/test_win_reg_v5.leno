@@ -174,10 +174,11 @@ main() {
         print("9. 枚举所有值")
         var enumValuesResult = win_reg.enumValues(hKey)
         if enumValuesResult.errorCode == win_reg.WinError.SUCCESS {
+            if enumValuesResult.values is Array {
             print("   找到 " + enumValuesResult.values.len() + " 个值:")
             for enumValuesResult.values to valueInfo {
-                // valueInfo 是 RegValueInfo 结构体
-                print("     - " + valueInfo.name + " (类型: " + valueInfo.typeName + ")")
+                print("     - " + valueInfo)
+            }
             }
         } else {
             print("   枚举失败: " + win_reg.errorToString(enumValuesResult.errorCode))
@@ -211,9 +212,13 @@ main() {
         print("11. 枚举子键")
         var enumSubKeysResult = win_reg.enumSubKeys(hKey)
         if enumSubKeysResult.errorCode == win_reg.WinError.SUCCESS {
+            if enumSubKeysResult.subKeys is Array {
             print("    找到 " + enumSubKeysResult.subKeys.len() + " 个子键:")
             for enumSubKeysResult.subKeys to subKeyName {
+            if subKeyName is string {
                 print("     - " + subKeyName)
+            }
+            }
             }
         } else {
             print("    枚举失败: " + win_reg.errorToString(enumSubKeysResult.errorCode))
