@@ -4,8 +4,9 @@ use SDL3.Event
 use SDL3.Renderer
 
 main() {
-    var win = SDL3.createWindow({title: "Hello LenoSDL3 - 绘图演示", w: 800, h: 600})
+    var win = SDL3.createWindow({title: "Hello LenoSDL3 - 绘图演示", w: 800, h: 600, flags: SDL3.WINDOW_RESIZABLE})
     if not win.ok { return }
+    win.setResizable(false)
 
     win.run(
         func(Event e): bool {
