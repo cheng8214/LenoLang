@@ -48,7 +48,7 @@ func counting_sort_by_digit(Array[int] arr, var exp) {
     }
 }
 
-func verify_sorted(var arr) {
+func verify_sorted(Array arr) {
     for 0:arr.len()-2 to var i {
         if arr[i] > arr[i + 1] {
             return false;

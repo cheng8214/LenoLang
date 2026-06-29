@@ -2,7 +2,7 @@
 import times as time
 import rands as rand
 // ==================== 插入排序 ====================
-func insertion_sort(var arr) {
+func insertion_sort(Array arr):Array[int] {
     var n = arr.len();
     for 1:n-1 to var i {
         var key = arr[i];
@@ -17,7 +17,7 @@ func insertion_sort(var arr) {
 }
 
 // ==================== 冒泡排序 ====================
-func bubble_sort(var arr) {
+func bubble_sort(Array arr):Array[int] {
     var n = arr.len();
     for n - 1 to var i {
         for n - i - 1 to var j {
@@ -32,7 +32,7 @@ func bubble_sort(var arr) {
 }
 
 // ==================== 选择排序 ====================
-func selection_sort(var arr) {
+func selection_sort(Array arr):Array[int] {
     var n = arr.len();
     for n - 1 to var i {
         var min_idx = i;
@@ -52,7 +52,7 @@ func selection_sort(var arr) {
 }
 
 // ==================== 希尔排序 ====================
-func shell_sort(var arr) {
+func shell_sort(Array arr):Array[int] {
     var n = arr.len();
     var gap = n / 2;
     while gap >= 1 {
@@ -140,7 +140,7 @@ func merge_sort(Array[int] arr) {
 }
 
 // ==================== 堆排序（迭代版本，避免递归栈溢出）====================
-func heap_sort(var arr) {
+func heap_sort(Array arr):Array[int] {
     var n = arr.len();
     if n <= 1 {
         return arr;
@@ -168,7 +168,7 @@ func heap_sort(var arr) {
     return arr;
 }
 
-func heapify(var arr,var  n,var  i) {
+func heapify(Array arr, var n, var i) {
     while true {
         var largest = i;
         var left = 2 * i + 1;
@@ -193,11 +193,11 @@ func heapify(var arr,var  n,var  i) {
 }
 
 // ==================== 快速排序（优化版本）====================
-func quick_sort(var arr) {
+func quick_sort(Array arr):Array[int] {
     return quick_sort_opt(arr, 0, arr.len() - 1)
 }
 
-func quick_sort_opt(var arr, var left, var right) {
+func quick_sort_opt(Array arr, var left, var right):Array[int] {
     // 小数组使用插入排序
     if right - left < 20 {
         return quick_insertion_sort_range(arr, left, right);
@@ -210,7 +210,7 @@ func quick_sort_opt(var arr, var left, var right) {
     return arr;
 }
 
-func partition_opt(var arr, var left, var right) {
+func partition_opt(Array arr, var left, var right) {
     // 三数取中法选择基准值
     var mid = (left + right) / 2;
     // 确保arr[left] <= arr[mid] <= arr[right]
@@ -257,7 +257,7 @@ func partition_opt(var arr, var left, var right) {
     return i
 }
 
-func quick_insertion_sort_range(var arr, var left, var right) {
+func quick_insertion_sort_range(Array arr, var left, var right):Array[int] {
     if left >= right {
         return arr
     }
@@ -274,7 +274,7 @@ func quick_insertion_sort_range(var arr, var left, var right) {
 }
 
 // ==================== 计数排序 ====================
-func counting_sort(var arr) {
+func counting_sort(Array arr):Array[int] {
     if arr.len() <= 1 {
         return arr;
     }
@@ -366,7 +366,7 @@ func counting_sort_by_digit(Array[int] arr, var exp) {
 }
 
 // ==================== 辅助函数 ====================
-func verify_sorted(var arr) {
+func verify_sorted(Array arr) {
     for 0:arr.len()-2 to var i {
         if arr[i] > arr[i + 1] {
             return false;

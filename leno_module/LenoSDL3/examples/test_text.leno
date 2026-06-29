@@ -1,0 +1,105 @@
+// test_text.leno - 测试 SDL3_ttf 文字显示功能
+import "../lib/SDL3.leno" as SDL3
+
+// ============================================================================
+// 主程序
+// ============================================================================
+
+main() {
+    // 创建窗口
+    var win = SDL3.createWindow("SDL3 文字显示测试", 800, 600, 0)
+    if not win.ok {
+        print("创建窗口失败")
+        return
+    }
+
+    // 创建渲染器（通过 Window.run 自动创建）
+    // 加载字体（使用微软雅黑，支持中文）
+    var font_path = "C:/Windows/Fonts/msyh.ttc"
+    var font = SDL3.createFont(font_path, 32.0)
+    if not font.ok {
+        print("加载字体失败，请确保字体文件存在: " + font_path)
+        win.destroy()
+        return
+    }
+
+    print("字体加载成功，高度: " + font.height)
+
+    // 创建事件对象
+    var ev = SDL3.createEvent()
+
+    // 创建渲染器
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok {
+        print("创建渲染器失败")
+        font.close()
+        win.destroy()
+        return
+    }
+
+    ren.setVSync(1)
+
+    // 创建文本纹理（预先创建）
+    var textTex = SDL3.createTextTexture(ren.handle, font, "Hello, SDL3!", 255, 255, 255)
+    if not textTex.ok {
+        print("创建文本纹理失败")
+    }
+
+    // 主循环
+    var running = true
+    var frameCount = 0
+
+    while running {
+        // 处理事件
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() {
+                running = false
+            }
+            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE {
+                running = false
+            }
+        }
+
+        // 清屏（黑色背景）
+        ren.setColor(0, 0, 0, 255)
+        ren.clear()
+
+        // 绘制文本纹理（白色文字）
+        if textTex.ok {
+            ren.drawTextureAt(textTex.texture, 100.0, 100.0, 200.0, 50.0)
+        }
+
+        // 绘制动态文本（每帧更新）
+        var dynamicText = "帧数: " + frameCount
+        var dynTex = SDL3.createTextTexture(ren.handle, font, dynamicText, 255, 100, 100)
+        if dynTex.ok {
+            ren.drawTextureAt(dynTex.texture, 100.0, 150.0, 150.0, 50.0)
+            dynTex.destroy()  // 动态文本每帧都需要销毁
+        }
+
+        // 绘制彩色文本
+        var colorTex = SDL3.createTextTexture(ren.handle, font, "彩色文字测试", 100, 255, 100)
+        if colorTex.ok {
+            ren.drawTextureAt(colorTex.texture, 100.0, 200.0, 150.0, 50.0)
+            colorTex.destroy()
+        }
+
+        // 显示渲染结果
+        ren.present()
+
+        frameCount = frameCount + 1
+        SDL3.delay(16)  // 约 60 FPS
+    }
+
+    // 清理资源
+    textTex.destroy()
+    ren.destroy()
+    font.close()
+    ev.uninit()
+    win.destroy()
+
+    // 退出 TTF（暂时注释，DLL 导出函数问题）
+    // SDL3.ttfQuit()
+
+    print("程序结束")
+}

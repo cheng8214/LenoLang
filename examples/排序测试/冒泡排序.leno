@@ -1,7 +1,7 @@
 import times as ti
 import rands
 // Leno语言实现的冒泡排序算法
-func bubble_sort(var arr){
+func bubble_sort(Array arr):Array {
     var n = arr.len();
     for n - 1 to var i {
         for n - i - 1 to var j {
@@ -16,7 +16,7 @@ func bubble_sort(var arr){
 }
 
 // 辅助函数：验证数组是否已排序
-func verify_sorted(var arr) {
+func verify_sorted(Array arr) {
     for arr.len() - 1 to var i {
         if arr[i] > arr[i + 1]{
             return false;

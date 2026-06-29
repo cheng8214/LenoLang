@@ -1,12 +1,12 @@
 // ===============================
 // 1. miniLang 解释器主函数
 // ===============================
-func tinylang_main(var code) {
+func tinylang_main(string code) {
     print("=== TinyLang 解释器 ===")
     
     try {
         // 1. 分词
-        var tokens = tinylang_tokenize(code)
+        Array tokens = tinylang_tokenize(code)
         // 2. 解析
         var ast = tinylang_parse(tokens)
         // 3. 执行
@@ -20,11 +20,11 @@ func tinylang_main(var code) {
 // ===============================
 // 2. 词法分析：分词器
 // ===============================
-func tinylang_tokenize(var code) {
+func tinylang_tokenize(string code):Array {
     // 集中定义关键字列表
     var keywords = ["print", "if", "else", "for", "while", "var"]
     
-    var tokens = []
+    Array tokens = []
     var i = 0
     var len = code.len()
     var line = 1  // 当前行号
@@ -112,8 +112,8 @@ func tinylang_tokenize(var code) {
 // ===============================
 // 3. 语法分析：生成 AST
 // ===============================
-func tinylang_parse(var tokens) {
-    var ast = {type: "PROGRAM", statements: []};
+func tinylang_parse(Array tokens) {
+    Dict ast = {type: "PROGRAM", statements: []};
     var token_index = 0;
     var len = tokens.len();
     
@@ -231,7 +231,7 @@ func tinylang_parse(var tokens) {
         
         // 赋值语句: x = 10; 或 x = 10\n (没有 var)
         if token.type == "IDENTIFIER" {
-            var id = token.value;
+            var id =_str(token.value);
             // 检查标识符是否以关键字开头（如 for5、whilex 等）
             for keywords to var kw {
                 if id.sub_str(0, kw.len()) == kw {
@@ -414,7 +414,11 @@ func tinylang_parse(var tokens) {
         if token_index >= len {break}
         
         var stmt = parse_stmt()
-        if stmt {ast.statements.add(stmt)}
+        if stmt {
+            if ast.statements is Array{
+            ast.statements.add(stmt)
+            }
+        }
     }
     
     return ast

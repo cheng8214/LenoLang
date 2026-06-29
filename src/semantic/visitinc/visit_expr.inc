@@ -165,7 +165,116 @@
                     TypeInfo* receiver_type = infer_expr_type(s, index_ast->u.index.obj);
                     
                     if (receiver_type) {
+                        // 检查是否是 clib 类型的方法调用
+                        int is_clib_call = 0;
+                        if (receiver_type->kind == TYPE_CLIB && receiver_type->struct_name) {
+                            Symbol* clib_sym = scope_resolve_tree_bfs(s->root_scope, receiver_type->struct_name);
+                            if (!clib_sym) {
+                                clib_sym = scope_resolve(s->current, receiver_type->struct_name);
+                            }
+                            if (clib_sym && clib_sym->clib_func_count > 0) {
+                                for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
+                                    if (strcmp(clib_sym->clib_func_names[fi], method_name) == 0) {
+                                        is_clib_call = 1;
+                                        int expected_count = clib_sym->clib_func_param_counts[fi];
+                                        int actual_count = ast->u.call.args.count;
+                                        if (actual_count != expected_count) {
+                                            char msg[BUFFER_MEDIUM];
+                                            snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                                     receiver_type->struct_name, method_name, expected_count, actual_count);
+                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                        }
+                                        for (int pi = 0; pi < actual_count && pi < expected_count; pi++) {
+                                            TypeInfo* expected_param = clib_sym->clib_func_param_types[fi][pi];
+                                            Ast* arg = ast->u.call.args.items[pi];
+                                            TypeInfo* arg_type = infer_expr_type(s, arg);
+                                            if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
+                                                if (!(expected_param->kind == TYPE_FLOAT && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR) &&
+                                                    !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
+                                                    !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_NULL) &&
+                                                    !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_STRING) &&
+                                                    !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_NULL) &&
+                                                    !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_STRING) &&
+                                                    !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_NULL) &&
+                                                    !(expected_param->kind == TYPE_I32 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_I64 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_U32 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_U64 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_I8 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_U8 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_I16 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_U16 && arg_type->kind == TYPE_INT) &&
+                                                    !(expected_param->kind == TYPE_F64 && arg_type->kind == TYPE_FLOAT) &&
+                                                    !(expected_param->kind == TYPE_F32 && arg_type->kind == TYPE_FLOAT) &&
+                                                    !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_CSTRUCT) &&
+                                                    !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_CSTRUCT) &&
+                                                    !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_CSTRUCT) &&
+                                                    !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_PTR) &&
+                                                    !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_NULL)) {
+                                                    char msg[BUFFER_MEDIUM];
+                                                    format_type_error(msg, sizeof(msg),
+                                                        "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",
+                                                        expected_param, arg_type,
+                                                        receiver_type->struct_name, method_name);
+                                                    char final_msg[BUFFER_MEDIUM];
+                                                    snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
+                                                    error_add(ERR_TYPE_MISMATCH, ast->line, final_msg);
+                                                }
+                                            }
+                                            if (arg_type) type_free(arg_type);
+                                        }
+                                        // 设置 cached_type 让 codegen 识别 clib 调用
+                                        if (!ast->cached_type) {
+                                            TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
+                                            if (ret_type) {
+                                                TypeKind rk = ret_type->kind;
+                                                switch (rk) {
+                                                    case TYPE_I8: case TYPE_U8:
+                                                    case TYPE_I16: case TYPE_U16:
+                                                    case TYPE_I32: case TYPE_U32:
+                                                    case TYPE_I64: case TYPE_U64:
+                                                        ast->cached_type = type_new(TYPE_INT); break;
+                                                    case TYPE_F32: case TYPE_F64:
+                                                        ast->cached_type = type_new(TYPE_FLOAT); break;
+                                                    case TYPE_STR8: case TYPE_STR16:
+                                                        ast->cached_type = type_new(TYPE_STRING); break;
+                                                    case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                                        ast->cached_type = type_new(TYPE_PTR);
+                                                        ast->cached_type->struct_name = strdup("Ptr"); break;
+                                                    case TYPE_BOOL:
+                                                        ast->cached_type = type_new(TYPE_BOOL); break;
+                                                    case TYPE_NULL:
+                                                        ast->cached_type = type_new(TYPE_NULL); break;
+                                                    default:
+                                                        ast->cached_type = type_copy(ret_type); break;
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!is_clib_call) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                         receiver_type->struct_name, method_name);
+                                error_add(ERR_SEMANTIC, ast->line, msg);
+                            }
+                            type_free(receiver_type);
+                            break;
+                        }
+                        // 非 clib 类型：走原生方法检查
                         const char* type_name = native_get_type_name(receiver_type->kind);
+                        if (!type_name) {
+                            // any 类型不能调用方法
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "不能在 any 类型上调用方法 '%s'\n"
+                                "  提示: 使用 if ... is Type { ... } 类型收窄或指定参数类型",
+                                method_name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
                         if (type_name) {
                             int expected_arity;
                             TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &expected_arity);

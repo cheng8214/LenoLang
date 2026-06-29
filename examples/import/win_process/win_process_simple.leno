@@ -157,7 +157,7 @@ export func enableDebugPrivilege() {
 // ========== 进程枚举 ==========
 
 // 获取所有进程ID
-export func enumProcesses() {
+export func enumProcesses():Dict{
     if _kernel32 == null { init() }
 
     Ptr buffer = ffi.malloc(4096)
@@ -231,10 +231,13 @@ export func listProcesses() {
     var processes = []
 
     for enumResult.pids to pid {
+    if pid is int 
+    {
         var name = _getProcessName(pid)
         if name != "" {
             processes.add({pid: pid, name: name})
         }
+    }
     }
 
     return {processes: processes, errorCode: 0}
@@ -247,8 +250,10 @@ export func findByName(string name) {
     var result = listProcesses()
 
     for result.processes to proc {
+    if proc is string{
         if proc.name.to_lower() == name.to_lower() {
             return {found: true, pid: proc.pid}
+        }
         }
     }
 

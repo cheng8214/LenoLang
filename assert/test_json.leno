@@ -25,10 +25,13 @@ main()
 
     // 测试2: decode 数组
     var arr1 = jsons.decode("[1, 2, 3]")
+    if arr1 is Array
+    {
     assert_eq(arr1.len(), 3)
     assert_eq(arr1[0], 1)
     assert_eq(arr1[1], 2)
     assert_eq(arr1[2], 3)
+    }
 
     // 测试3: decode 对象
     var obj1 = jsons.decode("{\"name\": \"Leno\", \"version\": 1.0}")
@@ -57,7 +60,10 @@ main()
     assert_eq(type(empty_obj), "Dict")
 
     var empty_arr = jsons.decode("[]")
+    if empty_arr is Array
+    {
     assert_eq(empty_arr.len(), 0)
+    }
 
     print("test_json passed")
 }

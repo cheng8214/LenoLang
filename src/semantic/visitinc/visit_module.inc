@@ -958,9 +958,21 @@
                         // 根据对象类型名称和方法名查找方法
                         if (obj_type_name) {
                             return_type = native_get_instance_method_return_type(obj_type_name, method_name, &expected_arity);
+                        } else if (obj_sym->type && obj_sym->type->kind == TYPE_GENERIC_PARAM) {
+                            // 泛型约束类型参数（如 T: Comparable），交给下面的约束检查
+                            expected_arity = -1;
+                            return_type = TYPE_ANY;
                         } else {
-                            // 如果无法确定对象类型，尝试全局查找（向后兼容）
-                            obj_type_name = native_find_instance_method_type(method_name, &expected_arity, &return_type);
+                            // any 类型不能调用方法，提示用户使用类型收窄或指定参数类型
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "不能在 any 类型上调用方法 '%s'\n"
+                                "  提示: 使用 if x is Type { x.%s() } 类型收窄\n"
+                                "  或者将参数声明为具体类型",
+                                method_name, method_name);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            expected_arity = -1;
+                            return_type = TYPE_ANY;
                         }
 
                         // 判断方法是否找到：当 return_type == TYPE_ANY 且 expected_arity == -1 时表示方法不存在

@@ -438,7 +438,7 @@ void sys_init_globals(void) {
     // 注册全局 _arch 函数（CPU架构，0 个参数）
     vm_register_native("_arch", native_arch, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
 
-    // 注册全局 _exec 函数（返回 [stdout_string, exit_code] 数组）
+    // 注册全局 _exec 函数（返回 [stdout_string, exit_code] 数组，混合类型用 TYPE_ANY）
     vm_register_native("_exec", native_exec, 1, -1, -1, TYPE_ARRAY, TYPE_ANY, NULL);
 
     // 注册全局 _username 函数（用户名，0 个参数）
