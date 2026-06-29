@@ -126,7 +126,7 @@ struct WinProcessManager impl ProcessManager {
     }
 
     func listProcesses():Dict {
-        return wp.listProcesses() as Dict
+        return wp.listProcesses()//我这里去掉as Dict ,然后在模块方法里设置返回Dict
     }
 
     func findByName(string name):Dict {

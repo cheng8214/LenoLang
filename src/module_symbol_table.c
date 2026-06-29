@@ -572,6 +572,9 @@ static TypeKind parse_base_type(const char* type_str) {
     if (strcmp(type_str, "c_ssize") == 0) return TYPE_C_SSIZE;
     if (strcmp(type_str, "str8") == 0)   return TYPE_STR8;
     if (strcmp(type_str, "str16") == 0)  return TYPE_STR16;
+    // 容器/集合类型
+    if (strcmp(type_str, "Array") == 0)  return TYPE_ARRAY;
+    if (strcmp(type_str, "Dict") == 0)   return TYPE_DICT;
     return TYPE_ANY;
 }
 
