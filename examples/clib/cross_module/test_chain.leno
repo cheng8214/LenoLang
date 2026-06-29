@@ -1,0 +1,33 @@
+// 三层模块链测试 - 模拟 SDL3 多模块拆分
+import "lib_mid.leno" as mid
+use mid.core_lib
+use mid.extra_lib
+
+main() {
+    print("=== 三层模块链 ===")
+
+    // 测试: 中间层透传 clib 返回类型是否正确
+    core_lib c = mid.getCore()
+    print("1. 类型推断OK: " + c.abs(-5))
+
+    // 测试: 链式调用
+    print("2. 链式: " + mid.getCore().abs(-7))
+
+    // 测试: 多类型
+    extra_lib e = mid.getExtra()
+    core_lib c2 = mid.getCore()
+    print("3. 多类型: " + c2.abs(-11))
+
+    // 测试: 变量复用
+    core_lib cc = mid.getCore()
+    print("4. 复用: " + cc.abs(-13) + " " + cc.abs(-17))
+
+    // 测试: 包装函数
+    print("5. 包装: " + mid.wrapAbs(-19))
+
+    // 测试: 参数传递
+    core_lib cp = mid.getCore()
+    print("6. 参数传递: " + mid.callWith(cp, -23))
+
+    print("=== 全部通过 ===")
+}
