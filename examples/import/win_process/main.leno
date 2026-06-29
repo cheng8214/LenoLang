@@ -126,31 +126,31 @@ struct WinProcessManager impl ProcessManager {
     }
 
     func listProcesses():Dict {
-        return wp.listProcesses()//我这里去掉as Dict ,然后在模块方法里设置返回Dict
+        return wp.listProcesses()
     }
 
     func findByName(string name):Dict {
-        return wp.findByName(name) as Dict
+        return wp.findByName(name)
     }
 
     func terminate(int pid):Dict {
-        return wp.terminate(pid) as Dict
+        return wp.terminate(pid)
     }
 
     func getProcessMemory(int pid):Dict {
-        return wp.getProcessMemory(pid) as Dict
+        return wp.getProcessMemory(pid)
     }
 
     func getProcessDetails(int pid):Dict {
-        return wp.getProcessDetails(pid) as Dict
+        return wp.getProcessDetails(pid)
     }
 
-    func getSystemInfo():Dict{
-        return wp.getSystemInfo() as Dict
+    func getSystemInfo():Dict {
+        return wp.getSystemInfo()
     }
 
     func getSystemUpTime():int {
-        return _int(wp.getSystemUpTime())
+        return wp.getSystemUpTime()
     }
 
     func formatUptime(int ms):string {
