@@ -1111,60 +1111,83 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 if (!clib_sym) {
                     clib_sym = scope_resolve(gen->sem->current, ast->cached_type->struct_name);
                 }
-                if (clib_sym && clib_sym->clib_func_count > 0) {
+                if (clib_sym) {
                     const char* func_name = ast->u.module_call.method_name;
-                    for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
-                        if (strcmp(clib_sym->clib_func_names[fi], func_name) == 0) {
-                            // 返回类型直接编码 TypeKind，VM 端根据 TypeKind 做自动展开
-                            TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
-                            int ret_type_kind = ret_type ? ret_type->kind : TYPE_NULL;
-                            // cstruct 返回值暂按 Ptr 处理（返回裸指针）
-                            if (ret_type_kind == TYPE_CSTRUCT) ret_type_kind = TYPE_PTR;
 
-                            // 生成 lib 变量值到栈上（使用 semantic 阶段存好的 lib_ref）
-                            SymRef* lib_ref = &ast->u.module_call.lib_ref;
-                            switch (lib_ref->kind) {
-                                case SYM_LOCAL:
-                                case SYM_PARAM:
-                                    emit_bytes_2(gen, OP_GET_LOCAL, lib_ref->index, ast->line);
-                                    break;
-                                case SYM_GLOBAL:
-                                    emit_get_global(gen, lib_ref->index, ast->line);
-                                    break;
-                                case SYM_UPVALUE:
-                                    emit_bytes_2(gen, OP_GET_UPVALUE, lib_ref->index, ast->line);
-                                    break;
-                                default:
-                                    break;
+                    // 判断是否是导入的 clib（函数表为空）
+                    int is_imported_clib = (clib_sym->clib_func_count == 0);
+                    int ret_type_kind = TYPE_I32;  // 默认返回 i32
+
+                    if (!is_imported_clib) {
+                        // 本地 clib：查找函数签名
+                        int found = 0;
+                        for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
+                            if (strcmp(clib_sym->clib_func_names[fi], func_name) == 0) {
+                                TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
+                                ret_type_kind = ret_type ? ret_type->kind : TYPE_NULL;
+                                if (ret_type_kind == TYPE_CSTRUCT) ret_type_kind = TYPE_PTR;
+                                found = 1;
+                                break;
                             }
+                        }
+                        if (!found) {
+                            // 未找到函数声明，但仍然生成调用（运行时处理）
+                        }
+                    }
 
-                            // 生成函数名字符串
-                            ObjString* func_name_str = str_copy(func_name, (int)strlen(func_name));
-                            emit_constant(gen, val_obj((Object*)func_name_str), ast->line);
-
-                            // 生成用户参数
-                            for (int ai = 0; ai < ast->u.module_call.args.count; ai++) {
-                                gen_expr(gen, ast->u.module_call.args.items[ai]);
-                            }
-
-                            int total_arg_count = 2 + ast->u.module_call.args.count;
-                            int user_arg_count = ast->u.module_call.args.count;
-
-                            // OP_CLIB_CALL arg_count(2) ret_type_kind(1) user_arg_count(1) arg_types[user_arg_count](1 each)
-                            emit_byte(gen, OP_CLIB_CALL, ast->line);
-                            emit_byte(gen, (total_arg_count >> 8) & 0xff, ast->line);
-                            emit_byte(gen, total_arg_count & 0xff, ast->line);
-                            emit_byte(gen, (uint8_t)ret_type_kind, ast->line);
-                            emit_byte(gen, (uint8_t)user_arg_count, ast->line);
-                            // 编码每个用户参数的类型（TypeKind 枚举值）
-                            for (int ai = 0; ai < user_arg_count; ai++) {
-                                TypeInfo* param_type = clib_sym->clib_func_param_types[fi][ai];
-                                int type_kind = param_type ? param_type->kind : 0;
-                                // cstruct 参数在 C 端传指针，编码为 TYPE_PTR
-                                if (type_kind == TYPE_CSTRUCT) type_kind = TYPE_PTR;
-                                emit_byte(gen, (uint8_t)type_kind, ast->line);
-                            }
+                    // 生成 lib 变量值到栈上（使用 semantic 阶段存好的 lib_ref）
+                    SymRef* lib_ref = &ast->u.module_call.lib_ref;
+                    switch (lib_ref->kind) {
+                        case SYM_LOCAL:
+                        case SYM_PARAM:
+                            emit_bytes_2(gen, OP_GET_LOCAL, lib_ref->index, ast->line);
                             break;
+                        case SYM_GLOBAL:
+                            emit_get_global(gen, lib_ref->index, ast->line);
+                            break;
+                        case SYM_UPVALUE:
+                            emit_bytes_2(gen, OP_GET_UPVALUE, lib_ref->index, ast->line);
+                            break;
+                        default:
+                            break;
+                    }
+
+                    // 生成函数名字符串
+                    ObjString* func_name_str = str_copy(func_name, (int)strlen(func_name));
+                    emit_constant(gen, val_obj((Object*)func_name_str), ast->line);
+
+                    // 生成用户参数
+                    for (int ai = 0; ai < ast->u.module_call.args.count; ai++) {
+                        gen_expr(gen, ast->u.module_call.args.items[ai]);
+                    }
+
+                    int total_arg_count = 2 + ast->u.module_call.args.count;
+                    int user_arg_count = ast->u.module_call.args.count;
+
+                    // OP_CLIB_CALL arg_count(2) ret_type_kind(1) user_arg_count(1) arg_types[user_arg_count](1 each)
+                    emit_byte(gen, OP_CLIB_CALL, ast->line);
+                    emit_byte(gen, (total_arg_count >> 8) & 0xff, ast->line);
+                    emit_byte(gen, total_arg_count & 0xff, ast->line);
+                    emit_byte(gen, (uint8_t)ret_type_kind, ast->line);
+                    emit_byte(gen, (uint8_t)user_arg_count, ast->line);
+
+                    if (is_imported_clib) {
+                        // 导入的 clib：参数类型全部编码为 TYPE_I32
+                        for (int ai = 0; ai < user_arg_count; ai++) {
+                            emit_byte(gen, (uint8_t)TYPE_I32, ast->line);
+                        }
+                    } else {
+                        // 本地 clib：使用声明的参数类型
+                        for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
+                            if (strcmp(clib_sym->clib_func_names[fi], func_name) == 0) {
+                                for (int ai = 0; ai < user_arg_count && ai < clib_sym->clib_func_param_counts[fi]; ai++) {
+                                    TypeInfo* param_type = clib_sym->clib_func_param_types[fi][ai];
+                                    int type_kind = param_type ? param_type->kind : 0;
+                                    if (type_kind == TYPE_CSTRUCT) type_kind = TYPE_PTR;
+                                    emit_byte(gen, (uint8_t)type_kind, ast->line);
+                                }
+                                break;
+                            }
                         }
                     }
                     break;  // 跳出 AST_MODULE_CALL

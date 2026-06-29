@@ -1,0 +1,41 @@
+// 跨模块 clib 测试 - 模块定义
+import ffi
+
+clib math_lib {
+    i32 abs(i32 x)
+    i32 add(i32 a, i32 b)
+}
+
+clib os_lib {
+    i32 get_value()
+}
+
+math_lib g_math = null
+os_lib   g_os   = null
+
+// 加载库并返回 clib 类型
+export func load(): math_lib {
+    if g_math == null {
+        g_math = ffi.load("kernel32.dll")
+    }
+    return g_math
+}
+
+// 返回第二个 clib 类型
+export func loadOs(): os_lib {
+    if g_os == null {
+        g_os = ffi.load("kernel32.dll")
+    }
+    return g_os
+}
+
+// 桥接函数：模块内部直接调用
+export func doAbs(int x): int {
+    math_lib l = load()
+    return l.abs(x) as int
+}
+
+// 接收 clib 作为参数
+export func doCallWithLib(math_lib lib, int x): int {
+    return lib.abs(x) as int
+}

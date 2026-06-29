@@ -1,0 +1,47 @@
+// 跨模块 clib 测试 - 导入方（边界测试）
+import "mylib.leno" as ml
+use ml.math_lib
+use ml.os_lib
+
+main() {
+    print("=== 跨模块 clib 边界测试 ===")
+
+    // 测试1: 桥接函数
+    print("1. 桥接函数: " + ml.doAbs(-5))
+
+    // 测试2: 拿到 clib 值
+    math_lib l = ml.load()
+    print("2. load() 成功")
+
+    // 测试3: 链式调用 clib 方法
+    print("3. 链式: " + ml.load().abs(-5))
+
+    // 测试4: 变量存储 clib 后再调
+    math_lib l2 = ml.load()
+    print("4. 变量复用: " + l2.abs(-10))
+
+    // 测试5: 同一模块多个 clib 类型
+    os_lib o = ml.loadOs()
+    print("5. 第二个 clib 类型 loadOs() 成功")
+
+    // 测试6: clib 双重链式
+    var v6 = ml.load().abs(-3)
+    print("6. 链式结果: " + v6)
+
+    // 测试7: clib 参数传递（跨模块传 clib 给函数）
+    math_lib l3 = ml.load()
+    print("7. 接收 clib 参数: " + ml.doCallWithLib(l3, -7))
+
+    // 测试8: null 检查
+    if l3 != null {
+        print("8. clib null 检查通过")
+    }
+
+    // 测试9: 多次调用同一 clib 变量
+    math_lib l4 = ml.load()
+    var a = l4.abs(-1)
+    var b = l4.abs(-2)
+    print("9. 多次调用: " + a + " " + b)
+
+    print("=== 全部完成 ===")
+}

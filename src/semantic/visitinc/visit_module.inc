@@ -330,6 +330,26 @@
                 break;
             }
 
+            // 尝试查找 clib 类型（通过检查函数返回类型）
+            {
+                int clib_found = 0;
+                for (int fi = 0; fi < module_info->sym_table->func_count && !clib_found; fi++) {
+                    ModuleFuncSymbol* func = &module_info->sym_table->funcs[fi];
+                    if (func->return_type == TYPE_CLIB && func->return_struct_name &&
+                        strcmp(func->return_struct_name, symbol_name) == 0) {
+                        clib_found = 1;
+                        SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                        Symbol* sym = scope_define(s->current, symbol_name, kind);
+                        if (sym) {
+                            sym->kind = SYM_TYPE;
+                            sym->type = type_new(TYPE_CLIB);
+                            sym->type->struct_name = strdup(symbol_name);
+                        }
+                    }
+                }
+                if (clib_found) break;
+            }
+
             // 尝试查找 face 定义
             ModuleFaceSymbol* face_sym = module_symbol_table_find_face(module_info->sym_table, symbol_name);
             if (face_sym) {
@@ -356,9 +376,9 @@
                 break;
             }
 
-            // 没有找到 struct 或 face
+            // 没有找到 struct、clib 或 face
             char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct 或 face 类型 '%s'", module_name, symbol_name);
+            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct、clib 或 face 类型 '%s'", module_name, symbol_name);
             error_add(ERR_SEMANTIC, ast->line, msg);
             break;
         }
@@ -644,6 +664,9 @@
                                     break;
                                 }
                             }
+                        } else if (clib_sym) {
+                            // 导入的 clib 类型：函数表为空，允许任意调用（运行时验证）
+                            is_clib_call = 1;
                         }
                         if (!is_clib_call) {
                             char msg[BUFFER_MEDIUM];

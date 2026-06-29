@@ -155,6 +155,16 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                     pt->kind = TYPE_CSTRUCT;
                 }
+                // 检查是否是 clib 类型
+                if (!struct_def) {
+                    struct_def = scope_resolve_local(s->current, pt->struct_name);
+                    if (!struct_def && s->current) {
+                        struct_def = scope_resolve(s->current, pt->struct_name);
+                    }
+                }
+                if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
+                    pt->kind = TYPE_CLIB;
+                }
             }
         }
         // 修正数组元素类型中的 face（如 Array[Speaker] 中 Speaker 被解析为 struct）

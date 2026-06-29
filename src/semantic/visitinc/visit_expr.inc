@@ -254,6 +254,9 @@
                                         break;
                                     }
                                 }
+                            } else if (clib_sym) {
+                                // 导入的 clib 类型：函数表为空，允许任意调用
+                                is_clib_call = 1;
                             }
                             if (!is_clib_call) {
                                 char msg[BUFFER_MEDIUM];

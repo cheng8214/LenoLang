@@ -29,7 +29,7 @@ static Value dict_method_get(int argc, Value* args) {
     if (dict_has(dict, key)) {
         return dict_get(dict, key);
     }
-    return argc >= 2 ? args[2] : val_null();
+    return argc >= 3 ? args[2] : val_null();
 }
 
 static Value dict_method_set(int argc, Value* args) {

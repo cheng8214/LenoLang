@@ -588,6 +588,16 @@ static int is_known_struct(const char* type_str, char** struct_names, int struct
     return 0;
 }
 
+// 检查类型是否是已知的 clib 类型
+static int is_known_clib(const char* type_str, char** clib_names, int clib_count) {
+    for (int i = 0; i < clib_count; i++) {
+        if (strcmp(clib_names[i], type_str) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // 从模块文件读取源代码（需要外部提供或复制相关代码）
 extern char* read_module_file(const char* file_path, const char* current_file);
 
@@ -604,9 +614,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     char* source = read_module_file(table->module_path, current_file);
     if (!source) return -1;
 
-    // 第一遍：收集所有 struct 名称
+    // 第一遍：收集所有 struct/cstruct/clib/face 名称
     char* struct_names[64];
     int struct_name_count = 0;
+    char* clib_names[16];
+    int clib_name_count = 0;
     char* p = source;
 
     while (*p && struct_name_count < 64) {
@@ -698,6 +710,52 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 p = after_face;
                 continue;
             }
+
+            // 检查 export clib
+            if (strncmp(after_export, "clib", 4) == 0 && (after_export[4] == ' ' || after_export[4] == '\t' || after_export[4] == '\n' || after_export[4] == '\r' || after_export[4] == '\0')) {
+                char* after_clib = after_export + 4;
+                while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+
+                const char* name_start = after_clib;
+                while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                int name_len = (int)(after_clib - name_start);
+
+                if (name_len > 0 && name_len < 64 && clib_name_count < 16) {
+                    clib_names[clib_name_count] = (char*)malloc(name_len + 1);
+                    strncpy(clib_names[clib_name_count], name_start, name_len);
+                    clib_names[clib_name_count][name_len] = '\0';
+                    clib_name_count++;
+                }
+
+                p = after_clib;
+                continue;
+            }
+        }
+
+        // 非 export 行也收集 clib（模块内的 clib 定义不带 export）
+        if (strncmp(p, "clib", 4) == 0 && (p[4] == ' ' || p[4] == '\t' || p[4] == '\n' || p[4] == '\r')) {
+            char* after_clib = p + 4;
+            while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+
+            const char* name_start = after_clib;
+            while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+            int name_len = (int)(after_clib - name_start);
+
+            if (name_len > 0 && name_len < 64 && clib_name_count < 16) {
+                int already = 0;
+                for (int ci = 0; ci < clib_name_count; ci++) {
+                    if (strcmp(clib_names[ci], name_start) == 0) { already = 1; break; }
+                }
+                if (!already) {
+                    clib_names[clib_name_count] = (char*)malloc(name_len + 1);
+                    strncpy(clib_names[clib_name_count], name_start, name_len);
+                    clib_names[clib_name_count][name_len] = '\0';
+                    clib_name_count++;
+                }
+            }
+
+            p = after_clib;
+            continue;
         }
 
         p++;
@@ -1020,6 +1078,23 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                     TypeKind param_type = parse_base_type(token);
                                                     char param_struct_name[64] = {0};
                                                     char* param_generic_name = NULL;
+
+                                                    // 如果不是基本类型，检查是否是已知的 clib/struct
+                                                    if (param_type == TYPE_ANY) {
+                                                        if (is_known_clib(token, clib_names, clib_name_count)) {
+                                                            param_type = TYPE_CLIB;
+                                                            size_t copy_len = strlen(token);
+                                                            if (copy_len > sizeof(param_struct_name) - 1) copy_len = sizeof(param_struct_name) - 1;
+                                                            memcpy(param_struct_name, token, copy_len);
+                                                            param_struct_name[copy_len] = '\0';
+                                                        } else if (is_known_struct(token, struct_names, struct_name_count)) {
+                                                            param_type = TYPE_STRUCT;
+                                                            size_t copy_len = strlen(token);
+                                                            if (copy_len > sizeof(param_struct_name) - 1) copy_len = sizeof(param_struct_name) - 1;
+                                                            memcpy(param_struct_name, token, copy_len);
+                                                            param_struct_name[copy_len] = '\0';
+                                                        }
+                                                    }
 
                                                     // 检查是否是泛型类型参数（如 T, K, V）
                                                     for (int tpi = 0; tpi < type_param_count; tpi++) {
@@ -1707,9 +1782,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 // 先检查是否是基本类型
                                 return_type = parse_base_type(type_str);
 
-                                // 如果不是基本类型，检查是否是已知的 struct
+                                // 如果不是基本类型，检查是否是已知的 clib/struct/cstruct
                                 if (return_type == TYPE_ANY) {
-                                    if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                    if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                        return_type = TYPE_CLIB;
+                                        size_t copy_len = strlen(type_str);
+                                        if (copy_len > sizeof(return_struct_name) - 1) copy_len = sizeof(return_struct_name) - 1;
+                                        memcpy(return_struct_name, type_str, copy_len);
+                                        return_struct_name[copy_len] = '\0';
+                                    } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
                                         return_type = TYPE_STRUCT;
                                         size_t copy_len = strlen(type_str);
                                         if (copy_len > sizeof(return_struct_name) - 1) copy_len = sizeof(return_struct_name) - 1;
@@ -1765,9 +1846,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                             // 先检查是否是基本类型
                             var_type = parse_base_type(type_str);
 
-                            // 如果不是基本类型，检查是否是已知的 struct
+                            // 如果不是基本类型，检查是否是已知的 clib/struct/cstruct
                             if (var_type == TYPE_ANY) {
-                                if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                    var_type = TYPE_CLIB;
+                                    size_t copy_len = strlen(type_str);
+                                    if (copy_len > sizeof(var_struct_name) - 1) copy_len = sizeof(var_struct_name) - 1;
+                                    memcpy(var_struct_name, type_str, copy_len);
+                                    var_struct_name[copy_len] = '\0';
+                                } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
                                     var_type = TYPE_STRUCT;
                                     size_t copy_len = strlen(type_str);
                                     if (copy_len > sizeof(var_struct_name) - 1) copy_len = sizeof(var_struct_name) - 1;
