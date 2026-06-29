@@ -1,0 +1,33 @@
+// 4层模块链: test → deep → mid → base
+import "lib_deep.leno" as deep
+use deep.core_lib
+use deep.extra_lib
+
+main() {
+    print("=== 4层模块链 ===")
+
+    // 1. 桥接函数
+    var v1 = deep.deepAbs(-5) as int
+    print("1. bridge: " + v1)
+
+    // 2. 获取clib
+    var c = deep.deepGetCore()
+    var v2 = c.abs(-7) as int
+    print("2. getCore: " + v2)
+
+    // 3. 链式
+    var v3 = deep.deepGetCore().abs(-11) as int
+    print("3. 链式: " + v3)
+
+    // 4. extra
+    var e = deep.deepGetExtra()
+    print("4. extra: OK")
+
+    // 5. 变量复用
+    var cc = deep.deepGetCore()
+    var v5a = cc.abs(-13) as int
+    var v5b = cc.abs(-17) as int
+    print("5. 复用: " + v5a + " " + v5b)
+
+    print("=== 全部通过 ===")
+}
