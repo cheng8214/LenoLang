@@ -894,6 +894,25 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     module_symbol_table_add_face(table, type_name,
                                         f_sym->method_count, f_sym->methods, f_sym->type_param_count);
                                 }
+                                // 查找 clib 类型（通过函数返回类型识别）
+                                if (!s_sym && !f_sym) {
+                                    for (int fi = 0; fi < dep_table->func_count; fi++) {
+                                        ModuleFuncSymbol* func = &dep_table->funcs[fi];
+                                        if (func->return_type == TYPE_CLIB && func->return_struct_name &&
+                                            strcmp(func->return_struct_name, type_name) == 0) {
+                                            // 将 clib 名称添加到当前模块，使后续函数签名解析能识别
+                                            int already = 0;
+                                            for (int ci = 0; ci < clib_name_count; ci++) {
+                                                if (strcmp(clib_names[ci], type_name) == 0) { already = 1; break; }
+                                            }
+                                            if (!already && clib_name_count < 16) {
+                                                clib_names[clib_name_count] = strdup(type_name);
+                                                clib_name_count++;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                             module_symbol_table_destroy(dep_table);
                         }

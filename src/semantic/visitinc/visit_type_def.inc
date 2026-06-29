@@ -16,19 +16,37 @@
                 for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                     TypeInfo* field_type = ast->u.struct_def.field_types[i];
 
-                    // 如果字段类型是 struct，验证该 struct 是否已定义
-                    if (field_type && field_type->kind == TYPE_STRUCT && field_type->struct_name) {
-                        // 允许自引用（struct 包含自身类型的字段，如链表节点）
-                        if (strcmp(field_type->struct_name, ast->u.struct_def.name) != 0) {
-                            // 检查引用的 struct 是否已定义
-                            Symbol* ref_struct = scope_resolve(s->current, field_type->struct_name);
-                            if (!ref_struct || ref_struct->type->kind != TYPE_STRUCT) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'",
-                                         ast->u.struct_def.name,
-                                         ast->u.struct_def.field_names[i],
-                                         field_type->struct_name);
-                                error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                    // 如果字段类型是 struct/clib/cstruct/face，验证是否已定义
+                    if (field_type && field_type->struct_name) {
+                        int is_named_type = (field_type->kind == TYPE_STRUCT ||
+                                            field_type->kind == TYPE_CLIB ||
+                                            field_type->kind == TYPE_CSTRUCT ||
+                                            field_type->kind == TYPE_FACE);
+                        if (!is_named_type && field_type->kind == TYPE_STRUCT) is_named_type = 1;
+                        if (is_named_type) {
+                            // 允许自引用（struct 包含自身类型的字段，如链表节点）
+                            if (strcmp(field_type->struct_name, ast->u.struct_def.name) != 0) {
+                                // 检查引用的类型是否已定义
+                                Symbol* ref_type = scope_resolve(s->current, field_type->struct_name);
+                                if (!ref_type || !ref_type->type ||
+                                    (ref_type->type->kind != TYPE_STRUCT &&
+                                     ref_type->type->kind != TYPE_CLIB &&
+                                     ref_type->type->kind != TYPE_CSTRUCT &&
+                                     ref_type->type->kind != TYPE_FACE)) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'",
+                                             ast->u.struct_def.name,
+                                             ast->u.struct_def.field_names[i],
+                                             field_type->struct_name);
+                                    error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                                } else if (ref_type->type->kind == TYPE_CLIB) {
+                                    // 修正字段类型为 TYPE_CLIB
+                                    field_type->kind = TYPE_CLIB;
+                                } else if (ref_type->type->kind == TYPE_CSTRUCT) {
+                                    field_type->kind = TYPE_CSTRUCT;
+                                } else if (ref_type->type->kind == TYPE_FACE) {
+                                    field_type->kind = TYPE_FACE;
+                                }
                             }
                         }
                     }
