@@ -16,6 +16,7 @@ typedef struct {
     char* name;                 // 字段名
     TypeKind type;              // 字段类型
     TypeKind element_type;      // Ptr[T] 中 T 的类型（仅当 type == TYPE_PTR_GENERIC 时有效）
+    char* struct_name;          // 类型名（当 type 为 TYPE_STRUCT/TYPE_CLIB/TYPE_CSTRUCT/TYPE_FACE 时）
 } ModuleStructField;
 
 // 模块 struct 方法

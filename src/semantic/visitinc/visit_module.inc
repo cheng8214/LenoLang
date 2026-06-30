@@ -199,6 +199,9 @@
                     for (int i = 0; i < struct_sym->field_count; i++) {
                         sym->struct_field_names[i] = strdup(struct_sym->fields[i].name);
                         sym->struct_field_types[i] = type_new(struct_sym->fields[i].type);
+                        if (struct_sym->fields[i].struct_name) {
+                            sym->struct_field_types[i]->struct_name = strdup(struct_sym->fields[i].struct_name);
+                        }
                     }
                     // 设置泛型类型参数信息
                     sym->struct_type_param_count = struct_sym->type_param_count;

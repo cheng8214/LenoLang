@@ -54,6 +54,7 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         free(table->structs[i].name);
         for (int j = 0; j < table->structs[i].field_count; j++) {
             free(table->structs[i].fields[j].name);
+            free(table->structs[i].fields[j].struct_name);
         }
         free(table->structs[i].fields);
         // 释放方法数组
@@ -180,6 +181,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
         for (int i = 0; i < field_count; i++) {
             st->fields[i].name = strdup(fields[i].name);
             st->fields[i].type = fields[i].type;
+            st->fields[i].struct_name = fields[i].struct_name ? strdup(fields[i].struct_name) : NULL;
             st->fields[i].element_type = fields[i].element_type;
         }
     }
@@ -1407,10 +1409,22 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 int field_len = (int)(after_struct - field_start);
 
                                 if (field_len > 0 && field_len < 64 && field_count < 64) {
+                                    TypeKind ft = parse_base_type(type_str);
                                     fields[field_count].name = (char*)malloc(field_len + 1);
                                     strncpy(fields[field_count].name, field_start, field_len);
                                     fields[field_count].name[field_len] = '\0';
-                                    fields[field_count].type = parse_base_type(type_str);
+                                    fields[field_count].type = ft;
+                                    fields[field_count].struct_name = NULL;
+                                    // 如果是未识别的自定义类型，检查是否是 clib
+                                    if (ft == TYPE_ANY) {
+                                        if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                            fields[field_count].type = TYPE_CLIB;
+                                            fields[field_count].struct_name = strdup(type_str);
+                                        } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                            fields[field_count].type = TYPE_STRUCT;
+                                            fields[field_count].struct_name = strdup(type_str);
+                                        }
+                                    }
                                     fields[field_count].element_type = element_type;
                                     field_count++;
                                 }
@@ -1584,10 +1598,21 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 int field_len = (int)(after_cstruct - field_start);
 
                                 if (field_len > 0 && field_len < 64 && field_count < 64) {
+                                    TypeKind ft = parse_base_type(type_str);
                                     fields[field_count].name = (char*)malloc(field_len + 1);
                                     strncpy(fields[field_count].name, field_start, field_len);
                                     fields[field_count].name[field_len] = '\0';
-                                    fields[field_count].type = parse_base_type(type_str);
+                                    fields[field_count].type = ft;
+                                    fields[field_count].struct_name = NULL;
+                                    if (ft == TYPE_ANY) {
+                                        if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                            fields[field_count].type = TYPE_CLIB;
+                                            fields[field_count].struct_name = strdup(type_str);
+                                        } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                            fields[field_count].type = TYPE_STRUCT;
+                                            fields[field_count].struct_name = strdup(type_str);
+                                        }
+                                    }
                                     fields[field_count].element_type = element_type;
                                     field_count++;
                                 }
