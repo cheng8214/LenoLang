@@ -598,6 +598,16 @@ static int is_known_clib(const char* type_str, char** clib_names, int clib_count
     return 0;
 }
 
+// 检查类型是否是已知的 face 类型
+static int is_known_face(const char* type_str, char** face_names, int face_count) {
+    for (int i = 0; i < face_count; i++) {
+        if (strcmp(face_names[i], type_str) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // 从模块文件读取源代码（需要外部提供或复制相关代码）
 extern char* read_module_file(const char* file_path, const char* current_file);
 
@@ -617,6 +627,8 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     // 第一遍：收集所有 struct/cstruct/clib/face 名称
     char* struct_names[64];
     int struct_name_count = 0;
+    char* face_names[64];
+    int face_name_count = 0;
     char* clib_names[16];
     int clib_name_count = 0;
     char* p = source;
@@ -700,11 +712,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 while (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) after_face++;
                 int name_len = (int)(after_face - name_start);
 
-                if (name_len > 0 && name_len < 64) {
-                    struct_names[struct_name_count] = (char*)malloc(name_len + 1);
-                    strncpy(struct_names[struct_name_count], name_start, name_len);
-                    struct_names[struct_name_count][name_len] = '\0';
-                    struct_name_count++;
+                if (name_len > 0 && name_len < 64 && face_name_count < 64) {
+                    face_names[face_name_count] = (char*)malloc(name_len + 1);
+                    strncpy(face_names[face_name_count], name_start, name_len);
+                    face_names[face_name_count][name_len] = '\0';
+                    face_name_count++;
                 }
 
                 p = after_face;
@@ -898,10 +910,10 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 if (f_sym && !module_symbol_table_find_face(table, type_name)) {
                                     module_symbol_table_add_face(table, type_name,
                                         f_sym->method_count, f_sym->methods, f_sym->type_param_count);
-                                    // 将 use 导入的 face 名称添加到 struct_names，使后续 export func 返回类型解析能识别
-                                    if (struct_name_count < 64) {
-                                        struct_names[struct_name_count] = strdup(type_name);
-                                        struct_name_count++;
+                                    // 将 use 导入的 face 名称添加到 face_names，使后续 export func 返回类型解析能识别
+                                    if (face_name_count < 64) {
+                                        face_names[face_name_count] = strdup(type_name);
+                                        face_name_count++;
                                     }
                                 }
                                 // 查找 clib 类型（通过函数返回类型识别）
@@ -1116,6 +1128,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                             if (copy_len > sizeof(param_struct_name) - 1) copy_len = sizeof(param_struct_name) - 1;
                                                             memcpy(param_struct_name, token, copy_len);
                                                             param_struct_name[copy_len] = '\0';
+                                                        } else if (is_known_face(token, face_names, face_name_count)) {
+                                                            param_type = TYPE_FACE;
+                                                            size_t copy_len = strlen(token);
+                                                            if (copy_len > sizeof(param_struct_name) - 1) copy_len = sizeof(param_struct_name) - 1;
+                                                            memcpy(param_struct_name, token, copy_len);
+                                                            param_struct_name[copy_len] = '\0';
                                                         } else if (is_known_struct(token, struct_names, struct_name_count)) {
                                                             param_type = TYPE_STRUCT;
                                                             size_t copy_len = strlen(token);
@@ -1221,8 +1239,14 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                         }
                                                     }
                                                     if (!is_type_param) {
-                                                        // 检查是否是已知的 struct 类型
-                                                        if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
+                                                        // 检查是否是已知的 face/struct 类型
+                                                        if (is_known_face(ret_type_str, face_names, face_name_count)) {
+                                                            method_return_type = TYPE_FACE;
+                                                            size_t copy_len = strlen(ret_type_str);
+                                                            if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
+                                                            memcpy(method_return_struct, ret_type_str, copy_len);
+                                                            method_return_struct[copy_len] = '\0';
+                                                        } else if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
                                                             method_return_type = TYPE_STRUCT;
                                                             size_t copy_len = strlen(ret_type_str);
                                                             if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
@@ -1662,7 +1686,13 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                             ret_type_str[ret_type_len] = '\0';
                                             method_return_type = parse_base_type(ret_type_str);
                                             if (method_return_type == TYPE_ANY) {
-                                                if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
+                                                if (is_known_face(ret_type_str, face_names, face_name_count)) {
+                                                    method_return_type = TYPE_FACE;
+                                                    size_t copy_len = strlen(ret_type_str);
+                                                    if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
+                                                    memcpy(method_return_struct, ret_type_str, copy_len);
+                                                    method_return_struct[copy_len] = '\0';
+                                                } else if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
                                                     method_return_type = TYPE_STRUCT;
                                                     size_t copy_len = strlen(ret_type_str);
                                                     if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
@@ -1811,10 +1841,16 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 // 先检查是否是基本类型
                                 return_type = parse_base_type(type_str);
 
-                                // 如果不是基本类型，检查是否是已知的 clib/struct/cstruct
+                                // 如果不是基本类型，检查是否是已知的 clib/face/struct/cstruct
                                 if (return_type == TYPE_ANY) {
                                     if (is_known_clib(type_str, clib_names, clib_name_count)) {
                                         return_type = TYPE_CLIB;
+                                        size_t copy_len = strlen(type_str);
+                                        if (copy_len > sizeof(return_struct_name) - 1) copy_len = sizeof(return_struct_name) - 1;
+                                        memcpy(return_struct_name, type_str, copy_len);
+                                        return_struct_name[copy_len] = '\0';
+                                    } else if (is_known_face(type_str, face_names, face_name_count)) {
+                                        return_type = TYPE_FACE;
                                         size_t copy_len = strlen(type_str);
                                         if (copy_len > sizeof(return_struct_name) - 1) copy_len = sizeof(return_struct_name) - 1;
                                         memcpy(return_struct_name, type_str, copy_len);
@@ -1875,10 +1911,16 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                             // 先检查是否是基本类型
                             var_type = parse_base_type(type_str);
 
-                            // 如果不是基本类型，检查是否是已知的 clib/struct/cstruct
+                            // 如果不是基本类型，检查是否是已知的 clib/face/struct/cstruct
                             if (var_type == TYPE_ANY) {
                                 if (is_known_clib(type_str, clib_names, clib_name_count)) {
                                     var_type = TYPE_CLIB;
+                                    size_t copy_len = strlen(type_str);
+                                    if (copy_len > sizeof(var_struct_name) - 1) copy_len = sizeof(var_struct_name) - 1;
+                                    memcpy(var_struct_name, type_str, copy_len);
+                                    var_struct_name[copy_len] = '\0';
+                                } else if (is_known_face(type_str, face_names, face_name_count)) {
+                                    var_type = TYPE_FACE;
                                     size_t copy_len = strlen(type_str);
                                     if (copy_len > sizeof(var_struct_name) - 1) copy_len = sizeof(var_struct_name) - 1;
                                     memcpy(var_struct_name, type_str, copy_len);
@@ -1982,10 +2024,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 ti_ptr = parse_type_from_string(type_str);
                             }
                             if (ti_ptr) {
-                                // 如果是简单 STRUCT 类型，检查 struct 是否已知
+                                // 如果是简单 STRUCT 类型，检查是否实际是 face
                                 if (ti_ptr->kind == TYPE_STRUCT && ti_ptr->struct_name) {
-                                    if (!is_known_struct(ti_ptr->struct_name, struct_names, struct_name_count)) {
-                                        // 不是本模块的 struct，保留为 TYPE_STRUCT（可能来自 use）
+                                    if (is_known_face(ti_ptr->struct_name, face_names, face_name_count)) {
+                                        ti_ptr->kind = TYPE_FACE;
+                                    } else if (!is_known_struct(ti_ptr->struct_name, struct_names, struct_name_count)) {
+                                        // 不是本模块的 struct/face，保留为 TYPE_STRUCT（可能来自 use）
                                     }
                                 }
                                 module_symbol_table_add_alias(table, alias_name, ti_ptr);
@@ -2019,6 +2063,10 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     // 释放 struct 名称数组
     for (int i = 0; i < struct_name_count; i++) {
         free(struct_names[i]);
+    }
+    // 释放 face 名称数组
+    for (int i = 0; i < face_name_count; i++) {
+        free(face_names[i]);
     }
 
     free(source);

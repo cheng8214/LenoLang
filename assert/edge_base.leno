@@ -1,0 +1,30 @@
+// 边界测试基础模块 - 提供多种类型
+export face Describable {
+    func describe(): string
+}
+
+export struct Item impl Describable {
+    int id = 0
+    string label = ""
+
+    func describe(): string {
+        return "Item(" + id + ":" + label + ")"
+    }
+}
+
+export struct Box {
+    int width = 0
+    int height = 0
+
+    func area(): int {
+        return width * height
+    }
+}
+
+export func makeItem(int id, string label): Item {
+    return new Item(id = id, label = label)
+}
+
+export func makeBox(int w, int h): Box {
+    return new Box(width = w, height = h)
+}

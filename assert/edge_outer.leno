@@ -1,0 +1,20 @@
+// 边界测试：三层use链 + 多类型 + 参数类型
+// level3 -> level2(mid) -> level1(base)
+import "edge_mid.leno" as mid
+use mid.Item
+use mid.Box
+
+// 测试: 通过两层use传导的struct作为返回类型
+export func wrapCreateItem(int id, string label): Item {
+    return mid.createItem(id, label)
+}
+
+// 测试: use导入的struct作为参数类型
+export func wrapDescribeItem(Item item): string {
+    return mid.describeItem(item)
+}
+
+// 测试: 返回Box
+export func wrapCreateBox(int w, int h): Box {
+    return mid.createBox(w, h)
+}

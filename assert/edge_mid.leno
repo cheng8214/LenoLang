@@ -1,0 +1,29 @@
+// 边界测试：use导入的struct作为export func参数类型
+import "edge_base.leno" as base
+use base.Item
+use base.Box
+
+// 测试1: use导入的struct作为返回类型
+export func createItem(int id, string label): Item {
+    return base.makeItem(id, label)
+}
+
+// 测试2: use导入的struct作为参数类型
+export func describeItem(Item item): string {
+    return item.describe()
+}
+
+// 测试3: 多个use类型混合使用
+export func itemInBox(Item item, Box box): string {
+    return item.label + " in " + box.area()
+}
+
+// 测试4: 返回另一个use导入的struct
+export func createBox(int w, int h): Box {
+    return base.makeBox(w, h)
+}
+
+// 测试5: use导入的struct作为var类型注解
+export func getItemLabel(Item item): string {
+    return item.label
+}

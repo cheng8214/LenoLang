@@ -1,0 +1,9 @@
+// 边界测试：face作为export func返回类型(通过use导入)
+import "edge_base.leno" as base
+use base.Describable
+use base.Item
+
+// 返回use导入的face类型
+export func getDescribable(): Describable {
+    return base.makeItem(42, "desc")
+}

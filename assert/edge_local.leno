@@ -1,0 +1,22 @@
+// 边界测试：同时定义本地struct和use导入的struct
+import "edge_base.leno" as base
+use base.Item
+
+// 本地定义的struct
+export struct LocalObj {
+    string tag = "local"
+
+    func greet(): string {
+        return "local:" + tag
+    }
+}
+
+// 返回use导入的Item
+export func makeItem(int id): Item {
+    return base.makeItem(id, "from_mid")
+}
+
+// 返回本地struct
+export func makeLocal(string tag): LocalObj {
+    return new LocalObj(tag = tag)
+}
