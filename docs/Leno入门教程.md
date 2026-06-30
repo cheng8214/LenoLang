@@ -5589,7 +5589,21 @@ main() {
 }
 ```
 
-> **⚠️ 注意**：`use` 导入的 enum 可直接用 `EnumName.Member` 访问，本地 enum 仍使用原有方式。
+> **⚠️ 注意**：`use` 导入的 enum 使用 `EnumName.Member` 访问（成员不注册到全局作用域）。
+
+### 子目录导入
+
+支持从子目录导入模块，`use` 同样生效：
+
+```leno
+import "sub/lib_shared.leno" as sub
+use sub.math_lib
+
+main() {
+    var m = sub.loadMath()
+    print(m.abs(-5) as int)
+}
+```
 
 ### face 方法的返回类型
 
