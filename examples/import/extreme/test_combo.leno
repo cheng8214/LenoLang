@@ -1,0 +1,16 @@
+// 组合: 子目录 + clib + enum
+import "sub/lib_shared.leno" as sub
+import "lib_a.leno" as a
+use sub.math_lib
+use a.handle_lib
+use sub.Dir
+
+main() {
+    print("=== 组合 ===")
+    var m = sub.loadMath()
+    print("1. " + m.abs(-5) as int)
+    print("2. " + Dir.Up)
+    var h = a.loadHandle()
+    print("3. " + h.abs(-7) as int)
+    print("=== 通过 ===")
+}

@@ -1,0 +1,6 @@
+import "lib_a.leno" as a
+use a.handle_lib
+main() {
+    handle_lib h = a.loadHandle()
+    print(h.abs(-3) as int)
+}

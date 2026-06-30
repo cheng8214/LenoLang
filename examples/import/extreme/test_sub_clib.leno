@@ -1,0 +1,7 @@
+// 验证 use sub.clib (子目录clib)
+import "sub/lib_shared.leno" as sub
+use sub.math_lib
+main() {
+    math_lib m = sub.loadMath()
+    print(m.abs(-5) as int)
+}

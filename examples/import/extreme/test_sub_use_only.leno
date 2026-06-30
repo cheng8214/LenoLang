@@ -1,0 +1,5 @@
+import "sub/lib_shared.leno" as sub
+use sub.Dir
+main() {
+    print("OK")
+}

@@ -1,0 +1,6 @@
+import "sub/lib_shared.leno" as sub
+use sub.Dir
+main() {
+    print(Up)      // 直接用成员名（不用 Dir.Up）
+    print(Down)
+}

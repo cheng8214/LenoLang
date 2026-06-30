@@ -1,0 +1,4 @@
+import "sub/lib_shared.leno" as sub
+main() {
+    print(sub.Dir.Up)
+}

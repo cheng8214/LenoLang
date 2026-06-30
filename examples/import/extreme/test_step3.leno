@@ -1,0 +1,5 @@
+import "lib_b.leno" as b
+main() {
+    var fn = b.absFunc
+    print(fn(-5))
+}
