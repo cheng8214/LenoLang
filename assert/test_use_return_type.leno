@@ -1,0 +1,29 @@
+// 回归测试：跨模块函数返回类型 - use 导入的 struct
+// Bug: 当模块通过 use 导入其他模块的 struct 并作为 export func 返回类型时，
+//      外部调用该函数时返回类型退化为 any，无法调用 struct 方法
+import "use_return_outer.leno" as outer
+
+main() {
+    // 1. 基本调用：makeOuter() 应返回 Inner 类型，而非 any
+    var o = outer.makeOuter()
+    assert_eq(o.hello(), "hello from inner")
+
+    // 2. 带参数的跨模块函数
+    var o2 = outer.makeOuterNamed("test")
+    assert_eq(o2.hello(), "hello from test")
+
+    // 3. 在中间层直接 new 的跨模块函数
+    var o3 = outer.makeOuterCustom()
+    assert_eq(o3.hello(), "hello from outer_custom")
+
+    // 4. 返回类型正确时可以调用 struct 方法
+    assert_eq(o.add(3, 4), 7)
+    assert_eq(o2.add(10, 20), 30)
+
+    // 5. 访问 struct 字段
+    assert_eq(o.name, "inner")
+    assert_eq(o2.name, "test")
+    assert_eq(o3.name, "outer_custom")
+
+    print("test_use_return_type passed")
+}

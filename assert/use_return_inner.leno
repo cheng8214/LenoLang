@@ -1,0 +1,20 @@
+// 底层模块 - 定义 struct 和返回该 struct 的函数
+export struct Inner {
+    string name = "inner"
+
+    func hello(): string {
+        return "hello from " + name
+    }
+
+    func add(int x, int y): int {
+        return x + y
+    }
+}
+
+export func makeInner(): Inner {
+    return new Inner()
+}
+
+export func makeInnerWithName(string s): Inner {
+    return new Inner(name = s)
+}

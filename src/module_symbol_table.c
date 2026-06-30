@@ -877,6 +877,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         s_sym->field_count, s_sym->fields,
                                         s_sym->method_count, s_sym->methods,
                                         s_sym->is_cstruct, s_sym->type_param_count, s_sym->type_param_names);
+                                    // 将 use 导入的 struct 名称添加到 struct_names，使后续 export func 返回类型解析能识别
+                                    if (struct_name_count < 64) {
+                                        struct_names[struct_name_count] = strdup(type_name);
+                                        struct_name_count++;
+                                    }
                                     if (s_sym->impl_count > 0) {
                                         ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
                                         if (new_sym) {
@@ -893,6 +898,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 if (f_sym && !module_symbol_table_find_face(table, type_name)) {
                                     module_symbol_table_add_face(table, type_name,
                                         f_sym->method_count, f_sym->methods, f_sym->type_param_count);
+                                    // 将 use 导入的 face 名称添加到 struct_names，使后续 export func 返回类型解析能识别
+                                    if (struct_name_count < 64) {
+                                        struct_names[struct_name_count] = strdup(type_name);
+                                        struct_name_count++;
+                                    }
                                 }
                                 // 查找 clib 类型（通过函数返回类型识别）
                                 if (!s_sym && !f_sym) {
