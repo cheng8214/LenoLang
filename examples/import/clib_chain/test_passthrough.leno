@@ -1,0 +1,43 @@
+// struct + clib 跨模块透传测试
+import "sdl_struct.leno" as cfg
+import "sdl_renderer.leno" as r
+use cfg.core_lib
+use cfg.Config
+use r.RenderContext
+
+main() {
+    print("=== struct 透传 ===")
+
+    // 1. 创建 struct
+    var c = cfg.makeConfig(5000)
+    print("1. timeout: " + c.timeout)
+
+    // 2. struct 带回传 clib
+    var v2 = cfg.useConfig(c, -5)
+    print("2. useConfig: " + v2)
+
+    // 3. 提取 clib 再用
+    core_lib h = cfg.extractHandle(c)
+    var v3 = h.abs(-7) as int
+    print("3. 提取: " + v3)
+
+    // 4. 跨模块 struct：Config hande → RenderContext
+    var rctx = new RenderContext(lib = h, name = "fromConfig")
+    var v4 = r.renderViaContext(rctx, -11)
+    print("4. 跨struct: " + v4)
+
+    // 5. 链式 struct 创建
+    var c2 = cfg.makeConfig(3000)
+    var h2 = cfg.extractHandle(c2)
+    var v5 = r.renderAbs(h2, -13)
+    print("5. 链: " + v5)
+
+    // 6. 多个 struct 同时持有不同 clib
+    var c3 = cfg.makeConfig(1000)
+    var c4 = cfg.makeConfig(2000)
+    var v6a = cfg.useConfig(c3, -17)
+    var v6b = cfg.useConfig(c4, -19)
+    print("6. 多实例: " + v6a + " " + v6b)
+
+    print("=== 全部通过 ===")
+}

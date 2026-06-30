@@ -1,0 +1,24 @@
+// 渲染器模块 - 模拟 renderer.leno
+import "sdl_core.leno" as core
+use core.core_lib
+
+// struct 包含 clib 字段
+export struct RenderContext {
+    core_lib lib = null
+    string   name = ""
+}
+
+// 包装函数
+export func renderAbs(core_lib lib, int x): int {
+    return lib.abs(x) as int
+}
+
+// 返回 clib 类型
+export func getRendererCore(): core_lib {
+    return core.loadCore()
+}
+
+// 通过 struct 间接使用 clib
+export func renderViaContext(RenderContext ctx, int x): int {
+    return ctx.lib.abs(x) as int
+}

@@ -1,0 +1,33 @@
+// 核心层 - 模拟 SDL3.leno 基础 DLL 绑定
+import ffi
+
+clib core_lib {
+    i32 abs(i32 x)
+    i32 add(i32 a, i32 b)
+    void sleep(u32 ms)
+}
+
+clib system_lib {
+    u32 get_value()
+}
+
+core_lib   g_core = null
+system_lib g_sys  = null
+
+export func loadCore(): core_lib {
+    if g_core == null { g_core = ffi.load("msvcrt.dll") }
+    return g_core
+}
+
+export func loadSys(): system_lib {
+    if g_sys == null { g_sys = ffi.load("kernel32.dll") }
+    return g_sys
+}
+
+export func coreAbs(int x): int {
+    return loadCore().abs(x) as int
+}
+
+export func coreAdd(int a, int b): int {
+    return loadCore().add(a, b) as int
+}

@@ -1,0 +1,23 @@
+// struct 跨模块模块 - struct 携带 clib 在模块间传递
+import "sdl_core.leno" as core
+use core.core_lib
+
+export struct Config {
+    core_lib handle = null
+    int     timeout = 0
+}
+
+export func makeConfig(int t): Config {
+    return new Config(handle = core.loadCore(), timeout = t)
+}
+
+export func useConfig(Config cfg, int x): int {
+    if cfg.handle != null {
+        return cfg.handle.abs(x) as int
+    }
+    return 0
+}
+
+export func extractHandle(Config cfg): core_lib {
+    return cfg.handle
+}

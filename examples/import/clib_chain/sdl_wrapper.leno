@@ -1,0 +1,31 @@
+// 顶层包装 - 模拟用户只需 import 这一个模块
+// 聚合所有子模块的 clib 类型并重新导出
+import "sdl_renderer.leno" as r
+import "sdl_ttf.leno" as ttf
+use r.core_lib
+use r.RenderContext
+use ttf.system_lib
+
+// 透传 renderer 功能
+export func wrapAbs(int x): int {
+    core_lib c = r.getRendererCore()
+    return c.abs(x) as int
+}
+
+export func wrapGetCore(): core_lib {
+    return r.getRendererCore()
+}
+
+// 透传 ttf 功能
+export func wrapTTFAbs(core_lib lib, int x): int {
+    return ttf.ttfAbs(lib, x)
+}
+
+export func wrapGetSys(): system_lib {
+    return ttf.getTTFSys()
+}
+
+// struct 包装
+export func createContext(string name): RenderContext {
+    return new RenderContext(lib = r.getRendererCore(), name = name)
+}
