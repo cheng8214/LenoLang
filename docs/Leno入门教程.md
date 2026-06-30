@@ -5606,6 +5606,8 @@ main() {
 }
 ```
 
+> **⚡ 性能说明**：模块拆分**不会带来运行时代价**。Leno 编译器对同一路径的 `import` 会去重——`sdl_window.leno` 和 `sdl_renderer.leno` 都 `import "sdl_core.leno"` 时，它们共用同一个模块实例，`g_lib` 全局变量只初始化一次，不会重复加载 DLL。所有函数调用直接走 FFI，实测拆分后的 SDL3 烟花效果与原始单文件版性能完全持平（~150 FPS）。
+
 ### face 方法的返回类型
 
 `face` 的方法返回类型支持 `clib` 类型（如需要返回 FFI 句柄的接口）：

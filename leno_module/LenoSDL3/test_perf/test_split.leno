@@ -1,0 +1,29 @@
+// 拆分模块版测试
+import "SDL3_split.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var start = SDL3.getTicks()
+    var win = SDL3.createWindow({title: "拆分版性能测试", w: 800, h: 600, flags: SDL3.WINDOW_RESIZABLE})
+    if not win.ok { print("窗口失败"); return }
+
+    var frames = 0
+    win.run(
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(20, 30, 50, 255)
+            r.clear()
+            r.setColor(255, 0, 0, 255)
+            for 0 : 100 to i {
+                r.fillRect(i * 7, 100, 5, 50)
+            }
+            frames = frames + 1
+        }
+    )
+    var elapsed = SDL3.getTicks() - start
+    print("拆分版: " + frames + " 帧, " + elapsed + "ms, FPS: " + frames * 1000 / elapsed)
+}
