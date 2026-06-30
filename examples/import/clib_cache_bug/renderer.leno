@@ -1,0 +1,22 @@
+// renderer.leno — 模拟 sdl_renderer，缓存 core.lib()
+import "core.leno" as core
+use core.test_lib
+
+test_lib _lib = core.lib()  // 模块加载时缓存
+
+export struct Renderer {
+    bool ok
+
+    func initDefault(): bool {
+        ok = true
+        return ok
+    }
+
+    func doThing(): float {
+        return _lib.pow(2.0, 3.0) as float
+    }
+}
+
+export func createRenderer(): Renderer {
+    var r = new Renderer(); r.initDefault(); return r
+}

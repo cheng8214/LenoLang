@@ -1,0 +1,16 @@
+// test_min_chain.leno — 最小复现
+import "core.leno" as core
+use core.test_lib
+import "renderer.leno" as renderer
+
+main() {
+    // 先通过 core.lib() 加载 DLL
+    test_lib l = core.lib()
+    var v0 = l.abs(-5) as int
+    print("local call OK: " + v0)
+
+    // 再访问 renderer 的模块级缓存（renderer.leno 的 _lib = core.lib()）
+    var r = renderer.createRenderer()
+    var v = r.doThing()
+    print("renderer: " + v)
+}

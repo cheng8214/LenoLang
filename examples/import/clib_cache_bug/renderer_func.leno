@@ -1,0 +1,22 @@
+// renderer_func.leno — 用函数访问 _lib（对照组）
+import "core.leno" as core
+use core.test_lib
+
+test_lib _lib = core.lib()  // 模块级缓存
+
+// 函数访问（和 _l() 一样）
+func getLib(): test_lib { return _lib }
+
+export struct Renderer {
+    bool ok
+
+    func initDefault(): bool { ok = true; return ok }
+
+    func doThing(): float {
+        return getLib().pow(2.0, 3.0) as float   // 通过函数访问
+    }
+}
+
+export func createRenderer(): Renderer {
+    var r = new Renderer(); r.initDefault(); return r
+}

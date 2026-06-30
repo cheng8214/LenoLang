@@ -1,0 +1,17 @@
+// test_chain.leno — 复现 SDL3 多层 import 链中 clib 缓存被释放
+import "core.leno" as core
+use core.test_lib
+import "window.leno" as wnd
+import "renderer.leno" as renderer
+
+main() {
+    // 1. window.init 调用 core.lib() 加载 DLL
+    var win = wnd.createWindow()
+    print("Window: " + win.ok)
+
+    // 2. renderer 在模块加载时执行 _lib = core.lib()
+    //    这里测试模块级缓存是否有效
+    var r = renderer.createRenderer()
+    var v = r.doThing()
+    print("Renderer: " + v)   // pow(2, 3) = 8
+}
