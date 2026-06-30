@@ -1,0 +1,16 @@
+// 测试 new module.Struct[Type]() 无需 use
+import "ge_core.leno" as core
+
+main() {
+    print("=== new module.Struct[Type] ===")
+
+    // 不用 use，直接用 new module.Wrapper[int]()
+    var w = new core.Wrapper[int](lib = core.loadMath(), data = 99)
+    print("1. " + core.wrapAbs(w, -5))
+
+    // string 版本
+    var w2 = new core.Wrapper[string](lib = core.loadMath(), data = "hi")
+    print("2. " + core.wrapAbs(w2, -7))
+
+    print("=== 通过 ===")
+}

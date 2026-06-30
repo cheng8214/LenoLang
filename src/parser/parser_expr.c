@@ -643,24 +643,38 @@ Ast* parse_new(Parser* p) {
     char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex); // 消费 struct 名称
 
+    // 支持 new module.StructName(...) 和 new module.StructName[Type](...) 语法
+    char* module_name = NULL;
+    if (p->lex.current.type == TOK_DOT) {
+        lexer_next(&p->lex); // 消费 '.'
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "期望 struct 名称");
+            free(struct_name);
+            return ast_new(AST_NULL, line);
+        }
+        module_name = struct_name;  // 第一个标识符是模块名
+        struct_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex); // 消费 struct 名称
+    }
+
     // 解析可选的泛型类型参数: new Box[int](value: 42)
     TypeInfo** generic_type_args = NULL;
     int generic_type_count = 0;
 
-    // 检查是否是别名，如果是则解析为底层 struct 名
-    char** alias_tp_names = NULL;
-    int alias_tp_count = 0;
-    TypeInfo* resolved_alias_type = find_alias_with_params(p, struct_name, &alias_tp_names, &alias_tp_count);
-    if (resolved_alias_type && resolved_alias_type->kind == TYPE_STRUCT && resolved_alias_type->struct_name) {
-        // 别名指向 struct：替换为底层 struct 名
-        free(struct_name);
-        struct_name = strdup(resolved_alias_type->struct_name);
-        // 如果别名已内嵌泛型参数（如 alias IntCell = Cell[int]），注入到 generic_type_args
-        if (alias_tp_count == 0 && resolved_alias_type->generic_count > 0 && resolved_alias_type->generic_args) {
-            generic_type_count = resolved_alias_type->generic_count;
-            generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * generic_type_count);
-            for (int gi = 0; gi < generic_type_count; gi++) {
-                generic_type_args[gi] = type_copy(resolved_alias_type->generic_args[gi]);
+    // 检查是否是别名，如果是则解析为底层 struct 名（仅当没有模块前缀时）
+    if (!module_name) {
+        char** alias_tp_names = NULL;
+        int alias_tp_count = 0;
+        TypeInfo* resolved_alias_type = find_alias_with_params(p, struct_name, &alias_tp_names, &alias_tp_count);
+        if (resolved_alias_type && resolved_alias_type->kind == TYPE_STRUCT && resolved_alias_type->struct_name) {
+            free(struct_name);
+            struct_name = strdup(resolved_alias_type->struct_name);
+            if (alias_tp_count == 0 && resolved_alias_type->generic_count > 0 && resolved_alias_type->generic_args) {
+                generic_type_count = resolved_alias_type->generic_count;
+                generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * generic_type_count);
+                for (int gi = 0; gi < generic_type_count; gi++) {
+                    generic_type_args[gi] = type_copy(resolved_alias_type->generic_args[gi]);
+                }
             }
         }
     }
@@ -668,7 +682,12 @@ Ast* parse_new(Parser* p) {
     if (p->lex.current.type == TOK_LBRACKET) {
         lexer_next(&p->lex);  // 跳过 '['
         int gt_capacity = 8;
-        generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * gt_capacity);
+        if (generic_type_args) {
+            // 已有别名预填充，扩容
+            generic_type_args = (TypeInfo**)realloc(generic_type_args, sizeof(TypeInfo*) * gt_capacity);
+        } else {
+            generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * gt_capacity);
+        }
 
         do {
             if (generic_type_count >= gt_capacity) {
@@ -686,79 +705,21 @@ Ast* parse_new(Parser* p) {
         consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
     }
 
-    // 支持 new module.StructName(...) 语法
-    if (p->lex.current.type == TOK_DOT) {
-        lexer_next(&p->lex); // 消费 '.'
-        if (p->lex.current.type != TOK_IDENT) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望 struct 名称");
-            free(struct_name);
-            return ast_new(AST_NULL, line);
-        }
-        // struct_name 作为模块名，读取真正的 struct 名称
-        char* real_struct_name = copy_string(p->lex.current.text, p->lex.current.len);
-        lexer_next(&p->lex); // 消费 struct 名称
-
-        // 期望 '('
-        if (!consume(p, TOK_LPAREN, "new 后面期望 '('")) {
-            free(struct_name);
-            free(real_struct_name);
-            return ast_new(AST_NULL, line);
-        }
-
-        // 创建 AST_STRUCT_INIT，struct_name 为 "module.StructName" 格式
-        Ast* ast = ast_new(AST_STRUCT_INIT, line);
-        // 拼接模块名和 struct 名
-        int full_name_len = strlen(struct_name) + 1 + strlen(real_struct_name) + 1;
-        char* full_name = (char*)malloc(full_name_len);
-        snprintf(full_name, full_name_len, "%s.%s", struct_name, real_struct_name);
-        ast->u.struct_init.struct_name = full_name;
-        free(struct_name);
-        free(real_struct_name);
-        ast->u.struct_init.field_names = NULL;
-        ast->u.struct_init.field_values = NULL;
-        ast->u.struct_init.field_count = 0;
-        ast->u.struct_init.generic_type_args = generic_type_args;
-        ast->u.struct_init.generic_type_count = generic_type_count;
-
-        int capacity = 8;
-        ast->u.struct_init.field_names = (char**)malloc(sizeof(char*) * capacity);
-        ast->u.struct_init.field_values = (Ast**)malloc(sizeof(Ast*) * capacity);
-
-        if (p->lex.current.type != TOK_RPAREN) {
-            do {
-                if (p->lex.current.type != TOK_IDENT) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望字段名");
-                    break;
-                }
-                char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
-                lexer_next(&p->lex);
-                if (!consume(p, TOK_EQ, "期望 '='")) {
-                    free(field_name);
-                    break;
-                }
-                Ast* field_value = parse_expression(p);
-                if (ast->u.struct_init.field_count >= capacity) {
-                    capacity *= 2;
-                    ast->u.struct_init.field_names = (char**)realloc(ast->u.struct_init.field_names,
-                                                                      sizeof(char*) * capacity);
-                    ast->u.struct_init.field_values = (Ast**)realloc(ast->u.struct_init.field_values,
-                                                                      sizeof(Ast*) * capacity);
-                }
-                ast->u.struct_init.field_names[ast->u.struct_init.field_count] = field_name;
-                ast->u.struct_init.field_values[ast->u.struct_init.field_count] = field_value;
-                ast->u.struct_init.field_count++;
-            } while (match(p, TOK_COMMA));
-        }
-
-        consume(p, TOK_RPAREN, "期望 ')'");
-        return ast;
-    }
-
-    // 普通 new StructName(...) 语法
-    // 期望 '('
+    // 有模块前缀 or 普通路径：都需要 '('
     if (!consume(p, TOK_LPAREN, "new 后面期望 '('")) {
+        if (module_name) free(module_name);
         free(struct_name);
         return ast_new(AST_NULL, line);
+    }
+
+    // 拼接模块前缀
+    if (module_name) {
+        int full_len = (int)strlen(module_name) + 1 + (int)strlen(struct_name) + 1;
+        char* full = (char*)malloc(full_len);
+        snprintf(full, full_len, "%s.%s", module_name, struct_name);
+        free(module_name);
+        free(struct_name);
+        struct_name = full;
     }
 
     // 复用 parse_struct_init 的逻辑：解析命名参数列表
