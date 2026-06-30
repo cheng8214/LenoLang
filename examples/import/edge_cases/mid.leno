@@ -1,0 +1,32 @@
+// 中间层
+import "core.leno" as c
+use c.sys_lib
+use c.Data
+use c.Engine
+use c.Runable
+use c.Runner
+
+export func getSys(): sys_lib { return c.loadSys() }
+
+export func makeData(u32 id, u32 val): Data {
+    var d = Data.malloc()
+    d.id = id; d.value = val
+    return d
+}
+
+export struct Wrapper {
+    Engine  eng = null
+    sys_lib lib = null
+}
+export func wrapEngine(): Wrapper {
+    return new Wrapper(eng = c.makeEngine("mid"), lib = c.loadSys())
+}
+
+export func getRunable(): Runable { return c.makeRunner() }
+
+// enum 通过 int 传递
+export func getColorName(int col): string {
+    if col == c.Color.Red   { return "Red" }
+    if col == c.Color.Green { return "Green" }
+    return "Blue"
+}

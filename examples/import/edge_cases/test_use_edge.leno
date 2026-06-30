@@ -1,0 +1,34 @@
+// use 边界: clib/cstruct/struct 类型声明
+import "core.leno" as c
+use c.sys_lib
+use c.Data
+use c.Engine
+
+main() {
+    print("=== use边界 ===")
+
+    // clib
+    sys_lib s = c.loadSys()
+    print("1. clib: " + s.abs(-5) as int)
+
+    // cstruct malloc
+    var d = Data.malloc()
+    d.id = 1; d.value = 100
+    print("2. cstruct: " + d.id)
+    d.free()
+
+    // struct
+    Engine e = c.makeEngine("e")
+    sys_lib el = e.lib
+    print("3. struct: " + el.abs(-7) as int)
+
+    // 重复 use
+    use c.sys_lib
+    sys_lib s2 = c.loadSys()
+    print("4. 重复use: " + s2.abs(-11) as int)
+
+    // enum 不支持 use，用模块名
+    print("5. enum: " + c.Color.Blue)
+
+    print("=== 通过 ===")
+}
