@@ -1,7 +1,0 @@
-import "sub/lib_shared.leno" as sub
-use sub.math_lib
-use sub.Dir
-main() {
-    print("1. " + sub.loadMath().abs(-5) as int)
-    print("2. " + Dir.Down)
-}

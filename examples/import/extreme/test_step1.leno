@@ -1,6 +1,0 @@
-import "sub/lib_shared.leno" as sub
-use sub.math_lib
-main() {
-    var m = sub.loadMath()
-    print(m.abs(-5) as int)
-}
