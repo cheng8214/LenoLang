@@ -9,7 +9,7 @@ export struct Renderer {
     Ptr handle; bool ok
 
     func initDefault(Ptr window): bool {
-        handle = core.lib().SDL_CreateRenderer(window, null as string)
+        handle = core.lib().SDL_CreateRenderer(window, null as string) as Ptr
         ok = handle != null
         return ok
     }

@@ -1,6 +1,7 @@
 // sdl_event.leno — SDL3 事件封装
 import ffi
 import "sdl_core.leno" as core
+use core.sdl3
 
 export struct Event {
     Ptr raw; bool has

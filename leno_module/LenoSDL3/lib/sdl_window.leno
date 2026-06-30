@@ -1,5 +1,6 @@
 // sdl_window.leno — SDL3 窗口封装
 import "sdl_core.leno" as core
+use core.sdl3
 import "sdl_renderer.leno" as renderer
 import "sdl_event.leno" as event
 
@@ -15,7 +16,7 @@ export struct Window {
         var w     = opts.get("w", 800) as int
         var h     = opts.get("h", 600) as int
         var flags = opts.get("flags", 0) as int
-        handle = core.lib().SDL_CreateWindow(title, w, h, flags)
+        handle = core.lib().SDL_CreateWindow(title, w, h, flags) as Ptr
         ok = handle != null
         return ok
     }

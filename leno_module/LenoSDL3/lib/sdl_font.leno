@@ -1,6 +1,9 @@
 // sdl_font.leno — SDL3_ttf 字体绑定
 import ffi
+import dirs
+import files
 import "sdl_core.leno" as core
+use core.sdl3
 
 // ==================== clib sdl3_ttf ====================
 
@@ -78,7 +81,7 @@ export struct TextTexture {
 
     func createFromSurface(Ptr renderer, Ptr surface): bool {
         if surface == null { return false }
-        texture = core.lib().SDL_CreateTextureFromSurface(renderer, surface)
+        texture = core.lib().SDL_CreateTextureFromSurface(renderer, surface) as Ptr
         ok = texture != null
         core.lib().SDL_DestroySurface(surface)
         return ok

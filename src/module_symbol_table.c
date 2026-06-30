@@ -1687,7 +1687,8 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 }
                             }
 
-                            while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != '}') after_cstruct++;
+                            while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != '}' && *after_cstruct != ';') after_cstruct++;
+                            if (*after_cstruct == ';') after_cstruct++;
                         }
 
                         // 添加 cstruct 到符号表（包括字段和方法）
