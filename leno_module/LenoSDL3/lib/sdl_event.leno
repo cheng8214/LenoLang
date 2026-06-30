@@ -45,5 +45,5 @@ export struct Event {
 }
 
 export func createEvent(): Event {
-    var ev = new Event(); ev.init(); return ev
+    Event ev = new Event(); ev.init(); return ev
 }

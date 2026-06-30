@@ -125,7 +125,7 @@ export func ttfQuit() {
 }
 
 export func createFont(string path, float ptsize): Font {
-    var font = new Font(); font.load(path, ptsize); return font
+    Font font = new Font(); font.load(path, ptsize); return font
 }
 
 export func createTextTexture(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {

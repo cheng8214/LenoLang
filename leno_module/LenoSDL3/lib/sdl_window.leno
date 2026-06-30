@@ -34,11 +34,11 @@ export struct Window {
         if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false }
     }
 
-    func run(Event onEvent, Renderer onRender) {
-        var ren = renderer.createRenderer(handle)
+    func run(var onEvent, var onRender) {
+        Renderer ren = renderer.createRenderer(handle)
         if not ren.ok { destroy(); return }
 
-        var ev = event.createEvent()
+        Event ev = event.createEvent()
         var running = true
         while running {
             while ev.poll() {
@@ -56,5 +56,5 @@ export struct Window {
 }
 
 export func createWindow(Dict opts): Window {
-    var win = new Window(); win.init(opts); return win
+    Window win = new Window(); win.init(opts); return win
 }

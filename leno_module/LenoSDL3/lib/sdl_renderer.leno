@@ -116,5 +116,5 @@ export struct Renderer {
 }
 
 export func createRenderer(Ptr window): Renderer {
-    var ren = new Renderer(); ren.initDefault(window); return ren
+    Renderer ren = new Renderer(); ren.initDefault(window); return ren
 }
