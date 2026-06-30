@@ -15,7 +15,7 @@ export struct Event {
     }
 
     func poll(): bool {
-        has = _lib.SDL_PollEvent(raw) != 0
+        has = _lib.SDL_PollEvent(raw)
         return has
     }
 

@@ -10,7 +10,7 @@ sdl3 _lib = core.lib()
 // ==================== clib sdl3_ttf ====================
 
 clib sdl3_ttf {
-    i32  TTF_Init()
+    bool TTF_Init()
     void TTF_Quit()
     Ptr  TTF_OpenFont(str8 file, f32 ptsize)
     void TTF_CloseFont(Ptr font)
@@ -115,7 +115,7 @@ export func ttfInit(): bool {
     if _ttfInited { return true }
     sdl3_ttf l = ttfLib()
     if l == null { return false }
-    _ttfInited = l.TTF_Init() != 0
+    _ttfInited = l.TTF_Init()
     return _ttfInited
 }
 

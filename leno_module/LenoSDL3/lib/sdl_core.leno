@@ -36,50 +36,50 @@ export cstruct SDL_Color {
 // ==================== clib sdl3 ====================
 
 clib sdl3 {
-    i32  SDL_Init(u32 flags)
+    bool SDL_Init(u32 flags)
     void SDL_Quit()
     str8 SDL_GetError()
 
     Ptr  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
     void SDL_DestroyWindow(Ptr window)
-    i32  SDL_SetWindowResizable(Ptr window, i32 resizable)
-    i32  SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
+    bool SDL_SetWindowResizable(Ptr window, i32 resizable)
+    bool SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
 
     Ptr  SDL_CreateRenderer(Ptr window, str8 name)
     void SDL_DestroyRenderer(Ptr renderer)
-    i32  SDL_RenderClear(Ptr renderer)
-    i32  SDL_RenderPresent(Ptr renderer)
-    i32  SDL_SetRenderDrawColor(Ptr renderer, u8 r, u8 g, u8 b, u8 a)
-    i32  SDL_SetRenderDrawColorFloat(Ptr renderer, f32 r, f32 g, f32 b, f32 a)
-    i32  SDL_RenderFillRect(Ptr renderer, Ptr rect)
-    i32  SDL_RenderRect(Ptr renderer, Ptr rect)
-    i32  SDL_RenderLine(Ptr renderer, f32 x1, f32 y1, f32 x2, f32 y2)
-    i32  SDL_RenderPoint(Ptr renderer, f32 x, f32 y)
-    i32  SDL_SetRenderVSync(Ptr renderer, i32 vsync)
+    bool SDL_RenderClear(Ptr renderer)
+    bool SDL_RenderPresent(Ptr renderer)
+    bool SDL_SetRenderDrawColor(Ptr renderer, u8 r, u8 g, u8 b, u8 a)
+    bool SDL_SetRenderDrawColorFloat(Ptr renderer, f32 r, f32 g, f32 b, f32 a)
+    bool SDL_RenderFillRect(Ptr renderer, Ptr rect)
+    bool SDL_RenderRect(Ptr renderer, Ptr rect)
+    bool SDL_RenderLine(Ptr renderer, f32 x1, f32 y1, f32 x2, f32 y2)
+    bool SDL_RenderPoint(Ptr renderer, f32 x, f32 y)
+    bool SDL_SetRenderVSync(Ptr renderer, i32 vsync)
 
-    i32  SDL_RenderLines(Ptr renderer, Ptr points, i32 count)
-    i32  SDL_RenderPoints(Ptr renderer, Ptr points, i32 count)
-    i32  SDL_RenderRects(Ptr renderer, Ptr rects, i32 count)
-    i32  SDL_RenderFillRects(Ptr renderer, Ptr rects, i32 count)
+    bool SDL_RenderLines(Ptr renderer, Ptr points, i32 count)
+    bool SDL_RenderPoints(Ptr renderer, Ptr points, i32 count)
+    bool SDL_RenderRects(Ptr renderer, Ptr rects, i32 count)
+    bool SDL_RenderFillRects(Ptr renderer, Ptr rects, i32 count)
 
-    i32  SDL_SetRenderScale(Ptr renderer, f32 sx, f32 sy)
-    i32  SDL_SetRenderDrawBlendMode(Ptr renderer, i32 mode)
-    i32  SDL_SetRenderClipRect(Ptr renderer, Ptr rect)
-    i32  SDL_SetRenderLogicalSize(Ptr renderer, i32 w, i32 h)
-    i32  SDL_SetRenderViewport(Ptr renderer, Ptr rect)
+    bool SDL_SetRenderScale(Ptr renderer, f32 sx, f32 sy)
+    bool SDL_SetRenderDrawBlendMode(Ptr renderer, i32 mode)
+    bool SDL_SetRenderClipRect(Ptr renderer, Ptr rect)
+    bool SDL_SetRenderLogicalSize(Ptr renderer, i32 w, i32 h)
+    bool SDL_SetRenderViewport(Ptr renderer, Ptr rect)
 
-    i32  SDL_GetRenderDrawColor(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
-    i32  SDL_GetRenderDrawColorFloat(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
+    bool SDL_GetRenderDrawColor(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
+    bool SDL_GetRenderDrawColorFloat(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
 
     Ptr  SDL_GetKeyboardState(Ptr numkeys)
-    i32  SDL_PollEvent(SDL_Event event)
+    bool SDL_PollEvent(Ptr event)
 
     void SDL_Delay(u32 ms)
     u64  SDL_GetTicks()
 
     Ptr  SDL_CreateTextureFromSurface(Ptr renderer, Ptr surface)
     void SDL_DestroyTexture(Ptr texture)
-    i32  SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
+    bool SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
     void SDL_DestroySurface(Ptr surface)
 }
 
@@ -171,7 +171,7 @@ export func lib(): sdl3 {
 export func init(int flags): bool {
     sdl3 l = lib()
     if l == null { return false }
-    return l.SDL_Init(flags) != 0
+    return l.SDL_Init(flags)
 }
 
 export func initVideo(): bool { return init(INIT_VIDEO) }
