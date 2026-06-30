@@ -27,7 +27,7 @@ export struct Window {
     }
 
     func setResizable(bool v) {
-        if ok { _lib.SDL_SetWindowResizable(handle, v as int) }
+        if ok { _lib.SDL_SetWindowResizable(handle, v) }
     }
 
     func destroy() {
