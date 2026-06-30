@@ -1,0 +1,14 @@
+// 测试模块：定义 export cstruct
+import ffi
+
+export cstruct TT {
+    u32 id
+    u32 value
+}
+
+export func makeTT(u32 id, u32 value): TT {
+    var t = TT.malloc()
+    t.id = id
+    t.value = value
+    return t
+}

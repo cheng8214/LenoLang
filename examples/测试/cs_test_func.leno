@@ -1,0 +1,9 @@
+// 调试：测试 cs.TT 是否存在
+import "cs_def.leno" as cs
+
+main() {
+    // 先测试通过函数返回
+    var t2 = cs.makeTT(2, 200)
+    print("makeTT: id=" + t2.id + " value=" + t2.value)
+    t2.free()
+}
