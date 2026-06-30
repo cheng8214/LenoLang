@@ -5,7 +5,9 @@ use core.sdl3
 sdl3 _lib = core.lib()
 
 import "sdl_renderer.leno" as renderer
+use renderer.Renderer
 import "sdl_event.leno" as event
+use event.Event
 
 export struct Window {
     Ptr handle; bool ok
@@ -32,7 +34,7 @@ export struct Window {
         if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false }
     }
 
-    func run(var onEvent, var onRender) {
+    func run(Event onEvent, Renderer onRender) {
         var ren = renderer.createRenderer(handle)
         if not ren.ok { destroy(); return }
 
