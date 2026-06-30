@@ -169,7 +169,13 @@
             ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(module_info->sym_table, symbol_name);
             if (struct_sym) {
                 // 将 struct/cstruct 定义注册到当前作用域
-                SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                // cstruct 使用 SYM_CSTRUCT，struct 使用 SYM_STRUCT，以便 codegen 生成正确的指令
+                SymKind kind;
+                if (struct_sym->is_cstruct) {
+                    kind = SYM_CSTRUCT;
+                } else {
+                    kind = SYM_STRUCT;
+                }
                 Symbol* sym = scope_define(s->current, symbol_name, kind);
                 if (!sym) {
                     // scope_define 返回 NULL 可能是因为同名冲突

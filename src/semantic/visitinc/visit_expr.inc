@@ -110,6 +110,50 @@
                     }
                 }
             }
+            // cstruct 字段赋值：设置字段索引
+            else if (obj_type && obj_type->kind == TYPE_CSTRUCT) {
+                if (ast->u.index_assign.index->kind == AST_STRING) {
+                    char* field_name = ast->u.index_assign.index->u.string.value;
+                    if (obj_type->struct_name) {
+                        // 先尝试从作用域查找
+                        Symbol* cstruct_def_sym = scope_resolve(s->current, obj_type->struct_name);
+                        if (cstruct_def_sym && cstruct_def_sym->struct_field_count > 0) {
+                            for (int j = 0; j < cstruct_def_sym->struct_field_count; j++) {
+                                if (strcmp(cstruct_def_sym->struct_field_names[j], field_name) == 0) {
+                                    ast->u.index_assign.field_index = j;
+                                    break;
+                                }
+                            }
+                        } else {
+                            // 从全局 cstruct 定义表查找
+                            ObjCStructDef* cdef = cstruct_def_find(obj_type->struct_name);
+                            if (cdef) {
+                                int idx = cstruct_get_field_index(cdef, field_name);
+                                if (idx >= 0) {
+                                    ast->u.index_assign.field_index = idx;
+                                }
+                            } else {
+                                // 从导入模块的符号表查找
+                                for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                    ImportedModuleInfo* mod = &s->imported_modules[mi];
+                                    if (mod->sym_table) {
+                                        ModuleStructSymbol* ssym = module_symbol_table_find_struct(mod->sym_table, obj_type->struct_name);
+                                        if (ssym && ssym->is_cstruct) {
+                                            for (int fi = 0; fi < ssym->field_count; fi++) {
+                                                if (strcmp(ssym->fields[fi].name, field_name) == 0) {
+                                                    ast->u.index_assign.field_index = fi;
+                                                    break;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // 检查数组索引赋值的元素类型
             else if (obj_type && obj_type->kind == TYPE_ARRAY) {
                 TypeInfo* value_type = infer_expr_type(s, ast->u.index_assign.value);

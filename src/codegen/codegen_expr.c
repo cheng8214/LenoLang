@@ -1368,6 +1368,23 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 break;
             }
 
+            // 检查是否是类型访问（struct/cstruct/face），直接获取类型定义
+            if (ast->cached_type) {
+                if (ast->cached_type->kind == TYPE_CSTRUCT && ast->cached_type->struct_name) {
+                    ObjString* type_name = str_copy(ast->cached_type->struct_name,
+                                                      (int)strlen(ast->cached_type->struct_name));
+                    int name_const = make_constant(gen, val_obj((Object*)type_name));
+                    emit_byte(gen, OP_GET_CSTRUCT_DEF, ast->line);
+                    emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, name_const & 0xff, ast->line);
+                    break;
+                }
+                if (ast->cached_type->kind == TYPE_STRUCT && ast->cached_type->struct_name) {
+                    // struct 类型：从模块对象中通过 OP_INDEX 获取
+                    // fall through to default handling below
+                }
+            }
+
             // .leno 用户模块成员访问
             Symbol* module_sym = scope_resolve(gen->sem->root_scope, ast->u.module_access.module_name);
             if (!module_sym || (module_sym->kind != SYM_GLOBAL && module_sym->kind != SYM_MODULE)) {

@@ -1580,6 +1580,36 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                 }
                 
+                // 如果还是没找到，尝试从全局 cstruct 定义表查找（跨模块导入的 cstruct）
+                if (ast->u.field_access.field_index < 0 && obj_type->struct_name) {
+                    ObjCStructDef* cdef = cstruct_def_find(obj_type->struct_name);
+                    if (cdef) {
+                        int idx = cstruct_get_field_index(cdef, field_name);
+                        if (idx >= 0) {
+                            result = type_new(cdef->fields[idx].type);
+                            ast->u.field_access.field_index = idx;
+                        }
+                    } else {
+                        // 全局表可能还没注册（语义分析阶段模块尚未编译执行），从导入模块的符号表查找
+                        for (int mi = 0; mi < s->imported_module_count; mi++) {
+                            ImportedModuleInfo* mod = &s->imported_modules[mi];
+                            if (mod->sym_table) {
+                                ModuleStructSymbol* ssym = module_symbol_table_find_struct(mod->sym_table, obj_type->struct_name);
+                                if (ssym && ssym->is_cstruct) {
+                                    for (int fi = 0; fi < ssym->field_count; fi++) {
+                                        if (strcmp(ssym->fields[fi].name, field_name) == 0) {
+                                            result = type_new(ssym->fields[fi].type);
+                                            ast->u.field_access.field_index = fi;
+                                            break;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 // 如果还是没找到，返回 ANY
                 if (ast->u.field_access.field_index < 0) {
                     result = type_new(TYPE_ANY);

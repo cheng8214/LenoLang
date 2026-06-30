@@ -108,6 +108,42 @@
                         // 注意：单层字段访问（如 o.inner）不需要检查 null 默认值
                         // 因为获取 null 本身不会运行时出错
                         // 链式访问（如 o.inner.value）的 null 检查在 AST_INDEX 中处理
+                    } else if (!struct_sym && obj_type->kind == TYPE_CSTRUCT && obj_type->struct_name) {
+                        // 从全局 cstruct 定义表查找（跨模块导入的 cstruct）
+                        ObjCStructDef* cdef = cstruct_def_find(obj_type->struct_name);
+                        if (cdef) {
+                            int idx = cstruct_get_field_index(cdef, field_name);
+                            if (idx >= 0) {
+                                ast->u.field_access.field_index = idx;
+                            } else {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", field_name);
+                                error_add(ERR_SEMANTIC, ast->line, msg);
+                            }
+                        } else {
+                            // 全局表可能还没注册（语义分析阶段模块尚未编译执行），从导入模块的符号表查找
+                            int found = 0;
+                            for (int mi = 0; mi < s->imported_module_count && !found; mi++) {
+                                ImportedModuleInfo* mod = &s->imported_modules[mi];
+                                if (mod->sym_table) {
+                                    ModuleStructSymbol* ssym = module_symbol_table_find_struct(mod->sym_table, obj_type->struct_name);
+                                    if (ssym && ssym->is_cstruct) {
+                                        for (int fi = 0; fi < ssym->field_count; fi++) {
+                                            if (strcmp(ssym->fields[fi].name, field_name) == 0) {
+                                                ast->u.field_access.field_index = fi;
+                                                found = 1;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (!found) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", field_name);
+                                error_add(ERR_SEMANTIC, ast->line, msg);
+                            }
+                        }
                     }
                 }
                 if (obj_type) type_free(obj_type);
