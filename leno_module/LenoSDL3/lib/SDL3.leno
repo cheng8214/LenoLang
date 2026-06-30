@@ -21,14 +21,6 @@ use wnd.Window
 use fnt.Font
 use fnt.TextTexture
 
-// 导出工厂函数（提供返回类型给模块符号表）
-export func newRenderer(Ptr w):   Renderer    { return r.createRenderer(w) }
-export func newEvent():           Event       { return evt.createEvent() }
-export func newWindow(Dict o):    Window      { return wnd.createWindow(o) }
-export func newFont(string p, float s): Font  { return fnt.createFont(p, s) }
-export func newTextTexture(Ptr ren, Font f, string t, int r, int g, int b): TextTexture {
-    return fnt.createTextTexture(ren, f, t, r, g, b)
-}
 
 // ==================== 重新导出常量 ====================
 // INIT 标志
