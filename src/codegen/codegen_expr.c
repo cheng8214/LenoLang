@@ -1178,6 +1178,9 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                         case SYM_UPVALUE:
                             emit_bytes_2(gen, OP_GET_UPVALUE, lib_ref->index, ast->line);
                             break;
+                        case SYM_MODULE:
+                            emit_bytes_2(gen, OP_GET_MODULE_VAR, lib_ref->index, ast->line);
+                            break;
                         default:
                             break;
                     }
