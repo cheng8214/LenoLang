@@ -5461,13 +5461,13 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 
 | 特性 | `import` | `use` |
 |------|----------|-------|
-| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/clib/face/enum 导入当前作用域 |
+| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/cstruct/clib/face/enum 导入当前作用域 |
 | 语法 | `import "路径" as 别名` | `use 别名.名称` |
-| 适用范围 | 模块中的所有导出内容 | struct、clib、face 和 enum 类型 |
+| 适用范围 | 模块中的所有导出内容 | struct、cstruct、clib、face、enum 类型 |
 | 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` |
 
 > **重要说明：**
-> - `use` 只能导入 **struct**、**clib**、**face** 和 **enum** 类型
+> - `use` 只能导入 **struct**、**cstruct**、**clib**、**face** 和 **enum** 类型
 > - clib 类型需要模块中存在**返回该 clib 类型的导出函数**
 > - enum 导入后可直接用 `EnumName.Member` 访问成员值
 > - **func**、**var** 必须通过模块名访问（如 `module.func()`）

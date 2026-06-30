@@ -562,15 +562,17 @@ main() {
 | 用法 | 支持 | 说明 |
 |------|------|------|
 | `use module.Struct` | ✅ | 导入后可用 `new Struct()` 或 `new Struct[Type]()` |
+| `use module.CStruct` | ✅ | 导入 cstruct 类型，可用 `CStruct.malloc()` |
 | `use module.Clib` | ✅ | 导入 clib 类型到当前作用域（需模块有函数返回该 clib 类型） |
 | `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
 | `use module.Enum` | ✅ | 导入 enum 类型，可用 `EnumName.Member` |
 | `use module.func` | ❌ | 函数必须通过模块名访问 |
 | `use module.var` | ❌ | 变量必须通过模块名访问 |
 
-**为什么 use 只支持 struct/clib/face/enum？**
+**为什么 use 只支持 struct/cstruct/clib/face/enum？**
 
 - **struct**：编译时类型，需要用于变量声明（如 `Point p`）
+- **cstruct**：FFI C 结构体类型，需要用 `Type.malloc()` 分配内存
 - **clib**：FFI 库类型，需要用于变量声明（如 `core_lib c = module.loadCore()`）
 - **face**：编译时类型，需要用于函数参数（如 `func printArea(Shape s)`）
 - **enum**：编译时常量类型，导入后可用 `EnumName.Member` 访问值
