@@ -5564,6 +5564,33 @@ main() {
 }
 ```
 
+### cstruct 跨模块使用
+
+`use` 也支持导入其他模块定义的 `cstruct` 类型：
+
+```leno
+// cs_def.leno
+import ffi
+export cstruct TT {
+    u32 id
+    u32 value
+}
+```
+
+```leno
+// main.leno - use 导入后直接用类型名
+import "cs_def.leno" as cs
+use cs.TT
+
+main() {
+    var t = TT.malloc()        // ✅ 直接使用 TT 类型名
+    t.id = 1; t.value = 100
+    t.free()
+}
+```
+
+也可以不 `use`，通过模块路径访问：`var t = cs.TT.malloc()`。
+
 ### 导入泛型 struct 并调用方法
 
 模块中导出的泛型 struct 可以通过 `use` 导入类型，然后直接实例化和调用方法：

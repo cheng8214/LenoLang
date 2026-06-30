@@ -796,11 +796,14 @@ struct RendererHolder {
 
 main() {
     var h = new RendererHolder(renderer = base.loadRenderer(), name = "main")
-    var v = h.renderer.do_something(10) as int
+    renderer_lib r = h.renderer              // ✅ 跨模块后类型正确推断
+    var v = r.do_something(10) as int
 }
 ```
 
-### 8.6.5 cstruct 跨模块使用
+> **💡 struct 字段 clib 类型跨模块**：使用 `use` 导入包含 clib 字段的 struct 后，字段类型会自动保留为 clib 类型，不再需要中间变量绕开。
+
+### 8.7 cstruct 跨模块使用
 
 `use` 也支持导入其他模块定义的 `cstruct` 类型。cstruct 是 FFI 中用于映射 C 结构体的类型定义，可以通过 `use` 导入后直接使用：
 
