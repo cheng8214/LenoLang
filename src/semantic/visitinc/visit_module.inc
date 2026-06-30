@@ -339,20 +339,53 @@
                 break;
             }
 
-            // 尝试查找 clib 类型（通过检查函数返回类型）
+            // 尝试查找 clib 类型（优先查符号表，再查函数返回类型）
             {
                 int clib_found = 0;
-                for (int fi = 0; fi < module_info->sym_table->func_count && !clib_found; fi++) {
-                    ModuleFuncSymbol* func = &module_info->sym_table->funcs[fi];
-                    if (func->return_type == TYPE_CLIB && func->return_struct_name &&
-                        strcmp(func->return_struct_name, symbol_name) == 0) {
-                        clib_found = 1;
-                        SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
-                        Symbol* sym = scope_define(s->current, symbol_name, kind);
-                        if (sym) {
-                            sym->kind = SYM_TYPE;
-                            sym->type = type_new(TYPE_CLIB);
-                            sym->type->struct_name = strdup(symbol_name);
+                // 先尝试从模块符号表的 clibs 中查找
+                ModuleClibSymbol* clib_sym_tbl = NULL;
+                if (module_info->sym_table) {
+                    clib_sym_tbl = module_symbol_table_find_clib(module_info->sym_table, symbol_name);
+                }
+                if (clib_sym_tbl) {
+                    clib_found = 1;
+                    SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                    Symbol* sym = scope_define(s->current, symbol_name, kind);
+                    if (sym) {
+                        sym->kind = SYM_TYPE;
+                        sym->type = type_new(TYPE_CLIB);
+                        sym->type->struct_name = strdup(symbol_name);
+                        // 填充 clib 函数签名
+                        sym->clib_func_count = clib_sym_tbl->func_count;
+                        sym->clib_func_names = (char**)malloc(sizeof(char*) * clib_sym_tbl->func_count);
+                        sym->clib_func_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * clib_sym_tbl->func_count);
+                        sym->clib_func_param_counts = (int*)malloc(sizeof(int) * clib_sym_tbl->func_count);
+                        sym->clib_func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * clib_sym_tbl->func_count);
+                        for (int fi = 0; fi < clib_sym_tbl->func_count; fi++) {
+                            sym->clib_func_names[fi] = strdup(clib_sym_tbl->funcs[fi].name);
+                            sym->clib_func_return_types[fi] = type_new(clib_sym_tbl->funcs[fi].return_type);
+                            sym->clib_func_param_counts[fi] = clib_sym_tbl->funcs[fi].param_count;
+                            sym->clib_func_param_types[fi] = (TypeInfo**)malloc(sizeof(TypeInfo*) * clib_sym_tbl->funcs[fi].param_count);
+                            for (int pi = 0; pi < clib_sym_tbl->funcs[fi].param_count; pi++) {
+                                sym->clib_func_param_types[fi][pi] = type_new(clib_sym_tbl->funcs[fi].param_types[pi]);
+                            }
+                        }
+                    }
+                }
+                // 回退：通过检查函数返回类型
+                if (!clib_found) {
+                    for (int fi = 0; fi < module_info->sym_table->func_count && !clib_found; fi++) {
+                        ModuleFuncSymbol* func = &module_info->sym_table->funcs[fi];
+                        if (func->return_type == TYPE_CLIB && func->return_struct_name &&
+                            strcmp(func->return_struct_name, symbol_name) == 0) {
+                            clib_found = 1;
+                            SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                            Symbol* sym = scope_define(s->current, symbol_name, kind);
+                            if (sym) {
+                                sym->kind = SYM_TYPE;
+                                sym->type = type_new(TYPE_CLIB);
+                                sym->type->struct_name = strdup(symbol_name);
+                            }
                         }
                     }
                 }

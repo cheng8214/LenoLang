@@ -54,6 +54,23 @@ typedef struct {
     int* member_values;         // 成员值数组
 } ModuleEnumSymbol;
 
+// 模块 clib 函数符号
+typedef struct {
+    char* name;                 // 函数名
+    TypeKind return_type;       // 返回类型
+    char* return_struct_name;   // 返回 struct 名（为 NULL 则为空字符串兼容）
+    int param_count;            // 参数数量
+    TypeKind* param_types;      // 参数类型数组
+    char** param_struct_names;  // 参数 struct 名数组（可为 NULL）
+} ModuleClibFuncSymbol;
+
+// 模块 clib 符号
+typedef struct {
+    char* name;                 // clib 名称
+    int func_count;             // 函数数量
+    ModuleClibFuncSymbol* funcs; // 函数定义数组
+} ModuleClibSymbol;
+
 // 模块 face 方法符号
 typedef struct {
     char* name;                 // 方法名
@@ -104,6 +121,9 @@ typedef struct {
     ModuleAliasSymbol* aliases; // 类型别名符号数组
     int alias_count;            // 别名数量
     int alias_capacity;         // 别名数组容量
+    ModuleClibSymbol* clibs;    // clib 符号数组
+    int clib_count;             // clib 数量
+    int clib_capacity;          // clib 数组容量
 } ModuleSymbolTable;
 
 // 创建模块符号表
@@ -155,6 +175,15 @@ ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, cons
 
 // 添加别名符号
 void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeInfo* type_info);
+
+// 查找 clib 符号
+ModuleClibSymbol* module_symbol_table_find_clib(ModuleSymbolTable* table, const char* clib_name);
+
+// 添加 clib 符号
+void module_symbol_table_add_clib(ModuleSymbolTable* table, const char* name, int func_count, ModuleClibFuncSymbol* funcs);
+
+// clib 符号数量
+int module_symbol_table_clib_count(ModuleSymbolTable* table);
 
 // 从字符串解析完整类型（支持 int/float/string/bool 及 Array[T]/Dict[K,V]）
 TypeInfo* parse_type_from_string(const char* type_str);

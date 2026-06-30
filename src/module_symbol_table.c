@@ -32,6 +32,9 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     table->aliases = NULL;
     table->alias_count = 0;
     table->alias_capacity = 0;
+    table->clibs = NULL;
+    table->clib_count = 0;
+    table->clib_capacity = 0;
 
     return table;
 }
@@ -126,6 +129,22 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         }
     }
     free(table->aliases);
+
+    // 释放 clib 符号
+    for (int i = 0; i < table->clib_count; i++) {
+        free(table->clibs[i].name);
+        for (int j = 0; j < table->clibs[i].func_count; j++) {
+            free(table->clibs[i].funcs[j].name);
+            free(table->clibs[i].funcs[j].return_struct_name);
+            for (int k = 0; k < table->clibs[i].funcs[j].param_count; k++) {
+                free(table->clibs[i].funcs[j].param_struct_names[k]);
+            }
+            free(table->clibs[i].funcs[j].param_types);
+            free(table->clibs[i].funcs[j].param_struct_names);
+        }
+        free(table->clibs[i].funcs);
+    }
+    free(table->clibs);
 
     free(table);
 }
@@ -417,6 +436,52 @@ void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, T
     ModuleAliasSymbol* alias = &table->aliases[table->alias_count++];
     alias->name = strdup(name);
     alias->type_info = type_info ? type_copy(type_info) : NULL;
+}
+
+// 查找 clib 符号
+ModuleClibSymbol* module_symbol_table_find_clib(ModuleSymbolTable* table, const char* clib_name) {
+    if (!table || !clib_name) return NULL;
+    for (int i = 0; i < table->clib_count; i++) {
+        if (strcmp(table->clibs[i].name, clib_name) == 0) return &table->clibs[i];
+    }
+    return NULL;
+}
+
+// 添加 clib 符号
+void module_symbol_table_add_clib(ModuleSymbolTable* table, const char* name, int func_count, ModuleClibFuncSymbol* funcs) {
+    if (!table || !name || func_count <= 0) return;
+
+    if (table->clib_count >= table->clib_capacity) {
+        int new_capacity = table->clib_capacity == 0 ? 8 : table->clib_capacity * 2;
+        ModuleClibSymbol* new_clibs = (ModuleClibSymbol*)realloc(table->clibs, sizeof(ModuleClibSymbol) * new_capacity);
+        if (!new_clibs) return;
+        table->clibs = new_clibs;
+        table->clib_capacity = new_capacity;
+    }
+
+    ModuleClibSymbol* cl = &table->clibs[table->clib_count++];
+    cl->name = strdup(name);
+    cl->func_count = func_count;
+    cl->funcs = (ModuleClibFuncSymbol*)malloc(sizeof(ModuleClibFuncSymbol) * func_count);
+    for (int i = 0; i < func_count; i++) {
+        cl->funcs[i].name = strdup(funcs[i].name);
+        cl->funcs[i].return_type = funcs[i].return_type;
+        cl->funcs[i].return_struct_name = funcs[i].return_struct_name ? strdup(funcs[i].return_struct_name) : NULL;
+        cl->funcs[i].param_count = funcs[i].param_count;
+        cl->funcs[i].param_types = (TypeKind*)malloc(sizeof(TypeKind) * funcs[i].param_count);
+        cl->funcs[i].param_struct_names = (char**)calloc(funcs[i].param_count, sizeof(char*));
+        for (int j = 0; j < funcs[i].param_count; j++) {
+            cl->funcs[i].param_types[j] = funcs[i].param_types[j];
+            if (funcs[i].param_struct_names[j]) {
+                cl->funcs[i].param_struct_names[j] = strdup(funcs[i].param_struct_names[j]);
+            }
+        }
+    }
+}
+
+// clib 符号数量
+int module_symbol_table_clib_count(ModuleSymbolTable* table) {
+    return table ? table->clib_count : 0;
 }
 
 // ============================================================================
@@ -796,7 +861,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             }
         }
 
-        // 非 export 行也收集 clib（模块内的 clib 定义不带 export）
+        // 非 export 行也收集 clib 并解析函数签名（模块内的 clib 定义不带 export）
         if (strncmp(p, "clib", 4) == 0 && (p[4] == ' ' || p[4] == '\t' || p[4] == '\n' || p[4] == '\r')) {
             char* after_clib = p + 4;
             while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
@@ -805,16 +870,119 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
             int name_len = (int)(after_clib - name_start);
 
-            if (name_len > 0 && name_len < 64 && clib_name_count < 16) {
-                int already = 0;
-                for (int ci = 0; ci < clib_name_count; ci++) {
-                    if (strcmp(clib_names[ci], name_start) == 0) { already = 1; break; }
+            if (name_len > 0 && name_len < 64) {
+                char clib_name_buf[64];
+                strncpy(clib_name_buf, name_start, name_len);
+                clib_name_buf[name_len] = '\0';
+
+                // 收集名称
+                if (clib_name_count < 16) {
+                    int already = 0;
+                    for (int ci = 0; ci < clib_name_count; ci++) {
+                        if (strcmp(clib_names[ci], clib_name_buf) == 0) { already = 1; break; }
+                    }
+                    if (!already) {
+                        clib_names[clib_name_count] = strdup(clib_name_buf);
+                        clib_name_count++;
+                    }
                 }
-                if (!already) {
-                    clib_names[clib_name_count] = (char*)malloc(name_len + 1);
-                    strncpy(clib_names[clib_name_count], name_start, name_len);
-                    clib_names[clib_name_count][name_len] = '\0';
-                    clib_name_count++;
+
+                // 查找 { 并解析函数签名
+                while (*after_clib && *after_clib != '{' && *after_clib != '\n') after_clib++;
+                if (*after_clib == '{') {
+                    after_clib++;
+                    ModuleClibFuncSymbol funcs[256];
+                    int func_count = 0;
+
+                    while (*after_clib && *after_clib != '}' && func_count < 256) {
+                        while (*after_clib && (*after_clib == ' ' || *after_clib == '\t' || *after_clib == '\n' || *after_clib == '\r')) after_clib++;
+                        if (*after_clib == '}' || *after_clib == '\0') break;
+                        if (*after_clib == '/' && *(after_clib+1) == '/') {
+                            while (*after_clib && *after_clib != '\n') after_clib++;
+                            continue;
+                        }
+
+                        // 解析返回类型
+                        const char* ret_start = after_clib;
+                        while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                        int ret_len = (int)(after_clib - ret_start);
+                        if (ret_len <= 0) break;
+
+                        TypeKind ret_type = TYPE_I32; // 默认
+                        if (ret_len < 64) {
+                            char ret_buf[64]; strncpy(ret_buf, ret_start, ret_len); ret_buf[ret_len] = '\0';
+                            ret_type = parse_base_type(ret_buf);
+                        }
+
+                        while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+
+                        // 解析函数名
+                        const char* func_name_start = after_clib;
+                        while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                        int func_name_len = (int)(after_clib - func_name_start);
+                        if (func_name_len <= 0) break;
+
+                        funcs[func_count].name = (char*)malloc(func_name_len + 1);
+                        strncpy(funcs[func_count].name, func_name_start, func_name_len);
+                        funcs[func_count].name[func_name_len] = '\0';
+                        funcs[func_count].return_type = ret_type;
+                        funcs[func_count].return_struct_name = NULL;
+
+                        while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+
+                        // 解析参数列表 (...)
+                        TypeKind param_types[32]; char* param_structs[32];
+                        int param_count = 0;
+                        if (*after_clib == '(') {
+                            after_clib++;
+                            while (*after_clib && *after_clib != ')') {
+                                while (*after_clib && (*after_clib == ' ' || *after_clib == '\t' || *after_clib == ',' || *after_clib == '\n' || *after_clib == '\r')) after_clib++;
+                                if (*after_clib == ')' || *after_clib == '\0') break;
+
+                                const char* pt_start = after_clib;
+                                while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                                int pt_len = (int)(after_clib - pt_start);
+                                if (pt_len > 0 && pt_len < 64 && param_count < 32) {
+                                    char pt_buf[64]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                    param_types[param_count] = parse_base_type(pt_buf);
+                                    param_structs[param_count] = NULL;
+                                    param_count++;
+                                }
+                                while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                // 跳过参数名
+                                while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                            }
+                            if (*after_clib == ')') after_clib++;
+                        }
+
+                        funcs[func_count].param_count = param_count;
+                        funcs[func_count].param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+                        funcs[func_count].param_struct_names = (char**)calloc(param_count, sizeof(char*));
+                        for (int pi = 0; pi < param_count; pi++) {
+                            funcs[func_count].param_types[pi] = param_types[pi];
+                            funcs[func_count].param_struct_names[pi] = param_structs[pi]
+                                ? strdup(param_structs[pi]) : NULL;
+                        }
+                        func_count++;
+
+                        // 跳到下一行
+                        while (*after_clib && *after_clib != '\n' && *after_clib != '}') after_clib++;
+                        if (*after_clib == '\n') after_clib++;
+                    }
+                    if (*after_clib == '}') after_clib++;
+
+                    // 存储 clib 符号
+                    module_symbol_table_add_clib(table, clib_name_buf, func_count, funcs);
+
+                    // 释放临时数据
+                    for (int fi = 0; fi < func_count; fi++) {
+                        free(funcs[fi].name);
+                        for (int pi = 0; pi < funcs[fi].param_count; pi++) {
+                            free(funcs[fi].param_struct_names[pi]);
+                        }
+                        free(funcs[fi].param_types);
+                        free(funcs[fi].param_struct_names);
+                    }
                 }
             }
 
