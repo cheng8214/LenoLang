@@ -5,13 +5,14 @@ import "sdl_core.leno" as core
 use core.sdl3
 use core.SDL_FRect
 
-// 本地缓存 core.lib()，模块加载时一次初始化
-sdl3 _lib = core.lib()
+// 本地缓存 core.lib()，首次调用 initDefault 时自动初始化
+sdl3 _lib = null
 
 export struct Renderer {
     Ptr handle; bool ok
 
     func initDefault(Ptr window): bool {
+        if _lib == null { _lib = core.lib() }
         handle = _lib.SDL_CreateRenderer(window, null as string) as Ptr
         ok = handle != null
         return ok
