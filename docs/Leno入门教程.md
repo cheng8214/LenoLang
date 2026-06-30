@@ -5461,14 +5461,15 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 
 | 特性 | `import` | `use` |
 |------|----------|-------|
-| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/clib/face 导入当前作用域 |
+| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/clib/face/enum 导入当前作用域 |
 | 语法 | `import "路径" as 别名` | `use 别名.名称` |
-| 适用范围 | 模块中的所有导出内容 | struct、clib 和 face 类型 |
+| 适用范围 | 模块中的所有导出内容 | struct、clib、face 和 enum 类型 |
 | 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` |
 
 > **重要说明：**
-> - `use` 只能导入 **struct**、**clib** 和 **face** 类型
+> - `use` 只能导入 **struct**、**clib**、**face** 和 **enum** 类型
 > - clib 类型需要模块中存在**返回该 clib 类型的导出函数**
+> - enum 导入后可直接用 `EnumName.Member` 访问成员值
 > - **func**、**var**、**enum** 必须通过模块名访问（如 `math.distance()`）
 > - struct 实例仍需通过模块构造函数创建（如 `new math.Point(x=1, y=2)`）
 
@@ -5561,6 +5562,51 @@ struct Holder {
 main() {
     var h = new Holder(r = base.loadRenderer(), name = "a")
     var v = h.r.do_something(10) as int
+}
+```
+
+### enum 跨模块使用
+
+`use` 也支持导入其他模块定义的 `enum` 类型，导入后可直接用枚举名和成员：
+
+```leno
+// levels.leno
+export enum Level {
+    Low = 0
+    Mid = 1
+    High = 2
+}
+```
+
+```leno
+// main.leno
+import "levels.leno" as lv
+use lv.Level
+
+main() {
+    var a = Level.Low     // 0
+    var b = Level.High    // 2
+}
+```
+
+> **⚠️ 注意**：`use` 导入的 enum 可直接用 `EnumName.Member` 访问，本地 enum 仍使用原有方式。
+
+### face 方法的返回类型
+
+`face` 的方法返回类型支持 `clib` 类型（如需要返回 FFI 句柄的接口）：
+
+```leno
+import ffi
+
+clib handle_lib { i32 do_sth(i32 x) }
+
+export face Handleable {
+    func getHandle(): handle_lib
+}
+
+export struct Holder impl Handleable {
+    handle_lib _h = null
+    func getHandle(): handle_lib { return self._h }
 }
 ```
 
