@@ -1,0 +1,46 @@
+// sdl_event.leno — SDL3 事件封装
+import ffi
+import "sdl_core.leno" as core
+
+export struct Event {
+    Ptr raw; bool has
+
+    func init(): bool {
+        raw = ffi.malloc(128)
+        has = false
+        return true
+    }
+
+    func poll(): bool {
+        has = core.lib().SDL_PollEvent(raw) != 0
+        return has
+    }
+
+    func type(): int { return ffi.read_int(raw, 0) }
+
+    func isQuit(): bool          { return type() == core.EVENT_QUIT }
+    func isKeyDown(): bool       { return type() == core.EVENT_KEY_DOWN }
+    func isKeyUp(): bool         { return type() == core.EVENT_KEY_UP }
+    func isWindowClose(): bool   { return type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
+    func isWindowResized(): bool { return type() == core.EVENT_WINDOW_RESIZED }
+    func isMouseMotion(): bool   { return type() == core.EVENT_MOUSE_MOTION }
+    func isMouseButtonDown(): bool { return type() == core.EVENT_MOUSE_BUTTON_DOWN }
+    func isMouseButtonUp(): bool   { return type() == core.EVENT_MOUSE_BUTTON_UP }
+
+    func scancode(): int { return ffi.read_int(raw, 24) }
+
+    func mouseX(): float     { return ffi.read_float(raw, 28) }
+    func mouseY(): float     { return ffi.read_float(raw, 32) }
+    func mouseDX(): float    { return ffi.read_float(raw, 36) }
+    func mouseDY(): float    { return ffi.read_float(raw, 40) }
+    func mouseButton(): int  { return ffi.read_int(raw, 24) }
+    func windowID(): int     { return ffi.read_int(raw, 16) }
+
+    func uninit() {
+        if raw != null { ffi.free(raw); raw = null; has = false }
+    }
+}
+
+export func createEvent(): Event {
+    var ev = new Event(); ev.init(); return ev
+}

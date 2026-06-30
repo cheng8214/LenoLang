@@ -933,7 +933,25 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     if (resolved_path[0]) {
                         ModuleSymbolTable* dep_table = module_symbol_table_create(resolved_path);
                         if (dep_table) {
-                            if (module_symbol_table_scan_depth(dep_table, current_file, depth + 1) == 0) {
+                            // 解析当前模块的绝对路径，作为子模块扫描基准
+                            char dep_base[MAX_PATH_LEN] = {0};
+                            if (current_file && table->module_path) {
+                                strncpy(dep_base, current_file, MAX_PATH_LEN - 1);
+                                dep_base[MAX_PATH_LEN - 1] = '\0';
+                                char* last = strrchr(dep_base, '\\');
+                                if (!last) last = strrchr(dep_base, '/');
+                                if (last) {
+                                    *(last + 1) = '\0';
+                                    strncat(dep_base, table->module_path, MAX_PATH_LEN - strlen(dep_base) - 1);
+                                } else {
+                                    strncpy(dep_base, table->module_path, MAX_PATH_LEN - 1);
+                                }
+                            } else if (table->module_path) {
+                                strncpy(dep_base, table->module_path, MAX_PATH_LEN - 1);
+                            } else {
+                                strncpy(dep_base, current_file, MAX_PATH_LEN - 1);
+                            }
+                            if (module_symbol_table_scan_depth(dep_table, dep_base[0] ? dep_base : current_file, depth + 1) == 0) {
                                 // 查找 struct
                                 ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
                                 if (s_sym && !module_symbol_table_find_struct(table, type_name)) {

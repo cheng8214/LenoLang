@@ -1,0 +1,126 @@
+// sdl_font.leno — SDL3_ttf 字体绑定
+import ffi
+import "sdl_core.leno" as core
+
+// ==================== clib sdl3_ttf ====================
+
+clib sdl3_ttf {
+    i32  TTF_Init()
+    void TTF_Quit()
+    Ptr  TTF_OpenFont(str8 file, f32 ptsize)
+    void TTF_CloseFont(Ptr font)
+    i32  TTF_GetFontHeight(Ptr font)
+    i32  TTF_GetFontAscent(Ptr font)
+    i32  TTF_GetFontDescent(Ptr font)
+    Ptr  TTF_RenderText_Blended(Ptr font, str8 text, u64 length, u32 color)
+    Ptr  TTF_RenderText_Solid(Ptr font, str8 text, u64 length, u32 color)
+    Ptr  TTF_RenderText_Shaded(Ptr font, str8 text, u64 length, u32 fg, u32 bg)
+}
+
+// ==================== DLL 加载 ====================
+
+sdl3_ttf g_ttf = null
+
+func ttfLib(): sdl3_ttf {
+    if g_ttf == null {
+        var path = dirs.script_dir() + "/SDL3_ttf.dll"
+        if not files.exists(path) { path = "SDL3_ttf.dll" }
+        g_ttf = ffi.load(path)
+    }
+    return g_ttf
+}
+
+// ==================== Font ====================
+
+export struct Font {
+    Ptr handle; bool ok; int height; int ascent; int descent
+
+    func load(string path, float ptsize): bool {
+        if not ttfInit() { return false }
+        handle = ttfLib().TTF_OpenFont(path, ptsize)
+        ok = handle != null
+        if ok {
+            height  = ttfLib().TTF_GetFontHeight(handle)
+            ascent  = ttfLib().TTF_GetFontAscent(handle)
+            descent = ttfLib().TTF_GetFontDescent(handle)
+        }
+        return ok
+    }
+
+    func close() {
+        if ok { ttfLib().TTF_CloseFont(handle); handle = null; ok = false }
+    }
+
+    func renderTextBlended(string text, int r, int g, int b): Ptr {
+        if not ok { return null }
+        var color = r | (g << 8) | (b << 16) | (255 << 24)
+        return ttfLib().TTF_RenderText_Blended(handle, text, 0, color)
+    }
+
+    func renderTextSolid(string text, int r, int g, int b): Ptr {
+        if not ok { return null }
+        var color = r | (g << 8) | (b << 16) | (255 << 24)
+        return ttfLib().TTF_RenderText_Solid(handle, text, 0, color)
+    }
+
+    func renderTextShaded(string text, int fr, int fg, int fb, int br, int bg, int bb): Ptr {
+        if not ok { return null }
+        var fg_color = fr | (fg << 8) | (fb << 16) | (255 << 24)
+        var bg_color = br | (bg << 8) | (bb << 16) | (255 << 24)
+        return ttfLib().TTF_RenderText_Shaded(handle, text, 0, fg_color, bg_color)
+    }
+}
+
+// ==================== TextTexture ====================
+
+export struct TextTexture {
+    Ptr texture; bool ok; int width; int height
+
+    func createFromSurface(Ptr renderer, Ptr surface): bool {
+        if surface == null { return false }
+        texture = core.lib().SDL_CreateTextureFromSurface(renderer, surface)
+        ok = texture != null
+        core.lib().SDL_DestroySurface(surface)
+        return ok
+    }
+
+    func createFromText(Ptr renderer, Font font, string text, int r, int g, int b): bool {
+        if not font.ok { return false }
+        var surface = font.renderTextBlended(text, r, g, b)
+        if surface == null { return false }
+        var result = createFromSurface(renderer, surface)
+        if result { height = font.height }
+        return result
+    }
+
+    func destroy() {
+        if ok { core.lib().SDL_DestroyTexture(texture); texture = null; ok = false }
+    }
+
+    func setWidth(int w)  { width = w }
+    func setHeight(int h) { height = h }
+}
+
+// ==================== 初始化/工厂 ====================
+
+export var _ttfInited = false
+
+export func ttfInit(): bool {
+    if _ttfInited { return true }
+    sdl3_ttf l = ttfLib()
+    if l == null { return false }
+    _ttfInited = l.TTF_Init() != 0
+    return _ttfInited
+}
+
+export func ttfQuit() {
+    if g_ttf != null { ffi.free(g_ttf); g_ttf = null; _ttfInited = false }
+}
+
+export func createFont(string path, float ptsize): Font {
+    var font = new Font(); font.load(path, ptsize); return font
+}
+
+export func createTextTexture(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
+    var tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
+}

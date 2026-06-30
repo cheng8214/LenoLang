@@ -1,0 +1,188 @@
+// sdl_core.leno — SDL3 核心绑定（cstruct/clib/常量/DLL）
+import ffi
+import dirs
+import files
+
+// ==================== cstruct ====================
+
+export cstruct SDL_FRect {
+    f32 x; f32 y; f32 w; f32 h
+}
+
+export cstruct SDL_Rect {
+    i32 x; i32 y; i32 w; i32 h
+}
+
+export cstruct SDL_FPoint {
+    f32 x; f32 y
+}
+
+export cstruct SDL_Point {
+    i32 x; i32 y
+}
+
+cstruct SDL_Event {
+    u32 type
+    u32 _reserved
+    u64 _timestamp
+    u32 _window_id
+    u8  _data[108]
+}
+
+export cstruct SDL_Color {
+    u8 r; u8 g; u8 b; u8 a
+}
+
+// ==================== clib sdl3 ====================
+
+clib sdl3 {
+    i32  SDL_Init(u32 flags)
+    void SDL_Quit()
+    str8 SDL_GetError()
+
+    Ptr  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
+    void SDL_DestroyWindow(Ptr window)
+    i32  SDL_SetWindowResizable(Ptr window, i32 resizable)
+    i32  SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
+
+    Ptr  SDL_CreateRenderer(Ptr window, str8 name)
+    void SDL_DestroyRenderer(Ptr renderer)
+    i32  SDL_RenderClear(Ptr renderer)
+    i32  SDL_RenderPresent(Ptr renderer)
+    i32  SDL_SetRenderDrawColor(Ptr renderer, u8 r, u8 g, u8 b, u8 a)
+    i32  SDL_SetRenderDrawColorFloat(Ptr renderer, f32 r, f32 g, f32 b, f32 a)
+    i32  SDL_RenderFillRect(Ptr renderer, Ptr rect)
+    i32  SDL_RenderRect(Ptr renderer, Ptr rect)
+    i32  SDL_RenderLine(Ptr renderer, f32 x1, f32 y1, f32 x2, f32 y2)
+    i32  SDL_RenderPoint(Ptr renderer, f32 x, f32 y)
+    i32  SDL_SetRenderVSync(Ptr renderer, i32 vsync)
+
+    i32  SDL_RenderLines(Ptr renderer, Ptr points, i32 count)
+    i32  SDL_RenderPoints(Ptr renderer, Ptr points, i32 count)
+    i32  SDL_RenderRects(Ptr renderer, Ptr rects, i32 count)
+    i32  SDL_RenderFillRects(Ptr renderer, Ptr rects, i32 count)
+
+    i32  SDL_SetRenderScale(Ptr renderer, f32 sx, f32 sy)
+    i32  SDL_SetRenderDrawBlendMode(Ptr renderer, i32 mode)
+    i32  SDL_SetRenderClipRect(Ptr renderer, Ptr rect)
+    i32  SDL_SetRenderLogicalSize(Ptr renderer, i32 w, i32 h)
+    i32  SDL_SetRenderViewport(Ptr renderer, Ptr rect)
+
+    i32  SDL_GetRenderDrawColor(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
+    i32  SDL_GetRenderDrawColorFloat(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
+
+    Ptr  SDL_GetKeyboardState(Ptr numkeys)
+    i32  SDL_PollEvent(SDL_Event event)
+
+    void SDL_Delay(u32 ms)
+    u64  SDL_GetTicks()
+
+    Ptr  SDL_CreateTextureFromSurface(Ptr renderer, Ptr surface)
+    void SDL_DestroyTexture(Ptr texture)
+    i32  SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
+    void SDL_DestroySurface(Ptr surface)
+}
+
+// ==================== 常量 ====================
+
+export var INIT_VIDEO  = 0x00000020
+export var INIT_AUDIO  = 0x00000010
+export var INIT_EVENTS = 0x00004000
+
+export var WINDOW_FULLSCREEN        = 0x0000000000000001
+export var WINDOW_OPENGL            = 0x0000000000000002
+export var WINDOW_HIDDEN            = 0x0000000000000008
+export var WINDOW_BORDERLESS        = 0x0000000000000010
+export var WINDOW_RESIZABLE         = 0x0000000000000020
+export var WINDOW_MINIMIZED         = 0x0000000000000040
+export var WINDOW_MAXIMIZED         = 0x0000000000000080
+export var WINDOW_MOUSE_GRABBED     = 0x0000000000000100
+export var WINDOW_ALWAYS_ON_TOP     = 0x0000000000010000
+export var WINDOW_HIGH_PIXEL_DENSITY = 0x0000000000002000
+export var WINDOW_TRANSPARENT       = 0x0000000000001000
+
+export var EVENT_QUIT                   = 0x100
+export var EVENT_KEY_DOWN               = 0x300
+export var EVENT_KEY_UP                 = 0x301
+export var EVENT_MOUSE_MOTION           = 0x400
+export var EVENT_MOUSE_BUTTON_DOWN      = 0x401
+export var EVENT_MOUSE_BUTTON_UP        = 0x402
+export var EVENT_WINDOW_CLOSE_REQUESTED = 0x210
+export var EVENT_WINDOW_RESIZED         = 0x206
+
+export var SCANCODE_ESCAPE    = 41
+export var SCANCODE_RETURN    = 40
+export var SCANCODE_SPACE     = 44
+export var SCANCODE_A = 4;  export var SCANCODE_B = 5;  export var SCANCODE_C = 6
+export var SCANCODE_D = 7;  export var SCANCODE_E = 8;  export var SCANCODE_F = 9
+export var SCANCODE_G = 10; export var SCANCODE_H = 11; export var SCANCODE_I = 12
+export var SCANCODE_J = 13; export var SCANCODE_K = 14; export var SCANCODE_L = 15
+export var SCANCODE_M = 16; export var SCANCODE_N = 17; export var SCANCODE_O = 18
+export var SCANCODE_P = 19; export var SCANCODE_Q = 20; export var SCANCODE_R = 21
+export var SCANCODE_S = 22; export var SCANCODE_T = 23; export var SCANCODE_U = 24
+export var SCANCODE_V = 25; export var SCANCODE_W = 26; export var SCANCODE_X = 27
+export var SCANCODE_Y = 28; export var SCANCODE_Z = 29
+export var SCANCODE_0 = 39; export var SCANCODE_1 = 30; export var SCANCODE_2 = 31
+export var SCANCODE_3 = 32; export var SCANCODE_4 = 33; export var SCANCODE_5 = 34
+export var SCANCODE_6 = 35; export var SCANCODE_7 = 36; export var SCANCODE_8 = 37
+export var SCANCODE_9 = 38
+export var SCANCODE_UP = 82; export var SCANCODE_DOWN = 81
+export var SCANCODE_LEFT = 80; export var SCANCODE_RIGHT = 79
+export var SCANCODE_LSHIFT = 225; export var SCANCODE_RSHIFT = 229
+export var SCANCODE_LCTRL = 224; export var SCANCODE_RCTRL = 228
+export var SCANCODE_LALT = 226; export var SCANCODE_RALT = 230
+export var SCANCODE_TAB = 43; export var SCANCODE_DELETE = 76; export var SCANCODE_BACKSPACE = 42
+export var SCANCODE_F1=58; export var SCANCODE_F2=59; export var SCANCODE_F3=60
+export var SCANCODE_F4=61; export var SCANCODE_F5=62; export var SCANCODE_F6=63
+export var SCANCODE_F7=64; export var SCANCODE_F8=65; export var SCANCODE_F9=66
+export var SCANCODE_F10=67; export var SCANCODE_F11=68; export var SCANCODE_F12=69
+
+export var MOUSE_LEFT = 1; export var MOUSE_MIDDLE = 2; export var MOUSE_RIGHT = 3
+
+export var BLENDMODE_NONE  = 0x00000000
+export var BLENDMODE_BLEND = 0x00000001
+export var BLENDMODE_ADD   = 0x00000002
+export var BLENDMODE_MOD   = 0x00000004
+export var BLENDMODE_MUL   = 0x00000008
+
+export var SDL_FRect_SIZE  = 16
+export var SDL_Rect_SIZE   = 16
+export var SDL_FPoint_SIZE = 8
+export var SDL_Point_SIZE  = 8
+export var SDL_Color_SIZE  = 4
+
+// ==================== DLL 加载 ====================
+
+sdl3 g_lib = null
+
+export func lib(): sdl3 {
+    if g_lib == null {
+        var path = dirs.script_dir() + "/SDL3.dll"
+        if not files.exists(path) { path = "SDL3.dll" }
+        g_lib = ffi.load(path)
+    }
+    return g_lib
+}
+
+// ==================== 核心函数 ====================
+
+export func init(int flags): bool {
+    sdl3 l = lib()
+    if l == null { return false }
+    return l.SDL_Init(flags) != 0
+}
+
+export func initVideo(): bool { return init(INIT_VIDEO) }
+
+export func quit() {
+    if g_lib != null { ffi.free(g_lib); g_lib = null }
+}
+
+export func getError(): string {
+    sdl3 l = lib()
+    if l == null { return "SDL3 not loaded" }
+    return l.SDL_GetError() as string
+}
+
+export func delay(int ms) { lib().SDL_Delay(ms) }
+export func getTicks(): int { return lib().SDL_GetTicks() as int }

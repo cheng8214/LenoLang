@@ -1,0 +1,54 @@
+// sdl_window.leno — SDL3 窗口封装
+import "sdl_core.leno" as core
+import "sdl_renderer.leno" as renderer
+import "sdl_event.leno" as event
+
+export struct Window {
+    Ptr handle; bool ok
+
+    func init(Dict opts): bool {
+        if not core.initVideo() {
+            print("[LenoSDL3] init failed: " + core.getError())
+            return false
+        }
+        var title = opts.get("title", "LenoSDL3") as string
+        var w     = opts.get("w", 800) as int
+        var h     = opts.get("h", 600) as int
+        var flags = opts.get("flags", 0) as int
+        handle = core.lib().SDL_CreateWindow(title, w, h, flags)
+        ok = handle != null
+        return ok
+    }
+
+    func setResizable(bool v) {
+        if ok { core.lib().SDL_SetWindowResizable(handle, v as int) }
+    }
+
+    func destroy() {
+        if ok { core.lib().SDL_DestroyWindow(handle); handle = null; ok = false }
+    }
+
+    func run(var onEvent, var onRender) {
+        var ren = renderer.createRenderer(handle)
+        if not ren.ok { destroy(); return }
+
+        var ev = event.createEvent()
+        var running = true
+        while running {
+            while ev.poll() {
+                if ev.isQuit() or ev.isWindowClose() { running = false }
+                else if not onEvent(ev) { running = false }
+            }
+            onRender(ren)
+            ren.present()
+        }
+        ev.uninit()
+        ren.destroy()
+        destroy()
+        core.quit()
+    }
+}
+
+export func createWindow(Dict opts): Window {
+    var win = new Window(); win.init(opts); return win
+}
