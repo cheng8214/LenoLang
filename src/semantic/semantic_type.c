@@ -1119,8 +1119,28 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         TypeInfo* var_type = type_new(var_sym->type);
                         if (var_sym->type == TYPE_STRUCT && var_sym->struct_name) {
                             var_type->struct_name = strdup(var_sym->struct_name);
+                        } else if (var_sym->type == TYPE_CSTRUCT && var_sym->struct_name) {
+                            var_type->struct_name = strdup(var_sym->struct_name);
                         }
                         ast->cached_type = var_type;
+                        return type_copy(ast->cached_type);
+                    }
+
+                    // 检查是否是 struct 名（如 cs.Point）
+                    ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(module_info->sym_table, ast->u.module_access.member_name);
+                    if (struct_sym) {
+                        TypeInfo* st_type = type_new(struct_sym->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT);
+                        st_type->struct_name = strdup(ast->u.module_access.member_name);
+                        ast->cached_type = st_type;
+                        return type_copy(ast->cached_type);
+                    }
+
+                    // 检查是否是 face 名（如 cs.Shape）
+                    ModuleFaceSymbol* face_sym = module_symbol_table_find_face(module_info->sym_table, ast->u.module_access.member_name);
+                    if (face_sym) {
+                        TypeInfo* face_type = type_new(TYPE_FACE);
+                        face_type->struct_name = strdup(ast->u.module_access.member_name);
+                        ast->cached_type = face_type;
                         return type_copy(ast->cached_type);
                     }
                 }

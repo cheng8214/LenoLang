@@ -5472,6 +5472,41 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 > - **func**、**var**、**enum** 必须通过模块名访问（如 `math.distance()`）
 > - struct 实例仍需通过模块构造函数创建（如 `new math.Point(x=1, y=2)`）
 
+**use 导入的类型可作为 export func 返回类型：**
+
+`use` 导入的 struct/face 类型可以直接作为 `export func` 的返回类型，调用方能正确推断：
+
+```leno
+// item.leno
+export struct Item {
+    int id = 0
+    func describe(): string { return "Item(" + id + ")" }
+}
+export func makeItem(int id): Item { return new Item(id = id) }
+```
+
+```leno
+// wrapper.leno
+import "item.leno" as item
+use item.Item
+
+export func createItem(int id): Item {   // ✅ Item 作为返回类型
+    return item.makeItem(id)
+}
+```
+
+```leno
+// main.leno
+import "wrapper.leno" as w
+
+main() {
+    var it = w.createItem(1)    // it 推断为 Item，不是 any
+    print(it.describe())         // ✅ 可调用 Item 方法
+}
+```
+
+face 类型同理——`use` 导入的 face 作为返回类型时，调用方正确识别为 face 类型并可调用其方法。
+
 ### clib 类型跨模块使用
 
 `use` 支持跨模块链式传递 clib 类型，适用于 FFI 库的多模块拆分：

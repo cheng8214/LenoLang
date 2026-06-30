@@ -625,7 +625,86 @@ main() {
 }
 ```
 
-### 8.4 use face 类型
+### 8.4 use 类型作为 export func 返回类型
+
+`use` 导入的 struct/face 类型可以直接作为 `export func` 的返回类型，调用方能正确推断返回值类型：
+
+```leno
+// item.leno - 底层模块定义 struct
+export struct Item {
+    int id = 0
+    string label = ""
+
+    func describe(): string {
+        return "Item(" + id + ":" + label + ")"
+    }
+}
+
+export func makeItem(int id, string label): Item {
+    return new Item(id = id, label = label)
+}
+```
+
+```leno
+// wrapper.leno - 中间层通过 use 导入 Item 并作为返回类型
+import "item.leno" as item
+use item.Item
+
+export func createItem(int id, string label): Item {
+    return item.makeItem(id, label)
+}
+```
+
+```leno
+// main.leno - 调用方正确推断返回类型为 Item
+import "wrapper.leno" as wrapper
+
+main() {
+    var it = wrapper.createItem(1, "hello")   // it 被推断为 Item，不是 any
+    print(it.describe())                       // ✅ 可以直接调用 Item 的方法
+}
+```
+
+**face 类型同样支持**：
+
+```leno
+// base.leno
+export face Describable {
+    func describe(): string
+}
+
+export struct Item impl Describable {
+    int id = 0
+    func describe(): string { return "Item(" + id + ")" }
+}
+
+export func makeItem(int id): Item {
+    return new Item(id = id)
+}
+```
+
+```leno
+// mid.leno - use 导入 face 并作为返回类型
+import "base.leno" as base
+use base.Describable
+
+export func getDescribable(): Describable {
+    return base.makeItem(42)
+}
+```
+
+```leno
+// main.leno
+import "mid.leno" as mid
+use mid.Describable
+
+main() {
+    var d = mid.getDescribable()    // d 被推断为 Describable（face 类型）
+    print(d.describe())             // ✅ 可以调用 face 定义的方法
+}
+```
+
+### 8.5 use face 类型
 
 ```leno
 // shape_mod.leno
@@ -657,7 +736,7 @@ main() {
 }
 ```
 
-### 8.5 clib 类型跨模块使用
+### 8.6 clib 类型跨模块使用
 
 `use` 也支持导入其他模块定义的 clib 类型：
 
@@ -721,7 +800,7 @@ main() {
 }
 ```
 
-### 8.6 类型守卫与跨模块类型
+### 8.7 类型守卫与跨模块类型
 
 ```leno
 // shape.leno
