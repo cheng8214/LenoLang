@@ -1,0 +1,18 @@
+// 模块B - 定义另一个同名clib handle_lib
+import ffi
+
+clib handle_lib {
+    i32 abs(i32 x)
+}
+
+handle_lib g = null
+export func loadHandle(): handle_lib {
+    if g == null { g = ffi.load("msvcrt.dll") }
+    return g
+}
+
+// 包装函数：将函数作为值导出
+export func localAbs(int x): int {
+    return loadHandle().abs(x) as int
+}
+export var absFunc = localAbs    // 重导出为变量

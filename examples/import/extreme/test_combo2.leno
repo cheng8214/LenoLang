@@ -1,0 +1,14 @@
+import "lib_a.leno" as a
+import "lib_b.leno" as b
+use a.handle_lib
+
+main() {
+    print("=== combo2 ===")
+    var h = a.loadHandle()
+    print("1. " + h.abs(-5) as int)
+    var fn = b.absFunc
+    print("2. " + fn(-7))
+    var hb = b.loadHandle()
+    print("3. " + hb.abs(-11) as int)
+    print("=== 通过 ===")
+}
