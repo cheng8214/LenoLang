@@ -7165,6 +7165,97 @@ main() {
 > - 调用外部函数时注意参数类型匹配
 > - Windows API 通常使用 UTF-16，需要 `utf8_to_utf16` 转换
 
+### cstruct 跨模块使用
+
+`cstruct` 定义可以通过模块导出，在其他模块中使用 `use` 导入或通过模块路径直接访问。
+
+**方式一：use 导入后直接使用类型名**
+
+```leno
+// cs_def.leno - 定义并导出 cstruct
+import ffi
+
+export cstruct DataBuffer {
+    u32 size
+    u32 capacity
+    Ptr data
+}
+
+export func createBuffer(u32 cap): DataBuffer {
+    var buf = DataBuffer.malloc()
+    buf.size = 0
+    buf.capacity = cap
+    buf.data = ffi.malloc(cap)
+    return buf
+}
+```
+
+```leno
+// main.leno - use 导入后直接使用
+import "cs_def.leno" as cs
+use cs.DataBuffer
+
+main() {
+    // ✅ 直接使用 DataBuffer 类型名
+    var buf = DataBuffer.malloc()
+    buf.size = 10
+    buf.capacity = 100
+    buf.data = ffi.malloc(100)
+    print("size=" + buf.size)
+    ffi.free(buf.data)
+    buf.free()
+    
+    // ✅ 或调用模块工厂函数
+    var buf2 = cs.createBuffer(256)
+    print("capacity=" + buf2.capacity)
+    ffi.free(buf2.data)
+    buf2.free()
+}
+```
+
+**方式二：通过模块路径直接访问**
+
+```leno
+// main.leno - 不用 use，通过模块路径
+import "cs_def.leno" as cs
+
+main() {
+    // ✅ 通过模块路径创建实例
+    var buf = cs.DataBuffer.malloc()
+    buf.size = 20
+    print("size=" + buf.size)
+    buf.free()
+}
+```
+
+**cstruct 作为函数返回类型**
+
+`use` 导入的 cstruct 可以作为 `export func` 的返回类型，调用方能正确推断：
+
+```leno
+// wrapper.leno - 中间层
+import "cs_def.leno" as cs
+use cs.DataBuffer
+
+export func newBuffer(u32 cap): DataBuffer {
+    return cs.createBuffer(cap)
+}
+```
+
+```leno
+// main.leno - 调用方正确推断类型
+import "wrapper.leno" as w
+
+main() {
+    var buf = w.newBuffer(512)   // buf 被推断为 DataBuffer
+    print("capacity=" + buf.capacity)  // ✅ 可直接访问字段
+    ffi.free(buf.data)
+    buf.free()
+}
+```
+
+> **⚠️ 注意**：cstruct 字段值是 C 类型（`u32`、`i32`、`f64` 等），参与 Leno 运算时会自动转换为 `int`/`float`，无需手动转换。
+
 ### cstruct 线程支持
 
 cstruct 定义可以在多线程环境中安全使用。由于 cstruct 定义是**编译时确定的只读类型元数据**，多个线程可以共享这些定义而不会产生竞争条件。

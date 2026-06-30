@@ -800,6 +800,94 @@ main() {
 }
 ```
 
+### 8.6.5 cstruct 跨模块使用
+
+`use` 也支持导入其他模块定义的 `cstruct` 类型。cstruct 是 FFI 中用于映射 C 结构体的类型定义，可以通过 `use` 导入后直接使用：
+
+**方式一：use 导入后直接使用类型名**
+
+```leno
+// cs_def.leno - 底层模块定义 cstruct
+import ffi
+
+export cstruct TT {
+    u32 id
+    u32 value
+}
+
+export func makeTT(u32 id, u32 value): TT {
+    var t = TT.malloc()
+    t.id = id
+    t.value = value
+    return t
+}
+```
+
+```leno
+// main.leno - use 导入 cstruct 类型
+import "cs_def.leno" as cs
+use cs.TT
+
+main() {
+    // ✅ 直接使用 TT 类型名创建实例
+    var t = TT.malloc()
+    t.id = 1
+    t.value = 100
+    print("id=" + t.id + " value=" + t.value)
+    t.free()
+    
+    // ✅ 也可以调用模块导出的工厂函数
+    var t2 = cs.makeTT(3, 300)
+    print("makeTT: id=" + t2.id + " value=" + t2.value)
+    t2.free()
+}
+```
+
+**方式二：通过模块路径直接访问**
+
+如果不使用 `use`，也可以通过模块路径直接访问 cstruct：
+
+```leno
+// main.leno - 不用 use，通过模块路径访问
+import "cs_def.leno" as cs
+
+main() {
+    // ✅ 通过模块路径创建实例
+    var t = cs.TT.malloc()
+    t.id = 1
+    t.value = 100
+    print("id=" + t.id + " value=" + t.value)
+    t.free()
+}
+```
+
+**cstruct 跨模块作为返回类型**
+
+与 struct/face 一样，cstruct 也可以作为 `export func` 的返回类型，调用方能正确推断：
+
+```leno
+// wrapper.leno - 中间层 use cstruct 并作为返回类型
+import "cs_def.leno" as cs
+use cs.TT
+
+export func createTT(u32 id, u32 value): TT {
+    return cs.makeTT(id, value)
+}
+```
+
+```leno
+// main.leno - 调用方正确推断返回类型
+import "wrapper.leno" as w
+
+main() {
+    var t = w.createTT(5, 500)   // t 被推断为 TT 类型
+    print("id=" + t.id + " value=" + t.value)  // ✅ 可以直接访问字段
+    t.free()
+}
+```
+
+> **⚠️ 注意**：cstruct 字段值是 C 类型（`u32`、`i32`、`f64` 等），参与 Leno 运算时会自动转换为 `int`/`float`。
+
 ### 8.7 类型守卫与跨模块类型
 
 ```leno
