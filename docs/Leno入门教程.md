@@ -5470,8 +5470,9 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 > - `use` 只能导入 **struct**、**clib**、**face** 和 **enum** 类型
 > - clib 类型需要模块中存在**返回该 clib 类型的导出函数**
 > - enum 导入后可直接用 `EnumName.Member` 访问成员值
-> - **func**、**var**、**enum** 必须通过模块名访问（如 `math.distance()`）
-> - struct 实例仍需通过模块构造函数创建（如 `new math.Point(x=1, y=2)`）
+> - **func**、**var** 必须通过模块名访问（如 `module.func()`）
+> - struct 实例可用 `new module.Struct()` 或 `new module.Struct[Type]()`（无需 `use`）
+> - 使用 `use` 后可直接用 `new StructName()` 实例化（更简洁）
 
 **use 导入的类型可作为 export func 返回类型：**
 

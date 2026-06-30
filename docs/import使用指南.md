@@ -548,11 +548,12 @@ main() {
     Point p = new shape.Point()
     print(p.x)
     
-    // ❌ 没有 use Circle，不能直接使用 Circle 类型
+    // ❌ 没有 use Circle，不能直接用 Circle 类型声明
     // Circle c = new shape.Circle()  // 错误：Circle 未定义
     
-    // ✅ 但可以通过模块名访问
-    var c = new shape.Circle()
+    // ✅ 可通过模块路径创建实例（无需 use）
+    var c = new shape.Circle()         // 普通 struct
+    var b = new shape.Box[int]()       // 泛型 struct 也支持
 }
 ```
 
@@ -560,20 +561,20 @@ main() {
 
 | 用法 | 支持 | 说明 |
 |------|------|------|
-| `use module.Struct` | ✅ | 导入 struct 类型到当前作用域 |
+| `use module.Struct` | ✅ | 导入后可用 `new Struct()` 或 `new Struct[Type]()` |
 | `use module.Clib` | ✅ | 导入 clib 类型到当前作用域（需模块有函数返回该 clib 类型） |
 | `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
+| `use module.Enum` | ✅ | 导入 enum 类型，可用 `EnumName.Member` |
 | `use module.func` | ❌ | 函数必须通过模块名访问 |
 | `use module.var` | ❌ | 变量必须通过模块名访问 |
-| `use module.enum` | ❌ | enum 成员通过模块名访问（如 `module.enum.member`） |
 
-**为什么 use 只支持 struct/clib/face？**
+**为什么 use 只支持 struct/clib/face/enum？**
 
 - **struct**：编译时类型，需要用于变量声明（如 `Point p`）
 - **clib**：FFI 库类型，需要用于变量声明（如 `core_lib c = module.loadCore()`）
 - **face**：编译时类型，需要用于函数参数（如 `func printArea(Shape s)`）
+- **enum**：编译时常量类型，导入后可用 `EnumName.Member` 访问值
 - **func/var**：运行时实体，必须通过模块名访问（如 `module.func()`）
-- **enum**：成员访问本身就是通过模块名（如 `module.enum.member`）
 
 ### 8.3 use 类型链式传导
 
