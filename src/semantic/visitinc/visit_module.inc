@@ -359,6 +359,29 @@
                 if (clib_found) break;
             }
 
+            // 尝试查找 enum 定义
+            {
+                ModuleEnumSymbol* enum_sym = module_symbol_table_find_enum(module_info->sym_table, symbol_name);
+                if (enum_sym) {
+                    Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
+                    if (sym) {
+                        sym->type = type_new(TYPE_ENUM);
+                        sym->type->struct_name = strdup(symbol_name);
+                    }
+                    // 同时导入 enum 的所有成员
+                    for (int mi = 0; mi < enum_sym->member_count; mi++) {
+                        SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                        Symbol* member_sym = scope_define(s->current, enum_sym->member_names[mi], kind);
+                        if (member_sym) {
+                            member_sym->type = type_new(TYPE_ENUM);
+                            member_sym->type->struct_name = strdup(symbol_name);
+                            member_sym->index = enum_sym->member_values[mi];
+                        }
+                    }
+                    break;
+                }
+            }
+
             // 尝试查找 face 定义
             ModuleFaceSymbol* face_sym = module_symbol_table_find_face(module_info->sym_table, symbol_name);
             if (face_sym) {
@@ -1338,7 +1361,39 @@
                     }
                 }
 
-                if (is_struct_type || is_cstruct_type || is_face_type) {
+                // 检查是否是 enum 类型
+                int is_enum_type = 0;
+                if (var_sym && var_sym->type && var_sym->type->kind == TYPE_ENUM) {
+                    is_enum_type = 1;
+                }
+
+                if (is_enum_type && var_sym->kind == SYM_TYPE) {
+                    // use 导入的 enum（SYM_TYPE）：直接替换为常量值
+                    Symbol* member_sym = scope_resolve(s->current, ast->u.module_access.member_name);
+                    if (member_sym && member_sym->type && member_sym->type->kind == TYPE_ENUM) {
+                        int member_value = member_sym->index;
+                        char* mod_name = ast->u.module_access.module_name;
+                        char* mem_name = ast->u.module_access.member_name;
+                        char* ref_name = ast->u.module_access.ref.name;
+                        ast->u.module_access.module_name = NULL;
+                        ast->u.module_access.member_name = NULL;
+                        ast->u.module_access.ref.name = NULL;
+                        free(mod_name); free(mem_name);
+                        if (ref_name) free(ref_name);
+                        if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
+                        ast->kind = AST_NUM;
+                        ast->u.num.value = (double)member_value;
+                        ast->u.num.is_float = 0;
+                        ast->u.num.is_bigint = 0;
+                        ast->cached_type = type_new(TYPE_INT);
+                    } else {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
+                                 ast->u.module_access.module_name,
+                                 ast->u.module_access.member_name);
+                        error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                    }
+                } else if (is_struct_type || is_cstruct_type || is_face_type) {
                     // struct/cstruct 字段访问：转换为 AST_FIELD_ACCESS
                     char* field_name = strdup(ast->u.module_access.member_name);
                     char* module_name = ast->u.module_access.module_name;

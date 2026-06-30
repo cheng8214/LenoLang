@@ -1,0 +1,6 @@
+// BUG5: enum 不支持 use
+export enum Level {
+    Low = 0
+    Mid = 1
+    High = 2
+}

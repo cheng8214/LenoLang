@@ -217,12 +217,21 @@
                                             if (strcmp(ast->u.struct_def.methods[k]->u.func.name, mname) == 0) {
                                                 found = 1;
                                                 if (mface->methods[j].return_type != TYPE_ANY && ast->u.struct_def.methods[k]->u.func.return_type) {
-                                                    if (mface->methods[j].return_type != ast->u.struct_def.methods[k]->u.func.return_type->kind) {
+                                                    TypeKind face_ret = mface->methods[j].return_type;
+                                                    TypeKind impl_ret = ast->u.struct_def.methods[k]->u.func.return_type->kind;
+                                                    // 允许 TYPE_STRUCT ↔ TYPE_CLIB 互转（都是命名自定义类型）
+                                                    int type_match = (face_ret == impl_ret);
+                                                    if (!type_match &&
+                                                        ((face_ret == TYPE_STRUCT && impl_ret == TYPE_CLIB) ||
+                                                         (face_ret == TYPE_CLIB && impl_ret == TYPE_STRUCT))) {
+                                                        type_match = 1;
+                                                    }
+                                                    if (!type_match) {
                                                         char msg[256];
                                                         snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
                                                                  ast->u.struct_def.name, mname, face_name,
-                                                                 type_kind_to_string(mface->methods[j].return_type),
-                                                                 type_kind_to_string(ast->u.struct_def.methods[k]->u.func.return_type->kind));
+                                                                 type_kind_to_string(face_ret),
+                                                                 type_kind_to_string(impl_ret));
                                                         error_add(ERR_SEMANTIC, ast->line, msg);
                                                     }
                                                 }
@@ -283,13 +292,19 @@
                                             }
                                         }
                                     }
-                                    if (expected_kind != TYPE_ANY &&
-                                        expected_kind != ast->u.struct_def.methods[k]->u.func.return_type->kind) {
+                                    TypeKind impl_ret2 = ast->u.struct_def.methods[k]->u.func.return_type->kind;
+                                    int type_match2 = (expected_kind == impl_ret2);
+                                    if (!type_match2 &&
+                                        ((expected_kind == TYPE_STRUCT && impl_ret2 == TYPE_CLIB) ||
+                                         (expected_kind == TYPE_CLIB && impl_ret2 == TYPE_STRUCT))) {
+                                        type_match2 = 1;
+                                    }
+                                    if (expected_kind != TYPE_ANY && !type_match2) {
                                         char msg[256];
                                         snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
                                                  ast->u.struct_def.name, mname, face_name,
                                                  type_kind_to_string(expected_kind),
-                                                 type_kind_to_string(ast->u.struct_def.methods[k]->u.func.return_type->kind));
+                                                 type_kind_to_string(impl_ret2));
                                         error_add(ERR_SEMANTIC, ast->line, msg);
                                     }
                                 }

@@ -1,0 +1,8 @@
+// BUG5: use enum
+import "bug5_enum.leno" as e
+use e.Level                // 期望: OK, 实际: 错误
+
+main() {
+    var l = Level.High
+    print(l)
+}

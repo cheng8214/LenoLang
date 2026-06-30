@@ -92,6 +92,11 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
     // 释放 enum 符号
     for (int i = 0; i < table->enum_count; i++) {
         free(table->enums[i].name);
+        for (int j = 0; j < table->enums[i].member_count; j++) {
+            free(table->enums[i].member_names[j]);
+        }
+        free(table->enums[i].member_names);
+        free(table->enums[i].member_values);
     }
     free(table->enums);
 
@@ -283,7 +288,7 @@ ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const 
 }
 
 // 添加 enum 符号
-void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name) {
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names) {
     if (!table || !name) return;
 
     // 扩容
@@ -297,6 +302,17 @@ void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name) {
 
     ModuleEnumSymbol* en = &table->enums[table->enum_count++];
     en->name = strdup(name);
+    en->member_count = member_count;
+    en->member_names = NULL;
+    en->member_values = NULL;
+    if (member_count > 0 && member_names) {
+        en->member_names = (char**)malloc(sizeof(char*) * member_count);
+        en->member_values = (int*)malloc(sizeof(int) * member_count);
+        for (int i = 0; i < member_count; i++) {
+            en->member_names[i] = strdup(member_names[i]);
+            en->member_values[i] = i;  // 默认值 = 索引
+        }
+    }
 }
 
 // 查找 face 符号
@@ -636,7 +652,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     char* source = read_module_file(table->module_path, current_file);
     if (!source) return -1;
 
-    // 第一遍：收集所有 struct/cstruct/clib/face 名称
+    // 第一遍：收集所有 struct/cstruct/clib/face/enum 名称
     char* struct_names[64];
     int struct_name_count = 0;
     char* cstruct_names[64];
@@ -645,6 +661,8 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     int face_name_count = 0;
     char* clib_names[16];
     int clib_name_count = 0;
+    char* enum_names[16];
+    int enum_name_count = 0;
     char* p = source;
 
     while (*p && struct_name_count < 64) {
@@ -754,6 +772,26 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 }
 
                 p = after_clib;
+                continue;
+            }
+
+            // 检查 export enum
+            if (strncmp(after_export, "enum", 4) == 0 && (after_export[4] == ' ' || after_export[4] == '\t' || after_export[4] == '\n' || after_export[4] == '\r' || after_export[4] == '\0')) {
+                char* after_enum = after_export + 4;
+                while (*after_enum && (*after_enum == ' ' || *after_enum == '\t')) after_enum++;
+
+                const char* name_start = after_enum;
+                while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
+                int name_len = (int)(after_enum - name_start);
+
+                if (name_len > 0 && name_len < 64 && enum_name_count < 16) {
+                    enum_names[enum_name_count] = (char*)malloc(name_len + 1);
+                    strncpy(enum_names[enum_name_count], name_start, name_len);
+                    enum_names[enum_name_count][name_len] = '\0';
+                    enum_name_count++;
+                }
+
+                p = after_enum;
                 continue;
             }
         }
@@ -943,7 +981,6 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         ModuleFuncSymbol* func = &dep_table->funcs[fi];
                                         if (func->return_type == TYPE_CLIB && func->return_struct_name &&
                                             strcmp(func->return_struct_name, type_name) == 0) {
-                                            // 将 clib 名称添加到当前模块，使后续函数签名解析能识别
                                             int already = 0;
                                             for (int ci = 0; ci < clib_name_count; ci++) {
                                                 if (strcmp(clib_names[ci], type_name) == 0) { already = 1; break; }
@@ -953,6 +990,20 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                 clib_name_count++;
                                             }
                                             break;
+                                        }
+                                    }
+                                }
+                                // 查找 enum 类型
+                                if (!s_sym && !f_sym) {
+                                    ModuleEnumSymbol* e_sym = module_symbol_table_find_enum(dep_table, type_name);
+                                    if (e_sym) {
+                                        int already = 0;
+                                        for (int ei = 0; ei < enum_name_count; ei++) {
+                                            if (strcmp(enum_names[ei], type_name) == 0) { already = 1; break; }
+                                        }
+                                        if (!already && enum_name_count < 16) {
+                                            enum_names[enum_name_count] = strdup(type_name);
+                                            enum_name_count++;
                                         }
                                     }
                                 }
@@ -1815,20 +1866,36 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     strncpy(enum_name, name_start, name_len);
                     enum_name[name_len] = '\0';
 
-                    // 添加 enum 到符号表
-                    module_symbol_table_add_enum(table, enum_name);
-
-                    // 跳过 enum 定义体
+                    // 解析成员名
+                    char* member_names_buf[64];
+                    int member_count = 0;
                     while (*after_enum && *after_enum != '{') after_enum++;
                     if (*after_enum == '{') {
                         after_enum++;
-                        int brace_depth = 1;
-                        while (*after_enum && brace_depth > 0) {
-                            if (*after_enum == '{') brace_depth++;
-                            else if (*after_enum == '}') brace_depth--;
-                            after_enum++;
+                        while (*after_enum && *after_enum != '}' && member_count < 64) {
+                            while (*after_enum && (*after_enum == ' ' || *after_enum == '\t' || *after_enum == '\n' || *after_enum == '\r')) after_enum++;
+                            if (*after_enum == '}' || *after_enum == '\0') break;
+                            if (*after_enum == '/' && *(after_enum+1) == '/') {
+                                while (*after_enum && *after_enum != '\n') after_enum++;
+                                continue;
+                            }
+                            const char* m_start = after_enum;
+                            while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
+                            int m_len = (int)(after_enum - m_start);
+                            if (m_len > 0 && m_len < 64) {
+                                member_names_buf[member_count] = (char*)malloc(m_len + 1);
+                                strncpy(member_names_buf[member_count], m_start, m_len);
+                                member_names_buf[member_count][m_len] = '\0';
+                                member_count++;
+                            }
+                            while (*after_enum && *after_enum != ',' && *after_enum != '}' && *after_enum != '\n') after_enum++;
+                            if (*after_enum == ',') after_enum++;
                         }
+                        if (*after_enum == '}') after_enum++;
                     }
+
+                    module_symbol_table_add_enum(table, enum_name, member_count, member_names_buf);
+                    for (int mi = 0; mi < member_count; mi++) free(member_names_buf[mi]);
                 }
 
                 p = after_enum;
