@@ -5,62 +5,66 @@ import "sdl_core.leno" as core
 use core.sdl3
 use core.SDL_FRect
 
+// 本地缓存 core.lib()，避免每次渲染调用都走函数链路
+sdl3 _lib = null
+func _l(): sdl3 { if _lib == null { _lib = core.lib() } return _lib }
+
 export struct Renderer {
     Ptr handle; bool ok
 
     func initDefault(Ptr window): bool {
-        handle = core.lib().SDL_CreateRenderer(window, null as string) as Ptr
+        handle = _l().SDL_CreateRenderer(window, null as string) as Ptr
         ok = handle != null
         return ok
     }
 
     func destroy() {
-        if ok { core.lib().SDL_DestroyRenderer(handle); handle = null; ok = false }
+        if ok { _l().SDL_DestroyRenderer(handle); handle = null; ok = false }
     }
 
-    func clear(): bool   { return core.lib().SDL_RenderClear(handle) != 0 }
-    func present(): bool { return core.lib().SDL_RenderPresent(handle) != 0 }
+    func clear(): bool   { return _l().SDL_RenderClear(handle) != 0 }
+    func present(): bool { return _l().SDL_RenderPresent(handle) != 0 }
 
     func setColor(int r, int g, int b, int a): bool {
-        return core.lib().SDL_SetRenderDrawColor(handle, r, g, b, a) != 0
+        return _l().SDL_SetRenderDrawColor(handle, r, g, b, a) != 0
     }
 
     func setColorFloat(float r, float g, float b, float a): bool {
-        return core.lib().SDL_SetRenderDrawColorFloat(handle, r, g, b, a) != 0
+        return _l().SDL_SetRenderDrawColorFloat(handle, r, g, b, a) != 0
     }
 
     func fillRect(float x, float y, float w, float h): bool {
         var rect = SDL_FRect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
-        var result = core.lib().SDL_RenderFillRect(handle, rect.to_ptr()) != 0
+        var result = _l().SDL_RenderFillRect(handle, rect.to_ptr()) != 0
         rect.free(); return result
     }
 
     func fillRectPtr(Ptr rect): bool {
-        return core.lib().SDL_RenderFillRect(handle, rect) != 0
+        return _l().SDL_RenderFillRect(handle, rect) != 0
     }
 
     func fillFull(): bool {
-        return core.lib().SDL_RenderFillRect(handle, null) != 0
+        return _l().SDL_RenderFillRect(handle, null) != 0
     }
 
     func drawRect(float x, float y, float w, float h): bool {
         var rect = SDL_FRect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
-        var result = core.lib().SDL_RenderRect(handle, rect) != 0
+        var result = _l().SDL_RenderRect(handle, rect) != 0
         rect.free(); return result
     }
 
     func drawLine(float x1, float y1, float x2, float y2): bool {
-        return core.lib().SDL_RenderLine(handle, x1, y1, x2, y2) != 0
+        return _l().SDL_RenderLine(handle, x1, y1, x2, y2) != 0
     }
 
     func drawPoint(float x, float y): bool {
-        return core.lib().SDL_RenderPoint(handle, x, y) != 0
+        return _l().SDL_RenderPoint(handle, x, y) != 0
     }
 
     func setVSync(int mode): bool {
-        return core.lib().SDL_SetRenderVSync(handle, mode) != 0
+        return _l().SDL_SetRenderVSync(handle, mode) != 0
     }
 
     func drawCircle(float cx, float cy, float radius): bool {
@@ -74,7 +78,7 @@ export struct Renderer {
             ffi.write_float(buf, i * 8,     cx + radius * maths.cos(a))
             ffi.write_float(buf, i * 8 + 4, cy + radius * maths.sin(a))
         }
-        var ok = core.lib().SDL_RenderLines(handle, buf, pts) != 0
+        var ok = _l().SDL_RenderLines(handle, buf, pts) != 0
         ffi.free(buf); return ok
     }
 
@@ -89,58 +93,58 @@ export struct Renderer {
     }
 
     func drawLines(Ptr pts, int count): bool {
-        return core.lib().SDL_RenderLines(handle, pts, count) != 0
+        return _l().SDL_RenderLines(handle, pts, count) != 0
     }
 
     func drawPoints(Ptr pts, int count): bool {
-        return core.lib().SDL_RenderPoints(handle, pts, count) != 0
+        return _l().SDL_RenderPoints(handle, pts, count) != 0
     }
 
     func drawRects(Ptr rects, int count): bool {
-        return core.lib().SDL_RenderRects(handle, rects, count) != 0
+        return _l().SDL_RenderRects(handle, rects, count) != 0
     }
 
     func fillRects(Ptr rects, int count): bool {
-        return core.lib().SDL_RenderFillRects(handle, rects, count) != 0
+        return _l().SDL_RenderFillRects(handle, rects, count) != 0
     }
 
     func setScale(float sx, float sy): bool {
-        return core.lib().SDL_SetRenderScale(handle, sx, sy) != 0
+        return _l().SDL_SetRenderScale(handle, sx, sy) != 0
     }
 
     func setBlendMode(int mode): bool {
-        return core.lib().SDL_SetRenderDrawBlendMode(handle, mode) != 0
+        return _l().SDL_SetRenderDrawBlendMode(handle, mode) != 0
     }
 
     func setClipRect(Ptr rect): bool {
-        return core.lib().SDL_SetRenderClipRect(handle, rect) != 0
+        return _l().SDL_SetRenderClipRect(handle, rect) != 0
     }
 
     func clearClip(): bool {
-        return core.lib().SDL_SetRenderClipRect(handle, null) != 0
+        return _l().SDL_SetRenderClipRect(handle, null) != 0
     }
 
     func setLogicalSize(int w, int h): bool {
-        return core.lib().SDL_SetRenderLogicalSize(handle, w, h) != 0
+        return _l().SDL_SetRenderLogicalSize(handle, w, h) != 0
     }
 
     func setViewport(Ptr rect): bool {
-        return core.lib().SDL_SetRenderViewport(handle, rect) != 0
+        return _l().SDL_SetRenderViewport(handle, rect) != 0
     }
 
     func resetViewport(): bool {
-        return core.lib().SDL_SetRenderViewport(handle, null) != 0
+        return _l().SDL_SetRenderViewport(handle, null) != 0
     }
 
     func drawTextureAt(Ptr texture, float x, float y, float w, float h): bool {
         var rect = SDL_FRect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
-        var ok = core.lib().SDL_RenderTexture(handle, texture, null, rect.to_ptr()) != 0
+        var ok = _l().SDL_RenderTexture(handle, texture, null, rect.to_ptr()) != 0
         rect.free(); return ok
     }
 
     func drawTextureRect(Ptr texture, Ptr srcrect, Ptr dstrect): bool {
-        return core.lib().SDL_RenderTexture(handle, texture, srcrect, dstrect) != 0
+        return _l().SDL_RenderTexture(handle, texture, srcrect, dstrect) != 0
     }
 }
 
