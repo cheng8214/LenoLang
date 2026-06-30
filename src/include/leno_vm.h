@@ -280,6 +280,10 @@ struct Symbol {
     TypeInfo** cfunc_param_types;   // 参数类型数组
     int cfunc_param_count;          // 参数数量
     TypeInfo* cfunc_return_type;    // 返回类型
+    // enum 成员信息（仅当类型为 enum 时使用，use 导入的 enum）
+    char** enum_value_names;        // 成员名称数组
+    int* enum_values;               // 成员值数组
+    int enum_value_count;           // 成员数量
 };
 
 struct Scope {

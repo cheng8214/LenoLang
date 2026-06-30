@@ -360,22 +360,20 @@
             }
 
             // 尝试查找 enum 定义
-            {
+            if (module_info->sym_table) {
                 ModuleEnumSymbol* enum_sym = module_symbol_table_find_enum(module_info->sym_table, symbol_name);
                 if (enum_sym) {
                     Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
                     if (sym) {
                         sym->type = type_new(TYPE_ENUM);
                         sym->type->struct_name = strdup(symbol_name);
-                    }
-                    // 同时导入 enum 的所有成员
-                    for (int mi = 0; mi < enum_sym->member_count; mi++) {
-                        SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
-                        Symbol* member_sym = scope_define(s->current, enum_sym->member_names[mi], kind);
-                        if (member_sym) {
-                            member_sym->type = type_new(TYPE_ENUM);
-                            member_sym->type->struct_name = strdup(symbol_name);
-                            member_sym->index = enum_sym->member_values[mi];
+                        // 存储 enum 成员信息到 symbol，用于 AST_NUM 转换
+                        sym->enum_value_count = enum_sym->member_count;
+                        sym->enum_value_names = (char**)malloc(sizeof(char*) * enum_sym->member_count);
+                        sym->enum_values = (int*)malloc(sizeof(int) * enum_sym->member_count);
+                        for (int mi = 0; mi < enum_sym->member_count; mi++) {
+                            sym->enum_value_names[mi] = strdup(enum_sym->member_names[mi]);
+                            sym->enum_values[mi] = enum_sym->member_values[mi];
                         }
                     }
                     break;
@@ -1368,10 +1366,20 @@
                 }
 
                 if (is_enum_type && var_sym->kind == SYM_TYPE) {
-                    // use 导入的 enum（SYM_TYPE）：直接替换为常量值
-                    Symbol* member_sym = scope_resolve(s->current, ast->u.module_access.member_name);
-                    if (member_sym && member_sym->type && member_sym->type->kind == TYPE_ENUM) {
-                        int member_value = member_sym->index;
+                    // use 导入的 enum：从 enum symbol 的成员表查找值
+                    const char* mname = ast->u.module_access.member_name;
+                    int found = 0;
+                    int member_value = 0;
+                    if (var_sym->enum_value_names) {
+                        for (int mi = 0; mi < var_sym->enum_value_count; mi++) {
+                            if (strcmp(var_sym->enum_value_names[mi], mname) == 0) {
+                                member_value = var_sym->enum_values[mi];
+                                found = 1;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) {
                         char* mod_name = ast->u.module_access.module_name;
                         char* mem_name = ast->u.module_access.member_name;
                         char* ref_name = ast->u.module_access.ref.name;
@@ -1389,8 +1397,7 @@
                     } else {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
-                                 ast->u.module_access.module_name,
-                                 ast->u.module_access.member_name);
+                                 ast->u.module_access.module_name, mname);
                         error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                     }
                 } else if (is_struct_type || is_cstruct_type || is_face_type) {
