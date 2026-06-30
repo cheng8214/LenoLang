@@ -3,6 +3,8 @@ import ffi
 import "sdl_core.leno" as core
 use core.sdl3
 
+sdl3 _lib = core.lib()
+
 export struct Event {
     Ptr raw; bool has
 
@@ -13,7 +15,7 @@ export struct Event {
     }
 
     func poll(): bool {
-        has = core.lib().SDL_PollEvent(raw) != 0
+        has = _lib.SDL_PollEvent(raw) != 0
         return has
     }
 
