@@ -48,12 +48,43 @@ export var EVENT_KEY_UP                 = core.EVENT_KEY_UP
 export var EVENT_MOUSE_MOTION           = core.EVENT_MOUSE_MOTION
 export var EVENT_MOUSE_BUTTON_DOWN      = core.EVENT_MOUSE_BUTTON_DOWN
 export var EVENT_MOUSE_BUTTON_UP        = core.EVENT_MOUSE_BUTTON_UP
+export var EVENT_MOUSE_WHEEL           = core.EVENT_MOUSE_WHEEL
 export var EVENT_WINDOW_CLOSE_REQUESTED = core.EVENT_WINDOW_CLOSE_REQUESTED
 
 // 扫描码
-export var SCANCODE_ESCAPE = core.SCANCODE_ESCAPE
-export var SCANCODE_RETURN = core.SCANCODE_RETURN
-export var SCANCODE_SPACE  = core.SCANCODE_SPACE
+export var SCANCODE_ESCAPE    = core.SCANCODE_ESCAPE
+export var SCANCODE_RETURN    = core.SCANCODE_RETURN
+export var SCANCODE_SPACE     = core.SCANCODE_SPACE
+export var SCANCODE_BACKSPACE = core.SCANCODE_BACKSPACE
+export var SCANCODE_TAB       = core.SCANCODE_TAB
+export var SCANCODE_DELETE    = core.SCANCODE_DELETE
+export var SCANCODE_UP        = core.SCANCODE_UP
+export var SCANCODE_DOWN      = core.SCANCODE_DOWN
+export var SCANCODE_LEFT      = core.SCANCODE_LEFT
+export var SCANCODE_RIGHT     = core.SCANCODE_RIGHT
+export var SCANCODE_LSHIFT    = core.SCANCODE_LSHIFT
+export var SCANCODE_RSHIFT    = core.SCANCODE_RSHIFT
+export var SCANCODE_LCTRL     = core.SCANCODE_LCTRL
+export var SCANCODE_RCTRL     = core.SCANCODE_RCTRL
+export var SCANCODE_LALT      = core.SCANCODE_LALT
+export var SCANCODE_RALT      = core.SCANCODE_RALT
+export var SCANCODE_A = core.SCANCODE_A; export var SCANCODE_B = core.SCANCODE_B; export var SCANCODE_C = core.SCANCODE_C
+export var SCANCODE_D = core.SCANCODE_D; export var SCANCODE_E = core.SCANCODE_E; export var SCANCODE_F = core.SCANCODE_F
+export var SCANCODE_G = core.SCANCODE_G; export var SCANCODE_H = core.SCANCODE_H; export var SCANCODE_I = core.SCANCODE_I
+export var SCANCODE_J = core.SCANCODE_J; export var SCANCODE_K = core.SCANCODE_K; export var SCANCODE_L = core.SCANCODE_L
+export var SCANCODE_M = core.SCANCODE_M; export var SCANCODE_N = core.SCANCODE_N; export var SCANCODE_O = core.SCANCODE_O
+export var SCANCODE_P = core.SCANCODE_P; export var SCANCODE_Q = core.SCANCODE_Q; export var SCANCODE_R = core.SCANCODE_R
+export var SCANCODE_S = core.SCANCODE_S; export var SCANCODE_T = core.SCANCODE_T; export var SCANCODE_U = core.SCANCODE_U
+export var SCANCODE_V = core.SCANCODE_V; export var SCANCODE_W = core.SCANCODE_W; export var SCANCODE_X = core.SCANCODE_X
+export var SCANCODE_Y = core.SCANCODE_Y; export var SCANCODE_Z = core.SCANCODE_Z
+export var SCANCODE_0 = core.SCANCODE_0; export var SCANCODE_1 = core.SCANCODE_1; export var SCANCODE_2 = core.SCANCODE_2
+export var SCANCODE_3 = core.SCANCODE_3; export var SCANCODE_4 = core.SCANCODE_4; export var SCANCODE_5 = core.SCANCODE_5
+export var SCANCODE_6 = core.SCANCODE_6; export var SCANCODE_7 = core.SCANCODE_7; export var SCANCODE_8 = core.SCANCODE_8
+export var SCANCODE_9 = core.SCANCODE_9
+export var SCANCODE_F1  = core.SCANCODE_F1;  export var SCANCODE_F2  = core.SCANCODE_F2;  export var SCANCODE_F3  = core.SCANCODE_F3
+export var SCANCODE_F4  = core.SCANCODE_F4;  export var SCANCODE_F5  = core.SCANCODE_F5;  export var SCANCODE_F6  = core.SCANCODE_F6
+export var SCANCODE_F7  = core.SCANCODE_F7;  export var SCANCODE_F8  = core.SCANCODE_F8;  export var SCANCODE_F9  = core.SCANCODE_F9
+export var SCANCODE_F10 = core.SCANCODE_F10; export var SCANCODE_F11 = core.SCANCODE_F11; export var SCANCODE_F12 = core.SCANCODE_F12
 
 // 鼠标
 export var MOUSE_LEFT   = core.MOUSE_LEFT

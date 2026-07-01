@@ -1,9 +1,22 @@
 // sdl_event.leno — SDL3 事件封装
+// SDL_Event 是联合体，不同事件类型共用 128 字节，字段在不同偏移量
 import ffi
 import "sdl_core.leno" as core
 use core.sdl3
 
 sdl3 _lib = core.lib()
+
+// SDL3 事件结构体字段偏移量（字节）
+var EV_TYPE    = 0   // u32: 事件类型
+var EV_WINID   = 16  // u32: 窗口 ID
+var EV_BUTTON  = 24  // u8:  鼠标按钮 (1=左 2=中 3=右)
+var EV_SCAN    = 24  // u32: 键盘扫描码
+var EV_WHEEL_X = 24  // f32: 滚轮 X (wheel 事件)
+var EV_WHEEL_Y = 28  // f32: 滚轮 Y (wheel 事件)
+var EV_MOUSE_X = 28  // f32: 鼠标 X (motion/button 事件)
+var EV_MOUSE_Y = 32  // f32: 鼠标 Y (motion/button 事件)
+var EV_MOUSE_DX = 36 // f32: 鼠标相对位移 X
+var EV_MOUSE_DY = 40 // f32: 鼠标相对位移 Y
 
 export struct Event {
     Ptr raw; bool has
@@ -19,25 +32,27 @@ export struct Event {
         return has
     }
 
-    func type(): int { return ffi.read_int(raw, 0) }
+    func sdl3_type(): int { return ffi.read_int(raw, EV_TYPE) }
 
-    func isQuit(): bool          { return type() == core.EVENT_QUIT }
-    func isKeyDown(): bool       { return type() == core.EVENT_KEY_DOWN }
-    func isKeyUp(): bool         { return type() == core.EVENT_KEY_UP }
-    func isWindowClose(): bool   { return type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
-    func isWindowResized(): bool { return type() == core.EVENT_WINDOW_RESIZED }
-    func isMouseMotion(): bool   { return type() == core.EVENT_MOUSE_MOTION }
-    func isMouseButtonDown(): bool { return type() == core.EVENT_MOUSE_BUTTON_DOWN }
-    func isMouseButtonUp(): bool   { return type() == core.EVENT_MOUSE_BUTTON_UP }
+    func isQuit(): bool          { return sdl3_type() == core.EVENT_QUIT }
+    func isKeyDown(): bool       { return sdl3_type() == core.EVENT_KEY_DOWN }
+    func isKeyUp(): bool         { return sdl3_type() == core.EVENT_KEY_UP }
+    func isWindowClose(): bool   { return sdl3_type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
+    func isWindowResized(): bool { return sdl3_type() == core.EVENT_WINDOW_RESIZED }
+    func isMouseMotion(): bool   { return sdl3_type() == core.EVENT_MOUSE_MOTION }
+    func isMouseButtonDown(): bool { return sdl3_type() == core.EVENT_MOUSE_BUTTON_DOWN }
+    func isMouseButtonUp(): bool   { return sdl3_type() == core.EVENT_MOUSE_BUTTON_UP }
+    func isMouseWheel(): bool      { return sdl3_type() == core.EVENT_MOUSE_WHEEL }
 
-    func scancode(): int { return ffi.read_int(raw, 24) }
+    func scancode(): int { return ffi.read_int(raw, EV_SCAN) }
 
-    func mouseX(): float     { return ffi.read_float(raw, 28) }
-    func mouseY(): float     { return ffi.read_float(raw, 32) }
-    func mouseDX(): float    { return ffi.read_float(raw, 36) }
-    func mouseDY(): float    { return ffi.read_float(raw, 40) }
-    func mouseButton(): int  { return ffi.read_int(raw, 24) }
-    func windowID(): int     { return ffi.read_int(raw, 16) }
+    func mouseX(): float     { return ffi.read_float(raw, EV_MOUSE_X) }
+    func mouseY(): float     { return ffi.read_float(raw, EV_MOUSE_Y) }
+    func mouseDX(): float    { return ffi.read_float(raw, EV_MOUSE_DX) }
+    func mouseDY(): float    { return ffi.read_float(raw, EV_MOUSE_DY) }
+    func mouseButton(): int  { return ffi.read_int(raw, EV_BUTTON) & 0xFF }
+    func wheelY(): float     { return ffi.read_float(raw, EV_WHEEL_Y) }
+    func windowID(): int     { return ffi.read_int(raw, EV_WINID) }
 
     func uninit() {
         if raw != null { ffi.free(raw); raw = null; has = false }

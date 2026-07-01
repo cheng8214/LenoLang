@@ -1,0 +1,86 @@
+// keyboard.leno — 键盘事件演示
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+var keyNames = {}
+var _knInited = false
+
+func scode2name(int code): string {
+    var d = keyNames
+    if not _knInited {
+        _knInited = true
+        d[SDL3.SCANCODE_ESCAPE]="Esc";   d[SDL3.SCANCODE_RETURN]="Enter"
+        d[SDL3.SCANCODE_SPACE]="空格";    d[SDL3.SCANCODE_BACKSPACE]="退格"
+        d[SDL3.SCANCODE_TAB]="Tab";       d[SDL3.SCANCODE_DELETE]="Del"
+        d[SDL3.SCANCODE_UP]="↑";          d[SDL3.SCANCODE_DOWN]="↓"
+        d[SDL3.SCANCODE_LEFT]="←";        d[SDL3.SCANCODE_RIGHT]="→"
+        d[SDL3.SCANCODE_LSHIFT]="左Shift"; d[SDL3.SCANCODE_RSHIFT]="右Shift"
+        d[SDL3.SCANCODE_LCTRL]="左Ctrl";   d[SDL3.SCANCODE_RCTRL]="右Ctrl"
+        d[SDL3.SCANCODE_LALT]="左Alt";     d[SDL3.SCANCODE_RALT]="右Alt"
+        d[SDL3.SCANCODE_A]="A"; d[SDL3.SCANCODE_B]="B"; d[SDL3.SCANCODE_C]="C"
+        d[SDL3.SCANCODE_D]="D"; d[SDL3.SCANCODE_E]="E"; d[SDL3.SCANCODE_F]="F"
+        d[SDL3.SCANCODE_G]="G"; d[SDL3.SCANCODE_H]="H"; d[SDL3.SCANCODE_I]="I"
+        d[SDL3.SCANCODE_J]="J"; d[SDL3.SCANCODE_K]="K"; d[SDL3.SCANCODE_L]="L"
+        d[SDL3.SCANCODE_M]="M"; d[SDL3.SCANCODE_N]="N"; d[SDL3.SCANCODE_O]="O"
+        d[SDL3.SCANCODE_P]="P"; d[SDL3.SCANCODE_Q]="Q"; d[SDL3.SCANCODE_R]="R"
+        d[SDL3.SCANCODE_S]="S"; d[SDL3.SCANCODE_T]="T"; d[SDL3.SCANCODE_U]="U"
+        d[SDL3.SCANCODE_V]="V"; d[SDL3.SCANCODE_W]="W"; d[SDL3.SCANCODE_X]="X"
+        d[SDL3.SCANCODE_Y]="Y"; d[SDL3.SCANCODE_Z]="Z"
+        d[SDL3.SCANCODE_0]="0"; d[SDL3.SCANCODE_1]="1"; d[SDL3.SCANCODE_2]="2"
+        d[SDL3.SCANCODE_3]="3"; d[SDL3.SCANCODE_4]="4"; d[SDL3.SCANCODE_5]="5"
+        d[SDL3.SCANCODE_6]="6"; d[SDL3.SCANCODE_7]="7"; d[SDL3.SCANCODE_8]="8"
+        d[SDL3.SCANCODE_9]="9"
+        d[SDL3.SCANCODE_F1]="F1"; d[SDL3.SCANCODE_F2]="F2"; d[SDL3.SCANCODE_F3]="F3"
+        d[SDL3.SCANCODE_F4]="F4"; d[SDL3.SCANCODE_F5]="F5"; d[SDL3.SCANCODE_F6]="F6"
+        d[SDL3.SCANCODE_F7]="F7"; d[SDL3.SCANCODE_F8]="F8"; d[SDL3.SCANCODE_F9]="F9"
+        d[SDL3.SCANCODE_F10]="F10"; d[SDL3.SCANCODE_F11]="F11"; d[SDL3.SCANCODE_F12]="F12"
+    }
+    var name = d.get(code, "") as string
+    if name != "" { return name }
+    return "?" + code
+}
+
+main() {
+    var win = SDL3.createWindow({title: "键盘演示", w: 600, h: 400, flags: SDL3.WINDOW_RESIZABLE})
+    if not win.ok { print("窗口失败"); return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 22.0)
+    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 22.0) }
+
+    var name = ""; var code = 0; var down = false
+    var pressed = 0; var released = 0
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() {
+                code = e.scancode(); name = scode2name(code)
+                down = true; pressed = pressed + 1
+            }
+            if e.isKeyUp() { down = false; released = released + 1 }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(20, 20, 40, 255)
+            r.clear()
+            func t(string s, int x, int y) {
+                if not font.ok { return }
+                var tex = SDL3.createTextTexture(r.handle, font, s, 180, 220, 255)
+                if tex.ok { r.drawTextureAt(tex.texture, x as float, y as float, 300.0, 28.0); tex.destroy() }
+            }
+            t("键盘事件测试", 10, 10)
+            if down {
+                t("按下: " + name + "  [" + code + "]", 10, 55)
+            } else {
+                t("松开", 10, 55)
+            }
+            t("按下次数: " + pressed,  10, 95)
+            t("释放次数: " + released, 10, 125)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

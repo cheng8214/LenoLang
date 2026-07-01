@@ -107,6 +107,7 @@ export var EVENT_KEY_UP                 = 0x301
 export var EVENT_MOUSE_MOTION           = 0x400
 export var EVENT_MOUSE_BUTTON_DOWN      = 0x401
 export var EVENT_MOUSE_BUTTON_UP        = 0x402
+export var EVENT_MOUSE_WHEEL           = 0x403
 export var EVENT_WINDOW_CLOSE_REQUESTED = 0x210
 export var EVENT_WINDOW_RESIZED         = 0x206
 
@@ -188,4 +189,4 @@ export func getError(): string {
 }
 
 export func delay(int ms) { lib().SDL_Delay(ms) }
-export func getTicks(): int { return lib().SDL_GetTicks() as int }
+export func getTicks(): int { return lib().SDL_GetTicks() as int }//这里为啥要转int因为SDL_GetTicks返回的是u64，是C语音的，这里需要转成int，因为leno的int是64位的，所以需要转换一下
