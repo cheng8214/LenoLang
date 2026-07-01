@@ -1,17 +1,9 @@
-// wrapper.leno — 尝试重新导出 types.leno 的别名
-
+// 复现: alias 类型不支持跨模块 use
+// 运行 `leno wrapper.leno` 看报错
 import "types.leno" as t
+use t.MySize
 
-// ❌ 方式1: export alias — 语法报错 "期望表达式"
-// export alias MySize = t.MySize
-
-// ❌ 方式2: use — 报错 "模块中没有 struct/clib/face 类型"
-// use t.MySize
-
-// ✅ 方式3: 本地重定义 — 只能重复写 Dict[string, int]
-// alias MySize = Dict[string, int]  // 这样写会覆盖掉
-
-// 测试用函数
-export func getSize(): t.MySize {
-    return {w: 100, h: 200}
+main() {
+    MySize s = {w: 100, h: 200}
+    print("w=" + s.w)
 }
