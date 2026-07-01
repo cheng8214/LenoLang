@@ -2834,6 +2834,48 @@ struct Calculator {
 }
 ```
 
+> **⚠️ 注意：struct 字段仅在方法内部可直接访问**
+>
+> Leno 有**前向声明**——函数可以调用后面定义的函数，struct 可以引用后面定义的 struct。但 **struct 字段访问有作用域限制**：
+>
+> - **✅ 方法内部**：可以直接用 `field_name` 或 `self.field_name` 访问字段
+> - **✅ 外部通过实例**：`obj.field_name` 可以访问
+> - **❌ 外部函数的局部变量**：即使该变量的类型是某个 struct，也不能用 `new StructName()` 后直接 `.field` 赋值
+>
+> ```leno
+> struct Point {
+>     int x
+>     int y
+>
+>     // ✅ 方法内直接访问字段
+>     func move(int dx) {
+>         x = x + dx       // 等价于 self.x = self.x + dx
+>     }
+> }
+>
+> // ✅ 外部通过实例访问
+> var p = new Point(x = 1, y = 2)
+> print(p.x)               // 1
+>
+> // ❌ 外部函数中 new 出来的 struct 不能直接 .field 赋值
+> func makePoint(): Point {
+>     var pt = new Point()
+>     // pt.x = 100         // ❌ 编译错误："无法确定字段索引"
+>     return new Point(x = 100, y = 200)  // ✅ 用构造参数
+> }
+> ```
+>
+> **解决方案**：把需要操作字段的逻辑放到 struct 的**方法**里。
+>
+> ```leno
+> struct Point {
+>     int x; int y
+>     func createFrom(int v): Point {     // ✅ 方法内可以操作字段
+>         x = v; y = v; return self
+>     }
+> }
+> ```
+
 **使用插值字符串输出 struct**：
 
 推荐使用 `$"..."` 来格式化输出，比字符串拼接更简洁：
