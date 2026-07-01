@@ -37,6 +37,10 @@ export cstruct SDL_FColor {
     f32 r; f32 g; f32 b; f32 a
 }
 
+export cstruct SDL_GlyphMetrics {
+    i32 minX; i32 maxX; i32 minY; i32 maxY; i32 advance
+}
+
 // ==================== clib sdl3 ====================
 
 clib sdl3 {

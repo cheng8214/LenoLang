@@ -5,6 +5,7 @@ import files
 import "sdl_core.leno" as core
 use core.sdl3
 use core.SDL_Point
+use core.SDL_GlyphMetrics
 
 sdl3 _lib = core.lib()
 
@@ -179,14 +180,10 @@ export struct Font {
 
     func measureStringWrapped(string text, int wrapWidth): Dict[string,int] {
         if not ok { return {w: 0, h: 0} }
-        var w = ffi.malloc(4)
-        var h = ffi.malloc(4)
-        ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, w, h)
-        var rw = ffi.read_int(w, 0)
-        var rh = ffi.read_int(h, 0)
-        ffi.free(w)
-        ffi.free(h)
-        return {w: rw, h: rh}
+        var pt = SDL_Point.malloc()
+        ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, &pt.x, &pt.y)
+        var d = {w: pt.x as int, h: pt.y as int}
+        pt.free(); return d
     }
 
     func renderGlyphBlended(int glyph, int r, int g, int b): Ptr {
@@ -210,19 +207,14 @@ export struct Font {
 
     func getGlyphMetrics(int glyph): Dict[string,int] {
         if not ok { return {} }
-        var mx = ffi.malloc(4); var Mx = ffi.malloc(4)
-        var my = ffi.malloc(4); var My = ffi.malloc(4)
-        var adv = ffi.malloc(4)
-        ttfLib().TTF_GetGlyphMetrics(handle, glyph, mx, Mx, my, My, adv)
+        var m = SDL_GlyphMetrics.malloc()
+        ttfLib().TTF_GetGlyphMetrics(handle, glyph, &m.minX, &m.maxX, &m.minY, &m.maxY, &m.advance)
         var r = {
-            minX: ffi.read_int(mx, 0),
-            maxX: ffi.read_int(Mx, 0),
-            minY: ffi.read_int(my, 0),
-            maxY: ffi.read_int(My, 0),
-            advance: ffi.read_int(adv, 0)
+            minX: m.minX as int, maxX: m.maxX as int,
+            minY: m.minY as int, maxY: m.maxY as int,
+            advance: m.advance as int
         }
-        ffi.free(mx); ffi.free(Mx); ffi.free(my); ffi.free(My); ffi.free(adv)
-        return r
+        m.free(); return r
     }
 }
 

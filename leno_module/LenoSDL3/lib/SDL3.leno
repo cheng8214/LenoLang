@@ -16,6 +16,7 @@ use core.SDL_FPoint
 use core.SDL_Point
 use core.SDL_Color
 use core.SDL_FColor
+use core.SDL_GlyphMetrics
 
 use evt.Event
 use r.Renderer
