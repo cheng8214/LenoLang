@@ -827,6 +827,46 @@ func describe(Shape s) {
 > `as` 有三种行为：**值转换**（int↔float、int→string、float→string 等）、**截断**（窄类型丢弃高位）、**类型检查**（bool/struct/face 等不匹配返回 `null`）。
 > `_int()`/`_float()` 等是**强制的**：转换失败会抛出运行时错误。
 
+### & 取地址运算符
+
+`&` 用于获取 cstruct 字段的内存地址（仅限 cstruct，普通 struct 字段无 C 稳定地址）：
+
+```leno
+import ffi
+
+cstruct MyColor { u8 r; u8 g; u8 b; u8 a }
+
+main() {
+    var c = MyColor.malloc()
+    var pr = &c.r     // → Ptr 指向 c 的 r 字段
+    var pg = &c.g     // → Ptr 指向 c 的 g 字段
+    var pb = &c.b     // → Ptr 指向 c 的 b 字段
+    var pa = &c.a     // → Ptr 指向 c 的 a 字段
+
+    // 每个 & 返回不同的指针（指向不同偏移）
+    print(pr != pg)  // true
+}
+```
+
+> **用途**：将 cstruct 字段作为 FFI 函数的 out 参数，避免手动 `ffi.malloc` + `ffi.read_int` + `ffi.free`：
+>
+> ```leno
+> // ❌ 旧方式：手动分配缓冲区
+> var cr = ffi.malloc(4); var cg = ffi.malloc(4)
+> var cb = ffi.malloc(4); var ca = ffi.malloc(4)
+> lib.SDL_GetRenderDrawColor(handle, cr, cg, cb, ca)
+> var c = SDL_Color.malloc()
+> c.r = ffi.read_int(cr, 0) & 0xFF
+> ...
+> ffi.free(cr); ffi.free(cg); ffi.free(cb); ffi.free(ca)
+>
+> // ✅ 新方式：& 直接取字段地址
+> var c = SDL_Color.malloc()
+> lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
+> ```
+
+> **⚠️ 限制**：仅支持 cstruct 字段（`TYPE_CSTRUCT` 类型）。普通 Leno struct 字段无固定 C 地址，不支持 `&`。
+
 ### type() 函数
 
 `type()` 返回**运行时值的类型**（不是编译时声明的类型）：

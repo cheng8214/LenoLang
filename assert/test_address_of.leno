@@ -1,0 +1,39 @@
+// as 安全类型转换测试
+import ffi
+
+cstruct TestColor { u8 r; u8 g; u8 b; u8 a }
+cstruct TestSize  { i32 w; i32 h }
+
+main() {
+    // 测试1: & 取地址基本功能 — 指针不同
+    var c = TestColor.malloc()
+    var pw0 = &c.r
+    var pw1 = &c.g
+    var pw2 = &c.b
+    var pw3 = &c.a
+    assert(pw0 != pw1, "&c.r 和 &c.g 应指向不同地址")
+    assert(pw0 != pw2, "&c.r 和 &c.b 应指向不同地址")
+    assert(pw1 != pw2, "&c.g 和 &c.b 应指向不同地址")
+
+    // 测试2: 多个实例 & 独立
+    var c2 = TestColor.malloc()
+    var pwr = &c.r
+    var pw2r = &c2.r
+    assert(pwr != pw2r, "不同实例的 & 指向不同地址")
+
+    // 测试3: SDL_Size 两字段
+    var s = TestSize.malloc()
+    var sw = &s.w
+    var sh = &s.h
+    assert(sw != sh, "&s.w 和 &s.h 应指向不同地址")
+
+    // 测试4: 通过 & 写入 cstruct 字段
+    // (验证指针可行，不需真实 DLL)
+    c.r = 0; c.g = 0; c.b = 0; c.a = 0
+    // 指针对象可用于 FFI 调用作为 out 参数
+    // 这里只验证指针非 null
+    assert(pw0 != null, "&c.r 不应为 null")
+    assert(pw1 != null, "&c.g 不应为 null")
+
+    print("test_address_of passed")
+}
