@@ -1878,6 +1878,28 @@ main() {
 }
 ```
 
+struct 也可以前向引用——函数定义在 struct 之前，仍能正常访问字段：
+
+```leno
+// ✅ struct 在后，函数在前——编译器预注册字段信息
+func makePixel(int r, int g, int b): Pixel {
+    var p = new Pixel()
+    p.r = r
+    p.g = g
+    p.b = b
+    return p
+}
+
+struct Pixel { int r; int g; int b }
+
+main() {
+    var p = makePixel(255, 128, 64)
+    print(p.r)  // 255
+}
+```
+
+> **原理**：编译器在语义分析阶段预扫描所有 struct 定义，将字段名和类型提前注册到作用域。函数体内通过 `scope_resolve` 查找类型符号时，能获取已注册的字段信息，从而正确解析字段索引。
+
 ### 默认参数
 
 ```leno
