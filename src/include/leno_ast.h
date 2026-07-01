@@ -55,6 +55,7 @@ typedef enum {
     AST_ENUM_DEF,      // enum 定义
     AST_STRUCT_INIT,   // struct 构造函数调用
     AST_FIELD_ACCESS,  // 字段访问: obj.field
+    AST_ADDRESS_OF,    // 取地址: &obj.field（仅 cstruct 字段）
     AST_AWAIT,         // await 表达式
 } AstKind;
 
@@ -324,6 +325,9 @@ struct Ast {
             char* field_name;  // 字段名称
             int field_index;   // 字段索引（编译期确定，-1 表示未确定）
         } field_access;
+        struct {
+            Ast* operand;      // 取地址的操作数（必须是 AST_FIELD_ACCESS）
+        } address_of;
         struct {
             Ast* expr;         // await 的表达式
         } await;

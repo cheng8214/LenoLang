@@ -600,6 +600,47 @@ OPCODE(OP_SET_FIELD) {
     DISPATCH;
 }
 
+OPCODE(OP_GET_FIELD_ADDR) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    // 获取 cstruct 字段地址（返回 ObjFFIPointer）
+    // 操作数：1字节字段索引
+    uint8_t field_idx = READ_BYTE();
+    
+    Value obj_val = vm_stack_pop(&vm);
+    
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_CSTRUCT) {
+        runtime_error("& 取地址仅支持 cstruct 字段", GET_CURRENT_LINE());
+        return -1;
+    }
+    
+    ObjCStruct* obj = (ObjCStruct*)val_as_obj(obj_val);
+    ObjCStructDef* def = obj->def;
+    
+    if (field_idx >= def->field_count) {
+        runtime_error("cstruct 字段索引越界", GET_CURRENT_LINE());
+        return -1;
+    }
+    
+    CStructFieldInfo* field = &def->fields[field_idx];
+    void* addr = obj->data + field->offset;
+    
+    // 创建 ObjFFIPointer（非拥有，指向 cstruct 字段内存）
+    ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+    if (!ffi_ptr) {
+        runtime_error("内存不足", GET_CURRENT_LINE());
+        return -1;
+    }
+    ffi_ptr->ptr = addr;
+    ffi_ptr->size = (size_t)field->size;
+    ffi_ptr->owned = 0;   // 不拥有内存（cstruct 拥有）
+    ffi_ptr->freed = 0;
+    ffi_ptr->element_type = field->type;
+    
+    vm_stack_push(&vm, val_obj((Object*)ffi_ptr));
+    
+    DISPATCH;
+}
+
 OPCODE(OP_GET_METHOD) {
     frame = &vm.frames[vm.frame_cnt - 1];
     // 获取结构体方法或原生对象方法

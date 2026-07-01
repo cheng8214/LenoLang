@@ -435,6 +435,10 @@ static void fold_expr(Ast* ast) {
             fold_expr(ast->u.field_access.obj);
             break;
 
+        case AST_ADDRESS_OF:
+            fold_expr(ast->u.address_of.operand);
+            break;
+
         case AST_AWAIT:
             fold_expr(ast->u.await.expr);
             break;
@@ -798,6 +802,10 @@ static int dce_expr(Ast* ast) {
         // 字段访问：递归处理对象
         case AST_FIELD_ACCESS:
             dce_expr(ast->u.field_access.obj);
+            return 0;
+
+        case AST_ADDRESS_OF:
+            dce_expr(ast->u.address_of.operand);
             return 0;
 
         // await：递归处理表达式

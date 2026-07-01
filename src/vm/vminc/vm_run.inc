@@ -168,6 +168,7 @@
         [OP_STRUCT_INIT] = &&LABEL(OP_STRUCT_INIT),
         [OP_GET_FIELD] = &&LABEL(OP_GET_FIELD),
         [OP_SET_FIELD] = &&LABEL(OP_SET_FIELD),
+        [OP_GET_FIELD_ADDR] = &&LABEL(OP_GET_FIELD_ADDR),
         [OP_GET_METHOD] = &&LABEL(OP_GET_METHOD),
         // enum 相关操作码
         [OP_ENUM_DEF] = &&LABEL(OP_ENUM_DEF),

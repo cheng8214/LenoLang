@@ -339,6 +339,9 @@ void ast_free(Ast* ast) {
             ast_free(ast->u.field_access.obj);
             free(ast->u.field_access.field_name);
             break;
+        case AST_ADDRESS_OF:
+            ast_free(ast->u.address_of.operand);
+            break;
         case AST_AWAIT:
             ast_free(ast->u.await.expr);
             break;

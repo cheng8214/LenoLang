@@ -24,6 +24,7 @@ static int is_generic_type_start_token(LenoTokenType type) {
 
 static Ast* parse_anon_func(Parser* p);
 static Ast* parse_new(Parser* p);
+static Ast* parse_addr_of(Parser* p);
 
 // ============================================================================
 // Pratt 规则表 - 定义每个 token 的前缀/中缀解析器和优先级
@@ -58,7 +59,7 @@ static ParseRule rules[] = {
     [TOK_SLASH]     = {NULL,     parse_binary, PREC_FACTOR},
     [TOK_STAR]      = {NULL,     parse_binary, PREC_FACTOR},
     [TOK_MOD]       = {NULL,     parse_binary, PREC_FACTOR},
-    [TOK_BITAND]    = {NULL,     parse_binary, PREC_BITAND},
+    [TOK_BITAND]    = {parse_addr_of, parse_binary, PREC_BITAND},
     [TOK_BITOR]     = {NULL,     parse_binary, PREC_BITOR},
     [TOK_BITXOR]    = {NULL,     parse_binary, PREC_BITXOR},
     [TOK_BITNOT]    = {parse_unary, NULL,       PREC_NONE},
@@ -522,6 +523,18 @@ Ast* parse_if_expr(Parser* p) {
     ast->u.if_.guard_type = NULL;
     type_guard_list_init(&ast->u.if_.guard_conds);
 
+    return ast;
+}
+
+// 解析取地址表达式（&expr，仅 cstruct 字段）
+Ast* parse_addr_of(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex);  // 消耗 '&'
+
+    Ast* operand = parse_precedence(p, PREC_UNARY);
+
+    Ast* ast = ast_new(AST_ADDRESS_OF, line);
+    ast->u.address_of.operand = operand;
     return ast;
 }
 

@@ -1657,6 +1657,19 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             if (obj_type) type_free(obj_type);
             break;
         }
+        case AST_ADDRESS_OF: {
+            // &expr 取地址，结果类型为 TYPE_PTR
+            // 尝试推断 element_type：如果操作数是 cstruct 字段访问，取字段类型
+            result = type_new(TYPE_PTR);
+            if (ast->u.address_of.operand && ast->u.address_of.operand->kind == AST_FIELD_ACCESS) {
+                Ast* fa = ast->u.address_of.operand;
+                TypeInfo* field_type = infer_expr_type(s, fa);
+                if (field_type) {
+                    result->element_type = field_type;  // 转移所有权，不 type_free
+                }
+            }
+            break;
+        }
         case AST_FUNC_DEF: {
             // 匿名函数表达式：根据返回类型注解构建函数类型
             TypeInfo* return_type = (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER)

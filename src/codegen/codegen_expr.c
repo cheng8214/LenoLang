@@ -1611,6 +1611,25 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             }
             break;
         }
+        case AST_ADDRESS_OF: {
+            // &expr 取地址：生成对象表达式 + OP_GET_FIELD_ADDR
+            Ast* operand = ast->u.address_of.operand;
+            if (operand && operand->kind == AST_FIELD_ACCESS) {
+                // 生成对象表达式（递归处理链式访问，如 &(c.nested).field）
+                gen_expr(gen, operand->u.field_access.obj);
+                // 发射 OP_GET_FIELD_ADDR + 字段索引
+                int field_idx = operand->u.field_access.field_index;
+                if (field_idx >= 0) {
+                    emit_byte(gen, OP_GET_FIELD_ADDR, ast->line);
+                    emit_byte(gen, (uint8_t)field_idx, ast->line);
+                } else {
+                    error_add(ERR_SEMANTIC, ast->line, "无法确定字段索引，& 取地址失败");
+                }
+            } else {
+                error_add(ERR_SEMANTIC, ast->line, "& 取地址运算符只能用于字段访问");
+            }
+            break;
+        }
         case AST_AWAIT: {
             // 生成 await 表达式的代码
             // 先生成被等待的表达式（应该返回 Future）
@@ -1693,6 +1712,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 case AST_ENUM_DEF: ast_type_name = "AST_ENUM_DEF"; break;
                 case AST_STRUCT_INIT: ast_type_name = "AST_STRUCT_INIT"; break;
                 case AST_FIELD_ACCESS: ast_type_name = "AST_FIELD_ACCESS"; break;
+                case AST_ADDRESS_OF: ast_type_name = "AST_ADDRESS_OF"; break;
                 case AST_AWAIT: ast_type_name = "AST_AWAIT"; break;
                 default: ast_type_name = "UNKNOWN_AST_KIND"; break;
             }

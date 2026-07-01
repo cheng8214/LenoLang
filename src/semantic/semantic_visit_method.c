@@ -477,6 +477,12 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             // 处理 await 表达式中的字段访问
             transform_method_body_ex(ast->u.await.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
             break;
+        case AST_ADDRESS_OF:
+            // 处理取地址表达式中的字段访问
+            if (ast->u.address_of.operand) {
+                transform_method_body_ex(ast->u.address_of.operand, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
+            }
+            break;
         case AST_CLIB_DEF:
         default:
             break;

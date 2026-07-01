@@ -1,0 +1,11 @@
+import ffi
+cstruct MySize { f32 w; f32 h }
+
+main() {
+    var s = MySize.malloc()
+    var pw = &s.w
+    var ph = &s.h
+    print("base=" + s.to_ptr())
+    print(s.debug())
+    print("pw=" + pw + " ph=" + ph)
+}

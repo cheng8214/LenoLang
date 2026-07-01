@@ -145,6 +145,7 @@ typedef enum {
     OP_STRUCT_INIT,    // 创建结构体实例
     OP_GET_FIELD,      // 获取结构体字段
     OP_SET_FIELD,      // 设置结构体字段
+    OP_GET_FIELD_ADDR, // 获取 cstruct 字段地址（返回 ObjFFIPointer）
     OP_GET_METHOD,     // 获取结构体方法（从struct方法表）
     // enum 相关指令
     OP_ENUM_DEF,       // 定义枚举
