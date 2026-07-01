@@ -1,0 +1,15 @@
+// struct 在后 - 前向引用测试
+func makePixel(int rv, int gv, int bv): Pixel {
+    var p = new Pixel()
+    p.r = rv
+    p.g = gv
+    p.b = bv
+    return p
+}
+
+struct Pixel { int r; int g; int b }
+
+main() {
+    var p = makePixel(255, 128, 64)
+    print("r=" + p.r + " g=" + p.g + " b=" + p.b)
+}

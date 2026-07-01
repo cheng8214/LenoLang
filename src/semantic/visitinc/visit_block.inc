@@ -1,6 +1,6 @@
         case AST_BLOCK: {
-            // 第零轮预扫描：提前注册所有 struct 和 face 定义
-            // 确保函数体中引用 struct/face 时能通过 struct_def_find/face_def_find 找到
+            // 第零轮预扫描：提前注册所有 struct/face/cstruct 定义
+            // 确保后续函数体中引用 struct 时能通过 scope_resolve 找到其字段
             for (int i = 0; i < ast->u.block.count; i++) {
                 Ast* stmt = ast->u.block.items[i];
                 if (stmt->kind == AST_STRUCT_DEF) {
@@ -25,6 +25,22 @@
                                 early_def->methods[j].name = strdup(stmt->u.struct_def.methods[j]->u.func.name);
                             }
                             struct_def_register(early_def);
+                        }
+                    }
+                    // ★ 同时注册到作用域符号表，让 scope_resolve 能找到字段信息
+                    if (s->current && !scope_resolve_local(s->current, stmt->u.struct_def.name)) {
+                        SymKind kind = (s->current->parent == NULL) ? (s->is_module ? SYM_MODULE : SYM_GLOBAL) : SYM_LOCAL;
+                        Symbol* sym = scope_define(s->current, stmt->u.struct_def.name, kind);
+                        if (sym) {
+                            sym->type = type_new(TYPE_STRUCT);
+                            sym->type->struct_name = strdup(stmt->u.struct_def.name);
+                            sym->struct_field_count = stmt->u.struct_def.field_count;
+                            sym->struct_field_names = (char**)malloc(sizeof(char*) * stmt->u.struct_def.field_count);
+                            sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * stmt->u.struct_def.field_count);
+                            for (int j = 0; j < stmt->u.struct_def.field_count; j++) {
+                                sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
+                                sym->struct_field_types[j] = type_copy(stmt->u.struct_def.field_types[j]);
+                            }
                         }
                     }
                 } else if (stmt->kind == AST_FACE_DEF) {
