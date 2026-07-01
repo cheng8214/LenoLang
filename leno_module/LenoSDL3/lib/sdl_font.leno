@@ -27,6 +27,13 @@ clib sdl3_ttf {
     void TTF_SetFontOutline(Ptr font, i32 outline)
     i32  TTF_GetFontOutline(Ptr font)
     str8 TTF_GetFontStyleName(Ptr font)
+    str8 TTF_GetFontFamilyName(Ptr font)
+    void TTF_SetFontHinting(Ptr font, i32 hinting)
+    i32  TTF_GetFontHinting(Ptr font)
+    void TTF_SetFontKerning(Ptr font, i32 kerning)
+    i32  TTF_GetFontKerning(Ptr font)
+    bool TTF_GetStringSizeWrapped(Ptr font, str8 text, u64 length, i32 wrapWidth, Ptr w, Ptr h)
+    Ptr  TTF_RenderGlyph_Blended(Ptr font, u32 glyph, u32 color)
 }
 
 // ==================== DLL 加载 ====================
@@ -44,7 +51,7 @@ func ttfLib(): sdl3_ttf {
 }
 
 // SDL_Surface 头部字段（用于 from_ptr 读取真实宽高）
-cstruct SDL_SurfaceInfo {
+export cstruct SDL_SurfaceInfo {
     u32 flags     // offset 0
     i32 format    // offset 4
     i32 w         // offset 8
@@ -56,6 +63,11 @@ export var STYLE_BOLD          = 0x01
 export var STYLE_ITALIC        = 0x02
 export var STYLE_UNDERLINE     = 0x04
 export var STYLE_STRIKETHROUGH = 0x08
+
+export var HINTING_NORMAL = 0
+export var HINTING_LIGHT  = 1
+export var HINTING_MONO   = 2
+export var HINTING_NONE   = 3
 
 // ==================== Font ====================
 
@@ -137,6 +149,47 @@ export struct Font {
         if not ok { return "" }
         return ttfLib().TTF_GetFontStyleName(handle) as string
     }
+
+    func getFamilyName(): string {
+        if not ok { return "" }
+        return ttfLib().TTF_GetFontFamilyName(handle) as string
+    }
+
+    func setHinting(int hinting) {
+        if ok { ttfLib().TTF_SetFontHinting(handle, hinting) }
+    }
+
+    func getHinting(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontHinting(handle)
+    }
+
+    func setKerning(int kerning) {
+        if ok { ttfLib().TTF_SetFontKerning(handle, kerning) }
+    }
+
+    func getKerning(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontKerning(handle)
+    }
+
+    func measureStringWrapped(string text, int wrapWidth): Dict {
+        if not ok { return {w: 0, h: 0} }
+        var w = ffi.malloc(4)
+        var h = ffi.malloc(4)
+        ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, w, h)
+        var rw = ffi.read_int(w, 0)
+        var rh = ffi.read_int(h, 0)
+        ffi.free(w)
+        ffi.free(h)
+        return {w: rw, h: rh}
+    }
+
+    func renderGlyphBlended(int glyph, int r, int g, int b): Ptr {
+        if not ok { return null }
+        var color = r | (g << 8) | (b << 16) | (255 << 24)
+        return ttfLib().TTF_RenderGlyph_Blended(handle, glyph, color)
+    }
 }
 
 // ==================== TextTexture ====================
@@ -195,4 +248,14 @@ export func createFont(string path, float ptsize): Font {
 
 export func createTextTexture(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
     var tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
+}
+
+export func createTextTextureWrapped(Ptr renderer, Ptr surface, int w, int h): TextTexture {
+    var tex = new TextTexture()
+    var ok = tex.createFromSurface(renderer, surface)
+    if ok {
+        tex.width = w
+        tex.height = h
+    }
+    return tex
 }

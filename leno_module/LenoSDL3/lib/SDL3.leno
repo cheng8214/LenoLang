@@ -110,8 +110,14 @@ export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
 export func createRenderer(Ptr w): Renderer     { return r.createRenderer(w) }
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
+use fnt.SDL_SurfaceInfo
+
 export func createTextTexture(Ptr ren, Font f, string t, int r, int g, int b): TextTexture {
     return fnt.createTextTexture(ren, f, t, r, g, b)
+}
+
+export func createTextTextureWrapped(Ptr ren, Ptr surface, int w, int h): TextTexture {
+    return fnt.createTextTextureWrapped(ren, surface, w, h)
 }
 
 // ==================== TTF ====================
@@ -124,3 +130,8 @@ export var STYLE_BOLD          = fnt.STYLE_BOLD
 export var STYLE_ITALIC        = fnt.STYLE_ITALIC
 export var STYLE_UNDERLINE     = fnt.STYLE_UNDERLINE
 export var STYLE_STRIKETHROUGH = fnt.STYLE_STRIKETHROUGH
+
+export var HINTING_NORMAL = fnt.HINTING_NORMAL
+export var HINTING_LIGHT  = fnt.HINTING_LIGHT
+export var HINTING_MONO   = fnt.HINTING_MONO
+export var HINTING_NONE   = fnt.HINTING_NONE
