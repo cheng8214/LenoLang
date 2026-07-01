@@ -42,7 +42,7 @@ var maybe_float = 42 as float
 assert_eq(maybe_float, 42.0)
 
 var maybe_str = 100 as string
-assert_eq(maybe_str, null)
+assert_eq(maybe_str, "100")
 
 // 测试 3: as struct 类型转换 - 匹配时返回原值
 var circle = new Circle()

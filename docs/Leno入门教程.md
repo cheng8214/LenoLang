@@ -745,7 +745,8 @@ for 32 {
 
 - **Leno 原生类型**（int、float）：值转换，始终成功（int↔float 互转）
 - **C 窄类型**（i8/u8/i16/u16/i32/u32/i64/u64/f32/f64）：**显式截断**，始终成功，丢弃超出位宽的高位
-- **结构类型**（string、bool、struct、face、cstruct）：类型检查，匹配返回原值，不匹配返回 `null`
+- **结构类型**（bool、struct、face、cstruct）：类型检查，匹配返回原值，不匹配返回 `null`
+- **string 类型**：自动转换为字符串表示（与 `as int`/`as float` 一致，始终成功）
 
 ```leno
 main() {
@@ -765,11 +766,11 @@ main() {
     var c3 = -1 as u8          // 255（位模式截断，0xFF）
     var c4 = 0x123456789 as i32  // 显式截断为 32 位
 
-    // 不同类型：返回 null
+    // 不同类型：返回 null 或自动转换
     var s = "hello"
-    var si = s as int          // null（string 不是 int）
+    var si = s as int          // null（string 不是 int，无法转换）
     var n = 100
-    var ns = n as string       // null（int 不是 string）
+    var ns = n as string       // "100"（自动转换，与 as int/as float 一致）
 
     // null 转换
     var na = null as int       // null
@@ -819,10 +820,11 @@ func describe(Shape s) {
 > | `_float(42)` | 强制类型转换 | `42.0`（int→float 转换） |
 > | `256 as u8` | 截断 | `0`（丢弃高位） |
 > | `_uint8(256)` | 截断 | `1`（256 & 0xFF） |
-> | `"abc" as int` | 类型检查 | `null`（不匹配） |
+> | `"abc" as int` | 类型检查 | `null`（不可转换） |
+> | `100 as string` | 自动转换 | `"100"`（int→string） |
 > | `_int("abc")` | 强制类型转换 | 运行时错误（解析失败） |
 >
-> `as` 有三种行为：**值转换**（int↔float）、**截断**（窄类型丢弃高位）、**类型检查**（结构类型不匹配返回 `null`）。
+> `as` 有三种行为：**值转换**（int↔float、int→string、float→string 等）、**截断**（窄类型丢弃高位）、**类型检查**（bool/struct/face 等不匹配返回 `null`）。
 > `_int()`/`_float()` 等是**强制的**：转换失败会抛出运行时错误。
 
 ### type() 函数
@@ -4434,10 +4436,12 @@ func describe(Shape s) {
 | `42 as float` | 值转换 | `42.0`（int→float 转换） |
 | `_float(42)` | 强制类型转换 | `42.0`（int→float 转换） |
 | `256 as u8` | 截断 | `0`（丢弃高位） |
-| `"abc" as int` | 类型检查 | `null`（不匹配） |
-| `_int("abc")` | 类型转换 | 运行时错误（解析失败） |
+| `"abc" as int` | 类型检查 | `null`（不可转换） |
+| `_int("abc")` | 强制类型转换 | 运行时错误（解析失败） |
+| `100 as string` | 自动转换 | `"100"`（int→string） |
+| `3.14 as string` | 自动转换 | `"3.14"`（float→string） |
 
-> **核心区别**：`as` 对原生类型做值转换/截断，对结构类型做安全检查（不匹配返回 `null`）；`_int()`/`_float()` 等是强制类型转换，失败抛运行时错误。
+> **核心区别**：`as` 对原生类型做值转换/截断（包括 int/float→string 自动转字符串），对结构类型做安全检查（不匹配返回 `null`）；`_int()`/`_float()` 等是强制类型转换，失败抛运行时错误。
 
 ### face 数组类型推断
 

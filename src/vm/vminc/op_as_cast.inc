@@ -67,7 +67,16 @@ OPCODE(OP_AS_CAST) {
         }
         case TYPE_STRING:
             (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING);
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING) {
+                matches = 1;
+            } else if (!val_is_null(value)) {
+                // 与 as int/as float 一致：非字符串类型自动转换
+                const char* str = val_to_string(value);
+                value = val_obj((struct Object*)str_copy(str, (int)strlen(str)));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
             break;
         case TYPE_BOOL:
             (void)READ_BYTE();
