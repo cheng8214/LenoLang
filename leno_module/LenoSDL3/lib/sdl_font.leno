@@ -17,9 +17,15 @@ clib sdl3_ttf {
     i32  TTF_GetFontHeight(Ptr font)
     i32  TTF_GetFontAscent(Ptr font)
     i32  TTF_GetFontDescent(Ptr font)
+    bool TTF_GetStringSize(Ptr font, str8 text, u64 length, Ptr w, Ptr h)
     Ptr  TTF_RenderText_Blended(Ptr font, str8 text, u64 length, u32 color)
     Ptr  TTF_RenderText_Solid(Ptr font, str8 text, u64 length, u32 color)
     Ptr  TTF_RenderText_Shaded(Ptr font, str8 text, u64 length, u32 fg, u32 bg)
+    Ptr  TTF_RenderText_Blended_Wrapped(Ptr font, str8 text, u64 length, u32 color, i32 wrapWidth)
+    void TTF_SetFontStyle(Ptr font, i32 style)
+    i32  TTF_GetFontStyle(Ptr font)
+    void TTF_SetFontOutline(Ptr font, i32 outline)
+    i32  TTF_GetFontOutline(Ptr font)
 }
 
 // ==================== DLL 加载 ====================
@@ -35,6 +41,20 @@ func ttfLib(): sdl3_ttf {
     }
     return g_ttf
 }
+
+// SDL_Surface 头部字段（用于 from_ptr 读取真实宽高）
+cstruct SDL_SurfaceInfo {
+    u32 flags     // offset 0
+    i32 format    // offset 4
+    i32 w         // offset 8
+    i32 h         // offset 12
+}
+
+export var STYLE_NORMAL        = 0x00
+export var STYLE_BOLD          = 0x01
+export var STYLE_ITALIC        = 0x02
+export var STYLE_UNDERLINE     = 0x04
+export var STYLE_STRIKETHROUGH = 0x08
 
 // ==================== Font ====================
 
@@ -75,6 +95,42 @@ export struct Font {
         var bg_color = br | (bg << 8) | (bb << 16) | (255 << 24)
         return ttfLib().TTF_RenderText_Shaded(handle, text, 0, fg_color, bg_color)
     }
+
+    func renderTextBlendedWrapped(string text, int r, int g, int b, int wrapWidth): Ptr {
+        if not ok { return null }
+        var color = r | (g << 8) | (b << 16) | (255 << 24)
+        return ttfLib().TTF_RenderText_Blended_Wrapped(handle, text, 0, color, wrapWidth)
+    }
+
+    func measureString(string text): Dict {
+        if not ok { return {w: 0, h: 0} }
+        var w = ffi.malloc(4)
+        var h = ffi.malloc(4)
+        ttfLib().TTF_GetStringSize(handle, text, 0, w, h)
+        var rw = ffi.read_int(w, 0)
+        var rh = ffi.read_int(h, 0)
+        ffi.free(w)
+        ffi.free(h)
+        return {w: rw, h: rh}
+    }
+
+    func setStyle(int style) {
+        if ok { ttfLib().TTF_SetFontStyle(handle, style) }
+    }
+
+    func getStyle(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontStyle(handle)
+    }
+
+    func setOutline(int outline) {
+        if ok { ttfLib().TTF_SetFontOutline(handle, outline) }
+    }
+
+    func getOutline(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontOutline(handle)
+    }
 }
 
 // ==================== TextTexture ====================
@@ -94,8 +150,11 @@ export struct TextTexture {
         if not font.ok { return false }
         var surface = font.renderTextBlended(text, r, g, b)
         if surface == null { return false }
+        // 通过 cstruct from_ptr 读取表面真实宽高
+        var info = SDL_SurfaceInfo.from_ptr(surface)
+        width  = info.w as int
+        height = info.h as int
         var result = createFromSurface(renderer, surface)
-        if result { height = font.height }
         return result
     }
 

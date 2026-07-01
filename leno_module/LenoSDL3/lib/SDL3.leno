@@ -118,3 +118,9 @@ export func createTextTexture(Ptr ren, Font f, string t, int r, int g, int b): T
 
 export func ttfInit(): bool  { return fnt.ttfInit() }
 export func ttfQuit()        { fnt.ttfQuit() }
+
+export var STYLE_NORMAL        = fnt.STYLE_NORMAL
+export var STYLE_BOLD          = fnt.STYLE_BOLD
+export var STYLE_ITALIC        = fnt.STYLE_ITALIC
+export var STYLE_UNDERLINE     = fnt.STYLE_UNDERLINE
+export var STYLE_STRIKETHROUGH = fnt.STYLE_STRIKETHROUGH

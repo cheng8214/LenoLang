@@ -1,0 +1,123 @@
+// show_time.leno - 在窗口中实时显示当前时间（测试 SDL3_ttf 文字渲染效果）
+import "../lib/SDL3.leno" as SDL3
+import times
+
+// ============================================================================
+// 主程序
+// ============================================================================
+
+main() {
+    // 创建窗口（启用高 DPI，避免缩放模糊）
+    var win = SDL3.createWindow({title: "实时时间显示 - SDL3_ttf 文字测试", w: 600, h: 300, flags: SDL3.WINDOW_HIGH_PIXEL_DENSITY})
+
+    if not win.ok {
+        print("创建窗口失败")
+        return
+    }
+
+    // 初始化 TTF
+    SDL3.ttfInit()
+
+    // 加载字体（微软雅黑，支持中文）
+    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 48.0)
+    if not font.ok {
+        font = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 48.0)
+    }
+    if not font.ok {
+        print("加载字体失败")
+        win.destroy()
+        return
+    }
+    print("字体加载成功，高度: " + font.height)
+
+    // 加载小号字体（用于显示日期）
+    var fontSmall = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 24.0)
+    if not fontSmall.ok {
+        fontSmall = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 24.0)
+    }
+
+    // 创建事件对象
+    var ev = SDL3.createEvent()
+
+    // 创建渲染器
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok {
+        print("创建渲染器失败")
+        font.close()
+        win.destroy()
+        return
+    }
+    ren.setVSync(1)
+
+    // 主循环
+    var running = true
+    while running {
+        // 处理事件
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() {
+                running = false
+            }
+            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE {
+                running = false
+            }
+        }
+
+        // 获取当前日期时间
+        var dt = times.datetime()  // [年, 月, 日, 时, 分, 秒]
+
+        // 清屏（深色背景）
+        ren.setColor(20, 20, 40, 255)
+        ren.clear()
+
+        // ===== 绘制时间（大字体，居中） =====
+        var timeStr = dt[3] + ":" + dt[4] + ":" + dt[5]
+        var timeTex = SDL3.createTextTexture(ren.handle, font, timeStr, 255, 255, 255)
+        if timeTex.ok {
+            var tx = (600.0 - timeTex.width) / 2.0
+            var ty = 60.0
+            ren.drawTextureAt(timeTex.texture, tx, ty, timeTex.width, timeTex.height)
+            timeTex.destroy()
+        }
+
+        // ===== 绘制日期（下方居中） =====
+        var dateStr = dt[0] + "年" + dt[1] + "月" + dt[2] + "日"
+        var dateTex = SDL3.createTextTexture(ren.handle, fontSmall, dateStr, 200, 200, 255)
+        if dateTex.ok {
+            var dx = (600.0 - dateTex.width) / 2.0
+            ren.drawTextureAt(dateTex.texture, dx, 140.0, dateTex.width, dateTex.height)
+            dateTex.destroy()
+        }
+
+        // ===== 绘制英文版本 =====
+        var enStr = dt[0] + "-" + dt[1] + "-" + dt[2] + "  " + dt[3] + ":" + dt[4] + ":" + dt[5]
+        var enTex = SDL3.createTextTexture(ren.handle, fontSmall, enStr, 150, 200, 150)
+        if enTex.ok {
+            var ex = (600.0 - enTex.width) / 2.0
+            ren.drawTextureAt(enTex.texture, ex, 185.0, enTex.width , enTex.height)
+            enTex.destroy()
+        }
+
+        // ===== 绘制提示信息 =====
+        var hintTex = SDL3.createTextTexture(ren.handle, fontSmall, "按 ESC 退出", 100, 100, 100)
+        if hintTex.ok {
+            var hx = (600.0 - hintTex.width) / 2.0
+            ren.drawTextureAt(hintTex.texture, hx, 240.0, hintTex.width, hintTex.height)
+            hintTex.destroy()
+        }
+
+        // 显示渲染结果
+        ren.present()
+
+        SDL3.delay(16)  // 约 60 FPS
+    }
+
+    // 清理资源
+    ren.destroy()
+    if font.ok { font.close() }
+    if fontSmall.ok { fontSmall.close() }
+    ev.uninit()
+    win.destroy()
+    SDL3.ttfQuit()
+
+    print("程序结束")
+}

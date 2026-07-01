@@ -68,7 +68,7 @@ main() {
             func t(string s, int x, int y) {
                 if not font.ok { return }
                 var tex = SDL3.createTextTexture(r.handle, font, s, 180, 220, 255)
-                if tex.ok { r.drawTextureAt(tex.texture, x as float, y as float, 300.0, 28.0); tex.destroy() }
+                if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
             }
             t("键盘事件测试", 10, 10)
             if down {

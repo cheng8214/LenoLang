@@ -1,0 +1,93 @@
+// test_font_api.leno - 测试 SDL3_ttf 新增 API
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Font
+
+main() {
+    print("=== SDL3_ttf 新 API 测试 ===\n")
+
+    SDL3.ttfInit()
+
+    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 32.0)
+    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 32.0) }
+    if not font.ok { print("字体加载失败"); SDL3.ttfQuit(); return }
+    print("字体加载成功, h=" + font.height)
+
+    // measureString
+    var s = font.measureString("Hello你好")
+    print("measureString: w=" + s["w"] + " h=" + s["h"])
+
+    // setStyle / getStyle
+    font.setStyle(SDL3.STYLE_BOLD)
+    print("BOLD: " + font.getStyle())
+    font.setStyle(SDL3.STYLE_ITALIC)
+    print("ITALIC: " + font.getStyle())
+    font.setStyle(SDL3.STYLE_UNDERLINE)
+    print("UNDERLINE: " + font.getStyle())
+    font.setStyle(SDL3.STYLE_NORMAL)
+
+    // setOutline / getOutline
+    font.setOutline(2)
+    print("Outline=2: " + font.getOutline())
+    font.setOutline(0)
+
+    // renderTextBlendedWrapped
+    var ws = font.renderTextBlendedWrapped("Long wrapped text at 300px", 255,255,255, 300)
+    print("Wrapped: " + (ws != null))
+
+    // 窗口可视化
+    var win = SDL3.createWindow({title:"TTF API Test", w:800, h:550})
+    if not win.ok { font.close(); SDL3.ttfQuit(); return }
+
+    var ev = SDL3.createEvent()
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { win.destroy(); font.close(); SDL3.ttfQuit(); return }
+    ren.setVSync(1)
+
+    var running = true
+    while running {
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
+        }
+
+        ren.setColor(30, 30, 50, 255)
+        ren.clear()
+
+        func t(string txt, int r, int g, int b, int x, int y) {
+            var tex = SDL3.createTextTexture(ren.handle, font, txt, r, g, b)
+            if tex.ok { ren.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
+        }
+
+        font.setStyle(SDL3.STYLE_NORMAL); font.setOutline(0)
+        t("1. Normal 正常", 255,255,255, 20, 20)
+
+        font.setStyle(SDL3.STYLE_BOLD)
+        t("2. Bold 粗体", 255,255,100, 20, 60)
+
+        font.setStyle(SDL3.STYLE_ITALIC)
+        t("3. Italic 斜体", 100,255,255, 20, 100)
+
+        font.setStyle(SDL3.STYLE_UNDERLINE)
+        t("4. Underline 下划线", 255,100,100, 20, 140)
+
+        font.setStyle(SDL3.STYLE_STRIKETHROUGH)
+        t("5. Strikethrough 删除线", 255,150,50, 20, 180)
+
+        font.setStyle(SDL3.STYLE_BOLD | SDL3.STYLE_ITALIC | SDL3.STYLE_UNDERLINE)
+        t("6. Bold+Italic+Underline", 255,100,255, 20, 220)
+
+        font.setStyle(SDL3.STYLE_NORMAL); font.setOutline(2)
+        t("7. Outline 描边", 100,255,100, 20, 270)
+        font.setOutline(0)
+
+        ren.present()
+        SDL3.delay(16)
+    }
+
+    ren.destroy()
+    font.close()
+    ev.uninit()
+    win.destroy()
+    SDL3.ttfQuit()
+    print("结束")
+}

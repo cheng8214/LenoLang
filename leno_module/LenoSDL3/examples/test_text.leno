@@ -66,21 +66,21 @@ main() {
 
         // 绘制文本纹理（白色文字）
         if textTex.ok {
-            ren.drawTextureAt(textTex.texture, 100.0, 100.0, 200.0, 50.0)
+            ren.drawTextureAt(textTex.texture, 100.0, 100.0, textTex.width, textTex.height)
         }
 
         // 绘制动态文本（每帧更新）
         var dynamicText = "帧数: " + frameCount
         var dynTex = SDL3.createTextTexture(ren.handle, font, dynamicText, 255, 100, 100)
         if dynTex.ok {
-            ren.drawTextureAt(dynTex.texture, 100.0, 150.0, 150.0, 50.0)
+            ren.drawTextureAt(dynTex.texture, 100.0, 150.0, dynTex.width, dynTex.height)
             dynTex.destroy()  // 动态文本每帧都需要销毁
         }
 
         // 绘制彩色文本
         var colorTex = SDL3.createTextTexture(ren.handle, font, "彩色文字测试", 100, 255, 100)
         if colorTex.ok {
-            ren.drawTextureAt(colorTex.texture, 100.0, 200.0, 150.0, 50.0)
+            ren.drawTextureAt(colorTex.texture, 100.0, 200.0, colorTex.width, colorTex.height)
             colorTex.destroy()
         }
 
