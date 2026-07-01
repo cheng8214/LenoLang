@@ -116,8 +116,12 @@ export func createTextTexture(Ptr ren, Font f, string t, int r, int g, int b): T
     return fnt.createTextTexture(ren, f, t, r, g, b)
 }
 
-export func createTextTextureWrapped(Ptr ren, Ptr surface, int w, int h): TextTexture {
-    return fnt.createTextTextureWrapped(ren, surface, w, h)
+export func createTextTextureWrapped(Ptr ren, Font f, string t, int r, int g, int b, int wrapW): TextTexture {
+    return fnt.createTextTextureWrapped(ren, f, t, r, g, b, wrapW)
+}
+
+export func createGlyphTexture(Ptr ren, Font f, int glyph, int r, int g, int b): TextTexture {
+    return fnt.createGlyphTexture(ren, f, glyph, r, g, b)
 }
 
 // ==================== TTF ====================

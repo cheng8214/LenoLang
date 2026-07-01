@@ -250,12 +250,26 @@ export func createTextTexture(Ptr renderer, Font font, string text, int r, int g
     var tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
 }
 
-export func createTextTextureWrapped(Ptr renderer, Ptr surface, int w, int h): TextTexture {
+export func createTextTextureWrapped(Ptr renderer, Font font, string text, int r, int g, int b, int wrapWidth): TextTexture {
+    var surface = font.renderTextBlendedWrapped(text, r, g, b, wrapWidth)
+    if surface == null { return new TextTexture() }
+    var info = SDL_SurfaceInfo.from_ptr(surface)
     var tex = new TextTexture()
-    var ok = tex.createFromSurface(renderer, surface)
-    if ok {
-        tex.width = w
-        tex.height = h
+    if tex.createFromSurface(renderer, surface) {
+        tex.width = info.w as int
+        tex.height = info.h as int
+    }
+    return tex
+}
+
+export func createGlyphTexture(Ptr renderer, Font font, int glyph, int r, int g, int b): TextTexture {
+    var surface = font.renderGlyphBlended(glyph, r, g, b)
+    if surface == null { return new TextTexture() }
+    var info = SDL_SurfaceInfo.from_ptr(surface)
+    var tex = new TextTexture()
+    if tex.createFromSurface(renderer, surface) {
+        tex.width = info.w as int
+        tex.height = info.h as int
     }
     return tex
 }

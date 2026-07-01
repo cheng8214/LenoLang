@@ -94,33 +94,25 @@ main() {
 
             // 5. 换行文字
             label("5. Wrapped @ 350px", 20, 285)
-            var ws = font.renderTextBlendedWrapped(
+            var wt = SDL3.createTextTextureWrapped(r.handle, font,
                 "这是一段很长的中文文本用来测试自动换行功能," +
                 "this is wrapped English text for testing",
                 200, 230, 255, 350
             )
-            if ws != null {
-                var surf = SDL3.SDL_SurfaceInfo.from_ptr(ws)
-                var wt = SDL3.createTextTextureWrapped(r.handle, ws, surf.w as int, surf.h as int)
-                if wt.ok { r.drawTextureAt(wt.texture, 20, 310, wt.width, wt.height); wt.destroy() }
-            }
+            if wt.ok { r.drawTextureAt(wt.texture, 20, 310, wt.width, wt.height); wt.destroy() }
 
-            // 6. Glyph 渲染 - 逐字符显示 "ABCDEFG"
+            // 6. Glyph 渲染
             label("6. Glyph rendering (ABCDEFG)", 450, 5)
             font.setStyle(SDL3.STYLE_NORMAL)
             var glyphX = 450
             var gsChars = [0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47]
             for 0 : 6 to gi {
                 var c = gsChars[gi]
-                var gsurf = font.renderGlyphBlended(c, 100 + gi * 20, 200, 255)
-                if gsurf != null {
-                    var info = SDL3.SDL_SurfaceInfo.from_ptr(gsurf)
-                    var wTex = SDL3.createTextTextureWrapped(r.handle, gsurf, info.w as int, info.h as int)
-                    if wTex.ok {
-                        r.drawTextureAt(wTex.texture, glyphX, 30, wTex.width, wTex.height)
-                        wTex.destroy()
-                    }
-                    glyphX = glyphX + (info.w as int) + 2
+                var gt = SDL3.createGlyphTexture(r.handle, font, c, 100 + gi * 20, 200, 255)
+                if gt.ok {
+                    r.drawTextureAt(gt.texture, glyphX, 30, gt.width, gt.height)
+                    glyphX = glyphX + _int(gt.width) + 2
+                    gt.destroy()
                 }
             }
 
@@ -141,21 +133,6 @@ main() {
             var sst = SDL3.createTextTexture(r.handle, font, "Strikethrough Text", 255, 150, 100)
             if sst.ok { r.drawTextureAt(sst.texture, 450, 215, sst.width, sst.height); sst.destroy() }
             font.setStyle(SDL3.STYLE_NORMAL)
-
-            // 10. Solid vs Shaded
-            label("10. Solid vs Shaded", 450, 260)
-            var solidSurf = font.renderTextSolid("Solid Text", 255, 255, 255)
-            if solidSurf != null {
-                var sinfo = SDL3.SDL_SurfaceInfo.from_ptr(solidSurf)
-                var stex = SDL3.createTextTextureWrapped(r.handle, solidSurf, sinfo.w as int, sinfo.h as int)
-                if stex.ok { r.drawTextureAt(stex.texture, 450, 285, stex.width, stex.height); stex.destroy() }
-            }
-            var shadedSurf = font.renderTextShaded("Shaded", 255, 255, 255, 0, 0, 200)
-            if shadedSurf != null {
-                var sinfo = SDL3.SDL_SurfaceInfo.from_ptr(shadedSurf)
-                var stex = SDL3.createTextTextureWrapped(r.handle, shadedSurf, sinfo.w as int, sinfo.h as int)
-                if stex.ok { r.drawTextureAt(stex.texture, 450, 320, stex.width, stex.height); stex.destroy() }
-            }
 
             // 提示
             label("按 H=Hinting  K=Kerning  ESC=退出", 240, 570)
