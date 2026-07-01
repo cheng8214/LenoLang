@@ -1,0 +1,30 @@
+// 测试 SDL3_image 加载 PNG/JPG
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "Image 测试", w: 1200, h: 900, flags: SDL3.WINDOW_RESIZABLE})
+    if not win.ok { return }
+
+    var tex = null as Ptr
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(0, 0, 0, 255)
+            r.clear()
+            if tex == null {
+                tex = SDL3.loadImageTexture(r.handle, "d:\\1.png")
+            }
+            if tex != null {
+                var ts = r.getTextureSize(tex)
+                r.drawTextureAt(tex, 10, 10, ts.get("w", 100), ts.get("h", 100))
+            }
+        }
+    )
+}

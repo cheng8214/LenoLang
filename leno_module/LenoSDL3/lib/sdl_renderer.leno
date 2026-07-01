@@ -4,6 +4,7 @@ import maths
 import "sdl_core.leno" as core
 use core.sdl3
 use core.SDL_FRect
+use core.SDL_Color
 
 // 模块加载时一次性初始化 DLL，后续直接用 _lib
 sdl3 _lib = core.lib()
@@ -30,6 +31,34 @@ export struct Renderer {
 
     func setColorFloat(float r, float g, float b, float a): bool {
         return _lib.SDL_SetRenderDrawColorFloat(handle, r, g, b, a)
+    }
+
+    func getColor(): SDL_Color {
+        var cr = ffi.malloc(4); var cg = ffi.malloc(4)
+        var cb = ffi.malloc(4); var ca = ffi.malloc(4)
+        _lib.SDL_GetRenderDrawColor(handle, cr, cg, cb, ca)
+        var c = core.SDL_Color.malloc()
+        c.r = ffi.read_int(cr, 0) & 0xFF; c.g = ffi.read_int(cg, 0) & 0xFF
+        c.b = ffi.read_int(cb, 0) & 0xFF; c.a = ffi.read_int(ca, 0) & 0xFF
+        ffi.free(cr); ffi.free(cg); ffi.free(cb); ffi.free(ca)
+        return c
+    }
+
+    func getColorFloat(): Dict {
+        var cr = ffi.malloc(4); var cg = ffi.malloc(4)
+        var cb = ffi.malloc(4); var ca = ffi.malloc(4)
+        _lib.SDL_GetRenderDrawColorFloat(handle, cr, cg, cb, ca)
+        var d = {r: ffi.read_float(cr, 0), g: ffi.read_float(cg, 0),
+                 b: ffi.read_float(cb, 0), a: ffi.read_float(ca, 0)}
+        ffi.free(cr); ffi.free(cg); ffi.free(cb); ffi.free(ca)
+        return d
+    }
+
+    func getOutputSize(): Dict {
+        var w = ffi.malloc(4); var h = ffi.malloc(4)
+        _lib.SDL_GetRenderOutputSize(handle, w, h)
+        var d = {w: ffi.read_int(w, 0), h: ffi.read_int(h, 0)}
+        ffi.free(w); ffi.free(h); return d
     }
 
     func fillRect(float x, float y, float w, float h): bool {
@@ -112,6 +141,13 @@ export struct Renderer {
 
     func drawTextureRect(Ptr texture, Ptr srcrect, Ptr dstrect): bool {
         return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
+    }
+
+    func getTextureSize(Ptr texture): Dict {
+        var w = ffi.malloc(4); var h = ffi.malloc(4)
+        _lib.SDL_GetTextureSize(texture, w, h)
+        var d = {w: ffi.read_float(w, 0), h: ffi.read_float(h, 0)}
+        ffi.free(w); ffi.free(h); return d
     }
 }
 

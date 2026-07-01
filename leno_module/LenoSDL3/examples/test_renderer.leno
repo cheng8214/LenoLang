@@ -1,0 +1,68 @@
+// 测试 Renderer 新增方法：getColor/getColorFloat/getOutputSize
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "Renderer 测试", w: 400, h: 300, flags: SDL3.WINDOW_RESIZABLE})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFont("C:/Windows/Fonts/consola.ttf", 20.0)
+    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/consolas.ttf", 20.0) }
+
+    var outSize = ""
+    var colorInfo = ""
+    var floatInfo = ""
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(20, 20, 40, 255)
+            r.clear()
+
+            func drawText(string s, int x, int y, int cr, int cg, int cb) {
+                if not font.ok { return }
+                var tex = SDL3.createTextTexture(r.handle, font, s, cr, cg, cb)
+                if tex.ok {
+                    r.drawTextureAt(tex.texture, x , y, tex.width, tex.height)
+                    tex.destroy()
+                }
+            }
+
+            // 只采集一次数据
+            if outSize == "" {
+                var sz = r.getOutputSize()
+                outSize = "Output Size: " + sz.get("w", 0) + " x " + sz.get("h", 0)
+            }
+            if colorInfo == "" {
+                r.setColor(100, 200, 50, 255)
+                var c = r.getColor()
+                colorInfo = "Color: r=" + c.r + " g=" + c.g + " b=" + c.b + " a=" + c.a
+            }
+            if floatInfo == "" {
+                r.setColorFloat(0.2, 0.6, 0.3, 1.0)
+                var cf = r.getColorFloat()
+                floatInfo = "Float: r=" + cf.get("r", 0) + " g=" + cf.get("g", 0) +
+                            " b=" + cf.get("b", 0) + " a=" + cf.get("a", 0)
+            }
+
+            drawText("=== Renderer API Test ===", 10, 10, 255, 255, 100)
+            drawText(outSize, 10, 40, 200, 200, 255)
+            drawText(colorInfo, 10, 70, 100, 200, 50)
+            drawText(floatInfo, 10, 100, 50, 200, 100)
+            drawText("Press ESC to exit", 10, 140, 128, 128, 128)
+
+            // 用采集到的颜色画个矩形验证
+            r.setColor(100, 200, 50, 255)
+            r.fillRect(10, 180, 100, 60)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

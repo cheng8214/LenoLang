@@ -70,6 +70,7 @@ clib sdl3 {
 
     bool SDL_GetRenderDrawColor(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
     bool SDL_GetRenderDrawColorFloat(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
+    bool SDL_GetRenderOutputSize(Ptr renderer, Ptr w, Ptr h)
 
     Ptr  SDL_GetKeyboardState(Ptr numkeys)
     bool SDL_PollEvent(Ptr event)
@@ -79,6 +80,7 @@ clib sdl3 {
 
     Ptr  SDL_CreateTextureFromSurface(Ptr renderer, Ptr surface)
     void SDL_DestroyTexture(Ptr texture)
+    bool SDL_GetTextureSize(Ptr texture, Ptr w, Ptr h)
     bool SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
     void SDL_DestroySurface(Ptr surface)
 }

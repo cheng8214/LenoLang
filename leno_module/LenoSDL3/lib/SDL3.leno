@@ -4,6 +4,7 @@ import "sdl_window.leno" as wnd
 import "sdl_renderer.leno" as r
 import "sdl_font.leno" as fnt
 import "sdl_event.leno" as evt
+import "sdl_image.leno" as img
 
 // ==================== 重新导出类型 ====================
 // 用户可通过 use SDL3.xxx 导入
@@ -218,3 +219,8 @@ export var HINTING_NONE   = fnt.HINTING_NONE
 export var WRAP_ALIGN_LEFT   = fnt.WRAP_ALIGN_LEFT
 export var WRAP_ALIGN_CENTER = fnt.WRAP_ALIGN_CENTER
 export var WRAP_ALIGN_RIGHT  = fnt.WRAP_ALIGN_RIGHT
+
+// ==================== Image ====================
+
+export func loadImage(string path): Ptr   { return img.load(path) }
+export func loadImageTexture(Ptr ren, string path): Ptr { return img.loadTexture(ren, path) }

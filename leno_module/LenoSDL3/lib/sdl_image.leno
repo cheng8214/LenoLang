@@ -1,0 +1,31 @@
+// sdl_image.leno — SDL3_image 图像加载（PNG/JPG/BMP 等）
+// SDL3_image 无需显式 Init/Quit，加载 DLL 后直接使用
+import ffi
+import dirs
+import files
+
+clib sdl3_image {
+    Ptr IMG_Load(str8 file)
+    Ptr IMG_LoadTexture(Ptr renderer, str8 file)
+    i32 IMG_Version()
+}
+
+sdl3_image _img = null
+
+func imgLib(): sdl3_image {
+    if _img == null {
+        var path = dirs.script_dir() + "/../SDL3_image.dll"
+        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_image.dll" }
+        if not files.exists(path) { path = "SDL3_image.dll" }
+        _img = ffi.load(path)
+    }
+    return _img
+}
+
+export func load(string path): Ptr {
+    return imgLib().IMG_Load(path)
+}
+
+export func loadTexture(Ptr renderer, string path): Ptr {
+    return imgLib().IMG_LoadTexture(renderer, path)
+}
