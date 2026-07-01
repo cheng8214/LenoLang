@@ -848,24 +848,64 @@ main() {
 }
 ```
 
-> **用途**：将 cstruct 字段作为 FFI 函数的 out 参数，避免手动 `ffi.malloc` + `ffi.read_int` + `ffi.free`：
->
-> ```leno
-> // ❌ 旧方式：手动分配缓冲区
-> var cr = ffi.malloc(4); var cg = ffi.malloc(4)
-> var cb = ffi.malloc(4); var ca = ffi.malloc(4)
-> lib.SDL_GetRenderDrawColor(handle, cr, cg, cb, ca)
-> var c = SDL_Color.malloc()
-> c.r = ffi.read_int(cr, 0) & 0xFF
-> ...
-> ffi.free(cr); ffi.free(cg); ffi.free(cb); ffi.free(ca)
->
-> // ✅ 新方式：& 直接取字段地址
-> var c = SDL_Color.malloc()
-> lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
-> ```
+> **原理**：`&c.r` 编译为 `OP_GET_FIELD_ADDR`，运行时从 cstruct 定义表查找字段偏移量，返回指向该字段内存的 `ObjFFIPointer`。多字段调用（`&a.x, &a.y`）互不干扰，每个 `&` 独立计算偏移。
 
-> **⚠️ 限制**：仅支持 cstruct 字段（`TYPE_CSTRUCT` 类型）。普通 Leno struct 字段无固定 C 地址，不支持 `&`。
+#### 两种 FFI 输出参数写法
+
+**方式一：`&` 取地址（推荐，有对应 cstruct 时）**
+
+用 `malloc` 分配 cstruct，`&` 获取字段指针传入 FFI，然后从 cstruct 读取结果：
+
+```leno
+// 获取渲染器颜色（匹配 SDL_Color cstruct）
+func getColor(Ptr handle): Dict {
+    var c = SDL_Color.malloc()
+    lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
+    var d = {r: c.r, g: c.g, b: c.b, a: c.a}
+    c.free(); return d
+}
+
+// 获取输出尺寸（匹配 SDL_Point cstruct）
+func getOutputSize(Ptr handle): Dict {
+    var pt = SDL_Point.malloc()
+    lib.SDL_GetRenderOutputSize(handle, &pt.x, &pt.y)
+    var d = {w: pt.x as int, h: pt.y as int}
+    pt.free(); return d
+}
+```
+
+**方式二：`ffi.malloc` + `ffi.read_*`（无对应 cstruct 或临时场景）**
+
+当没有现成的 cstruct 匹配输出参数布局时，手动分配缓冲区：
+
+```leno
+// 5 个独立的 int 输出参数（无现成 cstruct，临时用 ffi.malloc 更直接）
+func getGlyphMetrics(Ptr font, int glyph): Dict {
+    var mx = ffi.malloc(4); var Mx = ffi.malloc(4)
+    var my = ffi.malloc(4); var My = ffi.malloc(4)
+    var adv = ffi.malloc(4)
+    lib.TTF_GetGlyphMetrics(font, glyph, mx, Mx, my, My, adv)
+    var r = {
+        minX: ffi.read_int(mx, 0), ...
+    }
+    ffi.free(mx); ffi.free(Mx); ffi.free(my); ffi.free(My); ffi.free(adv)
+    return r
+}
+
+// 或者：创建专用 cstruct 后用 &（推荐的做法）
+cstruct SDL_GlyphMetrics { i32 minX; i32 maxX; i32 minY; i32 maxY; i32 advance }
+// 然后即可用 &m.minX, &m.maxX ...
+```
+
+> **选择指南**：
+> | 场景 | 推荐方式 |
+> |------|---------|
+> | 已有匹配的 cstruct | ✅ `&` 取地址 |
+> | 多个独立参数，可新建 cstruct | ✅ 建 cstruct + `&` |
+> | 临时一次性调用，参数少 | 两种皆可 |
+> | 从预分配的缓冲区多次读取 | `ffi.read_*`（如 SDL 事件缓冲区） |
+
+> **⚠️ 限制**：仅支持 cstruct 字段。普通 Leno struct 字段无固定 C 地址，不支持 `&`。多个 `&` 表达式互不干扰，各自独立计算偏移。
 
 ### type() 函数
 
