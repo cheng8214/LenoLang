@@ -1,22 +1,26 @@
 // sdl_event.leno — SDL3 事件封装
-// SDL_Event 是联合体，不同事件类型共用 128 字节，字段在不同偏移量
 import ffi
 import "sdl_core.leno" as core
 use core.sdl3
 
 sdl3 _lib = core.lib()
 
-// SDL3 事件结构体字段偏移量（字节）
-var EV_TYPE    = 0   // u32: 事件类型
-var EV_WINID   = 16  // u32: 窗口 ID
-var EV_BUTTON  = 24  // u8:  鼠标按钮 (1=左 2=中 3=右)
-var EV_SCAN    = 24  // u32: 键盘扫描码
-var EV_WHEEL_X = 24  // f32: 滚轮 X (wheel 事件)
-var EV_WHEEL_Y = 28  // f32: 滚轮 Y (wheel 事件)
-var EV_MOUSE_X = 28  // f32: 鼠标 X (motion/button 事件)
-var EV_MOUSE_Y = 32  // f32: 鼠标 Y (motion/button 事件)
-var EV_MOUSE_DX = 36 // f32: 鼠标相对位移 X
-var EV_MOUSE_DY = 40 // f32: 鼠标相对位移 Y
+// SDL_Event 字段偏移量（字节）
+var EV_TYPE     = 0   // u32: 事件类型
+var EV_WINID    = 16  // u32: 窗口 ID
+var EV_KEY_REP  = 21  // u8:  键盘重复标志
+var EV_KEY_MOD  = 32  // u16: 键盘修饰键
+var EV_SCAN     = 24  // u32: 键盘扫描码
+var EV_BUTTON   = 24  // u8:  鼠标按钮
+var EV_CLICKS   = 26  // u8:  点击次数
+var EV_WHEEL_X  = 24  // f32: 滚轮 X
+var EV_WHEEL_Y  = 28  // f32: 滚轮 Y
+var EV_MOUSE_X  = 28  // f32: 鼠标 X
+var EV_MOUSE_Y  = 32  // f32: 鼠标 Y
+var EV_MOUSE_DX = 36  // f32: 鼠标相对 X
+var EV_MOUSE_DY = 40  // f32: 鼠标相对 Y
+var EV_TEXT     = 24  // char[32]: 文本输入内容
+var EV_DROP     = 24  // str8:  拖放文件路径
 
 export struct Event {
     Ptr raw; bool has
@@ -34,25 +38,51 @@ export struct Event {
 
     func sdl3_type(): int { return ffi.read_int(raw, EV_TYPE) }
 
+    // ---- 通用 ----
     func isQuit(): bool          { return sdl3_type() == core.EVENT_QUIT }
+    func windowID(): int         { return ffi.read_int(raw, EV_WINID) }
+
+    // ---- 窗口 ----
+    func isWindowClose(): bool    { return sdl3_type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
+    func isWindowResized(): bool  { return sdl3_type() == core.EVENT_WINDOW_RESIZED }
+    func isWindowMoved(): bool    { return sdl3_type() == core.EVENT_WINDOW_MOVED }
+    func isWindowMinimized(): bool { return sdl3_type() == core.EVENT_WINDOW_MINIMIZED }
+    func isWindowMaximized(): bool { return sdl3_type() == core.EVENT_WINDOW_MAXIMIZED }
+    func isWindowRestored(): bool  { return sdl3_type() == core.EVENT_WINDOW_RESTORED }
+    func isWindowFocusGained(): bool { return sdl3_type() == core.EVENT_WINDOW_FOCUS_GAINED }
+    func isWindowFocusLost(): bool   { return sdl3_type() == core.EVENT_WINDOW_FOCUS_LOST }
+    func isWindowMouseEnter(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_ENTER }
+    func isWindowMouseLeave(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_LEAVE }
+
+    // ---- 键盘 ----
     func isKeyDown(): bool       { return sdl3_type() == core.EVENT_KEY_DOWN }
     func isKeyUp(): bool         { return sdl3_type() == core.EVENT_KEY_UP }
-    func isWindowClose(): bool   { return sdl3_type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
-    func isWindowResized(): bool { return sdl3_type() == core.EVENT_WINDOW_RESIZED }
-    func isMouseMotion(): bool   { return sdl3_type() == core.EVENT_MOUSE_MOTION }
+    func scancode(): int         { return ffi.read_int(raw, EV_SCAN) }
+    func keyRepeat(): bool       { return ffi.read_byte(raw, EV_KEY_REP) != 0 }
+    func keyMod(): int           { return ffi.read_uint16(raw, EV_KEY_MOD) }
+
+    // ---- 鼠标 ----
+    func isMouseMotion(): bool     { return sdl3_type() == core.EVENT_MOUSE_MOTION }
     func isMouseButtonDown(): bool { return sdl3_type() == core.EVENT_MOUSE_BUTTON_DOWN }
     func isMouseButtonUp(): bool   { return sdl3_type() == core.EVENT_MOUSE_BUTTON_UP }
     func isMouseWheel(): bool      { return sdl3_type() == core.EVENT_MOUSE_WHEEL }
-
-    func scancode(): int { return ffi.read_int(raw, EV_SCAN) }
-
     func mouseX(): float     { return ffi.read_float(raw, EV_MOUSE_X) }
     func mouseY(): float     { return ffi.read_float(raw, EV_MOUSE_Y) }
     func mouseDX(): float    { return ffi.read_float(raw, EV_MOUSE_DX) }
     func mouseDY(): float    { return ffi.read_float(raw, EV_MOUSE_DY) }
     func mouseButton(): int  { return ffi.read_int(raw, EV_BUTTON) & 0xFF }
+    func mouseClicks(): int  { return ffi.read_byte(raw, EV_CLICKS) }
+    func wheelX(): float     { return ffi.read_float(raw, EV_WHEEL_X) }
     func wheelY(): float     { return ffi.read_float(raw, EV_WHEEL_Y) }
-    func windowID(): int     { return ffi.read_int(raw, EV_WINID) }
+
+    // ---- 文本输入 ----
+    func isTextInput(): bool  { return sdl3_type() == core.EVENT_TEXT_INPUT }
+    func text(): string       { return ffi.read_string(raw, EV_TEXT) }
+
+    // ---- 拖放 ----
+    func isDropFile(): bool  { return sdl3_type() == core.EVENT_DROP_FILE }
+    func isDropText(): bool  { return sdl3_type() == core.EVENT_DROP_TEXT }
+    func dropPath(): string  { return ffi.read_string(raw, EV_DROP) }
 
     func uninit() {
         if raw != null { ffi.free(raw); raw = null; has = false }

@@ -110,6 +110,17 @@ export var EVENT_MOUSE_BUTTON_UP        = 0x402
 export var EVENT_MOUSE_WHEEL           = 0x403
 export var EVENT_WINDOW_CLOSE_REQUESTED = 0x210
 export var EVENT_WINDOW_RESIZED         = 0x206
+export var EVENT_WINDOW_MOVED          = 0x207
+export var EVENT_WINDOW_MINIMIZED      = 0x208
+export var EVENT_WINDOW_MAXIMIZED      = 0x209
+export var EVENT_WINDOW_RESTORED       = 0x20A
+export var EVENT_WINDOW_FOCUS_GAINED   = 0x20C
+export var EVENT_WINDOW_FOCUS_LOST     = 0x20D
+export var EVENT_WINDOW_MOUSE_ENTER    = 0x20E
+export var EVENT_WINDOW_MOUSE_LEAVE    = 0x20F
+export var EVENT_TEXT_INPUT            = 0x303
+export var EVENT_DROP_FILE             = 0x1000
+export var EVENT_DROP_TEXT             = 0x1001
 
 export var SCANCODE_ESCAPE    = 41
 export var SCANCODE_RETURN    = 40
