@@ -1,0 +1,3 @@
+// types.leno — 定义并导出类型别名
+export alias MySize = Dict[string, int]
+export alias MyColor = Dict[string, int]
