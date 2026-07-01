@@ -181,6 +181,14 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                 if (sym) {
                     sym->type = type_new(TYPE_STRUCT);
                     sym->type->struct_name = strdup(stmt->u.struct_def.name);
+                    // 预注册字段信息，确保前向引用时能解析字段索引
+                    sym->struct_field_count = stmt->u.struct_def.field_count;
+                    sym->struct_field_names = (char**)malloc(sizeof(char*) * stmt->u.struct_def.field_count);
+                    sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * stmt->u.struct_def.field_count);
+                    for (int j = 0; j < stmt->u.struct_def.field_count; j++) {
+                        sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
+                        sym->struct_field_types[j] = type_copy(stmt->u.struct_def.field_types[j]);
+                    }
                 }
                 // 同时注册到全局 struct 定义表，确保 type_is_compatible 能找到
                 if (stmt->u.struct_def.name && !struct_def_find(stmt->u.struct_def.name)) {
@@ -250,6 +258,14 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                     if (sym) {
                         sym->type = type_new(TYPE_STRUCT);
                         sym->type->struct_name = strdup(decl->u.struct_def.name);
+                        // 预注册字段信息，确保前向引用时能解析字段索引
+                        sym->struct_field_count = decl->u.struct_def.field_count;
+                        sym->struct_field_names = (char**)malloc(sizeof(char*) * decl->u.struct_def.field_count);
+                        sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * decl->u.struct_def.field_count);
+                        for (int j = 0; j < decl->u.struct_def.field_count; j++) {
+                            sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);
+                            sym->struct_field_types[j] = type_copy(decl->u.struct_def.field_types[j]);
+                        }
                     }
                     if (!struct_def_find(decl->u.struct_def.name)) {
                         ObjStructDef* early_def = struct_def_new(decl->u.struct_def.name, decl->u.struct_def.field_count, decl->u.struct_def.method_count);
@@ -383,6 +399,14 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                     if (sym) {
                         sym->type = type_new(TYPE_STRUCT);
                         sym->type->struct_name = strdup(stmt->u.struct_def.name);
+                        // 预注册字段信息，确保前向引用时能解析字段索引
+                        sym->struct_field_count = stmt->u.struct_def.field_count;
+                        sym->struct_field_names = (char**)malloc(sizeof(char*) * stmt->u.struct_def.field_count);
+                        sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * stmt->u.struct_def.field_count);
+                        for (int j = 0; j < stmt->u.struct_def.field_count; j++) {
+                            sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
+                            sym->struct_field_types[j] = type_copy(stmt->u.struct_def.field_types[j]);
+                        }
                     }
                 }
                 if (!struct_def_find(stmt->u.struct_def.name)) {
@@ -445,6 +469,14 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                     if (sym) {
                         sym->type = type_new(TYPE_STRUCT);
                         sym->type->struct_name = strdup(decl->u.struct_def.name);
+                        // 预注册字段信息，确保前向引用时能解析字段索引
+                        sym->struct_field_count = decl->u.struct_def.field_count;
+                        sym->struct_field_names = (char**)malloc(sizeof(char*) * decl->u.struct_def.field_count);
+                        sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * decl->u.struct_def.field_count);
+                        for (int j = 0; j < decl->u.struct_def.field_count; j++) {
+                            sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);
+                            sym->struct_field_types[j] = type_copy(decl->u.struct_def.field_types[j]);
+                        }
                     }
                     if (!struct_def_find(decl->u.struct_def.name)) {
                         ObjStructDef* early_def = struct_def_new(decl->u.struct_def.name, decl->u.struct_def.field_count, decl->u.struct_def.method_count);
