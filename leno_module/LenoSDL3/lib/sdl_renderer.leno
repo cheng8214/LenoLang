@@ -5,6 +5,7 @@ import "sdl_core.leno" as core
 use core.sdl3
 use core.SDL_FRect
 use core.SDL_Color
+use core.SDL_FColor
 use core.SDL_FPoint
 use core.SDL_Point
 
@@ -35,20 +36,18 @@ export struct Renderer {
         return _lib.SDL_SetRenderDrawColorFloat(handle, r, g, b, a)
     }
 
-    func getColor(): SDL_Color {
+    func getColor(): Dict {
         var c = core.SDL_Color.malloc()
         _lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
-        return c
+        var d = {r: c.r, g: c.g, b: c.b, a: c.a}
+        c.free(); return d
     }
 
     func getColorFloat(): Dict {
-        var cr = ffi.malloc(4); var cg = ffi.malloc(4)
-        var cb = ffi.malloc(4); var ca = ffi.malloc(4)
-        _lib.SDL_GetRenderDrawColorFloat(handle, cr, cg, cb, ca)
-        var d = {r: ffi.read_float(cr, 0), g: ffi.read_float(cg, 0),
-                 b: ffi.read_float(cb, 0), a: ffi.read_float(ca, 0)}
-        ffi.free(cr); ffi.free(cg); ffi.free(cb); ffi.free(ca)
-        return d
+        var c = core.SDL_FColor.malloc()
+        _lib.SDL_GetRenderDrawColorFloat(handle, &c.r, &c.g, &c.b, &c.a)
+        var d = {r: c.r, g: c.g, b: c.b, a: c.a}
+        c.free(); return d
     }
 
     func getOutputSize(): Dict {

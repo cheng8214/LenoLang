@@ -33,6 +33,10 @@ export cstruct SDL_Color {
     u8 r; u8 g; u8 b; u8 a
 }
 
+export cstruct SDL_FColor {
+    f32 r; f32 g; f32 b; f32 a
+}
+
 // ==================== clib sdl3 ====================
 
 clib sdl3 {
