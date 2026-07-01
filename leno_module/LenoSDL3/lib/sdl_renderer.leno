@@ -5,7 +5,6 @@ import "sdl_core.leno" as core
 use core.sdl3
 use core.SDL_FRect
 use core.SDL_Color
-use core.SDL_FColor
 use core.SDL_FPoint
 use core.SDL_Point
 
@@ -139,10 +138,10 @@ export struct Renderer {
         return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
     }
 
-    func getTextureSize(Ptr texture): Dict {
+    func getTextureSize(Ptr texture): Dict[string,float] {
         var pt = SDL_FPoint.malloc()
         _lib.SDL_GetTextureSize(texture, &pt.x, &pt.y)
-        var d = {w: pt.x, h: pt.y}
+        var d = {w: pt.x as float, h: pt.y as float}
         pt.free(); return d
     }
 }

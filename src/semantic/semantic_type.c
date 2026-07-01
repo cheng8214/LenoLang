@@ -1040,7 +1040,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
                 ModuleFuncSymbol* func = module_symbol_table_find_func(module_info->sym_table, method_name);
                 if (func) {
-                    TypeInfo* type = type_new(func->return_type);
+                    TypeInfo* type;
+                    if (func->return_type_info) {
+                        // 有完整类型信息（如 Dict[string,int]），直接使用
+                        type = type_copy(func->return_type_info);
+                    } else {
+                        type = type_new(func->return_type);
+                    }
                     if (func->return_struct_name) {
                         // 检查返回类型是否是模块中定义的 face
                         ModuleFaceSymbol* face_sym = module_symbol_table_find_face(module_info->sym_table, func->return_struct_name);

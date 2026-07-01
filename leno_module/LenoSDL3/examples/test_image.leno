@@ -23,6 +23,7 @@ main() {
             }
             if tex != null {
                 var ts = r.getTextureSize(tex)
+                int b=ts.w
                 r.drawTextureAt(tex, 10, 10,ts.w,ts.h)
             }
         }

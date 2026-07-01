@@ -6,7 +6,8 @@
 // 模块函数符号
 typedef struct {
     char* name;                 // 函数名
-    TypeKind return_type;       // 返回类型
+    TypeKind return_type;       // 返回类型（基本类型枚举，向后兼容）
+    TypeInfo* return_type_info; // 完整返回类型信息（支持 Dict[K,V]/Array[T] 等泛型）
     char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
     int type_param_count;       // 泛型类型参数数量（如 identity[T] 的 type_param_count=1）
 } ModuleFuncSymbol;
@@ -144,7 +145,7 @@ ModuleFuncSymbol* module_symbol_table_find_func(ModuleSymbolTable* table, const 
 ModuleStructSymbol* module_symbol_table_find_struct(ModuleSymbolTable* table, const char* struct_name);
 
 // 添加函数符号
-void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count);
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info);
 
 // 添加 struct 符号
 void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);
