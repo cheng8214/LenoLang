@@ -34,6 +34,9 @@ clib sdl3_ttf {
     i32  TTF_GetFontKerning(Ptr font)
     bool TTF_GetStringSizeWrapped(Ptr font, str8 text, u64 length, i32 wrapWidth, Ptr w, Ptr h)
     Ptr  TTF_RenderGlyph_Blended(Ptr font, u32 glyph, u32 color)
+    void TTF_SetFontSize(Ptr font, f32 ptsize)
+    void TTF_SetFontWrapAlignment(Ptr font, i32 align)
+    bool TTF_GetGlyphMetrics(Ptr font, u32 glyph, Ptr minx, Ptr maxx, Ptr miny, Ptr maxy, Ptr advance)
 }
 
 // ==================== DLL 加载 ====================
@@ -68,6 +71,10 @@ export var HINTING_NORMAL = 0
 export var HINTING_LIGHT  = 1
 export var HINTING_MONO   = 2
 export var HINTING_NONE   = 3
+
+export var WRAP_ALIGN_LEFT   = 0
+export var WRAP_ALIGN_CENTER = 1
+export var WRAP_ALIGN_RIGHT  = 2
 
 // ==================== Font ====================
 
@@ -190,6 +197,36 @@ export struct Font {
         var color = r | (g << 8) | (b << 16) | (255 << 24)
         return ttfLib().TTF_RenderGlyph_Blended(handle, glyph, color)
     }
+
+    func setFontSize(float ptsize) {
+        if ok {
+            ttfLib().TTF_SetFontSize(handle, ptsize)
+            height  = ttfLib().TTF_GetFontHeight(handle)
+            ascent  = ttfLib().TTF_GetFontAscent(handle)
+            descent = ttfLib().TTF_GetFontDescent(handle)
+        }
+    }
+
+    func setWrapAlignment(int align) {
+        if ok { ttfLib().TTF_SetFontWrapAlignment(handle, align) }
+    }
+
+    func getGlyphMetrics(int glyph): Dict {
+        if not ok { return {} }
+        var mx = ffi.malloc(4); var Mx = ffi.malloc(4)
+        var my = ffi.malloc(4); var My = ffi.malloc(4)
+        var adv = ffi.malloc(4)
+        ttfLib().TTF_GetGlyphMetrics(handle, glyph, mx, Mx, my, My, adv)
+        var r = {
+            minX: ffi.read_int(mx, 0),
+            maxX: ffi.read_int(Mx, 0),
+            minY: ffi.read_int(my, 0),
+            maxY: ffi.read_int(My, 0),
+            advance: ffi.read_int(adv, 0)
+        }
+        ffi.free(mx); ffi.free(Mx); ffi.free(my); ffi.free(My); ffi.free(adv)
+        return r
+    }
 }
 
 // ==================== TextTexture ====================
@@ -223,6 +260,13 @@ export struct TextTexture {
 
     func setWidth(int w)  { width = w }
     func setHeight(int h) { height = h }
+
+    func createFromSurfaceW(Ptr renderer, Ptr surface): bool {
+        var info = SDL_SurfaceInfo.from_ptr(surface)
+        width = info.w as int
+        height = info.h as int
+        return createFromSurface(renderer, surface)
+    }
 }
 
 // ==================== 初始化/工厂 ====================
@@ -253,47 +297,23 @@ export func createTextTexture(Ptr renderer, Font font, string text, int r, int g
 export func createTextTextureWrapped(Ptr renderer, Font font, string text, int r, int g, int b, int wrapWidth): TextTexture {
     var surface = font.renderTextBlendedWrapped(text, r, g, b, wrapWidth)
     if surface == null { return new TextTexture() }
-    var info = SDL_SurfaceInfo.from_ptr(surface)
-    var tex = new TextTexture()
-    if tex.createFromSurface(renderer, surface) {
-        tex.width = info.w as int
-        tex.height = info.h as int
-    }
-    return tex
+    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
 export func createGlyphTexture(Ptr renderer, Font font, int glyph, int r, int g, int b): TextTexture {
     var surface = font.renderGlyphBlended(glyph, r, g, b)
     if surface == null { return new TextTexture() }
-    var info = SDL_SurfaceInfo.from_ptr(surface)
-    var tex = new TextTexture()
-    if tex.createFromSurface(renderer, surface) {
-        tex.width = info.w as int
-        tex.height = info.h as int
-    }
-    return tex
+    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
 export func createTextTextureSolid(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
     var surface = font.renderTextSolid(text, r, g, b)
     if surface == null { return new TextTexture() }
-    var info = SDL_SurfaceInfo.from_ptr(surface)
-    var tex = new TextTexture()
-    if tex.createFromSurface(renderer, surface) {
-        tex.width = info.w as int
-        tex.height = info.h as int
-    }
-    return tex
+    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
 export func createTextTextureShaded(Ptr renderer, Font font, string text, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
     var surface = font.renderTextShaded(text, fr, fg, fb, br, bg, bb)
     if surface == null { return new TextTexture() }
-    var info = SDL_SurfaceInfo.from_ptr(surface)
-    var tex = new TextTexture()
-    if tex.createFromSurface(renderer, surface) {
-        tex.width = info.w as int
-        tex.height = info.h as int
-    }
-    return tex
+    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
