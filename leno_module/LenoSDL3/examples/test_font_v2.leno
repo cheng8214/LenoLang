@@ -134,6 +134,13 @@ main() {
             if sst.ok { r.drawTextureAt(sst.texture, 450, 215, sst.width, sst.height); sst.destroy() }
             font.setStyle(SDL3.STYLE_NORMAL)
 
+            // 10. Solid vs Shaded
+            label("10. Solid vs Shaded", 450, 250)
+            var solTex = SDL3.createTextTextureSolid(r.handle, font, "Solid Text", 255, 255, 255)
+            if solTex.ok { r.drawTextureAt(solTex.texture, 450, 275, solTex.width, solTex.height); solTex.destroy() }
+            var shaTex = SDL3.createTextTextureShaded(r.handle, font, "Shaded Text", 255, 255, 255, 0, 0, 200)
+            if shaTex.ok { r.drawTextureAt(shaTex.texture, 450, 320, shaTex.width, shaTex.height); shaTex.destroy() }
+
             // 提示
             label("按 H=Hinting  K=Kerning  ESC=退出", 240, 570)
         }

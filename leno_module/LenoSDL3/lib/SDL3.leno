@@ -124,6 +124,14 @@ export func createGlyphTexture(Ptr ren, Font f, int glyph, int r, int g, int b):
     return fnt.createGlyphTexture(ren, f, glyph, r, g, b)
 }
 
+export func createTextTextureSolid(Ptr ren, Font f, string t, int r, int g, int b): TextTexture {
+    return fnt.createTextTextureSolid(ren, f, t, r, g, b)
+}
+
+export func createTextTextureShaded(Ptr ren, Font f, string t, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
+    return fnt.createTextTextureShaded(ren, f, t, fr, fg, fb, br, bg, bb)
+}
+
 // ==================== TTF ====================
 
 export func ttfInit(): bool  { return fnt.ttfInit() }

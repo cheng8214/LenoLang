@@ -273,3 +273,27 @@ export func createGlyphTexture(Ptr renderer, Font font, int glyph, int r, int g,
     }
     return tex
 }
+
+export func createTextTextureSolid(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
+    var surface = font.renderTextSolid(text, r, g, b)
+    if surface == null { return new TextTexture() }
+    var info = SDL_SurfaceInfo.from_ptr(surface)
+    var tex = new TextTexture()
+    if tex.createFromSurface(renderer, surface) {
+        tex.width = info.w as int
+        tex.height = info.h as int
+    }
+    return tex
+}
+
+export func createTextTextureShaded(Ptr renderer, Font font, string text, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
+    var surface = font.renderTextShaded(text, fr, fg, fb, br, bg, bb)
+    if surface == null { return new TextTexture() }
+    var info = SDL_SurfaceInfo.from_ptr(surface)
+    var tex = new TextTexture()
+    if tex.createFromSurface(renderer, surface) {
+        tex.width = info.w as int
+        tex.height = info.h as int
+    }
+    return tex
+}
