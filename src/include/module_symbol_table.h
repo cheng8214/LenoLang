@@ -23,7 +23,8 @@ typedef struct {
 // 模块 struct 方法
 typedef struct {
     char* name;                 // 方法名
-    TypeKind return_type;       // 返回类型
+    TypeKind return_type;       // 返回类型（基本类型枚举，向后兼容）
+    TypeInfo* return_type_info; // 完整返回类型信息（支持 Dict[K,V]/Array[T] 等泛型）
     char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
     char* return_type_param_name; // 如果返回类型是泛型参数（如 T），存储参数名
     int return_generic_count;   // 返回类型的泛型参数数量（如 Holder[K] 的 return_generic_count=1）

@@ -67,6 +67,9 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         for (int j = 0; j < table->structs[i].method_count; j++) {
             free(table->structs[i].methods[j].name);
             free(table->structs[i].methods[j].return_struct_name);
+            if (table->structs[i].methods[j].return_type_info) {
+                type_free(table->structs[i].methods[j].return_type_info);
+            }
             free(table->structs[i].methods[j].return_type_param_name);
             for (int gi = 0; gi < table->structs[i].methods[j].return_generic_count; gi++) {
                 free(table->structs[i].methods[j].return_generic_param_names[gi]);
@@ -219,6 +222,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
         for (int i = 0; i < method_count; i++) {
             st->methods[i].name = strdup(methods[i].name);
             st->methods[i].return_type = methods[i].return_type;
+            st->methods[i].return_type_info = methods[i].return_type_info ? type_copy(methods[i].return_type_info) : NULL;
             st->methods[i].return_struct_name = methods[i].return_struct_name ? strdup(methods[i].return_struct_name) : NULL;
             st->methods[i].return_type_param_name = methods[i].return_type_param_name ? strdup(methods[i].return_type_param_name) : NULL;
             st->methods[i].return_generic_count = methods[i].return_generic_count;
@@ -573,6 +577,12 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
     
     // 检查泛型后缀 [T] 或 [K,V]
     if (**p == '[') {
+        // 保存标识符用于判断是否是 Array/Dict
+        char ident[65];
+        int copy_len = name_len < 64 ? name_len : 64;
+        memcpy(ident, name_start, copy_len);
+        ident[copy_len] = '\0';
+
         (*p)++; // skip '['
         skip_ws(p);
         
@@ -605,9 +615,18 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
         if (**p != ']') { type_free(param1); return NULL; }
         (*p)++; // skip ']'
         
-        TypeInfo* arr = type_new(TYPE_ARRAY);
-        arr->element_type = param1;
-        return arr;
+        // 判断标识符类型：Array → TYPE_ARRAY，其他 → 泛型 struct（如 Holder[K]）
+        if (strcmp(ident, "Array") == 0) {
+            TypeInfo* arr = type_new(TYPE_ARRAY);
+            arr->element_type = param1;
+            return arr;
+        }
+        
+        // 泛型 struct 类型：Holder[K] → TYPE_STRUCT, struct_name="Holder", element_type=K
+        TypeInfo* generic_struct = type_new(TYPE_STRUCT);
+        generic_struct->struct_name = strdup(ident);
+        generic_struct->element_type = param1;
+        return generic_struct;
     }
     
     // 简单类型
@@ -1476,6 +1495,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
 
                                         // 解析返回类型
                                         TypeKind method_return_type = TYPE_ANY;
+                                        TypeInfo* method_return_type_info = NULL;
                                         char method_return_struct[64] = {0};
                                         char method_return_type_param[64] = {0};
                                         int method_return_generic_count = 0;
@@ -1486,70 +1506,109 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                             while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
 
                                             const char* ret_type_start = after_func;
+                                            // 先读取标识符部分
                                             while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
                                             int ret_type_len = (int)(after_func - ret_type_start);
 
-                                            if (ret_type_len > 0 && ret_type_len < 64) {
-                                                char ret_type_str[64];
+                                            // 继续读取泛型参数部分（如 [string,float]）
+                                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                            if (*after_func == '[') {
+                                                int depth = 0;
+                                                while (*after_func) {
+                                                    if (*after_func == '[') depth++;
+                                                    else if (*after_func == ']') { depth--; if (depth == 0) { after_func++; break; } }
+                                                    after_func++;
+                                                }
+                                                ret_type_len = (int)(after_func - ret_type_start);
+                                            }
+
+                                            if (ret_type_len > 0 && ret_type_len < 128) {
+                                                char ret_type_str[128];
                                                 strncpy(ret_type_str, ret_type_start, ret_type_len);
                                                 ret_type_str[ret_type_len] = '\0';
-                                                method_return_type = parse_base_type(ret_type_str);
-                                                if (method_return_type == TYPE_ANY) {
-                                                    // 检查是否是泛型参数名（如 T, U, K, V）
+
+                                                // 先尝试解析完整类型信息
+                                                method_return_type_info = parse_type_from_string(ret_type_str);
+                                                if (method_return_type_info) {
+                                                    method_return_type = method_return_type_info->kind;
+                                                } else {
+                                                    method_return_type = parse_base_type(ret_type_str);
+                                                }
+
+                                                // 用标识符部分检查
+                                                char base_str[64];
+                                                int base_len = ret_type_len < 64 ? ret_type_len : 63;
+                                                strncpy(base_str, ret_type_str, base_len);
+                                                base_str[base_len] = '\0';
+                                                char* bracket = strchr(base_str, '[');
+                                                if (bracket) *bracket = '\0';
+
+                                                if (method_return_type == TYPE_ANY || method_return_type == TYPE_STRUCT) {
+                                                    // 检查泛型参数名
                                                     int is_type_param = 0;
                                                     for (int tpi = 0; tpi < type_param_count; tpi++) {
-                                                        if (type_param_names[tpi] && strcmp(ret_type_str, type_param_names[tpi]) == 0) {
+                                                        if (type_param_names[tpi] && strcmp(base_str, type_param_names[tpi]) == 0) {
                                                             is_type_param = 1;
-                                                            memcpy(method_return_type_param, ret_type_str, ret_type_len + 1);
+                                                            memcpy(method_return_type_param, base_str, strlen(base_str) + 1);
                                                             method_return_type = TYPE_GENERIC_PARAM;
+                                                            if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
                                                             break;
                                                         }
                                                     }
                                                     if (!is_type_param) {
-                                                        // 检查是否是已知的 face/cstruct/struct 类型
-                                                        if (is_known_face(ret_type_str, face_names, face_name_count)) {
+                                                        if (is_known_clib(base_str, clib_names, clib_name_count)) {
+                                                            method_return_type = TYPE_CLIB;
+                                                            if (method_return_type_info) method_return_type_info->kind = TYPE_CLIB;
+                                                            size_t copy_len = strlen(base_str);
+                                                            if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
+                                                            memcpy(method_return_struct, base_str, copy_len);
+                                                            method_return_struct[copy_len] = '\0';
+                                                        } else if (is_known_face(base_str, face_names, face_name_count)) {
                                                             method_return_type = TYPE_FACE;
-                                                            size_t copy_len = strlen(ret_type_str);
+                                                            if (method_return_type_info) method_return_type_info->kind = TYPE_FACE;
+                                                            size_t copy_len = strlen(base_str);
                                                             if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
-                                                            memcpy(method_return_struct, ret_type_str, copy_len);
+                                                            memcpy(method_return_struct, base_str, copy_len);
                                                             method_return_struct[copy_len] = '\0';
-                                                        } else if (is_known_cstruct(ret_type_str, cstruct_names, cstruct_name_count)) {
+                                                        } else if (is_known_cstruct(base_str, cstruct_names, cstruct_name_count)) {
                                                             method_return_type = TYPE_CSTRUCT;
-                                                            size_t copy_len = strlen(ret_type_str);
+                                                            if (method_return_type_info) method_return_type_info->kind = TYPE_CSTRUCT;
+                                                            size_t copy_len = strlen(base_str);
                                                             if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
-                                                            memcpy(method_return_struct, ret_type_str, copy_len);
+                                                            memcpy(method_return_struct, base_str, copy_len);
                                                             method_return_struct[copy_len] = '\0';
-                                                        } else if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
+                                                        } else if (is_known_struct(base_str, struct_names, struct_name_count)) {
                                                             method_return_type = TYPE_STRUCT;
-                                                            size_t copy_len = strlen(ret_type_str);
+                                                            size_t copy_len = strlen(base_str);
                                                             if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
-                                                            memcpy(method_return_struct, ret_type_str, copy_len);
+                                                            memcpy(method_return_struct, base_str, copy_len);
                                                             method_return_struct[copy_len] = '\0';
                                                         }
                                                     }
                                                 }
 
-                                                // 解析泛型返回类型的类型参数（如 Holder[K] 中的 [K]）
-                                                while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
-                                                if (*after_func == '[' && (method_return_type == TYPE_STRUCT || method_return_type == TYPE_PTR)) {
-                                                    after_func++; // skip '['
-                                                    while (*after_func && *after_func != ']') {
-                                                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
-                                                        if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
-                                                            const char* gp_start = after_func;
-                                                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
-                                                            int gp_len = (int)(after_func - gp_start);
-                                                            if (gp_len > 0 && gp_len < 64 && method_return_generic_count < 8) {
-                                                                method_return_generic_params[method_return_generic_count] = (char*)malloc(gp_len + 1);
-                                                                strncpy(method_return_generic_params[method_return_generic_count], gp_start, gp_len);
-                                                                method_return_generic_params[method_return_generic_count][gp_len] = '\0';
-                                                                method_return_generic_count++;
+                                                // 解析泛型返回类型的类型参数（如 Holder[K] 中的 [K]），仅用于非 Dict/Array
+                                                if (!method_return_type_info && method_return_type != TYPE_DICT && method_return_type != TYPE_ARRAY) {
+                                                    char* gen_bracket = strchr(ret_type_str, '[');
+                                                    if (gen_bracket && (method_return_type == TYPE_STRUCT || method_return_type == TYPE_PTR)) {
+                                                        gen_bracket++;
+                                                        while (*gen_bracket && *gen_bracket != ']') {
+                                                            while (*gen_bracket && (*gen_bracket == ' ' || *gen_bracket == '\t')) gen_bracket++;
+                                                            if (*gen_bracket && (isalnum((unsigned char)*gen_bracket) || *gen_bracket == '_')) {
+                                                                const char* gp_start = gen_bracket;
+                                                                while (*gen_bracket && (isalnum((unsigned char)*gen_bracket) || *gen_bracket == '_')) gen_bracket++;
+                                                                int gp_len = (int)(gen_bracket - gp_start);
+                                                                if (gp_len > 0 && gp_len < 64 && method_return_generic_count < 8) {
+                                                                    method_return_generic_params[method_return_generic_count] = (char*)malloc(gp_len + 1);
+                                                                    strncpy(method_return_generic_params[method_return_generic_count], gp_start, gp_len);
+                                                                    method_return_generic_params[method_return_generic_count][gp_len] = '\0';
+                                                                    method_return_generic_count++;
+                                                                }
                                                             }
+                                                            while (*gen_bracket && *gen_bracket != ',' && *gen_bracket != ']') gen_bracket++;
+                                                            if (*gen_bracket == ',') gen_bracket++;
                                                         }
-                                                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
-                                                        if (*after_func == ',') after_func++;
                                                     }
-                                                    if (*after_func == ']') after_func++; // skip ']'
                                                 }
                                             }
                                         }
@@ -1571,6 +1630,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         memcpy(methods[method_count].name, method_key, method_key_len);
                                         methods[method_count].name[method_key_len] = '\0';
                                         methods[method_count].return_type = method_return_type;
+                                        methods[method_count].return_type_info = method_return_type_info ? type_copy(method_return_type_info) : NULL;
+                                        // 释放临时 method_return_type_info（已复制到 methods 数组）
+                                        if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
                                         methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
                                         methods[method_count].return_type_param_name = method_return_type_param[0] ? strdup(method_return_type_param) : NULL;
                                         methods[method_count].return_generic_count = method_return_generic_count;
@@ -1702,6 +1764,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                         for (int i = 0; i < method_count; i++) {
                             free(methods[i].name);
                             free(methods[i].return_struct_name);
+                            if (methods[i].return_type_info) {
+                                type_free(methods[i].return_type_info);
+                            }
                             free(methods[i].return_type_param_name);
                             for (int gi = 0; gi < methods[i].return_generic_count; gi++) {
                                 free(methods[i].return_generic_param_names[gi]);
@@ -1872,7 +1937,22 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                         for (int i = 0; i < method_count; i++) {
                             free(methods[i].name);
                             free(methods[i].return_struct_name);
+                            if (methods[i].return_type_info) {
+                                type_free(methods[i].return_type_info);
+                            }
+                            free(methods[i].return_type_param_name);
+                            for (int gi = 0; gi < methods[i].return_generic_count; gi++) {
+                                free(methods[i].return_generic_param_names[gi]);
+                            }
+                            free(methods[i].return_generic_param_names);
                             free(methods[i].param_types);
+                            // 释放泛型参数名
+                            if (methods[i].param_generic_names) {
+                                for (int pi = 0; pi < methods[i].param_count; pi++) {
+                                    free(methods[i].param_generic_names[pi]);
+                                }
+                                free(methods[i].param_generic_names);
+                            }
                         }
 
                         while (*after_cstruct && *after_cstruct != '}') after_cstruct++;
@@ -1967,6 +2047,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
 
                                     // 解析返回类型
                                     TypeKind method_return_type = TYPE_ANY;
+                                    TypeInfo* method_return_type_info = NULL;
                                     char method_return_struct[64] = {0};
 
                                     if (*after_func == ':') {
@@ -1977,29 +2058,64 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
                                         int ret_type_len = (int)(after_func - ret_type_start);
 
-                                        if (ret_type_len > 0 && ret_type_len < 64) {
-                                            char ret_type_str[64];
+                                        // 继续读取泛型参数部分（如 [string,float]）
+                                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                        if (*after_func == '[') {
+                                            int depth = 0;
+                                            while (*after_func) {
+                                                if (*after_func == '[') depth++;
+                                                else if (*after_func == ']') { depth--; if (depth == 0) { after_func++; break; } }
+                                                after_func++;
+                                            }
+                                            ret_type_len = (int)(after_func - ret_type_start);
+                                        }
+
+                                        if (ret_type_len > 0 && ret_type_len < 128) {
+                                            char ret_type_str[128];
                                             strncpy(ret_type_str, ret_type_start, ret_type_len);
                                             ret_type_str[ret_type_len] = '\0';
-                                            method_return_type = parse_base_type(ret_type_str);
-                                            if (method_return_type == TYPE_ANY) {
-                                                if (is_known_face(ret_type_str, face_names, face_name_count)) {
+
+                                            method_return_type_info = parse_type_from_string(ret_type_str);
+                                            if (method_return_type_info) {
+                                                method_return_type = method_return_type_info->kind;
+                                            } else {
+                                                method_return_type = parse_base_type(ret_type_str);
+                                            }
+
+                                            char base_str[64];
+                                            int base_len = ret_type_len < 64 ? ret_type_len : 63;
+                                            strncpy(base_str, ret_type_str, base_len);
+                                            base_str[base_len] = '\0';
+                                            char* bracket = strchr(base_str, '[');
+                                            if (bracket) *bracket = '\0';
+
+                                            if (method_return_type == TYPE_ANY || method_return_type == TYPE_STRUCT) {
+                                                if (is_known_clib(base_str, clib_names, clib_name_count)) {
+                                                    method_return_type = TYPE_CLIB;
+                                                    if (method_return_type_info) method_return_type_info->kind = TYPE_CLIB;
+                                                    size_t copy_len = strlen(base_str);
+                                                    if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
+                                                    memcpy(method_return_struct, base_str, copy_len);
+                                                    method_return_struct[copy_len] = '\0';
+                                                } else if (is_known_face(base_str, face_names, face_name_count)) {
                                                     method_return_type = TYPE_FACE;
-                                                    size_t copy_len = strlen(ret_type_str);
+                                                    if (method_return_type_info) method_return_type_info->kind = TYPE_FACE;
+                                                    size_t copy_len = strlen(base_str);
                                                     if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
-                                                    memcpy(method_return_struct, ret_type_str, copy_len);
+                                                    memcpy(method_return_struct, base_str, copy_len);
                                                     method_return_struct[copy_len] = '\0';
-                                                } else if (is_known_cstruct(ret_type_str, cstruct_names, cstruct_name_count)) {
+                                                } else if (is_known_cstruct(base_str, cstruct_names, cstruct_name_count)) {
                                                     method_return_type = TYPE_CSTRUCT;
-                                                    size_t copy_len = strlen(ret_type_str);
+                                                    if (method_return_type_info) method_return_type_info->kind = TYPE_CSTRUCT;
+                                                    size_t copy_len = strlen(base_str);
                                                     if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
-                                                    memcpy(method_return_struct, ret_type_str, copy_len);
+                                                    memcpy(method_return_struct, base_str, copy_len);
                                                     method_return_struct[copy_len] = '\0';
-                                                } else if (is_known_struct(ret_type_str, struct_names, struct_name_count)) {
+                                                } else if (is_known_struct(base_str, struct_names, struct_name_count)) {
                                                     method_return_type = TYPE_STRUCT;
-                                                    size_t copy_len = strlen(ret_type_str);
+                                                    size_t copy_len = strlen(base_str);
                                                     if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
-                                                    memcpy(method_return_struct, ret_type_str, copy_len);
+                                                    memcpy(method_return_struct, base_str, copy_len);
                                                     method_return_struct[copy_len] = '\0';
                                                 }
                                             }
@@ -2013,6 +2129,8 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     methods[method_count].return_type = method_return_type;
                                     methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
                                     methods[method_count].param_count = param_count;
+                                    // 释放临时 method_return_type_info（face 方法符号不存储此字段）
+                                    if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
                                     method_count++;
                                 }
 

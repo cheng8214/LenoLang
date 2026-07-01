@@ -899,6 +899,26 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                     }
                                 }
 
+                                // 如果返回类型缺少泛型信息（如 TYPE_DICT 无 value_type），
+                                // 从模块符号表的 return_type_info 补充
+                                if (obj_type->struct_name &&
+                                    ((ret->kind == TYPE_DICT && !ret->value_type) ||
+                                     (ret->kind == TYPE_ARRAY && !ret->element_type) ||
+                                     (ret->kind == TYPE_STRUCT && !ret->struct_name))) {
+                                    for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                        ImportedModuleInfo* info = &s->imported_modules[mi];
+                                        if (info->sym_table) {
+                                            ModuleStructMethod* mod_method = module_symbol_table_find_struct_method(
+                                                info->sym_table, obj_type->struct_name, method_name);
+                                            if (mod_method && mod_method->return_type_info) {
+                                                type_free(ret);
+                                                ret = type_copy(mod_method->return_type_info);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
                                 ast->cached_type = type_copy(ret);
                                 type_free(obj_type);
                                 return ret;
@@ -948,7 +968,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                                 }
                                             }
                                             if (!result) {
-                                                result = type_new(method->return_type);
+                                                if (method->return_type_info) {
+                                                    result = type_copy(method->return_type_info);
+                                                } else {
+                                                    result = type_new(method->return_type);
+                                                }
                                                 if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
                                                     result->struct_name = strdup(method->return_struct_name);
                                                 }
@@ -1003,6 +1027,143 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         }
                         type_free(obj_type);
                     }
+                }
+            }
+            // 处理实例方法调用：obj.method()（callee 是 AST_FIELD_ACCESS）
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_FIELD_ACCESS) {
+                Ast* field_access = ast->u.call.callee;
+                const char* method_name = field_access->u.field_access.field_name;
+                TypeInfo* obj_type = infer_expr_type(s, field_access->u.field_access.obj);
+                if (obj_type) {
+                    // 处理 struct/cstruct/face 类型的方法调用
+                    if (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) {
+                        // 从函数表查找方法定义
+                        char method_key[256];
+                        if (obj_type->struct_name) {
+                            snprintf(method_key, sizeof(method_key), "%s::%s", obj_type->struct_name, method_name);
+                        } else {
+                            strncpy(method_key, method_name, sizeof(method_key) - 1);
+                            method_key[sizeof(method_key) - 1] = '\0';
+                        }
+                        Ast* func_def = func_table_find(&s->func_table, method_key);
+                        if (func_def && func_def->kind == AST_FUNC_DEF) {
+                            TypeInfo* ret = NULL;
+                            if (func_def->u.func.return_type && func_def->u.func.return_type->kind != TYPE_INFER) {
+                                ret = type_copy(func_def->u.func.return_type);
+                            } else if (func_def->u.func.body) {
+                                ret = infer_return_type_from_body(s, func_def->u.func.body);
+                            }
+                            if (!ret) ret = type_new(TYPE_ANY);
+                            // 泛型参数替换
+                            if (obj_type->generic_count > 0 && obj_type->generic_args && obj_type->struct_name) {
+                                for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                    ImportedModuleInfo* info = &s->imported_modules[mi];
+                                    if (info->sym_table) {
+                                        ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
+                                        if (ssym && ssym->type_param_count > 0 && ssym->type_param_names) {
+                                            TypeInfo* substituted = ret;
+                                            for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
+                                                TypeInfo* new_ret = type_substitute(substituted, ssym->type_param_names[gi], obj_type->generic_args[gi]);
+                                                type_free(substituted);
+                                                substituted = new_ret;
+                                            }
+                                            ret = substituted;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            ast->cached_type = type_copy(ret);
+                            type_free(obj_type);
+                            return ret;
+                        }
+                        // 检查是否是原生方法
+                        int arity;
+                        const char* type_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
+                        TypeKind native_ret = native_get_instance_method_return_type(type_name, method_name, &arity);
+                        if (native_ret != TYPE_ANY) {
+                            type_free(obj_type);
+                            return type_new(native_ret);
+                        }
+                        // 检查是否是从模块导入的 struct 的方法
+                        if (obj_type->struct_name) {
+                            for (int i = 0; i < s->imported_module_count; i++) {
+                                ImportedModuleInfo* info = &s->imported_modules[i];
+                                if (info->sym_table) {
+                                    ModuleStructMethod* method = module_symbol_table_find_struct_method(
+                                        info->sym_table, obj_type->struct_name, method_name);
+                                    if (method) {
+                                        TypeInfo* result = NULL;
+                                        // 如果返回类型是泛型参数，用 type_substitute 替换
+                                        if (method->return_type == TYPE_GENERIC_PARAM && method->return_type_param_name &&
+                                            obj_type->generic_count > 0 && obj_type->generic_args) {
+                                            ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
+                                            if (ssym && ssym->type_param_names) {
+                                                for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
+                                                    if (strcmp(ssym->type_param_names[gi], method->return_type_param_name) == 0) {
+                                                        result = type_copy(obj_type->generic_args[gi]);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if (!result) {
+                                            if (method->return_type_info) {
+                                                result = type_copy(method->return_type_info);
+                                            } else {
+                                                result = type_new(method->return_type);
+                                            }
+                                            if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
+                                                result->struct_name = strdup(method->return_struct_name);
+                                            }
+                                        }
+                                        type_free(obj_type);
+                                        return result;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 处理 clib 类型的方法调用
+                    else if (obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
+                        Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
+                        if (clib_sym && clib_sym->clib_func_count > 0) {
+                            for (int ci = 0; ci < clib_sym->clib_func_count; ci++) {
+                                if (strcmp(clib_sym->clib_func_names[ci], method_name) == 0) {
+                                    TypeInfo* ret_type = clib_sym->clib_func_return_types[ci];
+                                    TypeInfo* result2 = NULL;
+                                    if (ret_type) {
+                                        TypeKind rk = ret_type->kind;
+                                        switch (rk) {
+                                            case TYPE_I8: case TYPE_U8:
+                                            case TYPE_I16: case TYPE_U16:
+                                            case TYPE_I32: case TYPE_U32:
+                                            case TYPE_I64: case TYPE_U64:
+                                                result2 = type_new(TYPE_INT); break;
+                                            case TYPE_F32: case TYPE_F64:
+                                                result2 = type_new(TYPE_FLOAT); break;
+                                            case TYPE_STR8: case TYPE_STR16:
+                                                result2 = type_new(TYPE_STRING); break;
+                                            case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                                result2 = type_new(TYPE_PTR);
+                                                result2->struct_name = strdup("Ptr"); break;
+                                            case TYPE_BOOL:
+                                                result2 = type_new(TYPE_BOOL); break;
+                                            case TYPE_NULL:
+                                                result2 = type_new(TYPE_NULL); break;
+                                            default:
+                                                result2 = type_copy(ret_type); break;
+                                        }
+                                    } else {
+                                        result2 = type_new(TYPE_ANY);
+                                    }
+                                    type_free(obj_type);
+                                    return result2;
+                                }
+                            }
+                        }
+                    }
+                    type_free(obj_type);
                 }
             }
             return type_new(TYPE_ANY);
@@ -1656,6 +1817,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                 }
                 if (!result) result = type_new(TYPE_ANY);
+            }
+            // Dict 字段访问：d.key 等价于 d["key"]，返回值类型 V
+            else if (obj_type && obj_type->kind == TYPE_DICT) {
+                result = obj_type->value_type ? type_copy(obj_type->value_type) : type_new(TYPE_ANY);
             }
             else {
                 result = type_new(TYPE_ANY);

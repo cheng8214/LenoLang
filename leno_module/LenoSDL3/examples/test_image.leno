@@ -22,8 +22,8 @@ main() {
                 tex = SDL3.loadImageTexture(r.handle, "d:\\1.png")
             }
             if tex != null {
-                var ts = r.getTextureSize(tex)
-                int b=ts.w
+                Dict[string,float] ts = r.getTextureSize(tex)
+                float  b=ts.w
                 r.drawTextureAt(tex, 10, 10,ts.w,ts.h)
             }
         }

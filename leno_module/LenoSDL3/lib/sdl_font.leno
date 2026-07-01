@@ -122,7 +122,7 @@ export struct Font {
         return ttfLib().TTF_RenderText_Blended_Wrapped(handle, text, 0, color, wrapWidth)
     }
 
-    func measureString(string text): Dict {
+    func measureString(string text): Dict[string,int] {
         if not ok { return {w: 0, h: 0} }
         var w = ffi.malloc(4)
         var h = ffi.malloc(4)
@@ -180,7 +180,7 @@ export struct Font {
         return ttfLib().TTF_GetFontKerning(handle)
     }
 
-    func measureStringWrapped(string text, int wrapWidth): Dict {
+    func measureStringWrapped(string text, int wrapWidth): Dict[string,int] {
         if not ok { return {w: 0, h: 0} }
         var w = ffi.malloc(4)
         var h = ffi.malloc(4)
@@ -211,7 +211,7 @@ export struct Font {
         if ok { ttfLib().TTF_SetFontWrapAlignment(handle, align) }
     }
 
-    func getGlyphMetrics(int glyph): Dict {
+    func getGlyphMetrics(int glyph): Dict[string,int] {
         if not ok { return {} }
         var mx = ffi.malloc(4); var Mx = ffi.malloc(4)
         var my = ffi.malloc(4); var My = ffi.malloc(4)
