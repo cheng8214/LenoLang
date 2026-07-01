@@ -114,6 +114,11 @@ export var EVENT_WINDOW_RESIZED         = 0x206
 export var SCANCODE_ESCAPE    = 41
 export var SCANCODE_RETURN    = 40
 export var SCANCODE_SPACE     = 44
+export var SCANCODE_BACKSPACE = 42
+export var SCANCODE_TAB       = 43
+export var SCANCODE_CAPSLOCK   = 57
+
+// 字母
 export var SCANCODE_A = 4;  export var SCANCODE_B = 5;  export var SCANCODE_C = 6
 export var SCANCODE_D = 7;  export var SCANCODE_E = 8;  export var SCANCODE_F = 9
 export var SCANCODE_G = 10; export var SCANCODE_H = 11; export var SCANCODE_I = 12
@@ -123,20 +128,64 @@ export var SCANCODE_P = 19; export var SCANCODE_Q = 20; export var SCANCODE_R = 
 export var SCANCODE_S = 22; export var SCANCODE_T = 23; export var SCANCODE_U = 24
 export var SCANCODE_V = 25; export var SCANCODE_W = 26; export var SCANCODE_X = 27
 export var SCANCODE_Y = 28; export var SCANCODE_Z = 29
+
+// 数字
 export var SCANCODE_0 = 39; export var SCANCODE_1 = 30; export var SCANCODE_2 = 31
 export var SCANCODE_3 = 32; export var SCANCODE_4 = 33; export var SCANCODE_5 = 34
 export var SCANCODE_6 = 35; export var SCANCODE_7 = 36; export var SCANCODE_8 = 37
 export var SCANCODE_9 = 38
-export var SCANCODE_UP = 82; export var SCANCODE_DOWN = 81
-export var SCANCODE_LEFT = 80; export var SCANCODE_RIGHT = 79
+
+// 标点符号键
+export var SCANCODE_GRAVE        = 53  // `~\
+export var SCANCODE_MINUS        = 45  // -_
+export var SCANCODE_EQUALS       = 46  // =+
+export var SCANCODE_LEFTBRACKET  = 47  // [{
+export var SCANCODE_RIGHTBRACKET = 48  // ]}
+export var SCANCODE_BACKSLASH    = 49  // \ |
+export var SCANCODE_SEMICOLON    = 51  // ;:
+export var SCANCODE_APOSTROPHE   = 52  // '"
+export var SCANCODE_COMMA        = 54  // ,<
+export var SCANCODE_PERIOD       = 55  // .>
+export var SCANCODE_SLASH        = 56  // /?
+
+// 方向键
+export var SCANCODE_UP    = 82; export var SCANCODE_DOWN  = 81
+export var SCANCODE_LEFT  = 80; export var SCANCODE_RIGHT = 79
+
+// 编辑键
+export var SCANCODE_INSERT   = 73; export var SCANCODE_HOME   = 74
+export var SCANCODE_PAGEUP   = 75; export var SCANCODE_DELETE = 76
+export var SCANCODE_END      = 77; export var SCANCODE_PAGEDOWN = 78
+
+// 修饰键
 export var SCANCODE_LSHIFT = 225; export var SCANCODE_RSHIFT = 229
-export var SCANCODE_LCTRL = 224; export var SCANCODE_RCTRL = 228
-export var SCANCODE_LALT = 226; export var SCANCODE_RALT = 230
-export var SCANCODE_TAB = 43; export var SCANCODE_DELETE = 76; export var SCANCODE_BACKSPACE = 42
-export var SCANCODE_F1=58; export var SCANCODE_F2=59; export var SCANCODE_F3=60
-export var SCANCODE_F4=61; export var SCANCODE_F5=62; export var SCANCODE_F6=63
-export var SCANCODE_F7=64; export var SCANCODE_F8=65; export var SCANCODE_F9=66
+export var SCANCODE_LCTRL  = 224; export var SCANCODE_RCTRL  = 228
+export var SCANCODE_LALT   = 226; export var SCANCODE_RALT   = 230
+export var SCANCODE_LGUI   = 227; export var SCANCODE_RGUI   = 231
+
+// 功能键
+export var SCANCODE_F1 =58; export var SCANCODE_F2 =59; export var SCANCODE_F3 =60
+export var SCANCODE_F4 =61; export var SCANCODE_F5 =62; export var SCANCODE_F6 =63
+export var SCANCODE_F7 =64; export var SCANCODE_F8 =65; export var SCANCODE_F9 =66
 export var SCANCODE_F10=67; export var SCANCODE_F11=68; export var SCANCODE_F12=69
+
+// 系统键
+export var SCANCODE_PRINTSCREEN = 70
+export var SCANCODE_SCROLLLOCK  = 71
+export var SCANCODE_PAUSE       = 72
+
+// 小键盘
+export var SCANCODE_NUMLOCKCLEAR = 83
+export var SCANCODE_KP_DIVIDE    = 84
+export var SCANCODE_KP_MULTIPLY  = 85
+export var SCANCODE_KP_MINUS     = 86
+export var SCANCODE_KP_PLUS      = 87
+export var SCANCODE_KP_ENTER     = 88
+export var SCANCODE_KP_1 = 89; export var SCANCODE_KP_2 = 90; export var SCANCODE_KP_3 = 91
+export var SCANCODE_KP_4 = 92; export var SCANCODE_KP_5 = 93; export var SCANCODE_KP_6 = 94
+export var SCANCODE_KP_7 = 95; export var SCANCODE_KP_8 = 96; export var SCANCODE_KP_9 = 97
+export var SCANCODE_KP_0        = 98
+export var SCANCODE_KP_PERIOD   = 99
 
 export var MOUSE_LEFT = 1; export var MOUSE_MIDDLE = 2; export var MOUSE_RIGHT = 3
 
