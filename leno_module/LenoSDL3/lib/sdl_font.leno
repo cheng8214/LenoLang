@@ -26,6 +26,7 @@ clib sdl3_ttf {
     i32  TTF_GetFontStyle(Ptr font)
     void TTF_SetFontOutline(Ptr font, i32 outline)
     i32  TTF_GetFontOutline(Ptr font)
+    str8 TTF_GetFontStyleName(Ptr font)
 }
 
 // ==================== DLL 加载 ====================
@@ -130,6 +131,11 @@ export struct Font {
     func getOutline(): int {
         if not ok { return 0 }
         return ttfLib().TTF_GetFontOutline(handle)
+    }
+
+    func getStyleName(): string {
+        if not ok { return "" }
+        return ttfLib().TTF_GetFontStyleName(handle) as string
     }
 }
 

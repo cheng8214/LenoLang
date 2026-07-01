@@ -424,6 +424,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             break;
         }
         case AST_TYPE_CHECK:
+        case AST_AS_CAST:
             transform_method_body_ex(ast->u.type_check.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
             break;
         case AST_MODULE_ACCESS: {

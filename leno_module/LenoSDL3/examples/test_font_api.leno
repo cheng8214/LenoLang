@@ -25,6 +25,10 @@ main() {
     print("UNDERLINE: " + font.getStyle())
     font.setStyle(SDL3.STYLE_NORMAL)
 
+    // getStyleName
+    var sname = font.getStyleName()
+    print("StyleName: " + sname)
+
     // setOutline / getOutline
     font.setOutline(2)
     print("Outline=2: " + font.getOutline())
