@@ -2,7 +2,31 @@
 import "../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Font
+import files
 
+// ==================== 跨平台字体加载 ====================
+func loadFont(float size): Font {
+    var names = ["msyh.ttc", "simsun.ttc", "DejaVuSans.ttf", "Arial.ttf"]
+    var dirs = [
+        "./resources/fonts/",
+        "C:/Windows/Fonts/",
+        "/usr/share/fonts/truetype/dejavu/",
+        "/System/Library/Fonts/"
+    ]
+    for dirs to d {
+        for names to n {
+            var path = d + n
+            if files.exists(path) {
+                var font = SDL3.createFont(path, size)
+                if font.ok { return font }
+            }
+        }
+    }
+    return SDL3.createFont("", size)  // 返回空 Font
+}
+
+// ==================== 扫描码 → 名称映射 ====================
 var keyNames = {}
 var _knInited = false
 
@@ -37,7 +61,7 @@ func scode2name(int code): string {
         d[SDL3.SCANCODE_GRAVE]="`/~";         d[SDL3.SCANCODE_MINUS]="-/--"
         d[SDL3.SCANCODE_EQUALS]="=/+";         d[SDL3.SCANCODE_LEFTBRACKET]="[/{"
         d[SDL3.SCANCODE_RIGHTBRACKET]="]/}";   d[SDL3.SCANCODE_BACKSLASH]="\\/|"
-        d[SDL3.SCANCODE_SEMICOLON]=";/:";      d[SDL3.SCANCODE_APOSTROPHE]="'/\""
+        d[SDL3.SCANCODE_SEMICOLON]=";/:";      d[SDL3.SCANCODE_APOSTROPHE]="'\""
         d[SDL3.SCANCODE_COMMA]=",/<";           d[SDL3.SCANCODE_PERIOD]="./>"
         d[SDL3.SCANCODE_SLASH]="//?"
 
@@ -68,10 +92,14 @@ func scode2name(int code): string {
         d[SDL3.SCANCODE_PRINTSCREEN]="PrtSc"; d[SDL3.SCANCODE_SCROLLLOCK]="ScrLk"
         d[SDL3.SCANCODE_PAUSE]="Pause"
 
+        // 特殊键
+        d[SDL3.SCANCODE_APPLICATION]="右键菜单"
+
         // 小键盘
         d[SDL3.SCANCODE_NUMLOCKCLEAR]="NumLock"; d[SDL3.SCANCODE_KP_DIVIDE]="KP /"
         d[SDL3.SCANCODE_KP_MULTIPLY]="KP *";     d[SDL3.SCANCODE_KP_MINUS]="KP -"
         d[SDL3.SCANCODE_KP_PLUS]="KP +";          d[SDL3.SCANCODE_KP_ENTER]="KP Enter"
+        d[SDL3.SCANCODE_KP_EQUALS]="KP =";        d[SDL3.SCANCODE_KP_COMMA]="KP ,"
         d[SDL3.SCANCODE_KP_0]="KP 0"; d[SDL3.SCANCODE_KP_1]="KP 1"; d[SDL3.SCANCODE_KP_2]="KP 2"
         d[SDL3.SCANCODE_KP_3]="KP 3"; d[SDL3.SCANCODE_KP_4]="KP 4"; d[SDL3.SCANCODE_KP_5]="KP 5"
         d[SDL3.SCANCODE_KP_6]="KP 6"; d[SDL3.SCANCODE_KP_7]="KP 7"; d[SDL3.SCANCODE_KP_8]="KP 8"
@@ -82,29 +110,35 @@ func scode2name(int code): string {
     return "?" + code
 }
 
+// ==================== 主程序 ====================
 main() {
     var win = SDL3.createWindow({title: "键盘演示 - 全键覆盖", w: 700, h: 550, flags: SDL3.WINDOW_RESIZABLE})
     if not win.ok { print("窗口失败"); return }
 
     SDL3.ttfInit()
-    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 20.0)
-    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 20.0) }
+    var font = loadFont(20.0)
+    if not font.ok { print("字体加载失败"); SDL3.ttfQuit(); return }
+    print("字体: " + font.getFamilyName() + " " + font.getStyleName())
 
     var name = ""; var code = 0; var down = false
     var pressed = 0; var released = 0
-    var last8 = {}; var histIdx = 0  // 历史记录
+    var lastKeys = []      // Array 循环队列，最多 8 个
+    var lastCode = -1       // 长按去重
 
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() {
-                code = e.scancode(); name = scode2name(code)
-                down = true; pressed = pressed + 1
-                // 记录最近8个按键
-                last8[histIdx % 8] = name
-                histIdx = histIdx + 1
+                var newCode = e.scancode()
+                if newCode != lastCode {          // 去重：忽略连续相同键
+                    lastCode = newCode
+                    code = newCode; name = scode2name(code)
+                    down = true; pressed = pressed + 1
+                    if lastKeys.len() >= 8 { lastKeys.remove(0) }
+                    lastKeys.add(name)
+                }
             }
-            if e.isKeyUp() { down = false; released = released + 1 }
+            if e.isKeyUp() { down = false; released = released + 1; lastCode = -1 }
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
             return true
         },
@@ -113,13 +147,10 @@ main() {
             r.clear()
 
             func t(string s, int x, int y) {
-                if not font.ok { return }
                 var tex = SDL3.createTextTexture(r.handle, font, s, 180, 220, 255)
                 if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
             }
-            // 高亮文字
             func th(string s, int x, int y, int rr, int gg, int bb) {
-                if not font.ok { return }
                 var tex = SDL3.createTextTexture(r.handle, font, s, rr, gg, bb)
                 if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
             }
@@ -128,7 +159,7 @@ main() {
             th("⌨ 键盘事件测试 - 全键覆盖", 10, 8, 255, 220, 100)
             th("──────────────────────────────────────", 10, 32, 80, 80, 100)
 
-            // 当前按键
+            // 当前按键（长按去重）
             if down {
                 th("▼ 按下: " + name + "    [scancode=" + code + "]", 10, 55, 100, 255, 100)
             } else {
@@ -136,44 +167,34 @@ main() {
             }
 
             // 统计
-            t("按键次数: " + pressed + "    释放次数: " + released, 10, 90)
+            t("按键次数: " + pressed + " / 释放次数: " + released, 10, 90)
 
-            // 历史记录
+            // 历史记录 (Array)
             t("最近按键:", 10, 125)
             var hx = 10
-            for 0 : 7 to i {
-                var k = last8.get(i, "")
-                if k != "" {
-                    var ht = SDL3.createTextTexture(r.handle, font, k as string, 120, 200, 255)
-                    if ht.ok {
-                        r.drawTextureAt(ht.texture, hx, 150, ht.width, ht.height)
-                        hx = hx + _int(ht.width) + 8
-                        ht.destroy()
-                    }
+            for 0 : lastKeys.len() - 1 to i {
+                var k = lastKeys[i] as string
+                var ht = SDL3.createTextTexture(r.handle, font, k, 120, 200, 255)
+                if ht.ok {
+                    r.drawTextureAt(ht.texture, hx, 150, ht.width, ht.height)
+                    hx = hx + _int(ht.width) + 8
+                    ht.destroy()
                 }
             }
 
             th("──────────────────────────────────────", 10, 180, 80, 80, 100)
 
-            // 按键分类参考
             t("基础: Esc Enter 空格 退格 Tab Caps", 10, 200)
-
             t("字母: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z", 10, 225)
-
             t("数字: 0 1 2 3 4 5 6 7 8 9", 10, 250)
-
             t("标点: ` - = [ ] \\ ; ' , . /", 10, 275)
-
             t("方向: ↑ ↓ ← →    编辑: Ins Home PgUp Del End PgDn", 10, 300)
-
             t("修饰: 左/右Shift Ctrl Alt Win   功能: F1-F12", 10, 325)
-
-            t("系统: PrtSc ScrLk Pause    小键盘: NumLock KP 0-9 +-*/ . Enter", 10, 350)
-
-            t("按 ESC 退出", 10, 390)
+            t("系统: PrtSc ScrLk Pause    小键盘: NumLock KP 0-9 +-*/ = , . Enter", 10, 350)
+            t("特殊: 右键菜单    按 ESC 退出", 10, 375)
         }
     )
 
-    if font.ok { font.close() }
+    font.close()
     SDL3.ttfQuit()
 }

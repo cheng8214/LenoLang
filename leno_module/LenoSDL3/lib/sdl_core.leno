@@ -186,6 +186,9 @@ export var SCANCODE_KP_4 = 92; export var SCANCODE_KP_5 = 93; export var SCANCOD
 export var SCANCODE_KP_7 = 95; export var SCANCODE_KP_8 = 96; export var SCANCODE_KP_9 = 97
 export var SCANCODE_KP_0        = 98
 export var SCANCODE_KP_PERIOD   = 99
+export var SCANCODE_APPLICATION = 101
+export var SCANCODE_KP_EQUALS   = 103
+export var SCANCODE_KP_COMMA    = 133
 
 export var MOUSE_LEFT = 1; export var MOUSE_MIDDLE = 2; export var MOUSE_RIGHT = 3
 

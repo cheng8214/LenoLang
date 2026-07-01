@@ -137,6 +137,9 @@ export var SCANCODE_KP_5 = core.SCANCODE_KP_5; export var SCANCODE_KP_6 = core.S
 export var SCANCODE_KP_7 = core.SCANCODE_KP_7; export var SCANCODE_KP_8 = core.SCANCODE_KP_8
 export var SCANCODE_KP_9 = core.SCANCODE_KP_9; export var SCANCODE_KP_0 = core.SCANCODE_KP_0
 export var SCANCODE_KP_PERIOD = core.SCANCODE_KP_PERIOD
+export var SCANCODE_APPLICATION = core.SCANCODE_APPLICATION
+export var SCANCODE_KP_EQUALS   = core.SCANCODE_KP_EQUALS
+export var SCANCODE_KP_COMMA    = core.SCANCODE_KP_COMMA
 
 // 鼠标
 export var MOUSE_LEFT   = core.MOUSE_LEFT
