@@ -7,6 +7,10 @@ use core.SDL_FRect
 use core.SDL_Color
 use core.SDL_FPoint
 use core.SDL_Point
+use core.Color
+use core.FColor
+use core.Size
+use core.FSize
 
 // 模块加载时一次性初始化 DLL，后续直接用 _lib
 sdl3 _lib = core.lib()
