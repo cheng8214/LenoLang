@@ -178,7 +178,7 @@ static void extract_exports(const char* source, ExportList* list) {
 }
 
 // 规范化路径（统一使用平台特定的分隔符，处理 . 和 ..）
-static int normalize_path(char* path, int max_len) {
+int normalize_path(char* path, int max_len) {
     char result[MAX_PATH_LEN];
     int result_len = 0;
 

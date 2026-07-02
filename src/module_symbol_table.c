@@ -5,6 +5,9 @@
 #include "include/module_symbol_table.h"
 #include "include/module_loader.h"
 
+// 来自 module_loader.c
+extern int normalize_path(char* path, int max_len);
+
 // 初始容量
 #define INITIAL_CAPACITY 16
 
@@ -739,6 +742,26 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     char* source = read_module_file(table->module_path, current_file);
     if (!source) return -1;
 
+    // 构建当前模块的规范化绝对路径，供后续递归扫描使用
+    // 这样子模块的相对路径可以基于正确的目录解析
+    char normalized_current[MAX_PATH_LEN] = {0};
+    if (current_file) {
+        strncpy(normalized_current, current_file, MAX_PATH_LEN - 1);
+        normalized_current[MAX_PATH_LEN - 1] = '\0';
+        char* last_sep = strrchr(normalized_current, '\\');
+        if (!last_sep) last_sep = strrchr(normalized_current, '/');
+        if (last_sep) {
+            *(last_sep + 1) = '\0';
+            strncat(normalized_current, table->module_path, MAX_PATH_LEN - strlen(normalized_current) - 1);
+        } else {
+            strncpy(normalized_current, table->module_path, MAX_PATH_LEN - 1);
+        }
+        // 规范化路径（解析 ../ 等）
+        normalize_path(normalized_current, MAX_PATH_LEN);
+    } else {
+        strncpy(normalized_current, table->module_path, MAX_PATH_LEN - 1);
+    }
+
     // 第一遍：收集所有 struct/cstruct/clib/face/enum 名称
     char* struct_names[64];
     int struct_name_count = 0;
@@ -1123,27 +1146,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     if (resolved_path[0]) {
                         ModuleSymbolTable* dep_table = module_symbol_table_create(resolved_path);
                         if (dep_table) {
-                            // 解析当前模块的绝对路径，作为子模块扫描基准
-                            char dep_base[MAX_PATH_LEN] = {0};
-                            if (current_file && table->module_path) {
-                                strncpy(dep_base, current_file, MAX_PATH_LEN - 1);
-                                dep_base[MAX_PATH_LEN - 1] = '\0';
-                                char* last = strrchr(dep_base, '\\');
-                                if (!last) last = strrchr(dep_base, '/');
-                                if (last) {
-                                    *(last + 1) = '\0';
-                                    strncat(dep_base, table->module_path, MAX_PATH_LEN - strlen(dep_base) - 1);
-                                } else {
-                                    strncpy(dep_base, table->module_path, MAX_PATH_LEN - 1);
-                                }
-                            } else if (table->module_path) {
-                                strncpy(dep_base, table->module_path, MAX_PATH_LEN - 1);
-                            } else {
-                                strncpy(dep_base, current_file, MAX_PATH_LEN - 1);
-                            }
-                            if (module_symbol_table_scan_depth(dep_table, dep_base[0] ? dep_base : current_file, depth + 1) == 0) {
+                            // 使用已规范化的当前模块路径作为子模块扫描基准
+                            if (module_symbol_table_scan_depth(dep_table, normalized_current, depth + 1) == 0) {
                                 // 查找 struct
                                 ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
+                                ModuleFaceSymbol* f_sym_ptr = module_symbol_table_find_face(dep_table, type_name);
                                 if (s_sym && !module_symbol_table_find_struct(table, type_name)) {
                                     module_symbol_table_add_struct(table, type_name,
                                         s_sym->field_count, s_sym->fields,
@@ -1184,7 +1191,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     }
                                 }
                                 // 查找 clib 类型（通过函数返回类型识别）
-                                if (!s_sym && !f_sym) {
+                                if (!s_sym && !f_sym_ptr) {
                                     for (int fi = 0; fi < dep_table->func_count; fi++) {
                                         ModuleFuncSymbol* func = &dep_table->funcs[fi];
                                         if (func->return_type == TYPE_CLIB && func->return_struct_name &&
@@ -1202,7 +1209,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     }
                                 }
                                 // 查找 enum 类型
-                                if (!s_sym && !f_sym) {
+                                if (!s_sym && !f_sym_ptr) {
                                     ModuleEnumSymbol* e_sym = module_symbol_table_find_enum(dep_table, type_name);
                                     if (e_sym) {
                                         int already = 0;
@@ -1216,7 +1223,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     }
                                 }
                                 // 查找 alias 类型
-                                if (!s_sym && !f_sym) {
+                                if (!s_sym && !f_sym_ptr) {
                                     ModuleAliasSymbol* a_sym = module_symbol_table_find_alias(dep_table, type_name);
                                     if (a_sym && !module_symbol_table_find_alias(table, type_name)) {
                                         module_symbol_table_add_alias(table, type_name,
