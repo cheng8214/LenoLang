@@ -1,0 +1,11 @@
+// alias_generic_core.leno - 底层模块定义泛型 alias
+export alias SizeI = Dict[string, int]
+export alias SizeF = Dict[string, float]
+
+export func makeSizeI(int w, int h): SizeI {
+    return {w: w, h: h}
+}
+
+export func makeSizeF(float w, float h): SizeF {
+    return {w: w, h: h}
+}
