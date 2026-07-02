@@ -1215,6 +1215,14 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         }
                                     }
                                 }
+                                // 查找 alias 类型
+                                if (!s_sym && !f_sym) {
+                                    ModuleAliasSymbol* a_sym = module_symbol_table_find_alias(dep_table, type_name);
+                                    if (a_sym && !module_symbol_table_find_alias(table, type_name)) {
+                                        module_symbol_table_add_alias(table, type_name,
+                                            a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
+                                    }
+                                }
                             }
                             module_symbol_table_destroy(dep_table);
                         }
@@ -1527,12 +1535,19 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                 strncpy(ret_type_str, ret_type_start, ret_type_len);
                                                 ret_type_str[ret_type_len] = '\0';
 
-                                                // 先尝试解析完整类型信息
-                                                method_return_type_info = parse_type_from_string(ret_type_str);
-                                                if (method_return_type_info) {
+                                                // 先尝试从本地别名表解析
+                                                TypeInfo* alias_ti = FIND_LOCAL_ALIAS(ret_type_str);
+                                                if (alias_ti) {
+                                                    method_return_type_info = type_copy(alias_ti);
                                                     method_return_type = method_return_type_info->kind;
                                                 } else {
-                                                    method_return_type = parse_base_type(ret_type_str);
+                                                    // 解析完整类型信息
+                                                    method_return_type_info = parse_type_from_string(ret_type_str);
+                                                    if (method_return_type_info) {
+                                                        method_return_type = method_return_type_info->kind;
+                                                    } else {
+                                                        method_return_type = parse_base_type(ret_type_str);
+                                                    }
                                                 }
 
                                                 // 用标识符部分检查
@@ -2075,11 +2090,18 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                             strncpy(ret_type_str, ret_type_start, ret_type_len);
                                             ret_type_str[ret_type_len] = '\0';
 
-                                            method_return_type_info = parse_type_from_string(ret_type_str);
-                                            if (method_return_type_info) {
+                                            // 先尝试从本地别名表解析
+                                            TypeInfo* alias_ti = FIND_LOCAL_ALIAS(ret_type_str);
+                                            if (alias_ti) {
+                                                method_return_type_info = type_copy(alias_ti);
                                                 method_return_type = method_return_type_info->kind;
                                             } else {
-                                                method_return_type = parse_base_type(ret_type_str);
+                                                method_return_type_info = parse_type_from_string(ret_type_str);
+                                                if (method_return_type_info) {
+                                                    method_return_type = method_return_type_info->kind;
+                                                } else {
+                                                    method_return_type = parse_base_type(ret_type_str);
+                                                }
                                             }
 
                                             char base_str[64];
@@ -2290,13 +2312,20 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 strncpy(type_str, type_start, type_len);
                                 type_str[type_len] = '\0';
 
-                                // 先尝试解析完整类型信息（支持 Dict[K,V]、Array[T] 等泛型）
-                                return_type_info = parse_type_from_string(type_str);
-                                if (return_type_info) {
+                                // 先尝试从本地别名表解析
+                                TypeInfo* alias_ti = FIND_LOCAL_ALIAS(type_str);
+                                if (alias_ti) {
+                                    return_type_info = type_copy(alias_ti);
                                     return_type = return_type_info->kind;
                                 } else {
-                                    // 回退：仅解析基本类型
-                                    return_type = parse_base_type(type_str);
+                                    // 解析完整类型信息（支持 Dict[K,V]、Array[T] 等泛型）
+                                    return_type_info = parse_type_from_string(type_str);
+                                    if (return_type_info) {
+                                        return_type = return_type_info->kind;
+                                    } else {
+                                        // 回退：仅解析基本类型
+                                        return_type = parse_base_type(type_str);
+                                    }
                                 }
 
                                 // 用标识符部分（不含泛型参数）检查已知类型
@@ -2490,7 +2519,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                         after_alias++;
                         while (*after_alias && (*after_alias == ' ' || *after_alias == '\t')) after_alias++;
 
-                        // 收集完整类型字符串（支持 Array[int]、Dict[string,string] 等）
+                        // 收集完整类型字符串（支持 Array[int]、Dict[string, int] 等）
                         char type_str[256] = {0};
                         int ti = 0;
                         while (*after_alias && ti < 255 && *after_alias != '\n' && *after_alias != '\r' &&
@@ -2498,8 +2527,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                             if (!(*after_alias == '_' || isalnum((unsigned char)*after_alias) ||
                                   *after_alias == '[' || *after_alias == ']' ||
                                   *after_alias == ',' || *after_alias == ':' ||
-                                  *after_alias == '(' || *after_alias == ')')) break;
-                            type_str[ti++] = *after_alias++;
+                                  *after_alias == '(' || *after_alias == ')' ||
+                                  *after_alias == ' ' || *after_alias == '\t')) break;
+                            // 跳过连续空格，压缩为单个空格
+                            if ((*after_alias == ' ' || *after_alias == '\t') && ti > 0 && (type_str[ti-1] == ' ' || type_str[ti-1] == '\t')) {
+                                after_alias++;
+                                continue;
+                            }
+                            type_str[ti++] = (*after_alias == '\t') ? ' ' : *after_alias;
+                            after_alias++;
                         }
                         type_str[ti] = '\0';
 

@@ -1,0 +1,11 @@
+// 跨模塊 alias 測試 - 底層模塊定義 alias
+export alias MySize = Dict[string,int]
+export alias MyColor = Dict[string,float]
+
+export func makeSize(int w, int h): MySize {
+    return {w: w, h: h}
+}
+
+export func makeColor(float r, float g, float b): MyColor {
+    return {r: r, g: g, b: b}
+}

@@ -249,7 +249,7 @@ void add_alias_with_params(Parser* p, const char* name, TypeInfo* type, int tp_c
         p->alias_type_param_counts = realloc(p->alias_type_param_counts, sizeof(int) * p->alias_capacity);
     }
     p->alias_names[p->alias_count] = strdup(name);
-    p->alias_types[p->alias_count] = type;
+    p->alias_types[p->alias_count] = type ? type_copy(type) : NULL;
     if (tp_count > 0 && tp_names) {
         p->alias_type_params[p->alias_count] = (char**)malloc(sizeof(char*) * tp_count);
         for (int i = 0; i < tp_count; i++) {

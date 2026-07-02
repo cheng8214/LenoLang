@@ -537,7 +537,7 @@ Ast* parse_alias_stmt(Parser* p) {
     ast->u.alias.type_param_count = type_param_count;
     
     // 注册到解析器别名表，使后续类型解析可识别
-    add_alias_with_params(p, name, type_copy(type), type_param_count, type_params);
+    add_alias_with_params(p, name, type, type_param_count, type_params);
     
     return ast;
 }

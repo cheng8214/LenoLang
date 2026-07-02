@@ -439,9 +439,22 @@
                 break;
             }
 
-            // 没有找到 struct、clib 或 face
+            // 尝试查找 alias 定义
+            ModuleAliasSymbol* alias_sym = module_symbol_table_find_alias(module_info->sym_table, symbol_name);
+            if (alias_sym) {
+                // 将 alias 注册为类型符号，让后续类型解析能识别
+                // 注：import 时已将模块的 export alias 注册到解析器别名表，
+                // 这里只需注册到语义作用域即可
+                Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
+                if (sym && alias_sym->type_info) {
+                    sym->type = type_copy(alias_sym->type_info);
+                }
+                break;
+            }
+
+            // 没有找到 struct、clib、face 或 alias
             char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct、clib 或 face 类型 '%s'", module_name, symbol_name);
+            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct、clib、face 或 alias 类型 '%s'", module_name, symbol_name);
             error_add(ERR_SEMANTIC, ast->line, msg);
             break;
         }

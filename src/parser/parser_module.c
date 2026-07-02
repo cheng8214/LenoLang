@@ -171,15 +171,22 @@ Ast* parse_import_stmt(Parser* p) {
                                 s++;
                                 while (*s && (*s == ' ' || *s == '\t')) s++;
                                 
-                                // 收集完整类型字符串（支持 Array[int] 等）
+                                // 收集完整类型字符串（支持 Array[int]、Dict[string, int] 等）
                                 char type_str[256] = {0};
                                 int ti = 0;
                                 while (*s && ti < 255 && *s != '\n' && *s != '\r' &&
                                        *s != ';' && *s != '{' && *s != '/') {
                                     if (!(*s == '_' || isalnum((unsigned char)*s) ||
                                           *s == '[' || *s == ']' || *s == ',' ||
-                                          *s == ':' || *s == '(' || *s == ')')) break;
-                                    type_str[ti++] = *s++;
+                                          *s == ':' || *s == '(' || *s == ')' ||
+                                          *s == ' ' || *s == '\t')) break;
+                                    // 跳过连续空格，压缩为单个空格
+                                    if ((*s == ' ' || *s == '\t') && ti > 0 && (type_str[ti-1] == ' ' || type_str[ti-1] == '\t')) {
+                                        s++;
+                                        continue;
+                                    }
+                                    type_str[ti++] = (*s == '\t') ? ' ' : *s;
+                                    s++;
                                 }
                                 type_str[ti] = '\0';
                                 

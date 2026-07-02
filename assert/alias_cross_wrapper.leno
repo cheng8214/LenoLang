@@ -1,0 +1,17 @@
+// 跨模塊 alias 測試 - 包裝模塊通過 use 導入 alias
+import "alias_cross_types.leno" as t
+
+// 測試 use 導入 alias
+use t.MySize
+use t.MyColor
+
+// 使用 use 導入的 alias 類型
+export func createSize(int w, int h): MySize {
+    var s = t.makeSize(w, h)
+    return s
+}
+
+export func createColor(float r, float g, float b): MyColor {
+    var c = t.makeColor(r, g, b)
+    return c
+}
