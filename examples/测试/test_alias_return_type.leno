@@ -1,0 +1,20 @@
+// test_alias_return_type.leno - 测试 alias 跨模块返回类型是否保留泛型信息
+// 编译时检查：如果返回类型被推断为 any，赋值给 float 会编译报错
+import "alias_renderer.leno" as r
+
+main() {
+    // 测试: struct 方法返回 alias 类型（SizeF = Dict[string, float]）
+    var renderer = r.createRenderer()
+    var ts = renderer.getSize()
+
+    // 如果 ts 被推断为 any（而非 Dict[string,float]），
+    // ts.w 就是 any，赋值给 float 会编译报错
+    float w = ts.w
+    float h = ts.h
+    print("w=" + w + " h=" + h)
+
+    // 同理：int 类型的 alias
+    var renderer2 = r.createRenderer()
+    // 如果返回类型丢失，这里也无法编译
+    print("id=" + renderer2.id)
+}

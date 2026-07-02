@@ -1,0 +1,14 @@
+// alias_renderer2.leno - 第二层中间层，只 import renderer，use 传导 alias
+import "alias_renderer.leno" as r
+use r.SizeF
+
+export struct App {
+    func getAppSize(): SizeF {
+        var renderer = r.createRenderer()
+        return renderer.getSize()
+    }
+}
+
+export func createApp(): App {
+    return new App()
+}

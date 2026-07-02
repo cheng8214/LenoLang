@@ -1221,6 +1221,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     if (a_sym && !module_symbol_table_find_alias(table, type_name)) {
                                         module_symbol_table_add_alias(table, type_name,
                                             a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
+                                        // 同时添加到本地别名表，使后续方法返回类型解析能找到
+                                        if (local_alias_count < 32) {
+                                            local_alias_names[local_alias_count] = strdup(type_name);
+                                            local_alias_types[local_alias_count] = a_sym->type_info ? type_copy(a_sym->type_info) : NULL;
+                                            local_alias_count++;
+                                        }
                                     }
                                 }
                             }
