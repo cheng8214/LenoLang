@@ -6,6 +6,8 @@ import "sdl_core.leno" as core
 use core.sdl3
 use core.SDL_Point
 use core.SDL_GlyphMetrics
+use core.StringSize
+use core.GlyphInfo
 
 sdl3 _lib = core.lib()
 
@@ -124,7 +126,7 @@ export struct Font {
         return ttfLib().TTF_RenderText_Blended_Wrapped(handle, text, 0, color, wrapWidth)
     }
 
-    func measureString(string text): Dict[string,int] {
+    func measureString(string text): StringSize {
         if not ok { return {w: 0, h: 0} }
         var pt = SDL_Point.malloc()
         ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
@@ -178,7 +180,7 @@ export struct Font {
         return ttfLib().TTF_GetFontKerning(handle)
     }
 
-    func measureStringWrapped(string text, int wrapWidth): Dict[string,int] {
+    func measureStringWrapped(string text, int wrapWidth): StringSize {
         if not ok { return {w: 0, h: 0} }
         var pt = SDL_Point.malloc()
         ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, &pt.x, &pt.y)
@@ -205,7 +207,7 @@ export struct Font {
         if ok { ttfLib().TTF_SetFontWrapAlignment(handle, align) }
     }
 
-    func getGlyphMetrics(int glyph): Dict[string,int] {
+    func getGlyphMetrics(int glyph): GlyphInfo {
         if not ok { return {} }
         var m = SDL_GlyphMetrics.malloc()
         ttfLib().TTF_GetGlyphMetrics(handle, glyph, &m.minX, &m.maxX, &m.minY, &m.maxY, &m.advance)

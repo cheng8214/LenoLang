@@ -41,6 +41,15 @@ export cstruct SDL_GlyphMetrics {
     i32 minX; i32 maxX; i32 minY; i32 maxY; i32 advance
 }
 
+// ==================== 返回类型别名 ====================
+
+export alias Color      = Dict[string, int]
+export alias FColor     = Dict[string, float]
+export alias Size       = Dict[string, int]
+export alias FSize      = Dict[string, float]
+export alias StringSize = Dict[string, int]
+export alias GlyphInfo  = Dict[string, int]
+
 // ==================== clib sdl3 ====================
 
 clib sdl3 {

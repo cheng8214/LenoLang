@@ -35,21 +35,21 @@ export struct Renderer {
         return _lib.SDL_SetRenderDrawColorFloat(handle, r, g, b, a)
     }
 
-    func getColor(): Dict[string,int] {
+    func getColor(): Color {
         var c = core.SDL_Color.malloc()
         _lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
         var d = {r: c.r as int, g: c.g as int, b: c.b as int, a: c.a as int}
         c.free(); return d
     }
 
-    func getColorFloat(): Dict[string,float] {
+    func getColorFloat(): FColor {
         var c = core.SDL_FColor.malloc()
         _lib.SDL_GetRenderDrawColorFloat(handle, &c.r, &c.g, &c.b, &c.a)
         var d = {r: c.r as float, g: c.g as float, b: c.b as float, a: c.a as float}
         c.free(); return d
     }
 
-    func getOutputSize(): Dict[string,int] {
+    func getOutputSize(): Size {
         var pt = SDL_Point.malloc()
         _lib.SDL_GetRenderOutputSize(handle, &pt.x, &pt.y)
         var d = {w: pt.x as int, h: pt.y as int}
@@ -138,7 +138,7 @@ export struct Renderer {
         return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
     }
 
-    func getTextureSize(Ptr texture): Dict[string,float] {
+    func getTextureSize(Ptr texture): FSize {
         var pt = SDL_FPoint.malloc()
         _lib.SDL_GetTextureSize(texture, &pt.x, &pt.y)
         var d = {w: pt.x as float, h: pt.y as float}

@@ -24,6 +24,14 @@ use wnd.Window
 use fnt.Font
 use fnt.TextTexture
 
+// ==================== 重新导出类型别名 ====================
+
+use core.Color
+use core.FColor
+use core.Size
+use core.FSize
+use core.StringSize
+use core.GlyphInfo
 
 // ==================== 重新导出常量 ====================
 // INIT 标志
