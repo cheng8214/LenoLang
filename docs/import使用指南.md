@@ -215,6 +215,51 @@ main() {
 
 支持的复杂类型：`Array[T]`、`Dict[K,V]`、自定义 struct 名等。
 
+**use 导入 alias**：`use` 也支持导入其他模块的 `export alias`：
+
+```leno
+// types.leno
+export alias MySize = Dict[string,int]
+export alias MyColor = Dict[string,float]
+
+export func makeSize(int w, int h): MySize {
+    return {w: w, h: h}
+}
+```
+
+```leno
+// main.leno
+import "types.leno" as t
+use t.MySize       // 将 MySize 别名导入当前作用域
+
+main() {
+    MySize s = {w: 100, h: 200}   // ✅ 直接使用 MySize 类型名
+    var sz = t.makeSize(50, 75)   // 也可以通过模块调用
+}
+```
+
+**alias 作为跨模块函数返回类型**：`use` 导入的 alias 可以作为 `export func` 的返回类型：
+
+```leno
+// wrapper.leno - 中间层 use alias 并作为返回类型
+import "types.leno" as t
+use t.MySize
+
+export func createSize(int w, int h): MySize {   // ✅ MySize 作为返回类型
+    return t.makeSize(w, h)
+}
+```
+
+```leno
+// main.leno - 调用方正确推断返回类型
+import "wrapper.leno" as w
+
+main() {
+    var s = w.createSize(100, 200)   // s 被推断为 MySize (即 Dict[string,int])
+    print(s.w)                       // ✅ 可直接访问字段
+}
+```
+
 **别名链**——`export alias` 可以引用同模块内的其他别名：
 
 ```leno
@@ -565,16 +610,18 @@ main() {
 | `use module.CStruct` | ✅ | 导入 cstruct 类型，可用 `CStruct.malloc()` |
 | `use module.Clib` | ✅ | 导入 clib 类型到当前作用域（需模块有函数返回该 clib 类型） |
 | `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
+| `use module.Alias` | ✅ | 导入类型别名到当前作用域，可直接作为类型名使用 |
 | `use module.Enum` | ✅ | 导入 enum 类型，可用 `EnumName.Member` |
 | `use module.func` | ❌ | 函数必须通过模块名访问 |
 | `use module.var` | ❌ | 变量必须通过模块名访问 |
 
-**为什么 use 只支持 struct/cstruct/clib/face/enum？**
+**为什么 use 只支持 struct/cstruct/clib/face/alias/enum？**
 
 - **struct**：编译时类型，需要用于变量声明（如 `Point p`）
 - **cstruct**：FFI C 结构体类型，需要用 `Type.malloc()` 分配内存
 - **clib**：FFI 库类型，需要用于变量声明（如 `core_lib c = module.loadCore()`）
 - **face**：编译时类型，需要用于函数参数（如 `func printArea(Shape s)`）
+- **alias**：类型别名，编译期展开为实际类型，需要用于变量声明或返回类型
 - **enum**：编译时常量类型，导入后可用 `EnumName.Member` 访问值
 - **func/var**：运行时实体，必须通过模块名访问（如 `module.func()`）
 

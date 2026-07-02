@@ -5566,6 +5566,50 @@ main() {
 }
 ```
 
+**use 导入 alias**：也可以通过 `use` 将 alias 导入当前作用域：
+
+```leno
+// types.leno
+export alias MySize = Dict[string,int]
+
+export func makeSize(int w, int h): MySize {
+    return {w: w, h: h}
+}
+```
+
+```leno
+// main.leno
+import "types.leno" as t
+use t.MySize       // use 导入别名
+
+main() {
+    MySize s = {w: 100, h: 200}   // ✅ 直接使用 MySize 类型名
+    var sz = t.makeSize(50, 75)   // 也可以通过模块调用
+}
+```
+
+**alias 作为跨模块函数返回类型**：
+
+```leno
+// wrapper.leno
+import "types.leno" as t
+use t.MySize
+
+export func createSize(int w, int h): MySize {   // ✅ MySize 作为返回类型
+    return t.makeSize(w, h)
+}
+```
+
+```leno
+// main.leno
+import "wrapper.leno" as w
+
+main() {
+    var s = w.createSize(100, 200)   // s 推断为 MySize (即 Dict[string,int])
+    print(s.w)                       // ✅ 可直接访问字段
+}
+```
+
 ### 使用 use 导入类型
 
 `use` 可以将模块中的 struct/clib/face 类型导入当前作用域，之后直接用类型名声明变量：
@@ -5609,13 +5653,14 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 
 | 特性 | `import` | `use` |
 |------|----------|-------|
-| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/cstruct/clib/face/enum 导入当前作用域 |
+| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/cstruct/clib/face/alias/enum 导入当前作用域 |
 | 语法 | `import "路径" as 别名` | `use 别名.名称` |
-| 适用范围 | 模块中的所有导出内容 | struct、cstruct、clib、face、enum 类型 |
+| 适用范围 | 模块中的所有导出内容 | struct、cstruct、clib、face、alias、enum 类型 |
 | 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` |
 
 > **重要说明：**
-> - `use` 只能导入 **struct**、**cstruct**、**clib**、**face** 和 **enum** 类型
+> - `use` 只能导入 **struct**、**cstruct**、**clib**、**face**、**alias** 和 **enum** 类型
+> - **alias** 是类型别名，`use` 导入后可直接作为类型名使用（如 `MySize s = ...`）
 > - clib 类型需要模块中存在**返回该 clib 类型的导出函数**
 > - enum 导入后可直接用 `EnumName.Member` 访问成员值
 > - **func**、**var** 必须通过模块名访问（如 `module.func()`）
