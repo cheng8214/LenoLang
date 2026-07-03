@@ -1,0 +1,43 @@
+// 复现：跨模块导入 cstruct，在 export struct 方法内做数组索引赋值
+import ffi
+import "test_vertex_mod.leno" as vmod
+use vmod.TestVertex
+
+struct NormalStruct {
+    func run() {
+        print("NormalStruct: start")
+        var v = TestVertex.malloc_array(3)
+        v[0].x = 1.0
+        v.free()
+        print("NormalStruct: OK")
+    }
+}
+
+export struct ExportStruct {
+    func run() {
+        print("ExportStruct: start")
+        var v = TestVertex.malloc_array(3)
+        v[0].x = 1.0    // ← 跨模块 cstruct 在 export struct 内可能崩
+        v.free()
+        print("ExportStruct: OK")
+    }
+}
+
+main() {
+    // ✅ 顶层 — 正常
+    print("=== 顶层 ===")
+    var v1 = TestVertex.malloc_array(3)
+    v1[0].x = 1.0; v1.free()
+    print("顶层: OK")
+
+    // ✅ 普通 struct — 正常
+    print("=== struct ===")
+    NormalStruct ns = new NormalStruct()
+    ns.run()
+
+    // ❓ export struct + 跨模块 cstruct
+    print("=== export struct ===")
+    ExportStruct es = new ExportStruct()
+    es.run()
+    print("=== 完成 ===")
+}

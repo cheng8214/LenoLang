@@ -1,0 +1,2 @@
+// 模拟 sdl_core.leno：导出 cstruct
+export cstruct TestVertex { f32 x; f32 y; f32 r; f32 g; f32 b; f32 a }
