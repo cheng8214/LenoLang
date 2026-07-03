@@ -1,0 +1,4 @@
+// 模拟 sdl_font.leno 的场景：工具函数定义在一个模块
+export func packColor(int r, int g, int b): int {
+    return r | (g << 8) | (b << 16) | (255 << 24)
+}

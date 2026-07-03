@@ -647,13 +647,8 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
                 // 首先检查变量符号的类型（可能是函数类型）
                 Symbol* sym = scope_resolve(s->current, func_name);
-                if (sym && sym->type && sym->type->kind == TYPE_FUNCTION) {
-                    TypeInfo* ret = NULL;
-                    if (sym->type->return_type) {
-                        ret = type_copy(sym->type->return_type);
-                    } else {
-                        ret = type_new(TYPE_ANY);
-                    }
+                if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
+                    TypeInfo* ret = type_copy(sym->type->return_type);
                     
                     // 泛型函数调用：用推断的类型参数替换泛型参数
                     if (ast->u.call.generic_type_count > 0 && ast->u.call.generic_type_names && ast->u.call.generic_type_args) {

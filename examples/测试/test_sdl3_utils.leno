@@ -1,0 +1,40 @@
+// 测试 sdl_font 新增的便捷函数：packColor / createFontAuto
+import "../../leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+
+main() {
+    // ---- packColor 测试 ----
+    print("=== packColor ===")
+    var c1 = SDL3.packColor(255, 128, 0)
+    print("packColor(255, 128, 0)  = " + c1 + "  (应为 0xFFFF8000 = " + (255 | (128 << 8) | (0 << 16) | (255 << 24)) + ")")
+
+    var c2 = SDL3.packColor(0, 255, 0)
+    print("packColor(0, 255, 0)    = " + c2 + "  (应为 0xFF00FF00 = " + (0 | (255 << 8) | (0 << 16) | (255 << 24)) + ")")
+
+    var c3 = SDL3.packColor(100, 200, 50)
+    print("packColor(100, 200, 50) = " + c3 + "  (应为 " + (100 | (200 << 8) | (50 << 16) | (255 << 24)) + ")")
+
+    // 对比直接计算
+    var direct = 100 | (200 << 8) | (50 << 16) | (255 << 24)
+    print("packColor == 直接计算? " + (c3 == direct))
+
+    // ---- createFontAuto 测试 ----
+    print("")
+    print("=== createFontAuto ===")
+    SDL3.ttfInit()
+    var font16 = SDL3.createFontAuto(16.0)
+    print("createFontAuto(16.0): ok=" + font16.ok + "  height=" + font16.height)
+
+    var font32 = SDL3.createFontAuto(32.0)
+    print("createFontAuto(32.0): ok=" + font32.ok + "  height=" + font32.height)
+
+    var font48 = SDL3.createFontAuto(48.0)
+    print("createFontAuto(48.0): ok=" + font48.ok + "  height=" + font48.height)
+
+    if font16.ok { font16.close() }
+    if font32.ok { font32.close() }
+    if font48.ok { font48.close() }
+    SDL3.ttfQuit()
+
+    print("")
+    print("全部测试完成")
+}

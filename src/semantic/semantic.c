@@ -533,6 +533,8 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                         decl->u.func.ref.name = strdup(sym->name);
                         sym->type = type_function(NULL, NULL, 0);
                     }
+                    // 将函数添加到函数表（支持前向引用类型推断）
+                    func_table_add(&s->func_table, decl->u.func.name, decl);
                 }
             } else if (stmt->kind == AST_FUNC_DEF) {
                 if (stmt->u.func.name) {
@@ -543,6 +545,8 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                         stmt->u.func.ref.name = strdup(sym->name);
                         sym->type = type_function(NULL, NULL, 0);
                     }
+                    // 将函数添加到函数表（支持前向引用类型推断）
+                    func_table_add(&s->func_table, stmt->u.func.name, stmt);
                 }
             }
         }

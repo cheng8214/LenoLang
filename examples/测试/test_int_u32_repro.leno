@@ -1,0 +1,32 @@
+// 复刻：int 返回值 → clib u32 参数的类型关系
+import ffi
+
+clib sdl3_ttf {
+    void TTF_RenderText_Blended(Ptr font, str8 text, u64 length, u32 color)
+}
+
+func packColor(int r, int g, int b): int {
+    return r | (g << 8) | (b << 16) | (255 << 24)
+}
+
+sdl3_ttf lib = null
+
+main() {
+    lib = ffi.load("SDL3_ttf.dll")
+    if lib == null { print("DLL 未找到"); return }
+
+    // ✅ A: 直接表达式 → OK
+    lib.TTF_RenderText_Blended(null, "test", 0, 255 | (0 << 8) | (0 << 16) | (255 << 24))
+    print("A: 直接表达式 → OK")
+
+    // ✅ B: 同文件函数返回值 → OK（编译器能推断 int）
+    lib.TTF_RenderText_Blended(null, "test", 0, packColor(255, 0, 0))
+    print("B: 同文件函数返回值 → OK")
+
+    // ✅ C: var 存函数返回值再传 → OK
+    var c = packColor(0, 255, 0)
+    lib.TTF_RenderText_Blended(null, "test", 0, c)
+    print("C: var 存函数返回值 → OK")
+
+    print("结论：int 返回值可以传给 clib u32 参数！之前报错可能是其他原因")
+}
