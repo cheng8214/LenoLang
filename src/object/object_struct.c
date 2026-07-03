@@ -149,6 +149,14 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
             } else {
                 obj->field_values[i] = val_null();
             }
+        } else if (def->fields[i].type == TYPE_ARRAY) {
+            // Array 字段：自动初始化为空数组
+            ObjArray* arr = arr_new(0);
+            obj->field_values[i] = arr ? val_obj((Object*)arr) : val_null();
+        } else if (def->fields[i].type == TYPE_DICT) {
+            // Dict 字段：自动初始化为空字典
+            ObjDict* dict = dict_new(0);
+            obj->field_values[i] = dict ? val_obj((Object*)dict) : val_null();
         } else {
             obj->field_values[i] = val_null();
         }
