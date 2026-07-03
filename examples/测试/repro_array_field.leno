@@ -1,0 +1,18 @@
+struct S {
+    Array a
+    Dict d
+    func test() {
+        a.add(42)
+        d["k"] = 99
+        print(a.len())
+        print(d.len())
+        print(a[0])
+        print(d["k"])
+    }
+}
+main() {
+    S s = new S()
+    print(s.a.len())
+    print(s.d.len())
+    s.test()
+}

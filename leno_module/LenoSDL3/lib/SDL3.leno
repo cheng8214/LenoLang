@@ -4,6 +4,7 @@ import "sdl_window.leno" as wnd
 import "sdl_renderer.leno" as r
 import "sdl_font.leno" as fnt
 import "sdl_event.leno" as evt
+import "sdl_timer.leno" as tm
 import "sdl_image.leno" as img
 
 // ==================== 重新导出类型 ====================
@@ -32,6 +33,7 @@ use r.Renderer
 use wnd.Window
 use fnt.Font
 use fnt.TextTexture
+use tm.Timer
 
 // ==================== 重新导出类型别名 ====================
 

@@ -20,6 +20,8 @@ import "sdl_renderer.leno" as renderer
 use renderer.Renderer
 import "sdl_event.leno" as event
 use event.Event
+import "sdl_timer.leno" as timer
+use timer.Timer
 
 export struct Window {
     Ptr handle    // SDL_Window 指针
@@ -109,6 +111,16 @@ export struct Window {
     // 销毁窗口
     func destroy() {
         if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false }
+    }
+
+    // 创建并启动定时器（毫秒），用法: Timer t = win.setTimer(200, func() { ... })
+    func setTimer(int ms, var cb): Timer {
+        Timer t = new Timer(); t.set(ms, cb); return t
+    }
+
+    // 创建一次性定时器
+    func setTimerOnce(int ms, var cb): Timer {
+        Timer t = new Timer(); t.setOnce(ms, cb); return t
     }
 
     // 运行主循环（回调模式）

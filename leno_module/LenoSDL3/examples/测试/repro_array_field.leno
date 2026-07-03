@@ -1,0 +1,28 @@
+// repro_array_field.leno — 复现：struct 中 Array 字段未自动初始化为空数组
+// 预期: new S() 后 a.len() == 0，可正常 add
+// 实际: 字段 a 不是有效数组，需要 a = [] 才能 add
+
+struct S {
+    Array  a
+    int    x
+
+    func test() {
+        // 直接 add → 报 "append 操作需要数组"
+        a.add(42)
+    }
+
+    func testFix() {
+        a = []         // 手动初始化为空数组
+        a.add(42)      // OK
+    }
+}
+
+main() {
+    S s = new S()
+
+    // 期待能直接访问 a
+    print("a.len = " + s.a.len())
+
+    // 不加 a=[] 直接 add → 必崩
+    s.test()
+}

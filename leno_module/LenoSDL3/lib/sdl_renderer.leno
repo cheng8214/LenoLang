@@ -26,7 +26,8 @@ export struct Renderer {
 
     // 创建默认渲染器（关联到窗口）
     func initDefault(Ptr window): bool {
-        // 开启抗锯齿线条
+        // 抗锯齿：强制硬件渲染器 + AA 线条
+        _lib.SDL_SetHint("SDL_HINT_RENDER_DRIVER", "direct3d")
         _lib.SDL_SetHint("SDL_HINT_RENDER_LINE_METHOD", "2")
         handle = _lib.SDL_CreateRenderer(window, null as string)
         ok = handle != null
@@ -348,31 +349,44 @@ export struct Renderer {
         verts.free(); return ok
     }
 
-    // 填充圆角矩形（使用当前绘制颜色）
+    // 填充圆角矩形（使用当前绘制颜色）→ 单次 alloc + 单次 Geometry 提交
     func fillRoundedRect(float x, float y, float w, float h, float r): bool {
         if r <= 0.0 { return fillRect(x, y, w, h) }
         if r > w * 0.5 { r = w * 0.5 }
         if r > h * 0.5 { r = h * 0.5 }
 
-        // 直边区域（fillRect 用当前绘制颜色）
+        // 直边区域（3 个矩形批量填充）
         fillRect(x + r, y, w - 2.0 * r, h)
         fillRect(x, y + r, r, h - 2.0 * r)
         fillRect(x + w - r, y + r, r, h - 2.0 * r)
 
-        // 获取当前颜色供顶点使用
+        // 动态分段：小半径减段数
+        var segs = 16
+        if r > 32.0 { segs = 32 }
+        if r > 64.0 { segs = 48 }
+
+        // 获取当前颜色
         var col = getColorFloat()
         float cr = col.r; float cg = col.g; float cb = col.b; float ca = col.a
 
-        var segs = 32; var vcnt = 3 * segs; var half_pi = 1.57079633
+        var half_pi = 1.57079633
+        var v_per_corner = 3 * segs  // 每个角需要的顶点数（segs 个三角形 × 3 顶点）
+        var vcnt = 4 * v_per_corner // 四个角总顶点数
         var verts = SDL_Vertex.malloc_array(vcnt)
 
-        // 辅助：填充一个角的三角扇顶点
-        func fillCorner(float cx, float cy, float start_a) {
+        // 一次性生成四个角的三角扇顶点
+        for 0 : 3 to ci {
+            float cx, cy, sa
+            if ci == 0 { cx = x + r; cy = y + r; sa = half_pi * 2.0 }                        // 左上 π→3π/2
+            else if ci == 1 { cx = x + w - r; cy = y + r; sa = half_pi * 3.0 }               // 右上 3π/2→2π
+            else if ci == 2 { cx = x + w - r; cy = y + h - r; sa = 0.0 }                     // 右下 0→π/2
+            else { cx = x + r; cy = y + h - r; sa = half_pi }                                 // 左下 π/2→π
+
             var step = half_pi / _float(segs)
             for 0 : segs - 1 to i {
-                var a1 = start_a + step * _float(i)
-                var a2 = start_a + step * _float(i + 1)
-                var vi = i * 3
+                var a1 = sa + step * _float(i)
+                var a2 = sa + step * _float(i + 1)
+                var vi = ci * v_per_corner + i * 3
                 verts[vi].x = cx; verts[vi].y = cy
                 verts[vi].r = cr; verts[vi].g = cg; verts[vi].b = cb; verts[vi].a = ca
                 verts[vi+1].x = cx + r * maths.cos(a1); verts[vi+1].y = cy + r * maths.sin(a1)
@@ -380,14 +394,10 @@ export struct Renderer {
                 verts[vi+2].x = cx + r * maths.cos(a2); verts[vi+2].y = cy + r * maths.sin(a2)
                 verts[vi+2].r = cr; verts[vi+2].g = cg; verts[vi+2].b = cb; verts[vi+2].a = ca
             }
-            _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), vcnt, null, 0)
         }
-
-        fillCorner(x + r,     y + r,     half_pi * 2.0)  // 左上 π→3π/2
-        fillCorner(x + w - r, y + r,     half_pi * 3.0)  // 右上 3π/2→2π
-        fillCorner(x + w - r, y + h - r, 0.0)             // 右下 0→π/2
-        fillCorner(x + r,     y + h - r, half_pi)         // 左下 π/2→π
-        verts.free(); return true
+        // 单次几何提交：四个角所有三角形
+        var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), vcnt, null, 0)
+        verts.free(); return ok
     }
 
     // 绘制圆角矩形边框（使用当前绘制颜色）
@@ -396,33 +406,37 @@ export struct Renderer {
         if r > w * 0.5 { r = w * 0.5 }
         if r > h * 0.5 { r = h * 0.5 }
 
-        // 4 条直边
-        drawLine(x + r, y, x + w - r, y)
-        drawLine(x + w, y + r, x + w, y + h - r)
-        drawLine(x + w - r, y + h, x + r, y + h)
-        drawLine(x, y + h - r, x, y + r)
+        // 动态分段
+        var segs = 16
+        if r > 32.0 { segs = 32 }
 
-        // 4 个圆角弧（用 drawLines）
-        var segs = 32; var pts = segs + 1; var half_pi = 1.57079633
-        Ptr buf = ffi.malloc(pts * 8)  // x,y 对
+        var pts = segs + 1; var half_pi = 1.57079633
+        var total = 4 * pts + 1  // 4 圆弧 + 闭合左直边
+        Ptr buf = ffi.malloc(total * 8)
         if buf == null { return false }
 
-        // 辅助：画一个圆角弧
-        func drawArc(float cx, float cy, float start_a) {
+        // 一次性写入 4 个圆角弧的连续顶点
+        for 0 : 3 to ci {
+            float cx, cy, sa
+            if ci == 0 { cx = x + r; cy = y + r; sa = half_pi * 2.0 }               // 左上
+            else if ci == 1 { cx = x + w - r; cy = y + r; sa = half_pi * 3.0 }       // 右上
+            else if ci == 2 { cx = x + w - r; cy = y + h - r; sa = 0.0 }             // 右下
+            else { cx = x + r; cy = y + h - r; sa = half_pi }                         // 左下
+
             var step = half_pi / _float(segs)
             for 0 : segs to i {
-                var a = start_a + step * _float(i)
-                ffi.write_float(buf, i * 8,     cx + r * maths.cos(a))
-                ffi.write_float(buf, i * 8 + 4, cy + r * maths.sin(a))
+                var a = sa + step * _float(i)
+                var off = (ci * pts + i) * 8
+                ffi.write_float(buf, off,     cx + r * maths.cos(a))
+                ffi.write_float(buf, off + 4, cy + r * maths.sin(a))
             }
-            _lib.SDL_RenderLines(handle, buf, pts)
         }
+        // 闭合左直边：左下弧终点 (x, y+h-r) → 左上弧起点 (x, y+r)
+        ffi.write_float(buf, (4 * pts) * 8,     x)
+        ffi.write_float(buf, (4 * pts) * 8 + 4, y + r)
 
-        drawArc(x + r,     y + r,     half_pi * 2.0)  // 左上 π→3π/2
-        drawArc(x + w - r, y + r,     half_pi * 3.0)  // 右上 3π/2→2π
-        drawArc(x + w - r, y + h - r, 0.0)             // 右下 0→π/2
-        drawArc(x + r,     y + h - r, half_pi)         // 左下 π/2→π
-        ffi.free(buf); return true
+        var ok = _lib.SDL_RenderLines(handle, buf, total)
+        ffi.free(buf); return ok
     }
 }
 

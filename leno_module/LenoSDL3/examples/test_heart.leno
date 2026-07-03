@@ -1,0 +1,131 @@
+// test_heart.leno — 心形跳动动画
+import "../lib/SDL3.leno" as SDL3
+import maths
+import ffi
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.SDL_Vertex
+
+// 心跳参数：180 BPM，cos 波 scale 0.85~1.15
+var beat = 0.0
+
+// 心形参数方程采样（64 段）
+func heartX(float t): float {
+    return 16.0 * maths.sin(t) * maths.sin(t) * maths.sin(t)
+}
+
+func heartY(float t): float {
+    return -(13.0 * maths.cos(t) - 5.0 * maths.cos(2.0 * t) - 2.0 * maths.cos(3.0 * t) - maths.cos(4.0 * t))
+}
+
+main() {
+    var win = SDL3.createWindow({title: "心跳动画 ❤", w: 500, h: 500})
+    if not win.ok { return }
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(10, 10, 20, 255)
+
+            // ==================== 跳动心率 ====================
+            beat = beat + 0.016 * 1.2 * 6.283185  // 72 BPM 左右
+
+            // 跳动幅度：0.85 ~ 1.15
+            var s = maths.cos(beat) * 0.15  // -0.15 ~ 0.15
+            // 仅膨胀，不收缩
+            if s < 0.0 { s = -s * 0.5 }  // 收缩幅度减半
+            var scale = 1.0 + s
+
+            // ==================== 阴影 ====================
+            // 绘制心形阴影（偏移 + 半透明）
+            var segs = 60
+            var vcnt = 3 * segs   // segs 个三角形
+            var verts = SDL_Vertex.malloc_array(vcnt)
+            float cx = 250; float cy = 245
+            float sr = 7.0 * scale  // 缩放因子
+
+            // 阴影：深色偏移
+            _writeHeart(verts, segs, cx + 4.0, cy + 6.0, sr, 0.0, 0.0, 0.0, 0.25)
+            r.drawGeometry(verts.to_ptr(), vcnt, null, 0)
+
+            // ==================== 主体 ====================
+            // 红色渐变心形（顶点颜色从深红渐变到亮红）
+            _writeHeartGradient(verts, segs, cx, cy, sr)
+            r.drawGeometry(verts.to_ptr(), vcnt, null, 0)
+
+            // 高光（小一号白色半透明覆盖）
+            var sh = sr * 0.6
+            _writeHeart(verts, segs, cx + sh * 0.1, cy - sh * 0.15, sh, 1.0, 0.75, 0.75, 0.12)
+            r.drawGeometry(verts.to_ptr(), vcnt, null, 0)
+
+            verts.free()
+
+            // ==================== 边框线 ====================
+            var pts = segs + 1
+            Ptr lineBuf = ffi.malloc(pts * 8)
+            var two_pi = 6.28318531
+            var step = two_pi / _float(segs)
+            for 0 : segs to i {
+                var a = step * _float(i)
+                ffi.write_float(lineBuf, i * 8,     cx + sr * heartX(a))
+                ffi.write_float(lineBuf, i * 8 + 4, cy + sr * heartY(a))
+            }
+            // 闭合
+            ffi.write_float(lineBuf, segs * 8,     cx + sr * heartX(0.0))
+            ffi.write_float(lineBuf, segs * 8 + 4, cy + sr * heartY(0.0))
+
+            r.setColor(255, 100, 100, 80)
+            r.drawLines(lineBuf, pts)
+            ffi.free(lineBuf)
+        }
+    )
+}
+
+// 工具：生成心形三角扇顶点（单色）
+func _writeHeart(var verts, int segs, float cx, float cy, float sr, float r, float g, float b, float a) {
+    float two_pi = 6.28318531
+    float step = two_pi / _float(segs)
+    for 0 : segs - 1 to i {
+        float t1 = step * _float(i)
+        float t2 = step * _float(i + 1)
+        var vi = i * 3
+
+        verts[vi].x = cx; verts[vi].y = cy
+        verts[vi].r = r; verts[vi].g = g; verts[vi].b = b; verts[vi].a = a
+
+        verts[vi+1].x = cx + sr * heartX(t1); verts[vi+1].y = cy + sr * heartY(t1)
+        verts[vi+1].r = r; verts[vi+1].g = g; verts[vi+1].b = b; verts[vi+1].a = a
+
+        verts[vi+2].x = cx + sr * heartX(t2); verts[vi+2].y = cy + sr * heartY(t2)
+        verts[vi+2].r = r; verts[vi+2].g = g; verts[vi+2].b = b; verts[vi+2].a = a
+    }
+}
+
+// 工具：生成心形三角扇顶点（渐变色：深红→亮红）
+func _writeHeartGradient(var verts, int segs, float cx, float cy, float sr) {
+    float two_pi = 6.28318531
+    float step = two_pi / _float(segs)
+    for 0 : segs - 1 to i {
+        float t1 = step * _float(i)
+        float t2 = step * _float(i + 1)
+        var vi = i * 3
+
+        // 中心点：深红色
+        verts[vi].x = cx; verts[vi].y = cy
+        verts[vi].r = 0.8; verts[vi].g = 0.1; verts[vi].b = 0.1; verts[vi].a = 1.0
+
+        // 边缘点：根据角度渐变
+        var norm = (maths.sin(t1) + 1.0) * 0.5  // 0~1 渐变
+        float er = 1.0; float eg = 0.1 + norm * 0.3; float eb = 0.2 + norm * 0.3
+
+        verts[vi+1].x = cx + sr * heartX(t1); verts[vi+1].y = cy + sr * heartY(t1)
+        verts[vi+1].r = er; verts[vi+1].g = eg; verts[vi+1].b = eb; verts[vi+1].a = 1.0
+
+        verts[vi+2].x = cx + sr * heartX(t2); verts[vi+2].y = cy + sr * heartY(t2)
+        verts[vi+2].r = er; verts[vi+2].g = eg; verts[vi+2].b = eb; verts[vi+2].a = 1.0
+    }
+}
