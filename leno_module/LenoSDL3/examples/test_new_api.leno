@@ -1,0 +1,100 @@
+// test_new_api.leno — 测试新增 API：窗口控制/纹理调色/离屏渲染/剪贴板
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "New API Test", w: 700, h: 500, flags: SDL3.WINDOW_RESIZABLE})
+    if not win.ok { return }
+
+    // ---- 剪贴板测试 ----
+    SDL3.setClipboardText("Hello from LenoSDL3!")
+    print("剪贴板写入: Hello from LenoSDL3!")
+    print("剪贴板读取: " + SDL3.getClipboardText())
+
+    // ---- 窗口 API 测试 ----
+    win.setTitle("New API — 窗口控制 & 纹理调色")
+    print("窗口重命名 OK")
+
+    // ---- TTF 初始化 ----
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 状态
+    var alpha        = 255
+    var colorR       = 255
+    var colorG       = 255
+    var colorB       = 255
+    var clipText     = SDL3.getClipboardText()
+    var loadedTex    = null as Ptr
+    var texLoaded    = false
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+
+            // 鼠标状态
+            if e.isMouseButtonDown() {
+                print("鼠标按钮: " + e.mouseButton() + "  状态掩码: " + SDL3.getMouseState())
+            }
+
+            // 纹理调色
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_1 { alpha = 128; print("alpha=128") }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_2 { alpha = 255; print("alpha=255") }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_3 { colorR = 255; colorG = 100; colorB = 100; print("red tint") }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_4 { colorR = 255; colorG = 255; colorB = 255; print("normal") }
+
+            // 窗口控制
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_W { win.setSize(400, 300); print("400x300") }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_C { clipText = SDL3.getClipboardText(); print("clipboard: " + clipText) }
+
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+
+            // 首次加载纹理
+            if not texLoaded {
+                loadedTex = SDL3.loadImageTexture(r.handle, "d:\\1.png")
+                texLoaded = true
+            }
+
+            // 应用纹理调制
+            if loadedTex != null {
+                r.setTextureAlpha(loadedTex, alpha)
+                r.setTextureColor(loadedTex, colorR, colorG, colorB)
+                // 绘制测试纹理
+                r.drawTextureAt(loadedTex, 470, 280, 200, 180)
+            }
+
+            r.drawText(font, "New API Test — 窗口控制 & 纹理调色", 10, 8, 255, 220, 80)
+            r.drawText(font, "Alpha: " + alpha + "  色调: R=" + colorR + " G=" + colorG + " B=" + colorB, 10, 32, 180, 200, 255)
+
+            // 操作说明
+            r.drawText(font, "========================================", 10, 65, 80, 80, 80)
+            r.drawText(font, "纹理调色:", 10, 88, 200, 200, 100)
+            r.drawText(font, "  1 — Alpha=128 (半透明)   2 — Alpha=255 (不透明)", 10, 110, 150, 150, 150)
+            r.drawText(font, "  3 — 红色调              4 — 正常", 10, 130, 150, 150, 150)
+            r.drawText(font, "窗口控制:", 10, 160, 200, 200, 100)
+            r.drawText(font, "  W — 改变窗口大小为 400x300", 10, 182, 150, 150, 150)
+            r.drawText(font, "剪贴板:", 10, 210, 200, 200, 100)
+            r.drawText(font, "  C — 读取剪贴板到控制台", 10, 232, 150, 150, 150)
+            r.drawText(font, "剪贴板内容: " + clipText, 10, 260, 100, 200, 100)
+
+            r.drawText(font, "ESC — 退出", 10, 310, 150, 150, 150)
+
+            // 窗口 API 说明
+            r.drawText(font, "新增 Window 方法:", 10, 350, 200, 255, 100)
+            r.drawText(font, "  setTitle / setSize / setPosition / setAlwaysOnTop / setResizable", 10, 372, 120, 120, 120)
+            r.drawText(font, "新增 Renderer 方法:", 10, 394, 200, 255, 100)
+            r.drawText(font, "  setRenderTarget / setTextureAlpha / setTextureColor / flush", 10, 416, 120, 120, 120)
+            r.drawText(font, "新增独立函数:", 10, 440, 200, 255, 100)
+            r.drawText(font, "  getMouseState / getClipboardText / setClipboardText", 10, 462, 120, 120, 120)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+    print("测试完成")
+}

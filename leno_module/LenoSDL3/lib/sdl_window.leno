@@ -38,9 +38,29 @@ export struct Window {
         return ok
     }
 
+    // 设置窗口标题
+    func setTitle(string title): bool {
+        return _lib.SDL_SetWindowTitle(handle, title)
+    }
+
+    // 设置窗口大小
+    func setSize(int w, int h): bool {
+        return _lib.SDL_SetWindowSize(handle, w, h)
+    }
+
+    // 设置窗口位置
+    func setPosition(int x, int y): bool {
+        return _lib.SDL_SetWindowPosition(handle, x, y)
+    }
+
     // 设置窗口是否可调整大小
     func setResizable(bool v) {
         if ok { _lib.SDL_SetWindowResizable(handle, v) }
+    }
+
+    // 设置窗口置顶
+    func setAlwaysOnTop(bool v): bool {
+        return _lib.SDL_SetWindowAlwaysOnTop(handle, v)
     }
 
     // 销毁窗口

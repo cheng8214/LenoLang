@@ -197,6 +197,10 @@ export func getTicks(): int          { return core.getTicks() }
 export func startTextInput(Ptr w): bool  { return core.startTextInput(w) }
 export func stopTextInput(Ptr w): bool   { return core.stopTextInput(w) }
 
+export func getMouseState(): int         { return core.getMouseState() }
+export func getClipboardText(): string   { return core.getClipboardText() }
+export func setClipboardText(string t): bool { return core.setClipboardText(t) }
+
 // ==================== 重新导出工厂函数 ====================
 
 export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }

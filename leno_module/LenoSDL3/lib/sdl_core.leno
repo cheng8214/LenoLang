@@ -190,6 +190,21 @@ clib sdl3 {
     bool SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
     bool SDL_RenderTextureRotated(Ptr renderer, Ptr texture, Ptr src, Ptr dst, f64 angle, Ptr center, i32 flip)
     void SDL_DestroySurface(Ptr surface)
+
+    bool SDL_SetRenderTarget(Ptr renderer, Ptr texture)
+    bool SDL_SetTextureAlphaMod(Ptr texture, u8 alpha)
+    bool SDL_SetTextureColorMod(Ptr texture, u8 r, u8 g, u8 b)
+    bool SDL_FlushRenderer(Ptr renderer)
+
+    u32  SDL_GetMouseState(Ptr x, Ptr y)
+
+    bool SDL_SetWindowTitle(Ptr window, str8 title)
+    bool SDL_SetWindowSize(Ptr window, i32 w, i32 h)
+    bool SDL_SetWindowPosition(Ptr window, i32 x, i32 y)
+    bool SDL_SetWindowAlwaysOnTop(Ptr window, bool on_top)
+
+    str8 SDL_GetClipboardText()
+    bool SDL_SetClipboardText(str8 text)
 }
 
 // ==================== 常量 ====================
@@ -370,3 +385,7 @@ export func getTicks(): int { return lib().SDL_GetTicks() as int }//这里为啥
 export func startTextInput(Ptr window): bool  { return lib().SDL_StartTextInput(window) }
 export func stopTextInput(Ptr window): bool   { return lib().SDL_StopTextInput(window) }
 export func textInputActive(Ptr window): bool { return lib().SDL_TextInputActive(window) }
+
+export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) as int }
+export func getClipboardText(): string { return lib().SDL_GetClipboardText() as string }
+export func setClipboardText(string text): bool { return lib().SDL_SetClipboardText(text) }

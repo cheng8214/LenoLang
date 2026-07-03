@@ -230,6 +230,26 @@ export struct Renderer {
     func clearColor(int r, int g, int b, int a) {
         setColor(r, g, b, a); clear()
     }
+
+    // 渲染到纹理（null 恢复渲染到窗口）
+    func setRenderTarget(Ptr texture): bool {
+        return _lib.SDL_SetRenderTarget(handle, texture)
+    }
+
+    // 设置纹理透明度调制（0~255）
+    func setTextureAlpha(Ptr texture, int alpha): bool {
+        return _lib.SDL_SetTextureAlphaMod(texture, alpha)
+    }
+
+    // 设置纹理颜色调制（RGB 0~255）
+    func setTextureColor(Ptr texture, int r, int g, int b): bool {
+        return _lib.SDL_SetTextureColorMod(texture, r, g, b)
+    }
+
+    // 强制刷新渲染命令
+    func flush(): bool {
+        return _lib.SDL_FlushRenderer(handle)
+    }
 }
 
 // 创建渲染器实例
