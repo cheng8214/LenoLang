@@ -107,13 +107,16 @@ main() {
             r.setColor(150, 200, 255, 200)
             for 0 : 10 to i { r.drawLine(30.0 + _float(i * 15), 340.0, 40.0 + _float(i * 15), 340.0) }
 
-            // 网格
-            r.setColor(60, 60, 100, 100)
-            for 0 : 5 to xi {
-                for 0 : 5 to yi {
-                    float gx = 200.0 + _float(xi) * 30.0
-                    float gy = 340.0 + _float(yi) * 30.0
+            // 网格（6x6 点阵 + 连线）
+            r.setColor(100, 150, 200, 180)
+            for 0 : 6 to xi {
+                for 0 : 6 to yi {
+                    float gx = 200.0 + _float(xi) * 25.0
+                    float gy = 340.0 + _float(yi) * 25.0
                     r.drawPoint(gx, gy)
+                    // 画网格线
+                    if xi < 6 { r.drawLine(gx, gy, gx + 25.0, gy) }
+                    if yi < 6 { r.drawLine(gx, gy, gx, gy + 25.0) }
                 }
             }
 
