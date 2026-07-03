@@ -93,18 +93,25 @@ main() {
             float arad = angle * 3.14159265 / 180.0
             float cosA = maths.cos(arad); float sinA = maths.sin(arad)
 
-            // 用 SDL_Vertex 定义三角形（3 个顶点，不同颜色）
+            // 用 SDL_Vertex 定义旋转三角形（3 个顶点，旋转后坐标）
+            float p0x = cosA * 0.0  - sinA * (-35.0) + acx
+            float p0y = sinA * 0.0  + cosA * (-35.0) + acy
+            float p1x = cosA * 35.0 - sinA * 35.0  + acx
+            float p1y = sinA * 35.0 + cosA * 35.0  + acy
+            float p2x = cosA * (-35.0) - sinA * 35.0 + acx
+            float p2y = sinA * (-35.0) + cosA * 35.0 + acy
+
             var vbuf = ffi.malloc(3 * 40)  // SDL_Vertex = 10 float = 40 bytes
             // 顶点 0: 上方(红)
-            ffi.write_float(vbuf, 0,  acx); ffi.write_float(vbuf, 4,  acy - 35.0)
-            ffi.write_float(vbuf, 8,  1.0); ffi.write_float(vbuf, 12, 0.0); ffi.write_float(vbuf, 16, 0.0); ffi.write_float(vbuf, 20, 1.0)
+            ffi.write_float(vbuf, 0, p0x);  ffi.write_float(vbuf, 4, p0y)
+            ffi.write_float(vbuf, 8, 1.0);  ffi.write_float(vbuf, 12, 0.0); ffi.write_float(vbuf, 16, 0.0); ffi.write_float(vbuf, 20, 1.0)
             ffi.write_float(vbuf, 24, 0.0); ffi.write_float(vbuf, 28, 0.0)
             // 顶点 1: 右下(绿)
-            ffi.write_float(vbuf, 32, acx + 35.0); ffi.write_float(vbuf, 36, acy + 35.0)
+            ffi.write_float(vbuf, 32, p1x); ffi.write_float(vbuf, 36, p1y)
             ffi.write_float(vbuf, 40, 0.0); ffi.write_float(vbuf, 44, 1.0); ffi.write_float(vbuf, 48, 0.0); ffi.write_float(vbuf, 52, 1.0)
             ffi.write_float(vbuf, 56, 0.0); ffi.write_float(vbuf, 60, 0.0)
             // 顶点 2: 左下(蓝)
-            ffi.write_float(vbuf, 64, acx - 35.0); ffi.write_float(vbuf, 68, acy + 35.0)
+            ffi.write_float(vbuf, 64, p2x); ffi.write_float(vbuf, 68, p2y)
             ffi.write_float(vbuf, 72, 0.0); ffi.write_float(vbuf, 76, 0.0); ffi.write_float(vbuf, 80, 1.0); ffi.write_float(vbuf, 84, 1.0)
             ffi.write_float(vbuf, 88, 0.0); ffi.write_float(vbuf, 92, 0.0)
 
