@@ -70,19 +70,10 @@ main() {
         }
 
         // 绘制动态文本（每帧更新）
-        var dynamicText = "帧数: " + frameCount
-        var dynTex = SDL3.createTextTexture(ren.handle, font, dynamicText, 255, 100, 100)
-        if dynTex.ok {
-            ren.drawTextureAt(dynTex.texture, 100.0, 150.0, dynTex.width, dynTex.height)
-            dynTex.destroy()  // 动态文本每帧都需要销毁
-        }
+        ren.drawText(font, "帧数: " + frameCount, 100.0, 150.0, 255, 100, 100)
 
         // 绘制彩色文本
-        var colorTex = SDL3.createTextTexture(ren.handle, font, "彩色文字测试", 100, 255, 100)
-        if colorTex.ok {
-            ren.drawTextureAt(colorTex.texture, 100.0, 200.0, colorTex.width, colorTex.height)
-            colorTex.destroy()
-        }
+        ren.drawText(font, "彩色文字测试", 100.0, 200.0, 100, 255, 100)
 
         // 显示渲染结果
         ren.present()

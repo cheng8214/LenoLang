@@ -9,8 +9,7 @@ main() {
 
     // TTF
     SDL3.ttfInit()
-    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 16.0)
-    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 16.0) }
+    var font = SDL3.createFontAuto(16.0)
 
     var imgPath = "d:\\1.png"
     var loadedTex = null as Ptr
@@ -40,8 +39,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.setColor(22, 22, 40, 255)
-            r.clear()
+            r.clearColor(22, 22, 40, 255)
 
             // 首次加载纹理
             if not texLoaded {
@@ -52,19 +50,14 @@ main() {
             // 自动旋转
             if autoSpin { angle = angle + 1.5; if angle >= 360.0 { angle = angle - 360.0 } }
 
-            func t(string s, int x, int y, int rr, int gg, int bb) {
-                var tex = SDL3.createTextTexture(r.handle, font, s, rr, gg, bb)
-                if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
-            }
-
             // 标题
-            t("Transform 测试 — 旋转 & 翻转", 10, 8, 255, 220, 80)
+            r.drawText(font, "Transform 测试 — 旋转 & 翻转", 10, 8, 255, 220, 80)
 
             // 状态栏
             var flipName = "无"
             if flip == 1 { flipName = "水平" }
             if flip == 2 { flipName = "垂直" }
-            t("角度: " + angle + "°  翻转: " + flipName + "  自动旋转: " + (if autoSpin then "开" else "关"), 10, 32, 150, 200, 255)
+            r.drawText(font, "角度: " + angle + "°  翻转: " + flipName + "  自动旋转: " + (if autoSpin then "开" else "关"), 10, 32, 150, 200, 255)
 
             // 绘制图片：多个副本展示不同效果
             if loadedTex != null {
@@ -74,32 +67,32 @@ main() {
                 float tw = iw * scale; float th = ih * scale
 
                 // 1. 原始（不旋转不翻转）— 左上
-                t("原始", 10, 68, 100, 100, 100)
+                r.drawText(font, "原始", 10, 68, 100, 100, 100)
                 r.drawTextureAt(loadedTex, 10, 90, tw, th)
 
                 // 2. 旋转 — 中间大图
                 float cx = 420.0; float cy = 340.0
                 float bw = tw * 2.0; float bh = th * 2.0
-                t("旋转 " + angle + "°  翻转:" + flipName, 380, 68, 255, 200, 80)
+                r.drawText(font, "旋转 " + angle + "°  翻转:" + flipName, 380, 68, 255, 200, 80)
                 r.drawTextureRotated(loadedTex, cx - bw/2, cy - bh/2, bw, bh,
                                       angle, bw/2, bh/2, flip)
 
                 // 3. 水平翻转（固定）— 右下
-                t("水平翻转", 680, 68, 100, 100, 100)
+                r.drawText(font, "水平翻转", 680, 68, 100, 100, 100)
                 r.drawTextureRotated(loadedTex, 680, 90, tw, th, 0.0, 0.0, 0.0, SDL3.FLIP_HORIZONTAL)
 
                 // 4. 垂直翻转（固定）— 右下2
-                t("垂直翻转", 680, 140 + _int(th), 100, 100, 100)
+                r.drawText(font, "垂直翻转", 680, 140 + _int(th), 100, 100, 100)
                 r.drawTextureRotated(loadedTex, 680, 162 + _int(th), tw, th, 0.0, 0.0, 0.0, SDL3.FLIP_VERTICAL)
             }
 
             // 操作说明
-            t("========================================", 10, 440, 80, 80, 80)
-            t("操作:", 10, 462, 200, 200, 100)
-            t("  R — 手动旋转 +15°", 10, 484, 150, 150, 150)
-            t("  F — 循环翻转 (无→水平→垂直)", 10, 504, 150, 150, 150)
-            t("  S — 自动旋转 开/关", 10, 524, 150, 150, 150)
-            t("  ESC — 退出", 10, 544, 150, 150, 150)
+            r.drawText(font, "========================================", 10, 440, 80, 80, 80)
+            r.drawText(font, "操作:", 10, 462, 200, 200, 100)
+            r.drawText(font, "  R — 手动旋转 +15°", 10, 484, 150, 150, 150)
+            r.drawText(font, "  F — 循环翻转 (无→水平→垂直)", 10, 504, 150, 150, 150)
+            r.drawText(font, "  S — 自动旋转 开/关", 10, 524, 150, 150, 150)
+            r.drawText(font, "  ESC — 退出", 10, 544, 150, 150, 150)
         }
     )
 

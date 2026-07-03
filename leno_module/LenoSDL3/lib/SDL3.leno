@@ -203,6 +203,8 @@ export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
 export func createRenderer(Ptr w): Renderer     { return r.createRenderer(w) }
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
+export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }
+export func packColor(int r, int g, int b): int { return fnt.packColor(r, g, b) }
 use fnt.SDL_SurfaceInfo
 
 export func createTextTexture(Ptr ren, Font f, string t, int r, int g, int b): TextTexture {

@@ -8,8 +8,7 @@ main() {
     if not win.ok { print("窗口失败"); return }
 
     SDL3.ttfInit()
-    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 18.0)
-    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 18.0) }
+    var font = SDL3.createFontAuto(18.0)
 
     var events = []
     var textBuffer = ""       // 文本输入缓冲区
@@ -61,51 +60,41 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.setColor(18, 18, 38, 255)
-            r.clear()
-
-            func t(string s, int x, int y) {
-                var tex = SDL3.createTextTexture(r.handle, font, s, 140, 200, 255)
-                if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
-            }
-            func th(string s, int x, int y, int rr, int gg, int bb) {
-                var tex = SDL3.createTextTexture(r.handle, font, s, rr, gg, bb)
-                if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
-            }
+            r.clearColor(18, 18, 38, 255)
 
             // 标题
-            th("Event v2 - Text/Focus/Drop/Drag", 10, 8, 255, 220, 100)
+            r.drawText(font, "Event v2 - Text/Focus/Drop/Drag", 10, 8, 255, 220, 100)
 
             // 状态栏
             var f = if focused then "在" else "丢失"
             var m = if mouseInWindow then "在窗口内" else "已离开"
             var n = if minimized then "是" else "否"
-            t("状态: 焦点:" + f + "  鼠标:" + m + "  最小化:" + n, 10, 32)
+            r.drawText(font, "状态: 焦点:" + f + "  鼠标:" + m + "  最小化:" + n, 10, 32, 140, 200, 255)
 
             // 鼠标
-            t("鼠标: x=" + mx + " y=" + my + "  滚轮: " + wheelVal, 10, 55)
+            r.drawText(font, "鼠标: x=" + mx + " y=" + my + "  滚轮: " + wheelVal, 10, 55, 140, 200, 255)
 
             // 文本输入
-            th("文本输入: \"" + textBuffer + "\"", 10, 80, 100, 255, 100)
+            r.drawText(font, "文本输入: \"" + textBuffer + "\"", 10, 80, 100, 255, 100)
 
             // 事件历史
-            th("--- 事件历史 (最近20条) ---", 10, 110, 150, 150, 150)
+            r.drawText(font, "--- 事件历史 (最近20条) ---", 10, 110, 150, 150, 150)
             var ey = 132
             for 0 : events.len() - 1 to i {
-                t((events.len() - i) + ": " + (events[events.len() - 1 - i] ), 10, ey)
+                r.drawText(font, (events.len() - i) + ": " + (events[events.len() - 1 - i] ), 10, ey, 140, 200, 255)
                 ey = ey + 20
             }
 
             // 功能说明
-            th("--- 功能说明 ---", 410, 10, 200, 200, 100)
-            t("键盘: 按任意键测试 KeyDown/Up/Repeat", 410, 35)
-            t("鼠标: 移动/点击/滚轮测试", 410, 55)
-            t("文本: 切换到其他窗口再切回", 410, 75)
-            t("焦点: 点击窗口标题栏 或 切换窗口", 410, 95)
-            t("鼠标进入/离开: 移入/移出窗口", 410, 115)
-            t("拖放: 从文件管理器拖文件到窗口", 410, 135)
-            t("窗口状态: 最小化/最大化/还原窗口", 410, 155)
-            t("按 ESC 或关闭窗口退出", 410, 185)
+            r.drawText(font, "--- 功能说明 ---", 410, 10, 200, 200, 100)
+            r.drawText(font, "键盘: 按任意键测试 KeyDown/Up/Repeat", 410, 35, 140, 200, 255)
+            r.drawText(font, "鼠标: 移动/点击/滚轮测试", 410, 55, 140, 200, 255)
+            r.drawText(font, "文本: 切换到其他窗口再切回", 410, 75, 140, 200, 255)
+            r.drawText(font, "焦点: 点击窗口标题栏 或 切换窗口", 410, 95, 140, 200, 255)
+            r.drawText(font, "鼠标进入/离开: 移入/移出窗口", 410, 115, 140, 200, 255)
+            r.drawText(font, "拖放: 从文件管理器拖文件到窗口", 410, 135, 140, 200, 255)
+            r.drawText(font, "窗口状态: 最小化/最大化/还原窗口", 410, 155, 140, 200, 255)
+            r.drawText(font, "按 ESC 或关闭窗口退出", 410, 185, 140, 200, 255)
         }
     )
 

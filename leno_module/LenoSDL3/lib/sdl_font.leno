@@ -281,6 +281,18 @@ export func createFont(string path, float ptsize): Font {
     Font font = new Font(); font.load(path, ptsize); return font
 }
 
+// 加载字体（自动尝试微软雅黑→宋体回退）
+export func createFontAuto(float ptsize): Font {
+    Font font = createFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+    if not font.ok { font = createFont("C:/Windows/Fonts/simsun.ttc", ptsize) }
+    return font
+}
+
+// 打包 RGB 为 32 位颜色（0xAARRGGBB，Alpha=255）
+export func packColor(int r, int g, int b): int {
+    return r | (g << 8) | (b << 16) | (255 << 24)
+}
+
 export func createTextTexture(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
     TextTexture tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
 }

@@ -143,34 +143,24 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.setColor(18, 18, 38, 255)
-            r.clear()
-
-            func t(string s, int x, int y) {
-                var tex = SDL3.createTextTexture(r.handle, font, s, 180, 220, 255)
-                if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
-            }
-            func th(string s, int x, int y, int rr, int gg, int bb) {
-                var tex = SDL3.createTextTexture(r.handle, font, s, rr, gg, bb)
-                if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
-            }
+            r.clearColor(18, 18, 38, 255)
 
             // 标题
-            th("⌨ 键盘事件测试 - 全键覆盖", 10, 8, 255, 220, 100)
-            th("──────────────────────────────────────", 10, 32, 80, 80, 100)
+            r.drawText(font, "⌨ 键盘事件测试 - 全键覆盖", 10, 8, 255, 220, 100)
+            r.drawText(font, "──────────────────────────────────────", 10, 32, 80, 80, 100)
 
             // 当前按键（长按去重）
             if down {
-                th("▼ 按下: " + name + "    [scancode=" + code + "]", 10, 55, 100, 255, 100)
+                r.drawText(font, "▼ 按下: " + name + "    [scancode=" + code + "]", 10, 55, 100, 255, 100)
             } else {
-                t("▲ 松开", 10, 55)
+                r.drawText(font, "▲ 松开", 10, 55, 180, 220, 255)
             }
 
             // 统计
-            t("按键次数: " + pressed + " / 释放次数: " + released, 10, 90)
+            r.drawText(font, "按键次数: " + pressed + " / 释放次数: " + released, 10, 90, 180, 220, 255)
 
             // 历史记录 (Array)
-            t("最近按键:", 10, 125)
+            r.drawText(font, "最近按键:", 10, 125, 180, 220, 255)
             var hx = 10
             for 0 : lastKeys.len() - 1 to i {
                 var k = lastKeys[i] as string
@@ -182,16 +172,16 @@ main() {
                 }
             }
 
-            th("──────────────────────────────────────", 10, 180, 80, 80, 100)
+            r.drawText(font, "──────────────────────────────────────", 10, 180, 80, 80, 100)
 
-            t("基础: Esc Enter 空格 退格 Tab Caps", 10, 200)
-            t("字母: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z", 10, 225)
-            t("数字: 0 1 2 3 4 5 6 7 8 9", 10, 250)
-            t("标点: ` - = [ ] \\ ; ' , . /", 10, 275)
-            t("方向: ↑ ↓ ← →    编辑: Ins Home PgUp Del End PgDn", 10, 300)
-            t("修饰: 左/右Shift Ctrl Alt Win   功能: F1-F12", 10, 325)
-            t("系统: PrtSc ScrLk Pause    小键盘: NumLock KP 0-9 +-*/ = , . Enter", 10, 350)
-            t("特殊: 右键菜单    按 ESC 退出", 10, 375)
+            r.drawText(font, "基础: Esc Enter 空格 退格 Tab Caps", 10, 200, 180, 220, 255)
+            r.drawText(font, "字母: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z", 10, 225, 180, 220, 255)
+            r.drawText(font, "数字: 0 1 2 3 4 5 6 7 8 9", 10, 250, 180, 220, 255)
+            r.drawText(font, "标点: ` - = [ ] \\ ; ' , . /", 10, 275, 180, 220, 255)
+            r.drawText(font, "方向: ↑ ↓ ← →    编辑: Ins Home PgUp Del End PgDn", 10, 300, 180, 220, 255)
+            r.drawText(font, "修饰: 左/右Shift Ctrl Alt Win   功能: F1-F12", 10, 325, 180, 220, 255)
+            r.drawText(font, "系统: PrtSc ScrLk Pause    小键盘: NumLock KP 0-9 +-*/ = , . Enter", 10, 350, 180, 220, 255)
+            r.drawText(font, "特殊: 右键菜单    按 ESC 退出", 10, 375, 180, 220, 255)
         }
     )
 

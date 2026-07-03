@@ -225,12 +225,7 @@ main() {
 
             // ---- 文字覆盖 ----
             if font.ok {
-                var infoText = "FPS: " + fps + "  粒子: " + pc + "  峰值: " + peak
-                var tex = SDL3.createTextTexture(r.handle, font, infoText, 255, 255, 255)
-                if tex.ok {
-                    r.drawTextureAt(tex.texture, 10.0, 10.0, tex.width, tex.height)
-                    tex.destroy()
-                }
+                r.drawText(font, "FPS: " + fps + "  粒子: " + pc + "  峰值: " + peak, 10.0, 10.0, 255, 255, 255)
             }
         }
     )

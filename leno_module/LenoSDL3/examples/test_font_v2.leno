@@ -59,41 +59,35 @@ main() {
             r.setColor(25, 25, 45, 255)
             r.clear()
 
-            func label(string s, int x, int y) {
-                if not font16.ok { return }
-                var t = SDL3.createTextTexture(r.handle, font16, s, 120, 120, 130)
-                if t.ok { r.drawTextureAt(t.texture, x, y, t.width, t.height); t.destroy() }
-            }
-
             var hintNames = ["Normal", "Light", "Mono", "None"]
             font.setStyle(SDL3.STYLE_NORMAL); font.setOutline(0)
 
             // 1. 字体信息
-            label("FamilyName: " + font.getFamilyName(), 20, 5)
-            label("StyleName:  " + font.getStyleName(), 20, 22)
-            label("Height: " + font.height + "  Ascent: " + font.ascent + "  Descent: " + font.descent, 20, 39)
+            r.drawText(font16, "FamilyName: " + font.getFamilyName(), 20, 5, 120, 120, 130)
+            r.drawText(font16, "StyleName:  " + font.getStyleName(), 20, 22, 120, 120, 130)
+            r.drawText(font16, "Height: " + font.height + "  Ascent: " + font.ascent + "  Descent: " + font.descent, 20, 39, 120, 120, 130)
 
             // 2. Hinting 测试
             var h = hintNames[hintMode]
-            label("2. Hinting: " + h + " (按 H 切换)", 20, 65)
+            r.drawText(font16, "2. Hinting: " + h + " (按 H 切换)", 20, 65, 120, 120, 130)
             var ht = SDL3.createTextTexture(r.handle, font, "Hinting Demo 字体显示", 255, 255, 255)
             if ht.ok { r.drawTextureAt(ht.texture, 20, 90, ht.width, ht.height); ht.destroy() }
 
             // 3. Kerning 测试
-            label("3. Kerning: " + kerning + " (按 K 切换)", 20, 135)
+            r.drawText(font16, "3. Kerning: " + kerning + " (按 K 切换)", 20, 135, 120, 120, 130)
             var kt = SDL3.createTextTexture(r.handle, font, "AVATAR WAITING", 200, 200, 255)
             if kt.ok { r.drawTextureAt(kt.texture, 20, 160, kt.width, kt.height); kt.destroy() }
 
             // 4. 样式组合
             font.setStyle(SDL3.STYLE_BOLD | SDL3.STYLE_ITALIC)
-            label("4. Bold+Italic outline=1", 20, 210)
+            r.drawText(font16, "4. Bold+Italic outline=1", 20, 210, 120, 120, 130)
             font.setOutline(1)
             var st = SDL3.createTextTexture(r.handle, font, "Style & Outline", 255, 100, 255)
             if st.ok { r.drawTextureAt(st.texture, 20, 235, st.width, st.height); st.destroy() }
             font.setOutline(0); font.setStyle(SDL3.STYLE_NORMAL)
 
             // 5. 换行文字
-            label("5. Wrapped @ 350px", 20, 285)
+            r.drawText(font16, "5. Wrapped @ 350px", 20, 285, 120, 120, 130)
             var wt = SDL3.createTextTextureWrapped(r.handle, font,
                 "这是一段很长的中文文本用来测试自动换行功能," +
                 "this is wrapped English text for testing",
@@ -102,7 +96,7 @@ main() {
             if wt.ok { r.drawTextureAt(wt.texture, 20, 310, wt.width, wt.height); wt.destroy() }
 
             // 6. Glyph 渲染
-            label("6. Glyph rendering (ABCDEFG)", 450, 5)
+            r.drawText(font16, "6. Glyph rendering (ABCDEFG)", 450, 5, 120, 120, 130)
             font.setStyle(SDL3.STYLE_NORMAL)
             var glyphX = 450
             var gsChars = [0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47]
@@ -117,32 +111,32 @@ main() {
             }
 
             // 7. 测量对比
-            label("7. measureStringWrapped @ 200px", 450, 80)
+            r.drawText(font16, "7. measureStringWrapped @ 200px", 450, 80, 120, 120, 130)
             var m1 = font.measureStringWrapped("A long text for testing word wrap at fixed width", 200)
-            label("   result: w=" + m1["w"] + " h=" + m1["h"], 450, 98)
+            r.drawText(font16, "   result: w=" + m1["w"] + " h=" + m1["h"], 450, 98, 120, 120, 130)
 
             // 8. Underline
             font.setStyle(SDL3.STYLE_UNDERLINE)
-            label("8. Underline style", 450, 125)
+            r.drawText(font16, "8. Underline style", 450, 125, 120, 120, 130)
             var ut = SDL3.createTextTexture(r.handle, font, "Underlined Text", 255, 200, 100)
             if ut.ok { r.drawTextureAt(ut.texture, 450, 148, ut.width, ut.height); ut.destroy() }
 
             // 9. Strikethrough
             font.setStyle(SDL3.STYLE_STRIKETHROUGH)
-            label("9. Strikethrough style", 450, 190)
+            r.drawText(font16, "9. Strikethrough style", 450, 190, 120, 120, 130)
             var sst = SDL3.createTextTexture(r.handle, font, "Strikethrough Text", 255, 150, 100)
             if sst.ok { r.drawTextureAt(sst.texture, 450, 215, sst.width, sst.height); sst.destroy() }
             font.setStyle(SDL3.STYLE_NORMAL)
 
             // 10. Solid vs Shaded
-            label("10. Solid vs Shaded", 450, 250)
+            r.drawText(font16, "10. Solid vs Shaded", 450, 250, 120, 120, 130)
             var solTex = SDL3.createTextTextureSolid(r.handle, font, "Solid Text", 255, 255, 255)
             if solTex.ok { r.drawTextureAt(solTex.texture, 450, 275, solTex.width, solTex.height); solTex.destroy() }
             var shaTex = SDL3.createTextTextureShaded(r.handle, font, "Shaded Text", 255, 255, 255, 0, 0, 200)
             if shaTex.ok { r.drawTextureAt(shaTex.texture, 450, 320, shaTex.width, shaTex.height); shaTex.destroy() }
 
             // 提示
-            label("按 H=Hinting  K=Kerning  ESC=退出", 240, 570)
+            r.drawText(font16, "按 H=Hinting  K=Kerning  ESC=退出", 240, 570, 120, 120, 130)
         }
     )
 
