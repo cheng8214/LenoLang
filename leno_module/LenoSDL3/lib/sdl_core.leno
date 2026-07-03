@@ -127,6 +127,12 @@ export cstruct SDL_GlyphMetrics {
     i32 minX; i32 maxX; i32 minY; i32 maxY; i32 advance
 }
 
+export cstruct SDL_Vertex {
+    f32 x; f32 y    // position (SDL_FPoint)
+    f32 r; f32 g; f32 b; f32 a  // color (SDL_FColor)
+    f32 u; f32 v    // texcoord (SDL_FPoint)
+}
+
 // ==================== 返回类型别名 ====================
 
 export alias Color      = Dict[string, int]
@@ -188,6 +194,7 @@ clib sdl3 {
     void SDL_DestroyTexture(Ptr texture)
     bool SDL_GetTextureSize(Ptr texture, Ptr w, Ptr h)
     bool SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
+    bool SDL_RenderGeometry(Ptr renderer, Ptr texture, Ptr vertices, i32 num_vertices, Ptr indices, i32 num_indices)
     bool SDL_RenderTextureRotated(Ptr renderer, Ptr texture, Ptr src, Ptr dst, f64 angle, Ptr center, i32 flip)
     void SDL_DestroySurface(Ptr surface)
 
@@ -206,6 +213,7 @@ clib sdl3 {
     void SDL_UnlockTexture(Ptr texture)
 
     u32  SDL_GetMouseState(Ptr x, Ptr y)
+    u32  SDL_GetGlobalMouseState(Ptr x, Ptr y)
     bool SDL_ShowCursor()
     bool SDL_HideCursor()
     bool SDL_CursorVisible()
@@ -426,6 +434,7 @@ export func stopTextInput(Ptr window): bool   { return lib().SDL_StopTextInput(w
 export func textInputActive(Ptr window): bool { return lib().SDL_TextInputActive(window) }
 
 export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) as int }
+export func getGlobalMouseState(): int { return lib().SDL_GetGlobalMouseState(null, null) as int }
 export func showCursor(): bool    { return lib().SDL_ShowCursor() }
 export func hideCursor(): bool    { return lib().SDL_HideCursor() }
 export func cursorVisible(): bool { return lib().SDL_CursorVisible() }

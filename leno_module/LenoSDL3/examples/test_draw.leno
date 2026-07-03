@@ -1,6 +1,7 @@
 // test_draw.leno — 测试绘制：矩形/圆形/三角形/线条/阴影/渐变
 import "../lib/SDL3.leno" as SDL3
 import maths
+import ffi
 use SDL3.Event
 use SDL3.Renderer
 
@@ -86,19 +87,30 @@ main() {
             r.drawLine(t2x + 60, t2y, t2x + 120, t2y + 40)
             r.drawLine(t2x + 120, t2y + 40, t2x, t2y + 40)
 
-            // 旋转三角形
-            r.drawText(font, "旋转三角", 420, 155, 200, 200, 100)
-            float acx = 470; float acy = 240
+            // 旋转三角形 (drawGeometry — 真三角形渲染)
+            r.drawText(font, "旋转三角 (Geometry)", 420, 155, 200, 200, 100)
+            float acx = 480; float acy = 230
             float arad = angle * 3.14159265 / 180.0
             float cosA = maths.cos(arad); float sinA = maths.sin(arad)
-            var apx = [0.0, 0.0, 0.0]; var apy = [0.0, 0.0, 0.0]
-            apx[0] = acx + cosA * 0.0 - sinA * (-35.0); apy[0] = acy + sinA * 0.0 + cosA * (-35.0)
-            apx[1] = acx + cosA * 30.0 - sinA * 35.0;   apy[1] = acy + sinA * 30.0 + cosA * 35.0
-            apx[2] = acx + cosA * (-30.0) - sinA * 35.0; apy[2] = acy + sinA * (-30.0) + cosA * 35.0
-            r.setColor(255, 150, 50, 255)
-            r.drawLine(apx[0], apy[0], apx[1], apy[1])
-            r.drawLine(apx[1], apy[1], apx[2], apy[2])
-            r.drawLine(apx[2], apy[2], apx[0], apy[0])
+
+            // 用 SDL_Vertex 定义三角形（3 个顶点，不同颜色）
+            var vbuf = ffi.malloc(3 * 40)  // SDL_Vertex = 10 float = 40 bytes
+            // 顶点 0: 上方(红)
+            ffi.write_float(vbuf, 0,  acx); ffi.write_float(vbuf, 4,  acy - 35.0)
+            ffi.write_float(vbuf, 8,  1.0); ffi.write_float(vbuf, 12, 0.0); ffi.write_float(vbuf, 16, 0.0); ffi.write_float(vbuf, 20, 1.0)
+            ffi.write_float(vbuf, 24, 0.0); ffi.write_float(vbuf, 28, 0.0)
+            // 顶点 1: 右下(绿)
+            ffi.write_float(vbuf, 32, acx + 35.0); ffi.write_float(vbuf, 36, acy + 35.0)
+            ffi.write_float(vbuf, 40, 0.0); ffi.write_float(vbuf, 44, 1.0); ffi.write_float(vbuf, 48, 0.0); ffi.write_float(vbuf, 52, 1.0)
+            ffi.write_float(vbuf, 56, 0.0); ffi.write_float(vbuf, 60, 0.0)
+            // 顶点 2: 左下(蓝)
+            ffi.write_float(vbuf, 64, acx - 35.0); ffi.write_float(vbuf, 68, acy + 35.0)
+            ffi.write_float(vbuf, 72, 0.0); ffi.write_float(vbuf, 76, 0.0); ffi.write_float(vbuf, 80, 1.0); ffi.write_float(vbuf, 84, 1.0)
+            ffi.write_float(vbuf, 88, 0.0); ffi.write_float(vbuf, 92, 0.0)
+
+            // 通过 drawGeometry 渲染三角形
+            r.drawGeometry(vbuf, 3, null, 0)
+            ffi.free(vbuf)
 
             // ==================== 4. 虚线/网格 ====================
             r.drawText(font, "虚线 & 网格", 30, 300, 200, 200, 100)

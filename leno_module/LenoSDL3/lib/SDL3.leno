@@ -17,6 +17,7 @@ use core.SDL_Point
 use core.SDL_Color
 use core.SDL_FColor
 use core.SDL_GlyphMetrics
+use core.SDL_Vertex
 
 use core.SDL_KeyboardEvent
 use core.SDL_MouseButtonEvent
@@ -203,6 +204,7 @@ export func startTextInput(Ptr w): bool  { return core.startTextInput(w) }
 export func stopTextInput(Ptr w): bool   { return core.stopTextInput(w) }
 
 export func getMouseState(): int         { return core.getMouseState() }
+export func getGlobalMouseState(): int   { return core.getGlobalMouseState() }
 export func showCursor(): bool           { return core.showCursor() }
 export func hideCursor(): bool           { return core.hideCursor() }
 export func cursorVisible(): bool        { return core.cursorVisible() }
