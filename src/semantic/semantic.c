@@ -326,6 +326,20 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                 }
                 // 将函数添加到函数表（用于参数类型检查）
                 func_table_add(&s->func_table, stmt->u.func.name, stmt);
+            } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                       stmt->u.export.decl->kind == AST_FUNC_DEF) {
+                // 预注册 export func 定义（支持 export func 的前向引用）
+                Ast* decl = stmt->u.export.decl;
+                if (decl->u.func.name) {
+                    Symbol* sym = scope_define(s->current, decl->u.func.name, SYM_GLOBAL_FUNC);
+                    if (sym) {
+                        decl->u.func.ref.kind = sym->kind;
+                        decl->u.func.ref.index = sym->index;
+                        decl->u.func.ref.name = strdup(sym->name);
+                    }
+                    // 将函数添加到函数表（用于参数类型检查）
+                    func_table_add(&s->func_table, decl->u.func.name, decl);
+                }
             }
         }
     }

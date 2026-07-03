@@ -84,18 +84,7 @@ export var WRAP_ALIGN_RIGHT  = 2
 
 export var _ttfInited = false
 
-export func ttfInit(): bool {
-    if _ttfInited { return true }
-    sdl3_ttf l = ttfLib()
-    if l == null { return false }
-    _ttfInited = l.TTF_Init()
-    return _ttfInited
-}
 
-// 打包 RGB 为 32 位颜色（0xAARRGGBB，Alpha=255）
-export func packColor(int r, int g, int b): int {
-    return r | (g << 8) | (b << 16) | (255 << 24)
-}
 
 // ==================== Font ====================
 
@@ -272,7 +261,18 @@ export struct TextTexture {
 }
 
 // ==================== 工厂 ====================
+export func ttfInit(): bool {
+    if _ttfInited { return true }
+    sdl3_ttf l = ttfLib()
+    if l == null { return false }
+    _ttfInited = l.TTF_Init()
+    return _ttfInited
+}
 
+// 打包 RGB 为 32 位颜色（0xAARRGGBB，Alpha=255）
+export func packColor(int r, int g, int b): int {
+    return r | (g << 8) | (b << 16) | (255 << 24)
+}
 export func ttfQuit() {
     // 不释放 TTF DLL——避免跨模块引用失效
     _ttfInited = false
