@@ -1,5 +1,6 @@
 // test_draw.leno — 测试绘制：矩形/圆形/三角形/线条/阴影/渐变
 import "../lib/SDL3.leno" as SDL3
+import maths
 use SDL3.Event
 use SDL3.Renderer
 
@@ -86,9 +87,18 @@ main() {
             r.drawLine(t2x + 120, t2y + 40, t2x, t2y + 40)
 
             // 旋转三角形
-            float cx = 340; float cy = 260
             r.drawText(font, "旋转三角", 420, 155, 200, 200, 100)
-            var rad = angle * 3.14159265 / 180.0
+            float acx = 470; float acy = 240
+            float arad = angle * 3.14159265 / 180.0
+            float cosA = maths.cos(arad); float sinA = maths.sin(arad)
+            var apx = [0.0, 0.0, 0.0]; var apy = [0.0, 0.0, 0.0]
+            apx[0] = acx + cosA * 0.0 - sinA * (-35.0); apy[0] = acy + sinA * 0.0 + cosA * (-35.0)
+            apx[1] = acx + cosA * 30.0 - sinA * 35.0;   apy[1] = acy + sinA * 30.0 + cosA * 35.0
+            apx[2] = acx + cosA * (-30.0) - sinA * 35.0; apy[2] = acy + sinA * (-30.0) + cosA * 35.0
+            r.setColor(255, 150, 50, 255)
+            r.drawLine(apx[0], apy[0], apx[1], apy[1])
+            r.drawLine(apx[1], apy[1], apx[2], apy[2])
+            r.drawLine(apx[2], apy[2], apx[0], apy[0])
 
             // ==================== 4. 虚线/网格 ====================
             r.drawText(font, "虚线 & 网格", 30, 300, 200, 200, 100)
