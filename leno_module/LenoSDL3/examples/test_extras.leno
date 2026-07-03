@@ -34,7 +34,7 @@ main() {
             }
 
             // 窗口前置
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_T { win.raise(); lastMsg = "raise" }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_T { var ok = win.raise(); lastMsg = "raise=" + ok }
 
             return true
         },
