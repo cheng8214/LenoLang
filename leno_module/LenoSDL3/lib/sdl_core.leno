@@ -202,18 +202,23 @@ clib sdl3 {
 
     Ptr  SDL_CreateTexture(Ptr renderer, i32 format, i32 access, i32 w, i32 h)
     bool SDL_UpdateTexture(Ptr texture, Ptr rect, Ptr pixels, i32 pitch)
+    bool SDL_LockTexture(Ptr texture, Ptr rect, Ptr pixels, Ptr pitch)
+    void SDL_UnlockTexture(Ptr texture)
 
     u32  SDL_GetMouseState(Ptr x, Ptr y)
     bool SDL_ShowCursor()
     bool SDL_HideCursor()
     bool SDL_CursorVisible()
     bool SDL_WarpMouseInWindow(Ptr window, f32 x, f32 y)
+    bool SDL_SetWindowMouseGrab(Ptr window, bool grabbed)
+    bool SDL_GetWindowMouseGrab(Ptr window)
 
     bool SDL_SetWindowTitle(Ptr window, str8 title)
     bool SDL_SetWindowSize(Ptr window, i32 w, i32 h)
     bool SDL_SetWindowPosition(Ptr window, i32 x, i32 y)
     bool SDL_SetWindowAlwaysOnTop(Ptr window, bool on_top)
     bool SDL_SetWindowFullscreen(Ptr window, bool fullscreen)
+    bool SDL_RaiseWindow(Ptr window)
     bool SDL_ShowWindow(Ptr window)
     bool SDL_HideWindow(Ptr window)
     bool SDL_MaximizeWindow(Ptr window)

@@ -266,6 +266,14 @@ export struct Renderer {
         return _lib.SDL_UpdateTexture(texture, rect, pixels, pitch)
     }
 
+    // 锁定/解锁纹理以直接操作像素（需 TEXTUREACCESS_STREAMING）
+    func lockTexture(Ptr texture, Ptr rect): bool {
+        return _lib.SDL_LockTexture(texture, rect, null, null)
+    }
+    func unlockTexture(Ptr texture) {
+        _lib.SDL_UnlockTexture(texture)
+    }
+
     // 设置颜色缩放（HDR/亮度调节，不影响 alpha）
     func setColorScale(float scale): bool {
         return _lib.SDL_SetRenderColorScale(handle, scale)
