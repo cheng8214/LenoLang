@@ -25,7 +25,7 @@ void reset_loaded_modules(void);
 // max_exports: 最大导出项数量
 // 返回: 实际导出项数量，失败返回 -1
 int extract_module_exports_from_file(const char* file_path, const char* current_file, 
-                                      char exports[][64], int max_exports);
+                                      char exports[][128], int max_exports);
 
 // 检查模块中是否存在指定的方法
 // file_path: 模块文件路径

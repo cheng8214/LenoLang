@@ -9,12 +9,13 @@
 #include <windows.h>
 #endif
 
-#define MAX_MODULE_NAME 64
-#define MAX_EXPORTS 256
-#define MAX_LOADED_MODULES 64
+#define MAX_MODULE_NAME 128
+#define MAX_EXPORT_NAME 128
+#define MAX_EXPORTS 512
+#define MAX_LOADED_MODULES 128
 
 typedef struct {
-    char names[MAX_EXPORTS][64];
+    char names[MAX_EXPORTS][MAX_EXPORT_NAME];
     int count;
 } ExportList;
 
@@ -165,7 +166,7 @@ static void extract_exports(const char* source, ExportList* list) {
             while (*p && (isalnum(*p) || *p == '_')) p++;
 
             int len = (int)(p - start);
-            if (len > 0 && len < 64 && list->count < MAX_EXPORTS) {
+            if (len > 0 && len < MAX_EXPORT_NAME && list->count < MAX_EXPORTS) {
                 strncpy(list->names[list->count], start, len);
                 list->names[list->count][len] = '\0';
                 list->count++;
@@ -327,15 +328,15 @@ static ObjModule* compile_module_dispatch(const char* source, const char* module
         fprintf(stderr, "[错误] 模块编译器未注册\n");
         return NULL;
     }
-    // 将 ExportList 转换为 char[][64] 格式（堆分配避免栈溢出）
-    char (*export_names)[64] = (char(*)[64])malloc(exports->count * 64);
+    // 将 ExportList 转换为 char[][MAX_EXPORT_NAME] 格式（堆分配避免栈溢出）
+    char (*export_names)[MAX_EXPORT_NAME] = (char(*)[MAX_EXPORT_NAME])malloc(exports->count * MAX_EXPORT_NAME);
     if (!export_names) {
         fprintf(stderr, "[错误] 内存分配失败\n");
         return NULL;
     }
     for (int i = 0; i < exports->count && i < MAX_EXPORTS; i++) {
-        strncpy(export_names[i], exports->names[i], 63);
-        export_names[i][63] = '\0';
+        strncpy(export_names[i], exports->names[i], MAX_EXPORT_NAME - 1);
+        export_names[i][MAX_EXPORT_NAME - 1] = '\0';
     }
     ObjModule* result = compile_func(source, module_name, export_names, exports->count);
     free(export_names);
@@ -359,7 +360,7 @@ void loaded_modules_mark_all(void) {
 
 // 从模块文件中提取导出项（用于语义分析）
 int extract_module_exports_from_file(const char* file_path, const char* current_file,
-                                      char exports[][64], int max_exports) {
+                                      char exports[][MAX_EXPORT_NAME], int max_exports) {
     char* source = read_module_file(file_path, current_file);
     if (!source) return -1;
 
@@ -369,8 +370,8 @@ int extract_module_exports_from_file(const char* file_path, const char* current_
 
     int count = list.count < max_exports ? list.count : max_exports;
     for (int i = 0; i < count; i++) {
-        strncpy(exports[i], list.names[i], 63);
-        exports[i][63] = '\0';
+        strncpy(exports[i], list.names[i], MAX_EXPORT_NAME - 1);
+        exports[i][MAX_EXPORT_NAME - 1] = '\0';
     }
 
     return count;
@@ -378,7 +379,7 @@ int extract_module_exports_from_file(const char* file_path, const char* current_
 
 // 检查模块中是否存在指定的方法
 int module_has_method(const char* file_path, const char* current_file, const char* method_name) {
-    char exports[MAX_EXPORTS][64];
+    char exports[MAX_EXPORTS][MAX_EXPORT_NAME];
     int count = extract_module_exports_from_file(file_path, current_file, exports, MAX_EXPORTS);
 
     if (count < 0) {
