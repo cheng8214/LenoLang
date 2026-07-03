@@ -1,0 +1,36 @@
+// test_icon.leno — 测试用 PNG 设置窗口图标
+import "../lib/SDL3.leno" as SDL3
+
+main() {
+    var win = SDL3.createWindow({title: "Icon Test — PNG 图标", w: 400, h: 300})
+    if not win.ok { return }
+
+    // 加载 PNG 作为图标
+    var icon = SDL3.loadImage("d:\\1.png")
+    if icon != null {
+        win.setIcon(icon)
+        print("图标设置成功")
+    } else {
+        print("图标加载失败")
+    }
+
+    // 简单事件循环
+    var ev = SDL3.createEvent()
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { win.destroy(); return }
+
+    var running = true
+    while running {
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
+        }
+        ren.clearColor(20, 20, 40, 255)
+        ren.present()
+        SDL3.delay(16)
+    }
+
+    ren.destroy()
+    ev.uninit()
+    win.destroy()
+}
