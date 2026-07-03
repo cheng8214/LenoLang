@@ -1,3 +1,0 @@
-// main.leno — import 模块触发加载
-import "bug_repro_mod.leno" as mod
-print("ok")

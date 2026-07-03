@@ -80,6 +80,23 @@ export var WRAP_ALIGN_LEFT   = 0
 export var WRAP_ALIGN_CENTER = 1
 export var WRAP_ALIGN_RIGHT  = 2
 
+// ==================== 初始化/工具（需在 Font/TextTexture 之前定义，struct 方法会引用） ====================
+
+export var _ttfInited = false
+
+export func ttfInit(): bool {
+    if _ttfInited { return true }
+    sdl3_ttf l = ttfLib()
+    if l == null { return false }
+    _ttfInited = l.TTF_Init()
+    return _ttfInited
+}
+
+// 打包 RGB 为 32 位颜色（0xAARRGGBB，Alpha=255）
+export func packColor(int r, int g, int b): int {
+    return r | (g << 8) | (b << 16) | (255 << 24)
+}
+
 // ==================== Font ====================
 
 export struct Font {
@@ -254,17 +271,7 @@ export struct TextTexture {
     }
 }
 
-// ==================== 初始化/工厂 ====================
-
-export var _ttfInited = false
-
-export func ttfInit(): bool {
-    if _ttfInited { return true }
-    sdl3_ttf l = ttfLib()
-    if l == null { return false }
-    _ttfInited = l.TTF_Init()
-    return _ttfInited
-}
+// ==================== 工厂 ====================
 
 export func ttfQuit() {
     // 不释放 TTF DLL——避免跨模块引用失效
@@ -282,10 +289,6 @@ export func createFontAuto(float ptsize): Font {
     return font
 }
 
-// 打包 RGB 为 32 位颜色（0xAARRGGBB，Alpha=255）
-export func packColor(int r, int g, int b): int {
-    return r | (g << 8) | (b << 16) | (255 << 24)
-}
 
 export func createTextTexture(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
     TextTexture tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
