@@ -212,6 +212,17 @@ export func hideCursor(): bool           { return core.hideCursor() }
 export func cursorVisible(): bool        { return core.cursorVisible() }
 export func warpMouse(Ptr w, float x, float y): bool { return core.warpMouse(w, x, y) }
 
+export func setSystemCursor(int kind): Ptr { return core.setSystemCursor(kind) }
+export func showMessageBox(string title, string msg, int flags) { core.showMessageBox(title, msg, flags) }
+
+export var SYSTEM_CURSOR_DEFAULT     = core.SYSTEM_CURSOR_DEFAULT
+export var SYSTEM_CURSOR_TEXT        = core.SYSTEM_CURSOR_TEXT
+export var SYSTEM_CURSOR_WAIT        = core.SYSTEM_CURSOR_WAIT
+export var SYSTEM_CURSOR_POINTER     = core.SYSTEM_CURSOR_POINTER
+export var SYSTEM_CURSOR_CROSSHAIR   = core.SYSTEM_CURSOR_CROSSHAIR
+export var SYSTEM_CURSOR_MOVE        = core.SYSTEM_CURSOR_MOVE
+export var SYSTEM_CURSOR_NOT_ALLOWED = core.SYSTEM_CURSOR_NOT_ALLOWED
+
 export func getClipboardText(): string   { return core.getClipboardText() }
 export func setClipboardText(string t): bool { return core.setClipboardText(t) }
 

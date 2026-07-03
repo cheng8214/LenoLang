@@ -220,6 +220,12 @@ clib sdl3 {
     bool SDL_HideCursor()
     bool SDL_CursorVisible()
     bool SDL_WarpMouseInWindow(Ptr window, f32 x, f32 y)
+
+    Ptr  SDL_CreateSystemCursor(i32 kind)
+    bool SDL_SetCursor(Ptr cursor)
+    void SDL_DestroyCursor(Ptr cursor)
+
+    bool SDL_ShowSimpleMessageBox(u32 flags, str8 title, str8 message, Ptr window)
     bool SDL_SetWindowMouseGrab(Ptr window, bool grabbed)
     bool SDL_GetWindowMouseGrab(Ptr window)
     bool SDL_SetWindowRelativeMouseMode(Ptr window, bool enabled)
@@ -381,6 +387,22 @@ export var FLIP_NONE       = 0  // 不翻转
 export var FLIP_HORIZONTAL = 1  // 水平翻转
 export var FLIP_VERTICAL   = 2  // 垂直翻转
 
+// SDL3 系统光标索引（顺序编号，非 SDL2 位掩码）
+export var SYSTEM_CURSOR_DEFAULT     = 0
+export var SYSTEM_CURSOR_TEXT        = 1
+export var SYSTEM_CURSOR_WAIT        = 2
+export var SYSTEM_CURSOR_CROSSHAIR   = 3
+export var SYSTEM_CURSOR_PROGRESS    = 4
+export var SYSTEM_CURSOR_NWSE_RESIZE = 5
+export var SYSTEM_CURSOR_NESW_RESIZE = 6
+export var SYSTEM_CURSOR_EW_RESIZE   = 7
+export var SYSTEM_CURSOR_NS_RESIZE   = 8
+export var SYSTEM_CURSOR_MOVE        = 9
+export var SYSTEM_CURSOR_NOT_ALLOWED = 10
+export var SYSTEM_CURSOR_POINTER     = 11  // 链接手指
+
+
+
 export var PIXELFORMAT_RGBA8888 = 376840728  // SDL_PIXELFORMAT_RGBA8888
 export var TEXTUREACCESS_STATIC    = 0  // SDL_TEXTUREACCESS_STATIC
 export var TEXTUREACCESS_STREAMING = 1  // SDL_TEXTUREACCESS_STREAMING
@@ -441,6 +463,20 @@ export func showCursor(): bool    { return lib().SDL_ShowCursor() }
 export func hideCursor(): bool    { return lib().SDL_HideCursor() }
 export func cursorVisible(): bool { return lib().SDL_CursorVisible() }
 export func warpMouse(Ptr window, float x, float y): bool { return lib().SDL_WarpMouseInWindow(window, x, y) }
+
+// 设置系统光标（传入 SYSTEM_CURSOR_* 常量），返回旧光标（需手动 destroy）
+export func setSystemCursor(int kind): Ptr {
+    sdl3 l = lib()
+    Ptr cur = l.SDL_CreateSystemCursor(kind)
+    l.SDL_SetCursor(cur)
+    return cur  // 调用方负责 l.SDL_DestroyCursor(cur)
+}
+
+// 弹出消息框
+export func showMessageBox(string title, string msg, int flags) {
+    sdl3 l = lib()
+    l.SDL_ShowSimpleMessageBox(flags, title, msg, null)
+}
 
 export func getClipboardText(): string { return lib().SDL_GetClipboardText() as string }
 export func setClipboardText(string text): bool { return lib().SDL_SetClipboardText(text) }

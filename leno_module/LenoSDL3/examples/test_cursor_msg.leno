@@ -1,0 +1,55 @@
+// test_cursor_msg.leno — 测试：系统光标切换 + 消息框 + 拖放
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "光标/消息框/拖放 测试", w: 500, h: 400})
+    if not win.ok { return }
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() {
+                int sc = e.scancode()
+                if sc == SDL3.SCANCODE_ESCAPE { return false }
+                if sc == SDL3.SCANCODE_1 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_DEFAULT) }
+                if sc == SDL3.SCANCODE_2 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_TEXT) }
+                if sc == SDL3.SCANCODE_3 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_WAIT) }
+                if sc == SDL3.SCANCODE_4 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_CROSSHAIR) }
+                if sc == SDL3.SCANCODE_5 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_POINTER) }
+                if sc == SDL3.SCANCODE_6 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_MOVE) }
+                if sc == SDL3.SCANCODE_7 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_NOT_ALLOWED) }
+                if sc == SDL3.SCANCODE_M {
+                    SDL3.showMessageBox("测试消息框", "Hello from Leno!\n这是原生消息框", 0)
+                }
+            }
+            // 拖放文件（已有内置支持）
+            if e.isDropFile() {
+                print("拖入文件: " + e.dropPath())
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+
+            r.setColor(255, 220, 100, 255)
+            r.fillRoundedRect(30, 10, 440, 30, 6)
+            r.setColor(0, 0, 0, 255)
+            r.drawText(SDL3.createFontAuto(14.0), "光标切换(1-7) | M=消息框 | 可拖入文件测试", 40, 16, 255, 220, 100)
+
+            r.setColor(60, 60, 90, 255)
+            r.drawRoundedRect(30, 55, 440, 320, 10)
+
+            r.setColor(200, 200, 220, 255)
+            r.drawText(SDL3.createFontAuto(16.0), "1 = DEFAULT    2 = TEXT(输入)", 45, 70, 200, 220, 255)
+            r.drawText(SDL3.createFontAuto(16.0), "3 = WAIT(等待)  4 = CROSSHAIR", 45, 100, 200, 220, 255)
+            r.drawText(SDL3.createFontAuto(16.0), "5 = POINTER(手) 6 = MOVE(移动)", 45, 130, 200, 220, 255)
+            r.drawText(SDL3.createFontAuto(16.0), "7 = NOT_ALLOWED(禁止)", 45, 160, 200, 220, 255)
+            r.drawText(SDL3.createFontAuto(16.0), "M = 弹出原生消息框", 45, 200, 200, 220, 255)
+
+            r.setColor(150, 150, 180, 200)
+            r.drawText(SDL3.createFontAuto(14.0), "拖放: 将文件拖入窗口 → 控制台打印路径", 45, 250, 150, 180, 200)
+        }
+    )
+}
