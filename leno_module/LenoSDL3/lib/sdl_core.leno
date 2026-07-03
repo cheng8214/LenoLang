@@ -202,9 +202,17 @@ clib sdl3 {
     bool SDL_SetWindowSize(Ptr window, i32 w, i32 h)
     bool SDL_SetWindowPosition(Ptr window, i32 x, i32 y)
     bool SDL_SetWindowAlwaysOnTop(Ptr window, bool on_top)
+    bool SDL_ShowWindow(Ptr window)
+    bool SDL_HideWindow(Ptr window)
+    bool SDL_MaximizeWindow(Ptr window)
+    bool SDL_MinimizeWindow(Ptr window)
+    bool SDL_RestoreWindow(Ptr window)
+    bool SDL_SetWindowOpacity(Ptr window, f32 opacity)
 
     str8 SDL_GetClipboardText()
     bool SDL_SetClipboardText(str8 text)
+
+    Ptr SDL_RenderReadPixels(Ptr renderer, Ptr rect)
 }
 
 // ==================== 常量 ====================

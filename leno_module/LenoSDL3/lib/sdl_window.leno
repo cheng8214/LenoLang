@@ -63,6 +63,18 @@ export struct Window {
         return _lib.SDL_SetWindowAlwaysOnTop(handle, v)
     }
 
+    // 设置窗口透明度（0.0 全透明 ~ 1.0 不透明）
+    func setOpacity(float v): bool {
+        return _lib.SDL_SetWindowOpacity(handle, v)
+    }
+
+    // 窗口状态控制
+    func show(): bool        { return _lib.SDL_ShowWindow(handle) }
+    func hide(): bool        { return _lib.SDL_HideWindow(handle) }
+    func maximize(): bool    { return _lib.SDL_MaximizeWindow(handle) }
+    func minimize(): bool    { return _lib.SDL_MinimizeWindow(handle) }
+    func restore(): bool     { return _lib.SDL_RestoreWindow(handle) }
+
     // 销毁窗口
     func destroy() {
         if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false }

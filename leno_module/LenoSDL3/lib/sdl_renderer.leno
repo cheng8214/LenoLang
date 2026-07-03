@@ -250,6 +250,12 @@ export struct Renderer {
     func flush(): bool {
         return _lib.SDL_FlushRenderer(handle)
     }
+
+    // 截取当前渲染画面（返回 SDL_Surface，用完需 _lib.SDL_DestroySurface）
+    // rect 传 null 截取整个视口
+    func readPixels(Ptr rect): Ptr {
+        return _lib.SDL_RenderReadPixels(handle, rect) as Ptr
+    }
 }
 
 // 创建渲染器实例
