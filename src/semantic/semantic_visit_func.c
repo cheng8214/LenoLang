@@ -1,6 +1,95 @@
 #include "semantic_internal.h"
 
 // ============================================================================
+// 辅助：递归检查 TypeInfo 中是否存在未定义的类型（在 resolve_alias_in_type 之后调用）
+// 此时所有 alias 已被解析，剩余的 TYPE_STRUCT 只能是合法 struct 或未定义类型
+// ============================================================================
+static void check_undefined_type(Semantic* s, TypeInfo* type, int line) {
+    if (!type) return;
+
+    if (type->kind == TYPE_STRUCT && type->struct_name) {
+        // 在作用域中查找
+        Symbol* struct_def = scope_resolve_local(s->current, type->struct_name);
+        if (!struct_def && s->current) {
+            struct_def = scope_resolve(s->current, type->struct_name);
+        }
+        if (!struct_def) {
+            // 完全找不到 → 未定义的类型
+            char msg[BUFFER_MEDIUM];
+            snprintf(msg, sizeof(msg), "未定义的类型: %s", type->struct_name);
+            error_add(ERR_SEMANTIC, line, msg);
+        }
+        // 找到了就是合法的 struct 类型（alias 已在 resolve_alias_in_type 中解析）
+    }
+
+    // 递归检查子类型
+    if (type->generic_args) {
+        for (int i = 0; i < type->generic_count; i++) {
+            check_undefined_type(s, type->generic_args[i], line);
+        }
+    }
+    check_undefined_type(s, type->element_type, line);
+    check_undefined_type(s, type->key_type, line);
+    check_undefined_type(s, type->value_type, line);
+    check_undefined_type(s, type->return_type, line);
+    if (type->param_types) {
+        for (int i = 0; i < type->param_count; i++) {
+            check_undefined_type(s, type->param_types[i], line);
+        }
+    }
+}
+
+// 递归解析 TypeInfo 中的 alias 类型（在 resolve_generic_in_type 之后调用）
+// 返回 1 表示有修改，0 表示无修改
+static int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
+    if (!type_ptr || !*type_ptr) return 0;
+    TypeInfo* type = *type_ptr;
+    int changed = 0;
+
+    if (type->kind == TYPE_STRUCT && type->struct_name) {
+        if (face_def_find(type->struct_name)) {
+            type->kind = TYPE_FACE;
+            changed = 1;
+        } else {
+            Symbol* struct_def = scope_resolve_local(s->current, type->struct_name);
+            if (!struct_def && s->current) {
+                struct_def = scope_resolve(s->current, type->struct_name);
+            }
+            if (struct_def && struct_def->kind == SYM_TYPE && struct_def->type) {
+                // 是 alias（如 FSize = Dict[string,float]），解析为实际类型
+                type_free(type);
+                *type_ptr = type_copy(struct_def->type);
+                changed = 1;
+            } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
+                type->kind = TYPE_CSTRUCT;
+                changed = 1;
+            } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
+                type->kind = TYPE_CLIB;
+                changed = 1;
+            }
+        }
+    }
+
+    // 递归处理子类型
+    TypeInfo* t = *type_ptr;
+    if (t->generic_args) {
+        for (int i = 0; i < t->generic_count; i++) {
+            changed |= resolve_alias_in_type(s, &t->generic_args[i], line);
+        }
+    }
+    changed |= resolve_alias_in_type(s, &t->element_type, line);
+    changed |= resolve_alias_in_type(s, &t->key_type, line);
+    changed |= resolve_alias_in_type(s, &t->value_type, line);
+    changed |= resolve_alias_in_type(s, &t->return_type, line);
+    if (t->param_types) {
+        for (int i = 0; i < t->param_count; i++) {
+            changed |= resolve_alias_in_type(s, &t->param_types[i], line);
+        }
+    }
+    return changed;
+}
+
+// ============================================================================
 // 辅助：将 AST 中的 TYPE_STRUCT 泛型参数名转换为 TYPE_GENERIC_PARAM
 // ============================================================================
 
@@ -29,6 +118,12 @@ void resolve_generic_in_type(TypeInfo* type, char** type_params, char** type_par
     if (type->param_types) {
         for (int i = 0; i < type->param_count; i++) {
             resolve_generic_in_type(type->param_types[i], type_params, type_param_constraints, count);
+        }
+    }
+    // 递归处理泛型参数（如 Result[T] 中的 T）
+    if (type->generic_args) {
+        for (int i = 0; i < type->generic_count; i++) {
+            resolve_generic_in_type(type->generic_args[i], type_params, type_param_constraints, count);
         }
     }
 }
@@ -139,65 +234,6 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
         return;
     }
 
-    for (int i = 0; i < ast->u.func.pcnt; i++) {
-        TypeInfo* pt = ast->u.func.param_types[i];
-        if (pt && pt->kind == TYPE_STRUCT && pt->struct_name) {
-            if (face_def_find(pt->struct_name)) {
-                pt->kind = TYPE_FACE;
-            } else {
-                // 检查是否是 cstruct 类型
-                // 先尝试在当前作用域查找
-                Symbol* struct_def = scope_resolve_local(s->current, pt->struct_name);
-                // 如果找不到，尝试在父作用域查找
-                if (!struct_def && s->current) {
-                    struct_def = scope_resolve(s->current, pt->struct_name);
-                }
-                if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
-                    pt->kind = TYPE_CSTRUCT;
-                }
-                // 检查是否是 clib 类型
-                if (!struct_def) {
-                    struct_def = scope_resolve_local(s->current, pt->struct_name);
-                    if (!struct_def && s->current) {
-                        struct_def = scope_resolve(s->current, pt->struct_name);
-                    }
-                }
-                if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
-                    pt->kind = TYPE_CLIB;
-                }
-            }
-        }
-        // 修正数组元素类型中的 face（如 Array[Speaker] 中 Speaker 被解析为 struct）
-        if (pt && pt->kind == TYPE_ARRAY && pt->element_type && pt->element_type->kind == TYPE_STRUCT && pt->element_type->struct_name) {
-            if (face_def_find(pt->element_type->struct_name)) {
-                pt->element_type->kind = TYPE_FACE;
-            }
-        }
-    }
-
-    if (ast->u.func.return_type && ast->u.func.return_type->kind == TYPE_STRUCT && ast->u.func.return_type->struct_name) {
-        if (face_def_find(ast->u.func.return_type->struct_name)) {
-            ast->u.func.return_type->kind = TYPE_FACE;
-        } else {
-            // 检查是否是 cstruct 类型
-            Symbol* struct_def = scope_resolve_local(s->current, ast->u.func.return_type->struct_name);
-            if (!struct_def && s->current) {
-                struct_def = scope_resolve(s->current, ast->u.func.return_type->struct_name);
-            }
-            if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
-                ast->u.func.return_type->kind = TYPE_CSTRUCT;
-            } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
-                ast->u.func.return_type->kind = TYPE_CLIB;
-                // 同步更新符号类型（pre-scan 时可能已用 TYPE_STRUCT 注册）
-                Symbol* sym = scope_resolve_local(s->current, ast->u.func.name);
-                if (!sym && s->current) sym = scope_resolve(s->current, ast->u.func.name);
-                if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
-                    sym->type->return_type->kind = TYPE_CLIB;
-                }
-            }
-        }
-    }
-
     // 将解析为 struct 的泛型类型参数转换为 TYPE_GENERIC_PARAM（递归处理嵌套类型如 Array[T]）
     if (ast->u.func.type_param_count > 0 && ast->u.func.type_params) {
         for (int i = 0; i < ast->u.func.pcnt; i++) {
@@ -235,6 +271,34 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             }
         }
     }
+
+    // ========== 解析 alias 类型 + 检查未定义类型 ==========
+    // 在 resolve_generic_in_type 之后执行，此时泛型参数 T/K/V 已转换为 TYPE_GENERIC_PARAM
+    // 剩余的 TYPE_STRUCT 只能是合法 struct、alias 或未定义类型
+
+    // 1. 解析参数类型中的 alias（如 FSize = Dict[string,float]）
+    for (int i = 0; i < ast->u.func.pcnt; i++) {
+        resolve_alias_in_type(s, &ast->u.func.param_types[i], ast->line);
+    }
+    // 2. 解析返回类型中的 alias
+    resolve_alias_in_type(s, &ast->u.func.return_type, ast->line);
+
+    // 3. 同步更新符号的返回类型（当 alias 或类型被解析时）
+    if (ast->u.func.return_type) {
+        Symbol* sym = scope_resolve_local(s->current, ast->u.func.name);
+        if (!sym && s->current) sym = scope_resolve(s->current, ast->u.func.name);
+        if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
+            type_free(sym->type->return_type);
+            sym->type->return_type = type_copy(ast->u.func.return_type);
+        }
+    }
+
+    // 4. 检查参数类型中是否有未定义的类型
+    for (int i = 0; i < ast->u.func.pcnt; i++) {
+        check_undefined_type(s, ast->u.func.param_types[i], ast->line);
+    }
+    // 5. 检查返回类型中是否有未定义的类型
+    check_undefined_type(s, ast->u.func.return_type, ast->line);
 
     // ========== 默认参数语义检查 ==========
     int found_default = 0;  // 标记是否已遇到有默认值的参数

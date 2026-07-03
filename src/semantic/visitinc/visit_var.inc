@@ -51,7 +51,7 @@
                     sym->type = saved_type;
                 }
 
-                // 检查声明的类型是否存在（对于自定义 struct/cstruct/clib 类型）
+                // 检查声明的类型是否存在（对于自定义 struct/cstruct/clib/alias 类型）
                 if ((ast->u.var_decl.type->kind == TYPE_STRUCT || ast->u.var_decl.type->kind == TYPE_CLIB) &&
                     ast->u.var_decl.type->struct_name) {
                     const char* type_name = ast->u.var_decl.type->struct_name;
@@ -63,14 +63,19 @@
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
-                        } else if (struct_def->type->kind == TYPE_CLIB) {
+                        } else if (struct_def->kind == SYM_TYPE && struct_def->type) {
+                            // 类型是 alias（如 FSize = Dict[string,float]），解析为实际类型
+                            type_free(ast->u.var_decl.type);
+                            ast->u.var_decl.type = type_copy(struct_def->type);
+                        } else if (struct_def->type && struct_def->type->kind == TYPE_CLIB) {
                             // 如果是 clib 类型，更新为 TYPE_CLIB
                             ast->u.var_decl.type->kind = TYPE_CLIB;
-                        } else if (struct_def->type->kind == TYPE_CSTRUCT) {
+                        } else if (struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                             // 如果实际是 cstruct，更新类型为 TYPE_CSTRUCT
                             ast->u.var_decl.type->kind = TYPE_CSTRUCT;
-                        } else if (struct_def->type->kind != TYPE_STRUCT &&
-                                   struct_def->type->kind != TYPE_FACE) {
+                        } else if (!struct_def->type ||
+                                   (struct_def->type->kind != TYPE_STRUCT &&
+                                    struct_def->type->kind != TYPE_FACE)) {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
@@ -84,12 +89,19 @@
                         ast->u.var_decl.type->kind = TYPE_FACE;
                     } else {
                         Symbol* struct_def = scope_resolve(s->current, type_name);
-                        if (!struct_def || (struct_def->type->kind != TYPE_STRUCT &&
-                                            struct_def->type->kind != TYPE_CSTRUCT &&
-                                            struct_def->type->kind != TYPE_FACE)) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的 struct 类型: %s", type_name);
-                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                        if (!struct_def || !struct_def->type ||
+                            (struct_def->type->kind != TYPE_STRUCT &&
+                             struct_def->type->kind != TYPE_CSTRUCT &&
+                             struct_def->type->kind != TYPE_FACE)) {
+                            // 检查是否是 alias
+                            if (struct_def && struct_def->kind == SYM_TYPE && struct_def->type) {
+                                type_free(ast->u.var_decl.type);
+                                ast->u.var_decl.type = type_copy(struct_def->type);
+                            } else {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
+                                error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                            }
                         } else if (struct_def && struct_def->type->kind == TYPE_CSTRUCT) {
                             // 如果实际是 cstruct，更新类型为 TYPE_CSTRUCT
                             ast->u.var_decl.type->kind = TYPE_CSTRUCT;
@@ -193,18 +205,24 @@
                 if (sym) sym->is_initialized = 1;
                 if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
                     sym->type = type_copy(ast->u.var_decl.type);
-                    
-                    // 检查自定义 struct/cstruct 类型是否已定义
+
+                    // 检查自定义 struct/cstruct/alias 类型是否已定义
                     if (sym->type->kind == TYPE_STRUCT && sym->type->struct_name) {
                         Symbol* struct_def = scope_resolve(s->current, sym->type->struct_name);
-                        if (!struct_def || (struct_def->type->kind != TYPE_STRUCT &&
-                                            struct_def->type->kind != TYPE_CSTRUCT)) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的 struct 类型: %s", sym->type->struct_name);
-                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
-                        } else if (struct_def && struct_def->type->kind == TYPE_CSTRUCT) {
+                        if (struct_def && struct_def->kind == SYM_TYPE && struct_def->type) {
+                            // 类型是 alias（如 FSize = Dict[string,float]），解析为实际类型
+                            type_free(sym->type);
+                            sym->type = type_copy(struct_def->type);
+                        } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                             // 如果实际是 cstruct，更新类型为 TYPE_CSTRUCT
                             sym->type->kind = TYPE_CSTRUCT;
+                        } else if (!struct_def || !struct_def->type ||
+                                   (struct_def->type->kind != TYPE_STRUCT &&
+                                    struct_def->type->kind != TYPE_CSTRUCT &&
+                                    struct_def->type->kind != TYPE_FACE)) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s", sym->type->struct_name);
+                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                         }
                     }
                 } else {

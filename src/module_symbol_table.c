@@ -1046,6 +1046,50 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     TypeInfo* local_alias_types[32] = {0};
     int local_alias_count = 0;
 
+    // 预扫描：收集所有 import 模块的 export alias 到本地别名表
+    // 这样即使没有 use module.Alias，FIND_LOCAL_ALIAS 也能找到
+    {
+        const char* imp_scan = source;
+        while (*imp_scan) {
+            while (*imp_scan && (*imp_scan == ' ' || *imp_scan == '\t' || *imp_scan == '\n' || *imp_scan == '\r')) imp_scan++;
+            if (strncmp(imp_scan, "import", 6) == 0 && (imp_scan[6] == ' ' || imp_scan[6] == '\t' || imp_scan[6] == '"')) {
+                imp_scan += 6;
+                while (*imp_scan && (*imp_scan == ' ' || *imp_scan == '\t')) imp_scan++;
+                if (*imp_scan == '"') {
+                    imp_scan++;
+                    const char* path_start = imp_scan;
+                    while (*imp_scan && *imp_scan != '"') imp_scan++;
+                    int path_len = (int)(imp_scan - path_start);
+                    imp_scan++; // skip closing "
+                    if (path_len > 0 && path_len < 1023) {
+                        char imp_path[1024];
+                        memcpy(imp_path, path_start, path_len);
+                        imp_path[path_len] = '\0';
+                        ModuleSymbolTable* imp_table = module_symbol_table_create(imp_path);
+                        if (imp_table && module_symbol_table_scan_depth(imp_table, normalized_current, depth + 1) == 0) {
+                            for (int ai = 0; ai < imp_table->alias_count && local_alias_count < 32; ai++) {
+                                // 避免重复添加
+                                int dup = 0;
+                                for (int di = 0; di < local_alias_count; di++) {
+                                    if (strcmp(local_alias_names[di], imp_table->aliases[ai].name) == 0) { dup = 1; break; }
+                                }
+                                if (!dup) {
+                                    local_alias_names[local_alias_count] = strdup(imp_table->aliases[ai].name);
+                                    local_alias_types[local_alias_count] = imp_table->aliases[ai].type_info ? type_copy(imp_table->aliases[ai].type_info) : NULL;
+                                    local_alias_count++;
+                                }
+                            }
+                        }
+                        if (imp_table) module_symbol_table_destroy(imp_table);
+                    }
+                }
+            }
+            // 跳到下一行
+            while (*imp_scan && *imp_scan != '\n') imp_scan++;
+            if (*imp_scan) imp_scan++;
+        }
+    }
+
     // 查找本地别名
     #define FIND_LOCAL_ALIAS(n) ({ \
         TypeInfo* _r = NULL; \
