@@ -1,26 +1,16 @@
-// sdl_event.leno — SDL3 事件封装
+// sdl_event.leno — SDL3 事件封装（基于 cstruct，无需手动偏移）
 import ffi
 import "sdl_core.leno" as core
 use core.sdl3
+use core.SDL_KeyboardEvent
+use core.SDL_MouseButtonEvent
+use core.SDL_MouseMotionEvent
+use core.SDL_MouseWheelEvent
+use core.SDL_TextInputEvent
+use core.SDL_WindowEvent
+use core.SDL_DropEvent
 
 sdl3 _lib = core.lib()
-
-// SDL_Event 字段偏移量（字节）
-var EV_TYPE     = 0   // u32: 事件类型
-var EV_WINID    = 16  // u32: 窗口 ID
-var EV_KEY_REP  = 21  // u8:  键盘重复标志
-var EV_KEY_MOD  = 32  // u16: 键盘修饰键
-var EV_SCAN     = 24  // u32: 键盘扫描码
-var EV_BUTTON   = 24  // u8:  鼠标按钮
-var EV_CLICKS   = 26  // u8:  点击次数
-var EV_WHEEL_X  = 24  // f32: 滚轮 X
-var EV_WHEEL_Y  = 28  // f32: 滚轮 Y
-var EV_MOUSE_X  = 28  // f32: 鼠标 X
-var EV_MOUSE_Y  = 32  // f32: 鼠标 Y
-var EV_MOUSE_DX = 36  // f32: 鼠标相对 X
-var EV_MOUSE_DY = 40  // f32: 鼠标相对 Y
-var EV_TEXT     = 24  // char[32]: 文本输入内容
-var EV_DROP     = 24  // str8:  拖放文件路径
 
 export struct Event {
     Ptr raw; bool has
@@ -36,53 +26,98 @@ export struct Event {
         return has
     }
 
-    func sdl3_type(): int { return ffi.read_int(raw, EV_TYPE) }
+    func sdl3_type(): int {
+        var e = SDL_KeyboardEvent.from_ptr(raw)    // 公共头部都一样
+        return e.type as int
+    }
 
     // ---- 通用 ----
-    func isQuit(): bool          { return sdl3_type() == core.EVENT_QUIT }
-    func windowID(): int         { return ffi.read_int(raw, EV_WINID) }
+    func isQuit(): bool  { return sdl3_type() == core.EVENT_QUIT }
+    func windowID(): int {
+        var e = SDL_KeyboardEvent.from_ptr(raw)
+        return e.windowID as int
+    }
 
     // ---- 窗口 ----
-    func isWindowClose(): bool    { return sdl3_type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
-    func isWindowResized(): bool  { return sdl3_type() == core.EVENT_WINDOW_RESIZED }
-    func isWindowMoved(): bool    { return sdl3_type() == core.EVENT_WINDOW_MOVED }
-    func isWindowMinimized(): bool { return sdl3_type() == core.EVENT_WINDOW_MINIMIZED }
-    func isWindowMaximized(): bool { return sdl3_type() == core.EVENT_WINDOW_MAXIMIZED }
-    func isWindowRestored(): bool  { return sdl3_type() == core.EVENT_WINDOW_RESTORED }
+    func isWindowClose(): bool       { return sdl3_type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
+    func isWindowResized(): bool     { return sdl3_type() == core.EVENT_WINDOW_RESIZED }
+    func isWindowMoved(): bool       { return sdl3_type() == core.EVENT_WINDOW_MOVED }
+    func isWindowMinimized(): bool   { return sdl3_type() == core.EVENT_WINDOW_MINIMIZED }
+    func isWindowMaximized(): bool   { return sdl3_type() == core.EVENT_WINDOW_MAXIMIZED }
+    func isWindowRestored(): bool    { return sdl3_type() == core.EVENT_WINDOW_RESTORED }
     func isWindowFocusGained(): bool { return sdl3_type() == core.EVENT_WINDOW_FOCUS_GAINED }
     func isWindowFocusLost(): bool   { return sdl3_type() == core.EVENT_WINDOW_FOCUS_LOST }
     func isWindowMouseEnter(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_ENTER }
     func isWindowMouseLeave(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_LEAVE }
 
     // ---- 键盘 ----
-    func isKeyDown(): bool       { return sdl3_type() == core.EVENT_KEY_DOWN }
-    func isKeyUp(): bool         { return sdl3_type() == core.EVENT_KEY_UP }
-    func scancode(): int         { return ffi.read_int(raw, EV_SCAN) }
-    func keyRepeat(): bool       { return ffi.read_byte(raw, EV_KEY_REP) != 0 }
-    func keyMod(): int           { return ffi.read_uint16(raw, EV_KEY_MOD) }
+    func isKeyDown(): bool { return sdl3_type() == core.EVENT_KEY_DOWN }
+    func isKeyUp(): bool   { return sdl3_type() == core.EVENT_KEY_UP }
+    func scancode(): int {
+        var e = SDL_KeyboardEvent.from_ptr(raw)
+        return e.scancode as int
+    }
+    func keyRepeat(): bool {
+        var e = SDL_KeyboardEvent.from_ptr(raw)
+        return e.repeat != 0
+    }
+    func keyMod(): int {
+        var e = SDL_KeyboardEvent.from_ptr(raw)
+        return e.mod as int
+    }
 
     // ---- 鼠标 ----
     func isMouseMotion(): bool     { return sdl3_type() == core.EVENT_MOUSE_MOTION }
     func isMouseButtonDown(): bool { return sdl3_type() == core.EVENT_MOUSE_BUTTON_DOWN }
     func isMouseButtonUp(): bool   { return sdl3_type() == core.EVENT_MOUSE_BUTTON_UP }
     func isMouseWheel(): bool      { return sdl3_type() == core.EVENT_MOUSE_WHEEL }
-    func mouseX(): float     { return ffi.read_float(raw, EV_MOUSE_X) }
-    func mouseY(): float     { return ffi.read_float(raw, EV_MOUSE_Y) }
-    func mouseDX(): float    { return ffi.read_float(raw, EV_MOUSE_DX) }
-    func mouseDY(): float    { return ffi.read_float(raw, EV_MOUSE_DY) }
-    func mouseButton(): int  { return ffi.read_int(raw, EV_BUTTON) & 0xFF }
-    func mouseClicks(): int  { return ffi.read_byte(raw, EV_CLICKS) }
-    func wheelX(): float     { return ffi.read_float(raw, EV_WHEEL_X) }
-    func wheelY(): float     { return ffi.read_float(raw, EV_WHEEL_Y) }
+    func mouseX(): float {
+        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        return e.x as float
+    }
+    func mouseY(): float {
+        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        return e.y as float
+    }
+    func mouseDX(): float {
+        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        return e.xrel as float
+    }
+    func mouseDY(): float {
+        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        return e.yrel as float
+    }
+    func mouseButton(): int {
+        var e = SDL_MouseButtonEvent.from_ptr(raw)
+        return e.button as int
+    }
+    func mouseClicks(): int {
+        var e = SDL_MouseButtonEvent.from_ptr(raw)
+        return e.clicks as int
+    }
+    func wheelX(): float {
+        var e = SDL_MouseWheelEvent.from_ptr(raw)
+        return e.x as float
+    }
+    func wheelY(): float {
+        var e = SDL_MouseWheelEvent.from_ptr(raw)
+        return e.y as float
+    }
 
     // ---- 文本输入 ----
-    func isTextInput(): bool  { return sdl3_type() == core.EVENT_TEXT_INPUT }
-    func text(): string       { return ffi.read_string(raw, EV_TEXT) }
+    func isTextInput(): bool { return sdl3_type() == core.EVENT_TEXT_INPUT }
+    func text(): string {
+        var e = SDL_TextInputEvent.from_ptr(raw)
+        return ffi.read_string(e.text, 0)      // text 是 const char* 指针
+    }
 
     // ---- 拖放 ----
-    func isDropFile(): bool  { return sdl3_type() == core.EVENT_DROP_FILE }
-    func isDropText(): bool  { return sdl3_type() == core.EVENT_DROP_TEXT }
-    func dropPath(): string  { return ffi.read_string(raw, EV_DROP) }
+    func isDropFile(): bool { return sdl3_type() == core.EVENT_DROP_FILE }
+    func isDropText(): bool { return sdl3_type() == core.EVENT_DROP_TEXT }
+    func dropPath(): string {
+        var e = SDL_DropEvent.from_ptr(raw)
+        return ffi.read_string(e.data, 0)      // data 是 const char* 指针（文件名/文本）
+    }
 
     func uninit() {
         if raw != null { ffi.free(raw); raw = null; has = false }

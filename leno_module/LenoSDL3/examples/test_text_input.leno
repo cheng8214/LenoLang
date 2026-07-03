@@ -1,0 +1,90 @@
+// test_text_input.leno - 测试 isTextInput() 和 text() 函数
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "Text Input Test - isTextInput() & text()", w: 640, h: 400})
+    if not win.ok { print("窗口创建失败"); return }
+
+    // 初始化字体
+    SDL3.ttfInit()
+    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 20.0)
+    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/simsun.ttc", 20.0) }
+
+    var textBuffer = ""          // 累积所有文本输入
+    var lastInput = ""           // 最后一次输入的文本
+    var inputCount = 0           // 输入次数统计
+
+    // 关键：必须调用 startTextInput 才能接收文本输入事件
+    SDL3.startTextInput(win.handle)
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+
+            // ===== isTextInput() 测试 =====
+            // 判断是否是文本输入事件（非按键事件，是实际产生的字符）
+            if e.isTextInput() {
+                // ===== text() 测试 =====
+                // 获取输入的文本内容
+                lastInput = e.text()
+                textBuffer = textBuffer + lastInput
+                inputCount = inputCount + 1
+            }
+
+
+
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(22, 22, 40, 255)
+            r.clear()
+
+            // 辅助文字绘制函数
+            func drawText(string s, int x, int y, int rr, int gg, int bb) {
+                var tex = SDL3.createTextTexture(r.handle, font, s, rr, gg, bb)
+                if tex.ok { r.drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
+            }
+
+            // 标题
+            drawText("Text Input Test -- isTextInput() & text() 测试", 20, 15, 255, 200, 80)
+
+            // 分隔线
+            drawText("========================================", 20, 42, 100, 100, 100)
+
+            // 实时显示当前输入的文本
+            drawText("当前输入内容:", 20, 72, 180, 180, 200)
+            if textBuffer == "" {
+                drawText("(请开始输入文字...)", 30, 98, 80, 80, 80)
+            } else {
+                drawText("\"" + textBuffer + "\"", 30, 98, 100, 255, 100)
+            }
+
+            // 显示最后一次输入
+            drawText("最后一次 text() 返回值:", 20, 135, 180, 180, 200)
+            if lastInput == "" {
+                drawText("(无)", 30, 160, 80, 80, 80)
+            } else {
+                drawText("\"" + lastInput + "\"", 30, 160, 255, 180, 100)
+            }
+
+            // 统计信息
+            drawText("输入次数 (isTextInput() 为 true 的次数): " + inputCount, 20, 200, 150, 200, 255)
+
+            // 说明
+            drawText("========================================", 20, 240, 100, 100, 100)
+            drawText("说明:", 20, 268, 200, 200, 100)
+            drawText("  1. 输入文字/字母/中文/符号 — isTextInput() 为 true", 20, 292, 150, 150, 150)
+            drawText("  2. text() 返回当前输入的字符文本", 20, 314, 150, 150, 150)
+            drawText("  3. isTextInput 与 isKeyDown 不同:", 20, 336, 150, 150, 150)
+            drawText("     isKeyDown 检测物理按键, isTextInput 检测实际字符", 30, 358, 120, 120, 120)
+            drawText("  4. 按 ESC 退出", 20, 380, 150, 150, 150)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+    print("text() 总共返回: \"" + textBuffer + "\"，输入次数: " + inputCount)
+}

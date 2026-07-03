@@ -29,6 +29,92 @@ cstruct SDL_Event {
     u8  _data[108]
 }
 
+// ==================== 各事件类型 cstruct（替换手动偏移读取） ====================
+
+export cstruct SDL_KeyboardEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    u32 scancode     // 24
+    i32 key          // 28
+    u16 mod          // 32
+    u16 raw_code     // 34
+    u8  down         // 36
+    u8  repeat       // 37
+}
+
+export cstruct SDL_MouseButtonEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    u8  button       // 24
+    u8  down         // 25
+    u8  clicks       // 26
+    u8  _pad         // 27
+    f32 x            // 28
+    f32 y            // 32
+}
+
+export cstruct SDL_MouseMotionEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    u32 state        // 24
+    f32 x            // 28
+    f32 y            // 32
+    f32 xrel         // 36
+    f32 yrel         // 40
+}
+
+export cstruct SDL_MouseWheelEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    f32 x            // 24
+    f32 y            // 28
+    u32 direction    // 32
+    f32 mouse_x      // 36
+    f32 mouse_y      // 40
+}
+
+export cstruct SDL_TextInputEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 _pad         // 20  (8字节对齐填充)
+    Ptr text         // 24  (const char*)
+}
+
+export cstruct SDL_WindowEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    i32 data1        // 20
+    i32 data2        // 24
+}
+
+export cstruct SDL_DropEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    f32 x            // 20
+    f32 y            // 24
+    u32 _pad         // 28  (8字节对齐填充)
+    Ptr source       // 32  (const char*)
+    Ptr data         // 40  (const char*)
+}
+
 export cstruct SDL_Color {
     u8 r; u8 g; u8 b; u8 a
 }
@@ -91,6 +177,9 @@ clib sdl3 {
 
     Ptr  SDL_GetKeyboardState(Ptr numkeys)
     bool SDL_PollEvent(Ptr event)
+    bool SDL_StartTextInput(Ptr window)
+    bool SDL_StopTextInput(Ptr window)
+    bool SDL_TextInputActive(Ptr window)
 
     void SDL_Delay(u32 ms)
     u64  SDL_GetTicks()
@@ -272,3 +361,7 @@ export func getError(): string {
 
 export func delay(int ms) { lib().SDL_Delay(ms) }
 export func getTicks(): int { return lib().SDL_GetTicks() as int }//这里为啥要转int因为SDL_GetTicks返回的是u64，是C语音的，这里需要转成int，因为leno的int是64位的，所以需要转换一下
+
+export func startTextInput(Ptr window): bool  { return lib().SDL_StartTextInput(window) }
+export func stopTextInput(Ptr window): bool   { return lib().SDL_StopTextInput(window) }
+export func textInputActive(Ptr window): bool { return lib().SDL_TextInputActive(window) }
