@@ -1,9 +1,9 @@
 // test_draw.leno — 测试绘制：矩形/圆形/三角形/线条/阴影/渐变
 import "../lib/SDL3.leno" as SDL3
 import maths
-import ffi
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.SDL_Vertex
 
 main() {
     var win = SDL3.createWindow({title: "绘制测试 — 矩形/圆形/三角/阴影", w: 800, h: 600})
@@ -101,23 +101,20 @@ main() {
             float p2x = cosA * (-35.0) - sinA * 35.0 + acx
             float p2y = sinA * (-35.0) + cosA * 35.0 + acy
 
-            var vbuf = ffi.malloc(3 * 40)  // SDL_Vertex = 10 float = 40 bytes
+            // 用 SDL_Vertex cstruct 创建三角形顶点
+            var verts = SDL_Vertex.malloc_array(3)
             // 顶点 0: 上方(红)
-            ffi.write_float(vbuf, 0, p0x);  ffi.write_float(vbuf, 4, p0y)
-            ffi.write_float(vbuf, 8, 1.0);  ffi.write_float(vbuf, 12, 0.0); ffi.write_float(vbuf, 16, 0.0); ffi.write_float(vbuf, 20, 1.0)
-            ffi.write_float(vbuf, 24, 0.0); ffi.write_float(vbuf, 28, 0.0)
+            verts[0].x = p0x; verts[0].y = p0y
+            verts[0].r = 1.0; verts[0].g = 0.0; verts[0].b = 0.0; verts[0].a = 1.0
             // 顶点 1: 右下(绿)
-            ffi.write_float(vbuf, 32, p1x); ffi.write_float(vbuf, 36, p1y)
-            ffi.write_float(vbuf, 40, 0.0); ffi.write_float(vbuf, 44, 1.0); ffi.write_float(vbuf, 48, 0.0); ffi.write_float(vbuf, 52, 1.0)
-            ffi.write_float(vbuf, 56, 0.0); ffi.write_float(vbuf, 60, 0.0)
+            verts[1].x = p1x; verts[1].y = p1y
+            verts[1].r = 0.0; verts[1].g = 1.0; verts[1].b = 0.0; verts[1].a = 1.0
             // 顶点 2: 左下(蓝)
-            ffi.write_float(vbuf, 64, p2x); ffi.write_float(vbuf, 68, p2y)
-            ffi.write_float(vbuf, 72, 0.0); ffi.write_float(vbuf, 76, 0.0); ffi.write_float(vbuf, 80, 1.0); ffi.write_float(vbuf, 84, 1.0)
-            ffi.write_float(vbuf, 88, 0.0); ffi.write_float(vbuf, 92, 0.0)
+            verts[2].x = p2x; verts[2].y = p2y
+            verts[2].r = 0.0; verts[2].g = 0.0; verts[2].b = 1.0; verts[2].a = 1.0
 
-            // 通过 drawGeometry 渲染三角形
-            r.drawGeometry(vbuf, 3, null, 0)
-            ffi.free(vbuf)
+            r.drawGeometry(verts.to_ptr(), 3, null, 0)
+            verts.free()
 
             // ==================== 4. 虚线/网格 ====================
             r.drawText(font, "虚线 & 网格", 30, 300, 200, 200, 100)
