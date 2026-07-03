@@ -195,13 +195,21 @@ clib sdl3 {
     bool SDL_SetTextureAlphaMod(Ptr texture, u8 alpha)
     bool SDL_SetTextureColorMod(Ptr texture, u8 r, u8 g, u8 b)
     bool SDL_FlushRenderer(Ptr renderer)
+    bool SDL_RenderTexture9Grid(Ptr renderer, Ptr texture, Ptr srcrect, f32 lw, f32 rw, f32 th, f32 bh, f32 scale, Ptr dstrect)
+    bool SDL_RenderTextureTiled(Ptr renderer, Ptr texture, Ptr srcrect, f32 scale, Ptr dstrect)
+    Ptr  SDL_RenderReadPixels(Ptr renderer, Ptr rect)
 
     u32  SDL_GetMouseState(Ptr x, Ptr y)
+    bool SDL_ShowCursor()
+    bool SDL_HideCursor()
+    bool SDL_CursorVisible()
+    bool SDL_WarpMouseInWindow(Ptr window, f32 x, f32 y)
 
     bool SDL_SetWindowTitle(Ptr window, str8 title)
     bool SDL_SetWindowSize(Ptr window, i32 w, i32 h)
     bool SDL_SetWindowPosition(Ptr window, i32 x, i32 y)
     bool SDL_SetWindowAlwaysOnTop(Ptr window, bool on_top)
+    bool SDL_SetWindowFullscreen(Ptr window, bool fullscreen)
     bool SDL_ShowWindow(Ptr window)
     bool SDL_HideWindow(Ptr window)
     bool SDL_MaximizeWindow(Ptr window)
@@ -212,7 +220,8 @@ clib sdl3 {
     str8 SDL_GetClipboardText()
     bool SDL_SetClipboardText(str8 text)
 
-    Ptr SDL_RenderReadPixels(Ptr renderer, Ptr rect)
+    u64  SDL_GetPerformanceCounter()
+    u64  SDL_GetPerformanceFrequency()
 }
 
 // ==================== 常量 ====================
@@ -395,5 +404,13 @@ export func stopTextInput(Ptr window): bool   { return lib().SDL_StopTextInput(w
 export func textInputActive(Ptr window): bool { return lib().SDL_TextInputActive(window) }
 
 export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) as int }
+export func showCursor(): bool    { return lib().SDL_ShowCursor() }
+export func hideCursor(): bool    { return lib().SDL_HideCursor() }
+export func cursorVisible(): bool { return lib().SDL_CursorVisible() }
+export func warpMouse(Ptr window, float x, float y): bool { return lib().SDL_WarpMouseInWindow(window, x, y) }
+
 export func getClipboardText(): string { return lib().SDL_GetClipboardText() as string }
 export func setClipboardText(string text): bool { return lib().SDL_SetClipboardText(text) }
+
+export func getPerfCounter(): int { return lib().SDL_GetPerformanceCounter() as int }
+export func getPerfFrequency(): int { return lib().SDL_GetPerformanceFrequency() as int }

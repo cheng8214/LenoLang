@@ -251,10 +251,19 @@ export struct Renderer {
         return _lib.SDL_FlushRenderer(handle)
     }
 
-    // 截取当前渲染画面（返回 SDL_Surface，用完需 _lib.SDL_DestroySurface）
-    // rect 传 null 截取整个视口
+    // 截取当前渲染画面
     func readPixels(Ptr rect): Ptr {
         return _lib.SDL_RenderReadPixels(handle, rect) as Ptr
+    }
+
+    // 九宫格渲染（UI 边框不拉伸）
+    func drawTexture9Grid(Ptr texture, float lw, float rw, float th, float bh, float scale, Ptr dst): bool {
+        return _lib.SDL_RenderTexture9Grid(handle, texture, null, lw, rw, th, bh, scale, dst)
+    }
+
+    // 平铺渲染
+    func drawTextureTiled(Ptr texture, float scale, Ptr dst): bool {
+        return _lib.SDL_RenderTextureTiled(handle, texture, null, scale, dst)
     }
 }
 

@@ -12,9 +12,15 @@ main() {
     print("剪贴板: " + SDL3.getClipboardText())
 
     // ---- 窗口 API ----
-    win.setTitle("New API — 窗口控制 & 纹理调色 & 截图")
+    win.setTitle("New API — 窗口/纹理/截图/光标/全屏/计时")
     win.setOpacity(0.95)
-    print("setOpacity(0.95) OK")
+    win.setAlwaysOnTop(false)
+    print("窗口初始化 OK")
+
+    // ---- 性能计数器 ----
+    var perfStart = SDL3.getPerfCounter()
+    var perfFreq  = SDL3.getPerfFrequency()
+    print("性能计数器: freq=" + perfFreq + " start=" + perfStart)
 
     // ---- TTF ----
     SDL3.ttfInit()
@@ -55,10 +61,15 @@ main() {
             // 剪贴板
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_C { clipText = SDL3.getClipboardText(); lastMsg = "clipboard read" }
 
-            // 截图（下一帧在 onRender 中执行）
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_P {
-                needShot = true
-            }
+            // 光标
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_D { SDL3.showCursor(); lastMsg = "showCursor" }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_X { SDL3.hideCursor(); lastMsg = "hideCursor" }
+
+            // 全屏
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_F { win.setFullscreen(true); lastMsg = "fullscreen ON" }
+
+            // 截图
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_P { needShot = true }
 
             return true
         },
@@ -79,18 +90,18 @@ main() {
             r.drawText(font, "New API — 窗口控制 & 纹理调色 & 截图", 10, 8, 255, 220, 80)
             r.drawText(font, "Alpha:" + alpha + "  RGB:" + cr + "," + cg + "," + cb + "  最后操作: " + lastMsg, 10, 32, 180, 200, 255)
 
-            // 操作说明
             int ly = 70
-            r.drawText(font, "纹理调色: 1=半透明 2=不透明 3=红色调 4=正常", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "纹理: 1=半透明 2=不透明 3=红色调 4=正常", 10, ly, 150, 150, 150); ly = ly + 22
             r.drawText(font, "窗口: W=显示 H=隐藏 M=最大化 N=最小化 R=还原 Z=400x300", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "截图: P=保存截图到 d:\\screenshot.bmp  C=读剪贴板", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "全屏: F=开启  光标: D=显示 X=隐藏", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "截图: P=保存  剪贴板: C=读取   ESC=退出", 10, ly, 150, 150, 150); ly = ly + 15
 
-            r.drawText(font, "新增 Window 方法:", 10, ly + 15, 200, 255, 100); ly = ly + 37
-            r.drawText(font, "  show / hide / maximize / minimize / restore / setOpacity", 10, ly, 120, 120, 120); ly = ly + 22
-            r.drawText(font, "新增 Renderer 方法:", 10, ly, 200, 255, 100); ly = ly + 22
-            r.drawText(font, "  setRenderTarget / setTextureAlpha / setTextureColor / flush / readPixels", 10, ly, 120, 120, 120); ly = ly + 22
-            r.drawText(font, "新增独立函数:", 10, ly, 200, 255, 100); ly = ly + 22
-            r.drawText(font, "  getMouseState / getClipboardText / setClipboardText", 10, ly, 120, 120, 120)
+            r.drawText(font, "新增 API:", 10, ly, 200, 255, 100); ly = ly + 22
+            r.drawText(font, "  Mouse: showCursor/hideCursor/cursorVisible/warpMouse/getMouseState", 10, ly, 100, 200, 100); ly = ly + 22
+            r.drawText(font, "  Timer: getPerfCounter/getPerfFrequency", 10, ly, 100, 200, 100); ly = ly + 22
+            r.drawText(font, "  Window: setFullscreen/show/hide/maximize/minimize/restore/setOpacity", 10, ly, 100, 200, 100); ly = ly + 22
+            r.drawText(font, "  Renderer: setRenderTarget/setTextureAlpha/setTextureColor/readPixels/flush/drawTexture9Grid/drawTextureTiled", 10, ly, 100, 200, 100); ly = ly + 22
+            r.drawText(font, "  Clipboard: getClipboardText/setClipboardText", 10, ly, 100, 200, 100)
 
             // 截图：present 之前读取像素并保存
             if needShot {
