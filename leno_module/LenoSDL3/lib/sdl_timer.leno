@@ -5,50 +5,51 @@ use core.sdl3
 sdl3 _lib = core.lib()
 
 export struct Timer {
-    float   interval_ms   // 定时间隔（毫秒）
-    float   next_time     // 下次触发时间（秒）
+    float   _ms = 0.0     // 定时间隔（毫秒）
+    float   _next = 0.0    // 下次触发时间（getTicks 毫秒）
     bool    running       // 是否运行中
     bool    once          // true=一次性
-    Array   _cb           // 回调存在 [0]（编译器已自动初始化为 []）
+    Array   _cb           // 回调存 [0]
+
     // 设置并启动（循环），ms=毫秒，=0 只存回调不启动
     func set(int ms, var cb) {
-        _cb.add(cb)
-        interval_ms = _float(ms)
-        if ms > 0 { next_time = _float(_lib.SDL_GetTicks()) / 1000.0 + _float(ms) / 1000.0; running = true }
+        _cb.clear(); _cb.add(cb); _ms = _float(ms)
+        if ms > 0 { _next = _float(_lib.SDL_GetTicks()) + _ms; running = true }
         else { running = false }
         once = false
     }
 
     // 设置一次性定时器
     func setOnce(int ms, var cb) {
-        _cb.add(cb)
-        interval_ms = _float(ms)
-        next_time = _float(_lib.SDL_GetTicks()) / 1000.0 + _float(ms) / 1000.0
+        _cb.clear(); _cb.add(cb); _ms = _float(ms)
+        _next = _float(_lib.SDL_GetTicks()) + _ms
         running = true; once = true
     }
 
     // 暂停
     func stop() { running = false }
 
-    // 恢复（需先有间隔，否则忽略）
+    // 恢复（需先有间隔）
     func start() {
-        if interval_ms <= 0.0 { return }
-        next_time = _float(_lib.SDL_GetTicks()) / 1000.0 + interval_ms / 1000.0
-        running = true
+        if _ms <= 0.0 { return }
+        _next = _float(_lib.SDL_GetTicks()) + _ms; running = true
     }
 
-    // 修改间隔（毫秒，不改变回调）
-    func reset(int ms) { interval_ms = _float(ms) }
+    // 修改间隔 + 立即重启计时
+    func reset(int ms) {
+        _ms = _float(ms)
+        _next = _float(_lib.SDL_GetTicks()) + _ms; running = true
+    }
 
     // 每帧调用，自动触发回调
     func tick() {
-        if not running or _cb.len() == 0 or interval_ms <= 0.0 { return }
-        float now = _float(_lib.SDL_GetTicks()) / 1000.0
+        if not running or _cb.len() == 0 or _ms <= 0.0 { return }
+        float now = _float(_lib.SDL_GetTicks())
         var cb = _cb[0]
-        while now >= next_time {
+        while now >= _next {
             cb()
             if once { running = false; return }
-            next_time = next_time + interval_ms / 1000.0
+            _next = _next + _ms
         }
     }
 }

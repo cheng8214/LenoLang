@@ -22,13 +22,13 @@ main() {
 
     // ==================== 定时器 ====================
     // t1: 循环定时器，每秒触发
-    Timer t1 = win.setTimer(1000, func() { _count = _count + 1 })
+    Timer t1 = win.addTimer(1000, func() { _count = _count + 1 })
 
     // t2: 初始暂停（ms=0），后续手动 start
-    Timer t2 = win.setTimer(0, func() { _boom = true })
+    Timer t2 = win.addTimer(0, func() { _boom = true })
 
     // t3: 一次性，5 秒后触发
-    Timer t3 = win.setTimerOnce(5000, func() { _done = true })
+    Timer t3 = win.addTimerOnce(5000, func() { _done = true })
 
     // ==================== 主循环 ====================
     win.run(
