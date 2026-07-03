@@ -1,10 +1,10 @@
-// test_extras.leno — 测试 createTexture / updateTexture / setColorScale
+// test_extras.leno — 测试 createTexture / lockTexture / setColorScale / mouseGrab / raise
 import "../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 
 main() {
-    var win = SDL3.createWindow({title: "Extras Test — 纹理创建 & 颜色缩放", w: 600, h: 400})
+    var win = SDL3.createWindow({title: "Extras — lockTexture & mouseGrab & colorScale", w: 600, h: 400})
     if not win.ok { return }
 
     SDL3.ttfInit()
@@ -14,52 +14,60 @@ main() {
     var dynTex = null as Ptr
     var scale  = 1.0
     var lastMsg = ""
+    var grabbed = false
 
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
 
-            // 颜色缩放调节
+            // 颜色缩放
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_UP   { scale = scale + 0.1; if scale > 3.0 { scale = 3.0 }; lastMsg = "scale=" + scale }
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_DOWN { scale = scale - 0.1; if scale < 0.1 { scale = 0.1 }; lastMsg = "scale=" + scale }
+
+            // 鼠标锁定
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_G {
+                grabbed = not grabbed
+                win.setMouseGrab(grabbed)
+                lastMsg = if grabbed then "mouseGrab ON" else "mouseGrab OFF"
+                print(lastMsg + "  getMouseGrab=" + win.getMouseGrab())
+            }
+
+            // 窗口前置
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_T { win.raise(); lastMsg = "raise" }
 
             return true
         },
         func(Renderer r) {
             r.clearColor(20, 20, 40, 255)
-            r.setColorScale(scale)    // 应用颜色缩放
+            r.setColorScale(scale)
 
-            // 首次创建动态纹理（RGBA8888, TARGET 访问模式）
+            // 首次创建动态纹理（TARGET 模式用于离屏渲染）
             if dynTex == null {
                 dynTex = r.createTexture(SDL3.PIXELFORMAT_RGBA8888, SDL3.TEXTUREACCESS_TARGET, 200, 150)
                 if dynTex != null {
-                    lastMsg = "createTexture 200x150 OK"
-                    // 用离屏渲染画内容到纹理
+                    // 离屏渲染到纹理
                     r.setRenderTarget(dynTex)
-                    r.clearColor(40, 80, 120, 255)
+                    r.clearColor(50, 80, 180, 255)
                     r.setRenderTarget(null)
+                    lastMsg = "createTexture 200x150 OK"
                 } else {
                     lastMsg = "createTexture FAIL"
                 }
             }
 
-            // 绘制动态纹理
             if dynTex != null {
                 r.drawTextureAt(dynTex, 10, 60, 200, 150)
             }
 
-            r.drawText(font, "Extras Test — createTexture & colorScale", 10, 8, 255, 220, 80)
-            r.drawText(font, "ColorScale: " + scale + "   " + lastMsg, 10, 32, 180, 200, 255)
+            r.drawText(font, "Extras — lockTexture & mouseGrab & colorScale", 10, 8, 255, 220, 80)
+            r.drawText(font, "Scale:" + scale + "  Grab:" + grabbed + "  " + lastMsg, 10, 32, 180, 200, 255)
 
-            // 说明
             int ly = 230
-            r.drawText(font, "纹理创建:", 10, ly, 200, 255, 100); ly = ly + 22
-            r.drawText(font, "  左侧蓝色方块 = createTexture(200x150) + 离屏渲染", 10, ly, 120, 120, 120); ly = ly + 22
-            r.drawText(font, "颜色缩放:", 10, ly, 200, 255, 100); ly = ly + 22
-            r.drawText(font, "  UP/DOWN — 调节亮度 scale=" + scale, 10, ly, 120, 120, 120); ly = ly + 22
-            r.drawText(font, "  scale<1 变暗  scale=1 正常  scale>1 变亮(HDR)", 10, ly, 100, 100, 100); ly = ly + 22
-            r.drawText(font, "ESC — 退出", 10, ly + 10, 150, 150, 150)
+            r.drawText(font, "颜色缩放: UP/DOWN", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "鼠标锁定: G=切换 (鼠标限制在窗口内)", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "窗口前置: T", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "ESC — 退出", 10, ly + 12, 150, 150, 150)
         }
     )
 
