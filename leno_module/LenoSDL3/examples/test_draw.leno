@@ -1,9 +1,7 @@
 // test_draw.leno — 测试绘制：矩形/圆形/三角形/线条/阴影/渐变
 import "../lib/SDL3.leno" as SDL3
-import maths
 use SDL3.Event
 use SDL3.Renderer
-use SDL3.SDL_Vertex
 
 main() {
     var win = SDL3.createWindow({title: "绘制测试 — 矩形/圆形/三角/阴影", w: 800, h: 600})
@@ -87,31 +85,13 @@ main() {
             r.drawLine(t2x + 60, t2y, t2x + 120, t2y + 40)
             r.drawLine(t2x + 120, t2y + 40, t2x, t2y + 40)
 
-            // 旋转三角形 (drawGeometry — 真三角形渲染)
+            // 旋转三角形 (drawColorTriangle — 使用 Renderer 方法)
             r.drawText(font, "旋转三角 (Geometry)", 420, 155, 200, 200, 100)
-            float acx = 480; float acy = 230
-            float arad = angle * 3.14159265 / 180.0
-            float cosA = maths.cos(arad); float sinA = maths.sin(arad)
-
-            // 用 SDL_Vertex 定义旋转三角形（3 个顶点，旋转后坐标）
-            float p0x = cosA * 0.0  - sinA * (-35.0) + acx
-            float p0y = sinA * 0.0  + cosA * (-35.0) + acy
-            float p1x = cosA * 35.0 - sinA * 35.0  + acx
-            float p1y = sinA * 35.0 + cosA * 35.0  + acy
-            float p2x = cosA * (-35.0) - sinA * 35.0 + acx
-            float p2y = sinA * (-35.0) + cosA * 35.0 + acy
-
-            // 用 SDL_Vertex cstruct 创建三角形顶点
-            var verts = SDL_Vertex.malloc_array(3)
-            verts[0].x = p0x; verts[0].y = p0y
-            verts[0].r = 1.0; verts[0].g = 0.0; verts[0].b = 0.0; verts[0].a = 1.0
-            verts[1].x = p1x; verts[1].y = p1y
-            verts[1].r = 0.0; verts[1].g = 1.0; verts[1].b = 0.0; verts[1].a = 1.0
-            verts[2].x = p2x; verts[2].y = p2y
-            verts[2].r = 0.0; verts[2].g = 0.0; verts[2].b = 1.0; verts[2].a = 1.0
-
-            r.drawGeometry(verts.to_ptr(), 3, null, 0)
-            verts.free()
+            // RGB 三顶点渐变
+            r.drawTriangleGradient(480, 230, 35.0, angle,
+                1.0, 0.0, 0.0, 1.0,
+                0.0, 1.0, 0.0, 1.0,
+                0.0, 0.0, 1.0, 1.0)
 
             // ==================== 4. 虚线/网格 ====================
             r.drawText(font, "虚线 & 网格", 30, 300, 200, 200, 100)

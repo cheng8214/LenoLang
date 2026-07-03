@@ -10,6 +10,7 @@ use core.SDL_Color
 use core.SDL_FColor
 use core.SDL_FPoint
 use core.SDL_Point
+use core.SDL_Vertex
 use core.Color
 use core.FColor
 use core.Size
@@ -25,7 +26,9 @@ export struct Renderer {
 
     // 创建默认渲染器（关联到窗口）
     func initDefault(Ptr window): bool {
-        handle = _lib.SDL_CreateRenderer(window, null as string) as Ptr
+        // 开启抗锯齿线条
+        _lib.SDL_SetHint("SDL_HINT_RENDER_LINE_METHOD", "2")
+        handle = _lib.SDL_CreateRenderer(window, null as string)
         ok = handle != null
         return ok
     }
@@ -292,6 +295,134 @@ export struct Renderer {
     // 几何渲染（三角形/多边形），vertices 为 SDL_Vertex 数组 to_ptr()
     func drawGeometry(Ptr vertices, int count, Ptr indices, int idxCount): bool {
         return _lib.SDL_RenderGeometry(handle, null, vertices, count, indices, idxCount)
+    }
+
+    // 绘制三角形（单色填充，支持旋转和缩放）→ 每顶点独立颜色见 drawTriangleGradient
+    func drawTriangle(float cx, float cy, float size, float angle, float r, float g, float b, float a): bool {
+        float rad = angle * 3.14159265 / 180.0
+        float c = maths.cos(rad); float s = maths.sin(rad)
+
+        float p0x = c * 0.0  - s * (-size) + cx
+        float p0y = s * 0.0  + c * (-size) + cy
+        float p1x = c * size - s * size   + cx
+        float p1y = s * size + c * size   + cy
+        float p2x = c * (-size) - s * size + cx
+        float p2y = s * (-size) + c * size + cy
+
+        var verts = SDL_Vertex.malloc_array(3)
+        verts[0].x = p0x; verts[0].y = p0y
+        verts[0].r = r; verts[0].g = g; verts[0].b = b; verts[0].a = a
+        verts[1].x = p1x; verts[1].y = p1y
+        verts[1].r = r; verts[1].g = g; verts[1].b = b; verts[1].a = a
+        verts[2].x = p2x; verts[2].y = p2y
+        verts[2].r = r; verts[2].g = g; verts[2].b = b; verts[2].a = a
+
+        var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), 3, null, 0)
+        verts.free(); return ok
+    }
+
+    // 绘制渐变三角形（每个顶点可独立设色）
+    func drawTriangleGradient(float cx, float cy, float size, float angle,
+                               float r0, float g0, float b0, float a0,
+                               float r1, float g1, float b1, float a1,
+                               float r2, float g2, float b2, float a2): bool {
+        float rad = angle * 3.14159265 / 180.0
+        float c = maths.cos(rad); float s = maths.sin(rad)
+
+        float p0x = c * 0.0  - s * (-size) + cx
+        float p0y = s * 0.0  + c * (-size) + cy
+        float p1x = c * size - s * size   + cx
+        float p1y = s * size + c * size   + cy
+        float p2x = c * (-size) - s * size + cx
+        float p2y = s * (-size) + c * size + cy
+
+        var verts = SDL_Vertex.malloc_array(3)
+        verts[0].x = p0x; verts[0].y = p0y
+        verts[0].r = r0; verts[0].g = g0; verts[0].b = b0; verts[0].a = a0
+        verts[1].x = p1x; verts[1].y = p1y
+        verts[1].r = r1; verts[1].g = g1; verts[1].b = b1; verts[1].a = a1
+        verts[2].x = p2x; verts[2].y = p2y
+        verts[2].r = r2; verts[2].g = g2; verts[2].b = b2; verts[2].a = a2
+
+        var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), 3, null, 0)
+        verts.free(); return ok
+    }
+
+    // 填充圆角矩形（使用当前绘制颜色）
+    func fillRoundedRect(float x, float y, float w, float h, float r): bool {
+        if r <= 0.0 { return fillRect(x, y, w, h) }
+        if r > w * 0.5 { r = w * 0.5 }
+        if r > h * 0.5 { r = h * 0.5 }
+
+        // 直边区域（fillRect 用当前绘制颜色）
+        fillRect(x + r, y, w - 2.0 * r, h)
+        fillRect(x, y + r, r, h - 2.0 * r)
+        fillRect(x + w - r, y + r, r, h - 2.0 * r)
+
+        // 获取当前颜色供顶点使用
+        var col = getColorFloat()
+        float cr = col.r; float cg = col.g; float cb = col.b; float ca = col.a
+
+        var segs = 32; var vcnt = 3 * segs; var half_pi = 1.57079633
+        var verts = SDL_Vertex.malloc_array(vcnt)
+
+        // 辅助：填充一个角的三角扇顶点
+        func fillCorner(float cx, float cy, float start_a) {
+            var step = half_pi / _float(segs)
+            for 0 : segs - 1 to i {
+                var a1 = start_a + step * _float(i)
+                var a2 = start_a + step * _float(i + 1)
+                var vi = i * 3
+                verts[vi].x = cx; verts[vi].y = cy
+                verts[vi].r = cr; verts[vi].g = cg; verts[vi].b = cb; verts[vi].a = ca
+                verts[vi+1].x = cx + r * maths.cos(a1); verts[vi+1].y = cy + r * maths.sin(a1)
+                verts[vi+1].r = cr; verts[vi+1].g = cg; verts[vi+1].b = cb; verts[vi+1].a = ca
+                verts[vi+2].x = cx + r * maths.cos(a2); verts[vi+2].y = cy + r * maths.sin(a2)
+                verts[vi+2].r = cr; verts[vi+2].g = cg; verts[vi+2].b = cb; verts[vi+2].a = ca
+            }
+            _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), vcnt, null, 0)
+        }
+
+        fillCorner(x + r,     y + r,     half_pi * 2.0)  // 左上 π→3π/2
+        fillCorner(x + w - r, y + r,     half_pi * 3.0)  // 右上 3π/2→2π
+        fillCorner(x + w - r, y + h - r, 0.0)             // 右下 0→π/2
+        fillCorner(x + r,     y + h - r, half_pi)         // 左下 π/2→π
+        verts.free(); return true
+    }
+
+    // 绘制圆角矩形边框（使用当前绘制颜色）
+    func drawRoundedRect(float x, float y, float w, float h, float r): bool {
+        if r <= 0.0 { return drawRect(x, y, w, h) }
+        if r > w * 0.5 { r = w * 0.5 }
+        if r > h * 0.5 { r = h * 0.5 }
+
+        // 4 条直边
+        drawLine(x + r, y, x + w - r, y)
+        drawLine(x + w, y + r, x + w, y + h - r)
+        drawLine(x + w - r, y + h, x + r, y + h)
+        drawLine(x, y + h - r, x, y + r)
+
+        // 4 个圆角弧（用 drawLines）
+        var segs = 32; var pts = segs + 1; var half_pi = 1.57079633
+        Ptr buf = ffi.malloc(pts * 8)  // x,y 对
+        if buf == null { return false }
+
+        // 辅助：画一个圆角弧
+        func drawArc(float cx, float cy, float start_a) {
+            var step = half_pi / _float(segs)
+            for 0 : segs to i {
+                var a = start_a + step * _float(i)
+                ffi.write_float(buf, i * 8,     cx + r * maths.cos(a))
+                ffi.write_float(buf, i * 8 + 4, cy + r * maths.sin(a))
+            }
+            _lib.SDL_RenderLines(handle, buf, pts)
+        }
+
+        drawArc(x + r,     y + r,     half_pi * 2.0)  // 左上 π→3π/2
+        drawArc(x + w - r, y + r,     half_pi * 3.0)  // 右上 3π/2→2π
+        drawArc(x + w - r, y + h - r, 0.0)             // 右下 0→π/2
+        drawArc(x + r,     y + h - r, half_pi)         // 左下 π/2→π
+        ffi.free(buf); return true
     }
 }
 

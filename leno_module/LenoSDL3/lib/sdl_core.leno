@@ -145,6 +145,8 @@ export alias GlyphInfo  = Dict[string, int]
 // ==================== clib sdl3 ====================
 
 clib sdl3 {
+    bool SDL_SetHint(str8 name, str8 value)
+
     bool SDL_Init(u32 flags)
     void SDL_Quit()
     str8 SDL_GetError()
