@@ -1,0 +1,89 @@
+// test_button.leno — 交互式按钮测试
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "按钮测试", w: 500, h: 400})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 按钮数据
+    var bx = [50, 50, 50, 280]
+    var by = [60, 130, 200, 60]
+    var bw = [160, 160, 160, 160]
+    var bh = [50, 50, 50, 120]
+    var bt = ["开始游戏", "设置", "退出", "大按钮"]
+    var br = [60, 100, 200, 180]
+    var bg = [140, 100, 60, 120]
+    var bb = [220, 100, 60, 30]
+
+    var mx = 0.0; var my = 0.0
+    var lastClick = ""
+    var clickCount = 0
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+
+            if e.isMouseMotion() { mx = e.mouseX(); my = e.mouseY() }
+
+            if e.isMouseButtonDown() {
+                for 0 : 3 to i {
+                    int xi = bx[i]; int yi = by[i]; int wi = bw[i]; int hi = bh[i]
+                    if mx >= xi and mx <= xi + wi and my >= yi and my <= yi + hi {
+                        lastClick = bt[i] as string
+                        clickCount = clickCount + 1
+                        print("点击: " + lastClick + " (第" + clickCount + "次)")
+                    }
+                }
+            }
+
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(25, 25, 45, 255)
+            r.drawText(font, "交互按钮测试", 10, 10, 255, 220, 80)
+
+            for 0 : 3 to i {
+                int xi = bx[i]; int yi = by[i]; int wi = bw[i]; int hi = bh[i]
+                int cri = br[i]; int cgi = bg[i]; int cbi = bb[i]
+                var hover = mx >= xi and mx <= xi + wi and my >= yi and my <= yi + hi
+
+                // 阴影
+                r.setColor(0, 0, 0, 60)
+                r.fillRect(xi + 3, yi + 3, wi, hi)
+
+                // 背景（悬停加亮）
+                if hover { cri = cri + 40; if cri > 255 { cri = 255 }; cgi = cgi + 40; if cgi > 255 { cgi = 255 }; cbi = cbi + 40; if cbi > 255 { cbi = 255 } }
+                r.setColor(cri, cgi, cbi, 255)
+                r.fillRect(xi, yi, wi, hi)
+
+                // 边框
+                if hover { r.setColor(255, 255, 255, 180) }
+                else {
+                    int brC = cri + 40; if brC > 255 { brC = 255 }
+                    int bgC = cgi + 40; if bgC > 255 { bgC = 255 }
+                    int bbC = cbi + 40; if bbC > 255 { bbC = 255 }
+                    r.setColor(brC, bgC, bbC, 180)
+                }
+                r.drawRect(xi, yi, wi, hi)
+
+                // 文字
+                r.drawTextCentered(font, bt[i], 500.0, yi + _float(hi / 2 - 9), 255, 255, 255)
+            }
+
+            r.drawText(font, "鼠标: (" + mx + ", " + my + ")", 280, 200, 180, 200, 220)
+            r.drawText(font, "最后点击: " + lastClick, 280, 225, 255, 220, 80)
+            r.drawText(font, "点击次数: " + clickCount, 280, 250, 150, 150, 150)
+            r.drawText(font, "鼠标移到按钮上高亮，点击看控制台", 280, 290, 120, 120, 120)
+            r.drawText(font, "ESC 退出", 280, 315, 120, 120, 120)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
