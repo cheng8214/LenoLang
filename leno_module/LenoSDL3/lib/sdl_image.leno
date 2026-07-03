@@ -1,20 +1,29 @@
-// sdl_image.leno — SDL3_image 图像加载（PNG/JPG/BMP 等）
+// sdl_image.leno — SDL3_image 图像加载/保存（PNG/JPG/BMP/WEBP 等）
 // SDL3_image 无需显式 Init/Quit，加载 DLL 后直接使用
+// 注意：isFormat 函数需 SDL_IOStream 暂未封装
 import ffi
 import dirs
 import files
 
 clib sdl3_image {
-    Ptr IMG_Load(str8 file)
-    Ptr IMG_LoadTexture(Ptr renderer, str8 file)
-    i32 IMG_Version()
+    // 加载
+    Ptr  IMG_Load(str8 file)
+    Ptr  IMG_LoadTexture(Ptr renderer, str8 file)
+
+    // 保存（直接接受文件路径）
+    bool IMG_SavePNG(Ptr surface, str8 file)
+    bool IMG_SaveJPG(Ptr surface, str8 file, i32 quality)
+    bool IMG_SaveBMP(Ptr surface, str8 file)
+    bool IMG_SaveWEBP(Ptr surface, str8 file, f32 quality)
+
+    i32  IMG_Version()
 }
 
 sdl3_image _img = null
 
 func imgLib(): sdl3_image {
     if _img == null {
-        var path = dirs.script_dir() + "/../SDL3_image.dll"
+        string path = dirs.script_dir() + "/../SDL3_image.dll"
         if not files.exists(path) { path = dirs.script_dir() + "/SDL3_image.dll" }
         if not files.exists(path) { path = "SDL3_image.dll" }
         _img = ffi.load(path)
@@ -22,10 +31,42 @@ func imgLib(): sdl3_image {
     return _img
 }
 
+// ==================== 加载 ====================
+
+// 从文件加载为 SDL_Surface（用完需 SDL_DestroySurface）
 export func load(string path): Ptr {
     return imgLib().IMG_Load(path)
 }
 
+// 从文件直接加载为 GPU 纹理（需要有效渲染器）
 export func loadTexture(Ptr renderer, string path): Ptr {
     return imgLib().IMG_LoadTexture(renderer, path)
+}
+
+// ==================== 保存 ====================
+
+// 保存为 PNG（无损压缩）
+export func savePNG(Ptr surface, string path): bool {
+    return imgLib().IMG_SavePNG(surface, path)
+}
+
+// 保存为 JPG，quality: 0~100（越高画质越好）
+export func saveJPG(Ptr surface, string path, int quality): bool {
+    return imgLib().IMG_SaveJPG(surface, path, quality)
+}
+
+// 保存为 BMP
+export func saveBMP(Ptr surface, string path): bool {
+    return imgLib().IMG_SaveBMP(surface, path)
+}
+
+// 保存为 WEBP，quality: 0.0~100.0（浮点）
+export func saveWEBP(Ptr surface, string path, float quality): bool {
+    return imgLib().IMG_SaveWEBP(surface, path, quality)
+}
+
+// ==================== 版本 ====================
+
+export func version(): int {
+    return imgLib().IMG_Version()
 }

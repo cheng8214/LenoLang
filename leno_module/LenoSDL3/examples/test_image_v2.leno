@@ -1,0 +1,17 @@
+// test_image_v2.leno — 测试 SDL3_image 加载 & 保存
+import "../lib/SDL3.leno" as SDL3
+
+main() {
+    print("版本: " + SDL3.imageVersion())
+
+    // 加载
+    var surface = SDL3.loadImage("d:\\1.png")
+    print("loadImage: " + (surface != null))
+
+    // 保存
+    print("savePNG:  " + SDL3.saveImagePNG(surface, "d:\\test_png.png"))
+    print("saveJPG:  " + SDL3.saveImageJPG(surface, "d:\\test_jpg.jpg", 85))
+    print("saveBMP:  " + SDL3.saveImageBMP(surface, "d:\\test_bmp.bmp"))
+    print("saveWEBP: " + SDL3.saveImageWEBP(surface, "d:\\test_webp.webp", 80.0))
+    print("完成")
+}

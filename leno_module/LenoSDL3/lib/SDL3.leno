@@ -181,6 +181,10 @@ export var MOUSE_RIGHT  = core.MOUSE_RIGHT
 export var BLENDMODE_NONE  = core.BLENDMODE_NONE
 export var BLENDMODE_BLEND = core.BLENDMODE_BLEND
 
+export var FLIP_NONE       = core.FLIP_NONE
+export var FLIP_HORIZONTAL = core.FLIP_HORIZONTAL
+export var FLIP_VERTICAL   = core.FLIP_VERTICAL
+
 // ==================== 重新导出核心函数 ====================
 
 export func init(int flags): bool   { return core.init(flags) }
@@ -243,5 +247,10 @@ export var WRAP_ALIGN_RIGHT  = fnt.WRAP_ALIGN_RIGHT
 
 // ==================== Image ====================
 
-export func loadImage(string path): Ptr   { return img.load(path) }
-export func loadImageTexture(Ptr ren, string path): Ptr { return img.loadTexture(ren, path) }
+export func loadImage(string path): Ptr                  { return img.load(path) }
+export func loadImageTexture(Ptr ren, string path): Ptr  { return img.loadTexture(ren, path) }
+export func saveImagePNG(Ptr surface, string path): bool           { return img.savePNG(surface, path) }
+export func saveImageJPG(Ptr surface, string path, int q): bool    { return img.saveJPG(surface, path, q) }
+export func saveImageBMP(Ptr surface, string path): bool           { return img.saveBMP(surface, path) }
+export func saveImageWEBP(Ptr surface, string path, float q): bool { return img.saveWEBP(surface, path, q) }
+export func imageVersion(): int { return img.version() }

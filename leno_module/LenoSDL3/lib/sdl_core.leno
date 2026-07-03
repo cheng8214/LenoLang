@@ -188,6 +188,7 @@ clib sdl3 {
     void SDL_DestroyTexture(Ptr texture)
     bool SDL_GetTextureSize(Ptr texture, Ptr w, Ptr h)
     bool SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
+    bool SDL_RenderTextureRotated(Ptr renderer, Ptr texture, Ptr src, Ptr dst, f64 angle, Ptr center, i32 flip)
     void SDL_DestroySurface(Ptr surface)
 }
 
@@ -316,6 +317,10 @@ export var BLENDMODE_BLEND = 0x00000001
 export var BLENDMODE_ADD   = 0x00000002
 export var BLENDMODE_MOD   = 0x00000004
 export var BLENDMODE_MUL   = 0x00000008
+
+export var FLIP_NONE       = 0  // 不翻转
+export var FLIP_HORIZONTAL = 1  // 水平翻转
+export var FLIP_VERTICAL   = 2  // 垂直翻转
 
 export var SDL_FRect_SIZE  = 16
 export var SDL_Rect_SIZE   = 16

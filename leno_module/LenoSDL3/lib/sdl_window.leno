@@ -1,4 +1,14 @@
 // sdl_window.leno — SDL3 窗口封装
+//
+// 提供两种使用模式：
+// 1. run() 回调模式（推荐）：
+//    win.run(onEvent, onRender)
+//       onEvent: func(Event): bool  — 返回 false 退出
+//       onRender: func(Renderer)    — 每帧绘制
+//
+// 2. 手动轮询模式：
+//    var ev = SDL3.createEvent()
+//    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import "sdl_core.leno" as core
 use core.sdl3
 
@@ -10,37 +20,45 @@ import "sdl_event.leno" as event
 use event.Event
 
 export struct Window {
-    Ptr handle; bool ok
+    Ptr handle    // SDL_Window 指针
+    bool ok       // 窗口是否创建成功
 
+    // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
         if not core.initVideo() {
             print("[LenoSDL3] init failed: " + core.getError())
             return false
         }
-        var title = opts.get("title", "LenoSDL3") as string
-        var w     = opts.get("w", 800) as int
-        var h     = opts.get("h", 600) as int
-        var flags = opts.get("flags", 0) as int
+        string title = opts.get("title", "LenoSDL3") as string
+        int w        = opts.get("w", 800) as int
+        int h        = opts.get("h", 600) as int
+        int flags    = opts.get("flags", 0) as int
         handle = _lib.SDL_CreateWindow(title, w, h, flags) as Ptr
         ok = handle != null
         return ok
     }
 
+    // 设置窗口是否可调整大小
     func setResizable(bool v) {
         if ok { _lib.SDL_SetWindowResizable(handle, v) }
     }
 
+    // 销毁窗口
     func destroy() {
         if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false }
     }
 
+    // 运行主循环（回调模式）
+    // onEvent(Event): bool  — 返回 false 则退出循环
+    // onRender(Renderer)   — 每帧渲染回调
     func run(var onEvent, var onRender) {
         Renderer ren = renderer.createRenderer(handle)
         if not ren.ok { destroy(); return }
 
         Event ev = event.createEvent()
-        var running = true
+        bool running = true
         while running {
+            // 处理所有待处理事件
             while ev.poll() {
                 if ev.isQuit() or ev.isWindowClose() { running = false }
                 else if not onEvent(ev) { running = false }
@@ -48,6 +66,7 @@ export struct Window {
             onRender(ren)
             ren.present()
         }
+        // 清理
         ev.uninit()
         ren.destroy()
         destroy()
@@ -55,6 +74,7 @@ export struct Window {
     }
 }
 
+// 创建窗口实例，opts: {title, w, h, flags}
 export func createWindow(Dict opts): Window {
     Window win = new Window(); win.init(opts); return win
 }

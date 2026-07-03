@@ -128,7 +128,7 @@ export struct Font {
 
     func measureString(string text): StringSize {
         if not ok { return {w: 0, h: 0} }
-        var pt = SDL_Point.malloc()
+        SDL_Point pt = SDL_Point.malloc()
         ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
         var d = {w: pt.x as int, h: pt.y as int}
         pt.free(); return d
@@ -182,7 +182,7 @@ export struct Font {
 
     func measureStringWrapped(string text, int wrapWidth): StringSize {
         if not ok { return {w: 0, h: 0} }
-        var pt = SDL_Point.malloc()
+        SDL_Point pt = SDL_Point.malloc()
         ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, &pt.x, &pt.y)
         var d = {w: pt.x as int, h: pt.y as int}
         pt.free(); return d
@@ -209,7 +209,7 @@ export struct Font {
 
     func getGlyphMetrics(int glyph): GlyphInfo {
         if not ok { return {} }
-        var m = SDL_GlyphMetrics.malloc()
+        SDL_GlyphMetrics m = SDL_GlyphMetrics.malloc()
         ttfLib().TTF_GetGlyphMetrics(handle, glyph, &m.minX, &m.maxX, &m.minY, &m.maxY, &m.advance)
         var r = {
             minX: m.minX as int, maxX: m.maxX as int,
@@ -235,10 +235,10 @@ export struct TextTexture {
 
     func createFromText(Ptr renderer, Font font, string text, int r, int g, int b): bool {
         if not font.ok { return false }
-        var surface = font.renderTextBlended(text, r, g, b)
+        Ptr surface = font.renderTextBlended(text, r, g, b)
         if surface == null { return false }
         // 通过 cstruct from_ptr 读取表面真实宽高
-        var info = SDL_SurfaceInfo.from_ptr(surface)
+        SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
         width  = info.w as int
         height = info.h as int
         var result = createFromSurface(renderer, surface)
@@ -253,7 +253,7 @@ export struct TextTexture {
     func setHeight(int h) { height = h }
 
     func createFromSurfaceW(Ptr renderer, Ptr surface): bool {
-        var info = SDL_SurfaceInfo.from_ptr(surface)
+        SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
         width = info.w as int
         height = info.h as int
         return createFromSurface(renderer, surface)
@@ -282,29 +282,29 @@ export func createFont(string path, float ptsize): Font {
 }
 
 export func createTextTexture(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
-    var tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
+    TextTexture tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
 }
 
 export func createTextTextureWrapped(Ptr renderer, Font font, string text, int r, int g, int b, int wrapWidth): TextTexture {
-    var surface = font.renderTextBlendedWrapped(text, r, g, b, wrapWidth)
+    Ptr surface = font.renderTextBlendedWrapped(text, r, g, b, wrapWidth)
     if surface == null { return new TextTexture() }
-    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
 export func createGlyphTexture(Ptr renderer, Font font, int glyph, int r, int g, int b): TextTexture {
-    var surface = font.renderGlyphBlended(glyph, r, g, b)
+    Ptr surface = font.renderGlyphBlended(glyph, r, g, b)
     if surface == null { return new TextTexture() }
-    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
 export func createTextTextureSolid(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
-    var surface = font.renderTextSolid(text, r, g, b)
+    Ptr surface = font.renderTextSolid(text, r, g, b)
     if surface == null { return new TextTexture() }
-    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
 export func createTextTextureShaded(Ptr renderer, Font font, string text, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
-    var surface = font.renderTextShaded(text, fr, fg, fb, br, bg, bb)
+    Ptr surface = font.renderTextShaded(text, fr, fg, fb, br, bg, bb)
     if surface == null { return new TextTexture() }
-    var tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }

@@ -1,4 +1,11 @@
 // sdl_event.leno — SDL3 事件封装（基于 cstruct，无需手动偏移）
+//
+// 用法：
+//   var ev = SDL3.createEvent()
+//   while ev.poll() {
+//       if ev.isKeyDown() { print("按下: " + ev.scancode()) }
+//       if ev.isTextInput() { print("输入: " + ev.text()) }
+//   }
 import ffi
 import "sdl_core.leno" as core
 use core.sdl3
@@ -13,32 +20,41 @@ use core.SDL_DropEvent
 sdl3 _lib = core.lib()
 
 export struct Event {
-    Ptr raw; bool has
+    Ptr raw     // SDL_Event 原始内存（128 字节）
+    bool has    // 上次 poll 是否有事件
 
+    // 分配事件内存
     func init(): bool {
         raw = ffi.malloc(128)
         has = false
         return true
     }
 
+    // 从事件队列中轮询一个事件，返回是否有事件待处理
     func poll(): bool {
         has = _lib.SDL_PollEvent(raw)
         return has
     }
 
+    // 获取事件类型（所有事件 cstruct 头部相同，故用 KeyboardEvent 读取）
     func sdl3_type(): int {
-        var e = SDL_KeyboardEvent.from_ptr(raw)    // 公共头部都一样
+        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
         return e.type as int
     }
 
-    // ---- 通用 ----
+    // ==================== 通用 ====================
+
+    // 是否退出事件（SDL_QUIT）
     func isQuit(): bool  { return sdl3_type() == core.EVENT_QUIT }
+
+    // 获取触发事件的窗口 ID
     func windowID(): int {
-        var e = SDL_KeyboardEvent.from_ptr(raw)
+        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
         return e.windowID as int
     }
 
-    // ---- 窗口 ----
+    // ==================== 窗口事件 ====================
+
     func isWindowClose(): bool       { return sdl3_type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
     func isWindowResized(): bool     { return sdl3_type() == core.EVENT_WINDOW_RESIZED }
     func isWindowMoved(): bool       { return sdl3_type() == core.EVENT_WINDOW_MOVED }
@@ -50,80 +66,109 @@ export struct Event {
     func isWindowMouseEnter(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_ENTER }
     func isWindowMouseLeave(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_LEAVE }
 
-    // ---- 键盘 ----
+    // ==================== 键盘事件 ====================
+
+    // 是否按键按下/抬起事件
     func isKeyDown(): bool { return sdl3_type() == core.EVENT_KEY_DOWN }
     func isKeyUp(): bool   { return sdl3_type() == core.EVENT_KEY_UP }
+
+    // 获取物理扫描码（与键盘布局无关，如 SCANCODE_A, SCANCODE_ESCAPE）
     func scancode(): int {
-        var e = SDL_KeyboardEvent.from_ptr(raw)
+        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
         return e.scancode as int
     }
+
+    // 是否为按键重复事件（长按产生的自动重复）
     func keyRepeat(): bool {
-        var e = SDL_KeyboardEvent.from_ptr(raw)
+        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
         return e.repeat != 0
     }
+
+    // 获取修饰键状态（位掩码：Shift/Ctrl/Alt/GUI 等）
     func keyMod(): int {
-        var e = SDL_KeyboardEvent.from_ptr(raw)
+        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
         return e.mod as int
     }
 
-    // ---- 鼠标 ----
+    // ==================== 鼠标事件 ====================
+
     func isMouseMotion(): bool     { return sdl3_type() == core.EVENT_MOUSE_MOTION }
     func isMouseButtonDown(): bool { return sdl3_type() == core.EVENT_MOUSE_BUTTON_DOWN }
     func isMouseButtonUp(): bool   { return sdl3_type() == core.EVENT_MOUSE_BUTTON_UP }
     func isMouseWheel(): bool      { return sdl3_type() == core.EVENT_MOUSE_WHEEL }
+
+    // 鼠标位置（相对于窗口，浮点精度）
     func mouseX(): float {
-        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
         return e.x as float
     }
     func mouseY(): float {
-        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
         return e.y as float
     }
+
+    // 鼠标相对移动量（自上一帧的增量）
     func mouseDX(): float {
-        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
         return e.xrel as float
     }
     func mouseDY(): float {
-        var e = SDL_MouseMotionEvent.from_ptr(raw)
+        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
         return e.yrel as float
     }
+
+    // 鼠标按钮编号：1=左键, 2=中键, 3=右键
     func mouseButton(): int {
-        var e = SDL_MouseButtonEvent.from_ptr(raw)
+        SDL_MouseButtonEvent e = SDL_MouseButtonEvent.from_ptr(raw)
         return e.button as int
     }
+
+    // 点击次数：1=单击, 2=双击
     func mouseClicks(): int {
-        var e = SDL_MouseButtonEvent.from_ptr(raw)
+        SDL_MouseButtonEvent e = SDL_MouseButtonEvent.from_ptr(raw)
         return e.clicks as int
     }
+
+    // 滚轮滚动量（正值向右/远离用户，负值向左/朝向用户）
     func wheelX(): float {
-        var e = SDL_MouseWheelEvent.from_ptr(raw)
+        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
         return e.x as float
     }
     func wheelY(): float {
-        var e = SDL_MouseWheelEvent.from_ptr(raw)
+        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
         return e.y as float
     }
 
-    // ---- 文本输入 ----
+    // ==================== 文本输入 ====================
+    // 注意：必须先调用 SDL_StartTextInput() 启用文本输入，否则不会收到此事件
+
+    // 是否文本输入事件（处理输入法/IMM 产生的实际字符）
     func isTextInput(): bool { return sdl3_type() == core.EVENT_TEXT_INPUT }
+
+    // 获取输入的文本内容（UTF-8 字符串，只在此次 poll 内有效）
     func text(): string {
-        var e = SDL_TextInputEvent.from_ptr(raw)
-        return ffi.read_string(e.text, 0)      // text 是 const char* 指针
+        SDL_TextInputEvent e = SDL_TextInputEvent.from_ptr(raw)
+        return ffi.read_string(e.text, 0)
     }
 
-    // ---- 拖放 ----
+    // ==================== 拖放事件 ====================
+
     func isDropFile(): bool { return sdl3_type() == core.EVENT_DROP_FILE }
     func isDropText(): bool { return sdl3_type() == core.EVENT_DROP_TEXT }
+
+    // 获取拖放的文件路径或文本内容
     func dropPath(): string {
-        var e = SDL_DropEvent.from_ptr(raw)
-        return ffi.read_string(e.data, 0)      // data 是 const char* 指针（文件名/文本）
+        SDL_DropEvent e = SDL_DropEvent.from_ptr(raw)
+        return ffi.read_string(e.data, 0)
     }
 
+    // 释放事件内存
     func uninit() {
         if raw != null { ffi.free(raw); raw = null; has = false }
     }
 }
 
+// 创建事件对象
 export func createEvent(): Event {
     Event ev = new Event(); ev.init(); return ev
 }
