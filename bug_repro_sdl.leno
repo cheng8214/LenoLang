@@ -1,0 +1,19 @@
+// main_sdl_repro.leno — 使用真实 SDL3 模块复现
+import "leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "leno_module/LenoSDL3/lib/sdl_renderer.leno" as renderer
+
+use core.SDL_Vertex
+
+export struct TestRenderer {
+    func testVertex() {
+        SDL_Vertex v = SDL_Vertex.malloc_array(3)
+        v[0].x = 1.0
+        v[0].y = 2.0
+        v.free()
+        print("vertex ok")
+    }
+}
+
+TestRenderer t = new TestRenderer()
+t.testVertex()
+print("ok")

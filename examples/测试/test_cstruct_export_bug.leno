@@ -1,43 +1,11 @@
-// 复现：跨模块导入 cstruct，在 export struct 方法内做数组索引赋值
-import ffi
-import "test_vertex_mod.leno" as vmod
-use vmod.TestVertex
-
-struct NormalStruct {
-    func run() {
-        print("NormalStruct: start")
-        var v = TestVertex.malloc_array(3)
-        v[0].x = 1.0
-        v.free()
-        print("NormalStruct: OK")
-    }
-}
-
-export struct ExportStruct {
-    func run() {
-        print("ExportStruct: start")
-        var v = TestVertex.malloc_array(3)
-        v[0].x = 1.0    // ← 跨模块 cstruct 在 export struct 内可能崩
-        v.free()
-        print("ExportStruct: OK")
-    }
-}
+// 复现：A→B→C→main，export struct + 跨模块 cstruct 数组索引 → 模块加载崩溃
+// 关键条件：export struct 有多个方法 + 多个 cstruct use + 一个方法用 v[i].x = xxx
+import "test_bug_mod_c.leno" as c
+use c.RendererLike
 
 main() {
-    // ✅ 顶层 — 正常
-    print("=== 顶层 ===")
-    var v1 = TestVertex.malloc_array(3)
-    v1[0].x = 1.0; v1.free()
-    print("顶层: OK")
-
-    // ✅ 普通 struct — 正常
-    print("=== struct ===")
-    NormalStruct ns = new NormalStruct()
-    ns.run()
-
-    // ❓ export struct + 跨模块 cstruct
-    print("=== export struct ===")
-    ExportStruct es = new ExportStruct()
-    es.run()
-    print("=== 完成 ===")
+    print("开始 — 如果看到这行，模块加载成功")
+    RendererLike r = new RendererLike()
+    r.test_array()
+    print("完成 — 如果看到这行，bug 未复现")
 }

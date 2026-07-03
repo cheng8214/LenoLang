@@ -1,0 +1,5 @@
+// core.leno — 提供 cstruct 定义
+export cstruct Vertex {
+    f32 x
+    f32 y
+}

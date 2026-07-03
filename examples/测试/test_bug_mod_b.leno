@@ -1,0 +1,22 @@
+// 模拟 sdl_renderer.leno：多方法 export struct + 多 cstruct 导入
+import "test_bug_mod_a.leno" as a
+use a.MyVertex; use a.MyRect; use a.MyPoint
+
+export struct RendererLike {
+    Ptr handle; bool ok
+    func init(): bool { ok = true; return ok }
+    func clear()     { }
+    func setColor(int r, int g, int b, int a) { }
+    func fillRect(float x, float y, float w, float h) {
+        MyRect rect = MyRect.malloc(); rect.x = x; rect.free()
+    }
+    func getSize(): int {
+        MyPoint pt = MyPoint.malloc(); var r = pt.x; pt.free(); return r
+    }
+    // ← v[0].x = 1.0 导致模块加载崩溃（0xC0000005）
+    func test_array() {
+        var v = MyVertex.malloc_array(3)
+        v[0].x = 1.0
+        v.free()
+    }
+}
