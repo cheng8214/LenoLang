@@ -185,6 +185,11 @@ export var FLIP_NONE       = core.FLIP_NONE
 export var FLIP_HORIZONTAL = core.FLIP_HORIZONTAL
 export var FLIP_VERTICAL   = core.FLIP_VERTICAL
 
+export var PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
+export var TEXTUREACCESS_STATIC    = core.TEXTUREACCESS_STATIC
+export var TEXTUREACCESS_STREAMING = core.TEXTUREACCESS_STREAMING
+export var TEXTUREACCESS_TARGET    = core.TEXTUREACCESS_TARGET
+
 // ==================== 重新导出核心函数 ====================
 
 export func init(int flags): bool   { return core.init(flags) }

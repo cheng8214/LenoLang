@@ -256,6 +256,21 @@ export struct Renderer {
         return _lib.SDL_RenderReadPixels(handle, rect) as Ptr
     }
 
+    // 创建纹理（返回 Ptr，用完 SDL_DestroyTexture）
+    func createTexture(int format, int access, int w, int h): Ptr {
+        return _lib.SDL_CreateTexture(handle, format, access, w, h) as Ptr
+    }
+
+    // 更新纹理像素数据
+    func updateTexture(Ptr texture, Ptr rect, Ptr pixels, int pitch): bool {
+        return _lib.SDL_UpdateTexture(texture, rect, pixels, pitch)
+    }
+
+    // 设置颜色缩放（HDR/亮度调节，不影响 alpha）
+    func setColorScale(float scale): bool {
+        return _lib.SDL_SetRenderColorScale(handle, scale)
+    }
+
     // 九宫格渲染（UI 边框不拉伸）
     func drawTexture9Grid(Ptr texture, float lw, float rw, float th, float bh, float scale, Ptr dst): bool {
         return _lib.SDL_RenderTexture9Grid(handle, texture, null, lw, rw, th, bh, scale, dst)

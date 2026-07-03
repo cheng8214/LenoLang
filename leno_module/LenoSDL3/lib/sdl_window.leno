@@ -68,6 +68,9 @@ export struct Window {
         return _lib.SDL_SetWindowOpacity(handle, v)
     }
 
+    // 设置窗口图标（surface 来自 SDL3.loadImage 等）
+    func setIcon(Ptr icon): bool { return _lib.SDL_SetWindowIcon(handle, icon) }
+
     // 全屏切换
     func setFullscreen(bool v): bool { return _lib.SDL_SetWindowFullscreen(handle, v) }
 

@@ -22,6 +22,10 @@ main() {
     var perfFreq  = SDL3.getPerfFrequency()
     print("性能计数器: freq=" + perfFreq + " start=" + perfStart)
 
+    // ---- 光标初始状态 ----
+    var cursorVis = SDL3.cursorVisible()
+    print("光标初始状态: " + (if cursorVis then "可见" else "隐藏"))
+
     // ---- TTF ----
     SDL3.ttfInit()
     var font = SDL3.createFontAuto(16.0)
@@ -62,8 +66,8 @@ main() {
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_C { clipText = SDL3.getClipboardText(); lastMsg = "clipboard read" }
 
             // 光标
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_D { SDL3.showCursor(); lastMsg = "showCursor" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_X { SDL3.hideCursor(); lastMsg = "hideCursor" }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_D { SDL3.showCursor(); cursorVis = true;  lastMsg = "showCursor" }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_X { SDL3.hideCursor(); cursorVis = false; lastMsg = "hideCursor" }
 
             // 全屏
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_F { win.setFullscreen(true); lastMsg = "fullscreen ON" }
@@ -88,7 +92,7 @@ main() {
             }
 
             r.drawText(font, "New API — 窗口控制 & 纹理调色 & 截图", 10, 8, 255, 220, 80)
-            r.drawText(font, "Alpha:" + alpha + "  RGB:" + cr + "," + cg + "," + cb + "  最后操作: " + lastMsg, 10, 32, 180, 200, 255)
+            r.drawText(font, "Alpha:" + alpha + "  RGB:" + cr + "," + cg + "," + cb + "  光标:" + (if cursorVis then "可见" else "隐藏") + "  操作: " + lastMsg, 10, 32, 180, 200, 255)
 
             int ly = 70
             r.drawText(font, "纹理: 1=半透明 2=不透明 3=红色调 4=正常", 10, ly, 150, 150, 150); ly = ly + 22
