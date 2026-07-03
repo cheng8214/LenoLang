@@ -1,0 +1,79 @@
+// test_mouse.leno — 测试相对鼠标/最小窗口/闪烁/像素尺寸/纳秒计时
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "Mouse & Window Test", w: 500, h: 350})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    var relativeOn = false
+    var grabbedOn  = false
+    var minOn      = false
+    var mxRel = 0.0; var myRel = 0.0
+    var lastMsg = ""
+
+    // 测试 hasClipboardText / getTicksNS / getSizeInPixels
+    print("有剪贴板: " + SDL3.hasClipboardText())
+    print("纳秒: " + SDL3.getTicksNS())
+    var pix = win.getSizeInPixels()
+    print("像素尺寸: " + pix.w + "x" + pix.h)
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+
+            // 相对鼠标模式
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_R {
+                relativeOn = not relativeOn
+                win.setRelativeMouse(relativeOn)
+                lastMsg = if relativeOn then "相对模式 ON" else "相对模式 OFF"
+                print(lastMsg + " getRelativeMouse=" + win.getRelativeMouse())
+            }
+
+            // 鼠标锁定
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_G {
+                grabbedOn = not grabbedOn
+                win.setMouseGrab(grabbedOn)
+                lastMsg = if grabbedOn then "鼠标锁定 ON" else "鼠标锁定 OFF"
+            }
+
+            // 限制最小窗口
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_M {
+                minOn = not minOn
+                if minOn { win.setMinSize(300, 200); lastMsg = "最小限制 300x200" }
+                else { win.setMinSize(1, 1); lastMsg = "解除最小限制" }
+            }
+
+            // 闪烁
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_F { win.flash(SDL3.FLASH_BRIEFLY); lastMsg = "短暂闪烁" }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_L { win.flash(SDL3.FLASH_UNTIL_FOCUSED); lastMsg = "持续闪烁" }
+
+            // 相对移动读数
+            if e.isMouseMotion() { mxRel = mxRel + e.mouseDX(); myRel = myRel + e.mouseDY() }
+
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+            r.drawText(font, "Mouse & Window — 相对鼠标/锁定/闪烁/像素尺寸", 10, 8, 255, 220, 80)
+            r.drawText(font, "相对:" + relativeOn + " 锁定:" + grabbedOn + " 最小:" + minOn + " " + lastMsg, 10, 32, 180, 200, 255)
+            r.drawText(font, "累计移动 dx:" + mxRel + " dy:" + myRel, 10, 55, 150, 200, 255)
+
+            int ly = 90
+            r.drawText(font, "R=相对鼠标模式  G=鼠标锁定  M=最小窗口限制", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "F=短暂闪烁  L=持续闪烁(直到焦点)", 10, ly, 150, 150, 150); ly = ly + 22
+            r.drawText(font, "  (标题栏会闪烁，切回来按 F/L 看效果)", 10, ly, 120, 120, 120); ly = ly + 22
+            r.drawText(font, "新 API: setRelativeMouse / flash / setMinSize /", 10, ly, 100, 200, 100); ly = ly + 22
+            r.drawText(font, "  getSizeInPixels / getTicksNS / hasClipboardText", 10, ly, 100, 200, 100); ly = ly + 22
+            r.drawText(font, "ESC 退出", 10, ly + 15, 150, 150, 150)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

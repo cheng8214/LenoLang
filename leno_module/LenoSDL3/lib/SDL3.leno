@@ -213,6 +213,12 @@ export func setClipboardText(string t): bool { return core.setClipboardText(t) }
 
 export func getPerfCounter(): int    { return core.getPerfCounter() }
 export func getPerfFrequency(): int  { return core.getPerfFrequency() }
+export func getTicksNS(): int        { return core.getTicksNS() }
+export func hasClipboardText(): bool { return core.hasClipboardText() }
+
+export var FLASH_CANCEL         = core.FLASH_CANCEL
+export var FLASH_BRIEFLY        = core.FLASH_BRIEFLY
+export var FLASH_UNTIL_FOCUSED  = core.FLASH_UNTIL_FOCUSED
 
 // ==================== 重新导出工厂函数 ====================
 

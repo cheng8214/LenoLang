@@ -212,6 +212,8 @@ clib sdl3 {
     bool SDL_WarpMouseInWindow(Ptr window, f32 x, f32 y)
     bool SDL_SetWindowMouseGrab(Ptr window, bool grabbed)
     bool SDL_GetWindowMouseGrab(Ptr window)
+    bool SDL_SetWindowRelativeMouseMode(Ptr window, bool enabled)
+    bool SDL_GetWindowRelativeMouseMode(Ptr window)
 
     bool SDL_SetWindowTitle(Ptr window, str8 title)
     bool SDL_SetWindowSize(Ptr window, i32 w, i32 h)
@@ -226,12 +228,17 @@ clib sdl3 {
     bool SDL_RestoreWindow(Ptr window)
     bool SDL_SetWindowOpacity(Ptr window, f32 opacity)
     bool SDL_SetWindowIcon(Ptr window, Ptr icon)
+    bool SDL_SetWindowMinimumSize(Ptr window, i32 min_w, i32 min_h)
+    bool SDL_GetWindowSizeInPixels(Ptr window, Ptr w, Ptr h)
 
     str8 SDL_GetClipboardText()
     bool SDL_SetClipboardText(str8 text)
+    bool SDL_HasClipboardText()
 
     u64  SDL_GetPerformanceCounter()
     u64  SDL_GetPerformanceFrequency()
+    u64  SDL_GetTicksNS()
+    bool SDL_FlashWindow(Ptr window, i32 operation)
 }
 
 // ==================== 常量 ====================
@@ -429,3 +436,9 @@ export func setClipboardText(string text): bool { return lib().SDL_SetClipboardT
 
 export func getPerfCounter(): int { return lib().SDL_GetPerformanceCounter() as int }
 export func getPerfFrequency(): int { return lib().SDL_GetPerformanceFrequency() as int }
+export func getTicksNS(): int { return lib().SDL_GetTicksNS() as int }
+export func hasClipboardText(): bool { return lib().SDL_HasClipboardText() }
+
+export var FLASH_CANCEL    = 0
+export var FLASH_BRIEFLY   = 1
+export var FLASH_UNTIL_FOCUSED = 2
