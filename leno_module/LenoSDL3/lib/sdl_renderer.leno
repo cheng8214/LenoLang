@@ -289,7 +289,7 @@ export struct Renderer {
         return _lib.SDL_RenderTextureTiled(handle, texture, null, scale, dst)
     }
 
-    // 几何渲染（三角形/多边形），vertices 为 SDL_Vertex 数组的指针
+    // 几何渲染（三角形/多边形），vertices 为 SDL_Vertex 数组 to_ptr()
     func drawGeometry(Ptr vertices, int count, Ptr indices, int idxCount): bool {
         return _lib.SDL_RenderGeometry(handle, null, vertices, count, indices, idxCount)
     }

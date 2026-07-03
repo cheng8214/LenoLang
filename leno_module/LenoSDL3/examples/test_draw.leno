@@ -103,13 +103,10 @@ main() {
 
             // 用 SDL_Vertex cstruct 创建三角形顶点
             var verts = SDL_Vertex.malloc_array(3)
-            // 顶点 0: 上方(红)
             verts[0].x = p0x; verts[0].y = p0y
             verts[0].r = 1.0; verts[0].g = 0.0; verts[0].b = 0.0; verts[0].a = 1.0
-            // 顶点 1: 右下(绿)
             verts[1].x = p1x; verts[1].y = p1y
             verts[1].r = 0.0; verts[1].g = 1.0; verts[1].b = 0.0; verts[1].a = 1.0
-            // 顶点 2: 左下(蓝)
             verts[2].x = p2x; verts[2].y = p2y
             verts[2].r = 0.0; verts[2].g = 0.0; verts[2].b = 1.0; verts[2].a = 1.0
 
