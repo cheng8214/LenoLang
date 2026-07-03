@@ -1,5 +1,7 @@
 // export alias 别名链测试：B = A，A = int
 import "alias_chain_mod.leno" as m
+use m.A
+use m.B
 
 main() {
     // A = int

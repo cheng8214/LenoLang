@@ -59,15 +59,9 @@
                             }
                         }
 
-                        // 将模块中的 alias 定义注册到当前作用域
-                        for (int ai = 0; ai < info->sym_table->alias_count; ai++) {
-                            ModuleAliasSymbol* alias_sym = &info->sym_table->aliases[ai];
-                            // 注册为类型符号，让后续 parse_type 能识别
-                            Symbol* sym = scope_define(s->current, alias_sym->name, SYM_TYPE);
-                            if (sym && alias_sym->type_info) {
-                                sym->type = type_copy(alias_sym->type_info);
-                            }
-                        }
+                        // 注意：不再自动将模块的 alias 注册到当前作用域
+                        // alias 必须通过 use 语句显式导入才能使用
+                        // （use 语句的处理在下方）
 
                         // 将模块中的 struct 定义注册到全局表
                         // 这样类型检查时可以验证 struct 是否实现了 face

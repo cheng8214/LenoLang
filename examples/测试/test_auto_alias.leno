@@ -1,0 +1,8 @@
+// test_auto_alias.leno - 测试 import 后 alias 是否被自动注册（不应该）
+import "alias_core.leno" as ac
+
+main() {
+    // 不使用 use，直接用 alias 名——应该报错
+    SizeI si = {w: 10, h: 20}
+    print("si.w=" + si.w)
+}
