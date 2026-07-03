@@ -70,8 +70,19 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             Ast* value = ast->u.assign.value;
             transform_method_body_ex(value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
 
+            // 处理赋值左侧的复杂目标表达式（如 v[0].x = 1.0）
+            if (ast->u.assign.targets) {
+                for (int i = 0; i < ast->u.assign.name_count; i++) {
+                    if (ast->u.assign.targets[i]) {
+                        transform_method_body_ex(ast->u.assign.targets[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
+                    }
+                }
+            }
+
             // 处理赋值左侧的字段名
             for (int i = 0; i < ast->u.assign.name_count; i++) {
+                // 跳过 NULL 名称（复杂赋值目标如 v[0].x，names[i] 为 NULL）
+                if (!ast->u.assign.names[i]) continue;
                 // 如果被局部变量遮蔽，跳过转换
                 if (is_shadowed(ast->u.assign.names[i], shadowed_names, shadowed_count)) continue;
                 for (int j = 0; j < field_count; j++) {

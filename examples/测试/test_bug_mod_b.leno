@@ -10,7 +10,7 @@ export struct RendererLike {
     func fillRect(float x, float y, float w, float h) {
         MyRect rect = MyRect.malloc(); rect.x = x; rect.free()
     }
-    func getSize(): int {
+    func getSize(): i32 {
         MyPoint pt = MyPoint.malloc(); var r = pt.x; pt.free(); return r
     }
     // ← v[0].x = 1.0 导致模块加载崩溃（0xC0000005）
