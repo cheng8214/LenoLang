@@ -1,0 +1,26 @@
+// export struct + 多方法 + 跨模块 cstruct 数组索引赋值
+import "cstruct_export_a.leno" as a
+use a.Cv; use a.Cr; use a.Ci
+
+export struct ArrayRenderer {
+    Ptr handle; bool ok
+    func init(): bool { ok = true; return ok }
+    func clear() { }
+    func setVal(int r, int g) { }
+    func fillRect(float x, float y, float w, float h) {
+        Cr rect = Cr.malloc(); rect.w = w; rect.free()
+    }
+    func getTag(): int {
+        Ci ci = Ci.malloc(); var t = ci.val as int; ci.free(); return t
+    }
+    // 核心测试：cstruct.malloc_array()[i].x = xxx
+    func test_array(): float {
+        var v = Cv.malloc_array(3)
+        v[0].x = 1.0
+        v[1].x = 2.0
+        v[2].x = 3.0
+        var sum = (v[0].x + v[1].x + v[2].x) as float
+        v.free()
+        return sum
+    }
+}

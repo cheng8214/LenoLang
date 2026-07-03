@@ -1,0 +1,4 @@
+// 跨模块 cstruct 定义（供 test_cstruct_export_array.leno 使用）
+export cstruct Cv { f32 x; f32 y }
+export cstruct Cr { f32 w; f32 h }
+export cstruct Ci { i32 val; i32 tag }

@@ -1,0 +1,23 @@
+// 测试：export struct 方法内跨模块 cstruct 数组索引赋值
+// 修复前：transform_method_body_ex 中 AST_ASSIGN 的 names[i] 为 NULL 时
+//         strcmp(NULL, ...) 导致 0xC0000005 崩溃
+import "cstruct_export_b.leno" as b
+use b.ArrayRenderer
+
+main() {
+    var r = new b.ArrayRenderer(handle = null, ok = false)
+
+    // 1. init 方法
+    assert_eq(r.init(), true)
+
+    // 2. 多方法可正常调用
+    r.clear()
+    r.setVal(255, 128)
+    r.fillRect(0.0, 0.0, 100.0, 50.0)
+
+    // 3. 核心测试：cstruct 数组索引赋值不崩溃且结果正确
+    var sum = r.test_array()
+    assert_eq(sum, 6.0)
+
+    print("test_cstruct_export_array passed")
+}
