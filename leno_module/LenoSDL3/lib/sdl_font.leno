@@ -103,27 +103,22 @@ export struct Font {
 
     func renderTextBlended(string text, int r, int g, int b): Ptr {
         if not ok { return null }
-        var color = r | (g << 8) | (b << 16) | (255 << 24)
-        return ttfLib().TTF_RenderText_Blended(handle, text, 0, color)
+        return ttfLib().TTF_RenderText_Blended(handle, text, 0, packColor(r, g, b))
     }
 
     func renderTextSolid(string text, int r, int g, int b): Ptr {
         if not ok { return null }
-        var color = r | (g << 8) | (b << 16) | (255 << 24)
-        return ttfLib().TTF_RenderText_Solid(handle, text, 0, color)
+        return ttfLib().TTF_RenderText_Solid(handle, text, 0, packColor(r, g, b))
     }
 
     func renderTextShaded(string text, int fr, int fg, int fb, int br, int bg, int bb): Ptr {
         if not ok { return null }
-        var fg_color = fr | (fg << 8) | (fb << 16) | (255 << 24)
-        var bg_color = br | (bg << 8) | (bb << 16) | (255 << 24)
-        return ttfLib().TTF_RenderText_Shaded(handle, text, 0, fg_color, bg_color)
+        return ttfLib().TTF_RenderText_Shaded(handle, text, 0, packColor(fr, fg, fb), packColor(br, bg, bb))
     }
 
     func renderTextBlendedWrapped(string text, int r, int g, int b, int wrapWidth): Ptr {
         if not ok { return null }
-        var color = r | (g << 8) | (b << 16) | (255 << 24)
-        return ttfLib().TTF_RenderText_Blended_Wrapped(handle, text, 0, color, wrapWidth)
+        return ttfLib().TTF_RenderText_Blended_Wrapped(handle, text, 0, packColor(r, g, b), wrapWidth)
     }
 
     func measureString(string text): StringSize {
@@ -190,8 +185,7 @@ export struct Font {
 
     func renderGlyphBlended(int glyph, int r, int g, int b): Ptr {
         if not ok { return null }
-        var color = r | (g << 8) | (b << 16) | (255 << 24)
-        return ttfLib().TTF_RenderGlyph_Blended(handle, glyph, color)
+        return ttfLib().TTF_RenderGlyph_Blended(handle, glyph, packColor(r, g, b))
     }
 
     func setFontSize(float ptsize) {
