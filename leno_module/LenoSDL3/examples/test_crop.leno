@@ -1,0 +1,198 @@
+// test_crop.leno — 图片裁剪工具（鼠标拖拽选区）
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.SDL_FRect
+
+main() {
+    var win = SDL3.createWindow({title: "图片裁剪 — 鼠标拖拽选区 | S=保存 R=重置", w: 900, h: 650, flags: SDL3.WINDOW_RESIZABLE})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    var imgPath   = "d:\\1.png"
+    var loadedTex = null as Ptr
+    var texLoaded = false
+
+    // 原始纹理尺寸
+    float texW = 0; float texH = 0
+
+    // 选区（纹理坐标空间）
+    var selX  = 0.0; var selY  = 0.0
+    var selW  = 0.0; var selH  = 0.0
+    var selActive = false     // 是否有有效选区
+
+    // 拖拽状态
+    var mouseX = 0.0; var mouseY = 0.0
+    var dragging = false
+    var dragSX  = 0.0; var dragSY  = 0.0    // 拖拽起始（屏幕坐标）
+
+    // 图片在屏幕上的位置
+    var imgScreenX = 0.0; var imgScreenY = 0.0
+    var imgScreenW = 0.0; var imgScreenH = 0.0
+    var imgScale   = 1.0
+
+    var lastMsg = "拖拽鼠标选择裁剪区域"
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+
+            if e.isMouseMotion() { mouseX = e.mouseX(); mouseY = e.mouseY() }
+
+            // 鼠标左键按下 = 开始选区
+            if e.isMouseButtonDown() and e.mouseButton() == SDL3.MOUSE_LEFT {
+                dragging = true
+                dragSX   = mouseX
+                dragSY   = mouseY
+                selActive = false
+                lastMsg = "选择中..."
+            }
+
+            // 左键松开 = 完成选区
+            if e.isMouseButtonUp() and e.mouseButton() == SDL3.MOUSE_LEFT and dragging {
+                dragging = false
+                // 将屏幕坐标转为纹理坐标
+                float sx = (dragSX - imgScreenX) / imgScale
+                float sy = (dragSY - imgScreenY) / imgScale
+                float ex = (mouseX - imgScreenX) / imgScale
+                float ey = (mouseY - imgScreenY) / imgScale
+
+                // 保证起点在左上
+                if sx > ex { selX = ex; selW = sx - ex }
+                else       { selX = sx; selW = ex - sx }
+                if sy > ey { selY = ey; selH = sy - ey }
+                else       { selY = sy; selH = ey - sy }
+
+                // 限制在图片范围内
+                if selX < 0 { selX = 0 }
+                if selY < 0 { selY = 0 }
+                if selX + selW > texW { selW = texW - selX }
+                if selY + selH > texH { selH = texH - selY }
+
+                if selW > 1 and selH > 1 {
+                    selActive = true
+                    lastMsg = "选区: " + _int(selX) + "," + _int(selY) + " " + _int(selW) + "x" + _int(selH)
+                } else {
+                    selActive = false
+                    lastMsg = "选区太小"
+                }
+            }
+
+            // R 重置
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_R {
+                selActive = false; selX = 0; selY = 0; selW = 0; selH = 0
+                lastMsg = "已重置"
+            }
+
+            // S 保存裁剪结果
+            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_S and selActive {
+                lastMsg = "保存中...（暂不支持直接保存纹理像素）"
+                print("选区: " + _int(selX) + "," + _int(selY) + " " + _int(selW) + "x" + _int(selH))
+            }
+
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+
+            // 首次加载纹理
+            if not texLoaded {
+                loadedTex = SDL3.loadImageTexture(r.handle, imgPath)
+                if loadedTex != null {
+                    var ts = r.getTextureSize(loadedTex)
+                    texW = ts.w; texH = ts.h
+                }
+                texLoaded = true
+            }
+
+            if loadedTex == null {
+                r.drawText(font, "图片未加载", 400, 300, 255, 100, 100)
+                return
+            }
+
+            // ---------- 左侧：原始图片 + 选区框 ----------
+            float maxArea = 600.0
+            imgScale = maxArea / (if texH > texW then texH else texW)
+            imgScreenW = texW * imgScale
+            imgScreenH = texH * imgScale
+            imgScreenX = 20.0
+            imgScreenY = 25.0
+
+            // 绘制原图
+            SDL_FRect dst = SDL_FRect.malloc()
+            dst.x = imgScreenX; dst.y = imgScreenY; dst.w = imgScreenW; dst.h = imgScreenH
+            r.drawTextureRect(loadedTex, null, dst.to_ptr())
+            dst.free()
+
+            // 绘制选区框（或当前拖拽框）
+            float rx, ry, rw, rh
+            if dragging {
+                // 当前拖拽中的框
+                rx = (if mouseX > dragSX then dragSX else mouseX)
+                ry = (if mouseY > dragSY then dragSY else mouseY)
+                rw = (if mouseX > dragSX then mouseX - dragSX else dragSX - mouseX)
+                rh = (if mouseY > dragSY then mouseY - dragSY else dragSY - mouseY)
+                r.setColor(255, 200, 50, 60)
+                r.fillRect(rx, ry, rw, rh)
+                r.setColor(255, 200, 50, 255)
+                r.drawRect(rx, ry, rw, rh)
+            } else if selActive {
+                // 已确认的选区框
+                rx = imgScreenX + selX * imgScale
+                ry = imgScreenY + selY * imgScale
+                rw = selW * imgScale
+                rh = selH * imgScale
+                r.setColor(0, 200, 255, 60)
+                r.fillRect(rx, ry, rw, rh)
+                r.setColor(0, 200, 255, 255)
+                r.drawRect(rx, ry, rw, rh)
+            }
+
+            // 图片边框
+            r.setColor(100, 100, 150, 100)
+            r.drawRect(imgScreenX, imgScreenY, imgScreenW, imgScreenH)
+
+
+            // ---------- 右侧：裁剪预览 ----------
+            if selActive {
+                float previewX = imgScreenX + imgScreenW + 40.0
+                float previewMax = 250.0
+                float pScale = previewMax / (if selH > selW then selH else selW)
+                float pw = selW * pScale
+                float ph = selH * pScale
+
+                // 标签
+                r.drawText(font, "裁剪预览", previewX, imgScreenY - 2, 255, 220, 80)
+
+                // 绘制裁剪后的纹理
+                SDL_FRect src = SDL_FRect.malloc()
+                SDL_FRect previewDst = SDL_FRect.malloc()
+                src.x = selX; src.y = selY; src.w = selW; src.h = selH
+                previewDst.x = previewX; previewDst.y = imgScreenY + 20.0; previewDst.w = pw; previewDst.h = ph
+                r.drawTextureRect(loadedTex, src.to_ptr(), previewDst.to_ptr())
+                src.free(); previewDst.free()
+
+                // 预览边框
+                r.setColor(0, 200, 255, 150)
+                r.drawRect(previewX, imgScreenY + 20.0, pw, ph)
+
+                // 尺寸信息
+                r.drawText(font, _int(selW) + " x " + _int(selH), previewX, imgScreenY + 25.0 + ph, 100, 200, 255)
+            }
+
+
+            // ---------- HUD ----------
+            r.drawText(font, "图片裁剪 —  原始尺寸: " + _int(texW) + " x " + _int(texH), 10, 600, 150, 150, 150)
+            r.drawText(font, lastMsg, 260, 600, 200, 255, 100)
+
+            int ly = 624
+            r.drawText(font, "左键拖拽: 选裁剪区域  |  S: 输出选区信息  |  R: 重置  |  ESC: 退出", 10, ly, 120, 120, 120)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
