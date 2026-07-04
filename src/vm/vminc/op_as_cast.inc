@@ -196,6 +196,21 @@ OPCODE(OP_AS_CAST) {
                        val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
                        val_as_obj(value)->type == OBJ_FFI_CALLBACK));
             break;
+        case TYPE_PTR_GENERIC: {
+            TypeKind elem_kind = READ_BYTE();
+            matches = (val_is_obj(value) &&
+                      (val_as_obj(value)->type == OBJ_FFI_POINTER ||
+                       val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
+                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
+            // 如果匹配，将元素类型记录到 FFI 指针对象中
+            if (matches && val_as_obj(value)->type == OBJ_FFI_POINTER) {
+                ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)val_as_obj(value);
+                if (ffi_ptr->element_type == TYPE_ANY || ffi_ptr->element_type == TYPE_PTR) {
+                    ffi_ptr->element_type = elem_kind;
+                }
+            }
+            break;
+        }
         case TYPE_NULL:
             (void)READ_BYTE();
             matches = val_is_null(value);

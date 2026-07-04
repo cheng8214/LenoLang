@@ -633,13 +633,17 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
         if (**p != ']') { type_free(param1); return NULL; }
         (*p)++; // skip ']'
         
-        // 判断标识符类型：Array → TYPE_ARRAY，其他 → 泛型 struct（如 Holder[K]）
+        // 判断标识符类型：Array → TYPE_ARRAY，Ptr → TYPE_PTR_GENERIC，其他 → 泛型 struct（如 Holder[K]）
         if (strcmp(ident, "Array") == 0) {
             TypeInfo* arr = type_new(TYPE_ARRAY);
             arr->element_type = param1;
             return arr;
         }
-        
+
+        if (strcmp(ident, "Ptr") == 0) {
+            return type_ptr_generic(param1);
+        }
+
         // 泛型 struct 类型：Holder[K] → TYPE_STRUCT, struct_name="Holder", element_type=K
         TypeInfo* generic_struct = type_new(TYPE_STRUCT);
         generic_struct->struct_name = strdup(ident);

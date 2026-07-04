@@ -1,0 +1,12 @@
+// 复现模块：export func 调用 clib 并 as Ptr[u8]
+import ffi
+
+clib kernel32 {
+    Ptr GetCurrentProcess()
+}
+
+kernel32 _lib = ffi.load("kernel32.dll")
+
+export func getHandle(): Ptr[u8] {
+    return _lib.GetCurrentProcess() as Ptr[u8]
+}

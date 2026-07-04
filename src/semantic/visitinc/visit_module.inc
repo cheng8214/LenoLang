@@ -635,9 +635,13 @@
                         ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
                             module_info->sym_table, ast->u.module_call.method_name);
                         if (func_sym && func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
-                            ast->cached_type = type_new(func_sym->return_type);
-                            if (func_sym->return_struct_name) {
-                                ast->cached_type->struct_name = strdup(func_sym->return_struct_name);
+                            if (func_sym->return_type_info) {
+                                ast->cached_type = type_copy(func_sym->return_type_info);
+                            } else {
+                                ast->cached_type = type_new(func_sym->return_type);
+                                if (func_sym->return_struct_name) {
+                                    ast->cached_type->struct_name = strdup(func_sym->return_struct_name);
+                                }
                             }
                         }
                     }
