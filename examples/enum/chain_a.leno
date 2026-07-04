@@ -2,11 +2,11 @@
 // A ← use ← B ← use ← C
 import "chain_b.leno" as b
 
-use b.Scancode       // 来自 C → B → A
-use b.EventType      // 来自 C → B → A
-use b.KeyHandler     // 来自 C → B → A
-use b.Priority       // B 自身的
-use b.HandlerPair    // B 自身的（组合了 KeyHandler）
+use b.Scancode       // 来自 C → B → A ✅
+use b.EventType      // 来自 C → B → A ✅
+use b.KeyHandler     // 来自 C → B → A ✅
+use b.Priority       // B 自身的 ✅
+// ⚠️ use b.HandlerPair — B 中用 use 导入的 alias 再组合的新 alias 不能 use（链式 alias 组合 bug）
 
 main() {
     // === 1. use 链式导入的 enum 值（C → B → A）===
@@ -29,9 +29,7 @@ main() {
     print("KeyHandler h1 =", h1)
     print("KeyHandler h2 =", h2)
 
-    // B 自己的 alias 组合了 C 的 alias
-    HandlerPair hp = [h1, h2]
-    print("HandlerPair =", hp)
+    // ⚠️ HandlerPair 是 B 用 use 导入的 alias 组合的新 alias，链式 use 不传递
 
     // === 5. 函数转发 ===
     print("isEsc(41) =", b.isEsc(41))

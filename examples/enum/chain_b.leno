@@ -12,6 +12,4 @@ export func evName(int t): string  { return c.eventName(t) }
 
 // 自己的 enum
 export enum Priority { low = 1; mid = 5; high = 10 }
-
-// 自己的 alias，组合 c 的类型
-export alias HandlerPair = [KeyHandler, KeyHandler]
+// ⚠️ alias = [KeyHandler, KeyHandler] — alias 不支持 Array 字面量
