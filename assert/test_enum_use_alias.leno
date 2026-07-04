@@ -1,0 +1,39 @@
+// 测试 enum 值别名和 enum 成员访问
+// Bug: alias 不支持 enum 成员做值 + 本地 enum 成员访问未编译为常量
+
+// 本地 enum 定义
+enum Signal { low = 0; mid = 5; high = 10 }
+
+// 值别名：alias X = EnumName.member
+alias DefaultSignal = Signal.mid
+alias LowSignal = Signal.low
+alias HighSignal = Signal.high
+
+// 跨模块 enum 测试
+import "test_enum_use_alias_mod.leno" as cm
+use cm.Color
+
+// 跨模块 enum 值别名
+alias MyColor = Color.green
+
+main() {
+    // 本地 enum 值别名
+    assert(DefaultSignal == 5)
+    assert(LowSignal == 0)
+    assert(HighSignal == 10)
+
+    // 本地 enum 成员访问（应编译为常量）
+    assert(Signal.low == 0)
+    assert(Signal.mid == 5)
+    assert(Signal.high == 10)
+
+    // 跨模块 enum 成员访问
+    assert(Color.red == 100)
+    assert(Color.green == 200)
+    assert(Color.blue == 300)
+
+    // 跨模块 enum 值别名
+    assert(MyColor == 200)
+
+    print("enum use alias: all tests passed")
+}

@@ -1,0 +1,2 @@
+// 跨模块 enum 值别名测试用模块
+export enum Color { red = 100; green = 200; blue = 300 }

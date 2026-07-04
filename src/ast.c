@@ -315,6 +315,8 @@ void ast_free(Ast* ast) {
         case AST_ALIAS:
             free(ast->u.alias.name);
             type_free(ast->u.alias.type);
+            if (ast->u.alias.expr) ast_free(ast->u.alias.expr);
+            free(ast->u.alias.ref.name);
             break;
 
         case AST_ENUM_DEF:

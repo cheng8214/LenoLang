@@ -157,8 +157,8 @@ ModuleStructMethod* module_symbol_table_find_struct_method(ModuleSymbolTable* ta
 // 查找 enum 符号
 ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const char* enum_name);
 
-// 添加 enum 符号
-void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names);
+// 添加 enum 符号（member_values[i] = -1 表示无显式值，使用自动递增）
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int* member_values);
 
 // 查找 face 符号
 ModuleFaceSymbol* module_symbol_table_find_face(ModuleSymbolTable* table, const char* face_name);

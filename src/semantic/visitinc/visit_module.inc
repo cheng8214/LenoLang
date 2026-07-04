@@ -1431,7 +1431,7 @@
                     is_enum_type = 1;
                 }
 
-                if (is_enum_type && var_sym->kind == SYM_TYPE) {
+                if (is_enum_type) {
                     // use 导入的 enum：从 enum symbol 的成员表查找值
                     const char* mname = ast->u.module_access.member_name;
                     int found = 0;
@@ -1459,7 +1459,18 @@
                         ast->u.num.value = (double)member_value;
                         ast->u.num.is_float = 0;
                         ast->u.num.is_bigint = 0;
+                        ast->u.num.bigint_str = NULL;  // 必须清空：union 中 bigint_str 与 module_access.ref.kind/index 重叠
                         ast->cached_type = type_new(TYPE_INT);
+                        // enum 值已解析为常量，释放不再需要的 var_ast
+                        if (var_ast) {
+                            free(var_ast->u.var.name);
+                            var_ast->u.var.name = NULL;
+                            if (var_ast->u.var.ref.name) { free(var_ast->u.var.ref.name); var_ast->u.var.ref.name = NULL; }
+                            if (var_ast->u.var.ref.struct_name) { free(var_ast->u.var.ref.struct_name); var_ast->u.var.ref.struct_name = NULL; }
+                            if (var_ast->cached_type) { type_free(var_ast->cached_type); var_ast->cached_type = NULL; }
+                            free(var_ast);
+                            var_ast = NULL;
+                        }
                     } else {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",

@@ -333,7 +333,7 @@ ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const 
 }
 
 // 添加 enum 符号
-void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names) {
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int* member_values) {
     if (!table || !name) return;
 
     // 扩容
@@ -355,7 +355,8 @@ void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, in
         en->member_values = (int*)malloc(sizeof(int) * member_count);
         for (int i = 0; i < member_count; i++) {
             en->member_names[i] = strdup(member_names[i]);
-            en->member_values[i] = i;  // 默认值 = 索引
+            // 如果提供了显式值则使用，否则自动递增
+            en->member_values[i] = (member_values && member_values[i] != -1) ? member_values[i] : i;
         }
     }
 }
@@ -2360,8 +2361,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     strncpy(enum_name, name_start, name_len);
                     enum_name[name_len] = '\0';
 
-                    // 解析成员名
+                    // 解析成员名和显式值
                     char* member_names_buf[MOD_MAX_MEMBERS];
+                    int member_values_buf[MOD_MAX_MEMBERS];
                     int member_count = 0;
                     while (*after_enum && *after_enum != '{') after_enum++;
                     if (*after_enum == '{') {
@@ -2380,15 +2382,41 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 member_names_buf[member_count] = (char*)malloc(m_len + 1);
                                 strncpy(member_names_buf[member_count], m_start, m_len);
                                 member_names_buf[member_count][m_len] = '\0';
+                                // 检查是否有显式值 = number
+                                member_values_buf[member_count] = -1; // -1 表示无显式值
+                                while (*after_enum && (*after_enum == ' ' || *after_enum == '\t')) after_enum++;
+                                if (*after_enum == '=') {
+                                    after_enum++;
+                                    while (*after_enum && (*after_enum == ' ' || *after_enum == '\t')) after_enum++;
+                                    // 解析整数值（支持负数和十六进制）
+                                    int neg = 0;
+                                    if (*after_enum == '-') { neg = 1; after_enum++; }
+                                    int val = 0;
+                                    // 支持 0x 前缀
+                                    if (*after_enum == '0' && (*(after_enum+1) == 'x' || *(after_enum+1) == 'X')) {
+                                        after_enum += 2;
+                                        while (*after_enum && isxdigit((unsigned char)*after_enum)) {
+                                            val = val * 16 + (*after_enum <= '9' ? *after_enum - '0' : (*after_enum <= 'F' ? *after_enum - 'A' + 10 : *after_enum - 'a' + 10));
+                                            after_enum++;
+                                        }
+                                    } else {
+                                        while (*after_enum && isdigit((unsigned char)*after_enum)) {
+                                            val = val * 10 + (*after_enum - '0');
+                                            after_enum++;
+                                        }
+                                    }
+                                    member_values_buf[member_count] = neg ? -val : val;
+                                }
                                 member_count++;
                             }
-                            while (*after_enum && *after_enum != ',' && *after_enum != '}' && *after_enum != '\n') after_enum++;
-                            if (*after_enum == ',') after_enum++;
+                            // 跳过分隔符：逗号、分号或换行
+                            while (*after_enum && *after_enum != ',' && *after_enum != ';' && *after_enum != '}' && *after_enum != '\n') after_enum++;
+                            if (*after_enum == ',' || *after_enum == ';') after_enum++;
                         }
                         if (*after_enum == '}') after_enum++;
                     }
 
-                    module_symbol_table_add_enum(table, enum_name, member_count, member_names_buf);
+                    module_symbol_table_add_enum(table, enum_name, member_count, member_names_buf, member_values_buf);
                     for (int mi = 0; mi < member_count; mi++) free(member_names_buf[mi]);
                 }
 

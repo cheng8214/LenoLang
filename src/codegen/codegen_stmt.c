@@ -1634,6 +1634,16 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             // 签名信息在语义分析阶段存入 Symbol，供 ffi.callback 调用时使用
             break;
         case AST_ALIAS:
+            if (ast->u.alias.expr) {
+                // 值别名：生成表达式求值 + 定义变量
+                gen_expr(gen, ast->u.alias.expr);
+                if (ast->u.alias.ref.kind == SYM_GLOBAL) {
+                    emit_define_global(gen, ast->u.alias.ref.index, ast->line);
+                } else if (ast->u.alias.ref.kind == SYM_MODULE) {
+                    emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.alias.ref.index, ast->line);
+                    emit_byte(gen, OP_POP, ast->line);
+                }
+            }
             // 类型别名是纯编译期语法糖，不生成运行时指令
             break;
         case AST_ENUM_DEF: {
@@ -2068,9 +2078,23 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
             // clib 定义是纯编译期语法糖，不生成运行时指令
             break;
         case AST_CFUNC_DECL:
-        case AST_ALIAS:
-        case AST_USE:
             // 纯编译期语法糖，不生成运行时指令
+            break;
+        case AST_ALIAS:
+            if (ast->u.alias.expr) {
+                // 值别名：生成表达式求值 + 定义模块变量
+                gen_expr(gen, ast->u.alias.expr);
+                if (ast->u.alias.ref.kind == SYM_GLOBAL) {
+                    emit_define_global(gen, ast->u.alias.ref.index, ast->line);
+                } else if (ast->u.alias.ref.kind == SYM_MODULE) {
+                    emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.alias.ref.index, ast->line);
+                    emit_byte(gen, OP_POP, ast->line);
+                }
+            }
+            // 类型别名是纯编译期语法糖，不生成运行时指令
+            break;
+        case AST_USE:
+            // use 语句是编译时指令，不生成运行时指令
             break;
         case AST_ENUM_DEF:
             gen_enum_module(gen, ast);

@@ -109,6 +109,16 @@ void scope_free(Scope* scope) {
             if (sym->cfunc_return_type) {
                 type_free(sym->cfunc_return_type);
             }
+            // 释放 enum 成员信息
+            if (sym->enum_value_names) {
+                for (int j = 0; j < sym->enum_value_count; j++) {
+                    free(sym->enum_value_names[j]);
+                }
+                free(sym->enum_value_names);
+            }
+            if (sym->enum_values) {
+                free(sym->enum_values);
+            }
             free(sym);
         }
     }

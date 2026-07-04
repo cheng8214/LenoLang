@@ -20,6 +20,15 @@
                     ast->u.enum_def.ref.name = strdup(sym->name);
                     ast->u.enum_def.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                     
+                    // 存储 enum 成员值信息（供 EnumName.member 访问时查找）
+                    sym->enum_value_count = ast->u.enum_def.member_count;
+                    sym->enum_value_names = (char**)malloc(sizeof(char*) * ast->u.enum_def.member_count);
+                    sym->enum_values = (int*)malloc(sizeof(int) * ast->u.enum_def.member_count);
+                    for (int i = 0; i < ast->u.enum_def.member_count; i++) {
+                        sym->enum_value_names[i] = strdup(ast->u.enum_def.member_names[i]);
+                        sym->enum_values[i] = (int)ast->u.enum_def.member_values[i];
+                    }
+                    
                     // 注册 enum 成员到作用域
                     for (int i = 0; i < ast->u.enum_def.member_count; i++) {
                         char* member_name = ast->u.enum_def.member_names[i];
@@ -50,5 +59,18 @@
             break;
 
         case AST_ALIAS:
+            if (ast->u.alias.expr) {
+                // 值别名：alias X = EnumName.member
+                // 对表达式做语义分析（会将 AST_MODULE_ACCESS 转换为 AST_NUM）
+                visit(s, ast->u.alias.expr);
+                // 注册为全局变量
+                Symbol* sym = scope_define(s->current, ast->u.alias.name, SYM_GLOBAL);
+                if (sym) {
+                    sym->type = type_new(TYPE_INT);
+                    ast->u.alias.ref.kind = sym->kind;
+                    ast->u.alias.ref.index = sym->index;
+                    ast->u.alias.ref.name = strdup(sym->name);
+                }
+            }
             // 类型别名已在解析阶段注册到解析器别名表，无需运行时处理
             break;

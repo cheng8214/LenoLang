@@ -243,9 +243,11 @@ struct Ast {
         } type_check;
         struct {
             char* name;        // 别名名称
-            TypeInfo* type;    // 别名指向的类型
+            TypeInfo* type;    // 别名指向的类型（类型别名时非NULL）
+            Ast* expr;         // 值表达式（值别名时非NULL，如 alias X = Signal.mid）
             char** type_params;        // 泛型类型参数名（如 ["T"]），NULL 表示非泛型别名
             int type_param_count;      // 泛型类型参数数量
+            SymRef ref;        // 符号引用信息（值别名时使用）
         } alias;
         struct {
             char* name;        // struct 名称

@@ -520,6 +520,61 @@ Ast* parse_alias_stmt(Parser* p) {
         return NULL;
     }
 
+    // 检查是否是值别名模式：alias X = EnumName.member
+    // 模式：IDENT DOT IDENT — 即 . 紧跟在第一个标识符之后
+    if (p->lex.current.type == TOK_IDENT) {
+        // 保存当前词法位置以便回退
+        int saved_pos = p->lex.pos;
+        int saved_line = p->lex.line;
+        int saved_line_start = p->lex.line_start;
+        Token saved_current = p->lex.current;
+        // 防止回退时释放 saved_current.bigint_str（标识符不会有大整数字符串）
+        saved_current.bigint_str = NULL;
+
+        char* first_ident = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+
+        if (p->lex.current.type == TOK_DOT) {
+            // 这是值别名模式：alias X = EnumName.member
+            lexer_next(&p->lex); // 消费 '.'
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "期望枚举成员名");
+                free(name);
+                free(first_ident);
+                for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+                free(type_params);
+                return NULL;
+            }
+
+            char* member_name = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex); // 消费成员名
+
+            // 构建 AST_MODULE_ACCESS 表达式（与 parse_dot 中的逻辑一致）
+            Ast* expr = ast_new(AST_MODULE_ACCESS, line);
+            expr->u.module_access.module_name = first_ident;
+            expr->u.module_access.member_name = member_name;
+            expr->u.module_access.ref.kind = SYM_GLOBAL;
+            expr->u.module_access.ref.index = -1;
+            expr->u.module_access.ref.name = NULL;
+
+            Ast* ast = ast_new(AST_ALIAS, line);
+            ast->u.alias.name = name;
+            ast->u.alias.type = NULL;  // 值别名，无类型
+            ast->u.alias.expr = expr;
+            ast->u.alias.type_params = type_params;
+            ast->u.alias.type_param_count = type_param_count;
+            // 值别名不注册到解析器别名表
+            return ast;
+        }
+
+        // 不是值别名，回退词法分析器状态
+        free(first_ident);
+        p->lex.pos = saved_pos;
+        p->lex.line = saved_line;
+        p->lex.line_start = saved_line_start;
+        p->lex.current = saved_current;
+    }
+
     TypeInfo* type = parse_type(p);
     if (!type) {
         error_add(ERR_SYNTAX, p->lex.current.line, "期望类型");
@@ -533,6 +588,7 @@ Ast* parse_alias_stmt(Parser* p) {
     Ast* ast = ast_new(AST_ALIAS, line);
     ast->u.alias.name = name;
     ast->u.alias.type = type;
+    ast->u.alias.expr = NULL;
     ast->u.alias.type_params = type_params;
     ast->u.alias.type_param_count = type_param_count;
     
