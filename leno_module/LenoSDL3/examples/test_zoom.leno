@@ -22,6 +22,7 @@ main() {
     var dragStartX = 0.0; var dragStartY = 0.0
     var dragOffX  = 0.0; var dragOffY  = 0.0
     var wheelVal   = 0.0
+    var imgX = 0.0; var imgY = 0.0; var imgW = 0.0; var imgH = 0.0  // 图片在屏幕上的位置和尺寸
 
     win.run(
         func(Event e): bool {
@@ -40,8 +41,9 @@ main() {
                 if scale > 10.0 { scale = 10.0 }               // 最大缩放
             }
 
-            // 鼠标拖拽平移
-            if e.isMouseButtonDown() and e.mouseButton() == SDL3.MOUSE_LEFT {
+            // 鼠标拖拽平移（仅在图片上按住左键）
+            if e.isMouseButtonDown() and e.mouseButton() == SDL3.MOUSE_LEFT
+               and mx >= imgX and mx <= imgX + imgW and my >= imgY and my <= imgY + imgH {
                 dragging   = true
                 dragStartX = mx
                 dragStartY = my
@@ -77,16 +79,14 @@ main() {
             // 绘制缩放后的图片
             if loadedTex != null {
                 var ts = r.getTextureSize(loadedTex)
-                float iw = _float(ts.w as int)
-                float ih = _float(ts.h as int)
-                float sw = iw * scale
-                float sh = ih * scale
-
+                float sw = ts.w * scale
+                float sh = ts.h * scale
                 // 居中 + 偏移
-                float dx = 400.0 - sw/2.0 + offsetX
-                float dy = 300.0 - sh/2.0 + offsetY
+                imgX = 400.0 - sw/2.0 + offsetX
+                imgY = 300.0 - sh/2.0 + offsetY
+                imgW = sw; imgH = sh
 
-                r.drawTextureAt(loadedTex, dx, dy, sw, sh)
+                r.drawTextureAt(loadedTex, imgX, imgY, sw, sh)
             }
 
             // HUD 信息
