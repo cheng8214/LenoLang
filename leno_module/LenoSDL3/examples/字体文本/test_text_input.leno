@@ -1,5 +1,5 @@
 // test_text_input.leno - 测试 isTextInput() 和 text() 函数
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 

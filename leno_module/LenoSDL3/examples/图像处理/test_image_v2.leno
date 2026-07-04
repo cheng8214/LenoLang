@@ -1,5 +1,5 @@
 // test_image_v2.leno — 测试 SDL3_image 加载 & 保存
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 
 main() {
     print("版本: " + SDL3.imageVersion())

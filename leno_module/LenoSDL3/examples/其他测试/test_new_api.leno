@@ -1,5 +1,5 @@
 // test_new_api.leno — 测试新增 API：窗口控制/纹理调色/截图/剪贴板
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 

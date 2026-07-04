@@ -1,5 +1,5 @@
 // test_heart.leno — 心形跳动动画
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 import maths
 import ffi
 use SDL3.Event

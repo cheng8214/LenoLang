@@ -1,5 +1,5 @@
 // simple_window.leno — 最简 SDL3 窗口（回调模式）
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 

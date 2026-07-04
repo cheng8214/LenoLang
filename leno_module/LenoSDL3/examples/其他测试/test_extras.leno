@@ -1,5 +1,5 @@
 // test_extras.leno — 测试 createTexture / lockTexture / setColorScale / mouseGrab / raise
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 

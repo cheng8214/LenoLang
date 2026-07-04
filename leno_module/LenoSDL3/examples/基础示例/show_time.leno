@@ -1,5 +1,5 @@
 // show_time.leno - 在窗口中实时显示当前时间
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 import times
 
 main() {

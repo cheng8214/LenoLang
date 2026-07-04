@@ -1,5 +1,5 @@
 // test_event_v2.leno - 测试新增事件 API (文本输入/拖放/窗口状态/键盘修饰等)
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 

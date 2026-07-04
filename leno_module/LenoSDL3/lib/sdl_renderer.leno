@@ -10,6 +10,7 @@ use core.SDL_Color
 use core.SDL_FColor
 use core.SDL_FPoint
 use core.SDL_Point
+use core.SDL_Rect
 use core.SDL_Vertex
 use core.Color
 use core.FColor
@@ -193,6 +194,20 @@ export struct Renderer {
         return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
     }
 
+    // 绘制纹理的裁剪区域到目标位置
+    // sx, sy, sw, sh: 源矩形；dx, dy, dw, dh: 目标矩形
+    func drawTextureFromTo(Ptr texture,
+                          float sx, float sy, float sw, float sh,
+                          float dx, float dy, float dw, float dh): bool {
+        SDL_FRect src = SDL_FRect.malloc()
+        SDL_FRect dst = SDL_FRect.malloc()
+        src.x = sx; src.y = sy; src.w = sw; src.h = sh
+        dst.x = dx; dst.y = dy; dst.w = dw; dst.h = dh
+        bool ok = _lib.SDL_RenderTexture(handle, texture, src.to_ptr(), dst.to_ptr())
+        src.free(); dst.free()
+        return ok
+    }
+
     // 旋转+翻转绘制纹理
     // angle: 角度（度），顺时针；center: null 则绕目标中心旋转
     // flip: FLIP_NONE / FLIP_HORIZONTAL / FLIP_VERTICAL
@@ -258,6 +273,15 @@ export struct Renderer {
     // 截取当前渲染画面
     func readPixels(Ptr rect): Ptr {
         return _lib.SDL_RenderReadPixels(handle, rect) as Ptr
+    }
+
+    // 截取当前渲染画面（便捷重载：直接传入 x, y, w, h）
+    func readPixelsAt(int x, int y, int w, int h): Ptr {
+        SDL_Rect rect = SDL_Rect.malloc()
+        rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        var surface = _lib.SDL_RenderReadPixels(handle, rect.to_ptr())
+        rect.free()
+        return surface
     }
 
     // 创建纹理（返回 Ptr，用完 SDL_DestroyTexture）

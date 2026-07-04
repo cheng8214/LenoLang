@@ -1,5 +1,5 @@
 // test_font_api.leno - 测试 SDL3_ttf 新增 API
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Font
 
 main() {

@@ -1,8 +1,8 @@
 // test_crop.leno — 图片裁剪工具（鼠标拖拽选区）
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
-use SDL3.SDL_FRect
+import times
 
 main() {
     var win = SDL3.createWindow({title: "图片裁剪 — 鼠标拖拽选区 | S=保存 R=重置", w: 900, h: 650, flags: SDL3.WINDOW_RESIZABLE})
@@ -34,6 +34,10 @@ main() {
     var imgScale   = 1.0
 
     var lastMsg = "拖拽鼠标选择裁剪区域"
+
+    // 保存请求
+    var saveRequested = false
+    var saveCount  = 0
 
     win.run(
         func(Event e): bool {
@@ -89,8 +93,8 @@ main() {
 
             // S 保存裁剪结果
             if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_S and selActive {
-                lastMsg = "保存中...（暂不支持直接保存纹理像素）"
-                print("选区: " + _int(selX) + "," + _int(selY) + " " + _int(selW) + "x" + _int(selH))
+                saveRequested = true
+                lastMsg = "正在保存裁剪图片..."
             }
 
             return true
@@ -122,12 +126,44 @@ main() {
             imgScreenY = 25.0
 
             // 绘制原图
-            SDL_FRect dst = SDL_FRect.malloc()
-            dst.x = imgScreenX; dst.y = imgScreenY; dst.w = imgScreenW; dst.h = imgScreenH
-            r.drawTextureRect(loadedTex, null, dst.to_ptr())
-            dst.free()
+            r.drawTextureAt(loadedTex, imgScreenX, imgScreenY, imgScreenW, imgScreenH)
 
-            // 绘制选区框（或当前拖拽框）
+            // ---- 保存裁剪图片 ----
+            if saveRequested and selActive {
+                // 计算选区在屏幕上的像素坐标
+                int cropSX = _int(imgScreenX + selX * imgScale)
+                int cropSY = _int(imgScreenY + selY * imgScale)
+                int cropSW = _int(selW * imgScale)
+                int cropSH = _int(selH * imgScale)
+
+                // 防止越界
+                if cropSX < _int(imgScreenX) { cropSX = _int(imgScreenX) }
+                if cropSY < _int(imgScreenY) { cropSY = _int(imgScreenY) }
+                if cropSW <= 0 { cropSW = 1 }
+                if cropSH <= 0 { cropSH = 1 }
+
+                // 从渲染器读取像素，获取 surface
+                var surface = r.readPixelsAt(cropSX, cropSY, cropSW, cropSH)
+
+                if surface != null {
+                    saveCount = saveCount + 1
+                    var dt = times.datetime()
+                    var savePath = "d:\\crop_" + dt[3] + dt[4] + dt[5] + "_" + saveCount + ".png"
+                    var ok = SDL3.saveImagePNG(surface, savePath)
+                    if ok {
+                        lastMsg = "已保存: " + savePath
+                        print("裁剪图片已保存: " + savePath + "  (" + cropSW + "x" + cropSH + ")")
+                    } else {
+                        lastMsg = "保存失败"
+                        print("保存失败: " + savePath)
+                    }
+                } else {
+                    lastMsg = "读取像素失败"
+                }
+                saveRequested = false
+            }
+
+            // 绘制选区框（或当前拖拽框）- 仅边框，不填充
             float rx, ry, rw, rh
             if dragging {
                 // 当前拖拽中的框
@@ -135,20 +171,21 @@ main() {
                 ry = (if mouseY > dragSY then dragSY else mouseY)
                 rw = (if mouseX > dragSX then mouseX - dragSX else dragSX - mouseX)
                 rh = (if mouseY > dragSY then mouseY - dragSY else dragSY - mouseY)
-                r.setColor(255, 200, 50, 60)
-                r.fillRect(rx, ry, rw, rh)
+                // 虚线效果：画双层边框
                 r.setColor(255, 200, 50, 255)
                 r.drawRect(rx, ry, rw, rh)
+                r.setColor(255, 200, 50, 100)
+                r.drawRect(rx + 1, ry + 1, rw - 2, rh - 2)
             } else if selActive {
                 // 已确认的选区框
                 rx = imgScreenX + selX * imgScale
                 ry = imgScreenY + selY * imgScale
                 rw = selW * imgScale
                 rh = selH * imgScale
-                r.setColor(0, 200, 255, 60)
-                r.fillRect(rx, ry, rw, rh)
-                r.setColor(0, 200, 255, 255)
+                // 外层粗线 + 内层细线 = 双线边框效果
+                r.setColor(0, 220, 255, 200)
                 r.drawRect(rx, ry, rw, rh)
+                r.drawRect(rx + 1, ry + 1, rw - 2, rh - 2)
             }
 
             // 图片边框
@@ -168,12 +205,8 @@ main() {
                 r.drawText(font, "裁剪预览", previewX, imgScreenY - 2, 255, 220, 80)
 
                 // 绘制裁剪后的纹理
-                SDL_FRect src = SDL_FRect.malloc()
-                SDL_FRect previewDst = SDL_FRect.malloc()
-                src.x = selX; src.y = selY; src.w = selW; src.h = selH
-                previewDst.x = previewX; previewDst.y = imgScreenY + 20.0; previewDst.w = pw; previewDst.h = ph
-                r.drawTextureRect(loadedTex, src.to_ptr(), previewDst.to_ptr())
-                src.free(); previewDst.free()
+                r.drawTextureFromTo(loadedTex, selX, selY, selW, selH,
+                                    previewX, imgScreenY + 20.0, pw, ph)
 
                 // 预览边框
                 r.setColor(0, 200, 255, 150)
@@ -189,7 +222,7 @@ main() {
             r.drawText(font, lastMsg, 260, 600, 200, 255, 100)
 
             int ly = 624
-            r.drawText(font, "左键拖拽: 选裁剪区域  |  S: 输出选区信息  |  R: 重置  |  ESC: 退出", 10, ly, 120, 120, 120)
+            r.drawText(font, "左键拖拽: 选裁剪区域  |  S: 保存裁剪图片  |  R: 重置  |  ESC: 退出", 10, ly, 120, 120, 120)
         }
     )
 

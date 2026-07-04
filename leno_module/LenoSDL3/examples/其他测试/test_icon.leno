@@ -1,5 +1,5 @@
 // test_icon.leno — 测试用 PNG 设置窗口图标
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 
 main() {
     var win = SDL3.createWindow({title: "Icon Test — PNG 图标", w: 400, h: 300})

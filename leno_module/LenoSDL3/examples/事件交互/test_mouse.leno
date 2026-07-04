@@ -1,5 +1,5 @@
 // test_mouse.leno — 测试相对鼠标/最小窗口/闪烁/像素尺寸/纳秒计时
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 

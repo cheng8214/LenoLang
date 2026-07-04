@@ -1,5 +1,5 @@
 // test_timer.leno — 测试 Timer：stop/start/reset/setOnce
-import "../lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Timer
