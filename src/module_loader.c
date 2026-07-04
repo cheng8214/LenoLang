@@ -45,7 +45,11 @@ ObjModule* find_loaded_module(const char* path) {
 
 // 添加已加载模块
 static void add_loaded_module(const char* path, ObjModule* module) {
-    if (loaded_modules.count >= MAX_LOADED_MODULES) return;
+    if (loaded_modules.count >= MAX_LOADED_MODULES) {
+        fprintf(stderr, "[错误] 已加载模块数量超过上限 %d，'%s' 被忽略\n",
+                MAX_LOADED_MODULES, path);
+        return;
+    }
     size_t path_len = strlen(path);
     if (path_len >= MAX_PATH_LEN) path_len = MAX_PATH_LEN - 1;
     memcpy(loaded_modules.paths[loaded_modules.count], path, path_len);
@@ -166,10 +170,18 @@ static void extract_exports(const char* source, ExportList* list) {
             while (*p && (isalnum(*p) || *p == '_')) p++;
 
             int len = (int)(p - start);
-            if (len > 0 && len < MAX_EXPORT_NAME && list->count < MAX_EXPORTS) {
-                strncpy(list->names[list->count], start, len);
-                list->names[list->count][len] = '\0';
-                list->count++;
+            if (len > 0 && len < MAX_EXPORT_NAME) {
+                if (list->count >= MAX_EXPORTS) {
+                    fprintf(stderr, "[错误] 模块导出项数量超过上限 %d，'%.*s' 被忽略\n",
+                            MAX_EXPORTS, len, start);
+                } else {
+                    strncpy(list->names[list->count], start, len);
+                    list->names[list->count][len] = '\0';
+                    list->count++;
+                }
+            } else if (len >= MAX_EXPORT_NAME) {
+                fprintf(stderr, "[错误] 导出项名称长度超过上限 %d：'%.*s'\n",
+                        MAX_EXPORT_NAME, len, start);
             }
             continue;
         }
