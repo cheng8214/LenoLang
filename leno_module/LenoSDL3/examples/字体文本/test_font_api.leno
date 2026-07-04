@@ -1,6 +1,7 @@
-// test_font_api.leno - 测试 SDL3_ttf 新增 API
+﻿// test_font_api.leno - 测试 SDL3_ttf 新增 API
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Font
+use SDL3.Scancode
 
 main() {
     print("=== SDL3_ttf 新 API 测试 ===\n")
@@ -51,7 +52,7 @@ main() {
     while running {
         while ev.poll() {
             if ev.isQuit() or ev.isWindowClose() { running = false }
-            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
         }
 
         ren.setColor(30, 30, 50, 255)

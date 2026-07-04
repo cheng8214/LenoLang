@@ -1,7 +1,9 @@
-// test_mouse.leno — 测试相对鼠标/最小窗口/闪烁/像素尺寸/纳秒计时
+﻿// test_mouse.leno — 测试相对鼠标/最小窗口/闪烁/像素尺寸/纳秒计时
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.FlashOp
 
 main() {
     var win = SDL3.createWindow({title: "Mouse & Window Test", w: 500, h: 350})
@@ -25,10 +27,10 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             // 相对鼠标模式
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_R {
+            if e.isKeyDown() and e.scancode() == Scancode.R {
                 relativeOn = not relativeOn
                 win.setRelativeMouse(relativeOn)
                 lastMsg = if relativeOn then "相对模式 ON" else "相对模式 OFF"
@@ -36,22 +38,22 @@ main() {
             }
 
             // 鼠标锁定
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_G {
+            if e.isKeyDown() and e.scancode() == Scancode.G {
                 grabbedOn = not grabbedOn
                 win.setMouseGrab(grabbedOn)
                 lastMsg = if grabbedOn then "鼠标锁定 ON" else "鼠标锁定 OFF"
             }
 
             // 限制最小窗口
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_M {
+            if e.isKeyDown() and e.scancode() == Scancode.M {
                 minOn = not minOn
                 if minOn { win.setMinSize(300, 200); lastMsg = "最小限制 300x200" }
                 else { win.setMinSize(1, 1); lastMsg = "解除最小限制" }
             }
 
             // 闪烁
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_F { win.flash(SDL3.FLASH_BRIEFLY); lastMsg = "短暂闪烁" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_L { win.flash(SDL3.FLASH_UNTIL_FOCUSED); lastMsg = "持续闪烁" }
+            if e.isKeyDown() and e.scancode() == Scancode.F { win.flash(FlashOp.BRIEFLY); lastMsg = "短暂闪烁" }
+            if e.isKeyDown() and e.scancode() == Scancode.L { win.flash(FlashOp.UNTIL_FOCUSED); lastMsg = "持续闪烁" }
 
             // 相对移动读数
             if e.isMouseMotion() { mxRel = mxRel + e.mouseDX(); myRel = myRel + e.mouseDY() }

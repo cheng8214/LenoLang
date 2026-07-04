@@ -1,7 +1,8 @@
-// test_font_v2.leno - 测试新增 TTF API (FamilyName/Hinting/Kerning/Wrapped/Glyph)
+﻿// test_font_v2.leno - 测试新增 TTF API (FamilyName/Hinting/Kerning/Wrapped/Glyph)
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
 
 main() {
     SDL3.ttfInit()
@@ -40,19 +41,19 @@ main() {
             if e.isQuit() or e.isWindowClose() { return false }
 
             // 按 H 切换 Hinting 模式
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_H {
+            if e.isKeyDown() and e.scancode() == Scancode.H {
                 hintMode = (hintMode + 1) % 4
                 font.setHinting(hintMode)
                 print("Hinting: " + hintMode)
             }
             // 按 K 切换 Kerning
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_K {
+            if e.isKeyDown() and e.scancode() == Scancode.K {
                 kerning = 1 - kerning
                 font.setKerning(kerning)
                 print("Kerning: " + kerning)
             }
             // ESC 退出
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {

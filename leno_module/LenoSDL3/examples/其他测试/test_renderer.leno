@@ -1,10 +1,12 @@
-// 测试 Renderer 新增方法：getColor/getColorFloat/getOutputSize
+﻿// 测试 Renderer 新增方法：getColor/getColorFloat/getOutputSize
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
 
 main() {
-    var win = SDL3.createWindow({title: "Renderer 测试", w: 400, h: 300, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "Renderer 测试", w: 400, h: 300, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
 
     SDL3.ttfInit()
@@ -18,7 +20,7 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {

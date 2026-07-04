@@ -1,9 +1,11 @@
-// keyboard.leno — 键盘事件演示（全键覆盖）
+﻿// keyboard.leno — 键盘事件演示（全键覆盖）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Font
 import files
+use SDL3.Scancode
+use SDL3.WindowFlag
 
 // ==================== 跨平台字体加载 ====================
 func loadFont(float size): Font {
@@ -36,74 +38,74 @@ func scode2name(int code): string {
         _knInited = true
 
         // 基础键
-        d[SDL3.SCANCODE_ESCAPE]="Esc";     d[SDL3.SCANCODE_RETURN]="Enter"
-        d[SDL3.SCANCODE_SPACE]="空格";       d[SDL3.SCANCODE_BACKSPACE]="退格"
-        d[SDL3.SCANCODE_TAB]="Tab";          d[SDL3.SCANCODE_CAPSLOCK]="Caps"
+        d[Scancode.ESCAPE]="Esc";     d[Scancode.RETURN]="Enter"
+        d[Scancode.SPACE]="空格";       d[Scancode.BACKSPACE]="退格"
+        d[Scancode.TAB]="Tab";          d[Scancode.CAPSLOCK]="Caps"
 
         // 字母 A-Z
-        d[SDL3.SCANCODE_A]="A"; d[SDL3.SCANCODE_B]="B"; d[SDL3.SCANCODE_C]="C"
-        d[SDL3.SCANCODE_D]="D"; d[SDL3.SCANCODE_E]="E"; d[SDL3.SCANCODE_F]="F"
-        d[SDL3.SCANCODE_G]="G"; d[SDL3.SCANCODE_H]="H"; d[SDL3.SCANCODE_I]="I"
-        d[SDL3.SCANCODE_J]="J"; d[SDL3.SCANCODE_K]="K"; d[SDL3.SCANCODE_L]="L"
-        d[SDL3.SCANCODE_M]="M"; d[SDL3.SCANCODE_N]="N"; d[SDL3.SCANCODE_O]="O"
-        d[SDL3.SCANCODE_P]="P"; d[SDL3.SCANCODE_Q]="Q"; d[SDL3.SCANCODE_R]="R"
-        d[SDL3.SCANCODE_S]="S"; d[SDL3.SCANCODE_T]="T"; d[SDL3.SCANCODE_U]="U"
-        d[SDL3.SCANCODE_V]="V"; d[SDL3.SCANCODE_W]="W"; d[SDL3.SCANCODE_X]="X"
-        d[SDL3.SCANCODE_Y]="Y"; d[SDL3.SCANCODE_Z]="Z"
+        d[Scancode.A]="A"; d[Scancode.B]="B"; d[Scancode.C]="C"
+        d[Scancode.D]="D"; d[Scancode.E]="E"; d[Scancode.F]="F"
+        d[Scancode.G]="G"; d[Scancode.H]="H"; d[Scancode.I]="I"
+        d[Scancode.J]="J"; d[Scancode.K]="K"; d[Scancode.L]="L"
+        d[Scancode.M]="M"; d[Scancode.N]="N"; d[Scancode.O]="O"
+        d[Scancode.P]="P"; d[Scancode.Q]="Q"; d[Scancode.R]="R"
+        d[Scancode.S]="S"; d[Scancode.T]="T"; d[Scancode.U]="U"
+        d[Scancode.V]="V"; d[Scancode.W]="W"; d[Scancode.X]="X"
+        d[Scancode.Y]="Y"; d[Scancode.Z]="Z"
 
         // 数字
-        d[SDL3.SCANCODE_0]="0"; d[SDL3.SCANCODE_1]="1"; d[SDL3.SCANCODE_2]="2"
-        d[SDL3.SCANCODE_3]="3"; d[SDL3.SCANCODE_4]="4"; d[SDL3.SCANCODE_5]="5"
-        d[SDL3.SCANCODE_6]="6"; d[SDL3.SCANCODE_7]="7"; d[SDL3.SCANCODE_8]="8"
-        d[SDL3.SCANCODE_9]="9"
+        d[Scancode._0]="0"; d[Scancode._1]="1"; d[Scancode._2]="2"
+        d[Scancode._3]="3"; d[Scancode._4]="4"; d[Scancode._5]="5"
+        d[Scancode._6]="6"; d[Scancode._7]="7"; d[Scancode._8]="8"
+        d[Scancode._9]="9"
 
         // 标点
-        d[SDL3.SCANCODE_GRAVE]="`/~";         d[SDL3.SCANCODE_MINUS]="-/--"
-        d[SDL3.SCANCODE_EQUALS]="=/+";         d[SDL3.SCANCODE_LEFTBRACKET]="[/{"
-        d[SDL3.SCANCODE_RIGHTBRACKET]="]/}";   d[SDL3.SCANCODE_BACKSLASH]="\\/|"
-        d[SDL3.SCANCODE_SEMICOLON]=";/:";      d[SDL3.SCANCODE_APOSTROPHE]="'\""
-        d[SDL3.SCANCODE_COMMA]=",/<";           d[SDL3.SCANCODE_PERIOD]="./>"
-        d[SDL3.SCANCODE_SLASH]="//?"
+        d[Scancode.GRAVE]="`/~";         d[Scancode.MINUS]="-/--"
+        d[Scancode.EQUALS]="=/+";         d[Scancode.LEFTBRACKET]="[/{"
+        d[Scancode.RIGHTBRACKET]="]/}";   d[Scancode.BACKSLASH]="\\/|"
+        d[Scancode.SEMICOLON]=";/:";      d[Scancode.APOSTROPHE]="'\""
+        d[Scancode.COMMA]=",/<";           d[Scancode.PERIOD]="./>"
+        d[Scancode.SLASH]="//?"
 
         // 方向
-        d[SDL3.SCANCODE_UP]="↑";   d[SDL3.SCANCODE_DOWN]="↓"
-        d[SDL3.SCANCODE_LEFT]="←"; d[SDL3.SCANCODE_RIGHT]="→"
+        d[Scancode.UP]="↑";   d[Scancode.DOWN]="↓"
+        d[Scancode.LEFT]="←"; d[Scancode.RIGHT]="→"
 
         // 编辑
-        d[SDL3.SCANCODE_INSERT]="Ins";    d[SDL3.SCANCODE_HOME]="Home"
-        d[SDL3.SCANCODE_PAGEUP]="PgUp";   d[SDL3.SCANCODE_DELETE]="Del"
-        d[SDL3.SCANCODE_END]="End";       d[SDL3.SCANCODE_PAGEDOWN]="PgDn"
+        d[Scancode.INSERT]="Ins";    d[Scancode.HOME]="Home"
+        d[Scancode.PAGEUP]="PgUp";   d[Scancode.DELETE]="Del"
+        d[Scancode.END]="End";       d[Scancode.PAGEDOWN]="PgDn"
 
         // 修饰
-        d[SDL3.SCANCODE_LSHIFT]="左Shift"; d[SDL3.SCANCODE_RSHIFT]="右Shift"
-        d[SDL3.SCANCODE_LCTRL]="左Ctrl";   d[SDL3.SCANCODE_RCTRL]="右Ctrl"
-        d[SDL3.SCANCODE_LALT]="左Alt";     d[SDL3.SCANCODE_RALT]="右Alt"
-        d[SDL3.SCANCODE_LGUI]="左Win";     d[SDL3.SCANCODE_RGUI]="右Win"
+        d[Scancode.LSHIFT]="左Shift"; d[Scancode.RSHIFT]="右Shift"
+        d[Scancode.LCTRL]="左Ctrl";   d[Scancode.RCTRL]="右Ctrl"
+        d[Scancode.LALT]="左Alt";     d[Scancode.RALT]="右Alt"
+        d[Scancode.LGUI]="左Win";     d[Scancode.RGUI]="右Win"
 
         // 功能键
-        d[SDL3.SCANCODE_F1]="F1"; d[SDL3.SCANCODE_F2]="F2"
-        d[SDL3.SCANCODE_F3]="F3"; d[SDL3.SCANCODE_F4]="F4"
-        d[SDL3.SCANCODE_F5]="F5"; d[SDL3.SCANCODE_F6]="F6"
-        d[SDL3.SCANCODE_F7]="F7"; d[SDL3.SCANCODE_F8]="F8"
-        d[SDL3.SCANCODE_F9]="F9"; d[SDL3.SCANCODE_F10]="F10"
-        d[SDL3.SCANCODE_F11]="F11"; d[SDL3.SCANCODE_F12]="F12"
+        d[Scancode.F1]="F1"; d[Scancode.F2]="F2"
+        d[Scancode.F3]="F3"; d[Scancode.F4]="F4"
+        d[Scancode.F5]="F5"; d[Scancode.F6]="F6"
+        d[Scancode.F7]="F7"; d[Scancode.F8]="F8"
+        d[Scancode.F9]="F9"; d[Scancode.F10]="F10"
+        d[Scancode.F11]="F11"; d[Scancode.F12]="F12"
 
         // 系统
-        d[SDL3.SCANCODE_PRINTSCREEN]="PrtSc"; d[SDL3.SCANCODE_SCROLLLOCK]="ScrLk"
-        d[SDL3.SCANCODE_PAUSE]="Pause"
+        d[Scancode.PRINTSCREEN]="PrtSc"; d[Scancode.SCROLLLOCK]="ScrLk"
+        d[Scancode.PAUSE]="Pause"
 
         // 特殊键
-        d[SDL3.SCANCODE_APPLICATION]="右键菜单"
+        d[Scancode.APPLICATION]="右键菜单"
 
         // 小键盘
-        d[SDL3.SCANCODE_NUMLOCKCLEAR]="NumLock"; d[SDL3.SCANCODE_KP_DIVIDE]="KP /"
-        d[SDL3.SCANCODE_KP_MULTIPLY]="KP *";     d[SDL3.SCANCODE_KP_MINUS]="KP -"
-        d[SDL3.SCANCODE_KP_PLUS]="KP +";          d[SDL3.SCANCODE_KP_ENTER]="KP Enter"
-        d[SDL3.SCANCODE_KP_EQUALS]="KP =";        d[SDL3.SCANCODE_KP_COMMA]="KP ,"
-        d[SDL3.SCANCODE_KP_0]="KP 0"; d[SDL3.SCANCODE_KP_1]="KP 1"; d[SDL3.SCANCODE_KP_2]="KP 2"
-        d[SDL3.SCANCODE_KP_3]="KP 3"; d[SDL3.SCANCODE_KP_4]="KP 4"; d[SDL3.SCANCODE_KP_5]="KP 5"
-        d[SDL3.SCANCODE_KP_6]="KP 6"; d[SDL3.SCANCODE_KP_7]="KP 7"; d[SDL3.SCANCODE_KP_8]="KP 8"
-        d[SDL3.SCANCODE_KP_9]="KP 9"; d[SDL3.SCANCODE_KP_PERIOD]="KP ."
+        d[Scancode.NUMLOCKCLEAR]="NumLock"; d[Scancode.KP_DIVIDE]="KP /"
+        d[Scancode.KP_MULTIPLY]="KP *";     d[Scancode.KP_MINUS]="KP -"
+        d[Scancode.KP_PLUS]="KP +";          d[Scancode.KP_ENTER]="KP Enter"
+        d[Scancode.KP_EQUALS]="KP =";        d[Scancode.KP_COMMA]="KP ,"
+        d[Scancode.KP_0]="KP 0"; d[Scancode.KP_1]="KP 1"; d[Scancode.KP_2]="KP 2"
+        d[Scancode.KP_3]="KP 3"; d[Scancode.KP_4]="KP 4"; d[Scancode.KP_5]="KP 5"
+        d[Scancode.KP_6]="KP 6"; d[Scancode.KP_7]="KP 7"; d[Scancode.KP_8]="KP 8"
+        d[Scancode.KP_9]="KP 9"; d[Scancode.KP_PERIOD]="KP ."
     }
     var name = d.get(code, "") as string
     if name != "" { return name }
@@ -112,7 +114,7 @@ func scode2name(int code): string {
 
 // ==================== 主程序 ====================
 main() {
-    var win = SDL3.createWindow({title: "键盘演示 - 全键覆盖", w: 700, h: 550, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "键盘演示 - 全键覆盖", w: 700, h: 550, flags: WindowFlag.RESIZABLE})
     if not win.ok { print("窗口失败"); return }
 
     SDL3.ttfInit()
@@ -139,7 +141,7 @@ main() {
                 }
             }
             if e.isKeyUp() { down = false; released = released + 1; lastCode = -1 }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {

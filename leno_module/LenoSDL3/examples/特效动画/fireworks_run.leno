@@ -1,10 +1,11 @@
-// fireworks_run.leno — 烟花效果（win.run 回调模式 + 文字统计覆盖）
+﻿// fireworks_run.leno — 烟花效果（win.run 回调模式 + 文字统计覆盖）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 import maths
 import rands
 import times
+use SDL3.WindowFlag
 
 struct Particle {
     float x; float y
@@ -28,7 +29,7 @@ struct Star {
 }
 
 main() {
-    var win = SDL3.createWindow({title: "Fireworks", w: 800, h: 600, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "Fireworks", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
 
     // 初始化 TTF 字体

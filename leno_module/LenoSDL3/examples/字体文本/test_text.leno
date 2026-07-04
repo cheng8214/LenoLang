@@ -1,5 +1,7 @@
-// test_text.leno - 测试 SDL3_ttf 文字显示功能
+﻿// test_text.leno - 测试 SDL3_ttf 文字显示功能
 import "../../lib/SDL3.leno" as SDL3
+use SDL3.Scancode
+use SDL3.WindowFlag
 
 // ============================================================================
 // 主程序
@@ -7,7 +9,7 @@ import "../../lib/SDL3.leno" as SDL3
 
 main() {
     // 创建窗口
-    var win = SDL3.createWindow({title: "SDL3 文字显示测试", w: 800, h: 600, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "SDL3 文字显示测试", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
     if not win.ok {
         print("创建窗口失败")
         return
@@ -55,7 +57,7 @@ main() {
             if ev.isQuit() or ev.isWindowClose() {
                 running = false
             }
-            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE {
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE {
                 running = false
             }
         }

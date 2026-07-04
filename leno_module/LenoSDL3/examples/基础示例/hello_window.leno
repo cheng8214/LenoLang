@@ -1,16 +1,18 @@
-// hello_window.leno — SDL3 绘图示例（矩形、圆、线、混合模式）
+﻿// hello_window.leno — SDL3 绘图示例（矩形、圆、线、混合模式）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
-
+use SDL3.WindowFlag
+use SDL3.BlendMode
+use SDL3.Scancode
 main() {
-    var win = SDL3.createWindow({title: "Hello LenoSDL3 - 绘图演示", w: 800, h: 600, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "Hello LenoSDL3 - 绘图演示", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
     win.setResizable(false)
 
     win.run(
         func(Event e): bool {
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {
@@ -64,14 +66,14 @@ main() {
             r.fillRect(620, 250, 50, 80)
 
             // ---- 10. 半透明混合 ----
-            r.setBlendMode(SDL3.BLENDMODE_BLEND)
+            r.setBlendMode(BlendMode.BLEND)
             r.setColor(255, 80, 80, 160)
             r.fillRect(500, 400, 80, 80)
             r.setColor(80, 80, 255, 160)
             r.fillRect(540, 410, 80, 80)
             r.setColor(80, 255, 80, 160)
             r.fillRect(560, 430, 80, 80)
-            r.setBlendMode(SDL3.BLENDMODE_NONE)
+            r.setBlendMode(BlendMode.NONE)
         }
     )
 

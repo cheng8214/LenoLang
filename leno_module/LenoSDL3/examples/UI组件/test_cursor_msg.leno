@@ -1,7 +1,9 @@
-// test_cursor_msg.leno — 测试：系统光标切换 + 消息框 + 拖放
+﻿// test_cursor_msg.leno — 测试：系统光标切换 + 消息框 + 拖放
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.SystemCursor
 
 main() {
     var win = SDL3.createWindow({title: "光标/消息框/拖放 测试", w: 500, h: 400})
@@ -12,15 +14,15 @@ main() {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() {
                 int sc = e.scancode()
-                if sc == SDL3.SCANCODE_ESCAPE { return false }
-                if sc == SDL3.SCANCODE_1 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_DEFAULT) }
-                if sc == SDL3.SCANCODE_2 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_TEXT) }
-                if sc == SDL3.SCANCODE_3 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_WAIT) }
-                if sc == SDL3.SCANCODE_4 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_CROSSHAIR) }
-                if sc == SDL3.SCANCODE_5 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_POINTER) }
-                if sc == SDL3.SCANCODE_6 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_MOVE) }
-                if sc == SDL3.SCANCODE_7 { SDL3.setSystemCursor(SDL3.SYSTEM_CURSOR_NOT_ALLOWED) }
-                if sc == SDL3.SCANCODE_M {
+                if sc == Scancode.ESCAPE { return false }
+                if sc == Scancode._1 { SDL3.setSystemCursor(SystemCursor.DEFAULT) }
+                if sc == Scancode._2 { SDL3.setSystemCursor(SystemCursor.TEXT) }
+                if sc == Scancode._3 { SDL3.setSystemCursor(SystemCursor.WAIT) }
+                if sc == Scancode._4 { SDL3.setSystemCursor(SystemCursor.CROSSHAIR) }
+                if sc == Scancode._5 { SDL3.setSystemCursor(SystemCursor.POINTER) }
+                if sc == Scancode._6 { SDL3.setSystemCursor(SystemCursor.MOVE) }
+                if sc == Scancode._7 { SDL3.setSystemCursor(SystemCursor.NOT_ALLOWED) }
+                if sc == Scancode.M {
                     SDL3.showMessageBox("测试消息框", "Hello from Leno!\n这是原生消息框", 0)
                 }
             }

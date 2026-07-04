@@ -1,10 +1,12 @@
-// 测试 SDL3_image 加载 PNG/JPG
+﻿// 测试 SDL3_image 加载 PNG/JPG
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
 
 main() {
-    var win = SDL3.createWindow({title: "Image 测试", w: 1200, h: 900, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "Image 测试", w: 1200, h: 900, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
 
     var tex = null as Ptr[u8]
@@ -12,7 +14,7 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {

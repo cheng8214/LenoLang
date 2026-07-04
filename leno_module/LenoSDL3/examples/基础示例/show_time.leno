@@ -1,9 +1,11 @@
-// show_time.leno - 在窗口中实时显示当前时间
+﻿// show_time.leno - 在窗口中实时显示当前时间
 import "../../lib/SDL3.leno" as SDL3
 import times
+use SDL3.Scancode
+use SDL3.WindowFlag
 
 main() {
-    var win = SDL3.createWindow({title: "实时时间显示 - SDL3_ttf 文字测试", w: 600, h: 300, flags: SDL3.WINDOW_HIGH_PIXEL_DENSITY})
+    var win = SDL3.createWindow({title: "实时时间显示 - SDL3_ttf 文字测试", w: 600, h: 300, flags: WindowFlag.HIGH_PIXEL_DENSITY})
     if not win.ok { print("创建窗口失败"); return }
 
     SDL3.ttfInit()
@@ -27,7 +29,7 @@ main() {
     while running {
         while ev.poll() {
             if ev.isQuit() or ev.isWindowClose() { running = false }
-            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
         }
 
         var dt = times.datetime()  // [年, 月, 日, 时, 分, 秒]

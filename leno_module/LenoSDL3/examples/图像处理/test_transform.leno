@@ -1,7 +1,9 @@
-// test_transform.leno — 测试图片旋转 & 翻转
+﻿// test_transform.leno — 测试图片旋转 & 翻转
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Flip
 
 main() {
     var win = SDL3.createWindow({title: "Transform 测试 — 旋转 & 翻转", w: 900, h: 600})
@@ -22,18 +24,18 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             // R: 手动旋转 +15°
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_R {
+            if e.isKeyDown() and e.scancode() == Scancode.R {
                 angle = angle + 15.0; if angle >= 360.0 { angle = angle - 360.0 }
             }
             // F: 循环翻转模式
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_F {
+            if e.isKeyDown() and e.scancode() == Scancode.F {
                 flip = flip + 1; if flip >= 3 { flip = 0 }
             }
             // S: 自动旋转开关
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_S {
+            if e.isKeyDown() and e.scancode() == Scancode.S {
                 autoSpin = not autoSpin
             }
             return true
@@ -79,11 +81,11 @@ main() {
 
                 // 3. 水平翻转（固定）— 右下
                 r.drawText(font, "水平翻转", 680, 68, 100, 100, 100)
-                r.drawTextureRotated(loadedTex, 680, 90, tw, th, 0.0, 0.0, 0.0, SDL3.FLIP_HORIZONTAL)
+                r.drawTextureRotated(loadedTex, 680, 90, tw, th, 0.0, 0.0, 0.0, Flip.HORIZONTAL)
 
                 // 4. 垂直翻转（固定）— 右下2
                 r.drawText(font, "垂直翻转", 680, 140 + _int(th), 100, 100, 100)
-                r.drawTextureRotated(loadedTex, 680, 162 + _int(th), tw, th, 0.0, 0.0, 0.0, SDL3.FLIP_VERTICAL)
+                r.drawTextureRotated(loadedTex, 680, 162 + _int(th), tw, th, 0.0, 0.0, 0.0, Flip.VERTICAL)
             }
 
             // 操作说明

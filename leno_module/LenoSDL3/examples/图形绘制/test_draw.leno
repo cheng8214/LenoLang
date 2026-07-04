@@ -1,7 +1,8 @@
-// test_draw.leno — 测试绘制：矩形/圆形/三角形/线条/阴影/渐变
+﻿// test_draw.leno — 测试绘制：矩形/圆形/三角形/线条/阴影/渐变
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
 
 main() {
     var win = SDL3.createWindow({title: "绘制测试 — 矩形/圆形/三角/阴影", w: 800, h: 600})
@@ -15,7 +16,7 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {

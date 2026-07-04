@@ -1,7 +1,9 @@
-// test_extras.leno — 测试 createTexture / lockTexture / setColorScale / mouseGrab / raise
+﻿// test_extras.leno — 测试 createTexture / lockTexture / setColorScale / mouseGrab / raise
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.TextureAccess
 
 main() {
     var win = SDL3.createWindow({title: "Extras — lockTexture & mouseGrab & colorScale", w: 600, h: 400})
@@ -19,14 +21,14 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             // 颜色缩放
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_UP   { scale = scale + 0.1; if scale > 3.0 { scale = 3.0 }; lastMsg = "scale=" + scale }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_DOWN { scale = scale - 0.1; if scale < 0.1 { scale = 0.1 }; lastMsg = "scale=" + scale }
+            if e.isKeyDown() and e.scancode() == Scancode.UP   { scale = scale + 0.1; if scale > 3.0 { scale = 3.0 }; lastMsg = "scale=" + scale }
+            if e.isKeyDown() and e.scancode() == Scancode.DOWN { scale = scale - 0.1; if scale < 0.1 { scale = 0.1 }; lastMsg = "scale=" + scale }
 
             // 鼠标锁定
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_G {
+            if e.isKeyDown() and e.scancode() == Scancode.G {
                 grabbed = not grabbed
                 win.setMouseGrab(grabbed)
                 lastMsg = if grabbed then "mouseGrab ON" else "mouseGrab OFF"
@@ -34,7 +36,7 @@ main() {
             }
 
             // 窗口前置
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_T { var ok = win.raise(); lastMsg = "raise=" + ok }
+            if e.isKeyDown() and e.scancode() == Scancode.T { var ok = win.raise(); lastMsg = "raise=" + ok }
 
             return true
         },
@@ -44,7 +46,7 @@ main() {
 
             // 首次创建动态纹理（TARGET 模式用于离屏渲染）
             if dynTex == null {
-                dynTex = r.createTexture(SDL3.PIXELFORMAT_RGBA8888, SDL3.TEXTUREACCESS_TARGET, 200, 150)
+                dynTex = r.createTexture(SDL3.PIXELFORMAT_RGBA8888, TextureAccess.TARGET, 200, 150)
                 if dynTex != null {
                     // 离屏渲染到纹理
                     r.setRenderTarget(dynTex)

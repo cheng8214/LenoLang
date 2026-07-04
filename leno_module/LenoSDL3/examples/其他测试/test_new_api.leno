@@ -1,10 +1,12 @@
-// test_new_api.leno — 测试新增 API：窗口控制/纹理调色/截图/剪贴板
+﻿// test_new_api.leno — 测试新增 API：窗口控制/纹理调色/截图/剪贴板
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
 
 main() {
-    var win = SDL3.createWindow({title: "New API Test", w: 700, h: 500, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "New API Test", w: 700, h: 500, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
 
     // ---- 剪贴板 ----
@@ -42,38 +44,38 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             if e.isMouseButtonDown() {
                 print("鼠标按钮: " + e.mouseButton() + "  掩码: " + SDL3.getMouseState())
             }
 
             // 纹理调色
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_1 { alpha = 128; lastMsg = "alpha=128" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_2 { alpha = 255; lastMsg = "alpha=255" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_3 { cr = 255; cg = 100; cb = 100; lastMsg = "红色调" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_4 { cr = 255; cg = 255; cb = 255; lastMsg = "正常" }
+            if e.isKeyDown() and e.scancode() == Scancode._1 { alpha = 128; lastMsg = "alpha=128" }
+            if e.isKeyDown() and e.scancode() == Scancode._2 { alpha = 255; lastMsg = "alpha=255" }
+            if e.isKeyDown() and e.scancode() == Scancode._3 { cr = 255; cg = 100; cb = 100; lastMsg = "红色调" }
+            if e.isKeyDown() and e.scancode() == Scancode._4 { cr = 255; cg = 255; cb = 255; lastMsg = "正常" }
 
             // 窗口控制
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_W { win.show(); lastMsg = "show" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_H { win.hide(); lastMsg = "hide" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_M { win.maximize(); lastMsg = "maximize" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_N { win.minimize(); lastMsg = "minimize" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_R { win.restore(); lastMsg = "restore" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_Z { win.setSize(400, 300); lastMsg = "400x300" }
+            if e.isKeyDown() and e.scancode() == Scancode.W { win.show(); lastMsg = "show" }
+            if e.isKeyDown() and e.scancode() == Scancode.H { win.hide(); lastMsg = "hide" }
+            if e.isKeyDown() and e.scancode() == Scancode.M { win.maximize(); lastMsg = "maximize" }
+            if e.isKeyDown() and e.scancode() == Scancode.N { win.minimize(); lastMsg = "minimize" }
+            if e.isKeyDown() and e.scancode() == Scancode.R { win.restore(); lastMsg = "restore" }
+            if e.isKeyDown() and e.scancode() == Scancode.Z { win.setSize(400, 300); lastMsg = "400x300" }
 
             // 剪贴板
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_C { clipText = SDL3.getClipboardText(); lastMsg = "clipboard read" }
+            if e.isKeyDown() and e.scancode() == Scancode.C { clipText = SDL3.getClipboardText(); lastMsg = "clipboard read" }
 
             // 光标
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_D { SDL3.showCursor(); cursorVis = true;  lastMsg = "showCursor" }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_X { SDL3.hideCursor(); cursorVis = false; lastMsg = "hideCursor" }
+            if e.isKeyDown() and e.scancode() == Scancode.D { SDL3.showCursor(); cursorVis = true;  lastMsg = "showCursor" }
+            if e.isKeyDown() and e.scancode() == Scancode.X { SDL3.hideCursor(); cursorVis = false; lastMsg = "hideCursor" }
 
             // 全屏
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_F { win.setFullscreen(true); lastMsg = "fullscreen ON" }
+            if e.isKeyDown() and e.scancode() == Scancode.F { win.setFullscreen(true); lastMsg = "fullscreen ON" }
 
             // 截图
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_P { needShot = true }
+            if e.isKeyDown() and e.scancode() == Scancode.P { needShot = true }
 
             return true
         },

@@ -1,9 +1,11 @@
-// fireworks.leno — 烟花压力测试（FPS 统计）
+﻿// fireworks.leno — 烟花压力测试（FPS 统计）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 import maths
 import rands
+use SDL3.Scancode
+use SDL3.WindowFlag
 
 struct Particle {
     float x; float y
@@ -27,7 +29,7 @@ struct Star {
 }
 
 main() {
-    var win = SDL3.createWindow({title: "Fireworks", w: 800, h: 600, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "Fireworks", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
 
     // 关 vsync 测真实帧率
@@ -133,7 +135,7 @@ main() {
     while running {
         while ev.poll() {
             if ev.isQuit() or ev.isWindowClose() { running = false }
-            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
         }
 
         frame += 1

@@ -1,0 +1,35 @@
+// 测试 enum 分号：声明用分号 vs 换行
+
+// 方式1: 分号分隔
+export enum A1 { x = 1; y = 2; z = 3 }
+
+// 方式2: 换行分隔（无分号）
+export enum A2 {
+    a = 10
+    b = 20
+    c = 30
+}
+
+// 方式3: 混合（最后一个有分号，另一个无）
+export enum A3 { p = 100; q = 200 }
+
+// 方式4: 单行三个分号
+export enum A4 { u = 1; v = 2; w = 3 }
+
+// 方式5: 全部加分号
+export enum A5 {
+    aa = 5;
+    bb = 6;
+    cc = 7;
+}
+
+// === 本模块直接使用 ===
+main() {
+    print("A1.x =", A1.x)
+    print("A1.y =", A1.y)
+    print("A4.u =", A4.u)
+    print("A5.aa =", A5.aa)
+    if A1.z == 3 { print("A1.z==3 ✓") }
+    if A5.cc == 7 { print("A5.cc==7 ✓") }
+    print("=== PASS ===")
+}

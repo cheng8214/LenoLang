@@ -1,10 +1,11 @@
-// test_heart.leno — 心形跳动动画
+﻿// test_heart.leno — 心形跳动动画
 import "../../lib/SDL3.leno" as SDL3
 import maths
 import ffi
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.SDL_Vertex
+use SDL3.Scancode
 
 // 心跳参数：180 BPM，cos 波 scale 0.85~1.15
 var beat = 0.0
@@ -25,7 +26,7 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {

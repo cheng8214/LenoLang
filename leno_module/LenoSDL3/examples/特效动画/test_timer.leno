@@ -1,8 +1,9 @@
-// test_timer.leno — 测试 Timer：stop/start/reset/setOnce
+﻿// test_timer.leno — 测试 Timer：stop/start/reset/setOnce
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Timer
+use SDL3.Scancode
 
 main() {
     var win = SDL3.createWindow({title: "定时器测试", w: 600, h: 400})
@@ -36,22 +37,22 @@ main() {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() {
                 int sc = e.scancode()
-                if sc == SDL3.SCANCODE_ESCAPE { return false }
-                if sc == SDL3.SCANCODE_SPACE {
+                if sc == Scancode.ESCAPE { return false }
+                if sc == Scancode.SPACE {
                     // 空格：t2 切换启动/暂停
                     if t2.running { t2.stop(); _msg = "t2 已暂停" }
                     else { t2.start(); _msg = "t2 已启动 (0.5s)" }
                 }
-                if sc == SDL3.SCANCODE_R {
+                if sc == Scancode.R {
                     // R：reset t2 间隔为 500ms
                     t2.reset(500); t2.start()
                     _msg = "t2 间隔改为 500ms"
                 }
-                if sc == SDL3.SCANCODE_S {
+                if sc == Scancode.S {
                     // S：stop t1
                     t1.stop(); _msg = "t1 已暂停"
                 }
-                if sc == SDL3.SCANCODE_G {
+                if sc == Scancode.G {
                     // G：go/resume t1
                     t1.start(); _msg = "t1 已恢复"
                 }

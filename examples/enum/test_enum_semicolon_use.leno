@@ -1,0 +1,32 @@
+// 跨模块 use 导入分号 enum
+import "test_enum_semicolon.leno" as m
+use m.A1
+use m.A2
+use m.A3
+use m.A4
+use m.A5
+
+main() {
+    // 分号分隔
+    print("A1.x =", A1.x)
+    print("A1.y =", A1.y)
+
+    // 换行分隔
+    print("A2.a =", A2.a)
+    print("A2.b =", A2.b)
+
+    // 混合
+    print("A3.p =", A3.p)
+    print("A3.q =", A3.q)
+
+    // 单行三号
+    print("A4.w =", A4.w)
+
+    // 全加分号
+    print("A5.bb =", A5.bb)
+
+    if A1.z == 3 { print("A1.z==3 ✓") }
+    if A5.cc == 7 { print("A5.cc==7 ✓") }
+
+    print("=== PASS ===")
+}

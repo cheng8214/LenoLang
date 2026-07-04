@@ -1,11 +1,14 @@
-// test_crop.leno — 图片裁剪工具（鼠标拖拽选区）
+﻿// test_crop.leno — 图片裁剪工具（鼠标拖拽选区）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 import times
+use SDL3.Scancode
+use SDL3.WindowFlag
+use SDL3.MouseButton
 
 main() {
-    var win = SDL3.createWindow({title: "图片裁剪 — 鼠标拖拽选区 | S=保存 R=重置", w: 900, h: 650, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "图片裁剪 — 鼠标拖拽选区 | S=保存 R=重置", w: 900, h: 650, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
 
     SDL3.ttfInit()
@@ -42,12 +45,12 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             if e.isMouseMotion() { mouseX = e.mouseX(); mouseY = e.mouseY() }
 
             // 鼠标左键按下 = 开始选区
-            if e.isMouseButtonDown() and e.mouseButton() == SDL3.MOUSE_LEFT {
+            if e.isMouseButtonDown() and e.mouseButton() == MouseButton.LEFT {
                 dragging = true
                 dragSX   = mouseX
                 dragSY   = mouseY
@@ -56,7 +59,7 @@ main() {
             }
 
             // 左键松开 = 完成选区
-            if e.isMouseButtonUp() and e.mouseButton() == SDL3.MOUSE_LEFT and dragging {
+            if e.isMouseButtonUp() and e.mouseButton() == MouseButton.LEFT and dragging {
                 dragging = false
                 // 将屏幕坐标转为纹理坐标
                 float sx = (dragSX - imgScreenX) / imgScale
@@ -86,13 +89,13 @@ main() {
             }
 
             // R 重置
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_R {
+            if e.isKeyDown() and e.scancode() == Scancode.R {
                 selActive = false; selX = 0; selY = 0; selW = 0; selH = 0
                 lastMsg = "已重置"
             }
 
             // S 保存裁剪结果
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_S and selActive {
+            if e.isKeyDown() and e.scancode() == Scancode.S and selActive {
                 saveRequested = true
                 lastMsg = "正在保存裁剪图片..."
             }

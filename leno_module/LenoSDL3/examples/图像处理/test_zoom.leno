@@ -1,10 +1,13 @@
-// test_zoom.leno — 鼠标滚轮放大/缩小图片
+﻿// test_zoom.leno — 鼠标滚轮放大/缩小图片
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
+use SDL3.MouseButton
 
 main() {
-    var win = SDL3.createWindow({title: "图片缩放 — 滚轮放大缩小", w: 800, h: 600, flags: SDL3.WINDOW_RESIZABLE})
+    var win = SDL3.createWindow({title: "图片缩放 — 滚轮放大缩小", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
 
     SDL3.ttfInit()
@@ -27,7 +30,7 @@ main() {
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             // 鼠标移动
             if e.isMouseMotion() { mx = e.mouseX(); my = e.mouseY() }
@@ -42,7 +45,7 @@ main() {
             }
 
             // 鼠标拖拽平移（仅在图片上按住左键）
-            if e.isMouseButtonDown() and e.mouseButton() == SDL3.MOUSE_LEFT
+            if e.isMouseButtonDown() and e.mouseButton() == MouseButton.LEFT
                and mx >= imgX and mx <= imgX + imgW and my >= imgY and my <= imgY + imgH {
                 dragging   = true
                 dragStartX = mx
@@ -50,12 +53,12 @@ main() {
                 dragOffX   = offsetX
                 dragOffY   = offsetY
             }
-            if e.isMouseButtonUp() and e.mouseButton() == SDL3.MOUSE_LEFT {
+            if e.isMouseButtonUp() and e.mouseButton() == MouseButton.LEFT {
                 dragging = false
             }
 
             // R 重置
-            if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_R {
+            if e.isKeyDown() and e.scancode() == Scancode.R {
                 scale = 1.0; offsetX = 0.0; offsetY = 0.0
             }
 

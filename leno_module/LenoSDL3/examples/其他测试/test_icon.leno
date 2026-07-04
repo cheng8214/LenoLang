@@ -1,5 +1,6 @@
-// test_icon.leno — 测试用 PNG 设置窗口图标
+﻿// test_icon.leno — 测试用 PNG 设置窗口图标
 import "../../lib/SDL3.leno" as SDL3
+use SDL3.Scancode
 
 main() {
     var win = SDL3.createWindow({title: "Icon Test — PNG 图标", w: 400, h: 300})
@@ -23,7 +24,7 @@ main() {
     while running {
         while ev.poll() {
             if ev.isQuit() or ev.isWindowClose() { running = false }
-            if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
         }
         ren.clearColor(20, 20, 40, 255)
         ren.present()
