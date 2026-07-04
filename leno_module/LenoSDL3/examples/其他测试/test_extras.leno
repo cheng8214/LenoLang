@@ -11,7 +11,7 @@ main() {
     var font = SDL3.createFontAuto(16.0)
 
     // 动态纹理
-    var dynTex = null as Ptr
+    var dynTex = null as Ptr[u8]
     var scale  = 1.0
     var lastMsg = ""
     var grabbed = false

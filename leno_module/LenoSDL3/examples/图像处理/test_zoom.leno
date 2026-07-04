@@ -11,7 +11,7 @@ main() {
     var font = SDL3.createFontAuto(16.0)
 
     var imgPath   = "d:\\1.png"
-    var loadedTex = null as Ptr
+    var loadedTex = null as Ptr[u8]
     var texLoaded = false
 
     var scale     = 1.0     // 缩放比例

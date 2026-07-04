@@ -212,7 +212,7 @@ export func hideCursor(): bool           { return core.hideCursor() }
 export func cursorVisible(): bool        { return core.cursorVisible() }
 export func warpMouse(Ptr[u8] w, float x, float y): bool { return core.warpMouse(w, x, y) }
 
-export func setSystemCursor(int kind): Ptr { return core.setSystemCursor(kind) }
+export func setSystemCursor(int kind): Ptr[u8] { return core.setSystemCursor(kind) as Ptr[u8] }
 export func showMessageBox(string title, string msg, int flags) { core.showMessageBox(title, msg, flags) }
 
 export var SYSTEM_CURSOR_DEFAULT     = core.SYSTEM_CURSOR_DEFAULT
@@ -286,10 +286,9 @@ export var WRAP_ALIGN_CENTER = fnt.WRAP_ALIGN_CENTER
 export var WRAP_ALIGN_RIGHT  = fnt.WRAP_ALIGN_RIGHT
 
 // ==================== Image ====================
-// 注意：clib 返回暂不 Ptr[u8]（编译器 bug），保持 Ptr
 
-export func loadImage(string path): Ptr                  { return img.load(path) }
-export func loadImageTexture(Ptr[u8] ren, string path): Ptr  { return img.loadTexture(ren, path) }
+export func loadImage(string path): Ptr[u8]                  { return img.load(path) as Ptr[u8] }
+export func loadImageTexture(Ptr[u8] ren, string path): Ptr[u8]  { return img.loadTexture(ren, path) as Ptr[u8] }
 export func saveImagePNG(Ptr[u8] surface, string path): bool           { return img.savePNG(surface, path) }
 export func saveImageJPG(Ptr[u8] surface, string path, int q): bool    { return img.saveJPG(surface, path, q) }
 export func saveImageBMP(Ptr[u8] surface, string path): bool           { return img.saveBMP(surface, path) }

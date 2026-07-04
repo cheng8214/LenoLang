@@ -7,7 +7,7 @@ main() {
     var win = SDL3.createWindow({title: "Image 测试", w: 1200, h: 900, flags: SDL3.WINDOW_RESIZABLE})
     if not win.ok { return }
 
-    var tex = null as Ptr
+    var tex = null as Ptr[u8]
 
     win.run(
         func(Event e): bool {

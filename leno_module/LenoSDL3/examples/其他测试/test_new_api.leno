@@ -36,7 +36,7 @@ main() {
     var clipText  = SDL3.getClipboardText()
     var lastMsg   = ""
     var needShot  = false
-    var loadedTex = null as Ptr
+    var loadedTex = null as Ptr[u8]
     var texLoaded = false
 
     win.run(
