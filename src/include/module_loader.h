@@ -4,6 +4,8 @@
 #include "leno_value.h"
 #include "leno_vm.h"
 
+#define MAX_EXPORT_NAME_LEN 128
+
 // 加载并编译模块文件
 // file_path: 模块文件路径
 // current_file: 当前文件路径（用于解析相对路径）
@@ -25,7 +27,7 @@ void reset_loaded_modules(void);
 // max_exports: 最大导出项数量
 // 返回: 实际导出项数量，失败返回 -1
 int extract_module_exports_from_file(const char* file_path, const char* current_file, 
-                                      char exports[][128], int max_exports);
+                                      char exports[][MAX_EXPORT_NAME_LEN], int max_exports);
 
 // 检查模块中是否存在指定的方法
 // file_path: 模块文件路径

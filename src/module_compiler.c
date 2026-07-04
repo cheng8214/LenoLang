@@ -13,7 +13,7 @@
 // 编译模块 - 新实现
 // 模块被编译为函数对象，存储在模块的导出表中
 ObjModule* compile_module_new(const char* source, const char* module_name,
-                               char export_names[][64], int export_count) {
+                               char export_names[][MAX_EXPORT_NAME_LEN], int export_count) {
     // 1. 词法分析 + 语法分析
     Parser parser;
     parser_init(&parser, source);
