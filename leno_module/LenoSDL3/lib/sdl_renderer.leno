@@ -1,4 +1,4 @@
-// sdl_renderer.leno — SDL3 渲染器封装
+﻿// sdl_renderer.leno — SDL3 渲染器封装
 // 封装 SDL_Renderer 的绘制、颜色、纹理等操作
 import ffi
 import maths
@@ -60,7 +60,7 @@ export struct Renderer {
     func getColor(): Color {
         SDL_Color c = SDL_Color.malloc()
         _lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
-        var d = {r: c.r as int, g: c.g as int, b: c.b as int, a: c.a as int}
+        var d = {r: c.r, g: c.g, b: c.b, a: c.a}
         c.free(); return d
     }
 
@@ -76,7 +76,7 @@ export struct Renderer {
     func getOutputSize(): Size {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetRenderOutputSize(handle, &pt.x, &pt.y)
-        var d = {w: pt.x as int, h: pt.y as int}
+        var d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 

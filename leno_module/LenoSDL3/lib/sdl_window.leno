@@ -1,4 +1,4 @@
-// sdl_window.leno — SDL3 窗口封装
+﻿// sdl_window.leno — SDL3 窗口封装
 //
 // 提供两种使用模式：
 // 1. run() 回调模式（推荐）：
@@ -60,7 +60,7 @@ export struct Window {
     func getSizeInPixels(): Size {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetWindowSizeInPixels(handle, &pt.x, &pt.y)
-        var d = {w: pt.x as int, h: pt.y as int}
+        var d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 

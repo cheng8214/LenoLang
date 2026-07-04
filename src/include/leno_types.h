@@ -226,6 +226,7 @@ int c_layout_type_size(TypeKind kind);
 int c_layout_type_align(TypeKind kind);
 int c_layout_align_up(int offset, int alignment);
 int c_layout_is_valid_field_type(TypeKind kind);
+TypeKind c_layout_type_to_leno(TypeKind kind);
 
 // ============================================================================
 // 符号类型

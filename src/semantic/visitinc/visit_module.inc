@@ -571,6 +571,19 @@
                             (expected_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
                             type_compatible = true;
                         }
+                        // C 布局类型隐式转换
+                        if ((expected_type == TYPE_INT && arg_type->kind >= TYPE_I8 && arg_type->kind <= TYPE_C_SSIZE) ||
+                            (arg_type->kind == TYPE_INT && expected_type >= TYPE_I8 && expected_type <= TYPE_C_SSIZE)) {
+                            type_compatible = true;
+                        }
+                        if ((expected_type == TYPE_FLOAT && (arg_type->kind == TYPE_F32 || arg_type->kind == TYPE_F64)) ||
+                            (arg_type->kind == TYPE_FLOAT && (expected_type == TYPE_F32 || expected_type == TYPE_F64))) {
+                            type_compatible = true;
+                        }
+                        if ((expected_type == TYPE_STRING && (arg_type->kind == TYPE_STR8 || arg_type->kind == TYPE_STR16)) ||
+                            (arg_type->kind == TYPE_STRING && (expected_type == TYPE_STR8 || expected_type == TYPE_STR16))) {
+                            type_compatible = true;
+                        }
 
                         // 允许 cfunc 类型匹配
                         if (expected_type == TYPE_CFUNC && arg_type->kind == TYPE_CFUNC) {
@@ -698,40 +711,15 @@
                                         Ast* arg = ast->u.module_call.args.items[pi];
                                         TypeInfo* arg_type = infer_expr_type(s, arg);
                                         if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
-                                            if (!(expected_param->kind == TYPE_FLOAT && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR) &&
-                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
-                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_NULL) &&
-                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) &&
-                                                !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_STRING) &&
-                                                !(expected_param->kind == TYPE_STR8 && arg_type->kind == TYPE_NULL) &&
-                                                !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_STRING) &&
-                                                !(expected_param->kind == TYPE_STR16 && arg_type->kind == TYPE_NULL) &&
-                                                !(expected_param->kind == TYPE_I32 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_I64 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_U32 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_U64 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_I8 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_U8 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_I16 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_U16 && arg_type->kind == TYPE_INT) &&
-                                                !(expected_param->kind == TYPE_F64 && arg_type->kind == TYPE_FLOAT) &&
-                                                !(expected_param->kind == TYPE_F32 && arg_type->kind == TYPE_FLOAT) &&
-                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_CSTRUCT) &&
-                                                !(expected_param->kind == TYPE_PTR && arg_type->kind == TYPE_CSTRUCT) &&
-                                                !(expected_param->kind == TYPE_PTR_GENERIC && arg_type->kind == TYPE_CSTRUCT) &&
-                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_PTR) &&
-                                                !(expected_param->kind == TYPE_CSTRUCT && arg_type->kind == TYPE_NULL)) {
-                                                char msg[BUFFER_MEDIUM];
-                                                format_type_error(msg, sizeof(msg),
-                                                    "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",
-                                                    expected_param, arg_type,
-                                                    obj_type->struct_name, method_name);
-                                                // 追加参数序号
-                                                char final_msg[BUFFER_MEDIUM];
-                                                snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
-                                                error_add(ERR_TYPE_MISMATCH, ast->line, final_msg);
-                                            }
+                                            char msg[BUFFER_MEDIUM];
+                                            format_type_error(msg, sizeof(msg),
+                                                "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",
+                                                expected_param, arg_type,
+                                                obj_type->struct_name, method_name);
+                                            // 追加参数序号
+                                            char final_msg[BUFFER_MEDIUM];
+                                            snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
+                                            error_add(ERR_TYPE_MISMATCH, ast->line, final_msg);
                                         }
                                         if (arg_type) type_free(arg_type);
                                     }
@@ -1288,6 +1276,19 @@
                                             // 允许 Ptr[T] <-> Ptr 之间的隐式转换
                                             if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
                                                 (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
+                                                type_compatible = true;
+                                            }
+                                            // C 布局类型隐式转换
+                                            if ((expected_param_type == TYPE_INT && arg_type->kind >= TYPE_I8 && arg_type->kind <= TYPE_C_SSIZE) ||
+                                                (arg_type->kind == TYPE_INT && expected_param_type >= TYPE_I8 && expected_param_type <= TYPE_C_SSIZE)) {
+                                                type_compatible = true;
+                                            }
+                                            if ((expected_param_type == TYPE_FLOAT && (arg_type->kind == TYPE_F32 || arg_type->kind == TYPE_F64)) ||
+                                                (arg_type->kind == TYPE_FLOAT && (expected_param_type == TYPE_F32 || expected_param_type == TYPE_F64))) {
+                                                type_compatible = true;
+                                            }
+                                            if ((expected_param_type == TYPE_STRING && (arg_type->kind == TYPE_STR8 || arg_type->kind == TYPE_STR16)) ||
+                                                (arg_type->kind == TYPE_STRING && (expected_param_type == TYPE_STR8 || expected_param_type == TYPE_STR16))) {
                                                 type_compatible = true;
                                             }
                                             if (!type_compatible) {

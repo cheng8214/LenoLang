@@ -1,4 +1,4 @@
-// sdl_font.leno — SDL3_ttf 字体绑定
+﻿// sdl_font.leno — SDL3_ttf 字体绑定
 import ffi
 import dirs
 import files
@@ -131,7 +131,7 @@ export struct Font {
         if not ok { return {w: 0, h: 0} }
         SDL_Point pt = SDL_Point.malloc()
         ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
-        var d = {w: pt.x as int, h: pt.y as int}
+        var d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 
@@ -185,7 +185,7 @@ export struct Font {
         if not ok { return {w: 0, h: 0} }
         SDL_Point pt = SDL_Point.malloc()
         ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, &pt.x, &pt.y)
-        var d = {w: pt.x as int, h: pt.y as int}
+        var d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 
@@ -212,9 +212,9 @@ export struct Font {
         SDL_GlyphMetrics m = SDL_GlyphMetrics.malloc()
         ttfLib().TTF_GetGlyphMetrics(handle, glyph, &m.minX, &m.maxX, &m.minY, &m.maxY, &m.advance)
         var r = {
-            minX: m.minX as int, maxX: m.maxX as int,
-            minY: m.minY as int, maxY: m.maxY as int,
-            advance: m.advance as int
+            minX: m.minX, maxX: m.maxX,
+            minY: m.minY, maxY: m.maxY,
+            advance: m.advance
         }
         m.free(); return r
     }
@@ -239,8 +239,8 @@ export struct TextTexture {
         if surface == null { return false }
         // 通过 cstruct from_ptr 读取表面真实宽高
         SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
-        width  = info.w as int
-        height = info.h as int
+        width  = info.w
+        height = info.h
         var result = createFromSurface(renderer, surface)
         return result
     }
@@ -254,8 +254,8 @@ export struct TextTexture {
 
     func createFromSurfaceW(Ptr[u8] renderer, Ptr[u8] surface): bool {
         SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
-        width = info.w as int
-        height = info.h as int
+        width = info.w
+        height = info.h
         return createFromSurface(renderer, surface)
     }
 }

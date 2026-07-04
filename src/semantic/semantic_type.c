@@ -70,17 +70,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (strcmp(clib_sym->clib_func_names[i], func_name) == 0) {
                         TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
                         TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
-                        // C 类型 → Leno 类型映射
+                        // C 类型 → Leno 类型映射（使用 c_layout_type_to_leno 统一处理）
+                        TypeKind leno_rk = c_layout_type_to_leno(rk);
+                        if (leno_rk != rk) {
+                            return type_new(leno_rk);
+                        }
                         switch (rk) {
-                            case TYPE_I8: case TYPE_U8:
-                            case TYPE_I16: case TYPE_U16:
-                            case TYPE_I32: case TYPE_U32:
-                            case TYPE_I64: case TYPE_U64:
-                                return type_new(TYPE_INT);
-                            case TYPE_F32: case TYPE_F64:
-                                return type_new(TYPE_FLOAT);
-                            case TYPE_STR8: case TYPE_STR16:
-                                return type_new(TYPE_STRING);
                             case TYPE_PTR: case TYPE_PTR_GENERIC: {
                                 TypeInfo* t = type_new(TYPE_PTR);
                                 t->struct_name = strdup("Ptr");
@@ -1758,6 +1753,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         for (int i = 0; i < cstruct_def_sym->struct_field_count; i++) {
                             if (strcmp(cstruct_def_sym->struct_field_names[i], field_name) == 0) {
                                 result = type_copy(cstruct_def_sym->struct_field_types[i]);
+                                // cstruct 字段类型从 C 布局类型映射为 Leno 类型（零摩擦自动收窄）
+                                TypeKind leno_kind = c_layout_type_to_leno(result->kind);
+                                if (leno_kind != result->kind) {
+                                    result->kind = leno_kind;
+                                }
                                 ast->u.field_access.field_index = i; // 存储字段索引
                                 break;
                             }
@@ -1773,20 +1773,25 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         for (int i = 0; i < var_sym->struct_field_count; i++) {
                             if (strcmp(var_sym->struct_field_names[i], field_name) == 0) {
                                 result = type_copy(var_sym->struct_field_types[i]);
+                                // cstruct 字段类型从 C 布局类型映射为 Leno 类型（零摩擦自动收窄）
+                                TypeKind leno_kind = c_layout_type_to_leno(result->kind);
+                                if (leno_kind != result->kind) {
+                                    result->kind = leno_kind;
+                                }
                                 ast->u.field_access.field_index = i; // 存储字段索引
                                 break;
                             }
                         }
                     }
                 }
-                
+
                 // 如果还是没找到，尝试从全局 cstruct 定义表查找（跨模块导入的 cstruct）
                 if (ast->u.field_access.field_index < 0 && obj_type->struct_name) {
                     ObjCStructDef* cdef = cstruct_def_find(obj_type->struct_name);
                     if (cdef) {
                         int idx = cstruct_get_field_index(cdef, field_name);
                         if (idx >= 0) {
-                            result = type_new(cdef->fields[idx].type);
+                            result = type_new(c_layout_type_to_leno(cdef->fields[idx].type));
                             ast->u.field_access.field_index = idx;
                         }
                     } else {
@@ -1798,7 +1803,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 if (ssym && ssym->is_cstruct) {
                                     for (int fi = 0; fi < ssym->field_count; fi++) {
                                         if (strcmp(ssym->fields[fi].name, field_name) == 0) {
-                                            result = type_new(ssym->fields[fi].type);
+                                            result = type_new(c_layout_type_to_leno(ssym->fields[fi].type));
                                             ast->u.field_access.field_index = fi;
                                             break;
                                         }
@@ -1824,25 +1829,22 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             if (strcmp(clib_sym->clib_func_names[i], field_name) == 0) {
                                 TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
                                 TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
-                                switch (rk) {
-                                    case TYPE_I8: case TYPE_U8:
-                                    case TYPE_I16: case TYPE_U16:
-                                    case TYPE_I32: case TYPE_U32:
-                                    case TYPE_I64: case TYPE_U64:
-                                        result = type_new(TYPE_INT); break;
-                                    case TYPE_F32: case TYPE_F64:
-                                        result = type_new(TYPE_FLOAT); break;
-                                    case TYPE_STR8: case TYPE_STR16:
-                                        result = type_new(TYPE_STRING); break;
-                                    case TYPE_PTR: case TYPE_PTR_GENERIC:
-                                        result = type_new(TYPE_PTR);
-                                        result->struct_name = strdup("Ptr"); break;
-                                    case TYPE_BOOL:
-                                        result = type_new(TYPE_BOOL); break;
-                                    case TYPE_NULL:
-                                        result = type_new(TYPE_NULL); break;
-                                    default:
-                                        result = ret_type ? type_copy(ret_type) : type_new(TYPE_ANY); break;
+                                // C 类型 → Leno 类型映射（使用 c_layout_type_to_leno 统一处理）
+                                TypeKind leno_rk = c_layout_type_to_leno(rk);
+                                if (leno_rk != rk) {
+                                    result = type_new(leno_rk);
+                                } else {
+                                    switch (rk) {
+                                        case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                            result = type_new(TYPE_PTR);
+                                            result->struct_name = strdup("Ptr"); break;
+                                        case TYPE_BOOL:
+                                            result = type_new(TYPE_BOOL); break;
+                                        case TYPE_NULL:
+                                            result = type_new(TYPE_NULL); break;
+                                        default:
+                                            result = ret_type ? type_copy(ret_type) : type_new(TYPE_ANY); break;
+                                    }
                                 }
                                 break;
                             }

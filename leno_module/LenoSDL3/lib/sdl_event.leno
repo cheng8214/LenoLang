@@ -1,4 +1,4 @@
-// sdl_event.leno — SDL3 事件封装（基于 cstruct，无需手动偏移）
+﻿// sdl_event.leno — SDL3 事件封装（基于 cstruct，无需手动偏移）
 //
 // 用法：
 //   var ev = SDL3.createEvent()
@@ -39,7 +39,7 @@ export struct Event {
     // 获取事件类型（所有事件 cstruct 头部相同，故用 KeyboardEvent 读取）
     func sdl3_type(): int {
         SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.type as int
+        return e.type
     }
 
     // ==================== 通用 ====================
@@ -50,7 +50,7 @@ export struct Event {
     // 获取触发事件的窗口 ID
     func windowID(): int {
         SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.windowID as int
+        return e.windowID
     }
 
     // ==================== 窗口事件 ====================
@@ -75,7 +75,7 @@ export struct Event {
     // 获取物理扫描码（与键盘布局无关，如 SCANCODE_A, SCANCODE_ESCAPE）
     func scancode(): int {
         SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.scancode as int
+        return e.scancode
     }
 
     // 是否为按键重复事件（长按产生的自动重复）
@@ -87,7 +87,7 @@ export struct Event {
     // 获取修饰键状态（位掩码：Shift/Ctrl/Alt/GUI 等）
     func keyMod(): int {
         SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.mod as int
+        return e.mod
     }
 
     // ==================== 鼠标事件 ====================
@@ -120,13 +120,13 @@ export struct Event {
     // 鼠标按钮编号：1=左键, 2=中键, 3=右键
     func mouseButton(): int {
         SDL_MouseButtonEvent e = SDL_MouseButtonEvent.from_ptr(raw)
-        return e.button as int
+        return e.button
     }
 
     // 点击次数：1=单击, 2=双击
     func mouseClicks(): int {
         SDL_MouseButtonEvent e = SDL_MouseButtonEvent.from_ptr(raw)
-        return e.clicks as int
+        return e.clicks
     }
 
     // 滚轮滚动量（正值向右/远离用户，负值向左/朝向用户）

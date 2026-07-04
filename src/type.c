@@ -931,6 +931,15 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if ((target->kind == TYPE_STR8 || target->kind == TYPE_STR16) &&
         (source->kind == TYPE_STR8 || source->kind == TYPE_STR16)) return 1;
 
+    // cstruct ↔ Ptr 交叉兼容（cstruct 实例可传给期望 Ptr 的 clib 参数）
+    if (target->kind == TYPE_PTR && source->kind == TYPE_CSTRUCT) return 1;
+    if (target->kind == TYPE_PTR_GENERIC && source->kind == TYPE_CSTRUCT) return 1;
+    if (target->kind == TYPE_CSTRUCT && source->kind == TYPE_PTR) return 1;
+    // null 可赋值给 Ptr/str8/str16/cstruct（指针可为 NULL）
+    if (target->kind == TYPE_PTR && source->kind == TYPE_NULL) return 1;
+    if ((target->kind == TYPE_STR8 || target->kind == TYPE_STR16) && source->kind == TYPE_NULL) return 1;
+    if (target->kind == TYPE_CSTRUCT && source->kind == TYPE_NULL) return 1;
+
     return 0;  // 默认不兼容
 }
 
@@ -1114,5 +1123,31 @@ int c_layout_is_valid_field_type(TypeKind kind) {
             return 1;
         default:
             return 0;
+    }
+}
+
+// 将 C 布局 TypeKind 映射为 Leno 等价 TypeKind
+// cstruct 字段类型推断使用此函数，使 i32/u8 等自动映射为 int，无需 as int
+TypeKind c_layout_type_to_leno(TypeKind kind) {
+    switch (kind) {
+        // C 整数类型 → int
+        case TYPE_I8: case TYPE_U8:
+        case TYPE_I16: case TYPE_U16:
+        case TYPE_I32: case TYPE_U32:
+        case TYPE_I64: case TYPE_U64:
+        case TYPE_C_INT: case TYPE_C_UINT:
+        case TYPE_C_LONG: case TYPE_C_ULONG:
+        case TYPE_C_LONGLONG: case TYPE_C_ULONGLONG:
+        case TYPE_C_SIZE: case TYPE_C_SSIZE:
+            return TYPE_INT;
+        // C 浮点类型 → float
+        case TYPE_F32: case TYPE_F64:
+            return TYPE_FLOAT;
+        // C 字符串类型 → string
+        case TYPE_STR8: case TYPE_STR16:
+            return TYPE_STRING;
+        // 其他类型保持不变
+        default:
+            return kind;
     }
 }
