@@ -20,78 +20,46 @@ SDL3 封装里 `as int` 出现了 50+ 次。
 
 ```leno
 // ✅ 自动
-int x = pt.x       // i32 → int，语义：取整数值
-int code = e.key    // u32 → int
+int x  = pt.x           // i32 → int
+int code = e.key        // u32 → int
 
 // ❌ 保留 as
-int r = 3.14 as int  // float → int，必须显式
+int r = 3.14 as int     // float → int，必须显式
 ```
 
-## 2. `export *` 批量导出常量模块
+### 安全考量
 
-### 痛点
+`f32 → int` 截断、`u32 → int` 符号变化有风险，保留显式。但 `i32→int` 等同源整数无风险，可自动。
 
-`SDL3.leno` 中 80+ 行重复代码：
+## 2. `enum` 关键字 ✅ 已实现
 
 ```leno
-export var SCANCODE_A = core.SCANCODE_A
-export var SCANCODE_B = core.SCANCODE_B
-// ... 80 more lines
-export var INIT_VIDEO = core.INIT_VIDEO
-export var EVENT_QUIT = core.EVENT_QUIT
+export enum Scancode { ESCAPE = 41; SPACE = 44; A = 4; ... }
 ```
 
-### 建议：`enum` 关键字 ✅ 已实现
-
-`enum` 已在最新版本中实现，语法：
-
-```leno
-// sdl_core.leno
-export enum Scancode {
-    ESCAPE = 41, RETURN = 40, SPACE = 44, ...
-    A = 4, B = 5, C = 6, ...
-}
-
-// 用户侧 — import 模式（当前可用）
-import "SDL3.leno" as SDL3
-if e.scancode() == SDL3.Scancode.ESCAPE { ... }
-```
-
-优势：编译期枚举值检查，不需要 80 行 `export var`。
-
-⚠️ **当前限制**（见 `bug/bug_enum_use_cross_module.md`）：
-- `use` 导入跨模块 enum 有 bug（显式值丢失/崩溃）
-- 暂时只能用 `import` + `module.Scancode.ESCAPE` 全路径访问
-- 修复后即可 `use SDL3.Scancode` 一行替代 80 行
-
-> `export *` 不需要 —— enum 命名空间隔离已足够，`export *` 反而制造冲突。
+已全面应用到 SDL3 库，替代 140 行 `export var`，支持 `use` 导入和链式 `import` 访问。
 
 ## 3. 解构赋值
 
 ### 痛点
 
-Dict 返回模式非常啰嗦：
-
 ```leno
 var d = getOutputSize()
 int w = d.w; int h = d.h
-var d = getTextureSize()
 float fw = d.w; float fh = d.h
 ```
 
 ### 建议
 
 ```leno
-var {w, h} = getOutputSize()    // 类型从 getOutputSize(): Size 推断
-float w, h = getTextureSize()   // 显式类型
+var {w, h} = getOutputSize()
 ```
 
-影响：SDL3 封装中 10+ 处 Dict return 模式。
+影响：SDL3 封装中 10+ 处 Dict return 模式，每处省 2 行。
 
-## 优先级建议
+## 优先级
 
-| 特性 | 收益 | 实现成本 | 优先级 |
-|------|------|---------|--------|
-| `export *` / enum | 删 80 行重复 | 中 | ⭐1 |
-| 整数自动收窄 | 删 50 行 as int | 低 | ⭐2 |
-| 解构赋值 | 每处省 2 行 | 中 | ⭐3 |
+| 特性 | 收益 | 优先级 |
+|------|------|--------|
+| 整数自动收窄 | 删 50 行 `as int` | ⭐1 |
+| 解构赋值 | 每处省 2 行 | ⭐2 |
