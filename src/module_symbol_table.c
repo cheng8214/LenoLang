@@ -546,6 +546,7 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     if (strcmp(buf, "var") == 0)    return type_new(TYPE_INFER);
     if (strcmp(buf, "any") == 0)    return type_new(TYPE_ANY);
     if (strcmp(buf, "null") == 0)   return type_new(TYPE_NULL);
+    if (strcmp(buf, "void") == 0)   return type_new(TYPE_NULL);  // void 映射为 TYPE_NULL
     // 文件/网络类型
     if (strcmp(buf, "File") == 0)   return type_new(TYPE_FILE);
     if (strcmp(buf, "Socket") == 0) return type_new(TYPE_SOCKET);
@@ -590,6 +591,74 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
     const char* name_end;
     int name_len = read_ident(name_start, 64, &name_end);
     if (name_len == 0) return NULL;
+    
+    // 检查是否是 func 类型（函数类型：func(params):return_type）
+    char ident_buf[65];
+    int copy_len = name_len < 64 ? name_len : 64;
+    memcpy(ident_buf, name_start, copy_len);
+    ident_buf[copy_len] = '\0';
+    
+    if (strcmp(ident_buf, "func") == 0) {
+        *p = name_end;
+        skip_ws(p);
+        
+        TypeInfo** param_types = NULL;
+        int param_count = 0;
+        int param_capacity = 4;
+        TypeInfo* return_type = NULL;
+        
+        // 解析参数列表 (ParamType1, ParamType2, ...)
+        if (**p == '(') {
+            (*p)++; // 跳过 '('
+            skip_ws(p);
+            
+            if (**p != ')') {
+                // 有参数
+                param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_capacity);
+                while (1) {
+                    if (param_count >= param_capacity) {
+                        param_capacity *= 2;
+                        param_types = (TypeInfo**)realloc(param_types, sizeof(TypeInfo*) * param_capacity);
+                    }
+                    TypeInfo* pt = parse_type_from_string_inner(p);
+                    if (!pt) break;
+                    param_types[param_count++] = pt;
+                    skip_ws(p);
+                    if (**p == ',') {
+                        (*p)++;
+                        skip_ws(p);
+                    } else {
+                        break;
+                    }
+                }
+            }
+            
+            skip_ws(p);
+            if (**p == ')') (*p)++; // 跳过 ')'
+            skip_ws(p);
+        }
+        
+        // 解析返回类型 :ReturnType
+        if (**p == ':') {
+            (*p)++; // 跳过 ':'
+            skip_ws(p);
+            return_type = parse_type_from_string_inner(p);
+            // void 返回类型转为 TYPE_NULL
+            if (return_type && return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+                strcmp(return_type->struct_name, "void") == 0) {
+                type_free(return_type);
+                return_type = type_new(TYPE_NULL);
+            }
+        }
+        
+        // 构建函数类型
+        TypeInfo* func_type = type_new(TYPE_FUNCTION);
+        func_type->return_type = return_type;
+        func_type->param_types = param_types;
+        func_type->param_count = param_count;
+        return func_type;
+    }
+    
     *p = name_end;
     skip_ws(p);
     
