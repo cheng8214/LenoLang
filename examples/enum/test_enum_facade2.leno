@@ -1,0 +1,20 @@
+// 模拟 SDL3.leno facade 模式（跨文件）
+import "test_enum_facade.leno" as core
+use core.Scancode
+use core.KeyEvent
+// ✗ use core.isEscape — 函数不能 use（预期行为，非 bug）
+
+main() {
+    // ✅ use 导入的 enum 成员
+    print("Scancode.ESCAPE =", Scancode.ESCAPE)
+    print("Scancode.SPACE =", Scancode.SPACE)
+
+    // ✅ 函数通过 import 别名调用
+    print("isEscape(41) =", core.isEscape(Scancode.ESCAPE))
+
+    // ✅ alias 跨模块
+    KeyEvent ke = Scancode.B
+    print("KeyEvent ke =", ke)
+
+    print("=== PASS ===")
+}

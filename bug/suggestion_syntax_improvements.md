@@ -41,16 +41,9 @@ export var INIT_VIDEO = core.INIT_VIDEO
 export var EVENT_QUIT = core.EVENT_QUIT
 ```
 
-### 建议一：`export *` 语法
+### 建议：`enum` 关键字 ✅ 已实现
 
-```leno
-// 把 core 模块所有 export var 全部透传
-export * from core
-```
-
-### 建议二：`enum` 关键字（更优雅）
-
-把这些常量组声明为枚举，自动获得命名空间：
+`enum` 已在最新版本中实现，语法：
 
 ```leno
 // sdl_core.leno
@@ -59,14 +52,19 @@ export enum Scancode {
     A = 4, B = 5, C = 6, ...
 }
 
-// 用户侧
+// 用户侧 — import 模式（当前可用）
+import "SDL3.leno" as SDL3
 if e.scancode() == SDL3.Scancode.ESCAPE { ... }
 ```
 
-优势：
-- 一行 `use SDL3.Scancode` 就能用所有值
-- 编译期枚举值检查
-- 不需要 80 行 `export var`
+优势：编译期枚举值检查，不需要 80 行 `export var`。
+
+⚠️ **当前限制**（见 `bug/bug_enum_use_cross_module.md`）：
+- `use` 导入跨模块 enum 有 bug（显式值丢失/崩溃）
+- 暂时只能用 `import` + `module.Scancode.ESCAPE` 全路径访问
+- 修复后即可 `use SDL3.Scancode` 一行替代 80 行
+
+> `export *` 不需要 —— enum 命名空间隔离已足够，`export *` 反而制造冲突。
 
 ## 3. 解构赋值
 

@@ -1,0 +1,29 @@
+// 测试 enum + alias 组合
+enum Signal {
+    low  = 0
+    mid  = 5
+    high = 10
+}
+
+// ⚠️ BUG: alias DefaultSignal = Signal.mid  语法错误 "期望表达式"
+// alias 不能直接引用 enum 成员值
+
+// 绕过：用 var 常量
+export var DefaultSignal = Signal.mid
+
+main() {
+    print("Signal.low =", Signal.low)
+    print("Signal.mid =", Signal.mid)
+    print("Signal.high =", Signal.high)
+
+    // ✅ var 变量作为 enum 值替代（但失去 alias 的别名语义）
+    print("DefaultSignal =", DefaultSignal)
+
+    // ✅ 条件比较
+    int s = Signal.high
+    if s == Signal.low  { print("low") }
+    if s == Signal.mid  { print("mid") }
+    if s == Signal.high { print("high ✓") }
+
+    print("=== PASS ===")
+}
