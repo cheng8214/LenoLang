@@ -32,6 +32,9 @@ ObjModule* module_new(const char* name) {
     module->initialized = 0;
     module->export_mappings = NULL;
     module->export_mapping_count = 0;
+    module->use_reexport_names = NULL;
+    module->use_reexport_kinds = NULL;
+    module->use_reexport_count = 0;
     
     return module;
 }

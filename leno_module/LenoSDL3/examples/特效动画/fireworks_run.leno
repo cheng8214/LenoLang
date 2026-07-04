@@ -1,4 +1,4 @@
-﻿// fireworks_run.leno — 烟花效果（win.run 回调模式 + 文字统计覆盖）
+// fireworks_run.leno — 烟花效果（win.run 回调模式 + 文字统计覆盖）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer

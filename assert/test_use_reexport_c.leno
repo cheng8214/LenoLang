@@ -1,0 +1,21 @@
+// use re-export 测试：顶层通过 import 访问中间层 use 导入的类型
+// Bug: use 导入的类型不能通过链式 import 访问（b.Flag 为 null）
+import "test_use_reexport_b.leno" as b
+
+main() {
+    // 通过模块前缀访问 use 导入的 enum
+    assert(b.Flag.ON == 1)
+    assert(b.Flag.OFF == 0)
+
+    // 通过 use 再次导入 enum 成员访问
+    use b.Flag
+    assert(Flag.ON == 1)
+    assert(Flag.OFF == 0)
+
+    // 通过 use 再次导入 struct
+    use b.Counter
+    var c = new Counter(value=42)
+    assert(c.value == 42)
+
+    print("use re-export: all tests passed")
+}

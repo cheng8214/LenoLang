@@ -65,6 +65,31 @@ OPCODE(OP_INIT_LENOMODULE) {
                 }
             }
         }
+
+        // 将 use 导入的类型也添加到 exports（供 import B as b 后 b.TypeName 访问）
+        if (module->use_reexport_names && module->use_reexport_count > 0) {
+            extern ObjEnumDef* enum_def_find(const char* name);
+            extern ObjStructDef* struct_def_find(const char* name);
+            for (int i = 0; i < module->use_reexport_count; i++) {
+                const char* name = module->use_reexport_names[i];
+                TypeKind kind = (TypeKind)module->use_reexport_kinds[i];
+                ObjString* key = str_copy(name, (int)strlen(name));
+                Value current_val = dict_get(module->exports, val_obj((Object*)key));
+                if (val_is_null(current_val)) {
+                    if (kind == TYPE_ENUM) {
+                        ObjEnumDef* def = enum_def_find(name);
+                        if (def) {
+                            dict_set(module->exports, val_obj((Object*)key), val_obj((Object*)def));
+                        }
+                    } else if (kind == TYPE_STRUCT) {
+                        ObjStructDef* def = struct_def_find(name);
+                        if (def) {
+                            dict_set(module->exports, val_obj((Object*)key), val_obj((Object*)def));
+                        }
+                    }
+                }
+            }
+        }
     } else if (!module->initialized && !module->init_chunk) {
         module->initialized = 1;
 

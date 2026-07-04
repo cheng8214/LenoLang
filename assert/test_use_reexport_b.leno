@@ -1,0 +1,4 @@
+// use re-export 测试：中间层 use 导入
+import "test_use_reexport_a.leno" as a
+use a.Flag
+use a.Counter

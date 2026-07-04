@@ -411,6 +411,9 @@ typedef struct {
     int initialized;            // 是否已在运行时初始化
     ExportGlobalMapping* export_mappings;  // 导出名 -> 全局变量索引映射
     int export_mapping_count;   // 导出映射数量
+    char** use_reexport_names;  // use 导入的需要 re-export 的类型名（运行时添加到 exports）
+    int* use_reexport_kinds;    // use re-export 的类型种类（TYPE_ENUM, TYPE_STRUCT 等）
+    int use_reexport_count;     // use re-export 数量
 } ObjModule;
 
 // 绑定方法对象 - 将 receiver 和 method 绑定在一起

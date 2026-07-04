@@ -575,6 +575,16 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
             }
             placeholder_module->export_mapping_count = module->export_mapping_count;
         }
+        // 复制 use 导入的需要 re-export 的类型信息
+        if (module->use_reexport_names && module->use_reexport_count > 0) {
+            placeholder_module->use_reexport_names = (char**)malloc(module->use_reexport_count * sizeof(char*));
+            placeholder_module->use_reexport_kinds = (int*)malloc(module->use_reexport_count * sizeof(int));
+            for (int ei = 0; ei < module->use_reexport_count; ei++) {
+                placeholder_module->use_reexport_names[ei] = strdup(module->use_reexport_names[ei]);
+                placeholder_module->use_reexport_kinds[ei] = module->use_reexport_kinds[ei];
+            }
+            placeholder_module->use_reexport_count = module->use_reexport_count;
+        }
         // 更新所有函数/闭包的 module 指针（统一调用）
         update_module_function_ptrs(module, placeholder_module);
         // 更新已加载列表

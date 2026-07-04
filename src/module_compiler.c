@@ -62,6 +62,40 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
         module->native_import_count = count;
     }
 
+    // 3.6 收集 use 导入的类型名称（运行时需要 re-export 到模块的 exports）
+    {
+        int reexport_count = 0;
+        char** reexport_names = NULL;
+        int* reexport_kinds = NULL;
+        if (parser.root && parser.root->kind == AST_BLOCK) {
+            for (int j = 0; j < parser.root->u.block.count; j++) {
+                Ast* stmt = parser.root->u.block.items[j];
+                if (stmt->kind == AST_USE) {
+                    const char* symbol_name = stmt->u.use.symbol_name;
+                    // 检查该名称是否是需要 re-export 的类型（enum/struct/cstruct）
+                    Symbol* sym = scope_resolve(sem.root_scope, symbol_name);
+                    if (sym && sym->type) {
+                        TypeKind kind = sym->type->kind;
+                        if (kind == TYPE_ENUM || kind == TYPE_STRUCT) {
+                            char** new_names = realloc(reexport_names, (reexport_count + 1) * sizeof(char*));
+                            int* new_kinds = realloc(reexport_kinds, (reexport_count + 1) * sizeof(int));
+                            if (new_names && new_kinds) {
+                                reexport_names = new_names;
+                                reexport_kinds = new_kinds;
+                                reexport_names[reexport_count] = strdup(symbol_name);
+                                reexport_kinds[reexport_count] = (int)kind;
+                                reexport_count++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        module->use_reexport_names = reexport_names;
+        module->use_reexport_kinds = reexport_kinds;
+        module->use_reexport_count = reexport_count;
+    }
+
     // 4. 首先，为模块中的所有函数（包括内部函数和 struct 方法）创建函数对象
     ObjDict* func_dict = dict_new(16);
     
