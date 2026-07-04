@@ -77,8 +77,8 @@ main() {
         )
         stars[sid_next] = s
         sids[sc] = sid_next
-        sc = sc + 1
-        sid_next = sid_next + 1
+        sc += 1
+        sid_next += 1
     }
 
     func clamp(int v): int {
@@ -101,7 +101,7 @@ main() {
                 b=clamp(cb + rands.ints(-30, 30)),
                 ptype=ptype
             )
-            particles[nid] = p; pids[pc] = nid; pc = pc + 1; nid = nid + 1
+            particles[nid] = p; pids[pc] = nid; pc += 1; nid += 1
         }
     }
 
@@ -115,7 +115,7 @@ main() {
         particles.remove(id)
         if i != last { pids[i] = pids[last] }
         pids.remove(last)
-        pc = pc - 1
+        pc -= 1
     }
 
     func remR(int i) {
@@ -124,7 +124,7 @@ main() {
         rockets.remove(id)
         if i != last { rids[i] = rids[last] }
         rids.remove(last)
-        rc = rc - 1
+        rc -= 1
     }
 
     var ev = SDL3.createEvent()
@@ -136,7 +136,7 @@ main() {
             if ev.isKeyDown() and ev.scancode() == SDL3.SCANCODE_ESCAPE { running = false }
         }
 
-        frame = frame + 1
+        frame += 1
 
         // 暗蓝背景
         ren.setColor(2, 2, 15, 255)
@@ -146,11 +146,11 @@ main() {
         var si = 0
         while si < sc {
             var s = stars[sids[si]]
-            s.twinkle = s.twinkle + 0.03
+            s.twinkle += 0.03
             var a = 80 + _int(maths.sin(s.twinkle) * 60.0 + 60.0)
             ren.setColor(s.r, s.g, s.b, a)
             ren.drawPoint(s.x, s.y)
-            si = si + 1
+            si += 1
         }
 
         // ---- 发射（高频多枚） ----
@@ -167,8 +167,8 @@ main() {
                 )
                 rockets[rid_next] = rk
                 rids[rc] = rid_next
-                rc = rc + 1
-                rid_next = rid_next + 1
+                rc += 1
+                rid_next += 1
             }
         }
 
@@ -176,7 +176,7 @@ main() {
         var ri = 0
         while ri < rc {
             var rk = rockets[rids[ri]]
-            rk.y = rk.y + rk.vy
+            rk.y += rk.vy
             if rk.y <= rk.burst_y {
                 burst(rk.x, rk.y, rk.r, rk.g, rk.b, rk.burst_count, 30, 70, 0, 1.5, 6.0)
                 burst(rk.x, rk.y, 255, 255, 240, rands.ints(5, 15), 5, 12, 1, 0.3, 2.5)
@@ -187,7 +187,7 @@ main() {
                 ren.setColor(rk.r, rk.g, rk.b, 200)
                 ren.drawPoint(rk.x, rk.y)
                 ren.drawPoint(rk.x + 1, rk.y + 2)
-                ri = ri + 1
+                ri += 1
             }
         }
 
@@ -196,10 +196,10 @@ main() {
         var i = 0
         while i < pc {
             var p = particles[pids[i]]
-            p.x = p.x + p.vx
-            p.y = p.y + p.vy + 0.04
-            p.vy = p.vy * 0.98
-            p.life = p.life - 1
+            p.x += p.vx
+            p.y += p.vy + 0.04
+            p.vy *= 0.98
+            p.life -= 1
             if p.ptype != 1 { p.r = clamp(p.r - 1); p.g = clamp(p.g - 1); p.b = clamp(p.b - 1) }
 
             if p.life <= 0 or p.r <= 0 or p.y > 610 or p.y < -10 {
@@ -219,20 +219,20 @@ main() {
                         secBurst(p.x, p.y, p.r, p.g, p.b)
                     }
                 }
-                i = i + 1
+                i += 1
             }
         }
 
         ren.present()
 
         // ---- FPS 统计（每秒） ----
-        fps_frames = fps_frames + 1
+        fps_frames += 1
         var now = SDL3.getTicks()
         if now - last_fps_time >= 1000 {
             cur_fps = fps_frames
             if cur_fps < min_fps { min_fps = cur_fps }
-            total_frames = total_frames + fps_frames
-            fps_samples = fps_samples + 1
+            total_frames += fps_frames
+            fps_samples += 1
             fps_frames = 0
             last_fps_time = now
         }

@@ -51,7 +51,7 @@ export struct Timer {
         while now >= _next {
             cb()
             if once { running = false; return }
-            _next = _next + _ms
+            _next += _ms
         }
     }
 }
