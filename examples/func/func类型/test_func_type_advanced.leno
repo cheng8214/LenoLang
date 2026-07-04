@@ -1,0 +1,17 @@
+// 高级测试：嵌套函数类型 + 泛型 + 函数类型
+print("=== 高级测试 ===")
+
+// ✅ 1. 嵌套函数类型：返回 func(int):int
+func multi(int n): func(int):int {
+    func mul(int x): int { return x * n }
+    return mul
+}
+var mul5 = multi(5)
+print("nested: " + mul5(3))
+
+// ✅ 2. 泛型 + 函数类型参数
+func apply_g[T](T val, func(T):T fn): T { return fn(val) }
+func triple(int x): int { return x * 3 }
+print("generic: " + apply_g[int](5, triple))
+
+print("=== PASS ===")

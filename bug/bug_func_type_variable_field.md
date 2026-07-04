@@ -34,17 +34,7 @@ struct Calculator {
 
 **错误**：`[语法错误] 期望方法名`
 
-### 场景 3：匿名闭包作回调参数
 
-```leno
-func apply(func(int):int fn, int val): int {
-    return fn(val)
-}
-
-var r = apply(func(x):int { return x + 100 }, 1)  // ❌ 期望参数名
-```
-
-**错误**：`[语法错误] 期望参数名`
 
 ## 已验证可用的场景（对比）
 
@@ -56,9 +46,9 @@ var r = apply(func(x):int { return x + 100 }, 1)  // ❌ 期望参数名
 | 参数类型（void） | `func run(func():void fn)` | ✅ |
 | 闭包返回函数 | `func makeCounter(): func():int` | ✅ |
 | 命名函数作实参 | `bar(triple)` | ✅ |
-| **变量声明** | `func():void v = sayHello` | ❌ |
-| **struct 字段** | `struct S { func():void cb }` | ❌ |
-| **匿名闭包实参** | `bar(func(x):int {...}, 1)` | ❌ |
+| **变量声明** | `func():void v = sayHello` | ✅ | 648671a8 |
+| **struct 字段** | `struct S { func():void cb }` | ✅ | 648671a8 |
+| **匿名闭包实参** | `bar(func(int x):int {...}, 1)` | ✅ | 已有
 
 ## 影响
 
@@ -66,13 +56,42 @@ var r = apply(func(x):int { return x + 100 }, 1)  // ❌ 期望参数名
 - **回调存储**：struct 无法声明带类型的回调字段
 - **链式调用**：匿名闭包不能直接在调用点传入高阶函数
 
-场景 3 是表达式级匿名函数解析问题，匿名闭包 `func(x):int { ... }` 在函数调用实参位置时解析器未正确识别。
+## 修复方案
+
+`648671a8` 涉及 4 个编译文件 + 2 个测试：
+
+### parser.c — func 关键字预读
+```c
+case TOK_FUNC: {
+    Lexer saved = p->lex;
+    lexer_next(&p->lex);
+    int is_func_type = (p->lex.current.type == TOK_LPAREN);
+    p->lex = saved;
+    if (is_func_type) {
+        stmt = parse_var_decl_internal(p);  // 函数类型变量声明
+    } else {
+        stmt = parse_func_stmt(p);          // 函数定义
+    }
+    break;
+}
+```
+`func` 后面跟 `(` 时识别为函数类型（`func():void v = ...`），走变量声明解析。
+
+### parser_func.c — parse_base_type 优先匹配函数类型
+在解析 `TOK_IDENT` 之前，先检查前面是否已解析出函数类型关键字 `func`，避免把 `func():void` 拆成"自定义 struct func" + "未知的 ()"。
+
+### semantic/semantic_type.c — 函数类型变量/字段推断
+`infer_expr_type` 中新增对 `AST_FUNC_DEF` 的处理路径，允许函数类型的变量和 struct 字段正确参与类型推断。
+
+### codegen/codegen_expr.c — 函数类型字段代码生成
+struct 字段支持生成函数类型（`TYPE_FUNCTION`）的初始化代码。
 
 ## 环境
 
-- 提交: 3ddff11f
+- 提交: 3ddff11f → 648671a8
 - 测试: `examples/func/func类型/test_func_type.leno`
+- 新增: `examples/func/func类型/test_func_type_var_field.leno`
 
 ## 状态
 
-- [ ] 待修复
+- [x] 已修复 — `648671a8`
