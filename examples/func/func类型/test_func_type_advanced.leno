@@ -1,7 +1,22 @@
-// 高级测试：嵌套函数类型 + 泛型 + 函数类型
-print("=== 高级测试 ===")
+// 验证之前 2 个 bug 已修复
+print("=== 验证 func 类型修复 ===")
 
-// ✅ 1. 嵌套函数类型：返回 func(int):int
+// Bug 1: func():void/func():int 做 struct 字段
+struct Task { func():void cb; func run() { cb() } }
+func hello() { print("hello") }
+Task t = new Task(cb = hello)
+t.run()
+
+// Bug 2: func():int / func(int,int):void 变量声明
+func get42(): int { return 42 }
+func():int f42 = get42
+print("func():int -> " + f42())
+
+func log(int a, int b) { print("log: " + a + " " + b) }
+func(int,int):void flog = log
+flog(7, 8)
+
+// 嵌套函数类型
 func multi(int n): func(int):int {
     func mul(int x): int { return x * n }
     return mul
@@ -9,7 +24,7 @@ func multi(int n): func(int):int {
 var mul5 = multi(5)
 print("nested: " + mul5(3))
 
-// ✅ 2. 泛型 + 函数类型参数
+// 泛型 + 函数类型
 func apply_g[T](T val, func(T):T fn): T { return fn(val) }
 func triple(int x): int { return x * 3 }
 print("generic: " + apply_g[int](5, triple))
