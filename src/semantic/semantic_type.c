@@ -899,6 +899,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 if (obj_type->struct_name &&
                                     ((ret->kind == TYPE_DICT && !ret->value_type) ||
                                      (ret->kind == TYPE_ARRAY && !ret->element_type) ||
+                                     (ret->kind == TYPE_PTR_GENERIC && !ret->element_type) ||
                                      (ret->kind == TYPE_STRUCT && !ret->struct_name))) {
                                     for (int mi = 0; mi < s->imported_module_count; mi++) {
                                         ImportedModuleInfo* info = &s->imported_modules[mi];

@@ -35,14 +35,13 @@ func imgLib(): sdl3_image {
 
 // 从文件加载为 SDL_Surface（用完需 SDL_DestroySurface）
 export func load(string path): Ptr[u8] {
-    return imgLib().IMG_Load(path) as Ptr[u8]
+    return imgLib().IMG_Load(path) 
 }
 
 // 从文件直接加载为 GPU 纹理（需要有效渲染器）
 export func loadTexture(Ptr[u8] renderer, string path): Ptr[u8] {
-    return imgLib().IMG_LoadTexture(renderer, path) as Ptr[u8]
+    return imgLib().IMG_LoadTexture(renderer, path)
 }
-
 // ==================== 保存 ====================
 
 // 保存为 PNG（无损压缩）
