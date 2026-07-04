@@ -1,0 +1,95 @@
+// 函数类型字段断言 - 防止回归 bug_func_type_void_noparams
+// 测试 func():void / func():int 作为 struct 字段和变量声明
+
+print("=== func():void / func():int 变量声明 ===")
+
+func sayHello(): void {
+    print("hello")
+}
+
+func get42(): int {
+    return 42
+}
+
+func add(int a, int b): int {
+    return a + b
+}
+
+func log(int a, int b): void {
+    print(a + b)
+}
+
+// func():void 变量声明
+func():void fv = sayHello
+fv()
+
+// func():int 变量声明
+func():int fi = get42
+assert_eq(fi(), 42)
+
+// func(int,int):int 变量声明
+func(int, int):int fadd = add
+assert_eq(fadd(3, 4), 7)
+
+// func(int,int):void 变量声明
+func(int, int):void fl = log
+fl(1, 2)
+
+print("=== func():void / func():int 作为 struct 字段 ===")
+
+struct Task {
+    func():void cb
+    func():int getter
+    func(int, int):int op
+}
+
+var t = new Task()
+
+// 字段默认为 null
+assert_eq(t.cb == null, true)
+assert_eq(t.getter == null, true)
+
+// 赋值并调用 func():void 字段
+t.cb = sayHello
+t.cb()
+
+// 赋值并调用 func():int 字段
+t.getter = get42
+assert_eq(t.getter(), 42)
+
+// 赋值并调用 func(int,int):int 字段
+t.op = add
+assert_eq(t.op(3, 4), 7)
+
+print("=== struct 内 self 调用函数类型字段 ===")
+
+struct Event {
+    func():void on_click
+    func():int on_count
+
+    func trigger(): void {
+        self.on_click()
+    }
+
+    func count_up(): int {
+        return self.on_count()
+    }
+}
+
+var e = new Event()
+e.on_click = sayHello
+e.on_count = get42
+e.trigger()
+assert_eq(e.count_up(), 42)
+
+print("=== 函数类型字段 + 匿名闭包 ===")
+
+struct Handler {
+    func(int):int transform
+}
+
+var h = new Handler()
+h.transform = func(int x): int { return x * 10 }
+assert_eq(h.transform(5), 50)
+
+print("test_func_type_field passed")
