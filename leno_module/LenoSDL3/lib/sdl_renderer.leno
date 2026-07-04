@@ -26,7 +26,7 @@ export struct Renderer {
     Ptr handle; bool ok
 
     // 创建默认渲染器（关联到窗口）
-    func initDefault(Ptr window): bool {
+    func initDefault(Ptr[u8] window): bool {
         // 抗锯齿：强制硬件渲染器 + AA 线条
         _lib.SDL_SetHint("SDL_HINT_RENDER_DRIVER", "direct3d")
         _lib.SDL_SetHint("SDL_HINT_RENDER_LINE_METHOD", "2")
@@ -182,7 +182,7 @@ export struct Renderer {
     func resetViewport(): bool { return _lib.SDL_SetRenderViewport(handle, null) }
 
     // 在指定位置绘制纹理（按 w×h 缩放）
-    func drawTextureAt(Ptr texture, float x, float y, float w, float h): bool {
+    func drawTextureAt(Ptr[u8] texture, float x, float y, float w, float h): bool {
         SDL_FRect rect = SDL_FRect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
         bool ok = _lib.SDL_RenderTexture(handle, texture, null, rect.to_ptr())
@@ -190,13 +190,13 @@ export struct Renderer {
     }
 
     // 绘制纹理（指定源矩形和目标矩形，null 表示完整）
-    func drawTextureRect(Ptr texture, Ptr srcrect, Ptr dstrect): bool {
+    func drawTextureRect(Ptr[u8] texture, Ptr srcrect, Ptr dstrect): bool {
         return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
     }
 
     // 绘制纹理的裁剪区域到目标位置
     // sx, sy, sw, sh: 源矩形；dx, dy, dw, dh: 目标矩形
-    func drawTextureFromTo(Ptr texture,
+    func drawTextureFromTo(Ptr[u8] texture,
                           float sx, float sy, float sw, float sh,
                           float dx, float dy, float dw, float dh): bool {
         SDL_FRect src = SDL_FRect.malloc()
@@ -211,7 +211,7 @@ export struct Renderer {
     // 旋转+翻转绘制纹理
     // angle: 角度（度），顺时针；center: null 则绕目标中心旋转
     // flip: FLIP_NONE / FLIP_HORIZONTAL / FLIP_VERTICAL
-    func drawTextureRotated(Ptr texture, float x, float y, float w, float h,
+    func drawTextureRotated(Ptr[u8] texture, float x, float y, float w, float h,
                             float angle, float cx, float cy, int flip): bool {
         SDL_FRect dst = SDL_FRect.malloc()
         dst.x = x; dst.y = y; dst.w = w; dst.h = h
@@ -225,7 +225,7 @@ export struct Renderer {
     }
 
     // 获取纹理尺寸，返回 {w, h}（浮点）
-    func getTextureSize(Ptr texture): FSize {
+    func getTextureSize(Ptr[u8] texture): FSize {
         SDL_FPoint pt = SDL_FPoint.malloc()
         _lib.SDL_GetTextureSize(texture, &pt.x, &pt.y)
         var d = {w: pt.x as float, h: pt.y as float}
@@ -251,17 +251,17 @@ export struct Renderer {
     }
 
     // 渲染到纹理（null 恢复渲染到窗口）
-    func setRenderTarget(Ptr texture): bool {
+    func setRenderTarget(Ptr[u8] texture): bool {
         return _lib.SDL_SetRenderTarget(handle, texture)
     }
 
     // 设置纹理透明度调制（0~255）
-    func setTextureAlpha(Ptr texture, int alpha): bool {
+    func setTextureAlpha(Ptr[u8] texture, int alpha): bool {
         return _lib.SDL_SetTextureAlphaMod(texture, alpha)
     }
 
     // 设置纹理颜色调制（RGB 0~255）
-    func setTextureColor(Ptr texture, int r, int g, int b): bool {
+    func setTextureColor(Ptr[u8] texture, int r, int g, int b): bool {
         return _lib.SDL_SetTextureColorMod(texture, r, g, b)
     }
 
@@ -271,12 +271,12 @@ export struct Renderer {
     }
 
     // 截取当前渲染画面
-    func readPixels(Ptr rect): Ptr {
-        return _lib.SDL_RenderReadPixels(handle, rect) as Ptr
+    func readPixels(Ptr rect): Ptr[u8] {
+        return _lib.SDL_RenderReadPixels(handle, rect) as Ptr[u8]
     }
 
     // 截取当前渲染画面（便捷重载：直接传入 x, y, w, h）
-    func readPixelsAt(int x, int y, int w, int h): Ptr {
+    func readPixelsAt(int x, int y, int w, int h): Ptr[u8] {
         SDL_Rect rect = SDL_Rect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
         var surface = _lib.SDL_RenderReadPixels(handle, rect.to_ptr())
@@ -285,20 +285,20 @@ export struct Renderer {
     }
 
     // 创建纹理（返回 Ptr，用完 SDL_DestroyTexture）
-    func createTexture(int format, int access, int w, int h): Ptr {
-        return _lib.SDL_CreateTexture(handle, format, access, w, h) as Ptr
+    func createTexture(int format, int access, int w, int h): Ptr[u8] {
+        return _lib.SDL_CreateTexture(handle, format, access, w, h) as Ptr[u8]
     }
 
     // 更新纹理像素数据
-    func updateTexture(Ptr texture, Ptr rect, Ptr pixels, int pitch): bool {
+    func updateTexture(Ptr[u8] texture, Ptr rect, Ptr pixels, int pitch): bool {
         return _lib.SDL_UpdateTexture(texture, rect, pixels, pitch)
     }
 
     // 锁定/解锁纹理以直接操作像素（需 TEXTUREACCESS_STREAMING）
-    func lockTexture(Ptr texture, Ptr rect): bool {
+    func lockTexture(Ptr[u8] texture, Ptr rect): bool {
         return _lib.SDL_LockTexture(texture, rect, null, null)
     }
-    func unlockTexture(Ptr texture) {
+    func unlockTexture(Ptr[u8] texture) {
         _lib.SDL_UnlockTexture(texture)
     }
 
@@ -308,12 +308,12 @@ export struct Renderer {
     }
 
     // 九宫格渲染（UI 边框不拉伸）
-    func drawTexture9Grid(Ptr texture, float lw, float rw, float th, float bh, float scale, Ptr dst): bool {
+    func drawTexture9Grid(Ptr[u8] texture, float lw, float rw, float th, float bh, float scale, Ptr dst): bool {
         return _lib.SDL_RenderTexture9Grid(handle, texture, null, lw, rw, th, bh, scale, dst)
     }
 
     // 平铺渲染
-    func drawTextureTiled(Ptr texture, float scale, Ptr dst): bool {
+    func drawTextureTiled(Ptr[u8] texture, float scale, Ptr dst): bool {
         return _lib.SDL_RenderTextureTiled(handle, texture, null, scale, dst)
     }
 
@@ -465,6 +465,6 @@ export struct Renderer {
 }
 
 // 创建渲染器实例
-export func createRenderer(Ptr window): Renderer {
+export func createRenderer(Ptr[u8] window): Renderer {
     Renderer ren = new Renderer(); ren.initDefault(window); return ren
 }

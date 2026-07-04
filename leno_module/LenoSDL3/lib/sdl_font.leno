@@ -89,7 +89,7 @@ export var _ttfInited = false
 // ==================== Font ====================
 
 export struct Font {
-    Ptr handle; bool ok; int height; int ascent; int descent
+    Ptr[u8] handle; bool ok; int height; int ascent; int descent
 
     func load(string path, float ptsize): bool {
         if not ttfInit() { return false }
@@ -223,9 +223,9 @@ export struct Font {
 // ==================== TextTexture ====================
 
 export struct TextTexture {
-    Ptr texture; bool ok; int width; int height
+    Ptr[u8] texture; bool ok; int width; int height
 
-    func createFromSurface(Ptr renderer, Ptr surface): bool {
+    func createFromSurface(Ptr[u8] renderer, Ptr[u8] surface): bool {
         if surface == null { return false }
         texture = _lib.SDL_CreateTextureFromSurface(renderer, surface) as Ptr
         ok = texture != null
@@ -233,7 +233,7 @@ export struct TextTexture {
         return ok
     }
 
-    func createFromText(Ptr renderer, Font font, string text, int r, int g, int b): bool {
+    func createFromText(Ptr[u8] renderer, Font font, string text, int r, int g, int b): bool {
         if not font.ok { return false }
         Ptr surface = font.renderTextBlended(text, r, g, b)
         if surface == null { return false }
@@ -252,7 +252,7 @@ export struct TextTexture {
     func setWidth(int w)  { width = w }
     func setHeight(int h) { height = h }
 
-    func createFromSurfaceW(Ptr renderer, Ptr surface): bool {
+    func createFromSurfaceW(Ptr[u8] renderer, Ptr[u8] surface): bool {
         SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
         width = info.w as int
         height = info.h as int
@@ -290,30 +290,30 @@ export func createFontAuto(float ptsize): Font {
 }
 
 
-export func createTextTexture(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
+export func createTextTexture(Ptr[u8] renderer, Font font, string text, int r, int g, int b): TextTexture {
     TextTexture tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
 }
 
-export func createTextTextureWrapped(Ptr renderer, Font font, string text, int r, int g, int b, int wrapWidth): TextTexture {
-    Ptr surface = font.renderTextBlendedWrapped(text, r, g, b, wrapWidth)
+export func createTextTextureWrapped(Ptr[u8] renderer, Font font, string text, int r, int g, int b, int wrapWidth): TextTexture {
+    Ptr[u8] surface = font.renderTextBlendedWrapped(text, r, g, b, wrapWidth)
     if surface == null { return new TextTexture() }
     TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
-export func createGlyphTexture(Ptr renderer, Font font, int glyph, int r, int g, int b): TextTexture {
-    Ptr surface = font.renderGlyphBlended(glyph, r, g, b)
+export func createGlyphTexture(Ptr[u8] renderer, Font font, int glyph, int r, int g, int b): TextTexture {
+    Ptr[u8] surface = font.renderGlyphBlended(glyph, r, g, b)
     if surface == null { return new TextTexture() }
     TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
-export func createTextTextureSolid(Ptr renderer, Font font, string text, int r, int g, int b): TextTexture {
-    Ptr surface = font.renderTextSolid(text, r, g, b)
+export func createTextTextureSolid(Ptr[u8] renderer, Font font, string text, int r, int g, int b): TextTexture {
+    Ptr[u8] surface = font.renderTextSolid(text, r, g, b)
     if surface == null { return new TextTexture() }
     TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }
 
-export func createTextTextureShaded(Ptr renderer, Font font, string text, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
-    Ptr surface = font.renderTextShaded(text, fr, fg, fb, br, bg, bb)
+export func createTextTextureShaded(Ptr[u8] renderer, Font font, string text, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
+    Ptr[u8] surface = font.renderTextShaded(text, fr, fg, fb, br, bg, bb)
     if surface == null { return new TextTexture() }
     TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
 }

@@ -12,7 +12,7 @@ main() {
     var font = SDL3.createFontAuto(16.0)
 
     var imgPath   = "d:\\1.png"
-    var loadedTex = null as Ptr
+    Ptr[u8] loadedTex = null
     var texLoaded = false
 
     // 原始纹理尺寸

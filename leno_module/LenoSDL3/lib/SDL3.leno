@@ -202,15 +202,15 @@ export func getError(): string       { return core.getError() }
 export func delay(int ms)            { core.delay(ms) }
 export func getTicks(): int          { return core.getTicks() }
 
-export func startTextInput(Ptr w): bool  { return core.startTextInput(w) }
-export func stopTextInput(Ptr w): bool   { return core.stopTextInput(w) }
+export func startTextInput(Ptr[u8] w): bool  { return core.startTextInput(w) }
+export func stopTextInput(Ptr[u8] w): bool   { return core.stopTextInput(w) }
 
 export func getMouseState(): int         { return core.getMouseState() }
 export func getGlobalMouseState(): int   { return core.getGlobalMouseState() }
 export func showCursor(): bool           { return core.showCursor() }
 export func hideCursor(): bool           { return core.hideCursor() }
 export func cursorVisible(): bool        { return core.cursorVisible() }
-export func warpMouse(Ptr w, float x, float y): bool { return core.warpMouse(w, x, y) }
+export func warpMouse(Ptr[u8] w, float x, float y): bool { return core.warpMouse(w, x, y) }
 
 export func setSystemCursor(int kind): Ptr { return core.setSystemCursor(kind) }
 export func showMessageBox(string title, string msg, int flags) { core.showMessageBox(title, msg, flags) }
@@ -238,30 +238,30 @@ export var FLASH_UNTIL_FOCUSED  = core.FLASH_UNTIL_FOCUSED
 // ==================== 重新导出工厂函数 ====================
 
 export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
-export func createRenderer(Ptr w): Renderer     { return r.createRenderer(w) }
+export func createRenderer(Ptr[u8] w): Renderer     { return r.createRenderer(w) }
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
 export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }
 export func packColor(int r, int g, int b): int { return fnt.packColor(r, g, b) }
 use fnt.SDL_SurfaceInfo
 
-export func createTextTexture(Ptr ren, Font f, string t, int r, int g, int b): TextTexture {
+export func createTextTexture(Ptr[u8] ren, Font f, string t, int r, int g, int b): TextTexture {
     return fnt.createTextTexture(ren, f, t, r, g, b)
 }
 
-export func createTextTextureWrapped(Ptr ren, Font f, string t, int r, int g, int b, int wrapW): TextTexture {
+export func createTextTextureWrapped(Ptr[u8] ren, Font f, string t, int r, int g, int b, int wrapW): TextTexture {
     return fnt.createTextTextureWrapped(ren, f, t, r, g, b, wrapW)
 }
 
-export func createGlyphTexture(Ptr ren, Font f, int glyph, int r, int g, int b): TextTexture {
+export func createGlyphTexture(Ptr[u8] ren, Font f, int glyph, int r, int g, int b): TextTexture {
     return fnt.createGlyphTexture(ren, f, glyph, r, g, b)
 }
 
-export func createTextTextureSolid(Ptr ren, Font f, string t, int r, int g, int b): TextTexture {
+export func createTextTextureSolid(Ptr[u8] ren, Font f, string t, int r, int g, int b): TextTexture {
     return fnt.createTextTextureSolid(ren, f, t, r, g, b)
 }
 
-export func createTextTextureShaded(Ptr ren, Font f, string t, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
+export func createTextTextureShaded(Ptr[u8] ren, Font f, string t, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
     return fnt.createTextTextureShaded(ren, f, t, fr, fg, fb, br, bg, bb)
 }
 
@@ -286,11 +286,12 @@ export var WRAP_ALIGN_CENTER = fnt.WRAP_ALIGN_CENTER
 export var WRAP_ALIGN_RIGHT  = fnt.WRAP_ALIGN_RIGHT
 
 // ==================== Image ====================
+// 注意：clib 返回暂不 Ptr[u8]（编译器 bug），保持 Ptr
 
 export func loadImage(string path): Ptr                  { return img.load(path) }
-export func loadImageTexture(Ptr ren, string path): Ptr  { return img.loadTexture(ren, path) }
-export func saveImagePNG(Ptr surface, string path): bool           { return img.savePNG(surface, path) }
-export func saveImageJPG(Ptr surface, string path, int q): bool    { return img.saveJPG(surface, path, q) }
-export func saveImageBMP(Ptr surface, string path): bool           { return img.saveBMP(surface, path) }
-export func saveImageWEBP(Ptr surface, string path, float q): bool { return img.saveWEBP(surface, path, q) }
+export func loadImageTexture(Ptr[u8] ren, string path): Ptr  { return img.loadTexture(ren, path) }
+export func saveImagePNG(Ptr[u8] surface, string path): bool           { return img.savePNG(surface, path) }
+export func saveImageJPG(Ptr[u8] surface, string path, int q): bool    { return img.saveJPG(surface, path, q) }
+export func saveImageBMP(Ptr[u8] surface, string path): bool           { return img.saveBMP(surface, path) }
+export func saveImageWEBP(Ptr[u8] surface, string path, float q): bool { return img.saveWEBP(surface, path, q) }
 export func imageVersion(): int { return img.version() }

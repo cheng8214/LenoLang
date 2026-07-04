@@ -91,7 +91,7 @@ export cstruct SDL_TextInputEvent {
     u64 timestamp    // 8
     u32 windowID     // 16
     u32 _pad         // 20  (8字节对齐填充)
-    Ptr text         // 24  (const char*)
+    Ptr[u8] text     // 24  (const char*)
 }
 
 export cstruct SDL_WindowEvent {
@@ -111,8 +111,8 @@ export cstruct SDL_DropEvent {
     f32 x            // 20
     f32 y            // 24
     u32 _pad         // 28  (8字节对齐填充)
-    Ptr source       // 32  (const char*)
-    Ptr data         // 40  (const char*)
+    Ptr[u8] source   // 32  (const char*)
+    Ptr[u8] data     // 40  (const char*)
 }
 
 export cstruct SDL_Color {

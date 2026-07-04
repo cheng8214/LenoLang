@@ -39,29 +39,29 @@ export func load(string path): Ptr {
 }
 
 // 从文件直接加载为 GPU 纹理（需要有效渲染器）
-export func loadTexture(Ptr renderer, string path): Ptr {
+export func loadTexture(Ptr[u8] renderer, string path): Ptr {
     return imgLib().IMG_LoadTexture(renderer, path)
 }
 
 // ==================== 保存 ====================
 
 // 保存为 PNG（无损压缩）
-export func savePNG(Ptr surface, string path): bool {
+export func savePNG(Ptr[u8] surface, string path): bool {
     return imgLib().IMG_SavePNG(surface, path)
 }
 
 // 保存为 JPG，quality: 0~100（越高画质越好）
-export func saveJPG(Ptr surface, string path, int quality): bool {
+export func saveJPG(Ptr[u8] surface, string path, int quality): bool {
     return imgLib().IMG_SaveJPG(surface, path, quality)
 }
 
 // 保存为 BMP
-export func saveBMP(Ptr surface, string path): bool {
+export func saveBMP(Ptr[u8] surface, string path): bool {
     return imgLib().IMG_SaveBMP(surface, path)
 }
 
 // 保存为 WEBP，quality: 0.0~100.0（浮点）
-export func saveWEBP(Ptr surface, string path, float quality): bool {
+export func saveWEBP(Ptr[u8] surface, string path, float quality): bool {
     return imgLib().IMG_SaveWEBP(surface, path, quality)
 }
 

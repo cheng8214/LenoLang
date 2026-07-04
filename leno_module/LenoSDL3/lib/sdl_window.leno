@@ -24,7 +24,7 @@ import "sdl_timer.leno" as timer
 use timer.Timer
 
 export struct Window {
-    Ptr handle    // SDL_Window 指针
+    Ptr[u8] handle    // SDL_Window 指针
     bool ok       // 窗口是否创建成功
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
@@ -93,7 +93,7 @@ export struct Window {
     func flash(int op): bool                     { return _lib.SDL_FlashWindow(handle, op) }
 
     // 设置窗口图标（surface 来自 SDL3.loadImage 等）
-    func setIcon(Ptr icon): bool { return _lib.SDL_SetWindowIcon(handle, icon) }
+    func setIcon(Ptr[u8] icon): bool { return _lib.SDL_SetWindowIcon(handle, icon) }
 
     // 全屏切换
     func setFullscreen(bool v): bool { return _lib.SDL_SetWindowFullscreen(handle, v) }
