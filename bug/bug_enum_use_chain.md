@@ -2,7 +2,6 @@
 
 ## 环境
 - 发现: `d94c4342`（enum 单层 use 已修复）
-- 复现文件: `examples/enum/chain_*.leno`
 
 ## 现象
 
@@ -21,34 +20,38 @@ import "chain_b.leno" as b
 use b.Scancode          // ❌ "模块 'b' 中没有 struct、clib、face 或 alias 类型 'Scancode'"
 ```
 
-所有通过 `use` 间接导入的类型（enum/alias）都不能被更上层再次 `use`。
+所有通过 `use` 间接导入的 enum 不能被更上层再次 `use`。
 
-## 影响
+## 根因
 
-SDL3.leno facade 模式无法完全用 `use` 链式实现：
+`module_symbol_table_scan_depth()` 中 `use` 传播逻辑对 enum 的处理有缺陷：
 
-```
-sdl_core.leno      export enum Scancode { ... }
-     ↓ use
-sdl_xxx.leno       中间模块用 use 引入
-     ↓ use
-SDL3.leno          顶层 facade 无法 use 传递
-```
+- **struct**: 找到后调用 `module_symbol_table_add_struct()` 将完整信息加入符号表 ✅
+- **face**: 找到后调用 `module_symbol_table_add_face()` 将完整信息加入符号表 ✅
+- **alias**: 找到后调用 `module_symbol_table_add_alias()` 将完整信息加入符号表 ✅
+- **enum**: 只将名称添加到 `enum_names` 数组，**没有调用 `module_symbol_table_add_enum()`** ❌
 
-## 错误信息
+因此上层模块 `use b.Scancode` 时，`module_symbol_table_find_enum(B的符号表, "Scancode")` 找不到。
 
-```
-use 语句错误：模块 'b' 中没有 struct、clib、face 或 alias 类型 'xxx'
-```
+## 修复
 
-错误信息本身也需要更新——enum 已经实现，但提示仍只说 struct/clib/face/alias。
+- 调用 `module_symbol_table_add_enum()` 将 enum 完整信息（成员名+成员值）传播到当前模块的符号表
+- 添加去重检查 `!module_symbol_table_find_enum(table, type_name)`
+- 错误消息补充 enum（原来只说 struct/clib/face/alias）
 
-## 复现
+## 修改的文件
 
-```
-leno examples/enum/chain_a.leno
-```
+| 文件 | 修改内容 |
+|------|---------|
+| `src/module_symbol_table.c` | enum use 传播调用 `module_symbol_table_add_enum()` |
+| `src/semantic/visitinc/visit_module.inc` | 错误消息补充 enum |
+
+## 回归测试
+
+- `assert/test_enum_use_chain_c.leno` — 最底层模块：定义 export enum
+- `assert/test_enum_use_chain_b.leno` — 中间层：use c.Status
+- `assert/test_enum_use_chain_a.leno` — 顶层：use b.Status（验证链式传递）
 
 ## 状态
 
-- [ ] 待修复
+- [x] 已修复
