@@ -863,6 +863,26 @@
                             }
                         }
                     }
+
+                    // 检查是否是函数类型字段调用（如 t.cb() 其中 cb 是 func():void 字段）
+                    int is_func_type_field_call = 0;
+                    if (!is_struct_method && obj_type && obj_type->struct_name &&
+                        (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
+                        Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                        if (!struct_sym) {
+                            struct_sym = scope_resolve_tree_bfs(s->root_scope, obj_type->struct_name);
+                        }
+                        if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
+                            for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
+                                if (strcmp(struct_sym->struct_field_names[fi], method_name) == 0 &&
+                                    struct_sym->struct_field_types[fi]->kind == TYPE_FUNCTION) {
+                                    is_func_type_field_call = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     if (is_struct_method) {
                         // 自定义 struct 方法的参数类型检查
                         if (obj_type && obj_type->kind == TYPE_STRUCT && obj_type->struct_name) {
@@ -1289,6 +1309,8 @@
                                 if (arg_type) type_free(arg_type);
                             }
                         }
+                    } else if (is_func_type_field_call) {
+                        // 函数类型字段调用（如 t.cb() 其中 cb 是 func():void 字段），合法调用，不报错
                     } else if (!obj_sym->type || obj_sym->type->kind == TYPE_ANY) {
                         // 未初始化变量
                         char msg[BUFFER_MEDIUM];

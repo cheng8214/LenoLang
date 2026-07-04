@@ -43,6 +43,21 @@ func():int f = get42    // ❌ 期望函数名
 
 对变量声明，`func():int` 的预读逻辑可能未处理 void 返回量类型 / 无参 + 有返回的特殊组合。
 
+**实际根因**：语义分析中 `visit_module.inc` 处理 `AST_MODULE_CALL`（如 `t.cb()`）时，只查找 struct 方法定义，未检查 method_name 是否为函数类型字段。当 `cb` 是 `func():void` 类型的字段而非方法时，查找不到方法便报错"类型 'struct Task' 没有方法 'cb'"。
+
+## 修复
+
+在 `visit_module.inc` 的 struct 方法查找逻辑之后、错误报告之前，增加函数类型字段检查：
+
+1. 当 `is_struct_method == 0` 且对象类型为 `TYPE_STRUCT` / `TYPE_CSTRUCT` 时，遍历 struct 的字段列表
+2. 检查是否存在名称匹配且类型为 `TYPE_FUNCTION` 的字段
+3. 如果找到，标记 `is_func_type_field_call = 1`，跳过"没有方法"错误
+4. 后续的 AST 转换（`AST_MODULE_CALL` → `AST_CALL` with `AST_INDEX`）正常进行，`semantic_type.c` 中已有的函数类型字段推断逻辑会正确处理返回类型
+
+修改文件：`src/semantic/visitinc/visit_module.inc`
+
 ## 环境
 
 - 提交: 648671a8
+
+## 状态: ✅ 已修复
