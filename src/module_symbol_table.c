@@ -11,6 +11,21 @@ extern int normalize_path(char* path, int max_len);
 // 初始容量
 #define INITIAL_CAPACITY 16
 
+// ---- 模块符号表容量限制（命名常量，替代硬编码） ----
+#define MOD_MAX_NAMES         64   // 标识符/名称缓冲区长度
+#define MOD_MAX_TYPE_STR     256   // 类型字符串缓冲区长度
+#define MOD_MAX_TYPES        128   // 单模块内最大 struct/cstruct/face 定义数
+#define MOD_MAX_CLIBS         32   // 单模块内最大 clib 定义数
+#define MOD_MAX_ENUMS         32   // 单模块内最大 enum 定义数
+#define MOD_MAX_MEMBERS      128   // 单 enum 最大成员数
+#define MOD_MAX_FIELDS       128   // 单 struct/cstruct 最大字段数
+#define MOD_MAX_METHODS      128   // 单 struct/cstruct/face 最大方法数
+#define MOD_MAX_PARAMS        64   // 单函数最大参数数
+#define MOD_MAX_TYPE_PARAMS   16   // 单类型最大泛型参数数
+#define MOD_MAX_ALIASES       64   // 单模块内最大 alias 定义数
+#define MOD_MAX_CLIB_FUNCS   512   // 单 clib 最大函数数
+#define MOD_MAX_GENERIC_RET   16   // 返回类型最大泛型参数数
+
 // 创建模块符号表
 ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     ModuleSymbolTable* table = (ModuleSymbolTable*)malloc(sizeof(ModuleSymbolTable));
@@ -581,7 +596,7 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
     // 检查泛型后缀 [T] 或 [K,V]
     if (**p == '[') {
         // 保存标识符用于判断是否是 Array/Dict
-        char ident[65];
+        char ident[MOD_MAX_NAMES + 1];
         int copy_len = name_len < 64 ? name_len : 64;
         memcpy(ident, name_start, copy_len);
         ident[copy_len] = '\0';
@@ -763,19 +778,19 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     }
 
     // 第一遍：收集所有 struct/cstruct/clib/face/enum 名称
-    char* struct_names[64];
+    char* struct_names[MOD_MAX_TYPES];
     int struct_name_count = 0;
-    char* cstruct_names[64];
+    char* cstruct_names[MOD_MAX_TYPES];
     int cstruct_name_count = 0;
-    char* face_names[64];
+    char* face_names[MOD_MAX_TYPES];
     int face_name_count = 0;
-    char* clib_names[16];
+    char* clib_names[MOD_MAX_CLIBS];
     int clib_name_count = 0;
-    char* enum_names[16];
+    char* enum_names[MOD_MAX_ENUMS];
     int enum_name_count = 0;
     char* p = source;
 
-    while (*p && struct_name_count < 64) {
+    while (*p && struct_name_count < MOD_MAX_TYPES) {
         // 跳过空白、注释、字符串
         while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
         if (!*p) break;
@@ -815,10 +830,14 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 int name_len = (int)(after_struct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
-                    struct_names[struct_name_count] = (char*)malloc(name_len + 1);
-                    strncpy(struct_names[struct_name_count], name_start, name_len);
-                    struct_names[struct_name_count][name_len] = '\0';
-                    struct_name_count++;
+                    if (struct_name_count >= MOD_MAX_TYPES) {
+                        fprintf(stderr, "[错误] struct数量超过上限 %d\n", MOD_MAX_TYPES);
+                    } else {
+                        struct_names[struct_name_count] = (char*)malloc(name_len + 1);
+                        strncpy(struct_names[struct_name_count], name_start, name_len);
+                        struct_names[struct_name_count][name_len] = '\0';
+                        struct_name_count++;
+                    }
                 }
 
                 p = after_struct;
@@ -835,10 +854,14 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 int name_len = (int)(after_cstruct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
-                    cstruct_names[cstruct_name_count] = (char*)malloc(name_len + 1);
-                    strncpy(cstruct_names[cstruct_name_count], name_start, name_len);
-                    cstruct_names[cstruct_name_count][name_len] = '\0';
-                    cstruct_name_count++;
+                    if (cstruct_name_count >= MOD_MAX_TYPES) {
+                        fprintf(stderr, "[错误] cstruct数量超过上限 %d\n", MOD_MAX_TYPES);
+                    } else {
+                        cstruct_names[cstruct_name_count] = (char*)malloc(name_len + 1);
+                        strncpy(cstruct_names[cstruct_name_count], name_start, name_len);
+                        cstruct_names[cstruct_name_count][name_len] = '\0';
+                        cstruct_name_count++;
+                    }
                 }
 
                 p = after_cstruct;
@@ -854,11 +877,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 while (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) after_face++;
                 int name_len = (int)(after_face - name_start);
 
-                if (name_len > 0 && name_len < 64 && face_name_count < 64) {
-                    face_names[face_name_count] = (char*)malloc(name_len + 1);
-                    strncpy(face_names[face_name_count], name_start, name_len);
-                    face_names[face_name_count][name_len] = '\0';
-                    face_name_count++;
+                if (name_len > 0 && name_len < 64) {
+                    if (face_name_count >= MOD_MAX_TYPES) {
+                        fprintf(stderr, "[错误] face数量超过上限 %d\n", MOD_MAX_TYPES);
+                    } else {
+                        face_names[face_name_count] = (char*)malloc(name_len + 1);
+                        strncpy(face_names[face_name_count], name_start, name_len);
+                        face_names[face_name_count][name_len] = '\0';
+                        face_name_count++;
+                    }
                 }
 
                 p = after_face;
@@ -874,11 +901,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
                 int name_len = (int)(after_clib - name_start);
 
-                if (name_len > 0 && name_len < 64 && clib_name_count < 16) {
-                    clib_names[clib_name_count] = (char*)malloc(name_len + 1);
-                    strncpy(clib_names[clib_name_count], name_start, name_len);
-                    clib_names[clib_name_count][name_len] = '\0';
-                    clib_name_count++;
+                if (name_len > 0 && name_len < 64) {
+                    if (clib_name_count >= MOD_MAX_CLIBS) {
+                        fprintf(stderr, "[错误] clib数量超过上限 %d\n", MOD_MAX_CLIBS);
+                    } else {
+                        clib_names[clib_name_count] = (char*)malloc(name_len + 1);
+                        strncpy(clib_names[clib_name_count], name_start, name_len);
+                        clib_names[clib_name_count][name_len] = '\0';
+                        clib_name_count++;
+                    }
                 }
 
                 p = after_clib;
@@ -894,11 +925,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
                 int name_len = (int)(after_enum - name_start);
 
-                if (name_len > 0 && name_len < 64 && enum_name_count < 16) {
-                    enum_names[enum_name_count] = (char*)malloc(name_len + 1);
-                    strncpy(enum_names[enum_name_count], name_start, name_len);
-                    enum_names[enum_name_count][name_len] = '\0';
-                    enum_name_count++;
+                if (name_len > 0 && name_len < 64) {
+                    if (enum_name_count >= MOD_MAX_ENUMS) {
+                        fprintf(stderr, "[错误] enum数量超过上限 %d\n", MOD_MAX_ENUMS);
+                    } else {
+                        enum_names[enum_name_count] = (char*)malloc(name_len + 1);
+                        strncpy(enum_names[enum_name_count], name_start, name_len);
+                        enum_names[enum_name_count][name_len] = '\0';
+                        enum_name_count++;
+                    }
                 }
 
                 p = after_enum;
@@ -921,7 +956,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 clib_name_buf[name_len] = '\0';
 
                 // 收集名称
-                if (clib_name_count < 16) {
+                if (clib_name_count >= MOD_MAX_CLIBS) {
+                    fprintf(stderr, "[错误] clib数量超过上限 %d\n", MOD_MAX_CLIBS);
+                } else {
                     int already = 0;
                     for (int ci = 0; ci < clib_name_count; ci++) {
                         if (strcmp(clib_names[ci], clib_name_buf) == 0) { already = 1; break; }
@@ -936,10 +973,10 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 while (*after_clib && *after_clib != '{' && *after_clib != '\n') after_clib++;
                 if (*after_clib == '{') {
                     after_clib++;
-                    ModuleClibFuncSymbol funcs[256];
+                    ModuleClibFuncSymbol funcs[MOD_MAX_CLIB_FUNCS];
                     int func_count = 0;
 
-                    while (*after_clib && *after_clib != '}' && func_count < 256) {
+                    while (*after_clib && *after_clib != '}' && func_count < MOD_MAX_CLIB_FUNCS) {
                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t' || *after_clib == '\n' || *after_clib == '\r')) after_clib++;
                         if (*after_clib == '}' || *after_clib == '\0') break;
                         if (*after_clib == '/' && *(after_clib+1) == '/') {
@@ -976,7 +1013,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
 
                         // 解析参数列表 (...)
-                        TypeKind param_types[32]; char* param_structs[32];
+                        TypeKind param_types[MOD_MAX_PARAMS]; char* param_structs[MOD_MAX_PARAMS];
                         int param_count = 0;
                         if (*after_clib == '(') {
                             after_clib++;
@@ -987,11 +1024,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 const char* pt_start = after_clib;
                                 while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
                                 int pt_len = (int)(after_clib - pt_start);
-                                if (pt_len > 0 && pt_len < 64 && param_count < 32) {
-                                    char pt_buf[64]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
-                                    param_types[param_count] = parse_base_type(pt_buf);
-                                    param_structs[param_count] = NULL;
-                                    param_count++;
+                                if (pt_len > 0 && pt_len < 64) {
+                                    if (param_count >= MOD_MAX_PARAMS) {
+                                        fprintf(stderr, "[错误] clib函数参数数量超过上限 %d\n", MOD_MAX_PARAMS);
+                                    } else {
+                                        char pt_buf[64]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                        param_types[param_count] = parse_base_type(pt_buf);
+                                        param_structs[param_count] = NULL;
+                                        param_count++;
+                                    }
                                 }
                                 while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
                                 // 跳过参数名
@@ -1042,8 +1083,8 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
     p = source;
 
     // 本地别名解析表（支持 alias B = A 链式引用）
-    char* local_alias_names[32] = {0};
-    TypeInfo* local_alias_types[32] = {0};
+    char* local_alias_names[MOD_MAX_ALIASES] = {0};
+    TypeInfo* local_alias_types[MOD_MAX_ALIASES] = {0};
     int local_alias_count = 0;
 
     // 注意：不再自动收集 import 模块的 export alias 到本地别名表
@@ -1161,12 +1202,16 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         s_sym->is_cstruct, s_sym->type_param_count, s_sym->type_param_names);
                                     // 将 use 导入的 struct/cstruct 名称添加到对应数组，使后续 export func 返回类型解析能识别
                                     if (s_sym->is_cstruct) {
-                                        if (cstruct_name_count < 64) {
+                                        if (cstruct_name_count >= MOD_MAX_TYPES) {
+                                            fprintf(stderr, "[错误] cstruct数量超过上限 %d\n", MOD_MAX_TYPES);
+                                        } else {
                                             cstruct_names[cstruct_name_count] = strdup(type_name);
                                             cstruct_name_count++;
                                         }
                                     } else {
-                                        if (struct_name_count < 64) {
+                                        if (struct_name_count >= MOD_MAX_TYPES) {
+                                            fprintf(stderr, "[错误] struct数量超过上限 %d\n", MOD_MAX_TYPES);
+                                        } else {
                                             struct_names[struct_name_count] = strdup(type_name);
                                             struct_name_count++;
                                         }
@@ -1188,7 +1233,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     module_symbol_table_add_face(table, type_name,
                                         f_sym->method_count, f_sym->methods, f_sym->type_param_count);
                                     // 将 use 导入的 face 名称添加到 face_names，使后续 export func 返回类型解析能识别
-                                    if (face_name_count < 64) {
+                                    if (face_name_count >= MOD_MAX_TYPES) {
+                                        fprintf(stderr, "[错误] face数量超过上限 %d\n", MOD_MAX_TYPES);
+                                    } else {
                                         face_names[face_name_count] = strdup(type_name);
                                         face_name_count++;
                                     }
@@ -1203,9 +1250,13 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                             for (int ci = 0; ci < clib_name_count; ci++) {
                                                 if (strcmp(clib_names[ci], type_name) == 0) { already = 1; break; }
                                             }
-                                            if (!already && clib_name_count < 16) {
-                                                clib_names[clib_name_count] = strdup(type_name);
-                                                clib_name_count++;
+                                            if (!already) {
+                                                if (clib_name_count >= MOD_MAX_CLIBS) {
+                                                    fprintf(stderr, "[错误] clib数量超过上限 %d\n", MOD_MAX_CLIBS);
+                                                } else {
+                                                    clib_names[clib_name_count] = strdup(type_name);
+                                                    clib_name_count++;
+                                                }
                                             }
                                             break;
                                         }
@@ -1219,9 +1270,13 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         for (int ei = 0; ei < enum_name_count; ei++) {
                                             if (strcmp(enum_names[ei], type_name) == 0) { already = 1; break; }
                                         }
-                                        if (!already && enum_name_count < 16) {
-                                            enum_names[enum_name_count] = strdup(type_name);
-                                            enum_name_count++;
+                                        if (!already) {
+                                            if (enum_name_count >= MOD_MAX_ENUMS) {
+                                                fprintf(stderr, "[错误] enum数量超过上限 %d\n", MOD_MAX_ENUMS);
+                                            } else {
+                                                enum_names[enum_name_count] = strdup(type_name);
+                                                enum_name_count++;
+                                            }
                                         }
                                     }
                                 }
@@ -1232,7 +1287,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         module_symbol_table_add_alias(table, type_name,
                                             a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
                                         // 同时添加到本地别名表，使后续方法返回类型解析能找到
-                                        if (local_alias_count < 32) {
+                                        if (local_alias_count >= MOD_MAX_ALIASES) {
+                                            fprintf(stderr, "[错误] 别名数量超过上限 %d\n", MOD_MAX_ALIASES);
+                                        } else {
                                             local_alias_names[local_alias_count] = strdup(type_name);
                                             local_alias_types[local_alias_count] = a_sym->type_info ? type_copy(a_sym->type_info) : NULL;
                                             local_alias_count++;
@@ -1269,7 +1326,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
 
                     // 解析泛型参数 [T] 或 [K, V] 或 [T: Face, K]
                     int type_param_count = 0;
-                    char* type_param_names[16] = {NULL};
+                    char* type_param_names[MOD_MAX_TYPE_PARAMS] = {NULL};
                     while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
                     if (*after_struct == '[') {
                         after_struct++; // skip '['
@@ -1279,7 +1336,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 const char* tp_name_start = after_struct;
                                 while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
                                 int tp_name_len = (int)(after_struct - tp_name_start);
-                                if (tp_name_len > 0 && tp_name_len < 64 && type_param_count < 16) {
+                                if (tp_name_len > 0 && tp_name_len < 64 && type_param_count < MOD_MAX_TYPE_PARAMS) {
                                     type_param_names[type_param_count] = (char*)malloc(tp_name_len + 1);
                                     strncpy(type_param_names[type_param_count], tp_name_start, tp_name_len);
                                     type_param_names[type_param_count][tp_name_len] = '\0';
@@ -1301,7 +1358,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
 
                     // 解析 impl 声明
-                    char* impl_names[64];
+                    char* impl_names[MOD_MAX_TYPES];
                     int impl_count = 0;
                     if (strncmp(after_struct, "impl", 4) == 0 && (after_struct[4] == ' ' || after_struct[4] == '\t')) {
                         after_struct += 4;
@@ -1347,12 +1404,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     if (*after_struct == '{') {
                         after_struct++;
 
-                        ModuleStructField fields[64];
-                        ModuleStructMethod methods[64];
+                        ModuleStructField fields[MOD_MAX_FIELDS];
+                        ModuleStructMethod methods[MOD_MAX_METHODS];
                         int field_count = 0;
                         int method_count = 0;
 
-                        while (*after_struct && *after_struct != '}' && (field_count < 64 || method_count < 64)) {
+                        while (*after_struct && *after_struct != '}' && (field_count < MOD_MAX_FIELDS || method_count < MOD_MAX_METHODS)) {
                             while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
                             if (!*after_struct || *after_struct == '}') break;
 
@@ -1371,7 +1428,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
                                 int method_name_len = (int)(after_func - method_name_start);
 
-                                if (method_name_len > 0 && method_name_len < 64 && method_count < 64) {
+                                if (method_name_len > 0 && method_name_len < 64 && method_count < MOD_MAX_METHODS) {
                                     char method_name[64];
                                     strncpy(method_name, method_name_start, method_name_len);
                                     method_name[method_name_len] = '\0';
@@ -1383,9 +1440,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
 
                                     // 解析参数列表
                                     int param_count = 0;
-                                    TypeKind param_types[64] = {0};
-                                    char param_struct_names[64][64] = {{0}};
-                                    char* param_generic_names[64] = {NULL};  // 泛型参数名（如 T, K, V）
+                                    TypeKind param_types[MOD_MAX_PARAMS] = {0};
+                                    char param_struct_names[MOD_MAX_PARAMS][MOD_MAX_NAMES] = {{0}};
+                                    char* param_generic_names[MOD_MAX_PARAMS] = {NULL};  // 泛型参数名（如 T, K, V）
 
                                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                                     if (*after_func == '(') {
@@ -1476,15 +1533,17 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                         has_param = 1;
                                                     }
 
-                                                    if (has_param && param_count < 64) {
+                                                    if (has_param && param_count < MOD_MAX_PARAMS) {
                                                         param_types[param_count] = param_type;
                                                         param_generic_names[param_count] = param_generic_name;
                                                         param_generic_name = NULL;  // 转移所有权
                                                         if (param_struct_name[0]) {
-                                                            memcpy(param_struct_names[param_count], param_struct_name, 64);
-                                                            param_struct_names[param_count][63] = '\0';
+                                                            memcpy(param_struct_names[param_count], param_struct_name, MOD_MAX_NAMES);
+                                                            param_struct_names[param_count][MOD_MAX_NAMES - 1] = '\0';
                                                         }
                                                         param_count++;
+                                                    } else if (has_param && param_count >= MOD_MAX_PARAMS) {
+                                                        fprintf(stderr, "[错误] 函数参数数量超过上限 %d\n", MOD_MAX_PARAMS);
                                                     } else if (param_generic_name) {
                                                         free(param_generic_name);
                                                         param_generic_name = NULL;
@@ -1523,7 +1582,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         char method_return_struct[64] = {0};
                                         char method_return_type_param[64] = {0};
                                         int method_return_generic_count = 0;
-                                        char* method_return_generic_params[8] = {NULL};
+                                        char* method_return_generic_params[MOD_MAX_GENERIC_RET] = {NULL};
 
                                         if (*after_func == ':') {
                                             after_func++;
@@ -1696,7 +1755,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                                 }
                                             }
                                         }
-                                        method_count++;
+                                        if (method_count >= MOD_MAX_METHODS) {
+                                            fprintf(stderr, "[错误] struct方法数量超过上限 %d\n", MOD_MAX_METHODS);
+                                        } else {
+                                            method_count++;
+                                        }
                                     }
                                 }
 
@@ -1741,7 +1804,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
                                 int field_len = (int)(after_struct - field_start);
 
-                                if (field_len > 0 && field_len < 64 && field_count < 64) {
+                                if (field_len > 0 && field_len < 64 && field_count < MOD_MAX_FIELDS) {
                                     TypeKind ft = parse_base_type(type_str);
                                     fields[field_count].name = (char*)malloc(field_len + 1);
                                     strncpy(fields[field_count].name, field_start, field_len);
@@ -1759,7 +1822,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         }
                                     }
                                     fields[field_count].element_type = element_type;
-                                    field_count++;
+                                    if (field_count >= MOD_MAX_FIELDS) {
+                                        fprintf(stderr, "[错误] struct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
+                                    } else {
+                                        field_count++;
+                                    }
                                 }
                             }
 
@@ -1841,13 +1908,13 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     if (*after_cstruct == '{') {
                         after_cstruct++;
 
-                        ModuleStructField fields[64];
-                        ModuleStructMethod methods[64];
+                        ModuleStructField fields[MOD_MAX_FIELDS];
+                        ModuleStructMethod methods[MOD_MAX_METHODS];
                         int field_count = 0;
                         int method_count = 0;
 
                         // cstruct 只解析字段，不解析方法（cstruct 用于 C 布局，不支持方法）
-                        while (*after_cstruct && *after_cstruct != '}' && field_count < 64) {
+                        while (*after_cstruct && *after_cstruct != '}' && field_count < MOD_MAX_FIELDS) {
                             while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t' || *after_cstruct == '\n' || *after_cstruct == '\r')) after_cstruct++;
                             if (!*after_cstruct || *after_cstruct == '}') break;
 
@@ -1933,7 +2000,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 while (*after_cstruct && (isalnum((unsigned char)*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
                                 int field_len = (int)(after_cstruct - field_start);
 
-                                if (field_len > 0 && field_len < 64 && field_count < 64) {
+                                if (field_len > 0 && field_len < 64 && field_count < MOD_MAX_FIELDS) {
                                     TypeKind ft = parse_base_type(type_str);
                                     fields[field_count].name = (char*)malloc(field_len + 1);
                                     strncpy(fields[field_count].name, field_start, field_len);
@@ -1950,7 +2017,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         }
                                     }
                                     fields[field_count].element_type = element_type;
-                                    field_count++;
+                                    if (field_count >= MOD_MAX_FIELDS) {
+                                        fprintf(stderr, "[错误] cstruct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
+                                    } else {
+                                        field_count++;
+                                    }
                                 }
                             }
 
@@ -2031,10 +2102,10 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     if (*after_face == '{') {
                         after_face++;
 
-                        ModuleFaceMethodSymbol methods[64];
+                        ModuleFaceMethodSymbol methods[MOD_MAX_METHODS];
                         int method_count = 0;
 
-                        while (*after_face && *after_face != '}' && method_count < 64) {
+                        while (*after_face && *after_face != '}' && method_count < MOD_MAX_METHODS) {
                             while (*after_face && (*after_face == ' ' || *after_face == '\t' || *after_face == '\n' || *after_face == '\r')) after_face++;
                             if (!*after_face || *after_face == '}') break;
 
@@ -2169,7 +2240,11 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                     methods[method_count].param_count = param_count;
                                     // 释放临时 method_return_type_info（face 方法符号不存储此字段）
                                     if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
-                                    method_count++;
+                                    if (method_count >= MOD_MAX_METHODS) {
+                                        fprintf(stderr, "[错误] face方法数量超过上限 %d\n", MOD_MAX_METHODS);
+                                    } else {
+                                        method_count++;
+                                    }
                                 }
 
                                 after_face = after_func;
@@ -2213,12 +2288,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     enum_name[name_len] = '\0';
 
                     // 解析成员名
-                    char* member_names_buf[64];
+                    char* member_names_buf[MOD_MAX_MEMBERS];
                     int member_count = 0;
                     while (*after_enum && *after_enum != '{') after_enum++;
                     if (*after_enum == '{') {
                         after_enum++;
-                        while (*after_enum && *after_enum != '}' && member_count < 64) {
+                        while (*after_enum && *after_enum != '}' && member_count < MOD_MAX_MEMBERS) {
                             while (*after_enum && (*after_enum == ' ' || *after_enum == '\t' || *after_enum == '\n' || *after_enum == '\r')) after_enum++;
                             if (*after_enum == '}' || *after_enum == '\0') break;
                             if (*after_enum == '/' && *(after_enum+1) == '/') {
@@ -2578,7 +2653,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 }
                                 module_symbol_table_add_alias(table, alias_name, ti_ptr);
                                 // 添加到本地解析表
-                                if (local_alias_count < 32) {
+                                if (local_alias_count >= MOD_MAX_ALIASES) {
+                                    fprintf(stderr, "[错误] 别名数量超过上限 %d\n", MOD_MAX_ALIASES);
+                                } else {
                                     local_alias_names[local_alias_count] = strdup(alias_name);
                                     local_alias_types[local_alias_count] = type_copy(ti_ptr);
                                     local_alias_count++;
