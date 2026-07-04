@@ -1,0 +1,49 @@
+// chain_a.leno — 顶层测试，use 链式导入 b（b 又 use 了 c）
+// A ← use ← B ← use ← C
+import "chain_b.leno" as b
+
+use b.Scancode       // 来自 C → B → A
+use b.EventType      // 来自 C → B → A
+use b.KeyHandler     // 来自 C → B → A
+use b.Priority       // B 自身的
+use b.HandlerPair    // B 自身的（组合了 KeyHandler）
+
+main() {
+    // === 1. use 链式导入的 enum 值（C → B → A）===
+    print("Scancode.ESCAPE =", Scancode.ESCAPE)
+    print("Scancode.SPACE  =", Scancode.SPACE)
+    print("Scancode.A      =", Scancode.A)
+
+    // === 2. EventType ===
+    print("EventType.quit    =", EventType.quit)
+    print("EventType.keydown =", EventType.keydown)
+
+    // === 3. B 自身 enum ===
+    print("Priority.low  =", Priority.low)
+    print("Priority.mid  =", Priority.mid)
+    print("Priority.high =", Priority.high)
+
+    // === 4. alias 链式传播 ===
+    KeyHandler h1 = Scancode.ESCAPE
+    KeyHandler h2 = Scancode.RETURN
+    print("KeyHandler h1 =", h1)
+    print("KeyHandler h2 =", h2)
+
+    // B 自己的 alias 组合了 C 的 alias
+    HandlerPair hp = [h1, h2]
+    print("HandlerPair =", hp)
+
+    // === 5. 函数转发 ===
+    print("isEsc(41) =", b.isEsc(41))
+    print("evName(0x300) =", b.evName(0x300))
+
+    // === 6. 条件判断 ===
+    int code = Scancode.A
+    if code == Scancode.A { print("code==A ✓") }
+    if code != Scancode.B { print("code!=B ✓") }
+
+    // === 7. int 比较 ===
+    if Scancode.SPACE == 44 { print("SPACE==44 ✓") }
+
+    print("=== ALL PASS ===")
+}

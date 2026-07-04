@@ -1,0 +1,23 @@
+// chain_c.leno — 底层模块，定义 enum 和 alias
+export enum Scancode {
+    ESCAPE = 41
+    SPACE  = 44
+    RETURN = 40
+    A = 4
+    B = 5
+}
+
+export enum EventType {
+    quit    = 0x100
+    keydown = 0x300
+    keyup   = 0x301
+}
+
+export alias KeyHandler = int
+
+export func isEscape(int code): bool { return code == Scancode.ESCAPE }
+export func eventName(int t): string {
+    if t == EventType.quit    { return "quit" }
+    if t == EventType.keydown { return "keydown" }
+    return "???"
+}

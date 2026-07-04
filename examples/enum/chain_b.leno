@@ -1,0 +1,17 @@
+// chain_b.leno — 中间模块，use 链式导入 c
+// 模拟 SDL3.leno 的 facade 模式
+import "chain_c.leno" as c
+
+use c.Scancode
+use c.EventType
+use c.KeyHandler
+
+// 转发函数
+export func isEsc(int code): bool { return c.isEscape(code) }
+export func evName(int t): string  { return c.eventName(t) }
+
+// 自己的 enum
+export enum Priority { low = 1; mid = 5; high = 10 }
+
+// 自己的 alias，组合 c 的类型
+export alias HandlerPair = [KeyHandler, KeyHandler]
