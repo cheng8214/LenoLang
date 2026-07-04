@@ -34,6 +34,7 @@ use wnd.Window
 use fnt.Font
 use fnt.TextTexture
 use tm.Timer
+use tm.TimerCallback
 use wnd.EventHandler
 use wnd.RenderCallback
 

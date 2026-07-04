@@ -1,0 +1,28 @@
+// 测试 SDL3 导出的 func 类型别名
+import "../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.EventHandler
+use SDL3.RenderCallback
+use SDL3.Timer
+use SDL3.TimerCallback
+
+main() {
+    var win = SDL3.createWindow({title: "alias测试", w: 400, h: 200})
+    if not win.ok { return }
+
+    // 用别名声明回调变量
+    EventHandler onEvt = func(Event e): bool {
+        if e.isQuit() or e.isWindowClose() { return false }
+        if e.isKeyDown() and e.scancode() == SDL3.SCANCODE_ESCAPE { return false }
+        return true
+    }
+    RenderCallback onDraw = func(Renderer r) {
+        r.clearColor(20, 20, 40, 255)
+    }
+
+    // 定时器
+    Timer t = win.addTimer(2000, func() { print("tick!") })
+
+    win.run(onEvt, onDraw)
+}
