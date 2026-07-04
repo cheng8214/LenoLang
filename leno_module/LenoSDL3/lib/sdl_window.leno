@@ -23,6 +23,10 @@ use event.Event
 import "sdl_timer.leno" as timer
 use timer.Timer
 
+export alias EventHandler  = func(Event):bool
+export alias RenderCallback = func(Renderer)
+
+
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok       // 窗口是否创建成功
@@ -114,19 +118,19 @@ export struct Window {
     }
 
     // 添加定时器（毫秒），用法: Timer t = win.addTimer(200, func() { ... })
-    func addTimer(int ms, var cb): Timer {
+    func addTimer(int ms, func():void cb): Timer {
         Timer t = new Timer(); t.set(ms, cb); return t
     }
 
     // 添加一次性定时器
-    func addTimerOnce(int ms, var cb): Timer {
+    func addTimerOnce(int ms, func():void cb): Timer {
         Timer t = new Timer(); t.setOnce(ms, cb); return t
     }
 
     // 运行主循环（回调模式）
     // onEvent(Event): bool  — 返回 false 则退出循环
     // onRender(Renderer)   — 每帧渲染回调
-    func run(var onEvent, var onRender) {
+    func run(EventHandler onEvent, RenderCallback onRender) {
         Renderer ren = renderer.createRenderer(handle)
         if not ren.ok { destroy(); return }
 

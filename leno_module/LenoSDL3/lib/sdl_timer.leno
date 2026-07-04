@@ -4,6 +4,8 @@ import "../lib/sdl_core.leno" as core
 use core.sdl3
 sdl3 _lib = core.lib()
 
+export alias TimerCallback = func():void
+
 export struct Timer {
     float   _ms = 0.0     // 定时间隔（毫秒）
     float   _next = 0.0    // 下次触发时间（getTicks 毫秒）
@@ -12,7 +14,7 @@ export struct Timer {
     Array   _cb           // 回调存 [0]
 
     // 设置并启动（循环），ms=毫秒，=0 只存回调不启动
-    func set(int ms, var cb) {
+    func set(int ms, TimerCallback cb) {
         _cb.clear(); _cb.add(cb); _ms = _float(ms)
         if ms > 0 { _next = _float(_lib.SDL_GetTicks()) + _ms; running = true }
         else { running = false }
@@ -20,7 +22,7 @@ export struct Timer {
     }
 
     // 设置一次性定时器
-    func setOnce(int ms, var cb) {
+    func setOnce(int ms, TimerCallback cb) {
         _cb.clear(); _cb.add(cb); _ms = _float(ms)
         _next = _float(_lib.SDL_GetTicks()) + _ms
         running = true; once = true
