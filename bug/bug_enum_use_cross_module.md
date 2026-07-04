@@ -1,7 +1,11 @@
 # Bug: `use` 导入跨模块 enum 存在问题
 
 ## 环境
-- 提交: 最新 main（enum 已实现）
+- 发现: 最新 main（enum 已实现）
+- 修复: `d94c4342` — `fix: use导入跨模块enum三个Bug全部修复 + alias支持enum成员值`
+
+## 状态
+- [x] 已修复 — `d94c4342`
 
 ## 测试文件
 - `assert/test_enum_use_alias.leno` — enum 值别名 + 成员访问回归测试
