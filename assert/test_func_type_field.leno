@@ -1,5 +1,6 @@
 // 函数类型字段断言 - 防止回归 bug_func_type_void_noparams
 // 测试 func():void / func():int 作为 struct 字段和变量声明
+// 以及字段赋值类型不匹配检测
 
 print("=== func():void / func():int 变量声明 ===")
 
@@ -91,5 +92,32 @@ struct Handler {
 var h = new Handler()
 h.transform = func(int x): int { return x * 10 }
 assert_eq(h.transform(5), 50)
+
+print("=== 字段赋值类型不匹配检测 ===")
+
+// 匹配：func():int 字段赋值 func():int 函数 → 应通过
+struct GoodMatch {
+    func():int getter
+}
+
+var gm = new GoodMatch()
+gm.getter = get42
+assert_eq(gm.getter(), 42)
+
+// 匹配：int 字段赋值 int 值 → 应通过
+struct IntField {
+    int x
+}
+
+var inf = new IntField()
+inf.x = 42
+assert_eq(inf.x, 42)
+
+// 不匹配测试（这些应报编译错误，放在单独文件中验证）
+// 以下赋值应被编译器拒绝：
+//   func():int 字段 = func():void 函数  → 类型不匹配
+//   func():void 字段 = func():int 函数  → 类型不匹配
+//   func(int,int):int 字段 = func():int 函数 → 参数类型不匹配
+//   int 字段 = "hello" → 类型不匹配
 
 print("test_func_type_field passed")

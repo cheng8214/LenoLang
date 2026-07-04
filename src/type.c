@@ -911,6 +911,26 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     //     return 0;  // 不允许隐式转换
     // }
 
+    // Leno 基本类型与 C 布局类型的兼容性
+    // int 与 C 整数类型互通
+    if (target->kind == TYPE_INT && source->kind >= TYPE_I8 && source->kind <= TYPE_C_SSIZE) return 1;
+    if (source->kind == TYPE_INT && target->kind >= TYPE_I8 && target->kind <= TYPE_C_SSIZE) return 1;
+    // float 与 C 浮点类型互通
+    if (target->kind == TYPE_FLOAT && (source->kind == TYPE_F32 || source->kind == TYPE_F64)) return 1;
+    if (source->kind == TYPE_FLOAT && (target->kind == TYPE_F32 || target->kind == TYPE_F64)) return 1;
+    // string 与 C 字符串类型互通
+    if (target->kind == TYPE_STRING && (source->kind == TYPE_STR8 || source->kind == TYPE_STR16)) return 1;
+    if (source->kind == TYPE_STRING && (target->kind == TYPE_STR8 || target->kind == TYPE_STR16)) return 1;
+    // C 整数类型之间互通（i32 ↔ u32, i64 ↔ u64 等）
+    if (target->kind >= TYPE_I8 && target->kind <= TYPE_C_SSIZE &&
+        source->kind >= TYPE_I8 && source->kind <= TYPE_C_SSIZE) return 1;
+    // C 浮点类型之间互通（f32 ↔ f64）
+    if ((target->kind == TYPE_F32 || target->kind == TYPE_F64) &&
+        (source->kind == TYPE_F32 || source->kind == TYPE_F64)) return 1;
+    // C 字符串类型之间互通（str8 ↔ str16）
+    if ((target->kind == TYPE_STR8 || target->kind == TYPE_STR16) &&
+        (source->kind == TYPE_STR8 || source->kind == TYPE_STR16)) return 1;
+
     return 0;  // 默认不兼容
 }
 

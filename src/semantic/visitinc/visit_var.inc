@@ -388,6 +388,32 @@
                         }
                     }
                     if (obj_type) type_free(obj_type);
+                } else if (target->kind == AST_FIELD_ACCESS) {
+                    // struct/cstruct 字段赋值的类型检查
+                    TypeInfo* obj_type = infer_expr_type(s, target->u.field_access.obj);
+                    if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT) && obj_type->struct_name) {
+                        Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                        if (!struct_sym) {
+                            struct_sym = scope_resolve_tree_bfs(s->root_scope, obj_type->struct_name);
+                        }
+                        if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types && value_type) {
+                            const char* field_name = target->u.field_access.field_name;
+                            for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
+                                if (strcmp(struct_sym->struct_field_names[fi], field_name) == 0) {
+                                    TypeInfo* field_type = struct_sym->struct_field_types[fi];
+                                    if (field_type && !type_is_compatible(field_type, value_type)) {
+                                        char msg[BUFFER_MEDIUM];
+                                        format_detailed_type_error(msg, sizeof(msg),
+                                            field_type, value_type,
+                                            "字段赋值类型不匹配");
+                                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (obj_type) type_free(obj_type);
                 }
                 
                 if (value_type) type_free(value_type);
