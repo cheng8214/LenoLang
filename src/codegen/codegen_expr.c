@@ -678,6 +678,37 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                     expected_args = native_arity;  // 不包含 self，因为 BoundMethod 已经包含 receiver
                     required_args = expected_args;
                 } else {
+                    // 检查是否是函数类型字段（如 func(int,int):int op）
+                    int is_func_field = 0;
+                    if (receiver_type->struct_name && (receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_CSTRUCT)) {
+                        Symbol* struct_sym = scope_resolve(gen->sem->current, receiver_type->struct_name);
+                        if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
+                            for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
+                                if (strcmp(struct_sym->struct_field_names[fi], method_name) == 0 &&
+                                    struct_sym->struct_field_types[fi]->kind == TYPE_FUNCTION) {
+                                    is_func_field = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (is_func_field) {
+                        // 函数类型字段：生成"获取字段值 + 调用"
+                        // 先压入参数
+                        for (int i = 0; i < ast->u.call.args.count; i++) {
+                            gen_expr(gen, ast->u.call.args.items[i]);
+                        }
+                        // 获取字段值：生成 obj["field_name"]
+                        gen_expr(gen, obj_ast);
+                        ObjString* field_name_str = str_copy(method_name, strlen(method_name));
+                        int field_name_const = make_constant(gen, val_obj((Object*)field_name_str));
+                        emit_byte(gen, OP_CONST, ast->line);
+                        emit_byte(gen, (field_name_const >> 8) & 0xff, ast->line);
+                        emit_byte(gen, field_name_const & 0xff, ast->line);
+                        emit_byte(gen, OP_INDEX, ast->line);
+                        emit_call(gen, ast->u.call.args.count, ast->line);
+                        return;
+                    }
                     expected_args = provided_args + (obj_ast->kind == AST_VAR ? 0 : 1);
                     required_args = expected_args;
                 }

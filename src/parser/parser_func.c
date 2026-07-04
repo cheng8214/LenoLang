@@ -1326,6 +1326,16 @@ Ast* parse_struct_stmt(Parser* p) {
         }
 
         if (p->lex.current.type == TOK_FUNC) {
+            // 预读：func 后面跟 ( 说明是函数类型字段（如 func(int):int op），走字段类型解析
+            // func 后面跟 IDENT 说明是方法定义（如 func calc()）
+            Lexer saved = p->lex;
+            lexer_next(&p->lex);  // 跳过 func
+            int is_func_type_field = (p->lex.current.type == TOK_LPAREN);
+            p->lex = saved;  // 恢复
+
+            if (is_func_type_field) {
+                // 函数类型字段，不走方法定义路径，fall through 到下面的字段类型解析
+            } else {
             int func_line = p->lex.current.line;
             lexer_next(&p->lex); // 消费 'func'
 
@@ -1362,7 +1372,8 @@ Ast* parse_struct_stmt(Parser* p) {
                 lexer_next(&p->lex);
             }
             continue;
-        }
+            } // end else (方法定义)
+        } // end if TOK_FUNC
 
         // 解析字段类型
         TypeInfo* field_type = NULL;

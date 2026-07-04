@@ -344,6 +344,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 ast->cached_type = type_copy(sym->type);
                 return type_copy(sym->type);
             }
+            // 函数名引用：从函数表构造 TYPE_FUNCTION 类型
+            if (sym && (sym->kind == SYM_GLOBAL_FUNC || sym->kind == SYM_LOCAL)) {
+                Ast* func_def = func_table_find(&s->func_table, ast->u.var.name);
+                if (func_def && func_def->kind == AST_FUNC_DEF) {
+                    TypeInfo* ret_type = func_def->u.func.return_type ? type_copy(func_def->u.func.return_type) : type_new(TYPE_ANY);
+                    TypeInfo* func_type = type_function(ret_type, func_def->u.func.param_types, func_def->u.func.pcnt);
+                    ast->cached_type = func_type;
+                    return type_copy(func_type);
+                }
+            }
             if (ast->u.var.ref.type_kind != TYPE_ANY && ast->u.var.ref.type_kind != TYPE_INFER) {
                 ast->cached_type = type_new(ast->u.var.ref.type_kind);
                 if (ast->u.var.ref.struct_name &&
@@ -804,6 +814,22 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
                         // 处理 struct/cstruct 类型的方法调用
                         if (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) {
+                            // 先检查是否是函数类型字段（如 func(int,int):int op）
+                            if (obj_type->struct_name && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
+                                Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                                if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
+                                    for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
+                                        if (strcmp(struct_sym->struct_field_names[fi], method_name) == 0 &&
+                                            struct_sym->struct_field_types[fi]->kind == TYPE_FUNCTION &&
+                                            struct_sym->struct_field_types[fi]->return_type) {
+                                            TypeInfo* ret = type_copy(struct_sym->struct_field_types[fi]->return_type);
+                                            ast->cached_type = type_copy(ret);
+                                            type_free(obj_type);
+                                            return ret;
+                                        }
+                                    }
+                                }
+                            }
                             if (obj_type->kind == TYPE_FACE) {
                                 ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
                                 if (fdef) {
@@ -1024,6 +1050,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         type_free(obj_type);
                     }
                 }
+            }
+            // 处理函数类型字段调用：self["op"](a, b)（callee 是 AST_INDEX，且推断类型为 TYPE_FUNCTION）
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_INDEX) {
+                TypeInfo* callee_type = infer_expr_type(s, ast->u.call.callee);
+                if (callee_type && callee_type->kind == TYPE_FUNCTION && callee_type->return_type) {
+                    TypeInfo* ret = type_copy(callee_type->return_type);
+                    ast->cached_type = type_copy(ret);
+                    type_free(callee_type);
+                    return ret;
+                }
+                if (callee_type) type_free(callee_type);
             }
             // 处理实例方法调用：obj.method()（callee 是 AST_FIELD_ACCESS）
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_FIELD_ACCESS) {

@@ -29,10 +29,22 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_switch_stmt(p);
             break;
 
-        // 函数定义
-        case TOK_FUNC:
-            stmt = parse_func_stmt(p);
+        // 函数定义 或 函数类型变量声明（func():void v = ...）
+        case TOK_FUNC: {
+            // 预读：func 后面跟 ( 说明是函数类型（如 func(int):int），走变量声明
+            // func 后面跟 IDENT 说明是函数定义（如 func foo()）
+            Lexer saved = p->lex;
+            lexer_next(&p->lex);  // 跳过 func
+            int is_func_type = (p->lex.current.type == TOK_LPAREN);
+            p->lex = saved;  // 恢复
+
+            if (is_func_type) {
+                stmt = parse_var_decl_internal(p);
+            } else {
+                stmt = parse_func_stmt(p);
+            }
             break;
+        }
         
         // async 函数定义
         case TOK_ASYNC:

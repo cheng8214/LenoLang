@@ -153,5 +153,6 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_SOCKET_TYPE ||
            type == TOK_CHANNEL_TYPE ||
            type == TOK_THREAD_TYPE ||
-           type == TOK_PTR_TYPE;
+           type == TOK_PTR_TYPE ||
+           type == TOK_FUNC;
 }

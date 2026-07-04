@@ -1,0 +1,55 @@
+// 测试：函数类型 —— 作参数类型、作返回值类型
+print("=== 函数类型测试 ===")
+
+// 1. 函数类型作返回值（cs1 已验证的模式）
+func makeAdder(int a): func(int):int {
+    func adder(int b): int { return a + b }
+    return adder
+}
+var add10 = makeAdder(10)
+print("makeAdder(10)(5) → " + add10(5))
+
+// 2. 函数类型作参数（泛型 map/filter/reduce 已验证的模式）
+func apply(func(int):int fn, int val): int {
+    return fn(val)
+}
+func triple(int x): int { return x * 3 }
+print("apply(triple, 5) → " + apply(triple, 5))
+
+// 3. func():void 作参数
+func runOnce(func():void fn) {
+    print("  before call")
+    fn()
+    print("  after call")
+}
+func sayHi() { print("  Hello!") }
+runOnce(sayHi)
+
+// 4. 多参数回调
+func combine(int a, int b, func(int, int):int op): int {
+    return op(a, b)
+}
+func add(int a, int b): int { return a + b }
+func multiply(int a, int b): int { return a * b }
+print("combine(add, 6, 4) → " + combine(6, 4, add))
+print("combine(multiply, 6, 4) → " + combine(6, 4, multiply))
+
+// 5. 闭包返回函数类型（闭包捕获外部变量）
+func makeCounter(int start): func():int {
+    int count = start
+    func next():int { count = count + 1; return count }
+    return next
+}
+var c = makeCounter(100)
+print("counter: " + c() + ", " + c() + ", " + c())
+
+// 6. 函数类型链式组合
+func compose(func(int):int f, func(int):int g): func(int):int {
+    func composed(int x): int { return f(g(x)) }
+    return composed
+}
+func plus2(int x): int { return x + 2 }
+var f = compose(triple, plus2)
+print("compose(triple, plus2)(3) → " + f(3))
+
+print("=== PASS ===")
