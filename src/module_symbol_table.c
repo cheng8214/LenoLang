@@ -1339,7 +1339,10 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 // 查找 enum 类型
                                 if (!s_sym && !f_sym_ptr) {
                                     ModuleEnumSymbol* e_sym = module_symbol_table_find_enum(dep_table, type_name);
-                                    if (e_sym) {
+                                    if (e_sym && !module_symbol_table_find_enum(table, type_name)) {
+                                        // 将 enum 完整信息（成员名+成员值）添加到当前模块的符号表
+                                        module_symbol_table_add_enum(table, type_name,
+                                            e_sym->member_count, e_sym->member_names, e_sym->member_values);
                                         int already = 0;
                                         for (int ei = 0; ei < enum_name_count; ei++) {
                                             if (strcmp(enum_names[ei], type_name) == 0) { already = 1; break; }

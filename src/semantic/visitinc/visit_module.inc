@@ -448,7 +448,7 @@
 
             // 没有找到 struct、clib、face 或 alias
             char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct、clib、face 或 alias 类型 '%s'", module_name, symbol_name);
+            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct、clib、face、enum 或 alias 类型 '%s'", module_name, symbol_name);
             error_add(ERR_SEMANTIC, ast->line, msg);
             break;
         }
