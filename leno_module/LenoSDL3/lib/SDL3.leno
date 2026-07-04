@@ -47,154 +47,24 @@ use core.FSize
 use core.StringSize
 use core.GlyphInfo
 
-// ==================== 重新导出常量 ====================
-// INIT 标志
-export var INIT_VIDEO  = core.INIT_VIDEO
-export var INIT_AUDIO  = core.INIT_AUDIO
-export var INIT_EVENTS = core.INIT_EVENTS
-
-// 窗口标志
-export var WINDOW_FULLSCREEN        = core.WINDOW_FULLSCREEN
-export var WINDOW_OPENGL            = core.WINDOW_OPENGL
-export var WINDOW_HIDDEN            = core.WINDOW_HIDDEN
-export var WINDOW_BORDERLESS        = core.WINDOW_BORDERLESS
-export var WINDOW_RESIZABLE         = core.WINDOW_RESIZABLE
-export var WINDOW_MINIMIZED         = core.WINDOW_MINIMIZED
-export var WINDOW_MAXIMIZED         = core.WINDOW_MAXIMIZED
-export var WINDOW_MOUSE_GRABBED     = core.WINDOW_MOUSE_GRABBED
-export var WINDOW_ALWAYS_ON_TOP     = core.WINDOW_ALWAYS_ON_TOP
-export var WINDOW_HIGH_PIXEL_DENSITY = core.WINDOW_HIGH_PIXEL_DENSITY
-export var WINDOW_TRANSPARENT       = core.WINDOW_TRANSPARENT
-
-// 事件
-export var EVENT_QUIT                   = core.EVENT_QUIT
-export var EVENT_KEY_DOWN               = core.EVENT_KEY_DOWN
-export var EVENT_KEY_UP                 = core.EVENT_KEY_UP
-export var EVENT_MOUSE_MOTION           = core.EVENT_MOUSE_MOTION
-export var EVENT_MOUSE_BUTTON_DOWN      = core.EVENT_MOUSE_BUTTON_DOWN
-export var EVENT_MOUSE_BUTTON_UP        = core.EVENT_MOUSE_BUTTON_UP
-export var EVENT_MOUSE_WHEEL           = core.EVENT_MOUSE_WHEEL
-export var EVENT_WINDOW_CLOSE_REQUESTED = core.EVENT_WINDOW_CLOSE_REQUESTED
-export var EVENT_WINDOW_RESIZED         = core.EVENT_WINDOW_RESIZED
-export var EVENT_WINDOW_MOVED          = core.EVENT_WINDOW_MOVED
-export var EVENT_WINDOW_MINIMIZED      = core.EVENT_WINDOW_MINIMIZED
-export var EVENT_WINDOW_MAXIMIZED      = core.EVENT_WINDOW_MAXIMIZED
-export var EVENT_WINDOW_RESTORED       = core.EVENT_WINDOW_RESTORED
-export var EVENT_WINDOW_FOCUS_GAINED   = core.EVENT_WINDOW_FOCUS_GAINED
-export var EVENT_WINDOW_FOCUS_LOST     = core.EVENT_WINDOW_FOCUS_LOST
-export var EVENT_WINDOW_MOUSE_ENTER    = core.EVENT_WINDOW_MOUSE_ENTER
-export var EVENT_WINDOW_MOUSE_LEAVE    = core.EVENT_WINDOW_MOUSE_LEAVE
-export var EVENT_TEXT_INPUT            = core.EVENT_TEXT_INPUT
-export var EVENT_DROP_FILE             = core.EVENT_DROP_FILE
-export var EVENT_DROP_TEXT             = core.EVENT_DROP_TEXT
-
-// 扫描码
-export var SCANCODE_ESCAPE    = core.SCANCODE_ESCAPE
-export var SCANCODE_RETURN    = core.SCANCODE_RETURN
-export var SCANCODE_SPACE     = core.SCANCODE_SPACE
-export var SCANCODE_BACKSPACE = core.SCANCODE_BACKSPACE
-export var SCANCODE_TAB       = core.SCANCODE_TAB
-export var SCANCODE_CAPSLOCK  = core.SCANCODE_CAPSLOCK
-
-// 标点
-export var SCANCODE_GRAVE        = core.SCANCODE_GRAVE
-export var SCANCODE_MINUS        = core.SCANCODE_MINUS
-export var SCANCODE_EQUALS       = core.SCANCODE_EQUALS
-export var SCANCODE_LEFTBRACKET  = core.SCANCODE_LEFTBRACKET
-export var SCANCODE_RIGHTBRACKET = core.SCANCODE_RIGHTBRACKET
-export var SCANCODE_BACKSLASH    = core.SCANCODE_BACKSLASH
-export var SCANCODE_SEMICOLON    = core.SCANCODE_SEMICOLON
-export var SCANCODE_APOSTROPHE   = core.SCANCODE_APOSTROPHE
-export var SCANCODE_COMMA        = core.SCANCODE_COMMA
-export var SCANCODE_PERIOD       = core.SCANCODE_PERIOD
-export var SCANCODE_SLASH        = core.SCANCODE_SLASH
-
-// 字母
-export var SCANCODE_A = core.SCANCODE_A; export var SCANCODE_B = core.SCANCODE_B; export var SCANCODE_C = core.SCANCODE_C
-export var SCANCODE_D = core.SCANCODE_D; export var SCANCODE_E = core.SCANCODE_E; export var SCANCODE_F = core.SCANCODE_F
-export var SCANCODE_G = core.SCANCODE_G; export var SCANCODE_H = core.SCANCODE_H; export var SCANCODE_I = core.SCANCODE_I
-export var SCANCODE_J = core.SCANCODE_J; export var SCANCODE_K = core.SCANCODE_K; export var SCANCODE_L = core.SCANCODE_L
-export var SCANCODE_M = core.SCANCODE_M; export var SCANCODE_N = core.SCANCODE_N; export var SCANCODE_O = core.SCANCODE_O
-export var SCANCODE_P = core.SCANCODE_P; export var SCANCODE_Q = core.SCANCODE_Q; export var SCANCODE_R = core.SCANCODE_R
-export var SCANCODE_S = core.SCANCODE_S; export var SCANCODE_T = core.SCANCODE_T; export var SCANCODE_U = core.SCANCODE_U
-export var SCANCODE_V = core.SCANCODE_V; export var SCANCODE_W = core.SCANCODE_W; export var SCANCODE_X = core.SCANCODE_X
-export var SCANCODE_Y = core.SCANCODE_Y; export var SCANCODE_Z = core.SCANCODE_Z
-
-// 数字
-export var SCANCODE_0 = core.SCANCODE_0; export var SCANCODE_1 = core.SCANCODE_1; export var SCANCODE_2 = core.SCANCODE_2
-export var SCANCODE_3 = core.SCANCODE_3; export var SCANCODE_4 = core.SCANCODE_4; export var SCANCODE_5 = core.SCANCODE_5
-export var SCANCODE_6 = core.SCANCODE_6; export var SCANCODE_7 = core.SCANCODE_7; export var SCANCODE_8 = core.SCANCODE_8
-export var SCANCODE_9 = core.SCANCODE_9
-
-// 方向
-export var SCANCODE_UP    = core.SCANCODE_UP
-export var SCANCODE_DOWN  = core.SCANCODE_DOWN
-export var SCANCODE_LEFT  = core.SCANCODE_LEFT
-export var SCANCODE_RIGHT = core.SCANCODE_RIGHT
-
-// 编辑键
-export var SCANCODE_INSERT   = core.SCANCODE_INSERT
-export var SCANCODE_HOME     = core.SCANCODE_HOME
-export var SCANCODE_PAGEUP   = core.SCANCODE_PAGEUP
-export var SCANCODE_DELETE   = core.SCANCODE_DELETE
-export var SCANCODE_END      = core.SCANCODE_END
-export var SCANCODE_PAGEDOWN = core.SCANCODE_PAGEDOWN
-
-// 修饰
-export var SCANCODE_LSHIFT = core.SCANCODE_LSHIFT
-export var SCANCODE_RSHIFT = core.SCANCODE_RSHIFT
-export var SCANCODE_LCTRL  = core.SCANCODE_LCTRL
-export var SCANCODE_RCTRL  = core.SCANCODE_RCTRL
-export var SCANCODE_LALT   = core.SCANCODE_LALT
-export var SCANCODE_RALT   = core.SCANCODE_RALT
-export var SCANCODE_LGUI   = core.SCANCODE_LGUI
-export var SCANCODE_RGUI   = core.SCANCODE_RGUI
-
-// 功能键
-export var SCANCODE_F1  = core.SCANCODE_F1;  export var SCANCODE_F2  = core.SCANCODE_F2;  export var SCANCODE_F3  = core.SCANCODE_F3
-export var SCANCODE_F4  = core.SCANCODE_F4;  export var SCANCODE_F5  = core.SCANCODE_F5;  export var SCANCODE_F6  = core.SCANCODE_F6
-export var SCANCODE_F7  = core.SCANCODE_F7;  export var SCANCODE_F8  = core.SCANCODE_F8;  export var SCANCODE_F9  = core.SCANCODE_F9
-export var SCANCODE_F10 = core.SCANCODE_F10; export var SCANCODE_F11 = core.SCANCODE_F11; export var SCANCODE_F12 = core.SCANCODE_F12
-
-// 系统键
-export var SCANCODE_PRINTSCREEN = core.SCANCODE_PRINTSCREEN
-export var SCANCODE_SCROLLLOCK  = core.SCANCODE_SCROLLLOCK
-export var SCANCODE_PAUSE       = core.SCANCODE_PAUSE
-
-// 小键盘
-export var SCANCODE_NUMLOCKCLEAR = core.SCANCODE_NUMLOCKCLEAR
-export var SCANCODE_KP_DIVIDE    = core.SCANCODE_KP_DIVIDE
-export var SCANCODE_KP_MULTIPLY  = core.SCANCODE_KP_MULTIPLY
-export var SCANCODE_KP_MINUS     = core.SCANCODE_KP_MINUS
-export var SCANCODE_KP_PLUS      = core.SCANCODE_KP_PLUS
-export var SCANCODE_KP_ENTER     = core.SCANCODE_KP_ENTER
-export var SCANCODE_KP_1 = core.SCANCODE_KP_1; export var SCANCODE_KP_2 = core.SCANCODE_KP_2
-export var SCANCODE_KP_3 = core.SCANCODE_KP_3; export var SCANCODE_KP_4 = core.SCANCODE_KP_4
-export var SCANCODE_KP_5 = core.SCANCODE_KP_5; export var SCANCODE_KP_6 = core.SCANCODE_KP_6
-export var SCANCODE_KP_7 = core.SCANCODE_KP_7; export var SCANCODE_KP_8 = core.SCANCODE_KP_8
-export var SCANCODE_KP_9 = core.SCANCODE_KP_9; export var SCANCODE_KP_0 = core.SCANCODE_KP_0
-export var SCANCODE_KP_PERIOD = core.SCANCODE_KP_PERIOD
-export var SCANCODE_APPLICATION = core.SCANCODE_APPLICATION
-export var SCANCODE_KP_EQUALS   = core.SCANCODE_KP_EQUALS
-export var SCANCODE_KP_COMMA    = core.SCANCODE_KP_COMMA
-
-// 鼠标
-export var MOUSE_LEFT   = core.MOUSE_LEFT
-export var MOUSE_MIDDLE = core.MOUSE_MIDDLE
-export var MOUSE_RIGHT  = core.MOUSE_RIGHT
-
-// 混合模式
-export var BLENDMODE_NONE  = core.BLENDMODE_NONE
-export var BLENDMODE_BLEND = core.BLENDMODE_BLEND
-
-export var FLIP_NONE       = core.FLIP_NONE
-export var FLIP_HORIZONTAL = core.FLIP_HORIZONTAL
-export var FLIP_VERTICAL   = core.FLIP_VERTICAL
+// ==================== 重新导出枚举 ====================
+use core.InitFlag
+use core.WindowFlag
+use core.EventType
+use core.Scancode
+use core.MouseButton
+use core.BlendMode
+use core.Flip
+use core.SystemCursor
+use core.TextureAccess
+use core.FlashOp
 
 export var PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
-export var TEXTUREACCESS_STATIC    = core.TEXTUREACCESS_STATIC
-export var TEXTUREACCESS_STREAMING = core.TEXTUREACCESS_STREAMING
-export var TEXTUREACCESS_TARGET    = core.TEXTUREACCESS_TARGET
+export var SDL_FRect_SIZE  = core.SDL_FRect_SIZE
+export var SDL_Rect_SIZE   = core.SDL_Rect_SIZE
+export var SDL_FPoint_SIZE = core.SDL_FPoint_SIZE
+export var SDL_Point_SIZE  = core.SDL_Point_SIZE
+export var SDL_Color_SIZE  = core.SDL_Color_SIZE
 
 // ==================== 重新导出核心函数 ====================
 
@@ -218,13 +88,7 @@ export func warpMouse(Ptr[u8] w, float x, float y): bool { return core.warpMouse
 export func setSystemCursor(int kind): Ptr[u8] { return core.setSystemCursor(kind) as Ptr[u8] }
 export func showMessageBox(string title, string msg, int flags) { core.showMessageBox(title, msg, flags) }
 
-export var SYSTEM_CURSOR_DEFAULT     = core.SYSTEM_CURSOR_DEFAULT
-export var SYSTEM_CURSOR_TEXT        = core.SYSTEM_CURSOR_TEXT
-export var SYSTEM_CURSOR_WAIT        = core.SYSTEM_CURSOR_WAIT
-export var SYSTEM_CURSOR_POINTER     = core.SYSTEM_CURSOR_POINTER
-export var SYSTEM_CURSOR_CROSSHAIR   = core.SYSTEM_CURSOR_CROSSHAIR
-export var SYSTEM_CURSOR_MOVE        = core.SYSTEM_CURSOR_MOVE
-export var SYSTEM_CURSOR_NOT_ALLOWED = core.SYSTEM_CURSOR_NOT_ALLOWED
+
 
 export func getClipboardText(): string   { return core.getClipboardText() }
 export func setClipboardText(string t): bool { return core.setClipboardText(t) }
@@ -234,9 +98,7 @@ export func getPerfFrequency(): int  { return core.getPerfFrequency() }
 export func getTicksNS(): int        { return core.getTicksNS() }
 export func hasClipboardText(): bool { return core.hasClipboardText() }
 
-export var FLASH_CANCEL         = core.FLASH_CANCEL
-export var FLASH_BRIEFLY        = core.FLASH_BRIEFLY
-export var FLASH_UNTIL_FOCUSED  = core.FLASH_UNTIL_FOCUSED
+
 
 // ==================== 重新导出工厂函数 ====================
 

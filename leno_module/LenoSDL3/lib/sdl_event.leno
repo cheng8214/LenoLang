@@ -45,7 +45,7 @@ export struct Event {
     // ==================== 通用 ====================
 
     // 是否退出事件（SDL_QUIT）
-    func isQuit(): bool  { return sdl3_type() == core.EVENT_QUIT }
+    func isQuit(): bool  { return sdl3_type() == core.EventType.QUIT }
 
     // 获取触发事件的窗口 ID
     func windowID(): int {
@@ -55,22 +55,22 @@ export struct Event {
 
     // ==================== 窗口事件 ====================
 
-    func isWindowClose(): bool       { return sdl3_type() == core.EVENT_WINDOW_CLOSE_REQUESTED }
-    func isWindowResized(): bool     { return sdl3_type() == core.EVENT_WINDOW_RESIZED }
-    func isWindowMoved(): bool       { return sdl3_type() == core.EVENT_WINDOW_MOVED }
-    func isWindowMinimized(): bool   { return sdl3_type() == core.EVENT_WINDOW_MINIMIZED }
-    func isWindowMaximized(): bool   { return sdl3_type() == core.EVENT_WINDOW_MAXIMIZED }
-    func isWindowRestored(): bool    { return sdl3_type() == core.EVENT_WINDOW_RESTORED }
-    func isWindowFocusGained(): bool { return sdl3_type() == core.EVENT_WINDOW_FOCUS_GAINED }
-    func isWindowFocusLost(): bool   { return sdl3_type() == core.EVENT_WINDOW_FOCUS_LOST }
-    func isWindowMouseEnter(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_ENTER }
-    func isWindowMouseLeave(): bool  { return sdl3_type() == core.EVENT_WINDOW_MOUSE_LEAVE }
+    func isWindowClose(): bool       { return sdl3_type() == core.EventType.WINDOW_CLOSE_REQUESTED }
+    func isWindowResized(): bool     { return sdl3_type() == core.EventType.WINDOW_RESIZED }
+    func isWindowMoved(): bool       { return sdl3_type() == core.EventType.WINDOW_MOVED }
+    func isWindowMinimized(): bool   { return sdl3_type() == core.EventType.WINDOW_MINIMIZED }
+    func isWindowMaximized(): bool   { return sdl3_type() == core.EventType.WINDOW_MAXIMIZED }
+    func isWindowRestored(): bool    { return sdl3_type() == core.EventType.WINDOW_RESTORED }
+    func isWindowFocusGained(): bool { return sdl3_type() == core.EventType.WINDOW_FOCUS_GAINED }
+    func isWindowFocusLost(): bool   { return sdl3_type() == core.EventType.WINDOW_FOCUS_LOST }
+    func isWindowMouseEnter(): bool  { return sdl3_type() == core.EventType.WINDOW_MOUSE_ENTER }
+    func isWindowMouseLeave(): bool  { return sdl3_type() == core.EventType.WINDOW_MOUSE_LEAVE }
 
     // ==================== 键盘事件 ====================
 
     // 是否按键按下/抬起事件
-    func isKeyDown(): bool { return sdl3_type() == core.EVENT_KEY_DOWN }
-    func isKeyUp(): bool   { return sdl3_type() == core.EVENT_KEY_UP }
+    func isKeyDown(): bool { return sdl3_type() == core.EventType.KEY_DOWN }
+    func isKeyUp(): bool   { return sdl3_type() == core.EventType.KEY_UP }
 
     // 获取物理扫描码（与键盘布局无关，如 SCANCODE_A, SCANCODE_ESCAPE）
     func scancode(): int {
@@ -92,10 +92,10 @@ export struct Event {
 
     // ==================== 鼠标事件 ====================
 
-    func isMouseMotion(): bool     { return sdl3_type() == core.EVENT_MOUSE_MOTION }
-    func isMouseButtonDown(): bool { return sdl3_type() == core.EVENT_MOUSE_BUTTON_DOWN }
-    func isMouseButtonUp(): bool   { return sdl3_type() == core.EVENT_MOUSE_BUTTON_UP }
-    func isMouseWheel(): bool      { return sdl3_type() == core.EVENT_MOUSE_WHEEL }
+    func isMouseMotion(): bool     { return sdl3_type() == core.EventType.MOUSE_MOTION }
+    func isMouseButtonDown(): bool { return sdl3_type() == core.EventType.MOUSE_BUTTON_DOWN }
+    func isMouseButtonUp(): bool   { return sdl3_type() == core.EventType.MOUSE_BUTTON_UP }
+    func isMouseWheel(): bool      { return sdl3_type() == core.EventType.MOUSE_WHEEL }
 
     // 鼠标位置（相对于窗口，浮点精度）
     func mouseX(): float {
@@ -143,7 +143,7 @@ export struct Event {
     // 注意：必须先调用 SDL_StartTextInput() 启用文本输入，否则不会收到此事件
 
     // 是否文本输入事件（处理输入法/IMM 产生的实际字符）
-    func isTextInput(): bool { return sdl3_type() == core.EVENT_TEXT_INPUT }
+    func isTextInput(): bool { return sdl3_type() == core.EventType.TEXT_INPUT }
 
     // 获取输入的文本内容（UTF-8 字符串，只在此次 poll 内有效）
     func text(): string {
@@ -153,8 +153,8 @@ export struct Event {
 
     // ==================== 拖放事件 ====================
 
-    func isDropFile(): bool { return sdl3_type() == core.EVENT_DROP_FILE }
-    func isDropText(): bool { return sdl3_type() == core.EVENT_DROP_TEXT }
+    func isDropFile(): bool { return sdl3_type() == core.EventType.DROP_FILE }
+    func isDropText(): bool { return sdl3_type() == core.EventType.DROP_TEXT }
 
     // 获取拖放的文件路径或文本内容
     func dropPath(): string {
