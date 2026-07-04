@@ -26,14 +26,19 @@ SDL3.leno 中 `use core.Scancode` 等 10 个枚举/别名，用户通过 `import
 
 **当前 workaround**：用户必须自己加 `use SDL3.Scancode`，然后直接用 `Scancode.ESCAPE`（不带 `SDL3.` 前缀）。
 
-## 对比：struct 链式 import 正常
+## 对比：struct 链式 import 部分正常
 
 ```leno
 // A.leno: export struct Info { string name }
-// C.leno: import A as a; new a.Info(name="x")  → ✅ 正常
+// C.leno: import A as a
+main() {
+    new a.Info(name="x")  // ✅ 构造调用 OK
+    a.Info y              // ❌ 类型声明 语法错误
+    func f(a.Info x)      // ❌ 参数类型 语法错误
+}
 ```
 
-`export struct` 可以链式访问，`use` 导入的类型不行——不一致。
+`import` 别名只能用于 `new` 构造，不能作为类型名声明变量/参数/返回类型。
 
 ## 状态
 

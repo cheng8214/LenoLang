@@ -1,0 +1,14 @@
+// 测试: import 别名能当类型用吗？
+import "repro_struct_def.leno" as m
+
+main() {
+    // ✅ new m.Info(...) 可以
+    var x = new m.Info(name = "Tom", age = 30)
+    print("var x =", x.name, x.age, x.greet())
+
+    // ⚠️ m.Info y 作为类型声明 → 语法错误 "期望参数名"
+    // ⚠️ func f(m.Info x) 作为参数类型 → 语法错误
+    // ⚠️ func f(): m.Info 作为返回类型 → 语法错误
+
+    print("=== PASS ===")
+}

@@ -1,0 +1,24 @@
+// 模块 C: B 不用 use，C 能拿到链式类型吗？
+import "repro_chain3_b.leno" as b
+
+main() {
+    print("=== 测试1: b.a 本身 ===")
+    print(b.a)
+
+    print("=== 测试2: b.a.Mode 枚举 ===")
+    print(b.a.Mode)
+
+    print("=== 测试3: b.a.Mode.fast ===")
+    print(b.a.Mode.fast)
+    if b.a.Mode.fast == 0 { print("fast==0 ✓") }
+    else { print("fast=" + b.a.Mode.fast + " ✗") }
+
+    print("=== 测试4: b.a.Mode.slow ===")
+    print(b.a.Mode.slow)
+
+    print("=== 测试5: 能否创建 struct? ===")
+    // new b.a.Outer(...) — 不支持 a.b.c 链式语法
+    print("(语法不支持 new b.a.Outer, 跳过)")
+
+    print("=== DONE ===")
+}
