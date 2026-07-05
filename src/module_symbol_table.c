@@ -1907,8 +1907,37 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 }
                             }
 
-                            while (*after_struct && *after_struct != '\n' && *after_struct != '}' && *after_struct != ';') after_struct++;
-                            if (*after_struct == ';') after_struct++;
+                            // 跳过字段默认值（可能包含嵌套的 {} 或 []，如 Dict val = {}）
+	                            // 先跳过到 = 或行尾/分号/}
+	                            while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '=' && *after_struct != '}') after_struct++;
+	                            if (*after_struct == '=') {
+	                                after_struct++; // 跳过 =
+	                                // 跳过空白
+	                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+	                                // 处理默认值中的嵌套括号
+	                                if (*after_struct == '{') {
+	                                    int depth = 1;
+	                                    after_struct++;
+	                                    while (*after_struct && depth > 0) {
+	                                        if (*after_struct == '{') depth++;
+	                                        else if (*after_struct == '}') depth--;
+	                                        after_struct++;
+	                                    }
+	                                } else if (*after_struct == '[') {
+	                                    int depth = 1;
+	                                    after_struct++;
+	                                    while (*after_struct && depth > 0) {
+	                                        if (*after_struct == '[') depth++;
+	                                        else if (*after_struct == ']') depth--;
+	                                        after_struct++;
+	                                    }
+	                                } else {
+	                                    // 简单值（数字、字符串等），跳到 ; 或行尾或 }
+	                                    while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '}') after_struct++;
+	                                }
+	                            }
+	                            // 跳过分号（无论是否有默认值）
+	                            if (*after_struct == ';') after_struct++;
                         }
 
                         // 添加 struct 到符号表（包括字段和方法）
@@ -2102,8 +2131,37 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 }
                             }
 
-                            while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != '}' && *after_cstruct != ';') after_cstruct++;
-                            if (*after_cstruct == ';') after_cstruct++;
+                            // 跳过字段默认值（可能包含嵌套的 {} 或 []，如 Dict val = {}）
+	                            // 先跳过到 = 或行尾/分号/}
+	                            while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != ';' && *after_cstruct != '=' && *after_cstruct != '}') after_cstruct++;
+	                            if (*after_cstruct == '=') {
+	                                after_cstruct++; // 跳过 =
+	                                // 跳过空白
+	                                while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
+	                                // 处理默认值中的嵌套括号
+	                                if (*after_cstruct == '{') {
+	                                    int depth = 1;
+	                                    after_cstruct++;
+	                                    while (*after_cstruct && depth > 0) {
+	                                        if (*after_cstruct == '{') depth++;
+	                                        else if (*after_cstruct == '}') depth--;
+	                                        after_cstruct++;
+	                                    }
+	                                } else if (*after_cstruct == '[') {
+	                                    int depth = 1;
+	                                    after_cstruct++;
+	                                    while (*after_cstruct && depth > 0) {
+	                                        if (*after_cstruct == '[') depth++;
+	                                        else if (*after_cstruct == ']') depth--;
+	                                        after_cstruct++;
+	                                    }
+	                                } else {
+	                                    // 简单值（数字、字符串等），跳到 ; 或行尾或 }
+	                                    while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != ';' && *after_cstruct != '}') after_cstruct++;
+	                                }
+	                            }
+	                            // 跳过分号（无论是否有默认值）
+	                            if (*after_cstruct == ';') after_cstruct++;
                         }
 
                         // 添加 cstruct 到符号表（包括字段和方法）

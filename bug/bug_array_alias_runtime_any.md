@@ -53,7 +53,7 @@ if (is_generic_call_candidate && is_generic_type_start_token(p->lex.current.type
 
 ## 测试结果
 
-- 148 个测试全部通过 ✅
+- 150 个测试全部通过 ✅
 - 基本场景 `arr[0](5)` ✅
 - 循环中 `arr[i](i+10)` ✅
 - sdl_window.leno 模式 `_runEvts[i](ev)`, `_runRends[i](ren)` ✅

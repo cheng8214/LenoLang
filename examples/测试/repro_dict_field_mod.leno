@@ -1,0 +1,3 @@
+// A.leno — 定义含不同类型字段的 export struct
+export struct A_Int  { int  val = 0; func ok(): int { return val } }
+export struct B_Dict { Dict val = {}; func ok(): int { return 1 } }

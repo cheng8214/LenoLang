@@ -1,0 +1,29 @@
+// 测试 use 导入含 Dict 字段的 struct 后方法是否可见
+import "test_dict_field_struct_mod.leno" as m
+use m.A_Int
+use m.B_Dict
+use m.C_Array
+use m.D_DictArr
+use m.E_Multi
+
+// int 字段 — 基本场景
+A_Int a = new A_Int(val=42)
+assert(a.ok() == 42, "A_Int.ok()")
+
+// Dict 字段 — 触发 bug 的场景
+B_Dict b = new B_Dict(val={})
+assert(b.ok() == 1, "B_Dict.ok()")
+
+// Array 字段
+C_Array c = new C_Array(val=[])
+assert(c.ok() == 2, "C_Array.ok()")
+
+// Dict + Array 字段
+D_DictArr d = new D_DictArr(val={}, nums=[])
+assert(d.hello() == "hi", "D_DictArr.hello()")
+
+// Dict + int + string + 方法
+E_Multi e = new E_Multi(d={}, n=5, s="x")
+assert(e.combo() == 6, "E_Multi.combo()")
+
+print("test_dict_field_struct passed")
