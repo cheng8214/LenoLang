@@ -1,0 +1,9 @@
+// 测试 Dialog 构造函数
+import "../../leno_module/LenoSDL3/lib/sdl_dialog.leno" as dlg
+use dlg.Dialog
+
+main() {
+    print("before new")
+    Dialog d = new Dialog(style={title: "test", w: 200, h: 100})
+    print("after new, _hdl=", d._hdl != null, "_wid=", d._wid)
+}

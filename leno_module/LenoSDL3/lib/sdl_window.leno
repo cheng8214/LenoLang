@@ -41,6 +41,15 @@ var _modalWid = -1
 export func setModalWid(int w) { _modalWid = w }
 export func getModalWid(): int { return _modalWid }
 
+// 仅为注册（不启动循环），给 Dialog 等外部 struct 用
+export func registerRun(Ptr hdl, int wid, Renderer ren, var onEvent, var onRender) {
+    _runWids.add(wid)
+    _runHnds.add(hdl)
+    _runRens.add(ren)
+    _runEvts.add(onEvent)
+    _runRends.add(onRender)
+}
+
 
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
@@ -66,6 +75,8 @@ export struct Window {
     func getID(): int {
         return _lib.SDL_GetWindowID(handle) as int
     }
+
+    func getHandle(): Ptr { return handle }
 
     // 设置窗口标题
     func setTitle(string title): bool {
