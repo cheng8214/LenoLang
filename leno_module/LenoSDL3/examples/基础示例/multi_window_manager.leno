@@ -1,0 +1,119 @@
+// multi_window_manager.leno — 多窗口管理示例（完整版，使用并行数组）
+//
+// 演示：
+//   1. 主窗口 + 模态对话框
+//   2. 统一事件循环按 windowID 分发
+//   3. 对话框关闭后主窗口继续运行
+//   4. 按 D 键弹出对话框，点击确认/取消或 X 关闭
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+
+main() {
+    Window mainWin = SDL3.createWindow({title: "主窗口 — 按 D 弹出对话框", w: 800, h: 600})
+    if not mainWin.ok {
+        print("创建主窗口失败")
+        return
+    }
+    Renderer mainRen = mainWin.createRenderer()
+    int mainId = mainWin.getID()
+
+    // 对话框变量
+    Window dlgWin
+    Renderer dlgRen
+    int dlgId = -1
+    bool dlgAlive = false
+
+    bool running = true
+    bool dialogOpen = false
+    Event ev = SDL3.createEvent()
+
+    while running {
+        while ev.poll() {
+            if ev.isQuit() {
+                running = false
+                break
+            }
+
+            int wid = ev.windowID()
+
+            // 主窗口事件
+            if wid == mainId {
+                if ev.isKeyDown() and ev.scancode() == Scancode.D {
+                    if not dialogOpen {
+                        dialogOpen = true
+                        dlgWin = SDL3.createWindow({title: "对话框", w: 400, h: 260})
+                        if dlgWin.ok {
+                            dlgWin.setPosition(200, 150)
+                            dlgRen = dlgWin.createRenderer()
+                            dlgId = dlgWin.getID()
+                            dlgAlive = true
+                        }
+                    }
+                } else if ev.isWindowClose() {
+                    running = false
+                }
+            }
+
+            // 对话框事件
+            if wid == dlgId and dlgAlive {
+                if ev.isWindowClose() {
+                    dlgAlive = false
+                    dialogOpen = false
+                    dlgRen.destroy()
+                    dlgWin.destroy()
+                } else if ev.isMouseButtonDown() {
+                    float mx = ev.mouseX()
+                    float my = ev.mouseY()
+                    // 确认按钮 (40, 180, 140×30)
+                    if mx >= 40 and mx <= 180 and my >= 180 and my <= 210 {
+                        print("对话框: 确认")
+                        dlgAlive = false
+                        dialogOpen = false
+                        dlgRen.destroy()
+                        dlgWin.destroy()
+                    }
+                    // 取消按钮 (220, 180, 140×30)
+                    if mx >= 220 and mx <= 360 and my >= 180 and my <= 210 {
+                        print("对话框: 取消")
+                        dlgAlive = false
+                        dialogOpen = false
+                        dlgRen.destroy()
+                        dlgWin.destroy()
+                    }
+                }
+            }
+        }
+
+        if not running { break }
+
+        // 绘制主窗口
+        mainRen.clearColor(30, 30, 46, 255)
+        mainRen.setColor(69, 71, 90, 255)
+        mainRen.fillRect(50, 50, 700, 200)
+        mainRen.setColor(166, 227, 161, 255)
+        mainRen.fillRect(100, 120, 200, 50)
+        mainRen.setColor(88, 91, 112, 255)
+        mainRen.fillRect(0, 560, 800, 40)
+        mainRen.present()
+
+        // 绘制对话框
+        if dlgAlive {
+            dlgRen.clearColor(49, 50, 68, 255)
+            dlgRen.setColor(88, 91, 112, 255)
+            dlgRen.fillRect(20, 20, 360, 200)
+            dlgRen.setColor(166, 227, 161, 255)
+            dlgRen.fillRect(40, 180, 140, 30)
+            dlgRen.setColor(243, 139, 168, 255)
+            dlgRen.fillRect(220, 180, 140, 30)
+            dlgRen.present()
+        }
+    }
+
+    mainRen.destroy()
+    mainWin.destroy()
+    ev.uninit()
+    print("程序退出")
+}

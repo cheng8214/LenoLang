@@ -311,6 +311,10 @@ static void gen_while(CodeGen* gen, Ast* ast) {
         for (int i = 0; i < loop->break_count; i++) {
             patch_jump(gen, loop->break_jumps[i]);
         }
+        // 回填 continue 跳转到循环体开始位置
+        for (int i = 0; i < loop->continue_count; i++) {
+            patch_jump_to(gen, loop->continue_jumps[i], loop_start);
+        }
         loop_pop(gen);
         return;
     }
@@ -334,6 +338,11 @@ static void gen_while(CodeGen* gen, Ast* ast) {
 
     for (int i = 0; i < loop->break_count; i++) {
         patch_jump(gen, loop->break_jumps[i]);
+    }
+
+    // 回填 continue 跳转到循环条件检查位置（loop_start）
+    for (int i = 0; i < loop->continue_count; i++) {
+        patch_jump_to(gen, loop->continue_jumps[i], loop_start);
     }
 
     loop_pop(gen);
