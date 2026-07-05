@@ -1,4 +1,4 @@
-﻿// fireworks.leno — 烟花压力测试（FPS 统计）
+// fireworks.leno — 烟花压力测试（FPS 统计）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer

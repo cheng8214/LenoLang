@@ -1,0 +1,38 @@
+// 测试 Array[EventHandler] 是否保留类型 vs Array (any)
+export alias Handler = func(int):int
+
+// 方式1: 无类型 Array = []
+var _arr1 = []
+
+// 方式2: Array[Handler] 显式声明
+Array[Handler] _arr2 = []
+
+func getArr1(int i): var { return _arr1[i] }
+func getArr2(int i): Handler { return _arr2[i] }
+
+main() {
+    Handler h = func(int x): int { return x * 2 }
+
+    // 存入
+    _arr1.add(h)
+    _arr2.add(h)
+
+    // === 方式1: var = [] ===
+    var v1 = _arr1[0]
+    print("v1 is Handler =", v1 is Handler)
+    print("v1 is func   =", v1 is func)
+    // 需要 is Handler 守卫才能调用
+    if v1 is Handler { print("v1(5) =", v1(5)) }
+
+    // === 方式2: Array[Handler] = [] ===
+    // ⚠️ 这个能不能编译？
+    var v2 = _arr2[0]
+    print("v2 is Handler =", v2 is Handler)
+    print("v2(5) =", v2(5))
+
+    // === 方式3: export func 里 Array[Handler] ===
+    func callArr(Array[Handler] arr, int x): int { return arr[0](x) }
+    print("callArr =", callArr(_arr2, 10))
+
+    print("=== DONE ===")
+}

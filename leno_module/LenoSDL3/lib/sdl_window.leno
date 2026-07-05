@@ -29,6 +29,14 @@ use timer.Timer
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
 
+// 多窗口回调缓存
+Array[int]             _runWids   = []
+Array[Ptr]             _runHnds   = []
+Array[Renderer]        _runRens   = []
+Array[EventHandler]    _runEvts   = []
+Array[RenderCallback]  _runRends  = []
+var _runRunning = false
+
 
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
@@ -141,31 +149,64 @@ export struct Window {
         Timer t = new Timer(); t.setOnce(ms, cb); return t
     }
 
-    // 运行主循环（回调模式）
-    // onEvent(Event): bool  — 返回 false 则退出循环
-    // onRender(Renderer)   — 每帧渲染回调
+    // 运行主循环（回调模式，支持多窗口）
+    // 第一个 run() 启动循环，后续 run() 只注册回调，全部窗口关闭后退出
     func run(EventHandler onEvent, RenderCallback onRender) {
         Renderer ren = renderer.createRenderer(handle)
-        if not ren.ok { destroy(); return }
+        _runWids.add(getID())
+        _runHnds.add(handle)
+        _runRens.add(ren)
+        _runEvts.add(onEvent)
+        _runRends.add(onRender)
+
+        if _runRunning { return }
+        _runRunning = true
 
         Event ev = event.createEvent()
-        bool running = true
-        while running {
-            // 处理所有待处理事件
+        while true {
             while ev.poll() {
-                // 先传给用户，允许拦截关闭事件（如弹窗确认）
-                if not onEvent(ev) { running = false; break }
-                if ev.isQuit() or ev.isWindowClose() { running = false; break }
+                if ev.isQuit() {
+                    var i = 0
+                    while i < _runWids.len() {
+                        _runRens[i].destroy()
+                        _lib.SDL_DestroyWindow(_runHnds[i])
+                        _windowCount -= 1
+                        i += 1
+                    }
+                    ev.uninit()
+                    if _windowCount <= 0 { core.quit() }
+                    return
+                }
+                int wid = ev.windowID()
+                var i = 0
+                while i < _runWids.len() {
+                    if _runWids[i] == wid {
+                        var cb = _runEvts[i]
+                        if not cb(ev) or ev.isWindowClose() {
+                            _runRens[i].destroy()
+                            _lib.SDL_DestroyWindow(_runHnds[i])
+                            _windowCount -= 1
+                            _runWids.remove(i); _runHnds.remove(i)
+                            _runRens.remove(i); _runEvts.remove(i); _runRends.remove(i)
+                            break
+                        }
+                    }
+                    i += 1
+                }
             }
-            onRender(ren)
-            ren.present()
+            if _runWids.len() == 0 {
+                ev.uninit()
+                if _windowCount <= 0 { core.quit() }
+                return
+            }
+            var i = 0
+            while i < _runWids.len() {
+                var rd = _runRends[i]
+                if rd is RenderCallback { rd(_runRens[i]) }
+                _runRens[i].present()
+                i += 1
+            }
         }
-        // 清理
-        ev.uninit()
-        ren.destroy()
-        destroy()
-        // 只有最后一个窗口销毁时才 quit SDL
-        if _windowCount <= 0 { core.quit() }
     }
 }
 
