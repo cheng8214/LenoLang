@@ -1,8 +1,5 @@
 // sdl_dialog.leno — 模态对话框: new Dialog(style={...}) → dlg.run(onEv, onRend)
-// Event/Renderer 必须显式导入，因为 EventHandler/RenderCallback 的类型依赖不通过 use 链式传递
-import "sdl_window.leno"  as wnd;  use wnd.EventHandler;  use wnd.RenderCallback
-import "sdl_event.leno"   as evt;  use evt.Event
-import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_window.leno" as wnd; use wnd.EventHandler; use wnd.RenderCallback
 
 export struct Dialog {
     Dict style = {}
