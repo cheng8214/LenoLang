@@ -57,9 +57,10 @@ export func runMultiple(Array[Window] windows, Array onEvents, Array onRenders) 
 
 ## 环境
 
-- 提交: 449cb5bf
+- 发现: 449cb5bf
+- 修复: 760190ca — `fix: type-alias-SYM_TYPE`
 - 场景: `sdl_window.leno` `runMultiple` 函数
 
 ## 状态
 
-- [ ] 待修复
+- [x] 已修复 — `760190ca`
