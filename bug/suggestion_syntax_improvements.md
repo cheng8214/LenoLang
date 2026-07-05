@@ -36,13 +36,28 @@ int w = d.w; int h = d.h
 float fw = d.w; float fh = d.h
 ```
 
-### 建议
+SDL3 封装中 10+ 处 Dict return 模式，每处省 2 行。
+
+### 类型问题
+
+Dict 的值是 `var`/`any`，解构时必须显式标注类型。两种方案：
+
+**方案 A：前缀类型**（每个字段独立）
 
 ```leno
-var {w, h} = getOutputSize()
+var {int w, float h, string name} = getInfo()
 ```
-//关于解构赋值，这个问题，类型信息如何保存？
-影响：SDL3 封装中 10+ 处 Dict return 模式，每处省 2 行。
+
+灵活但字段多时啰嗦。
+
+**方案 B：统一类型**（推荐）
+
+```leno
+int {w, h}    = r.getOutputSize()   // 90% 场景，同类型
+float {fw, fh} = r.getTextureSize()
+```
+
+SDL3 中 `{w, h}` 永远是同类型，B 方案简洁够用。A 用于混合类型场景。编译期检查键名 + 值类型兼容性。
 
 ## 优先级
 
