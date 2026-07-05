@@ -36,6 +36,10 @@ Array[Renderer]        _runRens   = []
 Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
 var _runRunning = false
+var _modalWid = -1
+
+export func setModalWid(int w) { _modalWid = w }
+export func getModalWid(): int { return _modalWid }
 
 
 export struct Window {
@@ -178,6 +182,8 @@ export struct Window {
                     return
                 }
                 int wid = ev.windowID()
+                // 模态：非对话框窗口跳过事件
+                if _modalWid > 0 and wid != _modalWid { continue }
                 var i = 0
                 while i < _runWids.len() {
                     if _runWids[i] == wid {

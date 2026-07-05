@@ -1,0 +1,47 @@
+// test_modal_dialog.leno — 模态/非模态对话框测试
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+
+main() {
+    var mainWin = SDL3.createWindow({title: "主窗口 — M=模态 ESC=退", w: 600, h: 400})
+
+    // 主窗口 + 模态弹窗
+    mainWin.run(
+        func(Event e): bool {
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE { return false }
+                if e.scancode() == Scancode.M { openModal() }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+            r.setColor(255, 255, 255, 255)
+            r.drawText(SDL3.createFontAuto(16.0), "主窗口 — M=弹出模态对话框", 20, 20, 255, 255, 255)
+            r.drawText(SDL3.createFontAuto(14.0), "弹出后主窗口被阻塞,不能操作!", 20, 55, 255, 200, 100)
+        }
+    )
+
+    print("全部关闭")
+}
+
+func openModal() {
+    var dlg = SDL3.createWindow({title: "确认对话框 [模态]", w: 350, h: 200})
+    SDL3.setModalWid(dlg.getID())   // 设为模态
+    dlg.run(
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(40, 20, 20, 255)
+            r.setColor(255, 200, 100, 255)
+            r.drawText(SDL3.createFontAuto(15.0), "这是模态对话框!", 30, 40, 255, 200, 100)
+            r.drawText(SDL3.createFontAuto(13.0), "主窗口被阻塞", 30, 70, 200, 200, 200)
+            r.drawText(SDL3.createFontAuto(13.0), "ESC 关闭", 30, 100, 255, 100, 100)
+        }
+    )
+    SDL3.setModalWid(-1)            // 取消模态
+}

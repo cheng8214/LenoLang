@@ -1,0 +1,30 @@
+// sdl_dialog.leno — 模态/非模态对话框
+// 用法: dlg.show({opts}, onEvent, onRender, modal=true)
+//       在 run() 之前打开，主循环中 _modalWid 过滤非对话框事件
+import "sdl_window.leno" as wnd
+use wnd.Window
+use wnd.EventHandler
+use wnd.RenderCallback
+import "sdl_event.leno" as evt
+use evt.Event
+import "sdl_renderer.leno" as ren
+use ren.Renderer
+
+export struct Dialog {
+    int _wid = -1
+
+    func show(Dict opts, EventHandler onEvent, RenderCallback onRender, bool modal): bool {
+        Window w = wnd.createWindow(opts)
+        if not w.ok { return false }
+        _wid = w.getID()
+        if modal { wnd.setModalWid(_wid) }
+        w.run(onEvent, onRender)
+        return true
+    }
+
+    func close() {
+        if _wid == wnd.getModalWid() { wnd.setModalWid(-1) }
+    }
+}
+
+

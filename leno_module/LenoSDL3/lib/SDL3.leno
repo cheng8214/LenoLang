@@ -103,6 +103,8 @@ export func hasClipboardText(): bool { return core.hasClipboardText() }
 // ==================== 重新导出工厂函数 ====================
 
 export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
+export func setModalWid(int w)                 { wnd.setModalWid(w) }
+export func getModalWid(): int                 { return wnd.getModalWid() }
 export func createRenderer(Ptr[u8] w): Renderer     { return r.createRenderer(w) }
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
