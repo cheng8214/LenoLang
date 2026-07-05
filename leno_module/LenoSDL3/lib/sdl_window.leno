@@ -16,6 +16,9 @@ use core.Size
 
 sdl3 _lib = core.lib()
 
+// 全局窗口引用计数，最后一个窗口销毁时才 quit
+var _windowCount = 0
+
 import "sdl_renderer.leno" as renderer
 use renderer.Renderer
 import "sdl_event.leno" as event
@@ -43,6 +46,7 @@ export struct Window {
         int flags    = opts.get("flags", 0) as int
         handle = _lib.SDL_CreateWindow(title, w, h, flags) as Ptr
         ok = handle != null
+        if ok { _windowCount = _windowCount + 1 }
         return ok
     }
 
@@ -114,7 +118,12 @@ export struct Window {
 
     // 销毁窗口
     func destroy() {
-        if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false }
+        if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false; _windowCount = _windowCount - 1 }
+    }
+
+    // 手动创建渲染器（供轮询模式使用）
+    func createRenderer(): Renderer {
+        return renderer.createRenderer(handle)
     }
 
     // 添加定时器（毫秒），用法: Timer t = win.addTimer(200, func() { ... })
@@ -139,8 +148,9 @@ export struct Window {
         while running {
             // 处理所有待处理事件
             while ev.poll() {
-                if ev.isQuit() or ev.isWindowClose() { running = false }
-                else if not onEvent(ev) { running = false }
+                // 先传给用户，允许拦截关闭事件（如弹窗确认）
+                if not onEvent(ev) { running = false; break }
+                if ev.isQuit() or ev.isWindowClose() { running = false; break }
             }
             onRender(ren)
             ren.present()
@@ -149,7 +159,8 @@ export struct Window {
         ev.uninit()
         ren.destroy()
         destroy()
-        core.quit()
+        // 只有最后一个窗口销毁时才 quit SDL
+        if _windowCount <= 0 { core.quit() }
     }
 }
 
