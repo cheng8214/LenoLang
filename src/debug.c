@@ -40,7 +40,7 @@ static const char* opCodeNames[] = {
     "OP_LT_INT_IMM", "OP_GT_INT_IMM", "OP_LE_INT_IMM", "OP_GE_INT_IMM", "OP_EQ_INT_IMM",
     "OP_SHL_IMM", "OP_SHR_IMM", "OP_USHR_IMM",
     // struct 相关指令
-    "OP_STRUCT_DEF", "OP_STRUCT_INIT", "OP_GET_FIELD", "OP_SET_FIELD", "OP_GET_METHOD",
+    "OP_STRUCT_DEF", "OP_STRUCT_INIT", "OP_GET_FIELD", "OP_SET_FIELD", "OP_GET_FIELD_ADDR", "OP_GET_METHOD",
     // enum 相关指令
     "OP_ENUM_DEF",
     // face 相关指令

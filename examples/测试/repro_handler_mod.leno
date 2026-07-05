@@ -1,0 +1,30 @@
+// repro_handler_mod.leno — 加调试输出
+export alias EventHandler = func(int):bool
+
+Array[EventHandler] _handlers = []
+bool _running = false
+
+export func addHandler(EventHandler h) {
+    _handlers.add(h)
+    print("added, len=" + _str(_handlers.len()))
+}
+
+export func runDirect() {
+    print("runDirect: len=" + _str(_handlers.len()))
+    var i = 0
+    while i < _handlers.len() {
+        print("  i=" + _str(i))
+        _handlers[i](i + 10)
+        i = i + 1
+    }
+}
+
+export func runVar() {
+    print("runVar: len=" + _str(_handlers.len()))
+    var i = 0
+    while i < _handlers.len() {
+        var cb = _handlers[i]
+        cb(i + 10)
+        i = i + 1
+    }
+}

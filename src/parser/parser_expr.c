@@ -797,12 +797,19 @@ Ast* parse_index(Parser* p, Ast* obj) {
     // 条件：obj 是 AST_VAR、AST_FIELD_ACCESS、AST_MODULE_ACCESS
     //       或 AST_INDEX（属性访问 expr["method"]，index 是字符串字面量）
     //       且 [ 后面是类型关键字或标识符
+    // 注意：当 [ 后面是小写开头的标识符时（如 arr[i]），不应尝试泛型解析，
+    //       因为类型名通常大写开头，而小写标识符更可能是变量/表达式
     int is_generic_call_candidate = (obj->kind == AST_VAR || obj->kind == AST_FIELD_ACCESS || obj->kind == AST_MODULE_ACCESS);
     // 也支持 (expr).method[Type](args) 模式：obj 是 AST_INDEX，index 是字符串字面量
     if (obj->kind == AST_INDEX && obj->u.index.index && obj->u.index.index->kind == AST_STRING) {
         is_generic_call_candidate = 1;
     }
-    if (is_generic_call_candidate && is_generic_type_start_token(p->lex.current.type)) {
+    // 小写开头的标识符不可能是泛型类型参数，跳过泛型解析路径
+    // 这样 arr[i](args) 会被正确解析为数组索引+调用，而非泛型调用
+    int is_lowercase_ident = (p->lex.current.type == TOK_IDENT &&
+                              p->lex.current.text && p->lex.current.len > 0 &&
+                              p->lex.current.text[0] >= 'a' && p->lex.current.text[0] <= 'z');
+    if (is_generic_call_candidate && is_generic_type_start_token(p->lex.current.type) && !is_lowercase_ident) {
         // 保存词法器状态，以便回退
         Lexer saved_lex = p->lex;
 
