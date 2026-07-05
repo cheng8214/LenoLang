@@ -1,0 +1,17 @@
+// 跨模块测试：定义 export struct 和 export func(Array[Point])
+export struct Point {
+    float x
+    float y
+}
+
+export func processOne(Point pt) {
+    print("point: " + _str(pt.x) + ", " + _str(pt.y))
+}
+
+export func process(Array[Point] pts) {
+    var i = 0
+    while i < pts.len() {
+        print("pts[" + _str(i) + "]: " + _str(pts[i].x) + ", " + _str(pts[i].y))
+        i = i + 1
+    }
+}

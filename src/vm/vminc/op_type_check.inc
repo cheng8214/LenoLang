@@ -163,6 +163,13 @@ OPCODE(OP_TYPE_CHECK) {
             (void)READ_BYTE(); // 消费 element_type 字节
             matches = val_is_null(value);
             break;
+        case TYPE_FUNCTION:
+            (void)READ_BYTE(); // 消费 element_type 字节
+            matches = (val_is_obj(value) &&
+                      (val_as_obj(value)->type == OBJ_CLOSURE ||
+                       val_as_obj(value)->type == OBJ_NATIVE ||
+                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
+            break;
         case TYPE_ANY:
             (void)READ_BYTE(); // 消费 element_type 字节
             matches = 1;

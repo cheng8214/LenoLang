@@ -1,47 +1,58 @@
-// test_multi_window.leno — 多窗口顺序测试
+// 测试 Array[T] 类型信息是否丢失
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.WindowFlag
 use SDL3.Scancode
+use SDL3.EventHandler
+use SDL3.RenderCallback
+
+func addOne(int x): int { return x + 1 }
 
 main() {
-    // ===== 窗口 1 =====
-    var w1 = SDL3.createWindow({title: "窗口1 - 按ESC关闭", w: 400, h: 300, flags: WindowFlag.RESIZABLE})
-    if w1.ok {
-        w1.run(
-            func(Event e): bool {
-                if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
-                return true
-            },
-            func(Renderer r) {
-                r.setColor(60, 120, 220, 255); r.clear()
-                r.setColor(255, 255, 255, 255)
-                r.drawText(SDL3.createFontAuto(18.0), "窗口 1 — 按 ESC 关闭", 50, 130, 255, 255, 255)
-            }
-        )
-        print("窗口1 已关闭")
-    }
+    var w1 = SDL3.createWindow({title: "窗口1", w: 400, h: 300, flags: WindowFlag.RESIZABLE})
+    var w2 = SDL3.createWindow({title: "窗口2", w: 400, h: 300, flags: WindowFlag.RESIZABLE})
 
-    // 窗口1关闭后，窗口2才打开
-    var w2 = SDL3.createWindow({title: "窗口2 - 按ESC关闭", w: 500, h: 400, flags: WindowFlag.RESIZABLE})
-    if w2.ok {
-        var count = 0
-        w2.run(
-            func(Event e): bool {
-                if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
-                if e.isKeyDown() { count += 1 }
-                return true
-            },
-            func(Renderer r) {
-                r.setColor(20, 30, 50, 255); r.clear()
-                r.setColor(255, 200, 100, 255)
-                r.drawText(SDL3.createFontAuto(18.0), "窗口 2 — 按 ESC 关闭", 50, 130, 255, 200, 100)
-                r.drawText(SDL3.createFontAuto(14.0), "按键次数: " + count as string, 50, 160, 200, 200, 220)
-            }
-        )
-        print("窗口2 已关闭, 按键次数=" + count)
-    }
+    print("=== 测试1: Array[Window] 存入 Window 类型是否丢失 ===")
+    Array[Window] wins = [w1, w2]
+    print("wins.len =", wins.len())
+    print("wins[0].ok =", wins[0].ok)
+    print("wins[0] is Window =", wins[0] is Window)
 
-    print("=== 所有窗口已关闭 ===")
+    print("")
+    print("=== 测试2: Array[EventHandler] 存入函数类型 ===")
+    EventHandler eh1 = func(Event e): bool { return true }
+    EventHandler eh2 = func(Event e): bool { return true }
+    Array[EventHandler] handlers = [eh1, eh2]
+    print("handlers.len =", handlers.len())
+    print("handlers[0] is EventHandler =", handlers[0] is EventHandler)
+    print("handlers[0] is func =", handlers[0] is func)
+
+    print("")
+    print("=== 测试3: 混合类型 Array（元素为 any）===")
+    var mixed = [w1, addOne]
+    print("mixed[0] is Window =", mixed[0] is Window)
+    print("mixed[1] is func =", mixed[1] is func)
+
+    print("")
+    print("=== 测试4: Array[Window] 传给 export func 后 ===")
+    func callOnWin(Array[Window] arr) {
+        print("arr.len =", arr.len())
+        print("arr[0].ok =", arr[0].ok)
+    }
+    callOnWin(wins)
+
+    print("")
+    print("=== 测试5: Array[EventHandler] 传给 export func 后 ===")
+    func callOnHandler(Array[EventHandler] arr) {
+        print("arr.len =", arr.len())
+        // 直接调用 handlers[0] 是否可以？
+        var ev = SDL3.createEvent()
+        print("arr[0](ev) =", arr[0](ev))
+    }
+    callOnHandler(handlers)
+
+    print("")
+    print("=== DONE ===")
+    w1.destroy(); w2.destroy()
 }

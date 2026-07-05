@@ -1,0 +1,16 @@
+// 测试 is 操作符对函数类型别名的支持
+// Bug: h is MyHandler 应该返回 true，但返回 false
+
+export alias MyHandler = func(int):int
+
+MyHandler h = func(int x): int { return x + 1 }
+
+// 测试1: is 操作符
+print(h is MyHandler)  // 期望 true
+
+// 测试2: 函数直接 is func 类型
+print(h is func)       // 期望 true
+
+// 测试3: 数组字面量类型
+var arr = [h]
+print(arr is Array)    // 期望 true

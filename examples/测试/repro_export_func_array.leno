@@ -1,0 +1,15 @@
+// Bug复现: export func 参数 Array[struct] 不可用
+
+export struct Point { float x; float y }
+
+// ❌ 编译错误: "未定义的类型: Point"
+// export func process(Array[Point] pts) { print("ok") }
+
+// 只看 export func 能否接受 Array[struct名]
+export func processOne(Point pt) { print("x=", pt.x) }
+
+main() {
+    Point p = new Point(x = 1.0, y = 2.0)
+    processOne(p)
+    print("=== DONE ===")
+}
