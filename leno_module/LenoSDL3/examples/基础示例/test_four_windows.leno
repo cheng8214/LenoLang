@@ -1,0 +1,115 @@
+// test_four_windows.leno — 4 窗口不同位置弹出测试
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+
+// 并行数组管理
+Array[Window]   _wins  = []
+Array[Renderer] _rens  = []
+Array[int]      _ids   = []
+Array[bool]     _alive = []
+Array[bool]     _pend  = []
+Array[int]      _color = []  // 每窗口颜色索引
+
+func addWindow(Window win, int c) {
+    Renderer ren = win.createRenderer()
+    _wins.add(win); _rens.add(ren); _ids.add(win.getID())
+    _alive.add(true); _pend.add(false); _color.add(c)
+}
+
+func findIndex(int id): int {
+    var i = 0
+    while i < _ids.len() {
+        if _alive[i] and _ids[i] == id { return i }
+        i += 1
+    }
+    return -1
+}
+
+func markClose(int idx) {
+    if idx >= 0 and _alive[idx] { _alive[idx] = false; _pend[idx] = true }
+}
+
+func flushClose() {
+    var i = 0
+    while i < _pend.len() {
+        if _pend[i] { _pend[i] = false; _rens[i].destroy(); _wins[i].destroy() }
+        i += 1
+    }
+}
+
+// 位置预设: 4 窗口散布在 1920x1080 区域
+var _positions = [
+    [100, 100],      // 左上
+    [960, 100],      // 右上
+    [100, 500],      // 左下
+    [960, 500]       // 右下
+]
+var _titles = ["左上窗口", "右上窗口", "左下窗口", "右下窗口"]
+
+// 颜色预设
+var _colors = [
+    [60, 120, 220],   // 蓝
+    [220, 120, 60],   // 橙
+    [60, 220, 120],   // 绿
+    [220, 60, 200]    // 紫
+]
+
+func openWindow(int n) {
+    var pos = _positions[n]
+    Window w = SDL3.createWindow({title: _titles[n], w: 350, h: 250})
+    if w.ok {
+        var x = pos[0] as int; var y = pos[1] as int
+        w.setPosition(x, y)
+        addWindow(w, n)
+    }
+}
+
+main() {
+    // 一次性打开 4 个窗口
+    var i = 0
+    while i < 4 { openWindow(i); i += 1 }
+
+    var _running = true
+    Event ev = SDL3.createEvent()
+
+    while _running {
+        while ev.poll() {
+            if ev.isQuit() { _running = false; break }
+
+            int idx = findIndex(ev.windowID())
+            if idx < 0 { continue }
+
+            if ev.isWindowClose() {
+                markClose(idx)
+            } else if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE {
+                markClose(idx)  // 按 ESC 关闭当前窗口
+            }
+        }
+
+        // 绘制所有存活窗口
+        var c = 0
+        i = 0
+        while i < _wins.len() {
+            if _alive[i] and not _pend[i] {
+                var clr = _colors[_color[i]]
+                _rens[i].clearColor(20, 20, 35, 255)
+                _rens[i].setColor(clr[0], clr[1], clr[2], 255)
+                _rens[i].fillRect(20, 20, 310, 40)
+                _rens[i].setColor(255, 255, 255, 255)
+                _rens[i].drawText(SDL3.createFontAuto(16.0), _titles[_color[i]] + "  ESC=关闭", 30, 30, 255, 255, 255)
+                _rens[i].present()
+                c += 1
+            }
+            i += 1
+        }
+
+        flushClose()
+        if c == 0 { _running = false }
+    }
+
+    ev.uninit()
+    print("4 窗口全部关闭")
+}
