@@ -175,6 +175,12 @@
                     // scope_define 返回 NULL 可能是因为同名冲突
                     Symbol* existing = scope_resolve_local(s->current, symbol_name);
                     if (existing && existing->type && (existing->type->kind == TYPE_STRUCT || existing->type->kind == TYPE_CSTRUCT)) {
+                        // 检查是否是同一类型的重复导入（来自 import_type_deps 的隐式导入）
+                        // 如果现有符号是同一类型名，允许重复 use（跳过不报错）
+                        if (existing->type->struct_name && strcmp(existing->type->struct_name, symbol_name) == 0) {
+                            // 同一类型的重复导入，静默跳过
+                            break;
+                        }
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "use 错误：'%s' 已在当前作用域中定义（来自其他模块的 use），请使用模块名限定访问",
                                  symbol_name);
@@ -442,6 +448,8 @@
                 Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
                 if (sym && alias_sym->type_info) {
                     sym->type = type_copy(alias_sym->type_info);
+                    // 递归导入 alias 底层类型依赖（如 EventHandler = func(Event):bool 中的 Event）
+                    import_type_deps(s, module_info, alias_sym->type_info);
                 }
                 break;
             }

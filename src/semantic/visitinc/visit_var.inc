@@ -51,6 +51,9 @@
                     sym->type = saved_type;
                 }
 
+                // 递归解析变量声明类型中的 alias（如 Array[EventHandler] 中 EventHandler = func(Event):bool）
+                resolve_alias_in_type(s, &ast->u.var_decl.type, ast->line);
+
                 // 检查声明的类型是否存在（对于自定义 struct/cstruct/clib/alias 类型）
                 if ((ast->u.var_decl.type->kind == TYPE_STRUCT || ast->u.var_decl.type->kind == TYPE_CLIB) &&
                     ast->u.var_decl.type->struct_name) {

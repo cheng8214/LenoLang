@@ -41,7 +41,7 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line) {
 
 // 递归解析 TypeInfo 中的 alias 类型（在 resolve_generic_in_type 之后调用）
 // 返回 1 表示有修改，0 表示无修改
-static int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
+int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
     if (!type_ptr || !*type_ptr) return 0;
     TypeInfo* type = *type_ptr;
     int changed = 0;
