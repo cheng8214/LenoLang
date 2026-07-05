@@ -1,0 +1,72 @@
+// test_nested_modal.leno — 嵌套模态：主窗口 → 模态1 → 模态2 → 模态3
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
+use SDL3.Dialog
+
+func showModal3() {
+    Dialog d = new Dialog(style={title: "模态3 [最深层]", w: 300, h: 180, flags: WindowFlag.UTILITY})
+    d.run(
+        func(Event e): bool {
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE { return false }
+                if e.scancode() == Scancode._3 { showModal3() }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(60, 10, 10, 255)
+            r.setColor(255, 100, 100, 255)
+            r.drawText(SDL3.createFontAuto(14.0), "模态3 [最深层]", 30, 30, 255, 100, 100)
+            r.drawText(SDL3.createFontAuto(12.0), "ESC 关闭本层", 30, 55, 200, 200, 200)
+            r.drawText(SDL3.createFontAuto(12.0), "3 再弹一层", 30, 80, 200, 200, 200)
+            r.drawText(SDL3.createFontAuto(11.0), "点外层→闪屏提示", 30, 110, 150, 150, 150)
+        }
+    )
+}
+
+func showModal2() {
+    Dialog d = new Dialog(style={title: "模态2 [中间层]", w: 350, h: 220, flags: WindowFlag.UTILITY})
+    d.run(
+        func(Event e): bool {
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE { return false }
+                if e.scancode() == Scancode._3 { showModal3() }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(40, 15, 15, 255)
+            r.setColor(255, 150, 50, 255)
+            r.drawText(SDL3.createFontAuto(14.0), "模态2 [中间层]", 30, 30, 255, 150, 50)
+            r.drawText(SDL3.createFontAuto(12.0), "ESC 关闭本层", 30, 55, 200, 200, 200)
+            r.drawText(SDL3.createFontAuto(12.0), "3 弹出模态3", 30, 80, 200, 200, 200)
+            r.drawText(SDL3.createFontAuto(11.0), "ESC=关", 30, 110, 150, 150, 150)
+        }
+    )
+}
+
+main() {
+    var win = SDL3.createWindow({title: "主窗口 — ESC=退  2=模态2  3=模态3", w: 640, h: 480})
+
+    win.run(
+        func(Event e): bool {
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE { return false }
+                if e.scancode() == Scancode._2 { showModal2() }
+                if e.scancode() == Scancode._3 { showModal3() }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+            r.setColor(255, 255, 255, 255)
+            r.drawText(SDL3.createFontAuto(18.0), "主窗口", 20, 20, 255, 255, 255)
+            r.drawText(SDL3.createFontAuto(14.0), "2=弹出模态2  3=弹出模态3  ESC=退出", 20, 55, 200, 200, 220)
+            r.drawText(SDL3.createFontAuto(13.0), "模式: 从主窗口和任意层模态都能弹下层", 20, 90, 150, 200, 100)
+        }
+    )
+    print("全部关闭")
+}
