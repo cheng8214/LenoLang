@@ -37,7 +37,8 @@ use tm.Timer
 use tm.TimerCallback
 use wnd.EventHandler
 use wnd.RenderCallback
-use wnd.Dialog
+import "sdl_dialog.leno" as dlg
+use dlg.Dialog
 
 // ==================== 重新导出类型别名 ====================
 
