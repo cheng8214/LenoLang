@@ -1,10 +1,9 @@
-// test_dialog_api.leno — new Dialog(style={...}) → dlg.run(onEv, onRend)
+// test_dialog_api.leno — createDialogWindow + runModal 一行模态
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode
 use SDL3.WindowFlag
-use SDL3.Dialog
 
 main() {
     var win = SDL3.createWindow({title: "主窗口 — M=模态 ESC=退", w: 600, h: 400})
@@ -14,8 +13,8 @@ main() {
             if e.isKeyDown() {
                 if e.scancode() == Scancode.ESCAPE { return false }
                 if e.scancode() == Scancode.M {
-                    Dialog d = new Dialog(style={title: "确认对话框", w: 350, h: 200, flags: WindowFlag.UTILITY})
-                    d.run(
+                    var dlg = SDL3.createDialogWindow({title: "确认对话框", w: 350, h: 200, flags: WindowFlag.UTILITY})
+                    SDL3.runModal(dlg,
                         func(Event ev): bool {
                             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
                             return true

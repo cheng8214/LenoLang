@@ -1,26 +1,17 @@
-// sdl_dialog.leno — 模态对话框: new Dialog(style={...}) → dlg.run(onEv, onRend)
-import "sdl_window.leno" as wnd; use wnd.EventHandler; use wnd.RenderCallback
+// sdl_dialog.leno — 对话框工厂
+import "sdl_window.leno" as wnd; use wnd.Window
+import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 
-export struct Dialog {
-    Dict    style = {}
-    Ptr[u8] _hdl  = null
-    int     _wid  = -1
+// 返回已配置好的 Window: alwaysOnTop, 跟普通 Window 一样用
+export func createDialogWindow(Dict style): Window {
+    var win = wnd.createWindow(style)
+    win.setAlwaysOnTop(true)
+    return win
+}
 
-    func Dialog() {
-        var win = wnd.createWindow(style)
-        if not win.ok { return }
-        _hdl = win.getHandle()
-        _wid = win.getID()
-        win.setAlwaysOnTop(true)
-    }
-
-    func run(EventHandler onEvent, RenderCallback onRender) {
-        if _hdl == null { return }
-        Renderer ren = ren.createRenderer(_hdl)
-        wnd.registerRun(_hdl, _wid, ren, onEvent, onRender)
-        wnd.setModalWid(_wid)
-    }
-
-    // ~Dialog() 不清理 _modalWid——窗口由事件循环管理，变量作用域结束不代表窗口关闭
+// 以模态方式运行窗口（一行搞定 setModalWid + run）
+export func runModal(Window win, var onEvent, var onRender) {
+    wnd.setModalWid(win.getID())
+    win.run(onEvent, onRender)
 }

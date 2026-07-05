@@ -38,7 +38,9 @@ use tm.TimerCallback
 use wnd.EventHandler
 use wnd.RenderCallback
 import "sdl_dialog.leno" as dlg
-use dlg.Dialog
+export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }
+export func runModal(Window win, var onEvent, var onRender) { dlg.runModal(win, onEvent, onRender) }
+
 
 // ==================== 重新导出类型别名 ====================
 
