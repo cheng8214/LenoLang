@@ -181,8 +181,7 @@ export struct Window {
                 var i = 0
                 while i < _runWids.len() {
                     if _runWids[i] == wid {
-                        var cb = _runEvts[i]
-                        if not cb(ev) or ev.isWindowClose() {
+                        if not _runEvts[i](ev) or ev.isWindowClose() {
                             _runRens[i].destroy()
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
@@ -201,8 +200,7 @@ export struct Window {
             }
             var i = 0
             while i < _runWids.len() {
-                var rd = _runRends[i]
-                if rd is RenderCallback { rd(_runRens[i]) }
+                _runRends[i](_runRens[i])
                 _runRens[i].present()
                 i += 1
             }
