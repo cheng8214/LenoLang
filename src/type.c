@@ -886,6 +886,18 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         if (source->kind == TYPE_PTR_GENERIC) {
             return 1;
         }
+        // cstruct 可以隐式转换为 Ptr（cstruct 实例可传给期望 Ptr 的 clib 参数）
+        if (source->kind == TYPE_CSTRUCT) {
+            return 1;
+        }
+        // null 可以赋值给 Ptr（指针可以为 NULL）
+        if (source->kind == TYPE_NULL) {
+            return 1;
+        }
+        // clib 可以赋值给 Ptr
+        if (source->kind == TYPE_CLIB) {
+            return 1;
+        }
         return 0;
     }
 
@@ -902,6 +914,10 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
             if (!source->element_type) return 0;
             // 两个都有元素类型，检查兼容性
             return type_is_compatible(target->element_type, source->element_type);
+        }
+        // cstruct 可以隐式转换为 Ptr[T]
+        if (source->kind == TYPE_CSTRUCT) {
+            return 1;
         }
         return 0;
     }
@@ -931,12 +947,9 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if ((target->kind == TYPE_STR8 || target->kind == TYPE_STR16) &&
         (source->kind == TYPE_STR8 || source->kind == TYPE_STR16)) return 1;
 
-    // cstruct ↔ Ptr 交叉兼容（cstruct 实例可传给期望 Ptr 的 clib 参数）
-    if (target->kind == TYPE_PTR && source->kind == TYPE_CSTRUCT) return 1;
-    if (target->kind == TYPE_PTR_GENERIC && source->kind == TYPE_CSTRUCT) return 1;
+    // cstruct ← Ptr 交叉兼容（Ptr 可以赋值给 cstruct 变量）
     if (target->kind == TYPE_CSTRUCT && source->kind == TYPE_PTR) return 1;
-    // null 可赋值给 Ptr/str8/str16/cstruct（指针可为 NULL）
-    if (target->kind == TYPE_PTR && source->kind == TYPE_NULL) return 1;
+    // null 可赋值给 str8/str16/cstruct（指针可以为 NULL）
     if ((target->kind == TYPE_STR8 || target->kind == TYPE_STR16) && source->kind == TYPE_NULL) return 1;
     if (target->kind == TYPE_CSTRUCT && source->kind == TYPE_NULL) return 1;
 
