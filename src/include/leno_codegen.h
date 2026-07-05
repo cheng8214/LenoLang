@@ -24,6 +24,14 @@ typedef struct LoopContextNode {
 } LoopContextNode;
 
 // ============================================================================
+// 析构追踪条目（用于在作用域结束/return 时调用析构函数）
+// ============================================================================
+
+typedef struct {
+    int local_slot;    // 局部变量槽位索引
+} DtorEntry;
+
+// ============================================================================
 // 字节码生成器
 // ============================================================================
 
@@ -36,6 +44,10 @@ typedef struct {
     ObjFunction* current_func; // 当前正在生成的函数（用于更新 local_count）
     int max_local_slot;       // 最大使用的局部变量槽位（包括临时槽位）
     int peak_local_slot;      // 真正的槽位峰值（不受 gen_assign 临时槽位级联影响）
+    DtorEntry* dtor_entries;  // 需要析构的局部变量数组
+    int dtor_count;           // 当前条目数
+    int dtor_capacity;        // 数组容量
+    int dtor_temp_slot;       // return 时保存返回值的临时槽位（-1=未分配）
 } CodeGen;
 
 void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);
@@ -44,6 +56,7 @@ void codegen(CodeGen* gen, Ast* ast);
 void codegen_module(CodeGen* gen, Ast* ast);  // 模块代码生成
 void codegen_set_func_dict(void* dict);  // 设置全局函数字典
 void codegen_set_module(ObjModule* module);  // 设置当前模块
+void codegen_add_dtor_entry(CodeGen* gen, int local_slot);  // 添加析构追踪条目
 
 // 函数生成（供 codegen_stmt.c 使用）
 ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast);

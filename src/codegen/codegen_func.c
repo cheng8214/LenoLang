@@ -65,6 +65,7 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     func->type_param_count = 0;
     func->type_param_names = NULL;
     func->type_param_constraints = NULL;
+    func->is_ctor = ast->u.func.is_ctor;
 
     // 存储函数级泛型类型参数（如 func f[T, U] 中的 T, U）
     if (ast->u.func.type_param_count > 0 && ast->u.func.type_params) {
@@ -117,6 +118,8 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     ObjFunction* prev_func = gen->current_func;
     int prev_max_slot = gen->max_local_slot;
     int prev_peak_slot = gen->peak_local_slot;
+    int prev_dtor_count = gen->dtor_count;
+    int prev_dtor_temp_slot = gen->dtor_temp_slot;
 
     if (prev_chunk && prev_chunk->filename) {
         func->chunk->filename = strdup(prev_chunk->filename);
@@ -126,6 +129,8 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     gen->current_func = func;
     gen->max_local_slot = func->local_count - 1;  // 初始最大槽位是当前局部变量数-1
     gen->peak_local_slot = func->local_count - 1; // 峰值初始为声明变量数-1
+    gen->dtor_count = 0;          // 每个函数独立的析构追踪
+    gen->dtor_temp_slot = -1;     // 重置临时槽位
 
     gen->scope_depth++;
 
@@ -152,6 +157,8 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     gen->current_func = prev_func;
     gen->max_local_slot = prev_max_slot;
     gen->peak_local_slot = prev_peak_slot;
+    gen->dtor_count = prev_dtor_count;
+    gen->dtor_temp_slot = prev_dtor_temp_slot;
 
     return func;
 }

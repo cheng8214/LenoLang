@@ -688,6 +688,12 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         emit_define_global(gen, ref->index, ast->line);
     } else if (ref->kind == SYM_LOCAL) {
         emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+        // 追踪需要析构的局部变量（仅 var x = new StructWithDtor() 场景）
+        if (ast->u.var_decl.init &&
+            ast->u.var_decl.init->kind == AST_STRUCT_INIT &&
+            ast->u.var_decl.init->u.struct_init.has_dtor) {
+            codegen_add_dtor_entry(gen, ref->index);
+        }
     } else if (ref->kind == SYM_MODULE) {
         emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
         emit_byte(gen, OP_POP, ast->line);
@@ -1124,20 +1130,48 @@ static int is_tail_call(Ast* ast) {
 }
 
 static void gen_return(CodeGen* gen, Ast* ast) {
-    if (ast->u.ret) {
-        // 检测是否是尾调用：return func(...)
-        if (is_tail_call(ast->u.ret)) {
-            // 使用尾调用优化
-            gen_tail_call_expr(gen, ast->u.ret);
-            // 尾调用会处理返回值，直接返回即可
-            emit_byte(gen, OP_RETURN, ast->line);
-        } else {
+    if (gen->dtor_count > 0) {
+        // 有需要析构的变量，禁用尾调用优化
+        if (ast->u.ret) {
             gen_expr(gen, ast->u.ret);
+            // 保存返回值到临时槽位
+            if (gen->dtor_temp_slot < 0) {
+                gen->dtor_temp_slot = gen->current_func->local_count;
+                gen->current_func->local_count++;
+            }
+            emit_bytes_2(gen, OP_SET_LOCAL, gen->dtor_temp_slot, ast->line);
+        }
+        // 逆序调用所有析构函数
+        for (int i = gen->dtor_count - 1; i >= 0; i--) {
+            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
+            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
+            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
+            emit_byte(gen, OP_POP, ast->line);
+        }
+        // 恢复返回值
+        if (ast->u.ret) {
+            emit_bytes_2(gen, OP_GET_LOCAL, gen->dtor_temp_slot, ast->line);
+        } else {
+            emit_byte(gen, OP_NULL, ast->line);
+        }
+        emit_byte(gen, OP_RETURN, ast->line);
+    } else {
+        // 原有逻辑（支持尾调用优化）
+        if (ast->u.ret) {
+            // 检测是否是尾调用：return func(...)
+            if (is_tail_call(ast->u.ret)) {
+                // 使用尾调用优化
+                gen_tail_call_expr(gen, ast->u.ret);
+                // 尾调用会处理返回值，直接返回即可
+                emit_byte(gen, OP_RETURN, ast->line);
+            } else {
+                gen_expr(gen, ast->u.ret);
+                emit_byte(gen, OP_RETURN, ast->line);
+            }
+        } else {
+            emit_byte(gen, OP_NULL, ast->line);
             emit_byte(gen, OP_RETURN, ast->line);
         }
-    } else {
-        emit_byte(gen, OP_NULL, ast->line);
-        emit_byte(gen, OP_RETURN, ast->line);
     }
 }
 
@@ -1167,6 +1201,8 @@ void gen_block(CodeGen* gen, Ast* ast) {
     // 策略：先预生成所有局部函数，支持前向引用
     // 然后再按顺序执行其他语句
     // 注意：在循环体内定义的函数不预生成，而是在运行时每次迭代时创建
+
+    int dtor_count_at_entry = gen->dtor_count;  // 记录进入块时的析构条目数
 
     typedef struct {
         Ast* ast;
@@ -1230,6 +1266,15 @@ void gen_block(CodeGen* gen, Ast* ast) {
         } else if (stmt->kind != AST_FUNC_DEF) {
             gen_stmt(gen, stmt);
         }
+    }
+
+    // 块结束时，逆序生成新增 dtor 条目的析构调用
+    while (gen->dtor_count > dtor_count_at_entry) {
+        gen->dtor_count--;
+        emit_byte(gen, OP_DTOR_LOCAL, ast->line);
+        emit_byte(gen, (gen->dtor_entries[gen->dtor_count].local_slot >> 8) & 0xff, ast->line);
+        emit_byte(gen, gen->dtor_entries[gen->dtor_count].local_slot & 0xff, ast->line);
+        emit_byte(gen, OP_POP, ast->line);  // 弹出析构函数返回值(null)
     }
 }
 
@@ -1560,6 +1605,21 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, (method_func_consts[i] >> 8) & 0xff, ast->line);
                 emit_byte(gen, method_func_consts[i] & 0xff, ast->line);
             }
+
+            // 构造/析构函数标志和索引
+            // 查找 ctor/dtor 索引
+            int ctor_idx = -1, dtor_idx = -1;
+            for (int i = 0; i < method_count; i++) {
+                Ast* method_ast = ast->u.struct_def.methods[i];
+                if (method_ast && method_ast->u.func.is_ctor) ctor_idx = i;
+                if (method_ast && method_ast->u.func.is_dtor) dtor_idx = i;
+            }
+            uint8_t ctor_dtor_flags = 0;
+            if (ctor_idx >= 0) ctor_dtor_flags |= 1;
+            if (dtor_idx >= 0) ctor_dtor_flags |= 2;
+            emit_byte(gen, ctor_dtor_flags, ast->line);
+            if (ctor_idx >= 0) emit_byte(gen, (uint8_t)ctor_idx, ast->line);
+            if (dtor_idx >= 0) emit_byte(gen, (uint8_t)dtor_idx, ast->line);
 
             if (method_name_consts) free(method_name_consts);
             if (method_func_consts) free(method_func_consts);
@@ -1906,6 +1966,20 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
         emit_byte(gen, (method_func_consts[i] >> 8) & 0xff, ast->line);
         emit_byte(gen, method_func_consts[i] & 0xff, ast->line);
     }
+
+    // 构造/析构函数标志和索引
+    int ctor_idx = -1, dtor_idx = -1;
+    for (int i = 0; i < method_count; i++) {
+        Ast* method_ast = ast->u.struct_def.methods[i];
+        if (method_ast && method_ast->u.func.is_ctor) ctor_idx = i;
+        if (method_ast && method_ast->u.func.is_dtor) dtor_idx = i;
+    }
+    uint8_t ctor_dtor_flags = 0;
+    if (ctor_idx >= 0) ctor_dtor_flags |= 1;
+    if (dtor_idx >= 0) ctor_dtor_flags |= 2;
+    emit_byte(gen, ctor_dtor_flags, ast->line);
+    if (ctor_idx >= 0) emit_byte(gen, (uint8_t)ctor_idx, ast->line);
+    if (dtor_idx >= 0) emit_byte(gen, (uint8_t)dtor_idx, ast->line);
 
     if (method_name_consts) free(method_name_consts);
     if (method_func_consts) free(method_func_consts);

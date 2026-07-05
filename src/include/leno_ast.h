@@ -200,6 +200,8 @@ struct Ast {
             int default_count;         // 有默认值的参数数量
             // 协程信息
             int is_async;              // 是否是 async 函数（1=是，0=否）
+            int is_ctor;               // 是否是构造函数（func StructName()）
+            int is_dtor;               // 是否是析构函数（func ~StructName()）
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
             char** type_param_constraints; // 类型参数约束 face 名（如 ["Comparable", NULL]）
@@ -321,6 +323,7 @@ struct Ast {
             // 泛型类型参数（实例化时提供，如 new Box[int]{value: 42}）
             TypeInfo** generic_type_args;   // 具体类型参数数组（如 [TYPE_INT]）
             int generic_type_count;         // 类型参数数量
+            int has_dtor;                   // 该 struct 是否有析构函数（语义分析阶段设置）
         } struct_init;
         struct {
             Ast* obj;          // 对象表达式

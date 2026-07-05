@@ -1384,6 +1384,7 @@ Ast* parse_struct_stmt(Parser* p) {
         if (p->lex.current.type == TOK_FUNC) {
             // 预读：func 后面跟 ( 说明是函数类型字段（如 func(int):int op），走字段类型解析
             // func 后面跟 IDENT 说明是方法定义（如 func calc()）
+            // func 后面跟 ~ 说明是析构函数（如 func ~StructName()）
             Lexer saved = p->lex;
             lexer_next(&p->lex);  // 跳过 func
             int is_func_type_field = (p->lex.current.type == TOK_LPAREN);
@@ -1395,9 +1396,17 @@ Ast* parse_struct_stmt(Parser* p) {
             int func_line = p->lex.current.line;
             lexer_next(&p->lex); // 消费 'func'
 
+            // 检查是否是析构函数（func ~StructName）
+            int is_dtor = 0;
+            int is_ctor = 0;
+            if (p->lex.current.type == TOK_BITNOT) {
+                is_dtor = 1;
+                lexer_next(&p->lex);  // 消费 '~'
+            }
+
             // 期望方法名
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望方法名");
+                error_add(ERR_SYNTAX, p->lex.current.line, is_dtor ? "析构函数名必须为 ~StructName" : "期望方法名");
                 // 跳过错误恢复
                 while (p->lex.current.type != TOK_SEMI &&
                        p->lex.current.type != TOK_RBRACE &&
@@ -1410,11 +1419,30 @@ Ast* parse_struct_stmt(Parser* p) {
             char* method_name = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
 
+            // 判断构造函数（方法名与 struct 名相同且无 ~）
+            if (!is_dtor && strcmp(method_name, struct_name) == 0) {
+                is_ctor = 1;
+            }
+            // 析构函数名必须与 struct 名相同
+            if (is_dtor && strcmp(method_name, struct_name) != 0) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "析构函数名必须为 ~%s，而不是 ~%s", struct_name, method_name);
+                error_add(ERR_SYNTAX, func_line, msg);
+            }
+
             // 解析函数体
             Ast* func_ast = parse_func_body_and_create(p, method_name, func_line);
             if (func_ast) {
-                // 设置 async 标志
+                // 设置标志
                 func_ast->u.func.is_async = is_async;
+                func_ast->u.func.is_ctor = is_ctor;
+                func_ast->u.func.is_dtor = is_dtor;
+                // 构造/析构函数不能有显式参数
+                if ((is_ctor || is_dtor) && func_ast->u.func.pcnt > 0) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "%s不能有参数", is_ctor ? "构造函数" : "析构函数");
+                    error_add(ERR_SYNTAX, func_line, msg);
+                }
                 // 扩容检查
                 if (method_count >= method_capacity) {
                     method_capacity *= 2;

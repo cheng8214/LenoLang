@@ -87,6 +87,9 @@ OPCODE(OP_GET_PROPERTY) {
                 // 先查找用户自定义方法（如 struct impl face 中定义的方法）
                 for (int i = 0; i < def->method_count; i++) {
                     if (strcmp(def->methods[i].name, name->chars) == 0) {
+                        // 跳过构造/析构函数（不允许显式调用）
+                        if (def->has_ctor && i == def->ctor_index) continue;
+                        if (def->has_dtor && i == def->dtor_index) continue;
                         ObjClosure* pre_closure = def->methods[i].closure;
                         ObjFunction* func = def->methods[i].func;
                         if (func) {
@@ -342,6 +345,9 @@ OPCODE(OP_GET_PROPERTY) {
                 // 先查找用户自定义方法（如 struct impl face 中定义的方法）
                 for (int i = 0; i < def->method_count; i++) {
                     if (strcmp(def->methods[i].name, name->chars) == 0) {
+                        // 跳过构造/析构函数（不允许显式调用）
+                        if (def->has_ctor && i == def->ctor_index) continue;
+                        if (def->has_dtor && i == def->dtor_index) continue;
                         ObjClosure* pre_closure = def->methods[i].closure;
                         ObjFunction* func = def->methods[i].func;
                         if (func) {

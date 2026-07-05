@@ -686,6 +686,12 @@ OPCODE(OP_RETURN) {
 
     Value result = vm_stack_pop(&vm);
 
+    // 构造函数：返回 self 而不是返回值表达式
+    if (frame->closure && frame->closure->function &&
+        frame->closure->function->is_ctor) {
+        result = frame->locals[0];  // self
+    }
+
     // 检查是否有 finally 块需要执行（且当前不在 finally 中）
     if (frame->finally_ip != NULL && !frame->in_finally) {
         // 保存返回值

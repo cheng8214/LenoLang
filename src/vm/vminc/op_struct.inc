@@ -137,6 +137,17 @@ OPCODE(OP_STRUCT_DEF) {
             def->methods[i].closure = NULL;
         }
     }
+
+    // 读取构造/析构函数标志和索引
+    uint8_t ctor_dtor_flags = READ_BYTE();
+    def->has_ctor = (ctor_dtor_flags & 1) != 0;
+    def->has_dtor = (ctor_dtor_flags & 2) != 0;
+    if (def->has_ctor) {
+        def->ctor_index = READ_BYTE();
+    }
+    if (def->has_dtor) {
+        def->dtor_index = READ_BYTE();
+    }
     
     // 注册结构体定义
     struct_def_register(def);
@@ -424,7 +435,87 @@ OPCODE(OP_STRUCT_INIT) {
     
     // 将实例压入栈
     vm_stack_push(&vm, val_obj((Object*)obj));
+
+    // 如果有构造函数，自动调用
+    if (def->has_ctor && def->ctor_index >= 0 && def->ctor_index < def->method_count) {
+        StructMethodInfo* mi = &def->methods[def->ctor_index];
+        ObjClosure* ctor_closure = mi->closure;
+        if (!ctor_closure && mi->func) {
+            // 动态创建闭包（需要 upvalue 的情况）
+            ObjFunction* ctor_func = mi->func;
+            ctor_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+            if (!ctor_closure) {
+                runtime_error("内存不足，无法创建构造函数闭包", GET_CURRENT_LINE());
+                return -1;
+            }
+            ctor_closure->function = ctor_func;
+            ctor_closure->upvalue_count = ctor_func->upvalue_count;
+            for (int u = 0; u < ctor_func->upvalue_count; u++) {
+                ctor_closure->upvalues[u] = NULL;
+            }
+            mi->closure = ctor_closure;  // 缓存
+        }
+        if (ctor_closure) {
+            // 栈布局: [instance(self), closure(callee)]
+            // call() 读取: arg[0]=instance(self), callee=closure
+            vm_stack_push(&vm, val_obj((Object*)ctor_closure));
+            call(ctor_closure, 1, GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH;  // 进入构造函数执行
+        }
+    }
     
+    DISPATCH;
+}
+
+OPCODE(OP_DTOR_LOCAL) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    // 对局部变量调用析构函数
+    // 操作数：2字节 local_slot
+    uint16_t slot = READ_SHORT();
+
+    if (slot >= (uint16_t)frame->local_count) {
+        vm_stack_push(&vm, val_null());
+        DISPATCH;
+    }
+
+    Value val = frame->locals[slot];
+
+    // 检查是否是 struct 实例且有析构函数
+    if (val_is_obj(val) && val_as_obj(val)->type == OBJ_STRUCT) {
+        ObjStruct* obj = (ObjStruct*)val_as_obj(val);
+        ObjStructDef* def = obj->def;
+
+        if (def->has_dtor && def->dtor_index >= 0 && def->dtor_index < def->method_count) {
+            StructMethodInfo* mi = &def->methods[def->dtor_index];
+            ObjClosure* dtor_closure = mi->closure;
+            if (!dtor_closure && mi->func) {
+                ObjFunction* dtor_func = mi->func;
+                dtor_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                if (!dtor_closure) {
+                    runtime_error("内存不足，无法创建析构函数闭包", GET_CURRENT_LINE());
+                    return -1;
+                }
+                dtor_closure->function = dtor_func;
+                dtor_closure->upvalue_count = dtor_func->upvalue_count;
+                for (int u = 0; u < dtor_func->upvalue_count; u++) {
+                    dtor_closure->upvalues[u] = NULL;
+                }
+                mi->closure = dtor_closure;  // 缓存
+            }
+            if (dtor_closure) {
+                // 栈布局: [instance(self), closure(callee)]
+                vm_stack_push(&vm, val);                              // self
+                vm_stack_push(&vm, val_obj((Object*)dtor_closure));   // callee
+                call(dtor_closure, 1, GET_CURRENT_LINE());
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH;  // 进入析构函数执行
+            }
+        }
+    }
+
+    // 不是 struct 或没有析构函数 → 压入 null 作为"返回值"
+    vm_stack_push(&vm, val_null());
     DISPATCH;
 }
 
@@ -675,6 +766,9 @@ OPCODE(OP_GET_METHOD) {
         ObjFunction* func = NULL;
         for (int i = 0; i < def->method_count; i++) {
             if (strcmp(def->methods[i].name, method_name->chars) == 0) {
+                // 跳过构造/析构函数（不允许显式调用）
+                if (def->has_ctor && i == def->ctor_index) continue;
+                if (def->has_dtor && i == def->dtor_index) continue;
                 closure = def->methods[i].closure;
                 func = def->methods[i].func;
                 break;

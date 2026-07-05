@@ -4062,6 +4062,159 @@ main() {
 }
 ```
 
+### 构造函数与析构函数
+
+Leno 支持 struct 的构造函数和析构函数，用于在创建实例时自动初始化、离开作用域时自动清理资源。
+
+#### 构造函数
+
+`func StructName()` — 与 struct 同名的方法即为构造函数，在 `new` 创建实例并完成字段赋值后自动调用，**不能有参数**。
+
+```leno
+struct Counter {
+    int count = 0
+
+    func Counter() {
+        count = 10   // 构造时将 count 初始化为 10
+    }
+}
+
+main() {
+    var c = new Counter()
+    print(c.count)   // 10
+}
+```
+
+构造函数的典型用途：初始化计算字段、分配资源、设置默认状态。
+
+#### 析构函数
+
+`func ~StructName()` — 以 `~` 开头且与 struct 同名的方法即为析构函数，在变量离开作用域时自动调用，**不能有参数和返回值**。
+
+```leno
+int alive = 0
+
+struct Resource {
+    Ptr handle = null
+
+    func Resource() {
+        handle = ffi.malloc(1024)
+        alive = alive + 1
+    }
+
+    func ~Resource() {
+        if handle != null {
+            ffi.free(handle)
+            handle = null
+        }
+        alive = alive - 1
+    }
+}
+
+main() {
+    print(alive)    // 0
+    func test() {
+        var r = new Resource()
+        print(alive)    // 1（构造函数已调用）
+    }
+    test()
+    print(alive)    // 0（析构函数已调用，资源已释放）
+}
+```
+
+#### 引用语义：只有 new 变量负责析构
+
+Leno 的 struct 赋值是**引用**（不是拷贝），因此只有 `var x = new Struct()` 的变量承担析构义务，赋值产生的引用不会重复析构：
+
+```leno
+int destroyed = 0
+
+struct S {
+    func S() {}
+    func ~S() { destroyed = destroyed + 1 }
+}
+
+main() {
+    var d = new S()
+    var d2 = d       // d2 是引用，不触发析构
+    print(destroyed) // 0
+}                    // 只有 d 触发析构 → destroyed = 1
+```
+
+#### 析构触发时机
+
+析构函数在以下情况自动调用：
+
+| 场景 | 说明 |
+|------|------|
+| 作用域结束 | 块 `{}` 结束时，逆序析构块内变量 |
+| return 语句 | 函数 return 时，先析构局部变量再返回值 |
+| 多个对象 | 后构造的先析构（C++ 风格逆序） |
+
+```leno
+string order = ""
+
+struct S {
+    string name = ""
+    func S() {}
+    func ~S() { order = order + name }
+}
+
+func test() {
+    var a = new S(name="A")
+    var b = new S(name="B")
+    var c = new S(name="C")
+    // 逆序析构：C → B → A
+}
+
+main() {
+    test()
+    print(order)    // "CBA"
+}
+```
+
+#### 内部块作用域的析构
+
+```leno
+string order = ""
+
+struct S {
+    string name = ""
+    func S() {}
+    func ~S() { order = order + name }
+}
+
+func test() {
+    var a = new S(name="A")
+    if true {
+        var b = new S(name="B")
+        if true {
+            var c = new S(name="C")
+        }   // C 析构 → order = "C"
+    }       // B 析构 → order = "CB"
+}           // A 析构 → order = "CBA"
+```
+
+#### 注意事项
+
+1. **不能显式调用**构造函数和析构函数——它们由编译器自动插入调用
+2. **每个 struct 最多一个**构造函数和一个析构函数
+3. **构造函数返回 self**——即使写了 `return expr`，实际返回的仍是实例本身
+4. **悬空引用风险**——如果将 new 创建的变量赋给外层变量，内层析构后外层引用将失效：
+
+```leno
+Dialog g   // 外层变量
+
+func foo() {
+    Dialog d = new Dialog(style={})
+    g = d         // g 是引用，无析构义务
+}                  // d 析构 → 窗口销毁，但 g 还指向它
+
+g.run(...)        // ⚠️ 悬空引用，会崩溃！
+```
+
+> **最佳实践**：析构函数管理资源的 struct 尽量作为局部变量使用，不要将引用存到更外层的作用域。
+
 ### struct 常见问题
 
 **Q: 为什么自引用 struct 必须设 null 默认值？**
@@ -4162,6 +4315,9 @@ Array arr
 | 创建 | `var obj = new StructName()` |
 | 访问 | `obj.field`（推荐）或 `obj["field"]` |
 | 方法 | 在 struct 内定义，直接访问字段 |
+| 构造函数 | `func StructName()` 无参，new 后自动调用 |
+| 析构函数 | `func ~StructName()` 无参无返回值，离开作用域自动调用 |
+| 引用语义 | 赋值是引用，只有 new 变量负责析构 |
 | 嵌套 | 支持，自引用必须设 null 默认值 |
 | null 检查 | 编译时警告访问可能为 null 的字段 |
 | face | `face 名称 { func 签名 }` 定义接口 |

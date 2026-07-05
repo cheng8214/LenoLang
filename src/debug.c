@@ -59,7 +59,9 @@ static const char* opCodeNames[] = {
     // C 布局类型转换
     "OP_U8_TO_F64",
     // 泛型类型参数传递
-    "OP_PUSH_TYPE_ARGS"
+    "OP_PUSH_TYPE_ARGS",
+    // 析构函数调用
+    "OP_DTOR_LOCAL"
 };
 
 // 反汇编单条指令
@@ -464,6 +466,11 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int count = chunk->code[offset + 1];
             printf(" count=%d", count);
             return offset + 1 + 1 + count * 2;
+        }
+        case OP_DTOR_LOCAL: {
+            int slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            printf(" slot=%d", slot);
+            return offset + 3;
         }
         default:
             return offset + 1;

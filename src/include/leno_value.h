@@ -349,6 +349,7 @@ typedef struct {
     int type_param_count;        // 函数级泛型类型参数数量（如 func f[T] 的 type_param_count=1）
     char** type_param_names;     // 函数级泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
     char** type_param_constraints; // 函数级泛型类型参数约束 face 名数组（如 ["Comparable"]，NULL 表示无约束）
+    int is_ctor;              // 是否是构造函数（用于 OP_RETURN 返回 self）
 } ObjFunction;
 
 // 原生函数类型
@@ -566,6 +567,10 @@ typedef struct {
     int type_param_count;          // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
     char** type_param_names;       // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
     char** type_param_constraints;  // 泛型类型参数约束 face 名数组
+    int has_ctor;                   // 是否有构造函数
+    int ctor_index;                 // 构造函数在 methods[] 中的索引（-1 表示无）
+    int has_dtor;                   // 是否有析构函数
+    int dtor_index;                 // 析构函数在 methods[] 中的索引（-1 表示无）
 } ObjStructDef;
 
 // 结构体实例对象

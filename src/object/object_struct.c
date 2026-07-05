@@ -29,6 +29,10 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
     def->type_param_count = 0;
     def->type_param_names = NULL;
     def->type_param_constraints = NULL;
+    def->has_ctor = 0;
+    def->ctor_index = -1;
+    def->has_dtor = 0;
+    def->dtor_index = -1;
     return def;
 }
 

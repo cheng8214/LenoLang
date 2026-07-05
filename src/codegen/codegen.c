@@ -9,6 +9,10 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
     gen->current_func = NULL;
     gen->max_local_slot = -1;
     gen->peak_local_slot = -1;
+    gen->dtor_entries = NULL;
+    gen->dtor_count = 0;
+    gen->dtor_capacity = 0;
+    gen->dtor_temp_slot = -1;
 }
 
 void codegen_cleanup(CodeGen* gen) {
@@ -18,6 +22,22 @@ void codegen_cleanup(CodeGen* gen) {
         free(node);
     }
     gen->loop_count = 0;
+    if (gen->dtor_entries) {
+        free(gen->dtor_entries);
+        gen->dtor_entries = NULL;
+    }
+    gen->dtor_count = 0;
+    gen->dtor_capacity = 0;
+}
+
+void codegen_add_dtor_entry(CodeGen* gen, int local_slot) {
+    if (gen->dtor_count >= gen->dtor_capacity) {
+        int new_cap = gen->dtor_capacity == 0 ? 8 : gen->dtor_capacity * 2;
+        gen->dtor_entries = (DtorEntry*)realloc(gen->dtor_entries, sizeof(DtorEntry) * new_cap);
+        gen->dtor_capacity = new_cap;
+    }
+    gen->dtor_entries[gen->dtor_count].local_slot = local_slot;
+    gen->dtor_count++;
 }
 
 void codegen(CodeGen* gen, Ast* ast) {

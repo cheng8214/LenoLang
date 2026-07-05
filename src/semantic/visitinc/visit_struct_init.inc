@@ -104,6 +104,12 @@
                         error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                     }
                 } else {
+                    // 检查 struct 是否有析构函数，设置 has_dtor 标志供 codegen 使用
+                    ObjStructDef* sdef = struct_def_find(ast->u.struct_init.struct_name);
+                    if (sdef) {
+                        ast->u.struct_init.has_dtor = sdef->has_dtor;
+                    }
+
                     // 检查字段类型
                     for (int i = 0; i < ast->u.struct_init.field_count; i++) {
                         char* field_name = ast->u.struct_init.field_names[i];
