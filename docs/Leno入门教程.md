@@ -542,6 +542,22 @@ main() {
 }
 ```
 
+### 整数类型自动收窄 ✅ 已支持
+
+cstruct 字段的 C 类型（`i32`/`u32`/`i16`/`u16`/`i8`/`u8`）**隐式转换为 `int`**，无需 `as int`：
+
+```leno
+// ✅ 自动 — cstruct 字段
+int x  = pt.x           // i32 → int
+int sc = e.scancode     // u16 → int
+int s  = pt.x + pt.y    // 参与运算
+
+// ❌ 仍需 as — clib 返回值 / Dict.get / float
+int t = lib().getTicks() as int    // clib 返回
+int w = opts.get("w", 0) as int    // Dict.get → var
+int r = 3.14 as int                // float → int
+```
+
 ### 类型转换
 
 | 函数          | 用途        | 失败时   |
@@ -869,7 +885,7 @@ func getColor(Ptr handle): Dict {
 func getOutputSize(Ptr handle): Dict {
     var pt = SDL_Point.malloc()
     lib.SDL_GetRenderOutputSize(handle, &pt.x, &pt.y)
-    var d = {w: pt.x as int, h: pt.y as int}
+    var d = {w: pt.x, h: pt.y}
     pt.free(); return d
 }
 ```
@@ -4765,6 +4781,46 @@ main() {
 }
 ```
 
+### 使用 `use` 导入枚举
+
+```leno
+import "color_module.leno" as cm
+use cm.Color    // 引入枚举类型，之后直接用 Color.red
+
+main() {
+    print(Color.red)        // 0
+    print(Color.green)      // 1
+    if Color.red == 0 { print("red == 0") }
+}
+```
+
+### 链式模块中使用枚举
+
+```leno
+// A.leno:  export enum Flag { ON = 1; OFF = 0 }
+// B.leno:  import "A.leno" as a; use a.Flag
+// C.leno:
+import "B.leno" as b
+use b.Flag          // 链式 use 导入
+
+main() {
+    print(Flag.ON)  // 1
+}
+```
+
+### 枚举值做 alias
+
+```leno
+enum Signal { low = 0; mid = 5; high = 10 }
+
+// alias 可以用枚举成员做值
+alias DefaultLevel = Signal.mid    // DefaultLevel == 5
+
+main() {
+    print(DefaultLevel)            // 5
+}
+```
+
 ***
 
 ## 数组
@@ -5739,8 +5795,8 @@ main() {
 }
 ```
 
-> **⚠️ 注意**：clib 函数返回的是 C 类型（`i32`、`i64`、`f32` 等），
-> 参与 Leno 运算时**必须**用 `as int` / `as float` 显式转换。
+> **⚠️ 注意**：clib 函数返回的是 C 类型，参与 Leno 运算时**必须**用 `as int` / `as float` 显式转换。
+> 但 **cstruct 字段**（如 `pt.x`、`e.scancode`）已支持整数自动收窄，无需 `as int`。
 
 clib 类型也可用于 **struct 字段**：
 
@@ -7827,7 +7883,7 @@ lenolang program.leno
 | self 关键字 | `self.field`, `self.method()`     |
 | 方法链式调用   | `outer.get().get()`               |
 | 定义枚举     | `enum Color { red, green, blue }` |
-| 枚举值      | `Color.red`, `Color.green`        |
+| 枚举值      | `Color.red`, `Color.green`, `use m.Color` 链式导入 |
 
 ### 闭包与函数式编程
 
@@ -7896,7 +7952,7 @@ lenolang program.leno
 | 导出别名    | `export alias Size = int`, `export alias IntList = Array[int]` |
 | 别名链     | `export alias B = A` — 别名引用模板内其他别名 |
 | 导出 face  | `export face Shape { }` — 导出接口定义 |
-| use 类型   | `use module.Point` — 导入 struct/face 类型到当前作用域 |
+| use 类型   | `use module.Point` — 导入 struct/face/enum/alias 类型到当前作用域 |
 | use 链式传导 | D→C→B→A 链式传递，无需手动重导出 |
 | 循环依赖    | 支持 A→B→A 相互导入                                        |
 | 随机数     | `rands.ints(1,6)`, `rands.choice(arr)`               |
