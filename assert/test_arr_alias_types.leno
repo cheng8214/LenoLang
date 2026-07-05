@@ -1,0 +1,5 @@
+// Alias 定义模块
+import "test_arr_alias_event.leno" as ev
+use ev.Event
+
+export alias EventHandler = func(Event):bool

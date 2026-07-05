@@ -1,0 +1,15 @@
+// 调用方
+import "test_arr_alias_mod.leno" as m
+import "test_arr_alias_types.leno" as types
+import "test_arr_alias_event.leno" as ev
+use types.EventHandler
+use ev.Event
+
+func checkEvent(Event e): bool {
+    return e.code > 0
+}
+
+var handlers = [checkEvent]
+bool result = m.runHandlers(handlers)
+assert_eq(result, true)
+print("test_arr_alias passed!")

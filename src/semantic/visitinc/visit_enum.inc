@@ -71,6 +71,14 @@
                     ast->u.alias.ref.index = sym->index;
                     ast->u.alias.ref.name = strdup(sym->name);
                 }
+            } else if (ast->u.alias.type) {
+                // 类型别名：alias EventHandler = func(Event):bool
+                // 注册到语义作用域，使 resolve_alias_in_type 能找到
+                if (!scope_resolve(s->current, ast->u.alias.name)) {
+                    Symbol* sym = scope_define(s->current, ast->u.alias.name, SYM_TYPE);
+                    if (sym) {
+                        sym->type = type_copy(ast->u.alias.type);
+                    }
+                }
             }
-            // 类型别名已在解析阶段注册到解析器别名表，无需运行时处理
             break;

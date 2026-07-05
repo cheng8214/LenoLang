@@ -1,0 +1,4 @@
+// 事件类型模块
+export struct Event {
+    int code = 0
+}

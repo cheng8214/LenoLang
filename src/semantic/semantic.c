@@ -562,6 +562,14 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                     // 将函数添加到函数表（支持前向引用类型推断）
                     func_table_add(&s->func_table, stmt->u.func.name, stmt);
                 }
+            } else if (stmt->kind == AST_ALIAS && stmt->u.alias.type) {
+                // 类型别名注册到语义作用域，使 resolve_alias_in_type 能找到
+                if (!scope_resolve(s->current, stmt->u.alias.name)) {
+                    Symbol* sym = scope_define(s->current, stmt->u.alias.name, SYM_TYPE);
+                    if (sym) {
+                        sym->type = type_copy(stmt->u.alias.type);
+                    }
+                }
             }
         }
     }

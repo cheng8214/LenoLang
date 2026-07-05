@@ -1,0 +1,13 @@
+// 函数定义模块（use 导入 alias）
+import "test_arr_alias_types.leno" as types
+import "test_arr_alias_event.leno" as ev
+use types.EventHandler
+use ev.Event
+
+export func runHandlers(Array[EventHandler] handlers): bool {
+    var e = new Event()
+    e.code = 1
+    var h = handlers[0]
+    bool cont = h(e)
+    return cont
+}
