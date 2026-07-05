@@ -1,0 +1,47 @@
+// test_multi_window.leno — 多窗口顺序测试
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.WindowFlag
+use SDL3.Scancode
+
+main() {
+    // ===== 窗口 1 =====
+    var w1 = SDL3.createWindow({title: "窗口1 - 按ESC关闭", w: 400, h: 300, flags: WindowFlag.RESIZABLE})
+    if w1.ok {
+        w1.run(
+            func(Event e): bool {
+                if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+                return true
+            },
+            func(Renderer r) {
+                r.setColor(60, 120, 220, 255); r.clear()
+                r.setColor(255, 255, 255, 255)
+                r.drawText(SDL3.createFontAuto(18.0), "窗口 1 — 按 ESC 关闭", 50, 130, 255, 255, 255)
+            }
+        )
+        print("窗口1 已关闭")
+    }
+
+    // 窗口1关闭后，窗口2才打开
+    var w2 = SDL3.createWindow({title: "窗口2 - 按ESC关闭", w: 500, h: 400, flags: WindowFlag.RESIZABLE})
+    if w2.ok {
+        var count = 0
+        w2.run(
+            func(Event e): bool {
+                if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+                if e.isKeyDown() { count += 1 }
+                return true
+            },
+            func(Renderer r) {
+                r.setColor(20, 30, 50, 255); r.clear()
+                r.setColor(255, 200, 100, 255)
+                r.drawText(SDL3.createFontAuto(18.0), "窗口 2 — 按 ESC 关闭", 50, 130, 255, 200, 100)
+                r.drawText(SDL3.createFontAuto(14.0), "按键次数: " + count as string, 50, 160, 200, 200, 220)
+            }
+        )
+        print("窗口2 已关闭, 按键次数=" + count)
+    }
+
+    print("=== 所有窗口已关闭 ===")
+}
