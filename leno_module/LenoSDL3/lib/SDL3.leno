@@ -37,6 +37,7 @@ use tm.Timer
 use tm.TimerCallback
 use wnd.EventHandler
 use wnd.RenderCallback
+use wnd.Dialog
 
 // ==================== 重新导出类型别名 ====================
 

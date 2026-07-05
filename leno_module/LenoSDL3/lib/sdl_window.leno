@@ -219,3 +219,17 @@ export func createWindow(Dict opts): Window {
     Window win = new Window(); win.init(opts); return win
 }
 
+// ==================== 模态对话框 ====================
+// new Dialog(style={title, w, h, flags}) → dlg.run(onEvent, onRender)
+export struct Dialog {
+    Dict style = {}
+
+    func run(EventHandler onEvent, RenderCallback onRender) {
+        var win = createWindow(style)
+        if not win.ok { return }
+        win.setAlwaysOnTop(true)
+        setModalWid(win.getID())
+        win.run(onEvent, onRender)
+    }
+}
+
