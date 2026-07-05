@@ -4173,7 +4173,7 @@ Array arr
 | 数组推断 | 不同 struct 有公共 face 时推断为 Array[FaceName] |
 | 跨模块 face | import 模块中的 face 可用于 impl、参数、变量 |
 | 性能 | 字段索引编译期确定，O(1) 访问 |
-| use 导入 | 支持 `use module.Struct` 和 `use module.Face` 导入 |
+| use 导入 | 支持 `use module.Struct`/`Face`/`Enum`/`Alias`/`Clib`/`CStruct` 导入 |
 
 > **核心原则**：自引用设 null，访问先检查，参数用具体类型或 face，优先用字段访问！
 
