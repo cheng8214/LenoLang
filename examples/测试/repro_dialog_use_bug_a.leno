@@ -1,0 +1,14 @@
+// 模块 A: 定义两个 struct——一个方法可见，一个不可见？
+export alias SimpleFn = func():void
+
+export struct S1 {
+    func m1(): int { return 42 }
+}
+
+export struct S2 {
+    func m2(SimpleFn cb) { cb() }
+}
+
+export struct S3 {
+    func m3() { print("hello from S3") }
+}

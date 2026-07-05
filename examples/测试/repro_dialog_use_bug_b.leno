@@ -1,0 +1,22 @@
+// 测试: use 导入 struct 方法是否可见
+import "repro_dialog_use_bug_a.leno" as a
+use a.S1
+use a.S2
+use a.S3
+use a.SimpleFn
+
+main() {
+    // S1: 简单返回 int 的方法
+    S1 s1 = new S1()
+    print("s1.m1 =", s1.m1())
+
+    // S2: 接受 SimpleFn 回调的方法
+    S2 s2 = new S2()
+    s2.m2(func() { print("callback called") })
+
+    // S3: 打印的方法
+    S3 s3 = new S3()
+    s3.m3()
+
+    print("=== PASS ===")
+}

@@ -3,6 +3,7 @@ import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode
+use SDL3.WindowFlag
 
 main() {
     var mainWin = SDL3.createWindow({title: "主窗口 — M=模态 ESC=退", w: 600, h: 400})
@@ -28,8 +29,9 @@ main() {
 }
 
 func openModal() {
-    var dlg = SDL3.createWindow({title: "确认对话框 [模态]", w: 350, h: 200})
-    SDL3.setModalWid(dlg.getID())   // 设为模态
+    var dlg = SDL3.createWindow({title: "确认对话框 [模态]", w: 350, h: 200, flags: WindowFlag.UTILITY})
+    dlg.setAlwaysOnTop(true)
+    SDL3.setModalWid(dlg.getID())
     dlg.run(
         func(Event e): bool {
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }

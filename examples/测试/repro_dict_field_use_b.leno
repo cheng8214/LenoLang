@@ -1,0 +1,13 @@
+// 复现: use 导入 → int 字段有方法, Dict 字段方法丢失
+import "repro_dict_field_use_a.leno" as m
+use m.A_Int
+use m.B_Dict
+
+main() {
+    A_Int a = new A_Int(val=1)
+    print("A_Int.ok() =", a.ok())               // ✅ int 字段, 方法可见
+
+    B_Dict b = new B_Dict(val={})
+    print("B_Dict.ok() =", b.ok())               // ❌ 方法不可见
+    print("=== DONE ===")
+}

@@ -278,6 +278,7 @@ export enum WindowFlag {
     ALWAYS_ON_TOP     = 0x0000000000010000
     HIGH_PIXEL_DENSITY = 0x0000000000002000
     TRANSPARENT       = 0x0000000000001000
+    UTILITY           = 0x0000000000020000
 }
 
 export enum EventType {

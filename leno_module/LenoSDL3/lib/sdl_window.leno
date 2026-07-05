@@ -218,3 +218,4 @@ export struct Window {
 export func createWindow(Dict opts): Window {
     Window win = new Window(); win.init(opts); return win
 }
+
