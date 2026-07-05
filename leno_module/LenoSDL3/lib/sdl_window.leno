@@ -188,6 +188,7 @@ export struct Window {
                 while i < _runWids.len() {
                     if _runWids[i] == wid {
                         if not _runEvts[i](ev) or ev.isWindowClose() {
+                            if _runWids[i] == _modalWid { _modalWid = -1 }
                             _runRens[i].destroy()
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
