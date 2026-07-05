@@ -153,6 +153,7 @@ clib sdl3 {
 
     Ptr  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
     void SDL_DestroyWindow(Ptr window)
+    u32  SDL_GetWindowID(Ptr window)
     bool SDL_SetWindowResizable(Ptr window, bool resizable)
     bool SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
 

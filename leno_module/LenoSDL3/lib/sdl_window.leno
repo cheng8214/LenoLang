@@ -50,6 +50,11 @@ export struct Window {
         return ok
     }
 
+    // 获取窗口 ID
+    func getID(): int {
+        return _lib.SDL_GetWindowID(handle) as int
+    }
+
     // 设置窗口标题
     func setTitle(string title): bool {
         return _lib.SDL_SetWindowTitle(handle, title)
