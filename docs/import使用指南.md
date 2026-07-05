@@ -16,7 +16,7 @@ str.trim("  hello  ")  // 使用别名访问
 // 从子目录导入
 import "utils/array_helper.leno" as arr
 
-// 使用 use 导入类型（支持 struct、clib、face）
+// 使用 use 导入类型（支持 struct、clib、face、enum、alias）
 import "point.leno" as pt
 use pt.Point      // 将 Point 类型导入当前作用域
 Point p = new pt.Point()  // 现在可以直接使用 Point 类型
@@ -611,7 +611,7 @@ main() {
 | `use module.Clib` | ✅ | 导入 clib 类型到当前作用域（需模块有函数返回该 clib 类型） |
 | `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
 | `use module.Alias` | ✅ | 导入类型别名到当前作用域，可直接作为类型名使用 |
-| `use module.Enum` | ✅ | 导入 enum 类型，可用 `EnumName.Member` |
+| `use module.Enum` | ✅ | 导入 enum 类型，可用 `EnumName.Member` 或链式 `import B; use B.Enum` |
 | `use module.func` | ❌ | 函数必须通过模块名访问 |
 | `use module.var` | ❌ | 变量必须通过模块名访问 |
 
@@ -624,6 +624,23 @@ main() {
 - **alias**：类型别名，编译期展开为实际类型，需要用于变量声明或返回类型
 - **enum**：编译时常量类型，导入后可用 `EnumName.Member` 访问值
 - **func/var**：运行时实体，必须通过模块名访问（如 `module.func()`）
+
+### 8.2.1 使用 use 导入 enum
+
+```leno
+// key.leno
+export enum Key { ESCAPE = 41; SPACE = 44; A = 4 }
+
+// main.leno
+import "key.leno" as k
+use k.Key
+
+main() {
+    if e.scancode() == Key.ESCAPE { print("退出") }
+}
+```
+
+enum 支持链式传导——模块 B `use a.Key` 后，模块 C `import B; use B.Key` 也可访问 `Key.ESCAPE`。
 
 ### 8.3 use 类型链式传导
 
@@ -831,7 +848,7 @@ main() {
 
 ```
 
-> **⚠️ 重要**：clib 函数返回的是 C 类型（`i32`、`i64`、`f32` 等），参与 Leno 运算时**必须用 `as int` / `as float` 显式转换**。
+> **⚠️ 重要**：clib 函数返回的是 C 类型（`i32`、`i64`、`f32` 等），参与 Leno 运算时**必须用 `as int` / `as float` 显式转换**。但 **cstruct 字段**（如 `pt.x`、`e.id`）已支持整数自动收窄，无需 `as int`。
 
 **clib 类型可以用于 struct 字段**：
 
