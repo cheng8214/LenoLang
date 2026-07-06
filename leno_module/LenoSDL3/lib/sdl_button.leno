@@ -7,7 +7,7 @@ import "sdl_event.leno" as evt; use evt.Event
 export struct Button {
     string text
     float x; float y; float w; float h
-    int cr; int cg; int cb      // 背景色
+    int cr, cg, cb      // 背景色
     int tr; int tg; int tb      // 文字色
     func():void _onClick        // 点击回调
     bool hover

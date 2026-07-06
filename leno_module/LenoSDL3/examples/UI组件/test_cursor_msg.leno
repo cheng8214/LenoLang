@@ -1,4 +1,4 @@
-﻿// test_cursor_msg.leno — 测试：系统光标切换 + 消息框 + 拖放
+// test_cursor_msg.leno — 测试：系统光标切换 + 消息框 + 拖放
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
