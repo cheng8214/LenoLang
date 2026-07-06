@@ -7,6 +7,8 @@ import "sdl_event.leno" as evt
 import "sdl_timer.leno" as tm
 import "sdl_image.leno" as img
 import "sdl_button.leno" as btn
+import "sdl_label.leno" as lbl
+import "sdl_edit.leno" as edt
 
 
 // ==================== 重新导出类型 ====================
@@ -38,6 +40,8 @@ use fnt.TextTexture
 use tm.Timer
 use tm.TimerCallback
 use btn.Button
+use lbl.Label
+use edt.Edit
 use wnd.EventHandler
 use wnd.RenderCallback
 import "sdl_dialog.leno" as dlg
@@ -84,6 +88,9 @@ export func getTicks(): int          { return core.getTicks() }
 
 export func startTextInput(Ptr[u8] w): bool  { return core.startTextInput(w) }
 export func stopTextInput(Ptr[u8] w): bool   { return core.stopTextInput(w) }
+export func setTextInputArea(Ptr[u8] w, Ptr rect, int cursor): bool {
+    return core.setTextInputArea(w, rect, cursor)
+}
 
 export func getMouseState(): int         { return core.getMouseState() }
 export func getGlobalMouseState(): int   { return core.getGlobalMouseState() }

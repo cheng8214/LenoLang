@@ -220,6 +220,7 @@ clib sdl3 {
     bool SDL_ShowCursor()
     bool SDL_HideCursor()
     bool SDL_CursorVisible()
+    bool SDL_SetTextInputArea(Ptr window, Ptr rect, i32 cursor)
     bool SDL_WarpMouseInWindow(Ptr window, f32 x, f32 y)
 
     Ptr  SDL_CreateSystemCursor(i32 kind)
@@ -414,6 +415,9 @@ export func getTicks(): int { return lib().SDL_GetTicks() as int }//这里为啥
 export func startTextInput(Ptr window): bool  { return lib().SDL_StartTextInput(window) }
 export func stopTextInput(Ptr window): bool   { return lib().SDL_StopTextInput(window) }
 export func textInputActive(Ptr window): bool { return lib().SDL_TextInputActive(window) }
+export func setTextInputArea(Ptr window, Ptr rect, int cursor): bool {
+    return lib().SDL_SetTextInputArea(window, rect, cursor)
+}
 
 export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) as int }
 export func getGlobalMouseState(): int { return lib().SDL_GetGlobalMouseState(null, null) as int }

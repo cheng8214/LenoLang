@@ -1,0 +1,66 @@
+// test_edit.leno — Edit 控件测试
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Edit
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "Edit 测试", w: 500, h: 400})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    var lastMsg = ""
+
+    // 普通输入框
+    Edit edName = win.addEdit({text: "", x: 20, y: 60, w: 250, h: 36, placeholder: "请输入姓名..."})
+    edName.on_change(func() {
+        lastMsg = "姓名: " + edName.get_text()
+        print(lastMsg)
+    })
+
+    // 密码输入框
+    Edit edPwd = win.addEdit({text: "", x: 20, y: 115, w: 250, h: 36,
+                               placeholder: "请输入密码", password: true})
+    edPwd.on_change(func() {
+        lastMsg = "密码长度: " + edPwd.get_text().len()
+        print(lastMsg)
+    })
+
+    // 只读输入框
+    Edit edRead = win.addEdit({text: "这是只读文字，不可编辑", x: 20, y: 170, w: 250, h: 36, readonly: true})
+
+    // 暗色主题
+    Edit edDark = win.addEdit({text: "暗色主题", x: 20, y: 225, w: 250, h: 36,
+                                rgb: [20, 20, 30], text_rgb: [100, 255, 180]})
+    edDark.on_enter(func() { lastMsg = "回车: " + edDark.get_text(); print("[enter] " + lastMsg) })
+
+    // 长文本输入框
+    Edit edWide = win.addEdit({text: "这是一段很长的文字用来测试滚动", x: 20, y: 290, w: 460, h: 36})
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(25, 25, 45, 255)
+
+            r.drawText(font, "Edit 控件测试", 20, 12, 255, 220, 80)
+            r.drawText(font, "姓名:", 20, 38, 150, 150, 180)
+            r.drawText(font, "密码:", 20, 93, 150, 150, 180)
+            r.drawText(font, "只读:", 20, 148, 150, 150, 180)
+            r.drawText(font, "暗色:", 20, 203, 150, 150, 180)
+            r.drawText(font, "长文本:", 20, 265, 150, 150, 180)
+
+            r.drawText(font, "状态: " + lastMsg, 20, 330, 180, 200, 220)
+            r.drawText(font, "ESC 退出  |  点击输入框获得焦点后打字", 20, 360, 120, 120, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

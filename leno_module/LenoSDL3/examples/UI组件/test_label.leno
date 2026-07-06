@@ -1,0 +1,49 @@
+// test_label.leno — Label 控件测试
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Label
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "Label 测试", w: 600, h: 350})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+
+    // 左对齐（默认）
+    Label lblLeft = win.addLabel({text: "左对齐: Hello Leno!", x: 50, y: 40, font_size: 18, rgb: [255, 220, 100]})
+
+    // 居中
+    Label lblCenter = win.addLabel({text: "居中对齐: Hello Leno!", x: 300, y: 90, font_size: 20,
+                                     align: 1, rgb: [100, 220, 255]})
+
+    // 右对齐
+    Label lblRight = win.addLabel({text: "右对齐: Hello Leno!", x: 550, y: 140, font_size: 20,
+                                    align: 2, rgb: [100, 255, 160]})
+
+    // 大字
+    Label lblBig = win.addLabel({text: "48px 大标题", x: 50, y: 200, font_size: 48, rgb: [255, 255, 255]})
+
+    // 小字
+    Label lblSmall = win.addLabel({text: "14px 小字", x: 50, y: 270, font_size: 14, rgb: [180, 180, 200]})
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+
+            r.setColor(60, 60, 80, 200)
+            r.drawLine(15, 180, 585, 180)
+            r.drawLine(15, 175, 585, 175)
+
+            r.drawText(SDL3.createFontAuto(16.0), "ESC 退出", 15, 320, 150, 150, 170)
+        }
+    )
+
+    SDL3.ttfQuit()
+}
