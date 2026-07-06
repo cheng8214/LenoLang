@@ -19,7 +19,7 @@ main() {
     Edit ed = win.addEdit({text: "", x: 20, y: 60, w: 560, h: 280,
                             multiline: true, placeholder: "在这里输入多行文字...\n支持 Up/Down 箭头\n文字超出自动出现滚动条"})
     ed.on_change(func() {
-        lastMsg = "长度: " + ed.get_text().len()
+        lastMsg = "长度: " + ed.get_text_length()
         print(lastMsg)
     })
 

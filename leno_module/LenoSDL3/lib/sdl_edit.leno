@@ -42,6 +42,7 @@ export struct Edit {
     bool _loaded
     bool _dirty                  // 行缓存需重建
     bool _textDirty              // text 需要从 _lines 重建
+    int  _cachedLen              // 缓存总字符数（不含换行符）
     float _cachedMaxW            // 缓存最大行宽（脏时重算）
 
     // 文本选取
@@ -247,6 +248,23 @@ export struct Edit {
 
     // ==================== 查询 ====================
     func is_focused(): bool { return _focused }
+    func get_text_length(): int {
+        if _textDirty {
+            _rebuild_lines()
+            var len = 0
+            for _lines.len() to li { len = len + _lines[li].len() }
+            if _lines.len() > 1 { len = len + _lines.len() - 1 }
+            _cachedLen = len
+            _textDirty = false
+        } else if _cachedLen < 0 {
+            _rebuild_lines()
+            var len = 0
+            for _lines.len() to li { len = len + _lines[li].len() }
+            if _lines.len() > 1 { len = len + _lines.len() - 1 }
+            _cachedLen = len
+        }
+        return _cachedLen
+    }
     func get_text(): string {
         if _textDirty {
             _rebuild_lines()
