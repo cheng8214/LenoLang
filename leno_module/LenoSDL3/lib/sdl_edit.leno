@@ -41,6 +41,8 @@ export struct Edit {
     bool _readOnly               // 只读
     bool _loaded
     bool _dirty                  // 行缓存需重建
+    bool _textDirty              // text 需要从 _lines 重建
+    float _cachedMaxW            // 缓存最大行宽（脏时重算）
 
     // 文本选取
     int  _selStart               // 选区起始（-1 表示无选区）
@@ -60,6 +62,7 @@ export struct Edit {
                 _font = fnt.createFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _cachedMaxW = -1.0       // 字体变了，行宽缓存失效
             // 缓存行高
             if _font.ok {
                 var ms = _font.measureString("Ag")
@@ -106,6 +109,7 @@ export struct Edit {
     func _rebuild_lines() {
         if not _dirty { return }
         _dirty = false
+        _cachedMaxW = -1.0
 
         // 从 text 拆分行
         _lines = []
@@ -243,7 +247,18 @@ export struct Edit {
 
     // ==================== 查询 ====================
     func is_focused(): bool { return _focused }
-    func get_text(): string { return text }
+    func get_text(): string {
+        if _textDirty {
+            _rebuild_lines()
+            text = ""
+            for _lines.len() to i {
+                text = text + _lines[i]
+                if i < _lines.len() - 1 { text = text + "\n" }
+            }
+            _textDirty = false
+        }
+        return text
+    }
 
     // ==================== 回调 ====================
     func on_change(func():void cb) { _onChange = cb }
@@ -338,11 +353,14 @@ export struct Edit {
 
     func _max_line_width(): float {
         _rebuild_lines()
+        if _dirty { _cachedMaxW = -1.0 }
+        if _cachedMaxW >= 0.0 { return _cachedMaxW }
         float maxW = 0.0
         for _lines.len() to li {
             var ms = _font.measureString(_lines[li])
             if _float(ms.w) > maxW { maxW = _float(ms.w) }
         }
+        _cachedMaxW = maxW
         return maxW
     }
 
@@ -483,9 +501,10 @@ export struct Edit {
         var s = _selStart; var e = _selEnd
         if s > e { var t = s; s = e; e = t }
         if s < 0 { s = 0 }
-        if e > text.len() { e = text.len() }
+        var t = get_text()
+        if e > t.len() { e = t.len() }
         if s >= e { return "" }
-        return text.slice(s, e)
+        return t.slice(s, e)
     }
 
     // 删除选区并返回删除的起始位置
@@ -576,35 +595,54 @@ export struct Edit {
         }
     }
 
-    // ---- 多行事件处理（直接在 text 上操作，避免缓存不同步）----
+    // ---- 多行事件处理（直接改 _lines，O(行长度) 非 O(全文)）----
     func _process_ml(Event ev) {
         if ev.isKeyDown() {
             int sc = ev.scancode()
             bool moved = false; bool changed = false
 
+            _rebuild_lines()
+
             // Ctrl 组合键
             int mod = ev.keyMod()
             bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
             if ctrl {
-                if sc == Scancode.A { _selStart = 0; _selEnd = text.len(); _selActive = true; return }
+                if sc == Scancode.A { _selStart = 0; _selEnd = _line_count_pos(); _selActive = true; return }
                 if sc == Scancode.C {
+                    var t = get_text()
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
-                    else { core.setClipboardText(text) }
+                    else { core.setClipboardText(t) }
                     return
                 }
                 if sc == Scancode.X {
+                    var t = get_text()
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
-                    else { core.setClipboardText(text) }
-                    _cursorPos = _del_sel(); changed = true
+                    else { core.setClipboardText(t) }
+                    _del_sel_lines(); changed = true
                 }
                 if sc == Scancode.V {
                     var paste = core.getClipboardText()
                     if paste != "" {
-                        _cursorPos = _del_sel()
-                        text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
-                        _cursorPos += paste.len(); changed = true
+                        _del_sel_lines()
+                        if _lines.len() == 0 { _lines.add("") }
+                        var left = _lines[_cursorLine].slice(0, _cursorCol)
+                        var right = _lines[_cursorLine].slice(_cursorCol, _lines[_cursorLine].len())
+                        var full = left + paste
+                        var plines = _split_newlines(full)
+                        // 用多行替换当前行
+                        _lines.remove(_cursorLine)
+                        for plines.len() to pi {
+                            _lines = _lines_insert(_cursorLine + pi, plines[pi])
+                        }
+                        // 末行拼右侧
+                        var li = _cursorLine + plines.len() - 1
+                        _lines[li] = _lines[li] + right
+                        _cursorLine = li
+                        _cursorCol = plines[plines.len() - 1].len()
+                        _scrollY = 0; _scrollX = 0
+                        changed = true
                     }
                 }
             }
@@ -612,44 +650,69 @@ export struct Edit {
             // 退格
             if sc == Scancode.BACKSPACE {
                 if _selActive and _selStart != _selEnd {
-                    _cursorPos = _del_sel(); changed = true
-                } else if _cursorPos > 0 {
-                    text = text.slice(0, _cursorPos - 1) + text.slice(_cursorPos, text.len())
-                    _cursorPos -= 1; changed = true
+                    _del_sel_lines(); changed = true
+                } else if _cursorCol > 0 {
+                    var ln = _lines[_cursorLine]
+                    _lines[_cursorLine] = ln.slice(0, _cursorCol - 1) + ln.slice(_cursorCol, ln.len())
+                    _cursorCol -= 1; changed = true
+                } else if _cursorLine > 0 {
+                    _cursorCol = _lines[_cursorLine - 1].len()
+                    _lines[_cursorLine - 1] = _lines[_cursorLine - 1] + _lines[_cursorLine]
+                    _lines.remove(_cursorLine)
+                    _cursorLine -= 1; changed = true
                 }
             }
 
             // Delete
             if sc == Scancode.DELETE {
                 if _selActive and _selStart != _selEnd {
-                    _cursorPos = _del_sel(); changed = true
-                } else if _cursorPos < text.len() {
-                    text = text.slice(0, _cursorPos) + text.slice(_cursorPos + 1, text.len())
+                    _del_sel_lines(); changed = true
+                } else if _cursorCol < _lines[_cursorLine].len() {
+                    var ln = _lines[_cursorLine]
+                    _lines[_cursorLine] = ln.slice(0, _cursorCol) + ln.slice(_cursorCol + 1, ln.len())
+                    changed = true
+                } else if _cursorLine < _lines.len() - 1 {
+                    _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
+                    _lines.remove(_cursorLine + 1)
                     changed = true
                 }
             }
 
             // 方向键
-            if sc == Scancode.LEFT   { if _cursorPos > 0 { _cursorPos -= 1; moved = true; _clear_sel() } }
-            if sc == Scancode.RIGHT  { if _cursorPos < text.len() { _cursorPos += 1; moved = true; _clear_sel() } }
+            if sc == Scancode.LEFT {
+                if _cursorCol > 0 { _cursorCol -= 1; moved = true; _clear_sel() }
+                else if _cursorLine > 0 { _cursorLine -= 1; _cursorCol = _lines[_cursorLine].len(); moved = true; _clear_sel() }
+            }
+            if sc == Scancode.RIGHT {
+                if _cursorCol < _lines[_cursorLine].len() { _cursorCol += 1; moved = true; _clear_sel() }
+                else if _cursorLine < _lines.len() - 1 { _cursorLine += 1; _cursorCol = 0; moved = true; _clear_sel() }
+            }
             if sc == Scancode.UP     { _move_up(); moved = true; _clear_sel() }
             if sc == Scancode.DOWN   { _move_down(); moved = true; _clear_sel() }
-            if sc == Scancode.HOME   { _move_home(); moved = true; _clear_sel() }
-            if sc == Scancode.END    { _move_end(); moved = true; _clear_sel() }
+            if sc == Scancode.HOME   { _cursorCol = 0; moved = true; _clear_sel() }
+            if sc == Scancode.END    { _cursorCol = _lines[_cursorLine].len(); moved = true; _clear_sel() }
 
-            // 回车：插入 \n
+            // 回车
             if sc == Scancode.RETURN {
-                text = text.slice(0, _cursorPos) + "\n" + text.slice(_cursorPos, text.len())
-                _cursorPos += 1; changed = true
+                var ln = _lines[_cursorLine]
+                var rest = ln.slice(_cursorCol, ln.len())
+                _lines[_cursorLine] = ln.slice(0, _cursorCol)
+                _lines = _lines_insert(_cursorLine + 1, rest)
+                _cursorLine += 1; _cursorCol = 0; changed = true
             }
 
+            if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+            if _cursorLine < 0 { _cursorLine = 0 }
+
             if changed {
-                _dirty = true
+                _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+                _textDirty = true
                 _adjust_scroll()
                 _showCursor = true; _blinkTime = core.getTicks()
                 _update_ime()
                 if _onChange != null { _onChange() }
             } else if moved {
+                _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _adjust_scroll()
                 _showCursor = true; _blinkTime = core.getTicks()
                 _update_ime()
@@ -660,16 +723,116 @@ export struct Edit {
         if ev.isTextInput() {
             var ch = ev.text()
             if ch != "" {
-                _cursorPos = _del_sel()
-                text = text.slice(0, _cursorPos) + ch + text.slice(_cursorPos, text.len())
-                _cursorPos += ch.len()
-                _dirty = true
+                _rebuild_lines()
+                _del_sel_lines()
+                if _lines.len() == 0 { _lines.add("") }
+                var ln = _lines[_cursorLine]
+                _lines[_cursorLine] = ln.slice(0, _cursorCol) + ch + ln.slice(_cursorCol, ln.len())
+                _cursorCol += ch.len()
+                _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+                _textDirty = true
                 _adjust_scroll()
                 _showCursor = true; _blinkTime = core.getTicks()
                 _update_ime()
                 if _onChange != null { _onChange() }
             }
         }
+    }
+
+    // 总字符数（用于 Ctrl+A）
+    func _line_count_pos(): int {
+        _rebuild_lines()
+        var pos = 0
+        for _lines.len() to li { pos = pos + _lines[li].len() + 1 }
+        if pos > 0 { pos -= 1 }    // 去掉最后一个 \n
+        return pos
+    }
+
+    // 删除选区(行级别)
+    func _del_sel_lines() {
+        if not _selActive or _selStart < 0 { return }
+        var s = _selStart; var e = _selEnd
+        if s > e { var t = s; s = e; e = t }
+        if s < 0 { s = 0 }
+        if s >= e { _clear_sel(); return }
+        // 转换为行列
+        var cs = _pos_to_col(s)
+        var ce = _pos_to_col(e)
+        var ls = _pos_to_line(s)
+        var le = _pos_to_line(e)
+        if ls < 0 or le < 0 or ls >= _lines.len() or le >= _lines.len() { _clear_sel(); return }
+        // 删除选区
+        if ls == le {
+            var ln = _lines[ls]
+            _lines[ls] = ln.slice(0, cs) + ln.slice(ce, ln.len())
+        } else {
+            _lines[ls] = _lines[ls].slice(0, cs) + _lines[le].slice(ce, _lines[le].len())
+            var cnt = le - ls
+            for cnt to _ { _lines.remove(ls + 1) }
+        }
+        _cursorLine = ls; _cursorCol = cs
+        _clear_sel()
+    }
+
+    func _pos_to_line(int pos): int {
+        var p = 0
+        for _lines.len() to li {
+            var len = _lines[li].len() + 1
+            if pos < p + len { return li }
+            p += len
+        }
+        return _lines.len() - 1
+    }
+
+    func _pos_to_col(int pos): int {
+        var p = 0
+        for _lines.len() to li {
+            var len = _lines[li].len() + 1
+            if pos < p + len {
+                var col = pos - p
+                if col > _lines[li].len() { col = _lines[li].len() }
+                return col
+            }
+            p += len
+        }
+        return _lines[_lines.len() - 1].len()
+    }
+
+    // 按 \n 拆分字符串为行数组（去除 Windows \r）
+    func _split_newlines(string s): Array[string] {
+        var result = []
+        if s == "" { return result }
+        var start = 0
+        for :s.len() - 1 to i {
+            if s.slice(i, i + 1) == "\n" {
+                var line = s.slice(start, i)
+                if line.len() > 0 and line.slice(line.len() - 1, line.len()) == "\r" {
+                    line = line.slice(0, line.len() - 1)
+                }
+                result.add(line)
+                start = i + 1
+            }
+        }
+        if start < s.len() {
+            var line = s.slice(start, s.len())
+            if line.len() > 0 and line.slice(line.len() - 1, line.len()) == "\r" {
+                line = line.slice(0, line.len() - 1)
+            }
+            result.add(line)
+        }
+        if result.len() == 0 { result.add(s) }
+        return result
+    }
+
+    // 在 _lines 指定位置插入一行
+    func _lines_insert(int idx, string val): Array[string] {
+        var result = []
+        for _lines.len() to i {
+            if i == idx { result.add(val) }
+            result.add(_lines[i])
+        }
+        if idx >= _lines.len() { result.add(val) }
+        return result
     }
 
     // ---- 多行方向键辅助（基于 _cursorPos）----
@@ -868,8 +1031,8 @@ export struct Edit {
             }
         }
 
-        // 占位文字
-        if text == "" and not _focused and _placeholder != "" {
+        // 占位文字 / 内容
+        if _lines.len() == 0 and not _focused and _placeholder != "" {
             r.drawText(_font, _placeholder, x + pad, y + pad, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
         } else if _lines.len() > 0 {
             // 计算可见行范围
@@ -890,8 +1053,8 @@ export struct Edit {
             }
         }
 
-        // 光标（在裁剪区域内，先同步行列）
-        _sync_line_col()
+        // 光标（在裁剪区域内）
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
         if _focused and _showCursor and _lines.len() > 0 {
             float curLine = _float(_cursorLine)
             if curLine >= _float(_lines.len()) { curLine = _float(_lines.len() - 1) }
@@ -933,12 +1096,7 @@ export struct Edit {
         // ---- 横向滚动条 ----
         if sbH > 0.0 {
             float sbY = y + h - sbH - 4.0
-            float maxLineW = 0.0
-            for _lines.len() to li {
-                var ms = _font.measureString(_lines[li])
-                if _float(ms.w) > maxLineW { maxLineW = _float(ms.w) }
-            }
-            maxLineW = maxLineW + 8.0
+            float maxLineW = _max_line_width() + 8.0
 
             r.setColor(50, 50, 60, 180)
             r.fillRect(x + pad, sbY, visW, sbH)
