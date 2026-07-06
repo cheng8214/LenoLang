@@ -38,18 +38,18 @@ main() {
 
         // 时间（大字体居中）
         var timeStr = dt[3] + ":" + dt[4] + ":" + dt[5]
-        ren.drawTextCentered(font, timeStr, winW, 60.0, 255, 255, 255)
+        ren.drawTextCentered(font, timeStr, 0, winW, 60.0, 255, 255, 255)
 
         // 日期（居中）
         var dateStr = dt[0] + "年" + dt[1] + "月" + dt[2] + "日"
-        ren.drawTextCentered(fontSmall, dateStr, winW, 140.0, 200, 200, 255)
+        ren.drawTextCentered(fontSmall, dateStr, 0, winW, 140.0, 200, 200, 255)
 
         // 英文日期时间（居中）
         var enStr = dt[0] + "-" + dt[1] + "-" + dt[2] + "  " + dt[3] + ":" + dt[4] + ":" + dt[5]
-        ren.drawTextCentered(fontSmall, enStr, winW, 185.0, 150, 200, 150)
+        ren.drawTextCentered(fontSmall, enStr, 0, winW, 185.0, 150, 200, 150)
 
         // 提示（居中）
-        ren.drawTextCentered(fontSmall, "按 ESC 退出", winW, 240.0, 100, 100, 100)
+        ren.drawTextCentered(fontSmall, "按 ESC 退出", 0, winW, 240.0, 100, 100, 100)
 
         ren.present()
         SDL3.delay(16)

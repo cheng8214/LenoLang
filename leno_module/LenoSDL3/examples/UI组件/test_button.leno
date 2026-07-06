@@ -73,8 +73,10 @@ main() {
                 }
                 r.drawRect(xi, yi, wi, hi)
 
-                // 文字
-                r.drawTextCentered(font, bt[i], 500.0, yi + _float(hi / 2 - 9), 255, 255, 255)
+                // 文字（水平垂直居中）
+                var ms = font.measureString(bt[i])
+                float cy = _float(yi) + (_float(hi) - _float(ms.h)) / 2.0
+                r.drawTextCentered(font, bt[i], _float(xi), _float(wi), cy, 255, 255, 255)
             }
 
             r.drawText(font, "鼠标: (" + mx + ", " + my + ")", 280, 200, 180, 200, 220)

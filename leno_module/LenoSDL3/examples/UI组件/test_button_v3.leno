@@ -1,0 +1,337 @@
+// test_button_v3.leno — Button 控件全面测试（类型/样式/方法）
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Button
+use SDL3.Scancode
+use SDL3.SystemCursor
+
+// 字体样式常量（SDL3 中作为变量导出，直接用数字值）
+var STYLE_BOLD = 1
+var STYLE_ITALIC = 2
+var STYLE_UNDERLINE = 4
+var STYLE_COMBINED = STYLE_BOLD | STYLE_UNDERLINE
+
+main() {
+    var win = SDL3.createWindow({title: "Button v3 — 全面测试", w: 820, h: 680})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    // 状态变量
+    var lastClick = ""
+    var toggleBtn = null as Button
+
+    // ===== 第 1 列：预设类型 =====
+    Button btnPrimary = win.addButton({text: "Primary", x: 30, y: 55, w: 130, h: 40, type: "primary"})
+    btnPrimary.on_click(func() { lastClick = "Primary"; print("[click] Primary") })
+
+    Button btnDanger = win.addButton({text: "Danger", x: 30, y: 110, w: 130, h: 40, type: "danger"})
+    btnDanger.on_click(func() { lastClick = "Danger"; print("[click] Danger") })
+
+    Button btnSuccess = win.addButton({text: "Success", x: 30, y: 165, w: 130, h: 40, type: "success"})
+    btnSuccess.on_click(func() { lastClick = "Success"; print("[click] Success") })
+
+    Button btnWarning = win.addButton({text: "Warning", x: 30, y: 220, w: 130, h: 40, type: "warning"})
+    btnWarning.on_click(func() { lastClick = "Warning"; print("[click] Warning") })
+
+    Button btnDark = win.addButton({text: "Dark", x: 30, y: 275, w: 130, h: 40, type: "dark"})
+    btnDark.on_click(func() { lastClick = "Dark"; print("[click] Dark") })
+
+    // ===== 第 2 列：自定义颜色 =====
+    Button btnRgb = win.addButton({text: "自定义RGB", x: 220, y: 55, w: 150, h: 40,
+                                    rgb: [180, 80, 200]})
+    btnRgb.on_click(func() { lastClick = "自定义RGB"; print("[click] 自定义RGB") })
+
+    Button btnTextRgb = win.addButton({text: "金色文字", x: 220, y: 110, w: 150, h: 40,
+                                        rgb: [30, 30, 60], text_rgb: [255, 215, 0]})
+    btnTextRgb.on_click(func() { lastClick = "金色文字"; print("[click] 金色文字") })
+
+    Button btnHoverRgb = win.addButton({text: "悬停变绿", x: 220, y: 165, w: 150, h: 40,
+                                         rgb: [80, 80, 180], hover_rgb: [40, 200, 80]})
+    btnHoverRgb.on_click(func() { lastClick = "悬停变绿"; print("[click] 悬停变绿") })
+
+    Button btnFull = win.addButton({text: "全自定义", x: 220, y: 220, w: 150, h: 40,
+                                     rgb: [200, 60, 120], text_rgb: [255, 255, 200],
+                                     hover_rgb: [255, 100, 50], radius: 12, font_size: 20})
+    btnFull.on_click(func() { lastClick = "全自定义"; print("[click] 全自定义") })
+
+    // ===== 第 3 列：外观开关 =====
+    Button btnNoShadow = win.addButton({text: "无阴影", x: 420, y: 55, w: 130, h: 40,
+                                         rgb: [80, 160, 200], shadow: false})
+    btnNoShadow.on_click(func() { lastClick = "无阴影"; print("[click] 无阴影") })
+
+    Button btnNoBorder = win.addButton({text: "无边框", x: 420, y: 110, w: 130, h: 40,
+                                         rgb: [160, 80, 80], border: false})
+    btnNoBorder.on_click(func() { lastClick = "无边框"; print("[click] 无边框") })
+
+    Button btnSquare = win.addButton({text: "直角", x: 420, y: 165, w: 130, h: 40,
+                                       rgb: [60, 180, 140], radius: 0})
+    btnSquare.on_click(func() { lastClick = "直角"; print("[click] 直角") })
+
+    Button btnRound = win.addButton({text: "大圆角", x: 420, y: 220, w: 130, h: 40,
+                                      rgb: [200, 140, 60], radius: 20})
+    btnRound.on_click(func() { lastClick = "大圆角"; print("[click] 大圆角") })
+
+    // ===== 第 4 列：尺寸与状态 =====
+    Button btnBig = win.addButton({text: "大号按钮", x: 600, y: 55, w: 170, h: 55,
+                                    rgb: [100, 160, 220], font_size: 24})
+    btnBig.on_click(func() { lastClick = "大号按钮"; print("[click] 大号按钮") })
+
+    Button btnSmall = win.addButton({text: "小", x: 600, y: 125, w: 70, h: 30,
+                                      rgb: [180, 100, 100], font_size: 14})
+    btnSmall.on_click(func() { lastClick = "小按钮"; print("[click] 小按钮") })
+
+    Button btnWide = win.addButton({text: "超宽按钮", x: 600, y: 165, w: 170, h: 40,
+                                     rgb: [120, 120, 200], radius: 8})
+    btnWide.on_click(func() { lastClick = "超宽按钮"; print("[click] 超宽按钮") })
+
+    var toggleCount = 0
+    toggleBtn = win.addButton({text: "禁用态 (点击切换)", x: 600, y: 220, w: 170, h: 40,
+                                rgb: [100, 100, 100]})
+    toggleBtn.on_click(func() {
+        toggleCount = toggleCount + 1
+        if toggleCount % 2 == 1 {
+            toggleBtn.set_enabled(false)
+            toggleBtn.set_text("已禁用 (再点切换)")
+            lastClick = "禁用"
+        } else {
+            toggleBtn.set_enabled(true)
+            toggleBtn.set_text("禁用态 (点击切换)")
+            lastClick = "启用"
+        }
+        print("[click] 切换启用/禁用: " + lastClick)
+    })
+
+    // ===== 光标样式测试 =====
+    Button btnCursorNone = win.addButton({text: "无光标变化", x: 30, y: 350, w: 140, h: 38,
+                                           rgb: [100, 100, 140], cursor: -1})
+    btnCursorNone.on_click(func() { lastClick = "无光标变化"; print("[click] 无光标变化") })
+
+    Button btnCursorWait = win.addButton({text: "等待光标", x: 220, y: 350, w: 150, h: 38,
+                                           rgb: [180, 140, 60], cursor: SystemCursor.WAIT})
+    btnCursorWait.on_click(func() { lastClick = "等待光标"; print("[click] 等待光标") })
+
+    Button btnCursorText = win.addButton({text: "文本光标", x: 420, y: 350, w: 130, h: 38,
+                                           rgb: [60, 160, 160], cursor: SystemCursor.TEXT})
+    btnCursorText.on_click(func() { lastClick = "文本光标"; print("[click] 文本光标") })
+
+    var cursorPhase = 0
+    Button btnCursorToggle = win.addButton({text: "动态切换光标", x: 600, y: 350, w: 170, h: 38,
+                                              rgb: [160, 80, 200], cursor: SystemCursor.POINTER})
+    btnCursorToggle.on_click(func() {
+        cursorPhase = (cursorPhase + 1) % 4
+        if cursorPhase == 0 {
+            btnCursorToggle.set_cursor(SystemCursor.POINTER)
+            btnCursorToggle.set_text("动态切换光标")
+        }
+        if cursorPhase == 1 {
+            btnCursorToggle.set_cursor(SystemCursor.CROSSHAIR)
+            btnCursorToggle.set_text("十字光标")
+        }
+        if cursorPhase == 2 {
+            btnCursorToggle.set_cursor(SystemCursor.MOVE)
+            btnCursorToggle.set_text("移动光标")
+        }
+        if cursorPhase == 3 {
+            btnCursorToggle.set_cursor(SystemCursor.NOT_ALLOWED)
+            btnCursorToggle.set_text("禁止光标")
+        }
+        lastClick = "光标切换: " + btnCursorToggle.get_text()
+        print("[click] " + lastClick)
+    })
+
+    // ===== 字体样式测试 =====
+    Button btnBold = win.addButton({text: "粗体", x: 30, y: 430, w: 130, h: 36,
+                                    rgb: [100, 140, 200], font_style: STYLE_BOLD})
+    btnBold.on_click(func() { lastClick = "粗体"; print("[click] 粗体") })
+
+    Button btnItalic = win.addButton({text: "斜体", x: 220, y: 430, w: 130, h: 36,
+                                        rgb: [160, 100, 180], font_style: STYLE_ITALIC})
+    btnItalic.on_click(func() { lastClick = "斜体"; print("[click] 斜体") })
+
+    Button btnUnderline = win.addButton({text: "下划线", x: 420, y: 430, w: 130, h: 36,
+                                           rgb: [80, 160, 120], font_style: STYLE_UNDERLINE})
+    btnUnderline.on_click(func() { lastClick = "下划线"; print("[click] 下划线") })
+
+    Button btnFontToggle = win.addButton({text: "切换字体样式", x: 600, y: 430, w: 170, h: 36,
+                                           rgb: [160, 120, 60]})
+    var fontStylePhase = 0
+    btnFontToggle.on_click(func() {
+        fontStylePhase = (fontStylePhase + 1) % 4
+        if fontStylePhase == 0 {
+            btnFontToggle.set_font_style(0)
+            btnFontToggle.set_text("常规字体")
+        }
+        if fontStylePhase == 1 {
+            btnFontToggle.set_font_style(STYLE_BOLD)
+            btnFontToggle.set_text("粗体字体")
+        }
+        if fontStylePhase == 2 {
+            btnFontToggle.set_font_style(STYLE_ITALIC)
+            btnFontToggle.set_text("斜体字体")
+        }
+        if fontStylePhase == 3 {
+            btnFontToggle.set_font_style(STYLE_COMBINED)
+            btnFontToggle.set_text("粗体+下划线")
+        }
+        lastClick = "字体样式: " + btnFontToggle.get_text()
+        print("[click] " + lastClick)
+    })
+
+    // ===== 动态操作区 =====
+    Button btnDynamic = win.addButton({text: "动态按钮", x: 30, y: 515, w: 160, h: 45,
+                                        rgb: [140, 100, 200], radius: 8, font_size: 18})
+    var dynCount = 0
+    btnDynamic.on_click(func() {
+        dynCount = dynCount + 1
+        if dynCount % 4 == 1 {
+            btnDynamic.set_text("切换到 Danger")
+            btnDynamic.set_type("danger")
+        }
+        if dynCount % 4 == 2 {
+            btnDynamic.set_text("切换到 Success")
+            btnDynamic.set_type("success")
+        }
+        if dynCount % 4 == 3 {
+            btnDynamic.set_text("切换到 Warning")
+            btnDynamic.set_type("warning")
+        }
+        if dynCount % 4 == 0 {
+            btnDynamic.set_text("动态按钮")
+            btnDynamic.set_rgb(140, 100, 200)
+            btnDynamic.set_text_rgb(255, 255, 255)
+        }
+        lastClick = "动态: " + btnDynamic.get_text()
+        print("[click] " + lastClick)
+    })
+
+    // 改变大小
+    Button btnResize = win.addButton({text: "改变大小", x: 220, y: 515, w: 130, h: 45,
+                                       rgb: [200, 160, 60], radius: 8, font_size: 16})
+    var sizePhase = 0
+    btnResize.on_click(func() {
+        sizePhase = (sizePhase + 1) % 3
+        if sizePhase == 0 {
+            btnResize.set_size(130, 45)
+        }
+        if sizePhase == 1 {
+            btnResize.set_size(180, 35)
+        }
+        if sizePhase == 2 {
+            btnResize.set_size(100, 60)
+        }
+        lastClick = "大小: " + btnResize.get_w() + "x" + btnResize.get_h()
+        print("[click] 改变大小为 " + lastClick)
+    })
+
+    // 移位置
+    Button btnMove = win.addButton({text: "移动我", x: 380, y: 515, w: 130, h: 45,
+                                     rgb: [60, 200, 160], radius: 8, font_size: 16})
+    var movePhase = 0
+    btnMove.on_click(func() {
+        movePhase = (movePhase + 1) % 4
+        if movePhase == 0 {
+            btnMove.set_pos(380, 490)
+        }
+        if movePhase == 1 {
+            btnMove.set_pos(380, 555)
+        }
+        if movePhase == 2 {
+            btnMove.set_pos(620, 555)
+        }
+        if movePhase == 3 {
+            btnMove.set_pos(620, 490)
+        }
+        lastClick = "移动: " + btnMove.get_text()
+        print("[click] 移动到 (" + btnMove.get_x() + ", " + btnMove.get_y() + ")")
+    })
+
+    // 退出按钮
+    Button btnQuit = win.addButton({text: "退出", x: 30, y: 580, w: 130, h: 40,
+                                     rgb: [80, 80, 80], radius: 8, font_size: 18})
+    btnQuit.on_click(func() {
+        print("请按 ESC 退出")
+        lastClick = "请按 ESC 退出"
+    })
+
+    // 重置所有
+    Button btnReset = win.addButton({text: "重置", x: 180, y: 580, w: 130, h: 40,
+                                      rgb: [150, 150, 170], radius: 8, font_size: 18})
+    btnReset.on_click(func() {
+        // 重置动态按钮
+        dynCount = 0
+        btnDynamic.set_text("动态按钮")
+        btnDynamic.set_rgb(140, 100, 200)
+        btnDynamic.set_text_rgb(255, 255, 255)
+        // 重置移动
+        movePhase = 0
+        btnMove.set_pos(380, 490)
+        // 重置大小
+        sizePhase = 0
+        btnResize.set_size(130, 45)
+        // 重置开关
+        toggleCount = 0
+        toggleBtn.set_enabled(true)
+        toggleBtn.set_text("禁用态 (点击切换)")
+        // 重置光标
+        cursorPhase = 0
+        btnCursorToggle.set_cursor(SystemCursor.POINTER)
+        btnCursorToggle.set_text("动态切换光标")
+        // 重置字体样式
+        fontStylePhase = 0
+        btnFontToggle.set_font_style(0)
+        btnFontToggle.set_text("切换字体样式")
+        lastClick = "已重置"
+        print("[click] 全部重置")
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 40, 255)
+
+            // 标题
+            r.drawText(font, "Button v3 — 预设类型 / 自定义样式 / 动态方法", 30, 10, 255, 220, 80)
+
+            // 列标题
+            r.drawText(font, "预设类型", 45, 32, 180, 200, 220)
+            r.drawText(font, "自定义颜色", 235, 32, 180, 200, 220)
+            r.drawText(font, "外观开关", 435, 32, 180, 200, 220)
+            r.drawText(font, "尺寸与状态", 615, 32, 180, 200, 220)
+
+            // 分隔线：预设区域 -> 光标区域
+            r.setColor(60, 60, 80, 200)
+            r.drawLine(20, 320, 800, 320)
+            r.drawText(font, "光标样式", 30, 325, 140, 200, 255)
+
+            // 分隔线：光标区域 -> 字体区域
+            r.drawLine(20, 400, 800, 400)
+            r.drawText(font, "字体样式", 30, 405, 140, 200, 255)
+
+            // 分隔线：字体区域 -> 动态操作区
+            r.drawLine(20, 480, 800, 480)
+            r.drawText(font, "动态操作区", 30, 485, 220, 200, 100)
+
+            // 分隔线：动态操作区 -> 底部
+            r.drawLine(20, 625, 800, 625)
+
+            // 底部状态栏
+            r.setColor(30, 30, 50, 255)
+            r.fillRoundedRect(15, 635, 790, 30, 6)
+            r.setColor(80, 80, 110, 200)
+            r.drawRoundedRect(15, 635, 790, 30, 6)
+
+            r.drawText(font, "最后操作: " + lastClick, 25, 640, 200, 200, 220)
+            r.drawText(font, "ESC 退出  |  悬停查看高亮效果", 450, 640, 150, 150, 170)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

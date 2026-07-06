@@ -3,30 +3,148 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor
 
 export struct Button {
     string text
     float x; float y; float w; float h
-    int cr, cg, cb      // 背景色
-    int tr; int tg; int tb      // 文字色
-    func():void _onClick        // 点击回调
+    float _radius           // 圆角半径
+    float _fontSize         // 字体大小
+    string _fontPath        // 字体路径（空则自动选择）
+    int _fontStyle          // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
+    Font  _font             // 字体缓存
+    int cr, cg, cb          // 背景色
+    int tr; int tg; int tb  // 文字色
+    int hvr, hvg, hvb       // 悬停背景色（为 0 时自动计算）
+    int _cursor             // 悬停鼠标样式（SystemCursor 值，-1 不改变）
+    func():void _onClick    // 点击回调
     bool hover
+    bool _wasHover          // 上一帧悬停状态
+    bool enabled
+    bool _showShadow        // 是否显示阴影
+    bool _showBorder        // 是否显示边框
     bool _loaded
 
+    // ==================== 预设类型 ====================
+    func _apply_type(string t) {
+        switch t {
+            case "primary"  { cr = 60;  cg = 140; cb = 220 }
+            case "danger"   { cr = 220; cg = 60;  cb = 60  }
+            case "success"  { cr = 60;  cg = 200; cb = 80  }
+            case "warning"  { cr = 240; cg = 160; cb = 30  }
+            case "dark"     { cr = 60;  cg = 60;  cb = 70  }
+            default {}
+        }
+    }
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" {
+                _font = fnt.createFont(_fontPath, _fontSize)
+            } else {
+                _font = fnt.createFontAuto(_fontSize)
+            }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    // ==================== set 初始化 ====================
     func set(Dict opts) {
         text = opts.get("text", "Button") as string
         x    = _float(opts.get("x", 0))
         y    = _float(opts.get("y", 0))
         w    = _float(opts.get("w", 100))
         h    = _float(opts.get("h", 40))
-        cr   = 60; cg = 140; cb = 220
-        tr   = 255; tg = 255; tb = 255
-        // 优先用 rgb: [r, g, b] 数组
+
+        // 圆角
+        _radius   = _float(opts.get("radius", 6))
+        // 字体大小
+        _fontSize = _float(opts.get("font_size", 18))
+        // 字体路径（空则自动匹配系统字体）
+        _fontPath = opts.get("font_path", "") as string
+        // 字体样式（粗体/斜体/下划线等）
+        _fontStyle = _int(opts.get("font_style", 0))
+
+        // 默认颜色
+        cr = 60; cg = 140; cb = 220
+        tr = 255; tg = 255; tb = 255
+        hvr = 0; hvg = 0; hvb = 0
+
+        // 预设类型（优先级低于显式 rgb）
+        var tp = opts.get("type")
+        if tp is string { _apply_type(tp as string) }
+
+        // rgb: 背景色 [r, g, b]
         var c = opts.get("rgb")
         if c is Array { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
+
+        // text_rgb: 文字色 [r, g, b]
+        var tc = opts.get("text_rgb")
+        if tc is Array { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+
+        // hover_rgb: 悬停背景色 [r, g, b]（不设置则自动加亮）
+        var hc = opts.get("hover_rgb")
+        if hc is Array { hvr = _int(hc[0]); hvg = _int(hc[1]); hvb = _int(hc[2]) }
+
+        // 外观开关
+        _showShadow = _bool(opts.get("shadow", true))
+        _showBorder = _bool(opts.get("border", true))
+
+        // 鼠标样式（默认手型，-1 不改变）
+        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+
+        // 状态
+        enabled = _bool(opts.get("enabled", true))
+        hover   = false
+        _wasHover = false
+
+        _ensure_font()
         _loaded = true
     }
 
+    // ==================== 设置方法 ====================
+    func set_text(string t)     { text = t }
+    func set_pos(float px, float py)      { x = px; y = py }
+    func set_size(float sw, float sh)     { w = sw; h = sh }
+    func set_bounds(float bx, float by, float bw, float bh) {
+        x = bx; y = by; w = bw; h = bh
+    }
+    func set_rgb(int r, int g, int b)    { cr = r; cg = g; cb = b }
+    func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
+    func set_hover_rgb(int r, int g, int b) { hvr = r; hvg = g; hvb = b }
+    func set_font_size(float s) {
+        _fontSize = s
+        if _font != null { _font.close(); _font = null }
+    }
+    func set_font_path(string path) {
+        _fontPath = path
+        if _font != null { _font.close(); _font = null }
+    }
+    func set_font_style(int style) {
+        _fontStyle = style
+        _ensure_font()
+        if _font != null and _font.ok { _font.setStyle(style) }
+    }
+    func set_radius(float r)   { _radius = r }
+    func set_enabled(bool e)   { enabled = e }
+    func set_shadow(bool s)    { _showShadow = s }
+    func set_border(bool b)    { _showBorder = b }
+    func set_cursor(int cur)   { _cursor = cur }
+
+    // 应用预设类型
+    func set_type(string t) { _apply_type(t) }
+
+    // ==================== 查询方法 ====================
+    func is_hover(): bool    { return hover }
+    func is_enabled(): bool  { return enabled }
+    func get_text(): string  { return text }
+    func get_x(): float      { return x }
+    func get_y(): float      { return y }
+    func get_w(): float      { return w }
+    func get_h(): float      { return h }
+
+    // ==================== 交互 ====================
     func on_click(func():void callback) { _onClick = callback }
 
     func contains(float mx, float my): bool {
@@ -36,35 +154,70 @@ export struct Button {
     // 处理事件（run 内部调用）
     func process(Event ev) {
         if not _loaded { return }
+        if not enabled { return }
         if ev.isMouseMotion() {
+            _wasHover = hover
             hover = contains(ev.mouseX(), ev.mouseY())
+            // 鼠标样式切换
+            if _cursor >= 0 {
+                if hover and not _wasHover { core.setSystemCursor(_cursor) }
+                if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+            }
         }
         if ev.isMouseButtonDown() and hover and _onClick != null {
             _onClick()
         }
     }
 
-    // 渲染（run 内部调用）
+    // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        _ensure_font()
+
         int br = cr; int bg = cg; int bb = cb
-        if hover { br = cr + 40; bg = cg + 40; bb = cb + 40 }
+        int tr2 = tr; int tg2 = tg; int tb2 = tb
+
+        if hover {
+            if hvr > 0 or hvg > 0 or hvb > 0 {
+                br = hvr; bg = hvg; bb = hvb
+            } else {
+                br = cr + 40; bg = cg + 40; bb = cb + 40
+            }
+        }
+        if not enabled { br = cr / 2; bg = cg / 2; bb = cb / 2 }
         if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 }
 
         // 阴影
-        r.setColor(0, 0, 0, 40)
-        r.fillRoundedRect(x + 2, y + 2, w, h, 6)
+        if _showShadow {
+            r.setColor(0, 0, 0, 40)
+            r.fillRoundedRect(x + 2, y + 2, w, h, _radius)
+        }
+
         // 背景
         r.setColor(br, bg, bb, 255)
-        r.fillRoundedRect(x, y, w, h, 6)
+        r.fillRoundedRect(x, y, w, h, _radius)
+
         // 边框
-        if hover { r.setColor(255, 255, 255, 200) }
-        else      { r.setColor(br+30, bg+30, bb+30, 180) }
-        r.drawRoundedRect(x, y, w, h, 6)
-        // 文字
-        var f = fnt.createFontAuto(18.0)
-        r.drawTextCentered(f, text, x + w, y + h/2 - 10, tr, tg, tb)
-        f.close()
+        if _showBorder {
+            if hover { r.setColor(255, 255, 255, 200) }
+            else {
+                int bbr = br + 30; int bbg = bg + 30; int bbb = bb + 30
+                if bbr > 255 { bbr = 255 }; if bbg > 255 { bbg = 255 }; if bbb > 255 { bbb = 255 }
+                r.setColor(bbr, bbg, bbb, 180)
+            }
+            r.drawRoundedRect(x, y, w, h, _radius)
+        }
+
+        // 文字（水平居中、垂直居中）
+        if _font == null or not _font.ok { return }
+        var ms = _font.measureString(text)
+        float cy = y + (h - _float(ms.h)) / 2.0
+        r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+    }
+
+    // 释放字体资源
+    func dispose() {
+        if _font != null { _font.close(); _font = null }
     }
 }
 

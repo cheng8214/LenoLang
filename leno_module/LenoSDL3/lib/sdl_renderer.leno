@@ -238,11 +238,20 @@ export struct Renderer {
         if tex.ok { drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
     }
 
-    // 居中绘制文字（水平居中于窗口宽度 winW）
-    func drawTextCentered(Font f, string text, float winW, float y, int r, int g, int b) {
+    // 居中绘制文字（在 [x, x+w] 范围内水平居中）
+    func drawTextCentered(Font f, string text, float x, float w, float y, int r, int g, int b) {
         var ms = f.measureString(text)
-        float cx = (winW - _float(ms.w)) / 2.0
+        float cx = x + (w - _float(ms.w)) / 2.0
         drawText(f, text, cx, y, r, g, b)
+    }
+
+    // 便捷版：使用 [r, g, b] 数组传色（可预定义颜色变量复用）
+    func drawTextRgb(Font f, string text, float x, float y, Array c) {
+        drawText(f, text, x, y, _int(c[0]), _int(c[1]), _int(c[2]))
+    }
+
+    func drawTextCenteredRgb(Font f, string text, float x, float w, float y, Array c) {
+        drawTextCentered(f, text, x, w, y, _int(c[0]), _int(c[1]), _int(c[2]))
     }
 
     // 设置背景色并清屏（setColor + clear 一步完成）
@@ -401,10 +410,12 @@ export struct Renderer {
         // 一次性生成四个角的三角扇顶点
         for 0 : 3 to ci {
             float cx, cy, sa
-            if ci == 0 { cx = x + r; cy = y + r; sa = half_pi * 2.0 }                        // 左上 π→3π/2
-            else if ci == 1 { cx = x + w - r; cy = y + r; sa = half_pi * 3.0 }               // 右上 3π/2→2π
-            else if ci == 2 { cx = x + w - r; cy = y + h - r; sa = 0.0 }                     // 右下 0→π/2
-            else { cx = x + r; cy = y + h - r; sa = half_pi }                                 // 左下 π/2→π
+            switch ci {
+                case 0 { cx = x + r; cy = y + r; sa = half_pi * 2.0 }               // 左上 π→3π/2
+                case 1 { cx = x + w - r; cy = y + r; sa = half_pi * 3.0 }           // 右上 3π/2→2π
+                case 2 { cx = x + w - r; cy = y + h - r; sa = 0.0 }                 // 右下 0→π/2
+                case 3 { cx = x + r; cy = y + h - r; sa = half_pi }                 // 左下 π/2→π
+            }
 
             var step = half_pi / _float(segs)
             for 0 : segs - 1 to i {
@@ -442,10 +453,12 @@ export struct Renderer {
         // 一次性写入 4 个圆角弧的连续顶点
         for 0 : 3 to ci {
             float cx, cy, sa
-            if ci == 0 { cx = x + r; cy = y + r; sa = half_pi * 2.0 }               // 左上
-            else if ci == 1 { cx = x + w - r; cy = y + r; sa = half_pi * 3.0 }       // 右上
-            else if ci == 2 { cx = x + w - r; cy = y + h - r; sa = 0.0 }             // 右下
-            else { cx = x + r; cy = y + h - r; sa = half_pi }                         // 左下
+            switch ci {
+                case 0 { cx = x + r; cy = y + r; sa = half_pi * 2.0 }               // 左上
+                case 1 { cx = x + w - r; cy = y + r; sa = half_pi * 3.0 }           // 右上
+                case 2 { cx = x + w - r; cy = y + h - r; sa = 0.0 }                 // 右下
+                case 3 { cx = x + r; cy = y + h - r; sa = half_pi }                 // 左下
+            }
 
             var step = half_pi / _float(segs)
             for 0 : segs to i {
