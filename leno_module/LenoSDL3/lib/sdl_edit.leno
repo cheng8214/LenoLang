@@ -386,6 +386,23 @@ export struct Edit {
     func process(Event ev) {
         if not _loaded { return }
 
+        // ---- 鼠标滚轮（所有模式）----
+        if ev.isMouseWheel() {
+            if _multiline {
+                float sy = _scrollY - ev.wheelY() * _lineHeight * 3.0
+                if sy < 0 { sy = 0 }
+                float maxSY = _content_height() - (h - 16.0)
+                if maxSY < 0 { maxSY = 0 }
+                if sy > maxSY { sy = maxSY }
+                _scrollY = sy
+            } else {
+                float sx = _scrollX - ev.wheelX() * 20.0
+                if sx < 0 { sx = 0 }
+                _scrollX = sx
+            }
+            return
+        }
+
         // ---- 滚动条交互（多行模式）----
         if _multiline {
             float pad = 8.0
