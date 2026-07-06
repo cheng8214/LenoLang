@@ -1,4 +1,4 @@
-﻿// test_heart.leno — 心形跳动动画
+// test_heart.leno — 心形跳动动画
 import "../../lib/SDL3.leno" as SDL3
 import maths
 import ffi

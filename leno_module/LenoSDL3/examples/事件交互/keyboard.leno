@@ -1,4 +1,4 @@
-﻿// keyboard.leno — 键盘事件演示（全键覆盖）
+// keyboard.leno — 键盘事件演示（全键覆盖）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer

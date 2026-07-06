@@ -1,0 +1,14 @@
+// 复现2：struct 字段 int cb 与参数 func():void cb 同名
+// 编译器误把字段 int 当参数类型，报"期望 func():void，实际 int"
+
+struct Button {
+    int cb          // 背景蓝色
+
+    func on_click(func():void cb) {  // ❌ cb 与字段同名
+        // 编译器提示：期望 func():void，实际 int
+    }
+}
+
+main() {
+    print("start")
+}

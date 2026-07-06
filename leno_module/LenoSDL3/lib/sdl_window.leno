@@ -25,6 +25,8 @@ import "sdl_event.leno" as event
 use event.Event
 import "sdl_timer.leno" as timer
 use timer.Timer
+import "sdl_button.leno" as btn
+use btn.Button
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
@@ -35,6 +37,7 @@ Array[Ptr]             _runHnds   = []
 Array[Renderer]        _runRens   = []
 Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
+Array[Array[Button]]   _runBtns   = []
 var _runRunning = false
 var _modalWid = -1
 
@@ -54,6 +57,7 @@ export func registerRun(Ptr hdl, int wid, Renderer ren, var onEvent, var onRende
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok       // 窗口是否创建成功
+    Array[Button] _buttons = []
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -164,6 +168,14 @@ export struct Window {
         Timer t = new Timer(); t.setOnce(ms, cb); return t
     }
 
+    // 添加按钮，opts: {text, x, y, w, h, r, g, b}
+    // 返回 Button，可 .on_click(func() { ... })
+    func addButton(Dict opts): Button {
+        Button b = btn.createButton(opts)
+        _buttons.add(b)
+        return b
+    }
+
     // 运行主循环（回调模式，支持多窗口）
     // 第一个 run() 启动循环，后续 run() 只注册回调，全部窗口关闭后退出
     func run(EventHandler onEvent, RenderCallback onRender) {
@@ -173,6 +185,7 @@ export struct Window {
         _runRens.add(ren)
         _runEvts.add(onEvent)
         _runRends.add(onRender)
+        _runBtns.add(_buttons)       // 关联按钮列表
 
         if _runRunning { return }
         _runRunning = true
@@ -203,12 +216,24 @@ export struct Window {
                             _runRens[i].destroy()
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
-                            _runWids.remove(i); _runHnds.remove(i)
-                            _runRens.remove(i); _runEvts.remove(i); _runRends.remove(i)
+                            _runWids.remove(i);  _runHnds.remove(i)
+                            _runRens.remove(i);  _runEvts.remove(i)
+                            _runRends.remove(i); _runBtns.remove(i)
                             break
                         }
                     }
                     i += 1
+                }
+                // 自动处理该窗口的按钮事件
+                var j = 0
+                while j < _runWids.len() {
+                    if _runWids[j] == wid {
+                        var btns = _runBtns[j]
+                        var k = 0
+                        while k < btns.len() { btns[k].process(ev); k += 1 }
+                        break
+                    }
+                    j += 1
                 }
             }
             if _runWids.len() == 0 {
@@ -219,6 +244,10 @@ export struct Window {
             var i = 0
             while i < _runWids.len() {
                 _runRends[i](_runRens[i])
+                // 自动渲染该窗口的按钮
+                var btns = _runBtns[i]
+                var k = 0
+                while k < btns.len() { btns[k].render(_runRens[i]); k += 1 }
                 _runRens[i].present()
                 i += 1
             }

@@ -1,0 +1,37 @@
+// test_button_v2.leno — Button 控件测试（两行创建按钮）
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Button
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "Button v2", w: 480, h: 360})
+    if not win.ok { return }
+
+    // 两行创建一个按钮
+    Button btn1 = win.addButton({text: "点击我", x: 50, y: 60, w: 160, h: 50})
+    btn1.on_click(func() { print("Button 1 clicked!") })
+
+    Button btn2 = win.addButton({text: "第二个", x: 50, y: 130, w: 160, h: 50,
+                                  rgb: [200, 60, 60]})
+    btn2.on_click(func() { print("Button 2 clicked!") })
+
+    Button btn3 = win.addButton({text: "退出", x: 50, y: 200, w: 160, h: 50,
+                                  rgb: [100, 100, 100]})
+    btn3.on_click(func() {
+        print("退出")
+        // 触发窗口关闭
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(25, 25, 45, 255)
+            r.drawText(SDL3.createFontAuto(24), "Button v2 — 两行代码创建", 50, 20, 255, 220, 80)
+        }
+    )
+}

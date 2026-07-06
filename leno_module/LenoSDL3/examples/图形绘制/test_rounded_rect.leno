@@ -1,4 +1,4 @@
-﻿// test_rounded_rect.leno — 测试圆角矩形 fillRoundedRect / drawRoundedRect
+// test_rounded_rect.leno — 测试圆角矩形 fillRoundedRect / drawRoundedRect
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer

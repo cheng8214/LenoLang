@@ -6,6 +6,8 @@ import "sdl_font.leno" as fnt
 import "sdl_event.leno" as evt
 import "sdl_timer.leno" as tm
 import "sdl_image.leno" as img
+import "sdl_button.leno" as btn
+
 
 // ==================== 重新导出类型 ====================
 // 用户可通过 use SDL3.xxx 导入
@@ -35,6 +37,7 @@ use fnt.Font
 use fnt.TextTexture
 use tm.Timer
 use tm.TimerCallback
+use btn.Button
 use wnd.EventHandler
 use wnd.RenderCallback
 import "sdl_dialog.leno" as dlg

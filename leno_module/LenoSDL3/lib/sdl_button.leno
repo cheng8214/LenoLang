@@ -1,0 +1,74 @@
+// sdl_button.leno — 按钮控件
+// 通过 win.addButton({...}) 创建，run() 自动处理交互和渲染
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+
+export struct Button {
+    string text
+    float x; float y; float w; float h
+    int cr; int cg; int cb      // 背景色
+    int tr; int tg; int tb      // 文字色
+    func():void _onClick        // 点击回调
+    bool hover
+    bool _loaded
+
+    func set(Dict opts) {
+        text = opts.get("text", "Button") as string
+        x    = _float(opts.get("x", 0))
+        y    = _float(opts.get("y", 0))
+        w    = _float(opts.get("w", 100))
+        h    = _float(opts.get("h", 40))
+        cr   = 60; cg = 140; cb = 220
+        tr   = 255; tg = 255; tb = 255
+        // 优先用 rgb: [r, g, b] 数组
+        var c = opts.get("rgb")
+        if c is Array { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
+        _loaded = true
+    }
+
+    func on_click(func():void callback) { _onClick = callback }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // 处理事件（run 内部调用）
+    func process(Event ev) {
+        if not _loaded { return }
+        if ev.isMouseMotion() {
+            hover = contains(ev.mouseX(), ev.mouseY())
+        }
+        if ev.isMouseButtonDown() and hover and _onClick != null {
+            _onClick()
+        }
+    }
+
+    // 渲染（run 内部调用）
+    func render(Renderer r) {
+        if not _loaded { return }
+        int br = cr; int bg = cg; int bb = cb
+        if hover { br = cr + 40; bg = cg + 40; bb = cb + 40 }
+        if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 }
+
+        // 阴影
+        r.setColor(0, 0, 0, 40)
+        r.fillRoundedRect(x + 2, y + 2, w, h, 6)
+        // 背景
+        r.setColor(br, bg, bb, 255)
+        r.fillRoundedRect(x, y, w, h, 6)
+        // 边框
+        if hover { r.setColor(255, 255, 255, 200) }
+        else      { r.setColor(br+30, bg+30, bb+30, 180) }
+        r.drawRoundedRect(x, y, w, h, 6)
+        // 文字
+        var f = fnt.createFontAuto(18.0)
+        r.drawTextCentered(f, text, x + w, y + h/2 - 10, tr, tg, tb)
+        f.close()
+    }
+}
+
+// 工厂
+export func createButton(Dict opts): Button {
+    Button btn = new Button(); btn.set(opts); return btn
+}
