@@ -1,4 +1,4 @@
-// sdl_edit.leno — 文本编辑控件
+// sdl_edit.leno — 文本编辑控件（单行/多行 + 滚动条）
 // 通过 win.addEdit({...}) 创建，run() 自动处理交互和渲染
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -13,21 +13,44 @@ export struct Edit {
     string _fontPath
     int _fontStyle
     Font  _font                  // 字体缓存
-    Ptr[u8] _hwnd                // 窗口句柄（供输入法定位）
+    Ptr[u8] _hwnd                // 窗口句柄（IME 定位）
     int cr, cg, cb               // 背景色
-    int tr, tg; int tb           // 文字色
-    int _cursorPos               // 光标字符位置
+    int tr, tg, tb               // 文字色
+
+    // 单行模式
+    int _cursorPos               // 光标字符位置（单行）
     float _scrollX               // 水平滚动偏移
+
+    // 多行模式
+    bool _multiline
+    Array[string] _lines         // 行缓存
+    int _cursorLine; int _cursorCol   // 多行光标
+    float _scrollY               // 垂直滚动偏移
+    float _lineHeight            // 行高缓存
+
     string _placeholder          // 占位文字
     bool _focused
-    int _blinkTime               // 上次闪烁切换的 tick
-    bool _showCursor             // 当前是否显示光标
-    bool _password               // 密码模式（显示 *）
+    bool _mouseDown              // 鼠标左键是否按下
+    bool _draggingVScroll        // 拖竖向滚动条
+    bool _draggingHScroll        // 拖横向滚动条
+    bool _hoverVScroll           // 鼠标悬停竖向滚动条
+    bool _hoverHScroll           // 鼠标悬停横向滚动条
+    int _blinkTime               // 光标闪烁 tick
+    bool _showCursor
+    bool _password               // 密码模式
     bool _readOnly               // 只读
     bool _loaded
-    func():void _onChange        // 文字改变回调
-    func():void _onEnter         // 回车回调
+    bool _dirty                  // 行缓存需重建
 
+    // 文本选取
+    int  _selStart               // 选区起始（-1 表示无选区）
+    int  _selEnd                 // 选区结束
+    bool _selActive              // 有活跃选区
+
+    func():void _onChange
+    func():void _onEnter
+
+    // ==================== 字体 ====================
     func _ensure_font() {
         if _font == null or not _font.ok {
             if _font != null { _font.close() }
@@ -37,10 +60,15 @@ export struct Edit {
                 _font = fnt.createFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            // 缓存行高
+            if _font.ok {
+                var ms = _font.measureString("Ag")
+                _lineHeight = _float(ms.h) + 2.0
+            }
         }
     }
 
-    // 计算到 cursorPos 位置的文字像素宽度
+    // 单行：测量到 pos 的宽度
     func _text_width_to(int pos): float {
         if _font == null or not _font.ok { return 0.0 }
         if pos <= 0 { return 0.0 }
@@ -55,22 +83,99 @@ export struct Edit {
         return _float(ms.w)
     }
 
-    // 更新滚动偏移，确保光标在可见区域
+    // 多行：测量某行到某列的宽度
+    func _line_width_to(int line, int col): float {
+        if _font == null or not _font.ok { return 0.0 }
+        _rebuild_lines()
+        if line < 0 { return 0.0 }
+        if line >= _lines.len() { return 0.0 }
+        var ln = _lines[line]
+        if col <= 0 { return 0.0 }
+        if col > ln.len() { col = ln.len() }
+        var sub = ln.slice(0, col)
+        if _password {
+            var stars = ""
+            for col to _ { stars = stars + "*" }
+            sub = stars
+        }
+        var ms = _font.measureString(sub)
+        return _float(ms.w)
+    }
+
+    // ==================== 行管理 ====================
+    func _rebuild_lines() {
+        if not _dirty { return }
+        _dirty = false
+
+        // 从 text 拆分行
+        _lines = []
+        if text == "" { return }
+        var start = 0
+        for :text.len() - 1 to i {
+            if text.slice(i, i + 1) == "\n" {
+                _lines.add(text.slice(start, i))
+                start = i + 1
+            }
+        }
+        if start < text.len() {
+            _lines.add(text.slice(start, text.len()))
+        }
+    }
+
+    // 总内容高度
+    func _content_height(): float {
+        _rebuild_lines()
+        if _lines.len() == 0 { return _lineHeight }
+        return _lineHeight * _float(_lines.len())
+    }
+
+    // ==================== 滚动 ====================
     func _adjust_scroll() {
-        float pad = 8.0      // 内边距
+        if _multiline {
+            _adjust_scroll_ml()
+        } else {
+            _adjust_scroll_sl()
+        }
+    }
+
+    func _adjust_scroll_sl() {
+        float pad = 8.0
         float visW = w - pad * 2.0
         if visW <= 0 { return }
         float curX = _text_width_to(_cursorPos)
-
-        // 光标超出右边界
-        if curX - _scrollX > visW {
-            _scrollX = curX - visW + 4.0
-        }
-        // 光标超出左边界
-        if curX - _scrollX < 0 {
-            _scrollX = curX - 4.0
-        }
+        if curX - _scrollX > visW { _scrollX = curX - visW + 4.0 }
+        if curX - _scrollX < 0 { _scrollX = curX - 4.0 }
         if _scrollX < 0 { _scrollX = 0 }
+    }
+
+    func _adjust_scroll_ml() {
+        float sbW = _sb_width()
+        float sbH = _sb_height()
+        float pad = 8.0
+        float visW = w - pad * 2.0 - sbW
+        float visH = h - pad * 2.0 - sbH
+        if visH <= 0 { return }
+
+        // 垂直滚动
+        float curY = _float(_cursorLine) * _lineHeight
+        if curY - _scrollY > visH - _lineHeight {
+            _scrollY = curY - visH + _lineHeight
+        }
+        if curY - _scrollY < 0 {
+            _scrollY = curY
+        }
+        if _scrollY < 0 { _scrollY = 0 }
+
+        // 水平滚动
+        float curX = _line_width_to(_cursorLine, _cursorCol)
+        if curX - _scrollX > visW { _scrollX = curX - visW + 4.0 }
+        if curX - _scrollX < 0 { _scrollX = curX - 4.0 }
+        if _scrollX < 0 { _scrollX = 0 }
+
+        // 限制最大滚动
+        float maxSY = _content_height() - visH
+        if _scrollY > maxSY { _scrollY = maxSY }
+        if maxSY < 0 { _scrollY = 0 }
     }
 
     // ==================== set 初始化 ====================
@@ -93,24 +198,33 @@ export struct Edit {
         var tc = opts.get("text_rgb")
         if tc is Array { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
 
-        // 占位文字
         _placeholder = opts.get("placeholder", "") as string
 
-        // 状态
+        // 模式
+        _multiline  = _bool(opts.get("multiline", false))
         _password   = _bool(opts.get("password", false))
         _readOnly   = _bool(opts.get("readonly", false))
+
+        // 状态
         _focused    = false
         _showCursor = true
         _blinkTime  = core.getTicks()
         _cursorPos  = text.len()
-        _scrollX    = 0.0
+        _cursorLine = 0; _cursorCol = 0
+        _scrollX    = 0.0; _scrollY  = 0.0
+        _lines      = []
+        _dirty      = true
+        _selStart   = -1; _selEnd = 0; _selActive = false
 
         _ensure_font()
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
-    func set_text(string t)      { text = t; _cursorPos = text.len(); _adjust_scroll() }
+    func set_text(string t) {
+        text = t; _cursorPos = text.len(); _cursorLine = 0; _cursorCol = 0
+        _dirty = true; _adjust_scroll()
+    }
     func set_pos(float px, float py)    { x = px; y = py }
     func set_size(float sw, float sh)   { w = sw; h = sh }
     func set_rgb(int r, int g, int b)   { cr = r; cg = g; cb = b }
@@ -121,12 +235,13 @@ export struct Edit {
     }
     func set_readonly(bool ro)  { _readOnly = ro }
     func set_password(bool pw)  { _password = pw }
+    func set_multiline(bool ml) { _multiline = ml; _dirty = true }
     func set_placeholder(string p) { _placeholder = p }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
     func focus()    { _focused = true }
     func blur()     { _focused = false }
 
-    // ==================== 查询方法 ====================
+    // ==================== 查询 ====================
     func is_focused(): bool { return _focused }
     func get_text(): string { return text }
 
@@ -139,28 +254,32 @@ export struct Edit {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
 
-    // 更新输入法候选框位置
     func _update_ime() {
         float pad = 8.0
-        float cx = x + pad + _text_width_to(_cursorPos) - _scrollX
+        float cx, cy
+        if _multiline {
+            _rebuild_lines()
+            cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
+            cy = y + pad + _float(_cursorLine) * _lineHeight - _scrollY
+        } else {
+            cx = x + pad + _text_width_to(_cursorPos) - _scrollX
+            cy = y + h
+        }
         var rect = core.SDL_Rect.malloc()
         rect.x = _int(x)
-        rect.y = _int(y + h)         // 候选框放在编辑框下方
+        rect.y = _int(y + h)
         rect.w = _int(w)
         rect.h = _int(h)
-        // cursor 参数：光标在 rect 内相对于 rect 左上角的 x 偏移
         core.setTextInputArea(_hwnd, rect.to_ptr(), _int(cx - x))
         rect.free()
     }
 
-    // 根据鼠标 x 坐标计算光标位置
+    // 单行：从 x 算光标位置
     func _pos_from_x(float mx): int {
         if _font == null or not _font.ok { return 0 }
         if text.len() == 0 { return 0 }
-        float relX = mx - x - 8.0 + _scrollX   // 相对文字起始的像素位置
+        float relX = mx - x - 8.0 + _scrollX
         if relX <= 0 { return 0 }
-
-        // 二分查找最接近的字符位置
         var lo = 0
         var hi = text.len()
         while lo < hi {
@@ -170,70 +289,369 @@ export struct Edit {
         return lo
     }
 
-    // 处理事件（run 内部调用）
+    // 多行：从 mx,my 算 (line, col)
+    func _pos_from_xy(float mx, float my) {
+        float pad = 8.0; float sbW = _sb_width()
+        float relX = mx - x - pad + _scrollX
+        float relY = my - y - pad + _scrollY
+        if relY < 0 { relY = 0 }
+        _rebuild_lines()
+
+        _cursorLine = _int(relY / _lineHeight)
+        if _cursorLine < 0 { _cursorLine = 0 }
+        if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+        if _cursorLine < 0 { _cursorLine = 0 }
+
+        if _lines.len() == 0 { _cursorCol = 0; return }
+        var ln = _lines[_cursorLine]
+        if relX <= 0 { _cursorCol = 0; return }
+        var lo = 0
+        var hi = ln.len()
+        while lo < hi {
+            var mid = (lo + hi + 1) / 2
+            if _line_width_to(_cursorLine, mid) <= relX { lo = mid } else { hi = mid - 1 }
+        }
+        _cursorCol = lo
+        _cursorPos = 0
+        for 0 : _cursorLine - 1 to i {
+            _cursorPos = _cursorPos + _lines[i].len() + 1
+        }
+        _cursorPos = _cursorPos + _cursorCol
+    }
+
+    // ==================== 滚动条尺寸 ====================
+    func _sb_width(): float {
+        if not _multiline { return 0.0 }
+        float contentH = _content_height()
+        float visH = h - 16.0
+        if contentH > visH { return 10.0 }
+        return 0.0
+    }
+
+    func _sb_height(): float {
+        if not _multiline { return 0.0 }
+        float maxW = _max_line_width()
+        float visW = w - 16.0
+        if maxW > visW { return 10.0 }
+        return 0.0
+    }
+
+    func _max_line_width(): float {
+        _rebuild_lines()
+        float maxW = 0.0
+        for _lines.len() to li {
+            var ms = _font.measureString(_lines[li])
+            if _float(ms.w) > maxW { maxW = _float(ms.w) }
+        }
+        return maxW
+    }
+
+    // ==================== 事件处理 ====================
     func process(Event ev) {
         if not _loaded { return }
 
-        // 鼠标点击
-        if ev.isMouseButtonDown() {
-            _focused = contains(ev.mouseX(), ev.mouseY())
-            if _focused {
-                _cursorPos = _pos_from_x(ev.mouseX())
-                _adjust_scroll()
-                _showCursor = true
-                _blinkTime = core.getTicks()
-                _update_ime()
+        // ---- 滚动条交互（多行模式）----
+        if _multiline {
+            float pad = 8.0
+            float sbW = _sb_width()
+            float sbH = _sb_height()
+            float visW = w - pad * 2.0 - sbW
+            float visH = h - pad * 2.0 - sbH
+            float contentH = _content_height()
+
+            // hover 检测
+            _hoverVScroll = false; _hoverHScroll = false
+            if sbW > 0.0 {
+                float vsbX = x + w - sbW - 4.0
+                if ev.mouseX() >= vsbX and ev.mouseX() <= vsbX + sbW
+                   and ev.mouseY() >= y + pad and ev.mouseY() <= y + pad + visH {
+                    _hoverVScroll = true
+                }
             }
+            if sbH > 0.0 {
+                float hsbY = y + h - sbH - 4.0
+                if ev.mouseY() >= hsbY and ev.mouseY() <= hsbY + sbH
+                   and ev.mouseX() >= x + pad and ev.mouseX() <= x + pad + visW {
+                    _hoverHScroll = true
+                }
+            }
+
+            // 竖向拖动 — 直接用鼠标位置映射滚动，不依赖状态
+            if sbW > 0.0 and ev.isMouseButtonDown() and _hoverVScroll and not _draggingHScroll {
+                _draggingVScroll = true; _mouseDown = false
+            }
+            if _draggingVScroll {
+                if ev.isMouseButtonUp() { _draggingVScroll = false }
+                else if ev.isMouseMotion() {
+                    float relY = ev.mouseY() - y - pad
+                    if relY < 0 { relY = 0 }
+                    if relY > visH { relY = visH }
+                    _scrollY = relY * contentH / visH - visH / 2.0
+                    if _scrollY < 0 { _scrollY = 0 }
+                    float maxSY = contentH - visH
+                    if maxSY < 0 { maxSY = 0 }
+                    if _scrollY > maxSY { _scrollY = maxSY }
+                }
+            }
+
+            // 横向拖动
+            if sbH > 0.0 and ev.isMouseButtonDown() and _hoverHScroll and not _draggingVScroll {
+                _draggingHScroll = true; _mouseDown = false
+                var maxLineW = _max_line_width()
+                maxLineW = maxLineW + 8.0
+                // 缓存 maxLineW
+            }
+            if _draggingHScroll {
+                if ev.isMouseButtonUp() { _draggingHScroll = false }
+                else if ev.isMouseMotion() {
+                    var maxLineW = _max_line_width() + 8.0
+                    float relX = ev.mouseX() - x - pad
+                    if relX < 0 { relX = 0 }
+                    if relX > visW { relX = visW }
+                    _scrollX = relX * maxLineW / visW - visW / 2.0
+                    if _scrollX < 0 { _scrollX = 0 }
+                    float maxSX = maxLineW - visW
+                    if maxSX < 0 { maxSX = 0 }
+                    if _scrollX > maxSX { _scrollX = maxSX }
+                }
+            }
+        }
+
+        // ---- 选区 + 聚焦 ----
+        if ev.isMouseButtonDown() {
+            if not _draggingVScroll and not _draggingHScroll {
+                _mouseDown = true
+                _focused = contains(ev.mouseX(), ev.mouseY())
+                if _focused {
+                    if _multiline {
+                        _pos_from_xy(ev.mouseX(), ev.mouseY())
+                    } else {
+                        _cursorPos = _pos_from_x(ev.mouseX())
+                    }
+                    _selStart = _cursorPos; _selEnd = _cursorPos; _selActive = false
+                    _adjust_scroll()
+                    _showCursor = true; _blinkTime = core.getTicks()
+                    _update_ime()
+                } else {
+                    _selActive = false; _selStart = -1
+                }
+            }
+        }
+
+        // 按住拖动扩展选区
+        if _mouseDown and ev.isMouseMotion() and _focused and not _draggingVScroll and not _draggingHScroll {
+            if ev.mouseX() >= x and ev.mouseX() <= x + w
+               and ev.mouseY() >= y and ev.mouseY() <= y + h {
+                var oldEnd = _selEnd
+                if _multiline {
+                    _pos_from_xy(ev.mouseX(), ev.mouseY())
+                } else {
+                    _cursorPos = _pos_from_x(ev.mouseX())
+                }
+                if _cursorPos != _selEnd {
+                    _selEnd = _cursorPos
+                    _selActive = true
+                    _adjust_scroll()
+                }
+            }
+        }
+
+        if ev.isMouseButtonUp() {
+            _mouseDown = false
+            if _selStart == _selEnd { _selActive = false; _selStart = -1 }
         }
 
         if not _focused { return }
         if _readOnly { return }
 
-        // 键盘处理
+        if _multiline {
+            _process_ml(ev)
+        } else {
+            _process_sl(ev)
+        }
+    }
+
+    // 清除选区
+    func _clear_sel() {
+        _selActive = false
+        _selStart = -1
+    }
+
+    // 获取选中的文本
+    func _sel_text(): string {
+        if not _selActive or _selStart < 0 { return "" }
+        var s = _selStart; var e = _selEnd
+        if s > e { var t = s; s = e; e = t }
+        if s < 0 { s = 0 }
+        if e > text.len() { e = text.len() }
+        if s >= e { return "" }
+        return text.slice(s, e)
+    }
+
+    // 删除选区并返回删除的起始位置
+    func _del_sel(): int {
+        if not _selActive or _selStart < 0 { return _cursorPos }
+        var s = _selStart; var e = _selEnd
+        if s > e { var t = s; s = e; e = t }
+        if s < 0 { s = 0 }
+        if e > text.len() { e = text.len() }
+        if s < e { text = text.slice(0, s) + text.slice(e, text.len()) }
+        _clear_sel()
+        return s
+    }
+
+    // ---- 单行事件处理 ----
+    func _process_sl(Event ev) {
         if ev.isKeyDown() {
             int sc = ev.scancode()
             bool changed = false
 
-            if sc == Scancode.BACKSPACE {
-                if _cursorPos > 0 {
-                    text = text.slice(0, _cursorPos - 1) + text.slice(_cursorPos, text.len())
-                    _cursorPos -= 1
+            // Ctrl 组合键
+            int mod = ev.keyMod()
+            bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+            if ctrl {
+                if sc == Scancode.A {
+                    _selStart = 0; _selEnd = text.len(); _selActive = true
+                    return
+                }
+                if sc == Scancode.C {
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(text) }
+                    return
+                }
+                if sc == Scancode.X {
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(text) }
+                    _cursorPos = _del_sel()
                     changed = true
+                }
+                if sc == Scancode.V {
+                    var paste = core.getClipboardText()
+                    if paste != "" {
+                        _cursorPos = _del_sel()
+                        text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
+                        _cursorPos += paste.len()
+                        changed = true
+                    }
                 }
             }
 
+            if sc == Scancode.BACKSPACE {
+                if _selActive and _selStart != _selEnd {
+                    _cursorPos = _del_sel(); changed = true
+                } else if _cursorPos > 0 {
+                    text = text.slice(0, _cursorPos - 1) + text.slice(_cursorPos, text.len())
+                    _cursorPos -= 1; changed = true
+                }
+            }
             if sc == Scancode.DELETE {
-                if _cursorPos < text.len() {
+                if _selActive and _selStart != _selEnd {
+                    _cursorPos = _del_sel(); changed = true
+                } else if _cursorPos < text.len() {
+                    text = text.slice(0, _cursorPos) + text.slice(_cursorPos + 1, text.len())
+                    changed = true
+                }
+            }
+            if sc == Scancode.LEFT  { if _cursorPos > 0 { _cursorPos -= 1; _clear_sel() } }
+            if sc == Scancode.RIGHT { if _cursorPos < text.len() { _cursorPos += 1; _clear_sel() } }
+            if sc == Scancode.HOME  { _cursorPos = 0; _clear_sel() }
+            if sc == Scancode.END   { _cursorPos = text.len(); _clear_sel() }
+            if sc == Scancode.RETURN {
+                if _onEnter != null { _onEnter() }
+            }
+
+            if changed { _on_text_changed() }
+        }
+
+        if ev.isTextInput() {
+            var ch = ev.text()
+            if ch != "" {
+                _cursorPos = _del_sel()
+                text = text.slice(0, _cursorPos) + ch + text.slice(_cursorPos, text.len())
+                _cursorPos += ch.len()
+                _on_text_changed()
+            }
+        }
+    }
+
+    // ---- 多行事件处理（直接在 text 上操作，避免缓存不同步）----
+    func _process_ml(Event ev) {
+        if ev.isKeyDown() {
+            int sc = ev.scancode()
+            bool moved = false; bool changed = false
+
+            // Ctrl 组合键
+            int mod = ev.keyMod()
+            bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+            if ctrl {
+                if sc == Scancode.A { _selStart = 0; _selEnd = text.len(); _selActive = true; return }
+                if sc == Scancode.C {
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(text) }
+                    return
+                }
+                if sc == Scancode.X {
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(text) }
+                    _cursorPos = _del_sel(); changed = true
+                }
+                if sc == Scancode.V {
+                    var paste = core.getClipboardText()
+                    if paste != "" {
+                        _cursorPos = _del_sel()
+                        text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
+                        _cursorPos += paste.len(); changed = true
+                    }
+                }
+            }
+
+            // 退格
+            if sc == Scancode.BACKSPACE {
+                if _selActive and _selStart != _selEnd {
+                    _cursorPos = _del_sel(); changed = true
+                } else if _cursorPos > 0 {
+                    text = text.slice(0, _cursorPos - 1) + text.slice(_cursorPos, text.len())
+                    _cursorPos -= 1; changed = true
+                }
+            }
+
+            // Delete
+            if sc == Scancode.DELETE {
+                if _selActive and _selStart != _selEnd {
+                    _cursorPos = _del_sel(); changed = true
+                } else if _cursorPos < text.len() {
                     text = text.slice(0, _cursorPos) + text.slice(_cursorPos + 1, text.len())
                     changed = true
                 }
             }
 
-            if sc == Scancode.LEFT {
-                if _cursorPos > 0 { _cursorPos -= 1 }
-            }
+            // 方向键
+            if sc == Scancode.LEFT   { if _cursorPos > 0 { _cursorPos -= 1; moved = true; _clear_sel() } }
+            if sc == Scancode.RIGHT  { if _cursorPos < text.len() { _cursorPos += 1; moved = true; _clear_sel() } }
+            if sc == Scancode.UP     { _move_up(); moved = true; _clear_sel() }
+            if sc == Scancode.DOWN   { _move_down(); moved = true; _clear_sel() }
+            if sc == Scancode.HOME   { _move_home(); moved = true; _clear_sel() }
+            if sc == Scancode.END    { _move_end(); moved = true; _clear_sel() }
 
-            if sc == Scancode.RIGHT {
-                if _cursorPos < text.len() { _cursorPos += 1 }
-            }
-
-            if sc == Scancode.HOME { _cursorPos = 0 }
-            if sc == Scancode.END  { _cursorPos = text.len() }
-
+            // 回车：插入 \n
             if sc == Scancode.RETURN {
-                if _onEnter != null { _onEnter() }
+                text = text.slice(0, _cursorPos) + "\n" + text.slice(_cursorPos, text.len())
+                _cursorPos += 1; changed = true
             }
 
             if changed {
+                _dirty = true
                 _adjust_scroll()
-                _showCursor = true
-                _blinkTime = core.getTicks()
+                _showCursor = true; _blinkTime = core.getTicks()
+                _update_ime()
                 if _onChange != null { _onChange() }
-            } else if sc == Scancode.LEFT or sc == Scancode.RIGHT or
-                      sc == Scancode.HOME or sc == Scancode.END {
+            } else if moved {
                 _adjust_scroll()
-                _showCursor = true
-                _blinkTime = core.getTicks()
+                _showCursor = true; _blinkTime = core.getTicks()
                 _update_ime()
             }
         }
@@ -241,15 +659,96 @@ export struct Edit {
         // 文本输入
         if ev.isTextInput() {
             var ch = ev.text()
-            if ch != "" and _cursorPos <= text.len() {
+            if ch != "" {
+                _cursorPos = _del_sel()
                 text = text.slice(0, _cursorPos) + ch + text.slice(_cursorPos, text.len())
                 _cursorPos += ch.len()
+                _dirty = true
                 _adjust_scroll()
-                _showCursor = true
-                _blinkTime = core.getTicks()
+                _showCursor = true; _blinkTime = core.getTicks()
+                _update_ime()
                 if _onChange != null { _onChange() }
             }
         }
+    }
+
+    // ---- 多行方向键辅助（基于 _cursorPos）----
+    func _move_up() {
+        _sync_line_col()
+        if _cursorLine > 0 {
+            _cursorLine -= 1
+            _rebuild_lines()
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        }
+    }
+
+    func _move_down() {
+        _sync_line_col()
+        _rebuild_lines()
+        if _cursorLine < _lines.len() - 1 {
+            _cursorLine += 1
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        }
+    }
+
+    func _move_home() {
+        _sync_line_col()
+        _cursorCol = 0
+        _cursorPos = _col_to_pos(_cursorLine, 0)
+    }
+
+    func _move_end() {
+        _sync_line_col()
+        _rebuild_lines()
+        _cursorCol = _lines[_cursorLine].len()
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+    }
+
+    // 从 _cursorPos 同步 _cursorLine / _cursorCol
+    func _sync_line_col() {
+        _rebuild_lines()
+        var pos = 0
+        _cursorLine = 0; _cursorCol = 0
+        for _lines.len() to li {
+            var len = _lines[li].len() + 1   // +1 for \n
+            if _cursorPos < pos + len {
+                _cursorLine = li
+                _cursorCol = _cursorPos - pos
+                if _cursorCol > _lines[li].len() { _cursorCol = _lines[li].len() }
+                return
+            }
+            pos = pos + len
+        }
+        // 光标在末尾
+        if _lines.len() > 0 {
+            _cursorLine = _lines.len() - 1
+            _cursorCol = _lines[_cursorLine].len()
+        }
+    }
+
+    // 根据 line/col 计算 _cursorPos
+    func _col_to_pos(int line, int col): int {
+        var pos = 0
+        for 0 : line - 1 to i {
+            if i < _lines.len() { pos = pos + _lines[i].len() + 1 }
+        }
+        if line < _lines.len() {
+            var c = col
+            if c > _lines[line].len() { c = _lines[line].len() }
+            pos = pos + c
+        }
+        return pos
+    }
+
+    // 数组中指定位置插入元素
+    func _on_text_changed() {
+        _adjust_scroll()
+        _showCursor = true
+        _blinkTime = core.getTicks()
+        _update_ime()
+        if _onChange != null { _onChange() }
     }
 
     // ==================== 渲染 ====================
@@ -258,7 +757,7 @@ export struct Edit {
         _ensure_font()
         if _font == null or not _font.ok { return }
 
-        // 光标闪烁（500ms 周期）
+        // 光标闪烁
         var now = core.getTicks()
         if now - _blinkTime >= 500 {
             _showCursor = not _showCursor
@@ -270,24 +769,27 @@ export struct Edit {
         r.fillRoundedRect(x, y, w, h, _radius)
 
         // 边框
-        if _focused {
-            r.setColor(100, 180, 255, 255)
-        } else {
-            r.setColor(cr + 40, cg + 40, cb + 40, 220)
-        }
+        if _focused { r.setColor(100, 180, 255, 255) }
+        else         { r.setColor(cr + 40, cg + 40, cb + 40, 220) }
         r.drawRoundedRect(x, y, w, h, _radius)
 
-        // 文字内容或占位文字（裁剪区域防止溢出）
+        if _multiline {
+            _render_ml(r)
+        } else {
+            _render_sl(r)
+        }
+    }
+
+    // ---- 单行渲染 ----
+    func _render_sl(Renderer r) {
         float pad = 8.0
+        // 裁剪
         var clip = core.SDL_Rect.malloc()
-        clip.x = _int(x + pad)
-        clip.y = _int(y)
-        clip.w = _int(w - pad * 2.0)
-        clip.h = _int(h)
+        clip.x = _int(x + pad); clip.y = _int(y)
+        clip.w = _int(w - pad * 2.0); clip.h = _int(h)
         r.setClipRect(clip.to_ptr())
 
         if text == "" and not _focused and _placeholder != "" {
-            // 占位文字
             var ms = _font.measureString(_placeholder)
             float py = y + (h - _float(ms.h)) / 2.0
             r.drawText(_font, _placeholder, x + pad, py,
@@ -304,8 +806,7 @@ export struct Edit {
             r.drawText(_font, display, x + pad - _scrollX, ty, tr, tg, tb)
         }
 
-        r.clearClip()
-        clip.free()
+        r.clearClip(); clip.free()
 
         // 光标
         if _focused and _showCursor {
@@ -319,7 +820,154 @@ export struct Edit {
         }
     }
 
-    // 释放资源
+    // ---- 多行渲染 ----
+    func _render_ml(Renderer r) {
+        _rebuild_lines()
+        float pad = 8.0
+        float sbW = _sb_width()
+        float sbH = _sb_height()
+        float visW = w - pad * 2.0 - sbW
+        float visH = h - pad * 2.0 - sbH
+
+        // 裁剪区域
+        var clip = core.SDL_Rect.malloc()
+        clip.x = _int(x + pad); clip.y = _int(y + pad)
+        clip.w = _int(visW); clip.h = _int(visH)
+        r.setClipRect(clip.to_ptr())
+
+        // ---- 选区高亮 ----
+        if _selActive and _selStart >= 0 and _selStart != _selEnd {
+            var ss = _selStart; var se = _selEnd
+            if ss > se { var t = ss; ss = se; se = t }
+            _sync_line_col()   // 确保_selStart位置映射到行列
+            for _lines.len() to li {
+                var lineLen = _lines[li].len()
+                // 计算该行的选区范围
+                var lineStart = 0
+                for 0 : li - 1 to pi { lineStart = lineStart + _lines[pi].len() + 1 }
+                var lineEnd = lineStart + lineLen
+                var selS = ss; var selE = se
+                if selS > lineEnd { continue }
+                if selE < lineStart { break }
+                if selS < lineStart { selS = lineStart }
+                if selE > lineEnd { selE = lineEnd }
+                if selS >= selE { continue }
+
+                // 计算选区像素范围
+                var colS = selS - lineStart
+                var colE = selE - lineStart
+                var ms1 = _font.measureString(_lines[li].slice(0, colS))
+                var ms2 = _font.measureString(_lines[li].slice(0, colE))
+                float sx = x + pad + _float(ms1.w) - _scrollX
+                float ew = _float(ms2.w) - _float(ms1.w)
+                float sy = y + pad + _float(li) * _lineHeight - _scrollY
+                if ew < 0 { ew = 0 }
+
+                r.setColor(60, 100, 180, 180)
+                r.fillRect(sx, sy, ew, _lineHeight)
+            }
+        }
+
+        // 占位文字
+        if text == "" and not _focused and _placeholder != "" {
+            r.drawText(_font, _placeholder, x + pad, y + pad, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+        } else if _lines.len() > 0 {
+            // 计算可见行范围
+            var firstLine = _int(_scrollY / _lineHeight)
+            var lastLine = firstLine + _int(visH / _lineHeight) + 1
+            if lastLine > _lines.len() - 1 { lastLine = _lines.len() - 1 }
+            if firstLine < 0 { firstLine = 0 }
+
+            for firstLine : lastLine to li {
+                var display = _lines[li]
+                if _password {
+                    var pw = ""
+                    for display.len() to _ { pw = pw + "*" }
+                    display = pw
+                }
+                float ly = y + pad + _float(li) * _lineHeight - _scrollY
+                r.drawText(_font, display, x + pad - _scrollX, ly, tr, tg, tb)
+            }
+        }
+
+        // 光标（在裁剪区域内，先同步行列）
+        _sync_line_col()
+        if _focused and _showCursor and _lines.len() > 0 {
+            float curLine = _float(_cursorLine)
+            if curLine >= _float(_lines.len()) { curLine = _float(_lines.len() - 1) }
+            float cy = y + pad + curLine * _lineHeight - _scrollY
+            if cy >= y + pad and cy + _lineHeight <= y + pad + visH {
+                var ms = _font.measureString("Ag")
+                float ch = _float(ms.h)
+                float cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
+                r.setColor(220, 220, 240, 200)
+                r.drawLine(cx, cy, cx, cy + ch)
+            }
+        }
+
+        r.clearClip(); clip.free()
+
+        // ---- 竖向滚动条 ----
+        if sbW > 0.0 {
+            float sbX = x + w - sbW - 4.0
+            float contentH = _content_height()
+
+            r.setColor(50, 50, 60, 180)
+            r.fillRect(sbX, y + pad, sbW, visH)
+
+            float thumbH = visH * visH / contentH
+            if thumbH < 20 { thumbH = 20 }
+            float maxSY = contentH - visH
+            float thumbY = y + pad
+            if maxSY > 0 { thumbY = y + pad + _scrollY * visH / contentH }
+            if thumbY + thumbH > y + pad + visH { thumbY = y + pad + visH - thumbH }
+
+            if _hoverVScroll or _draggingVScroll {
+                r.setColor(160, 160, 180, 240)
+            } else {
+                r.setColor(120, 120, 140, 220)
+            }
+            r.fillRect(sbX, thumbY, sbW, thumbH)
+        }
+
+        // ---- 横向滚动条 ----
+        if sbH > 0.0 {
+            float sbY = y + h - sbH - 4.0
+            float maxLineW = 0.0
+            for _lines.len() to li {
+                var ms = _font.measureString(_lines[li])
+                if _float(ms.w) > maxLineW { maxLineW = _float(ms.w) }
+            }
+            maxLineW = maxLineW + 8.0
+
+            r.setColor(50, 50, 60, 180)
+            r.fillRect(x + pad, sbY, visW, sbH)
+
+            float thumbW = visW * visW / maxLineW
+            if thumbW < 20 { thumbW = 20 }
+            float maxSX = maxLineW - visW
+            if maxSX < 0 { maxSX = 0 }
+            float thumbX = x + pad
+            if maxSX > 0 { thumbX = x + pad + _scrollX * visW / maxLineW }
+            if thumbX + thumbW > x + pad + visW { thumbX = x + pad + visW - thumbW }
+
+            if _hoverHScroll or _draggingHScroll {
+                r.setColor(160, 160, 180, 240)
+            } else {
+                r.setColor(120, 120, 140, 220)
+            }
+            r.fillRect(thumbX, sbY, thumbW, sbH)
+        }
+
+        // ---- 滚动条交叉角落 ----
+        if sbW > 0.0 and sbH > 0.0 {
+            float cornerX = x + w - sbW - 4.0
+            float cornerY = y + h - sbH - 4.0
+            r.setColor(40, 40, 50, 200)
+            r.fillRect(cornerX, cornerY, sbW, sbH)
+        }
+    }
+
     func dispose() {
         if _font != null { _font.close(); _font = null }
     }

@@ -1,0 +1,50 @@
+// test_edit_ml.leno — 多行编辑 + 滚动条测试
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Edit
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "Edit 多行测试", w: 600, h: 450})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    var lastMsg = ""
+    var lineInfo = ""
+
+    // 多行编辑框
+    Edit ed = win.addEdit({text: "", x: 20, y: 60, w: 560, h: 280,
+                            multiline: true, placeholder: "在这里输入多行文字...\n支持 Up/Down 箭头\n文字超出自动出现滚动条"})
+    ed.on_change(func() {
+        lastMsg = "长度: " + ed.get_text().len()
+        print(lastMsg)
+    })
+
+    // 单行编辑框（对比）
+    Edit edSL = win.addEdit({text: "单行对比", x: 20, y: 380, w: 250, h: 36,
+                              placeholder: "单行输入框"})
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(25, 25, 45, 255)
+
+            r.drawText(font, "多行 Edit + 滚动条", 20, 12, 255, 220, 80)
+            r.drawText(font, "多行:", 20, 28, 150, 150, 180)
+            r.drawText(font, "单行:", 20, 348, 150, 150, 180)
+
+            r.drawText(font, "状态: " + lastMsg, 300, 345, 150, 150, 170)
+            r.drawText(font, "ESC 退出", 300, 370, 120, 120, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
