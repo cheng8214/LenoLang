@@ -141,7 +141,8 @@
                                 method_names[m] = ast->u.struct_def.methods[m]->u.func.name;
                             }
                         }
-                        transform_method_body(method_ast->u.func.body, ast->u.struct_def.field_names, ast->u.struct_def.field_count, method_names, method_count, ast->u.struct_def.name);
+                        transform_method_body(method_ast->u.func.body, ast->u.struct_def.field_names, ast->u.struct_def.field_count, method_names, method_count, ast->u.struct_def.name,
+                            method_ast->u.func.params, method_ast->u.func.pcnt);
                         if (method_names) free(method_names);
 
                         // 2. 添加隐式 self 参数作为第一个参数

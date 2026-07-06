@@ -1484,34 +1484,38 @@ Ast* parse_struct_stmt(Parser* p) {
             continue;
         }
 
-        // 期望字段名
+        // 期望字段名（支持逗号分隔多字段：int a, b, c）
         if (p->lex.current.type != TOK_IDENT) {
             error_add(ERR_SYNTAX, p->lex.current.line, "期望字段名");
             type_free(field_type);
             break;
         }
 
-        char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
-        lexer_next(&p->lex);
+        do {
+            char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
 
-        // 扩容检查
-        if (field_count >= field_capacity) {
-            field_capacity *= 2;
-            field_names = (char**)realloc(field_names, sizeof(char*) * field_capacity);
-            field_types = (TypeInfo**)realloc(field_types, sizeof(TypeInfo*) * field_capacity);
-            field_defaults = (Ast**)realloc(field_defaults, sizeof(Ast*) * field_capacity);
-            memset(&field_defaults[field_count], 0, sizeof(Ast*) * (field_capacity - field_count));
-        }
+            // 扩容检查
+            if (field_count >= field_capacity) {
+                field_capacity *= 2;
+                field_names = (char**)realloc(field_names, sizeof(char*) * field_capacity);
+                field_types = (TypeInfo**)realloc(field_types, sizeof(TypeInfo*) * field_capacity);
+                field_defaults = (Ast**)realloc(field_defaults, sizeof(Ast*) * field_capacity);
+                memset(&field_defaults[field_count], 0, sizeof(Ast*) * (field_capacity - field_count));
+            }
 
-        field_names[field_count] = field_name;
-        field_types[field_count] = field_type;
+            field_names[field_count] = field_name;
+            field_types[field_count] = type_copy(field_type);
 
-        // 解析可选的默认值: 类型 名 = 默认值
-        if (match(p, TOK_EQ)) {
-            field_defaults[field_count] = parse_expression(p);
-        }
+            // 解析可选的默认值: 类型 名 = 默认值
+            if (match(p, TOK_EQ)) {
+                field_defaults[field_count] = parse_expression(p);
+            }
 
-        field_count++;
+            field_count++;
+        } while (match(p, TOK_COMMA));
+
+        type_free(field_type);
 
         // 可选的分号
         if (p->lex.current.type == TOK_SEMI) {

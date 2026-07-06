@@ -1,14 +1,36 @@
-// 复现2：struct 字段 int cb 与参数 func():void cb 同名
-// 编译器误把字段 int 当参数类型，报"期望 func():void，实际 int"
+// 修复验证：struct 方法参数与字段同名时，参数优先遮蔽字段
 
+// 1. 不同类型：参数遮蔽字段（核心 bug 场景）
 struct Button {
-    int cb          // 背景蓝色
+    int cb          // 字段：int 类型
 
-    func on_click(func():void cb) {  // ❌ cb 与字段同名
-        // 编译器提示：期望 func():void，实际 int
+    func on_click(func():void cb) {  // 参数：func():void 类型，遮蔽字段 cb
+        cb()  // 应调用参数 cb，而非访问 self["cb"]
+    }
+
+    func set_cb(int val) {
+        cb = val  // 这里 cb 指字段，赋值给 self.cb
     }
 }
 
-main() {
-    print("start")
+func hello() { print("clicked!") }
+
+Button btn = new Button(cb = 0)
+btn.on_click(hello)  // 应输出 clicked!
+btn.set_cb(42)
+print("btn.cb = " + btn.cb)  // 应输出 42
+
+// 2. 同类型：参数遮蔽字段（应正常工作）
+struct S {
+    int x
+
+    func test(int x) {
+        print("param x = " + x)   // 参数 x
+        print("field x = " + self.x)  // 字段 x（通过 self 访问）
+    }
 }
+
+S s = new S(x = 10)
+s.test(20)  // 应输出 param x = 20, field x = 10
+
+print("=== PASS ===")

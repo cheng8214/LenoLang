@@ -20,8 +20,10 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
 
 // 将方法体中对字段名和方法名的访问转换为 self.字段名 / StructName::method(self, args)
 // 这是实现 struct 方法的核心：方法体内可以直接写字段名访问字段，直接写方法名调用同 struct 方法
-void transform_method_body(Ast* ast, char** field_names, int field_count, char** method_names, int method_count, const char* struct_name) {
-    transform_method_body_ex(ast, field_names, field_count, method_names, method_count, struct_name, NULL, 0);
+// param_names/param_count: 方法参数名列表，参数与字段同名时参数优先（遮蔽字段）
+void transform_method_body(Ast* ast, char** field_names, int field_count, char** method_names, int method_count, const char* struct_name,
+    char** param_names, int param_count) {
+    transform_method_body_ex(ast, field_names, field_count, method_names, method_count, struct_name, param_names, param_count);
 }
 
 static void transform_method_body_ex(Ast* ast, char** field_names, int field_count,
@@ -128,7 +130,8 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
         case AST_CALL: {
             // 检查 callee 是否是同 struct 的方法名调用
             int is_struct_method_call = 0;
-            if (ast->u.call.callee->kind == AST_VAR && struct_name) {
+            if (ast->u.call.callee->kind == AST_VAR && struct_name &&
+                !is_shadowed(ast->u.call.callee->u.var.name, shadowed_names, shadowed_count)) {
                 const char* callee_name = ast->u.call.callee->u.var.name;
                 for (int i = 0; i < method_count; i++) {
                     if (strcmp(callee_name, method_names[i]) == 0) {
@@ -217,18 +220,25 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             break;
         }
         case AST_BLOCK: {
-            // 收集块内所有 var_decl 的变量名作为遮蔽集合
-            char* local_shadows[64];
-            int local_shadow_count = 0;
+            // 收集块内所有 var_decl 的变量名，与传入的遮蔽集合合并
+            char* merged_shadows[128];
+            int merged_shadow_count = 0;
+            // 先加入传入的遮蔽名（参数名等）
+            for (int i = 0; i < shadowed_count && merged_shadow_count < 128; i++) {
+                if (shadowed_names[i]) {
+                    merged_shadows[merged_shadow_count++] = shadowed_names[i];
+                }
+            }
+            // 再加入块内 var_decl 的变量名
             for (int i = 0; i < ast->u.block.count; i++) {
                 Ast* item = ast->u.block.items[i];
                 if (item && item->kind == AST_VAR_DECL && item->u.var_decl.name) {
-                    if (local_shadow_count < 64) {
-                        local_shadows[local_shadow_count++] = item->u.var_decl.name;
+                    if (merged_shadow_count < 128) {
+                        merged_shadows[merged_shadow_count++] = item->u.var_decl.name;
                     }
                 }
             }
-            // 先用合并后的遮蔽集合处理块内语句
+            // 用合并后的遮蔽集合处理块内语句
             for (int i = 0; i < ast->u.block.count; i++) {
                 // 对 var_decl 的 init 部分不传入自身名（防止 init 引用自身时被遮蔽）
                 if (ast->u.block.items[i]->kind == AST_VAR_DECL) {
@@ -238,7 +248,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 } else {
                     transform_method_body_ex(ast->u.block.items[i],
                         field_names, field_count, method_names, method_count, struct_name,
-                        local_shadows, local_shadow_count);
+                        merged_shadows, merged_shadow_count);
                 }
             }
             break;
@@ -255,19 +265,23 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
         case AST_MODULE_CALL: {
             // 检查 module_name 是否是字段名（如 scores.len() 中的 scores）
             int is_field = 0;
-            for (int i = 0; i < field_count; i++) {
-                if (strcmp(ast->u.module_call.module_name, field_names[i]) == 0) {
-                    is_field = 1;
-                    break;
+            if (!is_shadowed(ast->u.module_call.module_name, shadowed_names, shadowed_count)) {
+                for (int i = 0; i < field_count; i++) {
+                    if (strcmp(ast->u.module_call.module_name, field_names[i]) == 0) {
+                        is_field = 1;
+                        break;
+                    }
                 }
             }
-            
+
             // 检查是否是同 struct 的方法调用
             int is_method = 0;
-            for (int i = 0; i < method_count; i++) {
-                if (strcmp(ast->u.module_call.method_name, method_names[i]) == 0) {
-                    is_method = 1;
-                    break;
+            if (!is_shadowed(ast->u.module_call.method_name, shadowed_names, shadowed_count)) {
+                for (int i = 0; i < method_count; i++) {
+                    if (strcmp(ast->u.module_call.method_name, method_names[i]) == 0) {
+                        is_method = 1;
+                        break;
+                    }
                 }
             }
             
@@ -379,6 +393,8 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             break;
         }
         case AST_COMPOUND_ASSIGN: {
+            // 如果被参数/局部变量遮蔽，跳过字段转换
+            if (!is_shadowed(ast->u.compound_assign.name, shadowed_names, shadowed_count)) {
             // 检查是否是字段名的复合赋值
             for (int j = 0; j < field_count; j++) {
                 if (strcmp(ast->u.compound_assign.name, field_names[j]) == 0) {
@@ -393,6 +409,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                     break;
                 }
             }
+            } // end shadowed check
             transform_method_body_ex(ast->u.compound_assign.value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
             break;
         }
@@ -440,6 +457,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             break;
         case AST_MODULE_ACCESS: {
             // 检查 module_name 是否是字段名（如 head.next 中的 head）
+            if (!is_shadowed(ast->u.module_access.module_name, shadowed_names, shadowed_count)) {
             for (int i = 0; i < field_count; i++) {
                 if (strcmp(ast->u.module_access.module_name, field_names[i]) == 0) {
                     // 将 module_access 转换为 index: self["field"].member
@@ -478,6 +496,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                     break;
                 }
             }
+            } // end shadowed check
             break;
         }
         case AST_FUNC_DEF:
