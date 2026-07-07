@@ -591,7 +591,6 @@ export struct Edit {
         if _lines.len() == 0 or _cursorLine >= _lines.len() { return }
         var ln = _lines[_cursorLine]
         if ln.len() == 0 { return }
-        // 找词边界
         var s = _cursorCol; var e = _cursorCol
         while s > 0 and _is_word_char(ln.slice(s - 1, s)) { s -= 1 }
         while e < ln.len() and _is_word_char(ln.slice(e, e + 1)) { e += 1 }
@@ -1091,37 +1090,7 @@ export struct Edit {
         if lastLineV > _lines.len() { lastLineV = _lines.len() }
         if firstLine < 0 { firstLine = 0 }
 
-        // ---- 选区高亮（只遍历可见行）----
-        if _selActive and _selStart >= 0 and _selStart != _selEnd and _lines.len() > 0 {
-            var ss = _selStart; var se = _selEnd
-            if ss > se { var t = ss; ss = se; se = t }
-            for firstLine : lastLineV - 1 to li {
-                if li >= _lines.len() { break }
-                var lineLen = _lines[li].len()
-                var lineStart = _line_pos(li)
-                var lineEnd = lineStart + lineLen
-                var selS = ss; var selE = se
-                if selS > lineEnd { continue }
-                if selE < lineStart { continue }
-                if selS < lineStart { selS = lineStart }
-                if selE > lineEnd { selE = lineEnd }
-                if selS >= selE { continue }
-
-                var colS = selS - lineStart
-                var colE = selE - lineStart
-                var ms1 = _font.measureString(_lines[li].slice(0, colS))
-                var ms2 = _font.measureString(_lines[li].slice(0, colE))
-                float sx = x + pad + _float(ms1.w) - _scrollX
-                float ew = _float(ms2.w) - _float(ms1.w)
-                float sy = y + pad + _float(li) * _lineHeight - _scrollY
-                if ew < 0 { ew = 0 }
-
-                r.setColor(60, 100, 180, 180)
-                r.fillRect(sx, sy, ew, _lineHeight)
-            }
-        }
-
-        // 占位文字 / 内容
+        // 占位文字 / 内容（先画文字）
         if _lines.len() == 0 and not _focused and _placeholder != "" {
             var phLines = _placeholder.split("\n")
             for phLines.len() to pl {
@@ -1168,6 +1137,34 @@ export struct Edit {
                 float cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
                 r.setColor(220, 220, 240, 200)
                 r.drawLine(cx, cy, cx, cy + ch)
+            }
+        }
+
+        // ---- 选区高亮（画在文字上面）----
+        if _selActive and _selStart >= 0 and _selStart != _selEnd and _lines.len() > 0 {
+            var ss = _selStart; var se = _selEnd
+            if ss > se { var t = ss; ss = se; se = t }
+            for firstLine : lastLineV - 1 to li {
+                if li >= _lines.len() { break }
+                var lineLen = _lines[li].len()
+                var lineStart = _line_pos(li)
+                var lineEnd = lineStart + lineLen
+                var selS = ss; var selE = se
+                if selS > lineEnd { continue }
+                if selE < lineStart { continue }
+                if selS < lineStart { selS = lineStart }
+                if selE > lineEnd { selE = lineEnd }
+                if selS >= selE { continue }
+                var colS = selS - lineStart
+                var colE = selE - lineStart
+                var ms1 = _font.measureString(_lines[li].slice(0, colS))
+                var ms2 = _font.measureString(_lines[li].slice(0, colE))
+                float sx = x + pad + _float(ms1.w) - _scrollX
+                float ew = _float(ms2.w) - _float(ms1.w)
+                float sy = y + pad + _float(li) * _lineHeight - _scrollY
+                if ew < 0 { ew = 0 }
+                r.setColor(60, 100, 180, 180)
+                r.fillRect(sx, sy, ew, _lineHeight)
             }
         }
 
