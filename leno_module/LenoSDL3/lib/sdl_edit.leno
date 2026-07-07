@@ -267,9 +267,11 @@ export struct Edit {
         _undoStack.remove(_undoStack.len() - 1)
         _textDirty = true; _dirty = true; _cachedLen = -1; _cachedMaxW = -1
         _clear_sel()
-        if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
-        if _cursorLine < 0 { _cursorLine = 0 }
-        if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        if _lines.len() > 0 {
+            if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+            if _cursorLine < 0 { _cursorLine = 0 }
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        } else { _cursorLine = 0; _cursorCol = 0 }
         _adjust_scroll()
     }
 
@@ -281,9 +283,11 @@ export struct Edit {
         _redoStack.remove(_redoStack.len() - 1)
         _textDirty = true; _dirty = true; _cachedLen = -1; _cachedMaxW = -1
         _clear_sel()
-        if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
-        if _cursorLine < 0 { _cursorLine = 0 }
-        if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        if _lines.len() > 0 {
+            if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+            if _cursorLine < 0 { _cursorLine = 0 }
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        } else { _cursorLine = 0; _cursorCol = 0 }
         _adjust_scroll()
     }
 
@@ -510,9 +514,10 @@ export struct Edit {
                 // 双击检测（400ms 内，位置接近）
                 var now = core.getTicks()
                 if now - _lastClickTime < 400
-                   and ev.mouseX() - _lastClickX < 10 and ev.mouseX() - _lastClickX > -10
-                   and ev.mouseY() - _lastClickY < 10 and ev.mouseY() - _lastClickY > -10 {
-                    _save_undo()
+                   and ev.mouseX() >= _lastClickX - 10 and ev.mouseX() <= _lastClickX + 10
+                   and ev.mouseY() >= _lastClickY - 10 and ev.mouseY() <= _lastClickY + 10 {
+                    if _multiline { _pos_from_xy(ev.mouseX(), ev.mouseY()) }
+                    else { _cursorPos = _pos_from_x(ev.mouseX()) }
                     _select_word()
                     _lastClickTime = 0
                 } else {
