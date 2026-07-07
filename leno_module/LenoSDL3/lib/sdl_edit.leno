@@ -253,14 +253,7 @@ export struct Edit {
     // ==================== 查询 ====================
     func is_focused(): bool { return _focused }
     func get_text_length(): int {
-        if _textDirty {
-            _rebuild_lines()
-            var len = 0
-            for _lines.len() to li { len = len + _lines[li].len() }
-            if _lines.len() > 1 { len = len + _lines.len() - 1 }
-            _cachedLen = len
-            _textDirty = false
-        } else if _cachedLen < 0 {
+        if _cachedLen < 0 {
             _rebuild_lines()
             var len = 0
             for _lines.len() to li { len = len + _lines[li].len() }
@@ -374,8 +367,14 @@ export struct Edit {
 
     func _max_line_width(): float {
         _rebuild_lines()
-        if _textDirty { _cachedMaxW = -1.0 }
-        if _cachedMaxW >= 0.0 { return _cachedMaxW }
+        if _cachedMaxW >= 0.0 {
+            // 增量：只检查当前行是否超过缓存
+            if _cursorLine >= 0 and _cursorLine < _lines.len() {
+                var ms = _font.measureString(_lines[_cursorLine])
+                if _float(ms.w) > _cachedMaxW { _cachedMaxW = _float(ms.w) }
+            }
+            return _cachedMaxW
+        }
         float maxW = 0.0
         for _lines.len() to li {
             var ms = _font.measureString(_lines[li])
@@ -659,7 +658,7 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(t) }
-                    _del_sel_lines(); changed = true
+                    _del_sel_lines(); _cachedLen = -1; changed = true
                 }
                 if sc == Scancode.V {
                     var paste = core.getClipboardText()
@@ -679,7 +678,7 @@ export struct Edit {
                         _lines[li] = _lines[li] + right
                         _cursorLine = li
                         _cursorCol = (plines[plines.len() - 1] as string).len()
-                        changed = true
+                        _cachedLen = -1; changed = true
                     }
                 }
             }
@@ -687,31 +686,31 @@ export struct Edit {
             // 退格
             if sc == Scancode.BACKSPACE {
                 if _selActive and _selStart != _selEnd {
-                    _del_sel_lines(); changed = true
+                    _del_sel_lines(); _cachedLen = -1; changed = true
                 } else if _cursorCol > 0 {
                     var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol - 1) + ln.slice(_cursorCol, ln.len())
-                    _cursorCol -= 1; changed = true
+                    _cursorCol -= 1; _cachedLen -= 1; changed = true
                 } else if _cursorLine > 0 {
                     _cursorCol = _lines[_cursorLine - 1].len()
                     _lines[_cursorLine - 1] = _lines[_cursorLine - 1] + _lines[_cursorLine]
                     _lines.remove(_cursorLine)
-                    _cursorLine -= 1; changed = true
+                    _cursorLine -= 1; _cachedLen -= 1; changed = true
                 }
             }
 
             // Delete
             if sc == Scancode.DELETE {
                 if _selActive and _selStart != _selEnd {
-                    _del_sel_lines(); changed = true
+                    _del_sel_lines(); _cachedLen = -1; changed = true
                 } else if _cursorCol < _lines[_cursorLine].len() {
                     var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol) + ln.slice(_cursorCol + 1, ln.len())
-                    changed = true
+                    _cachedLen -= 1; changed = true
                 } else if _cursorLine < _lines.len() - 1 {
                     _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
                     _lines.remove(_cursorLine + 1)
-                    changed = true
+                    _cachedLen -= 1; changed = true
                 }
             }
 
@@ -735,7 +734,7 @@ export struct Edit {
                 var rest = ln.slice(_cursorCol, ln.len())
                 _lines[_cursorLine] = ln.slice(0, _cursorCol)
                 _lines.insert(_cursorLine + 1, rest)
-                _cursorLine += 1; _cursorCol = 0; changed = true
+                _cursorLine += 1; _cursorCol = 0; _cachedLen += 1; changed = true
             }
 
             if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
@@ -766,6 +765,7 @@ export struct Edit {
                 var ln = _lines[_cursorLine]
                 _lines[_cursorLine] = ln.slice(0, _cursorCol) + ch + ln.slice(_cursorCol, ln.len())
                 _cursorCol += ch.len()
+                _cachedLen += ch.len()
                 _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _textDirty = true
                 _adjust_scroll()
@@ -1051,9 +1051,10 @@ export struct Edit {
 
         // 光标（在裁剪区域内）
         _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
-        if _focused and _showCursor and _lines.len() > 0 {
+        if _focused and _showCursor {
             float curLine = _float(_cursorLine)
-            if curLine >= _float(_lines.len()) { curLine = _float(_lines.len() - 1) }
+            if _lines.len() == 0 { curLine = 0 }
+            else if curLine >= _float(_lines.len()) { curLine = _float(_lines.len() - 1) }
             float cy = y + pad + curLine * _lineHeight - _scrollY
             if cy >= y + pad and cy + _lineHeight <= y + pad + visH {
                 var ms = _font.measureString("Ag")
