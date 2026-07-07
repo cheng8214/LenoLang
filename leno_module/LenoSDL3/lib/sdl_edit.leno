@@ -78,11 +78,7 @@ export struct Edit {
         if pos <= 0 { return 0.0 }
         if pos > text.len() { pos = text.len() }
         var sub = text.slice(0, pos)
-        if _password {
-            var stars = ""
-            for pos to _ { stars = stars + "*" }
-            sub = stars
-        }
+        if _password { sub = "*".rep(pos) }
         var ms = _font.measureString(sub)
         return _float(ms.w)
     }
@@ -97,11 +93,7 @@ export struct Edit {
         if col <= 0 { return 0.0 }
         if col > ln.len() { col = ln.len() }
         var sub = ln.slice(0, col)
-        if _password {
-            var stars = ""
-            for col to _ { stars = stars + "*" }
-            sub = stars
-        }
+        if _password { sub = "*".rep(col) }
         var ms = _font.measureString(sub)
         return _float(ms.w)
     }
@@ -367,14 +359,7 @@ export struct Edit {
 
     func _max_line_width(): float {
         _rebuild_lines()
-        if _cachedMaxW >= 0.0 {
-            // 增量：只检查当前行是否超过缓存
-            if _cursorLine >= 0 and _cursorLine < _lines.len() {
-                var ms = _font.measureString(_lines[_cursorLine])
-                if _float(ms.w) > _cachedMaxW { _cachedMaxW = _float(ms.w) }
-            }
-            return _cachedMaxW
-        }
+        if _cachedMaxW >= 0.0 { return _cachedMaxW }
         float maxW = 0.0
         for _lines.len() to li {
             var ms = _font.measureString(_lines[li])
@@ -460,13 +445,13 @@ export struct Edit {
                 if ev.isMouseButtonUp() { _draggingHScroll = false }
                 else if ev.isMouseMotion() {
                     var maxLineW = _max_line_width() + 8.0
-                    float relX = ev.mouseX() - x - pad
-                    if relX < 0 { relX = 0 }
-                    if relX > visW { relX = visW }
-                    _scrollX = relX * maxLineW / visW - visW / 2.0
-                    if _scrollX < 0 { _scrollX = 0 }
                     float maxSX = maxLineW - visW
                     if maxSX < 0 { maxSX = 0 }
+                    float thumbW = visW * visW / maxLineW
+                    if thumbW < 20 { thumbW = 20 }
+                    float relX = ev.mouseX() - x - pad
+                    _scrollX = relX * maxSX / (visW - thumbW)
+                    if _scrollX < 0 { _scrollX = 0 }
                     if _scrollX > maxSX { _scrollX = maxSX }
                 }
             }
@@ -575,7 +560,6 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(text) }
-                    _clear_sel()
                     return
                 }
                 if sc == Scancode.X {
@@ -652,7 +636,6 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(t) }
-                    _clear_sel()
                     return
                 }
                 if sc == Scancode.X {
@@ -692,27 +675,27 @@ export struct Edit {
                 } else if _cursorCol > 0 {
                     var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol - 1) + ln.slice(_cursorCol, ln.len())
-                    _cursorCol -= 1; _cachedLen -= 1; changed = true
+                    _cursorCol -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 } else if _cursorLine > 0 {
                     _cursorCol = _lines[_cursorLine - 1].len()
                     _lines[_cursorLine - 1] = _lines[_cursorLine - 1] + _lines[_cursorLine]
                     _lines.remove(_cursorLine)
-                    _cursorLine -= 1; _cachedLen -= 1; changed = true
+                    _cursorLine -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 }
             }
 
             // Delete
             if sc == Scancode.DELETE {
                 if _selActive and _selStart != _selEnd {
-                    _del_sel_lines(); _cachedLen = -1; changed = true
+                    _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; changed = true
                 } else if _cursorCol < _lines[_cursorLine].len() {
                     var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol) + ln.slice(_cursorCol + 1, ln.len())
-                    _cachedLen -= 1; changed = true
+                    _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 } else if _cursorLine < _lines.len() - 1 {
                     _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
                     _lines.remove(_cursorLine + 1)
-                    _cachedLen -= 1; changed = true
+                    _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 }
             }
 
@@ -736,7 +719,7 @@ export struct Edit {
                 var rest = ln.slice(_cursorCol, ln.len())
                 _lines[_cursorLine] = ln.slice(0, _cursorCol)
                 _lines.insert(_cursorLine + 1, rest)
-                _cursorLine += 1; _cursorCol = 0; _cachedLen += 1; changed = true
+                _cursorLine += 1; _cursorCol = 0; _cachedLen += 1; _cachedMaxW = -1; changed = true
             }
 
             if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
@@ -767,7 +750,7 @@ export struct Edit {
                 var ln = _lines[_cursorLine]
                 _lines[_cursorLine] = ln.slice(0, _cursorCol) + ch + ln.slice(_cursorCol, ln.len())
                 _cursorCol += ch.len()
-                _cachedLen += ch.len()
+                _cachedLen += ch.len(); _cachedMaxW = -1
                 _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _textDirty = true
                 _adjust_scroll()
@@ -1069,7 +1052,7 @@ export struct Edit {
             if _lines.len() == 0 { curLine = 0 }
             else if curLine >= _float(_lines.len()) { curLine = _float(_lines.len() - 1) }
             float cy = y + pad + curLine * _lineHeight - _scrollY
-            if cy >= y + pad and cy + _lineHeight <= y + pad + visH {
+            if cy + _lineHeight > y + pad and cy < y + pad + visH {
                 var ms = _font.measureString("Ag")
                 float ch = _float(ms.h)
                 float cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
