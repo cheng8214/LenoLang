@@ -645,7 +645,7 @@ export struct Edit {
             int mod = ev.keyMod()
             bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
             if ctrl {
-                if sc == Scancode.A { _selStart = 0; _selEnd = _line_count_pos(); _selActive = true; return }
+                if sc == Scancode.A { _selStart = 0; _selEnd = get_text_length(); _selActive = true; return }
                 if sc == Scancode.C {
                     var t = get_text()
                     var sel = _sel_text()
