@@ -575,6 +575,7 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(text) }
+                    _clear_sel()
                     return
                 }
                 if sc == Scancode.X {
@@ -651,6 +652,7 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(t) }
+                    _clear_sel()
                     return
                 }
                 if sc == Scancode.X {
@@ -774,6 +776,15 @@ export struct Edit {
                 if _onChange != null { _onChange() }
             }
         }
+    }
+
+    // 计算某行在全文中的起始字节位置
+    func _line_pos(int line): int {
+        var pos = 0
+        for 0 : line - 1 to i {
+            if i < _lines.len() { pos = pos + _lines[i].len() + 1 }
+        }
+        return pos
     }
 
     // 总字符数（用于 Ctrl+A）
@@ -995,24 +1006,28 @@ export struct Edit {
         clip.w = _int(visW); clip.h = _int(visH)
         r.setClipRect(clip.to_ptr())
 
-        // ---- 选区高亮 ----
-        if _selActive and _selStart >= 0 and _selStart != _selEnd {
+        // 计算可见行范围（选区和文本渲染共用）
+        var firstLine = _int(_scrollY / _lineHeight)
+        var lastLineV = firstLine + _int(visH / _lineHeight) + 2
+        if lastLineV > _lines.len() { lastLineV = _lines.len() }
+        if firstLine < 0 { firstLine = 0 }
+
+        // ---- 选区高亮（只遍历可见行）----
+        if _selActive and _selStart >= 0 and _selStart != _selEnd and _lines.len() > 0 {
             var ss = _selStart; var se = _selEnd
             if ss > se { var t = ss; ss = se; se = t }
-            for _lines.len() to li {
+            for firstLine : lastLineV - 1 to li {
+                if li >= _lines.len() { break }
                 var lineLen = _lines[li].len()
-                // 计算该行的选区范围
-                var lineStart = 0
-                for 0 : li - 1 to pi { lineStart = lineStart + _lines[pi].len() + 1 }
+                var lineStart = _line_pos(li)
                 var lineEnd = lineStart + lineLen
                 var selS = ss; var selE = se
                 if selS > lineEnd { continue }
-                if selE < lineStart { break }
+                if selE < lineStart { continue }
                 if selS < lineStart { selS = lineStart }
                 if selE > lineEnd { selE = lineEnd }
                 if selS >= selE { continue }
 
-                // 计算选区像素范围
                 var colS = selS - lineStart
                 var colE = selE - lineStart
                 var ms1 = _font.measureString(_lines[li].slice(0, colS))
@@ -1035,9 +1050,7 @@ export struct Edit {
                 r.drawText(_font, phLines[pl] as string, x + pad, ly, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
             }
         } else if _lines.len() > 0 {
-            // 计算可见行范围
-            var firstLine = _int(_scrollY / _lineHeight)
-            var lastLine = firstLine + _int(visH / _lineHeight) + 1
+            var lastLine = lastLineV - 1
             if lastLine > _lines.len() - 1 { lastLine = _lines.len() - 1 }
             if firstLine < 0 { firstLine = 0 }
 
