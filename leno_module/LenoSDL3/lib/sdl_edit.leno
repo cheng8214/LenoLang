@@ -1026,7 +1026,11 @@ export struct Edit {
 
         // 占位文字 / 内容
         if _lines.len() == 0 and not _focused and _placeholder != "" {
-            r.drawText(_font, _placeholder, x + pad, y + pad, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+            var phLines = _placeholder.split("\n")
+            for phLines.len() to pl {
+                float ly = y + pad + _float(pl) * _lineHeight
+                r.drawText(_font, phLines[pl] as string, x + pad, ly, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+            }
         } else if _lines.len() > 0 {
             // 计算可见行范围
             var firstLine = _int(_scrollY / _lineHeight)

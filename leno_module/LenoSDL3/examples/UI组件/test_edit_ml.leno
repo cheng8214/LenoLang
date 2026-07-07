@@ -1,32 +1,74 @@
-// test_edit_ml.leno — 多行编辑 + 滚动条测试
+// test_edit_ml.leno — 多行编辑 + 滚动条 + 联动测试
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Edit
+use SDL3.Button
 use SDL3.Scancode
 
 main() {
-    var win = SDL3.createWindow({title: "Edit 多行测试", w: 600, h: 450})
+    var win = SDL3.createWindow({title: "Edit 多行测试", w: 700, h: 480})
     if not win.ok { return }
 
     SDL3.ttfInit()
     var font = SDL3.createFontAuto(16.0)
 
     var lastMsg = ""
-    var lineInfo = ""
+    var lastSL = ""
 
     // 多行编辑框
-    Edit ed = win.addEdit({text: "", x: 20, y: 60, w: 560, h: 280,
-                            multiline: true, placeholder: "在这里输入多行文字...\n支持 Up/Down 箭头\n文字超出自动出现滚动条"})
+    Edit ed = win.addEdit({text: "", x: 20, y: 35, w: 660, h: 260,
+                            multiline: true,
+                            placeholder: "在这里输入多行文字...\n支持 Up/Down/滚轮\n文字超出自动出现滚动条\n← 单行回车 / 发送按钮 ->"})
     ed.on_change(func() {
-        lastMsg = "长度: " + ed.get_text().len()
+        lastMsg = "长度: " + ed.get_text_length()
         print(lastMsg)
     })
 
-    // 单行编辑框（对比）
-    Edit edSL = win.addEdit({text: "单行对比", x: 20, y: 380, w: 250, h: 36,
-                              placeholder: "单行输入框"})
+    // 单行编辑框 + 联动
+    Edit edSL = win.addEdit({text: "", x: 20, y: 330, w: 400, h: 36,
+                              placeholder: "输入文字，回车发送到多行框"})
+    edSL.on_enter(func() {
+        var t = edSL.get_text()
+        if t != "" {
+            var old = ed.get_text()
+            if old != "" { ed.set_text(old + "\n" + t) }
+            else { ed.set_text(t) }
+            edSL.set_text("")
+            lastMsg = "发送: " + t
+            print("[enter] " + lastMsg)
+        }
+    })
+    edSL.on_change(func() {
+        lastSL = edSL.get_text()
+    })
 
+    // 发送按钮
+    Button btnSend = win.addButton({text: "发送到多行 >", x: 440, y: 330, w: 120, h: 36,
+                                     rgb: [80, 160, 200], type: "primary"})
+    btnSend.on_click(func() {
+        var t = edSL.get_text()
+        if t == "" { t = lastSL }
+        if t != "" {
+            var old = ed.get_text()
+            if old != "" { ed.set_text(old + "\n" + t) }
+            else { ed.set_text(t) }
+            edSL.set_text("")
+            lastMsg = "发送: " + t
+            print("[button] " + lastMsg)
+        }
+    })
+
+    // 清空按钮
+    Button btnClear = win.addButton({text: "清空", x: 575, y: 330, w: 60, h: 36,
+                                      rgb: [180, 60, 60]})
+    btnClear.on_click(func() {
+        ed.set_text("")
+        lastMsg = "已清空"
+        print("[clear] 已清空")
+    })
+
+    // 状态栏
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
@@ -36,12 +78,11 @@ main() {
         func(Renderer r) {
             r.clearColor(25, 25, 45, 255)
 
-            r.drawText(font, "多行 Edit + 滚动条", 20, 12, 255, 220, 80)
-            r.drawText(font, "多行:", 20, 28, 150, 150, 180)
-            r.drawText(font, "单行:", 20, 348, 150, 150, 180)
+            r.drawText(font, "多行 Edit（滚轮/拖动滚动条/选区/Ctrl+V）", 20, 12, 255, 220, 80)
+            r.drawText(font, "单行输入 + 回车/按钮发送:", 20, 298, 150, 150, 180)
 
-            r.drawText(font, "状态: " + lastMsg, 300, 345, 150, 150, 170)
-            r.drawText(font, "ESC 退出", 300, 370, 120, 120, 140)
+            r.drawText(font, "状态: " + lastMsg, 20, 370, 150, 150, 170)
+            r.drawText(font, "ESC 退出", 20, 400, 120, 120, 140)
         }
     )
 
