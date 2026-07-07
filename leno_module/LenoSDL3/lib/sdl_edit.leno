@@ -219,6 +219,7 @@ export struct Edit {
         _scrollX    = 0.0; _scrollY  = 0.0
         _lines      = []
         _dirty      = true
+        _cachedLen  = -1
         _selStart   = -1; _selEnd = 0; _selActive = false
 
         _ensure_font()
@@ -240,7 +241,10 @@ export struct Edit {
     }
     func set_readonly(bool ro)  { _readOnly = ro }
     func set_password(bool pw)  { _password = pw }
-    func set_multiline(bool ml) { _multiline = ml; _dirty = true }
+    func set_multiline(bool ml) {
+        if not ml { text = get_text() }   // 切单行前 flush lines → text
+        _multiline = ml; _dirty = true
+    }
     func set_placeholder(string p) { _placeholder = p }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
     func focus()    { _focused = true }
@@ -268,11 +272,7 @@ export struct Edit {
     func get_text(): string {
         if _textDirty {
             _rebuild_lines()
-            text = ""
-            for _lines.len() to i {
-                text = text + _lines[i]
-                if i < _lines.len() - 1 { text = text + "\n" }
-            }
+            text = _lines.join("\n")
             _textDirty = false
         }
         return text
@@ -371,7 +371,7 @@ export struct Edit {
 
     func _max_line_width(): float {
         _rebuild_lines()
-        if _dirty { _cachedMaxW = -1.0 }
+        if _textDirty { _cachedMaxW = -1.0 }
         if _cachedMaxW >= 0.0 { return _cachedMaxW }
         float maxW = 0.0
         for _lines.len() to li {
@@ -429,20 +429,20 @@ export struct Edit {
                 }
             }
 
-            // 竖向拖动 — 直接用鼠标位置映射滚动，不依赖状态
+            // 竖向拖动
             if sbW > 0.0 and ev.isMouseButtonDown() and _hoverVScroll and not _draggingHScroll {
                 _draggingVScroll = true; _mouseDown = false
             }
             if _draggingVScroll {
                 if ev.isMouseButtonUp() { _draggingVScroll = false }
                 else if ev.isMouseMotion() {
-                    float relY = ev.mouseY() - y - pad
-                    if relY < 0 { relY = 0 }
-                    if relY > visH { relY = visH }
-                    _scrollY = relY * contentH / visH - visH / 2.0
-                    if _scrollY < 0 { _scrollY = 0 }
                     float maxSY = contentH - visH
                     if maxSY < 0 { maxSY = 0 }
+                    float thumbH = visH * visH / contentH
+                    if thumbH < 20 { thumbH = 20 }
+                    float relY = ev.mouseY() - y - pad
+                    _scrollY = relY * maxSY / (visH - thumbH)
+                    if _scrollY < 0 { _scrollY = 0 }
                     if _scrollY > maxSY { _scrollY = maxSY }
                 }
             }
@@ -472,9 +472,10 @@ export struct Edit {
 
         // ---- 选区 + 聚焦 ----
         if ev.isMouseButtonDown() {
-            if not _draggingVScroll and not _draggingHScroll {
+            var inside = contains(ev.mouseX(), ev.mouseY())
+            _focused = inside
+            if inside and not _draggingVScroll and not _draggingHScroll {
                 _mouseDown = true
-                _focused = contains(ev.mouseX(), ev.mouseY())
                 if _focused {
                     if _multiline {
                         _pos_from_xy(ev.mouseX(), ev.mouseY())
@@ -665,18 +666,16 @@ export struct Edit {
                         var left = _lines[_cursorLine].slice(0, _cursorCol)
                         var right = _lines[_cursorLine].slice(_cursorCol, _lines[_cursorLine].len())
                         var full = left + paste
-                        var plines = _split_newlines(full)
-                        // 用多行替换当前行
+                        var plines = full.replace("\r", "").split("\n")
                         _lines.remove(_cursorLine)
                         for plines.len() to pi {
-                            _lines = _lines_insert(_cursorLine + pi, plines[pi])
+                            _lines.insert(_cursorLine + pi, plines[pi] as string)
                         }
                         // 末行拼右侧
                         var li = _cursorLine + plines.len() - 1
                         _lines[li] = _lines[li] + right
                         _cursorLine = li
-                        _cursorCol = plines[plines.len() - 1].len()
-                        _scrollY = 0; _scrollX = 0
+                        _cursorCol = (plines[plines.len() - 1] as string).len()
                         changed = true
                     }
                 }
@@ -732,7 +731,7 @@ export struct Edit {
                 var ln = _lines[_cursorLine]
                 var rest = ln.slice(_cursorCol, ln.len())
                 _lines[_cursorLine] = ln.slice(0, _cursorCol)
-                _lines = _lines_insert(_cursorLine + 1, rest)
+                _lines.insert(_cursorLine + 1, rest)
                 _cursorLine += 1; _cursorCol = 0; changed = true
             }
 
@@ -831,43 +830,6 @@ export struct Edit {
             p += len
         }
         return _lines[_lines.len() - 1].len()
-    }
-
-    // 按 \n 拆分字符串为行数组（去除 Windows \r）
-    func _split_newlines(string s): Array[string] {
-        var result = []
-        if s == "" { return result }
-        var start = 0
-        for :s.len() - 1 to i {
-            if s.slice(i, i + 1) == "\n" {
-                var line = s.slice(start, i)
-                if line.len() > 0 and line.slice(line.len() - 1, line.len()) == "\r" {
-                    line = line.slice(0, line.len() - 1)
-                }
-                result.add(line)
-                start = i + 1
-            }
-        }
-        if start < s.len() {
-            var line = s.slice(start, s.len())
-            if line.len() > 0 and line.slice(line.len() - 1, line.len()) == "\r" {
-                line = line.slice(0, line.len() - 1)
-            }
-            result.add(line)
-        }
-        if result.len() == 0 { result.add(s) }
-        return result
-    }
-
-    // 在 _lines 指定位置插入一行
-    func _lines_insert(int idx, string val): Array[string] {
-        var result = []
-        for _lines.len() to i {
-            if i == idx { result.add(val) }
-            result.add(_lines[i])
-        }
-        if idx >= _lines.len() { result.add(val) }
-        return result
     }
 
     // ---- 多行方向键辅助（基于 _cursorPos）----
@@ -994,11 +956,7 @@ export struct Edit {
                        tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
         } else if text != "" {
             var display = text
-            if _password {
-                var pw = ""
-                for text.len() to _ { pw = pw + "*" }
-                display = pw
-            }
+            if _password { display = "*".rep(text.len()) }
             var ms = _font.measureString(display)
             float ty = y + (h - _float(ms.h)) / 2.0
             r.drawText(_font, display, x + pad - _scrollX, ty, tr, tg, tb)
@@ -1021,6 +979,7 @@ export struct Edit {
     // ---- 多行渲染 ----
     func _render_ml(Renderer r) {
         _rebuild_lines()
+        _sync_line_col()                // 进入渲染时统一同步行列
         float pad = 8.0
         float sbW = _sb_width()
         float sbH = _sb_height()
@@ -1037,7 +996,6 @@ export struct Edit {
         if _selActive and _selStart >= 0 and _selStart != _selEnd {
             var ss = _selStart; var se = _selEnd
             if ss > se { var t = ss; ss = se; se = t }
-            _sync_line_col()   // 确保_selStart位置映射到行列
             for _lines.len() to li {
                 var lineLen = _lines[li].len()
                 // 计算该行的选区范围
@@ -1078,11 +1036,7 @@ export struct Edit {
 
             for firstLine : lastLine to li {
                 var display = _lines[li]
-                if _password {
-                    var pw = ""
-                    for display.len() to _ { pw = pw + "*" }
-                    display = pw
-                }
+                if _password { display = "*".rep(display.len()) }
                 float ly = y + pad + _float(li) * _lineHeight - _scrollY
                 r.drawText(_font, display, x + pad - _scrollX, ly, tr, tg, tb)
             }
