@@ -45,6 +45,15 @@ export struct Edit {
     int  _cachedLen              // 缓存总字符数（不含换行符）
     float _cachedMaxW            // 缓存最大行宽（脏时重算）
 
+    // 撤销/重做
+    Array[Array[string]] _undoStack
+    Array[Array[string]] _redoStack
+    int  _lastClickTime          // 上次点击 tick（双击检测）
+    float _lastClickX; float _lastClickY
+
+    // 自动换行
+    bool _wordWrap
+
     // 文本选取
     int  _selStart               // 选区起始（-1 表示无选区）
     int  _selEnd                 // 选区结束
@@ -239,8 +248,44 @@ export struct Edit {
     }
     func set_placeholder(string p) { _placeholder = p }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
+    func set_word_wrap(bool w)  { _wordWrap = w }
     func focus()    { _focused = true }
     func blur()     { _focused = false }
+
+    // 保存当前状态到撤销栈
+    func _save_undo() {
+        _undoStack.add(_lines.copy())
+        if _undoStack.len() > 200 { _undoStack.remove(0) }
+        _redoStack.clear()
+    }
+
+    // Ctrl+Z
+    func _undo() {
+        if _undoStack.len() == 0 { return }
+        _redoStack.add(_lines.copy())
+        _lines = _undoStack[_undoStack.len() - 1]
+        _undoStack.remove(_undoStack.len() - 1)
+        _textDirty = true; _dirty = true; _cachedLen = -1; _cachedMaxW = -1
+        _clear_sel()
+        if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+        if _cursorLine < 0 { _cursorLine = 0 }
+        if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        _adjust_scroll()
+    }
+
+    // Ctrl+Y
+    func _redo() {
+        if _redoStack.len() == 0 { return }
+        _undoStack.add(_lines.copy())
+        _lines = _redoStack[_redoStack.len() - 1]
+        _redoStack.remove(_redoStack.len() - 1)
+        _textDirty = true; _dirty = true; _cachedLen = -1; _cachedMaxW = -1
+        _clear_sel()
+        if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+        if _cursorLine < 0 { _cursorLine = 0 }
+        if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        _adjust_scroll()
+    }
 
     // ==================== 查询 ====================
     func is_focused(): bool { return _focused }
@@ -462,7 +507,19 @@ export struct Edit {
             var inside = contains(ev.mouseX(), ev.mouseY())
             _focused = inside
             if inside and not _draggingVScroll and not _draggingHScroll {
-                _mouseDown = true
+                // 双击检测（400ms 内，位置接近）
+                var now = core.getTicks()
+                if now - _lastClickTime < 400
+                   and ev.mouseX() - _lastClickX < 10 and ev.mouseX() - _lastClickX > -10
+                   and ev.mouseY() - _lastClickY < 10 and ev.mouseY() - _lastClickY > -10 {
+                    _save_undo()
+                    _select_word()
+                    _lastClickTime = 0
+                } else {
+                    _lastClickTime = now
+                    _lastClickX = ev.mouseX(); _lastClickY = ev.mouseY()
+                    _mouseDown = true
+                }
                 if _focused {
                     if _multiline {
                         _pos_from_xy(ev.mouseX(), ev.mouseY())
@@ -516,6 +573,32 @@ export struct Edit {
     func _clear_sel() {
         _selActive = false
         _selStart = -1
+    }
+
+    // 双击选词
+    func _select_word() {
+        _rebuild_lines()
+        if _lines.len() == 0 or _cursorLine >= _lines.len() { return }
+        var ln = _lines[_cursorLine]
+        if ln.len() == 0 { return }
+        // 找词边界
+        var s = _cursorCol; var e = _cursorCol
+        while s > 0 and _is_word_char(ln.slice(s - 1, s)) { s -= 1 }
+        while e < ln.len() and _is_word_char(ln.slice(e, e + 1)) { e += 1 }
+        if s >= e { return }
+        _selStart = _line_pos(_cursorLine) + s
+        _selEnd = _line_pos(_cursorLine) + e
+        _selActive = true
+    }
+
+    func _is_word_char(string c): bool {
+        if c == "" { return false }
+        var b = c.slice(0, 1)
+        if b >= "a" and b <= "z" { return true }
+        if b >= "A" and b <= "Z" { return true }
+        if b >= "0" and b <= "9" { return true }
+        if b == "_" { return true }
+        return false
     }
 
     // 获取选中的文本
@@ -631,6 +714,8 @@ export struct Edit {
             bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
             if ctrl {
                 if sc == Scancode.A { _selStart = 0; _selEnd = get_text_length(); _selActive = true; return }
+                if sc == Scancode.Z { _undo(); return }
+                if sc == Scancode.Y { _redo(); return }
                 if sc == Scancode.C {
                     var t = get_text()
                     var sel = _sel_text()
@@ -671,13 +756,13 @@ export struct Edit {
             // 退格
             if sc == Scancode.BACKSPACE {
                 if _selActive and _selStart != _selEnd {
-                    _del_sel_lines(); _cachedLen = -1; changed = true
+                    _save_undo(); _del_sel_lines(); _cachedLen = -1; changed = true
                 } else if _cursorCol > 0 {
-                    var ln = _lines[_cursorLine]
+                    _save_undo(); var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol - 1) + ln.slice(_cursorCol, ln.len())
                     _cursorCol -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 } else if _cursorLine > 0 {
-                    _cursorCol = _lines[_cursorLine - 1].len()
+                    _save_undo(); _cursorCol = _lines[_cursorLine - 1].len()
                     _lines[_cursorLine - 1] = _lines[_cursorLine - 1] + _lines[_cursorLine]
                     _lines.remove(_cursorLine)
                     _cursorLine -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
@@ -687,13 +772,13 @@ export struct Edit {
             // Delete
             if sc == Scancode.DELETE {
                 if _selActive and _selStart != _selEnd {
-                    _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; changed = true
+                    _save_undo(); _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; changed = true
                 } else if _cursorCol < _lines[_cursorLine].len() {
-                    var ln = _lines[_cursorLine]
+                    _save_undo(); var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol) + ln.slice(_cursorCol + 1, ln.len())
                     _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 } else if _cursorLine < _lines.len() - 1 {
-                    _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
+                    _save_undo(); _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
                     _lines.remove(_cursorLine + 1)
                     _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 }
@@ -715,7 +800,7 @@ export struct Edit {
 
             // 回车
             if sc == Scancode.RETURN {
-                var ln = _lines[_cursorLine]
+                _save_undo(); var ln = _lines[_cursorLine]
                 var rest = ln.slice(_cursorCol, ln.len())
                 _lines[_cursorLine] = ln.slice(0, _cursorCol)
                 _lines.insert(_cursorLine + 1, rest)
@@ -745,6 +830,7 @@ export struct Edit {
             var ch = ev.text()
             if ch != "" {
                 _rebuild_lines()
+                _save_undo()
                 _del_sel_lines()
                 if _lines.len() == 0 { _lines.add("") }
                 var ln = _lines[_cursorLine]
@@ -1037,11 +1123,25 @@ export struct Edit {
             if lastLine > _lines.len() - 1 { lastLine = _lines.len() - 1 }
             if firstLine < 0 { firstLine = 0 }
 
-            for firstLine : lastLine to li {
-                var display = _lines[li]
-                if _password { display = "*".rep(display.len()) }
-                float ly = y + pad + _float(li) * _lineHeight - _scrollY
-                r.drawText(_font, display, x + pad - _scrollX, ly, tr, tg, tb)
+            if _wordWrap {
+                // 自动换行模式
+                var drawY = y + pad - _scrollY
+                for firstLine : lastLine to li {
+                    var display = _lines[li]
+                    if _password { display = "*".rep(display.len()) }
+                    var wraps = _wrap_line(display, visW)
+                    for wraps.len() to wi {
+                        r.drawText(_font, wraps[wi] as string, x + pad, drawY, tr, tg, tb)
+                        drawY = drawY + _lineHeight
+                    }
+                }
+            } else {
+                for firstLine : lastLine to li {
+                    var display = _lines[li]
+                    if _password { display = "*".rep(display.len()) }
+                    float ly = y + pad + _float(li) * _lineHeight - _scrollY
+                    r.drawText(_font, display, x + pad - _scrollX, ly, tr, tg, tb)
+                }
             }
         }
 
@@ -1117,6 +1217,22 @@ export struct Edit {
             r.setColor(40, 40, 50, 200)
             r.fillRect(cornerX, cornerY, sbW, sbH)
         }
+    }
+
+    // 按像素宽度拆分一行
+    func _wrap_line(string ln, float maxW): Array[string] {
+        var result = []
+        if ln == "" { result.add(""); return result }
+        var start = 0
+        for :ln.len() - 1 to i {
+            var ms = _font.measureString(ln.slice(start, i + 1))
+            if _float(ms.w) > maxW and i > start {
+                result.add(ln.slice(start, i))
+                start = i
+            }
+        }
+        if start < ln.len() { result.add(ln.slice(start, ln.len())) }
+        return result
     }
 
     func dispose() {
