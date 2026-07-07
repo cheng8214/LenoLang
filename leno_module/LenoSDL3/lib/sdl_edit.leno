@@ -221,6 +221,9 @@ export struct Edit {
         _lines      = []
         _dirty      = true
         _cachedLen  = -1
+        _lastClickTime = 0; _lastClickX = 0; _lastClickY = 0
+        _wordWrap   = false
+        _undoStack  = []; _redoStack = []
         _selStart   = -1; _selEnd = 0; _selActive = false
 
         _ensure_font()
@@ -600,11 +603,12 @@ export struct Edit {
 
     func _is_word_char(string c): bool {
         if c == "" or c == " " or c == "\n" or c == "\r" or c == "\t" { return false }
-        // 标点
         if c == "." or c == "," or c == "!" or c == "?" or c == ":" or c == ";"
            or c == "(" or c == ")" or c == "[" or c == "]" or c == "\"" or c == "'"
            or c == "：" or c == "。" or c == "，" or c == "！" or c == "？"
            or c == "（" or c == "）" or c == "【" or c == "】" or c == "；" { return false }
+        // 非 ASCII 字节（中文/日文等多字节字符的片段）→ 不是完整字符，不算词边界
+        if c.slice(0, 1) >= "\x80" { return false }
         return true
     }
 
