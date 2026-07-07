@@ -265,13 +265,14 @@ export struct Edit {
         _redoStack.add(_lines.copy())
         _lines = _undoStack[_undoStack.len() - 1]
         _undoStack.remove(_undoStack.len() - 1)
-        _textDirty = true; _dirty = true; _cachedLen = -1; _cachedMaxW = -1
+        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1
         _clear_sel()
         if _lines.len() > 0 {
             if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
             if _cursorLine < 0 { _cursorLine = 0 }
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
         } else { _cursorLine = 0; _cursorCol = 0 }
+        text = get_text()             // 同步 text，防 _rebuild_lines 从旧 text 重写 lines
         _adjust_scroll()
     }
 
@@ -281,13 +282,14 @@ export struct Edit {
         _undoStack.add(_lines.copy())
         _lines = _redoStack[_redoStack.len() - 1]
         _redoStack.remove(_redoStack.len() - 1)
-        _textDirty = true; _dirty = true; _cachedLen = -1; _cachedMaxW = -1
+        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1
         _clear_sel()
         if _lines.len() > 0 {
             if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
             if _cursorLine < 0 { _cursorLine = 0 }
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
         } else { _cursorLine = 0; _cursorCol = 0 }
+        text = get_text()             // 同步 text
         _adjust_scroll()
     }
 
@@ -513,19 +515,19 @@ export struct Edit {
             if inside and not _draggingVScroll and not _draggingHScroll {
                 // 双击检测（400ms 内，位置接近）
                 var now = core.getTicks()
-                if now - _lastClickTime < 400
-                   and ev.mouseX() >= _lastClickX - 10 and ev.mouseX() <= _lastClickX + 10
-                   and ev.mouseY() >= _lastClickY - 10 and ev.mouseY() <= _lastClickY + 10 {
+                var isDbl = now - _lastClickTime < 400
+                        and ev.mouseX() >= _lastClickX - 10 and ev.mouseX() <= _lastClickX + 10
+                        and ev.mouseY() >= _lastClickY - 10 and ev.mouseY() <= _lastClickY + 10
+                _lastClickTime = now
+                _lastClickX = ev.mouseX(); _lastClickY = ev.mouseY()
+                if isDbl {
                     if _multiline { _pos_from_xy(ev.mouseX(), ev.mouseY()) }
                     else { _cursorPos = _pos_from_x(ev.mouseX()) }
                     _select_word()
-                    _lastClickTime = 0
                 } else {
-                    _lastClickTime = now
-                    _lastClickX = ev.mouseX(); _lastClickY = ev.mouseY()
                     _mouseDown = true
                 }
-                if _focused {
+                if not isDbl and _focused {
                     if _multiline {
                         _pos_from_xy(ev.mouseX(), ev.mouseY())
                     } else {
@@ -597,13 +599,13 @@ export struct Edit {
     }
 
     func _is_word_char(string c): bool {
-        if c == "" { return false }
-        var b = c.slice(0, 1)
-        if b >= "a" and b <= "z" { return true }
-        if b >= "A" and b <= "Z" { return true }
-        if b >= "0" and b <= "9" { return true }
-        if b == "_" { return true }
-        return false
+        if c == "" or c == " " or c == "\n" or c == "\r" or c == "\t" { return false }
+        // 标点
+        if c == "." or c == "," or c == "!" or c == "?" or c == ":" or c == ";"
+           or c == "(" or c == ")" or c == "[" or c == "]" or c == "\"" or c == "'"
+           or c == "：" or c == "。" or c == "，" or c == "！" or c == "？"
+           or c == "（" or c == "）" or c == "【" or c == "】" or c == "；" { return false }
+        return true
     }
 
     // 获取选中的文本
@@ -654,7 +656,7 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(text) }
-                    _cursorPos = _del_sel()
+                    _save_undo(); _cursorPos = _del_sel()
                     changed = true
                 }
                 if sc == Scancode.V {
@@ -733,11 +735,12 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(t) }
-                    _del_sel_lines(); _cachedLen = -1; changed = true
+                    _save_undo(); _del_sel_lines(); _cachedLen = -1; changed = true
                 }
                 if sc == Scancode.V {
                     var paste = core.getClipboardText()
                     if paste != "" {
+                        _save_undo()
                         _del_sel_lines()
                         if _lines.len() == 0 { _lines.add("") }
                         var left = _lines[_cursorLine].slice(0, _cursorCol)
