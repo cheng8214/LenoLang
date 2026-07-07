@@ -607,8 +607,6 @@ export struct Edit {
            or c == "(" or c == ")" or c == "[" or c == "]" or c == "\"" or c == "'"
            or c == "：" or c == "。" or c == "，" or c == "！" or c == "？"
            or c == "（" or c == "）" or c == "【" or c == "】" or c == "；" { return false }
-        // 非 ASCII 字节（中文/日文等多字节字符的片段）→ 不是完整字符，不算词边界
-        if c.slice(0, 1) >= "\x80" { return false }
         return true
     }
 
