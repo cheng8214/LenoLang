@@ -289,20 +289,23 @@ export struct Edit {
 
     func _update_ime() {
         float pad = 8.0
-        float cx, cy
+        float cx
+        var rect = core.SDL_Rect.malloc()
         if _multiline {
             _rebuild_lines()
             cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
-            cy = y + pad + _float(_cursorLine) * _lineHeight - _scrollY
+            float cy = y + pad + _float(_cursorLine) * _lineHeight - _scrollY
+            rect.x = _int(x)
+            rect.y = _int(cy)
+            rect.w = _int(w)
+            rect.h = _int(_lineHeight)
         } else {
             cx = x + pad + _text_width_to(_cursorPos) - _scrollX
-            cy = y + h
+            rect.x = _int(x)
+            rect.y = _int(y + h)
+            rect.w = _int(w)
+            rect.h = _int(h)
         }
-        var rect = core.SDL_Rect.malloc()
-        rect.x = _int(x)
-        rect.y = _int(y + h)
-        rect.w = _int(w)
-        rect.h = _int(h)
         core.setTextInputArea(_hwnd, rect.to_ptr(), _int(cx - x))
         rect.free()
     }
