@@ -539,6 +539,11 @@ export struct Edit impl Widget {
     func process(Event ev) {
         if not _loaded { return }
 
+        // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
+        float emx = ev.mouseX(); float emy = ev.mouseY()
+        if ev.isMouseWheel() { emx = ev.wheelMouseX(); emy = ev.wheelMouseY() }
+        if core.inPopupCapture(emx, emy) { return }
+
         // ---- 悬停光标：鼠标移入编辑框 → 文本(I型)光标；移出 → 默认光标 ----
         // 走集中式光标决策（requestCursor），由 Window 帧末统一 apply，避免多控件互相覆盖
         if ev.isMouseMotion() {
@@ -548,8 +553,9 @@ export struct Edit impl Widget {
             if hit { core.requestCursor(core.SystemCursor.TEXT) }
         }
 
-        // ---- 鼠标滚轮（所有模式）----
+        // ---- 鼠标滚轮（所有模式，仅当光标在本控件内才响应）----
         if ev.isMouseWheel() {
+            if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
             if _multiline {
                 float sy = _scrollY - ev.wheelY() * _lineHeight * 3.0
                 if sy < 0 { sy = 0 }

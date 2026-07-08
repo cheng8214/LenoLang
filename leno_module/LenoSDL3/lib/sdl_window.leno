@@ -356,6 +356,8 @@ export struct Window {
             }
             for _runWids.len() to i {
                 _runRends[i](_runRens[i])
+                // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
+                core.clearPopupCapture()
                 // 自动渲染该窗口的所有控件（按添加顺序层叠）
                 var ws = _runWidgets[i]
                 for ws to w { w.render(_runRens[i]) }

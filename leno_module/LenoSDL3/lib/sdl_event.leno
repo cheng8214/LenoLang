@@ -139,6 +139,17 @@ export struct Event {
         return e.y as float
     }
 
+    // 滚轮事件发生时的鼠标坐标（注意：滚轮事件的结构与鼠标移动不同，
+    // 必须用 SDL_MouseWheelEvent.mouse_x / mouse_y，不能用 mouseX()/mouseY()）
+    func wheelMouseX(): float {
+        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
+        return e.mouse_x as float
+    }
+    func wheelMouseY(): float {
+        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
+        return e.mouse_y as float
+    }
+
     // ==================== 文本输入 ====================
     // 注意：必须先调用 SDL_StartTextInput() 启用文本输入，否则不会收到此事件
 

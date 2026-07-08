@@ -476,6 +476,22 @@ export func applyFrameCursor() {
     setSystemCursor(k)
 }
 
+// ==================== 弹层事件捕获区 ====================
+// 问题：ComboBox 弹层是覆盖在其它控件之上的 overlay。当弹层展开并压在某 ListBox/Edit 之上时，
+// 弹层范围内的滚轮/鼠标事件仍会被下层控件处理（窗口把同一事件派发给所有控件），
+// 导致“在弹层上滚轮，下层列表却跟着滚”。
+// 解决：展开弹层的 ComboBox 把弹出矩形登记为捕获区；下层控件只要事件落在“他人的捕获区”内就忽略。
+// 注意：捕获区在 render 阶段登记、在 render 阶段开始前清空，跨帧持久（事件处理在 render 之前，
+// 用的是上一帧 render 登记的捕获区），从而不受控件处理顺序影响。
+Array[float] _popupCapture = []
+export func setPopupCapture(float x, float y, float w, float h) { _popupCapture = [x, y, w, h] }
+export func clearPopupCapture() { _popupCapture = [] }
+export func inPopupCapture(float mx, float my): bool {
+    if _popupCapture.len() < 4 { return false }
+    return mx >= _popupCapture[0] and mx <= _popupCapture[0] + _popupCapture[2]
+       and my >= _popupCapture[1] and my <= _popupCapture[1] + _popupCapture[3]
+}
+
 // 弹出消息框
 export func showMessageBox(string title, string msg, int flags) {
     sdl3 l = lib()

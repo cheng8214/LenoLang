@@ -24,6 +24,8 @@ export struct ComboBox impl Widget {
     int _sbR, _sbG, _sbB
     int _cursor
     bool enabled; bool _loaded
+    bool _draggingScroll
+    float _sbDragOffset
     func(int):void _onChange
 
     func _ensure_font() {
@@ -121,19 +123,82 @@ export struct ComboBox impl Widget {
         return idx
     }
 
+    // 弹层竖向滚动条几何：返回 [sx, sw, ty0, ty1, thH, thy, maxs, px, py, ph]
+    func _sb_geom_popup(): Array[float] {
+        var pr = _popup_rect()
+        float px = pr[0]; float py = pr[1]; float pw = pr[2]; float ph = pr[3]
+        float maxs = _max_scroll()
+        float sw = 8.0
+        float sx = px + pw - sw - 2.0
+        float ty0 = py + 2.0
+        float ty1 = py + ph - 2.0
+        float trk = ty1 - ty0
+        float thH = _clamp(ph * ph / (_float(items.len()) * _itemH), 20.0, ph - 4.0)
+        float thy = ty0 + (_scroll / maxs) * (trk - thH)
+        return [sx, sw, ty0, ty1, thH, thy, maxs, px, py, ph]
+    }
+    func _in_vscroll_popup(float mx, float my): bool {
+        if not _open or _max_scroll() <= 0.0 { return false }
+        var g = _sb_geom_popup()
+        return mx >= g[0] - 2.0 and mx <= g[0] + g[1] + 2.0 and my >= g[2] and my <= g[3]
+    }
+    func _in_thumb_popup(float mx, float my): bool {
+        if not _open or _max_scroll() <= 0.0 { return false }
+        var g = _sb_geom_popup()
+        return mx >= g[0] - 2.0 and mx <= g[0] + g[1] + 2.0 and my >= g[5] and my <= g[5] + g[4]
+    }
+
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
-        if not enabled { _open = false; _hover = -1; return }
+        if not enabled { _open = false; _hover = -1; _draggingScroll = false; return }
+
+        float mx = ev.mouseX(); float my = ev.mouseY()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        // 弹层捕获：光标落在“他人的下拉弹层”范围内、且本框未展开时，忽略该事件
+        if core.inPopupCapture(mx, my) and not _open { return }
+
+        // 拖拽结束
+        if ev.isMouseButtonUp() and _draggingScroll { _draggingScroll = false; return }
+
+        // 弹层滚动条优先（仅展开时）
+        if _open and ev.isMouseButtonDown() and _in_vscroll_popup(mx, my) {
+            var g = _sb_geom_popup()
+            float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+            if _in_thumb_popup(mx, my) {
+                _draggingScroll = true
+                _sbDragOffset = my - g[5]                  // 记录起点相对滑块顶偏移，避免跳动
+            } else {
+                _draggingScroll = true
+                _sbDragOffset = thH / 2.0
+                float rel = my - g[2] - thH / 2.0
+                if trk - thH > 0.0 { _scroll = rel * maxs / (trk - thH) }
+                _clamp_scroll()
+            }
+            return
+        }
+
+        // 拖拽中：跟随鼠标移动滑块（即使移出弹层也继续）
+        if _draggingScroll {
+            if ev.isMouseMotion() {
+                var g = _sb_geom_popup()
+                float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+                float rel = my - g[2] - _sbDragOffset
+                if trk - thH > 0.0 { _scroll = rel * maxs / (trk - thH) }
+                _clamp_scroll()
+            }
+            return
+        }
 
         if ev.isMouseWheel() and _open {
+            // 滚轮只作用于光标所在的弹层，避免同一事件被其它控件共享
+            if not _in_popup(ev.wheelMouseX(), ev.wheelMouseY()) { return }
             float d = ev.wheelY() * _itemH
             _scroll = _scroll - d
             _clamp_scroll()
         }
 
         if ev.isMouseMotion() {
-            float mx = ev.mouseX(); float my = ev.mouseY()
             if _open { _hover = _index_at(mx, my) } else { _hover = -1 }
             bool hv = _open and _hover >= 0
             if not hv { hv = contains(mx, my) }
@@ -143,7 +208,6 @@ export struct ComboBox impl Widget {
         }
 
         if ev.isMouseButtonDown() {
-            float mx = ev.mouseX(); float my = ev.mouseY()
             if not _open {
                 if contains(mx, my) {
                     _open = true
@@ -207,6 +271,9 @@ export struct ComboBox impl Widget {
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         var pr = _popup_rect()
         float px = pr[0]; float py = pr[1]; float pw = pr[2]; float ph = pr[3]
+
+        // 把弹出矩形登记为事件捕获区，使下层控件忽略落在弹层范围内的鼠标/滚轮事件
+        core.setPopupCapture(px, py, pw, ph)
 
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRoundedRect(px, py, pw, ph, 6.0)
