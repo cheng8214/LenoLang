@@ -137,10 +137,9 @@ export struct ComboBox impl Widget {
             if _open { _hover = _index_at(mx, my) } else { _hover = -1 }
             bool hv = _open and _hover >= 0
             if not hv { hv = contains(mx, my) }
-            if _cursor >= 0 {
-                if hv { core.setSystemCursor(_cursor) }
-                else { core.setSystemCursor(SystemCursor.DEFAULT) }
-            }
+            core.markFrameMotion()
+            if hv and _cursor >= 0 { core.requestCursor(_cursor) }
+            // 未命中不再强制设 DEFAULT，由 Window 帧末统一决定（避免覆盖上方弹层的手型）
         }
 
         if ev.isMouseButtonDown() {
@@ -198,53 +197,57 @@ export struct ComboBox impl Widget {
         // 边框
         r.setColor(_bdrR, _bdrG, _bdrB, 220)
         r.drawRoundedRect(x, y, w, h, 6.0)
+    }
 
-        // 弹出列表
-        if _open and items.len() > 0 {
-            var pr = _popup_rect()
-            float px = pr[0]; float py = pr[1]; float pw = pr[2]; float ph = pr[3]
+    // 弹出列表（独立 overlay 通道：由 Window 在所有控件渲染完后第二遍调用，
+    // 保证下拉层永远盖在其它控件之上，不会被列表中靠后的 ComboBox 挡住）
+    func renderPopup(Renderer r) {
+        if not _loaded or not _open or items.len() == 0 { return }
+        int bgr = br; int bgg = bg; int bgb = bb
+        if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
+        var pr = _popup_rect()
+        float px = pr[0]; float py = pr[1]; float pw = pr[2]; float ph = pr[3]
 
-            r.setColor(bgr, bgg, bgb, 255)
-            r.fillRoundedRect(px, py, pw, ph, 6.0)
+        r.setColor(bgr, bgg, bgb, 255)
+        r.fillRoundedRect(px, py, pw, ph, 6.0)
 
-            SDL_Rect clip = SDL_Rect.malloc()
-            clip.x = _int(px); clip.y = _int(py); clip.w = _int(pw); clip.h = _int(ph)
-            r.setClipRect(clip.to_ptr())
+        SDL_Rect clip = SDL_Rect.malloc()
+        clip.x = _int(px); clip.y = _int(py); clip.w = _int(pw); clip.h = _int(ph)
+        r.setClipRect(clip.to_ptr())
 
-            for items.len() to i {
-                float iy = py - _scroll + _float(i) * _itemH
-                if iy + _itemH < py or iy > py + ph { continue }
-                int rr = bgr; int gg = bgg; int bb2 = bgb
-                if i == _sel { rr = _selR; gg = _selG; bb2 = _selB }
-                else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
-                r.setColor(rr, gg, bb2, 255)
-                r.fillRect(px, iy, pw, _itemH)
+        for items.len() to i {
+            float iy = py - _scroll + _float(i) * _itemH
+            if iy + _itemH < py or iy > py + ph { continue }
+            int rr = bgr; int gg = bgg; int bb2 = bgb
+            if i == _sel { rr = _selR; gg = _selG; bb2 = _selB }
+            else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
+            r.setColor(rr, gg, bb2, 255)
+            r.fillRect(px, iy, pw, _itemH)
 
-                if _font != null and _font.ok {
-                    float th = _float(_font.measureString("Ag").h)
-                    int tcR = tr; int tcG = tg; int tcB = tb
-                    r.drawText(_font, items[i], px + 8.0, iy + (_itemH - th) / 2.0, tcR, tcG, tcB)
-                }
+            if _font != null and _font.ok {
+                float th = _float(_font.measureString("Ag").h)
+                int tcR = tr; int tcG = tg; int tcB = tb
+                r.drawText(_font, items[i], px + 8.0, iy + (_itemH - th) / 2.0, tcR, tcG, tcB)
             }
-            r.clearClip()
-            clip.free()
+        }
+        r.clearClip()
+        clip.free()
 
-            r.setColor(_bdrR, _bdrG, _bdrB, 220)
-            r.drawRoundedRect(px, py, pw, ph, 6.0)
+        r.setColor(_bdrR, _bdrG, _bdrB, 220)
+        r.drawRoundedRect(px, py, pw, ph, 6.0)
 
-            // 弹出滚动条
-            float maxs = _max_scroll()
-            if maxs > 0.0 {
-                float sw = 8.0
-                float sx = px + pw - sw - 2.0
-                r.setColor(_sbR, _sbG, _sbB, 180)
-                r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
-                float ratio = _scroll / maxs
-                float thH = _clamp(ph * ph / (_float(items.len()) * _itemH), 20.0, ph - 4.0)
-                float thy = py + 2.0 + ratio * (ph - 4.0 - thH)
-                r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
-                r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
-            }
+        // 弹出滚动条
+        float maxs = _max_scroll()
+        if maxs > 0.0 {
+            float sw = 8.0
+            float sx = px + pw - sw - 2.0
+            r.setColor(_sbR, _sbG, _sbB, 180)
+            r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
+            float ratio = _scroll / maxs
+            float thH = _clamp(ph * ph / (_float(items.len()) * _itemH), 20.0, ph - 4.0)
+            float thy = py + 2.0 + ratio * (ph - 4.0 - thH)
+            r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+            r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
         }
     }
 

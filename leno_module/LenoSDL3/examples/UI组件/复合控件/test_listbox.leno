@@ -1,0 +1,60 @@
+// test_listbox.leno — ListBox 单独测试
+// 运行：leno 本文件
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.ListBox
+
+// 把索引数组格式化成 [0,2,5]
+func _fmt(Array[int] a): string {
+    string s = "["
+    for a.len() to i { if i > 0 { s = s + "," }; s = s + a[i] }
+    return s + "]"
+}
+
+main() {
+    var win = SDL3.createWindow({title: "ListBox 测试", w: 520, h: 460})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 单选 + 滚动条（10 项，框高只能显示约 5 项 -> 必然出现滚动条）
+    var fruits = ["苹果", "香蕉", "橙子", "葡萄", "西瓜", "芒果", "草莓", "菠萝", "桃子", "梨"]
+    var lb = win.addListBox({x: 30, y: 40, w: 200, h: 200, items: fruits, selected: 2})
+    lb.on_change(func(Array[int] idxs) {
+        print("单选 ListBox -> " + _fmt(idxs) + " 文本=" + lb.get_selected_text())
+    })
+
+    // 多选（mode:1）
+    var colors = ["红", "绿", "蓝", "黄", "紫", "青", "橙", "粉"]
+    var mlb = win.addListBox({x: 30, y: 260, w: 200, h: 160, items: colors, mode: 1, selected: [0, 2]})
+    mlb.on_change(func(Array[int] idxs) {
+        print("多选 ListBox -> " + _fmt(idxs))
+    })
+
+    // 第三个：项高自定义 + 初始空，运行时 set_items
+    var dyn = win.addListBox({x: 260, y: 40, w: 220, h: 360, items: ["初始项A", "初始项B"], item_h: 34})
+    dyn.on_change(func(Array[int] idxs) { print("动态 ListBox -> " + _fmt(idxs)) })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            // 按 R 重置第三个列表内容，测试 set_items / set_selected
+            if e.isKeyDown() and e.scancode() == Scancode.R {
+                dyn.set_items(["重设-1", "重设-2", "重设-3", "重设-4", "重设-5", "重设-6"])
+                dyn.set_selected(1)
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "ListBox 测试 (Esc 退出 / 按 R 重设右侧列表)", 30, 12, 200, 210, 230)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

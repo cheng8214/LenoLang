@@ -426,12 +426,54 @@ export func hideCursor(): bool    { return lib().SDL_HideCursor() }
 export func cursorVisible(): bool { return lib().SDL_CursorVisible() }
 export func warpMouse(Ptr window, float x, float y): bool { return lib().SDL_WarpMouseInWindow(window, x, y) }
 
-// 设置系统光标（传入 SYSTEM_CURSOR_* 常量），返回旧光标（需手动 destroy）
+// 系统光标缓存：每种 kind 只创建一次并复用，避免每次 mouse motion 都
+// SDL_CreateSystemCursor 新建+SDL_SetCursor，导致 Windows 下指针闪烁与内存泄漏
+Array[int] _curKinds = []
+Array[Ptr]  _curPtrs  = []
+
+// 设置系统光标（传入 SYSTEM_CURSOR_* 常量），返回当前光标指针
+// 注意：返回的光标由缓存持有，调用方不要 destroy（会被复用）
 export func setSystemCursor(int kind): Ptr {
     sdl3 l = lib()
-    Ptr cur = l.SDL_CreateSystemCursor(kind)
+    int idx = kind
+    if idx < 0 { idx = 0 }
+    if _curKinds.len() <= idx {
+        while _curKinds.len() <= idx { _curKinds.add(0); _curPtrs.add(null) }
+    }
+    Ptr cur = _curPtrs[idx]
+    if cur != null { l.SDL_SetCursor(cur); return cur }
+    cur = l.SDL_CreateSystemCursor(kind)
     l.SDL_SetCursor(cur)
-    return cur  // 调用方负责 l.SDL_DestroyCursor(cur)
+    _curKinds[idx] = kind
+    _curPtrs[idx]  = cur
+    return cur
+}
+
+// ==================== 集中式光标决策 ====================
+// 问题：每个控件在 mouse motion 里各自 setSystemCursor，最终光标由“最后处理的控件”决定，
+// 导致后添加的控件（如下方的 ComboBox）会把上方控件（如弹出的下拉层）手型指针覆盖成箭头。
+// 解决：控件只“请求”光标，由 Window 在每帧事件处理完后统一“应用”一次。
+// DEFAULT(0) 优先级最低，其余（POINTER/HAND/TEXT...）取较大 kind，保证非默认光标优先。
+int  _frameCursorReq   = -1
+bool _frameCursorSeen = false
+
+// 每帧事件处理开始前调用，清空本帧请求
+export func resetFrameCursor() { _frameCursorReq = -1; _frameCursorSeen = false }
+
+// 控件在 mouse motion 时调用：标记本帧发生了鼠标移动
+export func markFrameMotion() { _frameCursorSeen = true }
+
+// 控件命中自身敏感区域时调用：请求使用某种光标（取较大 kind）
+export func requestCursor(int kind) {
+    if kind > _frameCursorReq { _frameCursorReq = kind }
+}
+
+// 帧末统一应用：仅当本帧有鼠标移动才设置（静止帧保持上帧结果，避免闪烁/覆盖）
+export func applyFrameCursor() {
+    if not _frameCursorSeen { return }
+    int k = _frameCursorReq
+    if k < 0 { k = SystemCursor.DEFAULT }   // 无任何控件请求 → 默认箭头
+    setSystemCursor(k)
 }
 
 // 弹出消息框

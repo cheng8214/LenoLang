@@ -1,0 +1,58 @@
+// test_combobox.leno — ComboBox 单独测试
+// 运行：leno 本文件
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.ComboBox
+
+main() {
+    var win = SDL3.createWindow({title: "ComboBox 测试", w: 520, h: 380})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 基本下拉（含 placeholder + 点外部收起）
+    var cb = win.addComboBox({x: 40, y: 50, w: 240, h: 32,
+        items: ["北京", "上海", "广州", "深圳", "杭州", "成都", "武汉"],
+        placeholder: "请选择城市"})
+    cb.on_change(func(int i) {
+        print("ComboBox -> idx=" + i + " 文本=" + cb.get_selected_text())
+    })
+
+    // 长列表（测试下拉超出窗口高度时的弹出高度 / 滚动）
+    var big = win.addComboBox({x: 40, y: 110, w: 240, h: 32,
+        items: ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10",
+                "A11", "A12", "A13", "A14", "A15", "A16", "A17", "A18", "A19", "A20"],
+        popup_h: 200,
+        placeholder: "长列表下拉"})
+    big.on_change(func(int i) { print("长 ComboBox -> idx=" + i + " 文本=" + big.get_selected_text()) })
+
+    // 预设选中 + 运行时 set_items / set_selected
+    var preset = win.addComboBox({x: 40, y: 170, w: 240, h: 32,
+        items: ["甲", "乙", "丙", "丁"], selected: 2, placeholder: "预设选中丙"})
+    preset.on_change(func(int i) { print("预设 ComboBox -> idx=" + i + " 文本=" + preset.get_selected_text()) })
+
+    var label = SDL3.createLabel({text: "当前: 未选择", x: 320, y: 60, font_size: 14})
+    win.add(label)
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.R {
+                cb.set_items(["新-1", "新-2", "新-3", "新-4", "新-5"])
+                cb.set_selected(0)
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "ComboBox 测试 (Esc 退出 / 点外部收起 / 按 R 重设第一个)", 30, 12, 200, 210, 230)
+            label.set_text("北京=" + cb.get_selected_text() + " | 长=" + big.get_selected_text() + " | 预设=" + preset.get_selected_text())
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

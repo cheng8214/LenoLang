@@ -7,21 +7,6 @@ import "sdl_core.leno" as core; use core.Scancode
 use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 
-// 悬停光标缓存：仅创建一次并复用，避免每次鼠标移动都新建 SDL 光标导致内存泄漏
-Ptr _editCursorText = null
-Ptr _editCursorDefault = null
-
-func _edit_set_cursor(bool text) {
-    sdl3 l = core.lib()
-    if text {
-        if _editCursorText == null { _editCursorText = l.SDL_CreateSystemCursor(core.SystemCursor.TEXT) }
-        l.SDL_SetCursor(_editCursorText)
-    } else {
-        if _editCursorDefault == null { _editCursorDefault = l.SDL_CreateSystemCursor(core.SystemCursor.DEFAULT) }
-        l.SDL_SetCursor(_editCursorDefault)
-    }
-}
-
 export struct Edit impl Widget {
     string text
     float x; float y; float w; float h
@@ -555,12 +540,12 @@ export struct Edit impl Widget {
         if not _loaded { return }
 
         // ---- 悬停光标：鼠标移入编辑框 → 文本(I型)光标；移出 → 默认光标 ----
+        // 走集中式光标决策（requestCursor），由 Window 帧末统一 apply，避免多控件互相覆盖
         if ev.isMouseMotion() {
             bool hit = _edit_hit(ev.mouseX(), ev.mouseY())
-            if hit != _hoverText {
-                _hoverText = hit
-                _edit_set_cursor(hit)
-            }
+            _hoverText = hit
+            core.markFrameMotion()
+            if hit { core.requestCursor(core.SystemCursor.TEXT) }
         }
 
         // ---- 鼠标滚轮（所有模式）----

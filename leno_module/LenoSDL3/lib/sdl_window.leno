@@ -60,6 +60,7 @@ Array[Renderer]        _runRens   = []
 Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
 Array[Array[Widget]]   _runWidgets = []
+Array[Array[ComboBox]]  _runCombos  = []
 var _runRunning = false
 var _modalWid = -1
 
@@ -81,6 +82,7 @@ export struct Window {
     bool ok       // 窗口是否创建成功
     int _w; int _h; float _aaScale
     Array[Widget] _widgets = []
+    Array[ComboBox] _combos = []   // 下拉框集合，用于渲染结束后第二遍画弹出层（盖在最上层）
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -277,6 +279,7 @@ export struct Window {
     func addComboBox(Dict opts): ComboBox {
         ComboBox cb = cbb.createComboBox(opts)
         _widgets.add(cb as Widget)
+        _combos.add(cb)
         return cb
     }
 
@@ -300,12 +303,14 @@ export struct Window {
         _runEvts.add(onEvent)
         _runRends.add(onRender)
         _runWidgets.add(_widgets)    // 统一关联控件列表
+        _runCombos.add(_combos)      // 下拉框集合（用于第二遍 overlay 绘制）
 
         if _runRunning { return }
         _runRunning = true
 
         Event ev = event.createEvent()
         while true {
+            core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
             while ev.poll() {
                 if ev.isQuit() {
                     for _runWids.len() to i {
@@ -329,7 +334,7 @@ export struct Window {
                             _windowCount -= 1
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i);  _runEvts.remove(i)
-                            _runRends.remove(i); _runWidgets.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i); _runCombos.remove(i)
                             break
                         }
                     }
@@ -343,6 +348,7 @@ export struct Window {
                     }
                 }
             }
+            core.applyFrameCursor()    // 帧末：按本帧各控件的请求统一设置一次光标（避免互相覆盖）
             if _runWids.len() == 0 {
                 ev.uninit()
                 if _windowCount <= 0 { core.quit() }
@@ -353,6 +359,9 @@ export struct Window {
                 // 自动渲染该窗口的所有控件（按添加顺序层叠）
                 var ws = _runWidgets[i]
                 for ws to w { w.render(_runRens[i]) }
+                // 第二遍：所有打开的下拉框画在最上层，避免被靠后的 ComboBox 挡住
+                var cbs = _runCombos[i]
+                for cbs to cb { cb.renderPopup(_runRens[i]) }
                 _runRens[i].present()
             }
         }
