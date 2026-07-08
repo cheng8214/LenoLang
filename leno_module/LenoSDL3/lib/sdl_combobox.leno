@@ -53,6 +53,12 @@ export struct ComboBox impl Widget {
         if _scroll > m { _scroll = m }
     }
 
+    // ==================== 布局接口 ====================
+    func get_w(): float          { return w }
+    func get_h(): float          { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
     func set(Dict opts) {
         x         = _float(opts.get("x", 0))
         y         = _float(opts.get("y", 0))

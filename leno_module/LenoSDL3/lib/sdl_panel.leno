@@ -49,6 +49,10 @@ export struct Panel impl Widget {
     func set_enabled(bool e) { _loaded = e }
     func get_x(): float { return x }
     func get_y(): float { return y }
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h

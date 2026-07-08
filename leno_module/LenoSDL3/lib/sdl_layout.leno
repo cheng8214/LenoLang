@@ -1,0 +1,313 @@
+// sdl_layout.leno — 自动布局容器（HBox / VBox / AnchorBox）
+//
+// 解决的问题：此前所有控件都用窗口绝对坐标摆放，调整一个就得手动算其它所有坐标。
+// 布局容器接管子控件的 x/y（必要时还有 w/h），按规则自动排布。
+//
+// 关键依赖：控件通过 Widget 接口的 get_w()/get_h()/set_pos()/set_size() 与布局协作，
+// 因此任何 impl Widget 的控件（含未来新增的 TabControl/Menu/Table）都能直接放进布局，
+// 无需布局本身做修改 —— 这是“不影响后面扩展”的基础。
+//
+// 用法：
+//   HBox hb = win.addHBox({x, y, w, h, spacing, padX, padY})
+//   hb.add(win.addButton({text:"A"}), {expand:true})   // 占满剩余宽度
+//   hb.add(win.addButton({text:"B"}), {align:1})       // 交叉轴居中
+// 子控件创建时仍需给定 w/h（作为自然尺寸）；布局会按需用 set_size 改写它们。
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_renderer.leno" as ren; use ren.Renderer
+
+// 交叉轴对齐方式
+export var LAYOUT_START   = 0   // 靠起始边（左/上）
+export var LAYOUT_CENTER  = 1   // 居中
+export var LAYOUT_END     = 2   // 靠结束边（右/下）
+export var LAYOUT_STRETCH = 3   // 撑满交叉轴
+
+// ============================================================
+// HBox — 子控件沿水平方向依次排列
+// ============================================================
+export struct HBox impl Widget {
+    float x; float y; float w; float h
+    float padX; float padY; float spacing
+    Array[Widget] _c = []
+    Array[Dict]    _opt = []
+    bool _loaded
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0))
+        y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 300))
+        h = _float(opts.get("h", 40))
+        padX = _float(opts.get("padX", 8))
+        padY = _float(opts.get("padY", 8))
+        spacing = _float(opts.get("spacing", 6))
+        _loaded = true
+    }
+
+    func add(Widget c, Dict opts): Widget {
+        if opts == null { opts = {} }
+        _c.add(c); _opt.add(opts)
+        return c
+    }
+    func remove(Widget c) {
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
+    }
+    func clear() { _c = []; _opt = [] }
+
+    // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func _relayout() {
+        if not _loaded { return }
+        int n = _c.len()
+        if n == 0 { return }
+        float innerW = w - 2.0 * padX
+        float innerH = h - 2.0 * padY
+        if innerW < 0 { innerW = 0 }
+        if innerH < 0 { innerH = 0 }
+
+        // 先统计非 expand 子控件的自然宽度总和，算出 expand 子控件能分到的宽度
+        float totalFixed = 0.0
+        int expandCount = 0
+        for _c.len() to i {
+            Dict o = _opt[i]
+            if _bool(o.get("expand", false)) { expandCount = expandCount + 1 }
+            else { totalFixed = totalFixed + _c[i].get_w() }
+        }
+        float totalSpacing = spacing * _float(n - 1)
+        float remaining = innerW - totalFixed - totalSpacing
+        if remaining < 0 { remaining = 0 }
+        float expandW = 0.0
+        if expandCount > 0 { expandW = remaining / _float(expandCount) }
+
+        float cx = x + padX
+        for _c.len() to i {
+            Widget c = _c[i]
+            Dict o = _opt[i]
+            bool ex = _bool(o.get("expand", false))
+            float cw
+            if ex { cw = expandW } else { cw = c.get_w() }
+            float ch = c.get_h()
+            int align = _int(o.get("align", 0))
+            float cy
+            if align == 3 { ch = innerH; cy = y + padY }
+            else if align == 1 { cy = y + padY + (innerH - ch) / 2.0 }
+            else if align == 2 { cy = y + padY + innerH - ch }
+            else { cy = y + padY }
+            c.set_pos(cx, cy)
+            c.set_size(cw, ch)
+            cx = cx + cw + spacing
+        }
+    }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.process(ev) }
+    }
+    func render(Renderer r) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.render(r) }
+    }
+    func dispose() { for _c to c { c.dispose() } }
+}
+
+// ============================================================
+// VBox — 子控件沿垂直方向依次排列（主轴为竖直）
+// ============================================================
+export struct VBox impl Widget {
+    float x; float y; float w; float h
+    float padX; float padY; float spacing
+    Array[Widget] _c = []
+    Array[Dict]    _opt = []
+    bool _loaded
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0))
+        y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 200))
+        h = _float(opts.get("h", 300))
+        padX = _float(opts.get("padX", 8))
+        padY = _float(opts.get("padY", 8))
+        spacing = _float(opts.get("spacing", 6))
+        _loaded = true
+    }
+
+    func add(Widget c, Dict opts): Widget {
+        if opts == null { opts = {} }
+        _c.add(c); _opt.add(opts)
+        return c
+    }
+    func remove(Widget c) {
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
+    }
+    func clear() { _c = []; _opt = [] }
+
+    // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func _relayout() {
+        if not _loaded { return }
+        int n = _c.len()
+        if n == 0 { return }
+        float innerW = w - 2.0 * padX
+        float innerH = h - 2.0 * padY
+        if innerW < 0 { innerW = 0 }
+        if innerH < 0 { innerH = 0 }
+
+        float totalFixed = 0.0
+        int expandCount = 0
+        for _c.len() to i {
+            Dict o = _opt[i]
+            if _bool(o.get("expand", false)) { expandCount = expandCount + 1 }
+            else { totalFixed = totalFixed + _c[i].get_h() }
+        }
+        float totalSpacing = spacing * _float(n - 1)
+        float remaining = innerH - totalFixed - totalSpacing
+        if remaining < 0 { remaining = 0 }
+        float expandH = 0.0
+        if expandCount > 0 { expandH = remaining / _float(expandCount) }
+
+        float cy = y + padY
+        for _c.len() to i {
+            Widget c = _c[i]
+            Dict o = _opt[i]
+            bool ex = _bool(o.get("expand", false))
+            float ch
+            if ex { ch = expandH } else { ch = c.get_h() }
+            float cw = c.get_w()
+            int align = _int(o.get("align", 0))
+            float cx
+            if align == 3 { cw = innerW; cx = x + padX }
+            else if align == 1 { cx = x + padX + (innerW - cw) / 2.0 }
+            else if align == 2 { cx = x + padX + innerW - cw }
+            else { cx = x + padX }
+            c.set_pos(cx, cy)
+            c.set_size(cw, ch)
+            cy = cy + ch + spacing
+        }
+    }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.process(ev) }
+    }
+    func render(Renderer r) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.render(r) }
+    }
+    func dispose() { for _c to c { c.dispose() } }
+}
+
+// ============================================================
+// AnchorBox — 子控件按锚点（left/top/right/bottom 或 center）定位
+// opts 支持：left, top, right, bottom（像素偏移，-1 表示不约束）、
+//            centerX, centerY（bool）、w, h（显式尺寸，覆盖自然尺寸）
+// ============================================================
+export struct AnchorBox impl Widget {
+    float x; float y; float w; float h
+    float padX; float padY
+    Array[Widget] _c = []
+    Array[Dict]    _opt = []
+    bool _loaded
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0))
+        y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 300))
+        h = _float(opts.get("h", 200))
+        padX = _float(opts.get("padX", 0))
+        padY = _float(opts.get("padY", 0))
+        _loaded = true
+    }
+
+    func add(Widget c, Dict opts): Widget {
+        if opts == null { opts = {} }
+        _c.add(c); _opt.add(opts)
+        return c
+    }
+    func remove(Widget c) {
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
+    }
+    func clear() { _c = []; _opt = [] }
+
+    // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func _relayout() {
+        if not _loaded { return }
+        float bx = x + padX
+        float by = y + padY
+        float bw = w - 2.0 * padX
+        float bh = h - 2.0 * padY
+        if bw < 0 { bw = 0 }
+        if bh < 0 { bh = 0 }
+
+        for _c.len() to i {
+            Widget c = _c[i]
+            Dict o = _opt[i]
+            float cw = c.get_w(); float ch = c.get_h()
+            float ow = _float(o.get("w", -1.0)); if ow >= 0.0 { cw = ow }
+            float oh = _float(o.get("h", -1.0)); if oh >= 0.0 { ch = oh }
+            float l = _float(o.get("left", -1.0))
+            float t = _float(o.get("top", -1.0))
+            float r = _float(o.get("right", -1.0))
+            float b = _float(o.get("bottom", -1.0))
+            bool cX = _bool(o.get("centerX", false))
+            bool cY = _bool(o.get("centerY", false))
+            float px = bx; float py = by
+
+            // 水平
+            if l >= 0.0 and r >= 0.0 { cw = bw - l - r; px = bx + l }
+            else if l >= 0.0 and cX { px = bx + (bw - cw) / 2.0 }
+            else if l >= 0.0 { px = bx + l }
+            else if r >= 0.0 { px = bx + bw - r - cw }
+            else if cX { px = bx + (bw - cw) / 2.0 }
+            else { px = bx }
+            // 垂直
+            if t >= 0.0 and b >= 0.0 { ch = bh - t - b; py = by + t }
+            else if t >= 0.0 and cY { py = by + (bh - ch) / 2.0 }
+            else if t >= 0.0 { py = by + t }
+            else if b >= 0.0 { py = by + bh - b - ch }
+            else if cY { py = by + (bh - ch) / 2.0 }
+            else { py = by }
+
+            c.set_pos(px, py)
+            c.set_size(cw, ch)
+        }
+    }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.process(ev) }
+    }
+    func render(Renderer r) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.render(r) }
+    }
+    func dispose() { for _c to c { c.dispose() } }
+}
+
+// ==================== 工厂 ====================
+export func createHBox(Dict opts): HBox {
+    HBox b = new HBox(); b.set(opts); return b
+}
+export func createVBox(Dict opts): VBox {
+    VBox b = new VBox(); b.set(opts); return b
+}
+export func createAnchorBox(Dict opts): AnchorBox {
+    AnchorBox b = new AnchorBox(); b.set(opts); return b
+}

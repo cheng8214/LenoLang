@@ -79,6 +79,15 @@ export struct RadioButton impl Widget {
     func set_font_size(float s)   { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float           { return x }
     func get_y(): float           { return y }
+    func get_w(): float {
+        _ensure_font()
+        float tw = 0.0
+        if _font != null and _font.ok and text != "" { tw = _float(_font.measureString(text).w) }
+        return _box + _gap + tw
+    }
+    func get_h(): float          { return _box }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) {}
 
     func on_change(func(bool):void cb) { _onChange = cb }
 

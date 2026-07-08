@@ -17,3 +17,6 @@ build/
 test_serialize_tmp.*
 assert/run_tests.lenb
 assert/run_tests.exe
+
+# 编译器产物（leno -c 生成的字节码）
+*.lenb

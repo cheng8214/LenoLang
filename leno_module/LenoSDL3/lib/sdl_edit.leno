@@ -273,6 +273,8 @@ export struct Edit impl Widget {
     }
     func set_pos(float px, float py)    { x = px; y = py }
     func set_size(float sw, float sh)   { w = sw; h = sh }
+    func get_w(): float                 { return w }
+    func get_h(): float                 { return h }
     func set_rgb(int r, int g, int b)   { cr = r; cg = g; cb = b }
     func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_font_size(float s) {

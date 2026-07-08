@@ -14,6 +14,7 @@ export struct Label impl Widget {
     Font  _font                  // 字体缓存
     int tr; int tg; int tb       // 文字色
     int _align                   // 对齐: 0=左, 1=中, 2=右
+    float _w; float _h           // 缓存自然尺寸（供布局使用）
     bool _loaded
 
     func _ensure_font() {
@@ -46,11 +47,21 @@ export struct Label impl Widget {
         _align = _int(opts.get("align", 0))
 
         _ensure_font()
+        if _font != null and _font.ok {
+            if text != "" { _w = _float(_font.measureString(text).w) } else { _w = 0.0 }
+            _h = _float(_font.measureString("Ag").h)
+        } else { _w = 0.0; _h = 16.0 }
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
-    func set_text(string t)        { text = t }
+    func set_text(string t)        {
+        text = t
+        if _font != null and _font.ok {
+            if text != "" { _w = _float(_font.measureString(text).w) } else { _w = 0.0 }
+            _h = _float(_font.measureString("Ag").h)
+        }
+    }
     func set_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_font_size(float s) {
         _fontSize = s
@@ -71,6 +82,10 @@ export struct Label impl Widget {
     func get_text(): string  { return text }
     func get_x(): float      { return x }
     func get_y(): float      { return y }
+    func get_w(): float      { return _w }
+    func get_h(): float      { return _h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { _w = sw; _h = sh }
 
     // 标签无需处理输入事件（仅展示），提供空实现以适配 Widget 接口
     func process(Event ev) {}

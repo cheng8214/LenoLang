@@ -90,6 +90,24 @@ export struct Renderer {
         return true
     }
 
+    // 窗口缩放时重建离屏 SSAA 纹理，使其匹配新的逻辑尺寸（否则内容只覆盖旧尺寸区域）
+    // 仅 SSAA 开启时有效；非 SSAA（直接绘制到窗口）由 SDL 自动跟随窗口，无需处理
+    func resizeSSAA(int newW, int newH): bool {
+        if not _ssaa { return false }
+        if newW <= 0 or newH <= 0 { return false }
+        int tw = _int(_float(newW) * _ssaaScale)
+        int th = _int(_float(newH) * _ssaaScale)
+        if tw <= 0 or th <= 0 { return false }
+        Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
+        if tex == null { return false }
+        if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex) }
+        _ssaaTex = tex
+        _ssaaWinW = newW; _ssaaWinH = newH
+        setRenderTarget(_ssaaTex)
+        setScale(_ssaaScale, _ssaaScale)
+        return true
+    }
+
     // 设置绘制颜色（整数 RGBA，0~255）
     func setColor(int r, int g, int b, int a): bool {
         return _lib.SDL_SetRenderDrawColor(handle, r, g, b, a)

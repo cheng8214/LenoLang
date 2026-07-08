@@ -5,6 +5,13 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 
 export face Widget {
+    // 布局所需：返回控件的自然尺寸（用于自动排版）
+    func get_w(): float
+    func get_h(): float
+    // 布局所需：设置控件位置（左上角）
+    func set_pos(float x, float y)
+    // 布局所需：设置控件尺寸（HBox/VBox 的 expand / stretch 会调用）
+    func set_size(float w, float h)
     // 处理一个事件（鼠标/键盘/窗口等）
     func process(Event ev)
     // 用给定渲染器绘制自身
