@@ -62,6 +62,12 @@ export struct Edit {
     Array[int] _drC0
     Array[int] _drC1
     int _drCount
+    bool _drDirty               // 显示行表需重建
+    float _drVisW               // 上次构建显示行表用的可视宽度
+    bool _drWrap                // 上次构建时的换行模式
+    Array[float] _lineW         // 每行像素宽度缓存（增量更新）
+    float _maxLineW             // 当前最大行宽
+    bool _lwDirty               // 行宽缓存需全量重算
 
     // 文本选取
     int  _selStart               // 选区起始（-1 表示无选区）
@@ -121,6 +127,8 @@ export struct Edit {
         if not _dirty { return }
         _dirty = false
         _cachedMaxW = -1.0
+        _drDirty = true
+        _lwDirty = true
 
         // 从 text 拆分行（用 split 处理所有 \n，包括末尾换行产生的空行）
         if text == "" { _lines = []; return }
@@ -132,12 +140,9 @@ export struct Edit {
         _rebuild_lines()
         if _lines.len() == 0 { return _lineHeight }
         if _wordWrap {
-            float visW = w - 16.0
-            if visW <= 0 { visW = 1.0 }
-            var n = 0
-            for _lines.len() to li { n += _wrap_line(_lines[li], visW).len() }
-            if n == 0 { n = 1 }
-            return _lineHeight * _float(n)
+            if _drDirty or _drWrap != _wordWrap { _ensure_layout(w - 16.0) }
+            if _drCount == 0 { return _lineHeight }
+            return _lineHeight * _float(_drCount)
         }
         return _lineHeight * _float(_lines.len())
     }
@@ -162,15 +167,19 @@ export struct Edit {
     }
 
     func _adjust_scroll_ml() {
+        float pad = 8.0
+        // 先用不含滚动条的宽度构建显示行表，再算滚动条，避免每帧重排
+        float provVisW = w - pad * 2.0
+        if provVisW <= 0 { provVisW = 1.0 }
+        _ensure_layout(provVisW)
         float sbW = _sb_width()
         float sbH = _sb_height()
-        float pad = 8.0
         float visW = w - pad * 2.0 - sbW
         float visH = h - pad * 2.0 - sbH
         if visH <= 0 { return }
 
         // 构建显示行表并定位光标所在显示行
-        _build_display_rows(visW)
+        if not _wordWrap { _ensure_layout(visW) }
         var di = _disp_row_of(_cursorLine, _cursorCol)
 
         // 垂直滚动
@@ -236,6 +245,8 @@ export struct Edit {
         _scrollX    = 0.0; _scrollY  = 0.0
         _lines      = []
         _drLi = []; _drC0 = []; _drC1 = []; _drCount = 0
+        _drDirty = true; _drVisW = 0.0; _drWrap = _wordWrap
+        _lineW = []; _maxLineW = 0.0; _lwDirty = true
         _dirty      = true
         _cachedLen  = -1
         _lastClickTime = 0; _lastClickX = 0; _lastClickY = 0
@@ -268,7 +279,7 @@ export struct Edit {
     }
     func set_placeholder(string p) { _placeholder = p }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
-    func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0 }
+    func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }
     func focus()    { _focused = true }
     func blur()     { _focused = false }
 
@@ -303,6 +314,7 @@ export struct Edit {
         } else { _cursorLine = 0; _cursorCol = 0 }
         _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
         text = get_text()
+        _drDirty = true; _lwDirty = true
         _adjust_scroll()
     }
 
@@ -329,6 +341,7 @@ export struct Edit {
         } else { _cursorLine = 0; _cursorCol = 0 }
         _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
         text = get_text()             // 同步 text
+        _drDirty = true; _lwDirty = true
         _adjust_scroll()
     }
 
@@ -408,7 +421,7 @@ export struct Edit {
         float relY = my - y - pad + _scrollY
         if relY < 0 { relY = 0 }
         _rebuild_lines()
-        _build_display_rows(visW)
+        _ensure_layout(visW)
         if _drCount == 0 { _cursorLine = 0; _cursorCol = 0; _cursorPos = 0; return }
 
         var di = _int(relY / _lineHeight)
@@ -454,13 +467,41 @@ export struct Edit {
     func _max_line_width(): float {
         _rebuild_lines()
         if _cachedMaxW >= 0.0 { return _cachedMaxW }
-        float maxW = 0.0
+        _ensure_line_widths()
+        return _cachedMaxW
+    }
+
+    // 全量重算每行宽度并得出最大行宽（仅在行结构/字体变化时触发）
+    func _ensure_line_widths() {
+        if not _lwDirty and _cachedMaxW >= 0.0 { return }
+        _rebuild_lines()
+        _lineW = []
+        _maxLineW = 0.0
         for _lines.len() to li {
-            var ms = _font.measureString(_lines[li])
-            if _float(ms.w) > maxW { maxW = _float(ms.w) }
+            var w0 = _float(_font.measureString(_lines[li]).w)
+            _lineW.add(w0)
+            if w0 > _maxLineW { _maxLineW = w0 }
         }
-        _cachedMaxW = maxW
-        return maxW
+        _lwDirty = false
+        _cachedMaxW = _maxLineW
+    }
+
+    // 单行内容变化时的增量更新（避免每次按键全量重测所有行）
+    func _update_line_width(int li) {
+        if li < 0 or li >= _lines.len() { return }
+        if _lineW.len() != _lines.len() { _lwDirty = true }
+        _ensure_line_widths()
+        var w0 = _float(_font.measureString(_lines[li]).w)
+        var old = _lineW[li]
+        _lineW[li] = w0
+        if w0 > _maxLineW {
+            _maxLineW = w0; _cachedMaxW = w0
+        } else if old >= _maxLineW - 0.5 {
+            // 该行可能曾是最大值，安全起见重扫一次
+            _maxLineW = 0.0
+            for _lineW.len() to i { if _lineW[i] > _maxLineW { _maxLineW = _lineW[i] } }
+            _cachedMaxW = _maxLineW
+        }
     }
 
     // ==================== 事件处理 ====================
@@ -786,7 +827,7 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(t) }
-                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; changed = true
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _lwDirty = true; changed = true
                 }
                 if sc == Scancode.V {
                     var paste = core.getClipboardText()
@@ -807,7 +848,7 @@ export struct Edit {
                         _lines[li] = _lines[li] + right
                         _cursorLine = li
                         _cursorCol = (plines[plines.len() - 1] as string).len()
-                        _cachedLen = -1; changed = true
+                        _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; changed = true
                     }
                 }
             }
@@ -815,31 +856,31 @@ export struct Edit {
             // 退格
             if sc == Scancode.BACKSPACE {
                 if _selActive and _selStart != _selEnd {
-                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; changed = true
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _lwDirty = true; changed = true
                 } else if _cursorCol > 0 {
                     _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol - 1) + ln.slice(_cursorCol, ln.len())
-                    _cursorCol -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
+                    _cursorCol -= 1; _cachedLen -= 1; _update_line_width(_cursorLine); changed = true
                 } else if _cursorLine > 0 {
                     _save_undo(); _mergeUndo = false; _cursorCol = _lines[_cursorLine - 1].len()
                     _lines[_cursorLine - 1] = _lines[_cursorLine - 1] + _lines[_cursorLine]
                     _lines.remove(_cursorLine)
-                    _cursorLine -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
+                    _cursorLine -= 1; _cachedLen -= 1; _cachedMaxW = -1; _lwDirty = true; changed = true
                 }
             }
 
             // Delete
             if sc == Scancode.DELETE {
                 if _selActive and _selStart != _selEnd {
-                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; changed = true
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; changed = true
                 } else if _cursorCol < _lines[_cursorLine].len() {
                     _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol) + ln.slice(_cursorCol + 1, ln.len())
-                    _cachedLen -= 1; _cachedMaxW = -1; changed = true
+                    _cachedLen -= 1; _update_line_width(_cursorLine); changed = true
                 } else if _cursorLine < _lines.len() - 1 {
                     _save_undo(); _mergeUndo = false; _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
                     _lines.remove(_cursorLine + 1)
-                    _cachedLen -= 1; _cachedMaxW = -1; changed = true
+                    _cachedLen -= 1; _cachedMaxW = -1; _lwDirty = true; changed = true
                 }
             }
 
@@ -865,13 +906,14 @@ export struct Edit {
                 var rest = ln.slice(_cursorCol, ln.len())
                 _lines[_cursorLine] = ln.slice(0, _cursorCol)
                 _lines.insert(_cursorLine + 1, rest)
-                _cursorLine += 1; _cursorCol = 0; _cachedLen += 1; _cachedMaxW = -1; changed = true
+                _cursorLine += 1; _cursorCol = 0; _cachedLen += 1; _cachedMaxW = -1; _lwDirty = true; changed = true
             }
 
             if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
             if _cursorLine < 0 { _cursorLine = 0 }
 
             if changed {
+                _drDirty = true
                 _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _textDirty = true
                 _adjust_scroll()
@@ -899,7 +941,8 @@ export struct Edit {
                 var ln = _lines[_cursorLine]
                 _lines[_cursorLine] = ln.slice(0, _cursorCol) + ch + ln.slice(_cursorCol, ln.len())
                 _cursorCol += ch.len()
-                _cachedLen = -1; _cachedMaxW = -1
+                _cachedLen = -1; _update_line_width(_cursorLine)
+                _drDirty = true
                 _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _textDirty = true
                 _adjust_scroll()
@@ -980,7 +1023,7 @@ export struct Edit {
         _sync_line_col()
         _rebuild_lines()
         float visW = w - 16.0 - _sb_width()
-        _build_display_rows(visW)
+        _ensure_layout(visW)
         var di = _disp_row_of(_cursorLine, _cursorCol)
         if di > 0 {
             // 在同一逻辑行内的上一显示行，或上一逻辑行的末显示行
@@ -1002,7 +1045,7 @@ export struct Edit {
         _sync_line_col()
         _rebuild_lines()
         float visW = w - 16.0 - _sb_width()
-        _build_display_rows(visW)
+        _ensure_layout(visW)
         var di = _disp_row_of(_cursorLine, _cursorCol)
         if di < _drCount - 1 {
             var nli = _drLi[di + 1]; var nc0 = _drC0[di + 1]; var nc1 = _drC1[di + 1]
@@ -1152,11 +1195,18 @@ export struct Edit {
         _rebuild_lines()
         _sync_line_col()                // 进入渲染时统一同步行列
         float pad = 8.0
+        // 先用不含滚动条的宽度构建显示行表（仅脏时重建），再算滚动条
+        float provVisW = w - pad * 2.0
+        if provVisW <= 0 { provVisW = 1.0 }
+        _ensure_layout(provVisW)
         float sbW = _sb_width()
         float sbH = _sb_height()
         float visW = w - pad * 2.0 - sbW
         float visH = h - pad * 2.0 - sbH
-        _build_display_rows(visW)
+        if visW <= 0 { visW = 1.0 }
+        if visH <= 0 { visH = 1.0 }
+        if not _wordWrap { _ensure_layout(visW) }
+
 
         // 裁剪区域
         var clip = core.SDL_Rect.malloc()
@@ -1310,20 +1360,37 @@ export struct Edit {
         }
     }
 
-    // 按像素宽度拆分一行
+    // 按像素宽度拆分一行（逐字符累加宽度，O(n) 而非 O(n^2)）
     func _wrap_line(string ln, float maxW): Array[string] {
         var result = []
         if ln == "" { result.add(""); return result }
-        var start = 0
-        for :ln.len() - 1 to i {
-            var ms = _font.measureString(ln.slice(start, i + 1))
-            if _float(ms.w) > maxW and i > start {
-                result.add(ln.slice(start, i))
-                start = i
+        var n = ln.len()
+        var segStart = 0
+        var curW = 0.0
+        for :n to i {
+            var ch = ln.slice(i, i + 1)
+            var cw = _float(_font.measureString(ch).w)
+            if curW + cw > maxW and i > segStart {
+                result.add(ln.slice(segStart, i))
+                segStart = i
+                curW = cw
+            } else {
+                curW = curW + cw
             }
         }
-        if start < ln.len() { result.add(ln.slice(start, ln.len())) }
+        if segStart < n { result.add(ln.slice(segStart, n)) }
         return result
+    }
+
+    // 仅在行表脏（内容/字体/换行模式/可视宽度变化）时重建，避免每帧重排全文
+    func _ensure_layout(float visW): int {
+        if _drDirty or _drWrap != _wordWrap or (_wordWrap and _drVisW != visW) {
+            _build_display_rows(visW)
+            _drVisW = visW
+            _drWrap = _wordWrap
+            _drDirty = false
+        }
+        return _drCount
     }
 
     // 构建显示行表：自动换行时一行逻辑行会被拆成多显示行。
