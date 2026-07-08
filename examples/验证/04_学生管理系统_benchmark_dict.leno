@@ -1,32 +1,32 @@
-// Dict 版本性能测试
+// Dict 版本性能测试（纳秒精度）
 import times
 
 main() {
-    var start = times.ms()
-    
+    var start = times.ns()
+
     // 创建班级（用字典模拟）
     var students = []
-    
-    // 创建 10000 个学生
-    for 0:10000 to i {
+
+    // 创建 10000 个学生（for 为闭区间 0:9999，共 10000 次）
+    for 0:10000-1 to i {
         var s = {
             age: 18 + (i % 5),
             score: 80 + (i % 20)
         }
         students.add(s)
     }
-    var create_time = times.ms() - start
-    
-    // 测试计算 1000 次
-    start = times.ms()
-    for 0:1000 to i {
+    var create_time = times.ns() - start
+
+    // 测试计算 1000 次（for 闭区间 0:999，共 1000 次）
+    start = times.ns()
+    for 0:1000-1 to i {
         // 计算平均年龄
         int totalAge = 0
         for students to s {
             totalAge = totalAge + s.age
         }
         var avgAge = totalAge / students.len()
-        
+
         // 计算平均分数
         int totalScore = 0
         for students to s {
@@ -34,10 +34,10 @@ main() {
         }
         var avgScore = totalScore / students.len()
     }
-    var calc_time = times.ms() - start
-    
+    var calc_time = times.ns() - start
+
     print("=== Dict 版本 ===")
-    print("创建 10000 个学生: " + create_time + " ms")
-    print("计算平均(x1000): " + calc_time + " ms")
+    print("创建 10000 个学生: " + (create_time / 1000000.0) + " ms")
+    print("计算平均(x1000): " + (calc_time / 1000000.0) + " ms")
     print("总学生数: " + students.len())
 }
