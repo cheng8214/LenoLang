@@ -37,6 +37,10 @@ import "sdl_radio.leno" as rb
 use rb.RadioButton
 import "sdl_toggle.leno" as tgl
 use tgl.Toggle
+import "sdl_slider.leno" as sld
+use sld.Slider
+import "sdl_progress.leno" as prg
+use prg.ProgressBar
 import "sdl_widget.leno" as wgt
 use wgt.Widget
 
@@ -230,6 +234,21 @@ export struct Window {
         Toggle t = tgl.createToggle(opts)
         _widgets.add(t as Widget)
         return t
+    }
+
+    // 添加滑块，opts: {x, y, w, h, min, max, value, step, vertical, on_change}
+    // 返回 Slider，可 .set_value(float) / .get_value() / .on_change(func(float){...})
+    func addSlider(Dict opts): Slider {
+        Slider s = sld.createSlider(opts)
+        _widgets.add(s as Widget)
+        return s
+    }
+
+    // 添加进度条，opts: {x, y, w, h, min, max, value, clickable, show_text, on_change}
+    func addProgressBar(Dict opts): ProgressBar {
+        ProgressBar p = prg.createProgressBar(opts)
+        _widgets.add(p as Widget)
+        return p
     }
 
     // 运行主循环（回调模式，支持多窗口）

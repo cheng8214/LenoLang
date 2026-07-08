@@ -1,0 +1,216 @@
+// sdl_slider.leno — 滑块控件
+// 通过 win.addSlider({...}) 创建，拖拽 thumb 或在轨道上点击设定数值，回调 on_change(float)
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_widget.leno" as wgt; use wgt.Widget
+
+export struct Slider impl Widget {
+    float x; float y; float w; float h
+    float minV; float maxV; float value
+    float step
+    bool _vertical
+    string _fontPath; float _fontSize; int _fontStyle; Font _font
+    int _trkR, _trkG, _trkB       // 轨道背景色
+    int _fillR, _fillG, _fillB    // 已选填充色
+    int _thumbR, _thumbG, _thumbB // 滑块色
+    int tr, tg, tb                // 文字色
+    int _cursor
+    bool hover; bool _wasHover; bool _dragging; bool enabled; bool _loaded
+    func(float):void _onChange
+
+    func _clamp(float v, float lo, float hi): float {
+        if v < lo { return lo }
+        if v > hi { return hi }
+        return v
+    }
+    func _round(float f): float {
+        if f >= 0.0 { return _float(_int(f + 0.5)) }
+        return _float(_int(f - 0.5))
+    }
+    func _quantize(float v): float {
+        if step > 0.0 { v = _round(v / step) * step }
+        return _clamp(v, minV, maxV)
+    }
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
+            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    // ==================== set 初始化 ====================
+    func set(Dict opts) {
+        x      = _float(opts.get("x", 0))
+        y      = _float(opts.get("y", 0))
+        w      = _float(opts.get("w", 200))
+        h      = _float(opts.get("h", 24))
+        minV   = _float(opts.get("min", 0.0))
+        maxV   = _float(opts.get("max", 100.0))
+        value  = _float(opts.get("value", 0.0))
+        step   = _float(opts.get("step", 0.0))
+        _vertical = _bool(opts.get("vertical", false))
+        _fontSize = _float(opts.get("font_size", 14))
+        _fontPath = opts.get("font_path", "") as string
+        _fontStyle = _int(opts.get("font_style", 0))
+
+        _trkR = 60;  _trkG = 60;  _trkB = 72
+        _fillR = 60; _fillG = 170; _fillB = 245
+        _thumbR = 245; _thumbG = 245; _thumbB = 250
+        tr = 235; tg = 235; tb = 245
+
+        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        enabled = _bool(opts.get("enabled", true))
+        hover = false; _wasHover = false; _dragging = false
+        value = _clamp(value, minV, maxV)
+        _ensure_font()
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func set_value(float v)    { float nv = _quantize(v); if nv != value { value = nv; if _onChange != null { _onChange(value) } } }
+    func get_value(): float     { return value }
+    func set_range(float lo, float hi) { minV = lo; maxV = hi; value = _clamp(value, minV, maxV) }
+    func set_enabled(bool e)     { enabled = e }
+    func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func get_x(): float          { return x }
+    func get_y(): float          { return y }
+
+    func on_change(func(float):void cb) { _onChange = cb }
+
+    // 当前值在轴上的归一化比例 [0,1]
+    func _ratio(): float {
+        float span = maxV - minV
+        if span <= 0.0 { return 0.0 }
+        return _clamp((value - minV) / span, 0.0, 1.0)
+    }
+
+    func _thumb_radius(): float {
+        if _vertical { return _clamp(w * 0.45, 6.0, 40.0) }
+        return _clamp(h * 0.45, 6.0, 40.0)
+    }
+
+    func contains(float mx, float my): bool {
+        float pad = _thumb_radius() + 4.0
+        if _vertical { return mx >= x - pad and mx <= x + w + pad and my >= y and my <= y + h }
+        return mx >= x and mx <= x + w and my >= y - pad and my <= y + h + pad
+    }
+
+    // 把鼠标坐标换算为值（用于拖拽与点击）
+    func _value_from_pos(float p): float {
+        float rad = _thumb_radius()
+        float span
+        if _vertical { span = h - 2.0 * rad } else { span = w - 2.0 * rad }
+        float t
+        if _vertical { t = (p - (y + rad)) / span } else { t = (p - (x + rad)) / span }
+        if t < 0.0 { t = 0.0 }
+        if t > 1.0 { t = 1.0 }
+        return _quantize(minV + t * (maxV - minV))
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        if not enabled { hover = false; _dragging = false; return }
+
+        if ev.isMouseMotion() {
+            float mx = ev.mouseX(); float my = ev.mouseY()
+            _wasHover = hover
+            hover = contains(mx, my)
+            // 拖拽中：即使移出控件也要继续更新
+            if _dragging {
+                if _vertical { value = _value_from_pos(my) } else { value = _value_from_pos(mx) }
+                if _onChange != null { _onChange(value) }
+            }
+            if _cursor >= 0 {
+                if (hover or _dragging) and not _wasHover { core.setSystemCursor(_cursor) }
+                if not hover and not _dragging and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+            }
+        }
+
+        if ev.isMouseButtonUp() { _dragging = false }
+
+        if ev.isMouseButtonDown() and not _dragging {
+            if contains(ev.mouseX(), ev.mouseY()) {
+                _dragging = true
+                if _vertical { value = _value_from_pos(ev.mouseY()) } else { value = _value_from_pos(ev.mouseX()) }
+                if _onChange != null { _onChange(value) }
+            }
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+        _ensure_font()
+        float rad = _thumb_radius()
+        float baseWH
+        if _vertical { baseWH = w } else { baseWH = h }
+        float tk = _clamp(baseWH * 0.4, 3.0, 30.0)   // 轨道厚度
+        float span
+        if _vertical { span = h - 2.0 * rad } else { span = w - 2.0 * rad }
+
+        // 轨道背景
+        int tR = _trkR; int tG = _trkG; int tB = _trkB
+        if not enabled { tR = _trkR / 2; tG = _trkG / 2; tB = _trkB / 2 }
+        r.setColor(tR, tG, tB, 255)
+        if _vertical {
+            float tx = x + (w - tk) / 2.0
+            r.fillRoundedRect(tx, y + rad, tk, span, tk / 2.0)
+        } else {
+            float ty = y + (h - tk) / 2.0
+            r.fillRoundedRect(x + rad, ty, span, tk, tk / 2.0)
+        }
+
+        // 已选填充
+        float ratio = _ratio()
+        int fR = _fillR; int fG = _fillG; int fB = _fillB
+        if not enabled { fR = _fillR / 2; fG = _fillG / 2; fB = _fillB / 2 }
+        r.setColor(fR, fG, fB, 255)
+        if _vertical {
+            float tx = x + (w - tk) / 2.0
+            float fillH = tk / 2.0 + ratio * span   // 从底向上填充
+            r.fillRoundedRect(tx, y + h - rad - fillH, tk, fillH, tk / 2.0)
+        } else {
+            float ty = y + (h - tk) / 2.0
+            float fillW = tk / 2.0 + ratio * span
+            r.fillRoundedRect(x + rad, ty, fillW, tk, tk / 2.0)
+        }
+
+        // thumb
+        float cx, cy
+        if _vertical { cx = x + w / 2.0; cy = y + rad + ratio * span }
+        else         { cx = x + rad + ratio * span; cy = y + h / 2.0 }
+        int kR = _thumbR; int kG = _thumbG; int kB = _thumbB
+        if hover or _dragging { kR = kR + 15; kG = kG + 15; kB = kB + 15
+                               if kR > 255 { kR = 255 }; if kG > 255 { kG = 255 }; if kB > 255 { kB = 255 } }
+        if not enabled { kR = _thumbR / 2; kG = _thumbG / 2; kB = _thumbB / 2 }
+        r.setColor(kR, kG, kB, 255)
+        r.fillCircle(cx, cy, rad)
+
+        // 数值文字
+        if _font != null and _font.ok {
+            string label = value as string
+            float th = _float(_font.measureString("Ag").h)
+            float ty; float tx
+            if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _float(_font.measureString(label).w) / 2.0 }
+            else { ty = y + h / 2.0 - th / 2.0; tx = x + w + 8.0 }
+            int tcR = tr; int tcG = tg; int tcB = tb
+            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
+            r.drawText(_font, label, tx, ty, tcR, tcG, tcB)
+        }
+    }
+
+    func dispose() {
+        if _font != null { _font.close(); _font = null }
+    }
+}
+
+// 工厂
+export func createSlider(Dict opts): Slider {
+    Slider s = new Slider(); s.set(opts); return s
+}

@@ -12,6 +12,8 @@ import "sdl_edit.leno" as edt
 import "sdl_checkbox.leno" as chk
 import "sdl_radio.leno" as rb
 import "sdl_toggle.leno" as tgl
+import "sdl_slider.leno" as sld
+import "sdl_progress.leno" as prg
 import "sdl_widget.leno" as wgt
 
 
@@ -49,11 +51,15 @@ use edt.Edit
 use chk.CheckBox
 use rb.RadioButton
 use tgl.Toggle
+use sld.Slider
+use prg.ProgressBar
 use wgt.Widget
 use wnd.EventHandler
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createRadioButton(Dict opts): RadioButton { return rb.createRadioButton(opts) }
 export func createToggle(Dict opts): Toggle          { return tgl.createToggle(opts) }
+export func createSlider(Dict opts): Slider          { return sld.createSlider(opts) }
+export func createProgressBar(Dict opts): ProgressBar { return prg.createProgressBar(opts) }
 use wnd.RenderCallback
 import "sdl_dialog.leno" as dlg
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }

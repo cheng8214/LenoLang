@@ -1,0 +1,162 @@
+// sdl_progress.leno — 进度条控件
+// 通过 win.addProgressBar({...}) 创建，只读显示进度（可 set_value 设定）；
+// 开启 clickable 后点击/拖拽可设定进度（像可交互进度条），回调 on_change(float)
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_widget.leno" as wgt; use wgt.Widget
+
+export struct ProgressBar impl Widget {
+    float x; float y; float w; float h
+    float minV; float maxV; float value
+    bool _clickable
+    bool _showText
+    string _fontPath; float _fontSize; int _fontStyle; Font _font
+    int _trkR, _trkG, _trkB       // 轨道背景色
+    int _fillR, _fillG, _fillB    // 已选填充色
+    int tr, tg, tb                // 文字色
+    int _cursor
+    bool hover; bool _wasHover; bool _dragging; bool enabled; bool _loaded
+    func(float):void _onChange
+
+    func _clamp(float v, float lo, float hi): float {
+        if v < lo { return lo }
+        if v > hi { return hi }
+        return v
+    }
+    func _ratio(): float {
+        float span = maxV - minV
+        if span <= 0.0 { return 0.0 }
+        return _clamp((value - minV) / span, 0.0, 1.0)
+    }
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
+            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    // ==================== set 初始化 ====================
+    func set(Dict opts) {
+        x         = _float(opts.get("x", 0))
+        y         = _float(opts.get("y", 0))
+        w         = _float(opts.get("w", 200))
+        h         = _float(opts.get("h", 20))
+        minV      = _float(opts.get("min", 0.0))
+        maxV      = _float(opts.get("max", 100.0))
+        value     = _float(opts.get("value", 0.0))
+        _clickable = _bool(opts.get("clickable", false))
+        _showText  = _bool(opts.get("show_text", true))
+        _fontSize = _float(opts.get("font_size", 14))
+        _fontPath = opts.get("font_path", "") as string
+        _fontStyle = _int(opts.get("font_style", 0))
+
+        _trkR = 60;  _trkG = 60;  _trkB = 72
+        _fillR = 80; _fillG = 200; _fillB = 120
+        tr = 235; tg = 235; tb = 245
+
+        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        enabled = _bool(opts.get("enabled", true))
+        hover = false; _wasHover = false; _dragging = false
+        value = _clamp(value, minV, maxV)
+        _ensure_font()
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func set_value(float v)     { float nv = _clamp(v, minV, maxV); if nv != value { value = nv; if _onChange != null { _onChange(value) } } }
+    func get_value(): float      { return value }
+    func set_enabled(bool e)      { enabled = e }
+    func set_font_size(float s)   { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func get_x(): float           { return x }
+    func get_y(): float           { return y }
+
+    func on_change(func(float):void cb) { _onChange = cb }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    func _value_from_x(float mx): float {
+        float t = (mx - x) / w
+        if t < 0.0 { t = 0.0 }
+        if t > 1.0 { t = 1.0 }
+        return _clamp(minV + t * (maxV - minV), minV, maxV)
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        if not enabled { hover = false; _dragging = false; return }
+        if not _clickable { hover = false; return }   // 只读时不响应
+
+        if ev.isMouseMotion() {
+            float mx = ev.mouseX(); float my = ev.mouseY()
+            _wasHover = hover
+            hover = contains(mx, my)
+            if _dragging { value = _value_from_x(mx); if _onChange != null { _onChange(value) } }
+            if _cursor >= 0 {
+                if hover and not _wasHover { core.setSystemCursor(_cursor) }
+                if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+            }
+        }
+
+        if ev.isMouseButtonUp() { _dragging = false }
+
+        if ev.isMouseButtonDown() and not _dragging {
+            if contains(ev.mouseX(), ev.mouseY()) {
+                _dragging = true
+                value = _value_from_x(ev.mouseX())
+                if _onChange != null { _onChange(value) }
+            }
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+        _ensure_font()
+
+        // 轨道背景
+        int tR = _trkR; int tG = _trkG; int tB = _trkB
+        if not enabled { tR = _trkR / 2; tG = _trkG / 2; tB = _trkB / 2 }
+        r.setColor(tR, tG, tB, 255)
+        r.fillRoundedRect(x, y, w, h, h / 2.0)
+
+        // 已选填充
+        float ratio = _ratio()
+        float fillW = ratio * w
+        int fR = _fillR; int fG = _fillG; int fB = _fillB
+        if not enabled { fR = _fillR / 2; fG = _fillG / 2; fB = _fillB / 2 }
+        if fillW > 1.0 {
+            r.setColor(fR, fG, fB, 255)
+            r.fillRoundedRect(x, y, fillW, h, h / 2.0)
+        }
+
+        // 文字（百分比）
+        if _showText and _font != null and _font.ok {
+            int pct = _int(ratio * 100.0)
+            string label = pct as string + "%"
+            float tw = _float(_font.measureString(label).w)
+            float th = _float(_font.measureString("Ag").h)
+            float tx = x + w / 2.0 - tw / 2.0
+            float ty = y + h / 2.0 - th / 2.0
+            int tcR = tr; int tcG = tg; int tcB = tb
+            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
+            r.drawText(_font, label, tx, ty, tcR, tcG, tcB)
+        }
+    }
+
+    func dispose() {
+        if _font != null { _font.close(); _font = null }
+    }
+}
+
+// 工厂
+export func createProgressBar(Dict opts): ProgressBar {
+    ProgressBar p = new ProgressBar(); p.set(opts); return p
+}

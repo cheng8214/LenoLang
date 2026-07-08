@@ -1,0 +1,59 @@
+// test_slider_progress.leno — 数值控件演示
+// 横向滑块 / 纵向滑块 / 只读进度条 / 可点击进度条
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+// 跨模块调用控件方法，必须 use 控件类型（推荐经由 SDL3 统一导出）
+use SDL3.Slider
+use SDL3.ProgressBar
+
+main() {
+    var win = SDL3.createWindow({title: "数值控件测试", w: 520, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 横向滑块：回调打印值
+    var hsl = win.addSlider({ x: 40, y: 70, w: 320, h: 24, min: 0, max: 100, value: 20, step: 1 })
+    hsl.on_change(func(float v) { print("横向滑块 -> " + v) })
+
+    // 纵向滑块
+    var vsl = win.addSlider({ x: 400, y: 60, w: 24, h: 220, min: 0, max: 100, value: 0, vertical: true })
+    vsl.on_change(func(float v) { print("纵向滑块 -> " + v) })
+
+    // 只读进度条：静态 66%
+    var pbar = win.addProgressBar({ x: 40, y: 160, w: 320, h: 22, min: 0, max: 100, value: 66, clickable: false })
+
+    // 可点击进度条：点击/拖拽设定进度
+    var pbar2 = win.addProgressBar({ x: 40, y: 220, w: 320, h: 22, min: 0, max: 100, value: 0, clickable: true })
+    pbar2.on_change(func(float v) { print("可点击进度条 -> " + v) })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            r.drawText(font, "滑块 / 进度条 演示", 20, 12, 255, 220, 80)
+
+            // 用时间驱动进度条循环变化，演示 set_value + 回调链路（每 500ms 一步，避免刷屏）
+            int t = SDL3.getTicks()
+            int step = t / 500
+            float ph = _float(step % 101)
+            pbar.set_value(ph)
+            pbar2.set_value(ph)
+
+            r.drawText(font, "横向滑块: " + hsl.get_value(), 40, 320, 200, 220, 240)
+            r.drawText(font, "纵向滑块: " + vsl.get_value(), 40, 348, 200, 220, 240)
+            r.drawText(font, "进度条(只读): " + pbar.get_value() + "%", 40, 376, 200, 220, 240)
+            r.drawText(font, "点击/拖拽右侧进度条", 280, 376, 140, 140, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
