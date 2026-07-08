@@ -41,6 +41,12 @@ import "sdl_slider.leno" as sld
 use sld.Slider
 import "sdl_progress.leno" as prg
 use prg.ProgressBar
+import "sdl_listbox.leno" as lb
+use lb.ListBox
+import "sdl_combobox.leno" as cbb
+use cbb.ComboBox
+import "sdl_panel.leno" as pnl
+use pnl.Panel
 import "sdl_widget.leno" as wgt
 use wgt.Widget
 
@@ -254,6 +260,30 @@ export struct Window {
     // 添加进度条，opts: {x, y, w, h, min, max, value, clickable, show_text, on_change}
     func addProgressBar(Dict opts): ProgressBar {
         ProgressBar p = prg.createProgressBar(opts)
+        _widgets.add(p as Widget)
+        return p
+    }
+
+    // 添加列表框，opts: {x, y, w, h, items, item_h, mode, selected, on_change}
+    // mode: 0=单选, 1=多选；on_change 回调收到选中的索引数组 Array[int]
+    func addListBox(Dict opts): ListBox {
+        ListBox lb2 = lb.createListBox(opts)
+        _widgets.add(lb2 as Widget)
+        return lb2
+    }
+
+    // 添加下拉框，opts: {x, y, w, h, items, item_h, popup_h, placeholder, selected, on_change}
+    // on_change 回调收到选中索引 int
+    func addComboBox(Dict opts): ComboBox {
+        ComboBox cb = cbb.createComboBox(opts)
+        _widgets.add(cb as Widget)
+        return cb
+    }
+
+    // 添加面板容器，opts: {x, y, w, h, bg, border, radius, border_alpha, clip}
+    // 用 panel.add(win.addButton({...})) 把子控件挂到面板（子控件用窗口绝对坐标）
+    func addPanel(Dict opts): Panel {
+        Panel p = pnl.createPanel(opts)
         _widgets.add(p as Widget)
         return p
     }

@@ -1,0 +1,265 @@
+// sdl_combobox.leno — 下拉框控件（点击展开列表选择，回调 on_change(int)）
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+
+export struct ComboBox impl Widget {
+    float x; float y; float w; float h
+    Array[string] items
+    int _sel                // 选中索引（-1 无）
+    bool _open
+    float _itemH
+    float _scroll
+    int _hover
+    float _popupMax         // 弹出列表最大高度
+    float _fontSize; string _fontPath; int _fontStyle; Font _font
+    string _placeholder
+    int br, bg, bb
+    int _bdrR, _bdrG, _bdrB
+    int _selR, _selG, _selB
+    int _hovR, _hovG, _hovB
+    int tr, tg, tb
+    int _sbR, _sbG, _sbB
+    int _cursor
+    bool enabled; bool _loaded
+    func(int):void _onChange
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
+            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    func _ph(): float {
+        float ph = _float(items.len()) * _itemH
+        if ph > _popupMax { ph = _popupMax }
+        return ph
+    }
+    func _max_scroll(): float {
+        float m = _float(items.len()) * _itemH - _ph()
+        if m < 0.0 { m = 0.0 }
+        return m
+    }
+    func _clamp_scroll() {
+        float m = _max_scroll()
+        if _scroll < 0.0 { _scroll = 0.0 }
+        if _scroll > m { _scroll = m }
+    }
+
+    func set(Dict opts) {
+        x         = _float(opts.get("x", 0))
+        y         = _float(opts.get("y", 0))
+        w         = _float(opts.get("w", 200))
+        h         = _float(opts.get("h", 30))
+        _itemH    = _float(opts.get("item_h", 24))
+        _popupMax = _float(opts.get("popup_h", 200))
+        _fontSize = _float(opts.get("font_size", 14))
+        _fontPath = opts.get("font_path", "") as string
+        _fontStyle = _int(opts.get("font_style", 0))
+        _placeholder = opts.get("placeholder", "请选择") as string
+
+        var its = opts.get("items", [])
+        if its is Array { items = its as Array[string] } else { items = [] }
+        _sel = _int(opts.get("selected", -1))
+        if _sel >= items.len() { _sel = -1 }
+
+        br = 38; bg = 40; bb = 48
+        _bdrR = 90; _bdrG = 95; _bdrB = 110
+        _selR = 60; _selG = 150; _selB = 235
+        _hovR = 70; _hovG = 78; _hovB = 92
+        tr = 235; tg = 235; tb = 245
+        _sbR = 120; _sbG = 125; _sbB = 140
+
+        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        enabled = _bool(opts.get("enabled", true))
+        _open = false; _scroll = 0.0; _hover = -1
+        _ensure_font()
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func set_items(Array[string] its) { items = its; if _sel >= items.len() { _sel = -1 }; _open = false; _scroll = 0.0 }
+    func add_item(string s)           { items.add(s) }
+    func clear()                      { items = []; _sel = -1; _open = false; _scroll = 0.0; _hover = -1 }
+    func set_enabled(bool e)          { enabled = e }
+    func set_font_size(float s)       { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func get_x(): float               { return x }
+    func get_y(): float               { return y }
+
+    func get_selected(): int          { return _sel }
+    func get_selected_text(): string  { if _sel >= 0 and _sel < items.len() { return items[_sel] }; return "" }
+    func set_selected(int idx) {
+        if idx < 0 or idx >= items.len() { return }
+        _sel = idx
+        if _onChange != null { _onChange(_sel) }
+    }
+    func close() { _open = false }
+
+    func on_change(func(int):void cb) { _onChange = cb }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+    func _popup_rect(): Array[float] {
+        float ph = _ph()
+        return [x, y + h, w, ph]
+    }
+    func _in_popup(float mx, float my): bool {
+        var pr = _popup_rect()
+        return mx >= pr[0] and mx <= pr[0] + pr[2] and my >= pr[1] and my <= pr[1] + pr[3]
+    }
+    func _index_at(float mx, float my): int {
+        if not _in_popup(mx, my) { return -1 }
+        var pr = _popup_rect()
+        int idx = _int((my - pr[1] + _scroll) / _itemH)
+        if idx < 0 or idx >= items.len() { return -1 }
+        return idx
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        if not enabled { _open = false; _hover = -1; return }
+
+        if ev.isMouseWheel() and _open {
+            float d = ev.wheelY() * _itemH
+            _scroll = _scroll - d
+            _clamp_scroll()
+        }
+
+        if ev.isMouseMotion() {
+            float mx = ev.mouseX(); float my = ev.mouseY()
+            if _open { _hover = _index_at(mx, my) } else { _hover = -1 }
+            bool hv = _open and _hover >= 0
+            if not hv { hv = contains(mx, my) }
+            if _cursor >= 0 {
+                if hv { core.setSystemCursor(_cursor) }
+                else { core.setSystemCursor(SystemCursor.DEFAULT) }
+            }
+        }
+
+        if ev.isMouseButtonDown() {
+            float mx = ev.mouseX(); float my = ev.mouseY()
+            if not _open {
+                if contains(mx, my) {
+                    _open = true
+                    _scroll = 0.0
+                    if _sel >= 0 {
+                        float iy = _float(_sel) * _itemH
+                        if iy + _itemH > _ph() { _scroll = iy + _itemH - _ph() }
+                        _clamp_scroll()
+                    }
+                }
+            } else {
+                int idx = _index_at(mx, my)
+                if idx >= 0 {
+                    _sel = idx
+                    _open = false
+                    if _onChange != null { _onChange(_sel) }
+                } else if not contains(mx, my) {
+                    _open = false   // 点击弹出区域外关闭
+                } else {
+                    _open = false   // 点击标题栏收起
+                }
+            }
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+        _ensure_font()
+
+        int bgr = br; int bgg = bg; int bgb = bb
+        if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
+        r.setColor(bgr, bgg, bgb, 255)
+        r.fillRoundedRect(x, y, w, h, 6.0)
+
+        // 当前文字
+        if _font != null and _font.ok {
+            string t = ""
+            if _sel >= 0 and _sel < items.len() { t = items[_sel] } else { t = _placeholder }
+            float th = _float(_font.measureString("Ag").h)
+            int tcR = tr; int tcG = tg; int tcB = tb
+            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
+            r.drawText(_font, t, x + 8.0, y + (h - th) / 2.0, tcR, tcG, tcB)
+        }
+
+        // 下拉箭头（向下填充三角）
+        float aw = 10.0; float ax = x + w - aw - 8.0; float ay = y + h / 2.0
+        r.setColor(_bdrR + 60, _bdrG + 60, _bdrB + 60, 255)
+        r.drawTriangle(ax + aw / 2.0, ay, aw / 2.0, 180.0, _bdrR + 60, _bdrG + 60, _bdrB + 60, 255)
+
+        // 边框
+        r.setColor(_bdrR, _bdrG, _bdrB, 220)
+        r.drawRoundedRect(x, y, w, h, 6.0)
+
+        // 弹出列表
+        if _open and items.len() > 0 {
+            var pr = _popup_rect()
+            float px = pr[0]; float py = pr[1]; float pw = pr[2]; float ph = pr[3]
+
+            r.setColor(bgr, bgg, bgb, 255)
+            r.fillRoundedRect(px, py, pw, ph, 6.0)
+
+            SDL_Rect clip = SDL_Rect.malloc()
+            clip.x = _int(px); clip.y = _int(py); clip.w = _int(pw); clip.h = _int(ph)
+            r.setClipRect(clip.to_ptr())
+
+            for items.len() to i {
+                float iy = py - _scroll + _float(i) * _itemH
+                if iy + _itemH < py or iy > py + ph { continue }
+                int rr = bgr; int gg = bgg; int bb2 = bgb
+                if i == _sel { rr = _selR; gg = _selG; bb2 = _selB }
+                else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
+                r.setColor(rr, gg, bb2, 255)
+                r.fillRect(px, iy, pw, _itemH)
+
+                if _font != null and _font.ok {
+                    float th = _float(_font.measureString("Ag").h)
+                    int tcR = tr; int tcG = tg; int tcB = tb
+                    r.drawText(_font, items[i], px + 8.0, iy + (_itemH - th) / 2.0, tcR, tcG, tcB)
+                }
+            }
+            r.clearClip()
+            clip.free()
+
+            r.setColor(_bdrR, _bdrG, _bdrB, 220)
+            r.drawRoundedRect(px, py, pw, ph, 6.0)
+
+            // 弹出滚动条
+            float maxs = _max_scroll()
+            if maxs > 0.0 {
+                float sw = 8.0
+                float sx = px + pw - sw - 2.0
+                r.setColor(_sbR, _sbG, _sbB, 180)
+                r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
+                float ratio = _scroll / maxs
+                float thH = _clamp(ph * ph / (_float(items.len()) * _itemH), 20.0, ph - 4.0)
+                float thy = py + 2.0 + ratio * (ph - 4.0 - thH)
+                r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+                r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+            }
+        }
+    }
+
+    func _clamp(float v, float lo, float hi): float {
+        if v < lo { return lo }
+        if v > hi { return hi }
+        return v
+    }
+
+    func dispose() {
+        if _font != null { _font.close(); _font = null }
+    }
+}
+
+// 工厂
+export func createComboBox(Dict opts): ComboBox {
+    ComboBox cb = new ComboBox(); cb.set(opts); return cb
+}

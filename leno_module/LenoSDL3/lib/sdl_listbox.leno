@@ -1,0 +1,260 @@
+// sdl_listbox.leno — 列表框控件（可滚动、单选/多选）
+// 通过 win.addListBox({...}) 创建，鼠标点击选择、滚轮滚动，回调 on_change(Array[int])
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+
+export struct ListBox impl Widget {
+    float x; float y; float w; float h
+    Array[string] items
+    Array[int] _sel          // 已选中索引集合
+    float _itemH             // 行高
+    float _scroll            // 已向下滚动的像素（0 = 顶部）
+    int _hover               // 当前悬停行索引（-1 无）
+    float _fontSize; string _fontPath; int _fontStyle; Font _font
+    int _mode                // 0=单选, 1=多选
+    int br, bg, bb           // 背景色
+    int _bdrR, _bdrG, _bdrB  // 边框色
+    int _selR, _selG, _selB  // 选中行底色
+    int _hovR, _hovG, _hovB  // 悬停行底色
+    int tr, tg, tb           // 文字色
+    int _sbR, _sbG, _sbB     // 滚动条色
+    int _cursor
+    bool enabled; bool _loaded
+    func(Array[int]):void _onChange
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
+            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    func _max_scroll(): float {
+        float total = _float(items.len()) * _itemH
+        float m = total - h
+        if m < 0.0 { m = 0.0 }
+        return m
+    }
+
+    func _clamp_scroll() {
+        float m = _max_scroll()
+        if _scroll < 0.0 { _scroll = 0.0 }
+        if _scroll > m { _scroll = m }
+    }
+
+    func _is_selected(int idx): bool {
+        for _sel.len() to i { if _sel[i] == idx { return true } }
+        return false
+    }
+
+    func _total_h(): float { return _float(items.len()) * _itemH }
+
+    // ==================== set 初始化 ====================
+    func set(Dict opts) {
+        x         = _float(opts.get("x", 0))
+        y         = _float(opts.get("y", 0))
+        w         = _float(opts.get("w", 200))
+        h         = _float(opts.get("h", 200))
+        _itemH    = _float(opts.get("item_h", 24))
+        _fontSize = _float(opts.get("font_size", 14))
+        _fontPath = opts.get("font_path", "") as string
+        _fontStyle = _int(opts.get("font_style", 0))
+        _mode     = _int(opts.get("mode", 0))     // 0 单选 / 1 多选
+
+        var its = opts.get("items", [])
+        if its is Array { items = its as Array[string] } else { items = [] }
+        _sel = []
+        var sel = opts.get("selected", -1)
+        if sel is Array {
+            var a = sel as Array[int]
+            for a.len() to i { _sel.add(a[i]) }
+        } else {
+            int s = _int(sel)
+            if s >= 0 { _sel.add(s) }
+        }
+
+        br = 38; bg = 40; bb = 48          // 背景
+        _bdrR = 90; _bdrG = 95; _bdrB = 110
+        _selR = 60; _selG = 150; _selB = 235
+        _hovR = 70; _hovG = 78; _hovB = 92
+        tr = 235; tg = 235; tb = 245
+        _sbR = 120; _sbG = 125; _sbB = 140
+
+        _cursor  = _int(opts.get("cursor", SystemCursor.POINTER))
+        enabled  = _bool(opts.get("enabled", true))
+        _scroll  = 0.0; _hover = -1
+        _ensure_font()
+        _clamp_scroll()
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func set_items(Array[string] its) { items = its; _sel = []; _scroll = 0.0; _clamp_scroll() }
+    func add_item(string s)           { items.add(s); _clamp_scroll() }
+    func remove_item(int idx) {
+        if idx >= 0 and idx < items.len() {
+            items.remove(idx)
+            for _sel.len() to i {
+                if _sel[i] == idx { _sel.remove(i); i = i - 1 }
+                else if _sel[i] > idx { _sel[i] = _sel[i] - 1 }
+            }
+            _clamp_scroll()
+        }
+    }
+    func clear() { items = []; _sel = []; _scroll = 0.0; _hover = -1 }
+    func set_enabled(bool e)     { enabled = e }
+    func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func get_x(): float          { return x }
+    func get_y(): float          { return y }
+
+    func set_scroll(float p)     { _scroll = p; _clamp_scroll() }
+    func get_scroll(): float     { return _scroll }
+    func get_selected_indices(): Array[int] { return _sel }
+    func get_selected_index(): int {
+        if _sel.len() > 0 { return _sel[0] }
+        return -1
+    }
+    func get_selected_text(): string {
+        int i = get_selected_index()
+        if i >= 0 and i < items.len() { return items[i] }
+        return ""
+    }
+    func set_selected(int idx) {
+        if idx < 0 or idx >= items.len() { return }
+        _sel = []; _sel.add(idx)
+        float iy = _float(idx) * _itemH
+        if iy < _scroll { _scroll = iy }
+        else if iy + _itemH > _scroll + h { _scroll = iy + _itemH - h }
+        _clamp_scroll()
+        if _onChange != null { _onChange(_sel) }
+    }
+
+    func on_change(func(Array[int]):void cb) { _onChange = cb }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    func _index_at(float mx, float my): int {
+        if not contains(mx, my) { return -1 }
+        int idx = _int((my - y + _scroll) / _itemH)
+        if idx < 0 or idx >= items.len() { return -1 }
+        return idx
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        if not enabled { _hover = -1; return }
+
+        if ev.isMouseWheel() {
+            float d = ev.wheelY() * _itemH
+            _scroll = _scroll - d
+            _clamp_scroll()
+        }
+
+        if ev.isMouseMotion() {
+            float mx = ev.mouseX(); float my = ev.mouseY()
+            _hover = _index_at(mx, my)
+            bool hv = _hover >= 0
+            if _cursor >= 0 {
+                if hv { core.setSystemCursor(_cursor) }
+                if not hv { core.setSystemCursor(SystemCursor.DEFAULT) }
+            }
+        }
+
+        if ev.isMouseButtonDown() {
+            float mx = ev.mouseX(); float my = ev.mouseY()
+            int idx = _index_at(mx, my)
+            if idx >= 0 {
+                if _mode == 0 {
+                    if not _is_selected(idx) {
+                        _sel = []; _sel.add(idx)
+                        if _onChange != null { _onChange(_sel) }
+                    }
+                } else {
+                    if _is_selected(idx) {
+                        for _sel.len() to i { if _sel[i] == idx { _sel.remove(i); break } }
+                    } else { _sel.add(idx) }
+                    if _onChange != null { _onChange(_sel) }
+                }
+            }
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+        _ensure_font()
+
+        int bgr = br; int bgg = bg; int bgb = bb
+        if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
+        r.setColor(bgr, bgg, bgb, 255)
+        r.fillRoundedRect(x, y, w, h, 6.0)
+
+        SDL_Rect clip = SDL_Rect.malloc()
+        clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
+        r.setClipRect(clip.to_ptr())
+
+        float pad = 8.0
+        for items.len() to i {
+            float iy = y - _scroll + _float(i) * _itemH
+            if iy + _itemH < y or iy > y + h { continue }
+            int rr = bgr; int gg = bgg; int bb2 = bgb
+            if _is_selected(i) { rr = _selR; gg = _selG; bb2 = _selB }
+            else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
+            r.setColor(rr, gg, bb2, 255)
+            r.fillRect(x, iy, w, _itemH)
+
+            if _font != null and _font.ok and i < items.len() {
+                string t = items[i]
+                float th = _float(_font.measureString("Ag").h)
+                int tcR = tr; int tcG = tg; int tcB = tb
+                if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
+                r.drawText(_font, t, x + pad, iy + (_itemH - th) / 2.0, tcR, tcG, tcB)
+            }
+        }
+
+        r.clearClip()
+        clip.free()
+
+        // 边框
+        r.setColor(_bdrR, _bdrG, _bdrB, 220)
+        r.drawRoundedRect(x, y, w, h, 6.0)
+
+        // 滚动条（内容超出时）
+        float maxs = _max_scroll()
+        if maxs > 0.0 {
+            float sw = 8.0
+            float sx = x + w - sw - 2.0
+            r.setColor(_sbR, _sbG, _sbB, 180)
+            r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
+            float ratio = _scroll / maxs
+            float thH = _clamp(h * h / _total_h(), 20.0, h - 4.0)
+            float thy = y + 2.0 + ratio * (h - 4.0 - thH)
+            r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+            if _sbR + 60 > 255 { }
+            r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+        }
+    }
+
+    func _clamp(float v, float lo, float hi): float {
+        if v < lo { return lo }
+        if v > hi { return hi }
+        return v
+    }
+
+    func dispose() {
+        if _font != null { _font.close(); _font = null }
+    }
+}
+
+// 工厂
+export func createListBox(Dict opts): ListBox {
+    ListBox lb = new ListBox(); lb.set(opts); return lb
+}

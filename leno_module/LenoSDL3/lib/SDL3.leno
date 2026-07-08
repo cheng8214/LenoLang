@@ -14,6 +14,9 @@ import "sdl_radio.leno" as rb
 import "sdl_toggle.leno" as tgl
 import "sdl_slider.leno" as sld
 import "sdl_progress.leno" as prg
+import "sdl_listbox.leno" as lb
+import "sdl_combobox.leno" as cbb
+import "sdl_panel.leno" as pnl
 import "sdl_widget.leno" as wgt
 
 
@@ -53,13 +56,21 @@ use rb.RadioButton
 use tgl.Toggle
 use sld.Slider
 use prg.ProgressBar
+use lb.ListBox
+use cbb.ComboBox
+use pnl.Panel
 use wgt.Widget
 use wnd.EventHandler
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
+export func createButton(Dict opts): Button          { return btn.createButton(opts) }
+export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
 export func createRadioButton(Dict opts): RadioButton { return rb.createRadioButton(opts) }
 export func createToggle(Dict opts): Toggle          { return tgl.createToggle(opts) }
 export func createSlider(Dict opts): Slider          { return sld.createSlider(opts) }
 export func createProgressBar(Dict opts): ProgressBar { return prg.createProgressBar(opts) }
+export func createListBox(Dict opts): ListBox     { return lb.createListBox(opts) }
+export func createComboBox(Dict opts): ComboBox  { return cbb.createComboBox(opts) }
+export func createPanel(Dict opts): Panel        { return pnl.createPanel(opts) }
 use wnd.RenderCallback
 import "sdl_dialog.leno" as dlg
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }

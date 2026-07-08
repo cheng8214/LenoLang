@@ -1,0 +1,94 @@
+// sdl_panel.leno — 面板容器控件（背景框 + 边框 + 裁剪，承载子控件）
+// 子控件使用「窗口绝对坐标」添加到面板：panel.add(win.addButton({x, y, ...}))
+// 面板只负责绘制背景/边框、把绘制裁剪到自身范围、并把事件转发给子控件。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+
+export struct Panel impl Widget {
+    float x; float y; float w; float h
+    Array[Widget] children = []
+    int br, bg, bb           // 背景色
+    int _bdrR, _bdrG, _bdrB  // 边框色
+    float _radius
+    int _brdA                // 边框透明度
+    bool _drawBorder
+    bool _clip               // 是否裁剪子控件到面板范围
+    bool _loaded
+
+    func set(Dict opts) {
+        x    = _float(opts.get("x", 0))
+        y    = _float(opts.get("y", 0))
+        w    = _float(opts.get("w", 200))
+        h    = _float(opts.get("h", 150))
+        _radius = _float(opts.get("radius", 8.0))
+
+        var bgc = opts.get("bg")
+        if bgc is Array { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        else { br = 44; bg = 46; bb = 54 }
+
+        var bdc = opts.get("border")
+        if bdc is Array { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        else { _bdrR = 90; _bdrG = 95; _bdrB = 110 }
+
+        _brdA = _int(opts.get("border_alpha", 220))
+        _drawBorder = _bool(opts.get("border", true))
+        _clip = _bool(opts.get("clip", true))
+        children = []
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func add(Widget c): Widget { children.add(c); return c }
+    func remove(Widget c) {
+        for children.len() to i { if children[i] == c { children.remove(i); return } }
+    }
+    func clear_children() { children = [] }
+    func set_bg(int r, int g, int b) { br = r; bg = g; bb = b }
+    func set_enabled(bool e) { _loaded = e }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // 转发事件给所有子控件（子控件各自处理命中）
+    func process(Event ev) {
+        if not _loaded { return }
+        for children to c { c.process(ev) }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+
+        r.setColor(br, bg, bb, 255)
+        r.fillRoundedRect(x, y, w, h, _radius)
+
+        if _clip {
+            SDL_Rect cr = SDL_Rect.malloc()
+            cr.x = _int(x); cr.y = _int(y); cr.w = _int(w); cr.h = _int(h)
+            r.setClipRect(cr.to_ptr())
+        }
+
+        for children to c { c.render(r) }
+
+        if _clip { r.clearClip() }
+
+        if _drawBorder {
+            r.setColor(_bdrR, _bdrG, _bdrB, _brdA)
+            r.drawRoundedRect(x, y, w, h, _radius)
+        }
+    }
+
+    func dispose() {
+        for children to c { c.dispose() }
+    }
+}
+
+// 工厂
+export func createPanel(Dict opts): Panel {
+    Panel p = new Panel(); p.set(opts); return p
+}

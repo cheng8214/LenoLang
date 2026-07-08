@@ -281,7 +281,22 @@ export struct Renderer {
     }
 
     // 便捷绘制文字（创建纹理→绘制→销毁一步完成）
+    // SSAA 激活时：临时把字号放大到 _ssaaScale 倍渲染，使文字纹理本身为 2x 分辨率，
+    // 再按逻辑尺寸绘制（被 setScale 映射回 1:1 的离屏像素），下采样后清晰不糊。
     func drawText(Font f, string text, float x, float y, int r, int g, int b) {
+        if _ssaa and _ssaaScale > 0.0 {
+            float origPt = f._pt
+            f.setFontSize(origPt * _ssaaScale)
+            TextTexture tex = font.createTextTexture(handle, f, text, r, g, b)
+            f.setFontSize(origPt)   // 还原，避免影响后续 measureString/其它绘制
+            if tex.ok {
+                float dw = _float(tex.width)  / _ssaaScale
+                float dh = _float(tex.height) / _ssaaScale
+                drawTextureAt(tex.texture, x, y, dw, dh)
+                tex.destroy()
+            }
+            return
+        }
         TextTexture tex = font.createTextTexture(handle, f, text, r, g, b)
         if tex.ok { drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
     }

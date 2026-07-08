@@ -89,7 +89,7 @@ export var _ttfInited = false
 // ==================== Font ====================
 
 export struct Font {
-    Ptr[u8] handle; bool ok; int height; int ascent; int descent
+    Ptr[u8] handle; bool ok; int height; int ascent; int descent; float _pt
 
     func load(string path, float ptsize): bool {
         if not ttfInit() { return false }
@@ -99,6 +99,7 @@ export struct Font {
             height  = ttfLib().TTF_GetFontHeight(handle)
             ascent  = ttfLib().TTF_GetFontAscent(handle)
             descent = ttfLib().TTF_GetFontDescent(handle)
+            _pt     = ptsize
         }
         return ok
     }
@@ -200,6 +201,7 @@ export struct Font {
             height  = ttfLib().TTF_GetFontHeight(handle)
             ascent  = ttfLib().TTF_GetFontAscent(handle)
             descent = ttfLib().TTF_GetFontDescent(handle)
+            _pt     = ptsize
         }
     }
 

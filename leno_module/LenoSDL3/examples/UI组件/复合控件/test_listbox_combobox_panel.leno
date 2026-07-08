@@ -1,0 +1,65 @@
+// test_listbox_combobox_panel.leno — ListBox / ComboBox / Panel 演示
+// 注意：所有控件必须在 win.run() 之前添加，run() 是阻塞主循环
+// 运行：leno 本文件
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.ListBox
+use SDL3.ComboBox
+use SDL3.Panel
+use SDL3.Button
+use SDL3.Label
+
+main() {
+    var win = SDL3.createWindow({title: "ListBox / ComboBox / Panel 测试", w: 640, h: 460})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // ---------- 单选 ListBox（带滚动条）----------
+    var fruits = ["苹果", "香蕉", "橙子", "葡萄", "西瓜", "芒果", "草莓", "菠萝", "桃子", "梨"]
+    var lb = win.addListBox({x: 30, y: 40, w: 180, h: 200, items: fruits, selected: 0})
+    lb.on_change(func(Array[int] idxs) {
+        print("ListBox 选择 -> " + idxs.len() + " 项, 文本=" + lb.get_selected_text())
+    })
+
+    // ---------- 多选 ListBox ----------
+    var mlb = win.addListBox({x: 30, y: 260, w: 180, h: 150, items: ["红", "绿", "蓝", "黄", "紫"], mode: 1})
+    mlb.on_change(func(Array[int] idxs) { print("多选 ListBox -> " + idxs.len() + " 项") })
+
+    // ---------- ComboBox ----------
+    var cb = win.addComboBox({x: 260, y: 40, w: 200, h: 30, items: ["北京", "上海", "广州", "深圳", "杭州"], placeholder: "请选择城市"})
+    cb.on_change(func(int i) { print("ComboBox 选择 -> idx=" + i + " 文本=" + cb.get_selected_text()) })
+
+    // ---------- Panel 容器（含子控件 + 裁剪演示）----------
+    var panel = win.addPanel({x: 260, y: 110, w: 220, h: 160, bg: [44, 46, 54], border: [90, 95, 110], radius: 10})
+    var pTitle = SDL3.createLabel({text: "面板内控件（会被裁剪）", x: 275, y: 120, font_size: 14})
+    panel.add(pTitle)
+    // 这个按钮故意超出面板右边界，演示裁剪效果
+    var pBtn = SDL3.createButton({x: 275, y: 150, w: 230, h: 32, text: "超出面板的按钮"})
+    panel.add(pBtn)
+    var pLb = SDL3.createLabel({text: "面板内的说明文字", x: 275, y: 200, font_size: 13})
+    panel.add(pLb)
+
+    // 在面板外再放一个普通按钮，确认 Panel 不影响其它控件
+    win.addButton({x: 260, y: 300, w: 180, h: 34, text: "面板外按钮"}).on_click(func() {
+        print("点击了面板外的按钮")
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "ListBox / ComboBox / Panel 演示 (Esc 退出)", 30, 12, 200, 210, 230)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
