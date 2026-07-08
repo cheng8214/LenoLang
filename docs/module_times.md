@@ -244,7 +244,7 @@ import times
 main() {
     print("倒计时开始!")
     
-    for 10:1 to i {
+    for 10:1:-1 to i {
         print("还剩 " + i + " 秒...")
         sleep(1000)
     }

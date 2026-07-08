@@ -51,7 +51,8 @@ main()
 		*/
 	}
 	print("")
-	for 5:0 to num
+	// 倒序必须显式写步长 -1（方案 B：无步长只正向，for A:B 当 A>B 时为空循环不执行）
+	for 5:0:-1 to num
 	{
 		printf(num+" ")//5,4,3,2,1,0
 	}

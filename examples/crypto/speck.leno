@@ -85,7 +85,7 @@ func speck_decrypt_block(int x, int y, int k0, int k1, int k2, int k3):Array[int
     }
 
     // 从最后一轮倒序解密
-    for ROUNDS - 1:0 to i {
+    for ROUNDS - 1:0:-1 to i {
         y = rotr32(_int32(y ^ x), 3)
         x = rotl32(_int32((_int32(x ^ rk[i]) - y)), 8)
     }

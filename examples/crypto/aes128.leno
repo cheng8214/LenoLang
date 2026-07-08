@@ -234,7 +234,7 @@ func aes_decrypt_block(Array[int] ciphertext, Array[int] key):Array[int] {
     Array[int] state = add_round_key(ciphertext, get_round_key(w, 10))
 
     // 第 9-1 轮
-    for 9:1 to round {
+    for 9:1:-1 to round {
         state = inv_shift_rows(state)
         state = inv_sub_bytes(state)
         state = add_round_key(state, get_round_key(w, round))

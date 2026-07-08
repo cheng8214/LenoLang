@@ -79,7 +79,7 @@ func rc5_encrypt_block(int a, int b, int k0, int k1, int k2, int k3):Array[int] 
 func rc5_decrypt_block(int a, int b, int k0, int k1, int k2, int k3):Array[int] {
     Array[int] S = rc5_key_schedule(k0, k1, k2, k3)
 
-    for 12:1 to i {
+    for 12:1:-1 to i {
         b = rotr32(_int32(_int32(b - S[2 * i + 1])), a) ^ a
         a = rotr32(_int32(_int32(a - S[2 * i])), b) ^ b
     }

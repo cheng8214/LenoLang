@@ -498,34 +498,20 @@ static void gen_for(CodeGen* gen, Ast* ast) {
         emit_bytes_2(gen, OP_SET_LOCAL, step_slot, ast->line);
         emit_byte(gen, OP_POP, ast->line);
     } else {
-        // 无显式 step：根据 start 和 end 自动判断方向
+        // 方案 B：无显式 step 时默认正向 step=+1（不再根据 start/end 自动倒序）。
+        // 倒序必须显式写 for A:B:-1。
+        // 编译期提示：字面量区间 start > end 且无步长时，该循环现在不会执行（空循环）。
         if (ast->u.for_.start && ast->u.for_.start->kind == AST_NUM &&
-            ast->u.for_.start->u.num.value == 0.0) {
-            // 优化：start=0 时直接设 step=1
-            emit_byte(gen, OP_ONE, ast->line);
-            emit_bytes_2(gen, OP_SET_LOCAL, step_slot, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        } else {
-            emit_bytes_2(gen, OP_GET_LOCAL, start_slot, ast->line);
-            emit_bytes_2(gen, OP_GET_LOCAL, end_slot, ast->line);
-            emit_byte(gen, OP_GT, ast->line);
-
-            int reverse_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-
-            emit_byte(gen, OP_ZERO, ast->line);
-            emit_byte(gen, OP_ONE, ast->line);
-            emit_byte(gen, OP_SUB, ast->line);
-            int after_reverse = emit_jump(gen, OP_JUMP, ast->line);
-
-            patch_jump(gen, reverse_jump);
-            emit_byte(gen, OP_POP, ast->line);
-            emit_byte(gen, OP_ONE, ast->line);
-
-            patch_jump(gen, after_reverse);
-            emit_bytes_2(gen, OP_SET_LOCAL, step_slot, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
+            ast->u.for_.end && ast->u.for_.end->kind == AST_NUM &&
+            ast->u.for_.start->u.num.value > ast->u.for_.end->u.num.value) {
+            fprintf(stderr, "[WARN] 第 %d 行: for 区间 %g:%g 无显式步长，按正向规则不会执行（如需倒序请写 for A:B:-1）\n",
+                    ast->line,
+                    ast->u.for_.start->u.num.value,
+                    ast->u.for_.end->u.num.value);
         }
+        emit_byte(gen, OP_ONE, ast->line);
+        emit_bytes_2(gen, OP_SET_LOCAL, step_slot, ast->line);
+        emit_byte(gen, OP_POP, ast->line);
     }
 
     // 所有数值循环使用专用字节码 OP_FOR_PREP 和 OP_FOR_LOOP
