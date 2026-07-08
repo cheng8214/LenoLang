@@ -5,6 +5,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.Scancode
 use core.sdl3
+import "sdl_widget.leno" as wgt; use wgt.Widget
 
 // 悬停光标缓存：仅创建一次并复用，避免每次鼠标移动都新建 SDL 光标导致内存泄漏
 Ptr _editCursorText = null
@@ -21,7 +22,7 @@ func _edit_set_cursor(bool text) {
     }
 }
 
-export struct Edit {
+export struct Edit impl Widget {
     string text
     float x; float y; float w; float h
     float _radius                // 圆角半径

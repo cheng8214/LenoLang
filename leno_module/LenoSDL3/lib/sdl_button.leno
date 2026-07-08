@@ -4,8 +4,9 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_widget.leno" as wgt; use wgt.Widget
 
-export struct Button {
+export struct Button impl Widget {
     string text
     float x; float y; float w; float h
     float _radius           // 圆角半径

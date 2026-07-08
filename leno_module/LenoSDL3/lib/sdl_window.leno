@@ -31,6 +31,8 @@ import "sdl_label.leno" as lbl
 use lbl.Label
 import "sdl_edit.leno" as edt
 use edt.Edit
+import "sdl_widget.leno" as wgt
+use wgt.Widget
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
@@ -41,9 +43,7 @@ Array[Ptr]             _runHnds   = []
 Array[Renderer]        _runRens   = []
 Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
-Array[Array[Button]]   _runBtns   = []
-Array[Array[Label]]    _runLbls   = []
-Array[Array[Edit]]     _runEdts   = []
+Array[Array[Widget]]   _runWidgets = []
 var _runRunning = false
 var _modalWid = -1
 
@@ -63,9 +63,7 @@ export func registerRun(Ptr hdl, int wid, Renderer ren, var onEvent, var onRende
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok       // 窗口是否创建成功
-    Array[Button] _buttons = []
-    Array[Label]  _labels  = []
-    Array[Edit]   _edits   = []
+    Array[Widget] _widgets = []
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -180,14 +178,14 @@ export struct Window {
     // 返回 Button，可 .on_click(func() { ... })
     func addButton(Dict opts): Button {
         Button b = btn.createButton(opts)
-        _buttons.add(b)
+        _widgets.add(b as Widget)
         return b
     }
 
     // 添加标签，opts: {text, x, y, font_size, rgb, align}
     func addLabel(Dict opts): Label {
         Label l = lbl.createLabel(opts)
-        _labels.add(l)
+        _widgets.add(l as Widget)
         return l
     }
 
@@ -195,8 +193,14 @@ export struct Window {
     func addEdit(Dict opts): Edit {
         Edit ed = edt.createEdit(opts)
         ed.set_window(handle)
-        _edits.add(ed)
+        _widgets.add(ed as Widget)
         return ed
+    }
+
+    // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
+    func add(Widget w): Widget {
+        _widgets.add(w)
+        return w
     }
 
     // 运行主循环（回调模式，支持多窗口）
@@ -209,9 +213,7 @@ export struct Window {
         _runRens.add(ren)
         _runEvts.add(onEvent)
         _runRends.add(onRender)
-        _runBtns.add(_buttons)       // 关联按钮列表
-        _runLbls.add(_labels)        // 关联标签列表
-        _runEdts.add(_edits)         // 关联编辑框列表
+        _runWidgets.add(_widgets)    // 统一关联控件列表
 
         if _runRunning { return }
         _runRunning = true
@@ -241,18 +243,16 @@ export struct Window {
                             _windowCount -= 1
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i);  _runEvts.remove(i)
-                            _runRends.remove(i); _runBtns.remove(i); _runLbls.remove(i); _runEdts.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i)
                             break
                         }
                     }
                 }
-                // 自动处理该窗口的按钮事件
+                // 自动处理该窗口的所有控件事件
                 for _runWids.len() to j {
                     if _runWids[j] == wid {
-                        var btns = _runBtns[j]
-                        var edts = _runEdts[j]
-                        for btns to b { b.process(ev) }
-                        for edts to e { e.process(ev) }
+                        var ws = _runWidgets[j]
+                        for ws to w { if w is Widget { w.process(ev) } }
                         break
                     }
                 }
@@ -264,15 +264,9 @@ export struct Window {
             }
             for _runWids.len() to i {
                 _runRends[i](_runRens[i])
-                // 自动渲染该窗口的标签
-                var lbls = _runLbls[i]
-                for lbls to l { l.render(_runRens[i]) }
-                // 自动渲染该窗口的编辑框
-                var edts = _runEdts[i]
-                for edts to e { e.render(_runRens[i]) }
-                // 自动渲染该窗口的按钮
-                var btns = _runBtns[i]
-                for btns to b { b.render(_runRens[i]) }
+                // 自动渲染该窗口的所有控件（按添加顺序层叠）
+                var ws = _runWidgets[i]
+                for ws to w { if w is Widget { w.render(_runRens[i]) } }
                 _runRens[i].present()
             }
         }

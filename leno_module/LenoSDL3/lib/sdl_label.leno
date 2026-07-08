@@ -2,8 +2,10 @@
 // 通过 win.addLabel({...}) 创建，支持多行、对齐、自动换行
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_widget.leno" as wgt; use wgt.Widget
 
-export struct Label {
+export struct Label impl Widget {
     string text
     float x; float y
     float _fontSize              // 字体大小
@@ -69,6 +71,9 @@ export struct Label {
     func get_text(): string  { return text }
     func get_x(): float      { return x }
     func get_y(): float      { return y }
+
+    // 标签无需处理输入事件（仅展示），提供空实现以适配 Widget 接口
+    func process(Event ev) {}
 
     // ==================== 渲染 ====================
     func render(Renderer r) {
