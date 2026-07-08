@@ -85,6 +85,7 @@ int lenolang_run(const char* source) {
      }
     // 0. 清空错误
     error_clear();
+    warning_clear();
      if (debugMode) {
          printf("debug模式:进入语法分析阶段\n");
      }
@@ -94,6 +95,7 @@ int lenolang_run(const char* source) {
     if (parser_parse(&parser) < 0) {
         // 语法分析失败，只释放 AST
         error_print_all();
+        warning_print_all();
         ast_free(parser.root);
         return -1;
     }
@@ -148,9 +150,11 @@ int lenolang_run(const char* source) {
     // 如果有运行时错误，打印错误信息
     if (ret != 0 || error_has_any()) {
         error_print_all();
+        warning_print_all();
         return -1;
     }
-    
+
+    warning_print_all();
     return ret;
 
 fail:
@@ -158,6 +162,7 @@ fail:
         printf("debug模式:编译失败\n");
     }
     error_print_all();
+    warning_print_all();
     codegen_cleanup(&gen);
     ast_free(parser.root);
     // 编译失败时释放 root_scope（VM 未初始化）
@@ -209,15 +214,19 @@ int lenolang_run_binary(const char* path) {
 
     if (ret != 0 || error_has_any()) {
         error_print_all();
+        warning_print_all();
         return -1;
     }
 
+    warning_print_all();
     return ret;
 }
 
 // 编译源代码到二进制文件
 int lenolang_compile(const char* source, const char* output_path) {
+    clock_t compile_t0 = clock();
     error_clear();
+    warning_clear();
 
     gc_init();
     vm_init();
@@ -226,6 +235,7 @@ int lenolang_compile(const char* source, const char* output_path) {
     parser_init(&parser, source);
     if (parser_parse(&parser) < 0) {
         error_print_all();
+        warning_print_all();
         ast_free(parser.root);
         gc_free_all();
         return -1;
@@ -262,16 +272,23 @@ int lenolang_compile(const char* source, const char* output_path) {
     }
 
     printf("编译成功: %s -> %s\n", chunk.filename ? chunk.filename : "stdin", output_path);
+    {
+        clock_t compile_t1 = clock();
+        double compile_ms = (double)(compile_t1 - compile_t0) / CLOCKS_PER_SEC * 1000.0;
+        printf("编译耗时: %.1f ms\n", compile_ms);
+    }
 
     codegen_cleanup(&gen);
     ast_free(parser.root);
     semantic_cleanup(&sem);
     chunk_free(&chunk);
     gc_free_all();
+    warning_print_all();
     return 0;
 
 compile_fail:
     error_print_all();
+    warning_print_all();
     codegen_cleanup(&gen);
     ast_free(parser.root);
     if (sem.root_scope) {
@@ -460,12 +477,14 @@ int lenolang_run_file(const char* path) {
             free(source);
             return -1;
         }
+        clock_t pack_t0 = clock();
         int result = lenolang_compile(source, bin_path);
         free(source);
         if (result != 0) {
             free(bin_path);
             return result;
         }
+        clock_t pack_compile_end = clock();
 
         // 生成输出 exe 路径：与源文件同目录，扩展名改为 .exe
         char out_exe[MAX_PATH_LEN];
@@ -608,8 +627,15 @@ int lenolang_run_file(const char* path) {
         free(lenb_data);
         free(bin_path);
 
-        printf("打包成功: %s -> %s (%.1f KB)\n", path, out_exe,
-               (vm_size + lenb_size + 8) / 1024.0);
+        {
+            clock_t pack_end = clock();
+            double embed_ms = (double)(pack_end - pack_compile_end) / CLOCKS_PER_SEC * 1000.0;
+            double total_ms = (double)(pack_end - pack_t0) / CLOCKS_PER_SEC * 1000.0;
+            printf("打包成功: %s -> %s (%.1f KB)\n", path, out_exe,
+                   (vm_size + lenb_size + 8) / 1024.0);
+            printf("打包嵌入耗时: %.1f ms\n", embed_ms);
+            printf("总耗时: %.1f ms\n", total_ms);
+        }
 
         if (pauseMode) {
             printf("\n按任意键继续...");

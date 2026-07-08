@@ -2,6 +2,8 @@
 
 // 全局错误收集器
 ErrorCollector errors = {0};
+// 全局警告收集器（"担心系统"）
+WarningCollector warnings = {0};
 
 // 当前文件名（用于错误报告）
 static char current_filename[BUFFER_SMALL] = "";
@@ -126,4 +128,104 @@ void error_print_all(void) {
     }
     
     fprintf(stderr, "===================\n\n");
+}
+
+// ============================================================================
+// 警告系统（"担心系统"）
+// ============================================================================
+
+void warning_add(WarnType type, int line, const char* msg) {
+    // 合并相同警告（同类型、同文件、同行、同消息）
+    if (warnings.count > 0) {
+        Warning* last = &warnings.list[warnings.count - 1];
+        if (last->type == type && last->line == line &&
+            strcmp(last->msg, msg) == 0 && last->filename[0] != '\0') {
+            const char* fname = current_filename[0] ? current_filename : "";
+            if (strcmp(last->filename, fname) == 0) {
+                last->repeat_count++;
+                return;
+            }
+        }
+    }
+
+    if (warnings.count >= MAX_WARNINGS) {
+        return;
+    }
+
+    Warning* w = &warnings.list[warnings.count++];
+    w->type = type;
+    w->line = line;
+    w->column = current_column;
+    w->repeat_count = 1;
+    strncpy(w->msg, msg, sizeof(w->msg) - 1);
+    w->msg[sizeof(w->msg) - 1] = '\0';
+
+    if (current_filename[0]) {
+        size_t len = strlen(current_filename);
+        if (len > sizeof(w->filename) - 1) {
+            len = sizeof(w->filename) - 1;
+        }
+        memcpy(w->filename, current_filename, len);
+        w->filename[len] = '\0';
+    } else {
+        w->filename[0] = '\0';
+    }
+}
+
+int warning_has_any(void) {
+    return warnings.count > 0;
+}
+
+void warning_clear(void) {
+    warnings.count = 0;
+}
+
+void warning_print_all(void) {
+    if (warnings.count == 0) return;
+
+    int total = 0;
+    for (int i = 0; i < warnings.count; i++) {
+        total += warnings.list[i].repeat_count;
+    }
+
+    fprintf(stderr, "\n=== 发现 %d 个警告", total);
+    if (total > warnings.count) {
+        fprintf(stderr, "（%d 种，已合并重复）", warnings.count);
+    }
+    fprintf(stderr, " ===\n");
+
+    for (int i = 0; i < warnings.count; i++) {
+        Warning* w = &warnings.list[i];
+        const char* type_str = "警告";
+
+        switch (w->type) {
+            case WARN_FOR_EMPTY_RANGE: type_str = "空循环"; break;
+            case WARN_UNUSED_VAR:      type_str = "未使用变量"; break;
+            case WARN_SHADOW_VAR:      type_str = "变量遮蔽"; break;
+            case WARN_DEPRECATED:      type_str = "弃用"; break;
+            case WARN_IMPLICIT_TRUNC:  type_str = "隐式截断"; break;
+            case WARN_UNREACHABLE:     type_str = "不可达代码"; break;
+            default: break;
+        }
+
+        if (w->filename[0] && w->column > 0) {
+            fprintf(stderr, "[%s] %s 第 %d 行第 %d 列: %s",
+                    type_str, w->filename, w->line, w->column, w->msg);
+        } else if (w->filename[0]) {
+            fprintf(stderr, "[%s] %s 第 %d 行: %s",
+                    type_str, w->filename, w->line, w->msg);
+        } else if (w->column > 0) {
+            fprintf(stderr, "[%s] 第 %d 行第 %d 列: %s",
+                    type_str, w->line, w->column, w->msg);
+        } else {
+            fprintf(stderr, "[%s] 第 %d 行: %s", type_str, w->line, w->msg);
+        }
+
+        if (w->repeat_count > 1) {
+            fprintf(stderr, " (重复 %d 次)", w->repeat_count);
+        }
+        fprintf(stderr, "\n");
+    }
+
+    fprintf(stderr, "=====================\n\n");
 }

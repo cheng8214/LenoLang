@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include <stdio.h>
+#include "include/leno_error.h"
 
 // 链式循环上下文操作（堆分配，无嵌套深度限制）
 static LoopContext* loop_push(CodeGen* gen) {
@@ -504,10 +505,12 @@ static void gen_for(CodeGen* gen, Ast* ast) {
         if (ast->u.for_.start && ast->u.for_.start->kind == AST_NUM &&
             ast->u.for_.end && ast->u.for_.end->kind == AST_NUM &&
             ast->u.for_.start->u.num.value > ast->u.for_.end->u.num.value) {
-            fprintf(stderr, "[WARN] 第 %d 行: for 区间 %g:%g 无显式步长，按正向规则不会执行（如需倒序请写 for A:B:-1）\n",
-                    ast->line,
-                    ast->u.for_.start->u.num.value,
-                    ast->u.for_.end->u.num.value);
+            char wbuf[BUFFER_MEDIUM];
+            snprintf(wbuf, sizeof(wbuf),
+                     "for 区间 %g:%g 无显式步长，按正向规则不会执行（如需倒序请写 for A:B:-1）",
+                     ast->u.for_.start->u.num.value,
+                     ast->u.for_.end->u.num.value);
+            warning_add(WARN_FOR_EMPTY_RANGE, ast->line, wbuf);
         }
         emit_byte(gen, OP_ONE, ast->line);
         emit_bytes_2(gen, OP_SET_LOCAL, step_slot, ast->line);

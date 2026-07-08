@@ -31,4 +31,33 @@ int error_has_any(void);
 void error_clear(void);
 void error_print_all(void);
 
+// ============================================================================
+// 警告系统（"担心系统"）：默认开启，收集后打印，但不阻断编译
+// ============================================================================
+
+#ifndef MAX_WARNINGS
+#define MAX_WARNINGS 256
+#endif
+
+typedef struct {
+    WarnType type;
+    int line;
+    int column;                   // 列号（-1 表示未知）
+    char filename[BUFFER_SMALL];  // 文件名
+    char msg[BUFFER_MEDIUM];
+    int repeat_count;             // 重复次数（相同警告合并）
+} Warning;
+
+typedef struct {
+    Warning list[MAX_WARNINGS];
+    int count;
+} WarningCollector;
+
+extern WarningCollector warnings;
+
+void warning_add(WarnType type, int line, const char* msg);
+int warning_has_any(void);
+void warning_clear(void);
+void warning_print_all(void);
+
 #endif // LENO_ERROR_H
