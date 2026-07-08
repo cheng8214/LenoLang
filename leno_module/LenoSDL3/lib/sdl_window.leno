@@ -31,6 +31,12 @@ import "sdl_label.leno" as lbl
 use lbl.Label
 import "sdl_edit.leno" as edt
 use edt.Edit
+import "sdl_checkbox.leno" as chk
+use chk.CheckBox
+import "sdl_radio.leno" as rb
+use rb.RadioButton
+import "sdl_toggle.leno" as tgl
+use tgl.Toggle
 import "sdl_widget.leno" as wgt
 use wgt.Widget
 
@@ -201,6 +207,29 @@ export struct Window {
     func add(Widget w): Widget {
         _widgets.add(w)
         return w
+    }
+
+    // 添加复选框，opts: {text, x, y, box, checked, on_change}
+    // 返回 CheckBox，可 .on_change(func(bool){...}) / .set_checked(bool) / .is_checked()
+    func addCheckBox(Dict opts): CheckBox {
+        CheckBox c = chk.createCheckBox(opts)
+        _widgets.add(c as Widget)
+        return c
+    }
+
+    // 添加单选按钮，opts: {text, x, y, group, checked, on_change}
+    // 同一 group 内互斥（由控件内部注册表实现）
+    func addRadioButton(Dict opts): RadioButton {
+        RadioButton r = rb.createRadioButton(opts)
+        _widgets.add(r as Widget)
+        return r
+    }
+
+    // 添加开关，opts: {text, x, y, w, h, on, on_change}
+    func addToggle(Dict opts): Toggle {
+        Toggle t = tgl.createToggle(opts)
+        _widgets.add(t as Widget)
+        return t
     }
 
     // 运行主循环（回调模式，支持多窗口）

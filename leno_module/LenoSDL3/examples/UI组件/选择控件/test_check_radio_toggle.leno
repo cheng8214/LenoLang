@@ -1,0 +1,67 @@
+// test_check_radio_toggle.leno — 选择类控件演示
+// 复选框 / 单选按钮（同组互斥）/ 开关
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+// 跨模块调用控件方法，必须 use 控件类型（推荐经由 SDL3 统一导出）
+use SDL3.CheckBox
+use SDL3.RadioButton
+use SDL3.Toggle
+
+main() {
+    var win = SDL3.createWindow({title: "选择控件测试", w: 480, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 复选框
+    var agree = win.addCheckBox({
+        text: "我同意用户协议", x: 40, y: 40, checked: false
+    })
+    agree.on_change(func(bool v) {
+        print("复选框 -> " + v)
+    })
+
+    // 单选：同一 group 内互斥
+    win.addRadioButton({ text: "选项 A", x: 40, y: 100, group: "mode", checked: true })
+    win.addRadioButton({ text: "选项 B", x: 40, y: 140, group: "mode" })
+    win.addRadioButton({ text: "选项 C", x: 40, y: 180, group: "mode" })
+    // 另一组
+    win.addRadioButton({ text: "红色", x: 240, y: 100, group: "color", checked: true })
+    win.addRadioButton({ text: "蓝色", x: 240, y: 140, group: "color" })
+
+    var selectedMode = "A"
+    // 重新取回控件绑定回调（演示通过返回值外的引用也可行）
+    // 这里用注册时无法直接拿回，故在创建时即绑定：
+    // （上面 addRadioButton 未保存引用，下面演示用保存引用的写法）
+    var rA = win.addRadioButton({ text: "选项 X（引用写法）", x: 40, y: 240, group: "ref", checked: true })
+    var rB = win.addRadioButton({ text: "选项 Y（引用写法）", x: 40, y: 280, group: "ref" })
+    rA.on_change(func(bool v) { if v { selectedMode = "X"; print("ref 组选中 X") } })
+    rB.on_change(func(bool v) { if v { selectedMode = "Y"; print("ref 组选中 Y") } })
+
+    // 开关
+    var wifi = win.addToggle({ text: "Wi-Fi", x: 240, y: 200, on: true })
+    wifi.on_change(func(bool v) { print("Wi-Fi -> " + v) })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            r.drawText(font, "复选框 / 单选 / 开关 演示", 20, 12, 255, 220, 80)
+
+            r.drawText(font, "复选框状态: " + agree.is_checked(), 40, 360, 200, 220, 240)
+            r.drawText(font, "ref 组当前: " + selectedMode, 40, 388, 200, 220, 240)
+            r.drawText(font, "Wi-Fi: " + wifi.is_on(), 280, 360, 200, 220, 240)
+            r.drawText(font, "点击控件 / ESC 退出", 280, 388, 140, 140, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

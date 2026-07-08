@@ -9,6 +9,9 @@ import "sdl_image.leno" as img
 import "sdl_button.leno" as btn
 import "sdl_label.leno" as lbl
 import "sdl_edit.leno" as edt
+import "sdl_checkbox.leno" as chk
+import "sdl_radio.leno" as rb
+import "sdl_toggle.leno" as tgl
 import "sdl_widget.leno" as wgt
 
 
@@ -43,8 +46,14 @@ use tm.TimerCallback
 use btn.Button
 use lbl.Label
 use edt.Edit
+use chk.CheckBox
+use rb.RadioButton
+use tgl.Toggle
 use wgt.Widget
 use wnd.EventHandler
+export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
+export func createRadioButton(Dict opts): RadioButton { return rb.createRadioButton(opts) }
+export func createToggle(Dict opts): Toggle          { return tgl.createToggle(opts) }
 use wnd.RenderCallback
 import "sdl_dialog.leno" as dlg
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }
