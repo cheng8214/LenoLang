@@ -285,6 +285,46 @@
                         }
                         // 非 clib 类型：走原生方法检查
                         const char* type_name = native_get_type_name(receiver_type->kind);
+                        
+                        // face 类型：查找 face 定义验证方法存在性
+                        if (receiver_type->kind == TYPE_FACE && receiver_type->struct_name) {
+                            int face_method_found = 0;
+                            ObjFaceDef* fdef = face_def_find(receiver_type->struct_name);
+                            if (fdef) {
+                                for (int fi = 0; fi < fdef->method_count; fi++) {
+                                    if (strcmp(fdef->methods[fi].name, method_name) == 0) {
+                                        face_method_found = 1;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!face_method_found) {
+                                // 在导入的模块符号表中查找
+                                for (int mi = 0; mi < s->imported_module_count && !face_method_found; mi++) {
+                                    ImportedModuleInfo* m = &s->imported_modules[mi];
+                                    if (m && m->sym_table) {
+                                        ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, receiver_type->struct_name);
+                                        if (face_sym) {
+                                            for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                                if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                                                    face_method_found = 1;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (!face_method_found) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "face '%s' 没有方法 '%s'",
+                                         receiver_type->struct_name, method_name);
+                                error_add(ERR_SEMANTIC, ast->line, msg);
+                            }
+                            type_free(receiver_type);
+                            break;
+                        }
+                        
                         if (!type_name) {
                             // any 类型不能调用方法
                             char msg[BUFFER_MEDIUM];
@@ -754,6 +794,42 @@
                                      obj_type->struct_name, func_name);
                             error_add(ERR_SEMANTIC, ast->line, msg);
                         }
+                    }
+                }
+                // face 类型：查找 face 定义验证方法存在性
+                if (obj_type && obj_type->kind == TYPE_FACE && obj_type->struct_name) {
+                    const char* method_name = field_access->u.field_access.field_name;
+                    int face_method_found = 0;
+                    ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
+                    if (fdef) {
+                        for (int fi = 0; fi < fdef->method_count; fi++) {
+                            if (strcmp(fdef->methods[fi].name, method_name) == 0) {
+                                face_method_found = 1;
+                                break;
+                            }
+                        }
+                    }
+                    if (!face_method_found) {
+                        for (int mi = 0; mi < s->imported_module_count && !face_method_found; mi++) {
+                            ImportedModuleInfo* m = &s->imported_modules[mi];
+                            if (m && m->sym_table) {
+                                ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_type->struct_name);
+                                if (face_sym) {
+                                    for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                        if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                                            face_method_found = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (!face_method_found) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "face '%s' 没有方法 '%s'",
+                                 obj_type->struct_name, method_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
                     }
                 }
                 if (obj_type) type_free(obj_type);

@@ -1,0 +1,28 @@
+// 复现验证（跨模块）：把跨模块 impl 的 struct 放入 Array[face] 并调用
+import "repro_array_face_face.leno" as a
+use a.F
+import "repro_array_face_impl.leno" as b
+use b.S
+
+main() {
+    Array[F] arr = []
+    S s = new S()
+    arr.add(s as F)            // 跨模块：struct 存入 Array[face] 需 as
+
+    // ① 索引后直接调用 face 方法
+    int v = arr[0].f()
+    print("cross arr[0].f() = " + v)
+
+    // ② for-to 遍历变量直接调用 face 方法
+    for arr to w {
+        int x = w.f()
+        print("cross for-to w.f() = " + x)
+    }
+
+    // ③ 附带验证：as 裸表达式是否收窄
+    var a0 = arr[0]
+    int w3 = (a0 as F).f()
+    print("bare as = " + w3)
+
+    print("CROSS_MODULE_OK")
+}
