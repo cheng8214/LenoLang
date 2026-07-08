@@ -24,10 +24,14 @@ sdl3 _lib = core.lib()
 
 export struct Renderer {
     Ptr handle; bool ok
+    // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
+    Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
 
     // 创建默认渲染器（关联到窗口）
     func initDefault(Ptr[u8] window): bool {
-        // 抗锯齿：强制硬件渲染器 + AA 线条
+        // 说明：SDL3 的 2D 渲染 API 本身不支持图元抗锯齿，
+        // SDL_HINT_RENDER_LINE_METHOD="2" 只是切换为 driver 线算法，并不产生 AA。
+        // 真正的抗锯齿靠 enableSSAA()（超采样：渲染到 2x 离屏纹理再降采样贴回）。
         _lib.SDL_SetHint("SDL_HINT_RENDER_DRIVER", "direct3d")
         _lib.SDL_SetHint("SDL_HINT_RENDER_LINE_METHOD", "2")
         handle = _lib.SDL_CreateRenderer(window, null as string)
@@ -37,14 +41,54 @@ export struct Renderer {
 
     // 销毁渲染器，释放资源
     func destroy() {
-        if ok { _lib.SDL_DestroyRenderer(handle); handle = null; ok = false }
+        if ok {
+            if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex); _ssaaTex = null }
+            _lib.SDL_DestroyRenderer(handle); handle = null; ok = false
+        }
     }
 
     // 清空渲染目标（用当前颜色填充整个画面）
-    func clear(): bool   { return _lib.SDL_RenderClear(handle) }
+    // SSAA 开启时：清的是离屏高分辨率纹理，并把坐标缩放切到 scale
+    func clear(): bool {
+        if _ssaa { setRenderTarget(_ssaaTex); setScale(_ssaaScale, _ssaaScale) }
+        return _lib.SDL_RenderClear(handle)
+    }
 
     // 呈现渲染结果到屏幕（交换缓冲区）
-    func present(): bool { return _lib.SDL_RenderPresent(handle) }
+    // SSAA 开启时：把高分辨率离屏纹理以 1x 缩放贴回窗口，GPU 双线性降采样 -> 平滑边缘
+    func present(): bool {
+        if _ssaa {
+            setRenderTarget(null)
+            setScale(1.0, 1.0)
+            SDL_FRect dst = SDL_FRect.malloc()
+            dst.x = 0.0; dst.y = 0.0; dst.w = _float(_ssaaWinW); dst.h = _float(_ssaaWinH)
+            _lib.SDL_RenderTexture(handle, _ssaaTex, null, dst.to_ptr())
+            dst.free()
+        }
+        return _lib.SDL_RenderPresent(handle)
+    }
+
+    // 开启超采样抗锯齿：把整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口
+    // scale 建议 2.0（=4x 像素，兼顾画质与性能）；纹理创建失败则自动回退普通渲染
+    func enableSSAA(int winW, int winH, float scale): bool {
+        if scale <= 0.0 { return false }
+        int tw = _int(_float(winW) * scale)
+        int th = _int(_float(winH) * scale)
+        if tw <= 0 or th <= 0 { return false }
+        // SDL_TEXTUREACCESS_TARGET = 2
+        Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
+        if tex == null {
+            print("[LenoSDL3] SSAA 离屏纹理创建失败，回退普通渲染")
+            return false
+        }
+        _ssaaTex = tex
+        _ssaaScale = scale
+        _ssaaWinW = winW; _ssaaWinH = winH
+        _ssaa = true
+        setRenderTarget(_ssaaTex)
+        setScale(scale, scale)
+        return true
+    }
 
     // 设置绘制颜色（整数 RGBA，0~255）
     func setColor(int r, int g, int b, int a): bool {
@@ -137,13 +181,17 @@ export struct Renderer {
         ffi.free(buf); return ok
     }
 
-    // 填充实心圆形（逐行画线近似）
+    // 填充实心圆形（逐行画线近似，保留小数半径并覆盖完整上下行）
     func fillCircle(float cx, float cy, float radius): bool {
-        var ok = true; var r = _int(radius)
-        for 0 : r * 2 to i {
-            var dy = i - r
-            var half = maths.sqrt(radius * radius - _float(dy * dy))
-            if not drawLine(cx - half, cy + _float(dy), cx + half, cy + _float(dy)) { ok = false }
+        if radius <= 0.0 { return true }
+        var r = _int(radius)
+        var ok = true
+        for 0 : (2 * r + 1) to i {
+            var dy = _float(i - r)
+            var inside = radius * radius - dy * dy
+            if inside <= 0.0 { continue }
+            var half = maths.sqrt(inside)
+            if not drawLine(cx - half, cy + dy, cx + half, cy + dy) { ok = false }
         }
         return ok
     }

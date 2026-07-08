@@ -106,7 +106,7 @@ export struct Slider impl Widget {
         float span
         if _vertical { span = h - 2.0 * rad } else { span = w - 2.0 * rad }
         float t
-        if _vertical { t = (p - (y + rad)) / span } else { t = (p - (x + rad)) / span }
+        if _vertical { t = (y + h - rad - p) / span } else { t = (p - (x + rad)) / span }
         if t < 0.0 { t = 0.0 }
         if t > 1.0 { t = 1.0 }
         return _quantize(minV + t * (maxV - minV))
@@ -183,7 +183,7 @@ export struct Slider impl Widget {
 
         // thumb
         float cx, cy
-        if _vertical { cx = x + w / 2.0; cy = y + rad + ratio * span }
+        if _vertical { cx = x + w / 2.0; cy = y + h - rad - ratio * span }
         else         { cx = x + rad + ratio * span; cy = y + h / 2.0 }
         int kR = _thumbR; int kG = _thumbG; int kB = _thumbB
         if hover or _dragging { kR = kR + 15; kG = kG + 15; kB = kB + 15

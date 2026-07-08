@@ -73,6 +73,7 @@ export func registerRun(Ptr hdl, int wid, Renderer ren, var onEvent, var onRende
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok       // 窗口是否创建成功
+    int _w; int _h; float _aaScale
     Array[Widget] _widgets = []
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
@@ -85,6 +86,12 @@ export struct Window {
         int w        = opts.get("w", 800) as int
         int h        = opts.get("h", 600) as int
         int flags    = opts.get("flags", 0) as int
+        _w = w; _h = h
+        // 超采样抗锯齿：默认 2x；aa:false / aa:0 关闭；aa:1.5 自定义倍数
+        _aaScale = 2.0
+        var aaOpt = opts.get("aa", 2.0)
+        if aaOpt is bool { if not (_bool(aaOpt)) { _aaScale = 0.0 } }
+        else { float a = _float(aaOpt); if a <= 0.0 { _aaScale = 0.0 } else { _aaScale = a } }
         handle = _lib.SDL_CreateWindow(title, w, h, flags) as Ptr
         ok = handle != null
         if ok { _windowCount = _windowCount + 1 }
@@ -256,6 +263,7 @@ export struct Window {
     func run(EventHandler onEvent, RenderCallback onRender) {
         core.startTextInput(handle)      // 启用文本输入（供 Edit 控件使用）
         Renderer ren = renderer.createRenderer(handle)
+        if _aaScale > 0.0 { ren.enableSSAA(_w, _h, _aaScale) }
         _runWids.add(getID())
         _runHnds.add(handle)
         _runRens.add(ren)
