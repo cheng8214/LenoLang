@@ -48,6 +48,10 @@ export struct Edit {
     // 撤销/重做
     Array[Array[string]] _undoStack
     Array[Array[string]] _redoStack
+    Array[int] _undoCursorStack       // 撤销光标栈：每项存 line*10000+col
+    Array[int] _redoCursorStack
+    bool _mergeUndo              // 连续输入可合并为一次撤销
+    int  _mergePos               // 合并基准：上次输入结束处的光标字符位置
     int  _lastClickTime          // 上次点击 tick（双击检测）
     float _lastClickX; float _lastClickY
 
@@ -113,19 +117,9 @@ export struct Edit {
         _dirty = false
         _cachedMaxW = -1.0
 
-        // 从 text 拆分行
-        _lines = []
-        if text == "" { return }
-        var start = 0
-        for :text.len() - 1 to i {
-            if text.slice(i, i + 1) == "\n" {
-                _lines.add(text.slice(start, i))
-                start = i + 1
-            }
-        }
-        if start < text.len() {
-            _lines.add(text.slice(start, text.len()))
-        }
+        // 从 text 拆分行（用 split 处理所有 \n，包括末尾换行产生的空行）
+        if text == "" { _lines = []; return }
+        _lines = text.replace("\r", "").split("\n")
     }
 
     // 总内容高度
@@ -223,7 +217,8 @@ export struct Edit {
         _cachedLen  = -1
         _lastClickTime = 0; _lastClickX = 0; _lastClickY = 0
         _wordWrap   = false
-        _undoStack  = []; _redoStack = []
+        _undoStack  = []; _redoStack = []; _undoCursorStack = []; _redoCursorStack = []
+        _mergeUndo = false; _mergePos = 0
         _selStart   = -1; _selEnd = 0; _selActive = false
 
         _ensure_font()
@@ -258,40 +253,59 @@ export struct Edit {
     // 保存当前状态到撤销栈
     func _save_undo() {
         _undoStack.add(_lines.copy())
-        if _undoStack.len() > 200 { _undoStack.remove(0) }
-        _redoStack.clear()
+        _undoCursorStack.add(_cursorLine * 10000 + _cursorCol)
+        if _undoStack.len() > 200 { _undoStack.remove(0); _undoCursorStack.remove(0) }
+        _redoStack.clear(); _redoCursorStack.clear()
     }
 
     // Ctrl+Z
     func _undo() {
         if _undoStack.len() == 0 { return }
+        // 保存当前状态到 redo 栈
         _redoStack.add(_lines.copy())
+        _redoCursorStack.add(_cursorLine * 10000 + _cursorCol)
+        // 恢复行内容
         _lines = _undoStack[_undoStack.len() - 1]
         _undoStack.remove(_undoStack.len() - 1)
-        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1
+        // 恢复光标位置
+        var cursorInfo = _undoCursorStack[_undoCursorStack.len() - 1]
+        _undoCursorStack.remove(_undoCursorStack.len() - 1)
+        _cursorLine = cursorInfo / 10000
+        _cursorCol = cursorInfo % 10000
+        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1; _mergeUndo = false
         _clear_sel()
         if _lines.len() > 0 {
             if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
             if _cursorLine < 0 { _cursorLine = 0 }
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
         } else { _cursorLine = 0; _cursorCol = 0 }
-        text = get_text()             // 同步 text，防 _rebuild_lines 从旧 text 重写 lines
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        text = get_text()
         _adjust_scroll()
     }
 
     // Ctrl+Y
     func _redo() {
         if _redoStack.len() == 0 { return }
+        // 保存当前状态到 undo 栈
         _undoStack.add(_lines.copy())
+        _undoCursorStack.add(_cursorLine * 10000 + _cursorCol)
+        // 恢复行内容
         _lines = _redoStack[_redoStack.len() - 1]
         _redoStack.remove(_redoStack.len() - 1)
-        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1
+        // 恢复光标位置
+        var cursorInfo = _redoCursorStack[_redoCursorStack.len() - 1]
+        _redoCursorStack.remove(_redoCursorStack.len() - 1)
+        _cursorLine = cursorInfo / 10000
+        _cursorCol = cursorInfo % 10000
+        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1; _mergeUndo = false
         _clear_sel()
         if _lines.len() > 0 {
             if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
             if _cursorLine < 0 { _cursorLine = 0 }
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
         } else { _cursorLine = 0; _cursorCol = 0 }
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
         text = get_text()             // 同步 text
         _adjust_scroll()
     }
@@ -387,11 +401,7 @@ export struct Edit {
             if _line_width_to(_cursorLine, mid) <= relX { lo = mid } else { hi = mid - 1 }
         }
         _cursorCol = lo
-        _cursorPos = 0
-        for 0 : _cursorLine - 1 to i {
-            _cursorPos = _cursorPos + _lines[i].len() + 1
-        }
-        _cursorPos = _cursorPos + _cursorCol
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
     }
 
     // ==================== 滚动条尺寸 ====================
@@ -588,6 +598,16 @@ export struct Edit {
 
     // 双击选词
     func _select_word() {
+        if not _multiline {
+            // 单行模式：直接基于 text 和 _cursorPos
+            if text.len() == 0 { return }
+            var s = _cursorPos; var e = _cursorPos
+            while s > 0 and _is_word_char(text.slice(s - 1, s)) { s -= 1 }
+            while e < text.len() and _is_word_char(text.slice(e, e + 1)) { e += 1 }
+            if s >= e { return }
+            _selStart = s; _selEnd = e; _selActive = true
+            return
+        }
         _rebuild_lines()
         if _lines.len() == 0 or _cursorLine >= _lines.len() { return }
         var ln = _lines[_cursorLine]
@@ -603,10 +623,7 @@ export struct Edit {
 
     func _is_word_char(string c): bool {
         if c == "" or c == " " or c == "\n" or c == "\r" or c == "\t" { return false }
-        if c == "." or c == "," or c == "!" or c == "?" or c == ":" or c == ";"
-           or c == "(" or c == ")" or c == "[" or c == "]" or c == "\"" or c == "'"
-           or c == "：" or c == "。" or c == "，" or c == "！" or c == "？"
-           or c == "（" or c == "）" or c == "【" or c == "】" or c == "；" { return false }
+        if ".,!?:;()[]\"'：。，！？（）【】；".find(c) >= 0 { return false }
         return true
     }
 
@@ -664,6 +681,7 @@ export struct Edit {
                 if sc == Scancode.V {
                     var paste = core.getClipboardText()
                     if paste != "" {
+                        paste = paste.replace("\r", "").replace("\n", " ")
                         _cursorPos = _del_sel()
                         text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
                         _cursorPos += paste.len()
@@ -696,7 +714,7 @@ export struct Edit {
                 if _onEnter != null { _onEnter() }
             }
 
-            if changed { _on_text_changed() }
+            if changed { _dirty = true; _on_text_changed() }
         }
 
         if ev.isTextInput() {
@@ -706,6 +724,7 @@ export struct Edit {
                 text = text.slice(0, _cursorPos) + ch + text.slice(_cursorPos, text.len())
                 _cursorPos += ch.len()
                 _on_text_changed()
+                _dirty = true
             }
         }
     }
@@ -722,7 +741,7 @@ export struct Edit {
             int mod = ev.keyMod()
             bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
             if ctrl {
-                if sc == Scancode.A { _selStart = 0; _selEnd = get_text_length(); _selActive = true; return }
+                if sc == Scancode.A { _selStart = 0; _selEnd = get_text().len(); _selActive = true; return }
                 if sc == Scancode.Z { _undo(); return }
                 if sc == Scancode.Y { _redo(); return }
                 if sc == Scancode.C {
@@ -737,12 +756,12 @@ export struct Edit {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(t) }
-                    _save_undo(); _del_sel_lines(); _cachedLen = -1; changed = true
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; changed = true
                 }
                 if sc == Scancode.V {
                     var paste = core.getClipboardText()
                     if paste != "" {
-                        _save_undo()
+                        _save_undo(); _mergeUndo = false
                         _del_sel_lines()
                         if _lines.len() == 0 { _lines.add("") }
                         var left = _lines[_cursorLine].slice(0, _cursorCol)
@@ -766,13 +785,13 @@ export struct Edit {
             // 退格
             if sc == Scancode.BACKSPACE {
                 if _selActive and _selStart != _selEnd {
-                    _save_undo(); _del_sel_lines(); _cachedLen = -1; changed = true
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; changed = true
                 } else if _cursorCol > 0 {
-                    _save_undo(); var ln = _lines[_cursorLine]
+                    _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol - 1) + ln.slice(_cursorCol, ln.len())
                     _cursorCol -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 } else if _cursorLine > 0 {
-                    _save_undo(); _cursorCol = _lines[_cursorLine - 1].len()
+                    _save_undo(); _mergeUndo = false; _cursorCol = _lines[_cursorLine - 1].len()
                     _lines[_cursorLine - 1] = _lines[_cursorLine - 1] + _lines[_cursorLine]
                     _lines.remove(_cursorLine)
                     _cursorLine -= 1; _cachedLen -= 1; _cachedMaxW = -1; changed = true
@@ -782,13 +801,13 @@ export struct Edit {
             // Delete
             if sc == Scancode.DELETE {
                 if _selActive and _selStart != _selEnd {
-                    _save_undo(); _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; changed = true
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; changed = true
                 } else if _cursorCol < _lines[_cursorLine].len() {
-                    _save_undo(); var ln = _lines[_cursorLine]
+                    _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
                     _lines[_cursorLine] = ln.slice(0, _cursorCol) + ln.slice(_cursorCol + 1, ln.len())
                     _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 } else if _cursorLine < _lines.len() - 1 {
-                    _save_undo(); _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
+                    _save_undo(); _mergeUndo = false; _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
                     _lines.remove(_cursorLine + 1)
                     _cachedLen -= 1; _cachedMaxW = -1; changed = true
                 }
@@ -798,19 +817,21 @@ export struct Edit {
             if sc == Scancode.LEFT {
                 if _cursorCol > 0 { _cursorCol -= 1; moved = true; _clear_sel() }
                 else if _cursorLine > 0 { _cursorLine -= 1; _cursorCol = _lines[_cursorLine].len(); moved = true; _clear_sel() }
+                _mergeUndo = false
             }
             if sc == Scancode.RIGHT {
                 if _cursorCol < _lines[_cursorLine].len() { _cursorCol += 1; moved = true; _clear_sel() }
                 else if _cursorLine < _lines.len() - 1 { _cursorLine += 1; _cursorCol = 0; moved = true; _clear_sel() }
+                _mergeUndo = false
             }
-            if sc == Scancode.UP     { _move_up(); moved = true; _clear_sel() }
-            if sc == Scancode.DOWN   { _move_down(); moved = true; _clear_sel() }
-            if sc == Scancode.HOME   { _cursorCol = 0; moved = true; _clear_sel() }
-            if sc == Scancode.END    { _cursorCol = _lines[_cursorLine].len(); moved = true; _clear_sel() }
+            if sc == Scancode.UP     { _move_up(); moved = true; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.DOWN   { _move_down(); moved = true; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.HOME   { _cursorCol = 0; moved = true; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.END    { _cursorCol = _lines[_cursorLine].len(); moved = true; _clear_sel(); _mergeUndo = false }
 
             // 回车
             if sc == Scancode.RETURN {
-                _save_undo(); var ln = _lines[_cursorLine]
+                _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
                 var rest = ln.slice(_cursorCol, ln.len())
                 _lines[_cursorLine] = ln.slice(0, _cursorCol)
                 _lines.insert(_cursorLine + 1, rest)
@@ -840,30 +861,29 @@ export struct Edit {
             var ch = ev.text()
             if ch != "" {
                 _rebuild_lines()
-                _save_undo()
+                // 连续输入合并撤销：仅当上次也是文本输入、无选区删除、且光标紧接上次结束位置
+                bool canMerge = _mergeUndo and not _selActive and _cursorPos == _mergePos
+                if not canMerge { _save_undo() }
                 _del_sel_lines()
                 if _lines.len() == 0 { _lines.add("") }
                 var ln = _lines[_cursorLine]
                 _lines[_cursorLine] = ln.slice(0, _cursorCol) + ch + ln.slice(_cursorCol, ln.len())
                 _cursorCol += ch.len()
-                _cachedLen += ch.len(); _cachedMaxW = -1
+                _cachedLen = -1; _cachedMaxW = -1
                 _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _textDirty = true
                 _adjust_scroll()
                 _showCursor = true; _blinkTime = core.getTicks()
                 _update_ime()
                 if _onChange != null { _onChange() }
+                _mergeUndo = true; _mergePos = _cursorPos
             }
         }
     }
 
     // 计算某行在全文中的起始字节位置
     func _line_pos(int line): int {
-        var pos = 0
-        for 0 : line - 1 to i {
-            if i < _lines.len() { pos = pos + _lines[i].len() + 1 }
-        }
-        return pos
+        return _col_to_pos(line, 0)
     }
 
     // 总字符数（用于 Ctrl+A）
@@ -983,9 +1003,14 @@ export struct Edit {
 
     // 根据 line/col 计算 _cursorPos
     func _col_to_pos(int line, int col): int {
+        if _lines.len() == 0 { return 0 }
         var pos = 0
-        for 0 : line - 1 to i {
-            if i < _lines.len() { pos = pos + _lines[i].len() + 1 }
+        var end = line
+        if end > _lines.len() { end = _lines.len() }
+        if end > 0 {
+            for 0 : end - 1 to i {
+                pos = pos + _lines[i].len() + 1
+            }
         }
         if line < _lines.len() {
             var c = col
