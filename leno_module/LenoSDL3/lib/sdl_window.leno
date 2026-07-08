@@ -252,7 +252,7 @@ export struct Window {
                 for _runWids.len() to j {
                     if _runWids[j] == wid {
                         var ws = _runWidgets[j]
-                        for ws to w { if w is Widget { w.process(ev) } }
+                        for ws to w { w.process(ev) }
                         break
                     }
                 }
@@ -266,7 +266,7 @@ export struct Window {
                 _runRends[i](_runRens[i])
                 // 自动渲染该窗口的所有控件（按添加顺序层叠）
                 var ws = _runWidgets[i]
-                for ws to w { if w is Widget { w.render(_runRens[i]) } }
+                for ws to w { w.render(_runRens[i]) }
                 _runRens[i].present()
             }
         }

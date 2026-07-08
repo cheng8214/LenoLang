@@ -11,9 +11,9 @@
   - 跨模块: `examples/测试/repro_array_face_face.leno`（face 定义）+
     `examples/测试/repro_array_face_impl.leno`（struct impl）+
     `examples/测试/repro_array_face_cross.leno`（驱动）
-- 验证二进制: `build/leno.exe`，构建时间 2026-07-08 21:41
-  （源码 `src/` 当时为干净状态，无未提交修复 —— 即仓库当前提交对应的二进制）
-- 状态: ⚠️ 待修复（已找到可用 workaround，且已用复现文件实证可复现）
+- 验证二进制: `build/leno.exe`，发现问题时构建时间 2026-07-08 21:41（源码 `src/` 干净）；
+  修复后重建二进制时间 2026-07-09 0:18:19
+- 状态: ✅ 已修复（2026-07-09，用户修复后重建二进制；复现文件实测 EXIT=0）
 
 ## 背景
 
@@ -59,25 +59,27 @@ export face Widget {
 > 第 1 点属于“特定路径（下标访问）类型丢失”，第 2 点是“`as` 表达式与变量绑定路径行为不一致”。
 > 两者建议一并修复，使 face 数组的下标访问与 `as` 表达式的行为自洽。
 
-## 可用 workaround（已在 `sdl_window.leno` 落地）
+## 可用 workaround（历史记录，bug 修复后已不再需要）
 
-`run()` 中统一用 `for-to` + `is` 收窄遍历控件（当前版本 `for-to` 遍历变量已正确收窄，无需额外收窄即可调用，
-但为稳妥仍保留 `is`）：
+> 以下为修复前的临时绕法。修复后 `for-to` 遍历变量已正确收窄为 `Widget`，
+> `sdl_window.leno` 中的 `if w is Widget { }` 收窄已移除，直接 `w.process(ev)` / `w.render(ren)` 即可。
+
+修复前 `run()` 中统一用 `for-to` + `is` 收窄遍历控件：
 
 ```leno
 var ws = _runWidgets[i]            // Array[Widget]
 for ws to w {
-    if w is Widget {                // is 收窄后 w 为 Widget，方法可调用
+    if w is Widget {                // 修复前：is 收窄后 w 为 Widget，方法可调用
         w.process(ev)
         w.render(ren)
     }
 }
 ```
 
-若需按下标访问元素，需先收窄：
+修复前若需按下标访问元素，需先收窄：
 ```leno
 var e = _widgets[i]
-if e is Widget { e.process(ev) }    // 索引取出为 any，必须 is 收窄后才能调用
+if e is Widget { e.process(ev) }    // 修复前：索引取出为 any，必须 is 收窄后才能调用
 ```
 
 存入数组时显式 `as`：
@@ -101,6 +103,32 @@ _widgets.add(b as Widget)           // b 为 struct Button，需 as 转 face
 **根因**：`visit_expr.inc` 中 `AST_CALL(AST_INDEX)` 和 `AST_FIELD_ACCESS` 路径对 `TYPE_FACE` 类型的方法调用没有处理，`native_get_type_name(TYPE_FACE)` 返回 NULL，直接报 "不能在 any 类型上调用方法"。
 
 **修复**：在 `visit_expr.inc` 的两个路径中增加 `TYPE_FACE` 分支，查找 `face_def_find()` 和模块符号表验证 face 方法存在性，与 `visit_module.inc` 中 `AST_MODULE_CALL` 的处理逻辑一致。
+
+## 修复验证（2026-07-09 重建 `build/leno.exe` 0:18:19 后实测）
+
+复现文件 `examples/测试/repro_array_face_same.leno` 与 `repro_array_face_cross.leno` 均 EXIT=0：
+
+```
+$ leno examples/测试/repro_array_face_same.leno
+same arr[0].f() = 7
+same for-to w.f() = 7
+SAME_MODULE_OK
+EXIT=0
+
+$ leno examples/测试/repro_array_face_cross.leno
+cross arr[0].f() = 7
+cross for-to w.f() = 7
+bare as = 7
+CROSS_MODULE_OK
+EXIT=0
+```
+
+原复现的两个问题均已消除：
+1. `arr[0].f()` 索引访问不再退化为 `any`，正确输出 `7`。
+2. `(a0 as F).f()` `as` 裸表达式已正确收窄，输出 `7`。
+（`for-to` 遍历变量本就正常，初版误报已更正。）
+
+
 
 ## 附注（非 bug，仅记录）
 - 泛型类型实参中不能直接写模块限定名 `Array[a.F]`，需先 `use a.F` 再写 `Array[F]`。

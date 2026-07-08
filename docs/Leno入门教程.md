@@ -4794,6 +4794,38 @@ main() {
 
 > **⚠️ 注意：** 数组类型推断基于**显式 impl 声明**。如果 struct 没有 `impl` 声明，即使方法签名匹配，也不会被推断为该 face 类型。
 
+#### ⚠️ 实战踩坑记录（face 数组常见错误）
+
+以下是从实际 GUI 控件库（把 `Button`/`Label`/`Edit` 统一放进 `Array[Widget]` 由窗口调度）开发中踩出的真实错误，避免重复踩：
+
+1. **泛型实参不能写模块限定名**
+   `Array[a.Speaker]` 会报错，必须先在模块里 `use a.Speaker`，再写 `Array[Speaker]`：
+   ```leno
+   import "animal.leno" as a
+   use a.Speaker
+   Array[Speaker] arr = []      // ✅ 用 use 后的短名
+   // Array[a.Speaker] arr      // ❌ 泛型实参不支持模块限定名
+   ```
+
+2. **struct 存入 `Array[face]` 必须显式 `as` 上转**
+   即便变量 `d` 是 `impl Speaker` 的 struct，`arr.add(d)` 仍报“期望 face，实际 struct”，要写 `arr.add(d as Speaker)`：
+   ```leno
+   Array[Speaker] arr = []
+   Dog d = new Dog()
+   arr.add(d as Speaker)        // ✅ 必须 as 上转
+   // arr.add(d)                // ❌ 期望 Speaker，实际 Dog
+   ```
+   > 原因：把具体 struct 放进 face 数组是一次**向上转型**，需要显式 `as`，编译器不会自动隐式转换。
+
+3. **跨模块 `new` 需先 `use` 再用短名**
+   不能写 `b.Dog d = new b.Dog()`，必须 `use b.Dog` 后用 `Dog d = new Dog()`（详见下方“使用 use 导入类型”）。
+
+4. **遍历 vs 下标访问（历史坑，2026-07-09 编译器已修复）**
+   - `for arr to s { s.speak() }`：遍历变量 `s` 始终正确收窄为 `Speaker`，可直接调用方法（这是官方推荐写法）。
+   - `arr[i].speak()`：旧版本下标取出退化为 `any` 导致报错，当前版本已修复，可直接调用。
+   - `(x as Speaker).speak()`：旧版本 `as` 裸表达式不收窄（绑定到变量 `var sp = x as Speaker; sp.speak()` 则一直正常），当前版本已修复。
+   - 若遇到旧版二进制仍报错，可用 `is` 类型守卫兜底：`for arr to s { if s is Speaker { s.speak() } }`。
+
 ### face 不能实例化
 
 ```leno
@@ -5900,6 +5932,15 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 > - **func**、**var** 必须通过模块名访问（如 `module.func()`）
 > - struct 实例可用 `new module.Struct()` 或 `new module.Struct[Type]()`（无需 `use`）
 > - 使用 `use` 后可直接用 `new StructName()` 实例化（更简洁）
+
+> **⚠️ 跨模块 `new` 的坑：** `use` 导入类型后，**变量声明和 `new` 都要用短名**，不能保留模块限定名：
+> ```leno
+> import "animal.leno" as a
+> use a.Dog
+> Dog d = new Dog()        // ✅ 短名
+> // b.Dog d = new b.Dog() // ❌ 已 use 后不能写 b.Dog / new b.Dog()
+> ```
+> 即：`use` 之后，`b.S` 这种“模块名.类型”写法在声明和 `new` 中都不再用，统一用 `S`。
 
 **use 导入的类型可作为 export func 返回类型：**
 
