@@ -19,7 +19,8 @@ main() {
     // 多行编辑框
     Edit ed = win.addEdit({text: "", x: 20, y: 35, w: 660, h: 260,
                             multiline: true,
-                            placeholder: "在这里输入多行文字...\n支持 Up/Down/滚轮\n文字超出自动出现滚动条\n← 单行回车 / 发送按钮 ->"})
+                            wordWrap: true,
+                            placeholder: "在这里输入多行文字（自动换行）...\n支持 Up/Down/滚轮\n文字超出自动换行\n← 单行回车 / 发送按钮 ->"})
     ed.on_change(func() {
         lastMsg = "长度: " + ed.get_text_length()
         print(lastMsg)

@@ -57,6 +57,11 @@ export struct Edit {
 
     // 自动换行
     bool _wordWrap
+    // 显示行表（自动换行时一行逻辑行拆成多显示行）：每行 [逻辑行, 段起始列, 段结束列]
+    Array[int] _drLi
+    Array[int] _drC0
+    Array[int] _drC1
+    int _drCount
 
     // 文本选取
     int  _selStart               // 选区起始（-1 表示无选区）
@@ -126,6 +131,14 @@ export struct Edit {
     func _content_height(): float {
         _rebuild_lines()
         if _lines.len() == 0 { return _lineHeight }
+        if _wordWrap {
+            float visW = w - 16.0
+            if visW <= 0 { visW = 1.0 }
+            var n = 0
+            for _lines.len() to li { n += _wrap_line(_lines[li], visW).len() }
+            if n == 0 { n = 1 }
+            return _lineHeight * _float(n)
+        }
         return _lineHeight * _float(_lines.len())
     }
 
@@ -156,8 +169,12 @@ export struct Edit {
         float visH = h - pad * 2.0 - sbH
         if visH <= 0 { return }
 
+        // 构建显示行表并定位光标所在显示行
+        _build_display_rows(visW)
+        var di = _disp_row_of(_cursorLine, _cursorCol)
+
         // 垂直滚动
-        float curY = _float(_cursorLine) * _lineHeight
+        float curY = _float(di) * _lineHeight
         if curY - _scrollY > visH - _lineHeight {
             _scrollY = curY - visH + _lineHeight
         }
@@ -166,11 +183,15 @@ export struct Edit {
         }
         if _scrollY < 0 { _scrollY = 0 }
 
-        // 水平滚动
-        float curX = _line_width_to(_cursorLine, _cursorCol)
-        if curX - _scrollX > visW { _scrollX = curX - visW + 4.0 }
-        if curX - _scrollX < 0 { _scrollX = curX - 4.0 }
-        if _scrollX < 0 { _scrollX = 0 }
+        // 水平滚动（自动换行模式不横向滚动）
+        if not _wordWrap {
+            float curX = _line_width_to(_cursorLine, _cursorCol)
+            if curX - _scrollX > visW { _scrollX = curX - visW + 4.0 }
+            if curX - _scrollX < 0 { _scrollX = curX - 4.0 }
+            if _scrollX < 0 { _scrollX = 0 }
+        } else {
+            _scrollX = 0.0
+        }
 
         // 限制最大滚动
         float maxSY = _content_height() - visH
@@ -204,6 +225,7 @@ export struct Edit {
         _multiline  = _bool(opts.get("multiline", false))
         _password   = _bool(opts.get("password", false))
         _readOnly   = _bool(opts.get("readonly", false))
+        _wordWrap   = _bool(opts.get("wordWrap", false))
 
         // 状态
         _focused    = false
@@ -213,10 +235,10 @@ export struct Edit {
         _cursorLine = 0; _cursorCol = 0
         _scrollX    = 0.0; _scrollY  = 0.0
         _lines      = []
+        _drLi = []; _drC0 = []; _drC1 = []; _drCount = 0
         _dirty      = true
         _cachedLen  = -1
         _lastClickTime = 0; _lastClickX = 0; _lastClickY = 0
-        _wordWrap   = false
         _undoStack  = []; _redoStack = []; _undoCursorStack = []; _redoCursorStack = []
         _mergeUndo = false; _mergePos = 0
         _selStart   = -1; _selEnd = 0; _selActive = false
@@ -246,7 +268,7 @@ export struct Edit {
     }
     func set_placeholder(string p) { _placeholder = p }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
-    func set_word_wrap(bool w)  { _wordWrap = w }
+    func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0 }
     func focus()    { _focused = true }
     func blur()     { _focused = false }
 
@@ -381,27 +403,34 @@ export struct Edit {
     // 多行：从 mx,my 算 (line, col)
     func _pos_from_xy(float mx, float my) {
         float pad = 8.0; float sbW = _sb_width()
+        float visW = w - pad * 2.0 - sbW
         float relX = mx - x - pad + _scrollX
         float relY = my - y - pad + _scrollY
         if relY < 0 { relY = 0 }
         _rebuild_lines()
+        _build_display_rows(visW)
+        if _drCount == 0 { _cursorLine = 0; _cursorCol = 0; _cursorPos = 0; return }
 
-        _cursorLine = _int(relY / _lineHeight)
-        if _cursorLine < 0 { _cursorLine = 0 }
-        if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
-        if _cursorLine < 0 { _cursorLine = 0 }
+        var di = _int(relY / _lineHeight)
+        if di < 0 { di = 0 }
+        if di >= _drCount { di = _drCount - 1 }
 
-        if _lines.len() == 0 { _cursorCol = 0; return }
-        var ln = _lines[_cursorLine]
-        if relX <= 0 { _cursorCol = 0; return }
-        var lo = 0
-        var hi = ln.len()
+        var li = _drLi[di]; var c0 = _drC0[di]; var c1 = _drC1[di]
+        _cursorLine = li
+
+        if _lines.len() == 0 { _cursorCol = c0; _cursorPos = _col_to_pos(li, c0); return }
+        if relX <= 0 { _cursorCol = c0; _cursorPos = _col_to_pos(li, c0); return }
+
+        // 在段 [c0, c1] 内二分查找列
+        var lo = c0
+        var hi = c1
         while lo < hi {
             var mid = (lo + hi + 1) / 2
-            if _line_width_to(_cursorLine, mid) <= relX { lo = mid } else { hi = mid - 1 }
+            var segW = _line_width_to(li, mid) - _line_width_to(li, c0)
+            if segW <= relX { lo = mid } else { hi = mid - 1 }
         }
         _cursorCol = lo
-        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        _cursorPos = _col_to_pos(li, lo)
     }
 
     // ==================== 滚动条尺寸 ====================
@@ -415,6 +444,7 @@ export struct Edit {
 
     func _sb_height(): float {
         if not _multiline { return 0.0 }
+        if _wordWrap { return 0.0 }   // 自动换行不出现横向滚动条
         float maxW = _max_line_width()
         float visW = w - 16.0
         if maxW > visW { return 10.0 }
@@ -623,7 +653,7 @@ export struct Edit {
 
     func _is_word_char(string c): bool {
         if c == "" or c == " " or c == "\n" or c == "\r" or c == "\t" { return false }
-        if ".,!?:;()[]\"'：。，！？（）【】；".find(c) >= 0 { return false }
+        if ".,!?:;()[]\"'：。，！？（）【】；".has(c) { return false }
         return true
     }
 
@@ -948,9 +978,21 @@ export struct Edit {
     // ---- 多行方向键辅助（基于 _cursorPos）----
     func _move_up() {
         _sync_line_col()
-        if _cursorLine > 0 {
+        _rebuild_lines()
+        float visW = w - 16.0 - _sb_width()
+        _build_display_rows(visW)
+        var di = _disp_row_of(_cursorLine, _cursorCol)
+        if di > 0 {
+            // 在同一逻辑行内的上一显示行，或上一逻辑行的末显示行
+            var pli = _drLi[di - 1]; var pc0 = _drC0[di - 1]; var pc1 = _drC1[di - 1]
+            var off = _cursorCol - _drC0[di]
+            if off < 0 { off = 0 }
+            var ncol = pc0 + off
+            if ncol > pc1 { ncol = pc1 }
+            _cursorLine = pli; _cursorCol = ncol
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        } else if _cursorLine > 0 {
             _cursorLine -= 1
-            _rebuild_lines()
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
             _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
         }
@@ -959,7 +1001,18 @@ export struct Edit {
     func _move_down() {
         _sync_line_col()
         _rebuild_lines()
-        if _cursorLine < _lines.len() - 1 {
+        float visW = w - 16.0 - _sb_width()
+        _build_display_rows(visW)
+        var di = _disp_row_of(_cursorLine, _cursorCol)
+        if di < _drCount - 1 {
+            var nli = _drLi[di + 1]; var nc0 = _drC0[di + 1]; var nc1 = _drC1[di + 1]
+            var off = _cursorCol - _drC0[di]
+            if off < 0 { off = 0 }
+            var ncol = nc0 + off
+            if ncol > nc1 { ncol = nc1 }
+            _cursorLine = nli; _cursorCol = ncol
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        } else if _cursorLine < _lines.len() - 1 {
             _cursorLine += 1
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
             _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
@@ -1103,6 +1156,7 @@ export struct Edit {
         float sbH = _sb_height()
         float visW = w - pad * 2.0 - sbW
         float visH = h - pad * 2.0 - sbH
+        _build_display_rows(visW)
 
         // 裁剪区域
         var clip = core.SDL_Rect.malloc()
@@ -1113,31 +1167,32 @@ export struct Edit {
         // 计算可见行范围（选区和文本渲染共用）
         var firstLine = _int(_scrollY / _lineHeight)
         var lastLineV = firstLine + _int(visH / _lineHeight) + 2
-        if lastLineV > _lines.len() { lastLineV = _lines.len() }
+        if lastLineV > _drCount { lastLineV = _drCount }
         if firstLine < 0 { firstLine = 0 }
 
         // ---- 选区高亮（画在文字后面）----
         if _selActive and _selStart >= 0 and _selStart != _selEnd and _lines.len() > 0 {
             var ss = _selStart; var se = _selEnd
             if ss > se { var t = ss; ss = se; se = t }
-            for firstLine : lastLineV - 1 to li {
-                if li >= _lines.len() { break }
-                var lineLen = _lines[li].len()
-                var lineStart = _line_pos(li)
-                var lineEnd = lineStart + lineLen
+            for firstLine : lastLineV - 1 to di {
+                if di >= _drCount { break }
+                var li = _drLi[di]; var c0 = _drC0[di]; var c1 = _drC1[di]
+                var segStart = _line_pos(li) + c0
+                var segEnd = _line_pos(li) + c1
                 var selS = ss; var selE = se
-                if selS > lineEnd { continue }
-                if selE < lineStart { continue }
-                if selS < lineStart { selS = lineStart }
-                if selE > lineEnd { selE = lineEnd }
+                if selS > segEnd { continue }
+                if selE < segStart { continue }
+                if selS < segStart { selS = segStart }
+                if selE > segEnd { selE = segEnd }
                 if selS >= selE { continue }
-                var colS = selS - lineStart
-                var colE = selE - lineStart
-                var ms1 = _font.measureString(_lines[li].slice(0, colS))
-                var ms2 = _font.measureString(_lines[li].slice(0, colE))
+                var colS = selS - segStart
+                var colE = selE - segStart
+                var full = _lines[li]
+                var ms1 = _font.measureString(full.slice(c0, c0 + colS))
+                var ms2 = _font.measureString(full.slice(c0, c0 + colE))
                 float sx = x + pad + _float(ms1.w) - _scrollX
                 float ew = _float(ms2.w) - _float(ms1.w)
-                float sy = y + pad + _float(li) * _lineHeight - _scrollY
+                float sy = y + pad + _float(di) * _lineHeight - _scrollY
                 if ew < 0 { ew = 0 }
                 r.setColor(60, 100, 180, 180)
                 r.fillRect(sx, sy, ew, _lineHeight)
@@ -1147,48 +1202,51 @@ export struct Edit {
         // 占位文字 / 内容
         if _lines.len() == 0 and not _focused and _placeholder != "" {
             var phLines = _placeholder.split("\n")
+            var dy = 0
             for phLines.len() to pl {
-                float ly = y + pad + _float(pl) * _lineHeight
-                r.drawText(_font, phLines[pl] as string, x + pad, ly, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+                var seg = phLines[pl] as string
+                var wraps = _wrap_line(seg, visW)
+                for wraps.len() to wi {
+                    float ly = y + pad + _float(dy) * _lineHeight - _scrollY
+                    r.drawText(_font, wraps[wi] as string, x + pad, ly, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+                    dy += 1
+                }
             }
         } else if _lines.len() > 0 {
-            var lastLine = lastLineV - 1
-            if lastLine > _lines.len() - 1 { lastLine = _lines.len() - 1 }
-            if firstLine < 0 { firstLine = 0 }
-
-            if _wordWrap {
-                // 自动换行模式
-                var drawY = y + pad - _scrollY
-                for firstLine : lastLine to li {
-                    var display = _lines[li]
-                    if _password { display = "*".rep(display.len()) }
-                    var wraps = _wrap_line(display, visW)
-                    for wraps.len() to wi {
-                        r.drawText(_font, wraps[wi] as string, x + pad, drawY, tr, tg, tb)
-                        drawY = drawY + _lineHeight
-                    }
-                }
-            } else {
-                for firstLine : lastLine to li {
-                    var display = _lines[li]
-                    if _password { display = "*".rep(display.len()) }
-                    float ly = y + pad + _float(li) * _lineHeight - _scrollY
-                    r.drawText(_font, display, x + pad - _scrollX, ly, tr, tg, tb)
-                }
+            for firstLine : lastLineV - 1 to di {
+                if di >= _drCount { break }
+                var li = _drLi[di]; var c0 = _drC0[di]; var c1 = _drC1[di]
+                var seg = _lines[li].slice(c0, c1)
+                if _password { seg = "*".rep(seg.len()) }
+                float ly = y + pad + _float(di) * _lineHeight - _scrollY
+                r.drawText(_font, seg, x + pad - _scrollX, ly, tr, tg, tb)
             }
         }
 
         // 光标（在裁剪区域内）
         _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
         if _focused and _showCursor {
-            float curLine = _float(_cursorLine)
-            if _lines.len() == 0 { curLine = 0 }
-            else if curLine >= _float(_lines.len()) { curLine = _float(_lines.len() - 1) }
-            float cy = y + pad + curLine * _lineHeight - _scrollY
-            if cy + _lineHeight > y + pad and cy < y + pad + visH {
+            if _lines.len() > 0 and _drCount > 0 {
+                var cdi = _disp_row_of(_cursorLine, _cursorCol)
+                float cy = y + pad + _float(cdi) * _lineHeight - _scrollY
+                if cy + _lineHeight > y + pad and cy < y + pad + visH {
+                    var ms = _font.measureString("Ag")
+                    float ch = _float(ms.h)
+                    float cx = x + pad
+                    if _wordWrap {
+                        cx = cx + _line_width_to(_cursorLine, _cursorCol) - _line_width_to(_cursorLine, _drC0[cdi])
+                    } else {
+                        cx = cx + _line_width_to(_cursorLine, _cursorCol) - _scrollX
+                    }
+                    r.setColor(220, 220, 240, 200)
+                    r.drawLine(cx, cy, cx, cy + ch)
+                }
+            } else {
+                // 空内容：光标固定在左上角
+                float cy = y + pad
                 var ms = _font.measureString("Ag")
                 float ch = _float(ms.h)
-                float cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
+                float cx = x + pad
                 r.setColor(220, 220, 240, 200)
                 r.drawLine(cx, cy, cx, cy + ch)
             }
@@ -1266,6 +1324,44 @@ export struct Edit {
         }
         if start < ln.len() { result.add(ln.slice(start, ln.len())) }
         return result
+    }
+
+    // 构建显示行表：自动换行时一行逻辑行会被拆成多显示行。
+    // 非换行模式下显示行与逻辑行 1:1。结果存入 _drLi/_drC0/_drC1。
+    func _build_display_rows(float visW): int {
+        _drLi = []; _drC0 = []; _drC1 = []
+        if visW <= 0 { visW = 1.0 }
+        for _lines.len() to li {
+            var ln = _lines[li]
+            if not _wordWrap {
+                _drLi.add(li); _drC0.add(0); _drC1.add(ln.len())
+            } else {
+                var wl = _wrap_line(ln, visW)
+                var col0 = 0
+                for wl.len() to wi {
+                    var seg = wl[wi] as string
+                    var segLen = seg.len()
+                    _drLi.add(li); _drC0.add(col0); _drC1.add(col0 + segLen)
+                    col0 = col0 + segLen
+                }
+                if wl.len() == 0 { _drLi.add(li); _drC0.add(0); _drC1.add(0) }
+            }
+        }
+        _drCount = _drLi.len()
+        return _drCount
+    }
+
+    // 给定逻辑行列，返回其所在的显示行索引
+    func _disp_row_of(int li, int col): int {
+        var best = -1
+        for _drCount to di {
+            if _drLi[di] == li {
+                if col >= _drC0[di] and col <= _drC1[di] { return di }
+                best = di
+            }
+        }
+        if best >= 0 { return best }
+        return 0
     }
 
     func dispose() {
