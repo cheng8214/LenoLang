@@ -4,6 +4,22 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.Scancode
+use core.sdl3
+
+// 悬停光标缓存：仅创建一次并复用，避免每次鼠标移动都新建 SDL 光标导致内存泄漏
+Ptr _editCursorText = null
+Ptr _editCursorDefault = null
+
+func _edit_set_cursor(bool text) {
+    sdl3 l = core.lib()
+    if text {
+        if _editCursorText == null { _editCursorText = l.SDL_CreateSystemCursor(core.SystemCursor.TEXT) }
+        l.SDL_SetCursor(_editCursorText)
+    } else {
+        if _editCursorDefault == null { _editCursorDefault = l.SDL_CreateSystemCursor(core.SystemCursor.DEFAULT) }
+        l.SDL_SetCursor(_editCursorDefault)
+    }
+}
 
 export struct Edit {
     string text
@@ -35,6 +51,7 @@ export struct Edit {
     bool _draggingHScroll        // 拖横向滚动条
     bool _hoverVScroll           // 鼠标悬停竖向滚动条
     bool _hoverHScroll           // 鼠标悬停横向滚动条
+    bool _hoverText              // 鼠标悬停编辑区（显示文本光标）
     int _blinkTime               // 光标闪烁 tick
     bool _showCursor
     bool _password               // 密码模式
@@ -241,6 +258,7 @@ export struct Edit {
 
         // 状态
         _focused    = false
+        _hoverText  = false
         _showCursor = true
         _blinkTime  = core.getTicks()
         _cursorPos  = text.len()
@@ -379,6 +397,28 @@ export struct Edit {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
 
+    // 判断鼠标是否悬停在可编辑区域（多行模式排除滚动条）
+    func _edit_hit(float mx, float my): bool {
+        if not contains(mx, my) { return false }
+        if _multiline {
+            float pad = 8.0
+            float sbW = _sb_width(); float sbH = _sb_height()
+            float visW = w - pad * 2.0 - sbW
+            float visH = h - pad * 2.0 - sbH
+            if sbW > 0.0 {
+                float vsbX = x + w - sbW - 4.0
+                if mx >= vsbX and mx <= vsbX + sbW
+                   and my >= y + pad and my <= y + pad + visH { return false }
+            }
+            if sbH > 0.0 {
+                float hsbY = y + h - sbH - 4.0
+                if my >= hsbY and my <= hsbY + sbH
+                   and mx >= x + pad and mx <= x + pad + visW { return false }
+            }
+        }
+        return true
+    }
+
     func _update_ime() {
         float pad = 8.0
         float cx
@@ -512,6 +552,15 @@ export struct Edit {
     // ==================== 事件处理 ====================
     func process(Event ev) {
         if not _loaded { return }
+
+        // ---- 悬停光标：鼠标移入编辑框 → 文本(I型)光标；移出 → 默认光标 ----
+        if ev.isMouseMotion() {
+            bool hit = _edit_hit(ev.mouseX(), ev.mouseY())
+            if hit != _hoverText {
+                _hoverText = hit
+                _edit_set_cursor(hit)
+            }
+        }
 
         // ---- 鼠标滚轮（所有模式）----
         if ev.isMouseWheel() {

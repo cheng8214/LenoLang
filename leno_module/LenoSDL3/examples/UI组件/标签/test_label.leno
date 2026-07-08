@@ -1,5 +1,5 @@
 // test_label.leno — Label 控件测试
-import "../../lib/SDL3.leno" as SDL3
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Label
