@@ -8,10 +8,24 @@
 // 无需布局本身做修改 —— 这是“不影响后面扩展”的基础。
 //
 // 用法：
-//   HBox hb = win.addHBox({x, y, w, h, spacing, padX, padY})
-//   hb.add(SDL3.createButton({text:"A"}), {expand:true})   // 占满剩余宽度
-//   hb.add(SDL3.createButton({text:"B"}), {align:1})       // 交叉轴居中
-// 子控件创建时仍需给定 w/h（作为自然尺寸）；布局会按需用 set_size 改写它们。
+//   HBox hb = win.addHBox({x, y, w, h, spacing, padX, padY, justify})
+//   hb.add(SDL3.createButton({text:"A"}), {grow:1})            // 占满剩余宽度（可写 grow:2 拿两倍）
+//   hb.add(SDL3.createButton({text:"B"}), {grow:1, shrink:0})  // 可增长、但不被压缩
+//   hb.add(SDL3.createButton({text:"C"}), {align:1})           // 交叉轴居中
+//   hb.add(SDL3.createButton({text:"D"}), {basis:80, minW:40}) // 显式主轴基准尺寸 + 最小宽度
+// 子控件创建时仍需给定 w/h（作为自然尺寸/basis）；布局会按需用 set_size 改写它们。
+//
+// 每个子项 opts 支持（模拟 CSS Flexbox，沿主轴是 HBox 的水平 / VBox 的竖直）：
+//   grow      : 数字权重，剩余空间按权重分配（默认 0）。expand:true 等价于 grow:1（向后兼容）。
+//   shrink    : 数字权重，空间不足时按 shrink*basis 比例收缩（默认 1；写 0 即不收缩、允许溢出）。
+//   basis     : 显式主轴基准尺寸，覆盖控件自然尺寸（默认 -1 表示用 get_w()/get_h()）。
+//   align     : 交叉轴对齐 0=start 1=center 2=end 3=stretch（覆盖容器默认）。
+//   minW/maxW/minH/maxH : 主/交叉轴尺寸约束下限/上限（默认 -1 不约束）。
+// 容器 opts 支持：
+//   justify   : 主轴分布（仅当无 grow 且有剩余空间时生效）
+//               0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly。
+// 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
+//       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
 // 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
 //       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
 import "sdl_widget.leno" as wgt; use wgt.Widget
@@ -31,6 +45,7 @@ export var LAYOUT_STRETCH = 3   // 撑满交叉轴
 export struct HBox impl Widget {
     float x; float y; float w; float h
     float padX; float padY; float spacing
+    int justify                 // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     bool _loaded
@@ -44,6 +59,7 @@ export struct HBox impl Widget {
         padX = _float(opts.get("padX", 8))
         padY = _float(opts.get("padY", 8))
         spacing = _float(opts.get("spacing", 6))
+        justify = _int(opts.get("justify", 0))
         _loaded = true
     }
 
@@ -78,38 +94,77 @@ export struct HBox impl Widget {
         if innerW < 0 { innerW = 0 }
         if innerH < 0 { innerH = 0 }
 
-        // 先统计非 expand 子控件的自然宽度总和，算出 expand 子控件能分到的宽度
-        float totalFixed = 0.0
-        int expandCount = 0
-        for _c.len() to i {
-            Dict o = _opt[i]
-            if _bool(o.get("expand", false)) { expandCount = expandCount + 1 }
-            else { totalFixed = totalFixed + _c[i].get_w() }
-        }
+        // 解析每个子项的 flex 参数（兼容旧 expand:true -> grow=1）
+        Array[float] basisArr  = []
+        Array[float] growArr   = []
+        Array[float] shrinkArr = []
+        float totalBasis = 0.0
+        float sumGrow = 0.0
+        float sumShrinkBasis = 0.0
         float totalSpacing = spacing * _float(n - 1)
-        float remaining = innerW - totalFixed - totalSpacing
-        if remaining < 0 { remaining = 0 }
-        float expandW = 0.0
-        if expandCount > 0 { expandW = remaining / _float(expandCount) }
+        for n to i {
+            Dict o = _opt[i]
+            float g = _float(o.get("grow", 0.0))
+            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
+            float s = _float(o.get("shrink", 1.0))
+            float basis = _c[i].get_w()
+            float b = _float(o.get("basis", -1.0))
+            if b >= 0.0 { basis = b }
+            basisArr.add(basis); growArr.add(g); shrinkArr.add(s)
+            totalBasis = totalBasis + basis
+            sumGrow = sumGrow + g
+            sumShrinkBasis = sumShrinkBasis + s * basis
+        }
+        float free = innerW - totalBasis - totalSpacing
 
-        float cx = x + padX
-        for _c.len() to i {
+        // 计算每个子项的主轴尺寸：剩余空间按 grow 分配；空间不足按 shrink*basis 收缩
+        Array[float] sizes = []
+        for n to i {
+            float sz = basisArr[i]
+            if free >= 0.0 {
+                if sumGrow > 0.0 { sz = basisArr[i] + free * growArr[i] / sumGrow }
+            } else {
+                if sumShrinkBasis > 0.0 {
+                    float cut = (shrinkArr[i] * basisArr[i]) / sumShrinkBasis * (-free)
+                    sz = basisArr[i] - cut
+                    if sz < 0.0 { sz = 0.0 }
+                }
+            }
+            sizes.add(sz)
+        }
+
+        // 主轴起始偏移与间隙（justify-content，仅在无 grow 且有剩余空间时生效）
+        float lead = 0.0
+        float extraGap = 0.0
+        if sumGrow == 0.0 and free > 0.0 {
+            if justify == 1 { lead = free / 2.0 }
+            else if justify == 2 { lead = free }
+            else if justify == 3 { if n > 1 { extraGap = free / _float(n - 1) } }
+            else if justify == 4 { extraGap = free / _float(n); lead = extraGap / 2.0 }
+            else if justify == 5 { extraGap = free / _float(n + 1); lead = extraGap }
+        }
+
+        float cx = x + padX + lead
+        for n to i {
             Widget c = _c[i]
             Dict o = _opt[i]
-            bool ex = _bool(o.get("expand", false))
-            float cw
-            if ex { cw = expandW } else { cw = c.get_w() }
+            float cw = sizes[i]
             float ch = c.get_h()
             int align = _int(o.get("align", 0))
             float cy
             if align == 3 { ch = innerH; cy = y + padY }
+            else if growArr[i] > 0.0 { ch = innerH; cy = y + padY }   // grow 同时撑满交叉轴
             else if align == 1 { cy = y + padY + (innerH - ch) / 2.0 }
             else if align == 2 { cy = y + padY + innerH - ch }
-            else if ex { ch = innerH; cy = y + padY }   // expand 同时撑满交叉轴（高度）
             else { cy = y + padY }
+            // 最小/最大约束
+            float mn = _float(o.get("minW", -1.0)); if mn >= 0.0 and cw < mn { cw = mn }
+            float mx = _float(o.get("maxW", -1.0)); if mx >= 0.0 and cw > mx { cw = mx }
+            float mnh = _float(o.get("minH", -1.0)); if mnh >= 0.0 and ch < mnh { ch = mnh }
+            float mxh = _float(o.get("maxH", -1.0)); if mxh >= 0.0 and ch > mxh { ch = mxh }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
-            cx = cx + cw + spacing
+            cx = cx + cw + spacing + extraGap
         }
     }
 
@@ -132,6 +187,7 @@ export struct HBox impl Widget {
 export struct VBox impl Widget {
     float x; float y; float w; float h
     float padX; float padY; float spacing
+    int justify                 // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     bool _loaded
@@ -145,6 +201,7 @@ export struct VBox impl Widget {
         padX = _float(opts.get("padX", 8))
         padY = _float(opts.get("padY", 8))
         spacing = _float(opts.get("spacing", 6))
+        justify = _int(opts.get("justify", 0))
         _loaded = true
     }
 
@@ -179,37 +236,77 @@ export struct VBox impl Widget {
         if innerW < 0 { innerW = 0 }
         if innerH < 0 { innerH = 0 }
 
-        float totalFixed = 0.0
-        int expandCount = 0
-        for _c.len() to i {
-            Dict o = _opt[i]
-            if _bool(o.get("expand", false)) { expandCount = expandCount + 1 }
-            else { totalFixed = totalFixed + _c[i].get_h() }
-        }
+        // 解析每个子项的 flex 参数（兼容旧 expand:true -> grow=1）
+        Array[float] basisArr  = []
+        Array[float] growArr   = []
+        Array[float] shrinkArr = []
+        float totalBasis = 0.0
+        float sumGrow = 0.0
+        float sumShrinkBasis = 0.0
         float totalSpacing = spacing * _float(n - 1)
-        float remaining = innerH - totalFixed - totalSpacing
-        if remaining < 0 { remaining = 0 }
-        float expandH = 0.0
-        if expandCount > 0 { expandH = remaining / _float(expandCount) }
+        for n to i {
+            Dict o = _opt[i]
+            float g = _float(o.get("grow", 0.0))
+            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
+            float s = _float(o.get("shrink", 1.0))
+            float basis = _c[i].get_h()
+            float b = _float(o.get("basis", -1.0))
+            if b >= 0.0 { basis = b }
+            basisArr.add(basis); growArr.add(g); shrinkArr.add(s)
+            totalBasis = totalBasis + basis
+            sumGrow = sumGrow + g
+            sumShrinkBasis = sumShrinkBasis + s * basis
+        }
+        float free = innerH - totalBasis - totalSpacing
 
-        float cy = y + padY
-        for _c.len() to i {
+        // 计算每个子项的主轴尺寸：剩余空间按 grow 分配；空间不足按 shrink*basis 收缩
+        Array[float] sizes = []
+        for n to i {
+            float sz = basisArr[i]
+            if free >= 0.0 {
+                if sumGrow > 0.0 { sz = basisArr[i] + free * growArr[i] / sumGrow }
+            } else {
+                if sumShrinkBasis > 0.0 {
+                    float cut = (shrinkArr[i] * basisArr[i]) / sumShrinkBasis * (-free)
+                    sz = basisArr[i] - cut
+                    if sz < 0.0 { sz = 0.0 }
+                }
+            }
+            sizes.add(sz)
+        }
+
+        // 主轴起始偏移与间隙（justify-content，仅在无 grow 且有剩余空间时生效）
+        float lead = 0.0
+        float extraGap = 0.0
+        if sumGrow == 0.0 and free > 0.0 {
+            if justify == 1 { lead = free / 2.0 }
+            else if justify == 2 { lead = free }
+            else if justify == 3 { if n > 1 { extraGap = free / _float(n - 1) } }
+            else if justify == 4 { extraGap = free / _float(n); lead = extraGap / 2.0 }
+            else if justify == 5 { extraGap = free / _float(n + 1); lead = extraGap }
+        }
+
+        float cy = y + padY + lead
+        for n to i {
             Widget c = _c[i]
             Dict o = _opt[i]
-            bool ex = _bool(o.get("expand", false))
-            float ch
-            if ex { ch = expandH } else { ch = c.get_h() }
+            float ch = sizes[i]
             float cw = c.get_w()
             int align = _int(o.get("align", 0))
             float cx
             if align == 3 { cw = innerW; cx = x + padX }
+            else if growArr[i] > 0.0 { cw = innerW; cx = x + padX }   // grow 同时撑满交叉轴
             else if align == 1 { cx = x + padX + (innerW - cw) / 2.0 }
             else if align == 2 { cx = x + padX + innerW - cw }
-            else if ex { cw = innerW; cx = x + padX }   // expand 同时撑满交叉轴（宽度）
             else { cx = x + padX }
+            // 最小/最大约束
+            float mn = _float(o.get("minW", -1.0)); if mn >= 0.0 and cw < mn { cw = mn }
+            float mx = _float(o.get("maxW", -1.0)); if mx >= 0.0 and cw > mx { cw = mx }
+            float mnh = _float(o.get("minH", -1.0)); if mnh >= 0.0 and ch < mnh { ch = mnh }
+            float mxh = _float(o.get("maxH", -1.0)); if mxh >= 0.0 and ch > mxh { ch = mxh }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
-            cy = cy + ch + spacing
+            cy = cy + ch + spacing + extraGap
         }
     }
 

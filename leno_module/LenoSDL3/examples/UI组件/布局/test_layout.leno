@@ -1,9 +1,10 @@
-// test_layout.leno — 布局系统测试（HBox / VBox / AnchorBox）
-// 验证控件能自动排布，无需手填绝对坐标；窗口缩放时布局自适应。
+// test_layout.leno — 布局系统测试（新版弹性布局 HBox / VBox / AnchorBox）
+// 验证：grow 权重分配、shrink 收缩、basis 基准、justify 主轴分布、min/max 约束，
+//       以及向后兼容的 expand:true 与 AnchorBox 锚点定位。
+// 运行后拖动窗口缩放，观察各容器是否按预期自适应（ESC 退出）。
 //
-// 约定：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
-//       只把布局容器注册进窗口。容器会自动把窗口句柄下发给需要的子控件（如 Edit 的 IME），
-//       因此无需再手动调用 ed.set_window(win.handle)。
+// 约定：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免双重绘制），
+//       只把布局容器注册进窗口。容器会自动把窗口句柄下发给需要的子控件。
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -15,51 +16,99 @@ use SDL3.WindowFlag
 use SDL3.Size
 
 main() {
-    var win = SDL3.createWindow({title: "布局系统测试", w: 720, h: 520, flags: WindowFlag.RESIZABLE})
+    var win = SDL3.createWindow({title: "布局系统测试（弹性布局）", w: 820, h: 780, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
     SDL3.ttfInit()
 
-    // 顶部工具栏（HBox）：标题占满剩余宽度，右侧两个按钮右对齐
-    HBox top = win.addHBox({x: 10, y: 10, w: 700, h: 44, spacing: 8, padX: 6, padY: 6})
-    top.add(SDL3.createLabel({text: "布局系统演示", font_size: 18}), {expand: true})
-    top.add(SDL3.createButton({text: "帮助", w: 80, h: 32}), {})
-    top.add(SDL3.createButton({text: "退出", w: 80, h: 32}), {})
+    // ---- 行1：HBox grow 权重（2:1:1）---------------------------------------
+    // 期望：第一个按钮占 2/4 的剩余宽度，后两个各占 1/4。
+    HBox rowGrow = win.addHBox({x: 10, y: 44, w: 800, h: 46, spacing: 8, padX: 6, padY: 6})
+    rowGrow.add(SDL3.createButton({text: "grow:2", w: 80, h: 34}), {grow: 2})
+    rowGrow.add(SDL3.createButton({text: "grow:1", w: 80, h: 34}), {grow: 1})
+    rowGrow.add(SDL3.createButton({text: "grow:1", w: 80, h: 34}), {grow: 1})
 
-    // 左侧表单（VBox）：字段用 align:3 撑满宽度但保持自然高度（比 expand 更合适，不会被纵向拉长）
-    VBox form = win.addVBox({x: 10, y: 70, w: 340, h: 440, spacing: 12, padX: 10, padY: 10})
-    form.add(SDL3.createLabel({text: "用户名"}), {})
-    form.add(SDL3.createEdit({w: 200, h: 34, placeholder: "请输入用户名"}), {align: 3})
-    form.add(SDL3.createLabel({text: "密码"}), {})
-    form.add(SDL3.createEdit({w: 200, h: 34, placeholder: "请输入密码", password: true}), {align: 3})
-    form.add(SDL3.createLabel({text: "音量"}), {})
-    form.add(SDL3.createSlider({w: 200, h: 24, min: 0, max: 100, value: 40}), {align: 3})
-    form.add(SDL3.createCheckBox({text: "记住我", checked: true}), {})
-    form.add(SDL3.createToggle({text: "启用通知", on: true}), {})
-    form.add(SDL3.createProgressBar({w: 200, h: 20, value: 65}), {align: 3})
-    form.add(SDL3.createButton({text: "提交", w: 120, h: 36}), {align: 1})   // 居中
+    // ---- 行2：HBox justify=1 居中（无 grow，有剩余空间）--------------------
+    // 期望：三个固定宽按钮整体水平居中。
+    HBox rowCenter = win.addHBox({x: 10, y: 100, w: 800, h: 38, spacing: 10, justify: 1})
+    rowCenter.add(SDL3.createButton({text: "A", w: 70, h: 30}), {})
+    rowCenter.add(SDL3.createButton({text: "B", w: 70, h: 30}), {})
+    rowCenter.add(SDL3.createButton({text: "C", w: 70, h: 30}), {})
 
-    // 右侧锚点布局（AnchorBox）：控件钉在四角/居中
-    AnchorBox ab = win.addAnchorBox({x: 360, y: 70, w: 350, h: 440})
+    // ---- 行3：HBox justify=3 space-between ---------------------------------
+    // 期望：首尾贴边，中间等距。
+    HBox rowBetween = win.addHBox({x: 10, y: 146, w: 800, h: 38, spacing: 10, justify: 3})
+    rowBetween.add(SDL3.createButton({text: "左", w: 70, h: 30}), {})
+    rowBetween.add(SDL3.createButton({text: "中", w: 70, h: 30}), {})
+    rowBetween.add(SDL3.createButton({text: "右", w: 70, h: 30}), {})
+
+    // ---- 行4：HBox shrink 收缩（容器比内容窄）------------------------------
+    // 容器 w=400，三个按钮自然宽各 200（合计 600，超出约 200）。
+    // 期望：第一个 shrink:0 保持 200 不被压缩；后两个按 shrink*basis 均摊压缩到约 94。
+    HBox rowShrink = win.addHBox({x: 10, y: 192, w: 400, h: 38, spacing: 6, padX: 4, padY: 4})
+    rowShrink.add(SDL3.createButton({text: "s:0 w200", w: 200, h: 30}), {shrink: 0})
+    rowShrink.add(SDL3.createButton({text: "s:1", w: 200, h: 30}), {shrink: 1})
+    rowShrink.add(SDL3.createButton({text: "s:1", w: 200, h: 30}), {shrink: 1})
+
+    // ---- 行5：HBox basis + min/max 约束 ------------------------------------
+    // 期望：b1 用 basis:60 覆盖自然宽 200；b2 有 maxW:120 被截断；b3 有 minW:200 不被压太小。
+    HBox rowBasis = win.addHBox({x: 10, y: 238, w: 400, h: 38, spacing: 6, padX: 4, padY: 4})
+    rowBasis.add(SDL3.createButton({text: "basis:60", w: 200, h: 30}), {basis: 60, grow: 1})
+    rowBasis.add(SDL3.createButton({text: "maxW:120", w: 200, h: 30}), {grow: 1, maxW: 120})
+    rowBasis.add(SDL3.createButton({text: "minW:200", w: 60, h: 30}), {grow: 1, minW: 200})
+
+    // ---- 行6：HBox align 交叉轴（单按钮分别 start/center/end/stretch）------
+    HBox rowAlign = win.addHBox({x: 10, y: 284, w: 400, h: 50, spacing: 8, padX: 4, padY: 4})
+    rowAlign.add(SDL3.createButton({text: "start", w: 70, h: 20}), {align: 0})
+    rowAlign.add(SDL3.createButton({text: "center", w: 70, h: 20}), {align: 1})
+    rowAlign.add(SDL3.createButton({text: "end", w: 70, h: 20}), {align: 2})
+    rowAlign.add(SDL3.createButton({text: "stretch", w: 70, h: 20}), {align: 3})
+
+    // ---- 行7：向后兼容 expand:true（等价于 grow:1）-------------------------
+    HBox rowExpand = win.addHBox({x: 10, y: 344, w: 400, h: 38, spacing: 8, padX: 4, padY: 4})
+    rowExpand.add(SDL3.createLabel({text: "标题(expand)"}), {expand: true})
+    rowExpand.add(SDL3.createButton({text: "帮助", w: 70, h: 30}), {})
+    rowExpand.add(SDL3.createButton({text: "退出", w: 70, h: 30}), {})
+
+    // ---- 左侧：VBox 垂直弹性（grow / shrink / basis / align）--------------
+    VBox colV = win.addVBox({x: 10, y: 410, w: 390, h: 350, spacing: 10, padX: 8, padY: 8})
+    colV.add(SDL3.createLabel({text: "VBox(垂直弹性)"}), {})
+    colV.add(SDL3.createButton({text: "grow:2", w: 200, h: 30}), {grow: 2})
+    colV.add(SDL3.createButton({text: "grow:1 + minH:60", w: 200, h: 30}), {grow: 1, minH: 60})
+    colV.add(SDL3.createButton({text: "basis:40", w: 200, h: 120}), {basis: 40, grow: 1})
+    colV.add(SDL3.createButton({text: "align:1 居中", w: 120, h: 30}), {align: 1})
+    colV.add(SDL3.createButton({text: "底部(justify靠下)", w: 200, h: 30}), {})
+
+    // ---- 右侧：AnchorBox 锚点（应保持原行为不变）--------------------------
+    AnchorBox ab = win.addAnchorBox({x: 410, y: 410, w: 390, h: 350})
     ab.add(SDL3.createLabel({text: "左上"}), {left: 8, top: 8})
     ab.add(SDL3.createLabel({text: "右上"}), {right: 8, top: 8})
     ab.add(SDL3.createLabel({text: "居中"}), {centerX: true, centerY: true})
     ab.add(SDL3.createButton({text: "右下", w: 90, h: 32}), {right: 8, bottom: 8})
-    ab.add(SDL3.createListBox({items: ["项1", "项2", "项3", "项4", "项5"], w: 160, h: 140}),
+    ab.add(SDL3.createListBox({items: ["项1", "项2", "项3", "项4"], w: 160, h: 120}),
            {left: 8, bottom: 8})
 
-    print("布局测试已启动，拖动缩放窗口观察自适应（ESC 退出）")
+    print("布局弹性测试已启动：")
+    print("  行1 grow 2:1:1 | 行2 居中 | 行3 space-between | 行4 shrink | 行5 basis/min/max | 行6 align | 行7 expand兼容")
+    print("  左下 VBox 垂直弹性 | 右下 AnchorBox 锚点（行为不变）。拖动缩放窗口观察自适应，ESC 退出。")
+
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
-            // 窗口缩放/最大化时，让三个容器跟随新尺寸重新排布
             if e.isWindowResized() {
                 Size s = win.getSize()
                 float W = _float(s.w); float H = _float(s.h)
-                float leftW = (W - 30.0) / 2.0
-                top.set_pos(10.0, 10.0); top.set_size(W - 20.0, 44.0)
-                form.set_pos(10.0, 70.0); form.set_size(leftW, H - 80.0)
-                ab.set_pos(10.0 + leftW + 10.0, 70.0); ab.set_size(leftW, H - 80.0)
+                float fullW = W - 20.0
+                rowGrow.set_size(fullW, 46.0)
+                rowCenter.set_size(fullW, 38.0)
+                rowBetween.set_size(fullW, 38.0)
+                rowShrink.set_size(fullW / 2.0, 38.0)
+                rowBasis.set_size(fullW / 2.0, 38.0)
+                rowAlign.set_size(fullW / 2.0, 50.0)
+                rowExpand.set_size(fullW / 2.0, 38.0)
+                float colW = (W - 30.0) / 2.0
+                colV.set_pos(10.0, 410.0); colV.set_size(colW, H - 420.0)
+                ab.set_pos(10.0 + colW + 10.0, 410.0); ab.set_size(colW, H - 420.0)
             }
             return true
         },
