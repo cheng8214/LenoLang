@@ -389,7 +389,9 @@ OPCODE(OP_STRUCT_INIT) {
 
     ObjStructDef* def = struct_def_find(name->chars);
     if (!def) {
-        runtime_error("未定义的结构体", GET_CURRENT_LINE());
+        char _undef_msg[256];
+        snprintf(_undef_msg, sizeof(_undef_msg), "未定义的结构体 '%s'", name->chars);
+        runtime_error(_undef_msg, GET_CURRENT_LINE());
         if (generic_type_args) {
             for (int gi = 0; gi < generic_type_count; gi++) free(generic_type_args[gi]);
             free(generic_type_args);
@@ -414,7 +416,10 @@ OPCODE(OP_STRUCT_INIT) {
         
         // 边界检查
         if (field_idx >= def->field_count) {
-            runtime_error("struct 字段索引越界", GET_CURRENT_LINE());
+            char _idx_msg[256];
+            snprintf(_idx_msg, sizeof(_idx_msg), "struct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
+                     def->name ? def->name : "?", field_idx, def->field_count);
+            runtime_error(_idx_msg, GET_CURRENT_LINE());
             return -1;
         }
         
@@ -529,7 +534,15 @@ OPCODE(OP_GET_FIELD) {
     Value obj_val = vm_stack_pop(&vm);
     
     if (!val_is_obj(obj_val)) {
-        runtime_error("尝试在非对象类型上获取字段", GET_CURRENT_LINE());
+        char _type_buf[64];
+        if (val_is_null(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "null");
+        else if (val_is_int(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "int(%lld)", (long long)val_as_int(obj_val));
+        else if (val_is_float(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "float(%g)", val_as_double(obj_val));
+        else if (val_is_bool(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "bool");
+        else snprintf(_type_buf, sizeof(_type_buf), "unknown");
+        char _gf_msg[256];
+        snprintf(_gf_msg, sizeof(_gf_msg), "尝试在非对象类型上获取字段（实际类型: %s）", _type_buf);
+        runtime_error(_gf_msg, GET_CURRENT_LINE());
         return -1;
     }
     
@@ -540,7 +553,10 @@ OPCODE(OP_GET_FIELD) {
         
         // 边界检查
         if (field_idx >= def->field_count) {
-            runtime_error("struct 字段索引越界", GET_CURRENT_LINE());
+            char _idx_msg[256];
+            snprintf(_idx_msg, sizeof(_idx_msg), "struct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
+                     def->name ? def->name : "?", field_idx, def->field_count);
+            runtime_error(_idx_msg, GET_CURRENT_LINE());
             return -1;
         }
         
@@ -552,7 +568,10 @@ OPCODE(OP_GET_FIELD) {
         ObjCStructDef* def = obj->def;
         
         if (field_idx >= def->field_count) {
-            runtime_error("cstruct 字段索引越界", GET_CURRENT_LINE());
+            char _idx_msg[256];
+            snprintf(_idx_msg, sizeof(_idx_msg), "cstruct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
+                     def->name ? def->name : "?", field_idx, def->field_count);
+            runtime_error(_idx_msg, GET_CURRENT_LINE());
             return -1;
         }
         
@@ -585,7 +604,10 @@ OPCODE(OP_GET_FIELD) {
             const char* nested_struct_name = field->struct_name ? field->struct_name : field->name;
             ObjCStructDef* nested_def = cstruct_def_find(nested_struct_name);
             if (!nested_def) {
-                runtime_error("找不到嵌套 cstruct 定义", GET_CURRENT_LINE());
+                char _nest_msg[256];
+                snprintf(_nest_msg, sizeof(_nest_msg), "找不到嵌套 cstruct 定义 '%s'",
+                         nested_struct_name ? nested_struct_name : "?");
+                runtime_error(_nest_msg, GET_CURRENT_LINE());
                 return -1;
             }
             
@@ -629,7 +651,15 @@ OPCODE(OP_SET_FIELD) {
     Value obj_val = vm_stack_pop(&vm);
     
     if (!val_is_obj(obj_val)) {
-        runtime_error("尝试在非对象类型上设置字段", GET_CURRENT_LINE());
+        char _type_buf[64];
+        if (val_is_null(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "null");
+        else if (val_is_int(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "int(%lld)", (long long)val_as_int(obj_val));
+        else if (val_is_float(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "float(%g)", val_as_double(obj_val));
+        else if (val_is_bool(obj_val)) snprintf(_type_buf, sizeof(_type_buf), "bool");
+        else snprintf(_type_buf, sizeof(_type_buf), "unknown");
+        char _sf_msg[256];
+        snprintf(_sf_msg, sizeof(_sf_msg), "尝试在非对象类型上设置字段（实际类型: %s）", _type_buf);
+        runtime_error(_sf_msg, GET_CURRENT_LINE());
         return -1;
     }
     
@@ -638,7 +668,10 @@ OPCODE(OP_SET_FIELD) {
         ObjStructDef* def = obj->def;
         
         if (field_idx >= def->field_count) {
-            runtime_error("struct 字段索引越界", GET_CURRENT_LINE());
+            char _idx_msg[256];
+            snprintf(_idx_msg, sizeof(_idx_msg), "struct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
+                     def->name ? def->name : "?", field_idx, def->field_count);
+            runtime_error(_idx_msg, GET_CURRENT_LINE());
             return -1;
         }
 
@@ -664,7 +697,10 @@ OPCODE(OP_SET_FIELD) {
         ObjCStructDef* def = obj->def;
         
         if (field_idx >= def->field_count) {
-            runtime_error("cstruct 字段索引越界", GET_CURRENT_LINE());
+            char _idx_msg[256];
+            snprintf(_idx_msg, sizeof(_idx_msg), "cstruct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
+                     def->name ? def->name : "?", field_idx, def->field_count);
+            runtime_error(_idx_msg, GET_CURRENT_LINE());
             return -1;
         }
 
@@ -684,7 +720,21 @@ OPCODE(OP_SET_FIELD) {
         vm_stack_push(&vm, value);
     }
     else {
-        runtime_error("尝试在非 struct/cstruct 类型上设置字段", GET_CURRENT_LINE());
+        Object* _actual = val_as_obj(obj_val);
+        const char* _tn = "unknown";
+        switch (_actual->type) {
+            case OBJ_STRING: _tn = "string"; break;
+            case OBJ_ARRAY:  _tn = "array"; break;
+            case OBJ_DICT:   _tn = "dict"; break;
+            case OBJ_CLOSURE: _tn = "closure"; break;
+            case OBJ_MODULE: _tn = "module"; break;
+            case OBJ_FILE:   _tn = "File"; break;
+            case OBJ_SOCKET: _tn = "Socket"; break;
+            default: break;
+        }
+        char _sf2_msg[256];
+        snprintf(_sf2_msg, sizeof(_sf2_msg), "尝试在非 struct/cstruct 类型上设置字段（实际类型: %s）", _tn);
+        runtime_error(_sf2_msg, GET_CURRENT_LINE());
         return -1;
     }
     
@@ -700,7 +750,24 @@ OPCODE(OP_GET_FIELD_ADDR) {
     Value obj_val = vm_stack_pop(&vm);
     
     if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_CSTRUCT) {
-        runtime_error("& 取地址仅支持 cstruct 字段", GET_CURRENT_LINE());
+        char _addr_type_buf[64];
+        if (val_is_null(obj_val)) snprintf(_addr_type_buf, sizeof(_addr_type_buf), "null");
+        else if (val_is_int(obj_val)) snprintf(_addr_type_buf, sizeof(_addr_type_buf), "int");
+        else if (val_is_float(obj_val)) snprintf(_addr_type_buf, sizeof(_addr_type_buf), "float");
+        else if (val_is_obj(obj_val)) {
+            switch (val_as_obj(obj_val)->type) {
+                case OBJ_STRUCT: snprintf(_addr_type_buf, sizeof(_addr_type_buf), "struct"); break;
+                case OBJ_STRING: snprintf(_addr_type_buf, sizeof(_addr_type_buf), "string"); break;
+                case OBJ_ARRAY:  snprintf(_addr_type_buf, sizeof(_addr_type_buf), "array"); break;
+                case OBJ_DICT:   snprintf(_addr_type_buf, sizeof(_addr_type_buf), "dict"); break;
+                default:         snprintf(_addr_type_buf, sizeof(_addr_type_buf), "other"); break;
+            }
+        } else {
+            snprintf(_addr_type_buf, sizeof(_addr_type_buf), "unknown");
+        }
+        char _addr_msg[256];
+        snprintf(_addr_msg, sizeof(_addr_msg), "& 取地址仅支持 cstruct 字段（实际类型: %s）", _addr_type_buf);
+        runtime_error(_addr_msg, GET_CURRENT_LINE());
         return -1;
     }
     
@@ -708,7 +775,10 @@ OPCODE(OP_GET_FIELD_ADDR) {
     ObjCStructDef* def = obj->def;
     
     if (field_idx >= def->field_count) {
-        runtime_error("cstruct 字段索引越界", GET_CURRENT_LINE());
+        char _idx_msg[256];
+        snprintf(_idx_msg, sizeof(_idx_msg), "cstruct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
+                 def->name ? def->name : "?", field_idx, def->field_count);
+        runtime_error(_idx_msg, GET_CURRENT_LINE());
         return -1;
     }
     
@@ -818,10 +888,13 @@ OPCODE(OP_GET_METHOD) {
             DISPATCH;
         }
         
-        runtime_error("对象没有此方法", GET_CURRENT_LINE());
+        char _msg1[256];
+        snprintf(_msg1, sizeof(_msg1), "类型 '%s' 没有方法 '%s'",
+                 def->name ? def->name : "?", method_name->chars);
+        runtime_error(_msg1, GET_CURRENT_LINE());
         return -1;
     }
-    
+
     // 处理原生对象类型（File, Socket 等）
     ObjNative* native_method = NULL;
     if (obj->type == OBJ_FILE) {
@@ -839,10 +912,38 @@ OPCODE(OP_GET_METHOD) {
     }
 
     if (obj->type == OBJ_FILE || obj->type == OBJ_SOCKET) {
-        runtime_error("对象没有此方法", GET_CURRENT_LINE());
+        char _obj_type_name[32];
+        if (obj->type == OBJ_FILE) snprintf(_obj_type_name, sizeof(_obj_type_name), "File");
+        else snprintf(_obj_type_name, sizeof(_obj_type_name), "Socket");
+        char _msg2[256];
+        snprintf(_msg2, sizeof(_msg2), "类型 '%s' 没有方法 '%s'",
+                 _obj_type_name, method_name->chars);
+        runtime_error(_msg2, GET_CURRENT_LINE());
         return -1;
     }
     
-    runtime_error("尝试在非 struct 类型上获取方法", GET_CURRENT_LINE());
+    {
+        // 其他对象类型：显示实际类型名
+        const char* _tn = "unknown";
+        switch (obj->type) {
+            case OBJ_STRING: _tn = "string"; break;
+            case OBJ_ARRAY:  _tn = "array"; break;
+            case OBJ_DICT:   _tn = "dict"; break;
+            case OBJ_CLOSURE: _tn = "closure"; break;
+            case OBJ_MODULE: _tn = "module"; break;
+            case OBJ_CSTRUCT: _tn = "cstruct"; break;
+            case OBJ_FFI_LIBRARY: _tn = "ffi.Library"; break;
+            case OBJ_FFI_POINTER: _tn = "ffi.Pointer"; break;
+            case OBJ_FFI_CALLBACK: _tn = "ffi.Callback"; break;
+            case OBJ_THREAD: _tn = "Thread"; break;
+            case OBJ_CHANNEL: _tn = "Channel"; break;
+            case OBJ_COROUTINE: _tn = "Coroutine"; break;
+            default: break;
+        }
+        char _msg3[256];
+        snprintf(_msg3, sizeof(_msg3), "尝试在非 struct 类型上获取方法 '%s'（实际类型: %s）",
+                 method_name->chars, _tn);
+        runtime_error(_msg3, GET_CURRENT_LINE());
+    }
     return -1;
 }
