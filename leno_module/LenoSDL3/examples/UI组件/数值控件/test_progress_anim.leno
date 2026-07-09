@@ -1,0 +1,67 @@
+// test_progress_anim.leno — 进度条点击/设定动画演示
+// 演示：点击可交互进度条时，进度从当前显示位置平滑动画到目标位置，而非瞬间跳转。
+//   · 进度条 A：anim_speed=8（带动画）
+//   · 进度条 B：anim_speed=0（关闭动画，立即到位）—— 用作对比
+// 运行后点击轨道或下方按钮，观察 A 是否平滑过渡、B 是否瞬间跳变。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.ProgressBar
+use SDL3.Button
+
+main() {
+    var win = SDL3.createWindow({title: "进度条动画测试", w: 560, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 进度条 A：带动画（anim_speed 较小，过渡明显）
+    var pA = win.addProgressBar({ x: 40, y: 90, w: 460, h: 24, min: 0, max: 100, value: 0, clickable: true, anim_speed: 8.0 })
+    pA.on_change(func(float v) { print("A 目标 -> " + v) })
+
+    // 进度条 B：对比，关闭动画（anim_speed=0，立即到位）
+    var pB = win.addProgressBar({ x: 40, y: 150, w: 460, h: 24, min: 0, max: 100, value: 0, clickable: true, anim_speed: 0.0, fill_rgb: [220, 120, 60] })
+
+    // 一排按钮：跳到固定百分比（A、B 同时设定，便于并排对比）
+    var b0 = win.addButton({ x: 40,  y: 210, w: 80, h: 38, text: "0%",   type: "primary" })
+    b0.on_click(func():void { pA.set_value(0.0);   pB.set_value(0.0) })
+    var b25 = win.addButton({ x: 132, y: 210, w: 80, h: 38, text: "25%",  type: "primary" })
+    b25.on_click(func():void { pA.set_value(25.0);  pB.set_value(25.0) })
+    var b50 = win.addButton({ x: 224, y: 210, w: 80, h: 38, text: "50%",  type: "primary" })
+    b50.on_click(func():void { pA.set_value(50.0);  pB.set_value(50.0) })
+    var b75 = win.addButton({ x: 316, y: 210, w: 80, h: 38, text: "75%",  type: "primary" })
+    b75.on_click(func():void { pA.set_value(75.0);  pB.set_value(75.0) })
+    var b100 = win.addButton({ x: 408, y: 210, w: 80, h: 38, text: "100%", type: "primary" })
+    b100.on_click(func():void { pA.set_value(100.0); pB.set_value(100.0) })
+
+    // 随机跳转按钮：用时间生成伪随机目标
+    var rnd = win.addButton({ x: 40, y: 260, w: 120, h: 38, text: "随机跳转", type: "success" })
+    rnd.on_click(func():void {
+        int t = SDL3.getTicks()
+        float rv = _float((t / 97) % 101)
+        pA.set_value(rv); pB.set_value(rv)
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            r.drawText(font, "进度条点击动画：A 带动画 / B 无动画(对比)", 20, 14, 255, 220, 80)
+            r.drawText(font, "点击上方进度条轨道，或点按钮，观察 A 是否平滑过渡", 20, 40, 200, 210, 230)
+
+            r.drawText(font, "A 目标: " + pA.get_value() + "  显示: " + pA.get_display_value(), 40, 320, 120, 230, 160)
+            r.drawText(font, "B 目标: " + pB.get_value() + "  显示: " + pB.get_display_value(), 40, 350, 230, 160, 120)
+
+            r.drawText(font, "ESC 退出", 470, 392, 140, 140, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

@@ -18,6 +18,7 @@ export struct ProgressBar impl Widget {
     int tr, tg, tb                // 文字色
     int _cursor
     bool hover; bool _wasHover; bool _dragging; bool enabled; bool _loaded
+    float _animVal; float _animTarget; float _animLast; float _animSpeed; bool _animating
     func(float):void _onChange
 
     func _clamp(float v, float lo, float hi): float {
@@ -28,7 +29,7 @@ export struct ProgressBar impl Widget {
     func _ratio(): float {
         float span = maxV - minV
         if span <= 0.0 { return 0.0 }
-        return _clamp((value - minV) / span, 0.0, 1.0)
+        return _clamp((_animVal - minV) / span, 0.0, 1.0)
     }
 
     func _ensure_font() {
@@ -71,13 +72,25 @@ export struct ProgressBar impl Widget {
         enabled = _bool(opts.get("enabled", true))
         hover = false; _wasHover = false; _dragging = false
         value = _clamp(value, minV, maxV)
+        _animVal = value; _animTarget = value; _animating = false; _animLast = 0.0
+        _animSpeed = _float(opts.get("anim_speed", 12.0))
         _ensure_font()
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
-    func set_value(float v)     { float nv = _clamp(v, minV, maxV); if nv != value { value = nv; if _onChange != null { _onChange(value) } } }
+    func set_value(float v) {
+        float nv = _clamp(v, minV, maxV)
+        if nv != value {
+            value = nv
+            _animTarget = nv
+            _animating = true
+            _animLast = 0.0
+            if _onChange != null { _onChange(value) }
+        }
+    }
     func get_value(): float      { return value }
+    func get_display_value(): float { return _animVal }   // 动画当前显示值（用于观察过渡）
     func set_enabled(bool e)      { enabled = e }
     func set_font_size(float s)   { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float           { return x }
@@ -110,7 +123,12 @@ export struct ProgressBar impl Widget {
             float mx = ev.mouseX(); float my = ev.mouseY()
             _wasHover = hover
             hover = contains(mx, my)
-            if _dragging { value = _value_from_x(mx); if _onChange != null { _onChange(value) } }
+            if _dragging {
+                value = _value_from_x(mx)
+                _animVal = value          // 拖拽时实时跟随，取消动画延迟
+                _animating = false
+                if _onChange != null { _onChange(value) }
+            }
             if _cursor >= 0 {
                 if hover and not _wasHover { core.setSystemCursor(_cursor) }
                 if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
@@ -123,8 +141,34 @@ export struct ProgressBar impl Widget {
             if contains(ev.mouseX(), ev.mouseY()) {
                 _dragging = true
                 value = _value_from_x(ev.mouseX())
+                _animTarget = value
+                _animating = true          // 单击跳转：从当前显示位置平滑动画过去
+                _animLast = 0.0
                 if _onChange != null { _onChange(value) }
             }
+        }
+    }
+
+    // ==================== 动画步进（每帧由 render 调用） ====================
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animVal = _animTarget; _animating = false; return }  // 关闭动画：立即到位
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float diff = _animTarget - _animVal
+        float ad = diff
+        if ad < 0.0 { ad = -ad }
+        float eps = (maxV - minV) * 0.001
+        if eps < 0.0001 { eps = 0.0001 }
+        if ad <= eps {
+            _animVal = _animTarget
+            _animating = false
+        } else if dt > 0.0 {
+            float f = _animSpeed * dt
+            if f > 1.0 { f = 1.0 }
+            _animVal += diff * f
         }
     }
 
@@ -132,6 +176,7 @@ export struct ProgressBar impl Widget {
     func render(Renderer r) {
         if not _loaded { return }
         _ensure_font()
+        _step_anim()
 
         // 轨道背景
         int tR = _trkR; int tG = _trkG; int tB = _trkB
