@@ -1968,6 +1968,39 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
         }
     }
 
+    // 依赖缓存一致性检查：对每个依赖模块，验证其缓存是否与源文件一致
+    // 如果任何依赖的源文件已被修改（缓存失效），则父模块的缓存也应失效
+    if (dep_count > 0 && dep_paths) {
+        const char* cache_dir = module_loader_get_cache_dir();
+        for (uint32_t i = 0; i < dep_count; i++) {
+            if (!dep_paths[i] || !cache_dir) continue;
+            struct stat dep_st;
+            if (stat(dep_paths[i], &dep_st) != 0) continue;
+            // 快速检查：如果依赖源文件的修改时间比缓存文件新，则父缓存失效
+            char* dep_cache_path = module_cache_path_for(dep_paths[i], cache_dir);
+            if (!dep_cache_path) continue;
+            struct stat dep_cache_st;
+            if (stat(dep_cache_path, &dep_cache_st) == 0) {
+                // 缓存文件存在，但源文件更新 → 依赖缓存过期 → 父缓存也失效
+                if (dep_st.st_mtime > dep_cache_st.st_mtime) {
+                    free(dep_cache_path);
+                    for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);
+                    free(dep_paths);
+                    free(data);
+                    return NULL;
+                }
+            } else {
+                // 缓存文件不存在 → 依赖从未被缓存或缓存被删 → 父缓存失效
+                free(dep_cache_path);
+                for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);
+                free(dep_paths);
+                free(data);
+                return NULL;
+            }
+            free(dep_cache_path);
+        }
+    }
+
     // 创建占位模块并加入 loaded_modules（防循环依赖）
     // 模块名从 full_path 提取文件名（去扩展名）
     char mod_name[256];
