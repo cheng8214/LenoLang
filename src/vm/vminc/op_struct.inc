@@ -750,7 +750,18 @@ OPCODE(OP_GET_METHOD) {
     Value obj_val = vm_stack_pop(&vm);
     
     if (!val_is_obj(obj_val)) {
-        runtime_error("尝试在非对象类型上获取方法", GET_CURRENT_LINE());
+        // 增强错误信息：显示实际类型和值
+        char type_buf[64];
+        if (val_is_null(obj_val)) snprintf(type_buf, sizeof(type_buf), "null");
+        else if (val_is_int(obj_val)) snprintf(type_buf, sizeof(type_buf), "int(%lld)", (long long)val_as_int(obj_val));
+        else if (val_is_float(obj_val)) snprintf(type_buf, sizeof(type_buf), "float(%g)", val_as_double(obj_val));
+        else if (val_is_bool(obj_val)) snprintf(type_buf, sizeof(type_buf), "bool(%s)", val_as_bool(obj_val) ? "true" : "false");
+        else snprintf(type_buf, sizeof(type_buf), "unknown");
+        char msg[256];
+        ObjString* mn = (ObjString*)val_as_obj(method_name_val);
+        snprintf(msg, sizeof(msg), "尝试在非对象类型上获取方法 '%s'（实际类型: %s）",
+                 mn ? mn->chars : "?", type_buf);
+        runtime_error(msg, GET_CURRENT_LINE());
         return -1;
     }
     
