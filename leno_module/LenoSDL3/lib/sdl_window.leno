@@ -67,6 +67,7 @@ Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
 Array[Array[Widget]]   _runWidgets = []
 Array[Array[ComboBox]]  _runCombos  = []
+Array[Widget]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置）
 var _runRunning = false
 var _modalWid = -1
 
@@ -89,6 +90,7 @@ export struct Window {
     int _w; int _h; float _aaScale
     Array[Widget] _widgets = []
     Array[ComboBox] _combos = []   // 下拉框集合，用于渲染结束后第二遍画弹出层（盖在最上层）
+    Widget _root                     // 根布局控件（setRoot 设置），缩放时自动填满窗口
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -242,6 +244,13 @@ export struct Window {
         return w
     }
 
+    // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
+    func setRoot(Widget root) {
+        _root = root
+        root.set_pos(0, 0)
+        root.set_size(_float(_w), _float(_h))
+    }
+
     // 添加复选框，opts: {text, x, y, box, checked, on_change}
     // 返回 CheckBox，可 .on_change(func(bool){...}) / .set_checked(bool) / .is_checked()
     func addCheckBox(Dict opts): CheckBox {
@@ -353,6 +362,7 @@ export struct Window {
         _runRends.add(onRender)
         _runWidgets.add(_widgets)    // 统一关联控件列表
         _runCombos.add(_combos)      // 下拉框集合（用于第二遍 overlay 绘制）
+        _runRoots.add(_root)         // 根布局控件
 
         if _runRunning { return }
         _runRunning = true
@@ -383,7 +393,7 @@ export struct Window {
                             _windowCount -= 1
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i);  _runEvts.remove(i)
-                            _runRends.remove(i); _runWidgets.remove(i); _runCombos.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i); _runCombos.remove(i); _runRoots.remove(i)
                             break
                         }
                     }
@@ -404,6 +414,9 @@ export struct Window {
                             SDL_Point pt = SDL_Point.malloc()
                             _lib.SDL_GetWindowSize(_runHnds[k], &pt.x, &pt.y)
                             _runRens[k].resizeSSAA(pt.x, pt.y)
+                            // 驱动根布局控件跟随窗口大小
+                            var rootWid = _runRoots[k]
+                            if rootWid != null { rootWid.set_size(_float(pt.x), _float(pt.y)) }
                             pt.free()
                             break
                         }

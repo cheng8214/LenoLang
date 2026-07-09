@@ -24,6 +24,8 @@ export struct TabControl impl Widget {
     float _tabH                // 标签栏高度
     Array[string] _tabs        // 各页标题
     Array[Array[Widget]] _pages  // 每页的子控件集合（仅当前页被处理/绘制）
+    Array[VBox] _pageLayouts = []    // 每页的布局容器
+    Array[bool] _hasLayout = []       // 每页是否设置了布局容器
     Array[Array[Array[float]]] _rel  // 每页每子控件相对「内容区原点」的偏移 [relX, relY]
     int _active                // 当前激活页索引
     int _hover                 // 悬停的标签索引，-1 无
@@ -66,7 +68,14 @@ export struct TabControl impl Widget {
         // 每页一个子控件数组 + 对应的相对偏移数组
         _pages = []
         _rel = []
-        for _tabs.len() to i { _pages.add([]); _rel.add([]) }
+        _pageLayouts = []
+        _hasLayout = []
+        for _tabs.len() to i {
+            _pages.add([])
+            _rel.add([])
+            _pageLayouts.add(new VBox())
+            _hasLayout.add(false)
+        }
 
         _active = _int(opts.get("active", 0))
         if _active < 0 or _active >= _tabs.len() { _active = 0 }
@@ -121,11 +130,39 @@ export struct TabControl impl Widget {
     }
     // 添加到当前激活页（dx, dy 相对内容区左上角）
     func addToActivePage(Widget c, float dx, float dy): Widget { return addToPage(_active, c, dx, dy) }
+
+    // 把某页的内容区设为布局容器（如 VBox），自动填满内容区
+    // 布局容器接管该页的子控件排布，不再用手写 dx,dy
+    func setPageLayout(int page, VBox layout) {
+        if page < 0 or page >= _pages.len() { return }
+        _pageLayouts[page] = layout
+        _hasLayout[page] = true
+        // 初始位置和大小：内容区 = (x, y+tabH, w, h-tabH)
+        layout.set_pos(x, y + _tabH)
+        layout.set_size(w, h - _tabH)
+        if _hwnd != null { _tab_pass_window(layout as Widget, _hwnd) }
+    }
+
+    // 向某页的布局容器添加子控件（opts 传给布局容器的 add 方法，如 {align:3, expand:true}）
+    func addToPageLayout(int page, Widget c, Dict opts): Widget {
+        if page < 0 or page >= _pages.len() { return c }
+        if not _hasLayout[page] { return c }
+        var layout = _pageLayouts[page]
+        // 调用布局容器的 add 方法
+        layout.add(c, opts)
+        // 同时加入该页的子控件列表（供 process/render 遍历）
+        _pages[page].add(c)
+        _rel[page].add([0.0, 0.0])  // 布局模式下偏移无效，但保持数组对齐
+        if _hwnd != null { _tab_pass_window(c, _hwnd) }
+        return c
+    }
     // 动态新增一页，返回新页索引
     func addPage(string title): int {
         _tabs.add(title)
         _pages.add([])
         _rel.add([])
+        _pageLayouts.add(new VBox())
+        _hasLayout.add(false)
         return _tabs.len() - 1
     }
     // 从某页移除子控件
@@ -158,8 +195,18 @@ export struct TabControl impl Widget {
 
     // 每帧把当前页子控件重排到「内容区原点 + 相对偏移」：
     // 外层布局/拖拽改了 Tab 位置（set_pos）后，内部子控件整体跟随，与布局容器 _relayout 同一机制。
+    // 如果该页设置了布局容器（setPageLayout），则只更新布局容器位置/大小并触发布局重排，
+    // 子控件的位置由布局容器内部管理。
     func _applyOffsets(int page) {
         if page < 0 or page >= _pages.len() { return }
+        if _hasLayout[page] {
+            // 布局页：更新布局容器位置和大小，触发内部重排
+            var layout = _pageLayouts[page]
+            layout.set_pos(x, y + _tabH)
+            layout.set_size(w, h - _tabH)
+            return
+        }
+        // 普通页：逐个更新子控件相对偏移
         var pg = _pages[page]
         var of = _rel[page]
         float ox = x
@@ -227,8 +274,12 @@ export struct TabControl impl Widget {
         }
 
         // 转发事件给当前页子控件（隐藏页不参与，避免误触）
-        var page = _pages[_active]
-        for page to c { c.process(ev) }
+        if _hasLayout[_active] {
+            (_pageLayouts[_active] as Widget).process(ev)
+        } else {
+            var page = _pages[_active]
+            for page to c { c.process(ev) }
+        }
     }
 
     // ==================== 渲染 ====================
@@ -284,8 +335,13 @@ export struct TabControl impl Widget {
         r.setClipRect(clip.to_ptr())
 
         _applyOffsets(_active)
-        var page = _pages[_active]
-        for page to c { c.render(r) }
+        // 如果该页有布局容器，渲染布局容器（它内部会渲染子控件并调用 _relayout）
+        if _hasLayout[_active] {
+            (_pageLayouts[_active] as Widget).render(r)
+        } else {
+            var page = _pages[_active]
+            for page to c { c.render(r) }
+        }
 
         r.clearClip()
         clip.free()
