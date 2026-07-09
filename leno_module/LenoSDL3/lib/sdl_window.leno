@@ -47,6 +47,8 @@ import "sdl_combobox.leno" as cbb
 use cbb.ComboBox
 import "sdl_panel.leno" as pnl
 use pnl.Panel
+import "sdl_tab.leno" as tab
+use tab.TabControl
 import "sdl_layout.leno" as lay
 use lay.HBox
 use lay.VBox
@@ -301,6 +303,15 @@ export struct Window {
         Panel p = pnl.createPanel(opts)
         _widgets.add(p as Widget)
         return p
+    }
+
+    // 添加选项卡容器，opts: {x, y, w, h, tabs:[...], active, tab_h, font_size, ...}
+    // 用法：tab.addToPage(0, SDL3.createButton({...})) 把子控件挂到指定页（子控件用窗口绝对坐标，落在内容区）
+    func addTabControl(Dict opts): TabControl {
+        TabControl t = tab.createTabControl(opts)
+        _widgets.add(t as Widget)
+        t._bind_window(handle)
+        return t
     }
 
     // 添加水平布局容器，opts: {x, y, w, h, spacing, padX, padY}

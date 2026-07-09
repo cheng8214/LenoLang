@@ -1,0 +1,295 @@
+// sdl_tab.leno — 选项卡容器控件（TabControl）
+// 多页签切换容器：顶部标签栏（点击切换页）+ 内容区（仅当前页子控件参与事件与绘制）。
+//
+// 用法（与 Panel/布局一致：子控件用 SDL3.createXxx 创建，不在窗口注册，避免双重处理）：
+//   TabControl tab = win.addTabControl({x, y, w, h, tabs: ["常规", "高级"], active: 0})
+//   tab.addToPage(0, SDL3.createButton({x: 50, y: 80, w: 120, h: 32, text: "页1按钮"}))
+//   tab.addToPage(1, SDL3.createSlider({...}))
+//   tab.on_change(func(int idx){ print("切到页 " + idx) })
+//
+// 说明：每页子控件使用「窗口绝对坐标」，坐标落在内容区(x, y+tab_h, w, h-tab_h)内即可，
+//       TabControl 会裁剪到内容区。同窗口绝对坐标范式与 Panel 保持一致。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+
+export struct TabControl impl Widget {
+    float x; float y; float w; float h
+    float _tabH                // 标签栏高度
+    Array[string] _tabs        // 各页标题
+    Array[Array[Widget]] _pages  // 每页的子控件集合（仅当前页被处理/绘制）
+    int _active                // 当前激活页索引
+    int _hover                 // 悬停的标签索引，-1 无
+    bool _loaded
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
+
+    // 字体（画标签文字）
+    float _fontSize; string _fontPath; int _fontStyle; Font _font
+
+    // 配色
+    int _bgR, _bgG, _bgB       // 内容区背景
+    int _barR, _barG, _barB    // 标签栏背景
+    int _tabR, _tabG, _tabB    // 非激活标签
+    int _actR, _actG, _actB    // 激活标签
+    int _txtR, _txtG, _txtB    // 文字色（非激活）
+    int _actTxtR, _actTxtG, _actTxtB  // 激活文字色
+    int _accR, _accG, _accB    // 激活标签下划线
+    int _brdR, _brdG, _brdB    // 边框色
+    int _cursor
+    func(int):void _onChange
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
+            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    func set(Dict opts) {
+        x    = _float(opts.get("x", 0))
+        y    = _float(opts.get("y", 0))
+        w    = _float(opts.get("w", 400))
+        h    = _float(opts.get("h", 300))
+        _tabH = _float(opts.get("tab_h", 32))
+
+        var ts = opts.get("tabs", [])
+        if ts is Array[string] { _tabs = ts as Array[string] } else { _tabs = [] }
+        // 每页一个子控件数组
+        _pages = []
+        for _tabs.len() to i { _pages.add([]) }
+
+        _active = _int(opts.get("active", 0))
+        if _active < 0 or _active >= _tabs.len() { _active = 0 }
+
+        _fontSize = _float(opts.get("font_size", 14))
+        _fontPath = opts.get("font_path", "") as string
+        _fontStyle = _int(opts.get("font_style", 0))
+
+        // 默认配色
+        _bgR = 38;  _bgG = 40;  _bgB = 48
+        _barR = 30; _barG = 32; _barB = 38
+        _tabR = 44; _tabG = 46; _tabB = 54
+        _actR = 52; _actG = 120; _actB = 200
+        _txtR = 200; _txtG = 205; _txtB = 215
+        _actTxtR = 255; _actTxtG = 255; _actTxtB = 255
+        _accR = 80; _accG = 160; _accB = 245
+        _brdR = 90; _brdG = 95; _brdB = 110
+
+        var bgc = opts.get("bg")
+        if bgc is Array[int] { _bgR = _int(bgc[0]); _bgG = _int(bgc[1]); _bgB = _int(bgc[2]) }
+        var brc = opts.get("border")
+        if brc is Array[int] { _brdR = _int(brc[0]); _brdG = _int(brc[1]); _brdB = _int(brc[2]) }
+        var actc = opts.get("active_rgb")
+        if actc is Array[int] { _actR = _int(actc[0]); _actG = _int(actc[1]); _actB = _int(actc[2]) }
+        var accc = opts.get("accent_rgb")
+        if accc is Array[int] { _accR = _int(accc[0]); _accG = _int(accc[1]); _accB = _int(accc[2]) }
+
+        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _hover = -1
+        _ensure_font()
+        _loaded = true
+    }
+
+    // ==================== 布局接口（可被嵌套进其它布局） ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+
+    // ==================== 设置方法 ====================
+    // 添加子控件到指定页（page 从 0 起）
+    func addToPage(int page, Widget c): Widget {
+        if page < 0 or page >= _pages.len() { return c }
+        _pages[page].add(c)
+        if _hwnd != null { _tab_pass_window(c, _hwnd) }
+        return c
+    }
+    // 添加到当前激活页
+    func addToActivePage(Widget c): Widget { return addToPage(_active, c) }
+    // 动态新增一页，返回新页索引
+    func addPage(string title): int {
+        _tabs.add(title)
+        _pages.add([])
+        return _tabs.len() - 1
+    }
+    // 从某页移除子控件
+    func removeFromPage(int page, Widget c) {
+        if page < 0 or page >= _pages.len() { return }
+        var pg = _pages[page]
+        for pg.len() to i { if pg[i] == c { pg.remove(i); return } }
+    }
+    func set_active(int idx) {
+        if idx < 0 or idx >= _tabs.len() { return }
+        if idx == _active { return }
+        _active = idx
+        if _onChange != null { _onChange(_active) }
+    }
+    func get_active(): int { return _active }
+    func tab_count(): int  { return _tabs.len() }
+    func set_enabled(bool e) { _loaded = e }
+    func set_font_size(float s) { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func on_change(func(int):void cb) { _onChange = cb }
+    // 绑定窗口句柄（由 Window.addTabControl 调用）
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _pages.len() to p {
+            var pg = _pages[p]
+            for pg to c { _tab_pass_window(c, hwnd) }
+        }
+    }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // 计算各标签矩形：[rx, ry, rw, rh]
+    func _tabRects(): Array[Array[float]] {
+        Array[Array[float]] out = []
+        int n = _tabs.len()
+        if n == 0 { return out }
+        _ensure_font()
+        Array[float] widths = []
+        float total = 0.0
+        for n to i {
+            float tw = 60.0
+            if _font != null and _font.ok { tw = _float(_font.measureString(_tabs[i]).w) + 28.0 }
+            if tw < 48.0 { tw = 48.0 }
+            widths.add(tw)
+            total = total + tw
+        }
+        float tx = x
+        if total > w {
+            // 放不下则等宽分配
+            float ew = w / _float(n)
+            for n to i { out.add([tx, y, ew, _tabH]); tx = tx + ew }
+        } else {
+            for n to i { out.add([tx, y, widths[i], _tabH]); tx = tx + widths[i] }
+        }
+        return out
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        float mx = ev.mouseX(); float my = ev.mouseY()
+
+        var rs = _tabRects()
+        int hitTab = -1
+        for rs.len() to i {
+            var r = rs[i]
+            if mx >= r[0] and mx <= r[0] + r[2] and my >= r[1] and my <= r[1] + r[3] { hitTab = i }
+        }
+
+        if ev.isMouseMotion() {
+            _hover = hitTab
+            if _cursor >= 0 and _hover >= 0 { core.requestCursor(_cursor) }
+            core.markFrameMotion()
+        }
+
+        // 点击标签栏：切换页，不再转发给内容区子控件
+        if ev.isMouseButtonDown() and hitTab >= 0 {
+            set_active(hitTab)
+            return
+        }
+
+        // 转发事件给当前页子控件（隐藏页不参与，避免误触）
+        var page = _pages[_active]
+        for page to c { c.process(ev) }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+        _ensure_font()
+
+        // 标签栏背景
+        r.setColor(_barR, _barG, _barB, 255)
+        r.fillRect(x, y, w, _tabH)
+
+        // 各标签
+        var rs = _tabRects()
+        for rs.len() to i {
+            var rr = rs[i]
+            int bR = _tabR; int bG = _tabG; int bB = _tabB
+            int tR = _txtR; int tG = _txtG; int tB = _txtB
+            if i == _active { bR = _actR; bG = _actG; bB = _actB; tR = _actTxtR; tG = _actTxtG; tB = _actTxtB }
+            else if i == _hover { bR = bR + 15; bG = bG + 15; bB = bB + 15 }
+            r.setColor(bR, bG, bB, 255)
+            r.fillRect(rr[0], rr[1], rr[2], rr[3])
+
+            // 标签文字（居中裁剪）
+            if _font != null and _font.ok and _tabs[i] != "" {
+                float tw = _float(_font.measureString(_tabs[i]).w)
+                float th = _float(_font.measureString("Ag").h)
+                float tx = rr[0] + (rr[2] - tw) / 2.0
+                float ty = rr[1] + (rr[3] - th) / 2.0
+                r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tR, tG, tB)
+            }
+
+            // 激活标签下划线
+            if i == _active {
+                r.setColor(_accR, _accG, _accB, 255)
+                r.fillRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0)
+            }
+        }
+
+        // 标签栏底边
+        r.setColor(_brdR, _brdG, _brdB, 220)
+        r.drawLine(x, y + _tabH, x + w, y + _tabH)
+
+        // 内容区
+        float cx = x; float cy = y + _tabH; float cw = w; float ch = h - _tabH
+        if cw < 0 { cw = 0 }
+        if ch < 0 { ch = 0 }
+        r.setColor(_bgR, _bgG, _bgB, 255)
+        r.fillRect(cx, cy, cw, ch)
+
+        // 裁剪到内容区，绘制当前页子控件
+        SDL_Rect clip = SDL_Rect.malloc()
+        clip.x = _int(cx); clip.y = _int(cy); clip.w = _int(cw); clip.h = _int(ch)
+        r.setClipRect(clip.to_ptr())
+
+        var page = _pages[_active]
+        for page to c { c.render(r) }
+
+        r.clearClip()
+        clip.free()
+
+        // 内容区边框
+        r.setColor(_brdR, _brdG, _brdB, 200)
+        r.drawRect(cx, cy, cw, ch)
+    }
+
+    func dispose() {
+        for _pages.len() to p {
+            var pg = _pages[p]
+            for pg to c { c.dispose() }
+        }
+        if _font != null { _font.close(); _font = null }
+    }
+}
+
+// 把窗口句柄下发给需要它的子控件（Edit 的 IME 定位；嵌套布局继续向下传递）
+func _tab_pass_window(Widget c, Ptr[u8] hwnd) {
+    Edit e = c as Edit
+    if e != null { e.set_window(hwnd); return }
+    HBox h = c as HBox
+    if h != null { h._bind_window(hwnd); return }
+    VBox v = c as VBox
+    if v != null { v._bind_window(hwnd); return }
+    AnchorBox a = c as AnchorBox
+    if a != null { a._bind_window(hwnd); return }
+}
+
+// 工厂
+export func createTabControl(Dict opts): TabControl {
+    TabControl t = new TabControl(); t.set(opts); return t
+}

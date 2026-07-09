@@ -1,0 +1,78 @@
+// test_tab.leno — TabControl 选项卡容器测试
+// 运行：leno 本文件（Esc 退出）
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.TabControl
+use SDL3.Button
+use SDL3.Label
+use SDL3.Edit
+use SDL3.CheckBox
+use SDL3.Slider
+use SDL3.ProgressBar
+
+main() {
+    var win = SDL3.createWindow({title: "TabControl 测试", w: 640, h: 460})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 三页选项卡，初始激活第 0 页
+    Array[string] titles = ["常规", "外观设置", "关于"]
+    var tab = win.addTabControl({
+        x: 20, y: 20, w: 600, h: 380,
+        tabs: titles,
+        active: 0, tab_h: 34, font_size: 15
+    })
+    tab.on_change(func(int idx) {
+        print("切换到第 " + idx + " 页：" + titles[idx])
+    })
+
+    // ---- 页 0：表单 ----
+    tab.addToPage(0, SDL3.createLabel({text: "用户名：", x: 40, y: 70, font_size: 14}))
+    tab.addToPage(0, SDL3.createEdit({x: 120, y: 64, w: 200, h: 32, placeholder: "请输入用户名"}))
+    tab.addToPage(0, SDL3.createLabel({text: "密码：", x: 40, y: 112, font_size: 14}))
+    var pwd = SDL3.createEdit({x: 120, y: 106, w: 200, h: 32, placeholder: "请输入密码", password: true})
+    tab.addToPage(0, pwd)
+    tab.addToPage(0, SDL3.createCheckBox({x: 40, y: 156, w: 200, h: 24, text: "记住我", checked: true}))
+    var loginBtn = SDL3.createButton({x: 40, y: 196, w: 120, h: 34, text: "登录"})
+    tab.addToPage(0, loginBtn)
+    loginBtn.on_click(func() {
+        print("点击了登录（第 0 页）")
+    })
+
+    // ---- 页 1：外观 ----
+    tab.addToPage(1, SDL3.createLabel({text: "音量：", x: 40, y: 70, font_size: 14}))
+    tab.addToPage(1, SDL3.createSlider({x: 120, y: 70, w: 240, h: 24, min: 0, max: 100, value: 60}))
+    tab.addToPage(1, SDL3.createLabel({text: "进度：", x: 40, y: 112, font_size: 14}))
+    tab.addToPage(1, SDL3.createProgressBar({x: 120, y: 110, w: 240, h: 20, value: 42}))
+    tab.addToPage(1, SDL3.createToggle({x: 40, y: 156, w: 220, h: 30, text: "启用深色模式", on: true}))
+    tab.addToPage(1, SDL3.createButton({x: 40, y: 200, w: 140, h: 34, text: "保存外观"}))
+
+    // ---- 页 2：关于 ----
+    tab.addToPage(2, SDL3.createLabel({text: "LenoSDL3 TabControl 演示", x: 40, y: 70, font_size: 16}))
+    tab.addToPage(2, SDL3.createLabel({text: "点击上方标签栏可在不同页之间切换。", x: 40, y: 104, font_size: 13}))
+    tab.addToPage(2, SDL3.createLabel({text: "隐藏页的子控件不参与事件与绘制。", x: 40, y: 130, font_size: 13}))
+
+    // 切换时控件不会越界到其它页：验证子控件按页隔离
+    win.addButton({x: 460, y: 410, w: 150, h: 32, text: "跳到外观页"}).on_click(func() {
+        tab.set_active(1)
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "TabControl 测试 (Esc 退出)", 20, 2, 200, 210, 230)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
