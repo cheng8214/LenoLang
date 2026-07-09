@@ -1,0 +1,79 @@
+// test_tab_layout.leno — Tab 每页改用「布局容器」(P1) 响应式演示
+// 运行：leno 本文件（Esc 退出）
+//
+// 与 test_tab.leno(绝对坐标) 不同，本例每个页都是布局页：
+//   tab.setPageLayout(page, VBox) 把该页内容根设为布局容器，自动填满内容区；
+//   tab.addToPageLayout(page, 控件, {align:3}) 把子控件加入该页布局（不再手写 dx,dy）。
+// Tab 作为根布局(win.setRoot) 缩放时，页内子控件（含嵌套 HBox）每帧重排跟随变化。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.TabControl
+use SDL3.Label
+use SDL3.Edit
+use SDL3.Button
+use SDL3.CheckBox
+use SDL3.Slider
+use SDL3.Toggle
+use SDL3.HBox
+use SDL3.VBox
+
+main() {
+    var win = SDL3.createWindow({title: "Tab 布局页测试", w: 640, h: 460})
+    if not win.ok { return }
+    win.setResizable(true)
+    win.setMinSize(360, 300)
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    Array[string] titles = ["常规", "外观设置", "关于"]
+    var tab = win.addTabControl({
+        x: 0, y: 0, w: 640, h: 460,
+        tabs: titles, active: 0, tab_h: 34, font_size: 15
+    })
+    win.setRoot(tab)                // Tab 作为根：缩放自动填满窗口并驱动页内布局重排
+    tab.on_change(func(int idx) { print("切换到第 " + idx + " 页：" + titles[idx]) })
+
+    // ---- 页 0：表单（VBox 布局页，子控件随宽度撑满/自适应） ----
+    tab.setPageLayout(0, SDL3.createVBox({spacing: 10, padX: 16, padY: 16}) as VBox)
+    tab.addToPageLayout(0, SDL3.createLabel({text: "账号设置", font_size: 16}), {align: 3})
+    tab.addToPageLayout(0, SDL3.createLabel({text: "用户名", font_size: 13}), {align: 3})
+    tab.addToPageLayout(0, SDL3.createEdit({w: 200, h: 32, placeholder: "请输入用户名"}), {align: 3})
+    tab.addToPageLayout(0, SDL3.createLabel({text: "密码", font_size: 13}), {align: 3})
+    tab.addToPageLayout(0, SDL3.createEdit({w: 200, h: 32, placeholder: "请输入密码", password: true}), {align: 3})
+    tab.addToPageLayout(0, SDL3.createCheckBox({w: 200, h: 24, text: "记住我", checked: true}), {align: 3})
+
+    // 页内嵌套 HBox：登录按钮 expand 占满剩余宽度
+    var row0 = SDL3.createHBox({w: 400, h: 36, spacing: 10})
+    row0.add(SDL3.createButton({text: "登录", w: 120, h: 32}), {expand: true})
+    row0.add(SDL3.createButton({text: "取消", w: 120, h: 32}), {})
+    tab.addToPageLayout(0, row0 as Widget, {align: 3})
+
+    // ---- 页 1：外观（VBox 布局页 + 滑块/开关撑满） ----
+    tab.setPageLayout(1, SDL3.createVBox({spacing: 10, padX: 16, padY: 16}) as VBox)
+    tab.addToPageLayout(1, SDL3.createLabel({text: "外观设置", font_size: 16}), {align: 3})
+    tab.addToPageLayout(1, SDL3.createLabel({text: "音量", font_size: 13}), {align: 3})
+    tab.addToPageLayout(1, SDL3.createSlider({w: 240, h: 24, min: 0, max: 100, value: 60}), {align: 3})
+    tab.addToPageLayout(1, SDL3.createLabel({text: "主题", font_size: 13}), {align: 3})
+    tab.addToPageLayout(1, SDL3.createToggle({w: 220, h: 30, text: "启用深色模式", on: true}), {align: 3})
+
+    // ---- 页 2：关于（简单 VBox） ----
+    tab.setPageLayout(2, SDL3.createVBox({spacing: 10, padX: 16, padY: 16}) as VBox)
+    tab.addToPageLayout(2, SDL3.createLabel({text: "LenoSDL3 Tab 布局页演示", font_size: 16}), {align: 3})
+    tab.addToPageLayout(2, SDL3.createLabel({text: "每页都是一个布局容器，缩放窗口时页内自动重排。", font_size: 13}), {align: 3})
+    tab.addToPageLayout(2, SDL3.createLabel({text: "隐藏页的子控件不参与事件与绘制。", font_size: 13}), {align: 3})
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) { r.clearColor(28, 30, 36, 255) }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
