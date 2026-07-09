@@ -8,6 +8,7 @@
 #include "include/leno_serialize.h"
 #include "include/native.h"
 #include "include/module_compiler.h"
+#include "include/module_loader.h"
 #include "include/leno_package.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -448,6 +449,41 @@ int lenolang_run_file(const char* path) {
 
         // 添加全局缓存中所有已安装包的 lib/ 到搜索路径
         package_cache_add_to_search_paths();
+
+        // 设置模块编译缓存目录（优先项目根，fallback 到 entry 文件目录）
+        if (module_loader_is_cache_enabled()) {
+            const char* abs_f = error_get_filename();
+            char* proot = abs_f ? package_find_project_root(abs_f) : NULL;
+            const char* base_dir = NULL;
+            char dir_buf[MAX_PATH_LEN];
+            if (proot) {
+                base_dir = proot;
+            } else if (abs_f) {
+                strncpy(dir_buf, abs_f, MAX_PATH_LEN - 1);
+                dir_buf[MAX_PATH_LEN - 1] = '\0';
+                char* ls = strrchr(dir_buf,
+#ifdef _WIN32
+                    '\\'
+#else
+                    '/'
+#endif
+                );
+                if (ls) *(ls + 1) = '\0';
+                base_dir = dir_buf;
+            }
+            if (base_dir) {
+                char cache_dir[MAX_PATH_LEN];
+                snprintf(cache_dir, sizeof(cache_dir), "%s.lenocache%c", base_dir,
+#ifdef _WIN32
+                    '\\'
+#else
+                    '/'
+#endif
+                );
+                module_loader_set_cache_dir(cache_dir);
+            }
+            if (proot) free(proot);
+        }
     }
 
     // 编译模式：编译为 .lenb 文件
@@ -672,6 +708,11 @@ static int main_logic(int argc, char** argv) {
     // 注册模块编译器函数指针（解耦 module_loader 和编译器）
     set_module_compile_func(compile_module_new);
 
+    // 环境变量禁用缓存（LENO_NO_CACHE=1）
+    if (getenv("LENO_NO_CACHE") != NULL) {
+        module_loader_set_cache_enabled(0);
+    }
+
     // 保存命令行参数，供 _args() 全局函数使用
     g_argc = argc;
     g_argv = argv;
@@ -694,6 +735,9 @@ static int main_logic(int argc, char** argv) {
             continue;
         } else if (strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0) {
             packMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--no-cache") == 0) {
+            module_loader_set_cache_enabled(0);
             continue;
         } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
             printVersion();

@@ -966,6 +966,23 @@ static void free_object_resources(Object* obj) {
                 }
                 free(module->export_mappings);
             }
+            // 释放 use re-export 类型信息
+            if (module->use_reexport_names) {
+                for (int i = 0; i < module->use_reexport_count; i++) {
+                    free(module->use_reexport_names[i]);
+                }
+                free(module->use_reexport_names);
+            }
+            if (module->use_reexport_kinds) {
+                free(module->use_reexport_kinds);
+            }
+            // 释放原生模块引用名
+            if (module->native_imports) {
+                for (int i = 0; i < module->native_import_count; i++) {
+                    free(module->native_imports[i]);
+                }
+                free(module->native_imports);
+            }
             break;
         }
         // 绑定方法：无额外资源

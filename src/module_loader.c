@@ -1,12 +1,16 @@
 #include "include/leno_vm_runtime.h"
 #include "include/module_dispatch.h"
+#include "include/leno_serialize.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>  // _wmkdir
 #endif
 
 #define MAX_MODULE_NAME 128
@@ -27,6 +31,10 @@ typedef struct {
 
 static LoadedModules loaded_modules = {0};
 
+// 模块编译缓存配置
+static char* g_cache_dir = NULL;   // 缓存目录（NULL 表示未配置/禁用）
+static int g_cache_enabled = 1;    // 缓存开关
+
 // 检查模块是否已加载，如果已加载返回模块对象
 static void add_loaded_module(const char* path, ObjModule* module);
 
@@ -41,6 +49,95 @@ ObjModule* find_loaded_module(const char* path) {
         }
     }
     return NULL;
+}
+
+// 获取已加载模块数量（供序列化遍历依赖）
+int loaded_modules_get_count(void) {
+    return loaded_modules.count;
+}
+
+// 获取指定索引的已加载模块
+ObjModule* loaded_modules_get(int index) {
+    if (index < 0 || index >= loaded_modules.count) return NULL;
+    return loaded_modules.modules[index];
+}
+
+// 启用/禁用模块编译缓存
+void module_loader_set_cache_enabled(int enabled) {
+    g_cache_enabled = enabled;
+}
+
+// 查询缓存是否启用（供 main.c 在设置缓存目录前判断）
+int module_loader_is_cache_enabled(void) {
+    return g_cache_enabled;
+}
+
+// 获取缓存目录路径（供符号表缓存计算缓存文件路径）
+const char* module_loader_get_cache_dir(void) {
+    return g_cache_dir;
+}
+
+// 递归创建目录（用于缓存目录）
+static void ensure_cache_dir(const char* dir) {
+    if (!dir || !*dir) return;
+    char tmp[MAX_PATH_LEN];
+    strncpy(tmp, dir, MAX_PATH_LEN - 1);
+    tmp[MAX_PATH_LEN - 1] = '\0';
+    size_t len = strlen(tmp);
+    // 去掉末尾分隔符
+    if (len > 0) {
+        char last = tmp[len - 1];
+        if (last == '/' || last == '\\') {
+            tmp[len - 1] = '\0';
+        }
+    }
+    // 逐级创建
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char c = *p;
+            *p = '\0';
+#ifdef _WIN32
+            {
+                int wl = MultiByteToWideChar(CP_UTF8, 0, tmp, -1, NULL, 0);
+                wchar_t* wp = (wchar_t*)malloc(wl * sizeof(wchar_t));
+                if (wp) {
+                    MultiByteToWideChar(CP_UTF8, 0, tmp, -1, wp, wl);
+                    _wmkdir(wp);
+                    free(wp);
+                }
+            }
+#else
+            mkdir(tmp, 0755);
+#endif
+            *p = c;
+        }
+    }
+    // 最后一级
+#ifdef _WIN32
+    {
+        int wl = MultiByteToWideChar(CP_UTF8, 0, tmp, -1, NULL, 0);
+        wchar_t* wp = (wchar_t*)malloc(wl * sizeof(wchar_t));
+        if (wp) {
+            MultiByteToWideChar(CP_UTF8, 0, tmp, -1, wp, wl);
+            _wmkdir(wp);
+            free(wp);
+        }
+    }
+#else
+    mkdir(tmp, 0755);
+#endif
+}
+
+// 设置模块缓存目录
+void module_loader_set_cache_dir(const char* dir) {
+    if (g_cache_dir) {
+        free(g_cache_dir);
+        g_cache_dir = NULL;
+    }
+    if (dir && *dir) {
+        g_cache_dir = strdup(dir);
+        ensure_cache_dir(g_cache_dir);
+    }
 }
 
 // 添加已加载模块
@@ -462,6 +559,17 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         return existing_module;
     }
 
+    // 磁盘缓存查找：命中则跳过编译直接反序列化
+    if (g_cache_enabled && g_cache_dir) {
+        char* cache_path = module_cache_path_for(full_path, g_cache_dir);
+        if (cache_path) {
+            ObjModule* cached = module_cache_deserialize(cache_path, full_path);
+            free(cache_path);
+            if (cached) return cached;
+            // 反序列化失败（缓存不存在/失效/损坏）→ 走正常编译
+        }
+    }
+
     char* source = read_file(full_path);
     if (!source) {
         fprintf(stderr, "[错误] 无法读取文件: %s\n", full_path);
@@ -504,7 +612,7 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         free(exports);
         return NULL;
     }
-    placeholder_module->source_path = strdup(file_path);
+    placeholder_module->source_path = strdup(full_path);
     
     // 将导出项添加到占位符模块的导出表
     // 这样循环依赖中的其他模块可以看到本模块的导出（虽然值暂时为null）
@@ -521,8 +629,8 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
     // 恢复原始文件名
     error_set_filename(original_filename[0] ? original_filename : NULL);
 
-    free(source);
     free(exports);
+    // 注意：source 延后释放，编译成功后用于写缓存的源文件哈希计算
 
     if (module) {
         // 编译成功，将编译后的模块内容复制到占位符模块
@@ -601,9 +709,19 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         char* transferred_name = module->name;
         module->name = NULL;
         if (transferred_name) free(transferred_name);
+        // 编译成功后写回缓存（source 仍可用，用于计算源文件哈希）
+        if (g_cache_enabled && g_cache_dir && placeholder_module->source_path) {
+            char* cache_path = module_cache_path_for(full_path, g_cache_dir);
+            if (cache_path) {
+                module_cache_serialize(cache_path, placeholder_module, source);
+                free(cache_path);
+                // 写缓存失败不影响运行，静默忽略
+            }
+        }
+        free(source);
         return placeholder_module;
     } else {
-        // exports already freed above
+        free(source);
         return NULL;
     }
 }

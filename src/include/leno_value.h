@@ -400,7 +400,7 @@ typedef struct {
 typedef struct {
     Object header;
     char* name;           // 模块名称（别名）
-    char* source_path;    // 原始导入路径（如 "win_reg_enum_v4.leno"）
+    char* source_path;    // 规范化绝对路径（与 loaded_modules 键一致，用于模块缓存与 MODULE_REF 匹配）
     Value* globals;       // 模块全局变量数组
     int global_count;     // 全局变量数量
     int global_capacity;  // 全局变量数组容量

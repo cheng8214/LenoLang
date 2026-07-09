@@ -75,8 +75,13 @@
 // ============================================================================
 
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
-#define LENO_BIN_VERSION    0x00020000  // v2.0.0 - 完整序列化模块(globals+exports)
+#define LENO_BIN_VERSION    0x00020100  // v2.1.0 - 序列化模块补充 use_reexport 字段
 #define LENO_BIN_EXT        ".lenb"
+
+// 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
+#define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
+#define LENO_MODCACHE_VERSION  0x00000001
+#define LENO_MODCACHE_EXT      ".lenomc"
 
 // 常量类型标签
 #define CONST_TAG_NULL       0x00
@@ -142,5 +147,25 @@ int serialize_cache_is_valid(const char* source_path, const char* bin_path);
 
 // 计算源代码的 FNV-1a 哈希
 uint64_t serialize_source_hash(const char* source, size_t len);
+
+// ============================================================================
+// 模块编译缓存 API（跨运行缓存 import 的 .leno 模块编译产物）
+// ============================================================================
+
+// 计算模块缓存文件路径：<cache_dir>/<fnv1a(full_path)>.lenomc
+// 返回值需调用者 free
+char* module_cache_path_for(const char* full_path, const char* cache_dir);
+
+// 序列化单个模块到缓存文件（含依赖信息收集）
+// source: 模块源代码（用于计算 src_hash 做失效判定）
+SerializeResult module_cache_serialize(const char* cache_path,
+                                       ObjModule* mod,
+                                       const char* source);
+
+// 从缓存文件反序列化单个模块
+// full_path: 模块绝对规范化路径（用于加入 loaded_modules 与依赖匹配）
+// 返回模块对象，失败（缓存不存在/失效/损坏）返回 NULL
+ObjModule* module_cache_deserialize(const char* cache_path,
+                                     const char* full_path);
 
 #endif // LENO_SERIALIZE_H

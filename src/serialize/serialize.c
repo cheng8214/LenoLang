@@ -40,6 +40,39 @@ static void clear_serialized_modules(void) {
 }
 
 // ============================================================================
+// 模块缓存依赖收集
+// 序列化单个模块到缓存文件时，需记录其常量池中引用的其他模块路径（以
+// CONST_TAG_MODULE_REF 形式存储），以便反序列化时先递归 pre-load 依赖。
+// ============================================================================
+static int cache_serialize_active = 0;
+static char** cache_dep_paths = NULL;
+static int cache_dep_count = 0;
+static int cache_dep_capacity = 0;
+
+static void cache_dep_paths_add(const char* path) {
+    if (!path) return;
+    // 去重
+    for (int i = 0; i < cache_dep_count; i++) {
+        if (cache_dep_paths[i] && strcmp(cache_dep_paths[i], path) == 0) return;
+    }
+    if (cache_dep_count >= cache_dep_capacity) {
+        cache_dep_capacity = cache_dep_capacity == 0 ? 16 : cache_dep_capacity * 2;
+        cache_dep_paths = (char**)realloc(cache_dep_paths, cache_dep_capacity * sizeof(char*));
+    }
+    cache_dep_paths[cache_dep_count++] = strdup(path);
+}
+
+static void cache_dep_paths_clear(void) {
+    for (int i = 0; i < cache_dep_count; i++) {
+        free(cache_dep_paths[i]);
+    }
+    free(cache_dep_paths);
+    cache_dep_paths = NULL;
+    cache_dep_count = 0;
+    cache_dep_capacity = 0;
+}
+
+// ============================================================================
 // XOR 字符串编码密钥
 // ============================================================================
 
@@ -458,6 +491,10 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                 } else {
                     wb_write_u8(wb, 0);
                 }
+                // 依赖收集 hook：模块缓存序列化时记录被引用的依赖模块路径
+                if (cache_serialize_active && mod->source_path) {
+                    cache_dep_paths_add(mod->source_path);
+                }
                 return 1;
             }
             if (mod->source_path) {
@@ -506,6 +543,12 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             for (int i = 0; i < mod->export_mapping_count; i++) {
                 wb_write_string(wb, mod->export_mappings[i].name, (uint32_t)strlen(mod->export_mappings[i].name));
                 wb_write_u32(wb, (uint32_t)mod->export_mappings[i].global_index);
+            }
+            // 序列化 use_reexport（use 导入的需要 re-export 的类型）
+            wb_write_u32(wb, (uint32_t)mod->use_reexport_count);
+            for (int i = 0; i < mod->use_reexport_count; i++) {
+                wb_write_string(wb, mod->use_reexport_names[i], (uint32_t)strlen(mod->use_reexport_names[i]));
+                wb_write_i32(wb, mod->use_reexport_kinds[i]);
             }
             return 1;
         }
@@ -1225,6 +1268,27 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             }
         }
 
+        // 反序列化 use_reexport（use 导入的需要 re-export 的类型）
+        {
+            uint32_t ur_count;
+            if (!ctx_read_u32(ctx, &ur_count)) return 0;
+            mod->use_reexport_count = (int)ur_count;
+            mod->use_reexport_names = NULL;
+            mod->use_reexport_kinds = NULL;
+            if (ur_count > 0) {
+                mod->use_reexport_names = (char**)malloc(ur_count * sizeof(char*));
+                mod->use_reexport_kinds = (int*)malloc(ur_count * sizeof(int));
+                for (uint32_t i = 0; i < ur_count; i++) {
+                    uint32_t nlen;
+                    mod->use_reexport_names[i] = ctx_read_string(ctx, &nlen);
+                    if (!mod->use_reexport_names[i]) return 0;
+                    int32_t kind;
+                    if (!ctx_read_i32(ctx, &kind)) return 0;
+                    mod->use_reexport_kinds[i] = kind;
+                }
+            }
+        }
+
         // 反序列化后，将模块内所有函数/闭包的 module 指针指向此模块
         // 因为序列化时 func->module 未保存，反序列化后为 NULL
         {
@@ -1672,4 +1736,297 @@ int serialize_cache_is_valid(const char* source_path, const char* bin_path) {
     struct stat src_stat, bin_stat;
     if (stat(source_path, &src_stat) != 0 || stat(bin_path, &bin_stat) != 0) return 0;
     return bin_stat.st_mtime >= src_stat.st_mtime;
+}
+
+// ============================================================================
+// 模块编译缓存（.lenomc）实现
+// ============================================================================
+
+// 计算模块缓存文件路径：<cache_dir>/<fnv1a(full_path)>.lenomc
+char* module_cache_path_for(const char* full_path, const char* cache_dir) {
+    if (!full_path || !cache_dir) return NULL;
+    uint64_t hash = serialize_source_hash(full_path, strlen(full_path));
+    size_t dir_len = strlen(cache_dir);
+    // 确保目录后有路径分隔符
+    int need_sep = 0;
+    if (dir_len > 0) {
+        char last = cache_dir[dir_len - 1];
+#ifdef _WIN32
+        if (last != '\\' && last != '/') need_sep = 1;
+#else
+        if (last != '/') need_sep = 1;
+#endif
+    }
+    char sep_buf[2] = {0};
+    if (need_sep) {
+#ifdef _WIN32
+        sep_buf[0] = '\\';
+#else
+        sep_buf[0] = '/';
+#endif
+    }
+    // 20 位十六进制哈希 + 扩展名 + 分隔符 + \0
+    size_t buf_size = dir_len + (need_sep ? 1 : 0) + 20 + strlen(LENO_MODCACHE_EXT) + 1;
+    char* path = (char*)malloc(buf_size);
+    if (!path) return NULL;
+    snprintf(path, buf_size, "%s%s%llx%s",
+             cache_dir, sep_buf, (unsigned long long)hash, LENO_MODCACHE_EXT);
+    return path;
+}
+
+// 序列化单个模块到缓存文件
+// 依赖的其他模块以 CONST_TAG_MODULE_REF（仅路径）形式存储，路径收集到 header
+SerializeResult module_cache_serialize(const char* cache_path, ObjModule* mod, const char* source) {
+    if (!cache_path || !mod) return SERIALIZE_ERR_FILE;
+
+    // 计算源文件哈希与大小（用于失效判定）
+    // 注意：source 由 read_file 以文本模式读取（Windows 下 CRLF→LF），
+    // 哈希基于文本模式内容计算；大小用 stat 取磁盘真实字节数（含 CRLF），
+    // 以便反序列化时 O(1) stat 预检能匹配（st_size 与文本模式 strlen 在 Windows 不等）。
+    uint64_t src_hash = 0;
+    uint64_t src_size = 0;
+    if (source) {
+        src_hash = serialize_source_hash(source, strlen(source));
+    }
+    if (mod->source_path) {
+        struct stat st;
+        if (stat(mod->source_path, &st) == 0) {
+            src_size = (uint64_t)st.st_size;
+        } else if (source) {
+            src_size = (uint64_t)strlen(source);
+        }
+    } else if (source) {
+        src_size = (uint64_t)strlen(source);
+    }
+
+    clear_serialized_modules();
+    cache_dep_paths_clear();
+
+    // 预标记 loaded_modules 中除目标 mod 外的所有模块为「已序列化」
+    // 使目标模块常量池中的依赖模块以 CONST_TAG_MODULE_REF 形式输出
+    int total = loaded_modules_get_count();
+    for (int i = 0; i < total; i++) {
+        ObjModule* m = loaded_modules_get(i);
+        if (m && m != mod && m->source_path) {
+            mark_module_serialized(m->source_path);
+        }
+    }
+
+    cache_serialize_active = 1;
+
+    // 先序列化 body 到临时 buffer（同时经 hook 收集依赖路径）
+    WriteBuffer wb_body;
+    wb_init(&wb_body);
+    int ok = serialize_constant(&wb_body, val_obj((Object*)mod));
+
+    cache_serialize_active = 0;
+
+    if (!ok) {
+        wb_free(&wb_body);
+        cache_dep_paths_clear();
+        clear_serialized_modules();
+        return SERIALIZE_ERR_FORMAT;
+    }
+
+    // 组装最终文件：header + dep_count + dep_paths + body
+    WriteBuffer wb;
+    wb_init(&wb);
+    wb_write_u32(&wb, LENO_MODCACHE_MAGIC);
+    wb_write_u32(&wb, LENO_MODCACHE_VERSION);
+    wb_write_u64(&wb, src_hash);
+    wb_write_u64(&wb, src_size);
+    wb_write_u32(&wb, (uint32_t)cache_dep_count);
+    for (int i = 0; i < cache_dep_count; i++) {
+        wb_write_string(&wb, cache_dep_paths[i], (uint32_t)strlen(cache_dep_paths[i]));
+    }
+    wb_write(&wb, wb_body.data, wb_body.size);
+
+    wb_free(&wb_body);
+    cache_dep_paths_clear();
+    clear_serialized_modules();
+
+    // 写文件
+#ifdef _WIN32
+    int wideLen = MultiByteToWideChar(CP_UTF8, 0, cache_path, -1, NULL, 0);
+    wchar_t* widePath = (wchar_t*)malloc(wideLen * sizeof(wchar_t));
+    MultiByteToWideChar(CP_UTF8, 0, cache_path, -1, widePath, wideLen);
+    FILE* file = _wfopen(widePath, L"wb");
+    free(widePath);
+#else
+    FILE* file = fopen(cache_path, "wb");
+#endif
+
+    SerializeResult result = SERIALIZE_OK;
+    if (!file) {
+        result = SERIALIZE_ERR_FILE;
+    } else {
+        size_t written = fwrite(wb.data, 1, wb.size, file);
+        fclose(file);
+        if (written != wb.size) result = SERIALIZE_ERR_WRITE;
+    }
+
+    wb_free(&wb);
+    return result;
+}
+
+// 读取整个文件为字符串（用于失效判定的哈希计算）
+static char* read_file_for_hash(const char* path) {
+#ifdef _WIN32
+    int wl = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (wl <= 0) return NULL;
+    wchar_t* wp = (wchar_t*)malloc(wl * sizeof(wchar_t));
+    if (!wp) return NULL;
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wp, wl);
+    FILE* f = _wfopen(wp, L"r");  // 文本模式，与 module_loader.c 的 read_file 一致
+    free(wp);
+#else
+    FILE* f = fopen(path, "r");   // 文本模式，与 module_loader.c 的 read_file 一致
+#endif
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return NULL; }
+    char* buf = (char*)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    buf[rd] = '\0';
+    fclose(f);
+    return buf;
+}
+
+// 从缓存文件反序列化单个模块
+ObjModule* module_cache_deserialize(const char* cache_path, const char* full_path) {
+    if (!cache_path || !full_path) return NULL;
+
+    // 读缓存文件到内存
+#ifdef _WIN32
+    int wideLen = MultiByteToWideChar(CP_UTF8, 0, cache_path, -1, NULL, 0);
+    if (wideLen <= 0) return NULL;
+    wchar_t* widePath = (wchar_t*)malloc(wideLen * sizeof(wchar_t));
+    MultiByteToWideChar(CP_UTF8, 0, cache_path, -1, widePath, wideLen);
+    FILE* file = _wfopen(widePath, L"rb");
+    free(widePath);
+#else
+    FILE* file = fopen(cache_path, "rb");
+#endif
+    if (!file) return NULL;
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (file_size <= 0) { fclose(file); return NULL; }
+    uint8_t* data = (uint8_t*)malloc((size_t)file_size);
+    if (!data) { fclose(file); return NULL; }
+    size_t rd = fread(data, 1, (size_t)file_size, file);
+    fclose(file);
+    if (rd != (size_t)file_size) { free(data); return NULL; }
+
+    DeserializeCtx ctx;
+    ctx.data = data;
+    ctx.size = (size_t)file_size;
+    ctx.pos = 0;
+
+    // 读 header
+    uint32_t magic, version;
+    uint64_t src_hash, src_size;
+    if (!ctx_read_u32(&ctx, &magic) || !ctx_read_u32(&ctx, &version) ||
+        !ctx_read_u64(&ctx, &src_hash) || !ctx_read_u64(&ctx, &src_size)) {
+        free(data);
+        return NULL;
+    }
+    if (magic != LENO_MODCACHE_MAGIC || version != LENO_MODCACHE_VERSION) {
+        free(data);
+        return NULL;
+    }
+
+    // 失效判定：先比对文件大小（O(1) stat），再比对内容哈希
+    struct stat st;
+    if (stat(full_path, &st) != 0) { free(data); return NULL; }
+    if ((uint64_t)st.st_size != src_size) { free(data); return NULL; }
+    char* src = read_file_for_hash(full_path);
+    if (!src) { free(data); return NULL; }
+    uint64_t cur_hash = serialize_source_hash(src, strlen(src));
+    free(src);
+    if (cur_hash != src_hash) { free(data); return NULL; }
+
+    // 读依赖路径列表
+    uint32_t dep_count;
+    if (!ctx_read_u32(&ctx, &dep_count)) { free(data); return NULL; }
+    char** dep_paths = NULL;
+    if (dep_count > 0) {
+        dep_paths = (char**)malloc(dep_count * sizeof(char*));
+        if (!dep_paths) { free(data); return NULL; }
+        for (uint32_t i = 0; i < dep_count; i++) {
+            uint32_t plen;
+            dep_paths[i] = ctx_read_string(&ctx, &plen);
+            if (!dep_paths[i]) {
+                for (uint32_t j = 0; j < i; j++) free(dep_paths[j]);
+                free(dep_paths);
+                free(data);
+                return NULL;
+            }
+        }
+    }
+
+    // 创建占位模块并加入 loaded_modules（防循环依赖）
+    // 模块名从 full_path 提取文件名（去扩展名）
+    char mod_name[256];
+    {
+        const char* base = strrchr(full_path, '/');
+        if (!base) base = strrchr(full_path, '\\');
+        base = base ? base + 1 : full_path;
+        const char* dot = strrchr(base, '.');
+        int len = dot ? (int)(dot - base) : (int)strlen(base);
+        if (len >= (int)sizeof(mod_name)) len = (int)sizeof(mod_name) - 1;
+        memcpy(mod_name, base, len);
+        mod_name[len] = '\0';
+    }
+
+    // load_module_file 在调用本函数前已查 find_loaded_module，理论上不会重复
+    // 但防御性检查：若已存在则放弃反序列化（由调用方走编译）
+    if (find_loaded_module(full_path)) {
+        for (uint32_t i = 0; i < dep_count; i++) free(dep_paths[i]);
+        free(dep_paths);
+        free(data);
+        return NULL;
+    }
+
+    ObjModule* placeholder = module_new(mod_name);
+    if (!placeholder) {
+        for (uint32_t i = 0; i < dep_count; i++) free(dep_paths[i]);
+        free(dep_paths);
+        free(data);
+        return NULL;
+    }
+    placeholder->source_path = strdup(full_path);
+    add_loaded_module_public(full_path, placeholder);
+
+    // 递归 pre-load 依赖（load_module_file 会再次走缓存/编译逻辑）
+    for (uint32_t i = 0; i < dep_count; i++) {
+        if (!find_loaded_module(dep_paths[i])) {
+            load_module_file(dep_paths[i], NULL, NULL);
+        }
+        free(dep_paths[i]);
+    }
+    free(dep_paths);
+
+    // 反序列化 body
+    // CONST_TAG_MODULE 分支会 find_loaded_module(full_path) 复用占位 placeholder 并填充
+    Value val;
+    if (!deserialize_constant(&ctx, &val)) {
+        free(data);
+        return NULL;
+    }
+    free(data);
+
+    ObjModule* result_mod = NULL;
+    if (val_is_obj(val) && val_as_obj(val)->type == OBJ_MODULE) {
+        result_mod = (ObjModule*)val_as_obj(val);
+    }
+    if (!result_mod) return NULL;
+
+    // 反序列化后修复函数 module 指针、注册 struct/face/cstruct/enum 定义
+    fix_single_module(result_mod);
+
+    return result_mod;
 }

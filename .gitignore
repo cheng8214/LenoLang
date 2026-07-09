@@ -20,3 +20,6 @@ assert/run_tests.exe
 
 # 编译器产物（leno -c 生成的字节码）
 *.lenb
+
+# 模块编译缓存（跨运行缓存 import 的 .leno 模块编译产物）
+.lenocache/

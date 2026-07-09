@@ -39,4 +39,27 @@ int module_has_method(const char* file_path, const char* current_file, const cha
 // 扫描 chunk 常量池中的 cstruct/face 定义并注册到全局表
 void register_defs_from_chunk(Chunk* chunk);
 
+// ============================================================================
+// 模块编译缓存控制（跨运行缓存）
+// ============================================================================
+
+// 设置模块缓存目录（NULL 表示不启用磁盘缓存）
+// 内部会 strdup 保存并确保目录存在
+void module_loader_set_cache_dir(const char* dir);
+
+// 启用/禁用模块编译缓存
+void module_loader_set_cache_enabled(int enabled);
+
+// 查询缓存是否启用
+int module_loader_is_cache_enabled(void);
+
+// 获取缓存目录路径（返回内部指针，不需要调用者 free；NULL 表示未配置）
+const char* module_loader_get_cache_dir(void);
+
+// 获取已加载模块数量（供序列化遍历依赖）
+int loaded_modules_get_count(void);
+
+// 获取指定索引的已加载模块
+ObjModule* loaded_modules_get(int index);
+
 #endif // MODULE_LOADER_H
