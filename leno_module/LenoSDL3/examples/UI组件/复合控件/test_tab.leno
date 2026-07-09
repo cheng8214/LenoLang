@@ -1,5 +1,11 @@
 // test_tab.leno — TabControl 选项卡容器测试
 // 运行：leno 本文件（Esc 退出）
+//
+// 联动演示：
+//  1) 子控件用「内容区左上角」相对坐标 (dx, dy) 加入各页；
+//  2) 第 1 页内嵌一个 HBox 布局容器，证明 Tab 与布局可嵌套；
+//  3) 点击「移动 Tab」会改 Tab 位置，因每帧 _applyOffsets 以内容区原点重排，
+//     页内所有子控件（含嵌套 HBox）整体跟随移动 —— 与布局容器 _relayout 同一机制。
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -11,6 +17,8 @@ use SDL3.Edit
 use SDL3.CheckBox
 use SDL3.Slider
 use SDL3.ProgressBar
+use SDL3.Toggle
+use SDL3.HBox
 
 main() {
     var win = SDL3.createWindow({title: "TabControl 测试", w: 640, h: 460})
@@ -19,7 +27,7 @@ main() {
     SDL3.ttfInit()
     var font = SDL3.createFontAuto(14.0)
 
-    // 三页选项卡，初始激活第 0 页
+    // 三页选项卡，初始激活第 0 页。内容区原点 = (x, y+tab_h) = (20, 54)
     Array[string] titles = ["常规", "外观设置", "关于"]
     var tab = win.addTabControl({
         x: 20, y: 20, w: 600, h: 380,
@@ -30,35 +38,46 @@ main() {
         print("切换到第 " + idx + " 页：" + titles[idx])
     })
 
-    // ---- 页 0：表单 ----
-    tab.addToPage(0, SDL3.createLabel({text: "用户名：", x: 40, y: 70, font_size: 14}))
-    tab.addToPage(0, SDL3.createEdit({x: 120, y: 64, w: 200, h: 32, placeholder: "请输入用户名"}))
-    tab.addToPage(0, SDL3.createLabel({text: "密码：", x: 40, y: 112, font_size: 14}))
-    var pwd = SDL3.createEdit({x: 120, y: 106, w: 200, h: 32, placeholder: "请输入密码", password: true})
-    tab.addToPage(0, pwd)
-    tab.addToPage(0, SDL3.createCheckBox({x: 40, y: 156, w: 200, h: 24, text: "记住我", checked: true}))
-    var loginBtn = SDL3.createButton({x: 40, y: 196, w: 120, h: 34, text: "登录"})
-    tab.addToPage(0, loginBtn)
+    // ---- 页 0：表单（坐标相对内容区左上角） ----
+    tab.addToPage(0, SDL3.createLabel({text: "用户名：", font_size: 14}), 20, 16)
+    tab.addToPage(0, SDL3.createEdit({w: 200, h: 32, placeholder: "请输入用户名"}), 100, 10)
+    tab.addToPage(0, SDL3.createLabel({text: "密码：", font_size: 14}), 20, 58)
+    var pwd = SDL3.createEdit({w: 200, h: 32, placeholder: "请输入密码", password: true})
+    tab.addToPage(0, pwd, 100, 52)
+    tab.addToPage(0, SDL3.createCheckBox({w: 200, h: 24, text: "记住我", checked: true}), 20, 102)
+    var loginBtn = SDL3.createButton({w: 120, h: 34, text: "登录"})
+    tab.addToPage(0, loginBtn, 20, 142)
     loginBtn.on_click(func() {
         print("点击了登录（第 0 页）")
     })
 
-    // ---- 页 1：外观 ----
-    tab.addToPage(1, SDL3.createLabel({text: "音量：", x: 40, y: 70, font_size: 14}))
-    tab.addToPage(1, SDL3.createSlider({x: 120, y: 70, w: 240, h: 24, min: 0, max: 100, value: 60}))
-    tab.addToPage(1, SDL3.createLabel({text: "进度：", x: 40, y: 112, font_size: 14}))
-    tab.addToPage(1, SDL3.createProgressBar({x: 120, y: 110, w: 240, h: 20, value: 42}))
-    tab.addToPage(1, SDL3.createToggle({x: 40, y: 156, w: 220, h: 30, text: "启用深色模式", on: true}))
-    tab.addToPage(1, SDL3.createButton({x: 40, y: 200, w: 140, h: 34, text: "保存外观"}))
+    // ---- 页 1：外观（演示 Tab 内嵌布局 HBox） ----
+    tab.addToPage(1, SDL3.createLabel({text: "音量：", font_size: 14}), 20, 16)
+    tab.addToPage(1, SDL3.createSlider({w: 240, h: 24, min: 0, max: 100, value: 60}), 100, 16)
+    tab.addToPage(1, SDL3.createLabel({text: "进度：", font_size: 14}), 20, 58)
+    tab.addToPage(1, SDL3.createProgressBar({w: 240, h: 20, value: 42}), 100, 56)
+    tab.addToPage(1, SDL3.createToggle({w: 220, h: 30, text: "启用深色模式", on: true}), 20, 102)
+
+    // 在内容区 (20, 146) 放一个 HBox，里面两个按钮 —— 验证 Tab 与布局联动
+    var hb = SDL3.createHBox({w: 400, h: 36, spacing: 10, padX: 6, padY: 4})
+    hb.add(SDL3.createButton({text: "布局A", w: 120, h: 28}), {expand: true})
+    hb.add(SDL3.createButton({text: "布局B", w: 120, h: 28}), {})
+    tab.addToPage(1, hb, 20, 146)
 
     // ---- 页 2：关于 ----
-    tab.addToPage(2, SDL3.createLabel({text: "LenoSDL3 TabControl 演示", x: 40, y: 70, font_size: 16}))
-    tab.addToPage(2, SDL3.createLabel({text: "点击上方标签栏可在不同页之间切换。", x: 40, y: 104, font_size: 13}))
-    tab.addToPage(2, SDL3.createLabel({text: "隐藏页的子控件不参与事件与绘制。", x: 40, y: 130, font_size: 13}))
+    tab.addToPage(2, SDL3.createLabel({text: "LenoSDL3 TabControl 演示", font_size: 16}), 20, 16)
+    tab.addToPage(2, SDL3.createLabel({text: "点击上方标签栏可在不同页之间切换。", font_size: 13}), 20, 50)
+    tab.addToPage(2, SDL3.createLabel({text: "隐藏页的子控件不参与事件与绘制。", font_size: 13}), 20, 76)
 
-    // 切换时控件不会越界到其它页：验证子控件按页隔离
+    // 切换页（验证子控件按页隔离）
     win.addButton({x: 460, y: 410, w: 150, h: 32, text: "跳到外观页"}).on_click(func() {
         tab.set_active(1)
+    })
+
+    // 移动 Tab 整体：页内所有子控件（含 HBox）每帧跟随
+    win.addButton({x: 460, y: 372, w: 150, h: 32, text: "移动 Tab"}).on_click(func() {
+        tab.set_pos(140, 120)
+        print("Tab 已移动，页内子控件（含 HBox）整体跟随")
     })
 
     win.run(
