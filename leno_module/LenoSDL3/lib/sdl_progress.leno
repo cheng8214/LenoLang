@@ -59,6 +59,14 @@ export struct ProgressBar impl Widget {
         _fillR = 80; _fillG = 200; _fillB = 120
         tr = 235; tg = 235; tb = 245
 
+        // 颜色可被 dict 覆盖（[r,g,b]）
+        var tkc = opts.get("track_rgb")
+        if tkc is Array[int] { _trkR = _int(tkc[0]); _trkG = _int(tkc[1]); _trkB = _int(tkc[2]) }
+        var flc = opts.get("fill_rgb")
+        if flc is Array[int] { _fillR = _int(flc[0]); _fillG = _int(flc[1]); _fillB = _int(flc[2]) }
+        var ptc = opts.get("text_rgb")
+        if ptc is Array[int] { tr = _int(ptc[0]); tg = _int(ptc[1]); tb = _int(ptc[2]) }
+
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))
         hover = false; _wasHover = false; _dragging = false

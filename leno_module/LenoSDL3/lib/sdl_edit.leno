@@ -18,6 +18,7 @@ export struct Edit impl Widget {
     Ptr[u8] _hwnd                // 窗口句柄（IME 定位）
     int cr, cg, cb               // 背景色
     int tr, tg, tb               // 文字色
+    int _focusR, _focusG, _focusB // 聚焦边框色
 
     // 单行模式
     int _cursorPos               // 光标字符位置（单行）
@@ -232,9 +233,12 @@ export struct Edit impl Widget {
         cr = 35; cg = 35; cb = 50
         tr = 220; tg = 220; tb = 240
         var c = opts.get("rgb")
-        if c is Array { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
+        if c is Array[int] { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
         var tc = opts.get("text_rgb")
-        if tc is Array { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+        if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+        _focusR = 100; _focusG = 180; _focusB = 255
+        var fc = opts.get("focus_rgb")
+        if fc is Array[int] { _focusR = _int(fc[0]); _focusG = _int(fc[1]); _focusB = _int(fc[2]) }
 
         _placeholder = opts.get("placeholder", "") as string
 
@@ -1246,7 +1250,7 @@ export struct Edit impl Widget {
         r.fillRoundedRect(x, y, w, h, _radius)
 
         // 边框
-        if _focused { r.setColor(100, 180, 255, 255) }
+        if _focused { r.setColor(_focusR, _focusG, _focusB, 255) }
         else         { r.setColor(cr + 40, cg + 40, cb + 40, 220) }
         r.drawRoundedRect(x, y, w, h, _radius)
 

@@ -41,7 +41,7 @@ export struct Label impl Widget {
         // 文字色（默认白色）
         tr = 255; tg = 255; tb = 255
         var tc = opts.get("rgb")
-        if tc is Array { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+        if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
 
         // 对齐
         _align = _int(opts.get("align", 0))

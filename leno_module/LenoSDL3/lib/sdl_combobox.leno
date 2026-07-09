@@ -72,7 +72,7 @@ export struct ComboBox impl Widget {
         _placeholder = opts.get("placeholder", "请选择") as string
 
         var its = opts.get("items", [])
-        if its is Array { items = its as Array[string] } else { items = [] }
+        if its is Array[string] { items = its as Array[string] } else { items = [] }
         _sel = _int(opts.get("selected", -1))
         if _sel >= items.len() { _sel = -1 }
 
@@ -82,6 +82,20 @@ export struct ComboBox impl Widget {
         _hovR = 70; _hovG = 78; _hovB = 92
         tr = 235; tg = 235; tb = 245
         _sbR = 120; _sbG = 125; _sbB = 140
+
+        // 颜色可被 dict 覆盖（[r,g,b]）
+        var bgc = opts.get("bg_rgb")
+        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        var bdc = opts.get("border_rgb")
+        if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        var slc = opts.get("sel_rgb")
+        if slc is Array[int] { _selR = _int(slc[0]); _selG = _int(slc[1]); _selB = _int(slc[2]) }
+        var hvc = opts.get("hover_rgb")
+        if hvc is Array[int] { _hovR = _int(hvc[0]); _hovG = _int(hvc[1]); _hovB = _int(hvc[2]) }
+        var ctc = opts.get("text_rgb")
+        if ctc is Array[int] { tr = _int(ctc[0]); tg = _int(ctc[1]); tb = _int(ctc[2]) }
+        var sbc = opts.get("scroll_rgb")
+        if sbc is Array[int] { _sbR = _int(sbc[0]); _sbG = _int(sbc[1]); _sbB = _int(sbc[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))

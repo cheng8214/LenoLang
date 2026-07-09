@@ -40,12 +40,12 @@ main() {
             r.clearColor(28, 28, 46, 255)
             r.drawText(font, "滑块 / 进度条 演示", 20, 12, 255, 220, 80)
 
-            // 用时间驱动进度条循环变化，演示 set_value + 回调链路（每 500ms 一步，避免刷屏）
+            // 用时间驱动「只读」进度条循环变化，演示 set_value + 回调链路（每 500ms 一步，避免刷屏）
+            // 注意：只驱动只读的 pbar；pbar2(clickable) 由用户点击/拖拽控制，不能被这里覆盖，否则拖完立刻被刷回去
             int t = SDL3.getTicks()
             int step = t / 500
             float ph = _float(step % 101)
             pbar.set_value(ph)
-            pbar2.set_value(ph)
 
             r.drawText(font, "横向滑块: " + hsl.get_value(), 40, 320, 200, 220, 240)
             r.drawText(font, "纵向滑块: " + vsl.get_value(), 40, 348, 200, 220, 240)

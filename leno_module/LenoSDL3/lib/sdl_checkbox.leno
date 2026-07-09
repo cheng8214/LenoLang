@@ -53,6 +53,16 @@ export struct CheckBox impl Widget {
         tr = 235; tg = 235; tb = 245    // 文字色
         _brdR = 130; _brdG = 130; _brdB = 150
 
+        // 颜色可被 dict 覆盖（[r,g,b]）
+        var unk = opts.get("unchecked_rgb")
+        if unk is Array[int] { cr = _int(unk[0]); cg = _int(unk[1]); cb = _int(unk[2]) }
+        var chk = opts.get("checked_rgb")
+        if chk is Array[int] { cc = _int(chk[0]); ck = _int(chk[1]); cbl = _int(chk[2]) }
+        var ctc = opts.get("text_rgb")
+        if ctc is Array[int] { tr = _int(ctc[0]); tg = _int(ctc[1]); tb = _int(ctc[2]) }
+        var cbd = opts.get("border_rgb")
+        if cbd is Array[int] { _brdR = _int(cbd[0]); _brdG = _int(cbd[1]); _brdB = _int(cbd[2]) }
+
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _checked = _bool(opts.get("checked", false))
         enabled = _bool(opts.get("enabled", true))

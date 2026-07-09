@@ -78,15 +78,15 @@ export struct Button impl Widget {
 
         // rgb: 背景色 [r, g, b]
         var c = opts.get("rgb")
-        if c is Array { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
+        if c is Array[int] { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
 
         // text_rgb: 文字色 [r, g, b]
         var tc = opts.get("text_rgb")
-        if tc is Array { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+        if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
 
         // hover_rgb: 悬停背景色 [r, g, b]（不设置则自动加亮）
         var hc = opts.get("hover_rgb")
-        if hc is Array { hvr = _int(hc[0]); hvg = _int(hc[1]); hvb = _int(hc[2]) }
+        if hc is Array[int] { hvr = _int(hc[0]); hvg = _int(hc[1]); hvb = _int(hc[2]) }
 
         // 外观开关
         _showShadow = _bool(opts.get("shadow", true))

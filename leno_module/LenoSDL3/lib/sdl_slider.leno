@@ -58,10 +58,20 @@ export struct Slider impl Widget {
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
+        // 颜色：默认硬编码值，可通过 dict 选项覆盖。约定统一用 [r, g, b] 数组。
         _trkR = 60;  _trkG = 60;  _trkB = 72
         _fillR = 60; _fillG = 170; _fillB = 245
         _thumbR = 245; _thumbG = 245; _thumbB = 250
         tr = 235; tg = 235; tb = 245
+
+        var tkc = opts.get("track_rgb")
+        if tkc is Array[int] { _trkR = _int(tkc[0]); _trkG = _int(tkc[1]); _trkB = _int(tkc[2]) }
+        var flc = opts.get("fill_rgb")
+        if flc is Array[int] { _fillR = _int(flc[0]); _fillG = _int(flc[1]); _fillB = _int(flc[2]) }
+        var thc = opts.get("thumb_rgb")
+        if thc is Array[int] { _thumbR = _int(thc[0]); _thumbG = _int(thc[1]); _thumbB = _int(thc[2]) }
+        var txr = opts.get("text_rgb")
+        if txr is Array[int] { tr = _int(txr[0]); tg = _int(txr[1]); tb = _int(txr[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))

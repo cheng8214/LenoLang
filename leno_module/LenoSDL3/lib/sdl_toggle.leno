@@ -49,6 +49,14 @@ export struct Toggle impl Widget {
         _offR = 70; _offG = 70;  _offB = 82
         tr = 235; tg = 235; tb = 245
 
+        // 颜色可被 dict 覆盖（[r,g,b]）
+        var onc = opts.get("on_rgb")
+        if onc is Array[int] { _onR = _int(onc[0]); _onG = _int(onc[1]); _onB = _int(onc[2]) }
+        var ofc = opts.get("off_rgb")
+        if ofc is Array[int] { _offR = _int(ofc[0]); _offG = _int(ofc[1]); _offB = _int(ofc[2]) }
+        var ttc = opts.get("text_rgb")
+        if ttc is Array[int] { tr = _int(ttc[0]); tg = _int(ttc[1]); tb = _int(ttc[2]) }
+
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _on = _bool(opts.get("on", false))
         enabled = _bool(opts.get("enabled", true))

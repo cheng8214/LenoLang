@@ -25,11 +25,11 @@ export struct Panel impl Widget {
         _radius = _float(opts.get("radius", 8.0))
 
         var bgc = opts.get("bg")
-        if bgc is Array { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
         else { br = 44; bg = 46; bb = 54 }
 
         var bdc = opts.get("border")
-        if bdc is Array { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
         else { _bdrR = 90; _bdrG = 95; _bdrB = 110 }
 
         _brdA = _int(opts.get("border_alpha", 220))
