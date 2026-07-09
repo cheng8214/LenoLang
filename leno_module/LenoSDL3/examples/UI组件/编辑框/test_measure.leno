@@ -1,0 +1,44 @@
+// test_measure.leno — 对比 measureString 与 drawText 实际渲染宽度
+import "../../../lib/SDL3.leno" as SDL3
+
+main() {
+    var win = SDL3.createWindow({title: "measure test", w: 400, h: 200})
+    if not win.ok { print("win fail"); return }
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { print("ren fail"); font.close(); win.destroy(); return }
+
+    print("measureString vs createTextTexture width (digits):")
+    var s = ""
+    var prevM = 0
+    var prevT = 0
+    for 1 : 21 to i {
+        s = s + "1"
+        var mw = _int(font.measureString(s).w)
+        var tex = SDL3.createTextTexture(ren, font, s, 255, 255, 255)
+        var tw = _int(tex.width)
+        tex.destroy()
+        var dM = mw - prevM
+        var dT = tw - prevT
+        print("len=" + i + " measure=" + mw + " tex=" + tw + " dMeasure=" + dM + " dTex=" + dT + " diff=" + (tw - mw))
+        prevM = mw
+        prevT = tw
+    }
+
+    print("--- 字母 A (kerning 测试) ---")
+    var s2 = ""
+    for 1 : 21 to i {
+        s2 = s2 + "A"
+        var mw = _int(font.measureString(s2).w)
+        var tex = SDL3.createTextTexture(ren, font, s2, 255, 255, 255)
+        var tw = _int(tex.width)
+        tex.destroy()
+        print("len=" + i + " measure=" + mw + " tex=" + tw + " diff=" + (tw - mw))
+    }
+
+    font.close()
+    SDL3.ttfQuit()
+    win.destroy()
+    print("DONE")
+}

@@ -1,0 +1,53 @@
+// test_edit_big.leno — 大文本压力测试
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Edit
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "大文本测试", w: 800, h: 600})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    var lastLen = 0
+    var lastTime = SDL3.getTicks()
+    var curFPS = 0
+    var frame = 0
+    var fpsTime = lastTime
+
+    Edit ed = win.addEdit({text: "", x: 10, y: 10, w: 780, h: 540,
+                            multiline: true,
+                            placeholder: "粘贴大文本到这里测试性能...\nCtrl+V 粘贴 | ESC 退出"})
+    ed.on_change(func() {
+        lastLen = ed.get_text_length()
+        lastTime = SDL3.getTicks()
+        print("长度: " + lastLen + "  耗时: " + (lastTime - lastTime) + "ms")
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(20, 20, 35, 255)
+
+            frame += 1
+            var now = SDL3.getTicks()
+            if now - fpsTime >= 1000 {
+                curFPS = frame
+                frame = 0
+                fpsTime = now
+            }
+
+            r.drawText(font, "FPS: " + curFPS + "  长度: " + lastLen + "  ESC退出", 10, 575, 150, 150, 170)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
