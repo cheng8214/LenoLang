@@ -308,6 +308,7 @@ export struct Window {
     func addHBox(Dict opts): HBox {
         HBox b = lay.createHBox(opts)
         _widgets.add(b as Widget)
+        b._bind_window(handle)
         return b
     }
 
@@ -315,6 +316,7 @@ export struct Window {
     func addVBox(Dict opts): VBox {
         VBox b = lay.createVBox(opts)
         _widgets.add(b as Widget)
+        b._bind_window(handle)
         return b
     }
 
@@ -323,6 +325,7 @@ export struct Window {
     func addAnchorBox(Dict opts): AnchorBox {
         AnchorBox b = lay.createAnchorBox(opts)
         _widgets.add(b as Widget)
+        b._bind_window(handle)
         return b
     }
 

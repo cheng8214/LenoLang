@@ -9,12 +9,15 @@
 //
 // 用法：
 //   HBox hb = win.addHBox({x, y, w, h, spacing, padX, padY})
-//   hb.add(win.addButton({text:"A"}), {expand:true})   // 占满剩余宽度
-//   hb.add(win.addButton({text:"B"}), {align:1})       // 交叉轴居中
+//   hb.add(SDL3.createButton({text:"A"}), {expand:true})   // 占满剩余宽度
+//   hb.add(SDL3.createButton({text:"B"}), {align:1})       // 交叉轴居中
 // 子控件创建时仍需给定 w/h（作为自然尺寸）；布局会按需用 set_size 改写它们。
+// 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
+//       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_edit.leno" as edt; use edt.Edit
 
 // 交叉轴对齐方式
 export var LAYOUT_START   = 0   // 靠起始边（左/上）
@@ -31,6 +34,7 @@ export struct HBox impl Widget {
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     bool _loaded
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
         x = _float(opts.get("x", 0))
@@ -46,12 +50,18 @@ export struct HBox impl Widget {
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
         _c.add(c); _opt.add(opts)
+        if _hwnd != null { _layout_pass_window(c, _hwnd) }
         return c
     }
     func remove(Widget c) {
         for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
     }
     func clear() { _c = []; _opt = [] }
+    // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _c to c { _layout_pass_window(c, hwnd) }
+    }
 
     // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
     func get_w(): float { return w }
@@ -95,6 +105,7 @@ export struct HBox impl Widget {
             if align == 3 { ch = innerH; cy = y + padY }
             else if align == 1 { cy = y + padY + (innerH - ch) / 2.0 }
             else if align == 2 { cy = y + padY + innerH - ch }
+            else if ex { ch = innerH; cy = y + padY }   // expand 同时撑满交叉轴（高度）
             else { cy = y + padY }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
@@ -124,6 +135,7 @@ export struct VBox impl Widget {
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     bool _loaded
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
         x = _float(opts.get("x", 0))
@@ -139,12 +151,18 @@ export struct VBox impl Widget {
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
         _c.add(c); _opt.add(opts)
+        if _hwnd != null { _layout_pass_window(c, _hwnd) }
         return c
     }
     func remove(Widget c) {
         for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
     }
     func clear() { _c = []; _opt = [] }
+    // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _c to c { _layout_pass_window(c, hwnd) }
+    }
 
     // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
     func get_w(): float { return w }
@@ -187,6 +205,7 @@ export struct VBox impl Widget {
             if align == 3 { cw = innerW; cx = x + padX }
             else if align == 1 { cx = x + padX + (innerW - cw) / 2.0 }
             else if align == 2 { cx = x + padX + innerW - cw }
+            else if ex { cw = innerW; cx = x + padX }   // expand 同时撑满交叉轴（宽度）
             else { cx = x + padX }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
@@ -218,6 +237,7 @@ export struct AnchorBox impl Widget {
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     bool _loaded
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
         x = _float(opts.get("x", 0))
@@ -232,12 +252,18 @@ export struct AnchorBox impl Widget {
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
         _c.add(c); _opt.add(opts)
+        if _hwnd != null { _layout_pass_window(c, _hwnd) }
         return c
     }
     func remove(Widget c) {
         for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
     }
     func clear() { _c = []; _opt = [] }
+    // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _c to c { _layout_pass_window(c, hwnd) }
+    }
 
     // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
     func get_w(): float { return w }
@@ -299,6 +325,21 @@ export struct AnchorBox impl Widget {
         for _c to c { c.render(r) }
     }
     func dispose() { for _c to c { c.dispose() } }
+}
+
+// 把窗口句柄下发给需要它的子控件：
+// - Edit 需要窗口句柄做 IME 候选框定位（SDL_SetTextInputArea）；
+// - 嵌套的布局容器（HBox/VBox/AnchorBox）继续向下传递，保证深层子控件也能拿到句柄。
+// 其它控件忽略即可（无 set_window 需求）。
+func _layout_pass_window(Widget c, Ptr[u8] hwnd) {
+    Edit e = c as Edit
+    if e != null { e.set_window(hwnd); return }
+    HBox h = c as HBox
+    if h != null { h._bind_window(hwnd); return }
+    VBox v = c as VBox
+    if v != null { v._bind_window(hwnd); return }
+    AnchorBox a = c as AnchorBox
+    if a != null { a._bind_window(hwnd); return }
 }
 
 // ==================== 工厂 ====================

@@ -1,6 +1,9 @@
 // test_layout.leno — 布局系统测试（HBox / VBox / AnchorBox）
-// 验证控件能自动排布，无需手填绝对坐标；窗口缩放时布局自适应（expand）。
-// 约定：子控件用 SDL3.createXxx 创建（不注册到窗口），只把布局容器注册进窗口。
+// 验证控件能自动排布，无需手填绝对坐标；窗口缩放时布局自适应。
+//
+// 约定：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
+//       只把布局容器注册进窗口。容器会自动把窗口句柄下发给需要的子控件（如 Edit 的 IME），
+//       因此无需再手动调用 ed.set_window(win.handle)。
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -12,44 +15,44 @@ use SDL3.WindowFlag
 use SDL3.Size
 
 main() {
-    var win = SDL3.createWindow({title: "布局系统测试", w: 640, h: 480, flags: WindowFlag.RESIZABLE})
+    var win = SDL3.createWindow({title: "布局系统测试", w: 720, h: 520, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
     SDL3.ttfInit()
 
-    // 顶部：水平布局，三个按钮，中间那个占满剩余宽度
-    HBox top = win.addHBox({x: 10, y: 10, w: 620, h: 44, spacing: 8, padX: 6, padY: 6})
-    top.add(SDL3.createButton({text: "固定A", w: 90, h: 32}), {})
-    top.add(SDL3.createButton({text: "弹性B（占满剩余）", w: 120, h: 32}), {expand: true})
-    top.add(SDL3.createButton({text: "固定C", w: 90, h: 32}), {})
+    // 顶部工具栏（HBox）：标题占满剩余宽度，右侧两个按钮右对齐
+    HBox top = win.addHBox({x: 10, y: 10, w: 700, h: 44, spacing: 8, padX: 6, padY: 6})
+    top.add(SDL3.createLabel({text: "布局系统演示", font_size: 18}), {expand: true})
+    top.add(SDL3.createButton({text: "帮助", w: 80, h: 32}), {})
+    top.add(SDL3.createButton({text: "退出", w: 80, h: 32}), {})
 
-    // 中部：垂直布局，装一组表单控件；Edit/Slider 撑满宽度
-    VBox form = win.addVBox({x: 10, y: 70, w: 300, h: 390, spacing: 10, padX: 8, padY: 8})
+    // 左侧表单（VBox）：字段用 align:3 撑满宽度但保持自然高度（比 expand 更合适，不会被纵向拉长）
+    VBox form = win.addVBox({x: 10, y: 70, w: 340, h: 440, spacing: 12, padX: 10, padY: 10})
     form.add(SDL3.createLabel({text: "用户名"}), {})
-    var ed = SDL3.createEdit({w: 200, h: 34, placeholder: "请输入"})
-    ed.set_window(win.handle)
-    form.add(ed, {expand: true})
+    form.add(SDL3.createEdit({w: 200, h: 34, placeholder: "请输入用户名"}), {align: 3})
+    form.add(SDL3.createLabel({text: "密码"}), {})
+    form.add(SDL3.createEdit({w: 200, h: 34, placeholder: "请输入密码", password: true}), {align: 3})
     form.add(SDL3.createLabel({text: "音量"}), {})
-    form.add(SDL3.createSlider({w: 200, h: 24, min: 0, max: 100, value: 40}), {expand: true})
+    form.add(SDL3.createSlider({w: 200, h: 24, min: 0, max: 100, value: 40}), {align: 3})
     form.add(SDL3.createCheckBox({text: "记住我", checked: true}), {})
-    form.add(SDL3.createToggle({text: "启用", on: true}), {})
-    form.add(SDL3.createProgressBar({w: 200, h: 20, value: 65}), {expand: true})
-    form.add(SDL3.createButton({text: "提交", w: 200, h: 36}), {align: 1})   // 居中
+    form.add(SDL3.createToggle({text: "启用通知", on: true}), {})
+    form.add(SDL3.createProgressBar({w: 200, h: 20, value: 65}), {align: 3})
+    form.add(SDL3.createButton({text: "提交", w: 120, h: 36}), {align: 1})   // 居中
 
-    // 右侧：锚点布局，把控件钉在四角/居中
-    AnchorBox ab = win.addAnchorBox({x: 330, y: 70, w: 300, h: 390})
+    // 右侧锚点布局（AnchorBox）：控件钉在四角/居中
+    AnchorBox ab = win.addAnchorBox({x: 360, y: 70, w: 350, h: 440})
     ab.add(SDL3.createLabel({text: "左上"}), {left: 8, top: 8})
     ab.add(SDL3.createLabel({text: "右上"}), {right: 8, top: 8})
     ab.add(SDL3.createLabel({text: "居中"}), {centerX: true, centerY: true})
     ab.add(SDL3.createButton({text: "右下", w: 90, h: 32}), {right: 8, bottom: 8})
-    ab.add(SDL3.createListBox({items: ["项1", "项2", "项3", "项4", "项5"], w: 160, h: 120}),
+    ab.add(SDL3.createListBox({items: ["项1", "项2", "项3", "项4", "项5"], w: 160, h: 140}),
            {left: 8, bottom: 8})
 
-    print("布局测试已启动，可拖动缩放窗口观察自适应")
+    print("布局测试已启动，拖动缩放窗口观察自适应（ESC 退出）")
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
-            // 窗口缩放/最大化时，让三个容器跟随新尺寸重新排布（process/render 每帧会重排版子控件）
+            // 窗口缩放/最大化时，让三个容器跟随新尺寸重新排布
             if e.isWindowResized() {
                 Size s = win.getSize()
                 float W = _float(s.w); float H = _float(s.h)
