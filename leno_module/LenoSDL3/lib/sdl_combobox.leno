@@ -256,7 +256,8 @@ export struct ComboBox impl Widget {
             float th = _float(_font.measureString("Ag").h)
             int tcR = tr; int tcG = tg; int tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-            r.drawText(_font, t, x + 8.0, y + (h - th) / 2.0, tcR, tcG, tcB)
+            float ty = r.snapY(y + (h - th) / 2.0)
+            r.drawText(_font, t, r.snapX(x + 8.0), ty, tcR, tcG, tcB)
         }
 
         // 下拉箭头（向下填充三角）
@@ -289,7 +290,7 @@ export struct ComboBox impl Widget {
         r.setClipRect(clip.to_ptr())
 
         for items.len() to i {
-            float iy = py - _scroll + _float(i) * _itemH
+            float iy = r.snapY(py - _scroll + _float(i) * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }
             int rr = bgr; int gg = bgg; int bb2 = bgb
             if i == _sel { rr = _selR; gg = _selG; bb2 = _selB }
@@ -300,7 +301,8 @@ export struct ComboBox impl Widget {
             if _font != null and _font.ok {
                 float th = _float(_font.measureString("Ag").h)
                 int tcR = tr; int tcG = tg; int tcB = tb
-                r.drawText(_font, items[i], px + 8.0, iy + (_itemH - th) / 2.0, tcR, tcG, tcB)
+                float ty = r.snapY(iy + (_itemH - th) / 2.0)
+                r.drawText(_font, items[i], r.snapX(px + 8.0), ty, tcR, tcG, tcB)
             }
         }
         r.clearClip()

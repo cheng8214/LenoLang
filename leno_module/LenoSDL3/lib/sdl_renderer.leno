@@ -108,6 +108,32 @@ export struct Renderer {
         return true
     }
 
+    // 返回当前 SSAA 倍数（未真正开启/回退为 0.0）；供控件将字体测量与 SSAA 渲染对齐
+    func getSSAA(): float { return if _ssaa then _ssaaScale else 0.0 }
+
+    // 把逻辑坐标吸附到 SSAA 物理整数像素边界（physical = logical*scale 取整），
+    // 避免文字/图元在亚像素位置被双线性重采样导致的发虚与滚动抖动；
+    // 各互相对齐的偏移量均为整数倍 1/scale，独立吸附后仍严格对齐。
+    func snapX(float v): float {
+        if _ssaa and _ssaaScale > 0.0 {
+            float p = v * _ssaaScale
+            float rp = _int(p + 0.5)
+            if p < 0.0 { rp = _int(p - 0.5) }
+            return rp / _ssaaScale
+        }
+        return v
+    }
+    func snapY(float v): float {
+        if _ssaa and _ssaaScale > 0.0 {
+            float p = v * _ssaaScale
+            float rp = _int(p + 0.5)
+            if p < 0.0 { rp = _int(p - 0.5) }
+            return rp / _ssaaScale
+        }
+        return v
+    }
+
+
     // 设置绘制颜色（整数 RGBA，0~255）
     func setColor(int r, int g, int b, int a): bool {
         return _lib.SDL_SetRenderDrawColor(handle, r, g, b, a)
@@ -298,25 +324,25 @@ export struct Renderer {
         pt.free(); return d
     }
 
-    // 便捷绘制文字（创建纹理→绘制→销毁一步完成）
+    // 便捷绘制文字（创建/复用纹理→绘制一步完成）
     // SSAA 激活时：临时把字号放大到 _ssaaScale 倍渲染，使文字纹理本身为 2x 分辨率，
     // 再按逻辑尺寸绘制（被 setScale 映射回 1:1 的离屏像素），下采样后清晰不糊。
+    // 文字纹理经 Font 内部缓存（_getCachedTex），命中时跳过每帧 2x 栅格化与 GPU 上传，显著省 CPU/带宽。
     func drawText(Font f, string text, float x, float y, int r, int g, int b) {
         if _ssaa and _ssaaScale > 0.0 {
             float origPt = f._pt
-            f.setFontSize(origPt * _ssaaScale)
-            TextTexture tex = font.createTextTexture(handle, f, text, r, g, b)
-            f.setFontSize(origPt)   // 还原，避免影响后续 measureString/其它绘制
+            f.setFontSize(origPt * _ssaaScale)   // _pt 临时变 2x，作为缓存 key 维度
+            TextTexture tex = f._getCachedTex(handle, text, r, g, b)
+            f.setFontSize(origPt)                // 还原，避免影响后续 measureString/其它绘制
             if tex.ok {
                 float dw = _float(tex.width)  / _ssaaScale
                 float dh = _float(tex.height) / _ssaaScale
                 drawTextureAt(tex.texture, x, y, dw, dh)
-                tex.destroy()
             }
             return
         }
-        TextTexture tex = font.createTextTexture(handle, f, text, r, g, b)
-        if tex.ok { drawTextureAt(tex.texture, x, y, tex.width, tex.height); tex.destroy() }
+        TextTexture tex = f._getCachedTex(handle, text, r, g, b)
+        if tex.ok { drawTextureAt(tex.texture, x, y, _float(tex.width), _float(tex.height)) }
     }
 
     // 居中绘制文字（在 [x, x+w] 范围内水平居中）

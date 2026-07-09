@@ -273,7 +273,7 @@ export struct ListBox impl Widget {
 
         float pad = 8.0
         for items.len() to i {
-            float iy = y - _scroll + _float(i) * _itemH
+            float iy = r.snapY(y - _scroll + _float(i) * _itemH)
             if iy + _itemH < y or iy > y + h { continue }
             int rr = bgr; int gg = bgg; int bb2 = bgb
             if _is_selected(i) { rr = _selR; gg = _selG; bb2 = _selB }
@@ -286,7 +286,8 @@ export struct ListBox impl Widget {
                 float th = _float(_font.measureString("Ag").h)
                 int tcR = tr; int tcG = tg; int tcB = tb
                 if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-                r.drawText(_font, t, x + pad, iy + (_itemH - th) / 2.0, tcR, tcG, tcB)
+                float ty = r.snapY(iy + (_itemH - th) / 2.0)
+                r.drawText(_font, t, r.snapX(x + pad), ty, tcR, tcG, tcB)
             }
         }
 

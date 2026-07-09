@@ -36,6 +36,8 @@ export struct Edit impl Widget {
     bool _draggingVScroll        // 拖竖向滚动条
     bool _draggingHScroll        // 拖横向滚动条
     bool _hoverVScroll           // 鼠标悬停竖向滚动条
+    float _hDragOffset           // 横向拖动：抓取点在滑块内的偏移（避免拖动跳变）
+    bool  _hDragThumb            // 本次横向拖动是否抓在滑块上（false=抓在轨道）
     bool _hoverHScroll           // 鼠标悬停横向滚动条
     bool _hoverText              // 鼠标悬停编辑区（显示文本光标）
     int _blinkTime               // 光标闪烁 tick
@@ -480,21 +482,39 @@ export struct Edit impl Widget {
     }
 
     // ==================== 滚动条尺寸 ====================
-    func _sb_width(): float {
-        if not _multiline { return 0.0 }
+    // 一次性计算横/竖滚动条尺寸（双向耦合，用两段式避免相互递归）：
+    // 竖条存在会挤占横向轨道宽度，横条存在会挤占竖向轨道高度，
+    // 两者“是否出现”需互相参考对方的存在性，否则任一存在时另一个会判断错。
+    func _compute_sb(): Array[float] {
+        if not _multiline { return [0.0, 0.0] }
         float contentH = _content_height()
-        float visH = h - 16.0
-        if contentH > visH { return 10.0 }
-        return 0.0
+        float visH0 = h - 16.0
+        float visW0 = w - 16.0
+        float sbW = 0.0
+        float sbH = 0.0
+        if _wordWrap {
+            // 自动换行模式不出现横向滚动条（sbH 恒为 0），竖向轨道高度不受影响
+            if contentH > visH0 { sbW = 10.0 }
+        } else {
+            // 第一段：先忽略对方，各自判断是否超出
+            if contentH > visH0          { sbW = 10.0 }
+            if _max_line_width() > visW0 { sbH = 10.0 }
+            // 第二段：竖条存在 → 横向轨道变窄 → 可能需横条；
+            //         横条存在 → 竖向轨道变矮 → 可能需竖条
+            if sbW > 0.0 and _max_line_width() > visW0 - sbW { sbH = 10.0 }
+            if sbH > 0.0 and contentH > visH0 - sbH           { sbW = 10.0 }
+        }
+        return [sbW, sbH]
+    }
+
+    func _sb_width(): float {
+        var s = _compute_sb()
+        return s[0]
     }
 
     func _sb_height(): float {
-        if not _multiline { return 0.0 }
-        if _wordWrap { return 0.0 }   // 自动换行不出现横向滚动条
-        float maxW = _max_line_width()
-        float visW = w - 16.0
-        if maxW > visW { return 10.0 }
-        return 0.0
+        var s = _compute_sb()
+        return s[1]
     }
 
     func _max_line_width(): float {
@@ -561,7 +581,8 @@ export struct Edit impl Widget {
             if _multiline {
                 float sy = _scrollY - ev.wheelY() * _lineHeight * 3.0
                 if sy < 0 { sy = 0 }
-                float maxSY = _content_height() - (h - 16.0)
+                // 可见高度需减去横向滚动条高度（sbH），否则横条存在时滚不到底
+                float maxSY = _content_height() - (h - 16.0 - _sb_height())
                 if maxSY < 0 { maxSY = 0 }
                 if sy > maxSY { sy = maxSY }
                 _scrollY = sy
@@ -617,12 +638,34 @@ export struct Edit impl Widget {
                 }
             }
 
-            // 横向拖动
-            if sbH > 0.0 and ev.isMouseButtonDown() and _hoverHScroll and not _draggingVScroll {
-                _draggingHScroll = true; _mouseDown = false
-                var maxLineW = _max_line_width()
-                maxLineW = maxLineW + 8.0
-                // 缓存 maxLineW
+            // 横向拖动：在横向滚动条区域内按下即开始（直接命中测试，不依赖每事件 hover 布尔，
+            // 避免点击稍偏时“有时拖不动”）；抓在滑块上记录偏移，做到抓哪拖哪不跳变。
+            if sbH > 0.0 {
+                var maxLineW = _max_line_width() + 8.0
+                float maxSX = maxLineW - visW
+                if maxSX < 0 { maxSX = 0 }
+                float thumbW = visW * visW / maxLineW
+                if thumbW < 20 { thumbW = 20 }
+                float hsbY = y + h - sbH - 4.0
+                float trackX0 = x + pad
+                float trackX1 = x + pad + visW
+                float thumbX = trackX0
+                if maxSX > 0 { thumbX = trackX0 + _scrollX * visW / maxLineW }
+                if thumbX + thumbW > trackX1 { thumbX = trackX1 - thumbW }
+
+                if ev.isMouseButtonDown() and not _draggingVScroll {
+                    bool onBar = ev.mouseY() >= hsbY and ev.mouseY() <= hsbY + sbH
+                                and ev.mouseX() >= trackX0 and ev.mouseX() <= trackX1
+                    if onBar {
+                        _draggingHScroll = true; _mouseDown = false
+                        if ev.mouseX() >= thumbX and ev.mouseX() <= thumbX + thumbW {
+                            _hDragThumb = true
+                            _hDragOffset = ev.mouseX() - thumbX
+                        } else {
+                            _hDragThumb = false
+                        }
+                    }
+                }
             }
             if _draggingHScroll {
                 if ev.isMouseButtonUp() { _draggingHScroll = false }
@@ -632,8 +675,15 @@ export struct Edit impl Widget {
                     if maxSX < 0 { maxSX = 0 }
                     float thumbW = visW * visW / maxLineW
                     if thumbW < 20 { thumbW = 20 }
-                    float relX = ev.mouseX() - x - pad
-                    _scrollX = relX * maxSX / (visW - thumbW)
+                    float trackX0 = x + pad
+                    float trackX1 = x + pad + visW
+                    float tx
+                    if _hDragThumb { tx = ev.mouseX() - _hDragOffset }
+                    else { tx = ev.mouseX() - thumbW * 0.5 }
+                    if tx < trackX0 { tx = trackX0 }
+                    if tx > trackX1 - thumbW { tx = trackX1 - thumbW }
+                    if maxSX <= 0 { _scrollX = 0 }
+                    else { _scrollX = (tx - trackX0) * maxSX / (trackX1 - thumbW - trackX0) }
                     if _scrollX < 0 { _scrollX = 0 }
                     if _scrollX > maxSX { _scrollX = maxSX }
                 }
@@ -829,6 +879,7 @@ export struct Edit impl Widget {
             if sc == Scancode.RIGHT { if _cursorPos < text.len() { _cursorPos += 1; _clear_sel() } }
             if sc == Scancode.HOME  { _cursorPos = 0; _clear_sel() }
             if sc == Scancode.END   { _cursorPos = text.len(); _clear_sel() }
+            _adjust_scroll()
             if sc == Scancode.RETURN {
                 if _onEnter != null { _onEnter() }
             }
@@ -1087,6 +1138,7 @@ export struct Edit impl Widget {
             _cursorLine -= 1
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
             _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _adjust_scroll()
         }
     }
 
@@ -1109,6 +1161,7 @@ export struct Edit impl Widget {
             _cursorLine += 1
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
             _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _adjust_scroll()
         }
     }
 
@@ -1206,6 +1259,7 @@ export struct Edit impl Widget {
 
     // ---- 单行渲染 ----
     func _render_sl(Renderer r) {
+        _font.setSSAA(r.getSSAA())   // 让 measureString 与 SSAA 绘制宽度一致，光标/选区对齐且不变形
         float pad = 8.0
         // 裁剪
         var clip = core.SDL_Rect.malloc()
@@ -1213,35 +1267,57 @@ export struct Edit impl Widget {
         clip.w = _int(w - pad * 2.0); clip.h = _int(h)
         r.setClipRect(clip.to_ptr())
 
+        // 文字几何（先算，供选区/光标对齐）
+        var ms0 = _font.measureString("Ag")
+        float textH = _float(ms0.h)
+        float ty = y + (h - textH) / 2.0
+        var display = text
+        if _password and text != "" { display = "*".rep(text.len()) }
+        if text != "" {
+            var ms = _font.measureString(display)
+            textH = _float(ms.h)
+            ty = y + (h - textH) / 2.0
+        }
+
+        // 选区高亮（画在文字【后面】，文字再叠上去仍可见）
+        if _selActive and _selStart >= 0 and _selStart != _selEnd and text != "" {
+            var ss = _selStart; var se = _selEnd
+            if ss > se { var t = ss; ss = se; se = t }
+            if ss < 0 { ss = 0 }
+            if se > text.len() { se = text.len() }
+            float sx = r.snapX(x + pad + _text_width_to(ss) - _scrollX)
+            float ex = r.snapX(x + pad + _text_width_to(se) - _scrollX)
+            float rx = sx; float rw = ex - sx
+            if rw < 0 { rx = ex; rw = -rw }
+            r.setColor(60, 100, 180, 180)
+            r.fillRect(rx, r.snapY(ty), rw, textH)
+        }
+
+        // 文字（叠在选区之上）
         if text == "" and not _focused and _placeholder != "" {
             var ms = _font.measureString(_placeholder)
             float py = y + (h - _float(ms.h)) / 2.0
-            r.drawText(_font, _placeholder, x + pad, py,
+            r.drawText(_font, _placeholder, r.snapX(x + pad), r.snapY(py),
                        tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
         } else if text != "" {
-            var display = text
-            if _password { display = "*".rep(text.len()) }
-            var ms = _font.measureString(display)
-            float ty = y + (h - _float(ms.h)) / 2.0
-            r.drawText(_font, display, x + pad - _scrollX, ty, tr, tg, tb)
+            r.drawText(_font, display, r.snapX(x + pad - _scrollX), r.snapY(ty), tr, tg, tb)
         }
 
         r.clearClip(); clip.free()
 
-        // 光标
+        // 光标（与文字同高、垂直对齐）
         if _focused and _showCursor {
-            float cx = x + pad + _text_width_to(_cursorPos) - _scrollX
+            float cx = r.snapX(x + pad + _text_width_to(_cursorPos) - _scrollX)
             if cx < x + pad { cx = x + pad }
             if cx > x + w - pad { cx = x + w - pad }
-            var ms = _font.measureString("Ag")
-            float ch = _float(ms.h)
             r.setColor(220, 220, 240, 200)
-            r.drawLine(cx, y + (h - ch) / 2.0, cx, y + (h + ch) / 2.0 - 2.0)
+            r.drawLine(cx, r.snapY(ty), cx, r.snapY(ty + textH))
         }
     }
 
     // ---- 多行渲染 ----
     func _render_ml(Renderer r) {
+        _font.setSSAA(r.getSSAA())   // 让 measureString 与 SSAA 绘制宽度一致，光标/选区对齐且不变形
         _rebuild_lines()
         _sync_line_col()                // 进入渲染时统一同步行列
         float pad = 8.0
@@ -1290,9 +1366,9 @@ export struct Edit impl Widget {
                 var full = _lines[li]
                 var ms1 = _font.measureString(full.slice(c0, c0 + colS))
                 var ms2 = _font.measureString(full.slice(c0, c0 + colE))
-                float sx = x + pad + _float(ms1.w) - _scrollX
+                float sx = r.snapX(x + pad + _float(ms1.w) - _scrollX)
                 float ew = _float(ms2.w) - _float(ms1.w)
-                float sy = y + pad + _float(di) * _lineHeight - _scrollY
+                float sy = r.snapY(y + pad + _float(di) * _lineHeight - _scrollY)
                 if ew < 0 { ew = 0 }
                 r.setColor(60, 100, 180, 180)
                 r.fillRect(sx, sy, ew, _lineHeight)
@@ -1308,7 +1384,7 @@ export struct Edit impl Widget {
                 var wraps = _wrap_line(seg, visW)
                 for wraps.len() to wi {
                     float ly = y + pad + _float(dy) * _lineHeight - _scrollY
-                    r.drawText(_font, wraps[wi] as string, x + pad, ly, tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+                    r.drawText(_font, wraps[wi] as string, r.snapX(x + pad), r.snapY(ly), tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
                     dy += 1
                 }
             }
@@ -1319,7 +1395,7 @@ export struct Edit impl Widget {
                 var seg = _lines[li].slice(c0, c1)
                 if _password { seg = "*".rep(seg.len()) }
                 float ly = y + pad + _float(di) * _lineHeight - _scrollY
-                r.drawText(_font, seg, x + pad - _scrollX, ly, tr, tg, tb)
+                r.drawText(_font, seg, r.snapX(x + pad - _scrollX), r.snapY(ly), tr, tg, tb)
             }
         }
 
@@ -1328,25 +1404,34 @@ export struct Edit impl Widget {
         if _focused and _showCursor {
             if _lines.len() > 0 and _drCount > 0 {
                 var cdi = _disp_row_of(_cursorLine, _cursorCol)
-                float cy = y + pad + _float(cdi) * _lineHeight - _scrollY
+                float cy = r.snapY(y + pad + _float(cdi) * _lineHeight - _scrollY)
                 if cy + _lineHeight > y + pad and cy < y + pad + visH {
                     var ms = _font.measureString("Ag")
                     float ch = _float(ms.h)
                     float cx = x + pad
                     if _wordWrap {
-                        cx = cx + _line_width_to(_cursorLine, _cursorCol) - _line_width_to(_cursorLine, _drC0[cdi])
+                        // 直接测量段内子串（ln.slice(c0, col)）作为段内偏移，
+                        // 不能用 整行slice - 整行slice(c0) 相减：跨段边界的字偶距
+                        // 不计入，会随换行段数累积误差导致光标错位。
+                        var cm0 = 0
+                        if cdi >= 0 and cdi < _drC0.len() { cm0 = _drC0[cdi] }
+                        if _cursorCol < cm0 { cm0 = _cursorCol }
+                        var ln = _lines[_cursorLine]
+                        var seg = ln.slice(cm0, _cursorCol)
+                        cx = cx + _float(_font.measureString(seg).w) - _scrollX
                     } else {
                         cx = cx + _line_width_to(_cursorLine, _cursorCol) - _scrollX
                     }
+                    cx = r.snapX(cx)
                     r.setColor(220, 220, 240, 200)
                     r.drawLine(cx, cy, cx, cy + ch)
                 }
             } else {
                 // 空内容：光标固定在左上角
-                float cy = y + pad
+                float cy = r.snapY(y + pad)
                 var ms = _font.measureString("Ag")
                 float ch = _float(ms.h)
-                float cx = x + pad
+                float cx = r.snapX(x + pad)
                 r.setColor(220, 220, 240, 200)
                 r.drawLine(cx, cy, cx, cy + ch)
             }

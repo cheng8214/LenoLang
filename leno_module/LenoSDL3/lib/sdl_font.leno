@@ -88,8 +88,33 @@ export var _ttfInited = false
 
 // ==================== Font ====================
 
+// 文字纹理缓存条目（ring buffer 固定容量，避免每帧重建 2x 栅格化纹理）
+export struct CachedTex {
+    string key
+    Ptr[u8] texture
+    int w; int h; bool ok
+}
+
+// 字符串尺寸缓存条目（measureString 高频调用，缓存避免重复 TTF_SetFontSize + 测量）
+export struct CachedMeas {
+    string key
+    int w; int h
+}
+
 export struct Font {
     Ptr[u8] handle; bool ok; int height; int ascent; int descent; float _pt
+    float _aaScale = 0.0   // SSAA 倍数：>0 时 measureString 按「2x 测量再除 scale」计算，
+                           // 与 Renderer.drawText 的 SSAA 绘制宽度（tex.width/scale）完全一致
+
+    // 文字纹理缓存（ring buffer，固定容量）：drawText 命中时直接复用纹理，
+    // 避免每帧 TTF_RenderText_Blended（CPU 栅格化）+ SDL_CreateTextureFromSurface（上传）的重复开销
+    Array[CachedTex] _texCache = []
+    int _texCap = 512
+    int _texHead = 0
+    // 尺寸缓存：measureString 高频调用，缓存避免重复测量
+    Array[CachedMeas] _measCache = []
+    int _measCap = 1024
+    int _measHead = 0
 
     func load(string path, float ptsize): bool {
         if not ttfInit() { return false }
@@ -105,7 +130,16 @@ export struct Font {
     }
 
     func close() {
-        if ok { ttfLib().TTF_CloseFont(handle); handle = null; ok = false }
+        if ok {
+            // 释放所有缓存文字纹理，避免显存泄漏
+            for _texCache.len() to i {
+                if _texCache[i].ok and _texCache[i].texture != null {
+                    _lib.SDL_DestroyTexture(_texCache[i].texture)
+                }
+            }
+            _texCache = []
+            ttfLib().TTF_CloseFont(handle); handle = null; ok = false
+        }
     }
 
     func renderTextBlended(string text, int r, int g, int b): Ptr {
@@ -130,10 +164,93 @@ export struct Font {
 
     func measureString(string text): StringSize {
         if not ok { return {w: 0, h: 0} }
-        SDL_Point pt = SDL_Point.malloc()
-        ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
-        var d = {w: pt.x, h: pt.y}
-        pt.free(); return d
+        // 实际测量字号：SSAA 下为 2x，否则 1x。作为缓存 key 维度，自动区分两种测量方式，
+        // 缓存命中时连 TTF_SetFontSize 都省掉（measure 在 Edit 中调用极密集）。
+        float mpt = if _aaScale > 0.0 then _pt * _aaScale else _pt
+        string key = $"{mpt}\x01{text}"
+        for _measCache.len() to i {
+            if _measCache[i].key == key {
+                return {w: _measCache[i].w, h: _measCache[i].h}
+            }
+        }
+        int mw = 0
+        int mh = 0
+        if _aaScale > 0.0 {
+            // SSAA 一致测量：临时放大到 pt*scale 测量，再除以 scale 得到逻辑宽度。
+            // 这与 drawText 在 SSAA 下「渲染 2x 纹理、按 tex.width/scale 绘制」等价，
+            // 从而光标/选区/换行点与真实绘制文字逐像素对齐，且文字不变形。
+            float origPt = _pt
+            ttfLib().TTF_SetFontSize(handle, origPt * _aaScale)
+            SDL_Point pt = SDL_Point.malloc()
+            ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
+            ttfLib().TTF_SetFontSize(handle, origPt)
+            // 整段在 2x 下测量一次，再整体除 scale 取整（单次取整，残差 ≤0.5px，不随字符累积）
+            mw = _int(_float(pt.x) / _aaScale + 0.5)
+            mh = _int(_float(pt.y) / _aaScale + 0.5)
+            pt.free()
+        } else {
+            SDL_Point pt = SDL_Point.malloc()
+            ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
+            mw = pt.x; mh = pt.y
+            pt.free()
+        }
+        // 写入 ring 缓存（容量满则覆盖最旧）
+        CachedMeas e = new CachedMeas()
+        e.key = key; e.w = mw; e.h = mh
+        if _measCache.len() < _measCap {
+            _measCache.add(e)
+        } else {
+            _measCache[_measHead] = e
+            _measHead = (_measHead + 1) % _measCap
+        }
+        return {w: mw, h: mh}
+    }
+
+    // 设置 SSAA 倍数（与所用 Renderer 的 getSSAA() 一致）；传 0 关闭。
+    // 仅影响 measureString 的测量方式，使其与 drawText 的 2x 渲染对齐。
+    func setSSAA(float scale) { _aaScale = scale }
+
+    // 文字纹理缓存查询/创建：命中返回缓存纹理（调用方不得 destroy），未命中创建并写入 ring 缓存。
+    // 调用前由 Renderer.drawText 负责把字号临时设为 2x（SSAA）或保持 1x；本方法直接用当前字号渲染，
+    // 并以当前 _pt 作为缓存 key 维度，与 drawText 的 2x 渲染天然对应。
+    func _getCachedTex(Ptr[u8] renderer, string text, int r, int g, int b): TextTexture {
+        if not ok { return new TextTexture() }
+        string key = $"{renderer}\x01{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
+        for _texCache.len() to i {
+            if _texCache[i].key == key {
+                TextTexture t = new TextTexture()
+                t.texture = _texCache[i].texture
+                t.ok = true
+                t.width = _texCache[i].w
+                t.height = _texCache[i].h
+                return t
+            }
+        }
+        Ptr surface = ttfLib().TTF_RenderText_Blended(handle, text, 0, packColor(r, g, b))
+        TextTexture tex = new TextTexture()
+        if surface != null {
+            // 内联创建纹理（等价 TextTexture.createFromSurface），避免前向引用 TextTexture 方法
+            SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
+            int tw = info.w; int th = info.h
+            Ptr texPtr = _lib.SDL_CreateTextureFromSurface(renderer, surface)
+            _lib.SDL_DestroySurface(surface)
+            if texPtr != null {
+                tex.texture = texPtr
+                tex.width = tw; tex.height = th
+                tex.ok = true
+                CachedTex e = new CachedTex()
+                e.key = key; e.texture = texPtr; e.w = tw; e.h = th; e.ok = true
+                if _texCache.len() < _texCap {
+                    _texCache.add(e)
+                } else {
+                    CachedTex old = _texCache[_texHead]
+                    if old.ok and old.texture != null { _lib.SDL_DestroyTexture(old.texture) }
+                    _texCache[_texHead] = e
+                    _texHead = (_texHead + 1) % _texCap
+                }
+            }
+        }
+        return tex
     }
 
     func setStyle(int style) {

@@ -472,7 +472,7 @@ int lenolang_run_file(const char* path) {
                 base_dir = dir_buf;
             }
             if (base_dir) {
-                char cache_dir[MAX_PATH_LEN];
+                char cache_dir[MAX_PATH_LEN + 16];
                 snprintf(cache_dir, sizeof(cache_dir), "%s.lenocache%c", base_dir,
 #ifdef _WIN32
                     '\\'
