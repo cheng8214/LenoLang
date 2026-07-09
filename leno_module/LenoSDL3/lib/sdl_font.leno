@@ -98,7 +98,7 @@ export struct CachedTex {
 // 字符串尺寸缓存条目（measureString 高频调用，缓存避免重复 TTF_SetFontSize + 测量）
 export struct CachedMeas {
     string key
-    int w; int h
+    float w; float h
 }
 
 export struct Font {
@@ -173,25 +173,26 @@ export struct Font {
                 return {w: _measCache[i].w, h: _measCache[i].h}
             }
         }
-        int mw = 0
-        int mh = 0
+        float mw = 0.0
+        float mh = 0.0
         if _aaScale > 0.0 {
             // SSAA 一致测量：临时放大到 pt*scale 测量，再除以 scale 得到逻辑宽度。
-            // 这与 drawText 在 SSAA 下「渲染 2x 纹理、按 tex.width/scale 绘制」等价，
-            // 从而光标/选区/换行点与真实绘制文字逐像素对齐，且文字不变形。
+            // 必须与 drawText 在 SSAA 下「渲染 2x 纹理、按 tex.width/scale 绘制」的
+            // 精确（非取整）宽度完全一致，否则命中测试/光标/选区边界会和真实文字错位
+            // （最坏每字符边界差 0.5px，点击字符间隙时光标会落到前一格）。
             float origPt = _pt
             ttfLib().TTF_SetFontSize(handle, origPt * _aaScale)
             SDL_Point pt = SDL_Point.malloc()
             ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
             ttfLib().TTF_SetFontSize(handle, origPt)
-            // 整段在 2x 下测量一次，再整体除 scale 取整（单次取整，残差 ≤0.5px，不随字符累积）
-            mw = _int(_float(pt.x) / _aaScale + 0.5)
-            mh = _int(_float(pt.y) / _aaScale + 0.5)
+            // 注意：不取整。tex.width(2x) == TTF_GetStringSize(2x)，故 tex.width/scale == pt.x/scale
+            mw = _float(pt.x) / _aaScale
+            mh = _float(pt.y) / _aaScale
             pt.free()
         } else {
             SDL_Point pt = SDL_Point.malloc()
             ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
-            mw = pt.x; mh = pt.y
+            mw = _float(pt.x); mh = _float(pt.y)
             pt.free()
         }
         // 写入 ring 缓存（容量满则覆盖最旧）
@@ -303,7 +304,7 @@ export struct Font {
         if not ok { return {w: 0, h: 0} }
         SDL_Point pt = SDL_Point.malloc()
         ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, &pt.x, &pt.y)
-        var d = {w: pt.x, h: pt.y}
+        var d = {w: _float(pt.x), h: _float(pt.y)}
         pt.free(); return d
     }
 

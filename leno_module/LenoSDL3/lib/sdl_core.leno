@@ -139,7 +139,7 @@ export alias Color      = Dict[string, int]
 export alias FColor     = Dict[string, float]
 export alias Size       = Dict[string, int]
 export alias FSize      = Dict[string, float]
-export alias StringSize = Dict[string, int]
+export alias StringSize = Dict[string, float]
 export alias GlyphInfo  = Dict[string, int]
 
 // ==================== clib sdl3 ====================
