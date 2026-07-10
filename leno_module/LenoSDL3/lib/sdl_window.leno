@@ -55,6 +55,8 @@ use lay.VBox
 use lay.AnchorBox
 import "sdl_menu.leno" as menu
 use menu.MenuBar
+import "sdl_scrollview.leno" as scv
+use scv.ScrollView
 import "sdl_tooltip.leno" as tip
 import "sdl_widget.leno" as wgt
 use wgt.Widget
@@ -364,6 +366,16 @@ export struct Window {
         _widgets.add(b as Widget)
         b._bind_window(handle)
         return b
+    }
+
+    // 添加通用滚动容器，opts: {x, y, w, h, content_w, content_h, bg, border, radius}
+    // 用法：var box = SDL3.createVBox({...}); sv.set_content(box)；内容控件用 createXxx 创建（不要 win.add）
+    // content_w/h 不传则自动取内容自然尺寸；悬停滚轮滚动，可拖右侧/底部滚动条
+    func addScrollView(Dict opts): ScrollView {
+        ScrollView s = scv.createScrollView(opts)
+        _widgets.add(s as Widget)
+        s._bind_window(handle)
+        return s
     }
 
     // 运行主循环（回调模式，支持多窗口）

@@ -21,6 +21,7 @@ import "sdl_tab.leno" as tab
 import "sdl_layout.leno" as lay
 import "sdl_menu.leno" as menu
 import "sdl_tooltip.leno" as tip
+import "sdl_scrollview.leno" as scv
 import "sdl_widget.leno" as wgt
 
 
@@ -65,6 +66,7 @@ use cbb.ComboBox
 use pnl.Panel
 use tab.TabControl
 use menu.MenuBar
+use scv.ScrollView
 use lay.HBox
 use lay.VBox
 use lay.AnchorBox
@@ -83,6 +85,7 @@ export func createComboBox(Dict opts): ComboBox  { return cbb.createComboBox(opt
 export func createPanel(Dict opts): Panel        { return pnl.createPanel(opts) }
 export func createTabControl(Dict opts): TabControl { return tab.createTabControl(opts) }
 export func createMenuBar(Dict opts): MenuBar      { return menu.createMenuBar(opts) }
+export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
 export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }

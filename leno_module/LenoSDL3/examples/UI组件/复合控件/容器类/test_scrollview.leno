@@ -1,0 +1,60 @@
+// test_scrollview.leno — 通用滚动容器（ScrollView）演示
+// 演示：
+//   1) win.addScrollView 创建滚动视口，内容用 createVBox 创建（不要 win.add）
+//   2) 内容尺寸大于视口时出现滚动条，悬停滚轮滚动、可拖右侧/底部滚动条、点槽翻页
+//   3) 运行时 set_content_size 改变内容高度，滚动范围自动跟随
+//   4) scroll_to 跳到顶部/底部
+import "../../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "ScrollView 测试", w: 520, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 滚动容器：视口 300x300；内容 360x640（比视口宽且高 -> 同时出现横/竖滚动条）
+    var sv = win.addScrollView({x: 20, y: 20, w: 300, h: 300,
+        content_w: 360, content_h: 640, bg: [34, 36, 42], border: [80, 85, 100]})
+    // 内容：用 createXxx 创建，不要 win.add（避免被窗口与 ScrollView 双重处理）
+    var box = SDL3.createVBox({padX: 10, padY: 10, spacing: 8})
+    for 12 to i {
+        box.add(SDL3.createButton({text: "项目 " + (i + 1), h: 36}), {align: 3})
+    }
+    sv.set_content(box)
+
+    // 运行时动态改变内容高度，验证滚动范围跟随
+    var ch = 640.0
+    win.addButton({x: 350, y: 20, w: 150, h: 34, text: "内容 +120"}).on_click(func() {
+        ch = ch + 120.0; sv.set_content_size(360, ch)
+    })
+    win.addButton({x: 350, y: 62, w: 150, h: 34, text: "内容 -120"}).on_click(func() {
+        ch = ch - 120.0; if ch < 300.0 { ch = 300.0 }; sv.set_content_size(360, ch)
+    })
+    win.addButton({x: 350, y: 104, w: 150, h: 34, text: "滚动到顶部"}).on_click(func() {
+        sv.scroll_to(0, 0)
+    })
+    win.addButton({x: 350, y: 146, w: 150, h: 34, text: "滚动到底部"}).on_click(func() {
+        sv.scroll_to(0, sv.get_max_scroll_y())
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "ScrollView 测试：悬停滚轮滚动 / 拖右侧·底部滚动条", 20, 350, 200, 210, 230)
+            float curH = sv.get_max_scroll_y() + 300.0
+            r.drawText(font, "当前内容尺寸 360 x " + curH as string + "（ESC 退出）", 20, 374, 160, 170, 190)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

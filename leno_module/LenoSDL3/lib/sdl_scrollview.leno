@@ -1,0 +1,295 @@
+// sdl_scrollview.leno — 通用滚动容器（裁剪视口 + 内容偏移 + 滚轮/拖动滚动条）
+//
+// 解决的问题：Panel 只会裁剪不会滚动，只有 ListBox/ComboBox 内部自带滚动条。
+// ScrollView 持有一个「内容控件」（通常为 VBox/Panel/HBox），内容坐标 (0,0) 映射到
+// 可滚动区左上角；视口自动裁剪，悬停滚轮滚动，可拖动右侧/底部滚动条，点击槽翻页。
+//
+// 用法：
+//   var sv = win.addScrollView({x:20, y:20, w:300, h:200, content_w:300, content_h:800})
+//   var box = SDL3.createVBox({padX:10, padY:10, spacing:8})   // 用 createXxx，不要 win.add
+//   box.add(SDL3.createButton({text:"A"}), {})
+//   sv.set_content(box)
+//
+// 注意：内容控件不要单独 win.add，否则会被窗口与 ScrollView 双重处理。
+//       content_w/h 不传时，自动取内容控件的自然尺寸（即内容多大就滚多远）。
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_core.leno" as core; use core.SDL_Rect
+import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+import "sdl_edit.leno" as edt; use edt.Edit
+
+export struct ScrollView impl Widget {
+    float x; float y; float w; float h
+    float _contentW; float _contentH      // 可滚动内容虚拟尺寸
+    Widget _content                       // 内部内容控件（通常 VBox/Panel）
+    float _scrollX; float _scrollY        // 当前滚动偏移
+    float _step = 24.0                    // 每格滚轮滚动像素
+
+    // 外观
+    int br, bg, bb
+    int _bdrR, _bdrG, _bdrB
+    float _radius
+    int _brdA
+    bool _drawBorder
+
+    // 滚动条
+    float _barW = 12.0
+    int _dragV; int _dragH                // 0 无 / 1 拖动中
+    float _dragOffV; float _dragOffH
+    float _vThumbY; float _vThumbH        // 竖直滚动条拇指几何（每帧计算）
+    float _hThumbX; float _hThumbW        // 水平滚动条拇指几何
+
+    bool _loaded
+    Ptr[u8] _hwnd
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0))
+        y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 300))
+        h = _float(opts.get("h", 200))
+        _radius = _float(opts.get("radius", 8.0))
+        var bgc = opts.get("bg")
+        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        else { br = 38; bg = 40; bb = 48 }
+        var bdc = opts.get("border")
+        if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        else { _bdrR = 80; _bdrG = 85; _bdrB = 100 }
+        _brdA = _int(opts.get("border_alpha", 200))
+        _drawBorder = _bool(opts.get("border", true))
+        _contentW = _float(opts.get("content_w", -1.0))
+        _contentH = _float(opts.get("content_h", -1.0))
+        _scrollX = 0.0; _scrollY = 0.0
+        _loaded = true
+    }
+
+    // 绑定窗口句柄：记录自身，并下发给需要它的内容控件（如含 Edit 的布局）
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        if _content == null { return }
+        HBox hb = _content as HBox
+        if hb != null { hb._bind_window(hwnd); return }
+        VBox vb = _content as VBox
+        if vb != null { vb._bind_window(hwnd); return }
+        AnchorBox ab = _content as AnchorBox
+        if ab != null { ab._bind_window(hwnd); return }
+        ScrollView sv = _content as ScrollView
+        if sv != null { sv._bind_window(hwnd); return }
+        Edit e = _content as Edit
+        if e != null { e.set_window(hwnd) }
+    }
+
+    // 设置内容控件（单一）。content_w/h 未指定时取内容自然尺寸
+    func set_content(Widget c): Widget {
+        _content = c
+        if _contentW < 0.0 and c != null { _contentW = c.get_w() }
+        if _contentH < 0.0 and c != null { _contentH = c.get_h() }
+        _scrollX = 0.0; _scrollY = 0.0
+        if c != null and _hwnd != null { _bind_window(_hwnd) }
+        return c
+    }
+    func set_content_size(float cw, float ch) { _contentW = cw; _contentH = ch; _clampScroll() }
+    func set_bg(int r, int g, int b) { br = r; bg = g; bb = b }
+
+    // ---- 滚动范围与约束 ----
+    func _vmax(): float { float m = _contentH - h; if m < 0.0 { return 0.0 }; return m }
+    func _hmax(): float { float m = _contentW - w; if m < 0.0 { return 0.0 }; return m }
+    func _showV(): bool { return _vmax() > 0.0 }
+    func _showH(): bool { return _hmax() > 0.0 }
+    func _fabs(float v): float { if v < 0.0 { return -v } return v }
+    func _clampScroll() {
+        float mx = _hmax(); float my = _vmax()
+        if _scrollX < 0.0 { _scrollX = 0.0 } if _scrollX > mx { _scrollX = mx }
+        if _scrollY < 0.0 { _scrollY = 0.0 } if _scrollY > my { _scrollY = my }
+    }
+    func set_scroll(float sx, float sy) { _scrollX = sx; _scrollY = sy; _clampScroll() }
+    func scroll_to(float sx, float sy) { set_scroll(sx, sy) }
+    func get_scroll_x(): float { return _scrollX }
+    func get_scroll_y(): float { return _scrollY }
+    func get_max_scroll_x(): float { return _hmax() }
+    func get_max_scroll_y(): float { return _vmax() }
+
+    // 每帧把内容定位到（视口 - 偏移），设定内容尺寸，并刷新滚动条几何
+    func _sync() {
+        _computeThumbs()
+        if _content == null { return }
+        _content.set_pos(x - _scrollX, y - _scrollY)
+        _content.set_size(_contentW, _contentH)
+    }
+
+    func _computeThumbs() {
+        _vThumbY = y; _vThumbH = h; _hThumbX = x; _hThumbW = w
+        if _showV() {
+            float gh = if _showH() then _barW else 0.0
+            float trackH = h - gh
+            float ratio = if _contentH > 0.0 then h / _contentH else 1.0
+            float th = trackH * ratio
+            if th < 24.0 { th = 24.0 }
+            _vThumbH = th
+            float maxY = _vmax()
+            _vThumbY = if maxY > 0.0 then y + (_scrollY / maxY) * (trackH - th) else y
+        }
+        if _showH() {
+            float gw = if _showV() then _barW else 0.0
+            float trackW = w - gw
+            float ratio = if _contentW > 0.0 then w / _contentW else 1.0
+            float tw = trackW * ratio
+            if tw < 24.0 { tw = 24.0 }
+            _hThumbW = tw
+            float maxX = _hmax()
+            _hThumbX = if maxX > 0.0 then x + (_scrollX / maxX) * (trackW - tw) else x
+        }
+    }
+
+    // ---- Widget 接口 ----
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh; _clampScroll() }
+    func set_enabled(bool e) { _loaded = e }
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // 点是否在滚动条槽内（竖直右槽 / 水平底槽）
+    func _onGutter(float mx, float my): bool {
+        if _showV() {
+            float gw = _barW
+            if mx >= x + w - gw and mx <= x + w and my >= y and my <= y + h { return true }
+        }
+        if _showH() {
+            float gh = _barW
+            if my >= y + h - gh and my <= y + h and mx >= x and mx <= x + w { return true }
+        }
+        return false
+    }
+
+    func _scrollbarDown(float mx, float my) {
+        if _showV() {
+            float tx0 = x + w - _barW
+            if mx >= tx0 and mx <= x + w {
+                if my >= _vThumbY and my <= _vThumbY + _vThumbH {
+                    _dragV = 1; _dragOffV = my - _vThumbY
+                } else {
+                    float gh = if _showH() then _barW else 0.0
+                    float page = (h - gh) * 0.9
+                    if my < _vThumbY { _scrollY = _scrollY - page } else { _scrollY = _scrollY + page }
+                    _clampScroll()
+                }
+                return
+            }
+        }
+        if _showH() {
+            float ty0 = y + h - _barW
+            if my >= ty0 and my <= y + h {
+                if mx >= _hThumbX and mx <= _hThumbX + _hThumbW {
+                    _dragH = 1; _dragOffH = mx - _hThumbX
+                } else {
+                    float gw = if _showV() then _barW else 0.0
+                    float page = (w - gw) * 0.9
+                    if mx < _hThumbX { _scrollX = _scrollX - page } else { _scrollX = _scrollX + page }
+                    _clampScroll()
+                }
+                return
+            }
+        }
+    }
+
+    func _scrollbarDrag(float mx, float my) {
+        if _dragV == 1 {
+            float gh = if _showH() then _barW else 0.0
+            float trackH = h - gh
+            float maxY = _vmax()
+            if trackH - _vThumbH > 0.0 { _scrollY = (my - _dragOffV - y) / (trackH - _vThumbH) * maxY }
+            _clampScroll()
+        }
+        if _dragH == 1 {
+            float gw = if _showV() then _barW else 0.0
+            float trackW = w - gw
+            float maxX = _hmax()
+            if trackW - _hThumbW > 0.0 { _scrollX = (mx - _dragOffH - x) / (trackW - _hThumbW) * maxX }
+            _clampScroll()
+        }
+    }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        _sync()
+        // 滚动条交互优先于内容
+        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+            if _onGutter(ev.mouseX(), ev.mouseY()) { _scrollbarDown(ev.mouseX(), ev.mouseY()); return }
+        }
+        if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
+            if _dragV != 0 or _dragH != 0 { _dragV = 0; _dragH = 0; return }
+        }
+        if ev.isMouseMotion() and (_dragV != 0 or _dragH != 0) {
+            _scrollbarDrag(ev.mouseX(), ev.mouseY()); return
+        }
+        // 滚轮：悬停视口内才滚动
+        if ev.isMouseWheel() {
+            float wx = ev.wheelMouseX(); float wy = ev.wheelMouseY()
+            if wx >= x and wx <= x + w and wy >= y and wy <= y + h {
+                if _showH() and _fabs(ev.wheelX()) > _fabs(ev.wheelY()) {
+                    _scrollX = _scrollX - ev.wheelX() * _step
+                } else if _showV() {
+                    _scrollY = _scrollY - ev.wheelY() * _step
+                }
+                _clampScroll()
+            }
+        }
+        if _content != null { _content.process(ev) }
+    }
+
+    func _drawScrollbars(Renderer r) {
+        if _showV() {
+            float gw = _barW
+            float tx = x + w - gw
+            float gh = if _showH() then _barW else 0.0
+            r.setColor(60, 64, 76, 255)
+            r.fillRect(tx, y, gw, h - gh)
+            r.setColor(140, 145, 162, 255)
+            r.fillRoundedRect(tx + 2.0, _vThumbY, gw - 4.0, _vThumbH, 5.0)
+        }
+        if _showH() {
+            float gh = _barW
+            float ty = y + h - gh
+            float gw = if _showV() then _barW else 0.0
+            r.setColor(60, 64, 76, 255)
+            r.fillRect(x, ty, w - gw, gh)
+            r.setColor(140, 145, 162, 255)
+            r.fillRoundedRect(_hThumbX, ty + 2.0, _hThumbW, gh - 4.0, 5.0)
+        }
+    }
+
+    func render(Renderer r) {
+        if not _loaded { return }
+        _sync()
+        // 背景
+        r.setColor(br, bg, bb, 255)
+        r.fillRoundedRect(x, y, w, h, _radius)
+        // 裁剪到视口（扣除滚动条槽，避免内容画到槽下）
+        float gw = if _showV() then _barW else 0.0
+        float gh = if _showH() then _barW else 0.0
+        SDL_Rect cr = SDL_Rect.malloc()
+        cr.x = _int(x); cr.y = _int(y); cr.w = _int(w - gw); cr.h = _int(h - gh)
+        r.setClipRect(cr.to_ptr())
+        if _content != null { _content.render(r) }
+        r.clearClip()
+        // 滚动条（最上层）
+        _drawScrollbars(r)
+        // 边框
+        if _drawBorder {
+            r.setColor(_bdrR, _bdrG, _bdrB, _brdA)
+            r.drawRoundedRect(x, y, w, h, _radius)
+        }
+    }
+
+    func dispose() {
+        if _content != null { _content.dispose() }
+    }
+}
+
+// 工厂
+export func createScrollView(Dict opts): ScrollView {
+    ScrollView s = new ScrollView(); s.set(opts); return s
+}
