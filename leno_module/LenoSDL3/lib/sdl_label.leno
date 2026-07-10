@@ -4,6 +4,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 
 export struct Label impl Widget {
     string text
@@ -16,6 +17,8 @@ export struct Label impl Widget {
     int _align                   // 对齐: 0=左, 1=中, 2=右
     float _w; float _h           // 缓存自然尺寸（供布局使用）
     bool _loaded
+    bool hover; bool _wasHover
+    string _tip             // 悬停提示文本（空 = 不提示）
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -51,6 +54,8 @@ export struct Label impl Widget {
             if text != "" { _w = _float(_font.measureString(text).w) } else { _w = 0.0 }
             _h = _float(_font.measureString("Ag").h)
         } else { _w = 0.0; _h = 16.0 }
+        hover = false; _wasHover = false
+        _tip = opts.get("tip", "") as string
         _loaded = true
     }
 
@@ -77,6 +82,7 @@ export struct Label impl Widget {
         if _font != null and _font.ok { _font.setStyle(style) }
     }
     func set_align(int a) { _align = a }
+    func set_tip(string t) { _tip = t }
 
     // ==================== 查询方法 ====================
     func get_text(): string  { return text }
@@ -87,8 +93,16 @@ export struct Label impl Widget {
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { _w = sw; _h = sh }
 
-    // 标签无需处理输入事件（仅展示），提供空实现以适配 Widget 接口
-    func process(Event ev) {}
+    // 标签仅用于悬停提示检测（其余输入不参与）
+    func process(Event ev) {
+        if not _loaded { return }
+        if not ev.isMouseMotion() { return }
+        _wasHover = hover
+        float mx = ev.mouseX(); float my = ev.mouseY()
+        hover = mx >= x and mx <= x + _w and my >= y and my <= y + _h
+        if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
+        else if _wasHover and not hover { tip.tipClear() }
+    }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {

@@ -55,6 +55,7 @@ use lay.VBox
 use lay.AnchorBox
 import "sdl_menu.leno" as menu
 use menu.MenuBar
+import "sdl_tooltip.leno" as tip
 import "sdl_widget.leno" as wgt
 use wgt.Widget
 
@@ -71,6 +72,8 @@ Array[Array[Widget]]   _runWidgets = []
 Array[Array[ComboBox]]  _runCombos  = []
 Array[Array[MenuBar]]   _runMenus   = []
 Array[Widget]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置）
+Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
+Array[int]             _runH     = []     // 各窗口逻辑高
 var _runRunning = false
 var _modalWid = -1
 
@@ -377,6 +380,8 @@ export struct Window {
         _runCombos.add(_combos)      // 下拉框集合（用于第二遍 overlay 绘制）
         _runMenus.add(_menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
         _runRoots.add(_root)         // 根布局控件
+        Size sz = getSize()           // 窗口逻辑尺寸（Tooltip 浮层夹紧用）
+        _runW.add(sz.w); _runH.add(sz.h)
 
         if _runRunning { return }
         _runRunning = true
@@ -407,7 +412,7 @@ export struct Window {
                             _windowCount -= 1
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i);  _runEvts.remove(i)
-                            _runRends.remove(i); _runWidgets.remove(i); _runCombos.remove(i); _runMenus.remove(i); _runRoots.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i); _runCombos.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runW.remove(i); _runH.remove(i)
                             break
                         }
                     }
@@ -456,6 +461,9 @@ export struct Window {
                 // 第二遍：所有展开的下拉菜单画在最上层
                 var mns = _runMenus[i]
                 for mns to mn { mn.renderPopup(_runRens[i]) }
+                // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
+                tip.tipTick()
+                tip.tipRender(_runRens[i], _float(_runW[i]), _float(_runH[i]))
                 _runRens[i].present()
             }
         }

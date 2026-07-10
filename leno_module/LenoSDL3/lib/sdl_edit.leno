@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.Scancode
 use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 
 export struct Edit impl Widget {
     string text
@@ -46,6 +47,7 @@ export struct Edit impl Widget {
     bool _password               // 密码模式
     bool _readOnly               // 只读
     bool _loaded
+    string _tip             // 悬停提示文本（空 = 不提示）
     bool _dirty                  // 行缓存需重建
     bool _textDirty              // text 需要从 _lines 重建
     int  _cachedLen              // 缓存总字符数（不含换行符）
@@ -241,6 +243,7 @@ export struct Edit impl Widget {
         if fc is Array[int] { _focusR = _int(fc[0]); _focusG = _int(fc[1]); _focusB = _int(fc[2]) }
 
         _placeholder = opts.get("placeholder", "") as string
+        _tip = opts.get("tip", "") as string
 
         // 模式
         _multiline  = _bool(opts.get("multiline", false))
@@ -294,6 +297,7 @@ export struct Edit impl Widget {
         _multiline = ml; _dirty = true
     }
     func set_placeholder(string p) { _placeholder = p }
+    func set_tip(string t) { _tip = t }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
     func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }
     func focus()    { _focused = true }
@@ -577,6 +581,9 @@ export struct Edit impl Widget {
             _hoverText = hit
             core.markFrameMotion()
             if hit { core.requestCursor(core.SystemCursor.TEXT) }
+            // 悬停提示：命中编辑区上报、离开清除
+            if hit and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            else if not hit { tip.tipClear() }
         }
 
         // ---- 鼠标滚轮（所有模式，仅当光标在本控件内才响应）----

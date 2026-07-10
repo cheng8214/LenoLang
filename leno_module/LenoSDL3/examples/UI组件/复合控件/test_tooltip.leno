@@ -1,0 +1,78 @@
+// test_tooltip.leno — Tooltip 悬停提示测试
+// 运行：leno 本文件（Esc 退出）
+// 把鼠标停在带 tip 的控件上约 0.5 秒，会在光标旁浮出提示文字。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Button
+use SDL3.Label
+use SDL3.Edit
+use SDL3.CheckBox
+use SDL3.Slider
+use SDL3.Toggle
+
+main() {
+    var win = SDL3.createWindow({title: "Tooltip 测试", w: 560, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 全局可调：悬停 300ms 才弹出（默认 500ms）
+    SDL3.setTipDelay(300)
+
+    win.addLabel({x: 20, y: 16, text: "把鼠标停在以下控件上稍候，会浮出提示：", font_size: 15})
+
+    // 按钮：保存（tip）
+    win.addButton({x: 20, y: 56, w: 130, h: 36, text: "保存", tip: "保存当前文档 (Ctrl+S)"})
+        .on_click(func() { print("点击了保存") })
+
+    // 按钮：删除（危险型 tip）
+    win.addButton({x: 165, y: 56, w: 130, h: 36, text: "删除", type: "danger",
+                   tip: "删除后不可恢复，请谨慎操作"})
+
+    // 复选框 tip
+    win.addCheckBox({x: 20, y: 110, w: 260, h: 26, text: "自动保存", checked: true,
+                     tip: "每隔 5 分钟自动保存一次"})
+
+    // 开关 tip
+    win.addToggle({x: 20, y: 150, w: 240, h: 30, text: "启用通知", on: true,
+                   tip: "开启后将接收桌面通知"})
+
+    // 滑块 tip
+    var vol = SDL3.createSlider({x: 20, y: 200, w: 260, h: 24, min: 0, max: 100, value: 70,
+                                 tip: "系统音量：70%"})
+    win.add(vol)
+
+    // 编辑框 tip
+    win.addEdit({x: 20, y: 240, w: 260, h: 34, placeholder: "在此输入…",
+                 tip: "支持 Ctrl+Z 撤销 / Ctrl+C 复制"})
+
+    // 标签也能有 tip（用于解释性说明）
+    win.addLabel({x: 20, y: 290, text: "ⓘ 悬停我", font_size: 15,
+                  tip: "标签控件同样支持悬停提示"})
+
+    // 运行时动态修改 tip
+    var b2 = win.addButton({x: 310, y: 56, w: 200, h: 36, text: "动态 tip",
+                            tip: "初始提示"})
+    b2.on_click(func() {
+        b2.set_tip("你刚刚点过我（" + SDL3.getTicks() as string + "）")
+        print("已更新按钮 tip")
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "Tooltip 测试 (Esc 退出)", 20, 2, 200, 210, 230)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

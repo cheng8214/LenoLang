@@ -1,0 +1,104 @@
+// sdl_tooltip.leno — 悬停提示（Tooltip）
+//
+// 设计：全局单例。任意控件在 hover 且有 tip 文本时调用 tipReport(text, mx, my)；
+// Window 每帧先 tipTick()（按悬停时长决定是否显示），最后一遍 tipRender() 画在最上层。
+// Tooltip 不处理任何输入事件（无 process），纯展示，因此不会拦截点击/滚轮。
+//
+// 用法（控件侧，已内置到 Button/Label/CheckBox/RadioButton/Toggle/Slider/Edit）：
+//   win.addButton({tip: "保存当前文件", ...})
+//   // 或运行时：btn.set_tip("保存")
+// 全局可调：SDL3.setTipDelay(ms) 修改悬停多久才弹出（默认 500ms）。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_core.leno" as core
+
+// ==================== 全局状态 ====================
+var _tipText  = ""          // 当前要显示的提示文本（空 = 无）
+var _tipAX    = 0.0; var _tipAY = 0.0   // 锚点（最近一次上报的光标位置）
+var _tipStart = 0           // 首次 hover 该文本的 tick（用于延迟）
+var _tipVisible = false
+var _tipDelay  = 500        // 悬停多久才显示（毫秒）
+var _font Font
+var _fontSize  = 14.0
+
+// 配色（深色半透明浮层）
+var _bgR = 38;  var _bgG = 40;  var _bgB = 48
+var _txtR = 232; var _txtG = 234; var _txtB = 242
+var _brdR = 110; var _brdG = 115; var _brdB = 132
+
+// ==================== 外部可调 ====================
+export func setTipDelay(int ms) { _tipDelay = ms }
+
+// 控件在 hover 时调用（每次 mouse motion 上报）。text 为空表示此控件无 tip。
+// 同一文本重复上报不会重置计时；文本变化（或重新进入）才会重新计延迟。
+export func tipReport(string text, float ax, float ay) {
+    if text == null or text == "" { tipClear(); return }
+    if text != _tipText {
+        _tipText = text
+        _tipStart = core.getTicks()
+    }
+    _tipAX = ax; _tipAY = ay
+}
+
+// 控件离开 hover 时调用：立即隐藏（避免残留在屏幕上）。
+export func tipClear() {
+    _tipText = ""
+    _tipVisible = false
+}
+
+// 每帧由 Window 调用：根据悬停时长决定是否可见。
+export func tipTick() {
+    if _tipText == "" {
+        _tipVisible = false
+        return
+    }
+    int now = core.getTicks()
+    if now - _tipStart >= _tipDelay { _tipVisible = true }
+    else { _tipVisible = false }
+}
+
+func _ensureFont(Renderer r) {
+    if _font == null or not _font.ok {
+        Font old = _font as Font
+        if old != null { old.close() }
+        _font = fnt.createFontAuto(_fontSize)
+    }
+    if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }
+}
+
+// 每帧由 Window 在“所有控件 + ComboBox/Menu 弹层”之后调用，浮在最上层。
+// vw / vh 为窗口逻辑尺寸，用于把浮层夹紧在窗口内。
+export func tipRender(Renderer r, float vw, float vh) {
+    if not _tipVisible or _tipText == "" { return }
+    _ensureFont(r)
+    if _font == null or not _font.ok { return }
+
+    float padX = 10.0; float padY = 7.0
+    var ms = _font.measureString(_tipText)
+    float tw = _float(ms.w)
+    float th = _float(ms.h)
+    float bw = tw + padX * 2.0
+    float bh = th + padY * 2.0
+
+    // 默认显示在光标右下方
+    float bx = _tipAX + 14.0
+    float by = _tipAY + 20.0
+
+    // 横向越界则翻到光标左侧
+    if bx + bw > vw { bx = _tipAX - 14.0 - bw }
+    if bx < 0.0    { bx = 4.0 }
+    // 纵向越界则翻到光标上方
+    if by + bh > vh { by = _tipAY - 14.0 - bh }
+    if by < 0.0     { by = 4.0 }
+
+    // 背景
+    r.setColor(_bgR, _bgG, _bgB, 240)
+    r.fillRoundedRect(bx, by, bw, bh, 5.0)
+    // 边框
+    r.setColor(_brdR, _brdG, _brdB, 220)
+    r.drawRoundedRect(bx, by, bw, bh, 5.0)
+    // 文字（垂直居中）
+    float tx = bx + padX
+    float ty = by + (bh - th) / 2.0
+    r.drawText(_font, _tipText, r.snapX(tx), r.snapY(ty), _txtR, _txtG, _txtB)
+}

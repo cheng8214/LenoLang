@@ -5,6 +5,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 
 export struct Button impl Widget {
     string text
@@ -25,6 +26,7 @@ export struct Button impl Widget {
     bool _showShadow        // 是否显示阴影
     bool _showBorder        // 是否显示边框
     bool _loaded
+    string _tip             // 悬停提示文本（空 = 不提示）
 
     // ==================== 预设类型 ====================
     func _apply_type(string t) {
@@ -99,6 +101,7 @@ export struct Button impl Widget {
         enabled = _bool(opts.get("enabled", true))
         hover   = false
         _wasHover = false
+        _tip    = opts.get("tip", "") as string
 
         _ensure_font()
         _loaded = true
@@ -106,6 +109,7 @@ export struct Button impl Widget {
 
     // ==================== 设置方法 ====================
     func set_text(string t)     { text = t }
+    func set_tip(string t)       { _tip = t }
     func set_pos(float px, float py)      { x = px; y = py }
     func set_size(float sw, float sh)     { w = sw; h = sh }
     func set_bounds(float bx, float by, float bw, float bh) {
@@ -168,6 +172,9 @@ export struct Button impl Widget {
                 if hover and not _wasHover { core.setSystemCursor(_cursor) }
                 if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
             }
+            // 悬停提示：进入上报、离开清除
+            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            else if _wasHover and not hover { tip.tipClear() }
         }
         if ev.isMouseButtonDown() and hover and _onClick != null {
             _onClick()

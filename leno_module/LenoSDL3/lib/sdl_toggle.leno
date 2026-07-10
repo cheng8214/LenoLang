@@ -5,6 +5,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 
 export struct Toggle impl Widget {
     string text
@@ -24,6 +25,7 @@ export struct Toggle impl Widget {
     bool _pressed
     bool enabled
     bool _loaded
+    string _tip             // 悬停提示文本（空 = 不提示）
     bool _animate              // 开启动画选项（anim）
     float _animSpeed           // 动画速度（anim_speed）
     float _animPos             // 滑块当前显示位置 0=关 1=开
@@ -67,6 +69,7 @@ export struct Toggle impl Widget {
         _on = _bool(opts.get("on", false))
         enabled = _bool(opts.get("enabled", true))
         hover = false; _wasHover = false; _pressed = false
+        _tip = opts.get("tip", "") as string
 
         // 动画选项：anim=true 开启平滑滑动动画，anim_speed 控制速度
         _animate = _bool(opts.get("anim", false))
@@ -81,6 +84,7 @@ export struct Toggle impl Widget {
     }
 
     func set_text(string t)    { text = t }
+    func set_tip(string t)      { _tip = t }
     func set_on(bool o) {
         if _on != o {
             _on = o
@@ -134,6 +138,9 @@ export struct Toggle impl Widget {
                 if hover and not _wasHover { core.setSystemCursor(_cursor) }
                 if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
             }
+            // 悬停提示：进入上报、离开清除
+            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            else if _wasHover and not hover { tip.tipClear() }
         }
 
         if ev.isMouseButtonUp() { _pressed = false }
