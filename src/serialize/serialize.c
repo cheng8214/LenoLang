@@ -1968,34 +1968,68 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
         }
     }
 
-    // 依赖缓存一致性检查：对每个依赖模块，验证其缓存是否与源文件一致
-    // 如果任何依赖的源文件已被修改（缓存失效），则父模块的缓存也应失效
+    // 依赖缓存一致性检查：对每个依赖模块，读取其缓存 header 中的 src_hash/src_size，
+    // 再与依赖源文件当前内容比对。如果任何依赖的源文件已被修改，则父缓存也失效。
     if (dep_count > 0 && dep_paths) {
         const char* cache_dir = module_loader_get_cache_dir();
         for (uint32_t i = 0; i < dep_count; i++) {
             if (!dep_paths[i] || !cache_dir) continue;
-            struct stat dep_st;
-            if (stat(dep_paths[i], &dep_st) != 0) continue;
-            // 快速检查：如果依赖源文件的修改时间比缓存文件新，则父缓存失效
             char* dep_cache_path = module_cache_path_for(dep_paths[i], cache_dir);
             if (!dep_cache_path) continue;
-            struct stat dep_cache_st;
-            if (stat(dep_cache_path, &dep_cache_st) == 0) {
-                // 缓存文件存在，但源文件更新 → 依赖缓存过期 → 父缓存也失效
-                if (dep_st.st_mtime > dep_cache_st.st_mtime) {
+
+            // 读取依赖缓存文件的 header（magic + version + src_hash + src_size = 24字节）
+            FILE* dep_file = fopen(dep_cache_path, "rb");
+            if (!dep_file) {
+                // 缓存文件不存在 → 依赖从未缓存或缓存被删 → 父缓存失效
+                free(dep_cache_path);
+                for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);
+                free(dep_paths);
+                free(data);
+                return NULL;
+            }
+            uint32_t dep_magic, dep_version;
+            uint64_t dep_src_hash, dep_src_size;
+            int header_ok = 1;
+            if (fread(&dep_magic, 4, 1, dep_file) != 1) header_ok = 0;
+            if (fread(&dep_version, 4, 1, dep_file) != 1) header_ok = 0;
+            if (fread(&dep_src_hash, 8, 1, dep_file) != 1) header_ok = 0;
+            if (fread(&dep_src_size, 8, 1, dep_file) != 1) header_ok = 0;
+            fclose(dep_file);
+
+            if (!header_ok || dep_magic != LENO_MODCACHE_MAGIC || dep_version != LENO_MODCACHE_VERSION) {
+                // header 无效 → 依赖缓存损坏 → 父缓存失效
+                free(dep_cache_path);
+                for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);
+                free(dep_paths);
+                free(data);
+                return NULL;
+            }
+
+            // 与当前源文件比对：先比大小（O(1) stat），再比哈希
+            struct stat dep_st;
+            if (stat(dep_paths[i], &dep_st) == 0) {
+                if ((uint64_t)dep_st.st_size != dep_src_size) {
+                    // 大小不同 → 源文件已变 → 父缓存失效
                     free(dep_cache_path);
                     for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);
                     free(dep_paths);
                     free(data);
                     return NULL;
                 }
-            } else {
-                // 缓存文件不存在 → 依赖从未被缓存或缓存被删 → 父缓存失效
-                free(dep_cache_path);
-                for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);
-                free(dep_paths);
-                free(data);
-                return NULL;
+                // 大小相同也要比哈希（内容可能变了但大小恰好不变）
+                char* dep_src = read_file_for_hash(dep_paths[i]);
+                if (dep_src) {
+                    uint64_t dep_cur_hash = serialize_source_hash(dep_src, strlen(dep_src));
+                    free(dep_src);
+                    if (dep_cur_hash != dep_src_hash) {
+                        // 哈希不同 → 源文件已变 → 父缓存失效
+                        free(dep_cache_path);
+                        for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);
+                        free(dep_paths);
+                        free(data);
+                        return NULL;
+                    }
+                }
             }
             free(dep_cache_path);
         }
