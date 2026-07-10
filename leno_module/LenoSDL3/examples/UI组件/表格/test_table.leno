@@ -1,0 +1,82 @@
+// test_table.leno — Table 表格测试
+// 运行：leno 本文件（Esc 退出）
+// 校验点：多列渲染、斑马纹、表头排序（点表头）、行选中、双向滚动（数据 12 行触发纵向滚动）、
+//         add_row / remove_row / clear 数据操作、on_select / on_cell 回调
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Table
+
+main() {
+    var win = SDL3.createWindow({title: "Table 测试", w: 560, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    Array[string] headers = ["名称", "数量", "单价", "小计"]
+    // 对齐：0 左, 1 中, 2 右
+    Array[int] aligns = [0, 2, 2, 2]
+    Array[Array[string]] rows = [
+        ["键盘",   "12", "299.0",  "3588.0"],
+        ["鼠标",   "30", "99.0",   "2970.0"],
+        ["显示器", "5",  "1299.0", "6495.0"],
+        ["耳机",   "20", "199.0",  "3980.0"],
+        ["音箱",   "8",  "459.0",  "3672.0"],
+        ["摄像头", "15", "259.0",  "3885.0"],
+        ["硬盘",   "40", "499.0",  "19960.0"],
+        ["内存",   "60", "329.0",  "19740.0"],
+        ["显卡",   "10", "3299.0", "32990.0"],
+        ["电源",   "25", "399.0",  "9975.0"],
+        ["机箱",   "18", "299.0",  "5382.0"],
+        ["主板",   "22", "899.0",  "19778.0"]
+    ]
+
+    var tbl = win.addTable({
+        x: 30, y: 40, w: 500, h: 280,
+        headers: headers, aligns: aligns, rows: rows,
+        sortable: true, zebra: true, row_h: 24, header_h: 28
+    })
+    tbl.on_select(func(int row) {
+        print("选中第 " + row + " 行：" + tbl.get_row(row))
+    })
+    tbl.on_cell(func(int r, int c) {
+        print("点击单元格 (" + r + ", " + c + ") = " + tbl.get_row(r)[c])
+    })
+
+    // 按钮：添加一行
+    win.addButton({x: 30, y: 338, w: 150, h: 32, text: "添加一行"}).on_click(func() {
+        int n = tbl.row_count()
+        tbl.add_row(["新行" + n, "1", "1.0", "1.0"])
+        print("已添加，当前 " + tbl.row_count() + " 行")
+    })
+
+    // 按钮：删除选中行
+    win.addButton({x: 195, y: 338, w: 150, h: 32, text: "删除选中行"}).on_click(func() {
+        int sel = tbl.get_selected_row()
+        if sel >= 0 { tbl.remove_row(sel); print("已删除第 " + sel + " 行") }
+        else { print("未选中行") }
+    })
+
+    // 按钮：清空
+    win.addButton({x: 360, y: 338, w: 150, h: 32, text: "清空"}).on_click(func() {
+        tbl.clear()
+        print("已清空，剩余 " + tbl.row_count() + " 行")
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "Table 测试 (Esc 退出，点表头排序)", 20, 2, 200, 210, 230)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

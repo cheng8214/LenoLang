@@ -49,6 +49,10 @@ import "sdl_panel.leno" as pnl
 use pnl.Panel
 import "sdl_tab.leno" as tab
 use tab.TabControl
+import "sdl_spinbox.leno" as spb
+use spb.SpinBox
+import "sdl_table.leno" as tbl
+use tbl.Table
 import "sdl_layout.leno" as lay
 use lay.HBox
 use lay.VBox
@@ -339,6 +343,23 @@ export struct Window {
         TabControl t = tab.createTabControl(opts)
         _widgets.add(t as Widget)
         t._bind_window(handle)
+        return t
+    }
+
+    // 添加数值微调框，opts: {x, y, w, h, min, max, value, step, int, decimals, ...}
+    // 返回 SpinBox，可 .on_change(func(float){...}) / .set_value(float) / .get_value() / .set_range(lo,hi)
+    func addSpinBox(Dict opts): SpinBox {
+        SpinBox s = spb.createSpinBox(opts)
+        _widgets.add(s as Widget)
+        s._bind_window(handle)
+        return s
+    }
+
+    // 添加表格，opts: {x, y, w, h, headers, col_widths, aligns, rows, row_h, header_h, sortable, zebra, ...}
+    // 返回 Table，可 .on_select(func(int){...}) / .on_cell(func(int,int){...}) / .set_rows(...) / .add_row(...)
+    func addTable(Dict opts): Table {
+        Table t = tbl.createTable(opts)
+        _widgets.add(t as Widget)
         return t
     }
 

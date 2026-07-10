@@ -1,0 +1,83 @@
+// test_spinbox.leno — SpinBox 数值微调框测试
+// 运行：leno 本文件（Esc 退出）
+// 校验点：箭头 ±step、滚轮调整、手动输入（IME/剪贴板）、范围约束、int/decimals 模式、禁用态
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.SpinBox
+
+main() {
+    var win = SDL3.createWindow({title: "SpinBox 测试", w: 470, h: 360})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(15.0)
+
+    // 1) 通用数值框：0~100，步长 1
+    var sb1 = win.addSpinBox({x: 30, y: 50, w: 180, h: 34,
+                               min: 0, max: 100, value: 42, step: 1,
+                               tip: "点击上下箭头或滚轮 ±1"})
+    sb1.on_change(func(float v) {
+        print("sb1 值变化 -> " + v)
+    })
+
+    // 2) 整数模式：0~10，步长 1
+    var sb2 = win.addSpinBox({x: 30, y: 100, w: 180, h: 34,
+                               min: 0, max: 10, value: 3, step: 1, int_mode: true,
+                               tip: "整数模式"})
+
+    // 3) 浮点模式：0~1，步长 0.05，两位小数
+    var sb3 = win.addSpinBox({x: 30, y: 150, w: 180, h: 34,
+                               min: 0, max: 1, value: 0.5, step: 0.05, decimals: 2,
+                               tip: "浮点模式，两位小数"})
+
+    // 4) 禁用状态
+    var sb4 = win.addSpinBox({x: 30, y: 200, w: 180, h: 34,
+                               min: 0, max: 100, value: 7, enabled: false,
+                               tip: "禁用态"})
+
+    // 按钮：读取 sb1 当前值
+    win.addButton({x: 250, y: 48, w: 180, h: 32, text: "读取 sb1 值"}).on_click(func() {
+        print("sb1 当前值 = " + sb1.get_value())
+    })
+
+    // 按钮：设置 sb1 = 88
+    win.addButton({x: 250, y: 86, w: 180, h: 32, text: "设置 sb1 = 88"}).on_click(func() {
+        sb1.set_value(88)
+    })
+
+    // 按钮：sb1 范围改为 0~10（验证约束：88 会被夹到 10）
+    win.addButton({x: 250, y: 124, w: 180, h: 32, text: "sb1 范围 0~10"}).on_click(func() {
+        sb1.set_range(0, 10)
+    })
+
+    // 按钮：切换 sb4 启用状态
+    win.addButton({x: 250, y: 162, w: 180, h: 32, text: "切换 sb4 启用"}).on_click(func() {
+        sb4.set_enabled(not sb4.is_enabled())
+    })
+
+    // 按钮：sb2 切到浮点模式并设 step=0.1、2 位小数
+    win.addButton({x: 250, y: 200, w: 180, h: 32, text: "sb2 转浮点"}).on_click(func() {
+        sb2.set_int_mode(false)
+        sb2.set_step(0.1)
+        sb2.set_decimals(2)
+        sb2.set_range(0, 5)
+        sb2.set_value(1.23)
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "SpinBox 测试 (Esc 退出，滚轮/箭头/输入均可调值)", 20, 2, 200, 210, 230)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

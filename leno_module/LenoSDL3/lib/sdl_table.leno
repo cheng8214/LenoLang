@@ -1,0 +1,556 @@
+// sdl_table.leno — 表格控件（多列多行，可选表头/排序/选择/双向滚动）
+// 通过 win.addTable({...}) 创建；数据用 set_rows / add_row 设置。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
+
+export struct Table impl Widget {
+    float x; float y; float w; float h
+    Array[string] _headers
+    Array[float] _colW
+    Array[int] _aligns           // 每列对齐：0 左, 1 中, 2 右
+    Array[Array[string]] _rows
+    int _ncols
+    bool _autoCols              // 列宽是否按宽度等分（用户未指定 col_widths）
+    float _headerH; float _rowH
+    float _scrollX; float _scrollY
+    int _selRow; int _selCol; int _hoverRow
+    bool _sortable; int _sortCol; bool _sortDesc; bool _zebra
+
+    float _fontSize; string _fontPath; int _fontStyle; Font _font
+    int br, bg, bb
+    int _hdrR, _hdrG, _hdrB; int _hdrTxtR, _hdrTxtG, _hdrTxtB
+    int _selR, _selG, _selB; int _hovR, _hovG, _hovB; int _zebR, _zebG, _zebB
+    int tr, tg, tb; int _sepR, _sepG, _sepB; int _sbR, _sbG, _sbB
+    int _cursor
+    bool enabled; bool visible; bool _loaded
+    string _tip
+    bool _draggingV; bool _draggingH; float _vDragOffset; float _hDragOffset
+    int _dragCol; float _dragStartX; float _dragStartW; bool _resizable
+    func(int):void _onSelect
+    func(int, int):void _onCell
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
+            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+    func _clamp(float v, float lo, float hi): float {
+        if v < lo { return lo }; if v > hi { return hi }; return v
+    }
+    func _total_w(): float {
+        float s = 0.0
+        for _colW.len() to i { s = s + _colW[i] }
+        return s
+    }
+    func _compute_sb(): Array[float] {
+        float vw = 0.0; float hh = 0.0
+        float bodyH0 = h - _headerH - 8.0
+        float bodyW0 = w - 8.0
+        float ch = _rows.len() * _rowH
+        float tw = _total_w()
+        if ch > bodyH0 { vw = 8.0 }
+        if tw > bodyW0 { hh = 8.0 }
+        if vw > 0.0 and tw > bodyW0 - vw { hh = 8.0 }
+        if hh > 0.0 and ch > bodyH0 - hh { vw = 8.0 }
+        return [vw, hh]
+    }
+    func _max_scroll_y(): float {
+        var sb = _compute_sb()
+        float bodyH = h - _headerH - sb[1]
+        if bodyH < 0 { bodyH = 0 }
+        float ch = _rows.len() * _rowH
+        if ch <= 0 { ch = 1 }
+        float m = ch - bodyH
+        if m < 0 { m = 0 }
+        return m
+    }
+    func _max_scroll_x(): float {
+        var sb = _compute_sb()
+        float bodyW = w - sb[0]
+        if bodyW < 0 { bodyW = 0 }
+        float m = _total_w() - bodyW
+        if m < 0 { m = 0 }
+        return m
+    }
+    func _clamp_scroll() {
+        float my = _max_scroll_y(); if _scrollY < 0 { _scrollY = 0 }; if _scrollY > my { _scrollY = my }
+        float mx = _max_scroll_x(); if _scrollX < 0 { _scrollX = 0 }; if _scrollX > mx { _scrollX = mx }
+    }
+    func _col_x(int ci): float {
+        float cx = x - _scrollX
+        for 0 : ci - 1 to k { cx = cx + _colW[k] }
+        return cx
+    }
+    func _row_at(float my): int {
+        if my < y + _headerH { return -1 }
+        int idx = _int((my - y - _headerH + _scrollY) / _rowH)
+        if idx < 0 or idx >= _rows.len() { return -1 }
+        return idx
+    }
+    func _col_at(float mx): int {
+        if mx < x - _scrollX { return -1 }
+        float cx = x - _scrollX
+        for 0 : _ncols - 1 to k {
+            if mx >= cx and mx < cx + _colW[k] { return k }
+            cx = cx + _colW[k]
+        }
+        return -1
+    }
+    // 命中表头列分隔线（用于列宽拖拽），返回左侧列索引，未命中返回 -1
+    func _header_resize_col(float mx): int {
+        if not _resizable { return -1 }
+        if _ncols <= 0 { return -1 }
+        float tol = 5.0
+        for 0 : _ncols - 1 to c {
+            float edge = _col_x(c) + _colW[c]
+            if mx >= edge - tol and mx <= edge + tol { return c }
+        }
+        return -1
+    }
+    func _cell(int r, int c): string {
+        if r < 0 or r >= _rows.len() { return "" }
+        var row = _rows[r]
+        if c < 0 or c >= row.len() { return "" }
+        return row[c]
+    }
+
+    // ==================== set 初始化 ====================
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0))
+        y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 360))
+        h = _float(opts.get("h", 240))
+        _headerH = _float(opts.get("header_h", 28))
+        _rowH = _float(opts.get("row_h", 24))
+        _fontSize = _float(opts.get("font_size", 14))
+        _fontPath = opts.get("font_path", "") as string
+        _fontStyle = _int(opts.get("font_style", 0))
+        _sortable = _bool(opts.get("sortable", false))
+        _resizable = _bool(opts.get("resizable", true))
+        _zebra = _bool(opts.get("zebra", true))
+
+        var hs = opts.get("headers", [])
+        if hs is Array[string] { _headers = hs as Array[string] } else { _headers = [] }
+        var cws = opts.get("col_widths", [])
+        if cws is Array[float] { _colW = cws as Array[float]; _autoCols = (_colW.len() == 0) }
+        else { _colW = []; _autoCols = true }
+        var als = opts.get("aligns", [])
+        if als is Array[int] { _aligns = als as Array[int] } else { _aligns = [] }
+
+        var rs = opts.get("rows", [])
+        if rs is Array[Array[string]] { _rows = rs as Array[Array[string]] } else { _rows = [] }
+
+        _ncols = _headers.len()
+        if _ncols == 0 {
+            int m = 0
+            for _rows.len() to i { if _rows[i].len() > m { m = _rows[i].len() } }
+            _ncols = m
+        }
+        if _ncols == 0 { _ncols = 1 }
+        _recompute_cols()
+
+        // 配色
+        br = 38; bg = 40; bb = 48
+        _hdrR = 46; _hdrG = 48; _hdrB = 56; _hdrTxtR = 220; _hdrTxtG = 225; _hdrTxtB = 235
+        _selR = 60; _selG = 150; _selB = 235
+        _hovR = 70; _hovG = 78; _hovB = 92
+        _zebR = 44; _zebG = 46; _zebB = 54
+        tr = 232; tg = 235; tb = 245
+        _sepR = 70; _sepG = 74; _sepB = 84
+        _sbR = 120; _sbG = 125; _sbB = 140
+
+        var bgc = opts.get("bg_rgb")
+        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        var hdc = opts.get("header_rgb")
+        if hdc is Array[int] { _hdrR = _int(hdc[0]); _hdrG = _int(hdc[1]); _hdrB = _int(hdc[2]) }
+        var slc = opts.get("sel_rgb")
+        if slc is Array[int] { _selR = _int(slc[0]); _selG = _int(slc[1]); _selB = _int(slc[2]) }
+        var sc = opts.get("sep_rgb")
+        if sc is Array[int] { _sepR = _int(sc[0]); _sepG = _int(sc[1]); _sepB = _int(sc[2]) }
+
+        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
+        _tip = opts.get("tip", "") as string
+        _selRow = -1; _selCol = -1; _hoverRow = -1
+        _scrollX = 0.0; _scrollY = 0.0
+        _sortCol = -1; _sortDesc = false
+        _draggingV = false; _draggingH = false
+        _dragCol = -1
+        _ensure_font()
+        _clamp_scroll()
+        _loaded = true
+    }
+
+    func _recompute_cols() {
+        int n = _ncols
+        if n <= 0 { n = 1 }
+        if _autoCols or _colW.len() != n {
+            _colW = []
+            float cw = w / _float(n)
+            if cw < 30.0 { cw = 30.0 }
+            for n to _ { _colW.add(cw) }
+        }
+        if _aligns.len() != n {
+            _aligns = []
+            for n to _ { _aligns.add(0) }
+        }
+    }
+
+    // ==================== 布局接口 ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_pos(float px, float py) { x = px; y = py; _clamp_scroll() }
+    func set_size(float sw, float sh) {
+        w = sw; h = sh
+        if _autoCols { _recompute_cols() }
+        _clamp_scroll()
+    }
+
+    // ==================== 数据操作 ====================
+    func set_rows(Array[Array[string]] rs) {
+        _rows = rs
+        int m = 0
+        for _rows.len() to i { if _rows[i].len() > m { m = _rows[i].len() } }
+        if _headers.len() > 0 { _ncols = _headers.len() }
+        else if m > 0 { _ncols = m } else if _ncols == 0 { _ncols = 1 }
+        _recompute_cols()
+        _clamp_scroll()
+    }
+    func add_row(Array[string] row) {
+        _rows.add(row)
+        if row.len() > _ncols and _headers.len() == 0 { _ncols = row.len(); _recompute_cols() }
+        _clamp_scroll()
+    }
+    func remove_row(int idx) {
+        if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }
+        if _selRow == idx { _selRow = -1 }
+        else if _selRow > idx { _selRow = _selRow - 1 }
+        _clamp_scroll()
+    }
+    func clear() { _rows = []; _selRow = -1; _selCol = -1; _scrollX = 0; _scrollY = 0 }
+    func row_count(): int { return _rows.len() }
+    func col_count(): int { return _ncols }
+    func get_row(int idx): Array[string] {
+        if idx >= 0 and idx < _rows.len() { return _rows[idx] }
+        return []
+    }
+    func set_cell(int r, int c, string v) {
+        if r >= 0 and r < _rows.len() {
+            while _rows[r].len() <= c { _rows[r].add("") }
+            _rows[r][c] = v
+        }
+    }
+    func set_headers(Array[string] hs) {
+        _headers = hs; _ncols = hs.len(); if _ncols == 0 { _ncols = 1 }
+        _recompute_cols(); _clamp_scroll()
+    }
+    func set_selected(int idx) { if idx >= 0 and idx < _rows.len() { _selRow = idx } }
+    func get_selected_row(): int { return _selRow }
+    func set_aligns(Array[int] als) { _aligns = als; if _aligns.len() != _ncols { _recompute_cols() } }
+
+    // ==================== 排序 ====================
+    func sort_by(int col, bool desc) {
+        _sortCol = col; _sortDesc = desc
+        for 0 : _rows.len() - 1 to i {
+            for i + 1 : _rows.len() - 1 to j {
+                string a = _cell(i, col); string b = _cell(j, col)
+                bool lt = (a < b)
+                if desc { lt = (b < a) }
+                if lt {
+                    var tmp = _rows[i]; _rows[i] = _rows[j]; _rows[j] = tmp
+                }
+            }
+        }
+    }
+
+    // ==================== 设置方法 ====================
+    func set_font_size(float s) { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func set_resizable(bool r) { _resizable = r }
+    func is_visible(): bool { return visible }
+    func set_tip(string t) { _tip = t }
+    func on_select(func(int):void cb) { _onSelect = cb }
+    func on_cell(func(int, int):void cb) { _onCell = cb }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded or not visible or not enabled {
+            _hoverRow = -1; _draggingV = false; _draggingH = false; _dragCol = -1
+            return
+        }
+        float mx = ev.mouseX(); float my = ev.mouseY()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        if core.inPopupCapture(mx, my) { return }
+
+        var sb = _compute_sb()
+        float vw = sb[0]; float hh = sb[1]
+
+        if ev.isMouseButtonUp() { _draggingV = false; _draggingH = false; _dragCol = -1 }
+
+        // 竖向滚动条
+        if vw > 0.0 {
+            float sx = x + w - vw - 2.0
+            bool inV = mx >= sx - 2.0 and mx <= sx + vw + 2.0 and my >= y + _headerH and my <= y + h - hh
+            if ev.isMouseButtonDown() and inV {
+                float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
+                float bodyH = h - _headerH - hh
+                float track = bodyH - 4.0
+                float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
+                float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+                float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
+                if my >= thy and my <= thy + thumbH { _draggingV = true; _vDragOffset = my - thy }
+                else {
+                    _draggingV = true; _vDragOffset = thumbH / 2.0
+                    _scrollY = (my - (y + _headerH + 2.0) - thumbH / 2.0) * (maxY / (track - thumbH))
+                    _clamp_scroll()
+                }
+                return
+            }
+            if _draggingV and ev.isMouseMotion() {
+                float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
+                float bodyH = h - _headerH - hh
+                float track = bodyH - 4.0
+                float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
+                float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+                _scrollY = (my - (y + _headerH + 2.0) - _vDragOffset) * (maxY / (track - thumbH))
+                _clamp_scroll()
+                return
+            }
+        }
+
+        // 横向滚动条
+        if hh > 0.0 {
+            float sy = y + h - hh - 2.0
+            bool inH = my >= sy - 2.0 and my <= sy + hh + 2.0 and mx >= x and mx <= x + w - vw
+            if ev.isMouseButtonDown() and inH {
+                float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
+                float bodyW = w - vw
+                float track = bodyW - 4.0
+                float tw = _total_w(); if tw <= 0 { tw = 1 }
+                float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+                float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
+                if mx >= thx and mx <= thx + thumbW { _draggingH = true; _hDragOffset = mx - thx }
+                else {
+                    _draggingH = true; _hDragOffset = thumbW / 2.0
+                    _scrollX = (mx - (x + 2.0) - thumbW / 2.0) * (maxX / (track - thumbW))
+                    _clamp_scroll()
+                }
+                return
+            }
+            if _draggingH and ev.isMouseMotion() {
+                float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
+                float bodyW = w - vw
+                float track = bodyW - 4.0
+                float tw = _total_w(); if tw <= 0 { tw = 1 }
+                float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+                _scrollX = (mx - (x + 2.0) - _hDragOffset) * (maxX / (track - thumbW))
+                _clamp_scroll()
+                return
+            }
+        }
+
+        if ev.isMouseWheel() {
+            if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
+            int mod = ev.keyMod()
+            if (mod & 1) != 0 { _scrollX = _scrollX - ev.wheelX() * 24.0 }
+            else { _scrollY = _scrollY - ev.wheelY() * _rowH }
+            _clamp_scroll()
+            return
+        }
+
+        if ev.isMouseMotion() {
+            _hoverRow = _row_at(my)
+            bool hv = _hoverRow >= 0
+            core.markFrameMotion()
+            if _dragCol >= 0 {
+                float nw = _dragStartW + (mx - _dragStartX)
+                if nw < 24.0 { nw = 24.0 }
+                if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw }
+                _autoCols = false
+                _clamp_scroll()
+                core.requestCursor(SystemCursor.EW_RESIZE)
+            } else if my < y + _headerH {
+                int rc = _header_resize_col(mx)
+                if rc >= 0 { core.requestCursor(SystemCursor.EW_RESIZE) }
+                else if hv and _cursor >= 0 { core.requestCursor(_cursor) }
+            } else if hv and _cursor >= 0 {
+                core.requestCursor(_cursor)
+            }
+            if _tip != "" {
+                if hv { tip.tipReport(_tip, mx, my) }
+                else { tip.tipClear() }
+            }
+        }
+
+        if ev.isMouseButtonDown() {
+            if my < y + _headerH {
+                int rc = _header_resize_col(mx)
+                if rc >= 0 {
+                    _dragCol = rc; _dragStartX = mx; _dragStartW = _colW[rc]
+                    _autoCols = false
+                    return
+                }
+                int col = _col_at(mx)
+                if col >= 0 and _sortable { sort_by(col, not (_sortCol == col and _sortDesc)) }
+            } else {
+                int row = _row_at(my)
+                int col = _col_at(mx)
+                if row >= 0 {
+                    _selRow = row; _selCol = col
+                    if _onSelect != null { _onSelect(row) }
+                    if _onCell != null and col >= 0 { _onCell(row, col) }
+                }
+            }
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B) {
+        if _font == null or not _font.ok { return }
+        if t == "" { return }
+        float th = _float(_font.measureString("Ag").h)
+        float ty = ry + (rh - th) / 2.0
+        float pad = 8.0
+        float tw = _float(_font.measureString(t).w)
+        float tx
+        if align == 2 { tx = cx + cw - pad - tw }
+        else if align == 1 { tx = cx + (cw - tw) / 2.0 }
+        else { tx = cx + pad }
+        if tx < cx + 2.0 { tx = cx + 2.0 }
+        r.drawText(_font, t, r.snapX(tx), r.snapY(ty), R, G, B)
+    }
+
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        _ensure_font()
+
+        int bgr = br; int bgg = bg; int bgb = bb
+        if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
+        r.setColor(bgr, bgg, bgb, 255)
+        r.fillRect(x, y, w, h)
+
+        SDL_Rect clip = SDL_Rect.malloc()
+        clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
+        r.setClipRect(clip.to_ptr())
+
+        var sb = _compute_sb()
+
+        // 表头
+        r.setColor(_hdrR, _hdrG, _hdrB, 255)
+        r.fillRect(x, y, w, _headerH)
+        for 0 : _ncols - 1 to c {
+            float cx = _col_x(c)
+            float cw = _colW[c]
+            if cx + cw < x or cx > x + w { continue }
+            if c < _headers.len() {
+                string t = _headers[c]
+                int htcR = _hdrTxtR; int htcG = _hdrTxtG; int htcB = _hdrTxtB
+                if c == _sortCol {
+                    if _sortDesc { t = t + " ▼" } else { t = t + " ▲" }
+                }
+                _draw_cell_text(r, t, cx, cw, y, _headerH, _aligns[c], htcR, htcG, htcB)
+            }
+            r.setColor(_sepR, _sepG, _sepB, 130)
+            r.drawLine(cx + cw, y, cx + cw, y + _headerH)
+        }
+        r.setColor(_sepR, _sepG, _sepB, 220)
+        r.drawLine(x, y + _headerH, x + w, y + _headerH)
+
+        // 数据行
+        float bodyTop = y + _headerH
+        float bodyH = h - _headerH - sb[1]
+        int startRow = _int(_scrollY / _rowH)
+        if startRow < 0 { startRow = 0 }
+        int endRow = startRow + _int(bodyH / _rowH) + 2
+        if endRow > _rows.len() - 1 { endRow = _rows.len() - 1 }
+        for startRow : endRow to ri {
+            float ry = bodyTop - _scrollY + _float(ri) * _rowH
+            if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
+            int rr = bgr; int rg = bgg; int rb = bgb
+            if ri == _selRow { rr = _selR; rg = _selG; rb = _selB }
+            else if ri == _hoverRow { rr = _hovR; rg = _hovG; rb = _hovB }
+            else if _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
+            r.setColor(rr, rg, rb, 255)
+            r.fillRect(x, ry, w, _rowH)
+            if ri < _rows.len() {
+                var row = _rows[ri]
+                for 0 : _ncols - 1 to c {
+                    float cx = _col_x(c); float cw = _colW[c]
+                    if cx + cw < x or cx > x + w { continue }
+                    if c < row.len() {
+                        _draw_cell_text(r, row[c], cx, cw, ry, _rowH, _aligns[c], tr, tg, tb)
+                    }
+                    r.setColor(_sepR, _sepG, _sepB, 70)
+                    r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
+                }
+            }
+        }
+
+        r.clearClip(); clip.free()
+
+        if _dragCol >= 0 and _dragCol < _colW.len() {
+            float ex = _col_x(_dragCol) + _colW[_dragCol]
+            r.setColor(_selR, _selG, _selB, 255)
+            r.drawLine(ex, y, ex, y + h)
+        }
+
+        r.setColor(_sepR, _sepG, _sepB, 220)
+        r.drawRect(x, y, w, h)
+
+        if sb[0] > 0.0 { _draw_vscroll(r, sb) }
+        if sb[1] > 0.0 { _draw_hscroll(r, sb) }
+    }
+
+    func _draw_vscroll(Renderer r, Array[float] sb) {
+        float vw = 8.0
+        float sx = x + w - vw - 2.0
+        float bodyH = h - _headerH - sb[1]
+        float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
+        float track = bodyH - 4.0
+        float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
+        float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+        float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
+        r.setColor(_sbR, _sbG, _sbB, 180)
+        r.fillRect(sx, y + _headerH + 2.0, vw, bodyH - 4.0)
+        r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+        r.fillRect(sx, thy, vw, thumbH)
+    }
+    func _draw_hscroll(Renderer r, Array[float] sb) {
+        float hh = 8.0
+        float sy = y + h - hh - 2.0
+        float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
+        float bodyW = w - sb[0]
+        float track = bodyW - 4.0
+        float tw = _total_w(); if tw <= 0 { tw = 1 }
+        float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+        float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
+        r.setColor(_sbR, _sbG, _sbB, 180)
+        r.fillRect(x + 2.0, sy, bodyW - 4.0, hh)
+        r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+        r.fillRect(thx, sy, thumbW, hh)
+    }
+
+    func dispose() {
+        if _font != null { _font.close(); _font = null }
+    }
+}
+
+// 工厂
+export func createTable(Dict opts): Table {
+    Table t = new Table(); t.set(opts); return t
+}
