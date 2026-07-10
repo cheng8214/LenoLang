@@ -1,7 +1,16 @@
 // test_table.leno — Table 表格测试
 // 运行：leno 本文件（Esc 退出）
-// 校验点：多列渲染、斑马纹、表头排序（点表头）、行选中、双向滚动（数据 12 行触发纵向滚动）、
-//         add_row / remove_row / clear 数据操作、on_select / on_cell 回调
+// 校验点：
+//   1) 多列渲染、斑马纹、表头对齐（表头独立 align）
+//   2) 表头排序（点表头切换升/降）
+//   3) 列宽拖拽（鼠标移到表头列缝处，按下左右拖；resizable 开关）
+//   4) 行选中（单选 / 多选）：
+//        - 普通点击：选中整组（清空其它）
+//        - Ctrl/Cmd + 点击：切换该行选中
+//        - Shift + 点击：从焦点行到当前行范围选中
+//   5) 双向滚动（数据 12 行触发纵向滚动；列宽拖大触发横向滚动）
+//   6) 数据操作：add_row / remove_row / clear / select_all / clear_selection
+//   7) 回调：on_select / on_cell
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -9,7 +18,7 @@ use SDL3.Scancode
 use SDL3.Table
 
 main() {
-    var win = SDL3.createWindow({title: "Table 测试", w: 560, h: 420})
+    var win = SDL3.createWindow({title: "Table 测试", w: 560, h: 430})
     if not win.ok { return }
 
     SDL3.ttfInit()
@@ -18,6 +27,7 @@ main() {
     Array[string] headers = ["名称", "数量", "单价", "小计"]
     // 对齐：0 左, 1 中, 2 右
     Array[int] aligns = [0, 2, 2, 2]
+    Array[int] hAligns = [1, 1, 1, 1]   // 表头全部居中（独立于数据列）
     Array[Array[string]] rows = [
         ["键盘",   "12", "299.0",  "3588.0"],
         ["鼠标",   "30", "99.0",   "2970.0"],
@@ -34,9 +44,10 @@ main() {
     ]
 
     var tbl = win.addTable({
-        x: 30, y: 40, w: 500, h: 280,
-        headers: headers, aligns: aligns, rows: rows,
-        sortable: true, zebra: true, row_h: 24, header_h: 28
+        x: 30, y: 64, w: 500, h: 260,
+        headers: headers, aligns: aligns, header_aligns: hAligns, rows: rows,
+        sortable: true, resizable: true, zebra: true, row_h: 24, header_h: 28,
+        multi_select: true
     })
     tbl.on_select(func(int row) {
         print("选中第 " + row + " 行：" + tbl.get_row(row))
@@ -45,24 +56,37 @@ main() {
         print("点击单元格 (" + r + ", " + c + ") = " + tbl.get_row(r)[c])
     })
 
-    // 按钮：添加一行
+    // ---- 第一排按钮 ----
     win.addButton({x: 30, y: 338, w: 150, h: 32, text: "添加一行"}).on_click(func() {
         int n = tbl.row_count()
         tbl.add_row(["新行" + n, "1", "1.0", "1.0"])
         print("已添加，当前 " + tbl.row_count() + " 行")
     })
-
-    // 按钮：删除选中行
     win.addButton({x: 195, y: 338, w: 150, h: 32, text: "删除选中行"}).on_click(func() {
-        int sel = tbl.get_selected_row()
-        if sel >= 0 { tbl.remove_row(sel); print("已删除第 " + sel + " 行") }
-        else { print("未选中行") }
+        var sels = tbl.get_selected_rows()
+        for sels.len() to i {
+            int k = sels.len() - 1 - i   // 从大到小删，避免索引错位
+            int r = sels[k]
+            if r >= 0 and r < tbl.row_count() { tbl.remove_row(r) }
+        }
+        print("已删除选中 " + sels.len() + " 行；剩余 " + tbl.row_count() + " 行")
     })
-
-    // 按钮：清空
     win.addButton({x: 360, y: 338, w: 150, h: 32, text: "清空"}).on_click(func() {
         tbl.clear()
         print("已清空，剩余 " + tbl.row_count() + " 行")
+    })
+
+    // ---- 第二排按钮 ----
+    win.addButton({x: 30, y: 376, w: 150, h: 32, text: "全选"}).on_click(func() {
+        tbl.select_all()
+        print("全选，共 " + tbl.get_selected_rows().len() + " 行")
+    })
+    win.addButton({x: 195, y: 376, w: 150, h: 32, text: "清除选择"}).on_click(func() {
+        tbl.clear_selection()
+        print("已清除选择")
+    })
+    win.addButton({x: 360, y: 376, w: 150, h: 32, text: "选中行数"}).on_click(func() {
+        print("当前选中 " + tbl.get_selected_rows().len() + " 行：" + tbl.get_selected_rows())
     })
 
     win.run(
@@ -73,7 +97,9 @@ main() {
         },
         func(Renderer r) {
             r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Table 测试 (Esc 退出，点表头排序)", 20, 2, 200, 210, 230)
+            r.drawText(font, "Table 测试 (Esc 退出)", 20, 2, 200, 210, 230)
+            r.drawText(font, "点表头排序 | 拖表头列缝改列宽 | 普通点=单选  Ctrl+点=切换  Shift+点=范围", 20, 24, 150, 160, 180)
+            r.drawText(font, "表头居中(header_aligns)，数据列右对齐(aligns)", 20, 44, 150, 160, 180)
         }
     )
 

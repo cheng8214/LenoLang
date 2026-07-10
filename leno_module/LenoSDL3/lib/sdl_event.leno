@@ -86,8 +86,13 @@ export struct Event {
 
     // 获取修饰键状态（位掩码：Shift/Ctrl/Alt/GUI 等）
     func keyMod(): int {
-        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.mod
+        int t = sdl3_type()
+        if t == core.EventType.KEY_DOWN or t == core.EventType.KEY_UP {
+            SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
+            return e.mod
+        }
+        // 鼠标/滚轮等非键盘事件不含 mod 字段，改用全局修饰键状态
+        return _lib.SDL_GetModState() as int
     }
 
     // ==================== 鼠标事件 ====================
