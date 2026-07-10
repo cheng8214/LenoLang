@@ -1,0 +1,234 @@
+// showcase.leno — LenoSDL3 控件总览「活文档」与集成测试
+// 一个窗口内展示全部控件 + 三种布局（HBox/VBox/AnchorBox），
+// 并演示 Panel / ScrollView / TabControl / MenuBar / 右击上下文菜单 / Tooltip / 模态对话框。
+//
+// 设计要点（避免官方已知的「双重处理」陷阱）：
+//  - MenuBar / ComboBox 必须用 win.addXxx（它们依赖窗口的「第二遍弹层绘制」）。
+//  - Panel 的边框卡片里，子控件用 SDL3.createXxx + panel.add（不会 double-process）。
+//  - ScrollView / TabControl / HBox / VBox / AnchorBox 本身是顶层容器，内部用 createXxx。
+import "../../../lib/SDL3.leno" as SDL3
+
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+use SDL3.Panel
+
+// 创建一张「卡片」（Panel 边框 + 标题），返回 Panel 供继续 add 子控件
+func card(Window win, float x, float y, float w, float h, string title): Panel {
+    var p = win.addPanel({x:x, y:y, w:w, h:h, bg:[28,30,38], radius:10, border:[90,95,110]})
+    p.add(SDL3.createLabel({x:x+14, y:y+12, text:title, font_size:16, rgb:[180,200,255]}))
+    return p
+}
+
+// 模态对话框演示（createDialogWindow + runModal）
+func openDialog() {
+    var dlg = SDL3.createDialogWindow({title:"模态对话框", w:360, h:200})
+    var done = false
+    dlg.addLabel({x:30, y:36, text:"这是一个模态对话框", font_size:16})
+    dlg.addLabel({x:30, y:70, text:"点击按钮后关闭（主窗口输入被阻塞）", font_size:13, rgb:[180,180,190]})
+    var bOk = dlg.addButton({x:60, y:120, w:100, h:36, text:"确定", type:"primary"})
+    bOk.on_click(func():void { done = true })
+    var bCancel = dlg.addButton({x:200, y:120, w:100, h:36, text:"取消"})
+    bCancel.on_click(func():void { done = true })
+    SDL3.runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or done { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(40, 42, 50, 255)
+        })
+}
+
+main() {
+    SDL3.ttfInit()
+    SDL3.setTipDelay(400)
+
+    var win = SDL3.createWindow({title:"LenoSDL3 控件总览 Showcase", w:1280, h:1000, resizable:true})
+    if not win.ok { SDL3.ttfQuit(); return }
+
+    // 状态标签：被各交互回调实时更新，演示回调链路
+    var statusLbl = SDL3.createLabel({x:196, y:188, text:"状态: 就绪", font_size:14, rgb:[200,220,200]})
+
+    // ===================== 顶部菜单栏 =====================
+    // 注：本语言不支持跨多行嵌套字面量，菜单用构建器逐项添加
+    var bar = win.addMenuBar({ x:0, y:0, w:1280, h:28, font_size:14 })
+
+    int mFile = bar.addMenu("文件")
+    bar.addItem(mFile, { label:"新建", id:"new", shortcut:"Ctrl+N" })
+    bar.addItem(mFile, { label:"打开", id:"open" })
+    bar.addSeparator(mFile)
+    bar.addItem(mFile, { label:"保存", id:"save", shortcut:"Ctrl+S" })
+    bar.addItem(mFile, { label:"退出", id:"exit" })
+
+    int mEdit = bar.addMenu("编辑")
+    bar.addItem(mEdit, { label:"撤销", id:"undo" })
+    int mMore = bar.addItem(mEdit, { label:"更多" })
+    bar.addSubmenuItem(mEdit, mMore, { label:"设置 A", id:"setA" })
+    bar.addSubmenuItem(mEdit, mMore, { label:"设置 B", id:"setB" })
+
+    int mHelp = bar.addMenu("帮助")
+    bar.addItem(mHelp, { label:"关于", id:"about" })
+    bar.on_select(func(string m, string id) {
+        print("菜单选择: " + m + " -> " + id)
+        statusLbl.set_text("菜单: " + m + " -> " + id)
+    })
+
+    // 右击上下文菜单（在 onEvent 里 ev.mouseButton()==3 时弹出）
+    int ctx = bar.addContextMenu("ctx")
+    bar.addContextItem(ctx, { label:"复制", id:"copy" })
+    bar.addContextItem(ctx, { label:"粘贴", id:"paste" })
+    bar.addContextSeparator(ctx)
+    bar.addContextItem(ctx, { label:"属性", id:"prop" })
+
+    // ===================== 卡片1：按钮 =====================
+    var pBtn = card(win, 16, 40, 400, 220, "按钮 Buttons")
+    pBtn.add(SDL3.createButton({x:30,  y:86, w:110, h:34, text:"Primary", type:"primary", tip:"主要操作按钮"}))
+    pBtn.add(SDL3.createButton({x:150, y:86, w:110, h:34, text:"Danger",  type:"danger",  tip:"危险操作"}))
+    pBtn.add(SDL3.createButton({x:270, y:86, w:110, h:34, text:"Success", type:"success"}))
+    pBtn.add(SDL3.createButton({x:30,  y:130, w:110, h:34, text:"Warning", type:"warning"}))
+    pBtn.add(SDL3.createButton({x:150, y:130, w:110, h:34, text:"Dark",    type:"dark"}))
+    pBtn.add(SDL3.createButton({x:270, y:130, w:110, h:34, text:"禁用", enabled:false}))
+    var bDlg = SDL3.createButton({x:30, y:180, w:150, h:34, text:"打开对话框", type:"primary", tip:"弹出模态对话框"})
+    pBtn.add(bDlg)
+    bDlg.on_click(func():void { openDialog() })
+    pBtn.add(statusLbl)
+
+    // ===================== 卡片2：文本输入 =====================
+    var pIn = card(win, 16, 272, 400, 250, "文本输入 Input")
+    pIn.add(SDL3.createLabel({x:30, y:326, text:"单行:", font_size:14}))
+    pIn.add(SDL3.createEdit({x:90, y:322, w:220, h:30, placeholder:"请输入姓名"}))
+    pIn.add(SDL3.createLabel({x:30, y:366, text:"密码:", font_size:14}))
+    pIn.add(SDL3.createEdit({x:90, y:362, w:220, h:30, password:true, placeholder:"密码"}))
+    pIn.add(SDL3.createLabel({x:30, y:406, text:"多行:", font_size:14}))
+    pIn.add(SDL3.createEdit({x:90, y:402, w:220, h:80, multiline:true, text:"多行编辑框\n支持换行、选区、撤销/重做、IME"}))
+    pIn.add(SDL3.createLabel({x:30, y:496, text:"输入框支持 tip / placeholder / password / multiline", font_size:12, rgb:[150,150,160]}))
+
+    // ===================== 卡片3：选择类 =====================
+    var pSel = card(win, 16, 534, 400, 226, "选择 Selection")
+    pSel.add(SDL3.createLabel({x:30, y:588, text:"复选框:", font_size:14}))
+    var cb1 = SDL3.createCheckBox({x:110, y:584, text:"选项 A", checked:true, tip:"复选演示"})
+    pSel.add(cb1)
+    cb1.on_change(func(bool v) { statusLbl.set_text("复选A = " + (if v then "开" else "关")) })
+    var cb2 = SDL3.createCheckBox({x:230, y:584, text:"选项 B"})
+    pSel.add(cb2)
+    cb2.on_change(func(bool v) { statusLbl.set_text("复选B = " + (if v then "开" else "关")) })
+
+    pSel.add(SDL3.createLabel({x:30, y:622, text:"单选:", font_size:14}))
+    var r1 = SDL3.createRadioButton({x:110, y:618, text:"单选1", group:"g1", checked:true})
+    pSel.add(r1)
+    r1.on_change(func(bool v) { if v { statusLbl.set_text("单选 = 1") } })
+    var r2 = SDL3.createRadioButton({x:210, y:618, text:"单选2", group:"g1"})
+    pSel.add(r2)
+    r2.on_change(func(bool v) { if v { statusLbl.set_text("单选 = 2") } })
+
+    pSel.add(SDL3.createLabel({x:30, y:660, text:"开关:", font_size:14}))
+    var t1 = SDL3.createToggle({x:110, y:656, text:"开关1", on:true,  anim:true})
+    pSel.add(t1)
+    t1.on_change(func(bool v) { statusLbl.set_text("开关1 = " + (if v then "开" else "关")) })
+    var t2 = SDL3.createToggle({x:210, y:656, text:"开关2", on:false, anim:true})
+    pSel.add(t2)
+    t2.on_change(func(bool v) { statusLbl.set_text("开关2 = " + (if v then "开" else "关")) })
+
+    // ===================== 卡片4：滑块与进度 =====================
+    var pSP = card(win, 440, 40, 400, 300, "滑块与进度 Sliders & Progress")
+    var sl1 = SDL3.createSlider({x:470, y:96, w:240, h:24, min:0, max:100, value:40, tip:"拖动调节"})
+    pSP.add(sl1)
+    sl1.on_change(func(float v) { statusLbl.set_text("滑块 = " + (v as string)) })
+    var sl2 = SDL3.createSlider({x:470, y:140, w:24, h:150, min:0, max:10, value:3, vertical:true, tip:"竖直滑块"})
+    pSP.add(sl2)
+
+    pSP.add(SDL3.createLabel({x:560, y:120, text:"可点击进度:", font_size:13}))
+    var pg1 = SDL3.createProgressBar({x:560, y:140, w:240, h:22, value:30, clickable:true})
+    pSP.add(pg1)
+    pg1.on_change(func(float v) { statusLbl.set_text("进度1 = " + (v as string)) })
+    pSP.add(SDL3.createLabel({x:560, y:178, text:"动画进度:", font_size:13}))
+    var pg2 = SDL3.createProgressBar({x:560, y:198, w:240, h:22, value:0})
+    pSP.add(pg2)
+    var bInc = SDL3.createButton({x:560, y:236, w:120, h:32, text:"进度 +20", type:"success"})
+    pSP.add(bInc)
+    bInc.on_click(func():void { pg2.set_value(pg2.get_value() + 20.0) })
+
+    // ===================== 卡片5：列表框 =====================
+    var pLB = card(win, 440, 352, 400, 250, "列表框 ListBox")
+    pLB.add(SDL3.createLabel({x:470, y:380, text:"单选", font_size:13}))
+    var lb1 = SDL3.createListBox({x:470, y:396, w:160, h:150,
+        items:["苹果","香蕉","橘子","西瓜","葡萄","芒果","桃子","草莓"], selected:0})
+    pLB.add(lb1)
+    lb1.on_change(func(Array[int] idxs) { statusLbl.set_text("列表(单选) 选中 " + idxs.len() + " 项") })
+    pLB.add(SDL3.createLabel({x:650, y:380, text:"多选", font_size:13}))
+    var lb2 = SDL3.createListBox({x:650, y:396, w:160, h:150,
+        items:["红","绿","蓝","黄","紫","青","橙"], mode:1})
+    pLB.add(lb2)
+    lb2.on_change(func(Array[int] idxs) { statusLbl.set_text("列表(多选) 选中 " + idxs.len() + " 项") })
+
+    // ===================== 卡片6：下拉框（必须 win.addComboBox） =====================
+    var pCB = card(win, 440, 614, 400, 160, "下拉框 ComboBox")
+    pCB.add(SDL3.createLabel({x:470, y:680, text:"点击展开，下拉层盖在最上层", font_size:12, rgb:[150,150,160]}))
+    var cbb = win.addComboBox({x:470, y:700, w:240, h:32,
+        items:["选项一","选项二","选项三","选项四","选项五","选项六","选项七","选项八"],
+        placeholder:"请选择", selected:1, tip:"下拉演示"})
+    cbb.on_change(func(int idx) { statusLbl.set_text("下拉: " + cbb.get_selected_text()) })
+
+    // ===================== 卡片7：三种布局 =====================
+    var pLay = card(win, 864, 40, 400, 330, "布局 Layouts (HBox / VBox / AnchorBox)")
+    pLay.add(SDL3.createLabel({x:878, y:74, text:"HBox 水平等分:", font_size:13}))
+    var hb = win.addHBox({x:878, y:94, w:372, h:40, spacing:8, padX:8})
+    hb.add(SDL3.createButton({text:"H1", w:80, h:32}), {grow:1})
+    hb.add(SDL3.createButton({text:"H2", w:80, h:32}), {grow:1})
+    hb.add(SDL3.createButton({text:"H3", w:80, h:32}), {grow:1})
+
+    pLay.add(SDL3.createLabel({x:878, y:146, text:"VBox 竖直等分:", font_size:13}))
+    var vb = win.addVBox({x:878, y:166, w:180, h:180, spacing:8, padX:8, padY:8})
+    vb.add(SDL3.createButton({text:"V1", h:32}), {grow:1})
+    vb.add(SDL3.createButton({text:"V2", h:32}), {grow:1})
+    vb.add(SDL3.createButton({text:"V3", h:32}), {grow:1})
+
+    pLay.add(SDL3.createLabel({x:1070, y:146, text:"AnchorBox 锚点:", font_size:13}))
+    var ab = win.addAnchorBox({x:1070, y:166, w:180, h:180, padX:8, padY:8})
+    ab.add(SDL3.createButton({text:"左上", w:70, h:30}), {left:0, top:0})
+    ab.add(SDL3.createButton({text:"居中", w:70, h:30}), {centerX:true, centerY:true})
+    ab.add(SDL3.createButton({text:"右下", w:70, h:30}), {right:0, bottom:0})
+
+    // ===================== 卡片8：滚动容器 =====================
+    var pSV = card(win, 864, 382, 400, 240, "滚动容器 ScrollView")
+    var sv = win.addScrollView({x:878, y:426, w:372, h:180, content_w:340, content_h:520})
+    var svBox = SDL3.createVBox({padX:10, padY:10, spacing:8})
+    for 12 to i {
+        svBox.add(SDL3.createButton({text:"条目 " + i, h:32}), {})
+    }
+    sv.set_content(svBox)
+    pSV.add(SDL3.createLabel({x:878, y:614, text:"悬停滚轮 / 拖右侧滚动条；内容由 VBox 自适应", font_size:12, rgb:[150,150,160]}))
+
+    // ===================== 卡片9：选项卡 =====================
+    var pTab = card(win, 864, 634, 400, 320, "选项卡 TabControl")
+    var tab = win.addTabControl({x:878, y:684, w:372, h:250, tabs:["基础","高级"], active:0, tab_h:30})
+    // 页0 基础
+    tab.addToPage(0, SDL3.createLabel({x:20, y:20, text:"基础设置"}), 20, 20)
+    tab.addToPage(0, SDL3.createEdit({x:20, y:56, w:200, h:30, placeholder:"用户名"}), 20, 56)
+    tab.addToPage(0, SDL3.createCheckBox({x:20, y:100, text:"启用通知", checked:true}), 20, 100)
+    // 页1 高级
+    tab.addToPage(1, SDL3.createSlider({x:20, y:20, w:240, h:24, min:0, max:100, value:50}), 20, 20)
+    tab.addToPage(1, SDL3.createToggle({x:20, y:60, text:"实验功能", on:false}), 20, 60)
+    tab.addToPage(1, SDL3.createLabel({x:20, y:108, text:"高级页支持独立布局/子控件", font_size:13, rgb:[180,180,190]}), 20, 108)
+    tab.on_change(func(int idx) { statusLbl.set_text("切换到页 " + idx) })
+
+    // ===================== 主循环 =====================
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            // 右击弹出上下文菜单
+            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                bar.openContext(ctx, ev.mouseX(), ev.mouseY())
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(18, 20, 26, 255)
+        }
+    )
+
+    SDL3.ttfQuit()
+}
