@@ -47,6 +47,8 @@ export struct Edit impl Widget {
     bool _password               // 密码模式
     bool _readOnly               // 只读
     bool _loaded
+    bool enabled
+    bool visible
     string _tip             // 悬停提示文本（空 = 不提示）
     bool _dirty                  // 行缓存需重建
     bool _textDirty              // text 需要从 _lines 重建
@@ -234,7 +236,7 @@ export struct Edit impl Widget {
         // 颜色
         cr = 35; cg = 35; cb = 50
         tr = 220; tg = 220; tb = 240
-        var c = opts.get("rgb")
+        var c = opts.get("bg_rgb")
         if c is Array[int] { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
         var tc = opts.get("text_rgb")
         if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
@@ -272,6 +274,8 @@ export struct Edit impl Widget {
         _selStart   = -1; _selEnd = 0; _selActive = false
 
         _ensure_font()
+        enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         _loaded = true
     }
 
@@ -284,7 +288,7 @@ export struct Edit impl Widget {
     func set_size(float sw, float sh)   { w = sw; h = sh }
     func get_w(): float                 { return w }
     func get_h(): float                 { return h }
-    func set_rgb(int r, int g, int b)   { cr = r; cg = g; cb = b }
+    func set_bg(int r, int g, int b)    { cr = r; cg = g; cb = b }
     func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_font_size(float s) {
         _fontSize = s
@@ -298,6 +302,9 @@ export struct Edit impl Widget {
     }
     func set_placeholder(string p) { _placeholder = p }
     func set_tip(string t) { _tip = t }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
     func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }
     func focus()    { _focused = true }
@@ -568,6 +575,8 @@ export struct Edit impl Widget {
     // ==================== 事件处理 ====================
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
+        if not enabled { return }
 
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
         float emx = ev.mouseX(); float emy = ev.mouseY()
@@ -1242,6 +1251,7 @@ export struct Edit impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
         if _font == null or not _font.ok { return }
 

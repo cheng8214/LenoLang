@@ -26,6 +26,7 @@ export struct CheckBox impl Widget {
     bool _wasHover
     bool _pressed
     bool enabled
+    bool visible
     bool _loaded
     string _tip             // 悬停提示文本（空 = 不提示）
     func(bool):void _onChange
@@ -68,6 +69,7 @@ export struct CheckBox impl Widget {
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _checked = _bool(opts.get("checked", false))
         enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         hover = false; _wasHover = false; _pressed = false
         _tip = opts.get("tip", "") as string
         _ensure_font()
@@ -80,6 +82,8 @@ export struct CheckBox impl Widget {
     func set_checked(bool c)     { _checked = c }
     func is_checked(): bool     { return _checked }
     func set_enabled(bool e)     { enabled = e }
+    func set_visible(bool v)      { visible = v }
+    func is_visible(): bool       { return visible }
     func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float          { return x }
     func get_y(): float          { return y }
@@ -105,6 +109,7 @@ export struct CheckBox impl Widget {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
         if not enabled { hover = false; _pressed = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
         float mx = ev.mouseX(); float my = ev.mouseY()
@@ -136,6 +141,7 @@ export struct CheckBox impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
         float bx = x; float by = y; float bs = _box
 

@@ -45,6 +45,8 @@ export struct TabControl impl Widget {
     int _accR, _accG, _accB    // 激活标签下划线
     int _brdR, _brdG, _brdB    // 边框色
     int _cursor
+    bool enabled
+    bool visible
     func(int):void _onChange
 
     func _ensure_font() {
@@ -94,9 +96,9 @@ export struct TabControl impl Widget {
         _accR = 80; _accG = 160; _accB = 245
         _brdR = 90; _brdG = 95; _brdB = 110
 
-        var bgc = opts.get("bg")
+        var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { _bgR = _int(bgc[0]); _bgG = _int(bgc[1]); _bgB = _int(bgc[2]) }
-        var brc = opts.get("border")
+        var brc = opts.get("border_rgb")
         if brc is Array[int] { _brdR = _int(brc[0]); _brdG = _int(brc[1]); _brdB = _int(brc[2]) }
         var actc = opts.get("active_rgb")
         if actc is Array[int] { _actR = _int(actc[0]); _actG = _int(actc[1]); _actB = _int(actc[2]) }
@@ -181,7 +183,9 @@ export struct TabControl impl Widget {
     }
     func get_active(): int { return _active }
     func tab_count(): int  { return _tabs.len() }
-    func set_enabled(bool e) { _loaded = e }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
     func set_font_size(float s) { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func on_change(func(int):void cb) { _onChange = cb }
     // 绑定窗口句柄（由 Window.addTabControl 调用）
@@ -250,7 +254,7 @@ export struct TabControl impl Widget {
 
     // ==================== 交互 ====================
     func process(Event ev) {
-        if not _loaded { return }
+        if not _loaded or not enabled or not visible { return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
         if core.inPopupCapture(ev.mouseX(), ev.mouseY()) { return }
         _applyOffsets(_active)
@@ -287,7 +291,7 @@ export struct TabControl impl Widget {
 
     // ==================== 渲染 ====================
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not enabled or not visible { return }
         _ensure_font()
 
         // 标签栏背景

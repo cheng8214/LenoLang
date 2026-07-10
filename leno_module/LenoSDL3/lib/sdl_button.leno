@@ -23,6 +23,7 @@ export struct Button impl Widget {
     bool hover
     bool _wasHover          // 上一帧悬停状态
     bool enabled
+    bool visible
     bool _showShadow        // 是否显示阴影
     bool _showBorder        // 是否显示边框
     bool _loaded
@@ -78,8 +79,8 @@ export struct Button impl Widget {
         var tp = opts.get("type")
         if tp is string { _apply_type(tp as string) }
 
-        // rgb: 背景色 [r, g, b]
-        var c = opts.get("rgb")
+        // bg_rgb: 背景色 [r, g, b]
+        var c = opts.get("bg_rgb")
         if c is Array[int] { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
 
         // text_rgb: 文字色 [r, g, b]
@@ -99,6 +100,7 @@ export struct Button impl Widget {
 
         // 状态
         enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         hover   = false
         _wasHover = false
         _tip    = opts.get("tip", "") as string
@@ -115,7 +117,7 @@ export struct Button impl Widget {
     func set_bounds(float bx, float by, float bw, float bh) {
         x = bx; y = by; w = bw; h = bh
     }
-    func set_rgb(int r, int g, int b)    { cr = r; cg = g; cb = b }
+    func set_bg(int r, int g, int b)    { cr = r; cg = g; cb = b }
     func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_hover_rgb(int r, int g, int b) { hvr = r; hvg = g; hvb = b }
     func set_font_size(float s) {
@@ -133,6 +135,8 @@ export struct Button impl Widget {
     }
     func set_radius(float r)   { _radius = r }
     func set_enabled(bool e)   { enabled = e }
+    func set_visible(bool v)    { visible = v }
+    func is_visible(): bool     { return visible }
     func set_shadow(bool s)    { _showShadow = s }
     func set_border(bool b)    { _showBorder = b }
     func set_cursor(int cur)   { _cursor = cur }
@@ -159,6 +163,7 @@ export struct Button impl Widget {
     // 处理事件（run 内部调用）
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
         if not enabled { return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
         float mx = ev.mouseX(); float my = ev.mouseY()
@@ -184,6 +189,7 @@ export struct Button impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
 
         int br = cr; int bg = cg; int bb = cb

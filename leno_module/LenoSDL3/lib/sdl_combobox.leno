@@ -4,6 +4,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 
 export struct ComboBox impl Widget {
     float x; float y; float w; float h
@@ -23,7 +24,8 @@ export struct ComboBox impl Widget {
     int tr, tg, tb
     int _sbR, _sbG, _sbB
     int _cursor
-    bool enabled; bool _loaded
+    bool enabled; bool visible; bool _loaded
+    string _tip
     bool _draggingScroll
     float _sbDragOffset
     func(int):void _onChange
@@ -99,6 +101,8 @@ export struct ComboBox impl Widget {
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
+        _tip = opts.get("tip", "") as string
         _open = false; _scroll = 0.0; _hover = -1
         _ensure_font()
         _loaded = true
@@ -109,6 +113,8 @@ export struct ComboBox impl Widget {
     func add_item(string s)           { items.add(s) }
     func clear()                      { items = []; _sel = -1; _open = false; _scroll = 0.0; _hover = -1 }
     func set_enabled(bool e)          { enabled = e }
+    func set_visible(bool v)           { visible = v }
+    func is_visible(): bool           { return visible }
     func set_font_size(float s)       { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float               { return x }
     func get_y(): float               { return y }
@@ -224,6 +230,7 @@ export struct ComboBox impl Widget {
             if not hv { hv = contains(mx, my) }
             core.markFrameMotion()
             if hv and _cursor >= 0 { core.requestCursor(_cursor) }
+            if hv and _tip != "" { tip.tipReport(_tip, mx, my) }
             // 未命中不再强制设 DEFAULT，由 Window 帧末统一决定（避免覆盖上方弹层的手型）
         }
 
@@ -256,6 +263,7 @@ export struct ComboBox impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
 
         int bgr = br; int bgg = bg; int bgb = bb
@@ -287,7 +295,7 @@ export struct ComboBox impl Widget {
     // 弹出列表（独立 overlay 通道：由 Window 在所有控件渲染完后第二遍调用，
     // 保证下拉层永远盖在其它控件之上，不会被列表中靠后的 ComboBox 挡住）
     func renderPopup(Renderer r) {
-        if not _loaded or not _open or items.len() == 0 { return }
+        if not _loaded or not visible or not _open or items.len() == 0 { return }
         int bgr = br; int bgg = bg; int bgb = bb
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         var pr = _popup_rect()

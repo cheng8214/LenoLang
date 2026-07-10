@@ -134,7 +134,7 @@ export struct MenuBar impl Widget {
     int _winW; int _winH           // 所属窗口逻辑宽高（边界夹紧用；0=未知）
     string _orient                 // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
     string _align                  // 顶级标题对齐："left" / "center" / "right"
-    bool enabled; bool _loaded
+    bool enabled; bool visible; bool _loaded
     func(string, string):void _onSelect
 
     func _ensure_font() {
@@ -199,13 +199,14 @@ export struct MenuBar impl Widget {
         _bdrR = 90; _brdG = 95; _brdB = 110
         _accR = 80; _accG = 160; _accB = 245
 
-        var bgc = opts.get("bg");      if bgc is Array[int] { _bgR = _int(bgc[0]); _bgG = _int(bgc[1]); _bgB = _int(bgc[2]) }
-        var brc = opts.get("border");  if brc is Array[int] { _bdrR = _int(brc[0]); _brdG = _int(brc[1]); _brdB = _int(brc[2]) }
-        var accc = opts.get("accent"); if accc is Array[int] { _accR = _int(accc[0]); _accG = _int(accc[1]); _accB = _int(accc[2]) }
+        var bgc = opts.get("bg_rgb");      if bgc is Array[int] { _bgR = _int(bgc[0]); _bgG = _int(bgc[1]); _bgB = _int(bgc[2]) }
+        var brc = opts.get("border_rgb");  if brc is Array[int] { _bdrR = _int(brc[0]); _brdG = _int(brc[1]); _brdB = _int(brc[2]) }
+        var accc = opts.get("accent_rgb"); if accc is Array[int] { _accR = _int(accc[0]); _accG = _int(accc[1]); _accB = _int(accc[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1
         enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         _ensure_font()
         _loaded = true
     }
@@ -213,6 +214,8 @@ export struct MenuBar impl Widget {
     // ==================== 设置方法 ====================
     func on_select(func(string, string):void cb) { _onSelect = cb }
     func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null { _font.close(); _font = null }
@@ -413,6 +416,7 @@ export struct MenuBar impl Widget {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
         if not enabled { close(); return }
 
         float mx = ev.mouseX(); float my = ev.mouseY()
@@ -491,7 +495,7 @@ export struct MenuBar impl Widget {
 
     // ==================== 渲染：仅画菜单栏（下拉走 renderPopup 第二遍） ====================
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         _ensure_font()
 
         // 仅当存在“顶部菜单”时才绘制菜单栏背景；纯上下文菜单管理器无需画栏

@@ -17,7 +17,7 @@ main() {
 
     // 面板 1：子控件溢出右边界 -> 演示裁剪
     var panel = win.addPanel({x: 30, y: 50, w: 260, h: 200,
-        bg: [44, 46, 54], border: [90, 95, 110], radius: 10})
+        bg_rgb: [44, 46, 54], border_rgb: [90, 95, 110], radius: 10})
     var pTitle = SDL3.createLabel({text: "面板内控件（溢出会被裁剪）", x: 45, y: 60, font_size: 14})
     panel.add(pTitle)
     // 按钮故意超出面板右边界（面板宽 260，从 x=30 到 290；此按钮到 320 溢出）
@@ -30,7 +30,7 @@ main() {
 
     // 面板 2：无裁剪（clip:false），同样溢出但完整显示
     var panel2 = win.addPanel({x: 310, y: 50, w: 220, h: 200,
-        bg: [40, 48, 44], border: [90, 110, 95], radius: 10, clip: false})
+        bg_rgb: [40, 48, 44], border_rgb: [90, 110, 95], radius: 10, clip: false})
     var p2Title = SDL3.createLabel({text: "面板2(不裁剪)", x: 325, y: 60, font_size: 14})
     panel2.add(p2Title)
     var p2Btn = SDL3.createButton({x: 325, y: 95, w: 280, h: 34, text: "超宽按钮(不裁剪完整显示)"})

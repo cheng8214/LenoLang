@@ -41,6 +41,8 @@ export struct ScrollView impl Widget {
     float _hThumbX; float _hThumbW        // 水平滚动条拇指几何
 
     bool _loaded
+    bool enabled
+    bool visible
     Ptr[u8] _hwnd
 
     func set(Dict opts) {
@@ -49,10 +51,10 @@ export struct ScrollView impl Widget {
         w = _float(opts.get("w", 300))
         h = _float(opts.get("h", 200))
         _radius = _float(opts.get("radius", 8.0))
-        var bgc = opts.get("bg")
+        var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
         else { br = 38; bg = 40; bb = 48 }
-        var bdc = opts.get("border")
+        var bdc = opts.get("border_rgb")
         if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
         else { _bdrR = 80; _bdrG = 85; _bdrB = 100 }
         _brdA = _int(opts.get("border_alpha", 200))
@@ -146,7 +148,9 @@ export struct ScrollView impl Widget {
     func get_h(): float { return h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh; _clampScroll() }
-    func set_enabled(bool e) { _loaded = e }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
@@ -213,7 +217,7 @@ export struct ScrollView impl Widget {
     }
 
     func process(Event ev) {
-        if not _loaded { return }
+        if not _loaded or not enabled or not visible { return }
         _sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
@@ -262,7 +266,7 @@ export struct ScrollView impl Widget {
     }
 
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not enabled or not visible { return }
         _sync()
         // 背景
         r.setColor(br, bg, bb, 255)

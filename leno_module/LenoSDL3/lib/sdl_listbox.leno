@@ -5,6 +5,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 
 export struct ListBox impl Widget {
     float x; float y; float w; float h
@@ -22,7 +23,8 @@ export struct ListBox impl Widget {
     int tr, tg, tb           // 文字色
     int _sbR, _sbG, _sbB     // 滚动条色
     int _cursor
-    bool enabled; bool _loaded
+    bool enabled; bool visible; bool _loaded
+    string _tip
     bool _draggingScroll     // 正在拖拽竖向滚动条
     float _sbDragOffset      // 拖拽起点距滑块顶的相对偏移
     func(Array[int]):void _onChange
@@ -134,6 +136,8 @@ export struct ListBox impl Widget {
 
         _cursor  = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled  = _bool(opts.get("enabled", true))
+        visible  = _bool(opts.get("visible", true))
+        _tip = opts.get("tip", "") as string
         _scroll  = 0.0; _hover = -1
         _ensure_font()
         _clamp_scroll()
@@ -155,6 +159,8 @@ export struct ListBox impl Widget {
     }
     func clear() { items = []; _sel = []; _scroll = 0.0; _hover = -1 }
     func set_enabled(bool e)     { enabled = e }
+    func set_visible(bool v)      { visible = v }
+    func is_visible(): bool       { return visible }
     func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float          { return x }
     func get_y(): float          { return y }
@@ -197,6 +203,7 @@ export struct ListBox impl Widget {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
         if not enabled { _hover = -1; _draggingScroll = false; return }
 
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
@@ -251,6 +258,7 @@ export struct ListBox impl Widget {
             bool hv = _hover >= 0
             core.markFrameMotion()
             if hv and _cursor >= 0 { core.requestCursor(_cursor) }
+            if hv and _tip != "" { tip.tipReport(_tip, mx, my) }
         }
 
         if ev.isMouseButtonDown() {
@@ -274,6 +282,7 @@ export struct ListBox impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
 
         int bgr = br; int bgg = bg; int bgb = bb

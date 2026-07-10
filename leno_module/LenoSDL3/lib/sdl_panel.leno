@@ -16,6 +16,8 @@ export struct Panel impl Widget {
     bool _drawBorder
     bool _clip               // 是否裁剪子控件到面板范围
     bool _loaded
+    bool enabled
+    bool visible
 
     func set(Dict opts) {
         x    = _float(opts.get("x", 0))
@@ -24,11 +26,11 @@ export struct Panel impl Widget {
         h    = _float(opts.get("h", 150))
         _radius = _float(opts.get("radius", 8.0))
 
-        var bgc = opts.get("bg")
+        var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
         else { br = 44; bg = 46; bb = 54 }
 
-        var bdc = opts.get("border")
+        var bdc = opts.get("border_rgb")
         if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
         else { _bdrR = 90; _bdrG = 95; _bdrB = 110 }
 
@@ -46,7 +48,9 @@ export struct Panel impl Widget {
     }
     func clear_children() { children = [] }
     func set_bg(int r, int g, int b) { br = r; bg = g; bb = b }
-    func set_enabled(bool e) { _loaded = e }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
     func get_x(): float { return x }
     func get_y(): float { return y }
     func get_w(): float { return w }
@@ -60,13 +64,13 @@ export struct Panel impl Widget {
 
     // 转发事件给所有子控件（子控件各自处理命中）
     func process(Event ev) {
-        if not _loaded { return }
+        if not _loaded or not enabled or not visible { return }
         for children to c { c.process(ev) }
     }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not enabled or not visible { return }
 
         r.setColor(br, bg, bb, 255)
         r.fillRoundedRect(x, y, w, h, _radius)

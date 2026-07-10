@@ -18,7 +18,7 @@ main() {
 
     // 滚动容器：视口 300x300；内容 360x640（比视口宽且高 -> 同时出现横/竖滚动条）
     var sv = win.addScrollView({x: 20, y: 20, w: 300, h: 300,
-        content_w: 360, content_h: 640, bg: [34, 36, 42], border: [80, 85, 100]})
+        content_w: 360, content_h: 640, bg_rgb: [34, 36, 42], border_rgb: [80, 85, 100]})
     // 内容：用 createXxx 创建，不要 win.add（避免被窗口与 ScrollView 双重处理）
     var box = SDL3.createVBox({padX: 10, padY: 10, spacing: 8})
     for 12 to i {

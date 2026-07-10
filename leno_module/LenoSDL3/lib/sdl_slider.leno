@@ -18,7 +18,7 @@ export struct Slider impl Widget {
     int _thumbR, _thumbG, _thumbB // 滑块色
     int tr, tg, tb                // 文字色
     int _cursor
-    bool hover; bool _wasHover; bool _dragging; bool enabled; bool _loaded
+    bool hover; bool _wasHover; bool _dragging; bool enabled; bool visible; bool _loaded
     string _tip             // 悬停提示文本（空 = 不提示）
     func(float):void _onChange
 
@@ -77,6 +77,7 @@ export struct Slider impl Widget {
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         hover = false; _wasHover = false; _dragging = false
         _tip = opts.get("tip", "") as string
         value = _clamp(value, minV, maxV)
@@ -90,6 +91,8 @@ export struct Slider impl Widget {
     func get_value(): float     { return value }
     func set_range(float lo, float hi) { minV = lo; maxV = hi; value = _clamp(value, minV, maxV) }
     func set_enabled(bool e)     { enabled = e }
+    func set_visible(bool v)      { visible = v }
+    func is_visible(): bool       { return visible }
     func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float          { return x }
     func get_y(): float          { return y }
@@ -133,6 +136,7 @@ export struct Slider impl Widget {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
         if not enabled { hover = false; _dragging = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
         float mx = ev.mouseX(); float my = ev.mouseY()
@@ -172,6 +176,7 @@ export struct Slider impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
         float rad = _thumb_radius()
         float baseWH

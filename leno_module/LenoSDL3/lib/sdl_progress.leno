@@ -6,6 +6,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 
 export struct ProgressBar impl Widget {
     float x; float y; float w; float h
@@ -17,7 +18,8 @@ export struct ProgressBar impl Widget {
     int _fillR, _fillG, _fillB    // 已选填充色
     int tr, tg, tb                // 文字色
     int _cursor
-    bool hover; bool _wasHover; bool _dragging; bool enabled; bool _loaded
+    bool hover; bool _wasHover; bool _dragging; bool enabled; bool visible; bool _loaded
+    string _tip
     float _animVal; float _animTarget; float _animLast; float _animSpeed; bool _animating
     func(float):void _onChange
 
@@ -70,10 +72,12 @@ export struct ProgressBar impl Widget {
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         hover = false; _wasHover = false; _dragging = false
         value = _clamp(value, minV, maxV)
         _animVal = value; _animTarget = value; _animating = false; _animLast = 0.0
         _animSpeed = _float(opts.get("anim_speed", 12.0))
+        _tip = opts.get("tip", "") as string
         _ensure_font()
         _loaded = true
     }
@@ -92,6 +96,8 @@ export struct ProgressBar impl Widget {
     func get_value(): float      { return value }
     func get_display_value(): float { return _animVal }   // 动画当前显示值（用于观察过渡）
     func set_enabled(bool e)      { enabled = e }
+    func set_visible(bool v)       { visible = v }
+    func is_visible(): bool        { return visible }
     func set_font_size(float s)   { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float           { return x }
     func get_y(): float           { return y }
@@ -116,6 +122,13 @@ export struct ProgressBar impl Widget {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
+        if ev.isMouseMotion() {
+            float mx = ev.mouseX(); float my = ev.mouseY()
+            bool hit = contains(mx, my)
+            if hit and _tip != "" { tip.tipReport(_tip, mx, my) }
+            _wasHover = hit
+        }
         if not enabled { hover = false; _dragging = false; return }
         if not _clickable { hover = false; return }   // 只读时不响应
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
@@ -180,6 +193,7 @@ export struct ProgressBar impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
         _step_anim()
 

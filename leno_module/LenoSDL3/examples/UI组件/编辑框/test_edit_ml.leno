@@ -46,7 +46,7 @@ main() {
 
     // 发送按钮
     Button btnSend = win.addButton({text: "发送到多行 >", x: 440, y: 330, w: 120, h: 36,
-                                     rgb: [80, 160, 200], type: "primary"})
+                                     bg_rgb: [80, 160, 200], type: "primary"})
     btnSend.on_click(func() {
         var t = edSL.get_text()
         if t == "" { t = lastSL }
@@ -62,7 +62,7 @@ main() {
 
     // 清空按钮
     Button btnClear = win.addButton({text: "清空", x: 575, y: 330, w: 60, h: 36,
-                                      rgb: [180, 60, 60]})
+                                      bg_rgb: [180, 60, 60]})
     btnClear.on_click(func() {
         ed.set_text("")
         lastMsg = "已清空"

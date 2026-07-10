@@ -24,6 +24,7 @@ export struct Toggle impl Widget {
     bool _wasHover
     bool _pressed
     bool enabled
+    bool visible
     bool _loaded
     string _tip             // 悬停提示文本（空 = 不提示）
     bool _animate              // 开启动画选项（anim）
@@ -68,6 +69,7 @@ export struct Toggle impl Widget {
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _on = _bool(opts.get("on", false))
         enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         hover = false; _wasHover = false; _pressed = false
         _tip = opts.get("tip", "") as string
 
@@ -100,6 +102,8 @@ export struct Toggle impl Widget {
     func is_on(): bool          { return _on }
     func get_anim_pos(): float  { return _animPos }   // 滑块当前显示位置（用于观察过渡）
     func set_enabled(bool e)     { enabled = e }
+    func set_visible(bool v)      { visible = v }
+    func is_visible(): bool       { return visible }
     func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float          { return x }
     func get_y(): float          { return y }
@@ -124,6 +128,7 @@ export struct Toggle impl Widget {
 
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
         if not enabled { hover = false; _pressed = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
         float mx = ev.mouseX(); float my = ev.mouseY()
@@ -182,6 +187,7 @@ export struct Toggle impl Widget {
 
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
         _step_anim()
 

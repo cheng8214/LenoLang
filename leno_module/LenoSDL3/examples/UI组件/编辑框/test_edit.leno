@@ -34,7 +34,7 @@ main() {
 
     // 暗色主题
     Edit edDark = win.addEdit({text: "暗色主题", x: 20, y: 225, w: 250, h: 36,
-                                rgb: [20, 20, 30], text_rgb: [100, 255, 180]})
+                                bg_rgb: [20, 20, 30], text_rgb: [100, 255, 180]})
     edDark.on_enter(func() { lastMsg = "回车: " + edDark.get_text(); print("[enter] " + lastMsg) })
 
     // 长文本输入框

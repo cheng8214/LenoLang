@@ -17,6 +17,7 @@ export struct Label impl Widget {
     int _align                   // 对齐: 0=左, 1=中, 2=右
     float _w; float _h           // 缓存自然尺寸（供布局使用）
     bool _loaded
+    bool visible
     bool hover; bool _wasHover
     string _tip             // 悬停提示文本（空 = 不提示）
 
@@ -43,7 +44,7 @@ export struct Label impl Widget {
 
         // 文字色（默认白色）
         tr = 255; tg = 255; tb = 255
-        var tc = opts.get("rgb")
+        var tc = opts.get("text_rgb")
         if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
 
         // 对齐
@@ -56,6 +57,7 @@ export struct Label impl Widget {
         } else { _w = 0.0; _h = 16.0 }
         hover = false; _wasHover = false
         _tip = opts.get("tip", "") as string
+        visible = _bool(opts.get("visible", true))
         _loaded = true
     }
 
@@ -67,7 +69,7 @@ export struct Label impl Widget {
             _h = _float(_font.measureString("Ag").h)
         }
     }
-    func set_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
+    func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null { _font.close(); _font = null }
@@ -83,6 +85,8 @@ export struct Label impl Widget {
     }
     func set_align(int a) { _align = a }
     func set_tip(string t) { _tip = t }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
 
     // ==================== 查询方法 ====================
     func get_text(): string  { return text }
@@ -96,6 +100,7 @@ export struct Label impl Widget {
     // 标签仅用于悬停提示检测（其余输入不参与）
     func process(Event ev) {
         if not _loaded { return }
+        if not visible { return }
         if not ev.isMouseMotion() { return }
         _wasHover = hover
         float mx = ev.mouseX(); float my = ev.mouseY()
@@ -107,6 +112,7 @@ export struct Label impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded { return }
+        if not visible { return }
         _ensure_font()
         if _font == null or not _font.ok { return }
         if text == "" { return }
