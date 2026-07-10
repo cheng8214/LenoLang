@@ -251,8 +251,11 @@ export struct TabControl impl Widget {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
+        // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
+        if core.inPopupCapture(ev.mouseX(), ev.mouseY()) { return }
         _applyOffsets(_active)
         float mx = ev.mouseX(); float my = ev.mouseY()
+
 
         var rs = _tabRects()
         int hitTab = -1

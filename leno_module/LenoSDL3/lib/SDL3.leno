@@ -19,6 +19,7 @@ import "sdl_combobox.leno" as cbb
 import "sdl_panel.leno" as pnl
 import "sdl_tab.leno" as tab
 import "sdl_layout.leno" as lay
+import "sdl_menu.leno" as menu
 import "sdl_widget.leno" as wgt
 
 
@@ -62,6 +63,7 @@ use lb.ListBox
 use cbb.ComboBox
 use pnl.Panel
 use tab.TabControl
+use menu.MenuBar
 use lay.HBox
 use lay.VBox
 use lay.AnchorBox
@@ -79,6 +81,7 @@ export func createListBox(Dict opts): ListBox     { return lb.createListBox(opts
 export func createComboBox(Dict opts): ComboBox  { return cbb.createComboBox(opts) }
 export func createPanel(Dict opts): Panel        { return pnl.createPanel(opts) }
 export func createTabControl(Dict opts): TabControl { return tab.createTabControl(opts) }
+export func createMenuBar(Dict opts): MenuBar      { return menu.createMenuBar(opts) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
 export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(opts) }

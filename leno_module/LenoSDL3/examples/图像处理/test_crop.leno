@@ -1,4 +1,4 @@
-﻿// test_crop.leno — 图片裁剪工具（鼠标拖拽选区）
+// test_crop.leno — 图片裁剪工具（鼠标拖拽选区）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer

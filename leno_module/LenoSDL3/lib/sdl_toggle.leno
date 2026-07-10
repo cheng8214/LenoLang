@@ -24,6 +24,12 @@ export struct Toggle impl Widget {
     bool _pressed
     bool enabled
     bool _loaded
+    bool _animate              // 开启动画选项（anim）
+    float _animSpeed           // 动画速度（anim_speed）
+    float _animPos             // 滑块当前显示位置 0=关 1=开
+    float _animTarget          // 滑块目标位置
+    float _animLast            // 上次动画时刻(ms)
+    bool _animating            // 是否正在动画
     func(bool):void _onChange
 
     func _ensure_font() {
@@ -61,13 +67,34 @@ export struct Toggle impl Widget {
         _on = _bool(opts.get("on", false))
         enabled = _bool(opts.get("enabled", true))
         hover = false; _wasHover = false; _pressed = false
+
+        // 动画选项：anim=true 开启平滑滑动动画，anim_speed 控制速度
+        _animate = _bool(opts.get("anim", false))
+        _animSpeed = _float(opts.get("anim_speed", 12.0))
+        _animPos = if _on then 1.0 else 0.0
+        _animTarget = _animPos
+        _animLast = 0.0
+        _animating = false
+
         _ensure_font()
         _loaded = true
     }
 
     func set_text(string t)    { text = t }
-    func set_on(bool o)         { _on = o }
+    func set_on(bool o) {
+        if _on != o {
+            _on = o
+            if _animate {
+                _animTarget = if _on then 1.0 else 0.0
+                _animating = true
+                _animLast = 0.0
+            } else {
+                _animPos = if _on then 1.0 else 0.0
+            }
+        }
+    }
     func is_on(): bool          { return _on }
+    func get_anim_pos(): float  { return _animPos }   // 滑块当前显示位置（用于观察过渡）
     func set_enabled(bool e)     { enabled = e }
     func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
     func get_x(): float          { return x }
@@ -94,6 +121,11 @@ export struct Toggle impl Widget {
     func process(Event ev) {
         if not _loaded { return }
         if not enabled { hover = false; _pressed = false; return }
+        // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
+        float mx = ev.mouseX(); float my = ev.mouseY()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        if core.inPopupCapture(mx, my) { return }
+
 
         if ev.isMouseMotion() {
             _wasHover = hover
@@ -109,27 +141,58 @@ export struct Toggle impl Widget {
         if ev.isMouseButtonDown() and hover and not _pressed {
             _pressed = true
             _on = not _on
+            if _animate {
+                _animTarget = if _on then 1.0 else 0.0
+                _animating = true
+                _animLast = 0.0
+            } else {
+                _animPos = if _on then 1.0 else 0.0
+            }
             if _onChange != null { _onChange(_on) }
+        }
+    }
+
+    // ==================== 动画步进（每帧由 render 调用） ====================
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animPos = _animTarget; _animating = false; return }  // 关闭动画：立即到位
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float diff = _animTarget - _animPos
+        float ad = diff
+        if ad < 0.0 { ad = -ad }
+        if ad <= 0.001 {
+            _animPos = _animTarget
+            _animating = false
+        } else if dt > 0.0 {
+            float f = _animSpeed * dt
+            if f > 1.0 { f = 1.0 }
+            _animPos += diff * f
         }
     }
 
     func render(Renderer r) {
         if not _loaded { return }
         _ensure_font()
+        _step_anim()
 
-        // 轨道
-        int trkR = _offR; int trkG = _offG; int trkB = _offB
-        if _on { trkR = _onR; trkG = _onG; trkB = _onB }
+        // 轨道（颜色按动画位置在 关闭色↔开启色 之间平滑过渡）
+        int trkR = _int(_offR + _animPos * (_onR - _offR))
+        int trkG = _int(_offG + _animPos * (_onG - _offG))
+        int trkB = _int(_offB + _animPos * (_onB - _offB))
         if hover { trkR = trkR + 20; trkG = trkG + 20; trkB = trkB + 20
                    if trkR > 255 { trkR = 255 }; if trkG > 255 { trkG = 255 }; if trkB > 255 { trkB = 255 } }
         if not enabled { trkR = _offR / 2; trkG = _offG / 2; trkB = _offB / 2 }
         r.setColor(trkR, trkG, trkB, 255)
         r.fillRoundedRect(x, y, w, h, h / 2.0)
 
-        // 滑块（圆形，按状态左右移动）
+        // 滑块（按动画位置在 左↔右 之间平滑滑动）
         float knob = h - 6.0
-        float kx = x + 3.0
-        if _on { kx = x + w - 3.0 - knob }
+        float kxOff = x + 3.0
+        float kxOn  = x + w - 3.0 - knob
+        float kx = kxOff + _animPos * (kxOn - kxOff)
         r.setColor(245, 245, 250, 255)
         r.fillRoundedRect(kx, y + 3.0, knob, knob, knob / 2.0)
 

@@ -1,0 +1,49 @@
+// test_toggle_anim.leno — 开关动画演示
+// 演示：为开关开启 anim=true 后，点击时滑块与轨道颜色会像进度条一样平滑过渡，
+// 而非瞬间跳变；anim_speed 控制动画速度（越大越快）。
+//   · 上面两个开关：anim=true（带动画），分别用不同速度对比
+//   · 最下方开关：不传 anim（默认关闭动画，保持原瞬时切换行为，作为对照）
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Toggle
+
+main() {
+    var win = SDL3.createWindow({title: "开关动画测试", w: 480, h: 360})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 开关 A：带动画，速度较快
+    var tA = win.addToggle({ text: "动画·快", x: 40, y: 80, on: false, anim: true, anim_speed: 16.0 })
+    tA.on_change(func(bool v) { print("A -> " + v) })
+
+    // 开关 B：带动画，速度较慢（过渡更明显）
+    var tB = win.addToggle({ text: "动画·慢", x: 40, y: 140, on: true, anim: true, anim_speed: 5.0 })
+    tB.on_change(func(bool v) { print("B -> " + v) })
+
+    // 开关 C：对照——不开启动画（默认），点击瞬间切换
+    var tC = win.addToggle({ text: "无动画(对照)", x: 40, y: 200, on: false })
+    tC.on_change(func(bool v) { print("C -> " + v) })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            r.drawText(font, "开关动画：点击切换观察滑块平滑滑动", 20, 14, 255, 220, 80)
+            r.drawText(font, "A 显示位置: " + tA.get_anim_pos(), 240, 88, 150, 230, 160)
+            r.drawText(font, "B 显示位置: " + tB.get_anim_pos(), 240, 148, 150, 230, 160)
+            r.drawText(font, "C 显示位置: " + tC.get_anim_pos(), 240, 208, 200, 200, 200)
+            r.drawText(font, "ESC 退出", 400, 332, 140, 140, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

@@ -130,6 +130,11 @@ export struct Slider impl Widget {
     func process(Event ev) {
         if not _loaded { return }
         if not enabled { hover = false; _dragging = false; return }
+        // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
+        float mx = ev.mouseX(); float my = ev.mouseY()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        if core.inPopupCapture(mx, my) { return }
+
 
         if ev.isMouseMotion() {
             float mx = ev.mouseX(); float my = ev.mouseY()

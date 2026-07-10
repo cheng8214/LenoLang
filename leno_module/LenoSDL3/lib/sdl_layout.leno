@@ -94,14 +94,11 @@ export struct HBox impl Widget {
         if innerW < 0 { innerW = 0 }
         if innerH < 0 { innerH = 0 }
 
-        // 解析每个子项的 flex 参数（兼容旧 expand:true -> grow=1）
-        Array[float] basisArr  = []
-        Array[float] growArr   = []
-        Array[float] shrinkArr = []
+        // 先扫描，统计各 flex 总和（用于 free / justify 计算）
+        float totalSpacing = spacing * _float(n - 1)
         float totalBasis = 0.0
         float sumGrow = 0.0
         float sumShrinkBasis = 0.0
-        float totalSpacing = spacing * _float(n - 1)
         for n to i {
             Dict o = _opt[i]
             float g = _float(o.get("grow", 0.0))
@@ -110,27 +107,32 @@ export struct HBox impl Widget {
             float basis = _c[i].get_w()
             float b = _float(o.get("basis", -1.0))
             if b >= 0.0 { basis = b }
-            basisArr.add(basis); growArr.add(g); shrinkArr.add(s)
             totalBasis = totalBasis + basis
             sumGrow = sumGrow + g
             sumShrinkBasis = sumShrinkBasis + s * basis
         }
         float free = innerW - totalBasis - totalSpacing
 
-        // 计算每个子项的主轴尺寸：剩余空间按 grow 分配；空间不足按 shrink*basis 收缩
-        Array[float] sizes = []
-        for n to i {
-            float sz = basisArr[i]
+        // 嵌套闭包：计算第 i 个子项的主轴尺寸（捕获 free/sumGrow/sumShrinkBasis 等外层变量）
+        func childMain(int i): float {
+            Dict o = _opt[i]
+            float g = _float(o.get("grow", 0.0))
+            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
+            float s = _float(o.get("shrink", 1.0))
+            float basis = _c[i].get_w()
+            float b = _float(o.get("basis", -1.0))
+            if b >= 0.0 { basis = b }
             if free >= 0.0 {
-                if sumGrow > 0.0 { sz = basisArr[i] + free * growArr[i] / sumGrow }
-            } else {
-                if sumShrinkBasis > 0.0 {
-                    float cut = (shrinkArr[i] * basisArr[i]) / sumShrinkBasis * (-free)
-                    sz = basisArr[i] - cut
-                    if sz < 0.0 { sz = 0.0 }
-                }
+                if sumGrow > 0.0 { return basis + free * g / sumGrow }
+                return basis
             }
-            sizes.add(sz)
+            if sumShrinkBasis > 0.0 {
+                float cut = (s * basis) / sumShrinkBasis * (-free)
+                float sz = basis - cut
+                if sz < 0.0 { return 0.0 }
+                return sz
+            }
+            return basis
         }
 
         // 主轴起始偏移与间隙（justify-content，仅在无 grow 且有剩余空间时生效）
@@ -148,12 +150,14 @@ export struct HBox impl Widget {
         for n to i {
             Widget c = _c[i]
             Dict o = _opt[i]
-            float cw = sizes[i]
+            float cw = childMain(i)
             float ch = c.get_h()
+            float g = _float(o.get("grow", 0.0))
+            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             int align = _int(o.get("align", 0))
             float cy
             if align == 3 { ch = innerH; cy = y + padY }
-            else if growArr[i] > 0.0 { ch = innerH; cy = y + padY }   // grow 同时撑满交叉轴
+            else if g > 0.0 { ch = innerH; cy = y + padY }   // grow 同时撑满交叉轴
             else if align == 1 { cy = y + padY + (innerH - ch) / 2.0 }
             else if align == 2 { cy = y + padY + innerH - ch }
             else { cy = y + padY }
@@ -236,14 +240,11 @@ export struct VBox impl Widget {
         if innerW < 0 { innerW = 0 }
         if innerH < 0 { innerH = 0 }
 
-        // 解析每个子项的 flex 参数（兼容旧 expand:true -> grow=1）
-        Array[float] basisArr  = []
-        Array[float] growArr   = []
-        Array[float] shrinkArr = []
+        // 先扫描，统计各 flex 总和（用于 free / justify 计算）
+        float totalSpacing = spacing * _float(n - 1)
         float totalBasis = 0.0
         float sumGrow = 0.0
         float sumShrinkBasis = 0.0
-        float totalSpacing = spacing * _float(n - 1)
         for n to i {
             Dict o = _opt[i]
             float g = _float(o.get("grow", 0.0))
@@ -252,27 +253,32 @@ export struct VBox impl Widget {
             float basis = _c[i].get_h()
             float b = _float(o.get("basis", -1.0))
             if b >= 0.0 { basis = b }
-            basisArr.add(basis); growArr.add(g); shrinkArr.add(s)
             totalBasis = totalBasis + basis
             sumGrow = sumGrow + g
             sumShrinkBasis = sumShrinkBasis + s * basis
         }
         float free = innerH - totalBasis - totalSpacing
 
-        // 计算每个子项的主轴尺寸：剩余空间按 grow 分配；空间不足按 shrink*basis 收缩
-        Array[float] sizes = []
-        for n to i {
-            float sz = basisArr[i]
+        // 嵌套闭包：计算第 i 个子项的主轴尺寸（捕获 free/sumGrow/sumShrinkBasis 等外层变量）
+        func childMain(int i): float {
+            Dict o = _opt[i]
+            float g = _float(o.get("grow", 0.0))
+            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
+            float s = _float(o.get("shrink", 1.0))
+            float basis = _c[i].get_h()
+            float b = _float(o.get("basis", -1.0))
+            if b >= 0.0 { basis = b }
             if free >= 0.0 {
-                if sumGrow > 0.0 { sz = basisArr[i] + free * growArr[i] / sumGrow }
-            } else {
-                if sumShrinkBasis > 0.0 {
-                    float cut = (shrinkArr[i] * basisArr[i]) / sumShrinkBasis * (-free)
-                    sz = basisArr[i] - cut
-                    if sz < 0.0 { sz = 0.0 }
-                }
+                if sumGrow > 0.0 { return basis + free * g / sumGrow }
+                return basis
             }
-            sizes.add(sz)
+            if sumShrinkBasis > 0.0 {
+                float cut = (s * basis) / sumShrinkBasis * (-free)
+                float sz = basis - cut
+                if sz < 0.0 { return 0.0 }
+                return sz
+            }
+            return basis
         }
 
         // 主轴起始偏移与间隙（justify-content，仅在无 grow 且有剩余空间时生效）
@@ -290,12 +296,14 @@ export struct VBox impl Widget {
         for n to i {
             Widget c = _c[i]
             Dict o = _opt[i]
-            float ch = sizes[i]
+            float ch = childMain(i)
             float cw = c.get_w()
+            float g = _float(o.get("grow", 0.0))
+            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             int align = _int(o.get("align", 0))
             float cx
             if align == 3 { cw = innerW; cx = x + padX }
-            else if growArr[i] > 0.0 { cw = innerW; cx = x + padX }   // grow 同时撑满交叉轴
+            else if g > 0.0 { cw = innerW; cx = x + padX }   // grow 同时撑满交叉轴
             else if align == 1 { cx = x + padX + (innerW - cw) / 2.0 }
             else if align == 2 { cx = x + padX + innerW - cw }
             else { cx = x + padX }

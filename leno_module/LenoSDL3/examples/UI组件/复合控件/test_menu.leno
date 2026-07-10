@@ -1,0 +1,72 @@
+// test_menu.leno — 菜单栏演示（构建器 API）
+// 演示：顶部菜单栏点击展开下拉，含分隔线、快捷键文字、子菜单（二级飞出）、禁用项；
+// 点击空白处 / 切换标题 / Esc 关闭；下拉层自动盖在其它控件之上（不遮挡、不被遮挡）。
+// 说明：本语言暂不支持“跨多行的嵌套字面量”，故菜单用构建器逐项添加（每项单行 Dict）。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.MenuBar
+
+main() {
+    var win = SDL3.createWindow({title: "菜单栏测试", w: 560, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 菜单栏（先建空栏，再逐项添加，避免多层嵌套字面量）
+    var bar = win.addMenuBar({ x: 0, y: 0, w: 560, h: 28 })
+
+    int mFile = bar.addMenu("文件")
+    bar.addItem(mFile, { label: "新建", id: "new", shortcut: "Ctrl+N" })
+    bar.addItem(mFile, { label: "打开...", id: "open", shortcut: "Ctrl+O" })
+    bar.addSeparator(mFile)
+    int mRecent = bar.addItem(mFile, { label: "最近打开" })
+    bar.addSubmenuItem(mFile, mRecent, { label: "report.txt", id: "recent1" })
+    bar.addSubmenuItem(mFile, mRecent, { label: "photo.png", id: "recent2" })
+    bar.addSubmenuSeparator(mFile, mRecent)
+    bar.addSubmenuItem(mFile, mRecent, { label: "清空最近", id: "clear_recent" })
+    bar.addSeparator(mFile)
+    bar.addItem(mFile, { label: "退出", id: "exit", shortcut: "Alt+F4" })
+
+    int mEdit = bar.addMenu("编辑")
+    bar.addItem(mEdit, { label: "撤销", id: "undo", shortcut: "Ctrl+Z" })
+    bar.addItem(mEdit, { label: "重做", id: "redo", shortcut: "Ctrl+Y", enabled: false })
+    bar.addSeparator(mEdit)
+    bar.addItem(mEdit, { label: "剪切", id: "cut", shortcut: "Ctrl+X" })
+    bar.addItem(mEdit, { label: "复制", id: "copy", shortcut: "Ctrl+C" })
+    bar.addItem(mEdit, { label: "粘贴", id: "paste", shortcut: "Ctrl+V" })
+
+    int mHelp = bar.addMenu("帮助")
+    bar.addItem(mHelp, { label: "查看帮助", id: "help" })
+    bar.addItem(mHelp, { label: "关于", id: "about" })
+
+    // 统一回调：拿到（菜单名, 项 id）
+    bar.on_select(func(string menu, string id) {
+        print("选中 -> [" + menu + "] " + id)
+    })
+
+    // 一些内容控件，用于验证下拉层覆盖其上、并抑制其事件
+    var b1 = win.addButton({ x: 40, y: 80, w: 120, h: 38, text: "按钮 A", type: "primary" })
+    b1.on_click(func():void { print("按钮 A 被点击（菜单打开时不应触发）") })
+    var b2 = win.addButton({ x: 180, y: 80, w: 120, h: 38, text: "按钮 B" })
+    b2.on_click(func():void { print("按钮 B 被点击") })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            r.drawText(font, "顶部菜单栏：点击“文件/编辑/帮助”展开；悬停“最近打开”弹出二级", 20, 130, 200, 210, 230)
+            r.drawText(font, "点击下拉项会触发回调；点击空白/Esc 关闭", 20, 160, 200, 210, 230)
+            r.drawText(font, "ESC 退出", 470, 392, 140, 140, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
