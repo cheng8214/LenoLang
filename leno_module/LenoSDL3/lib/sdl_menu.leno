@@ -106,6 +106,10 @@ export struct MenuBar impl Widget {
     int _openSub    // 当前展开菜单中“已展开子菜单”的项索引，-1 无
     int _hoverSub   // 子菜单中悬停项索引，-1 无
 
+    // 右击上下文菜单（复用同一套弹层/几何逻辑；与 _menus/_titles 平行存储）
+    Array[bool]         _ctxFlag    // 标记某条目是否为“上下文菜单”（无标题栏）
+    Array[Array[float]] _ctxAnchor  // 上下文菜单的弹出锚点 [x, y]
+
     float _fontSize; string _fontPath; int _fontStyle; Font _font
 
     // 配色
@@ -119,6 +123,7 @@ export struct MenuBar impl Widget {
     int _bdrR, _brdG, _brdB        // 边框色
     int _accR, _accG, _accB        // 激活下划线
     int _cursor
+    int _winW; int _winH           // 所属窗口逻辑宽高（边界夹紧用；0=未知）
     bool enabled; bool _loaded
     func(string, string):void _onSelect
 
@@ -138,6 +143,8 @@ export struct MenuBar impl Widget {
     func get_y(): float { return y }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
+    // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
+    func setWindowSize(int ww, int hh) { _winW = ww; _winH = hh }
 
     func set(Dict opts) {
         x       = _float(opts.get("x", 0))
@@ -151,6 +158,8 @@ export struct MenuBar impl Widget {
 
         _titles = []
         _menus  = []
+        _ctxFlag = []
+        _ctxAnchor = []
         var ms = opts.get("menus", [])
         if ms is Array[Dict] {
             for ms.len() to i {
@@ -159,6 +168,8 @@ export struct MenuBar impl Widget {
                 var its = m.get("items", [])
                 if its is Array[Dict] { _menus.add(parseMenuItems(its as Array[Dict])) }
                 else { _menus.add([]) }
+                _ctxFlag.add(false)
+                _ctxAnchor.add([0.0, 0.0])
             }
         }
 
@@ -194,6 +205,8 @@ export struct MenuBar impl Widget {
     func addMenu(string title): int {
         _titles.add(title)
         _menus.add([])
+        _ctxFlag.add(false)          // 与 _menus/_titles 平行存储，保持索引对齐
+        _ctxAnchor.add([0.0, 0.0])
         return _titles.len() - 1
     }
     // 向指定顶级菜单追加一项，返回该项在菜单内的索引（可用于挂子菜单）
@@ -227,7 +240,56 @@ export struct MenuBar impl Widget {
         arr[parentIdx].submenu.add(mi)
     }
 
-    // ==================== 几何 ====================
+    // ==================== 右击上下文菜单（与顶部菜单共用 _menus/_titles） ====================
+    // 定义（一次性）：返回一个“上下文菜单句柄”（即它在 _menus 中的索引，带 ctx 标记）
+    func addContextMenu(string name): int {
+        _titles.add(name)
+        _menus.add([])
+        _ctxFlag.add(true)
+        _ctxAnchor.add([0.0, 0.0])
+        return _titles.len() - 1
+    }
+    func addContextItem(int ctxIdx, Dict opts): int {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return -1 }
+        var mi = _makeItem(opts)
+        _menus[ctxIdx].add(mi)
+        return _menus[ctxIdx].len() - 1
+    }
+    func addContextSeparator(int ctxIdx) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        var mi = new MenuItem(); mi.separator = true; mi.submenu = []
+        _menus[ctxIdx].add(mi)
+    }
+    func addContextSubmenuItem(int ctxIdx, int parentIdx, Dict opts): int {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return -1 }
+        var arr = _menus[ctxIdx]
+        if parentIdx < 0 or parentIdx >= arr.len() { return -1 }
+        var mi = _makeItem(opts)
+        arr[parentIdx].submenu.add(mi)
+        return arr[parentIdx].submenu.len() - 1
+    }
+    func addContextSubmenuSeparator(int ctxIdx, int parentIdx) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        var arr = _menus[ctxIdx]
+        if parentIdx < 0 or parentIdx >= arr.len() { return }
+        var mi = new MenuItem(); mi.separator = true; mi.submenu = []
+        arr[parentIdx].submenu.add(mi)
+    }
+    // 在光标处弹出（右键时调用）；x,y 为弹出锚点（一般为鼠标位置）
+    // 同一帧内立即登记弹层捕获区，避免右键穿透到下层控件
+    func openContext(int ctxIdx, float x, float y) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        close()
+        _open = ctxIdx
+        _ctxAnchor[ctxIdx] = [x, y]
+        _openSub = -1; _hoverItem = -1; _hoverSub = -1
+        _ensure_font()
+        // 统一经 _panelRect 做窗口边界夹紧（主面板与子菜单共用同一逻辑）
+        var g = _panelRect(ctxIdx)
+        _ctxAnchor[ctxIdx] = [g[0], g[1]]
+        core.setPopupCapture(g[0], g[1], g[2], g[3])
+    }
+
     func _topRects(): Array[Array[float]] {
         Array[Array[float]] out = []
         int n = _titles.len()
@@ -235,6 +297,11 @@ export struct MenuBar impl Widget {
         _ensure_font()
         float tx = x
         for n to i {
+            // 上下文菜单无标题栏：占位 [0,0,0,0] 以保持与 _menus 索引对齐
+            if i < _ctxFlag.len() and _ctxFlag[i] {
+                out.add([0.0, 0.0, 0.0, 0.0])
+                continue
+            }
             float tw = 60.0
             if _font != null and _font.ok { tw = _float(_font.measureString(_titles[i]).w) + 28.0 }
             if tw < 40.0 { tw = 40.0 }
@@ -243,14 +310,29 @@ export struct MenuBar impl Widget {
         }
         return out
     }
+    // 按所属窗口边界夹紧面板矩形（右/下越界则平移进窗口内）
+    func _clampRect(float px, float py, float pw, float ph): Array[float] {
+        if _winW > 0 and px + pw > _float(_winW) { px = _float(_winW) - pw }
+        if _winH > 0 and py + ph > _float(_winH) { py = _float(_winH) - ph }
+        if px < 0.0 { px = 0.0 }
+        if py < 0.0 { py = 0.0 }
+        return [px, py, pw, ph]
+    }
     func _panelRect(int mIdx): Array[float] {
+        // 上下文菜单：直接使用弹出锚点，而非标题栏下方
+        if mIdx >= 0 and mIdx < _ctxFlag.len() and _ctxFlag[mIdx] {
+            float ax = _ctxAnchor[mIdx][0]; float ay = _ctxAnchor[mIdx][1]
+            float pw = _colW(_menus[mIdx], _font, _itemH)
+            float ph = _panelH(_menus[mIdx], _itemH)
+            return _clampRect(ax, ay, pw, ph)
+        }
         var rs = _topRects()
         var r = rs[mIdx]
         float px = r[0]
         float py = y + h
         float pw = _colW(_menus[mIdx], _font, _itemH)
         float ph = _panelH(_menus[mIdx], _itemH)
-        return [px, py, pw, ph]
+        return _clampRect(px, py, pw, ph)
     }
     func _subRect(int parentIdx): Array[float] {
         var g = _panelRect(_open)
@@ -258,9 +340,14 @@ export struct MenuBar impl Widget {
         float iy = g[1] + offs[parentIdx]
         var sub = _menus[_open][parentIdx].submenu
         float fw = _colW(sub, _font, _itemH)
+        float fh = _panelH(sub, _itemH)
         float fx = g[0] + g[2] - 2.0
         float fy = iy
-        float fh = _panelH(sub, _itemH)
+        // 水平超界则翻转到父菜单左侧弹出；垂直超界则上移夹紧
+        if _winW > 0 and fx + fw > _float(_winW) { fx = g[0] - fw + 2.0 }
+        if _winH > 0 and fy + fh > _float(_winH) { fy = _float(_winH) - fh }
+        if fx < 0.0 { fx = 0.0 }
+        if fy < 0.0 { fy = 0.0 }
         return [fx, fy, fw, fh]
     }
 
@@ -323,7 +410,8 @@ export struct MenuBar impl Widget {
 
         if ev.isMouseButtonUp() { return }
 
-        if ev.isMouseButtonDown() {
+        // 仅左键参与菜单展开/选择/关闭；右键由应用层 onEvent 调 openContext 处理
+        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
             var rs = _topRects()
             int hitTop = -1
             for rs.len() to i {
@@ -362,13 +450,19 @@ export struct MenuBar impl Widget {
         if not _loaded { return }
         _ensure_font()
 
-        r.setColor(_barR, _barG, _barB, 255)
-        r.fillRect(x, y, w, h)
-        r.setColor(_bdrR, _brdG, _brdB, 220)
-        r.drawLine(x, y + h, x + w, y + h)
+        // 仅当存在“顶部菜单”时才绘制菜单栏背景；纯上下文菜单管理器无需画栏
+        bool anyTop = false
+        for _ctxFlag.len() to i { if not _ctxFlag[i] { anyTop = true; break } }
+        if anyTop {
+            r.setColor(_barR, _barG, _barB, 255)
+            r.fillRect(x, y, w, h)
+            r.setColor(_bdrR, _brdG, _brdB, 220)
+            r.drawLine(x, y + h, x + w, y + h)
+        }
 
         var rs = _topRects()
         for rs.len() to i {
+            if i < _ctxFlag.len() and _ctxFlag[i] { continue }   // 上下文菜单不画标题栏
             var rr = rs[i]
             bool active = (_open == i)
             bool hov = (_hoverTop == i) or active

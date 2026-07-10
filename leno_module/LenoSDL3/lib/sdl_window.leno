@@ -319,6 +319,7 @@ export struct Window {
         MenuBar m = menu.createMenuBar(opts)
         _widgets.add(m as Widget)
         _menus.add(m)
+        m.setWindowSize(_w, _h)   // 供上下文菜单弹出时按窗口边界夹紧
         return m
     }
 

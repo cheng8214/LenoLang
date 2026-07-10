@@ -1,0 +1,63 @@
+// test_contextmenu.leno — 右击上下文菜单演示（复用 MenuBar 的弹层/子菜单/快捷键机制）
+// 在窗口空白处右键弹出上下文菜单；含子菜单（二级飞出）、分隔线、快捷键、禁用项。
+// 关键点：右键在 win.run 的 onEvent 中检测（ev.mouseButton()==3），调用 bar.openContext(handle, x, y)
+//        在光标处弹出；菜单的 process 只响应左键，右键不会误触发下层控件（弹层捕获区已抑制）。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.MenuBar
+
+main() {
+    var win = SDL3.createWindow({title: "右击上下文菜单测试", w: 560, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 菜单栏（此处用它同时管理“顶部菜单”与“右击上下文菜单”）
+    var bar = win.addMenuBar({ x: 0, y: 0, w: 560, h: 28 })
+
+    // —— 顶部菜单（可选，演示两者可共存）——
+    int mFile = bar.addMenu("文件")
+    bar.addItem(mFile, { label: "新建", id: "new", shortcut: "Ctrl+N" })
+    bar.addItem(mFile, { label: "打开...", id: "open", shortcut: "Ctrl+O" })
+
+    // —— 右击上下文菜单（一次性定义，右键时弹出）——
+    int ctx = bar.addContextMenu("canvas")
+    bar.addContextItem(ctx, { label: "复制", id: "copy", shortcut: "Ctrl+C" })
+    bar.addContextItem(ctx, { label: "粘贴", id: "paste", shortcut: "Ctrl+V" })
+    bar.addContextSeparator(ctx)
+    int mAlign = bar.addContextItem(ctx, { label: "对齐方式" })
+    bar.addContextSubmenuItem(ctx, mAlign, { label: "左对齐", id: "align_left" })
+    bar.addContextSubmenuItem(ctx, mAlign, { label: "居中", id: "align_center" })
+    bar.addContextSubmenuItem(ctx, mAlign, { label: "右对齐", id: "align_right" })
+    bar.addContextSeparator(ctx)
+    bar.addContextItem(ctx, { label: "删除", id: "delete", enabled: false })
+
+    // 统一回调：拿到（菜单名, 项 id）；上下文菜单的“菜单名”为 "canvas"
+    bar.on_select(func(string menu, string id) {
+        print("选中 -> [" + menu + "] " + id)
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            // 右键：在光标处弹出上下文菜单（onEvent 先于各控件 process，同一帧内即生效）
+            if e.isMouseButtonDown() and e.mouseButton() == 3 {
+                bar.openContext(ctx, e.mouseX(), e.mouseY())
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            r.drawText(font, "在窗口空白处右键：弹出上下文菜单（含子菜单/禁用项）", 20, 120, 200, 210, 230)
+            r.drawText(font, "左键点菜单项触发回调；点空白/Esc 关闭；左键不会穿透到下层", 20, 150, 200, 210, 230)
+            r.drawText(font, "ESC 退出", 470, 392, 140, 140, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
