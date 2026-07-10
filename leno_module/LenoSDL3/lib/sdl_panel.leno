@@ -37,6 +37,8 @@ export struct Panel impl Widget {
         _brdA = _int(opts.get("border_alpha", 220))
         _drawBorder = _bool(opts.get("border", true))
         _clip = _bool(opts.get("clip", true))
+        enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         children = []
         _loaded = true
     }

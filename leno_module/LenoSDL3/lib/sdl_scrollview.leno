@@ -62,6 +62,8 @@ export struct ScrollView impl Widget {
         _contentW = _float(opts.get("content_w", -1.0))
         _contentH = _float(opts.get("content_h", -1.0))
         _scrollX = 0.0; _scrollY = 0.0
+        enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         _loaded = true
     }
 

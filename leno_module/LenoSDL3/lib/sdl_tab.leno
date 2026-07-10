@@ -107,6 +107,8 @@ export struct TabControl impl Widget {
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _hover = -1
+        enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
         _ensure_font()
         _loaded = true
     }
