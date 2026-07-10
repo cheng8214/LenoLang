@@ -1,0 +1,64 @@
+// test_vmenu.leno — 左侧竖菜单（经典三布局：竖栏 + 内容区）
+// 通过 orientation:"vertical" 让 MenuBar 变成左栏：顶级项竖排，点击后子菜单向右飞出。
+// 内容区由 win.run 的 render 回调自行绘制（从 x=200 起，避开左栏）。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.MenuBar
+
+main() {
+    var win = SDL3.createWindow({title: "竖菜单测试", w: 640, h: 420})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // 左栏竖菜单：x=0,y=0,w=180(栏宽),h=420(窗高)，orientation 设 vertical
+    MenuBar bar = win.addMenuBar({ x: 0, y: 0, w: 180, h: 420, orientation: "vertical" })
+
+    int m1 = bar.addMenu("文件")
+    bar.addItem(m1, { label: "新建", id: "new" })
+    bar.addItem(m1, { label: "打开...", id: "open" })
+    bar.addItem(m1, { separator: true })
+    int mr = bar.addItem(m1, { label: "最近" })
+    bar.addSubmenuItem(m1, mr, { label: "a.txt", id: "recent1" })
+    bar.addSubmenuItem(m1, mr, { label: "b.txt", id: "recent2" })
+    bar.addItem(m1, { label: "退出", id: "exit" })
+
+    int m2 = bar.addMenu("编辑")
+    bar.addItem(m2, { label: "撤销", id: "undo" })
+    bar.addItem(m2, { label: "重做", id: "redo" })
+
+    int m3 = bar.addMenu("视图")
+    bar.addItem(m3, { label: "放大", id: "zoom_in" })
+    bar.addItem(m3, { label: "缩小", id: "zoom_out" })
+    int ml = bar.addItem(m3, { label: "布局" })
+    bar.addSubmenuItem(m3, ml, { label: "左栏", id: "lay_l" })
+    bar.addSubmenuItem(m3, ml, { label: "右栏", id: "lay_r" })
+
+    string curMenu = ""; string curId = ""
+    bar.on_select(func(string menu, string id) {
+        curMenu = menu; curId = id
+        print("选中 -> [" + menu + "] " + id)
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            // 内容区（从 x=200 起，避开左栏 0~180）
+            r.drawText(font, "内容区", 210, 40, 230, 235, 245)
+            r.drawText(font, "选中: [" + curMenu + "] " + curId, 210, 80, 200, 210, 230)
+            r.drawText(font, "左栏竖菜单：点击项 -> 子菜单向右飞出", 210, 120, 160, 170, 190)
+            r.drawText(font, "ESC 退出", 560, 400, 140, 140, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

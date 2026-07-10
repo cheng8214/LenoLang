@@ -124,6 +124,7 @@ export struct MenuBar impl Widget {
     int _accR, _accG, _accB        // 激活下划线
     int _cursor
     int _winW; int _winH           // 所属窗口逻辑宽高（边界夹紧用；0=未知）
+    string _orient                 // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
     bool enabled; bool _loaded
     func(string, string):void _onSelect
 
@@ -155,6 +156,7 @@ export struct MenuBar impl Widget {
         _fontSize = _float(opts.get("font_size", 14))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
+        _orient    = opts.get("orientation", "horizontal") as string
 
         _titles = []
         _menus  = []
@@ -295,6 +297,16 @@ export struct MenuBar impl Widget {
         int n = _titles.len()
         if n == 0 { return out }
         _ensure_font()
+        if _orient == "vertical" {
+            // 左侧栏：顶级项竖排（栏宽 w、项高 _itemH）
+            float ty = y
+            for n to i {
+                if i < _ctxFlag.len() and _ctxFlag[i] { out.add([0.0, 0.0, 0.0, 0.0]); continue }
+                out.add([x, ty, w, _itemH])
+                ty = ty + _itemH
+            }
+            return out
+        }
         float tx = x
         for n to i {
             // 上下文菜单无标题栏：占位 [0,0,0,0] 以保持与 _menus 索引对齐
@@ -319,7 +331,7 @@ export struct MenuBar impl Widget {
         return [px, py, pw, ph]
     }
     func _panelRect(int mIdx): Array[float] {
-        // 上下文菜单：直接使用弹出锚点，而非标题栏下方
+        // 上下文菜单：直接使用弹出锚点，而非标题/侧栏旁
         if mIdx >= 0 and mIdx < _ctxFlag.len() and _ctxFlag[mIdx] {
             float ax = _ctxAnchor[mIdx][0]; float ay = _ctxAnchor[mIdx][1]
             float pw = _colW(_menus[mIdx], _font, _itemH)
@@ -328,10 +340,17 @@ export struct MenuBar impl Widget {
         }
         var rs = _topRects()
         var r = rs[mIdx]
-        float px = r[0]
-        float py = y + h
         float pw = _colW(_menus[mIdx], _font, _itemH)
         float ph = _panelH(_menus[mIdx], _itemH)
+        if _orient == "vertical" {
+            // 左侧栏：子菜单从顶级项右侧飞出
+            float px = r[0] + r[2]
+            float py = r[1]
+            return _clampRect(px, py, pw, ph)
+        }
+        // 顶部栏：下拉自标题下方
+        float px = r[0]
+        float py = y + h
         return _clampRect(px, py, pw, ph)
     }
     func _subRect(int parentIdx): Array[float] {
@@ -457,7 +476,8 @@ export struct MenuBar impl Widget {
             r.setColor(_barR, _barG, _barB, 255)
             r.fillRect(x, y, w, h)
             r.setColor(_bdrR, _brdG, _brdB, 220)
-            r.drawLine(x, y + h, x + w, y + h)
+            if _orient == "vertical" { r.drawLine(x + w, y, x + w, y + h) }
+            else { r.drawLine(x, y + h, x + w, y + h) }
         }
 
         var rs = _topRects()
@@ -468,13 +488,22 @@ export struct MenuBar impl Widget {
             bool hov = (_hoverTop == i) or active
             if hov { r.setColor(_barHovR, _barHovG, _barHovB, 255); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
             if _font != null and _font.ok and _titles[i] != "" {
-                float tw = _float(_font.measureString(_titles[i]).w)
                 float th = _float(_font.measureString("Ag").h)
-                float tx = rr[0] + (rr[2] - tw) / 2.0
-                float ty = rr[1] + (rr[3] - th) / 2.0
-                r.drawText(_font, _titles[i], r.snapX(tx), r.snapY(ty), _txtR, _txtG, _txtB)
+                if _orient == "vertical" {
+                    // 竖栏：文字左对齐（缩进），激活项画左侧竖条
+                    float ty = rr[1] + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
+                    r.drawText(_font, _titles[i], r.snapX(rr[0] + 12.0), r.snapY(ty), _txtR, _txtG, _txtB)
+                } else {
+                    float tw = _float(_font.measureString(_titles[i]).w)
+                    float tx = rr[0] + (rr[2] - tw) / 2.0
+                    float ty = rr[1] + (rr[3] - th) / 2.0
+                    r.drawText(_font, _titles[i], r.snapX(tx), r.snapY(ty), _txtR, _txtG, _txtB)
+                }
             }
-            if active { r.setColor(_accR, _accG, _accB, 255); r.fillRect(rr[0], rr[1] + rr[3] - 2.0, rr[2], 2.0) }
+            if active {
+                if _orient == "vertical" { r.setColor(_accR, _accG, _accB, 255); r.fillRect(rr[0], rr[1], 2.0, rr[3]) }
+                else { r.setColor(_accR, _accG, _accB, 255); r.fillRect(rr[0], rr[1] + rr[3] - 2.0, rr[2], 2.0) }
+            }
         }
     }
 
