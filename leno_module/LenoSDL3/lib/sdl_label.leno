@@ -18,6 +18,7 @@ export struct Label impl Widget {
     float _w; float _h           // 缓存自然尺寸（供布局使用）
     bool _loaded
     bool visible
+    bool enabled
     bool hover; bool _wasHover
     string _tip             // 悬停提示文本（空 = 不提示）
 
@@ -58,6 +59,7 @@ export struct Label impl Widget {
         hover = false; _wasHover = false
         _tip = opts.get("tip", "") as string
         visible = _bool(opts.get("visible", true))
+        enabled = _bool(opts.get("enabled", true))
         _loaded = true
     }
 
@@ -87,6 +89,8 @@ export struct Label impl Widget {
     func set_tip(string t) { _tip = t }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
+    func set_enabled(bool e) { enabled = e }
+    func is_enabled(): bool { return enabled }
 
     // ==================== 查询方法 ====================
     func get_text(): string  { return text }
@@ -99,8 +103,7 @@ export struct Label impl Widget {
 
     // 标签仅用于悬停提示检测（其余输入不参与）
     func process(Event ev) {
-        if not _loaded { return }
-        if not visible { return }
+        if not _loaded or not enabled or not visible { return }
         if not ev.isMouseMotion() { return }
         _wasHover = hover
         float mx = ev.mouseX(); float my = ev.mouseY()
@@ -111,8 +114,7 @@ export struct Label impl Widget {
 
     // ==================== 渲染 ====================
     func render(Renderer r) {
-        if not _loaded { return }
-        if not visible { return }
+        if not _loaded or not enabled or not visible { return }
         _ensure_font()
         if _font == null or not _font.ok { return }
         if text == "" { return }
