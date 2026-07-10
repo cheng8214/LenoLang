@@ -6,6 +6,11 @@
 // 用法：
 //   var bar = win.addMenuBar({
 //     x: 0, y: 0, w: 600, h: 28,
+//     font_size: 14,          // 字号（标题与下拉项共用）；改大时行高/栏高自动跟随
+//     item_h: 26,             // 下拉项行高（<=0 或不传则按字号自适应）
+//     orientation: "horizontal",  // "horizontal" 顶部栏 / "vertical" 左侧栏
+//     align: "center",        // 顶级标题对齐："left" / "center" / "right"（vertical 默认 left，横竖通用）
+//     item_gap: 0,            // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项），默认 0
 //     menus: [
 //       { title: "文件", items: [
 //           { label: "新建", id: "new", shortcut: "Ctrl+N", action: func():void { ... } },
@@ -69,24 +74,26 @@ func _colW(Array[MenuItem] items, Font f, float itemH): float {
     }
     return mw + 20.0
 }
-func _panelH(Array[MenuItem] items, float itemH): float {
+func _panelH(Array[MenuItem] items, float itemH, float gap): float {
     float hh = 0.0
     for items.len() to i {
+        if i > 0 { hh = hh + gap }
         if items[i].separator { hh = hh + 9.0 } else { hh = hh + itemH }
     }
     return hh
 }
-func _itemOffsets(Array[MenuItem] items, float itemH): Array[float] {
+func _itemOffsets(Array[MenuItem] items, float itemH, float gap): Array[float] {
     Array[float] offs = []
     float y = 0.0
     for items.len() to i {
         offs.add(y)
-        if items[i].separator { y = y + 9.0 } else { y = y + itemH }
+        float rh = if items[i].separator then 9.0 else itemH
+        y = y + rh + (if i < items.len() - 1 then gap else 0.0)
     }
     return offs
 }
-func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, float my, float itemH): int {
-    var offs = _itemOffsets(items, itemH)
+func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, float my, float itemH, float gap): int {
+    var offs = _itemOffsets(items, itemH, gap)
     for items.len() to i {
         float iy = py + offs[i]
         float ih = if items[i].separator then 9.0 else itemH
@@ -98,6 +105,7 @@ func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, floa
 export struct MenuBar impl Widget {
     float x; float y; float w; float h
     float _itemH
+    float _itemGap               // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项）
     Array[string]       _titles
     Array[Array[MenuItem]] _menus
     int _open        // 当前展开的顶部菜单索引，-1 无
@@ -125,6 +133,7 @@ export struct MenuBar impl Widget {
     int _cursor
     int _winW; int _winH           // 所属窗口逻辑宽高（边界夹紧用；0=未知）
     string _orient                 // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
+    string _align                  // 顶级标题对齐："left" / "center" / "right"
     bool enabled; bool _loaded
     func(string, string):void _onSelect
 
@@ -152,11 +161,16 @@ export struct MenuBar impl Widget {
         y       = _float(opts.get("y", 0))
         w       = _float(opts.get("w", 600))
         h       = _float(opts.get("h", 28))
-        _itemH  = _float(opts.get("item_h", 26))
         _fontSize = _float(opts.get("font_size", 14))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
         _orient    = opts.get("orientation", "horizontal") as string
+        _align     = opts.get("align", "") as string
+        if _align == "" { _align = if _orient == "vertical" then "left" else "center" }
+        // item_h：显式传入则用，否则按字号自适应（避免大字号被裁切）
+        if opts.has("item_h") { _itemH = _float(opts.get("item_h", 26)) }
+        else { _itemH = _fontSize + 12.0; if _itemH < 24.0 { _itemH = 24.0 } }
+        _itemGap = _float(opts.get("item_gap", 0))   // 竖直项间距，默认 0
 
         _titles = []
         _menus  = []
@@ -199,7 +213,18 @@ export struct MenuBar impl Widget {
     // ==================== 设置方法 ====================
     func on_select(func(string, string):void cb) { _onSelect = cb }
     func set_enabled(bool e) { enabled = e }
-    func set_font_size(float s) { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func set_font_size(float s) {
+        _fontSize = s
+        if _font != null { _font.close(); _font = null }
+        _itemH = _fontSize + 12.0; if _itemH < 24.0 { _itemH = 24.0 }  // 字号变化时行高自适应
+        if h < _fontSize + 14.0 { h = _fontSize + 14.0 }                // 顶部栏高度跟随字号，避免标题被裁
+    }
+    // 设置顶级标题对齐方式："left" / "center" / "right"
+    func set_align(string a) { _align = a }
+    // 显式设置下拉项行高（传入 <=0 则忽略）
+    func set_item_h(float ih) { if ih > 0.0 { _itemH = ih } }
+    // 设置竖直项之间的额外间距（下拉项 / 竖栏顶级项）
+    func set_item_gap(float g) { _itemGap = g }
     func close() { _open = -1; _openSub = -1; _hoverItem = -1; _hoverSub = -1 }
 
     // ==================== 构建器（避免多层嵌套字面量；每项单行 Dict 即可） ====================
@@ -298,12 +323,12 @@ export struct MenuBar impl Widget {
         if n == 0 { return out }
         _ensure_font()
         if _orient == "vertical" {
-            // 左侧栏：顶级项竖排（栏宽 w、项高 _itemH）
+            // 左侧栏：顶级项竖排（栏宽 w、项高 _itemH），项间加 _itemGap 间距
             float ty = y
             for n to i {
                 if i < _ctxFlag.len() and _ctxFlag[i] { out.add([0.0, 0.0, 0.0, 0.0]); continue }
                 out.add([x, ty, w, _itemH])
-                ty = ty + _itemH
+                ty = ty + _itemH + _itemGap
             }
             return out
         }
@@ -335,13 +360,13 @@ export struct MenuBar impl Widget {
         if mIdx >= 0 and mIdx < _ctxFlag.len() and _ctxFlag[mIdx] {
             float ax = _ctxAnchor[mIdx][0]; float ay = _ctxAnchor[mIdx][1]
             float pw = _colW(_menus[mIdx], _font, _itemH)
-            float ph = _panelH(_menus[mIdx], _itemH)
+            float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
             return _clampRect(ax, ay, pw, ph)
         }
         var rs = _topRects()
         var r = rs[mIdx]
         float pw = _colW(_menus[mIdx], _font, _itemH)
-        float ph = _panelH(_menus[mIdx], _itemH)
+        float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
         if _orient == "vertical" {
             // 左侧栏：子菜单从顶级项右侧飞出
             float px = r[0] + r[2]
@@ -355,11 +380,11 @@ export struct MenuBar impl Widget {
     }
     func _subRect(int parentIdx): Array[float] {
         var g = _panelRect(_open)
-        var offs = _itemOffsets(_menus[_open], _itemH)
+        var offs = _itemOffsets(_menus[_open], _itemH, _itemGap)
         float iy = g[1] + offs[parentIdx]
         var sub = _menus[_open][parentIdx].submenu
         float fw = _colW(sub, _font, _itemH)
-        float fh = _panelH(sub, _itemH)
+        float fh = _panelH(sub, _itemH, _itemGap)
         float fx = g[0] + g[2] - 2.0
         float fy = iy
         // 水平超界则翻转到父菜单左侧弹出；垂直超界则上移夹紧
@@ -403,11 +428,11 @@ export struct MenuBar impl Widget {
             }
             if _open >= 0 {
                 var g = _panelRect(_open)
-                _hoverItem = _itemAt(_menus[_open], g[0], g[1], g[2], mx, my, _itemH)
+                _hoverItem = _itemAt(_menus[_open], g[0], g[1], g[2], mx, my, _itemH, _itemGap)
                 if _openSub >= 0 {
                     // 先看光标是否落在已展开的子菜单飞出层内（避免移到飞出层时父项悬停丢失导致关闭）
                     var sg = _subRect(_openSub)
-                    int si = _itemAt(_menus[_open][_openSub].submenu, sg[0], sg[1], sg[2], mx, my, _itemH)
+                    int si = _itemAt(_menus[_open][_openSub].submenu, sg[0], sg[1], sg[2], mx, my, _itemH, _itemGap)
                     if si >= 0 {
                         _hoverSub = si
                     } else {
@@ -447,12 +472,12 @@ export struct MenuBar impl Widget {
                 if _openSub >= 0 {
                     var sub = _menus[_open][_openSub].submenu
                     var sg = _subRect(_openSub)
-                    int si = _itemAt(sub, sg[0], sg[1], sg[2], mx, my, _itemH)
+                    int si = _itemAt(sub, sg[0], sg[1], sg[2], mx, my, _itemH, _itemGap)
                     if si >= 0 and sub[si].enabled and not sub[si].separator { _invokeSub(_openSub, si); return }
                 }
                 // 主下拉项
                 var g = _panelRect(_open)
-                int it = _itemAt(_menus[_open], g[0], g[1], g[2], mx, my, _itemH)
+                int it = _itemAt(_menus[_open], g[0], g[1], g[2], mx, my, _itemH, _itemGap)
                 if it >= 0 and _menus[_open][it].enabled and not _menus[_open][it].separator {
                     if _menus[_open][it].submenu.len() > 0 { _openSub = it; _hoverSub = -1 }
                     else { _invokeItem(_open, it) }
@@ -489,16 +514,15 @@ export struct MenuBar impl Widget {
             if hov { r.setColor(_barHovR, _barHovG, _barHovB, 255); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
             if _font != null and _font.ok and _titles[i] != "" {
                 float th = _float(_font.measureString("Ag").h)
-                if _orient == "vertical" {
-                    // 竖栏：文字左对齐（缩进），激活项画左侧竖条
-                    float ty = rr[1] + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
-                    r.drawText(_font, _titles[i], r.snapX(rr[0] + 12.0), r.snapY(ty), _txtR, _txtG, _txtB)
-                } else {
-                    float tw = _float(_font.measureString(_titles[i]).w)
-                    float tx = rr[0] + (rr[2] - tw) / 2.0
-                    float ty = rr[1] + (rr[3] - th) / 2.0
-                    r.drawText(_font, _titles[i], r.snapX(tx), r.snapY(ty), _txtR, _txtG, _txtB)
-                }
+                float tw = _float(_font.measureString(_titles[i]).w)
+                float ty = rr[1] + (if th > rr[3] then 0.0 else (rr[3] - th) / 2.0)
+                // 水平对齐：left 缩进 / right 靠右 / center 居中（横栏竖栏共用）
+                float tx
+                if _align == "left" { tx = rr[0] + 12.0 }
+                else if _align == "right" { tx = rr[0] + rr[2] - tw - 12.0 }
+                else { tx = rr[0] + (rr[2] - tw) / 2.0 }
+                if tx < rr[0] + 2.0 { tx = rr[0] + 2.0 }   // 防止过宽标题溢出左边界
+                r.drawText(_font, _titles[i], r.snapX(tx), r.snapY(ty), _txtR, _txtG, _txtB)
             }
             if active {
                 if _orient == "vertical" { r.setColor(_accR, _accG, _accB, 255); r.fillRect(rr[0], rr[1], 2.0, rr[3]) }
@@ -533,7 +557,7 @@ export struct MenuBar impl Widget {
     }
 
     func _drawPanel(Renderer r, Array[MenuItem] items, float px, float py, float pw, int hoverIdx) {
-        float ph = _panelH(items, _itemH)
+        float ph = _panelH(items, _itemH, _itemGap)
         r.setColor(_bgR, _bgG, _bgB, 255)
         r.fillRoundedRect(px, py, pw, ph, 6.0)
 
@@ -547,7 +571,7 @@ export struct MenuBar impl Widget {
             if it.separator {
                 r.setColor(_sepR, _sepG, _sepB, 200)
                 r.drawLine(px + 10.0, iy + 4.0, px + pw - 10.0, iy + 4.0)
-                iy = iy + 9.0
+                iy = iy + 9.0 + _itemGap
                 continue
             }
             float ry = iy
@@ -568,7 +592,7 @@ export struct MenuBar impl Widget {
                     r.drawTriangle(ax, ay, 5.0, 90.0, lr, lg, lb2, 255)
                 }
             }
-            iy = iy + _itemH
+            iy = iy + _itemH + _itemGap
         }
         r.clearClip()
         clip.free()

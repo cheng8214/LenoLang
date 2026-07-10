@@ -6,7 +6,7 @@
 //  2) 第 1 页内嵌一个 HBox 布局容器，证明 Tab 与布局可嵌套；
 //  3) 点击「移动 Tab」会改 Tab 位置，因每帧 _applyOffsets 以内容区原点重排，
 //     页内所有子控件（含嵌套 HBox）整体跟随移动 —— 与布局容器 _relayout 同一机制。
-import "../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

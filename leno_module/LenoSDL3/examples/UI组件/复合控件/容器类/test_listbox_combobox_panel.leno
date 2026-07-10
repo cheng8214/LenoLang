@@ -1,7 +1,7 @@
 // test_listbox_combobox_panel.leno — ListBox / ComboBox / Panel 演示
 // 注意：所有控件必须在 win.run() 之前添加，run() 是阻塞主循环
 // 运行：leno 本文件
-import "../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

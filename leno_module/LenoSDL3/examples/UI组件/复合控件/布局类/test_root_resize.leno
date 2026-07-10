@@ -6,7 +6,7 @@
 //   - 标题 Label、输入框 Edit 用 align:3(STRETCH) 横向撑满，随窗口变宽；
 //   - 底部 HBox 内「自适应A」用 expand 占满剩余宽度，窗口越宽它越宽。
 // 若缩放时控件跟随变化，说明 P0 根布局机制生效（无需任何手动 set_size）。
-import "../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

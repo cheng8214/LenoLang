@@ -1,7 +1,7 @@
 // test_vmenu.leno — 左侧竖菜单（经典三布局：竖栏 + 内容区）
 // 通过 orientation:"vertical" 让 MenuBar 变成左栏：顶级项竖排，点击后子菜单向右飞出。
 // 内容区由 win.run 的 render 回调自行绘制（从 x=200 起，避开左栏）。
-import "../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

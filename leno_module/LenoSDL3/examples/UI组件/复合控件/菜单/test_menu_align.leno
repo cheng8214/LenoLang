@@ -1,0 +1,70 @@
+// test_menu_align.leno — 菜单栏“字号 + 对齐”演示
+// 演示：
+//   1) 顶级标题对齐 align: "left" / "center" / "right"
+//   2) 字号 font_size 调整（标题与下拉项共用），行高/栏高自动跟随，不裁切
+//   3) 竖栏（orientation:"vertical"）同样支持对齐
+import "../../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.MenuBar
+
+main() {
+    var win = SDL3.createWindow({title: "菜单 字号/对齐 测试", w: 620, h: 460})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    // ① 顶部栏：左对齐 + 字号 16
+    var barL = win.addMenuBar({ x: 0, y: 0, w: 620, h: 30, font_size: 16, align: "left" })
+    int mL = barL.addMenu("文件")
+    barL.addItem(mL, { label: "新建", id: "new" })
+    barL.addItem(mL, { label: "打开", id: "open" })
+    int mL2 = barL.addMenu("编辑")
+    barL.addItem(mL2, { label: "复制", id: "copy" })
+    barL.addItem(mL2, { label: "粘贴", id: "paste" })
+
+    // ② 顶部栏：居中（默认）+ 大字号 22（行高/栏高自动跟随）
+    var barC = win.addMenuBar({ x: 0, y: 36, w: 620, h: 44, font_size: 22, align: "center" })
+    int mC = barC.addMenu("视图")
+    barC.addItem(mC, { label: "放大", id: "zoom_in" })
+    barC.addItem(mC, { label: "缩小", id: "zoom_out" })
+    int mC2 = barC.addMenu("帮助")
+    barC.addItem(mC2, { label: "关于", id: "about" })
+
+    // ③ 顶部栏：右对齐
+    var barR = win.addMenuBar({ x: 0, y: 88, w: 620, h: 30, font_size: 16, align: "right" })
+    int mR = barR.addMenu("设置")
+    barR.addItem(mR, { label: "偏好", id: "pref" })
+    int mR2 = barR.addMenu("账户")
+    barR.addItem(mR2, { label: "退出登录", id: "logout" })
+
+    // ④ 竖栏：居中 + 字号 18 + 项间距 12（竖栏同样支持 left/center/right，这里演示 center）
+    var barV = win.addMenuBar({ x: 0, y: 130, w: 200, h: 300, font_size: 18, orientation: "vertical", align: "center", item_gap: 12 })
+    int mV = barV.addMenu("工具")
+    barV.addItem(mV, { label: "颜色", id: "color" })
+    barV.addItem(mV, { label: "标尺", id: "ruler" })
+    int mV2 = barV.addMenu("窗口")
+    barV.addItem(mV2, { label: "全屏", id: "full" })
+
+    barL.on_select(func(string menu, string id) { print("[左对齐] " + menu + " -> " + id) })
+    barC.on_select(func(string menu, string id) { print("[居中] " + menu + " -> " + id) })
+    barR.on_select(func(string menu, string id) { print("[右对齐] " + menu + " -> " + id) })
+    barV.on_select(func(string menu, string id) { print("[竖栏] " + menu + " -> " + id) })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 28, 46, 255)
+            r.drawText(font, "① 左对齐16px  ② 居中22px(大字号自适应)  ③ 右对齐16px  ④ 竖栏居中18px+项间距12", 12, 440, 200, 210, 230)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

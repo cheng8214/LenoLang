@@ -2,7 +2,7 @@
 // 演示：顶部菜单栏点击展开下拉，含分隔线、快捷键文字、子菜单（二级飞出）、禁用项；
 // 点击空白处 / 切换标题 / Esc 关闭；下拉层自动盖在其它控件之上（不遮挡、不被遮挡）。
 // 说明：本语言暂不支持“跨多行的嵌套字面量”，故菜单用构建器逐项添加（每项单行 Dict）。
-import "../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

@@ -2,7 +2,7 @@
 // 在窗口空白处右键弹出上下文菜单；含子菜单（二级飞出）、分隔线、快捷键、禁用项。
 // 关键点：右键在 win.run 的 onEvent 中检测（ev.mouseButton()==3），调用 bar.openContext(handle, x, y)
 //        在光标处弹出；菜单的 process 只响应左键，右键不会误触发下层控件（弹层捕获区已抑制）。
-import "../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

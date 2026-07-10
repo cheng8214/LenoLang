@@ -1,7 +1,7 @@
 // test_tooltip.leno — Tooltip 悬停提示测试
 // 运行：leno 本文件（Esc 退出）
 // 把鼠标停在带 tip 的控件上约 0.5 秒，会在光标旁浮出提示文字。
-import "../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode
