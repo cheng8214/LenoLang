@@ -1,8 +1,14 @@
-// sdl_filedialog.leno — 原生文件选择对话框（独立模块，与模态对话框 sdl_dialog.leno 互不干扰）
+// sdl_filedialog.leno — 原生文件选择对话框（独立模块，不污染核心库）
 //
-// 这是单独一个文件，不污染共享的 sdl_core.leno / sdl_window.leno / SDL3.leno。
-// 三个 SDL 函数声明在本模块【私有】的 clib 块里；
-// 万一某些 SDL3.dll 版本缺少这些符号，也只影响本模块，不会拖垮整个 LenoSDL3。
+// 设计要点（避免内存泄漏）：
+//   1. SDL3.dll 句柄【只加载一次】并缓存（参照 sdl_core.leno 的 lib() 范式），
+//      不要在每次 show* 里反复 ffi.load，否则每次弹框都泄漏一个 DLL 句柄。
+//   2. 增加【重入保护】：上一个对话框的回调尚未触发（_active=true）时，
+//      忽略新的 show* 调用。否则 _filterMem 会被覆盖，导致上一次的
+//      malloc 内存失去引用而泄漏。
+//   3. 过滤器内存（SDL_DialogFileFilter 数组 + 字符串缓冲）在 _buildFilters
+//      里分配、在 _dispatch 回调里统一 ffi.free，且 SDL 在回调返回后才释放
+//      filelist，故我们只【读取】filelist、不释放它（SDL 拥有其所有权）。
 //
 // 用法：
 //   import ".../lib/sdl_filedialog.leno" as fdlg
@@ -12,8 +18,8 @@
 //         filters: [ {name:"Leno 脚本", pattern:"*.leno"}, {name:"全部", pattern:"*.*"} ],
 //         default_location: "." })
 //
-// 回调在主线程返回。若你用 win.run() 事件循环，跨线程回调会在每帧的 clib 调用后
-// 自动泵送执行（详见 docs/FFI使用指南.md 7.4 跨线程回调），无需任何额外处理。
+// 回调在主线程返回。若用 win.run() 事件循环，跨线程回调会在每帧 clib 调用后
+// 自动泵送执行（详见 docs/FFI使用指南.md 7.4 跨线程回调），无需额外处理。
 
 import ffi
 import "sdl_window.leno" as wnd
@@ -37,6 +43,14 @@ var _cb        = null   // 持久化的 C 函数指针（一次创建，重复�
 var _active    = false  // 是否还有对话框在等待结果
 var _filterMem = []     // 本次对话框分配的过滤器内存，回调后统一释放
 
+// SDL3.dll 句柄缓存（只加载一次，避免每次弹框泄漏句柄）
+sdl3dlg _lib = null
+
+func _ensureLib(): sdl3dlg {
+    if _lib == null { _lib = ffi.load("SDL3.dll") }
+    return _lib
+}
+
 // 确保 C 回调只创建一次（ffi.callback 最多 128 个，避免泄漏）
 func _ensureCb() {
     if _cb == null {
@@ -56,7 +70,7 @@ func _dispatch(Ptr userdata, Ptr filelist, int filter) {
             i = i + 1
         }
     }
-    // 释放本次对话框分配的过滤器内存
+    // 释放本次对话框分配的过滤器内存（必须在回调里，SDL 仍持有 filelist 期间释放安全）
     for _filterMem.len() to k {
         ffi.free(_filterMem[k])
     }
@@ -106,10 +120,11 @@ func _nfiltersOf(Dict opts): int {
 
 // 打开文件（opts: allow_many / filters / default_location）
 export func showOpenFileDialog(Window win, var onResult, Dict opts) {
+    if _active { return }            // 重入保护：上一次对话框未结束
     _ensureCb()
     _onResult = onResult
     _active = true
-    sdl3dlg lib = ffi.load("SDL3.dll")
+    sdl3dlg lib = _ensureLib()
     Ptr filters = _buildFilters(opts)
     int nfilters = _nfiltersOf(opts)
     bool many = opts.get("allow_many", false) as bool
@@ -123,10 +138,11 @@ export func showOpenFileDialog(Window win, var onResult, Dict opts) {
 
 // 保存文件（opts: filters / default_location）
 export func showSaveFileDialog(Window win, var onResult, Dict opts) {
+    if _active { return }
     _ensureCb()
     _onResult = onResult
     _active = true
-    sdl3dlg lib = ffi.load("SDL3.dll")
+    sdl3dlg lib = _ensureLib()
     Ptr filters = _buildFilters(opts)
     int nfilters = _nfiltersOf(opts)
     var def = opts.get("default_location", null)
@@ -139,10 +155,11 @@ export func showSaveFileDialog(Window win, var onResult, Dict opts) {
 
 // 选择文件夹（opts: filters / default_location）
 export func showOpenFolderDialog(Window win, var onResult, Dict opts) {
+    if _active { return }
     _ensureCb()
     _onResult = onResult
     _active = true
-    sdl3dlg lib = ffi.load("SDL3.dll")
+    sdl3dlg lib = _ensureLib()
     Ptr filters = _buildFilters(opts)
     int nfilters = _nfiltersOf(opts)
     var def = opts.get("default_location", null)
