@@ -345,6 +345,13 @@ export struct Edit impl Widget {
 
     // 保存当前状态到撤销栈
     func _save_undo() {
+        // 单行模式：text 是源，_lines 仅惰性同步，撤销依赖 _lines，故先同步；
+        // 光标统一折成“行0 + 字符位置”，与 _undo/_redo 的 _col_to_pos 还原一致
+        if not _multiline {
+            _rebuild_lines()
+            _cursorLine = 0
+            _cursorCol = _cursorPos
+        }
         _undoStack.add(_lines.copy())
         _undoCursorStack.add(_cursorLine * 10000 + _cursorCol)
         if _undoStack.len() > 200 { _undoStack.remove(0); _undoCursorStack.remove(0) }
@@ -1001,41 +1008,48 @@ export struct Edit impl Widget {
                     var sel = _sel_text()
                     if sel != "" { core.setClipboardText(sel) }
                     else { core.setClipboardText(text) }
-                    _save_undo(); _cursorPos = _del_sel()
+                    _save_undo(); _mergeUndo = false; _cursorPos = _del_sel()
                     changed = true
                 }
                 if sc == Scancode.V {
                     var paste = core.getClipboardText()
                     if paste != "" {
                         paste = paste.replace("\r", "").replace("\n", " ")
+                        _save_undo(); _mergeUndo = false
                         _cursorPos = _del_sel()
                         text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
                         _cursorPos += paste.len()
                         changed = true
                     }
                 }
+                if sc == Scancode.Z { _undo(); return }
+                if sc == Scancode.Y { _redo(); return }
             }
 
             if sc == Scancode.BACKSPACE {
                 if _selActive and _selStart != _selEnd {
+                    _save_undo(); _mergeUndo = false
                     _cursorPos = _del_sel(); changed = true
                 } else if _cursorPos > 0 {
+                    _save_undo(); _mergeUndo = false
                     text = text.slice(0, _cursorPos - 1) + text.slice(_cursorPos, text.len())
                     _cursorPos -= 1; changed = true
                 }
             }
             if sc == Scancode.DELETE {
                 if _selActive and _selStart != _selEnd {
+                    _save_undo(); _mergeUndo = false
                     _cursorPos = _del_sel(); changed = true
                 } else if _cursorPos < text.len() {
+                    _save_undo(); _mergeUndo = false
                     text = text.slice(0, _cursorPos) + text.slice(_cursorPos + 1, text.len())
                     changed = true
                 }
             }
-            if sc == Scancode.LEFT  { if _cursorPos > 0 { _cursorPos -= 1; _clear_sel() } }
-            if sc == Scancode.RIGHT { if _cursorPos < text.len() { _cursorPos += 1; _clear_sel() } }
-            if sc == Scancode.HOME  { _cursorPos = 0; _clear_sel() }
-            if sc == Scancode.END   { _cursorPos = text.len(); _clear_sel() }
+            if sc == Scancode.LEFT  { if _cursorPos > 0 { _cursorPos -= 1; _clear_sel() }; _mergeUndo = false }
+            if sc == Scancode.RIGHT { if _cursorPos < text.len() { _cursorPos += 1; _clear_sel() }; _mergeUndo = false }
+            if sc == Scancode.HOME  { _cursorPos = 0; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.END   { _cursorPos = text.len(); _clear_sel(); _mergeUndo = false }
             _adjust_scroll()
             if sc == Scancode.RETURN {
                 if _onEnter != null { _onEnter() }
@@ -1048,10 +1062,14 @@ export struct Edit impl Widget {
             var ch = ev.text()
             if ch != "" {
                 _cursorPos = _del_sel()
+                // 连续输入合并为一次撤销（与多行一致）；选区删除/光标移动则断开
+                bool canMerge = _mergeUndo and not _selActive and _cursorPos == _mergePos
+                if not canMerge { _save_undo() }
                 text = text.slice(0, _cursorPos) + ch + text.slice(_cursorPos, text.len())
                 _cursorPos += ch.len()
                 _on_text_changed()
                 _dirty = true
+                _mergeUndo = true; _mergePos = _cursorPos
             }
         }
     }
