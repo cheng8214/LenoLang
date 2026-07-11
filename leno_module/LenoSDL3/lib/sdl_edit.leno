@@ -9,6 +9,12 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
 
+// 模块级注册表：所有 Edit 实例，供右击上下文菜单跨实例互斥。
+// 打开某编辑框菜单前先关闭其它编辑框已展开的菜单，避免多个 Edit 各自持有独立
+// MenuBar 实例、前一个菜单未被 close 而与新菜单叠加显示（双菜单 bug）。
+Array[Edit] _editRegistry = []
+int _editIdSeq = 0
+
 export struct Edit impl Widget {
     string text
     float x = 0.0; float y = 0.0; float w = 200.0; float h = 30.0
@@ -95,6 +101,7 @@ export struct Edit impl Widget {
     MenuBar _ctxMenu = null
     int _ctxMenuH = -1
     bool _ctxMenuEnabled = true       // 是否启用右击上下文菜单
+    int _ctxId = 0                     // 实例唯一 id（跨实例互斥时排除自身，避免值比较误判）
     int _winW = 0; int _winH = 0       // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
     func(string):void _onCtxSelect     // 上下文菜单自定义回调（内置动作之后触发，可选）
 
@@ -296,6 +303,11 @@ export struct Edit impl Widget {
         _ctxMenu.addContextSeparator(_ctxMenuH)
         _ctxMenu.addContextItem(_ctxMenuH, { label: "全选", id: "select_all", shortcut: "Ctrl+A" })
         _ctxMenu.on_select(func(string m, string id) { _ctx_action(id) })
+
+        // 注册到模块级表，供右击菜单跨实例互斥（参考 sdl_radio.leno 的自增 id 排除自身写法）
+        _editIdSeq = _editIdSeq + 1
+        _ctxId = _editIdSeq
+        _editRegistry.add(self)
     }
 
     // ==================== 设置方法 ====================
@@ -447,6 +459,14 @@ export struct Edit impl Widget {
     // 在 (x,y) 弹出，并按当前状态刷新各项可用性
     func _open_ctx_menu(float x, float y) {
         if _ctxMenu == null { return }
+        // 跨实例互斥：打开本编辑框菜单前，先关闭其它编辑框已展开的右击菜单，
+        // 否则多个 Edit 各自持有独立 MenuBar 实例，前一个菜单不会被 close，会与新菜单叠加显示
+        for _editRegistry.len() to i {
+            Edit o = _editRegistry[i]
+            if o != null and o._ctxId != _ctxId and o._ctxMenu != null and o._ctxMenu.isOpen() {
+                o._ctxMenu.close()
+            }
+        }
         _focused = true
         _ctxMenu.setContextItemEnabled(_ctxMenuH, "undo", _undoStack.len() > 0)
         _ctxMenu.setContextItemEnabled(_ctxMenuH, "redo", _redoStack.len() > 0)
@@ -737,6 +757,20 @@ export struct Edit impl Widget {
 
         // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
         if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+            // 菜单已展开时再次右键：编辑框内 → 移动到新位置重开；编辑框外 → 关闭。
+            // 否则右键会被 MenuBar.process 静默忽略，导致“旧菜单卡在原地、必须单击关闭再右键”的别扭流程。
+            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                for _editRegistry.len() to i {
+                    Edit o = _editRegistry[i]
+                    if o != null and o._ctxId != _ctxId and o._ctxMenu != null and o._ctxMenu.isOpen() { o._ctxMenu.close() }
+                }
+                if contains(ev.mouseX(), ev.mouseY()) {
+                    _open_ctx_menu(ev.mouseX(), ev.mouseY())
+                } else {
+                    _ctxMenu.close()
+                }
+                return
+            }
             _ctxMenu.process(ev)
             return
         }
