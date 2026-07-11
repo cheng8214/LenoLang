@@ -247,6 +247,9 @@ export struct Window {
     func addEdit(Dict opts): Edit {
         Edit ed = edt.createEdit(opts)
         ed.set_window(handle)
+        ed.set_window_size(_w, _h)
+        var cm = ed.get_context_menu()
+        if cm != null { _menus.add(cm) }   // 上下文菜单交由第二遍 renderPopup 顶层绘制
         _widgets.add(ed as Widget)
         return ed
     }

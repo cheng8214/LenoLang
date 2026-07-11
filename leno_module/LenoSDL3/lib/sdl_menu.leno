@@ -220,6 +220,8 @@ export struct MenuBar impl Widget {
     // 设置竖直项之间的额外间距（下拉项 / 竖栏顶级项）
     func set_item_gap(float g) { _itemGap = g }
     func close() { _open = -1; _openSub = -1; _hoverItem = -1; _hoverSub = -1 }
+    // 是否有菜单（含上下文菜单）处于展开状态
+    func isOpen(): bool { return _open >= 0 }
 
     // ==================== 构建器（避免多层嵌套字面量；每项单行 Dict 即可） ====================
     // 新增一个顶级菜单，返回其索引
@@ -295,6 +297,13 @@ export struct MenuBar impl Widget {
         if parentIdx < 0 or parentIdx >= arr.len() { return }
         var mi = new MenuItem(); mi.separator = true; mi.submenu = []
         arr[parentIdx].submenu.add(mi)
+    }
+    // 按 id 动态启用/禁用某个上下文菜单项（供调用方按当前状态刷新）
+    func setContextItemEnabled(int ctxIdx, string id, bool en) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        for _menus[ctxIdx].len() to i {
+            if _menus[ctxIdx][i].id == id { _menus[ctxIdx][i].enabled = en; return }
+        }
     }
     // 在光标处弹出（右键时调用）；x,y 为弹出锚点（一般为鼠标位置）
     // 同一帧内立即登记弹层捕获区，避免右键穿透到下层控件

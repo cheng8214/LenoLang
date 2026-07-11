@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.Scancode
 use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_menu.leno" as menu; use menu.MenuBar
 
 export struct Edit impl Widget {
     string text
@@ -89,6 +90,13 @@ export struct Edit impl Widget {
 
     func():void _onChange
     func():void _onEnter
+
+    // 内嵌右击上下文菜单（复制/剪切/粘贴/全选/撤销/重做），复用 MenuBar 弹层渲染与捕获
+    MenuBar _ctxMenu = null
+    int _ctxMenuH = -1
+    bool _ctxMenuEnabled = true       // 是否启用右击上下文菜单
+    int _winW = 0; int _winH = 0       // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
+    func(string):void _onCtxSelect     // 上下文菜单自定义回调（内置动作之后触发，可选）
 
     // ==================== 字体 ====================
     func _ensure_font() {
@@ -274,6 +282,20 @@ export struct Edit impl Widget {
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
         _loaded = true
+
+        // —— 内嵌右击上下文菜单（撤销/重做/剪切/复制/粘贴/全选）——
+        _ctxMenu = menu.createMenuBar({})
+        _ctxMenu.setWindowSize(_winW, _winH)
+        _ctxMenuH = _ctxMenu.addContextMenu("edit_ctx")
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "撤销", id: "undo", shortcut: "Ctrl+Z" })
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "重做", id: "redo", shortcut: "Ctrl+Y" })
+        _ctxMenu.addContextSeparator(_ctxMenuH)
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "剪切", id: "cut", shortcut: "Ctrl+X" })
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "复制", id: "copy", shortcut: "Ctrl+C" })
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "粘贴", id: "paste", shortcut: "Ctrl+V" })
+        _ctxMenu.addContextSeparator(_ctxMenuH)
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "全选", id: "select_all", shortcut: "Ctrl+A" })
+        _ctxMenu.on_select(func(string m, string id) { _ctx_action(id) })
     }
 
     // ==================== 设置方法 ====================
@@ -303,6 +325,20 @@ export struct Edit impl Widget {
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func set_window(Ptr[u8] hwnd) { _hwnd = hwnd }
+    // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
+    func set_window_size(int ww, int hh) {
+        _winW = ww; _winH = hh
+        if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) }
+    }
+    // 返回内嵌上下文菜单（MenuBar），应用可经 addContextItem 等扩展菜单项
+    func get_context_menu(): MenuBar { return _ctxMenu }
+    // 返回内嵌上下文菜单句柄（addContextMenu 返回的索引），用于扩展菜单项
+    func get_context_menu_handle(): int { return _ctxMenuH }
+    // 启用/禁用右击上下文菜单
+    func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
+    func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
+    // 注册上下文菜单自定义回调（内置动作执行之后触发，参数为项 id）
+    func on_context_select(func(string):void cb) { _onCtxSelect = cb }
     func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }
     func focus()    { _focused = true }
     func blur()     { _focused = false }
@@ -372,6 +408,95 @@ export struct Edit impl Widget {
     // ==================== 查询 ====================
     func is_focused(): bool { return _focused }
     func is_loaded(): bool { return _loaded }
+
+    // ==================== 右击上下文菜单 ====================
+    // 在 (x,y) 弹出，并按当前状态刷新各项可用性
+    func _open_ctx_menu(float x, float y) {
+        if _ctxMenu == null { return }
+        _focused = true
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "undo", _undoStack.len() > 0)
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "redo", _redoStack.len() > 0)
+        bool hasSel = _selActive and _selStart >= 0 and _selStart != _selEnd
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "cut", not _readOnly and hasSel)
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "copy", hasSel)
+        var cbp = core.getClipboardText()
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "paste", not _readOnly and cbp != "")
+        _ctxMenu.openContext(_ctxMenuH, x, y)
+    }
+
+    // 上下文菜单项动作分发
+    func _ctx_action(string id) {
+        if id == "undo"       { _undo() }
+        else if id == "redo"  { _redo() }
+        else if id == "cut"   { _ctx_cut() }
+        else if id == "copy"  { _ctx_copy() }
+        else if id == "paste" { _ctx_paste() }
+        else if id == "select_all" { _ctx_select_all() }
+        if _onCtxSelect != null { _onCtxSelect(id) }
+    }
+
+    func _ctx_copy() {
+        _rebuild_lines()
+        var sel = _sel_text()
+        if sel == "" { sel = if _multiline then get_text() else text }
+        if sel != "" { core.setClipboardText(sel) }
+    }
+
+    func _ctx_cut() {
+        if _readOnly { return }
+        _rebuild_lines()
+        var sel = _sel_text()
+        if sel == "" { return }
+        core.setClipboardText(sel)
+        if _multiline {
+            _save_undo(); _mergeUndo = false; _del_sel_lines()
+            _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; _drDirty = true
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _textDirty = true; _on_text_changed()
+        } else {
+            _cursorPos = _del_sel(); _dirty = true; _on_text_changed()
+        }
+    }
+
+    func _ctx_paste() {
+        if _readOnly { return }
+        var paste = core.getClipboardText()
+        if paste == "" { return }
+        if _multiline {
+            _rebuild_lines()
+            _save_undo(); _mergeUndo = false; _del_sel_lines()
+            if _lines.len() == 0 { _lines.add("") }
+            var left = _lines[_cursorLine].slice(0, _cursorCol)
+            var right = _lines[_cursorLine].slice(_cursorCol, _lines[_cursorLine].len())
+            var full = left + paste
+            var plines = full.replace("\r", "").split("\n")
+            _lines.remove(_cursorLine)
+            for plines.len() to pi {
+                _lines.insert(_cursorLine + pi, plines[pi] as string)
+            }
+            var li = _cursorLine + plines.len() - 1
+            _lines[li] = _lines[li] + right
+            _cursorLine = li
+            _cursorCol = (plines[plines.len() - 1] as string).len()
+            _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; _drDirty = true
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _textDirty = true; _on_text_changed()
+        } else {
+            paste = paste.replace("\r", "").replace("\n", " ")
+            _cursorPos = _del_sel()
+            text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
+            _cursorPos += paste.len()
+            _dirty = true; _on_text_changed()
+        }
+    }
+
+    func _ctx_select_all() {
+        _rebuild_lines()
+        if _multiline { _selStart = 0; _selEnd = get_text().len() }
+        else          { _selStart = 0; _selEnd = text.len() }
+        _selActive = true
+        _showCursor = true; _blinkTime = core.getTicks()
+    }
     func get_text_length(): int {
         if _cachedLen < 0 {
             _rebuild_lines()
@@ -576,10 +701,24 @@ export struct Edit impl Widget {
         if not visible { return }
         if not enabled { return }
 
+        // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
+        if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+            _ctxMenu.process(ev)
+            return
+        }
+
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
         float emx = ev.mouseX(); float emy = ev.mouseY()
         if ev.isMouseWheel() { emx = ev.wheelMouseX(); emy = ev.wheelMouseY() }
         if core.inPopupCapture(emx, emy) { return }
+
+        // 右键：在编辑框内弹出上下文菜单（复制/剪切/粘贴/全选/撤销/重做）
+        if _ctxMenuEnabled and _ctxMenu != null and ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+            if contains(ev.mouseX(), ev.mouseY()) {
+                _open_ctx_menu(ev.mouseX(), ev.mouseY())
+                return
+            }
+        }
 
         // ---- 悬停光标：鼠标移入编辑框 → 文本(I型)光标；移出 → 默认光标 ----
         // 走集中式光标决策（requestCursor），由 Window 帧末统一 apply，避免多控件互相覆盖

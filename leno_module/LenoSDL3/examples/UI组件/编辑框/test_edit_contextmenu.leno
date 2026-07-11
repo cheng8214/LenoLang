@@ -1,0 +1,64 @@
+// test_edit_contextmenu.leno — Edit 右击上下文菜单测试
+// 验证：在编辑框内右键弹出菜单（撤销/重做/剪切/复制/粘贴/全选），
+// 各项按当前状态自动启用/禁用；菜单走 Window 第二遍 renderPopup 顶层绘制。
+// 另演示扩展：给上下文菜单追加自定义项，并通过 on_context_select 接收回调。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Edit
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "Edit 右击菜单测试", w: 520, h: 360})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    var msg = "在编辑框内右键试试"
+
+    // 单行编辑框（右键菜单：复制/剪切/粘贴/全选/撤销/重做）
+    Edit ed = win.addEdit({text: "右键我弹出菜单", x: 30, y: 70, w: 300, h: 36})
+    ed.on_change(func() { msg = "内容: " + ed.get_text() })
+
+    // 多行编辑框（同样支持右键菜单，撤销/重做可用）
+    Edit edMl = win.addEdit({text: "多行文本\n第二行\n第三行", x: 30, y: 130, w: 300, h: 120, multiline: true})
+
+    // —— 扩展：给编辑框内置上下文菜单追加自定义项 ——
+    var cm = ed.get_context_menu()
+    var h  = ed.get_context_menu_handle()
+    if cm != null and h >= 0 {
+        cm.addContextSeparator(h)
+        cm.addContextItem(h, { label: "清空", id: "clear" })
+        cm.addContextItem(h, { label: "转大写", id: "upper" })
+    }
+    ed.on_context_select(func(string id) {
+        if id == "clear" { ed.set_text("") }
+        else if id == "upper" { ed.set_text(ed.get_text().upper()) }
+        msg = "菜单项: " + id
+    })
+
+    // 演示：关闭右键菜单（可对比无菜单行为）
+    Edit edNoMenu = win.addEdit({text: "我没有右键菜单", x: 30, y: 270, w: 300, h: 36, readonly: true})
+    edNoMenu.set_context_menu_enabled(false)
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(25, 25, 45, 255)
+            r.drawText(font, "Edit 右击上下文菜单", 30, 16, 255, 220, 80)
+            r.drawText(font, "单行:", 30, 48, 150, 150, 180)
+            r.drawText(font, "多行:", 30, 108, 150, 150, 180)
+            r.drawText(font, "只读(无菜单):", 30, 248, 150, 150, 180)
+            r.drawText(font, msg, 30, 320, 180, 200, 220)
+            r.drawText(font, "右键编辑框 -> 复制/剪切/粘贴/全选/撤销/重做 (+自定义)", 30, 340, 120, 120, 140)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
