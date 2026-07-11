@@ -2895,6 +2895,48 @@ struct LinkedList {
 }
 ```
 
+**⚠️ 重要：原始类型字段没有默认值时也是 null**
+
+在 Leno 中，`float`、`int`、`bool` 等原始类型字段如果不指定默认值，初始值是 **null** 而不是 0 或 false。这意味着在算术运算、比较等操作中会报错：
+
+```leno
+struct Counter {
+    float value           // ❌ 初始值是 null，不是 0.0
+    int count             // ❌ 初始值是 null，不是 0
+    bool active           // ❌ 初始值是 null，不是 false
+    string name           // ❌ 初始值是 null，不是 ""
+}
+
+struct Counter {
+    float value = 0.0     // ✅ 显式指定默认值
+    int count = 0         // ✅ 显式指定默认值
+    bool active = false   // ✅ 显式指定默认值
+    string name = ""      // ✅ 显式指定默认值
+}
+```
+
+**常见陷阱**：如果方法在 `set()` 初始化之前被调用，null 字段参与运算会报运行时错误：
+
+```leno
+struct Widget {
+    float x; float y      // 没有默认值 → null
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0))   // set() 中才赋值
+        y = _float(opts.get("y", 0))
+    }
+
+    func move(float dx, float dy) {
+        // ❌ 如果 move() 在 set() 之前调用，x 和 y 是 null
+        // 运行时报错："操作数必须是数字或字符串"
+        x = x + dx
+        y = y + dy
+    }
+}
+```
+
+> **建议**：所有可能参与运算的字段，都应显式指定默认值，避免 null 导致运行时错误。引用类型（struct、Font 等）默认就是 null，不需要写 `= null`（写了反而会触发语义分析器的 null 访问警告）。
+
 ### 结构体方法
 
 在 struct 内部定义 func，实现面向对象编程：
