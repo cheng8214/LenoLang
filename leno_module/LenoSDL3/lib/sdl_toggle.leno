@@ -8,31 +8,31 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct Toggle impl Widget {
-    string text
-    float x; float y
-    float w; float h            // 开关轨道尺寸
-    float _fontSize
-    string _fontPath
-    int _fontStyle
+    string text = ""
+    float x = 0.0; float y = 0.0
+    float w = 52.0; float h = 28.0
+    float _fontSize = 16.0
+    string _fontPath = ""
+    int _fontStyle = 0
     Font  _font
-    bool _on
-    int _onR, _onG, _onB        // 开启轨道色
-    int _offR, _offG, _offB     // 关闭轨道色
-    int tr, tg, tb             // 文字色
-    int _cursor
-    bool hover
-    bool _wasHover
-    bool _pressed
-    bool enabled
-    bool visible
-    bool _loaded
-    string _tip             // 悬停提示文本（空 = 不提示）
-    bool _animate              // 开启动画选项（anim）
-    float _animSpeed           // 动画速度（anim_speed）
-    float _animPos             // 滑块当前显示位置 0=关 1=开
-    float _animTarget          // 滑块目标位置
-    float _animLast            // 上次动画时刻(ms)
-    bool _animating            // 是否正在动画
+    bool _on = false
+    int _onR = 60; int _onG = 170; int _onB = 245
+    int _offR = 70; int _offG = 70; int _offB = 82
+    int tr = 235; int tg = 235; int tb = 245
+    int _cursor = SystemCursor.DEFAULT
+    bool hover = false
+    bool _wasHover = false
+    bool _pressed = false
+    bool enabled = true
+    bool visible = true
+    bool _loaded = false
+    string _tip = ""           // 悬停提示文本（空 = 不提示）
+    bool _animate = false
+    float _animSpeed = 12.0
+    float _animPos = 0.0
+    float _animTarget = 0.0
+    float _animLast = 0.0
+    bool _animating = false
     func(bool):void _onChange
 
     func _ensure_font() {
@@ -54,9 +54,7 @@ export struct Toggle impl Widget {
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
-        _onR = 60;  _onG = 170; _onB = 245
-        _offR = 70; _offG = 70;  _offB = 82
-        tr = 235; tg = 235; tb = 245
+        // 默认颜色见字段声明（_onR/_onG/_onB/_offR/_offG/_offB/tr/tg/tb 均有默认，以下仅 opts 覆盖）
 
         // 颜色可被 dict 覆盖（[r,g,b]）
         var onc = opts.get("on_rgb")
@@ -70,7 +68,7 @@ export struct Toggle impl Widget {
         _on = _bool(opts.get("on", false))
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
-        hover = false; _wasHover = false; _pressed = false
+        // hover/_wasHover/_pressed 默认见字段声明
         _tip = opts.get("tip", "") as string
 
         // 动画选项：anim=true 开启平滑滑动动画，anim_speed 控制速度

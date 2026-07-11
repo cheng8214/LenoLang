@@ -7,27 +7,27 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct ComboBox impl Widget {
-    float x; float y; float w; float h
-    Array[string] items
-    int _sel                // 选中索引（-1 无）
-    bool _open
-    float _itemH
-    float _scroll
-    int _hover
-    float _popupMax         // 弹出列表最大高度
-    float _fontSize; string _fontPath; int _fontStyle; Font _font
-    string _placeholder
-    int br, bg, bb
-    int _bdrR, _bdrG, _bdrB
-    int _selR, _selG, _selB
-    int _hovR, _hovG, _hovB
-    int tr, tg, tb
-    int _sbR, _sbG, _sbB
-    int _cursor
-    bool enabled; bool visible; bool _loaded
-    string _tip
-    bool _draggingScroll
-    float _sbDragOffset
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 30.0
+    Array[string] items = []
+    int _sel = -1              // 选中索引（-1 无）
+    bool _open = false
+    float _itemH = 24.0
+    float _scroll = 0.0
+    int _hover = -1
+    float _popupMax = 200.0    // 弹出列表最大高度
+    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    string _placeholder = "请选择"
+    int br = 38; int bg = 40; int bb = 48
+    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110
+    int _selR = 60; int _selG = 150; int _selB = 235
+    int _hovR = 70; int _hovG = 78; int _hovB = 92
+    int tr = 235; int tg = 235; int tb = 245
+    int _sbR = 120; int _sbG = 125; int _sbB = 140
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true; bool visible = true; bool _loaded = false
+    string _tip = ""
+    bool _draggingScroll = false
+    float _sbDragOffset = 0.0
     func(int):void _onChange
 
     func _ensure_font() {
@@ -78,12 +78,7 @@ export struct ComboBox impl Widget {
         _sel = _int(opts.get("selected", -1))
         if _sel >= items.len() { _sel = -1 }
 
-        br = 38; bg = 40; bb = 48
-        _bdrR = 90; _bdrG = 95; _bdrB = 110
-        _selR = 60; _selG = 150; _selB = 235
-        _hovR = 70; _hovG = 78; _hovB = 92
-        tr = 235; tg = 235; tb = 245
-        _sbR = 120; _sbG = 125; _sbB = 140
+        // 默认颜色见字段声明（br/bg/bb/_bdrR/_selR/_hovR/tr/_sbR 等均有默认，以下仅 opts 覆盖）
 
         // 颜色可被 dict 覆盖（[r,g,b]）
         var bgc = opts.get("bg_rgb")
@@ -103,7 +98,7 @@ export struct ComboBox impl Widget {
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
         _tip = opts.get("tip", "") as string
-        _open = false; _scroll = 0.0; _hover = -1
+        _open = false; _scroll = 0.0; _hover = -1   // 重置：收起弹层、滚动归零、悬停行清除
         _ensure_font()
         _loaded = true
     }

@@ -30,12 +30,12 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 
 // 单个菜单项（可被子菜单嵌套）
 export struct MenuItem {
-    string label
-    string id
-    string shortcut
-    bool enabled
-    bool separator
-    Array[MenuItem] submenu
+    string label = ""
+    string id = ""
+    string shortcut = ""
+    bool enabled = true
+    bool separator = false
+    Array[MenuItem] submenu = []
     func():void action
 }
 
@@ -103,38 +103,38 @@ func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, floa
 }
 
 export struct MenuBar impl Widget {
-    float x; float y; float w; float h
-    float _itemH
-    float _itemGap               // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项）
-    Array[string]       _titles
-    Array[Array[MenuItem]] _menus
-    int _open        // 当前展开的顶部菜单索引，-1 无
-    int _hoverTop   // 悬停的顶部标题索引，-1 无
-    int _hoverItem  // 当前展开菜单中悬停项索引，-1 无
-    int _openSub    // 当前展开菜单中“已展开子菜单”的项索引，-1 无
-    int _hoverSub   // 子菜单中悬停项索引，-1 无
+    float x = 0.0; float y = 0.0; float w = 600.0; float h = 28.0
+    float _itemH = 26.0
+    float _itemGap = 0.0          // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项）
+    Array[string]       _titles = []
+    Array[Array[MenuItem]] _menus = []
+    int _open = -1        // 当前展开的顶部菜单索引，-1 无
+    int _hoverTop = -1    // 悬停的顶部标题索引，-1 无
+    int _hoverItem = -1   // 当前展开菜单中悬停项索引，-1 无
+    int _openSub = -1     // 当前展开菜单中“已展开子菜单”的项索引，-1 无
+    int _hoverSub = -1    // 子菜单中悬停项索引，-1 无
 
     // 右击上下文菜单（复用同一套弹层/几何逻辑；与 _menus/_titles 平行存储）
-    Array[bool]         _ctxFlag    // 标记某条目是否为“上下文菜单”（无标题栏）
-    Array[Array[float]] _ctxAnchor  // 上下文菜单的弹出锚点 [x, y]
+    Array[bool]         _ctxFlag = []    // 标记某条目是否为“上下文菜单”（无标题栏）
+    Array[Array[float]] _ctxAnchor = []  // 上下文菜单的弹出锚点 [x, y]
 
-    float _fontSize; string _fontPath; int _fontStyle; Font _font
+    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
 
     // 配色
-    int _barR, _barG, _barB        // 菜单栏背景
-    int _barHovR, _barHovG, _barHovB  // 悬停/激活标题背景
-    int _bgR, _bgG, _bgB           // 下拉面板背景
-    int _hovR, _hovG, _hovB        // 项悬停背景
-    int _txtR, _txtG, _txtB        // 文字色
-    int _disR, _disG, _disB        // 禁用文字色
-    int _sepR, _sepG, _sepB        // 分隔线色
-    int _bdrR, _brdG, _brdB        // 边框色
-    int _accR, _accG, _accB        // 激活下划线
-    int _cursor
-    int _winW; int _winH           // 所属窗口逻辑宽高（边界夹紧用；0=未知）
-    string _orient                 // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
-    string _align                  // 顶级标题对齐："left" / "center" / "right"
-    bool enabled; bool visible; bool _loaded
+    int _barR = 34; int _barG = 36; int _barB = 44       // 菜单栏背景
+    int _barHovR = 50; int _barHovG = 52; int _barHovB = 62  // 悬停/激活标题背景
+    int _bgR = 30; int _bgG = 32; int _bgB = 38           // 下拉面板背景
+    int _hovR = 60; int _hovG = 120; int _hovB = 200      // 项悬停背景
+    int _txtR = 225; int _txtG = 228; int _txtB = 235     // 文字色
+    int _disR = 120; int _disG = 122; int _disB = 130     // 禁用文字色
+    int _sepR = 80; int _sepG = 84; int _sepB = 96        // 分隔线色
+    int _bdrR = 90; int _brdG = 95; int _brdB = 110       // 边框色
+    int _accR = 80; int _accG = 160; int _accB = 245      // 激活下划线
+    int _cursor = SystemCursor.POINTER
+    int _winW = 0; int _winH = 0          // 所属窗口逻辑宽高（边界夹紧用；0=未知）
+    string _orient = "horizontal"         // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
+    string _align = ""                    // 顶级标题对齐："left" / "center" / "right"
+    bool enabled = true; bool visible = true; bool _loaded = false
     func(string, string):void _onSelect
 
     func _ensure_font() {
@@ -189,22 +189,13 @@ export struct MenuBar impl Widget {
             }
         }
 
-        _barR = 34; _barG = 36; _barB = 44
-        _barHovR = 50; _barHovG = 52; _barHovB = 62
-        _bgR = 30; _bgG = 32; _bgB = 38
-        _hovR = 60; _hovG = 120; _hovB = 200
-        _txtR = 225; _txtG = 228; _txtB = 235
-        _disR = 120; _disG = 122; _disB = 130
-        _sepR = 80; _sepG = 84; _sepB = 96
-        _bdrR = 90; _brdG = 95; _brdB = 110
-        _accR = 80; _accG = 160; _accB = 245
-
+        // 默认配色见字段声明（_barR/_bgR/_hovR/_txtR/_disR/_sepR/_bdrR/_accR 等均有默认，以下仅 opts 覆盖）
         var bgc = opts.get("bg_rgb");      if bgc is Array[int] { _bgR = _int(bgc[0]); _bgG = _int(bgc[1]); _bgB = _int(bgc[2]) }
         var brc = opts.get("border_rgb");  if brc is Array[int] { _bdrR = _int(brc[0]); _brdG = _int(brc[1]); _brdB = _int(brc[2]) }
         var accc = opts.get("accent_rgb"); if accc is Array[int] { _accR = _int(accc[0]); _accG = _int(accc[1]); _accB = _int(accc[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
-        _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1
+        _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1   // 重置所有展开/悬停索引
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
         _ensure_font()

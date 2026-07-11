@@ -43,12 +43,12 @@ export var LAYOUT_STRETCH = 3   // 撑满交叉轴
 // HBox — 子控件沿水平方向依次排列
 // ============================================================
 export struct HBox impl Widget {
-    float x; float y; float w; float h
-    float padX; float padY; float spacing
-    int justify                 // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 40.0
+    float padX = 8.0; float padY = 8.0; float spacing = 6.0
+    int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
-    bool _loaded
+    bool _loaded = false
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
@@ -189,12 +189,12 @@ export struct HBox impl Widget {
 // VBox — 子控件沿垂直方向依次排列（主轴为竖直）
 // ============================================================
 export struct VBox impl Widget {
-    float x; float y; float w; float h
-    float padX; float padY; float spacing
-    int justify                 // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 300.0
+    float padX = 8.0; float padY = 8.0; float spacing = 6.0
+    int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
-    bool _loaded
+    bool _loaded = false
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
@@ -337,11 +337,11 @@ export struct VBox impl Widget {
 //            centerX, centerY（bool）、w, h（显式尺寸，覆盖自然尺寸）
 // ============================================================
 export struct AnchorBox impl Widget {
-    float x; float y; float w; float h
-    float padX; float padY
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    float padX = 0.0; float padY = 0.0
     Array[Widget] _c = []
     Array[Dict]    _opt = []
-    bool _loaded
+    bool _loaded = false
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {

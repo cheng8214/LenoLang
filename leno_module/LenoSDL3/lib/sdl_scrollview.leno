@@ -20,29 +20,29 @@ import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_edit.leno" as edt; use edt.Edit
 
 export struct ScrollView impl Widget {
-    float x; float y; float w; float h
-    float _contentW; float _contentH      // 可滚动内容虚拟尺寸
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    float _contentW = -1.0; float _contentH = -1.0   // 可滚动内容虚拟尺寸
     Widget _content                       // 内部内容控件（通常 VBox/Panel）
-    float _scrollX; float _scrollY        // 当前滚动偏移
+    float _scrollX = 0.0; float _scrollY = 0.0        // 当前滚动偏移
     float _step = 24.0                    // 每格滚轮滚动像素
 
     // 外观
-    int br, bg, bb
-    int _bdrR, _bdrG, _bdrB
-    float _radius
-    int _brdA
-    bool _drawBorder
+    int br = 38; int bg = 40; int bb = 48
+    int _bdrR = 80; int _bdrG = 85; int _bdrB = 100
+    float _radius = 8.0
+    int _brdA = 200
+    bool _drawBorder = true
 
     // 滚动条
     float _barW = 12.0
-    int _dragV; int _dragH                // 0 无 / 1 拖动中
-    float _dragOffV; float _dragOffH
-    float _vThumbY; float _vThumbH        // 竖直滚动条拇指几何（每帧计算）
-    float _hThumbX; float _hThumbW        // 水平滚动条拇指几何
+    int _dragV = 0; int _dragH = 0         // 0 无 / 1 拖动中
+    float _dragOffV = 0.0; float _dragOffH = 0.0
+    float _vThumbY = 0.0; float _vThumbH = 0.0      // 竖直滚动条拇指几何（每帧计算）
+    float _hThumbX = 0.0; float _hThumbW = 0.0      // 水平滚动条拇指几何
 
-    bool _loaded
-    bool enabled
-    bool visible
+    bool _loaded = false
+    bool enabled = true
+    bool visible = true
     Ptr[u8] _hwnd
 
     func set(Dict opts) {
@@ -53,10 +53,9 @@ export struct ScrollView impl Widget {
         _radius = _float(opts.get("radius", 8.0))
         var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
-        else { br = 38; bg = 40; bb = 48 }
+        // 默认色见字段声明，仅当 opts 指定时覆盖
         var bdc = opts.get("border_rgb")
         if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
-        else { _bdrR = 80; _bdrG = 85; _bdrB = 100 }
         _brdA = _int(opts.get("border_alpha", 200))
         _drawBorder = _bool(opts.get("border", true))
         _contentW = _float(opts.get("content_w", -1.0))

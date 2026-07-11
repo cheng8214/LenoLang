@@ -8,25 +8,25 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct ListBox impl Widget {
-    float x; float y; float w; float h
-    Array[string] items
-    Array[int] _sel          // 已选中索引集合
-    float _itemH             // 行高
-    float _scroll            // 已向下滚动的像素（0 = 顶部）
-    int _hover               // 当前悬停行索引（-1 无）
-    float _fontSize; string _fontPath; int _fontStyle; Font _font
-    int _mode                // 0=单选, 1=多选
-    int br, bg, bb           // 背景色
-    int _bdrR, _bdrG, _bdrB  // 边框色
-    int _selR, _selG, _selB  // 选中行底色
-    int _hovR, _hovG, _hovB  // 悬停行底色
-    int tr, tg, tb           // 文字色
-    int _sbR, _sbG, _sbB     // 滚动条色
-    int _cursor
-    bool enabled; bool visible; bool _loaded
-    string _tip
-    bool _draggingScroll     // 正在拖拽竖向滚动条
-    float _sbDragOffset      // 拖拽起点距滑块顶的相对偏移
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 200.0
+    Array[string] items = []
+    Array[int] _sel = []          // 已选中索引集合
+    float _itemH = 24.0          // 行高
+    float _scroll = 0.0          // 已向下滚动的像素（0 = 顶部）
+    int _hover = -1              // 当前悬停行索引（-1 无）
+    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    int _mode = 0                // 0=单选, 1=多选
+    int br = 38; int bg = 40; int bb = 48          // 背景色
+    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
+    int _selR = 60; int _selG = 150; int _selB = 235  // 选中行底色
+    int _hovR = 70; int _hovG = 78; int _hovB = 92    // 悬停行底色
+    int tr = 235; int tg = 235; int tb = 245          // 文字色
+    int _sbR = 120; int _sbG = 125; int _sbB = 140    // 滚动条色
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true; bool visible = true; bool _loaded = false
+    string _tip = ""
+    bool _draggingScroll = false   // 正在拖拽竖向滚动条
+    float _sbDragOffset = 0.0      // 拖拽起点距滑块顶的相对偏移
     func(Array[int]):void _onChange
 
     func _ensure_font() {
@@ -113,12 +113,7 @@ export struct ListBox impl Widget {
             if s >= 0 { _sel.add(s) }
         }
 
-        br = 38; bg = 40; bb = 48          // 背景
-        _bdrR = 90; _bdrG = 95; _bdrB = 110
-        _selR = 60; _selG = 150; _selB = 235
-        _hovR = 70; _hovG = 78; _hovB = 92
-        tr = 235; tg = 235; tb = 245
-        _sbR = 120; _sbG = 125; _sbB = 140
+        // 默认颜色见字段声明（br/bg/bb/_bdrR/_selR/_hovR/tr/_sbR 等均有默认，以下仅 opts 覆盖）
 
         // 颜色可被 dict 覆盖（[r,g,b]）
         var bgc = opts.get("bg_rgb")
@@ -138,7 +133,7 @@ export struct ListBox impl Widget {
         enabled  = _bool(opts.get("enabled", true))
         visible  = _bool(opts.get("visible", true))
         _tip = opts.get("tip", "") as string
-        _scroll  = 0.0; _hover = -1
+        _scroll  = 0.0; _hover = -1   // 重置滚动与悬停行（二次 set 时归零）
         _ensure_font()
         _clamp_scroll()
         _loaded = true

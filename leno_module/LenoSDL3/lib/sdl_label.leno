@@ -7,20 +7,20 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct Label impl Widget {
-    string text
-    float x; float y
-    float _fontSize              // 字体大小
-    string _fontPath             // 字体路径（空则自动匹配）
-    int _fontStyle               // 字体样式
+    string text = ""
+    float x = 0.0; float y = 0.0
+    float _fontSize = 16.0       // 字体大小
+    string _fontPath = ""        // 字体路径（空则自动匹配）
+    int _fontStyle = 0           // 字体样式
     Font  _font                  // 字体缓存
-    int tr; int tg; int tb       // 文字色
-    int _align                   // 对齐: 0=左, 1=中, 2=右
-    float _w; float _h           // 缓存自然尺寸（供布局使用）
-    bool _loaded
-    bool visible
-    bool enabled
-    bool hover; bool _wasHover
-    string _tip             // 悬停提示文本（空 = 不提示）
+    int tr = 255; int tg = 255; int tb = 255  // 文字色
+    int _align = 0               // 对齐: 0=左, 1=中, 2=右
+    float _w = 0.0; float _h = 16.0  // 缓存自然尺寸（供布局使用）
+    bool _loaded = false
+    bool visible = true
+    bool enabled = true
+    bool hover = false; bool _wasHover = false
+    string _tip = ""             // 悬停提示文本（空 = 不提示）
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -43,8 +43,7 @@ export struct Label impl Widget {
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
-        // 文字色（默认白色）
-        tr = 255; tg = 255; tb = 255
+        // 文字色见字段声明默认白色（tr/tg/tb），以下仅 opts 覆盖
         var tc = opts.get("text_rgb")
         if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
 
@@ -56,7 +55,7 @@ export struct Label impl Widget {
             if text != "" { _w = _float(_font.measureString(text).w) } else { _w = 0.0 }
             _h = _float(_font.measureString("Ag").h)
         } else { _w = 0.0; _h = 16.0 }
-        hover = false; _wasHover = false
+        // hover/_wasHover 默认见字段声明
         _tip = opts.get("tip", "") as string
         visible = _bool(opts.get("visible", true))
         enabled = _bool(opts.get("enabled", true))

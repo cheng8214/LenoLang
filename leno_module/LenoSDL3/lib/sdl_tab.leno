@@ -20,33 +20,33 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 
 export struct TabControl impl Widget {
-    float x; float y; float w; float h
-    float _tabH                // 标签栏高度
-    Array[string] _tabs        // 各页标题
-    Array[Array[Widget]] _pages  // 每页的子控件集合（仅当前页被处理/绘制）
+    float x = 0.0; float y = 0.0; float w = 400.0; float h = 300.0
+    float _tabH = 32.0         // 标签栏高度
+    Array[string] _tabs = []     // 各页标题
+    Array[Array[Widget]] _pages = []  // 每页的子控件集合（仅当前页被处理/绘制）
     Array[VBox] _pageLayouts = []    // 每页的布局容器
     Array[bool] _hasLayout = []       // 每页是否设置了布局容器
-    Array[Array[Array[float]]] _rel  // 每页每子控件相对「内容区原点」的偏移 [relX, relY]
-    int _active                // 当前激活页索引
-    int _hover                 // 悬停的标签索引，-1 无
-    bool _loaded
+    Array[Array[Array[float]]] _rel = []  // 每页每子控件相对「内容区原点」的偏移 [relX, relY]
+    int _active = 0            // 当前激活页索引
+    int _hover = -1            // 悬停的标签索引，-1 无
+    bool _loaded = false
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
     // 字体（画标签文字）
-    float _fontSize; string _fontPath; int _fontStyle; Font _font
+    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
 
     // 配色
-    int _bgR, _bgG, _bgB       // 内容区背景
-    int _barR, _barG, _barB    // 标签栏背景
-    int _tabR, _tabG, _tabB    // 非激活标签
-    int _actR, _actG, _actB    // 激活标签
-    int _txtR, _txtG, _txtB    // 文字色（非激活）
-    int _actTxtR, _actTxtG, _actTxtB  // 激活文字色
-    int _accR, _accG, _accB    // 激活标签下划线
-    int _brdR, _brdG, _brdB    // 边框色
-    int _cursor
-    bool enabled
-    bool visible
+    int _bgR = 38; int _bgG = 40; int _bgB = 48       // 内容区背景
+    int _barR = 30; int _barG = 32; int _barB = 38    // 标签栏背景
+    int _tabR = 44; int _tabG = 46; int _tabB = 54    // 非激活标签
+    int _actR = 52; int _actG = 120; int _actB = 200  // 激活标签
+    int _txtR = 200; int _txtG = 205; int _txtB = 215 // 文字色（非激活）
+    int _actTxtR = 255; int _actTxtG = 255; int _actTxtB = 255  // 激活文字色
+    int _accR = 80; int _accG = 160; int _accB = 245  // 激活标签下划线
+    int _brdR = 90; int _brdG = 95; int _brdB = 110   // 边框色
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true
+    bool visible = true
     func(int):void _onChange
 
     func _ensure_font() {
@@ -86,15 +86,7 @@ export struct TabControl impl Widget {
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
-        // 默认配色
-        _bgR = 38;  _bgG = 40;  _bgB = 48
-        _barR = 30; _barG = 32; _barB = 38
-        _tabR = 44; _tabG = 46; _tabB = 54
-        _actR = 52; _actG = 120; _actB = 200
-        _txtR = 200; _txtG = 205; _txtB = 215
-        _actTxtR = 255; _actTxtG = 255; _actTxtB = 255
-        _accR = 80; _accG = 160; _accB = 245
-        _brdR = 90; _brdG = 95; _brdB = 110
+        // 默认配色见字段声明（_bgR/_barR/_tabR/_actR/_txtR/_actTxtR/_accR/_brdR 等均有默认，以下仅 opts 覆盖）
 
         var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { _bgR = _int(bgc[0]); _bgG = _int(bgc[1]); _bgB = _int(bgc[2]) }
@@ -106,7 +98,7 @@ export struct TabControl impl Widget {
         if accc is Array[int] { _accR = _int(accc[0]); _accG = _int(accc[1]); _accB = _int(accc[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
-        _hover = -1
+        _hover = -1   // 重置悬停标签（二次 set 时归零）
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
         _ensure_font()

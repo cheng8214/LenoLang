@@ -8,26 +8,26 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct Button impl Widget {
-    string text
-    float x; float y; float w; float h
-    float _radius           // 圆角半径
-    float _fontSize         // 字体大小
-    string _fontPath        // 字体路径（空则自动选择）
-    int _fontStyle          // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
-    Font  _font             // 字体缓存
-    int cr, cg, cb          // 背景色
-    int tr; int tg; int tb  // 文字色
-    int hvr, hvg, hvb       // 悬停背景色（为 0 时自动计算）
-    int _cursor             // 悬停鼠标样式（SystemCursor 值，-1 不改变）
+    string text = "Button"
+    float x = 0.0; float y = 0.0; float w = 100.0; float h = 40.0
+    float _radius = 6.0      // 圆角半径
+    float _fontSize = 18.0   // 字体大小
+    string _fontPath = ""    // 字体路径（空则自动选择）
+    int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
+    Font  _font              // 字体缓存
+    int cr = 60; int cg = 140; int cb = 220   // 背景色（默认 primary）
+    int tr = 255; int tg = 255; int tb = 255  // 文字色
+    int hvr = 0; int hvg = 0; int hvb = 0     // 悬停背景色（为 0 时自动计算）
+    int _cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
     func():void _onClick    // 点击回调
-    bool hover
-    bool _wasHover          // 上一帧悬停状态
-    bool enabled
-    bool visible
-    bool _showShadow        // 是否显示阴影
-    bool _showBorder        // 是否显示边框
-    bool _loaded
-    string _tip             // 悬停提示文本（空 = 不提示）
+    bool hover = false
+    bool _wasHover = false  // 上一帧悬停状态
+    bool enabled = true
+    bool visible = true
+    bool _showShadow = true // 是否显示阴影
+    bool _showBorder = true // 是否显示边框
+    bool _loaded = false
+    string _tip = ""        // 悬停提示文本（空 = 不提示）
 
     // ==================== 预设类型 ====================
     func _apply_type(string t) {
@@ -70,10 +70,7 @@ export struct Button impl Widget {
         // 字体样式（粗体/斜体/下划线等）
         _fontStyle = _int(opts.get("font_style", 0))
 
-        // 默认颜色
-        cr = 60; cg = 140; cb = 220
-        tr = 255; tg = 255; tb = 255
-        hvr = 0; hvg = 0; hvb = 0
+        // 默认颜色见字段声明（cr/cg/cb/tr/tg/tb/hvr/hvg/hvb 均有默认，以下仅 opts 覆盖）
 
         // 预设类型（优先级低于显式 rgb）
         var tp = opts.get("type")
@@ -98,11 +95,9 @@ export struct Button impl Widget {
         // 鼠标样式（默认手型，-1 不改变）
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
 
-        // 状态
+        // 状态（hover/_wasHover 默认见字段声明；enabled/visible 有 opts 默认）
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
-        hover   = false
-        _wasHover = false
         _tip    = opts.get("tip", "") as string
 
         _ensure_font()

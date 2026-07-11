@@ -8,18 +8,18 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct Slider impl Widget {
-    float x; float y; float w; float h
-    float minV; float maxV; float value
-    float step
-    bool _vertical
-    string _fontPath; float _fontSize; int _fontStyle; Font _font
-    int _trkR, _trkG, _trkB       // 轨道背景色
-    int _fillR, _fillG, _fillB    // 已选填充色
-    int _thumbR, _thumbG, _thumbB // 滑块色
-    int tr, tg, tb                // 文字色
-    int _cursor
-    bool hover; bool _wasHover; bool _dragging; bool enabled; bool visible; bool _loaded
-    string _tip             // 悬停提示文本（空 = 不提示）
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 24.0
+    float minV = 0.0; float maxV = 100.0; float value = 0.0
+    float step = 0.0
+    bool _vertical = false
+    string _fontPath = ""; float _fontSize = 14.0; int _fontStyle = 0; Font _font
+    int _trkR = 60; int _trkG = 60; int _trkB = 72       // 轨道背景色
+    int _fillR = 60; int _fillG = 170; int _fillB = 245  // 已选填充色
+    int _thumbR = 245; int _thumbG = 245; int _thumbB = 250 // 滑块色
+    int tr = 235; int tg = 235; int tb = 245             // 文字色
+    int _cursor = SystemCursor.POINTER
+    bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
+    string _tip = ""           // 悬停提示文本（空 = 不提示）
     func(float):void _onChange
 
     func _clamp(float v, float lo, float hi): float {
@@ -60,12 +60,7 @@ export struct Slider impl Widget {
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
-        // 颜色：默认硬编码值，可通过 dict 选项覆盖。约定统一用 [r, g, b] 数组。
-        _trkR = 60;  _trkG = 60;  _trkB = 72
-        _fillR = 60; _fillG = 170; _fillB = 245
-        _thumbR = 245; _thumbG = 245; _thumbB = 250
-        tr = 235; tg = 235; tb = 245
-
+        // 默认颜色见字段声明（_trkR/_fillR/_thumbR/tr 等均有默认，以下仅 opts 覆盖）
         var tkc = opts.get("track_rgb")
         if tkc is Array[int] { _trkR = _int(tkc[0]); _trkG = _int(tkc[1]); _trkB = _int(tkc[2]) }
         var flc = opts.get("fill_rgb")
@@ -78,7 +73,7 @@ export struct Slider impl Widget {
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
-        hover = false; _wasHover = false; _dragging = false
+        // hover/_wasHover/_dragging 默认见字段声明
         _tip = opts.get("tip", "") as string
         value = _clamp(value, minV, maxV)
         _ensure_font()

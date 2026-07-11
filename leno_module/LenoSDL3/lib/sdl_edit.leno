@@ -17,9 +17,9 @@ export struct Edit impl Widget {
     int _fontStyle = 0
     Font  _font                     // 字体缓存
     Ptr[u8] _hwnd                   // 窗口句柄（IME 定位）
-    int cr = 255; int cg = 255; int cb = 255               // 背景色
-    int tr = 0; int tg = 0; int tb = 0               // 文字色
-    int _focusR = 100; int _focusG = 149; int _focusB = 237 // 聚焦边框色
+    int cr = 35; int cg = 35; int cb = 50                // 背景色（默认深色主题）
+    int tr = 220; int tg = 220; int tb = 240             // 文字色（默认浅色）
+    int _focusR = 100; int _focusG = 180; int _focusB = 255 // 聚焦边框色
 
     // 单行模式
     int _cursorPos = 0               // 光标字符位置（单行）
@@ -233,14 +233,11 @@ export struct Edit impl Widget {
         _fontPath   = opts.get("font_path", "") as string
         _fontStyle  = _int(opts.get("font_style", 0))
 
-        // 颜色
-        cr = 35; cg = 35; cb = 50
-        tr = 220; tg = 220; tb = 240
+        // 颜色（默认值见字段声明，仅当 opts 指定时覆盖）
         var c = opts.get("bg_rgb")
         if c is Array[int] { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
         var tc = opts.get("text_rgb")
         if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
-        _focusR = 100; _focusG = 180; _focusB = 255
         var fc = opts.get("focus_rgb")
         if fc is Array[int] { _focusR = _int(fc[0]); _focusG = _int(fc[1]); _focusB = _int(fc[2]) }
 

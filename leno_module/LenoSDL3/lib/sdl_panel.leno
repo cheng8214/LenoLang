@@ -7,17 +7,17 @@ import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 
 export struct Panel impl Widget {
-    float x; float y; float w; float h
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 150.0
     Array[Widget] children = []
-    int br, bg, bb           // 背景色
-    int _bdrR, _bdrG, _bdrB  // 边框色
-    float _radius
-    int _brdA                // 边框透明度
-    bool _drawBorder
-    bool _clip               // 是否裁剪子控件到面板范围
-    bool _loaded
-    bool enabled
-    bool visible
+    int br = 44; int bg = 46; int bb = 54     // 背景色
+    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
+    float _radius = 8.0
+    int _brdA = 220           // 边框透明度
+    bool _drawBorder = true
+    bool _clip = true         // 是否裁剪子控件到面板范围
+    bool _loaded = false
+    bool enabled = true
+    bool visible = true
 
     func set(Dict opts) {
         x    = _float(opts.get("x", 0))
@@ -26,20 +26,19 @@ export struct Panel impl Widget {
         h    = _float(opts.get("h", 150))
         _radius = _float(opts.get("radius", 8.0))
 
+        // 默认背景色/边框色见字段声明（br/bg/bb、_bdrR/_bdrG/_bdrB），以下仅 opts 覆盖
         var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
-        else { br = 44; bg = 46; bb = 54 }
 
         var bdc = opts.get("border_rgb")
         if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
-        else { _bdrR = 90; _bdrG = 95; _bdrB = 110 }
 
         _brdA = _int(opts.get("border_alpha", 220))
         _drawBorder = _bool(opts.get("border", true))
         _clip = _bool(opts.get("clip", true))
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
-        children = []
+        children = []   // 重置（二次 set 清空旧子控件）
         _loaded = true
     }
 

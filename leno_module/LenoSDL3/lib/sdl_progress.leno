@@ -9,18 +9,18 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct ProgressBar impl Widget {
-    float x; float y; float w; float h
-    float minV; float maxV; float value
-    bool _clickable
-    bool _showText
-    string _fontPath; float _fontSize; int _fontStyle; Font _font
-    int _trkR, _trkG, _trkB       // 轨道背景色
-    int _fillR, _fillG, _fillB    // 已选填充色
-    int tr, tg, tb                // 文字色
-    int _cursor
-    bool hover; bool _wasHover; bool _dragging; bool enabled; bool visible; bool _loaded
-    string _tip
-    float _animVal; float _animTarget; float _animLast; float _animSpeed; bool _animating
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 20.0
+    float minV = 0.0; float maxV = 100.0; float value = 0.0
+    bool _clickable = false
+    bool _showText = true
+    string _fontPath = ""; float _fontSize = 14.0; int _fontStyle = 0; Font _font
+    int _trkR = 60; int _trkG = 60; int _trkB = 72          // 轨道背景色
+    int _fillR = 80; int _fillG = 200; int _fillB = 120     // 已选填充色
+    int tr = 235; int tg = 235; int tb = 245                // 文字色
+    int _cursor = SystemCursor.POINTER
+    bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
+    string _tip = ""
+    float _animVal = 0.0; float _animTarget = 0.0; float _animLast = 0.0; float _animSpeed = 12.0; bool _animating = false
     func(float):void _onChange
 
     func _clamp(float v, float lo, float hi): float {
@@ -58,9 +58,7 @@ export struct ProgressBar impl Widget {
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
-        _trkR = 60;  _trkG = 60;  _trkB = 72
-        _fillR = 80; _fillG = 200; _fillB = 120
-        tr = 235; tg = 235; tb = 245
+        // 默认颜色见字段声明（_trkR/_fillR/tr 等均有默认，以下仅 opts 覆盖）
 
         // 颜色可被 dict 覆盖（[r,g,b]）
         var tkc = opts.get("track_rgb")
@@ -73,7 +71,7 @@ export struct ProgressBar impl Widget {
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
-        hover = false; _wasHover = false; _dragging = false
+        // hover/_wasHover/_dragging 默认见字段声明
         value = _clamp(value, minV, maxV)
         _animVal = value; _animTarget = value; _animating = false; _animLast = 0.0
         _animSpeed = _float(opts.get("anim_speed", 12.0))

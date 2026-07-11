@@ -8,27 +8,27 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct CheckBox impl Widget {
-    string text
-    float x; float y
-    float _box              // 勾选框边长
-    float _gap              // 框与文字间距
-    float _fontSize
-    string _fontPath
-    int _fontStyle
+    string text = ""
+    float x = 0.0; float y = 0.0
+    float _box = 22.0       // 勾选框边长
+    float _gap = 8.0        // 框与文字间距
+    float _fontSize = 16.0
+    string _fontPath = ""
+    int _fontStyle = 0
     Font  _font
-    bool _checked
-    int cr, cg, cb          // 未选中框背景
-    int cc, ck, cbl         // 选中框背景
-    int tr, tg, tb          // 文字色
-    int _brdR, _brdG, _brdB // 框边框色
-    int _cursor
-    bool hover
-    bool _wasHover
-    bool _pressed
-    bool enabled
-    bool visible
-    bool _loaded
-    string _tip             // 悬停提示文本（空 = 不提示）
+    bool _checked = false
+    int cr = 60; int cg = 60; int cb = 72     // 未选中框背景
+    int cc = 60; int ck = 170; int cbl = 245 // 选中框背景
+    int tr = 235; int tg = 235; int tb = 245 // 文字色
+    int _brdR = 130; int _brdG = 130; int _brdB = 150 // 框边框色
+    int _cursor = SystemCursor.DEFAULT
+    bool hover = false
+    bool _wasHover = false
+    bool _pressed = false
+    bool enabled = true
+    bool visible = true
+    bool _loaded = false
+    string _tip = ""        // 悬停提示文本（空 = 不提示）
     func(bool):void _onChange
 
     func _ensure_font() {
@@ -51,10 +51,7 @@ export struct CheckBox impl Widget {
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
-        cr = 60;  cg = 60;  cb = 72     // 未选框背景
-        cc = 60;  ck = 170; cbl = 245   // 选中框背景
-        tr = 235; tg = 235; tb = 245    // 文字色
-        _brdR = 130; _brdG = 130; _brdB = 150
+        // 默认颜色见字段声明（cr/cg/cb/cc/ck/cbl/tr/tg/tb/_brdR 等均有默认，以下仅 opts 覆盖）
 
         // 颜色可被 dict 覆盖（[r,g,b]）
         var unk = opts.get("unchecked_rgb")
@@ -70,7 +67,7 @@ export struct CheckBox impl Widget {
         _checked = _bool(opts.get("checked", false))
         enabled = _bool(opts.get("enabled", true))
         visible = _bool(opts.get("visible", true))
-        hover = false; _wasHover = false; _pressed = false
+        // hover/_wasHover/_pressed 默认见字段声明
         _tip = opts.get("tip", "") as string
         _ensure_font()
         _loaded = true

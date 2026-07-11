@@ -8,29 +8,31 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct Table impl Widget {
-    float x; float y; float w; float h
-    Array[string] _headers
-    Array[float] _colW
-    Array[int] _aligns           // 每列对齐：0 左, 1 中, 2 右
-    Array[int] _headerAligns      // 表头文字对齐（可独立于数据列），0 左, 1 中, 2 右
-    Array[Array[string]] _rows
-    int _ncols
-    bool _autoCols              // 列宽是否按宽度等分（用户未指定 col_widths）
-    float _headerH; float _rowH
-    float _scrollX; float _scrollY
-    int _selRow; int _selCol; int _hoverRow; bool _multi; Array[int] _selRows
-    bool _sortable; int _sortCol; bool _sortDesc; bool _zebra
+    float x = 0.0; float y = 0.0; float w = 360.0; float h = 240.0
+    Array[string] _headers = []
+    Array[float] _colW = []
+    Array[int] _aligns = []           // 每列对齐：0 左, 1 中, 2 右
+    Array[int] _headerAligns = []     // 表头文字对齐（可独立于数据列），0 左, 1 中, 2 右
+    Array[Array[string]] _rows = []
+    int _ncols = 1
+    bool _autoCols = true            // 列宽是否按宽度等分（用户未指定 col_widths）
+    float _headerH = 28.0; float _rowH = 24.0
+    float _scrollX = 0.0; float _scrollY = 0.0
+    int _selRow = -1; int _selCol = -1; int _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
+    bool _sortable = false; int _sortCol = -1; bool _sortDesc = false; bool _zebra = true
 
-    float _fontSize; string _fontPath; int _fontStyle; Font _font
-    int br, bg, bb
-    int _hdrR, _hdrG, _hdrB; int _hdrTxtR, _hdrTxtG, _hdrTxtB
-    int _selR, _selG, _selB; int _hovR, _hovG, _hovB; int _zebR, _zebG, _zebB
-    int tr, tg, tb; int _sepR, _sepG, _sepB; int _sbR, _sbG, _sbB
-    int _cursor
-    bool enabled; bool visible; bool _loaded
-    string _tip
-    bool _draggingV; bool _draggingH; float _vDragOffset; float _hDragOffset
-    int _dragCol; float _dragStartX; float _dragStartW; bool _resizable
+    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    int br = 38; int bg = 40; int bb = 48
+    int _hdrR = 46; int _hdrG = 48; int _hdrB = 56; int _hdrTxtR = 220; int _hdrTxtG = 225; int _hdrTxtB = 235
+    int _selR = 60; int _selG = 150; int _selB = 235
+    int _hovR = 70; int _hovG = 78; int _hovB = 92
+    int _zebR = 44; int _zebG = 46; int _zebB = 54
+    int tr = 232; int tg = 235; int tb = 245; int _sepR = 70; int _sepG = 74; int _sepB = 84; int _sbR = 120; int _sbG = 125; int _sbB = 140
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true; bool visible = true; bool _loaded = false
+    string _tip = ""
+    bool _draggingV = false; bool _draggingH = false; float _vDragOffset = 0.0; float _hDragOffset = 0.0
+    int _dragCol = -1; float _dragStartX = 0.0; float _dragStartW = 0.0; bool _resizable = true
     func(int):void _onSelect
     func(int, int):void _onCell
 
@@ -159,16 +161,7 @@ export struct Table impl Widget {
         if _ncols == 0 { _ncols = 1 }
         _recompute_cols()
 
-        // 配色
-        br = 38; bg = 40; bb = 48
-        _hdrR = 46; _hdrG = 48; _hdrB = 56; _hdrTxtR = 220; _hdrTxtG = 225; _hdrTxtB = 235
-        _selR = 60; _selG = 150; _selB = 235
-        _hovR = 70; _hovG = 78; _hovB = 92
-        _zebR = 44; _zebG = 46; _zebB = 54
-        tr = 232; tg = 235; tb = 245
-        _sepR = 70; _sepG = 74; _sepB = 84
-        _sbR = 120; _sbG = 125; _sbB = 140
-
+        // 默认配色见字段声明（br/bg/bb/_hdrR/_selR/_hovR/_zebR/tr/_sepR/_sbR 等均有默认，以下仅 opts 覆盖）
         var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
         var hdc = opts.get("header_rgb")

@@ -9,25 +9,25 @@ import "sdl_tooltip.leno" as tip
 import "sdl_edit.leno" as edt; use edt.Edit
 
 export struct SpinBox impl Widget {
-    float x; float y; float w; float h
-    float _arrowW                // 右侧箭头区宽度
-    float minV; float maxV; float value; float step
-    bool _intMode               // 整数模式（true 时显示为整数）
-    int _decimals               // 浮点显示小数位
-    Edit _edit                  // 内嵌编辑框（文本输入/IME）
+    float x = 0.0; float y = 0.0; float w = 140.0; float h = 34.0
+    float _arrowW = 20.0            // 右侧箭头区宽度
+    float minV = 0.0; float maxV = 100.0; float value = 0.0; float step = 1.0
+    bool _intMode = false           // 整数模式（true 时显示为整数）
+    int _decimals = 2               // 浮点显示小数位
+    Edit _edit                      // 内嵌编辑框（文本输入/IME）
     Ptr[u8] _hwnd
 
-    int br, bg, bb              // 整体背景
-    int _bdrR, _bdrG, _bdrB     // 边框色
-    int _focusR, _focusG, _focusB  // 聚焦边框色
-    int _arrowR, _arrowG, _arrowB  // 箭头区背景
-    int _btnR, _btnG, _btnB     // 箭头符号色
+    int br = 38; int bg = 40; int bb = 48          // 整体背景
+    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
+    int _focusR = 100; int _focusG = 180; int _focusB = 255  // 聚焦边框色
+    int _arrowR = 44; int _arrowG = 46; int _arrowB = 54  // 箭头区背景
+    int _btnR = 200; int _btnG = 205; int _btnB = 215  // 箭头符号色
 
-    bool _hoverUp; bool _hoverDown; bool _wasUp; bool _wasDown
-    bool _wasFocused
-    int _cursor
-    bool enabled; bool visible; bool _loaded
-    string _tip
+    bool _hoverUp = false; bool _hoverDown = false; bool _wasUp = false; bool _wasDown = false
+    bool _wasFocused = false
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true; bool visible = true; bool _loaded = false
+    string _tip = ""
     func(float):void _onChange
 
     // ==================== 工具 ====================
@@ -124,23 +124,23 @@ export struct SpinBox impl Widget {
                                 placeholder: opts.get("placeholder", "") as string})
         _edit.on_change(func() { _try_apply_text() })
 
-        br = 38; bg = 40; bb = 48
+        // 默认背景色见字段声明（br/bg/bb）
         var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
         _edit.set_bg(br, bg, bb)
         _edit.set_text_rgb(235, 235, 245)
 
-        _bdrR = 90; _bdrG = 95; _bdrB = 110
+        // 默认边框色见字段声明（_bdrR/_bdrG/_bdrB）
         var bdc = opts.get("border_rgb")
         if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
-        _focusR = 100; _focusG = 180; _focusB = 255
+        // 默认聚焦色见字段声明（_focusR/_focusG/_focusB）
         var fc = opts.get("focus_rgb")
         if fc is Array[int] { _focusR = _int(fc[0]); _focusG = _int(fc[1]); _focusB = _int(fc[2]) }
 
-        _arrowR = 44; _arrowG = 46; _arrowB = 54
+        // 默认箭头区背景见字段声明（_arrowR/_arrowG/_arrowB）
         var arc = opts.get("arrow_rgb")
         if arc is Array[int] { _arrowR = _int(arc[0]); _arrowG = _int(arc[1]); _arrowB = _int(arc[2]) }
-        _btnR = 200; _btnG = 205; _btnB = 215
+        // 默认箭头符号色见字段声明（_btnR/_btnG/_btnB）
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = _bool(opts.get("enabled", true))
