@@ -15,8 +15,8 @@ export struct Edit impl Widget {
     float _fontSize = 16.0          // 字体大小
     string _fontPath = ""
     int _fontStyle = 0
-    Font  _font = null              // 字体缓存
-    Ptr[u8] _hwnd = null            // 窗口句柄（IME 定位）
+    Font  _font                     // 字体缓存
+    Ptr[u8] _hwnd                   // 窗口句柄（IME 定位）
     int cr = 255; int cg = 255; int cb = 255               // 背景色
     int tr = 0; int tg = 0; int tb = 0               // 文字色
     int _focusR = 100; int _focusG = 149; int _focusB = 237 // 聚焦边框色
