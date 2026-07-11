@@ -62,7 +62,7 @@ export struct Edit impl Widget {
     Array[int] _redoCursorStack = []
     bool _mergeUndo = false              // 连续输入可合并为一次撤销
     int  _mergePos = 0               // 合并基准：上次输入结束处的光标字符位置
-    int  _lastClickTime = 0          // 上次点击 tick（双击检测）
+    int  _lastClickTime = -100000    // 上次点击 tick（双击检测）；初值足够小，避免首点误判双击
     float _lastClickX = 0.0; float _lastClickY = 0.0
 
     // 自动换行
@@ -265,7 +265,7 @@ export struct Edit impl Widget {
         _lineW = []; _maxLineW = 0.0; _lwDirty = true
         _dirty      = true
         _cachedLen  = -1
-        _lastClickTime = 0; _lastClickX = 0; _lastClickY = 0
+        _lastClickTime = -100000; _lastClickX = 0; _lastClickY = 0
         _undoStack  = []; _redoStack = []; _undoCursorStack = []; _redoCursorStack = []
         _mergeUndo = false; _mergePos = 0
         _selStart   = -1; _selEnd = 0; _selActive = false

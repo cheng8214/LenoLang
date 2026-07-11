@@ -41,7 +41,7 @@ export struct Table impl Widget {
     Edit _edit = null
     bool _editing = false
     int _editRow = -1; int _editCol = -1
-    int _lastClickTime = 0
+    int _lastClickTime = -100000
     float _lastClickX = 0.0; float _lastClickY = 0.0
 
     func _ensure_font() {
@@ -340,6 +340,7 @@ export struct Table impl Widget {
         }
         _editing = false
         _editRow = -1; _editCol = -1
+        _lastClickTime = -100000
     }
     func is_editing(): bool { return _editing }
     func edit_debug(): string {
@@ -368,10 +369,13 @@ export struct Table impl Widget {
             if ev.isKeyDown() and ev.scancode() == core.Scancode.RETURN { _commit_edit() }
             else if ev.isMouseButtonDown() and not _edit.contains(ev.mouseX(), ev.mouseY()) {
                 _commit_edit()
-                int row2 = _row_at(ev.mouseY())
-                int col2 = _col_at(ev.mouseX())
-                if row2 >= 0 and col2 >= 0 { _begin_edit(row2, col2) }
             }
+            return
+        }
+
+        // 仅处理命中表格区域内的事件（表格外点击/悬停不触发表头与行交互）
+        if not contains(mx, my) {
+            _hoverRow = -1
             return
         }
 
