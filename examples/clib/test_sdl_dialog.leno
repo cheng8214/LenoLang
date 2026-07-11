@@ -1,6 +1,6 @@
 // test_sdl_dialog.leno — 验证 ffi 回调 + SDL3 原生文件对话框
 //
-// 目的：单独验证“SDL3 自带原生对话框 + Leno ffi 回调”能否跑通。
+// 目的：单独验证"SDL3 自带原生对话框 + Leno ffi 回调"能否跑通。
 //       不依赖 LenoSDL3 业务库，仅用 ffi 最小调用 SDL3.dll。
 //
 // 运行：leno examples/clib/test_sdl_dialog.leno （需 SDL3.dll 在 PATH / 工作目录）
@@ -10,9 +10,9 @@
 //     结果只通过 C 函数指针回调返回，且 filelist 是 null 结尾的 const char* 数组。
 //   - 【重要】Windows 上 SDL3 实际会在【独立工作线程】里弹对话框，
 //     回调也在该工作线程触发（SDL_windowsdialog.c 用 SDL_CreateThread）。
-//     Leno FFI 已支持跨线程回调编组：工作线程的回调参数会自动排队，
-//     主线程需在事件循环中调用 ffi.pump_callbacks() 取出并在主线程 VM 上执行。
-//     （Linux 行为不同，回调通常在同线程触发，但调用 pump_callbacks 也无害。）
+//     Leno FFI 已支持跨线程回调自动编组：每次 clib 调用返回后会自动泵送
+//     待处理的跨线程回调，无需手动调用 ffi.pump_callbacks()。
+//     （Linux 行为不同，回调通常在同线程触发。）
 //   - 回调签名：void (*)(void* userdata, const char* const* filelist, int filter)
 //     filter: 用户选中的过滤器索引；filelist: 取消=空数组，错误=NULL。
 
@@ -24,7 +24,6 @@ clib sdl3 {
     void SDL_Quit()
     Ptr  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
     void SDL_DestroyWindow(Ptr window)
-    // 对话框是异步的：Windows 上由 SDL 内部工作线程触发回调（非事件队列回传），
     void SDL_PumpEvents()
     void SDL_Delay(u32 ms)
     // 打开文件（allow_many=true 多选；filters 可传 null；default_location 可传 null）
@@ -109,7 +108,6 @@ main() {
     lib.SDL_ShowOpenFileDialog(cb, null, win, null, 0, null, true)
     wait = 0
     while not g_done {
-        ffi.pump_callbacks()     // 泵送跨线程回调（Windows 上于工作线程触发）
         lib.SDL_PumpEvents()
         lib.SDL_Delay(10)
         wait = wait + 1
@@ -124,7 +122,6 @@ main() {
     lib.SDL_ShowSaveFileDialog(cb, null, win, null, 0, null)
     wait = 0
     while not g_done {
-        ffi.pump_callbacks()
         lib.SDL_PumpEvents()
         lib.SDL_Delay(10)
         wait = wait + 1
@@ -139,7 +136,6 @@ main() {
     lib.SDL_ShowOpenFolderDialog(cb, null, win, null, 0, null)
     wait = 0
     while not g_done {
-        ffi.pump_callbacks()
         lib.SDL_PumpEvents()
         lib.SDL_Delay(10)
         wait = wait + 1

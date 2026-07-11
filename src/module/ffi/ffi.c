@@ -308,6 +308,13 @@ static FFIType typekind_to_ffitype(TypeKind tk) {
  * 所有 ffi.call/ffi.call_double/ffi.call_void/ffi.call_ptr/ffi.call_bool 共用此函数
  * ret_type_kind: TypeKind 枚举值（clib 路径），-1 表示旧路径（使用 ret_ffitype）
  */
+/* 前置声明：ffi_pump_callbacks_func 定义在 callback_dispatch 之后 */
+static Value ffi_pump_callbacks_func(int argc, Value* args);
+
+/* 前置声明：跨线程回调编组全局变量，定义在 CallbackRegState 之后 */
+static int g_callback_marshal_initialized;
+static int g_pending_count;
+
 static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* arg_types) {
     ObjFFILibrary* lib = val_as_ffi_lib(args[0]);
     CHECK_LIB_FREED(lib);
@@ -580,6 +587,14 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
             ffi_args[i].value.p = NULL;
             ffi_args[i].owned = 0;
         }
+    }
+
+    /* 自动泵送跨线程回调：每次 clib 调用后检查是否有待处理的回调，
+     * 如有则立即在主线程 VM 上执行。零开销（仅 int 比较）当无待处理回调时。
+     * 这样用户不需要在事件循环中手动调用 ffi.pump_callbacks()。 */
+    if (g_callback_marshal_initialized && g_pending_count > 0) {
+        Value dummy;
+        ffi_pump_callbacks_func(0, &dummy);
     }
 
     /* 根据返回类型自动展开（C → Leno 零摩擦） */
@@ -2008,12 +2023,12 @@ typedef struct {
 } PendingCallback;
 
 static PendingCallback g_pending_queue[MAX_PENDING_CALLBACKS];
-static int g_pending_count = 0;
+/* g_pending_count 和 g_callback_marshal_initialized 前置声明在 ffi_call_impl 之前 */
 
 static PlatformMutex g_pending_mutex;      /* 队列互斥锁 */
 static PlatformCondVar g_pending_cond;     /* 队列有新项/有空位条件变量 */
 static PlatformCondVar g_complete_cond;    /* 单项完成条件变量 */
-static int g_callback_marshal_initialized = 0;
+/* g_callback_marshal_initialized 前置声明在 ffi_call_impl 之前 */
 
 /* 记录主线程 ID（在 ffi_callback_marshal_init 中由主线程设置） */
 static PlatformThreadID g_main_thread_id;
