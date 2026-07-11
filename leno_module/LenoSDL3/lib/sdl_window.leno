@@ -424,7 +424,10 @@ export struct Window {
         _runRunning = true
 
         Event ev = event.createEvent()
+        int _frameMs = 1000 / 60      // 目标 ~60FPS（每帧约 16ms），避免空转占满 CPU
+        int _startTicks = 0
         while true {
+            _startTicks = core.getTicks()
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
             while ev.poll() {
                 if ev.isQuit() {
@@ -503,6 +506,9 @@ export struct Window {
                 tip.tipRender(_runRens[i], _float(_runW[i]), _float(_runH[i]))
                 _runRens[i].present()
             }
+            // 帧率限制：本帧剩余时间让出 CPU，避免空转占满（此前约 12% 占用）
+            int _used = core.getTicks() - _startTicks
+            if _used < _frameMs { core.delay(_frameMs - _used) }
         }
     }
 }
