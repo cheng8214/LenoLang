@@ -66,6 +66,23 @@ func on_dialog(Ptr userdata, Ptr filelist, int filter) {
     if i == 0 { print("（用户取消，未选择任何文件）") }
 }
 
+// ==================== 结果输出 ====================
+func print_result() {
+    print("")
+    print("========== 控制台输出：所选文件 ==========")
+    if g_files.len() == 0 {
+        print("（未选择任何文件 / 已取消）")
+    } else {
+        print("共选择 " + g_files.len() + " 个文件, filter=" + g_filter)
+        int k = 0
+        while k < g_files.len() {
+            print("  文件[" + k + "] = " + g_files[k])
+            k = k + 1
+        }
+    }
+    print("=========================================")
+}
+
 // ==================== 主流程 ====================
 main() {
     sdl3 lib = ffi.load("SDL3.dll")
@@ -83,36 +100,52 @@ main() {
     var cb = ffi.callback(on_dialog, DialogCallback)
     print("callback 创建: " + (cb != null))
 
-    // ---------- 仅测试：打开文件（多选） ----------
+    int wait = 0   // 等待计数器（三个对话框复用）
+
+    // ---------- 1) 打开文件（多选） ----------
     g_files.clear(); g_filter = -1; g_done = false
     print("")
     print(">>> 弹出【打开文件】对话框（可多选）...")
     lib.SDL_ShowOpenFileDialog(cb, null, win, null, 0, null, true)
-    // 等待回调（SDL3 文件对话框异步：回调可能在独立线程触发，
-    // 此处持续泵送事件和跨线程回调，直到 on_dialog 设置 g_done）
-    int wait = 0
+    wait = 0
     while not g_done {
-        ffi.pump_callbacks()     // 泵送跨线程回调（SDL3 对话框在 Windows 上于工作线程触发回调）
+        ffi.pump_callbacks()     // 泵送跨线程回调（Windows 上于工作线程触发）
         lib.SDL_PumpEvents()
         lib.SDL_Delay(10)
         wait = wait + 1
-        if wait > 3000 { print("（等待超时，对话框可能未返回）"); break }  // 30s 上限，避免永久卡死
+        if wait > 3000 { print("（等待超时，对话框可能未返回）"); break }  // 30s 上限
     }
+    print_result()
 
-    // ---------- 选择结果输出到控制台 ----------
+    // ---------- 2) 保存文件 ----------
+    g_files.clear(); g_filter = -1; g_done = false
     print("")
-    print("========== 控制台输出：所选文件 ==========")
-    if g_files.len() == 0 {
-        print("（未选择任何文件 / 已取消）")
-    } else {
-        print("共选择 " + g_files.len() + " 个文件, filter=" + g_filter)
-        int k = 0
-        while k < g_files.len() {
-            print("  文件[" + k + "] = " + g_files[k])
-            k = k + 1
-        }
+    print(">>> 弹出【保存文件】对话框...")
+    lib.SDL_ShowSaveFileDialog(cb, null, win, null, 0, null)
+    wait = 0
+    while not g_done {
+        ffi.pump_callbacks()
+        lib.SDL_PumpEvents()
+        lib.SDL_Delay(10)
+        wait = wait + 1
+        if wait > 3000 { print("（等待超时，对话框可能未返回）"); break }
     }
-    print("=========================================")
+    print_result()
+
+    // ---------- 3) 选择文件夹 ----------
+    g_files.clear(); g_filter = -1; g_done = false
+    print("")
+    print(">>> 弹出【选择文件夹】对话框...")
+    lib.SDL_ShowOpenFolderDialog(cb, null, win, null, 0, null)
+    wait = 0
+    while not g_done {
+        ffi.pump_callbacks()
+        lib.SDL_PumpEvents()
+        lib.SDL_Delay(10)
+        wait = wait + 1
+        if wait > 3000 { print("（等待超时，对话框可能未返回）"); break }
+    }
+    print_result()
 
     lib.SDL_DestroyWindow(win)
     lib.SDL_Quit()

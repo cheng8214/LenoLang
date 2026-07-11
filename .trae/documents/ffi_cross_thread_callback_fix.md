@@ -410,3 +410,35 @@ typedef struct {
 4. 预期：控制台打印 `=== 对话框回调触发 ===`，逐行打印文件路径，主流程输出所选文件列表，最后打印 `done`
 5. 运行全部 152 个回归测试，确保无回归
 6. 验证同线程回调（如 `qsort`）仍正常工作
+
+## 验证结果（2026-07-11 实测通过）
+
+环境：Windows，Leno VM + `SDL3.dll`，修复方案 A（跨线程回调编组 + `ffi.pump_callbacks()`）已落地。
+
+`leno examples/clib/test_sdl_dialog.leno` 依次弹出三个对话框，全部正常返回，控制台输出符合预期：
+
+- **【打开文件】多选**：成功回调，读取到 9 个文件路径（`D:\CLeno\LenoC\examples\crypto\*.leno`）。
+- **【保存文件】**：成功回调，返回 `D:\1.txt`。
+- **【选择文件夹】**：成功回调，返回 `D:\软件`——**中文路径也能正确读取**，说明 `ffi.read_string` 的 UTF-8 处理在跨线程编组后仍正常。
+
+关键日志（节选）：
+
+```
+window 创建: true
+callback 创建: true
+>>> 弹出【打开文件】对话框（可多选）...
+=== 对话框回调触发 ===
+filter index = -1
+  文件[0] = D:\CLeno\LenoC\examples\crypto\caesar.leno
+  ...
+  文件[8] = D:\CLeno\LenoC\examples\crypto\rc4.leno
+>>> 弹出【保存文件】对话框...
+=== 对话框回调触发 ===
+  文件[0] = D:\1.txt
+>>> 弹出【选择文件夹】对话框...
+=== 对话框回调触发 ===
+  文件[0] = D:\软件
+done
+```
+
+结论：**BUG-FFI-001 已修复验证通过**。对应的 bug 报告（原 `docs/bug_sdl3_dialog_callback_cross_thread.md`）状态应更新为「已修复」；测试脚本 `examples/clib/test_sdl_dialog.leno` 已扩展覆盖打开/保存/文件夹三种对话框。
