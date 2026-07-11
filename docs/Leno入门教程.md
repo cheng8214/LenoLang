@@ -7758,6 +7758,8 @@ main() {
 | `ffi.memcpy(dst, src, size)`        | 内存拷贝           | `ffi.memcpy(dst, src, 100)`         |
 | `ffi.utf8_to_utf16(str)`            | UTF-8 转 UTF-16 | `ffi.utf8_to_utf16("中文")`           |
 | `ffi.utf16_to_utf8(ptr)`            | UTF-16 转 UTF-8 | `ffi.utf16_to_utf8(ptr)`            |
+| `ffi.callback(func, cfunc_name)`    | 创建 FFI 回调 | `ffi.callback(my_func, Compare)` |
+| `ffi.pump_callbacks()`              | 手动泵送跨线程回调 | `ffi.pump_callbacks()` |
 
 > **⚠️ 注意：FFI 是底层操作，使用不当可能导致程序崩溃**
 >
@@ -7766,6 +7768,32 @@ main() {
 > - Leno `write_*`/`memset`/`memcpy` 已内置边界检查，`ffi.free` 有哨兵检测 — 溢出报错而非崩溃
 > - 调用外部函数时注意参数类型匹配
 > - Windows API 通常使用 UTF-16，需要 `utf8_to_utf16` 转换
+
+### FFI 回调函数
+
+FFI 回调允许将 Leno 函数作为函数指针传递给 C 代码。使用 `cfunc` 声明回调签名，再用 `ffi.callback()` 创建：
+
+```leno
+import ffi
+
+// 声明 C 侧回调签名
+cfunc Compare(Ptr a, Ptr b): i32
+
+// Leno 侧实现
+func my_compare(Ptr a, Ptr b): int {
+    int va = ffi.read_int(a, 0)
+    int vb = ffi.read_int(b, 0)
+    return va - vb
+}
+
+main() {
+    var cb = ffi.callback(my_compare, Compare)  // 创建回调
+    // 将 cb 传给需要函数指针的 C 函数...
+    ffi.free(cb)  // 释放
+}
+```
+
+> **跨线程回调**：某些 C 库（如 SDL3 文件对话框）会在独立工作线程触发回调。Leno FFI 已自动处理——每次 clib 调用返回后会自动泵送跨线程回调，无需手动处理。详见《FFI使用指南》7.4 节。
 
 ### cstruct 跨模块使用
 

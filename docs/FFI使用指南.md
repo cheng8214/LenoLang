@@ -35,6 +35,8 @@ FFI（Foreign Function Interface）是 Leno 语言调用 C 动态库和操作系
   - [7.1 cfunc 声明式回调](#71-cfunc-声明式回调)
   - [7.2 回调与 qsort](#72-回调与-qsort)
   - [7.3 释放回调](#73-释放回调)
+  - [7.4 跨线程回调](#74-跨线程回调)
+  - [7.5 平台支持](#75-平台支持)
 - [第八章：最佳实践](#第八章最佳实践)
   - [8.1 错误处理](#81-错误处理)
   - [8.2 内存管理](#82-内存管理)
@@ -1394,6 +1396,80 @@ ffi.free(cb)  // 释放回调资源
 - 最多支持 128 个同时存在的回调（全局注册表限制）
 - 回调函数中的参数类型为 `Ptr` 时，需要通过 `ffi.read_*` 读取数据
 
+### 7.4 跨线程回调
+
+某些 C 库会在**独立工作线程**中触发回调（而非调用 `ffi.callback` 的主线程），例如：
+- **SDL3 文件对话框**：Windows 上通过 `SDL_CreateThread` 在工作线程中弹对话框并触发回调
+- **异步 I/O 库**：完成回调可能在线程池线程中触发
+
+Leno VM 是单线程运行的，不能从非主线程直接调用。为了安全处理这种情况，Leno FFI 提供了**跨线程回调自动编组**机制：
+
+1. 当回调在工作线程触发时，参数会自动打包到线程安全队列，工作线程**阻塞等待**
+2. 主线程在下一次 clib 调用返回后**自动泵送**（pump）队列中的回调，在主线程 VM 上执行
+3. 执行完毕后唤醒工作线程放行
+
+**这意味着：跨线程回调对 Leno 代码完全透明，无需任何额外处理。**
+
+#### 示例：SDL3 文件对话框
+
+```leno
+import ffi
+
+clib sdl3 {
+    void SDL_ShowOpenFileDialog(Ptr callback, Ptr userdata, Ptr window,
+                                Ptr filters, i32 nfilters, str8 default_location, bool allow_many)
+    void SDL_PumpEvents()
+    void SDL_Delay(u32 ms)
+}
+
+cfunc DialogCallback(Ptr userdata, Ptr filelist, i32 filter):void
+
+Array[string] g_files = []
+bool g_done = false
+
+func on_dialog(Ptr userdata, Ptr filelist, int filter) {
+    g_done = true
+    if filelist == null { return }
+    int i = 0
+    while true {
+        Ptr p = ffi.read_ptr(filelist, i * 8)
+        if p == null { break }
+        g_files.add(ffi.read_string(p, 0))
+        i = i + 1
+    }
+}
+
+main() {
+    sdl3 lib = ffi.load("SDL3.dll")
+    var cb = ffi.callback(on_dialog, DialogCallback)
+    lib.SDL_ShowOpenFileDialog(cb, null, null, null, 0, null, true)
+    // 等待回调——lib.SDL_Delay 和 lib.SDL_PumpEvents 是 clib 调用，
+    // 每次返回后会自动泵送跨线程回调，无需手动处理
+    while not g_done {
+        lib.SDL_PumpEvents()
+        lib.SDL_Delay(10)
+    }
+    ffi.free(lib)
+}
+```
+
+#### ffi.pump_callbacks()
+
+虽然 clib 调用后会自动泵送，但如果主线程长时间不调 clib 又需要处理回调，可手动调用：
+
+```leno
+ffi.pump_callbacks()  // 手动泵送所有待处理的跨线程回调
+```
+
+> **提示**：绝大多数场景不需要手动调用 `ffi.pump_callbacks()`，因为循环中的 clib 调用（如 `SDL_Delay`、`SDL_PumpEvents`）会自动触发泵送。
+
+#### 跨线程回调注意事项
+
+- **同线程回调**（如 `qsort` 比较函数）不受影响，走直接执行路径
+- **Leno 语言级线程**（`threads.start()`）有自己的 VM，触发 FFI 回调时也是直接执行，不经过编组
+- **只有 `current_exec_vm==NULL` 的 C 库工作线程**（如 SDL3 内部线程）才会走编组路径
+- 工作线程在回调执行完成前会**阻塞**，确保回调中读取的 C 数据（如 `filelist`）不会在被读取前被释放
+
 ### 7.5 平台支持
 
 FFI 回调功能在不同平台上的支持情况：
@@ -1877,6 +1953,7 @@ ffi.free(base)
 | 函数 | 参数 | 返回 | 说明 |
 |------|------|------|------|
 | `callback(func, cfunc_name)` | 函数, cfunc名称 | callback | 创建 FFI 回调（需先声明 cfunc） |
+| `pump_callbacks()` | 无 | null | 手动泵送待处理的跨线程回调（通常无需手动调用） |
 
 ### 字符串工具
 
