@@ -5,6 +5,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
 
 export struct Table impl Widget {
@@ -35,6 +36,13 @@ export struct Table impl Widget {
     int _dragCol = -1; float _dragStartX = 0.0; float _dragStartW = 0.0; bool _resizable = true
     func(int):void _onSelect
     func(int, int):void _onCell
+
+    // === 双击编辑 ===
+    Edit _edit = null
+    bool _editing = false
+    int _editRow = -1; int _editCol = -1
+    int _lastClickTime = 0
+    float _lastClickX = 0.0; float _lastClickY = 0.0
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -183,6 +191,10 @@ export struct Table impl Widget {
         _dragCol = -1
         _ensure_font()
         _clamp_scroll()
+        // 编辑框（朴素写法：在 sdl_table 内部经模块别名 edt 创建，触发传递加载别名 bug）
+        _edit = edt.createEdit({x:0, y:0, w:w, h:_rowH, font_size:_fontSize, border:false, radius:0})
+        _editing = false
+        _editRow = -1; _editCol = -1
         _loaded = true
     }
 
@@ -308,6 +320,34 @@ export struct Table impl Widget {
     func on_select(func(int):void cb) { _onSelect = cb }
     func on_cell(func(int, int):void cb) { _onCell = cb }
 
+    // ==================== 双击编辑 ====================
+    func _begin_edit(int row, int col) {
+        if row < 0 or row >= _rows.len() { return }
+        if col < 0 or col >= _ncols { return }
+        _editRow = row; _editCol = col
+        float cx = _col_x(col)
+        float ry = y + _headerH - _scrollY + _float(row) * _rowH
+        _edit.set_pos(cx, ry)
+        _edit.set_size(_colW[col], _rowH)
+        _edit.set_font_size(_fontSize)
+        _edit.set_text(_cell(row, col))
+        _edit.focus()
+        _editing = true
+    }
+    func _commit_edit() {
+        if _editRow >= 0 and _editCol >= 0 and _editRow < _rows.len() {
+            set_cell(_editRow, _editCol, _edit.get_text())
+        }
+        _editing = false
+        _editRow = -1; _editCol = -1
+    }
+    func is_editing(): bool { return _editing }
+    func edit_debug(): string {
+        if _edit == null { return "edit=null" }
+        if _edit.is_loaded() { return "edit.loaded=true" }
+        return "edit.loaded=false"
+    }
+
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
@@ -321,6 +361,19 @@ export struct Table impl Widget {
         float mx = ev.mouseX(); float my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
+
+        // 编辑中：事件转发给编辑框
+        if _editing {
+            _edit.process(ev)
+            if ev.isKeyDown() and ev.scancode() == core.Scancode.RETURN { _commit_edit() }
+            else if ev.isMouseButtonDown() and not _edit.contains(ev.mouseX(), ev.mouseY()) {
+                _commit_edit()
+                int row2 = _row_at(ev.mouseY())
+                int col2 = _col_at(ev.mouseX())
+                if row2 >= 0 and col2 >= 0 { _begin_edit(row2, col2) }
+            }
+            return
+        }
 
         var sb = _compute_sb()
         float vw = sb[0]; float hh = sb[1]
@@ -436,6 +489,16 @@ export struct Table impl Widget {
                 int row = _row_at(my)
                 int col = _col_at(mx)
                 if row >= 0 {
+                    int now = core.getTicks()
+                    bool isDbl = now - _lastClickTime < 400
+                            and mx >= _lastClickX - 10 and mx <= _lastClickX + 10
+                            and my >= _lastClickY - 10 and my <= _lastClickY + 10
+                    _lastClickTime = now
+                    _lastClickX = mx; _lastClickY = my
+                    if isDbl and col >= 0 {
+                        _begin_edit(row, col)
+                        return
+                    }
                     if _multi {
                         int MOD_SHIFT = 1; int MOD_CTRL = 64
                         int mod = ev.keyMod()
@@ -558,6 +621,8 @@ export struct Table impl Widget {
 
         if sb[0] > 0.0 { _draw_vscroll(r, sb) }
         if sb[1] > 0.0 { _draw_hscroll(r, sb) }
+
+        if _editing and _edit != null { _edit.render(r) }
     }
 
     func _draw_vscroll(Renderer r, Array[float] sb) {

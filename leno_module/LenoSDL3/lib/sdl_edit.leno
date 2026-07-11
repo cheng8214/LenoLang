@@ -371,6 +371,7 @@ export struct Edit impl Widget {
 
     // ==================== 查询 ====================
     func is_focused(): bool { return _focused }
+    func is_loaded(): bool { return _loaded }
     func get_text_length(): int {
         if _cachedLen < 0 {
             _rebuild_lines()
