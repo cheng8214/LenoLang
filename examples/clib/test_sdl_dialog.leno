@@ -1,0 +1,122 @@
+// test_sdl_dialog.leno — 验证 ffi 回调 + SDL3 原生文件对话框
+//
+// 目的：单独验证“SDL3 自带原生对话框 + Leno ffi 回调”能否跑通。
+//       不依赖 LenoSDL3 业务库，仅用 ffi 最小调用 SDL3.dll。
+//
+// 运行：leno examples/clib/test_sdl_dialog.leno （需 SDL3.dll 在 PATH / 工作目录）
+//
+// 关键点：
+//   - SDL_ShowOpenFileDialog/SaveFileDialog/OpenFolderDialog 是【强制回调式】，
+//     结果只通过 C 函数指针回调返回，且 filelist 是 null 结尾的 const char* 数组。
+//   - 【重要】Windows 上 SDL3 实际会在【独立工作线程】里弹对话框，
+//     回调也在该工作线程触发（SDL_windowsdialog.c 用 SDL_CreateThread）。
+//     Leno FFI 已支持跨线程回调编组：工作线程的回调参数会自动排队，
+//     主线程需在事件循环中调用 ffi.pump_callbacks() 取出并在主线程 VM 上执行。
+//     （Linux 行为不同，回调通常在同线程触发，但调用 pump_callbacks 也无害。）
+//   - 回调签名：void (*)(void* userdata, const char* const* filelist, int filter)
+//     filter: 用户选中的过滤器索引；filelist: 取消=空数组，错误=NULL。
+
+import ffi
+
+// ==================== SDL3 函数声明（仅测试所需） ====================
+clib sdl3 {
+    bool SDL_Init(u32 flags)
+    void SDL_Quit()
+    Ptr  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
+    void SDL_DestroyWindow(Ptr window)
+    // 对话框是异步的：Windows 上由 SDL 内部工作线程触发回调（非事件队列回传），
+    void SDL_PumpEvents()
+    void SDL_Delay(u32 ms)
+    // 打开文件（allow_many=true 多选；filters 可传 null；default_location 可传 null）
+    void SDL_ShowOpenFileDialog(Ptr callback, Ptr userdata, Ptr window, Ptr filters, i32 nfilters, str8 default_location, bool allow_many)
+    // 保存文件
+    void SDL_ShowSaveFileDialog(Ptr callback, Ptr userdata, Ptr window, Ptr filters, i32 nfilters, str8 default_location)
+    // 选择文件夹
+    void SDL_ShowOpenFolderDialog(Ptr callback, Ptr userdata, Ptr window, Ptr filters, i32 nfilters, str8 default_location)
+}
+
+// ==================== 对话框回调签名（C 侧函数指针类型） ====================
+cfunc DialogCallback(Ptr userdata, Ptr filelist, i32 filter):void
+
+// ==================== 结果收集 ====================
+Array[string] g_files  = []
+int           g_filter = -1
+bool          g_done   = false
+
+// ==================== Leno 侧回调实现 ====================
+func on_dialog(Ptr userdata, Ptr filelist, int filter) {
+    print("=== 对话框回调触发 ===")
+    print("filter index = " + filter)
+    g_filter = filter
+    g_done = true
+    if filelist == null {
+        print("（错误：filelist == NULL，可能对话框出错）")
+        return
+    }
+    // filelist 是 const char* const*，64 位下每个指针占 8 字节，以 NULL 结尾
+    int i = 0
+    while true {
+        Ptr p = ffi.read_ptr(filelist, i * 8)
+        if p == null { break }
+        string s = ffi.read_string(p, 0)
+        print("  文件[" + i + "] = " + s)
+        g_files.add(s)
+        i = i + 1
+    }
+    if i == 0 { print("（用户取消，未选择任何文件）") }
+}
+
+// ==================== 主流程 ====================
+main() {
+    sdl3 lib = ffi.load("SDL3.dll")
+    if lib == null { print("加载 SDL3.dll 失败"); return }
+
+    // SDL_INIT_VIDEO = 0x00000020
+    if not lib.SDL_Init(0x00000020) {
+        print("SDL_Init 失败"); ffi.free(lib); return
+    }
+
+    Ptr win = lib.SDL_CreateWindow("SDL 原生对话框测试", 640, 480, 0)
+    print("window 创建: " + (win != null))
+
+    // 把 Leno 闭包变成 C 函数指针（回调类型 = DialogCallback）
+    var cb = ffi.callback(on_dialog, DialogCallback)
+    print("callback 创建: " + (cb != null))
+
+    // ---------- 仅测试：打开文件（多选） ----------
+    g_files.clear(); g_filter = -1; g_done = false
+    print("")
+    print(">>> 弹出【打开文件】对话框（可多选）...")
+    lib.SDL_ShowOpenFileDialog(cb, null, win, null, 0, null, true)
+    // 等待回调（SDL3 文件对话框异步：回调可能在独立线程触发，
+    // 此处持续泵送事件和跨线程回调，直到 on_dialog 设置 g_done）
+    int wait = 0
+    while not g_done {
+        ffi.pump_callbacks()     // 泵送跨线程回调（SDL3 对话框在 Windows 上于工作线程触发回调）
+        lib.SDL_PumpEvents()
+        lib.SDL_Delay(10)
+        wait = wait + 1
+        if wait > 3000 { print("（等待超时，对话框可能未返回）"); break }  // 30s 上限，避免永久卡死
+    }
+
+    // ---------- 选择结果输出到控制台 ----------
+    print("")
+    print("========== 控制台输出：所选文件 ==========")
+    if g_files.len() == 0 {
+        print("（未选择任何文件 / 已取消）")
+    } else {
+        print("共选择 " + g_files.len() + " 个文件, filter=" + g_filter)
+        int k = 0
+        while k < g_files.len() {
+            print("  文件[" + k + "] = " + g_files[k])
+            k = k + 1
+        }
+    }
+    print("=========================================")
+
+    lib.SDL_DestroyWindow(win)
+    lib.SDL_Quit()
+    ffi.free(lib)
+    print("")
+    print("done")
+}

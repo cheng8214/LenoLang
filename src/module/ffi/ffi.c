@@ -59,6 +59,7 @@
 #include "include/leno_vm.h"
 #include "include/leno_value.h"
 #include "include/platform.h"
+#include "include/platform_thread.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1989,7 +1990,50 @@ typedef struct {
 /* 全局变量用于传递浮点返回值 */
 static double g_callback_float_result = 0.0;
 
-static FFIValue callback_dispatch(int cb_id, CallbackRegState* regs) {
+/* ===== 跨线程回调编组（marshalling） ===== */
+/* 当 C 库在工作线程触发 FFI 回调时（如 SDL3 对话框），Leno VM 不可跨线程重入。
+ * 此机制将回调参数打包到线程安全队列，阻塞工作线程等待，
+ * 由主线程通过 ffi.pump_callbacks() 取出并在主线程 VM 上执行回调，
+ * 完成后唤醒工作线程放行。
+ */
+#define MAX_PENDING_CALLBACKS 64
+
+typedef struct {
+    int cb_id;                    /* 回调 ID */
+    CallbackRegState regs;        /* 寄存器参数快照 */
+    FFIValue result;              /* 主线程执行后的返回值 */
+    double float_result;          /* 浮点返回值 */
+    int completed;                /* 主线程是否已执行完（0=等待，1=完成） */
+    int in_use;                   /* 槽位是否被占用（0=空闲，1=占用） */
+} PendingCallback;
+
+static PendingCallback g_pending_queue[MAX_PENDING_CALLBACKS];
+static int g_pending_count = 0;
+
+static PlatformMutex g_pending_mutex;      /* 队列互斥锁 */
+static PlatformCondVar g_pending_cond;     /* 队列有新项/有空位条件变量 */
+static PlatformCondVar g_complete_cond;    /* 单项完成条件变量 */
+static int g_callback_marshal_initialized = 0;
+
+/* 记录主线程 ID（在 ffi_callback_marshal_init 中由主线程设置） */
+static PlatformThreadID g_main_thread_id;
+static int g_main_thread_id_set = 0;
+
+static void ffi_callback_marshal_init(void) {
+    if (g_callback_marshal_initialized) return;
+    platform_mutex_init(&g_pending_mutex);
+    platform_cond_init(&g_pending_cond);
+    platform_cond_init(&g_complete_cond);
+    g_pending_count = 0;
+    memset(g_pending_queue, 0, sizeof(g_pending_queue));
+    /* 在主线程初始化时记录主线程 ID（ffi_init_module 由主线程调用） */
+    g_main_thread_id = platform_thread_self();
+    g_main_thread_id_set = 1;
+    g_callback_marshal_initialized = 1;
+}
+
+/* ===== 同线程直接执行回调（原有逻辑） ===== */
+static FFIValue callback_dispatch_direct(int cb_id, CallbackRegState* regs) {
     FFIValue result = {0};
     if (cb_id < 0 || cb_id >= MAX_FFI_CALLBACKS || !g_callback_registry[cb_id].active) {
         return result;
@@ -2128,6 +2172,117 @@ static FFIValue callback_dispatch(int cb_id, CallbackRegState* regs) {
     g_callback_float_result = result.d;
 
     return result;
+}
+
+/* ===== 跨线程回调编组：工作线程侧 ===== */
+/* 工作线程将回调参数打包到槽位，阻塞等待主线程执行完成 */
+static FFIValue callback_dispatch_marshal(int cb_id, CallbackRegState* regs) {
+    FFIValue result = {0};
+
+    platform_mutex_lock(&g_pending_mutex);
+
+    /* 查找空闲槽位 */
+    int slot = -1;
+    for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
+        if (!g_pending_queue[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        /* 队列满，直接返回（极端情况，不应发生） */
+        platform_mutex_unlock(&g_pending_mutex);
+        return result;
+    }
+
+    /* 填入参数 */
+    g_pending_queue[slot].cb_id = cb_id;
+    g_pending_queue[slot].regs = *regs;      /* 拷贝寄存器快照 */
+    g_pending_queue[slot].result = result;
+    g_pending_queue[slot].float_result = 0.0;
+    g_pending_queue[slot].completed = 0;
+    g_pending_queue[slot].in_use = 1;
+    g_pending_count++;
+
+    /* 通知主线程有新的待处理回调 */
+    platform_cond_signal(&g_pending_cond);
+
+    /* 阻塞等待自己的槽位完成 */
+    while (!g_pending_queue[slot].completed) {
+        platform_cond_wait(&g_complete_cond, &g_pending_mutex);
+    }
+
+    /* 取回结果 */
+    result = g_pending_queue[slot].result;
+    g_callback_float_result = g_pending_queue[slot].float_result;
+
+    /* 释放槽位 */
+    g_pending_queue[slot].in_use = 0;
+    g_pending_count--;
+
+    /* 通知其他等待空位的线程 */
+    platform_cond_signal(&g_pending_cond);
+
+    platform_mutex_unlock(&g_pending_mutex);
+
+    return result;
+}
+
+/* ===== callback_dispatch 入口：线程检测 + 调度 ===== */
+static FFIValue callback_dispatch(int cb_id, CallbackRegState* regs) {
+    /* 跨线程检测：g_main_thread_id 在 ffi_callback_marshal_init 中已由主线程设置 */
+    if (g_main_thread_id_set && !platform_thread_equal(platform_thread_self(), g_main_thread_id)) {
+        /* 非主线程：如果该线程有有效的 VM（如 Leno 语言级线程），可直接执行；
+         * 只有 current_exec_vm==NULL 的 C 库工作线程（如 SDL3 对话框线程）
+         * 才需要 marshal 到主线程，因为它们没有 VM，直接执行会崩溃。 */
+        if (current_exec_vm) {
+            return callback_dispatch_direct(cb_id, regs);
+        }
+        return callback_dispatch_marshal(cb_id, regs);
+    }
+
+    /* 主线程：直接执行 */
+    return callback_dispatch_direct(cb_id, regs);
+}
+
+/* ===== 主线程泵送：ffi.pump_callbacks() ===== */
+/* 主线程在事件循环中调用，处理所有排队的跨线程回调 */
+static Value ffi_pump_callbacks_func(int argc, Value* args) {
+    (void)argc;
+    (void)args;
+
+    if (!g_callback_marshal_initialized) return val_null();
+
+    platform_mutex_lock(&g_pending_mutex);
+
+    /* 处理所有待处理的回调 */
+    while (true) {
+        /* 查找一个 in_use 且未 completed 的槽位 */
+        int slot = -1;
+        for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
+            if (g_pending_queue[i].in_use && !g_pending_queue[i].completed) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) break;  /* 没有待处理的 */
+
+        PendingCallback* pending = &g_pending_queue[slot];
+
+        /* 在主线程上执行回调（复用直接执行逻辑） */
+        FFIValue cb_result = callback_dispatch_direct(pending->cb_id, &pending->regs);
+
+        pending->result = cb_result;
+        pending->float_result = g_callback_float_result;
+        pending->completed = 1;
+
+        /* 唤醒等待的工作线程 */
+        platform_cond_broadcast(&g_complete_cond);
+    }
+
+    platform_mutex_unlock(&g_pending_mutex);
+
+    return val_null();
 }
 
 #ifdef _WIN32
@@ -2555,4 +2710,10 @@ void ffi_init_module(void) {
     // ffi.callback(func, CfuncName) - 第二个参数必须是 cfunc 类型
     TypeKind callback_params[] = {TYPE_ANY, TYPE_CFUNC};
     native_register_module_method("ffi", "callback", ffi_callback_compat_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, callback_params);
+
+    /* ===== 跨线程回调泵送 ===== */
+    native_register_module_method("ffi", "pump_callbacks", ffi_pump_callbacks_func, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+
+    /* 初始化跨线程回调编组设施 */
+    ffi_callback_marshal_init();
 }
