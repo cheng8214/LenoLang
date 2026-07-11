@@ -361,6 +361,13 @@ export struct Edit impl Widget {
     // Ctrl+Z
     func _undo() {
         if _undoStack.len() == 0 { return }
+        // 单行模式：先把当前 text 同步进 _lines（数据源是 text，缓存可能陈旧），
+        // 保证 redo 栈存的是真实当前状态；并折出正确光标。
+        if not _multiline {
+            _rebuild_lines()
+            _cursorLine = 0
+            _cursorCol = _cursorPos
+        }
         // 保存当前状态到 redo 栈
         _redoStack.add(_lines.copy())
         _redoCursorStack.add(_cursorLine * 10000 + _cursorCol)
@@ -380,7 +387,14 @@ export struct Edit impl Widget {
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
         } else { _cursorLine = 0; _cursorCol = 0 }
         _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
-        text = get_text()
+        if not _multiline {
+            // 单行：直接由还原后的 _lines 重建 text，并禁止 get_text 再用旧 text 反写 _lines
+            _dirty = false
+            _textDirty = false
+            text = _lines.join("\n")
+        } else {
+            text = get_text()
+        }
         _drDirty = true; _lwDirty = true
         _adjust_scroll()
     }
@@ -388,6 +402,12 @@ export struct Edit impl Widget {
     // Ctrl+Y
     func _redo() {
         if _redoStack.len() == 0 { return }
+        // 单行模式：先把当前 text 同步进 _lines，保证 undo 栈存的是真实当前状态
+        if not _multiline {
+            _rebuild_lines()
+            _cursorLine = 0
+            _cursorCol = _cursorPos
+        }
         // 保存当前状态到 undo 栈
         _undoStack.add(_lines.copy())
         _undoCursorStack.add(_cursorLine * 10000 + _cursorCol)
@@ -407,7 +427,14 @@ export struct Edit impl Widget {
             if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
         } else { _cursorLine = 0; _cursorCol = 0 }
         _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
-        text = get_text()             // 同步 text
+        if not _multiline {
+            // 单行：直接由还原后的 _lines 重建 text，并禁止 get_text 再用旧 text 反写 _lines
+            _dirty = false
+            _textDirty = false
+            text = _lines.join("\n")
+        } else {
+            text = get_text()
+        }
         _drDirty = true; _lwDirty = true
         _adjust_scroll()
     }
