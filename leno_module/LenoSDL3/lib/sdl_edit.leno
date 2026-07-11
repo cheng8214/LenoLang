@@ -10,82 +10,82 @@ import "sdl_tooltip.leno" as tip
 
 export struct Edit impl Widget {
     string text
-    float x; float y; float w; float h
-    float _radius                // 圆角半径
-    float _fontSize              // 字体大小
-    string _fontPath
-    int _fontStyle
-    Font  _font                  // 字体缓存
-    Ptr[u8] _hwnd                // 窗口句柄（IME 定位）
-    int cr, cg, cb               // 背景色
-    int tr, tg, tb               // 文字色
-    int _focusR, _focusG, _focusB // 聚焦边框色
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 30.0
+    float _radius = 4.0             // 圆角半径
+    float _fontSize = 16.0          // 字体大小
+    string _fontPath = ""
+    int _fontStyle = 0
+    Font  _font = null              // 字体缓存
+    Ptr[u8] _hwnd = null            // 窗口句柄（IME 定位）
+    int cr = 255; int cg = 255; int cb = 255               // 背景色
+    int tr = 0; int tg = 0; int tb = 0               // 文字色
+    int _focusR = 100; int _focusG = 149; int _focusB = 237 // 聚焦边框色
 
     // 单行模式
-    int _cursorPos               // 光标字符位置（单行）
-    float _scrollX               // 水平滚动偏移
+    int _cursorPos = 0               // 光标字符位置（单行）
+    float _scrollX = 0.0             // 水平滚动偏移
 
     // 多行模式
-    bool _multiline
-    Array[string] _lines         // 行缓存
-    int _cursorLine; int _cursorCol   // 多行光标
-    float _scrollY               // 垂直滚动偏移
-    float _lineHeight            // 行高缓存
+    bool _multiline = false
+    Array[string] _lines = []         // 行缓存
+    int _cursorLine = 0; int _cursorCol = 0   // 多行光标
+    float _scrollY = 0.0              // 垂直滚动偏移
+    float _lineHeight = 20.0          // 行高缓存
 
-    string _placeholder          // 占位文字
-    bool _focused
-    bool _mouseDown              // 鼠标左键是否按下
-    bool _draggingVScroll        // 拖竖向滚动条
-    bool _draggingHScroll        // 拖横向滚动条
-    bool _hoverVScroll           // 鼠标悬停竖向滚动条
-    float _hDragOffset           // 横向拖动：抓取点在滑块内的偏移（避免拖动跳变）
-    bool  _hDragThumb            // 本次横向拖动是否抓在滑块上（false=抓在轨道）
-    bool _hoverHScroll           // 鼠标悬停横向滚动条
-    bool _hoverText              // 鼠标悬停编辑区（显示文本光标）
-    int _blinkTime               // 光标闪烁 tick
-    bool _showCursor
-    bool _password               // 密码模式
-    bool _readOnly               // 只读
-    bool _loaded
-    bool enabled
-    bool visible
-    string _tip             // 悬停提示文本（空 = 不提示）
-    bool _dirty                  // 行缓存需重建
-    bool _textDirty              // text 需要从 _lines 重建
-    int  _cachedLen              // 缓存总字符数（不含换行符）
-    float _cachedMaxW            // 缓存最大行宽（脏时重算）
+    string _placeholder = ""          // 占位文字
+    bool _focused = false
+    bool _mouseDown = false              // 鼠标左键是否按下
+    bool _draggingVScroll = false        // 拖竖向滚动条
+    bool _draggingHScroll = false        // 拖横向滚动条
+    bool _hoverVScroll = false           // 鼠标悬停竖向滚动条
+    float _hDragOffset = 0.0            // 横向拖动：抓取点在滑块内的偏移（避免拖动跳变）
+    bool  _hDragThumb = false            // 本次横向拖动是否抓在滑块上（false=抓在轨道）
+    bool _hoverHScroll = false           // 鼠标悬停横向滚动条
+    bool _hoverText = false              // 鼠标悬停编辑区（显示文本光标）
+    int _blinkTime = 0               // 光标闪烁 tick
+    bool _showCursor = true
+    bool _password = false               // 密码模式
+    bool _readOnly = false               // 只读
+    bool _loaded = false
+    bool enabled = true
+    bool visible = true
+    string _tip = ""             // 悬停提示文本（空 = 不提示）
+    bool _dirty = true                  // 行缓存需重建
+    bool _textDirty = false              // text 需要从 _lines 重建
+    int  _cachedLen = -1              // 缓存总字符数（不含换行符）
+    float _cachedMaxW = 0.0            // 缓存最大行宽（脏时重算）
 
     // 撤销/重做
-    Array[Array[string]] _undoStack
-    Array[Array[string]] _redoStack
-    Array[int] _undoCursorStack       // 撤销光标栈：每项存 line*10000+col
-    Array[int] _redoCursorStack
-    bool _mergeUndo              // 连续输入可合并为一次撤销
-    int  _mergePos               // 合并基准：上次输入结束处的光标字符位置
-    int  _lastClickTime          // 上次点击 tick（双击检测）
-    float _lastClickX; float _lastClickY
+    Array[Array[string]] _undoStack = []
+    Array[Array[string]] _redoStack = []
+    Array[int] _undoCursorStack = []       // 撤销光标栈：每项存 line*10000+col
+    Array[int] _redoCursorStack = []
+    bool _mergeUndo = false              // 连续输入可合并为一次撤销
+    int  _mergePos = 0               // 合并基准：上次输入结束处的光标字符位置
+    int  _lastClickTime = 0          // 上次点击 tick（双击检测）
+    float _lastClickX = 0.0; float _lastClickY = 0.0
 
     // 自动换行
-    bool _wordWrap
+    bool _wordWrap = false
     // 显示行表（自动换行时一行逻辑行拆成多显示行）：每行 [逻辑行, 段起始列, 段结束列]
-    Array[int] _drLi
-    Array[int] _drC0
-    Array[int] _drC1
-    int _drCount
-    bool _drDirty               // 显示行表需重建
-    float _drVisW               // 上次构建显示行表用的可视宽度
-    bool _drWrap                // 上次构建时的换行模式
-    Array[int] _drLStart        // 每逻辑行在显示行表中的起始索引
-    Array[int] _drLCnt          // 每逻辑行的显示行段数
-    int _dirtyLine              // 仅单行内容变化时需增量重算的逻辑行（-1 表示无）
-    Array[float] _lineW         // 每行像素宽度缓存（增量更新）
-    float _maxLineW             // 当前最大行宽
-    bool _lwDirty               // 行宽缓存需全量重算
+    Array[int] _drLi = []
+    Array[int] _drC0 = []
+    Array[int] _drC1 = []
+    int _drCount = 0
+    bool _drDirty = true               // 显示行表需重建
+    float _drVisW = 0.0               // 上次构建显示行表用的可视宽度
+    bool _drWrap = false                // 上次构建时的换行模式
+    Array[int] _drLStart = []        // 每逻辑行在显示行表中的起始索引
+    Array[int] _drLCnt = []          // 每逻辑行的显示行段数
+    int _dirtyLine = -1              // 仅单行内容变化时需增量重算的逻辑行（-1 表示无）
+    Array[float] _lineW = []         // 每行像素宽度缓存（增量更新）
+    float _maxLineW = 0.0             // 当前最大行宽
+    bool _lwDirty = true               // 行宽缓存需全量重算
 
     // 文本选取
-    int  _selStart               // 选区起始（-1 表示无选区）
-    int  _selEnd                 // 选区结束
-    bool _selActive              // 有活跃选区
+    int  _selStart = -1               // 选区起始（-1 表示无选区）
+    int  _selEnd = 0                 // 选区结束
+    bool _selActive = false              // 有活跃选区
 
     func():void _onChange
     func():void _onEnter
