@@ -103,6 +103,7 @@ export struct CachedMeas {
 
 export struct Font {
     Ptr[u8] handle; bool ok; int height; int ascent; int descent; float _pt
+    string _fontPath = ""       // 缓存池查询用
     float _aaScale = 0.0   // SSAA 倍数：>0 时 measureString 按「2x 测量再除 scale」计算，
                            // 与 Renderer.drawText 的 SSAA 绘制宽度（tex.width/scale）完全一致
 
@@ -398,12 +399,33 @@ export func ttfQuit() {
     _ttfInited = false
 }
 
+// ==================== 全局字体缓存池 ====================
+// 相同 path+ptsize 复用同一个 Font 对象，避免 N 个控件各自创建独立 Font + 纹理缓存。
+// 典型场景：30 个控件共用 2-3 个 Font，内存从 ~130MB 降到 ~30MB。
+
+Array[Font] _fontPool = []
+
+func _findCachedFont(string path, float ptsize): Font {
+    string key = $"{path}\x01{ptsize}"
+    for _fontPool.len() to i {
+        Font f = _fontPool[i]
+        if f.ok and $"{f._fontPath}\x01{f._pt}" == key { return f }
+    }
+    Font empty = new Font(); return empty
+}
+
 export func createFont(string path, float ptsize): Font {
-    Font font = new Font(); font.load(path, ptsize); return font
+    Font cached = _findCachedFont(path, ptsize)
+    if cached.ok { return cached }
+    Font font = new Font(); font.load(path, ptsize); font._fontPath = path
+    if font.ok { _fontPool.add(font) }
+    return font
 }
 
 // 加载字体（自动尝试微软雅黑→宋体回退）
 export func createFontAuto(float ptsize): Font {
+    Font cached = _findCachedFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+    if cached.ok { return cached }
     Font font = createFont("C:/Windows/Fonts/msyh.ttc", ptsize)
     if not font.ok { font = createFont("C:/Windows/Fonts/simsun.ttc", ptsize) }
     return font
