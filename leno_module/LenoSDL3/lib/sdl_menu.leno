@@ -102,6 +102,12 @@ func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, floa
     return -1
 }
 
+// 模块级：所有 MenuBar 实例注册表，用于“同一时刻仅一个菜单展开”的全局互斥。
+// 覆盖顶部菜单栏与各编辑框内嵌右击上下文菜单等所有 MenuBar 实例——任一菜单展开前
+// 先关闭其它已展开菜单，避免顶部菜单与右击菜单、或多个右击菜单叠加显示。
+Array[MenuBar] _menuRegistry = []
+int _menuIdSeq = 0
+
 export struct MenuBar impl Widget {
     float x = 0.0; float y = 0.0; float w = 600.0; float h = 28.0
     float _itemH = 26.0
@@ -136,6 +142,7 @@ export struct MenuBar impl Widget {
     string _align = ""                    // 顶级标题对齐："left" / "center" / "right"
     bool enabled = true; bool visible = true; bool _loaded = false
     func(string, string):void _onSelect
+    int _menuId = 0                       // 实例唯一 id（全局互斥时排除自身，避免值比较误判）
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -200,6 +207,21 @@ export struct MenuBar impl Widget {
         visible = _bool(opts.get("visible", true))
         _ensure_font()
         _loaded = true
+
+        // 注册到模块级表，供“同一时刻仅一个菜单展开”的全局互斥（首次 set 时注册一次）
+        if _menuId == 0 {
+            _menuIdSeq = _menuIdSeq + 1
+            _menuId = _menuIdSeq
+            _menuRegistry.add(self)
+        }
+    }
+
+    // 关闭其它所有已展开的菜单（顶部菜单栏 / 其它编辑框右击菜单），保证同一时刻仅一个菜单
+    func _closeOtherMenus() {
+        for _menuRegistry.len() to i {
+            MenuBar o = _menuRegistry[i]
+            if o != null and o._menuId != _menuId and o.isOpen() { o.close() }
+        }
     }
 
     // ==================== 设置方法 ====================
@@ -309,6 +331,7 @@ export struct MenuBar impl Widget {
     // 同一帧内立即登记弹层捕获区，避免右键穿透到下层控件
     func openContext(int ctxIdx, float x, float y) {
         if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        _closeOtherMenus()   // 展开前先关闭其它菜单（顶部菜单栏/其它右击菜单），保证仅一个
         close()
         _open = ctxIdx
         _ctxAnchor[ctxIdx] = [x, y]
@@ -468,7 +491,10 @@ export struct MenuBar impl Widget {
             }
             if hitTop >= 0 {
                 if _open == hitTop { _open = -1 }   // 再次点击同一标题：收起
-                else { _open = hitTop; _openSub = -1; _hoverItem = -1; _hoverSub = -1 }
+                else {
+                    _closeOtherMenus()   // 展开新标题前关闭其它菜单（如编辑框右击菜单），保证仅一个
+                    _open = hitTop; _openSub = -1; _hoverItem = -1; _hoverSub = -1
+                }
                 return
             }
             if _open >= 0 {
