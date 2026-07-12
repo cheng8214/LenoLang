@@ -1,7 +1,7 @@
 // test_filedialog.leno — 验证独立文件对话框模块 sdl_filedialog.leno
 // 运行：leno leno_module/LenoSDL3/examples/基础示例/test_filedialog.leno （需 SDL3.dll）
 //
-// 操作：O=打开文件(多选)  S=保存文件  F=选择文件夹  ESC=退出
+// 操作：点击窗口上的按钮打开对应对话框；ESC 退出
 // 结果实时显示在窗口上（回调在主线程返回，由 run() 每帧 clib 调用自动泵送）。
 //
 // 注意：g_status 用【文件级】变量，避免闭包按值捕获导致窗口读不到更新。
@@ -9,68 +9,99 @@
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
-use SDL3.Scancode
+
+import "../../lib/sdl_font.leno" as fnt
+use fnt.Font
 
 import "../../lib/sdl_filedialog.leno" as fdlg
 
 // 文件级状态（全局单例，闭包修改对外层可见）
-string g_status = "按 O=打开  S=保存  F=文件夹  ESC=退出"
+string g_status = "点击下方按钮打开文件对话框"
+bool g_exit = false
+// 字体只创建一次，避免每帧 createFontAuto 导致原生字体句柄泄漏（曾致 2GB/分）
+Font g_fontBig = null
+Font g_fontSmall = null
 
 main() {
-    var win = SDL3.createWindow({title: "文件对话框测试 — O/S/F 弹框 ESC 退出", w: 720, h: 420})
+    var win = SDL3.createWindow({title: "文件对话框测试 — 点击按钮", w: 720, h: 420})
     print("window 创建: " + (win != null))
+
+    // 字体缓存：仅创建一次，渲染时复用
+    g_fontBig = SDL3.createFontAuto(16.0)
+    g_fontSmall = SDL3.createFontAuto(13.0)
+
+    // 打开文件（多选）
+    var btnOpen = win.addButton({text: "打开文件", x: 24, y: 24, w: 150, h: 40, type: "primary"})
+    btnOpen.on_click(func() {
+        print(">>> 点击: 打开文件")
+        if fdlg.isActive() { return }   // 上一个对话框未结束则忽略
+        fdlg.showOpenFileDialog(win,
+            func(Array[string] paths, int filter) {
+                print(">>> 打开回调触发, 文件数=" + paths.len())
+                if paths.len() > 0 {
+                    g_status = "【打开】共 " + paths.len() + " 个: " + paths[0]
+                } else {
+                    g_status = "【打开】已取消"
+                }
+            },
+            { allow_many: true,
+              filters: [ {name:"Leno 脚本", pattern:"*.leno"}, {name:"全部文件", pattern:"*.*"} ],
+              default_location: "." })   // 库自动规范：*.leno→leno、*.*→*、相对路径"."→绝对路径
+    })
+
+    // 保存文件
+    var btnSave = win.addButton({text: "保存文件", x: 190, y: 24, w: 150, h: 40, type: "success"})
+    btnSave.on_click(func() {
+        print(">>> 点击: 保存文件")
+        if fdlg.isActive() { return }
+        fdlg.showSaveFileDialog(win,
+            func(Array[string] paths, int filter) {
+                print(">>> 保存回调触发, 文件数=" + paths.len())
+                if paths.len() > 0 {
+                    g_status = "【保存】路径 = " + paths[0]
+                } else {
+                    g_status = "【保存】已取消"
+                }
+            },
+            { filters: [ {name:"文本文件", pattern:"*.txt"} ], default_location: "." })   // 库自动规范
+    })
+
+    // 选择文件夹
+    var btnFolder = win.addButton({text: "选择文件夹", x: 356, y: 24, w: 150, h: 40, type: "warning"})
+    btnFolder.on_click(func() {
+        print(">>> 点击: 选择文件夹")
+        if fdlg.isActive() { return }
+        fdlg.showOpenFolderDialog(win,
+            func(Array[string] paths, int filter) {
+                print(">>> 文件夹回调触发, 文件数=" + paths.len())
+                if paths.len() > 0 {
+                    g_status = "【文件夹】= " + paths[0]
+                } else {
+                    g_status = "【文件夹】已取消"
+                }
+            }, { filters: [ {name:"全部", pattern:"*.*"} ] })   // 库自动规范
+    })
+
+    // 退出
+    var btnExit = win.addButton({text: "退出", x: 522, y: 24, w: 120, h: 40, type: "danger"})
+    btnExit.on_click(func() {
+        g_exit = true
+    })
 
     win.run(
         func(Event e): bool {
             if e.isQuit() { return false }
-            if e.isKeyDown() {
-                int sc = e.scancode()
-                if sc == Scancode.ESCAPE {
-                    return false
-                } else if sc == Scancode.O {
-                    fdlg.showOpenFileDialog(win,
-                        func(Array[string] paths, int filter) {
-                            print(">>> 打开回调触发, 文件数=" + paths.len())
-                            if paths.len() > 0 {
-                                g_status = "【打开】共 " + paths.len() + " 个: " + paths[0]
-                            } else {
-                                g_status = "【打开】已取消"
-                            }
-                        },
-                        { allow_many: true,
-                          filters: [ {name:"Leno 脚本", pattern:"*.leno"}, {name:"全部文件", pattern:"*.*"} ],
-                          default_location: "." })
-                } else if sc == Scancode.S {
-                    fdlg.showSaveFileDialog(win,
-                        func(Array[string] paths, int filter) {
-                            print(">>> 保存回调触发, 文件数=" + paths.len())
-                            if paths.len() > 0 {
-                                g_status = "【保存】路径 = " + paths[0]
-                            } else {
-                                g_status = "【保存】已取消"
-                            }
-                        },
-                        { filters: [ {name:"文本文件", pattern:"*.txt"} ], default_location: "." })
-                } else if sc == Scancode.F {
-                    fdlg.showOpenFolderDialog(win,
-                        func(Array[string] paths, int filter) {
-                            print(">>> 文件夹回调触发, 文件数=" + paths.len())
-                            if paths.len() > 0 {
-                                g_status = "【文件夹】= " + paths[0]
-                            } else {
-                                g_status = "【文件夹】已取消"
-                            }
-                        }, {})
-                }
-            }
+            // ESC 或点击“退出”按钮：返回 false 让 run() 销毁窗口
+            if g_exit { return false }
+            if e.isKeyDown() and e.scancode() == SDL3.Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {
             r.clearColor(24, 24, 32, 255)
             r.setColor(180, 220, 255, 255)
-            r.drawText(SDL3.createFontAuto(16.0), g_status, 24, 30, 180, 220, 255)
+            r.drawText(g_fontBig, g_status, 24, 110, 180, 220, 255)
             r.setColor(140, 140, 150, 255)
-            r.drawText(SDL3.createFontAuto(13.0), "提示: 结果由主线程回调返回（跨线程回调自动泵送）", 24, 70, 140, 140, 150)
+            r.drawText(g_fontSmall, "点击上方按钮打开对应对话框（结果由主线程回调返回）", 24, 150, 140, 140, 150)
         }
     )
     print("关闭")
