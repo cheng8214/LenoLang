@@ -108,6 +108,35 @@ func updateState(Label stateLbl, bool live) {
     else    { stateLbl.set_text("⏸ 已暂停刷新") }
 }
 
+// 关于对话框（模态窗口，显示在现有运行循环之上）
+func showAbout() {
+    var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:240})
+    dlg.addLabel({x:190, y:26,  text:"LenoSDL3 数据看板", font_size:18, text_rgb:[225,235,255], align:1})
+    dlg.addLabel({x:190, y:54,  text:"系统监控看板 Demo", font_size:13, text_rgb:[150,165,200], align:1})
+    dlg.addLabel({x:40,  y:96,  text:"版本：v1.0", font_size:13, text_rgb:[200,210,225]})
+    dlg.addLabel({x:40,  y:120, text:"基于 LenoSDL3 即时模式 UI 框架", font_size:13, text_rgb:[200,210,225]})
+    dlg.addLabel({x:40,  y:144, text:"集成图表 / 表格 / 进度条 / 日志 / 滑块", font_size:13, text_rgb:[200,210,225]})
+    dlg.addLabel({x:40,  y:168, text:"© 2026 LenoLang", font_size:12, text_rgb:[150,160,175]})
+    dlg.addButton({x:140, y:192, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+
+    SDL3.runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            // 点击「确定」按钮区域关闭
+            if ev.isMouseButtonUp() {
+                float mx = ev.mouseX(); float my = ev.mouseY()
+                if mx >= 140.0 and mx <= 240.0 and my >= 192.0 and my <= 226.0 { return false }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(30, 33, 42, 255)
+            core.requestRedraw()
+        }
+    )
+}
+
 // 构建一张 KPI 卡片（Panel + 标题 + 进度条 + 说明），返回进度条引用
 func buildKpi(Window win, float x, float y, float w, float h, string title, string caption, Array[int] fill): ProgressBar {
     var p = SDL3.createPanel({x:x, y:y, w:w, h:h, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
@@ -218,7 +247,7 @@ main() {
         } else if id == "clearlog" {
             logBox.clear(); _logCount = 0; statusLbl.set_text("日志已清空")
         } else if id == "about" {
-            statusLbl.set_text("LenoSDL3 数据看板 Demo · v1.0")
+            showAbout()
         }
     })
 
