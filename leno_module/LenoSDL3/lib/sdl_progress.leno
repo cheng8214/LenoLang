@@ -194,6 +194,7 @@ export struct ProgressBar impl Widget {
         if not visible { return }
         _ensure_font()
         _step_anim()
+        if _animating { core.requestRedraw() }
 
         // 轨道背景
         int tR = _trkR; int tG = _trkG; int tB = _trkB

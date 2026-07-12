@@ -57,6 +57,9 @@ export func tipTick() {
     else { _tipVisible = false }
 }
 
+// tooltip 是否正在等待延迟显示（Window 用来判断是否需要持续重绘）
+export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
+
 func _ensureFont(Renderer r) {
     if _font == null or not _font.ok {
         Font old = _font as Font

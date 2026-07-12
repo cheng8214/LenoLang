@@ -1,4 +1,4 @@
-﻿// sdl_window.leno — SDL3 窗口封装
+// sdl_window.leno — SDL3 窗口封装
 //
 // 提供两种使用模式：
 // 1. run() 回调模式（推荐）：
@@ -440,10 +440,13 @@ export struct Window {
         Event ev = event.createEvent()
         int _frameMs = 1000 / 60      // 目标 ~60FPS（每帧约 16ms），避免空转占满 CPU
         int _startTicks = 0
+        bool _needRedraw = true       // 初始绘制一次
         while true {
             _startTicks = core.getTicks()
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
+            bool _hadEvent = false
             while ev.poll() {
+                _hadEvent = true
                 if ev.isQuit() {
                     for _runWids.len() to i {
                         _runRens[i].destroy()
@@ -502,23 +505,30 @@ export struct Window {
                 if _windowCount <= 0 { core.quit() }
                 return
             }
-            for _runWids.len() to i {
-                _runRends[i](_runRens[i])
-                // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
-                core.clearPopupCapture()
-                // 自动渲染该窗口的所有控件（按添加顺序层叠）
-                var ws = _runWidgets[i]
-                for ws to w { w.render(_runRens[i]) }
-                // 第二遍：所有打开的下拉框画在最上层，避免被靠后的 ComboBox 挡住
-                var cbs = _runCombos[i]
-                for cbs to cb { cb.renderPopup(_runRens[i]) }
-                // 第二遍：所有展开的下拉菜单画在最上层
-                var mns = _runMenus[i]
-                for mns to mn { mn.renderPopup(_runRens[i]) }
-                // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
-                tip.tipTick()
-                tip.tipRender(_runRens[i], _float(_runW[i]), _float(_runH[i]))
-                _runRens[i].present()
+            // 事件驱动重绘：有事件/动画请求/tooltip等待时才渲染，空闲时跳过以降低 CPU 占用
+            if _hadEvent { _needRedraw = true }
+            if core.consumeRedrawRequest() { _needRedraw = true }
+            if tip.tipWaiting() { _needRedraw = true }
+            if _needRedraw {
+                _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
+                for _runWids.len() to i {
+                    _runRends[i](_runRens[i])
+                    // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
+                    core.clearPopupCapture()
+                    // 自动渲染该窗口的所有控件（按添加顺序层叠）
+                    var ws = _runWidgets[i]
+                    for ws to w { w.render(_runRens[i]) }
+                    // 第二遍：所有打开的下拉框画在最上层，避免被靠后的 ComboBox 挡住
+                    var cbs = _runCombos[i]
+                    for cbs to cb { cb.renderPopup(_runRens[i]) }
+                    // 第二遍：所有展开的下拉菜单画在最上层
+                    var mns = _runMenus[i]
+                    for mns to mn { mn.renderPopup(_runRens[i]) }
+                    // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
+                    tip.tipTick()
+                    tip.tipRender(_runRens[i], _float(_runW[i]), _float(_runH[i]))
+                    _runRens[i].present()
+                }
             }
             // 帧率限制：本帧剩余时间让出 CPU，避免空转占满（此前约 12% 占用）
             int _used = core.getTicks() - _startTicks

@@ -477,6 +477,16 @@ export func applyFrameCursor() {
     setSystemCursor(k)
 }
 
+// ==================== 重绘请求 ====================
+// 动画控件调用 requestRedraw() 请求下一帧重绘，Window 侧每帧检查并清除
+bool _redrawRequested = false
+
+export func requestRedraw() { _redrawRequested = true }
+export func consumeRedrawRequest(): bool {
+    if _redrawRequested { _redrawRequested = false; return true }
+    return false
+}
+
 // ==================== 弹层事件捕获区 ====================
 // 问题：ComboBox 弹层是覆盖在其它控件之上的 overlay。当弹层展开并压在某 ListBox/Edit 之上时，
 // 弹层范围内的滚轮/鼠标事件仍会被下层控件处理（窗口把同一事件派发给所有控件），

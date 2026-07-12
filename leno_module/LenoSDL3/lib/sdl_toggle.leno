@@ -188,6 +188,7 @@ export struct Toggle impl Widget {
         if not visible { return }
         _ensure_font()
         _step_anim()
+        if _animating { core.requestRedraw() }
 
         // 轨道（颜色按动画位置在 关闭色↔开启色 之间平滑过渡）
         int trkR = _int(_offR + _animPos * (_onR - _offR))
