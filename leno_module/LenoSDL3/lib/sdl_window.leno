@@ -546,6 +546,8 @@ export struct Window {
                     // 第二遍：所有打开的下拉框画在最上层，避免被靠后的 ComboBox 挡住
                     var cbs = _runCombos[i]
                     for cbs to cb { cb.renderPopup(_runRens[i]) }
+                    // 第二遍：所有展开的（含经 panel/tab/布局添加的）下拉框兜底画到最上层
+                    cbb.renderComboBoxes(_runRens[i])
                     // 第二遍：所有展开的下拉菜单画在最上层
                     var mns = _runMenus[i]
                     for mns to mn { mn.renderPopup(_runRens[i]) }

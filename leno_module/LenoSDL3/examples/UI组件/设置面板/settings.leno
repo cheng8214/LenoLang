@@ -1,0 +1,188 @@
+// settings.leno — LenoSDL3 设置面板示例
+// 演示「菜单栏 + 选项卡(常规/外观/关于)」组合 Toggle / Slider / ComboBox /
+// SpinBox / RadioButton / Button / Edit / Label，并用卡片(Panel)分组布局，
+// 展示控件库组合出的美观界面。
+//
+// 设计要点（避免「双重处理」陷阱，参考 showcase）：
+//  - MenuBar 必须用 win.addMenuBar（依赖第二遍弹层绘制）。
+//  - Tab 内的卡片用 SDL3.createPanel + tab.addToPage（不额外 win.addPanel，避免被双重处理）。
+//  - ComboBox 经 tab.addToPage 添加时，靠 sdl_combobox 的全局注册表兜底画下拉层（见 lib 改动）。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+use SDL3.Panel
+use SDL3.TabControl
+
+// 布局常量（与下方窗口/选项卡尺寸保持一致）
+var TABX = 16.0
+var TABY = 46.0
+var TABW = 888.0
+var TABH = 548.0
+
+// 创建一张「卡片」（Panel 边框 + 标题），并挂到指定选项卡页（相对内容区左上角 dx,dy）
+func card(Window win, TabControl tab, int page, float dx, float dy, float w, float h, string title): Panel {
+    var px = TABX + dx
+    var py = TABY + 32.0 + dy      // 选项卡内容区原点 = (TABX, TABY+tab_h)
+    var p = SDL3.createPanel({x:px, y:py, w:w, h:h, bg_rgb:[28,30,38], radius:10, border_rgb:[80,85,100]})
+    tab.addToPage(page, p, dx, dy)
+    p.add(SDL3.createLabel({x:px+14, y:py+12, text:title, font_size:16, text_rgb:[180,200,255]}))
+    return p
+}
+
+main() {
+    SDL3.ttfInit()
+    SDL3.setTipDelay(400)
+
+    var win = SDL3.createWindow({title:"LenoSDL3 设置面板", w:920, h:650, resizable:true})
+    if not win.ok { SDL3.ttfQuit(); return }
+
+    // 状态标签：被各交互回调实时更新，演示回调链路
+    var statusLbl = SDL3.createLabel({x:16, y:618, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+
+    // ===================== 顶部菜单栏 =====================
+    var bar = win.addMenuBar({x:0, y:0, w:920, h:30, font_size:14})
+    int mFile = bar.addMenu("文件")
+    bar.addItem(mFile, {label:"新建", id:"new", shortcut:"Ctrl+N"})
+    bar.addItem(mFile, {label:"打开", id:"open"})
+    bar.addItem(mFile, {label:"保存", id:"save", shortcut:"Ctrl+S"})
+    bar.addSeparator(mFile)
+    bar.addItem(mFile, {label:"退出", id:"exit"})
+    int mEdit = bar.addMenu("编辑")
+    bar.addItem(mEdit, {label:"撤销", id:"undo"})
+    bar.addItem(mEdit, {label:"重做", id:"redo"})
+    int mHelp = bar.addMenu("帮助")
+    bar.addItem(mHelp, {label:"关于", id:"about"})
+    bar.on_select(func(string m, string id) {
+        statusLbl.set_text("菜单: " + m + " -> " + id)
+    })
+
+    // 窗口级右击上下文菜单（底层 run 统一接管弹出：控件优先、窗口兜底）
+    int ctx = bar.addContextMenu("ctx")
+    bar.addContextItem(ctx, {label:"复制", id:"copy"})
+    bar.addContextItem(ctx, {label:"粘贴", id:"paste"})
+    bar.addContextSeparator(ctx)
+    bar.addContextItem(ctx, {label:"重置设置", id:"reset"})
+    bar.addContextItem(ctx, {label:"属性", id:"prop"})
+    win.setContextMenu(bar, ctx)
+
+    // ===================== 选项卡 =====================
+    var tab = win.addTabControl({x:TABX, y:TABY, w:TABW, h:TABH, tabs:["常规","外观","关于"], active:0, tab_h:32})
+
+    // ---------- 页 0：常规 ----------
+    var cAcc = card(win, tab, 0, 14, 0, 860, 180, "账户")
+    cAcc.add(SDL3.createLabel({x:44, y:124, text:"用户名", font_size:14}))
+    var edUser = SDL3.createEdit({x:170, y:120, w:240, h:30, placeholder:"请输入用户名", tip:"支持右键菜单：复制/粘贴/全选"})
+    edUser.set_window(win.handle)
+    cAcc.add(edUser)
+    cAcc.add(SDL3.createLabel({x:500, y:124, text:"界面语言", font_size:14}))
+    var cbLang = SDL3.createComboBox({x:590, y:120, w:220, items:["简体中文","English","日本語"], selected:0, tip:"界面显示语言"})
+    cAcc.add(cbLang)
+    cAcc.add(SDL3.createLabel({x:44, y:200, text:"启动时", font_size:14}))
+    var cbStart = SDL3.createComboBox({x:170, y:196, w:340, items:["显示主窗口","最小化到系统托盘","打开上次文档"], selected:0})
+    cAcc.add(cbStart)
+
+    var cUpd = card(win, tab, 0, 14, 196, 860, 210, "更新")
+    cUpd.add(SDL3.createLabel({x:44, y:320, text:"自动检查更新", font_size:14}))
+    var tgAuto = SDL3.createToggle({x:250, y:316, text:"", on:true, anim:true, tip:"有更新时自动下载"})
+    cUpd.add(tgAuto)
+    cUpd.add(SDL3.createLabel({x:44, y:358, text:"更新频率", font_size:14}))
+    var rbF1 = SDL3.createRadioButton({x:200, y:354, text:"每次启动", group:"freq", checked:true})
+    var rbF2 = SDL3.createRadioButton({x:320, y:354, text:"每周", group:"freq"})
+    var rbF3 = SDL3.createRadioButton({x:420, y:354, text:"每月", group:"freq"})
+    cUpd.add(rbF1); cUpd.add(rbF2); cUpd.add(rbF3)
+    cUpd.add(SDL3.createLabel({x:500, y:358, text:"下载通道", font_size:14}))
+    var cbCh = SDL3.createComboBox({x:590, y:354, w:220, items:["稳定版","测试版 (Beta)","内测版 (Canary)"], selected:0})
+    cUpd.add(cbCh)
+    cUpd.add(SDL3.createLabel({x:44, y:396, text:"允许后台下载", font_size:14}))
+    var tgBg = SDL3.createToggle({x:250, y:392, text:"", on:false, anim:true})
+    cUpd.add(tgBg)
+
+    cbLang.on_change(func(int i) { statusLbl.set_text("界面语言: " + cbLang.get_selected_text()) })
+    cbStart.on_change(func(int i) { statusLbl.set_text("启动: " + cbStart.get_selected_text()) })
+    cbCh.on_change(func(int i) { statusLbl.set_text("下载通道: " + cbCh.get_selected_text()) })
+    tgAuto.on_change(func(bool v) { statusLbl.set_text("自动更新 = " + (if v then "开" else "关")) })
+    tgBg.on_change(func(bool v) { statusLbl.set_text("后台下载 = " + (if v then "开" else "关")) })
+    rbF1.on_change(func(bool v) { if v { statusLbl.set_text("更新频率 = 每次启动") } })
+    rbF2.on_change(func(bool v) { if v { statusLbl.set_text("更新频率 = 每周") } })
+    rbF3.on_change(func(bool v) { if v { statusLbl.set_text("更新频率 = 每月") } })
+
+    // ---------- 页 1：外观 ----------
+    var cTheme = card(win, tab, 1, 14, 0, 860, 150, "主题")
+    cTheme.add(SDL3.createLabel({x:44, y:124, text:"主题模式", font_size:14}))
+    var rbL = SDL3.createRadioButton({x:200, y:120, text:"浅色", group:"theme"})
+    var rbD = SDL3.createRadioButton({x:300, y:120, text:"深色", group:"theme", checked:true})
+    var rbS = SDL3.createRadioButton({x:400, y:120, text:"跟随系统", group:"theme"})
+    cTheme.add(rbL); cTheme.add(rbD); cTheme.add(rbS)
+    cTheme.add(SDL3.createLabel({x:500, y:124, text:"强调色", font_size:14}))
+    var cbAcc = SDL3.createComboBox({x:590, y:120, w:220, items:["蓝色","绿色","紫色","橙色"], selected:0})
+    cTheme.add(cbAcc)
+
+    var cDisp = card(win, tab, 1, 14, 166, 860, 240, "显示")
+    cDisp.add(SDL3.createLabel({x:44, y:290, text:"界面缩放", font_size:14}))
+    var slZoom = SDL3.createSlider({x:200, y:286, w:250, h:24, min:100, max:200, value:100, step:10, tip:"100% ~ 200%"})
+    cDisp.add(slZoom)
+    cDisp.add(SDL3.createLabel({x:500, y:290, text:"字体大小", font_size:14}))
+    var spFont = SDL3.createSpinBox({x:590, y:286, w:120, min:10, max:20, value:14, step:1, int_mode:true})
+    cDisp.add(spFont)
+    cDisp.add(SDL3.createLabel({x:44, y:328, text:"显示状态栏", font_size:14}))
+    var tgBar = SDL3.createToggle({x:250, y:324, text:"", on:true, anim:true})
+    cDisp.add(tgBar)
+    cDisp.add(SDL3.createLabel({x:500, y:328, text:"动画效果", font_size:14}))
+    var tgAnim = SDL3.createToggle({x:660, y:324, text:"", on:true, anim:true})
+    cDisp.add(tgAnim)
+    cDisp.add(SDL3.createLabel({x:44, y:366, text:"控件圆角", font_size:14}))
+    var slRad = SDL3.createSlider({x:200, y:362, w:250, h:24, min:0, max:16, value:6, step:1})
+    cDisp.add(slRad)
+    cDisp.add(SDL3.createLabel({x:500, y:366, text:"紧凑模式", font_size:14}))
+    var tgCompact = SDL3.createToggle({x:660, y:362, text:"", on:false, anim:true})
+    cDisp.add(tgCompact)
+
+    cbAcc.on_change(func(int i) { statusLbl.set_text("强调色: " + cbAcc.get_selected_text()) })
+    slZoom.on_change(func(float v) { statusLbl.set_text("界面缩放: " + (v as int) + "%") })
+    spFont.on_change(func(float v) { statusLbl.set_text("字体大小: " + (v as int)) })
+    slRad.on_change(func(float v) { statusLbl.set_text("控件圆角: " + (v as int)) })
+    tgBar.on_change(func(bool v) { statusLbl.set_text("状态栏 = " + (if v then "开" else "关")) })
+    tgAnim.on_change(func(bool v) { statusLbl.set_text("动画 = " + (if v then "开" else "关")) })
+    tgCompact.on_change(func(bool v) { statusLbl.set_text("紧凑模式 = " + (if v then "开" else "关")) })
+    rbL.on_change(func(bool v) { if v { statusLbl.set_text("主题 = 浅色") } })
+    rbD.on_change(func(bool v) { if v { statusLbl.set_text("主题 = 深色") } })
+    rbS.on_change(func(bool v) { if v { statusLbl.set_text("主题 = 跟随系统") } })
+
+    // ---------- 页 2：关于 ----------
+    var cAbout = card(win, tab, 2, 14, 0, 860, 300, "关于本程序")
+    cAbout.add(SDL3.createLabel({x:60, y:128, text:"LenoSDL3 设置面板", font_size:22, text_rgb:[220,230,255]}))
+    cAbout.add(SDL3.createLabel({x:60, y:168, text:"版本 1.0.0  ·  Build 2026.07.12", font_size:13, text_rgb:[150,160,175]}))
+    cAbout.add(SDL3.createLabel({x:60, y:202, text:"本程序用 LenoSDL3 控件库搭建，演示菜单栏、选项卡、开关、滑块、下拉框、单选与数值微调等控件的组合与美观布局。", font_size:13, text_rgb:[190,195,205]}))
+    var bCheck = SDL3.createButton({x:60, y:250, w:150, h:36, text:"检查更新", type:"primary", tip:"检查是否有新版本"})
+    var bSite = SDL3.createButton({x:230, y:250, w:150, h:36, text:"访问官网"})
+    cAbout.add(bCheck); cAbout.add(bSite)
+    cAbout.add(SDL3.createLabel({x:60, y:330, text:"© 2026 LenoSDL3 Demo", font_size:12, text_rgb:[120,125,135]}))
+
+    bCheck.on_click(func():void { statusLbl.set_text("已是最新版本 (1.0.0)") })
+    bSite.on_click(func():void { statusLbl.set_text("打开: https://lenosdl3.dev") })
+
+    // ===================== 底部操作栏 =====================
+    win.add(statusLbl)
+    var bCancel = win.addButton({x:620, y:606, w:96, h:36, text:"取消", tip:"放弃修改"})
+    var bApply = win.addButton({x:724, y:606, w:96, h:36, text:"应用"})
+    var bOk = win.addButton({x:828, y:606, w:80, h:36, text:"确定", type:"primary"})
+    bCancel.on_click(func():void { statusLbl.set_text("已取消") })
+    bApply.on_click(func():void { statusLbl.set_text("设置已应用") })
+    bOk.on_click(func():void { statusLbl.set_text("设置已保存") })
+
+    // ===================== 主循环 =====================
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(18, 20, 26, 255)
+        }
+    )
+
+    SDL3.ttfQuit()
+}

@@ -140,10 +140,39 @@ export struct ListBox impl Widget {
     }
 
     // ==================== 设置方法 ====================
-    func set_items(Array[string] its) { items = its; _sel = []; _scroll = 0.0; _clamp_scroll() }
+    // 刷新数据：清空选择但【保留当前滚动位置】（仅在超出时夹紧），避免列表“跳回顶部”
+    func set_items(Array[string] its) { items = its; _sel = []; _clamp_scroll() }
+    // 追加单条（不自动滚屏，仅夹紧到有效范围）
     func add_item(string s)           { items.add(s); _clamp_scroll() }
+
+    // 智能追加：若用户当前已停在底部（跟随实时流），追加后保持贴底；
+    // 否则（用户在翻看历史）保留其当前滚动位置不跳动。maxKeep>0 时超出则从顶部丢弃最旧一条。
+    func append_item(string s, int maxKeep) {
+        float oldMax = _max_scroll()
+        bool atBottom = _scroll >= oldMax - 0.5
+        items.add(s)
+        if maxKeep > 0 and items.len() > maxKeep {
+            items.remove(0)
+            _scroll = _scroll - _itemH      // 顶部丢弃一条：把滚动量同步减一行，冻结视口内“内容”
+        }
+        if atBottom { _scroll = _max_scroll() }   // 跟随模式：贴到底部
+        _clamp_scroll()
+    }
+    // 强制追加到最底部并滚到最底部（适合“日志总在底部”的场景）
+    func append_bottom(string s, int maxKeep) {
+        items.add(s)
+        if maxKeep > 0 and items.len() > maxKeep { items.remove(0) }
+        _scroll = _max_scroll()
+        _clamp_scroll()
+    }
+    func scroll_to_bottom() { _scroll = _max_scroll(); _clamp_scroll() }
+    func scroll_to_top()    { _scroll = 0.0; _clamp_scroll() }
+    func is_at_bottom(): bool { return _scroll >= _max_scroll() - 0.5 }
+
     func remove_item(int idx) {
         if idx >= 0 and idx < items.len() {
+            // 删除顶部项时整体内容上移一行，把滚动量同步减一行以“冻结”视口内容
+            if idx == 0 { _scroll = _scroll - _itemH }
             items.remove(idx)
             for _sel.len() to i {
                 if _sel[i] == idx { _sel.remove(i); i = i - 1 }

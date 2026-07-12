@@ -18,6 +18,8 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+import "sdl_combobox.leno" as cbx; use cbx.ComboBox
+import "sdl_panel.leno" as pnl; use pnl.Panel
 
 export struct TabControl impl Widget {
     float x = 0.0; float y = 0.0; float w = 400.0; float h = 300.0
@@ -173,6 +175,7 @@ export struct TabControl impl Widget {
         if idx < 0 or idx >= _tabs.len() { return }
         if idx == _active { return }
         _active = idx
+        _closePopups()   // 切页时关闭所有已展开的下拉框，避免弹层残留/错位（修复切 tab 下拉仍显示）
         if _onChange != null { _onChange(_active) }
     }
     func get_active(): int { return _active }
@@ -249,8 +252,6 @@ export struct TabControl impl Widget {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
-        // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        if core.inPopupCapture(ev.mouseX(), ev.mouseY()) { return }
         _applyOffsets(_active)
         float mx = ev.mouseX(); float my = ev.mouseY()
 
@@ -268,18 +269,44 @@ export struct TabControl impl Widget {
             core.markFrameMotion()
         }
 
-        // 点击标签栏：切换页，不再转发给内容区子控件
+        // 点击标签栏：切换页。若光标落在某打开的弹层（下拉/菜单）范围内则不切换，避免误触；
+        // 同时关闭所有打开的下拉框，确保切页后弹层不残留/错位。
         if ev.isMouseButtonDown() and hitTab >= 0 {
-            set_active(hitTab)
+            if not core.inPopupCapture(mx, my) {
+                set_active(hitTab)   // 内部会关闭所有已展开的下拉框
+            } else {
+                _closePopups()
+            }
             return
         }
 
-        // 转发事件给当前页子控件（隐藏页不参与，避免误触）
+        // 转发事件给当前页子控件（隐藏页不参与，避免误触）。
+        // 注意：不再因「存在弹层」而整体跳过转发——否则 combo 自身展开的下拉层无法收到
+        // 鼠标移动/点击（hover 高亮与选中失效）。各子控件（如 ComboBox）在 process 内自行
+        // 通过 inPopupCapture(+_open) 守卫：只有自身的弹层会响应，其余控件因 inPopupCapture
+        // 为真而忽略，与顶层 combo（win.addComboBox）的处理方式一致。
         if _hasLayout[_active] {
             (_pageLayouts[_active] as Widget).process(ev)
         } else {
             var page = _pages[_active]
             for page to c { c.process(ev) }
+        }
+    }
+
+    // 切页 / 关闭弹层时，关闭所有页（含嵌套在 Panel 内的）已展开的下拉框，
+    // 避免弹层残留到其它页或停留在旧坐标（修复「切 tab 下拉框仍在」）。
+    func _closePopups() {
+        for _pages.len() to p {
+            var pg = _pages[p]
+            for pg to c { _closePopupsIn(c) }
+        }
+    }
+    func _closePopupsIn(Widget w) {
+        ComboBox cb = w as ComboBox
+        if cb != null { cb.close(); return }
+        Panel pl = w as Panel
+        if pl != null {
+            for pl.children to c { _closePopupsIn(c) }
         }
     }
 

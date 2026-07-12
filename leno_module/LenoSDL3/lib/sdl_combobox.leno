@@ -354,7 +354,23 @@ export struct ComboBox impl Widget {
     }
 }
 
+// ==================== 下拉框全局注册表（兜底第二遍绘制） ====================
+// 经 panel.add / 布局容器 / Tab 页添加的 ComboBox 不会进入窗口 _combos，
+// 其展开的下拉层无法由窗口第二遍绘制兜底到最上层（会被同级控件遮挡）。
+// 这里统一登记，由窗口第二遍 renderComboBoxes 兜底画在最上层，与 Edit 右击菜单同范式。
+Array[ComboBox] _comboPopupRegistry = []
+export func registerComboBox(ComboBox c) { _comboPopupRegistry.add(c) }
+// 第二遍：把所有「已展开（_open）」的 ComboBox 下拉层画在最上层（renderPopup 内部自判 _open）
+export func renderComboBoxes(Renderer r) {
+    for _comboPopupRegistry.len() to i {
+        var cb = _comboPopupRegistry[i]
+        if cb != null { cb.renderPopup(r) }
+    }
+}
+
 // 工厂
 export func createComboBox(Dict opts): ComboBox {
-    ComboBox cb = new ComboBox(); cb.set(opts); return cb
+    ComboBox cb = new ComboBox(); cb.set(opts)
+    registerComboBox(cb)   // 登记到全局注册表，确保经 panel/tab/布局添加时下拉层也能画到最上层
+    return cb
 }

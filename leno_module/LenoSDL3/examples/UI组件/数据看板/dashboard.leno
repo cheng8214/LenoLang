@@ -1,0 +1,242 @@
+// dashboard.leno — LenoSDL3 数据看板示例
+// 演示「顶部菜单 + 卡片区」组合 ProgressBar / Table / Slider / ListBox，偏可视化实时看板：
+//   · 顶部 4 张 KPI 卡片（进度条实时跳动）
+//   · 中部数据表格（按指标数值筛选，可排序/滚动）
+//   · 右侧系统日志列表（实时滚动追加）
+//   · 底部滑块按数值阈值实时筛选表格
+//   · 菜单：刷新数据 / 暂停·恢复实时 / 清空日志 / 导出 / 退出
+//
+// 布局要点（避免「双重处理」）：卡片用 Panel 承载，Panel 经 win.add 注册（自动处理事件/绘制），
+// 子控件（进度条/表格/列表/滑块）经 panel.add 添加，使用窗口绝对坐标。
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_core.leno" as core
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+use SDL3.Panel
+use SDL3.Table
+use SDL3.ListBox
+use SDL3.Label
+use SDL3.ProgressBar
+use SDL3.Slider
+
+// ===================== 模拟数据（模块级，供模块函数共享） =====================
+Array[string] HOSTS = ["web-01","web-02","db-01","db-02","cache-01","api-01","api-02","worker-01","worker-02","lb-01","mq-01","log-01"]
+Array[string] METRICS = ["CPU","内存","磁盘","网络","连接数","延迟"]
+int   _seedI   = 12345
+float _startMs = 0.0
+Array[Array[string]] _allRows = []
+float _threshold = 30.0
+int   _logCount  = 0
+
+// 简易可复现随机数（LCG），避免依赖未导出的 random
+func rnd(): float {
+    _seedI = (_seedI * 9301 + 49297) % 233280
+    return _float(_seedI) / 233280.0
+}
+func rndRange(float a, float b): float { return a + rnd() * (b - a) }
+func _pad2(int n): string {
+    string s = n as string
+    if n < 10 { s = "0" + s }
+    return s
+}
+func fmtTime(float sec): string {
+    int s = _int(sec) % 60
+    int m = _int(sec) / 60 % 60
+    int h = _int(sec) / 3600 % 24
+    return _pad2(h) + ":" + _pad2(m) + ":" + _pad2(s)
+}
+func nowStr(): string { return fmtTime((_float(SDL3.getTicks()) - _startMs) / 1000.0) }
+
+func genRows(): Array[Array[string]] {
+    Array[Array[string]] rows = []
+    for HOSTS.len() to i {
+        int iv = _int(rndRange(5.0, 98.0))
+        string status = "正常"
+        if iv >= 85 { status = "严重" } else if iv >= 65 { status = "警告" }
+        rows.add([HOSTS[i], METRICS[i % METRICS.len()], iv as string, status, nowStr()])
+    }
+    return rows
+}
+func pickMsg(): string {
+    Array[string] msgs = [
+        "节点心跳正常", "GC 回收完成", "请求处理耗时 12ms", "缓存命中率 92%",
+        "连接池扩容 +4", "慢查询已优化", "证书即将过期", "磁盘 IO 抖动",
+        "限流触发，已降级", "副本同步延迟升高", "自动伸缩触发", "健康检查通过"
+    ]
+    int k = _int(rnd() * _float(msgs.len()))
+    return msgs[k]
+}
+
+// 按数值阈值筛选表格
+func applyFilter(Table table, Label lbl) {
+    Array[Array[string]] out = []
+    for _allRows.len() to i {
+        var row = _allRows[i]
+        int v = _int(row[2])
+        if _float(v) >= _threshold { out.add(row) }
+    }
+    table.set_rows(out)
+    lbl.set_text("仅显示 数值 ≥ " + (_int(_threshold) as string) + " 的记录（" + (out.len() as string) + " / " + (_allRows.len() as string) + "）")
+}
+
+// 追加一条日志（保持上限，避免无限增长）
+func appendLog(ListBox lb, Label status) {
+    int iv = _int(rndRange(0.0, 100.0))
+    string lvl = "INFO"
+    if iv >= 90 { lvl = "ERROR" } else if iv >= 70 { lvl = "WARN" }
+    string line = nowStr() + "  [" + lvl + "]  " + pickMsg()
+    // 智能追加：停在底部则跟随新日志，翻看历史则冻结视口（不再跳动）；容量上限 220 自动丢旧
+    lb.append_item(line, 220)
+    _logCount = _logCount + 1
+    status.set_text("● 实时采集中 · 累计日志 " + (_logCount as string) + " 条 · 最近更新 " + nowStr())
+}
+
+func updateState(Label stateLbl, bool live) {
+    if live { stateLbl.set_text("● 实时刷新中") }
+    else    { stateLbl.set_text("⏸ 已暂停刷新") }
+}
+
+// 构建一张 KPI 卡片（Panel + 标题 + 进度条 + 说明），返回进度条引用
+func buildKpi(Window win, float x, float y, float w, float h, string title, string caption, Array[int] fill): ProgressBar {
+    var p = SDL3.createPanel({x:x, y:y, w:w, h:h, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    win.add(p)
+    p.add(SDL3.createLabel({x:x+16, y:y+14, text:title, font_size:14, text_rgb:[185,205,255]}))
+    var bar = SDL3.createProgressBar({x:x+16, y:y+50, w:w-32, h:20, value:20, show_text:true, fill_rgb:fill, track_rgb:[48,50,58], text_rgb:[235,238,245]})
+    p.add(bar)
+    p.add(SDL3.createLabel({x:x+16, y:y+80, text:caption, font_size:12, text_rgb:[150,160,175]}))
+    return bar
+}
+
+main() {
+    SDL3.ttfInit()
+    SDL3.setTipDelay(400)
+    _startMs = _float(SDL3.getTicks())
+    _seedI   = SDL3.getTicks() % 233280
+
+    var win = SDL3.createWindow({title:"LenoSDL3 数据看板", w:1000, h:720, resizable:true})
+    if not win.ok { SDL3.ttfQuit(); return }
+
+    bool live = true
+    bool wantQuit = false
+
+    // ===================== 顶部标题 + 状态 =====================
+    win.add(SDL3.createLabel({x:16, y:42, text:"系统监控看板", font_size:18, text_rgb:[225,235,255]}))
+    var stateLbl = SDL3.createLabel({x:770, y:48, text:"● 实时刷新中", font_size:13, text_rgb:[120,220,150]})
+    win.add(stateLbl)
+    var statusLbl = SDL3.createLabel({x:16, y:692, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+    win.add(statusLbl)
+
+    // ===================== 顶部菜单栏 =====================
+    var bar = win.addMenuBar({x:0, y:0, w:1000, h:30, font_size:14})
+    int mFile = bar.addMenu("文件")
+    bar.addItem(mFile, {label:"刷新数据", id:"refresh"})
+    bar.addItem(mFile, {label:"导出报告", id:"export"})
+    bar.addSeparator(mFile)
+    bar.addItem(mFile, {label:"退出", id:"exit"})
+    int mView = bar.addMenu("视图")
+    bar.addItem(mView, {label:"暂停 / 恢复实时", id:"pause"})
+    bar.addItem(mView, {label:"清空日志", id:"clearlog"})
+    int mHelp = bar.addMenu("帮助")
+    bar.addItem(mHelp, {label:"关于", id:"about"})
+
+    // ===================== KPI 卡片（进度条） =====================
+    var cpuBar  = buildKpi(win, 16,  76, 233, 104, "CPU 使用率",  "8 核 · 3.2 GHz",     [70,140,255])
+    var memBar  = buildKpi(win, 261, 76, 233, 104, "内存使用率",  "32 GB 总内存",       [80,210,140])
+    var diskBar = buildKpi(win, 506, 76, 233, 104, "磁盘使用率",  "1 TB NVMe",          [255,170,80])
+    var netBar  = buildKpi(win, 751, 76, 233, 104, "网络吞吐",    "1 Gbps 上行链路",    [190,120,255])
+
+    // ===================== 数据表格卡片 =====================
+    var tblCard = SDL3.createPanel({x:16, y:196, w:620, h:312, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    win.add(tblCard)
+    tblCard.add(SDL3.createLabel({x:32, y:212, text:"服务指标监控", font_size:15, text_rgb:[200,215,255]}))
+    var table = SDL3.createTable({
+        x:32, y:248, w:588, h:236,
+        headers:["主机","指标","数值","状态","时间"],
+        rows:[], sortable:true, zebra:true, row_h:26, header_h:30, font_size:14
+    })
+    tblCard.add(table)
+    var filterLbl = SDL3.createLabel({x:32, y:486, text:"", font_size:12, text_rgb:[150,160,175]})
+    tblCard.add(filterLbl)
+
+    // ===================== 系统日志卡片 =====================
+    var logCard = SDL3.createPanel({x:652, y:196, w:332, h:312, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    win.add(logCard)
+    logCard.add(SDL3.createLabel({x:668, y:212, text:"系统日志", font_size:15, text_rgb:[200,215,255]}))
+    var logBox = SDL3.createListBox({x:668, y:248, w:300, h:236, font_size:13, mode:0})
+    logCard.add(logBox)
+
+    // ===================== 滑块筛选卡片 =====================
+    var fltCard = SDL3.createPanel({x:16, y:524, w:968, h:96, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    win.add(fltCard)
+    fltCard.add(SDL3.createLabel({x:32, y:534, text:"实时筛选（按指标数值阈值）", font_size:14, text_rgb:[200,215,255]}))
+    var slFilter = SDL3.createSlider({x:32, y:576, w:560, h:24, min:0, max:100, value:30, step:1, tip:"拖动调整数值阈值"})
+    fltCard.add(slFilter)
+    var thrLbl = SDL3.createLabel({x:660, y:578, text:"阈值 30", font_size:14, text_rgb:[180,200,255]})
+    fltCard.add(thrLbl)
+    fltCard.add(SDL3.createLabel({x:32, y:604, text:"拖动滑块即时过滤上方表格：仅保留数值 ≥ 阈值的记录", font_size:12, text_rgb:[150,160,175]}))
+
+    // ===================== 绑定回调 =====================
+    bar.on_select(func(string m, string id) {
+        if id == "refresh" {
+            _allRows = genRows(); applyFilter(table, filterLbl)
+            appendLog(logBox, statusLbl); statusLbl.set_text("已手动刷新数据")
+        } else if id == "export" {
+            appendLog(logBox, statusLbl); statusLbl.set_text("已导出运行快照报告")
+        } else if id == "exit" {
+            wantQuit = true
+        } else if id == "pause" {
+            live = not live; updateState(stateLbl, live)
+            statusLbl.set_text(if live then "已恢复实时刷新" else "已暂停实时刷新")
+        } else if id == "clearlog" {
+            logBox.clear(); _logCount = 0; statusLbl.set_text("日志已清空")
+        } else if id == "about" {
+            statusLbl.set_text("LenoSDL3 数据看板 Demo · v1.0")
+        }
+    })
+
+    slFilter.on_change(func(float v) {
+        _threshold = v
+        thrLbl.set_text("阈值 " + (_int(v) as string))
+        applyFilter(table, filterLbl)
+    })
+
+    // ===================== 初始数据 + 定时器（实时模拟） =====================
+    _allRows = genRows()
+    applyFilter(table, filterLbl)
+    for 6 to _ { appendLog(logBox, statusLbl) }
+
+    var tKpi  = win.addTimer(1100, func() {
+        if not live { return }
+        cpuBar.set_value(rndRange(15.0, 92.0))
+        memBar.set_value(rndRange(30.0, 88.0))
+        diskBar.set_value(rndRange(20.0, 80.0))
+        netBar.set_value(rndRange(10.0, 95.0))
+    })
+    var tLog  = win.addTimer(900, func() {
+        if not live { return }
+        appendLog(logBox, statusLbl)
+    })
+    var tData = win.addTimer(3000, func() {
+        if not live { return }
+        _allRows = genRows(); applyFilter(table, filterLbl)
+    })
+
+    // ===================== 主循环 =====================
+    win.run(
+        func(Event ev): bool {
+            if wantQuit { return false }
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            tKpi.tick(); tLog.tick(); tData.tick()
+            r.clearColor(18, 20, 26, 255)
+            if live { core.requestRedraw() }   // 实时看板：持续重绘以驱动定时器与进度条动画
+        }
+    )
+
+    SDL3.ttfQuit()
+}
