@@ -118,11 +118,11 @@ export struct Window {
         int h        = opts.get("h", 600) as int
         int flags    = opts.get("flags", 0) as int
         _w = w; _h = h
-        // 超采样抗锯齿：默认 2x；aa:false / aa:0 关闭；aa:1.5 自定义倍数
-        _aaScale = 2.0
-        var aaOpt = opts.get("aa", 2.0)
-        if aaOpt is bool { if not (_bool(aaOpt)) { _aaScale = 0.0 } }
-        else { float a = _float(aaOpt); if a <= 0.0 { _aaScale = 0.0 } else { _aaScale = a } }
+        // 超采样抗锯齿：默认关闭；aa:true / aa:2 / aa:1.5 开启
+        _aaScale = 0.0
+        var aaOpt = opts.get("aa", 0.0)
+        if aaOpt is bool { if _bool(aaOpt) { _aaScale = 2.0 } }
+        else { float a = _float(aaOpt); if a > 0.0 { _aaScale = a } }
         handle = _lib.SDL_CreateWindow(title, w, h, flags) as Ptr
         ok = handle != null
         if ok { _windowCount = _windowCount + 1 }
