@@ -1,0 +1,23 @@
+// 跨模块泛型+接口深度边界测试 - 中间模块
+import "generic_face_base.leno" as base
+use base.Printable
+use base.Serializable
+use base.User
+use base.Product
+use base.EventDispatcher
+use base.TreeNodeBox
+
+// re-export alias
+export alias PrintHandler = func(Printable): bool
+export alias UserList = Array[User]
+
+// 中间模块的工厂
+export func make_dispatcher(): EventDispatcher {
+    EventDispatcher d = new EventDispatcher()
+    return d
+}
+
+// 中间模块的函数
+export func format_user(User u): string {
+    return u.fmt()
+}

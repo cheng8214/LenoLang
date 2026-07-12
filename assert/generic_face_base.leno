@@ -1,0 +1,72 @@
+// 跨模块泛型+接口深度边界测试 - 底层模块
+// 定义多 face、普通 struct impl 多 face、自递归 struct、alias 等
+
+// ========== 多接口 ==========
+export face Printable {
+    func fmt(): string
+}
+
+export face Serializable {
+    func to_data(): string
+}
+
+// ========== struct impl 多个 face ==========
+export struct User impl Printable, Serializable {
+    string name = ""
+    int age = 0
+
+    func fmt(): string { return name + "(" + _int(age) + ")" }
+    func to_data(): string { return "User|" + name + "|" + _int(age) }
+}
+
+// ========== 另一个 impl Printable 的 struct ==========
+export struct Product impl Printable {
+    string title = ""
+    int price = 0
+
+    func fmt(): string { return title + ":$" + _int(price) }
+}
+
+// ========== 含 Array[Face] 字段的 struct ==========
+export struct EventDispatcher {
+    Array[Printable] listeners = []
+
+    func add(Printable p) { listeners.add(p) }
+    func count(): int { return listeners.len() }
+    func format_at(int i): string {
+        Printable p = listeners[i]
+        return p.fmt()
+    }
+    func format_all(): string {
+        string result = ""
+        for listeners.len() to i {
+            if i > 0 { result = result + "," }
+            result = result + listeners[i].fmt()
+        }
+        return result
+    }
+}
+
+// ========== 自递归 struct ==========
+export struct TreeNodeBox {
+    int id = 0
+    string name = ""
+    Array[TreeNodeBox] children = []
+    func add_child(TreeNodeBox c) { children.add(c) }
+}
+
+// ========== 工厂函数 ==========
+export func make_user(string name, int age): User {
+    User u = new User(); u.name = name; u.age = age
+    return u
+}
+
+export func make_product(string title, int price): Product {
+    Product p = new Product(); p.title = title; p.price = price
+    return p
+}
+
+// ========== face 作为返回类型 ==========
+export func get_printable(User u): Printable {
+    return u
+}

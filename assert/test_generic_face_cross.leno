@@ -1,0 +1,296 @@
+// 跨模块泛型+接口深度边界测试
+// 覆盖：多 impl face、跨模块 face 参数/变量、Array[Face] 字段、
+//        face 方法返回 face、as 转型、多 face 赋值链、
+//        自递归 struct、alias 传导、跨模块工厂函数
+
+import "generic_face_base.leno" as base
+use base.Printable
+use base.Serializable
+use base.User
+use base.Product
+use base.EventDispatcher
+use base.TreeNodeBox
+
+import "generic_face_mid.leno" as mid
+use mid.PrintHandler
+use mid.UserList
+
+// ============================================================
+// 1. 跨模块 struct impl 多个 face
+// ============================================================
+func test_multi_impl() {
+    User u = new User(); u.name = "Alice"; u.age = 30
+
+    // 作为 Printable 使用
+    Printable p = u
+    assert_eq(p.fmt(), "Alice(30)")
+
+    // 作为 Serializable 使用
+    Serializable s = u
+    assert_eq(s.to_data(), "User|Alice|30")
+
+    // 直接调用两个 face 的方法
+    assert_eq(u.fmt(), "Alice(30)")
+    assert_eq(u.to_data(), "User|Alice|30")
+
+    print("[1] multi_impl passed")
+}
+
+// ============================================================
+// 2. 跨模块不同 struct impl 同一个 face
+// ============================================================
+func print_it(Printable p): string { return p.fmt() }
+
+func test_same_face_diff_struct() {
+    User u = new User(); u.name = "Bob"; u.age = 25
+    Product pr = new Product(); pr.title = "Book"; pr.price = 29
+
+    // 两个不同 struct 都可以传给 Printable 参数
+    assert_eq(print_it(u), "Bob(25)")
+    assert_eq(print_it(pr), "Book:$29")
+
+    // 都可以赋给 Printable 变量
+    Printable p1 = u
+    Printable p2 = pr
+    assert_eq(p1.fmt(), "Bob(25)")
+    assert_eq(p2.fmt(), "Book:$29")
+
+    print("[2] same_face_diff_struct passed")
+}
+
+// ============================================================
+// 3. 跨模块 Array[Face] 字段操作
+// ============================================================
+func test_array_face_field() {
+    EventDispatcher disp = new EventDispatcher()
+    User u1 = new User(); u1.name = "A"; u1.age = 1
+    Product p1 = new Product(); p1.title = "X"; p1.price = 10
+    User u2 = new User(); u2.name = "B"; u2.age = 2
+
+    disp.add(u1)
+    disp.add(p1)
+    disp.add(u2)
+
+    assert_eq(disp.count(), 3)
+    assert_eq(disp.format_at(0), "A(1)")
+    assert_eq(disp.format_at(1), "X:$10")
+    assert_eq(disp.format_at(2), "B(2)")
+    assert_eq(disp.format_all(), "A(1),X:$10,B(2)")
+
+    print("[3] array_face_field passed")
+}
+
+// ============================================================
+// 4. 跨模块 face 类型函数参数
+// ============================================================
+func test_face_func_param() {
+    User u = new User(); u.name = "Test"; u.age = 99
+    assert_eq(print_it(u), "Test(99)")
+
+    Product pr = new Product(); pr.title = "Pen"; pr.price = 5
+    assert_eq(print_it(pr), "Pen:$5")
+
+    print("[4] face_func_param passed")
+}
+
+// ============================================================
+// 5. 跨模块工厂函数
+// ============================================================
+func test_factory() {
+    User u = base.make_user("Factory", 42)
+    assert_eq(u.fmt(), "Factory(42)")
+    assert_eq(u.to_data(), "User|Factory|42")
+
+    Product p = base.make_product("Item", 99)
+    assert_eq(p.fmt(), "Item:$99")
+
+    print("[5] factory passed")
+}
+
+// ============================================================
+// 6. 跨模块 face 方法返回 face 类型
+// ============================================================
+func test_return_face() {
+    User u = new User(); u.name = "Ret"; u.age = 42
+    Printable p = base.get_printable(u)
+    assert_eq(p.fmt(), "Ret(42)")
+
+    print("[6] return_face passed")
+}
+
+// ============================================================
+// 7. 跨模块 face as 转回 struct
+// ============================================================
+func test_face_as_struct() {
+    User u = new User(); u.name = "AsTest"; u.age = 50
+    Printable p = u
+    assert_eq(p.fmt(), "AsTest(50)")
+
+    // 通过 as 转回 struct 访问 struct 字段
+    User u2 = p as User
+    assert_eq(u2.name, "AsTest")
+    assert_eq(u2.age, 50)
+
+    // Product 也一样
+    Product pr = new Product(); pr.title = "Phone"; pr.price = 999
+    Printable pp = pr
+    Product pr2 = pp as Product
+    assert_eq(pr2.title, "Phone")
+    assert_eq(pr2.price, 999)
+
+    print("[7] face_as_struct passed")
+}
+
+// ============================================================
+// 8. 跨模块多 face 赋值链
+// ============================================================
+func test_face_chain_assign() {
+    User u = new User(); u.name = "Chain"; u.age = 77
+
+    // User -> Printable
+    Printable p = u
+    assert_eq(p.fmt(), "Chain(77)")
+
+    // User -> Serializable
+    Serializable s = u
+    assert_eq(s.to_data(), "User|Chain|77")
+
+    // 从 face 再 as 回 struct
+    User u2 = p as User
+    u2.name = "Changed"
+    assert_eq(u.fmt(), "Changed(77)")
+
+    print("[8] face_chain_assign passed")
+}
+
+// ============================================================
+// 9. 跨模块自递归 struct
+// ============================================================
+func test_recursive_struct() {
+    TreeNodeBox root = new TreeNodeBox(); root.id = 1; root.name = "root"
+    TreeNodeBox c1 = new TreeNodeBox(); c1.id = 2; c1.name = "c1"
+    TreeNodeBox c2 = new TreeNodeBox(); c2.id = 3; c2.name = "c2"
+    root.add_child(c1); root.add_child(c2)
+
+    assert_eq(root.children.len(), 2)
+    assert_eq(root.children[0].id, 2)
+    assert_eq(root.children[1].name, "c2")
+
+    // 引用语义验证
+    root.children[0].name = "modified"
+    assert_eq(c1.name, "modified")
+
+    print("[9] recursive_struct passed")
+}
+
+// ============================================================
+// 10. 跨模块中间模块 re-export alias
+// ============================================================
+func test_mid_alias() {
+    // PrintHandler = func(Printable): bool
+    User u = new User(); u.name = "Check"; u.age = 1
+    PrintHandler h = func(Printable p): bool { return p.fmt() != "" }
+    assert_eq(h(u), true)
+
+    // UserList = Array[User]
+    UserList list = []
+    User u2 = new User(); u2.name = "InList"; u2.age = 2
+    list.add(u2)
+    assert_eq(list.len(), 1)
+
+    print("[10] mid_alias passed")
+}
+
+// ============================================================
+// 11. 跨模块中间模块函数调用
+// ============================================================
+func test_mid_func() {
+    User u = new User(); u.name = "Mid"; u.age = 33
+    assert_eq(mid.format_user(u), "Mid(33)")
+
+    EventDispatcher d = mid.make_dispatcher()
+    d.add(u)
+    assert_eq(d.count(), 1)
+
+    print("[11] mid_func passed")
+}
+
+// ============================================================
+// 12. 跨模块 Array[Face] 传参给函数
+// ============================================================
+func format_all(Array[Printable] items): string {
+    string result = ""
+    for items.len() to i {
+        if i > 0 { result = result + "|" }
+        result = result + items[i].fmt()
+    }
+    return result
+}
+
+func test_face_array_param() {
+    Array[Printable] items = []
+    User u = new User(); u.name = "U"; u.age = 1
+    Product p = new Product(); p.title = "P"; p.price = 2
+    items.add(u); items.add(p)
+
+    assert_eq(format_all(items), "U(1)|P:$2")
+
+    print("[12] face_array_param passed")
+}
+
+// ============================================================
+// 13. 跨模块 face 的 null 安全
+// ============================================================
+func test_face_null_safe() {
+    Printable p = null
+    assert(p == null)
+
+    User u = new User(); u.name = "NonNull"; u.age = 1
+    p = u
+    assert(p != null)
+    assert_eq(p.fmt(), "NonNull(1)")
+
+    print("[13] face_null_safe passed")
+}
+
+// ============================================================
+// 14. 跨模块 struct 修改后 face 视角一致
+// ============================================================
+func test_struct_face_sync() {
+    User u = new User(); u.name = "Sync"; u.age = 10
+    Printable p = u
+
+    // 修改 struct 字段
+    u.name = "Updated"
+    // face 视角也看到变化
+    assert_eq(p.fmt(), "Updated(10)")
+
+    // face as 回来再改
+    User u2 = p as User
+    u2.age = 99
+    assert_eq(u.age, 99)
+
+    print("[14] struct_face_sync passed")
+}
+
+// ============================================================
+// main
+// ============================================================
+main() {
+    test_multi_impl()
+    test_same_face_diff_struct()
+    test_array_face_field()
+    test_face_func_param()
+    test_factory()
+    test_return_face()
+    test_face_as_struct()
+    test_face_chain_assign()
+    test_recursive_struct()
+    test_mid_alias()
+    test_mid_func()
+    test_face_array_param()
+    test_face_null_safe()
+    test_struct_face_sync()
+
+    print("=== ALL generic+face cross-module edge tests passed ===")
+}
