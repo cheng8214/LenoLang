@@ -47,6 +47,23 @@ export struct EventDispatcher {
     }
 }
 
+// ========== 含 Dict[Face] 字段的 struct ==========
+export struct Registry {
+    Dict[string, Printable] entries = {}
+    int count = 0
+
+    func register(string key, Printable p) {
+        entries[key] = p
+        count = count + 1
+    }
+
+    func format(string key): string {
+        Printable p = entries[key]
+        if p != null { return p.fmt() }
+        return "<missing>"
+    }
+}
+
 // ========== 自递归 struct ==========
 export struct TreeNodeBox {
     int id = 0

@@ -529,7 +529,16 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     if (assign_type->kind == value_type->kind) {
         return 1;  // 类型相同，允许
     }
-    
+
+    // 允许 impl face 的 struct 赋给 face 类型的 Dict 值
+    if (value_type->kind == TYPE_FACE && assign_type->kind == TYPE_STRUCT && assign_type->struct_name) {
+        ObjFaceDef* fdef = face_def_find(value_type->struct_name);
+        ObjStructDef* sdef = struct_def_find(assign_type->struct_name);
+        if (fdef && sdef && struct_implements_face(sdef, fdef)) {
+            return 1;
+        }
+    }
+
     // int 可以隐式转为 float
     if (value_type->kind == TYPE_FLOAT && assign_type->kind == TYPE_INT) {
         return 1;  // int -> float 允许

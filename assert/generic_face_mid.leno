@@ -5,6 +5,7 @@ use base.Serializable
 use base.User
 use base.Product
 use base.EventDispatcher
+use base.Registry
 use base.TreeNodeBox
 
 // re-export alias

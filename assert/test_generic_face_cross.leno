@@ -9,6 +9,7 @@ use base.Serializable
 use base.User
 use base.Product
 use base.EventDispatcher
+use base.Registry
 use base.TreeNodeBox
 
 import "generic_face_mid.leno" as mid
@@ -274,6 +275,45 @@ func test_struct_face_sync() {
 }
 
 // ============================================================
+// 15. 跨模块 Dict[Face] 字段操作
+// ============================================================
+func test_dict_face_field() {
+    Registry reg = new Registry()
+    User u1 = new User(); u1.name = "Bob"; u1.age = 25
+    Product p1 = new Product(); p1.title = "Book"; p1.price = 29
+
+    reg.register("user", u1)
+    reg.register("product", p1)
+
+    assert_eq(reg.count, 2)
+    assert_eq(reg.format("user"), "Bob(25)")
+    assert_eq(reg.format("product"), "Book:$29")
+    assert_eq(reg.format("missing"), "<missing>")
+
+    print("[15] dict_face_field passed")
+}
+
+// ============================================================
+// 16. 跨模块 Dict[Face] 直接操作
+// ============================================================
+func test_dict_face_direct() {
+    Dict[string, Printable] lookup = {}
+    User u = new User(); u.name = "Direct"; u.age = 7
+    Product p = new Product(); p.title = "Gadget"; p.price = 42
+
+    lookup["u"] = u
+    lookup["p"] = p
+
+    Printable pu = lookup["u"]
+    assert_eq(pu.fmt(), "Direct(7)")
+
+    Printable pp = lookup["p"]
+    assert_eq(pp.fmt(), "Gadget:$42")
+
+    print("[16] dict_face_direct passed")
+}
+
+// ============================================================
 // main
 // ============================================================
 main() {
@@ -291,6 +331,8 @@ main() {
     test_face_array_param()
     test_face_null_safe()
     test_struct_face_sync()
+    test_dict_face_field()
+    test_dict_face_direct()
 
     print("=== ALL generic+face cross-module edge tests passed ===")
 }
