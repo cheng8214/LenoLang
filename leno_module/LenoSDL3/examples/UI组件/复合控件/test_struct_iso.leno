@@ -1,0 +1,26 @@
+// 隔离：自递归结构体，写入后 (a) 直接读数组 (b) 跨函数返回，分别看是否丢值
+struct N { int id; bool flag; Array[N] kids = [] }
+Array[N] roots = []
+
+func setFlag(int id, bool v) {
+    for roots.len() to i { if roots[i].id == id { roots[i].flag = v; return } }
+}
+func get(int id): N {
+    for roots.len() to i { if roots[i].id == id { return roots[i] } }
+    N e = new N(); return e
+}
+
+func fmtB(bool b): string { if b { return "true" } else { return "false" } }
+
+main() {
+    N a = new N(); a.id = 1
+    N a1 = new N(); a1.id = 2
+    a.kids.add(a1)                 // a 带一个孩子
+    N b = new N(); b.id = 3
+    roots.add(a); roots.add(b)     // roots = [a, b]
+
+    setFlag(3, true)
+    print("直接读 roots[1].flag = " + fmtB(roots[1].flag))   // 测写是否写进数组
+    N x = get(3)
+    print("get(3).flag (返回) = " + fmtB(x.flag))            // 测返回是否丢值
+}

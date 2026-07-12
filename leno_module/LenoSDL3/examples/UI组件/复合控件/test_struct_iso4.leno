@@ -1,0 +1,14 @@
+// 隔离4：区分"自递归 Array[Self]" 与 "普通 Array[别的struct]" 字段是否都出问题
+struct M { int id; bool flag }
+struct N { int id; bool flag; Array[M] kids = [] }   // 非自递归：含别的 struct 数组
+Array[N] roots = []
+
+func f(Array[M] list): int { return list.len() }
+
+main() {
+    N a = new N(); a.id = 1
+    M m = new M(); m.id = 5; a.kids.add(m)
+    roots.add(a)
+    print("roots[0].kids.len = " + roots[0].kids.len())    // 期望 1
+    print("f(roots[0].kids) = " + f(roots[0].kids))        // 期望 1 (类型 Array[M])
+}

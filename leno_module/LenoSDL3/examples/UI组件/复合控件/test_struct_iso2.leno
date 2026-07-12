@@ -1,0 +1,23 @@
+// 隔离2：自递归结构体，写入后 用"参数下标读" 是否丢值
+struct N { int id; bool flag; Array[N] kids = [] }
+Array[N] roots = []
+
+func readParam(Array[N] list, int idx): bool { return list[idx].flag }   // 参数下标读
+func readLoop(Array[N] list): bool {                                       // 循环下标读
+    for list.len() to i { if list[i].id == 3 { return list[i].flag } }
+    return false
+}
+
+func fmtB(bool b): string { if b { return "true" } else { return "false" } }
+
+main() {
+    N a = new N(); a.id = 1
+    N a1 = new N(); a1.id = 2; a.kids.add(a1)
+    N b = new N(); b.id = 3
+    roots.add(a); roots.add(b)
+
+    roots[1].flag = true                       // 写入
+    print("直接读 roots[1].flag = " + fmtB(roots[1].flag))      // 期望 true
+    print("循环读 readLoop = " + fmtB(readLoop(roots)))         // 期望 true
+    print("参数读 readParam(roots,1) = " + fmtB(readParam(roots, 1)))  // 期望 true?
+}

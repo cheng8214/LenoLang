@@ -1,0 +1,30 @@
+// 隔离变量：自递归结构体(含 Array[自身]) vs 普通结构体(含 Array[int])
+struct A { int id; bool flag; Array[int] nums = [] }   // 非自递归
+struct B { int id; bool flag; Array[B] kids = [] }      // 自递归（含自身数组）
+
+Array[A] ga = []
+Array[B] gb = []
+
+func getA(Array[A] list, int idx): A { return list[idx] }
+func getB(Array[B] list, int idx): B { return list[idx] }
+func readA(Array[A] list, int idx): bool { return list[idx].flag }
+func readB(Array[B] list, int idx): bool { return list[idx].flag }
+
+func fmtB(bool b): string { if b { return "true" } else { return "false" } }
+
+main() {
+    A a = new A(); a.id = 1; a.flag = true
+    ga.add(a)
+    B b = new B(); b.id = 1; b.flag = true
+    gb.add(b)
+
+    print("--- 非自递归 A ---")
+    print("ga[0].flag = " + fmtB(ga[0].flag))            // 期望 true
+    print("readA(gb->ga,0) = " + fmtB(readA(ga, 0)))     // 期望 true
+    A ra = getA(ga, 0); print("getA 返回 flag = " + fmtB(ra.flag))  // 期望 true
+
+    print("--- 自递归 B ---")
+    print("gb[0].flag = " + fmtB(gb[0].flag))            // 期望 true?
+    print("readB(gb,0) = " + fmtB(readB(gb, 0)))         // 期望 true?
+    B rb = getB(gb, 0); print("getB 返回 flag = " + fmtB(rb.flag))  // 期望 true?
+}

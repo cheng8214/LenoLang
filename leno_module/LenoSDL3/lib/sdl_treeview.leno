@@ -11,11 +11,13 @@
 //             tv.get_context_menu().on_select(func(s,id){...}) 处理选择。
 //
 // 数据模型：嵌套 Array[TreeViewNode] 树（_roots）为唯一数据源。
-// 重要：Leno 中结构体数组“按非循环下标 list[idx] 访问会返回零值默认拷贝”，
-//       且跨函数返回结构体是值拷贝。因此：
+// 重要：Leno 对"自递归结构体字段"（TreeViewNode.children 这种 Array[TreeViewNode]）
+//       的元素访问存在 bug——`list[i].children` 会被退化成 any 类型，读取/返回拿不到真实值
+//       （复现见 BUG_ArrayStruct语义.md 证据 B/D）。因此：
 //       1) 渲染/命中用的拍平视图一律用基础类型并行数组（_flatIds/_flatText/...），按下标访问安全；
-//       2) 所有按 id 的读/写都走“递归 + 循环变量 list[i].field”原地操作，绝不 list[idx] 或改副本。
-//       详见 BUG_ArrayStruct语义.md。
+//       2) 所有按 id 的读/写都走递归辅助函数 + 循环变量 list[i].field 原地操作，
+//          且不直接依赖"元素上 .children 字段"的取值。
+//       详见 BUG_ArrayStruct语义.md（注意：早期"Array[Struct] 拷贝陷阱"的判断已作废）。
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
