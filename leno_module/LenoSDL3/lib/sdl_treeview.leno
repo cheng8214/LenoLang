@@ -12,8 +12,9 @@
 //
 // 数据模型：嵌套 Array[TreeViewNode] 树（_roots）为唯一数据源。
 // 重要：Leno 对"自递归结构体字段"（TreeViewNode.children 这种 Array[TreeViewNode]）
-//       的元素访问存在 bug——`list[i].children` 会被退化成 any 类型，读取/返回拿不到真实值
-//       （复现见 BUG_ArrayStruct语义.md 证据 B/D）。因此：
+//       的"非常量下标"元素访问不可靠——常量下标 roots[0].children 正常，但 roots[i].children
+//       （i 为循环变量）要么被推断成 any 而编译报错，要么编译通过却静默返回错误值
+//       （复现见 BUG_ArrayStruct语义.md 第 3、4 节）。因此：
 //       1) 渲染/命中用的拍平视图一律用基础类型并行数组（_flatIds/_flatText/...），按下标访问安全；
 //       2) 所有按 id 的读/写都走递归辅助函数 + 循环变量 list[i].field 原地操作，
 //          且不直接依赖"元素上 .children 字段"的取值。
@@ -46,7 +47,7 @@ export struct TreeView impl Widget {
     // ===== 规范状态：嵌套树（唯一数据源）=====
     Array[TreeViewNode] _roots = []
     // ===== 当前可见行的拍平视图（基础类型并行数组，渲染/命中复用）=====
-    // 注意：Leno 中结构体数组按“非循环下标”访问会返回默认拷贝，故拍平层只用
+    // 注意：Leno 中结构体数组按"非循环下标"访问会返回默认拷贝，故拍平层只用
     // 基础类型数组（int/string/bool，按任意下标访问均安全）；源数据仍存于 _roots 树。
     Array[int] _flatIds = []
     Array[string] _flatText = []
@@ -130,7 +131,7 @@ export struct TreeView impl Widget {
         for ds.len() to i { _roots.add(_build_node(ds[i] as Dict, -1, 0)) }
     }
 
-    // 递归复制整棵子列表（全程用循环变量 list[i] 读取，规避“非循环下标返回零值拷贝”的语言坑）
+    // 递归复制整棵子列表（全程用循环变量 list[i] 读取，规避"非循环下标返回零值拷贝"的语言坑）
     func _snap_children(Array[TreeViewNode] list): Array[TreeViewNode] {
         Array[TreeViewNode] out = []
         for list.len() to i {
