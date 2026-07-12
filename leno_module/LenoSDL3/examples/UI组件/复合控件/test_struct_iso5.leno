@@ -1,0 +1,27 @@
+// 隔离5：与 iso3 同构，但把 findIn 改成递归（和 find 的 _findIn 同构），看是否还报错
+struct N { int id; bool flag; Array[N] kids = [] }
+Array[N] roots = []
+
+func setFlag(int id, bool v) { for roots.len() to i { if roots[i].id == id { roots[i].flag = v; return } } }
+func get(int id): N {
+    for roots.len() to i {
+        if roots[i].id == id { return roots[i] }
+        N c = findIn(roots[i].kids, id)
+        if c.id >= 0 { return c }
+    }
+    N e = new N(); return e
+}
+func findIn(Array[N] list, int id): N {
+    for list.len() to i { if list[i].id == id { return list[i] } N c = findIn(list[i].kids, id); if c.id >= 0 { return c } }
+    N e = new N(); return e
+}
+func fmtB(bool b): string { if b { return "true" } else { return "false" } }
+
+main() {
+    N a = new N(); a.id = 1
+    N a1 = new N(); a1.id = 2; a.kids.add(a1)
+    N b = new N(); b.id = 3
+    roots.add(a); roots.add(b)
+    setFlag(3, true)
+    print("get(3).flag = " + fmtB(get(3).flag))
+}

@@ -1,0 +1,18 @@
+// 最小复现
+face Animal {
+    func speak(): string
+}
+
+struct Dog impl Animal {
+    func speak(): string { return "woof" }
+}
+
+main() {
+    Array[Animal] animals = []
+    Dog d = new Dog()
+    animals.add(d)    // 报错：期望 face Animal，实际 struct Dog
+
+    // 直接赋值
+    Animal a = d      // 这能通过吗？
+    print("a.speak = " + a.speak())
+}
