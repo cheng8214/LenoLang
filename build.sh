@@ -5,6 +5,10 @@ echo "Building LenoLang Compiler..."
 
 mkdir -p build
 
+# 通用源文件清单：以 build.bat（Windows 权威、可工作清单）为准。
+# 注意：不包含各平台专属的 ffi 实现文件（win64/linux），在下方按平台追加。
+# 历史上 build.sh 曾引用过 src/object/object_{draw,window,event,image,font}.c 与
+# src/module/guis/guis_*.c，但这些文件/目录已不存在，故不再列出。
 SOURCES=""
 SOURCES="$SOURCES src/main.c"
 SOURCES="$SOURCES src/error.c"
@@ -36,12 +40,7 @@ SOURCES="$SOURCES src/object/object_array.c"
 SOURCES="$SOURCES src/object/object_dict.c"
 SOURCES="$SOURCES src/object/object_number.c"
 SOURCES="$SOURCES src/object/object_file.c"
-SOURCES="$SOURCES src/object/object_draw.c"
-SOURCES="$SOURCES src/object/object_window.c"
-SOURCES="$SOURCES src/object/object_event.c"
-SOURCES="$SOURCES src/object/object_image.c"
 SOURCES="$SOURCES src/object/object_socket.c"
-SOURCES="$SOURCES src/object/object_font.c"
 SOURCES="$SOURCES src/object/object_struct.c"
 SOURCES="$SOURCES src/object/object_face.c"
 SOURCES="$SOURCES src/object/object_cstruct.c"
@@ -85,15 +84,7 @@ SOURCES="$SOURCES src/module/threads/threads.c"
 SOURCES="$SOURCES src/module/assert/assert.c"
 SOURCES="$SOURCES src/module/sys/sys.c"
 SOURCES="$SOURCES src/module/regexs/regexs.c"
-SOURCES="$SOURCES src/module/guis/guis.c"
-SOURCES="$SOURCES src/module/guis/guis_constants.c"
-SOURCES="$SOURCES src/module/guis/guis_draw.c"
-SOURCES="$SOURCES src/module/guis/guis_window.c"
-SOURCES="$SOURCES src/module/guis/guis_style.c"
-SOURCES="$SOURCES src/module/guis/guis_event.c"
-SOURCES="$SOURCES src/module/guis/guis_image.c"
-SOURCES="$SOURCES src/module/guis/guis_font.c"
-SOURCES="$SOURCES src/module/guis/leno_guis_log.c"
+SOURCES="$SOURCES src/platform/platform_thread.c"
 SOURCES="$SOURCES src/serialize/serialize.c"
 SOURCES="$SOURCES src/package/package_platform.c"
 SOURCES="$SOURCES src/package/package_toml.c"
@@ -101,40 +92,35 @@ SOURCES="$SOURCES src/package/package_init.c"
 SOURCES="$SOURCES src/package/package_resolve.c"
 SOURCES="$SOURCES src/package/package_install.c"
 
-# Platform-specific sources
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    SOURCES="$SOURCES src/module/guis/leno_guis_macos.c"
-    SOURCES="$SOURCES src/platform/platform_thread.c"
-elif [[ "$OSTYPE" == "linux"* ]]; then
-    SOURCES="$SOURCES src/module/guis/leno_guis_linux.c"
-    SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
-    SOURCES="$SOURCES src/platform/platform_thread.c"
-fi
+# 平台检测
+OS="$(uname -s 2>/dev/null || echo unknown)"
+case "$OS" in
+  MINGW*|MSYS*|CYGWIN*)  PLATFORM=windows ;;
+  Darwin*)               PLATFORM=macos   ;;
+  *)                     PLATFORM=linux   ;;
+esac
 
-# Compiler detection
-if command -v gcc &> /dev/null; then
-    CC=gcc
-    EXTRA_CFLAGS=""
-    EXTRA_LDFLAGS=""
+EXE=""
+LIBS="-lm"
+if [ "$PLATFORM" = "windows" ]; then
+  SOURCES="$SOURCES src/module/ffi/leno_ffi_win64.c"
+  LIBS="$LIBS -municode -lws2_32"
+  EXE=".exe"
+elif [ "$PLATFORM" = "macos" ]; then
+  # leno_ffi_linux.c 用 #ifndef _WIN32 包裹，macOS（类 Unix）同样适用
+  SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
+  LIBS="$LIBS -lpthread -ldl"
 else
-    CC=/tmp/gcc-root/usr/bin/gcc-12
-    EXTRA_CFLAGS="--sysroot=/tmp/gcc-root -I/tmp/gcc-root/usr/include/freetype2"
-    EXTRA_LDFLAGS="--sysroot=/tmp/gcc-root"
-    export PATH="/tmp/gcc-root/usr/bin:$PATH"
-    export LD_LIBRARY_PATH="/tmp/gcc-root/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+  SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
+  LIBS="$LIBS -lpthread -ldl"
+  CFLAGS="$CFLAGS -D_GNU_SOURCE"
 fi
 
-# Platform-specific libraries
-LIBS="-lm -lpthread -ldl"
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    LIBS="$LIBS -framework AppKit"
-else
-    LIBS="$LIBS -lX11 -lXft -lXrender -lfontconfig -lfreetype -lpng -lz -lexpat -luuid -lbrotlidec -lXau -lXdmcp -lbsd -lmd"
-fi
+CC=${CC:-gcc}
 
-$CC $EXTRA_CFLAGS -o build/leno $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -D_GNU_SOURCE -Wno-format-truncation -Wno-unused-result -Wno-format -Wno-type-limits -Wno-alloc-size-larger-than $LIBS $EXTRA_LDFLAGS
+$CC $CFLAGS -o build/leno$EXE $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
 
 echo "Build successful"
 echo ""
-echo "Usage: build/leno <file.leno>"
-echo "Tests:  build/leno assert/run_tests.leno build/leno assert"
+echo "Usage: build/leno$EXE <file.leno>"
+echo "Tests:  build/leno$EXE assert/run_tests.leno build/leno$EXE assert"

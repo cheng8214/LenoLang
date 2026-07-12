@@ -214,7 +214,7 @@ main() {
     var n = p * q        // 3233
     var phi = (p - 1) * (q - 1)  // 3120
     var e = 17
-    var d = mod_inverse(e, phi)
+    var d = mod_inverse(e, phi) as int 
 
     print("p = " + _str(p) + ", q = " + _str(q))
     print("n = " + _str(n) + ", phi = " + _str(phi))
