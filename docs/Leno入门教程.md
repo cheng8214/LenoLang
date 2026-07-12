@@ -2844,7 +2844,7 @@ var y2 = p["y"]
 
 > **💡 性能提示**：优先使用 `obj.field` 而不是 `obj["field"]`。点号访问在编译期确定字段索引，运行时直接定位；索引访问需要运行时字符串查找。
 
-### null 默认值与编译时检查
+### null 默认值与编译时警告
 
 **⚠️ 重要：默认值为 null 的字段，访问其成员会有编译时警告**
 
@@ -2864,15 +2864,17 @@ main() {
     // ✅ 获取 null 本身 - 不警告
     var d = c.data
 
-    // ❌ 访问 null 字段的成员 - 编译时警告
-    var v = c.data["key"]     // [语义错误] 字段 'c.data' 默认值为 null...
-    var item = c.items[0]     // [语义错误] 字段 'c.items' 默认值为 null...
+    // ⚠️ 访问 null 字段的成员 - 编译时警告（不阻断编译）
+    var v = c.data["key"]     // [空值链式访问] 字段 'c.data' 默认值为 null...
+    var item = c.items[0]     // [空值链式访问] 字段 'c.items' 默认值为 null...
 
-    // ❌ 链式访问 null 字段
+    // ⚠️ 链式访问 null 字段
     var o = new Outer()
-    var x = o.inner.data      // [语义错误] 字段 'o.inner' 默认值为 null...
+    var x = o.inner.data      // [空值链式访问] 字段 'o.inner' 默认值为 null...
 }
 ```
+
+> **注意**：从 2026-07-12 起，null 字段链式访问从**编译错误**改为**编译警告**。编译会通过，但运行时如果字段确实为 null 则会报错。建议先检查非 null 再访问。
 
 **在方法中访问 null 字段**：
 
@@ -3286,6 +3288,50 @@ struct Node {
 struct Node {
     int value
     Node next = null    // 默认为 null，避免递归
+}
+```
+
+**自递归 struct（含 `Array[Self]` 字段）**：
+
+Leno 支持在 struct 中用 `Array[Self]` 定义树形结构：
+
+```leno
+struct TreeNode {
+    int id
+    string name = ""
+    Array[TreeNode] children = []    // 自递归数组字段
+}
+
+func findNode(TreeNode n, int id): TreeNode {
+    if n.id == id { return n }
+    for n.children.len() to i {
+        TreeNode found = findNode(n.children[i], id)
+        if found.id != null { return found }   // ⚠️ 用 != null 判断，不要用 >= 0
+    }
+    TreeNode e = new TreeNode(); return e       // 未找到返回空节点
+}
+```
+
+> **⚠️ 重要陷阱**：未赋值的 `int` 字段默认为 `null`，不是 `0`。判断"是否找到"时：
+> - ✅ `found.id != null` — 正确，null 不等于任何值
+> - ❌ `found.id >= 0` — **错误**！修复前的编译器中 `null >= 0` 会返回 `true`（2026-07-12 已修复），但最好用 `!= null` 语义更清晰
+
+也可以用 **face 类型** 实现更灵活的树结构：
+
+```leno
+face INode {
+    func get_id(): int
+}
+
+struct FileNode impl INode {
+    int _id
+    func get_id(): int { return _id }
+}
+
+struct DirNode impl INode {
+    int _id
+    Array[INode] _items = []     // face 类型数组，可混合 FileNode 和 DirNode
+    func get_id(): int { return _id }
 }
 ```
 
@@ -4849,15 +4895,15 @@ main() {
    // Array[a.Speaker] arr      // ❌ 泛型实参不支持模块限定名
    ```
 
-2. **struct 存入 `Array[face]` 必须显式 `as` 上转**
-   即便变量 `d` 是 `impl Speaker` 的 struct，`arr.add(d)` 仍报“期望 face，实际 struct”，要写 `arr.add(d as Speaker)`：
+2. **struct 存入 `Array[face]` 可直接 add**
+   `impl` 了该 face 的 struct 可直接 `arr.add(d)`，编译器会自动检查兼容性（2026-07-12 已修复）：
    ```leno
    Array[Speaker] arr = []
    Dog d = new Dog()
-   arr.add(d as Speaker)        // ✅ 必须 as 上转
-   // arr.add(d)                // ❌ 期望 Speaker，实际 Dog
+   arr.add(d)                   // ✅ 编译器自动检查 Dog impl Speaker
+   // arr.add(someNonImplObj)   // ❌ 类型不匹配：期望 Speaker，实际 struct Xxx
    ```
-   > 原因：把具体 struct 放进 face 数组是一次**向上转型**，需要显式 `as`，编译器不会自动隐式转换。
+   > 旧版本需要 `arr.add(d as Speaker)` 显式上转，当前版本已支持隐式兼容检查。
 
 3. **跨模块 `new` 需先 `use` 再用短名**
    不能写 `b.Dog d = new b.Dog()`，必须 `use b.Dog` 后用 `Dog d = new Dog()`（详见下方“使用 use 导入类型”）。
