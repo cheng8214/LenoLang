@@ -48,6 +48,8 @@ export struct HBox impl Widget {
     int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
+    Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
+    Array[float]  _natH = []
     bool _loaded = false
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
@@ -66,13 +68,14 @@ export struct HBox impl Widget {
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
         _c.add(c); _opt.add(opts)
+        _natW.add(c.get_w()); _natH.add(c.get_h())
         if _hwnd != null { _layout_pass_window(c, _hwnd) }
         return c
     }
     func remove(Widget c) {
-        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
     }
-    func clear() { _c = []; _opt = [] }
+    func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
@@ -104,7 +107,7 @@ export struct HBox impl Widget {
             float g = _float(o.get("grow", 0.0))
             if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             float s = _float(o.get("shrink", 1.0))
-            float basis = _c[i].get_w()
+            float basis = _natW[i]
             float b = _float(o.get("basis", -1.0))
             if b >= 0.0 { basis = b }
             totalBasis = totalBasis + basis
@@ -119,7 +122,7 @@ export struct HBox impl Widget {
             float g = _float(o.get("grow", 0.0))
             if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             float s = _float(o.get("shrink", 1.0))
-            float basis = _c[i].get_w()
+            float basis = _natW[i]
             float b = _float(o.get("basis", -1.0))
             if b >= 0.0 { basis = b }
             if free >= 0.0 {
@@ -151,7 +154,7 @@ export struct HBox impl Widget {
             Widget c = _c[i]
             Dict o = _opt[i]
             float cw = childMain(i)
-            float ch = c.get_h()
+            float ch = _natH[i]
             float g = _float(o.get("grow", 0.0))
             if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             int align = _int(o.get("align", 0))
@@ -194,6 +197,8 @@ export struct VBox impl Widget {
     int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
+    Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
+    Array[float]  _natH = []
     bool _loaded = false
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
@@ -212,13 +217,14 @@ export struct VBox impl Widget {
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
         _c.add(c); _opt.add(opts)
+        _natW.add(c.get_w()); _natH.add(c.get_h())
         if _hwnd != null { _layout_pass_window(c, _hwnd) }
         return c
     }
     func remove(Widget c) {
-        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
     }
-    func clear() { _c = []; _opt = [] }
+    func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
@@ -250,7 +256,7 @@ export struct VBox impl Widget {
             float g = _float(o.get("grow", 0.0))
             if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             float s = _float(o.get("shrink", 1.0))
-            float basis = _c[i].get_h()
+            float basis = _natH[i]
             float b = _float(o.get("basis", -1.0))
             if b >= 0.0 { basis = b }
             totalBasis = totalBasis + basis
@@ -265,7 +271,7 @@ export struct VBox impl Widget {
             float g = _float(o.get("grow", 0.0))
             if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             float s = _float(o.get("shrink", 1.0))
-            float basis = _c[i].get_h()
+            float basis = _natH[i]
             float b = _float(o.get("basis", -1.0))
             if b >= 0.0 { basis = b }
             if free >= 0.0 {
@@ -297,7 +303,7 @@ export struct VBox impl Widget {
             Widget c = _c[i]
             Dict o = _opt[i]
             float ch = childMain(i)
-            float cw = c.get_w()
+            float cw = _natW[i]
             float g = _float(o.get("grow", 0.0))
             if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
             int align = _int(o.get("align", 0))
@@ -341,6 +347,8 @@ export struct AnchorBox impl Widget {
     float padX = 0.0; float padY = 0.0
     Array[Widget] _c = []
     Array[Dict]    _opt = []
+    Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写）
+    Array[float]  _natH = []
     bool _loaded = false
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
@@ -357,13 +365,14 @@ export struct AnchorBox impl Widget {
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
         _c.add(c); _opt.add(opts)
+        _natW.add(c.get_w()); _natH.add(c.get_h())
         if _hwnd != null { _layout_pass_window(c, _hwnd) }
         return c
     }
     func remove(Widget c) {
-        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); return } }
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
     }
-    func clear() { _c = []; _opt = [] }
+    func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
@@ -388,7 +397,7 @@ export struct AnchorBox impl Widget {
         for _c.len() to i {
             Widget c = _c[i]
             Dict o = _opt[i]
-            float cw = c.get_w(); float ch = c.get_h()
+            float cw = _natW[i]; float ch = _natH[i]
             float ow = _float(o.get("w", -1.0)); if ow >= 0.0 { cw = ow }
             float oh = _float(o.get("h", -1.0)); if oh >= 0.0 { ch = oh }
             float l = _float(o.get("left", -1.0))
