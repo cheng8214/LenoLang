@@ -1,6 +1,24 @@
 #include "semantic_internal.h"
 #include "include/module_symbol_table.h"
 
+// 修正 TypeInfo：如果类型是 TYPE_STRUCT 但名称实际是 face 定义，改为 TYPE_FACE
+// 这是因为 parser 解析字段类型时，face 可能尚未注册到全局表，导致被误判为 struct
+static void fix_struct_to_face(TypeInfo* type) {
+    if (type && type->kind == TYPE_STRUCT && type->struct_name) {
+        if (face_def_find(type->struct_name)) {
+            type->kind = TYPE_FACE;
+        }
+    }
+    // 递归修正 Array[StructThatIsActuallyFace] 的元素类型
+    if (type && type->kind == TYPE_ARRAY && type->element_type) {
+        fix_struct_to_face(type->element_type);
+    }
+    // 递归修正 Dict[K, V] 的值类型
+    if (type && type->kind == TYPE_DICT && type->value_type) {
+        fix_struct_to_face(type->value_type);
+    }
+}
+
 
 
 // ============================================================================
@@ -1390,6 +1408,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 if (obj_type->kind == TYPE_ARRAY) {
                     // 返回数组的元素类型
                     if (obj_type->element_type) {
+                        fix_struct_to_face(obj_type->element_type);
                         ast->cached_type = type_copy(obj_type->element_type);
                         type_free(obj_type);
                         return type_copy(ast->cached_type);
@@ -1417,6 +1436,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             for (int i = 0; i < struct_sym->struct_field_count; i++) {
                                 if (strcmp(struct_sym->struct_field_names[i], field_name) == 0) {
                                     ast->cached_type = type_copy(struct_sym->struct_field_types[i]);
+                                    fix_struct_to_face(ast->cached_type);
                                     type_free(obj_type);
                                     return type_copy(ast->cached_type);
                                 }
@@ -1570,6 +1590,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         for (int i = 0; i < struct_sym->struct_field_count; i++) {
                             if (strcmp(struct_sym->struct_field_names[i], field_name) == 0) {
                                 result = type_copy(struct_sym->struct_field_types[i]);
+                                fix_struct_to_face(result);
                                 type_free(obj_type);
                                 break;
                             }
@@ -1861,6 +1882,8 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 result = type_new(TYPE_ANY);
             }
             if (obj_type) type_free(obj_type);
+            // 修正：如果字段类型被误推断为 struct 但实际是 face，修正为 face
+            fix_struct_to_face(result);
             break;
         }
         case AST_ADDRESS_OF: {

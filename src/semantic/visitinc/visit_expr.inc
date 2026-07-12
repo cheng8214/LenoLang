@@ -493,6 +493,17 @@
                                                         (arg_type->kind == TYPE_STRING && (expected_param_type == TYPE_STR8 || expected_param_type == TYPE_STR16))) {
                                                         type_compatible = true;
                                                     }
+                                                    // 允许 impl face 的 struct 传给 face 类型的参数
+                                                    if (expected_param_type == TYPE_FACE && arg_type->kind == TYPE_STRUCT && arg_type->struct_name) {
+                                                        // 从 receiver_type 获取数组元素类型的 face 名称
+                                                        if (receiver_type && receiver_type->element_type && receiver_type->element_type->struct_name) {
+                                                            ObjFaceDef* fdef = face_def_find(receiver_type->element_type->struct_name);
+                                                            ObjStructDef* sdef = struct_def_find(arg_type->struct_name);
+                                                            if (fdef && sdef && struct_implements_face(sdef, fdef)) {
+                                                                type_compatible = true;
+                                                            }
+                                                        }
+                                                    }
 
                                                     if (!type_compatible) {
                                                         char msg[BUFFER_MEDIUM];
@@ -1216,7 +1227,7 @@
                                             "字段 'self.%s' 默认值为 null，访问其成员可能导致运行时错误",
                                             inner_field);
                                     }
-                                    error_add(ERR_SEMANTIC, ast->line, msg);
+                                    warning_add(WARN_NULL_FIELD_CHAIN, ast->line, msg);
                                 }
                                 break;
                             }
@@ -1291,7 +1302,7 @@
                                         "字段 '%s' 默认值为 null，访问其成员可能导致运行时错误",
                                         inner_field);
                                 }
-                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                warning_add(WARN_NULL_FIELD_CHAIN, ast->line, msg);
                             }
                             break;
                         }
@@ -1300,8 +1311,6 @@
             }
 
             if (obj_type) type_free(obj_type);
-
-            // 推断并缓存 INDEX 节点的类型
             infer_expr_type(s, ast);
             break;
             

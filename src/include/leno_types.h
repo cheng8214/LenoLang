@@ -86,6 +86,7 @@ typedef enum {
     WARN_DEPRECATED,       // 弃用语法/API
     WARN_IMPLICIT_TRUNC,   // 浮点隐式截断为整数
     WARN_UNREACHABLE,      // 不可达代码
+    WARN_NULL_FIELD_CHAIN, // null 字段链式访问
 } WarnType;
 
 // ============================================================================
