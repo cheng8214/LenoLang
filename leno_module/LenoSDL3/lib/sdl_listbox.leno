@@ -14,7 +14,7 @@ export struct ListBox impl Widget {
     float _itemH = 24.0          // 行高
     float _scroll = 0.0          // 已向下滚动的像素（0 = 顶部）
     int _hover = -1              // 当前悬停行索引（-1 无）
-    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
     int _mode = 0                // 0=单选, 1=多选
     int br = 38; int bg = 40; int bb = 48          // 背景色
     int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
@@ -96,7 +96,7 @@ export struct ListBox impl Widget {
         w         = _float(opts.get("w", 200))
         h         = _float(opts.get("h", 200))
         _itemH    = _float(opts.get("item_h", 24))
-        _fontSize = _float(opts.get("font_size", 14))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
         _mode     = _int(opts.get("mode", 0))     // 0 单选 / 1 多选
