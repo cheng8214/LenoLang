@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
+import "sdl_menu.leno" as menu; use menu.MenuBar
 
 export struct Table impl Widget {
     float x = 0.0; float y = 0.0; float w = 360.0; float h = 240.0
@@ -37,6 +38,13 @@ export struct Table impl Widget {
     int _dragCol = -1; float _dragStartX = 0.0; float _dragStartW = 0.0; bool _resizable = true
     func(int):void _onSelect
     func(int, int):void _onCell
+    // 内嵌右击上下文菜单（复用 MenuBar 弹层渲染与捕获；默认不预置项，由应用层自定义）
+    MenuBar _ctxMenu = null
+    int _ctxMenuH = -1
+    bool _ctxMenuEnabled = true
+    int _ctxRow = -1; int _ctxCol = -1   // 右击命中行/列
+    int _winW = 0; int _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
+    func(int, string):void _onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
 
     // === 双击编辑 ===
     Edit _edit = null
@@ -196,6 +204,14 @@ export struct Table impl Widget {
         _edit = edt.createEdit({x:0, y:0, w:w, h:_rowH, font_size:_fontSize, border:false, radius:0})
         _editing = false
         _editRow = -1; _editCol = -1
+        // 内嵌右击上下文菜单（首次 set 时创建，避免重复注册到全局菜单注册表）
+        if _ctxMenu == null {
+            _ctxMenu = menu.createMenuBar({})
+            _ctxMenu.setWindowSize(_winW, _winH)
+            _ctxMenuH = _ctxMenu.addContextMenu("table_ctx")
+            _ctxMenu.on_select(func(string m, string id) { _ctx_select(id) })
+            menu.registerContextMenu(_ctxMenu)
+        }
         _loaded = true
     }
 
@@ -321,6 +337,54 @@ export struct Table impl Widget {
     func on_select(func(int):void cb) { _onSelect = cb }
     func on_cell(func(int, int):void cb) { _onCell = cb }
 
+    // ==================== 右击上下文菜单（默认不预置任何项，由应用层自定义） ====================
+    // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
+    func set_window_size(int ww, int hh) {
+        _winW = ww; _winH = hh
+        if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) }
+    }
+    // 启用/禁用右击上下文菜单
+    func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
+    func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
+    // 向上下文菜单追加一项，返回项在菜单内索引（可用于挂子菜单）
+    func addContextItem(Dict opts): int {
+        if _ctxMenu == null or _ctxMenuH < 0 { return -1 }
+        return _ctxMenu.addContextItem(_ctxMenuH, opts)
+    }
+    // 向上下文菜单追加分隔线
+    func addContextSeparator() {
+        if _ctxMenu == null or _ctxMenuH < 0 { return }
+        _ctxMenu.addContextSeparator(_ctxMenuH)
+    }
+    // 按 id 动态启用/禁用某个上下文菜单项（供调用方按当前状态刷新）
+    func setContextItemEnabled(string id, bool en) {
+        if _ctxMenu != null and _ctxMenuH >= 0 { _ctxMenu.setContextItemEnabled(_ctxMenuH, id, en) }
+    }
+    // 返回内嵌上下文菜单（MenuBar），应用可经 addContextItem 等进一步扩展或挂子菜单
+    func get_context_menu(): MenuBar { return _ctxMenu }
+    func get_context_menu_handle(): int { return _ctxMenuH }
+    // 右击时记录的行/列（在 on_context_select 回调内可读，定位操作目标）
+    func get_context_menu_row(): int { return _ctxRow }
+    func get_context_menu_col(): int { return _ctxCol }
+    // 注册上下文菜单自定义回调（参数为命中行与项 id）；也可直接在 addContextItem 的 opts 里写 action
+    func on_context_select(func(int, string):void cb) { _onCtxSelect = cb }
+
+    // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
+    func _open_ctx_menu(float x, float y) {
+        if _ctxMenu == null or _ctxMenuH < 0 { return }
+        _ctxRow = _row_at(y); _ctxCol = _col_at(x)
+        // 右击命中数据行时，先选中该行，使菜单操作作用于该目标
+        if _ctxRow >= 0 {
+            _selRow = _ctxRow; _selRows = [_ctxRow]
+            if _onSelect != null { _onSelect(_ctxRow) }
+        }
+        _ctxMenu.openContext(_ctxMenuH, x, y)
+    }
+    // 上下文菜单项动作分发
+    func _ctx_select(string id) {
+        if _onCtxSelect != null { _onCtxSelect(_ctxRow, id) }
+    }
+
     // ==================== 双击编辑 ====================
     func _begin_edit(int row, int col) {
         if row < 0 or row >= _rows.len() { return }
@@ -362,6 +426,18 @@ export struct Table impl Widget {
         }
         float mx = ev.mouseX(); float my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+
+        // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
+        if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                _ctxMenu.close()
+                if contains(mx, my) { _open_ctx_menu(mx, my) }
+                return
+            }
+            _ctxMenu.process(ev)
+            return
+        }
+
         if core.inPopupCapture(mx, my) { return }
 
         // 编辑中：事件转发给编辑框
@@ -481,6 +557,11 @@ export struct Table impl Widget {
         }
 
         if ev.isMouseButtonDown() {
+            // 右击：在表格内弹出上下文菜单（默认无预置项，由应用层自定义）
+            if _ctxMenuEnabled and _ctxMenu != null and ev.mouseButton() == 3 {
+                if contains(mx, my) { _open_ctx_menu(mx, my) }
+                return
+            }
             if my < y + _headerH {
                 int rc = _header_resize_col(mx)
                 if rc >= 0 {

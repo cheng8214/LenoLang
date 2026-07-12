@@ -377,7 +377,10 @@ export struct Window {
     // 返回 Table，可 .on_select(func(int){...}) / .on_cell(func(int,int){...}) / .set_rows(...) / .add_row(...)
     func addTable(Dict opts): Table {
         Table t = tbl.createTable(opts)
+        t.set_window_size(_w, _h)
         _widgets.add(t as Widget)
+        var cm = t.get_context_menu()
+        if cm != null { _menus.add(cm) }   // 上下文菜单交由第二遍 renderPopup 顶层绘制
         return t
     }
 
