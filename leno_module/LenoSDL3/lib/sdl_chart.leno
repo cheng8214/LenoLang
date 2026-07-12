@@ -1,0 +1,350 @@
+// sdl_chart.leno — 图表控件：柱状图(BarChart) / 折线图(LineChart) / 饼图(PieChart)
+// 均为即时模式 Widget：win.add(SDL3.createBarChart({...})) 注册后，主循环自动 render。
+// 特性：坐标轴 / 网格 / 类目与数值标签 / 多系列 / 悬停高亮（柱、点）/ 图例（饼图）。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno"   as evt; use evt.Event
+import "sdl_widget.leno"  as wgt; use wgt.Widget
+import "sdl_font.leno"    as fnt; use fnt.Font
+
+// ===================== 模块级辅助 =====================
+// 系列配色（与看板风格一致）
+Array[Array[int]] _CHART_PALETTE = [
+    [88,160,255],[80,210,150],[255,170,80],[190,120,255],
+    [255,110,130],[120,210,235],[235,210,110],[170,180,200]
+]
+
+func _cmin(float a, float b): float { if a < b { return a }; return b }
+func _cmax(float a, float b): float { if a > b { return a }; return b }
+func _clampf(float v, float lo, float hi): float { if v < lo { return lo }; if v > hi { return hi }; return v }
+
+// 计算「漂亮」的上界（1/2/5 ×10^n）
+func _niceMax(float v): float {
+    if v <= 1.0 { return 1.0 }
+    float mag = 1.0; float t = v
+    while t >= 10.0 { t = t / 10.0; mag = mag * 10.0 }
+    float step
+    if t <= 1.0 { step = 1.0 } else if t <= 2.0 { step = 2.0 }
+    else if t <= 5.0 { step = 5.0 } else { step = 10.0 }
+    return step * mag
+}
+
+func _palette(int i): Array[int] {
+    int n = _CHART_PALETTE.len()
+    return _CHART_PALETTE[i % n]
+}
+
+// 数值转字符串（整数显示，图表数据通常为整数指标）
+func _fmtNum(float v): string { return (_int(v) as string) }
+
+// 绘制悬停提示气泡（背景圆角框 + 描边 + 文字）
+func _drawTip(Renderer r, Font f, float mx, float my, string text) {
+    var ms = f.measureString(text)
+    float tw = _float(ms.w); float th = _float(ms.h)
+    float bx = mx + 12.0; float by = my + 12.0
+    float pad = 6.0
+    r.setColor(20, 22, 30, 235)
+    r.fillRoundedRect(bx, by, tw + pad * 2.0, th + pad * 2.0, 5.0)
+    r.setColor(120, 200, 255, 255)
+    r.drawRoundedRect(bx, by, tw + pad * 2.0, th + pad * 2.0, 5.0)
+    r.setColor(235, 240, 250, 255)
+    r.drawText(f, text, bx + pad, by + pad, 235, 240, 250)
+}
+
+// ===================== 柱状图 =====================
+export struct BarChart impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    string title = ""
+    Array[string] cats = []
+    Array[float] vals = []
+    int fsize = 12
+    bool showValues = true
+    bool showGrid = true
+    bool _hover = false
+    float _mx = -1.0; float _my = -1.0
+    bool _loaded = false
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 300)); h = _float(opts.get("h", 200))
+        title = opts.get("title", "") as string
+        fsize = _int(opts.get("font_size", 12))
+        showValues = _bool(opts.get("show_values", true))
+        showGrid = _bool(opts.get("show_grid", true))
+        _loaded = true
+    }
+    func set_data(Array[string] _cats, Array[float] _vals) { cats = _cats; vals = _vals }
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        if ev.isMouseMotion() {
+            _mx = ev.mouseX(); _my = ev.mouseY()
+            _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
+        }
+    }
+
+    func render(Renderer r) {
+        if not _loaded { return }
+        Font f = fnt.createFontAuto(_float(fsize))
+        float padL = 38.0; float padR = 14.0; float padT = 26.0; float padB = 30.0
+        float plotX = x + padL; float plotY = y + padT
+        float plotW = w - padL - padR; float plotH = h - padT - padB
+        if plotW <= 0 or plotH <= 0 { return }
+
+        if title != "" { r.setColor(205, 218, 255, 255); r.drawText(f, title, x + 10.0, y + 6.0, 205, 218, 255) }
+
+        int n = vals.len()
+        if n == 0 { return }
+
+        float vmax = 0.0
+        for n to i { vmax = _cmax(vmax, vals[i]) }
+        float ymax = _niceMax(vmax)
+        if ymax <= 0.0 { ymax = 1.0 }
+
+        // 网格 + Y 刻度
+        int ticks = 4
+        for 0 : ticks + 1 to ti {
+            float frac = _float(ti) / _float(ticks)
+            float gy = plotY + plotH * (1.0 - frac)
+            if showGrid { r.setColor(60, 64, 76, 255); r.drawLine(plotX, gy, plotX + plotW, gy) }
+            string lab = _fmtNum(ymax * frac)
+            var ms = f.measureString(lab)
+            r.setColor(150, 160, 178, 255)
+            r.drawText(f, lab, plotX - 6.0 - _float(ms.w), gy - _float(ms.h) / 2.0, 150, 160, 178)
+        }
+
+        // 轴线
+        r.setColor(90, 96, 112, 255)
+        r.drawLine(plotX, plotY, plotX, plotY + plotH)
+        r.drawLine(plotX, plotY + plotH, plotX + plotW, plotY + plotH)
+
+        // 柱子
+        float slot = plotW / _float(n)
+        float bw = slot * 0.6
+        int hi = -1
+        if _hover {
+            float idx = (_mx - plotX) / slot
+            if idx >= 0.0 and idx < _float(n) { hi = _int(idx) }
+        }
+        for n to i {
+            float vh = plotH * (vals[i] / ymax)
+            float bx = plotX + slot * _float(i) + (slot - bw) / 2.0
+            float by = plotY + plotH - vh
+            Array[int] c = _palette(i)
+            if i == hi { r.setColor(c[0], c[1], c[2], 255) } else { r.setColor(c[0], c[1], c[2], 210) }
+            r.fillRect(bx, by, bw, vh)
+            if showValues {
+                string s = _fmtNum(vals[i])
+                var ms = f.measureString(s)
+                r.setColor(225, 230, 240, 255)
+                r.drawText(f, s, bx + (bw - _float(ms.w)) / 2.0, by - _float(ms.h) - 3.0, 225, 230, 240)
+            }
+            if i < cats.len() {
+                string cat = cats[i]
+                var ms2 = f.measureString(cat)
+                r.setColor(160, 170, 188, 255)
+                r.drawText(f, cat, bx + (bw - _float(ms2.w)) / 2.0, plotY + plotH + 6.0, 160, 170, 188)
+            }
+        }
+
+        if hi >= 0 and hi < n {
+            string tip = cats[hi] + ": " + _fmtNum(vals[hi])
+            _drawTip(r, f, _mx, _my, tip)
+        }
+    }
+
+    func dispose() {}
+}
+
+// ===================== 折线图 =====================
+export struct LineChart impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    string title = ""
+    Array[string] xlabels = []
+    Array[Array[float]] series = []
+    Array[string] seriesNames = []
+    int fsize = 12
+    bool showGrid = true
+    bool showPoints = true
+    bool _hover = false; float _mx = -1.0; float _my = -1.0
+    bool _loaded = false
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 300)); h = _float(opts.get("h", 200))
+        title = opts.get("title", "") as string
+        fsize = _int(opts.get("font_size", 12))
+        showGrid = _bool(opts.get("show_grid", true))
+        showPoints = _bool(opts.get("show_points", true))
+        _loaded = true
+    }
+    func set_data(Array[string] _xlabels, Array[Array[float]] _series, Array[string] _names) {
+        xlabels = _xlabels; series = _series; seriesNames = _names
+    }
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        if ev.isMouseMotion() {
+            _mx = ev.mouseX(); _my = ev.mouseY()
+            _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
+        }
+    }
+
+    func render(Renderer r) {
+        if not _loaded { return }
+        Font f = fnt.createFontAuto(_float(fsize))
+        float padL = 40.0; float padR = 14.0; float padT = 26.0; float padB = 30.0
+        float plotX = x + padL; float plotY = y + padT
+        float plotW = w - padL - padR; float plotH = h - padT - padB
+        if plotW <= 0 or plotH <= 0 or series.len() == 0 { return }
+
+        int n = xlabels.len()
+        int maxn = 0
+        for series.len() to s {
+            int m2 = series[s].len()
+            if m2 > maxn { maxn = m2 }
+        }
+        if n == 0 { n = maxn }
+        if n == 0 { return }
+
+        if title != "" { r.setColor(205, 218, 255, 255); r.drawText(f, title, x + 10.0, y + 6.0, 205, 218, 255) }
+
+        float ymax = 0.0
+        for series.len() to s { for series[s].len() to i { ymax = _cmax(ymax, series[s][i]) } }
+        ymax = _niceMax(ymax); if ymax <= 0.0 { ymax = 1.0 }
+
+        int ticks = 4
+        for 0 : ticks + 1 to ti {
+            float frac = _float(ti) / _float(ticks)
+            float gy = plotY + plotH * (1.0 - frac)
+            if showGrid { r.setColor(60, 64, 76, 255); r.drawLine(plotX, gy, plotX + plotW, gy) }
+            string lab = _fmtNum(ymax * frac)
+            var ms = f.measureString(lab)
+            r.setColor(150, 160, 178, 255)
+            r.drawText(f, lab, plotX - 6.0 - _float(ms.w), gy - _float(ms.h) / 2.0, 150, 160, 178)
+        }
+        r.setColor(90, 96, 112, 255)
+        r.drawLine(plotX, plotY, plotX, plotY + plotH)
+        r.drawLine(plotX, plotY + plotH, plotX + plotW, plotY + plotH)
+
+        int denom = n - 1
+        if n - 1 < 1 { denom = 1 }
+        float stepX = plotW / _float(denom)
+
+        for n to i {
+            if i < xlabels.len() {
+                string xl = xlabels[i]
+                var ms = f.measureString(xl)
+                r.setColor(160, 170, 188, 255)
+                float lx = plotX + stepX * _float(i) - _float(ms.w) / 2.0
+                lx = _clampf(lx, plotX, plotX + plotW - _float(ms.w))
+                r.drawText(f, xl, lx, plotY + plotH + 6.0, 160, 170, 188)
+            }
+        }
+
+        int hi = -1
+        if _hover and n > 1 {
+            float idx = (_mx - plotX) / stepX
+            if idx >= 0.0 and idx <= _float(n - 1) { hi = _int(idx + 0.5) }
+        }
+
+        for series.len() to s {
+            Array[float] d = series[s]
+            Array[int] c = _palette(s)
+            r.setColor(c[0], c[1], c[2], 235)
+            for 1 : d.len() - 1 to i {
+                float x1 = plotX + stepX * _float(i - 1); float y1 = plotY + plotH * (1.0 - d[i - 1] / ymax)
+                float x2 = plotX + stepX * _float(i);   float y2 = plotY + plotH * (1.0 - d[i] / ymax)
+                r.drawLine(x1, y1, x2, y2)
+            }
+            if showPoints {
+                for d.len() to i {
+                    float px = plotX + stepX * _float(i); float py = plotY + plotH * (1.0 - d[i] / ymax)
+                    bool hl = (i == hi)
+                    if hl { r.setColor(255, 255, 255, 255) } else { r.setColor(c[0], c[1], c[2], 255) }
+                    r.fillCircle(px, py, if hl then 5.0 else 3.0)
+                }
+            }
+        }
+
+        if hi >= 0 and hi < n and series[0].len() > hi {
+            string tip = xlabels[hi] + ": " + _fmtNum(series[0][hi])
+            _drawTip(r, f, _mx, _my, tip)
+        }
+    }
+
+    func dispose() {}
+}
+
+// ===================== 饼图 =====================
+export struct PieChart impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    string title = ""
+    Array[string] labels = []
+    Array[float] values = []
+    int fsize = 12
+    bool _loaded = false
+
+    func set(Dict opts) {
+        x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
+        w = _float(opts.get("w", 300)); h = _float(opts.get("h", 200))
+        title = opts.get("title", "") as string
+        fsize = _int(opts.get("font_size", 12))
+        _loaded = true
+    }
+    func set_data(Array[string] _labels, Array[float] _values) { labels = _labels; values = _values }
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+    func process(Event ev) {}
+    func render(Renderer r) {
+        if not _loaded { return }
+        Font f = fnt.createFontAuto(_float(fsize))
+        if title != "" { r.setColor(205, 218, 255, 255); r.drawText(f, title, x + 10.0, y + 6.0, 205, 218, 255) }
+        int n = values.len()
+        if n == 0 { return }
+        float total = 0.0
+        for n to i { total = total + values[i] }
+        if total <= 0.0 { return }
+
+        float pieSize = _cmin(w * 0.55, h - 30.0)
+        if pieSize < 10.0 { pieSize = 10.0 }
+        float rad = pieSize / 2.0
+        float cx = x + 8.0 + rad
+        float cy = y + 30.0 + rad
+        float legendX = x + pieSize + 24.0
+        float ly = y + 34.0
+
+        float a = 0.0
+        for n to i {
+            float frac = values[i] / total
+            float a1 = a + frac * 360.0
+            Array[int] c = _palette(i)
+            r.fillPie(cx, cy, rad, a, a1, c[0], c[1], c[2], 255)
+            // 图例
+            r.setColor(c[0], c[1], c[2], 255); r.fillRect(legendX, ly, 12.0, 12.0)
+            r.setColor(220, 225, 235, 255)
+            string lab = labels[i] + "  " + _fmtNum(values[i])
+            r.drawText(f, lab, legendX + 18.0, ly - 1.0, 220, 225, 235)
+            ly = ly + 20.0
+            a = a1
+        }
+    }
+    func dispose() {}
+}
+
+// ===================== 工厂 =====================
+export func createBarChart(Dict opts): BarChart { BarChart c = new BarChart(); c.set(opts); return c }
+export func createLineChart(Dict opts): LineChart { LineChart c = new LineChart(); c.set(opts); return c }
+export func createPieChart(Dict opts): PieChart { PieChart c = new PieChart(); c.set(opts); return c }

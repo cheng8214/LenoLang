@@ -6,6 +6,7 @@
 //   · 底部滑块按数值阈值实时筛选表格
 //   · 菜单：刷新数据 / 暂停·恢复实时 / 清空日志 / 导出 / 退出
 //
+//   · 底部可视化图表：柱状图(各主机请求量) / 折线图(CPU·内存趋势) / 饼图(主机状态分布)
 // 布局要点（避免「双重处理」）：卡片用 Panel 承载，Panel 经 win.add 注册（自动处理事件/绘制），
 // 子控件（进度条/表格/列表/滑块）经 panel.add 添加，使用窗口绝对坐标。
 import "../../../lib/SDL3.leno" as SDL3
@@ -20,6 +21,9 @@ use SDL3.ListBox
 use SDL3.Label
 use SDL3.ProgressBar
 use SDL3.Slider
+use SDL3.BarChart
+use SDL3.LineChart
+use SDL3.PieChart
 
 // ===================== 模拟数据（模块级，供模块函数共享） =====================
 Array[string] HOSTS = ["web-01","web-02","db-01","db-02","cache-01","api-01","api-02","worker-01","worker-02","lb-01","mq-01","log-01"]
@@ -29,6 +33,12 @@ float _startMs = 0.0
 Array[Array[string]] _allRows = []
 float _threshold = 30.0
 int   _logCount  = 0
+// 图表数据（运行时维护）
+Array[string]  CHART_HOSTS = ["web-01","db-01","cache-01","api-01","lb-01","mq-01"]
+Array[float]   _barVals   = []
+Array[float]   _cpuTrend  = []
+Array[float]   _memTrend  = []
+Array[string]  _cpuLabels = []
 
 // 简易可复现随机数（LCG），避免依赖未导出的 random
 func rnd(): float {
@@ -115,7 +125,7 @@ main() {
     _startMs = _float(SDL3.getTicks())
     _seedI   = SDL3.getTicks() % 233280
 
-    var win = SDL3.createWindow({title:"LenoSDL3 数据看板", w:1000, h:720, resizable:true})
+    var win = SDL3.createWindow({title:"LenoSDL3 数据看板", w:1000, h:1000, resizable:true})
     if not win.ok { SDL3.ttfQuit(); return }
 
     bool live = true
@@ -125,7 +135,7 @@ main() {
     win.add(SDL3.createLabel({x:16, y:42, text:"系统监控看板", font_size:18, text_rgb:[225,235,255]}))
     var stateLbl = SDL3.createLabel({x:770, y:48, text:"● 实时刷新中", font_size:13, text_rgb:[120,220,150]})
     win.add(stateLbl)
-    var statusLbl = SDL3.createLabel({x:16, y:692, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+    var statusLbl = SDL3.createLabel({x:16, y:972, text:"就绪", font_size:13, text_rgb:[170,200,170]})
     win.add(statusLbl)
 
     // ===================== 顶部菜单栏 =====================
@@ -177,6 +187,22 @@ main() {
     fltCard.add(thrLbl)
     fltCard.add(SDL3.createLabel({x:32, y:604, text:"拖动滑块即时过滤上方表格：仅保留数值 ≥ 阈值的记录", font_size:12, text_rgb:[150,160,175]}))
 
+    // ===================== 可视化图表卡片 =====================
+    var chartCard = SDL3.createPanel({x:16, y:636, w:968, h:320, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    win.add(chartCard)
+    chartCard.add(SDL3.createLabel({x:32, y:652, text:"实时可视化图表", font_size:15, text_rgb:[200,215,255]}))
+
+    var barChart  = SDL3.createBarChart({x:32,  y:684, w:300, h:248, title:"各主机请求量(万)", font_size:11})
+    var lineChart = SDL3.createLineChart({x:350, y:684, w:300, h:248, title:"CPU / 内存 使用率趋势(%)", font_size:11})
+    var pieChart  = SDL3.createPieChart({x:668, y:684, w:300, h:248, title:"主机状态分布", font_size:11})
+    win.add(barChart); win.add(lineChart); win.add(pieChart)
+
+    // 初始图表数据
+    for CHART_HOSTS.len() to i { _barVals.add(rndRange(40.0, 200.0)) }
+    barChart.set_data(CHART_HOSTS, _barVals)
+    lineChart.set_data(_cpuLabels, [_cpuTrend, _memTrend], ["CPU","内存"])
+    pieChart.set_data(["正常","警告","严重"], [0.0, 0.0, 0.0])
+
     // ===================== 绑定回调 =====================
     bar.on_select(func(string m, string id) {
         if id == "refresh" {
@@ -209,10 +235,14 @@ main() {
 
     var tKpi  = win.addTimer(1100, func() {
         if not live { return }
-        cpuBar.set_value(rndRange(15.0, 92.0))
-        memBar.set_value(rndRange(30.0, 88.0))
+        float cv = rndRange(15.0, 92.0); cpuBar.set_value(cv)
+        float mv = rndRange(30.0, 88.0); memBar.set_value(mv)
         diskBar.set_value(rndRange(20.0, 80.0))
         netBar.set_value(rndRange(10.0, 95.0))
+        // 折线趋势（滚动窗口，最多 12 个点）
+        _cpuTrend.add(cv); _memTrend.add(mv); _cpuLabels.add(nowStr())
+        if _cpuTrend.len() > 12 { _cpuTrend.remove(0); _memTrend.remove(0); _cpuLabels.remove(0) }
+        lineChart.set_data(_cpuLabels, [_cpuTrend, _memTrend], ["CPU","内存"])
     })
     var tLog  = win.addTimer(900, func() {
         if not live { return }
@@ -221,6 +251,16 @@ main() {
     var tData = win.addTimer(3000, func() {
         if not live { return }
         _allRows = genRows(); applyFilter(table, filterLbl)
+        // 柱状图：刷新各主机请求量
+        for CHART_HOSTS.len() to i { _barVals[i] = rndRange(40.0, 200.0) }
+        barChart.set_data(CHART_HOSTS, _barVals)
+        // 饼图：主机状态分布
+        int nOk = 0; int nWarn = 0; int nErr = 0
+        for _allRows.len() to i {
+            string st = _allRows[i][3]
+            if st == "严重" { nErr = nErr + 1 } else if st == "警告" { nWarn = nWarn + 1 } else { nOk = nOk + 1 }
+        }
+        pieChart.set_data(["正常","警告","严重"], [_float(nOk), _float(nWarn), _float(nErr)])
     })
 
     // ===================== 主循环 =====================

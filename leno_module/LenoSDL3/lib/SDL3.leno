@@ -26,6 +26,7 @@ import "sdl_tooltip.leno" as tip
 import "sdl_scrollview.leno" as scv
 import "sdl_treeview.leno" as tv
 import "sdl_widget.leno" as wgt
+import "sdl_chart.leno" as cht
 
 
 // ==================== 重新导出类型 ====================
@@ -77,6 +78,9 @@ use lay.HBox
 use lay.VBox
 use lay.AnchorBox
 use wgt.Widget
+use cht.BarChart
+use cht.LineChart
+use cht.PieChart
 use wnd.EventHandler
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
@@ -95,6 +99,9 @@ export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
 export func createMenuBar(Dict opts): MenuBar      { return menu.createMenuBar(opts) }
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
 export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
+export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }
+export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }
+export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
 export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }

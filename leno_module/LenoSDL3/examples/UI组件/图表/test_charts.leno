@@ -1,0 +1,47 @@
+// test_charts.leno — 图表控件演示（柱状图 / 折线图 / 饼图）
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_core.leno" as core
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Window
+use SDL3.BarChart
+use SDL3.LineChart
+use SDL3.PieChart
+
+main() {
+    SDL3.ttfInit()
+    var win = SDL3.createWindow({title:"图表控件 Demo", w:880, h:600, resizable:true})
+    if not win.ok { SDL3.ttfQuit(); return }
+
+    // 柱状图：各机房请求量
+    var bar = SDL3.createBarChart({x:30, y:60, w:360, h:240, title:"各机房请求量(万)", font_size:12})
+    win.add(bar)
+    bar.set_data(["北京","上海","广州","深圳","成都","杭州"], [120,200,90,150,75,180])
+
+    // 折线图：CPU 使用率趋势（两条线）
+    var line = SDL3.createLineChart({x:30, y:330, w:360, h:240, title:"CPU 使用率趋势(%)", font_size:12})
+    win.add(line)
+    line.set_data(
+        ["00","04","08","12","16","20","24"],
+        [[20,35,30,60,75,50,25],[30,40,38,55,68,45,30]],
+        ["节点A","节点B"]
+    )
+
+    // 饼图：流量来源占比
+    var pie = SDL3.createPieChart({x:450, y:60, w:400, h:260, title:"流量来源占比", font_size:12})
+    win.add(pie)
+    pie.set_data(["直接访问","搜索引擎","社交媒体","其他"], [35,40,18,7])
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(18, 20, 26, 255)
+            core.requestRedraw()   // 持续重绘以响应悬停
+        }
+    )
+
+    SDL3.ttfQuit()
+}

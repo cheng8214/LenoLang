@@ -66,6 +66,10 @@ use tvlib.TreeView
 import "sdl_tooltip.leno" as tip
 import "sdl_widget.leno" as wgt
 use wgt.Widget
+import "sdl_chart.leno" as cht
+use cht.BarChart
+use cht.LineChart
+use cht.PieChart
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
@@ -423,6 +427,30 @@ export struct Window {
         if cm != null { _menus.add(cm) }   // 右键上下文菜单交由第二遍 renderPopup 顶层绘制
         _widgets.add(t as Widget)
         return t
+    }
+
+    // 添加柱状图，opts: {x, y, w, h, title, font_size, show_values, show_grid}
+    // 返回 BarChart，可 .set_data(Array[string] cats, Array[float] vals)
+    func addBarChart(Dict opts): BarChart {
+        BarChart c = cht.createBarChart(opts)
+        _widgets.add(c as Widget)
+        return c
+    }
+
+    // 添加折线图，opts: {x, y, w, h, title, font_size, show_grid, show_points}
+    // 返回 LineChart，可 .set_data(Array[string] xlabels, Array[Array[float]] series, Array[string] names)
+    func addLineChart(Dict opts): LineChart {
+        LineChart c = cht.createLineChart(opts)
+        _widgets.add(c as Widget)
+        return c
+    }
+
+    // 添加饼图，opts: {x, y, w, h, title, font_size}
+    // 返回 PieChart，可 .set_data(Array[string] labels, Array[float] values)
+    func addPieChart(Dict opts): PieChart {
+        PieChart c = cht.createPieChart(opts)
+        _widgets.add(c as Widget)
+        return c
     }
 
     // 运行主循环（回调模式，支持多窗口）
