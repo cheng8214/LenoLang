@@ -33,7 +33,7 @@ export struct TabControl impl Widget {
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
     // 字体（画标签文字）
-    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
 
     // 配色
     int _bgR = 38; int _bgG = 40; int _bgB = 48       // 内容区背景
@@ -82,7 +82,7 @@ export struct TabControl impl Widget {
         _active = _int(opts.get("active", 0))
         if _active < 0 or _active >= _tabs.len() { _active = 0 }
 
-        _fontSize = _float(opts.get("font_size", 14))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 

@@ -120,7 +120,7 @@ export struct SpinBox impl Widget {
         float ew = w - _arrowW
         if ew < 10.0 { ew = 10.0 }
         _edit = edt.createEdit({x: x, y: y, w: ew, h: h, border: false, radius: 0,
-                                font_size: _float(opts.get("font_size", 16)),
+                                font_size: _float(opts.get("font_size", 15)),
                                 placeholder: opts.get("placeholder", "") as string})
         _edit.on_change(func() { _try_apply_text() })
 

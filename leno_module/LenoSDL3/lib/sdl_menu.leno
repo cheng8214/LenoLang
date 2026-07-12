@@ -124,7 +124,7 @@ export struct MenuBar impl Widget {
     Array[bool]         _ctxFlag = []    // 标记某条目是否为“上下文菜单”（无标题栏）
     Array[Array[float]] _ctxAnchor = []  // 上下文菜单的弹出锚点 [x, y]
 
-    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
 
     // 配色
     int _barR = 34; int _barG = 36; int _barB = 44       // 菜单栏背景
@@ -168,7 +168,7 @@ export struct MenuBar impl Widget {
         y       = _float(opts.get("y", 0))
         w       = _float(opts.get("w", 600))
         h       = _float(opts.get("h", 28))
-        _fontSize = _float(opts.get("font_size", 14))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
         _orient    = opts.get("orientation", "horizontal") as string

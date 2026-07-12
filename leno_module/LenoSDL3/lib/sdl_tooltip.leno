@@ -19,7 +19,7 @@ var _tipStart = 0           // 首次 hover 该文本的 tick（用于延迟）
 var _tipVisible = false
 var _tipDelay  = 500        // 悬停多久才显示（毫秒）
 var _font Font
-var _fontSize  = 14.0
+var _fontSize  = 15.0
 
 // 配色（深色半透明浮层）
 var _bgR = 38;  var _bgG = 40;  var _bgB = 48

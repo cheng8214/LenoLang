@@ -12,7 +12,7 @@ export struct CheckBox impl Widget {
     float x = 0.0; float y = 0.0
     float _box = 22.0       // 勾选框边长
     float _gap = 8.0        // 框与文字间距
-    float _fontSize = 16.0
+    float _fontSize = 15.0
     string _fontPath = ""
     int _fontStyle = 0
     Font  _font
@@ -47,7 +47,7 @@ export struct CheckBox impl Widget {
         y         = _float(opts.get("y", 0))
         _box      = _float(opts.get("box", 22))
         _gap      = _float(opts.get("gap", 8))
-        _fontSize = _float(opts.get("font_size", 16))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 

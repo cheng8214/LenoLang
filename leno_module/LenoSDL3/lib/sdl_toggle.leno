@@ -11,7 +11,7 @@ export struct Toggle impl Widget {
     string text = ""
     float x = 0.0; float y = 0.0
     float w = 52.0; float h = 28.0
-    float _fontSize = 16.0
+    float _fontSize = 15.0
     string _fontPath = ""
     int _fontStyle = 0
     Font  _font
@@ -50,7 +50,7 @@ export struct Toggle impl Widget {
         y         = _float(opts.get("y", 0))
         w         = _float(opts.get("w", 52))
         h         = _float(opts.get("h", 28))
-        _fontSize = _float(opts.get("font_size", 16))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 

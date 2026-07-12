@@ -11,7 +11,7 @@ export struct Button impl Widget {
     string text = "Button"
     float x = 0.0; float y = 0.0; float w = 100.0; float h = 40.0
     float _radius = 6.0      // 圆角半径
-    float _fontSize = 18.0   // 字体大小
+    float _fontSize = 15.0   // 字体大小
     string _fontPath = ""    // 字体路径（空则自动选择）
     int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
     Font  _font              // 字体缓存
@@ -64,7 +64,7 @@ export struct Button impl Widget {
         // 圆角
         _radius   = _float(opts.get("radius", 6))
         // 字体大小
-        _fontSize = _float(opts.get("font_size", 18))
+        _fontSize = _float(opts.get("font_size", 15))
         // 字体路径（空则自动匹配系统字体）
         _fontPath = opts.get("font_path", "") as string
         // 字体样式（粗体/斜体/下划线等）

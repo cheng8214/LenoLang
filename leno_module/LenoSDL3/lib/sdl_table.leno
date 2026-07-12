@@ -22,7 +22,7 @@ export struct Table impl Widget {
     int _selRow = -1; int _selCol = -1; int _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
     bool _sortable = false; int _sortCol = -1; bool _sortDesc = false; bool _zebra = true
 
-    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
     int br = 38; int bg = 40; int bb = 48
     int _hdrR = 46; int _hdrG = 48; int _hdrB = 56; int _hdrTxtR = 220; int _hdrTxtG = 225; int _hdrTxtB = 235
     int _selR = 60; int _selG = 150; int _selB = 235
@@ -140,7 +140,7 @@ export struct Table impl Widget {
         h = _float(opts.get("h", 240))
         _headerH = _float(opts.get("header_h", 28))
         _rowH = _float(opts.get("row_h", 24))
-        _fontSize = _float(opts.get("font_size", 14))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
         _sortable = _bool(opts.get("sortable", false))

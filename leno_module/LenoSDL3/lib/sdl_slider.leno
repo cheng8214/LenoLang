@@ -12,7 +12,7 @@ export struct Slider impl Widget {
     float minV = 0.0; float maxV = 100.0; float value = 0.0
     float step = 0.0
     bool _vertical = false
-    string _fontPath = ""; float _fontSize = 14.0; int _fontStyle = 0; Font _font
+    string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font _font
     int _trkR = 60; int _trkG = 60; int _trkB = 72       // 轨道背景色
     int _fillR = 60; int _fillG = 170; int _fillB = 245  // 已选填充色
     int _thumbR = 245; int _thumbG = 245; int _thumbB = 250 // 滑块色
@@ -56,7 +56,7 @@ export struct Slider impl Widget {
         value  = _float(opts.get("value", 0.0))
         step   = _float(opts.get("step", 0.0))
         _vertical = _bool(opts.get("vertical", false))
-        _fontSize = _float(opts.get("font_size", 14))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 

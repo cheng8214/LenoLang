@@ -13,7 +13,7 @@ export struct ProgressBar impl Widget {
     float minV = 0.0; float maxV = 100.0; float value = 0.0
     bool _clickable = false
     bool _showText = true
-    string _fontPath = ""; float _fontSize = 14.0; int _fontStyle = 0; Font _font
+    string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font _font
     int _trkR = 60; int _trkG = 60; int _trkB = 72          // 轨道背景色
     int _fillR = 80; int _fillG = 200; int _fillB = 120     // 已选填充色
     int tr = 235; int tg = 235; int tb = 245                // 文字色
@@ -54,7 +54,7 @@ export struct ProgressBar impl Widget {
         value     = _float(opts.get("value", 0.0))
         _clickable = _bool(opts.get("clickable", false))
         _showText  = _bool(opts.get("show_text", true))
-        _fontSize = _float(opts.get("font_size", 14))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 

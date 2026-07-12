@@ -9,7 +9,7 @@ import "sdl_tooltip.leno" as tip
 export struct Label impl Widget {
     string text = ""
     float x = 0.0; float y = 0.0
-    float _fontSize = 16.0       // 字体大小
+    float _fontSize = 15.0       // 字体大小
     string _fontPath = ""        // 字体路径（空则自动匹配）
     int _fontStyle = 0           // 字体样式
     Font  _font                  // 字体缓存
@@ -39,7 +39,7 @@ export struct Label impl Widget {
         text      = opts.get("text", "") as string
         x         = _float(opts.get("x", 0))
         y         = _float(opts.get("y", 0))
-        _fontSize = _float(opts.get("font_size", 16))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
 
