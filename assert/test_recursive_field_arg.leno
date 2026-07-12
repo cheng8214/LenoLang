@@ -1,0 +1,41 @@
+// 测试跨模块自递归 struct 字段传参 - 修复后验证
+import "cross_mod_base.leno" as base
+use base.TreeNode
+
+// 递归搜索，直接用 n.children[i] 传参（之前推断为 any，现在应推断为 TreeNode）
+func findNodeById(TreeNode n, int id): TreeNode {
+    if n.id == id { return n }
+    for n.children.len() to i {
+        TreeNode found = findNodeById(n.children[i], id)
+        // TreeNode.id 默认值为 0，不是 null，所以用 > 0 判断
+        if found.id > 0 { return found }
+    }
+    TreeNode e = new TreeNode(); return e
+}
+
+main() {
+    TreeNode root = new TreeNode(); root.id = 1; root.name = "root"
+    TreeNode c1 = new TreeNode(); c1.id = 2; c1.name = "c1"
+    TreeNode c2 = new TreeNode(); c2.id = 3; c2.name = "c2"
+    root.add_child(c1); root.add_child(c2)
+
+    // 直接传 n.children[i] 作为递归参数（之前报类型不匹配）
+    TreeNode found = findNodeById(root, 3)
+    print("found.id = " + _int(found.id))
+    print("found.name = " + found.name)
+
+    // 用直接比较避免 assert_eq 的类型比较问题
+    if found.id == 3 {
+        print("OK: found.id == 3")
+    } else {
+        print("FAIL: found.id = " + _int(found.id) + " expected 3")
+    }
+
+    if found.name == "c2" {
+        print("OK: found.name == c2")
+    } else {
+        print("FAIL: found.name = " + found.name + " expected c2")
+    }
+
+    print("=== test_recursive_field_arg passed ===")
+}

@@ -87,6 +87,7 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         for (int j = 0; j < table->structs[i].field_count; j++) {
             free(table->structs[i].fields[j].name);
             free(table->structs[i].fields[j].struct_name);
+            free(table->structs[i].fields[j].element_struct_name);
         }
         free(table->structs[i].fields);
         // 释放方法数组
@@ -240,6 +241,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             st->fields[i].type = fields[i].type;
             st->fields[i].struct_name = fields[i].struct_name ? strdup(fields[i].struct_name) : NULL;
             st->fields[i].element_type = fields[i].element_type;
+            st->fields[i].element_struct_name = fields[i].element_struct_name ? strdup(fields[i].element_struct_name) : NULL;
         }
     }
 
@@ -2036,11 +2038,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 strncpy(type_str, type_start, type_len);
                                 type_str[type_len] = '\0';
 
-                                // 检查是否是 Ptr[T] 类型
+                                // 检查是否是 Ptr[T] / Array[T] / Dict[K,V] 类型
                                 TypeKind element_type = TYPE_PTR;  // 默认元素类型
+                                char* element_struct_name = NULL;   // 元素类型的结构体/face/clib 名称
                                 while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
                                 if (*after_struct == '[') {
-                                    // 解析 Ptr[T] 中的 T
+                                    // 解析 [T] 中的 T
                                     after_struct++;
                                     while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
                                     const char* elem_type_start = after_struct;
@@ -2051,6 +2054,16 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         strncpy(elem_type_str, elem_type_start, elem_type_len);
                                         elem_type_str[elem_type_len] = '\0';
                                         element_type = parse_base_type(elem_type_str);
+                                        // 如果元素类型是未识别的自定义类型，检查是否是 struct/face/clib
+                                        if (element_type == TYPE_ANY) {
+                                            if (is_known_struct(elem_type_str, struct_names, struct_name_count)) {
+                                                element_type = TYPE_STRUCT;
+                                                element_struct_name = strdup(elem_type_str);
+                                            } else if (is_known_clib(elem_type_str, clib_names, clib_name_count)) {
+                                                element_type = TYPE_CLIB;
+                                                element_struct_name = strdup(elem_type_str);
+                                            }
+                                        }
                                     }
                                     // 跳过到 ] 为止的内容
                                     while (*after_struct && *after_struct != ']') after_struct++;
@@ -2081,6 +2094,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         }
                                     }
                                     fields[field_count].element_type = element_type;
+                                    fields[field_count].element_struct_name = element_struct_name;
                                     if (field_count >= MOD_MAX_FIELDS) {
                                         fprintf(stderr, "[错误] struct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
                                     } else {
@@ -2261,11 +2275,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                 strncpy(type_str, type_start, type_len);
                                 type_str[type_len] = '\0';
 
-                                // 检查是否是 Ptr[T] 类型
+                                // 检查是否是 Ptr[T] / Array[T] / Dict[K,V] 类型
                                 TypeKind element_type = TYPE_PTR;  // 默认元素类型
+                                char* element_struct_name = NULL;   // 元素类型的结构体/face/clib 名称
                                 while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
                                 if (*after_cstruct == '[') {
-                                    // 解析 Ptr[T] 中的 T
+                                    // 解析 [T] 中的 T
                                     after_cstruct++;
                                     while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
                                     const char* elem_type_start = after_cstruct;
@@ -2276,6 +2291,16 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         strncpy(elem_type_str, elem_type_start, elem_type_len);
                                         elem_type_str[elem_type_len] = '\0';
                                         element_type = parse_base_type(elem_type_str);
+                                        // 如果元素类型是未识别的自定义类型，检查是否是 struct/face/clib
+                                        if (element_type == TYPE_ANY) {
+                                            if (is_known_struct(elem_type_str, struct_names, struct_name_count)) {
+                                                element_type = TYPE_STRUCT;
+                                                element_struct_name = strdup(elem_type_str);
+                                            } else if (is_known_clib(elem_type_str, clib_names, clib_name_count)) {
+                                                element_type = TYPE_CLIB;
+                                                element_struct_name = strdup(elem_type_str);
+                                            }
+                                        }
                                     }
                                     // 跳过到 ] 为止的内容
                                     while (*after_cstruct && *after_cstruct != ']') after_cstruct++;
@@ -2305,6 +2330,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         }
                                     }
                                     fields[field_count].element_type = element_type;
+                                    fields[field_count].element_struct_name = element_struct_name;
                                     if (field_count >= MOD_MAX_FIELDS) {
                                         fprintf(stderr, "[错误] cstruct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
                                     } else {
@@ -3048,7 +3074,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000002
+#define LENOSYMC_VERSION 0x00000003
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -3251,6 +3277,7 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
             uint8_t et = (uint8_t)ss->fields[j].element_type;
             fwrite(&et, 1, 1, f);
             sym_cache_write_string(f, ss->fields[j].struct_name);
+            sym_cache_write_string(f, ss->fields[j].element_struct_name);
         }
         uint32_t mc = (uint32_t)ss->method_count;
         fwrite(&mc, 4, 1, f);
@@ -3480,6 +3507,7 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             ss->fields[j].type = (TypeKind)ft;
             ss->fields[j].element_type = (TypeKind)et;
             ss->fields[j].struct_name = sym_cache_read_string(f);
+            ss->fields[j].element_struct_name = sym_cache_read_string(f);
         }
         uint32_t mc; if (fread(&mc, 4, 1, f) != 1) goto fail;
         ss->method_count = (int)mc;

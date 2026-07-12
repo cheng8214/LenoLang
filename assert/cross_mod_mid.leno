@@ -1,0 +1,18 @@
+// 中间模块：re-export 底层模块的类型
+import "cross_mod_base.leno" as base
+use base.IWidget
+use base.Button
+use base.Label
+use base.Panel
+use base.TreeNode
+use base.WidgetHandler
+use base.WidgetList
+
+// re-export：创建组合函数
+export func create_panel(int id): Panel {
+    Panel p = new Panel(); p._id = id
+    return p
+}
+
+// re-export alias
+export alias PanelHandler = func(Panel): bool

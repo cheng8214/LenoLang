@@ -1,0 +1,53 @@
+// 底层模块：定义 face + struct impl + alias + 自递归 struct
+export face IWidget {
+    func get_id(): int
+    func render(): string
+}
+
+export struct Button impl IWidget {
+    int _id = 0
+    string _label = ""
+    func get_id(): int { return _id }
+    func render(): string { return "Button(" + _label + ")" }
+}
+
+export struct Label impl IWidget {
+    int _id = 0
+    string _text = ""
+    func get_id(): int { return _id }
+    func render(): string { return "Label(" + _text + ")" }
+}
+
+export struct Panel impl IWidget {
+    int _id = 0
+    Array[IWidget] _children = []
+    func get_id(): int { return _id }
+    func render(): string { return "Panel(" + _int(_children.len()) + ")" }
+    func add_child(IWidget w) { _children.add(w) }
+    func child_count(): int { return _children.len() }
+}
+
+// 自递归 struct
+export struct TreeNode {
+    int id = 0
+    string name = ""
+    Array[TreeNode] children = []
+    func add_child(TreeNode c) { children.add(c) }
+}
+
+// alias：函数类型
+export alias WidgetHandler = func(IWidget): bool
+
+// alias：struct 类型
+export alias WidgetList = Array[IWidget]
+
+// 工厂函数
+export func make_button(int id, string label): Button {
+    Button b = new Button(); b._id = id; b._label = label
+    return b
+}
+
+export func make_label(int id, string text): Label {
+    Label l = new Label(); l._id = id; l._text = text
+    return l
+}

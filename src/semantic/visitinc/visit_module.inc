@@ -202,6 +202,15 @@
                         if (struct_sym->fields[i].struct_name) {
                             sym->struct_field_types[i]->struct_name = strdup(struct_sym->fields[i].struct_name);
                         }
+                        // 重建 Array[T]/Dict[K,V] 的元素类型信息
+                        if ((struct_sym->fields[i].type == TYPE_ARRAY || struct_sym->fields[i].type == TYPE_DICT)
+                            && struct_sym->fields[i].element_type != TYPE_PTR) {
+                            TypeInfo* elem_type = type_new(struct_sym->fields[i].element_type);
+                            if (struct_sym->fields[i].element_struct_name) {
+                                elem_type->struct_name = strdup(struct_sym->fields[i].element_struct_name);
+                            }
+                            sym->struct_field_types[i]->element_type = elem_type;
+                        }
                     }
                     // 设置泛型类型参数信息
                     sym->struct_type_param_count = struct_sym->type_param_count;
