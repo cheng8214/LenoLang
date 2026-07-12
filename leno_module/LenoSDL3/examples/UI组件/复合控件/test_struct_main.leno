@@ -1,0 +1,51 @@
+// test_struct_main.leno —— 独立测试：Array[Struct] 是否会在运行时退化成 any
+import "test_struct_mod.leno" as M
+use M.Holder
+use M.Item
+
+// 同文件内定义的结构体
+struct Node {
+    int id
+    string text
+    bool checked
+}
+
+func fmtBool(bool b): string {
+    if b { return "true" } else { return "false" }
+}
+
+main() {
+    print("===== 场景A：同文件内 Array[Node]（基础场景）=====")
+    Array[Node] arr = []
+    for 4 to i {
+        Node n = new Node()
+        n.id = i; n.text = "a" + i; n.checked = false
+        arr.add(n)
+    }
+    print("arr[2].id = " + arr[2].id)
+    print("arr[2].id == 2 -> " + fmtBool(arr[2].id == 2))
+    arr[2].checked = true
+    print("arr[2].checked 写回后 = " + fmtBool(arr[2].checked))
+
+    print("===== 场景B：模块内部 diagnose（复刻原 render 逐行判断）=====")
+    var h = new Holder()
+    h.fill()
+    var lines = h.diagnose(2)
+    for lines.len() to i { print(lines[i]) }
+    h.flip(2, true)
+    print("模块内 is_checked(2) 写回后 = " + fmtBool(h.is_checked(2)))
+
+    print("===== 场景C：模块外经访问器读 Array[Item] 元素 =====")
+    var c = h.count()
+    for c to i {
+        print("outside[" + i + "] id=" + h.id_at(i) + " match(==2)=" + fmtBool(h.match_at(i, 2)) + " checked=" + fmtBool(h.checked_at(i)))
+    }
+
+    print("===== 场景D：模块外【直接】访问 Array[Item] 字段（复刻原 tv._flat 诊断）=====")
+    var ext = h._items            // 直接读字段，原诊断里 tv._flat 在此变成 any
+    for ext.len() to i {
+        // 直接读元素 .id 并与 int 比较
+        var got = ext[i].id
+        print("ext[" + i + "] id=" + got + " match(==2)=" + fmtBool(got == 2))
+    }
+}

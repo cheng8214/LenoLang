@@ -1,0 +1,749 @@
+// sdl_treeview.leno — 树视图控件（层级节点、展开/折叠、单选/多选、可选复选框、右键节点菜单）
+// 通过 win.addTreeView({...}) 创建。
+//   items: Array[Dict]，每个节点 {text, children:[...], expanded, checked, checkable,
+//                                has_children(懒加载标记), data, id(可选)}
+//   on_change(func(Array[int]))  : 选择变化时回调，收到选中节点 id 数组
+//   on_context(func(int,float,float)) : 右键节点回调（节点 id, 鼠标 x, y）
+//   on_toggle(func(int,bool))    : 节点展开/折叠时回调（节点 id, 是否展开）
+//   on_check(func(int,bool))     : 节点勾选状态变化时回调（节点 id, 是否勾选）
+//   右键菜单：opts.context_menu = true 启用内置 MenuBar，之后用
+//             tv.get_context_menu().addContextItem(tv.get_context_handle(), {...}) 添加项，
+//             tv.get_context_menu().on_select(func(s,id){...}) 处理选择。
+//
+// 数据模型：嵌套 Array[TreeViewNode] 树（_roots）为唯一数据源。
+// 重要：Leno 中结构体数组“按非循环下标 list[idx] 访问会返回零值默认拷贝”，
+//       且跨函数返回结构体是值拷贝。因此：
+//       1) 渲染/命中用的拍平视图一律用基础类型并行数组（_flatIds/_flatText/...），按下标访问安全；
+//       2) 所有按 id 的读/写都走“递归 + 循环变量 list[i].field”原地操作，绝不 list[idx] 或改副本。
+//       详见 BUG_ArrayStruct语义.md。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
+import "sdl_menu.leno" as menu; use menu.MenuBar
+
+// 节点结构：children 递归构成树；_parent/_depth 为拍平遍历与连接线提供便利
+export struct TreeViewNode {
+    int id = -1
+    string text = ""
+    Array[TreeViewNode] children = []
+    bool expanded = false
+    bool hasChildren = false
+    bool checkable = false
+    bool checked = false
+    Dict data = {}
+    int _depth = 0
+    int _parent = -1
+}
+
+export struct TreeView impl Widget {
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 200.0
+    int _nextId = 1
+    // ===== 规范状态：嵌套树（唯一数据源）=====
+    Array[TreeViewNode] _roots = []
+    // ===== 当前可见行的拍平视图（基础类型并行数组，渲染/命中复用）=====
+    // 注意：Leno 中结构体数组按“非循环下标”访问会返回默认拷贝，故拍平层只用
+    // 基础类型数组（int/string/bool，按任意下标访问均安全）；源数据仍存于 _roots 树。
+    Array[int] _flatIds = []
+    Array[string] _flatText = []
+    Array[int] _flatParent = []     // 每行直接父节点 id（-1=根）
+    Array[int] _flatDepth = []
+    Array[bool] _flatHas = []
+    Array[bool] _flatCheck = []
+    Array[bool] _flatOn = []
+    Array[bool] _flatExpanded = []
+
+    float _rowH = 24.0
+    float _indent = 16.0
+    float _padX = 6.0
+    float _scroll = 0.0
+    int _hover = -1
+    int _sel = -1
+    Array[int] _sel2 = []
+    int _mode = 0
+    bool _showCheck = false
+    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    int br = 38; int bg = 40; int bb = 48
+    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110
+    int _selR = 60; int _selG = 150; int _selB = 235
+    int _hovR = 70; int _hovG = 78; int _hovB = 92
+    int tr = 235; int tg = 235; int tb = 245
+    int _arrR = 180; int _arrG = 185; int _arrB = 200
+    int _sbR = 120; int _sbG = 125; int _sbB = 140
+    int _lineR = 64; int _lineG = 70; int _lineB = 84   // 连接线颜色
+    bool _showLines = true                              // 是否显示层级连接线
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true; bool visible = true; bool _loaded = false
+    string _tip = ""
+    bool _draggingScroll = false; float _sbDragOffset = 0.0
+    // 右键上下文菜单
+    bool _ctxMenuEnabled = false
+    MenuBar _ctxMenu = null
+    int _ctxHandle = -1
+    int _winW = 0; int _winH = 0
+    func(Array[int]):void _onChange
+    func(int, float, float):void _onContext
+    func(int, bool):void _onToggle
+    func(int, bool):void _onCheck
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null { _font.close() }
+            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
+            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    // ==================== 规范状态构建（嵌套树）====================
+    func _build_node(Dict d, int parentId, int depth): TreeViewNode {
+        TreeViewNode n = new TreeViewNode()
+        n.id = _nextId; _nextId = _nextId + 1
+        n.text = d.get("text", "") as string
+        n._parent = parentId
+        n._depth = depth
+        n.expanded = _bool(d.get("expanded", false))
+        bool hasCh = false
+        var ch = d.get("children", [])
+        if ch is Array[Dict] { if (ch as Array[Dict]).len() > 0 { hasCh = true } }
+        if d.has("has_children") { hasCh = _bool(d.get("has_children", false)) or hasCh }
+        n.hasChildren = hasCh
+        bool chk = false; bool on = false
+        if d.has("checkable") { chk = _bool(d.get("checkable", false)) }
+        if d.has("checked") { chk = true; on = _bool(d.get("checked", false)) }
+        n.checkable = chk
+        n.checked = on
+        n.data = d.get("data", {}) as Dict
+        if ch is Array[Dict] {
+            var ca = ch as Array[Dict]
+            for ca.len() to k { n.children.add(_build_node(ca[k] as Dict, n.id, depth + 1)) }
+        }
+        return n
+    }
+    func _build_from_dicts(Array[Dict] ds) {
+        _roots = []
+        _nextId = 1
+        for ds.len() to i { _roots.add(_build_node(ds[i] as Dict, -1, 0)) }
+    }
+
+    // 递归复制整棵子列表（全程用循环变量 list[i] 读取，规避“非循环下标返回零值拷贝”的语言坑）
+    func _snap_children(Array[TreeViewNode] list): Array[TreeViewNode] {
+        Array[TreeViewNode] out = []
+        for list.len() to i {
+            TreeViewNode o = new TreeViewNode()
+            o.id = list[i].id; o.text = list[i].text; o.expanded = list[i].expanded
+            o.hasChildren = list[i].hasChildren; o.checkable = list[i].checkable; o.checked = list[i].checked
+            o._depth = list[i]._depth; o._parent = list[i]._parent; o.data = list[i].data
+            o.children = _snap_children(list[i].children)
+            out.add(o)
+        }
+        return out
+    }
+    // 按 id 查找节点：返回现建的快照（结构体跨函数返回为拷贝；且只用循环变量读取字段）
+    func _find(int id): TreeViewNode { return _find_r(_roots, id) }
+    func _find_r(Array[TreeViewNode] list, int id): TreeViewNode {
+        for list.len() to i {
+            if list[i].id == id {
+                TreeViewNode o = new TreeViewNode()
+                o.id = list[i].id; o.text = list[i].text; o.expanded = list[i].expanded
+                o.hasChildren = list[i].hasChildren; o.checkable = list[i].checkable; o.checked = list[i].checked
+                o._depth = list[i]._depth; o._parent = list[i]._parent; o.data = list[i].data
+                o.children = _snap_children(list[i].children)
+                return o
+            }
+            TreeViewNode c = _find_r(list[i].children, id)
+            if c.id >= 0 { return c }
+        }
+        TreeViewNode empty = new TreeViewNode()
+        return empty
+    }
+
+    // ==================== 拍平（仅收集已展开节点的可见行）====================
+    func _flatten() {
+        _flatIds = []; _flatText = []; _flatParent = []; _flatDepth = []
+        _flatHas = []; _flatCheck = []; _flatOn = []; _flatExpanded = []
+        _flatten_r(_roots, -1, 0)
+    }
+    func _flatten_r(Array[TreeViewNode] list, int par, int depth) {
+        for list.len() to i {
+            _flatIds.add(list[i].id)
+            _flatText.add(list[i].text)
+            _flatParent.add(par)
+            _flatDepth.add(depth)
+            _flatHas.add(list[i].hasChildren)
+            _flatCheck.add(list[i].checkable)
+            _flatOn.add(list[i].checked)
+            _flatExpanded.add(list[i].expanded)
+            if list[i].expanded {
+                _flatten_r(list[i].children, list[i].id, depth + 1)
+            }
+        }
+    }
+
+    func _total_h(): float { return _float(_flatIds.len()) * _rowH }
+    func _max_scroll(): float {
+        float m = _total_h() - h
+        if m < 0.0 { m = 0.0 }
+        return m
+    }
+    func _clamp_scroll() {
+        float m = _max_scroll()
+        if _scroll < 0.0 { _scroll = 0.0 }
+        if _scroll > m { _scroll = m }
+    }
+
+    // ==================== 布局接口 ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    // ==================== 滚动条几何 ====================
+    func _sb_geom(): Array[float] {
+        float maxs = _max_scroll()
+        float sw = 8.0
+        float sx = x + w - sw - 2.0
+        float ty0 = y + 2.0
+        float ty1 = y + h - 2.0
+        float trk = ty1 - ty0
+        float thH = _clamp(h * h / _total_h(), 20.0, h - 4.0)
+        float thy = ty0 + (_scroll / maxs) * (trk - thH)
+        return [sx, sw, ty0, ty1, thH, thy, maxs]
+    }
+    func _in_vscroll(float mx, float my): bool {
+        if _max_scroll() <= 0.0 { return false }
+        var g = _sb_geom()
+        return mx >= g[0] - 2.0 and mx <= g[0] + g[1] + 2.0 and my >= g[2] and my <= g[3]
+    }
+    func _in_thumb(float mx, float my): bool {
+        if _max_scroll() <= 0.0 { return false }
+        var g = _sb_geom()
+        return mx >= g[0] - 2.0 and mx <= g[0] + g[1] + 2.0 and my >= g[5] and my <= g[5] + g[4]
+    }
+
+    // ==================== 命中测试 ====================
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+    func _row_at(float my): int {
+        int idx = _int((my - y + _scroll) / _rowH)
+        if idx < 0 or idx >= _flatIds.len() { return -1 }
+        return idx
+    }
+    func _id_at(float mx, float my): int {
+        if not contains(mx, my) { return -1 }
+        int idx = _row_at(my)
+        if idx < 0 { return -1 }
+        return _flatIds[idx]
+    }
+    func _in_toggle(int idx, float mx, float my): bool {
+        int depth = _flatDepth[idx]
+        float cx = x + _padX + _float(depth) * _indent
+        float rowY = y - _scroll + _float(idx) * _rowH
+        return mx >= cx and mx <= cx + 16.0 and my >= rowY and my <= rowY + _rowH
+    }
+    func _in_check(int idx, float mx, float my): bool {
+        if not _showCheck { return false }
+        if not _flatCheck[idx] { return false }
+        int depth = _flatDepth[idx]
+        float cx = x + _padX + _float(depth) * _indent
+        float rowY = y - _scroll + _float(idx) * _rowH
+        float bx = cx + 18.0
+        float by = rowY + (_rowH - 14.0) / 2.0
+        return mx >= bx and mx <= bx + 14.0 and my >= by and my <= by + 14.0
+    }
+
+    func _is_selected(int id): bool {
+        if _mode == 0 { return id == _sel }
+        for _sel2.len() to i { if _sel2[i] == id { return true } }
+        return false
+    }
+
+    // ==================== set 初始化 ====================
+    func set(Dict opts) {
+        x         = _float(opts.get("x", 0))
+        y         = _float(opts.get("y", 0))
+        w         = _float(opts.get("w", 200))
+        h         = _float(opts.get("h", 200))
+        _rowH     = _float(opts.get("row_h", 24))
+        _indent    = _float(opts.get("indent", 16))
+        _padX      = _float(opts.get("pad_x", 6))
+        _fontSize = _float(opts.get("font_size", 14))
+        _fontPath = opts.get("font_path", "") as string
+        _fontStyle = _int(opts.get("font_style", 0))
+        _mode     = _int(opts.get("mode", 0))
+        _showCheck = _bool(opts.get("show_check", false))
+
+        var its = opts.get("items", [])
+        if its is Array[Dict] { _build_from_dicts(its as Array[Dict]) }
+        else { _roots = [] }
+
+        _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []
+
+        var bgc = opts.get("bg_rgb");      if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
+        var bdc = opts.get("border_rgb");  if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
+        var slc = opts.get("sel_rgb");     if slc is Array[int] { _selR = slc[0]; _selG = slc[1]; _selB = slc[2] }
+        var hvc = opts.get("hover_rgb");   if hvc is Array[int] { _hovR = hvc[0]; _hovG = hvc[1]; _hovB = hvc[2] }
+        var ctc = opts.get("text_rgb");    if ctc is Array[int] { tr = ctc[0]; tg = ctc[1]; tb = ctc[2] }
+        var arc = opts.get("arrow_rgb");   if arc is Array[int] { _arrR = arc[0]; _arrG = arc[1]; _arrB = arc[2] }
+        var sbc = opts.get("scroll_rgb");  if sbc is Array[int] { _sbR = sbc[0]; _sbG = sbc[1]; _sbB = sbc[2] }
+        var lnc = opts.get("line_rgb");    if lnc is Array[int] { _lineR = lnc[0]; _lineG = lnc[1]; _lineB = lnc[2] }
+        _showLines = _bool(opts.get("show_lines", true))
+
+        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        enabled = _bool(opts.get("enabled", true))
+        visible = _bool(opts.get("visible", true))
+        _tip = opts.get("tip", "") as string
+
+        _ctxMenuEnabled = _bool(opts.get("context_menu", false)) and opts.has("context_menu")
+        if _ctxMenuEnabled and _ctxMenu == null {
+            _ctxMenu = menu.createMenuBar({})
+            _ctxMenu.setWindowSize(_winW, _winH)
+            _ctxHandle = _ctxMenu.addContextMenu("tv_ctx")
+        }
+
+        _ensure_font()
+        _flatten()
+        _clamp_scroll()
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func set_items(Array[Dict] ds) {
+        if ds is Array[Dict] { _build_from_dicts(ds as Array[Dict]) }
+        else { _roots = [] }
+        _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []
+        _flatten(); _clamp_scroll()
+    }
+    func clear() {
+        _roots = []
+        _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []; _flatten()
+    }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func set_font_size(float s) { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func set_scroll(float p) { _scroll = p; _clamp_scroll() }
+    func get_scroll(): float { return _scroll }
+    // 层级连接线
+    func set_show_lines(bool v) { _showLines = v }
+    func get_show_lines(): bool { return _showLines }
+
+    // 展开/折叠（写操作原地递归修改）
+    func _get_expanded(int id): bool { return _get_expanded_r(_roots, id) }
+    func _get_expanded_r(Array[TreeViewNode] list, int id): bool {
+        for list.len() to i {
+            if list[i].id == id { return list[i].expanded }
+            if _get_expanded_r(list[i].children, id) { return true }
+        }
+        return false
+    }
+    func expand(int id, bool e) {
+        bool cur = _get_expanded(id)
+        if cur != e {
+            _set_expanded_r(_roots, id, e)
+            _flatten(); _clamp_scroll()
+            if _onToggle != null { _onToggle(id, e) }
+        }
+    }
+    func _set_expanded_r(Array[TreeViewNode] list, int id, bool v): bool {
+        for list.len() to i {
+            if list[i].id == id { list[i].expanded = v; return true }
+            if _set_expanded_r(list[i].children, id, v) { return true }
+        }
+        return false
+    }
+    func expand_all() { _set_all_expanded(true) }
+    func collapse_all() { _set_all_expanded(false) }
+    func _set_all_expanded(bool e) {
+        _set_all_r(_roots, e)
+        _flatten(); _clamp_scroll()
+    }
+    func _set_all_r(Array[TreeViewNode] list, bool e) {
+        for list.len() to i {
+            list[i].expanded = e
+            _set_all_r(list[i].children, e)
+        }
+    }
+    func _toggle_node(int id) {
+        bool e = not _get_expanded(id)
+        _set_expanded_r(_roots, id, e)
+        _flatten(); _clamp_scroll()
+        if _onToggle != null { _onToggle(id, e) }
+    }
+    func toggle(int id) { _toggle_node(id) }
+
+    // 复选框（写操作原地递归修改，避免跨函数返回结构体副本导致写不回）
+    func set_checked(int id, bool c) { _set_checked_r(_roots, id, c) }
+    func _set_checked_r(Array[TreeViewNode] list, int id, bool v): bool {
+        for list.len() to i {
+            if list[i].id == id { list[i].checked = v; return true }
+            if _set_checked_r(list[i].children, id, v) { return true }
+        }
+        return false
+    }
+    func is_checked(int id): bool { return _is_checked_r(_roots, id) }
+    func _is_checked_r(Array[TreeViewNode] list, int id): bool {
+        for list.len() to i {
+            if list[i].id == id { return list[i].checked }
+            if _is_checked_r(list[i].children, id) { return true }
+        }
+        return false
+    }
+    func get_checked_ids(): Array[int] {
+        Array[int] out = []
+        _collect_checked_r(_roots, out)
+        return out
+    }
+    func _collect_checked_r(Array[TreeViewNode] list, Array[int] out) {
+        for list.len() to i {
+            if list[i].checkable and list[i].checked { out.add(list[i].id) }
+            _collect_checked_r(list[i].children, out)
+        }
+    }
+
+    // 选择与查询
+    func get_selected_id(): int {
+        if _mode == 0 { return _sel }
+        if _sel2.len() > 0 { return _sel2[_sel2.len() - 1] }
+        return -1
+    }
+    func get_selected_ids(): Array[int] {
+        if _mode == 0 { if _sel >= 0 { return [_sel] } return [] }
+        return _sel2
+    }
+    func get_visible_count(): int { return _flatIds.len() }
+    func get_node(int id): TreeViewNode {
+        TreeViewNode src = _find(id)
+        TreeViewNode n = new TreeViewNode()
+        if src.id >= 0 {
+            n.id = src.id; n.text = src.text; n.expanded = src.expanded; n.hasChildren = src.hasChildren
+            n.checkable = src.checkable; n.checked = src.checked; n._depth = src._depth; n.data = src.data
+            for src.children.len() to i { n.children.add(get_node(src.children[i].id)) }
+        }
+        return n
+    }
+    func get_selected_node(): TreeViewNode { return get_node(_sel) }
+    func select(int id) { _select(id, false) }
+    func _select(int id, bool ctrl) {
+        if id < 0 { return }
+        if _mode == 0 {
+            if _sel != id { _sel = id; _ensure_visible(id); if _onChange != null { _onChange([id]) } }
+        } else {
+            if ctrl {
+                bool found = false
+                for _sel2.len() to i { if _sel2[i] == id { _sel2.remove(i); found = true; break } }
+                if not found { _sel2.add(id) }
+            } else { _sel2 = [id] }
+            _sel = id
+            _ensure_visible(id)
+            if _onChange != null { _onChange(_sel2.copy()) }
+        }
+    }
+    func _ensure_visible(int id) {
+        for _flatIds.len() to i {
+            if _flatIds[i] == id {
+                float iy = _float(i) * _rowH
+                if iy < _scroll { _scroll = iy }
+                else if iy + _rowH > _scroll + h { _scroll = iy + _rowH - h }
+                _clamp_scroll(); return
+            }
+        }
+    }
+    func set_data(int id, Dict d) { _set_data_r(_roots, id, d) }
+    func _set_data_r(Array[TreeViewNode] list, int id, Dict d): bool {
+        for list.len() to i {
+            if list[i].id == id { list[i].data = d; return true }
+            if _set_data_r(list[i].children, id, d) { return true }
+        }
+        return false
+    }
+    func get_data(int id): Dict { return _get_data_r(_roots, id) }
+    func _get_data_r(Array[TreeViewNode] list, int id): Dict {
+        for list.len() to i {
+            if list[i].id == id { return list[i].data }
+            Dict d = _get_data_r(list[i].children, id)
+            if d.len() > 0 { return d }
+        }
+        return {}
+    }
+    // 增删（支持懒加载）—— 原地递归，避免返回副本写不回
+    func add_child(int parentId, Dict d): int {
+        int id = _add_child_r(_roots, parentId, d)
+        if id >= 0 { _flatten(); _clamp_scroll() }
+        return id
+    }
+    func _add_child_r(Array[TreeViewNode] list, int parentId, Dict d): int {
+        for list.len() to i {
+            if list[i].id == parentId {
+                TreeViewNode n = _build_node(d, parentId, list[i]._depth + 1)
+                list[i].children.add(n)
+                list[i].hasChildren = true
+                return n.id
+            }
+            int r = _add_child_r(list[i].children, parentId, d)
+            if r >= 0 { return r }
+        }
+        return -1
+    }
+    func _remove_r(TreeViewNode node, int id): TreeViewNode {
+        if node.id == id { TreeViewNode e = new TreeViewNode(); e.id = -1; return e }
+        TreeViewNode cp = new TreeViewNode()
+        cp.id = node.id; cp.text = node.text; cp._parent = node._parent; cp._depth = node._depth
+        cp.expanded = node.expanded; cp.hasChildren = node.hasChildren; cp.checkable = node.checkable
+        cp.checked = node.checked; cp.data = node.data
+        for node.children.len() to i {
+            TreeViewNode c = _remove_r(node.children[i], id)
+            if c.id >= 0 { cp.children.add(c) }
+        }
+        return cp
+    }
+    func remove_node(int id) {
+        Array[TreeViewNode] out = []
+        for _roots.len() to i {
+            TreeViewNode c = _remove_r(_roots[i], id)
+            if c.id >= 0 { out.add(c) }
+        }
+        _roots = out
+        if _is_selected(id) { _sel = -1 }
+        for _sel2.len() to i { if _sel2[i] == id { _sel2.remove(i); i = i - 1 } }
+        _flatten(); _clamp_scroll()
+    }
+
+    func on_change(func(Array[int]):void cb) { _onChange = cb }
+    func on_context(func(int, float, float):void cb) { _onContext = cb }
+    func on_toggle(func(int, bool):void cb) { _onToggle = cb }
+    func on_check(func(int, bool):void cb) { _onCheck = cb }
+
+    // ==================== 右键菜单接入 ====================
+    func set_window(int ww, int hh) { _winW = ww; _winH = hh; if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) } }
+    func get_context_menu(): MenuBar { return _ctxMenu }
+    func get_context_handle(): int { return _ctxHandle }
+    func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
+    func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
+    func _open_ctx_menu(float mx, float my) {
+        if _ctxMenu == null or _ctxHandle < 0 { return }
+        _ctxMenu.openContext(_ctxHandle, mx, my)
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        if not visible { return }
+        if not enabled { _hover = -1; _draggingScroll = false; return }
+
+        if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                if contains(ev.mouseX(), ev.mouseY()) { _open_ctx_menu(ev.mouseX(), ev.mouseY()) }
+                else { _ctxMenu.close() }
+                return
+            }
+            _ctxMenu.process(ev)
+            return
+        }
+
+        float mx = ev.mouseX(); float my = ev.mouseY()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        if core.inPopupCapture(mx, my) { return }
+
+        if ev.isMouseButtonUp() and _draggingScroll { _draggingScroll = false; return }
+
+        if ev.isMouseButtonDown() and _in_vscroll(mx, my) {
+            var g = _sb_geom()
+            float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+            if _in_thumb(mx, my) {
+                _draggingScroll = true; _sbDragOffset = my - g[5]
+            } else {
+                _draggingScroll = true; _sbDragOffset = thH / 2.0
+                float rel = my - g[2] - thH / 2.0
+                if trk - thH > 0.0 { _scroll = rel * maxs / (trk - thH) }
+                _clamp_scroll()
+            }
+            return
+        }
+        if _draggingScroll {
+            if ev.isMouseMotion() {
+                var g = _sb_geom()
+                float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+                float rel = my - g[2] - _sbDragOffset
+                if trk - thH > 0.0 { _scroll = rel * maxs / (trk - thH) }
+                _clamp_scroll()
+            }
+            return
+        }
+
+        if ev.isMouseWheel() {
+            if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
+            _scroll = _scroll - ev.wheelY() * _rowH
+            _clamp_scroll()
+            return
+        }
+
+        if ev.isMouseMotion() {
+            _hover = _id_at(mx, my)
+            core.markFrameMotion()
+            if _hover >= 0 and _cursor >= 0 { core.requestCursor(_cursor) }
+            if _tip != "" {
+                if _hover >= 0 { tip.tipReport(_tip, mx, my) } else { tip.tipClear() }
+            }
+        }
+
+        if _ctxMenuEnabled and _ctxMenu != null and ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+            int id = _id_at(mx, my)
+            if id >= 0 {
+                _select(id, false)
+                if _onContext != null { _onContext(id, mx, my) }
+                _open_ctx_menu(mx, my)
+                return
+            }
+        }
+
+        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+            if not contains(mx, my) { return }   // 守卫：仅当点击落在控件内才处理
+            int idx = _row_at(my)
+            if idx < 0 { return }
+            int id = _flatIds[idx]                   // 基础类型数组，按下标读安全
+            bool hasCh = _flatHas[idx]
+            bool chkable = _flatCheck[idx]
+            if ev.mouseClicks() == 2 and hasCh { _toggle_node(id); return }
+            if hasCh and _in_toggle(idx, mx, my) { _toggle_node(id); return }
+            if _showCheck and chkable and _in_check(idx, mx, my) {
+                bool nv = not is_checked(id)
+                set_checked(id, nv)
+                _select(id, false)
+                if _onCheck != null { _onCheck(id, nv) }
+                return
+            }
+            bool ctrl = (ev.keyMod() & 64) != 0 or (ev.keyMod() & 128) != 0
+            _select(id, ctrl)
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+        if not visible { return }
+        _ensure_font()
+        _flatten()
+
+        int bgr = br; int bgg = bg; int bgb = bb
+        if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
+        r.setColor(bgr, bgg, bgb, 255)
+        r.fillRoundedRect(x, y, w, h, 6.0)
+
+        SDL_Rect clip = SDL_Rect.malloc()
+        clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
+        r.setClipRect(clip.to_ptr())
+
+        float checkOff = if _showCheck then 18.0 else 0.0
+        for _flatIds.len() to i {
+            int id = _flatIds[i]
+            float rowY = r.snapY(y - _scroll + _float(i) * _rowH)
+            if rowY + _rowH < y or rowY > y + h { continue }
+
+            bool seld = _is_selected(id)
+            int rr = bgr; int gg = bgg; int bb2 = bgb
+            if seld { rr = _selR; gg = _selG; bb2 = _selB }
+            else if id == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
+            if seld or id == _hover { r.setColor(rr, gg, bb2, 255); r.fillRect(x, rowY, w, _rowH) }
+
+            int depth = _flatDepth[i]
+
+            // 层级连接线：竖线贯穿各层级、横线连接父到本节点（最后子节点拐弯 └）
+            if _showLines and depth >= 1 {
+                int nx = if (i + 1 < _flatIds.len()) then _flatDepth[i + 1] else 0
+                for depth to kk {
+                    int k = kk + 1
+                    bool within = (i + 1 < _flatIds.len()) and (nx >= k)
+                    float seg = if within then _rowH else (_rowH / 2.0)
+                    float lx = r.snapX(x + _padX + _float(k) * _indent + 8.0)
+                    int la = if enabled then 255 else 120
+                    r.setColor(_lineR, _lineG, _lineB, la)
+                    r.drawLine(lx, r.snapY(rowY), lx, r.snapY(rowY + seg))
+                }
+                float lx0 = r.snapX(x + _padX + _float(depth - 1) * _indent + 8.0)
+                float lx1 = r.snapX(x + _padX + _float(depth) * _indent + 8.0)
+                float ly = r.snapY(rowY + _rowH / 2.0)
+                int la2 = if enabled then 255 else 120
+                r.setColor(_lineR, _lineG, _lineB, la2)
+                r.drawLine(lx0, ly, lx1, ly)
+            }
+
+            if _flatHas[i] {
+                float tcx = x + _padX + _float(depth) * _indent + 8.0
+                float tcy = rowY + _rowH / 2.0
+                int ar = _arrR; int ag = _arrG; int ab = _arrB
+                if not enabled { ar = ar / 2; ag = ag / 2; ab = ab / 2 }
+                r.setColor(ar, ag, ab, 255)
+                r.drawTriangle(tcx, tcy, 5.0, if _flatExpanded[i] then 180.0 else 90.0, ar, ag, ab, 255)
+            }
+            if _showCheck and _flatCheck[i] {
+                float cx = x + _padX + _float(depth) * _indent
+                float bx = cx + 18.0
+                float by = rowY + (_rowH - 14.0) / 2.0
+                if _flatOn[i] {
+                    int cr = _selR; int cg = _selG; int cb = _selB
+                    if not enabled { cr = cr / 2; cg = cg / 2; cb = cb / 2 }
+                    r.setColor(cr, cg, cb, 255)
+                    r.fillRoundedRect(bx, by, 14.0, 14.0, 3.0)
+                    int mr = 235; int mg = 240; int mb = 250
+                    if not enabled { mr = 120; mg = 125; mb = 135 }
+                    r.setColor(mr, mg, mb, 255)
+                    r.drawLine(r.snapX(bx + 3.0), r.snapY(by + 7.5), r.snapX(bx + 6.0), r.snapY(by + 10.5))
+                    r.drawLine(r.snapX(bx + 6.0), r.snapY(by + 10.5), r.snapX(bx + 11.0), r.snapY(by + 4.5))
+                } else {
+                    int br2 = _bdrR; int bg2 = _bdrG; int bb2c = _bdrB
+                    if not enabled { br2 = br2 / 2; bg2 = bg2 / 2; bb2c = bb2c / 2 }
+                    r.setColor(br2, bg2, bb2c, 255)
+                    r.drawRoundedRect(bx, by, 14.0, 14.0, 3.0)
+                }
+            }
+            if _font != null and _font.ok {
+                float tx = x + _padX + _float(depth) * _indent + 16.0 + checkOff + 4.0
+                float th = _float(_font.measureString("Ag").h)
+                int tcR = tr; int tcG = tg; int tcB = tb
+                if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
+                float ty = r.snapY(rowY + (_rowH - th) / 2.0)
+                r.drawText(_font, _flatText[i], r.snapX(tx), ty, tcR, tcG, tcB)
+            }
+        }
+
+        r.clearClip()
+        clip.free()
+
+        r.setColor(_bdrR, _bdrG, _bdrB, 220)
+        r.drawRoundedRect(x, y, w, h, 6.0)
+
+        float maxs = _max_scroll()
+        if maxs > 0.0 {
+            float sw = 8.0
+            float sx = x + w - sw - 2.0
+            r.setColor(_sbR, _sbG, _sbB, 180)
+            r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
+            float ratio = _scroll / maxs
+            float thH = _clamp(h * h / _total_h(), 20.0, h - 4.0)
+            float thy = y + 2.0 + ratio * (h - 4.0 - thH)
+            r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+            r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+        }
+    }
+
+    func _clamp(float v, float lo, float hi): float {
+        if v < lo { return lo }
+        if v > hi { return hi }
+        return v
+    }
+
+    func dispose() {
+        if _font != null { _font.close(); _font = null }
+    }
+}
+
+// 工厂
+export func createTreeView(Dict opts): TreeView {
+    TreeView t = new TreeView(); t.set(opts); return t
+}

@@ -24,6 +24,7 @@ import "sdl_layout.leno" as lay
 import "sdl_menu.leno" as menu
 import "sdl_tooltip.leno" as tip
 import "sdl_scrollview.leno" as scv
+import "sdl_treeview.leno" as tv
 import "sdl_widget.leno" as wgt
 
 
@@ -71,6 +72,7 @@ use spb.SpinBox
 use tbl.Table
 use menu.MenuBar
 use scv.ScrollView
+use tv.TreeView
 use lay.HBox
 use lay.VBox
 use lay.AnchorBox
@@ -92,6 +94,7 @@ export func createSpinBox(Dict opts): SpinBox { return spb.createSpinBox(opts) }
 export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
 export func createMenuBar(Dict opts): MenuBar      { return menu.createMenuBar(opts) }
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
+export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
 export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }

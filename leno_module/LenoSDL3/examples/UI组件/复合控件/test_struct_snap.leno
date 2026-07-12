@@ -1,0 +1,40 @@
+// 最小复现：setFlagR(参数递归写) / collectR(参数递归读) / snapshot+find(参数递归读) 对比
+struct N { int id; bool flag; Array[N] children = [] }
+Array[N] roots = []
+
+func setFlagR(Array[N] list, int id, bool v): bool {
+    for list.len() to i { if list[i].id == id { list[i].flag = v; return true } if setFlagR(list[i].children, id, v) { return true } }
+    return false
+}
+func collectR(Array[N] list, Array[int] out) {
+    for list.len() to i { if list[i].flag { out.add(list[i].id) } collectR(list[i].children, out) }
+}
+func snapshot(Array[N] list, int idx): N {
+    N out = new N()
+    out.id = list[idx].id; out.flag = list[idx].flag
+    for list[idx].children.len() to j { out.children.add(snapshot(list[idx].children, j)) }
+    return out
+}
+func find(int id): N {
+    for roots.len() to i { if roots[i].id == id { return snapshot(roots, i) } N c = findIn(roots[i].children, id); if c.id >= 0 { return c } }
+    N e = new N(); return e
+}
+func findIn(Array[N] list, int id): N {
+    for list.len() to i { if list[i].id == id { return snapshot(list, i) } N c = findIn(list[i].children, id); if c.id >= 0 { return c } }
+    N e = new N(); return e
+}
+func fmtB(bool b): string { if b { return "true" } else { return "false" } }
+
+main() {
+    N a = new N(); a.id = 1
+    N a1 = new N(); a1.id = 2; a.children.add(a1)
+    N b = new N(); b.id = 3
+    roots.add(a); roots.add(b)
+
+    setFlagR(roots, 3, true)
+    Array[int] out = []
+    collectR(roots, out)
+    print("collect(应有3) = " + out[0])
+    N s = find(3)
+    print("find(3).flag = " + fmtB(s.flag))
+}

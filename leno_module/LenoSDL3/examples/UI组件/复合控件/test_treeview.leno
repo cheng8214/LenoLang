@@ -1,0 +1,95 @@
+// test_treeview.leno — TreeView 树视图测试
+// 运行：leno 本文件
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.TreeView
+
+main() {
+    var win = SDL3.createWindow({title: "TreeView 测试", w: 560, h: 460})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 嵌套数据：children 递归；expanded 初始展开；has_children 可用于懒加载占位
+    var tree = [
+        {text: "项目", expanded: true, children: [
+            {text: "src", expanded: true, children: [
+                {text: "main.leno", data: {type: "file"}},
+                {text: "utils.leno", data: {type: "file"}},
+                {text: "core", children: [
+                    {text: "vm.leno"},
+                    {text: "lexer.leno"},
+                    {text: "parser.leno"}
+                ]}
+            ]},
+            {text: "docs", children: [
+                {text: "guide.md"},
+                {text: "api.md"}
+            ]},
+            {text: "README.md"}
+        ]},
+        {text: "依赖", expanded: false, children: [
+            {text: "SDL3"},
+            {text: "LenoRuntime"}
+        ]},
+        {text: "设置", checkable: true, checked: true}
+    ]
+
+    var tv = win.addTreeView({
+        x: 30, y: 40, w: 300, h: 380,
+        items: tree, row_h: 24, indent: 16,
+        show_check: true,            // 显示复选框（仅 checkable 节点可勾选）
+        show_lines: true,            // 显示层级连接线
+        context_menu: true,          // 启用内置右键菜单
+        on_change: func(Array[int] ids) {
+            print("选中节点 id -> " + _fmt(ids))
+        },
+        on_toggle: func(int id, bool ex) {
+            if ex { print("节点 " + id + " 展开") } else { print("节点 " + id + " 折叠") }
+        }
+    })
+
+    // 右键菜单项
+    var m = tv.get_context_menu()
+    var h = tv.get_context_handle()
+    m.addContextItem(h, {label: "重命名", id: "rename", shortcut: "F2"})
+    m.addContextItem(h, {label: "删除", id: "delete"})
+    m.addContextSeparator(h)
+    m.addContextItem(h, {label: "刷新", id: "refresh"})
+    m.on_select(func(string title, string id) {
+        var nid = tv.get_selected_id()
+        print("右键菜单: " + id + "  当前节点=" + nid)
+    })
+    tv.on_context(func(int nid, float mx, float my) {
+        print("右键命中节点: " + nid + "  @" + mx + "," + my)
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            // E 全部展开 / C 全部折叠 / L 切换连接线
+            if e.isKeyDown() and e.scancode() == Scancode.E { tv.expand_all() }
+            if e.isKeyDown() and e.scancode() == Scancode.C { tv.collapse_all() }
+            if e.isKeyDown() and e.scancode() == Scancode.L { tv.set_show_lines(not tv.get_show_lines()) }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "TreeView 测试 (Esc 退出 / E 全展开 / C 全折叠 / L 连线 " + (if tv.get_show_lines() then "开" else "关") + " / 右键节点)", 30, 12, 200, 210, 230)
+            r.drawText(font, "勾选项: " + _fmt(tv.get_checked_ids()), 350, 200, 160, 200, 160)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
+
+func _fmt(Array[int] a): string {
+    string s = "["
+    for a.len() to i { if i > 0 { s = s + "," }; s = s + a[i] }
+    return s + "]"
+}

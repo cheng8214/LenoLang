@@ -61,6 +61,8 @@ import "sdl_menu.leno" as menu
 use menu.MenuBar
 import "sdl_scrollview.leno" as scv
 use scv.ScrollView
+import "sdl_treeview.leno" as tvlib
+use tvlib.TreeView
 import "sdl_tooltip.leno" as tip
 import "sdl_widget.leno" as wgt
 use wgt.Widget
@@ -400,6 +402,18 @@ export struct Window {
         _widgets.add(s as Widget)
         s._bind_window(handle)
         return s
+    }
+
+    // 添加树视图，opts: {x, y, w, h, items, row_h, indent, mode, show_check, context_menu, on_change, ...}
+    // 返回 TreeView，可 .on_change(func(Array[int]){...}) / .on_context(...) / .on_toggle(...) /
+    //   .expand/.collapse_all/.get_selected_id/.get_node/.add_child/.remove_node 等
+    func addTreeView(Dict opts): TreeView {
+        TreeView t = tvlib.createTreeView(opts)
+        t.set_window(_w, _h)
+        var cm = t.get_context_menu()
+        if cm != null { _menus.add(cm) }   // 右键上下文菜单交由第二遍 renderPopup 顶层绘制
+        _widgets.add(t as Widget)
+        return t
     }
 
     // 运行主循环（回调模式，支持多窗口）

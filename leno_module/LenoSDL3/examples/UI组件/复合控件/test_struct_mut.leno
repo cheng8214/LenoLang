@@ -1,0 +1,34 @@
+// 验证：通过函数参数 / 局部变量副本 修改 Array[Struct] 元素，能否写回原数组
+struct Node {
+    int id
+    bool checked
+}
+
+func setViaParam(Array[Node] list, int idx, bool v): bool {
+    // 函数内通过参数 list[i].field = v 原地修改
+    list[idx].checked = v
+    return true
+}
+
+func setViaLocal(Array[Node] list, int idx, bool v) {
+    // 通过局部变量副本修改
+    Node n = list[idx]
+    n.checked = v
+}
+
+func fmtBool(bool b): string {
+    if b { return "true" } else { return "false" }
+}
+
+main() {
+    Array[Node] arr = []
+    for 3 to i { Node n = new Node(); n.id = i; n.checked = false; arr.add(n) }
+
+    print("初始 arr[1].checked = " + fmtBool(arr[1].checked))
+
+    setViaParam(arr, 1, true)
+    print("setViaParam 后 arr[1].checked = " + fmtBool(arr[1].checked))
+
+    setViaLocal(arr, 2, true)
+    print("setViaLocal 后 arr[2].checked = " + fmtBool(arr[2].checked))
+}
