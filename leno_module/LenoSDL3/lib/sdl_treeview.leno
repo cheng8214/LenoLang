@@ -71,6 +71,7 @@ export struct TreeView impl Widget {
     int br = 38; int bg = 40; int bb = 48
     int _bdrR = 90; int _bdrG = 95; int _bdrB = 110
     int _selR = 60; int _selG = 150; int _selB = 235
+    int _chkR = 70; int _chkG = 178; int _chkB = 120   // 勾选框填充色（独立于选中色，避免选中行上蓝框融进蓝背景）
     int _hovR = 70; int _hovG = 78; int _hovB = 92
     int tr = 235; int tg = 235; int tb = 245
     int _arrR = 180; int _arrG = 185; int _arrB = 200
@@ -295,6 +296,7 @@ export struct TreeView impl Widget {
         var arc = opts.get("arrow_rgb");   if arc is Array[int] { _arrR = arc[0]; _arrG = arc[1]; _arrB = arc[2] }
         var sbc = opts.get("scroll_rgb");  if sbc is Array[int] { _sbR = sbc[0]; _sbG = sbc[1]; _sbB = sbc[2] }
         var lnc = opts.get("line_rgb");    if lnc is Array[int] { _lineR = lnc[0]; _lineG = lnc[1]; _lineB = lnc[2] }
+        var chc = opts.get("check_rgb");   if chc is Array[int] { _chkR = chc[0]; _chkG = chc[1]; _chkB = chc[2] }
         _showLines = _bool(opts.get("show_lines", true))
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
@@ -652,7 +654,7 @@ export struct TreeView impl Widget {
             int rr = bgr; int gg = bgg; int bb2 = bgb
             if seld { rr = _selR; gg = _selG; bb2 = _selB }
             else if id == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
-            if seld or id == _hover { r.setColor(rr, gg, bb2, 255); r.fillRect(x, rowY, w, _rowH) }
+            if seld or id == _hover { r.setColor(rr, gg, bb2, 255); r.fillRoundedRect(x + 2.0, rowY + 1.0, w - 4.0, _rowH - 2.0, 4.0) }
 
             int depth = _flatDepth[i]
 
@@ -660,7 +662,7 @@ export struct TreeView impl Widget {
             if _showLines and depth >= 1 {
                 int nx = if (i + 1 < _flatIds.len()) then _flatDepth[i + 1] else 0
                 for depth to kk {
-                    int k = kk + 1
+                    int k = kk
                     bool within = (i + 1 < _flatIds.len()) and (nx >= k)
                     float seg = if within then _rowH else (_rowH / 2.0)
                     float lx = r.snapX(x + _padX + _float(k) * _indent + 8.0)
@@ -689,7 +691,7 @@ export struct TreeView impl Widget {
                 float bx = cx + 18.0
                 float by = rowY + (_rowH - 14.0) / 2.0
                 if _flatOn[i] {
-                    int cr = _selR; int cg = _selG; int cb = _selB
+                    int cr = _chkR; int cg = _chkG; int cb = _chkB
                     if not enabled { cr = cr / 2; cg = cg / 2; cb = cb / 2 }
                     r.setColor(cr, cg, cb, 255)
                     r.fillRoundedRect(bx, by, 14.0, 14.0, 3.0)
