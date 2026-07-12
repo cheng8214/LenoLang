@@ -388,10 +388,12 @@ OPCODE(OP_LT_INT_IMM) {
     int8_t imm = READ_BYTE();
     Value va = vm_stack_pop_fast(&vm);
 
-    if (likely(!val_is_bigint(va))) {
+    if (likely(val_is_int(va))) {
         vm_stack_push_fast(&vm, val_bool(val_as_int(va) < imm));
-    } else {
+    } else if (val_is_bigint(va)) {
         vm_stack_push_fast(&vm, val_bool(compare_value_imm(va, imm) < 0));
+    } else {
+        vm_stack_push_fast(&vm, val_bool(false));
     }
     DISPATCH;
 }
@@ -400,10 +402,12 @@ OPCODE(OP_GT_INT_IMM) {
     int8_t imm = READ_BYTE();
     Value va = vm_stack_pop_fast(&vm);
 
-    if (likely(!val_is_bigint(va))) {
+    if (likely(val_is_int(va))) {
         vm_stack_push_fast(&vm, val_bool(val_as_int(va) > imm));
-    } else {
+    } else if (val_is_bigint(va)) {
         vm_stack_push_fast(&vm, val_bool(compare_value_imm(va, imm) > 0));
+    } else {
+        vm_stack_push_fast(&vm, val_bool(false));
     }
     DISPATCH;
 }
@@ -412,10 +416,12 @@ OPCODE(OP_LE_INT_IMM) {
     int8_t imm = READ_BYTE();
     Value va = vm_stack_pop_fast(&vm);
 
-    if (likely(!val_is_bigint(va))) {
+    if (likely(val_is_int(va))) {
         vm_stack_push_fast(&vm, val_bool(val_as_int(va) <= imm));
-    } else {
+    } else if (val_is_bigint(va)) {
         vm_stack_push_fast(&vm, val_bool(compare_value_imm(va, imm) <= 0));
+    } else {
+        vm_stack_push_fast(&vm, val_bool(false));
     }
     DISPATCH;
 }
@@ -424,10 +430,12 @@ OPCODE(OP_GE_INT_IMM) {
     int8_t imm = READ_BYTE();
     Value va = vm_stack_pop_fast(&vm);
 
-    if (likely(!val_is_bigint(va))) {
+    if (likely(val_is_int(va))) {
         vm_stack_push_fast(&vm, val_bool(val_as_int(va) >= imm));
-    } else {
+    } else if (val_is_bigint(va)) {
         vm_stack_push_fast(&vm, val_bool(compare_value_imm(va, imm) >= 0));
+    } else {
+        vm_stack_push_fast(&vm, val_bool(false));
     }
     DISPATCH;
 }
@@ -436,10 +444,12 @@ OPCODE(OP_EQ_INT_IMM) {
     int8_t imm = READ_BYTE();
     Value va = vm_stack_pop_fast(&vm);
 
-    if (likely(!val_is_bigint(va))) {
+    if (likely(val_is_int(va))) {
         vm_stack_push_fast(&vm, val_bool(val_as_int(va) == imm));
-    } else {
+    } else if (val_is_bigint(va)) {
         vm_stack_push_fast(&vm, val_bool(compare_value_imm(va, imm) == 0));
+    } else {
+        vm_stack_push_fast(&vm, val_bool(false));
     }
     DISPATCH;
 }
