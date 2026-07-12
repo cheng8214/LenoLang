@@ -46,12 +46,14 @@ export struct Table impl Widget {
     int _winW = 0; int _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
     func(int, string):void _onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
 
-    // === 双击编辑 ===
+    // === 双击编辑（默认关闭，由应用按需开启） ===
     Edit _edit = null
     bool _editing = false
+    bool _editable = false          // 是否允许双击进入单元格编辑（默认 false）
     int _editRow = -1; int _editCol = -1
     int _lastClickTime = -100000
     float _lastClickX = 0.0; float _lastClickY = 0.0
+    func(int, int):void _onDblClick  // 双击单元格回调（无论是否可编辑都会触发，便于应用层自定义如“打开”）
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -408,6 +410,11 @@ export struct Table impl Widget {
         _lastClickTime = -100000
     }
     func is_editing(): bool { return _editing }
+    // 启用/禁用双击进入单元格编辑（默认关闭）
+    func set_editable(bool en) { _editable = en }
+    func is_editable(): bool { return _editable }
+    // 双击单元格回调：无论是否可编辑都会触发，便于应用层自定义（如文件管理器双击打开）
+    func on_dbl_click(func(int, int):void cb) { _onDblClick = cb }
     func edit_debug(): string {
         if _edit == null { return "edit=null" }
         if _edit.is_loaded() { return "edit.loaded=true" }
@@ -582,7 +589,8 @@ export struct Table impl Widget {
                     _lastClickTime = now
                     _lastClickX = mx; _lastClickY = my
                     if isDbl and col >= 0 {
-                        _begin_edit(row, col)
+                        if _onDblClick != null { _onDblClick(row, col) }
+                        if _editable { _begin_edit(row, col) }
                         return
                     }
                     if _multi {

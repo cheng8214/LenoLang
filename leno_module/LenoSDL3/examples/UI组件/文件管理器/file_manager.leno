@@ -297,6 +297,15 @@ main() {
         }
         return
     })
+    // 文件列表默认关闭单元格双击编辑；双击行直接打开（文件夹进入、文件提示已选）
+    _table.set_editable(false)
+    _table.on_dbl_click(func(int row, int col) {
+        if row >= 0 and row < _rowPaths.len() {
+            _selPath = _rowPaths[row]; _selIsDir = _rowIsDir[row]; showInfo()
+            openSelected()
+        }
+        return
+    })
 
     // ---------- 右下信息面板 ----------
     var infoCard = SDL3.createPanel({x:324, y:524, w:664, h:110, bg_rgb:[28,30,38], radius:8, border_rgb:[70,75,90]})
