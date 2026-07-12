@@ -67,7 +67,7 @@ export struct TreeView impl Widget {
     Array[int] _sel2 = []
     int _mode = 0
     bool _showCheck = false
-    float _fontSize = 14.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
     int br = 38; int bg = 40; int bb = 48
     int _bdrR = 90; int _bdrG = 95; int _bdrB = 110
     int _selR = 60; int _selG = 150; int _selB = 235
@@ -275,7 +275,7 @@ export struct TreeView impl Widget {
         _rowH     = _float(opts.get("row_h", 24))
         _indent    = _float(opts.get("indent", 16))
         _padX      = _float(opts.get("pad_x", 6))
-        _fontSize = _float(opts.get("font_size", 14))
+        _fontSize = _float(opts.get("font_size", 15))
         _fontPath = opts.get("font_path", "") as string
         _fontStyle = _int(opts.get("font_style", 0))
         _mode     = _int(opts.get("mode", 0))

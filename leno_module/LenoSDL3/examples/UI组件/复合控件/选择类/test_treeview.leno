@@ -1,0 +1,117 @@
+// test_treeview.leno — TreeView 树视图单独测试
+// 覆盖：层级节点、展开/折叠、单选/多选、复选框、右键节点菜单、动态增删。
+// 运行：leno 本文件
+//   左键：选择节点 / 点箭头或双击展开折叠 / 点复选框勾选
+//   Ctrl+左键：多选（右侧那棵）
+//   右键：在节点上弹出上下文菜单（左侧那棵启用）
+//   E 全部展开 / C 全部折叠 / A 给选中节点加子节点 / D 删除选中节点 / Esc 退出
+import "../../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.TreeView
+
+// 把 id 数组格式化成 [1,3,7]
+func _fmt(Array[int] a): string {
+    string s = "["
+    for a.len() to i { if i > 0 { s = s + "," }; s = s + a[i] }
+    return s + "]"
+}
+
+main() {
+    var win = SDL3.createWindow({title: "TreeView 树视图测试", w: 720, h: 520})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    // ============ 左树：单选 + 层级 + 右键菜单 ============
+    var leftItems = [
+        {text: "项目根目录", expanded: true, children: [
+            {text: "src", expanded: true, children: [
+                {text: "main.leno"},
+                {text: "utils.leno"},
+                {text: "模块", children: [
+                    {text: "net.leno"},
+                    {text: "io.leno"}
+                ]}
+            ]},
+            {text: "docs", children: [
+                {text: "README.md"},
+                {text: "CHANGELOG.md"}
+            ]},
+            {text: "build.sh"}
+        ]}
+    ]
+    var tv = win.addTreeView({x: 30, y: 60, w: 300, h: 420, items: leftItems, mode: 0, context_menu: true})
+    tv.on_change(func(Array[int] ids) {
+        var n = tv.get_selected_node()
+        print("左树 单选 -> " + _fmt(ids) + " 文本=" + n.text)
+    })
+    tv.on_toggle(func(int id, bool e) {
+        print("左树 展开切换 -> id=" + id + " expanded=" + e)
+    })
+    // 右键节点菜单：用内置 MenuBar 添加项 + 统一回调
+    var cm = tv.get_context_menu()
+    if cm != null {
+        int ch = tv.get_context_handle()
+        cm.addContextItem(ch, {label: "展开", id: "expand"})
+        cm.addContextItem(ch, {label: "折叠", id: "collapse"})
+        cm.addContextSeparator(ch)
+        cm.addContextItem(ch, {label: "添加子节点", id: "add"})
+        cm.addContextItem(ch, {label: "删除节点", id: "del"})
+        cm.on_select(func(string m, string id) {
+            int sel = tv.get_selected_id()
+            if sel < 0 { return }
+            if id == "expand" { tv.expand(sel, true) }
+            else if id == "collapse" { tv.expand(sel, false) }
+            else if id == "add" { tv.add_child(sel, {text: "新节点"}); tv.expand(sel, true) }
+            else if id == "del" { tv.remove_node(sel) }
+        })
+    }
+
+    // ============ 右树：多选 + 复选框 ============
+    var rightItems = [
+        {text: "水果", expanded: true, children: [
+            {text: "苹果", checkable: true, checked: true},
+            {text: "香蕉", checkable: true},
+            {text: "橙子", checkable: true}
+        ]},
+        {text: "蔬菜", expanded: true, children: [
+            {text: "白菜", checkable: true},
+            {text: "土豆", checkable: true, checked: true}
+        ]}
+    ]
+    var tv2 = win.addTreeView({x: 370, y: 60, w: 300, h: 420, items: rightItems, mode: 1, show_check: true})
+    tv2.on_change(func(Array[int] ids) { print("右树 多选 -> " + _fmt(ids)) })
+    tv2.on_check(func(int id, bool on) {
+        print("右树 勾选 -> id=" + id + " checked=" + on + " 已勾选=" + _fmt(tv2.get_checked_ids()))
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.E { tv.expand_all() }
+            if e.isKeyDown() and e.scancode() == Scancode.C { tv.collapse_all() }
+            if e.isKeyDown() and e.scancode() == Scancode.A {
+                int sel = tv.get_selected_id()
+                if sel >= 0 { tv.add_child(sel, {text: "子节点+"}); tv.expand(sel, true) }
+            }
+            if e.isKeyDown() and e.scancode() == Scancode.D {
+                int sel = tv.get_selected_id()
+                if sel >= 0 { tv.remove_node(sel) }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "左树：单选 + 右键菜单", 30, 30, 200, 210, 230)
+            r.drawText(font, "右树：多选(Ctrl+左键) + 复选框", 370, 30, 200, 210, 230)
+            r.drawText(font, "E 展开全部  C 折叠全部  A 加子节点  D 删除  Esc 退出", 30, 492, 140, 145, 160)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
