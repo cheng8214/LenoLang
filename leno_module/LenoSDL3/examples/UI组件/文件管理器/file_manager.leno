@@ -1,0 +1,337 @@
+// file_manager.leno — LenoSDL3 文件管理器示例
+// 演示组合：TreeView 目录树 + Table 文件列表 + Edit 路径栏 + MenuBar + 信息面板
+// 核心能力（均来自 dirs 模块）：
+//   · dirs.script_dir()  起始目录推导
+//   · dirs.listdir()     列目录（仅名称）
+//   · dirs.is_dir()      区分文件/文件夹
+//   · dirs.join()        拼接完整路径
+//   · dirs.stat()        读取大小（Dict{size,...}）
+//   · dirs.extname()     取扩展名
+//   · dirs.basename()/dirname()/abspath()
+//   · dirs.mkdir_p()     新建文件夹
+// 布局：顶部菜单 → 路径工具栏 → 左侧目录树 + 右侧文件表/信息面板 → 底部状态栏
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_core.leno" as core
+import "../../../lib/sdl_filedialog.leno" as fdlg
+import dirs
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Window
+use SDL3.Panel
+use SDL3.TreeView
+use SDL3.Table
+use SDL3.Label
+use SDL3.Edit
+use SDL3.Button
+use SDL3.MenuBar
+
+// ===================== 模块级状态（供模块函数共享） =====================
+string _curDir = ""
+Array[Array[string]] _rows = []     // 表格行：[名称, 大小, 类型]
+Array[string]        _rowPaths = []  // 每行完整路径（与 _rows 平行）
+Array[bool]          _rowIsDir = []  // 每行是否目录
+string _selPath = ""                // 当前选中项完整路径
+bool   _selIsDir = false
+Array[int] _loadedIds = []          // 已懒加载子节点的树节点 id
+Array[string] _nodePaths = []       // 树节点 id-1 → 完整路径（自建映射，规避 get_data 跨模块类型坑）
+bool   _wantQuit = false
+
+// 控件引用（main 中赋值）
+Window _win
+TreeView _tree
+Table  _table
+Edit   _pathEdit
+Label  _statusLbl
+Label  _infoName
+Label  _infoSize
+Label  _infoType
+Label  _infoPath
+
+// ===================== 工具函数 =====================
+
+// 列出某目录下的子文件夹，返回 TreeView 节点字典数组
+func subFolders(string path): Array[Dict] {
+    Array[Dict] out = []
+    var names = dirs.listdir(path)
+    if names != null {
+        for names.len() to i {
+            string nm = names[i] as string
+            string fp = dirs.join(path, nm)
+            if dirs.is_dir(fp) {
+                out.add({text: nm, data: {path: fp}, has_children: true, path: fp})
+            }
+        }
+    }
+    return out
+}
+
+// 人类可读大小
+func fmtSize(int b): string {
+    if b < 1024 { return (b as string) + " B" }
+    float kb = _float(b) / 1024.0
+    if kb < 1024.0 { return (_int(kb) as string) + " KB" }
+    float mb = kb / 1024.0
+    if mb < 1024.0 { return (_int(mb) as string) + " MB" }
+    float gb = mb / 1024.0
+    return (_int(gb) as string) + " GB"
+}
+
+// 树节点是否已懒加载过子节点
+func _isLoaded(int id): bool {
+    for _loadedIds.len() to i { if _loadedIds[i] == id { return true } }
+    return false
+}
+
+// 打开目录：刷新路径栏、表格、状态栏、信息面板
+func openDir(string path) {
+    if not dirs.is_dir(path) {
+        _statusLbl.set_text("无法打开目录: " + path)
+        return
+    }
+    _curDir = path
+    _pathEdit.set_text(path)
+    _rows = []; _rowPaths = []; _rowIsDir = []
+
+    var names = dirs.listdir(path)
+    if names == null {
+        _table.set_rows([])
+        _statusLbl.set_text("无法读取目录（权限不足或路径不存在）: " + path)
+        _selPath = ""; _selIsDir = false; showInfo()
+        return
+    }
+
+    // 先分文件夹 / 文件两批收集，文件夹排在前
+    Array[Array[string]] folders = []
+    Array[string]        folderPaths = []
+    Array[Array[string]] fileRows = []
+    Array[string]        filePaths = []
+    for names.len() to i {
+        string nm = names[i] as string
+        string fp = dirs.join(path, nm)
+        if dirs.is_dir(fp) {
+            folders.add([nm, "", "文件夹"])
+            folderPaths.add(fp)
+        } else {
+            var st = dirs.stat(fp)
+            int szb = _int(st.get("size", 0))
+            string ext = dirs.extname(nm)
+            string tp = "文件"
+            if ext != "" and ext != "." { tp = "文件 " + ext }
+            fileRows.add([nm, fmtSize(szb), tp])
+            filePaths.add(fp)
+        }
+    }
+    for folders.len() to i { _rows.add(folders[i]); _rowPaths.add(folderPaths[i]); _rowIsDir.add(true) }
+    for fileRows.len() to i { _rows.add(fileRows[i]); _rowPaths.add(filePaths[i]); _rowIsDir.add(false) }
+
+    _table.set_rows(_rows)
+    _statusLbl.set_text((_rows.len() as string) + " 个对象")
+    _selPath = ""; _selIsDir = false; showInfo()
+}
+
+// 刷新信息面板
+func showInfo() {
+    if _selPath == "" {
+        _infoName.set_text("未选择")
+        _infoSize.set_text(""); _infoType.set_text(""); _infoPath.set_text("")
+        return
+    }
+    string nm = dirs.basename(_selPath)
+    _infoName.set_text("名称: " + nm)
+    if _selIsDir {
+        _infoSize.set_text("大小: — (目录)")
+        _infoType.set_text("类型: 文件夹")
+    } else {
+        var st = dirs.stat(_selPath)
+        int szb = _int(st.get("size", 0))
+        _infoSize.set_text("大小: " + fmtSize(szb))
+        string ext = dirs.extname(nm)
+        string tp = if (ext != "" and ext != ".") then ("文件 " + ext) else "文件"
+        _infoType.set_text("类型: " + tp)
+    }
+    _infoPath.set_text("路径: " + _selPath)
+}
+
+// 打开选中项（文件夹→进入；文件→提示已选）
+func openSelected() {
+    if _selPath == "" { return }
+    if _selIsDir { openDir(_selPath) }
+    else { _statusLbl.set_text("已选择文件: " + dirs.basename(_selPath)) }
+}
+
+// 新建文件夹（自动避开重名）
+func newFolder() {
+    int n = 1
+    string base = dirs.join(_curDir, "新建文件夹")
+    string target = base
+    while dirs.exists(target) {
+        n = n + 1
+        target = base + " (" + (n as string) + ")"
+    }
+    if dirs.mkdir_p(target) {
+        openDir(_curDir)
+        _statusLbl.set_text("已创建: " + dirs.basename(target))
+    } else {
+        _statusLbl.set_text("创建文件夹失败")
+    }
+}
+
+// ===================== 主程序 =====================
+main() {
+    SDL3.ttfInit()
+    _win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, resizable:true})
+    if not _win.ok { SDL3.ttfQuit(); return }
+
+    // ---------- 顶部菜单 ----------
+    var bar = _win.addMenuBar({x:0, y:0, w:1000, h:30, font_size:14})
+    int mFile = bar.addMenu("文件")
+    bar.addItem(mFile, {label:"打开目录...", id:"openfolder"})
+    bar.addItem(mFile, {label:"新建文件夹", id:"newfolder"})
+    bar.addItem(mFile, {label:"刷新", id:"refresh"})
+    bar.addSeparator(mFile)
+    bar.addItem(mFile, {label:"退出", id:"exit"})
+    int mHelp = bar.addMenu("帮助")
+    bar.addItem(mHelp, {label:"关于", id:"about"})
+
+    bar.on_select(func(string menu, string id) {
+        if id == "openfolder" {
+            fdlg.showOpenFolderDialog(_win, func(Array[string] paths, int filter) {
+                if paths != null and paths.len() > 0 { openDir(paths[0]) }
+            }, {default_location: _curDir})
+        } else if id == "newfolder" { newFolder() }
+        else if id == "refresh"   { openDir(_curDir) }
+        else if id == "exit"      { _wantQuit = true }
+        else if id == "about"     { _statusLbl.set_text("文件管理器 v1.0 · 基于 LenoSDL3 即时模式 UI") }
+    })
+
+    // ---------- 路径工具栏 ----------
+    _pathEdit = SDL3.createEdit({x:12, y:38, w:740, h:28, font_size:14})
+    _win.add(_pathEdit)
+    _pathEdit.on_enter(func() {
+        string p = _pathEdit.get_text()
+        if dirs.is_dir(p) { openDir(p) } else { _statusLbl.set_text("不是有效目录: " + p) }
+    })
+    var btnOpen = SDL3.createButton({x:758, y:38, w:70, h:28, text:"打开", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+    _win.add(btnOpen); btnOpen.on_click(func() { openSelected() })
+    var btnUp = SDL3.createButton({x:834, y:38, w:70, h:28, text:"上级", bg_rgb:[60,66,80], text_rgb:[235,238,245]})
+    _win.add(btnUp); btnUp.on_click(func() { openDir(dirs.dirname(_curDir)) })
+    var btnRefresh = SDL3.createButton({x:910, y:38, w:78, h:28, text:"刷新", bg_rgb:[60,66,80], text_rgb:[235,238,245]})
+    _win.add(btnRefresh); btnRefresh.on_click(func() { openDir(_curDir) })
+
+    // ---------- 左侧目录树 ----------
+    _tree = SDL3.createTreeView({x:12, y:74, w:300, h:560, font_size:14})
+    _win.add(_tree)
+    _tree.on_change(func(Array[int] ids) {
+        if ids.len() == 0 { return }
+        int id = ids[0]
+        int idx = id - 1
+        if idx >= 0 and idx < _nodePaths.len() {
+            string p = _nodePaths[idx]
+            if p != "" and dirs.is_dir(p) { openDir(p) }
+        }
+        return
+    })
+    _tree.on_toggle(func(int id, bool expanded) {
+        if not expanded or _isLoaded(id) { return }
+        int idx = id - 1
+        if idx < 0 or idx >= _nodePaths.len() { return }
+        string p = _nodePaths[idx]
+        if p != "" {
+            var subs = subFolders(p)
+            for subs.len() to i {
+                int nid = _tree.add_child(id, subs[i])
+                while _nodePaths.len() < nid { _nodePaths.add("") }
+                _nodePaths[nid - 1] = subs[i].get("path", "") as string
+            }
+            _loadedIds.add(id)
+        }
+        return
+    })
+
+    // ---------- 右侧文件列表 ----------
+    _table = SDL3.createTable({
+        x:324, y:74, w:664, h:440,
+        headers:["名称","大小","类型"],
+        col_widths:[380,140,140],
+        sortable:true, zebra:true, row_h:24, header_h:28, font_size:14
+    })
+    _win.add(_table)
+    _table.on_select(func(int row) {
+        if row < 0 or row >= _rowPaths.len() { return }
+        _selPath = _rowPaths[row]
+        _selIsDir = _rowIsDir[row]
+        showInfo()
+        return
+    })
+
+    // ---------- 表格右击上下文菜单（方案 A：table 自身不预置项，这里在应用层自定义） ----------
+    _table.addContextItem({label:"打开", id:"open"})
+    _table.addContextItem({label:"复制路径", id:"copy"})
+    _table.addContextSeparator()
+    _table.addContextItem({label:"删除", id:"del"})
+    _table.addContextSeparator()
+    _table.addContextItem({label:"在当前目录新建文件夹", id:"newfolder"})
+    _table.on_context_select(func(int row, string id) {
+        if id == "open" {
+            if row >= 0 and row < _rowPaths.len() {
+                _selPath = _rowPaths[row]; _selIsDir = _rowIsDir[row]; showInfo()
+                openSelected()
+            }
+        } else if id == "copy" {
+            if row >= 0 and row < _rowPaths.len() {
+                core.setClipboardText(_rowPaths[row])
+                _statusLbl.set_text("已复制路径: " + _rowPaths[row])
+            }
+        } else if id == "del" {
+            if row >= 0 and row < _rowPaths.len() {
+                string p = _rowPaths[row]
+                if dirs.delete(p) {
+                    _statusLbl.set_text("已删除: " + dirs.basename(p))
+                    openDir(_curDir)
+                } else {
+                    _statusLbl.set_text("删除失败（可能被占用或权限不足）: " + dirs.basename(p))
+                }
+            }
+        } else if id == "newfolder" {
+            newFolder()
+        }
+        return
+    })
+
+    // ---------- 右下信息面板 ----------
+    var infoCard = SDL3.createPanel({x:324, y:524, w:664, h:110, bg_rgb:[28,30,38], radius:8, border_rgb:[70,75,90]})
+    _win.add(infoCard)
+    _infoName = SDL3.createLabel({x:340, y:534, text:"未选择", font_size:13, text_rgb:[200,215,255]}); infoCard.add(_infoName)
+    _infoSize = SDL3.createLabel({x:340, y:562, text:"", font_size:13, text_rgb:[200,210,225]}); infoCard.add(_infoSize)
+    _infoType = SDL3.createLabel({x:340, y:586, text:"", font_size:13, text_rgb:[200,210,225]}); infoCard.add(_infoType)
+    _infoPath = SDL3.createLabel({x:340, y:610, text:"", font_size:12, text_rgb:[150,160,175]}); infoCard.add(_infoPath)
+
+    // ---------- 底部状态栏 ----------
+    _statusLbl = SDL3.createLabel({x:12, y:648, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+    _win.add(_statusLbl)
+
+    // ---------- 初始化：以脚本所在目录的父目录（UI组件）为根 ----------
+    // 注意：dirs.abspath 在 Windows 上对含中文的路径会失效（内部用 ANSI 版 _fullpath），
+    // 故此处只用 dirs.dirname 做纯字符串处理（script_dir 已返回绝对路径）。
+    string root = dirs.dirname(dirs.script_dir())
+    var subs0 = subFolders(root)
+    Array[Dict] rootChildren = []
+    for subs0.len() to i { rootChildren.add(subs0[i]) }
+    _tree.set_items([{text: dirs.basename(root), data:{path: root}, has_children:true, expanded:true, children: rootChildren}])
+    _nodePaths = []
+    _nodePaths.add(root)
+    for subs0.len() to i { _nodePaths.add(subs0[i].get("path", "") as string) }
+    openDir(root)
+
+    // ---------- 运行主循环 ----------
+    _win.run(
+        func(Event ev): bool {
+            if _wantQuit or ev.isQuit() { return false }
+            return true
+        },
+        func(Renderer r) {
+            // 控件自行绘制，无需自定义
+        }
+    )
+    SDL3.ttfQuit()
+}
