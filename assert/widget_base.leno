@@ -1,0 +1,151 @@
+// 深度边界测试 - 底层模块
+// 模拟 LenoSDL3 的 Widget/HBox/VBox/TreeViewNode 模式
+// 覆盖：face 多实现、Array[Face] 字段、func type 字段、alias 复合类型、
+//        自递归 struct、嵌套布局容器、Dict[string, Face] 字段
+
+// ========== 核心 face ==========
+export face Widget {
+    func get_w(): float
+    func get_h(): float
+    func set_pos(float x, float y)
+    func render(): string
+}
+
+// ========== 事件回调类型 ==========
+export alias ClickHandler = func(string): void
+export alias WidgetList = Array[Widget]
+export alias WidgetMap = Dict[string, Widget]
+
+// ========== 简单控件 ==========
+export struct Label impl Widget {
+    string text = ""
+    float x = 0.0; float y = 0.0; float w = 100.0; float h = 20.0
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func render(): string { return "Label(" + text + ")" }
+}
+
+export struct Button impl Widget {
+    string text = ""
+    float x = 0.0; float y = 0.0; float w = 80.0; float h = 30.0
+    ClickHandler _onClick
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func render(): string { return "Button(" + text + ")" }
+    func click() { if _onClick != null { _onClick(text) } }
+}
+
+// ========== 布局容器（impl Widget + Array[Widget] 字段）==========
+export struct HBox impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 40.0
+    float spacing = 6.0
+    Array[Widget] children = []
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func add(Widget c) { children.add(c) }
+    func render(): string {
+        string result = "HBox["
+        for children.len() to i {
+            if i > 0 { result = result + "," }
+            result = result + children[i].render()
+        }
+        return result + "]"
+    }
+    // 模拟布局计算
+    func layout() {
+        float cx = x
+        for children.len() to i {
+            children[i].set_pos(cx, y)
+            cx = cx + children[i].get_w() + spacing
+        }
+    }
+}
+
+export struct VBox impl Widget {
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 300.0
+    float spacing = 4.0
+    Array[Widget] children = []
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func add(Widget c) { children.add(c) }
+    func render(): string {
+        string result = "VBox["
+        for children.len() to i {
+            if i > 0 { result = result + "," }
+            result = result + children[i].render()
+        }
+        return result + "]"
+    }
+    func layout() {
+        float cy = y
+        for children.len() to i {
+            children[i].set_pos(x, cy)
+            cy = cy + children[i].get_h() + spacing
+        }
+    }
+}
+
+// ========== 自递归 struct（模拟 TreeViewNode）==========
+export struct TreeNode {
+    int id = -1
+    string text = ""
+    Array[TreeNode] children = []
+    bool expanded = false
+
+    func add_child(TreeNode c) { children.add(c) }
+    func count(): int {
+        int n = 1
+        for children.len() to i { n = n + children[i].count() }
+        return n
+    }
+    func flat_text(): string {
+        string result = text
+        if expanded {
+            for children.len() to i {
+                result = result + "," + children[i].flat_text()
+            }
+        }
+        return result
+    }
+}
+
+// ========== 含 Dict[string, Widget] 的 struct ==========
+export struct NamedWidgets {
+    Dict[string, Widget] items = {}
+    int count = 0
+
+    func put(string key, Widget w) {
+        items[key] = w
+        count = count + 1
+    }
+    func get(string key): Widget { return items[key] }
+    func render(string key): string {
+        Widget w = items[key]
+        if w != null { return w.render() }
+        return "<missing>"
+    }
+}
+
+// ========== 工厂函数 ==========
+export func make_label(string t): Label {
+    Label l = new Label(); l.text = t; return l
+}
+
+export func make_button(string t): Button {
+    Button b = new Button(); b.text = t; return b
+}
+
+export func make_hbox(): HBox { return new HBox() }
+export func make_vbox(): VBox { return new VBox() }
+
+// ========== face 作为返回类型 ==========
+export func widget_from_label(Label l): Widget { return l }
+export func widget_from_button(Button b): Widget { return b }

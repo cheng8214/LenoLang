@@ -2059,6 +2059,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                             if (is_known_struct(elem_type_str, struct_names, struct_name_count)) {
                                                 element_type = TYPE_STRUCT;
                                                 element_struct_name = strdup(elem_type_str);
+                                            } else if (is_known_face(elem_type_str, face_names, face_name_count)) {
+                                                element_type = TYPE_FACE;
+                                                element_struct_name = strdup(elem_type_str);
                                             } else if (is_known_clib(elem_type_str, clib_names, clib_name_count)) {
                                                 element_type = TYPE_CLIB;
                                                 element_struct_name = strdup(elem_type_str);
@@ -2295,6 +2298,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                                         if (element_type == TYPE_ANY) {
                                             if (is_known_struct(elem_type_str, struct_names, struct_name_count)) {
                                                 element_type = TYPE_STRUCT;
+                                                element_struct_name = strdup(elem_type_str);
+                                            } else if (is_known_face(elem_type_str, face_names, face_name_count)) {
+                                                element_type = TYPE_FACE;
                                                 element_struct_name = strdup(elem_type_str);
                                             } else if (is_known_clib(elem_type_str, clib_names, clib_name_count)) {
                                                 element_type = TYPE_CLIB;
@@ -3074,7 +3080,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000003
+#define LENOSYMC_VERSION 0x00000004
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {

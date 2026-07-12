@@ -1,0 +1,348 @@
+// 深度边界测试 - 主文件
+// 模拟 LenoSDL3 的真实使用模式
+// 覆盖：Widget face 多实现、Array[Face] 字段增删、嵌套布局、func type 回调、
+//        alias 复合类型传导、Dict[string, Widget] 字段、自递归 struct 操作、
+//        跨模块 face 工厂、face 索引调用方法、Widget as 原始类型
+
+import "widget_base.leno" as base
+use base.Widget
+use base.Label
+use base.Button
+use base.HBox
+use base.VBox
+use base.TreeNode
+use base.ClickHandler
+use base.WidgetList
+use base.WidgetMap
+use base.NamedWidgets
+
+import "widget_mid.leno" as mid
+use mid.LayoutHandler
+use mid.StringList
+
+// ============================================================
+// 1. 跨模块不同 struct impl 同一 face
+// ============================================================
+func test_widget_multi_impl() {
+    Label l = new Label(); l.text = "Hello"
+    Button b = new Button(); b.text = "OK"
+
+    assert_eq(l.render(), "Label(Hello)")
+    assert_eq(b.render(), "Button(OK)")
+
+    // 都赋给 Widget 变量
+    Widget w1 = l; Widget w2 = b
+    assert_eq(w1.render(), "Label(Hello)")
+    assert_eq(w2.render(), "Button(OK)")
+
+    print("[1] widget_multi_impl passed")
+}
+
+// ============================================================
+// 2. Array[Face] 字段 - 不同 struct 作为同一 face 存入
+// ============================================================
+func test_array_face_mixed() {
+    HBox hbox = new HBox()
+    Label l = new Label(); l.text = "Name:"
+    Button b = new Button(); b.text = "Submit"
+
+    hbox.add(l)
+    hbox.add(b)
+
+    assert_eq(hbox.children.len(), 2)
+    assert_eq(hbox.render(), "HBox[Label(Name:),Button(Submit)]")
+
+    print("[2] array_face_mixed passed")
+}
+
+// ============================================================
+// 3. 嵌套布局（HBox 包含 VBox，VBox 包含 Label/Button）
+// ============================================================
+func test_nested_layout() {
+    HBox outer = new HBox()
+    VBox left = new VBox()
+    VBox right = new VBox()
+
+    Label l1 = new Label(); l1.text = "Left"
+    Label l2 = new Label(); l2.text = "Right"
+    Button b1 = new Button(); b1.text = "Go"
+
+    left.add(l1)
+    right.add(l2)
+    right.add(b1)
+
+    outer.add(left)
+    outer.add(right)
+
+    assert_eq(outer.children.len(), 2)
+    // VBox 也 impl Widget，可以通过 face 变量调用
+    Widget w = left
+    assert_eq(w.render(), "VBox[Label(Left)]")
+
+    // 嵌套 render
+    assert_eq(outer.render(), "HBox[VBox[Label(Left)],VBox[Label(Right),Button(Go)]]")
+
+    print("[3] nested_layout passed")
+}
+
+// ============================================================
+// 4. func type 字段（回调）
+// ============================================================
+func test_func_type_callback() {
+    Button b = new Button(); b.text = "Click"
+    string captured = ""
+    b._onClick = func(string t): void { captured = t + "_clicked" }
+    b.click()
+    assert_eq(captured, "Click_clicked")
+
+    print("[4] func_type_callback passed")
+}
+
+// ============================================================
+// 5. alias 复合类型传导
+// ============================================================
+func test_alias_complex() {
+    // WidgetList = Array[Widget]
+    WidgetList list = []
+    Label l = new Label(); l.text = "Item"
+    list.add(l)
+    assert_eq(list.len(), 1)
+    assert_eq(list[0].render(), "Label(Item)")
+
+    // ClickHandler = func(string): void
+    ClickHandler handler = func(string s): void {}
+    assert(handler != null)
+
+    // LayoutHandler（中间模块定义）
+    LayoutHandler lh = func(Widget w): void { w.set_pos(10.0, 20.0) }
+    Label ll = new Label(); ll.text = "Pos"
+    lh(ll)
+    assert_eq(ll.x, 10.0)
+    assert_eq(ll.y, 20.0)
+
+    // StringList（中间模块定义）
+    StringList names = ["a", "b", "c"]
+    assert_eq(names.len(), 3)
+
+    print("[5] alias_complex passed")
+}
+
+// ============================================================
+// 6. 跨模块工厂函数
+// ============================================================
+func test_factory() {
+    Label l = base.make_label("Auto")
+    assert_eq(l.render(), "Label(Auto)")
+
+    Button b = base.make_button("Action")
+    assert_eq(b.render(), "Button(Action)")
+
+    HBox h = base.make_hbox()
+    h.add(l); h.add(b)
+    assert_eq(h.render(), "HBox[Label(Auto),Button(Action)]")
+
+    print("[6] factory passed")
+}
+
+// ============================================================
+// 7. face 作为返回类型
+// ============================================================
+func test_face_return() {
+    Label l = new Label(); l.text = "Ret"
+    Widget w = base.widget_from_label(l)
+    assert_eq(w.render(), "Label(Ret)")
+
+    Button b = new Button(); b.text = "Btn"
+    Widget w2 = base.widget_from_button(b)
+    assert_eq(w2.render(), "Button(Btn)")
+
+    print("[7] face_return passed")
+}
+
+// ============================================================
+// 8. 自递归 struct 操作
+// ============================================================
+func test_recursive_struct() {
+    TreeNode root = new TreeNode(); root.id = 1; root.text = "root"; root.expanded = true
+    TreeNode c1 = new TreeNode(); c1.id = 2; c1.text = "child1"; c1.expanded = true
+    TreeNode c2 = new TreeNode(); c2.id = 3; c2.text = "child2"
+    TreeNode gc = new TreeNode(); gc.id = 4; gc.text = "grandchild"
+    root.add_child(c1); root.add_child(c2)
+    c1.add_child(gc)
+
+    // count 递归
+    assert_eq(root.count(), 4)
+    assert_eq(c1.count(), 2)
+    assert_eq(c2.count(), 1)
+
+    // flat_text 递归
+    assert_eq(root.flat_text(), "root,child1,grandchild,child2")
+    assert_eq(c2.flat_text(), "child2")
+
+    print("[8] recursive_struct passed")
+}
+
+// ============================================================
+// 9. Dict[string, Widget] 字段
+// ============================================================
+func test_dict_widget_field() {
+    NamedWidgets nw = new NamedWidgets()
+    Label l = new Label(); l.text = "Lbl"
+    Button b = new Button(); b.text = "Btn"
+
+    nw.put("label", l)
+    nw.put("button", b)
+
+    assert_eq(nw.count, 2)
+    assert_eq(nw.render("label"), "Label(Lbl)")
+    assert_eq(nw.render("button"), "Button(Btn)")
+    assert_eq(nw.render("missing"), "<missing>")
+
+    print("[9] dict_widget_field passed")
+}
+
+// ============================================================
+// 10. 跨模块中间模块函数
+// ============================================================
+func test_mid_module() {
+    NamedWidgets nw = mid.createNamedWidgets()
+    Label l = new Label(); l.text = "Mid"
+    nw.put("x", l)
+    assert_eq(nw.render("x"), "Label(Mid)")
+
+    string clicked = ""
+    Button b = mid.make_clickable_button("Test", func(string t): void { clicked = t })
+    b.click()
+    assert_eq(clicked, "Test")
+
+    print("[10] mid_module passed")
+}
+
+// ============================================================
+// 11. Widget as 原始类型后访问 struct 字段
+// ============================================================
+func test_widget_as_struct() {
+    Label l = new Label(); l.text = "Cast"; l.w = 150.0
+    Widget w = l
+
+    // Widget 只能调用 face 方法
+    assert_eq(w.render(), "Label(Cast)")
+    assert_eq(w.get_w(), 150.0)
+
+    // as 回原始类型
+    Label l2 = w as Label
+    assert_eq(l2.text, "Cast")
+    assert_eq(l2.w, 150.0)
+
+    // 修改 as 回来的对象
+    l2.text = "Modified"
+    assert_eq(l.render(), "Label(Modified)")
+
+    print("[11] widget_as_struct passed")
+}
+
+// ============================================================
+// 12. Array[Face] 索引遍历 + 方法调用
+// ============================================================
+func test_face_array_traverse() {
+    HBox box = new HBox()
+    for 5 to i {
+        Label l = new Label(); l.text = "L" + _int(i)
+        box.add(l)
+    }
+    assert_eq(box.children.len(), 5)
+
+    // 索引遍历调用 face 方法
+    float totalW = 0.0
+    for box.children.len() to i {
+        totalW = totalW + box.children[i].get_w()
+    }
+    assert_eq(totalW, 500.0)  // 5 * 100.0
+
+    print("[12] face_array_traverse passed")
+}
+
+// ============================================================
+// 13. 布局计算（跨模块 struct 方法修改 face 对象状态）
+// ============================================================
+func test_layout_calc() {
+    HBox h = new HBox(); h.x = 0.0; h.y = 0.0
+    Label l1 = new Label(); l1.text = "A"; l1.w = 50.0
+    Label l2 = new Label(); l2.text = "B"; l2.w = 80.0
+    h.add(l1); h.add(l2)
+
+    h.layout()
+
+    assert_eq(l1.x, 0.0)
+    assert_eq(l2.x, 56.0)  // 50.0 + 6.0 spacing
+
+    print("[13] layout_calc passed")
+}
+
+// ============================================================
+// 14. 跨模块 face 数组传参给函数
+// ============================================================
+func render_all(Array[Widget] items): string {
+    string result = ""
+    for items.len() to i {
+        if i > 0 { result = result + "|" }
+        result = result + items[i].render()
+    }
+    return result
+}
+
+func test_face_array_param() {
+    Array[Widget] items = []
+    Label l = new Label(); l.text = "X"
+    Button b = new Button(); b.text = "Y"
+    items.add(l); items.add(b)
+
+    assert_eq(render_all(items), "Label(X)|Button(Y)")
+
+    print("[14] face_array_param passed")
+}
+
+// ============================================================
+// 15. 跨模块 struct 嵌套 + 递归 render
+// ============================================================
+func test_deep_nesting() {
+    VBox outer = new VBox()
+    HBox row1 = new HBox()
+    HBox row2 = new HBox()
+
+    Label a = new Label(); a.text = "A"
+    Button b = new Button(); b.text = "B"
+    Label c = new Label(); c.text = "C"
+    Button d = new Button(); d.text = "D"
+
+    row1.add(a); row1.add(b)
+    row2.add(c); row2.add(d)
+    outer.add(row1); outer.add(row2)
+
+    assert_eq(outer.render(), "VBox[HBox[Label(A),Button(B)],HBox[Label(C),Button(D)]]")
+
+    print("[15] deep_nesting passed")
+}
+
+// ============================================================
+// main
+// ============================================================
+main() {
+    test_widget_multi_impl()
+    test_array_face_mixed()
+    test_nested_layout()
+    test_func_type_callback()
+    test_alias_complex()
+    test_factory()
+    test_face_return()
+    test_recursive_struct()
+    test_dict_widget_field()
+    test_mid_module()
+    test_widget_as_struct()
+    test_face_array_traverse()
+    test_layout_calc()
+    test_face_array_param()
+    test_deep_nesting()
+
+    print("=== ALL widget deep edge tests passed ===")
+}
