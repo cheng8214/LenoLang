@@ -32,6 +32,7 @@ export struct Table impl Widget {
     int _cursor = SystemCursor.POINTER
     bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""
+    Ptr _clipBase = null            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
     bool _draggingV = false; bool _draggingH = false; float _vDragOffset = 0.0; float _hDragOffset = 0.0
     int _dragCol = -1; float _dragStartX = 0.0; float _dragStartW = 0.0; bool _resizable = true
     func(int):void _onSelect
@@ -531,19 +532,55 @@ export struct Table impl Widget {
     }
 
     // ==================== 渲染 ====================
+    // 按可用宽度测算，超宽时在末尾追加 "…" 截断（二分查找最大可容纳字符数）
+    func _fit_cell_text(string t, float availW): string {
+        if _font == null or not _font.ok { return t }
+        if availW <= 0.0 { return "" }
+        float fullW = _float(_font.measureString(t).w)
+        if fullW <= availW { return t }
+        float eW = _float(_font.measureString("\u2026").w)   // "…"
+        float limit = availW - eW
+        if limit < 0.0 { return "\u2026" }
+        int n = t.len()
+        int lo = 0; int hi = n
+        while lo < hi {
+            int mid = (lo + hi + 1) / 2
+            float mw = _float(_font.measureString(t.slice(0, mid)).w)
+            if mw <= limit { lo = mid } else { hi = mid - 1 }
+        }
+        return t.slice(0, lo) + "\u2026"
+    }
+
     func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B) {
         if _font == null or not _font.ok { return }
         if t == "" { return }
         float th = _float(_font.measureString("Ag").h)
         float ty = ry + (rh - th) / 2.0
         float pad = 8.0
-        float tw = _float(_font.measureString(t).w)
+        float availW = cw - 2.0 * pad
+        string dt = _fit_cell_text(t, availW)
+        if dt == "" { return }
+        float tw = _float(_font.measureString(dt).w)
         float tx
         if align == 2 { tx = cx + cw - pad - tw }
         else if align == 1 { tx = cx + (cw - tw) / 2.0 }
         else { tx = cx + pad }
         if tx < cx + 2.0 { tx = cx + 2.0 }
-        r.drawText(_font, t, r.snapX(tx), r.snapY(ty), R, G, B)
+        // 安全裁剪（与表格外框取交集），兜底防止测量误差导致的残留溢出
+        float cl = cx; if cl < x { cl = x }
+        float crx = cx + cw; if crx > x + w { crx = x + w }
+        float cwClip = crx - cl
+        if cwClip <= 0.0 { return }
+        if _clipBase != null {
+            SDL_Rect crc = SDL_Rect.malloc()
+            crc.x = _int(cl); crc.y = _int(ry); crc.w = _int(cwClip); crc.h = _int(rh)
+            r.setClipRect(crc.to_ptr())
+            r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
+            r.setClipRect(_clipBase)
+            crc.free()
+        } else {
+            r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
+        }
     }
 
     func render(Renderer r) {
@@ -558,6 +595,7 @@ export struct Table impl Widget {
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
         r.setClipRect(clip.to_ptr())
+        _clipBase = clip.to_ptr()
 
         var sb = _compute_sb()
 

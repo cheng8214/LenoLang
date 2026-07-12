@@ -9,6 +9,7 @@
     #include <windows.h>
     #include <direct.h>
     #include <io.h>
+    #include <errno.h>
     #define PATH_SEP '\\'
     #define PATH_SEP_STR "\\"
 #else
@@ -132,11 +133,23 @@ static Value native_dirs_abspath(int argCount, Value* args) {
     }
     
 #ifdef _WIN32
-    char buffer[4096];
-    if (_fullpath(buffer, path, sizeof(buffer)) == NULL) {
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
         return val_null();
     }
-    return val_obj((Object*)str_copy(buffer, (int)strlen(buffer)));
+    wchar_t wbuffer[4096];
+    if (_wfullpath(wbuffer, wpath, sizeof(wbuffer) / sizeof(wchar_t)) == NULL) {
+        free(wpath);
+        return val_null();
+    }
+    free(wpath);
+    char* abs_path = utf16_to_utf8(wbuffer);
+    if (!abs_path) {
+        return val_null();
+    }
+    Value result = val_obj((Object*)str_copy(abs_path, (int)strlen(abs_path)));
+    free(abs_path);
+    return result;
 #else
     char buffer[4096];
     if (realpath(path, buffer) == NULL) {
@@ -395,7 +408,10 @@ static Value native_dirs_exists(int argCount, Value* args) {
     }
     
 #ifdef _WIN32
-    DWORD attr = GetFileAttributesA(path);
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    DWORD attr = GetFileAttributesW(wpath);
+    free(wpath);
     return val_bool(attr != INVALID_FILE_ATTRIBUTES);
 #else
     struct stat st;
@@ -417,7 +433,10 @@ static Value native_dirs_is_file(int argCount, Value* args) {
     }
     
 #ifdef _WIN32
-    DWORD attr = GetFileAttributesA(path);
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    DWORD attr = GetFileAttributesW(wpath);
+    free(wpath);
     if (attr == INVALID_FILE_ATTRIBUTES) {
         return val_bool(0);
     }
@@ -445,7 +464,10 @@ static Value native_dirs_is_dir(int argCount, Value* args) {
     }
     
 #ifdef _WIN32
-    DWORD attr = GetFileAttributesA(path);
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    DWORD attr = GetFileAttributesW(wpath);
+    free(wpath);
     if (attr == INVALID_FILE_ATTRIBUTES) {
         return val_bool(0);
     }
@@ -473,7 +495,12 @@ static Value native_dirs_mkdir(int argCount, Value* args) {
     }
     
 #ifdef _WIN32
-    int result = _mkdir(path);
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        return val_bool(0);
+    }
+    int result = _wmkdir(wpath);
+    free(wpath);
 #else
     int result = mkdir(path, 0755);
 #endif
@@ -506,7 +533,10 @@ static Value native_dirs_mkdir_p(int argCount, Value* args) {
             *p = '\0';
             
 #ifdef _WIN32
-            _mkdir(temp);
+            wchar_t* wtmp = utf8_to_utf16(temp);
+            int r = wtmp ? _wmkdir(wtmp) : -1;
+            free(wtmp);
+            (void)r;
 #else
             mkdir(temp, 0755);
 #endif
@@ -517,7 +547,9 @@ static Value native_dirs_mkdir_p(int argCount, Value* args) {
     
     // 创建最后一层
 #ifdef _WIN32
-    int result = _mkdir(temp);
+    wchar_t* wtmp = utf8_to_utf16(temp);
+    int result = wtmp ? _wmkdir(wtmp) : -1;
+    free(wtmp);
 #else
     int result = mkdir(temp, 0755);
 #endif
@@ -540,7 +572,12 @@ static Value native_dirs_rmdir(int argCount, Value* args) {
     }
     
 #ifdef _WIN32
-    int result = _rmdir(path);
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        return val_bool(0);
+    }
+    int result = _wrmdir(wpath);
+    free(wpath);
 #else
     int result = rmdir(path);
 #endif
@@ -561,7 +598,16 @@ static Value native_dirs_delete(int argCount, Value* args) {
         return val_null();
     }
 
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        return val_bool(0);
+    }
+    int result = _wremove(wpath);
+    free(wpath);
+#else
     int result = remove(path);
+#endif
     return val_bool(result == 0);
 }
 
@@ -580,7 +626,20 @@ static Value native_dirs_rename(int argCount, Value* args) {
         return val_null();
     }
     
+#ifdef _WIN32
+    wchar_t* wold = utf8_to_utf16(old_path);
+    wchar_t* wnew = utf8_to_utf16(new_path);
+    if (!wold || !wnew) {
+        free(wold);
+        free(wnew);
+        return val_bool(0);
+    }
+    int result = _wrename(wold, wnew);
+    free(wold);
+    free(wnew);
+#else
     int result = rename(old_path, new_path);
+#endif
     return val_bool(result == 0);
 }
 
@@ -794,8 +853,9 @@ static Value native_dirs_stat(int argCount, Value* args) {
     dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
     
 #ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
     WIN32_FILE_ATTRIBUTE_DATA attrData;
-    if (GetFileAttributesExA(path, GetFileExInfoStandard, &attrData)) {
+    if (wpath && GetFileAttributesExW(wpath, GetFileExInfoStandard, &attrData)) {
         // 文件存在，更新信息
         dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
         
@@ -813,6 +873,7 @@ static Value native_dirs_stat(int argCount, Value* args) {
         // mtime (简化版，返回 0)
         dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
     }
+    if (wpath) { free(wpath); }
 #else
     struct stat st;
     if (stat(path, &st) == 0) {
