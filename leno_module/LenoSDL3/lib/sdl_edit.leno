@@ -303,6 +303,8 @@ export struct Edit impl Widget {
         _ctxMenu.addContextSeparator(_ctxMenuH)
         _ctxMenu.addContextItem(_ctxMenuH, { label: "全选", id: "select_all", shortcut: "Ctrl+A" })
         _ctxMenu.on_select(func(string m, string id) { _ctx_action(id) })
+        // 登记到全局注册表，由窗口第二遍绘制兜底画在最上层（panel 添加的 Edit 也能被覆盖）
+        menu.registerContextMenu(_ctxMenu)
 
         // 注册到模块级表，供右击菜单跨实例互斥（参考 sdl_radio.leno 的自增 id 排除自身写法）
         _editIdSeq = _editIdSeq + 1

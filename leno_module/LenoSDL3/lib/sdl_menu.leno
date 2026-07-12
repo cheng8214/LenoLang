@@ -636,6 +636,20 @@ export struct MenuBar impl Widget {
     }
 }
 
+// ==================== 控件内嵌右击上下文菜单的全局注册表 ====================
+// 控件（Edit 等）经 panel.add / 布局容器添加时，其 MenuBar 不会进入窗口 _menus，
+// 因此窗口第二遍绘制无法覆盖它，导致弹层被同级控件（如相邻 Edit）遮挡。
+// 这里统一登记，由窗口第二遍 renderContextMenus 兜底画在最上层。
+Array[MenuBar] _ctxMenuRegistry = []
+export func registerContextMenu(MenuBar m) { _ctxMenuRegistry.add(m) }
+// 第二遍：把所有「已展开（isOpen）」的控件右击上下文菜单画在最上层
+export func renderContextMenus(Renderer r) {
+    for _ctxMenuRegistry.len() to k {
+        var cm = _ctxMenuRegistry[k]
+        if cm != null and cm.isOpen() { cm.renderPopup(r) }
+    }
+}
+
 // 工厂
 export func createMenuBar(Dict opts): MenuBar {
     MenuBar m = new MenuBar(); m.set(opts); return m

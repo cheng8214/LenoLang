@@ -80,6 +80,7 @@ main() {
     bar.addContextItem(ctx, { label:"粘贴", id:"paste" })
     bar.addContextSeparator(ctx)
     bar.addContextItem(ctx, { label:"属性", id:"prop" })
+    win.setContextMenu(bar, ctx)   // 注册窗口级右击菜单：由底层 run 统一接管弹出，示例无需在 onEvent 处理右键
 
     // ===================== 卡片1：按钮 =====================
     var pBtn = card(win, 16, 40, 400, 220, "按钮 Buttons")
@@ -218,10 +219,6 @@ main() {
         func(Event ev): bool {
             if ev.isQuit() or ev.isWindowClose() { return false }
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-            // 右击弹出上下文菜单
-            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
-                bar.openContext(ctx, ev.mouseX(), ev.mouseY())
-            }
             return true
         },
         func(Renderer r) {
