@@ -1,0 +1,68 @@
+// 转义字符测试
+// 覆盖：\n \t \r \\ \" \0 \xHH \uHHHH \b \f 及错误转义容错
+
+main()
+{
+    // 基础转义（\n \t \r \\ \" \0）
+    assert_eq("hello\nworld".has("\n"), true)
+    assert_eq("tab\there".has("\t"), true)
+    assert_eq("line1\rline2".has("\r"), true)
+    assert_eq("back\\slash" == "back\\slash", true)
+    assert_eq("quote\"here".has("\""), true)
+    assert_eq("\0".len(), 1)            // 空字符占1个字符位
+
+    // \xHH 十六进制字节转义
+    assert_eq("\x41", "A")              // 0x41 = 'A'
+    assert_eq("\x20", " ")              // 0x20 = 空格
+    assert_eq("\x61\x62\x63", "abc")   // 0x61='a', 0x62='b', 0x63='c'
+    assert_eq("\x01".len(), 1)          // SOH 控制字符，1个字符
+    assert_eq("\x01".byte(0), 1)        // 字节值为1
+
+    // \xHH 在插值字符串中
+    var x = 42
+    assert_eq($"val={x}\x01end".has("\x01"), true)
+
+    // \xHH 用作缓存分隔符
+    var key1 = $"abc\x01def"
+    var key2 = $"abc\x01def"
+    assert_eq(key1 == key2, true)
+    assert_eq(key1.has("\x01"), true)
+
+    // \uHHHH Unicode BMP 转义
+    assert_eq("\u0041", "A")            // U+0041 = 'A'
+    assert_eq("\u4E2D", "中")           // U+4E2D = '中'
+    assert_eq("\u00A9", "©")            // U+00A9 = '©'
+    assert_eq("\u4E2D\u6587", "中文")   // 连续 Unicode 转义
+
+    // \uHHHH 与字面量中文等价
+    var literal = "中文"
+    var escaped = "\u4E2D\u6587"
+    assert_eq(escaped == literal, true)
+
+    // \uHHHH 在插值字符串中
+    assert_eq($"hello\u4E16\u754C", "hello世界")
+
+    // \b 退格 (0x08)
+    assert_eq("ab\bcd".has("\b"), true)
+    assert_eq("\b".byte(0), 8)
+
+    // \f 换页 (0x0C)
+    assert_eq("line1\fline2".has("\f"), true)
+    assert_eq("\f".byte(0), 12)
+
+    // 错误转义容错：\x 后不是两位hex，保留反斜杠原样
+    assert_eq("\x1".has("\x1"), true)       // 只有1位hex，保留原样
+    assert_eq("\x".has("\x"), true)         // 没有hex，保留原样
+    assert_eq("\u123".has("\u123"), true)   // 只有3位hex，保留原样
+
+    // 未知转义保留反斜杠
+    assert_eq("\z".has("\\z"), true)
+
+    // 混合转义
+    var mixed = "A=\x41\tB=\u0042\nC=\x43"
+    assert_eq(mixed.has("A="), true)
+    assert_eq(mixed.has("\t"), true)
+    assert_eq(mixed.has("\n"), true)
+
+    print("test_escape passed")
+}

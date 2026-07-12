@@ -1,4 +1,6 @@
 #include "parser_internal.h"
+#include <stdint.h>
+#include <ctype.h>
 
 // ============================================================================
 // 辅助函数
@@ -27,9 +29,10 @@ int consume(Parser* p, LenoTokenType type, const char* msg) {
 // 字符串处理函数
 // ============================================================================
 
-// 处理字符串转义字符（如 \n, \t 等）
+// 处理字符串转义字符（如 \n, \t, \xHH, \uHHHH 等）
 char* process_escape_sequences(const char* text, int len, int* out_len) {
-    char* str = (char*)malloc(len + 1);
+    // \uHHHH 最多产生 4 字节 UTF-8（实际上 BMP 范围最多 3 字节），预分配足够空间
+    char* str = (char*)malloc(len * 4 + 1);
     if (!str) return NULL;
     
     int j = 0;
@@ -43,6 +46,44 @@ char* process_escape_sequences(const char* text, int len, int* out_len) {
                 case '\\': str[j++] = '\\'; i++; break;
                 case '"': str[j++] = '"'; i++; break;
                 case '0': str[j++] = '\0'; i++; break;
+                case 'b': str[j++] = '\b'; i++; break;   // 退格 0x08
+                case 'f': str[j++] = '\f'; i++; break;   // 换页 0x0C
+                case 'x': {
+                    // \xHH — 十六进制字节转义，HH 为两位十六进制数字
+                    if (i + 3 < len && isxdigit((unsigned char)text[i+2]) && isxdigit((unsigned char)text[i+3])) {
+                        char hex[3] = { text[i+2], text[i+3], '\0' };
+                        str[j++] = (char)strtol(hex, NULL, 16);
+                        i += 3; // 跳过 x 和两位十六进制
+                    } else {
+                        // \x 后不是两位hex，保留反斜杠原样
+                        str[j++] = text[i];
+                    }
+                    break;
+                }
+                case 'u': {
+                    // \uHHHH — Unicode BMP 转义，HHHH 为四位十六进制数字
+                    if (i + 5 < len && isxdigit((unsigned char)text[i+2]) && isxdigit((unsigned char)text[i+3])
+                                     && isxdigit((unsigned char)text[i+4]) && isxdigit((unsigned char)text[i+5])) {
+                        char hex[5] = { text[i+2], text[i+3], text[i+4], text[i+5], '\0' };
+                        uint32_t cp = (uint32_t)strtol(hex, NULL, 16);
+                        // 编码为 UTF-8
+                        if (cp <= 0x7F) {
+                            str[j++] = (char)cp;
+                        } else if (cp <= 0x7FF) {
+                            str[j++] = (char)(0xC0 | (cp >> 6));
+                            str[j++] = (char)(0x80 | (cp & 0x3F));
+                        } else {
+                            str[j++] = (char)(0xE0 | (cp >> 12));
+                            str[j++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                            str[j++] = (char)(0x80 | (cp & 0x3F));
+                        }
+                        i += 5; // 跳过 u 和四位十六进制
+                    } else {
+                        // \u 后不是四位hex，保留反斜杠原样
+                        str[j++] = text[i];
+                    }
+                    break;
+                }
                 default:
                     // 未知的转义序列，保留反斜杠
                     str[j++] = text[i];
