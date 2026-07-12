@@ -5,6 +5,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_event.leno"   as evt; use evt.Event
 import "sdl_widget.leno"  as wgt; use wgt.Widget
 import "sdl_font.leno"    as fnt; use fnt.Font
+import "sdl_core.leno"     as core; use core.SystemCursor
 
 // ===================== 模块级辅助 =====================
 // 系列配色（与看板风格一致）
@@ -79,6 +80,10 @@ export struct BarChart impl Widget {
     bool _hover = false
     float _mx = -1.0; float _my = -1.0
     bool _loaded = false
+    Array[float] _animVals = []      // 柱高动画当前显示值
+    bool _animating = false
+    float _animLast = 0.0
+    float _animSpeed = 12.0
 
     func set(Dict opts) {
         x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
@@ -89,7 +94,15 @@ export struct BarChart impl Widget {
         showGrid = _bool(opts.get("show_grid", true))
         _loaded = true
     }
-    func set_data(Array[string] _cats, Array[float] _vals) { cats = _cats; vals = _vals }
+    func set_data(Array[string] _cats, Array[float] _vals) {
+        cats = _cats; vals = _vals
+        if _animVals.len() != vals.len() {
+            Array[float] nv = []
+            for vals.len() to i { nv.add(0.0) }
+            _animVals = nv
+        }
+        _animating = true; _animLast = 0.0
+    }
 
     func get_w(): float { return w }
     func get_h(): float { return h }
@@ -106,6 +119,8 @@ export struct BarChart impl Widget {
 
     func render(Renderer r) {
         if not _loaded { return }
+        _step_anim()
+        if _animating { core.requestRedraw() }
         Font f = fnt.createFontAuto(_float(fsize))
         float padL = 38.0; float padR = 14.0; float padT = 26.0; float padB = 30.0
         float plotX = x + padL; float plotY = y + padT
@@ -154,14 +169,14 @@ export struct BarChart impl Widget {
             if idx >= 0.0 and idx < _float(n) { hi = _int(idx) }
         }
         for n to i {
-            float vh = plotH * (vals[i] / ymax)
+            float vh = plotH * (_animVals[i] / ymax)
             float bx = plotX + slot * _float(i) + (slot - bw) / 2.0
             float by = plotY + plotH - vh
             Array[int] c = _palette(i)
             if i == hi { r.setColor(c[0], c[1], c[2], 255) } else { r.setColor(c[0], c[1], c[2], 210) }
             r.fillRect(bx, by, bw, vh)
             if showValues {
-                string s = _fmtNum(vals[i])
+                string s = _fmtNum(_animVals[i])
                 var ms = f.measureString(s)
                 r.setColor(225, 230, 240, 255)
                 r.drawText(f, s, bx + (bw - _float(ms.w)) / 2.0, by - _float(ms.h) - 3.0, 225, 230, 240)
@@ -180,6 +195,29 @@ export struct BarChart impl Widget {
         }
     }
 
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animVals = vals; _animating = false; return }
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float eps = 0.05
+        bool done = true
+        for vals.len() to i {
+            float diff = vals[i] - _animVals[i]
+            if diff < 0.0 { diff = -diff }
+            if diff > eps { done = false }
+            float f = _animSpeed * dt
+            if f > 1.0 { f = 1.0 }
+            _animVals[i] = _animVals[i] + (vals[i] - _animVals[i]) * f
+        }
+        if done {
+            for vals.len() to i { _animVals[i] = vals[i] }
+            _animating = false
+        }
+    }
+
     func dispose() {}
 }
 
@@ -195,6 +233,10 @@ export struct LineChart impl Widget {
     bool showPoints = true
     bool _hover = false; float _mx = -1.0; float _my = -1.0
     bool _loaded = false
+    Array[Array[float]] _animSeries = []   // 折线各点 y 动画当前显示值
+    bool _animating = false
+    float _animLast = 0.0
+    float _animSpeed = 12.0
 
     func set(Dict opts) {
         x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
@@ -207,6 +249,20 @@ export struct LineChart impl Widget {
     }
     func set_data(Array[string] _xlabels, Array[Array[float]] _series, Array[string] _names) {
         xlabels = _xlabels; series = _series; seriesNames = _names
+        // 同步动画数组结构：已有点保留作起点，新点从 0 长出
+        Array[Array[float]] ans = []
+        for series.len() to s {
+            Array[float] src = series[s]
+            Array[float] dst = []
+            int have = 0
+            if s < _animSeries.len() { have = _animSeries[s].len() }
+            for src.len() to i {
+                if i < have { dst.add(_animSeries[s][i]) } else { dst.add(0.0) }
+            }
+            ans.add(dst)
+        }
+        _animSeries = ans
+        _animating = true; _animLast = 0.0
     }
 
     func get_w(): float { return w }
@@ -224,6 +280,8 @@ export struct LineChart impl Widget {
 
     func render(Renderer r) {
         if not _loaded { return }
+        _step_anim()
+        if _animating { core.requestRedraw() }
         Font f = fnt.createFontAuto(_float(fsize))
         float padL = 40.0; float padR = 14.0; float padT = 26.0; float padB = 30.0
         float plotX = x + padL; float plotY = y + padT
@@ -232,8 +290,8 @@ export struct LineChart impl Widget {
 
         int n = xlabels.len()
         int maxn = 0
-        for series.len() to s {
-            int m2 = series[s].len()
+        for _animSeries.len() to s {
+            int m2 = _animSeries[s].len()
             if m2 > maxn { maxn = m2 }
         }
         if n == 0 { n = maxn }
@@ -293,7 +351,7 @@ export struct LineChart impl Widget {
         }
 
         for series.len() to s {
-            Array[float] d = series[s]
+            Array[float] d = _animSeries[s]
             Array[int] c = _palette(s)
             r.setColor(c[0], c[1], c[2], 235)
             for 1 : d.len() - 1 to i {
@@ -317,6 +375,31 @@ export struct LineChart impl Widget {
         }
     }
 
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animSeries = series; _animating = false; return }
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float f = _animSpeed * dt
+        if f > 1.0 { f = 1.0 }
+        float eps = 0.05
+        bool done = true
+        for series.len() to s {
+            for series[s].len() to i {
+                float diff = series[s][i] - _animSeries[s][i]
+                if diff < 0.0 { diff = -diff }
+                if diff > eps { done = false }
+                _animSeries[s][i] = _animSeries[s][i] + (series[s][i] - _animSeries[s][i]) * f
+            }
+        }
+        if done {
+            for series.len() to s { for series[s].len() to i { _animSeries[s][i] = series[s][i] } }
+            _animating = false
+        }
+    }
+
     func dispose() {}
 }
 
@@ -328,6 +411,10 @@ export struct PieChart impl Widget {
     Array[float] values = []
     int fsize = 12
     bool _loaded = false
+    Array[float] _animValues = []   // 饼图各扇形占比动画当前显示值
+    bool _animating = false
+    float _animLast = 0.0
+    float _animSpeed = 12.0
 
     func set(Dict opts) {
         x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
@@ -336,7 +423,15 @@ export struct PieChart impl Widget {
         fsize = _int(opts.get("font_size", 12))
         _loaded = true
     }
-    func set_data(Array[string] _labels, Array[float] _values) { labels = _labels; values = _values }
+    func set_data(Array[string] _labels, Array[float] _values) {
+        labels = _labels; values = _values
+        if _animValues.len() != values.len() {
+            Array[float] nv = []
+            for values.len() to i { nv.add(0.0) }
+            _animValues = nv
+        }
+        _animating = true; _animLast = 0.0
+    }
 
     func get_w(): float { return w }
     func get_h(): float { return h }
@@ -345,12 +440,14 @@ export struct PieChart impl Widget {
     func process(Event ev) {}
     func render(Renderer r) {
         if not _loaded { return }
+        _step_anim()
+        if _animating { core.requestRedraw() }
         Font f = fnt.createFontAuto(_float(fsize))
         if title != "" { r.setColor(205, 218, 255, 255); r.drawText(f, title, x + 10.0, y + 6.0, 205, 218, 255) }
         int n = values.len()
         if n == 0 { return }
         float total = 0.0
-        for n to i { total = total + values[i] }
+        for n to i { total = total + _animValues[i] }
         if total <= 0.0 { return }
 
         float pieSize = _cmin(w * 0.55, h - 30.0)
@@ -363,19 +460,43 @@ export struct PieChart impl Widget {
 
         float a = 0.0
         for n to i {
-            float frac = values[i] / total
+            float frac = _animValues[i] / total
             float a1 = a + frac * 360.0
             Array[int] c = _palette(i)
             r.fillPie(cx, cy, rad, a, a1, c[0], c[1], c[2], 255)
             // 图例
             r.setColor(c[0], c[1], c[2], 255); r.fillRect(legendX, ly, 12.0, 12.0)
             r.setColor(220, 225, 235, 255)
-            string lab = labels[i] + "  " + _fmtNum(values[i])
+            string lab = labels[i] + "  " + _fmtNum(_animValues[i])
             r.drawText(f, lab, legendX + 18.0, ly - 1.0, 220, 225, 235)
             ly = ly + 20.0
             a = a1
         }
     }
+
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animValues = values; _animating = false; return }
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float eps = 0.05
+        bool done = true
+        for values.len() to i {
+            float diff = values[i] - _animValues[i]
+            if diff < 0.0 { diff = -diff }
+            if diff > eps { done = false }
+            float f = _animSpeed * dt
+            if f > 1.0 { f = 1.0 }
+            _animValues[i] = _animValues[i] + (values[i] - _animValues[i]) * f
+        }
+        if done {
+            for values.len() to i { _animValues[i] = values[i] }
+            _animating = false
+        }
+    }
+
     func dispose() {}
 }
 
