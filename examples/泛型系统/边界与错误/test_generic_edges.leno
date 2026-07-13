@@ -1,5 +1,5 @@
 // 泛型边界测试 - 覆盖各种边缘场景
-import "constraint_module.leno" as cm
+import "../模块/constraint_module.leno" as cm
 use cm.Comparable
 
 // ===== 1. 泛型约束混合：一个约束一个不约束 =====

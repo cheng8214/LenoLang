@@ -1,5 +1,5 @@
 // 测试6: 泛型边界 - 错误场景
-import "generic_module2.leno" as gm
+import "../模块/generic_module2.leno" as gm
 use gm.Box
 
 // 测试：use 不存在的泛型 struct

@@ -1,5 +1,5 @@
 // 测试1: 多类型参数泛型模块导入
-import "generic_module2.leno" as gm
+import "../模块/generic_module2.leno" as gm
 use gm.Box
 use gm.Pair
 use gm.Container

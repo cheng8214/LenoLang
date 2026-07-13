@@ -1,6 +1,6 @@
 // 跨模块调用带约束泛型函数
 
-import "constraint_module.leno" as cm
+import "../模块/constraint_module.leno" as cm
 use cm.Comparable
 
 struct OrdInt impl Comparable {

@@ -1,5 +1,5 @@
 // 测试7: use 不存在的模块符号
-import "generic_module2.leno" as gm
+import "../模块/generic_module2.leno" as gm
 
 // 这应该报错
 use gm.NotExist

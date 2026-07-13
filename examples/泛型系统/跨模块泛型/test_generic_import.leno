@@ -1,5 +1,5 @@
 // 测试导入泛型模块
-import "generic_module.leno" as gm
+import "../模块/generic_module.leno" as gm
 use gm.Box
 
 var intBox = new Box[int](value=42)

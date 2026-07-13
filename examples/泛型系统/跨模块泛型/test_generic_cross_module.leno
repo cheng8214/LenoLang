@@ -1,6 +1,6 @@
 // 测试4: 多模块交叉导入泛型
-import "generic_module2.leno" as gm
-import "generic_helper.leno" as gh
+import "../模块/generic_module2.leno" as gm
+import "../模块/generic_helper.leno" as gh
 use gm.Box
 use gh.Wrapper
 

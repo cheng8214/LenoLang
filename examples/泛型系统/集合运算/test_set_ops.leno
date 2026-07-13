@@ -1,0 +1,96 @@
+// 集合运算：交、并、差（补）、对称差、笛卡尔积 —— 用泛型函数实现
+// 目的：验证本语言泛型能力，并发现/记录问题
+// 注：Array 提供 .has(x):bool 成员判断（非 contains / index_of）
+
+// ---------- 单类型集合运算（同类型 T）----------
+
+// 并集（去重合并）
+func union[T](Array[T] a, Array[T] b): Array[T] {
+    Array[T] res = []
+    for a to x {
+        if not res.has(x) { res.add(x) }
+    }
+    for b to x {
+        if not res.has(x) { res.add(x) }
+    }
+    return res
+}
+
+// 交集
+func intersect[T](Array[T] a, Array[T] b): Array[T] {
+    Array[T] res = []
+    for a to x {
+        if b.has(x) and not res.has(x) { res.add(x) }
+    }
+    return res
+}
+
+// 差集（属于 a 且不属于 b）
+func difference[T](Array[T] a, Array[T] b): Array[T] {
+    Array[T] res = []
+    for a to x {
+        if not b.has(x) { res.add(x) }
+    }
+    return res
+}
+
+// 对称差 = (a-b) ∪ (b-a)
+func symdiff[T](Array[T] a, Array[T] b): Array[T] {
+    return union(difference(a, b), difference(b, a))
+}
+
+// ---------- 笛卡尔积（不同类型 T x U）----------
+// 用泛型结构体 Pair[T,U] 承载，避免 any/var 混合数组的类型推断问题
+
+struct Pair[T, U] {
+    T first
+    U second
+}
+
+func cartesian[T, U](Array[T] a, Array[U] b): Array[Pair[T, U]] {
+    Array[Pair[T, U]] res = []
+    for a to x {
+        for b to y {
+            res.add(new Pair[T, U](first=x, second=y))
+        }
+    }
+    return res
+}
+
+func show[T](string name, Array[T] arr) {
+    print(name + " = " + arr)
+}
+
+main() {
+    print("========== 集合运算（泛型）测试 ==========\n")
+
+    // --- int 集合 ---
+    Array[int] A = [1, 2, 3, 4, 5]
+    Array[int] B = [4, 5, 6, 7]
+    print("A = " + A)
+    print("B = " + B)
+    show("union(A,B)     ", union(A, B))
+    show("intersect(A,B) ", intersect(A, B))
+    show("difference(A,B)", difference(A, B))
+    show("symdiff(A,B)   ", symdiff(A, B))
+    print("")
+
+    // --- string 集合 ---
+    Array[string] S1 = ["a", "b", "c"]
+    Array[string] S2 = ["b", "c", "d"]
+    show("union(S1,S2)     ", union(S1, S2))
+    show("intersect(S1,S2) ", intersect(S1, S2))
+    show("difference(S1,S2)", difference(S1, S2))
+    print("")
+
+    // --- 笛卡尔积（不同类型）---
+    Array[int] X = [1, 2]
+    Array[string] Y = ["x", "y", "z"]
+    Array[Pair[int, string]] P = cartesian(X, Y)
+    print("cartesian(X,Y) (X=[1,2], Y=[x,y,z]):")
+    for P to p {
+        print("  (" + p.first + ", " + p.second + ")")
+    }
+
+    print("\n========== 测试完成 ==========")
+}

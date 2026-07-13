@@ -1,5 +1,5 @@
 // 测试2: 泛型 struct 嵌套 - 简化版
-import "generic_module2.leno" as gm
+import "../模块/generic_module2.leno" as gm
 use gm.Box
 
 // 嵌套泛型: Box 里放 Box

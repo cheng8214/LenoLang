@@ -1,5 +1,5 @@
 // 测试泛型方法链调用
-import "generic_module3.leno" as gm
+import "../模块/generic_module3.leno" as gm
 use gm.Box
 
 var inner = new Box[int](value=42)

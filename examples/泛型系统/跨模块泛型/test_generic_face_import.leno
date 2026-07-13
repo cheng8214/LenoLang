@@ -1,5 +1,5 @@
 // 测试3: 泛型 face impl 导入 - 只测试 struct
-import "generic_face_module.leno" as gfm
+import "../模块/generic_face_module.leno" as gfm
 use gfm.IntVal
 
 var x = new IntVal(val=3)

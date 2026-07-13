@@ -1,5 +1,5 @@
 // 测试8: use 导入泛型 face
-import "generic_face_module.leno" as gfm
+import "../模块/generic_face_module.leno" as gfm
 use gfm.IntVal
 use gfm.Comparable
 
