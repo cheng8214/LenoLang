@@ -1,7 +1,7 @@
-// 复现验证（跨模块）：把跨模块 impl 的 struct 放入 Array[face] 并调用
-import "repro_array_face_face.leno" as a
+﻿// 复现验证（跨模块）：把跨模块 impl 的 struct 放入 Array[face] 并调用
+import "../接口face/repro_array_face_face.leno" as a
 use a.F
-import "repro_array_face_impl.leno" as b
+import "../接口face/repro_array_face_impl.leno" as b
 use b.S
 
 main() {

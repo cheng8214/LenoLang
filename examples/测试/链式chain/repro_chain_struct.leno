@@ -1,7 +1,7 @@
-// Bug复现1: import 链式访问 struct（不用 use）
+﻿// Bug复现1: import 链式访问 struct（不用 use）
 // import "repro_struct_def.leno" as m → new m.Info() 能否创建？
 
-import "repro_struct_def.leno" as m
+import "../结构体GC/repro_struct_def.leno" as m
 
 // ⚠️ 关键测试: 不 use，直接用 m.XXX 访问
 var info = new m.Info(name = "Tom", age = 30)

@@ -1,5 +1,5 @@
-// 测试: import 别名能当类型用吗？
-import "repro_struct_def.leno" as m
+﻿// 测试: import 别名能当类型用吗？
+import "../结构体GC/repro_struct_def.leno" as m
 
 main() {
     // ✅ new m.Info(...) 可以

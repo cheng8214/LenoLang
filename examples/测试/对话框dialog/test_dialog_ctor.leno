@@ -1,5 +1,5 @@
-// 测试 Dialog 构造函数
-import "../../leno_module/LenoSDL3/lib/sdl_dialog.leno" as dlg
+﻿// 测试 Dialog 构造函数
+import "../../../leno_module/LenoSDL3/lib/sdl_dialog.leno" as dlg
 use dlg.Dialog
 
 main() {

@@ -1,5 +1,5 @@
-// 测试 sdl_font 新增的便捷函数：packColor / createFontAuto
-import "../../leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+﻿// 测试 sdl_font 新增的便捷函数：packColor / createFontAuto
+import "../../../leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
 
 main() {
     // ---- packColor 测试 ----

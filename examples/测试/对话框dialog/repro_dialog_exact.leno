@@ -1,5 +1,5 @@
-// 检查 EventHandler/RenderCallback 是否可用
-import "../../lib/SDL3.leno" as SDL3
+﻿// 检查 EventHandler/RenderCallback 是否可用
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.EventHandler
 use SDL3.RenderCallback
 
