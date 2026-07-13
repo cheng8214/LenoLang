@@ -54,6 +54,20 @@
                 // 递归解析变量声明类型中的 alias（如 Array[EventHandler] 中 EventHandler = func(Event):bool）
                 resolve_alias_in_type(s, &ast->u.var_decl.type, ast->line);
 
+                // 检查 var 是否被用作类型参数（如 Array[var]、Dict[string, var]）
+                // var 只能用于变量声明的顶层类型（var x = ...），不能作为复合类型的类型参数
+                int infer_as_param = 0;
+                if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
+                    TypeKind parent_kind = TYPE_UNKNOWN;
+                    if (type_has_infer_as_param(ast->u.var_decl.type, &parent_kind)) {
+                        char msg[BUFFER_MEDIUM];
+                        const char* parent_name = type_kind_to_string(parent_kind);
+                        snprintf(msg, sizeof(msg), "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        infer_as_param = 1;
+                    }
+                }
+
                 // 检查声明的类型是否存在（对于自定义 struct/cstruct/clib/alias 类型）
                 if ((ast->u.var_decl.type->kind == TYPE_STRUCT || ast->u.var_decl.type->kind == TYPE_CLIB) &&
                     ast->u.var_decl.type->struct_name) {
@@ -114,7 +128,7 @@
 
                 TypeInfo* init_type = infer_expr_type(s, ast->u.var_decl.init);
                 if (init_type) {
-                    if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
+                    if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER && !infer_as_param) {
                         if (!type_is_compatible(ast->u.var_decl.type, init_type)) {
                             char msg[BUFFER_MEDIUM];
                             char context[256];

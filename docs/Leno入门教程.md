@@ -131,6 +131,7 @@ main() {
 
 - 变量 `var` = **推断模式**：右边是什么，`var` 就是什么
 - 参数 `var` = **动态模式**：永远是 `any`，不根据调用推断
+- `var` ≠ `any`：`var` 只能用在变量声明/参数的**顶层**，不能作为复合类型的类型参数
 
 ```leno
 var x = 1              // x 是 int（推断）
@@ -140,6 +141,20 @@ func test(var x) {     // x 是 any（不推断！）
 
 test(1)                // 调用时 x 仍是 any，不会变成 int
 test("hello")          // x 仍然是 any
+```
+
+**⚠️ `var` 不能用作类型参数**
+
+`var` 的语义是"推断类型"，只能用在顶层位置。如果需要表示"任意类型"，请使用 `any`：
+
+```leno
+// ❌ 错误：var 不能用作类型参数
+Array[var] pair = [1, "hello"]    // 编译报错：var 不能用作类型参数，请改用 any
+Dict[string, var] m = {"a": 1}   // 编译报错：var 不能用作类型参数，请改用 any
+
+// ✅ 正确：用 any 表示任意类型
+Array[any] pair = [1, "hello"]    // 合法：any[] 可以承载异类元素
+Dict[string, any] m = {"a": 1}   // 合法：值可以是任意类型
 ```
 
 ### 基本类型

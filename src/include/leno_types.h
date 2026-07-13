@@ -233,6 +233,7 @@ TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param
 TypeInfo* type_generic_param(const char* name);  // 创建泛型类型参数 T, U 等
 TypeInfo* type_generic_param_constrained(const char* name, const char* constraint);  // 创建带约束的泛型类型参数
 int type_has_generic(TypeInfo* type);             // 类型是否包含泛型参数
+int type_has_infer_as_param(TypeInfo* type, TypeKind* out_parent_kind);  // 类型是否将 var 用作了类型参数
 TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* concrete);  // 类型替换
 void type_free(TypeInfo* type);
 int type_equals(TypeInfo* a, TypeInfo* b);

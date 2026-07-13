@@ -300,6 +300,28 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     // 5. 检查返回类型中是否有未定义的类型
     check_undefined_type(s, ast->u.func.return_type, ast->line);
 
+    // 6. 检查参数类型和返回类型中是否将 var 用作了类型参数
+    for (int i = 0; i < ast->u.func.pcnt; i++) {
+        if (ast->u.func.param_types[i] && ast->u.func.param_types[i]->kind != TYPE_INFER) {
+            TypeKind parent_kind = TYPE_UNKNOWN;
+            if (type_has_infer_as_param(ast->u.func.param_types[i], &parent_kind)) {
+                char msg[BUFFER_MEDIUM];
+                const char* parent_name = type_kind_to_string(parent_kind);
+                snprintf(msg, sizeof(msg), "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+            }
+        }
+    }
+    if (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER) {
+        TypeKind parent_kind = TYPE_UNKNOWN;
+        if (type_has_infer_as_param(ast->u.func.return_type, &parent_kind)) {
+            char msg[BUFFER_MEDIUM];
+            const char* parent_name = type_kind_to_string(parent_kind);
+            snprintf(msg, sizeof(msg), "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
+            error_add(ERR_SEMANTIC, ast->line, msg);
+        }
+    }
+
     // ========== 默认参数语义检查 ==========
     int found_default = 0;  // 标记是否已遇到有默认值的参数
     for (int i = 0; i < ast->u.func.pcnt; i++) {

@@ -541,7 +541,7 @@ const char* type_to_string(TypeInfo* type) {
 // TypeKind 转字符串
 const char* type_kind_to_string(TypeKind kind) {
     switch (kind) {
-        case TYPE_INFER:    return "any";  // 推断类型显示为 any
+        case TYPE_INFER:    return "var";  // 推断类型显示为 var（与 any 区分）
         case TYPE_INT:      return "int";
         case TYPE_FLOAT:    return "float";
         case TYPE_STRING:   return "string";
@@ -997,6 +997,78 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_STR16:         return TYPE_STR16;
         default:                return TYPE_INFER;
     }
+}
+
+// 检查类型中是否存在 TYPE_INFER 被用作类型参数的情况（如 Array[var]、Dict[string, var]）
+// TYPE_INFER 只允许出现在变量声明的顶层（var x = ...），不允许作为复合类型的类型参数
+// 返回：1 表示存在非法的 TYPE_INFER 用法，0 表示合法
+// out_parent_kind：如果发现非法用法，输出父类型的 kind（用于构造报错信息）
+int type_has_infer_as_param(TypeInfo* type, TypeKind* out_parent_kind) {
+    if (!type) return 0;
+
+    // 检查 Array 的元素类型
+    if (type->kind == TYPE_ARRAY && type->element_type) {
+        if (type->element_type->kind == TYPE_INFER) {
+            if (out_parent_kind) *out_parent_kind = TYPE_ARRAY;
+            return 1;
+        }
+        // 递归检查元素类型内部的嵌套
+        if (type_has_infer_as_param(type->element_type, out_parent_kind)) return 1;
+    }
+
+    // 检查 Dict 的键类型和值类型
+    if (type->kind == TYPE_DICT) {
+        if (type->key_type && type->key_type->kind == TYPE_INFER) {
+            if (out_parent_kind) *out_parent_kind = TYPE_DICT;
+            return 1;
+        }
+        if (type->value_type && type->value_type->kind == TYPE_INFER) {
+            if (out_parent_kind) *out_parent_kind = TYPE_DICT;
+            return 1;
+        }
+        if (type->key_type && type_has_infer_as_param(type->key_type, out_parent_kind)) return 1;
+        if (type->value_type && type_has_infer_as_param(type->value_type, out_parent_kind)) return 1;
+    }
+
+    // 检查 Ptr[T] 的元素类型
+    if (type->kind == TYPE_PTR_GENERIC && type->element_type) {
+        if (type->element_type->kind == TYPE_INFER) {
+            if (out_parent_kind) *out_parent_kind = TYPE_PTR_GENERIC;
+            return 1;
+        }
+        if (type_has_infer_as_param(type->element_type, out_parent_kind)) return 1;
+    }
+
+    // 检查函数类型的参数类型和返回类型
+    if (type->kind == TYPE_FUNCTION) {
+        if (type->return_type && type->return_type->kind == TYPE_INFER) {
+            if (out_parent_kind) *out_parent_kind = TYPE_FUNCTION;
+            return 1;
+        }
+        if (type->param_types) {
+            for (int i = 0; i < type->param_count; i++) {
+                if (type->param_types[i] && type->param_types[i]->kind == TYPE_INFER) {
+                    if (out_parent_kind) *out_parent_kind = TYPE_FUNCTION;
+                    return 1;
+                }
+                if (type_has_infer_as_param(type->param_types[i], out_parent_kind)) return 1;
+            }
+        }
+        if (type->return_type && type_has_infer_as_param(type->return_type, out_parent_kind)) return 1;
+    }
+
+    // 检查带泛型参数的 struct 类型（如 MyStruct[var]）
+    if (type->kind == TYPE_STRUCT && type->generic_count > 0 && type->generic_args) {
+        for (int i = 0; i < type->generic_count; i++) {
+            if (type->generic_args[i] && type->generic_args[i]->kind == TYPE_INFER) {
+                if (out_parent_kind) *out_parent_kind = TYPE_STRUCT;
+                return 1;
+            }
+            if (type_has_infer_as_param(type->generic_args[i], out_parent_kind)) return 1;
+        }
+    }
+
+    return 0;
 }
 
 // 检查类型是否包含泛型参数（递归）
