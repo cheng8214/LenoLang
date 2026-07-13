@@ -8,6 +8,17 @@ cstruct TEST_STRUCT {
     u32 field2
 }
 
+// 供 examples/测试/模块/main.leno 调用的模块测试入口
+export func test() {
+    print("=== cs2.test(): cstruct 模块方法 ===")
+    var s = TEST_STRUCT.malloc()
+    s.field1 = 100
+    s.field2 = 200
+    print("field1=" + s.field1 + ", field2=" + s.field2)
+    s.free()
+    print("cs2 模块方法测试通过")
+}
+
 // 测试函数：在线程中使用 cstruct
 func test_cstruct_in_thread(var ch) {
     // 尝试在子线程中使用 cstruct
@@ -15,10 +26,14 @@ func test_cstruct_in_thread(var ch) {
         var s = TEST_STRUCT.malloc()
         s.field1 = 100
         s.field2 = 200
-        ch.send({type: "ok", msg: "cstruct 工作正常", f1: s.field1, f2: s.field2})
+        if ch is Channel {
+            ch.send({type: "ok", msg: "cstruct 工作正常", f1: s.field1, f2: s.field2})
+        }
         s.free()
     } catch e {
-        ch.send({type: "error", msg: "cstruct 失败: " + e})
+        if ch is Channel {
+            ch.send({type: "error", msg: "cstruct 失败: " + e})
+        }
     }
 }
 
@@ -27,17 +42,23 @@ func test_ffi_in_thread(var ch) {
     try {
         var kernel32 = ffi.load("kernel32.dll")
         var buffer = ffi.malloc(100)
-        
+
         if buffer != ffi.nullptr() {
-            ch.send({type: "ok", msg: "ffi malloc 成功"})
+            if ch is Channel {
+                ch.send({type: "ok", msg: "ffi malloc 成功"})
+            }
         } else {
-            ch.send({type: "error", msg: "ffi malloc 失败"})
+            if ch is Channel {
+                ch.send({type: "error", msg: "ffi malloc 失败"})
+            }
         }
-        
+
         ffi.free(buffer)
         ffi.free(kernel32)
     } catch e {
-        ch.send({type: "error", msg: "ffi 失败: " + e})
+        if ch is Channel {
+            ch.send({type: "error", msg: "ffi 失败: " + e})
+        }
     }
 }
 
@@ -46,58 +67,68 @@ func test_cstruct_from_ptr(var ch) {
     try {
         var kernel32 = ffi.load("kernel32.dll")
         var buffer = ffi.malloc(100)
-        
+
         // 写入测试数据
         ffi.write_uint(buffer, 0, 123)
         ffi.write_uint(buffer, 4, 456)
-        
+
         // 使用 from_ptr 读取
         var s = TEST_STRUCT.from_ptr(buffer)
-        
-        ch.send({type: "ok", msg: "from_ptr 成功", f1: s.field1, f2: s.field2})
-        
+
+        if ch is Channel {
+            ch.send({type: "ok", msg: "from_ptr 成功", f1: s.field1, f2: s.field2})
+        }
+
         ffi.free(buffer)
         ffi.free(kernel32)
     } catch e {
-        ch.send({type: "error", msg: "from_ptr 失败: " + e})
+        if ch is Channel {
+            ch.send({type: "error", msg: "from_ptr 失败: " + e})
+        }
     }
 }
 
 main() {
     print("=== 线程测试 ===")
     print("")
-    
+
     var ch = threads.channel(10)
-    
+
     // 测试 1: cstruct 在线程中
     print("测试 1: 子线程中使用 cstruct...")
     var t1 = threads.start(test_cstruct_in_thread, ch)
-    var msg1 = ch.receive()
-    print("  结果: " + msg1.type + " - " + msg1.msg)
-    if msg1.type == "ok" {
-        print("  field1=" + msg1.f1 + ", field2=" + msg1.f2)
+    if ch is Channel {
+        var msg1 = ch.receive()
+        print("  结果: " + msg1.type + " - " + msg1.msg)
+        if msg1.type == "ok" {
+            print("  field1=" + msg1.f1 + ", field2=" + msg1.f2)
+        }
     }
     t1.join()
     print("")
-    
+
     // 测试 2: ffi 在线程中
     print("测试 2: 子线程中使用 ffi...")
     var t2 = threads.start(test_ffi_in_thread, ch)
-    var msg2 = ch.receive()
-    print("  结果: " + msg2.type + " - " + msg2.msg)
+    if ch is Channel {
+        var msg2 = ch.receive()
+        print("  结果: " + msg2.type + " - " + msg2.msg)
+    }
     t2.join()
     print("")
-    
+
     // 测试 3: cstruct from_ptr 在线程中
     print("测试 3: 子线程中使用 cstruct from_ptr...")
     var t3 = threads.start(test_cstruct_from_ptr, ch)
-    var msg3 = ch.receive()
-    print("  结果: " + msg3.type + " - " + msg3.msg)
-    if msg3.type == "ok" {
-        print("  field1=" + msg3.f1 + ", field2=" + msg3.f2)
+    if ch is Channel {
+        var msg3 = ch.receive()
+        print("  结果: " + msg3.type + " - " + msg3.msg)
+        if msg3.type == "ok" {
+            print("  field1=" + msg3.f1 + ", field2=" + msg3.f2)
+        }
     }
     t3.join()
     print("")
-    
+
     print("=== 测试完成 ===")
 }
