@@ -9,6 +9,7 @@
 //   · 底部可视化图表：柱状图(各主机请求量) / 折线图(CPU·内存趋势) / 饼图(主机状态分布)
 // 布局要点（避免「双重处理」）：卡片用 Panel 承载，Panel 经 win.add 注册（自动处理事件/绘制），
 // 子控件（进度条/表格/列表/滑块）经 panel.add 添加，使用窗口绝对坐标。
+import rands
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
 use SDL3.Event
@@ -28,7 +29,6 @@ use SDL3.PieChart
 // ===================== 模拟数据（模块级，供模块函数共享） =====================
 Array[string] HOSTS = ["web-01","web-02","db-01","db-02","cache-01","api-01","api-02","worker-01","worker-02","lb-01","mq-01","log-01"]
 Array[string] METRICS = ["CPU","内存","磁盘","网络","连接数","延迟"]
-int   _seedI   = 12345
 float _startMs = 0.0
 Array[Array[string]] _allRows = []
 float _threshold = 30.0
@@ -40,12 +40,6 @@ Array[float]   _cpuTrend  = []
 Array[float]   _memTrend  = []
 Array[string]  _cpuLabels = []
 
-// 简易可复现随机数（LCG），避免依赖未导出的 random
-func rnd(): float {
-    _seedI = (_seedI * 9301 + 49297) % 233280
-    return _float(_seedI) / 233280.0
-}
-func rndRange(float a, float b): float { return a + rnd() * (b - a) }
 func _pad2(int n): string {
     string s = n as string
     if n < 10 { s = "0" + s }
@@ -62,7 +56,7 @@ func nowStr(): string { return fmtTime((_float(SDL3.getTicks()) - _startMs) / 10
 func genRows(): Array[Array[string]] {
     Array[Array[string]] rows = []
     for HOSTS.len() to i {
-        int iv = _int(rndRange(5.0, 98.0))
+        int iv = _int(rands.floats(5.0, 98.0))
         string status = "正常"
         if iv >= 85 { status = "严重" } else if iv >= 65 { status = "警告" }
         rows.add([HOSTS[i], METRICS[i % METRICS.len()], iv as string, status, nowStr()])
@@ -75,8 +69,7 @@ func pickMsg(): string {
         "连接池扩容 +4", "慢查询已优化", "证书即将过期", "磁盘 IO 抖动",
         "限流触发，已降级", "副本同步延迟升高", "自动伸缩触发", "健康检查通过"
     ]
-    int k = _int(rnd() * _float(msgs.len()))
-    return msgs[k]
+    return rands.choice(msgs) as string
 }
 
 // 按数值阈值筛选表格
@@ -93,7 +86,7 @@ func applyFilter(Table table, Label lbl) {
 
 // 追加一条日志（保持上限，避免无限增长）
 func appendLog(ListBox lb, Label status) {
-    int iv = _int(rndRange(0.0, 100.0))
+    int iv = _int(rands.floats(0.0, 100.0))
     string lvl = "INFO"
     if iv >= 90 { lvl = "ERROR" } else if iv >= 70 { lvl = "WARN" }
     string line = nowStr() + "  [" + lvl + "]  " + pickMsg()
@@ -152,7 +145,7 @@ main() {
     SDL3.ttfInit()
     SDL3.setTipDelay(400)
     _startMs = _float(SDL3.getTicks())
-    _seedI   = SDL3.getTicks() % 233280
+    rands.seed(_int(SDL3.getTicks()) % 233280)   // 设置可复现随机种子
 
     var win = SDL3.createWindow({title:"LenoSDL3 数据看板", w:1000, h:1000, resizable:true})
     if not win.ok { SDL3.ttfQuit(); return }
@@ -227,11 +220,11 @@ main() {
     win.add(barChart); win.add(lineChart); win.add(pieChart)
 
     // 初始图表数据
-    for CHART_HOSTS.len() to i { _barVals.add(rndRange(40.0, 200.0)) }
+    for CHART_HOSTS.len() to i { _barVals.add(rands.floats(40.0, 200.0)) }
     barChart.set_data(CHART_HOSTS, _barVals)
     // 折线趋势：预填 2 个初始点，开屏即有趋势线（后续定时器逐点滚动）
-    _cpuTrend.add(rndRange(15.0, 92.0)); _memTrend.add(rndRange(30.0, 88.0)); _cpuLabels.add(nowStr())
-    _cpuTrend.add(rndRange(15.0, 92.0)); _memTrend.add(rndRange(30.0, 88.0)); _cpuLabels.add(nowStr())
+    _cpuTrend.add(rands.floats(15.0, 92.0)); _memTrend.add(rands.floats(30.0, 88.0)); _cpuLabels.add(nowStr())
+    _cpuTrend.add(rands.floats(15.0, 92.0)); _memTrend.add(rands.floats(30.0, 88.0)); _cpuLabels.add(nowStr())
     lineChart.set_data(_cpuLabels, [_cpuTrend, _memTrend], ["CPU","内存"])
     // 先生成一份主机状态数据，供表格与饼图开屏即用（避免饼图空 3 秒）
     _allRows = genRows()
@@ -273,10 +266,10 @@ main() {
 
     var tKpi  = win.addTimer(1100, func() {
         if not live { return }
-        float cv = rndRange(15.0, 92.0); cpuBar.set_value(cv)
-        float mv = rndRange(30.0, 88.0); memBar.set_value(mv)
-        diskBar.set_value(rndRange(20.0, 80.0))
-        netBar.set_value(rndRange(10.0, 95.0))
+        float cv = rands.floats(15.0, 92.0); cpuBar.set_value(cv)
+        float mv = rands.floats(30.0, 88.0); memBar.set_value(mv)
+        diskBar.set_value(rands.floats(20.0, 80.0))
+        netBar.set_value(rands.floats(10.0, 95.0))
         // 折线趋势（滚动窗口，最多 12 个点）
         _cpuTrend.add(cv); _memTrend.add(mv); _cpuLabels.add(nowStr())
         if _cpuTrend.len() > 12 { _cpuTrend.remove(0); _memTrend.remove(0); _cpuLabels.remove(0) }
@@ -290,7 +283,7 @@ main() {
         if not live { return }
         _allRows = genRows(); applyFilter(table, filterLbl)
         // 柱状图：刷新各主机请求量
-        for CHART_HOSTS.len() to i { _barVals[i] = rndRange(40.0, 200.0) }
+        for CHART_HOSTS.len() to i { _barVals[i] = rands.floats(40.0, 200.0) }
         barChart.set_data(CHART_HOSTS, _barVals)
         // 饼图：主机状态分布
         int nOk = 0; int nWarn = 0; int nErr = 0
