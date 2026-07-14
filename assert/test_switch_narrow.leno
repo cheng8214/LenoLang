@@ -1,0 +1,50 @@
+// 测试 switch case is 类型收窄
+
+struct Point { int x = 0; int y = 0 }
+struct Circle { float radius = 0.0 }
+
+face Shape { func area():float }
+
+struct Rect impl Shape {
+    float w = 0.0
+    float h = 0.0
+    func area():float { return self.w * self.h }
+}
+
+main() {
+    // 测试1：struct 类型收窄 — case 内可访问 struct 字段
+    var a = new Point(x=10, y=20)
+    switch a {
+        case is Point {
+            assert_eq(a.x, 10)
+            assert_eq(a.y, 20)
+        }
+        case is Circle {
+            assert_eq(a.radius, 0.0)
+        }
+        default {}
+    }
+
+    // 测试2：face 类型收窄为 struct — case 内可访问 struct 字段和 face 方法
+    Shape s = new Rect(w=3.0, h=4.0)
+    switch s {
+        case is Rect {
+            assert_eq(s.w, 3.0)
+            assert_eq(s.h, 4.0)
+            assert_eq(s.area(), 12.0)
+        }
+        default {}
+    }
+
+    // 测试3：enum 类型检查
+    enum Color { red; green; blue }
+    var c = Color
+    switch c {
+        case is Color {
+            print("test_switch_narrow: ALL PASSED")
+        }
+        default {
+            assert_false("enum type check failed")
+        }
+    }
+}

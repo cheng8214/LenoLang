@@ -124,6 +124,13 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
                 emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
                 emit_byte(gen, struct_name_const & 0xff, ast->line);
+            } else if (mt && mt->kind == TYPE_ENUM && mt->struct_name) {
+                ObjString* enum_name_str = str_copy(mt->struct_name,
+                                                     strlen(mt->struct_name));
+                int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
+                emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
+                emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, enum_name_const & 0xff, ast->line);
             } else {
                 if (mt) {
                     emit_byte(gen, (uint8_t)mt->kind, ast->line);
@@ -241,6 +248,22 @@ void gen_if(CodeGen* gen, Ast* ast) {
             emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
             emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
             emit_byte(gen, face_name_const & 0xff, ast->line);
+        } else if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_STRUCT && ast->u.if_.guard_type->struct_name) {
+            ObjString* struct_name_str = str_copy(ast->u.if_.guard_type->struct_name,
+                                                   strlen(ast->u.if_.guard_type->struct_name));
+            int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
+            emit_byte(gen, OP_TYPE_CHECK, ast->line);
+            emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
+            emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
+            emit_byte(gen, struct_name_const & 0xff, ast->line);
+        } else if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_ENUM && ast->u.if_.guard_type->struct_name) {
+            ObjString* enum_name_str = str_copy(ast->u.if_.guard_type->struct_name,
+                                                 strlen(ast->u.if_.guard_type->struct_name));
+            int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
+            emit_byte(gen, OP_TYPE_CHECK, ast->line);
+            emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
+            emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
+            emit_byte(gen, enum_name_const & 0xff, ast->line);
         } else {
             emit_byte(gen, OP_TYPE_CHECK, ast->line);
             if (ast->u.if_.guard_type) {

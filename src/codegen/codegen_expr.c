@@ -1457,6 +1457,14 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
                 emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
                 emit_byte(gen, struct_name_const & 0xff, ast->line);
+            } else if (ast->u.type_check.type && ast->u.type_check.type->kind == TYPE_ENUM && ast->u.type_check.type->struct_name) {
+                ObjString* enum_name_str = str_copy(ast->u.type_check.type->struct_name,
+                                                     strlen(ast->u.type_check.type->struct_name));
+                int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
+                emit_byte(gen, OP_TYPE_CHECK, ast->line);
+                emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
+                emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, enum_name_const & 0xff, ast->line);
             } else {
                 emit_byte(gen, OP_TYPE_CHECK, ast->line);
                 emit_byte(gen, (uint8_t)ast->u.type_check.type->kind, ast->line);

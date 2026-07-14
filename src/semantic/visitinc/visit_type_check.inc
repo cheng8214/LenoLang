@@ -6,6 +6,8 @@
                 Symbol* sym = scope_resolve(s->current, ast->u.type_check.type->struct_name);
                 if (sym && sym->type && sym->type->kind == TYPE_FACE) {
                     ast->u.type_check.type->kind = TYPE_FACE;
+                } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                    ast->u.type_check.type->kind = TYPE_ENUM;
                 } else {
                     // 当前作用域未找到，尝试在导入模块的符号表中查找 face
                     for (int mi = 0; mi < s->imported_module_count; mi++) {
@@ -30,6 +32,8 @@
                 Symbol* sym = scope_resolve(s->current, ast->u.type_check.type->struct_name);
                 if (sym && sym->type && sym->type->kind == TYPE_FACE) {
                     ast->u.type_check.type->kind = TYPE_FACE;
+                } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                    ast->u.type_check.type->kind = TYPE_ENUM;
                 } else {
                     // 当前作用域未找到，尝试在导入模块的符号表中查找 face
                     for (int mi = 0; mi < s->imported_module_count; mi++) {

@@ -136,6 +136,27 @@ OPCODE(OP_TYPE_CHECK) {
             break;
         }
 
+        case TYPE_ENUM: {
+            uint16_t enum_name_idx = READ_SHORT();
+            Value enum_name_val = frame->chunk->constants[enum_name_idx];
+            if (!val_is_obj(enum_name_val) || val_as_obj(enum_name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* enum_name = ((ObjString*)val_as_obj(enum_name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_ENUM_DEF) {
+                ObjEnumDef* edef = (ObjEnumDef*)val_as_obj(value);
+                if (edef->name) {
+                    matches = (strcmp(edef->name, enum_name) == 0);
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+
         case TYPE_FILE:
             (void)READ_BYTE(); // 消费 element_type 字节
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);

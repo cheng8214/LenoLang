@@ -6,9 +6,11 @@
                     Symbol* sym = scope_resolve(s->current, ast->u.if_.guard_type->struct_name);
                     if (sym && sym->type && sym->type->kind == TYPE_FACE) {
                         ast->u.if_.guard_type->kind = TYPE_FACE;
+                    } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                        ast->u.if_.guard_type->kind = TYPE_ENUM;
                     }
                 }
-                // 修正数组元素类型中的 face（如 Array[Speaker] 中 Speaker 被解析为 struct）
+                // 修正数组元素类型中的 face/enum（如 Array[Speaker] 中 Speaker 被解析为 struct）
                 if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_ARRAY &&
                     ast->u.if_.guard_type->element_type &&
                     ast->u.if_.guard_type->element_type->kind == TYPE_STRUCT &&
@@ -16,6 +18,8 @@
                     Symbol* sym = scope_resolve(s->current, ast->u.if_.guard_type->element_type->struct_name);
                     if (sym && sym->type && sym->type->kind == TYPE_FACE) {
                         ast->u.if_.guard_type->element_type->kind = TYPE_FACE;
+                    } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                        ast->u.if_.guard_type->element_type->kind = TYPE_ENUM;
                     }
                 }
                 for (int gi = 0; gi < ast->u.if_.guard_conds.count; gi++) {
@@ -24,9 +28,11 @@
                         Symbol* sym = scope_resolve(s->current, gc->guard_type->struct_name);
                         if (sym && sym->type && sym->type->kind == TYPE_FACE) {
                             gc->guard_type->kind = TYPE_FACE;
+                        } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                            gc->guard_type->kind = TYPE_ENUM;
                         }
                     }
-                    // 修正数组元素类型中的 face
+                    // 修正数组元素类型中的 face/enum
                     if (gc->guard_type && gc->guard_type->kind == TYPE_ARRAY &&
                         gc->guard_type->element_type &&
                         gc->guard_type->element_type->kind == TYPE_STRUCT &&
@@ -34,6 +40,8 @@
                         Symbol* sym = scope_resolve(s->current, gc->guard_type->element_type->struct_name);
                         if (sym && sym->type && sym->type->kind == TYPE_FACE) {
                             gc->guard_type->element_type->kind = TYPE_FACE;
+                        } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                            gc->guard_type->element_type->kind = TYPE_ENUM;
                         }
                     }
                 }
@@ -426,12 +434,19 @@
                 Scope* case_scope = scope_new(s->current, 0);
                 s->current = case_scope;
 
-                // case is Type 模式：解析 guard_var 的符号引用，并修正类型（struct -> face）
+                // case is Type 模式：解析 guard_var 的符号引用，并修正类型（struct -> face/enum）
                 if (ast->u.switch_.cases[i].is_type_match && ast->u.switch_.cases[i].match_type) {
                     TypeInfo* mt = ast->u.switch_.cases[i].match_type;
                     // 如果类型是 TYPE_STRUCT 但实际上是 face，修正为 TYPE_FACE
                     if (mt->kind == TYPE_STRUCT && mt->struct_name && face_def_find(mt->struct_name)) {
                         mt->kind = TYPE_FACE;
+                    }
+                    // 如果类型是 TYPE_STRUCT 但实际上是 enum，修正为 TYPE_ENUM
+                    if (mt->kind == TYPE_STRUCT && mt->struct_name) {
+                        Symbol* enum_sym = scope_resolve(s->current, mt->struct_name);
+                        if (enum_sym && enum_sym->type && enum_sym->type->kind == TYPE_ENUM) {
+                            mt->kind = TYPE_ENUM;
+                        }
                     }
                     // 解析 guard_var 的符号引用
                     if (ast->u.switch_.cases[i].guard_var) {
@@ -446,6 +461,34 @@
                             ast->u.switch_.cases[i].guard_var_ref.kind = sym->kind;
                             ast->u.switch_.cases[i].guard_var_ref.index = sym->index;
                             ast->u.switch_.cases[i].guard_var_ref.name = strdup(sym->name);
+                        }
+                    }
+                }
+
+                // 类型守卫：在 case 分支内收窄变量类型（与 if-is 一致）
+                if (ast->u.switch_.cases[i].guard_var && ast->u.switch_.cases[i].match_type) {
+                    SymRef narrow_ref;
+                    memset(&narrow_ref, 0, sizeof(narrow_ref));
+                    Symbol* original_sym = resolve_variable_with_upvalue(s, ast->u.switch_.cases[i].guard_var, &narrow_ref);
+                    if (narrow_ref.name) {
+                        SymKind guard_kind;
+                        if (narrow_ref.kind == SYM_UPVALUE) {
+                            guard_kind = SYM_UPVALUE;
+                        } else if (narrow_ref.kind == SYM_GLOBAL) {
+                            guard_kind = SYM_GLOBAL;
+                        } else {
+                            guard_kind = SYM_LOCAL;
+                        }
+                        Symbol* guard_sym = scope_define(s->current, ast->u.switch_.cases[i].guard_var, guard_kind);
+                        if (guard_sym) {
+                            // 数组类型保持原类型（与 if-is 一致：Array[int] + is Array → 保持 Array[int]）
+                            if (original_sym && original_sym->type && original_sym->type->kind == TYPE_ARRAY &&
+                                ast->u.switch_.cases[i].match_type->kind == TYPE_ARRAY) {
+                                guard_sym->type = type_copy(original_sym->type);
+                            } else {
+                                guard_sym->type = type_copy(ast->u.switch_.cases[i].match_type);
+                            }
+                            guard_sym->index = narrow_ref.index;  // 复用原始变量槽位
                         }
                     }
                 }
