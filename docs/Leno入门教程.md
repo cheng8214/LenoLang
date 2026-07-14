@@ -1659,13 +1659,34 @@ func describe(var s) {
 
 > **⚠️ 注意：`case is` 匹配成功后变量类型会被收窄**
 >
+> `case is` 匹配成功后，变量类型在分支内自动收窄为匹配的类型，可以直接访问 struct 字段、调用 face 方法：
+>
 > ```leno
-> switch x {
->     case is int {
->         int n = x   // ✅ 分支内 x 被收窄为 int
+> Shape s = new Rect(w=3.0, h=4.0)
+> switch s {
+>     case is Rect {
+>         // s 被收窄为 Rect，可直接访问 .w .h 字段
+>         print("宽: " + s.w + " 高: " + s.h)
 >     }
->     case is string {
->         string s = x  // ✅ 分支内 x 被收窄为 string
+>     case is Circle {
+>         print("半径: " + s.radius)  // 收窄为 Circle
+>     }
+>     default {
+>         print("其他形状")   // 未收窄，s 仍为 Shape
+>     }
+> }
+> ```
+>
+> **支持的类型：** `int`、`float`、`string`、`bool`、`null`、`Array`、`Dict`、struct、face、enum 等。
+>
+> ```leno
+> enum Color { red; green; blue }
+>
+> main() {
+>     var c = Color
+>     switch c {
+>         case is Color { print("是 Color 枚举") }   // 匹配 enum 定义对象
+>         default { print("其他类型") }
 >     }
 > }
 > ```
