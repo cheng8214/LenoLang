@@ -374,6 +374,8 @@ export struct Table impl Widget {
     // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
     func _open_ctx_menu(float x, float y) {
         if _ctxMenu == null or _ctxMenuH < 0 { return }
+        // 未添加任何上下文菜单项时，右击不弹菜单也不改变选择（避免出现空白横线）
+        if _ctxMenu.contextItemCount(_ctxMenuH) == 0 { return }
         _ctxRow = _row_at(y); _ctxCol = _col_at(x)
         // 右击命中数据行时，先选中该行，使菜单操作作用于该目标
         if _ctxRow >= 0 {

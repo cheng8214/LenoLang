@@ -327,10 +327,20 @@ export struct MenuBar impl Widget {
             if _menus[ctxIdx][i].id == id { _menus[ctxIdx][i].enabled = en; return }
         }
     }
+    // 统计某上下文菜单内“有效项”（非分隔线）数量；供调用方判断空菜单是否需要弹出
+    func contextItemCount(int ctxIdx): int {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() { return 0 }
+        int n = 0
+        for _menus[ctxIdx].len() to i { if not _menus[ctxIdx][i].separator { n = n + 1 } }
+        return n
+    }
+
     // 在光标处弹出（右键时调用）；x,y 为弹出锚点（一般为鼠标位置）
     // 同一帧内立即登记弹层捕获区，避免右键穿透到下层控件
     func openContext(int ctxIdx, float x, float y) {
         if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        // 空菜单（无任何有效项）不弹出，否则会画出一个 0 高圆角矩形，视觉上是一条横线
+        if contextItemCount(ctxIdx) == 0 { return }
         _closeOtherMenus()   // 展开前先关闭其它菜单（顶部菜单栏/其它右击菜单），保证仅一个
         close()
         _open = ctxIdx
