@@ -1,0 +1,45 @@
+// struct 方法默认参数断言
+
+struct Calculator {
+    int value = 0
+
+    func add(int x, int y = 10):int { return x + y }
+    func add_value(int x, int y = 0) { value = value + x + y }
+    func greet(string name, string prefix = "Hello"):string { return prefix + " " + name }
+}
+
+struct MultiDefault {
+    func test(int x, int y = 10, int z = 20):string {
+        return $"x={x} y={y} z={z}"
+    }
+}
+
+main() {
+    print("=== 外部调用方法默认参数 ===")
+    var c = new Calculator()
+    assert_eq(c.add(1), 11)
+    assert_eq(c.add(1, 20), 21)
+
+    print("=== 方法默认参数修改字段 ===")
+    c.add_value(5)
+    assert_eq(c.value, 5)
+    c.add_value(3, 2)
+    assert_eq(c.value, 10)
+
+    print("=== 方法字符串默认参数 ===")
+    assert_eq(c.greet("World"), "Hello World")
+    assert_eq(c.greet("World", "Hi"), "Hi World")
+
+    print("=== 多个默认参数 ===")
+    var m = new MultiDefault()
+    assert_eq(m.test(1), "x=1 y=10 z=20")
+    assert_eq(m.test(1, 2), "x=1 y=2 z=20")
+    assert_eq(m.test(1, 2, 3), "x=1 y=2 z=3")
+
+    print("=== 方法内部调用带默认参数 ===")
+    var c2 = new Calculator()
+    c2.add_value(100)
+    assert_eq(c2.value, 100)
+
+    print("test_method_default_param passed")
+}

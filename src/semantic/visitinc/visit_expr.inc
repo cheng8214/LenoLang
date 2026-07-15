@@ -339,6 +339,7 @@
                             TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &expected_arity);
 
                             // 当原生方法表找不到时，回退到 func_table 查找模块导入的 struct 方法
+                            int fallback_default_count = 0;
                             if (return_type == TYPE_ANY && expected_arity == -1 && receiver_type->struct_name) {
                                 char full_method_name[256];
                                 snprintf(full_method_name, sizeof(full_method_name), "%s::%s", receiver_type->struct_name, method_name);
@@ -346,6 +347,7 @@
                                 if (func_def && func_def->kind == AST_FUNC_DEF) {
                                     // 从占位符函数获取参数数量和返回类型
                                     expected_arity = func_def->u.func.pcnt - 1; // 减去 self
+                                    fallback_default_count = func_def->u.func.default_count;
                                     if (func_def->u.func.return_type) {
                                         return_type = func_def->u.func.return_type->kind;
                                     }
@@ -380,11 +382,17 @@
                                 }
                                 const InstanceMethodMeta* meta = native_find_instance_method(type_name, method_name);
 
-                                // arity >= 0: 固定参数数量
-                                if (expected_arity >= 0 && actual_arity != expected_arity) {
+                                // arity >= 0: 固定参数数量（考虑默认参数）
+                                int required_arity = expected_arity - fallback_default_count;
+                                if (expected_arity >= 0 && (actual_arity < required_arity || actual_arity > expected_arity)) {
                                     char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
-                                             method_name, expected_arity, actual_arity);
+                                    if (actual_arity < required_arity) {
+                                        snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数不足: 至少需要 %d, 实际 %d",
+                                                 method_name, required_arity, actual_arity);
+                                    } else {
+                                        snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过多: 最多 %d, 实际 %d",
+                                                 method_name, expected_arity, actual_arity);
+                                    }
                                     if (strcmp(method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2) {
                                         strncat(msg, "\n  \xf0\x9f\x92\xa1 提示: .map() 会传递 (item, index) 两个参数，"
                                                 "\n     函数签名需加第二个参数，如 func compress(string w, int _): string",
@@ -650,10 +658,17 @@
                                         int actual_arity = ast->u.call.args.count;
                                         // 方法参数从第1个开始（第0个是 self）
                                         int method_param_count = method_ast->u.func.pcnt - 1;
-                                        if (method_param_count >= 0 && actual_arity != method_param_count) {
+                                        int default_cnt = method_ast->u.func.default_count;
+                                        int required_cnt = method_param_count - default_cnt;
+                                        if (actual_arity < required_cnt || actual_arity > method_param_count) {
                                             char msg[BUFFER_MEDIUM];
-                                            snprintf(msg, sizeof(msg), "方法 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
-                                                     method_name, method_param_count, actual_arity);
+                                            if (actual_arity < required_cnt) {
+                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d",
+                                                         method_name, required_cnt, actual_arity);
+                                            } else {
+                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+                                                         method_name, method_param_count, actual_arity);
+                                            }
                                             error_add(ERR_SEMANTIC, ast->line, msg);
                                         } else {
                                             // 构建泛型参数替换表

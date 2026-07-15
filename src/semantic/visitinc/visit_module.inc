@@ -906,10 +906,17 @@
                                         strcmp(method_ast->u.func.name, method_name) == 0) {
                                         int actual_arity = ast->u.module_call.args.count;
                                         int method_param_count = method_ast->u.func.pcnt - 1;
-                                        if (method_param_count >= 0 && actual_arity != method_param_count) {
+                                        int default_cnt = method_ast->u.func.default_count;
+                                        int required_cnt = method_param_count - default_cnt;
+                                        if (actual_arity < required_cnt || actual_arity > method_param_count) {
                                             char msg[BUFFER_MEDIUM];
-                                            snprintf(msg, sizeof(msg), "方法 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
-                                                     method_name, method_param_count, actual_arity);
+                                            if (actual_arity < required_cnt) {
+                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d",
+                                                         method_name, required_cnt, actual_arity);
+                                            } else {
+                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+                                                         method_name, method_param_count, actual_arity);
+                                            }
                                             if (strcmp(method_name, "map") == 0 && actual_arity == 1 && method_param_count == 2) {
                                                 strncat(msg, "\n  \xf0\x9f\x92\xa1 提示: .map() 会传递 (item, index) 两个参数，\n"
                                                         "     函数签名需加第二个参数，如 func compress(string w, int _): string",

@@ -715,13 +715,23 @@ static void gen_call(CodeGen* gen, Ast* ast) {
             }
 
             // 检查参数数量
-            // 注意：对于方法调用，如果 obj 是 AST_VAR（如 list.add(10)），
-            // 则 provided_args 已经包含了 self（在语义分析阶段添加）
-            // 如果 obj 不是 AST_VAR（如 cs(x=10).test()），
-            // 则 provided_args 不包含 self，需要 +1
-            int self_in_args = (obj_ast->kind == AST_VAR) ? 1 : 0;
-            int actual_provided = provided_args + (self_in_args ? 0 : 1);  // +1 for self if not already in args
-            if (has_method_def && actual_provided < required_args) {
+            // 语义分析（visit_module.inc）将 MODULE_CALL 转换为 CALL 时，
+            // 已将 receiver 作为 args[0] 加入，此时 args[0] 与 obj_ast 指代同一变量
+            // 对于方法体内部调用 self.method(args)（transform_method_body），self 也作为 args[0] 加入
+            // 所以 self_in_args 判断：args[0] 是 AST_VAR 且名字与 obj_ast 相同（即 receiver 已在 args 中）
+            int self_in_args = 0;
+            if (ast->u.call.args.count > 0 &&
+                ast->u.call.args.items[0]->kind == AST_VAR &&
+                ast->u.call.args.items[0]->u.var.name &&
+                obj_ast->kind == AST_VAR &&
+                obj_ast->u.var.name &&
+                strcmp(ast->u.call.args.items[0]->u.var.name, obj_ast->u.var.name) == 0) {
+                self_in_args = 1;
+            }
+            int actual_provided = provided_args + (self_in_args ? 0 : 1);  // self_in_args 时已包含 self，否则需要 +1
+            // 原生方法的 expected_args 不包含 self，跳过 codegen 层的参数校验（语义分析已校验）
+            // 自定义方法的 expected_args 包含 self，需要校验
+            if (!is_native_method && !is_native_obj_type && has_method_def && actual_provided < required_args) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "方法 '%s' 调用参数不足: 至少需要 %d 个参数，实际传入 %d 个",
                          method_name, required_args - 1, provided_args - (self_in_args ? 1 : 0));
@@ -729,7 +739,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 return;
             }
 
-            if (has_method_def && actual_provided > expected_args) {
+            if (!is_native_method && !is_native_obj_type && has_method_def && actual_provided > expected_args) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "方法 '%s' 调用参数过多: 最多接受 %d 个参数，实际传入 %d 个",
                          method_name, expected_args - 1, provided_args - (self_in_args ? 1 : 0));
@@ -756,15 +766,15 @@ static void gen_call(CodeGen* gen, Ast* ast) {
             } else {
                 if (is_face_call) {
                     // face 动态派发调用：f.method(args)
-                    // 栈布局：[self?] [args...] [self_for_get_method] -> OP_GET_METHOD -> [self?] [args...] [closure] -> OP_CALL
-                    // 注意：当 self_in_args 时，语义分析已将 self 加入 args，不需要额外压入
+                    // 栈布局：[self][args...] [self_for_get_method] -> OP_GET_METHOD -> [self][args...] [closure] -> OP_CALL
+                    // 当 self_in_args 时语义分析已将 self 加入 args，否则需额外压入
                     if (!self_in_args) {
                         gen_expr(gen, obj_ast);
                     }
                     for (int i = 0; i < ast->u.call.args.count; i++) {
                         gen_expr(gen, ast->u.call.args.items[i]);
                     }
-                    // 再次压入 receiver 供 OP_GET_METHOD 消费（从 struct 方法表查找方法）
+                    // 压入 receiver 供 OP_GET_METHOD 消费（从 struct 方法表查找方法）
                     gen_expr(gen, obj_ast);
 
                     ObjString* method_name_str = str_copy(method_name, strlen(method_name));
@@ -773,7 +783,6 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                     emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
                     emit_byte(gen, method_name_const & 0xff, ast->line);
 
-                    // self_in_args 时 args 已包含 self，否则需要 +1 补上 self
                     int call_arg_count = provided_args + (self_in_args ? 0 : 1);
                     if (has_method_def) {
                         call_arg_count = expected_args;
@@ -781,25 +790,20 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                     emit_call(gen, call_arg_count, ast->line);
                 } else {
                     // struct 方法调用：s.method(args)
-                    // 栈布局与 face 调用相同，self_in_args 时跳过首次 self 压栈避免重复
+                    // 栈布局目标: [self][arg1]...[argN][default_args...][callee]
+                    // 当 self_in_args 时语义分析已将 self 作为 args[0] 加入，否则需额外压入 self
+                    // OP_CALL 从 vm.sp - arg_count - 1 开始读参数，跳过栈顶的 callee
                     if (!self_in_args) {
                         gen_expr(gen, obj_ast);
                     }
                     for (int i = 0; i < ast->u.call.args.count; i++) {
                         gen_expr(gen, ast->u.call.args.items[i]);
                     }
-                    gen_expr(gen, obj_ast);
 
-                    ObjString* method_name_str = str_copy(method_name, strlen(method_name));
-                    int method_name_const = make_constant(gen, val_obj((Object*)method_name_str));
-                    emit_byte(gen, OP_GET_METHOD, ast->line);
-                    emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, method_name_const & 0xff, ast->line);
-
-                    // 计算已提供的参数数量（含 self），用于默认参数填充
-                    int effective_provided = self_in_args ? provided_args : (provided_args + 1);
-                    if (has_method_def && method_def && effective_provided < expected_args) {
-                        for (int i = effective_provided; i < expected_args; i++) {
+                    // 在压入 callee 之前填充缺失的默认参数
+                    // actual_provided 已包含 self（无论是否在 args 中），直接与 expected_args 比较
+                    if (has_method_def && method_def && actual_provided < expected_args) {
+                        for (int i = actual_provided; i < expected_args; i++) {
                             Ast* default_expr = method_def->u.func.param_defaults[i];
                             if (default_expr) {
                                 gen_default_value(gen, default_expr);
@@ -808,6 +812,15 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                             }
                         }
                     }
+
+                    // 压入 receiver，OP_GET_METHOD 获取方法闭包压入栈顶
+                    gen_expr(gen, obj_ast);
+
+                    ObjString* method_name_str = str_copy(method_name, strlen(method_name));
+                    int method_name_const = make_constant(gen, val_obj((Object*)method_name_str));
+                    emit_byte(gen, OP_GET_METHOD, ast->line);
+                    emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, method_name_const & 0xff, ast->line);
 
                     if (has_method_def && method_def && method_def->u.func.is_async) {
                         emit_byte(gen, OP_ASYNC_CALL, ast->line);
