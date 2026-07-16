@@ -576,6 +576,14 @@ int w = opts.get("w", 0)           // 默认值 0 → 推断返回 int
 float f = opts.get("f", 0.0)       // 默认值 0.0 → 推断返回 float
 string s = opts.get("name", "")    // 默认值 "" → 推断返回 string
 bool b = opts.get("active", false) // 默认值 false → 推断返回 bool
+
+// ✅ Array 泛型方法自动推断返回类型
+Array[int] nums = [1, 2, 3]
+Array[int] evens = nums.filter(func(var x, var i) { return x % 2 == 0 })   // 保持型 → Array[int]
+Array[int] copy = nums.copy()                                                 // 保持型 → Array[int]
+Array[string] strs = nums.map(func(var x, var i) { return _str(x) })         // 变换型 → Array[string]
+Array[bool] flags = nums.map(func(var x, var i) { return x > 2 })            // 变换型 → Array[bool]
+Array[float] halves = nums.map(func(var x, var i) { return _float(x) / 2 }) // 变换型 → Array[float]
 ```
 
 ### 类型转换
