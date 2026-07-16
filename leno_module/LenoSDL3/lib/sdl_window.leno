@@ -129,7 +129,7 @@ export struct Window {
         // 超采样抗锯齿：默认关闭；aa:true / aa:2 / aa:1.5 开启
         _aaScale = 0.0
         var aaOpt = opts.get("aa", 0.0)
-        if aaOpt is bool { if _bool(aaOpt) { _aaScale = 2.0 } }
+        if aaOpt is bool { if aaOpt { _aaScale = 2.0 } }
         else { float a = _float(aaOpt); if a > 0.0 { _aaScale = a } }
         handle = _lib.SDL_CreateWindow(title, w, h, flags) as Ptr
         ok = handle != null
