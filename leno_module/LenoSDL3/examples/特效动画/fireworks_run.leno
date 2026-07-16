@@ -1,5 +1,6 @@
 // fireworks_run.leno — 烟花效果（win.run 回调模式 + 文字统计覆盖）
 import "../../lib/SDL3.leno" as SDL3
+import "../../lib/sdl_core.leno" as core
 use SDL3.Event
 use SDL3.Renderer
 import maths
@@ -228,6 +229,8 @@ main() {
             if font.ok {
                 r.drawText(font, "FPS: " + fps + "  粒子: " + pc + "  峰值: " + peak, 10.0, 10.0, 255, 255, 255)
             }
+
+            core.requestRedraw()   // 动画需每帧重绘：请求下一帧继续渲染（否则空闲时零重绘会卡住）
         }
     )
 

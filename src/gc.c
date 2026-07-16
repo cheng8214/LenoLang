@@ -14,7 +14,8 @@
 //
 //   写屏障（Write Barrier）：
 //     - 当老年代对象引用年轻代对象时，将老年代对象加入 remembered set
-//     - Minor GC 时额外扫描 remembered set，确保年轻代可达对象不被误回收
+//     - remembered set 当前未在 GC 标记阶段使用（mark_roots 已覆盖全部可达对象）
+//     - 保留写屏障和 remembered set 基础设施，供未来优化使用
 //
 // 收集策略：
 //   gc_alloc() → 年轻代分配超阈值 → Minor GC
@@ -25,6 +26,7 @@
 /* Socket 资源释放所需的平台头文件（必须在 windows.h 之前） */
 #ifdef _WIN32
     #include <winsock2.h>
+    #include <windows.h>
     #ifdef _MSC_VER
         #pragma comment(lib, "ws2_32.lib")
     #endif
@@ -310,7 +312,9 @@ void gc_mark_object(Object* obj) {
         case OBJ_DICT: {
             ObjDict* dict = (ObjDict*)obj;
             for (int i = 0; i < dict->asize; i++) {
-                gc_mark_value(dict->array[i]);
+                if (!val_is_null(dict->array[i])) {
+                    gc_mark_value(dict->array[i]);
+                }
             }
             for (int i = 0; i < dict->capacity; i++) {
                 Value entry_key = dict->entries[i].key;
@@ -693,17 +697,6 @@ static void mark_roots(void) {
 
     // 19. 标记字典 tombstone 哨兵字符串已不再需要（已改用 Value 哨兵值）
     // DICT_TOMBSTONE_VAL 是 NaN-boxed 值，不涉及 GC 管理的对象
-}
-
-// 标记 remembered set 中的老年代对象（Minor GC 时作为额外根集合）
-static void mark_remembered_set(void) {
-    for (int i = 0; i < gc.remembered_count; i++) {
-        Object* obj = gc.remembered_set[i];
-        // 安全检查：验证对象是否有效且仍为老年代
-        if (!obj || !is_valid_obj_type(obj->type)) continue;
-        if (obj->generation != GEN_OLD || obj->marked) continue;
-        gc_mark_object(obj);
-    }
 }
 
 // ============================================================================
@@ -1233,9 +1226,6 @@ static void sweep_young(void) {
                 promote->marked = (gc.mode == GC_MODE_FULL) ? 1 : 0;
                 promote->generation = GEN_OLD;
                 promote->survived = 0;
-                /* 晋升到老年代的对象可能仍持有年轻代引用，
-                 * 必须加入 remembered set，否则后续 Minor GC 会漏扫这些引用。 */
-                remembered_set_add(promote);
                 promote->next = gc.old_heap;
                 gc.old_heap = promote;
                 size_t obj_size = promote->size;
@@ -1255,7 +1245,6 @@ static void sweep_young(void) {
 // 清除老年代：回收未标记的对象
 static void sweep_old(void) {
     Object** obj = &gc.old_heap;
-    int freed_cnt = 0;
     while (*obj) {
         if (!is_valid_obj_type((*obj)->type)) {
             Object* invalid = *obj;
@@ -1275,7 +1264,6 @@ static void sweep_old(void) {
                 gc.old_allocated -= unreached->size;
             else
                 gc.old_allocated = 0;
-            freed_cnt++;
             // 尝试回收小数组到 free_list
             if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
                 continue;
@@ -1291,7 +1279,6 @@ static void sweep_old(void) {
 }
 
 // GC 后维护 remembered set。
-// 该集合是增量维护的：写屏障、对象晋升、老年代释放时都会更新它。
 // 这里只做压缩，清理可能残留的 NULL/无效/已非老年代的槽位。
 static void rebuild_remembered_set(void) {
     int j = 0;
@@ -1344,7 +1331,10 @@ void gc_try_collect_deferred(void) {
 }
 
 // Minor GC：只收集年轻代，若老年代堆积超阈值则顺带清扫
-// 流程：标记根集合 → 标记 remembered set → 清除年轻代 → [清除老年代] → 重建 remembered set
+// 流程：标记根集合 → 清除年轻代 → [清除老年代] → 重建 remembered set
+// 注：不再调用 mark_remembered_set()。mark_roots() 通过递归 gc_mark_object 已经标记了
+// 所有从根可达的对象（包括老年代引用的年轻代对象），因此 remembered set 是多余的。
+// 且 mark_remembered_set 会错误地标记已不可达的垃圾对象，导致 sweep_old freed=0。
 void gc_minor_collect(void) {
     if (gc.running || !gc.enabled) return;
 
@@ -1360,13 +1350,27 @@ void gc_minor_collect(void) {
 
     clear_all_marks();
     mark_roots();
-    mark_remembered_set();
 
     sweep_young();
 
     if (do_old_sweep) {
         sweep_old();
         gc.mode = GC_MODE_MINOR;
+
+        // Windows：定期归还 C 堆碎片化页面给 OS
+        // sweep_old 释放大量对象后，C 运行时的 free() 不会主动归还空闲页面给 OS，
+        // 导致进程工作集持续增长。HeapCompact 将连续的空闲页面合并并释放回系统。
+        // 每 60 秒最多执行一次，避免频繁调用导致帧率波动。
+#ifdef _WIN32
+        {
+            static THREAD_LOCAL uint32_t last_compact_tick = 0;
+            uint32_t now = (uint32_t)(clock() * 1000 / CLOCKS_PER_SEC);
+            if (now - last_compact_tick >= 60000) {
+                last_compact_tick = now;
+                HeapCompact(GetProcessHeap(), 0);
+            }
+        }
+#endif
     }
 
     rebuild_remembered_set();
@@ -1380,11 +1384,10 @@ void gc_minor_collect(void) {
     if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
         gc.young_threshold = GC_YOUNG_THRESHOLD;
     }
-
 }
 
 // Major GC：收集全部（年轻代 + 老年代）
-// 流程：标记根集合 → 标记 remembered set → 清除年轻代 → 清除老年代 → 重建 remembered set
+// 流程：标记根集合 → 清除年轻代 → 清除老年代 → 重建 remembered set
 void gc_major_collect(void) {
     if (gc.running || !gc.enabled) return;
 
@@ -1393,7 +1396,6 @@ void gc_major_collect(void) {
 
     clear_all_marks();
     mark_roots();
-    mark_remembered_set();
 
     // Major GC：在 sweep 之前清理无引用的内化字符串（此时 marked 标志仍有效）
     intern_sweep_unmarked();
@@ -1423,6 +1425,12 @@ void gc_major_collect(void) {
         gc.young_threshold = GC_YOUNG_THRESHOLD;
     }
 
+    // Windows：归还 C 堆碎片化页面给 OS
+    // Major GC 释放大量对象后，C 运行时的 free() 不会主动归还空闲页面给 OS，
+    // 导致进程工作集持续增长。HeapCompact 将连续的空闲页面合并并释放回系统。
+#ifdef _WIN32
+    HeapCompact(GetProcessHeap(), 0);
+#endif
 }
 
 // 自动选择 Minor 或 Major GC

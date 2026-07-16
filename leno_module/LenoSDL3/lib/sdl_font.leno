@@ -1,4 +1,4 @@
-﻿// sdl_font.leno — SDL3_ttf 字体绑定
+// sdl_font.leno — SDL3_ttf 字体绑定
 import ffi
 import dirs
 import files
@@ -109,12 +109,15 @@ export struct Font {
 
     // 文字纹理缓存（ring buffer，固定容量）：drawText 命中时直接复用纹理，
     // 避免每帧 TTF_RenderText_Blended（CPU 栅格化）+ SDL_CreateTextureFromSurface（上传）的重复开销
+    // 容量不宜过大：动画场景下 FPS 等数字每秒变化，每个不同文字各占一个纹理（~20-30KB/个），
+    // 512 个条目需要 ~8.5 分钟才填满才开始淘汰，期间纹理内存持续累积。
+    // 64 个条目足够缓存常见 UI 文字，64 秒后开始淘汰旧纹理，内存稳定在 ~2MB
     Array[CachedTex] _texCache = []
-    int _texCap = 512
+    int _texCap = 64
     int _texHead = 0
     // 尺寸缓存：measureString 高频调用，缓存避免重复测量
     Array[CachedMeas] _measCache = []
-    int _measCap = 1024
+    int _measCap = 256
     int _measHead = 0
 
     func load(string path, float ptsize): bool {

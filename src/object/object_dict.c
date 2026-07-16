@@ -281,8 +281,11 @@ void dict_set(ObjDict* dict, Value key, Value value) {
     int array_index = key_to_array_index(key);
     if (array_index >= 0) {
         if (array_index >= dict->asize) {
-            // 稀疏性保护
-            if (dict->asize > 0 && array_index > dict->asize * 2 && array_index > 64) {
+            // 稀疏性保护：当新键远超当前数组大小，或数组已较大且填充率低时，使用哈希表
+            // 避免整数键递增导致数组部分无限扩容（如粒子系统 nid 递增场景）
+            int sparse = (dict->asize > 0 && array_index > dict->asize * 2 && array_index > 64);
+            int low_density = (dict->asize > 1024 && dict->acount < dict->asize / 4);
+            if (sparse || low_density) {
                 goto use_hash;
             }
             if (!dict_array_resize(dict, array_index + 1)) {
@@ -414,6 +417,31 @@ void dict_try_shrink(ObjDict* dict) {
         if (new_order) {
             dict->order = new_order;
             dict->order_capacity = new_cap;
+        }
+    }
+
+    // 数组部分缩容：当实际元素数远小于数组容量时，缩小数组部分
+    // 找到数组部分最后一个非空元素的位置，将 asize 缩至该位置
+    if (dict->asize > 16 && dict->acount < dict->asize / 4) {
+        // 从尾部向前扫描，找到最后一个非空元素
+        int last_non_null = -1;
+        for (int i = dict->asize - 1; i >= 0; i--) {
+            if (!val_is_null(dict->array[i])) {
+                last_non_null = i;
+                break;
+            }
+        }
+        int target_size = last_non_null + 1;
+        // 向上取整到 2 的幂次
+        int new_asize = 4;
+        while (new_asize < target_size) new_asize *= 2;
+        if (new_asize < 4) new_asize = 4;
+        if (new_asize < dict->asize) {
+            Value* new_array = (Value*)realloc(dict->array, new_asize * sizeof(Value));
+            if (new_array) {
+                dict->array = new_array;
+                dict->asize = new_asize;
+            }
         }
     }
 }
