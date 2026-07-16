@@ -1704,6 +1704,47 @@ func describe(var s) {
 > }
 > ```
 
+#### `case is` 解构
+
+在 `case is Type` 匹配 struct 类型时，可以在类型名后加括号提取字段值到变量：
+
+```leno
+struct Point {
+    float x
+    float y
+}
+
+main() {
+    var p = new Point(x = 3.0, y = 4.0)
+    switch p {
+        case is Point(a, b) {
+            // a 获取 x 字段值，b 获取 y 字段值
+            print(a)  // 3.0
+            print(b)  // 4.0
+        }
+        default {}
+    }
+}
+```
+
+**解构变量按字段声明顺序对应**：第一个变量对应第一个字段，第二个变量对应第二个字段，依此类推。
+
+解构变量的类型自动推断为对应字段的类型（上例中 `a` 和 `b` 均为 `float`）。
+
+用 `_` 跳过不需要的字段：
+
+```leno
+switch p {
+    case is Point(_, y_val) {
+        // 只提取 y 字段，跳过 x
+        print(y_val)  // 4.0
+    }
+    default {}
+}
+```
+
+> **提示：** 解构可以和类型收窄结合使用——在 `case is Point(a, b)` 分支中，变量 `p` 同时被收窄为 `Point` 类型，可以直接访问 `p.x`、`p.y`。
+
 ### while 循环
 
 ```leno
@@ -8267,7 +8308,7 @@ lenolang program.leno
 | for 遍历字典  | `for dict to key`, `for dict to key, value`    |
 | for 遍历字符串 | `for str to char`, `for str to char, index`（按 Unicode 字符遍历） |
 | while 循环  | `while i < 10 { }`                             |
-| switch    | `switch x { case v { } case is Type { } default { } }` |
+| switch    | `switch x { case v { } case is Type { } case is Point(a, b) { } default { } }` |
 
 ### 运算符
 

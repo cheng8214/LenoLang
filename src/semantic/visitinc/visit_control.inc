@@ -493,6 +493,44 @@
                     }
                 }
 
+                // case is Type 解构：定义解构变量（如 case is Point(x, y)）
+                if (ast->u.switch_.cases[i].destructure_count > 0 &&
+                    ast->u.switch_.cases[i].match_type &&
+                    ast->u.switch_.cases[i].match_type->kind == TYPE_STRUCT &&
+                    ast->u.switch_.cases[i].match_type->struct_name) {
+                    // 查找 struct 定义，获取字段类型
+                    Symbol* struct_def_sym = scope_resolve(s->root_scope, ast->u.switch_.cases[i].match_type->struct_name);
+                    if (!struct_def_sym) {
+                        struct_def_sym = scope_resolve(s->current, ast->u.switch_.cases[i].match_type->struct_name);
+                    }
+                    if (struct_def_sym && struct_def_sym->struct_field_types) {
+                        // 分配索引数组和字段名数组
+                        int dcount = ast->u.switch_.cases[i].destructure_count;
+                        ast->u.switch_.cases[i].destructure_indices =
+                            malloc(sizeof(int) * dcount);
+                        ast->u.switch_.cases[i].destructure_field_names =
+                            malloc(sizeof(char*) * dcount);
+                        for (int di = 0; di < dcount; di++) {
+                            ast->u.switch_.cases[i].destructure_indices[di] = -1;
+                            ast->u.switch_.cases[i].destructure_field_names[di] = NULL;
+                            const char* var_name = ast->u.switch_.cases[i].destructure_vars[di];
+                            if (strcmp(var_name, "_") == 0) continue;  // _ 跳过
+                            if (di < struct_def_sym->struct_field_count) {
+                                // 保存对应的 struct 字段名（供 codegen 使用）
+                                ast->u.switch_.cases[i].destructure_field_names[di] =
+                                    strdup(struct_def_sym->struct_field_names[di]);
+                                Symbol* dvar = scope_define(s->current, var_name, SYM_LOCAL);
+                                if (dvar) {
+                                    dvar->type = type_copy(struct_def_sym->struct_field_types[di]);
+                                    dvar->index = s->local_index++;
+                                    dvar->is_initialized = 1;
+                                    ast->u.switch_.cases[i].destructure_indices[di] = dvar->index;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 for (int j = 0; j < ast->u.switch_.cases[i].values.count; j++) {
                     visit(s, ast->u.switch_.cases[i].values.items[j]);
                 }

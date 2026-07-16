@@ -181,6 +181,44 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
 
         emit_byte(gen, OP_POP, ast->line);
 
+        // 解构字段提取：case is Point(x, y) → 从 guard_var 提取字段赋给 x, y
+        if (ast->u.switch_.cases[i].destructure_count > 0 &&
+            ast->u.switch_.cases[i].match_type &&
+            ast->u.switch_.cases[i].match_type->kind == TYPE_STRUCT &&
+            ast->u.switch_.cases[i].match_type->struct_name &&
+            ast->u.switch_.cases[i].destructure_indices &&
+            ast->u.switch_.cases[i].destructure_field_names) {
+            for (int di = 0; di < ast->u.switch_.cases[i].destructure_count; di++) {
+                const char* var_name = ast->u.switch_.cases[i].destructure_vars[di];
+                const char* field_name = ast->u.switch_.cases[i].destructure_field_names[di];
+                if (strcmp(var_name, "_") == 0 || !field_name) continue;
+                int local_idx = ast->u.switch_.cases[i].destructure_indices[di];
+                if (local_idx < 0) continue;
+                // 加载 guard_var
+                SymRef* gref = &ast->u.switch_.cases[i].guard_var_ref;
+                if (gref->kind == SYM_UPVALUE) {
+                    emit_bytes_2(gen, OP_GET_UPVALUE, gref->index, ast->line);
+                } else if (gref->kind == SYM_GLOBAL) {
+                    emit_byte(gen, OP_GET_GLOBAL, ast->line);
+                    int gname_const = make_constant(gen, val_obj((Object*)str_copy(gref->name, strlen(gref->name))));
+                    emit_byte(gen, (gname_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, gname_const & 0xff, ast->line);
+                } else {
+                    emit_bytes_2(gen, OP_GET_LOCAL, gref->index, ast->line);
+                }
+                // 通过字段名获取字段值：OP_CONST + OP_INDEX
+                ObjString* fname_str = str_copy(field_name, strlen(field_name));
+                int fname_const = make_constant(gen, val_obj((Object*)fname_str));
+                emit_byte(gen, OP_CONST, ast->line);
+                emit_byte(gen, (fname_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, fname_const & 0xff, ast->line);
+                emit_byte(gen, OP_INDEX, ast->line);
+                // 存入解构变量
+                emit_bytes_2(gen, OP_SET_LOCAL, local_idx, ast->line);
+                emit_byte(gen, OP_POP, ast->line);
+            }
+        }
+
         if (ast->u.switch_.cases[i].body->kind == AST_BLOCK) {
             gen_block(gen, ast->u.switch_.cases[i].body);
         } else {

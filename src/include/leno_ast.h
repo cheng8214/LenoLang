@@ -175,6 +175,10 @@ struct Ast {
                 TypeInfo* match_type; // 匹配的类型（int, string, Array, Point, Shape 等）
                 char* guard_var;      // switch 表达式变量名（用于类型收窄）
                 SymRef guard_var_ref; // switch 表达式变量的符号引用
+                char** destructure_vars;      // 解构变量名数组（如 case is Point(x, y) → ["x", "y"]）
+                int destructure_count;        // 解构变量数量（0 = 无解构）
+                int* destructure_indices;     // 解构变量的局部变量索引数组（语义分析时填充）
+                char** destructure_field_names; // 对应的 struct 字段名数组（语义分析时填充，如 ["x", "y"]）
             }* cases;            // case 数组
             int case_count;      // case 数量
             Ast* default_body;   // default 体
