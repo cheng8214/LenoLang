@@ -1037,8 +1037,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             int arity;
                             TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &arity);
                             
-                            // 如果返回类型是数组（如 copy 方法），应该与对象类型相同
-                            if (return_type == TYPE_ARRAY && obj_type->kind == TYPE_ARRAY) {
+                            // 如果返回类型是数组（如 copy/filter/reverse/sort），应该与对象类型相同
+                            // 但 map 除外——map 返回 Array[U]，U 取决于 callback 返回类型
+                            if (return_type == TYPE_ARRAY && obj_type->kind == TYPE_ARRAY &&
+                                strcmp(method_name, "map") != 0) {
                                 // 复制对象类型作为返回类型
                                 TypeInfo* result = type_copy(obj_type);
                                 type_free(obj_type);
@@ -1054,6 +1056,47 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                     TypeInfo* arr_type = type_new(TYPE_ARRAY);
                                     arr_type->element_type = type_new(elem_type);
                                     return arr_type;
+                                }
+                            }
+
+                            // Array.map 泛型推断：根据 callback 返回类型推断 Array[U]
+                            // 利用类型守卫：临时将 callback 参数符号类型设为接收者元素类型
+                            // 这样函数体内 _str(x)、x > 3 等就能正确推断返回类型
+                            if (obj_type->kind == TYPE_ARRAY && strcmp(method_name, "map") == 0 &&
+                                ast->u.call.args.count >= 1 && obj_type->element_type &&
+                                obj_type->element_type->kind != TYPE_ANY) {
+                                Ast* callback_ast = ast->u.call.args.items[0];
+                                if (callback_ast && callback_ast->kind == AST_FUNC_DEF &&
+                                    callback_ast->u.func.pcnt >= 1) {
+                                    // 类型守卫：临时修改 callback 参数在作用域中的符号类型
+                                    TypeInfo* guard_type = type_copy(obj_type->element_type);
+                                    TypeInfo* orig_types[8] = {NULL};  // 保存原始类型
+                                    int guard_count = callback_ast->u.func.pcnt < 8 ? callback_ast->u.func.pcnt : 8;
+                                    for (int gi = 0; gi < guard_count; gi++) {
+                                        Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
+                                        if (param_sym) {
+                                            orig_types[gi] = param_sym->type;
+                                            param_sym->type = (gi == 0) ? type_copy(guard_type) : type_copy(orig_types[gi]);
+                                        }
+                                    }
+                                    // 推断函数体返回类型
+                                    TypeInfo* inferred = infer_return_type_from_body(s, callback_ast->u.func.body);
+                                    // 恢复原始参数符号类型
+                                    for (int gi = 0; gi < guard_count; gi++) {
+                                        Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
+                                        if (param_sym && orig_types[gi]) {
+                                            type_free(param_sym->type);
+                                            param_sym->type = orig_types[gi];
+                                        }
+                                    }
+                                    type_free(guard_type);
+                                    if (inferred && inferred->kind != TYPE_ANY) {
+                                        type_free(obj_type);
+                                        TypeInfo* arr_type = type_new(TYPE_ARRAY);
+                                        arr_type->element_type = inferred;
+                                        return arr_type;
+                                    }
+                                    if (inferred) type_free(inferred);
                                 }
                             }
 
@@ -1303,8 +1346,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     int arity;
                     TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &arity);
 
-                    // 如果返回类型是数组（如 copy 方法），应该与对象类型相同
-                    if (return_type == TYPE_ARRAY && obj_sym->type->kind == TYPE_ARRAY) {
+                    // 如果返回类型是数组（如 copy/filter/reverse/sort），应该与对象类型相同
+                    // 但 map 除外——map 返回 Array[U]，U 取决于 callback 返回类型
+                    if (return_type == TYPE_ARRAY && obj_sym->type->kind == TYPE_ARRAY &&
+                        strcmp(method_name, "map") != 0) {
                         // 复制对象类型作为返回类型
                         return type_copy(obj_sym->type);
                     }
@@ -1313,6 +1358,41 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (return_type == TYPE_STRUCT && obj_sym->type->kind == TYPE_STRUCT) {
                         // 复制对象类型作为返回类型
                         return type_copy(obj_sym->type);
+                    }
+
+                    // Array.map 泛型推断：类型守卫注入 callback 参数类型
+                    if (obj_sym->type->kind == TYPE_ARRAY && strcmp(method_name, "map") == 0 &&
+                        ast->u.module_call.args.count >= 1 && obj_sym->type->element_type &&
+                        obj_sym->type->element_type->kind != TYPE_ANY) {
+                        Ast* callback_ast = ast->u.module_call.args.items[0];
+                        if (callback_ast && callback_ast->kind == AST_FUNC_DEF &&
+                            callback_ast->u.func.pcnt >= 1) {
+                            TypeInfo* guard_type = type_copy(obj_sym->type->element_type);
+                            TypeInfo* orig_types[8] = {NULL};
+                            int guard_count = callback_ast->u.func.pcnt < 8 ? callback_ast->u.func.pcnt : 8;
+                            for (int gi = 0; gi < guard_count; gi++) {
+                                Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
+                                if (param_sym) {
+                                    orig_types[gi] = param_sym->type;
+                                    param_sym->type = (gi == 0) ? type_copy(guard_type) : type_copy(orig_types[gi]);
+                                }
+                            }
+                            TypeInfo* inferred = infer_return_type_from_body(s, callback_ast->u.func.body);
+                            for (int gi = 0; gi < guard_count; gi++) {
+                                Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
+                                if (param_sym && orig_types[gi]) {
+                                    type_free(param_sym->type);
+                                    param_sym->type = orig_types[gi];
+                                }
+                            }
+                            type_free(guard_type);
+                            if (inferred && inferred->kind != TYPE_ANY) {
+                                TypeInfo* arr_type = type_new(TYPE_ARRAY);
+                                arr_type->element_type = inferred;
+                                return arr_type;
+                            }
+                            if (inferred) type_free(inferred);
+                        }
                     }
 
                     // Dict.get 默认值类型推断：根据第二个参数（默认值）推断返回类型
@@ -1925,9 +2005,14 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         }
         case AST_FUNC_DEF: {
             // 匿名函数表达式：根据返回类型注解构建函数类型
-            TypeInfo* return_type = (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER)
-                ? type_copy(ast->u.func.return_type)
-                : type_new(TYPE_ANY);
+            TypeInfo* return_type;
+            if (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER) {
+                return_type = type_copy(ast->u.func.return_type);
+            } else {
+                // 无显式返回类型注解时，尝试从函数体推断
+                TypeInfo* inferred = infer_return_type_from_body(s, ast->u.func.body);
+                return_type = inferred ? inferred : type_new(TYPE_ANY);
+            }
             
             // 构建参数类型数组
             TypeInfo** param_types = NULL;

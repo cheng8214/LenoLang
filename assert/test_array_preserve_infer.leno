@@ -1,0 +1,31 @@
+// 测试 Array 保持型泛型推断：filter/copy/reverse/sort 返回与接收者相同类型
+
+main() {
+    Array[int] nums = [1, 2, 3, 4, 5]
+
+    // copy 返回 Array[int]
+    Array[int] copied = nums.copy()
+    assert_eq(copied.len(), 5)
+    assert_eq(copied[0], 1)
+
+    // reverse 返回 Array[int]
+    Array[int] rev = nums.reverse()
+    assert_eq(rev[0], 5)
+    assert_eq(rev[4], 1)
+
+    // sort 返回 Array[int]
+    Array[int] unsorted = [3, 1, 2]
+    Array[int] sorted = unsorted.sort()
+    assert_eq(sorted[0], 1)
+
+    // float 数组 copy
+    Array[float] floats = [1.5, 2.5, 3.5]
+    Array[float] f3 = floats.copy()
+    assert_eq(f3[0], 1.5)
+
+    // filter 返回 Array[int]
+    Array[int] evens = nums.filter(func(var x, var i) { return x % 2 == 0 })
+    assert_eq(evens.len(), 2)
+
+    print("test_array_preserve_infer passed")
+}
