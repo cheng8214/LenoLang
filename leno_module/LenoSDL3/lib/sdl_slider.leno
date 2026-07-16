@@ -1,4 +1,4 @@
-// sdl_slider.leno — 滑块控件
+﻿// sdl_slider.leno — 滑块控件
 // 通过 win.addSlider({...}) 创建，拖拽 thumb 或在轨道上点击设定数值，回调 on_change(float)
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -47,18 +47,18 @@ export struct Slider impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
-        x      = _float(opts.get("x", 0))
-        y      = _float(opts.get("y", 0))
-        w      = _float(opts.get("w", 200))
-        h      = _float(opts.get("h", 24))
-        minV   = _float(opts.get("min", 0.0))
-        maxV   = _float(opts.get("max", 100.0))
-        value  = _float(opts.get("value", 0.0))
-        step   = _float(opts.get("step", 0.0))
-        _vertical = _bool(opts.get("vertical", false))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
+        x      = opts.get("x", 0)
+        y      = opts.get("y", 0)
+        w      = opts.get("w", 200)
+        h      = opts.get("h", 24)
+        minV   = opts.get("min", 0.0)
+        maxV   = opts.get("max", 100.0)
+        value  = opts.get("value", 0.0)
+        step   = opts.get("step", 0.0)
+        _vertical = opts.get("vertical", false)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
 
         // 默认颜色见字段声明（_trkR/_fillR/_thumbR/tr 等均有默认，以下仅 opts 覆盖）
         var tkc = opts.get("track_rgb")
@@ -71,10 +71,10 @@ export struct Slider impl Widget {
         if txr is Array[int] { tr = _int(txr[0]); tg = _int(txr[1]); tb = _int(txr[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         // hover/_wasHover/_dragging 默认见字段声明
-        _tip = opts.get("tip", "") as string
+        _tip = opts.get("tip", "")
         value = _clamp(value, minV, maxV)
         _ensure_font()
         _loaded = true

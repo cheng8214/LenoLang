@@ -1,4 +1,4 @@
-// sdl_font.leno — SDL3_ttf 字体绑定
+﻿// sdl_font.leno — SDL3_ttf 字体绑定
 import ffi
 import dirs
 import files

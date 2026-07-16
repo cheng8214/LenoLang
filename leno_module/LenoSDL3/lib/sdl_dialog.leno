@@ -1,4 +1,4 @@
-// sdl_dialog.leno — 对话框工厂
+﻿// sdl_dialog.leno — 对话框工厂
 import "sdl_window.leno" as wnd; use wnd.Window
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer

@@ -1,4 +1,4 @@
-// LenoSDL3 — SDL3 绑定入口（用户只需导入此模块）
+﻿// LenoSDL3 — SDL3 绑定入口（用户只需导入此模块）
 import "sdl_core.leno" as core
 import "sdl_window.leno" as wnd
 import "sdl_renderer.leno" as r

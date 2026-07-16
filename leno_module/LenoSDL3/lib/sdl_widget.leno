@@ -1,4 +1,4 @@
-// sdl_widget.leno — 控件统一接口（face）
+﻿// sdl_widget.leno — 控件统一接口（face）
 // 任何希望被 Window.run() 自动管理（接收事件 + 自动渲染）的控件都必须 impl Widget。
 // 这样新增控件只需 win.add(widget) 一行，无需再修改 sdl_window.leno。
 import "sdl_event.leno" as evt; use evt.Event

@@ -1,4 +1,4 @@
-// sdl_panel.leno — 面板容器控件（背景框 + 边框 + 裁剪，承载子控件）
+﻿// sdl_panel.leno — 面板容器控件（背景框 + 边框 + 裁剪，承载子控件）
 // 子控件使用「窗口绝对坐标」添加到面板：panel.add(win.addButton({x, y, ...}))
 // 面板只负责绘制背景/边框、把绘制裁剪到自身范围、并把事件转发给子控件。
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -20,11 +20,11 @@ export struct Panel impl Widget {
     bool visible = true
 
     func set(Dict opts) {
-        x    = _float(opts.get("x", 0))
-        y    = _float(opts.get("y", 0))
-        w    = _float(opts.get("w", 200))
-        h    = _float(opts.get("h", 150))
-        _radius = _float(opts.get("radius", 8.0))
+        x    = opts.get("x", 0)
+        y    = opts.get("y", 0)
+        w    = opts.get("w", 200)
+        h    = opts.get("h", 150)
+        _radius = opts.get("radius", 8.0)
 
         // 默认背景色/边框色见字段声明（br/bg/bb、_bdrR/_bdrG/_bdrB），以下仅 opts 覆盖
         var bgc = opts.get("bg_rgb")
@@ -33,11 +33,11 @@ export struct Panel impl Widget {
         var bdc = opts.get("border_rgb")
         if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
 
-        _brdA = _int(opts.get("border_alpha", 220))
-        _drawBorder = _bool(opts.get("border", true))
-        _clip = _bool(opts.get("clip", true))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        _brdA = opts.get("border_alpha", 220)
+        _drawBorder = opts.get("border", true)
+        _clip = opts.get("clip", true)
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         children = []   // 重置（二次 set 清空旧子控件）
         _loaded = true
     }

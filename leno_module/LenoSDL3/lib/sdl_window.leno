@@ -1,4 +1,4 @@
-// sdl_window.leno — SDL3 窗口封装
+﻿// sdl_window.leno — SDL3 窗口封装
 //
 // 提供两种使用模式：
 // 1. run() 回调模式（推荐）：
@@ -121,10 +121,10 @@ export struct Window {
             print("[LenoSDL3] init failed: " + core.getError())
             return false
         }
-        string title = opts.get("title", "LenoSDL3") as string
-        int w        = opts.get("w", 800) as int
-        int h        = opts.get("h", 600) as int
-        int flags    = opts.get("flags", 0) as int
+        string title = opts.get("title", "LenoSDL3")
+        int w        = opts.get("w", 800)
+        int h        = opts.get("h", 600)
+        int flags    = opts.get("flags", 0)
         _w = w; _h = h
         // 超采样抗锯齿：默认关闭；aa:true / aa:2 / aa:1.5 开启
         _aaScale = 0.0

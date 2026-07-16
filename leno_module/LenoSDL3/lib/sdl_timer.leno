@@ -1,4 +1,4 @@
-// sdl_timer.leno — 基于 getTicks() 的定时器，Array 存回调
+﻿// sdl_timer.leno — 基于 getTicks() 的定时器，Array 存回调
 
 import "../lib/sdl_core.leno" as core
 use core.sdl3

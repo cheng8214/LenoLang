@@ -1,4 +1,4 @@
-// sdl_treeview.leno — 树视图控件（层级节点、展开/折叠、单选/多选、可选复选框、右键节点菜单）
+﻿// sdl_treeview.leno — 树视图控件（层级节点、展开/折叠、单选/多选、可选复选框、右键节点菜单）
 // 通过 win.addTreeView({...}) 创建。
 //   items: Array[Dict]，每个节点 {text, children:[...], expanded, checked, checkable,
 //                                has_children(懒加载标记), data, id(可选)}
@@ -105,18 +105,18 @@ export struct TreeView impl Widget {
     func _build_node(Dict d, int parentId, int depth): TreeViewNode {
         TreeViewNode n = new TreeViewNode()
         n.id = _nextId; _nextId = _nextId + 1
-        n.text = d.get("text", "") as string
+        n.text = d.get("text", "")
         n._parent = parentId
         n._depth = depth
-        n.expanded = _bool(d.get("expanded", false))
+        n.expanded = d.get("expanded", false)
         bool hasCh = false
         var ch = d.get("children", [])
         if ch is Array[Dict] { if (ch as Array[Dict]).len() > 0 { hasCh = true } }
-        if d.has("has_children") { hasCh = _bool(d.get("has_children", false)) or hasCh }
+        if d.has("has_children") { hasCh = d.get("has_children", false) or hasCh }
         n.hasChildren = hasCh
         bool chk = false; bool on = false
-        if d.has("checkable") { chk = _bool(d.get("checkable", false)) }
-        if d.has("checked") { chk = true; on = _bool(d.get("checked", false)) }
+        if d.has("checkable") { chk = d.get("checkable", false) }
+        if d.has("checked") { chk = true; on = d.get("checked", false) }
         n.checkable = chk
         n.checked = on
         n.data = d.get("data", {}) as Dict
@@ -269,18 +269,18 @@ export struct TreeView impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
-        x         = _float(opts.get("x", 0))
-        y         = _float(opts.get("y", 0))
-        w         = _float(opts.get("w", 200))
-        h         = _float(opts.get("h", 200))
-        _rowH     = _float(opts.get("row_h", 24))
-        _indent    = _float(opts.get("indent", 16))
-        _padX      = _float(opts.get("pad_x", 6))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
-        _mode     = _int(opts.get("mode", 0))
-        _showCheck = _bool(opts.get("show_check", false))
+        x         = opts.get("x", 0)
+        y         = opts.get("y", 0)
+        w         = opts.get("w", 200)
+        h         = opts.get("h", 200)
+        _rowH     = opts.get("row_h", 24)
+        _indent    = opts.get("indent", 16)
+        _padX      = opts.get("pad_x", 6)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
+        _mode     = opts.get("mode", 0)
+        _showCheck = opts.get("show_check", false)
 
         var its = opts.get("items", [])
         if its is Array[Dict] { _build_from_dicts(its as Array[Dict]) }
@@ -297,14 +297,14 @@ export struct TreeView impl Widget {
         var sbc = opts.get("scroll_rgb");  if sbc is Array[int] { _sbR = sbc[0]; _sbG = sbc[1]; _sbB = sbc[2] }
         var lnc = opts.get("line_rgb");    if lnc is Array[int] { _lineR = lnc[0]; _lineG = lnc[1]; _lineB = lnc[2] }
         var chc = opts.get("check_rgb");   if chc is Array[int] { _chkR = chc[0]; _chkG = chc[1]; _chkB = chc[2] }
-        _showLines = _bool(opts.get("show_lines", true))
+        _showLines = opts.get("show_lines", true)
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
-        _tip = opts.get("tip", "") as string
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _tip = opts.get("tip", "")
 
-        _ctxMenuEnabled = _bool(opts.get("context_menu", false)) and opts.has("context_menu")
+        _ctxMenuEnabled = opts.get("context_menu", false) and opts.has("context_menu")
         if _ctxMenuEnabled and _ctxMenu == null {
             _ctxMenu = menu.createMenuBar({})
             _ctxMenu.setWindowSize(_winW, _winH)

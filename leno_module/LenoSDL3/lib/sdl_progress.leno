@@ -1,4 +1,4 @@
-// sdl_progress.leno — 进度条控件
+﻿// sdl_progress.leno — 进度条控件
 // 通过 win.addProgressBar({...}) 创建，只读显示进度（可 set_value 设定）；
 // 开启 clickable 后点击/拖拽可设定进度（像可交互进度条），回调 on_change(float)
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -45,18 +45,18 @@ export struct ProgressBar impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
-        x         = _float(opts.get("x", 0))
-        y         = _float(opts.get("y", 0))
-        w         = _float(opts.get("w", 200))
-        h         = _float(opts.get("h", 20))
-        minV      = _float(opts.get("min", 0.0))
-        maxV      = _float(opts.get("max", 100.0))
-        value     = _float(opts.get("value", 0.0))
-        _clickable = _bool(opts.get("clickable", false))
-        _showText  = _bool(opts.get("show_text", true))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
+        x         = opts.get("x", 0)
+        y         = opts.get("y", 0)
+        w         = opts.get("w", 200)
+        h         = opts.get("h", 20)
+        minV      = opts.get("min", 0.0)
+        maxV      = opts.get("max", 100.0)
+        value     = opts.get("value", 0.0)
+        _clickable = opts.get("clickable", false)
+        _showText  = opts.get("show_text", true)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
 
         // 默认颜色见字段声明（_trkR/_fillR/tr 等均有默认，以下仅 opts 覆盖）
 
@@ -69,13 +69,13 @@ export struct ProgressBar impl Widget {
         if ptc is Array[int] { tr = _int(ptc[0]); tg = _int(ptc[1]); tb = _int(ptc[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         // hover/_wasHover/_dragging 默认见字段声明
         value = _clamp(value, minV, maxV)
         _animVal = value; _animTarget = value; _animating = false; _animLast = 0.0
-        _animSpeed = _float(opts.get("anim_speed", 12.0))
-        _tip = opts.get("tip", "") as string
+        _animSpeed = opts.get("anim_speed", 12.0)
+        _tip = opts.get("tip", "")
         _ensure_font()
         _loaded = true
     }

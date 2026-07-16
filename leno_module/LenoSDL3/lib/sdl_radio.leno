@@ -1,4 +1,4 @@
-// sdl_radio.leno — 单选按钮（同组互斥）
+﻿// sdl_radio.leno — 单选按钮（同组互斥）
 // 通过 win.addRadioButton({...}) 创建，同一 group 内只能选中一个。
 // 互斥依赖模块级注册表：Leno 的 struct 数组为引用语义，注册 self 即共享同一实例。
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -48,15 +48,15 @@ export struct RadioButton impl Widget {
     }
 
     func set(Dict opts) {
-        text      = opts.get("text", "") as string
-        group     = opts.get("group", "default") as string
-        x         = _float(opts.get("x", 0))
-        y         = _float(opts.get("y", 0))
-        _box      = _float(opts.get("box", 22))
-        _gap      = _float(opts.get("gap", 8))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
+        text      = opts.get("text", "")
+        group     = opts.get("group", "default")
+        x         = opts.get("x", 0)
+        y         = opts.get("y", 0)
+        _box      = opts.get("box", 22)
+        _gap      = opts.get("gap", 8)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
 
         // 默认颜色见字段声明（cr/cg/cb/cc/ck/cbl/tr/tg/tb/_brdR 等均有默认，以下仅 opts 覆盖）
 
@@ -71,11 +71,11 @@ export struct RadioButton impl Widget {
         if cbd is Array[int] { _brdR = _int(cbd[0]); _brdG = _int(cbd[1]); _brdB = _int(cbd[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
-        _checked = _bool(opts.get("checked", false))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        _checked = opts.get("checked", false)
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         // hover/_wasHover/_pressed 默认见字段声明
-        _tip = opts.get("tip", "") as string
+        _tip = opts.get("tip", "")
 
         _radioIdSeq = _radioIdSeq + 1
         _id = _radioIdSeq

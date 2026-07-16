@@ -1,4 +1,4 @@
-// sdl_core.leno — SDL3 核心绑定（cstruct/clib/常量/DLL）
+﻿// sdl_core.leno — SDL3 核心绑定（cstruct/clib/常量/DLL）
 import ffi
 import dirs
 import files

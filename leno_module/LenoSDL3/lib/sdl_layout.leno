@@ -1,4 +1,4 @@
-// sdl_layout.leno — 自动布局容器（HBox / VBox / AnchorBox）
+﻿// sdl_layout.leno — 自动布局容器（HBox / VBox / AnchorBox）
 //
 // 解决的问题：此前所有控件都用窗口绝对坐标摆放，调整一个就得手动算其它所有坐标。
 // 布局容器接管子控件的 x/y（必要时还有 w/h），按规则自动排布。
@@ -54,14 +54,14 @@ export struct HBox impl Widget {
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0))
-        y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 300))
-        h = _float(opts.get("h", 40))
-        padX = _float(opts.get("padX", 8))
-        padY = _float(opts.get("padY", 8))
-        spacing = _float(opts.get("spacing", 6))
-        justify = _int(opts.get("justify", 0))
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 300)
+        h = opts.get("h", 40)
+        padX = opts.get("padX", 8)
+        padY = opts.get("padY", 8)
+        spacing = opts.get("spacing", 6)
+        justify = opts.get("justify", 0)
         _loaded = true
     }
 
@@ -104,11 +104,11 @@ export struct HBox impl Widget {
         float sumShrinkBasis = 0.0
         for n to i {
             Dict o = _opt[i]
-            float g = _float(o.get("grow", 0.0))
-            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
-            float s = _float(o.get("shrink", 1.0))
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
             float basis = _natW[i]
-            float b = _float(o.get("basis", -1.0))
+            float b = o.get("basis", -1.0)
             if b >= 0.0 { basis = b }
             totalBasis = totalBasis + basis
             sumGrow = sumGrow + g
@@ -119,11 +119,11 @@ export struct HBox impl Widget {
         // 嵌套闭包：计算第 i 个子项的主轴尺寸（捕获 free/sumGrow/sumShrinkBasis 等外层变量）
         func childMain(int i): float {
             Dict o = _opt[i]
-            float g = _float(o.get("grow", 0.0))
-            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
-            float s = _float(o.get("shrink", 1.0))
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
             float basis = _natW[i]
-            float b = _float(o.get("basis", -1.0))
+            float b = o.get("basis", -1.0)
             if b >= 0.0 { basis = b }
             if free >= 0.0 {
                 if sumGrow > 0.0 { return basis + free * g / sumGrow }
@@ -155,9 +155,9 @@ export struct HBox impl Widget {
             Dict o = _opt[i]
             float cw = childMain(i)
             float ch = _natH[i]
-            float g = _float(o.get("grow", 0.0))
-            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
-            int align = _int(o.get("align", 0))
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            int align = o.get("align", 0)
             float cy
             if align == 3 { ch = innerH; cy = y + padY }
             else if g > 0.0 { ch = innerH; cy = y + padY }   // grow 同时撑满交叉轴
@@ -165,10 +165,10 @@ export struct HBox impl Widget {
             else if align == 2 { cy = y + padY + innerH - ch }
             else { cy = y + padY }
             // 最小/最大约束
-            float mn = _float(o.get("minW", -1.0)); if mn >= 0.0 and cw < mn { cw = mn }
-            float mx = _float(o.get("maxW", -1.0)); if mx >= 0.0 and cw > mx { cw = mx }
-            float mnh = _float(o.get("minH", -1.0)); if mnh >= 0.0 and ch < mnh { ch = mnh }
-            float mxh = _float(o.get("maxH", -1.0)); if mxh >= 0.0 and ch > mxh { ch = mxh }
+            float mn = o.get("minW", -1.0); if mn >= 0.0 and cw < mn { cw = mn }
+            float mx = o.get("maxW", -1.0); if mx >= 0.0 and cw > mx { cw = mx }
+            float mnh = o.get("minH", -1.0); if mnh >= 0.0 and ch < mnh { ch = mnh }
+            float mxh = o.get("maxH", -1.0); if mxh >= 0.0 and ch > mxh { ch = mxh }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
             cx = cx + cw + spacing + extraGap
@@ -203,14 +203,14 @@ export struct VBox impl Widget {
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0))
-        y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 200))
-        h = _float(opts.get("h", 300))
-        padX = _float(opts.get("padX", 8))
-        padY = _float(opts.get("padY", 8))
-        spacing = _float(opts.get("spacing", 6))
-        justify = _int(opts.get("justify", 0))
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 200)
+        h = opts.get("h", 300)
+        padX = opts.get("padX", 8)
+        padY = opts.get("padY", 8)
+        spacing = opts.get("spacing", 6)
+        justify = opts.get("justify", 0)
         _loaded = true
     }
 
@@ -253,11 +253,11 @@ export struct VBox impl Widget {
         float sumShrinkBasis = 0.0
         for n to i {
             Dict o = _opt[i]
-            float g = _float(o.get("grow", 0.0))
-            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
-            float s = _float(o.get("shrink", 1.0))
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
             float basis = _natH[i]
-            float b = _float(o.get("basis", -1.0))
+            float b = o.get("basis", -1.0)
             if b >= 0.0 { basis = b }
             totalBasis = totalBasis + basis
             sumGrow = sumGrow + g
@@ -268,11 +268,11 @@ export struct VBox impl Widget {
         // 嵌套闭包：计算第 i 个子项的主轴尺寸（捕获 free/sumGrow/sumShrinkBasis 等外层变量）
         func childMain(int i): float {
             Dict o = _opt[i]
-            float g = _float(o.get("grow", 0.0))
-            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
-            float s = _float(o.get("shrink", 1.0))
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
             float basis = _natH[i]
-            float b = _float(o.get("basis", -1.0))
+            float b = o.get("basis", -1.0)
             if b >= 0.0 { basis = b }
             if free >= 0.0 {
                 if sumGrow > 0.0 { return basis + free * g / sumGrow }
@@ -304,9 +304,9 @@ export struct VBox impl Widget {
             Dict o = _opt[i]
             float ch = childMain(i)
             float cw = _natW[i]
-            float g = _float(o.get("grow", 0.0))
-            if _bool(o.get("expand", false)) and g <= 0.0 { g = 1.0 }
-            int align = _int(o.get("align", 0))
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            int align = o.get("align", 0)
             float cx
             if align == 3 { cw = innerW; cx = x + padX }
             else if g > 0.0 { cw = innerW; cx = x + padX }   // grow 同时撑满交叉轴
@@ -314,10 +314,10 @@ export struct VBox impl Widget {
             else if align == 2 { cx = x + padX + innerW - cw }
             else { cx = x + padX }
             // 最小/最大约束
-            float mn = _float(o.get("minW", -1.0)); if mn >= 0.0 and cw < mn { cw = mn }
-            float mx = _float(o.get("maxW", -1.0)); if mx >= 0.0 and cw > mx { cw = mx }
-            float mnh = _float(o.get("minH", -1.0)); if mnh >= 0.0 and ch < mnh { ch = mnh }
-            float mxh = _float(o.get("maxH", -1.0)); if mxh >= 0.0 and ch > mxh { ch = mxh }
+            float mn = o.get("minW", -1.0); if mn >= 0.0 and cw < mn { cw = mn }
+            float mx = o.get("maxW", -1.0); if mx >= 0.0 and cw > mx { cw = mx }
+            float mnh = o.get("minH", -1.0); if mnh >= 0.0 and ch < mnh { ch = mnh }
+            float mxh = o.get("maxH", -1.0); if mxh >= 0.0 and ch > mxh { ch = mxh }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
             cy = cy + ch + spacing + extraGap
@@ -353,12 +353,12 @@ export struct AnchorBox impl Widget {
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0))
-        y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 300))
-        h = _float(opts.get("h", 200))
-        padX = _float(opts.get("padX", 0))
-        padY = _float(opts.get("padY", 0))
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 300)
+        h = opts.get("h", 200)
+        padX = opts.get("padX", 0)
+        padY = opts.get("padY", 0)
         _loaded = true
     }
 
@@ -398,14 +398,14 @@ export struct AnchorBox impl Widget {
             Widget c = _c[i]
             Dict o = _opt[i]
             float cw = _natW[i]; float ch = _natH[i]
-            float ow = _float(o.get("w", -1.0)); if ow >= 0.0 { cw = ow }
-            float oh = _float(o.get("h", -1.0)); if oh >= 0.0 { ch = oh }
-            float l = _float(o.get("left", -1.0))
-            float t = _float(o.get("top", -1.0))
-            float r = _float(o.get("right", -1.0))
-            float b = _float(o.get("bottom", -1.0))
-            bool cX = _bool(o.get("centerX", false))
-            bool cY = _bool(o.get("centerY", false))
+            float ow = o.get("w", -1.0); if ow >= 0.0 { cw = ow }
+            float oh = o.get("h", -1.0); if oh >= 0.0 { ch = oh }
+            float l = o.get("left", -1.0)
+            float t = o.get("top", -1.0)
+            float r = o.get("right", -1.0)
+            float b = o.get("bottom", -1.0)
+            bool cX = o.get("centerX", false)
+            bool cY = o.get("centerY", false)
             float px = bx; float py = by
 
             // 水平

@@ -1,4 +1,4 @@
-// sdl_toggle.leno — 开关（滑块式）
+﻿// sdl_toggle.leno — 开关（滑块式）
 // 通过 win.addToggle({...}) 创建，点击切换 on/off，回调 on_change(bool)
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -45,14 +45,14 @@ export struct Toggle impl Widget {
     }
 
     func set(Dict opts) {
-        text      = opts.get("text", "") as string
-        x         = _float(opts.get("x", 0))
-        y         = _float(opts.get("y", 0))
-        w         = _float(opts.get("w", 52))
-        h         = _float(opts.get("h", 28))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
+        text      = opts.get("text", "")
+        x         = opts.get("x", 0)
+        y         = opts.get("y", 0)
+        w         = opts.get("w", 52)
+        h         = opts.get("h", 28)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
 
         // 默认颜色见字段声明（_onR/_onG/_onB/_offR/_offG/_offB/tr/tg/tb 均有默认，以下仅 opts 覆盖）
 
@@ -65,15 +65,15 @@ export struct Toggle impl Widget {
         if ttc is Array[int] { tr = _int(ttc[0]); tg = _int(ttc[1]); tb = _int(ttc[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
-        _on = _bool(opts.get("on", false))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        _on = opts.get("on", false)
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         // hover/_wasHover/_pressed 默认见字段声明
-        _tip = opts.get("tip", "") as string
+        _tip = opts.get("tip", "")
 
         // 动画选项：anim=true 开启平滑滑动动画，anim_speed 控制速度
-        _animate = _bool(opts.get("anim", false))
-        _animSpeed = _float(opts.get("anim_speed", 12.0))
+        _animate = opts.get("anim", false)
+        _animSpeed = opts.get("anim_speed", 12.0)
         _animPos = if _on then 1.0 else 0.0
         _animTarget = _animPos
         _animLast = 0.0

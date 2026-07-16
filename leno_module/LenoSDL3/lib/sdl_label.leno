@@ -1,4 +1,4 @@
-// sdl_label.leno — 标签控件
+﻿// sdl_label.leno — 标签控件
 // 通过 win.addLabel({...}) 创建，支持多行、对齐、自动换行
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -36,19 +36,19 @@ export struct Label impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
-        text      = opts.get("text", "") as string
-        x         = _float(opts.get("x", 0))
-        y         = _float(opts.get("y", 0))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
+        text      = opts.get("text", "")
+        x         = opts.get("x", 0)
+        y         = opts.get("y", 0)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
 
         // 文字色见字段声明默认白色（tr/tg/tb），以下仅 opts 覆盖
         var tc = opts.get("text_rgb")
         if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
 
         // 对齐
-        _align = _int(opts.get("align", 0))
+        _align = opts.get("align", 0)
 
         _ensure_font()
         if _font != null and _font.ok {
@@ -56,9 +56,9 @@ export struct Label impl Widget {
             _h = _float(_font.measureString("Ag").h)
         } else { _w = 0.0; _h = 16.0 }
         // hover/_wasHover 默认见字段声明
-        _tip = opts.get("tip", "") as string
-        visible = _bool(opts.get("visible", true))
-        enabled = _bool(opts.get("enabled", true))
+        _tip = opts.get("tip", "")
+        visible = opts.get("visible", true)
+        enabled = opts.get("enabled", true)
         _loaded = true
     }
 

@@ -1,4 +1,4 @@
-// sdl_tooltip.leno — 悬停提示（Tooltip）
+﻿// sdl_tooltip.leno — 悬停提示（Tooltip）
 //
 // 设计：全局单例。任意控件在 hover 且有 tip 文本时调用 tipReport(text, mx, my)；
 // Window 每帧先 tipTick()（按悬停时长决定是否显示），最后一遍 tipRender() 画在最上层。

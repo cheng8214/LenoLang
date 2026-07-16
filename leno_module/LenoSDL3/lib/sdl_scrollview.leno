@@ -1,4 +1,4 @@
-// sdl_scrollview.leno — 通用滚动容器（裁剪视口 + 内容偏移 + 滚轮/拖动滚动条）
+﻿// sdl_scrollview.leno — 通用滚动容器（裁剪视口 + 内容偏移 + 滚轮/拖动滚动条）
 //
 // 解决的问题：Panel 只会裁剪不会滚动，只有 ListBox/ComboBox 内部自带滚动条。
 // ScrollView 持有一个「内容控件」（通常为 VBox/Panel/HBox），内容坐标 (0,0) 映射到
@@ -46,23 +46,23 @@ export struct ScrollView impl Widget {
     Ptr[u8] _hwnd
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0))
-        y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 300))
-        h = _float(opts.get("h", 200))
-        _radius = _float(opts.get("radius", 8.0))
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 300)
+        h = opts.get("h", 200)
+        _radius = opts.get("radius", 8.0)
         var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
         // 默认色见字段声明，仅当 opts 指定时覆盖
         var bdc = opts.get("border_rgb")
         if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
-        _brdA = _int(opts.get("border_alpha", 200))
-        _drawBorder = _bool(opts.get("border", true))
-        _contentW = _float(opts.get("content_w", -1.0))
-        _contentH = _float(opts.get("content_h", -1.0))
+        _brdA = opts.get("border_alpha", 200)
+        _drawBorder = opts.get("border", true)
+        _contentW = opts.get("content_w", -1.0)
+        _contentH = opts.get("content_h", -1.0)
         _scrollX = 0.0; _scrollY = 0.0
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         _loaded = true
     }
 

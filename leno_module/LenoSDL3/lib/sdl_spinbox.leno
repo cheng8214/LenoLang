@@ -1,4 +1,4 @@
-// sdl_spinbox.leno — 数值微调框（SpinBox）
+﻿// sdl_spinbox.leno — 数值微调框（SpinBox）
 // 通过 win.addSpinBox({...}) 创建：左侧 Edit 编辑数值，右侧上下箭头按钮 ±step，滚轮也可调整。
 // 复用 Edit 实现文本输入 / 光标 / IME / 剪贴板，SpinBox 仅负责箭头与数值约束。
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -104,24 +104,24 @@ export struct SpinBox impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
-        x = _float(opts.get("x", 0))
-        y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 140))
-        h = _float(opts.get("h", 34))
-        minV = _float(opts.get("min", 0.0))
-        maxV = _float(opts.get("max", 100.0))
-        value = _float(opts.get("value", 0.0))
-        step = _float(opts.get("step", 1.0))
-        _intMode = _bool(opts.get("int_mode", false))
-        _decimals = _int(opts.get("decimals", 2))
-        _arrowW = _float(opts.get("arrow_w", 20.0))
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 140)
+        h = opts.get("h", 34)
+        minV = opts.get("min", 0.0)
+        maxV = opts.get("max", 100.0)
+        value = opts.get("value", 0.0)
+        step = opts.get("step", 1.0)
+        _intMode = opts.get("int_mode", false)
+        _decimals = opts.get("decimals", 2)
+        _arrowW = opts.get("arrow_w", 20.0)
         if _arrowW < 12.0 { _arrowW = 12.0 }
 
         float ew = w - _arrowW
         if ew < 10.0 { ew = 10.0 }
         _edit = edt.createEdit({x: x, y: y, w: ew, h: h, border: false, radius: 0,
-                                font_size: _float(opts.get("font_size", 15)),
-                                placeholder: opts.get("placeholder", "") as string})
+                                font_size: opts.get("font_size", 15),
+                                placeholder: opts.get("placeholder", "")})
         _edit.on_change(func() { _try_apply_text() })
 
         // 默认背景色见字段声明（br/bg/bb）
@@ -143,9 +143,9 @@ export struct SpinBox impl Widget {
         // 默认箭头符号色见字段声明（_btnR/_btnG/_btnB）
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
-        _tip = opts.get("tip", "") as string
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _tip = opts.get("tip", "")
 
         value = _clamp(value, minV, maxV)
         _sync_text()

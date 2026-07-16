@@ -1,4 +1,4 @@
-// sdl_combobox.leno — 下拉框控件（点击展开列表选择，回调 on_change(int)）
+﻿// sdl_combobox.leno — 下拉框控件（点击展开列表选择，回调 on_change(int)）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -62,20 +62,20 @@ export struct ComboBox impl Widget {
     func set_size(float sw, float sh) { w = sw; h = sh }
 
     func set(Dict opts) {
-        x         = _float(opts.get("x", 0))
-        y         = _float(opts.get("y", 0))
-        w         = _float(opts.get("w", 200))
-        h         = _float(opts.get("h", 30))
-        _itemH    = _float(opts.get("item_h", 24))
-        _popupMax = _float(opts.get("popup_h", 200))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
-        _placeholder = opts.get("placeholder", "请选择") as string
+        x         = opts.get("x", 0)
+        y         = opts.get("y", 0)
+        w         = opts.get("w", 200)
+        h         = opts.get("h", 30)
+        _itemH    = opts.get("item_h", 24)
+        _popupMax = opts.get("popup_h", 200)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
+        _placeholder = opts.get("placeholder", "请选择")
 
         var its = opts.get("items", [])
         if its is Array[string] { items = its as Array[string] } else { items = [] }
-        _sel = _int(opts.get("selected", -1))
+        _sel = opts.get("selected", -1)
         if _sel >= items.len() { _sel = -1 }
 
         // 默认颜色见字段声明（br/bg/bb/_bdrR/_selR/_hovR/tr/_sbR 等均有默认，以下仅 opts 覆盖）
@@ -95,9 +95,9 @@ export struct ComboBox impl Widget {
         if sbc is Array[int] { _sbR = _int(sbc[0]); _sbG = _int(sbc[1]); _sbB = _int(sbc[2]) }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
-        _tip = opts.get("tip", "") as string
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _tip = opts.get("tip", "")
         _open = false; _scroll = 0.0; _hover = -1   // 重置：收起弹层、滚动归零、悬停行清除
         _ensure_font()
         _loaded = true

@@ -1,4 +1,4 @@
-// sdl_filedialog.leno — 原生文件选择对话框（独立模块，不污染核心库）
+﻿// sdl_filedialog.leno — 原生文件选择对话框（独立模块，不污染核心库）
 //
 // 设计要点（避免内存泄漏）：
 //   1. SDL3.dll 句柄【只加载一次】并缓存（参照 sdl_core.leno 的 lib() 范式），
@@ -117,8 +117,8 @@ func _buildFilters(Dict opts): Ptr {
         int i = 0
         while i < n {
             Dict f = fs[i] as Dict
-            string nm = f.get("name", "") as string
-            string pt = _normPattern(f.get("pattern", "") as string)
+            string nm = f.get("name", "")
+            string pt = _normPattern(f.get("pattern", ""))
             // name 缓冲：按 UTF-8 真实字节数 +1 终止符；显式写 0 确保 null 结尾
             // （SDL 的 const char* 必须 null 终止，否则工作线程读越界导致对话框不弹出）
             int nblen = ffi.string_bytes(nm)
@@ -171,7 +171,7 @@ export func showOpenFileDialog(Window win, var onResult, Dict opts) {
     sdl3dlg lib = _ensureLib()
     Ptr filters = _buildFilters(opts)
     int nfilters = _nfiltersOf(opts)
-    bool many = opts.get("allow_many", false) as bool
+    bool many = opts.get("allow_many", false)
     Ptr defPtr = _makeCStr(_normLocation(opts.get("default_location", null)))
     lib.SDL_ShowOpenFileDialog(_cb, null, win.getHandle(), filters, nfilters, defPtr, many)
 }

@@ -1,4 +1,4 @@
-// sdl_menu.leno — 菜单栏控件（顶部菜单 + 下拉项 + 子菜单 + 右键上下文）
+﻿// sdl_menu.leno — 菜单栏控件（顶部菜单 + 下拉项 + 子菜单 + 右键上下文）
 // 通过 win.addMenuBar({...}) 创建，点击顶部标题展开下拉，悬停含子菜单的项弹出二级，
 // 点击叶子项触发回调；点击空白处 / 切换标题 / Esc 关闭。下拉层走第二遍 renderPopup，
 // 复用 sdl_core 的弹层捕获区机制（setPopupCapture），与 ComboBox 同一范式。
@@ -42,11 +42,11 @@ export struct MenuItem {
 // 由 Dict 构造一个 MenuItem（递归支持子菜单）。供解析与构建器共用。
 func _makeItem(Dict d): MenuItem {
     MenuItem mi = new MenuItem()
-    mi.label     = d.get("label", "") as string
-    mi.id        = d.get("id", mi.label) as string
-    mi.shortcut  = d.get("shortcut", "") as string
-    mi.enabled   = _bool(d.get("enabled", true))
-    mi.separator = _bool(d.get("separator", false))
+    mi.label     = d.get("label", "")
+    mi.id        = d.get("id", mi.label)
+    mi.shortcut  = d.get("shortcut", "")
+    mi.enabled   = d.get("enabled", true)
+    mi.separator = d.get("separator", false)
     mi.action    = d.get("action", null) as func():void
     var sub = d.get("submenu", [])
     if sub is Array[Dict] { mi.submenu = parseMenuItems(sub as Array[Dict]) }
@@ -164,20 +164,20 @@ export struct MenuBar impl Widget {
     func setWindowSize(int ww, int hh) { _winW = ww; _winH = hh }
 
     func set(Dict opts) {
-        x       = _float(opts.get("x", 0))
-        y       = _float(opts.get("y", 0))
-        w       = _float(opts.get("w", 600))
-        h       = _float(opts.get("h", 28))
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
-        _orient    = opts.get("orientation", "horizontal") as string
-        _align     = opts.get("align", "") as string
+        x       = opts.get("x", 0)
+        y       = opts.get("y", 0)
+        w       = opts.get("w", 600)
+        h       = opts.get("h", 28)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
+        _orient    = opts.get("orientation", "horizontal")
+        _align     = opts.get("align", "")
         if _align == "" { _align = if _orient == "vertical" then "left" else "center" }
         // item_h：显式传入则用，否则按字号自适应（避免大字号被裁切）
-        if opts.has("item_h") { _itemH = _float(opts.get("item_h", 26)) }
+        if opts.has("item_h") { _itemH = opts.get("item_h", 26) }
         else { _itemH = _fontSize + 12.0; if _itemH < 24.0 { _itemH = 24.0 } }
-        _itemGap = _float(opts.get("item_gap", 0))   // 竖直项间距，默认 0
+        _itemGap = opts.get("item_gap", 0)   // 竖直项间距，默认 0
 
         _titles = []
         _menus  = []
@@ -187,7 +187,7 @@ export struct MenuBar impl Widget {
         if ms is Array[Dict] {
             for ms.len() to i {
                 var m = ms[i] as Dict
-                _titles.add(m.get("title", "") as string)
+                _titles.add(m.get("title", ""))
                 var its = m.get("items", [])
                 if its is Array[Dict] { _menus.add(parseMenuItems(its as Array[Dict])) }
                 else { _menus.add([]) }
@@ -203,8 +203,8 @@ export struct MenuBar impl Widget {
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1   // 重置所有展开/悬停索引
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         _ensure_font()
         _loaded = true
 

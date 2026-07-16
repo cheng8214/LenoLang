@@ -1,4 +1,4 @@
-// sdl_image.leno — SDL3_image 图像加载/保存（PNG/JPG/BMP/WEBP 等）
+﻿// sdl_image.leno — SDL3_image 图像加载/保存（PNG/JPG/BMP/WEBP 等）
 // SDL3_image 无需显式 Init/Quit，加载 DLL 后直接使用
 // 注意：isFormat 函数需 SDL_IOStream 暂未封装
 import ffi

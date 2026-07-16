@@ -1,4 +1,4 @@
-// sdl_chart.leno — 图表控件：柱状图(BarChart) / 折线图(LineChart) / 饼图(PieChart)
+﻿// sdl_chart.leno — 图表控件：柱状图(BarChart) / 折线图(LineChart) / 饼图(PieChart)
 // 均为即时模式 Widget：win.add(SDL3.createBarChart({...})) 注册后，主循环自动 render。
 // 特性：坐标轴 / 网格 / 类目与数值标签 / 多系列 / 悬停高亮（柱、点）/ 图例（饼图）。
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -86,12 +86,12 @@ export struct BarChart impl Widget {
     float _animSpeed = 12.0
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 300)); h = _float(opts.get("h", 200))
-        title = opts.get("title", "") as string
-        fsize = _int(opts.get("font_size", 12))
-        showValues = _bool(opts.get("show_values", true))
-        showGrid = _bool(opts.get("show_grid", true))
+        x = opts.get("x", 0); y = opts.get("y", 0)
+        w = opts.get("w", 300); h = opts.get("h", 200)
+        title = opts.get("title", "")
+        fsize = opts.get("font_size", 12)
+        showValues = opts.get("show_values", true)
+        showGrid = opts.get("show_grid", true)
         _loaded = true
     }
     func set_data(Array[string] _cats, Array[float] _vals) {
@@ -294,12 +294,12 @@ export struct LineChart impl Widget {
     float _animSpeed = 12.0
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 300)); h = _float(opts.get("h", 200))
-        title = opts.get("title", "") as string
-        fsize = _int(opts.get("font_size", 12))
-        showGrid = _bool(opts.get("show_grid", true))
-        showPoints = _bool(opts.get("show_points", true))
+        x = opts.get("x", 0); y = opts.get("y", 0)
+        w = opts.get("w", 300); h = opts.get("h", 200)
+        title = opts.get("title", "")
+        fsize = opts.get("font_size", 12)
+        showGrid = opts.get("show_grid", true)
+        showPoints = opts.get("show_points", true)
         _loaded = true
     }
     func set_data(Array[string] _xlabels, Array[Array[float]] _series, Array[string] _names) {
@@ -495,10 +495,10 @@ export struct PieChart impl Widget {
     float _animSpeed = 12.0
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0)); y = _float(opts.get("y", 0))
-        w = _float(opts.get("w", 300)); h = _float(opts.get("h", 200))
-        title = opts.get("title", "") as string
-        fsize = _int(opts.get("font_size", 12))
+        x = opts.get("x", 0); y = opts.get("y", 0)
+        w = opts.get("w", 300); h = opts.get("h", 200)
+        title = opts.get("title", "")
+        fsize = opts.get("font_size", 12)
         _loaded = true
     }
     func set_data(Array[string] _labels, Array[float] _values) {

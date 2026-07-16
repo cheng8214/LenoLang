@@ -1,4 +1,4 @@
-// sdl_tab.leno — 选项卡容器控件（TabControl）
+﻿// sdl_tab.leno — 选项卡容器控件（TabControl）
 // 多页签切换容器：顶部标签栏（点击切换页）+ 内容区（仅当前页子控件参与事件与绘制）。
 //
 // 用法（与 Panel/布局一致：子控件用 SDL3.createXxx 创建，不在窗口注册，避免双重处理）：
@@ -61,11 +61,11 @@ export struct TabControl impl Widget {
     }
 
     func set(Dict opts) {
-        x    = _float(opts.get("x", 0))
-        y    = _float(opts.get("y", 0))
-        w    = _float(opts.get("w", 400))
-        h    = _float(opts.get("h", 300))
-        _tabH = _float(opts.get("tab_h", 32))
+        x    = opts.get("x", 0)
+        y    = opts.get("y", 0)
+        w    = opts.get("w", 400)
+        h    = opts.get("h", 300)
+        _tabH = opts.get("tab_h", 32)
 
         var ts = opts.get("tabs", [])
         if ts is Array[string] { _tabs = ts as Array[string] } else { _tabs = [] }
@@ -81,12 +81,12 @@ export struct TabControl impl Widget {
             _hasLayout.add(false)
         }
 
-        _active = _int(opts.get("active", 0))
+        _active = opts.get("active", 0)
         if _active < 0 or _active >= _tabs.len() { _active = 0 }
 
-        _fontSize = _float(opts.get("font_size", 15))
-        _fontPath = opts.get("font_path", "") as string
-        _fontStyle = _int(opts.get("font_style", 0))
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
 
         // 默认配色见字段声明（_bgR/_barR/_tabR/_actR/_txtR/_actTxtR/_accR/_brdR 等均有默认，以下仅 opts 覆盖）
 
@@ -101,8 +101,8 @@ export struct TabControl impl Widget {
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _hover = -1   // 重置悬停标签（二次 set 时归零）
-        enabled = _bool(opts.get("enabled", true))
-        visible = _bool(opts.get("visible", true))
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
         _ensure_font()
         _loaded = true
     }
