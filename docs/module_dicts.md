@@ -138,20 +138,42 @@ print(nested.has("user"))        // true
 
 ---
 
-### `get(key)`
+### `get(key)` / `get(key, default)`
 
 获取指定键的值。
 
 **参数**:
 - `key` (string): 要获取的键
+- `default` (可选): 键不存在时的默认值
 
-**返回**: `any` - 键对应的值，键不存在返回 `null`
+**返回**:
+- 无默认值时返回 `any`，键不存在返回 `null`
+- **带默认值时，返回类型由默认值类型推断**：
+
+| 默认值类型 | 推断返回类型 | 示例 |
+|-----------|------------|------|
+| `0` (int) | `int` | `opts.get("x", 0)` |
+| `0.0` (float) | `float` | `opts.get("y", 0.0)` |
+| `true`/`false` (bool) | `bool` | `opts.get("z", false)` |
+| `""` (string) | `string` | `opts.get("name", "")` |
 
 ```leno
 var dict = {"name": "Alice", "age": 25}
+
+// 无默认值：返回 any
 print(dict.get("name"))   // Alice
-print(dict.get("age"))    // 25
 print(dict.get("email"))  // null
+
+// 带默认值：返回类型由默认值推断
+int age = dict.get("age", 0)         // 返回 int，无需 _int() 转换
+string name = dict.get("name", "")   // 返回 string，无需 _str() 转换
+int missing = dict.get("email", -1)  // 键不存在，返回默认值 -1（int）
+
+// int → float 自动提升
+float f = dict.get("age", 0)   // int 默认值自动提升为 float
+
+// float → int 不允许（会截断小数）
+// int x = dict.get("score", 0.0)  // 编译报错：float 不能自动降级为 int
 
 // 使用 [] 语法等价
 print(dict["name"])       // Alice

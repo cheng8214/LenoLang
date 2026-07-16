@@ -1057,6 +1057,20 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 }
                             }
 
+                            // Dict.get 默认值类型推断：根据第二个参数（默认值）推断返回类型
+                            // opts.get("x", 0) → int, opts.get("x", 0.0) → float,
+                            // opts.get("z", true) → bool, opts.get("name", "") → string
+                            if (obj_type->kind == TYPE_DICT && strcmp(method_name, "get") == 0 &&
+                                ast->u.call.args.count >= 2) {
+                                TypeInfo* default_type = infer_expr_type(s, ast->u.call.args.items[1]);
+                                if (default_type && default_type->kind != TYPE_ANY) {
+                                    type_free(obj_type);
+                                    ast->cached_type = type_copy(default_type);
+                                    return default_type;
+                                }
+                                if (default_type) type_free(default_type);
+                            }
+
                             type_free(obj_type);
                             return type_new(return_type);
                         }
@@ -1299,6 +1313,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (return_type == TYPE_STRUCT && obj_sym->type->kind == TYPE_STRUCT) {
                         // 复制对象类型作为返回类型
                         return type_copy(obj_sym->type);
+                    }
+
+                    // Dict.get 默认值类型推断：根据第二个参数（默认值）推断返回类型
+                    if (obj_sym->type->kind == TYPE_DICT && strcmp(method_name, "get") == 0 &&
+                        ast->u.module_call.args.count >= 2) {
+                        TypeInfo* default_type = infer_expr_type(s, ast->u.module_call.args.items[1]);
+                        if (default_type && default_type->kind != TYPE_ANY) {
+                            return default_type;
+                        }
+                        if (default_type) type_free(default_type);
                     }
 
                     return type_new(return_type);

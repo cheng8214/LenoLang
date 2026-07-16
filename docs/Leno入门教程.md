@@ -567,10 +567,15 @@ int x  = pt.x           // i32 → int
 int sc = e.scancode     // u16 → int
 int s  = pt.x + pt.y    // 参与运算
 
-// ❌ 仍需 as — clib 返回值 / Dict.get / float
+// ❌ 仍需 as — clib 返回值 / float→int
 int t = lib().getTicks() as int    // clib 返回
-int w = opts.get("w", 0) as int    // Dict.get → var
 int r = 3.14 as int                // float → int
+
+// ✅ Dict.get 带默认值时自动推断类型，无需 as 或 _xxx() 转换
+int w = opts.get("w", 0)           // 默认值 0 → 推断返回 int
+float f = opts.get("f", 0.0)       // 默认值 0.0 → 推断返回 float
+string s = opts.get("name", "")    // 默认值 "" → 推断返回 string
+bool b = opts.get("active", false) // 默认值 false → 推断返回 bool
 ```
 
 ### 类型转换
@@ -2960,8 +2965,8 @@ struct Widget {
     float x; float y      // 没有默认值 → null
 
     func set(Dict opts) {
-        x = _float(opts.get("x", 0))   // set() 中才赋值
-        y = _float(opts.get("y", 0))
+        x = opts.get("x", 0.0)   // 默认值 0.0 → 推断返回 float
+        y = opts.get("y", 0.0)   // 无需 _float() 转换
     }
 
     func move(float dx, float dy) {
