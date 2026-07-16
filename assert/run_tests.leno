@@ -35,16 +35,8 @@ main() {
                 // 直接传绝对路径，system() 包装层处理 stderr
                 var cmd = leno_exe + " " + full
 
-            // 执行测试（最多重试 2 次，消除偶发进程冲突）
-            int retry = 0
-            var result = null
-            while retry <= 2 {
-                result = _exec(cmd)
-                if result != null and result[1] == 0 { break }
-                retry = retry + 1
-                // 短暂 busy-wait 等 OS 清理子进程
-              sleep(100 * (retry + 1))  // 第一次 100ms，第二次 200ms，第三次 300ms
-            }
+            // 执行测试（不重试）
+            var result = _exec(cmd)
 
             if result == null {
                 print("  [FAIL] " + entry + " - 执行失败")
