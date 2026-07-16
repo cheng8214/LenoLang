@@ -373,6 +373,10 @@ export struct Renderer {
             }
             return
         }
+        // 1x 模式（无 SSAA）：逻辑像素 == 物理像素。把文字吸附到整数像素，
+        // 避免纹理在亚像素位置被双线性重采样而发虚（SSAA 模式由调用方 snapX/snapY 已处理）。
+        x = _int(x + 0.5)
+        y = _int(y + 0.5)
         TextTexture tex = f._getCachedTex(handle, text, r, g, b)
         if tex.ok { drawTextureAt(tex.texture, x, y, _float(tex.width), _float(tex.height)) }
     }
