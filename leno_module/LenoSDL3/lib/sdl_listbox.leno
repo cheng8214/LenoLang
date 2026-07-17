@@ -31,9 +31,9 @@ export struct ListBox impl Widget {
 
     func _ensure_font() {
         if _font == null or not _font.ok {
-            if _font != null { _font.close() }
-            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
-            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font != null { fnt.releaseFont(_font) }
+            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
         }
     }
@@ -185,7 +185,7 @@ export struct ListBox impl Widget {
     func set_enabled(bool e)     { enabled = e }
     func set_visible(bool v)      { visible = v }
     func is_visible(): bool       { return visible }
-    func set_font_size(float s)  { _fontSize = s; if _font != null { _font.close(); _font = null } }
+    func set_font_size(float s)  { _fontSize = s; if _font != null { fnt.releaseFont(_font); _font = null } }
     func get_x(): float          { return x }
     func get_y(): float          { return y }
 
@@ -368,7 +368,7 @@ export struct ListBox impl Widget {
     }
 
     func dispose() {
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
     }
 }
 

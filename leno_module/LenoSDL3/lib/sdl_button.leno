@@ -43,11 +43,11 @@ export struct Button impl Widget {
 
     func _ensure_font() {
         if _font == null or not _font.ok {
-            if _font != null { _font.close() }
+            if _font != null { fnt.releaseFont(_font) }
             if _fontPath != "" {
-                _font = fnt.createFont(_fontPath, _fontSize)
+                _font = fnt.acquireFont(_fontPath, _fontSize)
             } else {
-                _font = fnt.createFontAuto(_fontSize)
+                _font = fnt.acquireFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
         }
@@ -117,11 +117,11 @@ export struct Button impl Widget {
     func set_hover_rgb(int r, int g, int b) { hvr = r; hvg = g; hvb = b }
     func set_font_size(float s) {
         _fontSize = s
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
     }
     func set_font_path(string path) {
         _fontPath = path
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
     }
     func set_font_style(int style) {
         _fontStyle = style
@@ -230,7 +230,7 @@ export struct Button impl Widget {
 
     // 释放字体资源
     func dispose() {
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
     }
 }
 

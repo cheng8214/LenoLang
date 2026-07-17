@@ -145,9 +145,9 @@ export struct MenuBar impl Widget {
     func(string, string):void _onSelect
     func _ensure_font() {
         if _font == null or not _font.ok {
-            if _font != null { _font.close() }
-            if _fontPath != "" { _font = fnt.createFont(_fontPath, _fontSize) }
-            else { _font = fnt.createFontAuto(_fontSize) }
+            if _font != null { fnt.releaseFont(_font) }
+            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
         }
     }
@@ -222,7 +222,7 @@ export struct MenuBar impl Widget {
     func is_visible(): bool { return visible }
     func set_font_size(float s) {
         _fontSize = s
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
         _itemH = _fontSize + 12.0; if _itemH < 24.0 { _itemH = 24.0 }  // 字号变化时行高自适应
         if h < _fontSize + 14.0 { h = _fontSize + 14.0 }                // 顶部栏高度跟随字号，避免标题被裁
     }
@@ -638,7 +638,7 @@ export struct MenuBar impl Widget {
     }
 
     func dispose() {
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
         _clearActiveMenu(self)
         _unregisterContextMenu(self)   // 从上下文菜单登记表摘除自身，避免窗口销毁后悬空引用累积
     }

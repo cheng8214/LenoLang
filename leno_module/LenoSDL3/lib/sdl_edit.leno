@@ -101,11 +101,11 @@ export struct Edit impl Widget {
     // ==================== 字体 ====================
     func _ensure_font() {
         if _font == null or not _font.ok {
-            if _font != null { _font.close() }
+            if _font != null { fnt.releaseFont(_font) }
             if _fontPath != "" {
-                _font = fnt.createFont(_fontPath, _fontSize)
+                _font = fnt.acquireFont(_fontPath, _fontSize)
             } else {
-                _font = fnt.createFontAuto(_fontSize)
+                _font = fnt.acquireFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
             _cachedMaxW = -1.0       // 字体变了，行宽缓存失效
@@ -314,7 +314,7 @@ export struct Edit impl Widget {
     func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_font_size(float s) {
         _fontSize = s
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
     }
     func set_readonly(bool ro)  { _readOnly = ro }
     func set_password(bool pw)  { _password = pw }
@@ -1833,7 +1833,7 @@ export struct Edit impl Widget {
     }
 
     func dispose() {
-        if _font != null { _font.close(); _font = null }
+        if _font != null { fnt.releaseFont(_font); _font = null }
         // 释放内嵌右击菜单（MenuBar）。它不在窗口 _widgets 中，需由持有者负责清理，
         // 对齐 SpinBox.dispose 释放子控件的做法，避免右键菜单字体泄漏
         if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }

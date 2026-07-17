@@ -63,8 +63,8 @@ export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
 func _ensureFont(Renderer r) {
     if _font == null or not _font.ok {
         Font old = _font as Font
-        if old != null { old.close() }
-        _font = fnt.createFontAuto(_fontSize)
+        if old != null { fnt.releaseFont(old) }
+        _font = fnt.acquireFontAuto(_fontSize)
     }
     if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }
 }

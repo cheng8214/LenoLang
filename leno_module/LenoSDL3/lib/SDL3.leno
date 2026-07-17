@@ -186,6 +186,11 @@ export func createRenderer(Ptr[u8] w): Renderer     { return r.createRenderer(w)
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
 export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }
+// 引用计数版字体获取/释放：acquire 时 +1，release 时 -1，归零才真正关闭并从池摘除，
+// 避免共享字体被任一持有方直接 close 误关。控件内部统一使用此组 API。
+export func acquireFont(string p, float s): Font    { return fnt.acquireFont(p, s) }
+export func acquireFontAuto(float s): Font         { return fnt.acquireFontAuto(s) }
+export func releaseFont(Font f)                     { fnt.releaseFont(f) }
 export func packColor(int r, int g, int b): int { return fnt.packColor(r, g, b) }
 use fnt.SDL_SurfaceInfo
 

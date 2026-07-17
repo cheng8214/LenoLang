@@ -103,6 +103,7 @@ export struct CachedMeas {
 
 export struct Font {
     Ptr[u8] handle; bool ok; int height; int ascent; int descent; float _pt
+    int _refCount = 0           // 引用计数：acquireFont/acquireFontAuto 获取时 +1，releaseFont 归零才真正 close 并从池摘除
     string _fontPath = ""       // 缓存池查询用
     float _aaScale = 0.0   // SSAA 倍数：>0 时 measureString 按「2x 测量再除 scale」计算，
                            // 与 Renderer.drawText 的 SSAA 绘制宽度（tex.width/scale）完全一致
@@ -405,6 +406,8 @@ export func ttfQuit() {
 // ==================== 全局字体缓存池 ====================
 // 相同 path+ptsize 复用同一个 Font 对象，避免 N 个控件各自创建独立 Font + 纹理缓存。
 // 典型场景：30 个控件共用 2-3 个 Font，内存从 ~130MB 降到 ~30MB。
+// 所有权采用引用计数（见 acquireFont/acquireFontAuto/releaseFont）：控件「获取即 +1，释放即 -1」，
+// 归零才从池摘除并真正 close，彻底消除「共享字体被任一控件直接 close 误关 → 其它控件悬空、池残留失效条目」的旧隐患。
 
 Array[Font] _fontPool = []
 
@@ -424,6 +427,12 @@ export func createFont(string path, float ptsize): Font {
     if font.ok { _fontPool.add(font) }
     return font
 }
+// 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放；
+// 多个控件可共享同一 path+ptsize 的 Font，任一控件 dispose/换字号时只 release 自身引用，
+// 归零才真正关闭并从池摘除，避免旧「直接 _font.close() 误关共享对象」导致其它控件悬空、池残留失效条目。
+export func acquireFont(string path, float ptsize): Font {
+    Font f = createFont(path, ptsize); f._refCount = f._refCount + 1; return f
+}
 
 // 加载字体（自动尝试微软雅黑→宋体回退）
 export func createFontAuto(float ptsize): Font {
@@ -432,6 +441,21 @@ export func createFontAuto(float ptsize): Font {
     Font font = createFont("C:/Windows/Fonts/msyh.ttc", ptsize)
     if not font.ok { font = createFont("C:/Windows/Fonts/simsun.ttc", ptsize) }
     return font
+}
+// 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放（见 acquireFont 注释）。
+export func acquireFontAuto(float ptsize): Font {
+    Font f = createFontAuto(ptsize); f._refCount = f._refCount + 1; return f
+}
+// 释放一个 Font 持有引用：引用计数 -1，归零才真正关闭并从池摘除。
+// 不归零时不关闭，保证共享同一 Font 的其它控件仍可正常使用（旧行为靠 _font.ok 自愈，会残留失效池条目）。
+export func releaseFont(Font f) {
+    if f == null { return }
+    f._refCount = f._refCount - 1
+    if f._refCount <= 0 {
+        for _fontPool.len() to i { if _fontPool[i] == f { _fontPool.remove(i); break } }
+        if f.ok { f.close() }
+        f._refCount = 0
+    }
 }
 
 
