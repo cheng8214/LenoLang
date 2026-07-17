@@ -102,11 +102,11 @@ func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, floa
     return -1
 }
 
-// 模块级：所有 MenuBar 实例注册表，用于“同一时刻仅一个菜单展开”的全局互斥。
-// 覆盖顶部菜单栏与各编辑框内嵌右击上下文菜单等所有 MenuBar 实例——任一菜单展开前
-// 先关闭其它已展开菜单，避免顶部菜单与右击菜单、或多个右击菜单叠加显示。
-Array[MenuBar] _menuRegistry = []
-int _menuIdSeq = 0
+// 每窗口各自的活动菜单（窗口级单例）：同一时刻每窗口仅一个弹出菜单（模态弹层），
+// 按下新菜单前只关掉「本窗口」其它菜单，不再跨窗口互相抢互斥。嵌套（未拿到句柄）菜单
+// 走 key=null 的兜底桶，保持旧行为。关闭/销毁时摘除，无悬空引用累积。
+Array[Ptr[u8]] _activeHnds = []
+Array[MenuBar] _activeMenus = []
 
 export struct MenuBar impl Widget {
     float x = 0.0; float y = 0.0; float w = 600.0; float h = 28.0
@@ -125,6 +125,7 @@ export struct MenuBar impl Widget {
     Array[Array[float]] _ctxAnchor = []  // 上下文菜单的弹出锚点 [x, y]
 
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    Ptr[u8] _winHnd = null            // 所属窗口句柄：上下文菜单按窗口隔离绘制；面板嵌套未拿到句柄则为 null
 
     // 配色
     int _barR = 34; int _barG = 36; int _barB = 44       // 菜单栏背景
@@ -142,8 +143,6 @@ export struct MenuBar impl Widget {
     string _align = ""                    // 顶级标题对齐："left" / "center" / "right"
     bool enabled = true; bool visible = true; bool _loaded = false
     func(string, string):void _onSelect
-    int _menuId = 0                       // 实例唯一 id（全局互斥时排除自身，避免值比较误判）
-
     func _ensure_font() {
         if _font == null or not _font.ok {
             if _font != null { _font.close() }
@@ -208,20 +207,12 @@ export struct MenuBar impl Widget {
         _ensure_font()
         _loaded = true
 
-        // 注册到模块级表，供“同一时刻仅一个菜单展开”的全局互斥（首次 set 时注册一次）
-        if _menuId == 0 {
-            _menuIdSeq = _menuIdSeq + 1
-            _menuId = _menuIdSeq
-            _menuRegistry.add(self)
-        }
     }
 
-    // 关闭其它所有已展开的菜单（顶部菜单栏 / 其它编辑框右击菜单），保证同一时刻仅一个菜单
+    // 关闭当前活动菜单（若有且非自身），保证同一时刻仅一个弹出菜单（模态弹层）
     func _closeOtherMenus() {
-        for _menuRegistry.len() to i {
-            MenuBar o = _menuRegistry[i]
-            if o != null and o._menuId != _menuId and o.isOpen() { o.close() }
-        }
+        var am = _getActiveMenu(self.getWindowHandle())
+        if am != null and am != self and am.isOpen() { am.close() }
     }
 
     // ==================== 设置方法 ====================
@@ -241,7 +232,10 @@ export struct MenuBar impl Widget {
     func set_item_h(float ih) { if ih > 0.0 { _itemH = ih } }
     // 设置竖直项之间的额外间距（下拉项 / 竖栏顶级项）
     func set_item_gap(float g) { _itemGap = g }
-    func close() { _open = -1; _openSub = -1; _hoverItem = -1; _hoverSub = -1 }
+    // 记录所属窗口句柄，供上下文菜单按窗口隔离绘制（渲染循环据 hwnd 只画本窗口菜单）
+    func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
+    func getWindowHandle(): Ptr[u8] { return _winHnd }
+    func close() { _open = -1; _openSub = -1; _hoverItem = -1; _hoverSub = -1; _clearActiveMenu(self) }
     // 是否有菜单（含上下文菜单）处于展开状态
     func isOpen(): bool { return _open >= 0 }
 
@@ -351,6 +345,7 @@ export struct MenuBar impl Widget {
         var g = _panelRect(ctxIdx)
         _ctxAnchor[ctxIdx] = [g[0], g[1]]
         core.setPopupCapture(g[0], g[1], g[2], g[3])
+        _setActiveMenu(self)   // 标记本菜单为当前活动菜单（窗口级），供互斥关闭
     }
 
     func _topRects(): Array[Array[float]] {
@@ -500,10 +495,11 @@ export struct MenuBar impl Widget {
                 if mx >= r[0] and mx <= r[0] + r[2] and my >= r[1] and my <= r[1] + r[3] { hitTop = i }
             }
             if hitTop >= 0 {
-                if _open == hitTop { _open = -1 }   // 再次点击同一标题：收起
+                if _open == hitTop { _open = -1; _clearActiveMenu(self) }   // 再次点击同一标题：收起
                 else {
                     _closeOtherMenus()   // 展开新标题前关闭其它菜单（如编辑框右击菜单），保证仅一个
                     _open = hitTop; _openSub = -1; _hoverItem = -1; _hoverSub = -1
+                    _setActiveMenu(self)   // 标记本菜单为当前活动菜单（窗口级），供互斥关闭
                 }
                 return
             }
@@ -643,20 +639,55 @@ export struct MenuBar impl Widget {
 
     func dispose() {
         if _font != null { _font.close(); _font = null }
+        _clearActiveMenu(self)
+        _unregisterContextMenu(self)   // 从上下文菜单登记表摘除自身，避免窗口销毁后悬空引用累积
     }
 }
 
-// ==================== 控件内嵌右击上下文菜单的全局注册表 ====================
-// 控件（Edit 等）经 panel.add / 布局容器添加时，其 MenuBar 不会进入窗口 _menus，
-// 因此窗口第二遍绘制无法覆盖它，导致弹层被同级控件（如相邻 Edit）遮挡。
-// 这里统一登记，由窗口第二遍 renderContextMenus 兜底画在最上层。
+// ==================== 控件内嵌右击上下文菜单登记 ====================
+// 控件在创建/加入窗口时登记自身（自带窗口句柄）；面板/布局嵌套等拿不到句柄的控件也登记，
+// 但 _winHnd 为 null，绘制时由任意窗口兜底绘制（保持旧行为，避免嵌套控件右键菜单不显示）。
+// 区别于旧的「全局数组永不摘除」反模式：本数组在 MenuBar.dispose() 时摘除自身，
+// 窗口销毁（递归 dispose 所有控件）后不残留，无悬空引用累积、无跨窗口数组无限增长。
 Array[MenuBar] _ctxMenuRegistry = []
-export func registerContextMenu(MenuBar m) { _ctxMenuRegistry.add(m) }
-// 第二遍：把所有「已展开（isOpen）」的控件右击上下文菜单画在最上层
-export func renderContextMenus(Renderer r) {
+export func registerContextMenu(MenuBar m) {
+    if m == null { return }
+    for _ctxMenuRegistry.len() to k { if _ctxMenuRegistry[k] == m { return } }  // 去重
+    _ctxMenuRegistry.add(m)
+}
+// 第二遍：仅绘制归属本窗口（hwnd）的上下文菜单；未登记句柄（嵌套控件）兜底画到任意窗口
+export func renderContextMenus(Renderer r, Ptr[u8] hwnd) {
     for _ctxMenuRegistry.len() to k {
         var cm = _ctxMenuRegistry[k]
-        if cm != null and cm.isOpen() { cm.renderPopup(r) }
+        if cm != null and cm.isOpen() {
+            if cm.getWindowHandle() == null or cm.getWindowHandle() == hwnd {
+                cm.renderPopup(r)
+            }
+        }
+    }
+}
+// 摘除某个上下文菜单（在 MenuBar.dispose 时调用；置于文件末尾以便引用 _ctxMenuRegistry）
+func _unregisterContextMenu(MenuBar m) {
+    for _ctxMenuRegistry.len() to k { if _ctxMenuRegistry[k] == m { _ctxMenuRegistry.remove(k); break } }
+}
+
+// ==================== 窗口级活动菜单（按窗口句柄分桶） ====================
+// 置于文件末尾，便于引用 _activeHnds/_activeMenus 且解析 MenuBar 方法。
+func _setActiveMenu(MenuBar m) {
+    if m == null { return }
+    var h = m.getWindowHandle()
+    for _activeHnds.len() to i { if _activeHnds[i] == h { _activeMenus[i] = m; return } }
+    _activeHnds.add(h); _activeMenus.add(m)
+}
+func _getActiveMenu(Ptr[u8] h): MenuBar {
+    for _activeHnds.len() to i { if _activeHnds[i] == h { return _activeMenus[i] } }
+    return null
+}
+func _clearActiveMenu(MenuBar m) {
+    if m == null { return }
+    var h = m.getWindowHandle()
+    for _activeHnds.len() to i {
+        if _activeHnds[i] == h and _activeMenus[i] == m { _activeHnds.remove(i); _activeMenus.remove(i); return }
     }
 }
 

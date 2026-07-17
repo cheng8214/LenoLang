@@ -81,7 +81,6 @@ Array[Renderer]        _runRens   = []
 Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
 Array[Array[Widget]]   _runWidgets = []
-Array[Array[ComboBox]]  _runCombos  = []
 Array[Array[MenuBar]]   _runMenus   = []
 Array[MenuBar]          _runCtxBar  = []   // 各窗口级右击上下文菜单（由 setContextMenu 注册，run 自动接管弹出）
 Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
@@ -109,7 +108,6 @@ export struct Window {
     bool ok       // 窗口是否创建成功
     int _w; int _h; float _aaScale
     Array[Widget] _widgets = []
-    Array[ComboBox] _combos = []   // 下拉框集合，用于渲染结束后第二遍画弹出层（盖在最上层）
     Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
     MenuBar _ctxBar = null          // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
     int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
@@ -218,9 +216,14 @@ export struct Window {
     func minimize(): bool    { return _lib.SDL_MinimizeWindow(handle) }
     func restore(): bool     { return _lib.SDL_RestoreWindow(handle) }
 
-    // 销毁窗口
+    // 销毁窗口（同时释放所有控件资源：字体等，避免窗口关闭后字体泄漏）
     func destroy() {
-        if ok { _lib.SDL_DestroyWindow(handle); handle = null; ok = false; _windowCount = _windowCount - 1 }
+        if ok {
+            // 根销毁：先释放所有控件资源，沿父子树递归清理
+            for _widgets to w { w.dispose() }
+            if _root != null { _root.dispose() }
+            _lib.SDL_DestroyWindow(handle); handle = null; ok = false; _windowCount = _windowCount - 1
+        }
     }
 
     // 手动创建渲染器（供轮询模式使用）
@@ -259,7 +262,7 @@ export struct Window {
         ed.set_window(handle)
         ed.set_window_size(_w, _h)
         var cm = ed.get_context_menu()
-        if cm != null { _menus.add(cm) }   // 上下文菜单交由第二遍 renderPopup 顶层绘制
+        if cm != null { menu.registerContextMenu(cm) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         _widgets.add(ed as Widget)
         return ed
     }
@@ -289,6 +292,7 @@ export struct Window {
     // 同一 group 内互斥（由控件内部注册表实现）
     func addRadioButton(Dict opts): RadioButton {
         RadioButton r = rb.createRadioButton(opts)
+        r.setWindowHandle(handle)   // 让同组互斥按窗口隔离（避免跨窗口同组互相取消）
         _widgets.add(r as Widget)
         return r
     }
@@ -327,8 +331,8 @@ export struct Window {
     // on_change 回调收到选中索引 int
     func addComboBox(Dict opts): ComboBox {
         ComboBox cb = cbb.createComboBox(opts)
+        cb.setWindowHandle(handle)   // 让下拉层按窗口隔离绘制（工厂已登记到 registerComboBox）
         _widgets.add(cb as Widget)
-        _combos.add(cb)
         return cb
     }
 
@@ -336,6 +340,7 @@ export struct Window {
     // 下拉层自动盖在最上层（renderPopup 第二遍绘制 + 弹层捕获区）
     func addMenuBar(Dict opts): MenuBar {
         MenuBar m = menu.createMenuBar(opts)
+        m.setWindowHandle(handle)   // 让活动菜单按窗口隔离（避免跨窗口互相抢互斥）
         _widgets.add(m as Widget)
         _menus.add(m)
         m.setWindowSize(_w, _h)   // 供上下文菜单弹出时按窗口边界夹紧
@@ -345,7 +350,7 @@ export struct Window {
     // 注册窗口级右击上下文菜单（只需调用一次）。之后 run 会在每帧事件处理中统一接管右击：
     // 若命中控件自行弹出了自身菜单（占用弹层），则不弹窗口菜单；否则才弹本菜单。
     // 这样「控件菜单优先、窗口菜单兜底」由底层统一保证，示例无需在 onEvent 里处理右键。
-    func setContextMenu(MenuBar bar, int ctxIdx) { _ctxBar = bar; _ctxIdx = ctxIdx }
+    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); _ctxBar = bar; _ctxIdx = ctxIdx }
 
     // 添加面板容器，opts: {x, y, w, h, bg, border, radius, border_alpha, clip}
     // 用 panel.add(win.addButton({...})) 把子控件挂到面板（子控件用窗口绝对坐标）
@@ -378,9 +383,10 @@ export struct Window {
     func addTable(Dict opts): Table {
         Table t = tbl.createTable(opts)
         t.set_window_size(_w, _h)
+        t.set_window_handle(handle)
         _widgets.add(t as Widget)
         var cm = t.get_context_menu()
-        if cm != null { _menus.add(cm) }   // 上下文菜单交由第二遍 renderPopup 顶层绘制
+        if cm != null { menu.registerContextMenu(cm) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         return t
     }
 
@@ -426,8 +432,9 @@ export struct Window {
     func addTreeView(Dict opts): TreeView {
         TreeView t = tvlib.createTreeView(opts)
         t.set_window(_w, _h)
+        t.set_window_handle(handle)
         var cm = t.get_context_menu()
-        if cm != null { _menus.add(cm) }   // 右键上下文菜单交由第二遍 renderPopup 顶层绘制
+        if cm != null { menu.registerContextMenu(cm) }   // 右键上下文菜单登记，由窗口第二遍按窗口隔离绘制
         _widgets.add(t as Widget)
         return t
     }
@@ -468,7 +475,6 @@ export struct Window {
         _runEvts.add(onEvent)
         _runRends.add(onRender)
         _runWidgets.add(_widgets)    // 统一关联控件列表
-        _runCombos.add(_combos)      // 下拉框集合（用于第二遍 overlay 绘制）
         _runMenus.add(_menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
         if _ctxBar != null { _runCtxBar.add(_ctxBar); _runCtxIdx.add(_ctxIdx) }
         else { _runCtxBar.add(menu.createMenuBar({})); _runCtxIdx.add(-1) }   // 占位（idx=-1 表示未注册，run 中不弹）
@@ -491,6 +497,9 @@ export struct Window {
                 _hadEvent = true
                 if ev.isQuit() {
                     for _runWids.len() to i {
+                        // 根销毁：退出前先释放所有控件资源（字体等），沿父子树递归清理
+                        var ws = _runWidgets[i]
+                        if ws != null { for ws to w { w.dispose() } }
                         _runRens[i].destroy()
                         _lib.SDL_DestroyWindow(_runHnds[i])
                         _windowCount -= 1
@@ -506,12 +515,17 @@ export struct Window {
                     if _runWids[i] == wid {
                         if not _runEvts[i](ev) or ev.isWindowClose() {
                             if _runWids[i] == _modalWid { _modalWid = -1 }
+                            // 根销毁：关闭窗口前先释放所有控件资源（字体等），沿父子树递归清理
+                            var ws = _runWidgets[i]
+                            if ws != null { for ws to w { w.dispose() } }
+                            var rt = _runRoots[i]
+                            if rt != null { rt.dispose() }
                             _runRens[i].destroy()
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i);  _runEvts.remove(i)
-                            _runRends.remove(i); _runWidgets.remove(i); _runCombos.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runW.remove(i); _runH.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runW.remove(i); _runH.remove(i)
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
                             break
                         }
@@ -574,17 +588,14 @@ export struct Window {
                     // 自动渲染该窗口的所有控件（按添加顺序层叠）
                     var ws = _runWidgets[i]
                     for ws to w { w.render(_runRens[i]) }
-                    // 第二遍：所有打开的下拉框画在最上层，避免被靠后的 ComboBox 挡住
-                    var cbs = _runCombos[i]
-                    for cbs to cb { cb.renderPopup(_runRens[i]) }
-                    // 第二遍：所有展开的（含经 panel/tab/布局添加的）下拉框兜底画到最上层
-                    cbb.renderComboBoxes(_runRens[i])
+                    // 第二遍：所有展开的下拉框画在最上层（按窗口隔离；含经 panel/tab/布局添加的，由 registerComboBox 兜底）
+                    cbb.renderComboBoxes(_runRens[i], _runHnds[i])
                     // 第二遍：所有展开的下拉菜单画在最上层
                     var mns = _runMenus[i]
                     for mns to mn { mn.renderPopup(_runRens[i]) }
                     // 第二遍：所有展开的控件内嵌右击上下文菜单（Edit 经 panel.add 添加时未进 _menus，
                     // 在此兜底绘制到最上层，避免被同级控件遮挡）
-                    menu.renderContextMenus(_runRens[i])
+                    menu.renderContextMenus(_runRens[i], _runHnds[i])
                     // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
                     tip.tipTick()
                     tip.tipRender(_runRens[i], _float(_runW[i]), _float(_runH[i]))

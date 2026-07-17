@@ -29,6 +29,7 @@ export struct ComboBox impl Widget {
     bool _draggingScroll = false
     float _sbDragOffset = 0.0
     func(int):void _onChange
+    Ptr[u8] _winHnd = null            // 所属窗口句柄：下拉层按窗口隔离绘制；面板/Tab 嵌套未拿到句柄则为 null
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -122,6 +123,10 @@ export struct ComboBox impl Widget {
         if _onChange != null { _onChange(_sel) }
     }
     func close() { _open = false }
+    func isOpen(): bool { return _open }
+    // 记录所属窗口句柄，供下拉层按窗口隔离绘制（渲染循环据 hwnd 只画本窗口下拉框）
+    func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
+    func getWindowHandle(): Ptr[u8] { return _winHnd }
 
     func on_change(func(int):void cb) { _onChange = cb }
 
@@ -351,21 +356,36 @@ export struct ComboBox impl Widget {
 
     func dispose() {
         if _font != null { _font.close(); _font = null }
+        _unregisterComboBox(self)   // 从下拉框登记表摘除自身，避免窗口销毁后悬空引用累积
     }
 }
 
-// ==================== 下拉框全局注册表（兜底第二遍绘制） ====================
-// 经 panel.add / 布局容器 / Tab 页添加的 ComboBox 不会进入窗口 _combos，
-// 其展开的下拉层无法由窗口第二遍绘制兜底到最上层（会被同级控件遮挡）。
-// 这里统一登记，由窗口第二遍 renderComboBoxes 兜底画在最上层，与 Edit 右击菜单同范式。
+// ==================== 下拉框登记（兜底第二遍绘制） ====================
+// 经 panel.add / 布局容器 / Tab 页添加的 ComboBox 不会进入窗口首遍绘制顺序，
+// 其展开的下拉层无法兜底到最上层（会被同级控件遮挡）。这里统一登记（createComboBox 工厂登记），
+// 由窗口第二遍按窗口隔离绘制；面板/Tab 嵌套等拿不到句柄的控件 _winHnd 为 null，兜底画到任意窗口。
+// 区别于旧「全局数组永不摘除」反模式：本数组在 ComboBox.dispose() 时摘除自身，
+// 窗口销毁（递归 dispose 所有控件）后不残留，无悬空引用累积、无跨窗口数组无限增长。
 Array[ComboBox] _comboPopupRegistry = []
-export func registerComboBox(ComboBox c) { _comboPopupRegistry.add(c) }
-// 第二遍：把所有「已展开（_open）」的 ComboBox 下拉层画在最上层（renderPopup 内部自判 _open）
-export func renderComboBoxes(Renderer r) {
+export func registerComboBox(ComboBox c) {
+    if c == null { return }
+    for _comboPopupRegistry.len() to k { if _comboPopupRegistry[k] == c { return } }  // 去重
+    _comboPopupRegistry.add(c)
+}
+// 第二遍：仅绘制归属本窗口（hwnd）的下拉层；未登记句柄（嵌套控件）兜底画到任意窗口
+export func renderComboBoxes(Renderer r, Ptr[u8] hwnd) {
     for _comboPopupRegistry.len() to i {
         var cb = _comboPopupRegistry[i]
-        if cb != null { cb.renderPopup(r) }
+        if cb != null and cb.isOpen() {
+            if cb.getWindowHandle() == null or cb.getWindowHandle() == hwnd {
+                cb.renderPopup(r)
+            }
+        }
     }
+}
+// 摘除某个下拉框（在 ComboBox.dispose 时调用；置于文件末尾以便引用 _comboPopupRegistry）
+func _unregisterComboBox(ComboBox c) {
+    for _comboPopupRegistry.len() to k { if _comboPopupRegistry[k] == c { _comboPopupRegistry.remove(k); break } }
 }
 
 // 工厂

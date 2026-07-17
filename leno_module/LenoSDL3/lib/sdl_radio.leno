@@ -8,9 +8,8 @@ import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
-// 模块级注册表 + 自增 id，用于同组互斥（按 id 排除自身，避免值比较误判）
+// 模块级注册表，用于同组互斥（引用语义：dispose 时摘除自身，跨窗口按窗口句柄隔离）
 Array[RadioButton] _radioRegistry = []
-int _radioIdSeq = 0
 
 export struct RadioButton impl Widget {
     string text = ""
@@ -23,7 +22,6 @@ export struct RadioButton impl Widget {
     int _fontStyle = 0
     Font  _font
     bool _checked = false
-    int _id = 0
     int cr = 60; int cg = 60; int cb = 72
     int cc = 60; int ck = 170; int cbl = 245
     int tr = 235; int tg = 235; int tb = 245
@@ -37,6 +35,7 @@ export struct RadioButton impl Widget {
     bool _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
     func(bool):void _onChange
+    Ptr[u8] _winHnd = null            // 所属窗口句柄：同组互斥按窗口隔离（面板/Tab 嵌套未拿到句柄则为 null）
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -77,11 +76,9 @@ export struct RadioButton impl Widget {
         // hover/_wasHover/_pressed 默认见字段声明
         _tip = opts.get("tip", "")
 
-        _radioIdSeq = _radioIdSeq + 1
-        _id = _radioIdSeq
         _ensure_font()
         _loaded = true
-        _radioRegistry.add(self)   // 引用语义：与窗口数组同一实例
+        _registerRadio(self)   // 引用语义：与窗口数组同一实例（去重登记）
     }
 
     func set_text(string t)     { text = t }
@@ -105,6 +102,9 @@ export struct RadioButton impl Widget {
     func set_size(float sw, float sh) {}
 
     func on_change(func(bool):void cb) { _onChange = cb }
+    // 记录所属窗口句柄，供同组互斥按窗口隔离（_select 只取消同窗口同组其它项）
+    func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
+    func getWindowHandle(): Ptr[u8] { return _winHnd }
 
     func contains(float mx, float my): bool {
         float tw = 0.0
@@ -113,13 +113,13 @@ export struct RadioButton impl Widget {
         return mx >= x and mx <= x + totalW and my >= y and my <= y + _box
     }
 
-    // 选中自己并取消同组其它
+    // 选中自己并取消同组其它（同窗口内；未拿句柄的嵌套控件只与同桶控件互斥）
     func _select() {
         if _checked { return }   // 已选中保持不动
         _checked = true
         for _radioRegistry.len() to i {
             RadioButton rb = _radioRegistry[i]
-            if rb != null and rb.group == group and rb._id != _id {
+            if rb != null and rb.group == group and rb != self and rb.getWindowHandle() == _winHnd {
                 rb._checked = false
             }
         }
@@ -193,9 +193,23 @@ export struct RadioButton impl Widget {
 
     func dispose() {
         if _font != null { _font.close(); _font = null }
+        _unregisterRadio(self)   // 从注册表摘除自身，避免窗口销毁后悬空引用累积、跨窗口误互斥
     }
 }
 
 export func createRadioButton(Dict opts): RadioButton {
     RadioButton rb = new RadioButton(); rb.set(opts); return rb
+}
+
+// ==================== 单选按钮注册表（同组互斥） ====================
+// 区别于旧「全局数组永不摘除」反模式：RadioButton.dispose() 时通过 _unregisterRadio 摘除自身，
+// 窗口销毁（递归 dispose 所有控件）后不残留，无悬空引用累积、无跨窗口数组无限增长。
+// 登记去重；互斥判定在同窗口（_winHnd）+ 同 group 内进行（见 _select）。
+func _registerRadio(RadioButton r) {
+    if r == null { return }
+    for _radioRegistry.len() to i { if _radioRegistry[i] == r { return } }  // 去重
+    _radioRegistry.add(r)
+}
+func _unregisterRadio(RadioButton r) {
+    for _radioRegistry.len() to i { if _radioRegistry[i] == r { _radioRegistry.remove(i); break } }
 }

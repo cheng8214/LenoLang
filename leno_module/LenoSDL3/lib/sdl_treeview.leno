@@ -86,6 +86,7 @@ export struct TreeView impl Widget {
     bool _ctxMenuEnabled = false
     MenuBar _ctxMenu = null
     int _ctxHandle = -1
+    Ptr[u8] _hwnd = null           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     int _winW = 0; int _winH = 0
     func(Array[int]):void _onChange
     func(int, float, float):void _onContext
@@ -309,6 +310,7 @@ export struct TreeView impl Widget {
             _ctxMenu = menu.createMenuBar({})
             _ctxMenu.setWindowSize(_winW, _winH)
             _ctxHandle = _ctxMenu.addContextMenu("tv_ctx")
+            menu.registerContextMenu(_ctxMenu)   // 登记（含面板嵌套场景），由窗口第二遍按窗口隔离绘制
         }
 
         _ensure_font()
@@ -526,6 +528,11 @@ export struct TreeView impl Widget {
 
     // ==================== 右键菜单接入 ====================
     func set_window(int ww, int hh) { _winW = ww; _winH = hh; if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) } }
+    // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
+    func set_window_handle(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        if _ctxMenu != null { _ctxMenu.setWindowHandle(hwnd) }
+    }
     func get_context_menu(): MenuBar { return _ctxMenu }
     func get_context_handle(): int { return _ctxHandle }
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
@@ -745,6 +752,7 @@ export struct TreeView impl Widget {
 
     func dispose() {
         if _font != null { _font.close(); _font = null }
+        if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }
     }
 }
 

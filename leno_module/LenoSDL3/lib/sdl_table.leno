@@ -41,6 +41,7 @@ export struct Table impl Widget {
     // 内嵌右击上下文菜单（复用 MenuBar 弹层渲染与捕获；默认不预置项，由应用层自定义）
     MenuBar _ctxMenu = null
     int _ctxMenuH = -1
+    Ptr[u8] _hwnd = null           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     bool _ctxMenuEnabled = true
     int _ctxRow = -1; int _ctxCol = -1   // 右击命中行/列
     int _winW = 0; int _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
@@ -344,6 +345,11 @@ export struct Table impl Widget {
     func set_window_size(int ww, int hh) {
         _winW = ww; _winH = hh
         if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) }
+    }
+    // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
+    func set_window_handle(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        if _ctxMenu != null { _ctxMenu.setWindowHandle(hwnd) }
     }
     // 启用/禁用右击上下文菜单
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
@@ -789,6 +795,7 @@ export struct Table impl Widget {
 
     func dispose() {
         if _font != null { _font.close(); _font = null }
+        if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }
     }
 }
 
