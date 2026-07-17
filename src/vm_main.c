@@ -17,7 +17,6 @@
 // 尾部数据格式: [exe 原始数据] [lenb 数据] [4字节 lenb_size] [4字节 LENB_MAGIC]
 
 extern VM vm;
-extern int runtime_type_check;
 
 // 全局变量（VM 运行时需要，原定义在 main.c）
 int debugMode = 0;
@@ -169,7 +168,6 @@ int lenolang_run_lenb(const char* filename) {
     fix_module_function_ptrs(&chunk);
 
     // 初始化 VM 并执行
-    runtime_type_check = 1;
     vm_init_with_scope(scope);
 
     int ret = vm_run_chunk(&chunk);

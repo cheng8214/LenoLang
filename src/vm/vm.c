@@ -42,13 +42,6 @@ int vm_initialized = 0;
 // 主程序 VM 全局变量（效率第一）
 // 子线程使用独立的局部 VM，不共享此全局变量
 
-// 运行时类型检查开关（默认开启，发布版本可关闭以提高性能）
-#ifdef LENO_RELEASE
-int runtime_type_check = 0;  // 发布版：关闭运行时类型检查
-#else
-int runtime_type_check = 1;  // 调试版：开启类型检查
-#endif
-
 // 调试模式标志
 extern int debugMode;
 

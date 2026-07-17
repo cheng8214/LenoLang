@@ -2,42 +2,10 @@
 // 函数调用实现 - 从 vm_call.c 迁移
 // ============================================================================
 
-// 辅助函数：检查值是否匹配期望类型
-static inline int value_matches_type(Value value, TypeKind expected) {
-    switch (expected) {
-        case TYPE_STRING:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING);
-        case TYPE_INT:
-            return val_is_int(value) || val_is_bigint(value);
-        case TYPE_FLOAT:
-            return val_is_float(value) || val_is_int(value) || val_is_bigint(value);
-        case TYPE_BOOL:
-            return val_is_bool(value);
-        case TYPE_ARRAY:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_ARRAY);
-        case TYPE_DICT:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
-        case TYPE_FILE:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
-        case TYPE_SOCKET:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
-        case TYPE_CHANNEL:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_CHANNEL);
-        case TYPE_THREAD:
-            return (val_is_obj(value) && val_as_obj(value)->type == OBJ_THREAD);
-        case TYPE_PTR:
-            return (val_is_obj(value) &&
-                   (val_as_obj(value)->type == OBJ_FFI_POINTER ||
-                    val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
-                    val_as_obj(value)->type == OBJ_FFI_CALLBACK));
-        default:
-            return 1;
-    }
-}
-
 // 辅助函数：从运行时值推断泛型类型名（返回线程本地缓冲区指针）
 // 返回值如 "int"/"float"/"string"/"bool" 或 "struct FooName"
 // 返回 NULL 表示无法推断
+// 用于泛型 struct 实例化时推断类型参数
 static inline const char* value_to_generic_type_name(Value value) {
 #ifdef _MSC_VER
     static __declspec(thread) char buf[64];
@@ -96,48 +64,8 @@ static inline const char* typeinfo_to_generic_type_name(TypeInfo* type) {
     }
 }
 
-// 辅助函数：检查值是否匹配泛型类型名（用于运行时泛型类型检查）
-// actual_type 格式：基础类型如 "int"/"float"/"string"/"bool"，
-// 或带前缀的结构体类型如 "struct Foo"
-static inline int value_matches_generic_type(Value value, const char* actual_type) {
-    if (strcmp(actual_type, "int") == 0) {
-        return val_is_int(value) || val_is_bigint(value);
-    }
-    if (strcmp(actual_type, "float") == 0) {
-        return val_is_float(value) || val_is_int(value) || val_is_bigint(value);
-    }
-    if (strcmp(actual_type, "string") == 0) {
-        return val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING;
-    }
-    if (strcmp(actual_type, "bool") == 0) {
-        return val_is_bool(value);
-    }
-    if (strncmp(actual_type, "struct ", 7) == 0) {
-        // 带 "struct " 前缀的结构体类型：检查是否为 struct，并验证名称匹配
-        if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-            ObjStruct* arg_struct = (ObjStruct*)val_as_obj(value);
-            return arg_struct->def->name && strcmp(arg_struct->def->name, actual_type + 7) == 0;
-        }
-        return 0;
-    }
-    // 无前缀但可能是结构体名称
-    if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-        ObjStruct* arg_struct = (ObjStruct*)val_as_obj(value);
-        return arg_struct->def->name && strcmp(arg_struct->def->name, actual_type) == 0;
-    }
-    return 0;
-}
-
 // 调用闭包函数
 static inline int call(ObjClosure* closure, int arg_count, int line) {
-    if (runtime_type_check && arg_count != closure->function->arity) {
-        char msg[BUFFER_MEDIUM];
-        snprintf(msg, sizeof(msg), "调用函数 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
-                closure->function->name, closure->function->arity, arg_count);
-        throw_runtime_error(msg, line);
-        return 0;
-    }
-
     // 需要扩容
     if (vm.frame_cnt >= vm.frame_capacity) {
         if (!vm_grow_frames(current_exec_vm)) {
@@ -193,39 +121,6 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
             }
         }
 
-        // 泛型参数类型检查
-#ifndef LENO_RELEASE
-        if (runtime_type_check && closure->function->param_generic_names &&
-            i < closure->function->arity && closure->function->param_generic_names[i]) {
-            const char* generic_name = closure->function->param_generic_names[i];
-            // self 是第一个参数（locals[0] 对应参数 0）
-            Value self_val = vm.stack[vm.sp - arg_count - 1 + 0];
-            if (val_is_obj(self_val) && val_as_obj(self_val)->type == OBJ_STRUCT) {
-                ObjStruct* self_obj = (ObjStruct*)val_as_obj(self_val);
-                ObjStructDef* self_def = self_obj->def;
-                if (self_def->type_param_count > 0 && self_def->type_param_names &&
-                    self_obj->generic_type_arg_count > 0 && self_obj->generic_type_args) {
-                    for (int pi = 0; pi < self_def->type_param_count && pi < self_obj->generic_type_arg_count; pi++) {
-                        if (self_def->type_param_names[pi] && strcmp(self_def->type_param_names[pi], generic_name) == 0) {
-                            const char* actual_type = self_obj->generic_type_args[pi];
-                            if (!value_matches_generic_type(arg, actual_type)) {
-                                char msg[BUFFER_MEDIUM];
-                                char* arg_str = value_to_string(arg);
-                                snprintf(msg, sizeof(msg),
-                                    "泛型参数类型不匹配: 方法 '%s' 参数 %d 期望类型 %s (泛型参数 %s), 实际传入 '%s'",
-                                    closure->function->name ? closure->function->name : "unknown", i, actual_type, generic_name, arg_str);
-                                free(arg_str);
-                                throw_runtime_error(msg, line);
-                                return 0;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-#endif
-        
         locals[i] = arg;
     }
     
@@ -296,34 +191,7 @@ static inline int call_value(Value callee, int arg_count, int line) {
             }
             case OBJ_NATIVE: {
                 ObjNative* native = (ObjNative*)val_as_obj(callee);
-#ifndef LENO_RELEASE
-                // 调试版：参数数量和类型检查
-                if (native->arity >= 0 && arg_count != native->arity) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "调用函数 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
-                            native->name, native->arity, arg_count);
-                    throw_runtime_error(msg, line);
-                    return 0;
-                }
-                
-                // 运行时参数类型检查
-                if (runtime_type_check && native->arity >= 0 && arg_count == native->arity) {
-                    for (int i = 0; i < arg_count; i++) {
-                        TypeKind expected = native_get_global_function_param_type(native->name, i);
-                        if (expected != TYPE_ANY) {
-                            Value arg = vm.stack[vm.sp - arg_count - 1 + i];
-                            if (!value_matches_type(arg, expected)) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "调用函数 '%s' 时第 %d 个参数类型不匹配: 期望 '%s'",
-                                        native->name, i + 1, type_kind_to_string(expected));
-                                throw_runtime_error(msg, line);
-                                return 0;
-                            }
-                        }
-                    }
-                }
-#endif
-                
+
                 // 参数在 callee 之前
                 // 栈布局: [...][arg1][arg2][callee]
                 // 参数从 vm.sp - arg_count - 1 开始
@@ -368,65 +236,6 @@ static inline int call_value(Value callee, int arg_count, int line) {
 
                 ObjNative* native = bound->method;
 
-#ifndef LENO_RELEASE
-                // 调试版：运行时类型检查
-                if (runtime_type_check) {
-                    const char* type_name = NULL;
-                    if (val_is_obj(bound->receiver)) {
-                        type_name = obj_type_to_name(val_as_obj(bound->receiver)->type);
-                    }
-
-                    const InstanceMethodMeta* inst_meta = NULL;
-                    if (type_name && native->name) {
-                        inst_meta = native_find_instance_method(type_name, native->name);
-                    }
-
-                    // 检查参数数量（绑定方法的 arity 包含 receiver）
-                    // native->arity >= 0: 固定参数数量
-                    if (native->arity >= 0 && arg_count + 1 != native->arity) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
-                                native->name, native->arity - 1, arg_count);
-                        throw_runtime_error(msg, line);
-                        return 0;
-                    }
-                    // native->arity < 0: 可变参数，检查是否少于 min_arity
-                    else if (native->arity < 0 && inst_meta && inst_meta->min_arity >= 0 && arg_count < inst_meta->min_arity) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过少: 最少 %d 个, 实际 %d",
-                                native->name, inst_meta->min_arity, arg_count);
-                        throw_runtime_error(msg, line);
-                        return 0;
-                    }
-                    // native->arity < 0: 可变参数，检查是否超过 max_arity
-                    else if (native->arity < 0 && inst_meta && inst_meta->max_arity >= 0 && arg_count > inst_meta->max_arity) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
-                                native->name, inst_meta->max_arity, arg_count);
-                        throw_runtime_error(msg, line);
-                        return 0;
-                    }
-
-                    // 检查参数类型（如果知道 receiver 类型）
-                    if (type_name && native->name) {
-                        for (int i = 0; i < arg_count; i++) {
-                            // 参数在栈上，从 vm.sp - arg_count - 1 开始（因为 vm.sp - 1 是 bound_method）
-                            Value arg = vm.stack[vm.sp - arg_count - 1 + i];
-                            TypeKind expected = native_get_instance_method_param_type(type_name, native->name, i);
-
-                            if (expected != TYPE_ANY && !value_matches_type(arg, expected)) {
-                                char msg[BUFFER_MEDIUM];
-                                const char* expected_str = type_kind_to_string(expected);
-                                snprintf(msg, sizeof(msg), "调用方法 '%s.%s' 时第 %d 个参数类型不匹配: 期望 %s",
-                                        type_name, native->name, i + 1, expected_str);
-                                throw_runtime_error(msg, line);
-                                return 0;
-                            }
-                        }
-                    }
-                }
-#endif
-                
                 // 将 receiver 插入到参数列表开头
                 // 栈布局: [...][arg1][arg2][bound_method]
                 // 需要变为: [...][receiver][arg1][arg2]

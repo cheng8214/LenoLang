@@ -71,19 +71,7 @@ OPCODE(OP_TAIL_CALL) {
     if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE) {
         ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
         ObjFunction* function = closure->function;
-        
-        // 检查参数数量
-#ifndef LENO_RELEASE
-        if (runtime_type_check && arg_count != function->arity) {
-            char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "调用函数 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
-                    function->name, function->arity, arg_count);
-            throw_runtime_error(msg, GET_CURRENT_LINE());
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH;
-        }
-#endif
-        
+
         // 复用当前帧，只更新必要信息
         frame->closure = closure;
         frame->chunk = function->chunk;
@@ -126,41 +114,6 @@ OPCODE(OP_TAIL_CALL) {
                 }
             }
 
-            // 泛型参数类型检查：如果参数类型是泛型类型参数（如 T, K, V），
-            // 从参数栈中获取 self 实例，查找实际类型进行匹配
-#ifndef LENO_RELEASE
-            if (runtime_type_check && function->param_generic_names &&
-                i < function->arity && function->param_generic_names[i]) {
-                const char* generic_name = function->param_generic_names[i];
-                // self 是第一个参数
-                Value self_val = vm.stack[frame->stack_base + 0];
-                if (val_is_obj(self_val) && val_as_obj(self_val)->type == OBJ_STRUCT) {
-                    ObjStruct* self_obj = (ObjStruct*)val_as_obj(self_val);
-                    ObjStructDef* self_def = self_obj->def;
-                    if (self_def->type_param_count > 0 && self_def->type_param_names &&
-                        self_obj->generic_type_arg_count > 0 && self_obj->generic_type_args) {
-                        for (int pi = 0; pi < self_def->type_param_count && pi < self_obj->generic_type_arg_count; pi++) {
-                            if (self_def->type_param_names[pi] && strcmp(self_def->type_param_names[pi], generic_name) == 0) {
-                                const char* actual_type = self_obj->generic_type_args[pi];
-                                if (!value_matches_generic_type(arg, actual_type)) {
-                                    char msg[BUFFER_MEDIUM];
-                                    char* arg_str = value_to_string(arg);
-                                    snprintf(msg, sizeof(msg),
-                                        "泛型参数类型不匹配: 方法 '%s' 参数 %d 期望类型 %s (泛型参数 %s), 实际传入 '%s'",
-                                        function->name ? function->name : "unknown", i, actual_type, generic_name, arg_str);
-                                    free(arg_str);
-                                    throw_runtime_error(msg, GET_CURRENT_LINE());
-                                    frame = &vm.frames[vm.frame_cnt - 1];
-                                    DISPATCH;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-#endif
-            
             frame->locals[i] = arg;
         }
         
@@ -255,16 +208,6 @@ OPCODE(OP_TAIL_CALL) {
     } else if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_NATIVE) {
         // 原生函数：直接调用，然后返回
         ObjNative* native = (ObjNative*)val_as_obj(callee);
-#ifndef LENO_RELEASE
-        if (runtime_type_check && native->arity >= 0 && arg_count != native->arity) {
-            char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "调用函数 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
-                    native->name, native->arity, arg_count);
-            throw_runtime_error(msg, GET_CURRENT_LINE());
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH;
-        }
-#endif
 
         Value result = native->function(arg_count, vm.stack + vm.sp - arg_count - 1);
 
@@ -375,17 +318,6 @@ OPCODE(OP_TAIL_CALL) {
         }
 
         ObjNative* native = bound->method;
-
-#ifndef LENO_RELEASE
-        if (runtime_type_check && native->arity >= 0 && arg_count + 1 != native->arity) {
-            char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
-                    native->name, native->arity - 1, arg_count);
-            throw_runtime_error(msg, GET_CURRENT_LINE());
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH;
-        }
-#endif
 
         // 将 receiver 插入到参数列表开头
         // 当前栈布局: [old_locals...][arg1][arg2]...[argN][bound_method]
