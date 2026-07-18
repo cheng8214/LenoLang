@@ -671,9 +671,19 @@ export struct Table impl Widget {
         if _clipBase != null {
             SDL_Rect crc = SDL_Rect.malloc()
             crc.x = _int(cl); crc.y = _int(ry); crc.w = _int(cwClip); crc.h = _int(rh)
-            r.setClipRect(crc.to_ptr())
-            r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
-            r.setClipRect(_clipBase)
+            // 夹紧到基础裁剪区（数据区即为 bodyClip），防止文字渗透到滚动条/表外
+            SDL_Rect base = SDL_Rect.from_ptr(_clipBase)
+            int baseX2 = base.x + base.w; int baseY2 = base.y + base.h
+            if crc.x < base.x { crc.w = crc.w - (base.x - crc.x); crc.x = base.x }
+            if crc.y < base.y { crc.h = crc.h - (base.y - crc.y); crc.y = base.y }
+            int crcX2 = crc.x + crc.w; int crcY2 = crc.y + crc.h
+            if crcX2 > baseX2 { crc.w = baseX2 - crc.x }
+            if crcY2 > baseY2 { crc.h = baseY2 - crc.y }
+            if crc.w > 0 and crc.h > 0 {
+                r.setClipRect(crc.to_ptr())
+                r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
+                r.setClipRect(_clipBase)
+            }
             crc.free()
         } else {
             r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
@@ -720,6 +730,15 @@ export struct Table impl Widget {
         // 数据行
         float bodyTop = y + _headerH
         float bodyH = h - _headerH - sb[1]
+        float bodyW = w - sb[0]
+        // 数据区裁剪：防止行渲染渗透到底部滚动条区域
+        SDL_Rect bodyClip = SDL_Rect.malloc()
+        bodyClip.x = _int(x); bodyClip.y = _int(bodyTop)
+        bodyClip.w = _int(bodyW); bodyClip.h = _int(bodyH)
+        r.setClipRect(bodyClip.to_ptr())
+        // 关键：把 _clipBase 临时换成 bodyClip，让 _draw_cell_text 内部恢复时回到 body 区
+        // （否则恢复为全表 clip，后续行背景 fillRect 就会渗透到滚动条区域）
+        _clipBase = bodyClip.to_ptr()
         int startRow = _int(_scrollY / _rowH)
         if startRow < 0 { startRow = 0 }
         int endRow = startRow + _int(bodyH / _rowH) + 2
@@ -747,7 +766,10 @@ export struct Table impl Widget {
             }
         }
 
-        r.clearClip(); clip.free()
+        // 恢复表格整体裁剪区（滚动条/边框需全区域绘制）
+        _clipBase = clip.to_ptr()
+        r.setClipRect(clip.to_ptr())
+        bodyClip.free()
 
         if _dragCol >= 0 and _dragCol < _colW.len() {
             float ex = _col_x(_dragCol) + _colW[_dragCol]
@@ -762,6 +784,8 @@ export struct Table impl Widget {
         if sb[1] > 0.0 { _draw_hscroll(r, sb) }
 
         if _editing and _edit != null { _edit.render(r) }
+
+        r.clearClip(); clip.free()
     }
 
     func _draw_vscroll(Renderer r, Array[float] sb) {
