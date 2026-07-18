@@ -1,0 +1,6 @@
+// 包装模块（实验组）：用「批量 use」把 core 的符号转导出
+// 复现 bug：批量 use 在本模块内可用（返回类型 Point 能解析），
+// 但下游 use 该模块的符号时报“未定义”
+import "repro_batchimport_core.leno" as core
+use core.(Color, Point)
+export func makePointBatch(int x, int y): Point { return core.makePoint(x, y) }

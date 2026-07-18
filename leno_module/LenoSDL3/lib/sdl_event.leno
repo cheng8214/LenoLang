@@ -8,14 +8,7 @@
 //   }
 import ffi
 import "sdl_core.leno" as core
-use core.sdl3
-use core.SDL_KeyboardEvent
-use core.SDL_MouseButtonEvent
-use core.SDL_MouseMotionEvent
-use core.SDL_MouseWheelEvent
-use core.SDL_TextInputEvent
-use core.SDL_WindowEvent
-use core.SDL_DropEvent
+use core.(sdl3, SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_MouseWheelEvent, SDL_TextInputEvent, SDL_WindowEvent, SDL_DropEvent)
 
 sdl3 _lib = core.lib()
 

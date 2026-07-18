@@ -1,0 +1,15 @@
+// 主测试（复现 bug）：使用「批量 use」转导出的包装模块
+// 期望（按设计语义）：与单行 use 等价，应能 use 到 Batch.Color / Batch.Point
+// 实际：编译报“未定义符号”，证明批量 use 转导出失效
+import "repro_batchimport_wrap_batch.leno" as Batch
+
+use Batch.Color      // ❌ 批量 use 转导出，本应可用，实际报未定义
+use Batch.Point
+
+main() {
+    var c = Batch.Color.RED
+    var p = Batch.makePointBatch(3, 4)
+    print("batch Color.RED = " + c)
+    print("batch point     = (" + p.x + ", " + p.y + ")")
+    print("=== BATCH OK ===")
+}

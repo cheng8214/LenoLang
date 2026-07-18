@@ -33,30 +33,14 @@ import "sdl_chart.leno" as cht
 // 用户可通过 use SDL3.xxx 导入
 // 注：必须导出至少一个返回该类型的函数，模块符号表才能识别
 
-use core.SDL_FRect
-use core.SDL_Rect
-use core.SDL_FPoint
-use core.SDL_Point
-use core.SDL_Color
-use core.SDL_FColor
-use core.SDL_GlyphMetrics
-use core.SDL_Vertex
-
-use core.SDL_KeyboardEvent
-use core.SDL_MouseButtonEvent
-use core.SDL_MouseMotionEvent
-use core.SDL_MouseWheelEvent
-use core.SDL_TextInputEvent
-use core.SDL_WindowEvent
-use core.SDL_DropEvent
+use core.(SDL_FRect, SDL_Rect, SDL_FPoint, SDL_Point, SDL_Color, SDL_FColor, SDL_GlyphMetrics, SDL_Vertex)
+use core.(SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_MouseWheelEvent, SDL_TextInputEvent, SDL_WindowEvent, SDL_DropEvent)
 
 use evt.Event
 use r.Renderer
-use wnd.Window
-use fnt.Font
-use fnt.TextTexture
-use tm.Timer
-use tm.TimerCallback
+use wnd.(Window, EventHandler, RenderCallback)
+use fnt.(Font, TextTexture)
+use tm.(Timer, TimerCallback)
 use btn.Button
 use lbl.Label
 use edt.Edit
@@ -74,14 +58,9 @@ use tbl.Table
 use menu.MenuBar
 use scv.ScrollView
 use tv.TreeView
-use lay.HBox
-use lay.VBox
-use lay.AnchorBox
+use lay.(HBox, VBox, AnchorBox)
 use wgt.Widget
-use cht.BarChart
-use cht.LineChart
-use cht.PieChart
-use wnd.EventHandler
+use cht.(BarChart, LineChart, PieChart)
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
 export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
@@ -106,7 +85,6 @@ export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
 export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(opts) }
-use wnd.RenderCallback
 import "sdl_dialog.leno" as dlg
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }
 export func runModal(Window win, var onEvent, var onRender) { dlg.runModal(win, onEvent, onRender) }
@@ -114,24 +92,10 @@ export func runModal(Window win, var onEvent, var onRender) { dlg.runModal(win, 
 
 // ==================== 重新导出类型别名 ====================
 
-use core.Color
-use core.FColor
-use core.Size
-use core.FSize
-use core.StringSize
-use core.GlyphInfo
+use core.(Color, FColor, Size, FSize, StringSize, GlyphInfo)
 
 // ==================== 重新导出枚举 ====================
-use core.InitFlag
-use core.WindowFlag
-use core.EventType
-use core.Scancode
-use core.MouseButton
-use core.BlendMode
-use core.Flip
-use core.SystemCursor
-use core.TextureAccess
-use core.FlashOp
+use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp)
 
 export var PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
 export var SDL_FRect_SIZE  = core.SDL_FRect_SIZE

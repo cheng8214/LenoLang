@@ -4,20 +4,8 @@ import ffi
 import maths
 import "sdl_core.leno" as core
 import "sdl_font.leno" as font
-use core.sdl3
-use core.SDL_FRect
-use core.SDL_Color
-use core.SDL_FColor
-use core.SDL_FPoint
-use core.SDL_Point
-use core.SDL_Rect
-use core.SDL_Vertex
-use core.Color
-use core.FColor
-use core.Size
-use core.FSize
-use font.Font
-use font.TextTexture
+use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, Color, FColor, Size, FSize)
+use font.(Font, TextTexture)
 
 // 模块加载时一次性初始化 DLL，后续直接用 _lib
 sdl3 _lib = core.lib()

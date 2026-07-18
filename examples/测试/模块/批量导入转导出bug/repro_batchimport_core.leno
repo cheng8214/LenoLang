@@ -1,0 +1,9 @@
+// 模块 core：定义待转导出的 enum 与 struct（模拟 sdl_core.leno）
+export enum Color { RED = 1; GREEN = 2; BLUE = 3 }
+export struct Point { int x; int y }
+export func makePoint(int x, int y): Point {
+    var p = new Point()
+    p.x = x
+    p.y = y
+    return p
+}

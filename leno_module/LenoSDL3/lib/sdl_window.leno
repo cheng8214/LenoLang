@@ -10,9 +10,7 @@
 //    var ev = SDL3.createEvent()
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import "sdl_core.leno" as core
-use core.sdl3
-use core.SDL_Point
-use core.Size
+use core.(sdl3, SDL_Point, Size)
 
 sdl3 _lib = core.lib()
 
@@ -54,9 +52,7 @@ use spb.SpinBox
 import "sdl_table.leno" as tbl
 use tbl.Table
 import "sdl_layout.leno" as lay
-use lay.HBox
-use lay.VBox
-use lay.AnchorBox
+use lay.(HBox, VBox, AnchorBox)
 import "sdl_menu.leno" as menu
 use menu.MenuBar
 import "sdl_scrollview.leno" as scv
@@ -67,9 +63,7 @@ import "sdl_tooltip.leno" as tip
 import "sdl_widget.leno" as wgt
 use wgt.Widget
 import "sdl_chart.leno" as cht
-use cht.BarChart
-use cht.LineChart
-use cht.PieChart
+use cht.(BarChart, LineChart, PieChart)
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)

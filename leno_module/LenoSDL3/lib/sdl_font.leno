@@ -3,11 +3,7 @@ import ffi
 import dirs
 import files
 import "sdl_core.leno" as core
-use core.sdl3
-use core.SDL_Point
-use core.SDL_GlyphMetrics
-use core.StringSize
-use core.GlyphInfo
+use core.(sdl3, SDL_Point, SDL_GlyphMetrics, StringSize, GlyphInfo)
 
 sdl3 _lib = core.lib()
 

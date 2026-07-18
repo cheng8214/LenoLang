@@ -1,0 +1,6 @@
+// 包装模块（对照组）：用「单行 use」把 core 的符号转导出
+// 模拟 SDL3.leno 修复后的写法，下游应当能 use 到
+import "repro_batchimport_core.leno" as core
+use core.Color
+use core.Point
+export func makePointSingle(int x, int y): Point { return core.makePoint(x, y) }
