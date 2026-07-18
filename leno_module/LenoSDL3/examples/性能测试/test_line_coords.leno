@@ -1,0 +1,50 @@
+// test_line_coords.leno — 行批处理坐标回归测试（缓冲级，确定性）
+// 验证修复：行缓冲写入步长必须为 16 字节（每条线 4 个 float = x1,y1,x2,y2）。
+// 步长错误(8字节)时，第 2 条线会写到第 1 条线的 x2/y2 位置，覆盖其终点坐标 -> 线坐标错乱。
+// 本测试直接读回行缓冲里的 float 与已知坐标比对，不依赖 SDL 渲染/读回。
+// 运行：leno "leno_module/LenoSDL3/examples/性能测试/test_line_coords.leno"
+import "../../lib/SDL3.leno" as SDL3
+import ffi
+
+main() {
+    // 仅用于取得一个初始化过批处理缓冲的渲染器（_bxLine 在 createRenderer 时分配）
+    var win = SDL3.createWindow({title: "Line Coords Test", w: 120, h: 120})
+    if not win.ok { print("[LINE] FAIL: 窗口创建失败"); return }
+    var r = win.createRenderer()
+    if not r.ok { print("[LINE] FAIL: 渲染器创建失败"); return }
+
+    // 两条线：A(10,50)-(90,50)，B(10,20)-(90,20)
+    r.drawLine(10.0, 50.0, 90.0, 50.0)
+    r.drawLine(10.0, 20.0, 90.0, 20.0)
+
+    int n = SDL3._dbgLineCount(r)
+    Ptr buf = SDL3._dbgLinePtr(r)
+    float a_x1 = ffi.read_float(buf, 0)
+    float a_y1 = ffi.read_float(buf, 4)
+    float a_x2 = ffi.read_float(buf, 8)
+    float a_y2 = ffi.read_float(buf, 12)
+    float b_x1 = ffi.read_float(buf, 16)
+    float b_y1 = ffi.read_float(buf, 20)
+    float b_x2 = ffi.read_float(buf, 24)
+    float b_y2 = ffi.read_float(buf, 28)
+
+    print("[LINE] count=")
+    print(n)
+    print(" A=(")
+    print(a_x1); print(","); print(a_y1); print(" -> "); print(a_x2); print(","); print(a_y2)
+    print(") B=(")
+    print(b_x1); print(","); print(b_y1); print(" -> "); print(b_x2); print(","); print(b_y2)
+    print(")")
+
+    bool ok = n == 2
+            and a_x1 == 10.0 and a_y1 == 50.0 and a_x2 == 90.0 and a_y2 == 50.0
+            and b_x1 == 10.0 and b_y1 == 20.0 and b_x2 == 90.0 and b_y2 == 20.0
+    if ok {
+        print("[LINE] PASS: 行批处理坐标正确（步长 16 字节，无覆盖）")
+    } else {
+        print("[LINE] FAIL: 行坐标被覆盖/错位（步长 bug 未修复）")
+    }
+
+    r.destroy()
+    win.destroy()
+}
