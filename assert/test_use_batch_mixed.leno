@@ -1,0 +1,31 @@
+// use 混合语法测试 — 单行和批量混用
+import "use_mod_c.leno" as c
+import "use_mod_a.leno" as a
+
+// 批量导入
+use c.(Point, Color)
+// 单行导入（与批量混用）
+use c.Rect
+use c.Size
+// 另一个模块的批量导入
+use a.(Point)
+
+main() {
+    Point p = new c.Point(x = 1, y = 2)
+    assert_eq(p.x, 1)
+
+    Color cl = new c.Color(r = 255, g = 0, b = 0)
+    assert_eq(cl.r, 255)
+
+    Rect r = new c.Rect(w = 100, h = 200)
+    assert_eq(r.w, 100)
+
+    Size s = {w: 50, h: 75}
+    assert_eq(s["w"], 50)
+
+    // a 模块也有 Point
+    Point pa = new a.Point(x = 99, y = 88)
+    assert_eq(pa.x, 99)
+
+    print("test_use_batch_mixed passed")
+}

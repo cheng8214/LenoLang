@@ -1704,6 +1704,49 @@ static int detect_use_context(const char* content, LspPosition pos, char** use_m
         }
 
         int after_dot = q + 1;
+
+        // 批量模式: use module.(A, B, C)
+        if (after_dot < offset && content[after_dot] == '(') {
+            int paren_start = after_dot;
+            // 在括号内查找光标前的最后一个标识符前缀
+            int r = paren_start + 1;
+            int last_ident_start = -1;
+            int last_ident_len = 0;
+
+            while (r < offset) {
+                if (isalnum((unsigned char)content[r]) || content[r] == '_') {
+                    if (last_ident_start < 0 || r != last_ident_start + last_ident_len) {
+                        // 新标识符开始
+                        last_ident_start = r;
+                        last_ident_len = 0;
+                    }
+                    last_ident_len++;
+                    r++;
+                } else if (content[r] == ',') {
+                    // 逗号分隔，重置标识符追踪
+                    r++;
+                    last_ident_start = -1;
+                    last_ident_len = 0;
+                } else if (isspace((unsigned char)content[r])) {
+                    r++;
+                } else {
+                    break;
+                }
+            }
+
+            if (last_ident_start >= 0 && last_ident_len > 0) {
+                *use_prefix_out = (char*)malloc(last_ident_len + 1);
+                if (*use_prefix_out) {
+                    memcpy(*use_prefix_out, content + last_ident_start, last_ident_len);
+                    (*use_prefix_out)[last_ident_len] = '\0';
+                }
+            }
+            // 如果光标刚在 '(' 之后或 ',' 之后，prefix 为空（返回空串，提供全部补全）
+
+            return 2;
+        }
+
+        // 单模式: use module.Type
         if (after_dot < offset) {
             int sym_start = after_dot;
             int r = after_dot;

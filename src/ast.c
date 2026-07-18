@@ -229,6 +229,10 @@ void ast_free(Ast* ast) {
             free(ast->u.import.alias);
             free(ast->u.import.file_path);
             break;
+        case AST_USE:
+            free(ast->u.use.module_name);
+            free(ast->u.use.symbol_name);
+            break;
         case AST_EXPORT:
             ast_free(ast->u.export.decl);
             break;

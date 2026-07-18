@@ -191,7 +191,8 @@ Ast* parse_import_stmt(Parser* p) {
                 if (*s == '/' && *(s+1) == '/') { while (*s && *s != '\n') s++; continue; }
 
                 // 查找 use 语句，传导依赖模块的 alias
-                // 格式: use module.AliasName
+                // 格式: use module.AliasName         — 单个导入
+                //       use module.(A, B, C)         — 批量导入
                 if (strncmp(s, "use", 3) == 0 && !isalnum((unsigned char)s[3]) && s[3] != '_') {
                     s += 3;
                     while (*s && (*s == ' ' || *s == '\t')) s++;
@@ -204,127 +205,149 @@ Ast* parse_import_stmt(Parser* p) {
                         memcpy(mod_name, mod_start, mod_len);
                         mod_name[mod_len] = '\0';
                         s++; // skip '.'
-                        // 读取类型名
-                        const char* type_start = s;
-                        while (*s && (isalnum((unsigned char)*s) || *s == '_')) s++;
-                        int type_len = (int)(s - type_start);
-                        if (type_len > 0 && type_len < 64) {
-                            char use_type_name[64];
-                            memcpy(use_type_name, type_start, type_len);
-                            use_type_name[type_len] = '\0';
 
-                            // 查找 import_map 中模块名对应的文件路径
-                            for (int im = 0; im < import_cnt; im++) {
-                                if (strcmp(import_map[im].alias, mod_name) == 0) {
-                                    // 递归读取依赖模块，查找 export alias
-                                    // 需要用当前模块的完整路径作为基准来解析依赖模块的相对路径
-                                    // module_name 是 import 语句中的模块路径，需要从当前文件目录解析
-                                    char dep_base_path[MAX_PATH_LEN] = {0};
-                                    const char* current_parse_file = error_get_filename();
-                                    if (current_parse_file) {
-                                        strncpy(dep_base_path, current_parse_file, MAX_PATH_LEN - 1);
-                                        char* last_sep = strrchr(dep_base_path, '\\');
-                                        if (!last_sep) last_sep = strrchr(dep_base_path, '/');
-                                        if (last_sep) {
-                                            *(last_sep + 1) = '\0';
-                                            strncat(dep_base_path, import_map[im].path, MAX_PATH_LEN - strlen(dep_base_path) - 1);
+                        // 判断批量模式: use module.(A, B, C) 还是 use module.Type
+                        int batch_mode = (*s == '(');
+                        if (batch_mode) s++; // skip '('
+
+                        // 循环处理每个类型名（单模式只循环一次，批量模式循环到 ')'）
+                        while (1) {
+                            if (batch_mode) {
+                                while (*s && (*s == ' ' || *s == '\t')) s++;
+                                if (*s == ')') { s++; break; } // 批量模式结束
+                            }
+
+                            // 读取类型名
+                            const char* type_start = s;
+                            while (*s && (isalnum((unsigned char)*s) || *s == '_')) s++;
+                            int type_len = (int)(s - type_start);
+                            if (type_len > 0 && type_len < 64) {
+                                char use_type_name[64];
+                                memcpy(use_type_name, type_start, type_len);
+                                use_type_name[type_len] = '\0';
+
+                                // 查找 import_map 中模块名对应的文件路径
+                                for (int im = 0; im < import_cnt; im++) {
+                                    if (strcmp(import_map[im].alias, mod_name) == 0) {
+                                        // 递归读取依赖模块，查找 export alias
+                                        // 需要用当前模块的完整路径作为基准来解析依赖模块的相对路径
+                                        // module_name 是 import 语句中的模块路径，需要从当前文件目录解析
+                                        char dep_base_path[MAX_PATH_LEN] = {0};
+                                        const char* current_parse_file = error_get_filename();
+                                        if (current_parse_file) {
+                                            strncpy(dep_base_path, current_parse_file, MAX_PATH_LEN - 1);
+                                            char* last_sep = strrchr(dep_base_path, '\\');
+                                            if (!last_sep) last_sep = strrchr(dep_base_path, '/');
+                                            if (last_sep) {
+                                                *(last_sep + 1) = '\0';
+                                                strncat(dep_base_path, import_map[im].path, MAX_PATH_LEN - strlen(dep_base_path) - 1);
+                                            } else {
+                                                strncpy(dep_base_path, import_map[im].path, MAX_PATH_LEN - 1);
+                                            }
                                         } else {
                                             strncpy(dep_base_path, import_map[im].path, MAX_PATH_LEN - 1);
                                         }
-                                    } else {
-                                        strncpy(dep_base_path, import_map[im].path, MAX_PATH_LEN - 1);
-                                    }
-                                    char* dep_source = read_module_file(dep_base_path, current_parse_file);
-                                    if (dep_source) {
-                                        // 扫描依赖模块的 export alias
-                                        struct { char* name; TypeInfo* type; } dep_aliases[32] = {{0}};
-                                        int dep_cnt = 0;
-                                        char* ds = dep_source;
-                                        while (*ds) {
-                                            while (*ds && (*ds == ' ' || *ds == '\t' || *ds == '\n' || *ds == '\r')) ds++;
-                                            if (!*ds) break;
-                                            if (*ds == '/' && *(ds+1) == '/') { while (*ds && *ds != '\n') ds++; continue; }
-                                            if (strncmp(ds, "export", 6) == 0 && !isalnum((unsigned char)ds[6]) && ds[6] != '_') {
-                                                ds += 6;
+                                        char* dep_source = read_module_file(dep_base_path, current_parse_file);
+                                        if (dep_source) {
+                                            // 扫描依赖模块的 export alias
+                                            struct { char* name; TypeInfo* type; } dep_aliases[32] = {{0}};
+                                            int dep_cnt = 0;
+                                            char* ds = dep_source;
+                                            while (*ds) {
                                                 while (*ds && (*ds == ' ' || *ds == '\t' || *ds == '\n' || *ds == '\r')) ds++;
-                                                if (strncmp(ds, "alias", 5) == 0 && !isalnum((unsigned char)ds[5]) && ds[5] != '_') {
-                                                    ds += 5;
-                                                    while (*ds && (*ds == ' ' || *ds == '\t')) ds++;
-                                                    const char* dn_start = ds;
-                                                    while (*ds && (isalnum((unsigned char)*ds) || *ds == '_')) ds++;
-                                                    int dn_len = (int)(ds - dn_start);
-                                                    if (dn_len > 0 && dn_len < 64) {
-                                                        char dn[64];
-                                                        memcpy(dn, dn_start, dn_len);
-                                                        dn[dn_len] = '\0';
+                                                if (!*ds) break;
+                                                if (*ds == '/' && *(ds+1) == '/') { while (*ds && *ds != '\n') ds++; continue; }
+                                                if (strncmp(ds, "export", 6) == 0 && !isalnum((unsigned char)ds[6]) && ds[6] != '_') {
+                                                    ds += 6;
+                                                    while (*ds && (*ds == ' ' || *ds == '\t' || *ds == '\n' || *ds == '\r')) ds++;
+                                                    if (strncmp(ds, "alias", 5) == 0 && !isalnum((unsigned char)ds[5]) && ds[5] != '_') {
+                                                        ds += 5;
                                                         while (*ds && (*ds == ' ' || *ds == '\t')) ds++;
-                                                        if (*ds == '=') {
-                                                            ds++;
+                                                        const char* dn_start = ds;
+                                                        while (*ds && (isalnum((unsigned char)*ds) || *ds == '_')) ds++;
+                                                        int dn_len = (int)(ds - dn_start);
+                                                        if (dn_len > 0 && dn_len < 64) {
+                                                            char dn[64];
+                                                            memcpy(dn, dn_start, dn_len);
+                                                            dn[dn_len] = '\0';
                                                             while (*ds && (*ds == ' ' || *ds == '\t')) ds++;
-                                                            char dt_str[256] = {0};
-                                                            int dti = 0;
-                                                            while (*ds && dti < 255 && *ds != '\n' && *ds != '\r' &&
-                                                                   *ds != ';' && *ds != '{' && *ds != '/') {
-                                                                if (!(*ds == '_' || isalnum((unsigned char)*ds) ||
-                                                                      *ds == '[' || *ds == ']' || *ds == ',' ||
-                                                                      *ds == ' ' || *ds == '\t')) break;
-                                                                if ((*ds == ' ' || *ds == '\t') && dti > 0 && (dt_str[dti-1] == ' ' || dt_str[dti-1] == '\t')) {
-                                                                    ds++;
-                                                                    continue;
-                                                                }
-                                                                dt_str[dti++] = (*ds == '\t') ? ' ' : *ds;
+                                                            if (*ds == '=') {
                                                                 ds++;
-                                                            }
-                                                            dt_str[dti] = '\0';
-                                                            if (dti > 0) {
-                                                                extern TypeInfo* parse_type_from_string(const char* type_str);
-                                                                TypeInfo* dt_ptr = NULL;
-                                                                // 检查依赖模块的本地别名链
-                                                                if (!strchr(dt_str, '[') && !strchr(dt_str, ',')) {
-                                                                    for (int da = 0; da < dep_cnt; da++) {
-                                                                        if (strcmp(dep_aliases[da].name, dt_str) == 0) {
-                                                                            dt_ptr = type_copy(dep_aliases[da].type);
-                                                                            break;
+                                                                while (*ds && (*ds == ' ' || *ds == '\t')) ds++;
+                                                                char dt_str[256] = {0};
+                                                                int dti = 0;
+                                                                while (*ds && dti < 255 && *ds != '\n' && *ds != '\r' &&
+                                                                       *ds != ';' && *ds != '{' && *ds != '/') {
+                                                                    if (!(*ds == '_' || isalnum((unsigned char)*ds) ||
+                                                                          *ds == '[' || *ds == ']' || *ds == ',' ||
+                                                                          *ds == ' ' || *ds == '\t')) break;
+                                                                    if ((*ds == ' ' || *ds == '\t') && dti > 0 && (dt_str[dti-1] == ' ' || dt_str[dti-1] == '\t')) {
+                                                                        ds++;
+                                                                        continue;
+                                                                    }
+                                                                    dt_str[dti++] = (*ds == '\t') ? ' ' : *ds;
+                                                                    ds++;
+                                                                }
+                                                                dt_str[dti] = '\0';
+                                                                if (dti > 0) {
+                                                                    extern TypeInfo* parse_type_from_string(const char* type_str);
+                                                                    TypeInfo* dt_ptr = NULL;
+                                                                    // 检查依赖模块的本地别名链
+                                                                    if (!strchr(dt_str, '[') && !strchr(dt_str, ',')) {
+                                                                        for (int da = 0; da < dep_cnt; da++) {
+                                                                            if (strcmp(dep_aliases[da].name, dt_str) == 0) {
+                                                                                dt_ptr = type_copy(dep_aliases[da].type);
+                                                                                break;
+                                                                            }
                                                                         }
                                                                     }
-                                                                }
-                                                                if (!dt_ptr) dt_ptr = parse_type_from_string(dt_str);
-                                                                if (dt_ptr) {
-                                                                    if (dep_cnt < 32) {
-                                                                        dep_aliases[dep_cnt].name = strdup(dn);
-                                                                        dep_aliases[dep_cnt].type = type_copy(dt_ptr);
-                                                                        dep_cnt++;
+                                                                    if (!dt_ptr) dt_ptr = parse_type_from_string(dt_str);
+                                                                    if (dt_ptr) {
+                                                                        if (dep_cnt < 32) {
+                                                                            dep_aliases[dep_cnt].name = strdup(dn);
+                                                                            dep_aliases[dep_cnt].type = type_copy(dt_ptr);
+                                                                            dep_cnt++;
+                                                                        }
+                                                                        // 如果是被 use 的那个别名，注册到当前 parser
+                                                                        if (strcmp(dn, use_type_name) == 0) {
+                                                                            add_alias(p, use_type_name, dt_ptr);
+                                                                        }
+                                                                        type_free(dt_ptr);
                                                                     }
-                                                                    // 如果是被 use 的那个别名，注册到当前 parser
-                                                                    if (strcmp(dn, use_type_name) == 0) {
-                                                                        add_alias(p, use_type_name, dt_ptr);
-                                                                    }
-                                                                    type_free(dt_ptr);
                                                                 }
                                                             }
                                                         }
                                                     }
                                                 }
+                                                // 也扫描依赖模块的 use 语句（二级传导）
+                                                if (strncmp(ds, "use", 3) == 0 && !isalnum((unsigned char)ds[3]) && ds[3] != '_') {
+                                                    // 简单跳过，不递归更深层
+                                                    ds += 3;
+                                                    while (*ds && *ds != '\n' && *ds != '\r') ds++;
+                                                    continue;
+                                                }
+                                                if (*ds) ds++;
                                             }
-                                            // 也扫描依赖模块的 use 语句（二级传导）
-                                            if (strncmp(ds, "use", 3) == 0 && !isalnum((unsigned char)ds[3]) && ds[3] != '_') {
-                                                // 简单跳过，不递归更深层
-                                                ds += 3;
-                                                while (*ds && *ds != '\n' && *ds != '\r') ds++;
-                                                continue;
+                                            // 清理依赖模块别名表
+                                            for (int da = 0; da < dep_cnt; da++) {
+                                                free(dep_aliases[da].name);
+                                                type_free(dep_aliases[da].type);
                                             }
-                                            if (*ds) ds++;
+                                            free(dep_source);
                                         }
-                                        // 清理依赖模块别名表
-                                        for (int da = 0; da < dep_cnt; da++) {
-                                            free(dep_aliases[da].name);
-                                            type_free(dep_aliases[da].type);
-                                        }
-                                        free(dep_source);
+                                        break; // 找到匹配的 import，停止查找
                                     }
-                                    break; // 找到匹配的 import，停止查找
                                 }
                             }
+
+                            if (!batch_mode) break; // 单模式：只处理一次
+
+                            // 批量模式：跳过逗号和空白，继续下一个类型名
+                            while (*s && (*s == ' ' || *s == '\t')) s++;
+                            if (*s == ',') s++;
+                            while (*s && (*s == ' ' || *s == '\t')) s++;
+                            // 允许尾逗号
+                            if (*s == ')') { s++; break; }
                         }
                     }
                 }
@@ -425,7 +448,8 @@ Ast* parse_export_stmt(Parser* p) {
 
 // ============================================================================
 // use 语句解析（支持将模块中的类型导入到当前作用域）
-// 语法: use module.Type 
+// 语法: use module.Type           — 单个导入
+//       use module.(A, B, C)      — 批量导入
 // ============================================================================
 
 Ast* parse_use_stmt(Parser* p) {
@@ -443,13 +467,79 @@ Ast* parse_use_stmt(Parser* p) {
 
     // 检查是否有 . 符号
     if (p->lex.current.type != TOK_DOT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "use 语句语法: use module.Type");
+        error_add(ERR_SYNTAX, p->lex.current.line, "use 语句语法: use module.Type 或 use module.(A, B, C)");
         free(module_name);
         return NULL;
     }
     lexer_next(&p->lex); // .
 
-    // 解析要导入的符号名
+    // 批量模式: use module.(A, B, C)
+    if (p->lex.current.type == TOK_LPAREN) {
+        lexer_next(&p->lex); // (
+
+        // 创建 AST_BLOCK 容器
+        Ast* block = ast_new(AST_BLOCK, line);
+        ast_list_init(&block->u.block);
+
+        // 括号内至少需要一个符号名
+        if (p->lex.current.type == TOK_RPAREN) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "use 批量导入语法: use module.(A, B, C)，括号内不能为空");
+            free(module_name);
+            ast_free(block);
+            return NULL;
+        }
+
+        while (1) {
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "use 批量导入期望类型名");
+                free(module_name);
+                ast_free(block);
+                return NULL;
+            }
+
+            char* symbol_name = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+
+            // 创建 AST_USE 节点，每个子节点持有 module_name 的独立拷贝
+            Ast* use_ast = ast_new(AST_USE, line);
+            use_ast->u.use.module_name = strdup(module_name);
+            use_ast->u.use.symbol_name = symbol_name;
+            ast_list_add(&block->u.block, use_ast);
+
+            // 逗号则继续，右括号则结束
+            if (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex); // ,
+                // 允许尾逗号: use module.(A, B, C,)
+                if (p->lex.current.type == TOK_RPAREN) {
+                    lexer_next(&p->lex); // )
+                    break;
+                }
+                continue;
+            } else if (p->lex.current.type == TOK_RPAREN) {
+                lexer_next(&p->lex); // )
+                break;
+            } else {
+                error_add(ERR_SYNTAX, p->lex.current.line, "use 批量导入语法: 期望 ',' 或 ')'");
+                free(module_name);
+                ast_free(block);
+                return NULL;
+            }
+        }
+
+        free(module_name); // module_name 已被 strdup 到每个子节点
+
+        // 如果只有一个符号，直接返回单个 AST_USE 而非 AST_BLOCK
+        if (block->u.block.count == 1) {
+            Ast* single = block->u.block.items[0];
+            block->u.block.count = 0; // 防止 ast_free 递归释放子节点
+            ast_free(block);
+            return single;
+        }
+
+        return block;
+    }
+
+    // 单模式: use module.Type（原有逻辑）
     if (p->lex.current.type != TOK_IDENT) {
         error_add(ERR_SYNTAX, p->lex.current.line, "use 语句期望类型名");
         free(module_name);

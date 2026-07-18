@@ -1,0 +1,18 @@
+// 批量导入测试用的多类型模块
+export struct Point {
+    int x = 0
+    int y = 0
+}
+
+export struct Color {
+    int r = 0
+    int g = 0
+    int b = 0
+}
+
+export struct Rect {
+    int w = 0
+    int h = 0
+}
+
+export alias Size = Dict[string, int]
