@@ -10,10 +10,36 @@ use font.(Font, TextTexture)
 // 模块加载时一次性初始化 DLL，后续直接用 _lib
 sdl3 _lib = core.lib()
 
+// 批处理统计（性能分析 / 测试用，模块级全局；单渲染器场景精确）
+// Submits = 提交 SDL 批量调用的次数；Batched = 累计经批处理提交的图元数
+int _gFillSubmits = 0; int _gFillBatched = 0
+int _gOutSubmits = 0;  int _gOutBatched = 0
+int _gLineSubmits = 0; int _gLineBatched = 0
+
+// 批处理统计对外接口（模块级全局函数，避免依赖 struct 方法跨模块可见性）
+export func getBatchFillSubmits(): int { return _gFillSubmits }
+export func getBatchFillBatched(): int { return _gFillBatched }
+export func getBatchOutSubmits(): int { return _gOutSubmits }
+export func getBatchOutBatched(): int { return _gOutBatched }
+export func getBatchLineSubmits(): int { return _gLineSubmits }
+export func getBatchLineBatched(): int { return _gLineBatched }
+
 export struct Renderer {
     Ptr handle; bool ok
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
     Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
+
+    // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
+    Ptr _bxFill; int _bxFillN; int _bxFillCap
+    Ptr _bxOut;  int _bxOutN;  int _bxOutCap
+    Ptr _bxLine; int _bxLineN; int _bxLineCap
+    int _bxCur            // 0=空 1=填充 2=描边 3=线段（切换即 flush 保序）
+    int _bxR; int _bxG; int _bxB; int _bxA; bool _bxIsFloat
+    float _bxFr; float _bxFg; float _bxFb; float _bxFa
+    int _bxBlend
+    bool _bxClip; Ptr _bxClipPtr
+    Ptr[u8] _bxTarget
+    float _bxSx; float _bxSy; float _bxCScale
 
     // 创建默认渲染器（关联到窗口）
     func initDefault(Ptr[u8] window): bool {
@@ -24,12 +50,31 @@ export struct Renderer {
         _lib.SDL_SetHint("SDL_HINT_RENDER_LINE_METHOD", "2")
         handle = _lib.SDL_CreateRenderer(window, null as string)
         ok = handle != null
+        if ok {
+            // 批处理状态快照复位为 SDL 默认绘制状态
+            _bxR = 255; _bxG = 255; _bxB = 255; _bxA = 255; _bxIsFloat = false
+            _bxFr = 1.0; _bxFg = 1.0; _bxFb = 1.0; _bxFa = 1.0
+            _bxBlend = 0; _bxClip = false; _bxClipPtr = null; _bxTarget = null
+            _bxSx = 1.0; _bxSy = 1.0; _bxCScale = 1.0; _bxCur = 0
+            _gFillSubmits = 0; _gFillBatched = 0
+            _gOutSubmits = 0;  _gOutBatched = 0
+            _gLineSubmits = 0; _gLineBatched = 0
+            // 预分配批处理缓冲（ffi 连续内存）：fill/out 各 2048 个矩形，line 8192 个点
+            _bxFillCap = 2048; _bxFill = ffi.malloc(_bxFillCap * 16)
+            _bxOutCap  = 2048; _bxOut  = ffi.malloc(_bxOutCap * 16)
+            _bxLineCap = 4096; _bxLine = ffi.malloc(_bxLineCap * 8)
+            _bxFillN = 0; _bxOutN = 0; _bxLineN = 0
+        }
         return ok
     }
 
     // 销毁渲染器，释放资源
     func destroy() {
         if ok {
+            _flushBatches()
+            if _bxFill != null { ffi.free(_bxFill); _bxFill = null }
+            if _bxOut != null { ffi.free(_bxOut); _bxOut = null }
+            if _bxLine != null { ffi.free(_bxLine); _bxLine = null }
             if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex); _ssaaTex = null }
             _lib.SDL_DestroyRenderer(handle); handle = null; ok = false
         }
@@ -38,6 +83,7 @@ export struct Renderer {
     // 清空渲染目标（用当前颜色填充整个画面）
     // SSAA 开启时：清的是离屏高分辨率纹理，并把坐标缩放切到 scale
     func clear(): bool {
+        _flushBatches()
         if _ssaa { setRenderTarget(_ssaaTex); setScale(_ssaaScale, _ssaaScale) }
         return _lib.SDL_RenderClear(handle)
     }
@@ -45,6 +91,7 @@ export struct Renderer {
     // 呈现渲染结果到屏幕（交换缓冲区）
     // SSAA 开启时：把高分辨率离屏纹理以 1x 缩放贴回窗口，GPU 双线性降采样 -> 平滑边缘
     func present(): bool {
+        _flushBatches()
         if _ssaa {
             setRenderTarget(null)
             setScale(1.0, 1.0)
@@ -124,11 +171,21 @@ export struct Renderer {
 
     // 设置绘制颜色（整数 RGBA，0~255）
     func setColor(int r, int g, int b, int a): bool {
+        if not _bxIsFloat and r == _bxR and g == _bxG and b == _bxB and a == _bxA {
+            return true
+        }
+        _flushBatches()
+        _bxIsFloat = false; _bxR = r; _bxG = g; _bxB = b; _bxA = a
         return _lib.SDL_SetRenderDrawColor(handle, r, g, b, a)
     }
 
     // 设置绘制颜色（浮点 RGBA，0.0~1.0）
     func setColorFloat(float r, float g, float b, float a): bool {
+        if _bxIsFloat and r == _bxFr and g == _bxFg and b == _bxFb and a == _bxFa {
+            return true
+        }
+        _flushBatches()
+        _bxIsFloat = true; _bxFr = r; _bxFg = g; _bxFb = b; _bxFa = a
         return _lib.SDL_SetRenderDrawColorFloat(handle, r, g, b, a)
     }
 
@@ -156,39 +213,66 @@ export struct Renderer {
         pt.free(); return d
     }
 
-    // 填充矩形（x, y, w, h）
+    // 填充矩形（x, y, w, h）—— 透明自动批处理：同材质连续调用合并为一次 SDL_RenderFillRects
     func fillRect(float x, float y, float w, float h): bool {
-        SDL_FRect rect = SDL_FRect.malloc()
-        rect.x = x; rect.y = y; rect.w = w; rect.h = h
-        bool result = _lib.SDL_RenderFillRect(handle, rect.to_ptr())
-        rect.free(); return result
+        if _bxFill == null { return _emitFill(x, y, w, h) }
+        if _bxCur != 0 and _bxCur != 1 { _flushBatches() }
+        if _bxFillN >= _bxFillCap { _flushBatches() }
+        int off = _bxFillN * 16
+        ffi.write_float(_bxFill, off,      x)
+        ffi.write_float(_bxFill, off + 4,  y)
+        ffi.write_float(_bxFill, off + 8,  w)
+        ffi.write_float(_bxFill, off + 12, h)
+        _bxFillN = _bxFillN + 1
+        _bxCur = 1
+        return true
     }
 
-    // 填充矩形（传入 SDL_FRect 指针，避免重复创建）
+    // 填充矩形（传入 SDL_FRect 指针，避免重复创建）—— 立即提交
     func fillRectPtr(Ptr rect): bool {
+        _flushBatches()
         return _lib.SDL_RenderFillRect(handle, rect)
     }
 
-    // 填充整个渲染目标（传 null 给 SDL 即表示全屏）
+    // 填充整个渲染目标（传 null 给 SDL 即表示全屏）—— 立即提交
     func fillFull(): bool {
+        _flushBatches()
         return _lib.SDL_RenderFillRect(handle, null)
     }
 
-    // 绘制矩形边框（x, y, w, h）
+    // 绘制矩形边框（x, y, w, h）—— 透明自动批处理：同材质连续调用合并为一次 SDL_RenderRects
     func drawRect(float x, float y, float w, float h): bool {
-        SDL_FRect rect = SDL_FRect.malloc()
-        rect.x = x; rect.y = y; rect.w = w; rect.h = h
-        bool result = _lib.SDL_RenderRect(handle, rect)
-        rect.free(); return result
+        if _bxOut == null { return _emitRect(x, y, w, h) }
+        if _bxCur != 0 and _bxCur != 2 { _flushBatches() }
+        if _bxOutN >= _bxOutCap { _flushBatches() }
+        int off = _bxOutN * 16
+        ffi.write_float(_bxOut, off,      x)
+        ffi.write_float(_bxOut, off + 4,  y)
+        ffi.write_float(_bxOut, off + 8,  w)
+        ffi.write_float(_bxOut, off + 12, h)
+        _bxOutN = _bxOutN + 1
+        _bxCur = 2
+        return true
     }
 
-    // 绘制线段（x1, y1）→（x2, y2）
+    // 绘制线段（x1, y1）→（x2, y2）—— 透明自动批处理：连续调用合并为一次 SDL_RenderLines
     func drawLine(float x1, float y1, float x2, float y2): bool {
-        return _lib.SDL_RenderLine(handle, x1, y1, x2, y2)
+        if _bxLine == null { return _emitLine(x1, y1, x2, y2) }
+        if _bxCur != 0 and _bxCur != 3 { _flushBatches() }
+        if _bxLineN >= _bxLineCap { _flushBatches() }
+        int off = _bxLineN * 8
+        ffi.write_float(_bxLine, off,      x1)
+        ffi.write_float(_bxLine, off + 4,  y1)
+        ffi.write_float(_bxLine, off + 8,  x2)
+        ffi.write_float(_bxLine, off + 12, y2)
+        _bxLineN = _bxLineN + 1
+        _bxCur = 3
+        return true
     }
 
-    // 绘制点（x, y）
+    // 绘制点（x, y）—— 立即提交（点通常不批量，且需在后续图元前生效）
     func drawPoint(float x, float y): bool {
+        _flushBatches()
         return _lib.SDL_RenderPoint(handle, x, y)
     }
 
@@ -199,6 +283,7 @@ export struct Renderer {
 
     // 绘制圆形边框（cx, cy 圆心，radius 半径，64 段逼近）
     func drawCircle(float cx, float cy, float radius): bool {
+        _flushBatches()
         var segs = 64
         var pts  = segs + 1
         Ptr buf  = ffi.malloc(pts * 8)
@@ -215,6 +300,7 @@ export struct Renderer {
 
     // 填充实心圆形（逐行画线近似，保留小数半径并覆盖完整上下行）
     func fillCircle(float cx, float cy, float radius): bool {
+        _flushBatches()
         if radius <= 0.0 { return true }
         var r = _int(radius)
         var ok = true
@@ -223,7 +309,7 @@ export struct Renderer {
             var inside = radius * radius - dy * dy
             if inside <= 0.0 { continue }
             var half = maths.sqrt(inside)
-            if not drawLine(cx - half, cy + dy, cx + half, cy + dy) { ok = false }
+            if not _emitLine(cx - half, cy + dy, cx + half, cy + dy) { ok = false }
         }
         return ok
     }
@@ -231,6 +317,7 @@ export struct Renderer {
     // 填充扇形（饼图/环形图）：圆心(cx,cy)，半径 r，起止角度 a0→a1（单位：度，0=正右，顺时针为正）
     // 用三角扇（每小段一个三角形）批量提交几何，并把 0~255 整数色归一化为 SDL_Vertex 所需浮点色
     func fillPie(float cx, float cy, float r, float a0, float a1, int cr, int cg, int cb, int ca): bool {
+        _flushBatches()
         if r <= 0.0 { return true }
         var span = a1 - a0
         if span >= 360.0 { span = 359.999; a1 = a0 + span }
@@ -261,40 +348,59 @@ export struct Renderer {
     }
 
     // 批量绘制线段（pts 为 float 对数组，count 为点数）
-    func drawLines(Ptr pts, int count): bool { return _lib.SDL_RenderLines(handle, pts, count) }
+    func drawLines(Ptr pts, int count): bool { _flushBatches(); return _lib.SDL_RenderLines(handle, pts, count) }
 
     // 批量绘制点
-    func drawPoints(Ptr pts, int count): bool { return _lib.SDL_RenderPoints(handle, pts, count) }
+    func drawPoints(Ptr pts, int count): bool { _flushBatches(); return _lib.SDL_RenderPoints(handle, pts, count) }
 
     // 批量绘制矩形边框
-    func drawRects(Ptr rects, int count): bool { return _lib.SDL_RenderRects(handle, rects, count) }
+    func drawRects(Ptr rects, int count): bool { _flushBatches(); return _lib.SDL_RenderRects(handle, rects, count) }
 
     // 批量填充矩形
-    func fillRects(Ptr rects, int count): bool { return _lib.SDL_RenderFillRects(handle, rects, count) }
+    func fillRects(Ptr rects, int count): bool { _flushBatches(); return _lib.SDL_RenderFillRects(handle, rects, count) }
 
     // 设置渲染缩放（sx, sy 缩放因子）
-    func setScale(float sx, float sy): bool { return _lib.SDL_SetRenderScale(handle, sx, sy) }
+    func setScale(float sx, float sy): bool {
+        if sx == _bxSx and sy == _bxSy { return true }
+        _flushBatches(); _bxSx = sx; _bxSy = sy
+        return _lib.SDL_SetRenderScale(handle, sx, sy)
+    }
 
     // 设置混合模式：NONE=0, BLEND=1, ADD=2, MOD=4, MUL=8
-    func setBlendMode(int mode): bool { return _lib.SDL_SetRenderDrawBlendMode(handle, mode) }
+    func setBlendMode(int mode): bool {
+        if mode == _bxBlend { return true }
+        _flushBatches(); _bxBlend = mode
+        return _lib.SDL_SetRenderDrawBlendMode(handle, mode)
+    }
 
     // 设置裁剪矩形（只在此区域内绘制）
-    func setClipRect(Ptr rect): bool { return _lib.SDL_SetRenderClipRect(handle, rect) }
+    func setClipRect(Ptr rect): bool {
+        _flushBatches(); _bxClip = rect != null; _bxClipPtr = rect
+        return _lib.SDL_SetRenderClipRect(handle, rect)
+    }
 
     // 清除裁剪区域（恢复全屏绘制）
-    func clearClip(): bool { return _lib.SDL_SetRenderClipRect(handle, null) }
+    func clearClip(): bool {
+        if not _bxClip { return true }
+        _flushBatches(); _bxClip = false; _bxClipPtr = null
+        return _lib.SDL_SetRenderClipRect(handle, null)
+    }
 
     // 设置逻辑分辨率（坐标映射到 w×h，自动缩放）
-    func setLogicalSize(int w, int h): bool { return _lib.SDL_SetRenderLogicalSize(handle, w, h) }
+    func setLogicalSize(int w, int h): bool {
+        _flushBatches()
+        return _lib.SDL_SetRenderLogicalSize(handle, w, h)
+    }
 
     // 设置视口区域
-    func setViewport(Ptr rect): bool { return _lib.SDL_SetRenderViewport(handle, rect) }
+    func setViewport(Ptr rect): bool { _flushBatches(); return _lib.SDL_SetRenderViewport(handle, rect) }
 
     // 重置视口为全屏
-    func resetViewport(): bool { return _lib.SDL_SetRenderViewport(handle, null) }
+    func resetViewport(): bool { _flushBatches(); return _lib.SDL_SetRenderViewport(handle, null) }
 
     // 在指定位置绘制纹理（按 w×h 缩放）
     func drawTextureAt(Ptr[u8] texture, float x, float y, float w, float h): bool {
+        _flushBatches()
         SDL_FRect rect = SDL_FRect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
         bool ok = _lib.SDL_RenderTexture(handle, texture, null, rect.to_ptr())
@@ -303,6 +409,7 @@ export struct Renderer {
 
     // 绘制纹理（指定源矩形和目标矩形，null 表示完整）
     func drawTextureRect(Ptr[u8] texture, Ptr srcrect, Ptr dstrect): bool {
+        _flushBatches()
         return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
     }
 
@@ -311,6 +418,7 @@ export struct Renderer {
     func drawTextureFromTo(Ptr[u8] texture,
                           float sx, float sy, float sw, float sh,
                           float dx, float dy, float dw, float dh): bool {
+        _flushBatches()
         SDL_FRect src = SDL_FRect.malloc()
         SDL_FRect dst = SDL_FRect.malloc()
         src.x = sx; src.y = sy; src.w = sw; src.h = sh
@@ -325,6 +433,7 @@ export struct Renderer {
     // flip: FLIP_NONE / FLIP_HORIZONTAL / FLIP_VERTICAL
     func drawTextureRotated(Ptr[u8] texture, float x, float y, float w, float h,
                             float angle, float cx, float cy, int flip): bool {
+        _flushBatches()
         SDL_FRect dst = SDL_FRect.malloc()
         dst.x = x; dst.y = y; dst.w = w; dst.h = h
 
@@ -349,6 +458,7 @@ export struct Renderer {
     // 再按逻辑尺寸绘制（被 setScale 映射回 1:1 的离屏像素），下采样后清晰不糊。
     // 文字纹理经 Font 内部缓存（_getCachedTex），命中时跳过每帧 2x 栅格化与 GPU 上传，显著省 CPU/带宽。
     func drawText(Font f, string text, float x, float y, int r, int g, int b) {
+        _flushBatches()
         if _ssaa and _ssaaScale > 0.0 {
             float origPt = f._pt
             f.setFontSize(origPt * _ssaaScale)   // _pt 临时变 2x，作为缓存 key 维度
@@ -392,6 +502,7 @@ export struct Renderer {
 
     // 渲染到纹理（null 恢复渲染到窗口）
     func setRenderTarget(Ptr[u8] texture): bool {
+        _flushBatches(); _bxTarget = texture
         return _lib.SDL_SetRenderTarget(handle, texture)
     }
 
@@ -406,17 +517,68 @@ export struct Renderer {
     }
 
     // 强制刷新渲染命令
+    // ---- 批处理：立即提交（供复合图元内部使用，避免嵌套进缓冲打乱顺序） ----
+    func _emitFill(float x, float y, float w, float h): bool {
+        SDL_FRect rect = SDL_FRect.malloc()
+        rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        bool r = _lib.SDL_RenderFillRect(handle, rect.to_ptr())
+        rect.free(); return r
+    }
+    func _emitRect(float x, float y, float w, float h): bool {
+        SDL_FRect rect = SDL_FRect.malloc()
+        rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        bool r = _lib.SDL_RenderRect(handle, rect)
+        rect.free(); return r
+    }
+    func _emitLine(float x1, float y1, float x2, float y2): bool {
+        return _lib.SDL_RenderLine(handle, x1, y1, x2, y2)
+    }
+
+    // ---- 批处理：提交缓冲（切换绘制状态 / 立即绘制 / 帧末时调用） ----
+    // 三种图元各自缓冲，但 _bxCur 保证「跨类型切换即 flush」，从而不破坏绘制顺序：
+    // 同类型连续调用合并为一次 SDL 批量提交，不同类型按调用先后分段提交。
+    func _flushBatches(): bool {
+        bool ok = true
+        if _bxFill != null and _bxFillN > 0 {
+            if not _lib.SDL_RenderFillRects(handle, _bxFill, _bxFillN) { ok = false }
+            _gFillSubmits = _gFillSubmits + 1
+            _gFillBatched = _gFillBatched + _bxFillN
+            _bxFillN = 0
+        }
+        if _bxOut != null and _bxOutN > 0 {
+            if not _lib.SDL_RenderRects(handle, _bxOut, _bxOutN) { ok = false }
+            _gOutSubmits = _gOutSubmits + 1
+            _gOutBatched = _gOutBatched + _bxOutN
+            _bxOutN = 0
+        }
+        if _bxLine != null and _bxLineN > 0 {
+            if not _lib.SDL_RenderLines(handle, _bxLine, 2 * _bxLineN) { ok = false }
+            _gLineSubmits = _gLineSubmits + 1
+            _gLineBatched = _gLineBatched + _bxLineN
+            _bxLineN = 0
+        }
+        _bxCur = 0
+        return ok
+    }
+
+    // 批处理统计：fill/drawRect/drawLine 各自的「批量提交次数」与「经批处理提交的图元总数」
+
+
+    // 强制刷新渲染命令：先提交批处理缓冲，再让 SDL 把已入队命令刷到 GPU
     func flush(): bool {
+        _flushBatches()
         return _lib.SDL_FlushRenderer(handle)
     }
 
     // 截取当前渲染画面
     func readPixels(Ptr rect): Ptr[u8] {
+        _flushBatches()
         return _lib.SDL_RenderReadPixels(handle, rect) as Ptr[u8]
     }
 
     // 截取当前渲染画面（便捷重载：直接传入 x, y, w, h）
     func readPixelsAt(int x, int y, int w, int h): Ptr[u8] {
+        _flushBatches()
         SDL_Rect rect = SDL_Rect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
         var surface = _lib.SDL_RenderReadPixels(handle, rect.to_ptr())
@@ -444,6 +606,8 @@ export struct Renderer {
 
     // 设置颜色缩放（HDR/亮度调节，不影响 alpha）
     func setColorScale(float scale): bool {
+        if scale == _bxCScale { return true }
+        _flushBatches(); _bxCScale = scale
         return _lib.SDL_SetRenderColorScale(handle, scale)
     }
 
@@ -459,11 +623,13 @@ export struct Renderer {
 
     // 几何渲染（三角形/多边形），vertices 为 SDL_Vertex 数组 to_ptr()
     func drawGeometry(Ptr vertices, int count, Ptr indices, int idxCount): bool {
+        _flushBatches()
         return _lib.SDL_RenderGeometry(handle, null, vertices, count, indices, idxCount)
     }
 
     // 绘制三角形（单色填充，支持旋转和缩放）→ 每顶点独立颜色见 drawTriangleGradient
     func drawTriangle(float cx, float cy, float size, float angle, float r, float g, float b, float a): bool {
+        _flushBatches()
         float rad = angle * 3.14159265 / 180.0
         float c = maths.cos(rad); float s = maths.sin(rad)
 
@@ -491,6 +657,7 @@ export struct Renderer {
                                float r0, float g0, float b0, float a0,
                                float r1, float g1, float b1, float a1,
                                float r2, float g2, float b2, float a2): bool {
+        _flushBatches()
         float rad = angle * 3.14159265 / 180.0
         float c = maths.cos(rad); float s = maths.sin(rad)
 
@@ -515,14 +682,15 @@ export struct Renderer {
 
     // 填充圆角矩形（使用当前绘制颜色）→ 单次 alloc + 单次 Geometry 提交
     func fillRoundedRect(float x, float y, float w, float h, float r): bool {
-        if r <= 0.0 { return fillRect(x, y, w, h) }
+        _flushBatches()
+        if r <= 0.0 { return _emitFill(x, y, w, h) }
         if r > w * 0.5 { r = w * 0.5 }
         if r > h * 0.5 { r = h * 0.5 }
 
         // 直边区域（3 个矩形批量填充）
-        fillRect(x + r, y, w - 2.0 * r, h)
-        fillRect(x, y + r, r, h - 2.0 * r)
-        fillRect(x + w - r, y + r, r, h - 2.0 * r)
+        _emitFill(x + r, y, w - 2.0 * r, h)
+        _emitFill(x, y + r, r, h - 2.0 * r)
+        _emitFill(x + w - r, y + r, r, h - 2.0 * r)
 
         // 动态分段：小半径减段数
         var segs = 16
@@ -568,7 +736,8 @@ export struct Renderer {
 
     // 绘制圆角矩形边框（使用当前绘制颜色）
     func drawRoundedRect(float x, float y, float w, float h, float r): bool {
-        if r <= 0.0 { return drawRect(x, y, w, h) }
+        _flushBatches()
+        if r <= 0.0 { return _emitRect(x, y, w, h) }
         if r > w * 0.5 { r = w * 0.5 }
         if r > h * 0.5 { r = h * 0.5 }
 

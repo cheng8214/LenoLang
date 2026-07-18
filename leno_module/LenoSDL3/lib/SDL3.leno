@@ -147,6 +147,14 @@ export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
 export func setModalWid(int w)                 { wnd.setModalWid(w) }
 export func getModalWid(): int                 { return wnd.getModalWid() }
 export func createRenderer(Ptr[u8] w): Renderer     { return r.createRenderer(w) }
+
+// 批处理统计（转发自 sdl_renderer 模块级全局函数）
+export func getBatchFillSubmits(): int { return r.getBatchFillSubmits() }
+export func getBatchFillBatched(): int { return r.getBatchFillBatched() }
+export func getBatchOutSubmits(): int { return r.getBatchOutSubmits() }
+export func getBatchOutBatched(): int { return r.getBatchOutBatched() }
+export func getBatchLineSubmits(): int { return r.getBatchLineSubmits() }
+export func getBatchLineBatched(): int { return r.getBatchLineBatched() }
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
 export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }

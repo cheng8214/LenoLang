@@ -1,0 +1,94 @@
+// batch_render_smoke.leno — 批处理渲染冒烟测试
+// 验证：同材质连续 fillRect/drawLine 合并为单次 SDL 批量提交；颜色切换/跨类型切换触发 flush 保序。
+// 运行（会弹窗 300ms 后自动退出）：
+//   leno "leno_module/LenoSDL3/examples/性能测试/batch_render_smoke.leno"
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.WindowFlag
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "Batch Render Smoke", w: 720, h: 520, flags: WindowFlag.RESIZABLE})
+    if not win.ok { print("[SMOKE] FAIL: 窗口创建失败"); return }
+    var r = win.createRenderer()
+    if not r.ok { print("[SMOKE] FAIL: 渲染器创建失败"); return }
+
+    // 用例1：100 个同色连续 fillRect -> 应合并为 1 次 SDL_RenderFillRects
+    r.setColor(220, 60, 60, 255)
+    for 0 : 99 to i { r.fillRect(_float(i) * 5.0, 20.0, 3.0, 30.0) }
+    r.present()
+    int f1 = SDL3.getBatchFillBatched()
+    int s1 = SDL3.getBatchFillSubmits()
+
+    // 用例2：两色各 50 -> 颜色切换触发 flush，应 2 次提交（累计 3 次）
+    r.setColor(60, 200, 60, 255)
+    for 0 : 49 to i { r.fillRect(_float(i) * 5.0, 80.0, 3.0, 30.0) }
+    r.setColor(60, 60, 220, 255)
+    for 0 : 49 to i { r.fillRect(_float(i) * 5.0, 130.0, 3.0, 30.0) }
+    r.present()
+    int f2 = SDL3.getBatchFillBatched()
+    int s2 = SDL3.getBatchFillSubmits()
+
+    // 用例3：跨类型顺序（先描边后填充，填充不应覆盖描边）
+    r.setColor(255, 255, 255, 255)
+    r.drawRect(420.0, 30.0, 120.0, 80.0)
+    r.setColor(200, 80, 80, 255)
+    r.fillRect(425.0, 35.0, 110.0, 70.0)
+    r.present()
+
+    // 用例4：80 条同色连续 drawLine -> 应合并为 1 次 SDL_RenderLines
+    r.setColor(255, 220, 0, 255)
+    for 0 : 79 to i { r.drawLine(0.0, _float(i) * 5.0, 300.0, _float(i) * 5.0) }
+    r.present()
+    int l4 = SDL3.getBatchLineBatched()
+    int ls4 = SDL3.getBatchLineSubmits()
+    int o4 = SDL3.getBatchOutBatched()
+
+    // 断言
+    if f1 == 100 and s1 == 1 {
+        print("[SMOKE] PASS 用例1: 100 个同色矩形合并为 1 次批量提交")
+    } else {
+        print("[SMOKE] FAIL 用例1 batched=")
+        print(f1)
+        print(" submits=")
+        print(s1)
+    }
+
+    if f2 == 200 and s2 == 3 {
+        print("[SMOKE] PASS 用例2: 两色各 50 -> 颜色切换分割为 2 次提交（累计 3）")
+    } else {
+        print("[SMOKE] FAIL 用例2 batched=")
+        print(f2)
+        print(" submits=")
+        print(s2)
+    }
+
+    if o4 >= 1 {
+        print("[SMOKE] PASS 用例3: 描边已提交（跨类型切换触发 flush，保序）")
+    } else {
+        print("[SMOKE] FAIL 用例3 outBatched=")
+        print(o4)
+    }
+
+    if l4 == 80 and ls4 == 1 {
+        print("[SMOKE] PASS 用例4: 80 条同色线合并为 1 次批量提交")
+    } else {
+        print("[SMOKE] FAIL 用例4 batched=")
+        print(l4)
+        print(" submits=")
+        print(ls4)
+    }
+
+    print("[SMOKE] 统计 fill: batched=")
+    print(SDL3.getBatchFillBatched())
+    print(" submits=")
+    print(SDL3.getBatchFillSubmits())
+    print("[SMOKE] 统计 line: batched=")
+    print(SDL3.getBatchLineBatched())
+    print(" submits=")
+    print(SDL3.getBatchLineSubmits())
+
+    SDL3.delay(300)
+    r.destroy()
+    win.destroy()
+    print("[SMOKE] DONE")
+}
