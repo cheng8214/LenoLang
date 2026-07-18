@@ -155,6 +155,10 @@ export func getBatchOutSubmits(): int { return r.getBatchOutSubmits() }
 export func getBatchOutBatched(): int { return r.getBatchOutBatched() }
 export func getBatchLineSubmits(): int { return r.getBatchLineSubmits() }
 export func getBatchLineBatched(): int { return r.getBatchLineBatched() }
+
+// 调试：暴露行批处理缓冲（供坐标级回归测试读回 float 比对，验证后可删除）
+export func _dbgLinePtr(Renderer r): Ptr { return r._dbgLinePtr(r) }
+export func _dbgLineCount(Renderer r): int { return r._dbgLineCount(r) }
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
 export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }

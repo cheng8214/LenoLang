@@ -1,0 +1,37 @@
+// test_modal_deadlock.leno — 模态对话框死循环回归测试
+// 验证：打开模态对话框后，主循环不会因模态事件跳过（continue 漏掉 ev.poll）而卡死。
+// 机制：300ms 自动打开模态对话框并 dlg.raise() 强制焦点切到 dlg，
+//       主窗口因此收到 FOCUS_LOST 事件（windowID=主窗口 != _modalWid）走模态跳过分支；
+//       未修复时该分支 continue 漏掉 ev.poll() -> while(ev.has) 死循环（主线程假死，tick 停止）；
+//       修复后 ev.poll() 前进 -> tick 持续打印。程序靠外部 timeout 终止。
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.WindowFlag
+
+main() {
+    var mainWin = SDL3.createWindow({title: "死循环测试", w: 400, h: 300})
+    int _n = 0
+    // 每 150ms tick 一次，打印计数（用于判定主循环是否还活着）
+    mainWin.addTimer(150, func() {
+        print(_n)
+        _n = _n + 1
+    })
+    // 300ms 后自动打开模态对话框
+    mainWin.addTimerOnce(300, func() { openModal() })
+    mainWin.run(
+        func(Event e): bool { return true },
+        func(Renderer r) { r.clearColor(20, 20, 40, 255) }
+    )
+    print("DONE")
+}
+
+func openModal() {
+    var dlg = SDL3.createDialogWindow({title: "模态对话框", w: 300, h: 200, flags: WindowFlag.UTILITY})
+    // 强制焦点切到 dlg，使主窗口失去焦点 -> SDL 发送 WINDOW_FOCUS_LOST（windowID=主窗口）
+    dlg.raise()
+    SDL3.runModal(dlg,
+        func(Event e): bool { return true },
+        func(Renderer r) { r.clearColor(40, 15, 15, 255) }
+    )
+}

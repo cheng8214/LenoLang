@@ -24,6 +24,10 @@ export func getBatchOutBatched(): int { return _gOutBatched }
 export func getBatchLineSubmits(): int { return _gLineSubmits }
 export func getBatchLineBatched(): int { return _gLineBatched }
 
+// 调试：暴露行批处理缓冲，供坐标级回归测试直接读回 float 比对（前缀 _dbg，验证后可删除）
+export func _dbgLinePtr(Renderer r): Ptr { return r._bxLine }
+export func _dbgLineCount(Renderer r): int { return r._bxLineN }
+
 export struct Renderer {
     Ptr handle; bool ok
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
@@ -62,7 +66,7 @@ export struct Renderer {
             // 预分配批处理缓冲（ffi 连续内存）：fill/out 各 2048 个矩形，line 8192 个点
             _bxFillCap = 2048; _bxFill = ffi.malloc(_bxFillCap * 16)
             _bxOutCap  = 2048; _bxOut  = ffi.malloc(_bxOutCap * 16)
-            _bxLineCap = 4096; _bxLine = ffi.malloc(_bxLineCap * 8)
+            _bxLineCap = 4096; _bxLine = ffi.malloc(_bxLineCap * 16)
             _bxFillN = 0; _bxOutN = 0; _bxLineN = 0
         }
         return ok
@@ -260,7 +264,7 @@ export struct Renderer {
         if _bxLine == null { return _emitLine(x1, y1, x2, y2) }
         if _bxCur != 0 and _bxCur != 3 { _flushBatches() }
         if _bxLineN >= _bxLineCap { _flushBatches() }
-        int off = _bxLineN * 8
+        int off = _bxLineN * 16
         ffi.write_float(_bxLine, off,      x1)
         ffi.write_float(_bxLine, off + 4,  y1)
         ffi.write_float(_bxLine, off + 8,  x2)
