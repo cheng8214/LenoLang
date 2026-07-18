@@ -303,9 +303,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            tKpi.tick(); tLog.tick(); tData.tick()
             r.clearColor(18, 20, 26, 255)
-            if live { core.requestRedraw() }   // 实时看板：持续重绘以驱动定时器与进度条动画
         }
     )
 

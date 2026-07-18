@@ -233,12 +233,12 @@ export struct Window {
 
     // 添加定时器（毫秒），用法: Timer t = win.addTimer(200, func() { ... })
     func addTimer(int ms, func():void cb): Timer {
-        Timer t = new Timer(); t.set(ms, cb); return t
+        Timer t = new Timer(); t.set(ms, cb); timer.registerTimer(t); return t
     }
 
     // 添加一次性定时器
     func addTimerOnce(int ms, func():void cb): Timer {
-        Timer t = new Timer(); t.setOnce(ms, cb); return t
+        Timer t = new Timer(); t.setOnce(ms, cb); timer.registerTimer(t); return t
     }
 
     // 添加按钮，opts: {text, x, y, w, h, r, g, b}
@@ -575,6 +575,8 @@ export struct Window {
                 if _windowCount <= 0 { core.quit() }
                 return
             }
+            // 驱动所有定时器（在事件轮询外，确保 idle 期间也能触发定时器与自动重绘）
+            timer.tickAllTimers()
             // 事件驱动重绘：有事件/动画请求/tooltip等待时才渲染，空闲时跳过以降低 CPU 占用
             if _hadEvent { _needRedraw = true }
             if core.consumeRedrawRequest() { _needRedraw = true }

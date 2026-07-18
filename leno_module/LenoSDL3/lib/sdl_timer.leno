@@ -1,10 +1,34 @@
 ﻿// sdl_timer.leno — 基于 getTicks() 的定时器，Array 存回调
+// 注意：Timer 统一由 tickAllTimers() 在主循环中驱动（不要在各处手动 tick），
+// 定时器回调触发后自动 requestRedraw，无需在 onRender 中持续 requestRedraw。
 
 import "../lib/sdl_core.leno" as core
 use core.sdl3
 sdl3 _lib = core.lib()
 
 export alias TimerCallback = func():void
+
+// 全局定时器注册表（供窗口主循环统一 tick + 自动 requestRedraw）
+Array[Timer] _timers = []
+
+export func registerTimer(Timer t) {
+    _timers.add(t)
+}
+
+export func unregisterTimer(Timer t) {
+    for _timers.len() to i {
+        if _timers[i] == t { _timers.remove(i); break }
+    }
+}
+
+// 窗口主循环每帧调用：驱动所有注册的定时器，任意一个触发回调则自动 requestRedraw
+export func tickAllTimers() {
+    bool anyFired = false
+    for _timers.len() to i {
+        if _timers[i].tick() { anyFired = true }
+    }
+    if anyFired { core.requestRedraw() }
+}
 
 export struct Timer {
     float   _ms = 0.0     // 定时间隔（毫秒）
@@ -43,15 +67,18 @@ export struct Timer {
         _next = _float(_lib.SDL_GetTicks()) + _ms; running = true
     }
 
-    // 每帧调用，自动触发回调
-    func tick() {
-        if not running or _cb.len() == 0 or _ms <= 0.0 { return }
+    // 每帧调用，自动触发回调。返回是否触发了回调（供 tickAllTimers 判断是否需 requestRedraw）
+    func tick(): bool {
+        if not running or _cb.len() == 0 or _ms <= 0.0 { return false }
         float now = _float(_lib.SDL_GetTicks())
+        bool fired = false
         var cb = _cb[0]
         while now >= _next {
             cb()
-            if once { running = false; return }
+            fired = true
+            if once { running = false; return fired }
             _next += _ms
         }
+        return fired
     }
 }
