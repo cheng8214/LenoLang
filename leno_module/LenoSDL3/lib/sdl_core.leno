@@ -187,6 +187,7 @@ clib sdl3 {
     Ptr  SDL_GetKeyboardState(Ptr numkeys)
     u16  SDL_GetModState()
     bool SDL_PollEvent(Ptr event)
+    bool SDL_WaitEventTimeout(Ptr event, i32 timeoutMS)
     bool SDL_StartTextInput(Ptr window)
     bool SDL_StopTextInput(Ptr window)
     bool SDL_TextInputActive(Ptr window)

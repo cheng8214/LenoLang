@@ -36,6 +36,13 @@ export struct Event {
         return has
     }
 
+    // 阻塞等待事件，最多等待 timeoutMS 毫秒。返回是否有事件（事件数据已写入 raw）。
+    // 配合 has 字段使用：if waitTimeout(16) { while has { ...; poll() } }
+    func waitTimeout(int timeoutMS): bool {
+        has = _lib.SDL_WaitEventTimeout(raw, timeoutMS)
+        return has
+    }
+
     // 获取事件类型（所有事件 cstruct 头部相同，故用 KeyboardEvent 读取）
     func sdl3_type(): int {
         SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)

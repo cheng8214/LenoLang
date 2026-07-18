@@ -30,6 +30,20 @@ export func tickAllTimers() {
     if anyFired { core.requestRedraw() }
 }
 
+// 返回所有运行中定时器的最近触发时刻（getTicks 毫秒），用于主循环动态计算 waitTimeout；
+// 无运行定时器时返回 -1
+export func nextTimerMs(): int {
+    int best = -1
+    for _timers.len() to i {
+        var t = _timers[i]
+        if t is Timer and t.running {
+            int n = _int(t._next)
+            if best < 0 or n < best { best = n }
+        }
+    }
+    return best
+}
+
 export struct Timer {
     float   _ms = 0.0     // 定时间隔（毫秒）
     float   _next = 0.0    // 下次触发时间（getTicks 毫秒）

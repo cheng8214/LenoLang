@@ -32,6 +32,7 @@ struct Star {
 main() {
     var win = SDL3.createWindow({title: "Fireworks", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
+    win.setMaxFPS(60)    // 动画场景：60 FPS 流畅
 
     // 初始化 TTF 字体
     SDL3.ttfInit()

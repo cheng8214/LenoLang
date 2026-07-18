@@ -107,6 +107,7 @@ export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok       // 窗口是否创建成功
     int _w; int _h; float _aaScale
+    int _maxFPS = 30        // 最大渲染帧率（0=不限制）
     Array[Widget] _widgets = []
     Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
     MenuBar _ctxBar = null          // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
@@ -177,6 +178,9 @@ export struct Window {
     func setResizable(bool v) {
         if ok { _lib.SDL_SetWindowResizable(handle, v) }
     }
+
+    // 设置最大渲染帧率（默认 30 FPS；0 = 不限制）
+    func setMaxFPS(int fps) { _maxFPS = fps }
 
     // 设置窗口置顶
     func setAlwaysOnTop(bool v): bool {
@@ -486,14 +490,30 @@ export struct Window {
         _runRunning = true
 
         Event ev = event.createEvent()
-        int _frameMs = 1000 / 60      // 目标 ~60FPS（每帧约 16ms），避免空转占满 CPU
-        int _startTicks = 0
         bool _needRedraw = true       // 初始绘制一次
+        int  _lastRenderTicks = 0     // 上次渲染时刻，用于帧率节流
+        int  _throttleMs = if _maxFPS > 0 then 1000 / _maxFPS else 1
         while true {
-            _startTicks = core.getTicks()
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
             bool _hadEvent = false
-            while ev.poll() {
+            // 动态计算等待时长：有重绘请求时节流至目标 FPS，空闲时按定时器触发时刻
+            int timeoutMs = 500
+            if _needRedraw {
+                int elapsed = core.getTicks() - _lastRenderTicks
+                int remain = _throttleMs - elapsed
+                if remain < 1 { remain = 1 }
+                timeoutMs = remain
+            } else {
+                int nextTM = timer.nextTimerMs()
+                if nextTM >= 0 {
+                    int wait = nextTM - core.getTicks()
+                    if wait < 1 { wait = 1 }
+                    if wait > 100 { wait = 100 }
+                    timeoutMs = wait
+                }
+            }
+            ev.waitTimeout(timeoutMs)
+            while ev.has {
                 _hadEvent = true
                 if ev.isQuit() {
                     for _runWids.len() to i {
@@ -568,6 +588,7 @@ export struct Window {
                         }
                     }
                 }
+                ev.poll()              // 获取队列中下一个事件
             }
             core.applyFrameCursor()    // 帧末：按本帧各控件的请求统一设置一次光标（避免互相覆盖）
             if _runWids.len() == 0 {
@@ -582,8 +603,11 @@ export struct Window {
             if core.consumeRedrawRequest() { _needRedraw = true }
             if tip.tipWaiting() { _needRedraw = true }
             if _needRedraw {
-                _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
-                for _runWids.len() to i {
+                int now = core.getTicks()
+                if now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过
+                    _lastRenderTicks = now
+                    _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
+                    for _runWids.len() to i {
                     _runRends[i](_runRens[i])
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
                     core.clearPopupCapture()
@@ -603,10 +627,10 @@ export struct Window {
                     tip.tipRender(_runRens[i], _float(_runW[i]), _float(_runH[i]))
                     _runRens[i].present()
                 }
+                }              // 闭合节流 if
             }
-            // 帧率限制：本帧剩余时间让出 CPU，避免空转占满（此前约 12% 占用）
-            int _used = core.getTicks() - _startTicks
-            if _used < _frameMs { core.delay(_frameMs - _used) }
+            // 动画控件可能在 render 中调用了 requestRedraw() → 标记快速轮询
+            if core.consumeRedrawRequest() { _needRedraw = true }
         }
     }
 }
