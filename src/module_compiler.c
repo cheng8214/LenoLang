@@ -88,6 +88,29 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                             }
                         }
                     }
+                } else if (stmt->kind == AST_BLOCK) {
+                    // 批量 use 产生的 AST_BLOCK，递归遍历子节点
+                    for (int k = 0; k < stmt->u.block.count; k++) {
+                        Ast* inner = stmt->u.block.items[k];
+                        if (inner && inner->kind == AST_USE) {
+                            const char* symbol_name = inner->u.use.symbol_name;
+                            Symbol* sym = scope_resolve(sem.root_scope, symbol_name);
+                            if (sym && sym->type) {
+                                TypeKind kind = sym->type->kind;
+                                if (kind == TYPE_ENUM || kind == TYPE_STRUCT) {
+                                    char** new_names = realloc(reexport_names, (reexport_count + 1) * sizeof(char*));
+                                    int* new_kinds = realloc(reexport_kinds, (reexport_count + 1) * sizeof(int));
+                                    if (new_names && new_kinds) {
+                                        reexport_names = new_names;
+                                        reexport_kinds = new_kinds;
+                                        reexport_names[reexport_count] = strdup(symbol_name);
+                                        reexport_kinds[reexport_count] = (int)kind;
+                                        reexport_count++;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
