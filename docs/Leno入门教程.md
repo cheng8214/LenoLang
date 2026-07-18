@@ -4527,7 +4527,7 @@ Array arr
 | 数组推断 | 不同 struct 有公共 face 时推断为 Array[FaceName] |
 | 跨模块 face | import 模块中的 face 可用于 impl、参数、变量 |
 | 性能 | 字段索引编译期确定，O(1) 访问 |
-| use 导入 | 支持 `use module.Struct`/`Face`/`Enum`/`Alias`/`Clib`/`CStruct` 导入 |
+| use 导入 | 支持 `use module.Struct`/`Face`/`Enum`/`Alias`/`Clib`/`CStruct` 导入，批量用 `use module.(A, B, C)` |
 
 > **核心原则**：自引用设 null，访问先检查，参数用具体类型或 face，优先用字段访问！
 
@@ -6144,7 +6144,7 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 | 特性 | `import` | `use` |
 |------|----------|-------|
 | 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/cstruct/clib/face/alias/enum 导入当前作用域 |
-| 语法 | `import "路径" as 别名` | `use 别名.名称` |
+| 语法 | `import "路径" as 别名` | `use 别名.名称` 或 `use 别名.(A, B, C)` |
 | 适用范围 | 模块中的所有导出内容 | struct、cstruct、clib、face、alias、enum 类型 |
 | 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` |
 
@@ -6156,6 +6156,33 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 > - **func**、**var** 必须通过模块名访问（如 `module.func()`）
 > - struct 实例可用 `new module.Struct()` 或 `new module.Struct[Type]()`（无需 `use`）
 > - 使用 `use` 后可直接用 `new StructName()` 实例化（更简洁）
+
+**批量 use 导入：**
+
+当需要从同一模块导入多个类型时，可以使用圆括号批量导入，更加紧凑：
+
+```leno
+import "shape.leno" as shape
+
+// 批量导入：等价于 use shape.Point + use shape.Circle + use shape.Rect
+use shape.(Point, Circle, Rect)
+
+main() {
+    Point p = new shape.Point(x = 3, y = 4)
+    Circle c = new shape.Circle(r = 5)
+    Rect r = new shape.Rect(w = 100, h = 50)
+}
+```
+
+也支持尾逗号（方便多行书写）：
+
+```leno
+use shape.(
+    Point,
+    Circle,
+    Rect,
+)
+```
 
 > **⚠️ 跨模块 `new` 的坑：** `use` 导入类型后，**变量声明和 `new` 都要用短名**，不能保留模块限定名：
 > ```leno

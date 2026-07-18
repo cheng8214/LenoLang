@@ -20,6 +20,10 @@ import "utils/array_helper.leno" as arr
 import "point.leno" as pt
 use pt.Point      // 将 Point 类型导入当前作用域
 Point p = new pt.Point()  // 现在可以直接使用 Point 类型
+
+// 批量 use 导入：从同一模块导入多个类型
+import "shape.leno" as shape
+use shape.(Point, Circle, Rect)   // 等价于三行单独的 use 语句
 ```
 
 ***
@@ -612,6 +616,7 @@ main() {
 | `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
 | `use module.Alias` | ✅ | 导入类型别名到当前作用域，可直接作为类型名使用 |
 | `use module.Enum` | ✅ | 导入 enum 类型，可用 `EnumName.Member` 或链式 `import B; use B.Enum` |
+| `use module.(A, B, C)` | ✅ | 批量导入，等价于多行单独 `use`，支持尾逗号 |
 | `use module.func` | ❌ | 函数必须通过模块名访问 |
 | `use module.var` | ❌ | 变量必须通过模块名访问 |
 
@@ -689,6 +694,18 @@ use cm.Color
 main() {
     Point p = new pm.Point(x = 10, y = 20)
     Color c = new cm.Color(r = 255, g = 128, b = 0)
+}
+```
+
+**同一模块的多个类型可用批量 use 导入**：
+
+```leno
+import "shape_mod.leno" as sm
+use sm.(Point, Circle, Rect, Color)
+
+main() {
+    Point p = new sm.Point(x = 10, y = 20)
+    Circle c = new sm.Circle(r = 5)
 }
 ```
 
