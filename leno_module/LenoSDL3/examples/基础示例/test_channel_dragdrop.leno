@@ -1,10 +1,11 @@
-// test_channel_dragdrop.leno — Channel 跨窗口拖放/实时同步探索性测试
-// 使用 registerOnly() + run() 解决多窗口同时注册 + Button 控件发送颜色。
+// test_channel_dragdrop.leno — Channel 跨窗口通信 + 物理拖放证明
+// 使用 registerOnly() + run() 双窗口 + Button 快速发送 + 鼠标拖放到 W2
 //
-// 架构：
-//   - W1（数据源窗口）：8 个彩色按钮，点击通过 Channel 发送颜色到 W2
-//   - W2（接收端窗口）：每帧 try_receive 消费 Channel，改变背景色
-//   - 子线程：自动生产者，每 100ms 发送随机颜色
+// 拖放流程：
+//   1. W1 下方颜色条上按下鼠标 → 开始拖拽
+//   2. 拖拽期间 W1 显示跟随预览方块 + 醒目提示
+//   3. 鼠标移到 W2 上方 → W2 高亮边框提示可投放
+//   4. 释放鼠标 → 若在 W2 区域内则发送颜色
 //
 // 运行：leno "leno_module/LenoSDL3/examples/基础示例/test_channel_dragdrop.leno"
 
@@ -22,25 +23,17 @@ func decodeR(var v): int { var iv = _int(v); return (iv / 65536) % 256 }
 func decodeG(var v): int { var iv = _int(v); return (iv / 256) % 256 }
 func decodeB(var v): int { var iv = _int(v); return iv % 256 }
 
-// ===== 文本色: 亮背景用深字, 暗背景用白字 =====
-func textColor(int r, int g, int b) {
-    if (r + g + b) > 400 { return [30, 30, 30] }
-    return [255, 255, 255]
-}
-
-// ===== 子线程：自动颜色生产者 =====
+// ===== 子线程：自动生产者 =====
 func auto_producer(Channel ch, int total) {
     print("[THREAD] 自动生产者启动，将发送 " + total + " 条颜色")
-    var sent = 0
     for total to var i {
         var r = (i * 37 + 80) % 256
         var g = (i * 53 + 40) % 200 + 55
         var b = (i * 71 + 80) % 150 + 50
         ch.try_send(encodeColor(r, g, b))
-        sent = sent + 1
         threads.sleep(100)
     }
-    print("[THREAD] 结束：发送 " + sent + " 条")
+    print("[THREAD] 结束")
     ch.try_send(-1)
 }
 
@@ -48,51 +41,46 @@ main() {
     Channel ch = threads.channel(30)
 
     // ---- 共享状态 ----
-    var w1Sent = 0
-    var w2Recv = 0
+    var w1Sent = 0; var w2Recv = 0
     var w2R = 80; var w2G = 80; var w2B = 160
-    var stopped = false
-    var history = []
+    var stopped = false; var history = []
 
-    // ---- 预设颜色（按钮背景色） ----
+    // ---- 拖拽状态（共享：W1 写 mouseDown/Motion/Up，W2 读 hover） ----
+    var dragActive = false
+    var dragR = 0; var dragG = 0; var dragB = 0
+    var dragMouseX = 0.0; var dragMouseY = 0.0
+    var w2DropHover = false
+
+    // ---- 预设颜色 ----
     var colors = [
         [255, 80, 80],   [80, 255, 80],   [80, 80, 255],
         [255, 255, 80],  [255, 80, 255],  [80, 255, 255],
         [255, 160, 60],  [200, 200, 200]
     ]
 
-    // ---- 创建窗口 ----
-    var w1 = SDL3.createWindow({title: "数据源 - 点击按钮发送颜色", w: 400, h: 400})
-    if not w1.ok { print("[TEST] FAIL: W1 窗口创建失败"); return }
+    // ---- 窗口 ----
+    var w1 = SDL3.createWindow({title: "数据源 - 点击发送 / 拖放到 W2", w: 400, h: 480})
+    if not w1.ok { print("[TEST] FAIL: W1"); return }
     var w2 = SDL3.createWindow({title: "接收端 - 实时同步", w: 400, h: 360})
-    if not w2.ok { print("[TEST] FAIL: W2 窗口创建失败"); return }
+    if not w2.ok { print("[TEST] FAIL: W2"); return }
 
-    // ---- TTF / Font ----
     SDL3.ttfInit()
     var font = SDL3.createFontAuto(16.0)
-
-    // ---- 子线程 ----
     var tp = threads.start(auto_producer, ch, 30)
 
-    // ====== 创建 W1 的彩色按钮（互不干扰，自由点击） ======
+    // ====== W1：按钮 + 可拖拽颜色条 ======
     var btnY = 40
     for colors.len() to i {
         var c = colors[i]
-        var tc = textColor(c[0], c[1], c[2])
         Button btn = w1.addButton({
-            text: "发送 [" + c[0] + "," + c[1] + "," + c[2] + "]  -> W2",
+            text: "发送 [" + c[0] + "," + c[1] + "," + c[2] + "]",
             x: 20, y: btnY + i * 38, w: 350, h: 32,
-            bg_rgb: c,
-            text_rgb: tc,
-            font_size: 14,
-            radius: 6
+            bg_rgb: c, text_rgb: [255, 255, 255], font_size: 14, radius: 6
         })
         btn.on_click(func() {
             var sent = ch.try_send(encodeColor(c[0], c[1], c[2]))
-            if sent {
-                w1Sent = w1Sent + 1
-                print("[W1] 发送 [" + c[0] + "," + c[1] + "," + c[2] + "]  #" + w1Sent)
-            } else { print("[W1] Buffer满，发送失败") }
+            if sent { w1Sent = w1Sent + 1; print("[W1] 发送 [" + c[0] + "," + c[1] + "," + c[2] + "]  #" + w1Sent) }
+            else { print("[W1] Buffer满") }
         })
     }
 
@@ -108,34 +96,68 @@ main() {
             while true {
                 var val = ch.try_receive()
                 if val == null { break }
-                if val == -1 {
-                    print("[W2] 收到结束信号")
-                    stopped = true
-                } else {
+                if val == -1 { stopped = true }
+                else {
                     w2R = decodeR(val); w2G = decodeG(val); w2B = decodeB(val)
                     w2Recv = w2Recv + 1
                     history.add(val)
                     if history.len() > 10 { history.remove(0) }
                 }
             }
-            // 渲染
-            r.clearColor(w2R, w2G, w2B, 255)
+
+            // 拖拽时检查鼠标是否在 W2 上方 → 高亮 + 共享变量
+            var dropHover = false
+            if dragActive {
+                int gx = core.getGlobalMouseX()
+                int gy = core.getGlobalMouseY()
+                int wx = core.getWindowX(w2.handle)
+                int wy = core.getWindowY(w2.handle)
+                int ww = core.getWindowW(w2.handle)
+                int wh = core.getWindowH(w2.handle)
+                if gx >= wx and gx < wx + ww and gy >= wy and gy < wy + wh {
+                    dropHover = true
+                }
+            }
+            w2DropHover = dropHover
+
+            // 背景：投放高亮时显示拖拽色
+            if dropHover {
+                r.clearColor(dragR, dragG, dragB, 200)
+            } else {
+                r.clearColor(w2R, w2G, w2B, 255)
+            }
             r.clear()
+
+            if dropHover {
+                r.setColor(255, 255, 100, 255)
+                r.drawRect(3, 3, 394, 354)
+                r.drawRect(5, 5, 390, 350)
+            }
+
             if font.ok {
-                r.drawText(font, "=== 接收端 (实时同步) ===", 10, 6, 255, 220, 80)
+                r.drawText(font, "=== 接收端 ===", 10, 6, 255, 220, 80)
                 r.drawText(font, "已接收: " + w2Recv + " 条 | Buffer: " + ch.len(), 10, 30, 200, 200, 100)
-                r.drawText(font, "当前色: [" + w2R + "," + w2G + "," + w2B + "]", 10, 50, 180, 180, 255)
-                r.drawText(font, "子线程" + (if stopped then "[已结束]" else "[运行中]"), 10, 72, 120, 120, 120)
-                r.drawText(font, "ESC 关闭", 10, 94, 120, 120, 120)
-                // 最近颜色块预览
-                var y = 120
+                r.drawText(font, "当前: [" + w2R + "," + w2G + "," + w2B + "]", 10, 50, 180, 180, 255)
+                if dropHover {
+                    r.drawText(font, ">>> 释放鼠标投放 <<<", 80, 170, 255, 255, 100)
+                }
+                if dragActive {
+                    r.drawText(font, "拖拽中: [" + dragR + "," + dragG + "," + dragB + "]", 10, 72, dragR, dragG, dragB)
+                }
+                r.drawText(font, "子线程" + (if stopped then "[结束]" else "[运行]"), 10, 92, 120, 120, 120)
+                r.drawText(font, "ESC 关闭", 10, 112, 120, 120, 120)
+                if not dragActive {
+                    r.drawText(font, "<=  从左侧窗口拖颜色到这里释放", 10, 300, 150, 200, 255)
+                }
+                // 最近颜色块
+                var yv = 140
                 var start = 0
                 if history.len() > 8 { start = history.len() - 8 }
                 if history.len() > 0 {
                     for start : history.len() - 1 to j {
                         var cv = history[j]
                         r.setColor(decodeR(cv), decodeG(cv), decodeB(cv), 255)
-                        r.fillRect(10 + (j - start) * 48, y, 44, 44)
+                        r.fillRect(10 + (j - start) * 48, yv, 44, 44)
                     }
                 }
             }
@@ -143,22 +165,99 @@ main() {
         }
     )
 
-    // ====== W1 注册 + 启动主循环（按钮由 Widget 系统自动渲染） ======
+    // ====== W1 注册 + 启动主循环 ======
     w1.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+
+            // ---- 拖拽开始 ----
+            if e.isMouseButtonDown() and e.mouseButton() == 1 {
+                var mx = e.mouseX(); var my = e.mouseY()
+                if my >= 370.0 and my < 458.0 {
+                    var idx = _int((my - 375.0) / 10.0)
+                    if idx >= 0 and idx < 8 {
+                        var c = colors[idx]
+                        dragActive = true
+                        dragR = c[0]; dragG = c[1]; dragB = c[2]
+                        dragMouseX = mx; dragMouseY = my
+                        print("[DRAG] 开始拖拽 [" + dragR + "," + dragG + "," + dragB + "]")
+                    }
+                }
+                return true
+            }
+
+            // ---- 拖拽移动 ----
+            if e.isMouseMotion() and dragActive {
+                dragMouseX = e.mouseX()
+                dragMouseY = e.mouseY()
+                return true
+            }
+
+            // ---- 释放：投放/取消 ----
+            if e.isMouseButtonUp() and e.mouseButton() == 1 and dragActive {
+                int gx = core.getGlobalMouseX()
+                int gy = core.getGlobalMouseY()
+                int w2x = core.getWindowX(w2.handle)
+                int w2y = core.getWindowY(w2.handle)
+                int w2w = core.getWindowW(w2.handle)
+                int w2h = core.getWindowH(w2.handle)
+                // 双重确认：全局坐标命中 OR W2 自报悬停
+                var overW2 = (gx >= w2x and gx < w2x + w2w and gy >= w2y and gy < w2y + w2h) or w2DropHover
+
+                if overW2 {
+                    var sent = ch.try_send(encodeColor(dragR, dragG, dragB))
+                    if sent {
+                        w1Sent = w1Sent + 1
+                        print("[DROP] 投放 [" + dragR + "," + dragG + "," + dragB + "] 到 W2  #" + w1Sent)
+                    }
+                } else {
+                    print("[DRAG] 取消（未投放到 W2）")
+                }
+                dragActive = false
+                return true
+            }
+
             return true
         },
         func(Renderer r) {
             r.clearColor(30, 35, 50, 255)
             r.clear()
+
             if font.ok {
-                r.drawText(font, "=== 数据源 (点击按钮发送颜色) ===", 10, 6, 255, 220, 80)
+                r.drawText(font, "=== 数据源 ===", 10, 6, 255, 220, 80)
                 r.drawText(font, "已发送: " + w1Sent + " 条 | Buffer: " + ch.len(), 10, 24, 200, 200, 100)
-                r.drawText(font, "自动生产者: " + (if stopped then "[已结束]" else "[运行中]"), 10, 42, 100, 255, 100)
-                // 按钮由 Widget 系统自动渲染，此处只画提示
-                r.drawText(font, "ESC 关闭", 10, 350, 120, 120, 120)
+
+                // 拖拽区域标题
+                int yBase = 340
+                r.setColor(50, 55, 75, 255)
+                r.fillRect(10, yBase, 375, 30)
+                if dragActive {
+                    r.drawText(font, ">>> 正在拖拽！保持按住，移到 W2 窗口再释放 <<<", 15, yBase + 7, 255, 255, 100)
+                } else {
+                    r.drawText(font, "▼  拖拽区域 — 按住颜色条拖到右侧 W2 窗口释放", 15, yBase + 7, 200, 200, 100)
+                }
+
+                // 8 个可拖拽颜色条
+                for 0 : 7 to i {
+                    var c = colors[i]
+                    int yBox = yBase + 35 + i * 10
+                    r.setColor(c[0], c[1], c[2], 255)
+                    r.fillRect(15, yBox, 360, 8)
+                }
+
+                // 拖拽预览方块
+                if dragActive {
+                    int px = _int(dragMouseX) - 15
+                    int py = _int(dragMouseY) - 15
+                    r.setColor(dragR, dragG, dragB, 200)
+                    r.fillRect(px, py, 30, 30)
+                    r.setColor(255, 255, 255, 200)
+                    r.drawRect(px, py, 30, 30)
+                }
+
+                r.drawText(font, "上方按钮=快速发送 | 下方色条=拖放到 W2", 10, 440, 120, 120, 120)
+                r.drawText(font, "ESC 关闭", 10, 455, 120, 120, 120)
             }
         }
     )
@@ -167,9 +266,7 @@ main() {
     if font.ok { font.close() }
     SDL3.ttfQuit()
     tp.join()
-    print("[TEST] ===== 最终统计 =====")
-    print("[TEST] W1 手动发送: " + w1Sent + " 条")
-    print("[TEST] W2 接收: " + w2Recv + " 条")
-    print("[TEST] 子线程应发 30 条")
+    print("[TEST] ===== 统计 =====")
+    print("[TEST] W1 发送: " + w1Sent + " | W2 接收: " + w2Recv)
     print("[TEST] DONE")
 }

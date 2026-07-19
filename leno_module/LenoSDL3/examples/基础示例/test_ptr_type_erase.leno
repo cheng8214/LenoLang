@@ -1,0 +1,38 @@
+// test_ptr_type_erase.leno — FFI Ptr 类型擦除 Bug 复现
+// 验证：SDL_GetGlobalMouseState 期望 float*，但 SDL_Point（i32 字段）的指针
+// 可以静默传入，不报错。读回时 float 位模式被错解为 int。
+//
+// 运行：leno "leno_module/LenoSDL3/examples/基础示例/test_ptr_type_erase.leno"
+
+import "../../lib/SDL3.leno" as SDL3
+import "../../lib/sdl_core.leno" as core
+
+main() {
+    var win = SDL3.createWindow({title: "Ptr 类型擦除复现", w: 100, h: 100})
+    if not win.ok { print("[BUG] 窗口创建失败"); return }
+
+    print("=== FFI Ptr 类型擦除 Bug 复现 ===\n")
+
+    // ---- 错误路径：SDL_Point (i32) 接收 SDL_GetGlobalMouseState 的 float 写入 ----
+    int badVal = core._bug_globalMouseAsInt()
+
+    // ---- 正确路径：用 SDL_FPoint 获取正确的鼠标 X 坐标 ----
+    int goodVal = core.getGlobalMouseX()
+
+    print("[错误] SDL_Point(i32) 读回: " + badVal)
+    print("[正确] SDL_FPoint(f32) 读回: " + goodVal + "\n")
+
+    if badVal > 1000000 or badVal < -1000000 {
+        print("[BUG] 确认复现!")
+        print("  - SDL_Point.x 读到的是 float 的 IEEE 754 位模式")
+        print("  - 编译器应报错: Ptr<i32> 不能传给期望 Ptr<f32> 的参数")
+        print("  - 但目前 FFI 层将两者都擦除为 Ptr，零警告通过")
+    } else {
+        print("[?] " + badVal + " 在正常范围内，请移动鼠标后重试")
+    }
+
+    print("\n详情见 BUG_FFI_Ptr类型擦除导致隐式错传.md")
+
+    win.destroy()
+    SDL3.quit()
+}

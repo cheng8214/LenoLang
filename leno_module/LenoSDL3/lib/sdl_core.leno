@@ -156,6 +156,8 @@ clib sdl3 {
     u32  SDL_GetWindowID(Ptr window)
     bool SDL_SetWindowResizable(Ptr window, bool resizable)
     bool SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
+    bool SDL_GetWindowPosition(Ptr window, Ptr x, Ptr y)
+
 
     Ptr  SDL_CreateRenderer(Ptr window, str8 name)
     void SDL_DestroyRenderer(Ptr renderer)
@@ -423,6 +425,45 @@ export func setTextInputArea(Ptr window, Ptr rect, int cursor): bool {
 
 export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) as int }
 export func getGlobalMouseState(): int { return lib().SDL_GetGlobalMouseState(null, null) as int }
+// 注意：SDL_GetGlobalMouseState 写入 float*，必须用 SDL_FPoint (f32 字段)，
+// 不能用 SDL_Point (i32 字段) — 详见 BUG_FFI_Ptr类型擦除导致隐式错传.md
+export func getGlobalMouseX(): int {
+    var pt = SDL_FPoint.malloc()
+    lib().SDL_GetGlobalMouseState(&pt.x, &pt.y)
+    var x = _int(pt.x); pt.free(); return x
+}
+export func getGlobalMouseY(): int {
+    var pt = SDL_FPoint.malloc()
+    lib().SDL_GetGlobalMouseState(&pt.x, &pt.y)
+    var y = _int(pt.y); pt.free(); return y
+}
+// BUG 复现：故意用 SDL_Point(i32) 接收 float 数据 — 编译器不报错
+export func _bug_globalMouseAsInt(): int {
+    var pt = SDL_Point.malloc()
+    lib().SDL_GetGlobalMouseState(&pt.x, &pt.y)
+    int x = pt.x; pt.free()
+    return x  // float 位模式被解释为 int → 垃圾值
+}
+export func getWindowX(Ptr window): int {
+    var pt = SDL_Point.malloc()
+    lib().SDL_GetWindowPosition(window, &pt.x, &pt.y)
+    int x = pt.x; pt.free(); return x
+}
+export func getWindowY(Ptr window): int {
+    var pt = SDL_Point.malloc()
+    lib().SDL_GetWindowPosition(window, &pt.x, &pt.y)
+    int y = pt.y; pt.free(); return y
+}
+export func getWindowW(Ptr window): int {
+    var pt = SDL_Point.malloc()
+    lib().SDL_GetWindowSize(window, &pt.x, &pt.y)
+    int w = pt.x; pt.free(); return w
+}
+export func getWindowH(Ptr window): int {
+    var pt = SDL_Point.malloc()
+    lib().SDL_GetWindowSize(window, &pt.x, &pt.y)
+    int h = pt.y; pt.free(); return h
+}
 export func showCursor(): bool    { return lib().SDL_ShowCursor() }
 export func hideCursor(): bool    { return lib().SDL_HideCursor() }
 export func cursorVisible(): bool { return lib().SDL_CursorVisible() }
