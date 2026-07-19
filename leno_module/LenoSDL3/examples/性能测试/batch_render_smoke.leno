@@ -35,7 +35,8 @@ main() {
     r.fillRect(425.0, 35.0, 110.0, 70.0)
     r.present()
 
-    // 用例4：80 条同色连续 drawLine -> 应合并为 1 次 SDL_RenderLines
+    // 用例4：80 条同色连续 drawLine -> 逻辑上合并为 1 次批量提交
+    // （刷新时逐条 SDL_RenderLine 提交，避免连续折线把独立线段连成斜线）
     r.setColor(255, 220, 0, 255)
     for 0 : 79 to i { r.drawLine(0.0, _float(i) * 5.0, 300.0, _float(i) * 5.0) }
     r.present()

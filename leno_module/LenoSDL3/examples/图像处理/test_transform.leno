@@ -1,5 +1,6 @@
-﻿// test_transform.leno — 测试图片旋转 & 翻转
+// test_transform.leno — 测试图片旋转 & 翻转
 import "../../lib/SDL3.leno" as SDL3
+import "../../lib/sdl_core.leno" as core
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode
@@ -50,7 +51,10 @@ main() {
             }
 
             // 自动旋转
-            if autoSpin { angle = angle + 1.5; if angle >= 360.0 { angle = angle - 360.0 } }
+            if autoSpin {
+                angle = angle + 1.5; if angle >= 360.0 { angle = angle - 360.0 }
+                core.requestRedraw()   // 关键：主循环是「事件驱动重绘」，必须主动请求下一帧，否则动画会卡住（只有鼠标移动等事件触发时才重绘）
+            }
 
             // 标题
             r.drawText(font, "Transform 测试 — 旋转 & 翻转", 10, 8, 255, 220, 80)
