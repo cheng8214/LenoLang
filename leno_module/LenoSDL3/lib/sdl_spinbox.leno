@@ -86,8 +86,8 @@ export struct SpinBox impl Widget {
             if c >= "0" and c <= "9" {
                 anyDigit = true
                 int d = _digit(c)
-                if hasFrac { fdiv = fdiv * 10.0; frac = frac + _float(d) / fdiv }
-                else { intPart = intPart * 10.0 + _float(d) }
+                if hasFrac { fdiv = fdiv * 10.0; frac = frac + d / fdiv }
+                else { intPart = intPart * 10.0 + d }
             } else { return }
         }
         if not anyDigit { return }

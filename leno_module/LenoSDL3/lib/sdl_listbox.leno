@@ -39,7 +39,7 @@ export struct ListBox impl Widget {
     }
 
     func _max_scroll(): float {
-        float total = _float(items.len()) * _itemH
+        float total = items.len() * _itemH
         float m = total - h
         if m < 0.0 { m = 0.0 }
         return m
@@ -87,7 +87,7 @@ export struct ListBox impl Widget {
         return false
     }
 
-    func _total_h(): float { return _float(items.len()) * _itemH }
+    func _total_h(): float { return items.len() * _itemH }
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
@@ -204,7 +204,7 @@ export struct ListBox impl Widget {
     func set_selected(int idx) {
         if idx < 0 or idx >= items.len() { return }
         _sel = []; _sel.add(idx)
-        float iy = _float(idx) * _itemH
+        float iy = idx * _itemH
         if iy < _scroll { _scroll = iy }
         else if iy + _itemH > _scroll + h { _scroll = iy + _itemH - h }
         _clamp_scroll()
@@ -320,7 +320,7 @@ export struct ListBox impl Widget {
 
         float pad = 8.0
         for items.len() to i {
-            float iy = r.snapY(y - _scroll + _float(i) * _itemH)
+            float iy = r.snapY(y - _scroll + i * _itemH)
             if iy + _itemH < y or iy > y + h { continue }
             int rr = bgr; int gg = bgg; int bb2 = bgb
             if _is_selected(i) { rr = _selR; gg = _selG; bb2 = _selB }
@@ -330,7 +330,7 @@ export struct ListBox impl Widget {
 
             if _font != null and _font.ok and i < items.len() {
                 string t = items[i]
-                float th = _float(_font.measureString("Ag").h)
+                float th = _font.measureString("Ag").h
                 int tcR = tr; int tcG = tg; int tcB = tb
                 if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
                 float ty = r.snapY(iy + (_itemH - th) / 2.0)

@@ -221,9 +221,9 @@ export struct Slider impl Widget {
         // 数值文字
         if _font != null and _font.ok {
             string label = value as string
-            float th = _float(_font.measureString("Ag").h)
+            float th = _font.measureString("Ag").h
             float ty; float tx
-            if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _float(_font.measureString(label).w) / 2.0 }
+            if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _font.measureString(label).w / 2.0 }
             else { ty = y + h / 2.0 - th / 2.0; tx = x + w + 8.0 }
             int tcR = tr; int tcG = tg; int tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }

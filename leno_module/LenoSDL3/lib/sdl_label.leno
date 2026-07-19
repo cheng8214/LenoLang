@@ -52,8 +52,8 @@ export struct Label impl Widget {
 
         _ensure_font()
         if _font != null and _font.ok {
-            if text != "" { _w = _float(_font.measureString(text).w) } else { _w = 0.0 }
-            _h = _float(_font.measureString("Ag").h)
+            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
+            _h = _font.measureString("Ag").h
         } else { _w = 0.0; _h = 16.0 }
         // hover/_wasHover 默认见字段声明
         _tip = opts.get("tip", "")
@@ -66,8 +66,8 @@ export struct Label impl Widget {
     func set_text(string t)        {
         text = t
         if _font != null and _font.ok {
-            if text != "" { _w = _float(_font.measureString(text).w) } else { _w = 0.0 }
-            _h = _float(_font.measureString("Ag").h)
+            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
+            _h = _font.measureString("Ag").h
         }
     }
     func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
@@ -121,8 +121,8 @@ export struct Label impl Widget {
         var ms = _font.measureString(text)
         float drawX = x
         if _align == 0 { drawX = x }                          // 左对齐
-        if _align == 1 { drawX = x - _float(ms.w) / 2.0 }     // 居中
-        if _align == 2 { drawX = x - _float(ms.w) }           // 右对齐
+        if _align == 1 { drawX = x - ms.w / 2.0 }     // 居中
+        if _align == 2 { drawX = x - ms.w }           // 右对齐
 
         r.drawText(_font, text, drawX, y, tr, tg, tb)
     }

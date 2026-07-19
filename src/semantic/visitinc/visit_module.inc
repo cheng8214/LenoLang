@@ -372,11 +372,26 @@
                         sym->clib_func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * clib_sym_tbl->func_count);
                         for (int fi = 0; fi < clib_sym_tbl->func_count; fi++) {
                             sym->clib_func_names[fi] = strdup(clib_sym_tbl->funcs[fi].name);
-                            sym->clib_func_return_types[fi] = type_new(clib_sym_tbl->funcs[fi].return_type);
+                            // 构造返回类型：Ptr[T] 需要 element_type
+                            if (clib_sym_tbl->funcs[fi].return_type == TYPE_PTR_GENERIC
+                                && clib_sym_tbl->funcs[fi].return_element_type != TYPE_PTR) {
+                                sym->clib_func_return_types[fi] = type_ptr_generic(
+                                    type_new(clib_sym_tbl->funcs[fi].return_element_type));
+                            } else {
+                                sym->clib_func_return_types[fi] = type_new(clib_sym_tbl->funcs[fi].return_type);
+                            }
                             sym->clib_func_param_counts[fi] = clib_sym_tbl->funcs[fi].param_count;
                             sym->clib_func_param_types[fi] = (TypeInfo**)malloc(sizeof(TypeInfo*) * clib_sym_tbl->funcs[fi].param_count);
                             for (int pi = 0; pi < clib_sym_tbl->funcs[fi].param_count; pi++) {
-                                sym->clib_func_param_types[fi][pi] = type_new(clib_sym_tbl->funcs[fi].param_types[pi]);
+                                // 构造参数类型：Ptr[T] 需要 element_type
+                                if (clib_sym_tbl->funcs[fi].param_types[pi] == TYPE_PTR_GENERIC
+                                    && clib_sym_tbl->funcs[fi].param_element_types
+                                    && clib_sym_tbl->funcs[fi].param_element_types[pi] != TYPE_PTR) {
+                                    sym->clib_func_param_types[fi][pi] = type_ptr_generic(
+                                        type_new(clib_sym_tbl->funcs[fi].param_element_types[pi]));
+                                } else {
+                                    sym->clib_func_param_types[fi][pi] = type_new(clib_sym_tbl->funcs[fi].param_types[pi]);
+                                }
                             }
                         }
                     }

@@ -114,7 +114,7 @@ export struct Edit impl Widget {
             // 缓存行高
             if _font.ok {
                 var ms = _font.measureString("Ag")
-                _lineHeight = _float(ms.h) + 2.0
+                _lineHeight = ms.h + 2.0
             }
         }
     }
@@ -127,7 +127,7 @@ export struct Edit impl Widget {
         var sub = text.slice(0, pos)
         if _password { sub = "*".rep(pos) }
         var ms = _font.measureString(sub)
-        return _float(ms.w)
+        return ms.w
     }
 
     // 多行：测量某行到某列的宽度
@@ -142,7 +142,7 @@ export struct Edit impl Widget {
         var sub = ln.slice(0, col)
         if _password { sub = "*".rep(col) }
         var ms = _font.measureString(sub)
-        return _float(ms.w)
+        return ms.w
     }
 
     // ==================== 行管理 ====================
@@ -165,9 +165,9 @@ export struct Edit impl Widget {
         if _wordWrap {
             if _drDirty or _drWrap != _wordWrap { _ensure_layout(w - 16.0) }
             if _drCount == 0 { return _lineHeight }
-            return _lineHeight * _float(_drCount)
+            return _lineHeight * _drCount
         }
-        return _lineHeight * _float(_lines.len())
+        return _lineHeight * _lines.len()
     }
 
     // ==================== 滚动 ====================
@@ -206,7 +206,7 @@ export struct Edit impl Widget {
         var di = _disp_row_of(_cursorLine, _cursorCol)
 
         // 垂直滚动
-        float curY = _float(di) * _lineHeight
+        float curY = di * _lineHeight
         if curY - _scrollY > visH - _lineHeight {
             _scrollY = curY - visH + _lineHeight
         }
@@ -602,7 +602,7 @@ export struct Edit impl Widget {
         if _multiline {
             _rebuild_lines()
             cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
-            float cy = y + pad + _float(_cursorLine) * _lineHeight - _scrollY
+            float cy = y + pad + _cursorLine * _lineHeight - _scrollY
             rect.x = _int(x)
             rect.y = _int(cy)
             rect.w = _int(w)
@@ -717,7 +717,7 @@ export struct Edit impl Widget {
         _lineW = []
         _maxLineW = 0.0
         for _lines.len() to li {
-            var w0 = _float(_font.measureString(_lines[li]).w)
+            var w0 = _font.measureString(_lines[li]).w
             _lineW.add(w0)
             if w0 > _maxLineW { _maxLineW = w0 }
         }
@@ -730,7 +730,7 @@ export struct Edit impl Widget {
         if li < 0 or li >= _lines.len() { return }
         if _lineW.len() != _lines.len() { _lwDirty = true }
         _ensure_line_widths()
-        var w0 = _float(_font.measureString(_lines[li]).w)
+        var w0 = _font.measureString(_lines[li]).w
         var old = _lineW[li]
         _lineW[li] = w0
         if w0 > _maxLineW {
@@ -1489,13 +1489,13 @@ export struct Edit impl Widget {
 
         // 文字几何（先算，供选区/光标对齐）
         var ms0 = _font.measureString("Ag")
-        float textH = _float(ms0.h)
+        float textH = ms0.h
         float ty = y + (h - textH) / 2.0
         var display = text
         if _password and text != "" { display = "*".rep(text.len()) }
         if text != "" {
             var ms = _font.measureString(display)
-            textH = _float(ms.h)
+            textH = ms.h
             ty = y + (h - textH) / 2.0
         }
 
@@ -1516,7 +1516,7 @@ export struct Edit impl Widget {
         // 文字（叠在选区之上）
         if text == "" and not _focused and _placeholder != "" {
             var ms = _font.measureString(_placeholder)
-            float py = y + (h - _float(ms.h)) / 2.0
+            float py = y + (h - ms.h) / 2.0
             r.drawText(_font, _placeholder, r.snapX(x + pad), r.snapY(py),
                        tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
         } else if text != "" {
@@ -1586,9 +1586,9 @@ export struct Edit impl Widget {
                 var full = _lines[li]
                 var ms1 = _font.measureString(full.slice(c0, c0 + colS))
                 var ms2 = _font.measureString(full.slice(c0, c0 + colE))
-                float sx = r.snapX(x + pad + _float(ms1.w) - _scrollX)
-                float ew = _float(ms2.w) - _float(ms1.w)
-                float sy = r.snapY(y + pad + _float(di) * _lineHeight - _scrollY)
+                float sx = r.snapX(x + pad + ms1.w - _scrollX)
+                float ew = ms2.w - ms1.w
+                float sy = r.snapY(y + pad + di * _lineHeight - _scrollY)
                 if ew < 0 { ew = 0 }
                 r.setColor(60, 100, 180, 180)
                 r.fillRect(sx, sy, ew, _lineHeight)
@@ -1603,7 +1603,7 @@ export struct Edit impl Widget {
                 var seg = phLines[pl] as string
                 var wraps = _wrap_line(seg, visW)
                 for wraps.len() to wi {
-                    float ly = y + pad + _float(dy) * _lineHeight - _scrollY
+                    float ly = y + pad + dy * _lineHeight - _scrollY
                     r.drawText(_font, wraps[wi] as string, r.snapX(x + pad), r.snapY(ly), tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
                     dy += 1
                 }
@@ -1614,7 +1614,7 @@ export struct Edit impl Widget {
                 var li = _drLi[di]; var c0 = _drC0[di]; var c1 = _drC1[di]
                 var seg = _lines[li].slice(c0, c1)
                 if _password { seg = "*".rep(seg.len()) }
-                float ly = y + pad + _float(di) * _lineHeight - _scrollY
+                float ly = y + pad + di * _lineHeight - _scrollY
                 r.drawText(_font, seg, r.snapX(x + pad - _scrollX), r.snapY(ly), tr, tg, tb)
             }
         }
@@ -1624,10 +1624,10 @@ export struct Edit impl Widget {
         if _focused and _showCursor {
             if _lines.len() > 0 and _drCount > 0 {
                 var cdi = _disp_row_of(_cursorLine, _cursorCol)
-                float cy = r.snapY(y + pad + _float(cdi) * _lineHeight - _scrollY)
+                float cy = r.snapY(y + pad + cdi * _lineHeight - _scrollY)
                 if cy + _lineHeight > y + pad and cy < y + pad + visH {
                     var ms = _font.measureString("Ag")
-                    float ch = _float(ms.h)
+                    float ch = ms.h
                     float cx = x + pad
                     if _wordWrap {
                         // 直接测量段内子串（ln.slice(c0, col)）作为段内偏移，
@@ -1638,7 +1638,7 @@ export struct Edit impl Widget {
                         if _cursorCol < cm0 { cm0 = _cursorCol }
                         var ln = _lines[_cursorLine]
                         var seg = ln.slice(cm0, _cursorCol)
-                        cx = cx + _float(_font.measureString(seg).w) - _scrollX
+                        cx = cx + _font.measureString(seg).w - _scrollX
                     } else {
                         cx = cx + _line_width_to(_cursorLine, _cursorCol) - _scrollX
                     }
@@ -1650,7 +1650,7 @@ export struct Edit impl Widget {
                 // 空内容：光标固定在左上角
                 float cy = r.snapY(y + pad)
                 var ms = _font.measureString("Ag")
-                float ch = _float(ms.h)
+                float ch = ms.h
                 float cx = r.snapX(x + pad)
                 r.setColor(220, 220, 240, 200)
                 r.drawLine(cx, cy, cx, cy + ch)
@@ -1724,7 +1724,7 @@ export struct Edit impl Widget {
         var curW = 0.0
         for :n to i {
             var ch = ln.slice(i, i + 1)
-            var cw = _float(_font.measureString(ch).w)
+            var cw = _font.measureString(ch).w
             if curW + cw > maxW and i > segStart {
                 result.add(ln.slice(segStart, i))
                 segStart = i

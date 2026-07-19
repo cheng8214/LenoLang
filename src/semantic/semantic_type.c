@@ -94,10 +94,20 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             return type_new(leno_rk);
                         }
                         switch (rk) {
-                            case TYPE_PTR: case TYPE_PTR_GENERIC: {
+                            case TYPE_PTR: {
                                 TypeInfo* t = type_new(TYPE_PTR);
                                 t->struct_name = strdup("Ptr");
                                 return t;
+                            }
+                            case TYPE_PTR_GENERIC: {
+                                // 保留元素类型信息，使类型安全检查生效
+                                if (ret_type->element_type) {
+                                    return type_ptr_generic(type_copy(ret_type->element_type));
+                                } else {
+                                    TypeInfo* t = type_new(TYPE_PTR);
+                                    t->struct_name = strdup("Ptr");
+                                    return t;
+                                }
                             }
                             case TYPE_BOOL:
                                 return type_new(TYPE_BOOL);
@@ -763,9 +773,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                                     result2 = type_new(TYPE_FLOAT); break;
                                                 case TYPE_STR8: case TYPE_STR16:
                                                     result2 = type_new(TYPE_STRING); break;
-                                                case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                                case TYPE_PTR:
                                                     result2 = type_new(TYPE_PTR);
                                                     result2->struct_name = strdup("Ptr"); break;
+                                                case TYPE_PTR_GENERIC:
+                                                    // 保留元素类型信息
+                                                    if (ret_type->element_type) {
+                                                        result2 = type_ptr_generic(type_copy(ret_type->element_type));
+                                                    } else {
+                                                        result2 = type_new(TYPE_PTR);
+                                                        result2->struct_name = strdup("Ptr");
+                                                    }
+                                                    break;
                                                 case TYPE_BOOL:
                                                     result2 = type_new(TYPE_BOOL); break;
                                                 case TYPE_NULL:
@@ -1247,9 +1266,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                                 result2 = type_new(TYPE_FLOAT); break;
                                             case TYPE_STR8: case TYPE_STR16:
                                                 result2 = type_new(TYPE_STRING); break;
-                                            case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                            case TYPE_PTR:
                                                 result2 = type_new(TYPE_PTR);
                                                 result2->struct_name = strdup("Ptr"); break;
+                                            case TYPE_PTR_GENERIC:
+                                                // 保留元素类型信息
+                                                if (ret_type->element_type) {
+                                                    result2 = type_ptr_generic(type_copy(ret_type->element_type));
+                                                } else {
+                                                    result2 = type_new(TYPE_PTR);
+                                                    result2->struct_name = strdup("Ptr");
+                                                }
+                                                break;
                                             case TYPE_BOOL:
                                                 result2 = type_new(TYPE_BOOL); break;
                                             case TYPE_NULL:
@@ -1578,9 +1606,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                             result = type_new(TYPE_FLOAT); break;
                                         case TYPE_STR8: case TYPE_STR16:
                                             result = type_new(TYPE_STRING); break;
-                                        case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                        case TYPE_PTR:
                                             result = type_new(TYPE_PTR);
                                             result->struct_name = strdup("Ptr"); break;
+                                        case TYPE_PTR_GENERIC:
+                                            // 保留元素类型信息
+                                            if (ret_type && ret_type->element_type) {
+                                                result = type_ptr_generic(type_copy(ret_type->element_type));
+                                            } else {
+                                                result = type_new(TYPE_PTR);
+                                                result->struct_name = strdup("Ptr");
+                                            }
+                                            break;
                                         case TYPE_BOOL:
                                             result = type_new(TYPE_BOOL); break;
                                         case TYPE_NULL:
@@ -1960,9 +1997,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                     result = type_new(leno_rk);
                                 } else {
                                     switch (rk) {
-                                        case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                        case TYPE_PTR:
                                             result = type_new(TYPE_PTR);
                                             result->struct_name = strdup("Ptr"); break;
+                                        case TYPE_PTR_GENERIC:
+                                            // 保留元素类型信息
+                                            if (ret_type && ret_type->element_type) {
+                                                result = type_ptr_generic(type_copy(ret_type->element_type));
+                                            } else {
+                                                result = type_new(TYPE_PTR);
+                                                result->struct_name = strdup("Ptr");
+                                            }
+                                            break;
                                         case TYPE_BOOL:
                                             result = type_new(TYPE_BOOL); break;
                                         case TYPE_NULL:

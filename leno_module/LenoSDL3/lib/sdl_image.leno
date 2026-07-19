@@ -1,4 +1,4 @@
-﻿// sdl_image.leno — SDL3_image 图像加载/保存（PNG/JPG/BMP/WEBP 等）
+// sdl_image.leno — SDL3_image 图像加载/保存（PNG/JPG/BMP/WEBP 等）
 // SDL3_image 无需显式 Init/Quit，加载 DLL 后直接使用
 // 注意：isFormat 函数需 SDL_IOStream 暂未封装
 import ffi
@@ -7,14 +7,14 @@ import files
 
 clib sdl3_image {
     // 加载
-    Ptr  IMG_Load(str8 file)
-    Ptr  IMG_LoadTexture(Ptr renderer, str8 file)
+    Ptr[u8]  IMG_Load(str8 file)
+    Ptr[u8]  IMG_LoadTexture(Ptr[u8] renderer, str8 file)
 
     // 保存（直接接受文件路径）
-    bool IMG_SavePNG(Ptr surface, str8 file)
-    bool IMG_SaveJPG(Ptr surface, str8 file, i32 quality)
-    bool IMG_SaveBMP(Ptr surface, str8 file)
-    bool IMG_SaveWEBP(Ptr surface, str8 file, f32 quality)
+    bool IMG_SavePNG(Ptr[u8] surface, str8 file)
+    bool IMG_SaveJPG(Ptr[u8] surface, str8 file, i32 quality)
+    bool IMG_SaveBMP(Ptr[u8] surface, str8 file)
+    bool IMG_SaveWEBP(Ptr[u8] surface, str8 file, f32 quality)
 
     i32  IMG_Version()
 }

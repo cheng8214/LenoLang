@@ -108,7 +108,7 @@ export struct Toggle impl Widget {
     func get_w(): float {
         _ensure_font()
         float tw = 0.0
-        if _font != null and _font.ok and text != "" { tw = _float(_font.measureString(text).w) }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         return w + 10.0 + tw
     }
     func get_h(): float          { return h }
@@ -119,7 +119,7 @@ export struct Toggle impl Widget {
 
     func contains(float mx, float my): bool {
         float tw = 0.0
-        if _font != null and _font.ok and text != "" { tw = _float(_font.measureString(text).w) }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         float totalW = w + 10.0 + tw
         return mx >= x and mx <= x + totalW and my >= y and my <= y + h
     }
@@ -210,7 +210,7 @@ export struct Toggle impl Widget {
 
         // 文字
         if _font != null and _font.ok and text != "" {
-            float cy = y + (h - _float(_font.measureString("Ag").h)) / 2.0
+            float cy = y + (h - _font.measureString("Ag").h) / 2.0
             int tcR = tr; int tcG = tg; int tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, text, x + w + 10.0, cy, tcR, tcG, tcB)

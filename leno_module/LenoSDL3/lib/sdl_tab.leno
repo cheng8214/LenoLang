@@ -1,4 +1,4 @@
-﻿// sdl_tab.leno — 选项卡容器控件（TabControl）
+// sdl_tab.leno — 选项卡容器控件（TabControl）
 // 多页签切换容器：顶部标签栏（点击切换页）+ 内容区（仅当前页子控件参与事件与绘制）。
 //
 // 用法（与 Panel/布局一致：子控件用 SDL3.createXxx 创建，不在窗口注册，避免双重处理）：
@@ -233,7 +233,7 @@ export struct TabControl impl Widget {
         float total = 0.0
         for n to i {
             float tw = 60.0
-            if _font != null and _font.ok { tw = _float(_font.measureString(_tabs[i]).w) + 28.0 }
+            if _font != null and _font.ok { tw = _font.measureString(_tabs[i]).w + 28.0 }
             if tw < 48.0 { tw = 48.0 }
             widths.add(tw)
             total = total + tw
@@ -241,7 +241,7 @@ export struct TabControl impl Widget {
         float tx = x
         if total > w {
             // 放不下则等宽分配
-            float ew = w / _float(n)
+            float ew = w / n
             for n to i { out.add([tx, y, ew, _tabH]); tx = tx + ew }
         } else {
             for n to i { out.add([tx, y, widths[i], _tabH]); tx = tx + widths[i] }
@@ -332,8 +332,8 @@ export struct TabControl impl Widget {
 
             // 标签文字（居中裁剪）
             if _font != null and _font.ok and _tabs[i] != "" {
-                float tw = _float(_font.measureString(_tabs[i]).w)
-                float th = _float(_font.measureString("Ag").h)
+                float tw = _font.measureString(_tabs[i]).w
+                float th = _font.measureString("Ag").h
                 float tx = rr[0] + (rr[2] - tw) / 2.0
                 float ty = rr[1] + (rr[3] - th) / 2.0
                 r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tR, tG, tB)

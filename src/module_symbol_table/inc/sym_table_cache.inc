@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000004
+#define LENOSYMC_VERSION 0x00000005
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -316,12 +316,27 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
             sym_cache_write_string(f, cf->name);
             uint8_t rt = (uint8_t)cf->return_type;
             fwrite(&rt, 1, 1, f);
+            // return_element_type (Ptr[T] 中的 T，TYPE_PTR 表示无)
+            uint8_t ret_et = (uint8_t)cf->return_element_type;
+            fwrite(&ret_et, 1, 1, f);
             sym_cache_write_string(f, cf->return_struct_name);
             uint32_t pc = (uint32_t)cf->param_count;
             fwrite(&pc, 4, 1, f);
             for (uint32_t k = 0; k < pc; k++) {
                 uint8_t pt = (uint8_t)cf->param_types[k];
                 fwrite(&pt, 1, 1, f);
+            }
+            // param_element_types
+            if (cf->param_element_types && pc > 0) {
+                uint8_t has_pet = 1;
+                fwrite(&has_pet, 1, 1, f);
+                for (uint32_t k = 0; k < pc; k++) {
+                    uint8_t pet = (uint8_t)cf->param_element_types[k];
+                    fwrite(&pet, 1, 1, f);
+                }
+            } else {
+                uint8_t has_pet = 0;
+                fwrite(&has_pet, 1, 1, f);
             }
             // param_struct_names
             uint8_t has_psn = cf->param_struct_names ? 1 : 0;
@@ -569,6 +584,9 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             cf->name = sym_cache_read_string(f);
             uint8_t rt; if (fread(&rt, 1, 1, f) != 1) goto fail;
             cf->return_type = (TypeKind)rt;
+            // return_element_type
+            uint8_t ret_et; if (fread(&ret_et, 1, 1, f) != 1) goto fail;
+            cf->return_element_type = (TypeKind)ret_et;
             cf->return_struct_name = sym_cache_read_string(f);
             uint32_t pc; if (fread(&pc, 4, 1, f) != 1) goto fail;
             cf->param_count = (int)pc;
@@ -576,6 +594,15 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             for (uint32_t k = 0; k < pc; k++) {
                 uint8_t pt; if (fread(&pt, 1, 1, f) != 1) goto fail;
                 cf->param_types[k] = (TypeKind)pt;
+            }
+            // param_element_types
+            uint8_t has_pet; if (fread(&has_pet, 1, 1, f) != 1) goto fail;
+            if (has_pet && pc > 0) {
+                cf->param_element_types = (TypeKind*)calloc(pc, sizeof(TypeKind));
+                for (uint32_t k = 0; k < pc; k++) {
+                    uint8_t pet; if (fread(&pet, 1, 1, f) != 1) goto fail;
+                    cf->param_element_types[k] = (TypeKind)pet;
+                }
             }
             uint8_t has_psn; if (fread(&has_psn, 1, 1, f) != 1) goto fail;
             if (has_psn && pc > 0) {

@@ -94,7 +94,7 @@ export struct RadioButton impl Widget {
     func get_w(): float {
         _ensure_font()
         float tw = 0.0
-        if _font != null and _font.ok and text != "" { tw = _float(_font.measureString(text).w) }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         return _box + _gap + tw
     }
     func get_h(): float          { return _box }
@@ -108,7 +108,7 @@ export struct RadioButton impl Widget {
 
     func contains(float mx, float my): bool {
         float tw = 0.0
-        if _font != null and _font.ok and text != "" { tw = _float(_font.measureString(text).w) }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         float totalW = _box + _gap + tw
         return mx >= x and mx <= x + totalW and my >= y and my <= y + _box
     }
@@ -184,7 +184,7 @@ export struct RadioButton impl Widget {
 
         // 文字
         if _font != null and _font.ok and text != "" {
-            float cy = by + (bs - _float(_font.measureString("Ag").h)) / 2.0
+            float cy = by + (bs - _font.measureString("Ag").h) / 2.0
             int tcR = tr; int tcG = tg; int tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, text, bx + bs + _gap, cy, tcR, tcG, tcB)

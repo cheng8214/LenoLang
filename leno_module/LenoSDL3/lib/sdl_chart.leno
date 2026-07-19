@@ -1,4 +1,4 @@
-﻿// sdl_chart.leno — 图表控件：柱状图(BarChart) / 折线图(LineChart) / 饼图(PieChart)
+// sdl_chart.leno — 图表控件：柱状图(BarChart) / 折线图(LineChart) / 饼图(PieChart)
 // 均为即时模式 Widget：win.add(SDL3.createBarChart({...})) 注册后，主循环自动 render。
 // 特性：坐标轴 / 网格 / 类目与数值标签 / 多系列 / 悬停高亮（柱、点）/ 图例（饼图）。
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -41,13 +41,13 @@ func _fmtNum(float v): string { return (_int(v) as string) }
 func _truncLabel(Font f, string t, float availW): string {
     if availW <= 0.0 { return t }
     var ew = f.measureString("\u2026")   // "…"
-    float limit = availW - _float(ew.w)
+    float limit = availW - ew.w
     if limit <= 0.0 { return "\u2026" }
     int n = t.len()
     int lo = 0; int hi = n
     while lo < hi {
         int mid = (lo + hi + 1) / 2
-        float mw = _float(f.measureString(t.slice(0, mid)).w)
+        float mw = f.measureString(t.slice(0, mid)).w
         if mw <= limit { lo = mid } else { hi = mid - 1 }
     }
     if lo >= n { return t }
@@ -57,7 +57,7 @@ func _truncLabel(Font f, string t, float availW): string {
 // 绘制悬停提示气泡（背景圆角框 + 描边 + 文字）
 func _drawTip(Renderer r, Font f, float mx, float my, string text) {
     var ms = f.measureString(text)
-    float tw = _float(ms.w); float th = _float(ms.h)
+    float tw = ms.w; float th = ms.h
     float bx = mx + 12.0; float by = my + 12.0
     float pad = 6.0
     r.setColor(20, 22, 30, 235)
@@ -127,7 +127,7 @@ export struct BarChart impl Widget {
         // 故只需按「未加载 / 字号变更」重建，无需再访问可能为 null 的 _font.ok。
         if _font == null or _fontSize != fsize {
             if _font != null { fnt.releaseFont(_font) }
-            _font = fnt.acquireFontAuto(_float(fsize))
+            _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
         }
         Font f = _font
@@ -145,9 +145,9 @@ export struct BarChart impl Widget {
         // 根据 Y 轴刻度标签的最大宽度动态确定左侧边距，预留距离避免最左侧数字被裁剪
         float maxYLabW = 0.0
         for 0 : ticks to ti {
-            string lab = _fmtNum(ymax * _float(ti) / _float(ticks))
+            string lab = _fmtNum(ymax * ti / _float(ticks))
             var mw = f.measureString(lab)
-            if _float(mw.w) > maxYLabW { maxYLabW = _float(mw.w) }
+            if mw.w > maxYLabW { maxYLabW = mw.w }
         }
         float padL = maxYLabW + 12.0
         if padL < 38.0 { padL = 38.0 }
@@ -161,8 +161,8 @@ export struct BarChart impl Widget {
 
         // 类目标签抽稀：类目过多时只画不重叠的，避免挤在一起
         float maxCatW = 0.0
-        for cats.len() to i { var m = f.measureString(cats[i]); if _float(m.w) > maxCatW { maxCatW = _float(m.w) } }
-        float slot = plotW / _float(n)
+        for cats.len() to i { var m = f.measureString(cats[i]); if m.w > maxCatW { maxCatW = m.w } }
+        float slot = plotW / n
         float bw = slot * 0.6
         int catStride = 1
         if slot > 0.0 { int s = _int((maxCatW + 6.0) / slot) + 1; if s > catStride { catStride = s } }
@@ -170,7 +170,7 @@ export struct BarChart impl Widget {
         int hi = -1
         if _hover {
             float idx = (_mx - plotX) / slot
-            if idx >= 0.0 and idx < _float(n) { hi = _int(idx) }
+            if idx >= 0.0 and idx < n { hi = _int(idx) }
         }
 
         // 裁剪绘图区到图表主体范围：顶部紧贴 plotY，柱子一旦超过上边界即被裁剪，不会压到标题。
@@ -182,7 +182,7 @@ export struct BarChart impl Widget {
         // 网格线（Y 轴数字标签放到取消裁剪后绘制，避免上下半被裁剪显示不完整）
         if showGrid {
             for 0 : ticks to ti {
-                float frac = _float(ti) / _float(ticks)
+                float frac = ti / _float(ticks)
                 float gy = plotY + plotH * (1.0 - frac)
                 r.setColor(60, 64, 76, 255); r.drawLine(plotX, gy, plotX + plotW, gy)
             }
@@ -196,7 +196,7 @@ export struct BarChart impl Widget {
         // 第一遍：在裁剪区内绘制柱子（超出上边界的部分被裁掉）
         for n to i {
             float vh = plotH * (_animVals[i] / ymax)
-            float bx = plotX + slot * _float(i) + (slot - bw) / 2.0
+            float bx = plotX + slot * i + (slot - bw) / 2.0
             float by = plotY + plotH - vh
             Array[int] c = _palette(i)
             if i == hi { r.setColor(c[0], c[1], c[2], 255) } else { r.setColor(c[0], c[1], c[2], 210) }
@@ -208,48 +208,48 @@ export struct BarChart impl Widget {
 
         // Y 轴数字标签（不裁剪，完整显示）
         for 0 : ticks to ti {
-            float frac = _float(ti) / _float(ticks)
+            float frac = ti / _float(ticks)
             float gy = plotY + plotH * (1.0 - frac)
             string lab = _fmtNum(ymax * frac)
             var ms = f.measureString(lab)
             r.setColor(150, 160, 178, 255)
-            r.drawText(f, lab, plotX - 6.0 - _float(ms.w), gy - _float(ms.h) / 2.0, 150, 160, 178)
+            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, 150, 160, 178)
         }
 
         // 第二遍：数值标签与类目标签
         for n to i {
             float vh = plotH * (_animVals[i] / ymax)
-            float bx = plotX + slot * _float(i) + (slot - bw) / 2.0
+            float bx = plotX + slot * i + (slot - bw) / 2.0
             float by = plotY + plotH - vh
             if showValues {
                 string s = _fmtNum(_animVals[i])
                 var ms = f.measureString(s)
                 // 若标签会顶到上边界（可能压到标题），改为绘制到柱子内部，避免与标题重叠
-                float ly = by - _float(ms.h) - 3.0
+                float ly = by - ms.h - 3.0
                 int lr = 225; int lg = 230; int lb = 240
                 if ly < plotY { ly = by + 2.0; lr = 245; lg = 248; lb = 255 }
-                r.drawText(f, s, bx + (bw - _float(ms.w)) / 2.0, ly, lr, lg, lb)
+                r.drawText(f, s, bx + (bw - ms.w) / 2.0, ly, lr, lg, lb)
             }
             if i < cats.len() and (i % catStride) == 0 {
                 string cat = _truncLabel(f, cats[i], slot - 4.0)
                 var ms2 = f.measureString(cat)
                 r.setColor(160, 170, 188, 255)
-                r.drawText(f, cat, bx + (bw - _float(ms2.w)) / 2.0, plotY + plotH + 6.0, 160, 170, 188)
+                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, 160, 170, 188)
             }
         }
 
         // 末尾类目：若与上个标签间隔足够则补绘，并截断到可用宽度，避免与上一个重叠
-        if (n - 1) > _int(_float(n - 1) / _float(catStride)) * catStride and (n - 1) < cats.len() {
-            int rgap = (n - 1) - _int(_float(n - 1) / _float(catStride)) * catStride
-            float avail = (2.0 * _float(rgap) - _float(catStride)) * slot + 6.0
+        if (n - 1) > _int((n - 1) / _float(catStride)) * catStride and (n - 1) < cats.len() {
+            int rgap = (n - 1) - _int((n - 1) / _float(catStride)) * catStride
+            float avail = (2.0 * rgap - catStride) * slot + 6.0
             if avail > 0.0 {
                 float aw = slot - 4.0
                 if avail < aw { aw = avail }
                 string cat = _truncLabel(f, cats[n - 1], aw)
                 var ms2 = f.measureString(cat)
                 r.setColor(160, 170, 188, 255)
-                float bx = plotX + slot * _float(n - 1) + (slot - bw) / 2.0
-                r.drawText(f, cat, bx + (bw - _float(ms2.w)) / 2.0, plotY + plotH + 6.0, 160, 170, 188)
+                float bx = plotX + slot * (n - 1) + (slot - bw) / 2.0
+                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, 160, 170, 188)
             }
         }
 
@@ -352,7 +352,7 @@ export struct LineChart impl Widget {
         // 故只需按「未加载 / 字号变更」重建，无需再访问可能为 null 的 _font.ok。
         if _font == null or _fontSize != fsize {
             if _font != null { fnt.releaseFont(_font) }
-            _font = fnt.acquireFontAuto(_float(fsize))
+            _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
         }
         Font f = _font
@@ -378,13 +378,13 @@ export struct LineChart impl Widget {
 
         int ticks = 4
         for 0 : ticks to ti {
-            float frac = _float(ti) / _float(ticks)
+            float frac = ti / _float(ticks)
             float gy = plotY + plotH * (1.0 - frac)
             if showGrid { r.setColor(60, 64, 76, 255); r.drawLine(plotX, gy, plotX + plotW, gy) }
             string lab = _fmtNum(ymax * frac)
             var ms = f.measureString(lab)
             r.setColor(150, 160, 178, 255)
-            r.drawText(f, lab, plotX - 6.0 - _float(ms.w), gy - _float(ms.h) / 2.0, 150, 160, 178)
+            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, 150, 160, 178)
         }
         r.setColor(90, 96, 112, 255)
         r.drawLine(plotX, plotY, plotX, plotY + plotH)
@@ -392,39 +392,39 @@ export struct LineChart impl Widget {
 
         int denom = n - 1
         if n - 1 < 1 { denom = 1 }
-        float stepX = plotW / _float(denom)
+        float stepX = plotW / denom
 
         // X 轴类目标签：类目过多 / 文字过长时按步长抽稀并截断，保证均匀间隔、不重叠
         float labelGap = 6.0
         float maxLW = 0.0
-        for xlabels.len() to i { var m = f.measureString(xlabels[i]); if _float(m.w) > maxLW { maxLW = _float(m.w) } }
+        for xlabels.len() to i { var m = f.measureString(xlabels[i]); if m.w > maxLW { maxLW = m.w } }
         int stride = 1
         if stepX > 0.0 {
             int s = _int((maxLW + labelGap) / stepX) + 1
             if s > stride { stride = s }
         }
         if stride > n { stride = n }
-        float slotW = _float(stride) * stepX - labelGap
-        int lastMul = _int(_float(n - 1) / _float(stride)) * stride
+        float slotW = stride * stepX - labelGap
+        int lastMul = _int((n - 1) / _float(stride)) * stride
         for n to i {
             if i < xlabels.len() and (i % stride) == 0 {
                 string xl = _truncLabel(f, xlabels[i], slotW)
                 var ms = f.measureString(xl)
                 r.setColor(160, 170, 188, 255)
-                float lx = plotX + stepX * _float(i) - _float(ms.w) / 2.0
-                lx = _clampf(lx, plotX, plotX + plotW - _float(ms.w))
+                float lx = plotX + stepX * i - ms.w / 2.0
+                lx = _clampf(lx, plotX, plotX + plotW - ms.w)
                 r.drawText(f, xl, lx, plotY + plotH + 6.0, 160, 170, 188)
             }
         }
         // 末尾类目：若与上个标签间隔足够则补绘，并截断到可用宽度，避免与上一个重叠
         if (n - 1) > lastMul and (n - 1) < xlabels.len() {
             int rgap = (n - 1) - lastMul
-            float avail = (2.0 * _float(rgap) - _float(stride)) * stepX + labelGap
+            float avail = (2.0 * rgap - stride) * stepX + labelGap
             if avail > 0.0 {
                 string xl = _truncLabel(f, xlabels[n - 1], avail)
                 var ms = f.measureString(xl)
                 r.setColor(160, 170, 188, 255)
-                float lx = plotX + stepX * _float(n - 1) - _float(ms.w) / 2.0
+                float lx = plotX + stepX * (n - 1) - ms.w / 2.0
                 r.drawText(f, xl, lx, plotY + plotH + 6.0, 160, 170, 188)
             }
         }
@@ -437,7 +437,7 @@ export struct LineChart impl Widget {
             for series.len() to s {
                 Array[float] d = _animSeries[s]
                 for d.len() to i {
-                    float px = plotX + stepX * _float(i); float py = plotY + plotH * (1.0 - d[i] / ymax)
+                    float px = plotX + stepX * i; float py = plotY + plotH * (1.0 - d[i] / ymax)
                     float dx = _mx - px; float dy = _my - py
                     float dist2 = dx * dx + dy * dy
                     if dist2 <= pickR2 and dist2 < best { best = dist2; hiS = s; hiI = i }
@@ -450,13 +450,13 @@ export struct LineChart impl Widget {
             Array[int] c = _palette(s)
             r.setColor(c[0], c[1], c[2], 235)
             for 1 : d.len() - 1 to i {
-                float x1 = plotX + stepX * _float(i - 1); float y1 = plotY + plotH * (1.0 - d[i - 1] / ymax)
-                float x2 = plotX + stepX * _float(i);   float y2 = plotY + plotH * (1.0 - d[i] / ymax)
+                float x1 = plotX + stepX * (i - 1); float y1 = plotY + plotH * (1.0 - d[i - 1] / ymax)
+                float x2 = plotX + stepX * i;   float y2 = plotY + plotH * (1.0 - d[i] / ymax)
                 r.drawLine(x1, y1, x2, y2)
             }
             if showPoints {
                 for d.len() to i {
-                    float px = plotX + stepX * _float(i); float py = plotY + plotH * (1.0 - d[i] / ymax)
+                    float px = plotX + stepX * i; float py = plotY + plotH * (1.0 - d[i] / ymax)
                     bool hl = (s == hiS and i == hiI)
                     if hl { r.setColor(255, 255, 255, 255) } else { r.setColor(c[0], c[1], c[2], 255) }
                     r.fillCircle(px, py, if hl then 5.0 else 3.0)
@@ -544,7 +544,7 @@ export struct PieChart impl Widget {
         // 故只需按「未加载 / 字号变更」重建，无需再访问可能为 null 的 _font.ok。
         if _font == null or _fontSize != fsize {
             if _font != null { fnt.releaseFont(_font) }
-            _font = fnt.acquireFontAuto(_float(fsize))
+            _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
         }
         Font f = _font

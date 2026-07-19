@@ -319,12 +319,15 @@ void module_symbol_table_add_clib(ModuleSymbolTable* table, const char* name, in
     for (int i = 0; i < func_count; i++) {
         cl->funcs[i].name = strdup(funcs[i].name);
         cl->funcs[i].return_type = funcs[i].return_type;
+        cl->funcs[i].return_element_type = funcs[i].return_element_type;
         cl->funcs[i].return_struct_name = funcs[i].return_struct_name ? strdup(funcs[i].return_struct_name) : NULL;
         cl->funcs[i].param_count = funcs[i].param_count;
         cl->funcs[i].param_types = (TypeKind*)malloc(sizeof(TypeKind) * funcs[i].param_count);
+        cl->funcs[i].param_element_types = (TypeKind*)malloc(sizeof(TypeKind) * funcs[i].param_count);
         cl->funcs[i].param_struct_names = (char**)calloc(funcs[i].param_count, sizeof(char*));
         for (int j = 0; j < funcs[i].param_count; j++) {
             cl->funcs[i].param_types[j] = funcs[i].param_types[j];
+            cl->funcs[i].param_element_types[j] = funcs[i].param_element_types[j];
             if (funcs[i].param_struct_names[j]) {
                 cl->funcs[i].param_struct_names[j] = strdup(funcs[i].param_struct_names[j]);
             }

@@ -1,4 +1,4 @@
-﻿// sdl_event.leno — SDL3 事件封装（基于 cstruct，无需手动偏移）
+// sdl_event.leno — SDL3 事件封装（基于 cstruct，无需手动偏移）
 //
 // 用法：
 //   var ev = SDL3.createEvent()
@@ -13,7 +13,7 @@ use core.(sdl3, SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, S
 sdl3 _lib = core.lib()
 
 export struct Event {
-    Ptr raw     // SDL_Event 原始内存（128 字节）
+    Ptr[u8] raw     // SDL_Event 原始内存（128 字节）
     bool has    // 上次 poll 是否有事件
 
     // 分配事件内存

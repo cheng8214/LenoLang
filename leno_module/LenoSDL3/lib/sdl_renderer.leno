@@ -1,4 +1,4 @@
-﻿// sdl_renderer.leno — SDL3 渲染器封装
+// sdl_renderer.leno — SDL3 渲染器封装
 // 封装 SDL_Renderer 的绘制、颜色、纹理等操作
 import ffi
 import maths
@@ -25,23 +25,23 @@ export func getBatchLineSubmits(): int { return _gLineSubmits }
 export func getBatchLineBatched(): int { return _gLineBatched }
 
 // 调试：暴露行批处理缓冲，供坐标级回归测试直接读回 float 比对（前缀 _dbg，验证后可删除）
-export func _dbgLinePtr(Renderer r): Ptr { return r._bxLine }
+export func _dbgLinePtr(Renderer r): Ptr[f32] { return r._bxLine }
 export func _dbgLineCount(Renderer r): int { return r._bxLineN }
 
 export struct Renderer {
-    Ptr handle; bool ok
+    Ptr[u8] handle; bool ok
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
     Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
 
     // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
-    Ptr _bxFill; int _bxFillN; int _bxFillCap
-    Ptr _bxOut;  int _bxOutN;  int _bxOutCap
-    Ptr _bxLine; int _bxLineN; int _bxLineCap
+    Ptr[f32] _bxFill; int _bxFillN; int _bxFillCap
+    Ptr[f32] _bxOut;  int _bxOutN;  int _bxOutCap
+    Ptr[f32] _bxLine; int _bxLineN; int _bxLineCap
     int _bxCur            // 0=空 1=填充 2=描边 3=线段（切换即 flush 保序）
     int _bxR; int _bxG; int _bxB; int _bxA; bool _bxIsFloat
     float _bxFr; float _bxFg; float _bxFb; float _bxFa
     int _bxBlend
-    bool _bxClip; Ptr _bxClipPtr
+    bool _bxClip; Ptr[u8] _bxClipPtr
     Ptr[u8] _bxTarget
     float _bxSx; float _bxSy; float _bxCScale
 
@@ -100,7 +100,7 @@ export struct Renderer {
             setRenderTarget(null)
             setScale(1.0, 1.0)
             SDL_FRect dst = SDL_FRect.malloc()
-            dst.x = 0.0; dst.y = 0.0; dst.w = _float(_ssaaWinW); dst.h = _float(_ssaaWinH)
+            dst.x = 0.0; dst.y = 0.0; dst.w = _ssaaWinW; dst.h = _ssaaWinH
             _lib.SDL_RenderTexture(handle, _ssaaTex, null, dst.to_ptr())
             dst.free()
         }
@@ -111,8 +111,8 @@ export struct Renderer {
     // scale 建议 2.0（=4x 像素，兼顾画质与性能）；纹理创建失败则自动回退普通渲染
     func enableSSAA(int winW, int winH, float scale): bool {
         if scale <= 0.0 { return false }
-        int tw = _int(_float(winW) * scale)
-        int th = _int(_float(winH) * scale)
+        int tw = _int(winW * scale)
+        int th = _int(winH * scale)
         if tw <= 0 or th <= 0 { return false }
         // SDL_TEXTUREACCESS_TARGET = 2
         Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
@@ -134,8 +134,8 @@ export struct Renderer {
     func resizeSSAA(int newW, int newH): bool {
         if not _ssaa { return false }
         if newW <= 0 or newH <= 0 { return false }
-        int tw = _int(_float(newW) * _ssaaScale)
-        int th = _int(_float(newH) * _ssaaScale)
+        int tw = _int(newW * _ssaaScale)
+        int th = _int(newH * _ssaaScale)
         if tw <= 0 or th <= 0 { return false }
         Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
         if tex == null { return false }
@@ -233,7 +233,7 @@ export struct Renderer {
     }
 
     // 填充矩形（传入 SDL_FRect 指针，避免重复创建）—— 立即提交
-    func fillRectPtr(Ptr rect): bool {
+    func fillRectPtr(Ptr[u8] rect): bool {
         _flushBatches()
         return _lib.SDL_RenderFillRect(handle, rect)
     }
@@ -291,11 +291,11 @@ export struct Renderer {
         _flushBatches()
         var segs = 64
         var pts  = segs + 1
-        Ptr buf  = ffi.malloc(pts * 8)
+        Ptr[f32] buf  = ffi.malloc(pts * 8)
         if buf == null { return false }
         var two_pi = 6.283185307
         for 0 : segs to i {
-            var a = two_pi * _float(i) / _float(segs)
+            var a = two_pi * i / _float(segs)
             ffi.write_float(buf, i * 8,     cx + radius * maths.cos(a))
             ffi.write_float(buf, i * 8 + 4, cy + radius * maths.sin(a))
         }
@@ -310,7 +310,7 @@ export struct Renderer {
         var r = _int(radius)
         var ok = true
         for 0 : (2 * r + 1) to i {
-            var dy = _float(i - r)
+            var dy = i - r
             var inside = radius * radius - dy * dy
             if inside <= 0.0 { continue }
             var half = maths.sqrt(inside)
@@ -327,8 +327,8 @@ export struct Renderer {
         var span = a1 - a0
         if span >= 360.0 { span = 359.999; a1 = a0 + span }
         if span <= 0.0 { return true }
-        float fr = _float(cr) / 255.0; float fg = _float(cg) / 255.0
-        float fb = _float(cb) / 255.0; float fa = _float(ca) / 255.0
+        float fr = cr / 255.0; float fg = cg / 255.0
+        float fb = cb / 255.0; float fa = ca / 255.0
         int segs = _int(span / 6.0)
         if segs < 6 { segs = 6 }
         if segs > 120 { segs = 120 }
@@ -336,8 +336,8 @@ export struct Renderer {
         var verts = SDL_Vertex.malloc_array(vcnt)
         float d2r = 3.14159265 / 180.0
         for 0 : segs to i {
-            float aa = a0 + span * _float(i) / _float(segs)
-            float ab = a0 + span * _float(i + 1) / _float(segs)
+            float aa = a0 + span * i / _float(segs)
+            float ab = a0 + span * (i + 1) / _float(segs)
             int vi = i * 3
             verts[vi].x = cx; verts[vi].y = cy
             verts[vi].r = fr; verts[vi].g = fg; verts[vi].b = fb; verts[vi].a = fa
@@ -353,16 +353,16 @@ export struct Renderer {
     }
 
     // 批量绘制线段（pts 为 float 对数组，count 为点数）
-    func drawLines(Ptr pts, int count): bool { _flushBatches(); return _lib.SDL_RenderLines(handle, pts, count) }
+    func drawLines(Ptr[u8] pts, int count): bool { _flushBatches(); return _lib.SDL_RenderLines(handle, pts, count) }
 
     // 批量绘制点
-    func drawPoints(Ptr pts, int count): bool { _flushBatches(); return _lib.SDL_RenderPoints(handle, pts, count) }
+    func drawPoints(Ptr[u8] pts, int count): bool { _flushBatches(); return _lib.SDL_RenderPoints(handle, pts, count) }
 
     // 批量绘制矩形边框
-    func drawRects(Ptr rects, int count): bool { _flushBatches(); return _lib.SDL_RenderRects(handle, rects, count) }
+    func drawRects(Ptr[u8] rects, int count): bool { _flushBatches(); return _lib.SDL_RenderRects(handle, rects, count) }
 
     // 批量填充矩形
-    func fillRects(Ptr rects, int count): bool { _flushBatches(); return _lib.SDL_RenderFillRects(handle, rects, count) }
+    func fillRects(Ptr[u8] rects, int count): bool { _flushBatches(); return _lib.SDL_RenderFillRects(handle, rects, count) }
 
     // 设置渲染缩放（sx, sy 缩放因子）
     func setScale(float sx, float sy): bool {
@@ -379,7 +379,7 @@ export struct Renderer {
     }
 
     // 设置裁剪矩形（只在此区域内绘制）
-    func setClipRect(Ptr rect): bool {
+    func setClipRect(Ptr[u8] rect): bool {
         _flushBatches(); _bxClip = rect != null; _bxClipPtr = rect
         return _lib.SDL_SetRenderClipRect(handle, rect)
     }
@@ -398,7 +398,7 @@ export struct Renderer {
     }
 
     // 设置视口区域
-    func setViewport(Ptr rect): bool { _flushBatches(); return _lib.SDL_SetRenderViewport(handle, rect) }
+    func setViewport(Ptr[u8] rect): bool { _flushBatches(); return _lib.SDL_SetRenderViewport(handle, rect) }
 
     // 重置视口为全屏
     func resetViewport(): bool { _flushBatches(); return _lib.SDL_SetRenderViewport(handle, null) }
@@ -413,7 +413,7 @@ export struct Renderer {
     }
 
     // 绘制纹理（指定源矩形和目标矩形，null 表示完整）
-    func drawTextureRect(Ptr[u8] texture, Ptr srcrect, Ptr dstrect): bool {
+    func drawTextureRect(Ptr[u8] texture, Ptr[u8] srcrect, Ptr[u8] dstrect): bool {
         _flushBatches()
         return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
     }
@@ -470,8 +470,8 @@ export struct Renderer {
             TextTexture tex = f._getCachedTex(handle, text, r, g, b)
             f.setFontSize(origPt)                // 还原，避免影响后续 measureString/其它绘制
             if tex.ok {
-                float dw = _float(tex.width)  / _ssaaScale
-                float dh = _float(tex.height) / _ssaaScale
+                float dw = tex.width  / _ssaaScale
+                float dh = tex.height / _ssaaScale
                 drawTextureAt(tex.texture, x, y, dw, dh)
             }
             return
@@ -481,13 +481,13 @@ export struct Renderer {
         x = _int(x + 0.5)
         y = _int(y + 0.5)
         TextTexture tex = f._getCachedTex(handle, text, r, g, b)
-        if tex.ok { drawTextureAt(tex.texture, x, y, _float(tex.width), _float(tex.height)) }
+        if tex.ok { drawTextureAt(tex.texture, x, y, tex.width, tex.height) }
     }
 
     // 居中绘制文字（在 [x, x+w] 范围内水平居中）
     func drawTextCentered(Font f, string text, float x, float w, float y, int r, int g, int b) {
         var ms = f.measureString(text)
-        float cx = x + (w - _float(ms.w)) / 2.0
+        float cx = x + (w - ms.w) / 2.0
         drawText(f, text, cx, y, r, g, b)
     }
 
@@ -587,7 +587,7 @@ export struct Renderer {
     }
 
     // 截取当前渲染画面
-    func readPixels(Ptr rect): Ptr[u8] {
+    func readPixels(Ptr[u8] rect): Ptr[u8] {
         _flushBatches()
         return _lib.SDL_RenderReadPixels(handle, rect) as Ptr[u8]
     }
@@ -608,12 +608,12 @@ export struct Renderer {
     }
 
     // 更新纹理像素数据
-    func updateTexture(Ptr[u8] texture, Ptr rect, Ptr pixels, int pitch): bool {
+    func updateTexture(Ptr[u8] texture, Ptr[u8] rect, Ptr[u8] pixels, int pitch): bool {
         return _lib.SDL_UpdateTexture(texture, rect, pixels, pitch)
     }
 
     // 锁定/解锁纹理以直接操作像素（需 TEXTUREACCESS_STREAMING）
-    func lockTexture(Ptr[u8] texture, Ptr rect): bool {
+    func lockTexture(Ptr[u8] texture, Ptr[u8] rect): bool {
         return _lib.SDL_LockTexture(texture, rect, null, null)
     }
     func unlockTexture(Ptr[u8] texture) {
@@ -628,17 +628,17 @@ export struct Renderer {
     }
 
     // 九宫格渲染（UI 边框不拉伸）
-    func drawTexture9Grid(Ptr[u8] texture, float lw, float rw, float th, float bh, float scale, Ptr dst): bool {
+    func drawTexture9Grid(Ptr[u8] texture, float lw, float rw, float th, float bh, float scale, Ptr[u8] dst): bool {
         return _lib.SDL_RenderTexture9Grid(handle, texture, null, lw, rw, th, bh, scale, dst)
     }
 
     // 平铺渲染
-    func drawTextureTiled(Ptr[u8] texture, float scale, Ptr dst): bool {
+    func drawTextureTiled(Ptr[u8] texture, float scale, Ptr[u8] dst): bool {
         return _lib.SDL_RenderTextureTiled(handle, texture, null, scale, dst)
     }
 
     // 几何渲染（三角形/多边形），vertices 为 SDL_Vertex 数组 to_ptr()
-    func drawGeometry(Ptr vertices, int count, Ptr indices, int idxCount): bool {
+    func drawGeometry(Ptr[u8] vertices, int count, Ptr[u8] indices, int idxCount): bool {
         _flushBatches()
         return _lib.SDL_RenderGeometry(handle, null, vertices, count, indices, idxCount)
     }
@@ -732,10 +732,10 @@ export struct Renderer {
                 case 3 { cx = x + r; cy = y + h - r; sa = half_pi }                 // 左下 π/2→π
             }
 
-            var step = half_pi / _float(segs)
+            var step = half_pi / segs
             for 0 : segs - 1 to i {
-                var a1 = sa + step * _float(i)
-                var a2 = sa + step * _float(i + 1)
+                var a1 = sa + step * i
+                var a2 = sa + step * (i + 1)
                 var vi = ci * v_per_corner + i * 3
                 verts[vi].x = cx; verts[vi].y = cy
                 verts[vi].r = cr; verts[vi].g = cg; verts[vi].b = cb; verts[vi].a = ca
@@ -763,7 +763,7 @@ export struct Renderer {
 
         var pts = segs + 1; var half_pi = 1.57079633
         var total = 4 * pts + 1  // 4 圆弧 + 闭合左直边
-        Ptr buf = ffi.malloc(total * 8)
+        Ptr[f32] buf = ffi.malloc(total * 8)
         if buf == null { return false }
 
         // 一次性写入 4 个圆角弧的连续顶点
@@ -776,9 +776,9 @@ export struct Renderer {
                 case 3 { cx = x + r; cy = y + h - r; sa = half_pi }                 // 左下
             }
 
-            var step = half_pi / _float(segs)
+            var step = half_pi / segs
             for 0 : segs to i {
-                var a = sa + step * _float(i)
+                var a = sa + step * i
                 var off = (ci * pts + i) * 8
                 ffi.write_float(buf, off,     cx + r * maths.cos(a))
                 ffi.write_float(buf, off + 4, cy + r * maths.sin(a))

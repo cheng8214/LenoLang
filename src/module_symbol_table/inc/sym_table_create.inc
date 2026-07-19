@@ -133,6 +133,7 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         for (int j = 0; j < table->clibs[i].func_count; j++) {
             free(table->clibs[i].funcs[j].name);
             free(table->clibs[i].funcs[j].return_struct_name);
+            free(table->clibs[i].funcs[j].param_element_types);
             for (int k = 0; k < table->clibs[i].funcs[j].param_count; k++) {
                 free(table->clibs[i].funcs[j].param_struct_names[k]);
             }

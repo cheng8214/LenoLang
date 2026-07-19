@@ -229,17 +229,39 @@
                             continue;
                         }
 
-                        // 解析返回类型
+                        // 解析返回类型（支持 Ptr[T] 语法）
                         const char* ret_start = after_clib;
                         while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                        // 支持 Ptr[T] 语法：跳过 [T] 部分
+                        if (*after_clib == '[') {
+                            after_clib++;
+                            while (*after_clib && *after_clib != ']') after_clib++;
+                            if (*after_clib == ']') after_clib++;
+                        }
                         int ret_len = (int)(after_clib - ret_start);
-                        if (ret_len <= 0) break;
 
                         TypeKind ret_type = TYPE_I32; // 默认
-                        if (ret_len < 64) {
-                            char ret_buf[64]; strncpy(ret_buf, ret_start, ret_len); ret_buf[ret_len] = '\0';
-                            ret_type = parse_base_type(ret_buf);
+                        TypeKind ret_element_type = TYPE_PTR; // Ptr[T] 中的 T，默认无
+                        if (ret_len > 0 && ret_len < 128) {
+                            char ret_buf[128]; strncpy(ret_buf, ret_start, ret_len); ret_buf[ret_len] = '\0';
+                            // 检查是否是 Ptr[T] 语法
+                            char* bracket = strchr(ret_buf, '[');
+                            if (bracket) {
+                                *bracket = '\0'; // 截断为 "Ptr"
+                                ret_type = parse_base_type(ret_buf);
+                                if (ret_type == TYPE_PTR) {
+                                    ret_type = TYPE_PTR_GENERIC;
+                                    // 提取 [T] 中的元素类型
+                                    char* elem_start = bracket + 1;
+                                    char* elem_end = strchr(elem_start, ']');
+                                    if (elem_end) *elem_end = '\0';
+                                    ret_element_type = parse_base_type(elem_start);
+                                }
+                            } else {
+                                ret_type = parse_base_type(ret_buf);
+                            }
                         }
+                        if (ret_len <= 0) break;
 
                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
 
@@ -253,13 +275,17 @@
                         strncpy(funcs[func_count].name, func_name_start, func_name_len);
                         funcs[func_count].name[func_name_len] = '\0';
                         funcs[func_count].return_type = ret_type;
+                        funcs[func_count].return_element_type = ret_element_type;
                         funcs[func_count].return_struct_name = NULL;
 
                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
 
-                        // 解析参数列表 (...)
+                        // 解析参数列表 (...)（支持 Ptr[T] 语法）
                         TypeKind param_types[MOD_MAX_PARAMS]; char* param_structs[MOD_MAX_PARAMS];
+                        TypeKind param_element_types[MOD_MAX_PARAMS]; // Ptr[T] 中的 T
                         int param_count = 0;
+                        // 初始化 param_element_types
+                        for (int pi = 0; pi < MOD_MAX_PARAMS; pi++) param_element_types[pi] = TYPE_PTR;
                         if (*after_clib == '(') {
                             after_clib++;
                             while (*after_clib && *after_clib != ')') {
@@ -268,13 +294,35 @@
 
                                 const char* pt_start = after_clib;
                                 while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                                // 支持 Ptr[T] 语法：跳过 [T] 部分
+                                if (*after_clib == '[') {
+                                    after_clib++;
+                                    while (*after_clib && *after_clib != ']') after_clib++;
+                                    if (*after_clib == ']') after_clib++;
+                                }
                                 int pt_len = (int)(after_clib - pt_start);
-                                if (pt_len > 0 && pt_len < 64) {
+                                if (pt_len > 0 && pt_len < 128) {
                                     if (param_count >= MOD_MAX_PARAMS) {
                                         fprintf(stderr, "[错误] clib函数参数数量超过上限 %d\n", MOD_MAX_PARAMS);
                                     } else {
-                                        char pt_buf[64]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
-                                        param_types[param_count] = parse_base_type(pt_buf);
+                                        char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                        // 检查是否是 Ptr[T] 语法
+                                        char* pbracket = strchr(pt_buf, '[');
+                                        if (pbracket) {
+                                            *pbracket = '\0';
+                                            TypeKind base = parse_base_type(pt_buf);
+                                            if (base == TYPE_PTR) {
+                                                param_types[param_count] = TYPE_PTR_GENERIC;
+                                                char* pelem_start = pbracket + 1;
+                                                char* pelem_end = strchr(pelem_start, ']');
+                                                if (pelem_end) *pelem_end = '\0';
+                                                param_element_types[param_count] = parse_base_type(pelem_start);
+                                            } else {
+                                                param_types[param_count] = base;
+                                            }
+                                        } else {
+                                            param_types[param_count] = parse_base_type(pt_buf);
+                                        }
                                         param_structs[param_count] = NULL;
                                         param_count++;
                                     }
@@ -288,9 +336,11 @@
 
                         funcs[func_count].param_count = param_count;
                         funcs[func_count].param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+                        funcs[func_count].param_element_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
                         funcs[func_count].param_struct_names = (char**)calloc(param_count, sizeof(char*));
                         for (int pi = 0; pi < param_count; pi++) {
                             funcs[func_count].param_types[pi] = param_types[pi];
+                            funcs[func_count].param_element_types[pi] = param_element_types[pi];
                             funcs[func_count].param_struct_names[pi] = param_structs[pi]
                                 ? strdup(param_structs[pi]) : NULL;
                         }
@@ -312,6 +362,7 @@
                             free(funcs[fi].param_struct_names[pi]);
                         }
                         free(funcs[fi].param_types);
+                        free(funcs[fi].param_element_types);
                         free(funcs[fi].param_struct_names);
                     }
                 }

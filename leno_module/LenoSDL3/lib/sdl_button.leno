@@ -224,7 +224,7 @@ export struct Button impl Widget {
         // 文字（水平居中、垂直居中）
         if _font == null or not _font.ok { return }
         var ms = _font.measureString(text)
-        float cy = y + (h - _float(ms.h)) / 2.0
+        float cy = y + (h - ms.h) / 2.0
         r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
     }
 

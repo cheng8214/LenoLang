@@ -1,4 +1,4 @@
-﻿// sdl_core.leno — SDL3 核心绑定（cstruct/clib/常量/DLL）
+// sdl_core.leno — SDL3 核心绑定（cstruct/clib/常量/DLL）
 import ffi
 import dirs
 import files
@@ -151,107 +151,107 @@ clib sdl3 {
     void SDL_Quit()
     str8 SDL_GetError()
 
-    Ptr  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
-    void SDL_DestroyWindow(Ptr window)
-    u32  SDL_GetWindowID(Ptr window)
-    bool SDL_SetWindowResizable(Ptr window, bool resizable)
-    bool SDL_GetWindowSize(Ptr window, Ptr w, Ptr h)
-    bool SDL_GetWindowPosition(Ptr window, Ptr x, Ptr y)
+    Ptr[u8]  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
+    void SDL_DestroyWindow(Ptr[u8] window)
+    u32  SDL_GetWindowID(Ptr[u8] window)
+    bool SDL_SetWindowResizable(Ptr[u8] window, bool resizable)
+    bool SDL_GetWindowSize(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
+    bool SDL_GetWindowPosition(Ptr[u8] window, Ptr[i32] x, Ptr[i32] y)
 
 
-    Ptr  SDL_CreateRenderer(Ptr window, str8 name)
-    void SDL_DestroyRenderer(Ptr renderer)
-    bool SDL_RenderClear(Ptr renderer)
-    bool SDL_RenderPresent(Ptr renderer)
-    bool SDL_SetRenderDrawColor(Ptr renderer, u8 r, u8 g, u8 b, u8 a)
-    bool SDL_SetRenderDrawColorFloat(Ptr renderer, f32 r, f32 g, f32 b, f32 a)
-    bool SDL_RenderFillRect(Ptr renderer, Ptr rect)
-    bool SDL_RenderRect(Ptr renderer, Ptr rect)
-    bool SDL_RenderLine(Ptr renderer, f32 x1, f32 y1, f32 x2, f32 y2)
-    bool SDL_RenderPoint(Ptr renderer, f32 x, f32 y)
-    bool SDL_SetRenderVSync(Ptr renderer, i32 vsync)
+    Ptr[u8]  SDL_CreateRenderer(Ptr[u8] window, str8 name)
+    void SDL_DestroyRenderer(Ptr[u8] renderer)
+    bool SDL_RenderClear(Ptr[u8] renderer)
+    bool SDL_RenderPresent(Ptr[u8] renderer)
+    bool SDL_SetRenderDrawColor(Ptr[u8] renderer, u8 r, u8 g, u8 b, u8 a)
+    bool SDL_SetRenderDrawColorFloat(Ptr[u8] renderer, f32 r, f32 g, f32 b, f32 a)
+    bool SDL_RenderFillRect(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_RenderRect(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_RenderLine(Ptr[u8] renderer, f32 x1, f32 y1, f32 x2, f32 y2)
+    bool SDL_RenderPoint(Ptr[u8] renderer, f32 x, f32 y)
+    bool SDL_SetRenderVSync(Ptr[u8] renderer, i32 vsync)
 
-    bool SDL_RenderLines(Ptr renderer, Ptr points, i32 count)
-    bool SDL_RenderPoints(Ptr renderer, Ptr points, i32 count)
-    bool SDL_RenderRects(Ptr renderer, Ptr rects, i32 count)
-    bool SDL_RenderFillRects(Ptr renderer, Ptr rects, i32 count)
+    bool SDL_RenderLines(Ptr[u8] renderer, Ptr[u8] points, i32 count)
+    bool SDL_RenderPoints(Ptr[u8] renderer, Ptr[u8] points, i32 count)
+    bool SDL_RenderRects(Ptr[u8] renderer, Ptr[u8] rects, i32 count)
+    bool SDL_RenderFillRects(Ptr[u8] renderer, Ptr[u8] rects, i32 count)
 
-    bool SDL_SetRenderScale(Ptr renderer, f32 sx, f32 sy)
-    bool SDL_SetRenderDrawBlendMode(Ptr renderer, i32 mode)
-    bool SDL_SetRenderClipRect(Ptr renderer, Ptr rect)
-    bool SDL_SetRenderLogicalSize(Ptr renderer, i32 w, i32 h)
-    bool SDL_SetRenderViewport(Ptr renderer, Ptr rect)
+    bool SDL_SetRenderScale(Ptr[u8] renderer, f32 sx, f32 sy)
+    bool SDL_SetRenderDrawBlendMode(Ptr[u8] renderer, i32 mode)
+    bool SDL_SetRenderClipRect(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_SetRenderLogicalSize(Ptr[u8] renderer, i32 w, i32 h)
+    bool SDL_SetRenderViewport(Ptr[u8] renderer, Ptr[u8] rect)
 
-    bool SDL_GetRenderDrawColor(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
-    bool SDL_GetRenderDrawColorFloat(Ptr renderer, Ptr r, Ptr g, Ptr b, Ptr a)
-    bool SDL_GetRenderOutputSize(Ptr renderer, Ptr w, Ptr h)
+    bool SDL_GetRenderDrawColor(Ptr[u8] renderer, Ptr[u8] r, Ptr[u8] g, Ptr[u8] b, Ptr[u8] a)
+    bool SDL_GetRenderDrawColorFloat(Ptr[u8] renderer, Ptr[f32] r, Ptr[f32] g, Ptr[f32] b, Ptr[f32] a)
+    bool SDL_GetRenderOutputSize(Ptr[u8] renderer, Ptr[i32] w, Ptr[i32] h)
 
-    Ptr  SDL_GetKeyboardState(Ptr numkeys)
+    Ptr[u8]  SDL_GetKeyboardState(Ptr[i32] numkeys)
     u16  SDL_GetModState()
-    bool SDL_PollEvent(Ptr event)
-    bool SDL_WaitEventTimeout(Ptr event, i32 timeoutMS)
-    bool SDL_StartTextInput(Ptr window)
-    bool SDL_StopTextInput(Ptr window)
-    bool SDL_TextInputActive(Ptr window)
+    bool SDL_PollEvent(Ptr[u8] event)
+    bool SDL_WaitEventTimeout(Ptr[u8] event, i32 timeoutMS)
+    bool SDL_StartTextInput(Ptr[u8] window)
+    bool SDL_StopTextInput(Ptr[u8] window)
+    bool SDL_TextInputActive(Ptr[u8] window)
 
     void SDL_Delay(u32 ms)
     u64  SDL_GetTicks()
 
-    Ptr  SDL_CreateTextureFromSurface(Ptr renderer, Ptr surface)
-    void SDL_DestroyTexture(Ptr texture)
-    bool SDL_GetTextureSize(Ptr texture, Ptr w, Ptr h)
-    bool SDL_RenderTexture(Ptr renderer, Ptr texture, Ptr src, Ptr dst)
-    bool SDL_RenderGeometry(Ptr renderer, Ptr texture, Ptr vertices, i32 num_vertices, Ptr indices, i32 num_indices)
-    bool SDL_RenderTextureRotated(Ptr renderer, Ptr texture, Ptr src, Ptr dst, f64 angle, Ptr center, i32 flip)
-    void SDL_DestroySurface(Ptr surface)
+    Ptr[u8]  SDL_CreateTextureFromSurface(Ptr[u8] renderer, Ptr[u8] surface)
+    void SDL_DestroyTexture(Ptr[u8] texture)
+    bool SDL_GetTextureSize(Ptr[u8] texture, Ptr[f32] w, Ptr[f32] h)
+    bool SDL_RenderTexture(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] src, Ptr[u8] dst)
+    bool SDL_RenderGeometry(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] vertices, i32 num_vertices, Ptr[u8] indices, i32 num_indices)
+    bool SDL_RenderTextureRotated(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] src, Ptr[u8] dst, f64 angle, Ptr[u8] center, i32 flip)
+    void SDL_DestroySurface(Ptr[u8] surface)
 
-    bool SDL_SetRenderTarget(Ptr renderer, Ptr texture)
-    bool SDL_SetTextureAlphaMod(Ptr texture, u8 alpha)
-    bool SDL_SetTextureColorMod(Ptr texture, u8 r, u8 g, u8 b)
-    bool SDL_FlushRenderer(Ptr renderer)
-    bool SDL_RenderTexture9Grid(Ptr renderer, Ptr texture, Ptr srcrect, f32 lw, f32 rw, f32 th, f32 bh, f32 scale, Ptr dstrect)
-    bool SDL_RenderTextureTiled(Ptr renderer, Ptr texture, Ptr srcrect, f32 scale, Ptr dstrect)
-    Ptr  SDL_RenderReadPixels(Ptr renderer, Ptr rect)
-    bool SDL_SetRenderColorScale(Ptr renderer, f32 scale)
+    bool SDL_SetRenderTarget(Ptr[u8] renderer, Ptr[u8] texture)
+    bool SDL_SetTextureAlphaMod(Ptr[u8] texture, u8 alpha)
+    bool SDL_SetTextureColorMod(Ptr[u8] texture, u8 r, u8 g, u8 b)
+    bool SDL_FlushRenderer(Ptr[u8] renderer)
+    bool SDL_RenderTexture9Grid(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] srcrect, f32 lw, f32 rw, f32 th, f32 bh, f32 scale, Ptr[u8] dstrect)
+    bool SDL_RenderTextureTiled(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] srcrect, f32 scale, Ptr[u8] dstrect)
+    Ptr[u8]  SDL_RenderReadPixels(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_SetRenderColorScale(Ptr[u8] renderer, f32 scale)
 
-    Ptr  SDL_CreateTexture(Ptr renderer, i32 format, i32 access, i32 w, i32 h)
-    bool SDL_UpdateTexture(Ptr texture, Ptr rect, Ptr pixels, i32 pitch)
-    bool SDL_LockTexture(Ptr texture, Ptr rect, Ptr pixels, Ptr pitch)
-    void SDL_UnlockTexture(Ptr texture)
+    Ptr[u8]  SDL_CreateTexture(Ptr[u8] renderer, i32 format, i32 access, i32 w, i32 h)
+    bool SDL_UpdateTexture(Ptr[u8] texture, Ptr[u8] rect, Ptr[u8] pixels, i32 pitch)
+    bool SDL_LockTexture(Ptr[u8] texture, Ptr[u8] rect, Ptr[u8] pixels, Ptr[i32] pitch)
+    void SDL_UnlockTexture(Ptr[u8] texture)
 
-    u32  SDL_GetMouseState(Ptr x, Ptr y)
-    u32  SDL_GetGlobalMouseState(Ptr x, Ptr y)
+    u32  SDL_GetMouseState(Ptr[f32] x, Ptr[f32] y)
+    u32  SDL_GetGlobalMouseState(Ptr[f32] x, Ptr[f32] y)
     bool SDL_ShowCursor()
     bool SDL_HideCursor()
     bool SDL_CursorVisible()
-    bool SDL_SetTextInputArea(Ptr window, Ptr rect, i32 cursor)
-    bool SDL_WarpMouseInWindow(Ptr window, f32 x, f32 y)
+    bool SDL_SetTextInputArea(Ptr[u8] window, Ptr[u8] rect, i32 cursor)
+    bool SDL_WarpMouseInWindow(Ptr[u8] window, f32 x, f32 y)
 
-    Ptr  SDL_CreateSystemCursor(i32 kind)
-    bool SDL_SetCursor(Ptr cursor)
-    void SDL_DestroyCursor(Ptr cursor)
+    Ptr[u8]  SDL_CreateSystemCursor(i32 kind)
+    bool SDL_SetCursor(Ptr[u8] cursor)
+    void SDL_DestroyCursor(Ptr[u8] cursor)
 
-    bool SDL_ShowSimpleMessageBox(u32 flags, str8 title, str8 message, Ptr window)
-    bool SDL_SetWindowMouseGrab(Ptr window, bool grabbed)
-    bool SDL_GetWindowMouseGrab(Ptr window)
-    bool SDL_SetWindowRelativeMouseMode(Ptr window, bool enabled)
-    bool SDL_GetWindowRelativeMouseMode(Ptr window)
+    bool SDL_ShowSimpleMessageBox(u32 flags, str8 title, str8 message, Ptr[u8] window)
+    bool SDL_SetWindowMouseGrab(Ptr[u8] window, bool grabbed)
+    bool SDL_GetWindowMouseGrab(Ptr[u8] window)
+    bool SDL_SetWindowRelativeMouseMode(Ptr[u8] window, bool enabled)
+    bool SDL_GetWindowRelativeMouseMode(Ptr[u8] window)
 
-    bool SDL_SetWindowTitle(Ptr window, str8 title)
-    bool SDL_SetWindowSize(Ptr window, i32 w, i32 h)
-    bool SDL_SetWindowPosition(Ptr window, i32 x, i32 y)
-    bool SDL_SetWindowAlwaysOnTop(Ptr window, bool on_top)
-    bool SDL_SetWindowFullscreen(Ptr window, bool fullscreen)
-    bool SDL_RaiseWindow(Ptr window)
-    bool SDL_ShowWindow(Ptr window)
-    bool SDL_HideWindow(Ptr window)
-    bool SDL_MaximizeWindow(Ptr window)
-    bool SDL_MinimizeWindow(Ptr window)
-    bool SDL_RestoreWindow(Ptr window)
-    bool SDL_SetWindowOpacity(Ptr window, f32 opacity)
-    bool SDL_SetWindowIcon(Ptr window, Ptr icon)
-    bool SDL_SetWindowMinimumSize(Ptr window, i32 min_w, i32 min_h)
-    bool SDL_GetWindowSizeInPixels(Ptr window, Ptr w, Ptr h)
+    bool SDL_SetWindowTitle(Ptr[u8] window, str8 title)
+    bool SDL_SetWindowSize(Ptr[u8] window, i32 w, i32 h)
+    bool SDL_SetWindowPosition(Ptr[u8] window, i32 x, i32 y)
+    bool SDL_SetWindowAlwaysOnTop(Ptr[u8] window, bool on_top)
+    bool SDL_SetWindowFullscreen(Ptr[u8] window, bool fullscreen)
+    bool SDL_RaiseWindow(Ptr[u8] window)
+    bool SDL_ShowWindow(Ptr[u8] window)
+    bool SDL_HideWindow(Ptr[u8] window)
+    bool SDL_MaximizeWindow(Ptr[u8] window)
+    bool SDL_MinimizeWindow(Ptr[u8] window)
+    bool SDL_RestoreWindow(Ptr[u8] window)
+    bool SDL_SetWindowOpacity(Ptr[u8] window, f32 opacity)
+    bool SDL_SetWindowIcon(Ptr[u8] window, Ptr[u8] icon)
+    bool SDL_SetWindowMinimumSize(Ptr[u8] window, i32 min_w, i32 min_h)
+    bool SDL_GetWindowSizeInPixels(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
 
     str8 SDL_GetClipboardText()
     bool SDL_SetClipboardText(str8 text)
@@ -260,7 +260,7 @@ clib sdl3 {
     u64  SDL_GetPerformanceCounter()
     u64  SDL_GetPerformanceFrequency()
     u64  SDL_GetTicksNS()
-    bool SDL_FlashWindow(Ptr window, i32 operation)
+    bool SDL_FlashWindow(Ptr[u8] window, i32 operation)
 }
 
 // ==================== 枚举常量 ====================
@@ -416,10 +416,10 @@ export func getError(): string {
 export func delay(int ms) { lib().SDL_Delay(ms) }
 export func getTicks(): int { return lib().SDL_GetTicks() as int }//这里为啥要转int因为SDL_GetTicks返回的是u64，是C语音的，这里需要转成int，因为leno的int是64位的，所以需要转换一下
 
-export func startTextInput(Ptr window): bool  { return lib().SDL_StartTextInput(window) }
-export func stopTextInput(Ptr window): bool   { return lib().SDL_StopTextInput(window) }
-export func textInputActive(Ptr window): bool { return lib().SDL_TextInputActive(window) }
-export func setTextInputArea(Ptr window, Ptr rect, int cursor): bool {
+export func startTextInput(Ptr[u8] window): bool  { return lib().SDL_StartTextInput(window) }
+export func stopTextInput(Ptr[u8] window): bool   { return lib().SDL_StopTextInput(window) }
+export func textInputActive(Ptr[u8] window): bool { return lib().SDL_TextInputActive(window) }
+export func setTextInputArea(Ptr[u8] window, Ptr[u8] rect, int cursor): bool {
     return lib().SDL_SetTextInputArea(window, rect, cursor)
 }
 
@@ -444,22 +444,22 @@ export func _bug_globalMouseAsInt(): int {
     int x = pt.x; pt.free()
     return x  // float 位模式被解释为 int → 垃圾值
 }
-export func getWindowX(Ptr window): int {
+export func getWindowX(Ptr[u8] window): int {
     var pt = SDL_Point.malloc()
     lib().SDL_GetWindowPosition(window, &pt.x, &pt.y)
     int x = pt.x; pt.free(); return x
 }
-export func getWindowY(Ptr window): int {
+export func getWindowY(Ptr[u8] window): int {
     var pt = SDL_Point.malloc()
     lib().SDL_GetWindowPosition(window, &pt.x, &pt.y)
     int y = pt.y; pt.free(); return y
 }
-export func getWindowW(Ptr window): int {
+export func getWindowW(Ptr[u8] window): int {
     var pt = SDL_Point.malloc()
     lib().SDL_GetWindowSize(window, &pt.x, &pt.y)
     int w = pt.x; pt.free(); return w
 }
-export func getWindowH(Ptr window): int {
+export func getWindowH(Ptr[u8] window): int {
     var pt = SDL_Point.malloc()
     lib().SDL_GetWindowSize(window, &pt.x, &pt.y)
     int h = pt.y; pt.free(); return h
@@ -467,23 +467,23 @@ export func getWindowH(Ptr window): int {
 export func showCursor(): bool    { return lib().SDL_ShowCursor() }
 export func hideCursor(): bool    { return lib().SDL_HideCursor() }
 export func cursorVisible(): bool { return lib().SDL_CursorVisible() }
-export func warpMouse(Ptr window, float x, float y): bool { return lib().SDL_WarpMouseInWindow(window, x, y) }
+export func warpMouse(Ptr[u8] window, float x, float y): bool { return lib().SDL_WarpMouseInWindow(window, x, y) }
 
 // 系统光标缓存：每种 kind 只创建一次并复用，避免每次 mouse motion 都
 // SDL_CreateSystemCursor 新建+SDL_SetCursor，导致 Windows 下指针闪烁与内存泄漏
 Array[int] _curKinds = []
-Array[Ptr]  _curPtrs  = []
+Array[Ptr[u8]]  _curPtrs  = []
 
 // 设置系统光标（传入 SYSTEM_CURSOR_* 常量），返回当前光标指针
 // 注意：返回的光标由缓存持有，调用方不要 destroy（会被复用）
-export func setSystemCursor(int kind): Ptr {
+export func setSystemCursor(int kind): Ptr[u8] {
     sdl3 l = lib()
     int idx = kind
     if idx < 0 { idx = 0 }
     if _curKinds.len() <= idx {
         while _curKinds.len() <= idx { _curKinds.add(0); _curPtrs.add(null) }
     }
-    Ptr cur = _curPtrs[idx]
+    Ptr[u8] cur = _curPtrs[idx]
     if cur != null { l.SDL_SetCursor(cur); return cur }
     cur = l.SDL_CreateSystemCursor(kind)
     l.SDL_SetCursor(cur)

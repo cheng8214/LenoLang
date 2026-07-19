@@ -78,8 +78,8 @@ export func tipRender(Renderer r, float vw, float vh) {
 
     float padX = 10.0; float padY = 7.0
     var ms = _font.measureString(_tipText)
-    float tw = _float(ms.w)
-    float th = _float(ms.h)
+    float tw = ms.w
+    float th = ms.h
     float bw = tw + padX * 2.0
     float bh = th + padY * 2.0
 

@@ -1,4 +1,4 @@
-﻿// sdl_treeview.leno — 树视图控件（层级节点、展开/折叠、单选/多选、可选复选框、右键节点菜单）
+// sdl_treeview.leno — 树视图控件（层级节点、展开/折叠、单选/多选、可选复选框、右键节点菜单）
 // 通过 win.addTreeView({...}) 创建。
 //   items: Array[Dict]，每个节点 {text, children:[...], expanded, checked, checkable,
 //                                has_children(懒加载标记), data, id(可选)}
@@ -187,7 +187,7 @@ export struct TreeView impl Widget {
         }
     }
 
-    func _total_h(): float { return _float(_flatIds.len()) * _rowH }
+    func _total_h(): float { return _flatIds.len() * _rowH }
     func _max_scroll(): float {
         float m = _total_h() - h
         if m < 0.0 { m = 0.0 }
@@ -247,16 +247,16 @@ export struct TreeView impl Widget {
     }
     func _in_toggle(int idx, float mx, float my): bool {
         int depth = _flatDepth[idx]
-        float cx = x + _padX + _float(depth) * _indent
-        float rowY = y - _scroll + _float(idx) * _rowH
+        float cx = x + _padX + depth * _indent
+        float rowY = y - _scroll + idx * _rowH
         return mx >= cx and mx <= cx + 16.0 and my >= rowY and my <= rowY + _rowH
     }
     func _in_check(int idx, float mx, float my): bool {
         if not _showCheck { return false }
         if not _flatCheck[idx] { return false }
         int depth = _flatDepth[idx]
-        float cx = x + _padX + _float(depth) * _indent
-        float rowY = y - _scroll + _float(idx) * _rowH
+        float cx = x + _padX + depth * _indent
+        float rowY = y - _scroll + idx * _rowH
         float bx = cx + 18.0
         float by = rowY + (_rowH - 14.0) / 2.0
         return mx >= bx and mx <= bx + 14.0 and my >= by and my <= by + 14.0
@@ -454,7 +454,7 @@ export struct TreeView impl Widget {
     func _ensure_visible(int id) {
         for _flatIds.len() to i {
             if _flatIds[i] == id {
-                float iy = _float(i) * _rowH
+                float iy = i * _rowH
                 if iy < _scroll { _scroll = iy }
                 else if iy + _rowH > _scroll + h { _scroll = iy + _rowH - h }
                 _clamp_scroll(); return
@@ -654,7 +654,7 @@ export struct TreeView impl Widget {
         float checkOff = if _showCheck then 18.0 else 0.0
         for _flatIds.len() to i {
             int id = _flatIds[i]
-            float rowY = r.snapY(y - _scroll + _float(i) * _rowH)
+            float rowY = r.snapY(y - _scroll + i * _rowH)
             if rowY + _rowH < y or rowY > y + h { continue }
 
             bool seld = _is_selected(id)
@@ -672,13 +672,13 @@ export struct TreeView impl Widget {
                     int k = kk
                     bool within = (i + 1 < _flatIds.len()) and (nx >= k)
                     float seg = if within then _rowH else (_rowH / 2.0)
-                    float lx = r.snapX(x + _padX + _float(k) * _indent + 8.0)
+                    float lx = r.snapX(x + _padX + k * _indent + 8.0)
                     int la = if enabled then 255 else 120
                     r.setColor(_lineR, _lineG, _lineB, la)
                     r.drawLine(lx, r.snapY(rowY), lx, r.snapY(rowY + seg))
                 }
-                float lx0 = r.snapX(x + _padX + _float(depth - 1) * _indent + 8.0)
-                float lx1 = r.snapX(x + _padX + _float(depth) * _indent + 8.0)
+                float lx0 = r.snapX(x + _padX + (depth - 1) * _indent + 8.0)
+                float lx1 = r.snapX(x + _padX + depth * _indent + 8.0)
                 float ly = r.snapY(rowY + _rowH / 2.0)
                 int la2 = if enabled then 255 else 120
                 r.setColor(_lineR, _lineG, _lineB, la2)
@@ -686,7 +686,7 @@ export struct TreeView impl Widget {
             }
 
             if _flatHas[i] {
-                float tcx = x + _padX + _float(depth) * _indent + 8.0
+                float tcx = x + _padX + depth * _indent + 8.0
                 float tcy = rowY + _rowH / 2.0
                 int ar = _arrR; int ag = _arrG; int ab = _arrB
                 if not enabled { ar = ar / 2; ag = ag / 2; ab = ab / 2 }
@@ -694,7 +694,7 @@ export struct TreeView impl Widget {
                 r.drawTriangle(tcx, tcy, 5.0, if _flatExpanded[i] then 180.0 else 90.0, ar, ag, ab, 255)
             }
             if _showCheck and _flatCheck[i] {
-                float cx = x + _padX + _float(depth) * _indent
+                float cx = x + _padX + depth * _indent
                 float bx = cx + 18.0
                 float by = rowY + (_rowH - 14.0) / 2.0
                 if _flatOn[i] {
@@ -715,8 +715,8 @@ export struct TreeView impl Widget {
                 }
             }
             if _font != null and _font.ok {
-                float tx = x + _padX + _float(depth) * _indent + 16.0 + checkOff + 4.0
-                float th = _float(_font.measureString("Ag").h)
+                float tx = x + _padX + depth * _indent + 16.0 + checkOff + 4.0
+                float th = _font.measureString("Ag").h
                 int tcR = tr; int tcG = tg; int tcB = tb
                 if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
                 float ty = r.snapY(rowY + (_rowH - th) / 2.0)

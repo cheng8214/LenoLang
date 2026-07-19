@@ -61,9 +61,11 @@ typedef struct {
 typedef struct {
     char* name;                 // 函数名
     TypeKind return_type;       // 返回类型
+    TypeKind return_element_type; // Ptr[T] 中的 T，TYPE_PTR 表示无
     char* return_struct_name;   // 返回 struct 名（为 NULL 则为空字符串兼容）
     int param_count;            // 参数数量
     TypeKind* param_types;      // 参数类型数组
+    TypeKind* param_element_types; // 参数 Ptr[T] 中的 T 数组，TYPE_PTR 表示无
     char** param_struct_names;  // 参数 struct 名数组（可为 NULL）
 } ModuleClibFuncSymbol;
 

@@ -1,4 +1,4 @@
-﻿// sdl_window.leno — SDL3 窗口封装
+// sdl_window.leno — SDL3 窗口封装
 //
 // 提供两种使用模式：
 // 1. run() 回调模式（推荐）：
@@ -70,7 +70,7 @@ export alias RenderCallback = func(Renderer)
 
 // 多窗口回调缓存
 Array[int]             _runWids   = []
-Array[Ptr]             _runHnds   = []
+Array[Ptr[u8]]            _runHnds   = []
 Array[Renderer]        _runRens   = []
 Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
@@ -88,7 +88,7 @@ export func setModalWid(int w) { _modalWid = w }
 export func getModalWid(): int { return _modalWid }
 
 // 仅为注册（不启动循环），给 Dialog 等外部 struct 用
-export func registerRun(Ptr hdl, int wid, Renderer ren, var onEvent, var onRender) {
+export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, var onEvent, var onRender) {
     _runWids.add(wid)
     _runHnds.add(hdl)
     _runRens.add(ren)
@@ -123,8 +123,8 @@ export struct Window {
         _aaScale = 0.0
         var aaOpt = opts.get("aa", 0.0)
         if aaOpt is bool { if aaOpt { _aaScale = 2.0 } }
-        else { float a = _float(aaOpt); if a > 0.0 { _aaScale = a } }
-        handle = _lib.SDL_CreateWindow(title, w, h, flags) as Ptr
+        else { float a = aaOpt; if a > 0.0 { _aaScale = a } }
+        handle = _lib.SDL_CreateWindow(title, w, h, flags) as Ptr[u8]
         ok = handle != null
         if ok { _windowCount = _windowCount + 1 }
         return ok
@@ -135,7 +135,7 @@ export struct Window {
         return _lib.SDL_GetWindowID(handle) as int
     }
 
-    func getHandle(): Ptr { return handle }
+    func getHandle(): Ptr[u8] { return handle }
 
     // 设置窗口标题
     func setTitle(string title): bool {
@@ -275,7 +275,7 @@ export struct Window {
     func setRoot(Widget root) {
         _root = root
         root.set_pos(0, 0)
-        root.set_size(_float(_w), _float(_h))
+        root.set_size(_w, _h)
     }
 
     // 添加复选框，opts: {text, x, y, box, checked, on_change}
@@ -582,7 +582,7 @@ export struct Window {
                             _runRens[k].resizeSSAA(pt.x, pt.y)
                             // 驱动根布局控件跟随窗口大小
                             var rootWid = _runRoots[k]
-                            if rootWid != null { rootWid.set_size(_float(pt.x), _float(pt.y)) }
+                            if rootWid != null { rootWid.set_size(pt.x, pt.y) }
                             pt.free()
                             break
                         }
@@ -624,7 +624,7 @@ export struct Window {
                     menu.renderContextMenus(_runRens[i], _runHnds[i])
                     // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
                     tip.tipTick()
-                    tip.tipRender(_runRens[i], _float(_runW[i]), _float(_runH[i]))
+                    tip.tipRender(_runRens[i], _runW[i], _runH[i])
                     _runRens[i].present()
                 }
                 }              // 闭合节流 if

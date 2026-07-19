@@ -254,9 +254,18 @@
                                                     ast->cached_type = type_new(leno_rk);
                                                 } else {
                                                     switch (rk) {
-                                                        case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                                        case TYPE_PTR:
                                                             ast->cached_type = type_new(TYPE_PTR);
                                                             ast->cached_type->struct_name = strdup("Ptr"); break;
+                                                        case TYPE_PTR_GENERIC:
+                                                            // 保留元素类型信息，使类型安全检查生效
+                                                            if (ret_type->element_type) {
+                                                                ast->cached_type = type_ptr_generic(type_copy(ret_type->element_type));
+                                                            } else {
+                                                                ast->cached_type = type_new(TYPE_PTR);
+                                                                ast->cached_type->struct_name = strdup("Ptr");
+                                                            }
+                                                            break;
                                                         case TYPE_BOOL:
                                                             ast->cached_type = type_new(TYPE_BOOL); break;
                                                         case TYPE_NULL:
@@ -794,9 +803,18 @@
                                         ast->cached_type = type_new(leno_rk);
                                     } else {
                                         switch (rk) {
-                                            case TYPE_PTR: case TYPE_PTR_GENERIC:
+                                            case TYPE_PTR:
                                                 ast->cached_type = type_new(TYPE_PTR);
                                                 ast->cached_type->struct_name = strdup("Ptr");
+                                                break;
+                                            case TYPE_PTR_GENERIC:
+                                                // 保留元素类型信息，使类型安全检查生效
+                                                if (ret_type->element_type) {
+                                                    ast->cached_type = type_ptr_generic(type_copy(ret_type->element_type));
+                                                } else {
+                                                    ast->cached_type = type_new(TYPE_PTR);
+                                                    ast->cached_type->struct_name = strdup("Ptr");
+                                                }
                                                 break;
                                             case TYPE_BOOL:
                                                 ast->cached_type = type_new(TYPE_BOOL);

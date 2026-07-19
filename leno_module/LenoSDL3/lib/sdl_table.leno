@@ -1,4 +1,4 @@
-﻿// sdl_table.leno — 表格控件（多列多行，可选表头/排序/选择/双向滚动）
+// sdl_table.leno — 表格控件（多列多行，可选表头/排序/选择/双向滚动）
 // 通过 win.addTable({...}) 创建；数据用 set_rows / add_row 设置。
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -33,7 +33,7 @@ export struct Table impl Widget {
     int _cursor = SystemCursor.POINTER
     bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""
-    Ptr _clipBase = null            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
+    Ptr[u8] _clipBase = null            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
     bool _draggingV = false; bool _draggingH = false; float _vDragOffset = 0.0; float _hDragOffset = 0.0
     int _dragCol = -1; float _dragStartX = 0.0; float _dragStartW = 0.0; bool _resizable = true
     func(int):void _onSelect
@@ -223,7 +223,7 @@ export struct Table impl Widget {
         if n <= 0 { n = 1 }
         if _autoCols or _colW.len() != n {
             _colW = []
-            float cw = w / _float(n)
+            float cw = w / n
             if cw < 30.0 { cw = 30.0 }
             for n to _ { _colW.add(cw) }
         }
@@ -401,7 +401,7 @@ export struct Table impl Widget {
         if col < 0 or col >= _ncols { return }
         _editRow = row; _editCol = col
         float cx = _col_x(col)
-        float ry = y + _headerH - _scrollY + _float(row) * _rowH
+        float ry = y + _headerH - _scrollY + row * _rowH
         _edit.set_pos(cx, ry)
         _edit.set_size(_colW[col], _rowH)
         _edit.set_font_size(_fontSize)
@@ -633,16 +633,16 @@ export struct Table impl Widget {
     func _fit_cell_text(string t, float availW): string {
         if _font == null or not _font.ok { return t }
         if availW <= 0.0 { return "" }
-        float fullW = _float(_font.measureString(t).w)
+        float fullW = _font.measureString(t).w
         if fullW <= availW { return t }
-        float eW = _float(_font.measureString("\u2026").w)   // "…"
+        float eW = _font.measureString("\u2026").w   // "…"
         float limit = availW - eW
         if limit < 0.0 { return "\u2026" }
         int n = t.len()
         int lo = 0; int hi = n
         while lo < hi {
             int mid = (lo + hi + 1) / 2
-            float mw = _float(_font.measureString(t.slice(0, mid)).w)
+            float mw = _font.measureString(t.slice(0, mid)).w
             if mw <= limit { lo = mid } else { hi = mid - 1 }
         }
         return t.slice(0, lo) + "\u2026"
@@ -651,13 +651,13 @@ export struct Table impl Widget {
     func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B) {
         if _font == null or not _font.ok { return }
         if t == "" { return }
-        float th = _float(_font.measureString("Ag").h)
+        float th = _font.measureString("Ag").h
         float ty = ry + (rh - th) / 2.0
         float pad = 8.0
         float availW = cw - 2.0 * pad
         string dt = _fit_cell_text(t, availW)
         if dt == "" { return }
-        float tw = _float(_font.measureString(dt).w)
+        float tw = _font.measureString(dt).w
         float tx
         if align == 2 { tx = cx + cw - pad - tw }
         else if align == 1 { tx = cx + (cw - tw) / 2.0 }
@@ -744,7 +744,7 @@ export struct Table impl Widget {
         int endRow = startRow + _int(bodyH / _rowH) + 2
         if endRow > _rows.len() - 1 { endRow = _rows.len() - 1 }
         for startRow : endRow to ri {
-            float ry = bodyTop - _scrollY + _float(ri) * _rowH
+            float ry = bodyTop - _scrollY + ri * _rowH
             if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
             int rr = bgr; int rg = bgg; int rb = bgb
             if _is_sel(ri) { rr = _selR; rg = _selG; rb = _selB }

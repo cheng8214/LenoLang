@@ -41,12 +41,12 @@ export struct ComboBox impl Widget {
     }
 
     func _ph(): float {
-        float ph = _float(items.len()) * _itemH
+        float ph = items.len() * _itemH
         if ph > _popupMax { ph = _popupMax }
         return ph
     }
     func _max_scroll(): float {
-        float m = _float(items.len()) * _itemH - _ph()
+        float m = items.len() * _itemH - _ph()
         if m < 0.0 { m = 0.0 }
         return m
     }
@@ -159,7 +159,7 @@ export struct ComboBox impl Widget {
         float ty0 = py + 2.0
         float ty1 = py + ph - 2.0
         float trk = ty1 - ty0
-        float thH = _clamp(ph * ph / (_float(items.len()) * _itemH), 20.0, ph - 4.0)
+        float thH = _clamp(ph * ph / (items.len() * _itemH), 20.0, ph - 4.0)
         float thy = ty0 + (_scroll / maxs) * (trk - thH)
         return [sx, sw, ty0, ty1, thH, thy, maxs, px, py, ph]
     }
@@ -240,7 +240,7 @@ export struct ComboBox impl Widget {
                     _open = true
                     _scroll = 0.0
                     if _sel >= 0 {
-                        float iy = _float(_sel) * _itemH
+                        float iy = _sel * _itemH
                         if iy + _itemH > _ph() { _scroll = iy + _itemH - _ph() }
                         _clamp_scroll()
                     }
@@ -275,7 +275,7 @@ export struct ComboBox impl Widget {
         if _font != null and _font.ok {
             string t = ""
             if _sel >= 0 and _sel < items.len() { t = items[_sel] } else { t = _placeholder }
-            float th = _float(_font.measureString("Ag").h)
+            float th = _font.measureString("Ag").h
             int tcR = tr; int tcG = tg; int tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             float ty = r.snapY(y + (h - th) / 2.0)
@@ -312,7 +312,7 @@ export struct ComboBox impl Widget {
         r.setClipRect(clip.to_ptr())
 
         for items.len() to i {
-            float iy = r.snapY(py - _scroll + _float(i) * _itemH)
+            float iy = r.snapY(py - _scroll + i * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }
             int rr = bgr; int gg = bgg; int bb2 = bgb
             if i == _sel { rr = _selR; gg = _selG; bb2 = _selB }
@@ -321,7 +321,7 @@ export struct ComboBox impl Widget {
             r.fillRect(px, iy, pw, _itemH)
 
             if _font != null and _font.ok {
-                float th = _float(_font.measureString("Ag").h)
+                float th = _font.measureString("Ag").h
                 int tcR = tr; int tcG = tg; int tcB = tb
                 float ty = r.snapY(iy + (_itemH - th) / 2.0)
                 r.drawText(_font, items[i], r.snapX(px + 8.0), ty, tcR, tcG, tcB)
@@ -341,7 +341,7 @@ export struct ComboBox impl Widget {
             r.setColor(_sbR, _sbG, _sbB, 180)
             r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
             float ratio = _scroll / maxs
-            float thH = _clamp(ph * ph / (_float(items.len()) * _itemH), 20.0, ph - 4.0)
+            float thH = _clamp(ph * ph / (items.len() * _itemH), 20.0, ph - 4.0)
             float thy = py + 2.0 + ratio * (ph - 4.0 - thH)
             r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
             r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)

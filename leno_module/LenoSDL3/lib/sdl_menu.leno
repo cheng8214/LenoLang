@@ -1,4 +1,4 @@
-﻿// sdl_menu.leno — 菜单栏控件（顶部菜单 + 下拉项 + 子菜单 + 右键上下文）
+// sdl_menu.leno — 菜单栏控件（顶部菜单 + 下拉项 + 子菜单 + 右键上下文）
 // 通过 win.addMenuBar({...}) 创建，点击顶部标题展开下拉，悬停含子菜单的项弹出二级，
 // 点击叶子项触发回调；点击空白处 / 切换标题 / Esc 关闭。下拉层走第二遍 renderPopup，
 // 复用 sdl_core 的弹层捕获区机制（setPopupCapture），与 ComboBox 同一范式。
@@ -68,8 +68,8 @@ func _colW(Array[MenuItem] items, Font f, float itemH): float {
         var it = items[i]
         if it.separator { continue }
         float w = 60.0
-        if f != null and f.ok { w = _float(f.measureString(it.label).w) }
-        if it.shortcut != "" and f != null and f.ok { w = w + 16.0 + _float(f.measureString(it.shortcut).w) }
+        if f != null and f.ok { w = f.measureString(it.label).w }
+        if it.shortcut != "" and f != null and f.ok { w = w + 16.0 + f.measureString(it.shortcut).w }
         if w > mw { mw = w }
     }
     return mw + 20.0
@@ -371,7 +371,7 @@ export struct MenuBar impl Widget {
                 continue
             }
             float tw = 60.0
-            if _font != null and _font.ok { tw = _float(_font.measureString(_titles[i]).w) + 28.0 }
+            if _font != null and _font.ok { tw = _font.measureString(_titles[i]).w + 28.0 }
             if tw < 40.0 { tw = 40.0 }
             out.add([tx, y, tw, h])
             tx = tx + tw
@@ -380,8 +380,8 @@ export struct MenuBar impl Widget {
     }
     // 按所属窗口边界夹紧面板矩形（右/下越界则平移进窗口内）
     func _clampRect(float px, float py, float pw, float ph): Array[float] {
-        if _winW > 0 and px + pw > _float(_winW) { px = _float(_winW) - pw }
-        if _winH > 0 and py + ph > _float(_winH) { py = _float(_winH) - ph }
+        if _winW > 0 and px + pw > _winW { px = _winW - pw }
+        if _winH > 0 and py + ph > _winH { py = _winH - ph }
         if px < 0.0 { px = 0.0 }
         if py < 0.0 { py = 0.0 }
         return [px, py, pw, ph]
@@ -419,8 +419,8 @@ export struct MenuBar impl Widget {
         float fx = g[0] + g[2] - 2.0
         float fy = iy
         // 水平超界则翻转到父菜单左侧弹出；垂直超界则上移夹紧
-        if _winW > 0 and fx + fw > _float(_winW) { fx = g[0] - fw + 2.0 }
-        if _winH > 0 and fy + fh > _float(_winH) { fy = _float(_winH) - fh }
+        if _winW > 0 and fx + fw > _winW { fx = g[0] - fw + 2.0 }
+        if _winH > 0 and fy + fh > _winH { fy = _winH - fh }
         if fx < 0.0 { fx = 0.0 }
         if fy < 0.0 { fy = 0.0 }
         return [fx, fy, fw, fh]
@@ -549,8 +549,8 @@ export struct MenuBar impl Widget {
             bool hov = (_hoverTop == i) or active
             if hov { r.setColor(_barHovR, _barHovG, _barHovB, 255); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
             if _font != null and _font.ok and _titles[i] != "" {
-                float th = _float(_font.measureString("Ag").h)
-                float tw = _float(_font.measureString(_titles[i]).w)
+                float th = _font.measureString("Ag").h
+                float tw = _font.measureString(_titles[i]).w
                 float ty = rr[1] + (if th > rr[3] then 0.0 else (rr[3] - th) / 2.0)
                 // 水平对齐：left 缩进 / right 靠右 / center 居中（横栏竖栏共用）
                 float tx
@@ -616,11 +616,11 @@ export struct MenuBar impl Widget {
             int lr = _txtR; int lg = _txtG; int lb2 = _txtB
             if not it.enabled { lr = _disR; lg = _disG; lb2 = _disB }
             if _font != null and _font.ok {
-                float th = _float(_font.measureString("Ag").h)
+                float th = _font.measureString("Ag").h
                 float ty = ry + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
                 r.drawText(_font, it.label, r.snapX(px + 12.0), r.snapY(ty), lr, lg, lb2)
                 if it.shortcut != "" {
-                    float sw = _float(_font.measureString(it.shortcut).w)
+                    float sw = _font.measureString(it.shortcut).w
                     r.drawText(_font, it.shortcut, r.snapX(px + pw - 12.0 - sw), r.snapY(ty), lr, lg, lb2)
                 }
                 if it.submenu.len() > 0 {
