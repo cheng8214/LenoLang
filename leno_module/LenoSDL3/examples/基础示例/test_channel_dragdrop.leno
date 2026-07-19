@@ -1,0 +1,175 @@
+// test_channel_dragdrop.leno — Channel 跨窗口拖放/实时同步探索性测试
+// 使用 registerOnly() + run() 解决多窗口同时注册 + Button 控件发送颜色。
+//
+// 架构：
+//   - W1（数据源窗口）：8 个彩色按钮，点击通过 Channel 发送颜色到 W2
+//   - W2（接收端窗口）：每帧 try_receive 消费 Channel，改变背景色
+//   - 子线程：自动生产者，每 100ms 发送随机颜色
+//
+// 运行：leno "leno_module/LenoSDL3/examples/基础示例/test_channel_dragdrop.leno"
+
+import "../../lib/SDL3.leno" as SDL3
+import "../../lib/sdl_core.leno" as core
+import threads
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Button
+use SDL3.Scancode
+
+// ===== 颜色编码 =====
+func encodeColor(int r, int g, int b): int { return (r * 65536) + (g * 256) + b }
+func decodeR(var v): int { var iv = _int(v); return (iv / 65536) % 256 }
+func decodeG(var v): int { var iv = _int(v); return (iv / 256) % 256 }
+func decodeB(var v): int { var iv = _int(v); return iv % 256 }
+
+// ===== 文本色: 亮背景用深字, 暗背景用白字 =====
+func textColor(int r, int g, int b) {
+    if (r + g + b) > 400 { return [30, 30, 30] }
+    return [255, 255, 255]
+}
+
+// ===== 子线程：自动颜色生产者 =====
+func auto_producer(Channel ch, int total) {
+    print("[THREAD] 自动生产者启动，将发送 " + total + " 条颜色")
+    var sent = 0
+    for total to var i {
+        var r = (i * 37 + 80) % 256
+        var g = (i * 53 + 40) % 200 + 55
+        var b = (i * 71 + 80) % 150 + 50
+        ch.try_send(encodeColor(r, g, b))
+        sent = sent + 1
+        threads.sleep(100)
+    }
+    print("[THREAD] 结束：发送 " + sent + " 条")
+    ch.try_send(-1)
+}
+
+main() {
+    Channel ch = threads.channel(30)
+
+    // ---- 共享状态 ----
+    var w1Sent = 0
+    var w2Recv = 0
+    var w2R = 80; var w2G = 80; var w2B = 160
+    var stopped = false
+    var history = []
+
+    // ---- 预设颜色（按钮背景色） ----
+    var colors = [
+        [255, 80, 80],   [80, 255, 80],   [80, 80, 255],
+        [255, 255, 80],  [255, 80, 255],  [80, 255, 255],
+        [255, 160, 60],  [200, 200, 200]
+    ]
+
+    // ---- 创建窗口 ----
+    var w1 = SDL3.createWindow({title: "数据源 - 点击按钮发送颜色", w: 400, h: 400})
+    if not w1.ok { print("[TEST] FAIL: W1 窗口创建失败"); return }
+    var w2 = SDL3.createWindow({title: "接收端 - 实时同步", w: 400, h: 360})
+    if not w2.ok { print("[TEST] FAIL: W2 窗口创建失败"); return }
+
+    // ---- TTF / Font ----
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    // ---- 子线程 ----
+    var tp = threads.start(auto_producer, ch, 30)
+
+    // ====== 创建 W1 的彩色按钮（互不干扰，自由点击） ======
+    var btnY = 40
+    for colors.len() to i {
+        var c = colors[i]
+        var tc = textColor(c[0], c[1], c[2])
+        Button btn = w1.addButton({
+            text: "发送 [" + c[0] + "," + c[1] + "," + c[2] + "]  -> W2",
+            x: 20, y: btnY + i * 38, w: 350, h: 32,
+            bg_rgb: c,
+            text_rgb: tc,
+            font_size: 14,
+            radius: 6
+        })
+        btn.on_click(func() {
+            var sent = ch.try_send(encodeColor(c[0], c[1], c[2]))
+            if sent {
+                w1Sent = w1Sent + 1
+                print("[W1] 发送 [" + c[0] + "," + c[1] + "," + c[2] + "]  #" + w1Sent)
+            } else { print("[W1] Buffer满，发送失败") }
+        })
+    }
+
+    // ====== W2 只注册不启动循环 ======
+    w2.registerOnly(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            // 消费 Channel
+            while true {
+                var val = ch.try_receive()
+                if val == null { break }
+                if val == -1 {
+                    print("[W2] 收到结束信号")
+                    stopped = true
+                } else {
+                    w2R = decodeR(val); w2G = decodeG(val); w2B = decodeB(val)
+                    w2Recv = w2Recv + 1
+                    history.add(val)
+                    if history.len() > 10 { history.remove(0) }
+                }
+            }
+            // 渲染
+            r.clearColor(w2R, w2G, w2B, 255)
+            r.clear()
+            if font.ok {
+                r.drawText(font, "=== 接收端 (实时同步) ===", 10, 6, 255, 220, 80)
+                r.drawText(font, "已接收: " + w2Recv + " 条 | Buffer: " + ch.len(), 10, 30, 200, 200, 100)
+                r.drawText(font, "当前色: [" + w2R + "," + w2G + "," + w2B + "]", 10, 50, 180, 180, 255)
+                r.drawText(font, "子线程" + (if stopped then "[已结束]" else "[运行中]"), 10, 72, 120, 120, 120)
+                r.drawText(font, "ESC 关闭", 10, 94, 120, 120, 120)
+                // 最近颜色块预览
+                var y = 120
+                var start = 0
+                if history.len() > 8 { start = history.len() - 8 }
+                if history.len() > 0 {
+                    for start : history.len() - 1 to j {
+                        var cv = history[j]
+                        r.setColor(decodeR(cv), decodeG(cv), decodeB(cv), 255)
+                        r.fillRect(10 + (j - start) * 48, y, 44, 44)
+                    }
+                }
+            }
+            core.requestRedraw()
+        }
+    )
+
+    // ====== W1 注册 + 启动主循环（按钮由 Widget 系统自动渲染） ======
+    w1.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(30, 35, 50, 255)
+            r.clear()
+            if font.ok {
+                r.drawText(font, "=== 数据源 (点击按钮发送颜色) ===", 10, 6, 255, 220, 80)
+                r.drawText(font, "已发送: " + w1Sent + " 条 | Buffer: " + ch.len(), 10, 24, 200, 200, 100)
+                r.drawText(font, "自动生产者: " + (if stopped then "[已结束]" else "[运行中]"), 10, 42, 100, 255, 100)
+                // 按钮由 Widget 系统自动渲染，此处只画提示
+                r.drawText(font, "ESC 关闭", 10, 350, 120, 120, 120)
+            }
+        }
+    )
+
+    // ---- 清理 ----
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+    tp.join()
+    print("[TEST] ===== 最终统计 =====")
+    print("[TEST] W1 手动发送: " + w1Sent + " 条")
+    print("[TEST] W2 接收: " + w2Recv + " 条")
+    print("[TEST] 子线程应发 30 条")
+    print("[TEST] DONE")
+}

@@ -81,7 +81,7 @@ Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
 Array[Widget]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置）
 Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
-var _runRunning = false
+var _runLoopActive = false    // 主循环是否已在运行（改为 _runLoopActive 语义更准确）
 var _modalWid = -1
 
 export func setModalWid(int w) { _modalWid = w }
@@ -461,9 +461,8 @@ export struct Window {
         return c
     }
 
-    // 运行主循环（回调模式，支持多窗口）
-    // 第一个 run() 启动循环，后续 run() 只注册回调，全部窗口关闭后退出
-    func run(EventHandler onEvent, RenderCallback onRender) {
+    // 仅注册窗口（不启动主循环），用于多窗口场景：先逐个 registerOnly，最后 run() 启动循环
+    func registerOnly(EventHandler onEvent, RenderCallback onRender) {
         core.startTextInput(handle)      // 启用文本输入（供 Edit 控件使用）
         Renderer ren = renderer.createRenderer(handle)
         if _aaScale > 0.0 { ren.enableSSAA(_w, _h, _aaScale) }
@@ -479,9 +478,15 @@ export struct Window {
         _runRoots.add(_root)         // 根布局控件
         Size sz = getSize()           // 窗口逻辑尺寸（Tooltip 浮层夹紧用）
         _runW.add(sz.w); _runH.add(sz.h)
+    }
 
-        if _runRunning { return }
-        _runRunning = true
+    // 运行主循环（回调模式，支持多窗口）
+    // 单窗口：直接调用 run() 注册并启动循环
+    // 多窗口：各窗口先 registerOnly()，最后一个 run() 启动循环
+    func run(EventHandler onEvent, RenderCallback onRender) {
+        registerOnly(onEvent, onRender)
+        if _runLoopActive { return }
+        _runLoopActive = true
 
         Event ev = event.createEvent()
         bool _needRedraw = true       // 初始绘制一次
