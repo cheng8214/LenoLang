@@ -5,17 +5,17 @@
 //   WinForms    Image + TextImageRelation (ImageBeforeText / TextBeforeImage / ImageAboveText / TextAboveImage)
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.(Event, Renderer, Button, Scancode, Window)
-import "../../../lib/sdl_core.leno" as core
+import "../../../lib/sdl_core.leno" as core; use core.sdl3
 import "../../../lib/sdl_image.leno" as img
 
 // 程序化生成纯色图标（利用 SDL 表面 + SDL_image 保存）
 func makeIcon(string path, int r, int g, int b): bool {
-    Ptr surf = core.createSurface(64, 64, core.PIXELFORMAT_RGBA8888)
+    Ptr[u8] surf = core.lib().SDL_CreateSurface(64, 64, core.PIXELFORMAT_RGBA8888)
     if surf == null { print("[icon] 创建表面失败: " + path); return false }
-    int col = core.mapSurfaceRGBA(surf, r, g, b, 255)
-    core.fillSurfaceRect(surf, null, col)
+    int col = core.lib().SDL_MapSurfaceRGBA(surf, r, g, b, 255)
+    core.lib().SDL_FillSurfaceRect(surf, null, col)
     bool ok = img.savePNG(surf, path)
-    core.destroySurface(surf)
+    core.lib().SDL_DestroySurface(surf)
     print("[icon] " + (if ok then "OK " else "FAIL ") + path)
     return ok
 }

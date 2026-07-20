@@ -398,14 +398,7 @@ export func lib(): sdl3 {
     return g_lib
 }
 
-// ==================== 纹理 / 表面辅助（导出包装，供模块外部调用） ====================
-// 注意：clib 函数只能通过模块级 clib 引用（如 _lib）或本处导出的包装函数调用；
-// 不能对 core.lib() 的返回值直接调用 cfunc（编译器无法解析）。
-export func destroyTexture(Ptr[u8] texture) { lib().SDL_DestroyTexture(texture) }
-export func createSurface(int w, int h, int format): Ptr[u8] { return lib().SDL_CreateSurface(w, h, format) }
-export func destroySurface(Ptr[u8] surface) { lib().SDL_DestroySurface(surface) }
-export func mapSurfaceRGBA(Ptr[u8] surface, int r, int g, int b, int a): int { return lib().SDL_MapSurfaceRGBA(surface, r, g, b, a) }
-export func fillSurfaceRect(Ptr[u8] surface, Ptr[u8] rect, int color): bool { return lib().SDL_FillSurfaceRect(surface, rect, color) }
+
 
 // ==================== 核心函数 ====================
 

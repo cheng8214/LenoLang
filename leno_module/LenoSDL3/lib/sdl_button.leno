@@ -3,7 +3,7 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
-import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_core.leno" as core; use core.(SystemCursor, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_image.leno" as img
@@ -198,7 +198,7 @@ export struct Button impl Widget {
     func set_image_alpha(int a)  { _imgAlpha = a }
     func set_image_tint(int r, int g, int b) { _imgTintR = r; _imgTintG = g; _imgTintB = b }
     func _release_image() {
-        if _imgTex != null { core.destroyTexture(_imgTex); _imgTex = null }
+        if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
     }
 
     // 应用预设类型
@@ -363,7 +363,7 @@ export struct Button impl Widget {
     // 释放字体与图片资源
     func dispose() {
         if _font != null { fnt.releaseFont(_font); _font = null }
-        if _imgTex != null { core.destroyTexture(_imgTex); _imgTex = null }
+        if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
     }
 }
 
