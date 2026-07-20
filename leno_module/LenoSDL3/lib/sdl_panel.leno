@@ -76,8 +76,8 @@ export struct Panel impl Widget {
         r.setColor(br, bg, bb, 255)
         r.fillRoundedRect(x, y, w, h, _radius)
 
+        SDL_Rect cr = SDL_Rect.malloc()
         if _clip {
-            SDL_Rect cr = SDL_Rect.malloc()
             cr.x = _int(x); cr.y = _int(y); cr.w = _int(w); cr.h = _int(h)
             r.setClipRect(cr.to_ptr())
         }
@@ -85,6 +85,7 @@ export struct Panel impl Widget {
         for children to c { c.render(r) }
 
         if _clip { r.clearClip() }
+        cr.free()
 
         if _drawBorder {
             r.setColor(_bdrR, _bdrG, _bdrB, _brdA)
