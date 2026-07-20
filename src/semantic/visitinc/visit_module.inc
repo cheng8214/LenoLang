@@ -409,6 +409,37 @@
                                 sym->kind = SYM_TYPE;
                                 sym->type = type_new(TYPE_CLIB);
                                 sym->type->struct_name = strdup(symbol_name);
+                                // 从源模块符号表复制 clib 函数签名，实现编译期参数检查
+                                ModuleClibSymbol* src_clib = module_symbol_table_find_clib(module_info->sym_table, symbol_name);
+                                if (src_clib && src_clib->func_count > 0) {
+                                    sym->clib_func_count = src_clib->func_count;
+                                    sym->clib_func_names = (char**)malloc(sizeof(char*) * src_clib->func_count);
+                                    sym->clib_func_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * src_clib->func_count);
+                                    sym->clib_func_param_counts = (int*)malloc(sizeof(int) * src_clib->func_count);
+                                    sym->clib_func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * src_clib->func_count);
+                                    for (int ci = 0; ci < src_clib->func_count; ci++) {
+                                        sym->clib_func_names[ci] = strdup(src_clib->funcs[ci].name);
+                                        if (src_clib->funcs[ci].return_type == TYPE_PTR_GENERIC
+                                            && src_clib->funcs[ci].return_element_type != TYPE_PTR) {
+                                            sym->clib_func_return_types[ci] = type_ptr_generic(
+                                                type_new(src_clib->funcs[ci].return_element_type));
+                                        } else {
+                                            sym->clib_func_return_types[ci] = type_new(src_clib->funcs[ci].return_type);
+                                        }
+                                        sym->clib_func_param_counts[ci] = src_clib->funcs[ci].param_count;
+                                        sym->clib_func_param_types[ci] = (TypeInfo**)malloc(sizeof(TypeInfo*) * src_clib->funcs[ci].param_count);
+                                        for (int pi = 0; pi < src_clib->funcs[ci].param_count; pi++) {
+                                            if (src_clib->funcs[ci].param_types[pi] == TYPE_PTR_GENERIC
+                                                && src_clib->funcs[ci].param_element_types
+                                                && src_clib->funcs[ci].param_element_types[pi] != TYPE_PTR) {
+                                                sym->clib_func_param_types[ci][pi] = type_ptr_generic(
+                                                    type_new(src_clib->funcs[ci].param_element_types[pi]));
+                                            } else {
+                                                sym->clib_func_param_types[ci][pi] = type_new(src_clib->funcs[ci].param_types[pi]);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

@@ -1,0 +1,18 @@
+// 模拟 sdl_core.leno —— 定义 clib 并导出 lib() 函数
+import ffi
+
+clib sdl3 {
+    void SDL_Delay(i32 ms)
+    i32  SDL_GetTicks()
+}
+
+sdl3 g_lib = null
+
+export func lib(): sdl3 {
+    return g_lib
+}
+
+export func init(): bool {
+    g_lib = ffi.load("SDL3.dll")
+    return g_lib != null
+}
