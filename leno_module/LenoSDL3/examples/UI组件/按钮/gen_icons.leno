@@ -1,0 +1,87 @@
+// gen_icons.leno — 程序化生成「带形状」的按钮图标（离线，无窗口）
+// 画法完全沿用框架既有 API：Renderer.drawTriangle / fillRect / fillCircle / drawLine
+//   取像素：r.readPixelsAt(...)   存盘：SDL3.saveImagePNG(...)
+//   （与 examples/图像处理/test_crop.leno、examples/图形绘制/test_draw.leno 同款写法）
+import "../../../lib/SDL3.leno" as SDL3
+import maths
+use SDL3.(Renderer, WindowFlag)
+
+// 粗线：在中线两侧各偏移一条 1px 线，模拟线宽 w（避免 1px 太细看不清）
+func thickLine(Renderer r, float x1, float y1, float x2, float y2, float w): bool {
+    var dx = x2 - x1
+    var dy = y2 - y1
+    var len = maths.sqrt(dx * dx + dy * dy)
+    if len < 0.001 { return true }
+    var nx = (0.0 - dy) / len
+    var ny = dx / len
+    var o = w / 2.0
+    r.drawLine(x1 + nx * o, y1 + ny * o, x2 + nx * o, y2 + ny * o)
+    r.drawLine(x1, y1, x2, y2)
+    r.drawLine(x1 - nx * o, y1 - ny * o, x2 - nx * o, y2 - ny * o)
+    return true
+}
+
+// 播放：朝右的实心三角（drawTriangle angle=90 指向右）
+func drawPlay(Renderer r, float ox) {
+    r.drawTriangle(ox + 32.0, 32.0, 16.0, 90.0, 255.0, 255.0, 255.0, 255.0)
+}
+
+// 暂停：两条竖条
+func drawPause(Renderer r, float ox) {
+    r.fillRect(ox + 22.0, 18.0, 8.0, 28.0)
+    r.fillRect(ox + 38.0, 18.0, 8.0, 28.0)
+}
+
+// 对勾：两段粗线
+func drawCheck(Renderer r, float ox) {
+    thickLine(r, ox + 16.0, 33.0, ox + 28.0, 45.0, 6.0)
+    thickLine(r, ox + 28.0, 45.0, ox + 48.0, 20.0, 6.0)
+}
+
+// 右箭头：横杆 + 朝右三角箭头
+func drawArrow(Renderer r, float ox) {
+    r.fillRect(ox + 14.0, 29.0, 22.0, 6.0)
+    r.drawTriangle(ox + 40.0, 32.0, 12.0, 90.0, 255.0, 255.0, 255.0, 255.0)
+}
+
+// 心形：两个圆 + 朝下的三角（drawTriangle angle=180 指向下）
+func drawHeart(Renderer r, float ox) {
+    r.fillCircle(ox + 24.0, 28.0, 11.0)
+    r.fillCircle(ox + 40.0, 28.0, 11.0)
+    r.drawTriangle(ox + 32.0, 44.0, 18.0, 180.0, 255.0, 255.0, 255.0, 255.0)
+}
+
+// 加号：竖条 + 横条
+func drawPlus(Renderer r, float ox) {
+    r.fillRect(ox + 28.0, 18.0, 8.0, 28.0)
+    r.fillRect(ox + 18.0, 28.0, 28.0, 8.0)
+}
+
+main() {
+    // 6 个图标横向排布在 384x64 画布上，每个 64x64
+    var win = SDL3.createWindow({title: "icon-gen", w: 384, h: 64, flags: WindowFlag.HIDDEN})
+    if not win.ok { print("[gen] createWindow 失败: " + SDL3.getError()); return }
+
+    var r = SDL3.createRenderer(win.getHandle())
+    r.clearColor(0, 0, 0, 0)                          // 透明背景（按钮着色时会透出按钮底色）
+    r.setColor(255, 255, 255, 255)                    // 白色形状（按钮 image_tint 可染色）
+
+    drawPlay(r, 0.0)
+    drawPause(r, 64.0)
+    drawCheck(r, 128.0)
+    drawArrow(r, 192.0)
+    drawHeart(r, 256.0)
+    drawPlus(r, 320.0)
+
+    // 逐列截取 64x64 并保存；第 0 列（播放三角）同时作为演示用的 D:/1.png
+    var s0 = r.readPixelsAt(0, 0, 64, 64);    SDL3.saveImagePNG(s0, "d:\\1.png")
+    SDL3.saveImagePNG(s0, "d:\\icon_play.png")
+    var s1 = r.readPixelsAt(64, 0, 64, 64);   SDL3.saveImagePNG(s1, "d:\\icon_pause.png")
+    var s2 = r.readPixelsAt(128, 0, 64, 64);  SDL3.saveImagePNG(s2, "d:\\icon_check.png")
+    var s3 = r.readPixelsAt(192, 0, 64, 64);  SDL3.saveImagePNG(s3, "d:\\icon_arrow.png")
+    var s4 = r.readPixelsAt(256, 0, 64, 64);  SDL3.saveImagePNG(s4, "d:\\icon_heart.png")
+    var s5 = r.readPixelsAt(320, 0, 64, 64);  SDL3.saveImagePNG(s5, "d:\\icon_plus.png")
+
+    print("[gen] 图标已生成：D:/1.png(播放) + icon_play/pause/check/arrow/heart/plus.png")
+    SDL3.quit()
+}
