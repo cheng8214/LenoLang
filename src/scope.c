@@ -221,7 +221,7 @@ Symbol* scope_define(Scope* s, const char* name, SymKind kind) {
     } else if (kind == SYM_GLOBAL_FUNC) {
         // 全局函数使用独立的索引
         sym->index = s->global_func_index++;
-    } else if (kind == SYM_NATIVE || kind == SYM_TYPE || kind == SYM_STRUCT || kind == SYM_CSTRUCT || kind == SYM_ENUM) {
+    } else if (kind == SYM_NATIVE || kind == SYM_TYPE || kind == SYM_STRUCT || kind == SYM_CSTRUCT || kind == SYM_ENUM || kind == SYM_FUNC_ALIAS) {
         // native 函数和类型定义不占用运行时索引
         sym->index = -1;
     } else {
@@ -427,6 +427,7 @@ void scope_print_tree(Scope* s, int indent) {
             case SYM_CLIB: kind_str = "CLIB"; break;
             case SYM_CFUNC: kind_str = "CFUNC"; break;
             case SYM_ENUM: kind_str = "ENUM"; break;
+            case SYM_FUNC_ALIAS: kind_str = "FUNC_ALIAS"; break;
         }
         printf("- %s [%s, idx=%d, captured=%d]\n", 
                sym->name, kind_str, sym->index, sym->is_captured);

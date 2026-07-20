@@ -268,6 +268,7 @@ typedef enum {
     SYM_CLIB,        // clib 类型定义
     SYM_CFUNC,       // cfunc 回调签名定义
     SYM_ENUM,        // enum 类型定义
+    SYM_FUNC_ALIAS,  // use 导入的模块函数别名
 } SymKind;
 
 #endif // LENO_TYPES_H

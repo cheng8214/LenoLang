@@ -478,9 +478,33 @@
                 break;
             }
 
+            // 尝试查找函数定义（use module.funcName 导入函数）
+            ModuleFuncSymbol* func_sym = module_symbol_table_find_func(module_info->sym_table, symbol_name);
+            if (func_sym) {
+                Symbol* sym = scope_define(s->current, symbol_name, SYM_FUNC_ALIAS);
+                if (sym) {
+                    sym->alias_module_name = strdup(module_name);
+                    sym->alias_func_name = strdup(symbol_name);
+                    // 设置返回类型信息，用于类型推断
+                    if (func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
+                        if (func_sym->return_type_info) {
+                            sym->type = type_copy(func_sym->return_type_info);
+                        } else {
+                            sym->type = type_new(func_sym->return_type);
+                            if (func_sym->return_struct_name) {
+                                sym->type->struct_name = strdup(func_sym->return_struct_name);
+                            }
+                        }
+                    } else {
+                        sym->type = type_new(TYPE_ANY);
+                    }
+                }
+                break;
+            }
+
             // 没有找到 struct、clib、face 或 alias
             char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有 struct、clib、face、enum 或 alias 类型 '%s'", module_name, symbol_name);
+            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'", module_name, symbol_name);
             error_add(ERR_SEMANTIC, ast->line, msg);
             break;
         }

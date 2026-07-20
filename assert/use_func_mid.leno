@@ -1,0 +1,18 @@
+// 中间层模块（模拟 sdl_font.leno）
+// 导入底层模块，导出自己的函数 + 重新导出底层类型
+import "use_func_core.leno" as core
+use core.Point
+
+export func makeGreeting(string name): string {
+    // 调用底层模块的函数
+    return "font: " + core.greet(name)
+}
+
+export func double(int x): int {
+    return core.add(x, x)
+}
+
+// 重新导出底层类型（模拟 use core.Point 后自动重导出）
+export func coreVersion(): int {
+    return core.getVersion()
+}

@@ -901,6 +901,31 @@
                 } else {
                     ast->u.call.callee->u.var.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
 
+                    // 检查是否是 use 导入的函数别名，转换为模块调用
+                    if (sym->kind == SYM_FUNC_ALIAS) {
+                        // 将 AST_CALL 转换为 AST_MODULE_CALL
+                        // funcName(args) -> module.funcName(args)
+                        char* mod_name = sym->alias_module_name;
+                        char* fn_name = sym->alias_func_name;
+                        AstList args = ast->u.call.args;
+
+                        // 释放原来的 callee
+                        ast_free(ast->u.call.callee);
+
+                        // 转换为 AST_MODULE_CALL
+                        ast->kind = AST_MODULE_CALL;
+                        ast->u.module_call.module_name = strdup(mod_name);
+                        ast->u.module_call.method_name = strdup(fn_name);
+                        ast->u.module_call.args = args;
+                        ast->u.module_call.generic_type_args = NULL;
+                        ast->u.module_call.generic_type_count = 0;
+                        memset(&ast->u.module_call.lib_ref, 0, sizeof(SymRef));
+
+                        // 重新访问转换后的 AST_MODULE_CALL
+                        visit(s, ast);
+                        return;
+                    }
+
                     // 检查是否是 struct 类型调用（未使用 new 关键字）
                     if (sym->type && sym->type->kind == TYPE_STRUCT) {
                         char msg[BUFFER_MEDIUM];

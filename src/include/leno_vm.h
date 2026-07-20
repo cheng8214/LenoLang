@@ -288,6 +288,9 @@ struct Symbol {
     char** enum_value_names;        // 成员名称数组
     int* enum_values;               // 成员值数组
     int enum_value_count;           // 成员数量
+    // 函数别名信息（仅当 kind == SYM_FUNC_ALIAS 时使用）
+    char* alias_module_name;        // 源模块名（如 "core"）
+    char* alias_func_name;          // 源函数名（如 "loadTexture"）
 };
 
 struct Scope {

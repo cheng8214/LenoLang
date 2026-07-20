@@ -1,0 +1,28 @@
+// 顶层入口模块（模拟 SDL3.leno）
+// 多层导入 + 重新导出函数 + 类型重导出
+import "use_func_core.leno" as core
+import "use_func_mid.leno" as mid
+
+// 重导出类型
+use core.Point
+
+// 重新导出底层函数（转发模式，和 LenoSDL3 一样）
+export func init(): bool {
+    return true
+}
+
+export func greet(string name): string {
+    return core.greet(name)
+}
+
+export func midGreet(string name): string {
+    return mid.makeGreeting(name)
+}
+
+export func add(int a, int b): int {
+    return core.add(a, b)
+}
+
+export func version(): int {
+    return core.getVersion()
+}
