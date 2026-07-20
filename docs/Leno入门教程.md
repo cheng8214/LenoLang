@@ -4575,7 +4575,7 @@ Array arr
 | 数组推断 | 不同 struct 有公共 face 时推断为 Array[FaceName] |
 | 跨模块 face | import 模块中的 face 可用于 impl、参数、变量 |
 | 性能 | 字段索引编译期确定，O(1) 访问 |
-| use 导入 | 支持 `use module.Struct`/`Face`/`Enum`/`Alias`/`Clib`/`CStruct` 导入，批量用 `use module.(A, B, C)` |
+| use 导入 | 支持 `use module.Struct`/`Face`/`Enum`/`Alias`/`Clib`/`CStruct`/`func` 导入，批量用 `use module.(A, B, C)` |
 
 > **核心原则**：自引用设 null，访问先检查，参数用具体类型或 face，优先用字段访问！
 
@@ -6153,7 +6153,7 @@ main() {
 
 ### 使用 use 导入类型
 
-`use` 可以将模块中的 struct/clib/face 类型导入当前作用域，之后直接用类型名声明变量：
+`use` 可以将模块中的 struct/clib/face/enum 类型和导出函数导入当前作用域，之后直接用类型名或函数名：
 
 ```leno
 // shape.leno
@@ -6194,17 +6194,17 @@ func print_area(Shape s) {  // use 之后可直接用 face 名
 
 | 特性 | `import` | `use` |
 |------|----------|-------|
-| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/cstruct/clib/face/alias/enum 导入当前作用域 |
+| 作用 | 导入模块，通过模块名访问内容 | 将模块中的 struct/cstruct/clib/face/alias/enum/func 导入当前作用域 |
 | 语法 | `import "路径" as 别名` | `use 别名.名称` 或 `use 别名.(A, B, C)` |
-| 适用范围 | 模块中的所有导出内容 | struct、cstruct、clib、face、alias、enum 类型 |
-| 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` |
+| 适用范围 | 模块中的所有导出内容 | struct、cstruct、clib、face、alias、enum 类型，以及 export func |
+| 访问方式 | `别名.func()`、`new 别名.Struct()` | 直接使用类型名 `StructName` 或函数名 `funcName` |
 
 > **重要说明：**
-> - `use` 只能导入 **struct**、**cstruct**、**clib**、**face**、**alias** 和 **enum** 类型
+> - `use` 可以导入 **struct**、**cstruct**、**clib**、**face**、**alias**、**enum** 类型和 **export func** 函数
 > - **alias** 是类型别名，`use` 导入后可直接作为类型名使用（如 `MySize s = ...`）
 > - clib 类型需要模块中存在**返回该 clib 类型的导出函数**
 > - enum 导入后可直接用 `EnumName.Member` 访问成员值
-> - **func**、**var** 必须通过模块名访问（如 `module.func()`）
+> - **var**/const 必须通过模块名访问（如 `module.PI`）
 > - struct 实例可用 `new module.Struct()` 或 `new module.Struct[Type]()`（无需 `use`）
 > - 使用 `use` 后可直接用 `new StructName()` 实例化（更简洁）
 
@@ -6319,6 +6319,32 @@ main() {
 > **⚠️ 注意**：clib 函数返回的是 C 类型，参与 Leno 运算时**必须**用 `as int` / `as float` 显式转换。
 > 但 **cstruct 字段**（如 `pt.x`、`e.scancode`）已支持整数自动收窄，无需 `as int`。
 
+**链式调用与编译期检查：**
+
+`use` 导入 clib 类型后，编译器会从源模块复制完整的函数签名，实现**编译期参数检查**（函数名、参数数量、参数类型）。同时支持链式调用——通过模块函数返回的 clib 对象直接调用方法：
+
+```leno
+import "sdl_base.leno" as base
+use base.renderer_lib
+
+main() {
+    // 方式1：声明变量后调用
+    renderer_lib r = base.loadRenderer()
+    r.do_something(42)
+
+    // 方式2：链式调用（直接对返回值调用方法）
+    base.loadRenderer().do_something(42)
+
+    // 编译期检查：参数数量不匹配会报错
+    // r.do_something(1, 2)  // ❌ 期望 1 个参数，实际 2 个
+
+    // 编译期检查：函数名不存在会报错
+    // r.non_exist()         // ❌ clib 'renderer_lib' 没有声明函数 'non_exist'
+}
+```
+
+> **⚠️ 注意**：链式调用前必须先 `use` 导入 clib 类型，否则编译器无法识别返回类型的 clib 方法。
+
 clib 类型也可用于 **struct 字段**：
 
 ```leno
@@ -6361,6 +6387,48 @@ main() {
 ```
 
 > **⚠️ 注意**：`use` 导入的 enum 使用 `EnumName.Member` 访问（成员不注册到全局作用域）。
+
+### use 导入函数
+
+`use` 不仅支持导入类型，还支持直接导入模块的 `export func`，之后可像本地函数一样调用：
+
+```leno
+// math_utils.leno
+export func add(int a, int b): int {
+    return a + b
+}
+
+export func greet(string name): string {
+    return "hello " + name
+}
+```
+
+```leno
+// main.leno
+import "math_utils.leno" as mu
+use mu.add
+use mu.greet
+
+main() {
+    int result = add(3, 4)        // 直接调用，等价于 mu.add(3, 4)
+    string s = greet("leno")      // 直接调用，等价于 mu.greet("leno")
+
+    // 模块名调用仍然有效
+    int r2 = mu.add(10, 20)
+}
+```
+
+批量导入也支持：
+
+```leno
+use mu.(add, greet)
+add(1, 2)       // ✅
+greet("world")  // ✅
+```
+
+> **💡 提示**：`use` 导入函数后，调用等价于 `module.func()`，编译器会自动转换为模块调用。函数名和参数类型都在编译期检查。
+>
+> **⚠️ 注意**：只能导入 `export func`，非导出函数无法通过 `use` 导入。
 
 ### 子目录导入
 

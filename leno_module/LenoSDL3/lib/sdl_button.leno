@@ -288,14 +288,38 @@ export struct Button impl Widget {
         }
 
         // ============ 图标 + 文字布局 ============
-        // 图标尺寸（对齐 Qt setIconSize / Material iconSize）：显式 > 自然高（裁剪到按钮高度）
+        // 内容裁剪到按钮矩形内，防止图标/文字溢出按钮（对齐 sdl_edit / sdl_panel 做法）
+        var _btnClip = core.SDL_Rect.malloc()
+        _btnClip.x = _int(x); _btnClip.y = _int(y); _btnClip.w = _int(w); _btnClip.h = _int(h)
+        r.setClipRect(_btnClip.to_ptr())
+
+        float pad = 6.0
+        // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
+        float textW = 0.0; float textH = 0.0
+        if _font != null and _font.ok {
+            var ms0 = _font.measureString(text)
+            textW = ms0.w; textH = ms0.h
+        }
+
+        // 图标尺寸（对齐 Qt setIconSize / Material iconSize）
+        // 自动尺寸须按布局约束，确保图标与文字都能容纳在按钮内：
+        //  - 左右布局：图标纵向占满（留 padding）
+        //  - 上下布局：图标须给文字预留 (h - 2pad - gap - textH) 高度
         float isize = _imgSize
         if isize <= 0.0 and _imgTex != null {
             var ts = r.getTextureSize(_imgTex)
             isize = ts["h"]
-            if isize > h - 8.0 { isize = h - 8.0 }
         }
-        if isize <= 0.0 { isize = h - 8.0 }   // 无图兜底
+        if isize <= 0.0 { isize = h - 2.0 * pad }   // 无图兜底
+        if isize > w - 2.0 * pad { isize = w - 2.0 * pad }
+        if _imgPos == 0 or _imgPos == 1 {
+            if isize > h - 2.0 * pad { isize = h - 2.0 * pad }
+        } else {
+            float maxI = h - 2.0 * pad - _imgGap - textH
+            if maxI < 0.0 { maxI = 0.0 }
+            if isize > maxI { isize = maxI }
+        }
+        if isize < 0.0 { isize = 0.0 }
 
         // 绘制图标（按 alpha/tint 调制，对齐 Qt ColorMod / Material icon tint）
         if _imgTex != null {
@@ -304,7 +328,6 @@ export struct Button impl Widget {
             else { r.setTextureColor(_imgTex, 255, 255, 255) }
         }
 
-        float pad = 6.0
         if _font != null and _font.ok {
             var ms = _font.measureString(text)
             if _imgTex == null {
@@ -358,6 +381,9 @@ export struct Button impl Widget {
             else { ix = x + (w - isize) / 2.0; iy = y + h - pad - isize }
             r.drawTextureAt(_imgTex, ix, iy, isize, isize)
         }
+
+        // 恢复裁剪区
+        r.clearClip(); _btnClip.free()
     }
 
     // 释放字体与图片资源
