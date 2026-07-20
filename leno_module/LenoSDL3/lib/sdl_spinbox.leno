@@ -126,20 +126,20 @@ export struct SpinBox impl Widget {
 
         // 默认背景色见字段声明（br/bg/bb）
         var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
         _edit.set_bg(br, bg, bb)
         _edit.set_text_rgb(235, 235, 245)
 
         // 默认边框色见字段声明（_bdrR/_bdrG/_bdrB）
         var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
         // 默认聚焦色见字段声明（_focusR/_focusG/_focusB）
         var fc = opts.get("focus_rgb")
-        if fc is Array[int] { _focusR = _int(fc[0]); _focusG = _int(fc[1]); _focusB = _int(fc[2]) }
+        if fc is Array[int] { _focusR = fc[0]; _focusG = fc[1]; _focusB = fc[2] }
 
         // 默认箭头区背景见字段声明（_arrowR/_arrowG/_arrowB）
         var arc = opts.get("arrow_rgb")
-        if arc is Array[int] { _arrowR = _int(arc[0]); _arrowG = _int(arc[1]); _arrowB = _int(arc[2]) }
+        if arc is Array[int] { _arrowR = arc[0]; _arrowG = arc[1]; _arrowB = arc[2] }
         // 默认箭头符号色见字段声明（_btnR/_btnG/_btnB）
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))

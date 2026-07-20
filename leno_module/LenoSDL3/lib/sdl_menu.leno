@@ -196,9 +196,9 @@ export struct MenuBar impl Widget {
         }
 
         // 默认配色见字段声明（_barR/_bgR/_hovR/_txtR/_disR/_sepR/_bdrR/_accR 等均有默认，以下仅 opts 覆盖）
-        var bgc = opts.get("bg_rgb");      if bgc is Array[int] { _bgR = _int(bgc[0]); _bgG = _int(bgc[1]); _bgB = _int(bgc[2]) }
-        var brc = opts.get("border_rgb");  if brc is Array[int] { _bdrR = _int(brc[0]); _brdG = _int(brc[1]); _brdB = _int(brc[2]) }
-        var accc = opts.get("accent_rgb"); if accc is Array[int] { _accR = _int(accc[0]); _accG = _int(accc[1]); _accB = _int(accc[2]) }
+        var bgc = opts.get("bg_rgb");      if bgc is Array[int] { _bgR = bgc[0]; _bgG = bgc[1]; _bgB = bgc[2] }
+        var brc = opts.get("border_rgb");  if brc is Array[int] { _bdrR = brc[0]; _brdG = brc[1]; _brdB = brc[2] }
+        var accc = opts.get("accent_rgb"); if accc is Array[int] { _accR = accc[0]; _accG = accc[1]; _accB = accc[2] }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1   // 重置所有展开/悬停索引

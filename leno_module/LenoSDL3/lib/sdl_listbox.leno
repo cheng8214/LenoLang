@@ -117,17 +117,17 @@ export struct ListBox impl Widget {
 
         // 颜色可被 dict 覆盖（[r,g,b]）
         var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
         var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
         var slc = opts.get("sel_rgb")
-        if slc is Array[int] { _selR = _int(slc[0]); _selG = _int(slc[1]); _selB = _int(slc[2]) }
+        if slc is Array[int] { _selR = slc[0]; _selG = slc[1]; _selB = slc[2] }
         var hvc = opts.get("hover_rgb")
-        if hvc is Array[int] { _hovR = _int(hvc[0]); _hovG = _int(hvc[1]); _hovB = _int(hvc[2]) }
+        if hvc is Array[int] { _hovR = hvc[0]; _hovG = hvc[1]; _hovB = hvc[2] }
         var ctc = opts.get("text_rgb")
-        if ctc is Array[int] { tr = _int(ctc[0]); tg = _int(ctc[1]); tb = _int(ctc[2]) }
+        if ctc is Array[int] { tr = ctc[0]; tg = ctc[1]; tb = ctc[2] }
         var sbc = opts.get("scroll_rgb")
-        if sbc is Array[int] { _sbR = _int(sbc[0]); _sbG = _int(sbc[1]); _sbB = _int(sbc[2]) }
+        if sbc is Array[int] { _sbR = sbc[0]; _sbG = sbc[1]; _sbB = sbc[2] }
 
         _cursor  = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled  = opts.get("enabled", true)

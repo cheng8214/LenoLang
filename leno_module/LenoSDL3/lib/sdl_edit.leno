@@ -245,11 +245,11 @@ export struct Edit impl Widget {
 
         // 颜色（默认值见字段声明，仅当 opts 指定时覆盖）
         var c = opts.get("bg_rgb")
-        if c is Array[int] { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
+        if c is Array[int] { cr = c[0]; cg = c[1]; cb = c[2] }
         var tc = opts.get("text_rgb")
-        if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+        if tc is Array[int] { tr = tc[0]; tg = tc[1]; tb = tc[2] }
         var fc = opts.get("focus_rgb")
-        if fc is Array[int] { _focusR = _int(fc[0]); _focusG = _int(fc[1]); _focusB = _int(fc[2]) }
+        if fc is Array[int] { _focusR = fc[0]; _focusG = fc[1]; _focusB = fc[2] }
 
         _placeholder = opts.get("placeholder", "")
         _tip = opts.get("tip", "")

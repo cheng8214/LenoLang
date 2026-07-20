@@ -183,13 +183,13 @@ export struct Table impl Widget {
 
         // 默认配色见字段声明（br/bg/bb/_hdrR/_selR/_hovR/_zebR/tr/_sepR/_sbR 等均有默认，以下仅 opts 覆盖）
         var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
         var hdc = opts.get("header_rgb")
-        if hdc is Array[int] { _hdrR = _int(hdc[0]); _hdrG = _int(hdc[1]); _hdrB = _int(hdc[2]) }
+        if hdc is Array[int] { _hdrR = hdc[0]; _hdrG = hdc[1]; _hdrB = hdc[2] }
         var slc = opts.get("sel_rgb")
-        if slc is Array[int] { _selR = _int(slc[0]); _selG = _int(slc[1]); _selB = _int(slc[2]) }
+        if slc is Array[int] { _selR = slc[0]; _selG = slc[1]; _selB = slc[2] }
         var sc = opts.get("sep_rgb")
-        if sc is Array[int] { _sepR = _int(sc[0]); _sepG = _int(sc[1]); _sepB = _int(sc[2]) }
+        if sc is Array[int] { _sepR = sc[0]; _sepG = sc[1]; _sepB = sc[2] }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)

@@ -52,10 +52,10 @@ export struct ScrollView impl Widget {
         h = opts.get("h", 200)
         _radius = opts.get("radius", 8.0)
         var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
         // 默认色见字段声明，仅当 opts 指定时覆盖
         var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
         _brdA = opts.get("border_alpha", 200)
         _drawBorder = opts.get("border", true)
         _contentW = opts.get("content_w", -1.0)

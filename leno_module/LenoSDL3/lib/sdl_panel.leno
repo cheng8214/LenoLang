@@ -28,10 +28,10 @@ export struct Panel impl Widget {
 
         // 默认背景色/边框色见字段声明（br/bg/bb、_bdrR/_bdrG/_bdrB），以下仅 opts 覆盖
         var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = _int(bgc[0]); bg = _int(bgc[1]); bb = _int(bgc[2]) }
+        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
 
         var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = _int(bdc[0]); _bdrG = _int(bdc[1]); _bdrB = _int(bdc[2]) }
+        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
 
         _brdA = opts.get("border_alpha", 220)
         _drawBorder = opts.get("border", true)

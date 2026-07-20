@@ -45,7 +45,7 @@ export struct Label impl Widget {
 
         // 文字色见字段声明默认白色（tr/tg/tb），以下仅 opts 覆盖
         var tc = opts.get("text_rgb")
-        if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+        if tc is Array[int] { tr = tc[0]; tg = tc[1]; tb = tc[2] }
 
         // 对齐
         _align = opts.get("align", 0)

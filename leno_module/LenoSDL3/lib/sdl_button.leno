@@ -100,15 +100,15 @@ export struct Button impl Widget {
 
         // bg_rgb: 背景色 [r, g, b]
         var c = opts.get("bg_rgb")
-        if c is Array[int] { cr = _int(c[0]); cg = _int(c[1]); cb = _int(c[2]) }
+        if c is Array[int] { cr = c[0]; cg = c[1]; cb = c[2] }
 
         // text_rgb: 文字色 [r, g, b]
         var tc = opts.get("text_rgb")
-        if tc is Array[int] { tr = _int(tc[0]); tg = _int(tc[1]); tb = _int(tc[2]) }
+        if tc is Array[int] { tr = tc[0]; tg = tc[1]; tb = tc[2] }
 
         // hover_rgb: 悬停背景色 [r, g, b]（不设置则自动加亮）
         var hc = opts.get("hover_rgb")
-        if hc is Array[int] { hvr = _int(hc[0]); hvg = _int(hc[1]); hvb = _int(hc[2]) }
+        if hc is Array[int] { hvr = hc[0]; hvg = hc[1]; hvb = hc[2] }
 
         // 外观开关
         _showShadow = opts.get("shadow", true)
@@ -138,7 +138,7 @@ export struct Button impl Widget {
         _imgGap   = opts.get("image_gap", 6.0)
         _imgAlpha = _int(opts.get("image_alpha", 255))
         var tint = opts.get("image_tint")
-        if tint is Array[int] { _imgTintR = _int(tint[0]); _imgTintG = _int(tint[1]); _imgTintB = _int(tint[2]) }
+        if tint is Array[int] { _imgTintR = tint[0]; _imgTintG = tint[1]; _imgTintB = tint[2] }
         // 更换图片路径时释放旧纹理，下一帧 render 重新加载
         if _imgTex != null { _release_image(); _imgTex = null }
         _imgLoadPath = ""

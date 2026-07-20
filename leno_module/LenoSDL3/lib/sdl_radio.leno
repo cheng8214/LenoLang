@@ -61,13 +61,13 @@ export struct RadioButton impl Widget {
 
         // 颜色可被 dict 覆盖（[r,g,b]）
         var unk = opts.get("unchecked_rgb")
-        if unk is Array[int] { cr = _int(unk[0]); cg = _int(unk[1]); cb = _int(unk[2]) }
+        if unk is Array[int] { cr = unk[0]; cg = unk[1]; cb = unk[2] }
         var chk = opts.get("checked_rgb")
-        if chk is Array[int] { cc = _int(chk[0]); ck = _int(chk[1]); cbl = _int(chk[2]) }
+        if chk is Array[int] { cc = chk[0]; ck = chk[1]; cbl = chk[2] }
         var ctc = opts.get("text_rgb")
-        if ctc is Array[int] { tr = _int(ctc[0]); tg = _int(ctc[1]); tb = _int(ctc[2]) }
+        if ctc is Array[int] { tr = ctc[0]; tg = ctc[1]; tb = ctc[2] }
         var cbd = opts.get("border_rgb")
-        if cbd is Array[int] { _brdR = _int(cbd[0]); _brdG = _int(cbd[1]); _brdB = _int(cbd[2]) }
+        if cbd is Array[int] { _brdR = cbd[0]; _brdG = cbd[1]; _brdB = cbd[2] }
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _checked = opts.get("checked", false)
