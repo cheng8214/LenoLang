@@ -600,8 +600,9 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         if (cache_path) {
             ObjModule* cached = module_cache_deserialize(cache_path, full_path);
             free(cache_path);
-            if (cached) return cached;
-            // 反序列化失败（缓存不存在/失效/损坏）→ 走正常编译
+            if (cached) {
+                return cached;
+            }
         }
     }
 
@@ -750,7 +751,6 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
             if (cache_path) {
                 module_cache_serialize(cache_path, placeholder_module, source);
                 free(cache_path);
-                // 写缓存失败不影响运行，静默忽略
             }
         }
         free(source);

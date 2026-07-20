@@ -58,9 +58,19 @@ void update_module_function_ptrs(ObjModule* src_module, ObjModule* dst_module) {
                     Object* obj = val_as_obj(entry->value);
                     if (obj->type == OBJ_CLOSURE) {
                         ObjClosure* closure = (ObjClosure*)obj;
-                        if (closure->function) closure->function->module = dst_module;
+                        if (closure->function) {
+                            closure->function->module = dst_module;
+                            // 递归修复嵌套闭包的 module 指针
+                            if (closure->function->chunk) {
+                                update_chunk_function_module(closure->function->chunk, dst_module);
+                            }
+                        }
                     } else if (obj->type == OBJ_FUNCTION) {
-                        ((ObjFunction*)obj)->module = dst_module;
+                        ObjFunction* func = (ObjFunction*)obj;
+                        func->module = dst_module;
+                        if (func->chunk) {
+                            update_chunk_function_module(func->chunk, dst_module);
+                        }
                     }
                 }
             }
@@ -74,9 +84,18 @@ void update_module_function_ptrs(ObjModule* src_module, ObjModule* dst_module) {
                 Object* obj = val_as_obj(val);
                 if (obj->type == OBJ_CLOSURE) {
                     ObjClosure* closure = (ObjClosure*)obj;
-                    if (closure->function) closure->function->module = dst_module;
+                    if (closure->function) {
+                        closure->function->module = dst_module;
+                        if (closure->function->chunk) {
+                            update_chunk_function_module(closure->function->chunk, dst_module);
+                        }
+                    }
                 } else if (obj->type == OBJ_FUNCTION) {
-                    ((ObjFunction*)obj)->module = dst_module;
+                    ObjFunction* func = (ObjFunction*)obj;
+                    func->module = dst_module;
+                    if (func->chunk) {
+                        update_chunk_function_module(func->chunk, dst_module);
+                    }
                 }
             }
         }

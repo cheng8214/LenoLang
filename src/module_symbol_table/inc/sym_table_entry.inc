@@ -42,12 +42,26 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                 if (source) {
                     uint64_t src_hash = serialize_source_hash(source, strlen(source));
                     uint64_t src_size = 0;
+#ifdef _WIN32
+                    struct _stat st;
+                    {
+                        wchar_t* wp = utf8_to_utf16(full_path);
+                        if (wp) {
+                            if (_wstat(wp, &st) == 0) {
+                                src_size = (uint64_t)st.st_size;
+                            }
+                            free(wp);
+                        }
+                    }
+                    if (src_size == 0) src_size = (uint64_t)strlen(source);
+#else
                     struct stat st;
                     if (stat(full_path, &st) == 0) {
                         src_size = (uint64_t)st.st_size;
                     } else {
                         src_size = (uint64_t)strlen(source);
                     }
+#endif
                     char* cp = sym_cache_path_for(full_path);
                     if (cp) {
                         sym_cache_serialize(cp, table, src_hash, src_size);

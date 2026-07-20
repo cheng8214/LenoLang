@@ -13,6 +13,7 @@
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
 import "../../../lib/sdl_filedialog.leno" as fdlg
+import "about_dialog.leno" as about
 import dirs
 use SDL3.Event
 use SDL3.Renderer
@@ -196,7 +197,7 @@ main() {
         } else if id == "newfolder" { newFolder() }
         else if id == "refresh"   { openDir(_curDir) }
         else if id == "exit"      { _wantQuit = true }
-        else if id == "about"     { _statusLbl.set_text("文件管理器 v1.0 · 基于 LenoSDL3 即时模式 UI") }
+        else if id == "about"     { about.show() }
     })
 
     // ---------- 路径工具栏 ----------

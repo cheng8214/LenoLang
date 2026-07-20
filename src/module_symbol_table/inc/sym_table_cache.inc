@@ -381,16 +381,26 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
     }
 
     // 失效判定：先比对文件大小（O(1) stat），再比对内容哈希
+    // Windows 上使用 _wstat 处理 UTF-8 中文路径
+#ifdef _WIN32
+    struct _stat st;
+    {
+        wchar_t* wp = utf8_to_utf16(full_path);
+        if (!wp) { fclose(f); return -1; }
+        int ret = _wstat(wp, &st);
+        free(wp);
+        if (ret != 0) { fclose(f); return -1; }
+    }
+#else
     struct stat st;
     if (stat(full_path, &st) != 0) { fclose(f); return -1; }
+#endif
     if ((uint64_t)st.st_size != src_size) { fclose(f); return -1; }
     // 读源文件算哈希（文本模式，与 module_loader.c 的 read_file 一致）
 #ifdef _WIN32
     {
-        int wl2 = MultiByteToWideChar(CP_UTF8, 0, full_path, -1, NULL, 0);
-        wchar_t* wp2 = (wchar_t*)malloc(wl2 * sizeof(wchar_t));
+        wchar_t* wp2 = utf8_to_utf16(full_path);
         if (!wp2) { fclose(f); return -1; }
-        MultiByteToWideChar(CP_UTF8, 0, full_path, -1, wp2, wl2);
         FILE* sf = _wfopen(wp2, L"r");
         free(wp2);
         if (!sf) { fclose(f); return -1; }

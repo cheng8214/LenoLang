@@ -1,6 +1,7 @@
 #include "include/leno_serialize.h"
 #include "include/lenolang.h"
 #include "include/module_loader.h"
+#include "include/platform.h"
 #include <string.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -9,6 +10,35 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+// 跨平台 stat：Windows 上使用 _wstat + UTF-8 转宽字符，解决中文路径问题
+static int leno_stat(const char* path, struct stat* st) {
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) return -1;
+    int ret = _wstat(wpath, (struct _stat*)st);
+    free(wpath);
+    return ret;
+#else
+    return stat(path, st);
+#endif
+}
+
+// 跨平台 fopen：Windows 上使用 _wfopen + UTF-8 转宽字符，解决中文路径问题
+static FILE* leno_fopen(const char* path, const char* mode) {
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) return NULL;
+    wchar_t* wmode = utf8_to_utf16(mode);
+    if (!wmode) { free(wpath); return NULL; }
+    FILE* fp = _wfopen(wpath, wmode);
+    free(wpath);
+    free(wmode);
+    return fp;
+#else
+    return fopen(path, mode);
+#endif
+}
 
 static char** serialized_modules = NULL;
 static int serialized_module_count = 0;
@@ -1734,7 +1764,7 @@ char* serialize_get_bin_path(const char* source_path) {
 
 int serialize_cache_is_valid(const char* source_path, const char* bin_path) {
     struct stat src_stat, bin_stat;
-    if (stat(source_path, &src_stat) != 0 || stat(bin_path, &bin_stat) != 0) return 0;
+    if (leno_stat(source_path, &src_stat) != 0 || leno_stat(bin_path, &bin_stat) != 0) return 0;
     return bin_stat.st_mtime >= src_stat.st_mtime;
 }
 
@@ -1790,7 +1820,7 @@ SerializeResult module_cache_serialize(const char* cache_path, ObjModule* mod, c
     }
     if (mod->source_path) {
         struct stat st;
-        if (stat(mod->source_path, &st) == 0) {
+        if (leno_stat(mod->source_path, &st) == 0) {
             src_size = (uint64_t)st.st_size;
         } else if (source) {
             src_size = (uint64_t)strlen(source);
@@ -1941,13 +1971,21 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
 
     // 失效判定：先比对文件大小（O(1) stat），再比对内容哈希
     struct stat st;
-    if (stat(full_path, &st) != 0) { free(data); return NULL; }
-    if ((uint64_t)st.st_size != src_size) { free(data); return NULL; }
+    if (leno_stat(full_path, &st) != 0) {
+        free(data); return NULL;
+    }
+    if ((uint64_t)st.st_size != src_size) {
+        free(data); return NULL;
+    }
     char* src = read_file_for_hash(full_path);
-    if (!src) { free(data); return NULL; }
+    if (!src) {
+        free(data); return NULL;
+    }
     uint64_t cur_hash = serialize_source_hash(src, strlen(src));
     free(src);
-    if (cur_hash != src_hash) { free(data); return NULL; }
+    if (cur_hash != src_hash) {
+        free(data); return NULL;
+    }
 
     // 读依赖路径列表
     uint32_t dep_count;
@@ -1978,7 +2016,7 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
             if (!dep_cache_path) continue;
 
             // 读取依赖缓存文件的 header（magic + version + src_hash + src_size = 24字节）
-            FILE* dep_file = fopen(dep_cache_path, "rb");
+            FILE* dep_file = leno_fopen(dep_cache_path, "rb");
             if (!dep_file) {
                 // 缓存文件不存在 → 依赖从未缓存或缓存被删 → 父缓存失效
                 free(dep_cache_path);
@@ -1990,11 +2028,24 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
             uint32_t dep_magic, dep_version;
             uint64_t dep_src_hash, dep_src_size;
             int header_ok = 1;
-            if (fread(&dep_magic, 4, 1, dep_file) != 1) header_ok = 0;
-            if (fread(&dep_version, 4, 1, dep_file) != 1) header_ok = 0;
-            if (fread(&dep_src_hash, 8, 1, dep_file) != 1) header_ok = 0;
-            if (fread(&dep_src_size, 8, 1, dep_file) != 1) header_ok = 0;
+            uint8_t header_buf[24];
+            if (fread(header_buf, 24, 1, dep_file) != 1) header_ok = 0;
             fclose(dep_file);
+            if (header_ok) {
+                // 解析大端序 header（与 ctx_read_u32/ctx_read_u64 一致）
+                dep_magic = ((uint32_t)header_buf[0] << 24) | ((uint32_t)header_buf[1] << 16) |
+                            ((uint32_t)header_buf[2] << 8) | header_buf[3];
+                dep_version = ((uint32_t)header_buf[4] << 24) | ((uint32_t)header_buf[5] << 16) |
+                              ((uint32_t)header_buf[6] << 8) | header_buf[7];
+                dep_src_hash = 0;
+                for (int bi = 0; bi < 8; bi++) {
+                    dep_src_hash = (dep_src_hash << 8) | header_buf[8 + bi];
+                }
+                dep_src_size = 0;
+                for (int bi = 0; bi < 8; bi++) {
+                    dep_src_size = (dep_src_size << 8) | header_buf[16 + bi];
+                }
+            }
 
             if (!header_ok || dep_magic != LENO_MODCACHE_MAGIC || dep_version != LENO_MODCACHE_VERSION) {
                 // header 无效 → 依赖缓存损坏 → 父缓存失效
@@ -2007,7 +2058,7 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
 
             // 与当前源文件比对：先比大小（O(1) stat），再比哈希
             struct stat dep_st;
-            if (stat(dep_paths[i], &dep_st) == 0) {
+            if (leno_stat(dep_paths[i], &dep_st) == 0) {
                 if ((uint64_t)dep_st.st_size != dep_src_size) {
                     // 大小不同 → 源文件已变 → 父缓存失效
                     free(dep_cache_path);

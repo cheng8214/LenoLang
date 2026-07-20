@@ -5,6 +5,7 @@
 #include "../include/module_symbol_table.h"
 #include "../include/module_loader.h"
 #include "../include/leno_serialize.h"
+#include "../include/platform.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 
