@@ -126,7 +126,7 @@ export struct Button impl Widget {
         _imagePath = opts.get("image_path", "")
         var ip = opts.get("image_pos", "left")
         if ip is string {
-            switch ip as string {
+            switch ip {
                 case "left"   { _imgPos = 0 }
                 case "right"  { _imgPos = 1 }
                 case "top"    { _imgPos = 2 }

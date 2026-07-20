@@ -46,6 +46,8 @@ export struct Table impl Widget {
     int _ctxRow = -1; int _ctxCol = -1   // 右击命中行/列
     int _winW = 0; int _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
     func(int, string):void _onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
+    func(int):void _onCtxWillOpen          // 右键菜单弹出前回调（参数为命中行）；用于按行类型动态重建菜单项
+    func(int, int, string):void _onEditCommit  // 行内编辑提交回调（行, 列, 新文本）；供应用层落盘（如重命名）
 
     // === 双击编辑（默认关闭，由应用按需开启） ===
     Edit _edit = null
@@ -376,18 +378,30 @@ export struct Table impl Widget {
     func get_context_menu_col(): int { return _ctxCol }
     // 注册上下文菜单自定义回调（参数为命中行与项 id）；也可直接在 addContextItem 的 opts 里写 action
     func on_context_select(func(int, string):void cb) { _onCtxSelect = cb }
+    // 注册“右键菜单弹出前”回调（参数为命中行，row<0 表示空白处）；用于按行类型动态重建菜单项
+    func on_context_will_open(func(int):void cb) { _onCtxWillOpen = cb }
+    // 清空内嵌上下文菜单的全部项（配合 on_context_will_open 在弹出前重建）
+    func clearContextItems() {
+        if _ctxMenu != null and _ctxMenuH >= 0 { _ctxMenu.clearContextItems(_ctxMenuH) }
+    }
+    // 注册行内编辑提交回调（行,列,新文本）；如用于右键“重命名”后落盘
+    func on_edit_commit(func(int, int, string):void cb) { _onEditCommit = cb }
+    // 程序触发进入某行某列的行内编辑（如右键“重命名”）
+    func begin_edit(int row, int col) { _begin_edit(row, col) }
 
     // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
     func _open_ctx_menu(float x, float y) {
         if _ctxMenu == null or _ctxMenuH < 0 { return }
-        // 未添加任何上下文菜单项时，右击不弹菜单也不改变选择（避免出现空白横线）
-        if _ctxMenu.contextItemCount(_ctxMenuH) == 0 { return }
         _ctxRow = _row_at(y); _ctxCol = _col_at(x)
         // 右击命中数据行时，先选中该行，使菜单操作作用于该目标
         if _ctxRow >= 0 {
             _selRow = _ctxRow; _selRows = [_ctxRow]
             if _onSelect != null { _onSelect(_ctxRow) }
         }
+        // 弹出前把命中行交给应用层，由它按行类型重建菜单项（文件/文件夹/空白处不同）
+        if _onCtxWillOpen != null { _onCtxWillOpen(_ctxRow) }
+        // 重建后仍无任何有效项则不弹菜单（避免出现空白横线）
+        if _ctxMenu.contextItemCount(_ctxMenuH) == 0 { return }
         _ctxMenu.openContext(_ctxMenuH, x, y)
     }
     // 上下文菜单项动作分发
@@ -411,7 +425,9 @@ export struct Table impl Widget {
     }
     func _commit_edit() {
         if _editRow >= 0 and _editCol >= 0 and _editRow < _rows.len() {
-            set_cell(_editRow, _editCol, _edit.get_text())
+            string newText = _edit.get_text()
+            set_cell(_editRow, _editCol, newText)
+            if _onEditCommit != null { _onEditCommit(_editRow, _editCol, newText) }
         }
         _editing = false
         _editRow = -1; _editCol = -1

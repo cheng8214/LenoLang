@@ -27,9 +27,8 @@ use SDL3.MenuBar
 
 // ===================== 模块级状态（供模块函数共享） =====================
 string _curDir = ""
-Array[Array[string]] _rows = []     // 表格行：[名称, 大小, 类型]
-Array[string]        _rowPaths = []  // 每行完整路径（与 _rows 平行）
-Array[bool]          _rowIsDir = []  // 每行是否目录
+Array[Array[string]] _rows = []     // 表格行：[名称, 大小, 类型, 完整路径, 是否目录("1"/"0")]；第4/5列仅内部用，表头只有3列故不显示
+string _renameOldPath = ""          // 右键“重命名”时暂存旧路径，供编辑提交后 dirs.rename 使用
 string _selPath = ""                // 当前选中项完整路径
 bool   _selIsDir = false
 Array[int] _loadedIds = []          // 已懒加载子节点的树节点 id
@@ -90,7 +89,7 @@ func openDir(string path) {
     }
     _curDir = path
     _pathEdit.set_text(path)
-    _rows = []; _rowPaths = []; _rowIsDir = []
+    _rows = []
 
     var names = dirs.listdir(path)
     if names == null {
@@ -100,32 +99,28 @@ func openDir(string path) {
         return
     }
 
-    // 先分文件夹 / 文件两批收集，文件夹排在前
+    // 先分文件夹 / 文件两批收集，文件夹排在前；每行第4/5列携带完整路径与是否目录，随排序一起移动
     Array[Array[string]] folders = []
-    Array[string]        folderPaths = []
     Array[Array[string]] fileRows = []
-    Array[string]        filePaths = []
     for names.len() to i {
         string nm = names[i] as string
         string fp = dirs.join(path, nm)
         if dirs.is_dir(fp) {
-            folders.add([nm, "", "文件夹"])
-            folderPaths.add(fp)
+            folders.add([nm, "", "文件夹", fp, "1"])
         } else {
             var st = dirs.stat(fp)
             int szb = _int(st.get("size", 0))
             string ext = dirs.extname(nm)
             string tp = "文件"
             if ext != "" and ext != "." { tp = "文件 " + ext }
-            fileRows.add([nm, fmtSize(szb), tp])
-            filePaths.add(fp)
+            fileRows.add([nm, fmtSize(szb), tp, fp, "0"])
         }
     }
-    for folders.len() to i { _rows.add(folders[i]); _rowPaths.add(folderPaths[i]); _rowIsDir.add(true) }
-    for fileRows.len() to i { _rows.add(fileRows[i]); _rowPaths.add(filePaths[i]); _rowIsDir.add(false) }
+    for folders.len() to i { _rows.add(folders[i]) }
+    for fileRows.len() to i { _rows.add(fileRows[i]) }
 
     _table.set_rows(_rows)
-    _statusLbl.set_text((_rows.len() as string) + " 个对象")
+    _statusLbl.set_text(_rows.len() + " 个对象")
     _selPath = ""; _selIsDir = false; showInfo()
 }
 
@@ -257,53 +252,94 @@ main() {
     })
     _win.add(_table)
     _table.on_select(func(int row) {
-        if row < 0 or row >= _rowPaths.len() { return }
-        _selPath = _rowPaths[row]
-        _selIsDir = _rowIsDir[row]
-        showInfo()
+        if row < 0 or row >= _table.row_count() { return }
+        var r = _table.get_row(row)
+        if r.len() < 5 { return }
+        _selPath = r[3]; _selIsDir = (r[4] == "1"); showInfo()
         return
     })
 
-    // ---------- 表格右击上下文菜单（方案 A：table 自身不预置项，这里在应用层自定义） ----------
-    _table.addContextItem({label:"打开", id:"open"})
-    _table.addContextItem({label:"复制路径", id:"copy"})
-    _table.addContextSeparator()
-    _table.addContextItem({label:"删除", id:"del"})
-    _table.addContextSeparator()
-    _table.addContextItem({label:"在当前目录新建文件夹", id:"newfolder"})
-    _table.on_context_select(func(int row, string id) {
-        if id == "open" {
-            if row >= 0 and row < _rowPaths.len() {
-                _selPath = _rowPaths[row]; _selIsDir = _rowIsDir[row]; showInfo()
-                openSelected()
-            }
-        } else if id == "copy" {
-            if row >= 0 and row < _rowPaths.len() {
-                core.setClipboardText(_rowPaths[row])
-                _statusLbl.set_text("已复制路径: " + _rowPaths[row])
-            }
-        } else if id == "del" {
-            if row >= 0 and row < _rowPaths.len() {
-                string p = _rowPaths[row]
-                if dirs.delete(p) {
-                    _statusLbl.set_text("已删除: " + dirs.basename(p))
-                    openDir(_curDir)
-                } else {
-                    _statusLbl.set_text("删除失败（可能被占用或权限不足）: " + dirs.basename(p))
-                }
-            }
-        } else if id == "newfolder" {
-            newFolder()
+    // ---------- 表格右击上下文菜单：按“文件 / 文件夹 / 空白处”动态区分 ----------
+    // 弹出前按命中行类型重建菜单项：文件夹多“在此文件夹内新建文件夹”，文件多“属性”
+    _table.on_context_will_open(func(int row) {
+        _table.clearContextItems()
+        if row < 0 {
+            _table.addContextItem({label:"新建文件夹", id:"newfolder"})
+            _table.addContextSeparator()
+            _table.addContextItem({label:"刷新", id:"refresh"})
+            return
+        }
+        var r = _table.get_row(row)
+        bool isDir = (r.len() >= 5 and r[4] == "1")
+        _table.addContextItem({label:"打开", id:"open"})
+        _table.addContextItem({label:"复制路径", id:"copy"})
+        _table.addContextSeparator()
+        _table.addContextItem({label:"重命名", id:"rename"})
+        _table.addContextItem({label:"删除", id:"del"})
+        _table.addContextSeparator()
+        if isDir {
+            _table.addContextItem({label:"在此文件夹内新建文件夹", id:"newfolder"})
+        } else {
+            _table.addContextItem({label:"属性", id:"props"})
         }
         return
     })
-    // 文件列表默认关闭单元格双击编辑；双击行直接打开（文件夹进入、文件提示已选）
+    _table.on_context_select(func(int row, string id) {
+        if row < 0 {
+            if id == "newfolder" { newFolder() }
+            else if id == "refresh" { openDir(_curDir) }
+            return
+        }
+        var r = _table.get_row(row)
+        if r.len() < 5 { return }
+        string p = r[3]; bool isDir = (r[4] == "1")
+        if id == "open" {
+            _selPath = p; _selIsDir = isDir; showInfo(); openSelected()
+        } else if id == "copy" {
+            core.setClipboardText(p)
+            _statusLbl.set_text("已复制路径: " + p)
+        } else if id == "rename" {
+            _renameOldPath = p
+            _table.begin_edit(row, 0)   // 进入名称单元格行内编辑，提交时落盘
+        } else if id == "del" {
+            if dirs.delete(p) {
+                _statusLbl.set_text("已删除: " + dirs.basename(p))
+                openDir(_curDir)
+            } else {
+                _statusLbl.set_text("删除失败（可能被占用或权限不足）: " + dirs.basename(p))
+            }
+        } else if id == "newfolder" {
+            newFolder()
+        } else if id == "props" {
+            _selPath = p; _selIsDir = isDir; showInfo()
+            string nm = dirs.basename(p)
+            string ext = dirs.extname(nm)
+            string kind = if isDir then "文件夹" else ("文件 " + (if ext != "" and ext != "." then ext else ""))
+            _statusLbl.set_text("属性 — " + nm + "（" + kind + "）")
+        }
+        return
+    })
+    // 行内编辑提交（由右键“重命名”触发）：真正落盘到 dirs.rename
+    _table.on_edit_commit(func(int row, int col, string text) {
+        if _renameOldPath == "" { return }
+        string oldP = _renameOldPath; _renameOldPath = ""
+        string newP = dirs.join(_curDir, text)
+        if oldP == newP { return }
+        if dirs.rename(oldP, newP) {
+            _statusLbl.set_text("已重命名: " + text)
+        } else {
+            _statusLbl.set_text("重命名失败（名称冲突或权限不足）: " + text)
+        }
+        openDir(_curDir)   // 刷新列表（成功显示新名，失败还原）
+        return
+    })
+    // 双击行直接打开（文件夹进入、文件提示已选）；行内编辑仅由右键“重命名”触发，故关闭双击编辑
     _table.set_editable(false)
     _table.on_dbl_click(func(int row, int col) {
-        if row >= 0 and row < _rowPaths.len() {
-            _selPath = _rowPaths[row]; _selIsDir = _rowIsDir[row]; showInfo()
-            openSelected()
-        }
+        if row < 0 or row >= _table.row_count() { return }
+        var r = _table.get_row(row)
+        if r.len() < 5 { return }
+        _selPath = r[3]; _selIsDir = (r[4] == "1"); showInfo(); openSelected()
         return
     })
 
