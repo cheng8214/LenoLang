@@ -1,0 +1,113 @@
+// test_button_image.leno — Button 图片（图标）功能探索测试
+// 参考成熟框架设计：
+//   Qt          setIcon / setIconSize
+//   Material    icon + iconGravity (start/end/top)
+//   WinForms    Image + TextImageRelation (ImageBeforeText / TextBeforeImage / ImageAboveText / TextAboveImage)
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.(Event, Renderer, Button, Scancode, Window)
+import "../../../lib/sdl_core.leno" as core
+import "../../../lib/sdl_image.leno" as img
+
+// 程序化生成纯色图标（利用 SDL 表面 + SDL_image 保存）
+func makeIcon(string path, int r, int g, int b): bool {
+    Ptr surf = core.createSurface(64, 64, core.PIXELFORMAT_RGBA8888)
+    if surf == null { print("[icon] 创建表面失败: " + path); return false }
+    int col = core.mapSurfaceRGBA(surf, r, g, b, 255)
+    core.fillSurfaceRect(surf, null, col)
+    bool ok = img.savePNG(surf, path)
+    core.destroySurface(surf)
+    print("[icon] " + (if ok then "OK " else "FAIL ") + path)
+    return ok
+}
+
+main() {
+    SDL3.ttfInit()
+
+    // 生成 6 个图标（不同颜色，用于演示）
+    makeIcon("icon_left.png",   80, 160, 255)
+    makeIcon("icon_right.png",  255, 120, 80)
+    makeIcon("icon_top.png",    120, 230, 120)
+    makeIcon("icon_bottom.png", 255, 200, 60)
+    makeIcon("icon_swap_a.png", 200, 80, 200)
+    makeIcon("icon_swap_b.png", 80, 200, 200)
+
+    Window win = SDL3.createWindow({title: "Button 图片演示", w: 520, h: 420})
+    if not win.ok { print("窗口创建失败"); return }
+
+    // —— 演示 1：图标在左（默认，对齐 Material iconGravity=start / WinForms ImageBeforeText） ——
+    Button bLeft = win.addButton({
+        text: "图标在左", x: 30, y: 30, w: 200, h: 50,
+        type: "primary",
+        image_path: "icon_left.png", image_pos: "left", image_gap: 8
+    })
+
+    // —— 演示 2：图标在右（Material iconGravity=end / WinForms TextBeforeImage） ——
+    Button bRight = win.addButton({
+        text: "图标在右", x: 280, y: 30, w: 200, h: 50,
+        type: "success",
+        image_path: "icon_right.png", image_pos: "right"
+    })
+
+    // —— 演示 3：图标在上（Material iconGravity=top / WinForms ImageAboveText） ——
+    Button bTop = win.addButton({
+        text: "图标在上", x: 30, y: 110, w: 200, h: 70,
+        type: "warning",
+        image_path: "icon_top.png", image_pos: "top"
+    })
+
+    // —— 演示 4：图标在下（WinForms TextAboveImage） ——
+    Button bBottom = win.addButton({
+        text: "图标在下", x: 280, y: 110, w: 200, h: 70,
+        type: "danger",
+        image_path: "icon_bottom.png", image_pos: "bottom"
+    })
+
+    // —— 演示 5：透明度 + 着色（对齐 Qt ColorMod / Material icon tint） ——
+    Button bTint = win.addButton({
+        text: "半透明+红色着色", x: 30, y: 210, w: 230, h: 50,
+        type: "dark",
+        image_path: "icon_left.png", image_pos: "left",
+        image_alpha: 120, image_tint: [255, 60, 60]
+    })
+
+    // —— 演示 6：点击动态切换图片（模拟图标状态切换） ——
+    Button bSwap = win.addButton({
+        text: "点我切换图标", x: 280, y: 210, w: 200, h: 50,
+        type: "primary",
+        image_path: "icon_swap_a.png", image_pos: "left"
+    })
+    var swapState = 0
+    bSwap.on_click(func() {
+        swapState = swapState + 1
+        if swapState % 2 == 0 { bSwap.set_image("icon_swap_a.png") }
+        else { bSwap.set_image("icon_swap_b.png") }
+        bSwap.set_text("点我切换图标 #" + swapState)
+        print("[swap] 切换到 " + (if swapState % 2 == 0 then "A" else "B"))
+    })
+
+    // —— 演示 7：纯图标按钮（无文字） ——
+    Button bIconOnly = win.addButton({
+        x: 30, y: 290, w: 50, h: 50,
+        type: "success",
+        image_path: "icon_top.png"
+    })
+
+    print("=== Button 图片演示：左/右/上/下/透明着色/动态切换/纯图标 均已创建 ===")
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            bLeft.process(ev); bRight.process(ev); bTop.process(ev); bBottom.process(ev)
+            bTint.process(ev); bSwap.process(ev); bIconOnly.process(ev)
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(30, 32, 40, 255)
+            bLeft.render(r); bRight.render(r); bTop.render(r); bBottom.render(r)
+            bTint.render(r); bSwap.render(r); bIconOnly.render(r)
+        }
+    )
+}
+
+main()

@@ -205,6 +205,12 @@ clib sdl3 {
     bool SDL_RenderTextureRotated(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] src, Ptr[u8] dst, f64 angle, Ptr[u8] center, i32 flip)
     void SDL_DestroySurface(Ptr[u8] surface)
 
+    // 离屏表面（用于程序化生成图片，配合 SDL_image 保存）
+    Ptr[u8]  SDL_CreateSurface(i32 w, i32 h, i32 format)
+    i32  SDL_MapSurfaceRGBA(Ptr[u8] surface, u8 r, u8 g, u8 b, u8 a)
+    bool SDL_FillSurfaceRect(Ptr[u8] surface, Ptr[u8] rect, i32 color)
+
+
     bool SDL_SetRenderTarget(Ptr[u8] renderer, Ptr[u8] texture)
     bool SDL_SetTextureAlphaMod(Ptr[u8] texture, u8 alpha)
     bool SDL_SetTextureColorMod(Ptr[u8] texture, u8 r, u8 g, u8 b)
@@ -391,6 +397,15 @@ export func lib(): sdl3 {
     }
     return g_lib
 }
+
+// ==================== 纹理 / 表面辅助（导出包装，供模块外部调用） ====================
+// 注意：clib 函数只能通过模块级 clib 引用（如 _lib）或本处导出的包装函数调用；
+// 不能对 core.lib() 的返回值直接调用 cfunc（编译器无法解析）。
+export func destroyTexture(Ptr[u8] texture) { lib().SDL_DestroyTexture(texture) }
+export func createSurface(int w, int h, int format): Ptr[u8] { return lib().SDL_CreateSurface(w, h, format) }
+export func destroySurface(Ptr[u8] surface) { lib().SDL_DestroySurface(surface) }
+export func mapSurfaceRGBA(Ptr[u8] surface, int r, int g, int b, int a): int { return lib().SDL_MapSurfaceRGBA(surface, r, g, b, a) }
+export func fillSurfaceRect(Ptr[u8] surface, Ptr[u8] rect, int color): bool { return lib().SDL_FillSurfaceRect(surface, rect, color) }
 
 // ==================== 核心函数 ====================
 

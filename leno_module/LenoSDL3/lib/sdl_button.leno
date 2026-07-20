@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_image.leno" as img
 
 export struct Button impl Widget {
     string text = "Button"
@@ -29,6 +30,19 @@ export struct Button impl Widget {
     bool _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
 
+    // ==================== 图片（图标） ====================
+    // 设计参考：Qt setIcon/setIconSize、Material iconGravity、WinForms TextImageRelation
+    string _imagePath = ""   // 图片路径（空 = 无图）
+    int    _imgPos = 0       // 图标相对文字位置：0=left 1=right 2=top 3=bottom
+    float  _imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
+    float  _imgGap = 6.0     // 图标与文字间距
+    int    _imgAlpha = 255   // 图标透明度 0~255
+    int    _imgTintR = -1    // 图标着色（-1 = 不着色，其余按 [r,g,b] 着色）
+    int    _imgTintG = -1
+    int    _imgTintB = -1
+    Ptr[u8] _imgTex = null   // 图片纹理（懒加载，dispose 释放）
+    string _imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
+
     // ==================== 预设类型 ====================
     func _apply_type(string t) {
         switch t {
@@ -50,6 +64,14 @@ export struct Button impl Widget {
                 _font = fnt.acquireFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    // 懒加载图片纹理（需要有效渲染器，render 时调用）
+    func _ensure_image(Renderer r) {
+        if _imagePath != "" and _imgTex == null and _imgLoadPath != _imagePath {
+            _imgTex = img.loadTexture(r.handle, _imagePath)
+            _imgLoadPath = _imagePath   // 标记已尝试，避免加载失败每帧重试
         }
     }
 
@@ -100,6 +122,27 @@ export struct Button impl Widget {
         visible = opts.get("visible", true)
         _tip    = opts.get("tip", "")
 
+        // 图片（图标）
+        _imagePath = opts.get("image_path", "")
+        var ip = opts.get("image_pos", "left")
+        if ip is string {
+            switch ip as string {
+                case "left"   { _imgPos = 0 }
+                case "right"  { _imgPos = 1 }
+                case "top"    { _imgPos = 2 }
+                case "bottom" { _imgPos = 3 }
+                default       { _imgPos = 0 }
+            }
+        }
+        _imgSize  = opts.get("image_size", 0.0)
+        _imgGap   = opts.get("image_gap", 6.0)
+        _imgAlpha = _int(opts.get("image_alpha", 255))
+        var tint = opts.get("image_tint")
+        if tint is Array[int] { _imgTintR = _int(tint[0]); _imgTintG = _int(tint[1]); _imgTintB = _int(tint[2]) }
+        // 更换图片路径时释放旧纹理，下一帧 render 重新加载
+        if _imgTex != null { _release_image(); _imgTex = null }
+        _imgLoadPath = ""
+
         _ensure_font()
         _loaded = true
     }
@@ -135,6 +178,28 @@ export struct Button impl Widget {
     func set_shadow(bool s)    { _showShadow = s }
     func set_border(bool b)    { _showBorder = b }
     func set_cursor(int cur)   { _cursor = cur }
+
+    // ==================== 图片设置方法 ====================
+    func set_image(string path) {
+        if _imgTex != null { _release_image() }
+        _imagePath = path; _imgTex = null; _imgLoadPath = ""
+    }
+    func set_image_pos(string pos) {
+        switch pos {
+            case "left"   { _imgPos = 0 }
+            case "right"  { _imgPos = 1 }
+            case "top"    { _imgPos = 2 }
+            case "bottom" { _imgPos = 3 }
+            default       { _imgPos = 0 }
+        }
+    }
+    func set_image_size(float s) { _imgSize = s }
+    func set_image_gap(float g)  { _imgGap = g }
+    func set_image_alpha(int a)  { _imgAlpha = a }
+    func set_image_tint(int r, int g, int b) { _imgTintR = r; _imgTintG = g; _imgTintB = b }
+    func _release_image() {
+        if _imgTex != null { core.destroyTexture(_imgTex); _imgTex = null }
+    }
 
     // 应用预设类型
     func set_type(string t) { _apply_type(t) }
@@ -186,6 +251,7 @@ export struct Button impl Widget {
         if not _loaded { return }
         if not visible { return }
         _ensure_font()
+        _ensure_image(r)
 
         int br = cr; int bg = cg; int bb = cb
         int tr2 = tr; int tg2 = tg; int tb2 = tb
@@ -221,16 +287,83 @@ export struct Button impl Widget {
             r.drawRoundedRect(x, y, w, h, _radius)
         }
 
-        // 文字（水平居中、垂直居中）
-        if _font == null or not _font.ok { return }
-        var ms = _font.measureString(text)
-        float cy = y + (h - ms.h) / 2.0
-        r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+        // ============ 图标 + 文字布局 ============
+        // 图标尺寸（对齐 Qt setIconSize / Material iconSize）：显式 > 自然高（裁剪到按钮高度）
+        float isize = _imgSize
+        if isize <= 0.0 and _imgTex != null {
+            var ts = r.getTextureSize(_imgTex)
+            isize = ts["h"]
+            if isize > h - 8.0 { isize = h - 8.0 }
+        }
+        if isize <= 0.0 { isize = h - 8.0 }   // 无图兜底
+
+        // 绘制图标（按 alpha/tint 调制，对齐 Qt ColorMod / Material icon tint）
+        if _imgTex != null {
+            r.setTextureAlpha(_imgTex, _imgAlpha)
+            if _imgTintR >= 0 { r.setTextureColor(_imgTex, _imgTintR, _imgTintG, _imgTintB) }
+            else { r.setTextureColor(_imgTex, 255, 255, 255) }
+        }
+
+        float pad = 6.0
+        if _font != null and _font.ok {
+            var ms = _font.measureString(text)
+            if _imgTex == null {
+                // 纯文字：整按钮居中
+                float cy = y + (h - ms.h) / 2.0
+                r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+            } else if _imgPos == 0 {
+                // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
+                float ix = x + pad
+                float iy = y + (h - isize) / 2.0
+                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                float tx = ix + isize + _imgGap
+                float tw = (x + w) - tx - pad
+                float ty = y + (h - ms.h) / 2.0
+                r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
+            } else if _imgPos == 1 {
+                // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
+                float ix = x + w - pad - isize
+                float iy = y + (h - isize) / 2.0
+                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                float tx = x + pad
+                float tw = ix - _imgGap - tx
+                float ty = y + (h - ms.h) / 2.0
+                r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
+            } else if _imgPos == 2 {
+                // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
+                float ix = x + (w - isize) / 2.0
+                float iy = y + pad
+                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                float ty = iy + isize + _imgGap
+                float th = (y + h) - ty - pad
+                float cy = ty + (th - ms.h) / 2.0
+                r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+            } else {
+                // 图标在下（WinForms TextAboveImage）
+                float ix = x + (w - isize) / 2.0
+                float iy = y + h - pad - isize
+                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                float ty = y + pad
+                float th = iy - _imgGap - ty
+                float cy = ty + (th - ms.h) / 2.0
+                r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+            }
+        } else if _imgTex != null {
+            // 仅图标、无文字：居中绘制
+            float ix = x + (w - isize) / 2.0
+            float iy = y + (h - isize) / 2.0
+            if _imgPos == 0 { ix = x + pad; iy = y + (h - isize) / 2.0 }
+            else if _imgPos == 1 { ix = x + w - pad - isize; iy = y + (h - isize) / 2.0 }
+            else if _imgPos == 2 { ix = x + (w - isize) / 2.0; iy = y + pad }
+            else { ix = x + (w - isize) / 2.0; iy = y + h - pad - isize }
+            r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+        }
     }
 
-    // 释放字体资源
+    // 释放字体与图片资源
     func dispose() {
         if _font != null { fnt.releaseFont(_font); _font = null }
+        if _imgTex != null { core.destroyTexture(_imgTex); _imgTex = null }
     }
 }
 
