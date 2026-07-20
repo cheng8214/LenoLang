@@ -113,6 +113,7 @@ main() {
 | 场景 | 推荐 | 口诀 |
 | -- | -------------------------- | ----------- |
 | 变量 | `var x = 值` | "右边有值用 var" |
+| 常量 | `const PI = 3.14` | "不变的用 const" |
 | 参数 | `int x` / `Array[int] arr` | "参数写清楚" |
 | 默认参数 | `int y = 10` | "默认值放末尾" |
 | 返回 | `:int` / `:Array[int]` | "返回要声明" |
@@ -320,6 +321,41 @@ main() {
 > var a = 10, b, c = 1    // a=10, b=null, c=1（各自独立）
 > // 不是：a=10, b=10, c=1
 > ```
+
+### const 常量声明
+
+`const` 用于声明**不可变**的常量，必须在声明时初始化，之后不能再赋值：
+
+```leno
+main() {
+    // 类型推断（推荐写法）
+    const PI = 3.14159         // 推断为 float
+    const MAX_SIZE = 100       // 推断为 int
+    const NAME = "Leno"        // 推断为 string
+
+    // 显式类型
+    const float E = 2.71828    // 显式指定 float
+    const int PORT = 8080      // 显式指定 int
+
+    print(PI)       // 3.14159
+    print(MAX_SIZE) // 100
+
+    // ❌ 编译报错：不能对 const 变量重新赋值
+    PI = 3.14
+}
+```
+
+> **⚠️ const 与 var 的区别**
+>
+> | 特性 | `var` | `const` |
+> | -- | ----- | ------- |
+> | 可重新赋值 | ✅ 可以 | ❌ 不可以 |
+> | 必须初始化 | ❌ 可以不初始化（默认 null） | ✅ 必须初始化 |
+> | 类型推断 | 支持 | 支持 |
+> | 显式类型 | 支持 | 支持 |
+> | 适用场景 | 可变变量 | 不可变常量 |
+
+> **💡 最佳实践**：不会改变的值优先用 `const`，编译器会在赋值时保护你。
 
 ### 类型别名（alias）
 
@@ -552,6 +588,18 @@ var a = 100     // 文件级别变量（在main函数外声明）
 
 main() {
     print(a)    // 可以访问
+}
+```
+
+文件级别也可以用 `const` 声明常量：
+
+```leno
+const PI = 3.14159      // 文件级别常量
+const MAX_CONN = 100    // 不可修改
+
+main() {
+    print(PI)           // 3.14159
+    // PI = 3.14        // ❌ 编译报错
 }
 ```
 
@@ -6012,7 +6060,7 @@ main() {
 
 ```leno
 // math_utils.leno
-export var PI = 3.14156
+export const PI = 3.14156      // 导出常量（不可修改）
 
 export func add(var a, var b) {
     return a + b
@@ -6031,8 +6079,11 @@ import "math_utils.leno" as math
 main() {
     print(math.PI)
     print(math.add(1, 2))
+    // math.PI = 3.14    // ❌ 编译报错：不能对 const 变量重新赋值
 }
 ```
+
+> **💡 提示**：模块中不会改变的值应使用 `export const`，既有语义保护，也方便阅读者理解意图。
 
 ### 导出类型别名（export alias）
 
