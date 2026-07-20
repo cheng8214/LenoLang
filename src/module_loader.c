@@ -244,10 +244,45 @@ static void extract_exports(const char* source, ExportList* list) {
             p += 6;
             while (*p && (*p == ' ' || *p == '\t')) p++;
 
-            // 跳过可能的 "func"、"var"、"struct"、"cstruct"、"enum" 关键字
+            // 跳过可能的 "func"、"var"、"const"、"struct"、"cstruct"、"enum" 关键字
             if (strncmp(p, "func", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
                 p += 4;
                 while (*p && (*p == ' ' || *p == '\t')) p++;
+            } else if (strncmp(p, "const", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                p += 5;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                // const 后面可能还有类型关键字（如 const int, const float 等），继续跳过
+                // 需要循环跳过，因为可能有多级（虽然当前语法只有一级）
+                int skipped_type = 1;
+                while (skipped_type) {
+                    skipped_type = 0;
+                    if (strncmp(p, "int", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "float", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                        p += 5; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "string", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+                        p += 6; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "bool", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
+                        p += 4; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "var", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "any", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "Array", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                        p += 5; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "Dict", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
+                        p += 4; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "Ptr", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    }
+                    // 跳过泛型参数（如 Array[int] 中的 [int]）
+                    if (*p == '[') {
+                        p++;
+                        while (*p && *p != ']') p++;
+                        if (*p == ']') p++;
+                        while (*p && (*p == ' ' || *p == '\t')) p++;
+                    }
+                }
             } else if (strncmp(p, "var", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
                 p += 3;
                 while (*p && (*p == ' ' || *p == '\t')) p++;

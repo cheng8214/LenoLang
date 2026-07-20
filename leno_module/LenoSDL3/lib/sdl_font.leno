@@ -61,20 +61,20 @@ export cstruct SDL_SurfaceInfo {
     i32 h         // offset 12
 }
 
-export var STYLE_NORMAL        = 0x00
-export var STYLE_BOLD          = 0x01
-export var STYLE_ITALIC        = 0x02
-export var STYLE_UNDERLINE     = 0x04
-export var STYLE_STRIKETHROUGH = 0x08
+export const STYLE_NORMAL        = 0x00
+export const STYLE_BOLD          = 0x01
+export const STYLE_ITALIC        = 0x02
+export const STYLE_UNDERLINE     = 0x04
+export const STYLE_STRIKETHROUGH = 0x08
 
-export var HINTING_NORMAL = 0
-export var HINTING_LIGHT  = 1
-export var HINTING_MONO   = 2
-export var HINTING_NONE   = 3
+export const HINTING_NORMAL = 0
+export const HINTING_LIGHT  = 1
+export const HINTING_MONO   = 2
+export const HINTING_NONE   = 3
 
-export var WRAP_ALIGN_LEFT   = 0
-export var WRAP_ALIGN_CENTER = 1
-export var WRAP_ALIGN_RIGHT  = 2
+export const WRAP_ALIGN_LEFT   = 0
+export const WRAP_ALIGN_CENTER = 1
+export const WRAP_ALIGN_RIGHT  = 2
 
 // ==================== 初始化/工具（需在 Font/TextTexture 之前定义，struct 方法会引用） ====================
 

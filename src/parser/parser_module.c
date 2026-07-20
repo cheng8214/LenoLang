@@ -376,8 +376,8 @@ Ast* parse_export_stmt(Parser* p) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // export
 
-    // export 后面可以是 var 声明、func 定义、struct 定义、cstruct 定义或 enum 定义
-    if (p->lex.current.type == TOK_VAR) {
+    // export 后面可以是 var/const 声明、func 定义、struct 定义、cstruct 定义或 enum 定义
+    if (p->lex.current.type == TOK_VAR || p->lex.current.type == TOK_CONST) {
         Ast* decl = parse_var_decl_internal(p);
         if (!decl) return NULL;
 
@@ -441,7 +441,7 @@ Ast* parse_export_stmt(Parser* p) {
         ast->u.export.decl = decl;
         return ast;
     } else {
-        error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、func、struct、cstruct、clib、enum 或 alias");
+        error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、const、func、struct、cstruct、clib、enum 或 alias");
         return NULL;
     }
 }

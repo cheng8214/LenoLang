@@ -221,7 +221,7 @@ struct Ast {
             SymRef* refs;         // 符号引用数组
         } assign;
         struct { char* name; Ast* value; SymRef ref; LenoTokenType op; } compound_assign;  // 复合赋值
-        struct { char* name; Ast* init; SymRef ref; TypeInfo* type; } var_decl;
+        struct { char* name; Ast* init; SymRef ref; TypeInfo* type; int is_const; } var_decl;
         struct { Ast* expr; } expr_stmt;
         struct { char* module_name; char* alias; char* file_path; } import;
         struct { Ast* decl; } export;

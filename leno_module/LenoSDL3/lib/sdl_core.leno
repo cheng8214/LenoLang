@@ -369,13 +369,13 @@ export enum SystemCursor {
 
 export enum TextureAccess { STATIC = 0; STREAMING = 1; TARGET = 2 }
 
-export var PIXELFORMAT_RGBA8888 = 376840728  // SDL_PIXELFORMAT_RGBA8888
+export const PIXELFORMAT_RGBA8888 = 376840728  // SDL_PIXELFORMAT_RGBA8888
 
-export var SDL_FRect_SIZE  = 16
-export var SDL_Rect_SIZE   = 16
-export var SDL_FPoint_SIZE = 8
-export var SDL_Point_SIZE  = 8
-export var SDL_Color_SIZE  = 4
+export const SDL_FRect_SIZE  = 16
+export const SDL_Rect_SIZE   = 16
+export const SDL_FPoint_SIZE = 8
+export const SDL_Point_SIZE  = 8
+export const SDL_Color_SIZE  = 4
 
 // ==================== DLL 加载 ====================
 

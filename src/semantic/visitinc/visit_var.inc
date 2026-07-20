@@ -9,6 +9,10 @@
             }
             Symbol* sym = scope_define(s->current, ast->u.var_decl.name, kind);
             if (sym) {
+                // 设置 const 标志
+                if (ast->u.var_decl.is_const) {
+                    sym->is_const = 1;
+                }
                 // 局部变量使用allocate_local_index分配索引，与函数local_count保持一致
                 if (kind == SYM_LOCAL) {
                     sym->index = allocate_local_index(s);
@@ -351,6 +355,12 @@
                         if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
                         error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                     } else {
+                        // 检查是否对 const 变量赋值
+                        if (sym->is_const) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.assign.names[i]);
+                            error_add(ERR_SEMANTIC, ast->line, msg);
+                        }
                         ast->u.assign.refs[i].type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                     }
                 }
@@ -454,6 +464,12 @@
                     error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                 }
             } else {
+                // 检查是否对 const 变量复合赋值
+                if (sym->is_const) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.compound_assign.name);
+                    error_add(ERR_SEMANTIC, ast->line, msg);
+                }
                 ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
             }
             visit(s, ast->u.compound_assign.value);

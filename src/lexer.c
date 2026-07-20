@@ -85,6 +85,7 @@ static void init_keyword_table(void) {
         {"case", TOK_CASE},
         {"default", TOK_DEFAULT},
         {"var", TOK_VAR},
+        {"const", TOK_CONST},
         {"return", TOK_RETURN},
         {"func", TOK_FUNC},
         {"true", TOK_TRUE},

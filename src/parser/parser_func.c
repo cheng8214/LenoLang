@@ -605,12 +605,32 @@ Ast* parse_alias_stmt(Parser* p) {
 Ast* parse_var_decl_internal(Parser* p) {
     int line = p->lex.current.line;
     TypeInfo* shared_type = NULL;
+    int is_const = 0;
     
-    // 解析类型
-    shared_type = parse_type(p);
+    // 检查是否是 const 声明
+    if (p->lex.current.type == TOK_CONST) {
+        is_const = 1;
+        lexer_next(&p->lex); // 消费 const
+        // const 后面的标识符可能是变量名（如 const PI = 3.14）或自定义类型（如 const MyStruct x = ...）
+        // 如果标识符后面紧跟 = 或 ,，说明是变量名，使用类型推断
+        if (p->lex.current.type == TOK_IDENT) {
+            Lexer saved_lex = p->lex;
+            lexer_next(&p->lex);
+            LenoTokenType peek = p->lex.current.type;
+            p->lex = saved_lex;
+            if (peek == TOK_EQ || peek == TOK_COMMA) {
+                shared_type = type_new(TYPE_INFER);
+            }
+        }
+    }
+    
+    // 解析类型（如果尚未推断）
     if (!shared_type) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望类型 (int, float, string, bool, Array, Dict, var)");
-        return NULL;
+        shared_type = parse_type(p);
+        if (!shared_type) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "期望类型 (int, float, string, bool, Array, Dict, var)");
+            return NULL;
+        }
     }
     
     // 解析第一个变量名
@@ -647,11 +667,23 @@ Ast* parse_var_decl_internal(Parser* p) {
             init = parse_expression(p);
         }
         
+        // const 声明必须有初始值
+        if (is_const && !init) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "const 声明必须有初始值");
+            type_free(var_type);
+            free(name);
+            for (int i = 0; i < decl_count; i++) ast_free(decls[i]);
+            free(decls);
+            type_free(shared_type);
+            return NULL;
+        }
+        
         // 创建变量声明节点
         Ast* ast = ast_new(AST_VAR_DECL, line);
         ast->u.var_decl.name = name;
         ast->u.var_decl.init = init;
         ast->u.var_decl.type = var_type;
+        ast->u.var_decl.is_const = is_const;
         
         // 添加到数组
         if (decl_count >= decl_capacity) {

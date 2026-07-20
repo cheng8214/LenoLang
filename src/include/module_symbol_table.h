@@ -97,6 +97,7 @@ typedef struct {
     char* name;                 // 变量名
     TypeKind type;              // 变量类型
     char* struct_name;          // 如果类型是 struct，存储 struct 名称
+    int is_const;               // 是否为 const 声明
 } ModuleVarSymbol;
 
 // 模块类型别名符号
@@ -173,7 +174,7 @@ void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, in
 ModuleVarSymbol* module_symbol_table_find_var(ModuleSymbolTable* table, const char* var_name);
 
 // 添加变量符号
-void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name);
+void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name, int is_const);
 
 // 查找别名符号
 ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, const char* alias_name);

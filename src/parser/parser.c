@@ -81,8 +81,9 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_use_stmt(p);
             break;
 
-        // 变量声明（var 关键字或类型关键字开头，或自定义 struct 类型）
+        // 变量声明（var/const 关键字或类型关键字开头，或自定义 struct 类型）
         case TOK_VAR:
+        case TOK_CONST:
         case TOK_INT_TYPE:
         case TOK_FLOAT_TYPE:
         case TOK_STRING_TYPE:

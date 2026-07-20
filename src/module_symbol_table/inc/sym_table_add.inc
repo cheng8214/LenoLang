@@ -243,7 +243,7 @@ ModuleVarSymbol* module_symbol_table_find_var(ModuleSymbolTable* table, const ch
 }
 
 // 添加变量符号
-void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name) {
+void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name, int is_const) {
     if (!table || !name) return;
 
     // 扩容
@@ -259,6 +259,7 @@ void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, Typ
     var->name = strdup(name);
     var->type = type;
     var->struct_name = struct_name ? strdup(struct_name) : NULL;
+    var->is_const = is_const;
 }
 
 // 查找别名符号

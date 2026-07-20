@@ -1,4 +1,4 @@
-﻿// sdl_layout.leno — 自动布局容器（HBox / VBox / AnchorBox）
+// sdl_layout.leno — 自动布局容器（HBox / VBox / AnchorBox）
 //
 // 解决的问题：此前所有控件都用窗口绝对坐标摆放，调整一个就得手动算其它所有坐标。
 // 布局容器接管子控件的 x/y（必要时还有 w/h），按规则自动排布。
@@ -34,10 +34,10 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_edit.leno" as edt; use edt.Edit
 
 // 交叉轴对齐方式
-export var LAYOUT_START   = 0   // 靠起始边（左/上）
-export var LAYOUT_CENTER  = 1   // 居中
-export var LAYOUT_END     = 2   // 靠结束边（右/下）
-export var LAYOUT_STRETCH = 3   // 撑满交叉轴
+export const LAYOUT_START   = 0   // 靠起始边（左/上）
+export const LAYOUT_CENTER  = 1   // 居中
+export const LAYOUT_END     = 2   // 靠结束边（右/下）
+export const LAYOUT_STRETCH = 3   // 撑满交叉轴
 
 // ============================================================
 // HBox — 子控件沿水平方向依次排列

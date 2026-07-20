@@ -253,6 +253,7 @@ struct Symbol {
     int is_captured;
     int is_in_loop;           // 变量是否定义在循环作用域中
     int is_initialized;       // 变量是否已初始化
+    int is_const;             // 是否为 const 声明（不可重新赋值）
     Scope* scope;
     Symbol* next;
     TypeInfo* type;
