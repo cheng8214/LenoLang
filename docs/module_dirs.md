@@ -257,17 +257,26 @@ dirs.rmdir("non_empty")         // false (目录非空)
 
 ### `delete(path)`
 
-删除文件。
+删除文件或目录。
+
+- **文件**：直接删除。
+- **目录**：递归删除整个目录树（先删除其所有子文件和子目录，再删除自身），因此**非空目录也能删除**。
+- 全程使用 UTF-16 处理路径，支持中文等非 ASCII 路径。
+- 路径不存在时返回 `false`。
 
 **参数**:
-- `path` (string): 文件路径
+- `path` (string): 文件或目录路径
 
 **返回**: `bool` - 是否删除成功
 
 ```leno
-dirs.delete("old_file.txt")     // true
-dirs.delete("not_exist.txt")    // false
+dirs.delete("old_file.txt")            // true（删文件）
+dirs.delete("empty_folder")            // true（删空目录）
+dirs.delete("project")                 // true（递归删非空目录及其全部内容）
+dirs.delete("not_exist.txt")           // false（路径不存在）
 ```
+
+> 注意：删除非空目录会**永久移除其下所有内容**，请谨慎使用。若只想删除空目录，可用 `dirs.rmdir()`。
 
 ---
 
@@ -573,5 +582,5 @@ main() {
 
 ---
 
-*文档版本: 1.0*  
-*最后更新: 2026-05-07*
+*文档版本: 1.1*  
+*最后更新: 2026-07-22*
