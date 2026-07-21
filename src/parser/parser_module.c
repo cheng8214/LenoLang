@@ -127,6 +127,20 @@ Ast* parse_import_stmt(Parser* p) {
     ast->u.import.module_name = module_name;
     ast->u.import.alias = alias;  // 如果没有别名，alias 为 NULL
     
+    // 如果模块名不含 .leno，尝试通过搜索路径解析为文件模块
+    // 例如 import "SDL3" → 解析为 leno_module/LenoSDL3/lib/SDL3.leno
+    if (strstr(module_name, ".leno") == NULL) {
+        extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
+        char resolved[MAX_PATH_LEN] = {0};
+        if (package_resolve_module_file(module_name, resolved, sizeof(resolved)) == 1) {
+            // 找到了，将 module_name 替换为完整路径
+            free(module_name);
+            module_name = strdup(resolved);
+            // 同时更新 AST 中的 module_name
+            ast->u.import.module_name = module_name;
+        }
+    }
+
     // 如果是文件模块（包含 .leno），保存文件路径
     if (strstr(module_name, ".leno") != NULL) {
         ast->u.import.file_path = copy_string(module_name, strlen(module_name));

@@ -228,6 +228,12 @@ int package_cache_ensure(void);
  */
 void package_cache_add_to_search_paths(void);
 
+/**
+ * 将内置模块目录（exe_dir/leno_module/<包名>/lib/）添加到模块搜索路径。
+ * 结构与全局缓存一致，便于随 exe 分发内置包模块（如 LenoSDL3）。
+ */
+void package_builtin_add_to_search_paths(void);
+
 /* ============================================================================
  * 包安装
  * ============================================================================ */

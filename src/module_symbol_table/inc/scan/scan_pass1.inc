@@ -5,7 +5,22 @@
     // 构建当前模块的规范化绝对路径，供后续递归扫描使用
     // 这样子模块的相对路径可以基于正确的目录解析
     char normalized_current[MAX_PATH_LEN] = {0};
-    if (current_file) {
+    // 判断 module_path 是否已经是绝对路径
+    int module_path_is_absolute = 0;
+    if (table->module_path) {
+    #ifdef _WIN32
+        if (table->module_path[1] == ':' && (table->module_path[2] == '\\' || table->module_path[2] == '/'))
+            module_path_is_absolute = 1;
+    #else
+        if (table->module_path[0] == '/')
+            module_path_is_absolute = 1;
+    #endif
+    }
+    if (module_path_is_absolute) {
+        // 已经是绝对路径，直接使用
+        strncpy(normalized_current, table->module_path, MAX_PATH_LEN - 1);
+        normalized_current[MAX_PATH_LEN - 1] = '\0';
+    } else if (current_file) {
         strncpy(normalized_current, current_file, MAX_PATH_LEN - 1);
         normalized_current[MAX_PATH_LEN - 1] = '\0';
         char* last_sep = strrchr(normalized_current, '\\');
@@ -16,11 +31,11 @@
         } else {
             strncpy(normalized_current, table->module_path, MAX_PATH_LEN - 1);
         }
-        // 规范化路径（解析 ../ 等）
-        normalize_path(normalized_current, MAX_PATH_LEN);
     } else {
         strncpy(normalized_current, table->module_path, MAX_PATH_LEN - 1);
     }
+    // 规范化路径（解析 ../ 等）
+    normalize_path(normalized_current, MAX_PATH_LEN);
 
     // 第一遍：收集所有 struct/cstruct/clib/face/enum 名称
     char* struct_names[MOD_MAX_TYPES];

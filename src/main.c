@@ -447,6 +447,10 @@ int lenolang_run_file(const char* path) {
             package_search_path_add(file_dir);
         }
 
+        // 添加内置模块搜索路径（exe_dir/leno_module/<包名>/lib/）
+        // 内置模块优先于全局缓存，确保随 exe 分发的模块版本不被缓存覆盖
+        package_builtin_add_to_search_paths();
+
         // 添加全局缓存中所有已安装包的 lib/ 到搜索路径
         package_cache_add_to_search_paths();
 

@@ -94,19 +94,24 @@ int package_cache_ensure(void) {
 }
 
 /* ============================================================================
- * 缓存搜索路径
+ * 搜索路径
  * ============================================================================ */
 
-void package_cache_add_to_search_paths(void) {
-    const char* cache = package_cache_dir();
-
+/**
+ * 将指定目录下所有子目录的 lib/ 添加到模块搜索路径。
+ * 目录结构: base_dir/<包名>/lib/  → 添加为搜索路径
+ * 同时适用于：
+ *   - 全局包缓存: ~/.leno/pkgs/<包名>/lib/
+ *   - 内置模块:   exe_dir/leno_module/<包名>/lib/
+ */
+static void add_pkg_lib_search_paths(const char* base_dir) {
 #ifdef _WIN32
-    /* 枚举缓存目录下的所有子目录 */
+    /* 枚举目录下的所有子目录 */
     char pattern[MAX_PATH_LEN];
     {
-        size_t clen = strlen(cache);
+        size_t clen = strlen(base_dir);
         if (clen + 2 >= sizeof(pattern)) return;
-        snprintf(pattern, sizeof(pattern), "%s*", cache);
+        snprintf(pattern, sizeof(pattern), "%s*", base_dir);
     }
 
     WIN32_FIND_DATAW fd;
@@ -126,11 +131,11 @@ void package_cache_add_to_search_paths(void) {
 
         char lib_path[MAX_PATH_LEN];
         {
-            size_t clen = strlen(cache);
+            size_t clen = strlen(base_dir);
             size_t nlen = strlen(name);
             if (clen + nlen + 6 >= sizeof(lib_path)) continue;
             snprintf(lib_path, sizeof(lib_path), "%.*s%.*s%clib%c",
-                     (int)clen, cache, (int)nlen, name, PATH_SEP, PATH_SEP);
+                     (int)clen, base_dir, (int)nlen, name, PATH_SEP, PATH_SEP);
         }
 
         /* 检查 lib/ 目录存在 */
@@ -143,7 +148,7 @@ void package_cache_add_to_search_paths(void) {
 #else
     /* Linux/macOS: 用 opendir */
     #include <dirent.h>
-    DIR* d = opendir(cache);
+    DIR* d = opendir(base_dir);
     if (!d) return;
 
     struct dirent* ent;
@@ -153,11 +158,11 @@ void package_cache_add_to_search_paths(void) {
 
         char lib_path[MAX_PATH_LEN];
         {
-            size_t clen = strlen(cache);
+            size_t clen = strlen(base_dir);
             size_t nlen = strlen(ent->d_name);
             if (clen + nlen + 6 >= sizeof(lib_path)) continue;
             snprintf(lib_path, sizeof(lib_path), "%.*s%.*s%clib%c",
-                     (int)clen, cache, (int)nlen, ent->d_name, PATH_SEP, PATH_SEP);
+                     (int)clen, base_dir, (int)nlen, ent->d_name, PATH_SEP, PATH_SEP);
         }
 
         struct stat st;
@@ -167,6 +172,48 @@ void package_cache_add_to_search_paths(void) {
     }
     closedir(d);
 #endif
+}
+
+/* 全局包缓存搜索路径 */
+void package_cache_add_to_search_paths(void) {
+    const char* cache = package_cache_dir();
+    add_pkg_lib_search_paths(cache);
+}
+
+/* 内置模块搜索路径: exe_dir/leno_module/<包名>/lib/ */
+void package_builtin_add_to_search_paths(void) {
+#ifdef _WIN32
+    wchar_t wexe[MAX_PATH_LEN];
+    GetModuleFileNameW(NULL, wexe, MAX_PATH_LEN);
+    /* 转为 UTF-8 并提取目录 */
+    char exe_dir[MAX_PATH_LEN];
+    int conv = WideCharToMultiByte(CP_UTF8, 0, wexe, -1, exe_dir, MAX_PATH_LEN, NULL, NULL);
+    if (conv <= 0) return;
+    char* last_sep = strrchr(exe_dir, '\\');
+    if (!last_sep) last_sep = strrchr(exe_dir, '/');
+    if (last_sep) *(last_sep + 1) = '\0'; else exe_dir[0] = '\0';
+#else
+    char exe_dir[MAX_PATH_LEN];
+    ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+    if (len <= 0) return;
+    exe_dir[len] = '\0';
+    char* last_sep = strrchr(exe_dir, '/');
+    if (last_sep) *(last_sep + 1) = '\0'; else exe_dir[0] = '\0';
+#endif
+
+    if (exe_dir[0] == '\0') return;
+
+    /* 拼接 exe_dir + "leno_module/"，提前检查长度 */
+    size_t elen = strlen(exe_dir);
+    if (elen + 12 >= (size_t)MAX_PATH_LEN) return;  /* "leno_module" + sep + '\0' */
+    char builtin_dir[MAX_PATH_LEN];
+    snprintf(builtin_dir, sizeof(builtin_dir), "%sleno_module%c", exe_dir, PATH_SEP);
+
+    /* 检查内置模块目录存在 */
+    struct stat st;
+    if (stat(builtin_dir, &st) == 0 && (st.st_mode & S_IFDIR)) {
+        add_pkg_lib_search_paths(builtin_dir);
+    }
 }
 
 /* ============================================================================
