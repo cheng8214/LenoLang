@@ -67,6 +67,17 @@
 #include <errno.h>
 
 #include "leno_ffi.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#ifdef _WIN32
+/* Windows 上 S_ISREG 未定义，自行补充 */
+#ifndef S_ISREG
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#endif
+#else
+#include <unistd.h>
+#endif
 
 #define MAX_FFI_CALLBACKS 128
 
@@ -205,61 +216,214 @@ static int parse_offset(int argc, Value* args, int idx) {
 
 /* ==================== FFI 库操作函数 ==================== */
 
-/* ffi.load(path) - 加载动态链接库 */
+/* 辅助函数：判断路径是否为绝对路径 */
+static int is_absolute_path(const char* path) {
+#ifdef _WIN32
+    /* Windows: C:\, \\, 或 X: 开头 */
+    if (path[0] && path[1] == ':') return 1;
+    if (path[0] == '\\' && path[1] == '\\') return 1;
+#else
+    /* Linux/macOS: / 开头 */
+    if (path[0] == '/') return 1;
+#endif
+    return 0;
+}
+
+/* 辅助函数：从路径中提取目录部分（含末尾分隔符） */
+static void extract_dir(const char* path, char* dir, int dir_size) {
+    strncpy(dir, path, dir_size - 1);
+    dir[dir_size - 1] = '\0';
+    int len = (int)strlen(dir);
+    /* 查找最后一个路径分隔符 */
+    for (int i = len - 1; i >= 0; i--) {
+        if (dir[i] == '/' || dir[i] == '\\') {
+            dir[i + 1] = '\0';
+            return;
+        }
+    }
+    /* 没有分隔符，返回当前目录 */
+    dir[0] = '.'; dir[1] = '/'; dir[2] = '\0';
+}
+
+/* 辅助函数：跨平台检查文件是否存在（支持中文路径） */
+static int file_exists_utf8(const char* path) {
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) return 0;
+    DWORD attrs = GetFileAttributesW(wpath);
+    free(wpath);
+    return (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY));
+#else
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISREG(st.st_mode));
+#endif
+}
+
+/* 辅助函数：跨平台加载动态库（Windows 使用 LoadLibraryW 支持中文路径） */
+static void* load_library_utf8(const char* path) {
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) return NULL;
+    HMODULE handle = LoadLibraryW(wpath);
+    free(wpath);
+    return (void*)handle;
+#else
+    return dlopen(path, RTLD_LAZY);
+#endif
+}
+
+/* 辅助函数：获取 exe 所在目录（含末尾分隔符） */
+static void get_exe_dir(char* dir, int dir_size) {
+#ifdef _WIN32
+    wchar_t wexe[MAX_PATH_LEN];
+    GetModuleFileNameW(NULL, wexe, MAX_PATH_LEN);
+    /* 转为 UTF-8 */
+    char utf8_exe[MAX_PATH_LEN];
+    int conv = WideCharToMultiByte(CP_UTF8, 0, wexe, -1, utf8_exe, MAX_PATH_LEN, NULL, NULL);
+    if (conv > 0) {
+        extract_dir(utf8_exe, dir, dir_size);
+    } else {
+        dir[0] = '\0';
+    }
+#else
+    char exe_path[MAX_PATH_LEN];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0) {
+        exe_path[len] = '\0';
+        extract_dir(exe_path, dir, dir_size);
+    } else {
+        dir[0] = '\0';
+    }
+#endif
+}
+
+/* 辅助函数：获取当前模块目录（含末尾分隔符） */
+static void get_current_module_dir(char* dir, int dir_size) {
+    dir[0] = '\0';
+    VM* vm_ptr = current_exec_vm;
+    if (!vm_ptr) return;
+    ModuleFrame* mf = vm_ptr->current_module_frame;
+    if (!mf || !mf->module || !mf->module->source_path) return;
+    const char* src = mf->module->source_path;
+    extract_dir(src, dir, dir_size);
+}
+
+/* ffi.load(path) - 加载动态链接库
+ * 自动搜索顺序（仅对相对路径/纯文件名生效）：
+ *   1) 给定路径直接加载
+ *   2) 当前模块目录/bin/<文件名>
+ *   3) 当前模块目录/<文件名>
+ *   4) exe 所在目录/<文件名>
+ *   5) 系统PATH（交给系统加载器处理）
+ * Windows 使用 LoadLibraryW 支持中文路径
+ */
 static Value ffi_load_func(int argc, Value* args) {
     (void)argc;
     ObjString* path_str = (ObjString*)val_as_obj(args[0]);
     const char* path = path_str->chars;
+    char* resolved_path = NULL;  /* 自动搜索时分配，需在最后释放 */
 
+    /* 1) 直接尝试加载给定路径 */
+    void* handle = load_library_utf8(path);
+
+    /* 2) 加载失败且为相对路径时，自动搜索 */
+    if (!handle && !is_absolute_path(path)) {
+        /* 提取纯文件名（去掉可能的目录前缀） */
+        const char* filename = path;
+        const char* last_sep = strrchr(path, '/');
+        const char* last_sep2 = strrchr(path, '\\');
+        if (last_sep2 && (!last_sep || last_sep2 > last_sep)) last_sep = last_sep2;
+        if (last_sep) filename = last_sep + 1;
+
+        char search_path[MAX_PATH_LEN];
+
+        /* 2a) 当前模块目录/bin/<文件名> */
+        char mod_dir[MAX_PATH_LEN];
+        get_current_module_dir(mod_dir, sizeof(mod_dir));
+        if (mod_dir[0] != '\0') {
+            snprintf(search_path, sizeof(search_path), "%sbin%c%s", mod_dir,
 #ifdef _WIN32
-    HMODULE handle = LoadLibraryA(path);
-    if (!handle) {
-        DWORD error = GetLastError();
-        char msg[256];
-        snprintf(msg, sizeof(msg), "加载库 '%s' 失败，错误码: %lu", path, error);
-        native_throw_error(msg);
-        return val_null();
-    }
+                     '\\',
 #else
-    void* handle = dlopen(path, RTLD_LAZY);
+                     '/',
+#endif
+                     filename);
+            if (file_exists_utf8(search_path)) {
+                handle = load_library_utf8(search_path);
+                if (handle) resolved_path = strdup(search_path);
+            }
+        }
+
+        /* 2b) 当前模块目录/<文件名> */
+        if (!handle && mod_dir[0] != '\0') {
+            snprintf(search_path, sizeof(search_path), "%s%s", mod_dir, filename);
+            if (file_exists_utf8(search_path)) {
+                handle = load_library_utf8(search_path);
+                if (handle) resolved_path = strdup(search_path);
+            }
+        }
+
+        /* 2c) exe 所在目录/<文件名> */
+        if (!handle) {
+            char exe_dir[MAX_PATH_LEN];
+            get_exe_dir(exe_dir, sizeof(exe_dir));
+            if (exe_dir[0] != '\0') {
+                snprintf(search_path, sizeof(search_path), "%s%s", exe_dir, filename);
+                if (file_exists_utf8(search_path)) {
+                    handle = load_library_utf8(search_path);
+                    if (handle) resolved_path = strdup(search_path);
+                }
+            }
+        }
+
+        /* 2d) 系统PATH（交给系统加载器处理，传入纯文件名） */
+        if (!handle) {
+            handle = load_library_utf8(filename);
+            if (handle) resolved_path = strdup(filename);
+        }
+    }
+
     if (!handle) {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "加载库 '%s' 失败: %s", path, dlerror());
+        free(resolved_path);
+        char msg[512];
+#ifdef _WIN32
+        DWORD error = GetLastError();
+        snprintf(msg, sizeof(msg), "加载库 '%s' 失败，错误码: %lu（已搜索: 模块目录/bin、模块目录、exe目录、系统PATH）",
+                 path_str->chars, error);
+#else
+        const char* dl_err = dlerror();
+        snprintf(msg, sizeof(msg), "加载库 '%s' 失败: %s（已搜索: 模块目录/bin、模块目录、exe目录、系统PATH）",
+                 path_str->chars, dl_err ? dl_err : "未知错误");
+#endif
         native_throw_error(msg);
         return val_null();
     }
-#endif
 
     ObjFFILibrary* lib = (ObjFFILibrary*)gc_alloc(sizeof(ObjFFILibrary), OBJ_FFI_LIBRARY);
     if (!lib) {
 #ifdef _WIN32
-        FreeLibrary(handle);
+        FreeLibrary((HMODULE)handle);
 #else
         dlclose(handle);
 #endif
+        free(resolved_path);
         native_throw_error("内存不足");
         return val_null();
     }
 
-    lib->path = strdup(path);
+    lib->path = strdup(resolved_path ? resolved_path : path);
     lib->handle = handle;
     lib->freed = 0;
+    free(resolved_path);
 
     return val_obj((Object*)lib);
 }
 
 Value ffi_reload_library(const char* path) {
-#ifdef _WIN32
-    HMODULE handle = LoadLibraryA(path);
+    void* handle = load_library_utf8(path);
     if (!handle) {
         return val_null();
     }
-#else
-    void* handle = dlopen(path, RTLD_LAZY);
-    if (!handle) {
-        return val_null();
-    }
-#endif
 
     ObjFFILibrary* lib = (ObjFFILibrary*)gc_alloc(sizeof(ObjFFILibrary), OBJ_FFI_LIBRARY);
     if (!lib) {
