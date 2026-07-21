@@ -600,7 +600,61 @@ static Value native_dirs_rmdir(int argCount, Value* args) {
     return val_bool(result == 0);
 }
 
-// dirs.delete(path) - 删除文件
+// ---- 递归删除辅助 ----
+#ifdef _WIN32
+// 返回 1 成功 / 0 失败。目录递归删除其子项后移除，文件直接删除。
+static int dirs_recursive_delete_w(const wchar_t* wpath) {
+    DWORD attr = GetFileAttributesW(wpath);
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+        return 0;
+    }
+    if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+        wchar_t wsearch[4096];
+        swprintf(wsearch, sizeof(wsearch) / sizeof(wchar_t), L"%ls\\*", wpath);
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(wsearch, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) {
+                    continue;
+                }
+                wchar_t child[4096];
+                swprintf(child, sizeof(child) / sizeof(wchar_t), L"%ls\\%ls", wpath, fd.cFileName);
+                dirs_recursive_delete_w(child);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+        return RemoveDirectoryW(wpath) ? 1 : 0;
+    }
+    return DeleteFileW(wpath) ? 1 : 0;
+}
+#else
+static int dirs_recursive_delete_u(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return 0;
+    }
+    if (S_ISDIR(st.st_mode)) {
+        DIR* d = opendir(path);
+        if (d) {
+            struct dirent* e;
+            while ((e = readdir(d)) != NULL) {
+                if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
+                    continue;
+                }
+                char child[4096];
+                snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
+                dirs_recursive_delete_u(child);
+            }
+            closedir(d);
+        }
+        return rmdir(path) == 0 ? 1 : 0;
+    }
+    return remove(path) == 0 ? 1 : 0;
+}
+#endif
+
+// dirs.delete(path) - 删除文件或目录（目录递归删除）
 static Value native_dirs_delete(int argCount, Value* args) {
     if (argCount < 1) {
         native_throw_error("delete 需要路径参数");
@@ -618,12 +672,12 @@ static Value native_dirs_delete(int argCount, Value* args) {
     if (!wpath) {
         return val_bool(0);
     }
-    int result = _wremove(wpath);
+    int result = dirs_recursive_delete_w(wpath);
     free(wpath);
 #else
-    int result = remove(path);
+    int result = dirs_recursive_delete_u(path);
 #endif
-    return val_bool(result == 0);
+    return val_bool(result ? 1 : 0);
 }
 
 // dirs.rename(old, new) - 重命名
