@@ -80,32 +80,28 @@ Leno 代码（for 步长2）：
 
 ```leno
 var k = 0
-for csnum {
+for csnum to k {
     k++
     arr2.add(k)
 }
 ```
 
-Python 代码（for 步长2）：
+Python 代码（步长2）：
 
 ```python
-for k in range(csnum):
+k = 0
+while k < csnum:
     k += 1
     arr2.append(k)
+    k += 1
 ```
 
 #### 差异分析
 
-- **Leno 的 `for N {}`**：专用计数循环语法，由 `OP_FOR_LOOP` 字节码直接控制迭代，循环体中 `k++` 是局部变量的原地修改，零堆分配
-- **Python 的 `for k in range(N)`**：每次迭代都要：
-  - 调用 `range.__iter__()` 获取迭代器
-  - 调用 `iterator.__next__()` 获取下一个值
-  - 将值赋给局部变量 k
-  - 处理 `StopIteration` 异常作为循环终止信号
+- **Leno 的 `for N to k {}`**：循环变量 `k` 由 `for` 自动推进（步长 1），体内额外 `k++` 再推进一步，净步长 2。`k` 是 int48 原地修改，零堆分配
+- **Python 的 `while k < N`**：Python 的 `for k in range(N)` 中迭代值由迭代器控制，体内修改 `k` 会被重新覆盖，无法实现体内跳步，只能用 `while` 模拟
 
-Leno 的 for 31ms 空循环 vs Python for 160ms，差距 5.2 倍，正是专用循环指令 vs 迭代器协议开销的差异。
-
-步长2 的测试中，两者都执行 10,000,000 次迭代，差距主要来自整数模型差异：Leno 的 `k++` 是 int48 原地修改，Python 的 `k += 1` 需要创建新的 PyLong 对象。
+步长 2 的测试中，迭代次数减半（约 5,000,000 次），差距主要来自整数模型差异：Leno 的 `k++` 是 int48 原地修改，Python 的 `k += 1` 需要创建新的 PyLong 对象。
 
 > **注意**：嵌套循环 (1000×1000) Leno 耗时 <1ms，无法精确对比，因为 100 万次操作对 Leno 来说过于简单。
 
