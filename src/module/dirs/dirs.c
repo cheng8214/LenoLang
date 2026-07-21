@@ -103,20 +103,25 @@ static void arr_push(ObjArray* arr, Value value) {
 static Value native_dirs_cwd(int argCount, Value* args) {
     (void)argCount;
     (void)args;
-    
-    char buffer[4096];
-    
+
 #ifdef _WIN32
-    if (_getcwd(buffer, sizeof(buffer)) == NULL) {
+    wchar_t wbuffer[4096];
+    if (_wgetcwd(wbuffer, sizeof(wbuffer) / sizeof(wchar_t)) == NULL) {
         return val_null();
     }
+    char* utf8 = utf16_to_utf8(wbuffer);
+    if (!utf8) {
+        return val_null();
+    }
+    Value result = val_obj((Object*)str_copy(utf8, (int)strlen(utf8)));
+    free(utf8);
+    return result;
 #else
     if (getcwd(buffer, sizeof(buffer)) == NULL) {
         return val_null();
     }
-#endif
-    
     return val_obj((Object*)str_copy(buffer, (int)strlen(buffer)));
+#endif
 }
 
 // dirs.abspath(path) - 转换为绝对路径
@@ -354,11 +359,21 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     }
 
     // 转换为绝对路径
-    char abs_path[4096];
 #ifdef _WIN32
-    if (_fullpath(abs_path, target, sizeof(abs_path)) == NULL) {
+    wchar_t* wtarget = utf8_to_utf16(target);
+    if (!wtarget) { return val_null(); }
+    wchar_t wabs[4096];
+    if (_wfullpath(wabs, wtarget, sizeof(wabs) / sizeof(wchar_t)) == NULL) {
+        free(wtarget);
         return val_null();
     }
+    free(wtarget);
+    char* abs_utf8 = utf16_to_utf8(wabs);
+    if (!abs_utf8) { return val_null(); }
+    char abs_path[4096];
+    strncpy(abs_path, abs_utf8, sizeof(abs_path) - 1);
+    abs_path[sizeof(abs_path) - 1] = '\0';
+    free(abs_utf8);
 #else
     if (realpath(target, abs_path) == NULL) {
         // realpath 失败，尝试拼接 cwd
@@ -730,29 +745,37 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
     }
 
 #ifdef _WIN32
-    char search_path[4096];
-    snprintf(search_path, sizeof(search_path), "%s\\*", path);
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return; }
 
-    WIN32_FIND_DATAA findData;
-    HANDLE hFind = FindFirstFileA(search_path, &findData);
+    wchar_t wsearch[4096];
+    swprintf(wsearch, sizeof(wsearch) / sizeof(wchar_t), L"%ls\\*", wpath);
+    free(wpath);
+
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind = FindFirstFileW(wsearch, &findData);
 
     if (hFind != INVALID_HANDLE_VALUE) {
         do {
-            if (strcmp(findData.cFileName, ".") == 0 || strcmp(findData.cFileName, "..") == 0) {
+            if (wcscmp(findData.cFileName, L".") == 0 || wcscmp(findData.cFileName, L"..") == 0) {
                 continue;
             }
 
-            ObjString* name = str_copy(findData.cFileName, (int)strlen(findData.cFileName));
+            char* utf8_name = utf16_to_utf8(findData.cFileName);
+            if (!utf8_name) { continue; }
+
+            ObjString* name = str_copy(utf8_name, (int)strlen(utf8_name));
             if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                 arr_push(dir_names, val_obj((Object*)name));
                 // 构建子目录完整路径
                 char full_path[4096];
-                snprintf(full_path, sizeof(full_path), "%s\\%s", path, findData.cFileName);
+                snprintf(full_path, sizeof(full_path), "%s\\%s", path, utf8_name);
                 arr_push(subdirs, val_obj((Object*)str_copy(full_path, (int)strlen(full_path))));
             } else {
                 arr_push(file_names, val_obj((Object*)name));
             }
-        } while (FindNextFileA(hFind, &findData));
+            free(utf8_name);
+        } while (FindNextFileW(hFind, &findData));
         FindClose(hFind);
     }
 #else
