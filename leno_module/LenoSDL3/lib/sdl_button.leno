@@ -291,7 +291,7 @@ export struct Button impl Widget {
         // 内容裁剪到按钮矩形内，防止图标/文字溢出按钮（对齐 sdl_edit / sdl_panel 做法）
         var _btnClip = core.SDL_Rect.malloc()
         _btnClip.x = _int(x); _btnClip.y = _int(y); _btnClip.w = _int(w); _btnClip.h = _int(h)
-        r.setClipRect(_btnClip.to_ptr())
+        r.pushClipRect(_btnClip.to_ptr())
 
         float pad = 6.0
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
@@ -383,7 +383,7 @@ export struct Button impl Widget {
         }
 
         // 恢复裁剪区
-        r.clearClip(); _btnClip.free()
+        r.popClipRect(); _btnClip.free()
     }
 
     // 释放字体与图片资源

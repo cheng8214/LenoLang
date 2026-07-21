@@ -1485,7 +1485,7 @@ export struct Edit impl Widget {
         var clip = core.SDL_Rect.malloc()
         clip.x = _int(x + pad); clip.y = _int(y)
         clip.w = _int(w - pad * 2.0); clip.h = _int(h)
-        r.setClipRect(clip.to_ptr())
+        r.pushClipRect(clip.to_ptr())
 
         // 文字几何（先算，供选区/光标对齐）
         var ms0 = _font.measureString("Ag")
@@ -1523,7 +1523,7 @@ export struct Edit impl Widget {
             r.drawText(_font, display, r.snapX(x + pad - _scrollX), r.snapY(ty), tr, tg, tb)
         }
 
-        r.clearClip(); clip.free()
+        r.popClipRect(); clip.free()
 
         // 光标（与文字同高、垂直对齐）
         if _focused and _showCursor {
@@ -1558,7 +1558,7 @@ export struct Edit impl Widget {
         var clip = core.SDL_Rect.malloc()
         clip.x = _int(x + pad); clip.y = _int(y + pad)
         clip.w = _int(visW); clip.h = _int(visH)
-        r.setClipRect(clip.to_ptr())
+        r.pushClipRect(clip.to_ptr())
 
         // 计算可见行范围（选区和文本渲染共用）
         var firstLine = _int(_scrollY / _lineHeight)
@@ -1657,7 +1657,7 @@ export struct Edit impl Widget {
             }
         }
 
-        r.clearClip(); clip.free()
+        r.popClipRect(); clip.free()
 
         // ---- 竖向滚动条 ----
         if sbW > 0.0 {

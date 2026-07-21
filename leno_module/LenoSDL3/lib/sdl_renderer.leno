@@ -41,7 +41,10 @@ export struct Renderer {
     int _bxR; int _bxG; int _bxB; int _bxA; bool _bxIsFloat
     float _bxFr; float _bxFg; float _bxFb; float _bxFa
     int _bxBlend
-    bool _bxClip; Ptr[u8] _bxClipPtr
+    bool _bxClip; Ptr[u8] _bxClipPtr; bool _bxClipOwned  // _bxClipOwned：_bxClipPtr 是否由我们 alloc（需 free）
+    // 裁剪栈：每个入口存储 {ptr: Ptr[u8], owned: bool}
+    Array[Ptr[u8]] _clipStack
+    Array[bool]    _clipStackOwned
     Ptr[u8] _bxTarget
     float _bxSx; float _bxSy; float _bxCScale
 
@@ -58,7 +61,8 @@ export struct Renderer {
             // 批处理状态快照复位为 SDL 默认绘制状态
             _bxR = 255; _bxG = 255; _bxB = 255; _bxA = 255; _bxIsFloat = false
             _bxFr = 1.0; _bxFg = 1.0; _bxFb = 1.0; _bxFa = 1.0
-            _bxBlend = 0; _bxClip = false; _bxClipPtr = null; _bxTarget = null
+            _bxBlend = 0; _bxClip = false; _bxClipPtr = null; _bxClipOwned = false; _bxTarget = null
+            _clipStack = []; _clipStackOwned = []
             _bxSx = 1.0; _bxSy = 1.0; _bxCScale = 1.0; _bxCur = 0
             _gFillSubmits = 0; _gFillBatched = 0
             _gOutSubmits = 0;  _gOutBatched = 0
@@ -76,6 +80,14 @@ export struct Renderer {
     func destroy() {
         if ok {
             _flushBatches()
+            // 释放裁剪栈里残留的 rect
+            for _clipStack.len() to i {
+                if _clipStackOwned[i] and _clipStack[i] != null { ffi.free(_clipStack[i]) }
+            }
+            _clipStack.clear(); _clipStackOwned.clear()
+            // 释放当前裁剪 rect（如果由我们拥有）
+            if _bxClipOwned and _bxClipPtr != null { ffi.free(_bxClipPtr); _bxClipOwned = false }
+            _bxClip = false; _bxClipPtr = null
             if _bxFill != null { ffi.free(_bxFill); _bxFill = null }
             if _bxOut != null { ffi.free(_bxOut); _bxOut = null }
             if _bxLine != null { ffi.free(_bxLine); _bxLine = null }
@@ -389,6 +401,64 @@ export struct Renderer {
         if not _bxClip { return true }
         _flushBatches(); _bxClip = false; _bxClipPtr = null
         return _lib.SDL_SetRenderClipRect(handle, null)
+    }
+
+    // ---- 裁剪栈（push/pop）：解决嵌套组件裁剪相互覆盖的问题 ----
+    // 用法：替换 setClipRect/clearClip 对，自动保存/恢复上一层裁剪。
+    // 参考：Qt QPainter::setClipRect(Qt::IntersectClip)、HTML Canvas clip()
+    //
+    // 关键设计：pushClipRect 会计算新 rect 与当前 clip 的**交集**，
+    // 确保子组件永远不会绘制到父容器裁剪区之外（如 ScrollView 内的按钮）。
+    func pushClipRect(Ptr[u8] rect): bool {
+        _flushBatches()
+        // 保存当前裁剪状态到栈（连同所有权标记）
+        _clipStack.add(_bxClipPtr)
+        _clipStackOwned.add(_bxClipOwned)
+        // 所有权转移给栈：我们不再拥有旧的 _bxClipPtr
+
+        if rect == null {
+            _bxClip = false; _bxClipPtr = null; _bxClipOwned = false
+            return _lib.SDL_SetRenderClipRect(handle, null)
+        }
+
+        // 计算交集：如果已有裁剪，新裁剪 = rect ∩ 当前裁剪
+        if _bxClip and _bxClipPtr != null {
+            SDL_Rect cur = SDL_Rect.from_ptr(_bxClipPtr)
+            SDL_Rect nr  = SDL_Rect.from_ptr(rect)
+            int ix  = if nr.x > cur.x then nr.x else cur.x
+            int iy  = if nr.y > cur.y then nr.y else cur.y
+            int ix2 = nr.x + nr.w; if ix2 > cur.x + cur.w { ix2 = cur.x + cur.w }
+            int iy2 = nr.y + nr.h; if iy2 > cur.y + cur.h { iy2 = cur.y + cur.h }
+            int iw = ix2 - ix; if iw < 0 { iw = 0 }
+            int ih = iy2 - iy; if ih < 0 { ih = 0 }
+            SDL_Rect inter = SDL_Rect.malloc()
+            inter.x = ix; inter.y = iy; inter.w = iw; inter.h = ih
+            _bxClip = true; _bxClipPtr = inter.to_ptr(); _bxClipOwned = true
+            return _lib.SDL_SetRenderClipRect(handle, inter.to_ptr())
+        }
+
+        // 无当前裁剪：直接设置为 rect（调用方拥有，我们不 free）
+        _bxClip = true; _bxClipPtr = rect; _bxClipOwned = false
+        return _lib.SDL_SetRenderClipRect(handle, rect)
+    }
+
+    func popClipRect(): bool {
+        _flushBatches()
+        // 释放当前裁剪 rect（仅当我们拥有它）
+        if _bxClipOwned and _bxClipPtr != null {
+            ffi.free(_bxClipPtr)
+        }
+        if _clipStack.len() == 0 {
+            _bxClip = false; _bxClipPtr = null; _bxClipOwned = false
+            return _lib.SDL_SetRenderClipRect(handle, null)
+        }
+        // 弹出并恢复上一级裁剪
+        int last = _clipStack.len() - 1
+        _bxClipPtr = _clipStack[last]
+        _bxClipOwned = _clipStackOwned[last]
+        _clipStack.remove(last); _clipStackOwned.remove(last)
+        _bxClip = _bxClipPtr != null
+        return _lib.SDL_SetRenderClipRect(handle, _bxClipPtr)
     }
 
     // 设置逻辑分辨率（坐标映射到 w×h，自动缩放）

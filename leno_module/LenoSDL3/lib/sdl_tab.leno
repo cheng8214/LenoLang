@@ -360,7 +360,7 @@ export struct TabControl impl Widget {
         // 裁剪到内容区，绘制当前页子控件
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(cx); clip.y = _int(cy); clip.w = _int(cw); clip.h = _int(ch)
-        r.setClipRect(clip.to_ptr())
+        r.pushClipRect(clip.to_ptr())
 
         _applyOffsets(_active)
         // 如果该页有布局容器，渲染布局容器（它内部会渲染子控件并调用 _relayout）
@@ -371,7 +371,7 @@ export struct TabControl impl Widget {
             for page to c { c.render(r) }
         }
 
-        r.clearClip()
+        r.popClipRect()
         clip.free()
 
         // 内容区边框

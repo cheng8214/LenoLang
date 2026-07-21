@@ -277,9 +277,9 @@ export struct ScrollView impl Widget {
         float gh = if _showH() then _barW else 0.0
         SDL_Rect cr = SDL_Rect.malloc()
         cr.x = _int(x); cr.y = _int(y); cr.w = _int(w - gw); cr.h = _int(h - gh)
-        r.setClipRect(cr.to_ptr())
+        r.pushClipRect(cr.to_ptr())
         if _content != null { _content.render(r) }
-        r.clearClip()
+        r.popClipRect()
         // 滚动条（最上层）
         _drawScrollbars(r)
         // 边框

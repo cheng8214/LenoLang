@@ -309,7 +309,7 @@ export struct ComboBox impl Widget {
 
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(px); clip.y = _int(py); clip.w = _int(pw); clip.h = _int(ph)
-        r.setClipRect(clip.to_ptr())
+        r.pushClipRect(clip.to_ptr())
 
         for items.len() to i {
             float iy = r.snapY(py - _scroll + i * _itemH)
@@ -327,7 +327,7 @@ export struct ComboBox impl Widget {
                 r.drawText(_font, items[i], r.snapX(px + 8.0), ty, tcR, tcG, tcB)
             }
         }
-        r.clearClip()
+        r.popClipRect()
         clip.free()
 
         r.setColor(_bdrR, _bdrG, _bdrB, 220)

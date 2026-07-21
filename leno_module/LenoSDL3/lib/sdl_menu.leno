@@ -604,7 +604,7 @@ export struct MenuBar impl Widget {
 
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(px); clip.y = _int(py); clip.w = _int(pw); clip.h = _int(ph)
-        r.setClipRect(clip.to_ptr())
+        r.pushClipRect(clip.to_ptr())
 
         float iy = py
         for items.len() to i {
@@ -635,7 +635,7 @@ export struct MenuBar impl Widget {
             }
             iy = iy + _itemH + _itemGap
         }
-        r.clearClip()
+        r.popClipRect()
         clip.free()
 
         r.setColor(_bdrR, _brdG, _brdB, 220)

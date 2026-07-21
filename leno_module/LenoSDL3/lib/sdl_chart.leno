@@ -177,7 +177,7 @@ export struct BarChart impl Widget {
         // 左界取 x 以容纳 Y 轴刻度标签，底部类目标签在取消裁剪后绘制。
         SDL_Rect _clip = SDL_Rect.malloc()
         _clip.x = _int(x); _clip.y = _int(plotY); _clip.w = _int(w); _clip.h = _int(plotH)
-        r.setClipRect(_clip.to_ptr())
+        r.pushClipRect(_clip.to_ptr())
 
         // 网格线（Y 轴数字标签放到取消裁剪后绘制，避免上下半被裁剪显示不完整）
         if showGrid {
@@ -204,7 +204,7 @@ export struct BarChart impl Widget {
         }
 
         // 取消裁剪，绘制数值标签与类目标签（不再受上边界限制，但需避免与标题重叠）
-        r.clearClip(); _clip.free()
+        r.popClipRect(); _clip.free()
 
         // Y 轴数字标签（不裁剪，完整显示）
         for 0 : ticks to ti {

@@ -79,12 +79,12 @@ export struct Panel impl Widget {
         SDL_Rect cr = SDL_Rect.malloc()
         if _clip {
             cr.x = _int(x); cr.y = _int(y); cr.w = _int(w); cr.h = _int(h)
-            r.setClipRect(cr.to_ptr())
+            r.pushClipRect(cr.to_ptr())
         }
 
         for children to c { c.render(r) }
 
-        if _clip { r.clearClip() }
+        if _clip { r.popClipRect() }
         cr.free()
 
         if _drawBorder {
