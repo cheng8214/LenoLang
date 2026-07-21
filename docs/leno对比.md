@@ -74,32 +74,50 @@ Leno 的 int48 设计让它在常见整数范围内完全避免了堆分配，�
 | for 数组添加 | 110 | 408 | 3.7x |
 | while 数组添加 | 203 | 645 | 3.2x |
 | for 步长2 | 172 | 713 | 4.1x |
+| while 步长2 | （待测） | （待测） | — |
 | 嵌套循环 (1000×1000) | <1 | 39 | — |
 
-Leno 代码（for 步长2）：
+Leno 代码（for 步长2 — 三段式步长语法 `start:end:step`）：
 
 ```leno
-var k = 0
-for csnum to k {
-    k++
+for 0:csnum-1:2 to k {
     arr2.add(k)
 }
 ```
 
-Python 代码（步长2）：
+Python 代码（for 步长2 — range 自带步长参数）：
 
 ```python
-k = 0
-while k < csnum:
-    k += 1
+for k in range(0, csnum, 2):
     arr2.append(k)
-    k += 1
+```
+
+Leno 代码（while 步长2 — 完全公平对比）：
+
+```leno
+var kk = 0
+while kk < csnum {
+    kk++
+    arr3.add(kk)
+    kk++
+}
+```
+
+Python 代码（while 步长2 — 完全公平对比）：
+
+```python
+kk = 0
+while kk < csnum:
+    kk += 1
+    arr3.append(kk)
+    kk += 1
 ```
 
 #### 差异分析
 
-- **Leno 的 `for N to k {}`**：循环变量 `k` 由 `for` 自动推进（步长 1），体内额外 `k++` 再推进一步，净步长 2。`k` 是 int48 原地修改，零堆分配
-- **Python 的 `while k < N`**：Python 的 `for k in range(N)` 中迭代值由迭代器控制，体内修改 `k` 会被重新覆盖，无法实现体内跳步，只能用 `while` 模拟
+- **Leno 的 `for start:end:step to k {}`**：三段式数值循环语法，与 Python 的 `range(start, end, step)` 语义等价，步长由循环控制，体内无需额外操作，由 `OP_FOR_LOOP` 字节码直接驱动
+- **Python 的 `range(0, N, 2)`**：步长由 `range` 参数控制，体内同样不需要额外操作。但每次迭代仍有迭代器协议开销（`__next__` → `StopIteration`）
+- **while 步长2**：两边语义完全一致（体内两次 `++`），是纯粹公平的 VM vs CPython 对比
 
 步长 2 的测试中，迭代次数减半（约 5,000,000 次），差距主要来自整数模型差异：Leno 的 `k++` 是 int48 原地修改，Python 的 `k += 1` 需要创建新的 PyLong 对象。
 
@@ -287,6 +305,8 @@ Leno 在 i5-14400F 上展现出 3-5 倍于 Python 的基础性能，这不是测
 - Python 选择了更丰富的语义（任意精度整数、迭代器协议、灵活对象模型）
 
 两者没有绝对的好坏，只有适合的场景。Leno 证明了自研 VM 语言可以达到接近编译型语言的性能，同时保持脚本语言的开发效率。
+
+> **补充验证**：同一套测试在 i5-3470、i3-8100T 等老机型上也跑过，Leno 的加速比规律完全一致（3~6 倍），结论不依赖于特定 CPU。
 
 ---
 

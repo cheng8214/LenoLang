@@ -377,18 +377,21 @@ func whileandfor()
     print("")
 
     // 测试5: 循环变量修改场景
-    print("--- 测试5: 步长为2 (模拟每隔一个执行) ---")
+    print("--- 测试5: for 步长2 (各自最自然的写法) ---")
 
     var arr2=[]
     t1=times.ms()
-    var k=0
-    for csnum to k{
-        k++
+    for 0:csnum-1:2 to k {
         arr2.add(k)
     }
     t2=times.ms()
     var for_step = t2-t1
-    print($"for N to k + k++: " + for_step + "ms, 长度: " + arr2.len())
+    print($"for 0:csnum:2 to k: " + for_step + "ms, 长度: " + arr2.len())
+
+    print("")
+
+    // 测试5b: while 步长2 (完全公平对比)
+    print("--- 测试5b: while 步长2 (完全公平对比) ---")
 
     var arr3=[]
     t1=times.ms()
@@ -400,7 +403,7 @@ func whileandfor()
     }
     t2=times.ms()
     var while_step = t2-t1
-    print($"while + 两次i++: " + while_step + "ms, 长度: " + arr.len())
+    print($"while + 两次i++: " + while_step + "ms, 长度: " + arr3.len())
     print("")
 
     // 测试6: 嵌套循环场景
