@@ -1,0 +1,91 @@
+// props_dialog.leno — 文件/文件夹属性对话框（模态窗口）
+// 用法：props.show(path, isDir)
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_core.leno" as core
+import dirs
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+
+// 人类可读大小
+func fmtSize(int b): string {
+    if b < 1024 { return (b as string) + " B" }
+    float kb = _float(b) / 1024.0
+    if kb < 1024.0 { return _int(kb) + " KB" }
+    float mb = kb / 1024.0
+    if mb < 1024.0 { return _int(mb) + " MB" }
+    float gb = mb / 1024.0
+    return (_int(gb) as string) + " GB"
+}
+
+bool _shouldClose = false
+
+// 显示属性对话框
+export func show(string path, bool isDir) {
+    string nm = dirs.basename(path)
+    string dir = dirs.dirname(path)
+    var st = dirs.stat(path)
+
+    int szb = _int(st.get("size", 0))
+    string szStr = fmtSize(szb) + " (" + szb + " 字节)"
+
+    string ext = dirs.extname(nm)
+    string kind
+    if isDir {
+        kind = "文件夹"
+    } else {
+        string e = ext
+        if e.len() > 1 { e = e.slice(1, e.len()) }
+        kind = if e != "" then ("文件 " + e) else "文件"
+    }
+
+    int mt = _int(st.get("mtime", 0))
+    string mtStr = if mt > 0 then (mt as string) else "N/A"
+
+    bool exists = _bool(st.get("exists", false))
+    string existStr = if exists then "是" else "否"
+    string accessStr = if exists then "可访问" else "无法访问（可能已被移动或删除）"
+
+    _shouldClose = false
+
+    var dlg = SDL3.createDialogWindow({title:"属性 — " + nm, w:470, h:360})
+    dlg.addLabel({x:235, y:16, text:"文件属性", font_size:16, text_rgb:[150,200,255], align:1})
+
+    int lx = 55; int vx = 155; int y0 = 48; int g2 = 26
+    dlg.addLabel({x:lx, y:y0,         text:"名称:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:vx, y:y0,         text:nm,    font_size:13, text_rgb:[225,235,255]})
+    dlg.addLabel({x:lx, y:y0 + g2,    text:"类型:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:vx, y:y0 + g2,    text:kind,  font_size:13, text_rgb:[225,235,255]})
+    dlg.addLabel({x:lx, y:y0 + g2*2,  text:"位置:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:vx, y:y0 + g2*2,  text:dir,   font_size:12, text_rgb:[180,195,215]})
+    dlg.addLabel({x:lx, y:y0 + g2*3,  text:"大小:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:vx, y:y0 + g2*3,  text:szStr, font_size:13, text_rgb:[225,235,255]})
+    dlg.addLabel({x:lx, y:y0 + g2*4,  text:"修改时间:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:vx, y:y0 + g2*4,  text:mtStr, font_size:13, text_rgb:[200,215,235]})
+    dlg.addLabel({x:lx, y:y0 + g2*5,  text:"是否存在:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:vx, y:y0 + g2*5,  text:existStr, font_size:13, text_rgb:[225,235,255]})
+    dlg.addLabel({x:lx, y:y0 + g2*6,  text:"完整路径:", font_size:12, text_rgb:[150,165,185]})
+    dlg.addLabel({x:vx, y:y0 + g2*6,  text:path,       font_size:12, text_rgb:[180,190,205]})
+    dlg.addLabel({x:lx, y:y0 + g2*7,  text:"访问状态:", font_size:13, text_rgb:[150,165,185]})
+    if exists {
+        dlg.addLabel({x:vx, y:y0 + g2*7, text:accessStr, font_size:13, text_rgb:[200,225,200]})
+    } else {
+        dlg.addLabel({x:vx, y:y0 + g2*7, text:accessStr, font_size:13, text_rgb:[255,180,180]})
+    }
+
+    var btnOk = dlg.addButton({x:185, y:310, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+    btnOk.on_click(func() { _shouldClose = true 
+    })
+
+    SDL3.runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            if _shouldClose { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(30, 33, 42, 255)
+        }
+    )
+}

@@ -89,6 +89,7 @@ export struct CachedTex {
     string key
     Ptr[u8] texture
     int w; int h; bool ok
+    Ptr[u8] ren   // 创建该纹理的渲染器；渲染器销毁时据此精准失效，避免跨渲染器复用指针导致命中失效纹理
 }
 
 // 字符串尺寸缓存条目（measureString 高频调用，缓存避免重复 TTF_SetFontSize + 测量）
@@ -217,14 +218,16 @@ export struct Font {
     // 并以当前 _pt 作为缓存 key 维度，与 drawText 的 2x 渲染天然对应。
     func _getCachedTex(Ptr[u8] renderer, string text, int r, int g, int b): TextTexture {
         if not ok { return new TextTexture() }
-        string key = $"{renderer}\x01{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
+        string key = $"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
         for _texCache.len() to i {
-            if _texCache[i].key == key {
+            CachedTex c = _texCache[i]
+            // 必须校验 ren 匹配且纹理仍有效：避免命中「属于已销毁渲染器、且 SDL 复用了同一指针」的失效纹理
+            if c.ok and c.ren == renderer and c.texture != null and c.key == key {
                 TextTexture t = new TextTexture()
-                t.texture = _texCache[i].texture
+                t.texture = c.texture
                 t.ok = true
-                t.width = _texCache[i].w
-                t.height = _texCache[i].h
+                t.width = c.w
+                t.height = c.h
                 return t
             }
         }
@@ -241,7 +244,7 @@ export struct Font {
                 tex.width = tw; tex.height = th
                 tex.ok = true
                 CachedTex e = new CachedTex()
-                e.key = key; e.texture = texPtr; e.w = tw; e.h = th; e.ok = true
+                e.key = key; e.texture = texPtr; e.w = tw; e.h = th; e.ok = true; e.ren = renderer
                 if _texCache.len() < _texCap {
                     _texCache.add(e)
                 } else {
@@ -253,6 +256,21 @@ export struct Font {
             }
         }
         return tex
+    }
+
+    // 渲染器销毁时调用：使所有由该渲染器创建的纹理缓存失效（仅置空，不 SDL_DestroyTexture）。
+    // 渲染器销毁时其纹理已由 SDL 内部释放，再次 Destroy 会 double-free/崩溃；
+    // 置空后即便 SDL 复用同一指针新建渲染器，也不会命中旧渲染器的失效纹理（表现为“字体消失”）。
+    func invalidateRenderer(Ptr[u8] renderer) {
+        if renderer == null { return }
+        for _texCache.len() to i {
+            if _texCache[i].ren == renderer {
+                _texCache[i].ok = false
+                _texCache[i].texture = null
+                _texCache[i].ren = null
+                _texCache[i].key = ""
+            }
+        }
     }
 
     func setStyle(int style) {
@@ -451,6 +469,16 @@ export func releaseFont(Font f) {
         for _fontPool.len() to i { if _fontPool[i] == f { _fontPool.remove(i); break } }
         if f.ok { f.close() }
         f._refCount = 0
+    }
+}
+
+// 全局：某渲染器销毁时，使所有 Font 缓存中由它创建的纹理失效（避免命中失效纹理导致字体不显示）。
+// 由 Renderer.destroy() 在 SDL_DestroyRenderer 之前调用。
+export func invalidateRendererTextures(Ptr[u8] renderer) {
+    if renderer == null { return }
+    for _fontPool.len() to i {
+        Font f = _fontPool[i]
+        if f.ok { f.invalidateRenderer(renderer) }
     }
 }
 

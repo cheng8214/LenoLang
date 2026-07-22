@@ -1,0 +1,48 @@
+// delete_confirm_dialog.leno — 删除确认对话框（模态窗口）
+// 用法：delete_confirm.show(path, isDir, onConfirm) — onConfirm 在用户点"删除"时回调
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_core.leno" as core
+import dirs
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+
+// 显示删除确认对话框，用户确认后回调 onConfirm
+export func show(string path, bool isDir, func():void onConfirm) {
+    string nm = dirs.basename(path)
+    string kind = if isDir then "文件夹" else "文件"
+
+    var dlg = SDL3.createDialogWindow({title:"确认删除 — " + nm, w:440, h:210})
+    dlg.addLabel({x:220, y:18, text:"确认删除", font_size:16, text_rgb:[255,130,100], align:1})
+    dlg.addLabel({x:220, y:48, text:"确定要删除以下" + kind + "吗？此操作无法撤销。", font_size:13, text_rgb:[200,210,225], align:1})
+
+    dlg.addLabel({x:50, y:78,  text:"名称:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:140, y:78, text:nm,    font_size:13, text_rgb:[225,235,255]})
+    dlg.addLabel({x:50, y:102, text:"类型:", font_size:13, text_rgb:[150,165,185]})
+    dlg.addLabel({x:140, y:102, text:kind,  font_size:13, text_rgb:[225,235,255]})
+    dlg.addLabel({x:50, y:126, text:"路径:", font_size:12, text_rgb:[140,155,170]})
+    dlg.addLabel({x:140, y:126, text:path,  font_size:12, text_rgb:[180,190,205]})
+
+    var btnCancel = dlg.addButton({x:110, y:162, w:100, h:34, text:"取消", bg_rgb:[60,66,80],  text_rgb:[220,230,245]})
+    var btnDel    = dlg.addButton({x:230, y:162, w:100, h:34, text:"删除", bg_rgb:[220,70,70], text_rgb:[255,255,255]})
+
+    var shouldClose = false
+    btnCancel.on_click(func() { shouldClose = true })
+    btnDel.on_click(func() {
+        shouldClose = true
+        if onConfirm != null { onConfirm() }
+    })
+
+    SDL3.runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            if shouldClose { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(30, 33, 42, 255)
+
+        }
+    )
+}

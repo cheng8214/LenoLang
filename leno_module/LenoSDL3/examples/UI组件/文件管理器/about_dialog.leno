@@ -1,5 +1,5 @@
 // about_dialog.leno — 关于对话框（独立模块，模态窗口方案，参考 dashboard.leno）
-// 用法： about.show()   // 菜单“关于”点击时调用，弹出独立模态窗口，直到用户关闭才返回
+// 用法： about.show()   // 菜单"关于"点击时调用，弹出独立模态窗口，直到用户关闭才返回
 // 说明：用 SDL3.createDialogWindow + SDL3.runModal 弹独立窗口，不会遮挡/清空主窗口控件。
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
@@ -7,7 +7,7 @@ use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode
 
-// 显示模态“关于”对话框；点击“确定”按钮 / 按 ESC / 关闭窗口即返回
+// 显示模态"关于"对话框；点击"确定"按钮 / 按 ESC / 关闭窗口即返回
 export func show() {
     var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:240})
     dlg.addLabel({x:190, y:26,  text:"LenoSDL3 文件管理器",   font_size:18, text_rgb:[225,235,255], align:1})
@@ -16,22 +16,18 @@ export func show() {
     dlg.addLabel({x:40,  y:120, text:"基于 LenoSDL3 即时模式 UI 框架", font_size:13, text_rgb:[200,210,225]})
     dlg.addLabel({x:40,  y:144, text:"文件夹树 / 列表 / 右键菜单 / 重命名", font_size:13, text_rgb:[200,210,225]})
     dlg.addLabel({x:40,  y:168, text:"© 2026 LenoLang", font_size:12, text_rgb:[150,160,175]})
-    dlg.addButton({x:140, y:192, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
 
+    var shouldClose = false
+   dlg.addButton({x:140, y:192, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]}).on_click(func() { shouldClose = true })
     SDL3.runModal(dlg,
         func(Event ev): bool {
             if ev.isQuit() or ev.isWindowClose() { return false }
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-            // 点击「确定」按钮区域关闭
-            if ev.isMouseButtonUp() {
-                float mx = ev.mouseX(); float my = ev.mouseY()
-                if mx >= 140.0 and mx <= 240.0 and my >= 192.0 and my <= 226.0 { return false }
-            }
+            if shouldClose { return false }
             return true
         },
         func(Renderer r) {
             r.clearColor(30, 33, 42, 255)
-            core.requestRedraw()
         }
     )
 }

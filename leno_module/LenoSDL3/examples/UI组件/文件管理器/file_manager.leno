@@ -14,6 +14,8 @@ import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
 import "../../../lib/sdl_filedialog.leno" as fdlg
 import "about_dialog.leno" as about
+import "delete_confirm_dialog.leno" as del_confirm
+import "props_dialog.leno" as props
 import dirs
 use SDL3.Event
 use SDL3.Renderer
@@ -433,20 +435,18 @@ main() {
             _renameOldPath = p
             _table.begin_edit(row, 0)   // 进入名称单元格行内编辑，提交时落盘
         } else if id == "del" {
-            if dirs.delete(p) {
-                _statusLbl.set_text("已删除: " + dirs.basename(p))
-                openDir(_curDir)
-            } else {
-                _statusLbl.set_text("删除失败（可能被占用或权限不足）: " + dirs.basename(p))
-            }
+            del_confirm.show(p, isDir, func() {
+                if dirs.delete(p) {
+                    _statusLbl.set_text("已删除: " + dirs.basename(p))
+                    openDir(_curDir)
+                } else {
+                    _statusLbl.set_text("删除失败（可能被占用或权限不足）: " + dirs.basename(p))
+                }
+            })
         } else if id == "newfolder" {
             newFolder()
         } else if id == "props" {
-            _selPath = p; _selIsDir = isDir; showInfo()
-            string nm = dirs.basename(p)
-            string ext = dirs.extname(nm)
-            string kind = if isDir then "文件夹" else ("文件 " + (if ext != "" and ext != "." then ext else ""))
-            _statusLbl.set_text("属性 — " + nm + "（" + kind + "）")
+            props.show(p, isDir)
         }
         return
     })

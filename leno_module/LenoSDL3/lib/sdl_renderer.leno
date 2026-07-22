@@ -92,6 +92,9 @@ export struct Renderer {
             if _bxOut != null { ffi.free(_bxOut); _bxOut = null }
             if _bxLine != null { ffi.free(_bxLine); _bxLine = null }
             if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex); _ssaaTex = null }
+            // 渲染器销毁前：先使字体库中由本渲染器创建的纹理缓存失效。
+            // 否则销毁后这些纹理悬空，SDL 复用同一指针再建渲染器时会命中失效纹理 → 字体不显示。
+            font.invalidateRendererTextures(handle)
             _lib.SDL_DestroyRenderer(handle); handle = null; ok = false
         }
     }
