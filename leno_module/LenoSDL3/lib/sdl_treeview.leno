@@ -100,9 +100,11 @@ export struct TreeView impl Widget {
             if _font != null { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
-            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok {
+                if _fontStyle != 0 { _font.setStyle(_fontStyle) }
+                _textH = _font.measureString("Ag").h   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
+            }
         }
-        if _font != null and _font.ok { _textH = _font.measureString("Ag").h }   // 缓存行高，整帧只算一次
     }
 
     // ==================== 规范状态构建（嵌套树）====================
@@ -645,6 +647,7 @@ export struct TreeView impl Widget {
         if not _loaded { return }
         if not visible { return }
         _ensure_font()
+        if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         _flatten()
 
         int bgr = br; int bgg = bg; int bgb = bb
