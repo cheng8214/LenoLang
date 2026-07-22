@@ -273,6 +273,7 @@ export struct Edit impl Widget {
             core.requestRedraw()
         })
         tmr.registerTimer(_blinkTimer)
+        _blinkTimer.stop()    // 默认不运行，聚焦时由 focus() 启动
         _cursorPos  = text.len()
         _cursorLine = 0; _cursorCol = 0
         _scrollX    = 0.0; _scrollY  = 0.0
@@ -356,8 +357,8 @@ export struct Edit impl Widget {
     // 注册上下文菜单自定义回调（内置动作执行之后触发，参数为项 id）
     func on_context_select(func(string):void cb) { _onCtxSelect = cb }
     func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }
-    func focus()    { _focused = true }
-    func blur()     { _focused = false }
+    func focus()    { _focused = true; if _blinkTimer != null { _blinkTimer.start() } }
+    func blur()     { _focused = false; if _blinkTimer != null { _blinkTimer.stop() } }
 
     // 保存当前状态到撤销栈
     func _save_undo() {
@@ -463,7 +464,7 @@ export struct Edit impl Widget {
     // 在 (x,y) 弹出，并按当前状态刷新各项可用性
     func _open_ctx_menu(float x, float y) {
         if _ctxMenu == null { return }
-        _focused = true
+        focus()
         _ctxMenu.setContextItemEnabled(_ctxMenuH, "undo", _undoStack.len() > 0)
         _ctxMenu.setContextItemEnabled(_ctxMenuH, "redo", _redoStack.len() > 0)
         bool hasSel = _selActive and _selStart >= 0 and _selStart != _selEnd
@@ -924,7 +925,7 @@ export struct Edit impl Widget {
         // ---- 选区 + 聚焦 ----
         if ev.isMouseButtonDown() {
             var inside = contains(ev.mouseX(), ev.mouseY())
-            _focused = inside
+            if inside { focus() } else { blur() }
             if inside and not _draggingVScroll and not _draggingHScroll {
                 // 双击检测（400ms 内，位置接近）
                 var now = core.getTicks()

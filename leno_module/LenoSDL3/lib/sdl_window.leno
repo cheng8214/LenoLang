@@ -510,7 +510,7 @@ export struct Window {
 
         Event ev = event.createEvent()
         bool _needRedraw = true       // 初始绘制一次
-        int  _lastRenderTicks = 0     // 上次渲染时刻，用于帧率节流
+        int  _lastRenderTicks = core.getTicks()   // 上次渲染时刻，用于帧率节流
         int  _throttleMs = if _maxFPS > 0 then 1000 / _maxFPS else 1
         while true {
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
@@ -521,6 +521,7 @@ export struct Window {
                 int elapsed = core.getTicks() - _lastRenderTicks
                 int remain = _throttleMs - elapsed
                 if remain < 1 { remain = 1 }
+                if remain > timeoutMs { remain = timeoutMs }
                 timeoutMs = remain
             } else {
                 int nextTM = timer.nextTimerMs()
@@ -531,7 +532,13 @@ export struct Window {
                     timeoutMs = wait
                 }
             }
+            int _t0 = core.getTicks()
             ev.waitTimeout(timeoutMs)
+            // 兜底：若 waitTimeout 提前返回（实际等待 < 5ms 且无事件），
+            // 强制 Sleep 补足，防止事件循环高频空转→CPU 占用异常
+            int _wakeTick = core.getTicks()
+            int _wakeWait = _wakeTick - _t0
+            if not ev.has and _wakeWait < 5 { core.delay(5 - _wakeWait) }
             while ev.has {
                 // 鼠标移动(motion)不强制整窗重绘：光标为 OS 级、hover 变化已由控件
                 // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，

@@ -436,6 +436,7 @@ export struct Table impl Widget {
         _editing = false
         _editRow = -1; _editCol = -1
         _lastClickTime = -100000
+        _edit.blur()    // 停止闪烁定时器，避免每 500ms 空跑 requestRedraw 导致 Table 闪烁
     }
     func is_editing(): bool { return _editing }
     // 启用/禁用双击进入单元格编辑（默认关闭）
@@ -717,12 +718,14 @@ export struct Table impl Widget {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         _ensure_font()
-        if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
 
+        // 背景底色（在字体检查之前画，避免字体偶发未就绪时 Table 区域变透明露出容器底色 → 闪一下）
         int bgr = br; int bgg = bg; int bgb = bb
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRect(x, y, w, h)
+
+        if _font == null or not _font.ok { return }   // 字体无效时仍有背景，只跳过文字
 
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
