@@ -313,8 +313,9 @@ static void get_current_module_dir(char* dir, int dir_size) {
  *   1) 给定路径直接加载
  *   2) 当前模块目录/bin/<文件名>
  *   3) 当前模块目录/<文件名>
- *   4) exe 所在目录/<文件名>
- *   5) 系统PATH（交给系统加载器处理）
+ *   4) 所有已加载模块目录/<文件名>（DLL 与 .leno 同目录，包自包含）
+ *   5) exe 所在目录/<文件名>
+ *   6) 系统PATH（交给系统加载器处理）
  * Windows 使用 LoadLibraryW 支持中文路径
  */
 static Value ffi_load_func(int argc, Value* args) {
@@ -363,7 +364,27 @@ static Value ffi_load_func(int argc, Value* args) {
             }
         }
 
-        /* 2c) exe 所在目录/<文件名> */
+        /* 2c) 所有已加载模块目录/<文件名>（DLL 与 .leno 同目录，包自包含） */
+        if (!handle) {
+            extern int loaded_modules_get_count(void);
+            extern ObjModule* loaded_modules_get(int index);
+            int mod_count = loaded_modules_get_count();
+            for (int mi = 0; mi < mod_count && !handle; mi++) {
+                ObjModule* m = loaded_modules_get(mi);
+                if (!m || !m->source_path) continue;
+                char mdir[MAX_PATH_LEN];
+                extract_dir(m->source_path, mdir, sizeof(mdir));
+                /* 跳过与当前模块目录相同的（2b 已搜索过） */
+                if (mod_dir[0] != '\0' && strcmp(mdir, mod_dir) == 0) continue;
+                snprintf(search_path, sizeof(search_path), "%s%s", mdir, filename);
+                if (file_exists_utf8(search_path)) {
+                    handle = load_library_utf8(search_path);
+                    if (handle) resolved_path = strdup(search_path);
+                }
+            }
+        }
+
+        /* 2d) exe 所在目录/<文件名> */
         if (!handle) {
             char exe_dir[MAX_PATH_LEN];
             get_exe_dir(exe_dir, sizeof(exe_dir));
@@ -376,7 +397,7 @@ static Value ffi_load_func(int argc, Value* args) {
             }
         }
 
-        /* 2d) 系统PATH（交给系统加载器处理，传入纯文件名） */
+        /* 2e) 系统PATH（交给系统加载器处理，传入纯文件名） */
         if (!handle) {
             handle = load_library_utf8(filename);
             if (handle) resolved_path = strdup(filename);
@@ -388,11 +409,11 @@ static Value ffi_load_func(int argc, Value* args) {
         char msg[512];
 #ifdef _WIN32
         DWORD error = GetLastError();
-        snprintf(msg, sizeof(msg), "加载库 '%s' 失败，错误码: %lu（已搜索: 模块目录/bin、模块目录、exe目录、系统PATH）",
+        snprintf(msg, sizeof(msg), "加载库 '%s' 失败，错误码: %lu（已搜索: 模块目录/bin、模块目录、已导入模块目录、exe目录、系统PATH）",
                  path_str->chars, error);
 #else
         const char* dl_err = dlerror();
-        snprintf(msg, sizeof(msg), "加载库 '%s' 失败: %s（已搜索: 模块目录/bin、模块目录、exe目录、系统PATH）",
+        snprintf(msg, sizeof(msg), "加载库 '%s' 失败: %s（已搜索: 模块目录/bin、模块目录、已导入模块目录、exe目录、系统PATH）",
                  path_str->chars, dl_err ? dl_err : "未知错误");
 #endif
         native_throw_error(msg);
