@@ -57,6 +57,8 @@ export struct TreeView impl Widget {
     Array[bool] _flatCheck = []
     Array[bool] _flatOn = []
     Array[bool] _flatExpanded = []
+    bool _flatDirty = true      // 拍平视图是否过期：结构变更后置位，render 时按需重建，避免每帧重建数组
+    float _textH = 16.0         // 缓存字体行高，避免渲染时每行重复 measureString
 
     float _rowH = 24.0
     float _indent = 16.0
@@ -100,6 +102,7 @@ export struct TreeView impl Widget {
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
         }
+        if _font != null and _font.ok { _textH = _font.measureString("Ag").h }   // 缓存行高，整帧只算一次
     }
 
     // ==================== 规范状态构建（嵌套树）====================
@@ -167,9 +170,11 @@ export struct TreeView impl Widget {
 
     // ==================== 拍平（仅收集已展开节点的可见行）====================
     func _flatten() {
+        if not _flatDirty { return }   // 结构未变则跳过，避免每帧重建 8 个数组（鼠标移动高频重绘时抖动/闪烁的主因）
         _flatIds = []; _flatText = []; _flatParent = []; _flatDepth = []
         _flatHas = []; _flatCheck = []; _flatOn = []; _flatExpanded = []
         _flatten_r(_roots, -1, 0)
+        _flatDirty = false
     }
     func _flatten_r(Array[TreeViewNode] list, int par, int depth) {
         for list.len() to i {
@@ -328,7 +333,7 @@ export struct TreeView impl Widget {
     }
     func clear() {
         _roots = []
-        _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []; _flatten()
+        _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []; _flatDirty = true; _flatten()
     }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
@@ -368,7 +373,7 @@ export struct TreeView impl Widget {
     func collapse_all() { _set_all_expanded(false) }
     func _set_all_expanded(bool e) {
         _set_all_r(_roots, e)
-        _flatten(); _clamp_scroll()
+        _flatDirty = true; _flatten(); _clamp_scroll()
     }
     func _set_all_r(Array[TreeViewNode] list, bool e) {
         for list.len() to i {
@@ -379,13 +384,13 @@ export struct TreeView impl Widget {
     func _toggle_node(int id) {
         bool e = not _get_expanded(id)
         _set_expanded_r(_roots, id, e)
-        _flatten(); _clamp_scroll()
+        _flatDirty = true; _flatten(); _clamp_scroll()
         if _onToggle != null { _onToggle(id, e) }
     }
     func toggle(int id) { _toggle_node(id) }
 
     // 复选框（写操作原地递归修改，避免跨函数返回结构体副本导致写不回）
-    func set_checked(int id, bool c) { _set_checked_r(_roots, id, c) }
+    func set_checked(int id, bool c) { _set_checked_r(_roots, id, c); _flatDirty = true }
     func _set_checked_r(Array[TreeViewNode] list, int id, bool v): bool {
         for list.len() to i {
             if list[i].id == id { list[i].checked = v; return true }
@@ -481,7 +486,7 @@ export struct TreeView impl Widget {
     // 增删（支持懒加载）—— 原地递归，避免返回副本写不回
     func add_child(int parentId, Dict d): int {
         int id = _add_child_r(_roots, parentId, d)
-        if id >= 0 { _flatten(); _clamp_scroll() }
+        if id >= 0 { _flatDirty = true; _flatten(); _clamp_scroll() }
         return id
     }
     func _add_child_r(Array[TreeViewNode] list, int parentId, Dict d): int {
@@ -518,7 +523,7 @@ export struct TreeView impl Widget {
         _roots = out
         if _is_selected(id) { _sel = -1 }
         for _sel2.len() to i { if _sel2[i] == id { _sel2.remove(i); i = i - 1 } }
-        _flatten(); _clamp_scroll()
+        _flatDirty = true; _flatten(); _clamp_scroll()
     }
 
     func on_change(func(Array[int]):void cb) { _onChange = cb }
@@ -716,7 +721,7 @@ export struct TreeView impl Widget {
             }
             if _font != null and _font.ok {
                 float tx = x + _padX + depth * _indent + 16.0 + checkOff + 4.0
-                float th = _font.measureString("Ag").h
+                float th = _textH
                 int tcR = tr; int tcG = tg; int tcB = tb
                 if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
                 float ty = r.snapY(rowY + (_rowH - th) / 2.0)

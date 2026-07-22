@@ -24,6 +24,7 @@ export struct Table impl Widget {
     bool _sortable = false; int _sortCol = -1; bool _sortDesc = false; bool _zebra = true
 
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _textH = 16.0         // 缓存字体行高，避免每个单元格重复 measureString
     int br = 38; int bg = 40; int bb = 48
     int _hdrR = 46; int _hdrG = 48; int _hdrB = 56; int _hdrTxtR = 220; int _hdrTxtG = 225; int _hdrTxtB = 235
     int _selR = 60; int _selG = 150; int _selB = 235
@@ -65,6 +66,7 @@ export struct Table impl Widget {
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
         }
+        if _font != null and _font.ok { _textH = _font.measureString("Ag").h }   // 缓存行高，整帧只算一次
     }
     func _clamp(float v, float lo, float hi): float {
         if v < lo { return lo }; if v > hi { return hi }; return v
@@ -667,7 +669,7 @@ export struct Table impl Widget {
     func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B) {
         if _font == null or not _font.ok { return }
         if t == "" { return }
-        float th = _font.measureString("Ag").h
+        float th = _textH
         float ty = ry + (rh - th) / 2.0
         float pad = 8.0
         float availW = cw - 2.0 * pad

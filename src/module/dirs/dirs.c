@@ -972,6 +972,38 @@ static Value native_dirs_stat(int argCount, Value* args) {
     return val_obj((Object*)dict);
 }
 
+// dirs.list_drives() - 返回盘符列表
+//   Windows: ["C:\\", "D:\\", ...]（按位枚举逻辑驱动器）
+//   Unix:    ["/"]
+static Value native_dirs_list_drives(int argCount, Value* args) {
+    ObjArray* arr = arr_new_with_capacity(8);
+    if (!arr) {
+        return val_null();
+    }
+
+#ifdef _WIN32
+    DWORD mask = GetLogicalDrives();
+    for (int i = 0; i < 26; i++) {
+        if (mask & (1u << i)) {
+            wchar_t buf[8];
+            buf[0] = (wchar_t)('A' + i);
+            buf[1] = L':';
+            buf[2] = L'\\';
+            buf[3] = L'\0';
+            char* u = utf16_to_utf8(buf);
+            if (u) {
+                arr_push(arr, val_obj((Object*)str_copy(u, (int)strlen(u))));
+                free(u);
+            }
+        }
+    }
+#else
+    arr_push(arr, val_obj((Object*)str_copy("/", 1)));
+#endif
+
+    return val_obj((Object*)arr);
+}
+
 // ==================== 初始化 ====================
 
 void dirs_init_module(void) {
@@ -979,7 +1011,9 @@ void dirs_init_module(void) {
     TypeKind string_params[] = {TYPE_STRING};
     TypeKind string2_params[] = {TYPE_STRING, TYPE_STRING};
     TypeKind no_params[] = {};
-    
+
+    native_register_module_method("dirs", "list_drives", native_dirs_list_drives, 0, -1, -1, TYPE_ARRAY, TYPE_STRING, no_params);
+
     native_register_module_method("dirs", "cwd", native_dirs_cwd, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
     native_register_module_method("dirs", "abspath", native_dirs_abspath, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
     native_register_module_method("dirs", "basename", native_dirs_basename, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);

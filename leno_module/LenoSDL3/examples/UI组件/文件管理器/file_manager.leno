@@ -33,7 +33,10 @@ string _renameOldPath = ""          // 右键“重命名”时暂存旧路径�
 string _selPath = ""                // 当前选中项完整路径
 bool   _selIsDir = false
 Array[int] _loadedIds = []          // 已懒加载子节点的树节点 id
-Array[string] _nodePaths = []       // 树节点 id-1 → 完整路径（自建映射，规避 get_data 跨模块类型坑）
+Array[string] _nodePaths = []       // 树节点 id-1 → 完整路径
+Array[string] _nodeTypes = []       // 树节点 id-1 → 类型（pc/qa/drive/folder）
+int    _regCounter = 1              // regDicts 用的 id 分配计数器（与 TreeView 内部 DFS 一致）
+bool   _treeExpanded = true         // 导航树当前是否处于展开态
 bool   _wantQuit = false
 
 // 控件引用（main 中赋值）
@@ -46,6 +49,11 @@ Label  _infoName
 Label  _infoSize
 Label  _infoType
 Label  _infoPath
+Panel  _navPanel                     // 左侧导航面板容器（背景卡片）
+Edit   _pathSearch                  // 左侧搜索 / 跳转输入框
+Button _btnNew                      // 左侧“新建”按钮
+Button _btnRefresh                  // 左侧“刷新”按钮
+Button _btnToggle                   // 左侧“展开/折叠”按钮
 
 // ===================== 工具函数 =====================
 
@@ -80,6 +88,119 @@ func fmtSize(int b): string {
 func _isLoaded(int id): bool {
     for _loadedIds.len() to i { if _loadedIds[i] == id { return true } }
     return false
+}
+
+// 盘符显示名：去掉末尾分隔符（"C:\\" → "C:"，"/" → "/"）
+func driveLabel(string p): string {
+    string s = p
+    while s.len() > 0 {
+        string last = s.slice(s.len() - 1, s.len())
+        if last == "\\" or last == "/" { s = s.slice(0, s.len() - 1) } else { break }
+    }
+    if s.len() == 0 { return p }
+    return s
+}
+
+// 把节点字典列表登记进 _nodePaths/_nodeTypes（id 分配顺序与 TreeView 内部 DFS 完全一致）
+func ensureNodeArr(int n) {
+    while _nodePaths.len() < n { _nodePaths.add(""); _nodeTypes.add("") }
+}
+func regDicts(Array[Dict] ds) {
+    for ds.len() to i {
+        Dict d = ds[i] as Dict
+        ensureNodeArr(_regCounter)
+        Dict dd = d.get("data", {}) as Dict
+        _nodePaths[_regCounter - 1] = dd.get("path", "") as string
+        _nodeTypes[_regCounter - 1] = dd.get("type", "folder") as string
+        _regCounter = _regCounter + 1
+        var ch = d.get("children", null)
+        if ch is Array[Dict] and (ch as Array[Dict]).len() > 0 {
+            regDicts(ch as Array[Dict])
+        }
+    }
+}
+func nodePath(int id): string {
+    int idx = id - 1
+    if idx >= 0 and idx < _nodePaths.len() { return _nodePaths[idx] }
+    return ""
+}
+func nodeType(int id): string {
+    int idx = id - 1
+    if idx >= 0 and idx < _nodeTypes.len() { return _nodeTypes[idx] }
+    return "folder"
+}
+func findNodeByType(string tp): int {
+    for _nodeTypes.len() to i { if _nodeTypes[i] == tp { return i + 1 } }
+    return -1
+}
+
+// 构建导航树根：此电脑（磁盘入口）+ 快速访问（当前位置）
+func buildNavRoots(): Array[Dict] {
+    Array[Dict] roots = []
+    roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true})
+    string root = dirs.dirname(dirs.script_dir())
+    Array[Dict] qaKids = []
+    qaKids.add({text:"当前位置", data:{type:"folder", path:root}, has_children:true, expanded:true, children: subFolders(root)})
+    roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, expanded:true, children: qaKids})
+    return roots
+}
+
+// 此电脑节点：加载全部盘符（pc 节点为根首位，id 固定为 1）
+func loadPcDrives() {
+    int pcId = findNodeByType("pc")
+    if pcId < 0 or _isLoaded(pcId) { return }
+    var dv = dirs.list_drives()
+    if dv != null {
+        for dv.len() to i {
+            string d = dv[i] as string
+            Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true}
+            int nid = _tree.add_child(pcId, node)
+            ensureNodeArr(nid)
+            _nodePaths[nid - 1] = d
+            _nodeTypes[nid - 1] = "drive"
+        }
+    }
+    _loadedIds.add(pcId)
+}
+
+// 树节点展开：懒加载子目录（盘符 / 普通文件夹）
+func _onTreeToggle(int id, bool expanded) {
+    if not expanded or _isLoaded(id) { return }
+    string tp = nodeType(id)
+    string p = nodePath(id)
+    if tp == "pc" {
+        var dv = dirs.list_drives()
+        if dv != null {
+            for dv.len() to i {
+                string d = dv[i] as string
+                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true}
+                int nid = _tree.add_child(id, node)
+                ensureNodeArr(nid)
+                _nodePaths[nid - 1] = d
+                _nodeTypes[nid - 1] = "drive"
+            }
+        }
+    } else if p != "" {
+        var subs = subFolders(p)
+        for subs.len() to i {
+            int nid = _tree.add_child(id, subs[i])
+            ensureNodeArr(nid)
+            Dict dd = subs[i].get("data", {}) as Dict
+            _nodePaths[nid - 1] = dd.get("path", "") as string
+            _nodeTypes[nid - 1] = "folder"
+        }
+    }
+    _loadedIds.add(id)
+}
+
+// 选中树节点：导航（跳过容器节点 pc/qa）
+func _onTreeChange(Array[int] ids) {
+    if ids.len() == 0 { return }
+    int id = ids[0]
+    string tp = nodeType(id)
+    if tp == "pc" or tp == "qa" { return }
+    string p = nodePath(id)
+    if p != "" and dirs.is_dir(p) { openDir(p) }
 }
 
 // 打开目录：刷新路径栏、表格、状态栏、信息面板
@@ -214,35 +335,44 @@ main() {
     var btnRefresh = SDL3.createButton({x:910, y:38, w:78, h:28, text:"刷新", bg_rgb:[60,66,80], text_rgb:[235,238,245]})
     _win.add(btnRefresh); btnRefresh.on_click(func() { openDir(_curDir) })
 
-    // ---------- 左侧目录树 ----------
-    _tree = SDL3.createTreeView({x:12, y:74, w:300, h:560, font_size:14})
-    _win.add(_tree)
-    _tree.on_change(func(Array[int] ids) {
-        if ids.len() == 0 { return }
-        int id = ids[0]
-        int idx = id - 1
-        if idx >= 0 and idx < _nodePaths.len() {
-            string p = _nodePaths[idx]
-            if p != "" and dirs.is_dir(p) { openDir(p) }
+    // ---------- 左侧导航面板（此电脑 + 快速访问 + 工具栏） ----------
+    _navPanel = SDL3.createPanel({x:12, y:74, w:300, h:560, bg_rgb:[26,28,36], border_rgb:[70,75,92], radius:8})
+    _win.add(_navPanel)
+
+    var navTitle = SDL3.createLabel({x:24, y:84, text:"导航", font_size:14, text_rgb:[150,200,255]})
+    _navPanel.add(navTitle)
+
+    // 搜索 / 跳转路径输入框
+    _pathSearch = SDL3.createEdit({x:24, y:108, w:276, h:26, font_size:13, placeholder:"搜索或输入路径…", bg_rgb:[18,20,26], text_rgb:[230,235,245]})
+    _navPanel.add(_pathSearch)
+    _pathSearch.on_enter(func() {
+        string t = _pathSearch.get_text()
+        if t == "" { return }
+        string target = t
+        if not dirs.is_dir(target) {
+            string j = dirs.join(_curDir, t)
+            if dirs.is_dir(j) { target = j } else { _statusLbl.set_text("找不到: " + t); return }
         }
-        return
+        openDir(target)
+        _pathSearch.set_text("")
     })
-    _tree.on_toggle(func(int id, bool expanded) {
-        if not expanded or _isLoaded(id) { return }
-        int idx = id - 1
-        if idx < 0 or idx >= _nodePaths.len() { return }
-        string p = _nodePaths[idx]
-        if p != "" {
-            var subs = subFolders(p)
-            for subs.len() to i {
-                int nid = _tree.add_child(id, subs[i])
-                while _nodePaths.len() < nid { _nodePaths.add("") }
-                _nodePaths[nid - 1] = subs[i].get("path", "") as string
-            }
-            _loadedIds.add(id)
-        }
-        return
+
+    // 工具栏按钮
+    _btnNew = SDL3.createButton({x:24, y:142, w:84, h:26, text:"新建", bg_rgb:[70,130,220], text_rgb:[255,255,255], font_size:12})
+    _navPanel.add(_btnNew); _btnNew.on_click(func() { newFolder() })
+    _btnRefresh = SDL3.createButton({x:114, y:142, w:84, h:26, text:"刷新", bg_rgb:[60,66,80], text_rgb:[235,238,245], font_size:12})
+    _navPanel.add(_btnRefresh); _btnRefresh.on_click(func() { openDir(_curDir) })
+    _btnToggle = SDL3.createButton({x:204, y:142, w:84, h:26, text:"折叠", bg_rgb:[60,66,80], text_rgb:[235,238,245], font_size:12})
+    _navPanel.add(_btnToggle); _btnToggle.on_click(func() {
+        if _treeExpanded { _tree.collapse_all(); _treeExpanded = false; _btnToggle.set_text("展开") }
+        else { _tree.expand_all(); _treeExpanded = true; _btnToggle.set_text("折叠") }
     })
+
+    // 目录树
+    _tree = SDL3.createTreeView({x:24, y:180, w:276, h:448, font_size:14})
+    _navPanel.add(_tree)
+    _tree.on_change(_onTreeChange)
+    _tree.on_toggle(_onTreeToggle)
 
     // ---------- 右侧文件列表 ----------
     _table = SDL3.createTable({
@@ -356,18 +486,17 @@ main() {
     _statusLbl = SDL3.createLabel({x:12, y:648, text:"就绪", font_size:13, text_rgb:[170,200,170]})
     _win.add(_statusLbl)
 
-    // ---------- 初始化：以脚本所在目录的父目录（UI组件）为根 ----------
-    // 注意：dirs.abspath 在 Windows 上对含中文的路径会失效（内部用 ANSI 版 _fullpath），
-    // 故此处只用 dirs.dirname 做纯字符串处理（script_dir 已返回绝对路径）。
-    string root = dirs.dirname(dirs.script_dir())
-    var subs0 = subFolders(root)
-    Array[Dict] rootChildren = []
-    for subs0.len() to i { rootChildren.add(subs0[i]) }
-    _tree.set_items([{text: dirs.basename(root), data:{path: root}, has_children:true, expanded:true, children: rootChildren}])
+    // ---------- 初始化：导航树（此电脑 + 快速访问） ----------
+    _regCounter = 1
     _nodePaths = []
-    _nodePaths.add(root)
-    for subs0.len() to i { _nodePaths.add(subs0[i].get("path", "") as string) }
-    openDir(root)
+    _nodeTypes = []
+    _loadedIds = []
+    _treeExpanded = true
+    var navRoots = buildNavRoots()
+    _tree.set_items(navRoots)
+    regDicts(navRoots)      // 登记 id → 路径/类型（与 TreeView 内部分配顺序一致）
+    loadPcDrives()          // 此电脑节点立即加载全部盘符
+    openDir(dirs.dirname(dirs.script_dir()))
 
     // ---------- 运行主循环 ----------
     _win.run(
