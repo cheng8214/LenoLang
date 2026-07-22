@@ -264,9 +264,10 @@ export struct TabControl impl Widget {
         }
 
         if ev.isMouseMotion() {
+            int prevHover = _hover
             _hover = hitTab
             if _cursor >= 0 and _hover >= 0 { core.requestCursor(_cursor) }
-            core.markFrameMotion()
+            if _hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
         }
 
         // 点击标签栏：切换页。若光标落在某打开的弹层（下拉/菜单）范围内则不切换，避免误触；

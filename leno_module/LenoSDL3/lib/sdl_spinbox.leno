@@ -224,7 +224,7 @@ export struct SpinBox impl Widget {
         if ev.isMouseMotion() {
             _wasUp = _hoverUp; _wasDown = _hoverDown
             _hoverUp = upHit; _hoverDown = downHit
-            core.markFrameMotion()
+            if _hoverUp != _wasUp or _hoverDown != _wasDown { core.markFrameRedraw() } else { core.markFrameMotion() }
             if (upHit or downHit) and _cursor >= 0 { core.requestCursor(_cursor) }
             if _tip != "" {
                 if upHit or downHit { tip.tipReport(_tip, mx, my) }

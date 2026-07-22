@@ -512,7 +512,10 @@ bool _frameCursorSeen = false
 export func resetFrameCursor() { _frameCursorReq = -1; _frameCursorSeen = false }
 
 // 控件在 mouse motion 时调用：标记本帧发生了鼠标移动
-export func markFrameMotion() { _frameCursorSeen = true; requestRedraw() }
+export func markFrameMotion() { _frameCursorSeen = true }
+
+// 控件在视觉状态变化时调用：标记本帧发生了鼠标移动 + 请求下一帧重绘
+export func markFrameRedraw() { _frameCursorSeen = true; requestRedraw() }
 
 // 控件命中自身敏感区域时调用：请求使用某种光标（取较大 kind）
 export func requestCursor(int kind) {

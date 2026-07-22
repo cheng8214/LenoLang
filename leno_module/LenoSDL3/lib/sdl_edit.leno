@@ -782,8 +782,8 @@ export struct Edit impl Widget {
         // 走集中式光标决策（requestCursor），由 Window 帧末统一 apply，避免多控件互相覆盖
         if ev.isMouseMotion() {
             bool hit = _edit_hit(ev.mouseX(), ev.mouseY())
+            if hit != _hoverText { core.markFrameRedraw() } else { core.markFrameMotion() }
             _hoverText = hit
-            core.markFrameMotion()
             if hit { core.requestCursor(core.SystemCursor.TEXT) }
             // 悬停提示：命中编辑区上报、离开清除
             if hit and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }

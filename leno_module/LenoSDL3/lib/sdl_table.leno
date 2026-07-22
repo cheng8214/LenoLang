@@ -568,9 +568,10 @@ export struct Table impl Widget {
         }
 
         if ev.isMouseMotion() {
+            int prevHover = _hoverRow
             _hoverRow = _row_at(my)
             bool hv = _hoverRow >= 0
-            core.markFrameMotion()
+            if _hoverRow != prevHover { core.markFrameRedraw() }
             if _dragCol >= 0 {
                 float nw = _dragStartW + (mx - _dragStartX)
                 if nw < 24.0 { nw = 24.0 }

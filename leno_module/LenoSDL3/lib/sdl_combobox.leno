@@ -225,10 +225,11 @@ export struct ComboBox impl Widget {
         }
 
         if ev.isMouseMotion() {
+            int prevHover = _hover
             if _open { _hover = _index_at(mx, my) } else { _hover = -1 }
             bool hv = _open and _hover >= 0
             if not hv { hv = contains(mx, my) }
-            core.markFrameMotion()
+            if _hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             if hv and _cursor >= 0 { core.requestCursor(_cursor) }
             if hv and _tip != "" { tip.tipReport(_tip, mx, my) }
             // 未命中不再强制设 DEFAULT，由 Window 帧末统一决定（避免覆盖上方弹层的手型）
