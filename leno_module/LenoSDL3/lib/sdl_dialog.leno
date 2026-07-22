@@ -20,10 +20,11 @@ export func createDialogWindow(Dict style): Window {
 }
 
 // 以模态方式运行窗口（pushModal + run，嵌套安全）
+// 注意：不做 popModalIfTop 兜底——win.run() 在主循环已跑时不阻塞，
+// 模态状态由事件循环在对话框关闭时自动弹出
 export func runModal(Window win, var onEvent, var onRender) {
     wnd.pushModal(win.getID())
     win.run(onEvent, onRender)
-    wnd.popModalIfTop(win.getID())   // 兜底：事件循环已弹则 no-op
 }
 
 // 非模态对话框：正常窗口标志（出现在任务栏），可选置顶

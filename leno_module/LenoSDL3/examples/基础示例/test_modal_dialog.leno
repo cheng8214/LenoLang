@@ -18,9 +18,11 @@ use SDL3.WindowFlag
 
 main() {
     var mainWin = SDL3.createWindow({title:"主窗口 — 1=模态 2=非模态 3=嵌套模态 ESC=退", w:660, h:440})
+    var eventCount = 0    // 主窗口收到的事件数——模态时暂停增长则证明阻塞有效
 
     mainWin.run(
         func(Event e): bool {
+            eventCount = eventCount + 1
             if e.isKeyDown() {
                 if e.scancode() == Scancode.ESCAPE { return false }
                 if e.scancode() == Scancode._1 { testModal() }
@@ -34,6 +36,8 @@ main() {
             r.drawText(SDL3.createFontAuto(18.0), "主窗口", 20, 20, 255, 255, 255)
             r.drawText(SDL3.createFontAuto(14.0), "1=模态对话框  2=非模态对话框  3=嵌套模态", 20, 55, 200, 200, 240)
             r.drawText(SDL3.createFontAuto(14.0), "ESC=退出主窗口", 20, 80, 150, 150, 180)
+            r.drawText(SDL3.createFontAuto(13.0), "事件计数: " + eventCount, 20, 110, 120, 200, 120)
+            r.drawText(SDL3.createFontAuto(12.0), "模态弹出后此计数应停止增长", 20, 135, 100, 100, 100)
         }
     )
 }
