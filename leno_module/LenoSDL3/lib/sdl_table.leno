@@ -523,6 +523,7 @@ export struct Table impl Widget {
                 float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
                 _scrollY = (my - (y + _headerH + 2.0) - _vDragOffset) * (maxY / (track - thumbH))
                 _clamp_scroll()
+                core.markFrameRedraw()
                 return
             }
         }
@@ -554,6 +555,7 @@ export struct Table impl Widget {
                 float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
                 _scrollX = (mx - (x + 2.0) - _hDragOffset) * (maxX / (track - thumbW))
                 _clamp_scroll()
+                core.markFrameRedraw()
                 return
             }
         }
@@ -578,6 +580,7 @@ export struct Table impl Widget {
                 if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw }
                 _autoCols = false
                 _clamp_scroll()
+                core.markFrameRedraw()
                 core.requestCursor(SystemCursor.EW_RESIZE)
             } else if my < y + _headerH {
                 int rc = _header_resize_col(mx)

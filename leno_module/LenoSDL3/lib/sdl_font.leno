@@ -109,9 +109,11 @@ export struct Font {
     // 避免每帧 TTF_RenderText_Blended（CPU 栅格化）+ SDL_CreateTextureFromSurface（上传）的重复开销
     // 容量不宜过大：动画场景下 FPS 等数字每秒变化，每个不同文字各占一个纹理（~20-30KB/个），
     // 512 个条目需要 ~8.5 分钟才填满才开始淘汰，期间纹理内存持续累积。
-    // 64 个条目足够缓存常见 UI 文字，64 秒后开始淘汰旧纹理，内存稳定在 ~2MB
+    // 文字纹理缓存容量。早期 64 槽在「表格 + 目录树 + 菜单 + 标签」同屏存在大量不重复文字时
+    // 会每帧淘汰/重建大量纹理，导致重绘（如鼠标移到其它控件、弹对话框）时偶发卡顿/闪烁。
+    // 放大到足以容纳整窗可见文字即可避免淘汰，内存实际由“不重复文字数”决定，不会无谓增长。
     Array[CachedTex] _texCache = []
-    int _texCap = 64
+    int _texCap = 1024
     int _texHead = 0
     // 尺寸缓存：measureString 高频调用，缓存避免重复测量
     Array[CachedMeas] _measCache = []

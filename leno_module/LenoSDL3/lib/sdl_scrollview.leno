@@ -228,7 +228,7 @@ export struct ScrollView impl Widget {
             if _dragV != 0 or _dragH != 0 { _dragV = 0; _dragH = 0; return }
         }
         if ev.isMouseMotion() and (_dragV != 0 or _dragH != 0) {
-            _scrollbarDrag(ev.mouseX(), ev.mouseY()); return
+            _scrollbarDrag(ev.mouseX(), ev.mouseY()); core.markFrameRedraw(); return
         }
         // 滚轮：悬停视口内才滚动
         if ev.isMouseWheel() {

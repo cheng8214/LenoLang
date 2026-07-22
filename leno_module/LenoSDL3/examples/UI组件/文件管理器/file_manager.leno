@@ -505,7 +505,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            // 控件自行绘制，无需自定义
+             r.clearColor(30, 33, 42, 255)
         }
     )
     SDL3.ttfQuit()

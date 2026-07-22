@@ -513,7 +513,11 @@ export struct Window {
             }
             ev.waitTimeout(timeoutMs)
             while ev.has {
-                _hadEvent = true
+                // 鼠标移动(motion)不强制整窗重绘：光标为 OS 级、hover 变化已由控件
+                // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
+                // 偶发呈现异常会让控件（如表）整块露出背景而“闪一下”。
+                // 滚轮/点击/resize/键盘等非 motion 事件仍强制重绘。
+                if not ev.isMouseMotion() { _hadEvent = true }
                 if ev.isQuit() {
                     for _runWids.len() to i {
                         // 根销毁：退出前先释放所有控件资源（字体等），沿父子树递归清理
@@ -598,7 +602,9 @@ export struct Window {
             }
             // 驱动所有定时器（在事件轮询外，确保 idle 期间也能触发定时器与自动重绘）
             timer.tickAllTimers()
-            // 事件驱动重绘：有事件/动画请求/tooltip等待时才渲染，空闲时跳过以降低 CPU 占用
+            // 事件驱动重绘：非 motion 事件/动画请求/tooltip等待时才渲染，空闲时跳过以降低 CPU 占用。
+            // 注意：纯鼠标移动(motion)不再触发整窗重绘——其光标为 OS 级、hover 变化由控件
+            // markFrameRedraw() 单独请求；否则每次移动都整窗清屏+重绘会偶发“闪一下”。
             if _hadEvent { _needRedraw = true }
             if core.consumeRedrawRequest() { _needRedraw = true }
             if tip.tipWaiting() { _needRedraw = true }
