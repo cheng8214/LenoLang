@@ -844,6 +844,7 @@ export struct Table impl Widget {
 
     func dispose() {
         if _font != null { fnt.releaseFont(_font); _font = null }
+        if _edit != null { _edit.dispose(); _edit = null }
         if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }
     }
 }

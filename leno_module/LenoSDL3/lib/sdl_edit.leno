@@ -1543,9 +1543,8 @@ export struct Edit impl Widget {
             r.drawText(_font, display, r.snapX(x + pad - _scrollX), r.snapY(ty), tr, tg, tb)
         }
 
-        r.popClipRect(); clip.free()
-
-        // 光标（与文字同高、垂直对齐）
+        // 光标（与文字同高、垂直对齐；画在裁剪区域内，与 _render_ml 行为一致，
+        // 避免在容器嵌套（Panel/VBox/HBox 内嵌 Table 含 Edit）时光标溢出到右下角）
         if _focused and _showCursor {
             float cx = r.snapX(x + pad + _text_width_to(_cursorPos) - _scrollX)
             if cx < x + pad { cx = x + pad }
@@ -1553,6 +1552,8 @@ export struct Edit impl Widget {
             r.setColor(220, 220, 240, 200)
             r.drawLine(cx, r.snapY(ty), cx, r.snapY(ty + textH))
         }
+
+        r.popClipRect(); clip.free()
     }
 
     // ---- 多行渲染 ----
