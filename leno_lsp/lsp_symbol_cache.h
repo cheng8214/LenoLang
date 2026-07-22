@@ -13,14 +13,31 @@
 #include "leno_compiler_lib.h"
 #include "../src/include/module_symbol_table.h"
 
+// ==================== 路径解析 ====================
+
+// 解析模块路径为绝对路径（复用 read_module_file 的解析逻辑，但不读文件内容）
+// file_path: 模块路径（可能是相对路径或绝对路径）
+// current_file: 当前文件路径（用于解析相对路径，可为 NULL）
+// out: 输出绝对路径缓冲区
+// out_len: 缓冲区大小
+// 返回 1 成功，0 失败
+int lsp_resolve_module_full_path(const char* file_path, const char* current_file,
+                                 char* out, int out_len);
+
 // ==================== 模块符号表缓存 ====================
 
 // 获取模块符号表（进程内缓存，按文件 mtime 失效）
-// module_path: 模块文件路径
+// module_path: 模块文件绝对路径
 // current_file: 当前文件路径（用于解析相对路径，可为 NULL）
 // 返回 ModuleSymbolTable*（所有权归缓存，调用者不可 destroy）
 // 失败返回 NULL
 ModuleSymbolTable* lsp_cache_get_module_symtable(const char* module_path, const char* current_file);
+
+// 通过相对路径/文件名获取模块符号表（内部先解析为绝对路径再缓存）
+// file_path: 模块路径（可能是相对路径）
+// current_file: 当前文件路径
+ModuleSymbolTable* lsp_cache_get_module_symtable_resolved(const char* file_path,
+                                                          const char* current_file);
 
 // ==================== 当前文件分析缓存 ====================
 

@@ -81,7 +81,7 @@ Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
 Array[Widget]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置）
 Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
-Array[int]             _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
+Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
 var _runLoopActive = false    // 主循环是否已在运行
 Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
 
@@ -89,12 +89,12 @@ Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
 export func pushModal(int w) { _modalStack.add(w) }
 // 弹出栈顶：仅当栈顶匹配时才弹出（防止重复弹/弹错）
 export func popModalIfTop(int w) {
-    if _modalStack.len() > 0 and _modalStack.last() == w { _modalStack.pop() }
+    if _modalStack.len() > 0 and _modalStack[_modalStack.len() - 1] == w { _modalStack.pop() }
 }
 // 当前是否为模态状态（栈非空即模态）
 func _isModal(): bool { return _modalStack.len() > 0 }
 func _modalTop(): int {
-    if _modalStack.len() > 0 { return _modalStack.last() }
+    if _modalStack.len() > 0 { return _modalStack[_modalStack.len() - 1] }
     return -1
 }
 
