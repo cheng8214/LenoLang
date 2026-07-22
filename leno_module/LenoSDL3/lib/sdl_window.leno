@@ -81,7 +81,8 @@ Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
 Array[Widget]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置）
 Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
-var _runLoopActive = false    // 主循环是否已在运行（改为 _runLoopActive 语义更准确）
+Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
+var _runLoopActive = false    // 主循环是否已在运行
 var _modalWid = -1
 
 export func setModalWid(int w) { _modalWid = w }
@@ -107,6 +108,7 @@ export struct Window {
     MenuBar _ctxBar = null          // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
     int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
     Widget _root                     // 根布局控件（setRoot 设置），缩放时自动填满窗口
+    bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -498,6 +500,7 @@ export struct Window {
         _runRoots.add(_root)         // 根布局控件
         Size sz = getSize()           // 窗口逻辑尺寸（Tooltip 浮层夹紧用）
         _runW.add(sz.w); _runH.add(sz.h)
+        _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
     }
 
     // 运行主循环（回调模式，支持多窗口）
@@ -578,6 +581,7 @@ export struct Window {
                             _runRens.remove(i);  _runEvts.remove(i)
                             _runRends.remove(i); _runWidgets.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runW.remove(i); _runH.remove(i)
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
+                            _runDialogHidden.remove(i)
                             break
                         }
                     }
@@ -660,6 +664,11 @@ export struct Window {
                     tip.tipTick()
                     tip.tipRender(_runRens[i], _runW[i], _runH[i])
                     _runRens[i].present()
+                    // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
+                    if _runDialogHidden[i] {
+                        _lib.SDL_ShowWindow(_runHnds[i])
+                        _runDialogHidden[i] = false
+                    }
                 }
                 }              // 闭合节流 if
             }

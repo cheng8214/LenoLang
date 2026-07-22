@@ -87,6 +87,7 @@ export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
 export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(opts) }
 import "sdl_dialog.leno" as dlg
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }
+export func createModelessDialog(Dict style): Window { return dlg.createModelessDialog(style) }
 export func runModal(Window win, var onEvent, var onRender) { dlg.runModal(win, onEvent, onRender) }
 
 
