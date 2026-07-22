@@ -93,7 +93,10 @@ export func popModalIfTop(int w) {
 }
 // 当前是否为模态状态（栈非空即模态）
 func _isModal(): bool { return _modalStack.len() > 0 }
-func _modalTop(): int { if _modalStack.len() > 0 then _modalStack.last() else -1 }
+func _modalTop(): int {
+    if _modalStack.len() > 0 { return _modalStack.last() }
+    return -1
+}
 
 // 兼容旧 API（已废弃，仅 test_modal_dialog.leno 等旧示例使用）
 export func setModalWid(int w) {
