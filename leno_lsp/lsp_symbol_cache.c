@@ -74,6 +74,64 @@ static void free_module_cache_entry(int idx) {
     g_module_cache[idx].mtime = 0;
 }
 
+// ==================== 路径解析 ====================
+
+// normalize_path 在 module_loader.c 中导出
+extern int normalize_path(char* path, int max_len);
+
+// 解析模块路径为绝对路径（复用 read_module_file 的解析逻辑，但不读文件内容）
+int lsp_resolve_module_full_path(const char* file_path, const char* current_file,
+                                 char* out, int out_len) {
+    if (!file_path || !out || out_len <= 0) return 0;
+
+    char full_path[MAX_PATH_LEN];
+    char normalized_current[MAX_PATH_LEN] = {0};
+
+    if (current_file != NULL) {
+        strncpy(normalized_current, current_file, MAX_PATH_LEN - 1);
+        normalized_current[MAX_PATH_LEN - 1] = '\0';
+#ifdef _WIN32
+        for (int i = 0; normalized_current[i]; i++) {
+            if (normalized_current[i] == '/') normalized_current[i] = '\\';
+        }
+#else
+        for (int i = 0; normalized_current[i]; i++) {
+            if (normalized_current[i] == '\\') normalized_current[i] = '/';
+        }
+#endif
+    }
+
+    // 相对路径：拼接 current_file 目录
+    if (current_file != NULL && file_path[0] != '/' && file_path[0] != '\\' &&
+        !(file_path[1] == ':' && (file_path[2] == '/' || file_path[2] == '\\'))) {
+#ifdef _WIN32
+        const char* last_slash = strrchr(normalized_current, '\\');
+#else
+        const char* last_slash = strrchr(normalized_current, '/');
+#endif
+        if (last_slash != NULL) {
+            size_t dir_len = last_slash - normalized_current + 1;
+            if (dir_len >= MAX_PATH_LEN) return 0;
+            memcpy(full_path, normalized_current, dir_len);
+            full_path[dir_len] = '\0';
+            if (strlen(full_path) + strlen(file_path) >= MAX_PATH_LEN) return 0;
+            strcat(full_path, file_path);
+        } else {
+            if (strlen(file_path) >= MAX_PATH_LEN) return 0;
+            strcpy(full_path, file_path);
+        }
+    } else {
+        if (strlen(file_path) >= MAX_PATH_LEN) return 0;
+        strcpy(full_path, file_path);
+    }
+
+    if (!normalize_path(full_path, MAX_PATH_LEN)) return 0;
+
+    strncpy(out, full_path, out_len - 1);
+    out[out_len - 1] = '\0';
+    return 1;
+}
+
 // ==================== 模块符号表缓存 ====================
 
 ModuleSymbolTable* lsp_cache_get_module_symtable(const char* module_path, const char* current_file) {
@@ -118,6 +176,17 @@ ModuleSymbolTable* lsp_cache_get_module_symtable(const char* module_path, const 
     g_module_cache[idx].table = table;
 
     return table;
+}
+
+// 通过相对路径/文件名获取模块符号表（内部先解析为绝对路径再缓存）
+ModuleSymbolTable* lsp_cache_get_module_symtable_resolved(const char* file_path,
+                                                          const char* current_file) {
+    if (!file_path) return NULL;
+    char full_path[MAX_PATH_LEN];
+    if (!lsp_resolve_module_full_path(file_path, current_file, full_path, sizeof(full_path))) {
+        return NULL;
+    }
+    return lsp_cache_get_module_symtable(full_path, current_file);
 }
 
 // ==================== 当前文件分析缓存 ====================

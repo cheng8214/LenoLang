@@ -5,8 +5,10 @@
 
 #include "leno_lsp.h"
 #include "leno_compiler_lib.h"
+#include "lsp_symbol_cache.h"
 #include "leno_builtins.h"
 #include "../src/include/native.h"
+#include "../src/include/module_symbol_table.h"
 #include <ctype.h>
 #include <stdlib.h>
 
