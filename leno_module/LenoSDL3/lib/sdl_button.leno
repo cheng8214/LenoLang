@@ -43,6 +43,19 @@ export struct Button impl Widget {
     Ptr[u8] _imgTex = null   // 图片纹理（懒加载，dispose 释放）
     string _imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 
+    // ==================== 状态图片（对齐 iOS UIButton.setImage(_:forState:)） ====================
+    string _imgPathHover = "";    Ptr[u8] _imgTexHover = null;    string _imgLoadHover = ""
+    string _imgPathPressed = "";  Ptr[u8] _imgTexPressed = null;  string _imgLoadPressed = ""
+    string _imgPathDisabled = ""; Ptr[u8] _imgTexDisabled = null; string _imgLoadDisabled = ""
+    bool   _pressed = false       // 鼠标按下且悬停中（用于 pressed 态图片 / 按下高亮）
+
+    // ==================== 内容模式（对齐 iOS contentMode / Android scaleType） ====================
+    // 0=aspectFit 默认（保持比例，完整显示在方框内，不拉伸） 1=stretch 拉伸填满 2=aspectFill 覆盖填满(裁剪)
+    int _imgMode = 0
+
+    // ==================== 背景图（对齐 iOS setBackgroundImage） ====================
+    string _bgImagePath = ""; Ptr[u8] _bgTex = null; string _bgLoadPath = ""
+
     // ==================== 预设类型 ====================
     func _apply_type(string t) {
         switch t {
@@ -69,9 +82,21 @@ export struct Button impl Widget {
 
     // 懒加载图片纹理（需要有效渲染器，render 时调用）
     func _ensure_image(Renderer r) {
+        Ptr[u8] h = r.handle
         if _imagePath != "" and _imgTex == null and _imgLoadPath != _imagePath {
-            _imgTex = img.loadTexture(r.handle, _imagePath)
-            _imgLoadPath = _imagePath   // 标记已尝试，避免加载失败每帧重试
+            _imgTex = img.loadTexture(h, _imagePath); _imgLoadPath = _imagePath
+        }
+        if _imgPathHover != "" and _imgTexHover == null and _imgLoadHover != _imgPathHover {
+            _imgTexHover = img.loadTexture(h, _imgPathHover); _imgLoadHover = _imgPathHover
+        }
+        if _imgPathPressed != "" and _imgTexPressed == null and _imgLoadPressed != _imgPathPressed {
+            _imgTexPressed = img.loadTexture(h, _imgPathPressed); _imgLoadPressed = _imgPathPressed
+        }
+        if _imgPathDisabled != "" and _imgTexDisabled == null and _imgLoadDisabled != _imgPathDisabled {
+            _imgTexDisabled = img.loadTexture(h, _imgPathDisabled); _imgLoadDisabled = _imgPathDisabled
+        }
+        if _bgImagePath != "" and _bgTex == null and _bgLoadPath != _bgImagePath {
+            _bgTex = img.loadTexture(h, _bgImagePath); _bgLoadPath = _bgImagePath
         }
     }
 
@@ -96,7 +121,7 @@ export struct Button impl Widget {
 
         // 预设类型（优先级低于显式 rgb）
         var tp = opts.get("type")
-        if tp is string { _apply_type(tp as string) }
+        if tp is string { _apply_type(tp) }
 
         // bg_rgb: 背景色 [r, g, b]
         var c = opts.get("bg_rgb")
@@ -136,12 +161,21 @@ export struct Button impl Widget {
         }
         _imgSize  = opts.get("image_size", 0.0)
         _imgGap   = opts.get("image_gap", 6.0)
-        _imgAlpha = _int(opts.get("image_alpha", 255))
+        _imgAlpha = opts.get("image_alpha", 255)
         var tint = opts.get("image_tint")
         if tint is Array[int] { _imgTintR = tint[0]; _imgTintG = tint[1]; _imgTintB = tint[2] }
-        // 更换图片路径时释放旧纹理，下一帧 render 重新加载
-        if _imgTex != null { _release_image(); _imgTex = null }
-        _imgLoadPath = ""
+
+        // 内容模式 / 状态图片 / 背景图
+        _imgMode        = opts.get("image_mode", 0)
+        _imgPathHover   = opts.get("image_path_hover", "")
+        _imgPathPressed = opts.get("image_path_pressed", "")
+        _imgPathDisabled = opts.get("image_path_disabled", "")
+        _bgImagePath    = opts.get("bg_image", "")
+
+        // 更换任意图片路径时释放旧纹理，下一帧 render 重新加载
+        _release_all_images()
+        _imgLoadPath = ""; _imgLoadHover = ""; _imgLoadPressed = ""
+        _imgLoadDisabled = ""; _bgLoadPath = ""
 
         _ensure_font()
         _loaded = true
@@ -197,8 +231,43 @@ export struct Button impl Widget {
     func set_image_gap(float g)  { _imgGap = g }
     func set_image_alpha(int a)  { _imgAlpha = a }
     func set_image_tint(int r, int g, int b) { _imgTintR = r; _imgTintG = g; _imgTintB = b }
+    // 内容模式：0=aspectFit 1=stretch 2=aspectFill
+    func set_image_mode(int mode) { _imgMode = mode }
+    // 状态图片（对齐 iOS setImage(_:forState:)）：state ∈ "hover" | "pressed" | "disabled" | "normal"(默认)
+    func set_image_for_state(string path, string state) {
+        switch state {
+            case "hover" {
+                if _imgTexHover != null { core.lib().SDL_DestroyTexture(_imgTexHover); _imgTexHover = null }
+                _imgPathHover = path; _imgLoadHover = ""
+            }
+            case "pressed" {
+                if _imgTexPressed != null { core.lib().SDL_DestroyTexture(_imgTexPressed); _imgTexPressed = null }
+                _imgPathPressed = path; _imgLoadPressed = ""
+            }
+            case "disabled" {
+                if _imgTexDisabled != null { core.lib().SDL_DestroyTexture(_imgTexDisabled); _imgTexDisabled = null }
+                _imgPathDisabled = path; _imgLoadDisabled = ""
+            }
+            default {
+                if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
+                _imagePath = path; _imgLoadPath = ""
+            }
+        }
+    }
+    // 背景图（对齐 iOS setBackgroundImage / Android background）
+    func set_background_image(string path) {
+        if _bgTex != null { core.lib().SDL_DestroyTexture(_bgTex); _bgTex = null }
+        _bgImagePath = path; _bgLoadPath = ""
+    }
     func _release_image() {
         if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
+    }
+    func _release_all_images() {
+        if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
+        if _imgTexHover != null { core.lib().SDL_DestroyTexture(_imgTexHover); _imgTexHover = null }
+        if _imgTexPressed != null { core.lib().SDL_DestroyTexture(_imgTexPressed); _imgTexPressed = null }
+        if _imgTexDisabled != null { core.lib().SDL_DestroyTexture(_imgTexDisabled); _imgTexDisabled = null }
+        if _bgTex != null { core.lib().SDL_DestroyTexture(_bgTex); _bgTex = null }
     }
 
     // 应用预设类型
@@ -232,6 +301,9 @@ export struct Button impl Widget {
         if ev.isMouseMotion() {
             _wasHover = hover
             hover = contains(ev.mouseX(), ev.mouseY())
+            // hover 状态变化需请求重绘：run 循环已优化为 motion 不整窗重绘，
+            // 由控件在视觉状态变化时自行 markFrameRedraw()（对齐 table/edit 等控件）
+            if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             // 鼠标样式切换
             if _cursor >= 0 {
                 if hover and not _wasHover { core.setSystemCursor(_cursor) }
@@ -241,9 +313,14 @@ export struct Button impl Widget {
             if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
             else if _wasHover and not hover { tip.tipClear() }
         }
-        if ev.isMouseButtonDown() and hover and _onClick != null {
-            _onClick()
+        if ev.isMouseButtonDown() {
+            if contains(ev.mouseX(), ev.mouseY()) {
+                hover = true
+                _pressed = true
+                if _onClick != null { _onClick() }
+            }
         }
+        if ev.isMouseButtonUp() { _pressed = false }
     }
 
     // ==================== 渲染 ====================
@@ -276,6 +353,13 @@ export struct Button impl Widget {
         r.setColor(br, bg, bb, 255)
         r.fillRoundedRect(x, y, w, h, _radius)
 
+        // 背景图（对齐 iOS setBackgroundImage / Android background）：覆盖在纯色背景之上、填满按钮矩形
+        if _bgTex != null {
+            r.setTextureAlpha(_bgTex, 255)
+            r.setTextureColor(_bgTex, 255, 255, 255)
+            r.drawTextureAt(_bgTex, x, y, w, h)
+        }
+
         // 边框
         if _showBorder {
             if hover { r.setColor(255, 255, 255, 200) }
@@ -301,13 +385,21 @@ export struct Button impl Widget {
             textW = ms0.w; textH = ms0.h
         }
 
+        // 选择当前状态的图标纹理（disabled > pressed > hover > normal）
+        Ptr[u8] itex = _imgTex
+        bool imgAutoDim = false
+        if not enabled and _imgTexDisabled != null { itex = _imgTexDisabled }
+        else if not enabled { itex = _imgTex; imgAutoDim = true }
+        else if _pressed and _imgTexPressed != null { itex = _imgTexPressed }
+        else if hover and _imgTexHover != null { itex = _imgTexHover }
+
         // 图标尺寸（对齐 Qt setIconSize / Material iconSize）
         // 自动尺寸须按布局约束，确保图标与文字都能容纳在按钮内：
         //  - 左右布局：图标纵向占满（留 padding）
         //  - 上下布局：图标须给文字预留 (h - 2pad - gap - textH) 高度
         float isize = _imgSize
-        if isize <= 0.0 and _imgTex != null {
-            var ts = r.getTextureSize(_imgTex)
+        if isize <= 0.0 and itex != null {
+            var ts = r.getTextureSize(itex)
             isize = ts["h"]
         }
         if isize <= 0.0 { isize = h - 2.0 * pad }   // 无图兜底
@@ -321,16 +413,33 @@ export struct Button impl Widget {
         }
         if isize < 0.0 { isize = 0.0 }
 
-        // 绘制图标（按 alpha/tint 调制，对齐 Qt ColorMod / Material icon tint）
-        if _imgTex != null {
-            r.setTextureAlpha(_imgTex, _imgAlpha)
-            if _imgTintR >= 0 { r.setTextureColor(_imgTex, _imgTintR, _imgTintG, _imgTintB) }
-            else { r.setTextureColor(_imgTex, 255, 255, 255) }
+        // 实际绘制尺寸（按内容模式保持/拉伸比例，避免非正方形图变形）+ alpha/tint 调制
+        float dw = isize; float dh = isize
+        if itex != null {
+            int effA = _imgAlpha
+            if imgAutoDim { effA = _int(_imgAlpha * 0.5) }
+            r.setTextureAlpha(itex, effA)
+            if _imgTintR >= 0 { r.setTextureColor(itex, _imgTintR, _imgTintG, _imgTintB) }
+            else if imgAutoDim { r.setTextureColor(itex, 128, 128, 128) }   // 禁用态自动变灰
+            else { r.setTextureColor(itex, 255, 255, 255) }
+            if _imgMode != 1 {   // 0=aspectFit / 2=aspectFill：保持原始比例
+                var nats = r.getTextureSize(itex)
+                float nw = nats["w"]; float nh = nats["h"]
+                if nw > 0.0 and nh > 0.0 {
+                    if _imgMode == 2 {   // aspectFill：覆盖填满（可能裁剪，居中绘制）
+                        float s = isize / nw; if isize / nh > s { s = isize / nh }
+                        dw = nw * s; dh = nh * s
+                    } else {             // aspectFit：完整显示（可能留边，居中绘制）
+                        float s = isize / nw; if isize / nh < s { s = isize / nh }
+                        dw = nw * s; dh = nh * s
+                    }
+                }
+            }
         }
 
         if _font != null and _font.ok {
             var ms = _font.measureString(text)
-            if _imgTex == null {
+            if itex == null {
                 // 纯文字：整按钮居中
                 float cy = y + (h - ms.h) / 2.0
                 r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
@@ -338,7 +447,7 @@ export struct Button impl Widget {
                 // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
                 float ix = x + pad
                 float iy = y + (h - isize) / 2.0
-                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float tx = ix + isize + _imgGap
                 float tw = (x + w) - tx - pad
                 float ty = y + (h - ms.h) / 2.0
@@ -347,7 +456,7 @@ export struct Button impl Widget {
                 // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
                 float ix = x + w - pad - isize
                 float iy = y + (h - isize) / 2.0
-                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float tx = x + pad
                 float tw = ix - _imgGap - tx
                 float ty = y + (h - ms.h) / 2.0
@@ -356,7 +465,7 @@ export struct Button impl Widget {
                 // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
                 float ix = x + (w - isize) / 2.0
                 float iy = y + pad
-                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float ty = iy + isize + _imgGap
                 float th = (y + h) - ty - pad
                 float cy = ty + (th - ms.h) / 2.0
@@ -365,13 +474,13 @@ export struct Button impl Widget {
                 // 图标在下（WinForms TextAboveImage）
                 float ix = x + (w - isize) / 2.0
                 float iy = y + h - pad - isize
-                r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+                r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float ty = y + pad
                 float th = iy - _imgGap - ty
                 float cy = ty + (th - ms.h) / 2.0
                 r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
             }
-        } else if _imgTex != null {
+        } else if itex != null {
             // 仅图标、无文字：居中绘制
             float ix = x + (w - isize) / 2.0
             float iy = y + (h - isize) / 2.0
@@ -379,7 +488,7 @@ export struct Button impl Widget {
             else if _imgPos == 1 { ix = x + w - pad - isize; iy = y + (h - isize) / 2.0 }
             else if _imgPos == 2 { ix = x + (w - isize) / 2.0; iy = y + pad }
             else { ix = x + (w - isize) / 2.0; iy = y + h - pad - isize }
-            r.drawTextureAt(_imgTex, ix, iy, isize, isize)
+            r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
         }
 
         // 恢复裁剪区
@@ -389,7 +498,7 @@ export struct Button impl Widget {
     // 释放字体与图片资源
     func dispose() {
         if _font != null { fnt.releaseFont(_font); _font = null }
-        if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
+        _release_all_images()
     }
 }
 

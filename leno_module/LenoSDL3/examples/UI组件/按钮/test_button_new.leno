@@ -1,0 +1,124 @@
+// test_button_new.leno — Button 新增图片功能测试
+// 覆盖：状态图片(hover/pressed/disabled) / 内容模式(aspectFit/stretch/aspectFill)
+//       / 背景图(set_background_image) / hover 重绘修复
+// 自包含：先用隐藏窗口程序化生成图标，再到演示窗口里验证，无需手动准备图片。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.(Event, Renderer, Button, Scancode, WindowFlag,Window)
+
+// ==================== 1) 程序化生成测试图标 ====================
+// 在 256x128 隐藏画布上绘制，再分区截取保存为 PNG（沿用 gen_icons.leno 写法）
+func genIcons(): bool {
+    var gen = SDL3.createWindow({title: "icon-gen", w: 256, h: 128, flags: WindowFlag.HIDDEN})
+    if not gen.ok { print("[gen] createWindow 失败: " + SDL3.getError()); return false }
+    var r = SDL3.createRenderer(gen.getHandle())
+
+    // 状态图片：4 个不同颜色的方块（红=normal 绿=hover 蓝=pressed 灰=disabled）
+    r.clearColor(0, 0, 0, 0)
+    r.setColor(220, 60, 60, 255);  r.fillRect(0,   0, 64, 64)   // normal 红
+    r.setColor(60, 200, 80, 255);  r.fillRect(64,  0, 64, 64)   // hover 绿
+    r.setColor(60, 120, 230, 255); r.fillRect(128, 0, 64, 64)   // pressed 蓝
+    r.setColor(140, 140, 140, 255);r.fillRect(192, 0, 64, 64)   // disabled 灰
+
+    // 宽图(128x64，2:1)用于 content mode：蓝底 + 左红圆 + 右黄方 + 白色中线
+    // 这样 stretch 会变形、aspectFit 会留边、aspectFill 会裁剪，肉眼可辨
+    r.setColor(30, 90, 150, 255);  r.fillRect(0, 64, 128, 64)
+    r.setColor(230, 70, 70, 255);  r.fillCircle(32.0, 96.0, 22.0)
+    r.setColor(240, 200, 60, 255); r.fillRect(80.0, 80.0, 32.0, 32.0)
+    r.setColor(255, 255, 255, 160);r.fillRect(63.0, 64.0, 2.0, 64.0)
+
+    // 背景图(64x64)棋盘格，用于 set_background_image 验证
+    for 0 : 8 to i {
+        for 0 : 8 to j {
+            bool odd = (i + j) % 2 == 0
+            if odd { r.setColor(70, 70, 90, 255) } else { r.setColor(120, 120, 150, 255) }
+            r.fillRect(128.0 + _float(i) * 8.0, 64.0 + _float(j) * 8.0, 8.0, 8.0)
+        }
+    }
+
+    // 分区截取保存
+    SDL3.saveImagePNG(r.readPixelsAt(0,   0, 64, 64), "d:\\t_normal.png")
+    SDL3.saveImagePNG(r.readPixelsAt(64,  0, 64, 64), "d:\\t_hover.png")
+    SDL3.saveImagePNG(r.readPixelsAt(128, 0, 64, 64), "d:\\t_pressed.png")
+    SDL3.saveImagePNG(r.readPixelsAt(192, 0, 64, 64), "d:\\t_disabled.png")
+    SDL3.saveImagePNG(r.readPixelsAt(0,  64, 128, 64), "d:\\t_wide.png")
+    SDL3.saveImagePNG(r.readPixelsAt(128, 64, 64, 64), "d:\\t_bg.png")
+    print("[gen] 图标已生成: d:/t_normal|hover|pressed|disabled|wide|bg.png")
+
+    r.destroy(); gen.destroy()
+    return true
+}
+
+main() {
+    SDL3.ttfInit()
+    if not genIcons() { print("[main] 图标生成失败，退出"); return }
+
+    Window win = SDL3.createWindow({title: "Button 新功能测试", w: 560, h: 400})
+    if not win.ok { print("窗口创建失败"); return }
+
+    // —— 1) 状态图片（对齐 iOS setImage(_:forState:)）——
+    //     正常显红、悬停显绿、按下显蓝；移上去/按下时肉眼可见图标切换
+    Button bState = win.addButton({
+        text: "状态图片演示", x: 30, y: 30, w: 260, h: 54,
+        type: "primary", image_path: "d:/t_normal.png", image_pos: "left"
+    })
+    bState.set_image_for_state("d:/t_hover.png", "hover")
+    bState.set_image_for_state("d:/t_pressed.png", "pressed")
+    bState.set_image_for_state("d:/t_disabled.png", "disabled")
+    bState.on_click(func() { print("[状态] 点击") })
+
+    // —— 2) 禁用态按钮 + disabled 状态图片（无图时也会自动变灰）——
+    Button bDis = win.addButton({
+        text: "禁用(disabled)", x: 310, y: 30, w: 200, h: 54,
+        type: "primary", image_path: "d:/t_normal.png", image_pos: "left", enabled: false
+    })
+    bDis.set_image_for_state("d:/t_disabled.png", "disabled")
+
+    // —— 3) 内容模式：同一张 2:1 宽图，三种缩放表现 ——
+    //     aspectFit(默认) 保持比例完整+留边 / stretch 拉伸变形 / aspectFill 填满裁剪
+    Button bFit = win.addButton({
+        text: "aspectFit", x: 30, y: 110, w: 160, h: 60,
+        type: "dark", image_path: "d:/t_wide.png", image_pos: "left", image_mode: 0
+    })
+    Button bStretch = win.addButton({
+        text: "stretch", x: 200, y: 110, w: 160, h: 60,
+        type: "dark", image_path: "d:/t_wide.png", image_pos: "left", image_mode: 1
+    })
+    Button bFill = win.addButton({
+        text: "aspectFill", x: 370, y: 110, w: 160, h: 60,
+        type: "dark", image_path: "d:/t_wide.png", image_pos: "left", image_mode: 2
+    })
+
+    // —— 4) 背景图（对齐 iOS setBackgroundImage）：棋盘格铺满按钮矩形 ——
+    Button bBg = win.addButton({
+        text: "背景图", x: 30, y: 200, w: 220, h: 60, type: "dark"
+    })
+    bBg.set_background_image("d:/t_bg.png")
+    bBg.on_click(func() { print("[背景图] 点击") })
+
+    // —— 5) hover 重绘修复验证：普通按钮，鼠标移上去应立即高亮(背景加亮+白边) ——
+    Button bHover = win.addButton({
+        text: "悬停我→立即高亮(hover修复)", x: 270, y: 200, w: 260, h: 60, type: "warning"
+    })
+    bHover.on_click(func() { print("[hover] 点击") })
+
+    // —— 6) 纯图标按钮 + pressed 态切换（无文字）——
+    Button bIconState = win.addButton({
+        x: 30, y: 290, w: 54, h: 54, type: "success", image_path: "d:/t_normal.png"
+    })
+    bIconState.set_image_for_state("d:/t_pressed.png", "pressed")
+    bIconState.on_click(func() { print("[纯图标] 按下态切换验证") })
+
+    print("=== 新功能测试: 状态图片 / 内容模式 / 背景图 / hover重绘 已创建 ===")
+    print("=== 鼠标悬停各按钮观察: 状态切换、不变形、背景图、即时高亮 ===")
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(30, 32, 40, 255)
+        }
+    )
+}
