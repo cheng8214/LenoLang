@@ -18,6 +18,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_panel.leno" as pnl; use pnl.Panel
 
 export struct ScrollView impl Widget {
     float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
@@ -78,6 +79,8 @@ export struct ScrollView impl Widget {
         if ab != null { ab._bind_window(hwnd); return }
         ScrollView sv = _content as ScrollView
         if sv != null { sv._bind_window(hwnd); return }
+        Panel p = _content as Panel
+        if p != null { p._bind_window(hwnd); return }
         Edit e = _content as Edit
         if e != null { e.set_window(hwnd) }
     }

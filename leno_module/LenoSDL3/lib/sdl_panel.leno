@@ -5,6 +5,8 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 
 export struct Panel impl Widget {
     float x = 0.0; float y = 0.0; float w = 200.0; float h = 150.0
@@ -18,6 +20,7 @@ export struct Panel impl Widget {
     bool _loaded = false
     bool enabled = true
     bool visible = true
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
     func set(Dict opts) {
         x    = opts.get("x", 0)
@@ -43,7 +46,29 @@ export struct Panel impl Widget {
     }
 
     // ==================== 设置方法 ====================
-    func add(Widget c): Widget { children.add(c); return c }
+    func add(Widget c): Widget {
+        children.add(c)
+        if _hwnd != null { _pass_hwnd(c, _hwnd) }
+        return c
+    }
+    // 绑定窗口句柄：记录自身，并向下分发给需要它的子控件（Edit / 布局容器 / 嵌套 Panel）
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for children to c { _pass_hwnd(c, hwnd) }
+    }
+    // 把窗口句柄下发给子控件：Edit 直接设置；布局容器/嵌套 Panel 继续向下传递
+    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+        Edit e = c as Edit
+        if e != null { e.set_window(hwnd); return }
+        HBox h = c as HBox
+        if h != null { h._bind_window(hwnd); return }
+        VBox v = c as VBox
+        if v != null { v._bind_window(hwnd); return }
+        AnchorBox a = c as AnchorBox
+        if a != null { a._bind_window(hwnd); return }
+        Panel p = c as Panel
+        if p != null { p._bind_window(hwnd); return }
+    }
     func remove(Widget c) {
         for children.len() to i { if children[i] == c { children.remove(i); return } }
     }

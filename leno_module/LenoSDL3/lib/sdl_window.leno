@@ -268,6 +268,25 @@ export struct Window {
     // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
     func add(Widget w): Widget {
         _widgets.add(w)
+        // 绑定窗口句柄：容器向下传递，Edit 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
+        Panel p = w as Panel
+        if p != null { p._bind_window(handle); return w }
+        ScrollView s = w as ScrollView
+        if s != null { s._bind_window(handle); return w }
+        HBox h = w as HBox
+        if h != null { h._bind_window(handle); return w }
+        VBox vb = w as VBox
+        if vb != null { vb._bind_window(handle); return w }
+        AnchorBox ab = w as AnchorBox
+        if ab != null { ab._bind_window(handle); return w }
+        TabControl tc = w as TabControl
+        if tc != null { tc._bind_window(handle); return w }
+        Edit e = w as Edit
+        if e != null { e.set_window(handle); return w }
+        SpinBox sp = w as SpinBox
+        if sp != null { sp._bind_window(handle); return w }
+        TreeView tv = w as TreeView
+        if tv != null { tv.set_window_handle(handle); return w }
         return w
     }
 
@@ -355,6 +374,7 @@ export struct Window {
     func addPanel(Dict opts): Panel {
         Panel p = pnl.createPanel(opts)
         _widgets.add(p as Widget)
+        p._bind_window(handle)
         return p
     }
 

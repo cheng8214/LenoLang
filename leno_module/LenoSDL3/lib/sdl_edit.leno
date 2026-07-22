@@ -36,6 +36,8 @@ export struct Edit impl Widget {
 
     string _placeholder = ""          // 占位文字
     bool _focused = false
+    // IME 候选框位置缓存：仅在坐标/光标变化时调用 SDL，避免每帧无谓刷新
+    int _imeX = -1; int _imeY = -1; int _imeW = -1; int _imeH = -1; int _imeCursor = -1
     bool _mouseDown = false              // 鼠标左键是否按下
     bool _draggingVScroll = false        // 拖竖向滚动条
     bool _draggingHScroll = false        // 拖横向滚动条
@@ -596,25 +598,39 @@ export struct Edit impl Widget {
     }
 
     func _update_ime() {
+        // 仅在聚焦且窗口有效时更新；未聚焦时不应干涉 IME
+        if not _focused or _hwnd == null {
+            _imeX = -1; _imeY = -1; _imeW = -1; _imeH = -1; _imeCursor = -1
+            return
+        }
         float pad = 8.0
         float cx
-        var rect = core.SDL_Rect.malloc()
+        int rx = 0; int ry = 0; int rw = 0; int rh = 0
         if _multiline {
             _rebuild_lines()
             cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
-            float cy = y + pad + _cursorLine * _lineHeight - _scrollY
-            rect.x = _int(x)
-            rect.y = _int(cy)
-            rect.w = _int(w)
-            rect.h = _int(_lineHeight)
+            rx = _int(x)
+            ry = _int(y + pad + _cursorLine * _lineHeight - _scrollY)
+            rw = _int(w)
+            rh = _int(_lineHeight)
         } else {
             cx = x + pad + _text_width_to(_cursorPos) - _scrollX
-            rect.x = _int(x)
-            rect.y = _int(y + h)
-            rect.w = _int(w)
-            rect.h = _int(h)
+            rx = _int(x)
+            // 单行文字垂直居中绘制，IME 矩形应只覆盖文字所在那一行
+            // （与多行的「单行文字矩形」保持一致），否则候选框会落在整框下方、偏低
+            float textH = _lineHeight - 2.0
+            ry = _int(y + (h - textH) / 2.0)
+            rw = _int(w)
+            rh = _int(textH)
         }
-        core.setTextInputArea(_hwnd, rect.to_ptr(), _int(cx - x))
+        int icur = _int(cx - x)
+        // 仅在位置或光标相对上次发送有变化时才调用 SDL：
+        // 1) 避免每帧无谓刷新；2) 保证滚动/布局/resize 导致坐标变化后候选框跟随。
+        if rx == _imeX and ry == _imeY and rw == _imeW and rh == _imeH and icur == _imeCursor { return }
+        _imeX = rx; _imeY = ry; _imeW = rw; _imeH = rh; _imeCursor = icur
+        var rect = core.SDL_Rect.malloc()
+        rect.x = rx; rect.y = ry; rect.w = rw; rect.h = rh
+        core.setTextInputArea(_hwnd, rect.to_ptr(), icur)
         rect.free()
     }
 
@@ -1458,6 +1474,10 @@ export struct Edit impl Widget {
     func render(Renderer r) {
         if not _loaded { return }
         if not visible { return }
+        // 聚焦时每帧用当前绝对坐标刷新 IME 候选框位置。
+        // 容器(ScrollView/VBox/Panel 等)会动态设置 edit 的绝对坐标，
+        // render 阶段的坐标是最终权威值，可修正“容器内 IME 位置不对”的问题。
+        if _focused { _update_ime() }
         _ensure_font()
         if _font == null or not _font.ok { return }
 
