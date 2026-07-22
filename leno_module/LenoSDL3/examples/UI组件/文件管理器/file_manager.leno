@@ -63,7 +63,7 @@ func subFolders(string path): Array[Dict] {
     var names = dirs.listdir(path)
     if names != null {
         for names.len() to i {
-            string nm = names[i] as string
+            string nm = names[i]
             string fp = dirs.join(path, nm)
             if dirs.is_dir(fp) {
                 out.add({text: nm, data: {path: fp}, has_children: true, path: fp})
@@ -77,9 +77,9 @@ func subFolders(string path): Array[Dict] {
 func fmtSize(int b): string {
     if b < 1024 { return (b as string) + " B" }
     float kb = _float(b) / 1024.0
-    if kb < 1024.0 { return (_int(kb) as string) + " KB" }
+    if kb < 1024.0 { return _int(kb) + " KB" }
     float mb = kb / 1024.0
-    if mb < 1024.0 { return (_int(mb) as string) + " MB" }
+    if mb < 1024.0 { return _int(mb) + " MB" }
     float gb = mb / 1024.0
     return (_int(gb) as string) + " GB"
 }
@@ -109,9 +109,9 @@ func regDicts(Array[Dict] ds) {
     for ds.len() to i {
         Dict d = ds[i] as Dict
         ensureNodeArr(_regCounter)
-        Dict dd = d.get("data", {}) as Dict
-        _nodePaths[_regCounter - 1] = dd.get("path", "") as string
-        _nodeTypes[_regCounter - 1] = dd.get("type", "folder") as string
+        Dict dd = d.get("data", {})
+        _nodePaths[_regCounter - 1] = dd.get("path", "") 
+        _nodeTypes[_regCounter - 1] = dd.get("type", "folder") 
         _regCounter = _regCounter + 1
         var ch = d.get("children", null)
         if ch is Array[Dict] and (ch as Array[Dict]).len() > 0 {
@@ -185,8 +185,8 @@ func _onTreeToggle(int id, bool expanded) {
         for subs.len() to i {
             int nid = _tree.add_child(id, subs[i])
             ensureNodeArr(nid)
-            Dict dd = subs[i].get("data", {}) as Dict
-            _nodePaths[nid - 1] = dd.get("path", "") as string
+            Dict dd = subs[i].get("data", {})
+            _nodePaths[nid - 1] = dd.get("path", "") 
             _nodeTypes[nid - 1] = "folder"
         }
     }
@@ -225,13 +225,13 @@ func openDir(string path) {
     Array[Array[string]] folders = []
     Array[Array[string]] fileRows = []
     for names.len() to i {
-        string nm = names[i] as string
+        string nm = names[i]
         string fp = dirs.join(path, nm)
         if dirs.is_dir(fp) {
             folders.add([nm, "", "文件夹", fp, "1"])
         } else {
             var st = dirs.stat(fp)
-            int szb = _int(st.get("size", 0))
+            int szb = st.get("size", 0)
             string ext = dirs.extname(nm)
             string tp = "文件"
             if ext != "" and ext != "." { tp = "文件 " + ext }
@@ -283,7 +283,7 @@ func newFolder() {
     string target = base
     while dirs.exists(target) {
         n = n + 1
-        target = base + " (" + (n as string) + ")"
+        target = base + " (" + n + ")"
     }
     if dirs.mkdir_p(target) {
         openDir(_curDir)

@@ -976,6 +976,8 @@ static Value native_dirs_stat(int argCount, Value* args) {
 //   Windows: ["C:\\", "D:\\", ...]（按位枚举逻辑驱动器）
 //   Unix:    ["/"]
 static Value native_dirs_list_drives(int argCount, Value* args) {
+    (void)argCount;
+    (void)args;
     ObjArray* arr = arr_new_with_capacity(8);
     if (!arr) {
         return val_null();
