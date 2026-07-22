@@ -188,7 +188,7 @@ export struct MenuBar impl Widget {
                 var m = ms[i] as Dict
                 _titles.add(m.get("title", ""))
                 var its = m.get("items", [])
-                if its is Array[Dict] { _menus.add(parseMenuItems(its as Array[Dict])) }
+                if its is Array[Dict] { _menus.add(parseMenuItems(its)) }
                 else { _menus.add([]) }
                 _ctxFlag.add(false)
                 _ctxAnchor.add([0.0, 0.0])

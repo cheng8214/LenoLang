@@ -10,15 +10,13 @@
 //             tv.get_context_menu().addContextItem(tv.get_context_handle(), {...}) 添加项，
 //             tv.get_context_menu().on_select(func(s,id){...}) 处理选择。
 //
-// 数据模型：嵌套 Array[TreeViewNode] 树（_roots）为唯一数据源。
-// 重要：Leno 对"自递归结构体字段"（TreeViewNode.children 这种 Array[TreeViewNode]）
-//       的"非常量下标"元素访问不可靠——常量下标 roots[0].children 正常，但 roots[i].children
-//       （i 为循环变量）要么被推断成 any 而编译报错，要么编译通过却静默返回错误值
-//       （复现见 BUG_ArrayStruct语义.md 第 3、4 节）。因此：
-//       1) 渲染/命中用的拍平视图一律用基础类型并行数组（_flatIds/_flatText/...），按下标访问安全；
-//       2) 所有按 id 的读/写都走递归辅助函数 + 循环变量 list[i].field 原地操作，
-//          且不直接依赖"元素上 .children 字段"的取值。
-//       详见 BUG_ArrayStruct语义.md（注意：早期"Array[Struct] 拷贝陷阱"的判断已作废）。
+// 数据模型：嵌套 Array[TreeViewNode] 树（_roots）为唯一数据源；节点字段（含 image）即唯一真相。
+// 渲染/命中用的拍平视图（_flatIds/_flatText/...）只是一层"渲染缓存"——基础类型按下标访问安全、
+// 且可避免每帧重建数组（鼠标移动高频重绘抖动的主因），并非因为结构体字段访问不可靠。
+// 历史上的坑：Leno 曾对自递归结构体字段（TreeViewNode.children）的"非循环下标"访问不可靠，
+// 迫使所有读写都绕递归辅助函数；该语言坑已于编译器层面修复（见 test_structarray_probe.leno 验证），
+// 现在 list[i].children / list[i].image 等变量下标访问均可靠，节点字段可直接作为数据源。
+// 下方 _flatten_r 直接读取 list[i].image 即通过结构体字段取值，已无旧坑。
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -26,11 +24,14 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
+import "sdl_image.leno" as img
 
 // 节点结构：children 递归构成树；_parent/_depth 为拍平遍历与连接线提供便利
 export struct TreeViewNode {
     int id = -1
     string text = ""
+    string image = ""    // 节点图标路径（空 = 无图）；作为唯一数据源
+    int imageMode = -1   // 图标内容模式：-1=用全局 _imgMode；0=aspectFit 1=stretch 2=aspectFill
     Array[TreeViewNode] children = []
     bool expanded = false
     bool hasChildren = false
@@ -47,8 +48,8 @@ export struct TreeView impl Widget {
     // ===== 规范状态：嵌套树（唯一数据源）=====
     Array[TreeViewNode] _roots = []
     // ===== 当前可见行的拍平视图（基础类型并行数组，渲染/命中复用）=====
-    // 注意：Leno 中结构体数组按"非循环下标"访问会返回默认拷贝，故拍平层只用
-    // 基础类型数组（int/string/bool，按任意下标访问均安全）；源数据仍存于 _roots 树。
+    // 这层是"渲染缓存"而非数据来源：基础类型按下标访问安全、且可只在结构变更时重建，
+    // 避免每帧重建数组导致高频重绘抖动/闪烁。源数据始终存于 _roots 树（节点 image 等字段）。
     Array[int] _flatIds = []
     Array[string] _flatText = []
     Array[int] _flatParent = []     // 每行直接父节点 id（-1=根）
@@ -57,7 +58,17 @@ export struct TreeView impl Widget {
     Array[bool] _flatCheck = []
     Array[bool] _flatOn = []
     Array[bool] _flatExpanded = []
+    Array[string] _flatImage = []      // 每行图片路径（渲染缓存，源在节点 image 字段）
+    Array[int] _flatImgMode = []       // 每行图片内容模式（节点 imageMode，<0 时回退全局 _imgMode）
     bool _flatDirty = true      // 拍平视图是否过期：结构变更后置位，render 时按需重建，避免每帧重建数组
+
+    // 节点图标（image）绘制参数
+    float _imgSize = 0.0      // 图标边长（0 = 自动：取 _rowH - 8）
+    float _imgGap = 4.0       // 图标与文字间距
+    int   _imgMode = 0        // 内容模式：0=aspectFit(保持比例) 1=stretch(拉伸) 2=aspectFill(覆盖裁剪)
+    // 纹理缓存（path -> tex 平行数组）：跨拍平重建持久存在，避免每帧重载与纹理泄漏
+    Array[string] _imgCachePaths = []
+    Array[Ptr[u8]] _imgCacheTex = []
     float _textH = 16.0         // 缓存字体行高，避免渲染时每行重复 measureString
 
     float _rowH = 24.0
@@ -112,6 +123,8 @@ export struct TreeView impl Widget {
         TreeViewNode n = new TreeViewNode()
         n.id = _nextId; _nextId = _nextId + 1
         n.text = d.get("text", "")
+        n.image = d.get("image", "")
+        n.imageMode = d.get("imageMode", -1)
         n._parent = parentId
         n._depth = depth
         n.expanded = d.get("expanded", false)
@@ -143,7 +156,7 @@ export struct TreeView impl Widget {
         Array[TreeViewNode] out = []
         for list.len() to i {
             TreeViewNode o = new TreeViewNode()
-            o.id = list[i].id; o.text = list[i].text; o.expanded = list[i].expanded
+            o.id = list[i].id; o.text = list[i].text; o.image = list[i].image; o.imageMode = list[i].imageMode; o.expanded = list[i].expanded
             o.hasChildren = list[i].hasChildren; o.checkable = list[i].checkable; o.checked = list[i].checked
             o._depth = list[i]._depth; o._parent = list[i]._parent; o.data = list[i].data
             o.children = _snap_children(list[i].children)
@@ -157,7 +170,7 @@ export struct TreeView impl Widget {
         for list.len() to i {
             if list[i].id == id {
                 TreeViewNode o = new TreeViewNode()
-                o.id = list[i].id; o.text = list[i].text; o.expanded = list[i].expanded
+                o.id = list[i].id; o.text = list[i].text; o.image = list[i].image; o.imageMode = list[i].imageMode; o.expanded = list[i].expanded
                 o.hasChildren = list[i].hasChildren; o.checkable = list[i].checkable; o.checked = list[i].checked
                 o._depth = list[i]._depth; o._parent = list[i]._parent; o.data = list[i].data
                 o.children = _snap_children(list[i].children)
@@ -174,7 +187,7 @@ export struct TreeView impl Widget {
     func _flatten() {
         if not _flatDirty { return }   // 结构未变则跳过，避免每帧重建 8 个数组（鼠标移动高频重绘时抖动/闪烁的主因）
         _flatIds = []; _flatText = []; _flatParent = []; _flatDepth = []
-        _flatHas = []; _flatCheck = []; _flatOn = []; _flatExpanded = []
+        _flatHas = []; _flatCheck = []; _flatOn = []; _flatExpanded = []; _flatImage = []; _flatImgMode = []
         _flatten_r(_roots, -1, 0)
         _flatDirty = false
     }
@@ -182,6 +195,8 @@ export struct TreeView impl Widget {
         for list.len() to i {
             _flatIds.add(list[i].id)
             _flatText.add(list[i].text)
+            _flatImage.add(list[i].image)
+            _flatImgMode.add(list[i].imageMode)
             _flatParent.add(par)
             _flatDepth.add(depth)
             _flatHas.add(list[i].hasChildren)
@@ -192,6 +207,16 @@ export struct TreeView impl Widget {
                 _flatten_r(list[i].children, list[i].id, depth + 1)
             }
         }
+    }
+
+    // 纹理缓存：按 path 取/载纹理，跨拍平重建持久存在，避免每帧重载与纹理泄漏
+    func _get_tex(Renderer r, string path): Ptr[u8] {
+        for _imgCachePaths.len() to i {
+            if _imgCachePaths[i] == path { return _imgCacheTex[i] }
+        }
+        Ptr[u8] t = img.loadTexture(r.handle, path)
+        _imgCachePaths.add(path); _imgCacheTex.add(t)
+        return t
     }
 
     func _total_h(): float { return _flatIds.len() * _rowH }
@@ -291,7 +316,7 @@ export struct TreeView impl Widget {
         _showCheck = opts.get("show_check", false)
 
         var its = opts.get("items", [])
-        if its is Array[Dict] { _build_from_dicts(its as Array[Dict]) }
+        if its is Array[Dict] { _build_from_dicts(its) }
         else { _roots = [] }
 
         _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []
@@ -328,7 +353,7 @@ export struct TreeView impl Widget {
 
     // ==================== 设置方法 ====================
     func set_items(Array[Dict] ds) {
-        if ds is Array[Dict] { _build_from_dicts(ds as Array[Dict]) }
+        if ds is Array[Dict] { _build_from_dicts(ds) }
         else { _roots = [] }
         _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []
         _flatten(); _clamp_scroll()
@@ -347,6 +372,12 @@ export struct TreeView impl Widget {
     func set_show_lines(bool v) { _showLines = v }
     func get_show_lines(): bool { return _showLines }
 
+    // 节点图标（image）绘制参数
+    func set_image_size(float s) { _imgSize = s }
+    func set_image_gap(float g) { _imgGap = g }
+    // 内容模式：0=aspectFit(保持比例,默认) 1=stretch(拉伸) 2=aspectFill(覆盖裁剪)
+    func set_image_mode(int m) { _imgMode = m }
+
     // 展开/折叠（写操作原地递归修改）
     func _get_expanded(int id): bool { return _get_expanded_r(_roots, id) }
     func _get_expanded_r(Array[TreeViewNode] list, int id): bool {
@@ -360,7 +391,7 @@ export struct TreeView impl Widget {
         bool cur = _get_expanded(id)
         if cur != e {
             _set_expanded_r(_roots, id, e)
-            _flatten(); _clamp_scroll()
+            _flatDirty = true; _flatten(); _clamp_scroll()
             if _onToggle != null { _onToggle(id, e) }
         }
     }
@@ -435,7 +466,7 @@ export struct TreeView impl Widget {
         TreeViewNode src = _find(id)
         TreeViewNode n = new TreeViewNode()
         if src.id >= 0 {
-            n.id = src.id; n.text = src.text; n.expanded = src.expanded; n.hasChildren = src.hasChildren
+            n.id = src.id; n.text = src.text; n.image = src.image; n.imageMode = src.imageMode; n.expanded = src.expanded; n.hasChildren = src.hasChildren
             n.checkable = src.checkable; n.checked = src.checked; n._depth = src._depth; n.data = src.data
             for src.children.len() to i { n.children.add(get_node(src.children[i].id)) }
         }
@@ -507,7 +538,7 @@ export struct TreeView impl Widget {
     func _remove_r(TreeViewNode node, int id): TreeViewNode {
         if node.id == id { TreeViewNode e = new TreeViewNode(); e.id = -1; return e }
         TreeViewNode cp = new TreeViewNode()
-        cp.id = node.id; cp.text = node.text; cp._parent = node._parent; cp._depth = node._depth
+        cp.id = node.id; cp.text = node.text; cp.image = node.image; cp.imageMode = node.imageMode; cp._parent = node._parent; cp._depth = node._depth
         cp.expanded = node.expanded; cp.hasChildren = node.hasChildren; cp.checkable = node.checkable
         cp.checked = node.checked; cp.data = node.data
         for node.children.len() to i {
@@ -660,11 +691,11 @@ export struct TreeView impl Widget {
         clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
         r.pushClipRect(clip.to_ptr())
 
-        float checkOff = if _showCheck then 18.0 else 0.0
         for _flatIds.len() to i {
             int id = _flatIds[i]
             float rowY = r.snapY(y - _scroll + i * _rowH)
             if rowY + _rowH < y or rowY > y + h { continue }
+            float checkOff = if _showCheck then 18.0 else 0.0
 
             bool seld = _is_selected(id)
             int rr = bgr; int gg = bgg; int bb2 = bgb
@@ -681,6 +712,10 @@ export struct TreeView impl Widget {
                     int k = kk
                     bool within = (i + 1 < _flatIds.len()) and (nx >= k)
                     float seg = if within then _rowH else (_rowH / 2.0)
+                    // 本节点所在列（k==depth）正是展开三角所在的列：竖线若画满整行，
+                    // 展开后会从向下三角的底尖穿出。钳制为只画到三角中心（上半段），
+                    // 下半段由子节点各自的列（depth+1）继续连接，既去掉穿透又保持主干连续。
+                    if k == depth and _flatHas[i] { seg = _rowH / 2.0 }
                     float lx = r.snapX(x + _padX + k * _indent + 8.0)
                     int la = if enabled then 255 else 120
                     r.setColor(_lineR, _lineG, _lineB, la)
@@ -723,6 +758,40 @@ export struct TreeView impl Widget {
                     r.drawRoundedRect(bx, by, 14.0, 14.0, 3.0)
                 }
             }
+            // 节点图标（image）：绘制在 缩进/展开箭头/复选框 之后、文字之前
+            float imgX = x + _padX + depth * _indent + 16.0 + checkOff
+            float imgSize = _imgSize
+            if imgSize <= 0.0 { imgSize = _rowH - 8.0 }
+            float imgDrawY = rowY + (_rowH - imgSize) / 2.0
+            string ipath = _flatImage[i]
+            if ipath != "" {
+                Ptr[u8] itex = _get_tex(r, ipath)
+                if itex != null {
+                    r.setTextureAlpha(itex, 255)
+                    r.setTextureColor(itex, 255, 255, 255)
+                    int mode = _flatImgMode[i]
+                    if mode < 0 { mode = _imgMode }   // 节点未指定则用全局模式
+                    var nats = r.getTextureSize(itex)
+                    float nw = nats["w"]; float nh = nats["h"]
+                    if mode == 1 {
+                        // stretch：直接拉伸填满（会变形）
+                        r.drawTextureFromTo(itex, 0.0, 0.0, nw, nh, imgX, imgDrawY, imgSize, imgSize)
+                    } else if mode == 2 {
+                        // aspectFill（裁边填满）：覆盖缩放 + 居中裁剪源矩形
+                        float s = imgSize / nw; if imgSize / nh > s { s = imgSize / nh }
+                        float sw = imgSize / s; float sh = imgSize / s
+                        float sx = (nw - sw) / 2.0; float sy = (nh - sh) / 2.0
+                        r.drawTextureFromTo(itex, sx, sy, sw, sh, imgX, imgDrawY, imgSize, imgSize)
+                    } else {
+                        // aspectFit（默认，留边）：保持比例完整显示
+                        float s = imgSize / nw; if imgSize / nh < s { s = imgSize / nh }
+                        float dw = nw * s; float dh = nh * s
+                        r.drawTextureFromTo(itex, 0.0, 0.0, nw, nh,
+                            imgX + (imgSize - dw) / 2.0, imgDrawY + (imgSize - dh) / 2.0, dw, dh)
+                    }
+                    checkOff = checkOff + imgSize + _imgGap   // 文字右移，给图标让位
+                }
+            }
             if _font != null and _font.ok {
                 float tx = x + _padX + depth * _indent + 16.0 + checkOff + 4.0
                 float th = _textH
@@ -762,6 +831,9 @@ export struct TreeView impl Widget {
     func dispose() {
         if _font != null { fnt.releaseFont(_font); _font = null }
         if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }
+        // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
+        // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
+        _imgCacheTex = []; _imgCachePaths = []
     }
 }
 

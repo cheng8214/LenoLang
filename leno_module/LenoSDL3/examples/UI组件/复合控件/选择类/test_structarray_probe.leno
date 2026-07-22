@@ -1,0 +1,52 @@
+// test_structarray_probe.leno — 探针：验证“自递归结构体数组 + 变量下标访问”的编译器 bug 是否已修复
+// 复现 sdl_treeview.leno 头部注释描述的场景：
+//   list[i].children / list[i].children[j]（i/j 为循环变量）当初会被推断成 any 或静默返回错误值
+import "../../../../lib/SDL3.leno" as SDL3
+
+struct Node {
+    int id
+    string text
+    Array[Node] children
+}
+
+// 与 TreeView 的 _flatten_r 完全同构的写法：变量下标访问嵌套递归结构体数组
+func flatten(Array[Node] list, string indent) {
+    for list.len() to i {
+        Node n = list[i]
+        print(indent + "id=" + n.id + " text=" + n.text + " nchild=" + n.children.len())
+        // 变量下标访问嵌套递归结构体的元素字段（当初报错的写法）
+        for list[i].children.len() to j {
+            print(indent + "  child[" + j + "] id=" + list[i].children[j].id + " text=" + list[i].children[j].text)
+        }
+        // 把变量下标取到的元素（含其嵌套数组）继续递归
+        flatten(list[i].children, indent + "    ")
+    }
+}
+
+main() {
+    Array[Node] roots = []
+    Node a = new Node(); a.id = 1; a.text = "A"
+    Node a1 = new Node(); a1.id = 11; a1.text = "A1"
+    Node a2 = new Node(); a2.id = 12; a2.text = "A2"
+    a.children.add(a1); a.children.add(a2)
+    roots.add(a)
+    Node b = new Node(); b.id = 2; b.text = "B"
+    roots.add(b)
+
+    print("=== 变量下标读取探针 ===")
+    flatten(roots, "")
+
+    print("=== 变量下标写入探针 ===")
+    roots[0].text = "AX"
+    print("roots[0].text(期望 AX) = " + roots[0].text)
+    roots[0].children[0].text = "A1X"
+    print("roots[0].children[0].text(期望 A1X) = " + roots[0].children[0].text)
+
+    print("=== 期望输出 ===")
+    print("id=1 text=A nchild=2")
+    print("  child[0] id=11 text=A1")
+    print("  child[1] id=12 text=A2")
+    print("id=2 text=B nchild=0")
+    print("roots[0].text(期望 AX) = AX")
+    print("roots[0].children[0].text(期望 A1X) = A1X")
+}

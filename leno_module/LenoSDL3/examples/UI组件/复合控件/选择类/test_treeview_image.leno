@@ -1,0 +1,124 @@
+// test_treeview_image.leno — TreeView 节点图标(image) 功能测试
+// 覆盖：节点 image 字段渲染、图标尺寸/间距/内容模式(aspectFit/stretch/aspectFill)、
+//       add_child 动态节点带图、语言坑修复后 list[i].image 直接取值。
+// 自包含：先用隐藏窗口程序化生成图标，再到演示窗口里验证，无需手动准备图片。
+// 运行：leno 本文件
+//   左键选择 / 点箭头或双击展开折叠 / 点复选框勾选
+//   E 展开全部 / C 折叠全部 / A 给选中节点加带图子节点 / D 删除选中 / Esc 退出
+import "../../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.TreeView
+use SDL3.WindowFlag
+
+// ==================== 1) 程序化生成测试图标 ====================
+func genIcons(): bool {
+    var gen = SDL3.createWindow({title: "icon-gen", w: 192, h: 64, flags: WindowFlag.HIDDEN})
+    if not gen.ok { print("[gen] createWindow 失败: " + SDL3.getError()); return false }
+    var r = SDL3.createRenderer(gen.getHandle())
+
+    r.clearColor(0, 0, 0, 0)
+    // 文件夹（黄）
+    r.setColor(230, 200, 60, 255);  r.fillRoundedRect(0,   8, 64, 52, 6)
+    // 文件（白）
+    r.setColor(225, 225, 235, 255); r.fillRoundedRect(64,  8, 64, 52, 4)
+    // 叶子（绿）
+    r.setColor(70, 190, 90, 255);   r.fillCircle(128.0, 32.0, 26.0)
+    // 宽图(64x32 2:1) 用于 content mode 对比：蓝底+红圆+黄方
+    r.setColor(40, 100, 170, 255);  r.fillRect(0, 32, 64, 32)
+    r.setColor(230, 70, 70, 255);   r.fillCircle(16.0, 48.0, 11.0)
+    r.setColor(240, 200, 60, 255);  r.fillRect(36.0, 40.0, 16.0, 16.0)
+
+    SDL3.saveImagePNG(r.readPixelsAt(0,  0, 64, 64), "d:\\tv_folder.png")
+    SDL3.saveImagePNG(r.readPixelsAt(64, 0, 64, 64), "d:\\tv_file.png")
+    SDL3.saveImagePNG(r.readPixelsAt(128,0, 64, 64), "d:\\tv_leaf.png")
+    SDL3.saveImagePNG(r.readPixelsAt(0, 32, 64, 32), "d:\\tv_wide.png")
+    print("[gen] 图标已生成: d:/tv_folder|file|leaf|wide.png")
+    r.destroy(); gen.destroy()
+    return true
+}
+
+// 把 id 数组格式化成 [1,3,7]
+func _fmt(Array[int] a): string {
+    string s = "["
+    for a.len() to i { if i > 0 { s = s + "," }; s = s + a[i] }
+    return s + "]"
+}
+
+main() {
+    SDL3.ttfInit()
+    if not genIcons() { print("[main] 图标生成失败，退出"); return }
+
+    var win = SDL3.createWindow({title: "TreeView 图标测试", w: 720, h: 520})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    // ============ 左树：图标 + 展开折叠 + 复选框 ============
+    // 每类节点带不同图标：文件夹/文件/叶子；宽图用于演示 aspectFill 覆盖裁剪
+    var leftItems = [
+        {text: "项目根目录", image: "d:\\tv_folder.png", expanded: true, children: [
+            {text: "src", image: "d:\\tv_folder.png", expanded: true, children: [
+                {text: "main.leno", image: "d:\\tv_file.png"},
+                {text: "utils.leno", image: "d:\\tv_file.png"},
+                {text: "模块", image: "d:\\tv_folder.png", children: [
+                    {text: "net.leno", image: "d:\\tv_file.png"},
+                    {text: "io.leno", image: "d:\\tv_file.png"},
+                    {text: "宽图(aspectFill裁边)", image: "d:\\tv_wide.png", imageMode: 2}
+                ]}
+            ]},
+            {text: "docs", image: "d:\\tv_folder.png", children: [
+                {text: "README.md", image: "d:\\tv_file.png"},
+                {text: "CHANGELOG.md", image: "d:\\tv_file.png"}
+            ]},
+            {text: "build.sh", image: "d:\\tv_file.png"}
+        ]}
+    ]
+    var tv = win.addTreeView({x: 30, y: 60, w: 320, h: 420, items: leftItems, mode: 0, show_check: true})
+    tv.set_image_size(20.0)     // 图标边长
+    tv.set_image_gap(6.0)       // 图标与文字间距
+    tv.set_image_mode(0)        // 0=aspectFit(默认，保持比例完整显示)
+    tv.on_change(func(Array[int] ids) {
+        var n = tv.get_selected_node()
+        print("左树 选择 -> " + _fmt(ids) + " 文本=" + n.text + " 图标=" + n.image)
+    })
+
+    // ============ 右树：内容模式对比（同一张 2:1 宽图，三个节点分别用不同模式）============
+    // 节点级 imageMode 优先于全局 set_image_mode：0=aspectFit(留边) 1=stretch(拉伸变形) 2=aspectFill(裁边)
+    var rightItems = [
+        {text: "aspectFit(留边)", image: "d:\\tv_wide.png", imageMode: 0},
+        {text: "stretch(拉伸变形)", image: "d:\\tv_wide.png", imageMode: 1},
+        {text: "aspectFill(裁边)", image: "d:\\tv_wide.png", imageMode: 2}
+    ]
+    var tv2 = win.addTreeView({x: 380, y: 60, w: 320, h: 420, items: rightItems, mode: 0})
+    tv2.set_image_size(22.0)    // 三节点用同一尺寸，便于肉眼对比三种模式差异
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.E { tv.expand_all() }
+            if e.isKeyDown() and e.scancode() == Scancode.C { tv.collapse_all() }
+            if e.isKeyDown() and e.scancode() == Scancode.A {
+                int sel = tv.get_selected_id()
+                if sel >= 0 { tv.add_child(sel, {text: "新叶子", image: "d:\\tv_leaf.png"}); tv.expand(sel, true) }
+            }
+            if e.isKeyDown() and e.scancode() == Scancode.D {
+                int sel = tv.get_selected_id()
+                if sel >= 0 { tv.remove_node(sel) }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "左树：节点图标 + 复选框 (image / aspectFit)", 30, 30, 200, 210, 230)
+            r.drawText(font, "右树：内容模式 (整树 stretch 演示)", 380, 30, 200, 210, 230)
+            r.drawText(font, "E 展开  C 折叠  A 加带图子节点  D 删除  Esc 退出", 30, 492, 140, 145, 160)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
