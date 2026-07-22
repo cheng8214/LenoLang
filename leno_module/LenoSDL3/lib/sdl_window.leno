@@ -81,12 +81,26 @@ Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
 Array[Widget]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置）
 Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
-Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
+Array[int]             _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
 var _runLoopActive = false    // 主循环是否已在运行
-var _modalWid = -1
+Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
 
-export func setModalWid(int w) { _modalWid = w }
-export func getModalWid(): int { return _modalWid }
+// 推入模态窗口（runModal 内部调用）
+export func pushModal(int w) { _modalStack.add(w) }
+// 弹出栈顶：仅当栈顶匹配时才弹出（防止重复弹/弹错）
+export func popModalIfTop(int w) {
+    if _modalStack.len() > 0 and _modalStack.last() == w { _modalStack.pop() }
+}
+// 当前是否为模态状态（栈非空即模态）
+func _isModal(): bool { return _modalStack.len() > 0 }
+func _modalTop(): int { if _modalStack.len() > 0 then _modalStack.last() else -1 }
+
+// 兼容旧 API（已废弃，仅 test_modal_dialog.leno 等旧示例使用）
+export func setModalWid(int w) {
+    if w < 0 { _modalStack = [] }
+    else { _modalStack.add(w) }
+}
+export func getModalWid(): int { return _modalTop() }
 
 // 仅为注册（不启动循环），给 Dialog 等外部 struct 用
 export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, var onEvent, var onRender) {
@@ -562,13 +576,13 @@ export struct Window {
                     return
                 }
                 int wid = ev.windowID()
-                // 模态：非对话框窗口跳过事件
+                // 模态：仅栈顶窗口接收事件，其余全部跳过（含主窗口 + 下层模态）
                 // 注意：必须继续 poll 前进事件队列，否则 ev.has 恒为 true 导致 while 死循环（窗口假死）
-                if _modalWid > 0 and wid != _modalWid { ev.poll(); continue }
+                if _isModal() and wid != _modalTop() { ev.poll(); continue }
                 for _runWids.len() to i {
                     if _runWids[i] == wid {
                         if not _runEvts[i](ev) or ev.isWindowClose() {
-                            if _runWids[i] == _modalWid { _modalWid = -1 }
+                            if _isModal() and _runWids[i] == _modalTop() { _modalStack.pop() }
                             // 根销毁：关闭窗口前先释放所有控件资源（字体等），沿父子树递归清理
                             var ws = _runWidgets[i]
                             if ws != null { for ws to w { w.dispose() } }
