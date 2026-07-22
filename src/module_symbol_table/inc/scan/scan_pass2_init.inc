@@ -122,8 +122,8 @@
                         if (resolved_path[0]) {
                             ModuleSymbolTable* dep_table = module_symbol_table_create(resolved_path);
                             if (dep_table) {
-                                // 使用已规范化的当前模块路径作为子模块扫描基准
-                                if (module_symbol_table_scan_depth(dep_table, normalized_current, depth + 1) == 0) {
+                                // 使用入口函数扫描（会先检查 .lenosymc 磁盘缓存，命中则跳过源文件扫描）
+                                if (module_symbol_table_scan(dep_table, normalized_current) == 0) {
                                     // 查找 struct
                                     ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
                                     ModuleFaceSymbol* f_sym_ptr = module_symbol_table_find_face(dep_table, type_name);
