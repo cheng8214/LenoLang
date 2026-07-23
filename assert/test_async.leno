@@ -1,0 +1,107 @@
+// 异步 async/await + Future 类型测试
+import io
+import asyncs
+
+// 测试1: 基本 async/await
+async func greet(string name): string {
+    await asyncs.sleep(50)
+    return $"Hello {name}"
+}
+
+// 测试2: async 函数返回 Future 类型
+async func compute(int x): int {
+    await asyncs.sleep(30)
+    return x * x
+}
+
+// 测试3: 多个协程并发
+async func concurrent_task(string label, int ms): string {
+    await asyncs.sleep(ms)
+    return $"{label} done"
+}
+
+// 测试4: async 异常捕获
+async func risky(int x): int {
+    await asyncs.sleep(10)
+    if x < 0 {
+        throw "negative"
+    }
+    return x
+}
+
+// 测试5: yield 交替执行
+async func ping(int count) {
+    for count to i {
+        io.print($"ping {i}")
+        await asyncs.yield()
+    }
+}
+
+async func pong(int count) {
+    for count to i {
+        io.print($"pong {i}")
+        await asyncs.yield()
+    }
+}
+
+// 综合测试入口（async 函数中才能用 await）
+async func run_tests() {
+    // === 测试1: 基本 async/await ===
+    var g = await greet("World")
+    assert_eq(g, "Hello World")
+    io.print("[PASS] 测试1: 基本 async/await")
+
+    // === 测试2: Future 类型注解 ===
+    Future f = compute(7)
+    await f
+    var result = asyncs.all([f])
+    assert_eq(result[0], 49)
+    io.print("[PASS] 测试2: Future 类型注解 + compute(7)=49")
+
+    // === 测试3: 并发执行 ===
+    var f1 = concurrent_task("A", 30)
+    var f2 = concurrent_task("B", 10)
+    var f3 = concurrent_task("C", 50)
+    await f1
+    await f2
+    await f3
+    var results = asyncs.all([f1, f2, f3])
+    assert_eq(results[0], "A done")
+    assert_eq(results[1], "B done")
+    assert_eq(results[2], "C done")
+    io.print("[PASS] 测试3: 并发执行")
+
+    // === 测试4: async 异常捕获 ===
+    try {
+        var r = await risky(-1)
+        io.print("不应到达")
+    } catch e {
+        assert_eq(e, "negative")
+        io.print("[PASS] 测试4: async 异常捕获")
+    }
+
+    // === 测试5: timeout 超时 ===
+    async func slow(): string {
+        await asyncs.sleep(5000)
+        return "never"
+    }
+    var tr = await asyncs.timeout(slow(), 50)
+    assert_eq(tr, null)
+    io.print("[PASS] 测试5: timeout 超时返回 null")
+}
+
+main() {
+    io.print("=== async 测试开始 ===")
+
+    // 测试1-4: 综合测试
+    run_tests()
+    asyncs.run()
+
+    // 测试5: yield 交替
+    ping(2)
+    pong(2)
+    asyncs.run()
+    io.print("[PASS] 测试6: yield 交替执行")
+
+    io.print("=== test_async all passed ===")
+}

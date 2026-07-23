@@ -1,0 +1,70 @@
+// 三元表达式进阶测试 — 覆盖 if/then/else 在语句位置、函数返回、赋值等场景
+// 配合 d59a2174 的修复：parse_if_stmt 遇 then 回退 parse_if_expr
+import io
+
+// 函数返回 if 表达式
+func abs_val(int x): int { return if x >= 0 then x else -x }
+
+// if 表达式在赋值右侧
+func choose(int x): int {
+    int z = if x > 0 then x else -x
+    return z
+}
+
+// if 表达式带复杂 else 分支（验证优先级）
+func with_prec(int x): int { return if x > 0 then x else x + 100 }
+
+// 括号形式
+func paren_form(): int { return if (true) then 10 else 20 }
+
+// 嵌套 if 表达式
+func nested(): int { return if true then (if true then 1 else 2) else 3 }
+
+// if 表达式作为独立语句（语句位置）
+func standalone(): int {
+    if true then print("stmt_ok") else print("fail")
+    return 42
+}
+
+main() {
+    // 测试1: 函数返回 if 表达式
+    assert_eq(abs_val(5), 5)
+    assert_eq(abs_val(-3), 3)
+    io.print("[PASS] 测试1: 函数返回 if 表达式")
+
+    // 测试2: 赋值右侧 if 表达式
+    assert_eq(choose(5), 5)
+    assert_eq(choose(-3), 3)
+    io.print("[PASS] 测试2: 赋值右侧 if 表达式")
+
+    // 测试3: else 分支优先级（else 应绑定整个 if，而非仅 else 部分）
+    // if x > 0 then x else x + 100
+    // x=-3: else 分支 = (-3) + 100 = 97，不是 -(3+100)
+    assert_eq(with_prec(5), 5)
+    assert_eq(with_prec(-3), 97)
+    io.print("[PASS] 测试3: else 分支优先级")
+
+    // 测试4: 括号形式
+    assert_eq(paren_form(), 10)
+    io.print("[PASS] 测试4: 括号形式")
+
+    // 测试5: 嵌套 if 表达式
+    assert_eq(nested(), 1)
+    io.print("[PASS] 测试5: 嵌套 if 表达式")
+
+    // 测试6: 语句位置 if 表达式
+    assert_eq(standalone(), 42)
+    io.print("[PASS] 测试6: 语句位置 if 表达式")
+
+    // 测试7: 变量声明中 if 表达式
+    int val = if 10 > 5 then 100 else 200
+    assert_eq(val, 100)
+    io.print("[PASS] 测试7: 变量声明中 if 表达式")
+
+    // 测试8: 字符串结果
+    string s = if true then "yes" else "no"
+    assert_eq(s, "yes")
+    io.print("[PASS] 测试8: 字符串结果")
+
+    print("test_ternary_advanced passed")
+}

@@ -1,0 +1,41 @@
+// 测试 Future 类型注册 — Future 可作为类型注解使用
+import io
+import asyncs
+
+// 1. Future 类型注解
+async func task(string name, int ms): string {
+    await asyncs.sleep(ms)
+    return $"{name}完成"
+}
+
+// 2. Future 变量声明
+async func test_future_type() {
+    Future f1 = task("A", 100)
+    Future f2 = task("B", 200)
+    
+    await f1
+    await f2
+    
+    var results = asyncs.all([f1, f2])
+    io.print(results[0])
+    io.print(results[1])
+}
+
+// 3. 普通函数接收 Future 参数
+func show_future(Future f) {
+    io.print("收到一个Future")
+}
+
+async func test_pass_future() {
+    Future f = task("C", 50)
+    show_future(f)
+    await f
+}
+
+main() {
+    io.print("=== Future 类型测试 ===")
+    test_future_type()
+    test_pass_future()
+    asyncs.run()
+    io.print("=== 测试完成 ===")
+}

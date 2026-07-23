@@ -129,6 +129,7 @@ typedef enum {
     TOK_SOCKET_TYPE,     // Socket 类型
     TOK_CHANNEL_TYPE,    // Channel 类型
     TOK_THREAD_TYPE,     // Thread 类型
+    TOK_FUTURE_TYPE,     // Future 类型
     // C 布局类型关键字
     TOK_I8, TOK_U8,           // i8, u8
     TOK_I16, TOK_U16,         // i16, u16
@@ -199,6 +200,7 @@ typedef enum {
     TYPE_PTR_GENERIC,           // 泛型指针 Ptr[T]
     TYPE_THREAD,                // 线程类型
     TYPE_CHANNEL,               // Channel 类型
+    TYPE_FUTURE,                // Future 类型（异步结果）
     TYPE_SOCKET,                // Socket 类型
     TYPE_GENERIC_PARAM,         // 泛型类型参数（如 T、U）
 } TypeKind;

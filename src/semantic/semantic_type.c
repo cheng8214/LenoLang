@@ -679,9 +679,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 const char* func_name = ast->u.call.callee->u.var.name;
 
                 // 首先检查变量符号的类型（可能是函数类型）
+                // 同时检查是否是 async 函数（async 函数返回 Future）
+                Ast* func_def_for_async = func_table_find(&s->func_table, func_name);
                 Symbol* sym = scope_resolve(s->current, func_name);
                 if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
                     TypeInfo* ret = type_copy(sym->type->return_type);
+                    
+                    // async 函数返回 Future 而非声明的返回类型
+                    if (func_def_for_async && func_def_for_async->kind == AST_FUNC_DEF &&
+                        func_def_for_async->u.func.is_async) {
+                        type_free(ret);
+                        ret = type_new(TYPE_FUTURE);
+                    }
                     
                     // 泛型函数调用：用推断的类型参数替换泛型参数
                     if (ast->u.call.generic_type_count > 0 && ast->u.call.generic_type_names && ast->u.call.generic_type_args) {
@@ -705,7 +714,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
                 if (func_def && func_def->kind == AST_FUNC_DEF) {
                     TypeInfo* ret = NULL;
-                    if (func_def->u.func.return_type) {
+                    // async 函数返回 Future 而非声明的返回类型
+                    if (func_def->u.func.is_async) {
+                        ret = type_new(TYPE_FUTURE);
+                    } else if (func_def->u.func.return_type) {
                         ret = type_copy(func_def->u.func.return_type);
                     } else {
                         ret = type_new(TYPE_ANY);

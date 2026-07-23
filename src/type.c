@@ -554,6 +554,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_SOCKET:   return "Socket";
         case TYPE_CHANNEL:  return "Channel";
         case TYPE_THREAD:   return "Thread";
+        case TYPE_FUTURE:   return "Future";
         case TYPE_PTR:      return "Ptr";
         case TYPE_PTR_GENERIC: return "Ptr";
         case TYPE_ANY:      return "any";
@@ -654,6 +655,8 @@ TypeInfo* type_infer_from_value(Value* v) {
                 return type_new(TYPE_PTR);
             } else if (val_as_obj(*v)->type == OBJ_SOCKET) {
                 return type_new(TYPE_SOCKET);
+            } else if (val_as_obj(*v)->type == OBJ_FUTURE) {
+                return type_new(TYPE_FUTURE);
             }
             return type_new(TYPE_ANY);
         default:
@@ -972,6 +975,7 @@ TypeKind token_to_type_kind(LenoTokenType token) {
         case TOK_SOCKET_TYPE:   return TYPE_SOCKET;
         case TOK_CHANNEL_TYPE:  return TYPE_CHANNEL;
         case TOK_THREAD_TYPE:   return TYPE_THREAD;
+        case TOK_FUTURE_TYPE:   return TYPE_FUTURE;
         case TOK_PTR_TYPE:      return TYPE_PTR;
         case TOK_VAR:           return TYPE_INFER;
         // C 布局类型

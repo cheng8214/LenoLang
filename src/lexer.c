@@ -123,6 +123,7 @@ static void init_keyword_table(void) {
         {"Socket", TOK_SOCKET_TYPE},
         {"Channel", TOK_CHANNEL_TYPE},
         {"Thread", TOK_THREAD_TYPE},
+        {"Future", TOK_FUTURE_TYPE},
         {"Ptr", TOK_PTR_TYPE},
         {"async", TOK_ASYNC},
         {"await", TOK_AWAIT},

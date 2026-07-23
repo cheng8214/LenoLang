@@ -1,0 +1,109 @@
+// for 循环测试 — 覆盖所有形式：简单次数、范围、步进、倒序、数组遍历、字符串遍历
+
+main() {
+    // 测试1: 简单次数循环
+    int count1 = 0
+    for 5 {
+        count1++
+    }
+    assert_eq(count1, 5)
+    print("[PASS] 测试1: 简单次数循环 for 5")
+
+    // 测试2: 带变量循环 (0 到 n-1)
+    int sum2 = 0
+    for 5 to i {
+        sum2 += i
+    }
+    // 0+1+2+3+4 = 10
+    assert_eq(sum2, 10)
+    print("[PASS] 测试2: 带变量循环 for 5 to i")
+
+    // 测试3: 包含范围 (冒号表示包含结束值)
+    int sum3 = 0
+    for :5 to i {
+        sum3 += i
+    }
+    // 0+1+2+3+4+5 = 15
+    assert_eq(sum3, 15)
+    print("[PASS] 测试3: 包含范围 for :5 to i")
+
+    // 测试4: 起始到结束范围
+    int sum4 = 0
+    for 2:5 to i {
+        sum4 += i
+    }
+    // 2+3+4+5 = 14
+    assert_eq(sum4, 14)
+    print("[PASS] 测试4: 范围循环 for 2:5 to i")
+
+    // 测试5: 带步进
+    int sum5 = 0
+    for 0:5:2 to i {
+        sum5 += i
+    }
+    // 0+2+4 = 6
+    assert_eq(sum5, 6)
+    print("[PASS] 测试5: 带步进 for 0:5:2 to i")
+
+    // 测试6: 倒序循环
+    var result6 = ""
+    for 3:0:-1 to i {
+        result6 = result6 + i
+    }
+    assert_eq(result6, "3210")
+    print("[PASS] 测试6: 倒序循环 for 3:0:-1 to i")
+
+    // 测试7: 数组遍历
+    Array[int] arr = [10, 20, 30]
+    int sum7 = 0
+    for arr to item {
+        sum7 += item
+    }
+    assert_eq(sum7, 60)
+    print("[PASS] 测试7: 数组遍历")
+
+    // 测试8: 数组带索引遍历
+    Array[int] arr8 = [100, 200, 300]
+    int index_sum = 0
+    int value_sum = 0
+    for arr8 to v, idx {
+        index_sum += idx
+        value_sum += v
+    }
+    assert_eq(index_sum, 3)  // 0+1+2
+    assert_eq(value_sum, 600)
+    print("[PASS] 测试8: 数组带索引遍历")
+
+    // 测试9: 字符串遍历
+    int char_count = 0
+    for "abc" to ch {
+        char_count++
+    }
+    assert_eq(char_count, 3)
+    print("[PASS] 测试9: 字符串遍历")
+
+    // 测试10: 循环中 break
+    int break_val = 0
+    for :10 to i {
+        if i == 5 {
+            break
+        }
+        break_val = i
+    }
+    assert_eq(break_val, 4)
+    print("[PASS] 测试10: 循环中 break")
+
+    // 测试11: 循环中 continue
+    int continue_sum = 0
+    for :5 to i {
+        if i == 3 {
+            continue
+        }
+        continue_sum += i
+    }
+    // 0+1+2+4+5 = 12 (跳过3)
+    assert_eq(continue_sum, 12)
+    print("[PASS] 测试11: 循环中 continue")
+
+    print("test_for all passed")
+}

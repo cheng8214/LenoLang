@@ -1,0 +1,51 @@
+// 数组切片测试 — 覆盖 arr[start:end], arr[:end], arr[start:]
+
+main() {
+    Array[int] arr = [1, 2, 3, 4, 5, 6, 7, 8]
+
+    // 测试1: 基本切片 arr[start:end]（包含 end）
+    Array[int] s1 = arr[2:5]
+    assert_eq(s1.len(), 4)  // 索引 2,3,4,5
+    assert_eq(s1[0], 3)
+    assert_eq(s1[3], 6)
+    print("[PASS] 测试1: 基本切片 arr[2:5]")
+
+    // 测试2: 从开头切片 arr[:end]
+    Array[int] s2 = arr[:3]
+    assert_eq(s2.len(), 4)  // 索引 0,1,2,3
+    assert_eq(s2[0], 1)
+    assert_eq(s2[3], 4)
+    print("[PASS] 测试2: 从开头切片 arr[:3]")
+
+    // 测试3: 到末尾切片 arr[start:]
+    Array[int] s3 = arr[5:]
+    assert_eq(s3.len(), 3)  // 索引 5,6,7
+    assert_eq(s3[0], 6)
+    assert_eq(s3[2], 8)
+    print("[PASS] 测试3: 到末尾切片 arr[5:]")
+
+    // 测试4: 完整切片（等于复制）
+    Array[int] s4 = arr[0:7]
+    assert_eq(s4.len(), 8)
+    assert_eq(s4[0], 1)
+    assert_eq(s4[7], 8)
+    print("[PASS] 测试4: 完整切片 arr[0:7]")
+
+    // 测试5: 字符串数组切片
+    Array[string] names = ["alice", "bob", "carol", "dave"]
+    Array[string] sub = names[1:2]
+    assert_eq(sub.len(), 2)
+    assert_eq(sub[0], "bob")
+    assert_eq(sub[1], "carol")
+    print("[PASS] 测试5: 字符串数组切片")
+
+    // 测试6: 切片不修改原数组
+    Array[int] orig = [10, 20, 30]
+    Array[int] sliced = orig[0:1]
+    assert_eq(orig.len(), 3)
+    assert_eq(orig[0], 10)
+    assert_eq(sliced.len(), 2)
+    print("[PASS] 测试6: 切片不修改原数组")
+
+    print("test_array_slice all passed")
+}

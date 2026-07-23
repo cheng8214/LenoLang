@@ -88,6 +88,10 @@ static TypeInfo* parse_base_type(Parser* p) {
         lexer_next(&p->lex);
         return type_new(TYPE_THREAD);
     }
+    if (p->lex.current.type == TOK_FUTURE_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_FUTURE);
+    }
     if (p->lex.current.type == TOK_PTR_TYPE) {
         lexer_next(&p->lex);
         // 检查是否有泛型参数 Ptr[T]
