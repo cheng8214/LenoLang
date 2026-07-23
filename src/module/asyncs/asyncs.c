@@ -200,7 +200,7 @@ void asyncs_init_module(void) {
     native_register_module_method("asyncs", "yield", native_async_yield, 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, NULL);
 
     TypeKind all_params[] = {TYPE_ARRAY};
-    native_register_module_method("asyncs", "all", native_async_all, 1, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, all_params);
+    native_register_module_method("asyncs", "all", native_async_all, 1, -1, -1, TYPE_ARRAY, TYPE_ANY, all_params);
 
     TypeKind timeout_params[] = {TYPE_ANY, TYPE_INT};
     native_register_module_method("asyncs", "timeout", native_async_timeout, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, timeout_params);
