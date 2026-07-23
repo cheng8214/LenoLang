@@ -1,11 +1,12 @@
 // 线程 + 异步 边界组合测试
-// 约束：1) asyncs.run() 只能在主线程调用  2) async 函数必须定义在全局级别
+// 约束：1) asyncs.run() 只能在主线程调用
+// 注意：asyncs.all() 当前为 MVP 行为，不自动等待 Future 完成，需先 asyncs.run() 再收集
 import threads
 import asyncs
 import io
 
 // ============================================================
-// 全局级 async 函数定义
+// async 函数定义（支持全局和局部定义）
 // ============================================================
 async func main_task(): string {
     await asyncs.sleep(30)
