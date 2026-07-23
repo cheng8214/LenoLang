@@ -406,6 +406,13 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
             vm_ptr->frame_cnt++;
         }
         
+        // 更新协程的 saved_frame_cnt，使 OP_RETURN 能正确判断协程顶层函数返回
+        // 恢复后的 frame_cnt 就是此协程当前拥有的帧数量上界
+        co->saved_frame_cnt = vm_ptr->frame_cnt;
+        
+        // 恢复栈指针到挂起时的位置，确保压入 Future 结果的位置正确
+        vm_ptr->sp = co->saved_sp;
+        
         // 如果协程正在等待一个已完成的 Future，推送结果到栈或抛出异常
         if (co->waiting_for && co->waiting_for->completed) {
             // 检查 Future 是否有错误
@@ -455,7 +462,7 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                 // 没有找到异常处理
                 error_add(ERR_RUNTIME, co->saved_frame_copy ? co->saved_frame_copy->chunk->lines[0] : 0, "未捕获的异步异常");
             } else {
-                // 手动压入结果到栈
+                // 手动压入结果到栈（sp 已恢复到挂起时的位置）
                 if (vm_ptr->sp >= vm_ptr->stack_capacity) {
                     int new_capacity = vm_ptr->stack_capacity < 8 ? 8 : vm_ptr->stack_capacity * 2;
                     Value* new_stack = (Value*)realloc(vm_ptr->stack, new_capacity * sizeof(Value));

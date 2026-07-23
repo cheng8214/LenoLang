@@ -397,7 +397,11 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
 
     // 将函数添加到函数表（哈希表自动处理重复）
     // 跳过 struct 方法的注册，因为它们已经在 semantic_visit_ast.c 中以 struct_name::method_name 格式注册
-    if (!is_struct_method) {
+    // 跳过局部函数（嵌套在函数体内的函数），避免覆盖同名全局函数
+    // 全局函数表用于模块级前向引用类型推断，局部函数不需要注册
+    // 判断是否为全局函数：当前作用域的父作用域为 NULL 时表示全局作用域
+    int is_global_func = s->current && s->current->parent == NULL;
+    if (!is_struct_method && is_global_func) {
         func_table_add(&s->func_table, ast->u.func.name, ast);
     }
 

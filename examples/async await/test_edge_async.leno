@@ -1,0 +1,255 @@
+// async/await 边界测试 — 系统性覆盖所有边界场景
+import io
+import asyncs
+
+// ============================================================
+// 边界1: async 函数嵌套调用（async 调用 async，多层 await）
+// ============================================================
+async func inner(): string {
+    await asyncs.sleep(10)
+    return "inner_result"
+}
+
+async func outer(): string {
+    var r = await inner()
+    return $"outer_{r}"
+}
+
+async func triple(): string {
+    var r = await outer()
+    return $"triple_{r}"
+}
+
+// ============================================================
+// 边界2: async 函数中无 await（直接返回）
+// ============================================================
+async func no_await(): int {
+    return 42
+}
+
+// ============================================================
+// 边界3: async 函数无返回值（返回 null）
+// ============================================================
+async func no_return() {
+    io.print("no_return executed")
+}
+
+// ============================================================
+// 边界4: async 函数中 throw 异常
+// ============================================================
+async func thrower() {
+    await asyncs.sleep(10)
+    throw "async_error"
+}
+
+// ============================================================
+// 边界5: async 函数中 for 循环 + await
+// ============================================================
+async func loop_await(int n): int {
+    int total = 0
+    for n to i {
+        await asyncs.sleep(5)
+        total += i
+    }
+    return total
+}
+
+// ============================================================
+// 边界6: async 函数中 while 循环 + await
+// ============================================================
+async func while_await(int n): int {
+    int i = 0
+    int total = 0
+    while i < n {
+        await asyncs.sleep(5)
+        total += i
+        i++
+    }
+    return total
+}
+
+// ============================================================
+// 边界7: 空 async 函数
+// ============================================================
+async func empty_async() {
+}
+
+// ============================================================
+// 边界8: 多个 async 函数同时启动后一次性 await
+// ============================================================
+async func task_n(string name, int ms): string {
+    await asyncs.sleep(ms)
+    return name
+}
+
+// ============================================================
+// 边界9: async 函数返回值赋给 var 和显式类型变量
+// ============================================================
+async func get_int(): int {
+    await asyncs.sleep(10)
+    return 100
+}
+
+// ============================================================
+// 边界10: async 函数中 try-catch 嵌套
+// ============================================================
+async func nested_catch(): string {
+    try {
+        try {
+            await asyncs.sleep(10)
+            throw "deep_error"
+        } catch e {
+            return $"caught_inner_{e}"
+        }
+    } catch e2 {
+        return $"caught_outer_{e2}"
+    }
+}
+
+// ============================================================
+// 边界11: async 函数返回 Future 作为另一个 async 的参数
+// ============================================================
+async func use_future(Future f): string {
+    await f
+    var results = asyncs.all([f])
+    return $"got_{results[0]}"
+}
+
+// ============================================================
+// 边界12: 连续多次 await 同一个 Future
+// ============================================================
+async func multi_await_same(): string {
+    Future f = task_n("once", 10)
+    await f
+    await f  // 第二次 await 已完成的 Future
+    await f  // 第三次
+    return "multi_ok"
+}
+
+// ============================================================
+// 边界13: async 函数中闭包捕获变量
+// ============================================================
+async func closure_capture(int x): func {
+    await asyncs.sleep(10)
+    func inner(): int {
+        return x * 2
+    }
+    return inner
+}
+
+// ============================================================
+// 边界14: 未调用 asyncs.run() 时协程不执行
+// ============================================================
+// (只验证不崩溃)
+
+// ============================================================
+// 边界15: async 函数在 if 分支中 await
+// ============================================================
+async func conditional_await(bool flag): string {
+    if flag {
+        await asyncs.sleep(10)
+        return "true_path"
+    } else {
+        return "false_path"
+    }
+}
+
+// ============================================================
+// 综合测试入口
+// ============================================================
+async func run_all_tests() {
+    // 边界1: 嵌套 async
+    var r1 = await triple()
+    assert_eq(r1, "triple_outer_inner_result")
+    io.print("[PASS] 边界1: 嵌套 async 调用")
+
+    // 边界2: 无 await 的 async
+    var r2 = await no_await()
+    assert_eq(r2, 42)
+    io.print("[PASS] 边界2: 无 await 的 async")
+
+    // 边界3: 无返回值 async
+    await no_return()
+    io.print("[PASS] 边界3: 无返回值 async")
+
+    // 边界4: throw 异常
+    try {
+        await thrower()
+        io.print("[FAIL] 边界4: 未捕获异常")
+    } catch e {
+        assert_eq(e, "async_error")
+        io.print("[PASS] 边界4: async throw 异常")
+    }
+
+    // 边界5: for 循环 + await
+    var r5 = await loop_await(3)
+    // 0+1+2 = 3
+    assert_eq(r5, 3)
+    io.print("[PASS] 边界5: for 循环 + await")
+
+    // 边界6: while 循环 + await
+    var r6 = await while_await(3)
+    // 0+1+2 = 3
+    assert_eq(r6, 3)
+    io.print("[PASS] 边界6: while 循环 + await")
+
+    // 边界7: 空 async
+    await empty_async()
+    io.print("[PASS] 边界7: 空 async")
+
+    // 边界8: 多个并发 + all
+    var fa = task_n("A", 30)
+    var fb = task_n("B", 10)
+    var fc = task_n("C", 20)
+    await fa
+    await fb
+    await fc
+    var r8 = asyncs.all([fa, fb, fc])
+    assert_eq(r8[0], "A")
+    assert_eq(r8[1], "B")
+    assert_eq(r8[2], "C")
+    io.print("[PASS] 边界8: 多个并发 + all")
+
+    // 边界9: 返回值赋给 var 和显式类型
+    var r9a = await get_int()
+    Future r9f = get_int()
+    await r9f
+    assert_eq(r9a, 100)
+    io.print("[PASS] 边界9: 返回值赋给 var/Future")
+
+    // 边界10: try-catch 嵌套
+    var r10 = await nested_catch()
+    assert_eq(r10, "caught_inner_deep_error")
+    io.print("[PASS] 边界10: try-catch 嵌套")
+
+    // 边界11: Future 作为参数
+    var f11 = task_n("param", 10)
+    var r11 = await use_future(f11)
+    assert_eq(r11, "got_param")
+    io.print("[PASS] 边界11: Future 作为参数")
+
+    // 边界12: 多次 await 同一 Future
+    var r12 = await multi_await_same()
+    assert_eq(r12, "multi_ok")
+    io.print("[PASS] 边界12: 多次 await 同一 Future")
+
+    // 边界13: 闭包捕获
+    var fn13 = await closure_capture(5)
+    var r13 = fn13()
+    assert_eq(r13, 10)
+    io.print("[PASS] 边界13: async 闭包捕获")
+
+    // 边界15: 条件 await
+    var r15a = await conditional_await(true)
+    assert_eq(r15a, "true_path")
+    var r15b = await conditional_await(false)
+    assert_eq(r15b, "false_path")
+    io.print("[PASS] 边界15: 条件 await")
+}
+
+main() {
+    io.print("=== async/await 边界测试 ===")
+    run_all_tests()
+    asyncs.run()
+    io.print("=== 边界测试完成 ===")
+}

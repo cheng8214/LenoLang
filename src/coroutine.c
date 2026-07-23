@@ -88,6 +88,7 @@ ObjCoroutine* coroutine_new(ObjClosure* closure) {
     co->saved_frame = NULL;
     co->saved_ip = NULL;
     co->saved_stack_base = 0;
+    co->saved_sp = 0;                   // 初始化为0，OP_AWAIT 时会设置
     co->saved_frame_cnt = 0;  // 初始化为0，首次执行时会设置
     co->saved_frame_copy = NULL;  // 初始没有 frame 副本
     co->has_saved_frame = 0;  // 初始没有保存 frame 副本

@@ -160,7 +160,11 @@
                         }
                     }
                     // 将函数预注册到函数表，使前向引用能通过 func_table_find 找到并推断返回类型
-                    func_table_add(&s->func_table, stmt->u.func.name, stmt);
+                    // 仅全局函数注册到 func_table，局部函数（嵌套在函数体内的函数）不注册
+                    // 避免局部同名函数覆盖全局 async 函数导致代码生成错误的调用指令
+                    if (s->current && s->current->parent == NULL) {
+                        func_table_add(&s->func_table, stmt->u.func.name, stmt);
+                    }
                 }
             }
             // 第二轮：转换所有函数的参数类型（struct -> cstruct/face）

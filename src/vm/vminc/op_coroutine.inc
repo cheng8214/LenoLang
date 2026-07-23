@@ -138,6 +138,7 @@ OPCODE(OP_AWAIT) {
     current->saved_ip = frame->ip;
     // 保存栈基址和当前栈指针位置
     current->saved_stack_base = frame->stack_base;
+    current->saved_sp = vm.sp;  // 保存栈指针，恢复时精确还原
     // 保存当前的 frame_cnt，以便恢复时知道有多少个 frame 属于此协程
     current->saved_frame_cnt = vm.frame_cnt;
     // 保存 frame 副本（因为其他协程可能会覆盖 vm.frames）
