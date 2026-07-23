@@ -1,1 +1,43 @@
+// 测试局部 async 函数（定义在普通函数内部的 async 函数）
+import asyncs
+import io
+
+func test_local_async() {
+    // 在普通函数内定义 async 函数
+    async func local_greet(string name): string {
+        await asyncs.sleep(20)
+        return $"Hello {name}"
+    }
+
+    var f = local_greet("local")
+    asyncs.run()
+    var results = asyncs.all([f])
+    assert_eq(results[0], "Hello local")
+    io.print("[PASS] 局部 async 函数")
+}
+
+func test_nested_local_async() {
+    // 嵌套：普通函数 → async 函数 → 调用另一个局部 async 函数
+    async func inner_task(int x): int {
+        await asyncs.sleep(10)
+        return x * x
+    }
+
+    async func outer_task(int x): int {
+        var r = await inner_task(x)
+        return r + 1
+    }
+
+    var f = outer_task(5)
+    asyncs.run()
+    var results = asyncs.all([f])
+    assert_eq(results[0], 26)  // 5*5+1
+    io.print("[PASS] 嵌套局部 async 函数")
+}
+
+main() {
+    io.print("=== 局部 async 函数测试 ===")
+    test_local_async()
+    test_nested_local_async()
+    io.print("=== 测试完成 ===")
 }

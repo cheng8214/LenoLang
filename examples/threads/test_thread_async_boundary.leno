@@ -1,1 +1,348 @@
+// 线程 + 异步 边界组合测试
+// 约束：1) asyncs.run() 只能在主线程调用  2) async 函数必须定义在全局级别
+import threads
+import asyncs
+import io
+
+// ============================================================
+// 全局级 async 函数定义
+// ============================================================
+async func main_task(): string {
+    await asyncs.sleep(30)
+    return "main_done"
+}
+
+async func wait_and_process(): string {
+    await asyncs.sleep(10)
+    return "async_done"
+}
+
+async func async_check_factor(int factor): string {
+    await asyncs.sleep(10)
+    return $"factor={factor}"
+}
+
+async func coordinator(any ch): string {
+    var t = threads.start(func(any c) {
+        if c is Channel {
+            threads.sleep(20)
+            c.send("from_thread")
+            c.close()
+        }
+    }, ch)
+
+    await asyncs.sleep(40)
+    var val = ""
+    if ch is Channel {
+        val = _str(ch.receive())
+    }
+    t.join()
+    return $"coord_{val}"
+}
+
+async func collector(any ch): string {
+    await asyncs.sleep(5)
+    var r1 = ""
+    var r2 = ""
+    var r3 = ""
+    if ch is Channel {
+        r1 = _str(ch.receive())
+        r2 = _str(ch.receive())
+        r3 = _str(ch.receive())
+    }
+    return $"{r1}-{r2}-{r3}"
+}
+
+async func producer(): string {
+    await asyncs.sleep(20)
+    return "produced_value"
+}
+
+async func main_slow(): string {
+    await asyncs.sleep(5000)
+    return "never"
+}
+
+async func main_timeout(): string {
+    var result = await asyncs.timeout(main_slow(), 30)
+    if result == null {
+        return "timeout"
+    }
+    return _str(result)
+}
+
+async func task_a(): string {
+    await asyncs.sleep(10)
+    return "A_done"
+}
+
+async func task_b(): string {
+    await asyncs.sleep(20)
+    return "B_done"
+}
+
+async func process_sum(any ch): string {
+    await asyncs.sleep(10)
+    var val = 0
+    if ch is Channel {
+        val = _int(ch.receive())
+    }
+    return $"sum={val}"
+}
+
+async func risky(): string {
+    await asyncs.sleep(10)
+    throw "async_error"
+}
+
+// ============================================================
+// 测试用例
+// ============================================================
+
+// 测试1: 主线程 async + 子线程并行
+func test1() {
+    var ch = threads.channel(1)
+    var t = threads.start(func(any c) {
+        if c is Channel {
+            threads.sleep(20)
+            c.send("thread_done")
+            c.close()
+        }
+    }, ch)
+
+    var f = main_task()
+    asyncs.run()
+    var results = asyncs.all([f])
+    var thread_result = ""
+    if ch is Channel {
+        thread_result = _str(ch.receive())
+    }
+    t.join()
+
+    assert_eq(results[0], "main_done")
+    assert_eq(thread_result, "thread_done")
+    io.print("[PASS] 测试1: 主线程 async + 子线程并行")
+}
+
+// 测试2: 线程 join 返回值 + async 组合
+func test2() {
+    var t = threads.start(func(): string {
+        threads.sleep(20)
+        return "thread_result"
+    })
+
+    var f = wait_and_process()
+    var thread_result = t.join()
+    asyncs.run()
+    var results = asyncs.all([f])
+
+    assert_eq(thread_result, "thread_result")
+    assert_eq(results[0], "async_done")
+    io.print("[PASS] 测试2: 线程 join 返回值 + async 组合")
+}
+
+// 测试3: 子线程先完成 → 主线程 async 消费
+func test3() {
+    var ch = threads.channel(1)
+
+    var t = threads.start(func(any c) {
+        if c is Channel {
+            var sum = 0
+            for 100 to var i {
+                sum += i
+            }
+            c.send(sum)
+            c.close()
+        }
+    }, ch)
+
+    t.join()
+
+    var f = process_sum(ch)
+    asyncs.run()
+    var results = asyncs.all([f])
+
+    assert_eq(results[0], "sum=4950")
+    io.print("[PASS] 测试3: 子线程先完成 → 主线程 async 消费")
+}
+
+// 测试4: 线程闭包捕获外部变量
+func test4() {
+    var factor = 3
+    var ch = threads.channel(1)
+
+    var t = threads.start(func(any c) {
+        if c is Channel {
+            var result = 7 * factor
+            c.send(result)
+            c.close()
+        }
+    }, ch)
+
+    t.join()
+
+    var f = async_check_factor(factor)
+    asyncs.run()
+    var results = asyncs.all([f])
+
+    var val = 0
+    if ch is Channel {
+        val = _int(ch.receive())
+    }
+    assert_eq(results[0], "factor=3")
+    assert_eq(val, 21)
+    io.print("[PASS] 测试4: 线程闭包捕获外部变量")
+}
+
+// 测试5: async 协程中启动线程
+func test5() {
+    var ch = threads.channel(1)
+
+    var f = coordinator(ch)
+    asyncs.run()
+    var results = asyncs.all([f])
+    assert_eq(results[0], "coord_from_thread")
+    io.print("[PASS] 测试5: async 协程中启动线程")
+}
+
+// 测试6: 多个线程并发 + async 汇总
+func test6() {
+    var ch = threads.channel(3)
+
+    var t1 = threads.start(func(any c) {
+        if c is Channel { threads.sleep(20); c.send("A") }
+    }, ch)
+    var t2 = threads.start(func(any c) {
+        if c is Channel { threads.sleep(10); c.send("B") }
+    }, ch)
+    var t3 = threads.start(func(any c) {
+        if c is Channel { threads.sleep(30); c.send("C") }
+    }, ch)
+
+    t1.join()
+    t2.join()
+    t3.join()
+
+    var f = collector(ch)
+    asyncs.run()
+    var results = asyncs.all([f])
+    if ch is Channel { ch.close() }
+
+    var combined = _str(results[0])
+    var hasA = combined != combined.replace("A", "")
+    var hasB = combined != combined.replace("B", "")
+    var hasC = combined != combined.replace("C", "")
+    assert_eq(hasA and hasB and hasC, true)
+    io.print("[PASS] 测试6: 多个线程并发 + async 汇总")
+}
+
+// 测试7: async timeout
+func test7() {
+    var fm = main_timeout()
+    asyncs.run()
+    var rm = asyncs.all([fm])
+    assert_eq(rm[0], "timeout")
+    io.print("[PASS] 测试7: async timeout")
+}
+
+// 测试8: Channel 传递 async 结果给线程（双通道回声）
+func test8() {
+    var ch_in = threads.channel(1)   // 主→子
+    var ch_out = threads.channel(1)  // 子→主
+
+    var f = producer()
+    asyncs.run()
+    var results = asyncs.all([f])
+
+    if ch_in is Channel { ch_in.send(results[0]) }
+
+    var t = threads.start(func(any ci, any co) {
+        var val = ""
+        if ci is Channel { val = _str(ci.receive()) }
+        if co is Channel { co.send($"echo_{val}") }
+    }, ch_in, ch_out)
+
+    var echo = ""
+    if ch_out is Channel { echo = _str(ch_out.receive()) }
+    t.join()
+    if ch_in is Channel { ch_in.close() }
+    if ch_out is Channel { ch_out.close() }
+
+    assert_eq(echo, "echo_produced_value")
+    io.print("[PASS] 测试8: Channel 传递 async 结果给线程")
+}
+
+// 测试9: 多个 async + 线程混合并发
+func test9() {
+    var ch = threads.channel(1)
+
+    var t = threads.start(func(any c) {
+        if c is Channel {
+            var result = 0
+            for 50 to var i {
+                result += i * i
+            }
+            c.send(result)
+            c.close()
+        }
+    }, ch)
+
+    var fa = task_a()
+    var fb = task_b()
+    asyncs.run()
+
+    var ra = asyncs.all([fa])
+    var rb = asyncs.all([fb])
+    var thread_result = 0
+    if ch is Channel {
+        thread_result = _int(ch.receive())
+    }
+    t.join()
+
+    assert_eq(ra[0], "A_done")
+    assert_eq(rb[0], "B_done")
+    assert_eq(thread_result, 40425)
+    io.print("[PASS] 测试9: 多个 async + 线程混合并发")
+}
+
+// 测试10: 线程异常 + async 异常独立处理（放最后，异常可能影响后续状态）
+func test10() {
+    // 线程中异常
+    var t = threads.start(func() {
+        throw "thread_error"
+    })
+    var thread_caught = false
+    try {
+        t.join()
+    } catch e {
+        thread_caught = true
+    }
+    assert_eq(thread_caught, true)
+
+    // async 异常（独立 try-catch 包裹整个 asyncs.run）
+    var f = risky()
+    try {
+        asyncs.run()
+        var results = asyncs.all([f])
+    } catch e {
+        // async 异常已捕获
+    }
+    io.print("[PASS] 测试10: 线程异常 + async 异常独立处理")
+}
+
+main() {
+    io.print("=== 线程 + 异步 边界组合测试 ===")
+
+    test1()
+    test2()
+    test3()
+    test4()
+    test5()
+    test6()
+    test7()
+    test8()
+    test9()
+    test10()
+
+    io.print("=== 线程 + 异步 边界组合测试完成 ===")
 }
