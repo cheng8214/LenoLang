@@ -406,12 +406,16 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
 
     // 将函数添加到函数表（哈希表自动处理重复）
     // 跳过 struct 方法的注册，因为它们已经在 semantic_visit_ast.c 中以 struct_name::method_name 格式注册
-    // 跳过局部函数（嵌套在函数体内的函数），避免覆盖同名全局函数
-    // 全局函数表用于模块级前向引用类型推断，局部函数不需要注册
-    // 判断是否为全局函数：当前作用域的父作用域为 NULL 时表示全局作用域
+    // 全局函数正常注册；局部函数仅在是 async 且未被全局定义覆盖时注册（确保代码生成能识别 async）
     int is_global_func = s->current && s->current->parent == NULL;
     if (!is_struct_method && is_global_func) {
         func_table_add(&s->func_table, ast->u.func.name, ast);
+    } else if (!is_struct_method && !is_global_func && ast->u.func.is_async) {
+        // 局部 async 函数：仅当 func_table 中尚无该名称时才注册，避免覆盖全局定义
+        Ast* existing_def = func_table_find(&s->func_table, ast->u.func.name);
+        if (!existing_def) {
+            func_table_add(&s->func_table, ast->u.func.name, ast);
+        }
     }
 
     // 在父作用域注册函数名（如果还没有注册）

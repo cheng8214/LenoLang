@@ -134,7 +134,8 @@ struct Ast {
         struct { Ast* l; Ast* r; LenoTokenType op; } binop;
         struct { Ast* operand; LenoTokenType op; int is_postfix; } unary;
         struct { Ast* callee; AstList args; int is_tail_call;
-                 char** generic_type_names; TypeInfo** generic_type_args; int generic_type_count; } call;
+                 char** generic_type_names; TypeInfo** generic_type_args; int generic_type_count;
+                 int callee_is_async; } call;
         struct { Ast* obj; Ast* index; } index;
         struct { Ast* obj; Ast* start; Ast* end; } slice;  // 切片：arr[start:end]
         struct { Ast* obj; Ast* index; Ast* value; int field_index; } index_assign;

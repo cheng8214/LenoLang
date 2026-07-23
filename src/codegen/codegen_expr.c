@@ -924,7 +924,10 @@ static void gen_call(CodeGen* gen, Ast* ast) {
     int total_args = func_def ? expected_args : ast->u.call.args.count;
     
     // 检查是否是 async 函数调用
-    if (func_def && func_def->kind == AST_FUNC_DEF && func_def->u.func.is_async) {
+    // 优先查 func_table，其次用语义分析标记的 callee_is_async
+    int is_async_call = (func_def && func_def->kind == AST_FUNC_DEF && func_def->u.func.is_async)
+                      || ast->u.call.callee_is_async;
+    if (is_async_call) {
         // async 函数使用 OP_ASYNC_CALL
         emit_byte(gen, OP_ASYNC_CALL, ast->line);
         emit_byte(gen, (total_args >> 8) & 0xff, ast->line);

@@ -46,8 +46,16 @@ static Value native_async_sleep(int arg_count, Value* args) {
 static Value native_async_run(int arg_count, Value* args) {
     (void)arg_count;
     (void)args;
-    
-    VM* target_vm = get_current_vm();
+
+    // 子线程中 current_exec_vm 为 NULL，回退到主线程 &vm 会导致并发访问崩溃
+    // 必须在主线程中调用 asyncs.run()
+    extern THREAD_LOCAL VM* current_exec_vm;
+    if (!current_exec_vm) {
+        native_throw_error("asyncs.run() 只能在主线程调用，子线程不支持事件循环");
+        return val_null();
+    }
+
+    VM* target_vm = current_exec_vm;
     if (!target_vm->event_loop) {
         native_throw_error("async.run 需要在初始化事件循环后调用");
         return val_null();

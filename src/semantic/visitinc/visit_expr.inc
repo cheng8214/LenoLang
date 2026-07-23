@@ -882,6 +882,12 @@
 
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR) {
                 func_name = ast->u.call.callee->u.var.name;
+                // 标记被调用函数是否为 async（供代码生成使用）
+                ast->u.call.callee_is_async = 0;
+                Ast* callee_def = func_table_find(&s->func_table, func_name);
+                if (callee_def && callee_def->kind == AST_FUNC_DEF && callee_def->u.func.is_async) {
+                    ast->u.call.callee_is_async = 1;
+                }
                 // 使用resolve_variable_with_upvalue处理函数调用，支持闭包
                 sym = resolve_variable_with_upvalue(s, func_name, &ast->u.call.callee->u.var.ref);
                 if (!sym) {

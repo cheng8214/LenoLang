@@ -57,8 +57,10 @@ print("\n=== 测试5: 无缓冲通道 ===")
 var ch5 = threads.channel(0)
 var received_val = 0
 var t5 = threads.start(func(any ch){
-    ch.send(42)
-    ch.close()
+    if ch is Channel {
+        ch.send(42)
+        ch.close()
+    }
 }, ch5)
 received_val = _int(ch5.receive())
 print("无缓冲通道收到: " + received_val)
@@ -70,10 +72,12 @@ print("测试5通过")
 print("\n=== 测试6: Channel 传递 null 值 ===")
 var ch7 = threads.channel(10)
 var t7 = threads.start(func(any ch){
-    ch.send(null)
-    ch.send("real_value")
-    ch.send(null)
-    ch.close()
+    if ch is Channel {
+        ch.send(null)
+        ch.send("real_value")
+        ch.send(null)
+        ch.close()
+    }
 }, ch7)
 var m1 = ch7.receive()
 var m2 = ch7.receive()
@@ -93,10 +97,14 @@ print("测试6通过")
 print("\n=== 测试7: 多线程并发写 Channel ===")
 var ch10 = threads.channel(100)
 var t10a = threads.start(func(any ch){
-    for 10 to var i { ch.send("A" + i) }
+    if ch is Channel {
+        for 10 to var i { ch.send("A" + i) }
+    }
 }, ch10)
 var t10b = threads.start(func(any ch){
-    for 10 to var i { ch.send("B" + i) }
+    if ch is Channel {
+        for 10 to var i { ch.send("B" + i) }
+    }
 }, ch10)
 t10a.join()
 t10b.join()

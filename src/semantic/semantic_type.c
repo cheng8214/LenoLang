@@ -1808,6 +1808,41 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             if (else_type) type_free(else_type);
             break;
         }
+        case AST_AWAIT: {
+            // await 表达式：解包 Future 类型，返回内部类型
+            // 例如 await async_func() → async_func 返回 Future[T]，await 返回 T
+            if (ast->u.await.expr) {
+                TypeInfo* inner_type = infer_expr_type(s, ast->u.await.expr);
+                if (inner_type) {
+                    if (inner_type->kind == TYPE_FUTURE) {
+                        type_free(inner_type);
+                        // Future 类型：尝试从被等待的函数调用中提取声明返回类型
+                        // 例如 await inner_task(x) → inner_task 声明返回 int → await 返回 int
+                        if (ast->u.await.expr->kind == AST_CALL &&
+                            ast->u.await.expr->u.call.callee &&
+                            ast->u.await.expr->u.call.callee->kind == AST_VAR) {
+                            const char* fn = ast->u.await.expr->u.call.callee->u.var.name;
+                            Ast* fdef = func_table_find(&s->func_table, fn);
+                            if (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.is_async && fdef->u.func.return_type) {
+                                result = type_copy(fdef->u.func.return_type);
+                            } else {
+                                result = type_new(TYPE_ANY);
+                            }
+                        } else {
+                            result = type_new(TYPE_ANY);
+                        }
+                    } else {
+                        // 非 Future 类型（直接返回值），保持原类型
+                        result = inner_type;
+                    }
+                } else {
+                    result = type_new(TYPE_ANY);
+                }
+            } else {
+                result = type_new(TYPE_ANY);
+            }
+            break;
+        }
         case AST_TYPE_CHECK:
             // is 表达式返回 bool
             result = type_new(TYPE_BOOL);

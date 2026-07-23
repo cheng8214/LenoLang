@@ -160,10 +160,15 @@
                         }
                     }
                     // 将函数预注册到函数表，使前向引用能通过 func_table_find 找到并推断返回类型
-                    // 仅全局函数注册到 func_table，局部函数（嵌套在函数体内的函数）不注册
-                    // 避免局部同名函数覆盖全局 async 函数导致代码生成错误的调用指令
+                    // 全局函数正常注册；局部函数仅在是 async 且未被全局定义覆盖时注册（确保代码生成能识别 async）
                     if (s->current && s->current->parent == NULL) {
                         func_table_add(&s->func_table, stmt->u.func.name, stmt);
+                    } else if (stmt->u.func.is_async) {
+                        // 局部 async 函数：仅当 func_table 中尚无该名称时才注册，避免覆盖全局定义
+                        Ast* existing_def = func_table_find(&s->func_table, stmt->u.func.name);
+                        if (!existing_def) {
+                            func_table_add(&s->func_table, stmt->u.func.name, stmt);
+                        }
                     }
                 }
             }
