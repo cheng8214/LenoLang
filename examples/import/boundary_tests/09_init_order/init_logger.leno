@@ -3,7 +3,7 @@
 
 export var init_log = []
 
-export func log_init(var module_name) {
+export func log_init(any module_name) {
     init_log.add(module_name)
 }
 

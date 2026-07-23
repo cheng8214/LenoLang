@@ -22,7 +22,7 @@ enum Priority {
 }
 
 // 辅助函数
-func test_enum_value(var color) {
+func test_enum_value(any color) {
     print("传入的颜色值:", color)
 }
 

@@ -18,7 +18,7 @@ export enum Status {
 }
 
 // 导出颜色名称映射
-export func color_name(var color) {
+export func color_name(any color) {
     if (color == Color.RED) {
         return "Red"
     } else if (color == Color.GREEN) {
@@ -36,12 +36,12 @@ export func color_name(var color) {
 }
 
 // 导出状态检查函数
-export func is_terminal_status(var status) {
+export func is_terminal_status(any status) {
     return status == Status.COMPLETED or status == Status.FAILED
 }
 
 // 导出混合颜色功能（模拟）
-export func mix_colors(var c1, var c2) {
+export func mix_colors(any c1, any c2) {
     // 简单的颜色混合逻辑
     if ((c1 == Color.RED and c2 == Color.BLUE) or (c1 == Color.BLUE and c2 == Color.RED)) {
         return Color.BLACK  // 简化为黑色

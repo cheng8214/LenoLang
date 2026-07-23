@@ -29,10 +29,10 @@ func test_exception() {
 }
 
 // 测试3: 线程中的嵌套函数调用和返回值
-func add(var a, var b) {
+func add(any a, any b) {
     return a + b
 }
-func multiply(var a, var b) {
+func multiply(any a, any b) {
     return a * b
 }
 func test_nested_call() {
@@ -128,7 +128,7 @@ func test_nested_exception() {
 }
 
 // 测试10: 线程中的递归
-func fibonacci(var n) {
+func fibonacci(any n) {
     if n <= 1 { return n }
     return fibonacci(n - 1) + fibonacci(n - 2)
 }

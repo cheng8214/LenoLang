@@ -19,7 +19,7 @@ cstruct MEMORYSTATUS {
 
 // 辅助函数：将字节转换为人类可读的格式
 // 使用 f64 避免溢出
-func formatBytes(var bytes): string {
+func formatBytes(any bytes): string {
     var b = _float(bytes)
     if b >= 1073741824.0 {
         return (b / 1073741824.0) + " GB"

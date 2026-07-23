@@ -18,7 +18,7 @@ func create_points(int count)
 }
 
 // 测试 1: 使用 Array[Point] 类型守卫后访问字段
-func test_point_array_access(var points)
+func test_point_array_access(any points)
 {
     print("=== 测试 Array[Point] 类型守卫 ===")
     
@@ -48,7 +48,7 @@ func test_point_array_access(var points)
 }
 
 // 测试 2: 使用 Array 类型守卫（无泛型）
-func test_any_array_access(var points)
+func test_any_array_access(any points)
 {
     print("=== 测试 Array 类型守卫 ===")
     
@@ -76,7 +76,7 @@ func test_any_array_access(var points)
 }
 
 // 测试 3: 直接访问（无类型守卫）
-func test_direct_access(var points)
+func test_direct_access(any points)
 {
     print("=== 测试直接访问（无类型守卫） ===")
     

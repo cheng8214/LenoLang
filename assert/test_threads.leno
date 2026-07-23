@@ -3,7 +3,7 @@
 import threads
 
 // 线程函数：计算累加和
-func sum_worker(var n) {
+func sum_worker(any n) {
     var sum = 0
     if n is int {
         for n to var i {
@@ -14,7 +14,7 @@ func sum_worker(var n) {
 }
 
 // 线程函数：通过 channel 发送数据
-func channel_worker(var ch) {
+func channel_worker(any ch) {
     if ch is Channel {
         ch.send("hello")
         ch.send(42)

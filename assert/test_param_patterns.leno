@@ -1,7 +1,7 @@
 // 断言测试：三种参数模式对比
 
 // var: any
-func get_type(var x):string {
+func get_type(any x):string {
     return type(x)
 }
 

@@ -23,7 +23,7 @@ func create_colors(int count)
 }
 
 // 测试数组类型守卫
-func test_array_type(var colors)
+func test_array_type(any colors)
 {
     print("=== 测试数组类型 ===")
     
@@ -50,7 +50,7 @@ func test_array_type(var colors)
 }
 
 // 测试元素类型
-func test_element_type(var colors)
+func test_element_type(any colors)
 {
     print("=== 测试元素类型 ===")
     

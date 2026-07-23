@@ -54,7 +54,7 @@ main() {
 // 测试1: 数组 copy 方法尾递归
 // 递归调用 arr.copy() 作为尾调用
 // ============================================================================
-func test_array_copy_tail(var arr, var n) {
+func test_array_copy_tail(any arr, any n) {
     if n <= 0 {
         return arr
     }
@@ -65,7 +65,7 @@ func test_array_copy_tail(var arr, var n) {
 // ============================================================================
 // 测试2: 数组 append 方法尾递归
 // ============================================================================
-func test_array_append_tail(var start, var n) {
+func test_array_append_tail(any start, any n) {
     if n <= 0 {
         return [start]
     }
@@ -77,7 +77,7 @@ func test_array_append_tail(var start, var n) {
 // ============================================================================
 // 测试3: 字符串 len 方法尾递归
 // ============================================================================
-func test_string_len_tail(var str, var n) {
+func test_string_len_tail(any str, any n) {
     if n <= 0 {
         return str.len()
     }
@@ -91,7 +91,7 @@ func test_string_len_tail(var str, var n) {
 // 测试4: 链式调用尾递归
 // 在尾调用位置使用方法调用
 // ============================================================================
-func test_chain_tail(var n) {
+func test_chain_tail(any n) {
     if n <= 0 {
         return [1, 2, 3]
     }
@@ -103,7 +103,7 @@ func test_chain_tail(var n) {
 // ============================================================================
 // 测试5: 直接尾调用绑定方法（这会触发 BoundMethod 尾调用）
 // ============================================================================
-func direct_bound_method_call(var arr) {
+func direct_bound_method_call(any arr) {
     // 直接返回绑定方法调用的结果
     // 这应该触发 OP_TAIL_CALL 对 OBJ_BOUND_METHOD 的处理
     return arr.copy()

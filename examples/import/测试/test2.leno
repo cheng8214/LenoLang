@@ -1,18 +1,18 @@
 // 测试内部函数调用的模块
 import times
-func ab(var a, var b)
+func ab(any a, any b)
 {
     return a + b
 }
 
-export func add(var a, var b)
+export func add(any a, any b)
 {
     return ab(a, b)
 }
 
 export var PI = 3.14156
 
-export func fib(var n) {
+export func fib(any n) {
 
     if n <= 1 {
         return n

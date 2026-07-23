@@ -20,7 +20,7 @@ func face_compile_time(Speaker s, int n) {
 }
 
 // 运行时确定类型的 face 调用（从数组取）
-func face_runtime(var speakers, int n) {
+func face_runtime(any speakers, int n) {
    
             print("cs:"+speakers)
             if speakers is Array[Speaker]

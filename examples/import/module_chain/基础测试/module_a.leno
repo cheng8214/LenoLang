@@ -7,7 +7,7 @@ export func get_value()
     return 42
 }
 
-export func add(var a, var b)
+export func add(any a, any b)
 {
     return a + b
 }

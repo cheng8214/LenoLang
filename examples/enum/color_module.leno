@@ -15,7 +15,7 @@ export enum Status {
 }
 
 // 导出一个函数，使用 enum
-export func get_color_name(var color) {
+export func get_color_name(any color) {
     if color == Color.red {
         return "red"
     } else if color == Color.green {
@@ -27,6 +27,6 @@ export func get_color_name(var color) {
 }
 
 // 导出函数，使用 Status enum
-export func is_success(var status) {
+export func is_success(any status) {
     return status == Status.ok
 }

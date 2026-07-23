@@ -9,7 +9,7 @@ main() {
     print((t2-t1)+"ms")
 }
 
-func fib(var n){
+func fib(any n){
 
     if n <= 1 {
         return n

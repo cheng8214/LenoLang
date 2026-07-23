@@ -1,7 +1,7 @@
 // 测试各种类型注解组合
 
 // 2. 使用 var 关键字
-func add2(var a, var b) {
+func add2(any a, any b) {
     return a + b
 }
 
@@ -11,7 +11,7 @@ func add3(int a, int b) {
 }
 
 // 4. 带返回类型注解
-func add4(var a, var b): int {
+func add4(any a, any b): int {
 	//如果写的var那么类型就是any,所以这里需要转换
     return _int(a + b)
 }
@@ -22,7 +22,7 @@ func add5(int a, int b): int {
 }
 
 // 6. 混合使用
-func add6(int a,var b): int {
+func add6(int a,any b): int {
 //这int a;var b,因为b是any
     return a + _int(b)
 }

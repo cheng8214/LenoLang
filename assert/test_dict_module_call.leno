@@ -4,7 +4,7 @@
 import "../examples/import/boundary_tests/13_type_cross_module/point_struct.leno" as ps
 
 // 辅助函数：创建点
-func create_test_point(var x, var y) {
+func create_test_point(any x, any y) {
     return ps.create_point(x, y)
 }
 
@@ -136,7 +136,7 @@ func test_array_with_dict_call() {
 }
 
 // 测试9: 混合本地函数和跨模块函数调用
-func local_multiply(var a, var b) {
+func local_multiply(any a, any b) {
     return a * b
 }
 

@@ -85,7 +85,7 @@ func test_int_no_value_match() {
 }
 
 // 测试 string 参数混合匹配
-func test_string_param_mixed(var cmd) {
+func test_string_param_mixed(any cmd) {
     string result = ""
     switch cmd {
         case "start" {
@@ -114,7 +114,7 @@ assert_eq(test_string_param_mixed(42), "int")
 assert_eq(test_string_param_mixed(true), "default")
 
 // 测试多个类型分支 + 值分支
-func test_multi_type_with_value(var val) {
+func test_multi_type_with_value(any val) {
     string result = ""
     switch val {
         case 0 {

@@ -1,4 +1,4 @@
-﻿// sdl_dialog.leno — 对话框工厂
+// sdl_dialog.leno — 对话框工厂
 import "sdl_window.leno" as wnd; use wnd.Window
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -22,7 +22,7 @@ export func createDialogWindow(Dict style): Window {
 // 以模态方式运行窗口（pushModal + run，嵌套安全）
 // 注意：不做 popModalIfTop 兜底——win.run() 在主循环已跑时不阻塞，
 // 模态状态由事件循环在对话框关闭时自动弹出
-export func runModal(Window win, var onEvent, var onRender) {
+export func runModal(Window win, any onEvent, any onRender) {
     wnd.pushModal(win.getID())
     win.run(onEvent, onRender)
 }

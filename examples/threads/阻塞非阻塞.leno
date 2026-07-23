@@ -12,7 +12,7 @@ func sum_worker(int n) {
 }
 
 // 线程函数：通过 channel 发送数据
-func channel_worker(var ch) {
+func channel_worker(any ch) {
     ch.send("hello")
     ch.send(42)
     ch.send(3.14)

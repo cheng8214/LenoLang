@@ -18,7 +18,7 @@ var FILE_SHARE_DELETE = 0x00000004
 var OPEN_EXISTING = 3
 
 // 监控线程函数
-func watch_folder(var ch, var watchPath) {
+func watch_folder(any ch, any watchPath) {
     import ffi
 
     var kernel32 = ffi.load("kernel32.dll")
@@ -118,7 +118,7 @@ func watch_folder(var ch, var watchPath) {
 }
 
 // 主线程任务：模拟其他工作
-func main_task(var ch) {
+func main_task(any ch) {
     import ffi
 
     var kernel32 = ffi.load("kernel32.dll")

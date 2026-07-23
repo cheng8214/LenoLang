@@ -4,32 +4,32 @@ main() {
     Array[int] nums = [1, 2, 3, 4, 5]
 
     // map 返回 Array[int]（算术运算）
-    Array[int] doubled = nums.map(func(var x, var i) { return x * 2 })
+    Array[int] doubled = nums.map(func(any x, any i) { return x * 2 })
     assert_eq(doubled[0], 2)
     assert_eq(doubled[4], 10)
 
     // map 返回 Array[float]（浮点运算）
-    Array[float] halved = nums.map(func(var x, var i) { return _float(x) / 2.0 })
+    Array[float] halved = nums.map(func(any x, any i) { return _float(x) / 2.0 })
     assert_eq(halved[0], 0.5)
 
     // map 返回 Array[string]（类型守卫让 x 为 int → _str(x) 返回 string）
-    Array[string] strs = nums.map(func(var x, var i) { return _str(x) })
+    Array[string] strs = nums.map(func(any x, any i) { return _str(x) })
     assert_eq(strs[0], "1")
     assert_eq(strs[4], "5")
 
     // map 返回 Array[bool]（类型守卫让 x 为 int → x > 3 返回 bool）
-    Array[bool] flags = nums.map(func(var x, var i) { return x > 3 })
+    Array[bool] flags = nums.map(func(any x, any i) { return x > 3 })
     assert_eq(flags[0], false)
     assert_eq(flags[3], true)
 
     // map 返回 Array[int]（平方）
-    Array[int] squared = nums.map(func(var x, var i) { return x * x })
+    Array[int] squared = nums.map(func(any x, any i) { return x * x })
     assert_eq(squared[0], 1)
     assert_eq(squared[4], 25)
 
     // 链式操作：filter → map
-    Array[int] big = nums.filter(func(var x, var i) { return x > 2 })
-    Array[int] big_doubled = big.map(func(var x, var i) { return x * 10 })
+    Array[int] big = nums.filter(func(any x, any i) { return x > 2 })
+    Array[int] big_doubled = big.map(func(any x, any i) { return x * 10 })
     assert_eq(big_doubled[0], 30)
 
     print("test_array_map_infer passed")

@@ -97,7 +97,7 @@ func _normPattern(string p): string {
 // default_location 规范化：SDL3 在 Windows 上不接受相对路径（传 "." 会导致对话框
 // 初始化失败而不弹出），故用 dirs.abspath 把相对路径 / "." 解析为绝对路径；
 // 已是绝对路径则原样返回。null 或空串返回 null（交给 SDL 用默认目录）。
-func _normLocation(var s): string {
+func _normLocation(any s): string {
     if s == null { return null }
     string loc = s as string
     if loc == null or loc.len() == 0 { return null }
@@ -150,7 +150,7 @@ func _nfiltersOf(Dict opts): int {
 // 以便回调后统一释放。null 或空串返回 null。
 // 关键：SDL 文件对话框在【工作线程】异步读取该指针，直接传 Leno 内部字符串会被
 // GC/释放导致对话框初始化失败而不弹出，故必须 malloc 独立内存。
-func _makeCStr(var s): Ptr[u8] {
+func _makeCStr(any s): Ptr[u8] {
     if s == null { return null }
     string str = s as string
     if str == null or str.len() == 0 { return null }
@@ -163,7 +163,7 @@ func _makeCStr(var s): Ptr[u8] {
 }
 
 // 打开文件（opts: allow_many / filters / default_location）
-export func showOpenFileDialog(Window win, var onResult, Dict opts) {
+export func showOpenFileDialog(Window win, any onResult, Dict opts) {
     if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
     _ensureCb()
     _onResult = onResult
@@ -177,7 +177,7 @@ export func showOpenFileDialog(Window win, var onResult, Dict opts) {
 }
 
 // 保存文件（opts: filters / default_location）
-export func showSaveFileDialog(Window win, var onResult, Dict opts) {
+export func showSaveFileDialog(Window win, any onResult, Dict opts) {
     if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
     _ensureCb()
     _onResult = onResult
@@ -190,7 +190,7 @@ export func showSaveFileDialog(Window win, var onResult, Dict opts) {
 }
 
 // 选择文件夹（opts: filters / default_location）
-export func showOpenFolderDialog(Window win, var onResult, Dict opts) {
+export func showOpenFolderDialog(Window win, any onResult, Dict opts) {
     if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
     _ensureCb()
     _onResult = onResult

@@ -15,30 +15,30 @@ export func create_string_map() {
 }
 
 // 3. 导出操作类型别名的函数
-export func pair_sum(var pair) {
+export func pair_sum(any pair) {
     return pair[0] + pair[1]
 }
 
-export func pair_swap(var pair) {
+export func pair_swap(any pair) {
     // 返回新数组，不修改原数组
     return [pair[1], pair[0]]
 }
 
-export func map_set(var map, var key, var value) {
+export func map_set(any map, any key, any value) {
     map[key] = value
     return map
 }
 
-export func map_get(var map, var key) {
+export func map_get(any map, any key) {
     return map[key]
 }
 
 // 4. 导出复杂类型操作
-export func merge_pairs(var p1, var p2) {
+export func merge_pairs(any p1, any p2) {
     return [p1[0], p1[1], p2[0], p2[1]]
 }
 
-export func map_merge(var m1, var m2) {
+export func map_merge(any m1, any m2) {
     var result = {}
     // 简化版本，直接返回 m1
     return m1

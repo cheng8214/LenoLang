@@ -26,12 +26,12 @@ main() {
 }
 
 // 创建加法器
-func make_adder(var n) {
-    return func(var x) { return x + n }
+func make_adder(any n) {
+    return func(any x) { return x + n }
 }
 
 // 创建计数器
-func make_counter(var start) {
+func make_counter(any start) {
     var count = start
     return func() {
         count = count + 1

@@ -1,13 +1,13 @@
 
 //test.leno文件内容
 export var PI=3.14156
-export func add(var a,var b)
+export func add(any a,any b)
 {	
 	
 	return add1(a,b)
 }
 
-func add1(var a,var b)
+func add1(any a,any b)
 {
 	return a+b
 }

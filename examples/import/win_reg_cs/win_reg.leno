@@ -34,14 +34,14 @@ export var HKEY_CURRENT_CONFIG = ffi.ptr_from_int(0x80000005)
 // ========== 内部辅助函数 ==========
 
 // 将 UTF-8 字符串转换为 UTF-16 宽字符串指针
-func toWstr(var str) {
+func toWstr(any str) {
     return ffi.utf8_to_utf16(str)
 }
 
 // ========== 键操作 ==========
 
 // 打开注册表键（Unicode 版本）
-export func openKey(var hKey, var subKey, var samDesired) {
+export func openKey(any hKey, any subKey, any samDesired) {
     var advapi = ffi.load("advapi32.dll")
     var hResult = ffi.malloc(8)
     
@@ -71,7 +71,7 @@ export func openKey(var hKey, var subKey, var samDesired) {
 }
 
 // 创建注册表键（Unicode 版本）
-export func createKey(var hKey, var subKey, var samDesired) {
+export func createKey(any hKey, any subKey, any samDesired) {
     var advapi = ffi.load("advapi32.dll")
     var hResult = ffi.malloc(8)
     var disp = ffi.malloc(4)
@@ -109,14 +109,14 @@ export func createKey(var hKey, var subKey, var samDesired) {
 }
 
 // 关闭注册表键
-export func closeKey(var hKey) {
+export func closeKey(any hKey) {
     var advapi = ffi.load("advapi32.dll")
     ffi.call(advapi, "RegCloseKey", hKey)
     ffi.free(advapi)
 }
 
 // 删除注册表键（Unicode 版本）
-export func deleteKey(var hKey, var subKey) {
+export func deleteKey(any hKey, any subKey) {
     var advapi = ffi.load("advapi32.dll")
     var wSubKey = toWstr(subKey)
     var result = ffi.call(advapi, "RegDeleteKeyW", hKey, wSubKey)
@@ -128,7 +128,7 @@ export func deleteKey(var hKey, var subKey) {
 // ========== 值操作 ==========
 
 // 读取字符串值（Unicode 版本）
-export func readString(var hKey, var valueName) {
+export func readString(any hKey, any valueName) {
     var advapi = ffi.load("advapi32.dll")
     var dataType = ffi.malloc(4)
     var dataSize = ffi.malloc(4)
@@ -170,7 +170,7 @@ export func readString(var hKey, var valueName) {
 }
 
 // 读取 DWORD 值
-export func readDword(var hKey, var valueName) {
+export func readDword(any hKey, any valueName) {
     var advapi = ffi.load("advapi32.dll")
     var dataType = ffi.malloc(4)
     var dataSize = ffi.malloc(4)
@@ -210,7 +210,7 @@ export func readDword(var hKey, var valueName) {
 }
 
 // 写入字符串值（Unicode 版本）
-export func writeString(var hKey, var valueName, var value) {
+export func writeString(any hKey, any valueName, any value) {
     var advapi = ffi.load("advapi32.dll")
     
     // 将值名和值转换为 UTF-16
@@ -238,7 +238,7 @@ export func writeString(var hKey, var valueName, var value) {
 }
 
 // 写入 DWORD 值
-export func writeDword(var hKey, var valueName, var value) {
+export func writeDword(any hKey, any valueName, any value) {
     var advapi = ffi.load("advapi32.dll")
     var buffer = ffi.malloc(4)
     ffi.write_int(buffer, 0, value)
@@ -264,7 +264,7 @@ export func writeDword(var hKey, var valueName, var value) {
 }
 
 // 删除值（Unicode 版本）
-export func deleteValue(var hKey, var valueName) {
+export func deleteValue(any hKey, any valueName) {
     var advapi = ffi.load("advapi32.dll")
     var wValueName = toWstr(valueName)
     var result = ffi.call(advapi, "RegDeleteValueW", hKey, wValueName)
@@ -274,17 +274,17 @@ export func deleteValue(var hKey, var valueName) {
 }
 
 // 设置键的默认值
-export func setDefaultValue(var hKey, var value) {
+export func setDefaultValue(any hKey, any value) {
     return writeString(hKey, "", value)
 }
 
 // 读取键的默认值
-export func getDefaultValue(var hKey) {
+export func getDefaultValue(any hKey) {
     return readString(hKey, "")
 }
 
 // 刷新注册表（强制写入磁盘）
-export func flushKey(var hKey) {
+export func flushKey(any hKey) {
     var advapi = ffi.load("advapi32.dll")
     var result = ffi.call(advapi, "RegFlushKey", hKey)
     ffi.free(advapi)

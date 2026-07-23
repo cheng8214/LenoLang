@@ -1,4 +1,4 @@
-export func make_counter(var start) {
+export func make_counter(any start) {
     var count = start
     func counter_func() {
         count = count + 1

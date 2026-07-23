@@ -55,7 +55,7 @@ main()
     print("test_bigint passed")
 }
 
-func fib_bigint(var n)
+func fib_bigint(any n)
 {
     if n <= 1 {
         return n

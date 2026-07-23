@@ -16,7 +16,7 @@ func create_points(int count)
     return points
 }
 
-func test_point_array(var points)
+func test_point_array(any points)
 {
     print("=== 测试 Array[Point] 类型守卫 ===")
     

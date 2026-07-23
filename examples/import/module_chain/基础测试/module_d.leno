@@ -7,7 +7,7 @@ export func use_a()
     return a.get_value()
 }
 
-export func add_with_a(var x, var y)
+export func add_with_a(any x, any y)
 {
     return a.add(x, y)
 }

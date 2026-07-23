@@ -181,7 +181,7 @@ export var HKEY_USERS          = ffi.ptr_from_int(0x80000003)
 export var HKEY_CURRENT_CONFIG = ffi.ptr_from_int(0x80000005)
 
 // 内部辅助函数：将 HKey enum 值转换为指针
-func getHKeyPtr(var hKey):Ptr {
+func getHKeyPtr(any hKey):Ptr {
     if hKey is Ptr {
         return hKey
     }
@@ -197,7 +197,7 @@ func getHKeyPtr(var hKey):Ptr {
     }
 }
 
-export func errorToString(var errorCode):string {
+export func errorToString(any errorCode):string {
     switch errorCode {
         case WinError.SUCCESS { return "SUCCESS" }
         case WinError.FILE_NOT_FOUND { return "FILE_NOT_FOUND" }
@@ -214,7 +214,7 @@ export func errorToString(var errorCode):string {
 
 // ========== 键操作 ==========
 
-export func openKey(var hKey, string subKey, var samDesired) {
+export func openKey(any hKey, string subKey, any samDesired) {
     _ensureLoaded()
     Ptr hResult = ffi.malloc(8)
     try {
@@ -235,7 +235,7 @@ export func openKey(var hKey, string subKey, var samDesired) {
     }
 }
 
-export func createKey(var hKey, string subKey, var samDesired) {
+export func createKey(any hKey, string subKey, any samDesired) {
     _ensureLoaded()
     Ptr hResult = ffi.malloc(8)
     Ptr disp = ffi.malloc(4)
@@ -263,12 +263,12 @@ export func createKey(var hKey, string subKey, var samDesired) {
     }
 }
 
-export func closeKey(var hKey) {
+export func closeKey(any hKey) {
     _ensureLoaded()
     return ffi.call(_advapi32, "RegCloseKey", hKey)
 }
 
-export func deleteKey(var hKey, string subKey) {
+export func deleteKey(any hKey, string subKey) {
     _ensureLoaded()
     Ptr wSubKey = toWstr(subKey)
     try {
@@ -281,7 +281,7 @@ export func deleteKey(var hKey, string subKey) {
 
 // ========== 枚举操作 ==========
 
-export func enumSubKeys(var hKey) {
+export func enumSubKeys(any hKey) {
     _ensureLoaded()
     var subKeys = []
     int index = 0
@@ -317,7 +317,7 @@ export func enumSubKeys(var hKey) {
     }
 }
 
-export func enumValues(var hKey) {
+export func enumValues(any hKey) {
     _ensureLoaded()
     var values = []
     int index = 0
@@ -380,7 +380,7 @@ export func enumValues(var hKey) {
 
 // ========== 值操作 ==========
 
-export func readString(var hKey, string valueName) {
+export func readString(any hKey, string valueName) {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -425,7 +425,7 @@ export func readString(var hKey, string valueName) {
     }
 }
 
-export func readExpandString(var hKey, string valueName) {
+export func readExpandString(any hKey, string valueName) {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -483,7 +483,7 @@ export func readExpandString(var hKey, string valueName) {
     }
 }
 
-export func readDword(var hKey, string valueName) {
+export func readDword(any hKey, string valueName) {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -517,7 +517,7 @@ export func readDword(var hKey, string valueName) {
     }
 }
 
-export func readQword(var hKey, string valueName) {
+export func readQword(any hKey, string valueName) {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -552,7 +552,7 @@ export func readQword(var hKey, string valueName) {
     }
 }
 
-export func writeString(var hKey, string valueName, string value) {
+export func writeString(any hKey, string valueName, string value) {
     _ensureLoaded()
     var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
     Ptr wValue = toWstr(value)
@@ -570,7 +570,7 @@ export func writeString(var hKey, string valueName, string value) {
     }
 }
 
-export func writeExpandString(var hKey, string valueName, string value) {
+export func writeExpandString(any hKey, string valueName, string value) {
     _ensureLoaded()
     var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
     Ptr wValue = toWstr(value)
@@ -588,7 +588,7 @@ export func writeExpandString(var hKey, string valueName, string value) {
     }
 }
 
-export func writeDword(var hKey, string valueName, int value) {
+export func writeDword(any hKey, string valueName, int value) {
     _ensureLoaded()
     Ptr buffer = ffi.malloc(4)
     try {
@@ -607,7 +607,7 @@ export func writeDword(var hKey, string valueName, int value) {
     }
 }
 
-export func writeQword(var hKey, string valueName, int value) {
+export func writeQword(any hKey, string valueName, int value) {
     _ensureLoaded()
     Ptr buffer = ffi.malloc(8)
     try {
@@ -626,7 +626,7 @@ export func writeQword(var hKey, string valueName, int value) {
     }
 }
 
-export func readBinary(var hKey, string valueName) {
+export func readBinary(any hKey, string valueName) {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -676,7 +676,7 @@ export func readBinary(var hKey, string valueName) {
     }
 }
 
-export func writeBinary(var hKey, string valueName, Array data) {
+export func writeBinary(any hKey, string valueName, Array data) {
     _ensureLoaded()
     int dataLen = data.len()
     Ptr buffer = ffi.malloc(dataLen)
@@ -700,7 +700,7 @@ export func writeBinary(var hKey, string valueName, Array data) {
     }
 }
 
-export func readMultiString(var hKey, string valueName) {
+export func readMultiString(any hKey, string valueName) {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -767,7 +767,7 @@ export func readMultiString(var hKey, string valueName) {
     }
 }
 
-export func writeMultiString(var hKey, string valueName, Array multiStrings) {
+export func writeMultiString(any hKey, string valueName, Array multiStrings) {
     _ensureLoaded()
     
     // 计算需要的总大小
@@ -815,7 +815,7 @@ export func writeMultiString(var hKey, string valueName, Array multiStrings) {
     }
 }
 
-export func deleteValue(var hKey, string valueName) {
+export func deleteValue(any hKey, string valueName) {
     _ensureLoaded()
     Ptr wValueName = toWstr(valueName)
     try {
@@ -825,22 +825,22 @@ export func deleteValue(var hKey, string valueName) {
     }
 }
 
-export func setDefaultValue(var hKey, string value) {
+export func setDefaultValue(any hKey, string value) {
     return writeString(hKey, "", value)
 }
 
-export func getDefaultValue(var hKey) {
+export func getDefaultValue(any hKey) {
     return readString(hKey, "")
 }
 
-export func flushKey(var hKey) {
+export func flushKey(any hKey) {
     _ensureLoaded()
     return ffi.call(_advapi32, "RegFlushKey", hKey)
 }
 
 // ========== 高级操作 ==========
 
-export func keyExists(var hKey, string subKey) {
+export func keyExists(any hKey, string subKey) {
     var result = openKey(hKey, subKey, KeyAccess.QUERY_VALUE)
     var handle = result.handle
     var errorCode = result.errorCode
@@ -852,13 +852,13 @@ export func keyExists(var hKey, string subKey) {
     return errorCode != WinError.FILE_NOT_FOUND and errorCode != WinError.PATH_NOT_FOUND
 }
 
-export func valueExists(var hKey, string valueName) {
+export func valueExists(any hKey, string valueName) {
     var result = readString(hKey, valueName)
     return result.errorCode == 0
 }
 
 // 递归删除键及其所有子键和值
-export func deleteKeyRecursive(var hKey, string subKey) {
+export func deleteKeyRecursive(any hKey, string subKey) {
     // 打开要删除的键
     var openResult = openKey(hKey, subKey, KeyAccess.ALL_ACCESS)
     if openResult.errorCode != WinError.SUCCESS {

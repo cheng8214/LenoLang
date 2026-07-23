@@ -1,6 +1,6 @@
 // 异常模块 - 提供可能抛出异常的函数
 
-export func may_throw(var should_throw) {
+export func may_throw(any should_throw) {
     if should_throw {
         throw "Error from error_module"
     }

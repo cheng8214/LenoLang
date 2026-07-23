@@ -18,11 +18,11 @@ func mov_eax(int val) { eax = val }
 func mov_ebx(int val) { ebx = val }
 func mov_ecx(int val) { ecx = val }
 
-func mov_eax_from_mem(var addr) {
+func mov_eax_from_mem(any addr) {
     eax = ffi.read_int(MEMORY, addr)
 }
 
-func mov_mem_from_ebx(var addr) {
+func mov_mem_from_ebx(any addr) {
     ffi.write_int(MEMORY, addr, ebx)
 }
 

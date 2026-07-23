@@ -1,6 +1,6 @@
 // 测试嵌套函数（命名函数返回）
 
-func make_counter(var start) {
+func make_counter(any start) {
     var count = start
     
     func increment() {
@@ -11,8 +11,8 @@ func make_counter(var start) {
     return increment
 }
 
-func make_adder(var base) {
-    func add(var x) {
+func make_adder(any base) {
+    func add(any x) {
         return base + x
     }
     return add

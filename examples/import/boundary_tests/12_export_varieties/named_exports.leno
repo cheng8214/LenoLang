@@ -6,11 +6,11 @@ export var public_var = 42
 export var public_string = "hello"
 
 // 2. 导出函数
-export func add(var a, var b) {
+export func add(any a, any b) {
     return a + b
 }
 
-export func greet(var name) {
+export func greet(any name) {
     return "Hello, " + name
 }
 

@@ -106,7 +106,7 @@ export func setModalWid(int w) {
 export func getModalWid(): int { return _modalTop() }
 
 // 仅为注册（不启动循环），给 Dialog 等外部 struct 用
-export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, var onEvent, var onRender) {
+export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, any onEvent, any onRender) {
     _runWids.add(wid)
     _runHnds.add(hdl)
     _runRens.add(ren)

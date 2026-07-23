@@ -30,7 +30,7 @@ func test_basic_narrowing() {
 
 // ==================== 测试 2: var 参数类型守卫收窄 ====================
 
-func test_var_param_narrowing(var val) {
+func test_var_param_narrowing(any val) {
     if val is int {
         int n = val
         assert_eq(n > 0, true)
@@ -46,7 +46,7 @@ test_var_param_narrowing("hello")
 
 // ==================== 测试 3: 否定类型守卫 ====================
 
-func test_negated_guard(var val) {
+func test_negated_guard(any val) {
     if val not is int {
         assert_eq(val is int, false)
     } else {
@@ -61,7 +61,7 @@ test_negated_guard("not_int")
 
 // ==================== 测试 4: 多条件 and 类型守卫 ====================
 
-func test_and_guard(var x, var y) {
+func test_and_guard(any x, any y) {
     if x is int and y is string {
         int n = x
         string s = y
@@ -74,7 +74,7 @@ test_and_guard(42, "hello")
 
 // ==================== 测试 5: or 条件不收窄 ====================
 
-func test_or_no_narrowing(var x, var y) {
+func test_or_no_narrowing(any x, any y) {
     if x is int or y is string {
         // or 条件下不收窄，x 和 y 仍是 any
         // 不能直接赋值给具体类型变量
@@ -85,7 +85,7 @@ test_or_no_narrowing(42, "hello")
 
 // ==================== 测试 6: 作用域恢复 ====================
 
-func test_scope_recovery(var val) {
+func test_scope_recovery(any val) {
     if val is int {
         int n = val
         assert_eq(n, 10)
@@ -97,7 +97,7 @@ test_scope_recovery(10)
 
 // ==================== 测试 7: 闭包中类型守卫 ====================
 
-func test_closure_guard(var a) {
+func test_closure_guard(any a) {
     if a is int {
         func inner():int {
             return a + 10
@@ -110,7 +110,7 @@ test_closure_guard(42)
 
 // ==================== 测试 8: Array 类型守卫 ====================
 
-func test_array_guard(var arr) {
+func test_array_guard(any arr) {
     if arr is Array[int] {
         arr.add(99)
         assert_eq(arr[arr.len() - 1], 99)
@@ -186,7 +186,7 @@ struct Point {
     int y = 0
 }
 
-func test_struct_guard(var obj) {
+func test_struct_guard(any obj) {
     if obj is Point {
         int x_val = obj.x
         int y_val = obj.y
@@ -218,7 +218,7 @@ test_nested_field_guard()
 
 // ==================== 测试 14: Array[Struct] 类型守卫 ====================
 
-func test_array_struct_guard(var points) {
+func test_array_struct_guard(any points) {
     if points is Array[Point] {
         var first = points[0]
         int x_val = first.x

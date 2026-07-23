@@ -2,27 +2,27 @@ import arrays
 import io
 
 // 定义回调函数
-func double(var x, var i) {
+func double(any x, any i) {
     return x * 2
 }
 
-func triple(var x, var i) {
+func triple(any x, any i) {
     return x * 3
 }
 
-func is_even(var x, var i) {
+func is_even(any x, any i) {
     return x % 2 == 0
 }
 
-func is_odd(var x, var i) {
+func is_odd(any x, any i) {
     return x % 2 == 1
 }
 
-func sum_acc(var acc, var x, var i) {
+func sum_acc(any acc, any x, any i) {
     return acc + x
 }
 
-func product_acc(var acc, var x, var i) {
+func product_acc(any acc, any x, any i) {
     return acc * x
 }
 

@@ -18,7 +18,7 @@ func create_points(int count)
 }
 
 // 测试 1: 检查数组类型守卫
-func test_array_type(var points)
+func test_array_type(any points)
 {
     print("=== 测试数组类型 ===")
     
@@ -45,7 +45,7 @@ func test_array_type(var points)
 }
 
 // 测试 2: 检查元素类型
-func test_element_type(var points)
+func test_element_type(any points)
 {
     print("=== 测试元素类型 ===")
     

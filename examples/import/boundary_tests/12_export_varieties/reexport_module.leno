@@ -11,12 +11,12 @@ export var reexported_var = inner.public_var
 export var reexported_PI = inner.PI
 
 // 3. 重导出函数（包装或代理）
-export func wrapped_add(var a, var b) {
+export func wrapped_add(any a, any b) {
     print("Wrapped add called with " + a + " and " + b)
     return inner.add(a, b)
 }
 
-export func reexported_greet(var name) {
+export func reexported_greet(any name) {
     return inner.greet(name)
 }
 

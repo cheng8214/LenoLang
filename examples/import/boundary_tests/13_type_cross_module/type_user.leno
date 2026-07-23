@@ -6,7 +6,7 @@ import "color_enum.leno" as ce
 import "type_aliases.leno" as ta
 
 // 1. 使用其他模块的 struct
-export func create_line(var p1, var p2) {
+export func create_line(any p1, any p2) {
     // 先计算长度，避免在字典字面量中调用跨模块函数
     var len = ps.distance(p1, p2)
     return {
@@ -16,7 +16,7 @@ export func create_line(var p1, var p2) {
     }
 }
 
-export func is_point_in_rect(var point, var rect) {
+export func is_point_in_rect(any point, any rect) {
     // 使用局部变量存储中间结果，避免链式访问问题
     var tl = rect.top_left
     var br = rect.bottom_right
@@ -27,7 +27,7 @@ export func is_point_in_rect(var point, var rect) {
 }
 
 // 2. 使用其他模块的 enum
-export func get_status_icon(var status) {
+export func get_status_icon(any status) {
     if (status == ce.Status.PENDING) {
         return "pending"
     } else if (status == ce.Status.RUNNING) {
@@ -40,7 +40,7 @@ export func get_status_icon(var status) {
     return "unknown"
 }
 
-export func create_colored_point(var x, var y, var color) {
+export func create_colored_point(any x, any y, any color) {
     // 先获取颜色名称，避免在字典字面量中调用跨模块函数
     var name = ce.color_name(color)
     return {
@@ -52,7 +52,7 @@ export func create_colored_point(var x, var y, var color) {
 }
 
 // 3. 使用其他模块的类型别名
-export func process_data(var data) {
+export func process_data(any data) {
     var result = {}
     result["sum"] = ta.pair_sum(data)
     result["swapped"] = ta.pair_swap(data)
@@ -60,7 +60,7 @@ export func process_data(var data) {
 }
 
 // 4. 组合使用多个模块的类型
-export func create_shape(var tl, var br, var fill_color, var border_color) {
+export func create_shape(any tl, any br, any fill_color, any border_color) {
     // 先计算所有值，避免在字典字面量中调用跨模块函数
     var rect = ps.create_rectangle(tl, br)
     var area = ps.rectangle_area(rect)

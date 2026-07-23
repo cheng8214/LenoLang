@@ -6,7 +6,7 @@ main()
 	print(c)
 }
 
-func test(var a,var b)
+func test(any a,any b)
 {
 	print(a)
 	print(b)

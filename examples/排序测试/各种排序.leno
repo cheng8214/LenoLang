@@ -42,14 +42,14 @@ func quick_sort_original(Array arr):Array {
 func quick_sort(Array arr):Array[int] {
     return quick_sort_recursive(arr, 0, arr.len() - 1)
 }
-func quick_sort_recursive(Array arr, var left, var right):Array[int] {
+func quick_sort_recursive(Array arr, any left, any right):Array[int] {
     if left >= right {return arr}
     var pivot_index = partition(arr, left, right)
     quick_sort_recursive(arr, left, pivot_index - 1)
     quick_sort_recursive(arr, pivot_index + 1, right)
     return arr;
 }
-func partition(Array arr, var left, var right) {
+func partition(Array arr, any left, any right) {
     // 选择中间元素作为基准值，避免最坏情况
     var mid = (left + right) / 2;
     var pivot = arr[mid];
@@ -77,7 +77,7 @@ func partition(Array arr, var left, var right) {
 func quick_sort_optimized(Array arr):Array[int] {
     return quick_sort_opt(arr, 0, arr.len() - 1)
 }
-func quick_sort_opt(Array arr, var left, var right):Array[int] {
+func quick_sort_opt(Array arr, any left, any right):Array[int] {
     // 小数组使用插入排序
     if right - left < 20 {
         return insertion_sort_range(arr, left, right);
@@ -89,7 +89,7 @@ func quick_sort_opt(Array arr, var left, var right):Array[int] {
     }
     return arr;
 }
-func partition_opt(Array arr, var left, var right) {
+func partition_opt(Array arr, any left, any right) {
     // 三数取中法选择基准值
     var mid = (left + right) / 2;
     // 确保arr[left] <= arr[mid] <= arr[right]
@@ -135,7 +135,7 @@ func partition_opt(Array arr, var left, var right) {
     arr[right - 1] = temp1
     return i
 }
-func insertion_sort_range(Array arr, var left, var right):Array[int] {
+func insertion_sort_range(Array arr, any left, any right):Array[int] {
 	 if left >= right {
 	        return arr
 	    }

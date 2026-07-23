@@ -121,7 +121,7 @@ func tinylang_parse(Array tokens) {
     var keywords = ["print", "if", "else", "for", "while", "var"]
     
     // 辅助函数：检查字符串是否是关键字
-    func is_keyword(var s) {
+    func is_keyword(any s) {
         return keywords.has(s)
     }
     
@@ -428,11 +428,11 @@ func tinylang_parse(Array tokens) {
 // ===============================
 // 4. 执行：解释器核心
 // ===============================
-func tinylang_execute(var ast) {
+func tinylang_execute(any ast) {
     var env = {}
     
     // 执行表达式
-    func execute_expr(var expr) {
+    func execute_expr(any expr) {
         if not expr {return null}
         
         if expr.type == "NUMBER" or expr.type == "STRING" {return expr.value}
@@ -465,7 +465,7 @@ func tinylang_execute(var ast) {
     }
     
     // 执行语句
-    func execute_stmt(var stmt) {
+    func execute_stmt(any stmt) {
         switch stmt.type {
             case "PROGRAM" {
                 for stmt.statements to var st {

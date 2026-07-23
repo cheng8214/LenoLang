@@ -80,7 +80,7 @@ async func fetch_with_timeout(string host, int timeout_ms) {
 }
 
 // 简单的异步服务器处理
-async func handle_client(var client, int client_id) {
+async func handle_client(any client, int client_id) {
     io.print("  [服务器] 客户端 " + client_id + " 已连接")
 
     var data = client.recv(1024)

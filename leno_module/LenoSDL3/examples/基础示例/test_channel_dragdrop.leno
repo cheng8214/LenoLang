@@ -19,9 +19,9 @@ use SDL3.Scancode
 
 // ===== 颜色编码 =====
 func encodeColor(int r, int g, int b): int { return (r * 65536) + (g * 256) + b }
-func decodeR(var v): int { var iv = _int(v); return (iv / 65536) % 256 }
-func decodeG(var v): int { var iv = _int(v); return (iv / 256) % 256 }
-func decodeB(var v): int { var iv = _int(v); return iv % 256 }
+func decodeR(any v): int { var iv = _int(v); return (iv / 65536) % 256 }
+func decodeG(any v): int { var iv = _int(v); return (iv / 256) % 256 }
+func decodeB(any v): int { var iv = _int(v); return iv % 256 }
 
 // ===== 子线程：自动生产者 =====
 func auto_producer(Channel ch, int total) {

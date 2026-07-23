@@ -2,7 +2,7 @@
 // 变量 type(x) 需要 _str 或直接 print 输出
 
 // ============ 模式1: var = any ============
-func print_any(var x) {
+func print_any(any x) {
     print("var 模式: " + type(x))
 }
 

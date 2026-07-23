@@ -13,7 +13,7 @@ main() {
     print(test(1, 20, "hey")) // 期望: x=1 y=20 z=hey
 
     // 测试 3: var 参数默认值
-    func test2(var a, var b = 0) {
+    func test2(any a, any b = 0) {
         print(type(a))
         print(type(b))
     }

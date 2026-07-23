@@ -37,7 +37,7 @@ func test_with_closure() {
 }
 
 // 测试在函数内 return 的 switch
-func test_return_in_switch(var val):string {
+func test_return_in_switch(any val):string {
     switch val {
         case is int {
             return "int"

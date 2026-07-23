@@ -1,10 +1,10 @@
 
-export func add(var a, var b)
+export func add(any a, any b)
 {
     return a + b
 }
 
-export func greet(var name)
+export func greet(any name)
 {
     print("Hello, " + name)
 }

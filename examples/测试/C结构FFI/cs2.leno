@@ -20,7 +20,7 @@ export func test() {
 }
 
 // 测试函数：在线程中使用 cstruct
-func test_cstruct_in_thread(var ch) {
+func test_cstruct_in_thread(any ch) {
     // 尝试在子线程中使用 cstruct
     try {
         var s = TEST_STRUCT.malloc()
@@ -38,7 +38,7 @@ func test_cstruct_in_thread(var ch) {
 }
 
 // 测试函数：在线程中使用 ffi
-func test_ffi_in_thread(var ch) {
+func test_ffi_in_thread(any ch) {
     try {
         var kernel32 = ffi.load("kernel32.dll")
         var buffer = ffi.malloc(100)
@@ -63,7 +63,7 @@ func test_ffi_in_thread(var ch) {
 }
 
 // 测试函数：在线程中使用 cstruct from_ptr
-func test_cstruct_from_ptr(var ch) {
+func test_cstruct_from_ptr(any ch) {
     try {
         var kernel32 = ffi.load("kernel32.dll")
         var buffer = ffi.malloc(100)

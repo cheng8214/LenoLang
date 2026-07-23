@@ -10,7 +10,7 @@ main()
 
 func test()
 {
-	func bubble_sort(var arr){
+	func bubble_sort(any arr){
 	    var n = arr.len();
 	    for n - 1 to var i {
 	        for n - i - 1 to var j {

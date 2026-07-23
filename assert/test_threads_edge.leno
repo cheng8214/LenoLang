@@ -47,7 +47,7 @@ main()
 
     // 测试5: 无缓冲通道 channel(0) 同步通讯
     var ch5 = threads.channel(0)
-    var t5 = threads.start(func(var ch){
+    var t5 = threads.start(func(any ch){
         if ch is Channel {
             ch.send(42)
             ch.close()
@@ -61,7 +61,7 @@ main()
 
     // 测试6: Channel 传递 null 值
     var ch6 = threads.channel(10)
-    var t6 = threads.start(func(var ch){
+    var t6 = threads.start(func(any ch){
         if ch is Channel {
             ch.send(null)
             ch.send("real_value")
@@ -81,12 +81,12 @@ main()
 
     // 测试7: 多线程并发写同一 Channel
     var ch7 = threads.channel(100)
-    var t7a = threads.start(func(var ch){
+    var t7a = threads.start(func(any ch){
         if ch is Channel {
             for 10 to var i { ch.send("A" + i) }
         }
     }, ch7)
-    var t7b = threads.start(func(var ch){
+    var t7b = threads.start(func(any ch){
         if ch is Channel {
             for 10 to var i { ch.send("B" + i) }
         }

@@ -4,7 +4,7 @@ import "../数学模块链/geometry.leno" as geo
 import "../类型定义/types.leno" as ty
 
 // 计算圆形面积
-export func circle_area(var radius)
+export func circle_area(any radius)
 {
     return geo.circle_area(radius)
 }
@@ -16,13 +16,13 @@ export func create_rectangle(int x, int y, int w, int h)
 }
 
 // 计算矩形面积
-export func rectangle_area(var rect)
+export func rectangle_area(any rect)
 {
     return ty.rect_area(rect)
 }
 
 // 获取颜色名称
-export func get_color_name(var color)
+export func get_color_name(any color)
 {
     return ty.color_name(color)
 }

@@ -2,7 +2,7 @@ import threads
 import times as ti
 
 // 测试1: 通过参数传递 channel
-func producer(var ch) {
+func producer(any ch) {
     ch.send("hello from thread")
     ch.send(42)
     ch.send(3.14)
@@ -10,7 +10,7 @@ func producer(var ch) {
 }
 
 // 测试2: 多条消息
-func counter(var ch) {
+func counter(any ch) {
     for 5 to var i {
         ch.send(i)
     }
@@ -18,13 +18,13 @@ func counter(var ch) {
 }
 
 // 测试3: 数组消息
-func array_sender(var ch) {
+func array_sender(any ch) {
     ch.send([1, 2, 3, 4, 5])
     ch.close()
 }
 
 // 测试4: 字典消息
-func dict_sender(var ch) {
+func dict_sender(any ch) {
     ch.send({name: "Leno", version: 1})
     ch.close()
 }
@@ -84,7 +84,7 @@ main() {
     print("\n=== 测试5: 双线程通讯 ===")
     var ch5 = threads.channel(10)
 
-    func sender(var ch) {
+    func sender(any ch) {
         for 3 to var i {
             ch.send("消息" + (i + 1))
         }
@@ -92,7 +92,7 @@ main() {
         ch.close()
     }
 
-    func receiver(var ch) {
+    func receiver(any ch) {
         while true {
             var msg = ch.receive()
             print("接收: " + msg)

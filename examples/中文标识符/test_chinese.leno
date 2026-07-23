@@ -1,10 +1,10 @@
 // 测试中文变量名和函数名
 
-func 打招呼(var 名字) {
+func 打招呼(any 名字) {
     return "你好，" + 名字 + "！"
 }
 
-func 计算面积(var 长, var 宽) {
+func 计算面积(any 长, any 宽) {
     return 长 * 宽
 }
 

@@ -1,11 +1,11 @@
 // 函数与闭包测试
-func add(var a, var b) {
+func add(any a, any b) {
     return a + b
 }
 assert_eq(add(3, 4), 7)
 assert_eq(add(1.5, 2.5), 4.0)
 
-func factorial(var n) {
+func factorial(any n) {
     if n <= 1 {
         return 1
     }
@@ -28,8 +28,8 @@ assert_eq(counter(), 1)
 assert_eq(counter(), 2)
 assert_eq(counter(), 3)
 
-func make_adder(var x) {
-    func adder(var y) {
+func make_adder(any x) {
+    func adder(any y) {
         return x + y
     }
     return adder

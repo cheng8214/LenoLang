@@ -473,7 +473,7 @@ func fib_memo_helper(int n, Dict memo) {
 }
 
 // 版本3：迭代实现（最快）
-func fib_iterative(var n) {
+func fib_iterative(any n) {
     if n <= 1 {
         return n
     }
@@ -490,11 +490,11 @@ func fib_iterative(var n) {
 }
 
 // 版本4：尾递归优化
-func fib_tail(var n) {
+func fib_tail(any n) {
     return fib_tail_helper(n, 0, 1)
 }
 
-func fib_tail_helper(var n,var a,var b) {
+func fib_tail_helper(any n,any a,any b) {
     if n == 0 {
         return a
     }

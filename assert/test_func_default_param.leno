@@ -13,7 +13,7 @@ assert_eq(test(1, 20), "x=1 y=20 z=hi")
 assert_eq(test(1, 20, "hey"), "x=1 y=20 z=hey")
 
 print("=== var 默认值推断为 int ===")
-func test_var(var a, var b = 0) {
+func test_var(any a, any b = 0) {
     assert_eq(type(b), "int")
 }
 test_var(42)

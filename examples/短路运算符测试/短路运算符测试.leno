@@ -2,7 +2,7 @@ main()
 {
 	print("=== 短路运算符测试 ===")
 	
-	func sideEffect(var msg) {
+	func sideEffect(any msg) {
 	    print("执行了: " + msg)
 	    return true
 	}

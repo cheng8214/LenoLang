@@ -2,13 +2,13 @@
 
 import "math_utils.leno" as math
 
-export func circle_area(var radius)
+export func circle_area(any radius)
 {
     // 使用导入模块的变量和函数
     return math.multiply(math.PI, math.square(radius))
 }
 
-export func rectangle_area(var width, var height)
+export func rectangle_area(any width, any height)
 {
     return math.multiply(width, height)
 }

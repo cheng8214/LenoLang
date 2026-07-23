@@ -1,5 +1,5 @@
 // 测试1：类型守卫在闭包中
-func test_closure(var a):int {
+func test_closure(any a):int {
     if a is int {
         // 闭包捕获类型守卫变量
         func inner():int {
@@ -11,7 +11,7 @@ func test_closure(var a):int {
 }
 
 // 测试2：is 表达式赋值给变量
-func test_assign(var b):int {
+func test_assign(any b):int {
     var is_int = b is int
     print("b is int: " + is_int)
     
@@ -23,11 +23,11 @@ func test_assign(var b):int {
 }
 
 // 测试3：is 表达式在函数调用中
-func check_type(var x):bool {
+func check_type(any x):bool {
     return x is string
 }
 
-func test_call(var c):int {
+func test_call(any c):int {
     if check_type(c) {
         // 函数返回的 bool 也不能类型收窄
         print("c is string (from func)")
@@ -36,7 +36,7 @@ func test_call(var c):int {
 }
 
 // 测试4：直接类型守卫（可以收窄）
-func test_direct(var d):int {
+func test_direct(any d):int {
     if d is string {
         string s = d  // ✅ 可以收窄
         print("direct guard: " + s)

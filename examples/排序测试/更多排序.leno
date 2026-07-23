@@ -168,7 +168,7 @@ func heap_sort(Array arr):Array[int] {
     return arr;
 }
 
-func heapify(Array arr, var n, var i) {
+func heapify(Array arr, any n, any i) {
     while true {
         var largest = i;
         var left = 2 * i + 1;
@@ -197,7 +197,7 @@ func quick_sort(Array arr):Array[int] {
     return quick_sort_opt(arr, 0, arr.len() - 1)
 }
 
-func quick_sort_opt(Array arr, var left, var right):Array[int] {
+func quick_sort_opt(Array arr, any left, any right):Array[int] {
     // 小数组使用插入排序
     if right - left < 20 {
         return quick_insertion_sort_range(arr, left, right);
@@ -210,7 +210,7 @@ func quick_sort_opt(Array arr, var left, var right):Array[int] {
     return arr;
 }
 
-func partition_opt(Array arr, var left, var right) {
+func partition_opt(Array arr, any left, any right) {
     // 三数取中法选择基准值
     var mid = (left + right) / 2;
     // 确保arr[left] <= arr[mid] <= arr[right]
@@ -257,7 +257,7 @@ func partition_opt(Array arr, var left, var right) {
     return i
 }
 
-func quick_insertion_sort_range(Array arr, var left, var right):Array[int] {
+func quick_insertion_sort_range(Array arr, any left, any right):Array[int] {
     if left >= right {
         return arr
     }
@@ -332,7 +332,7 @@ func radix_sort(Array[int] arr) {
     return arr;
 }
 
-func counting_sort_by_digit(Array[int] arr, var exp) {
+func counting_sort_by_digit(Array[int] arr, any exp) {
     var n = arr.len();
     var output = [];
     for n to var i { output.add(0); }
@@ -376,7 +376,7 @@ func verify_sorted(Array arr) {
 }
 
 // 生成整数随机数组
-func rand_int_array(var min_val,var  max_val,var  size):Array[int] {
+func rand_int_array(any min_val,any  max_val,any  size):Array[int] {
     var arr = [];
     for size to var i {
         arr.add(rand.ints(min_val, max_val));

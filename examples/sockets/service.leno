@@ -4,7 +4,7 @@ import io
 // 聊天服务器 - 面向对象风格
 
 // 处理单个客户端
-func handle_client(var client, string name) {
+func handle_client(any client, string name) {
     io.print("[" + name + "] 连接成功")
 
     // 发送欢迎消息

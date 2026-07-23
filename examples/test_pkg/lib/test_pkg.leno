@@ -5,7 +5,7 @@ export func hello() {
     print("Hello from test_pkg!")
 }
 
-export func add(var a, var b) {
+export func add(any a, any b) {
     return a + b
 }
 

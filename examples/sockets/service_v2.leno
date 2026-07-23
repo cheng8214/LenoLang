@@ -8,7 +8,7 @@ var client_names = []
 var client_counter = 0
 
 // 广播消息
-func broadcast(string msg, var exclude) {
+func broadcast(string msg, any exclude) {
     io.print("[广播] 消息: " + msg.trim() + " 给 " + (clients.len() - 1) + " 个客户端")
     var i = 0
     while i < clients.len() {

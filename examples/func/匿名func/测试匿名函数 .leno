@@ -10,13 +10,13 @@ main() {
     
     // 测试 2: 带参数的匿名函数
     print("\n测试 2: 带参数的匿名函数")
-    var add = func(var a, var b) { return a + b }
+    var add = func(any a, any b) { return a + b }
     print(add(1, 2))
     print(add(10, 20))
     
     // 测试 3: 匿名函数作为参数
     print("\n测试 3: 匿名函数作为参数")
-    apply(func(var x) { return x * 2 }, 5)
+    apply(func(any x) { return x * 2 }, 5)
     
     // 测试 4: 立即执行匿名函数 (IIFE)
     print("\n测试 4: IIFE")
@@ -37,8 +37,8 @@ main() {
     // 测试 6: 匿名函数存储在字典中
     print("\n测试 6: 匿名函数在字典中")
     var ops = {
-        "double": func(var x) { return x * 2 },
-        "triple": func(var x) { return x * 3 }
+        "double": func(any x) { return x * 2 },
+        "triple": func(any x) { return x * 3 }
     }
     print(ops["double"](5))
     print(ops["triple"](5))
@@ -47,6 +47,6 @@ main() {
 }
 
 // 辅助函数：应用函数到值
-func apply(var f, var x) {
+func apply(any f, any x) {
     print(f(x))
 }

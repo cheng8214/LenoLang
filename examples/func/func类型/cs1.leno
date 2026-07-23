@@ -1,4 +1,4 @@
-func make_counter(var start):func():int {
+func make_counter(any start):func():int {
 
     int count=_int(start)
     func test():int {

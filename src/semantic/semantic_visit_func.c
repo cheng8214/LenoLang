@@ -322,6 +322,15 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
         }
     }
 
+    // 7. 检查参数是否使用了 var 类型（参数位置不允许 var，请改用 any）
+    for (int i = 0; i < ast->u.func.pcnt; i++) {
+        if (ast->u.func.param_types[i] && ast->u.func.param_types[i]->kind == TYPE_INFER) {
+            char msg[BUFFER_MEDIUM];
+            snprintf(msg, sizeof(msg), "参数 '%s' 不能使用 var 类型，请改用 any", ast->u.func.params[i]);
+            error_add(ERR_SEMANTIC, ast->line, msg);
+        }
+    }
+
     // ========== 默认参数语义检查 ==========
     int found_default = 0;  // 标记是否已遇到有默认值的参数
     for (int i = 0; i < ast->u.func.pcnt; i++) {

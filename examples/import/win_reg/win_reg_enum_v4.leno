@@ -138,7 +138,7 @@ export var HKEY_USERS          = ffi.ptr_from_int(0x80000003)
 export var HKEY_CURRENT_CONFIG = ffi.ptr_from_int(0x80000005)
 
 // 内部辅助函数：将 HKey enum 值转换为指针
-func getHKeyPtr(var hKey):Ptr {
+func getHKeyPtr(any hKey):Ptr {
     if hKey is Ptr {
         return hKey
     }
@@ -154,7 +154,7 @@ func getHKeyPtr(var hKey):Ptr {
     }
 }
 
-export func errorToString(var errorCode):string {
+export func errorToString(any errorCode):string {
     switch errorCode {
         case WinError.SUCCESS { return "SUCCESS" }
         case WinError.FILE_NOT_FOUND { return "FILE_NOT_FOUND" }
@@ -171,7 +171,7 @@ export func errorToString(var errorCode):string {
 
 // ========== 键操作 ==========
 
-export func openKey(var hKey, string subKey, var samDesired):OpenKeyResult {
+export func openKey(any hKey, string subKey, any samDesired):OpenKeyResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr hResult = ffi.malloc(8)
     try {
@@ -193,7 +193,7 @@ export func openKey(var hKey, string subKey, var samDesired):OpenKeyResult {
     }
 }
 
-export func createKey(var hKey, string subKey, var samDesired):CreateKeyResult {
+export func createKey(any hKey, string subKey, any samDesired):CreateKeyResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr hResult = ffi.malloc(8)
     Ptr disp = ffi.malloc(4)
@@ -222,7 +222,7 @@ export func createKey(var hKey, string subKey, var samDesired):CreateKeyResult {
     }
 }
 
-export func closeKey(var hKey):int {
+export func closeKey(any hKey):int {
     Ptr advapi = ffi.load("advapi32.dll")
     try {
         return ffi.call_int(advapi, "RegCloseKey", hKey)
@@ -231,7 +231,7 @@ export func closeKey(var hKey):int {
     }
 }
 
-export func deleteKey(var hKey, string subKey):int {
+export func deleteKey(any hKey, string subKey):int {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr wSubKey = toWstr(subKey)
     try {
@@ -245,7 +245,7 @@ export func deleteKey(var hKey, string subKey):int {
 
 // ========== 枚举操作 ==========
 
-export func enumSubKeys(var hKey):EnumSubKeysResult {
+export func enumSubKeys(any hKey):EnumSubKeysResult {
     Ptr advapi = ffi.load("advapi32.dll")
     var subKeys = []
     int index = 0
@@ -285,7 +285,7 @@ export func enumSubKeys(var hKey):EnumSubKeysResult {
     }
 }
 
-export func enumValues(var hKey):EnumValuesResult {
+export func enumValues(any hKey):EnumValuesResult {
     Ptr advapi = ffi.load("advapi32.dll")
     var values = []
     int index = 0
@@ -355,7 +355,7 @@ export func enumValues(var hKey):EnumValuesResult {
 
 // ========== 值操作 ==========
 
-export func readString(var hKey, string valueName):ReadStringResult {
+export func readString(any hKey, string valueName):ReadStringResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -401,7 +401,7 @@ export func readString(var hKey, string valueName):ReadStringResult {
     }
 }
 
-export func readExpandString(var hKey, string valueName):ReadExpandStringResult {
+export func readExpandString(any hKey, string valueName):ReadExpandStringResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -464,7 +464,7 @@ export func readExpandString(var hKey, string valueName):ReadExpandStringResult 
     }
 }
 
-export func readDword(var hKey, string valueName):ReadDwordResult {
+export func readDword(any hKey, string valueName):ReadDwordResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -499,7 +499,7 @@ export func readDword(var hKey, string valueName):ReadDwordResult {
     }
 }
 
-export func readQword(var hKey, string valueName):ReadQwordResult {
+export func readQword(any hKey, string valueName):ReadQwordResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -535,7 +535,7 @@ export func readQword(var hKey, string valueName):ReadQwordResult {
     }
 }
 
-export func writeString(var hKey, string valueName, string value):int {
+export func writeString(any hKey, string valueName, string value):int {
     Ptr advapi = ffi.load("advapi32.dll")
     var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
     Ptr wValue = toWstr(value)
@@ -554,7 +554,7 @@ export func writeString(var hKey, string valueName, string value):int {
     }
 }
 
-export func writeExpandString(var hKey, string valueName, string value):int {
+export func writeExpandString(any hKey, string valueName, string value):int {
     Ptr advapi = ffi.load("advapi32.dll")
     var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
     Ptr wValue = toWstr(value)
@@ -573,7 +573,7 @@ export func writeExpandString(var hKey, string valueName, string value):int {
     }
 }
 
-export func writeDword(var hKey, string valueName, int value):int {
+export func writeDword(any hKey, string valueName, int value):int {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr buffer = ffi.malloc(4)
     try {
@@ -593,7 +593,7 @@ export func writeDword(var hKey, string valueName, int value):int {
     }
 }
 
-export func writeQword(var hKey, string valueName, int value):int {
+export func writeQword(any hKey, string valueName, int value):int {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr buffer = ffi.malloc(8)
     try {
@@ -613,7 +613,7 @@ export func writeQword(var hKey, string valueName, int value):int {
     }
 }
 
-export func readBinary(var hKey, string valueName):ReadBinaryResult {
+export func readBinary(any hKey, string valueName):ReadBinaryResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -664,7 +664,7 @@ export func readBinary(var hKey, string valueName):ReadBinaryResult {
     }
 }
 
-export func writeBinary(var hKey, string valueName, Array data):int {
+export func writeBinary(any hKey, string valueName, Array data):int {
     Ptr advapi = ffi.load("advapi32.dll")
     int dataLen = data.len()
     Ptr buffer = ffi.malloc(dataLen)
@@ -689,7 +689,7 @@ export func writeBinary(var hKey, string valueName, Array data):int {
     }
 }
 
-export func readMultiString(var hKey, string valueName):ReadMultiStringResult {
+export func readMultiString(any hKey, string valueName):ReadMultiStringResult {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -757,7 +757,7 @@ export func readMultiString(var hKey, string valueName):ReadMultiStringResult {
     }
 }
 
-export func writeMultiString(var hKey, string valueName, Array multiStrings):int {
+export func writeMultiString(any hKey, string valueName, Array multiStrings):int {
     Ptr advapi = ffi.load("advapi32.dll")
     
     // 计算需要的总大小
@@ -806,7 +806,7 @@ export func writeMultiString(var hKey, string valueName, Array multiStrings):int
     }
 }
 
-export func deleteValue(var hKey, string valueName):int {
+export func deleteValue(any hKey, string valueName):int {
     Ptr advapi = ffi.load("advapi32.dll")
     Ptr wValueName = toWstr(valueName)
     try {
@@ -817,15 +817,15 @@ export func deleteValue(var hKey, string valueName):int {
     }
 }
 
-export func setDefaultValue(var hKey, string value):int {
+export func setDefaultValue(any hKey, string value):int {
     return writeString(hKey, "", value)
 }
 
-export func getDefaultValue(var hKey):ReadStringResult {
+export func getDefaultValue(any hKey):ReadStringResult {
     return readString(hKey, "")
 }
 
-export func flushKey(var hKey):int {
+export func flushKey(any hKey):int {
     Ptr advapi = ffi.load("advapi32.dll")
     try {
         return ffi.call_int(advapi, "RegFlushKey", hKey)
@@ -836,7 +836,7 @@ export func flushKey(var hKey):int {
 
 // ========== 高级操作 ==========
 
-export func keyExists(var hKey, string subKey):bool {
+export func keyExists(any hKey, string subKey):bool {
     var result = openKey(hKey, subKey, KeyAccess.QUERY_VALUE)
     var handle = result.handle
     var errorCode = result.errorCode
@@ -848,13 +848,13 @@ export func keyExists(var hKey, string subKey):bool {
     return errorCode != WinError.FILE_NOT_FOUND and errorCode != WinError.PATH_NOT_FOUND
 }
 
-export func valueExists(var hKey, string valueName):bool {
+export func valueExists(any hKey, string valueName):bool {
     var result = readString(hKey, valueName)
     return result.errorCode == 0
 }
 
 // 递归删除键及其所有子键和值
-export func deleteKeyRecursive(var hKey, string subKey):int {
+export func deleteKeyRecursive(any hKey, string subKey):int {
     // 打开要删除的键
     var openResult = openKey(hKey, subKey, KeyAccess.ALL_ACCESS)
     if openResult.errorCode != WinError.SUCCESS {

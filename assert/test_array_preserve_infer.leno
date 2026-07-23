@@ -24,7 +24,7 @@ main() {
     assert_eq(f3[0], 1.5)
 
     // filter 返回 Array[int]
-    Array[int] evens = nums.filter(func(var x, var i) { return x % 2 == 0 })
+    Array[int] evens = nums.filter(func(any x, any i) { return x % 2 == 0 })
     assert_eq(evens.len(), 2)
 
     print("test_array_preserve_infer passed")

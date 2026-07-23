@@ -3,14 +3,14 @@
 import "math_utils.leno" as math
 import "geometry.leno" as geo
 
-export func cylinder_volume(var radius, var height)
+export func cylinder_volume(any radius, any height)
 {
     // 调用 geometry 模块的函数，而 geometry 内部又调用了 math_utils
     var base_area = geo.circle_area(radius)
     return math.multiply(base_area, height)
 }
 
-export func cylinder_surface_area(var radius, var height)
+export func cylinder_surface_area(any radius, any height)
 {
     var base_area = geo.circle_area(radius)
     var two_bases = math.multiply(2, base_area)

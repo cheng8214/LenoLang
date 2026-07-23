@@ -29,7 +29,7 @@ main() {
     test_status(Status.error)
 }
 
-func test_status(var s) {
+func test_status(any s) {
     switch s {
         case Status.ok {
             print("测试: OK")

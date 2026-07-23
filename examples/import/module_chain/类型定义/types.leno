@@ -57,13 +57,13 @@ export func create_person(string name, int age)
 }
 
 // 计算矩形面积
-export func rect_area(var rect)
+export func rect_area(any rect)
 {
     return rect.width * rect.height
 }
 
 // 获取颜色名称
-export func color_name(var color)
+export func color_name(any color)
 {
     if color == Color.RED {
         return "Red"
@@ -82,7 +82,7 @@ export func color_name(var color)
 }
 
 // 获取状态名称
-export func status_name(var status)
+export func status_name(any status)
 {
     if status == Status.PENDING {
         return "Pending"

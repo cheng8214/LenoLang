@@ -2,10 +2,10 @@
 export var the_value = 42
 export var PI = 3.14
 
-export func add(var a, var b) {
+export func add(any a, any b) {
     return a + b
 }
 
-export func greet(var name) {
+export func greet(any name) {
     return "Hello, " + name
 }

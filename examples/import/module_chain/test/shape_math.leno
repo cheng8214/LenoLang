@@ -23,32 +23,32 @@ export func create_rectangle(int x, int y, int w, int h)
 }
 
 // 计算矩形面积
-export func rectangle_area(var rect)
+export func rectangle_area(any rect)
 {
     return ty.rect_area(rect)
 }
 
 // 计算两个矩形的总面积
-export func total_area(var rect1, var rect2)
+export func total_area(any rect1, any rect2)
 {
     return ty.rect_area(rect1) + ty.rect_area(rect2)
 }
 
 // 创建带颜色的形状
-export func create_colored_rect(int x, int y, int w, int h, var color)
+export func create_colored_rect(int x, int y, int w, int h, any color)
 {
     var rect = new ty.Rectangle(x = x, y = y, width = w, height = h)
     return rect
 }
 
 // 获取颜色名称
-export func get_color_name(var color)
+export func get_color_name(any color)
 {
     return ty.color_name(color)
 }
 
 // 复杂计算：圆形 + 矩形
-export func mixed_shape_area(int radius, var rect)
+export func mixed_shape_area(int radius, any rect)
 {
     var circle = geo.circle_area(radius)
     var rectangle = ty.rect_area(rect)
@@ -67,7 +67,7 @@ export func create_points(int count)
 }
 
 // 计算点数组的总距离（简化版）
-export func total_distance(var points)
+export func total_distance(any points)
 {
     // 使用类型守卫确保 points 是 Point 数组
     if points is Array[Point] {

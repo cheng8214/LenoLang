@@ -1,5 +1,5 @@
 // ✅ 处理 null/非数值的健壮函数
-func safeAdd(var a, var b):int {
+func safeAdd(any a, any b):int {
     // 边界1：检查 null
     if a ==null or b ==null {
         return 0
@@ -15,7 +15,7 @@ func safeAdd(var a, var b):int {
 }
 
 // ✅ 安全转换数组
-func toIntArr(var arr):Array[int] {
+func toIntArr(any arr):Array[int] {
     Array[int] res
     // 边界：检查是否为数组
     if arr not is Array {

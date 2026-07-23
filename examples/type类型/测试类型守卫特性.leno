@@ -7,7 +7,7 @@ main()
     test_any(a)
 }
 
-func test_any(var a)   // a 是 any,虽然传过来是整形，但是参数不会继承调用者，统一是any类型
+func test_any(any a)   // a 是 any,虽然传过来是整形，但是参数不会继承调用者，统一是any类型
 {
     print("类型守卫前: " + type(a))//运行时这里时int
     

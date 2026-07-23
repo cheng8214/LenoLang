@@ -4,31 +4,31 @@ main()
 {
     io.print("=== 测试 map + 匿名函数 ===")
     var arr = [1, 2, 3, 4, 5]
-    var doubled = arr.map(func(var x, var i) { return x * 2 })
+    var doubled = arr.map(func(any x, any i) { return x * 2 })
     io.print(doubled)
 
-    var tripled = arr.map(func(var x, var i) { return x * 3 })
+    var tripled = arr.map(func(any x, any i) { return x * 3 })
     io.print(tripled)
 
     io.print("=== 测试 filter + 匿名函数 ===")
     var nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    var evens = nums.filter(func(var x, var i) { return x % 2 == 0 })
+    var evens = nums.filter(func(any x, any i) { return x % 2 == 0 })
     io.print(evens)
 
-    var odds = nums.filter(func(var x, var i) { return x % 2 == 1 })
+    var odds = nums.filter(func(any x, any i) { return x % 2 == 1 })
     io.print(odds)
 
     io.print("=== 测试 reduce + 匿名函数 ===")
     var data = [1, 2, 3, 4, 5]
-    var sum = data.reduce(func(var acc, var x, var i) { return acc + x }, 0)
+    var sum = data.reduce(func(any acc, any x, any i) { return acc + x }, 0)
     io.print(sum)
 
-    var product = data.reduce(func(var acc, var x, var i) { return acc * x }, 1)
+    var product = data.reduce(func(any acc, any x, any i) { return acc * x }, 1)
     io.print(product)
 
     io.print("=== 链式操作 ===")
-    var result = nums.filter(func(var x, var i) { return x > 3 })
-                     .map(func(var x, var i) { return x * 2 })
+    var result = nums.filter(func(any x, any i) { return x > 3 })
+                     .map(func(any x, any i) { return x * 2 })
     io.print(result)
 
     io.print("=== 匿名函数测试通过! ===")

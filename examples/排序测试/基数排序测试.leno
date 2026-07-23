@@ -19,7 +19,7 @@ func radix_sort(Array[int] arr) {
     return arr;
 }
 
-func counting_sort_by_digit(Array[int] arr, var exp) {
+func counting_sort_by_digit(Array[int] arr, any exp) {
     var n = arr.len();
     var output = [];
     for n to var i { output.add(0); }

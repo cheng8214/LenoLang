@@ -47,7 +47,7 @@ func create_points(int count)
 }
 
 // 测试 1: 遍历数组调用方法
-func test_array_methods(var points)
+func test_array_methods(any points)
 {
     print("=== 测试遍历数组调用方法 ===")
     
@@ -70,7 +70,7 @@ func test_array_methods(var points)
 }
 
 // 测试 2: 计算点之间的距离
-func test_point_distances(var points)
+func test_point_distances(any points)
 {
     print("=== 测试计算点之间的距离 ===")
     
@@ -95,7 +95,7 @@ func test_point_distances(var points)
 }
 
 // 测试 3: 修改点的位置
-func test_move_points(var points)
+func test_move_points(any points)
 {
     print("=== 测试移动点 ===")
     
