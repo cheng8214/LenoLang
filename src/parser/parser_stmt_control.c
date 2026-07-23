@@ -38,6 +38,7 @@ Ast* parse_block_internal(Parser* p) {
 
 Ast* parse_if_stmt(Parser* p) {
     int line = p->lex.current.line;
+    Lexer if_start_lex = p->lex;   // 保存 if 关键字位置，供 if 表达式形式回退
     // 支持 if 和 eif 关键字
     if (p->lex.current.type == TOK_IF || p->lex.current.type == TOK_EIF) {
         lexer_next(&p->lex); // 消费 if/eif
@@ -276,6 +277,15 @@ Ast* parse_if_stmt(Parser* p) {
         // 正常解析条件表达式
         // parse_expression 会自己处理括号
         cond = parse_expression(p);
+    }
+
+    // if 表达式形式：if cond then expr1 else expr2
+    // 出现在语句位置时（如函数体最后一行、独立表达式语句），回退交给
+    // parse_if_expr 解析。codegen 的 gen_if 已按 then/else 节点 kind 区分
+    // 语句块与表达式，因此表达式形式的 AST_IF 在语句位置同样可编译。
+    if (p->lex.current.type == TOK_THEN) {
+        p->lex = if_start_lex;
+        return parse_if_expr(p);
     }
 
     // then 分支必须是代码块 {}

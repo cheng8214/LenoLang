@@ -1,15 +1,11 @@
 // test_modal_dialog.leno — 模态/非模态对话框完整测试
 // 覆盖：模态(不在任务栏) / 非模态(在任务栏) / 嵌套模态(栈) / 闪现消除
 //
-// === 已知问题：if/then/else 表达式解析 ===
-// 以下写法会导致解析错误（then/else 优先级绑定异常）：
-//   func test(): int { if x > 0 then a else b }
-//   func test(): int { if x > 0 then a else b + 1 }
-// 临时变通：改用 if {} 语句块或加括号：
-//   func test(): int { if x > 0 { return a }; return b }
-//   func test(): int { return if (x > 0) then a else b }
-// 触发位置：sdl_window.leno:_modalTop() 曾用表达式形式报语法错误
-// TODO: 修复编译器对 if 表达式 then/else 的优先级处理
+// === if/then/else 表达式解析（已修复） ===
+// 裸 `if cond then a else b` 现可在语句位置解析（parse_if_stmt 遇 then 时
+// 回退交给 parse_if_expr）。修复见 src/parser/parser_stmt_control.c。
+// 复现/验证脚本：examples/验证/repro_if_expr.leno
+// 注意：Leno 不支持裸表达式自动返回，函数需显式 return 返回 if 表达式结果。
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer

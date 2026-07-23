@@ -1,0 +1,26 @@
+// repro_if_expr.leno — 复现/验证 if/then/else 表达式解析
+// 历史问题：裸 `if cond then a else b` 作为语句（函数体、表达式语句）曾报语法错误
+//            "if 语句体必须用大括号 {} 包裹"。现已修复：解析器在语句位置遇到
+//            `then` 时回退交给 parse_if_expr。
+// 注意：Leno 不支持"裸表达式自动返回"，故函数体需用 return 返回 if 表达式结果。
+
+func choose(int x): int { return if x > 0 then x else -x }      // 期望 5 / 3
+func with_prec(int x): int { return if x > 0 then x else x + 100 } // 期望 5 / 97
+func paren_form(): int { return if (true) then 10 else 20 }      // 期望 10
+func nested(): int { return if true then (if true then 1 else 2) else 3 } // 期望 1
+func in_assign(): int {
+    int z = if true then 7 else 8
+    return z
+}
+
+main() {
+    print(choose(5))        // 5
+    print(choose(-3))       // 3
+    print(with_prec(5))     // 5
+    print(with_prec(-3))    // 97  (else 分支应为 (-3)+100，验证优先级)
+    print(paren_form())     // 10
+    print(nested())         // 1
+    print(in_assign())      // 7
+    // 裸 if 表达式语句：仅验证可解析、可运行（结果不返回）
+    if true then print(99) else print(0)   // 99
+}
