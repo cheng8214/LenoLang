@@ -134,7 +134,7 @@
                 }
             }
 
-            // 第一轮：收集所有命名函数定义
+            // 第一轮：收集所有命名函数定义（符号注册 + func_table 预注册，支持前向引用类型推断）
             for (int i = 0; i < ast->u.block.count; i++) {
                 Ast* stmt = ast->u.block.items[i];
                 if (stmt->kind == AST_FUNC_DEF) {
@@ -159,6 +159,8 @@
                             stmt->u.func.ref.name = strdup(existing->name);
                         }
                     }
+                    // 将函数预注册到函数表，使前向引用能通过 func_table_find 找到并推断返回类型
+                    func_table_add(&s->func_table, stmt->u.func.name, stmt);
                 }
             }
             // 第二轮：转换所有函数的参数类型（struct -> cstruct/face）
