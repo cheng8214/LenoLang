@@ -722,10 +722,13 @@ static int main_logic(int argc, char** argv) {
     g_argv = argv;
 
     const char* filePath = NULL;
+    char* joined_path = NULL;  // 动态分配，用于拼接含空格的路径（需在返回前释放）
     
     // 解析参数
     // Leno 内置选项（--pause, --debug 等）在任何位置都生效
     // 第一个非选项参数作为脚本路径，之后的非选项参数传给脚本
+    // 支持含空格的路径：如果首个非选项参数不是有效文件，尝试拼接后续参数
+    int file_arg_start = -1;  // 第一个非选项参数的索引
     for (int i = 1; i < argc; i++) {
         // 先检查是否是 Leno 内置选项（在任何位置都处理）
         if (strcmp(argv[i], "--pause") == 0) {
@@ -759,9 +762,8 @@ static int main_logic(int argc, char** argv) {
 
         // 非选项参数
         if (argv[i][0] != '-') {
-            if (filePath == NULL) {
-                // 第一个非选项参数是脚本路径
-                filePath = argv[i];
+            if (file_arg_start < 0) {
+                file_arg_start = i;
             }
             // 后续非选项参数保留给脚本（由 _args() 获取）
             continue;
@@ -772,20 +774,97 @@ static int main_logic(int argc, char** argv) {
         printHelp(argv[0]);
         return 64;
     }
+
+    // 尝试拼接非选项参数以支持含空格的文件路径
+    // 从 file_arg_start 开始，逐步拼接更多参数，直到找到存在的文件
+    if (file_arg_start >= 0) {
+        char buf[MAX_PATH_LEN];
+        buf[0] = '\0';
+        filePath = NULL;
+        for (int i = file_arg_start; i < argc; i++) {
+            // 跳过已被识别为选项的参数
+            if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
+                strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
+                strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                strcmp(argv[i], "--no-cache") == 0 ||
+                strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
+                strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||
+                strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+                continue;
+            }
+            if (argv[i][0] == '-') continue;  // 跳过选项参数
+
+            if (buf[0] != '\0') {
+                size_t cur_len = strlen(buf);
+                if (cur_len + 1 < MAX_PATH_LEN) {
+                    buf[cur_len] = ' ';
+                    buf[cur_len + 1] = '\0';
+                }
+            }
+            size_t remain = MAX_PATH_LEN - strlen(buf) - 1;
+            strncat(buf, argv[i], remain);
+
+            // 检查拼接后的路径是否存在（文件或目录）
+#ifdef _WIN32
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, buf, -1, NULL, 0);
+            if (wlen > 0) {
+                wchar_t* wcheck = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+                if (wcheck) {
+                    MultiByteToWideChar(CP_UTF8, 0, buf, -1, wcheck, wlen);
+                    DWORD attrs = GetFileAttributesW(wcheck);
+                    free(wcheck);
+                    if (attrs != INVALID_FILE_ATTRIBUTES) {
+                        joined_path = strdup(buf);
+                        filePath = joined_path;
+                        break;
+                    }
+                }
+            }
+#else
+            struct stat st;
+            if (stat(buf, &st) == 0) {
+                joined_path = strdup(buf);
+                filePath = joined_path;
+                break;
+            }
+#endif
+        }
+        // 如果拼接后仍未找到有效路径，使用第一个非选项参数
+        if (!filePath) {
+            for (int i = file_arg_start; i < argc; i++) {
+                if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
+                    strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
+                    strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                    strcmp(argv[i], "--no-cache") == 0 ||
+                    strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
+                    strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||
+                    strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+                    continue;
+                }
+                if (argv[i][0] == '-') continue;
+                filePath = argv[i];
+                break;
+            }
+        }
+    }
     
     if (initMode) {
+        int result;
         if (filePath) {
             /* 如果参数包含路径分隔符，当作目录路径；否则在当前目录下创建子目录 */
             int is_path = strchr(filePath, '/') || strchr(filePath, '\\');
             if (is_path) {
-                return package_init(filePath, NULL);
+                result = package_init(filePath, NULL);
             } else {
-                return package_init(filePath, filePath);
+                result = package_init(filePath, filePath);
             }
         } else {
-            return package_init(".", NULL);
+            result = package_init(".", NULL);
         }
+        free(joined_path);
+        return result;
     } else if (installMode) {
+        int result;
         package_cache_ensure();
         if (filePath) {
             /* leno --install <git-url> 或 <本地目录路径> */
@@ -797,30 +876,35 @@ static int main_logic(int argc, char** argv) {
                 strncmp(filePath, "http://", 7) == 0 ||
                 strstr(filePath, "git@")) {
                 /* git 源 → 远程安装 */
-                return package_install_from_git(filePath);
+                result = package_install_from_git(filePath);
             } else {
                 /* 本地目录路径 → 本地安装 */
-                return package_install_from_dir(filePath);
+                result = package_install_from_dir(filePath);
             }
         } else {
             /* leno --install - 从当前目录的 leno.toml 安装所有依赖 */
             char toml_path[MAX_PATH_LEN];
             snprintf(toml_path, sizeof(toml_path), "leno.toml");
-            return package_install_deps(toml_path);
+            result = package_install_deps(toml_path);
         }
+        free(joined_path);
+        return result;
     } else if (filePath == NULL) {
         // 没有文件参数，显示帮助信息
         printHelp(argv[0]);
         // 暂停以便用户查看帮助信息
         printf("\n按任意键继续...");
         getchar();
+        free(joined_path);
         return 0;
     } else {
         // 文件模式
-        return lenolang_run_file(filePath);
+        int result = lenolang_run_file(filePath);
+        free(joined_path);
+        return result;
     }
     
-    return 0;
+    free(joined_path);
 }
 
 #ifdef _WIN32
