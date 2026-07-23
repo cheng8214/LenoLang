@@ -123,18 +123,18 @@ main() {
 | 场景 | 写法 | 实际类型 | 说明 |
 | -------- | --------------- | ----- | ------------------------- |
 | **变量声明** | `var x = 1` | `int` | ✅ 根据右边推断为具体类型 |
-| **函数参数** | `func f(var x)` | `any` | ⚠️ 参数 `var` 保持 `any`，不推断！ |
+| **函数参数** | `func f(any x)` | `any` | ⚠️ 参数必须用 `any`，不推断！ |
 | **函数返回** | `func f()` | `any` | 省略 `:type` 则返回 `any` |
 
 **关键区别**：
 
 - 变量 `var` = **推断模式**：右边是什么，`var` 就是什么
-- 参数 `var` = **动态模式**：永远是 `any`，不根据调用推断
-- `var` ≠ `any`：`var` 只能用在变量声明/参数的**顶层**，不能作为复合类型的类型参数
+- 参数 `any` = **动态模式**：永远是 `any`，不根据调用推断（参数位置不允许用 `var`，必须用 `any`）
+- `var` ≠ `any`：`var` 只能用在变量声明的**顶层**，不能作为复合类型的类型参数
 
 ```leno
 var x = 1              // x 是 int（推断）
-func test(var x) {     // x 是 any（不推断！）
+func test(any x) {     // x 是 any（不推断！）
     var y = x          // y 也是 any（因为 x 是 any）
 }
 
@@ -625,11 +625,11 @@ bool b = opts.get("active", false) // 默认值 false → 推断返回 bool
 
 // ✅ Array 泛型方法自动推断返回类型
 Array[int] nums = [1, 2, 3]
-Array[int] evens = nums.filter(func(var x, var i) { return x % 2 == 0 })   // 保持型 → Array[int]
+Array[int] evens = nums.filter(func(any x, any i) { return x % 2 == 0 })   // 保持型 → Array[int]
 Array[int] copy = nums.copy()                                                 // 保持型 → Array[int]
-Array[string] strs = nums.map(func(var x, var i) { return _str(x) })         // 变换型 → Array[string]
-Array[bool] flags = nums.map(func(var x, var i) { return x > 2 })            // 变换型 → Array[bool]
-Array[float] halves = nums.map(func(var x, var i) { return _float(x) / 2 }) // 变换型 → Array[float]
+Array[string] strs = nums.map(func(any x, any i) { return _str(x) })         // 变换型 → Array[string]
+Array[bool] flags = nums.map(func(any x, any i) { return x > 2 })            // 变换型 → Array[bool]
+Array[float] halves = nums.map(func(any x, any i) { return _float(x) / 2 }) // 变换型 → Array[float]
 ```
 
 ### 类型转换
@@ -1210,7 +1210,7 @@ main() {
 > - 不确定时：函数参数等无法追踪 → 回退为 `bool`
 >
 > ```leno
-> func test(var x) {
+> func test(any x) {
 >     var r = x and 2     // r 推断为 bool（编译器不确定 x 的值）
 > }
 > ```
@@ -1420,7 +1420,7 @@ main() {
 > **⚠️ 注意：类型守卫只在 if 块内有效**
 >
 > ```leno
-> func test(var x) {
+> func test(any x) {
 >     if x is int {
 >         int n = x     // ✅ 守卫内 x 是 int
 >     }
@@ -1431,7 +1431,7 @@ main() {
 > **⚠️ 注意：`or`** **条件不收窄类型**
 >
 > ```leno
-> func test(var x, var y) {
+> func test(any x, any y) {
 >     if x is int or y is string {
 >         int n = x      // ❌ 报错：or 条件下不收窄
 >     }
@@ -1502,7 +1502,7 @@ if data.inner is Dict {
 **1. `is` 表达式赋值给变量后不能收窄：**
 
 ```leno
-func test(var b) {
+func test(any b) {
     var is_int = b is int   // is_int 是 bool 变量
     if is_int {
         int n = b           // ❌ 无法收窄，b 仍是 any
@@ -1513,21 +1513,21 @@ func test(var b) {
 **2. 函数返回的 bool 不能用于收窄：**
 
 ```leno
-func check_type(var x):bool {
+func check_type(any x):bool {
     return x is string
 }
 
-func test(var c) {
+func test(any c) {
     if check_type(c) {
         string s = c        // ❌ 无法收窄，c 仍是 any
     }
 }
 ```
 
-**3. 闭包内 var 参数保持 any（无守卫时不收窄）：**
+**3. 闭包内 any 参数保持 any（无守卫时不收窄）：**
 
 ```leno
-func test(var x) {
+func test(any x) {
     func inner() {
         print(type(x))      // "any"
         int a = x           // ❌ 错误：无法将 any 赋值给 int
@@ -1537,7 +1537,7 @@ func test(var x) {
 test(42)
 ```
 
-> **原因**：闭包捕获 `var` 参数时，如果没有类型守卫，`x` 保持 `any` 类型。
+> **原因**：闭包捕获 `any` 参数时，如果没有类型守卫，`x` 保持 `any` 类型。
 
 #### `is Array` 的特殊行为
 
@@ -1555,7 +1555,7 @@ if arr is Array {         // ✅ 匹配成功
 **多分支数组类型守卫**（用泛型数组类型收窄）：
 
 ```leno
-func process(var arr) {
+func process(any arr) {
     if arr is Array[int] {           // 检查是否为 int 数组
         arr.add(1)                   // ✅ 可以添加 int
     } else if arr is Array[string] { // 检查是否为 string 数组
@@ -1659,7 +1659,7 @@ main() {
 **值匹配和类型匹配可以混合使用：**
 
 ```leno
-func process(var x) {
+func process(any x) {
     switch x {
         case 0 {
             print("零")
@@ -1698,7 +1698,7 @@ struct Rect impl Shape {
     func area():float { return _width * _height }
 }
 
-func describe(var s) {
+func describe(any s) {
     switch s {
         case is Circle {
             print("圆形，面积: " + s.area())
@@ -1930,7 +1930,7 @@ main() {
 在排序算法中使用：
 
 ```leno
-func bubble_sort(var arr) {
+func bubble_sort(any arr) {
     var n = arr.len()
     for n - 1 to var i {
         for n - i - 1 to var j {
@@ -2063,8 +2063,8 @@ for d to key, value {
 ### 函数定义
 
 ```leno
-// 基本函数
-func add(var a, var b) {
+// 基本函数（推荐：参数写具体类型）
+func add(int a, int b):int {
     return a + b
 }
 
@@ -2084,10 +2084,26 @@ main() {
 }
 ```
 
-> **⚠️ 注意：`var`** **参数永远是** **`any`，不会根据调用推断类型**
+> **⚠️ 注意：参数尽量写具体类型，避免裸 `any`**
 >
 > ```leno
-> func test(var x) {
+> // ✅ 推荐：写具体类型
+> func add(int a, int b):int { return a + b }
+>
+> // ⚠️ 不推荐：裸 any 参数不做类型检查，运行时可能出错
+> func add(any a, any b) { return a + b }    // add("a", "b") 不会编译报错，但运行时可能异常
+>
+> // ✅ 如果必须用 any，请加类型守卫
+> func add(any a, any b) {
+>     if a is int and b is int { return a + b }
+>     return 0
+> }
+> ```
+>
+> `any` **参数永远是** **`any`，不会根据调用推断类型**：
+>
+> ```leno
+> func test(any x) {
 >     int a = x    // ❌ 报错：any 不能赋给 int
 > }
 > test(1)           // x 内部仍然是 any，不是 int
@@ -2166,20 +2182,20 @@ main() {
 > func bad(int x = 10, int y) { }      // ❌ 默认参数不能在必选参数前面
 > func bad2(int x, int y = 3.14) { }   // ❌ float 不能赋给 int（降级）
 >
-> func ok(var a, var b = 10) {
+> func ok(any a, any b = 10) {
 >     a         // 编译期 any（无默认值，不推断）
->     b         // 编译期 int（从默认值 10 推断）
+>     b         // 编译期 int（从默认值 10 收窄）
 > }
 > ```
 
 ### var 速查：变量 vs 参数
 
-**`var` 在不同场景含义完全不同：**
+**`var` 和 `any` 在不同场景含义完全不同：**
 
 | 场景 | 写法 | 实际类型 | 说明 |
 |------|------|------|------|
 | **变量声明** | `var x = 1` | `int` | ✅ 根据右边推断具体类型 |
-| **函数参数** | `func f(var x)` | `any` | ⚠️ 参数 `var` 保持 `any`，不推断！ |
+| **函数参数** | `func f(any x)` | `any` | ⚠️ 参数必须用 `any`，不推断！ |
 | **函数返回** | `func f()` | `any` | 省略 `:type` 则返回 `any` |
 
 **选择口诀：**
@@ -2191,9 +2207,9 @@ main() {
 | 默认参数 | `int y = 10` | "默认值放末尾" |
 | 返回 | `:int` / `:Array[int]` | "返回要声明" |
 
-**var 参数 vs 具体类型参数：**
+**any 参数 vs 具体类型参数：**
 
-| 特性 | 具体类型 | var |
+| 特性 | 具体类型 | any |
 |------|:---:|:---:|
 | 类型检查 | 编译期 | 运行期 |
 | 字段访问 | ✅ | ❌ |
@@ -2201,7 +2217,7 @@ main() {
 | 索引访问 | ✅ | ✅ |
 | 比较运算 | ✅ | ✅ |
 
-> 需要访问 struct 字段或调用方法 → 具体类型或 `is` 收窄。只需打印/比较 → 可用 var。
+> 需要访问 struct 字段或调用方法 → 具体类型或 `is` 收窄。只需打印/比较 → 可用 any，但仍建议写具体类型更安全。
 
 **`any` 的编译时 vs 运行时：**
 
@@ -2217,7 +2233,7 @@ main() {
 | `any` 收窄后调用 | `if x is Array { x.add(1) }` | ✅ | `is` 守卫收窄后可用 |
 
 ```leno
-func fib(var n) {        // n 是 any，但运行时实际是 int
+func fib(any n) {        // n 是 any，但运行时实际是 int
     if n <= 1 {          // ✅ 可以比较，运行时检查
         return n
     }
@@ -2242,10 +2258,10 @@ fib(10)  // 正常工作，返回 55
 
 ### 常见错误及修复
 
-#### ❌ 错误 1：var 参数直接赋给具体类型
+#### ❌ 错误 1：any 参数直接赋给具体类型
 
 ```leno
-func test(var c) {
+func test(any c) {
     int a = c    // 报错：any 不能赋给 int
 }
 ```
@@ -2254,7 +2270,7 @@ func test(var c) {
 
 ```leno
 // 方案1：显式转换（确保你知道 c 是什么）
-func test(var c) {
+func test(any c) {
     int a = _int(c)
 }
 
@@ -2288,7 +2304,7 @@ int x = getValue()     // ✅ 直接可用
 #### ❌ 错误 3：any 类型不能直接调用方法
 
 ```leno
-func process(var obj) {
+func process(any obj) {
     obj.add(1)           // ❌ 报错：不能在 any 类型上调用方法 'add'
     obj.len()            // ❌ 报错：不能在 any 类型上调用方法 'len'
 }
@@ -2298,7 +2314,7 @@ func process(var obj) {
 
 ```leno
 // 方案1：使用 is 类型收窄（推荐，安全）
-func process(var obj) {
+func process(any obj) {
     if obj is Array[int] {
         obj.add(1)       // ✅ 守卫内 obj 是 Array[int]
     }
@@ -2313,7 +2329,7 @@ func process(Array[int] obj) {
 }
 
 // 方案3：使用 _ 显式转换（临时方案，不推荐）
-func process(var obj) {
+func process(any obj) {
     _int(obj)            // 只转值，不改变类型
     // obj.add(1)         // ❌ obj 仍是 any
 }
@@ -2391,7 +2407,7 @@ var my_add = add       // 函数赋值给变量
 print(my_add(3, 4))    // 7
 
 // 函数作为参数（高阶函数）
-func apply_operation(int x, int y, var operation) {
+func apply_operation(int x, int y, any operation) {
     return operation(x, y)
 }
 
@@ -2399,7 +2415,7 @@ print(apply_operation(5, 3, add))   // 8
 print(apply_operation(5, 3, mul))   // 15
 
 // 函数作为返回值
-func get_operation(var op_name) {
+func get_operation(any op_name) {
     if op_name == "add" {
         return add
     } else if op_name == "mul" {
@@ -2442,11 +2458,11 @@ var add = func(int a, int b) { return a + b }
 print(add(1, 2))        // 3
 
 // 匿名函数作为参数（高阶函数）
-func apply(var f, var x) {
+func apply(any f, any x) {
     return f(x)
 }
 
-print(apply(func(var x) { return x * 2 }, 5))   // 10
+print(apply(func(any x) { return x * 2 }, 5))   // 10
 
 // 匿名函数作为返回值
 func make_adder(int n) {
@@ -2801,13 +2817,13 @@ Leno 提供三种参数声明方式，按需选择：
 
 | 模式 | 语法 | 类型检查 | 适用场景 |
 |------|------|:---:|------|
-| **var** | `func f(var x)` | ❌ 编译期不检查 | 任意类型输入，运行时自行处理 |
+| **any** | `func f(any x)` | ❌ 编译期不检查 | 任意类型输入，运行时自行处理 |
 | **泛型 [T]** | `func f[T](T x)` | ✅ 调用时推断 | 多类型但需类型安全 |
 | **具体类型** | `func f(int x)` | ✅ 编译期严格 | 确定类型，无须多态 |
 
 ```leno
-// var: 完全动态，接受任何类型
-func print_any(var x) {
+// any: 完全动态，接受任何类型
+func print_any(any x) {
     print(type(x))           // 运行时才能知道类型
 }
 print_any(42)                // int
@@ -3252,7 +3268,7 @@ points.add(new Point(x = 3, y = 4))
 points.add(new Point(x = 6, y = 8))
 
 // 使用 Array[Point] 类型守卫
-func process_points(var points) {
+func process_points(any points) {
     if points is Array[Point] {
         // 在类型守卫内部，points[0] 被识别为 Point 类型
         var p = points[0]
@@ -3282,8 +3298,8 @@ struct Student {
     int age = 0
 }
 
-func process(var obj) {
-    // ❌ 直接访问会报错：var 无法识别字段
+func process(any obj) {
+    // ❌ 直接访问会报错：any 无法识别字段
     // print(obj.name)
 
     // ✅ 使用类型守卫收窄类型
@@ -3548,16 +3564,16 @@ struct Class {
 
 > **建议**：如果字段是需要经常操作的集合类型，使用 `[]` 或 `{}` 作为默认值，避免 null 检查。
 
-### 为什么 struct 参数不能用 var？
+### 为什么 struct 参数不能用 any？
 
-`var` 参数没有 struct 定义信息，无法访问字段：
+`any` 参数没有 struct 定义信息，无法访问字段：
 
 | 参数类型 | 能否访问字段 | 说明 |
 |---------|:---:|------|
 | `LinkedList list` | ✅ | 编译器知道结构，生成字段访问指令 |
-| `var list` | ❌ | `any` 类型，没有 struct 定义，无法识别 `.head` |
+| `any list` | ❌ | `any` 类型，没有 struct 定义，无法识别 `.head` |
 
-需要访问 struct 字段 → 用**具体类型**参数。只需要打印、比较、索引 → 可以用 `var`。
+需要访问 struct 字段 → 用**具体类型**参数。只需要打印、比较、索引 → 可以用 `any`。
 
 #### 链表示例
 
@@ -3587,7 +3603,7 @@ func list_add(LinkedList list, int value) {
     list.count = list.count + 1
 }
 
-// ❌ func list_add(var list, int value) — 不行！list.head 无法识别
+// ❌ func list_add(any list, int value) — 不行！list.head 无法识别
 ```
 
 ### 泛型结构体
@@ -3864,9 +3880,12 @@ print(chained.value)    // 168
 > strict[string]("a", "b")   // ✅ OK
 > ```
 >
-> 如果需要灵活类型，使用 `var` 参数：
+> 如果需要灵活类型，使用 `any` 参数（但建议加类型守卫）：
 > ```leno
-> func flexible(var a, var b) { ... }   // 接受任意类型组合
+> func flexible(any a, any b) {
+>     if a is int and b is int { return a + b }
+>     return 0
+> }
 > ```
 
 > **⚠️ 注意 5：方法参数数量不匹配也会报错**
@@ -4479,12 +4498,12 @@ struct Node {
 }
 ```
 
-**Q: 为什么 var 参数不能访问 struct 字段？**
+**Q: 为什么 any 参数不能访问 struct 字段？**
 
-A: `var` 参数类型为 `any`，编译器不知道具体类型，无法生成字段访问指令：
+A: `any` 参数类型为 `any`，编译器不知道具体类型，无法生成字段访问指令：
 
 ```leno
-func test(var list) {
+func test(any list) {
     list.head = null    // ❌ 编译器不知道 list 是什么类型
 }
 
@@ -4500,7 +4519,7 @@ A: `any` 类型在编译期没有类型信息，编译器无法验证方法是�
 索同名方法碰运气，导致不确定性行为。新版强制要求显式收窄：
 
 ```leno
-func test(var obj) {
+func test(any obj) {
     obj.add(1)          // ❌ 编译错误：不能在 any 上调用方法
 
     // 修复1：is 类型收窄
@@ -5446,20 +5465,20 @@ main() {
 
     // map: 映射转换（返回新数组）
     var nums = [1, 2, 3, 4, 5]
-    var doubled = nums.map(func(var x, var i) { return x * 2 })
+    var doubled = nums.map(func(any x, any i) { return x * 2 })
     print(doubled)      // [2, 4, 6, 8, 10]
 
     // filter: 过滤元素（返回新数组）
-    var evens = nums.filter(func(var x, var i) { return x % 2 == 0 })
+    var evens = nums.filter(func(any x, any i) { return x % 2 == 0 })
     print(evens)        // [2, 4]
 
     // reduce: 累积计算
-    var sum = nums.reduce(func(var acc, var x, var i) { return acc + x }, 0)
+    var sum = nums.reduce(func(any acc, any x, any i) { return acc + x }, 0)
     print(sum)          // 15
 
     // 链式调用
-    var result = nums.filter(func(var x, var i) { return x > 2 })
-                     .map(func(var x, var i) { return x * 10 })
+    var result = nums.filter(func(any x, any i) { return x > 2 })
+                     .map(func(any x, any i) { return x * 10 })
     print(result)       // [30, 40, 50]
 }
 ```
@@ -6062,7 +6081,7 @@ main() {
 // math_utils.leno
 export const PI = 3.14156      // 导出常量（不可修改）
 
-export func add(var a, var b) {
+export func add(int a, int b):int {
     return a + b
 }
 
@@ -7476,7 +7495,7 @@ main() {
 import threads
 
 main() {
-    var t = threads.start(func(var name, var age){
+    var t = threads.start(func(any name, any age){
         print($"name={name}, age={age}")
     }, "Leno", 3)
     t.join()
@@ -7636,7 +7655,7 @@ main() {
     var ch = threads.channel(10)
 
     // 子线程发送数据
-    var t = threads.start(func(var ch){
+    var t = threads.start(func(any ch){
         ch.send("from child")
         ch.close()
     }, ch)
@@ -7658,7 +7677,7 @@ main() {
     var ch = threads.channel(0)
 
     // 子线程发送（会阻塞直到主线程接收）
-    var t = threads.start(func(var ch){
+    var t = threads.start(func(any ch){
         ch.send(42)
     }, ch)
 
@@ -7806,11 +7825,11 @@ import threads
 main() {
     var ch = threads.channel(100)
 
-    var t1 = threads.start(func(var ch){
+    var t1 = threads.start(func(any ch){
         for 10 to var i { ch.send("A" + i) }
     }, ch)
 
-    var t2 = threads.start(func(var ch){
+    var t2 = threads.start(func(any ch){
         for 10 to var i { ch.send("B" + i) }
     }, ch)
 
@@ -8230,7 +8249,7 @@ cstruct TEST_STRUCT {
 }
 
 // 在线程中使用 cstruct
-func thread_worker(var ch) {
+func thread_worker(any ch) {
     try {
         var s = TEST_STRUCT.malloc()
         s.field1 = 100
@@ -8268,7 +8287,7 @@ main() {
 
 ```leno
 // ✅ 正确：每个线程独立使用 cstruct
-func worker(var ch) {
+func worker(any ch) {
     var s = TEST_STRUCT.malloc()  // 子线程独立分配
     s.field1 = 123
     ch.send(s.field1)  // 发送数据，不是实例
@@ -8276,7 +8295,7 @@ func worker(var ch) {
 }
 
 // ❌ 错误：不要尝试共享实例
-func bad_worker(var s, var ch) {
+func bad_worker(any s, any ch) {
     s.field1 = 123  // 不要传递实例到线程
 }
 ```
@@ -8597,7 +8616,7 @@ lenolang program.leno
 |------|------|
 | 导入线程模块 | `import threads` |
 | 创建线程 | `threads.start(func(){ })` |
-| 线程传参 | `threads.start(func(var x){ }, x)` |
+| 线程传参 | `threads.start(func(any x){ }, x)` |
 | 等待线程 | `t.join()` |
 | 线程状态 | `t.state()` → `"running"` / `"done"` / `"error"` |
 | 线程休眠 | `threads.sleep(ms)` |
