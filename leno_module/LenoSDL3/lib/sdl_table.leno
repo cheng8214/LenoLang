@@ -779,7 +779,7 @@ export struct Table impl Widget {
             else if ri == _hoverRow { rr = _hovR; rg = _hovG; rb = _hovB }
             else if _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
             r.setColor(rr, rg, rb, 255)
-            r.fillRect(x, ry, w, _rowH)
+            r.fillRect(x, ry, w, _rowH + 1.0)   // +1 覆盖亚像素间隙，防止行间闪烁
             if ri < _rows.len() {
                 var row = _rows[ri]
                 for 0 : _ncols - 1 to c {
