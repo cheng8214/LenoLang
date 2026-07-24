@@ -1,0 +1,53 @@
+// test_tray.leno — 系统托盘功能测试
+// 托盘回调依赖 SDL 事件循环，必须通过 win.run() 驱动
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.(Tray, TrayMenu, Event, Renderer, Scancode)
+
+main() {
+    var win = SDL3.createWindow({title: "SystemTray 测试", w: 400, h: 300})
+    if not win.ok { return }
+
+    Tray tray = SDL3.createTray({ tooltip: "Leno Tray Test" })
+    print("托盘创建: " + (tray != null))
+    if tray == null { return }
+
+    TrayMenu menu = tray.getMenu()
+    bool _exitFlag = false
+
+    menu.addButton("显示消息", func() {
+        SDL3.showMessageBox("托盘测试", "你点击了按钮！", 0)
+    })
+    print("按钮 OK")
+
+    menu.addCheckbox("自动启动", false, func() {
+        print("[托盘] 复选框被点击")
+    })
+    print("复选框 OK")
+
+    menu.addSeparator()
+    print("分隔线 OK")
+
+    var sub = menu.addSubmenu("更多")
+    if sub != null {
+        sub.addButton("关于", func() {
+            SDL3.showMessageBox("托盘测试", "Leno Tray Demo v0.1", 0)
+        })
+        sub.addButton("退出", func() {
+            _exitFlag = true
+        })
+    }
+    print("子菜单: " + (sub != null))
+    print("右键托盘图标 -> 展开菜单测试 (Esc 或 '更多→退出')")
+
+    win.run(
+        func(Event e): bool {
+            if _exitFlag { tray.destroy(); return false }
+            if e.isQuit() or e.isWindowClose() { tray.destroy(); return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { tray.destroy(); return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+        }
+    )
+}
