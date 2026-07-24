@@ -91,9 +91,11 @@ export struct TrayMenu {
         return m
     }
 
-    // 分隔符：Windows 托盘菜单无原生分隔线，用禁用文字模拟
+    // 分隔符：label 传 null，SDL3 即渲染为原生分隔线（flags 忽略）
     func addSeparator(): Ptr[u8] {
-        return _insert("────────", TrayEntryFlag.BUTTON | TrayEntryFlag.DISABLED, -1)
+        if _ptr == null { return null }
+        return _lib.SDL_InsertTrayEntryAt(_ptr, -1, null, 0)
+    }
     }
 
     func removeEntry(Ptr[u8] entry) {
