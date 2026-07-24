@@ -165,8 +165,8 @@ main() {
 
     // 链式集合操作
     var result = [1, 2, 3, 4, 5]
-        .filter(func(var x, var i) { return x % 2 == 0 })
-        .map(func(var x, var i) { return x * 10 })
+        .filter(func(any x, any i) { return x % 2 == 0 })
+        .map(func(any x, any i) { return x * 10 })
     print(result)  // [20, 40]
 
     // 异常处理
