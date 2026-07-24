@@ -200,7 +200,7 @@ export struct BarChart impl Widget {
             float bx = plotX + slot * i + (slot - bw) / 2.0
             float by = plotY + plotH - vh
             Array[int] c = _palette(i)
-            if i == hi { r.setColor(c[0], c[1], c[2], 255) } else { r.setColor(c[0], c[1], c[2], 210) }
+            if i == hi { r.setColor(c[0], c[1], c[2], 255) } else { r.setColor(c[0], c[1], c[2], 255) }
             r.fillRect(bx, by, bw, vh)
         }
 

@@ -347,10 +347,10 @@ export struct Renderer {
         int segs = _int(span / 6.0)
         if segs < 6 { segs = 6 }
         if segs > 120 { segs = 120 }
-        var vcnt = (segs + 1) * 3
+        var vcnt = segs * 3
         var verts = SDL_Vertex.malloc_array(vcnt)
         float d2r = 3.14159265 / 180.0
-        for 0 : segs to i {
+        for 0 : segs - 1 to i {
             float aa = a0 + span * i / _float(segs)
             float ab = a0 + span * (i + 1) / _float(segs)
             int vi = i * 3
@@ -634,7 +634,7 @@ export struct Renderer {
             // 若把多条独立线段塞进同一数组，相邻线段端点会被斜线相连 -> 出现多余斜线。
             // 因此逐条用 SDL_RenderLine 提交：既保留缓冲收集（减少调用方每帧提交次数），
             // 又保证每条线段彼此独立、不相连。
-            for 0 : _bxLineN to i {
+            for 0 : _bxLineN - 1 to i {
                 int off = i * 16
                 float lx1 = ffi.read_float(_bxLine, off)
                 float ly1 = ffi.read_float(_bxLine, off + 4)
