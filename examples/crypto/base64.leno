@@ -7,8 +7,8 @@ import strings
 var ENCODE_TABLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 // 位掩码常量
-int MASK_3F = 0x3F
-int MASK_FF = 0xFF
+int MASK_3F = 0x3F  // 6 位掩码
+int MASK_FF = 0xFF  // 8 位掩码
 
 // 从编码表取一个字符（0-based 索引）
 // 用 byte() + strings.char() 避免 slice 分配新字符串
@@ -198,7 +198,7 @@ main() {
         i += 1
     }
 
-    print("标准测试: " + _str(pass) + "/" + _str(tests.len()) + " 通过")
+    print("标准测试: " + pass + "/" + tests.len() + " 通过")
     print("")
 
     // 测试 2：Hello World

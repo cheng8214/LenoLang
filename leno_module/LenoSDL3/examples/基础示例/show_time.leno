@@ -1,30 +1,33 @@
-﻿// show_time.leno - 在窗口中实时显示当前时间
+// show_time.leno — 模拟时钟（时针 / 分针 / 秒针）
+// 用 maths 计算指针角度，SDL 绘制表盘与指针；手动循环逐帧刷新。
 import "../../lib/SDL3.leno" as SDL3
+import maths
 import times
 use SDL3.Scancode
 use SDL3.WindowFlag
 
+// 角度约定：12 点方向为正上方，顺时针为正。
+// 指针末端（角度 θ 弧度，自 12 点顺时针）：
+//   x = cx + L*sin(θ),  y = cy - L*cos(θ)
+func _tipX(float cx, float L, float theta): float { return cx + L * maths.sin(theta) }
+func _tipY(float cy, float L, float theta): float { return cy - L * maths.cos(theta) }
+
 main() {
-    var win = SDL3.createWindow({title: "实时时间显示 - SDL3_ttf 文字测试", w: 600, h: 300, flags: WindowFlag.HIGH_PIXEL_DENSITY})
+    var win = SDL3.createWindow({title: "模拟时钟 - LenoSDL3", w: 400, h: 460, flags: WindowFlag.HIGH_PIXEL_DENSITY})
     if not win.ok { print("创建窗口失败"); return }
 
     SDL3.ttfInit()
 
-    // 大字（显示时间）
-    var font = SDL3.createFontAuto(48.0)
-    if not font.ok { print("加载字体失败"); win.destroy(); return }
+    var font     = SDL3.createFontAuto(26.0)   // 数字 / 数字时间
+    var fontSmall = SDL3.createFontAuto(18.0)   // 提示文字
 
-    // 小字（日期/提示）
-    var fontSmall = SDL3.createFontAuto(24.0)
-
-    print("字体加载成功，高度: " + font.height)
-
-    var ev = SDL3.createEvent()
+    var ev  = SDL3.createEvent()
     var ren = SDL3.createRenderer(win.handle)
     if not ren.ok { font.close(); win.destroy(); return }
     ren.setVSync(1)
 
-    float winW = 600.0
+    float cx = 200.0; float cy = 200.0; float R = 160.0
+
     var running = true
     while running {
         while ev.poll() {
@@ -32,24 +35,61 @@ main() {
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
         }
 
-        var dt = times.datetime()  // [年, 月, 日, 时, 分, 秒]
+        // [年,月,日,时,分,秒]
+        var dt = times.datetime()
+        int h = dt[3],m = dt[4],s = dt[5]
 
-        ren.clearColor(20, 20, 40, 255)
+        // 各指针弧度（含秒的小数，使分针/时针平滑走动）
+        float twoPi = maths.pi() * 2.0
+        float th = (((h % 12) + m / 60.0) / 12.0) * twoPi
+        float tm = ((m + s / 60.0) / 60.0) * twoPi
+        float ts = (s / 60.0) * twoPi
 
-        // 时间（大字体居中）
+        ren.clearColor(24, 26, 34, 255)
+
+        // ===== 表盘 =====
+        ren.setColor(245, 245, 240, 255); ren.fillCircle(cx, cy, R)
+        ren.setColor(40, 40, 50, 255)
+        ren.drawCircle(cx, cy, R)
+        ren.drawCircle(cx, cy, R - 6.0)
+
+        // ===== 刻度（整点更长）+ 数字 =====
+        for 1 : 12 to i {
+            float ang = (i / 12.0) * twoPi
+            bool major = (i % 3 == 0)
+            float rO = R - 6.0
+            float rI = if major then R - 26.0 else R - 16.0
+            ren.setColor(60, 60, 70, 255)
+            ren.drawLine(_tipX(cx, rI, ang), _tipY(cy, rI, ang),
+                         _tipX(cx, rO, ang), _tipY(cy, rO, ang))
+            if major {
+                float rn = R - 46.0
+                float nx = _tipX(cx, rn, ang)
+                float ny = _tipY(cy, rn, ang)
+                ren.setColor(40, 40, 50, 255)
+                ren.drawTextCentered(font, i as string, nx - 20.0, 40.0,
+                                     ny - font.height / 2.0, 40, 40, 50)
+            }
+        }
+
+        // ===== 时针 / 分针（深色） =====
+        ren.setColor(30, 30, 40, 255)
+        ren.drawLine(cx, cy, _tipX(cx, R - 80.0, th), _tipY(cy, R - 80.0, th))
+        ren.drawLine(cx, cy, _tipX(cx, R - 48.0, tm), _tipY(cy, R - 48.0, tm))
+
+        // ===== 秒针（红色，带反向配重） =====
+        ren.setColor(220, 60, 60, 255)
+        ren.drawLine(_tipX(cx, -18.0, ts), _tipY(cy, -18.0, ts),
+                     _tipX(cx, R - 24.0, ts), _tipY(cy, R - 24.0, ts))
+
+        // ===== 中心轴 =====
+        ren.setColor(30, 30, 40, 255); ren.fillCircle(cx, cy, 6.0)
+        ren.setColor(220, 60, 60, 255); ren.fillCircle(cx, cy, 3.0)
+
+        // ===== 底部数字时间 =====
         var timeStr = dt[3] + ":" + dt[4] + ":" + dt[5]
-        ren.drawTextCentered(font, timeStr, 0, winW, 60.0, 255, 255, 255)
-
-        // 日期（居中）
-        var dateStr = dt[0] + "年" + dt[1] + "月" + dt[2] + "日"
-        ren.drawTextCentered(fontSmall, dateStr, 0, winW, 140.0, 200, 200, 255)
-
-        // 英文日期时间（居中）
-        var enStr = dt[0] + "-" + dt[1] + "-" + dt[2] + "  " + dt[3] + ":" + dt[4] + ":" + dt[5]
-        ren.drawTextCentered(fontSmall, enStr, 0, winW, 185.0, 150, 200, 150)
-
-        // 提示（居中）
-        ren.drawTextCentered(fontSmall, "按 ESC 退出", 0, winW, 240.0, 100, 100, 100)
+        ren.drawTextCentered(font, timeStr, 0, 400.0, 400.0, 220, 220, 230)
+        ren.drawTextCentered(fontSmall, "按 ESC 退出", 0, 400.0, 432.0, 110, 110, 120)
 
         ren.present()
         SDL3.delay(16)
