@@ -38,7 +38,26 @@ SDL3 的 `SDL_InsertTrayEntryAt(menu, pos, label, u32 flags)` 时：
 **不受影响**：WindowFlag（值都在 $2^{31}$ 以内，没有最高位置1的）。
 
 ## 修复方向
+将所有存储 enum 成员值的位置从 `int`/`int*` 改为 `int64_t`/`int64_t*`：
 
+| 文件 | 行号 | 当前 | 改为 |
+|------|------|------|------|
+| `src/include/leno_vm.h` | 289 | `int* enum_values` | `int64_t* enum_values` |
+| `src/include/module_symbol_table.h` | 57 | `int* member_values` | `int64_t* member_values` |
+| `src/include/module_symbol_table.h` | 165 | `int* member_values` (参数) | `int64_t* member_values` |
+| `src/semantic/visitinc/visit_enum.inc` | 26 | `(int*)malloc(sizeof(int)*n)` | `(int64_t*)malloc(sizeof(int64_t)*n)` |
+| `src/semantic/visitinc/visit_enum.inc` | 29 | `(int)ast->u.enum_def...` | 去掉 `(int)` 截断 |
+| `src/semantic/visitinc/visit_module.inc` | 461 | `(int*)malloc(sizeof(int)*n)` | `(int64_t*)malloc(sizeof(int64_t)*n)` |
+| `src/semantic/visitinc/visit_module.inc` | 1533 | `int member_value` | `int64_t member_value` |
+| `src/semantic/semantic_visit_ast.c` | 156 | `(int*)malloc(sizeof(int)*n)` | `(int64_t*)malloc(sizeof(int64_t)*n)` |
+| `src/module_symbol_table/inc/sym_table_add.inc` | 162 | `int* member_values` | `int64_t* member_values` |
+| `src/module_symbol_table/inc/sym_table_add.inc` | 181 | `(int*)malloc(sizeof(int)*n)` | `(int64_t*)malloc(sizeof(int64_t)*n)` |
+| `src/module_symbol_table/inc/sym_table_cache.inc` | 7 | `LENOSYMC_VERSION 0x05` | `0x06`（enum 值格式 int32→int64，旧缓存自动失效） |
+| `src/module_symbol_table/inc/sym_table_cache.inc` | 265-266 | `int32_t mv; fwrite(&mv,4,...)` | `int64_t mv; fwrite(&mv,8,...)` |
+| `src/module_symbol_table/inc/sym_table_cache.inc` | 526,529-530 | `calloc(sizeof(int))` + `int32_t read` | `calloc(sizeof(int64_t))` + `int64_t read` |
+| `src/module_symbol_table/inc/scan/scan_enum.inc` | 17,45 | `int[]` + `int val` | `int64_t[]` + `int64_t val` |
+
+> ✅ **已修复（2026-07-25）**：上述全部 13 处已改为 `int64_t`。`EnumName.member` 编译期取值改为 `int64_t`，经 `(double)` 转 `AST_NUM`（与 lexer 对 hex 字面量 ≤ 2^53 的处理一致），codegen 中 `val_int_safe` 自动处理 int48→bigint 提升。缓存版本升级 v5→v6，旧 `.lenosymc` 自动失效重扫。验证：`TrayEntryFlag.DISABLED | BUTTON` = 2147483649，经 ffi `u32` 传参（kernel32 SetLastError/GetLastError 往返）通过。
 
 **修复后需要删除 `.lenocache` 缓存目录**重新生成符号表缓存。
 
@@ -103,5 +122,24 @@ m._ptr = some_ptr
 m._isSub = false
 _rootMenu = m
 ```
+
+---
+
+# 注意事项: 托盘回调需要 drain 事件
+
+托盘菜单的点击回调通过 SDL 内部事件处理触发。
+事件循环必须 drain 事件队列，否则回调不会执行：
+
+```leno
+var ev = createEvent()
+while running {
+    ev.waitTimeout(500)
+    while ev.has { ev.poll() }   // ★ 必须 drain
+}
+```
+
+`waitTimeout` 只取一个事件，后续事件（包括触发回调的事件）堆积在队列中不会被处理。
+
+---
 
 # 托盘开发中发现的编译器/语言问题
