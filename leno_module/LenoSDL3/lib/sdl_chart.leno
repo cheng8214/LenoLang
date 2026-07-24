@@ -115,7 +115,9 @@ export struct BarChart impl Widget {
         if not _loaded { return }
         if ev.isMouseMotion() {
             _mx = ev.mouseX(); _my = ev.mouseY()
+            bool wasHover = _hover
             _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
+            if wasHover != _hover { core.markFrameRedraw() }
         }
     }
 
@@ -341,7 +343,9 @@ export struct LineChart impl Widget {
         if not _loaded { return }
         if ev.isMouseMotion() {
             _mx = ev.mouseX(); _my = ev.mouseY()
+            bool wasHover = _hover
             _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
+            if wasHover != _hover { core.markFrameRedraw() }
         }
     }
 

@@ -144,9 +144,13 @@ export struct Slider impl Widget {
             _wasHover = hover
             hover = contains(mx, my)
             // 拖拽中：即使移出控件也要继续更新
+            // 注意：motion 事件不触发整窗重绘，控件必须主动 markFrameRedraw()
             if _dragging {
                 if _vertical { value = _value_from_pos(my) } else { value = _value_from_pos(mx) }
                 if _onChange != null { _onChange(value) }
+                core.markFrameRedraw()
+            } else if _wasHover != hover {
+                core.markFrameRedraw()   // hover 状态变化也需重绘（thumb 高亮）
             }
             if _cursor >= 0 {
                 if (hover or _dragging) and not _wasHover { core.setSystemCursor(_cursor) }

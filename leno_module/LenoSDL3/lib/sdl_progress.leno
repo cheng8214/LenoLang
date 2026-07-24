@@ -144,6 +144,9 @@ export struct ProgressBar impl Widget {
                 _animVal = value          // 拖拽时实时跟随，取消动画延迟
                 _animating = false
                 if _onChange != null { _onChange(value) }
+                core.markFrameRedraw()
+            } else if _wasHover != hover {
+                core.markFrameRedraw()    // hover 变化也需重绘（颜色高亮）
             }
             if _cursor >= 0 {
                 if hover and not _wasHover { core.setSystemCursor(_cursor) }
