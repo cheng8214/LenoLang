@@ -6,6 +6,7 @@ import "sdl_event.leno"   as evt; use evt.Event
 import "sdl_widget.leno"  as wgt; use wgt.Widget
 import "sdl_font.leno"    as fnt; use fnt.Font
 import "sdl_core.leno"     as core; use core.SystemCursor; use core.SDL_Rect
+import maths
 
 // ===================== 模块级辅助 =====================
 // 系列配色（与看板风格一致）
@@ -14,15 +15,13 @@ Array[Array[int]] _CHART_PALETTE = [
     [255,110,130],[120,210,235],[235,210,110],[170,180,200]
 ]
 
-func _cmin(float a, float b): float { if a < b { return a }; return b }
-func _cmax(float a, float b): float { if a > b { return a }; return b }
-func _clampf(float v, float lo, float hi): float { if v < lo { return lo }; if v > hi { return hi }; return v }
+func _clampf(float v, float lo, float hi): float { return maths.max(lo, maths.min(hi, v)) }
 
 // 计算「漂亮」的上界（1/2/5 ×10^n）
 func _niceMax(float v): float {
     if v <= 1.0 { return 1.0 }
-    float mag = 1.0; float t = v
-    while t >= 10.0 { t = t / 10.0; mag = mag * 10.0 }
+    float mag = maths.pow(10.0, maths.floor(maths.log10(v)))
+    float t = v / mag
     float step
     if t <= 1.0 { step = 1.0 } else if t <= 2.0 { step = 2.0 }
     else if t <= 5.0 { step = 5.0 } else { step = 10.0 }
@@ -138,7 +137,7 @@ export struct BarChart impl Widget {
         int ticks = 4
 
         float vmax = 0.0
-        for n to i { vmax = _cmax(vmax, vals[i]) }
+        for n to i { vmax = maths.max(vmax, vals[i]) }
         float ymax = _niceMax(vmax)
         if ymax <= 0.0 { ymax = 1.0 }
 
@@ -173,35 +172,65 @@ export struct BarChart impl Widget {
             if idx >= 0.0 and idx < n { hi = _int(idx) }
         }
 
-        // 裁剪绘图区到图表主体范围：顶部紧贴 plotY，柱子一旦超过上边界即被裁剪，不会压到标题。
-        // 左界取 x 以容纳 Y 轴刻度标签，底部类目标签在取消裁剪后绘制。
+        // 裁剪绘图区到图表主体范围
         SDL_Rect _clip = SDL_Rect.malloc()
         _clip.x = _int(x); _clip.y = _int(plotY)
-        _clip.w = _int(w) + 1; _clip.h = _int(plotH) + 1   // +1 覆盖浮点截断的亚像素
+        _clip.w = _int(w) + 1; _clip.h = _int(plotH) + 1
         r.pushClipRect(_clip.to_ptr())
-
-        // 网格线（Y 轴数字标签放到取消裁剪后绘制，避免上下半被裁剪显示不完整）
-        if showGrid {
-            for 0 : ticks to ti {
-                float frac = ti / _float(ticks)
-                float gy = plotY + plotH * (1.0 - frac)
-                r.setColor(60, 64, 76, 255); r.drawLine(plotX, gy, plotX + plotW, gy)
-            }
-        }
 
         // 轴线
         r.setColor(90, 96, 112, 255)
         r.drawLine(plotX, plotY, plotX, plotY + plotH)
         r.drawLine(plotX, plotY + plotH, plotX + plotW, plotY + plotH)
 
-        // 第一遍：在裁剪区内绘制柱子（超出上边界的部分被裁掉）
+        // 绘制柱子
         for n to i {
             float vh = plotH * (_animVals[i] / ymax)
             float bx = plotX + slot * i + (slot - bw) / 2.0
             float by = plotY + plotH - vh
             Array[int] c = _palette(i)
-            if i == hi { r.setColor(c[0], c[1], c[2], 255) } else { r.setColor(c[0], c[1], c[2], 210) }
+            r.setColor(c[0], c[1], c[2], 255)
             r.fillRect(bx, by, bw, vh)
+            if i == hi { r.setColor(255, 255, 255, 235); r.drawRect(bx, by, bw, vh) }
+        }
+
+        // 网格线：画在柱子之后，用裁剪区分段只在间隙中绘制
+        if showGrid {
+            r.setColor(60, 64, 76, 255)
+            for 1 : ticks to ti {
+                float frac = ti / _float(ticks)
+                float gy = plotY + plotH * (1.0 - frac)
+                float segX = plotX
+                for n to i {
+                    if _animVals[i] >= ymax * frac {
+                        float bx = plotX + slot * i + (slot - bw) / 2.0
+                        // 裁剪到 segX~bx 间隙，画整条线（自动被裁去柱子区域以外的部分）
+                        if bx > segX {
+                            SDL_Rect gapClip = SDL_Rect.malloc()
+                            gapClip.x = _int(segX) + 1
+                            gapClip.y = _int(plotY)
+                            int gw = _int(bx - segX) - 1
+                            if gw < 1 { gw = 1 }
+                            gapClip.w = gw
+                            gapClip.h = _int(plotH) + 1
+                            r.pushClipRect(gapClip.to_ptr())
+                            r.drawLine(plotX, gy, plotX + plotW, gy)
+                            r.popClipRect(); gapClip.free()
+                        }
+                        segX = bx + bw
+                    }
+                }
+                if segX < plotX + plotW {
+                    SDL_Rect gapClip = SDL_Rect.malloc()
+                    gapClip.x = _int(segX) + 1
+                    gapClip.y = _int(plotY)
+                    gapClip.w = _int(plotX + plotW - segX)
+                    gapClip.h = _int(plotH) + 1
+                    r.pushClipRect(gapClip.to_ptr())
+                    r.drawLine(plotX, gy, plotX + plotW, gy)
+                    r.popClipRect(); gapClip.free()
+                }
+            }
         }
 
         // 取消裁剪，绘制数值标签与类目标签（不再受上边界限制，但需避免与标题重叠）
@@ -270,8 +299,7 @@ export struct BarChart impl Widget {
         float eps = 0.05
         bool done = true
         for vals.len() to i {
-            float diff = vals[i] - _animVals[i]
-            if diff < 0.0 { diff = -diff }
+            float diff = maths.abs(vals[i] - _animVals[i])
             if diff > eps { done = false }
             float f = _animSpeed * dt
             if f > 1.0 { f = 1.0 }
@@ -374,7 +402,7 @@ export struct LineChart impl Widget {
         if title != "" { r.setColor(205, 218, 255, 255); r.drawText(f, title, x + 10.0, y + 6.0, 205, 218, 255) }
 
         float ymax = 0.0
-        for series.len() to s { for series[s].len() to i { ymax = _cmax(ymax, series[s][i]) } }
+        for series.len() to s { for series[s].len() to i { ymax = maths.max(ymax, series[s][i]) } }
         ymax = _niceMax(ymax); if ymax <= 0.0 { ymax = 1.0 }
 
         int ticks = 4
@@ -485,8 +513,7 @@ export struct LineChart impl Widget {
         bool done = true
         for series.len() to s {
             for series[s].len() to i {
-                float diff = series[s][i] - _animSeries[s][i]
-                if diff < 0.0 { diff = -diff }
+                float diff = maths.abs(series[s][i] - _animSeries[s][i])
                 if diff > eps { done = false }
                 _animSeries[s][i] = _animSeries[s][i] + (series[s][i] - _animSeries[s][i]) * f
             }
@@ -556,7 +583,7 @@ export struct PieChart impl Widget {
         for n to i { total = total + _animValues[i] }
         if total <= 0.0 { return }
 
-        float pieSize = _cmin(w * 0.55, h - 30.0)
+        float pieSize = maths.min(w * 0.55, h - 30.0)
         if pieSize < 10.0 { pieSize = 10.0 }
         float rad = pieSize / 2.0
         float cx = x + 8.0 + rad
@@ -590,8 +617,7 @@ export struct PieChart impl Widget {
         float eps = 0.05
         bool done = true
         for values.len() to i {
-            float diff = values[i] - _animValues[i]
-            if diff < 0.0 { diff = -diff }
+            float diff = maths.abs(values[i] - _animValues[i])
             if diff > eps { done = false }
             float f = _animSpeed * dt
             if f > 1.0 { f = 1.0 }
