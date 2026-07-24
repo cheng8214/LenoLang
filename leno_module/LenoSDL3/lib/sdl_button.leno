@@ -1,4 +1,4 @@
-﻿// sdl_button.leno — 按钮控件
+// sdl_button.leno — 按钮控件
 // 通过 win.addButton({...}) 创建，run() 自动处理交互和渲染
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -374,7 +374,8 @@ export struct Button impl Widget {
         // ============ 图标 + 文字布局 ============
         // 内容裁剪到按钮矩形内，防止图标/文字溢出按钮（对齐 sdl_edit / sdl_panel 做法）
         var _btnClip = core.SDL_Rect.malloc()
-        _btnClip.x = _int(x); _btnClip.y = _int(y); _btnClip.w = _int(w); _btnClip.h = _int(h)
+        _btnClip.x = _int(x); _btnClip.y = _int(y)
+        _btnClip.w = _int(w) + 1; _btnClip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(_btnClip.to_ptr())
 
         float pad = 6.0

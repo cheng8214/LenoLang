@@ -1,4 +1,4 @@
-﻿// sdl_listbox.leno — 列表框控件（可滚动、单选/多选）
+// sdl_listbox.leno — 列表框控件（可滚动、单选/多选）
 // 通过 win.addListBox({...}) 创建，鼠标点击选择、滚轮滚动，回调 on_change(Array[int])
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -316,7 +316,8 @@ export struct ListBox impl Widget {
         r.fillRoundedRect(x, y, w, h, 6.0)
 
         SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
+        clip.x = _int(x); clip.y = _int(y)
+        clip.w = _int(w) + 1; clip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
         float pad = 8.0

@@ -1505,7 +1505,7 @@ export struct Edit impl Widget {
         // 裁剪
         var clip = core.SDL_Rect.malloc()
         clip.x = _int(x + pad); clip.y = _int(y)
-        clip.w = _int(w - pad * 2.0); clip.h = _int(h)
+        clip.w = _int(w - pad * 2.0) + 1; clip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
         // 文字几何（先算，供选区/光标对齐）
@@ -1579,7 +1579,7 @@ export struct Edit impl Widget {
         // 裁剪区域
         var clip = core.SDL_Rect.malloc()
         clip.x = _int(x + pad); clip.y = _int(y + pad)
-        clip.w = _int(visW); clip.h = _int(visH)
+        clip.w = _int(visW) + 1; clip.h = _int(visH) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
         // 计算可见行范围（选区和文本渲染共用）

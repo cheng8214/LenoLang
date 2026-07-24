@@ -695,7 +695,8 @@ export struct Table impl Widget {
         if cwClip <= 0.0 { return }
         if _clipBase != null {
             SDL_Rect crc = SDL_Rect.malloc()
-            crc.x = _int(cl); crc.y = _int(ry); crc.w = _int(cwClip); crc.h = _int(rh)
+            crc.x = _int(cl); crc.y = _int(ry)
+            crc.w = _int(cwClip) + 1; crc.h = _int(rh) + 1   // +1 覆盖浮点截断的亚像素
             // 夹紧到基础裁剪区（数据区即为 bodyClip），防止文字渗透到滚动条/表外
             SDL_Rect base = SDL_Rect.from_ptr(_clipBase)
             int baseX2 = base.x + base.w; int baseY2 = base.y + base.h
@@ -728,7 +729,8 @@ export struct Table impl Widget {
         if _font == null or not _font.ok { return }   // 字体无效时仍有背景，只跳过文字
 
         SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
+        clip.x = _int(x); clip.y = _int(y)
+        clip.w = _int(w) + 1; clip.h = _int(h) + 1   // +1 防止浮点坐标截断丢失亚像素，避免行边缘闪烁
         r.pushClipRect(clip.to_ptr())
         _clipBase = clip.to_ptr()
 
@@ -762,7 +764,7 @@ export struct Table impl Widget {
         // 数据区裁剪：防止行渲染渗透到底部滚动条区域
         SDL_Rect bodyClip = SDL_Rect.malloc()
         bodyClip.x = _int(x); bodyClip.y = _int(bodyTop)
-        bodyClip.w = _int(bodyW); bodyClip.h = _int(bodyH)
+        bodyClip.w = _int(bodyW) + 1; bodyClip.h = _int(bodyH) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(bodyClip.to_ptr())
         // 关键：把 _clipBase 临时换成 bodyClip，让 _draw_cell_text 内部恢复时回到 body 区
         // （否则恢复为全表 clip，后续行背景 fillRect 就会渗透到滚动条区域）

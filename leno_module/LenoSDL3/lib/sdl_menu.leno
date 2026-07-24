@@ -605,7 +605,8 @@ export struct MenuBar impl Widget {
         r.fillRoundedRect(px, py, pw, ph, 6.0)
 
         SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(px); clip.y = _int(py); clip.w = _int(pw); clip.h = _int(ph)
+        clip.x = _int(px); clip.y = _int(py)
+        clip.w = _int(pw) + 1; clip.h = _int(ph) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
         float iy = py

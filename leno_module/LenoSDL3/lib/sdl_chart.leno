@@ -176,7 +176,8 @@ export struct BarChart impl Widget {
         // 裁剪绘图区到图表主体范围：顶部紧贴 plotY，柱子一旦超过上边界即被裁剪，不会压到标题。
         // 左界取 x 以容纳 Y 轴刻度标签，底部类目标签在取消裁剪后绘制。
         SDL_Rect _clip = SDL_Rect.malloc()
-        _clip.x = _int(x); _clip.y = _int(plotY); _clip.w = _int(w); _clip.h = _int(plotH)
+        _clip.x = _int(x); _clip.y = _int(plotY)
+        _clip.w = _int(w) + 1; _clip.h = _int(plotH) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(_clip.to_ptr())
 
         // 网格线（Y 轴数字标签放到取消裁剪后绘制，避免上下半被裁剪显示不完整）

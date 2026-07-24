@@ -1,4 +1,4 @@
-﻿// sdl_scrollview.leno — 通用滚动容器（裁剪视口 + 内容偏移 + 滚轮/拖动滚动条）
+// sdl_scrollview.leno — 通用滚动容器（裁剪视口 + 内容偏移 + 滚轮/拖动滚动条）
 //
 // 解决的问题：Panel 只会裁剪不会滚动，只有 ListBox/ComboBox 内部自带滚动条。
 // ScrollView 持有一个「内容控件」（通常为 VBox/Panel/HBox），内容坐标 (0,0) 映射到
@@ -279,7 +279,8 @@ export struct ScrollView impl Widget {
         float gw = if _showV() then _barW else 0.0
         float gh = if _showH() then _barW else 0.0
         SDL_Rect cr = SDL_Rect.malloc()
-        cr.x = _int(x); cr.y = _int(y); cr.w = _int(w - gw); cr.h = _int(h - gh)
+        cr.x = _int(x); cr.y = _int(y)
+        cr.w = _int(w - gw) + 1; cr.h = _int(h - gh) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(cr.to_ptr())
         if _content != null { _content.render(r) }
         r.popClipRect()

@@ -360,7 +360,7 @@ export struct TabControl impl Widget {
 
         // 裁剪到内容区，绘制当前页子控件
         SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(cx); clip.y = _int(cy); clip.w = _int(cw); clip.h = _int(ch)
+        clip.x = _int(cx); clip.y = _int(cy); clip.w = _int(cw) + 1; clip.h = _int(ch) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
         r.pushClipRect(clip.to_ptr())
 
         _applyOffsets(_active)

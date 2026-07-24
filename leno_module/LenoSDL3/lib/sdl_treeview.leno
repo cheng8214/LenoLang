@@ -688,7 +688,8 @@ export struct TreeView impl Widget {
         r.fillRoundedRect(x, y, w, h, 6.0)
 
         SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(x); clip.y = _int(y); clip.w = _int(w); clip.h = _int(h)
+        clip.x = _int(x); clip.y = _int(y)
+        clip.w = _int(w) + 1; clip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
         for _flatIds.len() to i {

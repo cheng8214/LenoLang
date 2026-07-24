@@ -1,4 +1,4 @@
-﻿// sdl_combobox.leno — 下拉框控件（点击展开列表选择，回调 on_change(int)）
+// sdl_combobox.leno — 下拉框控件（点击展开列表选择，回调 on_change(int)）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -309,7 +309,8 @@ export struct ComboBox impl Widget {
         r.fillRoundedRect(px, py, pw, ph, 6.0)
 
         SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(px); clip.y = _int(py); clip.w = _int(pw); clip.h = _int(ph)
+        clip.x = _int(px); clip.y = _int(py)
+        clip.w = _int(pw) + 1; clip.h = _int(ph) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
         for items.len() to i {

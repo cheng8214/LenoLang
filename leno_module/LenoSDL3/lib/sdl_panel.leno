@@ -1,4 +1,4 @@
-﻿// sdl_panel.leno — 面板容器控件（背景框 + 边框 + 裁剪，承载子控件）
+// sdl_panel.leno — 面板容器控件（背景框 + 边框 + 裁剪，承载子控件）
 // 子控件使用「窗口绝对坐标」添加到面板：panel.add(win.addButton({x, y, ...}))
 // 面板只负责绘制背景/边框、把绘制裁剪到自身范围、并把事件转发给子控件。
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -103,7 +103,8 @@ export struct Panel impl Widget {
 
         SDL_Rect cr = SDL_Rect.malloc()
         if _clip {
-            cr.x = _int(x); cr.y = _int(y); cr.w = _int(w); cr.h = _int(h)
+            cr.x = _int(x); cr.y = _int(y)
+            cr.w = _int(w) + 1; cr.h = _int(h) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
             r.pushClipRect(cr.to_ptr())
         }
 
