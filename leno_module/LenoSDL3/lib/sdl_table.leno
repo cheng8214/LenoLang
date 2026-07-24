@@ -688,32 +688,12 @@ export struct Table impl Widget {
         else if align == 1 { tx = cx + (cw - tw) / 2.0 }
         else { tx = cx + pad }
         if tx < cx + 2.0 { tx = cx + 2.0 }
-        // 安全裁剪（与表格外框取交集），兜底防止测量误差导致的残留溢出
+        // 安全裁剪：tx 已 clamp，body clip 已覆盖数据区，无需 per-cell pushClipRect
+        // （每格 push/pop 会产生 2 次 batch flush，12行×5列=120次/帧，导致闪烁）
         float cl = cx; if cl < x { cl = x }
         float crx = cx + cw; if crx > x + w { crx = x + w }
-        float cwClip = crx - cl
-        if cwClip <= 0.0 { return }
-        if _clipBase != null {
-            SDL_Rect crc = SDL_Rect.malloc()
-            crc.x = _int(cl); crc.y = _int(ry)
-            crc.w = _int(cwClip) + 1; crc.h = _int(rh) + 1   // +1 覆盖浮点截断的亚像素
-            // 夹紧到基础裁剪区（数据区即为 bodyClip），防止文字渗透到滚动条/表外
-            SDL_Rect base = SDL_Rect.from_ptr(_clipBase)
-            int baseX2 = base.x + base.w; int baseY2 = base.y + base.h
-            if crc.x < base.x { crc.w = crc.w - (base.x - crc.x); crc.x = base.x }
-            if crc.y < base.y { crc.h = crc.h - (base.y - crc.y); crc.y = base.y }
-            int crcX2 = crc.x + crc.w; int crcY2 = crc.y + crc.h
-            if crcX2 > baseX2 { crc.w = baseX2 - crc.x }
-            if crcY2 > baseY2 { crc.h = baseY2 - crc.y }
-            if crc.w > 0 and crc.h > 0 {
-                r.pushClipRect(crc.to_ptr())
-                r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
-                r.popClipRect()
-            }
-            crc.free()
-        } else {
-            r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
-        }
+        if tx >= crx { return }
+        r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
     }
 
     func render(Renderer r) {

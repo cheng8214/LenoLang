@@ -30,6 +30,15 @@ main() {
     var pbar2 = win.addProgressBar({ x: 40, y: 220, w: 320, h: 22, min: 0, max: 100, value: 0, clickable: true })
     pbar2.on_change(func(float v) { print("可点击进度条 -> " + v) })
 
+    // 用定时器驱动「只读」进度条循环变化（每 500ms），定时器自动触发重绘
+    // 注意：只驱动只读的 pbar；pbar2(clickable) 由用户点击/拖拽控制，不能被这里覆盖
+    int _step = 0
+    win.addTimer(500, func() {
+        _step = _step + 1
+        float ph = _float(_step % 101)
+        pbar.set_value(ph)
+    })
+
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
@@ -39,13 +48,6 @@ main() {
         func(Renderer r) {
             r.clearColor(28, 28, 46, 255)
             r.drawText(font, "滑块 / 进度条 演示", 20, 12, 255, 220, 80)
-
-            // 用时间驱动「只读」进度条循环变化，演示 set_value + 回调链路（每 500ms 一步，避免刷屏）
-            // 注意：只驱动只读的 pbar；pbar2(clickable) 由用户点击/拖拽控制，不能被这里覆盖，否则拖完立刻被刷回去
-            int t = SDL3.getTicks()
-            int step = t / 500
-            float ph = _float(step % 101)
-            pbar.set_value(ph)
 
             r.drawText(font, "横向滑块: " + hsl.get_value(), 40, 320, 200, 220, 240)
             r.drawText(font, "纵向滑块: " + vsl.get_value(), 40, 348, 200, 220, 240)

@@ -662,7 +662,11 @@ export struct Window {
                     _lastRenderTicks = now
                     _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
                     for _runWids.len() to i {
-                    _runRens[i].clearColor(0, 0, 0, 255)   // 每帧清屏：避免旧帧像素残留；否则动态文字(状态栏/信息面板)更新时会叠加在旧文字上，表现为"文字重叠"
+                    // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
+                    // SDL_RenderClear 在 Win/D3D 后端可能不走 back buffer 缓冲，导致短暂黑闪
+                    var ren = _runRens[i]
+                    ren.setColor(0, 0, 0, 255)
+                    ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
                     _runRends[i](_runRens[i])
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
                     core.clearPopupCapture()

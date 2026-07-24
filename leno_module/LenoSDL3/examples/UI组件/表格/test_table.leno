@@ -4,18 +4,15 @@
 //   1) 多列渲染、斑马纹、表头对齐（表头独立 align）
 //   2) 表头排序（点表头切换升/降）
 //   3) 列宽拖拽（鼠标移到表头列缝处，按下左右拖；resizable 开关）
-//   4) 行选中（单选 / 多选）：
-//        - 普通点击：选中整组（清空其它）
-//        - Ctrl/Cmd + 点击：切换该行选中
-//        - Shift + 点击：从焦点行到当前行范围选中
+//   4) 行选中（单选 / 多选）
 //   5) 双向滚动（数据 12 行触发纵向滚动；列宽拖大触发横向滚动）
-//   6) 数据操作：add_row / remove_row / clear / select_all / clear_selection
-//   7) 回调：on_select / on_cell
+//   6) 定时器更新表格数据：模拟 set_rows 刷新，观察是否闪烁
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode
 use SDL3.Table
+import rands
 
 main() {
     var win = SDL3.createWindow({title: "Table 测试", w: 560, h: 430})
@@ -25,27 +22,23 @@ main() {
     var font = SDL3.createFontAuto(14.0)
 
     Array[string] headers = ["名称", "数量", "单价", "小计"]
-    // 对齐：0 左, 1 中, 2 右
     Array[int] aligns = [0, 2, 2, 2]
-    Array[int] hAligns = [1, 1, 1, 1]   // 表头全部居中（独立于数据列）
-    Array[Array[string]] rows = [
-        ["键盘",   "12", "299.0",  "3588.0"],
-        ["鼠标",   "30", "99.0",   "2970.0"],
-        ["显示器", "5",  "1299.0", "6495.0"],
-        ["耳机",   "20", "199.0",  "3980.0"],
-        ["音箱",   "8",  "459.0",  "3672.0"],
-        ["摄像头", "15", "259.0",  "3885.0"],
-        ["硬盘",   "40", "499.0",  "19960.0"],
-        ["内存",   "60", "329.0",  "19740.0"],
-        ["显卡",   "10", "3299.0", "32990.0"],
-        ["电源",   "25", "399.0",  "9975.0"],
-        ["机箱",   "18", "299.0",  "5382.0"],
-        ["主板",   "22", "899.0",  "19778.0"]
-    ]
+    Array[int] hAligns = [1, 1, 1, 1]
+
+    func genRows(): Array[Array[string]] {
+        Array[Array[string]] out = []
+        Array[string] names = ["键盘","鼠标","显示器","耳机","音箱","摄像头","硬盘","内存","显卡","电源","机箱","主板"]
+        for names.len() to i {
+            int qty = _int(rands.floats(5, 60))
+            float price = rands.floats(99, 3299)
+            out.add([names[i], qty as string, price as string, _int(price * qty) as string])
+        }
+        return out
+    }
 
     var tbl = win.addTable({
         x: 30, y: 64, w: 500, h: 260,
-        headers: headers, aligns: aligns, header_aligns: hAligns, rows: rows,
+        headers: headers, aligns: aligns, header_aligns: hAligns, rows: genRows(),
         sortable: true, resizable: true, zebra: true, row_h: 24, header_h: 28,
         multi_select: true
     })
@@ -65,7 +58,7 @@ main() {
     win.addButton({x: 195, y: 338, w: 150, h: 32, text: "删除选中行"}).on_click(func() {
         var sels = tbl.get_selected_rows()
         for sels.len() to i {
-            int k = sels.len() - 1 - i   // 从大到小删，避免索引错位
+            int k = sels.len() - 1 - i
             int r = sels[k]
             if r >= 0 and r < tbl.row_count() { tbl.remove_row(r) }
         }
@@ -89,6 +82,17 @@ main() {
         print("当前选中 " + tbl.get_selected_rows().len() + " 行：" + tbl.get_selected_rows())
     })
 
+    rands.seed(_int(SDL3.getTicks()) % 233280)
+
+    // ===== 定时器：模拟 set_rows 刷新，复现闪烁 =====
+    int _count = 0
+    win.addTimer(2000, func() {
+        _count = _count + 1
+        var newRows = genRows()
+        tbl.set_rows(newRows)
+        print("[定时器 " + _count + "] 已刷新表格 " + newRows.len() + " 行")
+    })
+
     win.run(
         func(Event e): bool {
             if e.isQuit() or e.isWindowClose() { return false }
@@ -97,7 +101,7 @@ main() {
         },
         func(Renderer r) {
             r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Table 测试 (Esc 退出)", 20, 2, 200, 210, 230)
+            r.drawText(font, "Table 测试 (Esc 退出) — 定时器每2s刷新表格", 20, 2, 200, 210, 230)
             r.drawText(font, "点表头排序 | 拖表头列缝改列宽 | 普通点=单选  Ctrl+点=切换  Shift+点=范围", 20, 24, 150, 160, 180)
             r.drawText(font, "表头居中(header_aligns)，数据列右对齐(aligns)", 20, 44, 150, 160, 180)
         }

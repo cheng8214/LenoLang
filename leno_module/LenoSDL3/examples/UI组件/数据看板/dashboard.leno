@@ -180,7 +180,7 @@ main() {
     var netBar  = buildKpi(win, 751, 76, 233, 104, "网络吞吐",    "1 Gbps 上行链路",    [190,120,255])
 
     // ===================== 数据表格卡片 =====================
-    var tblCard = SDL3.createPanel({x:16, y:196, w:620, h:312, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    var tblCard = SDL3.createPanel({x:16, y:196, w:620, h:312, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90], clip:false})
     win.add(tblCard)
     tblCard.add(SDL3.createLabel({x:32, y:212, text:"服务指标监控", font_size:15, text_rgb:[200,215,255]}))
     var table = SDL3.createTable({
@@ -260,32 +260,33 @@ main() {
         applyFilter(table, filterLbl)
     })
 
-    // ===================== 初始数据 + 定时器（实时模拟） =====================
+    // ===================== 初始数据 + 双定时器（分开动画和表格更新） =====================
+    // 诊断：表格闪烁可能是动画驱动的连续重绘与 set_rows 交叠导致。
+    // 方案：动画定时器（高频）只驱动进度条/折线；表格更新定时器（低频）单独触发。
     applyFilter(table, filterLbl)
     for 6 to _ { appendLog(logBox, statusLbl) }
 
-    var tKpi  = win.addTimer(1100, func() {
+    // 动画定时器：只更新进度条 + 折线图（不碰表格）
+    int _animTick = 0
+    win.addTimer(500, func() {
         if not live { return }
+        _animTick = _animTick + 1
         float cv = rands.floats(15.0, 92.0); cpuBar.set_value(cv)
         float mv = rands.floats(30.0, 88.0); memBar.set_value(mv)
         diskBar.set_value(rands.floats(20.0, 80.0))
         netBar.set_value(rands.floats(10.0, 95.0))
-        // 折线趋势（滚动窗口，最多 12 个点）
+        appendLog(logBox, statusLbl)
         _cpuTrend.add(cv); _memTrend.add(mv); _cpuLabels.add(nowStr())
         if _cpuTrend.len() > 12 { _cpuTrend.remove(0); _memTrend.remove(0); _cpuLabels.remove(0) }
         lineChart.set_data(_cpuLabels, [_cpuTrend, _memTrend], ["CPU","内存"])
     })
-    var tLog  = win.addTimer(900, func() {
-        if not live { return }
-        appendLog(logBox, statusLbl)
-    })
-    var tData = win.addTimer(3000, func() {
+
+    // 表格 + 柱状图 + 饼图定时器：独立低频更新（不跟动画抢帧）
+    win.addTimer(3000, func() {
         if not live { return }
         _allRows = genRows(); applyFilter(table, filterLbl)
-        // 柱状图：刷新各主机请求量
         for CHART_HOSTS.len() to i { _barVals[i] = rands.floats(40.0, 200.0) }
         barChart.set_data(CHART_HOSTS, _barVals)
-        // 饼图：主机状态分布
         int nOk = 0; int nWarn = 0; int nErr = 0
         for _allRows.len() to i {
             string st = _allRows[i][3]
