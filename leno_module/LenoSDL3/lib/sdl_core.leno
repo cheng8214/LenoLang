@@ -595,7 +595,7 @@ export enum FlashOp { CANCEL = 0; BRIEFLY = 1; UNTIL_FOCUSED = 2 }
 
 // TrayEntryFlags — SDL3 系统托盘条目类型
 // 注意：DISABLED(0x80000000) 和 CHECKED(0x40000000) >= 2^31，
-// 当前编译器 enum 值存储为 32 位有符号 int 会截断，详见 BUG_TRAY_INT_TRUNC.md
+// 编译器 enum 成员值已使用 int64_t 存储，支持 >= 2^31 的位标志（原 int 截断 bug 已修复，见 BUG_TRAY_COMPILER.md）
 export enum TrayEntryFlag {
     BUTTON   = 0x00000001
     CHECKBOX = 0x00000002

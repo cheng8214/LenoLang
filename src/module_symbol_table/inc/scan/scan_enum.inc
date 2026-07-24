@@ -14,7 +14,7 @@
 
                     // 解析成员名和显式值
                     char* member_names_buf[MOD_MAX_MEMBERS];
-                    int member_values_buf[MOD_MAX_MEMBERS];
+                    int64_t member_values_buf[MOD_MAX_MEMBERS];
                     int member_count = 0;
                     while (*after_enum && *after_enum != '{') after_enum++;
                     if (*after_enum == '{') {
@@ -42,7 +42,7 @@
                                     // 解析整数值（支持负数和十六进制）
                                     int neg = 0;
                                     if (*after_enum == '-') { neg = 1; after_enum++; }
-                                    int val = 0;
+                                    int64_t val = 0;
                                     // 支持 0x 前缀
                                     if (*after_enum == '0' && (*(after_enum+1) == 'x' || *(after_enum+1) == 'X')) {
                                         after_enum += 2;

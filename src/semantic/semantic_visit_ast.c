@@ -153,7 +153,7 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
                     sym->type->struct_name = strdup(dep_name);
                     sym->enum_value_count = esym->member_count;
                     sym->enum_value_names = (char**)malloc(sizeof(char*) * esym->member_count);
-                    sym->enum_values = (int*)malloc(sizeof(int) * esym->member_count);
+                    sym->enum_values = (int64_t*)malloc(sizeof(int64_t) * esym->member_count);
                     for (int mi = 0; mi < esym->member_count; mi++) {
                         sym->enum_value_names[mi] = strdup(esym->member_names[mi]);
                         sym->enum_values[mi] = esym->member_values[mi];

@@ -91,10 +91,9 @@ export struct TrayMenu {
         return m
     }
 
-    // 分隔符：纯 BUTTON + 空标签，SDL3 渲染为分隔线
-    // 不组合 DISABLED(0x80000000)：编译器 enum 值存储为 32 位有符号会截断，见 BUG_TRAY_INT_TRUNC.md
+    // 分隔符：Windows 托盘菜单无原生分隔线，用禁用文字模拟
     func addSeparator(): Ptr[u8] {
-        return _insert("", TrayEntryFlag.BUTTON, -1)
+        return _insert("────────", TrayEntryFlag.BUTTON | TrayEntryFlag.DISABLED, -1)
     }
 
     func removeEntry(Ptr[u8] entry) {

@@ -1,0 +1,49 @@
+// 回归测试：enum 成员值 >= 2^31 不被截断为 int32
+// 历史 bug：语义符号表用 int* 存储 enum 值，0x80000000 被截断为 -2147483648，
+// 经 EnumName.member 编译期取值后，位组合传给 ffi u32 报“超出 u32 范围”。
+// 修复：enum_values/member_values 全部改为 int64_t。
+
+import "test_enum_int64_mod.leno" as tm
+use tm.TrayEntryFlag
+
+// 同模块定义 enum（走 visit_enum.inc 路径）
+enum LocalFlag {
+    BUTTON   = 0x00000001
+    DISABLED = 0x80000000
+    CHECKED  = 0x40000000
+}
+
+// 自动递增紧跟大值成员：下一个应为 0x80000001
+enum AutoAfter {
+    BASE = 0x80000000
+    NEXT                  // 自动 = 0x80000001 = 2147483649
+}
+
+// 值别名指向大值 enum 成员
+alias DisabledFlag = TrayEntryFlag.DISABLED
+
+main() {
+    // === 同模块 enum：visit_enum.inc 路径 ===
+    assert_eq(LocalFlag.DISABLED, 2147483648)
+    assert_eq(LocalFlag.BUTTON, 1)
+    assert_eq(LocalFlag.DISABLED | LocalFlag.BUTTON, 2147483649)
+    assert_eq(LocalFlag.CHECKED, 1073741824)
+    assert_eq(LocalFlag.DISABLED | LocalFlag.CHECKED, 3221225472)
+
+    // === use 导入 enum：semantic_visit_ast.c 路径（原始 sdl_tray bug 场景）===
+    assert_eq(TrayEntryFlag.DISABLED, 2147483648)
+    assert_eq(TrayEntryFlag.BUTTON, 1)
+    assert_eq(TrayEntryFlag.DISABLED | TrayEntryFlag.BUTTON, 2147483649)
+    assert_eq(TrayEntryFlag.CHECKED, 1073741824)
+    assert_eq(TrayEntryFlag.DISABLED | TrayEntryFlag.CHECKED, 3221225472)
+    assert_eq(TrayEntryFlag.DISABLED | TrayEntryFlag.BUTTON | TrayEntryFlag.CHECKED, 3221225473)
+
+    // === 自动递增紧跟大值成员 ===
+    assert_eq(AutoAfter.BASE, 2147483648)
+    assert_eq(AutoAfter.NEXT, 2147483649)
+
+    // === 值别名指向大值 enum 成员 ===
+    assert_eq(DisabledFlag, 2147483648)
+
+    print("enum int64 截断回归测试通过")
+}

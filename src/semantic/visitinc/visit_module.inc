@@ -458,7 +458,7 @@
                         // 存储 enum 成员信息到 symbol，用于 AST_NUM 转换
                         sym->enum_value_count = enum_sym->member_count;
                         sym->enum_value_names = (char**)malloc(sizeof(char*) * enum_sym->member_count);
-                        sym->enum_values = (int*)malloc(sizeof(int) * enum_sym->member_count);
+                        sym->enum_values = (int64_t*)malloc(sizeof(int64_t) * enum_sym->member_count);
                         for (int mi = 0; mi < enum_sym->member_count; mi++) {
                             sym->enum_value_names[mi] = strdup(enum_sym->member_names[mi]);
                             sym->enum_values[mi] = enum_sym->member_values[mi];
@@ -1530,7 +1530,7 @@
                     // use 导入的 enum：从 enum symbol 的成员表查找值
                     const char* mname = ast->u.module_access.member_name;
                     int found = 0;
-                    int member_value = 0;
+                    int64_t member_value = 0;
                     if (var_sym->enum_value_names) {
                         for (int mi = 0; mi < var_sym->enum_value_count; mi++) {
                             if (strcmp(var_sym->enum_value_names[mi], mname) == 0) {

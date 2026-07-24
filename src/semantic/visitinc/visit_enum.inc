@@ -23,10 +23,10 @@
                     // 存储 enum 成员值信息（供 EnumName.member 访问时查找）
                     sym->enum_value_count = ast->u.enum_def.member_count;
                     sym->enum_value_names = (char**)malloc(sizeof(char*) * ast->u.enum_def.member_count);
-                    sym->enum_values = (int*)malloc(sizeof(int) * ast->u.enum_def.member_count);
+                    sym->enum_values = (int64_t*)malloc(sizeof(int64_t) * ast->u.enum_def.member_count);
                     for (int i = 0; i < ast->u.enum_def.member_count; i++) {
                         sym->enum_value_names[i] = strdup(ast->u.enum_def.member_names[i]);
-                        sym->enum_values[i] = (int)ast->u.enum_def.member_values[i];
+                        sym->enum_values[i] = ast->u.enum_def.member_values[i];
                     }
                     
                     // 注册 enum 成员到作用域
