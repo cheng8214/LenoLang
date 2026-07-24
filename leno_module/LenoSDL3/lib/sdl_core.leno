@@ -267,6 +267,25 @@ clib sdl3 {
     u64  SDL_GetPerformanceFrequency()
     u64  SDL_GetTicksNS()
     bool SDL_FlashWindow(Ptr[u8] window, i32 operation)
+
+    // Tray API（系统托盘，SDL 3.2.0+）
+    Ptr[u8] SDL_CreateTray(Ptr[u8] icon, str8 tooltip)
+    void    SDL_DestroyTray(Ptr[u8] tray)
+    Ptr[u8] SDL_CreateTrayMenu(Ptr[u8] tray)
+    Ptr[u8] SDL_CreateTraySubmenu(Ptr[u8] entry)
+    Ptr[u8] SDL_InsertTrayEntryAt(Ptr[u8] menu, i32 pos, str8 label, u32 flags)
+    void    SDL_RemoveTrayEntry(Ptr[u8] entry)
+    void    SDL_SetTrayEntryCallback(Ptr[u8] entry, Ptr[u8] callback, Ptr[u8] userdata)
+    void    SDL_SetTrayEntryLabel(Ptr[u8] entry, str8 label)
+    void    SDL_SetTrayEntryChecked(Ptr[u8] entry, bool checked)
+    void    SDL_SetTrayEntryEnabled(Ptr[u8] entry, bool enabled)
+    void    SDL_SetTrayIcon(Ptr[u8] tray, Ptr[u8] icon)
+    void    SDL_SetTrayTooltip(Ptr[u8] tray, str8 tooltip)
+    bool    SDL_GetTrayEntryChecked(Ptr[u8] entry)
+    bool    SDL_GetTrayEntryEnabled(Ptr[u8] entry)
+    str8    SDL_GetTrayEntryLabel(Ptr[u8] entry)
+    Ptr[u8] SDL_GetTrayMenu(Ptr[u8] tray)
+    Ptr[u8] SDL_GetTraySubmenu(Ptr[u8] entry)
 }
 
 // ==================== 枚举常量 ====================
@@ -573,3 +592,14 @@ export func getTicksNS(): int { return lib().SDL_GetTicksNS() as int }
 export func hasClipboardText(): bool { return lib().SDL_HasClipboardText() }
 
 export enum FlashOp { CANCEL = 0; BRIEFLY = 1; UNTIL_FOCUSED = 2 }
+
+// TrayEntryFlags — SDL3 系统托盘条目类型
+// 注意：DISABLED(0x80000000) 和 CHECKED(0x40000000) >= 2^31，
+// 当前编译器 enum 值存储为 32 位有符号 int 会截断，详见 BUG_TRAY_INT_TRUNC.md
+export enum TrayEntryFlag {
+    BUTTON   = 0x00000001
+    CHECKBOX = 0x00000002
+    SUBMENU  = 0x00000004
+    DISABLED = 0x80000000
+    CHECKED  = 0x40000000
+}
