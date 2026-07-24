@@ -91,11 +91,10 @@ export struct TrayMenu {
         return m
     }
 
-    // 分隔符：label 传 null，SDL3 即渲染为原生分隔线（flags 忽略）
+    // 分隔符：label 传 null，SDL3 即渲染为原生分隔线
     func addSeparator(): Ptr[u8] {
         if _ptr == null { return null }
         return _lib.SDL_InsertTrayEntryAt(_ptr, -1, null, 0)
-    }
     }
 
     func removeEntry(Ptr[u8] entry) {
@@ -108,7 +107,7 @@ export struct TrayMenu {
         return e
     }
 
-    func ptr(): Ptr[u8] { return _ptr }
+    func rawPtr(): Ptr[u8] { return _ptr }
 }
 
 // ============ Tray ============
@@ -143,7 +142,7 @@ export struct Tray {
         _lib.SDL_SetTrayTooltip(_ptr, text)
     }
 
-    func ptr(): Ptr[u8] { return _ptr }
+    func rawPtr(): Ptr[u8] { return _ptr }
 
     func destroy() {
         if _destroyed or _ptr == null { return }
