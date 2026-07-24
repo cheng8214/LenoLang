@@ -1,5 +1,6 @@
 // sdl_table.leno — 表格控件（多列多行，可选表头/排序/选择/双向滚动）
 // 通过 win.addTable({...}) 创建；数据用 set_rows / add_row 设置。
+import maths
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -69,9 +70,6 @@ export struct Table impl Widget {
                 _textH = _font.measureString("Ag").h   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
             }
         }
-    }
-    func _clamp(float v, float lo, float hi): float {
-        if v < lo { return lo }; if v > hi { return hi }; return v
     }
     func _total_w(): float {
         float s = 0.0
@@ -506,7 +504,7 @@ export struct Table impl Widget {
                 float bodyH = h - _headerH - hh
                 float track = bodyH - 4.0
                 float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
-                float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+                float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
                 float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
                 if my >= thy and my <= thy + thumbH { _draggingV = true; _vDragOffset = my - thy }
                 else {
@@ -521,7 +519,7 @@ export struct Table impl Widget {
                 float bodyH = h - _headerH - hh
                 float track = bodyH - 4.0
                 float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
-                float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+                float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
                 _scrollY = (my - (y + _headerH + 2.0) - _vDragOffset) * (maxY / (track - thumbH))
                 _clamp_scroll()
                 core.markFrameRedraw()
@@ -538,7 +536,7 @@ export struct Table impl Widget {
                 float bodyW = w - vw
                 float track = bodyW - 4.0
                 float tw = _total_w(); if tw <= 0 { tw = 1 }
-                float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+                float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
                 float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
                 if mx >= thx and mx <= thx + thumbW { _draggingH = true; _hDragOffset = mx - thx }
                 else {
@@ -553,7 +551,7 @@ export struct Table impl Widget {
                 float bodyW = w - vw
                 float track = bodyW - 4.0
                 float tw = _total_w(); if tw <= 0 { tw = 1 }
-                float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+                float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
                 _scrollX = (mx - (x + 2.0) - _hDragOffset) * (maxX / (track - thumbW))
                 _clamp_scroll()
                 core.markFrameRedraw()
@@ -805,7 +803,7 @@ export struct Table impl Widget {
         float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
         float track = bodyH - 4.0
         float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
-        float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+        float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
         float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
         r.setColor(_sbR, _sbG, _sbB, 180)
         r.fillRect(sx, y + _headerH + 2.0, vw, bodyH - 4.0)
@@ -819,7 +817,7 @@ export struct Table impl Widget {
         float bodyW = w - sb[0]
         float track = bodyW - 4.0
         float tw = _total_w(); if tw <= 0 { tw = 1 }
-        float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+        float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
         float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
         r.setColor(_sbR, _sbG, _sbB, 180)
         r.fillRect(x + 2.0, sy, bodyW - 4.0, hh)

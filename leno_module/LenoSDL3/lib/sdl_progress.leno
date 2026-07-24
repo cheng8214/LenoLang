@@ -1,6 +1,7 @@
 ﻿// sdl_progress.leno — 进度条控件
 // 通过 win.addProgressBar({...}) 创建，只读显示进度（可 set_value 设定）；
 // 开启 clickable 后点击/拖拽可设定进度（像可交互进度条），回调 on_change(float)
+import maths
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -23,15 +24,10 @@ export struct ProgressBar impl Widget {
     float _animVal = 0.0; float _animTarget = 0.0; float _animLast = 0.0; float _animSpeed = 12.0; bool _animating = false
     func(float):void _onChange
 
-    func _clamp(float v, float lo, float hi): float {
-        if v < lo { return lo }
-        if v > hi { return hi }
-        return v
-    }
     func _ratio(): float {
         float span = maxV - minV
         if span <= 0.0 { return 0.0 }
-        return _clamp((_animVal - minV) / span, 0.0, 1.0)
+        return maths.max(0.0, maths.min((_animVal - minV) / span, 1.0))
     }
 
     func _ensure_font() {
@@ -72,7 +68,7 @@ export struct ProgressBar impl Widget {
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         // hover/_wasHover/_dragging 默认见字段声明
-        value = _clamp(value, minV, maxV)
+        value = maths.max(minV, maths.min(value, maxV))
         _animVal = value; _animTarget = value; _animating = false; _animLast = 0.0
         _animSpeed = opts.get("anim_speed", 12.0)
         _tip = opts.get("tip", "")
@@ -82,7 +78,7 @@ export struct ProgressBar impl Widget {
 
     // ==================== 设置方法 ====================
     func set_value(float v) {
-        float nv = _clamp(v, minV, maxV)
+        float nv = maths.max(minV, maths.min(v, maxV))
         if nv != value {
             value = nv
             _animTarget = nv
@@ -114,7 +110,7 @@ export struct ProgressBar impl Widget {
         float t = (mx - x) / w
         if t < 0.0 { t = 0.0 }
         if t > 1.0 { t = 1.0 }
-        return _clamp(minV + t * (maxV - minV), minV, maxV)
+        return maths.max(minV, maths.min(minV + t * (maxV - minV), maxV))
     }
 
     // ==================== 交互 ====================
