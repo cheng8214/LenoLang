@@ -324,7 +324,7 @@ export struct Renderer {
         if radius <= 0.0 { return true }
         var r = _int(radius)
         var ok = true
-        for 0 : (2 * r + 1) to i {
+        for 0 : (2 * r) to i {
             var dy = i - r
             var inside = radius * radius - dy * dy
             if inside <= 0.0 { continue }
