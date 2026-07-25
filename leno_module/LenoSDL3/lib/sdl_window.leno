@@ -287,15 +287,17 @@ export struct Window {
     func add(Widget w): Widget {
         _widgets.add(w)
         // 绑定窗口句柄：容器向下传递，Edit 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
-        if w is Panel { w._bind_window(handle); return w }
-        if w is ScrollView { w._bind_window(handle); return w }
-        if w is HBox { w._bind_window(handle); return w }
-        if w is VBox { w._bind_window(handle); return w }
-        if w is AnchorBox { w._bind_window(handle); return w }
-        if w is TabControl { w._bind_window(handle); return w }
-        if w is Edit { w.set_window(handle); return w }
-        if w is SpinBox { w._bind_window(handle); return w }
-        if w is TreeView { w.set_window_handle(handle); return w }
+        switch w {
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox {
+                w._bind_window(handle); return w
+            }
+            case is Edit {
+                w.set_window(handle); return w
+            }
+            case is TreeView {
+                w.set_window_handle(handle); return w
+            }
+        }
         return w
     }
 

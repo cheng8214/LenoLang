@@ -71,12 +71,10 @@ export struct ScrollView impl Widget {
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
         Widget c = _content
-        if c is HBox { c._bind_window(hwnd); return }
-        if c is VBox { c._bind_window(hwnd); return }
-        if c is AnchorBox { c._bind_window(hwnd); return }
-        if c is ScrollView { c._bind_window(hwnd); return }
-        if c is Panel { c._bind_window(hwnd); return }
-        if c is Edit { c.set_window(hwnd) }
+        switch c {
+            case is HBox, VBox, AnchorBox, ScrollView, Panel { c._bind_window(hwnd); return }
+            case is Edit { c.set_window(hwnd) }
+        }
     }
 
     // 设置内容控件（单一）。content_w/h 未指定时取内容自然尺寸

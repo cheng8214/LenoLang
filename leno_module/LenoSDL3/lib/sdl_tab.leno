@@ -389,10 +389,10 @@ export struct TabControl impl Widget {
 
 // 把窗口句柄下发给需要它的子控件（Edit 的 IME 定位；嵌套布局继续向下传递）
 func _tab_pass_window(Widget c, Ptr[u8] hwnd) {
-    if c is Edit { c.set_window(hwnd); return }
-    if c is HBox { c._bind_window(hwnd); return }
-    if c is VBox { c._bind_window(hwnd); return }
-    if c is AnchorBox { c._bind_window(hwnd); return }
+    switch c {
+        case is Edit { c.set_window(hwnd); return }
+        case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
+    }
 }
 
 // 工厂
