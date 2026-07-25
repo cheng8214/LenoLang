@@ -54,7 +54,7 @@ typedef struct {
     char* name;                 // enum 名称
     int member_count;           // 成员数量
     char** member_names;        // 成员名称数组
-    int* member_values;         // 成员值数组
+    int64_t* member_values;     // 成员值数组（int64_t，支持 >= 2^31 的位标志值）
 } ModuleEnumSymbol;
 
 // 模块 clib 函数符号
@@ -162,7 +162,7 @@ ModuleStructMethod* module_symbol_table_find_struct_method(ModuleSymbolTable* ta
 ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const char* enum_name);
 
 // 添加 enum 符号（member_values[i] = -1 表示无显式值，使用自动递增）
-void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int* member_values);
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int64_t* member_values);
 
 // 查找 face 符号
 ModuleFaceSymbol* module_symbol_table_find_face(ModuleSymbolTable* table, const char* face_name);

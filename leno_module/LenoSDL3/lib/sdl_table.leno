@@ -1,5 +1,6 @@
 // sdl_table.leno — 表格控件（多列多行，可选表头/排序/选择/双向滚动）
 // 通过 win.addTable({...}) 创建；数据用 set_rows / add_row 设置。
+import maths
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -69,9 +70,6 @@ export struct Table impl Widget {
                 _textH = _font.measureString("Ag").h   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
             }
         }
-    }
-    func _clamp(float v, float lo, float hi): float {
-        if v < lo { return lo }; if v > hi { return hi }; return v
     }
     func _total_w(): float {
         float s = 0.0
@@ -506,7 +504,7 @@ export struct Table impl Widget {
                 float bodyH = h - _headerH - hh
                 float track = bodyH - 4.0
                 float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
-                float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+                float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
                 float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
                 if my >= thy and my <= thy + thumbH { _draggingV = true; _vDragOffset = my - thy }
                 else {
@@ -521,7 +519,7 @@ export struct Table impl Widget {
                 float bodyH = h - _headerH - hh
                 float track = bodyH - 4.0
                 float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
-                float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+                float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
                 _scrollY = (my - (y + _headerH + 2.0) - _vDragOffset) * (maxY / (track - thumbH))
                 _clamp_scroll()
                 core.markFrameRedraw()
@@ -538,7 +536,7 @@ export struct Table impl Widget {
                 float bodyW = w - vw
                 float track = bodyW - 4.0
                 float tw = _total_w(); if tw <= 0 { tw = 1 }
-                float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+                float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
                 float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
                 if mx >= thx and mx <= thx + thumbW { _draggingH = true; _hDragOffset = mx - thx }
                 else {
@@ -553,7 +551,7 @@ export struct Table impl Widget {
                 float bodyW = w - vw
                 float track = bodyW - 4.0
                 float tw = _total_w(); if tw <= 0 { tw = 1 }
-                float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+                float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
                 _scrollX = (mx - (x + 2.0) - _hDragOffset) * (maxX / (track - thumbW))
                 _clamp_scroll()
                 core.markFrameRedraw()
@@ -688,32 +686,12 @@ export struct Table impl Widget {
         else if align == 1 { tx = cx + (cw - tw) / 2.0 }
         else { tx = cx + pad }
         if tx < cx + 2.0 { tx = cx + 2.0 }
-        // 安全裁剪（与表格外框取交集），兜底防止测量误差导致的残留溢出
+        // 安全裁剪：tx 已 clamp，body clip 已覆盖数据区，无需 per-cell pushClipRect
+        // （每格 push/pop 会产生 2 次 batch flush，12行×5列=120次/帧，导致闪烁）
         float cl = cx; if cl < x { cl = x }
         float crx = cx + cw; if crx > x + w { crx = x + w }
-        float cwClip = crx - cl
-        if cwClip <= 0.0 { return }
-        if _clipBase != null {
-            SDL_Rect crc = SDL_Rect.malloc()
-            crc.x = _int(cl); crc.y = _int(ry)
-            crc.w = _int(cwClip) + 1; crc.h = _int(rh) + 1   // +1 覆盖浮点截断的亚像素
-            // 夹紧到基础裁剪区（数据区即为 bodyClip），防止文字渗透到滚动条/表外
-            SDL_Rect base = SDL_Rect.from_ptr(_clipBase)
-            int baseX2 = base.x + base.w; int baseY2 = base.y + base.h
-            if crc.x < base.x { crc.w = crc.w - (base.x - crc.x); crc.x = base.x }
-            if crc.y < base.y { crc.h = crc.h - (base.y - crc.y); crc.y = base.y }
-            int crcX2 = crc.x + crc.w; int crcY2 = crc.y + crc.h
-            if crcX2 > baseX2 { crc.w = baseX2 - crc.x }
-            if crcY2 > baseY2 { crc.h = baseY2 - crc.y }
-            if crc.w > 0 and crc.h > 0 {
-                r.pushClipRect(crc.to_ptr())
-                r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
-                r.popClipRect()
-            }
-            crc.free()
-        } else {
-            r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
-        }
+        if tx >= crx { return }
+        r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
     }
 
     func render(Renderer r) {
@@ -825,7 +803,7 @@ export struct Table impl Widget {
         float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
         float track = bodyH - 4.0
         float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
-        float thumbH = _clamp(bodyH * bodyH / contentH, 18.0, bodyH)
+        float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
         float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
         r.setColor(_sbR, _sbG, _sbB, 180)
         r.fillRect(sx, y + _headerH + 2.0, vw, bodyH - 4.0)
@@ -839,7 +817,7 @@ export struct Table impl Widget {
         float bodyW = w - sb[0]
         float track = bodyW - 4.0
         float tw = _total_w(); if tw <= 0 { tw = 1 }
-        float thumbW = _clamp(bodyW * bodyW / tw, 18.0, bodyW)
+        float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
         float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
         r.setColor(_sbR, _sbG, _sbB, 180)
         r.fillRect(x + 2.0, sy, bodyW - 4.0, hh)

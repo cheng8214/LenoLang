@@ -1,0 +1,190 @@
+// sdl_tray.leno — 系统托盘（System Tray）封装
+//
+// 回调机制（参照 sdl_filedialog.leno）：
+//   - 一个共享的 C 回调 _cb（ffi.callback 只创建一次）
+//   - 每个条目通过 userdata 传索引，_dispatch 读索引查 Array
+//
+// 用法：
+//   import "../../lib/SDL3.leno" as SDL3
+//   use SDL3.(Tray, TrayMenu)
+//   Tray tray = SDL3.createTray({ tooltip: "My App" })
+//   TrayMenu menu = tray.getMenu()
+//   menu.addButton("显示", func() { win.show() })
+//   menu.addButton("退出", func() { tray.destroy() })
+//   // 必须用 win.run() 驱动事件循环
+
+import ffi
+import "sdl_core.leno" as core
+use core.(sdl3, TrayEntryFlag)
+sdl3 _lib = core.lib()
+
+// ============ 回调 ============
+cfunc _TrayCb(Ptr[u8] userdata, Ptr[u8] entry):void
+
+var _cb        = null       // 共享 C 回调（只创建一次）
+Array _entryCbs = []        // 每个条目的用户回调，按创建顺序
+Array _entryUds = []        // 每个条目的 userdata malloc 指针（用于释放）
+
+func _ensureCb() {
+    if _cb == null {
+        _cb = ffi.callback(_dispatch, _TrayCb)
+    }
+}
+
+func _dispatch(Ptr[u8] userdata, Ptr[u8] entry) {
+    // userdata 是 malloc(sizeof(int)) 的地址，里面存了条目索引
+    if userdata == null { return }
+    int idx = ffi.read_int(userdata, 0)
+    if idx < 0 or idx >= _entryCbs.len() { return }
+    var cb = _entryCbs[idx]
+    if cb != null { cb() }
+}
+
+// 为条目分配 userdata（malloc 一个 int，值为索引）
+func _allocUd(int idx): Ptr[u8] {
+    Ptr[u8] p = ffi.malloc(4)
+    ffi.write_int(p, 0, idx)
+    _entryUds.add(p)
+    return p
+}
+
+func _bind(Ptr[u8] entry, any cb) {
+    _ensureCb()
+    int idx = _entryCbs.len()
+    _entryCbs.add(cb)
+    Ptr[u8] ud = _allocUd(idx)
+    _lib.SDL_SetTrayEntryCallback(entry, _cb, ud)
+}
+
+// ============ TrayMenu ============
+
+export struct TrayMenu {
+    Ptr[u8] _ptr
+    bool    _isSub
+
+    func _insert(string label, int flags, int pos): Ptr[u8] {
+        if _ptr == null { return null }
+        return _lib.SDL_InsertTrayEntryAt(_ptr, pos, label, flags)
+    }
+
+    func addButton(string label, any cb): Ptr[u8] {
+        Ptr[u8] e = _insert(label, TrayEntryFlag.BUTTON, -1)
+        if e != null and cb != null { _bind(e, cb) }
+        return e
+    }
+
+    func addCheckbox(string label, bool checked, any cb): Ptr[u8] {
+        int f = TrayEntryFlag.CHECKBOX
+        if checked { f = f | TrayEntryFlag.CHECKED }
+        Ptr[u8] e = _insert(label, f, -1)
+        if e != null and cb != null { _bind(e, cb) }
+        return e
+    }
+
+    func addSubmenu(string label): TrayMenu {
+        Ptr[u8] entry = _insert(label, TrayEntryFlag.SUBMENU, -1)
+        if entry == null { return null }
+        Ptr[u8] subPtr = _lib.SDL_CreateTraySubmenu(entry)
+        TrayMenu m = new TrayMenu()
+        m._ptr = subPtr
+        m._isSub = true
+        return m
+    }
+
+    // 分隔符：label 传 null，SDL3 即渲染为原生分隔线
+    func addSeparator(): Ptr[u8] {
+        if _ptr == null { return null }
+        return _lib.SDL_InsertTrayEntryAt(_ptr, -1, null, 0)
+    }
+
+    func removeEntry(Ptr[u8] entry) {
+        if entry != null { _lib.SDL_RemoveTrayEntry(entry) }
+    }
+
+    func insertButtonAt(int pos, string label, any cb): Ptr[u8] {
+        Ptr[u8] e = _insert(label, TrayEntryFlag.BUTTON, pos)
+        if e != null and cb != null { _bind(e, cb) }
+        return e
+    }
+
+    func rawPtr(): Ptr[u8] { return _ptr }
+}
+
+// ============ Tray ============
+
+export struct Tray {
+    Ptr[u8]   _ptr
+    TrayMenu  _rootMenu
+    bool      _menuInited    // 需显式标志：struct 字段是值类型，不能与 null 比较
+    bool      _destroyed
+
+    func getMenu(): TrayMenu {
+        if not _menuInited {
+            TrayMenu m = new TrayMenu()
+            m._ptr = _lib.SDL_GetTrayMenu(_ptr)
+            if m._ptr == null {
+                m._ptr = _lib.SDL_CreateTrayMenu(_ptr)
+            }
+            m._isSub = false
+            _rootMenu = m
+            _menuInited = true
+        }
+        return _rootMenu
+    }
+
+    func setIcon(Ptr[u8] surface) {
+        if _ptr == null { return }
+        _lib.SDL_SetTrayIcon(_ptr, surface)
+    }
+
+    func setTooltip(string text) {
+        if _ptr == null { return }
+        _lib.SDL_SetTrayTooltip(_ptr, text)
+    }
+
+    func rawPtr(): Ptr[u8] { return _ptr }
+
+    func destroy() {
+        if _destroyed or _ptr == null { return }
+        _destroyed = true
+        _lib.SDL_DestroyTray(_ptr)
+        _ptr = null
+        _menuInited = false
+        // 释放所有 userdata malloc
+        for _entryUds.len() to i { ffi.free(_entryUds[i]) }
+        _entryUds = []
+        _entryCbs = []
+    }
+}
+
+// ============ 工厂 ============
+
+export func createTray(Dict opts): Tray {
+    _ensureCb()
+
+    Ptr[u8] icon = null
+    var iconOpt = opts.get("icon", null)
+    if iconOpt != null and iconOpt is Ptr[u8] {
+        icon = iconOpt as Ptr[u8]
+    }
+
+    string tip = ""
+    var tipOpt = opts.get("tooltip", null)
+    if tipOpt != null { tip = tipOpt as string }
+
+    Ptr[u8] p = _lib.SDL_CreateTray(icon, tip)
+    if p == null { return null }
+
+    Tray t = new Tray()
+    t._ptr = p
+    t._destroyed = false
+    return t
+}
+
+// ============ 工具函数 ============
+
+export func isEntryChecked(Ptr[u8] entry): bool    { return _lib.SDL_GetTrayEntryChecked(entry) }
+export func isEntryEnabled(Ptr[u8] entry): bool    { return _lib.SDL_GetTrayEntryEnabled(entry) }
+export func setEntryEnabled(Ptr[u8] entry, bool e) { _lib.SDL_SetTrayEntryEnabled(entry, e) }
+export func setEntryLabel(Ptr[u8] entry, string l)  { _lib.SDL_SetTrayEntryLabel(entry, l) }
+export func setEntryChecked(Ptr[u8] entry, bool c)  { _lib.SDL_SetTrayEntryChecked(entry, c) }

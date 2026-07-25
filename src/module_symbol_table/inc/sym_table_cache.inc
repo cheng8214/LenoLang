@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000005
+#define LENOSYMC_VERSION 0x00000006  // v6: enum 成员值 int32 -> int64，支持 >= 2^31 的位标志
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -262,8 +262,8 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
         fwrite(&emc, 4, 1, f);
         for (uint32_t j = 0; j < emc; j++) {
             sym_cache_write_string(f, table->enums[i].member_names[j]);
-            int32_t mv = table->enums[i].member_values[j];
-            fwrite(&mv, 4, 1, f);
+            int64_t mv = table->enums[i].member_values[j];
+            fwrite(&mv, 8, 1, f);
         }
     }
 
@@ -523,10 +523,10 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
         uint32_t emc; if (fread(&emc, 4, 1, f) != 1) goto fail;
         table->enums[i].member_count = (int)emc;
         table->enums[i].member_names = emc > 0 ? (char**)calloc(emc, sizeof(char*)) : NULL;
-        table->enums[i].member_values = emc > 0 ? (int*)calloc(emc, sizeof(int)) : NULL;
+        table->enums[i].member_values = emc > 0 ? (int64_t*)calloc(emc, sizeof(int64_t)) : NULL;
         for (uint32_t j = 0; j < emc; j++) {
             table->enums[i].member_names[j] = sym_cache_read_string(f);
-            int32_t mv; if (fread(&mv, 4, 1, f) != 1) goto fail;
+            int64_t mv; if (fread(&mv, 8, 1, f) != 1) goto fail;
             table->enums[i].member_values[j] = mv;
         }
         table->enum_count++;

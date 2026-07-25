@@ -286,7 +286,7 @@ struct Symbol {
     TypeInfo* cfunc_return_type;    // 返回类型
     // enum 成员信息（仅当类型为 enum 时使用，use 导入的 enum）
     char** enum_value_names;        // 成员名称数组
-    int* enum_values;               // 成员值数组
+    int64_t* enum_values;           // 成员值数组（int64_t，支持 >= 2^31 的位标志值）
     int enum_value_count;           // 成员数量
     // 函数别名信息（仅当 kind == SYM_FUNC_ALIAS 时使用）
     char* alias_module_name;        // 源模块名（如 "core"）

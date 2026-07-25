@@ -159,7 +159,7 @@ ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const 
 }
 
 // 添加 enum 符号
-void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int* member_values) {
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int64_t* member_values) {
     if (!table || !name) return;
 
     // 扩容
@@ -178,11 +178,11 @@ void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, in
     en->member_values = NULL;
     if (member_count > 0 && member_names) {
         en->member_names = (char**)malloc(sizeof(char*) * member_count);
-        en->member_values = (int*)malloc(sizeof(int) * member_count);
+        en->member_values = (int64_t*)malloc(sizeof(int64_t) * member_count);
         for (int i = 0; i < member_count; i++) {
             en->member_names[i] = strdup(member_names[i]);
             // 如果提供了显式值则使用，否则自动递增
-            en->member_values[i] = (member_values && member_values[i] != -1) ? member_values[i] : i;
+            en->member_values[i] = (member_values && member_values[i] != -1) ? member_values[i] : (int64_t)i;
         }
     }
 }

@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import maths
 
 export struct Slider impl Widget {
     float x = 0.0; float y = 0.0; float w = 200.0; float h = 24.0
@@ -22,18 +23,9 @@ export struct Slider impl Widget {
     string _tip = ""           // 悬停提示文本（空 = 不提示）
     func(float):void _onChange
 
-    func _clamp(float v, float lo, float hi): float {
-        if v < lo { return lo }
-        if v > hi { return hi }
-        return v
-    }
-    func _round(float f): float {
-        if f >= 0.0 { return _float(_int(f + 0.5)) }
-        return _float(_int(f - 0.5))
-    }
     func _quantize(float v): float {
-        if step > 0.0 { v = _round(v / step) * step }
-        return _clamp(v, minV, maxV)
+        if step > 0.0 { v = maths.round(v / step) * step }
+        return maths.max(minV, maths.min(v, maxV))
     }
 
     func _ensure_font() {
@@ -75,7 +67,7 @@ export struct Slider impl Widget {
         visible = opts.get("visible", true)
         // hover/_wasHover/_dragging 默认见字段声明
         _tip = opts.get("tip", "")
-        value = _clamp(value, minV, maxV)
+        value = maths.max(minV, maths.min(value, maxV))
         _ensure_font()
         _loaded = true
     }
@@ -84,7 +76,7 @@ export struct Slider impl Widget {
     func set_value(float v)    { float nv = _quantize(v); if nv != value { value = nv; if _onChange != null { _onChange(value) } } }
     func set_tip(string t)      { _tip = t }
     func get_value(): float     { return value }
-    func set_range(float lo, float hi) { minV = lo; maxV = hi; value = _clamp(value, minV, maxV) }
+    func set_range(float lo, float hi) { minV = lo; maxV = hi; value = maths.max(minV, maths.min(value, maxV)) }
     func set_enabled(bool e)     { enabled = e }
     func set_visible(bool v)      { visible = v }
     func is_visible(): bool       { return visible }
@@ -102,12 +94,12 @@ export struct Slider impl Widget {
     func _ratio(): float {
         float span = maxV - minV
         if span <= 0.0 { return 0.0 }
-        return _clamp((value - minV) / span, 0.0, 1.0)
+        return maths.max(0.0, maths.min((value - minV) / span, 1.0))
     }
 
     func _thumb_radius(): float {
-        if _vertical { return _clamp(w * 0.45, 6.0, 40.0) }
-        return _clamp(h * 0.45, 6.0, 40.0)
+        if _vertical { return maths.max(6.0, maths.min(w * 0.45, 40.0)) }
+        return maths.max(6.0, maths.min(h * 0.45, 40.0))
     }
 
     func contains(float mx, float my): bool {
@@ -144,9 +136,13 @@ export struct Slider impl Widget {
             _wasHover = hover
             hover = contains(mx, my)
             // 拖拽中：即使移出控件也要继续更新
+            // 注意：motion 事件不触发整窗重绘，控件必须主动 markFrameRedraw()
             if _dragging {
                 if _vertical { value = _value_from_pos(my) } else { value = _value_from_pos(mx) }
                 if _onChange != null { _onChange(value) }
+                core.markFrameRedraw()
+            } else if _wasHover != hover {
+                core.markFrameRedraw()   // hover 状态变化也需重绘（thumb 高亮）
             }
             if _cursor >= 0 {
                 if (hover or _dragging) and not _wasHover { core.setSystemCursor(_cursor) }
@@ -176,7 +172,7 @@ export struct Slider impl Widget {
         float rad = _thumb_radius()
         float baseWH
         if _vertical { baseWH = w } else { baseWH = h }
-        float tk = _clamp(baseWH * 0.4, 3.0, 30.0)   // 轨道厚度
+        float tk = maths.max(3.0, maths.min(baseWH * 0.4, 30.0))   // 轨道厚度
         float span
         if _vertical { span = h - 2.0 * rad } else { span = w - 2.0 * rad }
 

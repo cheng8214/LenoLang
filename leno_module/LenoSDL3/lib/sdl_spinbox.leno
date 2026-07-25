@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import maths
 import "sdl_edit.leno" as edt; use edt.Edit
 
 export struct SpinBox impl Widget {
@@ -31,18 +32,10 @@ export struct SpinBox impl Widget {
     func(float):void _onChange
 
     // ==================== 工具 ====================
-    func _clamp(float v, float lo, float hi): float {
-        if v < lo { return lo }
-        if v > hi { return hi }
-        return v
-    }
-    func _round(float f): float {
-        if f >= 0.0 { return _float(_int(f + 0.5)) }
-        return _float(_int(f - 0.5))
-    }
+
     func _quantize(float v): float {
-        if step > 0.0 { v = _round(v / step) * step }
-        return _clamp(v, minV, maxV)
+        if step > 0.0 { v = maths.round(v / step) * step }
+        return maths.max(minV, maths.min(v, maxV))
     }
     func _digit(string c): int {
         if c == "0" { return 0 } eif c == "1" { return 1 } eif c == "2" { return 2 }
@@ -56,7 +49,7 @@ export struct SpinBox impl Widget {
         if _decimals > 0 {
             float p = 1.0
             for _decimals to _ { p = p * 10.0 }
-            float r = _round(value * p) / p
+            float r = maths.round(value * p) / p
             return (r) as string
         }
         return (value) as string
@@ -94,7 +87,7 @@ export struct SpinBox impl Widget {
         float v = intPart + frac
         if neg { v = -v }
         if step > 0.0 { v = _quantize(v) }
-        value = _clamp(v, minV, maxV)
+        value = maths.max(minV, maths.min(v, maxV))
         if _onChange != null { _onChange(value) }
     }
     func _step_delta(): float {
@@ -147,7 +140,7 @@ export struct SpinBox impl Widget {
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
 
-        value = _clamp(value, minV, maxV)
+        value = maths.max(minV, maths.min(value, maxV))
         _sync_text()
         _loaded = true
     }
@@ -176,7 +169,7 @@ export struct SpinBox impl Widget {
         }
     }
     func get_value(): float { return value }
-    func set_range(float lo, float hi) { minV = lo; maxV = hi; value = _clamp(value, minV, maxV); _sync_text() }
+    func set_range(float lo, float hi) { minV = lo; maxV = hi; value = maths.max(minV, maths.min(value, maxV)); _sync_text() }
     func set_step(float s) { step = s }
     func set_int_mode(bool m) { _intMode = m; if m { _decimals = 0 }; _sync_text() }
     func set_decimals(int d) { _decimals = d; if _intMode { _decimals = 0 }; _sync_text() }

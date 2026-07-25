@@ -867,6 +867,7 @@ export struct Edit impl Widget {
                     _scrollY = relY * maxSY / (visH - thumbH)
                     if _scrollY < 0 { _scrollY = 0 }
                     if _scrollY > maxSY { _scrollY = maxSY }
+                    core.markFrameRedraw()
                 }
             }
 
@@ -918,6 +919,7 @@ export struct Edit impl Widget {
                     else { _scrollX = (tx - trackX0) * maxSX / (trackX1 - thumbW - trackX0) }
                     if _scrollX < 0 { _scrollX = 0 }
                     if _scrollX > maxSX { _scrollX = maxSX }
+                    core.markFrameRedraw()
                 }
             }
         }

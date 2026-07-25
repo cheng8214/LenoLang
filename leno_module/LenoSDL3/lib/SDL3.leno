@@ -27,6 +27,7 @@ import "sdl_scrollview.leno" as scv
 import "sdl_treeview.leno" as tv
 import "sdl_widget.leno" as wgt
 import "sdl_chart.leno" as cht
+import "sdl_tray.leno" as tray
 
 
 // ==================== 重新导出类型 ====================
@@ -61,6 +62,7 @@ use tv.TreeView
 use lay.(HBox, VBox, AnchorBox)
 use wgt.Widget
 use cht.(BarChart, LineChart, PieChart)
+use tray.(Tray, TrayMenu)
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
 export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
@@ -81,6 +83,12 @@ export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts)
 export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }
 export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }
 export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
+export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
+export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
+export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
+export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }
+export func setTrayEntryLabel(Ptr[u8] e, string l)  { tray.setEntryLabel(e, l) }
+export func setTrayEntryChecked(Ptr[u8] e, bool v)  { tray.setEntryChecked(e, v) }
 export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
@@ -96,7 +104,7 @@ export func runModal(Window win, any onEvent, any onRender) { dlg.runModal(win, 
 use core.(Color, FColor, Size, FSize, StringSize, GlyphInfo)
 
 // ==================== 重新导出枚举 ====================
-use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp)
+use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp, TrayEntryFlag)
 
 export const PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
 export const SDL_FRect_SIZE  = core.SDL_FRect_SIZE
