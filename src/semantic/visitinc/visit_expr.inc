@@ -37,6 +37,27 @@
                     }
                 }
             }
+            // struct 值类型与 null 比较：struct 字段默认被立即分配（不为 null），
+            // == null 仅在显式赋 null 后才成立，常导致懒初始化模式失效
+            {
+                int op = ast->u.binop.op;
+                if (op == TOK_EQEQ || op == TOK_NEQ) {
+                    Ast* la = ast->u.binop.l;
+                    Ast* ra = ast->u.binop.r;
+                    TypeInfo* lt = la ? la->cached_type : NULL;
+                    TypeInfo* rt = ra ? ra->cached_type : NULL;
+                    int struct_vs_null = (lt && lt->kind == TYPE_STRUCT && ra && ra->kind == AST_NULL) ||
+                                         (rt && rt->kind == TYPE_STRUCT && la && la->kind == AST_NULL);
+                    if (struct_vs_null) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg),
+                            "struct 值类型默认被立即分配（不为 null），%s null 仅在显式赋 null 后才成立；"
+                            "懒初始化请改用 bool 标志",
+                            (op == TOK_EQEQ) ? "==" : "!=");
+                        warning_add(WARN_STRUCT_EQ_NULL, ast->line, msg);
+                    }
+                }
+            }
             break;
         }
 

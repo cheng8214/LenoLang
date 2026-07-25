@@ -84,8 +84,12 @@ export struct Tray {
 `if _menu == null` 始终为 `false`，懒初始化不生效，`_menu._ptr` 保持默认值 null。
 
 ## 根因
-Leno 中 struct 字段是**值类型**（内嵌在父 struct 的内存中），不是指针/引用。
-值类型永远不为 null，编译器允许 `== null` 比较但不产生正确结果。
+Leno 中 struct 字段是**值类型**：`new Tray()` 时嵌套 struct 字段被**递归立即分配**
+（`object_struct.c:struct_instance_new_depth` 中 TYPE_STRUCT 分支），所以默认不为 null。
+编译器允许 `== null` 比较（`type_is_compatible` 中 `null 可赋值给任何类型`），
+但默认状态下结果恒为 false，懒初始化分支永不执行。
+
+注：显式 `_menu = null` 后 `== null` 才会为 true（运行时确认为 true）。
 
 ## 影响范围
 所有对 struct 类型字段做 `== null` / `!= null` 判断的懒初始化模式。
@@ -96,6 +100,11 @@ Leno 中 struct 字段是**值类型**（内嵌在父 struct 的内存中），�
 2. **编译器层面**：struct 字段 `== null` 时给出编译警告或错误
 
 目前 `sdl_tray.leno` 使用方案 1。
+
+> ✅ **方案 2 已实现（2026-07-25）**：新增 `WARN_STRUCT_EQ_NULL` 警告类型，
+> 在语义分析 `AST_BINOP` 中检测 `struct 类型 == null` / `!= null`（一侧 `TYPE_STRUCT`，
+> 另一侧 `AST_NULL`），提示"struct 值类型默认被立即分配，仅在显式赋 null 后才成立"。
+> 警告不阻断编译，Ptr/string 等非 struct 类型的 `== null` 不受影响。
 
 ---
 
