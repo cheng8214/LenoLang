@@ -70,19 +70,13 @@ export struct ScrollView impl Widget {
     // 绑定窗口句柄：记录自身，并下发给需要它的内容控件（如含 Edit 的布局）
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
-        if _content == null { return }
-        HBox hb = _content as HBox
-        if hb != null { hb._bind_window(hwnd); return }
-        VBox vb = _content as VBox
-        if vb != null { vb._bind_window(hwnd); return }
-        AnchorBox ab = _content as AnchorBox
-        if ab != null { ab._bind_window(hwnd); return }
-        ScrollView sv = _content as ScrollView
-        if sv != null { sv._bind_window(hwnd); return }
-        Panel p = _content as Panel
-        if p != null { p._bind_window(hwnd); return }
-        Edit e = _content as Edit
-        if e != null { e.set_window(hwnd) }
+        Widget c = _content
+        if c is HBox { c._bind_window(hwnd); return }
+        if c is VBox { c._bind_window(hwnd); return }
+        if c is AnchorBox { c._bind_window(hwnd); return }
+        if c is ScrollView { c._bind_window(hwnd); return }
+        if c is Panel { c._bind_window(hwnd); return }
+        if c is Edit { c.set_window(hwnd) }
     }
 
     // 设置内容控件（单一）。content_w/h 未指定时取内容自然尺寸

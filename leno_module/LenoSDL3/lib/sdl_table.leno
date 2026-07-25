@@ -24,7 +24,7 @@ export struct Table impl Widget {
     int _selRow = -1; int _selCol = -1; int _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
     bool _sortable = false; int _sortCol = -1; bool _sortDesc = false; bool _zebra = true
 
-    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font; bool _fontDirty = true
     float _textH = 16.0         // 缓存字体行高，避免每个单元格重复 measureString
     int br = 38; int bg = 40; int bb = 48
     int _hdrR = 46; int _hdrG = 48; int _hdrB = 56; int _hdrTxtR = 220; int _hdrTxtG = 225; int _hdrTxtB = 235
@@ -41,7 +41,7 @@ export struct Table impl Widget {
     func(int):void _onSelect
     func(int, int):void _onCell
     // 内嵌右击上下文菜单（复用 MenuBar 弹层渲染与捕获；默认不预置项，由应用层自定义）
-    MenuBar _ctxMenu = null
+    MenuBar _ctxMenu = null; bool _hasCtxMenu = false
     int _ctxMenuH = -1
     Ptr[u8] _hwnd = null           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     bool _ctxMenuEnabled = true
@@ -52,7 +52,7 @@ export struct Table impl Widget {
     func(int, int, string):void _onEditCommit  // 行内编辑提交回调（行, 列, 新文本）；供应用层落盘（如重命名）
 
     // === 双击编辑（默认关闭，由应用按需开启） ===
-    Edit _edit = null
+    Edit _edit = null; bool _hasEdit = false
     bool _editing = false
     bool _editable = false          // 是否允许双击进入单元格编辑（默认 false）
     int _editRow = -1; int _editCol = -1
@@ -61,14 +61,15 @@ export struct Table impl Widget {
     func(int, int):void _onDblClick  // 双击单元格回调（无论是否可编辑都会触发，便于应用层自定义如“打开”）
 
     func _ensure_font() {
-        if _font == null or not _font.ok {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or not _font.ok {
+            if _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok {
                 if _fontStyle != 0 { _font.setStyle(_fontStyle) }
                 _textH = _font.measureString("Ag").h   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
             }
+            _fontDirty = false
         }
     }
     func _total_w(): float {
@@ -209,15 +210,17 @@ export struct Table impl Widget {
         _clamp_scroll()
         // 编辑框（朴素写法：在 sdl_table 内部经模块别名 edt 创建，触发传递加载别名 bug）
         _edit = edt.createEdit({x:0, y:0, w:w, h:_rowH, font_size:_fontSize, border:false, radius:0})
+        _hasEdit = true
         _editing = false
         _editRow = -1; _editCol = -1
         // 内嵌右击上下文菜单（首次 set 时创建，避免重复注册到全局菜单注册表）
-        if _ctxMenu == null {
+        if not _hasCtxMenu {
             _ctxMenu = menu.createMenuBar({})
             _ctxMenu.setWindowSize(_winW, _winH)
             _ctxMenuH = _ctxMenu.addContextMenu("table_ctx")
             _ctxMenu.on_select(func(string m, string id) { _ctx_select(id) })
             menu.registerContextMenu(_ctxMenu)
+            _hasCtxMenu = true
         }
         _loaded = true
     }
@@ -335,7 +338,7 @@ export struct Table impl Widget {
     }
 
     // ==================== 设置方法 ====================
-    func set_font_size(float s) { _fontSize = s; if _font != null { fnt.releaseFont(_font); _font = null } }
+    func set_font_size(float s) { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func set_resizable(bool r) { _resizable = r }
@@ -348,29 +351,29 @@ export struct Table impl Widget {
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
     func set_window_size(int ww, int hh) {
         _winW = ww; _winH = hh
-        if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) }
+        if _hasCtxMenu { _ctxMenu.setWindowSize(ww, hh) }
     }
     // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
     func set_window_handle(Ptr[u8] hwnd) {
         _hwnd = hwnd
-        if _ctxMenu != null { _ctxMenu.setWindowHandle(hwnd) }
+        if _hasCtxMenu { _ctxMenu.setWindowHandle(hwnd) }
     }
     // 启用/禁用右击上下文菜单
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
     func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
     // 向上下文菜单追加一项，返回项在菜单内索引（可用于挂子菜单）
     func addContextItem(Dict opts): int {
-        if _ctxMenu == null or _ctxMenuH < 0 { return -1 }
+        if not _hasCtxMenu or _ctxMenuH < 0 { return -1 }
         return _ctxMenu.addContextItem(_ctxMenuH, opts)
     }
     // 向上下文菜单追加分隔线
     func addContextSeparator() {
-        if _ctxMenu == null or _ctxMenuH < 0 { return }
+        if not _hasCtxMenu or _ctxMenuH < 0 { return }
         _ctxMenu.addContextSeparator(_ctxMenuH)
     }
     // 按 id 动态启用/禁用某个上下文菜单项（供调用方按当前状态刷新）
     func setContextItemEnabled(string id, bool en) {
-        if _ctxMenu != null and _ctxMenuH >= 0 { _ctxMenu.setContextItemEnabled(_ctxMenuH, id, en) }
+        if _hasCtxMenu and _ctxMenuH >= 0 { _ctxMenu.setContextItemEnabled(_ctxMenuH, id, en) }
     }
     // 返回内嵌上下文菜单（MenuBar），应用可经 addContextItem 等进一步扩展或挂子菜单
     func get_context_menu(): MenuBar { return _ctxMenu }
@@ -384,7 +387,7 @@ export struct Table impl Widget {
     func on_context_will_open(func(int):void cb) { _onCtxWillOpen = cb }
     // 清空内嵌上下文菜单的全部项（配合 on_context_will_open 在弹出前重建）
     func clearContextItems() {
-        if _ctxMenu != null and _ctxMenuH >= 0 { _ctxMenu.clearContextItems(_ctxMenuH) }
+        if _hasCtxMenu and _ctxMenuH >= 0 { _ctxMenu.clearContextItems(_ctxMenuH) }
     }
     // 注册行内编辑提交回调（行,列,新文本）；如用于右键“重命名”后落盘
     func on_edit_commit(func(int, int, string):void cb) { _onEditCommit = cb }
@@ -393,7 +396,7 @@ export struct Table impl Widget {
 
     // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
     func _open_ctx_menu(float x, float y) {
-        if _ctxMenu == null or _ctxMenuH < 0 { return }
+        if not _hasCtxMenu or _ctxMenuH < 0 { return }
         _ctxRow = _row_at(y); _ctxCol = _col_at(x)
         // 右击命中数据行时，先选中该行，使菜单操作作用于该目标
         if _ctxRow >= 0 {
@@ -443,7 +446,7 @@ export struct Table impl Widget {
     // 双击单元格回调：无论是否可编辑都会触发，便于应用层自定义（如文件管理器双击打开）
     func on_dbl_click(func(int, int):void cb) { _onDblClick = cb }
     func edit_debug(): string {
-        if _edit == null { return "edit=null" }
+        if not _hasEdit { return "edit=null" }
         if _edit.is_loaded() { return "edit.loaded=true" }
         return "edit.loaded=false"
     }
@@ -462,7 +465,7 @@ export struct Table impl Widget {
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
         // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
-        if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+        if _ctxMenuEnabled and _hasCtxMenu and _ctxMenu.isOpen() {
             if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
                 _ctxMenu.close()
                 if contains(mx, my) { _open_ctx_menu(mx, my) }
@@ -596,7 +599,7 @@ export struct Table impl Widget {
 
         if ev.isMouseButtonDown() {
             // 右击：在表格内弹出上下文菜单（默认无预置项，由应用层自定义）
-            if _ctxMenuEnabled and _ctxMenu != null and ev.mouseButton() == 3 {
+            if _ctxMenuEnabled and _hasCtxMenu and ev.mouseButton() == 3 {
                 if contains(mx, my) { _open_ctx_menu(mx, my) }
                 return
             }
@@ -654,7 +657,7 @@ export struct Table impl Widget {
     // ==================== 渲染 ====================
     // 按可用宽度测算，超宽时在末尾追加 "…" 截断（二分查找最大可容纳字符数）
     func _fit_cell_text(string t, float availW): string {
-        if _font == null or not _font.ok { return t }
+        if not _font.ok { return t }
         if availW <= 0.0 { return "" }
         float fullW = _font.measureString(t).w
         if fullW <= availW { return t }
@@ -672,7 +675,7 @@ export struct Table impl Widget {
     }
 
     func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B) {
-        if _font == null or not _font.ok { return }
+        if not _font.ok { return }
         if t == "" { return }
         float th = _textH
         float ty = ry + (rh - th) / 2.0
@@ -704,7 +707,7 @@ export struct Table impl Widget {
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRect(x, y, w, h)
 
-        if _font == null or not _font.ok { return }   // 字体无效时仍有背景，只跳过文字
+        if not _font.ok { return }   // 字体无效时仍有背景，只跳过文字
 
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(x); clip.y = _int(y)
@@ -791,7 +794,7 @@ export struct Table impl Widget {
         if sb[0] > 0.0 { _draw_vscroll(r, sb) }
         if sb[1] > 0.0 { _draw_hscroll(r, sb) }
 
-        if _editing and _edit != null { _edit.render(r) }
+        if _editing and _hasEdit { _edit.render(r) }
 
         r.popClipRect(); clip.free()
     }
@@ -826,9 +829,9 @@ export struct Table impl Widget {
     }
 
     func dispose() {
-        if _font != null { fnt.releaseFont(_font); _font = null }
-        if _edit != null { _edit.dispose(); _edit = null }
-        if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }
+        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _hasEdit { _edit.dispose() }; _hasEdit = false
+        if _hasCtxMenu { _ctxMenu.dispose() }; _hasCtxMenu = false
     }
 }
 

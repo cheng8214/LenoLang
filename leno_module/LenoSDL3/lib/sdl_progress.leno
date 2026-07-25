@@ -1,4 +1,4 @@
-﻿// sdl_progress.leno — 进度条控件
+// sdl_progress.leno — 进度条控件
 // 通过 win.addProgressBar({...}) 创建，只读显示进度（可 set_value 设定）；
 // 开启 clickable 后点击/拖拽可设定进度（像可交互进度条），回调 on_change(float)
 import maths
@@ -14,7 +14,7 @@ export struct ProgressBar impl Widget {
     float minV = 0.0; float maxV = 100.0; float value = 0.0
     bool _clickable = false
     bool _showText = true
-    string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font _font
+    string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font _font; bool _fontDirty = true
     int _trkR = 60; int _trkG = 60; int _trkB = 72          // 轨道背景色
     int _fillR = 80; int _fillG = 200; int _fillB = 120     // 已选填充色
     int tr = 235; int tg = 235; int tb = 245                // 文字色
@@ -31,11 +31,12 @@ export struct ProgressBar impl Widget {
     }
 
     func _ensure_font() {
-        if _font == null or not _font.ok {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or not _font.ok {
+            if _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _fontDirty = false
         }
     }
 
@@ -92,7 +93,7 @@ export struct ProgressBar impl Widget {
     func set_enabled(bool e)      { enabled = e }
     func set_visible(bool v)       { visible = v }
     func is_visible(): bool        { return visible }
-    func set_font_size(float s)   { _fontSize = s; if _font != null { fnt.releaseFont(_font); _font = null } }
+    func set_font_size(float s)   { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
     func get_x(): float           { return x }
     func get_y(): float           { return y }
     func get_w(): float          { return w }
@@ -212,7 +213,7 @@ export struct ProgressBar impl Widget {
         }
 
         // 文字（百分比）
-        if _showText and _font != null and _font.ok {
+        if _showText and _font.ok {
             int pct = _int(ratio * 100.0)
             string label = pct as string + "%"
             float tw = _font.measureString(label).w
@@ -226,7 +227,7 @@ export struct ProgressBar impl Widget {
     }
 
     func dispose() {
-        if _font != null { fnt.releaseFont(_font); _font = null }
+        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
     }
 }
 

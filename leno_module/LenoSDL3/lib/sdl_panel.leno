@@ -58,16 +58,11 @@ export struct Panel impl Widget {
     }
     // 把窗口句柄下发给子控件：Edit 直接设置；布局容器/嵌套 Panel 继续向下传递
     func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
-        Edit e = c as Edit
-        if e != null { e.set_window(hwnd); return }
-        HBox h = c as HBox
-        if h != null { h._bind_window(hwnd); return }
-        VBox v = c as VBox
-        if v != null { v._bind_window(hwnd); return }
-        AnchorBox a = c as AnchorBox
-        if a != null { a._bind_window(hwnd); return }
-        Panel p = c as Panel
-        if p != null { p._bind_window(hwnd); return }
+        if c is Edit { c.set_window(hwnd); return }
+        if c is HBox { c._bind_window(hwnd); return }
+        if c is VBox { c._bind_window(hwnd); return }
+        if c is AnchorBox { c._bind_window(hwnd); return }
+        if c is Panel { c._bind_window(hwnd); return }
     }
     func remove(Widget c) {
         for children.len() to i { if children[i] == c { children.remove(i); return } }

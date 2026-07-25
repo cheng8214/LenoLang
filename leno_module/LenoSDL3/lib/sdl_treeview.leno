@@ -81,7 +81,7 @@ export struct TreeView impl Widget {
     Array[int] _sel2 = []
     int _mode = 0
     bool _showCheck = false
-    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font; bool _fontDirty = true
     int br = 38; int bg = 40; int bb = 48
     int _bdrR = 90; int _bdrG = 95; int _bdrB = 110
     int _selR = 60; int _selG = 150; int _selB = 235
@@ -98,7 +98,7 @@ export struct TreeView impl Widget {
     bool _draggingScroll = false; float _sbDragOffset = 0.0
     // 右键上下文菜单
     bool _ctxMenuEnabled = false
-    MenuBar _ctxMenu = null
+    MenuBar _ctxMenu = null; bool _hasCtxMenu = false
     int _ctxHandle = -1
     Ptr[u8] _hwnd = null           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     int _winW = 0; int _winH = 0
@@ -108,14 +108,15 @@ export struct TreeView impl Widget {
     func(int, bool):void _onCheck
 
     func _ensure_font() {
-        if _font == null or not _font.ok {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or not _font.ok {
+            if _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok {
                 if _fontStyle != 0 { _font.setStyle(_fontStyle) }
                 _textH = _font.measureString("Ag").h   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
             }
+            _fontDirty = false
         }
     }
 
@@ -339,8 +340,9 @@ export struct TreeView impl Widget {
         _tip = opts.get("tip", "")
 
         _ctxMenuEnabled = opts.get("context_menu", false) and opts.has("context_menu")
-        if _ctxMenuEnabled and _ctxMenu == null {
+        if _ctxMenuEnabled and not _hasCtxMenu {
             _ctxMenu = menu.createMenuBar({})
+            _hasCtxMenu = true
             _ctxMenu.setWindowSize(_winW, _winH)
             _ctxHandle = _ctxMenu.addContextMenu("tv_ctx")
             menu.registerContextMenu(_ctxMenu)   // 登记（含面板嵌套场景），由窗口第二遍按窗口隔离绘制
@@ -366,7 +368,7 @@ export struct TreeView impl Widget {
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
-    func set_font_size(float s) { _fontSize = s; if _font != null { fnt.releaseFont(_font); _font = null } }
+    func set_font_size(float s) { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
     func set_scroll(float p) { _scroll = p; _clamp_scroll() }
     func get_scroll(): float { return _scroll }
     // 层级连接线
@@ -566,18 +568,18 @@ export struct TreeView impl Widget {
     func on_check(func(int, bool):void cb) { _onCheck = cb }
 
     // ==================== 右键菜单接入 ====================
-    func set_window(int ww, int hh) { _winW = ww; _winH = hh; if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) } }
+    func set_window(int ww, int hh) { _winW = ww; _winH = hh; if _hasCtxMenu { _ctxMenu.setWindowSize(ww, hh) } }
     // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
     func set_window_handle(Ptr[u8] hwnd) {
         _hwnd = hwnd
-        if _ctxMenu != null { _ctxMenu.setWindowHandle(hwnd) }
+        if _hasCtxMenu { _ctxMenu.setWindowHandle(hwnd) }
     }
     func get_context_menu(): MenuBar { return _ctxMenu }
     func get_context_handle(): int { return _ctxHandle }
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
     func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
     func _open_ctx_menu(float mx, float my) {
-        if _ctxMenu == null or _ctxHandle < 0 { return }
+        if not _hasCtxMenu or _ctxHandle < 0 { return }
         _ctxMenu.openContext(_ctxHandle, mx, my)
     }
 
@@ -587,7 +589,7 @@ export struct TreeView impl Widget {
         if not visible { return }
         if not enabled { _hover = -1; _draggingScroll = false; return }
 
-        if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+        if _ctxMenuEnabled and _hasCtxMenu and _ctxMenu.isOpen() {
             if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
                 if contains(ev.mouseX(), ev.mouseY()) { _open_ctx_menu(ev.mouseX(), ev.mouseY()) }
                 else { _ctxMenu.close() }
@@ -645,7 +647,7 @@ export struct TreeView impl Widget {
             }
         }
 
-        if _ctxMenuEnabled and _ctxMenu != null and ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+        if _ctxMenuEnabled and _hasCtxMenu and ev.isMouseButtonDown() and ev.mouseButton() == 3 {
             int id = _id_at(mx, my)
             if id >= 0 {
                 _select(id, false)
@@ -681,7 +683,7 @@ export struct TreeView impl Widget {
         if not _loaded { return }
         if not visible { return }
         _ensure_font()
-        if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
+        if not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         _flatten()
 
         int bgr = br; int bgg = bg; int bgb = bb
@@ -795,7 +797,7 @@ export struct TreeView impl Widget {
                     checkOff = checkOff + imgSize + _imgGap   // 文字右移，给图标让位
                 }
             }
-            if _font != null and _font.ok {
+            if _font.ok {
                 float tx = x + _padX + depth * _indent + 16.0 + checkOff + 4.0
                 float th = _textH
                 int tcR = tr; int tcG = tg; int tcB = tb
@@ -826,8 +828,8 @@ export struct TreeView impl Widget {
     }
 
     func dispose() {
-        if _font != null { fnt.releaseFont(_font); _font = null }
-        if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }
+        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _hasCtxMenu { _ctxMenu.dispose() }; _hasCtxMenu = false
         // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
         // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
         _imgCacheTex = []; _imgCachePaths = []

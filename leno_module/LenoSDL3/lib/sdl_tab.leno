@@ -35,7 +35,7 @@ export struct TabControl impl Widget {
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
     // 字体（画标签文字）
-    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font; bool _fontDirty = true
 
     // 配色
     int _bgR = 38; int _bgG = 40; int _bgB = 48       // 内容区背景
@@ -52,11 +52,12 @@ export struct TabControl impl Widget {
     func(int):void _onChange
 
     func _ensure_font() {
-        if _font == null or not _font.ok {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or not _font.ok {
+            if _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _fontDirty = false
         }
     }
 
@@ -183,7 +184,7 @@ export struct TabControl impl Widget {
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
-    func set_font_size(float s) { _fontSize = s; if _font != null { fnt.releaseFont(_font); _font = null } }
+    func set_font_size(float s) { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
     func on_change(func(int):void cb) { _onChange = cb }
     // 绑定窗口句柄（由 Window.addTabControl 调用）
     func _bind_window(Ptr[u8] hwnd) {
@@ -233,7 +234,7 @@ export struct TabControl impl Widget {
         float total = 0.0
         for n to i {
             float tw = 60.0
-            if _font != null and _font.ok { tw = _font.measureString(_tabs[i]).w + 28.0 }
+            if _font.ok { tw = _font.measureString(_tabs[i]).w + 28.0 }
             if tw < 48.0 { tw = 48.0 }
             widths.add(tw)
             total = total + tw
@@ -303,11 +304,9 @@ export struct TabControl impl Widget {
         }
     }
     func _closePopupsIn(Widget w) {
-        ComboBox cb = w as ComboBox
-        if cb != null { cb.close(); return }
-        Panel pl = w as Panel
-        if pl != null {
-            for pl.children to c { _closePopupsIn(c) }
+        if w is ComboBox { w.close(); return }
+        if w is Panel {
+            for w.children to c { _closePopupsIn(c) }
         }
     }
 
@@ -332,7 +331,7 @@ export struct TabControl impl Widget {
             r.fillRect(rr[0], rr[1], rr[2], rr[3])
 
             // 标签文字（居中裁剪）
-            if _font != null and _font.ok and _tabs[i] != "" {
+            if _font.ok and _tabs[i] != "" {
                 float tw = _font.measureString(_tabs[i]).w
                 float th = _font.measureString("Ag").h
                 float tx = rr[0] + (rr[2] - tw) / 2.0
@@ -385,20 +384,16 @@ export struct TabControl impl Widget {
             var pg = _pages[p]
             for pg to c { c.dispose() }
         }
-        if _font != null { fnt.releaseFont(_font); _font = null }
+        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = false
     }
 }
 
 // 把窗口句柄下发给需要它的子控件（Edit 的 IME 定位；嵌套布局继续向下传递）
 func _tab_pass_window(Widget c, Ptr[u8] hwnd) {
-    Edit e = c as Edit
-    if e != null { e.set_window(hwnd); return }
-    HBox h = c as HBox
-    if h != null { h._bind_window(hwnd); return }
-    VBox v = c as VBox
-    if v != null { v._bind_window(hwnd); return }
-    AnchorBox a = c as AnchorBox
-    if a != null { a._bind_window(hwnd); return }
+    if c is Edit { c.set_window(hwnd); return }
+    if c is HBox { c._bind_window(hwnd); return }
+    if c is VBox { c._bind_window(hwnd); return }
+    if c is AnchorBox { c._bind_window(hwnd); return }
 }
 
 // 工厂

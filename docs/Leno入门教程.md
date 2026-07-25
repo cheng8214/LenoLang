@@ -1539,6 +1539,37 @@ test(42)
 
 > **原因**：闭包捕获 `any` 参数时，如果没有类型守卫，`x` 保持 `any` 类型。
 
+**4. struct 字段不做类型收窄：**
+
+`is` 检查 struct 字段时，编译器**不会**收窄类型——因为字段是共享可变状态，在 `is` 检查后、使用前可能被其他代码修改，收窄不安全：
+
+```leno
+struct ScrollView impl Widget {
+    Widget _content
+    // ...
+
+    func _bind_window(Ptr[u8] hwnd) {
+        // ❌ _content 是 struct 字段，is 不收窄，仍视为 Widget
+        if _content is HBox {
+            _content._bind_window(hwnd)   // ❌ 报错：Widget 没有 _bind_window
+        }
+    }
+}
+```
+
+**解决方法**：先将字段赋给局部变量，再对局部变量做 `is` 守卫：
+
+```leno
+func _bind_window(Ptr[u8] hwnd) {
+    Widget c = _content         // 赋给局部变量
+    if c is HBox {
+        c._bind_window(hwnd)    // ✅ 局部变量可安全收窄
+    }
+}
+```
+
+> **原因**：局部变量和函数参数在 `if` 块内不会被外部修改，编译器可以安全收窄；而 struct 字段随时可能被其他代码（如定时器回调、事件处理）修改，收窄后类型可能不再成立。
+
 #### `is Array` 的特殊行为
 
 `is Array` 匹配**所有数组类型**（包括 `Array[int]`、`Array[string]` 等），但**不会收窄类型**：

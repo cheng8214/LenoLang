@@ -80,7 +80,8 @@ export struct BarChart impl Widget {
     bool _hover = false
     float _mx = -1.0; float _my = -1.0
     bool _loaded = false
-    Font _font = null
+    Font _font
+    bool _fontDirty = true
     float _fontSize = 0.0
     Array[float] _animVals = []      // 柱高动画当前显示值
     bool _animating = false
@@ -125,12 +126,11 @@ export struct BarChart impl Widget {
         if not _loaded { return }
         _step_anim()
         if _animating { core.requestRedraw() }
-        // 引用计数已保证 _font 在持有期间始终有效（仅 dispose 会 release 并置空），
-        // 故只需按「未加载 / 字号变更」重建，无需再访问可能为 null 的 _font.ok。
-        if _font == null or _fontSize != fsize {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or _fontSize != fsize {
+            if _font.ok { fnt.releaseFont(_font) }
             _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
+            _fontDirty = false
         }
         Font f = _font
         int n = vals.len()
@@ -285,7 +285,7 @@ export struct BarChart impl Widget {
         }
     }
 
-    func dispose() { if _font != null { fnt.releaseFont(_font); _font = null } }
+    func dispose() { if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
 }
 
 // ===================== 折线图 =====================
@@ -300,7 +300,8 @@ export struct LineChart impl Widget {
     bool showPoints = true
     bool _hover = false; float _mx = -1.0; float _my = -1.0
     bool _loaded = false
-    Font _font = null
+    Font _font
+    bool _fontDirty = true
     float _fontSize = 0.0
     Array[Array[float]] _animSeries = []   // 折线各点 y 动画当前显示值
     bool _animating = false
@@ -353,12 +354,11 @@ export struct LineChart impl Widget {
         if not _loaded { return }
         _step_anim()
         if _animating { core.requestRedraw() }
-        // 引用计数已保证 _font 在持有期间始终有效（仅 dispose 会 release 并置空），
-        // 故只需按「未加载 / 字号变更」重建，无需再访问可能为 null 的 _font.ok。
-        if _font == null or _fontSize != fsize {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or _fontSize != fsize {
+            if _font.ok { fnt.releaseFont(_font) }
             _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
+            _fontDirty = false
         }
         Font f = _font
         float padL = 40.0; float padR = 14.0; float padT = 26.0; float padB = 30.0
@@ -501,7 +501,7 @@ export struct LineChart impl Widget {
         }
     }
 
-    func dispose() { if _font != null { fnt.releaseFont(_font); _font = null } }
+    func dispose() { if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
 }
 
 // ===================== 饼图 =====================
@@ -512,7 +512,8 @@ export struct PieChart impl Widget {
     Array[float] values = []
     int fsize = 12
     bool _loaded = false
-    Font _font = null
+    Font _font
+    bool _fontDirty = true
     float _fontSize = 0.0
     Array[float] _animValues = []   // 饼图各扇形占比动画当前显示值
     bool _animating = false
@@ -545,12 +546,11 @@ export struct PieChart impl Widget {
         if not _loaded { return }
         _step_anim()
         if _animating { core.requestRedraw() }
-        // 引用计数已保证 _font 在持有期间始终有效（仅 dispose 会 release 并置空），
-        // 故只需按「未加载 / 字号变更」重建，无需再访问可能为 null 的 _font.ok。
-        if _font == null or _fontSize != fsize {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or _fontSize != fsize {
+            if _font.ok { fnt.releaseFont(_font) }
             _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
+            _fontDirty = false
         }
         Font f = _font
         if title != "" { r.setColor(205, 218, 255, 255); r.drawText(f, title, x + 10.0, y + 6.0, 205, 218, 255) }
@@ -607,7 +607,7 @@ export struct PieChart impl Widget {
         }
     }
 
-    func dispose() { if _font != null { fnt.releaseFont(_font); _font = null } }
+    func dispose() { if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
 }
 
 // ===================== 工厂 =====================

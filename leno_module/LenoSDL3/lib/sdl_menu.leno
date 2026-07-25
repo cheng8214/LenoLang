@@ -68,8 +68,8 @@ func _colW(Array[MenuItem] items, Font f, float itemH): float {
         var it = items[i]
         if it.separator { continue }
         float w = 60.0
-        if f != null and f.ok { w = f.measureString(it.label).w }
-        if it.shortcut != "" and f != null and f.ok { w = w + 16.0 + f.measureString(it.shortcut).w }
+        if f.ok { w = f.measureString(it.label).w }
+        if it.shortcut != "" and f.ok { w = w + 16.0 + f.measureString(it.shortcut).w }
         if w > mw { mw = w }
     }
     return mw + 20.0
@@ -124,7 +124,7 @@ export struct MenuBar impl Widget {
     Array[bool]         _ctxFlag = []    // 标记某条目是否为“上下文菜单”（无标题栏）
     Array[Array[float]] _ctxAnchor = []  // 上下文菜单的弹出锚点 [x, y]
 
-    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font; bool _fontDirty = true
     Ptr[u8] _winHnd = null            // 所属窗口句柄：上下文菜单按窗口隔离绘制；面板嵌套未拿到句柄则为 null
 
     // 配色
@@ -144,11 +144,12 @@ export struct MenuBar impl Widget {
     bool enabled = true; bool visible = true; bool _loaded = false
     func(string, string):void _onSelect
     func _ensure_font() {
-        if _font == null or not _font.ok {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or not _font.ok {
+            if _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _fontDirty = false
         }
     }
 
@@ -212,7 +213,7 @@ export struct MenuBar impl Widget {
     // 关闭当前活动菜单（若有且非自身），保证同一时刻仅一个弹出菜单（模态弹层）
     func _closeOtherMenus() {
         var am = _getActiveMenu(self.getWindowHandle())
-        if am != null and am != self and am.isOpen() { am.close() }
+        if am is MenuBar and am != self and am.isOpen() { am.close() }
     }
 
     // ==================== 设置方法 ====================
@@ -222,7 +223,8 @@ export struct MenuBar impl Widget {
     func is_visible(): bool { return visible }
     func set_font_size(float s) {
         _fontSize = s
-        if _font != null { fnt.releaseFont(_font); _font = null }
+        if _font.ok { fnt.releaseFont(_font) }
+        _fontDirty = true
         _itemH = _fontSize + 12.0; if _itemH < 24.0 { _itemH = 24.0 }  // 字号变化时行高自适应
         if h < _fontSize + 14.0 { h = _fontSize + 14.0 }                // 顶部栏高度跟随字号，避免标题被裁
     }
@@ -376,7 +378,7 @@ export struct MenuBar impl Widget {
                 continue
             }
             float tw = 60.0
-            if _font != null and _font.ok { tw = _font.measureString(_titles[i]).w + 28.0 }
+            if _font.ok { tw = _font.measureString(_titles[i]).w + 28.0 }
             if tw < 40.0 { tw = 40.0 }
             out.add([tx, y, tw, h])
             tx = tx + tw
@@ -555,7 +557,7 @@ export struct MenuBar impl Widget {
             bool active = (_open == i)
             bool hov = (_hoverTop == i) or active
             if hov { r.setColor(_barHovR, _barHovG, _barHovB, 255); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
-            if _font != null and _font.ok and _titles[i] != "" {
+            if _font.ok and _titles[i] != "" {
                 float th = _font.measureString("Ag").h
                 float tw = _font.measureString(_titles[i]).w
                 float ty = rr[1] + (if th > rr[3] then 0.0 else (rr[3] - th) / 2.0)
@@ -623,7 +625,7 @@ export struct MenuBar impl Widget {
             if hov { r.setColor(_hovR, _hovG, _hovB, 255); r.fillRect(px, ry, pw, _itemH) }
             int lr = _txtR; int lg = _txtG; int lb2 = _txtB
             if not it.enabled { lr = _disR; lg = _disG; lb2 = _disB }
-            if _font != null and _font.ok {
+            if _font.ok {
                 float th = _font.measureString("Ag").h
                 float ty = ry + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
                 r.drawText(_font, it.label, r.snapX(px + 12.0), r.snapY(ty), lr, lg, lb2)
@@ -646,7 +648,8 @@ export struct MenuBar impl Widget {
     }
 
     func dispose() {
-        if _font != null { fnt.releaseFont(_font); _font = null }
+        if _font.ok { fnt.releaseFont(_font) }
+        _fontDirty = true
         _clearActiveMenu(self)
         _unregisterContextMenu(self)   // 从上下文菜单登记表摘除自身，避免窗口销毁后悬空引用累积
     }
@@ -659,7 +662,7 @@ export struct MenuBar impl Widget {
 // 窗口销毁（递归 dispose 所有控件）后不残留，无悬空引用累积、无跨窗口数组无限增长。
 Array[MenuBar] _ctxMenuRegistry = []
 export func registerContextMenu(MenuBar m) {
-    if m == null { return }
+    if not (m is MenuBar) { return }
     for _ctxMenuRegistry.len() to k { if _ctxMenuRegistry[k] == m { return } }  // 去重
     _ctxMenuRegistry.add(m)
 }
@@ -667,7 +670,7 @@ export func registerContextMenu(MenuBar m) {
 export func renderContextMenus(Renderer r, Ptr[u8] hwnd) {
     for _ctxMenuRegistry.len() to k {
         var cm = _ctxMenuRegistry[k]
-        if cm != null and cm.isOpen() {
+        if cm is MenuBar and cm.isOpen() {
             if cm.getWindowHandle() == null or cm.getWindowHandle() == hwnd {
                 cm.renderPopup(r)
             }
@@ -682,7 +685,7 @@ func _unregisterContextMenu(MenuBar m) {
 // ==================== 窗口级活动菜单（按窗口句柄分桶） ====================
 // 置于文件末尾，便于引用 _activeHnds/_activeMenus 且解析 MenuBar 方法。
 func _setActiveMenu(MenuBar m) {
-    if m == null { return }
+    if not (m is MenuBar) { return }
     var h = m.getWindowHandle()
     for _activeHnds.len() to i { if _activeHnds[i] == h { _activeMenus[i] = m; return } }
     _activeHnds.add(h); _activeMenus.add(m)
@@ -692,7 +695,7 @@ func _getActiveMenu(Ptr[u8] h): MenuBar {
     return null
 }
 func _clearActiveMenu(MenuBar m) {
-    if m == null { return }
+    if not (m is MenuBar) { return }
     var h = m.getWindowHandle()
     for _activeHnds.len() to i {
         if _activeHnds[i] == h and _activeMenus[i] == m { _activeHnds.remove(i); _activeMenus.remove(i); return }

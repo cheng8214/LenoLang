@@ -1,4 +1,4 @@
-﻿// sdl_spinbox.leno — 数值微调框（SpinBox）
+// sdl_spinbox.leno — 数值微调框（SpinBox）
 // 通过 win.addSpinBox({...}) 创建：左侧 Edit 编辑数值，右侧上下箭头按钮 ±step，滚轮也可调整。
 // 复用 Edit 实现文本输入 / 光标 / IME / 剪贴板，SpinBox 仅负责箭头与数值约束。
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -15,7 +15,7 @@ export struct SpinBox impl Widget {
     float minV = 0.0; float maxV = 100.0; float value = 0.0; float step = 1.0
     bool _intMode = false           // 整数模式（true 时显示为整数）
     int _decimals = 2               // 浮点显示小数位
-    Edit _edit                      // 内嵌编辑框（文本输入/IME）
+    Edit _edit; bool _hasEdit = false   // 内嵌编辑框（文本输入/IME）
     Ptr[u8] _hwnd
 
     int br = 38; int bg = 40; int bb = 48          // 整体背景
@@ -55,11 +55,11 @@ export struct SpinBox impl Widget {
         return (value) as string
     }
     func _sync_text() {
-        if _edit != null { _edit.set_text(_fmt()) }
+        if _hasEdit { _edit.set_text(_fmt()) }
     }
     // 解析内嵌 Edit 的文本为数值（手动解析，避免依赖不确定转换）
     func _try_apply_text() {
-        if _edit == null { return }
+        if not _hasEdit { return }
         string s = _edit.get_text()
         int n = s.len()
         if n == 0 { return }
@@ -116,6 +116,7 @@ export struct SpinBox impl Widget {
                                 font_size: opts.get("font_size", 15),
                                 placeholder: opts.get("placeholder", "")})
         _edit.on_change(func() { _try_apply_text() })
+        _hasEdit = true
 
         // 默认背景色见字段声明（br/bg/bb）
         var bgc = opts.get("bg_rgb")
@@ -152,11 +153,11 @@ export struct SpinBox impl Widget {
     func get_y(): float { return y }
     func set_pos(float px, float py) {
         x = px; y = py
-        if _edit != null { _edit.set_pos(x, y); _edit.set_size(w - _arrowW, h) }
+        if _hasEdit { _edit.set_pos(x, y); _edit.set_size(w - _arrowW, h) }
     }
     func set_size(float sw, float sh) {
         w = sw; h = sh
-        if _edit != null { _edit.set_pos(x, y); _edit.set_size(w - _arrowW, h) }
+        if _hasEdit { _edit.set_pos(x, y); _edit.set_size(w - _arrowW, h) }
     }
 
     // ==================== 设置方法 ====================
@@ -174,13 +175,13 @@ export struct SpinBox impl Widget {
     func set_int_mode(bool m) { _intMode = m; if m { _decimals = 0 }; _sync_text() }
     func set_decimals(int d) { _decimals = d; if _intMode { _decimals = 0 }; _sync_text() }
     func set_tip(string t) { _tip = t }
-    func set_enabled(bool e) { enabled = e; if _edit != null { _edit.set_enabled(e) } }
+    func set_enabled(bool e) { enabled = e; if _hasEdit { _edit.set_enabled(e) } }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func is_enabled(): bool { return enabled }
-    func get_text(): string { if _edit != null { return _edit.get_text() }; return "" }
+    func get_text(): string { if _hasEdit { return _edit.get_text() }; return "" }
     func on_change(func(float):void cb) { _onChange = cb }
-    func _bind_window(Ptr[u8] hwnd) { _hwnd = hwnd; if _edit != null { _edit.set_window(hwnd) } }
+    func _bind_window(Ptr[u8] hwnd) { _hwnd = hwnd; if _hasEdit { _edit.set_window(hwnd) } }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
@@ -207,7 +208,7 @@ export struct SpinBox impl Widget {
         }
 
         // 其余事件转发给内嵌 Edit（箭头区在 Edit 之外，Edit 自动忽略）
-        if _edit != null { _edit.process(ev) }
+        if _hasEdit { _edit.process(ev) }
 
         float ax = x + (w - _arrowW)
         float midY = y + h / 2.0
@@ -233,7 +234,7 @@ export struct SpinBox impl Widget {
 
         // 失焦时把文本同步为规范值
         bool f = false
-        if _edit != null { f = _edit.is_focused() }
+        if _hasEdit { f = _edit.is_focused() }
         if _wasFocused and not f { _sync_text() }
         _wasFocused = f
     }
@@ -241,7 +242,7 @@ export struct SpinBox impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        if _edit != null { _edit.render(r) }
+        if _hasEdit { _edit.render(r) }
 
         float ax = x + (w - _arrowW)
         int aR = _arrowR; int aG = _arrowG; int aB = _arrowB
@@ -273,13 +274,13 @@ export struct SpinBox impl Widget {
         r.drawLine(cxA, dy + s * 0.5, cxA + s, dy - s * 0.5)
 
         // 外边框（聚焦高亮）
-        if _edit != null and _edit.is_focused() { r.setColor(_focusR, _focusG, _focusB, 255) }
+        if _hasEdit and _edit.is_focused() { r.setColor(_focusR, _focusG, _focusB, 255) }
         else { r.setColor(_bdrR, _bdrG, _bdrB, 200) }
         r.drawRect(x, y, w, h)
     }
 
     func dispose() {
-        if _edit != null { _edit.dispose(); _edit = null }
+        if _hasEdit { _edit.dispose() }; _hasEdit = false
     }
 }
 
