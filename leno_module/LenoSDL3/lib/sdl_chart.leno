@@ -80,8 +80,7 @@ export struct BarChart impl Widget {
     bool _hover = false
     float _mx = -1.0; float _my = -1.0
     bool _loaded = false
-    Font _font
-    bool _fontDirty = true
+    Font? _font
     float _fontSize = 0.0
     Array[float] _animVals = []      // 柱高动画当前显示值
     bool _animating = false
@@ -126,13 +125,12 @@ export struct BarChart impl Widget {
         if not _loaded { return }
         _step_anim()
         if _animating { core.requestRedraw() }
-        if _fontDirty or _fontSize != fsize {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok or _fontSize != fsize {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
-            _fontDirty = false
         }
-        Font f = _font
+        Font? f = _font
         int n = vals.len()
         if n == 0 { return }
 
@@ -285,7 +283,7 @@ export struct BarChart impl Widget {
         }
     }
 
-    func dispose() { if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
+    func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
 }
 
 // ===================== 折线图 =====================
@@ -300,8 +298,7 @@ export struct LineChart impl Widget {
     bool showPoints = true
     bool _hover = false; float _mx = -1.0; float _my = -1.0
     bool _loaded = false
-    Font _font
-    bool _fontDirty = true
+    Font? _font
     float _fontSize = 0.0
     Array[Array[float]] _animSeries = []   // 折线各点 y 动画当前显示值
     bool _animating = false
@@ -354,13 +351,12 @@ export struct LineChart impl Widget {
         if not _loaded { return }
         _step_anim()
         if _animating { core.requestRedraw() }
-        if _fontDirty or _fontSize != fsize {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok or _fontSize != fsize {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
-            _fontDirty = false
         }
-        Font f = _font
+        Font? f = _font
         float padL = 40.0; float padR = 14.0; float padT = 26.0; float padB = 30.0
         float plotX = x + padL; float plotY = y + padT
         float plotW = w - padL - padR; float plotH = h - padT - padB
@@ -501,7 +497,7 @@ export struct LineChart impl Widget {
         }
     }
 
-    func dispose() { if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
+    func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
 }
 
 // ===================== 饼图 =====================
@@ -512,8 +508,7 @@ export struct PieChart impl Widget {
     Array[float] values = []
     int fsize = 12
     bool _loaded = false
-    Font _font
-    bool _fontDirty = true
+    Font? _font
     float _fontSize = 0.0
     Array[float] _animValues = []   // 饼图各扇形占比动画当前显示值
     bool _animating = false
@@ -546,13 +541,12 @@ export struct PieChart impl Widget {
         if not _loaded { return }
         _step_anim()
         if _animating { core.requestRedraw() }
-        if _fontDirty or _fontSize != fsize {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok or _fontSize != fsize {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             _font = fnt.acquireFontAuto(fsize)
             _fontSize = fsize
-            _fontDirty = false
         }
-        Font f = _font
+        Font? f = _font
         if title != "" { r.setColor(205, 218, 255, 255); r.drawText(f, title, x + 10.0, y + 6.0, 205, 218, 255) }
         int n = values.len()
         if n == 0 { return }
@@ -607,7 +601,7 @@ export struct PieChart impl Widget {
         }
     }
 
-    func dispose() { if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
+    func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
 }
 
 // ===================== 工厂 =====================

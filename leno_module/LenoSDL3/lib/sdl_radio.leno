@@ -20,8 +20,7 @@ export struct RadioButton impl Widget {
     float _fontSize = 15.0
     string _fontPath = ""
     int _fontStyle = 0
-    Font  _font
-    bool _fontDirty = true
+    Font? _font
     bool _checked = false
     int cr = 60; int cg = 60; int cb = 72
     int cc = 60; int ck = 170; int cbl = 245
@@ -36,15 +35,14 @@ export struct RadioButton impl Widget {
     bool _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
     func(bool):void _onChange
-    Ptr[u8] _winHnd = null            // 所属窗口句柄：同组互斥按窗口隔离（面板/Tab 嵌套未拿到句柄则为 null）
+    Ptr[u8]? _winHnd            // 所属窗口句柄：同组互斥按窗口隔离（面板/Tab 嵌套未拿到句柄则为 null）
 
     func _ensure_font() {
-        if _fontDirty or not _font.ok {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _fontDirty = false
         }
     }
 
@@ -90,13 +88,13 @@ export struct RadioButton impl Widget {
     func set_enabled(bool e)      { enabled = e }
     func set_visible(bool v)       { visible = v }
     func is_visible(): bool        { return visible }
-    func set_font_size(float s)   { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
+    func set_font_size(float s)   { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
     func get_x(): float           { return x }
     func get_y(): float           { return y }
     func get_w(): float {
         _ensure_font()
         float tw = 0.0
-        if _font.ok and text != "" { tw = _font.measureString(text).w }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         return _box + _gap + tw
     }
     func get_h(): float          { return _box }
@@ -110,7 +108,7 @@ export struct RadioButton impl Widget {
 
     func contains(float mx, float my): bool {
         float tw = 0.0
-        if _font.ok and text != "" { tw = _font.measureString(text).w }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         float totalW = _box + _gap + tw
         return mx >= x and mx <= x + totalW and my >= y and my <= y + _box
     }
@@ -185,7 +183,7 @@ export struct RadioButton impl Widget {
         }
 
         // 文字
-        if _font.ok and text != "" {
+        if _font != null and _font.ok and text != "" {
             float cy = by + (bs - _font.measureString("Ag").h) / 2.0
             int tcR = tr; int tcG = tg; int tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
@@ -194,7 +192,7 @@ export struct RadioButton impl Widget {
     }
 
     func dispose() {
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         _unregisterRadio(self)   // 从注册表摘除自身，避免窗口销毁后悬空引用累积、跨窗口误互斥
     }
 }

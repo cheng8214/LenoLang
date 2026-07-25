@@ -14,7 +14,7 @@ export struct ProgressBar impl Widget {
     float minV = 0.0; float maxV = 100.0; float value = 0.0
     bool _clickable = false
     bool _showText = true
-    string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font _font; bool _fontDirty = true
+    string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font? _font
     int _trkR = 60; int _trkG = 60; int _trkB = 72          // 轨道背景色
     int _fillR = 80; int _fillG = 200; int _fillB = 120     // 已选填充色
     int tr = 235; int tg = 235; int tb = 245                // 文字色
@@ -31,12 +31,11 @@ export struct ProgressBar impl Widget {
     }
 
     func _ensure_font() {
-        if _fontDirty or not _font.ok {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _fontDirty = false
         }
     }
 
@@ -93,7 +92,7 @@ export struct ProgressBar impl Widget {
     func set_enabled(bool e)      { enabled = e }
     func set_visible(bool v)       { visible = v }
     func is_visible(): bool        { return visible }
-    func set_font_size(float s)   { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
+    func set_font_size(float s)   { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
     func get_x(): float           { return x }
     func get_y(): float           { return y }
     func get_w(): float          { return w }
@@ -213,7 +212,7 @@ export struct ProgressBar impl Widget {
         }
 
         // 文字（百分比）
-        if _showText and _font.ok {
+        if _showText and _font != null and _font.ok {
             int pct = _int(ratio * 100.0)
             string label = pct as string + "%"
             float tw = _font.measureString(label).w
@@ -227,7 +226,7 @@ export struct ProgressBar impl Widget {
     }
 
     func dispose() {
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
 }
 

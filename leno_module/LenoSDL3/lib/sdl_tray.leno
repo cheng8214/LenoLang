@@ -59,8 +59,8 @@ func _bind(Ptr[u8] entry, any cb) {
 // ============ TrayMenu ============
 
 export struct TrayMenu {
-    Ptr[u8] _ptr
-    bool    _isSub
+	    Ptr[u8]? _ptr
+	    bool    _isSub
 
     func _insert(string label, int flags, int pos): Ptr[u8] {
         if _ptr == null { return null }
@@ -113,13 +113,12 @@ export struct TrayMenu {
 // ============ Tray ============
 
 export struct Tray {
-    Ptr[u8]   _ptr
-    TrayMenu  _rootMenu
-    bool      _menuInited    // 需显式标志：struct 字段是值类型，不能与 null 比较
-    bool      _destroyed
+	    Ptr[u8]?   _ptr
+	    TrayMenu?  _rootMenu
+	    bool      _destroyed
 
     func getMenu(): TrayMenu {
-        if not _menuInited {
+        if _rootMenu == null {
             TrayMenu m = new TrayMenu()
             m._ptr = _lib.SDL_GetTrayMenu(_ptr)
             if m._ptr == null {
@@ -127,7 +126,6 @@ export struct Tray {
             }
             m._isSub = false
             _rootMenu = m
-            _menuInited = true
         }
         return _rootMenu
     }
@@ -149,7 +147,7 @@ export struct Tray {
         _destroyed = true
         _lib.SDL_DestroyTray(_ptr)
         _ptr = null
-        _menuInited = false
+        _rootMenu = null
         // 释放所有 userdata malloc
         for _entryUds.len() to i { ffi.free(_entryUds[i]) }
         _entryUds = []

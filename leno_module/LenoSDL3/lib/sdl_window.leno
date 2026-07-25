@@ -78,7 +78,7 @@ Array[Array[Widget]]   _runWidgets = []
 Array[Array[MenuBar]]   _runMenus   = []
 Array[MenuBar]          _runCtxBar  = []   // 各窗口级右击上下文菜单（由 setContextMenu 注册，run 自动接管弹出）
 Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
-Array[Widget]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置）
+Array[Widget?]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置，可空）
 Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
 Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
@@ -122,10 +122,9 @@ export struct Window {
     int _maxFPS = 30        // 最大渲染帧率（0=不限制）
     Array[Widget] _widgets = []
     Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
-    MenuBar _ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
-    bool _hasCtxBar = false       // _ctxBar 是否已注册（struct 值类型始终非 null，用 bool 标志替代 null 检查）
+    MenuBar? _ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
     int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
-    Widget _root                     // 根布局控件（setRoot 设置），缩放时自动填满窗口
+    Widget? _root                     // 根布局控件（setRoot 设置），缩放时自动填满窗口
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
@@ -171,7 +170,7 @@ export struct Window {
     func getSizeInPixels(): Size {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetWindowSizeInPixels(handle, &pt.x, &pt.y)
-        var d = {w: pt.x, h: pt.y}
+        Size d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 
@@ -179,7 +178,7 @@ export struct Window {
     func getSize(): Size {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetWindowSize(handle, &pt.x, &pt.y)
-        var d = {w: pt.x, h: pt.y}
+        Size d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 
@@ -377,7 +376,7 @@ export struct Window {
     // 注册窗口级右击上下文菜单（只需调用一次）。之后 run 会在每帧事件处理中统一接管右击：
     // 若命中控件自行弹出了自身菜单（占用弹层），则不弹窗口菜单；否则才弹本菜单。
     // 这样「控件菜单优先、窗口菜单兜底」由底层统一保证，示例无需在 onEvent 里处理右键。
-    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); _ctxBar = bar; _hasCtxBar = true; _ctxIdx = ctxIdx }
+    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); _ctxBar = bar; _ctxIdx = ctxIdx }
 
     // 添加面板容器，opts: {x, y, w, h, bg, border, radius, border_alpha, clip}
     // 用 panel.add(win.addButton({...})) 把子控件挂到面板（子控件用窗口绝对坐标）
@@ -501,7 +500,8 @@ export struct Window {
         _runRends.add(onRender)
         _runWidgets.add(_widgets)    // 统一关联控件列表
         _runMenus.add(_menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
-        if _hasCtxBar { _runCtxBar.add(_ctxBar); _runCtxIdx.add(_ctxIdx) }
+        MenuBar? cb = _ctxBar
+        if cb is MenuBar { _runCtxBar.add(cb); _runCtxIdx.add(_ctxIdx) }
         else { _runCtxBar.add(menu.createMenuBar({})); _runCtxIdx.add(-1) }   // 占位（idx=-1 表示未注册，run 中不弹）
         _runRoots.add(_root)         // 根布局控件
         Size sz = getSize()           // 窗口逻辑尺寸（Tooltip 浮层夹紧用）

@@ -15,8 +15,7 @@ export struct Button impl Widget {
     float _fontSize = 15.0   // 字体大小
     string _fontPath = ""    // 字体路径（空则自动选择）
     int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
-    Font  _font              // 字体缓存
-    bool  _fontDirty = true  // 字体是否需要（重新）加载
+    Font? _font              // 字体缓存
     int cr = 60; int cg = 140; int cb = 220   // 背景色（默认 primary）
     int tr = 255; int tg = 255; int tb = 255  // 文字色
     int hvr = 0; int hvg = 0; int hvb = 0     // 悬停背景色（为 0 时自动计算）
@@ -41,13 +40,13 @@ export struct Button impl Widget {
     int    _imgTintR = -1    // 图标着色（-1 = 不着色，其余按 [r,g,b] 着色）
     int    _imgTintG = -1
     int    _imgTintB = -1
-    Ptr[u8] _imgTex = null   // 图片纹理（懒加载，dispose 释放）
+    Ptr[u8]? _imgTex   // 图片纹理（懒加载，dispose 释放）
     string _imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 
     // ==================== 状态图片（对齐 iOS UIButton.setImage(_:forState:)） ====================
-    string _imgPathHover = "";    Ptr[u8] _imgTexHover = null;    string _imgLoadHover = ""
-    string _imgPathPressed = "";  Ptr[u8] _imgTexPressed = null;  string _imgLoadPressed = ""
-    string _imgPathDisabled = ""; Ptr[u8] _imgTexDisabled = null; string _imgLoadDisabled = ""
+    string _imgPathHover = "";    Ptr[u8]? _imgTexHover;    string _imgLoadHover = ""
+    string _imgPathPressed = "";  Ptr[u8]? _imgTexPressed;  string _imgLoadPressed = ""
+    string _imgPathDisabled = ""; Ptr[u8]? _imgTexDisabled; string _imgLoadDisabled = ""
     bool   _pressed = false       // 鼠标按下且悬停中（用于 pressed 态图片 / 按下高亮）
 
     // ==================== 内容模式（对齐 iOS contentMode / Android scaleType） ====================
@@ -55,7 +54,7 @@ export struct Button impl Widget {
     int _imgMode = 0
 
     // ==================== 背景图（对齐 iOS setBackgroundImage） ====================
-    string _bgImagePath = ""; Ptr[u8] _bgTex = null; string _bgLoadPath = ""
+    string _bgImagePath = ""; Ptr[u8]? _bgTex; string _bgLoadPath = ""
 
     // ==================== 预设类型 ====================
     func _apply_type(string t) {
@@ -70,15 +69,14 @@ export struct Button impl Widget {
     }
 
     func _ensure_font() {
-        if _fontDirty or not _font.ok {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" {
                 _font = fnt.acquireFont(_fontPath, _fontSize)
             } else {
                 _font = fnt.acquireFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _fontDirty = false
         }
     }
 
@@ -196,11 +194,11 @@ export struct Button impl Widget {
     func set_hover_rgb(int r, int g, int b) { hvr = r; hvg = g; hvb = b }
     func set_font_size(float s) {
         _fontSize = s
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
     func set_font_path(string path) {
         _fontPath = path
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
     func set_font_style(int style) {
         _fontStyle = style
@@ -500,7 +498,7 @@ export struct Button impl Widget {
 
     // 释放字体与图片资源
     func dispose() {
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         _release_all_images()
     }
 }

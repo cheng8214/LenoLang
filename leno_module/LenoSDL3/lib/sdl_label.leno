@@ -12,8 +12,7 @@ export struct Label impl Widget {
     float _fontSize = 15.0       // 字体大小
     string _fontPath = ""        // 字体路径（空则自动匹配）
     int _fontStyle = 0           // 字体样式
-    Font  _font                  // 字体缓存
-    bool  _fontDirty = true      // 字体需要重新加载
+    Font? _font                  // 字体缓存
     int tr = 255; int tg = 255; int tb = 255  // 文字色
     int _align = 0               // 对齐: 0=左, 1=中, 2=右
     float _w = 0.0; float _h = 16.0  // 缓存自然尺寸（供布局使用）
@@ -24,15 +23,14 @@ export struct Label impl Widget {
     string _tip = ""             // 悬停提示文本（空 = 不提示）
 
     func _ensure_font() {
-        if _fontDirty or not _font.ok {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" {
                 _font = fnt.acquireFont(_fontPath, _fontSize)
             } else {
                 _font = fnt.acquireFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _fontDirty = false
         }
     }
 
@@ -67,7 +65,7 @@ export struct Label impl Widget {
     // ==================== 设置方法 ====================
     func set_text(string t)        {
         text = t
-        if _font.ok {
+        if _font != null and _font.ok {
             if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
             _h = _font.measureString("Ag").h
         }
@@ -75,11 +73,11 @@ export struct Label impl Widget {
     func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_font_size(float s) {
         _fontSize = s
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
     func set_font_path(string p) {
         _fontPath = p
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
     func set_font_style(int style) {
         _fontStyle = style
@@ -117,7 +115,7 @@ export struct Label impl Widget {
     func render(Renderer r) {
         if not _loaded or not enabled or not visible { return }
         _ensure_font()
-        if _fontDirty or not _font.ok { return }
+        if _font == null or not _font.ok { return }
         if text == "" { return }
 
         var ms = _font.measureString(text)
@@ -131,7 +129,7 @@ export struct Label impl Widget {
 
     // 释放字体资源
     func dispose() {
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
 }
 

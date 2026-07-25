@@ -14,8 +14,7 @@ export struct Toggle impl Widget {
     float _fontSize = 15.0
     string _fontPath = ""
     int _fontStyle = 0
-    Font  _font
-    bool _fontDirty = true
+    Font? _font
     bool _on = false
     int _onR = 60; int _onG = 170; int _onB = 245
     int _offR = 70; int _offG = 70; int _offB = 82
@@ -37,12 +36,11 @@ export struct Toggle impl Widget {
     func(bool):void _onChange
 
     func _ensure_font() {
-        if _fontDirty or not _font.ok {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _fontDirty = false
         }
     }
 
@@ -104,13 +102,13 @@ export struct Toggle impl Widget {
     func set_enabled(bool e)     { enabled = e }
     func set_visible(bool v)      { visible = v }
     func is_visible(): bool       { return visible }
-    func set_font_size(float s)  { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
+    func set_font_size(float s)  { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
     func get_x(): float          { return x }
     func get_y(): float          { return y }
     func get_w(): float {
         _ensure_font()
         float tw = 0.0
-        if _font.ok and text != "" { tw = _font.measureString(text).w }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         return w + 10.0 + tw
     }
     func get_h(): float          { return h }
@@ -121,7 +119,7 @@ export struct Toggle impl Widget {
 
     func contains(float mx, float my): bool {
         float tw = 0.0
-        if _font.ok and text != "" { tw = _font.measureString(text).w }
+        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
         float totalW = w + 10.0 + tw
         return mx >= x and mx <= x + totalW and my >= y and my <= y + h
     }
@@ -211,7 +209,7 @@ export struct Toggle impl Widget {
         r.fillRoundedRect(kx, y + 3.0, knob, knob, knob / 2.0)
 
         // 文字
-        if _font.ok and text != "" {
+        if _font != null and _font.ok and text != "" {
             float cy = y + (h - _font.measureString("Ag").h) / 2.0
             int tcR = tr; int tcG = tg; int tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
@@ -220,7 +218,7 @@ export struct Toggle impl Widget {
     }
 
     func dispose() {
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
 }
 

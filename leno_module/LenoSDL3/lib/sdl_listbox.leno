@@ -15,7 +15,7 @@ export struct ListBox impl Widget {
     float _itemH = 24.0          // 行高
     float _scroll = 0.0          // 已向下滚动的像素（0 = 顶部）
     int _hover = -1              // 当前悬停行索引（-1 无）
-    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font _font; bool _fontDirty = true
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     int _mode = 0                // 0=单选, 1=多选
     int br = 38; int bg = 40; int bb = 48          // 背景色
     int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
@@ -31,12 +31,11 @@ export struct ListBox impl Widget {
     func(Array[int]):void _onChange
 
     func _ensure_font() {
-        if _fontDirty or not _font.ok {
-            if _font.ok { fnt.releaseFont(_font) }
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _fontDirty = false
         }
     }
 
@@ -187,7 +186,7 @@ export struct ListBox impl Widget {
     func set_enabled(bool e)     { enabled = e }
     func set_visible(bool v)      { visible = v }
     func is_visible(): bool       { return visible }
-    func set_font_size(float s)  { _fontSize = s; if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true }
+    func set_font_size(float s)  { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
     func get_x(): float          { return x }
     func get_y(): float          { return y }
 
@@ -333,7 +332,7 @@ export struct ListBox impl Widget {
             r.setColor(rr, gg, bb2, 255)
             r.fillRect(x, iy, w, _itemH)
 
-            if _font.ok and i < items.len() {
+            if _font != null and _font.ok and i < items.len() {
                 string t = items[i]
                 float th = _font.measureString("Ag").h
                 int tcR = tr; int tcG = tg; int tcB = tb
@@ -367,7 +366,7 @@ export struct ListBox impl Widget {
     }
 
     func dispose() {
-        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
 }
 

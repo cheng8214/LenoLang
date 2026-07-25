@@ -726,9 +726,13 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         target_stripped.nullable = 0;
         return type_is_compatible(&target_stripped, source);
     }
-    // Type? 不能隐式赋值给 Type（可能为 null，不安全）
+    // Type? 可隐式赋值给 Type（剥离 nullable 后检查基础类型兼容性）
+    // 运行时若传 null 给非空参数，由 VM 自然报错（如空指针访问）
+    // 这样避免了 `is` 窄化对 struct 字段不生效导致的样板代码爆炸
     if (!target->nullable && source->nullable) {
-        return 0;
+        TypeInfo source_stripped = *source;
+        source_stripped.nullable = 0;
+        return type_is_compatible(target, &source_stripped);
     }
 
     // 相同类型肯定兼容

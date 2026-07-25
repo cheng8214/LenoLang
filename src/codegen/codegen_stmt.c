@@ -42,6 +42,16 @@ static Value ast_default_to_value(Ast* expr) {
             return val_bool(expr->u.boolean);
         case AST_NULL:
             return val_null();
+        case AST_UNARY: {
+            // 支持一元负号常量（如 -1、-3.14）
+            Value operand_val = ast_default_to_value(expr->u.unary.operand);
+            if (val_is_null(operand_val)) return val_null();
+            if (expr->u.unary.op == TOK_MINUS) {
+                if (val_is_int(operand_val)) return val_num(-val_as_int(operand_val));
+                if (val_is_float(operand_val)) return val_float(-val_as_double(operand_val));
+            }
+            return val_null();
+        }
         case AST_ARRAY: {
             ObjArray* arr = arr_new(expr->u.array.count > 0 ? expr->u.array.count : 1);
             for (int i = 0; i < expr->u.array.count; i++) {

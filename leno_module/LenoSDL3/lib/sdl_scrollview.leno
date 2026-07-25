@@ -23,7 +23,7 @@ import "sdl_panel.leno" as pnl; use pnl.Panel
 export struct ScrollView impl Widget {
     float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
     float _contentW = -1.0; float _contentH = -1.0   // 可滚动内容虚拟尺寸
-    Widget _content                       // 内部内容控件（通常 VBox/Panel）
+    Widget? _content                       // 内部内容控件（通常 VBox/Panel）
     float _scrollX = 0.0; float _scrollY = 0.0        // 当前滚动偏移
     float _step = 24.0                    // 每格滚轮滚动像素
 
@@ -44,7 +44,7 @@ export struct ScrollView impl Widget {
     bool _loaded = false
     bool enabled = true
     bool visible = true
-    Ptr[u8] _hwnd
+    Ptr[u8]? _hwnd
 
     func set(Dict opts) {
         x = opts.get("x", 0)

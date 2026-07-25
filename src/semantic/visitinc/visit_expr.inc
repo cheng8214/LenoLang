@@ -1298,11 +1298,12 @@
                         }
                     }
 
-                    // 检查内层字段是否为 null 默认值
+                    // 检查内层字段是否为 null 默认值（跳过 Type? nullable 字段，? 本身已表达可空语义）
                     if (struct_sym && struct_sym->struct_field_null_default) {
                         for (int i = 0; i < struct_sym->struct_field_count; i++) {
                             if (strcmp(struct_sym->struct_field_names[i], inner_field) == 0) {
-                                if (struct_sym->struct_field_null_default[i]) {
+                                int is_nullable_type = (struct_sym->struct_field_types[i] && struct_sym->struct_field_types[i]->nullable);
+                                if (struct_sym->struct_field_null_default[i] && !is_nullable_type) {
                                     char msg[BUFFER_MEDIUM];
                                     if (outer_field) {
                                         snprintf(msg, sizeof(msg),
@@ -1365,11 +1366,12 @@
 
                 if (obj_type_info) type_free(obj_type_info);
 
-                // 检查内层字段（如 inner）是否为 null 默认值
+                // 检查内层字段（如 inner）是否为 null 默认值（跳过 Type? nullable 字段）
                 if (struct_sym && struct_sym->struct_field_null_default) {
                     for (int i = 0; i < struct_sym->struct_field_count; i++) {
                         if (strcmp(struct_sym->struct_field_names[i], inner_field) == 0) {
-                            if (struct_sym->struct_field_null_default[i]) {
+                            int is_nullable_type = (struct_sym->struct_field_types[i] && struct_sym->struct_field_types[i]->nullable);
+                            if (struct_sym->struct_field_null_default[i] && !is_nullable_type) {
                                 char msg[BUFFER_MEDIUM];
                                 if (base_var_name && outer_field) {
                                     snprintf(msg, sizeof(msg),
