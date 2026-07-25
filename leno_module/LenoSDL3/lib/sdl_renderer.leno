@@ -212,7 +212,7 @@ export struct Renderer {
     func getColor(): Color {
         SDL_Color c = SDL_Color.malloc()
         _lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
-        var d = {r: c.r, g: c.g, b: c.b, a: c.a}
+        Color d = {r: c.r as int, g: c.g as int, b: c.b as int, a: c.a as int}
         c.free(); return d
     }
 

@@ -1,0 +1,195 @@
+// test_switch_case_is_comma.leno — 测试 case is 逗号合并语法
+// 验证 case is Type1, Type2, Type3 { body } 多类型共享同一 body
+
+// ========== 辅助定义 ==========
+
+face Shape {
+    func area(): float
+}
+
+struct Circle impl Shape {
+    float r = 1.0
+    func area(): float { return 3.14159 * r * r }
+}
+
+struct Rect impl Shape {
+    float w = 1.0; float h = 1.0
+    func area(): float { return w * h }
+}
+
+struct Triangle impl Shape {
+    float base = 1.0; float height = 1.0
+    func area(): float { return 0.5 * base * height }
+}
+
+struct Diamond impl Shape {
+    float d1 = 1.0; float d2 = 1.0
+    func area(): float { return 0.5 * d1 * d2 }
+}
+
+enum Color { RED = 1; GREEN = 2; BLUE = 3 }
+
+// ========== 测试 1：多 struct 类型逗号合并 ==========
+
+func test_multi_struct(): int {
+    int pass = 0
+    // 圆形和菱形共享处理（都只需一个维度参数来描述面积公式特征）
+    Circle c = new Circle(r=3.0)
+    switch c {
+        case is Circle, Diamond {
+            pass = pass + 1  // 命中
+        }
+        case is Rect {
+            pass = pass + 10  // 不应命中
+        }
+        case is Triangle {
+            pass = pass + 100  // 不应命中
+        }
+    }
+
+    Rect r = new Rect(w=2.0, h=3.0)
+    switch r {
+        case is Circle, Diamond {
+            pass = pass + 1000  // 不应命中
+        }
+        case is Rect, Triangle {
+            pass = pass + 2  // 命中
+        }
+    }
+
+    Diamond d = new Diamond(d1=4.0, d2=6.0)
+    switch d {
+        case is Circle, Diamond {
+            pass = pass + 3  // 命中
+        }
+        case is Rect, Triangle {
+            pass = pass + 1000  // 不应命中
+        }
+    }
+
+    // pass 应为 1+2+3=6
+    if pass == 6 { return 1 }
+    print("test_multi_struct failed: pass=" + pass)
+    return 0
+}
+
+// ========== 测试 2：逗号合并 + face 类型 ==========
+
+func test_with_face(): int {
+    Shape s = new Circle(r=2.0)
+    int result = 0
+    switch s {
+        case is Circle, Rect {
+            result = 1  // Circle 命中
+        }
+        case is Triangle, Diamond {
+            result = 2
+        }
+    }
+    if result == 1 { return 1 }
+    print("test_with_face failed: result=" + result)
+    return 0
+}
+
+// ========== 测试 3：逗号合并 + enum 类型 ==========
+
+func test_with_enum(): int {
+    int val = 2
+    int result = 0
+    switch val {
+        case is Color {
+            result = 1  // int 不匹配 enum
+        }
+    }
+    // val 是 int，不是 Color enum，不命中
+    if result == 0 { return 1 }
+    print("test_with_enum failed: result=" + result)
+    return 0
+}
+
+// ========== 测试 4：逗号合并 + 普通值混合 ==========
+
+func test_mixed_with_values(): int {
+    int x = 42
+    int result = 0
+    switch x {
+        case is int {
+            result = result + 1
+        }
+        case 1, 2, 3 {
+            result = result + 10
+        }
+    }
+    if result == 1 { return 1 }
+    print("test_mixed_with_values failed: result=" + result)
+    return 0
+}
+
+// ========== 测试 5：default 分支 ==========
+
+func test_default(): int {
+    Triangle t = new Triangle(base=3.0, height=4.0)
+    int result = 0
+    switch t {
+        case is Circle, Rect {
+            result = 1
+        }
+        default {
+            result = 2  // Triangle 不在列表中，走 default
+        }
+    }
+    if result == 2 { return 1 }
+    print("test_default failed: result=" + result)
+    return 0
+}
+
+// ========== 测试 6：类型窄化到首类型 ==========
+
+func test_narrowing(): int {
+    Shape s = new Circle(r=5.0)
+    float a = 0.0
+    switch s {
+        case is Circle, Rect {
+            // 窄化到首类型 Circle，可以访问 Circle 的字段
+            a = s.area()
+        }
+        default {
+            a = -1.0
+        }
+    }
+    // Circle(r=5) 的面积 ≈ 78.54
+    if a > 78.0 and a < 79.0 { return 1 }
+    print("test_narrowing failed: a=" + a)
+    return 0
+}
+
+// ========== 测试 7：大量类型逗号合并 ==========
+
+func test_many_types(): int {
+    Diamond d = new Diamond(d1=2.0, d2=4.0)
+    int result = 0
+    switch d {
+        case is Circle, Rect, Triangle, Diamond {
+            result = 1  // Diamond 命中
+        }
+    }
+    if result == 1 { return 1 }
+    print("test_many_types failed: result=" + result)
+    return 0
+}
+
+// ========== 运行所有测试 ==========
+
+int total = 0
+int passed = 0
+
+total = total + 1; passed = passed + test_multi_struct()
+total = total + 1; passed = passed + test_with_face()
+total = total + 1; passed = passed + test_with_enum()
+total = total + 1; passed = passed + test_mixed_with_values()
+total = total + 1; passed = passed + test_default()
+total = total + 1; passed = passed + test_narrowing()
+total = total + 1; passed = passed + test_many_types()
+
+print("case is comma merge: " + passed + "/" + total + " passed")
+assert_eq(passed, total)

@@ -173,7 +173,9 @@ struct Ast {
                 AstList values;  // case 值列表（支持多个值）
                 Ast* body;       // case 体
                 int is_type_match;    // 1 = case is Type 模式
-                TypeInfo* match_type; // 匹配的类型（int, string, Array, Point, Shape 等）
+                TypeInfo* match_type; // 匹配的首类型（= match_types[0]，用于类型窄化和解构）
+                TypeInfo** match_types;  // 匹配类型数组（逗号合并：case is A, B, C）
+                int match_type_count;    // 匹配类型数量（1=单类型，>1=逗号合并）
                 char* guard_var;      // switch 表达式变量名（用于类型收窄）
                 SymRef guard_var_ref; // switch 表达式变量的符号引用
                 char** destructure_vars;      // 解构变量名数组（如 case is Point(x, y) → ["x", "y"]）

@@ -153,7 +153,13 @@ void ast_free(Ast* ast) {
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 free_ast_list(&ast->u.switch_.cases[i].values);
                 ast_free(ast->u.switch_.cases[i].body);
-                if (ast->u.switch_.cases[i].match_type) {
+                // 释放 match_types 数组（逗号合并时多个类型）
+                if (ast->u.switch_.cases[i].match_types) {
+                    for (int mi = 0; mi < ast->u.switch_.cases[i].match_type_count; mi++) {
+                        type_free(ast->u.switch_.cases[i].match_types[mi]);
+                    }
+                    free(ast->u.switch_.cases[i].match_types);
+                } else if (ast->u.switch_.cases[i].match_type) {
                     type_free(ast->u.switch_.cases[i].match_type);
                 }
                 free(ast->u.switch_.cases[i].guard_var);

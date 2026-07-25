@@ -527,6 +527,8 @@ Ast* parse_switch_stmt(Parser* p) {
             ast_list_init(&cases[case_count].values);
             cases[case_count].is_type_match = 0;
             cases[case_count].match_type = NULL;
+            cases[case_count].match_types = NULL;
+            cases[case_count].match_type_count = 0;
             cases[case_count].guard_var = NULL;
             cases[case_count].destructure_vars = NULL;
             cases[case_count].destructure_count = 0;
@@ -538,54 +540,86 @@ Ast* parse_switch_stmt(Parser* p) {
             if (p->lex.current.type == TOK_IS) {
                 lexer_next(&p->lex); // is
                 
-                // 解析类型
+                // 解析类型（支持逗号合并：case is Type1, Type2, Type3）
+                int mt_cap = 4;
+                int mt_count = 0;
+                TypeInfo** mt_arr = malloc(sizeof(TypeInfo*) * mt_cap);
+
                 TypeInfo* type_info = parse_type(p);
                 if (!type_info) {
                     error_add(ERR_SYNTAX, p->lex.current.line, "case is 后期望类型名");
+                    free(mt_arr);
                     free(switch_var_name);
                     free(cases);
                     return NULL;
                 }
-                
+                mt_arr[mt_count++] = type_info;
+
+                // 逗号合并：解析后续类型
+                while (p->lex.current.type == TOK_COMMA) {
+                    lexer_next(&p->lex); // ,
+                    TypeInfo* extra_type = parse_type(p);
+                    if (!extra_type) {
+                        error_add(ERR_SYNTAX, p->lex.current.line, "case is 逗号后期望类型名");
+                        for (int t = 0; t < mt_count; t++) type_free(mt_arr[t]);
+                        free(mt_arr);
+                        free(switch_var_name);
+                        free(cases);
+                        return NULL;
+                    }
+                    if (mt_count >= mt_cap) {
+                        mt_cap *= 2;
+                        mt_arr = realloc(mt_arr, sizeof(TypeInfo*) * mt_cap);
+                    }
+                    mt_arr[mt_count++] = extra_type;
+                }
+
                 cases[case_count].is_type_match = 1;
-                cases[case_count].match_type = type_info;
+                cases[case_count].match_types = mt_arr;
+                cases[case_count].match_type_count = mt_count;
+                cases[case_count].match_type = mt_arr[0];  // 首类型，用于类型窄化和解构
                 if (switch_var_name) {
                     cases[case_count].guard_var = strdup(switch_var_name);
                 }
 
-                // 解析解构变量：case is Point(x, y)
+                // 解构变量：case is Point(x, y)（仅单类型时允许）
                 if (p->lex.current.type == TOK_LPAREN) {
-                    lexer_next(&p->lex); // (
-                    int var_cap = 4;
-                    int var_count = 0;
-                    char** var_names = malloc(sizeof(char*) * var_cap);
+                    if (mt_count > 1) {
+                        error_add(ERR_SYNTAX, p->lex.current.line,
+                            "case is 逗号合并不支持解构（case is A, B 不允许 (x, y)）");
+                    } else {
+                        lexer_next(&p->lex); // (
+                        int var_cap = 4;
+                        int var_count = 0;
+                        char** var_names = malloc(sizeof(char*) * var_cap);
 
-                    while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
-                        if (p->lex.current.type != TOK_IDENT) {
-                            error_add(ERR_SYNTAX, p->lex.current.line, "解构变量名期望标识符");
-                            free(var_names);
-                            free(switch_var_name);
-                            free(cases);
-                            return NULL;
+                        while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+                            if (p->lex.current.type != TOK_IDENT) {
+                                error_add(ERR_SYNTAX, p->lex.current.line, "解构变量名期望标识符");
+                                free(var_names);
+                                free(switch_var_name);
+                                free(cases);
+                                return NULL;
+                            }
+                            if (var_count >= var_cap) {
+                                var_cap *= 2;
+                                var_names = realloc(var_names, sizeof(char*) * var_cap);
+                            }
+                            {
+                                char* name = malloc(p->lex.current.len + 1);
+                                memcpy(name, p->lex.current.text, p->lex.current.len);
+                                name[p->lex.current.len] = '\0';
+                                var_names[var_count++] = name;
+                            }
+                            lexer_next(&p->lex);
+                            if (p->lex.current.type == TOK_COMMA) {
+                                lexer_next(&p->lex); // ,
+                            }
                         }
-                        if (var_count >= var_cap) {
-                            var_cap *= 2;
-                            var_names = realloc(var_names, sizeof(char*) * var_cap);
-                        }
-                        {
-                            char* name = malloc(p->lex.current.len + 1);
-                            memcpy(name, p->lex.current.text, p->lex.current.len);
-                            name[p->lex.current.len] = '\0';
-                            var_names[var_count++] = name;
-                        }
-                        lexer_next(&p->lex);
-                        if (p->lex.current.type == TOK_COMMA) {
-                            lexer_next(&p->lex); // ,
-                        }
+                        consume(p, TOK_RPAREN, "期望 ')'");
+                        cases[case_count].destructure_vars = var_names;
+                        cases[case_count].destructure_count = var_count;
                     }
-                    consume(p, TOK_RPAREN, "期望 ')'");
-                    cases[case_count].destructure_vars = var_names;
-                    cases[case_count].destructure_count = var_count;
                 }
             } else {
                 // 普通值匹配：解析 case 值（支持多个值，用逗号分隔）

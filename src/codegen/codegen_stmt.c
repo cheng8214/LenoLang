@@ -112,51 +112,64 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
 
     for (int i = 0; i < case_count; i++) {
         int value_count = ast->u.switch_.cases[i].values.count;
-        case_infos[i].match_jumps = malloc(sizeof(int) * (value_count > 0 ? value_count : 1));
+        int type_count = ast->u.switch_.cases[i].match_type_count;
+        // 分配足够容纳多类型检查的 match_jumps
+        int max_jumps = value_count > type_count ? value_count : type_count;
+        if (max_jumps < 1) max_jumps = 1;
+        case_infos[i].match_jumps = malloc(sizeof(int) * max_jumps);
         case_infos[i].match_jump_count = 0;
 
         if (ast->u.switch_.cases[i].is_type_match) {
-            // case is Type 模式：生成类型检查
-            emit_byte(gen, OP_DUP, ast->line);
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            TypeInfo* mt = ast->u.switch_.cases[i].match_type;
-            if (mt && mt->kind == TYPE_FACE && mt->struct_name) {
-                ObjString* face_name_str = str_copy(mt->struct_name,
-                                                     strlen(mt->struct_name));
-                int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-                emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
-                emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, face_name_const & 0xff, ast->line);
-            } else if (mt && mt->kind == TYPE_STRUCT && mt->struct_name) {
-                ObjString* struct_name_str = str_copy(mt->struct_name,
-                                                       strlen(mt->struct_name));
-                int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
-                emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
-                emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, struct_name_const & 0xff, ast->line);
-            } else if (mt && mt->kind == TYPE_ENUM && mt->struct_name) {
-                ObjString* enum_name_str = str_copy(mt->struct_name,
-                                                     strlen(mt->struct_name));
-                int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
-                emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
-                emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, enum_name_const & 0xff, ast->line);
-            } else {
-                if (mt) {
-                    emit_byte(gen, (uint8_t)mt->kind, ast->line);
-                    if (mt->element_type) {
-                        emit_byte(gen, (uint8_t)mt->element_type->kind, ast->line);
+            // case is Type 模式：对每个匹配类型生成类型检查（逗号合并时多个类型跳转同一 body）
+            int mt_count = type_count > 0 ? type_count : 1;
+            TypeInfo** mt_arr = ast->u.switch_.cases[i].match_types;
+            if (!mt_arr) {
+                // 单类型回退（match_types 未设置时用 match_type）
+                mt_count = 1;
+                mt_arr = &ast->u.switch_.cases[i].match_type;
+            }
+            for (int mi = 0; mi < mt_count; mi++) {
+                TypeInfo* mt = mt_arr[mi];
+                emit_byte(gen, OP_DUP, ast->line);
+                emit_byte(gen, OP_TYPE_CHECK, ast->line);
+                if (mt && mt->kind == TYPE_FACE && mt->struct_name) {
+                    ObjString* face_name_str = str_copy(mt->struct_name,
+                                                         strlen(mt->struct_name));
+                    int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
+                    emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
+                    emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, face_name_const & 0xff, ast->line);
+                } else if (mt && mt->kind == TYPE_STRUCT && mt->struct_name) {
+                    ObjString* struct_name_str = str_copy(mt->struct_name,
+                                                           strlen(mt->struct_name));
+                    int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
+                    emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
+                    emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, struct_name_const & 0xff, ast->line);
+                } else if (mt && mt->kind == TYPE_ENUM && mt->struct_name) {
+                    ObjString* enum_name_str = str_copy(mt->struct_name,
+                                                         strlen(mt->struct_name));
+                    int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
+                    emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
+                    emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, enum_name_const & 0xff, ast->line);
+                } else {
+                    if (mt) {
+                        emit_byte(gen, (uint8_t)mt->kind, ast->line);
+                        if (mt->element_type) {
+                            emit_byte(gen, (uint8_t)mt->element_type->kind, ast->line);
+                        } else {
+                            emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+                        }
                     } else {
                         emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+                        emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
                     }
-                } else {
-                    emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                    emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
                 }
+                case_infos[i].match_jumps[case_infos[i].match_jump_count++] =
+                    emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
+                emit_byte(gen, OP_POP, ast->line);
             }
-            case_infos[i].match_jumps[case_infos[i].match_jump_count++] =
-                emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
         } else if (value_count > 0) {
             for (int j = 0; j < value_count; j++) {
                 emit_byte(gen, OP_DUP, ast->line);
