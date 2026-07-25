@@ -1,4 +1,4 @@
-﻿// sdl_tooltip.leno — 悬停提示（Tooltip）
+// sdl_tooltip.leno — 悬停提示（Tooltip）
 //
 // 设计：全局单例。任意控件在 hover 且有 tip 文本时调用 tipReport(text, mx, my)；
 // Window 每帧先 tipTick()（按悬停时长决定是否显示），最后一遍 tipRender() 画在最上层。
@@ -19,6 +19,7 @@ var _tipStart = 0           // 首次 hover 该文本的 tick（用于延迟）
 var _tipVisible = false
 var _tipDelay  = 500        // 悬停多久才显示（毫秒）
 var _font Font
+var _fontDirty = true
 var _fontSize  = 15.0
 
 // 配色（深色半透明浮层）
@@ -61,12 +62,13 @@ export func tipTick() {
 export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
 
 func _ensureFont(Renderer r) {
-    if _font == null or not _font.ok {
+    if _fontDirty or not _font.ok {
         Font old = _font as Font
-        if old != null { fnt.releaseFont(old) }
+        if old.ok { fnt.releaseFont(old) }
         _font = fnt.acquireFontAuto(_fontSize)
+        _fontDirty = false
     }
-    if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }
+    if _font.ok { _font.setSSAA(r.getSSAA()) }
 }
 
 // 每帧由 Window 在“所有控件 + ComboBox/Menu 弹层”之后调用，浮在最上层。
@@ -74,7 +76,7 @@ func _ensureFont(Renderer r) {
 export func tipRender(Renderer r, float vw, float vh) {
     if not _tipVisible or _tipText == "" { return }
     _ensureFont(r)
-    if _font == null or not _font.ok { return }
+    if not _font.ok { return }
 
     float padX = 10.0; float padY = 7.0
     var ms = _font.measureString(_tipText)

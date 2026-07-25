@@ -16,6 +16,7 @@ export struct Button impl Widget {
     string _fontPath = ""    // 字体路径（空则自动选择）
     int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
     Font  _font              // 字体缓存
+    bool  _fontDirty = true  // 字体是否需要（重新）加载
     int cr = 60; int cg = 140; int cb = 220   // 背景色（默认 primary）
     int tr = 255; int tg = 255; int tb = 255  // 文字色
     int hvr = 0; int hvg = 0; int hvb = 0     // 悬停背景色（为 0 时自动计算）
@@ -69,14 +70,15 @@ export struct Button impl Widget {
     }
 
     func _ensure_font() {
-        if _font == null or not _font.ok {
-            if _font != null { fnt.releaseFont(_font) }
+        if _fontDirty or not _font.ok {
+            if _font.ok { fnt.releaseFont(_font) }
             if _fontPath != "" {
                 _font = fnt.acquireFont(_fontPath, _fontSize)
             } else {
                 _font = fnt.acquireFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _fontDirty = false
         }
     }
 
@@ -194,16 +196,16 @@ export struct Button impl Widget {
     func set_hover_rgb(int r, int g, int b) { hvr = r; hvg = g; hvb = b }
     func set_font_size(float s) {
         _fontSize = s
-        if _font != null { fnt.releaseFont(_font); _font = null }
+        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
     }
     func set_font_path(string path) {
         _fontPath = path
-        if _font != null { fnt.releaseFont(_font); _font = null }
+        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
     }
     func set_font_style(int style) {
         _fontStyle = style
         _ensure_font()
-        if _font != null and _font.ok { _font.setStyle(style) }
+        if _font.ok { _font.setStyle(style) }
     }
     func set_radius(float r)   { _radius = r }
     func set_enabled(bool e)   { enabled = e }
@@ -381,7 +383,7 @@ export struct Button impl Widget {
         float pad = 6.0
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
         float textW = 0.0; float textH = 0.0
-        if _font != null and _font.ok {
+        if _font.ok {
             var ms0 = _font.measureString(text)
             textW = ms0.w; textH = ms0.h
         }
@@ -438,7 +440,7 @@ export struct Button impl Widget {
             }
         }
 
-        if _font != null and _font.ok {
+        if _font.ok {
             var ms = _font.measureString(text)
             if itex == null {
                 // 纯文字：整按钮居中
@@ -498,7 +500,7 @@ export struct Button impl Widget {
 
     // 释放字体与图片资源
     func dispose() {
-        if _font != null { fnt.releaseFont(_font); _font = null }
+        if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true
         _release_all_images()
     }
 }

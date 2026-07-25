@@ -122,7 +122,8 @@ export struct Window {
     int _maxFPS = 30        // 最大渲染帧率（0=不限制）
     Array[Widget] _widgets = []
     Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
-    MenuBar _ctxBar = null          // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
+    MenuBar _ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
+    bool _hasCtxBar = false       // _ctxBar 是否已注册（struct 值类型始终非 null，用 bool 标志替代 null 检查）
     int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
     Widget _root                     // 根布局控件（setRoot 设置），缩放时自动填满窗口
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
@@ -278,8 +279,7 @@ export struct Window {
         Edit ed = edt.createEdit(opts)
         ed.set_window(handle)
         ed.set_window_size(_w, _h)
-        var cm = ed.get_context_menu()
-        if cm != null { menu.registerContextMenu(cm) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
+        if ed.is_context_menu_enabled() { menu.registerContextMenu(ed.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         _widgets.add(ed as Widget)
         return ed
     }
@@ -288,24 +288,15 @@ export struct Window {
     func add(Widget w): Widget {
         _widgets.add(w)
         // 绑定窗口句柄：容器向下传递，Edit 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
-        Panel p = w as Panel
-        if p != null { p._bind_window(handle); return w }
-        ScrollView s = w as ScrollView
-        if s != null { s._bind_window(handle); return w }
-        HBox h = w as HBox
-        if h != null { h._bind_window(handle); return w }
-        VBox vb = w as VBox
-        if vb != null { vb._bind_window(handle); return w }
-        AnchorBox ab = w as AnchorBox
-        if ab != null { ab._bind_window(handle); return w }
-        TabControl tc = w as TabControl
-        if tc != null { tc._bind_window(handle); return w }
-        Edit e = w as Edit
-        if e != null { e.set_window(handle); return w }
-        SpinBox sp = w as SpinBox
-        if sp != null { sp._bind_window(handle); return w }
-        TreeView tv = w as TreeView
-        if tv != null { tv.set_window_handle(handle); return w }
+        if w is Panel { w._bind_window(handle); return w }
+        if w is ScrollView { w._bind_window(handle); return w }
+        if w is HBox { w._bind_window(handle); return w }
+        if w is VBox { w._bind_window(handle); return w }
+        if w is AnchorBox { w._bind_window(handle); return w }
+        if w is TabControl { w._bind_window(handle); return w }
+        if w is Edit { w.set_window(handle); return w }
+        if w is SpinBox { w._bind_window(handle); return w }
+        if w is TreeView { w.set_window_handle(handle); return w }
         return w
     }
 
@@ -386,7 +377,7 @@ export struct Window {
     // 注册窗口级右击上下文菜单（只需调用一次）。之后 run 会在每帧事件处理中统一接管右击：
     // 若命中控件自行弹出了自身菜单（占用弹层），则不弹窗口菜单；否则才弹本菜单。
     // 这样「控件菜单优先、窗口菜单兜底」由底层统一保证，示例无需在 onEvent 里处理右键。
-    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); _ctxBar = bar; _ctxIdx = ctxIdx }
+    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); _ctxBar = bar; _hasCtxBar = true; _ctxIdx = ctxIdx }
 
     // 添加面板容器，opts: {x, y, w, h, bg, border, radius, border_alpha, clip}
     // 用 panel.add(win.addButton({...})) 把子控件挂到面板（子控件用窗口绝对坐标）
@@ -422,8 +413,7 @@ export struct Window {
         t.set_window_size(_w, _h)
         t.set_window_handle(handle)
         _widgets.add(t as Widget)
-        var cm = t.get_context_menu()
-        if cm != null { menu.registerContextMenu(cm) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
+        if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         return t
     }
 
@@ -470,8 +460,7 @@ export struct Window {
         TreeView t = tvlib.createTreeView(opts)
         t.set_window(_w, _h)
         t.set_window_handle(handle)
-        var cm = t.get_context_menu()
-        if cm != null { menu.registerContextMenu(cm) }   // 右键上下文菜单登记，由窗口第二遍按窗口隔离绘制
+        if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 右键上下文菜单登记，由窗口第二遍按窗口隔离绘制
         _widgets.add(t as Widget)
         return t
     }
@@ -512,7 +501,7 @@ export struct Window {
         _runRends.add(onRender)
         _runWidgets.add(_widgets)    // 统一关联控件列表
         _runMenus.add(_menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
-        if _ctxBar != null { _runCtxBar.add(_ctxBar); _runCtxIdx.add(_ctxIdx) }
+        if _hasCtxBar { _runCtxBar.add(_ctxBar); _runCtxIdx.add(_ctxIdx) }
         else { _runCtxBar.add(menu.createMenuBar({})); _runCtxIdx.add(-1) }   // 占位（idx=-1 表示未注册，run 中不弹）
         _runRoots.add(_root)         // 根布局控件
         Size sz = getSize()           // 窗口逻辑尺寸（Tooltip 浮层夹紧用）

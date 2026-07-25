@@ -465,7 +465,7 @@ export func acquireFontAuto(float ptsize): Font {
 // 释放一个 Font 持有引用：引用计数 -1，归零才真正关闭并从池摘除。
 // 不归零时不关闭，保证共享同一 Font 的其它控件仍可正常使用（旧行为靠 _font.ok 自愈，会残留失效池条目）。
 export func releaseFont(Font f) {
-    if f == null { return }
+    if not f.ok { return }
     f._refCount = f._refCount - 1
     if f._refCount <= 0 {
         for _fontPool.len() to i { if _fontPool[i] == f { _fontPool.remove(i); break } }
