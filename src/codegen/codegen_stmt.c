@@ -1614,6 +1614,10 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 TypeKind field_type = ast->u.struct_def.field_types[i]->kind;
                 emit_byte(gen, field_type, ast->line);
 
+                // nullable 标记
+                uint8_t is_nullable = ast->u.struct_def.field_types[i]->nullable ? 1 : 0;
+                emit_byte(gen, is_nullable, ast->line);
+
                 // 如果字段是 struct 类型，输出 struct 类型名
                 if (field_type == TYPE_STRUCT) {
                     const char* struct_type_name = ast->u.struct_def.field_types[i]->struct_name;
@@ -1637,12 +1641,23 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
 
                 // 是否有默认值
                 if (ast->u.struct_def.field_defaults[i]) {
-                    emit_byte(gen, 1, ast->line);
                     Ast* default_expr = ast->u.struct_def.field_defaults[i];
                     Value default_val = ast_default_to_value(default_expr);
-                    int default_const = make_constant(gen, default_val);
-                    emit_byte(gen, (default_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, default_const & 0xff, ast->line);
+                    // 非常量默认值（如 new Point(x=99)）无法在编译期求值
+                    if (val_is_null(default_val) && default_expr->kind != AST_NULL) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg),
+                            "struct 字段 '%s' 的默认值不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量），"
+                            "请使用构造器初始化",
+                            ast->u.struct_def.field_names[i]);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        emit_byte(gen, 0, ast->line); // 无默认值
+                    } else {
+                        emit_byte(gen, 1, ast->line);
+                        int default_const = make_constant(gen, default_val);
+                        emit_byte(gen, (default_const >> 8) & 0xff, ast->line);
+                        emit_byte(gen, default_const & 0xff, ast->line);
+                    }
                 } else {
                     emit_byte(gen, 0, ast->line);
                 }
@@ -1974,6 +1989,10 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
         TypeKind field_type = ast->u.struct_def.field_types[i]->kind;
         emit_byte(gen, field_type, ast->line);
 
+        // nullable 标记
+        uint8_t is_nullable2 = ast->u.struct_def.field_types[i]->nullable ? 1 : 0;
+        emit_byte(gen, is_nullable2, ast->line);
+
         // 如果字段是 struct 类型，输出 struct 类型名
         if (field_type == TYPE_STRUCT) {
             const char* struct_type_name = ast->u.struct_def.field_types[i]->struct_name;
@@ -1997,13 +2016,23 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
 
         // 是否有默认值
         if (ast->u.struct_def.field_defaults[i]) {
-            emit_byte(gen, 1, ast->line);
-            // 将默认值表达式转换为常量值（编译期求值）
             Ast* default_expr = ast->u.struct_def.field_defaults[i];
             Value default_val = ast_default_to_value(default_expr);
-            int default_const = make_constant(gen, default_val);
-            emit_byte(gen, (default_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, default_const & 0xff, ast->line);
+            // 非常量默认值（如 new Point(x=99)）无法在编译期求值
+            if (val_is_null(default_val) && default_expr->kind != AST_NULL) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg),
+                    "struct 字段 '%s' 的默认值不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量），"
+                    "请使用构造器初始化",
+                    ast->u.struct_def.field_names[i]);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+                emit_byte(gen, 0, ast->line); // 无默认值
+            } else {
+                emit_byte(gen, 1, ast->line);
+                int default_const = make_constant(gen, default_val);
+                emit_byte(gen, (default_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, default_const & 0xff, ast->line);
+            }
         } else {
             emit_byte(gen, 0, ast->line);
         }

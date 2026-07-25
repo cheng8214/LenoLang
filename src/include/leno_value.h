@@ -473,6 +473,7 @@ typedef struct {
     Value default_value; // 字段默认值
     int has_default;    // 是否有默认值
     TypeKind element_type;  // Ptr[T] 中 T 的类型（仅当 type == TYPE_PTR_GENERIC 时有效）
+    int nullable;       // 可空字段标记：1=Type?，0=Type
 } StructFieldInfo;
 
 // 结构体方法信息
@@ -1017,7 +1018,7 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
 
 // 设置结构体字段
 void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKind type,
-                          const char* struct_type_name, Value default_value, int has_default, TypeKind element_type);
+                          const char* struct_type_name, Value default_value, int has_default, TypeKind element_type, int nullable);
 
 // 创建结构体实例
 ObjStruct* struct_instance_new(ObjStructDef* def);

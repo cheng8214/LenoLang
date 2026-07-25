@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000006  // v6: enum 成员值 int32 -> int64，支持 >= 2^31 的位标志
+#define LENOSYMC_VERSION 0x00000007  // v7: 支持 Type? 可空类型（TypeInfo nullable 标记、ModuleStructField nullable）
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -48,6 +48,8 @@ static void sym_cache_write_type_info(FILE* f, TypeInfo* ti) {
     }
     uint8_t kind = (uint8_t)ti->kind;
     fwrite(&kind, 1, 1, f);
+    uint8_t nullable = (uint8_t)(ti->nullable ? 1 : 0);
+    fwrite(&nullable, 1, 1, f);
     switch (ti->kind) {
         case TYPE_ARRAY:
         case TYPE_PTR_GENERIC:
@@ -100,8 +102,12 @@ static TypeInfo* sym_cache_read_type_info(FILE* f) {
     if (fread(&kind, 1, 1, f) != 1) return NULL;
     if (kind == 0xFF) return NULL;  // NULL 标记
 
+    uint8_t nullable = 0;
+    if (fread(&nullable, 1, 1, f) != 1) return NULL;
+
     TypeInfo* ti = type_new((TypeKind)kind);
     if (!ti) return NULL;
+    ti->nullable = nullable ? 1 : 0;
     switch ((TypeKind)kind) {
         case TYPE_ARRAY:
         case TYPE_PTR_GENERIC: {
@@ -206,6 +212,8 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
             fwrite(&ft, 1, 1, f);
             uint8_t et = (uint8_t)ss->fields[j].element_type;
             fwrite(&et, 1, 1, f);
+            uint8_t nl = (uint8_t)(ss->fields[j].nullable ? 1 : 0);
+            fwrite(&nl, 1, 1, f);
             sym_cache_write_string(f, ss->fields[j].struct_name);
             sym_cache_write_string(f, ss->fields[j].element_struct_name);
         }
@@ -457,10 +465,11 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
         ss->fields = flc > 0 ? (ModuleStructField*)calloc(flc, sizeof(ModuleStructField)) : NULL;
         for (uint32_t j = 0; j < flc; j++) {
             ss->fields[j].name = sym_cache_read_string(f);
-            uint8_t ft, et;
-            if (fread(&ft, 1, 1, f) != 1 || fread(&et, 1, 1, f) != 1) goto fail;
+            uint8_t ft, et, nl;
+            if (fread(&ft, 1, 1, f) != 1 || fread(&et, 1, 1, f) != 1 || fread(&nl, 1, 1, f) != 1) goto fail;
             ss->fields[j].type = (TypeKind)ft;
             ss->fields[j].element_type = (TypeKind)et;
+            ss->fields[j].nullable = nl ? 1 : 0;
             ss->fields[j].struct_name = sym_cache_read_string(f);
             ss->fields[j].element_struct_name = sym_cache_read_string(f);
         }

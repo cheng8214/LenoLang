@@ -115,7 +115,7 @@ typedef enum {
     TOK_IF, TOK_ELSE, TOK_EIF, TOK_THEN, TOK_FUNC, TOK_RETURN, TOK_WHILE, TOK_FOR, TOK_TO, TOK_BREAK, TOK_CONTINUE,
     TOK_SWITCH, TOK_CASE, TOK_DEFAULT,
     TOK_VAR, TOK_CONST, TOK_TRUE, TOK_FALSE, TOK_NULL,
-    TOK_AND, TOK_OR, TOK_NOT, TOK_IS, TOK_IN, TOK_NOT_IN, TOK_IMPORT, TOK_EXPORT, TOK_AS, TOK_USE,
+    TOK_AND, TOK_OR, TOK_NOT, TOK_IS, TOK_IN, TOK_NOT_IN, TOK_QUESTION, TOK_IMPORT, TOK_EXPORT, TOK_AS, TOK_USE,
     TOK_TRY, TOK_CATCH, TOK_THROW, TOK_FINALLY,
     TOK_STRUCT,        // struct 关键字
     TOK_ENUM,          // enum 关键字
@@ -225,6 +225,7 @@ struct TypeInfo {
     // 泛型 struct 实例化时的具体类型参数（如 Box[int] 的 int）
     TypeInfo** generic_args; // 具体类型参数数组
     int generic_count;       // 类型参数数量
+    int nullable;            // 可空类型标记：1=Type?，0=Type
 };
 
 // 类型系统 API
@@ -245,6 +246,7 @@ const char* type_to_string(TypeInfo* type);
 const char* type_kind_to_string(TypeKind kind);
 int type_is_compatible(TypeInfo* target, TypeInfo* source);
 TypeKind token_to_type_kind(LenoTokenType token);
+int type_is_nullable(TypeInfo* type);
 
 // C 布局类型 API
 int c_layout_type_size(TypeKind kind);

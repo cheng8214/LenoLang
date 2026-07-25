@@ -729,6 +729,10 @@ void lexer_next(Lexer* lex) {
             lex->current = make_token(lex, TOK_BITNOT);
             advance(lex);
             break;
+        case '?':
+            lex->current = make_token(lex, TOK_QUESTION);
+            advance(lex);
+            break;
         case '#':
             // Leno 不支持 # 开头的语法（注释使用 // 或 /* */）
             error_add(ERR_SYNTAX, lex->line, "意外的字符 '#'，请使用 // 或 /* */ 进行注释");

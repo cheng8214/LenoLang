@@ -125,6 +125,7 @@ void type_free(TypeInfo* type) {
 int type_equals(TypeInfo* a, TypeInfo* b) {
     if (!a || !b) return a == b;
     if (a->kind != b->kind) return 0;
+    if (a->nullable != b->nullable) return 0;
     
     switch (a->kind) {
         case TYPE_ARRAY:
@@ -241,7 +242,8 @@ TypeInfo* type_copy(TypeInfo* type) {
         default:
             break;
     }
-    
+
+    copy->nullable = type->nullable;
     return copy;
 }
 
@@ -519,6 +521,15 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             break;
         }
     }
+
+    // 可空类型后缀
+    if (type->nullable) {
+        if (*offset + 1 < buf_size - 1) {
+            buf[*offset] = '?';
+            (*offset)++;
+            buf[*offset] = '\0';
+        }
+    }
 }
 
 // 类型转字符串（使用线程本地存储，确保线程安全）
@@ -692,6 +703,11 @@ TypeInfo* type_infer_from_ast(Ast* ast) {
 
 #endif // LENO_VM_ONLY
 
+// 检查类型是否可空
+int type_is_nullable(TypeInfo* type) {
+    return type && type->nullable;
+}
+
 // 检查类型是否兼容（用于赋值）
 int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (!target || !source) return 1;  // 任意类型都可以
@@ -703,6 +719,17 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
 
     // null 可以赋值给任何类型（允许 int b = null, string c = null）
     if (source->kind == TYPE_NULL) return 1;
+
+    // nullable 类型兼容性：Type 可赋值给 Type?（非空→可空，安全）
+    if (target->nullable && !source->nullable) {
+        TypeInfo target_stripped = *target;
+        target_stripped.nullable = 0;
+        return type_is_compatible(&target_stripped, source);
+    }
+    // Type? 不能隐式赋值给 Type（可能为 null，不安全）
+    if (!target->nullable && source->nullable) {
+        return 0;
+    }
 
     // 相同类型肯定兼容
     if (type_equals(target, source)) return 1;

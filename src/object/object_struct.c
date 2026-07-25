@@ -37,7 +37,7 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
 }
 
 void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKind type,
-                          const char* struct_type_name, Value default_value, int has_default, TypeKind element_type) {
+                          const char* struct_type_name, Value default_value, int has_default, TypeKind element_type, int nullable) {
     if (index < 0 || index >= def->field_count) return;
 
     def->fields[index].name = strdup(name);
@@ -46,6 +46,7 @@ void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKi
     def->fields[index].default_value = default_value;
     def->fields[index].has_default = has_default;
     def->fields[index].element_type = element_type;
+    def->fields[index].nullable = nullable;
 }
 
 // 注册结构体定义
@@ -130,7 +131,7 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
     // 使用默认值初始化字段
     for (int i = 0; i < def->field_count; i++) {
         if (def->fields[i].has_default) {
-            // 深拷贝引用类型的默认值（Array、Dict），避免所有实例共享同一对象
+            // 深拷贝引用类型的默认值（Array、Dict、Struct），避免所有实例共享同一对象
             Value dv = def->fields[i].default_value;
             if (val_is_obj(dv)) {
                 Object* dobj = val_as_obj(dv);
@@ -140,6 +141,9 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
                 }
             }
             obj->field_values[i] = dv;
+        } else if (def->fields[i].nullable) {
+            // nullable 字段默认为 null（不递归分配/不自动创建空容器）
+            obj->field_values[i] = val_null();
         } else if (def->fields[i].type == TYPE_STRUCT && def->fields[i].struct_type_name) {
             // 嵌套 struct 类型：递归创建实例
             ObjStructDef* nested_def = struct_def_find(def->fields[i].struct_type_name);

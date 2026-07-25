@@ -1,0 +1,72 @@
+// Type? 可空类型测试
+
+struct Inner {
+    int value = 0
+}
+
+struct Container {
+    Inner? nullable_inner    // nullable struct 字段，默认为 null
+    Inner normal_inner       // 非 nullable struct 字段，默认递归分配
+    string? nullable_str     // nullable string 字段
+    int normal_int = 42      // 非 nullable int 字段
+}
+
+// 测试1：nullable struct 字段默认为 null
+func test_nullable_default() {
+    Container c = new Container()
+    assert_eq(c.nullable_inner == null, true)
+    print("test_nullable_default: nullable_inner == null => true")
+}
+
+// 测试2：非 nullable struct 字段默认被分配
+func test_normal_default() {
+    Container c = new Container()
+    assert_eq(c.normal_inner != null, true)
+    assert_eq(c.normal_inner.value, 0)
+    print("test_normal_default: normal_inner != null, value=0")
+}
+
+// 测试3：nullable struct 字段赋值后不为 null
+func test_nullable_assign() {
+    Container c = new Container()
+    c.nullable_inner = new Inner(value=99)
+    assert_eq(c.nullable_inner != null, true)
+    assert_eq(c.nullable_inner.value, 99)
+    print("test_nullable_assign: assigned, value=99")
+}
+
+// 测试4：nullable struct 字段可以再次赋 null
+func test_nullable_reassign_null() {
+    Container c = new Container()
+    c.nullable_inner = new Inner(value=1)
+    assert_eq(c.nullable_inner != null, true)
+    c.nullable_inner = null
+    assert_eq(c.nullable_inner == null, true)
+    print("test_nullable_reassign_null: re-assigned to null")
+}
+
+// 测试5：非 nullable int 字段正常工作
+func test_normal_int() {
+    Container c = new Container()
+    assert_eq(c.normal_int, 42)
+    print("test_normal_int: value=42")
+}
+
+// 测试6：nullable string 字段默认为 null
+func test_nullable_string() {
+    Container c = new Container()
+    assert_eq(c.nullable_str == null, true)
+    c.nullable_str = "hello"
+    assert_eq(c.nullable_str != null, true)
+    assert_eq(c.nullable_str, "hello")
+    print("test_nullable_string: null -> assigned -> 'hello'")
+}
+
+test_nullable_default()
+test_normal_default()
+test_nullable_assign()
+test_nullable_reassign_null()
+test_normal_int()
+test_nullable_string()
+
+print("test_nullable_type: ALL PASSED")

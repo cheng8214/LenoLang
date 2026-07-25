@@ -88,6 +88,10 @@
                         if (ast->u.struct_def.field_defaults[i] &&
                             ast->u.struct_def.field_defaults[i]->kind == AST_NULL) {
                             sym->struct_field_null_default[i] = 1;
+                        } else if (!ast->u.struct_def.field_defaults[i] &&
+                                   ast->u.struct_def.field_types[i]->nullable) {
+                            // nullable 字段无显式默认值时，默认为 null
+                            sym->struct_field_null_default[i] = 1;
                         } else {
                             sym->struct_field_null_default[i] = 0;
                         }

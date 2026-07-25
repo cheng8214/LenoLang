@@ -443,6 +443,7 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                     if (!serialize_constant(wb, f->default_value)) return 0;
                 }
                 wb_write_u8(wb, (uint8_t)f->element_type);
+                wb_write_u8(wb, (uint8_t)f->nullable);
             }
             wb_write_u32(wb, (uint32_t)struct_def->method_count);
             for (int i = 0; i < struct_def->method_count; i++) {
@@ -999,9 +1000,12 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             uint8_t element_type;
             if (!ctx_read_u8(ctx, &element_type)) { free(fname); free(struct_type_name); return 0; }
 
+            uint8_t is_nullable = 0;
+            if (!ctx_read_u8(ctx, &is_nullable)) { free(fname); free(struct_type_name); return 0; }
+
             struct_def_set_field(sdef, (int)i, fname, (TypeKind)type_kind,
                                  struct_type_name, default_val, has_default,
-                                 (TypeKind)element_type);
+                                 (TypeKind)element_type, is_nullable);
             free(fname);
             free(struct_type_name);
         }

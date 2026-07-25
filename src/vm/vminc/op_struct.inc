@@ -60,6 +60,7 @@ OPCODE(OP_STRUCT_DEF) {
     for (int i = 0; i < field_count; i++) {
         uint16_t field_name_idx = READ_SHORT();
         uint8_t field_type = READ_BYTE();
+        uint8_t is_nullable = READ_BYTE();  // nullable 标记
 
         // 读取 struct 类型名（如果字段是 struct 类型）
         char* struct_type_name = NULL;
@@ -97,7 +98,7 @@ OPCODE(OP_STRUCT_DEF) {
         }
 
         struct_def_set_field(def, i, field_name->chars, (TypeKind)field_type,
-                            struct_type_name, default_value, has_default, element_type);
+                            struct_type_name, default_value, has_default, element_type, is_nullable);
     }
     
     // 读取方法信息

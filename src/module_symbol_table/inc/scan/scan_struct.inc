@@ -458,12 +458,22 @@
                             // 解析字段
                             const char* type_start = after_struct;
                             while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                            // 检查类型名后的 ? (如 Font?)
+                            int is_nullable = 0;
+                            if (*after_struct == '?') {
+                                is_nullable = 1;
+                                after_struct++;
+                            }
                             int type_len = (int)(after_struct - type_start);
 
                             if (type_len > 0 && type_len < 64) {
                                 char type_str[64];
-                                strncpy(type_str, type_start, type_len);
-                                type_str[type_len] = '\0';
+                                // 如果类型以 ? 结尾，去掉 ?（已由上面的 is_nullable 标记）
+                                int copy_len = is_nullable ? type_len - 1 : type_len;
+                                strncpy(type_str, type_start, copy_len);
+                                type_str[copy_len] = '\0';
+
+                                // 检查可空类型后缀 Type?（泛型 ] 后的 ? 已在上面处理）
 
                                 // 检查是否是 Ptr[T] / Array[T] / Dict[K,V] 类型
                                 TypeKind element_type = TYPE_PTR;  // 默认元素类型
@@ -498,6 +508,12 @@
                                     // 跳过到 ] 为止的内容
                                     while (*after_struct && *after_struct != ']') after_struct++;
                                     if (*after_struct == ']') after_struct++;
+                                    // 检查 ] 后是否有 ? (如 Array[Font]?)
+                                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                    if (*after_struct == '?') {
+                                        is_nullable = 1;
+                                        after_struct++;
+                                    }
                                 }
 
                                 while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
@@ -525,6 +541,7 @@
                                     }
                                     fields[field_count].element_type = element_type;
                                     fields[field_count].element_struct_name = element_struct_name;
+                                    fields[field_count].nullable = is_nullable;
                                     if (field_count >= MOD_MAX_FIELDS) {
                                         fprintf(stderr, "[错误] struct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
                                     } else {

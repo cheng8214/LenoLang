@@ -13,6 +13,7 @@
 5. [函数](#函数)
    - [泛型约束（T: Face）](#泛型约束t-face)
 6. [结构体（Struct）](#结构体struct)
+   - [可空类型 `Type?`](#可空类型-type推荐方案)
    - [泛型结构体](#泛型结构体)
 7. [face（接口）](#face接口)
    - [泛型 face](#泛型-face)
@@ -3080,6 +3081,148 @@ struct LinkedList {
 }
 ```
 
+---
+
+### 可空类型 `Type?`（推荐方案）
+
+**`Type?`** 是可空类型语法——在类型名后加 `?`，表示该字段/变量**可以为 null**。这是解决上面 null 默认值问题的**推荐方案**。
+
+#### 基本用法
+
+```leno
+struct Font {
+    int size = 15
+    string path = ""
+}
+
+struct Widget {
+    Font? _font           // 可空 Font，默认为 null（不递归分配）
+    string name = ""      // 非 nullable，有默认值
+    int x = 0             // 非 nullable int
+}
+
+main() {
+    var w = new Widget()
+    print(w._font == null)    // true —— 可空字段默认 null
+    print(w.name)             // "" —— 非 nullable 字段正常
+
+    w._font = new Font(size=20)  // 赋值后不为 null
+    print(w._font != null)       // true
+}
+```
+
+#### `Type?` vs 非 nullable struct 的区别
+
+| 声明方式 | 默认值 | `== null` | 编译警告 |
+|---------|--------|-----------|---------|
+| `Font _font` | 递归分配 Font 实例 | 永远为 false ⚠️ | struct == null 会警告 |
+| `Font? _font` | null | null 时为 true ✅ | 无警告 |
+| `Font _font = null` | null | null 时为 true | 无警告 |
+
+#### 用 `is` 进行类型窄化
+
+可空类型访问成员前，用 `is` 检查并窄化类型：
+
+```leno
+struct Widget {
+    Font? _font
+
+    func get_font_size(): int {
+        if _font is Font {
+            return _font.size    // is 窄化后，_font 视为 Font 访问
+        }
+        return 0
+    }
+}
+```
+
+`switch case is` 同样支持窄化：
+
+```leno
+switch _font {
+    case is Font {
+        print(_font.size)    // 窄化后安全访问
+    }
+}
+```
+
+#### 各种类型的 `Type?`
+
+`?` 可用于任何类型：
+
+```leno
+struct Example {
+    int? count           // 可空 int，默认 null
+    float? ratio         // 可空 float，默认 null
+    string? label        // 可空 string，默认 null
+    bool? flag           // 可空 bool，默认 null
+    Array[int]? items    // 可空数组，默认 null（不是空数组！）
+    Dict[string, int]? data  // 可空字典，默认 null（不是空字典！）
+    Point? origin        // 可空 struct，默认 null
+}
+```
+
+> **注意**：`Array[int]?` 默认为 **null**，而 `Array[int]` 默认为**空数组** `[]`。同样 `Dict[K,V]?` 默认为 **null**，`Dict[K,V]` 默认为**空字典** `{}`。
+
+#### 可空类型函数参数和返回值
+
+```leno
+// 可空参数
+func greet(string? name): string {
+    if name is string {
+        return name         // is 窄化后作为 string 返回
+    }
+    return "world"
+}
+
+// 可空返回类型
+func find_user(int id): User? {
+    if id > 0 {
+        return new User(id=id)
+    }
+    return null            // 返回 null 合法
+}
+```
+
+#### 可空类型局部变量
+
+```leno
+func process() {
+    Point? p = null        // 声明可空局部变量
+    p = new Point(x=10)
+    if p is Point {
+        print(p.x)        // 窄化后安全访问
+    }
+    p = null              // 可重新赋 null
+}
+```
+
+#### 类型兼容规则
+
+```leno
+Point normal = new Point(x=1)
+Point? opt = normal      // ✅ Type → Type? 兼容（非空赋给可空）
+
+Point? opt2 = null
+Point p2 = opt2          // ❌ Type? → Type 不兼容（可能为 null，不安全）
+```
+
+#### 非常量默认值限制
+
+```leno
+struct Bad {
+    Point? pt = new Point(x=99)   // ❌ 编译错误：new 不是常量表达式
+}
+
+struct Good {
+    Point? pt                      // ✅ 默认 null，在构造器或方法中赋值
+}
+```
+
+> `Type?` 字段默认值仅支持**常量表达式**（数字、字符串、bool、null、数组字面量、字典字面量）。`new` 表达式需要在构造器或方法中初始化。
+
+---
+
 **⚠️ 重要：原始类型字段没有默认值时也是 null**
 
 在 Leno 中，`float`、`int`、`bool` 等原始类型字段如果不指定默认值，初始值是 **null** 而不是 0 或 false。这意味着在算术运算、比较等操作中会报错：
@@ -3458,7 +3601,7 @@ main() {
 }
 ```
 
-**自引用 struct 必须设 null 默认值**：
+**自引用 struct 使用可空类型 `Type?`**：
 
 ```leno
 // ❌ 错误：会导致栈溢出（无限递归）
@@ -3467,10 +3610,16 @@ struct Node {
     Node next    // 没有默认值，会无限创建 Node
 }
 
-// ✅ 正确：设置 null 默认值
+// ✅ 正确：使用可空类型
 struct Node {
     int value
-    Node next = null    // 默认为 null，避免递归
+    Node? next        // 可空类型，默认为 null，避免递归
+}
+
+// ✅ 也可以用 = null（效果相同，但 Type? 更规范）
+struct Node {
+    int value
+    Node next = null  // 默认为 null，避免递归
 }
 ```
 

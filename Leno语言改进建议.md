@@ -92,7 +92,7 @@ Button b = new Button(); b.set(opts)
 
 ---
 
-### 3. `match is` 类型分发
+### 3. `case is` 逗号合并
 
 **痛点**：Widget 类型分发是 UI 库最频繁的操作，当前只能用 `if ... is` 链：
 
@@ -111,22 +111,30 @@ func add(Widget w): Widget {
 }
 ```
 
-**建议**：支持 `match is` 语法，块内自动类型收窄：
+**现状**：`switch case is` 已支持类型匹配和收窄（`switch w { case is Panel { ... } }`），
+但同处理逻辑的多个类型必须重复写多个 case，无法合并。
+
+**建议**：支持 `case is` 逗号合并语法，多个类型共享同一个 body：
 
 ```leno
 func add(Widget w): Widget {
-    match w is {
-        Panel     { w._bind_window(handle) }
-        ScrollView { w._bind_window(handle) }
-        HBox, VBox, AnchorBox, TabControl, SpinBox { w._bind_window(handle) }
-        Edit      { w.set_window(handle) }
-        TreeView  { w.set_window_handle(handle) }
+    switch w {
+        case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox {
+            w._bind_window(handle)
+        }
+        case is Edit {
+            w.set_window(handle)
+        }
+        case is TreeView {
+            w.set_window_handle(handle)
+        }
     }
     return w
 }
 ```
 
 **收益**：类型分发代码量减少 50%+，同处理逻辑的类型可合并，可读性大幅提升。
+（`match is` 不再需要——`switch case is` 已具备类型收窄能力，只需加逗号合并即可）
 
 ---
 
@@ -217,10 +225,10 @@ UI 库中坐标/尺寸运算频繁，运算符重载能让代码更自然。
 |--------|------|---------|--------------|
 | 高 | `Type?` 可空类型 | 142 个 null 警告 + bool 伴生字段 | ~30% 控件样板 |
 | 高 | Dict 解构初始化 | 每个 set() 20+ 行重复赋值 | ~20% 控件代码 |
-| 高 | `match is` 类型分发 | 9 层 if-is 链 | ~50% 分发代码 |
+| 高 | `case is` 逗号合并 | 9 层重复 case-is | ~50% 分发代码 |
 | 中 | defer | 忘记清理资源 | 防止 bug |
 | 中 | 访问控制 | 内部 API 无保护 | 设计规范 |
 | 低 | 数组解构 | 多返回值不便 | 小幅 |
 | 低 | 运算符重载 | 坐标运算不自然 | 小幅 |
 
-> 前三项（可空类型、Dict 解构、match is）如果能实现，Leno 的 UI 库代码量预计可减少 25-35%，且显著降低 bool 标志与 struct 不同步的隐性 bug 风险。
+> 前三项（可空类型、Dict 解构、case is 合并）如果能实现，Leno 的 UI 库代码量预计可减少 25-35%，且显著降低 bool 标志与 struct 不同步的隐性 bug 风险。

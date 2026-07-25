@@ -449,25 +449,34 @@ static TypeInfo* parse_function_type(Parser* p) {
     return type_function(return_type, param_types, param_count);
 }
 
-// 内部类型解析 - 支持泛型
+// 内部类型解析 - 支持泛型和可空类型 Type?
 static TypeInfo* parse_type_internal(Parser* p) {
+    TypeInfo* t = NULL;
+
     // 尝试解析函数类型
     if (p->lex.current.type == TOK_FUNC) {
-        return parse_function_type(p);
+        t = parse_function_type(p);
     }
-    
     // 尝试解析 Array[T]
-    if (p->lex.current.type == TOK_ARRAY_TYPE) {
-        return parse_array_type(p);
+    else if (p->lex.current.type == TOK_ARRAY_TYPE) {
+        t = parse_array_type(p);
     }
-    
     // 尝试解析 Dict[K,V]
-    if (p->lex.current.type == TOK_DICT_TYPE) {
-        return parse_dict_type(p);
+    else if (p->lex.current.type == TOK_DICT_TYPE) {
+        t = parse_dict_type(p);
+    }
+    // 解析基础类型
+    else {
+        t = parse_base_type(p);
     }
 
-    // 解析基础类型
-    return parse_base_type(p);
+    // 统一检查 ? 后缀（可空类型：Type?）
+    if (t && p->lex.current.type == TOK_QUESTION) {
+        lexer_next(&p->lex); // 消费 '?'
+        t->nullable = 1;
+    }
+
+    return t;
 }
 
 // 公共接口：解析类型

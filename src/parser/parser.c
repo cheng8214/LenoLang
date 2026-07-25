@@ -145,15 +145,43 @@ Ast* parse_statement(Parser* p) {
             if (is_entry_function_def(p)) {
                 stmt = parse_entry_func_stmt(p);
             }
-            // 检查是否是自定义类型变量声明（如 Point b = ...）
-            // 当前 token 是标识符，且下一个 token 也是标识符
+            // 检查是否是自定义类型变量声明（如 Point b = ... 或 Inner2? a = ...）
+            // 当前 token 是标识符，且下一个 token 也是标识符（或 ? 后跟标识符）
             else if (p->lex.current.type == TOK_IDENT) {
                 // 预读检查下一个 token
                 Lexer saved = p->lex;
                 lexer_next(&p->lex);
-                int is_type_decl = (p->lex.current.type == TOK_IDENT);
+                int is_type_decl = 0;
+                if (p->lex.current.type == TOK_IDENT) {
+                    // Type varName = ...
+                    is_type_decl = 1;
+                } else if (p->lex.current.type == TOK_QUESTION) {
+                    // Type? varName = ... （可空类型声明）
+                    lexer_next(&p->lex);
+                    is_type_decl = (p->lex.current.type == TOK_IDENT);
+                } else if (p->lex.current.type == TOK_LBRACKET) {
+                    // Type[T] varName = ... （泛型类型声明，如 Array[int] arr）
+                    // 需要找到匹配的 ] 后检查是否跟标识符
+                    int bracket_depth = 1;
+                    lexer_next(&p->lex);
+                    while (p->lex.current.type != TOK_EOF && bracket_depth > 0) {
+                        if (p->lex.current.type == TOK_LBRACKET) bracket_depth++;
+                        else if (p->lex.current.type == TOK_RBRACKET) bracket_depth--;
+                        if (bracket_depth > 0) lexer_next(&p->lex);
+                    }
+                    if (bracket_depth == 0) {
+                        lexer_next(&p->lex);
+                        if (p->lex.current.type == TOK_IDENT) {
+                            is_type_decl = 1;
+                        } else if (p->lex.current.type == TOK_QUESTION) {
+                            // Type[T]? varName = ...
+                            lexer_next(&p->lex);
+                            is_type_decl = (p->lex.current.type == TOK_IDENT);
+                        }
+                    }
+                }
                 p->lex = saved; // 恢复 lexer 状态
-                
+
                 if (is_type_decl) {
                     stmt = parse_var_decl_internal(p);
                 } else {
