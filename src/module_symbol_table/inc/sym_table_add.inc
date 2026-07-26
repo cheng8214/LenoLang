@@ -51,13 +51,14 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
     }
 
     if (field_count > 0 && fields) {
-        st->fields = (ModuleStructField*)malloc(sizeof(ModuleStructField) * field_count);
+        st->fields = (ModuleStructField*)calloc(field_count, sizeof(ModuleStructField));
         for (int i = 0; i < field_count; i++) {
             st->fields[i].name = strdup(fields[i].name);
             st->fields[i].type = fields[i].type;
             st->fields[i].struct_name = fields[i].struct_name ? strdup(fields[i].struct_name) : NULL;
             st->fields[i].element_type = fields[i].element_type;
             st->fields[i].element_struct_name = fields[i].element_struct_name ? strdup(fields[i].element_struct_name) : NULL;
+            st->fields[i].nullable = fields[i].nullable;
         }
     }
 

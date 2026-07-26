@@ -212,7 +212,7 @@ export struct Renderer {
     func getColor(): Color {
         SDL_Color c = SDL_Color.malloc()
         _lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
-        Color d = {r: c.r as int, g: c.g as int, b: c.b as int, a: c.a as int}
+        Color d = {r: c.r, g: c.g, b: c.b, a: c.a}
         c.free(); return d
     }
 
@@ -220,7 +220,7 @@ export struct Renderer {
     func getColorFloat(): FColor {
         SDL_FColor c = SDL_FColor.malloc()
         _lib.SDL_GetRenderDrawColorFloat(handle, &c.r, &c.g, &c.b, &c.a)
-        FColor d = {r: c.r as float, g: c.g as float, b: c.b as float, a: c.a as float}
+        FColor d = {r: c.r, g: c.g, b: c.b, a: c.a}
         c.free(); return d
     }
 
@@ -228,7 +228,7 @@ export struct Renderer {
     func getOutputSize(): Size {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetRenderOutputSize(handle, &pt.x, &pt.y)
-        Size d = {w: pt.x as int, h: pt.y as int}
+        Size d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 
@@ -527,7 +527,7 @@ export struct Renderer {
     func getTextureSize(Ptr[u8] texture): FSize {
         SDL_FPoint pt = SDL_FPoint.malloc()
         _lib.SDL_GetTextureSize(texture, &pt.x, &pt.y)
-        FSize d = {w: pt.x as float, h: pt.y as float}
+        FSize d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 

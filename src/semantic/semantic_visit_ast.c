@@ -77,6 +77,8 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
                         if (ssym->fields[fi].struct_name) {
                             sym->struct_field_types[fi]->struct_name = strdup(ssym->fields[fi].struct_name);
                         }
+                        // 复制 nullable 标记（Type? 可空类型）
+                        sym->struct_field_types[fi]->nullable = ssym->fields[fi].nullable;
                         // 重建 Array[T]/Dict[K,V] 的元素类型信息
                         if ((ssym->fields[fi].type == TYPE_ARRAY || ssym->fields[fi].type == TYPE_DICT)
                             && ssym->fields[fi].element_type != TYPE_PTR) {

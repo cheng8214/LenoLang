@@ -170,7 +170,7 @@ export struct Window {
     func getSizeInPixels(): Size {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetWindowSizeInPixels(handle, &pt.x, &pt.y)
-        Size d = {w: pt.x as int, h: pt.y as int}
+        Size d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 
@@ -178,7 +178,7 @@ export struct Window {
     func getSize(): Size {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetWindowSize(handle, &pt.x, &pt.y)
-        Size d = {w: pt.x as int, h: pt.y as int}
+        Size d = {w: pt.x, h: pt.y}
         pt.free(); return d
     }
 

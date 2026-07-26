@@ -141,6 +141,7 @@
                                     }
                                     fields[field_count].element_type = element_type;
                                     fields[field_count].element_struct_name = element_struct_name;
+                                    fields[field_count].nullable = 0;  // cstruct 字段不支持 nullable，显式初始化
                                     if (field_count >= MOD_MAX_FIELDS) {
                                         fprintf(stderr, "[错误] cstruct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
                                     } else {

@@ -151,4 +151,37 @@ while running {
 
 ---
 
-# 托盘开发中发现的编译器/语言问题
+# BUG: Type? 迁移时 `not XXX != null` 运算符优先级错误
+
+## 发现位置
+`leno_module/LenoSDL3/lib/sdl_table.leno` 等 — Type? 迁移后右键菜单不弹出。
+
+## 现象
+Type? 迁移将 `_ctxMenu == null` 替换为 `not _ctxMenu != null`，
+但 `not` 优先级高于 `!=`，实际解析为 `(not _ctxMenu) != null`，永远为 `true`，
+导致上下文菜单中的 guard 条件始终触发，菜单项/分隔符注册被跳过。
+
+## 受影响文件（已修复）
+- `sdl_table.leno:363,368,396,446` — `not _ctxMenu/_edit != null` → `== null`
+- `sdl_treeview.leno:580` — `not _ctxMenu != null` → `== null`
+- `sdl_spinbox.leno:62` — `not _edit != null` → `== null`
+
+---
+
+# BUG: `c_layout_type_to_leno` 在 dict 字面量值推断路径上失效
+
+## 现象
+`Size d = {w: pt.x, h: pt.y}` 报错 `Dict[string, any] 不兼容 Dict[string, int]`。
+`pt.x` 来自 `SDL_Point` cstruct（i32），
+`c_layout_type_to_leno`（`src/type.c:1249`）负责将 i32→int 映射，
+但在 dict 字面量值类型推断路径上未生效，值被推断为 `any`。
+
+
+## 影响范围
+所有 cstruct 字段值用于 dict 字面量且目标为显式 `Dict[string, int/float]` 类型的场景。
+
+## workaround
+显式 `as int`/`as float`：`{w: pt.x as int, h: pt.y as int}`。
+
+## 修复方向
+在 dict 字面量值类型推断路径中加入 `c_layout_type_to_leno` 调用。

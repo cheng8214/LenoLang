@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000007  // v7: 支持 Type? 可空类型（TypeInfo nullable 标记、ModuleStructField nullable）
+#define LENOSYMC_VERSION 0x00000008  // v8: 修复 v7 中 nullable 未正确初始化导致的缓存脏数据问题
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
