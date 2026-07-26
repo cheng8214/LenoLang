@@ -12,9 +12,9 @@ sdl3 _lib = core.lib()
 
 // 批处理统计（性能分析 / 测试用，模块级全局；单渲染器场景精确）
 // Submits = 提交 SDL 批量调用的次数；Batched = 累计经批处理提交的图元数
-int _gFillSubmits = 0; int _gFillBatched = 0
-int _gOutSubmits = 0;  int _gOutBatched = 0
-int _gLineSubmits = 0; int _gLineBatched = 0
+int _gFillSubmits = 0, _gFillBatched = 0
+int _gOutSubmits = 0, _gOutBatched = 0
+int _gLineSubmits = 0, _gLineBatched = 0
 
 // 批处理统计对外接口（模块级全局函数，避免依赖 struct 方法跨模块可见性）
 export func getBatchFillSubmits(): int { return _gFillSubmits }
@@ -34,19 +34,21 @@ export struct Renderer {
     Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
 
     // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
-    Ptr[f32] _bxFill; int _bxFillN; int _bxFillCap
-    Ptr[f32] _bxOut;  int _bxOutN;  int _bxOutCap
-    Ptr[f32] _bxLine; int _bxLineN; int _bxLineCap
+    Ptr[f32] _bxFill; int _bxFillN, _bxFillCap
+    Ptr[f32] _bxOut;  int _bxOutN, _bxOutCap
+    Ptr[f32] _bxLine; int _bxLineN, _bxLineCap
     int _bxCur            // 0=空 1=填充 2=描边 3=线段（切换即 flush 保序）
-    int _bxR; int _bxG; int _bxB; int _bxA; bool _bxIsFloat
-    float _bxFr; float _bxFg; float _bxFb; float _bxFa
+    int _bxR, _bxG, _bxB, _bxA
+    bool _bxIsFloat
+    float _bxFr, _bxFg, _bxFb, _bxFa
     int _bxBlend
-    bool _bxClip; Ptr[u8] _bxClipPtr; bool _bxClipOwned  // _bxClipOwned：_bxClipPtr 是否由我们 alloc（需 free）
+    Ptr[u8] _bxClipPtr 
+    bool _bxClip, _bxClipOwned  // _bxClipOwned：_bxClipPtr 是否由我们 alloc（需 free）
     // 裁剪栈：每个入口存储 {ptr: Ptr[u8], owned: bool}
     Array[Ptr[u8]] _clipStack
     Array[bool]    _clipStackOwned
     Ptr[u8] _bxTarget
-    float _bxSx; float _bxSy; float _bxCScale
+    float _bxSx, _bxSy, _bxCScale
 
     // 创建默认渲染器（关联到窗口）
     func initDefault(Ptr[u8] window): bool {
@@ -342,8 +344,8 @@ export struct Renderer {
         var span = a1 - a0
         if span >= 360.0 { span = 359.999; a1 = a0 + span }
         if span <= 0.0 { return true }
-        float fr = cr / 255.0; float fg = cg / 255.0
-        float fb = cb / 255.0; float fa = ca / 255.0
+        float fr = cr / 255.0, fg = cg / 255.0
+        float fb = cb / 255.0, fa = ca / 255.0
         int segs = _int(span / 6.0)
         if segs < 6 { segs = 6 }
         if segs > 120 { segs = 120 }
@@ -565,12 +567,12 @@ export struct Renderer {
     }
 
     // 便捷版：使用 [r, g, b] 数组传色（可预定义颜色变量复用）
-    func drawTextRgb(Font f, string text, float x, float y, Array c) {
-        drawText(f, text, x, y, _int(c[0]), _int(c[1]), _int(c[2]))
+    func drawTextRgb(Font f, string text, float x, float y, Array[int] c) {
+        drawText(f, text, x, y, c[0], c[1], c[2])
     }
 
-    func drawTextCenteredRgb(Font f, string text, float x, float w, float y, Array c) {
-        drawTextCentered(f, text, x, w, y, _int(c[0]), _int(c[1]), _int(c[2]))
+    func drawTextCenteredRgb(Font f, string text, float x, float w, float y, Array[int] c) {
+        drawTextCentered(f, text, x, w, y, c[0], c[1], c[2])
     }
 
     // 设置背景色并清屏（setColor + clear 一步完成）

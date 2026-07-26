@@ -8,18 +8,18 @@ import "sdl_tooltip.leno" as tip
 
 export struct Label impl Widget {
     string text = ""
-    float x = 0.0; float y = 0.0
+    float x = 0.0, y = 0.0
     float _fontSize = 15.0       // 字体大小
     string _fontPath = ""        // 字体路径（空则自动匹配）
     int _fontStyle = 0           // 字体样式
     Font? _font                  // 字体缓存
-    int tr = 255; int tg = 255; int tb = 255  // 文字色
+    int tr = 255, tg = 255, tb = 255  // 文字色
     int _align = 0               // 对齐: 0=左, 1=中, 2=右
     float _w = 0.0; float _h = 16.0  // 缓存自然尺寸（供布局使用）
     bool _loaded = false
     bool visible = true
     bool enabled = true
-    bool hover = false; bool _wasHover = false
+    bool hover = false, _wasHover = false
     string _tip = ""             // 悬停提示文本（空 = 不提示）
 
     func _ensure_font() {

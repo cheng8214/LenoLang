@@ -92,7 +92,7 @@ export struct Event {
             return e.mod
         }
         // 鼠标/滚轮等非键盘事件不含 mod 字段，改用全局修饰键状态
-        return _lib.SDL_GetModState() as int
+        return _lib.SDL_GetModState()
     }
 
     // ==================== 鼠标事件 ====================
@@ -105,21 +105,21 @@ export struct Event {
     // 鼠标位置（相对于窗口，浮点精度）
     func mouseX(): float {
         SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.x as float
+        return e.x
     }
     func mouseY(): float {
         SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.y as float
+        return e.y
     }
 
     // 鼠标相对移动量（自上一帧的增量）
     func mouseDX(): float {
         SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.xrel as float
+        return e.xrel
     }
     func mouseDY(): float {
         SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.yrel as float
+        return e.yrel
     }
 
     // 鼠标按钮编号：1=左键, 2=中键, 3=右键
@@ -137,24 +137,23 @@ export struct Event {
     // 滚轮滚动量（正值向右/远离用户，负值向左/朝向用户）
     func wheelX(): float {
         SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.x as float
+        return e.x
     }
     func wheelY(): float {
         SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.y as float
+        return e.y
     }
 
     // 滚轮事件发生时的鼠标坐标（注意：滚轮事件的结构与鼠标移动不同，
     // 必须用 SDL_MouseWheelEvent.mouse_x / mouse_y，不能用 mouseX()/mouseY()）
     func wheelMouseX(): float {
         SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.mouse_x as float
+        return e.mouse_x
     }
     func wheelMouseY(): float {
         SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.mouse_y as float
+        return e.mouse_y
     }
-
     // ==================== 文本输入 ====================
     // 注意：必须先调用 SDL_StartTextInput() 启用文本输入，否则不会收到此事件
 

@@ -9,7 +9,7 @@ import "sdl_tooltip.leno" as tip
 
 export struct CheckBox impl Widget {
     string text = ""
-    float x = 0.0; float y = 0.0
+    float x = 0.0, y = 0.0
     float _box = 22.0       // 勾选框边长
     float _gap = 8.0        // 框与文字间距
     float _fontSize = 15.0
@@ -17,17 +17,12 @@ export struct CheckBox impl Widget {
     int _fontStyle = 0
     Font? _font
     bool _checked = false
-    int cr = 60; int cg = 60; int cb = 72     // 未选中框背景
-    int cc = 60; int ck = 170; int cbl = 245 // 选中框背景
-    int tr = 235; int tg = 235; int tb = 245 // 文字色
-    int _brdR = 130; int _brdG = 130; int _brdB = 150 // 框边框色
+    int cr = 60, cg = 60, cb = 72     // 未选中框背景
+    int cc = 60, ck = 170, cbl = 245 // 选中框背景
+    int tr = 235, tg = 235, tb = 245 // 文字色
+    int _brdR = 130, _brdG = 130, _brdB = 150 // 框边框色
     int _cursor = SystemCursor.DEFAULT
-    bool hover = false
-    bool _wasHover = false
-    bool _pressed = false
-    bool enabled = true
-    bool visible = true
-    bool _loaded = false
+    bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
     func(bool):void _onChange
 
@@ -140,10 +135,10 @@ export struct CheckBox impl Widget {
         if not _loaded { return }
         if not visible { return }
         _ensure_font()
-        float bx = x; float by = y; float bs = _box
+        float bx = x, by = y, bs = _box
 
         // 框背景
-        int br = cr; int bg = cg; int bb = cb
+        int br = cr, bg = cg, bb = cb
         if _checked { br = cc; bg = ck; bb = cbl }
         if hover { br = br + 25; bg = bg + 25; bb = bb + 25
                    if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 } }
@@ -167,7 +162,7 @@ export struct CheckBox impl Widget {
         // 文字
         if _font.ok and text != "" {
             float cy = by + (bs - _font.measureString("Ag").h) / 2.0
-            int tcR = tr; int tcG = tg; int tcB = tb
+            int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, text, bx + bs + _gap, cy, tcR, tcG, tcB)
         }

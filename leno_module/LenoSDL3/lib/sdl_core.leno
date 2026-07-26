@@ -439,11 +439,11 @@ export func quit() {
 export func getError(): string {
     sdl3 l = lib()
     if l == null { return "SDL3 not loaded" }
-    return l.SDL_GetError() as string
+    return l.SDL_GetError()
 }
 
 export func delay(int ms) { lib().SDL_Delay(ms) }
-export func getTicks(): int { return lib().SDL_GetTicks() as int }//这里为啥要转int因为SDL_GetTicks返回的是u64，是C语音的，这里需要转成int，因为leno的int是64位的，所以需要转换一下
+export func getTicks(): int { return lib().SDL_GetTicks() }
 
 export func startTextInput(Ptr[u8] window): bool  { return lib().SDL_StartTextInput(window) }
 export func stopTextInput(Ptr[u8] window): bool   { return lib().SDL_StopTextInput(window) }
@@ -452,8 +452,8 @@ export func setTextInputArea(Ptr[u8] window, Ptr[u8] rect, int cursor): bool {
     return lib().SDL_SetTextInputArea(window, rect, cursor)
 }
 
-export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) as int }
-export func getGlobalMouseState(): int { return lib().SDL_GetGlobalMouseState(null, null) as int }
+export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) }
+export func getGlobalMouseState(): int { return lib().SDL_GetGlobalMouseState(null, null) }
 // 注意：SDL_GetGlobalMouseState 写入 float*，必须用 SDL_FPoint (f32 字段)，
 // 不能用 SDL_Point (i32 字段) — 详见 BUG_FFI_Ptr类型擦除导致隐式错传.md
 export func getGlobalMouseX(): int {
@@ -583,12 +583,12 @@ export func showMessageBox(string title, string msg, int flags) {
     l.SDL_ShowSimpleMessageBox(flags, title, msg, null)
 }
 
-export func getClipboardText(): string { return lib().SDL_GetClipboardText() as string }
+export func getClipboardText(): string { return lib().SDL_GetClipboardText()}
 export func setClipboardText(string text): bool { return lib().SDL_SetClipboardText(text) }
 
-export func getPerfCounter(): int { return lib().SDL_GetPerformanceCounter() as int }
-export func getPerfFrequency(): int { return lib().SDL_GetPerformanceFrequency() as int }
-export func getTicksNS(): int { return lib().SDL_GetTicksNS() as int }
+export func getPerfCounter(): int { return lib().SDL_GetPerformanceCounter()}
+export func getPerfFrequency(): int { return lib().SDL_GetPerformanceFrequency() }
+export func getTicksNS(): int { return lib().SDL_GetTicksNS() }
 export func hasClipboardText(): bool { return lib().SDL_HasClipboardText() }
 
 export enum FlashOp { CANCEL = 0; BRIEFLY = 1; UNTIL_FOCUSED = 2 }

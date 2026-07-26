@@ -10,15 +10,15 @@ import "sdl_image.leno" as img
 
 export struct Button impl Widget {
     string text = "Button"
-    float x = 0.0; float y = 0.0; float w = 100.0; float h = 40.0
+    float x = 0.0, y = 0.0, w = 100.0, h = 40.0
     float _radius = 6.0      // 圆角半径
     float _fontSize = 15.0   // 字体大小
     string _fontPath = ""    // 字体路径（空则自动选择）
     int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
     Font? _font              // 字体缓存
-    int cr = 60; int cg = 140; int cb = 220   // 背景色（默认 primary）
-    int tr = 255; int tg = 255; int tb = 255  // 文字色
-    int hvr = 0; int hvg = 0; int hvb = 0     // 悬停背景色（为 0 时自动计算）
+    int cr = 60, cg = 140, cb = 220   // 背景色（默认 primary）
+    int tr = 255, tg = 255, tb = 255  // 文字色
+    int hvr = 0, hvg = 0, hvb = 0     // 悬停背景色（为 0 时自动计算）
     int _cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
     func():void _onClick    // 点击回调
     bool hover = false
@@ -37,9 +37,7 @@ export struct Button impl Widget {
     float  _imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
     float  _imgGap = 6.0     // 图标与文字间距
     int    _imgAlpha = 255   // 图标透明度 0~255
-    int    _imgTintR = -1    // 图标着色（-1 = 不着色，其余按 [r,g,b] 着色）
-    int    _imgTintG = -1
-    int    _imgTintB = -1
+    int    _imgTintR = -1, _imgTintG = -1, _imgTintB = -1   // 图标着色（-1 = 不着色，其余按 [r,g,b] 着色）
     Ptr[u8]? _imgTex   // 图片纹理（懒加载，dispose 释放）
     string _imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 

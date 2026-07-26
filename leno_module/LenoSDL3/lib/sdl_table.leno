@@ -11,7 +11,7 @@ import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
 
 export struct Table impl Widget {
-    float x = 0.0; float y = 0.0; float w = 360.0; float h = 240.0
+    float x = 0.0, y = 0.0, w = 360.0, h = 240.0
     Array[string] _headers = []
     Array[float] _colW = []
     Array[int] _aligns = []           // 每列对齐：0 左, 1 中, 2 右
@@ -19,25 +19,25 @@ export struct Table impl Widget {
     Array[Array[string]] _rows = []
     int _ncols = 1
     bool _autoCols = true            // 列宽是否按宽度等分（用户未指定 col_widths）
-    float _headerH = 28.0; float _rowH = 24.0
-    float _scrollX = 0.0; float _scrollY = 0.0
-    int _selRow = -1; int _selCol = -1; int _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
-    bool _sortable = false; int _sortCol = -1; bool _sortDesc = false; bool _zebra = true
+    float _headerH = 28.0, _rowH = 24.0
+    float _scrollX = 0.0, _scrollY = 0.0
+    int _selRow = -1, _selCol = -1, _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
+    bool _sortable = false; int _sortCol = -1; bool _sortDesc = false, _zebra = true
 
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     float _textH = 16.0         // 缓存字体行高，避免每个单元格重复 measureString
-    int br = 38; int bg = 40; int bb = 48
-    int _hdrR = 46; int _hdrG = 48; int _hdrB = 56; int _hdrTxtR = 220; int _hdrTxtG = 225; int _hdrTxtB = 235
-    int _selR = 60; int _selG = 150; int _selB = 235
-    int _hovR = 70; int _hovG = 78; int _hovB = 92
-    int _zebR = 44; int _zebG = 46; int _zebB = 54
-    int tr = 232; int tg = 235; int tb = 245; int _sepR = 70; int _sepG = 74; int _sepB = 84; int _sbR = 120; int _sbG = 125; int _sbB = 140
+    int br = 38, bg = 40, bb = 48
+    int _hdrR = 46, _hdrG = 48, _hdrB = 56, _hdrTxtR = 220, _hdrTxtG = 225, _hdrTxtB = 235
+    int _selR = 60, _selG = 150, _selB = 235
+    int _hovR = 70, _hovG = 78, _hovB = 92
+    int _zebR = 44, _zebG = 46, _zebB = 54
+    int tr = 232, tg = 235, tb = 245, _sepR = 70, _sepG = 74, _sepB = 84, _sbR = 120, _sbG = 125, _sbB = 140
     int _cursor = SystemCursor.POINTER
-    bool enabled = true; bool visible = true; bool _loaded = false
+    bool enabled = true, visible = true, _loaded = false
     string _tip = ""
     Ptr[u8]? _clipBase            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
-    bool _draggingV = false; bool _draggingH = false; float _vDragOffset = 0.0; float _hDragOffset = 0.0
-    int _dragCol = -1; float _dragStartX = 0.0; float _dragStartW = 0.0; bool _resizable = true
+    bool _draggingV = false, _draggingH = false; float _vDragOffset = 0.0, _hDragOffset = 0.0
+    int _dragCol = -1; float _dragStartX = 0.0, _dragStartW = 0.0; bool _resizable = true
     func(int):void _onSelect
     func(int, int):void _onCell
     // 内嵌右击上下文菜单（复用 MenuBar 弹层渲染与捕获；默认不预置项，由应用层自定义）
@@ -45,8 +45,8 @@ export struct Table impl Widget {
     int _ctxMenuH = -1
     Ptr[u8]? _hwnd           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     bool _ctxMenuEnabled = true
-    int _ctxRow = -1; int _ctxCol = -1   // 右击命中行/列
-    int _winW = 0; int _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
+    int _ctxRow = -1, _ctxCol = -1   // 右击命中行/列
+    int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
     func(int, string):void _onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
     func(int):void _onCtxWillOpen          // 右键菜单弹出前回调（参数为命中行）；用于按行类型动态重建菜单项
     func(int, int, string):void _onEditCommit  // 行内编辑提交回调（行, 列, 新文本）；供应用层落盘（如重命名）
@@ -55,9 +55,9 @@ export struct Table impl Widget {
     Edit? _edit
     bool _editing = false
     bool _editable = false          // 是否允许双击进入单元格编辑（默认 false）
-    int _editRow = -1; int _editCol = -1
+    int _editRow = -1, _editCol = -1
     int _lastClickTime = -100000
-    float _lastClickX = 0.0; float _lastClickY = 0.0
+    float _lastClickX = 0.0, _lastClickY = 0.0
     func(int, int):void _onDblClick  // 双击单元格回调（无论是否可编辑都会触发，便于应用层自定义如“打开”）
 
     func _ensure_font() {
@@ -77,7 +77,7 @@ export struct Table impl Widget {
         return s
     }
     func _compute_sb(): Array[float] {
-        float vw = 0.0; float hh = 0.0
+        float vw = 0.0, hh = 0.0
         float bodyH0 = h - _headerH - 8.0
         float bodyW0 = w - 8.0
         float ch = _rows.len() * _rowH
@@ -164,17 +164,17 @@ export struct Table impl Widget {
         _zebra = opts.get("zebra", true)
 
         var hs = opts.get("headers", [])
-        if hs is Array[string] { _headers = hs as Array[string] } else { _headers = [] }
+        if hs is Array[string] { _headers = hs } else { _headers = [] }
         var cws = opts.get("col_widths", [])
-        if cws is Array[float] { _colW = cws as Array[float]; _autoCols = (_colW.len() == 0) }
+        if cws is Array[float] { _colW = cws ; _autoCols = (_colW.len() == 0) }
         else { _colW = []; _autoCols = true }
         var als = opts.get("aligns", [])
-        if als is Array[int] { _aligns = als as Array[int] } else { _aligns = [] }
+        if als is Array[int] { _aligns = als } else { _aligns = [] }
         var has = opts.get("header_aligns", [])
-        if has is Array[int] { _headerAligns = has as Array[int] } else { _headerAligns = [] }
+        if has is Array[int] { _headerAligns = has } else { _headerAligns = [] }
 
         var rs = opts.get("rows", [])
-        if rs is Array[Array[string]] { _rows = rs as Array[Array[string]] } else { _rows = [] }
+        if rs is Array[Array[string]] { _rows = rs } else { _rows = [] }
 
         _ncols = _headers.len()
         if _ncols == 0 {
@@ -324,7 +324,7 @@ export struct Table impl Widget {
         _sortCol = col; _sortDesc = desc
         for 0 : _rows.len() - 1 to i {
             for i + 1 : _rows.len() - 1 to j {
-                string a = _cell(i, col); string b = _cell(j, col)
+                string a = _cell(i, col), b = _cell(j, col)
                 bool lt = (a < b)
                 if desc { lt = (b < a) }
                 if lt {
@@ -458,7 +458,7 @@ export struct Table impl Widget {
             _hoverRow = -1; _draggingV = false; _draggingH = false; _dragCol = -1
             return
         }
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
         // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
@@ -491,7 +491,7 @@ export struct Table impl Widget {
         }
 
         var sb = _compute_sb()
-        float vw = sb[0]; float hh = sb[1]
+        float vw = sb[0], hh = sb[1]
 
         if ev.isMouseButtonUp() { _draggingV = false; _draggingH = false; _dragCol = -1 }
 
@@ -625,12 +625,11 @@ export struct Table impl Widget {
                         return
                     }
                     if _multi {
-                        int MOD_SHIFT = 1; int MOD_CTRL = 64
+                        int MOD_SHIFT = 1, MOD_CTRL = 64
                         int mod = ev.keyMod()
-                        bool shift = (mod & MOD_SHIFT) != 0
-                        bool ctrl = (mod & MOD_CTRL) != 0
+            bool shift = (mod & MOD_SHIFT) != 0, ctrl = (mod & MOD_CTRL) != 0
                         if shift and _selRow >= 0 {
-                            int a = _selRow; int b = row
+                            int a = _selRow, b = row
                             if a > b { int t = a; a = b; b = t }
                             _selRows = []
                             for a : b to k { _selRows.add(k) }
@@ -662,7 +661,7 @@ export struct Table impl Widget {
         float limit = availW - eW
         if limit < 0.0 { return "\u2026" }
         int n = t.len()
-        int lo = 0; int hi = n
+        int lo = 0, hi = n
         while lo < hi {
             int mid = (lo + hi + 1) / 2
             float mw = _font.measureString(t.slice(0, mid)).w
@@ -699,7 +698,7 @@ export struct Table impl Widget {
         _ensure_font()
 
         // 背景底色（在字体检查之前画，避免字体偶发未就绪时 Table 区域变透明露出容器底色 → 闪一下）
-        int bgr = br; int bgg = bg; int bgb = bb
+        int bgr = br, bgg = bg, bgb = bb
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRect(x, y, w, h)
@@ -723,7 +722,7 @@ export struct Table impl Widget {
             if cx + cw < x or cx > x + w { continue }
             if c < _headers.len() {
                 string t = _headers[c]
-                int htcR = _hdrTxtR; int htcG = _hdrTxtG; int htcB = _hdrTxtB
+                int htcR = _hdrTxtR, htcG = _hdrTxtG, htcB = _hdrTxtB
                 if c == _sortCol {
                     if _sortDesc { t = t + " ▼" } else { t = t + " ▲" }
                 }
@@ -754,7 +753,7 @@ export struct Table impl Widget {
         for startRow : endRow to ri {
             float ry = bodyTop - _scrollY + ri * _rowH
             if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
-            int rr = bgr; int rg = bgg; int rb = bgb
+            int rr = bgr, rg = bgg, rb = bgb
             if _is_sel(ri) { rr = _selR; rg = _selG; rb = _selB }
             else if ri == _hoverRow { rr = _hovR; rg = _hovG; rb = _hovB }
             else if _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
@@ -763,7 +762,7 @@ export struct Table impl Widget {
             if ri < _rows.len() {
                 var row = _rows[ri]
                 for 0 : _ncols - 1 to c {
-                    float cx = _col_x(c); float cw = _colW[c]
+                    float cx = _col_x(c), cw = _colW[c]
                     if cx + cw < x or cx > x + w { continue }
                     if c < row.len() {
                         _draw_cell_text(r, row[c], cx, cw, ry, _rowH, _aligns[c], tr, tg, tb)

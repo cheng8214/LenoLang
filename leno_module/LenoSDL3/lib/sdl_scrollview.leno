@@ -21,29 +21,27 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_panel.leno" as pnl; use pnl.Panel
 
 export struct ScrollView impl Widget {
-    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
-    float _contentW = -1.0; float _contentH = -1.0   // 可滚动内容虚拟尺寸
+    float x = 0.0, y = 0.0, w = 300.0, h = 200.0
+    float _contentW = -1.0, _contentH = -1.0   // 可滚动内容虚拟尺寸
     Widget? _content                       // 内部内容控件（通常 VBox/Panel）
-    float _scrollX = 0.0; float _scrollY = 0.0        // 当前滚动偏移
+    float _scrollX = 0.0, _scrollY = 0.0        // 当前滚动偏移
     float _step = 24.0                    // 每格滚轮滚动像素
 
     // 外观
-    int br = 38; int bg = 40; int bb = 48
-    int _bdrR = 80; int _bdrG = 85; int _bdrB = 100
+    int br = 38, bg = 40, bb = 48
+    int _bdrR = 80, _bdrG = 85, _bdrB = 100
     float _radius = 8.0
     int _brdA = 200
     bool _drawBorder = true
 
     // 滚动条
     float _barW = 12.0
-    int _dragV = 0; int _dragH = 0         // 0 无 / 1 拖动中
-    float _dragOffV = 0.0; float _dragOffH = 0.0
-    float _vThumbY = 0.0; float _vThumbH = 0.0      // 竖直滚动条拇指几何（每帧计算）
-    float _hThumbX = 0.0; float _hThumbW = 0.0      // 水平滚动条拇指几何
+    int _dragV = 0, _dragH = 0         // 0 无 / 1 拖动中
+    float _dragOffV = 0.0, _dragOffH = 0.0
+    float _vThumbY = 0.0, _vThumbH = 0.0      // 竖直滚动条拇指几何（每帧计算）
+    float _hThumbX = 0.0, _hThumbW = 0.0      // 水平滚动条拇指几何
 
-    bool _loaded = false
-    bool enabled = true
-    bool visible = true
+    bool _loaded = false, enabled = true, visible = true
     Ptr[u8]? _hwnd
 
     func set(Dict opts) {
@@ -96,7 +94,7 @@ export struct ScrollView impl Widget {
     func _showH(): bool { return _hmax() > 0.0 }
     func _fabs(float v): float { if v < 0.0 { return -v } return v }
     func _clampScroll() {
-        float mx = _hmax(); float my = _vmax()
+        float mx = _hmax(), my = _vmax()
         if _scrollX < 0.0 { _scrollX = 0.0 } if _scrollX > mx { _scrollX = mx }
         if _scrollY < 0.0 { _scrollY = 0.0 } if _scrollY > my { _scrollY = my }
     }
@@ -227,7 +225,7 @@ export struct ScrollView impl Widget {
         }
         // 滚轮：悬停视口内才滚动
         if ev.isMouseWheel() {
-            float wx = ev.wheelMouseX(); float wy = ev.wheelMouseY()
+            float wx = ev.wheelMouseX(), wy = ev.wheelMouseY()
             if wx >= x and wx <= x + w and wy >= y and wy <= y + h {
                 if _showH() and _fabs(ev.wheelX()) > _fabs(ev.wheelY()) {
                     _scrollX = _scrollX - ev.wheelX() * _step

@@ -9,7 +9,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct ListBox impl Widget {
-    float x = 0.0; float y = 0.0; float w = 200.0; float h = 200.0
+    float x = 0.0, y = 0.0, w = 200.0, h = 200.0
     Array[string] items = []
     Array[int] _sel = []          // 已选中索引集合
     float _itemH = 24.0          // 行高
@@ -17,14 +17,14 @@ export struct ListBox impl Widget {
     int _hover = -1              // 当前悬停行索引（-1 无）
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     int _mode = 0                // 0=单选, 1=多选
-    int br = 38; int bg = 40; int bb = 48          // 背景色
-    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
-    int _selR = 60; int _selG = 150; int _selB = 235  // 选中行底色
-    int _hovR = 70; int _hovG = 78; int _hovB = 92    // 悬停行底色
-    int tr = 235; int tg = 235; int tb = 245          // 文字色
-    int _sbR = 120; int _sbG = 125; int _sbB = 140    // 滚动条色
+    int br = 38, bg = 40, bb = 48          // 背景色
+    int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
+    int _selR = 60, _selG = 150, _selB = 235  // 选中行底色
+    int _hovR = 70, _hovG = 78, _hovB = 92    // 悬停行底色
+    int tr = 235, tg = 235, tb = 245          // 文字色
+    int _sbR = 120, _sbG = 125, _sbB = 140    // 滚动条色
     int _cursor = SystemCursor.POINTER
-    bool enabled = true; bool visible = true; bool _loaded = false
+    bool enabled = true, visible = true, _loaded = false
     string _tip = ""
     bool _draggingScroll = false   // 正在拖拽竖向滚动条
     float _sbDragOffset = 0.0      // 拖拽起点距滑块顶的相对偏移
@@ -103,12 +103,11 @@ export struct ListBox impl Widget {
         _mode     = opts.get("mode", 0)     // 0 单选 / 1 多选
 
         var its = opts.get("items", [])
-        if its is Array[string] { items = its as Array[string] } else { items = [] }
+        if its is Array[string] { items = its } else { items = [] }
         _sel = []
         var sel = opts.get("selected", -1)
         if sel is Array[int] {
-            var a = sel as Array[int]
-            for a.len() to i { _sel.add(a[i]) }
+            for sel.len() to i { _sel.add(sel[i]) }
         } else {
             int s = _int(sel)
             if s >= 0 { _sel.add(s) }
@@ -232,7 +231,7 @@ export struct ListBox impl Widget {
         if not enabled { _hover = -1; _draggingScroll = false; return }
 
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -243,7 +242,7 @@ export struct ListBox impl Widget {
         // 滚动条优先于列表项
         if ev.isMouseButtonDown() and _in_vscroll(mx, my) {
             var g = _sb_geom()
-            float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+            float maxs = g[6], trk = g[3] - g[2], thH = g[4]
             if _in_thumb(mx, my) {
                 _draggingScroll = true
                 _sbDragOffset = my - g[5]                  // 记录起点相对滑块顶的偏移，避免跳动
@@ -261,7 +260,7 @@ export struct ListBox impl Widget {
         if _draggingScroll {
             if ev.isMouseMotion() {
                 var g = _sb_geom()
-                float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+                float maxs = g[6], trk = g[3] - g[2], thH = g[4]
                 float rel = my - g[2] - _sbDragOffset
                 if trk - thH > 0.0 { _scroll = rel * maxs / (trk - thH) }
                 _clamp_scroll()
@@ -312,7 +311,7 @@ export struct ListBox impl Widget {
         if not visible { return }
         _ensure_font()
 
-        int bgr = br; int bgg = bg; int bgb = bb
+        int bgr = br, bgg = bg, bgb = bb
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRoundedRect(x, y, w, h, 6.0)
@@ -326,7 +325,7 @@ export struct ListBox impl Widget {
         for items.len() to i {
             float iy = r.snapY(y - _scroll + i * _itemH)
             if iy + _itemH < y or iy > y + h { continue }
-            int rr = bgr; int gg = bgg; int bb2 = bgb
+            int rr = bgr, gg = bgg, bb2 = bgb
             if _is_selected(i) { rr = _selR; gg = _selG; bb2 = _selB }
             else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
             r.setColor(rr, gg, bb2, 255)
@@ -335,7 +334,7 @@ export struct ListBox impl Widget {
             if _font != null and _font.ok and i < items.len() {
                 string t = items[i]
                 float th = _font.measureString("Ag").h
-                int tcR = tr; int tcG = tg; int tcB = tb
+                int tcR = tr, tcG = tg, tcB = tb
                 if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
                 float ty = r.snapY(iy + (_itemH - th) / 2.0)
                 r.drawText(_font, t, r.snapX(x + pad), ty, tcR, tcG, tcB)

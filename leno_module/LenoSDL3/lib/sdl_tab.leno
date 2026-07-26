@@ -22,7 +22,7 @@ import "sdl_combobox.leno" as cbx; use cbx.ComboBox
 import "sdl_panel.leno" as pnl; use pnl.Panel
 
 export struct TabControl impl Widget {
-    float x = 0.0; float y = 0.0; float w = 400.0; float h = 300.0
+    float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     float _tabH = 32.0         // 标签栏高度
     Array[string] _tabs = []     // 各页标题
     Array[Array[Widget]] _pages = []  // 每页的子控件集合（仅当前页被处理/绘制）
@@ -38,17 +38,16 @@ export struct TabControl impl Widget {
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
 
     // 配色
-    int _bgR = 38; int _bgG = 40; int _bgB = 48       // 内容区背景
-    int _barR = 30; int _barG = 32; int _barB = 38    // 标签栏背景
-    int _tabR = 44; int _tabG = 46; int _tabB = 54    // 非激活标签
-    int _actR = 52; int _actG = 120; int _actB = 200  // 激活标签
-    int _txtR = 200; int _txtG = 205; int _txtB = 215 // 文字色（非激活）
-    int _actTxtR = 255; int _actTxtG = 255; int _actTxtB = 255  // 激活文字色
-    int _accR = 80; int _accG = 160; int _accB = 245  // 激活标签下划线
-    int _brdR = 90; int _brdG = 95; int _brdB = 110   // 边框色
+    int _bgR = 38, _bgG = 40, _bgB = 48       // 内容区背景
+    int _barR = 30, _barG = 32, _barB = 38    // 标签栏背景
+    int _tabR = 44, _tabG = 46, _tabB = 54    // 非激活标签
+    int _actR = 52, _actG = 120, _actB = 200  // 激活标签
+    int _txtR = 200, _txtG = 205, _txtB = 215 // 文字色（非激活）
+    int _actTxtR = 255, _actTxtG = 255, _actTxtB = 255  // 激活文字色
+    int _accR = 80, _accG = 160, _accB = 245  // 激活标签下划线
+    int _brdR = 90, _brdG = 95, _brdB = 110   // 边框色
     int _cursor = SystemCursor.POINTER
-    bool enabled = true
-    bool visible = true
+    bool enabled = true, visible = true
     func(int):void _onChange
 
     func _ensure_font() {
@@ -253,7 +252,7 @@ export struct TabControl impl Widget {
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
         _applyOffsets(_active)
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
 
 
         var rs = _tabRects()
@@ -322,8 +321,8 @@ export struct TabControl impl Widget {
         var rs = _tabRects()
         for rs.len() to i {
             var rr = rs[i]
-            int bR = _tabR; int bG = _tabG; int bB = _tabB
-            int tR = _txtR; int tG = _txtG; int tB = _txtB
+            int bR = _tabR, bG = _tabG, bB = _tabB
+            int tR = _txtR, tG = _txtG, tB = _txtB
             if i == _active { bR = _actR; bG = _actG; bB = _actB; tR = _actTxtR; tG = _actTxtG; tB = _actTxtB }
             else if i == _hover { bR = bR + 15; bG = bG + 15; bB = bB + 15 }
             r.setColor(bR, bG, bB, 255)
@@ -350,7 +349,7 @@ export struct TabControl impl Widget {
         r.drawLine(x, y + _tabH, x + w, y + _tabH)
 
         // 内容区
-        float cx = x; float cy = y + _tabH; float cw = w; float ch = h - _tabH
+        float cx = x, cy = y + _tabH, cw = w, ch = h - _tabH
         if cw < 0 { cw = 0 }
         if ch < 0 { ch = 0 }
         r.setColor(_bgR, _bgG, _bgB, 255)

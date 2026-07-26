@@ -9,17 +9,15 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 
 export struct Panel impl Widget {
-    float x = 0.0; float y = 0.0; float w = 200.0; float h = 150.0
+    float x = 0.0, y = 0.0, w = 200.0, h = 150.0
     Array[Widget] children = []
-    int br = 44; int bg = 46; int bb = 54     // 背景色
-    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
+    int br = 44, bg = 46, bb = 54     // 背景色
+    int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
     float _radius = 8.0
     int _brdA = 220           // 边框透明度
     bool _drawBorder = true
     bool _clip = true         // 是否裁剪子控件到面板范围
-    bool _loaded = false
-    bool enabled = true
-    bool visible = true
+    bool _loaded = false, enabled = true, visible = true
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
     func set(Dict opts) {

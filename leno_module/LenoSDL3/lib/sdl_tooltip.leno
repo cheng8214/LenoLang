@@ -13,19 +13,19 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_core.leno" as core
 
 // ==================== 全局状态 ====================
-var _tipText  = ""          // 当前要显示的提示文本（空 = 无）
-var _tipAX    = 0.0; var _tipAY = 0.0   // 锚点（最近一次上报的光标位置）
-var _tipStart = 0           // 首次 hover 该文本的 tick（用于延迟）
-var _tipVisible = false
-var _tipDelay  = 500        // 悬停多久才显示（毫秒）
-var _font Font
-var _fontDirty = true
-var _fontSize  = 15.0
+string _tipText  = ""          // 当前要显示的提示文本（空 = 无）
+float _tipAX = 0.0, _tipAY = 0.0   // 锚点（最近一次上报的光标位置）
+int _tipStart = 0           // 首次 hover 该文本的 tick（用于延迟）
+bool _tipVisible = false
+int _tipDelay  = 500        // 悬停多久才显示（毫秒）
+Font _font 
+bool _fontDirty = true
+float _fontSize  = 15.0
 
 // 配色（深色半透明浮层）
-var _bgR = 38;  var _bgG = 40;  var _bgB = 48
-var _txtR = 232; var _txtG = 234; var _txtB = 242
-var _brdR = 110; var _brdG = 115; var _brdB = 132
+int _bgR = 38, _bgG = 40, _bgB = 48
+int _txtR = 232, _txtG = 234, _txtB = 242
+int _brdR = 110, _brdG = 115, _brdB = 132
 
 // ==================== 外部可调 ====================
 export func setTipDelay(int ms) { _tipDelay = ms }
@@ -63,8 +63,7 @@ export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
 
 func _ensureFont(Renderer r) {
     if _fontDirty or not _font.ok {
-        Font old = _font as Font
-        if old.ok { fnt.releaseFont(old) }
+        if _font.ok { fnt.releaseFont(_font) }
         _font = fnt.acquireFontAuto(_fontSize)
         _fontDirty = false
     }

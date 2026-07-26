@@ -9,29 +9,21 @@ import "sdl_tooltip.leno" as tip
 
 export struct Toggle impl Widget {
     string text = ""
-    float x = 0.0; float y = 0.0
-    float w = 52.0; float h = 28.0
+    float x = 0.0, y = 0.0
+    float w = 52.0, h = 28.0
     float _fontSize = 15.0
     string _fontPath = ""
     int _fontStyle = 0
     Font? _font
     bool _on = false
-    int _onR = 60; int _onG = 170; int _onB = 245
-    int _offR = 70; int _offG = 70; int _offB = 82
-    int tr = 235; int tg = 235; int tb = 245
+    int _onR = 60, _onG = 170, _onB = 245
+    int _offR = 70, _offG = 70, _offB = 82
+    int tr = 235, tg = 235, tb = 245
     int _cursor = SystemCursor.DEFAULT
-    bool hover = false
-    bool _wasHover = false
-    bool _pressed = false
-    bool enabled = true
-    bool visible = true
-    bool _loaded = false
+    bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
     bool _animate = false
-    float _animSpeed = 12.0
-    float _animPos = 0.0
-    float _animTarget = 0.0
-    float _animLast = 0.0
+    float _animSpeed = 12.0, _animPos = 0.0, _animTarget = 0.0, _animLast = 0.0
     bool _animating = false
     func(bool):void _onChange
 
@@ -129,7 +121,7 @@ export struct Toggle impl Widget {
         if not visible { return }
         if not enabled { hover = false; _pressed = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -211,7 +203,7 @@ export struct Toggle impl Widget {
         // 文字
         if _font != null and _font.ok and text != "" {
             float cy = y + (h - _font.measureString("Ag").h) / 2.0
-            int tcR = tr; int tcG = tg; int tcB = tb
+            int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, text, x + w + 10.0, cy, tcR, tcG, tcB)
         }

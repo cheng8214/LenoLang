@@ -14,7 +14,7 @@ Array[RadioButton] _radioRegistry = []
 export struct RadioButton impl Widget {
     string text = ""
     string group = "default"
-    float x = 0.0; float y = 0.0
+    float x = 0.0, y = 0.0
     float _box = 22.0
     float _gap = 8.0
     float _fontSize = 15.0
@@ -22,17 +22,12 @@ export struct RadioButton impl Widget {
     int _fontStyle = 0
     Font? _font
     bool _checked = false
-    int cr = 60; int cg = 60; int cb = 72
-    int cc = 60; int ck = 170; int cbl = 245
-    int tr = 235; int tg = 235; int tb = 245
-    int _brdR = 130; int _brdG = 130; int _brdB = 150
+    int cr = 60, cg = 60, cb = 72
+    int cc = 60, ck = 170, cbl = 245
+    int tr = 235, tg = 235, tb = 245
+    int _brdR = 130, _brdG = 130, _brdB = 150
     int _cursor = SystemCursor.DEFAULT
-    bool hover = false
-    bool _wasHover = false
-    bool _pressed = false
-    bool enabled = true
-    bool visible = true
-    bool _loaded = false
+    bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
     func(bool):void _onChange
     Ptr[u8]? _winHnd            // 所属窗口句柄：同组互斥按窗口隔离（面板/Tab 嵌套未拿到句柄则为 null）
@@ -131,7 +126,7 @@ export struct RadioButton impl Widget {
         if not visible { return }
         if not enabled { hover = false; _pressed = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -160,10 +155,10 @@ export struct RadioButton impl Widget {
         if not _loaded { return }
         if not visible { return }
         _ensure_font()
-        float bx = x; float by = y; float bs = _box
+        float bx = x, by = y, bs = _box
 
         // 外环
-        int br = cr; int bg = cg; int bb = cb
+        int br = cr, bg = cg, bb = cb
         if hover { br = br + 25; bg = bg + 25; bb = bb + 25
                    if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 } }
         if not enabled { br = cr / 2; bg = cg / 2; bb = cb / 2 }
@@ -175,7 +170,7 @@ export struct RadioButton impl Widget {
 
         // 选中内点
         if _checked {
-            int dr = cc; int dg = ck; int db = cbl
+            int dr = cc, dg = ck, db = cbl
             if not enabled { dr = cc / 2; dg = ck / 2; db = cbl / 2 }
             r.setColor(dr, dg, db, 255)
             float ins = bs * 0.30
@@ -185,7 +180,7 @@ export struct RadioButton impl Widget {
         // 文字
         if _font != null and _font.ok and text != "" {
             float cy = by + (bs - _font.measureString("Ag").h) / 2.0
-            int tcR = tr; int tcG = tg; int tcB = tb
+            int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, text, bx + bs + _gap, cy, tcR, tcG, tcB)
         }

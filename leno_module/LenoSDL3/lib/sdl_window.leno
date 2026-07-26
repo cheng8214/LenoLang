@@ -151,7 +151,7 @@ export struct Window {
 
     // 获取窗口 ID
     func getID(): int {
-        return _lib.SDL_GetWindowID(handle) as int
+        return _lib.SDL_GetWindowID(handle)
     }
 
     func getHandle(): Ptr[u8] { return handle }

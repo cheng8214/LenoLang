@@ -49,7 +49,7 @@ func _makeItem(Dict d): MenuItem {
     mi.separator = d.get("separator", false)
     mi.action    = d.get("action", null) as func():void
     var sub = d.get("submenu", [])
-    if sub is Array[Dict] { mi.submenu = parseMenuItems(sub as Array[Dict]) }
+    if sub is Array[Dict] { mi.submenu = parseMenuItems(sub)}
     else { mi.submenu = [] }
     return mi
 }
@@ -109,7 +109,7 @@ Array[Ptr[u8]] _activeHnds = []
 Array[MenuBar] _activeMenus = []
 
 export struct MenuBar impl Widget {
-    float x = 0.0; float y = 0.0; float w = 600.0; float h = 28.0
+    float x = 0.0, y = 0.0, w = 600.0, h = 28.0
     float _itemH = 26.0
     float _itemGap = 0.0          // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项）
     Array[string]       _titles = []
@@ -128,20 +128,20 @@ export struct MenuBar impl Widget {
     Ptr[u8]? _winHnd            // 所属窗口句柄：上下文菜单按窗口隔离绘制；面板嵌套未拿到句柄则为 null
 
     // 配色
-    int _barR = 34; int _barG = 36; int _barB = 44       // 菜单栏背景
-    int _barHovR = 50; int _barHovG = 52; int _barHovB = 62  // 悬停/激活标题背景
-    int _bgR = 30; int _bgG = 32; int _bgB = 38           // 下拉面板背景
-    int _hovR = 60; int _hovG = 120; int _hovB = 200      // 项悬停背景
-    int _txtR = 225; int _txtG = 228; int _txtB = 235     // 文字色
-    int _disR = 120; int _disG = 122; int _disB = 130     // 禁用文字色
-    int _sepR = 80; int _sepG = 84; int _sepB = 96        // 分隔线色
-    int _bdrR = 90; int _brdG = 95; int _brdB = 110       // 边框色
-    int _accR = 80; int _accG = 160; int _accB = 245      // 激活下划线
+    int _barR = 34, _barG = 36, _barB = 44       // 菜单栏背景
+    int _barHovR = 50, _barHovG = 52, _barHovB = 62  // 悬停/激活标题背景
+    int _bgR = 30, _bgG = 32, _bgB = 38           // 下拉面板背景
+    int _hovR = 60, _hovG = 120, _hovB = 200      // 项悬停背景
+    int _txtR = 225, _txtG = 228, _txtB = 235     // 文字色
+    int _disR = 120, _disG = 122, _disB = 130     // 禁用文字色
+    int _sepR = 80, _sepG = 84, _sepB = 96        // 分隔线色
+    int _bdrR = 90, _brdG = 95, _brdB = 110       // 边框色
+    int _accR = 80, _accG = 160, _accB = 245      // 激活下划线
     int _cursor = SystemCursor.POINTER
-    int _winW = 0; int _winH = 0          // 所属窗口逻辑宽高（边界夹紧用；0=未知）
+    int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（边界夹紧用；0=未知）
     string _orient = "horizontal"         // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
     string _align = ""                    // 顶级标题对齐："left" / "center" / "right"
-    bool enabled = true; bool visible = true; bool _loaded = false
+    bool enabled = true, visible = true, _loaded = false
     func(string, string):void _onSelect
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -185,9 +185,8 @@ export struct MenuBar impl Widget {
         var ms = opts.get("menus", [])
         if ms is Array[Dict] {
             for ms.len() to i {
-                var m = ms[i] as Dict
-                _titles.add(m.get("title", ""))
-                var its = m.get("items", [])
+                _titles.add(ms[i].get("title", ""))
+                var its = ms[i].get("items", [])
                 if its is Array[Dict] { _menus.add(parseMenuItems(its)) }
                 else { _menus.add([]) }
                 _ctxFlag.add(false)
@@ -395,7 +394,7 @@ export struct MenuBar impl Widget {
     func _panelRect(int mIdx): Array[float] {
         // 上下文菜单：直接使用弹出锚点，而非标题/侧栏旁
         if mIdx >= 0 and mIdx < _ctxFlag.len() and _ctxFlag[mIdx] {
-            float ax = _ctxAnchor[mIdx][0]; float ay = _ctxAnchor[mIdx][1]
+            float ax = _ctxAnchor[mIdx][0], ay = _ctxAnchor[mIdx][1]
             float pw = _colW(_menus[mIdx], _font, _itemH)
             float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
             return _clampRect(ax, ay, pw, ph)
@@ -453,12 +452,12 @@ export struct MenuBar impl Widget {
         if not visible { return }
         if not enabled { close(); return }
 
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
 
         if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { close(); return }
 
         if ev.isMouseMotion() {
-            int prevHoverTop = _hoverTop; int prevHoverItem = _hoverItem
+            int prevHoverTop = _hoverTop, prevHoverItem = _hoverItem
             var rs = _topRects()
             _hoverTop = -1
             for rs.len() to i {
@@ -580,10 +579,10 @@ export struct MenuBar impl Widget {
         if not _loaded or _open < 0 { return }
         var items = _menus[_open]
         var g = _panelRect(_open)
-        float px = g[0]; float py = g[1]; float pw = g[2]; float ph = g[3]
+        float px = g[0], py = g[1], pw = g[2], ph = g[3]
 
         // 捕获区取“下拉 + 子菜单飞出”的包围盒，抑制其范围内其它控件的事件
-        float capX = px; float capY = py; float capR = px + pw; float capB = py + ph
+        float capX = px, capY = py, capR = px + pw, capB = py + ph
         if _openSub >= 0 and _openSub < items.len() and items[_openSub].submenu.len() > 0 {
             var sg = _subRect(_openSub)
             if sg[0] < capX { capX = sg[0] }
@@ -622,7 +621,7 @@ export struct MenuBar impl Widget {
             float ry = iy
             bool hov = (i == hoverIdx) and it.enabled
             if hov { r.setColor(_hovR, _hovG, _hovB, 255); r.fillRect(px, ry, pw, _itemH) }
-            int lr = _txtR; int lg = _txtG; int lb2 = _txtB
+            int lr = _txtR, lg = _txtG, lb2 = _txtB
             if not it.enabled { lr = _disR; lg = _disG; lb2 = _disB }
             if _font != null and _font.ok {
                 float th = _font.measureString("Ag").h
@@ -633,7 +632,7 @@ export struct MenuBar impl Widget {
                     r.drawText(_font, it.shortcut, r.snapX(px + pw - 12.0 - sw), r.snapY(ty), lr, lg, lb2)
                 }
                 if it.submenu.len() > 0 {
-                    float ax = px + pw - 14.0; float ay = ry + _itemH / 2.0
+                    float ax = px + pw - 14.0, ay = ry + _itemH / 2.0
                     r.drawTriangle(ax, ay, 5.0, 90.0, lr, lg, lb2, 255)
                 }
             }

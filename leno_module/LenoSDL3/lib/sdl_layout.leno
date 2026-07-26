@@ -43,8 +43,8 @@ export const LAYOUT_STRETCH = 3   // 撑满交叉轴
 // HBox — 子控件沿水平方向依次排列
 // ============================================================
 export struct HBox impl Widget {
-    float x = 0.0; float y = 0.0; float w = 300.0; float h = 40.0
-    float padX = 8.0; float padY = 8.0; float spacing = 6.0
+    float x = 0.0, y = 0.0, w = 300.0, h = 40.0
+    float padX = 8.0, padY = 8.0, spacing = 6.0
     int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []

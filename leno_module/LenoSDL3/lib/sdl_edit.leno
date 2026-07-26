@@ -1,4 +1,4 @@
-// sdl_edit.leno — 文本编辑控件（单行/多行 + 滚动条）
+﻿// sdl_edit.leno — 文本编辑控件（单行/多行 + 滚动条）
 // 通过 win.addEdit({...}) 创建，run() 自动处理交互和渲染
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -12,16 +12,16 @@ import "sdl_timer.leno" as tmr; use tmr.Timer
 
 export struct Edit impl Widget {
     string text
-    float x = 0.0; float y = 0.0; float w = 200.0; float h = 30.0
+    float x = 0.0, y = 0.0, w = 200.0, h = 30.0
     float _radius = 4.0             // 圆角半径
     float _fontSize = 15.0          // 字体大小
     string _fontPath = ""
     int _fontStyle = 0
     Font? _font                    // 字体缓存
     Ptr[u8]? _hwnd                   // 窗口句柄（IME 定位）
-    int cr = 35; int cg = 35; int cb = 50                // 背景色（默认深色主题）
-    int tr = 220; int tg = 220; int tb = 240             // 文字色（默认浅色）
-    int _focusR = 100; int _focusG = 180; int _focusB = 255 // 聚焦边框色
+    int cr = 35, cg = 35, cb = 50                // 背景色（默认深色主题）
+    int tr = 220, tg = 220, tb = 240             // 文字色（默认浅色）
+    int _focusR = 100, _focusG = 180, _focusB = 255 // 聚焦边框色
 
     // 单行模式
     int _cursorPos = 0               // 光标字符位置（单行）
@@ -30,22 +30,17 @@ export struct Edit impl Widget {
     // 多行模式
     bool _multiline = false
     Array[string] _lines = []         // 行缓存
-    int _cursorLine = 0; int _cursorCol = 0   // 多行光标
+    int _cursorLine = 0, _cursorCol = 0   // 多行光标
     float _scrollY = 0.0              // 垂直滚动偏移
     float _lineHeight = 20.0          // 行高缓存
 
     string _placeholder = ""          // 占位文字
     bool _focused = false
     // IME 候选框位置缓存：仅在坐标/光标变化时调用 SDL，避免每帧无谓刷新
-    int _imeX = -1; int _imeY = -1; int _imeW = -1; int _imeH = -1; int _imeCursor = -1
-    bool _mouseDown = false              // 鼠标左键是否按下
-    bool _draggingVScroll = false        // 拖竖向滚动条
-    bool _draggingHScroll = false        // 拖横向滚动条
-    bool _hoverVScroll = false           // 鼠标悬停竖向滚动条
+    int _imeX = -1, _imeY = -1, _imeW = -1, _imeH = -1, _imeCursor = -1
+    bool _mouseDown = false, _draggingVScroll = false, _draggingHScroll = false, _hoverVScroll = false
     float _hDragOffset = 0.0            // 横向拖动：抓取点在滑块内的偏移（避免拖动跳变）
-    bool  _hDragThumb = false            // 本次横向拖动是否抓在滑块上（false=抓在轨道）
-    bool _hoverHScroll = false           // 鼠标悬停横向滚动条
-    bool _hoverText = false              // 鼠标悬停编辑区（显示文本光标）
+    bool _hDragThumb = false, _hoverHScroll = false, _hoverText = false
     int _blinkTime = 0               // 光标闪烁 tick
     Timer? _blinkTimer              // 光标闪烁定时器（500ms 间隔驱动空闲闪烁）
     bool _showCursor = true
@@ -68,7 +63,7 @@ export struct Edit impl Widget {
     bool _mergeUndo = false              // 连续输入可合并为一次撤销
     int  _mergePos = 0               // 合并基准：上次输入结束处的光标字符位置
     int  _lastClickTime = -100000    // 上次点击 tick（双击检测）；初值足够小，避免首点误判双击
-    float _lastClickX = 0.0; float _lastClickY = 0.0
+    float _lastClickX = 0.0, _lastClickY = 0.0
 
     // 自动换行
     bool _wordWrap = false
@@ -99,7 +94,7 @@ export struct Edit impl Widget {
     MenuBar? _ctxMenu
     int _ctxMenuH = -1
     bool _ctxMenuEnabled = true       // 是否启用右击上下文菜单
-    int _winW = 0; int _winH = 0       // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
+    int _winW = 0, _winH = 0       // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
     func(string):void _onCtxSelect     // 上下文菜单自定义回调（内置动作之后触发，可选）
 
     // ==================== 字体 ====================
@@ -197,10 +192,7 @@ export struct Edit impl Widget {
         float provVisW = w - pad * 2.0
         if provVisW <= 0 { provVisW = 1.0 }
         _ensure_layout(provVisW)
-        float sbW = _sb_width()
-        float sbH = _sb_height()
-        float visW = w - pad * 2.0 - sbW
-        float visH = h - pad * 2.0 - sbH
+        float sbW = _sb_width(), sbH = _sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
         if visH <= 0 { return }
 
         // 构建显示行表并定位光标所在显示行
@@ -606,7 +598,7 @@ export struct Edit impl Widget {
         }
         float pad = 8.0
         float cx
-        int rx = 0; int ry = 0; int rw = 0; int rh = 0
+        int rx = 0, ry = 0, rw = 0, rh = 0
         if _multiline {
             _rebuild_lines()
             cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
@@ -785,7 +777,7 @@ export struct Edit impl Widget {
         }
 
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
-        float emx = ev.mouseX(); float emy = ev.mouseY()
+        float emx = ev.mouseX(), emy = ev.mouseY()
         if ev.isMouseWheel() { emx = ev.wheelMouseX(); emy = ev.wheelMouseY() }
         if core.inPopupCapture(emx, emy) { return }
 
@@ -830,11 +822,7 @@ export struct Edit impl Widget {
 
         // ---- 滚动条交互（多行模式）----
         if _multiline {
-            float pad = 8.0
-            float sbW = _sb_width()
-            float sbH = _sb_height()
-            float visW = w - pad * 2.0 - sbW
-            float visH = h - pad * 2.0 - sbH
+            float pad = 8.0, sbW = _sb_width(), sbH = _sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
             float contentH = _content_height()
 
             // hover 检测
@@ -956,6 +944,7 @@ export struct Edit impl Widget {
                     _adjust_scroll()
                     _showCursor = true; _blinkTime = core.getTicks()
                     _update_ime()
+                    core.markFrameRedraw()
                 } else {
                     _selActive = false; _selStart = -1
                 }
@@ -966,7 +955,6 @@ export struct Edit impl Widget {
         if _mouseDown and ev.isMouseMotion() and _focused and not _draggingVScroll and not _draggingHScroll {
             if ev.mouseX() >= x and ev.mouseX() <= x + w
                and ev.mouseY() >= y and ev.mouseY() <= y + h {
-                var oldEnd = _selEnd
                 if _multiline {
                     _pos_from_xy(ev.mouseX(), ev.mouseY())
                 } else {
@@ -976,6 +964,7 @@ export struct Edit impl Widget {
                     _selEnd = _cursorPos
                     _selActive = true
                     _adjust_scroll()
+                    core.markFrameRedraw()
                 }
             }
         }
@@ -1187,7 +1176,7 @@ export struct Edit impl Widget {
                         var plines = full.replace("\r", "").split("\n")
                         _lines.remove(_cursorLine)
                         for plines.len() to pi {
-                            _lines.insert(_cursorLine + pi, plines[pi] as string)
+                            _lines.insert(_cursorLine + pi, plines[pi])
                         }
                         // 末行拼右侧
                         var li = _cursorLine + plines.len() - 1
@@ -1571,10 +1560,7 @@ export struct Edit impl Widget {
         float provVisW = w - pad * 2.0
         if provVisW <= 0 { provVisW = 1.0 }
         _ensure_layout(provVisW)
-        float sbW = _sb_width()
-        float sbH = _sb_height()
-        float visW = w - pad * 2.0 - sbW
-        float visH = h - pad * 2.0 - sbH
+        float sbW = _sb_width(), sbH = _sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
         if visW <= 0 { visW = 1.0 }
         if visH <= 0 { visH = 1.0 }
         if not _wordWrap { _ensure_layout(visW) }
@@ -1612,9 +1598,7 @@ export struct Edit impl Widget {
                 var full = _lines[li]
                 var ms1 = _font.measureString(full.slice(c0, c0 + colS))
                 var ms2 = _font.measureString(full.slice(c0, c0 + colE))
-                float sx = r.snapX(x + pad + ms1.w - _scrollX)
-                float ew = ms2.w - ms1.w
-                float sy = r.snapY(y + pad + di * _lineHeight - _scrollY)
+                float sx = r.snapX(x + pad + ms1.w - _scrollX), ew = ms2.w - ms1.w, sy = r.snapY(y + pad + di * _lineHeight - _scrollY)
                 if ew < 0 { ew = 0 }
                 r.setColor(60, 100, 180, 180)
                 r.fillRect(sx, sy, ew, _lineHeight)
@@ -1626,11 +1610,11 @@ export struct Edit impl Widget {
             var phLines = _placeholder.split("\n")
             var dy = 0
             for phLines.len() to pl {
-                var seg = phLines[pl] as string
+                var seg = phLines[pl]
                 var wraps = _wrap_line(seg, visW)
                 for wraps.len() to wi {
                     float ly = y + pad + dy * _lineHeight - _scrollY
-                    r.drawText(_font, wraps[wi] as string, r.snapX(x + pad), r.snapY(ly), tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+                    r.drawText(_font, wraps[wi], r.snapX(x + pad), r.snapY(ly), tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
                     dy += 1
                 }
             }
@@ -1795,7 +1779,7 @@ export struct Edit impl Widget {
             var wl = _wrap_line(ln, visW)
             var col0 = 0
             for wl.len() to wi {
-                var segLen = (wl[wi] as string).len()
+                var segLen = (wl[wi]).len()
                 nc0.add(col0); nc1.add(col0 + segLen); col0 = col0 + segLen
             }
             if wl.len() == 0 { nc0.add(0); nc1.add(0) }
@@ -1833,7 +1817,7 @@ export struct Edit impl Widget {
                 var wl = _wrap_line(ln, visW)
                 var col0 = 0
                 for wl.len() to wi {
-                    var seg = wl[wi] as string
+                    var seg = wl[wi]
                     var segLen = seg.len()
                     _drLi.add(li); _drC0.add(col0); _drC1.add(col0 + segLen)
                     col0 = col0 + segLen

@@ -295,12 +295,12 @@ export struct Font {
 
     func getStyleName(): string {
         if not ok { return "" }
-        return ttfLib().TTF_GetFontStyleName(handle) as string
+        return ttfLib().TTF_GetFontStyleName(handle)
     }
 
     func getFamilyName(): string {
         if not ok { return "" }
-        return ttfLib().TTF_GetFontFamilyName(handle) as string
+        return ttfLib().TTF_GetFontFamilyName(handle)
     }
 
     func setHinting(int hinting) {

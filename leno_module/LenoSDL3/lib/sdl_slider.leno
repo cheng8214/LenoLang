@@ -1,4 +1,4 @@
-// sdl_slider.leno — 滑块控件
+﻿// sdl_slider.leno — 滑块控件
 // 通过 win.addSlider({...}) 创建，拖拽 thumb 或在轨道上点击设定数值，回调 on_change(float)
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -9,15 +9,15 @@ import "sdl_tooltip.leno" as tip
 import maths
 
 export struct Slider impl Widget {
-    float x = 0.0; float y = 0.0; float w = 200.0; float h = 24.0
-    float minV = 0.0; float maxV = 100.0; float value = 0.0
+    float x = 0.0, y = 0.0, w = 200.0, h = 24.0
+    float minV = 0.0, maxV = 100.0, value = 0.0
     float step = 0.0
     bool _vertical = false
     string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font? _font
-    int _trkR = 60; int _trkG = 60; int _trkB = 72       // 轨道背景色
-    int _fillR = 60; int _fillG = 170; int _fillB = 245  // 已选填充色
-    int _thumbR = 245; int _thumbG = 245; int _thumbB = 250 // 滑块色
-    int tr = 235; int tg = 235; int tb = 245             // 文字色
+    int _trkR = 60, _trkG = 60, _trkB = 72       // 轨道背景色
+    int _fillR = 60, _fillG = 170, _fillB = 245  // 已选填充色
+    int _thumbR = 245, _thumbG = 245, _thumbB = 250 // 滑块色
+    int tr = 235, tg = 235, tb = 245             // 文字色
     int _cursor = SystemCursor.POINTER
     bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
@@ -126,13 +126,13 @@ export struct Slider impl Widget {
         if not visible { return }
         if not enabled { hover = false; _dragging = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
 
         if ev.isMouseMotion() {
-            float mx = ev.mouseX(); float my = ev.mouseY()
+            float mx = ev.mouseX(), my = ev.mouseY()
             _wasHover = hover
             hover = contains(mx, my)
             // 拖拽中：即使移出控件也要继续更新
@@ -177,7 +177,7 @@ export struct Slider impl Widget {
         if _vertical { span = h - 2.0 * rad } else { span = w - 2.0 * rad }
 
         // 轨道背景
-        int tR = _trkR; int tG = _trkG; int tB = _trkB
+        int tR = _trkR, tG = _trkG, tB = _trkB
         if not enabled { tR = _trkR / 2; tG = _trkG / 2; tB = _trkB / 2 }
         r.setColor(tR, tG, tB, 255)
         if _vertical {
@@ -190,7 +190,7 @@ export struct Slider impl Widget {
 
         // 已选填充
         float ratio = _ratio()
-        int fR = _fillR; int fG = _fillG; int fB = _fillB
+        int fR = _fillR, fG = _fillG, fB = _fillB
         if not enabled { fR = _fillR / 2; fG = _fillG / 2; fB = _fillB / 2 }
         r.setColor(fR, fG, fB, 255)
         if _vertical {
@@ -207,7 +207,7 @@ export struct Slider impl Widget {
         float cx, cy
         if _vertical { cx = x + w / 2.0; cy = y + h - rad - ratio * span }
         else         { cx = x + rad + ratio * span; cy = y + h / 2.0 }
-        int kR = _thumbR; int kG = _thumbG; int kB = _thumbB
+        int kR = _thumbR, kG = _thumbG, kB = _thumbB
         if hover or _dragging { kR = kR + 15; kG = kG + 15; kB = kB + 15
                                if kR > 255 { kR = 255 }; if kG > 255 { kG = 255 }; if kB > 255 { kB = 255 } }
         if not enabled { kR = _thumbR / 2; kG = _thumbG / 2; kB = _thumbB / 2 }
@@ -221,7 +221,7 @@ export struct Slider impl Widget {
             float ty; float tx
             if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _font.measureString(label).w / 2.0 }
             else { ty = y + h / 2.0 - th / 2.0; tx = x + w + 8.0 }
-            int tcR = tr; int tcG = tg; int tcB = tb
+            int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, label, tx, ty, tcR, tcG, tcB)
         }

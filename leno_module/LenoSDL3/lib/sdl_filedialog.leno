@@ -96,12 +96,17 @@ func _normPattern(string p): string {
 
 // default_location 规范化：SDL3 在 Windows 上不接受相对路径（传 "." 会导致对话框
 // 初始化失败而不弹出），故用 dirs.abspath 把相对路径 / "." 解析为绝对路径；
-// 已是绝对路径则原样返回。null 或空串返回 null（交给 SDL 用默认目录）。
-func _normLocation(any s): string {
-    if s == null { return null }
-    string loc = s as string
-    if loc == null or loc.len() == 0 { return null }
-    return dirs.abspath(loc)
+// 已是绝对路径则原样返回。空串返回 null（交给 SDL 用默认目录）。
+func _normLocation(string s): string {
+    if s == null or s.len() == 0 { return null }
+    return dirs.abspath(s)
+}
+
+// 从 opts 取 default_location 并规范化；未设置则返回 null
+func _optDefaultLocation(Dict opts): string {
+    var v = opts.get("default_location", null)
+    if v == null { return null }
+    return _normLocation(v as string)
 }
 
 // 构造 SDL_DialogFileFilter 数组（每项 = {name ptr, pattern ptr}，16 字节）
@@ -150,13 +155,11 @@ func _nfiltersOf(Dict opts): int {
 // 以便回调后统一释放。null 或空串返回 null。
 // 关键：SDL 文件对话框在【工作线程】异步读取该指针，直接传 Leno 内部字符串会被
 // GC/释放导致对话框初始化失败而不弹出，故必须 malloc 独立内存。
-func _makeCStr(any s): Ptr[u8] {
-    if s == null { return null }
-    string str = s as string
-    if str == null or str.len() == 0 { return null }
-    int blen = ffi.string_bytes(str)
+func _makeCStr(string s): Ptr[u8] {
+    if s == null or s.len() == 0 { return null }
+    int blen = ffi.string_bytes(s)
     Ptr[u8] p = ffi.malloc(blen + 1)
-    ffi.write_string(p, 0, str)
+    ffi.write_string(p, 0, s)
     ffi.write_int8(p, blen, 0)
     _filterMem.add(p)
     return p
@@ -172,7 +175,7 @@ export func showOpenFileDialog(Window win, any onResult, Dict opts) {
     Ptr[u8] filters = _buildFilters(opts)
     int nfilters = _nfiltersOf(opts)
     bool many = opts.get("allow_many", false)
-    Ptr[u8] defPtr = _makeCStr(_normLocation(opts.get("default_location", null)))
+    Ptr[u8] defPtr = _makeCStr(_optDefaultLocation(opts))
     lib.SDL_ShowOpenFileDialog(_cb, null, win.getHandle(), filters, nfilters, defPtr, many)
 }
 
@@ -185,7 +188,7 @@ export func showSaveFileDialog(Window win, any onResult, Dict opts) {
     sdl3dlg lib = _ensureLib()
     Ptr[u8] filters = _buildFilters(opts)
     int nfilters = _nfiltersOf(opts)
-    Ptr[u8] defPtr = _makeCStr(_normLocation(opts.get("default_location", null)))
+    Ptr[u8] defPtr = _makeCStr(_optDefaultLocation(opts))
     lib.SDL_ShowSaveFileDialog(_cb, null, win.getHandle(), filters, nfilters, defPtr)
 }
 
@@ -198,7 +201,7 @@ export func showOpenFolderDialog(Window win, any onResult, Dict opts) {
     sdl3dlg lib = _ensureLib()
     Ptr[u8] filters = _buildFilters(opts)
     int nfilters = _nfiltersOf(opts)
-    Ptr[u8] defPtr = _makeCStr(_normLocation(opts.get("default_location", null)))
+    Ptr[u8] defPtr = _makeCStr(_optDefaultLocation(opts))
     lib.SDL_ShowOpenFolderDialog(_cb, null, win.getHandle(), filters, nfilters, defPtr)
 }
 

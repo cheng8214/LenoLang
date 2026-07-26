@@ -8,7 +8,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 
 export struct ComboBox impl Widget {
-    float x = 0.0; float y = 0.0; float w = 200.0; float h = 30.0
+    float x = 0.0, y = 0.0, w = 200.0, h = 30.0
     Array[string] items = []
     int _sel = -1              // 选中索引（-1 无）
     bool _open = false
@@ -18,14 +18,14 @@ export struct ComboBox impl Widget {
     float _popupMax = 200.0    // 弹出列表最大高度
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     string _placeholder = "请选择"
-    int br = 38; int bg = 40; int bb = 48
-    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110
-    int _selR = 60; int _selG = 150; int _selB = 235
-    int _hovR = 70; int _hovG = 78; int _hovB = 92
-    int tr = 235; int tg = 235; int tb = 245
-    int _sbR = 120; int _sbG = 125; int _sbB = 140
+    int br = 38, bg = 40, bb = 48
+    int _bdrR = 90, _bdrG = 95, _bdrB = 110
+    int _selR = 60, _selG = 150, _selB = 235
+    int _hovR = 70, _hovG = 78, _hovB = 92
+    int tr = 235, tg = 235, tb = 245
+    int _sbR = 120, _sbG = 125, _sbB = 140
     int _cursor = SystemCursor.POINTER
-    bool enabled = true; bool visible = true; bool _loaded = false
+    bool enabled = true, visible = true, _loaded = false
     string _tip = ""
     bool _draggingScroll = false
     float _sbDragOffset = 0.0
@@ -76,7 +76,7 @@ export struct ComboBox impl Widget {
         _placeholder = opts.get("placeholder", "请选择")
 
         var its = opts.get("items", [])
-        if its is Array[string] { items = its as Array[string] } else { items = [] }
+        if its is Array[string] { items = its } else { items = [] }
         _sel = opts.get("selected", -1)
         if _sel >= items.len() { _sel = -1 }
 
@@ -153,7 +153,7 @@ export struct ComboBox impl Widget {
     // 弹层竖向滚动条几何：返回 [sx, sw, ty0, ty1, thH, thy, maxs, px, py, ph]
     func _sb_geom_popup(): Array[float] {
         var pr = _popup_rect()
-        float px = pr[0]; float py = pr[1]; float pw = pr[2]; float ph = pr[3]
+        float px = pr[0], py = pr[1], pw = pr[2], ph = pr[3]
         float maxs = _max_scroll()
         float sw = 8.0
         float sx = px + pw - sw - 2.0
@@ -191,7 +191,7 @@ export struct ComboBox impl Widget {
         // 弹层滚动条优先（仅展开时）
         if _open and ev.isMouseButtonDown() and _in_vscroll_popup(mx, my) {
             var g = _sb_geom_popup()
-            float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+            float maxs = g[6], trk = g[3] - g[2], thH = g[4]
             if _in_thumb_popup(mx, my) {
                 _draggingScroll = true
                 _sbDragOffset = my - g[5]                  // 记录起点相对滑块顶偏移，避免跳动
@@ -209,7 +209,7 @@ export struct ComboBox impl Widget {
         if _draggingScroll {
             if ev.isMouseMotion() {
                 var g = _sb_geom_popup()
-                float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+                float maxs = g[6], trk = g[3] - g[2], thH = g[4]
                 float rel = my - g[2] - _sbDragOffset
                 if trk - thH > 0.0 { _scroll = rel * maxs / (trk - thH) }
                 _clamp_scroll()
@@ -269,7 +269,7 @@ export struct ComboBox impl Widget {
         if not visible { return }
         _ensure_font()
 
-        int bgr = br; int bgg = bg; int bgb = bb
+        int bgr = br, bgg = bg, bgb = bb
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRoundedRect(x, y, w, h, 6.0)
@@ -279,14 +279,14 @@ export struct ComboBox impl Widget {
             string t = ""
             if _sel >= 0 and _sel < items.len() { t = items[_sel] } else { t = _placeholder }
             float th = _font.measureString("Ag").h
-            int tcR = tr; int tcG = tg; int tcB = tb
+            int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             float ty = r.snapY(y + (h - th) / 2.0)
             r.drawText(_font, t, r.snapX(x + 8.0), ty, tcR, tcG, tcB)
         }
 
         // 下拉箭头（向下填充三角）
-        float aw = 10.0; float ax = x + w - aw - 8.0; float ay = y + h / 2.0
+        float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
         r.setColor(_bdrR + 60, _bdrG + 60, _bdrB + 60, 255)
         r.drawTriangle(ax + aw / 2.0, ay, aw / 2.0, 180.0, _bdrR + 60, _bdrG + 60, _bdrB + 60, 255)
 
@@ -299,10 +299,10 @@ export struct ComboBox impl Widget {
     // 保证下拉层永远盖在其它控件之上，不会被列表中靠后的 ComboBox 挡住）
     func renderPopup(Renderer r) {
         if not _loaded or not visible or not _open or items.len() == 0 { return }
-        int bgr = br; int bgg = bg; int bgb = bb
+        int bgr = br, bgg = bg, bgb = bb
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         var pr = _popup_rect()
-        float px = pr[0]; float py = pr[1]; float pw = pr[2]; float ph = pr[3]
+        float px = pr[0], py = pr[1], pw = pr[2], ph = pr[3]
 
         // 把弹出矩形登记为事件捕获区，使下层控件忽略落在弹层范围内的鼠标/滚轮事件
         core.setPopupCapture(px, py, pw, ph)
@@ -318,7 +318,7 @@ export struct ComboBox impl Widget {
         for items.len() to i {
             float iy = r.snapY(py - _scroll + i * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }
-            int rr = bgr; int gg = bgg; int bb2 = bgb
+            int rr = bgr, gg = bgg, bb2 = bgb
             if i == _sel { rr = _selR; gg = _selG; bb2 = _selB }
             else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
             r.setColor(rr, gg, bb2, 255)
@@ -326,7 +326,7 @@ export struct ComboBox impl Widget {
 
             if _font.ok {
                 float th = _font.measureString("Ag").h
-                int tcR = tr; int tcG = tg; int tcB = tb
+                int tcR = tr, tcG = tg, tcB = tb
                 float ty = r.snapY(iy + (_itemH - th) / 2.0)
                 r.drawText(_font, items[i], r.snapX(px + 8.0), ty, tcR, tcG, tcB)
             }
@@ -340,8 +340,7 @@ export struct ComboBox impl Widget {
         // 弹出滚动条
         float maxs = _max_scroll()
         if maxs > 0.0 {
-            float sw = 8.0
-            float sx = px + pw - sw - 2.0
+            float sw = 8.0, sx = px + pw - sw - 2.0
             r.setColor(_sbR, _sbG, _sbB, 180)
             r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
             float ratio = _scroll / maxs

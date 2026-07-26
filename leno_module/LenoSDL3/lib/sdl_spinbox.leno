@@ -10,24 +10,24 @@ import maths
 import "sdl_edit.leno" as edt; use edt.Edit
 
 export struct SpinBox impl Widget {
-    float x = 0.0; float y = 0.0; float w = 140.0; float h = 34.0
+    float x = 0.0, y = 0.0, w = 140.0, h = 34.0
     float _arrowW = 20.0            // 右侧箭头区宽度
-    float minV = 0.0; float maxV = 100.0; float value = 0.0; float step = 1.0
+    float minV = 0.0, maxV = 100.0, value = 0.0, step = 1.0
     bool _intMode = false           // 整数模式（true 时显示为整数）
     int _decimals = 2               // 浮点显示小数位
     Edit? _edit   // 内嵌编辑框（文本输入/IME）
     Ptr[u8]? _hwnd
 
-    int br = 38; int bg = 40; int bb = 48          // 整体背景
-    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110  // 边框色
-    int _focusR = 100; int _focusG = 180; int _focusB = 255  // 聚焦边框色
-    int _arrowR = 44; int _arrowG = 46; int _arrowB = 54  // 箭头区背景
-    int _btnR = 200; int _btnG = 205; int _btnB = 215  // 箭头符号色
+    int br = 38, bg = 40, bb = 48          // 整体背景
+    int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
+    int _focusR = 100, _focusG = 180, _focusB = 255  // 聚焦边框色
+    int _arrowR = 44, _arrowG = 46, _arrowB = 54  // 箭头区背景
+    int _btnR = 200, _btnG = 205, _btnB = 215  // 箭头符号色
 
-    bool _hoverUp = false; bool _hoverDown = false; bool _wasUp = false; bool _wasDown = false
+    bool _hoverUp = false, _hoverDown = false, _wasUp = false, _wasDown = false
     bool _wasFocused = false
     int _cursor = SystemCursor.POINTER
-    bool enabled = true; bool visible = true; bool _loaded = false
+    bool enabled = true, visible = true, _loaded = false
     string _tip = ""
     func(float):void _onChange
 
@@ -192,7 +192,7 @@ export struct SpinBox impl Widget {
             _hoverUp = false; _hoverDown = false
             return
         }
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -244,7 +244,7 @@ export struct SpinBox impl Widget {
         if _edit != null { _edit.render(r) }
 
         float ax = x + (w - _arrowW)
-        int aR = _arrowR; int aG = _arrowG; int aB = _arrowB
+        int aR = _arrowR, aG = _arrowG, aB = _arrowB
         if _hoverUp or _hoverDown { aR = aR + 10; aG = aG + 10; aB = aB + 10
             if aR > 255 { aR = 255 }; if aG > 255 { aG = 255 }; if aB > 255 { aB = 255 } }
         r.setColor(aR, aG, aB, 255)
@@ -256,7 +256,7 @@ export struct SpinBox impl Widget {
         float s = 4.0
         float cxA = ax + _arrowW / 2.0
         // 上箭头
-        int bR = _btnR; int bG = _btnG; int bB = _btnB
+        int bR = _btnR, bG = _btnG, bB = _btnB
         if _hoverUp { bR = bR + 40; bG = bG + 40; bB = bB + 40
             if bR > 255 { bR = 255 }; if bG > 255 { bG = 255 }; if bB > 255 { bB = 255 } }
         r.setColor(bR, bG, bB, 255)
@@ -264,7 +264,7 @@ export struct SpinBox impl Widget {
         r.drawLine(cxA - s, uy + s * 0.5, cxA, uy - s * 0.5)
         r.drawLine(cxA, uy - s * 0.5, cxA + s, uy + s * 0.5)
         // 下箭头
-        int dR = _btnR; int dG = _btnG; int dB = _btnB
+        int dR = _btnR, dG = _btnG, dB = _btnB
         if _hoverDown { dR = dR + 40; dG = dG + 40; dB = dB + 40
             if dR > 255 { dR = 255 }; if dG > 255 { dG = 255 }; if dB > 255 { dB = 255 } }
         r.setColor(dR, dG, dB, 255)

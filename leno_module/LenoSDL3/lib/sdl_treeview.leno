@@ -44,7 +44,7 @@ export struct TreeViewNode {
 }
 
 export struct TreeView impl Widget {
-    float x = 0.0; float y = 0.0; float w = 200.0; float h = 200.0
+    float x = 0.0, y = 0.0, w = 200.0, h = 200.0
     int _nextId = 1
     // ===== 规范状态：嵌套树（唯一数据源）=====
     Array[TreeViewNode] _roots = []
@@ -82,18 +82,18 @@ export struct TreeView impl Widget {
     int _mode = 0
     bool _showCheck = false
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
-    int br = 38; int bg = 40; int bb = 48
-    int _bdrR = 90; int _bdrG = 95; int _bdrB = 110
-    int _selR = 60; int _selG = 150; int _selB = 235
-    int _chkR = 70; int _chkG = 178; int _chkB = 120   // 勾选框填充色（独立于选中色，避免选中行上蓝框融进蓝背景）
-    int _hovR = 70; int _hovG = 78; int _hovB = 92
-    int tr = 235; int tg = 235; int tb = 245
-    int _arrR = 180; int _arrG = 185; int _arrB = 200
-    int _sbR = 120; int _sbG = 125; int _sbB = 140
-    int _lineR = 64; int _lineG = 70; int _lineB = 84   // 连接线颜色
+    int br = 38, bg = 40, bb = 48
+    int _bdrR = 90, _bdrG = 95, _bdrB = 110
+    int _selR = 60, _selG = 150, _selB = 235
+    int _chkR = 70, _chkG = 178, _chkB = 120   // 勾选框填充色（独立于选中色，避免选中行上蓝框融进蓝背景）
+    int _hovR = 70, _hovG = 78, _hovB = 92
+    int tr = 235, tg = 235, tb = 245
+    int _arrR = 180, _arrG = 185, _arrB = 200
+    int _sbR = 120, _sbG = 125, _sbB = 140
+    int _lineR = 64, _lineG = 70, _lineB = 84   // 连接线颜色
     bool _showLines = true                              // 是否显示层级连接线
     int _cursor = SystemCursor.POINTER
-    bool enabled = true; bool visible = true; bool _loaded = false
+    bool enabled = true, visible = true, _loaded = false
     string _tip = ""
     bool _draggingScroll = false; float _sbDragOffset = 0.0
     // 右键上下文菜单
@@ -101,7 +101,7 @@ export struct TreeView impl Widget {
     MenuBar? _ctxMenu
     int _ctxHandle = -1
     Ptr[u8]? _hwnd           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
-    int _winW = 0; int _winH = 0
+    int _winW = 0, _winH = 0
     func(Array[int]):void _onChange
     func(int, float, float):void _onContext
     func(int, bool):void _onToggle
@@ -131,25 +131,24 @@ export struct TreeView impl Widget {
         n.expanded = d.get("expanded", false)
         bool hasCh = false
         var ch = d.get("children", [])
-        if ch is Array[Dict] { if (ch as Array[Dict]).len() > 0 { hasCh = true } }
+        if ch is Array[Dict] { if ch.len() > 0 { hasCh = true } }
         if d.has("has_children") { hasCh = d.get("has_children", false) or hasCh }
         n.hasChildren = hasCh
-        bool chk = false; bool on = false
+        bool chk = false, on = false
         if d.has("checkable") { chk = d.get("checkable", false) }
         if d.has("checked") { chk = true; on = d.get("checked", false) }
         n.checkable = chk
         n.checked = on
-        n.data = d.get("data", {}) as Dict
+        n.data = d.get("data", {})
         if ch is Array[Dict] {
-            var ca = ch as Array[Dict]
-            for ca.len() to k { n.children.add(_build_node(ca[k] as Dict, n.id, depth + 1)) }
+            for ch.len() to k { n.children.add(_build_node(ch[k], n.id, depth + 1)) }
         }
         return n
     }
     func _build_from_dicts(Array[Dict] ds) {
         _roots = []
         _nextId = 1
-        for ds.len() to i { _roots.add(_build_node(ds[i] as Dict, -1, 0)) }
+        for ds.len() to i { _roots.add(_build_node(ds[i], -1, 0)) }
     }
 
     // 递归复制整棵子列表（全程用循环变量 list[i] 读取，规避"非循环下标返回零值拷贝"的语言坑）
@@ -597,7 +596,7 @@ export struct TreeView impl Widget {
             return
         }
 
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -605,7 +604,7 @@ export struct TreeView impl Widget {
 
         if ev.isMouseButtonDown() and _in_vscroll(mx, my) {
             var g = _sb_geom()
-            float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+            float maxs = g[6], trk = g[3] - g[2], thH = g[4]
             if _in_thumb(mx, my) {
                 _draggingScroll = true; _sbDragOffset = my - g[5]
             } else {
@@ -619,7 +618,7 @@ export struct TreeView impl Widget {
         if _draggingScroll {
             if ev.isMouseMotion() {
                 var g = _sb_geom()
-                float maxs = g[6]; float trk = g[3] - g[2]; float thH = g[4]
+                float maxs = g[6], trk = g[3] - g[2], thH = g[4]
                 float rel = my - g[2] - _sbDragOffset
                 if trk - thH > 0.0 { _scroll = rel * maxs / (trk - thH) }
                 _clamp_scroll()
@@ -684,7 +683,7 @@ export struct TreeView impl Widget {
         if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         _flatten()
 
-        int bgr = br; int bgg = bg; int bgb = bb
+        int bgr = br, bgg = bg, bgb = bb
         if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRoundedRect(x, y, w, h, 6.0)
@@ -701,7 +700,7 @@ export struct TreeView impl Widget {
             float checkOff = if _showCheck then 18.0 else 0.0
 
             bool seld = _is_selected(id)
-            int rr = bgr; int gg = bgg; int bb2 = bgb
+            int rr = bgr, gg = bgg, bb2 = bgb
             if seld { rr = _selR; gg = _selG; bb2 = _selB }
             else if id == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
             if seld or id == _hover { r.setColor(rr, gg, bb2, 255); r.fillRoundedRect(x + 2.0, rowY + 1.0, w - 4.0, _rowH - 2.0, 4.0) }
@@ -735,7 +734,7 @@ export struct TreeView impl Widget {
             if _flatHas[i] {
                 float tcx = x + _padX + depth * _indent + 8.0
                 float tcy = rowY + _rowH / 2.0
-                int ar = _arrR; int ag = _arrG; int ab = _arrB
+                int ar = _arrR, ag = _arrG, ab = _arrB
                 if not enabled { ar = ar / 2; ag = ag / 2; ab = ab / 2 }
                 r.setColor(ar, ag, ab, 255)
                 r.drawTriangle(tcx, tcy, 5.0, if _flatExpanded[i] then 180.0 else 90.0, ar, ag, ab, 255)
@@ -745,17 +744,17 @@ export struct TreeView impl Widget {
                 float bx = cx + 18.0
                 float by = rowY + (_rowH - 14.0) / 2.0
                 if _flatOn[i] {
-                    int cr = _chkR; int cg = _chkG; int cb = _chkB
+                    int cr = _chkR, cg = _chkG, cb = _chkB
                     if not enabled { cr = cr / 2; cg = cg / 2; cb = cb / 2 }
                     r.setColor(cr, cg, cb, 255)
                     r.fillRoundedRect(bx, by, 14.0, 14.0, 3.0)
-                    int mr = 235; int mg = 240; int mb = 250
+                    int mr = 235, mg = 240, mb = 250
                     if not enabled { mr = 120; mg = 125; mb = 135 }
                     r.setColor(mr, mg, mb, 255)
                     r.drawLine(r.snapX(bx + 3.0), r.snapY(by + 7.5), r.snapX(bx + 6.0), r.snapY(by + 10.5))
                     r.drawLine(r.snapX(bx + 6.0), r.snapY(by + 10.5), r.snapX(bx + 11.0), r.snapY(by + 4.5))
                 } else {
-                    int br2 = _bdrR; int bg2 = _bdrG; int bb2c = _bdrB
+                    int br2 = _bdrR, bg2 = _bdrG, bb2c = _bdrB
                     if not enabled { br2 = br2 / 2; bg2 = bg2 / 2; bb2c = bb2c / 2 }
                     r.setColor(br2, bg2, bb2c, 255)
                     r.drawRoundedRect(bx, by, 14.0, 14.0, 3.0)
@@ -775,20 +774,20 @@ export struct TreeView impl Widget {
                     int mode = _flatImgMode[i]
                     if mode < 0 { mode = _imgMode }   // 节点未指定则用全局模式
                     var nats = r.getTextureSize(itex)
-                    float nw = nats["w"]; float nh = nats["h"]
+                    float nw = nats["w"], nh = nats["h"]
                     if mode == 1 {
                         // stretch：直接拉伸填满（会变形）
                         r.drawTextureFromTo(itex, 0.0, 0.0, nw, nh, imgX, imgDrawY, imgSize, imgSize)
                     } else if mode == 2 {
                         // aspectFill（裁边填满）：覆盖缩放 + 居中裁剪源矩形
                         float s = imgSize / nw; if imgSize / nh > s { s = imgSize / nh }
-                        float sw = imgSize / s; float sh = imgSize / s
-                        float sx = (nw - sw) / 2.0; float sy = (nh - sh) / 2.0
+                        float sw = imgSize / s, sh = imgSize / s
+                        float sx = (nw - sw) / 2.0, sy = (nh - sh) / 2.0
                         r.drawTextureFromTo(itex, sx, sy, sw, sh, imgX, imgDrawY, imgSize, imgSize)
                     } else {
                         // aspectFit（默认，留边）：保持比例完整显示
                         float s = imgSize / nw; if imgSize / nh < s { s = imgSize / nh }
-                        float dw = nw * s; float dh = nh * s
+                        float dw = nw * s, dh = nh * s
                         r.drawTextureFromTo(itex, 0.0, 0.0, nw, nh,
                             imgX + (imgSize - dw) / 2.0, imgDrawY + (imgSize - dh) / 2.0, dw, dh)
                     }
@@ -798,7 +797,7 @@ export struct TreeView impl Widget {
             if _font != null and _font.ok {
                 float tx = x + _padX + depth * _indent + 16.0 + checkOff + 4.0
                 float th = _textH
-                int tcR = tr; int tcG = tg; int tcB = tb
+                int tcR = tr, tcG = tg, tcB = tb
                 if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
                 float ty = r.snapY(rowY + (_rowH - th) / 2.0)
                 r.drawText(_font, _flatText[i], r.snapX(tx), ty, tcR, tcG, tcB)
