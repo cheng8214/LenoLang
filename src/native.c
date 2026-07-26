@@ -544,10 +544,6 @@ ObjNative* native_find_function(const char* name) {
 
 // 注册所有全局模块的 native 函数元信息（编译时调用）
 void native_register_all_module_metas(void) {
-    // 如果模块元数据已经注册过，跳过重复注册（LSP 场景下频繁调用）
-    if (moduleMethodTable.entries != NULL && moduleMethodTable.count > 0) {
-        return;
-    }
     // 调用 io 模块的初始化函数来注册元信息
     // vm_register_native 内部会调用 native_register_meta 注册元信息
     extern void io_init_globals(void);
@@ -1413,10 +1409,6 @@ void threads_init_instance_methods(void);
 void sockets_init_instance_methods(void);
 
 void native_register_all_instance_method_metas(void) {
-    // 如果实例方法元数据已经注册过，跳过重复注册（LSP 场景下频繁调用）
-    if (instanceMethodTable.entries != NULL && instanceMethodTable.count > 0) {
-        return;
-    }
     native_reset_instance_method_metas();
     arrays_init_instance_methods();
     strings_init_instance_methods();
