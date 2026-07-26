@@ -9,7 +9,8 @@
 1. [基础语法](#基础语法)
 2. [变量与类型](#变量与类型)
 3. [运算符](#运算符)
-   - [安全访问运算符 `?.`](#安全访问运算符-)
+	   - [安全访问运算符 `?.`](#安全访问运算符-)
+	   - [空值合并运算符 `??`](#空值合并运算符-)
 4. [控制流](#控制流)
 5. [函数](#函数)
    - [泛型约束（T: Face）](#泛型约束t-face)
@@ -1417,6 +1418,113 @@ struct App {
 > ```
 >
 > 同理，`if x != null { x.method(); x = null }` 这种有副作用的模式也不能用 `?.` 简化。
+
+### 空值合并运算符 `??`
+
+`??` 是空值合并运算符：当左侧为 **null** 时返回右侧的值，左侧非 null 时返回左侧的值。它是短路求值的。
+
+```leno
+struct Font {
+    int size = 14
+}
+
+struct Widget {
+    Font? _font
+    float _fontSize = 15.0
+
+    func get_font(): Font {
+        // 旧写法：手动 null 检查 + else
+        // if _font != null { return _font as Font }
+        // return acquireFontAuto(_fontSize)
+
+        // 新写法：?? 一行搞定
+        return _font ?? acquireFontAuto(_fontSize)
+    }
+
+    func get_size(): int {
+        // 旧写法
+        // var s = _font?.size
+        // if s != null { return s as int }
+        // return 14
+
+        // 新写法：?. 配合 ??
+        return _font?.size ?? 14
+    }
+}
+```
+
+#### 与 `or` 的区别
+
+`or` 也会在左值为 null 时返回右值，但它对**所有假值**（0、0.0、false、""、null）都生效。`??` 只对 **null** 生效：
+
+```leno
+float? val = 0.0
+
+val or 1.0     // 1.0 —— ❌ 0.0 被当成假值，错误地回退
+val ?? 1.0     // 0.0 —— ✅ 0.0 不是 null，保留原值
+
+bool? flag = false
+
+flag or true   // true  —— ❌ false 被当成假值，错误地回退
+flag ?? true   // false —— ✅ false 不是 null，保留原值
+```
+
+> **💡 何时用 `or`，何时用 `??`？**
+>
+> | 场景 | 推荐 | 原因 |
+> |------|------|------|
+> | null fallback（如果为 null 就用默认值） | `??` | 只对 null 生效，0.0/false 不会被误判 |
+> | 真值选择（第一个真值） | `or` | 需要 0/""/false 也触发回退 |
+> | `Dict.get("key", default)` | `get` | 已有内置默认值机制，无需 `??` |
+
+#### 类型推断
+
+`??` 的类型推断规则：
+
+- `Type ?? Type` → `Type`（消除可空性）
+- `Type? ?? Type` → `Type`（左侧可能为 null，右侧一定不为 null，结果一定不为 null）
+- `Type? ?? Type?` → `Type?`（两侧都可能为 null，结果仍可能为 null）
+
+```leno
+Font? f = _font
+Font  defaultFont = acquireFontAuto(15)
+
+var result = f ?? defaultFont   // 类型推断为 Font（非空）
+```
+
+#### 运算符优先级
+
+`??` 的优先级介于 `or` 和赋值之间：
+
+```
+or        （最低）
+??
+= += -=   （赋值）
+```
+
+这意味着 `a ?? b or c` 解析为 `a ?? (b or c)`，而 `a = b ?? c` 解析为 `a = (b ?? c)`。
+
+#### 注意事项
+
+> **⚠️ `??` 是短路求值**
+>
+> 当左侧非 null 时，右侧**不会执行**：
+>
+> ```leno
+> // acquireFontAuto 只有在 _font 为 null 时才会被调用
+> var f = _font ?? acquireFontAuto(15)
+> ```
+
+> **⚠️ `??` 不适用于回调调用**
+>
+> `??` 用于值合并，不能替代回调的 null 检查：
+>
+> ```leno
+> func(float):void? _onChange
+>
+> // ❌ 不能用 _onChange ?? func(v) { }  —— 语义不对
+> if _onChange != null { _onChange(value) }   // ✅ 正确写法
+> ```
 
 ### 运算符示例
 

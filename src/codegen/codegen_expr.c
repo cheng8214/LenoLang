@@ -70,6 +70,28 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
         return;
     }
 
+    // ?? 空值合并：left ?? right
+    // 若 left 不为 null，返回 left；否则求值 right
+    if (ast->u.binop.op == TOK_NULL_COALESCE) {
+        gen_expr(gen, ast->u.binop.l);        // [left]
+        emit_byte(gen, OP_DUP, ast->line);    // [left, left]
+        emit_byte(gen, OP_IS_NULL, ast->line); // [left, is_null]（弹出 dup，压入 bool）
+        int null_jump = emit_jump(gen, OP_JUMP_IF_TRUE, ast->line); // is_null → 跳到 null 路径
+
+        // 非 null 路径：保留 left
+        emit_byte(gen, OP_POP, ast->line);    // [left] 弹出 is_null (false)
+        int end_jump = emit_jump(gen, OP_JUMP, ast->line);
+
+        // null 路径：弹出 left，求值 right
+        patch_jump(gen, null_jump);
+        emit_byte(gen, OP_POP, ast->line);    // [null] 弹出 is_null (true)
+        emit_byte(gen, OP_POP, ast->line);    // [] 弹出 null left
+        gen_expr(gen, ast->u.binop.r);        // [right]
+
+        patch_jump(gen, end_jump);
+        return;
+    }
+
     // 类型特化：如果编译器已知操作数类型，使用特化指令
     TypeKind left_type = get_expr_type_kind(ast->u.binop.l);
     TypeKind right_type = get_expr_type_kind(ast->u.binop.r);
@@ -1698,8 +1720,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             // 栈布局：
             //   gen_expr(obj)     → [obj]
             //   OP_DUP            → [obj, obj]
-            //   OP_NULL           → [obj, obj, null]
-            //   OP_EQ             → [obj, is_null]
+            //   OP_IS_NULL        → [obj, is_null]（弹出 dup，压入 bool）
             //   OP_JUMP_IF_TRUE   → null_jump (跳到 null 路径)
             //   OP_POP            → [obj] 弹出比较结果
             //   ... 非 null 路径（字段/方法访问）
@@ -1708,8 +1729,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             //   结束
             gen_expr(gen, ast->u.safe_access.obj);    // [obj]
             emit_byte(gen, OP_DUP, ast->line);         // [obj, obj]
-            emit_byte(gen, OP_NULL, ast->line);        // [obj, obj, null]
-            emit_byte(gen, OP_EQ, ast->line);          // [obj, is_null]
+            emit_byte(gen, OP_IS_NULL, ast->line);     // [obj, is_null]
             int null_jump = emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
 
             // 非 null 路径

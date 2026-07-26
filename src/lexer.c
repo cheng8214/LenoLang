@@ -734,6 +734,10 @@ void lexer_next(Lexer* lex) {
                 lex->current = make_token(lex, TOK_QUESTION_DOT);
                 advance(lex);  // 消费 '?'
                 advance(lex);  // 消费 '.'
+            } else if (peek_next(lex) == '?') {
+                lex->current = make_token(lex, TOK_NULL_COALESCE);
+                advance(lex);  // 消费第一个 '?'
+                advance(lex);  // 消费第二个 '?'
             } else {
                 lex->current = make_token(lex, TOK_QUESTION);
                 advance(lex);

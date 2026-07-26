@@ -82,6 +82,7 @@
         [OP_PRE_DEC_LOCAL] = &&LABEL(OP_PRE_DEC_LOCAL),
         [OP_EQ] = &&LABEL(OP_EQ),
         [OP_NEQ] = &&LABEL(OP_NEQ),
+        [OP_IS_NULL] = &&LABEL(OP_IS_NULL),
         [OP_LT] = &&LABEL(OP_LT),
         [OP_GT] = &&LABEL(OP_GT),
         [OP_LE] = &&LABEL(OP_LE),

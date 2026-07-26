@@ -15,6 +15,7 @@
 typedef enum {
     PREC_NONE = 0,
     PREC_ASSIGNMENT,  // =
+    PREC_NULL_COALESCE, // ??
     PREC_OR,          // or
     PREC_AND,         // and
     PREC_BITOR,       // |

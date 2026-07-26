@@ -1,0 +1,161 @@
+// ?? 空值合并运算符测试
+
+struct Inner {
+    int value = 42
+}
+
+struct Outer {
+    Inner? _inner
+}
+
+// ===== 1. 基本用法：null 取默认值 =====
+func test_basic() {
+    int? a = null
+    assert_eq(a ?? 42, 42)
+
+    int? b = 5
+    assert_eq(b ?? 42, 5)
+
+    string? s1 = null
+    assert_eq(s1 ?? "default", "default")
+
+    string? s2 = "hello"
+    assert_eq(s2 ?? "default", "hello")
+}
+
+// ===== 2. 关键区别：?? vs or =====
+func test_vs_or() {
+    // 0 是合法值，?? 保留，or 吃掉
+    int? z = 0
+    assert_eq(z ?? 99, 0)       // ??: 0 不是 null → 保留
+    assert_eq(z or 99, 99)      // or: 0 是 falsy → 走右侧
+
+    // false 同理
+    bool? b = false
+    assert_eq(b ?? true, false)
+    assert_eq(b or true, true)
+
+    // "" 是 truthy，or 和 ?? 行为一致
+    string? e = ""
+    assert_eq(e ?? "def", "")
+    assert_eq(e or "def", "")
+}
+
+// ===== 3. float 区别（用 print 验证，避免 assert_eq 精度问题） =====
+func test_float_vs_or() {
+    float? f = 0.0
+    var r1 = f ?? 3.14
+    var r2 = f or 3.14
+    assert_eq(r1 == 0.0, true)   // ?? 保留 0.0
+    assert_eq(r2 == 3.14, true)  // or 吃掉 0.0
+
+    float? fn = null
+    assert_eq(fn ?? 2.5 == 2.5, true)  // null → 默认值
+}
+
+// ===== 4. 链式 ?? =====
+func test_chain() {
+    int? a = null
+    int? b = null
+    int? c = 7
+    assert_eq(a ?? b ?? c, 7)
+
+    int? d = 3
+    assert_eq(d ?? b ?? c, 3)
+
+    int? e = null
+    int? f = 5
+    assert_eq(e ?? f ?? 99, 5)
+}
+
+// ===== 5. 短路求值 =====
+var _side_effect = 0
+
+func _acquire(): int {
+    _side_effect = 1
+    return 100
+}
+
+func test_short_circuit() {
+    // 左侧不为 null，右侧不应求值
+    _side_effect = 0
+    int? x = 10
+    int r1 = x ?? _acquire()
+    assert_eq(r1, 10)
+    assert_eq(_side_effect, 0)   // 未调用 _acquire
+
+    // 左侧为 null，右侧应求值
+    _side_effect = 0
+    int? y = null
+    int r2 = y ?? _acquire()
+    assert_eq(r2, 100)
+    assert_eq(_side_effect, 1)   // 调用了 _acquire
+}
+
+// ===== 6. 与 ?. 配合（字段访问） =====
+func test_safe_access_coalescing() {
+    Outer o = new Outer()
+    // _inner 为 null
+    int v1 = o._inner?.value ?? 0
+    assert_eq(v1, 0)
+
+    // _inner 非 null
+    o._inner = new Inner(value=99)
+    int v2 = o._inner?.value ?? 0
+    assert_eq(v2, 99)
+}
+
+// ===== 7. struct 类型 ?? =====
+struct Font {
+    int size = 14
+}
+
+func _default_font(): Font {
+    return new Font(size=12)
+}
+
+func test_struct_coalescing() {
+    Font? f = null
+    Font r = f ?? _default_font()
+    assert_eq(r.size, 12)
+
+    Font? f2 = new Font(size=20)
+    Font r2 = f2 ?? _default_font()
+    assert_eq(r2.size, 20)
+}
+
+// ===== 8. bool/string 全类型 =====
+func test_all_types() {
+    // bool
+    bool? ba = null
+    assert_eq(ba ?? true, true)
+    bool? bb = false
+    assert_eq(bb ?? true, false)       // false 不是 null
+
+    // string
+    string? sa = null
+    assert_eq(sa ?? "x", "x")
+    string? sb = ""
+    assert_eq(sb ?? "x", "")            // "" 不是 null
+}
+
+// ===== 运行所有测试 =====
+main() {
+    test_basic()
+    print("test_basic: passed")
+    test_vs_or()
+    print("test_vs_or: passed")
+    test_float_vs_or()
+    print("test_float_vs_or: passed")
+    test_chain()
+    print("test_chain: passed")
+    test_short_circuit()
+    print("test_short_circuit: passed")
+    test_safe_access_coalescing()
+    print("test_safe_access_coalescing: passed")
+    test_struct_coalescing()
+    print("test_struct_coalescing: passed")
+    test_all_types()
+    print("test_all_types: passed")
+    print("?? 空值合并运算符：全部测试通过")
+}

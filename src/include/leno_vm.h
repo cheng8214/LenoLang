@@ -59,6 +59,7 @@ typedef enum {
     OP_PRE_DEC_LOCAL,  // 局部变量--，返回新值
     OP_EQ,
     OP_NEQ,
+    OP_IS_NULL,        // 检查栈顶是否为 null：弹出值，压入 bool（修复 float 0.0 == null 的 VM bug）
     OP_LT,
     OP_GT,
     OP_LE,

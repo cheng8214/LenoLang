@@ -279,6 +279,15 @@ OPCODE(OP_NEQ) {
     DISPATCH;
 }
 
+// OP_IS_NULL：弹出栈顶值，压入 val_is_null 结果
+// 用于 ?. 和 ?? 的 null 检查，避免 OP_EQ 的 float 0.0 == null bug
+OPCODE(OP_IS_NULL) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value val = vm_stack_pop(&vm);
+    vm_stack_push(&vm, val_bool(val_is_null(val)));
+    DISPATCH;
+}
+
 OPCODE(OP_LT) {
     frame = &vm.frames[vm.frame_cnt - 1];
     Value b = vm_stack_pop(&vm);

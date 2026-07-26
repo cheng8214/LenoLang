@@ -623,6 +623,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 case TOK_OR:
                     result = type_new(TYPE_BOOL);
                     break;
+                case TOK_NULL_COALESCE: {
+                    // left ?? right → 结果类型 = left 去可空化
+                    if (left && left->nullable) {
+                        result = type_copy(left);
+                        result->nullable = 0;
+                    } else if (left) {
+                        result = type_copy(left);
+                    } else {
+                        result = type_new(TYPE_ANY);
+                    }
+                    break;
+                }
                 default:
                     result = type_new(TYPE_ANY);
                     break;

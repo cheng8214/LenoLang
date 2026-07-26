@@ -59,7 +59,7 @@ static void fold_binary(Ast* ast) {
     Ast* r = ast->u.binop.r;
     LenoTokenType op = ast->u.binop.op;
 
-    if (op == TOK_AND || op == TOK_OR) return;
+    if (op == TOK_AND || op == TOK_OR || op == TOK_NULL_COALESCE) return;
 
     if (is_const_num(l) && is_const_num(r)) {
         int l_float = l->u.num.is_float;

@@ -82,6 +82,7 @@ static ParseRule rules[] = {
     [TOK_NUM]           = {parse_number,        NULL,   PREC_NONE},
     [TOK_AND]       = {NULL,     parse_binary, PREC_AND},
     [TOK_OR]        = {NULL,     parse_binary, PREC_OR},
+    [TOK_NULL_COALESCE] = {NULL, parse_binary, PREC_NULL_COALESCE},
     [TOK_NOT]       = {parse_unary,    NULL,   PREC_NONE},
     [TOK_AWAIT]     = {parse_await,    NULL,   PREC_NONE},
     [TOK_IS]        = {NULL,     parse_type_check, PREC_IN},
