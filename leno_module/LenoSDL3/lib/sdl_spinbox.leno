@@ -59,7 +59,7 @@ export struct SpinBox impl Widget {
     }
     // 解析内嵌 Edit 的文本为数值（手动解析，避免依赖不确定转换）
     func _try_apply_text() {
-        if not _edit != null { return }
+        if _edit == null { return }
         string s = _edit.get_text()
         int n = s.len()
         if n == 0 { return }

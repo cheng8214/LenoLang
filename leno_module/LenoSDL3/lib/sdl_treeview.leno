@@ -577,7 +577,7 @@ export struct TreeView impl Widget {
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
     func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
     func _open_ctx_menu(float mx, float my) {
-        if not _ctxMenu != null or _ctxHandle < 0 { return }
+        if _ctxMenu == null or _ctxHandle < 0 { return }
         _ctxMenu.openContext(_ctxHandle, mx, my)
     }
 

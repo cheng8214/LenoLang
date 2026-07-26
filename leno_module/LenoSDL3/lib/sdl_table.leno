@@ -360,12 +360,12 @@ export struct Table impl Widget {
     func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
     // 向上下文菜单追加一项，返回项在菜单内索引（可用于挂子菜单）
     func addContextItem(Dict opts): int {
-        if not _ctxMenu != null or _ctxMenuH < 0 { return -1 }
+        if _ctxMenu == null or _ctxMenuH < 0 { return -1 }
         return _ctxMenu.addContextItem(_ctxMenuH, opts)
     }
     // 向上下文菜单追加分隔线
     func addContextSeparator() {
-        if not _ctxMenu != null or _ctxMenuH < 0 { return }
+        if _ctxMenu == null or _ctxMenuH < 0 { return }
         _ctxMenu.addContextSeparator(_ctxMenuH)
     }
     // 按 id 动态启用/禁用某个上下文菜单项（供调用方按当前状态刷新）
@@ -393,7 +393,7 @@ export struct Table impl Widget {
 
     // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
     func _open_ctx_menu(float x, float y) {
-        if not _ctxMenu != null or _ctxMenuH < 0 { return }
+        if _ctxMenu == null or _ctxMenuH < 0 { return }
         _ctxRow = _row_at(y); _ctxCol = _col_at(x)
         // 右击命中数据行时，先选中该行，使菜单操作作用于该目标
         if _ctxRow >= 0 {
@@ -443,7 +443,7 @@ export struct Table impl Widget {
     // 双击单元格回调：无论是否可编辑都会触发，便于应用层自定义（如文件管理器双击打开）
     func on_dbl_click(func(int, int):void cb) { _onDblClick = cb }
     func edit_debug(): string {
-        if not _edit != null { return "edit=null" }
+        if _edit == null { return "edit=null" }
         if _edit.is_loaded() { return "edit.loaded=true" }
         return "edit.loaded=false"
     }
