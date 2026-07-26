@@ -71,7 +71,8 @@ void lsp_server_destroy(LspServer* server) {
     
     free(server->root_path);
     
-    // 日志文件已禁用，无需关闭
+    // 释放 GC 管理的所有对象（之前未调用，导致内存泄露）
+    gc_free_all();
     
     free(server);
 }

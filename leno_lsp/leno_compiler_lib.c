@@ -25,21 +25,28 @@ bool compiler_context_init(CompilerContext* ctx) {
 void compiler_context_cleanup(CompilerContext* ctx) {
     if (!ctx) return;
     
+    // 释放 AST（之前未释放，导致严重内存泄露）
+    if (ctx->ast_root) {
+        ast_free(ctx->ast_root);
+        ctx->ast_root = NULL;
+    }
+    
     // 释放作用域
     if (ctx->root_scope) {
         scope_free(ctx->root_scope);
         ctx->root_scope = NULL;
     }
-    
-    // 注意：AST 由 parser 管理，这里不释放
-    ctx->ast_root = NULL;
 }
 
 // 分析源代码，构建符号表
 bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, const char* filename) {
     if (!ctx || !source) return false;
     
-    // 清理之前的状态
+    // 清理之前的状态（包括 AST，防止内存泄露）
+    if (ctx->ast_root) {
+        ast_free(ctx->ast_root);
+        ctx->ast_root = NULL;
+    }
     if (ctx->root_scope) {
         scope_free(ctx->root_scope);
         ctx->root_scope = NULL;
