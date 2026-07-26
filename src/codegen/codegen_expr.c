@@ -1693,6 +1693,101 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             emit_byte(gen, OP_AWAIT, ast->line);
             break;
         }
+        case AST_SAFE_ACCESS: {
+            // 安全访问：expr?.field / expr?.method()
+            // 栈布局：
+            //   gen_expr(obj)     → [obj]
+            //   OP_DUP            → [obj, obj]
+            //   OP_NULL           → [obj, obj, null]
+            //   OP_EQ             → [obj, is_null]
+            //   OP_JUMP_IF_TRUE   → null_jump (跳到 null 路径)
+            //   OP_POP            → [obj] 弹出比较结果
+            //   ... 非 null 路径（字段/方法访问）
+            //   OP_JUMP           → end_jump
+            //   null 路径：OP_POP + OP_POP + OP_NULL
+            //   结束
+            gen_expr(gen, ast->u.safe_access.obj);    // [obj]
+            emit_byte(gen, OP_DUP, ast->line);         // [obj, obj]
+            emit_byte(gen, OP_NULL, ast->line);        // [obj, obj, null]
+            emit_byte(gen, OP_EQ, ast->line);          // [obj, is_null]
+            int null_jump = emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
+
+            // 非 null 路径
+            emit_byte(gen, OP_POP, ast->line);         // [obj] 弹出比较结果 bool
+
+            if (!ast->u.safe_access.is_call) {
+                // === 字段访问：obj?.field ===
+                int field_idx = ast->u.safe_access.field_index;
+                if (field_idx >= 0) {
+                    emit_byte(gen, OP_GET_FIELD, ast->line);
+                    emit_byte(gen, (uint8_t)field_idx, ast->line);
+                } else {
+                    // 回退：通过字段名索引
+                    ObjString* fname = str_copy(ast->u.safe_access.name,
+                                                 strlen(ast->u.safe_access.name));
+                    int fname_const = make_constant(gen, val_obj((Object*)fname));
+                    emit_byte(gen, OP_CONST, ast->line);
+                    emit_bytes(gen, (fname_const >> 8) & 0xff, fname_const & 0xff, ast->line);
+                    emit_byte(gen, OP_INDEX, ast->line);
+                }
+            } else {
+                // === 方法调用：obj?.method(args) ===
+                // 临时变量保存 obj
+                int temp_slot = -1;
+                if (gen->current_func) {
+                    temp_slot = gen->current_func->local_count;
+                    if (gen->max_local_slot > temp_slot) {
+                        temp_slot = gen->max_local_slot;
+                    }
+                }
+                if (temp_slot < 0) temp_slot = 0;
+                if (temp_slot + 1 > gen->max_local_slot) {
+                    gen->max_local_slot = temp_slot + 1;
+                }
+
+                emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_slot, ast->line);  // [] 保存 obj
+
+                // 生成参数（self + args）
+                emit_bytes_2(gen, OP_GET_LOCAL, temp_slot, ast->line);  // [self]
+                for (int i = 0; i < ast->u.safe_access.args.count; i++) {
+                    gen_expr(gen, ast->u.safe_access.args.items[i]);    // [self, arg1, ...]
+                }
+
+                // 压入 receiver 供 OP_GET_METHOD 消费
+                emit_bytes_2(gen, OP_GET_LOCAL, temp_slot, ast->line);  // [self, args..., obj]
+
+                // 生成 OP_GET_METHOD
+                ObjString* method_name_str = str_copy(ast->u.safe_access.name,
+                                                       strlen(ast->u.safe_access.name));
+                int method_name_const = make_constant(gen, val_obj((Object*)method_name_str));
+                emit_byte(gen, OP_GET_METHOD, ast->line);
+                emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, method_name_const & 0xff, ast->line);
+
+                // 生成调用
+                int call_arg_count = ast->u.safe_access.args.count + 1; // +1 for self
+                if (ast->u.safe_access.callee_is_async) {
+                    emit_byte(gen, OP_ASYNC_CALL, ast->line);
+                    emit_byte(gen, (call_arg_count >> 8) & 0xff, ast->line);
+                    emit_byte(gen, call_arg_count & 0xff, ast->line);
+                } else {
+                    emit_call(gen, call_arg_count, ast->line);
+                }
+            }
+
+            // 跳过 null 路径
+            int end_jump = emit_jump(gen, OP_JUMP, ast->line);
+
+            // null 路径
+            patch_jump(gen, null_jump);
+            emit_byte(gen, OP_POP, ast->line);     // [] 弹出比较结果 bool
+            emit_byte(gen, OP_POP, ast->line);     // [] 弹出 obj
+            emit_byte(gen, OP_NULL, ast->line);    // [null] 推入 null 作为结果
+
+            // 结束
+            patch_jump(gen, end_jump);
+            break;
+        }
         case AST_FUNC_DEF: {
             // 生成匿名函数表达式
             // 1. 生成函数原型

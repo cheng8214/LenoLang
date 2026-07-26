@@ -57,6 +57,7 @@ typedef enum {
     AST_FIELD_ACCESS,  // 字段访问: obj.field
     AST_ADDRESS_OF,    // 取地址: &obj.field（仅 cstruct 字段）
     AST_AWAIT,         // await 表达式
+    AST_SAFE_ACCESS,   // 安全访问: expr?.field / expr?.method()
 } AstKind;
 
 typedef struct Ast Ast;
@@ -343,6 +344,18 @@ struct Ast {
         struct {
             Ast* expr;         // await 的表达式
         } await;
+        struct {
+            Ast* obj;          // 对象表达式（?. 之前）
+            char* name;        // 字段名或方法名（?. 之后）
+            int is_call;       // 1=方法调用，0=字段访问
+            AstList args;      // 方法参数（is_call=1时使用）
+            int field_index;   // 字段索引（语义分析填充，-1=未确定）
+            SymRef ref;        // 对象符号引用（语义分析填充）
+            int callee_is_async; // 方法是否是 async
+            TypeInfo** generic_type_args;
+            int generic_type_count;
+            char** generic_type_names;
+        } safe_access;
     } u;
 };
 

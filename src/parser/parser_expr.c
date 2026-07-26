@@ -39,6 +39,7 @@ static ParseRule rules[] = {
     [TOK_LBRACKET]  = {parse_array,    parse_index,   PREC_CALL},
     [TOK_RBRACKET]  = {NULL,     NULL,   PREC_NONE},
     [TOK_DOT]       = {NULL,     parse_dot,   PREC_CALL},
+    [TOK_QUESTION_DOT] = {NULL, parse_safe_dot, PREC_CALL},
     [TOK_COMMA]     = {NULL,     NULL,   PREC_NONE},
     [TOK_COLON]     = {NULL,     NULL,   PREC_NONE},
     [TOK_MINUS]     = {parse_unary,    parse_binary, PREC_TERM},
@@ -1060,6 +1061,42 @@ Ast* parse_dot(Parser* p, Ast* left) {
     Ast* ast = ast_new(AST_INDEX, line);
     ast->u.index.obj = left;
     ast->u.index.index = index;
+    return ast;
+}
+
+// 安全访问解析器（expr?.field / expr?.method()）
+Ast* parse_safe_dot(Parser* p, Ast* left) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 '?.'
+    // 期望标识符
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "?. 后期望属性名");
+        return left;
+    }
+    char* name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex); // 消费标识符
+    Ast* ast = ast_new(AST_SAFE_ACCESS, line);
+    ast->u.safe_access.obj = left;
+    ast->u.safe_access.name = name;
+    ast->u.safe_access.is_call = 0;
+    ast_list_init(&ast->u.safe_access.args);
+    ast->u.safe_access.field_index = -1;
+    ast->u.safe_access.callee_is_async = 0;
+    ast->u.safe_access.generic_type_args = NULL;
+    ast->u.safe_access.generic_type_count = 0;
+    ast->u.safe_access.generic_type_names = NULL;
+    // 检查是否是方法调用
+    if (p->lex.current.type == TOK_LPAREN) {
+        ast->u.safe_access.is_call = 1;
+        lexer_next(&p->lex); // 消费 '('
+        if (p->lex.current.type != TOK_RPAREN) {
+            do {
+                Ast* arg = parse_expression(p);
+                ast_list_add(&ast->u.safe_access.args, arg);
+            } while (match(p, TOK_COMMA));
+        }
+        consume(p, TOK_RPAREN, "期望 ')'");
+    }
     return ast;
 }
 

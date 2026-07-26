@@ -443,6 +443,13 @@ static void fold_expr(Ast* ast) {
             fold_expr(ast->u.await.expr);
             break;
 
+        case AST_SAFE_ACCESS:
+            fold_expr(ast->u.safe_access.obj);
+            for (int i = 0; i < ast->u.safe_access.args.count; i++) {
+                fold_expr(ast->u.safe_access.args.items[i]);
+            }
+            break;
+
         case AST_IMPORT:
         case AST_USE:
         case AST_MODULE_ACCESS:
@@ -811,6 +818,13 @@ static int dce_expr(Ast* ast) {
         // await：递归处理表达式
         case AST_AWAIT:
             dce_expr(ast->u.await.expr);
+            return 0;
+
+        case AST_SAFE_ACCESS:
+            dce_expr(ast->u.safe_access.obj);
+            for (int i = 0; i < ast->u.safe_access.args.count; i++) {
+                dce_expr(ast->u.safe_access.args.items[i]);
+            }
             return 0;
 
         // 以下节点无子表达式需要 DCE 处理

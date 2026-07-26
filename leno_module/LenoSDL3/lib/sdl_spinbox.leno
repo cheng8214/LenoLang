@@ -55,7 +55,7 @@ export struct SpinBox impl Widget {
         return (value) as string
     }
     func _sync_text() {
-        if _edit != null { _edit.set_text(_fmt()) }
+        _edit?.set_text(_fmt())
     }
     // 解析内嵌 Edit 的文本为数值（手动解析，避免依赖不确定转换）
     func _try_apply_text() {
@@ -152,11 +152,11 @@ export struct SpinBox impl Widget {
     func get_y(): float { return y }
     func set_pos(float px, float py) {
         x = px; y = py
-        if _edit != null { _edit.set_pos(x, y); _edit.set_size(w - _arrowW, h) }
+        _edit?.set_pos(x, y); _edit?.set_size(w - _arrowW, h)
     }
     func set_size(float sw, float sh) {
         w = sw; h = sh
-        if _edit != null { _edit.set_pos(x, y); _edit.set_size(w - _arrowW, h) }
+        _edit?.set_pos(x, y); _edit?.set_size(w - _arrowW, h)
     }
 
     // ==================== 设置方法 ====================
@@ -174,13 +174,13 @@ export struct SpinBox impl Widget {
     func set_int_mode(bool m) { _intMode = m; if m { _decimals = 0 }; _sync_text() }
     func set_decimals(int d) { _decimals = d; if _intMode { _decimals = 0 }; _sync_text() }
     func set_tip(string t) { _tip = t }
-    func set_enabled(bool e) { enabled = e; if _edit != null { _edit.set_enabled(e) } }
+    func set_enabled(bool e) { enabled = e; _edit?.set_enabled(e) }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func is_enabled(): bool { return enabled }
     func get_text(): string { if _edit != null { return _edit.get_text() }; return "" }
     func on_change(func(float):void cb) { _onChange = cb }
-    func _bind_window(Ptr[u8] hwnd) { _hwnd = hwnd; if _edit != null { _edit.set_window(hwnd) } }
+    func _bind_window(Ptr[u8] hwnd) { _hwnd = hwnd; _edit?.set_window(hwnd) }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
@@ -207,7 +207,7 @@ export struct SpinBox impl Widget {
         }
 
         // 其余事件转发给内嵌 Edit（箭头区在 Edit 之外，Edit 自动忽略）
-        if _edit != null { _edit.process(ev) }
+        _edit?.process(ev)
 
         float ax = x + (w - _arrowW)
         float midY = y + h / 2.0
@@ -241,7 +241,7 @@ export struct SpinBox impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        if _edit != null { _edit.render(r) }
+        _edit?.render(r)
 
         float ax = x + (w - _arrowW)
         int aR = _arrowR, aG = _arrowG, aB = _arrowB
@@ -279,7 +279,7 @@ export struct SpinBox impl Widget {
     }
 
     func dispose() {
-        if _edit != null { _edit.dispose() }; _edit = null
+        _edit?.dispose(); _edit = null
     }
 }
 

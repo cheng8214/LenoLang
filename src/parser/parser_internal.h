@@ -99,6 +99,7 @@ Ast* parse_binary(Parser* p, Ast* left);
 Ast* parse_call(Parser* p, Ast* callee);
 Ast* parse_index(Parser* p, Ast* obj);
 Ast* parse_dot(Parser* p, Ast* left);
+Ast* parse_safe_dot(Parser* p, Ast* left);
 Ast* parse_assignment(Parser* p, Ast* left);
 Ast* parse_postfix_inc_dec(Parser* p, Ast* left);
 Ast* parse_type_check(Parser* p, Ast* left);

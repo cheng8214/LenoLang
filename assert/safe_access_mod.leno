@@ -1,0 +1,59 @@
+// 跨模块 ?. 安全访问模拟测试
+// 模拟 SDL 模块中的 face + nullable struct 模式
+
+// 模拟跨模块的 face 定义（类似 Widget、Timer 等）
+export face IWidget {
+    func render()
+    func dispose()
+}
+
+export face ITimer {
+    func start()
+    func stop()
+}
+
+// 模拟跨模块的 struct 实现 face
+export struct WidgetA impl IWidget {
+    string name = "A"
+
+    func render() { print(name + " render") }
+    func dispose() { print(name + " dispose") }
+}
+
+export struct TimerA impl ITimer {
+    int interval = 100
+
+    func start() { print("timer start") }
+    func stop() { print("timer stop") }
+}
+
+// 模拟包含 nullable face 字段的 struct（类似 Edit 包含 Timer?）
+export struct Container {
+    IWidget? widget
+    ITimer? timer
+    string label = "container"
+
+    func set_widget(IWidget w) {
+        widget = w
+    }
+
+    func set_timer(ITimer t) {
+        timer = t
+    }
+
+    func render_content() {
+        // 模拟 SDL 中的典型 null 检查模式
+        // 原写法: if widget != null { widget.render() }
+        self.widget?.render()
+    }
+
+    func start_timer() {
+        // 原写法: if timer != null { timer.start() }
+        self.timer?.start()
+    }
+
+    func stop_timer() {
+        // 原写法: if timer != null { timer.stop() }
+        self.timer?.stop()
+    }
+}

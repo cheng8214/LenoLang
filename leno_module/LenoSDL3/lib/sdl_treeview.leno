@@ -565,11 +565,11 @@ export struct TreeView impl Widget {
     func on_check(func(int, bool):void cb) { _onCheck = cb }
 
     // ==================== 右键菜单接入 ====================
-    func set_window(int ww, int hh) { _winW = ww; _winH = hh; if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) } }
+    func set_window(int ww, int hh) { _winW = ww; _winH = hh; _ctxMenu?.setWindowSize(ww, hh) }
     // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
     func set_window_handle(Ptr[u8] hwnd) {
         _hwnd = hwnd
-        if _ctxMenu != null { _ctxMenu.setWindowHandle(hwnd) }
+        _ctxMenu?.setWindowHandle(hwnd)
     }
     func get_context_menu(): MenuBar { return _ctxMenu }
     func get_context_handle(): int { return _ctxHandle }
@@ -826,7 +826,7 @@ export struct TreeView impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
-        if _ctxMenu != null { _ctxMenu.dispose() }; _ctxMenu = null
+        _ctxMenu?.dispose(); _ctxMenu = null
         // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
         // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
         _imgCacheTex = []; _imgCachePaths = []

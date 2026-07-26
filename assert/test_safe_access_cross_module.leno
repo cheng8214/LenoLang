@@ -1,0 +1,76 @@
+// 跨模块 ?. 安全访问测试
+// 使用 safe_access_mod 中定义的 face 和 struct
+
+import "safe_access_mod.leno" as mod
+use mod.IWidget
+use mod.ITimer
+use mod.WidgetA
+use mod.TimerA
+use mod.Container
+
+// 测试1：nullable face 字段的 ?. 方法调用 - null 时
+func test_null_face_method() {
+    Container c = new Container()
+    // widget 和 timer 都是 null
+    c.render_content()  // 应该静默跳过（null?.method() 返回 null）
+    c.start_timer()     // 同上
+    c.stop_timer()      // 同上
+    print("test_null_face_method: passed")
+}
+
+// 测试2：nullable face 字段的 ?. 方法调用 - 非 null 时
+func test_non_null_face_method() {
+    Container c = new Container()
+    c.set_widget(new WidgetA())
+    c.set_timer(new TimerA())
+
+    c.render_content()   // 应该输出 "A render"
+    c.start_timer()      // 应该输出 "timer start"
+    c.stop_timer()       // 应该输出 "timer stop"
+    print("test_non_null_face_method: passed")
+}
+
+// 测试3：直接对 nullable 变量使用 ?.
+func test_nullable_var_method() {
+    ITimer? t = null
+    t?.start()           // null，静默跳过
+    t?.stop()            // null，静默跳过
+
+    t = new TimerA()
+    t?.start()           // 应该输出 "timer start"
+    print("test_nullable_var_method: passed")
+}
+
+// 测试4：nullable struct 字段访问
+func test_nullable_field_access() {
+    Container c = new Container()
+    // 直接在 nullable 字段上使用 ?.
+    var result = c.timer?.interval
+    assert_eq(result == null, true)
+
+    c.set_timer(new TimerA())
+    result = c.timer?.interval
+    assert_eq(result, 100)
+    print("test_nullable_field_access: passed")
+}
+
+// 测试5：链式 ?. 跨 face 边界
+func test_chain_cross_face() {
+    Container c = new Container()
+    // widget 为 null 时，链式访问
+    // 注意：这种模式需要 widget?.name 但 widget 是 face 类型
+    // face 只能访问 face 定义的方法，不能访问底层 struct 的字段
+    c.render_content()  // null → 静默
+
+    c.set_widget(new WidgetA())
+    c.render_content()  // 非 null → 调用 render()
+    print("test_chain_cross_face: passed")
+}
+
+test_null_face_method()
+test_non_null_face_method()
+test_nullable_var_method()
+test_nullable_field_access()
+test_chain_cross_face()
+
+print("test_safe_access_cross_module: ALL PASSED")

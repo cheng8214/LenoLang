@@ -1,4 +1,4 @@
-﻿// sdl_edit.leno — 文本编辑控件（单行/多行 + 滚动条）
+// sdl_edit.leno — 文本编辑控件（单行/多行 + 滚动条）
 // 通过 win.addEdit({...}) 创建，run() 自动处理交互和渲染
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -332,12 +332,12 @@ export struct Edit impl Widget {
     func is_visible(): bool { return visible }
     func set_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
-        if _ctxMenu != null { _ctxMenu.setWindowHandle(hwnd) }   // 让右击菜单按窗口隔离绘制
+        _ctxMenu?.setWindowHandle(hwnd)   // 让右击菜单按窗口隔离绘制
     }
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
     func set_window_size(int ww, int hh) {
         _winW = ww; _winH = hh
-        if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) }
+        _ctxMenu?.setWindowSize(ww, hh)
     }
     // 返回内嵌上下文菜单（MenuBar），应用可经 addContextItem 等扩展菜单项
     func get_context_menu(): MenuBar { return _ctxMenu }
@@ -349,8 +349,8 @@ export struct Edit impl Widget {
     // 注册上下文菜单自定义回调（内置动作执行之后触发，参数为项 id）
     func on_context_select(func(string):void cb) { _onCtxSelect = cb }
     func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }
-    func focus()    { _focused = true; if _blinkTimer != null { _blinkTimer.start() } }
-    func blur()     { _focused = false; if _blinkTimer != null { _blinkTimer.stop() } }
+    func focus()    { _focused = true; _blinkTimer?.start() }
+    func blur()     { _focused = false; _blinkTimer?.stop() }
 
     // 保存当前状态到撤销栈
     func _save_undo() {
@@ -1847,9 +1847,10 @@ export struct Edit impl Widget {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         // 释放内嵌右击菜单（MenuBar）。它不在窗口 _widgets 中，需由持有者负责清理，
         // 对齐 SpinBox.dispose 释放子控件的做法，避免右键菜单字体泄漏
-        if _ctxMenu != null { _ctxMenu.dispose(); _ctxMenu = null }
+        _ctxMenu?.dispose(); _ctxMenu = null
         // 停止并注销光标闪烁定时器
-        if _blinkTimer != null { _blinkTimer.stop(); tmr.unregisterTimer(_blinkTimer) }
+        _blinkTimer?.stop()
+        if _blinkTimer != null { tmr.unregisterTimer(_blinkTimer) }
     }
 }
 

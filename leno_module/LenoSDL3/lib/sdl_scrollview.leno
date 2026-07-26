@@ -235,7 +235,7 @@ export struct ScrollView impl Widget {
                 _clampScroll()
             }
         }
-        if _content != null { _content.process(ev) }
+        _content?.process(ev)
     }
 
     func _drawScrollbars(Renderer r) {
@@ -272,7 +272,7 @@ export struct ScrollView impl Widget {
         cr.x = _int(x); cr.y = _int(y)
         cr.w = _int(w - gw) + 1; cr.h = _int(h - gh) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(cr.to_ptr())
-        if _content != null { _content.render(r) }
+        _content?.render(r)
         r.popClipRect()
         // 滚动条（最上层）
         _drawScrollbars(r)
@@ -284,7 +284,7 @@ export struct ScrollView impl Widget {
     }
 
     func dispose() {
-        if _content != null { _content.dispose() }
+        _content?.dispose()
     }
 }
 

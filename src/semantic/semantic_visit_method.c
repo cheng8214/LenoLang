@@ -513,6 +513,16 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 transform_method_body_ex(ast->u.address_of.operand, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
             }
             break;
+        case AST_SAFE_ACCESS:
+            // 安全访问：expr?.field / expr?.method(args)
+            // 转换 obj 和 args 中的裸字段名为 self["field"]
+            if (ast->u.safe_access.obj) {
+                transform_method_body_ex(ast->u.safe_access.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
+            }
+            for (int i = 0; i < ast->u.safe_access.args.count; i++) {
+                transform_method_body_ex(ast->u.safe_access.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
+            }
+            break;
         case AST_CLIB_DEF:
         default:
             break;

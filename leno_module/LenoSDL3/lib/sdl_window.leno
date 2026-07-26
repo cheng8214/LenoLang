@@ -238,7 +238,7 @@ export struct Window {
         if ok {
             // 根销毁：先释放所有控件资源，沿父子树递归清理
             for _widgets to w { w.dispose() }
-            if _root != null { _root.dispose() }
+            _root?.dispose()
             _lib.SDL_DestroyWindow(handle); handle = null; ok = false; _windowCount = _windowCount - 1
         }
     }
@@ -581,7 +581,7 @@ export struct Window {
                             var ws = _runWidgets[i]
                             if ws != null { for ws to w { w.dispose() } }
                             var rt = _runRoots[i]
-                            if rt != null { rt.dispose() }
+                            rt?.dispose()
                             _runRens[i].destroy()
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
@@ -625,7 +625,7 @@ export struct Window {
                             _runRens[k].resizeSSAA(pt.x, pt.y)
                             // 驱动根布局控件跟随窗口大小
                             var rootWid = _runRoots[k]
-                            if rootWid != null { rootWid.set_size(pt.x, pt.y) }
+                            rootWid?.set_size(pt.x, pt.y)
                             pt.free()
                             break
                         }

@@ -357,6 +357,18 @@ void ast_free(Ast* ast) {
         case AST_AWAIT:
             ast_free(ast->u.await.expr);
             break;
+        case AST_SAFE_ACCESS:
+            ast_free(ast->u.safe_access.obj);
+            free(ast->u.safe_access.name);
+            for (int i = 0; i < ast->u.safe_access.args.count; i++) {
+                ast_free(ast->u.safe_access.args.items[i]);
+            }
+            free(ast->u.safe_access.args.items);
+            if (ast->u.safe_access.ref.name) free(ast->u.safe_access.ref.name);
+            if (ast->u.safe_access.ref.struct_name) free(ast->u.safe_access.ref.struct_name);
+            if (ast->u.safe_access.generic_type_args) free(ast->u.safe_access.generic_type_args);
+            if (ast->u.safe_access.generic_type_names) free(ast->u.safe_access.generic_type_names);
+            break;
         case AST_CLIB_DEF:
             free(ast->u.clib_def.name);
             for (int i = 0; i < ast->u.clib_def.func_count; i++) {

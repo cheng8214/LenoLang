@@ -9,6 +9,7 @@
 1. [基础语法](#基础语法)
 2. [变量与类型](#变量与类型)
 3. [运算符](#运算符)
+   - [安全访问运算符 `?.`](#安全访问运算符-)
 4. [控制流](#控制流)
 5. [函数](#函数)
    - [泛型约束（T: Face）](#泛型约束t-face)
@@ -1312,6 +1313,110 @@ main() {
     }
 }
 ```
+
+### 安全访问运算符 `?.`
+
+`?.` 用于安全地访问可空类型的字段或方法——当对象为 null 时，整个表达式返回 null 而不报错：
+
+```leno
+struct Font {
+    int size = 14
+    func set_size(int s) { size = s }
+}
+
+struct Widget {
+    Font? _font
+    string name = ""
+
+    func try_set_size(int s) {
+        // 旧写法：手动 null 检查
+        // if _font != null { _font.set_size(s) }
+
+        // 新写法：?. 安全调用
+        _font?.set_size(s)          // _font 为 null 时跳过，不为 null 时调用
+    }
+
+    func try_get_size(): int {
+        // 旧写法
+        // if _font != null { return _font.size }
+
+        // 新写法：?. 安全字段访问
+        int? s = _font?.size        // _font 为 null 时 s = null，否则 s = 字段值
+        if s != null { return s as int }
+        return 0
+    }
+}
+```
+
+#### 两种形式
+
+| 形式 | 语法 | 返回类型 | 说明 |
+|------|------|---------|------|
+| 安全字段访问 | `expr?.field` | `FieldType?` | 访问字段，null 时返回 null |
+| 安全方法调用 | `expr?.method(args)` | `ReturnType?` | 调用方法，null 时跳过并返回 null |
+
+#### 链式调用
+
+`?.` 支持链式使用：
+
+```leno
+struct Config {
+    Font? font
+}
+
+struct App {
+    Config? cfg
+
+    func get_font_size(): int {
+        // 链式安全访问：cfg?.font?.size
+        // 任何一环为 null 都安全返回 null
+        int? s = cfg?.font?.size
+        if s != null { return s as int }
+        return 14
+    }
+}
+```
+
+#### 注意事项
+
+> **⚠️ `?.` 返回可空类型**
+>
+> `expr?.method()` 的返回类型是 `ReturnType?`（可空），即使原方法返回非空类型。
+> 如果需要非空值，必须配合 `if != null` 或 `as` 转换：
+>
+> ```leno
+> Font? f = _widget?._font        // 类型是 Font?，不是 Font
+> int? s = _font?.size            // 类型是 int?，不是 int
+>
+> // 需要非空值时：
+> if s != null { print(s as int) }
+> ```
+
+> **⚠️ `?.` 不适用于回调调用**
+>
+> `?.` 仅支持字段访问和方法调用，不支持函数字段的可空调用：
+>
+> ```leno
+> struct Button {
+>     func(float):void? _onClick
+>
+>     // ❌ 不能用 _onClick?.(value)  —— 语法不支持
+>     if _onClick != null { _onClick(value) }   // ✅ 正确写法
+> }
+> ```
+
+> **⚠️ 复合条件仍需 `if`**
+>
+> 当 null 检查需要与其他条件组合时，`?.` 无法替代：
+>
+> ```leno
+> // ❌ 无法用 ?. 表达
+> if _font != null and _font.ok { fnt.releaseFont(_font) }
+>
+> // ✅ 保持 if 写法
+> ```
+>
+> 同理，`if x != null { x.method(); x = null }` 这种有副作用的模式也不能用 `?.` 简化。
 
 ### 运算符示例
 
@@ -3145,6 +3250,42 @@ switch _font {
     }
 }
 ```
+
+#### 用 `?.` 安全访问（推荐简化写法）
+
+对于「null 就跳过」的场景，`?.` 比 `if is` 更简洁：
+
+```leno
+struct Widget {
+    Font? _font
+
+    // 旧写法：手动 null 检查
+    func old_set_size(int s) {
+        if _font != null { _font.set_size(s) }
+    }
+
+    // 新写法：?. 一行搞定
+    func new_set_size(int s) {
+        _font?.set_size(s)
+    }
+
+    // 安全字段访问返回可空类型
+    func get_size(): int {
+        int? s = _font?.size      // _font 为 null 时 s = null
+        if s != null { return s as int }
+        return 0
+    }
+
+    // 链式安全访问
+    func get_name_len(): int {
+        string? n = _font?.name       // _font 为 null 时 n = null
+        if n != null { return n.len() }
+        return 0
+    }
+}
+```
+
+> **详见**：[安全访问运算符 `?.`](#安全访问运算符-)
 
 #### 各种类型的 `Type?`
 
@@ -8661,6 +8802,7 @@ lenolang program.leno
 | 位运算   | `&`, `\|`, `^`, `~`, `<<`, `>>`, `>>>`  |
 | 比较运算  | `==`, `!=`, `<`, `>`, `<=`, `>=`        |
 | 逻辑运算  | `and`, `or`, `not`                      |
+| 安全访问  | `expr?.field`, `expr?.method(args)`      |
 | 成员检查  | `x in arr`, `key in dict`, `sub in str` |
 | 非成员检查 | `x not in arr`, `key not in dict`       |
 | 复合赋值  | `+=`, `-=`, `*=`, `/=`, `%=`            |

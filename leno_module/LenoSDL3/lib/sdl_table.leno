@@ -348,12 +348,12 @@ export struct Table impl Widget {
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
     func set_window_size(int ww, int hh) {
         _winW = ww; _winH = hh
-        if _ctxMenu != null { _ctxMenu.setWindowSize(ww, hh) }
+        _ctxMenu?.setWindowSize(ww, hh)
     }
     // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
     func set_window_handle(Ptr[u8] hwnd) {
         _hwnd = hwnd
-        if _ctxMenu != null { _ctxMenu.setWindowHandle(hwnd) }
+        _ctxMenu?.setWindowHandle(hwnd)
     }
     // 启用/禁用右击上下文菜单
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
@@ -826,8 +826,8 @@ export struct Table impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
-        if _edit != null { _edit.dispose() }; _edit = null
-        if _ctxMenu != null { _ctxMenu.dispose() }; _ctxMenu = null
+        _edit?.dispose(); _edit = null
+        _ctxMenu?.dispose(); _ctxMenu = null
     }
 }
 

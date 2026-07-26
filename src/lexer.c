@@ -730,8 +730,14 @@ void lexer_next(Lexer* lex) {
             advance(lex);
             break;
         case '?':
-            lex->current = make_token(lex, TOK_QUESTION);
-            advance(lex);
+            if (peek_next(lex) == '.') {
+                lex->current = make_token(lex, TOK_QUESTION_DOT);
+                advance(lex);  // 消费 '?'
+                advance(lex);  // 消费 '.'
+            } else {
+                lex->current = make_token(lex, TOK_QUESTION);
+                advance(lex);
+            }
             break;
         case '#':
             // Leno 不支持 # 开头的语法（注释使用 // 或 /* */）

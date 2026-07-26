@@ -1843,6 +1843,37 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             }
             break;
         }
+        case AST_SAFE_ACCESS: {
+            // 安全访问：expr?.field / expr?.method()
+            // 结果类型为字段/方法的类型，但总是可空的
+            TypeInfo* obj_type = infer_expr_type(s, ast->u.safe_access.obj);
+            const char* safe_name = ast->u.safe_access.name;
+
+            if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT) && obj_type->struct_name) {
+                Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                if (struct_sym && struct_sym->struct_field_count > 0) {
+                    if (ast->u.safe_access.is_call) {
+                        // 方法调用：返回类型需要运行时确定，默认 any
+                        result = type_new(TYPE_ANY);
+                    } else {
+                        // 字段访问：查找字段类型
+                        for (int i = 0; i < struct_sym->struct_field_count; i++) {
+                            if (strcmp(struct_sym->struct_field_names[i], safe_name) == 0) {
+                                if (struct_sym->struct_field_types[i]) {
+                                    result = type_copy(struct_sym->struct_field_types[i]);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!result) result = type_new(TYPE_ANY);
+            // 安全访问的结果总是可空的
+            result->nullable = 1;
+            if (obj_type) type_free(obj_type);
+            break;
+        }
         case AST_TYPE_CHECK:
             // is 表达式返回 bool
             result = type_new(TYPE_BOOL);
