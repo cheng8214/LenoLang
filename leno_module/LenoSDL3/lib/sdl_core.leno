@@ -207,6 +207,7 @@ clib sdl3 {
 
     // 离屏表面（用于程序化生成图片，配合 SDL_image 保存）
     Ptr[u8]  SDL_CreateSurface(i32 w, i32 h, i32 format)
+    Ptr[u8]  SDL_CreateSurfaceFrom(i32 w, i32 h, i32 format, Ptr[u8] pixels, i32 pitch)
     i32  SDL_MapSurfaceRGBA(Ptr[u8] surface, u8 r, u8 g, u8 b, u8 a)
     bool SDL_FillSurfaceRect(Ptr[u8] surface, Ptr[u8] rect, i32 color)
 
@@ -321,16 +322,21 @@ export enum EventType {
     MOUSE_BUTTON_DOWN      = 0x401
     MOUSE_BUTTON_UP        = 0x402
     MOUSE_WHEEL           = 0x403
-    WINDOW_CLOSE_REQUESTED = 0x210
-    WINDOW_RESIZED         = 0x206
-    WINDOW_MOVED          = 0x207
-    WINDOW_MINIMIZED      = 0x208
-    WINDOW_MAXIMIZED      = 0x209
-    WINDOW_RESTORED       = 0x20A
-    WINDOW_FOCUS_GAINED   = 0x20C
-    WINDOW_FOCUS_LOST     = 0x20D
-    WINDOW_MOUSE_ENTER    = 0x20E
-    WINDOW_MOUSE_LEAVE    = 0x20F
+    WINDOW_SHOWN              = 0x202
+    WINDOW_HIDDEN             = 0x203
+    WINDOW_EXPOSED            = 0x204
+    WINDOW_MOVED              = 0x205
+    WINDOW_RESIZED            = 0x206
+    WINDOW_PIXEL_SIZE_CHANGED = 0x207
+    WINDOW_METAL_VIEW_RESIZED = 0x208
+    WINDOW_MINIMIZED          = 0x209
+    WINDOW_MAXIMIZED          = 0x20A
+    WINDOW_RESTORED           = 0x20B
+    WINDOW_MOUSE_ENTER        = 0x20C
+    WINDOW_MOUSE_LEAVE        = 0x20D
+    WINDOW_FOCUS_GAINED       = 0x20E
+    WINDOW_FOCUS_LOST         = 0x20F
+    WINDOW_CLOSE_REQUESTED    = 0x210
     TEXT_INPUT            = 0x303
     DROP_FILE             = 0x1000
     DROP_TEXT             = 0x1001
@@ -396,7 +402,9 @@ export enum SystemCursor {
 
 export enum TextureAccess { STATIC = 0; STREAMING = 1; TARGET = 2 }
 
-export const PIXELFORMAT_RGBA8888 = 373563396  // SDL_PIXELFORMAT_RGBA8888 = SDL_DEFINE_PIXELFORMAT(PACKED32, RGBA, 8888, 32, 4) = 0x16442004
+export const PIXELFORMAT_RGBA8888 = 373694468  // SDL_PIXELFORMAT_RGBA8888 = 0x16462004
+export const PIXELFORMAT_ARGB8888 = 372645892  // SDL_PIXELFORMAT_ARGB8888 = 0x16362004
+export const PIXELFORMAT_BGRA8888 = 377888772  // SDL_PIXELFORMAT_BGRA8888 = 0x16862004
 
 export const SDL_FRect_SIZE  = 16
 export const SDL_Rect_SIZE   = 16

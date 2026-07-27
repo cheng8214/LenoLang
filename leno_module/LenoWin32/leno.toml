@@ -1,0 +1,7 @@
+[package]
+name = "LenoWin32"
+version = "0.1.0"
+description = "Leno Windows 系统 API 模块 — 桌面截屏、全局热键、剪贴板图片等"
+
+[modules]
+root = "lib"

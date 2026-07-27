@@ -36,6 +36,7 @@ import "sdl_tray.leno" as tray
 
 use core.(SDL_FRect, SDL_Rect, SDL_FPoint, SDL_Point, SDL_Color, SDL_FColor, SDL_GlyphMetrics, SDL_Vertex)
 use core.(SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_MouseWheelEvent, SDL_TextInputEvent, SDL_WindowEvent, SDL_DropEvent)
+use core.sdl3
 
 use evt.Event
 use r.Renderer
@@ -107,6 +108,8 @@ use core.(Color, FColor, Size, FSize, StringSize, GlyphInfo)
 use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp, TrayEntryFlag)
 
 export const PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
+export const PIXELFORMAT_ARGB8888 = core.PIXELFORMAT_ARGB8888
+export const PIXELFORMAT_BGRA8888 = core.PIXELFORMAT_BGRA8888
 export const SDL_FRect_SIZE  = core.SDL_FRect_SIZE
 export const SDL_Rect_SIZE   = core.SDL_Rect_SIZE
 export const SDL_FPoint_SIZE = core.SDL_FPoint_SIZE
@@ -232,3 +235,11 @@ export func saveImageJPG(Ptr[u8] surface, string path, int q): bool    { return 
 export func saveImageBMP(Ptr[u8] surface, string path): bool           { return img.saveBMP(surface, path) }
 export func saveImageWEBP(Ptr[u8] surface, string path, float q): bool { return img.saveWEBP(surface, path, q) }
 export func imageVersion(): int { return img.version() }
+
+// 从原始像素创建 surface（配合 LenoWin32 截屏使用）
+sdl3 _sdlLib = core.lib()
+
+export func createSurfaceFromRaw(int w, int h, int fmt, Ptr[u8] pixels, int pitch): Ptr[u8] {
+    return _sdlLib.SDL_CreateSurfaceFrom(w, h, fmt, pixels, pitch)
+}
+export func destroySurface(Ptr[u8] surface) { _sdlLib.SDL_DestroySurface(surface) }

@@ -1,0 +1,43 @@
+// Win32.leno — LenoWin32 统一入口模块
+// Windows 系统 API 封装：桌面截屏、全局热键、剪贴板图片等
+// 非 Windows 平台无法使用
+import "w32_capture.leno" as cap
+
+// ── OS 守卫 ──
+// _os() 返回 "windows" / "macos" / "linux" 等
+export func _is_supported(): bool { return _os() == "windows" }
+
+// ── 桌面截屏 ──
+// 返回 Dict: {pixels: Ptr[u8], w: int, h: int, pitch: int}
+// 调用方用 SDL_CreateSurfaceFrom(w, h, PIXELFORMAT_RGBA8888, pixels, pitch) 转 SDL_Surface
+export func captureScreen() {
+    if not _is_supported() {
+        print("[LenoWin32] 桌面截屏仅支持 Windows")
+        return {}
+    }
+    return cap.captureScreen()
+}
+
+export func getScreenSize(): Array[int] {
+    if not _is_supported() { return [0, 0] }
+    return cap.getScreenSize()
+}
+
+// ── 全局热键（占位） ──
+export func registerHotKey(int id, int mod, int vk): bool {
+    if not _is_supported() {
+        print("[LenoWin32] 全局热键仅支持 Windows")
+        return false
+    }
+    // TODO
+    return false
+}
+
+export func unregisterHotKey(int id): bool {
+    if not _is_supported() {
+        print("[LenoWin32] 全局热键仅支持 Windows")
+        return false
+    }
+    // TODO
+    return false
+}

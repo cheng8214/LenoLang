@@ -1,4 +1,4 @@
-﻿// 测试 Renderer 新增方法：getColor/getColorFloat/getOutputSize
+// 测试 Renderer 新增方法：getColor/getColorFloat/getOutputSize
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer

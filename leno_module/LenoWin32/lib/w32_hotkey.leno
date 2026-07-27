@@ -1,0 +1,33 @@
+// w32_hotkey.leno — Windows 全局热键（RegisterHotKey / UnregisterHotKey）
+// 注意：全局热键依赖 SDL 窗口 HWND 和消息循环，需与 sdl_window 配合使用
+import ffi
+
+// ==================== USER32 ====================
+clib user32 {
+    bool RegisterHotKey(Ptr[u8] hwnd, i32 id, u32 mod, u32 vk)
+    bool UnregisterHotKey(Ptr[u8] hwnd, i32 id)
+}
+
+user32 _usr = null
+func _lib(): user32 {
+    if _usr == null { _usr = ffi.load("user32.dll") }
+    return _usr
+}
+
+// 修饰键常量
+export const MOD_ALT     = 0x0001
+export const MOD_CONTROL = 0x0002
+export const MOD_SHIFT   = 0x0004
+export const MOD_WIN     = 0x0008
+export const MOD_NOREPEAT = 0x4000
+
+// 注册全局热键（返回是否成功）
+// hwnd: SDL 窗口句柄，id: 自定义热键 ID，mod: 修饰键组合，vk: 虚拟键码
+export func register(Ptr[u8] hwnd, int id, int mod, int vk): bool {
+    return _lib().RegisterHotKey(hwnd, id, mod, vk)
+}
+
+// 注销全局热键
+export func unregister(Ptr[u8] hwnd, int id): bool {
+    return _lib().UnregisterHotKey(hwnd, id)
+}
