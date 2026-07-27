@@ -38,15 +38,18 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             // 检查是否是字段名
             for (int i = 0; i < field_count; i++) {
                 if (strcmp(ast->u.var.name, field_names[i]) == 0) {
-                    // 保存行号
+                    // 保存行号和字段名
                     int line = ast->line;
+                    char* saved_field_name = strdup(field_names[i]);
 
                     // 释放原节点的变量数据
                     free(ast->u.var.name);
                     if (ast->u.var.ref.name) free(ast->u.var.ref.name);
 
-                    // 将当前节点转换为 INDEX 节点：self["field_name"]
-                    ast->kind = AST_INDEX;
+                    // 将当前节点转换为 FIELD_ACCESS 节点：self.field_name
+                    // 使用 AST_FIELD_ACCESS 而非 AST_INDEX，使语义分析能填充 field_index，
+                    // 代码生成能使用 OP_GET_FIELD 做编译期索引直接访问（O(1) 数组下标）
+                    ast->kind = AST_FIELD_ACCESS;
 
                     // 创建 self 变量节点
                     Ast* self_var = ast_new(AST_VAR, line);
@@ -54,13 +57,11 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                     self_var->u.var.ref.name = strdup("self");
                     self_var->u.var.ref.kind = SYM_PARAM;  // self 是参数
                     self_var->u.var.ref.index = 0;         // self 是第一个参数
-                    ast->u.index.obj = self_var;
+                    ast->u.field_access.obj = self_var;
 
-                    // 创建字段名字符串节点
-                    Ast* field_str = ast_new(AST_STRING, line);
-                    field_str->u.string.value = strdup(field_names[i]);
-                    field_str->u.string.len = (int)strlen(field_names[i]);
-                    ast->u.index.index = field_str;
+                    // 设置字段名（语义分析会填充 field_index）
+                    ast->u.field_access.field_name = saved_field_name;
+                    ast->u.field_access.field_index = -1;   // 待语义分析填充
 
                     break;
                 }
@@ -196,6 +197,9 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             transform_method_body_ex(ast->u.index.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
             transform_method_body_ex(ast->u.index.index, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
             break;
+        case AST_FIELD_ACCESS:
+            transform_method_body_ex(ast->u.field_access.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
+            break;
         case AST_INDEX_ASSIGN:
             transform_method_body_ex(ast->u.index_assign.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
             transform_method_body_ex(ast->u.index_assign.index, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count);
@@ -286,8 +290,9 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             }
             
             if (is_field) {
-                // 将 field.method() 转换为 self["field"]["method"]()
-                // 即：把 MODULE_CALL 转换为 CALL，callee 是 INDEX(self["field"], "method")
+                // 将 field.method() 转换为 self.field["method"]()
+                // 即：把 MODULE_CALL 转换为 CALL，callee 是 INDEX(self.field, "method")
+                // 使用 AST_FIELD_ACCESS 优化字段读取，语义分析会填充 field_index
                 int line = ast->line;
                 
                 // 保存原始信息
@@ -303,21 +308,20 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 // 转换节点类型
                 ast->kind = AST_CALL;
                 
-                // 创建 callee: self["field"]["method"]
+                // 创建 callee: self.field["method"]
                 Ast* callee = ast_new(AST_INDEX, line);
                 
-                // 创建 self["field"]
-                Ast* self_field = ast_new(AST_INDEX, line);
+                // 创建 self.field（使用 AST_FIELD_ACCESS 优化）
                 Ast* self_var = ast_new(AST_VAR, line);
                 self_var->u.var.name = strdup("self");
                 self_var->u.var.ref.name = strdup("self");
                 self_var->u.var.ref.kind = SYM_PARAM;
                 self_var->u.var.ref.index = 0;
-                self_field->u.index.obj = self_var;
-                Ast* field_str = ast_new(AST_STRING, line);
-                field_str->u.string.value = field_name;
-                field_str->u.string.len = (int)strlen(field_name);
-                self_field->u.index.index = field_str;
+
+                Ast* self_field = ast_new(AST_FIELD_ACCESS, line);
+                self_field->u.field_access.obj = self_var;
+                self_field->u.field_access.field_name = field_name;
+                self_field->u.field_access.field_index = -1;  // 待语义分析填充
 
                 // 创建 ["method"]
                 callee->u.index.obj = self_field;
@@ -460,32 +464,29 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             if (!is_shadowed(ast->u.module_access.module_name, shadowed_names, shadowed_count)) {
             for (int i = 0; i < field_count; i++) {
                 if (strcmp(ast->u.module_access.module_name, field_names[i]) == 0) {
-                    // 将 module_access 转换为 index: self["field"].member
+                    // 将 module_access 转换为 field_access: self.field.member
                     int line = ast->line;
                     char* member_name = ast->u.module_access.member_name;
 
                     // 释放原 module_name
                     free(ast->u.module_access.module_name);
 
-                    // 转换为 INDEX 节点
+                    // 转换为 INDEX 节点：obj 是 self.field，index 是 member
                     ast->kind = AST_INDEX;
 
-                    // 创建 self["field"] 作为 obj
+                    // 创建 self.field 作为 obj（使用 AST_FIELD_ACCESS 优化字段读取）
                     Ast* self_var = ast_new(AST_VAR, line);
                     self_var->u.var.name = strdup("self");
                     self_var->u.var.ref.name = strdup("self");
                     self_var->u.var.ref.kind = SYM_PARAM;
                     self_var->u.var.ref.index = 0;
 
-                    Ast* field_str = ast_new(AST_STRING, line);
-                    field_str->u.string.value = strdup(field_names[i]);
-                    field_str->u.string.len = (int)strlen(field_names[i]);
+                    Ast* field_access = ast_new(AST_FIELD_ACCESS, line);
+                    field_access->u.field_access.obj = self_var;
+                    field_access->u.field_access.field_name = strdup(field_names[i]);
+                    field_access->u.field_access.field_index = -1;  // 待语义分析填充
 
-                    Ast* index_obj = ast_new(AST_INDEX, line);
-                    index_obj->u.index.obj = self_var;
-                    index_obj->u.index.index = field_str;
-
-                    ast->u.index.obj = index_obj;
+                    ast->u.index.obj = field_access;
 
                     // 创建 member_name 作为 index
                     Ast* member_str = ast_new(AST_STRING, line);
