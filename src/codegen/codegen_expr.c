@@ -61,9 +61,8 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
 
     if (ast->u.binop.op == TOK_OR) {
         gen_expr(gen, ast->u.binop.l);
-        int else_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
-        int end_jump = emit_jump(gen, OP_JUMP, ast->line);
-        patch_jump(gen, else_jump);
+        // 优化：用 OP_JUMP_IF_TRUE 直接跳到末尾，消除原来 OP_JUMP_IF_FALSE + OP_JUMP 的死跳转
+        int end_jump = emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
         emit_byte(gen, OP_POP, ast->line);
         gen_expr(gen, ast->u.binop.r);
         patch_jump(gen, end_jump);
@@ -76,6 +75,8 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
         gen_expr(gen, ast->u.binop.l);        // [left]
         emit_byte(gen, OP_DUP, ast->line);    // [left, left]
         emit_byte(gen, OP_IS_NULL, ast->line); // [left, is_null]（弹出 dup，压入 bool）
+        // 注意：?? 不能用 or 那样的反转优化（OP_JUMP_IF_FALSE→直接跳末尾），
+        // 因为条件值(is_null)不是结果值(left)，跳转后 is_null 仍留在栈上导致不平衡
         int null_jump = emit_jump(gen, OP_JUMP_IF_TRUE, ast->line); // is_null → 跳到 null 路径
 
         // 非 null 路径：保留 left
