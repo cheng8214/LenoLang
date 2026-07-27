@@ -33,6 +33,42 @@ static int compileMode = 0;
 static int packMode = 0;
 static int initMode = 0;
 static int installMode = 0;
+static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
+
+// 字节码输出重定向辅助（Windows 用 _dup/_dup2 保存/恢复 stdout 句柄）
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
+
+static FILE* debug_redirect_stdout(const char* filename) {
+    if (!filename) return NULL;
+    fflush(stdout);
+#ifdef _WIN32
+    int backup_fd = _dup(_fileno(stdout));
+    FILE* backup = _fdopen(backup_fd, "w");
+    freopen(filename, "w", stdout);
+    return backup;
+#else
+    FILE* backup = stdout;
+    freopen(filename, "w", stdout);
+    return backup;
+#endif
+}
+
+static void debug_restore_stdout(FILE* backup) {
+    if (!backup) return;
+    fflush(stdout);
+#ifdef _WIN32
+    _dup2(_fileno(backup), _fileno(stdout));
+    fclose(backup);
+    // 恢复 stdout 的行缓冲模式
+    setvbuf(stdout, NULL, _IOLBF, 0);
+#else
+    freopen("/dev/tty", "w", stdout);
+    fclose(backup);
+#endif
+}
 
 // 命令行参数（供 _args() 全局函数使用）
 int g_argc = 0;
@@ -61,6 +97,7 @@ static void printHelp(const char* program) {
     printf("  -v, --version     显示版本信息\n");
     printf("  --pause           执行完毕后暂停\n");
     printf("  --debug           启用调试模式（输出字节码）\n");
+    printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
     printf("  -p, --pack        编译并打包为独立 exe（嵌入 leno_vm.exe）\n");
     printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
@@ -129,7 +166,9 @@ int lenolang_run(const char* source) {
 
     // 调试模式：输出字节码
     if (debugMode) {
+        FILE* backup = debug_redirect_stdout(debugOutFile);
         disassembleChunk(&chunk, "主程序");
+        debug_restore_stdout(backup);
     }
 
     // 4. VM 执行
@@ -201,7 +240,9 @@ int lenolang_run_binary(const char* path) {
 
     if (debugMode) {
         printf("debug模式:从二进制文件加载成功\n");
+        FILE* backup = debug_redirect_stdout(debugOutFile);
         disassembleChunk(&chunk, "主程序");
+        debug_restore_stdout(backup);
     }
 
     gc_init();
@@ -258,7 +299,9 @@ int lenolang_compile(const char* source, const char* output_path) {
     if (error_has_any()) goto compile_fail;
 
     if (debugMode) {
+        FILE* backup = debug_redirect_stdout(debugOutFile);
         disassembleChunk(&chunk, "主程序");
+        debug_restore_stdout(backup);
     }
 
     SerializeResult result = chunk_serialize(output_path, &chunk, sem.root_scope);
@@ -736,6 +779,16 @@ static int main_logic(int argc, char** argv) {
             continue;
         } else if (strcmp(argv[i], "--debug") == 0) {
             debugMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--debug-out") == 0) {
+            debugMode = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                debugOutFile = argv[i + 1];
+                i++;  // 消费文件名参数
+            } else {
+                fprintf(stderr, "错误: --debug-out 需要指定输出文件路径\n");
+                return 1;
+            }
             continue;
         } else if (strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0) {
             compileMode = 1;
