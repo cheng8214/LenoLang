@@ -10,6 +10,7 @@
 #include "include/module_compiler.h"
 #include "include/module_loader.h"
 #include "include/leno_package.h"
+#include "include/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +48,14 @@ static FILE* debug_redirect_stdout(const char* filename) {
 #ifdef _WIN32
     int backup_fd = _dup(_fileno(stdout));
     FILE* backup = _fdopen(backup_fd, "w");
-    freopen(filename, "w", stdout);
+    // UTF-8 路径支持：转宽字符后用 _wfreopen
+    wchar_t* wpath = utf8_to_utf16(filename);
+    if (wpath) {
+        _wfreopen(wpath, L"w", stdout);
+        free(wpath);
+    } else {
+        freopen(filename, "w", stdout);
+    }
     return backup;
 #else
     FILE* backup = stdout;
