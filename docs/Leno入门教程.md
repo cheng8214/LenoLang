@@ -1341,10 +1341,13 @@ struct Widget {
         // 旧写法
         // if _font != null { return _font.size }
 
-        // 新写法：?. 安全字段访问
+        // 新写法 A：?. + if 处理可空
         int? s = _font?.size        // _font 为 null 时 s = null，否则 s = 字段值
         if s != null { return s as int }
         return 0
+
+        // 新写法 B：?. 配合 ?? 一步到位（推荐）
+        // return _font?.size ?? 0
     }
 }
 ```
@@ -1383,13 +1386,16 @@ struct App {
 > **⚠️ `?.` 返回可空类型**
 >
 > `expr?.method()` 的返回类型是 `ReturnType?`（可空），即使原方法返回非空类型。
-> 如果需要非空值，必须配合 `if != null` 或 `as` 转换：
+> 如果需要非空值，推荐配合 `??`，也可用 `if != null`：
 >
 > ```leno
 > Font? f = _widget?._font        // 类型是 Font?，不是 Font
 > int? s = _font?.size            // 类型是 int?，不是 int
 >
-> // 需要非空值时：
+> // 推荐：?? 直接出非空值
+> print(_font?.size ?? 0)
+>
+> // 也可：if 检查后 as 转换
 > if s != null { print(s as int) }
 > ```
 
@@ -1418,6 +1424,35 @@ struct App {
 > ```
 >
 > 同理，`if x != null { x.method(); x = null }` 这种有副作用的模式也不能用 `?.` 简化。
+
+#### 配合 `??` 一步到位
+
+`?.` 返回可空类型，`??` 提供默认值，两者配合是最实用的组合：
+
+```leno
+struct SpinBox {
+    Edit? _edit
+
+    // 返回字符串：?. 获取值，?? 提供 null 时的默认值
+    func get_text(): string {
+        return _edit?.get_text() ?? ""
+    }
+
+    // 返回 bool：?. 获取值，?? false 保证非空
+    func is_editing(): bool {
+        return _edit?.is_focused() ?? false
+    }
+}
+```
+
+> **💡 一行替换两行**：传统写法需要 `if xxx == null { return "" }` 再 `return xxx.get_text()`，`?.` + `??` 一行搞定，且类型推断正确，无需 `as` 转换。
+
+> **⚠️ `?.` 仅适用于 struct/class 类型**：对 `clib`（`ffi.Library`）类型不能使用 `?.`。例如何判断 `lib()` 是否加载成功，仍需 `if` 守卫：
+> ```leno
+> sdl3 l = lib()
+> if l == null { return false }  // clib 类型不支持 ?.
+> return l.SDL_Init(flags)
+> ```
 
 ### 空值合并运算符 `??`
 
@@ -1838,6 +1873,24 @@ main() {
     print("grade: " + grade)    // grade: B
 }
 ```
+<!-- end:三元基础 -->
+
+#### 多分支：`if-eif-else`
+
+三元表达式支持 `eif` 链式分支，类似语句版 `if-eif-else`，但返回一个值：
+
+```leno
+var score = 89
+
+// if-eif-else 三元：按区间匹配等级
+var grade = if score >= 90 then "A"
+            eif score >= 80 then "B"
+            eif score >= 60 then "C"
+            else "F"
+print(grade)  // B
+```
+
+> **💡 `then` 是三元表达式的专属标记**：语句版 `if` 不需要 `then`，三元表达式必须写 `then`（包括每个 `eif` 分支）。
 
 **类型规则**：
 
