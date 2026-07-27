@@ -15,6 +15,8 @@
 // 前置声明 - 类型推断
 // ============================================================================
 TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
+TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
+TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
 
 // ============================================================================
 // 前置声明 - 变量解析

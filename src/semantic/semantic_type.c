@@ -67,6 +67,322 @@ static TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
 }
 
 // ============================================================================
+// 类型推断辅助函数
+// ============================================================================
+
+// 推断 struct/cstruct/face 对象调用 method_name 的返回类型
+// 包含完整的 6 步查找 + 泛型替换 + return_type_info 回退
+// 返回推断出的类型（需调用者 type_free），未找到返回 NULL
+// 注意：不设置 ast->cached_type，不 type_free(obj_type)，均由调用方管理
+TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name) {
+    if (!obj_type || !method_name) return NULL;
+
+    if (obj_type->kind != TYPE_STRUCT && obj_type->kind != TYPE_CSTRUCT && obj_type->kind != TYPE_FACE) {
+        return NULL;
+    }
+
+    // 1. 检查函数类型字段（如 func(int,int):int op）
+    if (obj_type->struct_name && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
+        Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
+        if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
+            for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
+                if (strcmp(struct_sym->struct_field_names[fi], method_name) == 0 &&
+                    struct_sym->struct_field_types[fi]->kind == TYPE_FUNCTION &&
+                    struct_sym->struct_field_types[fi]->return_type) {
+                    return type_copy(struct_sym->struct_field_types[fi]->return_type);
+                }
+            }
+        }
+    }
+
+    // 2. Face 本地定义
+    if (obj_type->kind == TYPE_FACE) {
+        ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
+        if (fdef) {
+            for (int mi = 0; mi < fdef->method_count; mi++) {
+                if (strcmp(fdef->methods[mi].name, method_name) == 0) {
+                    if (fdef->methods[mi].return_type) {
+                        return type_copy(fdef->methods[mi].return_type);
+                    } else {
+                        return type_new(TYPE_ANY);
+                    }
+                }
+            }
+        }
+        // 3. Face 可能定义在导入的模块中
+        for (int mi = 0; mi < s->imported_module_count; mi++) {
+            ImportedModuleInfo* m = &s->imported_modules[mi];
+            if (m && m->sym_table) {
+                ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_type->struct_name);
+                if (face_sym) {
+                    for (int fi = 0; fi < face_sym->method_count; fi++) {
+                        if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
+                            TypeInfo* ret_type = type_new(face_sym->methods[fi].return_type);
+                            if (face_sym->methods[fi].return_type == TYPE_STRUCT && face_sym->methods[fi].return_struct_name) {
+                                ret_type->struct_name = strdup(face_sym->methods[fi].return_struct_name);
+                            }
+                            // 检查返回类型是否是 face
+                            if (face_sym->methods[fi].return_struct_name) {
+                                ModuleFaceSymbol* ret_face = module_symbol_table_find_face(m->sym_table, face_sym->methods[fi].return_struct_name);
+                                if (ret_face) {
+                                    ret_type->kind = TYPE_FACE;
+                                    ret_type->struct_name = strdup(ret_face->name);
+                                }
+                            }
+                            return ret_type;
+                        }
+                    }
+                }
+            }
+        }
+        return NULL;
+    }
+
+    // 4. 从函数表查找方法定义（struct_name::method_name）
+    char method_key[256];
+    if (obj_type->struct_name) {
+        snprintf(method_key, sizeof(method_key), "%s::%s", obj_type->struct_name, method_name);
+    } else {
+        strncpy(method_key, method_name, sizeof(method_key) - 1);
+        method_key[sizeof(method_key) - 1] = '\0';
+    }
+    Ast* func_def = func_table_find(&s->func_table, method_key);
+    if (func_def && func_def->kind == AST_FUNC_DEF) {
+        TypeInfo* ret = NULL;
+        if (func_def->u.func.return_type && func_def->u.func.return_type->kind != TYPE_INFER) {
+            ret = type_copy(func_def->u.func.return_type);
+        } else if (func_def->u.func.body) {
+            ret = infer_return_type_from_body(s, func_def->u.func.body);
+        }
+        if (!ret) {
+            ret = type_new(TYPE_ANY);
+        }
+
+        // 泛型参数替换：如果 obj_type 有具体泛型参数，替换返回类型中的泛型参数
+        if (obj_type->generic_count > 0 && obj_type->generic_args && obj_type->struct_name) {
+            for (int mi = 0; mi < s->imported_module_count; mi++) {
+                ImportedModuleInfo* info = &s->imported_modules[mi];
+                if (info->sym_table) {
+                    ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
+                    if (ssym && ssym->type_param_count > 0 && ssym->type_param_names) {
+                        TypeInfo* substituted = ret;
+                        for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
+                            TypeInfo* new_ret = type_substitute(substituted, ssym->type_param_names[gi], obj_type->generic_args[gi]);
+                            type_free(substituted);
+                            substituted = new_ret;
+                        }
+                        ret = substituted;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 如果返回类型缺少泛型信息，从模块符号表的 return_type_info 补充
+        if (obj_type->struct_name &&
+            ((ret->kind == TYPE_DICT && !ret->value_type) ||
+             (ret->kind == TYPE_ARRAY && !ret->element_type) ||
+             (ret->kind == TYPE_PTR_GENERIC && !ret->element_type) ||
+             (ret->kind == TYPE_STRUCT && !ret->struct_name))) {
+            for (int mi = 0; mi < s->imported_module_count; mi++) {
+                ImportedModuleInfo* info = &s->imported_modules[mi];
+                if (info->sym_table) {
+                    ModuleStructMethod* mod_method = module_symbol_table_find_struct_method(
+                        info->sym_table, obj_type->struct_name, method_name);
+                    if (mod_method && mod_method->return_type_info) {
+                        type_free(ret);
+                        ret = type_copy(mod_method->return_type_info);
+                        break;
+                    }
+                }
+            }
+        }
+
+        return ret;
+    }
+
+    // 5. 原生方法
+    {
+        int arity;
+        const char* type_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
+        TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &arity);
+
+        if ((return_type == TYPE_STRUCT || return_type == TYPE_CSTRUCT) &&
+            (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
+            return type_copy(obj_type);
+        }
+        if (return_type != TYPE_ANY) {
+            return type_new(return_type);
+        }
+    }
+
+    // 6. 从导入模块的符号表查找
+    if (obj_type->struct_name) {
+        for (int i = 0; i < s->imported_module_count; i++) {
+            ImportedModuleInfo* info = &s->imported_modules[i];
+            if (info->sym_table) {
+                ModuleStructMethod* method = module_symbol_table_find_struct_method(
+                    info->sym_table, obj_type->struct_name, method_name);
+                if (method) {
+                    TypeInfo* result = NULL;
+                    // 如果返回类型是泛型参数，用 type_substitute 替换
+                    if (method->return_type == TYPE_GENERIC_PARAM && method->return_type_param_name &&
+                        obj_type->generic_count > 0 && obj_type->generic_args) {
+                        ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
+                        if (ssym && ssym->type_param_names) {
+                            for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
+                                if (strcmp(ssym->type_param_names[gi], method->return_type_param_name) == 0) {
+                                    result = type_copy(obj_type->generic_args[gi]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!result) {
+                        if (method->return_type_info) {
+                            result = type_copy(method->return_type_info);
+                        } else {
+                            result = type_new(method->return_type);
+                        }
+                        if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
+                            result->struct_name = strdup(method->return_struct_name);
+                        }
+                    }
+                    return result;
+                }
+            }
+        }
+    }
+
+    return NULL;
+}
+
+// 推断 struct/cstruct/clib/dict 对象访问 field_name 的字段类型
+// 包含泛型替换、cstruct 特殊处理（c_layout_type_to_leno）、变量符号回退、全局 cstruct 表查找
+// out_field_index: 输出字段索引（可为 NULL 表示不需要）
+// 返回推断出的类型（需调用者 type_free），未找到返回 NULL
+// 注意：不设置 ast 字段，不 type_free(obj_type)，均由调用方管理
+TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index) {
+    if (!obj_type || !field_name) return NULL;
+    if (out_field_index) *out_field_index = -1;
+
+    if (obj_type->kind == TYPE_STRUCT) {
+        // 从对象类型获取 struct 类型名称，查找 struct 定义
+        if (obj_type->struct_name) {
+            Symbol* struct_def_sym = scope_resolve(s->current, obj_type->struct_name);
+            if (struct_def_sym && struct_def_sym->struct_field_count > 0) {
+                for (int i = 0; i < struct_def_sym->struct_field_count; i++) {
+                    if (strcmp(struct_def_sym->struct_field_names[i], field_name) == 0) {
+                        TypeInfo* result = type_copy(struct_def_sym->struct_field_types[i]);
+                        if (out_field_index) *out_field_index = i;
+
+                        // 泛型参数替换
+                        if (obj_type->generic_count > 0 && obj_type->generic_args &&
+                            struct_def_sym->struct_type_param_count > 0 && struct_def_sym->struct_type_params) {
+                            for (int j = 0; j < struct_def_sym->struct_type_param_count && j < obj_type->generic_count; j++) {
+                                TypeInfo* substituted = type_substitute(result,
+                                    struct_def_sym->struct_type_params[j], obj_type->generic_args[j]);
+                                type_free(result);
+                                result = substituted;
+                            }
+                        }
+                        return result;
+                    }
+                }
+            }
+        }
+        // 变量符号回退查找
+        return NULL;
+    }
+    else if (obj_type->kind == TYPE_CSTRUCT) {
+        if (obj_type->struct_name) {
+            Symbol* cstruct_def_sym = scope_resolve(s->current, obj_type->struct_name);
+            if (cstruct_def_sym && cstruct_def_sym->struct_field_count > 0) {
+                for (int i = 0; i < cstruct_def_sym->struct_field_count; i++) {
+                    if (strcmp(cstruct_def_sym->struct_field_names[i], field_name) == 0) {
+                        TypeInfo* result = type_copy(cstruct_def_sym->struct_field_types[i]);
+                        // cstruct 字段类型从 C 布局类型映射为 Leno 类型
+                        TypeKind leno_kind = c_layout_type_to_leno(result->kind);
+                        if (leno_kind != result->kind) {
+                            result->kind = leno_kind;
+                        }
+                        if (out_field_index) *out_field_index = i;
+                        return result;
+                    }
+                }
+            }
+
+            // 从全局 cstruct 定义表查找（跨模块导入的 cstruct）
+            ObjCStructDef* cdef = cstruct_def_find(obj_type->struct_name);
+            if (cdef) {
+                int idx = cstruct_get_field_index(cdef, field_name);
+                if (idx >= 0) {
+                    if (out_field_index) *out_field_index = idx;
+                    return type_new(c_layout_type_to_leno(cdef->fields[idx].type));
+                }
+            } else {
+                // 全局表可能还没注册，从导入模块的符号表查找
+                for (int mi = 0; mi < s->imported_module_count; mi++) {
+                    ImportedModuleInfo* mod = &s->imported_modules[mi];
+                    if (mod->sym_table) {
+                        ModuleStructSymbol* ssym = module_symbol_table_find_struct(mod->sym_table, obj_type->struct_name);
+                        if (ssym && ssym->is_cstruct) {
+                            for (int fi = 0; fi < ssym->field_count; fi++) {
+                                if (strcmp(ssym->fields[fi].name, field_name) == 0) {
+                                    if (out_field_index) *out_field_index = fi;
+                                    return type_new(c_layout_type_to_leno(ssym->fields[fi].type));
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return NULL;
+    }
+    else if (obj_type->kind == TYPE_CLIB) {
+        if (obj_type->struct_name) {
+            Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
+            if (clib_sym && clib_sym->clib_func_count > 0) {
+                for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                    if (strcmp(clib_sym->clib_func_names[i], field_name) == 0) {
+                        TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                        TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
+                        TypeKind leno_rk = c_layout_type_to_leno(rk);
+                        if (leno_rk != rk) {
+                            return type_new(leno_rk);
+                        }
+                        switch (rk) {
+                            case TYPE_PTR:
+                                { TypeInfo* t = type_new(TYPE_PTR); t->struct_name = strdup("Ptr"); return t; }
+                            case TYPE_PTR_GENERIC:
+                                if (ret_type && ret_type->element_type) {
+                                    return type_ptr_generic(type_copy(ret_type->element_type));
+                                } else {
+                                    TypeInfo* t = type_new(TYPE_PTR); t->struct_name = strdup("Ptr"); return t;
+                                }
+                            case TYPE_BOOL:
+                                return type_new(TYPE_BOOL);
+                            case TYPE_NULL:
+                                return type_new(TYPE_NULL);
+                            default:
+                                return ret_type ? type_copy(ret_type) : type_new(TYPE_ANY);
+                        }
+                    }
+                }
+            }
+        }
+        return NULL;
+    }
+    else if (obj_type->kind == TYPE_DICT) {
+        return obj_type->value_type ? type_copy(obj_type->value_type) : type_new(TYPE_ANY);
+    }
+
+    return NULL;
+}
+
+// ============================================================================
 // 类型推断
 // ============================================================================
 
@@ -868,200 +1184,14 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             return type_new(TYPE_ANY);
                         }
 
-                        // 处理 struct/cstruct 类型的方法调用
+                        // 处理 struct/cstruct/face 类型的方法调用
                         if (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) {
-                            // 先检查是否是函数类型字段（如 func(int,int):int op）
-                            if (obj_type->struct_name && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
-                                Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
-                                if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
-                                    for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
-                                        if (strcmp(struct_sym->struct_field_names[fi], method_name) == 0 &&
-                                            struct_sym->struct_field_types[fi]->kind == TYPE_FUNCTION &&
-                                            struct_sym->struct_field_types[fi]->return_type) {
-                                            TypeInfo* ret = type_copy(struct_sym->struct_field_types[fi]->return_type);
-                                            ast->cached_type = type_copy(ret);
-                                            type_free(obj_type);
-                                            return ret;
-                                        }
-                                    }
-                                }
-                            }
-                            if (obj_type->kind == TYPE_FACE) {
-                                ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
-                                if (fdef) {
-                                    for (int mi = 0; mi < fdef->method_count; mi++) {
-                                        if (strcmp(fdef->methods[mi].name, method_name) == 0) {
-                                            if (fdef->methods[mi].return_type) {
-                                                ast->cached_type = type_copy(fdef->methods[mi].return_type);
-                                            } else {
-                                                ast->cached_type = type_new(TYPE_ANY);
-                                            }
-                                            type_free(obj_type);
-                                            return type_copy(ast->cached_type);
-                                        }
-                                    }
-                                }
-                                // face 可能定义在导入的模块中，从模块符号表查找方法返回类型
-                                for (int mi = 0; mi < s->imported_module_count; mi++) {
-                                    ImportedModuleInfo* m = &s->imported_modules[mi];
-                                    if (m && m->sym_table) {
-                                        ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_type->struct_name);
-                                        if (face_sym) {
-                                            for (int fi = 0; fi < face_sym->method_count; fi++) {
-                                                if (strcmp(face_sym->methods[fi].name, method_name) == 0) {
-                                                    TypeInfo* ret_type = type_new(face_sym->methods[fi].return_type);
-                                                    if (face_sym->methods[fi].return_type == TYPE_STRUCT && face_sym->methods[fi].return_struct_name) {
-                                                        ret_type->struct_name = strdup(face_sym->methods[fi].return_struct_name);
-                                                    }
-                                                    // 检查返回类型是否是 face
-                                                    if (face_sym->methods[fi].return_struct_name) {
-                                                        ModuleFaceSymbol* ret_face = module_symbol_table_find_face(m->sym_table, face_sym->methods[fi].return_struct_name);
-                                                        if (ret_face) {
-                                                            ret_type->kind = TYPE_FACE;
-                                                            ret_type->struct_name = strdup(ret_face->name);
-                                                        }
-                                                    }
-                                                    ast->cached_type = ret_type;
-                                                    type_free(obj_type);
-                                                    return type_copy(ast->cached_type);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                type_free(obj_type);
-                                return type_new(TYPE_ANY);
-                            }
-                            // 从函数表查找方法定义（用户定义的方法）
-                            // 使用 struct_name::method_name 格式，避免与全局函数冲突
-                            char method_key[256];
-                            if (obj_type->struct_name) {
-                                snprintf(method_key, sizeof(method_key), "%s::%s", obj_type->struct_name, method_name);
-                            } else {
-                                strncpy(method_key, method_name, sizeof(method_key) - 1);
-                                method_key[sizeof(method_key) - 1] = '\0';
-                            }
-                            Ast* func_def = func_table_find(&s->func_table, method_key);
-                            if (func_def && func_def->kind == AST_FUNC_DEF) {
-                                TypeInfo* ret = NULL;
-                                if (func_def->u.func.return_type && func_def->u.func.return_type->kind != TYPE_INFER) {
-                                    ret = type_copy(func_def->u.func.return_type);
-                                } else if (func_def->u.func.body) {
-                                    // 尝试推断返回类型从 return 语句
-                                    ret = infer_return_type_from_body(s, func_def->u.func.body);
-                                }
-                                if (!ret) {
-                                    ret = type_new(TYPE_ANY);
-                                }
-
-                                // 泛型参数替换：如果 obj_type 有具体泛型参数，替换返回类型中的泛型参数
-                                if (obj_type->generic_count > 0 && obj_type->generic_args && obj_type->struct_name) {
-                                    // 从模块符号表查找 struct 的泛型参数名
-                                    for (int mi = 0; mi < s->imported_module_count; mi++) {
-                                        ImportedModuleInfo* info = &s->imported_modules[mi];
-                                        if (info->sym_table) {
-                                            ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
-                                            if (ssym && ssym->type_param_count > 0 && ssym->type_param_names) {
-                                                // 用 type_substitute 逐个替换泛型参数
-                                                TypeInfo* substituted = ret;
-                                                for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
-                                                    TypeInfo* new_ret = type_substitute(substituted, ssym->type_param_names[gi], obj_type->generic_args[gi]);
-                                                    type_free(substituted);
-                                                    substituted = new_ret;
-                                                }
-                                                ret = substituted;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 如果返回类型缺少泛型信息（如 TYPE_DICT 无 value_type），
-                                // 从模块符号表的 return_type_info 补充
-                                if (obj_type->struct_name &&
-                                    ((ret->kind == TYPE_DICT && !ret->value_type) ||
-                                     (ret->kind == TYPE_ARRAY && !ret->element_type) ||
-                                     (ret->kind == TYPE_PTR_GENERIC && !ret->element_type) ||
-                                     (ret->kind == TYPE_STRUCT && !ret->struct_name))) {
-                                    for (int mi = 0; mi < s->imported_module_count; mi++) {
-                                        ImportedModuleInfo* info = &s->imported_modules[mi];
-                                        if (info->sym_table) {
-                                            ModuleStructMethod* mod_method = module_symbol_table_find_struct_method(
-                                                info->sym_table, obj_type->struct_name, method_name);
-                                            if (mod_method && mod_method->return_type_info) {
-                                                type_free(ret);
-                                                ret = type_copy(mod_method->return_type_info);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
+                            TypeInfo* ret = infer_method_return_type(s, obj_type, method_name);
+                            if (ret) {
                                 ast->cached_type = type_copy(ret);
                                 type_free(obj_type);
                                 return ret;
                             }
-                            
-                            // 检查是否是原生方法（如 copy, malloc_array）
-                            int arity;
-                            const char* type_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
-                            TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &arity);
-
-                            // 如果返回类型是结构体（如 copy, malloc_array 方法），应该与对象类型相同
-                            if ((return_type == TYPE_STRUCT || return_type == TYPE_CSTRUCT) &&
-                                (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
-                                // 复制对象类型作为返回类型
-                                TypeInfo* result = type_copy(obj_type);
-                                type_free(obj_type);
-                                return result;
-                            }
-
-                            if (return_type != TYPE_ANY) {
-                                type_free(obj_type);
-                                return type_new(return_type);
-                            }
-
-                            // 检查是否是从模块导入的 struct 的方法
-                            if (obj_type->struct_name) {
-                                // 遍历所有导入的模块，查找 struct 方法
-                                for (int i = 0; i < s->imported_module_count; i++) {
-                                    ImportedModuleInfo* info = &s->imported_modules[i];
-                                    if (info->sym_table) {
-                                        ModuleStructMethod* method = module_symbol_table_find_struct_method(
-                                            info->sym_table, obj_type->struct_name, method_name);
-                                        if (method) {
-                                            TypeInfo* result = NULL;
-                                            // 如果返回类型是泛型参数，用 type_substitute 替换
-                                            if (method->return_type == TYPE_GENERIC_PARAM && method->return_type_param_name &&
-                                                obj_type->generic_count > 0 && obj_type->generic_args) {
-                                                ModuleStructSymbol* ssym = module_symbol_table_find_struct(info->sym_table, obj_type->struct_name);
-                                                if (ssym && ssym->type_param_names) {
-                                                    // 找到泛型参数名对应的索引
-                                                    for (int gi = 0; gi < ssym->type_param_count && gi < obj_type->generic_count; gi++) {
-                                                        if (strcmp(ssym->type_param_names[gi], method->return_type_param_name) == 0) {
-                                                            result = type_copy(obj_type->generic_args[gi]);
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            if (!result) {
-                                                if (method->return_type_info) {
-                                                    result = type_copy(method->return_type_info);
-                                                } else {
-                                                    result = type_new(method->return_type);
-                                                }
-                                                if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
-                                                    result->struct_name = strdup(method->return_struct_name);
-                                                }
-                                            }
-                                            type_free(obj_type);
-                                            return result;
-                                        }
-                                    }
-                                }
-                            }
-
                             type_free(obj_type);
                             return type_new(TYPE_ANY);
                         }
@@ -1863,117 +1993,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
             if (ast->u.safe_access.is_call && obj_type &&
                 (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE)) {
-                // 方法调用：复用普通方法调用的返回类型查找逻辑
-                // 1. 检查函数类型字段
-                if (obj_type->struct_name && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
-                    Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
-                    if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
-                        for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
-                            if (strcmp(struct_sym->struct_field_names[fi], safe_name) == 0 &&
-                                struct_sym->struct_field_types[fi]->kind == TYPE_FUNCTION &&
-                                struct_sym->struct_field_types[fi]->return_type) {
-                                result = type_copy(struct_sym->struct_field_types[fi]->return_type);
-                                break;
-                            }
-                        }
-                    }
-                }
-                // 2. face 类型：查 face 定义
-                if (!result && obj_type->kind == TYPE_FACE) {
-                    ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
-                    if (fdef) {
-                        for (int mi = 0; mi < fdef->method_count; mi++) {
-                            if (strcmp(fdef->methods[mi].name, safe_name) == 0) {
-                                if (fdef->methods[mi].return_type) {
-                                    result = type_copy(fdef->methods[mi].return_type);
-                                } else {
-                                    result = type_new(TYPE_ANY);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    // face 可能在导入的模块中
-                    if (!result) {
-                        for (int mi = 0; mi < s->imported_module_count; mi++) {
-                            ImportedModuleInfo* m = &s->imported_modules[mi];
-                            if (m && m->sym_table) {
-                                ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_type->struct_name);
-                                if (face_sym) {
-                                    for (int fi = 0; fi < face_sym->method_count; fi++) {
-                                        if (strcmp(face_sym->methods[fi].name, safe_name) == 0) {
-                                            result = type_new(face_sym->methods[fi].return_type);
-                                            if (face_sym->methods[fi].return_type == TYPE_STRUCT && face_sym->methods[fi].return_struct_name) {
-                                                result->struct_name = strdup(face_sym->methods[fi].return_struct_name);
-                                            }
-                                            break;
-                                        }
-                                    }
-                                    if (result) break;
-                                }
-                            }
-                        }
-                    }
-                }
-                // 3. 从函数表查找方法定义（struct_name::method_name）
-                if (!result && obj_type->struct_name) {
-                    char method_key[256];
-                    snprintf(method_key, sizeof(method_key), "%s::%s", obj_type->struct_name, safe_name);
-                    Ast* func_def = func_table_find(&s->func_table, method_key);
-                    if (func_def && func_def->kind == AST_FUNC_DEF) {
-                        if (func_def->u.func.return_type && func_def->u.func.return_type->kind != TYPE_INFER) {
-                            result = type_copy(func_def->u.func.return_type);
-                        } else if (func_def->u.func.body) {
-                            result = infer_return_type_from_body(s, func_def->u.func.body);
-                        }
-                    }
-                }
-                // 4. 原生方法
-                if (!result) {
-                    int arity;
-                    const char* type_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
-                    TypeKind return_type = native_get_instance_method_return_type(type_name, safe_name, &arity);
-                    if ((return_type == TYPE_STRUCT || return_type == TYPE_CSTRUCT) &&
-                        (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
-                        result = type_copy(obj_type);
-                    } else if (return_type != TYPE_ANY) {
-                        result = type_new(return_type);
-                    }
-                }
-                // 5. 从模块符号表查找
-                if (!result && obj_type->struct_name) {
-                    for (int i = 0; i < s->imported_module_count; i++) {
-                        ImportedModuleInfo* info = &s->imported_modules[i];
-                        if (info->sym_table) {
-                            ModuleStructMethod* method = module_symbol_table_find_struct_method(
-                                info->sym_table, obj_type->struct_name, safe_name);
-                            if (method) {
-                                if (method->return_type_info) {
-                                    result = type_copy(method->return_type_info);
-                                } else {
-                                    result = type_new(method->return_type);
-                                }
-                                if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
-                                    result->struct_name = strdup(method->return_struct_name);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            } else if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT) && obj_type->struct_name) {
-                // 字段访问：查找字段类型
-                Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
-                if (struct_sym && struct_sym->struct_field_count > 0) {
-                    for (int i = 0; i < struct_sym->struct_field_count; i++) {
-                        if (strcmp(struct_sym->struct_field_names[i], safe_name) == 0) {
-                            if (struct_sym->struct_field_types[i]) {
-                                result = type_copy(struct_sym->struct_field_types[i]);
-                            }
-                            break;
-                        }
-                    }
-                }
+                // 方法调用：复用统一的方法返回类型推断
+                result = infer_method_return_type(s, obj_type, safe_name);
+            } else if (obj_type) {
+                // 字段访问：复用统一的字段类型推断
+                result = infer_field_type(s, obj_type, safe_name, NULL);
             }
             if (!result) result = type_new(TYPE_ANY);
             // 安全访问的结果总是可空的
@@ -2037,185 +2061,46 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 }
             }
 
-            if (obj_type && obj_type->kind == TYPE_STRUCT) {
-                // 获取字段名
+            // 使用统一的字段类型推断
+            if (obj_type) {
                 const char* field_name = ast->u.field_access.field_name;
+                result = infer_field_type(s, obj_type, field_name, &ast->u.field_access.field_index);
 
-                // 从对象类型获取 struct 类型名称，查找 struct 定义
-                if (obj_type->struct_name) {
-                    Symbol* struct_def_sym = scope_resolve(s->current, obj_type->struct_name);
-                    if (struct_def_sym && struct_def_sym->struct_field_count > 0) {
-                        // 在 struct 定义中查找字段类型和索引
-                        for (int i = 0; i < struct_def_sym->struct_field_count; i++) {
-                            if (strcmp(struct_def_sym->struct_field_names[i], field_name) == 0) {
-                                result = type_copy(struct_def_sym->struct_field_types[i]);
-                                ast->u.field_access.field_index = i; // 存储字段索引
-
-                                // 泛型参数替换：如果 obj_type 有具体泛型参数，替换字段类型中的泛型参数
-                                if (obj_type->generic_count > 0 && obj_type->generic_args &&
-                                    struct_def_sym->struct_type_param_count > 0 && struct_def_sym->struct_type_params) {
-                                    for (int j = 0; j < struct_def_sym->struct_type_param_count && j < obj_type->generic_count; j++) {
-                                        TypeInfo* substituted = type_substitute(result,
-                                            struct_def_sym->struct_type_params[j], obj_type->generic_args[j]);
-                                        type_free(result);
-                                        result = substituted;
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // 如果没找到字段类型，尝试从变量符号查找
-                if (!result && ast->u.field_access.obj->kind == AST_VAR) {
+                // struct 类型：infer_field_type 可能未找到，尝试从变量符号回退查找
+                if (!result && obj_type->kind == TYPE_STRUCT && ast->u.field_access.obj->kind == AST_VAR) {
                     const char* var_name = ast->u.field_access.obj->u.var.name;
                     Symbol* var_sym = scope_resolve(s->current, var_name);
                     if (var_sym && var_sym->struct_field_count > 0) {
                         for (int i = 0; i < var_sym->struct_field_count; i++) {
                             if (strcmp(var_sym->struct_field_names[i], field_name) == 0) {
                                 result = type_copy(var_sym->struct_field_types[i]);
-                                ast->u.field_access.field_index = i; // 存储字段索引
+                                ast->u.field_access.field_index = i;
                                 break;
                             }
                         }
                     }
                 }
-
-                // 如果还是没找到，返回 ANY
-                if (!result) {
-                    result = type_new(TYPE_ANY);
-                }
-            }
-            // 处理 cstruct 字段访问
-            else if (obj_type && obj_type->kind == TYPE_CSTRUCT) {
-                // 获取字段名
-                const char* field_name = ast->u.field_access.field_name;
-                
-                // 从对象类型获取 cstruct 类型名称，查找 cstruct 定义
-                if (obj_type->struct_name) {
-                    Symbol* cstruct_def_sym = scope_resolve(s->current, obj_type->struct_name);
-                    if (cstruct_def_sym && cstruct_def_sym->struct_field_count > 0) {
-                        // 在 cstruct 定义中查找字段类型和索引
-                        for (int i = 0; i < cstruct_def_sym->struct_field_count; i++) {
-                            if (strcmp(cstruct_def_sym->struct_field_names[i], field_name) == 0) {
-                                result = type_copy(cstruct_def_sym->struct_field_types[i]);
-                                // cstruct 字段类型从 C 布局类型映射为 Leno 类型（零摩擦自动收窄）
-                                TypeKind leno_kind = c_layout_type_to_leno(result->kind);
-                                if (leno_kind != result->kind) {
-                                    result->kind = leno_kind;
-                                }
-                                ast->u.field_access.field_index = i; // 存储字段索引
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // 如果没找到字段类型，尝试从变量符号查找
-                if (ast->u.field_access.field_index < 0 && ast->u.field_access.obj->kind == AST_VAR) {
+                // cstruct 类型：infer_field_type 可能未找到，尝试从变量符号回退查找
+                if (!result && obj_type->kind == TYPE_CSTRUCT && ast->u.field_access.field_index < 0 && ast->u.field_access.obj->kind == AST_VAR) {
                     const char* var_name = ast->u.field_access.obj->u.var.name;
                     Symbol* var_sym = scope_resolve(s->current, var_name);
                     if (var_sym && var_sym->struct_field_count > 0) {
                         for (int i = 0; i < var_sym->struct_field_count; i++) {
                             if (strcmp(var_sym->struct_field_names[i], field_name) == 0) {
                                 result = type_copy(var_sym->struct_field_types[i]);
-                                // cstruct 字段类型从 C 布局类型映射为 Leno 类型（零摩擦自动收窄）
                                 TypeKind leno_kind = c_layout_type_to_leno(result->kind);
                                 if (leno_kind != result->kind) {
                                     result->kind = leno_kind;
                                 }
-                                ast->u.field_access.field_index = i; // 存储字段索引
+                                ast->u.field_access.field_index = i;
                                 break;
                             }
                         }
                     }
                 }
+            }
 
-                // 如果还是没找到，尝试从全局 cstruct 定义表查找（跨模块导入的 cstruct）
-                if (ast->u.field_access.field_index < 0 && obj_type->struct_name) {
-                    ObjCStructDef* cdef = cstruct_def_find(obj_type->struct_name);
-                    if (cdef) {
-                        int idx = cstruct_get_field_index(cdef, field_name);
-                        if (idx >= 0) {
-                            result = type_new(c_layout_type_to_leno(cdef->fields[idx].type));
-                            ast->u.field_access.field_index = idx;
-                        }
-                    } else {
-                        // 全局表可能还没注册（语义分析阶段模块尚未编译执行），从导入模块的符号表查找
-                        for (int mi = 0; mi < s->imported_module_count; mi++) {
-                            ImportedModuleInfo* mod = &s->imported_modules[mi];
-                            if (mod->sym_table) {
-                                ModuleStructSymbol* ssym = module_symbol_table_find_struct(mod->sym_table, obj_type->struct_name);
-                                if (ssym && ssym->is_cstruct) {
-                                    for (int fi = 0; fi < ssym->field_count; fi++) {
-                                        if (strcmp(ssym->fields[fi].name, field_name) == 0) {
-                                            result = type_new(c_layout_type_to_leno(ssym->fields[fi].type));
-                                            ast->u.field_access.field_index = fi;
-                                            break;
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 如果还是没找到，返回 ANY
-                if (ast->u.field_access.field_index < 0) {
-                    result = type_new(TYPE_ANY);
-                }
-            }
-            else if (obj_type && obj_type->kind == TYPE_CLIB) {
-                const char* field_name = ast->u.field_access.field_name;
-                if (obj_type->struct_name) {
-                    Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);
-                    if (clib_sym && clib_sym->clib_func_count > 0) {
-                        for (int i = 0; i < clib_sym->clib_func_count; i++) {
-                            if (strcmp(clib_sym->clib_func_names[i], field_name) == 0) {
-                                TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
-                                TypeKind rk = ret_type ? ret_type->kind : TYPE_NULL;
-                                // C 类型 → Leno 类型映射（使用 c_layout_type_to_leno 统一处理）
-                                TypeKind leno_rk = c_layout_type_to_leno(rk);
-                                if (leno_rk != rk) {
-                                    result = type_new(leno_rk);
-                                } else {
-                                    switch (rk) {
-                                        case TYPE_PTR:
-                                            result = type_new(TYPE_PTR);
-                                            result->struct_name = strdup("Ptr"); break;
-                                        case TYPE_PTR_GENERIC:
-                                            // 保留元素类型信息
-                                            if (ret_type && ret_type->element_type) {
-                                                result = type_ptr_generic(type_copy(ret_type->element_type));
-                                            } else {
-                                                result = type_new(TYPE_PTR);
-                                                result->struct_name = strdup("Ptr");
-                                            }
-                                            break;
-                                        case TYPE_BOOL:
-                                            result = type_new(TYPE_BOOL); break;
-                                        case TYPE_NULL:
-                                            result = type_new(TYPE_NULL); break;
-                                        default:
-                                            result = ret_type ? type_copy(ret_type) : type_new(TYPE_ANY); break;
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (!result) result = type_new(TYPE_ANY);
-            }
-            // Dict 字段访问：d.key 等价于 d["key"]，返回值类型 V
-            else if (obj_type && obj_type->kind == TYPE_DICT) {
-                result = obj_type->value_type ? type_copy(obj_type->value_type) : type_new(TYPE_ANY);
-            }
-            else {
-                result = type_new(TYPE_ANY);
-            }
+            if (!result) result = type_new(TYPE_ANY);
             if (obj_type) type_free(obj_type);
             // 修正：如果字段类型被误推断为 struct 但实际是 face，修正为 face
             fix_struct_to_face(result);
