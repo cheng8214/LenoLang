@@ -138,6 +138,8 @@ export func warpMouse(Ptr[u8] w, float x, float y): bool { return core.warpMouse
 export func setSystemCursor(int kind): Ptr[u8] { return core.setSystemCursor(kind) as Ptr[u8] }
 export func showMessageBox(string title, string msg, int flags) { core.showMessageBox(title, msg, flags) }
 
+export func markFrameRedraw() { core.markFrameRedraw() }
+export func requestRedraw()   { core.requestRedraw() }
 
 
 export func getClipboardText(): string   { return core.getClipboardText() }

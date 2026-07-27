@@ -47,7 +47,10 @@ main() {
             if e.isQuit() or e.isWindowClose() { return false }
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
-            if e.isMouseMotion() { mouseX = e.mouseX(); mouseY = e.mouseY() }
+            if e.isMouseMotion() {
+                mouseX = e.mouseX(); mouseY = e.mouseY()
+                if dragging { SDL3.markFrameRedraw() }
+            }
 
             // 鼠标左键按下 = 开始选区
             if e.isMouseButtonDown() and e.mouseButton() == MouseButton.LEFT {
