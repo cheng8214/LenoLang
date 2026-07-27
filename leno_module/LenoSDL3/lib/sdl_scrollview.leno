@@ -108,9 +108,8 @@ export struct ScrollView impl Widget {
     // 每帧把内容定位到（视口 - 偏移），设定内容尺寸，并刷新滚动条几何
     func _sync() {
         _computeThumbs()
-        if _content == null { return }
-        _content.set_pos(x - _scrollX, y - _scrollY)
-        _content.set_size(_contentW, _contentH)
+        _content?.set_pos(x - _scrollX, y - _scrollY)
+        _content?.set_size(_contentW, _contentH)
     }
 
     func _computeThumbs() {
