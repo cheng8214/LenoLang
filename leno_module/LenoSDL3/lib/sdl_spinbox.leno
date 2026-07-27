@@ -38,11 +38,13 @@ export struct SpinBox impl Widget {
         return maths.max(minV, maths.min(v, maxV))
     }
     func _digit(string c): int {
-        if c == "0" { return 0 } eif c == "1" { return 1 } eif c == "2" { return 2 }
-        eif c == "3" { return 3 } eif c == "4" { return 4 } eif c == "5" { return 5 }
-        eif c == "6" { return 6 } eif c == "7" { return 7 } eif c == "8" { return 8 }
-        eif c == "9" { return 9 }
-        return 0
+        switch c {
+            case "0" { return 0 } case "1" { return 1 } case "2" { return 2 }
+            case "3" { return 3 } case "4" { return 4 } case "5" { return 5 }
+            case "6" { return 6 } case "7" { return 7 } case "8" { return 8 }
+            case "9" { return 9 }
+            default  { return 0 }
+        }
     }
     func _fmt(): string {
         if _intMode { return (_int(value)) as string }
@@ -90,10 +92,7 @@ export struct SpinBox impl Widget {
         value = maths.max(minV, maths.min(v, maxV))
         if _onChange != null { _onChange(value) }
     }
-    func _step_delta(): float {
-        if step > 0.0 { return step }
-        return 1.0
-    }
+    func _step_delta(): float { return if step > 0.0 then step else 1.0 }
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {

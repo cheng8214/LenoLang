@@ -43,13 +43,11 @@ export struct ComboBox impl Widget {
 
     func _ph(): float {
         float ph = items.len() * _itemH
-        if ph > _popupMax { ph = _popupMax }
-        return ph
+        return if ph > _popupMax then _popupMax else ph
     }
     func _max_scroll(): float {
         float m = items.len() * _itemH - _ph()
-        if m < 0.0 { m = 0.0 }
-        return m
+        return if m < 0.0 then 0.0 else m
     }
     func _clamp_scroll() {
         float m = _max_scroll()
@@ -117,7 +115,7 @@ export struct ComboBox impl Widget {
     func get_y(): float               { return y }
 
     func get_selected(): int          { return _sel }
-    func get_selected_text(): string  { if _sel >= 0 and _sel < items.len() { return items[_sel] }; return "" }
+    func get_selected_text(): string  { return if _sel >= 0 and _sel < items.len() then items[_sel] else "" }
     func set_selected(int idx) {
         if idx < 0 or idx >= items.len() { return }
         _sel = idx

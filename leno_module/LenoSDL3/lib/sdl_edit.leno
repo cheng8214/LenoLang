@@ -469,12 +469,14 @@ export struct Edit impl Widget {
 
     // 上下文菜单项动作分发
     func _ctx_action(string id) {
-        if id == "undo"       { _undo() }
-        else if id == "redo"  { _redo() }
-        else if id == "cut"   { _ctx_cut() }
-        else if id == "copy"  { _ctx_copy() }
-        else if id == "paste" { _ctx_paste() }
-        else if id == "select_all" { _ctx_select_all() }
+        switch id {
+            case "undo"       { _undo() }
+            case "redo"       { _redo() }
+            case "cut"        { _ctx_cut() }
+            case "copy"       { _ctx_copy() }
+            case "paste"      { _ctx_paste() }
+            case "select_all" { _ctx_select_all() }
+        }
         if _onCtxSelect != null { _onCtxSelect(id) }
     }
 

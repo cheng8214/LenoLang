@@ -88,11 +88,11 @@ export struct ScrollView impl Widget {
     func set_bg(int r, int g, int b) { br = r; bg = g; bb = b }
 
     // ---- 滚动范围与约束 ----
-    func _vmax(): float { float m = _contentH - h; if m < 0.0 { return 0.0 }; return m }
-    func _hmax(): float { float m = _contentW - w; if m < 0.0 { return 0.0 }; return m }
+    func _vmax(): float { return if _contentH - h < 0.0 then 0.0 else _contentH - h }
+    func _hmax(): float { return if _contentW - w < 0.0 then 0.0 else _contentW - w }
     func _showV(): bool { return _vmax() > 0.0 }
     func _showH(): bool { return _hmax() > 0.0 }
-    func _fabs(float v): float { if v < 0.0 { return -v } return v }
+    func _fabs(float v): float { return if v < 0.0 then -v else v }
     func _clampScroll() {
         float mx = _hmax(), my = _vmax()
         if _scrollX < 0.0 { _scrollX = 0.0 } if _scrollX > mx { _scrollX = mx }
