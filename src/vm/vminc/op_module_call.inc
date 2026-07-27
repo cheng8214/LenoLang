@@ -52,7 +52,23 @@ OPCODE(OP_MODULE_CALL) {
 
     if (!meta) {
         char msg[BUFFER_MEDIUM];
-        snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s", module_name, method_name);
+        // 列出该模块的可用方法作为提示
+        extern ModuleMethodMeta* native_get_module_method_metas(const char* module_name, int* count);
+        int method_count = 0;
+        ModuleMethodMeta* all_methods = native_get_module_method_metas(module_name, &method_count);
+        if (all_methods && method_count > 0) {
+            char available[BUFFER_MEDIUM];
+            int pos = 0;
+            for (int mi = 0; mi < method_count && pos < BUFFER_MEDIUM - 50; mi++) {
+                if (mi > 0) pos += snprintf(available + pos, BUFFER_MEDIUM - pos, ", ");
+                pos += snprintf(available + pos, BUFFER_MEDIUM - pos, "%s", all_methods[mi].method_name);
+            }
+            snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s（可用: %s）",
+                     module_name, method_name, available);
+            free(all_methods);
+        } else {
+            snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s", module_name, method_name);
+        }
         runtime_error(msg, GET_CURRENT_LINE());
         return -1;
     }

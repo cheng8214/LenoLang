@@ -20,8 +20,15 @@
                         }
                         if (!func_found) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
-                                     obj_type->struct_name, func_name);
+                            // 检查是否是因为未 use 导入 clib 类型
+                            Symbol* local_clib = scope_resolve(s->current, obj_type->struct_name);
+                            if (!local_clib) {
+                                snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
+                                         obj_type->struct_name, func_name, obj_type->struct_name);
+                            } else {
+                                snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                         obj_type->struct_name, func_name);
+                            }
                             error_add(ERR_SEMANTIC, ast->line, msg);
                         }
                     }

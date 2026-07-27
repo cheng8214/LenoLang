@@ -519,9 +519,11 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
     if (!func) {
         char msg[256];
 #ifdef _WIN32
-        snprintf(msg, sizeof(msg), "在库中找不到函数 '%s'，错误码: %lu", func_name, GetLastError());
+        snprintf(msg, sizeof(msg), "在库 '%s' 中找不到函数 '%s'，错误码: %lu",
+                 lib->path ? lib->path : "未知", func_name, GetLastError());
 #else
-        snprintf(msg, sizeof(msg), "在库中找不到函数 '%s': %s", func_name, dlerror());
+        snprintf(msg, sizeof(msg), "在库 '%s' 中找不到函数 '%s': %s",
+                 lib->path ? lib->path : "未知", func_name, dlerror());
 #endif
         native_throw_error(msg);
         return val_null();

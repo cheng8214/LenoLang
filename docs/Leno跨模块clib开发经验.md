@@ -13,7 +13,7 @@
 import "sdl_core.leno" as core
 
 export func myFunc(): Ptr[u8] {
-    return core.lib().SDL_CreateSurfaceFrom(...)  // ❌ 报"clib 没有声明该函数"
+    return core.lib().SDL_CreateSurfaceFrom(...)  // ❌ 报"clib 函数未找到"
 }
 ```
 
@@ -29,23 +29,24 @@ export func myFunc(): Ptr[u8] {
 }
 ```
 
-**编译器报错改进建议**：当 `core.lib().SDL_xxx` 失败但 clib 块中确有该函数时，报"clib 类型 'sdl3' 未导入，请添加 `use core.sdl3`"，而非误导性地报"函数未声明"。
+**编译器报错**（✅ 已改进）：当未 `use` 导入 clib 类型时，编译器会提示：
+```
+clib 'sdl3' 函数 'SDL_Init' 未找到，请添加 use 语句导入 clib 类型（如 use module.sdl3）
+```
 
 ---
 
 ## 2. 返回类型标注限制
 
-`Dict` / `Dict[...]` 不能作为函数返回类型标注：
+~~`Dict` / `Dict[...]` 不能作为函数返回类型标注~~（✅ 已修复，`Dict` 和 `Dict[K, V]` 均可作为返回类型）。
 
 ```leno
-// ❌ 编译器报"期望 Dict[unknown, unknown]，实际 struct Dict"
+// ✅ 直接使用 Dict 作为返回类型
 export func captureScreen(): Dict { ... }
 
-// ✅ 不标注返回类型，让编译器推断
-export func captureScreen() { ... }
+// ✅ 使用泛型 Dict
+export func getSettings(): Dict[string, int] { ... }
 ```
-
-**编译器报错改进建议**：直接接受 `Dict` 作为返回类型，或自动推导为 `Dict[string, any]` 等。
 
 ---
 
@@ -69,7 +70,10 @@ export func captureScreen() { ... }
 ffi.write_int8(buf, off, 32); ffi.write_int8(buf, off+1, 0)
 ```
 
-**编译器报错改进建议**：报"ffi 没有 write_int32"时，顺带提示 `可用: write_int(4字节), write_int8(1字节), write_int64(8字节)`。
+**编译器报错**（✅ 已改进）：当调用不存在的 ffi 方法时，编译器会列出可用方法：
+```
+未找到模块方法: ffi.write_int32（可用: utf8_to_utf16, write_bool, call_void, alloc, call, ...）
+```
 
 ---
 
@@ -84,7 +88,10 @@ ffi.write_int8(buf, off, 32); ffi.write_int8(buf, off+1, 0)
 | `shell32.dll` | 文件操作相关 |
 | `kernel32.dll` | `GlobalAlloc`, `GlobalFree`, `GlobalLock`, `GlobalUnlock` 等 |
 
-**运行时错误改进建议**：`clib.call()` 找不到函数时，在错误信息中附带当前已加载的 DLL 文件名。
+**运行时错误**（✅ 已改进）：`clib.call()` 找不到函数时，错误信息会附带 DLL 文件名：
+```
+在库 'SDL3.dll' 中找不到函数 'SDL_FakeFunction'，错误码: 127
+```
 
 ---
 

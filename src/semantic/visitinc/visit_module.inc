@@ -572,10 +572,26 @@
                 ModuleMethodMeta* meta = native_find_module_method(actual_module, ast->u.module_call.method_name);
                 
                 if (!meta) {
-                    // 方法不存在
+                    // 方法不存在，尝试列出该模块的可用方法作为提示
                     char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s",
-                             actual_module, ast->u.module_call.method_name);
+                    extern ModuleMethodMeta* native_get_module_method_metas(const char* module_name, int* count);
+                    int method_count = 0;
+                    ModuleMethodMeta* all_methods = native_get_module_method_metas(actual_module, &method_count);
+                    if (all_methods && method_count > 0) {
+                        // 构建可用方法列表
+                        char available[BUFFER_MEDIUM];
+                        int pos = 0;
+                        for (int mi = 0; mi < method_count && pos < BUFFER_MEDIUM - 50; mi++) {
+                            if (mi > 0) pos += snprintf(available + pos, BUFFER_MEDIUM - pos, ", ");
+                            pos += snprintf(available + pos, BUFFER_MEDIUM - pos, "%s", all_methods[mi].method_name);
+                        }
+                        snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s（可用: %s）",
+                                 actual_module, ast->u.module_call.method_name, available);
+                        free(all_methods);
+                    } else {
+                        snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s",
+                                 actual_module, ast->u.module_call.method_name);
+                    }
                     error_add(ERR_SEMANTIC, ast->line, msg);
                 } else {
                     // 方法存在，检查参数数量
@@ -823,8 +839,15 @@
                         }
                         if (!is_clib_call) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
-                                     obj_type->struct_name, method_name);
+                            // 检查是否是因为未 use 导入 clib 类型
+                            Symbol* local_clib = scope_resolve(s->current, obj_type->struct_name);
+                            if (!local_clib) {
+                                snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
+                                         obj_type->struct_name, method_name, obj_type->struct_name);
+                            } else {
+                                snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                         obj_type->struct_name, method_name);
+                            }
                             error_add(ERR_SEMANTIC, ast->line, msg);
                         } else {
                             // clib 调用验证通过，标记 cached_type 让 codegen 识别
