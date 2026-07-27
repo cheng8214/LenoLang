@@ -1861,21 +1861,116 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             TypeInfo* obj_type = infer_expr_type(s, ast->u.safe_access.obj);
             const char* safe_name = ast->u.safe_access.name;
 
-            if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT) && obj_type->struct_name) {
-                Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
-                if (struct_sym && struct_sym->struct_field_count > 0) {
-                    if (ast->u.safe_access.is_call) {
-                        // 方法调用：返回类型需要运行时确定，默认 any
-                        result = type_new(TYPE_ANY);
-                    } else {
-                        // 字段访问：查找字段类型
-                        for (int i = 0; i < struct_sym->struct_field_count; i++) {
-                            if (strcmp(struct_sym->struct_field_names[i], safe_name) == 0) {
-                                if (struct_sym->struct_field_types[i]) {
-                                    result = type_copy(struct_sym->struct_field_types[i]);
+            if (ast->u.safe_access.is_call && obj_type &&
+                (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE)) {
+                // 方法调用：复用普通方法调用的返回类型查找逻辑
+                // 1. 检查函数类型字段
+                if (obj_type->struct_name && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
+                    Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                    if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
+                        for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
+                            if (strcmp(struct_sym->struct_field_names[fi], safe_name) == 0 &&
+                                struct_sym->struct_field_types[fi]->kind == TYPE_FUNCTION &&
+                                struct_sym->struct_field_types[fi]->return_type) {
+                                result = type_copy(struct_sym->struct_field_types[fi]->return_type);
+                                break;
+                            }
+                        }
+                    }
+                }
+                // 2. face 类型：查 face 定义
+                if (!result && obj_type->kind == TYPE_FACE) {
+                    ObjFaceDef* fdef = face_def_find(obj_type->struct_name);
+                    if (fdef) {
+                        for (int mi = 0; mi < fdef->method_count; mi++) {
+                            if (strcmp(fdef->methods[mi].name, safe_name) == 0) {
+                                if (fdef->methods[mi].return_type) {
+                                    result = type_copy(fdef->methods[mi].return_type);
+                                } else {
+                                    result = type_new(TYPE_ANY);
                                 }
                                 break;
                             }
+                        }
+                    }
+                    // face 可能在导入的模块中
+                    if (!result) {
+                        for (int mi = 0; mi < s->imported_module_count; mi++) {
+                            ImportedModuleInfo* m = &s->imported_modules[mi];
+                            if (m && m->sym_table) {
+                                ModuleFaceSymbol* face_sym = module_symbol_table_find_face(m->sym_table, obj_type->struct_name);
+                                if (face_sym) {
+                                    for (int fi = 0; fi < face_sym->method_count; fi++) {
+                                        if (strcmp(face_sym->methods[fi].name, safe_name) == 0) {
+                                            result = type_new(face_sym->methods[fi].return_type);
+                                            if (face_sym->methods[fi].return_type == TYPE_STRUCT && face_sym->methods[fi].return_struct_name) {
+                                                result->struct_name = strdup(face_sym->methods[fi].return_struct_name);
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    if (result) break;
+                                }
+                            }
+                        }
+                    }
+                }
+                // 3. 从函数表查找方法定义（struct_name::method_name）
+                if (!result && obj_type->struct_name) {
+                    char method_key[256];
+                    snprintf(method_key, sizeof(method_key), "%s::%s", obj_type->struct_name, safe_name);
+                    Ast* func_def = func_table_find(&s->func_table, method_key);
+                    if (func_def && func_def->kind == AST_FUNC_DEF) {
+                        if (func_def->u.func.return_type && func_def->u.func.return_type->kind != TYPE_INFER) {
+                            result = type_copy(func_def->u.func.return_type);
+                        } else if (func_def->u.func.body) {
+                            result = infer_return_type_from_body(s, func_def->u.func.body);
+                        }
+                    }
+                }
+                // 4. 原生方法
+                if (!result) {
+                    int arity;
+                    const char* type_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
+                    TypeKind return_type = native_get_instance_method_return_type(type_name, safe_name, &arity);
+                    if ((return_type == TYPE_STRUCT || return_type == TYPE_CSTRUCT) &&
+                        (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT)) {
+                        result = type_copy(obj_type);
+                    } else if (return_type != TYPE_ANY) {
+                        result = type_new(return_type);
+                    }
+                }
+                // 5. 从模块符号表查找
+                if (!result && obj_type->struct_name) {
+                    for (int i = 0; i < s->imported_module_count; i++) {
+                        ImportedModuleInfo* info = &s->imported_modules[i];
+                        if (info->sym_table) {
+                            ModuleStructMethod* method = module_symbol_table_find_struct_method(
+                                info->sym_table, obj_type->struct_name, safe_name);
+                            if (method) {
+                                if (method->return_type_info) {
+                                    result = type_copy(method->return_type_info);
+                                } else {
+                                    result = type_new(method->return_type);
+                                }
+                                if (method->return_type == TYPE_STRUCT && method->return_struct_name) {
+                                    result->struct_name = strdup(method->return_struct_name);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT) && obj_type->struct_name) {
+                // 字段访问：查找字段类型
+                Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                if (struct_sym && struct_sym->struct_field_count > 0) {
+                    for (int i = 0; i < struct_sym->struct_field_count; i++) {
+                        if (strcmp(struct_sym->struct_field_names[i], safe_name) == 0) {
+                            if (struct_sym->struct_field_types[i]) {
+                                result = type_copy(struct_sym->struct_field_types[i]);
+                            }
+                            break;
                         }
                     }
                 }

@@ -178,7 +178,7 @@ export struct SpinBox impl Widget {
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func is_enabled(): bool { return enabled }
-    func get_text(): string { if _edit != null { return _edit.get_text() }; return "" }
+    func get_text(): string { return _edit?.get_text() ?? "" }
     func on_change(func(float):void cb) { _onChange = cb }
     func _bind_window(Ptr[u8] hwnd) { _hwnd = hwnd; _edit?.set_window(hwnd) }
 
@@ -232,8 +232,7 @@ export struct SpinBox impl Widget {
         }
 
         // 失焦时把文本同步为规范值
-        bool f = false
-        if _edit != null { f = _edit.is_focused() }
+        bool f = _edit?.is_focused() ?? false
         if _wasFocused and not f { _sync_text() }
         _wasFocused = f
     }
