@@ -1,0 +1,77 @@
+// 测试 LenoWin32 进程管理模块
+import "../lib/w32_process.leno" as proc
+
+main() {
+    print("===== 测试 LenoWin32 进程管理 =====")
+    print("")
+
+    // 测试 StandardProcessManager
+    print("【测试 StandardProcessManager】")
+    var pm = new proc.StandardProcessManager()
+
+    // 获取当前进程 PID
+    int pid = proc.getCurrentPid()
+    print("当前进程 PID: " + pid)
+    print("")
+
+    // 获取进程列表
+    print("--- 获取进程列表 ---")
+    var listResult = pm.listProcesses()
+    if listResult.errorCode != 0 {
+        print("获取进程列表失败，错误码: " + listResult.errorCode)
+    } else {
+        if listResult.processes is Array {
+            int total = listResult.processes.len()
+            print("找到 " + total + " 个进程")
+            // 只显示前 5 个
+            int count = 0
+            for listResult.processes to p {
+                if count >= 5 { break }
+                if p is Dict {
+                    print("  PID: " + p.pid + " | 名称: " + p.name)
+                }
+                count = count + 1
+            }
+            if total > 5 {
+                print("  ... 还有 " + (total - 5) + " 个进程")
+            }
+        }
+    }
+    print("")
+
+    // 根据名称查找进程
+    print("--- 查找进程 ---")
+    var findResult = pm.findByName("explorer.exe")
+    if findResult.found {
+        print("找到 explorer.exe: PID = " + findResult.pid)
+    } else {
+        print("未找到 explorer.exe")
+    }
+    print("")
+
+    // 检查当前进程是否存在
+    print("--- 检查进程存在 ---")
+    bool exists = pm.exists(pid)
+    print("当前进程 (PID=" + pid + ") 存在: " + exists)
+    print("")
+
+    // 获取当前进程内存信息
+    print("--- 获取进程内存 ---")
+    var memInfo = proc.getProcessMemory(pid)
+    if memInfo.errorCode == 0 {
+        print("工作集: " + memInfo.workingSet + " KB")
+        print("峰值工作集: " + memInfo.peakWorkingSet + " KB")
+    } else {
+        print("获取内存信息失败，错误码: " + memInfo.errorCode)
+    }
+    print("")
+
+    // 测试 SafeProcessManager
+    print("【测试 SafeProcessManager】")
+    var safePm = new proc.SafeProcessManager()
+    var safeResult = safePm.terminate(9999)
+    print("安全管理器终止进程结果: " + safeResult.message)
+    print("")
+
+    print("===== 测试完成 =====")
+}

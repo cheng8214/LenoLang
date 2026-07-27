@@ -1,0 +1,41 @@
+// 测试通过 Win32.leno 入口模块调用进程和注册表功能
+import "../lib/Win32.leno" as w32
+
+main() {
+    print("===== 测试 Win32.leno 入口模块 =====")
+    print("")
+
+    // 进程管理
+    print("--- 进程管理 ---")
+    int pid = w32.getCurrentPid()
+    print("当前 PID: " + pid)
+    print("进程存在: " + w32.processExists(pid))
+
+    var memInfo = w32.getProcessMemory(pid)
+    if memInfo.errorCode == 0 {
+        print("工作集: " + memInfo.workingSet + " KB")
+    }
+    print("")
+
+    // 注册表操作（使用 Win32 入口常量，无需单独 import w32_reg）
+    print("--- 注册表操作 ---")
+    var createResult = w32.regCreateKey(w32.HKEY_CURRENT_USER, "SOFTWARE\\Win32EntryTest", w32.KEY_ALL_ACCESS)
+    if createResult.errorCode == 0 {
+        print("创建键成功")
+        w32.regCloseKey(createResult.handle)
+    }
+
+    var openResult = w32.regOpenKey(w32.HKEY_CURRENT_USER, "SOFTWARE\\Win32EntryTest", w32.KEY_ALL_ACCESS)
+    if openResult.errorCode == 0 {
+        w32.regWriteString(openResult.handle, "Name", "TestValue")
+        var readResult = w32.regReadString(openResult.handle, "Name")
+        print("写入并读取: " + readResult.value)
+        w32.regCloseKey(openResult.handle)
+    }
+
+    w32.regDeleteKeyRecursive(w32.HKEY_CURRENT_USER, "SOFTWARE\\Win32EntryTest")
+    print("递归删除测试键完成")
+    print("")
+
+    print("===== 测试完成 =====")
+}

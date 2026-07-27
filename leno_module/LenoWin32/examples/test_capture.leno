@@ -1,0 +1,55 @@
+// test_capture.leno — 桌面截屏测试
+// 截取全屏并保存为 screenshot.png
+import "../lib/Win32.leno" as Win32
+import "../../LenoSDL3/lib/SDL3.leno" as SDL3
+import ffi
+
+main() {
+    if not SDL3.initVideo() {
+        print("SDL3 init failed: " + SDL3.getError())
+        return
+    }
+
+    var shot = Win32.captureScreen()
+    if shot is Dict {
+        int w = _int(shot["w"])
+        int h = _int(shot["h"])
+        if w == 0 or h == 0 {
+            print("capture failed: empty screen")
+            SDL3.quit()
+            return
+        }
+
+        int fmt = _int(shot["fmt"])
+        Ptr[u8] pixels = shot["pixels"] as Ptr[u8]
+        int pitch = _int(shot["pitch"])
+
+        print("Screen captured: " + w + "x" + h + " fmt=" + fmt + " pitch=" + pitch)
+
+        // 调试：打印前 2 个像素（小端 ARGB8888 内存布局：B,G,R,A）
+        print("pixel[0]: B=" + ffi.read_byte(pixels, 0) +
+              " G=" + ffi.read_byte(pixels, 1) +
+              " R=" + ffi.read_byte(pixels, 2) +
+              " A=" + ffi.read_byte(pixels, 3))
+
+        Ptr[u8] surface = SDL3.createSurfaceFromRaw(w, h, fmt, pixels, pitch)
+        if surface != null {
+            bool ok = SDL3.saveImagePNG(surface, "d:/CLeno/LenoC/leno_module/LenoWin32/examples/screenshot.png")
+            if ok {
+                print("Screenshot saved: d:/CLeno/LenoC/leno_module/LenoWin32/examples/screenshot.png (" + w + "x" + h + ")")
+            } else {
+                print("Save failed: " + SDL3.getError())
+            }
+            SDL3.destroySurface(surface)
+        } else {
+            print("createSurfaceFromRaw failed: " + SDL3.getError())
+        }
+
+        ffi.free(pixels)
+    } else {
+        print("capture failed or not supported")
+    }
+
+    SDL3.quit()
+    print("test_capture done")
+}

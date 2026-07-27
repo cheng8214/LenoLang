@@ -1,0 +1,237 @@
+// 测试 LenoWin32 注册表操作模块
+import "../lib/w32_reg.leno" as reg
+
+main() {
+    print("===== 测试 LenoWin32 注册表操作 =====")
+    print("")
+
+    // ========== 测试基本键操作 ==========
+    print("--- 测试键操作 ---")
+
+    // 创建键
+    print("1. 创建测试键")
+    var createResult = reg.createKey(
+        reg.HKEY_CURRENT_USER,
+        "SOFTWARE\\LenoWin32Test",
+        reg.KeyAccess.ALL_ACCESS
+    )
+
+    if createResult.errorCode == reg.WinError.SUCCESS {
+        print("   创建成功，句柄: " + createResult.handle)
+        print("   是否新建: " + createResult.created)
+
+        reg.closeKey(createResult.handle)
+    } else {
+        print("   创建失败: " + reg.errorToString(createResult.errorCode))
+    }
+    print("")
+
+    // 打开键
+    print("2. 打开已存在的键")
+    var openResult = reg.openKey(
+        reg.HKEY_CURRENT_USER,
+        "SOFTWARE\\LenoWin32Test",
+        reg.KeyAccess.ALL_ACCESS
+    )
+
+    if openResult.errorCode == reg.WinError.SUCCESS {
+        var hKey = openResult.handle
+        print("   打开成功")
+
+        // ========== 测试值操作 ==========
+        print("")
+        print("--- 测试值操作 ---")
+
+        // 写入字符串值
+        print("3. 写入字符串值")
+        var writeResult = reg.writeString(hKey, "TestString", "Hello from LenoWin32!")
+        print("   写入结果: " + reg.errorToString(writeResult))
+
+        // 读取字符串值
+        print("4. 读取字符串值")
+        var readResult = reg.readString(hKey, "TestString")
+        if readResult.errorCode == reg.WinError.SUCCESS {
+            print("   读取成功: " + readResult.value)
+        } else {
+            print("   读取失败: " + reg.errorToString(readResult.errorCode))
+        }
+
+        // 写入 DWORD 值
+        print("")
+        print("5. 写入 DWORD 值")
+        writeResult = reg.writeDword(hKey, "TestDword", 42)
+        print("   写入结果: " + reg.errorToString(writeResult))
+
+        // 读取 DWORD 值
+        print("6. 读取 DWORD 值")
+        var dwordResult = reg.readDword(hKey, "TestDword")
+        if dwordResult.errorCode == reg.WinError.SUCCESS {
+            print("   读取成功: " + dwordResult.value)
+        } else {
+            print("   读取失败: " + reg.errorToString(dwordResult.errorCode))
+        }
+
+        // 写入 QWORD 值
+        print("")
+        print("7. 写入 QWORD 值")
+        writeResult = reg.writeQword(hKey, "TestQword", 123456789012345)
+        print("   写入结果: " + reg.errorToString(writeResult))
+
+        // 读取 QWORD 值
+        print("8. 读取 QWORD 值")
+        var qwordResult = reg.readQword(hKey, "TestQword")
+        if qwordResult.errorCode == reg.WinError.SUCCESS {
+            print("   读取成功: " + qwordResult.value)
+        } else {
+            print("   读取失败: " + reg.errorToString(qwordResult.errorCode))
+        }
+
+        // 写入展开字符串值
+        print("")
+        print("9. 写入展开字符串值")
+        writeResult = reg.writeExpandString(hKey, "TestExpand", "%SystemRoot%\\System32")
+        print("   写入结果: " + reg.errorToString(writeResult))
+
+        // 读取展开字符串值
+        print("10. 读取展开字符串值（已展开）")
+        var expandResult = reg.readExpandString(hKey, "TestExpand")
+        if expandResult.errorCode == reg.WinError.SUCCESS {
+            print("   读取成功: " + expandResult.value)
+        } else {
+            print("   读取失败: " + reg.errorToString(expandResult.errorCode))
+        }
+
+        // 写入二进制值
+        print("")
+        print("11. 写入二进制值")
+        var binaryData = [0x48, 0x65, 0x6C, 0x6C, 0x6F]
+        writeResult = reg.writeBinary(hKey, "TestBinary", binaryData)
+        print("   写入结果: " + reg.errorToString(writeResult))
+
+        // 读取二进制值
+        print("12. 读取二进制值")
+        var binaryResult = reg.readBinary(hKey, "TestBinary")
+        if binaryResult.errorCode == reg.WinError.SUCCESS {
+            if binaryResult.data is Array {
+                print("   读取成功，字节数: " + binaryResult.data.len())
+                print("   数据: " + binaryResult.data)
+            }
+        } else {
+            print("   读取失败: " + reg.errorToString(binaryResult.errorCode))
+        }
+
+        // 写入多字符串值
+        print("")
+        print("13. 写入多字符串值")
+        var multiStrings = ["Path1", "Path2", "Path3"]
+        writeResult = reg.writeMultiString(hKey, "TestMulti", multiStrings)
+        print("   写入结果: " + reg.errorToString(writeResult))
+
+        // 读取多字符串值
+        print("14. 读取多字符串值")
+        var multiResult = reg.readMultiString(hKey, "TestMulti")
+        if multiResult.errorCode == reg.WinError.SUCCESS {
+            if multiResult.strings is Array {
+                print("   读取成功，字符串数: " + multiResult.strings.len())
+                for multiResult.strings to s {
+                    if s is string {
+                        print("   - " + s)
+                    }
+                }
+            }
+        } else {
+            print("   读取失败: " + reg.errorToString(multiResult.errorCode))
+        }
+
+        // 写入默认值
+        print("")
+        print("15. 写入默认值")
+        writeResult = reg.setDefaultValue(hKey, "Default from LenoWin32")
+        print("   写入结果: " + reg.errorToString(writeResult))
+
+        // 读取默认值
+        print("16. 读取默认值")
+        var defaultResult = reg.getDefaultValue(hKey)
+        if defaultResult.errorCode == reg.WinError.SUCCESS {
+            print("   读取成功: " + defaultResult.value)
+        } else {
+            print("   读取失败: " + reg.errorToString(defaultResult.errorCode))
+        }
+
+        // ========== 测试枚举操作 ==========
+        print("")
+        print("--- 测试枚举操作 ---")
+
+        // 枚举值
+        print("17. 枚举所有值")
+        var enumValuesResult = reg.enumValues(hKey)
+        if enumValuesResult.errorCode == reg.WinError.SUCCESS {
+            if enumValuesResult.values is Array {
+                print("   找到 " + enumValuesResult.values.len() + " 个值")
+                for enumValuesResult.values to valueInfo {
+                    print("   - " + valueInfo)
+                }
+            }
+        } else {
+            print("   枚举失败: " + reg.errorToString(enumValuesResult.errorCode))
+        }
+
+        // 创建子键用于枚举测试
+        print("")
+        print("18. 创建子键")
+        var subKey1 = reg.createKey(hKey, "SubKey1", reg.KeyAccess.ALL_ACCESS)
+        if subKey1.errorCode == reg.WinError.SUCCESS {
+            reg.closeKey(subKey1.handle)
+            print("   子键1创建成功")
+        }
+        var subKey2 = reg.createKey(hKey, "SubKey2", reg.KeyAccess.ALL_ACCESS)
+        if subKey2.errorCode == reg.WinError.SUCCESS {
+            reg.closeKey(subKey2.handle)
+            print("   子键2创建成功")
+        }
+
+        // 枚举子键
+        print("")
+        print("19. 枚举子键")
+        var enumSubKeysResult = reg.enumSubKeys(hKey)
+        if enumSubKeysResult.errorCode == reg.WinError.SUCCESS {
+            if enumSubKeysResult.subKeys is Array {
+                print("   找到 " + enumSubKeysResult.subKeys.len() + " 个子键")
+                for enumSubKeysResult.subKeys to subKeyName {
+                    if subKeyName is string {
+                        print("   - " + subKeyName)
+                    }
+                }
+            }
+        } else {
+            print("   枚举失败: " + reg.errorToString(enumSubKeysResult.errorCode))
+        }
+
+        // ========== 测试高级操作 ==========
+        print("")
+        print("--- 测试高级操作 ---")
+
+        // 检查值是否存在
+        print("20. 检查值是否存在")
+        print("   TestString 存在: " + reg.valueExists(hKey, "TestString"))
+        print("   NonExistent 存在: " + reg.valueExists(hKey, "NonExistent"))
+
+        // 关闭键
+        print("")
+        print("21. 关闭键")
+        var closeResult = reg.closeKey(hKey)
+        print("   关闭结果: " + reg.errorToString(closeResult))
+
+        // 递归删除测试键
+        print("")
+        print("22. 递归删除测试键")
+        var deleteResult = reg.deleteKeyRecursive(reg.HKEY_CURRENT_USER, "SOFTWARE\\LenoWin32Test")
+        print("   删除结果: " + reg.errorToString(deleteResult))
+
+    } else {
+        print("   打开失败: " + reg.errorToString(openResult.errorCode))
+    }
+
+    print("")
+    print("===== 测试完成 =====")
+}

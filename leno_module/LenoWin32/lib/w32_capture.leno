@@ -1,0 +1,155 @@
+// w32_capture.leno — Windows 桌面截屏（GDI BitBlt + GetDIBits）
+// 通过 user32.dll 和 gdi32.dll 获取屏幕像素数据
+// Windows GDI 返回 BGRA，转换为 RGBA 后输出，兼容性更好
+// 配合 SDL3.createSurfaceFromRaw 可创建 SDL Surface
+import ffi
+
+// ==================== USER32 ====================
+clib user32 {
+    Ptr GetDC(Ptr hwnd)
+    i32 ReleaseDC(Ptr hwnd, Ptr hdc)
+    i32 GetSystemMetrics(i32 index)
+}
+
+user32 _usr = null
+func _usrLib(): user32 {
+    if _usr == null { _usr = ffi.load("user32.dll") }
+    return _usr
+}
+
+// ==================== GDI32 ====================
+clib gdi32 {
+    Ptr CreateCompatibleDC(Ptr hdc)
+    Ptr CreateCompatibleBitmap(Ptr hdc, i32 w, i32 h)
+    Ptr SelectObject(Ptr hdc, Ptr obj)
+    bool BitBlt(Ptr dest, i32 x, i32 y, i32 w, i32 h, Ptr src, i32 x1, i32 y1, u32 rop)
+    i32 GetDIBits(Ptr hdc, Ptr bmp, u32 start, u32 lines, Ptr bits, Ptr bmi, u32 usage)
+    bool DeleteDC(Ptr hdc)
+    bool DeleteObject(Ptr obj)
+}
+
+gdi32 _gdi = null
+func _gdiLib(): gdi32 {
+    if _gdi == null { _gdi = ffi.load("gdi32.dll") }
+    return _gdi
+}
+
+// ==================== BITMAPINFOHEADER ====================
+// Windows BITMAPINFOHEADER 结构 (40 bytes)，GetDIBits 需要
+cstruct BITMAPINFOHEADER {
+    u32 biSize
+    i32 biWidth
+    i32 biHeight
+    u16 biPlanes
+    u16 biBitCount
+    u32 biCompression
+    u32 biSizeImage
+    i32 biXPelsPerMeter
+    i32 biYPelsPerMeter
+    u32 biClrUsed
+    u32 biClrImportant
+}
+
+// ==================== 常量 ====================
+const SRCCOPY        = 0x00CC0020  // BitBlt 光栅操作码：复制源到目标
+const DIB_RGB_COLORS = 0          // GetDIBits 颜色表类型：RGB
+const SM_CXSCREEN    = 0          // GetSystemMetrics 索引：屏幕宽度
+const SM_CYSCREEN    = 1          // GetSystemMetrics 索引：屏幕高度
+
+// SDL3 像素格式：ARGB8888 在小端(x86)内存布局为 B,G,R,A，与 Windows 32-bit DIB 一致
+const FMT_ARGB8888 = 372645892  // SDL_PIXELFORMAT_ARGB8888 = 0x16362004
+
+// ==================== 截屏函数 ====================
+
+// 桌面截屏，返回 Dict 包含像素数据
+// 返回值: { "w": int, "h": int, "fmt": int, "pixels": Ptr[u8], "pitch": int }
+// pixels 由 ffi.malloc 分配，调用者需 ffi.free() 释放
+// 失败返回 {}
+export func captureScreen() {
+    // 1. 获取桌面 DC
+    Ptr hdcScreen = _usrLib().GetDC(null)
+    if hdcScreen == null {
+        print("[w32_capture] GetDC failed")
+        return {}
+    }
+
+    // 2. 获取屏幕尺寸
+    int w = _usrLib().GetSystemMetrics(SM_CXSCREEN)
+    int h = _usrLib().GetSystemMetrics(SM_CYSCREEN)
+    if w == 0 or h == 0 {
+        print("[w32_capture] screen size is 0")
+        _usrLib().ReleaseDC(null, hdcScreen)
+        return {}
+    }
+
+    // 3. 创建内存 DC 和兼容位图
+    Ptr hdcMem = _gdiLib().CreateCompatibleDC(hdcScreen)
+    if hdcMem == null {
+        print("[w32_capture] CreateCompatibleDC failed")
+        _usrLib().ReleaseDC(null, hdcScreen)
+        return {}
+    }
+
+    Ptr hBitmap = _gdiLib().CreateCompatibleBitmap(hdcScreen, w, h)
+    if hBitmap == null {
+        print("[w32_capture] CreateCompatibleBitmap failed")
+        _gdiLib().DeleteDC(hdcMem)
+        _usrLib().ReleaseDC(null, hdcScreen)
+        return {}
+    }
+
+    // 4. 选入位图并 BitBlt
+    Ptr hOld = _gdiLib().SelectObject(hdcMem, hBitmap)
+    _gdiLib().BitBlt(hdcMem, 0, 0, w, h, hdcScreen, 0, 0, SRCCOPY)
+
+    // 5. 构造 BITMAPINFOHEADER
+    var bmi = BITMAPINFOHEADER.malloc()
+    bmi.biSize = 40
+    bmi.biWidth = w
+    bmi.biHeight = -h        // 负值 = 自顶向下，与 SDL 布局一致
+    bmi.biPlanes = 1
+    bmi.biBitCount = 32      // 32-bit BGRA
+    bmi.biCompression = 0    // BI_RGB
+    bmi.biSizeImage = w * h * 4
+
+    // 6. 分配像素缓冲区并获取像素数据
+    int pixelSize = w * h * 4
+    Ptr[u8] pixels = ffi.malloc(pixelSize)
+    int result = _gdiLib().GetDIBits(hdcMem, hBitmap, 0, h, pixels, bmi.to_ptr(), DIB_RGB_COLORS)
+
+    // 先检查 GetDIBits 是否成功
+    if result == 0 {
+        print("[w32_capture] GetDIBits failed")
+        ffi.free(pixels)
+        _gdiLib().SelectObject(hdcMem, hOld)
+        _gdiLib().DeleteObject(hBitmap)
+        _gdiLib().DeleteDC(hdcMem)
+        _usrLib().ReleaseDC(null, hdcScreen)
+        bmi.free()
+        return {}
+    }
+
+    // 7. Alpha 通道修正
+    // Windows GDI 返回 32-bit DIB (BI_RGB)，小端内存布局为 byte0=B,byte1=G,byte2=R,byte3=A。
+    // SDL3 的 SDL_PIXELFORMAT_ARGB8888 在小端上的内存布局同样是 B,G,R,A。
+    // 因此 GDI 数据与 ARGB8888 格式天然匹配，只需把 alpha(byte3) 设为 255 即可。
+    int count = w * h
+    for 0:(count - 1) to i {
+        ffi.write_byte(pixels, i * 4 + 3, 255)   // A = 255
+    }
+
+    // 8. 清理 GDI 资源
+    _gdiLib().SelectObject(hdcMem, hOld)
+    _gdiLib().DeleteObject(hBitmap)
+    _gdiLib().DeleteDC(hdcMem)
+    _usrLib().ReleaseDC(null, hdcScreen)
+    bmi.free()
+
+    return {
+        "w": w,
+        "h": h,
+        "fmt": FMT_ARGB8888,
+        "pixels": pixels,
+        "pitch": w * 4
+    }
+}
