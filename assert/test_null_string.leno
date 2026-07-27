@@ -33,11 +33,11 @@ main() {
     var test_data = "Hello" + strings.char(0) + "World"
     assert_eq(test_data.len(), 11)
 
-    var f = files.open("d:\\test_null.bin", "wb")
+    var f = files.open("test_null.bin", "wb")
     f.write(test_data)
     f.close()
 
-    var f2 = files.open("d:\\test_null.bin", "rb")
+    var f2 = files.open("test_null.bin", "rb")
     var read_data = f2.read()
     f2.close()
     assert_eq(read_data.len(), 11)
@@ -46,7 +46,7 @@ main() {
     for 0:10 to i {
         assert_eq(test_data.byte(i), read_data.byte(i))
     }
-    files.delete("d:\\test_null.bin")
+    files.delete("test_null.bin")
 
     // 测试 6：整数转字符串（模拟加密场景）
     // 0x41004243 = 'A' '\0' 'B' 'C'
