@@ -573,7 +573,7 @@
                 
                 if (!meta) {
                     // 方法不存在，尝试列出该模块的可用方法作为提示
-                    char msg[BUFFER_MEDIUM];
+                    char msg[1024];  /* 大于 BUFFER_MEDIUM，容纳中文 + 多个 %s */
                     extern ModuleMethodMeta* native_get_module_method_metas(const char* module_name, int* count);
                     int method_count = 0;
                     ModuleMethodMeta* all_methods = native_get_module_method_metas(actual_module, &method_count);

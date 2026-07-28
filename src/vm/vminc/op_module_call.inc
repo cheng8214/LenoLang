@@ -51,7 +51,7 @@ OPCODE(OP_MODULE_CALL) {
 #endif
 
     if (!meta) {
-        char msg[BUFFER_MEDIUM];
+        char msg[1024];  /* 大于 BUFFER_MEDIUM，容纳中文 + 多个 %s */
         // 列出该模块的可用方法作为提示
         extern ModuleMethodMeta* native_get_module_method_metas(const char* module_name, int* count);
         int method_count = 0;
