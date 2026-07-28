@@ -537,7 +537,18 @@
                 break;
             }
 
-            // 没有找到 struct、clib、face 或 alias
+            // 尝试查找 const 常量定义
+            if (module_info->sym_table) {
+                ModuleVarSymbol* var_sym = module_symbol_table_find_var(module_info->sym_table, symbol_name);
+                if (var_sym && var_sym->is_const) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "use 语句不能导入常量 '%s'，请使用 %s.%s 访问", symbol_name, module_name, symbol_name);
+                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    break;
+                }
+            }
+
+            // 没有找到 struct、clib、face、alias 或函数
             char msg[BUFFER_MEDIUM];
             snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'", module_name, symbol_name);
             error_add(ERR_SEMANTIC, ast->line, msg);

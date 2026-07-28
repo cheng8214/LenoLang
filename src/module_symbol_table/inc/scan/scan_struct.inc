@@ -518,36 +518,80 @@
 
                                 while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
 
-                                const char* field_start = after_struct;
-                                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
-                                int field_len = (int)(after_struct - field_start);
+                                // 支持逗号分隔多字段：int a, b, c
+                                do {
+                                    const char* field_start = after_struct;
+                                    while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                                    int field_len = (int)(after_struct - field_start);
 
-                                if (field_len > 0 && field_len < 64 && field_count < MOD_MAX_FIELDS) {
-                                    TypeKind ft = parse_base_type(type_str);
-                                    fields[field_count].name = (char*)malloc(field_len + 1);
-                                    strncpy(fields[field_count].name, field_start, field_len);
-                                    fields[field_count].name[field_len] = '\0';
-                                    fields[field_count].type = ft;
-                                    fields[field_count].struct_name = NULL;
-                                    // 如果是未识别的自定义类型，检查是否是 clib
-                                    if (ft == TYPE_ANY) {
-                                        if (is_known_clib(type_str, clib_names, clib_name_count)) {
-                                            fields[field_count].type = TYPE_CLIB;
-                                            fields[field_count].struct_name = strdup(type_str);
-                                        } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
-                                            fields[field_count].type = TYPE_STRUCT;
-                                            fields[field_count].struct_name = strdup(type_str);
+                                    if (field_len > 0 && field_len < 64 && field_count < MOD_MAX_FIELDS) {
+                                        TypeKind ft = parse_base_type(type_str);
+                                        fields[field_count].name = (char*)malloc(field_len + 1);
+                                        strncpy(fields[field_count].name, field_start, field_len);
+                                        fields[field_count].name[field_len] = '\0';
+                                        fields[field_count].type = ft;
+                                        fields[field_count].struct_name = NULL;
+                                        // 如果是未识别的自定义类型，检查是否是 clib
+                                        if (ft == TYPE_ANY) {
+                                            if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                                fields[field_count].type = TYPE_CLIB;
+                                                fields[field_count].struct_name = strdup(type_str);
+                                            } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                                fields[field_count].type = TYPE_STRUCT;
+                                                fields[field_count].struct_name = strdup(type_str);
+                                            }
+                                        }
+                                        fields[field_count].element_type = element_type;
+                                        fields[field_count].element_struct_name = element_struct_name;
+                                        fields[field_count].nullable = is_nullable;
+                                        // 仅第一个字段转移 element_struct_name 所有权
+                                        if (field_count > 0) {
+                                            // 后续字段需要独立的 element_struct_name 副本
+                                            if (element_struct_name) {
+                                                fields[field_count].element_struct_name = strdup(element_struct_name);
+                                            }
+                                        } else {
+                                            // 第一个字段直接使用 element_struct_name 指针
+                                        }
+                                        if (field_count >= MOD_MAX_FIELDS) {
+                                            fprintf(stderr, "[错误] struct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
+                                        } else {
+                                            field_count++;
                                         }
                                     }
-                                    fields[field_count].element_type = element_type;
-                                    fields[field_count].element_struct_name = element_struct_name;
-                                    fields[field_count].nullable = is_nullable;
-                                    if (field_count >= MOD_MAX_FIELDS) {
-                                        fprintf(stderr, "[错误] struct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
-                                    } else {
-                                        field_count++;
+
+                                    // 跳过空白
+                                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+
+                                    // 跳过字段默认值（逗号前的默认值：int a = 5, b = 3）
+                                    if (*after_struct == '=') {
+                                        after_struct++; // 跳过 =
+                                        while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                        // 处理默认值中的嵌套括号
+                                        if (*after_struct == '{') {
+                                            int depth = 1;
+                                            after_struct++;
+                                            while (*after_struct && depth > 0) {
+                                                if (*after_struct == '{') depth++;
+                                                else if (*after_struct == '}') depth--;
+                                                after_struct++;
+                                            }
+                                        } else if (*after_struct == '[') {
+                                            int depth = 1;
+                                            after_struct++;
+                                            while (*after_struct && depth > 0) {
+                                                if (*after_struct == '[') depth++;
+                                                else if (*after_struct == ']') depth--;
+                                                after_struct++;
+                                            }
+                                        } else {
+                                            // 简单值，跳到逗号或分号或行尾或 }
+                                            while (*after_struct && *after_struct != ',' && *after_struct != ';' && *after_struct != '\n' && *after_struct != '}') after_struct++;
+                                        }
+                                        // 跳过空白
+                                        while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
                                     }
-                                }
+                                } while (*after_struct == ',' && (after_struct++, 1));
                             }
 
                             // 跳过字段默认值（可能包含嵌套的 {} 或 []，如 Dict val = {}）

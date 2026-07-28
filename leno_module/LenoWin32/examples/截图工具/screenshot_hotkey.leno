@@ -1,14 +1,19 @@
-// screenshot_hotkey.leno — Leno 热键截图工具（纯热键版，最简单可靠方案）
-// Ctrl+Shift+S 截图，Enter 保存到桌面，Ctrl+C 复制到剪贴板，Esc 取消
+// screenshot_hotkey.leno — Leno 热键截图工具（带标注功能）
+// Ctrl+Shift+S 截图，选区后可添加标注，Enter 保存到桌面，Ctrl+C 复制到剪贴板，Esc 取消
 import ffi
 import times
 import dirs
 import "../../lib/Win32.leno" as Win32
 import "../../../LenoSDL3/lib/SDL3.leno" as SDL3
+import "annotation.leno" as anno
 
 use SDL3.(Event, Renderer, Scancode, WindowFlag, MouseButton, Font)
+use anno.(Annotation, AnnotationList, ToolbarConfig)
 
 const MOD_CTRL = 0x00C0
+
+// 颜色预设（ARGB）
+const COLORS = [0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFF00, 0xFF00FFFF, 0xFFFF00FF, 0xFFFFFFFF, 0xFF000000]
 
 // 全局像素缓冲区
 Ptr[u8] _pixels = null; var _sw = 0; var _sh = 0
@@ -17,16 +22,59 @@ float _sx = 0.0; float _sy = 0.0; float _ex = 0.0; float _ey = 0.0
 var _sel = false; var _saveReq = false
 var _hint = "拖拽鼠标选择区域，Enter 保存，Ctrl+C 复制"
 
+// 标注相关状态
+AnnotationList _annos = new AnnotationList()
+ToolbarConfig _toolbar = new ToolbarConfig()
+var _drawingAnno = false      // 是否正在绘制标注
+var _annoStartX = 0.0; var _annoStartY = 0.0
+var _toolBarY = 0.0           // 工具栏 Y 坐标
+var _inToolbar = false        // 鼠标是否在工具栏区域
+var _selectedTool = anno.ANNO_RECT // 当前选中的工具
+var _selectedColorIdx = 0     // 当前选中的颜色索引
+
 func hasSel(): bool {
     var fx = if _sx < _ex then _ex - _sx else _sx - _ex
     var fy = if _sy < _ey then _ey - _sy else _sy - _ey
     return _int(fx) > 2 and _int(fy) > 2
 }
 func resetSel() { _sel = false; _sx = 0.0; _sy = 0.0; _ex = 0.0; _ey = 0.0 }
+
 func getRect(): Dict {
     return { x: if _sx < _ex then _sx else _ex, y: if _sy < _ey then _sy else _ey,
              w: if _sx > _ex then _sx - _ex else _ex - _sx,
              h: if _sy > _ey then _sy - _ey else _ey - _sy }
+}
+
+// 工具栏高度
+func toolbarHeight(): float { return 36.0 }
+
+// 检测点是否在工具栏区域内
+func isInToolbar(float x, float y): bool {
+    return y >= _toolBarY and y < _toolBarY + toolbarHeight()
+}
+
+// 检测点击了哪个工具按钮（返回 0-7: 工具，-1: 无）
+func getToolButtonAt(float x, float y): int {
+    if not isInToolbar(x, y) { return -1 }
+    float bx = 10.0; float bw = 32.0; float gap = 4.0
+    for 0 : 7 to i {
+        if x >= bx + i * (bw + gap) and x < bx + (i + 1) * (bw + gap) - gap {
+            return i
+        }
+    }
+    return -1
+}
+
+// 检测点击了哪个颜色按钮（返回 0-7: 颜色，-1: 无）
+func getColorButtonAt(float x, float y): int {
+    if not isInToolbar(x, y) { return -1 }
+    float bx = 300.0; float bw = 20.0; float gap = 4.0
+    for 0 : 7 to i {
+        if x >= bx + i * (bw + gap) and x < bx + (i + 1) * (bw + gap) - gap {
+            return i
+        }
+    }
+    return -1
 }
 
 // ==================== 截图 Session ====================
@@ -46,39 +94,109 @@ func doScreenshot() {
     if not win.ok { ffi.free(_pixels); _pixels = null; return }
 
     resetSel(); _saveReq = false
-    _hint = "拖拽鼠标选择区域，Enter 保存，Ctrl+C 复制"
+    _annos.clear()
+    _selectedTool = anno.ANNO_RECT; _selectedColorIdx = 0
+    _hint = "拖拽选择区域 → 选区后可绘制标注 → Enter 保存"
     win.raise()
 
     var font = SDL3.createFontAuto(16.0)
     Ptr[u8] tex = null
     Ptr[u8] magTex = null  // 放大镜纹理
+    _toolBarY = _float(_sh) - toolbarHeight() - 32.0  // 底部栏上方
 
     win.run(
         func(Event ev): bool {
             if ev.isQuit() or ev.isWindowClose() { return false }
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
 
+            // Ctrl+C 复制
             if ev.isKeyDown() and ev.scancode() == Scancode.C and (ev.keyMod() & MOD_CTRL) != 0 {
                 if hasSel() { copyClipboard(); _hint = "已复制到剪贴板"; SDL3.markFrameRedraw() }
             }
+            // Enter 保存
             if ev.isKeyDown() and (ev.scancode() == Scancode.RETURN or ev.scancode() == Scancode.KP_ENTER) {
                 if hasSel() { _saveReq = true; return false }
                 else { _hint = "请先选择区域"; SDL3.markFrameRedraw() }
             }
+            // Ctrl+Z 撤销标注
+            if ev.isKeyDown() and ev.scancode() == Scancode.Z and (ev.keyMod() & MOD_CTRL) != 0 {
+                _annos.removeLast()
+                _hint = "已撤销标注"
+                SDL3.markFrameRedraw()
+            }
+
+            // 右键：重置选区或取消
             if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.RIGHT {
                 if hasSel() { resetSel(); _hint = "已重置选区"; SDL3.markFrameRedraw() }
                 else { return false }
             }
-            if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.LEFT {
-                _sel = true; _sx = ev.mouseX(); _sy = ev.mouseY(); _ex = _sx; _ey = _sy
+
+            // 鼠标移动
+            if ev.isMouseMotion() {
+                _mx = ev.mouseX(); _my = ev.mouseY()
+                _inToolbar = isInToolbar(_mx, _my)
                 SDL3.markFrameRedraw()
             }
-            if ev.isMouseMotion() { _mx = ev.mouseX(); _my = ev.mouseY(); SDL3.markFrameRedraw() }
-            if ev.isMouseMotion() and _sel { _ex = _mx; _ey = _my; SDL3.markFrameRedraw() }
-            if ev.isMouseButtonUp() and ev.mouseButton() == MouseButton.LEFT and _sel {
-                _sel = false; _ex = ev.mouseX(); _ey = ev.mouseY()
-                _hint = if hasSel() then "按 Enter 保存, Ctrl+C 复制" else "选区太小"
+
+            // 左键按下
+            if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.LEFT {
+                // 检查是否点击工具栏
+                int toolIdx = getToolButtonAt(_mx, _my)
+                if toolIdx >= 0 {
+                    _selectedTool = toolIdx + 1  // 1-8 对应 ANNO 常量
+                    _hint = "工具: " + _toolName(_selectedTool)
+                    SDL3.markFrameRedraw()
+                }
+                else {
+                    int colorIdx = getColorButtonAt(_mx, _my)
+                    if colorIdx >= 0 {
+                        _selectedColorIdx = colorIdx
+                        SDL3.markFrameRedraw()
+                    }
+                    // 不在工具栏：开始选区或标注
+                    else if hasSel() {
+                        // 在选区内：开始绘制标注
+                        _drawingAnno = true
+                        _annoStartX = _mx; _annoStartY = _my
+                    }
+                    else {
+                        // 开始选区
+                        _sel = true; _sx = _mx; _sy = _my; _ex = _sx; _ey = _sy
+                    }
+                    SDL3.markFrameRedraw()
+                }
+            }
+
+            // 鼠标拖拽
+            if ev.isMouseMotion() and _sel {
+                _ex = _mx; _ey = _my
                 SDL3.markFrameRedraw()
+            }
+            if ev.isMouseMotion() and _drawingAnno {
+                SDL3.markFrameRedraw()
+            }
+
+            // 左键释放
+            if ev.isMouseButtonUp() and ev.mouseButton() == MouseButton.LEFT {
+                if _sel {
+                    _sel = false; _ex = _mx; _ey = _my
+                    _hint = if hasSel() then "选区完成，可绘制标注，Enter 保存" else "选区太小"
+                    SDL3.markFrameRedraw()
+                }
+                else if _drawingAnno {
+                    _drawingAnno = false
+                    // 添加标注
+                    Annotation a = new Annotation()
+                    a.type = _selectedTool
+                    a.x1 = _annoStartX; a.y1 = _annoStartY
+                    a.x2 = _mx; a.y2 = _my
+                    a.color = COLORS[_selectedColorIdx]
+                    a.lineWidth = 2
+                    a.mosaicSize = 10
+                    _annos.add(a)
+                    _hint = "已添加" + _toolName(_selectedTool) + "标注"
+                    SDL3.markFrameRedraw()
+                }
             }
             return true
         },
@@ -94,14 +212,17 @@ func doScreenshot() {
             float x0 = r["x"] as float; float y0 = r["y"] as float
             float rw = r["w"] as float; float rh = r["h"] as float
 
+            // 遮罩（选区外半透明）
             ren.setBlendMode(1); ren.setColor(0,0,0,120)
-            if rw <= 0.0 or rh <= 0.0 { ren.fillRect(0.0, 0.0, _float(_sw), _float(_sh)) }
-            else {
+            if rw <= 0.0 or rh <= 0.0 {
+                ren.fillRect(0.0, 0.0, _float(_sw), _float(_sh))
+            } else {
                 ren.fillRect(0.0, 0.0, _float(_sw), y0)
                 ren.fillRect(0.0, y0 + rh, _float(_sw), _float(_sh) - y0 - rh)
                 ren.fillRect(0.0, y0, x0, rh)
                 ren.fillRect(x0 + rw, y0, _float(_sw) - x0 - rw, rh)
                 ren.setColor(255,255,255,255); ren.drawRect(x0, y0, rw, rh)
+                // 四角拖拽点
                 float hs = 6.0; ren.setColor(255,255,255,200)
                 ren.fillRect(x0 - hs, y0 - hs, hs*2, hs*2)
                 ren.fillRect(x0 + rw - hs, y0 - hs, hs*2, hs*2)
@@ -110,54 +231,39 @@ func doScreenshot() {
             }
             ren.setBlendMode(0)
 
-            // 十字准星
-            if not _sel {
+            // 绘制已完成的标注
+            _annos.drawAll(ren, font)
+
+            // 绘制正在绘制的标注（实时预览）
+            if _drawingAnno {
+                Annotation tmp = new Annotation()
+                tmp.type = _selectedTool
+                tmp.x1 = _annoStartX; tmp.y1 = _annoStartY; tmp.x2 = _mx; tmp.y2 = _my
+                tmp.color = COLORS[_selectedColorIdx]; tmp.lineWidth = 2
+                _annos._drawOne(ren, tmp, font)
+            }
+
+            // 十字准星（不在绘制标注且不在工具栏时）
+            if not _sel and not _drawingAnno and not _inToolbar {
                 ren.setColor(255,255,255,80)
                 ren.fillRect(_mx, 0.0, 1.0, _float(_sh))
                 ren.fillRect(0.0, _my, _float(_sw), 1.0)
             }
-            // 放大镜（纹理缩放优化）
-            float ms=120.0; int magSize=24; float scale=ms/_float(magSize)
-            float mx = if _mx > _float(_sw)*0.5 then _mx-ms-30 else _mx+30
-            float my = if _my > _float(_sh)*0.5 then _my-ms-30 else _my+30
-            if mx<0 { mx=0 }; if my<0 { my=0 }
-            if mx+ms>_float(_sw) { mx=_float(_sw)-ms }
-            if my+ms>_float(_sh) { my=_float(_sh)-ms }
-            int cx=_int(_mx); int cy=_int(_my); int half=magSize/2
-            // 创建/更新放大镜纹理
-            if magTex == null { magTex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 1, magSize, magSize) }
-            if magTex != null {
-                Ptr[u8] magBuf = ffi.malloc(magSize*magSize*4)
-                if magBuf != null {
-                    for 0:(magSize-1) to dy { for 0:(magSize-1) to dx {
-                        int sx=cx+dx-half; int sy=cy+dy-half
-                        int di=(dy*magSize+dx)*4
-                        if sx>=0 and sx<_sw and sy>=0 and sy<_sh {
-                            int si=sy*_sw*4+sx*4
-                            ffi.write_byte(magBuf,di,ffi.read_byte(_pixels,si))
-                            ffi.write_byte(magBuf,di+1,ffi.read_byte(_pixels,si+1))
-                            ffi.write_byte(magBuf,di+2,ffi.read_byte(_pixels,si+2))
-                            ffi.write_byte(magBuf,di+3,ffi.read_byte(_pixels,si+3))
-                        } else {
-                            ffi.write_byte(magBuf,di,0); ffi.write_byte(magBuf,di+1,0)
-                            ffi.write_byte(magBuf,di+2,0); ffi.write_byte(magBuf,di+3,255)
-                        }
-                    }}
-                    ren.updateTexture(magTex, null, magBuf, magSize*4)
-                    ffi.free(magBuf)
-                }
-                ren.drawTextureAt(magTex, mx, my, ms, ms)
-            }
-            ren.setColor(255,255,255,255)
-            ren.drawRect(mx, my, ms, ms); ren.drawRect(mx-1, my-1, ms+2, ms+2)
-            float mcX=mx+ms*0.5; float mcY=my+ms*0.5; float mcR=6.0
-            ren.setColor(255,80,80,255)
-            ren.fillRect(mcX-mcR, mcY, mcR*2+1, 1); ren.fillRect(mcX, mcY-mcR, 1, mcR*2+1)
 
-            // 底部栏
+            // 放大镜（简化版，仅在非绘制状态下显示）
+            if not _sel and not _drawingAnno and not _inToolbar {
+                _drawMagnifier(ren, magTex)
+            }
+
+            // 工具栏
+            _drawToolbar(ren, font)
+
+            // 底部状态栏
             float bh=32; ren.setColor(0,0,0,180)
             ren.fillRect(0.0, _float(_sh)-bh, _float(_sw), bh)
             if font.ok { ren.drawText(font, _hint, 10.0, _float(_sh)-24, 255,255,255) }
+
+            // 尺寸标注
             if rw>0 and rh>0 and font.ok {
                 var ss = _int(rw) + " x " + _int(rh)
                 var sz = font.measureString(ss)
@@ -169,14 +275,111 @@ func doScreenshot() {
         }
     )
 
-    // 注意：tex 和 magTex 会在 win.run 结束时随 Renderer 销毁而自动释放，无需显式 destroyTexture
     if font.ok { font.close() }
     if _saveReq and hasSel() { saveToFile() }
     ffi.free(_pixels); _pixels = null
 }
 
+// 绘制放大镜
+func _drawMagnifier(Renderer ren, Ptr[u8] magTex) {
+    float ms=120.0; int magSize=24
+    float mx = if _mx > _float(_sw)*0.5 then _mx-ms-30 else _mx+30
+    float my = if _my > _float(_sh)*0.5 then _my-ms-30 else _my+30
+    if mx<0 { mx=0 }; if my<0 { my=0 }
+    if mx+ms>_float(_sw) { mx=_float(_sw)-ms }
+    if my+ms>_float(_sh) { my=_float(_sh)-ms }
+    int cx=_int(_mx); int cy=_int(_my); int half=magSize/2
+
+    if magTex == null { magTex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 1, magSize, magSize) }
+    if magTex != null and _pixels != null {
+        Ptr[u8] magBuf = ffi.malloc(magSize*magSize*4)
+        if magBuf != null {
+            for 0 : (magSize-1) to dy { for 0 : (magSize-1) to dx {
+                int sx=cx+dx-half; int sy=cy+dy-half
+                int di=(dy*magSize+dx)*4
+                if sx>=0 and sx<_sw and sy>=0 and sy<_sh {
+                    int si=sy*_sw*4+sx*4
+                    ffi.write_byte(magBuf,di,ffi.read_byte(_pixels,si))
+                    ffi.write_byte(magBuf,di+1,ffi.read_byte(_pixels,si+1))
+                    ffi.write_byte(magBuf,di+2,ffi.read_byte(_pixels,si+2))
+                    ffi.write_byte(magBuf,di+3,ffi.read_byte(_pixels,si+3))
+                } else {
+                    ffi.write_byte(magBuf,di,0); ffi.write_byte(magBuf,di+1,0)
+                    ffi.write_byte(magBuf,di+2,0); ffi.write_byte(magBuf,di+3,255)
+                }
+            }}
+            ren.updateTexture(magTex, null, magBuf, magSize*4)
+            ffi.free(magBuf)
+        }
+        ren.drawTextureAt(magTex, mx, my, ms, ms)
+    }
+    ren.setColor(255,255,255,255)
+    ren.drawRect(mx, my, ms, ms)
+    float mcX=mx+ms*0.5; float mcY=my+ms*0.5; float mcR=6.0
+    ren.setColor(255,80,80,255)
+    ren.fillRect(mcX-mcR, mcY, mcR*2+1, 1); ren.fillRect(mcX, mcY-mcR, 1, mcR*2+1)
+}
+
+// 绘制工具栏
+func _drawToolbar(Renderer ren, Font font) {
+    float th = toolbarHeight()
+    float ty = _toolBarY
+
+    // 背景
+    ren.setBlendMode(1)
+    ren.setColor(40, 40, 40, 230)
+    ren.fillRect(0.0, ty, _float(_sw), th)
+
+    // 工具按钮
+    float bx = 10.0; float bw = 32.0; float bh = 24.0; float gap = 4.0
+    Array[string] toolNames = ["矩形", "箭头", "文字", "马赛克", "", "", "", ""]
+    for 0 : 7 to i {
+        float tx = bx + i * (bw + gap)
+        // 按钮背景
+        ren.setColor(if i+1 == _selectedTool then 80 else 60, if i+1 == _selectedTool then 80 else 60, if i+1 == _selectedTool then 80 else 60, 255)
+        ren.fillRect(tx, ty + 6, bw, bh)
+        // 按钮边框
+        ren.setColor(100, 100, 100, 255)
+        ren.drawRect(tx, ty + 6, bw, bh)
+        // 按钮文字（简化）
+        if i < 4 and font.ok {
+            string name = toolNames[i]
+            ren.setColor(255, 255, 255, 255)
+            ren.drawText(font, name, tx + 4, ty + 10, 255, 255, 255)
+        }
+    }
+
+    // 分隔线
+    ren.setColor(80, 80, 80, 255)
+    ren.fillRect(290.0, ty + 8, 1.0, th - 16.0)
+
+    // 颜色按钮
+    float cx = 300.0; float cw = 20.0; float gap2 = 4.0
+    for 0 : 7 to i {
+        float colorX = cx + i * (cw + gap2)
+        int col = COLORS[i]
+        ren.setColor(col & 0xFF, (col >> 8) & 0xFF, (col >> 16) & 0xFF, 255)
+        ren.fillRect(colorX, ty + 8, cw, cw)
+        // 选中框
+        if i == _selectedColorIdx {
+            ren.setColor(255, 255, 255, 255)
+            ren.drawRect(colorX - 1, ty + 7, cw + 2, cw + 2)
+        }
+    }
+
+    ren.setBlendMode(0)
+}
+
+// 工具名称
+func _toolName(int t): string {
+    if t == anno.ANNO_RECT { return "矩形" }
+    if t == anno.ANNO_ARROW { return "箭头" }
+    if t == anno.ANNO_TEXT { return "文字" }
+    if t == anno.ANNO_MOSAIC { return "马赛克" }
+    return "未知"
+}
+
 // ==================== 裁剪选区（公共函数）====================
-// 返回裁剪后的像素缓冲区（需调用者 ffi.free）和尺寸
 func cropSelection(): Dict {
     var r = getRect()
     int x=_int(r["x"] as float); int y=_int(r["y"] as float)
@@ -187,7 +390,7 @@ func cropSelection(): Dict {
     if w<=0 or h<=0 { return null }
     int sp=_sw*4; int dp=w*4
     Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return null }
-    for 0:(h-1) to row { for 0:(w-1) to col {
+    for 0 : (h-1) to row { for 0 : (w-1) to col {
         int si=(y+row)*sp+(x+col)*4; int di=row*dp+col*4
         ffi.write_byte(cp,di,ffi.read_byte(_pixels,si))
         ffi.write_byte(cp,di+1,ffi.read_byte(_pixels,si+1))
@@ -203,6 +406,10 @@ func saveToFile() {
     if c == null { return }
     Ptr[u8] cp = c["pixels"] as Ptr[u8]
     int w = _int(c["w"]); int h = _int(c["h"]); int dp = _int(c["dp"])
+
+    // 应用马赛克标注（直接修改像素）
+    anno.renderAnnotationsToPixels(cp, w, h, _annos)
+
     Ptr[u8] sf=SDL3.createSurfaceFromRaw(w,h,SDL3.PIXELFORMAT_ARGB8888,cp,dp)
     if sf!=null {
         var p=dirs.join(_homedir(),"Desktop","screenshot_"+times.format(times.now(),"%Y%m%d_%H%M%S")+".png")
@@ -219,6 +426,10 @@ func copyClipboard() {
     if c == null { return }
     Ptr[u8] cp = c["pixels"] as Ptr[u8]
     int w = _int(c["w"]); int h = _int(c["h"])
+
+    // 应用标注
+    anno.renderAnnotationsToPixels(cp, w, h, _annos)
+
     if Win32.copyToClipboard(cp,w,h) { print("[剪贴板] 已复制 "+w+"x"+h) }
     else { print("[剪贴板] 失败") }
     ffi.free(cp)
@@ -227,17 +438,16 @@ func copyClipboard() {
 // ==================== 入口 ====================
 main() {
     SDL3.ttfInit()
-    print("Leno 截图工具 - Ctrl+Shift+S 截图, Ctrl+C 退出")
+    print("Leno 截图工具 - Ctrl+Shift+S 截图")
+    print("功能: 选区后可添加标注，Ctrl+Z 撤销，Enter 保存")
     print("后台运行中...")
 
     var _hkDown = false
     var msgBuf = Win32.allocMsg()
     while true {
-        // 清空消息队列（派发所有消息）
         while Win32.peekMessage(msgBuf, true) > 0 {
             Win32.dispatchMsg(msgBuf)
         }
-        // 轮询热键
         var ctrl  = Win32.isKeyDown(Win32.VK_CONTROL)
         var shift = Win32.isKeyDown(Win32.VK_SHIFT)
         var sKey  = Win32.isKeyDown(0x53)
@@ -250,9 +460,12 @@ main() {
         }
         _hkDown = hk
 
-        // 休眠 50ms 避免 CPU 100%
-        sleep(50)
+        _sleep(50)
     }
     Win32.freeMsg(msgBuf)
     SDL3.ttfQuit()
 }
+
+clib k32 { void Sleep(u32 ms) }
+k32 _ksleep = null
+func _sleep(int ms) { if _ksleep == null { _ksleep = ffi.load("kernel32.dll") }; _ksleep.Sleep(ms) }
