@@ -17,10 +17,6 @@ float _sx = 0.0; float _sy = 0.0; float _ex = 0.0; float _ey = 0.0
 var _sel = false; var _saveReq = false
 var _hint = "拖拽鼠标选择区域，Enter 保存，Ctrl+C 复制"
 
-clib k32 { void Sleep(u32 ms) }
-k32 _ksleep = null
-func _sleep50() { if _ksleep == null { _ksleep = ffi.load("kernel32.dll") }; _ksleep.Sleep(50) }
-
 func hasSel(): bool {
     var fx = if _sx < _ex then _ex - _sx else _sx - _ex
     var fy = if _sy < _ey then _ey - _sy else _sy - _ey
@@ -55,6 +51,7 @@ func doScreenshot() {
 
     var font = SDL3.createFontAuto(16.0)
     Ptr[u8] tex = null
+    Ptr[u8] magTex = null  // 放大镜纹理
 
     win.run(
         func(Event ev): bool {
@@ -119,22 +116,38 @@ func doScreenshot() {
                 ren.fillRect(_mx, 0.0, 1.0, _float(_sh))
                 ren.fillRect(0.0, _my, _float(_sw), 1.0)
             }
-            // 放大镜
-            float ms=120.0; float mz=5.0; int sr = _int(ms/mz)/2; float px=mz
+            // 放大镜（纹理缩放优化）
+            float ms=120.0; int magSize=24; float scale=ms/_float(magSize)
             float mx = if _mx > _float(_sw)*0.5 then _mx-ms-30 else _mx+30
             float my = if _my > _float(_sh)*0.5 then _my-ms-30 else _my+30
             if mx<0 { mx=0 }; if my<0 { my=0 }
             if mx+ms>_float(_sw) { mx=_float(_sw)-ms }
             if my+ms>_float(_sh) { my=_float(_sh)-ms }
-            int cx=_int(_mx); int cy=_int(_my); int mn=-sr; int mxR=sr-1
-            for mn:mxR to dy { for mn:mxR to dx {
-                int sx=cx+dx; int sy=cy+dy
-                if sx>=0 and sx<_sw and sy>=0 and sy<_sh {
-                    int si=sy*_sw*4+sx*4
-                    ren.setColor(_int(ffi.read_byte(_pixels,si)), _int(ffi.read_byte(_pixels,si+1)), _int(ffi.read_byte(_pixels,si+2)), 255)
-                    ren.fillRect(mx+_float(dx+sr)*px, my+_float(dy+sr)*px, px, px)
+            int cx=_int(_mx); int cy=_int(_my); int half=magSize/2
+            // 创建/更新放大镜纹理
+            if magTex == null { magTex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 1, magSize, magSize) }
+            if magTex != null {
+                Ptr[u8] magBuf = ffi.malloc(magSize*magSize*4)
+                if magBuf != null {
+                    for 0:(magSize-1) to dy { for 0:(magSize-1) to dx {
+                        int sx=cx+dx-half; int sy=cy+dy-half
+                        int di=(dy*magSize+dx)*4
+                        if sx>=0 and sx<_sw and sy>=0 and sy<_sh {
+                            int si=sy*_sw*4+sx*4
+                            ffi.write_byte(magBuf,di,ffi.read_byte(_pixels,si))
+                            ffi.write_byte(magBuf,di+1,ffi.read_byte(_pixels,si+1))
+                            ffi.write_byte(magBuf,di+2,ffi.read_byte(_pixels,si+2))
+                            ffi.write_byte(magBuf,di+3,ffi.read_byte(_pixels,si+3))
+                        } else {
+                            ffi.write_byte(magBuf,di,0); ffi.write_byte(magBuf,di+1,0)
+                            ffi.write_byte(magBuf,di+2,0); ffi.write_byte(magBuf,di+3,255)
+                        }
+                    }}
+                    ren.updateTexture(magTex, null, magBuf, magSize*4)
+                    ffi.free(magBuf)
                 }
-            }}
+                ren.drawTextureAt(magTex, mx, my, ms, ms)
+            }
             ren.setColor(255,255,255,255)
             ren.drawRect(mx, my, ms, ms); ren.drawRect(mx-1, my-1, ms+2, ms+2)
             float mcX=mx+ms*0.5; float mcY=my+ms*0.5; float mcR=6.0
@@ -147,7 +160,8 @@ func doScreenshot() {
             if font.ok { ren.drawText(font, _hint, 10.0, _float(_sh)-24, 255,255,255) }
             if rw>0 and rh>0 and font.ok {
                 var ss = _int(rw) + " x " + _int(rh)
-                float swW=_float(ss.len()*9); float swX=x0+rw/2-swW/2
+                var sz = font.measureString(ss)
+                float swW=sz.w; float swX=x0+rw/2-swW/2
                 float swY=if y0>40 then y0-26 else y0+rh+6
                 ren.setColor(0,0,0,200); ren.fillRect(swX-4, swY, swW+8, 22)
                 ren.drawText(font, ss, swX, swY+2, 255,255,255)
@@ -155,22 +169,24 @@ func doScreenshot() {
         }
     )
 
+    // 注意：tex 和 magTex 会在 win.run 结束时随 Renderer 销毁而自动释放，无需显式 destroyTexture
     if font.ok { font.close() }
     if _saveReq and hasSel() { saveToFile() }
     ffi.free(_pixels); _pixels = null
 }
 
-// ==================== 保存 ====================
-func saveToFile() {
+// ==================== 裁剪选区（公共函数）====================
+// 返回裁剪后的像素缓冲区（需调用者 ffi.free）和尺寸
+func cropSelection(): Dict {
     var r = getRect()
     int x=_int(r["x"] as float); int y=_int(r["y"] as float)
     int w=_int(r["w"] as float); int h=_int(r["h"] as float)
-    if w<=0 or h<=0 { return }
+    if w<=0 or h<=0 { return null }
     if x<0 { x=0 }; if y<0 { y=0 }
     if x+w>_sw { w=_sw-x }; if y+h>_sh { h=_sh-y }
-    if w<=0 or h<=0 { return }
+    if w<=0 or h<=0 { return null }
     int sp=_sw*4; int dp=w*4
-    Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return }
+    Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return null }
     for 0:(h-1) to row { for 0:(w-1) to col {
         int si=(y+row)*sp+(x+col)*4; int di=row*dp+col*4
         ffi.write_byte(cp,di,ffi.read_byte(_pixels,si))
@@ -178,6 +194,15 @@ func saveToFile() {
         ffi.write_byte(cp,di+2,ffi.read_byte(_pixels,si+2))
         ffi.write_byte(cp,di+3,ffi.read_byte(_pixels,si+3))
     }}
+    return { pixels: cp, w: w, h: h, dp: dp }
+}
+
+// ==================== 保存 ====================
+func saveToFile() {
+    var c = cropSelection()
+    if c == null { return }
+    Ptr[u8] cp = c["pixels"] as Ptr[u8]
+    int w = _int(c["w"]); int h = _int(c["h"]); int dp = _int(c["dp"])
     Ptr[u8] sf=SDL3.createSurfaceFromRaw(w,h,SDL3.PIXELFORMAT_ARGB8888,cp,dp)
     if sf!=null {
         var p=dirs.join(_homedir(),"Desktop","screenshot_"+times.format(times.now(),"%Y%m%d_%H%M%S")+".png")
@@ -190,22 +215,10 @@ func saveToFile() {
 
 // ==================== 复制到剪贴板 ====================
 func copyClipboard() {
-    var r = getRect()
-    int x=_int(r["x"] as float); int y=_int(r["y"] as float)
-    int w=_int(r["w"] as float); int h=_int(r["h"] as float)
-    if w<=0 or h<=0 { return }
-    if x<0 { x=0 }; if y<0 { y=0 }
-    if x+w>_sw { w=_sw-x }; if y+h>_sh { h=_sh-y }
-    if w<=0 or h<=0 { return }
-    int sp=_sw*4; int dp=w*4
-    Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return }
-    for 0:(h-1) to row { for 0:(w-1) to col {
-        int si=(y+row)*sp+(x+col)*4; int di=row*dp+col*4
-        ffi.write_byte(cp,di,ffi.read_byte(_pixels,si))
-        ffi.write_byte(cp,di+1,ffi.read_byte(_pixels,si+1))
-        ffi.write_byte(cp,di+2,ffi.read_byte(_pixels,si+2))
-        ffi.write_byte(cp,di+3,ffi.read_byte(_pixels,si+3))
-    }}
+    var c = cropSelection()
+    if c == null { return }
+    Ptr[u8] cp = c["pixels"] as Ptr[u8]
+    int w = _int(c["w"]); int h = _int(c["h"])
     if Win32.copyToClipboard(cp,w,h) { print("[剪贴板] 已复制 "+w+"x"+h) }
     else { print("[剪贴板] 失败") }
     ffi.free(cp)
@@ -238,7 +251,7 @@ main() {
         _hkDown = hk
 
         // 休眠 50ms 避免 CPU 100%
-        _sleep50()
+        sleep(50)
     }
     Win32.freeMsg(msgBuf)
     SDL3.ttfQuit()
