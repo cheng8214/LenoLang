@@ -97,6 +97,17 @@ Ast* parse_statement(Parser* p) {
         case TOK_THREAD_TYPE:
         case TOK_FUTURE_TYPE:
         case TOK_PTR_TYPE:
+        // C 布局类型（i32/u8 等）：允许解析为变量声明，语义分析阶段会限制使用范围
+        case TOK_I8:  case TOK_U8:
+        case TOK_I16: case TOK_U16:
+        case TOK_I32: case TOK_U32:
+        case TOK_I64: case TOK_U64:
+        case TOK_F32: case TOK_F64:
+        case TOK_C_INT: case TOK_C_UINT:
+        case TOK_C_LONG: case TOK_C_ULONG:
+        case TOK_C_LONGLONG: case TOK_C_ULONGLONG:
+        case TOK_C_SIZE: case TOK_C_SSIZE:
+        case TOK_STR8: case TOK_STR16:
             stmt = parse_var_decl_internal(p);
             break;
 

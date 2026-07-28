@@ -147,6 +147,7 @@ void semantic_init(Semantic* s, Ast* root) {
     s->imported_module_count = 0;
     s->is_module = 0;
     s->is_lsp_mode = 0;
+    s->in_clib = 0;
     
     // 初始化 imported_modules 数组
     memset(s->imported_modules, 0, sizeof(s->imported_modules));

@@ -1246,6 +1246,27 @@ int c_layout_is_valid_field_type(TypeKind kind) {
     }
 }
 
+// 判断 TypeKind 是否为 C 布局类型（i32/u8/f32 等）
+// 这些类型只能在 clib 声明、cstruct 字段、Ptr[T] 中使用
+// 在普通变量声明和函数参数/返回值中使用应报错
+int is_c_layout_type(TypeKind kind) {
+    switch (kind) {
+        case TYPE_I8: case TYPE_U8:
+        case TYPE_I16: case TYPE_U16:
+        case TYPE_I32: case TYPE_U32:
+        case TYPE_I64: case TYPE_U64:
+        case TYPE_F32: case TYPE_F64:
+        case TYPE_C_INT: case TYPE_C_UINT:
+        case TYPE_C_LONG: case TYPE_C_ULONG:
+        case TYPE_C_LONGLONG: case TYPE_C_ULONGLONG:
+        case TYPE_C_SIZE: case TYPE_C_SSIZE:
+        case TYPE_STR8: case TYPE_STR16:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 // 将 C 布局 TypeKind 映射为 Leno 等价 TypeKind
 // cstruct 字段类型推断使用此函数，使 i32/u8 等自动映射为 int，无需 as int
 TypeKind c_layout_type_to_leno(TypeKind kind) {

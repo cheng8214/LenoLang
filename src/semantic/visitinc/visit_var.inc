@@ -1,4 +1,15 @@
         case AST_VAR_DECL: {
+            // 检查变量声明类型是否使用了 C 布局类型（i32/u8/f32 等）
+            // C 布局类型只能在 clib 声明、cstruct 字段、Ptr[T] 中使用
+            if (ast->u.var_decl.type && is_c_layout_type(ast->u.var_decl.type->kind)) {
+                char msg[BUFFER_MEDIUM];
+                const char* type_str = type_kind_to_string(ast->u.var_decl.type->kind);
+                snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于变量声明，请使用 Leno 类型（如 int/float/string）", type_str);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+            }
+            // 检查 Ptr[T] 中的 T 是否是 C 布局类型（Ptr[u8] 是合法的）
+            // 注意：Ptr[T] 本身是合法的，不检查
+
             // 在当前作用域定义变量
             SymKind kind;
             if (s->current && s->current->parent == NULL) {

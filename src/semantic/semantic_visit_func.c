@@ -300,6 +300,26 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     // 5. 检查返回类型中是否有未定义的类型
     check_undefined_type(s, ast->u.func.return_type, ast->line);
 
+    // 5.5 检查参数类型和返回类型是否使用了 C 布局类型（i32/u8/f32 等）
+    // C 布局类型只能在 clib 声明、cstruct 字段、Ptr[T] 中使用
+    // 在 clib/cfunc 上下文中的函数定义不检查（clib 内部允许）
+    if (!s->in_clib) {
+        for (int i = 0; i < ast->u.func.pcnt; i++) {
+            if (ast->u.func.param_types[i] && is_c_layout_type(ast->u.func.param_types[i]->kind)) {
+                char msg[BUFFER_MEDIUM];
+                const char* type_str = type_kind_to_string(ast->u.func.param_types[i]->kind);
+                snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于函数参数，请使用 Leno 类型（如 int/float/string）", type_str);
+                error_add(ERR_SEMANTIC, ast->line, msg);
+            }
+        }
+        if (ast->u.func.return_type && is_c_layout_type(ast->u.func.return_type->kind)) {
+            char msg[BUFFER_MEDIUM];
+            const char* type_str = type_kind_to_string(ast->u.func.return_type->kind);
+            snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于函数返回值，请使用 Leno 类型（如 int/float/string）", type_str);
+            error_add(ERR_SEMANTIC, ast->line, msg);
+        }
+    }
+
     // 6. 检查参数类型和返回类型中是否将 var 用作了类型参数
     for (int i = 0; i < ast->u.func.pcnt; i++) {
         if (ast->u.func.param_types[i] && ast->u.func.param_types[i]->kind != TYPE_INFER) {

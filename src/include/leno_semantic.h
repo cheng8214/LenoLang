@@ -53,6 +53,7 @@ typedef struct {
     int imported_module_count;  // 导入的模块数量
     int is_module;      // 是否为模块模式
     int is_lsp_mode;    // 是否为 LSP 模式（保留所有作用域供符号查询）
+    int in_clib;        // 是否在 clib/cfunc 声明上下文中（C 布局类型允许）
 } Semantic;
 
 // 函数表 API
