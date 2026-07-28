@@ -1,0 +1,245 @@
+// screenshot_hotkey.leno — Leno 热键截图工具（纯热键版，最简单可靠方案）
+// Ctrl+Shift+S 截图，Enter 保存到桌面，Ctrl+C 复制到剪贴板，Esc 取消
+import ffi
+import times
+import dirs
+import "../../lib/Win32.leno" as Win32
+import "../../../LenoSDL3/lib/SDL3.leno" as SDL3
+
+use SDL3.(Event, Renderer, Scancode, WindowFlag, MouseButton, Font)
+
+const MOD_CTRL = 0x00C0
+
+// 全局像素缓冲区
+Ptr[u8] _pixels = null; var _sw = 0; var _sh = 0
+float _mx = 0.0; float _my = 0.0
+float _sx = 0.0; float _sy = 0.0; float _ex = 0.0; float _ey = 0.0
+var _sel = false; var _saveReq = false
+var _hint = "拖拽鼠标选择区域，Enter 保存，Ctrl+C 复制"
+
+clib k32 { void Sleep(u32 ms) }
+k32 _ksleep = null
+func _sleep50() { if _ksleep == null { _ksleep = ffi.load("kernel32.dll") }; _ksleep.Sleep(50) }
+
+func hasSel(): bool {
+    var fx = if _sx < _ex then _ex - _sx else _sx - _ex
+    var fy = if _sy < _ey then _ey - _sy else _sy - _ey
+    return _int(fx) > 2 and _int(fy) > 2
+}
+func resetSel() { _sel = false; _sx = 0.0; _sy = 0.0; _ex = 0.0; _ey = 0.0 }
+func getRect(): Dict {
+    return { x: if _sx < _ex then _sx else _ex, y: if _sy < _ey then _sy else _ey,
+             w: if _sx > _ex then _sx - _ex else _ex - _sx,
+             h: if _sy > _ey then _sy - _ey else _ey - _sy }
+}
+
+// ==================== 截图 Session ====================
+func doScreenshot() {
+    var shot = Win32.captureScreen()
+    if not (shot is Dict) { return }
+    _sw = _int(shot["w"]); _sh = _int(shot["h"])
+    _pixels = shot["pixels"] as Ptr[u8]
+    if _sw <= 0 or _sh <= 0 or _pixels == null { return }
+
+    // 重新初始化 SDL（win.run 退出时 windowCount=0 会调 SDL_Quit，必须完整 SDL_Init 回来）
+    SDL3.init(0x20)   // SDL_INIT_VIDEO
+    var win = SDL3.createWindow({
+        title: "LenoScreenshot", w: _sw, h: _sh,
+        flags: WindowFlag.BORDERLESS | WindowFlag.ALWAYS_ON_TOP
+    })
+    if not win.ok { ffi.free(_pixels); _pixels = null; return }
+
+    resetSel(); _saveReq = false
+    _hint = "拖拽鼠标选择区域，Enter 保存，Ctrl+C 复制"
+    win.raise()
+
+    var font = SDL3.createFontAuto(16.0)
+    Ptr[u8] tex = null
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+
+            if ev.isKeyDown() and ev.scancode() == Scancode.C and (ev.keyMod() & MOD_CTRL) != 0 {
+                if hasSel() { copyClipboard(); _hint = "已复制到剪贴板"; SDL3.markFrameRedraw() }
+            }
+            if ev.isKeyDown() and (ev.scancode() == Scancode.RETURN or ev.scancode() == Scancode.KP_ENTER) {
+                if hasSel() { _saveReq = true; return false }
+                else { _hint = "请先选择区域"; SDL3.markFrameRedraw() }
+            }
+            if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.RIGHT {
+                if hasSel() { resetSel(); _hint = "已重置选区"; SDL3.markFrameRedraw() }
+                else { return false }
+            }
+            if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.LEFT {
+                _sel = true; _sx = ev.mouseX(); _sy = ev.mouseY(); _ex = _sx; _ey = _sy
+                SDL3.markFrameRedraw()
+            }
+            if ev.isMouseMotion() { _mx = ev.mouseX(); _my = ev.mouseY(); SDL3.markFrameRedraw() }
+            if ev.isMouseMotion() and _sel { _ex = _mx; _ey = _my; SDL3.markFrameRedraw() }
+            if ev.isMouseButtonUp() and ev.mouseButton() == MouseButton.LEFT and _sel {
+                _sel = false; _ex = ev.mouseX(); _ey = ev.mouseY()
+                _hint = if hasSel() then "按 Enter 保存, Ctrl+C 复制" else "选区太小"
+                SDL3.markFrameRedraw()
+            }
+            return true
+        },
+        func(Renderer ren) {
+            if tex == null and _pixels != null {
+                tex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 0, _sw, _sh)
+                if tex != null { ren.updateTexture(tex, null, _pixels, _sw * 4) }
+            }
+            ren.setColor(0,0,0,255); ren.clear()
+            if tex != null { ren.drawTextureAt(tex, 0.0, 0.0, _float(_sw), _float(_sh)) }
+
+            var r = getRect()
+            float x0 = r["x"] as float; float y0 = r["y"] as float
+            float rw = r["w"] as float; float rh = r["h"] as float
+
+            ren.setBlendMode(1); ren.setColor(0,0,0,120)
+            if rw <= 0.0 or rh <= 0.0 { ren.fillRect(0.0, 0.0, _float(_sw), _float(_sh)) }
+            else {
+                ren.fillRect(0.0, 0.0, _float(_sw), y0)
+                ren.fillRect(0.0, y0 + rh, _float(_sw), _float(_sh) - y0 - rh)
+                ren.fillRect(0.0, y0, x0, rh)
+                ren.fillRect(x0 + rw, y0, _float(_sw) - x0 - rw, rh)
+                ren.setColor(255,255,255,255); ren.drawRect(x0, y0, rw, rh)
+                float hs = 6.0; ren.setColor(255,255,255,200)
+                ren.fillRect(x0 - hs, y0 - hs, hs*2, hs*2)
+                ren.fillRect(x0 + rw - hs, y0 - hs, hs*2, hs*2)
+                ren.fillRect(x0 - hs, y0 + rh - hs, hs*2, hs*2)
+                ren.fillRect(x0 + rw - hs, y0 + rh - hs, hs*2, hs*2)
+            }
+            ren.setBlendMode(0)
+
+            // 十字准星
+            if not _sel {
+                ren.setColor(255,255,255,80)
+                ren.fillRect(_mx, 0.0, 1.0, _float(_sh))
+                ren.fillRect(0.0, _my, _float(_sw), 1.0)
+            }
+            // 放大镜
+            float ms=120.0; float mz=5.0; int sr = _int(ms/mz)/2; float px=mz
+            float mx = if _mx > _float(_sw)*0.5 then _mx-ms-30 else _mx+30
+            float my = if _my > _float(_sh)*0.5 then _my-ms-30 else _my+30
+            if mx<0 { mx=0 }; if my<0 { my=0 }
+            if mx+ms>_float(_sw) { mx=_float(_sw)-ms }
+            if my+ms>_float(_sh) { my=_float(_sh)-ms }
+            int cx=_int(_mx); int cy=_int(_my); int mn=-sr; int mxR=sr-1
+            for mn:mxR to dy { for mn:mxR to dx {
+                int sx=cx+dx; int sy=cy+dy
+                if sx>=0 and sx<_sw and sy>=0 and sy<_sh {
+                    int si=sy*_sw*4+sx*4
+                    ren.setColor(_int(ffi.read_byte(_pixels,si)), _int(ffi.read_byte(_pixels,si+1)), _int(ffi.read_byte(_pixels,si+2)), 255)
+                    ren.fillRect(mx+_float(dx+sr)*px, my+_float(dy+sr)*px, px, px)
+                }
+            }}
+            ren.setColor(255,255,255,255)
+            ren.drawRect(mx, my, ms, ms); ren.drawRect(mx-1, my-1, ms+2, ms+2)
+            float mcX=mx+ms*0.5; float mcY=my+ms*0.5; float mcR=6.0
+            ren.setColor(255,80,80,255)
+            ren.fillRect(mcX-mcR, mcY, mcR*2+1, 1); ren.fillRect(mcX, mcY-mcR, 1, mcR*2+1)
+
+            // 底部栏
+            float bh=32; ren.setColor(0,0,0,180)
+            ren.fillRect(0.0, _float(_sh)-bh, _float(_sw), bh)
+            if font.ok { ren.drawText(font, _hint, 10.0, _float(_sh)-24, 255,255,255) }
+            if rw>0 and rh>0 and font.ok {
+                var ss = _int(rw) + " x " + _int(rh)
+                float swW=_float(ss.len()*9); float swX=x0+rw/2-swW/2
+                float swY=if y0>40 then y0-26 else y0+rh+6
+                ren.setColor(0,0,0,200); ren.fillRect(swX-4, swY, swW+8, 22)
+                ren.drawText(font, ss, swX, swY+2, 255,255,255)
+            }
+        }
+    )
+
+    if font.ok { font.close() }
+    if _saveReq and hasSel() { saveToFile() }
+    ffi.free(_pixels); _pixels = null
+}
+
+// ==================== 保存 ====================
+func saveToFile() {
+    var r = getRect()
+    int x=_int(r["x"] as float); int y=_int(r["y"] as float)
+    int w=_int(r["w"] as float); int h=_int(r["h"] as float)
+    if w<=0 or h<=0 { return }
+    if x<0 { x=0 }; if y<0 { y=0 }
+    if x+w>_sw { w=_sw-x }; if y+h>_sh { h=_sh-y }
+    if w<=0 or h<=0 { return }
+    int sp=_sw*4; int dp=w*4
+    Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return }
+    for 0:(h-1) to row { for 0:(w-1) to col {
+        int si=(y+row)*sp+(x+col)*4; int di=row*dp+col*4
+        ffi.write_byte(cp,di,ffi.read_byte(_pixels,si))
+        ffi.write_byte(cp,di+1,ffi.read_byte(_pixels,si+1))
+        ffi.write_byte(cp,di+2,ffi.read_byte(_pixels,si+2))
+        ffi.write_byte(cp,di+3,ffi.read_byte(_pixels,si+3))
+    }}
+    Ptr[u8] sf=SDL3.createSurfaceFromRaw(w,h,SDL3.PIXELFORMAT_ARGB8888,cp,dp)
+    if sf!=null {
+        var p=dirs.join(_homedir(),"Desktop","screenshot_"+times.format(times.now(),"%Y%m%d_%H%M%S")+".png")
+        if SDL3.saveImagePNG(sf,p) { print("[保存] "+p) }
+        else { print("[保存] 失败: "+SDL3.getError()) }
+        SDL3.destroySurface(sf)
+    }
+    ffi.free(cp)
+}
+
+// ==================== 复制到剪贴板 ====================
+func copyClipboard() {
+    var r = getRect()
+    int x=_int(r["x"] as float); int y=_int(r["y"] as float)
+    int w=_int(r["w"] as float); int h=_int(r["h"] as float)
+    if w<=0 or h<=0 { return }
+    if x<0 { x=0 }; if y<0 { y=0 }
+    if x+w>_sw { w=_sw-x }; if y+h>_sh { h=_sh-y }
+    if w<=0 or h<=0 { return }
+    int sp=_sw*4; int dp=w*4
+    Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return }
+    for 0:(h-1) to row { for 0:(w-1) to col {
+        int si=(y+row)*sp+(x+col)*4; int di=row*dp+col*4
+        ffi.write_byte(cp,di,ffi.read_byte(_pixels,si))
+        ffi.write_byte(cp,di+1,ffi.read_byte(_pixels,si+1))
+        ffi.write_byte(cp,di+2,ffi.read_byte(_pixels,si+2))
+        ffi.write_byte(cp,di+3,ffi.read_byte(_pixels,si+3))
+    }}
+    if Win32.copyToClipboard(cp,w,h) { print("[剪贴板] 已复制 "+w+"x"+h) }
+    else { print("[剪贴板] 失败") }
+    ffi.free(cp)
+}
+
+// ==================== 入口 ====================
+main() {
+    SDL3.ttfInit()
+    print("Leno 截图工具 - Ctrl+Shift+S 截图, Ctrl+C 退出")
+    print("后台运行中...")
+
+    var _hkDown = false
+    var msgBuf = Win32.allocMsg()
+    while true {
+        // 清空消息队列（派发所有消息）
+        while Win32.peekMessage(msgBuf, true) > 0 {
+            Win32.dispatchMsg(msgBuf)
+        }
+        // 轮询热键
+        var ctrl  = Win32.isKeyDown(Win32.VK_CONTROL)
+        var shift = Win32.isKeyDown(Win32.VK_SHIFT)
+        var sKey  = Win32.isKeyDown(0x53)
+        var hk = ctrl and shift and sKey
+
+        if hk and not _hkDown {
+            print("[热键] Ctrl+Shift+S")
+            doScreenshot()
+            print("[截图] 完成")
+        }
+        _hkDown = hk
+
+        // 休眠 50ms 避免 CPU 100%
+        _sleep50()
+    }
+    Win32.freeMsg(msgBuf)
+    SDL3.ttfQuit()
+}

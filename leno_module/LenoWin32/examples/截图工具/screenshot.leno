@@ -1,0 +1,298 @@
+// screenshot.leno — Leno 截图工具（QQ截图风格，带系统托盘）
+// 依赖：LenoSDL3 + LenoWin32
+// 热键 Ctrl+Shift+S 截图，托盘右键菜单操作，Ctrl+C 复制到剪贴板
+import ffi
+import times
+import dirs
+import "../../lib/Win32.leno" as Win32
+import "../../../LenoSDL3/lib/SDL3.leno" as SDL3
+
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
+use SDL3.MouseButton
+use SDL3.Font
+use SDL3.Tray
+use SDL3.TrayMenu
+
+const HOTKEY_ID = 1
+const HOTKEY_MOD = Win32.HOTKEY_MOD_CONTROL | Win32.HOTKEY_MOD_SHIFT
+const HOTKEY_VK  = 0x53          // S 键
+const MOD_CTRL   = 0x00C0        // KMOD_LCTRL | KMOD_RCTRL
+
+// ==================== 全局状态 ====================
+Ptr[u8] _screenPixels = null; var _screenW = 0; var _screenH = 0
+float _startX = 0.0; float _startY = 0.0; float _endX = 0.0; float _endY = 0.0
+float _mouseX = 0.0; float _mouseY = 0.0
+var _selecting = false; var _saveRequested = false
+var _hintText = "拖拽鼠标选择区域，Enter 保存，Esc/右键 取消"
+
+func hasSelection(): bool {
+    var fx = if _startX < _endX then _endX - _startX else _startX - _endX
+    var fy = if _startY < _endY then _endY - _startY else _startY - _endY
+    return _int(fx) > 2 and _int(fy) > 2
+}
+
+func resetSelection() { _selecting = false; _startX = 0.0; _startY = 0.0; _endX = 0.0; _endY = 0.0 }
+
+func getSelectionRect(): Dict {
+    return {
+        x: if _startX < _endX then _startX else _endX,
+        y: if _startY < _endY then _startY else _endY,
+        w: if _startX > _endX then _startX - _endX else _endX - _startX,
+        h: if _startY > _endY then _startY - _endY else _endY - _startY
+    }
+}
+
+// ==================== 截图 Session（嵌套事件循环）====================
+func screenshotSession() {
+    var shot = Win32.captureScreen()
+    if not (shot is Dict) { print("[截图] 截屏失败"); return }
+    _screenW = _int(shot["w"]); _screenH = _int(shot["h"])
+    _screenPixels = shot["pixels"] as Ptr[u8]
+    if _screenW <= 0 or _screenH <= 0 or _screenPixels == null {
+        print("[截图] 截屏数据无效"); return
+    }
+
+    var win = SDL3.createWindow({
+        title: "Leno Screenshot", w: _screenW, h: _screenH,
+        flags: WindowFlag.BORDERLESS | WindowFlag.ALWAYS_ON_TOP
+    })
+    if not win.ok { ffi.free(_screenPixels); _screenPixels = null; return }
+
+    resetSelection(); _saveRequested = false
+    _hintText = "拖拽鼠标选择区域，Enter 保存，Esc/右键 取消"
+    win.raise()
+
+    SDL3.ttfInit()
+    Font font = SDL3.createFontAuto(16.0)
+    Ptr[u8] screenTexture = null
+
+    // ── 事件处理 ──
+    var onEvent = func(Event ev): bool {
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+
+        if ev.isKeyDown() and ev.scancode() == Scancode.C and (ev.keyMod() & MOD_CTRL) != 0 {
+            if hasSelection() { copySelectionToClipboard(); _hintText = "已复制到剪贴板"; SDL3.markFrameRedraw() }
+        }
+
+        if ev.isKeyDown() and (ev.scancode() == Scancode.RETURN or ev.scancode() == Scancode.KP_ENTER) {
+            if hasSelection() { _saveRequested = true; return false }
+            else { _hintText = "请先选择区域"; SDL3.markFrameRedraw() }
+        }
+
+        if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.RIGHT {
+            if hasSelection() { resetSelection(); _hintText = "已重置选区"; SDL3.markFrameRedraw() }
+            else { return false }
+        }
+
+        if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.LEFT {
+            _selecting = true; _startX = ev.mouseX(); _startY = ev.mouseY()
+            _endX = _startX; _endY = _startY; SDL3.markFrameRedraw()
+        }
+        if ev.isMouseMotion() { _mouseX = ev.mouseX(); _mouseY = ev.mouseY(); SDL3.markFrameRedraw() }
+        if ev.isMouseMotion() and _selecting { _endX = _mouseX; _endY = _mouseY; SDL3.markFrameRedraw() }
+        if ev.isMouseButtonUp() and ev.mouseButton() == MouseButton.LEFT and _selecting {
+            _selecting = false; _endX = ev.mouseX(); _endY = ev.mouseY()
+            _hintText = if hasSelection() then "按 Enter 保存, Ctrl+C 复制" else "选区太小，请重新选择"
+            SDL3.markFrameRedraw()
+        }
+        return true
+    }
+
+    // ── 渲染 ──
+    var onRender = func(Renderer ren) {
+        if screenTexture == null and _screenPixels != null {
+            screenTexture = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 0, _screenW, _screenH)
+            if screenTexture != null { ren.updateTexture(screenTexture, null, _screenPixels, _screenW * 4) }
+        }
+        ren.setColor(0, 0, 0, 255); ren.clear()
+        if screenTexture != null { ren.drawTextureAt(screenTexture, 0.0, 0.0, _float(_screenW), _float(_screenH)) }
+
+        var sel = getSelectionRect()
+        float x0 = sel["x"] as float; float y0 = sel["y"] as float
+        float sw = sel["w"] as float; float sh = sel["h"] as float
+
+        // 遮罩
+        ren.setBlendMode(1); ren.setColor(0, 0, 0, 120)
+        if sw <= 0.0 or sh <= 0.0 {
+            ren.fillRect(0.0, 0.0, _float(_screenW), _float(_screenH))
+        } else {
+            ren.fillRect(0.0, 0.0, _float(_screenW), y0)
+            ren.fillRect(0.0, y0 + sh, _float(_screenW), _float(_screenH) - y0 - sh)
+            ren.fillRect(0.0, y0, x0, sh)
+            ren.fillRect(x0 + sw, y0, _float(_screenW) - x0 - sw, sh)
+            ren.setColor(255, 255, 255, 255); ren.drawRect(x0, y0, sw, sh)
+            float hs = 6.0; ren.setColor(255, 255, 255, 200)
+            ren.fillRect(x0 - hs, y0 - hs, hs * 2.0, hs * 2.0)
+            ren.fillRect(x0 + sw - hs, y0 - hs, hs * 2.0, hs * 2.0)
+            ren.fillRect(x0 - hs, y0 + sh - hs, hs * 2.0, hs * 2.0)
+            ren.fillRect(x0 + sw - hs, y0 + sh - hs, hs * 2.0, hs * 2.0)
+        }
+        ren.setBlendMode(0)
+
+        // 十字准星
+        if not _selecting {
+            ren.setColor(255, 255, 255, 80)
+            ren.fillRect(_mouseX, 0.0, 1.0, _float(_screenH))
+            ren.fillRect(0.0, _mouseY, _float(_screenW), 1.0)
+        }
+
+        // 放大镜
+        float mgSize = 120.0; float mgZoom = 5.0
+        int srcR = _int(mgSize / mgZoom) / 2; float pix = mgZoom
+        float mgX = if _mouseX > _float(_screenW) * 0.5 then _mouseX - mgSize - 30.0 else _mouseX + 30.0
+        float mgY = if _mouseY > _float(_screenH) * 0.5 then _mouseY - mgSize - 30.0 else _mouseY + 30.0
+        if mgX < 0.0 { mgX = 0.0 }; if mgY < 0.0 { mgY = 0.0 }
+        if mgX + mgSize > _float(_screenW) { mgX = _float(_screenW) - mgSize }
+        if mgY + mgSize > _float(_screenH) { mgY = _float(_screenH) - mgSize }
+
+        int cx = _int(_mouseX); int cy = _int(_mouseY)
+        int rMin = -srcR; int rMax = srcR - 1
+        for rMin:rMax to dy {
+            for rMin:rMax to dx {
+                int sx = cx + dx; int sy = cy + dy
+                if sx >= 0 and sx < _screenW and sy >= 0 and sy < _screenH {
+                    int si = sy * _screenW * 4 + sx * 4
+                    ren.setColor(_int(ffi.read_byte(_screenPixels, si + 0)), _int(ffi.read_byte(_screenPixels, si + 1)), _int(ffi.read_byte(_screenPixels, si + 2)), 255)
+                    ren.fillRect(mgX + _float(dx + srcR) * pix, mgY + _float(dy + srcR) * pix, pix, pix)
+                }
+            }
+        }
+        ren.setColor(255, 255, 255, 255)
+        ren.drawRect(mgX, mgY, mgSize, mgSize); ren.drawRect(mgX - 1.0, mgY - 1.0, mgSize + 2.0, mgSize + 2.0)
+        float mcX = mgX + mgSize * 0.5; float mcY = mgY + mgSize * 0.5; float mcR = 6.0
+        ren.setColor(255, 80, 80, 255)
+        ren.fillRect(mcX - mcR, mcY, mcR * 2.0 + 1.0, 1.0); ren.fillRect(mcX, mcY - mcR, 1.0, mcR * 2.0 + 1.0)
+
+        // 底部提示栏 + 尺寸
+        float barH = 32.0; ren.setColor(0, 0, 0, 180)
+        ren.fillRect(0.0, _float(_screenH) - barH, _float(_screenW), barH)
+        if font.ok {
+            ren.drawText(font, _hintText, 10.0, _float(_screenH) - 24.0, 255, 255, 255)
+            if sw > 0.0 and sh > 0.0 {
+                var sStr = _int(sw) + " x " + _int(sh)
+                float swW = _float(sStr.len() * 9); float swX = x0 + sw / 2.0 - swW / 2.0
+                float swY = if y0 > 40.0 then y0 - 26.0 else y0 + sh + 6.0
+                ren.setColor(0, 0, 0, 200); ren.fillRect(swX - 4.0, swY, swW + 8.0, 22.0)
+                ren.drawText(font, sStr, swX, swY + 2.0, 255, 255, 255)
+            }
+        }
+    }
+
+    // ── 运行 ──
+    win.run(onEvent, onRender)
+
+    if font.ok { font.close() }; SDL3.ttfQuit()
+
+    if _saveRequested and hasSelection() { saveSelection() }
+    ffi.free(_screenPixels); _screenPixels = null
+}
+
+// ==================== 保存 ====================
+func saveSelection() {
+    var sel = getSelectionRect()
+    int x = _int(sel["x"] as float); int y = _int(sel["y"] as float)
+    int w = _int(sel["w"] as float); int h = _int(sel["h"] as float)
+    if w <= 0 or h <= 0 { return }
+    if x < 0 { x = 0 }; if y < 0 { y = 0 }
+    if x + w > _screenW { w = _screenW - x }; if y + h > _screenH { h = _screenH - y }
+    if w <= 0 or h <= 0 { return }
+
+    int sp = _screenW * 4; int dp = w * 4
+    Ptr[u8] cp = ffi.malloc(w * h * 4)
+    if cp == null { return }
+    for 0:(h - 1) to row { for 0:(w - 1) to col {
+        int si = (y + row) * sp + (x + col) * 4; int di = row * dp + col * 4
+        ffi.write_byte(cp, di + 0, ffi.read_byte(_screenPixels, si + 0))
+        ffi.write_byte(cp, di + 1, ffi.read_byte(_screenPixels, si + 1))
+        ffi.write_byte(cp, di + 2, ffi.read_byte(_screenPixels, si + 2))
+        ffi.write_byte(cp, di + 3, ffi.read_byte(_screenPixels, si + 3))
+    }}
+
+    Ptr[u8] sf = SDL3.createSurfaceFromRaw(w, h, SDL3.PIXELFORMAT_ARGB8888, cp, dp)
+    if sf != null {
+        var path = dirs.join(_homedir(), "Desktop", "screenshot_" + times.format(times.now(), "%Y%m%d_%H%M%S") + ".png")
+        if SDL3.saveImagePNG(sf, path) { print("[截图] 已保存: " + path) }
+        else { print("[截图] 保存失败: " + SDL3.getError()) }
+        SDL3.destroySurface(sf)
+    }
+    ffi.free(cp)
+}
+
+// ==================== 复制到剪贴板 ====================
+func copySelectionToClipboard() {
+    var sel = getSelectionRect()
+    int x = _int(sel["x"] as float); int y = _int(sel["y"] as float)
+    int w = _int(sel["w"] as float); int h = _int(sel["h"] as float)
+    if w <= 0 or h <= 0 { return }
+    if x < 0 { x = 0 }; if y < 0 { y = 0 }
+    if x + w > _screenW { w = _screenW - x }; if y + h > _screenH { h = _screenH - y }
+    if w <= 0 or h <= 0 { return }
+
+    int sp = _screenW * 4; int dp = w * 4
+    Ptr[u8] cp = ffi.malloc(w * h * 4)
+    if cp == null { return }
+    for 0:(h - 1) to row { for 0:(w - 1) to col {
+        int si = (y + row) * sp + (x + col) * 4; int di = row * dp + col * 4
+        ffi.write_byte(cp, di + 0, ffi.read_byte(_screenPixels, si + 0))
+        ffi.write_byte(cp, di + 1, ffi.read_byte(_screenPixels, si + 1))
+        ffi.write_byte(cp, di + 2, ffi.read_byte(_screenPixels, si + 2))
+        ffi.write_byte(cp, di + 3, ffi.read_byte(_screenPixels, si + 3))
+    }}
+
+    if Win32.copyToClipboard(cp, w, h) { print("[截图] 已复制到剪贴板 (" + w + "x" + h + ")") }
+    else { print("[截图] 复制到剪贴板失败") }
+    ffi.free(cp)
+}
+
+// ==================== 入口 ====================
+main() {
+    // 1. 注册热键
+    if not Win32.registerHotKey(HOTKEY_ID, HOTKEY_MOD, HOTKEY_VK) {
+        print("热键注册失败（可能被占用），仅托盘可用")
+    } else { print("热键 Ctrl+Shift+S 已注册") }
+
+    // 2. 创建可见窗口（1x1 像素）以驱动事件循环 + 托盘
+    // 注：HIDDEN 窗口不触发 onRender，导致热键轮询不工作
+    var win = SDL3.createWindow({
+        title: "LenoScreenshot",
+        w: 1, h: 1,
+        flags: WindowFlag.BORDERLESS
+    })
+    if not win.ok { print("窗口创建失败"); return }
+
+    Tray tray = SDL3.createTray({tooltip: "Leno 截图工具"})
+    if tray == null { print("托盘创建失败"); return }
+
+    TrayMenu menu = tray.getMenu()
+    var _exitAll = false
+
+    // 托盘回调中直接调用截图（不依赖 onEvent 标志位）
+    menu.addButton("立即截图 (Ctrl+Shift+S)", func() { screenshotSession() })
+    menu.addSeparator()
+    menu.addButton("退出", func() { _exitAll = true })
+
+    print("Leno 截图工具已启动，右键托盘图标操作")
+
+    // 3. 主循环
+    win.run(
+        func(Event ev): bool {
+            if _exitAll { tray.destroy(); return false }
+            return true
+        },
+        func(Renderer r) {
+            // GetAsyncKeyState 轮询热键（不受 SDL 内部消息泵影响）
+            var ctrl = Win32.isKeyDown(Win32.VK_CONTROL)
+            var shift = Win32.isKeyDown(Win32.VK_SHIFT)
+            var sKey = Win32.isKeyDown(0x53)
+            if ctrl and shift and sKey {
+                screenshotSession()
+            }
+        }
+    )
+
+    Win32.unregisterHotKey(HOTKEY_ID)
+}

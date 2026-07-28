@@ -1,0 +1,109 @@
+// w32_clipboard.leno — Windows 剪贴板操作
+// 将图像以 CF_DIB 格式写入剪贴板，可直接粘贴到微信/QQ/PS
+import ffi
+
+// ==================== USER32 ====================
+clib user32 {
+    bool OpenClipboard(Ptr[u8] hwnd)
+    bool CloseClipboard()
+    bool EmptyClipboard()
+    Ptr[u8] SetClipboardData(u32 format, Ptr[u8] mem)
+}
+
+// ==================== KERNEL32 ====================
+clib kernel32 {
+    Ptr[u8] GlobalAlloc(u32 flags, u64 size)
+    Ptr[u8] GlobalLock(Ptr[u8] mem)
+    bool GlobalUnlock(Ptr[u8] mem)
+}
+
+// ==================== 常量 ====================
+const CF_DIB        = 8        // DIB 格式
+const GMEM_MOVEABLE  = 0x0002   // 可移动全局内存
+const BI_RGB         = 0        // 无压缩
+const DIB_HEADER_SIZE = 40     // BITMAPINFOHEADER 大小
+
+user32  _cu = null
+kernel32 _ck = null
+func _us(): user32   { if _cu == null { _cu = ffi.load("user32.dll")   }; return _cu }
+func _kr(): kernel32 { if _ck == null { _ck = ffi.load("kernel32.dll") }; return _ck }
+
+// ==================== 写入 BITMAPINFOHEADER ====================
+// 将 40 字节的 BITMAPINFOHEADER 写入内存
+// 返回写入后的指针位置（指向像素数据起始处）
+func _write_bmi(Ptr[u8] buf, int w, int h): Ptr[u8] {
+    int size = w * h * 4
+    // biSize = 40
+    ffi.write_byte(buf, 0, 40);    ffi.write_byte(buf, 1, 0)
+    ffi.write_byte(buf, 2, 0);     ffi.write_byte(buf, 3, 0)
+    // biWidth = w
+    ffi.write_byte(buf, 4, w & 0xFF)
+    ffi.write_byte(buf, 5, (w >> 8) & 0xFF)
+    ffi.write_byte(buf, 6, (w >> 16) & 0xFF)
+    ffi.write_byte(buf, 7, (w >> 24) & 0xFF)
+    // biHeight = -h (top-down DIB)
+    int nH = -h
+    ffi.write_byte(buf, 8,  nH & 0xFF)
+    ffi.write_byte(buf, 9,  (nH >> 8) & 0xFF)
+    ffi.write_byte(buf, 10, (nH >> 16) & 0xFF)
+    ffi.write_byte(buf, 11, (nH >> 24) & 0xFF)
+    // biPlanes = 1
+    ffi.write_byte(buf, 12, 1);    ffi.write_byte(buf, 13, 0)
+    // biBitCount = 32
+    ffi.write_byte(buf, 14, 32);   ffi.write_byte(buf, 15, 0)
+    // biCompression = 0 (BI_RGB)
+    ffi.write_byte(buf, 16, 0); ffi.write_byte(buf, 17, 0)
+    ffi.write_byte(buf, 18, 0); ffi.write_byte(buf, 19, 0)
+    // biSizeImage = size
+    ffi.write_byte(buf, 20, size & 0xFF)
+    ffi.write_byte(buf, 21, (size >> 8) & 0xFF)
+    ffi.write_byte(buf, 22, (size >> 16) & 0xFF)
+    ffi.write_byte(buf, 23, (size >> 24) & 0xFF)
+    // biXPelsPerMeter = 0
+    for 24:31 to i { ffi.write_byte(buf, i, 0) }
+    // biYPelsPerMeter = 0
+    for 32:39 to i { ffi.write_byte(buf, i, 0) }
+    // biClrUsed = 0, biClrImportant = 0 (already zeroed above)
+
+    return ffi.offset(buf, 40)  // 返回像素起始位置
+}
+
+// ==================== 复制 BGRA 像素到全局内存 ====================
+func _copy_pixels(Ptr[u8] dst, Ptr[u8] src, int count) {
+    for 0:(count - 1) to i {
+        ffi.write_byte(dst, i, ffi.read_byte(src, i))
+    }
+}
+
+// ==================== 公开 API ====================
+
+// 将 BGRA 像素数据以 DIB 格式写入剪贴板
+// pixels: BGRA 像素缓冲区, w/h: 图像尺寸
+export func setBitmap(Ptr[u8] pixels, int w, int h): bool {
+    int pixelSize = w * h * 4
+    int totalSize = DIB_HEADER_SIZE + pixelSize
+
+    // 1. 分配全局内存
+    Ptr[u8] hMem = _kr().GlobalAlloc(GMEM_MOVEABLE, totalSize)
+    if hMem == null { return false }
+
+    // 2. 锁定并写入数据
+    Ptr[u8] ptr = _kr().GlobalLock(hMem)
+    if ptr == null { return false }
+
+    // BITMAPINFOHEADER
+    Ptr[u8] pixDest = _write_bmi(ptr, w, h)
+
+    // 像素数据（BGRA，直接复制）
+    _copy_pixels(pixDest, pixels, pixelSize)
+
+    _kr().GlobalUnlock(hMem)
+
+    // 3. 写入剪贴板
+    if not _us().OpenClipboard(null) { return false }
+    _us().EmptyClipboard()
+    Ptr[u8] result = _us().SetClipboardData(CF_DIB, hMem)
+    _us().CloseClipboard()
+
+    return result != null
+}

@@ -4,8 +4,9 @@
 
 import ffi
 import times
-import "../lib/Win32.leno" as Win32
-import "../../LenoSDL3/lib/SDL3.leno" as SDL3
+import dirs
+import "../../lib/Win32.leno" as Win32
+import "../../../LenoSDL3/lib/SDL3.leno" as SDL3
 
 use SDL3.Event
 use SDL3.Renderer
@@ -47,12 +48,12 @@ func onEvent(Event ev): bool {
         return false
     }
 
-    // Enter / 数字区回车 → 请求保存选区
+    // Enter / 数字区回车 → 请求保存选区并退出
     if ev.isKeyDown() and (ev.scancode() == Scancode.RETURN or ev.scancode() == Scancode.KP_ENTER) {
         if hasSelection() {
             _saveRequested = true
-            _hintText = "保存中..."
             SDL3.markFrameRedraw()
+            return false
         } else {
             _hintText = "请先选择区域"
             SDL3.markFrameRedraw()
@@ -247,7 +248,8 @@ func saveSelection() {
     Ptr[u8] cropSurface = SDL3.createSurfaceFromRaw(w, h, SDL3.PIXELFORMAT_ARGB8888, cropPixels, dstPitch)
     if cropSurface != null {
         string fileName = "screenshot_" + times.format(times.now(), "%Y%m%d_%H%M%S") + ".png"
-        bool ok = SDL3.saveImagePNG(cropSurface, fileName)
+        var savePath = dirs.join(_homedir(), "Desktop", fileName)
+        bool ok = SDL3.saveImagePNG(cropSurface, savePath)
         if ok {
             print("已保存: " + fileName + " (" + w + "x" + h + ")")
             _hintText = "已保存: " + fileName
@@ -297,6 +299,9 @@ main() {
         ffi.free(_screenPixels)
         return
     }
+
+    // 抢焦点：无边框窗口默认没有键盘焦点，必须手动 raise
+    win.raise()
 
     print("操作说明：拖拽鼠标框选，Enter 保存，Esc/右键 取消")
 

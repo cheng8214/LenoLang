@@ -4,6 +4,9 @@
 import "w32_capture.leno" as cap
 import "w32_process.leno" as proc
 import "w32_reg.leno" as reg
+import "w32_hotkey.leno" as hotkey
+import "w32_message.leno" as msg
+import "w32_clipboard.leno" as cb
 
 // ── OS 守卫 ──
 export func _is_supported(): bool { return _os() == "windows" }
@@ -20,13 +23,13 @@ export func captureScreen() {
 
 // ==================== 全局热键 ====================
 
+// 注册全局热键（hwnd=null 时为线程级热键）
 export func registerHotKey(int id, int mod, int vk): bool {
     if not _is_supported() {
         print("[LenoWin32] 全局热键仅支持 Windows")
         return false
     }
-    // TODO
-    return false
+    return hotkey.register(null, id, mod, vk)
 }
 
 export func unregisterHotKey(int id): bool {
@@ -34,8 +37,52 @@ export func unregisterHotKey(int id): bool {
         print("[LenoWin32] 全局热键仅支持 Windows")
         return false
     }
-    // TODO
-    return false
+    return hotkey.unregister(null, id)
+}
+
+// 修饰键常量（透传）
+export const HOTKEY_MOD_ALT     = hotkey.MOD_ALT
+export const HOTKEY_MOD_CONTROL = hotkey.MOD_CONTROL
+export const HOTKEY_MOD_SHIFT   = hotkey.MOD_SHIFT
+export const HOTKEY_MOD_WIN     = hotkey.MOD_WIN
+export const HOTKEY_MOD_NOREPEAT = hotkey.MOD_NOREPEAT
+
+// 消息常量
+export const WM_HOTKEY = msg.WM_HOTKEY
+
+// 等待热键（阻塞）
+export func waitHotKey(): int {
+    if not _is_supported() { return -1 }
+    var m = msg.allocMsg()
+    var ret = msg.waitHotkey(m)  // >0=有消息, 0=WM_QUIT, -1=错误
+    var id = -1
+    if ret > 0 {
+        id = msg.msgWParam(m)   // wParam = 注册时的 id
+    }
+    msg.freeMsg(m)
+    return id
+}
+
+// 消息工具（用于非阻塞热键轮询）
+export func allocMsg(): Ptr[u8]       { return msg.allocMsg() }
+export func freeMsg(Ptr[u8] m)        { msg.freeMsg(m) }
+export func msgMessage(Ptr[u8] m): int { return msg.msgMessage(m) }
+export func msgWParam(Ptr[u8] m): int  { return msg.msgWParam(m) }
+export func peekMessage(Ptr[u8] m, bool remove): int { return msg.peekMessage(m, remove) }
+export func getMessage(Ptr[u8] m): int       { return msg.getMessage(m) }
+export func dispatchMsg(Ptr[u8] m)           { msg.dispatchMsg(m) }
+export func isKeyDown(int vk): bool          { return msg.isKeyDown(vk) }
+
+// 虚拟键码
+export const VK_SHIFT   = msg.VK_SHIFT
+export const VK_CONTROL = msg.VK_CONTROL
+
+// ==================== 剪贴板 ====================
+
+// 将 BGRA 像素数据以 DIB 格式写入剪贴板（可直接粘贴到微信/QQ/PS）
+export func copyToClipboard(Ptr[u8] pixels, int w, int h): bool {
+    if not _is_supported() { return false }
+    return cb.setBitmap(pixels, w, h)
 }
 
 // ==================== 进程管理 ====================
