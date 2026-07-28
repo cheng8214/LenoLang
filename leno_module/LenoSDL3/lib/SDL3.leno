@@ -41,7 +41,7 @@ use core.sdl3
 use evt.Event
 use r.Renderer
 use wnd.(Window, EventHandler, RenderCallback)
-use fnt.(Font, TextTexture)
+use fnt.(Font, TextTexture, sdl3_ttf, SDL_SurfaceInfo)
 use tm.(Timer, TimerCallback)
 use btn.Button
 use lbl.Label
@@ -184,7 +184,6 @@ export func acquireFont(string p, float s): Font    { return fnt.acquireFont(p, 
 export func acquireFontAuto(float s): Font         { return fnt.acquireFontAuto(s) }
 export func releaseFont(Font f)                     { fnt.releaseFont(f) }
 export func packColor(int r, int g, int b): int { return fnt.packColor(r, g, b) }
-use fnt.SDL_SurfaceInfo
 
 export func createTextTexture(Ptr[u8] ren, Font f, string t, int r, int g, int b): TextTexture {
     return fnt.createTextTexture(ren, f, t, r, g, b)
@@ -210,6 +209,7 @@ export func createTextTextureShaded(Ptr[u8] ren, Font f, string t, int fr, int f
 
 export func ttfInit(): bool  { return fnt.ttfInit() }
 export func ttfQuit()        { fnt.ttfQuit() }
+export func ttfLib(): sdl3_ttf { return fnt.ttfLib() }
 
 export const STYLE_NORMAL        = fnt.STYLE_NORMAL
 export const STYLE_BOLD          = fnt.STYLE_BOLD

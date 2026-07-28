@@ -389,3 +389,204 @@
 
         p++;
     }
+
+    // 递归扫描 import 子文件，收集子文件中的 clib 定义
+    // 主文件只扫描到 export clib，但子文件中的 clib 也需要收集到模块符号表
+    p = source;
+    while (*p) {
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+        if (!*p) break;
+        if (*p == '/' && *(p+1) == '/') { while (*p && *p != '\n') p++; continue; }
+        if (*p == '/' && *(p+1) == '*') { p += 2; while (*p && !(*p == '*' && *(p+1) == '/')) p++; if (*p) p += 2; continue; }
+        if (*p == '"') { p++; while (*p && *p != '"') { if (*p == '\\' && *(p+1)) p += 2; else p++; } if (*p) p++; continue; }
+
+        // 查找 import 语句
+        if (strncmp(p, "import", 6) == 0 && (p[6] == ' ' || p[6] == '\t')) {
+            char* after_import = p + 6;
+            while (*after_import && (*after_import == ' ' || *after_import == '\t')) after_import++;
+            if (*after_import == '"') {
+                after_import++;
+                const char* path_start = after_import;
+                while (*after_import && *after_import != '"') after_import++;
+                int path_len = (int)(after_import - path_start);
+                if (path_len > 0 && path_len < MAX_PATH_LEN) {
+                    char import_path[MAX_PATH_LEN];
+                    strncpy(import_path, path_start, path_len);
+                    import_path[path_len] = '\0';
+                    // 解析子文件的绝对路径
+                    char sub_full_path[MAX_PATH_LEN] = {0};
+                    if (normalized_current[0]) {
+                        strncpy(sub_full_path, normalized_current, MAX_PATH_LEN - 1);
+                        char* last_sep = strrchr(sub_full_path, '\\');
+                        if (!last_sep) last_sep = strrchr(sub_full_path, '/');
+                        if (last_sep) {
+                            *(last_sep + 1) = '\0';
+                            strncat(sub_full_path, import_path, MAX_PATH_LEN - strlen(sub_full_path) - 1);
+                        } else {
+                            strncpy(sub_full_path, import_path, MAX_PATH_LEN - 1);
+                        }
+                    } else {
+                        strncpy(sub_full_path, import_path, MAX_PATH_LEN - 1);
+                    }
+                    normalize_path(sub_full_path, MAX_PATH_LEN);
+                    
+                    // 读取子文件并扫描其中的 clib 定义
+                    char* sub_source = read_module_file(import_path, sub_full_path);
+                    if (sub_source) {
+                        char* sp = sub_source;
+                        while (*sp) {
+                            while (*sp && (*sp == ' ' || *sp == '\t' || *sp == '\n' || *sp == '\r')) sp++;
+                            if (!*sp) break;
+                            if (*sp == '/' && *(sp+1) == '/') { while (*sp && *sp != '\n') sp++; continue; }
+                            if (*sp == '/' && *(sp+1) == '*') { sp += 2; while (*sp && !(*sp == '*' && *(sp+1) == '/')) sp++; if (*sp) sp += 2; continue; }
+                            if (*sp == '"') { sp++; while (*sp && *sp != '"') { if (*sp == '\\' && *(sp+1)) sp += 2; else sp++; } if (*sp) sp++; continue; }
+
+                            // 查找 export clib
+                            if (strncmp(sp, "export", 6) == 0 && (sp[6] == ' ' || sp[6] == '\t' || sp[6] == '\n' || sp[6] == '\r')) {
+                                char* after_exp = sp + 6;
+                                while (*after_exp && (*after_exp == ' ' || *after_exp == '\t' || *after_exp == '\n' || *after_exp == '\r')) after_exp++;
+                                if (strncmp(after_exp, "clib", 4) == 0 && (after_exp[4] == ' ' || after_exp[4] == '\t')) {
+                                    char* after_clib = after_exp + 4;
+                                    while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                    const char* name_start = after_clib;
+                                    while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                                    int name_len = (int)(after_clib - name_start);
+                                    if (name_len > 0 && name_len < 64) {
+                                        char clib_name_buf[64];
+                                        strncpy(clib_name_buf, name_start, name_len);
+                                        clib_name_buf[name_len] = '\0';
+                                        // 检查是否已经收集过这个 clib
+                                        int already_exists = 0;
+                                        for (int ei = 0; ei < table->clib_count; ei++) {
+                                            if (strcmp(table->clibs[ei].name, clib_name_buf) == 0) {
+                                                already_exists = 1;
+                                                break;
+                                            }
+                                        }
+                                        if (!already_exists) {
+                                            // 解析 clib 函数签名（与主文件相同的逻辑）
+                                            // 跳过到 { 开始
+                                            while (*after_clib && *after_clib != '{') after_clib++;
+                                            if (*after_clib == '{') after_clib++;
+                                            // 解析函数列表
+                                            ModuleClibFuncSymbol funcs[MOD_MAX_CLIB_FUNCS];
+                                            int func_count = 0;
+                                            while (*after_clib && *after_clib != '}' && func_count < MOD_MAX_CLIB_FUNCS) {
+                                                while (*after_clib && (*after_clib == ' ' || *after_clib == '\t' || *after_clib == '\n' || *after_clib == '\r')) after_clib++;
+                                                if (*after_clib == '}') break;
+                                                // 解析返回类型
+                                                const char* rt_start = after_clib;
+                                                while (*after_clib && *after_clib != ' ' && *after_clib != '\t') after_clib++;
+                                                int rt_len = (int)(after_clib - rt_start);
+                                                while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                                // 解析函数名
+                                                const char* fn_start = after_clib;
+                                                while (*after_clib && *after_clib != '(') after_clib++;
+                                                int fn_len = (int)(after_clib - fn_start);
+                                                if (fn_len > 0 && rt_len > 0) {
+                                                    funcs[func_count].name = (char*)malloc(fn_len + 1);
+                                                    strncpy(funcs[func_count].name, fn_start, fn_len);
+                                                    funcs[func_count].name[fn_len] = '\0';
+                                                    // 解析返回类型
+                                                    char rt_buf[128];
+                                                    strncpy(rt_buf, rt_start, rt_len < 127 ? rt_len : 127);
+                                                    rt_buf[rt_len < 127 ? rt_len : 127] = '\0';
+                                                    char* rbracket = strchr(rt_buf, '[');
+                                                    if (rbracket) {
+                                                        *rbracket = '\0';
+                                                        TypeKind base = parse_base_type(rt_buf);
+                                                        if (base == TYPE_PTR) {
+                                                            funcs[func_count].return_type = TYPE_PTR_GENERIC;
+                                                            char* elem_start = rbracket + 1;
+                                                            char* elem_end = strchr(elem_start, ']');
+                                                            if (elem_end) *elem_end = '\0';
+                                                            funcs[func_count].return_element_type = parse_base_type(elem_start);
+                                                        } else {
+                                                            funcs[func_count].return_type = base;
+                                                            funcs[func_count].return_element_type = TYPE_UNKNOWN;
+                                                        }
+                                                    } else {
+                                                        funcs[func_count].return_type = parse_base_type(rt_buf);
+                                                        funcs[func_count].return_element_type = TYPE_UNKNOWN;
+                                                    }
+                                                    funcs[func_count].return_struct_name = NULL;
+                                                    // 解析参数
+                                                    if (*after_clib == '(') after_clib++;
+                                                    TypeKind param_types[MOD_MAX_PARAMS];
+                                                    TypeKind param_element_types[MOD_MAX_PARAMS];
+                                                    char* param_structs[MOD_MAX_PARAMS];
+                                                    int param_count = 0;
+                                                    while (*after_clib && *after_clib != ')' && param_count < MOD_MAX_PARAMS) {
+                                                        while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                                        const char* pt_start = after_clib;
+                                                        while (*after_clib && *after_clib != ',' && *after_clib != ')' && *after_clib != ' ' && *after_clib != '\t') after_clib++;
+                                                        int pt_len = (int)(after_clib - pt_start);
+                                                        if (pt_len > 0 && pt_len < 128) {
+                                                            char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                                            char* pbracket = strchr(pt_buf, '[');
+                                                            if (pbracket) {
+                                                                *pbracket = '\0';
+                                                                TypeKind base = parse_base_type(pt_buf);
+                                                                if (base == TYPE_PTR) {
+                                                                    param_types[param_count] = TYPE_PTR_GENERIC;
+                                                                    char* pelem_start = pbracket + 1;
+                                                                    char* pelem_end = strchr(pelem_start, ']');
+                                                                    if (pelem_end) *pelem_end = '\0';
+                                                                    param_element_types[param_count] = parse_base_type(pelem_start);
+                                                                } else {
+                                                                    param_types[param_count] = base;
+                                                                    param_element_types[param_count] = TYPE_UNKNOWN;
+                                                                }
+                                                            } else {
+                                                                param_types[param_count] = parse_base_type(pt_buf);
+                                                                param_element_types[param_count] = TYPE_UNKNOWN;
+                                                            }
+                                                            param_structs[param_count] = NULL;
+                                                            param_count++;
+                                                        }
+                                                        while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                                        // 跳过参数名
+                                                        while (*after_clib && *after_clib != ',' && *after_clib != ')') after_clib++;
+                                                        if (*after_clib == ',') after_clib++;
+                                                    }
+                                                    if (*after_clib == ')') after_clib++;
+                                                    funcs[func_count].param_count = param_count;
+                                                    funcs[func_count].param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+                                                    funcs[func_count].param_element_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+                                                    funcs[func_count].param_struct_names = (char**)calloc(param_count, sizeof(char*));
+                                                    for (int pi = 0; pi < param_count; pi++) {
+                                                        funcs[func_count].param_types[pi] = param_types[pi];
+                                                        funcs[func_count].param_element_types[pi] = param_element_types[pi];
+                                                        funcs[func_count].param_struct_names[pi] = param_structs[pi]
+                                                            ? strdup(param_structs[pi]) : NULL;
+                                                    }
+                                                    func_count++;
+                                                }
+                                                while (*after_clib && *after_clib != '\n' && *after_clib != '}') after_clib++;
+                                                if (*after_clib == '\n') after_clib++;
+                                            }
+                                            if (*after_clib == '}') after_clib++;
+                                            // 存储 clib 符号
+                                            module_symbol_table_add_clib(table, clib_name_buf, func_count, funcs);
+                                            // 释放临时数据
+                                            for (int fi = 0; fi < func_count; fi++) {
+                                                free(funcs[fi].name);
+                                                for (int pi = 0; pi < funcs[fi].param_count; pi++) {
+                                                    free(funcs[fi].param_struct_names[pi]);
+                                                }
+                                                free(funcs[fi].param_types);
+                                                free(funcs[fi].param_element_types);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            sp++;
+                        }
+                        free(sub_source);
+                    }
+                }
+            }
+        }
+        p++;
+    }

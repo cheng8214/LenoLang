@@ -854,6 +854,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
                     ast->u.module_call.generic_type_args = generic_type_args;
                     ast->u.module_call.generic_type_count = count;
                     ast->u.module_call.generic_type_names = generic_type_names;
+                    ast->u.module_call.clib_return_type = NULL;
 
                     // 释放原始 MODULE_ACCESS（name 已转移，需置 NULL 避免双重释放）
                     obj->u.module_access.module_name = NULL;
@@ -981,8 +982,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
             ast->u.module_call.generic_type_args = NULL;
             ast->u.module_call.generic_type_count = 0;
             ast->u.module_call.generic_type_names = NULL;
-
-            // 释放原始 AST_VAR 节点（name 已转移，需置 NULL 避免双重释放）
+            ast->u.module_call.clib_return_type = NULL;
             left->u.var.name = NULL;
             free(left->u.var.ref.name);
             left->u.var.ref.name = NULL;

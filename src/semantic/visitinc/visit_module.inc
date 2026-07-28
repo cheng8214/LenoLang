@@ -867,6 +867,106 @@
                             // 同时保存 lib 变量的 ref 信息
                             ast->u.module_call.lib_ref = ref;
                             if (ref.name) ast->u.module_call.lib_ref.name = strdup(ref.name);
+                            // 计算并缓存 clib 函数的 Leno 返回类型（供 infer_expr_type 使用）
+                            // clib_sym 可能有函数信息（同模块定义），也可能没有（跨模块导入）
+                            int clib_ret_set = 0;
+                            if (clib_sym && clib_sym->clib_func_count > 0) {
+                                for (int fi = 0; fi < clib_sym->clib_func_count; fi++) {
+                                    if (strcmp(clib_sym->clib_func_names[fi], method_name) == 0) {
+                                        TypeInfo* ret_type = clib_sym->clib_func_return_types[fi];
+                                        if (ret_type) {
+                                            TypeKind rk = ret_type->kind;
+                                            TypeKind leno_rk = c_layout_type_to_leno(rk);
+                                            if (leno_rk != rk) {
+                                                ast->u.module_call.clib_return_type = type_new(leno_rk);
+                                            } else {
+                                                switch (rk) {
+                                                    case TYPE_PTR: {
+                                                        TypeInfo* t = type_new(TYPE_PTR);
+                                                        t->struct_name = strdup("Ptr");
+                                                        ast->u.module_call.clib_return_type = t;
+                                                        break;
+                                                    }
+                                                    case TYPE_PTR_GENERIC: {
+                                                        if (ret_type->element_type) {
+                                                            ast->u.module_call.clib_return_type = type_ptr_generic(type_copy(ret_type->element_type));
+                                                        } else {
+                                                            TypeInfo* t = type_new(TYPE_PTR);
+                                                            t->struct_name = strdup("Ptr");
+                                                            ast->u.module_call.clib_return_type = t;
+                                                        }
+                                                        break;
+                                                    }
+                                                    case TYPE_BOOL:
+                                                        ast->u.module_call.clib_return_type = type_new(TYPE_BOOL);
+                                                        break;
+                                                    case TYPE_NULL:
+                                                        ast->u.module_call.clib_return_type = type_new(TYPE_NULL);
+                                                        break;
+                                                    default:
+                                                        ast->u.module_call.clib_return_type = type_copy(ret_type);
+                                                        break;
+                                                }
+                                            }
+                                        } else {
+                                            ast->u.module_call.clib_return_type = type_new(TYPE_ANY);
+                                        }
+                                        clib_ret_set = 1;
+                                        break;
+                                    }
+                                }
+                            }
+                            // 如果 clib_sym 没有函数信息（跨模块导入），从导入模块的符号表查找
+                            if (!clib_ret_set) {
+                                for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                    ImportedModuleInfo* info = &s->imported_modules[mi];
+                                    if (info->sym_table) {
+                                        ModuleClibSymbol* mod_clib = module_symbol_table_find_clib(info->sym_table, obj_type->struct_name);
+                                        if (mod_clib && mod_clib->func_count > 0) {
+                                            for (int fi = 0; fi < mod_clib->func_count; fi++) {
+                                                if (strcmp(mod_clib->funcs[fi].name, method_name) == 0) {
+                                                    TypeKind rk = mod_clib->funcs[fi].return_type;
+                                                    TypeKind leno_rk = c_layout_type_to_leno(rk);
+                                                    if (leno_rk != rk) {
+                                                        ast->u.module_call.clib_return_type = type_new(leno_rk);
+                                                    } else {
+                                                        switch (rk) {
+                                                            case TYPE_PTR: {
+                                                                TypeInfo* t = type_new(TYPE_PTR);
+                                                                t->struct_name = strdup("Ptr");
+                                                                ast->u.module_call.clib_return_type = t;
+                                                                break;
+                                                            }
+                                                            case TYPE_PTR_GENERIC: {
+                                                                if (mod_clib->funcs[fi].return_element_type != TYPE_UNKNOWN) {
+                                                                    ast->u.module_call.clib_return_type = type_ptr_generic(type_new(mod_clib->funcs[fi].return_element_type));
+                                                                } else {
+                                                                    TypeInfo* t = type_new(TYPE_PTR);
+                                                                    t->struct_name = strdup("Ptr");
+                                                                    ast->u.module_call.clib_return_type = t;
+                                                                }
+                                                                break;
+                                                            }
+                                                            case TYPE_BOOL:
+                                                                ast->u.module_call.clib_return_type = type_new(TYPE_BOOL);
+                                                                break;
+                                                            case TYPE_NULL:
+                                                                ast->u.module_call.clib_return_type = type_new(TYPE_NULL);
+                                                                break;
+                                                            default:
+                                                                ast->u.module_call.clib_return_type = type_new(rk);
+                                                                break;
+                                                        }
+                                                    }
+                                                    clib_ret_set = 1;
+                                                    break;
+                                                }
+                                            }
+                                            if (clib_ret_set) break;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 

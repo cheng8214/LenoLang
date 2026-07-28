@@ -9,7 +9,7 @@ sdl3 _lib = core.lib()
 
 // ==================== clib sdl3_ttf ====================
 
-clib sdl3_ttf {
+export clib sdl3_ttf {
     bool TTF_Init()
     void TTF_Quit()
     Ptr[u8]  TTF_OpenFont(str8 file, f32 ptsize)
@@ -43,7 +43,7 @@ clib sdl3_ttf {
 
 sdl3_ttf g_ttf = null
 
-func ttfLib(): sdl3_ttf {
+export func ttfLib(): sdl3_ttf {
     if g_ttf == null {
         var path = dirs.script_dir() + "/../SDL3_ttf.dll"
         if not files.exists(path) { path = dirs.script_dir() + "/SDL3_ttf.dll" }

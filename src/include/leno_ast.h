@@ -230,7 +230,7 @@ struct Ast {
         struct { char* module_name; char* alias; char* file_path; } import;
         struct { Ast* decl; } export;
         struct { char* module_name; char* symbol_name; } use;
-        struct { char* module_name; char* method_name; AstList args; SymRef lib_ref; TypeInfo** generic_type_args; int generic_type_count; char** generic_type_names; } module_call;
+        struct { char* module_name; char* method_name; AstList args; SymRef lib_ref; TypeInfo** generic_type_args; int generic_type_count; char** generic_type_names; TypeInfo* clib_return_type; } module_call;
         struct { char* module_name; char* member_name; SymRef ref; } module_access;
         struct {
             char** parts;      // 字符串片段数组

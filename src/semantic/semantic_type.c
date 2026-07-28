@@ -394,9 +394,60 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         // clib 调用的 cached_type 是 TYPE_CLIB（供 codegen 识别），
         // 但表达式实际类型应该是映射后的 Leno 类型（零摩擦）
         if (ast->kind == AST_MODULE_CALL && ast->cached_type->kind == TYPE_CLIB && ast->cached_type->struct_name) {
+            // 优先使用 visit 阶段缓存的 clib 返回类型（已映射为 Leno 类型）
+            if (ast->u.module_call.clib_return_type) {
+                return type_copy(ast->u.module_call.clib_return_type);
+            }
+            // 降级：从作用域查找 clib 符号（可能函数信息为空，因为 clib 定义在其他模块中）
             Symbol* clib_sym = scope_resolve(s->root_scope, ast->cached_type->struct_name);
             if (!clib_sym) {
                 clib_sym = scope_resolve(s->current, ast->cached_type->struct_name);
+            }
+            // 如果作用域中的符号没有函数信息，从导入模块的符号表查找
+            if (!clib_sym || clib_sym->clib_func_count == 0) {
+                const char* clib_name = ast->cached_type->struct_name;
+                for (int mi = 0; mi < s->imported_module_count; mi++) {
+                    ImportedModuleInfo* info = &s->imported_modules[mi];
+                    if (info->sym_table) {
+                        ModuleClibSymbol* mod_clib = module_symbol_table_find_clib(info->sym_table, clib_name);
+                        if (mod_clib && mod_clib->func_count > 0) {
+                            const char* func_name = ast->u.module_call.method_name;
+                            for (int fi = 0; fi < mod_clib->func_count; fi++) {
+                                if (strcmp(mod_clib->funcs[fi].name, func_name) == 0) {
+                                    TypeKind rk = mod_clib->funcs[fi].return_type;
+                                    // C 类型 → Leno 类型映射
+                                    TypeKind leno_rk = c_layout_type_to_leno(rk);
+                                    if (leno_rk != rk) {
+                                        return type_new(leno_rk);
+                                    }
+                                    switch (rk) {
+                                        case TYPE_PTR: {
+                                            TypeInfo* t = type_new(TYPE_PTR);
+                                            t->struct_name = strdup("Ptr");
+                                            return t;
+                                        }
+                                        case TYPE_PTR_GENERIC: {
+                                            if (mod_clib->funcs[fi].return_element_type != TYPE_UNKNOWN) {
+                                                return type_ptr_generic(type_new(mod_clib->funcs[fi].return_element_type));
+                                            } else {
+                                                TypeInfo* t = type_new(TYPE_PTR);
+                                                t->struct_name = strdup("Ptr");
+                                                return t;
+                                            }
+                                        }
+                                        case TYPE_BOOL:
+                                            return type_new(TYPE_BOOL);
+                                        case TYPE_NULL:
+                                            return type_new(TYPE_NULL);
+                                        default:
+                                            return type_new(rk);
+                                    }
+                                }
+                            }
+                            break; // 找到了 clib 但没有匹配的函数，不需要继续搜索其他模块
+                        }
+                    }
+                }
             }
             if (clib_sym && clib_sym->clib_func_count > 0) {
                 const char* func_name = ast->u.module_call.method_name;
@@ -1522,6 +1573,63 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             // 查找变量
             Symbol* obj_sym = scope_resolve(s->current, ast->u.module_call.module_name);
             if (obj_sym && obj_sym->type) {
+                // clib 类型实例方法调用（如 ttf.TTF_OpenFont(...)）
+                // native_get_type_name 不支持 TYPE_CLIB，需专用路径处理
+                if (obj_sym->type->kind == TYPE_CLIB && obj_sym->type->struct_name) {
+                    Symbol* clib_sym = scope_resolve(s->current, obj_sym->type->struct_name);
+                    if (clib_sym && clib_sym->clib_func_count > 0) {
+                        const char* method_name = ast->u.module_call.method_name;
+                        for (int ci = 0; ci < clib_sym->clib_func_count; ci++) {
+                            if (strcmp(clib_sym->clib_func_names[ci], method_name) == 0) {
+                                TypeInfo* ret_type = clib_sym->clib_func_return_types[ci];
+                                TypeInfo* result2 = NULL;
+                                if (ret_type) {
+                                    TypeKind rk = ret_type->kind;
+                                    switch (rk) {
+                                        case TYPE_I8: case TYPE_U8:
+                                        case TYPE_I16: case TYPE_U16:
+                                        case TYPE_I32: case TYPE_U32:
+                                        case TYPE_I64: case TYPE_U64:
+                                            result2 = type_new(TYPE_INT); break;
+                                        case TYPE_F32: case TYPE_F64:
+                                            result2 = type_new(TYPE_FLOAT); break;
+                                        case TYPE_STR8: case TYPE_STR16:
+                                            result2 = type_new(TYPE_STRING); break;
+                                        case TYPE_PTR:
+                                            result2 = type_new(TYPE_PTR);
+                                            result2->struct_name = strdup("Ptr"); break;
+                                        case TYPE_PTR_GENERIC:
+                                            // 保留元素类型信息
+                                            if (ret_type->element_type) {
+                                                result2 = type_ptr_generic(type_copy(ret_type->element_type));
+                                            } else {
+                                                result2 = type_new(TYPE_PTR);
+                                                result2->struct_name = strdup("Ptr");
+                                            }
+                                            break;
+                                        case TYPE_BOOL:
+                                            result2 = type_new(TYPE_BOOL); break;
+                                        case TYPE_NULL:
+                                            result2 = type_new(TYPE_NULL); break;
+                                        case TYPE_C_INT: case TYPE_C_UINT:
+                                        case TYPE_C_LONG: case TYPE_C_ULONG:
+                                        case TYPE_C_LONGLONG: case TYPE_C_ULONGLONG:
+                                        case TYPE_C_SIZE: case TYPE_C_SSIZE:
+                                            result2 = type_new(TYPE_INT); break;
+                                        default:
+                                            result2 = type_copy(ret_type); break;
+                                    }
+                                } else {
+                                    result2 = type_new(TYPE_ANY);
+                                }
+                                ast->cached_type = type_copy(result2);
+                                return result2;
+                            }
+                        }
+                    }
+                    return type_new(TYPE_ANY);
+                }
+
                 const char* type_name = native_get_type_name(obj_sym->type->kind);
                 if (type_name) {
                     const char* method_name = ast->u.module_call.method_name;
