@@ -1,0 +1,315 @@
+// screenshot_tool.leno — Leno 桌面截图工具
+// 依赖：LenoSDL3 + LenoWin32
+// 操作：鼠标拖拽框选区域，Enter 保存 PNG，Esc/右键 取消退出
+
+import ffi
+import times
+import "../lib/Win32.leno" as Win32
+import "../../LenoSDL3/lib/SDL3.leno" as SDL3
+
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
+use SDL3.MouseButton
+
+// ==================== 状态 ====================
+
+var _running = true
+var _screenW = 0
+var _screenH = 0
+Ptr[u8] _screenTexture = null
+Ptr[u8] _screenPixels = null
+
+// 选区状态
+var _selecting = false
+float _startX = 0.0
+float _startY = 0.0
+float _endX = 0.0
+float _endY = 0.0
+
+// 是否请求保存
+var _saveRequested = false
+
+// 提示信息
+var _hintText = "拖拽鼠标选择区域，Enter 保存，Esc/右键 取消"
+
+// ==================== 事件处理 ====================
+
+func onEvent(Event ev): bool {
+    // Esc / 窗口关闭 → 退出
+    if ev.isQuit() or ev.isWindowClose() {
+        _running = false
+        return false
+    }
+    if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE {
+        _running = false
+        return false
+    }
+
+    // Enter / 数字区回车 → 请求保存选区
+    if ev.isKeyDown() and (ev.scancode() == Scancode.RETURN or ev.scancode() == Scancode.KP_ENTER) {
+        if hasSelection() {
+            _saveRequested = true
+            _hintText = "保存中..."
+            SDL3.markFrameRedraw()
+        } else {
+            _hintText = "请先选择区域"
+            SDL3.markFrameRedraw()
+        }
+    }
+
+    // 鼠标右键 → 取消当前选区/退出
+    if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.RIGHT {
+        if hasSelection() {
+            resetSelection()
+            _hintText = "已重置选区"
+            SDL3.markFrameRedraw()
+        } else {
+            _running = false
+            return false
+        }
+    }
+
+    // 左键按下 → 开始框选
+    if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.LEFT {
+        _selecting = true
+        _startX = ev.mouseX()
+        _startY = ev.mouseY()
+        _endX = _startX
+        _endY = _startY
+        SDL3.markFrameRedraw()
+    }
+
+    // 鼠标移动 → 更新选区
+    if ev.isMouseMotion() and _selecting {
+        _endX = ev.mouseX()
+        _endY = ev.mouseY()
+        SDL3.markFrameRedraw()
+    }
+
+    // 左键释放 → 结束框选
+    if ev.isMouseButtonUp() and ev.mouseButton() == MouseButton.LEFT and _selecting {
+        _selecting = false
+        _endX = ev.mouseX()
+        _endY = ev.mouseY()
+        if hasSelection() {
+            _hintText = "按 Enter 保存选区"
+        } else {
+            _hintText = "选区太小，请重新选择"
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    return true
+}
+
+func _f_abs(float v): float {
+    if v < 0.0 { return -v }
+    return v
+}
+
+func hasSelection(): bool {
+    return _int(_f_abs(_endX - _startX)) > 2 and _int(_f_abs(_endY - _startY)) > 2
+}
+
+func resetSelection() {
+    _selecting = false
+    _startX = 0.0; _startY = 0.0
+    _endX = 0.0; _endY = 0.0
+}
+
+// 规范化选区
+func getSelectionRect(): Dict {
+    float x0 = if _startX < _endX then _startX else _endX
+    float y0 = if _startY < _endY then _startY else _endY
+    float x1 = if _startX > _endX then _startX else _endX
+    float y1 = if _startY > _endY then _startY else _endY
+    return {x: x0, y: y0, w: x1 - x0, h: y1 - y0}
+}
+
+// ==================== 渲染 ====================
+
+func onRender(Renderer ren) {
+    // 首次渲染时创建纹理
+    if _screenTexture == null and _screenPixels != null {
+        _screenTexture = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 0, _screenW, _screenH)
+        if _screenTexture != null {
+            ren.updateTexture(_screenTexture, null, _screenPixels, _screenW * 4)
+        }
+    }
+
+    // 清屏
+    ren.setColor(0, 0, 0, 255)
+    ren.clear()
+
+    // 绘制桌面截图背景
+    if _screenTexture != null {
+        ren.drawTextureAt(_screenTexture, 0.0, 0.0, _float(_screenW), _float(_screenH))
+    }
+
+    var sel = getSelectionRect()
+    float x0 = sel["x"] as float
+    float y0 = sel["y"] as float
+    float sw = sel["w"] as float
+    float sh = sel["h"] as float
+
+    // 绘制遮罩（选区外变暗）
+    ren.setBlendMode(1) // BLEND
+    ren.setColor(0, 0, 0, 120)
+    if sw <= 0.0 or sh <= 0.0 {
+        ren.fillRect(0.0, 0.0, _float(_screenW), _float(_screenH))
+    } else {
+        // 上
+        ren.fillRect(0.0, 0.0, _float(_screenW), y0)
+        // 下
+        ren.fillRect(0.0, y0 + sh, _float(_screenW), _float(_screenH) - y0 - sh)
+        // 左
+        ren.fillRect(0.0, y0, x0, sh)
+        // 右
+        ren.fillRect(x0 + sw, y0, _float(_screenW) - x0 - sw, sh)
+
+        // 选区边框（白色实线）
+        ren.setColor(255, 255, 255, 255)
+        ren.drawRect(x0, y0, sw, sh)
+
+        // 选区内部四角小方块（抓手）
+        float handleSize = 6.0
+        ren.setColor(255, 255, 255, 200)
+        ren.fillRect(x0 - handleSize, y0 - handleSize, handleSize * 2.0, handleSize * 2.0)
+        ren.fillRect(x0 + sw - handleSize, y0 - handleSize, handleSize * 2.0, handleSize * 2.0)
+        ren.fillRect(x0 - handleSize, y0 + sh - handleSize, handleSize * 2.0, handleSize * 2.0)
+        ren.fillRect(x0 + sw - handleSize, y0 + sh - handleSize, handleSize * 2.0, handleSize * 2.0)
+
+        // 尺寸文字背景
+        string info = _int(sw) + " x " + _int(sh)
+        float infoW = _float(info.len() * 7 + 10)
+        float infoH = 20.0
+        float infoX = x0 + 4.0
+        float infoY = y0 - infoH - 5.0
+        if infoY < 0.0 { infoY = y0 + sh + 5.0 }
+        if infoX + infoW > _float(_screenW) { infoX = _float(_screenW) - infoW - 4.0 }
+        ren.setColor(0, 0, 0, 180)
+        ren.fillRect(infoX, infoY, infoW, infoH)
+
+        // 尺寸文字（用白色小方块拼数字太麻烦，用系统光标位置提示代替）
+        // 简化：绘制坐标点
+        ren.setColor(255, 255, 255, 255)
+        // 用 1x1 点阵示意？不，直接不显示文字，靠控制台输出
+    }
+
+    // 底部操作提示
+    ren.setColor(0, 0, 0, 160)
+    ren.fillRect(0.0, _float(_screenH - 28), _float(_screenW), 28.0)
+    ren.setColor(255, 255, 255, 255)
+    // 简化：不渲染文字，只画提示条
+
+    ren.setBlendMode(0) // NONE
+}
+
+// ==================== 保存选区 ====================
+
+func saveSelection() {
+    var sel = getSelectionRect()
+    int x = _int(sel["x"] as float)
+    int y = _int(sel["y"] as float)
+    int w = _int(sel["w"] as float)
+    int h = _int(sel["h"] as float)
+
+    if w <= 0 or h <= 0 { return }
+
+    // 防止越界
+    if x < 0 { x = 0 }
+    if y < 0 { y = 0 }
+    if x + w > _screenW { w = _screenW - x }
+    if y + h > _screenH { h = _screenH - y }
+    if w <= 0 or h <= 0 { return }
+
+    int srcPitch = _screenW * 4
+    int dstPitch = w * 4
+    Ptr[u8] cropPixels = ffi.malloc(w * h * 4)
+    if cropPixels == null {
+        print("内存分配失败")
+        return
+    }
+
+    for 0:(h - 1) to row {
+        for 0:(w - 1) to col {
+            int srcIdx = (y + row) * srcPitch + (x + col) * 4
+            int dstIdx = row * dstPitch + col * 4
+            ffi.write_byte(cropPixels, dstIdx + 0, ffi.read_byte(_screenPixels, srcIdx + 0))
+            ffi.write_byte(cropPixels, dstIdx + 1, ffi.read_byte(_screenPixels, srcIdx + 1))
+            ffi.write_byte(cropPixels, dstIdx + 2, ffi.read_byte(_screenPixels, srcIdx + 2))
+            ffi.write_byte(cropPixels, dstIdx + 3, ffi.read_byte(_screenPixels, srcIdx + 3))
+        }
+    }
+
+    Ptr[u8] cropSurface = SDL3.createSurfaceFromRaw(w, h, SDL3.PIXELFORMAT_ARGB8888, cropPixels, dstPitch)
+    if cropSurface != null {
+        string fileName = "screenshot_" + times.format(times.now(), "%Y%m%d_%H%M%S") + ".png"
+        bool ok = SDL3.saveImagePNG(cropSurface, fileName)
+        if ok {
+            print("已保存: " + fileName + " (" + w + "x" + h + ")")
+            _hintText = "已保存: " + fileName
+        } else {
+            print("保存失败: " + SDL3.getError())
+            _hintText = "保存失败"
+        }
+        SDL3.destroySurface(cropSurface)
+    } else {
+        print("创建 surface 失败: " + SDL3.getError())
+        _hintText = "创建 surface 失败"
+    }
+
+    ffi.free(cropPixels)
+}
+
+// ==================== 入口 ====================
+
+main() {
+    // 1. 捕获桌面
+    var shot = Win32.captureScreen()
+    if not (shot is Dict) {
+        print("截屏失败")
+        return
+    }
+
+    _screenW = _int(shot["w"])
+    _screenH = _int(shot["h"])
+    _screenPixels = shot["pixels"] as Ptr[u8]
+
+    if _screenW <= 0 or _screenH <= 0 or _screenPixels == null {
+        print("截屏数据无效")
+        return
+    }
+
+    print("桌面尺寸: " + _screenW + "x" + _screenH)
+
+    // 2. 创建全屏无边框置顶窗口
+    var win = SDL3.createWindow({
+        title: "Leno Screenshot Tool",
+        w: _screenW,
+        h: _screenH,
+        flags: WindowFlag.BORDERLESS | WindowFlag.ALWAYS_ON_TOP
+    })
+    if not win.ok {
+        print("创建窗口失败: " + SDL3.getError())
+        ffi.free(_screenPixels)
+        return
+    }
+
+    print("操作说明：拖拽鼠标框选，Enter 保存，Esc/右键 取消")
+
+    // 3. 启动主循环
+    win.run(onEvent, onRender)
+
+    // 4. 如果请求保存，在主循环结束后执行
+    if _saveRequested and hasSelection() {
+        saveSelection()
+    }
+
+    // 5. 清理
+    ffi.free(_screenPixels)
+    _screenPixels = null
+    _screenTexture = null
+}
