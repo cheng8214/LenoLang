@@ -13,8 +13,8 @@ export const ANNO_MOSAIC = 4
 // ==================== 标注结构 ====================
 export struct Annotation {
     int type           // ANNO_RECT/ARROW/TEXT/MOSAIC
-    float x1; float y1       // 起点
-    float x2; float y2       // 终点
+    float x1, y1       // 起点
+    float x2, y2       // 终点
     string text        // 文字内容（仅 TEXT）
     int color          // 颜色 ARGB
     int lineWidth      // 线宽

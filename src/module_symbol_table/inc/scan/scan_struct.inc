@@ -520,6 +520,9 @@
 
                                 // 支持逗号分隔多字段：int a, b, c
                                 do {
+                                    // 跳过字段名前的空白（逗号后可能有空白）
+                                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+
                                     const char* field_start = after_struct;
                                     while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
                                     int field_len = (int)(after_struct - field_start);
