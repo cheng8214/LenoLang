@@ -1,6 +1,64 @@
         case AST_IF: {
             visit(s, ast->u.if_.cond);
 
+            // 从条件 AST 树中提取类型守卫（支持复合条件如 x != null and x is Type）
+            // 仅在解析器未提取到守卫时（guard_var == NULL && guard_conds.count == 0）才执行
+            if (ast->u.if_.guard_var == NULL && ast->u.if_.guard_conds.count == 0 && ast->u.if_.cond) {
+                // 递归提取函数：从条件 AST 中收集 AST_TYPE_CHECK 信息
+                // 只处理 and 连接的条件（or 不安全，不收窄）
+                // 声明为嵌套函数（GCC/Clang 扩展，MSVC 用单独函数）
+                // 为可移植性，使用循环+栈方式实现
+                {
+                    // 使用小型栈遍历 AST，收集 AST_TYPE_CHECK 节点
+                    Ast* stack[32];
+                    int stack_top = 0;
+                    stack[stack_top++] = ast->u.if_.cond;
+
+                    while (stack_top > 0) {
+                        Ast* node = stack[--stack_top];
+                        if (!node) continue;
+
+                        if (node->kind == AST_TYPE_CHECK) {
+                            // 提取变量名和类型
+                            char* gvar_name = NULL;
+                            char* gfield_name = NULL;
+                            TypeInfo* gtype = node->u.type_check.type;
+
+                            if (node->u.type_check.expr) {
+                                Ast* expr = node->u.type_check.expr;
+                                if (expr->kind == AST_VAR) {
+                                    gvar_name = expr->u.var.name;
+                                } else if (expr->kind == AST_FIELD_ACCESS && expr->u.field_access.obj && expr->u.field_access.obj->kind == AST_VAR) {
+                                    gvar_name = expr->u.field_access.obj->u.var.name;
+                                    gfield_name = expr->u.field_access.field_name;
+                                }
+                            }
+
+                            if (gvar_name && gtype) {
+                                // 添加到 guard_conds
+                                TypeGuardCond gc;
+                                memset(&gc, 0, sizeof(gc));
+                                gc.var_name = strdup(gvar_name);
+                                gc.field_name = gfield_name ? strdup(gfield_name) : NULL;
+                                gc.guard_type = type_copy(gtype);
+                                type_guard_list_add(&ast->u.if_.guard_conds, gc);
+
+                                // 兼容旧版：第一个守卫同时设置 guard_var/guard_type
+                                if (ast->u.if_.guard_var == NULL) {
+                                    ast->u.if_.guard_var = strdup(gvar_name);
+                                    ast->u.if_.guard_type = type_copy(gtype);
+                                }
+                            }
+                        } else if (node->kind == AST_BINOP && node->u.binop.op == TOK_AND) {
+                            // and 连接：两边都可能包含类型守卫
+                            if (stack_top < 32) stack[stack_top++] = node->u.binop.r;
+                            if (stack_top < 32) stack[stack_top++] = node->u.binop.l;
+                        }
+                        // or / 其他节点不递归（or 不安全，其他不包含类型守卫）
+                    }
+                }
+            }
+
             if (ast->u.if_.guard_var != NULL) {
                 if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_STRUCT && ast->u.if_.guard_type->struct_name) {
                     Symbol* sym = scope_resolve(s->current, ast->u.if_.guard_type->struct_name);

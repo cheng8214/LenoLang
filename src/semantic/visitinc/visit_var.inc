@@ -396,9 +396,9 @@
                         if (value_type) {
                             if (!type_is_compatible(sym->type, value_type)) {
                                 char msg[BUFFER_MEDIUM];
-                                format_detailed_type_error(msg, sizeof(msg),
+                                format_detailed_type_error_ex(msg, sizeof(msg),
                                     sym->type, value_type,
-                                    "无法将值赋值给变量");
+                                    "无法将值赋值给变量", ast->u.assign.names[i]);
                                 error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                             } else {
                                 // var 声明的变量（类型为 any），第一次赋非 null 值时锁定类型
@@ -441,9 +441,9 @@
                                     TypeInfo* field_type = struct_sym->struct_field_types[fi];
                                     if (field_type && !type_is_compatible(field_type, value_type)) {
                                         char msg[BUFFER_MEDIUM];
-                                        format_detailed_type_error(msg, sizeof(msg),
+                                        format_detailed_type_error_ex(msg, sizeof(msg),
                                             field_type, value_type,
-                                            "字段赋值类型不匹配");
+                                            "字段赋值类型不匹配", field_name);
                                         error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                                     }
                                     break;
@@ -491,9 +491,9 @@
                 if (value_type) {
                     if (!type_is_compatible(sym->type, value_type)) {
                         char msg[BUFFER_MEDIUM];
-                        format_detailed_type_error(msg, sizeof(msg),
+                        format_detailed_type_error_ex(msg, sizeof(msg),
                             sym->type, value_type,
-                            "复合赋值类型不匹配");
+                            "复合赋值类型不匹配", ast->u.compound_assign.name);
                         error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                     }
                     type_free(value_type);

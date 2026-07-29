@@ -664,7 +664,7 @@ export struct Renderer {
     // 截取当前渲染画面
     func readPixels(Ptr[u8] rect): Ptr[u8] {
         _flushBatches()
-        return _lib.SDL_RenderReadPixels(handle, rect) as Ptr[u8]
+        return _lib.SDL_RenderReadPixels(handle, rect)
     }
 
     // 截取当前渲染画面（便捷重载：直接传入 x, y, w, h）
@@ -679,7 +679,7 @@ export struct Renderer {
 
     // 创建纹理（返回 Ptr，用完 SDL_DestroyTexture）
     func createTexture(int format, int access, int w, int h): Ptr[u8] {
-        return _lib.SDL_CreateTexture(handle, format, access, w, h) as Ptr[u8]
+        return _lib.SDL_CreateTexture(handle, format, access, w, h)
     }
 
     // 更新纹理像素数据

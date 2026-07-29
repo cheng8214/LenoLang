@@ -77,6 +77,10 @@ const char* get_similar_name_hint(Scope* scope, const char* name);
 void format_detailed_type_error(char* buf, size_t buf_size,
                                 TypeInfo* expected, TypeInfo* actual,
                                 const char* context);
+// 扩展版本：支持变量名
+void format_detailed_type_error_ex(char* buf, size_t buf_size,
+                                TypeInfo* expected, TypeInfo* actual,
+                                const char* context, const char* var_name);
 
 // 数组索引赋值类型检查工具函数
 int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line);

@@ -401,9 +401,17 @@ const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
 //   expected - 期望类型
 //   actual - 实际类型
 //   context - 错误上下文（如"变量赋值"、"函数参数"等）
+//   var_name - 相关变量名（可为NULL，用于在错误信息中显示具体变量名）
 void format_detailed_type_error(char* buf, size_t buf_size,
                                 TypeInfo* expected, TypeInfo* actual,
                                 const char* context) {
+    format_detailed_type_error_ex(buf, buf_size, expected, actual, context, NULL);
+}
+
+// 扩展版本：支持变量名
+void format_detailed_type_error_ex(char* buf, size_t buf_size,
+                                TypeInfo* expected, TypeInfo* actual,
+                                const char* context, const char* var_name) {
     char expected_buf[128] = "";
     char actual_buf[128] = "";
     
@@ -419,10 +427,17 @@ void format_detailed_type_error(char* buf, size_t buf_size,
         actual_buf[sizeof(actual_buf) - 1] = '\0';
     }
     
-    // 构建基础错误信息
-    int offset = snprintf(buf, buf_size, "类型错误：%s\n  期望类型: %s\n  实际类型: %s",
+    // 构建基础错误信息（包含变量名）
+    int offset;
+    if (var_name) {
+        offset = snprintf(buf, buf_size, "类型错误：%s '%s'\n  期望类型: %s\n  实际类型: %s",
+                          context ? context : "类型不匹配", var_name,
+                          expected_buf, actual_buf);
+    } else {
+        offset = snprintf(buf, buf_size, "类型错误：%s\n  期望类型: %s\n  实际类型: %s",
                           context ? context : "类型不匹配",
                           expected_buf, actual_buf);
+    }
     
     // 添加转换建议
     if (expected && actual) {

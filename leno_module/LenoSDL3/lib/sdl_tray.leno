@@ -163,7 +163,7 @@ export func createTray(Dict opts): Tray {
     Ptr[u8] icon = null
     var iconOpt = opts.get("icon", null)
     if iconOpt != null and iconOpt is Ptr[u8] {
-        icon = iconOpt as Ptr[u8]
+        icon = iconOpt
     }
 
     string tip = ""

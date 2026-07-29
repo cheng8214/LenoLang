@@ -368,7 +368,7 @@ export struct TextTexture {
 
     func createFromSurface(Ptr[u8] renderer, Ptr[u8] surface): bool {
         if surface == null { return false }
-        texture = _lib.SDL_CreateTextureFromSurface(renderer, surface) as Ptr[u8]
+        texture = _lib.SDL_CreateTextureFromSurface(renderer, surface)
         ok = texture != null
         _lib.SDL_DestroySurface(surface)
         return ok
