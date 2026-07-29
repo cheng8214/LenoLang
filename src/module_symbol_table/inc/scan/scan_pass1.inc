@@ -416,17 +416,17 @@
                     // 解析子文件的绝对路径
                     char sub_full_path[MAX_PATH_LEN] = {0};
                     if (normalized_current[0]) {
-                        strncpy(sub_full_path, normalized_current, MAX_PATH_LEN - 1);
+                        snprintf(sub_full_path, MAX_PATH_LEN, "%s", normalized_current);
                         char* last_sep = strrchr(sub_full_path, '\\');
                         if (!last_sep) last_sep = strrchr(sub_full_path, '/');
                         if (last_sep) {
                             *(last_sep + 1) = '\0';
                             strncat(sub_full_path, import_path, MAX_PATH_LEN - strlen(sub_full_path) - 1);
                         } else {
-                            strncpy(sub_full_path, import_path, MAX_PATH_LEN - 1);
+                            snprintf(sub_full_path, MAX_PATH_LEN, "%s", import_path);
                         }
                     } else {
-                        strncpy(sub_full_path, import_path, MAX_PATH_LEN - 1);
+                        snprintf(sub_full_path, MAX_PATH_LEN, "%s", import_path);
                     }
                     normalize_path(sub_full_path, MAX_PATH_LEN);
                     
