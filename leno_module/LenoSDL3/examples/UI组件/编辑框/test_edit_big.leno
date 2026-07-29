@@ -22,9 +22,7 @@ main() {
                             multiline: true,
                             placeholder: "粘贴大文本到这里测试性能...\nCtrl+V 粘贴 | ESC 退出"})
     ed.on_change(func() {
-        lastLen = ed.get_text_length()
-        lastTime = SDL3.getTicks()
-        print("长度: " + lastLen + "  耗时: " + (lastTime - lastTime) + "ms")
+       
     })
 
     win.run(
