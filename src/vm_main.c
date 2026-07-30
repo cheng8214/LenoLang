@@ -97,46 +97,39 @@ static int check_embedded_lenb(const char* exe_path, unsigned char** out_data, s
     return 1;
 }
 
-// 从内存中的 lenb 数据运行（写入临时文件再加载）
+// 从内存中的 lenb 数据运行（直接内存反序列化，不写临时文件）
 static int run_lenb_from_memory(unsigned char* data, size_t size) {
     if (size < 20) {
         fprintf(stderr, "[错误] lenb 数据过小\n");
         return 1;
     }
 
-    // 写入临时文件
-    char temp_path[MAX_PATH_LEN];
-#ifdef _WIN32
-    char temp_dir[MAX_PATH_LEN];
-    GetTempPathA(MAX_PATH_LEN, temp_dir);
-    temp_dir[MAX_PATH_LEN - 1] = '\0';
-    // 使用 %lu 格式匹配 DWORD (unsigned long)
-    DWORD pid = GetCurrentProcessId();
-    // 检查路径长度，避免截断
-    size_t dir_len = strlen(temp_dir);
-    // 简化格式: temp_dir + "vm_" + pid(10位) + ".lenb" = dir_len + 3 + 10 + 5 = dir_len + 18
-    if (dir_len + 18 < MAX_PATH_LEN) {
-        snprintf(temp_path, MAX_PATH_LEN, "%svm_%lu.lenb", temp_dir, (unsigned long)pid);
-    } else {
-        // 路径太长，使用当前目录
-        snprintf(temp_path, MAX_PATH_LEN, "vm_%lu.lenb", (unsigned long)pid);
-    }
-#else
-    snprintf(temp_path, MAX_PATH_LEN, "/tmp/leno_vm_%d.lenb", getpid());
-#endif
+    Chunk chunk;
+    chunk_init(&chunk);
+    Scope* scope = NULL;
 
-    FILE* fp = fopen(temp_path, "wb");
-    if (!fp) {
-        fprintf(stderr, "[错误] 无法创建临时文件: %s\n", temp_path);
+    SerializeResult result = chunk_deserialize_from_memory(data, size, &chunk, &scope);
+    if (result != SERIALIZE_OK) {
+        fprintf(stderr, "[错误] 内存反序列化失败: %d\n", result);
+        chunk_free(&chunk);
         return 1;
     }
-    fwrite(data, 1, size, fp);
-    fclose(fp);
 
-    int ret = lenolang_run_lenb(temp_path);
+    // 注册 struct/face/enum 定义到全局表
+    register_defs_from_chunk(&chunk);
 
-    // 清理临时文件
-    remove(temp_path);
+    // 初始化 GC
+    gc_init();
+
+    // 修复模块函数指针
+    fix_module_function_ptrs(&chunk);
+
+    // 初始化 VM 并执行
+    vm_init_with_scope(scope);
+    int ret = vm_run_chunk(&chunk);
+    chunk_free(&chunk);
+    // scope 已被 vm_init_with_scope 设为 vm.global_scope，由 gc_free_all 释放
+    gc_free_all();
     return ret;
 }
 

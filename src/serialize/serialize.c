@@ -1738,6 +1738,95 @@ SerializeResult chunk_deserialize(const char* path, Chunk* out_chunk, Scope** ou
     return SERIALIZE_OK;
 }
 
+SerializeResult chunk_serialize_to_memory(Chunk* chunk, Scope* global_scope,
+                                          uint8_t** out_data, size_t* out_size) {
+    clear_serialized_modules();
+    WriteBuffer wb;
+    wb_init(&wb);
+
+    uint32_t magic = LENO_BIN_MAGIC;
+    wb_write_u32(&wb, magic);
+    wb_write_u32(&wb, LENO_BIN_VERSION);
+    wb_write_u32(&wb, 0);
+
+    uint64_t src_hash = 0;
+    if (chunk && chunk->filename) {
+#ifdef _WIN32
+        int wideLen = MultiByteToWideChar(CP_UTF8, 0, chunk->filename, -1, NULL, 0);
+        wchar_t* widePath = (wchar_t*)malloc(wideLen * sizeof(wchar_t));
+        MultiByteToWideChar(CP_UTF8, 0, chunk->filename, -1, widePath, wideLen);
+        FILE* f = _wfopen(widePath, L"rb");
+        free(widePath);
+#else
+        FILE* f = fopen(chunk->filename, "rb");
+#endif
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long sz = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            char* src = (char*)malloc(sz + 1);
+            if (src) {
+                size_t rd = fread(src, 1, sz, f);
+                src[rd] = '\0';
+                src_hash = serialize_source_hash(src, rd);
+                free(src);
+            }
+            fclose(f);
+        }
+    }
+    wb_write_u64(&wb, src_hash);
+
+    if (!serialize_scope_data(&wb, global_scope)) {
+        wb_free(&wb);
+        return SERIALIZE_ERR_FORMAT;
+    }
+
+    if (!serialize_chunk(&wb, chunk)) {
+        wb_free(&wb);
+        return SERIALIZE_ERR_FORMAT;
+    }
+
+    // 转移 WriteBuffer 所有权给调用方，不 wb_free
+    *out_data = wb.data;
+    *out_size = wb.size;
+    return SERIALIZE_OK;
+}
+
+SerializeResult chunk_deserialize_from_memory(uint8_t* data, size_t size,
+                                              Chunk* out_chunk, Scope** out_scope) {
+    if (size < 20) return SERIALIZE_ERR_FORMAT;
+
+    DeserializeCtx ctx;
+    ctx.data = data;
+    ctx.size = size;
+    ctx.pos = 0;
+
+    uint32_t magic, version, flags;
+    uint64_t src_hash;
+    if (!ctx_read_u32(&ctx, &magic) ||
+        !ctx_read_u32(&ctx, &version) ||
+        !ctx_read_u32(&ctx, &flags) ||
+        !ctx_read_u64(&ctx, &src_hash)) {
+        return SERIALIZE_ERR_FORMAT;
+    }
+
+    if (magic != LENO_BIN_MAGIC) return SERIALIZE_ERR_MAGIC;
+    if (version != LENO_BIN_VERSION) return SERIALIZE_ERR_VERSION;
+
+    Scope* scope = deserialize_scope_data(&ctx);
+    if (!scope) return SERIALIZE_ERR_FORMAT;
+
+    chunk_init(out_chunk);
+    if (!deserialize_chunk_data(&ctx, out_chunk)) {
+        scope_free(scope);
+        chunk_free(out_chunk);
+        return SERIALIZE_ERR_FORMAT;
+    }
+
+    *out_scope = scope;
+    return SERIALIZE_OK;
+}
+
 int serialize_is_binary_file(const char* path) {
     if (!path) return 0;
     size_t len = strlen(path);

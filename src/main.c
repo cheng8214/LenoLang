@@ -179,7 +179,57 @@ int lenolang_run(const char* source) {
         debug_restore_stdout(backup);
     }
 
-    // 4. VM 执行
+    // 4. 内存态序列化运行：编译 → 序列化 → 释放编译器 → 反序列化 → 运行
+    //    让 .leno 直跑与 .lenb 路径一致，消除编译器驻留导致的 CPU 缓存污染
+    {
+        uint8_t* lenb_buf = NULL;
+        size_t lenb_size = 0;
+        SerializeResult sr = chunk_serialize_to_memory(&chunk, sem.root_scope, &lenb_buf, &lenb_size);
+        if (sr == SERIALIZE_OK && lenb_buf) {
+            // 立刻释放编译器资源（核心！清零「内存税」）
+            codegen_cleanup(&gen);
+            ast_free(parser.root);
+            semantic_cleanup(&sem);
+            chunk_free(&chunk);
+
+            // 从内存反序列化出全新 chunk + scope
+            Chunk run_chunk;
+            chunk_init(&run_chunk);
+            Scope* run_scope = NULL;
+            sr = chunk_deserialize_from_memory(lenb_buf, lenb_size, &run_chunk, &run_scope);
+            free(lenb_buf);  // 缓冲已用完，立即释放
+
+            if (sr == SERIALIZE_OK) {
+                // 与 lenb 路径一致的运行前准备（补 native 函数指针）
+                register_defs_from_chunk(&run_chunk);
+                gc_init();
+                fix_module_function_ptrs(&run_chunk);
+                vm_init_with_scope(run_scope);
+                vm_load(&run_chunk);
+                int ret = vm_run();
+
+                chunk_free(&run_chunk);
+                // run_scope 已被 vm_init_with_scope 设为 vm.global_scope，由 gc_free_all 释放
+                gc_free_all();
+
+                if (ret != 0 || error_has_any()) {
+                    error_print_all();
+                    warning_print_all();
+                    return -1;
+                }
+                warning_print_all();
+                return ret;
+            }
+            // 反序列化失败，回退到原路径（需重新编译，因为编译器资源已释放）
+            // 这种情况理论上不会发生，但做兜底保护
+            fprintf(stderr, "[警告] 内存反序列化失败，回退到直接运行\n");
+            return -1;
+        }
+        // 序列化失败，回退到原 vm_run 直跑路径
+        if (lenb_buf) free(lenb_buf);
+    }
+
+    // 兜底：原 vm_run 直跑路径（序列化失败时走这里）
     gc_init();
     vm_init_with_scope(sem.root_scope);  // 使用语义分析的 scope，确保索引一致
     vm_load(&chunk);

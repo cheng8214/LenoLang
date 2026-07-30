@@ -135,6 +135,15 @@ SerializeResult chunk_serialize(const char* path, Chunk* chunk, Scope* global_sc
 // 从文件反序列化 Chunk + Scope
 SerializeResult chunk_deserialize(const char* path, Chunk* out_chunk, Scope** out_scope);
 
+// 序列化到内存：返回 malloc 的缓冲（调用方负责 free），不落盘
+// 返回值 SERIALIZE_OK 时 *out_data / *out_size 有效
+SerializeResult chunk_serialize_to_memory(Chunk* chunk, Scope* global_scope,
+                                          uint8_t** out_data, size_t* out_size);
+
+// 从内存缓冲反序列化：直接在 data 上解析，不 free 调用方缓冲
+SerializeResult chunk_deserialize_from_memory(uint8_t* data, size_t size,
+                                              Chunk* out_chunk, Scope** out_scope);
+
 // 检查文件是否是 .lenb 二进制文件
 int serialize_is_binary_file(const char* path);
 
