@@ -428,7 +428,11 @@ static Token read_number(Lexer* lex) {
         }
     } else {
         double val = strtod(start, NULL);
-        if (tok.len > 10 || val > 2147483647.0 || val < -2147483648.0) {
+        // int48 范围内的整数用 double 精确存储（double 可精确表示到 2^53）；
+        // 仅当超出 int48（INT48_MAX=2^47-1=140737488355327）才升级为 bigint。
+        // 此前用 int32(2^31) 阈值过于激进，导致 2147483648 等 int48 值被误判为 bigint，
+        // num_val 被置 0，引发 codegen 误报"空循环"警告等问题。
+        if (tok.len > 15 || val > 140737488355327.0 || val < -140737488355328.0) {
             tok.is_bigint = 1;
             tok.bigint_str = (char*)malloc(tok.len + 1);
             if (tok.bigint_str) {

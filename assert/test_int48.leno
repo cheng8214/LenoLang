@@ -94,5 +94,33 @@ main() {
     }
     assert_eq(s4, 15, "for 1:5 inclusive")
 
+    // ===== 6. for 循环负数范围边界（曾因解析器只接受 NUM/IDENT 作起点而报语法错误）=====
+    var s5 = 0
+    for -5:-1 to i {
+        s5 = s5 + i
+    }
+    assert_eq(s5, -15, "for -5:-1")
+
+    // 负数括号边界 + int32 下界跨越
+    var s6 = 0
+    for (-2147483648):(-2147483645) to i {
+        s6 = s6 + i
+    }
+    assert_eq(s6, -8589934586, "for (INT32_MIN):(INT32_MIN+3)")
+
+    // 负到正跨越零
+    var s7 = 0
+    for -3:3 to i {
+        s7 = s7 + i
+    }
+    assert_eq(s7, 0, "for -3:3 cross zero")
+
+    // 倒序负数范围（显式负步长）
+    var s8 = ""
+    for -1:-5:-1 to i {
+        s8 = s8 + i + ","
+    }
+    assert_eq(s8, "-1,-2,-3,-4,-5,", "for -1:-5:-1 reverse")
+
     print("[PASS] int48: 序列化/范围/for循环 int48 全链路")
 }

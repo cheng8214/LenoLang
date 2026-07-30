@@ -374,7 +374,11 @@ Ast* parse_for_stmt(Parser* p) {
     char* var_name = NULL;
 
     // 检查是否是简单循环次数形式: for 5 { } 或 for expr { }
-    if (p->lex.current.type == TOK_NUM || p->lex.current.type == TOK_IDENT) {
+    // 接受可作范围起点的 token：数字、标识符、负号/正号（负数边界如 for -5:-1）、
+    // 左括号（括号边界如 for (-5):(-1)）。解析后通过 : / to / { 区分范围形式与简单次数形式
+    if (p->lex.current.type == TOK_NUM || p->lex.current.type == TOK_IDENT ||
+        p->lex.current.type == TOK_MINUS || p->lex.current.type == TOK_PLUS ||
+        p->lex.current.type == TOK_LPAREN) {
         // 保存当前位置
         Lexer saved_lex = p->lex;
         
