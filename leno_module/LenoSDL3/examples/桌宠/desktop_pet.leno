@@ -1,12 +1,22 @@
-// desktop_pet.leno — 可爱桌宠（拖拽移动、呼吸动画、眨眼、挥手、自动走动）
+// desktop_pet.leno — 机器人桌宠（拖拽、走动+转身、挥手、跳跃、眨眼、冒泡对话）
 // 使用 win.run() 回调模式，透明窗口
 import "../../lib/SDL3.leno" as SDL3
 import "../../lib/sdl_core.leno" as core
-use SDL3.(Event, Renderer, WindowFlag)
+use SDL3.(Event, Renderer, WindowFlag, Font)
 import maths
+import rands
 
-// 桌宠状态
-struct Pet {
+// 烟花粒子（累了蹲下放烟花用）
+struct PetParticle {
+    float x, y
+    float vx, vy
+    int life
+    int r, g, b
+    int kind   // 0=上升火星, 1=爆炸粒子
+}
+
+// 机器人状态
+struct Robot {
     float x, y           // 位置（窗口内）
     float vx             // 移动速度
     int frame            // 帧计数
@@ -21,298 +31,714 @@ struct Pet {
     int waveFrame        // 挥手帧
     int walkTimer        // 行走计时器
     int winX, winY       // 窗口位置
+    float jumpOffset     // 跳跃高度偏移
+    bool isJumping       // 是否在跳跃
+    int jumpFrame        // 跳跃帧计数
+    int walkPhase        // 行走相位（腿部交替动画用）
+    int facing           // 朝向：1=朝右, -1=朝左
+    string bubbleText    // 冒泡文字
+    int bubbleTimer      // 冒泡剩余帧数
+    // 部位互动状态
+    bool isHeadHurt      // 头部被打（起包+揉脑袋）
+    int headHurtTimer
+    bool isPeeing        // 撒尿模式
+    int peeTimer
+    bool isBlushing      // 脸红
+    int blushTimer
+    // 累了 + 蹲下放烟花
+    int stepCount         // 累计步数（走动计数）
+    bool isTired          // 累了状态
+    int tiredTimer        // 累持续时间
+    bool isCrouching      // 蹲下
+    Array[PetParticle] fwParticles  // 烟花粒子
+    int fwLaunchTimer     // 下次烟花发射倒计时
+    // 拖拽起始记录（用全局鼠标坐标，避免反馈循环抖动）
+    int dragStartGX, dragStartGY
+    int dragStartWinX, dragStartWinY
 }
 
-// 绘制桌宠（一只小猫）
-func drawPet(Renderer r, Pet pet) {
-    float x = pet.x
-    float y = pet.y + maths.sin(_float(pet.frame) * 0.05) * 3.0  // 呼吸动画
+// 检测点击的身体部位：1=头部, 2=胯下, 3=大腿, 0=其他
+func hitTest(float mx, float my, float cx, float cy): int {
+    float dx = mx - cx
+    float dy = my - cy
+    // 头部：y-50 ~ y-12，|x| < 25
+    if my < cy - 12.0 and my > cy - 50.0 and dx * dx < 625.0 { return 1 }
+    // 胯下：y+30 ~ y+40，|x| < 8（腿之间）
+    if my > cy + 30.0 and my < cy + 40.0 and dx * dx < 80.0 { return 2 }
+    // 大腿：y+34 ~ y+52，|x| < 15
+    if my > cy + 34.0 and my < cy + 52.0 and dx * dx < 225.0 { return 3 }
+    return 0
+}
+
+// 绘制圆角矩形（用 fillRect + 四角 fillCircle 模拟圆角）
+func fillRoundRect(Renderer r, float x, float y, float w, float h, float radius) {
+    r.fillRect(x + radius, y, w - radius * 2.0, h)
+    r.fillRect(x, y + radius, w, h - radius * 2.0)
+    r.fillCircle(x + radius, y + radius, radius)
+    r.fillCircle(x + w - radius, y + radius, radius)
+    r.fillCircle(x + radius, y + h - radius, radius)
+    r.fillCircle(x + w - radius, y + h - radius, radius)
+}
+
+// 随机冒泡文字
+func randomBubble(): string {
+    int idx = rands.ints(0, 6)
+    if idx == 0 { return "你好!" }
+    if idx == 1 { return "我是小机器人" }
+    if idx == 2 { return "今天真开心~" }
+    if idx == 3 { return "想去哪儿?" }
+    if idx == 4 { return "嘿嘿~" }
+    return "陪我玩吧!" 
+}
+
+// 绘制机器人
+func drawRobot(Renderer r, Robot robot, Font font) {
+    float baseX = robot.x
+    float baseY = robot.y - robot.jumpOffset
     
-    // 身体颜色
-    int bodyR = 255, bodyG = 200, bodyB = 150  // 橘猫色
-    if pet.isHappy {
-        bodyR = 255; bodyG = 180; bodyB = 200  // 开心时变粉
+    // 走动时身体上下微动
+    float bobY = 0.0
+    if robot.vx != 0.0 and not robot.isJumping {
+        bobY = maths.sin(_float(robot.walkPhase) * 0.3) * 2.0
     }
     
-    // === 身体 ===
-    r.setColor(bodyR, bodyG, bodyB, 255)
-    r.fillCircle(x, y, 28.0)
+    float x = baseX
+    float y = baseY + bobY
+    // 蹲下：整体下移 cd，腿等量缩短（脚不动，身体下降模拟屈膝）
+    float cd = 0.0
+    if robot.isCrouching { cd = 10.0 }
+    y = y + cd
+    float s = _float(robot.facing)  // 1.0=朝右, -1.0=朝左（翻转水平偏移）
     
-    // === 头部 ===
-    float headY = y - 28.0
-    r.fillCircle(x, headY, 20.0)
+    // 主体颜色（金属蓝），开心时变金色
+    int bodyR = 100, bodyG = 150, bodyB = 200
+    int headR = 120, headG = 170, headB = 220
+    int accentR = 70, accentG = 110, accentB = 160
+    if robot.isHappy {
+        bodyR = 255; bodyG = 180; bodyB = 50
+        headR = 255; headG = 200; headB = 80
+        accentR = 200; accentG = 140; accentB = 30
+    }
     
-    // === 耳朵（用小圆模拟） ===
-    r.fillCircle(x - 16.0, headY - 16.0, 9.0)
-    r.fillCircle(x + 16.0, headY - 16.0, 9.0)
-    // 耳朵内部
-    r.setColor(255, 180, 180, 255)
-    r.fillCircle(x - 16.0, headY - 16.0, 5.0)
-    r.fillCircle(x + 16.0, headY - 16.0, 5.0)
+    // === 天线 ===
+    float antennaTopY = y - 58.0
+    r.setColor(60, 60, 70, 255)
+    r.drawLine(x, y - 44.0, x, antennaTopY)
+    int glow = 200 + _int(maths.sin(_float(robot.frame) * 0.2) * 55.0)
+    r.setColor(glow, glow, 50, 255)
+    r.fillCircle(x, antennaTopY, 4.0)
     
-    // === 眼睛 ===
-    r.setColor(255, 255, 255, 255)
-    float eyeY = headY - 2.0
+    // === 头部（圆角矩形） ===
+    float headW = 46.0, headH = 34.0
+    float headX = x - headW / 2.0
+    float headY = y - 46.0
+    r.setColor(headR, headG, headB, 255)
+    fillRoundRect(r, headX, headY, headW, headH, 6.0)
     
-    if not pet.isBlinking {
-        // 眼白
-        r.fillCircle(x - 8.0, eyeY, 6.0)
-        r.fillCircle(x + 8.0, eyeY, 6.0)
-        // 眼珠
-        r.setColor(50, 50, 50, 255)
-        r.fillCircle(x - 8.0, eyeY, 3.5)
-        r.fillCircle(x + 8.0, eyeY, 3.5)
-        // 高光
-        r.setColor(255, 255, 255, 255)
-        r.fillCircle(x - 6.0, eyeY - 2.0, 1.8)
-        r.fillCircle(x + 10.0, eyeY - 2.0, 1.8)
+    // 头部接缝线
+    r.setColor(accentR, accentG, accentB, 255)
+    r.drawLine(headX + 4.0, headY + headH - 4.0, headX + headW - 4.0, headY + headH - 4.0)
+    
+    // === 眼睛（LED 方形，高光朝向行走方向） ===
+    float eyeY = headY + 10.0
+    float eyeSize = 8.0
+    if robot.isBlinking {
+        r.setColor(30, 30, 30, 255)
+        r.fillRect(x - 14.0, eyeY + 3.0, 9.0, 2.0)
+        r.fillRect(x + 5.0, eyeY + 3.0, 9.0, 2.0)
     } else {
-        // 眨眼时画线
-        r.setColor(50, 50, 50, 255)
-        r.drawLine(x - 13.0, eyeY, x - 3.0, eyeY)
-        r.drawLine(x + 3.0, eyeY, x + 13.0, eyeY)
+        r.setColor(0, 255, 255, 255)
+        r.fillRect(x - 14.0, eyeY, eyeSize, eyeSize)
+        r.fillRect(x + 6.0, eyeY, eyeSize, eyeSize)
+        // 高光（偏向行走方向，体现视线方向）
+        r.setColor(255, 255, 255, 255)
+        float hlOff = 1.0 * s  // 朝右右偏，朝左左偏
+        r.fillRect(x - 13.0 + hlOff, eyeY + 1.0, 2.0, 2.0)
+        r.fillRect(x + 7.0 + hlOff, eyeY + 1.0, 2.0, 2.0)
     }
-    
-    // === 鼻子 ===
-    r.setColor(255, 150, 150, 255)
-    r.fillCircle(x, headY + 4.0, 2.5)
     
     // === 嘴巴 ===
-    r.setColor(50, 50, 50, 255)
-    if pet.isHappy {
-        // 开心的笑
-        r.drawLine(x - 4.0, headY + 8.0, x, headY + 11.0)
-        r.drawLine(x, headY + 11.0, x + 4.0, headY + 8.0)
+    r.setColor(30, 30, 30, 255)
+    if robot.isHappy {
+        r.drawLine(x - 7.0, headY + 24.0, x - 3.0, headY + 27.0)
+        r.drawLine(x - 3.0, headY + 27.0, x + 3.0, headY + 27.0)
+        r.drawLine(x + 3.0, headY + 27.0, x + 7.0, headY + 24.0)
     } else {
-        // 平静的嘴
-        r.drawLine(x - 4.0, headY + 8.0, x + 4.0, headY + 8.0)
+        r.fillRect(x - 5.0, headY + 25.0, 10.0, 2.0)
     }
     
-    // === 前腿（左边是固定腿） ===
+    // === 颈部 ===
+    r.setColor(60, 60, 70, 255)
+    r.fillRect(x - 5.0, y - 14.0, 10.0, 8.0)
+    
+    // === 身体（圆角矩形） ===
+    float bodyW = 52.0, bodyH = 40.0
+    float bodyX = x - bodyW / 2.0
+    float bodyY = y - 6.0
     r.setColor(bodyR, bodyG, bodyB, 255)
-    r.fillCircle(x - 16.0, y + 22.0, 7.0)
+    fillRoundRect(r, bodyX, bodyY, bodyW, bodyH, 7.0)
     
-    // === 右手（挥手或站立） ===
-    float handX = x + 16.0
-    float handY = y + 22.0
+    // 身体接缝线
+    r.setColor(accentR, accentG, accentB, 255)
+    r.drawLine(bodyX + 4.0, bodyY + bodyH / 2.0, bodyX + bodyW - 4.0, bodyY + bodyH / 2.0)
     
-    if pet.isWaving {
+    // === 方向指示灯（身体前方，体现转身） ===
+    float frontX = x + 20.0 * s  // 朝右在右，朝左在左
+    r.setColor(255, 200, 0, 255)
+    r.fillCircle(frontX, bodyY + 6.0, 3.0)
+    
+    // === 胸前指示灯（呼吸闪烁） ===
+    int ledGlow = 128 + _int(maths.sin(_float(robot.frame) * 0.1) * 100.0)
+    r.setColor(30, 60, 40, 255)
+    r.drawCircle(x, bodyY + bodyH / 2.0, 8.0)
+    r.setColor(50, ledGlow, 100, 255)
+    r.fillCircle(x, bodyY + bodyH / 2.0, 5.0)
+    r.setColor(200, 255, 200, 255)
+    r.fillCircle(x - 1.5, bodyY + bodyH / 2.0 - 1.5, 1.5)
+    
+    // === 后手臂（固定下垂，在背向方向） ===
+    // 朝右时在左侧，朝左时在右侧（位置互换）
+    float backArmX = if robot.facing == 1 then bodyX - 7.0 else bodyX + bodyW
+    r.setColor(accentR, accentG, accentB, 255)
+    r.fillRect(backArmX, bodyY + 5.0, 7.0, 22.0)
+    r.setColor(60, 60, 70, 255)
+    r.fillCircle(backArmX + 3.5, bodyY + 5.0, 3.5)
+    r.fillCircle(backArmX + 3.5, bodyY + 28.0, 4.5)
+    
+    // === 前手臂（挥手或固定，在朝向方向） ===
+    // 朝右时在右侧，朝左时在左侧（位置互换）
+    float frontArmX = if robot.facing == 1 then bodyX + bodyW else bodyX - 7.0
+    if robot.isHeadHurt {
+        // 揉脑袋：前手举到头顶画圆揉
+        float rubX = x + maths.sin(_float(robot.frame) * 0.5) * 6.0
+        float rubY = headY - 4.0 + maths.cos(_float(robot.frame) * 0.5) * 3.0
+        r.setColor(accentR, accentG, accentB, 255)
+        r.drawLine(frontArmX, bodyY + 6.0, rubX, rubY)
+        r.setColor(60, 60, 70, 255)
+        r.fillCircle(frontArmX, bodyY + 6.0, 3.5)
+        r.fillCircle(rubX, rubY, 5.0)
+    } else if robot.isWaving {
         // 挥手动画
-        float waveOffset = maths.sin(_float(pet.waveFrame) * 0.3) * 12.0
-        handY = handY - 15.0 - waveOffset
+        float waveAngle = maths.sin(_float(robot.waveFrame) * 0.4)
+        float shoulderX = frontArmX
+        float shoulderY = bodyY + 6.0
+        float elbowX = shoulderX + 10.0 * s
+        float elbowY = shoulderY - 10.0 + waveAngle * 3.0
+        float handX = elbowX + 8.0 * s + waveAngle * 8.0 * s
+        float handY = elbowY - 12.0 + waveAngle * 4.0
         
-        // 手臂
-        r.setColor(bodyR, bodyG, bodyB, 255)
-        r.fillCircle(x + 16.0, y + 10.0, 5.0)  // 肘部
-        
-        // 手掌（小爪子）
-        r.fillCircle(handX + waveOffset * 0.3, handY, 8.0)
-        
-        // 手指（三个小圆）
-        r.fillCircle(handX + waveOffset * 0.3 - 4.0, handY - 6.0, 3.0)
-        r.fillCircle(handX + waveOffset * 0.3, handY - 7.0, 3.0)
-        r.fillCircle(handX + waveOffset * 0.3 + 4.0, handY - 6.0, 3.0)
+        r.setColor(accentR, accentG, accentB, 255)
+        r.drawLine(shoulderX, shoulderY, elbowX, elbowY)
+        r.drawLine(elbowX, elbowY, handX, handY)
+        r.setColor(60, 60, 70, 255)
+        r.fillCircle(shoulderX, shoulderY, 3.5)
+        r.fillCircle(elbowX, elbowY, 3.0)
+        r.fillCircle(handX, handY, 5.0)
     } else {
-        // 正常站立
-        r.fillCircle(handX, handY, 7.0)
+        r.setColor(accentR, accentG, accentB, 255)
+        r.fillRect(frontArmX, bodyY + 5.0, 7.0, 22.0)
+        r.setColor(60, 60, 70, 255)
+        r.fillCircle(frontArmX + 3.5, bodyY + 5.0, 3.5)
+        r.fillCircle(frontArmX + 3.5, bodyY + 28.0, 4.5)
     }
     
-    // === 悬停高亮 ===
-    if pet.isHover {
-        r.setColor(255, 255, 100, 150)
-        r.drawCircle(x, y, 42.0)
+    // === 腿（行走时交替移动；蹲下时屈膝缩短） ===
+    float legY = bodyY + bodyH
+    float legW = 9.0, legH = 16.0 - cd
+    r.setColor(60, 60, 70, 255)
+    
+    if robot.isJumping {
+        r.fillRect(x - 12.0, legY, legW, legH - 6.0)
+        r.fillRect(x + 3.0, legY, legW, legH - 6.0)
+        r.fillCircle(x - 7.5, legY + legH - 6.0, 5.0)
+        r.fillCircle(x + 7.5, legY + legH - 6.0, 5.0)
+    } else if robot.vx != 0.0 {
+        float leftOffset = maths.sin(_float(robot.walkPhase) * 0.3) * 4.0
+        float rightOffset = -leftOffset
+        r.fillRect(x - 12.0 + leftOffset, legY, legW, legH)
+        r.fillRect(x + 3.0 + rightOffset, legY, legW, legH)
+        r.fillCircle(x - 7.5 + leftOffset, legY + legH, 5.0)
+        r.fillCircle(x + 7.5 + rightOffset, legY + legH, 5.0)
+    } else {
+        r.fillRect(x - 12.0, legY, legW, legH)
+        r.fillRect(x + 3.0, legY, legW, legH)
+        r.fillCircle(x - 7.5, legY + legH, 5.0)
+        r.fillCircle(x + 7.5, legY + legH, 5.0)
     }
+    
+    // === 冒泡文字 ===
+    if robot.bubbleTimer > 0 {
+        float bw = 90.0, bh = 26.0
+        float bx = x - bw / 2.0
+        float by = y - 85.0
+        // 背景（白色半透明）
+        r.setColor(255, 255, 255, 220)
+        fillRoundRect(r, bx, by, bw, bh, 5.0)
+        // 小三角指向机器人
+        r.fillRect(x - 3.0, by + bh, 6.0, 5.0)
+        // 文字
+        r.drawText(font, robot.bubbleText, bx + 6.0, by + 5.0, 50, 50, 50)
+    }
+    
+    // === 头部起包（被打后头顶鼓包） ===
+    if robot.isHeadHurt {
+        float bumpSize = 4.0 + maths.sin(_float(robot.headHurtTimer) * 0.15) * 2.0
+        r.setColor(255, 180, 180, 255)
+        r.fillCircle(x, headY - 8.0, bumpSize)
+        // 包上的高光
+        r.setColor(255, 220, 220, 255)
+        r.fillCircle(x - 1.0, headY - 9.0, bumpSize * 0.4)
+    }
+
+    // === 脸红（脸颊红色圆点） ===
+    if robot.isBlushing {
+        int blushAlpha = 150 + _int(maths.sin(_float(robot.frame) * 0.3) * 50.0)
+        r.setColor(255, 100, 100, blushAlpha)
+        r.fillCircle(x - 16.0, eyeY + 6.0, 4.0)
+        r.fillCircle(x + 16.0, eyeY + 6.0, 4.0)
+    }
+
+    // === 撒尿动画（朝朝向方向射出，受重力呈抛物线弧形下降 + 落地水花） ===
+    if robot.isPeeing {
+        float peeX0 = x + 3.0 * s         // 起点略偏朝向方向（胯下）
+        float peeY0 = y + 36.0
+        float v0x = 2.4 * s               // 水平初速度（朝朝向方向射出）
+        float g = 0.42                    // 重力加速度（控制弧度）
+
+        // 计算落地点：落到地面 y+56 处，由 0.5*g*t^2 = dropDist 求 t
+        float groundY = y + 56.0
+        float dropDist = groundY - peeY0
+        if dropDist < 1.0 { dropDist = 1.0 }
+        float tMax = maths.sqrt(2.0 * dropDist / g)
+        float landX = peeX0 + v0x * tMax
+        float landY = groundY
+
+        // 抛物线水柱：由多个小圆点沿轨迹描绘，越靠近末端越小越淡
+        int nDrops = 16
+        for 0 : nDrops to i {
+            float t = _float(i) / _float(nDrops) * tMax
+            float px = peeX0 + v0x * t
+            float py = peeY0 + 0.5 * g * t * t
+            float size = 3.0 - _float(i) * 0.13
+            if size < 1.0 { size = 1.0 }
+            int alpha = 240 - i * 10
+            if alpha < 90 { alpha = 90 }
+            r.setColor(255, 255, 100, alpha)
+            r.fillCircle(px, py, size)
+        }
+
+        // 落地水花：沿朝向方向散开 + 向上溅起再落下（正弦弧）
+        for 0 : 6 to i {
+            int phase = (robot.frame + i * 4) % 18
+            float tt = _float(phase) / 18.0
+            float spread = maths.sin(_float(i) * 1.7) * 14.0 * tt
+            float sx = landX + spread
+            float sy = landY - maths.sin(tt * 3.14159) * 7.0
+            float sr = 3.2 * (1.0 - tt) + 1.0
+            r.setColor(255, 255, 80, 210)
+            r.fillCircle(sx, sy, sr)
+        }
+    }
+
+    // === 烟花粒子（累了蹲下时从头顶发射） ===
+    for robot.fwParticles to p {
+        int a = 255
+        if p.kind == 1 {
+            a = _int(_float(p.life) / 55.0 * 255.0)
+            if a > 255 { a = 255 }
+            if a < 0 { a = 0 }
+        }
+        r.setColor(p.r, p.g, p.b, a)
+        r.fillCircle(p.x, p.y, 2.0)
+    }
+
 }
 
 main() {
     // 创建无边框、置顶、透明的小窗口
     var win = SDL3.createWindow({
-        title: "Desktop Pet",
-        w: 150,
-        h: 150,
+        title: "Desktop Pet Robot",
+        w: 160,
+        h: 200,
         flags: WindowFlag.BORDERLESS | WindowFlag.ALWAYS_ON_TOP | WindowFlag.TRANSPARENT
     })
     if not win.ok { 
         print("[错误] 窗口创建失败")
         return 
     }
-    print("[OK] 窗口创建成功")
+    print("[OK] 机器人窗口创建成功")
     
-    // 设置窗口位置（屏幕右下角）
-    win.setPosition(1200, 700)
+    // 初始化字体（冒泡文字用）
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
     
-    // 启用连续渲染（动画需要）
+    win.setPosition(1200, 680)
     win.setMaxFPS(60)
     
-    // 初始化桌宠状态
-    var pet = new Pet()
-    pet.x = 75.0
-    pet.y = 95.0
-    pet.vx = 0.0
-    pet.frame = 0
-    pet.blinkTimer = 0
-    pet.isBlinking = false
-    pet.isDragging = false
-    pet.isHover = false
-    pet.isHappy = false
-    pet.happyTimer = 0
-    pet.isWaving = false
-    pet.waveTimer = 0
-    pet.waveFrame = 0
-    pet.walkTimer = 200  // 2秒后开始走动
-    pet.winX = 1200
-    pet.winY = 700
+    // 初始化机器人状态
+    var robot = new Robot()
+    robot.x = 80.0
+    robot.y = 130.0
+    robot.vx = 0.0
+    robot.frame = 0
+    robot.blinkTimer = 0
+    robot.isBlinking = false
+    robot.isDragging = false
+    robot.isHover = false
+    robot.isHappy = false
+    robot.happyTimer = 0
+    robot.isWaving = false
+    robot.waveTimer = 0
+    robot.waveFrame = 0
+    robot.walkTimer = 200
+    robot.winX = 1200
+    robot.winY = 680
+    robot.jumpOffset = 0.0
+    robot.isJumping = false
+    robot.jumpFrame = 0
+    robot.walkPhase = 0
+    robot.facing = 1       // 默认朝右
+    robot.bubbleText = ""
+    robot.bubbleTimer = 0
+    robot.isHeadHurt = false
+    robot.headHurtTimer = 0
+    robot.isPeeing = false
+    robot.peeTimer = 0
+    robot.isBlushing = false
+    robot.blushTimer = 0
+    robot.dragStartGX = 0
+    robot.dragStartGY = 0
+    robot.dragStartWinX = 0
+    robot.dragStartWinY = 0
+    // 累了 + 烟花
+    robot.stepCount = 0
+    robot.isTired = false
+    robot.tiredTimer = 0
+    robot.isCrouching = false
+    robot.fwParticles = []
+    robot.fwLaunchTimer = 0
     
-    // 运行事件循环（使用内联匿名函数）
+    // 运行事件循环
     win.run(
         func(Event ev): bool {
-            // 窗口关闭
             if ev.isQuit() or ev.isWindowClose() { return false }
             
             // 鼠标移动 - 检测悬停
             if ev.isMouseMotion() {
                 float mx = ev.mouseX()
                 float my = ev.mouseY()
-                float dx = mx - pet.x
-                float dy = my - pet.y
-                pet.isHover = dx * dx + dy * dy < 1764.0  // 42x42
+                float dx = mx - robot.x
+                float dy = my - robot.y
+                robot.isHover = dx * dx + dy * dy < 2704.0  // 52x52
                 
-                // 拖拽时移动窗口
-                if pet.isDragging {
-                    float dx2 = ev.mouseDX()
-                    float dy2 = ev.mouseDY()
-                    pet.winX = pet.winX + _int(dx2)
-                    pet.winY = pet.winY + _int(dy2)
-                    win.setPosition(pet.winX, pet.winY)
+                // 拖拽：用全局鼠标坐标计算偏移，避免反馈循环抖动
+                if robot.isDragging {
+                    int curGX = core.getGlobalMouseX()
+                    int curGY = core.getGlobalMouseY()
+                    robot.winX = robot.dragStartWinX + (curGX - robot.dragStartGX)
+                    robot.winY = robot.dragStartWinY + (curGY - robot.dragStartGY)
+                    win.setPosition(robot.winX, robot.winY)
                 }
             }
             
-            // 鼠标按下 - 开始拖拽
-            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {  // 左键
+            // 鼠标按下 - 记录拖拽起始位置
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
                 float mx = ev.mouseX()
                 float my = ev.mouseY()
-                float dx = mx - pet.x
-                float dy = my - pet.y
-                if dx * dx + dy * dy < 1764.0 {
-                    pet.isDragging = true
-                    pet.vx = 0.0
+                float dx = mx - robot.x
+                float dy = my - robot.y
+                if dx * dx + dy * dy < 2704.0 {
+                    robot.isDragging = true
+                    robot.vx = 0.0
+                    // 记录全局鼠标和窗口起始位置
+                    robot.dragStartGX = core.getGlobalMouseX()
+                    robot.dragStartGY = core.getGlobalMouseY()
+                    robot.dragStartWinX = robot.winX
+                    robot.dragStartWinY = robot.winY
                 }
             }
             
-            // 鼠标释放 - 结束拖拽
+            // 鼠标释放 - 根据点击部位触发不同互动
             if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
-                if pet.isDragging {
-                    pet.isDragging = false
-                    pet.walkTimer = 150  // 1.5秒后重新开始走动
-                } else if pet.isHover {
-                    // 点击但未拖拽 = 开心反应
-                    pet.isHappy = true
-                    pet.happyTimer = 60
-                    pet.isWaving = true
-                    pet.waveTimer = 60
-                    pet.waveFrame = 0
+                if robot.isDragging {
+                    robot.isDragging = false
+                    // 判断是点击还是拖拽：窗口位置变化 < 5像素 = 点击
+                    int winDx = robot.winX - robot.dragStartWinX
+                    int winDy = robot.winY - robot.dragStartWinY
+                    if winDx * winDx + winDy * winDy < 25 {
+                        // 点击 → 根据部位触发互动
+                        float mx = ev.mouseX()
+                        float my = ev.mouseY()
+                        int part = hitTest(mx, my, robot.x, robot.y)
+                        if part == 1 {
+                            // 点击头部：起包 + 揉脑袋
+                            robot.isHeadHurt = true
+                            robot.headHurtTimer = 120
+                            robot.bubbleText = "好痛！"
+                            robot.bubbleTimer = 120
+                        } else if part == 2 {
+                            // 点击胯下：撒尿模式
+                            robot.isPeeing = true
+                            robot.peeTimer = 100
+                            robot.bubbleText = "呃..."
+                            robot.bubbleTimer = 100
+                        } else if part == 3 {
+                            // 点击大腿：脸红 + 害羞
+                            robot.isBlushing = true
+                            robot.blushTimer = 150
+                            robot.bubbleText = "人家不要嘛？"
+                            robot.bubbleTimer = 150
+                        } else {
+                            // 点击其他部位：跳跃 + 开心 + 挥手
+                            if not robot.isJumping {
+                                robot.isJumping = true
+                                robot.jumpFrame = 0
+                            }
+                            robot.isHappy = true
+                            robot.happyTimer = 60
+                            robot.isWaving = true
+                            robot.waveTimer = 90
+                            robot.waveFrame = 0
+                            robot.bubbleText = randomBubble()
+                            robot.bubbleTimer = 150
+                        }
+                    } else {
+                        // 拖拽结束
+                        robot.walkTimer = 150
+                    }
                 }
             }
             
             return true
         },
         func(Renderer r) {
-            // 更新动画状态
-            pet.frame = pet.frame + 1
+            robot.frame = robot.frame + 1
             
-            // 眨眼逻辑
-            pet.blinkTimer = pet.blinkTimer + 1
-            if pet.blinkTimer > 180 {  // 约3秒眨一次
-                pet.isBlinking = true
-                if pet.blinkTimer > 195 {
-                    pet.isBlinking = false
-                    pet.blinkTimer = 0
+            // === 跳跃逻辑（抛物线） ===
+            if robot.isJumping {
+                robot.jumpFrame = robot.jumpFrame + 1
+                if robot.jumpFrame <= 25 {
+                    robot.jumpOffset = _float(robot.jumpFrame) * 1.4
+                } else if robot.jumpFrame <= 50 {
+                    robot.jumpOffset = 35.0 - _float(robot.jumpFrame - 25) * 1.4
+                } else {
+                    robot.isJumping = false
+                    robot.jumpOffset = 0.0
                 }
             }
             
-            // 开心状态
-            if pet.isHappy {
-                pet.happyTimer = pet.happyTimer - 1
-                if pet.happyTimer <= 0 {
-                    pet.isHappy = false
+            // === 眨眼逻辑 ===
+            robot.blinkTimer = robot.blinkTimer + 1
+            if robot.blinkTimer > 180 {
+                robot.isBlinking = true
+                if robot.blinkTimer > 195 {
+                    robot.isBlinking = false
+                    robot.blinkTimer = 0
                 }
             }
             
-            // 挥手动画
-            if pet.isWaving {
-                pet.waveFrame = pet.waveFrame + 1
-                pet.waveTimer = pet.waveTimer - 1
-                if pet.waveTimer <= 0 {
-                    pet.isWaving = false
-                }
+            // === 开心状态 ===
+            if robot.isHappy {
+                robot.happyTimer = robot.happyTimer - 1
+                if robot.happyTimer <= 0 { robot.isHappy = false }
             }
             
-            // 自动走动逻辑
-            if not pet.isDragging {
-                pet.walkTimer = pet.walkTimer - 1
-                if pet.walkTimer <= 0 {
-                    // 随机改变行为
-                    int action = _int(maths.sin(_float(pet.frame) * 0.01) * 100.0) % 10
-                    
-                    if action < 3 {
-                        pet.vx = -0.5  // 向左
-                    } else if action < 6 {
-                        pet.vx = 0.5   // 向右
-                    } else {
-                        pet.vx = 0.0   // 停止
-                        // 停止时随机挥手
-                        if action >= 8 and not pet.isWaving {
-                            pet.isWaving = true
-                            pet.waveTimer = 60
-                            pet.waveFrame = 0
+            // === 挥手动画 ===
+            if robot.isWaving {
+                robot.waveFrame = robot.waveFrame + 1
+                robot.waveTimer = robot.waveTimer - 1
+                if robot.waveTimer <= 0 { robot.isWaving = false }
+            }
+
+            // === 部位互动计时 ===
+            if robot.isHeadHurt {
+                robot.headHurtTimer = robot.headHurtTimer - 1
+                if robot.headHurtTimer <= 0 { robot.isHeadHurt = false }
+            }
+            if robot.isPeeing {
+                robot.peeTimer = robot.peeTimer - 1
+                if robot.peeTimer <= 0 { robot.isPeeing = false }
+            }
+            if robot.isBlushing {
+                robot.blushTimer = robot.blushTimer - 1
+                if robot.blushTimer <= 0 { robot.isBlushing = false }
+            }
+            
+            // === 冒泡文字计时 ===
+            if robot.bubbleTimer > 0 {
+                robot.bubbleTimer = robot.bubbleTimer - 1
+            }
+            
+            // === 自动走动逻辑（用 rands 生成随机行为） ===
+            if not robot.isDragging {
+                if robot.isTired {
+                    // 累了：蹲下不走动，倒计时恢复
+                    robot.vx = 0.0
+                    robot.isCrouching = true
+                    robot.tiredTimer = robot.tiredTimer - 1
+                    if robot.tiredTimer <= 0 {
+                        robot.isTired = false
+                        robot.isCrouching = false
+                        robot.stepCount = 0
+                        robot.fwParticles = []
+                        robot.walkTimer = 100
+                        robot.bubbleText = "歇够了~"
+                        robot.bubbleTimer = 80
+                    }
+                } else {
+                    robot.walkTimer = robot.walkTimer - 1
+                    if robot.walkTimer <= 0 {
+                        int action = rands.ints(0, 10)
+
+                        if action < 3 {
+                            robot.vx = -0.5
+                            robot.facing = -1  // 朝左
+                        } else if action < 6 {
+                            robot.vx = 0.5
+                            robot.facing = 1   // 朝右
+                        } else {
+                            robot.vx = 0.0   // 停止
+                            // 停止时随机挥手打招呼
+                            if action >= 8 and not robot.isWaving {
+                                robot.isWaving = true
+                                robot.waveTimer = 80
+                                robot.waveFrame = 0
+                                robot.bubbleText = randomBubble()
+                                robot.bubbleTimer = 120
+                            }
+                            // 停止时偶尔跳跃
+                            if action == 7 and not robot.isJumping {
+                                robot.isJumping = true
+                                robot.jumpFrame = 0
+                            }
+                        }
+                        robot.walkTimer = 100 + rands.ints(0, 100)
+                    }
+
+                    // 行走相位更新
+                    if robot.vx != 0.0 {
+                        robot.walkPhase = robot.walkPhase + 1
+                    }
+
+                    // 应用移动
+                    robot.x = robot.x + robot.vx
+
+                    // 窗口内边界检测（反弹 + 转身）
+                    if robot.x < 40.0 {
+                        robot.x = 40.0
+                        robot.vx = 0.3
+                        robot.facing = 1   // 转身朝右
+                    }
+                    if robot.x > 120.0 {
+                        robot.x = 120.0
+                        robot.vx = -0.3
+                        robot.facing = -1  // 转身朝左
+                    }
+
+                    // 移动窗口位置（屏幕上真实走动）
+                    if robot.vx != 0.0 {
+                        robot.winX = robot.winX + _int(robot.vx * 2.0)
+
+                        // 屏幕边界检测（反弹 + 转身）
+                        if robot.winX < 0 {
+                            robot.winX = 0
+                            robot.vx = -robot.vx
+                            robot.facing = -robot.facing
+                        }
+                        if robot.winX > 1760 {
+                            robot.winX = 1760
+                            robot.vx = -robot.vx
+                            robot.facing = -robot.facing
+                        }
+
+                        win.setPosition(robot.winX, robot.winY)
+                    }
+
+                    // 步数累计 → 触发累状态（走动累计 500 步后蹲下放烟花休息）
+                    if robot.vx != 0.0 and not robot.isJumping {
+                        robot.stepCount = robot.stepCount + 1
+                        if robot.stepCount >= 500 {
+                            robot.isTired = true
+                            robot.tiredTimer = 400
+                            robot.isCrouching = true
+                            robot.vx = 0.0
+                            robot.bubbleText = "好累啊..."
+                            robot.bubbleTimer = 120
                         }
                     }
-                    pet.walkTimer = 100 + _int(maths.sin(_float(pet.frame) * 0.02) * 50.0 + 50.0)
-                }
-                
-                // 应用移动
-                pet.x = pet.x + pet.vx
-                
-                // 边界检测（窗口内）
-                if pet.x < 35.0 {
-                    pet.x = 35.0
-                    pet.vx = 0.3
-                }
-                if pet.x > 115.0 {
-                    pet.x = 115.0
-                    pet.vx = -0.3
-                }
-                
-                // 移动窗口位置（屏幕上）
-                if pet.vx != 0.0 {
-                    pet.winX = pet.winX + _int(pet.vx * 2.0)
-                    
-                    // 屏幕边界检测
-                    if pet.winX < 0 { pet.winX = 0 }
-                    if pet.winX > 1770 {  // 1920 - 150
-                        pet.winX = 1770
-                        pet.vx = -pet.vx
-                    }
-                    
-                    win.setPosition(pet.winX, pet.winY)
                 }
             }
+
+            // === 烟花粒子更新（累了蹲下时从头顶发射，参考 fireworks_run 粒子系统） ===
+            if robot.isTired and robot.isCrouching {
+                robot.fwLaunchTimer = robot.fwLaunchTimer - 1
+                if robot.fwLaunchTimer <= 0 {
+                    var fp = new PetParticle(
+                        x=_float(robot.x), y=_float(robot.y - 50.0),
+                        vx=_float(rands.ints(-1, 1)) * 0.6,
+                        vy=-3.5,
+                        life=45,
+                        r=rands.ints(150, 255), g=rands.ints(150, 255), b=rands.ints(150, 255),
+                        kind=0
+                    )
+                    robot.fwParticles.add(fp)
+                    robot.fwLaunchTimer = 20 + rands.ints(0, 25)
+                }
+            }
+            Array[PetParticle] fwAlive = []
+            Array[PetParticle] fwNew = []
+            int fwN = robot.fwParticles.len()
+            for fwN to i {
+                var p = robot.fwParticles[i]
+                p.x = p.x + p.vx
+                p.y = p.y + p.vy
+                p.life = p.life - 1
+                if p.kind == 0 {
+                    // 上升火星：减速到顶后爆炸
+                    p.vy = p.vy + 0.06
+                    if p.vy >= 0.0 or p.life <= 0 {
+                        int cnt = rands.ints(12, 20)
+                        for 0 : cnt - 1 to j {
+                            float a = rands.floats(0.0, 6.283)
+                            float sp = rands.floats(1.0, 3.5)
+                            var pp = new PetParticle(
+                                x=_float(p.x), y=_float(p.y),
+                                vx=maths.cos(a) * sp, vy=maths.sin(a) * sp,
+                                life=rands.ints(35, 55),
+                                r=_int(p.r), g=_int(p.g), b=_int(p.b),
+                                kind=1
+                            )
+                            fwNew.add(pp)
+                        }
+                    } else {
+                        fwAlive.add(p)
+                    }
+                } else {
+                    // 爆炸粒子：受重力下落 + 阻力衰减
+                    p.vy = p.vy + 0.07
+                    p.vx = p.vx * 0.97
+                    p.vy = p.vy * 0.97
+                    if p.life > 0 { fwAlive.add(p) }
+                }
+            }
+            for fwNew to np { fwAlive.add(np) }
+            robot.fwParticles = fwAlive
             
-            // 透明背景（alpha=0）
+            // 透明背景
             r.setColor(0, 0, 0, 0)
             r.clear()
             
-            // 绘制桌宠
-            drawPet(r, pet)
+            // 绘制机器人
+            drawRobot(r, robot, font)
             
-            // 请求下一帧渲染（动画必需）
             core.requestRedraw()
         }
     )
     
     // 清理
+    if font.ok { font.close() }
     win.destroy()
     SDL3.quit()
     
-    print("桌宠退出")
+    print("机器人桌宠退出")
 }
