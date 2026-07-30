@@ -59,14 +59,21 @@ OPCODE(OP_FOR_LOOP) {
     Value end_val = frame->locals[end_slot];
 
     // 优化：如果 step 和 loop_var 都是普通整数（不是 BigInt），使用整数运算
+    // 注意：必须用 int64_t（int48 容器），不能用 int32——否则 i=2147483647 再 +1
+    // 会溢出为 -2147483648，导致 i<=end 永真，陷入约 40 亿次死循环（内存爆炸）
     if (val_is_int(loop_var) && val_is_int(step_val) && val_is_int(end_val)) {
-        int loop_num = val_as_int(loop_var);
-        int step_num = val_as_int(step_val);
-        int end_num = val_as_int(end_val);
+        int64_t loop_num = val_as_int(loop_var);
+        int64_t step_num = val_as_int(step_val);
+        int64_t end_num = val_as_int(end_val);
 
         // 更新 loop_var += step
         loop_num += step_num;
-        frame->locals[loop_var_slot] = val_int(loop_num);
+        // 若增量后超出 int48 范围，转为 bigint 存储（下一次迭代自动走 bigint 路径）
+        if (loop_num >= INT48_MIN && loop_num <= INT48_MAX) {
+            frame->locals[loop_var_slot] = val_int(loop_num);
+        } else {
+            frame->locals[loop_var_slot] = val_obj((Object*)bigint_from_int64(loop_num));
+        }
 
         // 检查是否继续循环
         int should_continue = 0;

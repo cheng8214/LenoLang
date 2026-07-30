@@ -1,0 +1,61 @@
+// 回归测试：new Struct(named=params) 命名参数字段访问类型推断
+// 历史 bug：visit_struct_init 先 infer 后 visit，AST_MODULE_ACCESS 未转换为
+// AST_FIELD_ACCESS，导致 p1.x 在命名参数位置被推断为 any，报类型不匹配。
+// 修复：改为先 visit 后推断（visit_struct_init.inc）。
+
+struct Point {
+    float x, y
+    int r, g, b
+}
+
+func useFloat(float v): float { return v + 1.0 }
+func useInt(int v): int { return v + 1 }
+
+main() {
+    // 基准：字面量构造
+    Point p1 = new Point(x=1.0, y=2.0, r=10, g=20, b=30)
+    assert_eq(p1.x, 1.0)
+    assert_eq(p1.r, 10)
+
+    // 场景A：从变量字段访问构造（核心回归点）
+    var p2 = new Point(x=p1.x, y=p1.y, r=p1.r, g=p1.g, b=p1.b)
+    assert_eq(p2.x, 1.0)
+    assert_eq(p2.y, 2.0)
+    assert_eq(p2.r, 10)
+    assert_eq(p2.g, 20)
+    assert_eq(p2.b, 30)
+
+    // 场景B：局部变量作为命名参数值
+    float fx = 3.0
+    int ir = 40
+    var p3 = new Point(x=fx, y=4.0, r=ir, g=50, b=60)
+    assert_eq(p3.x, 3.0)
+    assert_eq(p3.r, 40)
+
+    // 场景C：数组索引元素的字段访问
+    Array[Point] arr = [p1, p2, p3]
+    var f = arr[0]
+    var p4 = new Point(x=f.x, y=f.y, r=f.r, g=f.g, b=f.b)
+    assert_eq(p4.x, 1.0)
+    assert_eq(p4.r, 10)
+
+    // 场景D：字段访问作为函数参数
+    float d1 = useFloat(p1.x)
+    int d2 = useInt(p1.r)
+    assert_eq(d1, 2.0)
+    assert_eq(d2, 11)
+
+    // 场景E：字段访问参与算术
+    float sum = p1.x + p1.y
+    int total = p1.r + p1.g + p1.b
+    assert_eq(sum, 3.0)
+    assert_eq(total, 60)
+
+    // 场景F：字段访问赋值给显式类型变量
+    float gx = p1.x
+    int gr = p1.r
+    assert_eq(gx, 1.0)
+    assert_eq(gr, 10)
+
+    print("[PASS] type_infer_named: new Struct 命名参数字段访问类型推断")
+}

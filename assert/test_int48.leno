@@ -1,0 +1,98 @@
+// 回归测试：int48 整型全链路正确性
+// 历史 bug：
+// 1) serialize.c CONST_TAG_INT 用 int32 存储，>= 2^31 的 int48 值经 序列化→反序列化 后变负
+//    （f9ec68f4 让 .leno 直走序列化后激活此潜在 bug）
+// 2) ObjRange 全链路 int32 截断（VM/struct/序列化），与 int48 模型不一致
+// 3) for 循环 int 快速路径用 32 位 int 存计数器，i=2147483647 再 +1 溢出为负，
+//    导致 i<=end 永真，陷入约 40 亿次死循环，内存爆炸到 11GB+
+// 修复：CONST_TAG_INT/CONST_TAG_RANGE 改 u64；ObjRange.start/end 改 int64_t；
+//       for 循环计数器改 int64_t + int48 边界守护（超限转 bigint）。
+
+struct Cfg {
+    int flags = 0x80000000
+    int mask = 0xFFFFFFFF
+    float pi = 3.14
+}
+
+main() {
+    // ===== 1. int48 序列化（.leno 直走 serialize→deserialize）=====
+    // 0x80000000 = 2147483648 (> INT32_MAX)，曾因 int32 截断变负
+    int a = 0x80000000
+    assert_eq(a, 2147483648, "0x80000000")
+
+    // 0xFFFFFFFF = 4294967295
+    int b = 0xFFFFFFFF
+    assert_eq(b, 4294967295, "0xFFFFFFFF")
+
+    // 0x7FFFFFFF = 2147483647 (INT32_MAX，边界)
+    int c = 0x7FFFFFFF
+    assert_eq(c, 2147483647, "0x7FFFFFFF")
+
+    // 负边界
+    int d = -2147483648
+    assert_eq(d, -2147483648, "INT32_MIN")
+
+    // 零
+    int e = 0
+    assert_eq(e, 0, "zero")
+
+    // ===== 2. struct 字段默认值（走 serialize_constant 递归路径）=====
+    var cfg = new Cfg()
+    assert_eq(cfg.flags, 2147483648, "struct default flags")
+    assert_eq(cfg.mask, 4294967295, "struct default mask")
+    assert_eq(cfg.pi, 3.14, "struct default pi")
+
+    // ===== 3. 数组元素（走 CONST_TAG_ARRAY 递归）=====
+    Array[int] arr = [0x80000000, 0xFFFFFFFF, 0x7FFFFFFF]
+    assert_eq(arr[0], 2147483648, "arr[0]")
+    assert_eq(arr[1], 4294967295, "arr[1]")
+    assert_eq(arr[2], 2147483647, "arr[2]")
+
+    // ===== 4. ObjRange int48 包含判断（走 OP_RANGE + range_contains）=====
+    // 0x80000000:0xFFFFFFFF 范围内的值
+    assert_eq(3000000000 in 0x80000000:0xFFFFFFFF, true, "3000000000 in range")
+    assert_eq(5000000000 in 0x80000000:0xFFFFFFFF, false, "5000000000 out of range")
+    assert_eq(100 in 0x80000000:0xFFFFFFFF, false, "100 before range")
+
+    // 小 range 回归
+    assert_eq(5 in 1:10, true, "5 in 1:10")
+    assert_eq(15 in 1:10, false, "15 not in 1:10")
+
+    // ===== 5. for 循环 int48（曾因 int32 溢出导致 11GB 内存爆炸）=====
+    // 用户原始复现：2147483646:2147483647
+    var s1 = 0
+    for 2147483646:2147483647 to i {
+        s1 = s1 + i
+    }
+    assert_eq(s1, 4294967293, "for 2147483646:2147483647")
+
+    // 跨越 int32 上界
+    var s2 = 0
+    for 2147483645:2147483650 to i {
+        s2 = s2 + i
+    }
+    assert_eq(s2, 12884901885, "for cross int32 max")
+
+    // int48 中段大值
+    var s3 = 0
+    for 1000000000:1000000002 to i {
+        s3 = s3 + i
+    }
+    assert_eq(s3, 3000000003, "for mid int48")
+
+    // 超过 int48（bigint）循环——140737488355328 = 2^47
+    var cnt = 0
+    for 140737488355328:140737488355330 to i {
+        cnt = cnt + 1
+    }
+    assert_eq(cnt, 3, "for bigint range")
+
+    // 小值回归
+    var s4 = 0
+    for 1:5 to i {
+        s4 = s4 + i
+    }
+    assert_eq(s4, 15, "for 1:5 inclusive")
+
+    print("[PASS] int48: 序列化/范围/for循环 int48 全链路")
+}
