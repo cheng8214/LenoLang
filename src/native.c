@@ -1507,9 +1507,9 @@ Value value_copy(Value v) {
                 return val_obj((Object*)copy);
             }
             case OBJ_STRING: {
-                // 字符串是不可变的，可以共享（但这里选择拷贝）
-                ObjString* str = (ObjString*)obj;
-                return val_obj((Object*)str_copy(str->chars, str->len));
+                // 字符串是不可变的，直接共享引用（避免不必要的内存分配和字符数据拷贝）
+                // GC 通过遍历 Value 标记对象，多个 Value 引用同一个 ObjString 是安全的
+                return v;
             }
             case OBJ_DICT: {
                 // 字典深拷贝
