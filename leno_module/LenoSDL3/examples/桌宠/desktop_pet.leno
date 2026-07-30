@@ -1,8 +1,9 @@
 // desktop_pet.leno — 可爱桌宠（拖拽移动、呼吸动画、眨眼、挥手、自动走动）
 // 使用 win.run() 回调模式，透明窗口
 import "../../lib/SDL3.leno" as SDL3
+import "../../lib/sdl_core.leno" as core
+use SDL3.(Event, Renderer, WindowFlag)
 import maths
-use SDL3.(Event, Renderer, WindowFlag, BlendMode)
 
 // 桌宠状态
 struct Pet {
@@ -162,151 +163,152 @@ main() {
     pet.winX = 1200
     pet.winY = 700
     
-    // 事件处理函数
-    func onEvent(Event ev): bool {
-        // 窗口关闭
-        if ev.isQuit() or ev.isWindowClose() { return false }
-        
-        // 鼠标移动 - 检测悬停
-        if ev.isMouseMotion() {
-            float mx = ev.mouseX()
-            float my = ev.mouseY()
-            float dx = mx - pet.x
-            float dy = my - pet.y
-            pet.isHover = dx * dx + dy * dy < 1764.0  // 42x42
+    // 运行事件循环（使用内联匿名函数）
+    win.run(
+        func(Event ev): bool {
+            // 窗口关闭
+            if ev.isQuit() or ev.isWindowClose() { return false }
             
-            // 拖拽时移动窗口
-            if pet.isDragging {
-                float dx2 = ev.mouseDX()
-                float dy2 = ev.mouseDY()
-                pet.winX = pet.winX + _int(dx2)
-                pet.winY = pet.winY + _int(dy2)
-                win.setPosition(pet.winX, pet.winY)
-            }
-        }
-        
-        // 鼠标按下 - 开始拖拽
-        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {  // 左键
-            float mx = ev.mouseX()
-            float my = ev.mouseY()
-            float dx = mx - pet.x
-            float dy = my - pet.y
-            if dx * dx + dy * dy < 1764.0 {
-                pet.isDragging = true
-                pet.vx = 0.0
-            }
-        }
-        
-        // 鼠标释放 - 结束拖拽
-        if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
-            if pet.isDragging {
-                pet.isDragging = false
-                pet.walkTimer = 150  // 1.5秒后重新开始走动
-            } else if pet.isHover {
-                // 点击但未拖拽 = 开心反应
-                pet.isHappy = true
-                pet.happyTimer = 60
-                pet.isWaving = true
-                pet.waveTimer = 60
-                pet.waveFrame = 0
-            }
-        }
-        
-        return true
-    }
-    
-    // 渲染函数
-    func onRender(Renderer r) {
-        // 更新动画状态
-        pet.frame = pet.frame + 1
-        
-        // 眨眼逻辑
-        pet.blinkTimer = pet.blinkTimer + 1
-        if pet.blinkTimer > 180 {  // 约3秒眨一次
-            pet.isBlinking = true
-            if pet.blinkTimer > 195 {
-                pet.isBlinking = false
-                pet.blinkTimer = 0
-            }
-        }
-        
-        // 开心状态
-        if pet.isHappy {
-            pet.happyTimer = pet.happyTimer - 1
-            if pet.happyTimer <= 0 {
-                pet.isHappy = false
-            }
-        }
-        
-        // 挥手动画
-        if pet.isWaving {
-            pet.waveFrame = pet.waveFrame + 1
-            pet.waveTimer = pet.waveTimer - 1
-            if pet.waveTimer <= 0 {
-                pet.isWaving = false
-            }
-        }
-        
-        // 自动走动逻辑
-        if not pet.isDragging {
-            pet.walkTimer = pet.walkTimer - 1
-            if pet.walkTimer <= 0 {
-                // 随机改变行为
-                int action = _int(maths.sin(_float(pet.frame) * 0.01) * 100.0) % 10
+            // 鼠标移动 - 检测悬停
+            if ev.isMouseMotion() {
+                float mx = ev.mouseX()
+                float my = ev.mouseY()
+                float dx = mx - pet.x
+                float dy = my - pet.y
+                pet.isHover = dx * dx + dy * dy < 1764.0  // 42x42
                 
-                if action < 3 {
-                    pet.vx = -0.5  // 向左
-                } else if action < 6 {
-                    pet.vx = 0.5   // 向右
-                } else {
-                    pet.vx = 0.0   // 停止
-                    // 停止时随机挥手
-                    if action >= 8 and not pet.isWaving {
-                        pet.isWaving = true
-                        pet.waveTimer = 60
-                        pet.waveFrame = 0
+                // 拖拽时移动窗口
+                if pet.isDragging {
+                    float dx2 = ev.mouseDX()
+                    float dy2 = ev.mouseDY()
+                    pet.winX = pet.winX + _int(dx2)
+                    pet.winY = pet.winY + _int(dy2)
+                    win.setPosition(pet.winX, pet.winY)
+                }
+            }
+            
+            // 鼠标按下 - 开始拖拽
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {  // 左键
+                float mx = ev.mouseX()
+                float my = ev.mouseY()
+                float dx = mx - pet.x
+                float dy = my - pet.y
+                if dx * dx + dy * dy < 1764.0 {
+                    pet.isDragging = true
+                    pet.vx = 0.0
+                }
+            }
+            
+            // 鼠标释放 - 结束拖拽
+            if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
+                if pet.isDragging {
+                    pet.isDragging = false
+                    pet.walkTimer = 150  // 1.5秒后重新开始走动
+                } else if pet.isHover {
+                    // 点击但未拖拽 = 开心反应
+                    pet.isHappy = true
+                    pet.happyTimer = 60
+                    pet.isWaving = true
+                    pet.waveTimer = 60
+                    pet.waveFrame = 0
+                }
+            }
+            
+            return true
+        },
+        func(Renderer r) {
+            // 更新动画状态
+            pet.frame = pet.frame + 1
+            
+            // 眨眼逻辑
+            pet.blinkTimer = pet.blinkTimer + 1
+            if pet.blinkTimer > 180 {  // 约3秒眨一次
+                pet.isBlinking = true
+                if pet.blinkTimer > 195 {
+                    pet.isBlinking = false
+                    pet.blinkTimer = 0
+                }
+            }
+            
+            // 开心状态
+            if pet.isHappy {
+                pet.happyTimer = pet.happyTimer - 1
+                if pet.happyTimer <= 0 {
+                    pet.isHappy = false
+                }
+            }
+            
+            // 挥手动画
+            if pet.isWaving {
+                pet.waveFrame = pet.waveFrame + 1
+                pet.waveTimer = pet.waveTimer - 1
+                if pet.waveTimer <= 0 {
+                    pet.isWaving = false
+                }
+            }
+            
+            // 自动走动逻辑
+            if not pet.isDragging {
+                pet.walkTimer = pet.walkTimer - 1
+                if pet.walkTimer <= 0 {
+                    // 随机改变行为
+                    int action = _int(maths.sin(_float(pet.frame) * 0.01) * 100.0) % 10
+                    
+                    if action < 3 {
+                        pet.vx = -0.5  // 向左
+                    } else if action < 6 {
+                        pet.vx = 0.5   // 向右
+                    } else {
+                        pet.vx = 0.0   // 停止
+                        // 停止时随机挥手
+                        if action >= 8 and not pet.isWaving {
+                            pet.isWaving = true
+                            pet.waveTimer = 60
+                            pet.waveFrame = 0
+                        }
                     }
-                }
-                pet.walkTimer = 100 + _int(maths.sin(_float(pet.frame) * 0.02) * 50.0 + 50.0)
-            }
-            
-            // 应用移动
-            pet.x = pet.x + pet.vx
-            
-            // 边界检测（窗口内）
-            if pet.x < 35.0 {
-                pet.x = 35.0
-                pet.vx = 0.3
-            }
-            if pet.x > 115.0 {
-                pet.x = 115.0
-                pet.vx = -0.3
-            }
-            
-            // 移动窗口位置（屏幕上）
-            if pet.vx != 0.0 {
-                pet.winX = pet.winX + _int(pet.vx * 2.0)
-                
-                // 屏幕边界检测
-                if pet.winX < 0 { pet.winX = 0 }
-                if pet.winX > 1770 {  // 1920 - 150
-                    pet.winX = 1770
-                    pet.vx = -pet.vx
+                    pet.walkTimer = 100 + _int(maths.sin(_float(pet.frame) * 0.02) * 50.0 + 50.0)
                 }
                 
-                win.setPosition(pet.winX, pet.winY)
+                // 应用移动
+                pet.x = pet.x + pet.vx
+                
+                // 边界检测（窗口内）
+                if pet.x < 35.0 {
+                    pet.x = 35.0
+                    pet.vx = 0.3
+                }
+                if pet.x > 115.0 {
+                    pet.x = 115.0
+                    pet.vx = -0.3
+                }
+                
+                // 移动窗口位置（屏幕上）
+                if pet.vx != 0.0 {
+                    pet.winX = pet.winX + _int(pet.vx * 2.0)
+                    
+                    // 屏幕边界检测
+                    if pet.winX < 0 { pet.winX = 0 }
+                    if pet.winX > 1770 {  // 1920 - 150
+                        pet.winX = 1770
+                        pet.vx = -pet.vx
+                    }
+                    
+                    win.setPosition(pet.winX, pet.winY)
+                }
             }
+            
+            // 透明背景（alpha=0）
+            r.setColor(0, 0, 0, 0)
+            r.clear()
+            
+            // 绘制桌宠
+            drawPet(r, pet)
+            
+            // 请求下一帧渲染（动画必需）
+            core.requestRedraw()
         }
-        
-        // 透明背景（alpha=0）
-        r.setColor(0, 0, 0, 0)
-        r.clear()
-        
-        // 绘制桌宠
-        drawPet(r, pet)
-    }
-    // 运行事件循环
-    win.run(onEvent, onRender)
+    )
     
     // 清理
     win.destroy()
