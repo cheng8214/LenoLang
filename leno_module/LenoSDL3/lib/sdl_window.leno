@@ -82,6 +82,7 @@ Array[Widget?]          _runRoots  = []     // 各窗口的根布局控件（set
 Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
 Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
+Array[bool]            _runTransparent = []    // 各窗口是否透明（跳过背景填充）
 var _runLoopActive = false    // 主循环是否已在运行
 Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
 
@@ -126,6 +127,7 @@ export struct Window {
     int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
     Widget? _root                     // 根布局控件（setRoot 设置），缩放时自动填满窗口
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
+    bool _transparent = false          // 透明窗口（跳过背景填充）
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -138,6 +140,8 @@ export struct Window {
         int h        = opts.get("h", 600)
         int flags    = opts.get("flags", 0)
         _w = w; _h = h
+        // 检测透明窗口标志
+        _transparent = (flags & 0x0000000040000000) != 0
         // 超采样抗锯齿：默认关闭；aa:true / aa:2 / aa:1.5 开启
         _aaScale = 0.0
         var aaOpt = opts.get("aa", 0.0)
@@ -509,6 +513,7 @@ export struct Window {
         Size sz = getSize()           // 窗口逻辑尺寸（Tooltip 浮层夹紧用）
         _runW.add(sz.w); _runH.add(sz.h)
         _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
+        _runTransparent.add(_transparent)    // 透明窗口标志
     }
 
     // 运行主循环（回调模式，支持多窗口）
@@ -657,9 +662,12 @@ export struct Window {
                     for _runWids.len() to i {
                     // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
                     // SDL_RenderClear 在 Win/D3D 后端可能不走 back buffer 缓冲，导致短暂黑闪
+                    // 透明窗口跳过背景填充，保留 alpha=0 区域透明
                     var ren = _runRens[i]
-                    ren.setColor(0, 0, 0, 255)
-                    ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
+                    if not _runTransparent[i] {
+                        ren.setColor(0, 0, 0, 255)
+                        ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
+                    }
                     _runRends[i](_runRens[i])
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
                     core.clearPopupCapture()
