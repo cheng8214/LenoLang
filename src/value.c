@@ -419,7 +419,7 @@ char* value_to_string(Value v) {
 // Range 操作
 // ============================================================================
 
-ObjRange* range_new(int start, int end, int inclusive) {
+ObjRange* range_new(int64_t start, int64_t end, int inclusive) {
     ObjRange* range = (ObjRange*)gc_alloc(sizeof(ObjRange), OBJ_RANGE);
     if (!range) return NULL;
     range->start = start;
@@ -428,7 +428,7 @@ ObjRange* range_new(int start, int end, int inclusive) {
     return range;
 }
 
-int range_contains(ObjRange* range, int value) {
+int range_contains(ObjRange* range, int64_t value) {
     if (range->inclusive) {
         return value >= range->start && value <= range->end;
     } else {

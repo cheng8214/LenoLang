@@ -51,7 +51,7 @@ OPCODE(OP_IN) {
             case OBJ_RANGE: {
                 ObjRange* range = (ObjRange*)val_as_obj(collection);
                 if (val_is_num(item)) {
-                    found = range_contains(range, (int)value_to_double(item));
+                    found = range_contains(range, (int64_t)value_to_double(item));
                 }
                 break;
             }
@@ -70,12 +70,22 @@ OPCODE(OP_RANGE) {
     Value end = vm_stack_pop(&vm);
     Value start = vm_stack_pop(&vm);
 
-    int start_val = 0, end_val = 0;
-    if (val_is_num(start)) {
-        start_val = (int)value_to_double(start);
+    // int48 值用 val_as_int 精确取值（不再截断为 int32）；float 用 value_to_double 转换；
+    // bigint（超 int48）不支持 range 对象——抛清晰错误，迭代请用 for 循环（已原生支持 bigint）
+    int64_t start_val = 0, end_val = 0;
+    if (val_is_int(start)) {
+        start_val = val_as_int(start);
+    } else if (val_is_float(start)) {
+        start_val = (int64_t)value_to_double(start);
+    } else if (val_is_bigint(start)) {
+        throw_runtime_error("range 起始值超出 int48 范围，请使用 for 循环或比较表达式", GET_CURRENT_LINE());
     }
-    if (val_is_num(end)) {
-        end_val = (int)value_to_double(end);
+    if (val_is_int(end)) {
+        end_val = val_as_int(end);
+    } else if (val_is_float(end)) {
+        end_val = (int64_t)value_to_double(end);
+    } else if (val_is_bigint(end)) {
+        throw_runtime_error("range 结束值超出 int48 范围，请使用 for 循环或比较表达式", GET_CURRENT_LINE());
     }
 
     ObjRange* range = range_new(start_val, end_val, inclusive);

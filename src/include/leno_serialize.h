@@ -75,7 +75,7 @@
 // ============================================================================
 
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
-#define LENO_BIN_VERSION    0x00020100  // v2.1.0 - 序列化模块补充 use_reexport 字段
+#define LENO_BIN_VERSION    0x00020200  // v2.2.0 - CONST_TAG_INT 与 CONST_TAG_RANGE 改用 64 位存储 int48 值（修复 >= 2^31 被截断为 int32）
 #define LENO_BIN_EXT        ".lenb"
 
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存

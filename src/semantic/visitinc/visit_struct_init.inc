@@ -114,7 +114,15 @@
                     for (int i = 0; i < ast->u.struct_init.field_count; i++) {
                         char* field_name = ast->u.struct_init.field_names[i];
                         Ast* field_value = ast->u.struct_init.field_values[i];
-                        
+
+                        // 先递归访问字段值：解析器可能将 expr.field 初判为 AST_MODULE_ACCESS
+                        //（如 p1.x），需经 visit 原地转换为 AST_FIELD_ACCESS 后才能正确推断类型；
+                        // 否则 infer_expr_type 会拿到未转换节点而回落为 any（与函数参数、算术等
+                        // 上下文先 visit 后推断的处理顺序保持一致）。
+                        if (field_value) {
+                            visit(s, field_value);
+                        }
+
                         // 查找字段定义
                         TypeInfo* expected_type = NULL;
                         for (int j = 0; j < sym->struct_field_count; j++) {
@@ -123,16 +131,16 @@
                                 break;
                             }
                         }
-                        
+
                         if (!expected_type) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'", 
+                            snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
                                      ast->u.struct_init.struct_name, field_name);
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                         } else if (field_value) {
                             // 推断参数字段的类型
                             TypeInfo* actual_type = infer_expr_type(s, field_value);
-                            
+
                             // 泛型 struct：用具体类型参数替换字段类型中的泛型参数
                             TypeInfo* check_type = expected_type;
                             if (ast->u.struct_init.generic_type_count > 0) {
@@ -180,9 +188,6 @@
                                 type_free(check_type);
                             }
                         }
-                        
-                        // 递归访问字段值
-                        visit(s, field_value);
                     }
                 }
             }

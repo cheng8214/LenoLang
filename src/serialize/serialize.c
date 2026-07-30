@@ -312,7 +312,9 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
     }
     if (val_is_int(val)) {
         wb_write_u8(wb, CONST_TAG_INT);
-        wb_write_i32(wb, (int32_t)val_as_int(val));
+        // int48 值范围为 [-2^47, 2^47-1]，必须用 64 位写入；
+        // 否则 >= 2^31 的值（如 0x80000000）会被截断为 int32（变成负数）
+        wb_write_u64(wb, (uint64_t)val_as_int(val));
         return 1;
     }
     if (val_is_float(val)) {
@@ -373,8 +375,9 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
         case OBJ_RANGE: {
             ObjRange* range = (ObjRange*)obj;
             wb_write_u8(wb, CONST_TAG_RANGE);
-            wb_write_i32(wb, (int32_t)range->start);
-            wb_write_i32(wb, (int32_t)range->end);
+            // start/end 为 int48（int64_t 容器），必须用 64 位写入，否则 >= 2^31 会被截断
+            wb_write_u64(wb, (uint64_t)range->start);
+            wb_write_u64(wb, (uint64_t)range->end);
             wb_write_u8(wb, (uint8_t)range->inclusive);
             return 1;
         }
@@ -792,9 +795,9 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         *out_val = val_bool(0);
         return 1;
     case CONST_TAG_INT: {
-        int32_t ival;
-        if (!ctx_read_i32(ctx, &ival)) return 0;
-        *out_val = val_int((int)ival);
+        uint64_t uval;
+        if (!ctx_read_u64(ctx, &uval)) return 0;
+        *out_val = val_int((int64_t)uval);
         return 1;
     }
     case CONST_TAG_FLOAT: {
@@ -906,11 +909,11 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         return 1;
     }
     case CONST_TAG_RANGE: {
-        int32_t start, end;
+        uint64_t start, end;
         uint8_t inclusive;
-        if (!ctx_read_i32(ctx, &start) || !ctx_read_i32(ctx, &end) ||
+        if (!ctx_read_u64(ctx, &start) || !ctx_read_u64(ctx, &end) ||
             !ctx_read_u8(ctx, &inclusive)) return 0;
-        ObjRange* range = range_new((int)start, (int)end, inclusive);
+        ObjRange* range = range_new((int64_t)start, (int64_t)end, inclusive);
         *out_val = val_obj((Object*)range);
         return 1;
     }

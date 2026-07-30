@@ -1,0 +1,53 @@
+// type_infer_repro.leno
+// 复现 new Struct(named=params) 命名参数构造时，变量字段访问被推断为 any 的问题
+// 背景：desktop_pet.leno 中 new PetParticle(x=p.x, r=p.r, ...) 报
+//       "字段 'r' 类型不匹配: 期望 'int'，实际 'any'"
+//       但 p.r 来源是 int 字段，应是 int；而函数调用参数（rands.ints）正常推断
+// 目标：定位是编译器类型推导 bug，还是特定场景的正常行为
+
+struct Point {
+    float x, y
+    int r, g, b
+}
+
+func useFloat(float v): float { return v + 1.0 }
+func useInt(int v): int { return v + 1 }
+
+main() {
+    // 基准：字面量构造，必过
+    Point p1 = new Point(x=1.0, y=2.0, r=10, g=20, b=30)
+    print("p1: " + p1.x + "," + p1.y + " " + p1.r + "," + p1.g + "," + p1.b)
+
+    // 场景A：从变量字段访问构造（核心复现点，对应 desktop_pet 的 p.x / p.r）
+    var p2 = new Point(x=p1.x, y=p1.y, r=p1.r, g=p1.g, b=p1.b)
+    print("p2: " + p2.x + "," + p2.y + " " + p2.r + "," + p2.g + "," + p2.b)
+
+    // 场景B：局部变量作为命名参数值（对比：变量本身 vs 变量字段）
+    float fx = 3.0
+    int ir = 40
+    var p3 = new Point(x=fx, y=4.0, r=ir, g=50, b=60)
+    print("p3: " + p3.x + "," + p3.y + " " + p3.r + "," + p3.g + "," + p3.b)
+
+    // 场景C：数组索引元素的字段访问（对应 desktop_pet 的 robot.fwParticles[i].x）
+    Array[Point] arr = [p1, p2, p3]
+    var f = arr[0]
+    var p4 = new Point(x=f.x, y=f.y, r=f.r, g=f.g, b=f.b)
+    print("p4: " + p4.x + "," + p4.y + " " + p4.r + "," + p4.g + "," + p4.b)
+
+    // 场景D：字段访问作为函数参数
+    float d1 = useFloat(p1.x)
+    int d2 = useInt(p1.r)
+    print("D: " + d1 + " " + d2)
+
+    // 场景E：字段访问参与算术
+    float sum = p1.x + p1.y
+    int total = p1.r + p1.g + p1.b
+    print("E: " + sum + " " + total)
+
+    // 场景F：字段访问赋值给显式类型变量
+    float gx = p1.x
+    int gr = p1.r
+    print("F: " + gx + " " + gr)
+
+    print("type_infer_repro done")
+}

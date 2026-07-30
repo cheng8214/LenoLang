@@ -428,8 +428,8 @@ typedef struct {
 // 范围对象
 typedef struct {
     Object header;
-    int start;          // 起始值
-    int end;            // 结束值
+    int64_t start;      // 起始值（int48，用 int64_t 容器存储，与 Leno int 模型对齐）
+    int64_t end;        // 结束值（int48，用 int64_t 容器存储，与 Leno int 模型对齐）
     int inclusive;      // 是否包含结束值（1=包含，0=不包含）
 } ObjRange;
 
@@ -844,8 +844,8 @@ static inline ObjString* str_copy(const char* chars, int len) {
 ObjString* str_concat(ObjString* a, ObjString* b);
 
 // Range 操作
-ObjRange* range_new(int start, int end, int inclusive);
-int range_contains(ObjRange* range, int value);
+ObjRange* range_new(int64_t start, int64_t end, int inclusive);
+int range_contains(ObjRange* range, int64_t value);
 
 // BigInt 操作
 ObjBigInt* bigint_new(const uint32_t* limbs, int limb_count, int is_negative);
