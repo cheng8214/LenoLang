@@ -29,18 +29,23 @@ static ImportAlias* parse_imports(const char* content, int* count) {
             if (!*p) break;
             
             // 解析模块名或路径
-            char module_name[128] = {0};
+            char module_name[128] = {0};   // 截断后的文件名（用于别名匹配）
+            char full_module_name[128] = {0};  // 完整相对路径（用于 read_module_file）
             int mod_len = 0;
+            int full_mod_len = 0;
             
             if (*p == '"') {
-                // 字符串路径: import "./test.leno"
+                // 字符串路径: import "../../lib/SDL3.leno" as SDL3
                 p++;
-                while (*p && *p != '"' && mod_len < 127) {
-                    module_name[mod_len++] = *p++;
+                while (*p && *p != '"' && mod_len < 127 && full_mod_len < 127) {
+                    char c = *p++;
+                    module_name[mod_len++] = c;
+                    full_module_name[full_mod_len++] = c;
                 }
                 if (*p == '"') p++;
                 module_name[mod_len] = '\0';
-                // 从路径提取文件名作为模块名（保留.leno后缀，因为需要用它来读取文件）
+                full_module_name[full_mod_len] = '\0';
+                // 从路径提取文件名用于别名匹配（无 as 时）
                 char* slash = strrchr(module_name, '/');
                 char* backslash = strrchr(module_name, '\\');
                 char* last_sep = slash > backslash ? slash : backslash;
@@ -48,7 +53,6 @@ static ImportAlias* parse_imports(const char* content, int* count) {
                     memmove(module_name, last_sep + 1, strlen(last_sep + 1) + 1);
                     mod_len = strlen(module_name);
                 }
-                // 注意：保留 .leno 后缀在 module_name 中，因为 module_symbol_table_scan 需要完整文件名
             } else {
                 // 标识符: import maths
                 while (*p && (isalnum((unsigned char)*p) || *p == '_') && mod_len < 127) {
@@ -77,8 +81,8 @@ static ImportAlias* parse_imports(const char* content, int* count) {
                 alias[alias_len] = '\0';
             }
             
-            // 存储映射
-            aliases[idx].module_name = strdup(module_name);
+            // 存储映射：module_name 保留完整路径（read_module_file 需要）
+            aliases[idx].module_name = strdup(full_module_name[0] ? full_module_name : module_name);
             if (alias_len > 0) {
                 aliases[idx].alias = strdup(alias);
             } else {

@@ -1327,11 +1327,19 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
 
             if (*p == '"') {
                 p++;
-                while (*p && *p != '"' && path_len < 255) {
-                    import_path[path_len++] = *p++;
+                // 保留完整路径用于 read_module_file
+                char full_import_path[256] = {0};
+                int full_path_len = 0;
+                while (*p && *p != '"' && path_len < 255 && full_path_len < 255) {
+                    char c = *p++;
+                    import_path[path_len++] = c;
+                    full_import_path[full_path_len++] = c;
                 }
                 if (*p == '"') p++;
+                import_path[path_len] = '\0';
+                full_import_path[full_path_len] = '\0';
 
+                // 从路径提取文件名用于别名匹配（无 as 时）
                 char* slash = strrchr(import_path, '/');
                 char* backslash = strrchr(import_path, '\\');
                 char* last_sep = slash > backslash ? slash : backslash;
@@ -1355,7 +1363,7 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                 char module_name_without_ext[256];
                 if (alias[0]) {
                     if (strcmp(alias, segments[0]) == 0) {
-                        module_path = strdup(import_path);
+                        module_path = strdup(full_import_path);  // 使用完整路径
                         break;
                     }
                 } else {
@@ -1366,7 +1374,7 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                         *dot = '\0';
                     }
                     if (strcmp(module_name_without_ext, segments[0]) == 0) {
-                        module_path = strdup(import_path);
+                        module_path = strdup(full_import_path);  // 使用完整路径
                         break;
                     }
                 }

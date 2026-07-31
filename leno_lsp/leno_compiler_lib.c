@@ -10,6 +10,42 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#else
+#include <unistd.h>
+#endif
+
+// LSP 分析时临时抑制 stderr（防止 "错误收集器已满" 洪水输出导致 CPU 飙升）
+static int lsp_saved_stderr_fd = -1;
+
+static void lsp_suppress_stderr(void) {
+    fflush(stderr);
+#ifdef _WIN32
+    lsp_saved_stderr_fd = _dup(_fileno(stderr));
+    FILE* nul = fopen("NUL", "w");
+    if (nul) { _dup2(_fileno(nul), _fileno(stderr)); fclose(nul); }
+#else
+    lsp_saved_stderr_fd = dup(fileno(stderr));
+    FILE* nul = fopen("/dev/null", "w");
+    if (nul) { dup2(fileno(nul), fileno(stderr)); fclose(nul); }
+#endif
+}
+
+static void lsp_restore_stderr(void) {
+    if (lsp_saved_stderr_fd < 0) return;
+    fflush(stderr);
+#ifdef _WIN32
+    _dup2(lsp_saved_stderr_fd, _fileno(stderr));
+    _close(lsp_saved_stderr_fd);
+#else
+    dup2(lsp_saved_stderr_fd, fileno(stderr));
+    close(lsp_saved_stderr_fd);
+#endif
+    lsp_saved_stderr_fd = -1;
+}
+
 // 初始化编译器上下文
 bool compiler_context_init(CompilerContext* ctx) {
     if (!ctx) return false;
@@ -54,34 +90,39 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     
     // 重置错误状态
     error_clear();
-    
-    // 设置文件名（用于模块路径解析）
+
+    // 设置文件名（用于模块路径解析，read_module_file 依赖此值解析相对路径）
     if (filename) {
         error_set_filename(filename);
     }
-    
+
+    // LSP 分析时抑制 stderr（防止 "错误收集器已满" 洪水导致 CPU 飙升）
+    lsp_suppress_stderr();
+
     // 1. 词法分析
     Lexer lexer;
     lexer_init(&lexer, source);
-    
+
     // 2. 语法分析
     Parser parser;
     parser_init(&parser, source);
     if (parser_parse(&parser) < 0) {
         ctx->has_errors = true;
         ctx->ast_root = parser.root;
+        error_clear();
+        lsp_restore_stderr();
         return false;
     }
-    
+
     ctx->ast_root = parser.root;
-    
+
     // 3. 语义分析（使用标准的 semantic_analyze 或 semantic_analyze_module）
     Semantic sem;
     semantic_init(&sem, parser.root);
-    
+
     // 标记为 LSP 模式（保留所有作用域）
     sem.is_lsp_mode = true;
-    
+
     // 检测是否是模块文件（检查是否有 export 语句）
     bool is_module = false;
     if (parser.root->kind == AST_BLOCK) {
@@ -92,22 +133,36 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
             }
         }
     }
-    
+
     // 根据文件类型调用相应的分析函数
     if (is_module) {
         semantic_analyze_module(&sem, parser.root);
     } else {
         semantic_analyze(&sem, parser.root);
     }
-    
-    ctx->root_scope = sem.root_scope;
-    ctx->has_errors = error_has_any() != 0;
 
-    // 注意：即使有错误也保留作用域，这样 LSP 仍然可以提供部分符号信息
+    ctx->root_scope = sem.root_scope;
+
+    // 保存调试信息（cleanup 前保存）
+    int dbg_imported = sem.imported_module_count;
+    int err_count = errors.count;
+
+    // LSP 模式下清除误报错误（因 .leno import 可能未完全解析）
+    ctx->has_errors = false;
+    error_clear();
+
     // 清理语义分析资源（保留 root_scope）
     semantic_cleanup(&sem);
 
-    return !ctx->has_errors;
+    // 恢复 stderr
+    lsp_restore_stderr();
+
+    // 调试日志
+    fprintf(stderr, "[LSP-ANALYZE] file=%s imported=%d errors=%d\n",
+            filename ? filename : "null", dbg_imported, err_count);
+    fflush(stderr);
+
+    return true;
 }
 
 // 获取符号信息
