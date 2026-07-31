@@ -1193,11 +1193,23 @@ static void gen_tail_call_expr(CodeGen* gen, Ast* ast) {
 }
 
 // 检查表达式是否是可优化的尾调用
-static int is_tail_call(Ast* ast) {
+static int is_tail_call(CodeGen* gen, Ast* ast) {
     if (!ast || ast->kind != AST_CALL) return 0;
     
     // 暂不处理方法调用 arr.method()
     if (ast->u.call.callee->kind == AST_INDEX) return 0;
+    
+    // async 函数不能使用尾调用优化
+    // 因为 async 函数需要 OP_ASYNC_CALL 创建独立协程，
+    // 而 OP_TAIL_CALL 会复用当前帧，导致协程帧追踪混乱
+    if (ast->u.call.callee_is_async) return 0;
+    // 也通过 func_table 检查（callee_is_async 可能在语义分析阶段未设置）
+    if (ast->u.call.callee->kind == AST_VAR) {
+        Ast* func_def = func_table_find(&gen->sem->func_table, ast->u.call.callee->u.var.name);
+        if (func_def && func_def->kind == AST_FUNC_DEF && func_def->u.func.is_async) {
+            return 0;
+        }
+    }
     
     return 1;
 }
@@ -1232,7 +1244,7 @@ static void gen_return(CodeGen* gen, Ast* ast) {
         // 原有逻辑（支持尾调用优化）
         if (ast->u.ret) {
             // 检测是否是尾调用：return func(...)
-            if (is_tail_call(ast->u.ret)) {
+            if (is_tail_call(gen, ast->u.ret)) {
                 // 使用尾调用优化
                 gen_tail_call_expr(gen, ast->u.ret);
                 // 尾调用会处理返回值，直接返回即可

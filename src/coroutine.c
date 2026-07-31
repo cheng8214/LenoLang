@@ -85,13 +85,10 @@ void future_fail(ObjFuture* future, Value error) {
 ObjCoroutine* coroutine_new(ObjClosure* closure) {
     ObjCoroutine* co = (ObjCoroutine*)gc_alloc(sizeof(ObjCoroutine), OBJ_COROUTINE);
     co->state = COROUTINE_NEW;
-    co->saved_frame = NULL;
-    co->saved_ip = NULL;
-    co->saved_stack_base = 0;
-    co->saved_sp = 0;                   // 初始化为0，OP_AWAIT 时会设置
-    co->saved_frame_cnt = 0;  // 初始化为0，首次执行时会设置
-    co->saved_frame_copy = NULL;  // 初始没有 frame 副本
-    co->has_saved_frame = 0;  // 初始没有保存 frame 副本
+    co->saved_sp = 0;
+    co->saved_frame_cnt = 0;  // 协程帧之前的基准 frame_cnt
+    co->saved_frames = NULL;  // 保存的 frame 副本数组
+    co->saved_frame_count = 0;  // 保存的 frame 数量
     co->result = val_null();
     co->closure = closure;
     co->await_count = 0;
@@ -302,9 +299,29 @@ void gc_mark_coroutine(ObjCoroutine* co) {
             gc_mark_value(co->initial_args[i]);
         }
     }
-    // 注意：协程的locals保留在vm.frames中，由GC通过遍历frames来标记
-    // saved_frame 指向 vm.frames 中的帧，由 GC 遍历 frames 时标记
-    // saved_frame_copy 是 frame 的副本，其闭包和 locals 已经在 vm.frames 中标记
+    // 标记保存的调用帧副本数组
+    if (co->saved_frames && co->saved_frame_count > 0) {
+        for (int fi = 0; fi < co->saved_frame_count; fi++) {
+            CallFrame* frame_copy = &co->saved_frames[fi];
+            gc_mark_object((Object*)frame_copy->closure);
+            if (frame_copy->chunk) {
+                for (int j = 0; j < frame_copy->chunk->const_cnt; j++) {
+                    gc_mark_value(frame_copy->chunk->constants[j]);
+                }
+            }
+            if (frame_copy->locals) {
+                for (int i = 0; i < frame_copy->local_count; i++) {
+                    gc_mark_value(frame_copy->locals[i]);
+                }
+            }
+            if (frame_copy->has_try_return) {
+                gc_mark_value(frame_copy->try_return_value);
+            }
+            if (frame_copy->module) {
+                gc_mark_object((Object*)frame_copy->module);
+            }
+        }
+    }
 }
 
 // 标记 Future 对象（供 GC 使用）

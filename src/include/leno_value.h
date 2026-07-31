@@ -621,13 +621,10 @@ struct CallFrame;  // 前向声明
 typedef struct ObjCoroutine {
     Object header;
     CoroutineState state;
-    struct CallFrame* saved_frame;     // 保存的调用帧（指向 vm.frames 中的帧）
-    uint8_t* saved_ip;                 // 保存的指令指针（恢复时从这里继续）
-    int saved_stack_base;              // 保存的栈基址
     int saved_sp;                      // 保存的栈指针（恢复时精确还原栈位置）
-    int saved_frame_cnt;               // 保存时的 frame 数量（用于恢复调用栈）
-    struct CallFrame* saved_frame_copy; // 保存的 frame 副本（动态分配）
-    int has_saved_frame;               // 是否保存了 frame 副本
+    int saved_frame_cnt;               // 协程的基准 frame_cnt（协程帧之前的 frame 数）
+    struct CallFrame* saved_frames;   // 保存的 frame 副本数组（动态分配）
+    int saved_frame_count;             // 保存的 frame 数量（0 表示无保存帧）
     Value result;                      // 返回值 / Future 结果
     ObjClosure* closure;               // 关联的闭包
     int await_count;                   // await 次数

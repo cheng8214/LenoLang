@@ -340,10 +340,21 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         // 使用传入的 VM 执行（子线程使用自己的 VM）
         int result = vm_run_with_vm(vm_ptr);
         
-        // 如果协程挂起，OP_AWAIT 已经更新了 saved_frame_cnt
-        // 如果协程完成，OP_RETURN 已经减少了 frame_cnt
-        // 我们需要恢复之前的 frame_cnt
-        vm_ptr->frame_cnt = saved_frame_cnt;
+        // 恢复之前的 frame_cnt（移除本协程添加的 frame）
+        if (co->state == COROUTINE_SUSPENDED) {
+            // 挂起时 saved_frames 拥有动态 locals，不释放 vm.frames 中的
+            vm_ptr->frame_cnt = saved_frame_cnt;
+        } else {
+            // 完成或失败时，清理残留帧的动态 locals
+            for (int i = saved_frame_cnt; i < vm_ptr->frame_cnt; i++) {
+                CallFrame* f = &vm_ptr->frames[i];
+                if (f->locals_is_dynamic && f->locals) {
+                    free(f->locals);
+                    f->locals = NULL;
+                }
+            }
+            vm_ptr->frame_cnt = saved_frame_cnt;
+        }
         
         // 检查协程是否完成
         // 如果 result == 0 且状态不是 SUSPENDED（即没有被再次挂起），则协程已完成
@@ -392,18 +403,31 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         // 保存当前的 frame_cnt（可能属于其他协程或主程序）
         int saved_frame_cnt = vm_ptr->frame_cnt;
         
-        // 如果有保存的 frame 副本，恢复它到 vm.frames 的新位置
-        if (co->has_saved_frame && co->saved_frame_copy) {
+        // 恢复所有保存的 frame 到 vm.frames
+        if (co->saved_frames && co->saved_frame_count > 0) {
             // 确保有足够的空间
-            if (vm_ptr->frame_cnt >= vm_ptr->frame_capacity) {
+            while (vm_ptr->frame_cnt + co->saved_frame_count >= vm_ptr->frame_capacity) {
                 if (!vm_grow_frames(vm_ptr)) {
                     vm_ptr->current_coroutine = saved_current;
                     return -1;
                 }
             }
-            // 将 frame 副本复制到 vm.frames[vm.frame_cnt]
-            memcpy(&vm_ptr->frames[vm_ptr->frame_cnt], co->saved_frame_copy, sizeof(CallFrame));
-            vm_ptr->frame_cnt++;
+            // 将所有保存的 frame 拷贝到 vm.frames
+            for (int i = 0; i < co->saved_frame_count; i++) {
+                CallFrame* dst = &vm_ptr->frames[vm_ptr->frame_cnt + i];
+                CallFrame* src = &co->saved_frames[i];
+                memcpy(dst, src, sizeof(CallFrame));
+                // inline_locals 帧的 locals 指针需重定向到 vm.frames 中的 inline_locals
+                if (!dst->locals_is_dynamic && dst->local_count > 0) {
+                    dst->locals = dst->inline_locals;
+                }
+                // 动态分配的 locals 指针直接拷贝即可，所有权转回 vm.frames
+            }
+            vm_ptr->frame_cnt += co->saved_frame_count;
+            // 释放 saved_frames 数组本身（不释放动态 locals，所有权已转移到 vm.frames）
+            free(co->saved_frames);
+            co->saved_frames = NULL;
+            co->saved_frame_count = 0;
         }
         
         // 更新协程的 saved_frame_cnt，使 OP_RETURN 能正确判断协程顶层函数返回
@@ -460,7 +484,11 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                     }
                 }
                 // 没有找到异常处理
-                error_add(ERR_RUNTIME, co->saved_frame_copy ? co->saved_frame_copy->chunk->lines[0] : 0, "未捕获的异步异常");
+                if (co->saved_frames && co->saved_frame_count > 0) {
+                    error_add(ERR_RUNTIME, co->saved_frames[0].chunk->lines[0], "未捕获的异步异常");
+                } else {
+                    error_add(ERR_RUNTIME, 0, "未捕获的异步异常");
+                }
             } else {
                 // 手动压入结果到栈（sp 已恢复到挂起时的位置）
                 if (vm_ptr->sp >= vm_ptr->stack_capacity) {
@@ -480,19 +508,33 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         // 执行协程直到完成或再次挂起
         int result = vm_run_with_vm(vm_ptr);
         
-        // 如果协程再次挂起，保存 frame 副本
-        if (co->state == COROUTINE_SUSPENDED && vm_ptr->frame_cnt > 0) {
-            if (!co->saved_frame_copy) {
-                co->saved_frame_copy = (CallFrame*)malloc(sizeof(CallFrame));
-            }
-            if (co->saved_frame_copy) {
-                memcpy(co->saved_frame_copy, &vm_ptr->frames[vm_ptr->frame_cnt - 1], sizeof(CallFrame));
-                co->has_saved_frame = 1;
-            }
-        }
+        // 如果协程再次挂起，OP_AWAIT 已经保存了所有 frame
+        // 如果协程完成，需要清理 saved_frames（如果有的话）
+        // OP_AWAIT 会释放旧的 saved_frames 并重新分配，所以这里不需要处理
         
         // 恢复之前的 frame_cnt（移除本协程添加的 frame）
-        vm_ptr->frame_cnt = saved_frame_cnt;
+        // 注意：
+        // - 协程挂起时: OP_AWAIT 已将帧保存到 saved_frames，动态 locals 所有权也转移了
+        //   此时 vm.frames 中协程帧的 locals 指针不应被释放（所有权已转给 saved_frames）
+        //   所以只需重置 frame_cnt，不释放 locals
+        // - 协程完成时: OP_RETURN 已逐帧释放动态 locals 并减少 frame_cnt
+        //   正常情况下 frame_cnt 已等于 saved_frame_cnt，无需清理
+        // - 异常完成时: 可能有部分帧未正常 OP_RETURN，需清理这些帧的动态 locals
+        //   但此时 saved_frames 应为空（恢复时已转出所有权）
+        if (co->state == COROUTINE_SUSPENDED) {
+            // 挂起时 saved_frames 拥有动态 locals，不释放 vm.frames 中的
+            vm_ptr->frame_cnt = saved_frame_cnt;
+        } else {
+            // 完成或失败时，清理残留帧的动态 locals
+            for (int i = saved_frame_cnt; i < vm_ptr->frame_cnt; i++) {
+                CallFrame* f = &vm_ptr->frames[i];
+                if (f->locals_is_dynamic && f->locals) {
+                    free(f->locals);
+                    f->locals = NULL;
+                }
+            }
+            vm_ptr->frame_cnt = saved_frame_cnt;
+        }
         
         // 检查协程是否完成
         // 如果 result == 0 且状态不是 SUSPENDED（即没有被再次挂起），则协程已完成

@@ -134,21 +134,48 @@ OPCODE(OP_AWAIT) {
     
     // 保存协程状态
     current->state = COROUTINE_SUSPENDED;
-    // 保存当前指令指针（恢复时从这里继续）
-    current->saved_ip = frame->ip;
-    // 保存栈基址和当前栈指针位置
-    current->saved_stack_base = frame->stack_base;
-    current->saved_sp = vm.sp;  // 保存栈指针，恢复时精确还原
-    // 保存当前的 frame_cnt，以便恢复时知道有多少个 frame 属于此协程
-    current->saved_frame_cnt = vm.frame_cnt;
-    // 保存 frame 副本（因为其他协程可能会覆盖 vm.frames）
-    if (!current->saved_frame_copy) {
-        current->saved_frame_copy = (CallFrame*)malloc(sizeof(CallFrame));
+    current->saved_sp = vm.sp;
+    // saved_frame_cnt 在 vm_run_coroutine_with_vm 的 NEW/恢复分支中设置，
+    // 表示协程第一个帧之后的位置索引，即协程帧范围: [saved_frame_cnt-1, vm.frame_cnt)
+    // 这里不修改 saved_frame_cnt
+    
+    // 保存所有属于此协程的 frame（从协程第一帧到当前顶层帧）
+    // 协程第一帧索引 = saved_frame_cnt - 1
+    int co_start = current->saved_frame_cnt - 1;
+    if (co_start < 0) co_start = 0;
+    int num_frames = vm.frame_cnt - co_start;
+    
+    if (num_frames > 0) {
+        // 恢复后 saved_frames 已被清空（所有权转移到 vm.frames），所以这里总是重新分配
+        // 如果有残留的 saved_frames（理论上不应该），先释放
+        if (current->saved_frames) {
+            for (int i = 0; i < current->saved_frame_count; i++) {
+                CallFrame* sf = &current->saved_frames[i];
+                if (sf->locals_is_dynamic && sf->locals) {
+                    free(sf->locals);
+                }
+            }
+            free(current->saved_frames);
+            current->saved_frames = NULL;
+        }
+        current->saved_frames = (CallFrame*)malloc(num_frames * sizeof(CallFrame));
+        if (current->saved_frames) {
+            for (int i = 0; i < num_frames; i++) {
+                CallFrame* src = &vm.frames[co_start + i];
+                CallFrame* dst = &current->saved_frames[i];
+                memcpy(dst, src, sizeof(CallFrame));
+                // inline_locals 帧的 locals 指针需重定向到副本内的 inline_locals
+                if (!src->locals_is_dynamic && src->local_count > 0) {
+                    dst->locals = dst->inline_locals;
+                }
+                // 动态分配的 locals 指针直接拷贝即可：
+                // vm.frames 中的帧将被 frame_cnt 重置"放弃"，不释放 locals
+                // 所有权转移到 saved_frames，恢复时再转回 vm.frames
+            }
+            current->saved_frame_count = num_frames;
+        }
     }
-    if (current->saved_frame_copy) {
-        memcpy(current->saved_frame_copy, frame, sizeof(CallFrame));
-        current->has_saved_frame = 1;
-    }
+    
     current->waiting_for = future;
     
     // 设置 Future 的等待者

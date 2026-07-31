@@ -423,25 +423,27 @@ void gc_mark_object(Object* obj) {
             if (co->next) {
                 gc_mark_object((Object*)co->next);
             }
-            // 标记保存的调用帧副本
-            if (co->has_saved_frame && co->saved_frame_copy) {
-                CallFrame* frame_copy = co->saved_frame_copy;
-                gc_mark_object((Object*)frame_copy->closure);
-                if (frame_copy->chunk) {
-                    for (int j = 0; j < frame_copy->chunk->const_cnt; j++) {
-                        gc_mark_value(frame_copy->chunk->constants[j]);
+            // 标记保存的调用帧副本数组
+            if (co->saved_frames && co->saved_frame_count > 0) {
+                for (int fi = 0; fi < co->saved_frame_count; fi++) {
+                    CallFrame* frame_copy = &co->saved_frames[fi];
+                    gc_mark_object((Object*)frame_copy->closure);
+                    if (frame_copy->chunk) {
+                        for (int j = 0; j < frame_copy->chunk->const_cnt; j++) {
+                            gc_mark_value(frame_copy->chunk->constants[j]);
+                        }
                     }
-                }
-                if (frame_copy->locals) {
-                    for (int i = 0; i < frame_copy->local_count; i++) {
-                        gc_mark_value(frame_copy->locals[i]);
+                    if (frame_copy->locals) {
+                        for (int i = 0; i < frame_copy->local_count; i++) {
+                            gc_mark_value(frame_copy->locals[i]);
+                        }
                     }
-                }
-                if (frame_copy->has_try_return) {
-                    gc_mark_value(frame_copy->try_return_value);
-                }
-                if (frame_copy->module) {
-                    gc_mark_object((Object*)frame_copy->module);
+                    if (frame_copy->has_try_return) {
+                        gc_mark_value(frame_copy->try_return_value);
+                    }
+                    if (frame_copy->module) {
+                        gc_mark_object((Object*)frame_copy->module);
+                    }
                 }
             }
             if (co->initial_args) {
@@ -788,10 +790,12 @@ static size_t get_object_size(Object* obj) {
         case OBJ_COROUTINE: {
             ObjCoroutine* co = (ObjCoroutine*)obj;
             size_t size = sizeof(ObjCoroutine);
-            if (co->saved_frame) {
-                size += sizeof(CallFrame);
-                if (co->saved_frame->locals_is_dynamic && co->saved_frame->locals) {
-                    size += co->saved_frame->local_count * sizeof(Value);
+            if (co->saved_frames && co->saved_frame_count > 0) {
+                size += co->saved_frame_count * sizeof(CallFrame);
+                for (int i = 0; i < co->saved_frame_count; i++) {
+                    if (co->saved_frames[i].locals_is_dynamic && co->saved_frames[i].locals) {
+                        size += co->saved_frames[i].local_count * sizeof(Value);
+                    }
                 }
             }
             if (co->initial_args) {
@@ -1074,14 +1078,16 @@ static void free_object_resources(Object* obj) {
             }
             break;
         }
-        // 协程：释放保存的调用帧副本和初始参数
+        // 协程：释放保存的调用帧副本数组和初始参数
         case OBJ_COROUTINE: {
             ObjCoroutine* co = (ObjCoroutine*)obj;
-            if (co->saved_frame) {
-                if (co->saved_frame->locals_is_dynamic && co->saved_frame->locals) {
-                    free(co->saved_frame->locals);
+            if (co->saved_frames) {
+                for (int i = 0; i < co->saved_frame_count; i++) {
+                    if (co->saved_frames[i].locals_is_dynamic && co->saved_frames[i].locals) {
+                        free(co->saved_frames[i].locals);
+                    }
                 }
-                free(co->saved_frame);
+                free(co->saved_frames);
             }
             if (co->initial_args) {
                 free(co->initial_args);

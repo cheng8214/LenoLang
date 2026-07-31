@@ -1,0 +1,235 @@
+// 嵌套 await 调用栈保存测试
+// 验证协程挂起时完整保存所有调用帧，恢复后能正确继续执行
+import io
+import asyncs
+
+// === 测试1: 深层嵌套 async 调用链 ===
+async func level3(int x): int {
+    await asyncs.sleep(10)
+    return x * 3
+}
+
+async func level2(int x): int {
+    var r = await level3(x)
+    return r * 2
+}
+
+async func level1(int x): int {
+    var r = await level2(x)
+    return r + 1
+}
+
+// === 测试2: async -> 普通函数 -> async ===
+func helper_normal(int x) {
+    async func inner_async(int v): int {
+        await asyncs.sleep(10)
+        return v + 100
+    }
+    return inner_async(x)
+}
+
+async func caller_async(int x): var {
+    var f = helper_normal(x)
+    var result = await f
+    return result
+}
+
+// === 测试3: 多层普通函数嵌套 ===
+func deep_normal_2(int x) {
+    async func deep_async(int v): int {
+        await asyncs.sleep(5)
+        return v * 10
+    }
+    return deep_async(x)
+}
+
+func deep_normal_1(int x) {
+    return deep_normal_2(x)
+}
+
+async func deep_caller(int x): var {
+    var f = deep_normal_1(x)
+    var r = await f
+    return r
+}
+
+// === 测试4: 多次交替 await ===
+async func multi_await(): int {
+    var sum = 0
+    for 5 to i {
+        await asyncs.sleep(1)
+        sum = sum + i
+    }
+    return sum
+}
+
+// === 测试5: 局部变量保持 ===
+async func locals_test(int base): int {
+    var a = base
+    var b = base * 2
+    await asyncs.sleep(5)
+    var c = a + b
+    await asyncs.sleep(5)
+    var d = c * 2
+    return d
+}
+
+// === 测试6: 递归 async ===
+async func async_fib(int n): int {
+    if n <= 1 {
+        return n
+    }
+    await asyncs.sleep(1)
+    var a = await async_fib(n - 1)
+    var b = await async_fib(n - 2)
+    return a + b
+}
+
+// === 测试7: 并发深层嵌套 ===
+async func deep_chain(int depth): int {
+    if depth == 0 {
+        await asyncs.sleep(1)
+        return 1
+    }
+    var r = await deep_chain(depth - 1)
+    return r + 1
+}
+
+// === 测试8: 嵌套 await 异常捕获 ===
+async func failing_inner(): int {
+    await asyncs.sleep(5)
+    throw "inner error"
+}
+
+async func catching_outer(): string {
+    try {
+        var r = await failing_inner()
+        return "no error: " + r
+    } catch e {
+        return "caught: " + e
+    }
+}
+
+// === 测试9: async 函数中调用普通函数后继续使用局部变量 ===
+// 这是最容易暴露旧 bug 的场景：
+// async caller -> 普通函数 helper -> async worker -> await sleep
+// await 完成后 worker 返回到 helper，helper 返回到 caller
+// caller 继续使用自己的局部变量
+func make_future(int x) {
+    async func worker(int v): int {
+        await asyncs.sleep(10)
+        return v * 5
+    }
+    return worker(x)
+}
+
+// 简化测试：直接在 async 中 await + 使用局部变量
+async func simple_local_test(int x): string {
+    var a = x * 100
+    await asyncs.sleep(5)
+    var b = x * 5
+    return $"{a}+{b}"
+}
+
+async func test_return_through_normal(int x): string {
+    var local_val = x * 100
+    var f = make_future(x)
+    var result = await f
+    // 关键：恢复后 local_val 必须仍然有效
+    return $"{local_val}+{result}"  // "300+15"
+}
+
+// === 测试10: 深层 async 调用后访问中间帧的局部变量 ===
+async func grandchild(int x): int {
+    await asyncs.sleep(5)
+    var gc_local = x * 7
+    return gc_local
+}
+
+async func child_func(int x): int {
+    var child_local = x + 10
+    var gc_result = await grandchild(x)
+    // 关键：await 恢复后 child_local 必须有效
+    return child_local + gc_result  // (x+10) + (x*7) = 8x+10
+}
+
+async func parent_func(int x): int {
+    var parent_local = x * 3
+    var c_result = await child_func(x)
+    // 关键：await 恢复后 parent_local 必须有效
+    return parent_local + c_result  // 3x + 8x+10 = 11x+10
+}
+
+// === 综合测试入口 ===
+async func run_tests() {
+    // === 测试1: 深层嵌套 async 调用链 ===
+    var r1 = await level1(5)
+    // 5*3=15, 15*2=30, 30+1=31
+    assert_eq(r1, 31)
+    io.print("[PASS] 测试1: 深层嵌套 async 调用链 (3层)")
+
+    // === 测试2: async -> 普通函数 -> async ===
+    var r2 = await caller_async(42)
+    assert_eq(r2, 142)
+    io.print("[PASS] 测试2: async 调用普通函数中的 async")
+
+    // === 测试3: 多层普通函数嵌套 ===
+    var r3 = await deep_caller(7)
+    assert_eq(r3, 70)
+    io.print("[PASS] 测试3: 多层普通函数嵌套中 await")
+
+    // === 测试4: 多次交替 await ===
+    var r4 = await multi_await()
+    assert_eq(r4, 10)
+    io.print("[PASS] 测试4: 多次交替 await (同一协程5次挂起)")
+
+    // === 测试5: 局部变量保持 ===
+    var r5 = await locals_test(10)
+    assert_eq(r5, 60)
+    io.print("[PASS] 测试5: 嵌套 await 中局部变量保持")
+
+    // === 测试6: 递归 async 函数 ===
+    var r6 = await async_fib(7)
+    assert_eq(r6, 13)
+    io.print("[PASS] 测试6: 递归 async 函数 (fib(7)=13)")
+
+    // === 测试7: 并发深层嵌套 ===
+    var f1 = deep_chain(5)
+    var f2 = deep_chain(8)
+    var f3 = deep_chain(3)
+    var r7a = await f1
+    var r7b = await f2
+    var r7c = await f3
+    assert_eq(r7a, 6)
+    assert_eq(r7b, 9)
+    assert_eq(r7c, 4)
+    io.print("[PASS] 测试7: 并发深层嵌套 (不互相干扰)")
+
+    // === 测试8: 嵌套 await 异常捕获 ===
+    var r8 = await catching_outer()
+    assert_eq(r8, "caught: inner error")
+    io.print("[PASS] 测试8: 嵌套 await 中捕获异常")
+
+    // === 测试9: 通过普通函数返回后使用局部变量 ===
+    // 先测试简单场景
+    var r9s = await simple_local_test(3)
+    assert_eq(r9s, "300+15")
+    io.print("[PASS] 测试9a: 简单局部变量保持")
+
+    var r9 = await test_return_through_normal(3)
+    assert_eq(r9, "300+15")
+    io.print("[PASS] 测试9b: 通过普通函数返回后局部变量保持")
+
+    // === 测试10: 深层 async 调用后中间帧局部变量 ===
+    var r10 = await parent_func(5)
+    // 11*5+10 = 65
+    assert_eq(r10, 65)
+    io.print("[PASS] 测试10: 深层 async 调用后中间帧局部变量保持")
+}
+
+main() {
+    io.print("=== 嵌套 await 调用栈保存测试 ===")
+    run_tests()
+    asyncs.run()
+    io.print("=== test_nested_await all passed ===")
+}
