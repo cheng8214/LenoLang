@@ -9123,8 +9123,11 @@ lenolang program.leno
 | 比较运算  | `==`, `!=`, `<`, `>`, `<=`, `>=`        |
 | 逻辑运算  | `and`, `or`, `not`                      |
 | 安全访问  | `expr?.field`, `expr?.method(args)`      |
+| 空值合并  | `expr ?? default`                       |
 | 成员检查  | `x in arr`, `key in dict`, `sub in str` |
 | 非成员检查 | `x not in arr`, `key not in dict`       |
+| 可空类型  | `Type?` — `int?`, `string?`, `Point?` 等  |
+| null 判断 | `x is null`, `x != null`, `x == null`    |
 | 复合赋值  | `+=`, `-=`, `*=`, `/=`, `%=`            |
 | 位复合赋值 | `&=`, `\|=`, `^=`, `<<=`, `>>=`, `>>>=` |
 | 自增自减  | `++`, `--`                              |

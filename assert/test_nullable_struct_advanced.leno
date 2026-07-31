@@ -1,0 +1,366 @@
+// Type? 可空 struct 高级场景测试
+// 验证 LenoSDL3 实践中常见的 nullable struct 使用模式
+
+import io
+
+struct Widget {
+    string name = ""
+    int width = 0
+    int height = 0
+
+    func area(): int {
+        return width * height
+    }
+}
+
+struct Container {
+    string title = ""
+    Widget? child       // nullable child widget
+    Widget parent       // non-nullable parent widget
+}
+
+// ============================================================================
+// 1. nullable struct 在数组中
+// ============================================================================
+func test_nullable_in_array() {
+    Widget? a = null
+    Widget? b = new Widget(name="btn", width=10, height=20)
+    Widget? c = null
+
+    // 存入数组
+    var arr = [a, b, c]
+    assert_eq(arr.len(), 3)
+
+    // 检查 null 和非 null 元素
+    assert_eq(arr[0] == null, true)
+    assert_eq(arr[1] != null, true)
+    assert_eq(arr[2] == null, true)
+
+    // 取出非 null 元素的字段
+    var w = arr[1]
+    if w != null {
+        assert_eq(w.name, "btn")
+        assert_eq(w.width, 10)
+    }
+
+    print("test_nullable_in_array: PASSED")
+}
+
+// ============================================================================
+// 2. nullable struct 在字典中
+// ============================================================================
+func test_nullable_in_dict() {
+    Widget? w1 = null
+    Widget? w2 = new Widget(name="input", width=100, height=30)
+
+    var d = {}
+    d.set("a", w1)
+    d.set("b", w2)
+
+    var a_val = d.get("a", null)
+    assert_eq(a_val == null, true)
+
+    var b_val = d.get("b", null)
+    if b_val != null {
+        assert_eq(b_val.name, "input")
+        assert_eq(b_val.width, 100)
+    }
+
+    print("test_nullable_in_dict: PASSED")
+}
+
+// ============================================================================
+// 3. nullable struct 方法调用链
+// ============================================================================
+func test_nullable_method_chain() {
+    Container c = new Container()
+    c.title = "root"
+    c.child = new Widget(name="button", width=50, height=30)
+
+    // 链式: container.child?.area()
+    var area = c.child?.area()
+    assert_eq(area, 1500)
+
+    // 置 null 后链式调用返回 null
+    c.child = null
+    var null_area = c.child?.area()
+    assert_eq(null_area == null, true)
+
+    print("test_nullable_method_chain: PASSED")
+}
+
+// ============================================================================
+// 4. ?. 与 ?? 组合：典型 GUI 模式
+// ============================================================================
+func test_safe_access_with_coalesce() {
+    Container c = new Container()
+
+    // child 为 null 时，使用默认值
+    var name = c.child?.name ?? "default"
+    assert_eq(name, "default")
+
+    var area = c.child?.area() ?? 0
+    assert_eq(area, 0)
+
+    // child 非 null 时，使用实际值
+    c.child = new Widget(name="real", width=5, height=6)
+    name = c.child?.name ?? "default"
+    assert_eq(name, "real")
+
+    area = c.child?.area() ?? 0
+    assert_eq(area, 30)
+
+    print("test_safe_access_with_coalesce: PASSED")
+}
+
+// ============================================================================
+// 5. 深层嵌套 nullable struct 链
+// ============================================================================
+struct Level3 {
+    int value = 0
+}
+
+struct Level2 {
+    Level3? deep
+    string tag = ""
+}
+
+struct Level1 {
+    Level2? mid
+    string name = ""
+}
+
+func test_deep_nullable_chain() {
+    Level1 l1 = new Level1(name="root")
+
+    // 全 null 链
+    var deep_val = l1.mid?.deep?.value ?? -1
+    assert_eq(deep_val, -1)
+
+    // 部分填充
+    l1.mid = new Level2(tag="mid")
+    deep_val = l1.mid?.deep?.value ?? -1
+    assert_eq(deep_val, -1)  // deep 仍为 null
+
+    // 完全填充
+    l1.mid.deep = new Level3(value=42)
+    deep_val = l1.mid?.deep?.value ?? -1
+    assert_eq(deep_val, 42)
+
+    // 链式方法调用
+    var tag = l1.mid?.tag ?? "none"
+    assert_eq(tag, "mid")
+
+    print("test_deep_nullable_chain: PASSED")
+}
+
+// ============================================================================
+// 6. nullable struct 作为函数返回值 + 调用方处理
+// ============================================================================
+func find_widget(string name): Widget? {
+    if name == "found" {
+        return new Widget(name=name, width=10, height=20)
+    }
+    return null
+}
+
+func test_nullable_return_and_use() {
+    // 返回 null 的情况
+    Widget? not_found = find_widget("missing")
+    assert_eq(not_found == null, true)
+
+    // 返回值后直接用 ?. 访问
+    var w = find_widget("found")
+    var w_name = w?.name ?? "N/A"
+    assert_eq(w_name, "found")
+
+    var w_area = w?.area() ?? 0
+    assert_eq(w_area, 200)
+
+    print("test_nullable_return_and_use: PASSED")
+}
+
+// ============================================================================
+// 7. nullable struct 多次赋值切换
+// ============================================================================
+func test_nullable_toggle() {
+    Widget? w = null
+    assert_eq(w == null, true)
+
+    // null -> value
+    w = new Widget(name="first", width=1, height=1)
+    assert_eq(w != null, true)
+    assert_eq(w.name, "first")
+    assert_eq(w.area(), 1)
+
+    // value -> null
+    w = null
+    assert_eq(w == null, true)
+
+    // null -> value again
+    w = new Widget(name="second", width=2, height=3)
+    assert_eq(w != null, true)
+    assert_eq(w.name, "second")
+    assert_eq(w.area(), 6)
+
+    print("test_nullable_toggle: PASSED")
+}
+
+// ============================================================================
+// 8. nullable struct 字段赋值给另一个 nullable struct
+// ============================================================================
+func test_nullable_to_nullable_assign() {
+    Container c1 = new Container()
+    Container c2 = new Container()
+
+    c1.child = new Widget(name="shared", width=7, height=8)
+
+    // Type? <- Type? 赋值
+    c2.child = c1.child
+
+    assert_eq(c2.child != null, true)
+    assert_eq(c2.child?.name, "shared")
+    assert_eq(c2.child?.area(), 56)
+
+    // 原 child 仍存在（值语义，不是引用共享）
+    assert_eq(c1.child != null, true)
+    assert_eq(c1.child?.name, "shared")
+
+    print("test_nullable_to_nullable_assign: PASSED")
+}
+
+// ============================================================================
+// 9. is null / is not null 判断
+// ============================================================================
+func test_is_null_check() {
+    Widget? w = null
+
+    // is null
+    assert_eq(w is null, true)
+
+    // is not null (通过 not)
+    assert_eq(not (w is null), false)
+
+    w = new Widget(name="exists")
+
+    assert_eq(w is null, false)
+    assert_eq(not (w is null), true)
+
+    print("test_is_null_check: PASSED")
+}
+
+// ============================================================================
+// 10. nullable struct 在条件表达式中使用
+// ============================================================================
+func test_nullable_in_condition() {
+    Widget? w = null
+
+    // null 在布尔上下文中为 false
+    var has_widget = (w != null)
+    assert_eq(has_widget, false)
+
+    w = new Widget(name="yes")
+    has_widget = (w != null)
+    assert_eq(has_widget, true)
+
+    // 结合 ?. 和 if
+    if w != null {
+        var n = w.name
+        assert_eq(n, "yes")
+    } else {
+        assert_eq(true, false)  // 不应执行
+    }
+
+    print("test_nullable_in_condition: PASSED")
+}
+
+// ============================================================================
+// 11. 多个 nullable struct 字段互相独立
+// ============================================================================
+struct MultiWidget {
+    Widget? header
+    Widget? footer
+    Widget? sidebar
+    Widget body        // 非 nullable
+}
+
+func test_multi_nullable_independent() {
+    MultiWidget mw = new MultiWidget()
+
+    // 全部默认 null（body 非 null 被分配）
+    assert_eq(mw.header == null, true)
+    assert_eq(mw.footer == null, true)
+    assert_eq(mw.sidebar == null, true)
+    assert_eq(mw.body != null, true)
+    assert_eq(mw.body.name, "")
+
+    // 只赋值部分
+    mw.header = new Widget(name="header", width=100, height=10)
+    mw.sidebar = new Widget(name="side", width=20, height=50)
+
+    assert_eq(mw.header != null, true)
+    assert_eq(mw.footer == null, true)
+    assert_eq(mw.sidebar != null, true)
+
+    assert_eq(mw.header?.name, "header")
+    assert_eq(mw.footer?.name ?? "N/A", "N/A")
+    assert_eq(mw.sidebar?.name, "side")
+
+    print("test_multi_nullable_independent: PASSED")
+}
+
+// ============================================================================
+// 12. nullable struct 方法内修改 nullable 字段
+// ============================================================================
+struct Builder {
+    Widget? current
+
+    func set_widget(string name, int w, int h) {
+        current = new Widget(name=name, width=w, height=h)
+    }
+
+    func get_area(): int {
+        return current?.area() ?? 0
+    }
+
+    func clear() {
+        current = null
+    }
+}
+
+func test_nullable_in_method() {
+    Builder b = new Builder()
+
+    // 初始为 null
+    assert_eq(b.get_area(), 0)
+
+    // 设置后
+    b.set_widget("test", 4, 5)
+    assert_eq(b.get_area(), 20)
+
+    // 清空后
+    b.clear()
+    assert_eq(b.get_area(), 0)
+
+    print("test_nullable_in_method: PASSED")
+}
+
+// ============================================================================
+// 运行所有测试
+// ============================================================================
+main() {
+    test_nullable_in_array()
+    test_nullable_in_dict()
+    test_nullable_method_chain()
+    test_safe_access_with_coalesce()
+    test_deep_nullable_chain()
+    test_nullable_return_and_use()
+    test_nullable_toggle()
+    test_nullable_to_nullable_assign()
+    test_is_null_check()
+    test_nullable_in_condition()
+    test_multi_nullable_independent()
+    test_nullable_in_method()
+
+    print("=== test_nullable_struct_advanced: ALL PASSED ===")
+}
