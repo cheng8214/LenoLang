@@ -258,20 +258,50 @@ void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
 }
 
 // ============================================================================
-// 标记阶段（Mark Phase）
+// 标记阶段（Mark Phase）— 迭代式标记（显式栈替代递归）
 // ============================================================================
+//
+// 三色标记模型：
+//   White  — 未标记（未被 mark_roots 触及）
+//   Gray   — 已标记（marked=1），但子引用尚未扫描（在 mark_stack 上）
+//   Black  — 已标记且子引用已扫描（已从 mark_stack 弹出）
+//
+// 流程：
+//   1. mark_roots() 对每个根调用 gc_mark_object/gc_mark_value
+//   2. gc_mark_object(obj): 标记 obj → 压入 mark_stack（不递归）
+//   3. gc_drain_mark_stack(): 弹出 obj → gc_scan_children(obj) 扫描子引用
+//      → 对每个子引用调用 gc_mark_object（标记+压栈）
+//   4. 重复 3 直到栈空
+//
+// 优势：标记深度不再受 C 调用栈限制，10000 层链表也能安全标记。
 
-// 递归标记对象及其所有可达引用
-void gc_mark_object(Object* obj) {
-    if (!obj || obj->marked) return;
+// --- 前向声明 ---
+void gc_scan_children(Object* obj);
 
-    // 安全检查：验证对象类型是否有效
-    if (!is_valid_obj_type(obj->type)) {
-        return;  // 无效的对象类型，跳过
+// --- 显式标记栈 ---
+static Object** mark_stack = NULL;
+static int mark_stack_count = 0;
+static int mark_stack_capacity = 0;
+
+static void mark_stack_push(Object* obj) {
+    if (mark_stack_count >= mark_stack_capacity) {
+        int new_cap = mark_stack_capacity * 2;
+        if (new_cap < 256) new_cap = 256;
+        Object** new_stack = (Object**)realloc(mark_stack, new_cap * sizeof(Object*));
+        if (!new_stack) {
+            // realloc 失败：回退到递归标记，避免丢失对象
+            gc_scan_children(obj);
+            return;
+        }
+        mark_stack = new_stack;
+        mark_stack_capacity = new_cap;
     }
+    mark_stack[mark_stack_count++] = obj;
+}
 
-    obj->marked = 1;
-
+// 扫描对象的子引用（原 gc_mark_object 的 switch 主体）
+// 对每个子引用调用 gc_mark_object / gc_mark_value（标记 + 压栈）
+void gc_scan_children(Object* obj) {
     switch (obj->type) {
         // 闭包：标记函数和所有 upvalue
         case OBJ_CLOSURE: {
@@ -519,10 +549,31 @@ void gc_mark_object(Object* obj) {
     }
 }
 
-// 标记 Value（如果是对象类型则递归标记）
+// 标记对象：标记 + 压入显式栈（不递归，由 gc_drain_mark_stack 负责扫描子引用）
+void gc_mark_object(Object* obj) {
+    if (!obj || obj->marked) return;
+
+    // 安全检查：验证对象类型是否有效
+    if (!is_valid_obj_type(obj->type)) {
+        return;  // 无效的对象类型，跳过
+    }
+
+    obj->marked = 1;
+    mark_stack_push(obj);
+}
+
+// 标记 Value（如果是对象类型则标记）
 void gc_mark_value(Value v) {
     if (val_is_obj(v)) {
         gc_mark_object(val_as_obj(v));
+    }
+}
+
+// 迭代式排空标记栈：循环弹出对象并扫描子引用，直到栈空
+static void gc_drain_mark_stack(void) {
+    while (mark_stack_count > 0) {
+        Object* obj = mark_stack[--mark_stack_count];
+        gc_scan_children(obj);
     }
 }
 
@@ -1356,6 +1407,7 @@ void gc_minor_collect(void) {
 
     clear_all_marks();
     mark_roots();
+    gc_drain_mark_stack();
 
     sweep_young();
 
@@ -1402,6 +1454,7 @@ void gc_major_collect(void) {
 
     clear_all_marks();
     mark_roots();
+    gc_drain_mark_stack();
 
     // Major GC：在 sweep 之前清理无引用的内化字符串（此时 marked 标志仍有效）
     intern_sweep_unmarked();

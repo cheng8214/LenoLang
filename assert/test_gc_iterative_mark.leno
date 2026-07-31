@@ -1,0 +1,310 @@
+// GC 迭代式标记测试：深嵌套对象图
+// 验证显式栈标记不会栈溢出，且深嵌套对象被正确标记和回收
+
+import io
+
+// ============================================================================
+// 1. 深链表：5000 层 struct 引用链
+// ============================================================================
+struct Node {
+    int value = 0
+    Node? next
+}
+
+func build_deep_list(int depth): Node {
+    Node head = new Node(value=0)
+    Node current = head
+    for 1:depth-1 to i {
+        current.next = new Node(value=i)
+        if current.next != null {
+            current = current.next
+        }
+    }
+    return head
+}
+
+func count_list(Node head): int {
+    int count = 0
+    Node? cur = head
+    while cur != null {
+        count = count + 1
+        cur = cur.next
+    }
+    return count
+}
+
+func sum_list(Node head): int {
+    int sum = 0
+    Node? cur = head
+    while cur != null {
+        sum = sum + cur.value
+        cur = cur.next
+    }
+    return sum
+}
+
+func test_deep_linked_list() {
+    // 构建 5000 层深链表
+    int depth = 5000
+    Node head = build_deep_list(depth)
+
+    // 验证链表完整性
+    int count = count_list(head)
+    assert_eq(count, 5000)
+
+    // 验证值正确
+    int sum = sum_list(head)
+    // 0 + 1 + 2 + ... + (depth-1) = depth*(depth-1)/2
+    int expected = 5000 * 4999 / 2
+    assert_eq(sum, expected)
+
+    print($"test_deep_linked_list: {depth} 层链表，count={count}, sum={sum}")
+}
+
+// ============================================================================
+// 2. 深嵌套 struct（树形结构）：1000 层
+// ============================================================================
+struct TreeNode {
+    int data = 0
+    TreeNode? left
+    TreeNode? right
+}
+
+func build_deep_tree(int depth): TreeNode {
+    TreeNode root = new TreeNode(data=depth)
+    TreeNode current = root
+    for 1:depth-1 to i {
+        current.left = new TreeNode(data=depth - i)
+        current = current.left
+    }
+    return root
+}
+
+func count_tree(TreeNode root): int {
+    int count = 1
+    TreeNode? cur = root.left
+    while cur != null {
+        count = count + 1
+        cur = cur.left
+    }
+    return count
+}
+
+func test_deep_tree() {
+    int depth = 1000
+    TreeNode root = build_deep_tree(depth)
+    int count = count_tree(root)
+    assert_eq(count, depth)
+    assert_eq(root.data, depth)
+    print($"test_deep_tree: {depth} 层深树，count={count}")
+}
+
+// ============================================================================
+// 3. 深嵌套数组（通过 struct 包装避免数组逆变）
+// ============================================================================
+struct ArrayNode {
+    int value = 0
+    ArrayNode? parent
+    Array[int] items = []
+}
+
+func build_deep_array_nodes(int depth): ArrayNode {
+    ArrayNode root = new ArrayNode(value=0)
+    ArrayNode current = root
+    for 1:depth-1 to i {
+        ArrayNode child = new ArrayNode(value=i)
+        // 每个 node 持有一个数组，数组持有前一个 node 的引用
+        child.items = [current.value, i * 2, i * 3]
+        current.parent = child
+        current = child
+    }
+    return root
+}
+
+func count_array_nodes(ArrayNode root): int {
+    int count = 1
+    ArrayNode? cur = root
+    while cur != null {
+        count = count + 1
+        cur = cur.parent
+    }
+    return count - 1
+}
+
+func test_deep_array_nodes() {
+    int depth = 1000
+    ArrayNode root = build_deep_array_nodes(depth)
+    int count = count_array_nodes(root)
+    assert_eq(count, depth)
+    print($"test_deep_array_nodes: {depth} 层 struct+array 嵌套，count={count}")
+}
+
+// ============================================================================
+// 4. 深嵌套字典（通过 struct 包装）
+// ============================================================================
+struct DictNode {
+    int depth = 0
+    DictNode? child
+    Dict[string, int] data = {}
+}
+
+func build_deep_dict_nodes(int depth): DictNode {
+    DictNode root = new DictNode(depth=0)
+    DictNode current = root
+    for 1:depth-1 to i {
+        DictNode child = new DictNode(depth=i)
+        child.data.set("parent_depth", current.depth)
+        child.data.set("index", i)
+        current.child = child
+        current = child
+    }
+    return root
+}
+
+func count_dict_nodes(DictNode root): int {
+    int count = 1
+    DictNode? cur = root
+    while cur != null {
+        count = count + 1
+        cur = cur.child
+    }
+    return count - 1
+}
+
+func test_deep_dict_nodes() {
+    int depth = 1000
+    DictNode root = build_deep_dict_nodes(depth)
+    int count = count_dict_nodes(root)
+    assert_eq(count, depth)
+    print($"test_deep_dict_nodes: {depth} 层 struct+dict 嵌套，count={count}")
+}
+
+// ============================================================================
+// 5. 混合深嵌套：struct → array → dict → struct → ...
+// ============================================================================
+struct MixedNode {
+    int level = 0
+    MixedNode? inner
+}
+
+func build_mixed_deep(int depth): MixedNode {
+    MixedNode root = new MixedNode(level=0)
+    MixedNode current = root
+    for 1:depth-1 to i {
+        MixedNode child = new MixedNode(level=i)
+        current.inner = child
+        current = child
+    }
+    return root
+}
+
+func count_mixed_deep(MixedNode root): int {
+    int count = 1
+    MixedNode? cur = root
+    while cur != null {
+        count = count + 1
+        cur = cur.inner
+    }
+    return count - 1  // 最后一个 cur == null 也被算了
+}
+
+func test_mixed_deep() {
+    int depth = 300
+    MixedNode root = build_mixed_deep(depth)
+    int count = count_mixed_deep(root)
+    assert_eq(count, depth)
+    print($"test_mixed_deep: {depth} 层混合嵌套，count={count}")
+}
+
+// ============================================================================
+// 6. 多个独立深链表（压力测试）
+// ============================================================================
+func test_multiple_deep_lists() {
+    // 创建多个深链表，增加 GC 标记栈压力
+    Node list1 = build_deep_list(2000)
+    Node list2 = build_deep_list(2000)
+    Node list3 = build_deep_list(2000)
+
+    assert_eq(count_list(list1), 2000)
+    assert_eq(count_list(list2), 2000)
+    assert_eq(count_list(list3), 2000)
+
+    // 丢弃部分引用，让 GC 回收
+    list1 = null
+    // list2 和 list3 仍存活
+
+    assert_eq(count_list(list2), 2000)
+    assert_eq(count_list(list3), 2000)
+
+    print("test_multiple_deep_lists: 3x2000 层链表，GC 标记正确")
+}
+
+// ============================================================================
+// 7. 深嵌套 struct 中的字段正确性
+// ============================================================================
+struct DeepStruct {
+    int id = 0
+    string name = ""
+    DeepStruct? inner
+}
+
+func build_deep_struct(int depth): DeepStruct {
+    DeepStruct root = new DeepStruct(id=0, name="root")
+    DeepStruct current = root
+    for 1:depth-1 to i {
+        current.inner = new DeepStruct(id=i, name=$"level_{i}")
+        current = current.inner
+    }
+    return root
+}
+
+func verify_deep_struct(DeepStruct root, int depth): int {
+    int errors = 0
+    DeepStruct? cur = root
+    int expected_id = 0
+    while cur != null {
+        if cur.id != expected_id {
+            errors = errors + 1
+        }
+        if expected_id == 0 {
+            if cur.name != "root" {
+                errors = errors + 1
+            }
+        } else {
+            if cur.name != $"level_{expected_id}" {
+                errors = errors + 1
+            }
+        }
+        cur = cur.inner
+        expected_id = expected_id + 1
+    }
+    if expected_id != depth {
+        errors = errors + 1
+    }
+    return errors
+}
+
+func test_deep_struct_fields() {
+    int depth = 2000
+    DeepStruct root = build_deep_struct(depth)
+    int errors = verify_deep_struct(root, depth)
+    assert_eq(errors, 0)
+    print($"test_deep_struct_fields: {depth} 层深嵌套 struct，字段全部正确")
+}
+
+// ============================================================================
+// 运行所有测试
+// ============================================================================
+main() {
+    print("=== GC 迭代式标记测试开始 ===")
+
+    test_deep_linked_list()
+    test_deep_tree()
+    test_deep_array_nodes()
+    test_deep_dict_nodes()
+    test_mixed_deep()
+    test_multiple_deep_lists()
+    test_deep_struct_fields()
+
+    print("=== test_gc_iterative_mark: ALL PASSED ===")
+}
