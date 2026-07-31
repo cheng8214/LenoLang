@@ -19,7 +19,7 @@ import files
 // 非正方形 + 内部图案使 aspectFit/stretch/aspectFill 三种模式肉眼可区分
 func makeColorPNG(sdl3 lib, string path, int w, int h, int r, int g, int b): bool {
     if files.exists(path) { return true }
-    int fmt = 373694468   // SDL_PIXELFORMAT_RGBA8888
+    int fmt = SDL3.PIXELFORMAT_RGBA8888   // 跨模块 export const 转发，验证类型推导
     Ptr[u8] surf = lib.SDL_CreateSurface(w, h, fmt)
     if surf == null { return false }
     // 底色填充

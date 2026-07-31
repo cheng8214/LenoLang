@@ -1763,7 +1763,30 @@
                     ast->u.module_access.ref.kind = module_sym->kind;
                     ast->u.module_access.ref.index = module_sym->index;
                     ast->u.module_access.ref.name = strdup(module_sym->name);
-                    ast->u.module_access.ref.type_kind = module_sym->type ? module_sym->type->kind : TYPE_ANY;
+                    // 模块符号本身无类型信息（module_sym->type 为 NULL），常量类型需查模块符号表
+                    // 修复：跨模块 export const X = module.Y 转发时，类型此前丢失为 TYPE_ANY
+                    //       现从 ImportedModuleInfo.sym_table 查常量真实类型
+                    TypeKind member_type = TYPE_ANY;
+                    ImportedModuleInfo* mod_info = find_imported_module(s, ast->u.module_access.module_name);
+                    if (mod_info && mod_info->sym_table) {
+                        ModuleVarSymbol* mv = module_symbol_table_find_var(mod_info->sym_table, ast->u.module_access.member_name);
+                        if (mv) {
+                            member_type = mv->type;
+                        } else {
+                            // 也可能是 enum 成员（enum 成员可被引用为常量）
+                            for (int ei = 0; ei < mod_info->sym_table->enum_count; ei++) {
+                                ModuleEnumSymbol* es = &mod_info->sym_table->enums[ei];
+                                for (int mi = 0; mi < es->member_count; mi++) {
+                                    if (strcmp(es->member_names[mi], ast->u.module_access.member_name) == 0) {
+                                        member_type = TYPE_INT;
+                                        break;
+                                    }
+                                }
+                                if (member_type != TYPE_ANY) break;
+                            }
+                        }
+                    }
+                    ast->u.module_access.ref.type_kind = member_type;
                 }
             }
             break;
