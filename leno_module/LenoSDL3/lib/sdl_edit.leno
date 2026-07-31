@@ -1677,7 +1677,7 @@ export struct Edit impl Widget {
             float contentH = _content_height()
 
             r.setColor(50, 50, 60, 180)
-            r.fillRect(sbX, y + pad, sbW, visH)
+            r.fillRoundedRect(sbX, y + pad, sbW, visH, sbW / 2.0)
 
             float thumbH = visH * visH / contentH
             if thumbH < 20 { thumbH = 20 }
@@ -1691,7 +1691,7 @@ export struct Edit impl Widget {
             } else {
                 r.setColor(120, 120, 140, 220)
             }
-            r.fillRect(sbX, thumbY, sbW, thumbH)
+            r.fillRoundedRect(sbX, thumbY, sbW, thumbH, sbW / 2.0)
         }
 
         // ---- 横向滚动条 ----
@@ -1700,7 +1700,7 @@ export struct Edit impl Widget {
             float maxLineW = _max_line_width() + 8.0
 
             r.setColor(50, 50, 60, 180)
-            r.fillRect(x + pad, sbY, visW, sbH)
+            r.fillRoundedRect(x + pad, sbY, visW, sbH, sbH / 2.0)
 
             float thumbW = visW * visW / maxLineW
             if thumbW < 20 { thumbW = 20 }
@@ -1715,7 +1715,7 @@ export struct Edit impl Widget {
             } else {
                 r.setColor(120, 120, 140, 220)
             }
-            r.fillRect(thumbX, sbY, thumbW, sbH)
+            r.fillRoundedRect(thumbX, sbY, thumbW, sbH, sbH / 2.0)
         }
 
         // ---- 滚动条交叉角落 ----
@@ -1723,7 +1723,7 @@ export struct Edit impl Widget {
             float cornerX = x + w - sbW - 4.0
             float cornerY = y + h - sbH - 4.0
             r.setColor(40, 40, 50, 200)
-            r.fillRect(cornerX, cornerY, sbW, sbH)
+            r.fillRoundedRect(cornerX, cornerY, sbW, sbH, sbW / 2.0)
         }
     }
 

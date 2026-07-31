@@ -243,18 +243,18 @@ export struct ScrollView impl Widget {
             float tx = x + w - gw
             float gh = if _showH() then _barW else 0.0
             r.setColor(60, 64, 76, 255)
-            r.fillRect(tx, y, gw, h - gh)
+            r.fillRoundedRect(tx, y, gw, h - gh, gw / 2.0)
             r.setColor(140, 145, 162, 255)
-            r.fillRoundedRect(tx + 2.0, _vThumbY, gw - 4.0, _vThumbH, 5.0)
+            r.fillRoundedRect(tx + 2.0, _vThumbY, gw - 4.0, _vThumbH, (gw - 4.0) / 2.0)
         }
         if _showH() {
             float gh = _barW
             float ty = y + h - gh
             float gw = if _showV() then _barW else 0.0
             r.setColor(60, 64, 76, 255)
-            r.fillRect(x, ty, w - gw, gh)
+            r.fillRoundedRect(x, ty, w - gw, gh, gh / 2.0)
             r.setColor(140, 145, 162, 255)
-            r.fillRoundedRect(_hThumbX, ty + 2.0, _hThumbW, gh - 4.0, 5.0)
+            r.fillRoundedRect(_hThumbX, ty + 2.0, _hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
         }
     }
 

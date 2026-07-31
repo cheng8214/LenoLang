@@ -805,9 +805,9 @@ export struct Table impl Widget {
         float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
         float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
         r.setColor(_sbR, _sbG, _sbB, 180)
-        r.fillRect(sx, y + _headerH + 2.0, vw, bodyH - 4.0)
+        r.fillRoundedRect(sx, y + _headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
         r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
-        r.fillRect(sx, thy, vw, thumbH)
+        r.fillRoundedRect(sx, thy, vw, thumbH, vw / 2.0)
     }
     func _draw_hscroll(Renderer r, Array[float] sb) {
         float hh = 8.0
@@ -819,9 +819,9 @@ export struct Table impl Widget {
         float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
         float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
         r.setColor(_sbR, _sbG, _sbB, 180)
-        r.fillRect(x + 2.0, sy, bodyW - 4.0, hh)
+        r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
         r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
-        r.fillRect(thx, sy, thumbW, hh)
+        r.fillRoundedRect(thx, sy, thumbW, hh, hh / 2.0)
     }
 
     func dispose() {
