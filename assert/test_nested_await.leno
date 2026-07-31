@@ -160,7 +160,46 @@ async func parent_func(int x): int {
     return parent_local + c_result  // 3x + 8x+10 = 11x+10
 }
 
-// === 综合测试入口 ===
+// === 测试11: async 返回嵌套 Future（不 await 直接返回）===
+// async 函数直接 return 另一个 async 调用时，返回的是 Future 对象
+// 需要双重 await 才能拿到最终值
+async func inner_async(int v): int {
+    await asyncs.sleep(5)
+    return v + 100
+}
+
+async func wrap_nested(): var {
+    // 直接返回另一个 async 的 Future，不做 await
+    return inner_async(42)
+}
+
+// === 测试12: await 后再调用普通函数 ===
+// 验证恢复后 SP 正确，后续调用不会崩溃
+func normal_after(int x): int {
+    return x * 10
+}
+
+async func await_then_call(int x): int {
+    await asyncs.sleep(5)
+    var r = normal_after(x)
+    return r + 1
+}
+
+// === 测试13: 结构体字段在 await 后使用 ===
+// 结构体值类型存储在帧的 locals 中，恢复后字段必须完整
+struct Point3D {
+    int x = 0
+    int y = 0
+    int z = 0
+}
+
+async func struct_after_await(int xv, int yv): string {
+    var p = new Point3D(x=xv, y=yv, z=xv+yv)
+    await asyncs.sleep(5)
+    return $"{p.x},{p.y},{p.z}"
+}
+
+// === 综合测试入口 === ===
 async func run_tests() {
     // === 测试1: 深层嵌套 async 调用链 ===
     var r1 = await level1(5)
@@ -225,6 +264,23 @@ async func run_tests() {
     // 11*5+10 = 65
     assert_eq(r10, 65)
     io.print("[PASS] 测试10: 深层 async 调用后中间帧局部变量保持")
+
+    // === 测试11: async 返回嵌套 Future 后双重 await ===
+    var f11 = wrap_nested()
+    var inner = await f11
+    var r11 = await inner
+    assert_eq(r11, 142)
+    io.print("[PASS] 测试11: async 返回嵌套 Future 后双重 await")
+
+    // === 测试12: await 后调用普通函数 ===
+    var r12 = await await_then_call(7)
+    assert_eq(r12, 71)
+    io.print("[PASS] 测试12: await 后调用普通函数")
+
+    // === 测试13: 结构体字段在 await 后使用 ===
+    var r13 = await struct_after_await(3, 4)
+    assert_eq(r13, "3,4,7")
+    io.print("[PASS] 测试13: 结构体字段在 await 后使用")
 }
 
 main() {
