@@ -1,10 +1,10 @@
-// test_table_image.leno — Table 图片列测试
+// test_table_image.leno — Table 行图标测试（图标+文字同列，对齐 Treeview 模式）
 // 运行：leno 本文件（Esc 退出）
 // 校验点：
-//   1) image_cols 指定第 0 列为图片列，单元格值=图片路径，渲染为缩略图
+//   1) image_col 指定某列显示 [图标+文字]，图标路径由 row_images 独立存储
 //   2) 三种内容模式：aspectFit / stretch / aspectFill
-//   3) 图片列与文字列混合显示
-//   4) 运行时 set_image_mode 切换模式
+//   3) 行图标与行数据分离：rows 只存文本，row_images 存图标路径
+//   4) 运行时 set_image_mode / set_row_image 动态修改
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -39,7 +39,7 @@ func makeColorPNG(sdl3 lib, string path, int w, int h, int r, int g, int b): boo
 }
 
 main() {
-    var win = SDL3.createWindow({title: "Table 图片列测试", w: 620, h: 460})
+    var win = SDL3.createWindow({title: "Table 行图标测试", w: 620, h: 460})
     if not win.ok { return }
 
     SDL3.ttfInit()
@@ -50,35 +50,40 @@ main() {
     string p1 = dir + "/tbl_img_red.png"
     string p2 = dir + "/tbl_img_green.png"
     string p3 = dir + "/tbl_img_blue.png"
-    // 删除旧缓存（上次可能是正方形 24×24，需重新生成宽矩形）
+    // 删除旧缓存（上次可能是正方形，需重新生成宽矩形）
     files.delete(p1); files.delete(p2); files.delete(p3)
     var lib = core.lib()
     makeColorPNG(lib, p1, 48, 16, 220, 60, 60)
     makeColorPNG(lib, p2, 48, 16, 60, 200, 80)
     makeColorPNG(lib, p3, 48, 16, 60, 100, 220)
 
-    Array[string] headers = ["图标", "名称", "类型", "大小"]
-    Array[int] aligns = [1, 0, 1, 2]
-    Array[int] hAligns = [1, 1, 1, 1]
+    Array[string] headers = ["名称", "类型", "大小"]
+    Array[int] aligns = [0, 1, 2]
+    Array[int] hAligns = [1, 1, 1]
+    // 行数据：只存文本，不再暴露图片路径
     Array[Array[string]] rows = [
-        [p1, "文件A", "PNG", "1.2 MB"],
-        [p2, "文件B", "JPG", "3.4 MB"],
-        [p3, "文件C", "BMP", "5.6 MB"],
-        [p1, "文件D", "PNG", "0.8 MB"],
-        [p2, "文件E", "GIF", "2.1 MB"],
-        ["", "无图标项", "TXT", "0.1 KB"],
-        [p3, "文件F", "WEBP", "4.0 MB"],
-        [p1, "文件G", "SVG", "12 KB"]
+        ["文件A", "PNG", "1.2 MB"],
+        ["文件B", "JPG", "3.4 MB"],
+        ["文件C", "BMP", "5.6 MB"],
+        ["文件D", "PNG", "0.8 MB"],
+        ["文件E", "GIF", "2.1 MB"],
+        ["无图标项", "TXT", "0.1 KB"],
+        ["文件F", "WEBP", "4.0 MB"],
+        ["文件G", "SVG", "12 KB"]
     ]
+    // 图标路径：与 rows 平行，独立存储（空串=无图标）
+    Array[string] rowImages = [p1, p2, p3, p1, p2, "", p3, p1]
 
     var tbl = win.addTable({
         x: 30, y: 64, w: 560, h: 280,
         headers: headers, aligns: aligns, header_aligns: hAligns,
         rows: rows,
-        image_cols: [0],          // 第 0 列渲染图片
-        image_size: 20,           // 图片边长（0=自动）
-        image_mode: 0,            // 0=aspectFit
-        image_pad: 2,
+        image_col: 0,           // 第 0 列显示 [图标+文字]
+        row_images: rowImages,   // 每行图标路径（与 rows 平行）
+        image_size: 20,          // 图标边长（0=自动）
+        image_mode: 0,           // 0=aspectFit
+        image_pad: 4,            // 图标左侧内边距
+        image_gap: 4,            // 图标与文字间距
         sortable: true, resizable: true, zebra: true, row_h: 28, header_h: 28
     })
 
@@ -103,7 +108,7 @@ main() {
         string ip = p2
         if n % 3 == 0 { ip = p1 }
         if n % 3 == 2 { ip = p3 }
-        tbl.add_row([ip, "新行" + n, "PNG", "0.5 MB"])
+        tbl.add_row(["新行" + n, "PNG", "0.5 MB"], ip)
     })
     win.addButton({x: 360, y: 356, w: 120, h: 32, text: "删除选中行"}).on_click(func() {
         var sels = tbl.get_selected_rows()
@@ -135,8 +140,8 @@ main() {
         },
         func(Renderer r) {
             r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Table 图片列测试 (Esc 退出) — 第0列渲染图片，路径来自程序化生成的PNG", 20, 2, 200, 210, 230)
-            r.drawText(font, "点按钮切换 image_mode / image_size | 空路径行不显示图片", 20, 24, 150, 160, 180)
+            r.drawText(font, "Table 行图标测试 (Esc 退出) — 第0列显示[图标+文字]，路径独立存储", 20, 2, 200, 210, 230)
+            r.drawText(font, "点按钮切换 image_mode / image_size | 空路径行只显示文字", 20, 24, 150, 160, 180)
             r.drawText(font, "当前模式: " + modeName(), 20, 44, 180, 200, 120)
         }
     )

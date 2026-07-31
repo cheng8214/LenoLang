@@ -46,11 +46,13 @@ export struct Table impl Widget {
     int _ctxMenuH = -1
     Ptr[u8]? _hwnd           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     bool _ctxMenuEnabled = true
-    // 图片列支持：通过 image_cols 指定哪些列渲染图片（单元格值=图片路径）
-    Array[int]   _imageCols = []          // 图片列索引集合（0-based）
-    float        _imgSize = 0.0           // 图片边长（0 = 自动：取 _rowH - 8）
+    // 行图标支持：指定某列显示 [图标+文字]，图标路径由 _rowImages 独立存储（对齐 Treeview 模式）
+    int          _imageCol = -1           // 图标列索引（0-based，-1=无图标列）
+    Array[string] _rowImages = []         // 每行图标路径（与 _rows 平行，空串=无图标）
+    float        _imgSize = 0.0           // 图标边长（0 = 自动：取 _rowH - 8）
     int          _imgMode = 0             // 内容模式：0=aspectFit 1=stretch 2=aspectFill
-    float        _imgPad = 4.0            // 图片在单元格内的内边距
+    float        _imgPad = 4.0            // 图标在单元格内的左侧内边距
+    float        _imgGap = 4.0            // 图标与文字间距
     Array[string] _imgCachePaths = []     // 纹理缓存路径
     Array[Ptr[u8]] _imgCacheTex = []      // 纹理缓存指针
     int _ctxRow = -1, _ctxCol = -1   // 右击命中行/列
@@ -203,12 +205,14 @@ export struct Table impl Widget {
         var sc = opts.get("sep_rgb")
         if sc is Array[int] { _sepR = sc[0]; _sepG = sc[1]; _sepB = sc[2] }
 
-        // 图片列配置：image_cols 指定哪些列渲染图片（单元格值=图片路径）
-        var ic = opts.get("image_cols", [])
-        if ic is Array[int] { _imageCols = ic } else { _imageCols = [] }
+        // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
+        _imageCol = opts.get("image_col", -1)
+        var ri = opts.get("row_images", [])
+        if ri is Array[string] { _rowImages = ri } else { _rowImages = [] }
         _imgSize = opts.get("image_size", 0.0)
         _imgMode = opts.get("image_mode", 0)
         _imgPad = opts.get("image_pad", 4.0)
+        _imgGap = opts.get("image_gap", 4.0)
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)
@@ -278,14 +282,18 @@ export struct Table impl Widget {
         _recompute_cols()
         _clamp_scroll()
         _selRow = -1; _selRows = []
+        // 同步 _rowImages 长度
+        while _rowImages.len() > _rows.len() { _rowImages.remove(_rowImages.len() - 1) }
     }
-    func add_row(Array[string] row) {
+    func add_row(Array[string] row, string imgPath) {
         _rows.add(row)
+        _rowImages.add(imgPath)
         if row.len() > _ncols and _headers.len() == 0 { _ncols = row.len(); _recompute_cols() }
         _clamp_scroll()
     }
     func remove_row(int idx) {
         if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }
+        if idx >= 0 and idx < _rowImages.len() { _rowImages.remove(idx) }
         if _selRow == idx { _selRow = -1 }
         else if _selRow > idx { _selRow = _selRow - 1 }
         Array[int] ns = []
@@ -298,7 +306,7 @@ export struct Table impl Widget {
         _selRows = ns
         _clamp_scroll()
     }
-    func clear() { _rows = []; _selRow = -1; _selCol = -1; _selRows = []; _scrollX = 0; _scrollY = 0 }
+    func clear() { _rows = []; _rowImages = []; _selRow = -1; _selCol = -1; _selRows = []; _scrollX = 0; _scrollY = 0 }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return _ncols }
     func get_row(int idx): Array[string] {
@@ -359,11 +367,23 @@ export struct Table impl Widget {
     func on_select(func(int):void cb) { _onSelect = cb }
     func on_cell(func(int, int):void cb) { _onCell = cb }
 
-    // ==================== 图片列设置方法 ====================
-    func set_image_cols(Array[int] cols) { _imageCols = cols }
+    // ==================== 行图标设置方法 ====================
+    func set_image_col(int c) { _imageCol = c }
+    func set_row_image(int row, string path) {
+        if row >= 0 and row < _rowImages.len() { _rowImages[row] = path }
+        else if row >= 0 {
+            while _rowImages.len() <= row { _rowImages.add("") }
+            _rowImages[row] = path
+        }
+    }
+    func get_row_image(int row): string {
+        if row >= 0 and row < _rowImages.len() { return _rowImages[row] }
+        return ""
+    }
     func set_image_size(float s) { _imgSize = s }
     func set_image_mode(int m) { _imgMode = m }
     func set_image_pad(float p) { _imgPad = p }
+    func set_image_gap(float g) { _imgGap = g }
 
     // ==================== 右击上下文菜单（默认不预置任何项，由应用层自定义） ====================
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
@@ -691,10 +711,13 @@ export struct Table impl Widget {
         return t.slice(0, lo) + "\u2026"
     }
 
-    // 判断列 c 是否为图片列
-    func _is_image_col(int c): bool {
-        for _imageCols.len() to i { if _imageCols[i] == c { return true } }
-        return false
+    // 判断是否启用了图标列
+    func _has_image_col(): bool { return _imageCol >= 0 }
+
+    // 获取行 ri 的图标路径（越界或无图标返回空串）
+    func _row_image(int ri): string {
+        if ri < 0 or ri >= _rowImages.len() { return "" }
+        return _rowImages[ri]
     }
 
     // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏
@@ -707,57 +730,54 @@ export struct Table impl Widget {
         return t
     }
 
-    // 在单元格区域内绘制图片（单元格值=图片路径，路径为空则跳过）
-    func _draw_cell_image(Renderer r, string path, float cx, float cw, float ry, float rh) {
-        if path == "" { return }
-        Ptr[u8] tex = _get_tex(r, path)
-        if tex == null { return }
+    // 在图标列单元格内绘制 [图标+文字]（对齐 Treeview 的 icon+text 模式）
+    // 返回图标占据的宽度（0 = 无图标），供调用方在文字绘制时偏移
+    func _draw_cell_icon(Renderer r, string ipath, float cx, float ry, float rh): float {
+        if ipath == "" { return 0.0 }
+        Ptr[u8] tex = _get_tex(r, ipath)
+        if tex == null { return 0.0 }
         float imgSize = _imgSize
         if imgSize <= 0.0 { imgSize = rh - 8.0 }
-        if imgSize <= 0.0 { return }
-        float pad = _imgPad
-        float availW = cw - 2.0 * pad
-        float availH = rh - 2.0 * pad
-        if availW <= 0.0 or availH <= 0.0 { return }
-        // 图片绘制区域（居中）
-        float drawX = cx + pad + (availW - imgSize) / 2.0
-        float drawY = ry + pad + (availH - imgSize) / 2.0
+        if imgSize <= 0.0 { return 0.0 }
+        float imgX = cx + _imgPad
+        float imgY = ry + (rh - imgSize) / 2.0
         r.setTextureAlpha(tex, 255)
         r.setTextureColor(tex, 255, 255, 255)
         var nats = r.getTextureSize(tex)
         float nw = nats["w"], nh = nats["h"]
         if _imgMode == 1 {
             // stretch：直接拉伸填满
-            r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh, drawX, drawY, imgSize, imgSize)
+            r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh, imgX, imgY, imgSize, imgSize)
         } else if _imgMode == 2 {
             // aspectFill（裁边填满）：覆盖缩放 + 居中裁剪源矩形
             float s = imgSize / nw; if imgSize / nh > s { s = imgSize / nh }
             float sw = imgSize / s, sh = imgSize / s
             float sx = (nw - sw) / 2.0, sy = (nh - sh) / 2.0
-            r.drawTextureFromTo(tex, sx, sy, sw, sh, drawX, drawY, imgSize, imgSize)
+            r.drawTextureFromTo(tex, sx, sy, sw, sh, imgX, imgY, imgSize, imgSize)
         } else {
             // aspectFit（默认，留边）：保持比例完整显示
             float s = imgSize / nw; if imgSize / nh < s { s = imgSize / nh }
             float dw = nw * s, dh = nh * s
             r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh,
-                drawX + (imgSize - dw) / 2.0, drawY + (imgSize - dh) / 2.0, dw, dh)
+                imgX + (imgSize - dw) / 2.0, imgY + (imgSize - dh) / 2.0, dw, dh)
         }
+        return imgSize + _imgGap   // 返回图标总占宽（含间距），文字需右移此量
     }
 
-    func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B) {
+    func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B, float iconOff) {
         if _font == null or not _font.ok { return }
         if t == "" { return }
         float th = _textH
         float ty = ry + (rh - th) / 2.0
         float pad = 8.0
-        float availW = cw - 2.0 * pad
+        float availW = cw - 2.0 * pad - iconOff
         string dt = _fit_cell_text(t, availW)
         if dt == "" { return }
         float tw = _font.measureString(dt).w
         float tx
         if align == 2 { tx = cx + cw - pad - tw }
-        else if align == 1 { tx = cx + (cw - tw) / 2.0 }
-        else { tx = cx + pad }
+        else if align == 1 { tx = cx + iconOff + (cw - iconOff - tw) / 2.0 }
+        else { tx = cx + pad + iconOff }
         if tx < cx + 2.0 { tx = cx + 2.0 }
         // 安全裁剪：tx 已 clamp，body clip 已覆盖数据区，无需 per-cell pushClipRect
         // （每格 push/pop 会产生 2 次 batch flush，12行×5列=120次/帧，导致闪烁）
@@ -800,7 +820,7 @@ export struct Table impl Widget {
                 if c == _sortCol {
                     if _sortDesc { t = t + " ▼" } else { t = t + " ▲" }
                 }
-                _draw_cell_text(r, t, cx, cw, y, _headerH, _headerAligns[c], htcR, htcG, htcB)
+                _draw_cell_text(r, t, cx, cw, y, _headerH, _headerAligns[c], htcR, htcG, htcB, 0.0)
             }
             r.setColor(_sepR, _sepG, _sepB, 130)
             r.drawLine(cx + cw, y, cx + cw, y + _headerH)
@@ -835,15 +855,16 @@ export struct Table impl Widget {
             r.fillRect(x, ry, w, _rowH + 1.0)   // +1 覆盖亚像素间隙，防止行间闪烁
             if ri < _rows.len() {
                 var row = _rows[ri]
+                string imgPath = _row_image(ri)
                 for 0 : _ncols - 1 to c {
                     float cx = _col_x(c), cw = _colW[c]
                     if cx + cw < x or cx > x + w { continue }
+                    float iconOff = 0.0
+                    if c == _imageCol and _has_image_col() {
+                        iconOff = _draw_cell_icon(r, imgPath, cx, ry, _rowH)
+                    }
                     if c < row.len() {
-                        if _is_image_col(c) {
-                            _draw_cell_image(r, row[c], cx, cw, ry, _rowH)
-                        } else {
-                            _draw_cell_text(r, row[c], cx, cw, ry, _rowH, _aligns[c], tr, tg, tb)
-                        }
+                        _draw_cell_text(r, row[c], cx, cw, ry, _rowH, _aligns[c], tr, tg, tb, iconOff)
                     }
                     r.setColor(_sepR, _sepG, _sepB, 70)
                     r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
