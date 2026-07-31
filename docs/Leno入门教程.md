@@ -8356,7 +8356,7 @@ main() {
 
 ## 异步编程
 
-Leno 支持 `async`/`await` 语法进行异步编程，配合 `asyncs` 模块实现非阻塞操作。
+Leno 支持 `async`/`await` 语法进行异步编程，配合 `asyncs` 模块实现非阻塞操作。协程在挂起时会保存完整的调用栈，恢复后所有局部变量完整保持。
 
 ### 基本用法
 
@@ -8370,7 +8370,7 @@ async func fetch_data():string {
 }
 
 main() {
-    // 调用异步函数
+    // 调用异步函数（返回 Future）
     fetch_data()
     
     // 运行事件循环
@@ -8409,6 +8409,8 @@ main() {
 
 ### 嵌套异步调用
 
+async 函数中调用另一个 async 函数并 `await`，中间帧的局部变量在协程挂起/恢复时完整保持：
+
 ```leno
 import asyncs
 
@@ -8419,10 +8421,12 @@ async func inner(int n):int {
 
 async func outer() {
     print("outer 开始")
-    var a = await inner(5)
+    var local_var = 999           // outer 的局部变量
+    var a = await inner(5)        // 协程挂起，outer 的帧被保存
     print($"inner(5) = {a}")
     var b = await inner(10)
     print($"inner(10) = {b}")
+    print($"local_var = {local_var}")  // 999 — 恢复后保持
     print($"总和: {a + b}")
 }
 
@@ -8432,7 +8436,162 @@ main() {
 }
 ```
 
-> **⚠️ 注意：必须调用** **`asyncs.run()`** **启动事件循环**
+更深层的嵌套也完全支持——async → 普通 → async 的调用链中，每一层普通函数的局部变量都会在 `await` 挂起时被保存：
+
+```leno
+async func deep_async(int n): int {
+    await asyncs.sleep(5)
+    return n + 1
+}
+
+func middle(int n): var {
+    var mid_local = n * 10        // 普通函数的局部变量
+    return deep_async(mid_local)  // 返回 Future
+}
+
+async func top(int n): int {
+    var future = middle(n)        // 得到 Future
+    var result = await future     // 挂起时，top 的帧被保存
+    return result                  // 恢复后继续
+}
+```
+
+### 普通函数调用 async 函数
+
+普通函数调用 async 函数时返回 `Future` 对象，不能使用 `await`。让 async 函数来负责 `await`：
+
+```leno
+async func worker(int v): int {
+    await asyncs.sleep(10)
+    return v * 5
+}
+
+func make_future(int x) {
+    return worker(x)    // 返回 Future，不是 int
+}
+
+async func caller(int x): int {
+    var f = make_future(x)   // 普通函数调用，得到 Future
+    return await f            // 在 async 函数中 await
+}
+```
+
+> **⚠️ `await` 只能在 `async` 函数中使用**
+>
+> ```leno
+> func normal() {
+>     var result = await some_async()   // ❌ 编译错误
+> }
+> ```
+
+### async 函数返回另一个 async 调用
+
+async 函数直接 `return` 另一个 async 函数调用时，返回的是**嵌套 Future**，需要两次 `await`：
+
+```leno
+async func inner_async(int v): int {
+    await asyncs.sleep(5)
+    return v + 100
+}
+
+async func wrap(): var {
+    return inner_async(42)    // 不 await，直接返回 Future
+}
+
+async func test() {
+    var f = wrap()             // Future（结果也是 Future）
+    var inner_f = await f      // 第一次 await：得到 inner 的 Future
+    var result = await inner_f // 第二次 await：得到 142
+    print(result)               // 142
+}
+```
+
+如果不希望嵌套，使用 `return await inner_async(42)` 即可一步返回值。
+
+### 并发与结果收集
+
+```leno
+import asyncs
+
+async func task(string name, int ms) {
+    await asyncs.sleep(ms)
+    print($"任务 {name} 完成")
+}
+
+async func main_async() {
+    // 同时启动三个任务（并发）
+    var f1 = task("A", 1000)
+    var f2 = task("B", 500)
+    var f3 = task("C", 1500)
+    
+    await f1
+    await f2
+    await f3
+    
+    // 收集结果
+    var results = asyncs.all([f1, f2, f3])
+}
+
+main() {
+    main_async()
+    asyncs.run()    // 总耗时约 1.5 秒（最慢的任务），而非 3 秒
+}
+```
+
+### 超时控制
+
+```leno
+async func slow_task():string {
+    await asyncs.sleep(5000)
+    return "完成"
+}
+
+async func test() {
+    var result = await asyncs.timeout(slow_task(), 1000)
+    if result is null {
+        print("超时了！")
+    } else {
+        print(result)
+    }
+}
+```
+
+### 异常处理
+
+async 函数中抛出的异常通过 Future 传播，在 `await` 处重新抛出，可用 `try-catch` 捕获：
+
+```leno
+async func risky():string {
+    await asyncs.sleep(100)
+    throw "出错了"
+}
+
+async func safe_catch() {
+    try {
+        var result = await risky()
+        print($"成功: {result}")
+    } catch e {
+        print($"捕获异常: {e}")    // 捕获异常: 出错了
+    }
+}
+
+main() {
+    safe_catch()
+    asyncs.run()
+}
+```
+
+### asyncs 模块 API
+
+| 函数 | 说明 | 示例 |
+|------|------|------|
+| `asyncs.sleep(ms)` | 暂停指定毫秒 | `await asyncs.sleep(1000)` |
+| `asyncs.run()` | 启动事件循环 | `asyncs.run()` |
+| `asyncs.all([f1,f2])` | 收集已完成 Future 的结果 | `asyncs.all([f1, f2])` |
+| `asyncs.timeout(f, ms)` | 超时等待 | `await asyncs.timeout(f, 500)` |
+| `asyncs.yield()` | 主动让出执行权 | `await asyncs.yield()` |
+
+> **⚠️ 必须调用** **`asyncs.run()`** **启动事件循环**
 >
 > ```leno
 > async func task() {
@@ -9024,11 +9183,17 @@ lenolang program.leno
 
 ### 异步编程
 
-| 功能     | 语法                           |
-| ------ | ---------------------------- |
-| 异步函数   | `async func name():type { }` |
-| 等待结果   | `await asyncs.sleep(100)`    |
-| 启动事件循环 | `asyncs.run()`               |
+| 功能 | 语法 |
+|------|------|
+| 异步函数 | `async func name():type { }` |
+| 等待结果 | `await asyncs.sleep(100)` |
+| 启动事件循环 | `asyncs.run()` |
+| 普通函数返回 Future | `func f() { return async_fn() }` |
+| 嵌套 Future | `async func wrap():var { return inner() }` |
+| 并发收集结果 | `asyncs.all([f1, f2, f3])` |
+| 超时控制 | `await asyncs.timeout(f, 1000)` |
+| 主动让出 | `await asyncs.yield()` |
+| 异常捕获 | `try { await f } catch e { }` |
 
 ### FFI 外部函数接口
 

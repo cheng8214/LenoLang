@@ -285,6 +285,110 @@ main() {
 }
 ```
 
+### 4. 普通函数中调用 async 函数
+
+普通函数调用 async 函数时，返回的是 `Future` 对象而非值。这是完全合法的模式——普通函数充当"中间人"传递 Future，由调用方的 async 函数负责 `await`：
+
+```leno
+// 普通函数：创建并返回 Future，不做 await
+func make_future(int x) {
+    async func worker(int v): int {
+        await asyncs.sleep(10)
+        return v * 5
+    }
+    return worker(x)      // 返回 Future，不是 int
+}
+
+async func caller(int x): int {
+    var f = make_future(x)  // 普通函数调用，得到 Future
+    var result = await f    // 在 async 函数中 await
+    return result
+}
+```
+
+> **⚠️ 注意：普通函数不能使用 `await`**
+>
+> ```leno
+> func normal() {
+>     var result = await some_async()   // ❌ 编译错误：await 只能在 async 函数中使用
+> }
+> ```
+>
+> 如果需要在普通函数中等待异步结果，将其改为 `async func`，或者在 `main()` 中调用 `asyncs.run()` 后通过 Future 获取结果。
+
+### 5. async 函数直接返回另一个 async 调用
+
+当 async 函数直接 `return` 另一个 async 函数的调用时，返回的是**嵌套 Future**（Future 中包含另一个 Future）。需要两次 `await` 才能拿到最终值：
+
+```leno
+async func inner(int v): int {
+    await asyncs.sleep(5)
+    return v + 100
+}
+
+async func wrap(): var {
+    return inner(42)       // 不 await，直接返回 Future
+}
+
+async func test() {
+    var f = wrap()          // f 是 Future（其结果是另一个 Future）
+    var inner_f = await f    // 第一次 await：得到 inner 的 Future
+    var result = await inner_f  // 第二次 await：得到最终值 142
+    assert_eq(result, 142)
+}
+```
+
+> **💡 为什么需要两次 await？**
+>
+> `wrap()` 返回的是它自己的 `task_future`。当 `wrap` 完成时，`task_future` 的结果是 `inner(42)` 的返回值——但 `inner` 是 async 函数，它的返回值就是另一个 `Future`。因此第一次 `await f` 得到的是 `inner` 的 Future，第二次 `await` 才拿到真正的值。
+>
+> 如果不希望嵌套，在 `wrap` 中使用 `return await inner(42)` 即可一步返回值。
+
+### 6. async 函数中的局部变量在 await 后保持
+
+协程挂起时，VM 会保存该协程的**所有调用帧**（不只是顶层帧）。这意味着 `await` 前后，局部变量完整保持：
+
+```leno
+async func test(): int {
+    var a = 100
+    var b = 200
+    await asyncs.sleep(10)   // 协程挂起，所有帧被保存
+    // 恢复后，a 和 b 的值完整保持
+    return a + b             // 300
+}
+```
+
+这一保证也适用于嵌套调用链中的中间帧：
+
+```leno
+async func child(int x): int {
+    await asyncs.sleep(5)
+    return x * 8 + 10
+}
+
+async func parent(int x): int {
+    var parent_local = x * 3
+    var c_result = await child(x)   // parent 的帧被保存
+    return parent_local + c_result   // parent_local 保持不变
+}
+```
+
+以及结构体值类型：
+
+```leno
+struct Point3D {
+    int x = 0
+    int y = 0
+    int z = 0
+}
+
+async func test(): string {
+    var p = new Point3D(x=3, y=4, z=7)
+    await asyncs.sleep(5)           // p 存储在帧的 locals 中，被完整保存
+    return $"{p.x},{p.y},{p.z}"     // "3,4,7" — 字段完整保持
+}
+```
+
 ---
 
 ## 异常处理
