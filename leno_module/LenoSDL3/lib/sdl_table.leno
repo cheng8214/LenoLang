@@ -9,6 +9,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
+import "sdl_image.leno" as img
 
 export struct Table impl Widget {
     float x = 0.0, y = 0.0, w = 360.0, h = 240.0
@@ -45,6 +46,13 @@ export struct Table impl Widget {
     int _ctxMenuH = -1
     Ptr[u8]? _hwnd           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     bool _ctxMenuEnabled = true
+    // 图片列支持：通过 image_cols 指定哪些列渲染图片（单元格值=图片路径）
+    Array[int]   _imageCols = []          // 图片列索引集合（0-based）
+    float        _imgSize = 0.0           // 图片边长（0 = 自动：取 _rowH - 8）
+    int          _imgMode = 0             // 内容模式：0=aspectFit 1=stretch 2=aspectFill
+    float        _imgPad = 4.0            // 图片在单元格内的内边距
+    Array[string] _imgCachePaths = []     // 纹理缓存路径
+    Array[Ptr[u8]] _imgCacheTex = []      // 纹理缓存指针
     int _ctxRow = -1, _ctxCol = -1   // 右击命中行/列
     int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
     func(int, string):void _onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
@@ -195,6 +203,13 @@ export struct Table impl Widget {
         var sc = opts.get("sep_rgb")
         if sc is Array[int] { _sepR = sc[0]; _sepG = sc[1]; _sepB = sc[2] }
 
+        // 图片列配置：image_cols 指定哪些列渲染图片（单元格值=图片路径）
+        var ic = opts.get("image_cols", [])
+        if ic is Array[int] { _imageCols = ic } else { _imageCols = [] }
+        _imgSize = opts.get("image_size", 0.0)
+        _imgMode = opts.get("image_mode", 0)
+        _imgPad = opts.get("image_pad", 4.0)
+
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
@@ -343,6 +358,12 @@ export struct Table impl Widget {
     func set_tip(string t) { _tip = t }
     func on_select(func(int):void cb) { _onSelect = cb }
     func on_cell(func(int, int):void cb) { _onCell = cb }
+
+    // ==================== 图片列设置方法 ====================
+    func set_image_cols(Array[int] cols) { _imageCols = cols }
+    func set_image_size(float s) { _imgSize = s }
+    func set_image_mode(int m) { _imgMode = m }
+    func set_image_pad(float p) { _imgPad = p }
 
     // ==================== 右击上下文菜单（默认不预置任何项，由应用层自定义） ====================
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
@@ -670,6 +691,59 @@ export struct Table impl Widget {
         return t.slice(0, lo) + "\u2026"
     }
 
+    // 判断列 c 是否为图片列
+    func _is_image_col(int c): bool {
+        for _imageCols.len() to i { if _imageCols[i] == c { return true } }
+        return false
+    }
+
+    // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏
+    func _get_tex(Renderer r, string path): Ptr[u8] {
+        for _imgCachePaths.len() to i {
+            if _imgCachePaths[i] == path { return _imgCacheTex[i] }
+        }
+        Ptr[u8] t = img.loadTexture(r.handle, path)
+        _imgCachePaths.add(path); _imgCacheTex.add(t)
+        return t
+    }
+
+    // 在单元格区域内绘制图片（单元格值=图片路径，路径为空则跳过）
+    func _draw_cell_image(Renderer r, string path, float cx, float cw, float ry, float rh) {
+        if path == "" { return }
+        Ptr[u8] tex = _get_tex(r, path)
+        if tex == null { return }
+        float imgSize = _imgSize
+        if imgSize <= 0.0 { imgSize = rh - 8.0 }
+        if imgSize <= 0.0 { return }
+        float pad = _imgPad
+        float availW = cw - 2.0 * pad
+        float availH = rh - 2.0 * pad
+        if availW <= 0.0 or availH <= 0.0 { return }
+        // 图片绘制区域（居中）
+        float drawX = cx + pad + (availW - imgSize) / 2.0
+        float drawY = ry + pad + (availH - imgSize) / 2.0
+        r.setTextureAlpha(tex, 255)
+        r.setTextureColor(tex, 255, 255, 255)
+        var nats = r.getTextureSize(tex)
+        float nw = nats["w"], nh = nats["h"]
+        if _imgMode == 1 {
+            // stretch：直接拉伸填满
+            r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh, drawX, drawY, imgSize, imgSize)
+        } else if _imgMode == 2 {
+            // aspectFill（裁边填满）：覆盖缩放 + 居中裁剪源矩形
+            float s = imgSize / nw; if imgSize / nh > s { s = imgSize / nh }
+            float sw = imgSize / s, sh = imgSize / s
+            float sx = (nw - sw) / 2.0, sy = (nh - sh) / 2.0
+            r.drawTextureFromTo(tex, sx, sy, sw, sh, drawX, drawY, imgSize, imgSize)
+        } else {
+            // aspectFit（默认，留边）：保持比例完整显示
+            float s = imgSize / nw; if imgSize / nh < s { s = imgSize / nh }
+            float dw = nw * s, dh = nh * s
+            r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh,
+                drawX + (imgSize - dw) / 2.0, drawY + (imgSize - dh) / 2.0, dw, dh)
+        }
+    }
+
     func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B) {
         if _font == null or not _font.ok { return }
         if t == "" { return }
@@ -765,7 +839,11 @@ export struct Table impl Widget {
                     float cx = _col_x(c), cw = _colW[c]
                     if cx + cw < x or cx > x + w { continue }
                     if c < row.len() {
-                        _draw_cell_text(r, row[c], cx, cw, ry, _rowH, _aligns[c], tr, tg, tb)
+                        if _is_image_col(c) {
+                            _draw_cell_image(r, row[c], cx, cw, ry, _rowH)
+                        } else {
+                            _draw_cell_text(r, row[c], cx, cw, ry, _rowH, _aligns[c], tr, tg, tb)
+                        }
                     }
                     r.setColor(_sepR, _sepG, _sepB, 70)
                     r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
@@ -828,6 +906,9 @@ export struct Table impl Widget {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         _edit?.dispose(); _edit = null
         _ctxMenu?.dispose(); _ctxMenu = null
+        // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
+        // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
+        _imgCacheTex = []; _imgCachePaths = []
     }
 }
 

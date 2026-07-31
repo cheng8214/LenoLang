@@ -1,0 +1,146 @@
+// test_table_image.leno — Table 图片列测试
+// 运行：leno 本文件（Esc 退出）
+// 校验点：
+//   1) image_cols 指定第 0 列为图片列，单元格值=图片路径，渲染为缩略图
+//   2) 三种内容模式：aspectFit / stretch / aspectFill
+//   3) 图片列与文字列混合显示
+//   4) 运行时 set_image_mode 切换模式
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Table
+import "../../../lib/sdl_core.leno" as core; use core.sdl3
+import "../../../lib/sdl_image.leno" as simg
+import dirs
+import files
+
+// 程序化生成一张带中心白色方块的宽矩形 PNG（48×16，3:1 宽高比）
+// 非正方形 + 内部图案使 aspectFit/stretch/aspectFill 三种模式肉眼可区分
+func makeColorPNG(sdl3 lib, string path, int w, int h, int r, int g, int b): bool {
+    if files.exists(path) { return true }
+    int fmt = 373694468   // SDL_PIXELFORMAT_RGBA8888
+    Ptr[u8] surf = lib.SDL_CreateSurface(w, h, fmt)
+    if surf == null { return false }
+    // 底色填充
+    int bgColor = lib.SDL_MapSurfaceRGBA(surf, r, g, b, 255)
+    lib.SDL_FillSurfaceRect(surf, null, bgColor)
+    // 中心白色方块（宽高各 1/3），让 stretch 拉伸变形/aspectFit 留边/aspectFill 裁切可区分
+    int cw = w / 3, ch = h / 3
+    int cx = (w - cw) / 2, cy = (h - ch) / 2
+    var rect = core.SDL_Rect.malloc()
+    rect.x = cx; rect.y = cy; rect.w = cw; rect.h = ch
+    int whiteColor = lib.SDL_MapSurfaceRGBA(surf, 255, 255, 255, 255)
+    lib.SDL_FillSurfaceRect(surf, rect.to_ptr(), whiteColor)
+    rect.free()
+    bool ok = simg.savePNG(surf, path)
+    lib.SDL_DestroySurface(surf)
+    return ok
+}
+
+main() {
+    var win = SDL3.createWindow({title: "Table 图片列测试", w: 620, h: 460})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 生成 3 张不同颜色的测试 PNG（48×16 宽矩形，3:1 宽高比，保存到脚本目录）
+    string dir = dirs.script_dir()
+    string p1 = dir + "/tbl_img_red.png"
+    string p2 = dir + "/tbl_img_green.png"
+    string p3 = dir + "/tbl_img_blue.png"
+    // 删除旧缓存（上次可能是正方形 24×24，需重新生成宽矩形）
+    files.delete(p1); files.delete(p2); files.delete(p3)
+    var lib = core.lib()
+    makeColorPNG(lib, p1, 48, 16, 220, 60, 60)
+    makeColorPNG(lib, p2, 48, 16, 60, 200, 80)
+    makeColorPNG(lib, p3, 48, 16, 60, 100, 220)
+
+    Array[string] headers = ["图标", "名称", "类型", "大小"]
+    Array[int] aligns = [1, 0, 1, 2]
+    Array[int] hAligns = [1, 1, 1, 1]
+    Array[Array[string]] rows = [
+        [p1, "文件A", "PNG", "1.2 MB"],
+        [p2, "文件B", "JPG", "3.4 MB"],
+        [p3, "文件C", "BMP", "5.6 MB"],
+        [p1, "文件D", "PNG", "0.8 MB"],
+        [p2, "文件E", "GIF", "2.1 MB"],
+        ["", "无图标项", "TXT", "0.1 KB"],
+        [p3, "文件F", "WEBP", "4.0 MB"],
+        [p1, "文件G", "SVG", "12 KB"]
+    ]
+
+    var tbl = win.addTable({
+        x: 30, y: 64, w: 560, h: 280,
+        headers: headers, aligns: aligns, header_aligns: hAligns,
+        rows: rows,
+        image_cols: [0],          // 第 0 列渲染图片
+        image_size: 20,           // 图片边长（0=自动）
+        image_mode: 0,            // 0=aspectFit
+        image_pad: 2,
+        sortable: true, resizable: true, zebra: true, row_h: 28, header_h: 28
+    })
+
+    int curMode = 0
+    func modeName(): string {
+        switch curMode {
+            case 0 { return "aspectFit" }
+            case 1 { return "stretch" }
+            case 2 { return "aspectFill" }
+            default { return "?" }
+        }
+    }
+
+    // ---- 按钮 ----
+    win.addButton({x: 30, y: 356, w: 180, h: 32, text: "切换模式: aspectFit"}).on_click(func() {
+        curMode = (curMode + 1) % 3
+        tbl.set_image_mode(curMode)
+        print("图片模式切换为: " + modeName())
+    })
+    win.addButton({x: 225, y: 356, w: 120, h: 32, text: "添加行"}).on_click(func() {
+        int n = tbl.row_count()
+        string ip = p2
+        if n % 3 == 0 { ip = p1 }
+        if n % 3 == 2 { ip = p3 }
+        tbl.add_row([ip, "新行" + n, "PNG", "0.5 MB"])
+    })
+    win.addButton({x: 360, y: 356, w: 120, h: 32, text: "删除选中行"}).on_click(func() {
+        var sels = tbl.get_selected_rows()
+        for sels.len() to i {
+            int k = sels.len() - 1 - i
+            int r = sels[k]
+            if r >= 0 and r < tbl.row_count() { tbl.remove_row(r) }
+        }
+    })
+
+    win.addButton({x: 30, y: 396, w: 180, h: 32, text: "image_size=0 (自动)"}).on_click(func() {
+        tbl.set_image_size(0)
+        print("image_size=0 (自动：取 rowH-8)")
+    })
+    win.addButton({x: 225, y: 396, w: 120, h: 32, text: "size=14"}).on_click(func() {
+        tbl.set_image_size(14)
+        print("image_size=14")
+    })
+    win.addButton({x: 360, y: 396, w: 120, h: 32, text: "size=24"}).on_click(func() {
+        tbl.set_image_size(24)
+        print("image_size=24")
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "Table 图片列测试 (Esc 退出) — 第0列渲染图片，路径来自程序化生成的PNG", 20, 2, 200, 210, 230)
+            r.drawText(font, "点按钮切换 image_mode / image_size | 空路径行不显示图片", 20, 24, 150, 160, 180)
+            r.drawText(font, "当前模式: " + modeName(), 20, 44, 180, 200, 120)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
