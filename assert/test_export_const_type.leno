@@ -1,0 +1,50 @@
+// 测试：跨模块 export const 类型传播
+// bug 场景：模块 B 执行 export const X = base.Y，第三方模块 C 访问 B.X 时类型应为 int 而非 any
+// 修复前：scan_var.inc 无法解析 module.member 形式的初始值，类型退化为 TYPE_ANY
+// 修复后：scan_var.inc 递归扫描依赖模块，正确传播类型
+
+import "test_export_const_type_mid.leno" as mid
+import "test_export_const_type_mod.leno" as base
+import io
+
+main() {
+    // 验证值正确传播
+    assert_eq(mid.RE_INT, 42)
+    assert_eq(mid.RE_FLOAT, 3.14)
+    assert_eq(mid.RE_BOOL, true)
+    assert_eq(mid.RE_STRING, "hello")
+    assert_eq(mid.RE_NEG, -100)
+
+    // 验证中间模块与基础模块的值一致
+    assert_eq(mid.RE_INT, base.INT_VAL)
+    assert_eq(mid.RE_FLOAT, base.FLOAT_VAL)
+    assert_eq(mid.RE_BOOL, base.BOOL_VAL)
+    assert_eq(mid.RE_STRING, base.STRING_VAL)
+    assert_eq(mid.RE_NEG, base.NEG_VAL)
+
+    // 验证类型正确传播（通过隐式转换可用性间接验证）
+    // 如果 RE_INT 被推导为 any，传给 int 形参的函数会失败
+    // 这里用 int 变量赋值来验证类型不是 any
+    int int_val = mid.RE_INT
+    assert_eq(int_val, 42)
+
+    float float_val = mid.RE_FLOAT
+    assert_eq(float_val, 3.14)
+
+    // 算术运算验证（any 类型做算术会报错）
+    int doubled = mid.RE_INT * 2
+    assert_eq(doubled, 84)
+
+    int sum = mid.RE_INT + mid.RE_NEG
+    assert_eq(sum, -58)
+
+    // 传给需要 int 参数的函数
+    int result = check_int_param(mid.RE_INT)
+    assert_eq(result, 42)
+
+    print("test_export_const_type: ALL PASSED")
+}
+
+func check_int_param(int x): int {
+    return x
+}

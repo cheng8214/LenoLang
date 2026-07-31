@@ -1,0 +1,8 @@
+// 基础模块：导出各种类型的 const
+// 测试跨模块 export const 类型传播
+
+export const INT_VAL = 42
+export const FLOAT_VAL = 3.14
+export const BOOL_VAL = true
+export const STRING_VAL = "hello"
+export const NEG_VAL = -100
