@@ -8,6 +8,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import maths
 import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct SpinBox impl Widget {
     float x = 0.0, y = 0.0, w = 140.0, h = 34.0
@@ -96,6 +97,12 @@ export struct SpinBox impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        br = th.bgR; bg = th.bgG; bb = th.bgB
+        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
+        _focusR = th.accentFocusR; _focusG = th.accentFocusG; _focusB = th.accentFocusB
+        _arrowR = th.bgAltR; _arrowG = th.bgAltG; _arrowB = th.bgAltB
+        _btnR = th.txtR; _btnG = th.txtG; _btnB = th.txtB
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 140)

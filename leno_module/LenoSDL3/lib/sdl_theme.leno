@@ -1,0 +1,114 @@
+// sdl_theme.leno — 全局主题系统
+//
+// 设计：全局单例。所有控件在 set() 时从 getTheme() 读取默认配色，
+// 用户可通过 setTheme(darkTheme()) 或 setTheme(lightTheme()) 一键切换。
+// 优先级：opts 显式覆盖 > 主题默认 > 结构体硬编码。
+//
+// 用法：
+//   SDL3.setTheme(SDL3.lightTheme())   // 在创建控件之前切换为浅色主题
+//   win.addButton({text:"OK"})         // 自动使用浅色配色
+//   win.addButton({bg_rgb:[100,50,50]}) // 仍可逐控件覆盖
+//
+// 注意：主题在控件 set() 时读取。已创建的控件不会随主题变更自动刷新；
+//       如需运行时切换，重新创建控件即可。
+
+// ==================== Theme 结构体 ====================
+export struct Theme {
+    string name = "dark"
+
+    // === 背景层次（从深到浅） ===
+    int bgR = 38, bgG = 40, bgB = 48              // 控件主背景
+    int bgAltR = 44, bgAltG = 46, bgAltB = 54     // 次级背景（面板/斑马纹/非激活标签）
+    int bgInputR = 35, bgInputG = 35, bgInputB = 50  // 输入框背景（略深于主背景）
+    int bgHoverR = 70, bgHoverG = 78, bgHoverB = 92   // 悬停行背景
+    int bgZebraR = 44, bgZebraG = 46, bgZebraB = 54  // 斑马纹行（与 bgAlt 相同）
+    int bgHeaderR = 46, bgHeaderG = 48, bgHeaderB = 56  // 表头/标签栏背景
+
+    // === 文字 ===
+    int txtR = 235, txtG = 235, txtB = 245        // 主文字色
+    int txtInputR = 220, txtInputG = 220, txtInputB = 240  // 输入框文字
+    int txtOnAccentR = 255, txtOnAccentG = 255, txtOnAccentB = 255  // 强调色上的白字
+    int txtDimR = 120, txtDimG = 128, txtDimB = 140  // 暗淡/空状态文字
+    int txtHeaderR = 220, txtHeaderG = 225, txtHeaderB = 235  // 表头文字
+
+    // === 强调/交互色 ===
+    int accentR = 60, accentG = 150, accentB = 235    // 选中/开关/强调主色
+    int accentFocusR = 100, accentFocusG = 180, accentFocusB = 255  // 聚焦边框（比 accent 更亮）
+    int accentBrightR = 80, accentBrightG = 160, accentBrightB = 245  // 更亮的强调色（tab 下划线等）
+
+    // === 边框/分隔 ===
+    int borderR = 90, borderG = 95, borderB = 110     // 普通边框
+    int sepR = 70, sepG = 74, sepB = 84              // 分隔线/连接线
+
+    // === 滚动条 ===
+    int sbR = 120, sbG = 125, sbB = 140              // 滚动条颜色
+
+    // === 预设按钮色 ===
+    int btnPrimaryR = 60, btnPrimaryG = 140, btnPrimaryB = 220
+    int btnDangerR = 220, btnDangerG = 60, btnDangerB = 60
+    int btnSuccessR = 60, btnSuccessG = 200, btnSuccessB = 80
+    int btnWarningR = 240, btnWarningG = 160, btnWarningB = 30
+    int btnDarkR = 60, btnDarkG = 60, btnDarkB = 70
+
+    // === Tooltip ===
+    int tipBgR = 38, tipBgG = 40, tipBgB = 48
+    int tipTxtR = 232, tipTxtG = 234, tipTxtB = 242
+    int tipBrdR = 110, tipBrdG = 115, tipBrdB = 132
+
+    // === 字体 ===
+    float fontSize = 15.0
+}
+
+// ==================== 全局单例 ====================
+Theme _theme = new Theme()
+
+export func getTheme(): Theme { return _theme }
+export func setTheme(Theme t) { _theme = t }
+
+// ==================== 预设主题 ====================
+
+// 深色主题（默认值已匹配，返回全新实例以便用户进一步微调）
+export func darkTheme(): Theme {
+    Theme t = new Theme()
+    t.name = "dark"
+    return t
+}
+
+// 浅色主题
+export func lightTheme(): Theme {
+    Theme t = new Theme()
+    t.name = "light"
+    // 背景层次（从浅到略深）
+    t.bgR = 240; t.bgG = 240; t.bgB = 245
+    t.bgAltR = 232; t.bgAltG = 232; t.bgAltB = 238
+    t.bgInputR = 255; t.bgInputG = 255; t.bgInputB = 255
+    t.bgHoverR = 206; t.bgHoverG = 214; t.bgHoverB = 224
+    t.bgZebraR = 236; t.bgZebraG = 236; t.bgZebraB = 242
+    t.bgHeaderR = 226; t.bgHeaderG = 228; t.bgHeaderB = 234
+    // 文字
+    t.txtR = 30; t.txtG = 30; t.txtB = 40
+    t.txtInputR = 25; t.txtInputG = 25; t.txtInputB = 35
+    t.txtOnAccentR = 255; t.txtOnAccentG = 255; t.txtOnAccentB = 255
+    t.txtDimR = 140; t.txtDimG = 145; t.txtDimB = 155
+    t.txtHeaderR = 40; t.txtHeaderG = 45; t.txtHeaderB = 55
+    // 强调/交互
+    t.accentR = 60; t.accentG = 130; t.accentB = 220
+    t.accentFocusR = 80; t.accentFocusG = 150; t.accentFocusB = 230
+    t.accentBrightR = 60; t.accentBrightG = 130; t.accentBrightB = 220
+    // 边框/分隔
+    t.borderR = 200; t.borderG = 205; t.borderB = 212
+    t.sepR = 210; t.sepG = 214; t.sepB = 220
+    // 滚动条
+    t.sbR = 160; t.sbG = 165; t.sbB = 175
+    // 预设按钮色
+    t.btnPrimaryR = 50; t.btnPrimaryG = 120; t.btnPrimaryB = 210
+    t.btnDangerR = 210; t.btnDangerG = 50; t.btnDangerB = 50
+    t.btnSuccessR = 50; t.btnSuccessG = 180; t.btnSuccessB = 70
+    t.btnWarningR = 230; t.btnWarningG = 150; t.btnWarningB = 20
+    t.btnDarkR = 70; t.btnDarkG = 70; t.btnDarkB = 80
+    // Tooltip
+    t.tipBgR = 250; t.tipBgG = 250; t.tipBgB = 255
+    t.tipTxtR = 30; t.tipTxtG = 30; t.tipTxtB = 40
+    t.tipBrdR = 180; t.tipBrdG = 185; t.tipBrdB = 195
+    return t
+}

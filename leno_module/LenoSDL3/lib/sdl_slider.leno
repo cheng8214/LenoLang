@@ -1,4 +1,4 @@
-﻿// sdl_slider.leno — 滑块控件
+// sdl_slider.leno — 滑块控件
 // 通过 win.addSlider({...}) 创建，拖拽 thumb 或在轨道上点击设定数值，回调 on_change(float)
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.Theme
 import maths
 
 export struct Slider impl Widget {
@@ -39,6 +40,11 @@ export struct Slider impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _trkR = th.bgAltR; _trkG = th.bgAltG; _trkB = th.bgAltB
+        _fillR = th.accentR; _fillG = th.accentG; _fillB = th.accentB
+        _thumbR = th.txtR; _thumbG = th.txtG; _thumbB = th.txtB
+        tr = th.txtR; tg = th.txtG; tb = th.txtB
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         w      = opts.get("w", 200)

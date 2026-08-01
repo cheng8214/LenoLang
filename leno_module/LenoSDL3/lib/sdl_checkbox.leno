@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct CheckBox impl Widget {
     string text = ""
@@ -37,6 +38,11 @@ export struct CheckBox impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        cr = th.bgAltR; cg = th.bgAltG; cb = th.bgAltB
+        cc = th.accentR; ck = th.accentG; cbl = th.accentB
+        tr = th.txtR; tg = th.txtG; tb = th.txtB
+        _brdR = th.borderR; _brdG = th.borderG; _brdB = th.borderB
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)

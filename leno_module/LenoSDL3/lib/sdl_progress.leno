@@ -7,6 +7,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_theme.leno" as theme; use theme.Theme
 import "sdl_tooltip.leno" as tip
 
 export struct ProgressBar impl Widget {
@@ -40,6 +41,10 @@ export struct ProgressBar impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _trkR = th.bgAltR; _trkG = th.bgAltG; _trkB = th.bgAltB
+        _fillR = th.btnSuccessR; _fillG = th.btnSuccessG; _fillB = th.btnSuccessB
+        tr = th.txtR; tg = th.txtG; tb = th.txtB
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
         w         = opts.get("w", 200)

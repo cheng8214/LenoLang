@@ -10,6 +10,7 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct Table impl Widget {
     float x = 0.0, y = 0.0, w = 360.0, h = 240.0
@@ -196,6 +197,19 @@ export struct Table impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        // 主题默认配色（opts 覆盖优先级更高）
+        Theme th = theme.getTheme()
+        br = th.bgR; bg = th.bgG; bb = th.bgB
+        _hdrR = th.bgHeaderR; _hdrG = th.bgHeaderG; _hdrB = th.bgHeaderB
+        _selR = th.accentR; _selG = th.accentG; _selB = th.accentB
+        _hovR = th.bgHoverR; _hovG = th.bgHoverG; _hovB = th.bgHoverB
+        _zebR = th.bgZebraR; _zebG = th.bgZebraG; _zebB = th.bgZebraB
+        tr = th.txtR; tg = th.txtG; tb = th.txtB
+        _hdrTxtR = th.txtHeaderR; _hdrTxtG = th.txtHeaderG; _hdrTxtB = th.txtHeaderB
+        _sepR = th.sepR; _sepG = th.sepG; _sepB = th.sepB
+        _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
+        _emptyR = th.txtDimR; _emptyG = th.txtDimG; _emptyB = th.txtDimB
+        _chkBoxR = th.borderR; _chkBoxG = th.borderG; _chkBoxB = th.borderB
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 360)

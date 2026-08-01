@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct Panel impl Widget {
     float x = 0.0, y = 0.0, w = 200.0, h = 150.0
@@ -21,6 +22,9 @@ export struct Panel impl Widget {
     Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        br = th.bgAltR; bg = th.bgAltG; bb = th.bgAltB
+        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
         w    = opts.get("w", 200)

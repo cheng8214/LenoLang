@@ -28,6 +28,7 @@ import "sdl_treeview.leno" as tv
 import "sdl_widget.leno" as wgt
 import "sdl_chart.leno" as cht
 import "sdl_tray.leno" as tray
+import "sdl_theme.leno" as thm
 
 
 // ==================== 重新导出类型 ====================
@@ -64,6 +65,7 @@ use lay.(HBox, VBox, AnchorBox)
 use wgt.Widget
 use cht.(BarChart, LineChart, PieChart)
 use tray.(Tray, TrayMenu)
+use thm.Theme
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
 export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
@@ -243,3 +245,10 @@ export func createSurfaceFromRaw(int w, int h, int fmt, Ptr[u8] pixels, int pitc
     return _sdlLib.SDL_CreateSurfaceFrom(w, h, fmt, pixels, pitch)
 }
 export func destroySurface(Ptr[u8] surface) { _sdlLib.SDL_DestroySurface(surface) }
+
+// ==================== 主题 ====================
+
+export func getTheme(): Theme           { return thm.getTheme() }
+export func setTheme(Theme t)           { thm.setTheme(t) }
+export func darkTheme(): Theme           { return thm.darkTheme() }
+export func lightTheme(): Theme          { return thm.lightTheme() }

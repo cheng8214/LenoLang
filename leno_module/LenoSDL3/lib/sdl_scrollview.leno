@@ -19,6 +19,7 @@ import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct ScrollView impl Widget {
     float x = 0.0, y = 0.0, w = 300.0, h = 200.0
@@ -45,6 +46,9 @@ export struct ScrollView impl Widget {
     Ptr[u8]? _hwnd
 
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        br = th.bgR; bg = th.bgG; bb = th.bgB
+        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 300)

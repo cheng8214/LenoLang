@@ -20,6 +20,7 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_combobox.leno" as cbx; use cbx.ComboBox
 import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct TabControl impl Widget {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
@@ -60,6 +61,15 @@ export struct TabControl impl Widget {
     }
 
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _bgR = th.bgR; _bgG = th.bgG; _bgB = th.bgB
+        _barR = th.bgInputR; _barG = th.bgInputG; _barB = th.bgInputB
+        _tabR = th.bgAltR; _tabG = th.bgAltG; _tabB = th.bgAltB
+        _actR = th.accentR; _actG = th.accentG; _actB = th.accentB
+        _txtR = th.txtDimR; _txtG = th.txtDimG; _txtB = th.txtDimB
+        _actTxtR = th.txtR; _actTxtG = th.txtG; _actTxtB = th.txtB
+        _accR = th.accentBrightR; _accG = th.accentBrightG; _accB = th.accentBrightB
+        _brdR = th.borderR; _brdG = th.borderG; _brdB = th.borderB
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
         w    = opts.get("w", 400)

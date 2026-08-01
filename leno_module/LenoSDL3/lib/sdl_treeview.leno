@@ -24,6 +24,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.Theme
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
 
@@ -302,6 +303,14 @@ export struct TreeView impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        br = th.bgR; bg = th.bgG; bb = th.bgB
+        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
+        _selR = th.accentR; _selG = th.accentG; _selB = th.accentB
+        _hovR = th.bgHoverR; _hovG = th.bgHoverG; _hovB = th.bgHoverB
+        tr = th.txtR; tg = th.txtG; tb = th.txtB
+        _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
+        _lineR = th.sepR; _lineG = th.sepG; _lineB = th.sepB
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
         w         = opts.get("w", 200)

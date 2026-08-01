@@ -11,6 +11,7 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_core.leno" as core
+import "sdl_theme.leno" as theme; use theme.Theme
 
 // ==================== 全局状态 ====================
 string _tipText  = ""          // 当前要显示的提示文本（空 = 无）
@@ -96,13 +97,14 @@ export func tipRender(Renderer r, float vw, float vh) {
     if by < 0.0     { by = 4.0 }
 
     // 背景
-    r.setColor(_bgR, _bgG, _bgB, 240)
+    Theme tm = theme.getTheme()
+    r.setColor(tm.tipBgR, tm.tipBgG, tm.tipBgB, 240)
     r.fillRoundedRect(bx, by, bw, bh, 5.0)
     // 边框
-    r.setColor(_brdR, _brdG, _brdB, 220)
+    r.setColor(tm.tipBrdR, tm.tipBrdG, tm.tipBrdB, 220)
     r.drawRoundedRect(bx, by, bw, bh, 5.0)
     // 文字（垂直居中）
     float tx = bx + padX
     float ty = by + (bh - th) / 2.0
-    r.drawText(_font, _tipText, r.snapX(tx), r.snapY(ty), _txtR, _txtG, _txtB)
+    r.drawText(_font, _tipText, r.snapX(tx), r.snapY(ty), tm.tipTxtR, tm.tipTxtG, tm.tipTxtB)
 }
