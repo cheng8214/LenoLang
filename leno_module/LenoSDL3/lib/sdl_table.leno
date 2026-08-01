@@ -263,7 +263,7 @@ export struct Table impl Widget {
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
         _selRow = -1; _selCol = -1; _hoverRow = -1; _selRows = []
-        _multi = opts.get("multi_select", false)
+        _multi = opts.get("multi_select", opts.get("multi", false))
         _scrollX = 0.0; _scrollY = 0.0
         _sortCol = -1; _sortDesc = false
         _draggingV = false; _draggingH = false
