@@ -69,6 +69,7 @@ export struct Table impl Widget {
     bool _checkHeaderState = false    // 表头全选框状态（三态：半选用 false 但有部分勾选时渲染半选样式）
     int  _chkR = 70, _chkG = 178, _chkB = 120   // 勾选框填充色
     int  _chkBoxR = 90, _chkBoxG = 95, _chkBoxB = 110  // 未勾选时边框色
+    int  _markR = 235, _markG = 240, _markB = 250  // 勾选标记颜色
 
     // === 行级颜色 ===
     Array[int] _rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
@@ -210,6 +211,7 @@ export struct Table impl Widget {
         _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
         _emptyR = th.txtDimR; _emptyG = th.txtDimG; _emptyB = th.txtDimB
         _chkBoxR = th.borderR; _chkBoxG = th.borderG; _chkBoxB = th.borderB
+        _markR = th.txtOnAccentR; _markG = th.txtOnAccentG; _markB = th.txtOnAccentB
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 360)
@@ -986,13 +988,13 @@ export struct Table impl Widget {
             r.fillRect(bx, by, boxSize, boxSize)
             // 勾号（checked）或横杠（partial 半选）
             if checked {
-                int mr = 235, mg = 240, mb = 250
+                int mr = _markR, mg = _markG, mb = _markB
                 if not enabled { mr = 120; mg = 125; mb = 135 }
                 r.setColor(mr, mg, mb, 255)
                 r.drawLine(bx + 3.0, by + 7.5, bx + 6.0, by + 10.5)
                 r.drawLine(bx + 6.0, by + 10.5, bx + 11.0, by + 4.5)
             } else if partial {
-                int mr = 235, mg = 240, mb = 250
+                int mr = _markR, mg = _markG, mb = _markB
                 if not enabled { mr = 120; mg = 125; mb = 135 }
                 r.setColor(mr, mg, mb, 255)
                 r.drawLine(bx + 3.0, by + 7.0, bx + 11.0, by + 7.0)

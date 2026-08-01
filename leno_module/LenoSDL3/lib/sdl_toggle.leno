@@ -20,6 +20,8 @@ export struct Toggle impl Widget {
     int _onR = 60, _onG = 170, _onB = 245
     int _offR = 70, _offG = 70, _offB = 82
     int tr = 235, tg = 235, tb = 245
+    int _knobR = 245, _knobG = 245, _knobB = 250       // 滑块填充色
+    int _knobBrdR = 200, _knobBrdG = 200, _knobBrdB = 210 // 滑块边框色（浅色主题下确保可见）
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
@@ -42,6 +44,8 @@ export struct Toggle impl Widget {
         _onR = th.accentR; _onG = th.accentG; _onB = th.accentB
         _offR = th.bgAltR; _offG = th.bgAltG; _offB = th.bgAltB
         tr = th.txtR; tg = th.txtG; tb = th.txtB
+        _knobR = th.txtOnAccentR; _knobG = th.txtOnAccentG; _knobB = th.txtOnAccentB
+        _knobBrdR = th.borderR; _knobBrdG = th.borderG; _knobBrdB = th.borderB
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
@@ -202,8 +206,11 @@ export struct Toggle impl Widget {
         float kxOff = x + 3.0
         float kxOn  = x + w - 3.0 - knob
         float kx = kxOff + _animPos * (kxOn - kxOff)
-        r.setColor(245, 245, 250, 255)
+        r.setColor(_knobR, _knobG, _knobB, 255)
         r.fillRoundedRect(kx, y + 3.0, knob, knob, knob / 2.0)
+        // 浅色主题下滑块可能与轨道重合，添加边框确保可见
+        r.setColor(_knobBrdR, _knobBrdG, _knobBrdB, 130)
+        r.drawRoundedRect(kx, y + 3.0, knob, knob, knob / 2.0)
 
         // 文字
         if _font != null and _font.ok and text != "" {

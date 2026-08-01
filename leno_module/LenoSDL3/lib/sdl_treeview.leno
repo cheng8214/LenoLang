@@ -90,6 +90,7 @@ export struct TreeView impl Widget {
     int _hovR = 70, _hovG = 78, _hovB = 92
     int tr = 235, tg = 235, tb = 245
     int _arrR = 180, _arrG = 185, _arrB = 200
+    int _markR = 235, _markG = 240, _markB = 250   // 勾选标记颜色
     int _sbR = 120, _sbG = 125, _sbB = 140
     int _lineR = 64, _lineG = 70, _lineB = 84   // 连接线颜色
     bool _showLines = true                              // 是否显示层级连接线
@@ -311,6 +312,8 @@ export struct TreeView impl Widget {
         tr = th.txtR; tg = th.txtG; tb = th.txtB
         _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
         _lineR = th.sepR; _lineG = th.sepG; _lineB = th.sepB
+        _arrR = th.txtR * 3 / 4; _arrG = th.txtG * 3 / 4; _arrB = th.txtB * 3 / 4
+        _markR = th.txtOnAccentR; _markG = th.txtOnAccentG; _markB = th.txtOnAccentB
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
         w         = opts.get("w", 200)
@@ -757,8 +760,8 @@ export struct TreeView impl Widget {
                     if not enabled { cr = cr / 2; cg = cg / 2; cb = cb / 2 }
                     r.setColor(cr, cg, cb, 255)
                     r.fillRoundedRect(bx, by, 14.0, 14.0, 3.0)
-                    int mr = 235, mg = 240, mb = 250
-                    if not enabled { mr = 120; mg = 125; mb = 135 }
+                    int mr = _markR, mg = _markG, mb = _markB
+                    if not enabled { mr = mr / 2; mg = mg / 2; mb = mb / 2 }
                     r.setColor(mr, mg, mb, 255)
                     r.drawLine(r.snapX(bx + 3.0), r.snapY(by + 7.5), r.snapX(bx + 6.0), r.snapY(by + 10.5))
                     r.drawLine(r.snapX(bx + 6.0), r.snapY(by + 10.5), r.snapX(bx + 11.0), r.snapY(by + 4.5))

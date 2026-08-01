@@ -31,6 +31,7 @@ export struct ScrollView impl Widget {
     // 外观
     int br = 38, bg = 40, bb = 48
     int _bdrR = 80, _bdrG = 85, _bdrB = 100
+    int _sbR = 120, _sbG = 125, _sbB = 140           // 滚动条颜色
     float _radius = 8.0
     int _brdA = 200
     bool _drawBorder = true
@@ -49,6 +50,7 @@ export struct ScrollView impl Widget {
         Theme th = theme.getTheme()
         br = th.bgR; bg = th.bgG; bb = th.bgB
         _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
+        _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 300)
@@ -246,18 +248,18 @@ export struct ScrollView impl Widget {
             float gw = _barW
             float tx = x + w - gw
             float gh = if _showH() then _barW else 0.0
-            r.setColor(60, 64, 76, 255)
+            r.setColor(_sbR, _sbG, _sbB, 255)
             r.fillRoundedRect(tx, y, gw, h - gh, gw / 2.0)
-            r.setColor(140, 145, 162, 255)
+            r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 255)
             r.fillRoundedRect(tx + 2.0, _vThumbY, gw - 4.0, _vThumbH, (gw - 4.0) / 2.0)
         }
         if _showH() {
             float gh = _barW
             float ty = y + h - gh
             float gw = if _showV() then _barW else 0.0
-            r.setColor(60, 64, 76, 255)
+            r.setColor(_sbR, _sbG, _sbB, 255)
             r.fillRoundedRect(x, ty, w - gw, gh, gh / 2.0)
-            r.setColor(140, 145, 162, 255)
+            r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 255)
             r.fillRoundedRect(_hThumbX, ty + 2.0, _hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
         }
     }

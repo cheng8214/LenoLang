@@ -22,6 +22,7 @@ export struct CheckBox impl Widget {
     int cc = 60, ck = 170, cbl = 245 // 选中框背景
     int tr = 235, tg = 235, tb = 245 // 文字色
     int _brdR = 130, _brdG = 130, _brdB = 150 // 框边框色
+    int _markR = 255, _markG = 255, _markB = 255 // 勾选标记颜色
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
@@ -43,6 +44,7 @@ export struct CheckBox impl Widget {
         cc = th.accentR; ck = th.accentG; cbl = th.accentB
         tr = th.txtR; tg = th.txtG; tb = th.txtB
         _brdR = th.borderR; _brdG = th.borderG; _brdB = th.borderB
+        _markR = th.txtOnAccentR; _markG = th.txtOnAccentG; _markB = th.txtOnAccentB
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
@@ -159,7 +161,7 @@ export struct CheckBox impl Widget {
 
         // 勾
         if _checked {
-            r.setColor(255, 255, 255, 255)
+            r.setColor(_markR, _markG, _markB, 255)
             float p = bs * 0.26
             r.drawLine(bx + p,                by + bs * 0.52, bx + bs * 0.42, by + bs * 0.72)
             r.drawLine(bx + bs * 0.42,        by + bs * 0.72, bx + bs - p,     by + bs * 0.30)

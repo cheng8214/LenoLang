@@ -23,6 +23,7 @@ export struct Edit impl Widget {
     int cr = 35, cg = 35, cb = 50                // 背景色（默认深色主题）
     int tr = 220, tg = 220, tb = 240             // 文字色（默认浅色）
     int _focusR = 100, _focusG = 180, _focusB = 255 // 聚焦边框色
+    int _sbR = 120, _sbG = 125, _sbB = 140           // 滚动条颜色
 
     // 单行模式
     int _cursorPos = 0               // 光标字符位置（单行）
@@ -233,6 +234,7 @@ export struct Edit impl Widget {
         cr = th.bgInputR; cg = th.bgInputG; cb = th.bgInputB
         tr = th.txtInputR; tg = th.txtInputG; tb = th.txtInputB
         _focusR = th.accentFocusR; _focusG = th.accentFocusG; _focusB = th.accentFocusB
+        _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
         text        = opts.get("text", "")
         x           = opts.get("x", 0)
         y           = opts.get("y", 0)
@@ -1551,7 +1553,7 @@ export struct Edit impl Widget {
             float cx = r.snapX(x + pad + _text_width_to(_cursorPos) - _scrollX)
             if cx < x + pad { cx = x + pad }
             if cx > x + w - pad { cx = x + w - pad }
-            r.setColor(220, 220, 240, 200)
+            r.setColor(tr, tg, tb, 200)
             r.drawLine(cx, r.snapY(ty), cx, r.snapY(ty + textH))
         }
 
@@ -1661,7 +1663,7 @@ export struct Edit impl Widget {
                         cx = cx + _line_width_to(_cursorLine, _cursorCol) - _scrollX
                     }
                     cx = r.snapX(cx)
-                    r.setColor(220, 220, 240, 200)
+                    r.setColor(tr, tg, tb, 200)
                     r.drawLine(cx, cy, cx, cy + ch)
                 }
             } else {
@@ -1670,7 +1672,7 @@ export struct Edit impl Widget {
                 var ms = _font.measureString("Ag")
                 float ch = ms.h
                 float cx = r.snapX(x + pad)
-                r.setColor(220, 220, 240, 200)
+                r.setColor(tr, tg, tb, 200)
                 r.drawLine(cx, cy, cx, cy + ch)
             }
         }
@@ -1682,7 +1684,7 @@ export struct Edit impl Widget {
             float sbX = x + w - sbW - 4.0
             float contentH = _content_height()
 
-            r.setColor(50, 50, 60, 180)
+            r.setColor(_sbR, _sbG, _sbB, 180)
             r.fillRoundedRect(sbX, y + pad, sbW, visH, sbW / 2.0)
 
             float thumbH = visH * visH / contentH
@@ -1693,9 +1695,9 @@ export struct Edit impl Widget {
             if thumbY + thumbH > y + pad + visH { thumbY = y + pad + visH - thumbH }
 
             if _hoverVScroll or _draggingVScroll {
-                r.setColor(160, 160, 180, 240)
+                r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 240)
             } else {
-                r.setColor(120, 120, 140, 220)
+                r.setColor(_sbR, _sbG, _sbB, 220)
             }
             r.fillRoundedRect(sbX, thumbY, sbW, thumbH, sbW / 2.0)
         }
@@ -1705,7 +1707,7 @@ export struct Edit impl Widget {
             float sbY = y + h - sbH - 4.0
             float maxLineW = _max_line_width() + 8.0
 
-            r.setColor(50, 50, 60, 180)
+            r.setColor(_sbR, _sbG, _sbB, 180)
             r.fillRoundedRect(x + pad, sbY, visW, sbH, sbH / 2.0)
 
             float thumbW = visW * visW / maxLineW
@@ -1717,9 +1719,9 @@ export struct Edit impl Widget {
             if thumbX + thumbW > x + pad + visW { thumbX = x + pad + visW - thumbW }
 
             if _hoverHScroll or _draggingHScroll {
-                r.setColor(160, 160, 180, 240)
+                r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 240)
             } else {
-                r.setColor(120, 120, 140, 220)
+                r.setColor(_sbR, _sbG, _sbB, 220)
             }
             r.fillRoundedRect(thumbX, sbY, thumbW, sbH, sbH / 2.0)
         }
@@ -1728,7 +1730,7 @@ export struct Edit impl Widget {
         if sbW > 0.0 and sbH > 0.0 {
             float cornerX = x + w - sbW - 4.0
             float cornerY = y + h - sbH - 4.0
-            r.setColor(40, 40, 50, 200)
+            r.setColor(_sbR, _sbG, _sbB, 200)
             r.fillRoundedRect(cornerX, cornerY, sbW, sbH, sbW / 2.0)
         }
     }

@@ -127,7 +127,7 @@ export struct SpinBox impl Widget {
         var bgc = opts.get("bg_rgb")
         if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
         _edit.set_bg(br, bg, bb)
-        _edit.set_text_rgb(235, 235, 245)
+        _edit.set_text_rgb(th.txtInputR, th.txtInputG, th.txtInputB)
 
         // 默认边框色见字段声明（_bdrR/_bdrG/_bdrB）
         var bdc = opts.get("border_rgb")
