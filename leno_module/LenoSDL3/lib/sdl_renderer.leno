@@ -192,12 +192,15 @@ export struct Renderer {
 
     // 设置绘制颜色（整数 RGBA，0~255）
     func setColor(int r, int g, int b, int a): bool {
-        if not _bxIsFloat and r == _bxR and g == _bxG and b == _bxB and a == _bxA {
+        int rr = r; int gg = g; int bb = b; int aa = a
+        if rr > 255 { rr = 255 }; if gg > 255 { gg = 255 }; if bb > 255 { bb = 255 }; if aa > 255 { aa = 255 }
+        if rr < 0 { rr = 0 }; if gg < 0 { gg = 0 }; if bb < 0 { bb = 0 }; if aa < 0 { aa = 0 }
+        if not _bxIsFloat and rr == _bxR and gg == _bxG and bb == _bxB and aa == _bxA {
             return true
         }
         _flushBatches()
-        _bxIsFloat = false; _bxR = r; _bxG = g; _bxB = b; _bxA = a
-        return _lib.SDL_SetRenderDrawColor(handle, r, g, b, a)
+        _bxIsFloat = false; _bxR = rr; _bxG = gg; _bxB = bb; _bxA = aa
+        return _lib.SDL_SetRenderDrawColor(handle, rr, gg, bb, aa)
     }
 
     // 设置绘制颜色（浮点 RGBA，0.0~1.0）

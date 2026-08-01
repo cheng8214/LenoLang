@@ -5,6 +5,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct Label impl Widget {
     string text = ""
@@ -36,6 +37,8 @@ export struct Label impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        tr = th.txtR; tg = th.txtG; tb = th.txtB
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)

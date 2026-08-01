@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.Scancode
 use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.Theme
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_timer.leno" as tmr; use tmr.Timer
 
@@ -227,6 +228,11 @@ export struct Edit impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        // 主题默认配色（opts 覆盖优先级更高）
+        Theme th = theme.getTheme()
+        cr = th.bgInputR; cg = th.bgInputG; cb = th.bgInputB
+        tr = th.txtInputR; tg = th.txtInputG; tb = th.txtInputB
+        _focusR = th.accentFocusR; _focusG = th.accentFocusG; _focusB = th.accentFocusB
         text        = opts.get("text", "")
         x           = opts.get("x", 0)
         y           = opts.get("y", 0)

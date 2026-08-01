@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.(SystemCursor, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_image.leno" as img
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct Button impl Widget {
     string text = "Button"
@@ -56,12 +57,13 @@ export struct Button impl Widget {
 
     // ==================== 预设类型 ====================
     func _apply_type(string t) {
+        Theme th = theme.getTheme()
         switch t {
-            case "primary"  { cr = 60;  cg = 140; cb = 220 }
-            case "danger"   { cr = 220; cg = 60;  cb = 60  }
-            case "success"  { cr = 60;  cg = 200; cb = 80  }
-            case "warning"  { cr = 240; cg = 160; cb = 30  }
-            case "dark"     { cr = 60;  cg = 60;  cb = 70  }
+            case "primary"  { cr = th.btnPrimaryR;  cg = th.btnPrimaryG;  cb = th.btnPrimaryB }
+            case "danger"   { cr = th.btnDangerR;   cg = th.btnDangerG;   cb = th.btnDangerB }
+            case "success"  { cr = th.btnSuccessR;  cg = th.btnSuccessG;  cb = th.btnSuccessB }
+            case "warning"  { cr = th.btnWarningR;  cg = th.btnWarningG;  cb = th.btnWarningB }
+            case "dark"     { cr = th.btnDarkR;     cg = th.btnDarkG;     cb = th.btnDarkB }
             default {}
         }
     }
@@ -100,6 +102,10 @@ export struct Button impl Widget {
 
     // ==================== set 初始化 ====================
     func set(Dict opts) {
+        // 主题默认配色（opts 覆盖优先级更高）
+        Theme th = theme.getTheme()
+        cr = th.btnPrimaryR; cg = th.btnPrimaryG; cb = th.btnPrimaryB
+        tr = th.txtOnAccentR; tg = th.txtOnAccentG; tb = th.txtOnAccentB
         text = opts.get("text", "Button")
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)

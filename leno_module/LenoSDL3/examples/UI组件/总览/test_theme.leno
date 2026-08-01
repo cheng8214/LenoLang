@@ -1,0 +1,124 @@
+// test_theme.leno — 主题系统测试
+// 验证深色/浅色主题切换后，所有组件正确使用主题配色（背景、文字、按钮预设等）。
+// 点击「切换主题」按钮关闭当前窗口，以另一主题重新创建，对比效果。
+//
+// 用法：leno run test_theme.leno
+
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Scancode)
+
+var _light   = false      // 当前是否浅色主题
+var _running = true       // 外层循环控制
+var _switch  = false       // 切换主题请求标记
+
+// ───────────────────────── 构建窗口 + 全部控件 ─────────────────────────
+func buildWindow() {
+    // 1. 先设主题（在创建控件之前）
+    if _light { SDL3.setTheme(SDL3.lightTheme()) }
+    else      { SDL3.setTheme(SDL3.darkTheme()) }
+
+    // 2. 创建窗口（注意：不传 bg_rgb，让窗口内部用主题背景色清屏）
+    var win = SDL3.createWindow({
+        title: "主题测试 " + (if _light then "(Light)" else "(Dark)"),
+        w: 880, h: 580
+    })
+    if not win.ok { _running = false; return }
+
+    // ─── 标题标签 ───
+    win.addLabel({
+        x: 24, y: 18, text: "LenoSDL3 主题系统测试",
+        font_size: 20
+    })
+    win.addLabel({
+        x: 24, y: 48, text: "当前主题: " + (if _light then "Light（浅色）" else "Dark（深色）"),
+        font_size: 13
+    })
+
+    // ─── 按钮（5 种预设 + 禁用） ───
+    win.addLabel({x: 24, y: 82, text: "Buttons", font_size: 14})
+    win.addButton({x: 24,  y: 108, w: 110, h: 34, text: "Primary", type: "primary", tip: "主要操作"})
+    win.addButton({x: 140, y: 108, w: 110, h: 34, text: "Danger",  type: "danger",  tip: "危险操作"})
+    win.addButton({x: 256, y: 108, w: 110, h: 34, text: "Success", type: "success"})
+    win.addButton({x: 372, y: 108, w: 110, h: 34, text: "Warning", type: "warning"})
+    win.addButton({x: 488, y: 108, w: 110, h: 34, text: "Dark",    type: "dark"})
+    win.addButton({x: 604, y: 108, w: 110, h: 34, text: "禁用",    enabled: false})
+
+    // ─── 文本输入 ───
+    win.addLabel({x: 24, y: 158, text: "Edit", font_size: 14})
+    win.addEdit({x: 24, y: 184, w: 260, h: 30, placeholder: "单行输入"})
+    win.addEdit({x: 300, y: 184, w: 200, h: 30, password: true, placeholder: "密码"})
+    win.addEdit({x: 24, y: 224, w: 476, h: 60, multiline: true, text: "多行编辑框\n验证主题背景色和文字色"})
+
+    // ─── 选择类 ───
+    win.addLabel({x: 540, y: 158, text: "Selection", font_size: 14})
+    var cb1 = win.addCheckBox({x: 540, y: 184, text: "复选框 A", checked: true, tip: "复选演示"})
+    var cb2 = win.addCheckBox({x: 540, y: 214, text: "复选框 B"})
+
+    var r1 = win.addRadioButton({x: 540, y: 248, text: "单选 1", group: "theme", checked: true})
+    var r2 = win.addRadioButton({x: 540, y: 276, text: "单选 2", group: "theme"})
+
+    var t1 = win.addToggle({x: 540, y: 310, text: "开关 1", on: true,  anim: true})
+    var t2 = win.addToggle({x: 540, y: 340, text: "开关 2", on: false, anim: true})
+
+    // ─── 滑块与进度条 ───
+    win.addLabel({x: 24, y: 300, text: "Slider & Progress", font_size: 14})
+    var sl = win.addSlider({x: 24, y: 326, w: 260, h: 24, min: 0, max: 100, value: 40, tip: "拖动滑块"})
+    sl.on_change(func(float v):void { /* 可扩展 */ })
+
+    var pg = win.addProgressBar({x: 24, y: 366, w: 260, h: 22, value: 60})
+    win.addLabel({x: 300, y: 366, text: "进度 60%", font_size: 13})
+
+    // ─── 列表框 ───
+    win.addLabel({x: 300, y: 300, text: "ListBox", font_size: 14})
+    win.addListBox({
+        x: 300, y: 326, w: 200, h: 120,
+        items: ["苹果", "香蕉", "橘子", "西瓜", "葡萄", "芒果"],
+        selected: 0
+    })
+
+    // ─── SpinBox ───
+    win.addLabel({x: 540, y: 382, text: "SpinBox", font_size: 14})
+    win.addSpinBox({x: 540, y: 408, w: 120, h: 30, min: 0, max: 100, value: 50, step: 1, int_mode: true})
+
+    // ─── 切换主题按钮 ───
+    var btnSwitch = win.addButton({
+        x: 300, y: 500, w: 280, h: 40,
+        text: "切换主题 → " + (if _light then "Dark" else "Light"),
+        type: "primary",
+        tip: "关闭当前窗口，以另一主题重新创建"
+    })
+    btnSwitch.on_click(func():void { _switch = true })
+
+    // ─── 退出按钮 ───
+    var btnExit = win.addButton({
+        x: 600, y: 500, w: 120, h: 40,
+        text: "退出", type: "danger"
+    })
+    btnExit.on_click(func():void { _running = false; _switch = true })
+
+    // ─── 主循环 ───
+    // 注意：onRender 留空，让窗口内部用主题背景色清屏（不再硬编码黑色）
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { _running = false; return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { _running = false; return false }
+            if _switch { _switch = false; return false }  // 触发窗口关闭 → 切换主题
+            return true
+        },
+        func(Renderer r) {}
+    )
+}
+
+// ───────────────────────── 入口 ─────────────────────────
+main() {
+    SDL3.ttfInit()
+    SDL3.setTipDelay(300)
+
+    // 循环：关闭一个窗口后以另一主题重建
+    while _running {
+        buildWindow()
+        _light = not _light   // 切换主题
+    }
+
+    SDL3.ttfQuit()
+}

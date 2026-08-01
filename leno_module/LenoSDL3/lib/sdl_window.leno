@@ -64,6 +64,8 @@ import "sdl_widget.leno" as wgt
 use wgt.Widget
 import "sdl_chart.leno" as cht
 use cht.(BarChart, LineChart, PieChart)
+import "sdl_theme.leno" as theme
+use theme.Theme
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
@@ -663,9 +665,11 @@ export struct Window {
                     // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
                     // SDL_RenderClear 在 Win/D3D 后端可能不走 back buffer 缓冲，导致短暂黑闪
                     // 透明窗口跳过背景填充，保留 alpha=0 区域透明
+                    // 使用主题背景色而非硬编码黑色，消除首帧黑闪
                     var ren = _runRens[i]
                     if not _runTransparent[i] {
-                        ren.setColor(0, 0, 0, 255)
+                        Theme th = theme.getTheme()
+                        ren.setColor(th.bgR, th.bgG, th.bgB, 255)
                         ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
                     }
                     _runRends[i](_runRens[i])

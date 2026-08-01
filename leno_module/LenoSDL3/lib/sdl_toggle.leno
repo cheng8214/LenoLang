@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct Toggle impl Widget {
     string text = ""
@@ -37,6 +38,10 @@ export struct Toggle impl Widget {
     }
 
     func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _onR = th.accentR; _onG = th.accentG; _onB = th.accentB
+        _offR = th.bgAltR; _offG = th.bgAltG; _offB = th.bgAltB
+        tr = th.txtR; tg = th.txtG; tb = th.txtB
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
