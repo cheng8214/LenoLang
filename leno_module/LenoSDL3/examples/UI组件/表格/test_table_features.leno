@@ -1,0 +1,117 @@
+// test_table_features.leno — Table 新功能测试（复选框列 / 空状态 / 行级颜色）
+// 运行：leno 本文件（Esc 退出）
+// 校验点：
+//   1) check_col: 第 0 列为复选框列，表头全选/半选，行勾选独立切换
+//   2) 行级颜色：错误行红色(0xFF6060)、成功行绿色(0x60E0A0)、警告行橙色(0xFFB040)
+//   3) 空状态：点击"清空"后表格居中显示"暂无数据"
+//   4) 勾选回调：底部状态栏实时显示已勾选行数
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Table
+
+main() {
+    var win = SDL3.createWindow({title: "Table 新功能测试", w: 640, h: 480})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    Array[string] headers = ["", "任务", "状态", "耗时"]
+    Array[int] aligns = [1, 0, 1, 2]
+    Array[int] hAligns = [1, 1, 1, 1]
+    Array[Array[string]] rows = [
+        ["", "编译模块A", "成功", "1.2s"],
+        ["", "编译模块B", "错误", "3.4s"],
+        ["", "运行测试", "成功", "0.8s"],
+        ["", "打包发布", "警告", "5.6s"],
+        ["", "编译模块C", "错误", "2.1s"],
+        ["", "部署上线", "成功", "0.3s"]
+    ]
+
+    var tbl = win.addTable({
+        x: 30, y: 64, w: 580, h: 280,
+        headers: headers, aligns: aligns, header_aligns: hAligns, rows: rows,
+        col_widths: [40, 220, 140, 100],
+        check_col: 0,               // 第 0 列为复选框列
+        sortable: true, resizable: true, zebra: true, row_h: 28, header_h: 28,
+        empty_text: "暂无数据 — 点击\"添加行\"恢复"
+    })
+
+    // 设置行级颜色：错误行红色、成功行绿色、警告行橙色
+    // 颜色为 0xRRGGBB 整数
+    int RED   = 0xFF6060
+    int GREEN = 0x60E0A0
+    int ORANGE= 0xFFB040
+    for rows.len() to i {
+        string status = rows[i][2]
+        if status == "错误" { tbl.set_row_color(i, RED) }
+        else if status == "成功" { tbl.set_row_color(i, GREEN) }
+        else if status == "警告" { tbl.set_row_color(i, ORANGE) }
+    }
+
+    // 勾选回调：底部状态栏实时显示
+    tbl.on_check(func(int col, Array[int] checked) {
+        print("勾选变化: " + checked.len() + " 行 — " + checked)
+    })
+
+    // ---- 第一排按钮 ----
+    win.addButton({x: 30, y: 356, w: 120, h: 32, text: "全选"}).on_click(func() {
+        tbl.check_all()
+        print("全选")
+    })
+    win.addButton({x: 160, y: 356, w: 120, h: 32, text: "全不选"}).on_click(func() {
+        tbl.uncheck_all()
+        print("全不选")
+    })
+    win.addButton({x: 290, y: 356, w: 120, h: 32, text: "清空"}).on_click(func() {
+        tbl.clear()
+        print("已清空 — 观察空状态提示")
+    })
+    win.addButton({x: 420, y: 356, w: 120, h: 32, text: "添加行"}).on_click(func() {
+        int n = tbl.row_count()
+        Array[string] types = ["成功", "错误", "警告"]
+        int idx = n % 3
+        string st = types[idx]
+        tbl.add_row(["", "新任务" + n, st, "0.5s"], "")
+        int ri = tbl.row_count() - 1
+        if st == "错误" { tbl.set_row_color(ri, RED) }
+        else if st == "成功" { tbl.set_row_color(ri, GREEN) }
+        else { tbl.set_row_color(ri, ORANGE) }
+    })
+
+    // ---- 第二排按钮 ----
+    win.addButton({x: 30, y: 396, w: 180, h: 32, text: "清除行颜色"}).on_click(func() {
+        tbl.clear_row_colors()
+        print("已清除所有行颜色")
+    })
+    win.addButton({x: 225, y: 396, w: 160, h: 32, text: "第一行变蓝色"}).on_click(func() {
+        if tbl.row_count() > 0 {
+            tbl.set_row_color(0, 0x60A0FF)
+            print("第一行文字已变蓝色")
+        }
+    })
+    win.addButton({x: 400, y: 396, w: 140, h: 32, text: "查看勾选"}).on_click(func() {
+        var checked = tbl.get_checked_rows()
+        print("当前勾选 " + checked.len() + " 行: " + checked)
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "Table 新功能测试 (Esc 退出) — 复选框列 / 行级颜色 / 空状态提示", 20, 2, 200, 210, 230)
+            r.drawText(font, "点表头复选框全选 | 点行复选框切换 | 红=错误 绿=成功 橙=警告", 20, 24, 150, 160, 180)
+            var checked = tbl.get_checked_rows()
+            r.drawText(font, "已勾选: " + checked.len() + " 行 | 总行数: " + tbl.row_count(), 20, 44, 180, 200, 120)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
