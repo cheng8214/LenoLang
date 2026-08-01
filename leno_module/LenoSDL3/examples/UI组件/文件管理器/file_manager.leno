@@ -40,6 +40,7 @@ Array[string] _nodeTypes = []       // 树节点 id-1 → 类型（pc/qa/drive/f
 int    _regCounter = 1              // regDicts 用的 id 分配计数器（与 TreeView 内部 DFS 一致）
 bool   _treeExpanded = true         // 导航树当前是否处于展开态
 bool   _wantQuit = false
+string _imgDir = ""                // 图标资源目录（images/）
 
 // 控件引用（main 中赋值）
 Window _win
@@ -59,6 +60,15 @@ Button _btnToggle                   // 左侧“展开/折叠”按钮
 
 // ===================== 工具函数 =====================
 
+// 根据文件扩展名/是否目录，返回对应图标路径
+//   文件夹 → folder_1.png   .exe → exe_1.png   .dll → dll_1.png   其他 → file_1.png
+func iconForRow(string ext, bool isDir): string {
+    if isDir { return _imgDir + "/folder_1.png" }
+    if ext == ".exe" { return _imgDir + "/exe_1.png" }
+    if ext == ".dll" { return _imgDir + "/dll_1.png" }
+    return _imgDir + "/file_1.png"
+}
+
 // 列出某目录下的子文件夹，返回 TreeView 节点字典数组
 func subFolders(string path): Array[Dict] {
     Array[Dict] out = []
@@ -68,7 +78,7 @@ func subFolders(string path): Array[Dict] {
             string nm = names[i]
             string fp = dirs.join(path, nm)
             if dirs.is_dir(fp) {
-                out.add({text: nm, data: {path: fp}, has_children: true, path: fp})
+                out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: _imgDir + "/folder_1.png"})
             }
         }
     }
@@ -138,12 +148,13 @@ func findNodeByType(string tp): int {
 
 // 构建导航树根：此电脑（磁盘入口）+ 快速访问（当前位置）
 func buildNavRoots(): Array[Dict] {
+    string folderIcon = _imgDir + "/folder_1.png"
     Array[Dict] roots = []
-    roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true})
+    roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true, image:folderIcon})
     string root = dirs.dirname(dirs.script_dir())
     Array[Dict] qaKids = []
-    qaKids.add({text:"当前位置", data:{type:"folder", path:root}, has_children:true, expanded:true, children: subFolders(root)})
-    roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, expanded:true, children: qaKids})
+    qaKids.add({text:"当前位置", data:{type:"folder", path:root}, has_children:true, expanded:true, image:folderIcon, children: subFolders(root)})
+    roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, expanded:true, image:folderIcon, children: qaKids})
     return roots
 }
 
@@ -155,7 +166,7 @@ func loadPcDrives() {
     if dv != null {
         for dv.len() to i {
             string d = dv[i] as string
-            Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true}
+            Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/folder_1.png"}
             int nid = _tree.add_child(pcId, node)
             ensureNodeArr(nid)
             _nodePaths[nid - 1] = d
@@ -175,7 +186,7 @@ func _onTreeToggle(int id, bool expanded) {
         if dv != null {
             for dv.len() to i {
                 string d = dv[i] as string
-                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true}
+                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/folder_1.png"}
                 int nid = _tree.add_child(id, node)
                 ensureNodeArr(nid)
                 _nodePaths[nid - 1] = d
@@ -244,6 +255,12 @@ func openDir(string path) {
     for fileRows.len() to i { _rows.add(fileRows[i]) }
 
     _table.set_rows(_rows)
+    // 为每行设置对应类型图标（set_rows 不携带图片，需逐行 set_row_image）
+    for _rows.len() to i {
+        bool isDir = (_rows[i][4] == "1")
+        string ext = dirs.extname(_rows[i][0])
+        _table.set_row_image(i, iconForRow(ext, isDir))
+    }
     _statusLbl.set_text(_rows.len() + " 个对象")
     _selPath = ""; _selIsDir = false; showInfo()
 }
@@ -371,7 +388,7 @@ main() {
     })
 
     // 目录树
-    _tree = SDL3.createTreeView({x:24, y:180, w:276, h:448, font_size:14})
+    _tree = SDL3.createTreeView({x:24, y:180, w:276, h:448, font_size:14, image_size:16, image_gap:4})
     _navPanel.add(_tree)
     _tree.on_change(_onTreeChange)
     _tree.on_toggle(_onTreeToggle)
@@ -381,7 +398,8 @@ main() {
         x:324, y:74, w:664, h:440,
         headers:["名称","大小","类型"],
         col_widths:[380,140,140],
-        sortable:true, zebra:true, row_h:24, header_h:28, font_size:14
+        sortable:true, zebra:true, row_h:24, header_h:28, font_size:14,
+        image_col:0, image_size:18, image_pad:4, image_gap:4
     })
     _win.add(_table)
     _table.on_select(func(int row) {
@@ -486,7 +504,8 @@ main() {
     _statusLbl = SDL3.createLabel({x:12, y:648, text:"就绪", font_size:13, text_rgb:[170,200,170]})
     _win.add(_statusLbl)
 
-    // ---------- 初始化：导航树（此电脑 + 快速访问） ----------
+    // ---------- 初始化：图标目录 + 导航树（此电脑 + 快速访问） ----------
+    _imgDir = dirs.join(dirs.script_dir(), "images")
     _regCounter = 1
     _nodePaths = []
     _nodeTypes = []

@@ -352,6 +352,10 @@ export struct Table impl Widget {
                 if desc { lt = (b < a) }
                 if lt {
                     var tmp = _rows[i]; _rows[i] = _rows[j]; _rows[j] = tmp
+                    // 同步交换行图标，保持图标与行数据对齐
+                    if i < _rowImages.len() and j < _rowImages.len() {
+                        string ti = _rowImages[i]; _rowImages[i] = _rowImages[j]; _rowImages[j] = ti
+                    }
                 }
             }
         }
