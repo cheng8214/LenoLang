@@ -220,6 +220,9 @@ void event_loop_stop(EventLoop* loop) {
 // 外部声明：执行一个协程直到它挂起或完成
 extern int vm_run_coroutine(ObjCoroutine* co);
 
+// 外部声明：sockets 模块提供的 async I/O poll 接口
+extern int sockets_poll_async_io(uint64_t timeout_ms);
+
 // 运行事件循环直到所有协程完成
 void event_loop_run(EventLoop* loop) {
     loop->running = 1;
@@ -263,17 +266,21 @@ void event_loop_run(EventLoop* loop) {
             // 没有就绪协程且没有定时器，退出
             break;
         }
-        
-        // 4. 如果没有就绪协程但有定时器，休眠到最近的定时器
-        if (loop->ready_count == 0 && loop->timer_count > 0) {
-            uint64_t next_time = event_loop_next_timer_time(loop);
+
+        // 4. 如果没有就绪协程但有定时器或有待处理的 async I/O，等待
+        if (loop->ready_count == 0) {
+            uint64_t timeout = event_loop_next_timer_time(loop);
             uint64_t now = current_time_ms();
-            if (next_time > now) {
-                uint64_t sleep_time = next_time - now;
-                if (sleep_time > 0) {
-                    sleep_ms(sleep_time);
-                }
+            if (timeout != UINT64_MAX && timeout > now) {
+                timeout = timeout - now;
+            } else if (timeout == UINT64_MAX) {
+                timeout = 100; // 无定时器时默认 100ms 超时
+            } else {
+                timeout = 0;
             }
+
+            // 用 sockets_poll_async_io 同时等待 I/O 和定时器
+            sockets_poll_async_io(timeout);
         }
     }
     

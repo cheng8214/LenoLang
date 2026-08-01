@@ -1,0 +1,233 @@
+import sockets
+import asyncs
+import io
+
+var g_total_clients = 0
+var g_total_msgs = 0
+
+async func handle_client(any client_obj, int id, int port) {
+    if client_obj is Socket {
+        var client = client_obj
+        g_total_clients = g_total_clients + 1
+        io.print($"[port{port}] [handler#{id}] 客户端 #{id} 已连接")
+
+        var msg_count = 0
+        while true {
+            var data = await client.arecv(1024)
+            if data == null or data == "" {
+                io.print($"[port{port}] [handler#{id}] 客户端断开 (共 {msg_count} 条)")
+                client.close()
+                return
+            }
+            msg_count = msg_count + 1
+            g_total_msgs = g_total_msgs + 1
+            io.print($"[port{port}] [handler#{id}] 收到: {data}")
+
+            var reply = $"[Handler#{id}] Echo: {data}"
+            client.send(reply)
+
+            if data == "DISCONNECT" {
+                io.print($"[port{port}] [handler#{id}] 收到 DISCONNECT，关闭连接")
+                client.close()
+                return
+            }
+        }
+    } else {
+        io.print($"[port{port}] [handler#{id}] 错误: 不是 Socket 类型")
+    }
+}
+
+async func echo_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print($"[port{port}] [服务器] 启动失败")
+        return
+    }
+    io.print($"[port{port}] [服务器] 监听 127.0.0.1:{port}")
+
+    var client_id = 0
+    while true {
+        var client = await server.aaccept()
+        if client == null {
+            io.print($"[port{port}] [服务器] accept 结束")
+            break
+        }
+        client_id = client_id + 1
+        handle_client(client, client_id, port)
+    }
+    server.close()
+}
+
+async func big_data_client(int port, int id) {
+    await asyncs.sleep(50)
+    var conn = sockets.connect("127.0.0.1", port)
+    if conn is Socket {
+        io.print($"[port{port}] [BD#{id}] 已连接")
+
+        var big = ""
+        var i = 0
+        while i < 300 {
+            big = big + $"[{id}-{i}]"
+            i = i + 1
+        }
+        io.print($"[port{port}] [BD#{id}] 发送 {big.len()} 字节数据...")
+        conn.send(big)
+
+        var total_received = ""
+        while true {
+            var chunk = await conn.arecv(1024)
+            if chunk == null or chunk == "" { break }
+            total_received = total_received + chunk
+            if total_received.len() >= big.len() { break }
+        }
+
+        io.print($"[port{port}] [BD#{id}] 收到 {total_received.len()} 字节回复")
+        if total_received.len() >= big.len() {
+            io.print($"[port{port}] [BD#{id}] ✓ 大数据分片测试通过!")
+        } else {
+            io.print($"[port{port}] [BD#{id}] ✗ 数据不完整")
+        }
+
+        conn.send("DISCONNECT")
+        await asyncs.sleep(100)
+        conn.close()
+    }
+}
+
+async func echo_client(int port, int id, string msg) {
+    await asyncs.sleep(50)
+    var conn = sockets.connect("127.0.0.1", port)
+    if conn is Socket {
+        io.print($"[port{port}] [Client#{id}] 已连接")
+        conn.send(msg)
+
+        var reply = await asyncs.timeout(conn.arecv(1024), 2000)
+        if reply == null {
+            io.print($"[port{port}] [Client#{id}] ✗ 超时未回复")
+        } else {
+            io.print($"[port{port}] [Client#{id}] 收到: {reply}")
+        }
+
+        conn.send("DISCONNECT")
+        await asyncs.sleep(50)
+        conn.close()
+        io.print($"[port{port}] [Client#{id}] 已断开")
+    }
+}
+
+async func rapid_fire_client(int port, int id) {
+    await asyncs.sleep(50)
+    var conn = sockets.connect("127.0.0.1", port)
+    if conn is Socket {
+        var count = 5
+        var n = 0
+        while n < count {
+            var msg = $"[RF#{id}] msg#{n}"
+            conn.send(msg)
+            var reply = await asyncs.timeout(conn.arecv(1024), 1000)
+            if reply != null {
+                io.print($"[port{port}] [RF#{id}] 回复: {reply}")
+            } else {
+                io.print($"[port{port}] [RF#{id}] msg#{n} 超时")
+            }
+            n = n + 1
+        }
+        io.print($"[port{port}] [RF#{id}] 快速发送 {count} 条消息完成")
+        conn.send("DISCONNECT")
+        await asyncs.sleep(50)
+        conn.close()
+    }
+}
+
+async func test_concurrent_echo() {
+    var port = 23457
+    io.print("\n=== 用例1: 并发 Echo (5客户端) ===")
+    echo_server(port)
+    echo_client(port, 1, "Hello-1")
+    echo_client(port, 2, "Hello-2")
+    echo_client(port, 3, "Hello-3")
+    echo_client(port, 4, "Hello-4")
+    echo_client(port, 5, "Hello-5")
+    await asyncs.sleep(3000)
+    io.print($"=== 用例1完成 ===")
+}
+
+async func test_big_data() {
+    var port = 23458
+    io.print("\n=== 用例2: 大数据分片 ===")
+    echo_server(port)
+    big_data_client(port, 1)
+    big_data_client(port, 2)
+    await asyncs.sleep(3000)
+    io.print($"=== 用例2完成 ===")
+}
+
+async func test_server_continues_after_disconnect() {
+    var port = 23459
+    io.print("\n=== 用例3: 断开后服务器继续 ===")
+    echo_server(port)
+    await asyncs.sleep(30)
+
+    var c1 = sockets.connect("127.0.0.1", port)
+    if c1 is Socket {
+        c1.send("FIRST")
+        var r1 = await c1.arecv(1024)
+        io.print($"[port{port}] 第一个客户端回复: {r1}")
+        c1.send("DISCONNECT")
+        await asyncs.sleep(50)
+        c1.close()
+    } else {
+        io.print($"[port{port}] [用例3] 第一个客户端连接失败")
+        return
+    }
+
+    await asyncs.sleep(100)
+    var c2 = sockets.connect("127.0.0.1", port)
+    if c2 is Socket {
+        c2.send("SECOND")
+        var r2 = await c2.arecv(1024)
+        io.print($"[port{port}] 第二个客户端回复: {r2}")
+        c2.send("DISCONNECT")
+        await asyncs.sleep(50)
+        c2.close()
+    } else {
+        io.print($"[port{port}] [用例3] 第二个客户端连接失败")
+        return
+    }
+
+    await asyncs.sleep(500)
+    io.print("=== 用例3完成 ===")
+}
+
+async func test_mixed_rapid() {
+    var port = 23460
+    io.print("\n=== 用例4: 快速发消息 + 混合 ===")
+    echo_server(port)
+    rapid_fire_client(port, 1)
+    rapid_fire_client(port, 2)
+    echo_client(port, 3, "Quick-3")
+    await asyncs.sleep(3000)
+    io.print("=== 用例4完成 ===")
+}
+
+async func run_all_tests() {
+    await test_concurrent_echo()
+    await test_big_data()
+    await test_server_continues_after_disconnect()
+    await test_mixed_rapid()
+}
+
+main() {
+    io.print("======================================")
+    io.print("  Async Socket 压力测试")
+    io.print("======================================")
+
+    run_all_tests()
+
+    asyncs.run()
+
+    io.print("\n======================================")
+    io.print($"  统计: 处理 {g_total_clients} 个客户端, {g_total_msgs} 条消息")
+    io.print("  压力测试全部完成!")
+    io.print("======================================")
+}

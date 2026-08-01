@@ -2078,6 +2078,81 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             } else {
                                 result = type_new(TYPE_ANY);
                             }
+                        } else if (ast->u.await.expr->kind == AST_CALL &&
+                                   ast->u.await.expr->u.call.callee &&
+                                   ast->u.await.expr->u.call.callee->kind == AST_INDEX &&
+                                   ast->u.await.expr->u.call.callee->u.index.obj &&
+                                   ast->u.await.expr->u.call.callee->u.index.obj->kind == AST_VAR &&
+                                   ast->u.await.expr->u.call.callee->u.index.index &&
+                                   ast->u.await.expr->u.call.callee->u.index.index->kind == AST_STRING) {
+                            // await obj.method() — AST_MODULE_CALL 已被 visit_module.inc 转为 AST_CALL(INDEX(obj, "method"))
+                            Ast* index_node = ast->u.await.expr->u.call.callee;
+                            const char* obj_name = index_node->u.index.obj->u.var.name;
+                            const char* method_name = index_node->u.index.index->u.string.value;
+                            // 查找变量以获取对象类型
+                            Symbol* obj_sym = scope_resolve(s->current, obj_name);
+                            TypeInfo* obj_type = NULL;
+                            int obj_type_owned = 0;
+                            if (obj_sym && obj_sym->type) {
+                                obj_type = obj_sym->type;
+                            } else {
+                                obj_type = infer_expr_type(s, index_node->u.index.obj);
+                                obj_type_owned = 1;
+                            }
+                            if (obj_type) {
+                                const char* type_name = NULL;
+                                if (obj_type->kind == TYPE_CSTRUCT) {
+                                    type_name = "cstruct";
+                                } else if (obj_type->kind == TYPE_STRUCT) {
+                                    type_name = "struct";
+                                } else {
+                                    type_name = native_get_type_name(obj_type->kind);
+                                }
+                                if (type_name) {
+                                    int arity;
+                                    TypeKind ret = native_get_instance_method_return_type(type_name, method_name, &arity);
+                                    if (ret == TYPE_FUTURE) {
+                                        TypeKind elem = native_get_instance_method_return_element_type(type_name, method_name);
+                                        if (elem != TYPE_UNKNOWN && elem != TYPE_ANY) {
+                                            result = type_new(elem);
+                                            if (elem == TYPE_STRUCT) {
+                                                result->struct_name = strdup("Socket");
+                                            }
+                                        } else {
+                                            result = type_new(TYPE_ANY);
+                                        }
+                                    } else if (ret != TYPE_UNKNOWN) {
+                                        result = type_new(ret);
+                                    }
+                                }
+                                if (obj_type_owned) type_free(obj_type);
+                            }
+                            if (!result) result = type_new(TYPE_ANY);
+                        } else if (ast->u.await.expr->kind == AST_MODULE_CALL) {
+                            // 兼容旧版：模块实例方法调用（不应到达此分支）
+                            const char* method_name = ast->u.await.expr->u.module_call.method_name;
+                            Symbol* obj_sym = scope_resolve(s->current, ast->u.await.expr->u.module_call.module_name);
+                            if (obj_sym && obj_sym->type && (obj_sym->type->kind == TYPE_STRUCT || obj_sym->type->kind == TYPE_CSTRUCT || obj_sym->type->kind == TYPE_FACE)) {
+                                const char* type_name = (obj_sym->type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
+                                int arity;
+                                TypeKind ret = native_get_instance_method_return_type(type_name, method_name, &arity);
+                                if (ret == TYPE_FUTURE) {
+                                    TypeKind elem = native_get_instance_method_return_element_type(type_name, method_name);
+                                    if (elem != TYPE_UNKNOWN && elem != TYPE_ANY) {
+                                        result = type_new(elem);
+                                        if (elem == TYPE_STRUCT) {
+                                            result->struct_name = strdup("Socket");
+                                        }
+                                    } else {
+                                        result = type_new(TYPE_ANY);
+                                    }
+                                } else {
+                                    result = type_new(ret);
+                                }
+                            } else {
+                                result = type_new(TYPE_ANY);
+                            }
+                            if (!result) result = type_new(TYPE_ANY);
                         } else {
                             result = type_new(TYPE_ANY);
                         }

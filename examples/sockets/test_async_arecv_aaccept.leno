@@ -1,0 +1,87 @@
+import sockets
+import asyncs
+import io
+
+// 测试 async socket 方法: sock.arecv() 和 sock.aaccept()
+// 用法: build\leno.exe examples/sockets/test_async_arecv_aaccept.leno
+
+// 核心测试：在单个 async 服务器协程中使用 arecv/aaccept
+async func echo_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("服务器启动失败")
+        return
+    }
+    io.print("[服务器] 监听 127.0.0.1:" + port)
+
+    // aaccept: 异步等待客户端连接
+    var client = await server.aaccept()
+    if client == null {
+        io.print("[服务器] accept 失败")
+        server.close()
+        return
+    }
+    io.print("[服务器] 客户端已连接")
+
+    // arecv: 异步等待数据
+    var data = await client.arecv(1024)
+    if data != null {
+        io.print("[服务器] 收到: " + data)
+        client.send("Echo: " + data)
+    }
+
+    // 再接收一次
+    data = await client.arecv(1024)
+    if data != null {
+        io.print("[服务器] 收到: " + data)
+        client.send("Echo: " + data)
+    }
+
+    client.close()
+    server.close()
+    io.print("[服务器] 已关闭")
+}
+
+// 客户端协程
+async func client(int port, string msg1, string msg2) {
+    await asyncs.sleep(200)  // 等服务器就绪
+
+    var conn = sockets.connect("127.0.0.1", port)
+    if conn == null {
+        io.print("[客户端] 连接失败")
+        return
+    }
+    io.print("[客户端] 已连接")
+
+    // 发送第一条
+    conn.send(msg1)
+    var reply = await conn.arecv(1024)
+    if reply != null {
+        io.print("[客户端] 收到: " + reply)
+    }
+
+    // 发送第二条
+    await asyncs.sleep(100)
+    conn.send(msg2)
+    reply = await conn.arecv(1024)
+    if reply != null {
+        io.print("[客户端] 收到: " + reply)
+    }
+
+    conn.close()
+    io.print("[客户端] 已断开")
+}
+
+async func run_test() {
+    var port = 23456
+    echo_server(port)
+    client(port, "Hello Async!", "Second message")
+    await asyncs.sleep(2000)
+}
+
+main() {
+    io.print("========== Async Socket 测试 ==========")
+    run_test()
+    asyncs.run()
+    io.print("\n========== 测试完成 ==========")
+}

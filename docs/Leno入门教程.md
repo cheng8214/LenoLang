@@ -7258,25 +7258,72 @@ main() {
 
 ```leno
 import sockets
+import io
 
 main() {
     // TCP 连接到服务器
-    var conn = sockets.connect("www.example.com", 80)
-    
+    Socket conn = sockets.connect("www.example.com", 80)
+
     if conn != null {
         // 发送 HTTP 请求
         var request = "GET / HTTP/1.0\r\nHost: www.example.com\r\n\r\n"
-        sockets.send(conn, request)
-        
+        conn.send(request)
+
         // 接收响应
-        var response = sockets.recv(conn, 1024)
-        print(response)
-        
+        var response = conn.recv(1024)
+        io.print(response)
+
         // 关闭连接
-        sockets.close(conn)
+        conn.close()
     }
 }
 ```
+
+#### 异步 socket 配合 arecv/aaccept
+
+配合 `async`/`await` 和 `asyncs` 模块，可以实现非阻塞的多客户端并发服务器：
+
+```leno
+import sockets
+import asyncs
+import io
+
+async func handle_client(Socket client, int id) {
+    io.print($"[#{id}] 客户端已连接")
+    while true {
+        var data = await client.arecv(1024)
+        if data == null or data == "" {
+            break
+        }
+        client.send("Echo: " + data)
+        if data == "DISCONNECT" {
+            client.close()
+            return
+        }
+    }
+    client.close()
+}
+
+async func echo_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null { return }
+    var client_id = 0
+    while true {
+        var client = await server.aaccept()
+        if client == null { break }
+        client_id = client_id + 1
+        handle_client(client, client_id)
+    }
+    server.close()
+}
+
+main() {
+    echo_server(8080)
+    asyncs.run()
+}
+```
+
+> 详见 [module_sockets.md](module_sockets.md) 的"异步 IO"章节。
 
 ### dirs 目录操作模块
 
@@ -8406,6 +8453,47 @@ main() {
     asyncs.run()
 }
 ```
+
+### 网络 IO 异步 (async socket)
+
+配合 `sockets` 模块的 `aaccept` / `arecv` 方法，可以用协程实现非阻塞的网络服务器：
+
+```leno
+import sockets
+import asyncs
+import io
+
+async func handle_client(Socket client, int id) {
+    io.print($"[#{id}] 客户端已连接")
+    while true {
+        var data = await client.arecv(1024)  // 异步接收，不阻塞事件循环
+        if data == null or data == "" { break }
+        client.send("Echo: " + data)
+        if data == "DISCONNECT" { client.close() return }
+    }
+    client.close()
+}
+
+async func echo_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null { return }
+    var n = 0
+    while true {
+        var client = await server.aaccept()  // 异步等待连接
+        if client == null { break }
+        n = n + 1
+        handle_client(client, n)  // 派生独立协程处理
+    }
+    server.close()
+}
+
+main() {
+    echo_server(8080)
+    asyncs.run()
+}
+```
+
+> `arecv()` / `aaccept()` 返回 Future，在 `await` 期间让出执行权给其他协程，实现真正的并发。详见 [module_sockets.md](module_sockets.md)。
 
 ### 嵌套异步调用
 

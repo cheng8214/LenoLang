@@ -10,6 +10,7 @@ async func task(string name, int ms) {
 
 main() {
     io.print("=== 测试开始 ===")
-    await task("X", 100)
+    task("X", 100)  // launch as coroutine
+    asyncs.run()
     io.print("=== 测试完成 ===")
 }

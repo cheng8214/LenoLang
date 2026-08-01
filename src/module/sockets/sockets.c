@@ -62,6 +62,133 @@ extern void socket_init_methods(void);
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 
 // ============================================================================
+// Async I/O 内部实现 - 利用 select 多路复用
+// ============================================================================
+
+// 前向声明（定义在本文件后续位置）
+static ObjSocket* create_socket_obj(socket_fd_t fd, int type);
+static inline int socket_is_valid(ObjSocket* sock);
+
+// 最大并发异步 I/O 数
+#define MAX_ASYNC_IO 64
+
+// 异步操作类型
+typedef enum { ASYNC_OP_RECV = 1, ASYNC_OP_ACCEPT } AsyncOpType;
+
+// 异步 I/O 请求
+typedef struct {
+    ObjSocket*    sock;        // 关联的 socket
+    ObjFuture*    future;      // 等待者 Future
+    AsyncOpType   op;          // 操作类型
+    char*         buffer;      // recv 缓冲区
+    int           buf_size;    // 缓冲区大小
+    int           active;      // 是否仍在等待
+} AsyncIORequest;
+
+static AsyncIORequest g_async_requests[MAX_ASYNC_IO];
+static int g_async_count = 0;
+static int g_async_init = 0;
+
+// 注册异步操作，返回 0 成功
+static int async_add(ObjSocket* sock, ObjFuture* future, AsyncOpType op, char* buf, int buf_size) {
+    if (g_async_count >= MAX_ASYNC_IO) return -1;
+    AsyncIORequest* r = &g_async_requests[g_async_count++];
+    r->sock = sock;
+    r->future = future;
+    r->op = op;
+    r->buffer = buf;
+    r->buf_size = buf_size;
+    r->active = 1;
+    return 0;
+}
+
+// 供 event_loop_run 调用: 用 select 等待就绪的 socket，执行真正的 I/O，完成 Future
+int sockets_poll_async_io(uint64_t timeout_ms) {
+    if (g_async_count == 0) return 0;
+
+    fd_set readfds, writefds;
+    FD_ZERO(&readfds);
+    FD_ZERO(&writefds);
+    socket_fd_t max_fd = 0;
+    int has_pending = 0;
+
+    for (int i = 0; i < g_async_count; i++) {
+        AsyncIORequest* r = &g_async_requests[i];
+        if (!r->active || !socket_is_valid(r->sock)) continue;
+        FD_SET(r->sock->fd, &readfds);
+        if (r->sock->fd > max_fd) max_fd = r->sock->fd;
+        has_pending = 1;
+    }
+    if (!has_pending) return 0;
+
+    struct timeval tv;
+    tv.tv_sec  = (long)(timeout_ms / 1000);
+    tv.tv_usec = (long)((timeout_ms % 1000) * 1000);
+
+    int ret = select((int)(max_fd + 1), &readfds, &writefds, NULL, &tv);
+    if (ret <= 0) return 0;
+
+    int done = 0;
+    for (int i = 0; i < g_async_count; i++) {
+        AsyncIORequest* r = &g_async_requests[i];
+        if (!r->active) continue;
+        if (!FD_ISSET(r->sock->fd, &readfds)) continue;
+
+        if (r->op == ASYNC_OP_RECV) {
+            int n = recv(r->sock->fd, r->buffer, r->buf_size, 0);
+            r->active = 0;
+            if (n > 0) {
+                ObjString* s = str_new(r->buffer, n);
+                future_complete(r->future, val_obj((Object*)s));
+            } else {
+                // 出错或关闭
+                future_complete(r->future, val_null());
+            }
+            done++;
+        } else if (r->op == ASYNC_OP_ACCEPT) {
+            struct sockaddr_in addr;
+            socklen_t len = sizeof(addr);
+            socket_fd_t cfd = accept(r->sock->fd, (struct sockaddr*)&addr, &len);
+            r->active = 0;
+            if (cfd != INVALID_SOCKET_FD) {
+                ObjSocket* cs = create_socket_obj(cfd, SOCKET_TYPE_TCP);
+                if (cs) {
+                    cs->is_connected = 1;
+                    future_complete(r->future, val_obj((Object*)cs));
+                } else {
+                    CLOSE_SOCKET(cfd);
+                    future_complete(r->future, val_null());
+                }
+            } else {
+                future_complete(r->future, val_null());
+            }
+            done++;
+        }
+    }
+
+    // 压缩数组：移除 inactive 项
+    int w = 0;
+    for (int i = 0; i < g_async_count; i++) {
+        if (g_async_requests[i].active) {
+            g_async_requests[w++] = g_async_requests[i];
+        } else {
+            if (g_async_requests[i].buffer) free(g_async_requests[i].buffer);
+        }
+    }
+    g_async_count = w;
+    return done;
+}
+
+// 清理某个协程关联的所有异步请求（协程结束时调用）
+void sockets_cancel_async(ObjCoroutine* co) {
+    for (int i = 0; i < g_async_count; i++) {
+        if (g_async_requests[i].future && g_async_requests[i].future->waiter == co) {
+            g_async_requests[i].active = 0;
+        }
+    }
+}
+
+// ============================================================================
 // Socket 实例方法编译期元信息注册（在 native_register_all_instance_method_metas 中调用）
 // ============================================================================
 void sockets_init_instance_methods(void) {
@@ -115,6 +242,13 @@ void sockets_init_instance_methods(void) {
     /* sock.set_timeout(ms) -> bool */
     TypeKind set_timeout_params[] = {TYPE_INT};
     native_register_instance_method_meta_with_params("Socket", "set_timeout", 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_timeout_params);
+
+    /* sock.arecv(max_bytes) -> Future (异步接收) */
+    TypeKind arecv_params[] = {TYPE_INT};
+    native_register_instance_method_meta_with_params("Socket", "arecv", 1, -1, -1, TYPE_FUTURE, TYPE_STRING, arecv_params);
+
+    /* sock.aaccept() -> Future (异步接受连接) */
+    native_register_instance_method_meta_with_params("Socket", "aaccept", 0, -1, -1, TYPE_FUTURE, TYPE_SOCKET, no_params);
 }
 
 // ============================================================================
@@ -161,6 +295,88 @@ static inline int socket_is_valid(ObjSocket* sock) {
 // ============================================================================
 // 实例方法实现（self 是第一个参数）
 // ============================================================================
+
+/* sock.arecv(max_bytes) -> Future (异步接收，await 后返回 string|null) */
+static Value socket_arecv_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+    int max_bytes = val_as_int(args[1]);
+
+    if (!socket_is_valid(sock)) return val_null();
+    if (sock->type == SOCKET_TYPE_TCP && !sock->is_connected) return val_null();
+    if (max_bytes <= 0) max_bytes = 1024;
+    if (max_bytes > 65536) max_bytes = 65536;
+
+    ObjCoroutine* co = vm_current_coroutine();
+    if (!co) {
+        native_throw_error("arecv 只能在 async 函数中使用");
+        return val_null();
+    }
+
+    // 设置非阻塞
+    if (!sock->is_nonblocking) {
+        u_long mode = 1;
+        #ifdef _WIN32
+        ioctlsocket(sock->fd, FIONBIO, &mode);
+        #else
+        int flags = fcntl(sock->fd, F_GETFL, 0);
+        if (flags != -1) fcntl(sock->fd, F_SETFL, flags | O_NONBLOCK);
+        #endif
+        sock->is_nonblocking = 1;
+    }
+
+    char* buffer = (char*)malloc(max_bytes);
+    if (!buffer) return val_null();
+
+    ObjFuture* future = future_new();
+    future->waiter = co;
+
+    if (async_add(sock, future, ASYNC_OP_RECV, buffer, max_bytes) != 0) {
+        free(buffer);
+        native_throw_error("注册异步 I/O 失败（可能已达上限）");
+        return val_null();
+    }
+
+    co->waiting_for = future;
+    return val_obj((Object*)future);
+}
+
+/* sock.aaccept() -> Future (异步接受连接，await 后返回 Socket|null) */
+static Value socket_aaccept_func(int argc, Value* args) {
+    (void)argc;
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+
+    if (!socket_is_valid(sock) || !sock->is_listening) return val_null();
+
+    ObjCoroutine* co = vm_current_coroutine();
+    if (!co) {
+        native_throw_error("aaccept 只能在 async 函数中使用");
+        return val_null();
+    }
+
+    // 设置非阻塞
+    if (!sock->is_nonblocking) {
+        u_long mode = 1;
+        #ifdef _WIN32
+        ioctlsocket(sock->fd, FIONBIO, &mode);
+        #else
+        int flags = fcntl(sock->fd, F_GETFL, 0);
+        if (flags != -1) fcntl(sock->fd, F_SETFL, flags | O_NONBLOCK);
+        #endif
+        sock->is_nonblocking = 1;
+    }
+
+    ObjFuture* future = future_new();
+    future->waiter = co;
+
+    if (async_add(sock, future, ASYNC_OP_ACCEPT, NULL, 0) != 0) {
+        native_throw_error("注册异步 I/O 失败（可能已达上限）");
+        return val_null();
+    }
+
+    co->waiting_for = future;
+    return val_obj((Object*)future);
+}
 
 /* sock.send(data) -> bool */
 static Value socket_send_func(int argc, Value* args) {
@@ -894,6 +1110,13 @@ void sockets_init_module(void) {
     /* sock.set_timeout(ms) -> bool */
     TypeKind set_timeout_params[] = {TYPE_INT};
     socket_register_method_with_params("set_timeout", make_native(socket_set_timeout_func, 2, "set_timeout"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_timeout_params);
+
+    /* sock.arecv(max_bytes) -> Future (异步接收，在 async 函数中 await 得到 string|null) */
+    TypeKind arecv_params[] = {TYPE_INT};
+    socket_register_method_with_params("arecv", make_native(socket_arecv_func, 2, "arecv"), 1, -1, -1, TYPE_FUTURE, TYPE_UNKNOWN, arecv_params);
+
+    /* sock.aaccept() -> Future (异步接受连接，在 async 函数中 await 得到 Socket|null) */
+    socket_register_method_with_params("aaccept", make_native(socket_aaccept_func, 1, "aaccept"), 0, -1, -1, TYPE_FUTURE, TYPE_UNKNOWN, no_params);
 
     // =====================================================
     // 注册模块工厂方法（sockets.xxx）

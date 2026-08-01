@@ -476,3 +476,9 @@ A: 确保使用 `await` 等待 async 函数，并用 `try-catch` 捕获异常。
 - `test_async_yield.leno` - yield 测试
 - `test_async_all.leno` - all 测试
 - `test_async_timeout.leno` - timeout 测试
+- `examples/sockets/test_async_arecv_aaccept.leno` - async socket 测试
+- `examples/sockets/test_async_stress.leno` - async socket 压力测试
+
+## 网络 IO 异步
+
+`sockets` 模块提供了异步方法 `sock.arecv()` 和 `sock.aaccept()`，配合 `await` 使用时让出执行权给事件循环，实现真正的并发网络服务器。详见 [module_sockets.md](../docs/module_sockets.md)。

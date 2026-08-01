@@ -710,7 +710,8 @@ main() {
 - **不要在 `async` 函数中调用 `threads.start()`**：协程是协作式调度，启动 OS 线程会打破执行假设
 - **不要在子线程中使用 `async`/`await`**：子线程有独立 VM，`asyncs.run()` 不会跨线程调度
 - 需要 CPU 并行 → 用 `threads.start()` + Channel
-- 需要 I/O 并发 → 用 `async func` + `await` + `asyncs.run()`
+- 网络 I/O → 使用 `socket.arecv()`/`socket.aaccept()` 配合 await，见 [sockets 模块文档](module_sockets.md#异步-io-arecv--aaccept)
+需要 I/O 并发 → 用 `async func` + `await` + `asyncs.run()`
 
 ---
 
@@ -741,4 +742,4 @@ main() {
 ---
 
 *文档版本: 1.1*  
-*最后更新: 2026-06-14*
+*最后更新: 2026-08-01*

@@ -12,6 +12,7 @@
 - [TCP 服务器](#tcp-服务器)
 - [UDP 通信](#udp-通信)
 - [非阻塞 IO](#非阻塞-io)
+- [异步 IO (arecv / aaccept)](#异步-io-arecv--aaccept)
 - [连接信息与错误处理](#连接信息与错误处理)
 - [示例代码](#示例代码)
 - [与 asyncs 模块配合使用](#与-asyncs-模块配合使用)
@@ -402,6 +403,61 @@ conn.close()
 
 ---
 
+### `sock.arecv(max_bytes)` (异步方法)
+
+异步接收数据。必须在 `async` 函数中使用 `await` 获取结果。
+
+**参数**:
+- `max_bytes` (int): 最大接收字节数（最大 65536）
+
+**返回**: `Future` - 在 async 函数中 `await sock.arecv(1024)` 的结果为 `string|null`
+
+```leno
+async func receive_data(Socket conn) {
+    // 异步等待数据，释放事件循环给其他协程
+    var data = await conn.arecv(1024)
+    if data != null {
+        io.print("收到: " + data)
+    } else {
+        io.print("连接已关闭")
+    }
+}
+```
+
+**与 `recv()` 的区别**:
+- `recv()` - 阻塞等待，会挂起整个事件循环直到数据到达
+- `arecv()` - 异步等待，让出执行权，其他协程可以继续运行
+
+---
+
+### `sock.aaccept()` (异步方法)
+
+异步接受客户端连接。必须在 `async` 函数中使用 `await` 获取结果。
+
+**返回**: `Future` - 在 async 函数中 `await server.aaccept()` 的结果为 `Socket|null`
+
+```leno
+async func echo_server(int port) {
+    Socket server = sockets.listen("127.0.0.1", port)
+    if server == null { return }
+
+    while true {
+        // 异步等待客户端连接，释放事件循环
+        var client = await server.aaccept()
+        if client == null { break }
+
+        // 为每个客户端派生独立协程，不阻塞 accept 循环
+        handle_client(client)
+    }
+}
+```
+
+**与 `accept()` 的区别**:
+- `accept()` - 阻塞等待客户端连接
+- `aaccept()` - 异步等待，让出执行权，可以同时处理多个协程
+
+---
+
 ### `sock.set_timeout(ms)`
 
 设置 socket 收发超时时间。
@@ -585,6 +641,123 @@ main() {
             }
         }
     }
+}
+```
+
+---
+
+## 异步 IO (arecv / aaccept)
+
+`sockets` 模块提供了基于事件循环的异步 IO 方法，配合 `async`/`await` 可以在单个协程中实现非阻塞的网络通信，避免阻塞整个事件循环。
+
+### 基本模式
+
+异步 IO 需要结合 `asyncs` 模块的事件循环使用：
+
+```leno
+import sockets
+import asyncs
+import io
+
+async func handle_client(Socket client, int id) {
+    io.print($"[#{id}] 客户端已连接")
+
+    while true {
+        // 异步等待数据，让出执行权给其他协程
+        var data = await client.arecv(1024)
+        if data == null or data == "" {
+            io.print($"[#{id}] 客户端断开")
+            client.close()
+            return
+        }
+
+        io.print($"[#{id}] 收到: {data}")
+        client.send("Echo: " + data)
+
+        if data == "DISCONNECT" {
+            client.close()
+            return
+        }
+    }
+}
+
+async func echo_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null { return }
+
+    var client_id = 0
+    while true {
+        // 异步等待客户端连接
+        var client = await server.aaccept()
+        if client == null { break }
+
+        client_id = client_id + 1
+        // 派生独立协程处理，不阻塞 accept 循环
+        handle_client(client, client_id)
+    }
+    server.close()
+}
+
+async func client(int id) {
+    await asyncs.sleep(50)  // 等服务器就绪
+    var conn = sockets.connect("127.0.0.1", 23456)
+    if conn is Socket {
+        conn.send($"Hello from client {id}")
+        var reply = await conn.arecv(1024)
+        io.print($"[Client#{id}] 收到: {reply}")
+        conn.send("DISCONNECT")
+        await asyncs.sleep(50)
+        conn.close()
+    }
+}
+
+main() {
+    echo_server(23456)
+    client(1)
+    client(2)
+    client(3)
+    asyncs.run()
+}
+```
+
+### 与阻塞 IO 的对比
+
+| 特性 | 阻塞 IO (`recv`/`accept`) | 异步 IO (`arecv`/`aaccept`) |
+|------|---------------------------|----------------------------|
+| 执行方式 | 阻塞直到完成 | 让出执行权，事件循环驱动 |
+| 并发能力 | 需要非阻塞+select/poll | 天然支持，每个连接独立协程 |
+| 代码复杂度 | 需要手动管理事件循环 | 类似同步代码，易读易写 |
+| 适用场景 | 简单脚本、单连接 | 多连接服务器、高并发场景 |
+
+### 大数据分片接收
+
+当数据超过单次 `arecv` 的缓冲区大小时，需要循环接收：
+
+```leno
+async func recv_all(Socket conn, int total_bytes):string {
+    var received = ""
+    while received.len() < total_bytes {
+        var chunk = await conn.arecv(1024)
+        if chunk == null or chunk == "" { break }
+        received = received + chunk
+    }
+    return received
+}
+```
+
+### 超时处理
+
+结合 `asyncs.timeout()` 实现超时控制：
+
+```leno
+async func recv_with_timeout(Socket conn, int ms) {
+    var future = conn.arecv(1024)
+    var data = await asyncs.timeout(future, ms)
+    if data == null {
+        io.print("接收超时")
+        return ""
+    }
+    return data
 }
 ```
 
@@ -1052,14 +1225,14 @@ main() {
 | `sockets.ntohs(net_short)` | int | int | 网络序 -> 主机序 (16位) |
 | `sockets.ntohl(net_long)` | int | int | 网络序 -> 主机序 (32位) |
 
-### 实例方法（`sock.xxx`）
+### 实例方法 - 同步（`sock.xxx`）
 
 | 方法 | 参数 | 返回 | 说明 |
 |------|------|------|------|
 | `sock.send(data)` | string | bool | TCP 发送 |
 | `sock.recv(max)` | int | string\|null | TCP 接收 |
 | `sock.close()` | - | null | 关闭连接 |
-| `sock.accept()` | - | Socket\|null | 接受连接（服务器） |
+| `sock.accept()` | - | Socket\|null | 接受连接（服务器，阻塞） |
 | `sock.sendto(data, addr, port)` | string, string, int | bool | UDP 发送 |
 | `sock.recvfrom(max)` | int | array\|null | UDP 接收 |
 | `sock.set_nonblocking(flag)` | bool | bool | 设置非阻塞模式 |
@@ -1070,6 +1243,17 @@ main() {
 | `sock.error()` | - | int | 获取最后错误码 |
 | `sock.shutdown(how)` | int | bool | 优雅关闭 (0=读/1=写/2=双向) |
 | `sock.set_timeout(ms)` | int | bool | 设置收发超时 |
+
+### 异步实例方法（`sock.a*`）
+
+> **重要**: 异步方法必须在 `async` 函数中使用 `await` 获取结果。这些方法基于事件循环 + select() 实现非阻塞 IO。
+
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `sock.arecv(max_bytes)` | int | Future | 异步接收数据，await 返回 string\|null |
+| `sock.aaccept()` | - | Future | 异步接受连接，await 返回 Socket\|null |
+
+**注意**: 调用 `sock.arecv()` 或 `sock.aaccept()` 立即返回 Future 对象，需要 `await` 等待结果。在 `await` 期间，事件循环可以执行其他协程。
 
 ---
 
@@ -1140,4 +1324,4 @@ var addr_be = sockets.htonl(addr)
 
 ---
 
-*最后更新: 2026-06-08*
+*最后更新: 2026-08-01*
