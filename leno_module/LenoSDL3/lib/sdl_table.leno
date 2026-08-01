@@ -147,10 +147,13 @@ export struct Table impl Widget {
     // 滚动使指定行可见
     func _ensure_row_visible(int row) {
         if row < 0 { return }
+        var sb = _compute_sb()
+        float visH = h - _headerH - sb[1]
+        if visH < 0 { visH = 0 }
         float rowTop = row * _rowH
         float rowBot = rowTop + _rowH
         if rowTop < _scrollY { _scrollY = rowTop }
-        else if rowBot > _scrollY + (h - _headerH) { _scrollY = rowBot - (h - _headerH) }
+        else if rowBot > _scrollY + visH { _scrollY = rowBot - visH }
         _clamp_scroll()
     }
     func _col_x(int ci): float {
@@ -689,7 +692,9 @@ export struct Table impl Widget {
                 }
                 case core.Scancode.PAGEUP {
                     if _rows.len() == 0 { return }
-                    float bodyH = h - _headerH
+                    var sbP = _compute_sb()
+                    float bodyH = h - _headerH - sbP[1]
+                    if bodyH < 0 { bodyH = 0 }
                     int pageSteps = _int(bodyH / _rowH)
                     if pageSteps < 1 { pageSteps = 1 }
                     int r = _selRow - pageSteps
@@ -699,7 +704,9 @@ export struct Table impl Widget {
                 }
                 case core.Scancode.PAGEDOWN {
                     if _rows.len() == 0 { return }
-                    float bodyH = h - _headerH
+                    var sbP = _compute_sb()
+                    float bodyH = h - _headerH - sbP[1]
+                    if bodyH < 0 { bodyH = 0 }
                     int pageSteps = _int(bodyH / _rowH)
                     if pageSteps < 1 { pageSteps = 1 }
                     int r = _selRow + pageSteps
