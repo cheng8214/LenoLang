@@ -135,6 +135,24 @@ export struct Table impl Widget {
         float my = _max_scroll_y(); if _scrollY < 0 { _scrollY = 0 }; if _scrollY > my { _scrollY = my }
         float mx = _max_scroll_x(); if _scrollX < 0 { _scrollX = 0 }; if _scrollX > mx { _scrollX = mx }
     }
+    // 键盘导航：选中某行并滚动到可见
+    func _select_key(int row) {
+        if row < 0 or row >= _rows.len() { return }
+        _selRow = row
+        _selRows = [row]
+        _ensure_row_visible(row)
+        core.markFrameRedraw()
+        if _onSelect != null { _onSelect(row) }
+    }
+    // 滚动使指定行可见
+    func _ensure_row_visible(int row) {
+        if row < 0 { return }
+        float rowTop = row * _rowH
+        float rowBot = rowTop + _rowH
+        if rowTop < _scrollY { _scrollY = rowTop }
+        else if rowBot > _scrollY + (h - _headerH) { _scrollY = rowBot - (h - _headerH) }
+        _clamp_scroll()
+    }
     func _col_x(int ci): float {
         float cx = x - _scrollX
         for 0 : ci - 1 to k { cx = cx + _colW[k] }
@@ -355,6 +373,15 @@ export struct Table impl Widget {
             while _rows[r].len() <= c { _rows[r].add("") }
             _rows[r][c] = v
         }
+    }
+    // 获取单元格文本（供 tooltip 截断检测用）
+    func _cell_text(int r, int c): string {
+        if r < 0 or r >= _rows.len() { return "" }
+        if c < 0 or c >= _rows[r].len() { return "" }
+        return _rows[r][c]
+    }
+    func get_cell(int r, int c): string {
+        return _cell_text(r, c)
     }
     func set_headers(Array[string] hs) {
         _headers = hs; _ncols = hs.len(); if _ncols == 0 { _ncols = 1 }
@@ -629,6 +656,70 @@ export struct Table impl Widget {
             return
         }
 
+        // 键盘导航：表格聚焦时处理方向键/Enter/PageUp/PageDown/Home/End/Ctrl+A
+        if ev.isKeyDown() {
+            int sc = ev.scancode()
+            int mod = ev.keyMod()
+            if sc == core.Scancode.UP {
+                if _rows.len() == 0 { return }
+                int r = _selRow - 1
+                if _selRow < 0 { r = 0 }
+                if r < 0 { r = 0 }
+                _select_key(r)
+                return
+            }
+            if sc == core.Scancode.DOWN {
+                if _rows.len() == 0 { return }
+                int r = _selRow + 1
+                if _selRow < 0 { r = 0 }
+                if r >= _rows.len() { r = _rows.len() - 1 }
+                _select_key(r)
+                return
+            }
+            if sc == core.Scancode.HOME {
+                if _rows.len() == 0 { return }
+                _select_key(0)
+                return
+            }
+            if sc == core.Scancode.END {
+                if _rows.len() == 0 { return }
+                _select_key(_rows.len() - 1)
+                return
+            }
+            if sc == core.Scancode.PAGEUP {
+                if _rows.len() == 0 { return }
+                float bodyH = h - _headerH
+                int pageSteps = _int(bodyH / _rowH)
+                if pageSteps < 1 { pageSteps = 1 }
+                int r = _selRow - pageSteps
+                if r < 0 { r = 0 }
+                _select_key(r)
+                return
+            }
+            if sc == core.Scancode.PAGEDOWN {
+                if _rows.len() == 0 { return }
+                float bodyH = h - _headerH
+                int pageSteps = _int(bodyH / _rowH)
+                if pageSteps < 1 { pageSteps = 1 }
+                int r = _selRow + pageSteps
+                if r >= _rows.len() { r = _rows.len() - 1 }
+                _select_key(r)
+                return
+            }
+            if sc == core.Scancode.RETURN {
+                if _selRow >= 0 and _selRow < _rows.len() {
+                    if _onDblClick != null { _onDblClick(_selRow, _selCol) }
+                    if _editable { _begin_edit(_selRow, _selCol) }
+                }
+                return
+            }
+            // Ctrl+A 全选
+            if sc == core.Scancode.A and ((mod & 64) != 0 or (mod & 128) != 0) {
+                if _multi { select_all() }
+                return
+            }
+        }
+
         // 仅处理命中表格区域内的事件（表格外点击/悬停不触发表头与行交互）
         if not contains(mx, my) {
             _hoverRow = -1
@@ -736,6 +827,33 @@ export struct Table impl Widget {
             if _tip != "" {
                 if hv { tip.tipReport(_tip, mx, my) }
                 else { tip.tipClear() }
+            } else if hv {
+                // 单元格 Tooltip：文字被截断时悬停显示完整内容
+                int hc = _col_at(mx)
+                if hc >= 0 {
+                    string cellText = _cell_text(_hoverRow, hc)
+                    if cellText != "" and cellText != null {
+                        float iconOff = 0.0
+                        if hc == _imageCol and _hoverRow < _rowImages.len() {
+                            string ip = _rowImages[_hoverRow]
+                            if ip != "" and ip != null { iconOff = _rowH * 0.7 }
+                        }
+                        float pad = 8.0
+                        float availW = _colW[hc] - 2.0 * pad - iconOff
+                        float fullW = _font.measureString(cellText).w
+                        if fullW > availW {
+                            tip.tipReport(cellText, mx, my)
+                        } else {
+                            tip.tipClear()
+                        }
+                    } else {
+                        tip.tipClear()
+                    }
+                } else {
+                    tip.tipClear()
+                }
+            } else {
+                tip.tipClear()
             }
         }
 

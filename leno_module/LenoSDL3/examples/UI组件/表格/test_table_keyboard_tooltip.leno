@@ -1,0 +1,107 @@
+// test_table_keyboard_tooltip.leno — 键盘导航 & 单元格 Tooltip 测试
+// 运行：leno 本文件（Esc 退出）
+// 校验点：
+//   1) ↑↓ 选择行，选中行自动滚动到可见区域
+//   2) PageUp/PageDown 翻页选择
+//   3) Home/End 跳到首行/末行
+//   4) Enter 触发双击回调（底部状态栏显示 "打开: 行号"）
+//   5) Ctrl+A 全选（开启多选模式后）
+//   6) Tooltip：第 1 列文件名很长被截断，悬停时显示完整路径
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+
+main() {
+    var win = SDL3.createWindow({title: "键盘导航 & Tooltip 测试", w: 720, h: 480})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    Array[string] headers = ["文件名", "大小", "修改日期", "类型"]
+    Array[int] aligns = [0, 2, 1, 1]
+    Array[int] hAligns = [1, 1, 1, 1]
+
+    // 故意造一些很长的文件名来测试 Tooltip 截断
+    Array[Array[string]] rows = [
+        ["src_main_application_core_module.cpp", "12.3 KB", "2026-07-15", "C++"],
+        ["README.md", "3.1 KB", "2026-07-20", "Markdown"],
+        ["sdl_table_implementation_with_sorting_and_checkbox.leno", "18.7 KB", "2026-07-28", "Leno"],
+        ["test_table_features_check_checkbox_empty_color.leno", "8.2 KB", "2026-07-29", "Leno"],
+        ["build_output_directory_temporary_cache_file.dat", "456 KB", "2026-06-10", "Data"],
+        ["config", "—", "2026-05-01", "文件夹"],
+        ["include_platform_windows_win32_compat_header.h", "5.4 KB", "2026-04-22", "C Header"],
+        ["main", "—", "2026-03-15", "文件夹"],
+        ["Makefile", "1.2 KB", "2026-07-01", "Make"],
+        ["examples_UI_components_file_manager_demo.leno", "6.8 KB", "2026-07-30", "Leno"]
+    ]
+
+    var tbl = win.addTable({
+        x: 20, y: 64, w: 680, h: 300,
+        headers: headers, aligns: aligns, header_aligns: hAligns, rows: rows,
+        col_widths: [200, 80, 100, 80],
+        sortable: true, resizable: true, zebra: true, row_h: 26, header_h: 28,
+        multi: true,                    // 开启多选，支持 Ctrl+A
+        tip: "表格提示信息"              // 表格级 tooltip
+    })
+
+    // 选中回调
+    tbl.on_select(func(int row) {
+        print("选中行: " + row)
+    })
+
+    // 双击回调（Enter 也会触发）
+    tbl.on_dbl_click(func(int r, int c) {
+        print("打开: 行" + r + " 列" + c + " — " + tbl.get_cell(r, 0))
+    })
+
+    string statusText = "就绪 — 使用 ↑↓ 浏览，Enter 打开，Ctrl+A 全选"
+
+    // ---- 按钮 ----
+    win.addButton({x: 20, y: 374, w: 120, h: 32, text: "选中第3行"}).on_click(func() {
+        tbl.set_selected(2)
+        print("已选中第 3 行（索引2）")
+    })
+    win.addButton({x: 150, y: 374, w: 120, h: 32, text: "清除选择"}).on_click(func() {
+        tbl.clear_selection()
+        print("已清除选择")
+    })
+    win.addButton({x: 280, y: 374, w: 120, h: 32, text: "添加长名行"}).on_click(func() {
+        int n = tbl.row_count()
+        tbl.add_row(["a_very_long_filename_that_will_be_truncated_and_should_show_tooltip_" + n + ".txt", "1.0 KB", "2026-08-01", "Text"])
+        print("已添加行，总数: " + tbl.row_count())
+    })
+    win.addButton({x: 410, y: 374, w: 140, h: 32, text: "跳到末行"}).on_click(func() {
+        if tbl.row_count() > 0 {
+            tbl.set_selected(tbl.row_count() - 1)
+            print("已跳到末行")
+        }
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "键盘导航 & Tooltip 测试 (Esc 退出)", 20, 2, 200, 210, 230)
+            r.drawText(font, "↑↓浏览  PageUp/Down翻页  Home/End首末  Enter打开  Ctrl+A全选  悬停看完整文字", 20, 24, 150, 160, 180)
+
+            int selRow = tbl.get_selected_row()
+            var selRows = tbl.get_selected_rows()
+            if selRow >= 0 {
+                string cellText = tbl.get_cell(selRow, 0)
+                statusText = "当前选中: 行" + selRow + " | " + cellText + " | 多选数: " + selRows.len()
+            } else {
+                statusText = "未选中（按 ↓ 开始导航）"
+            }
+            r.drawText(font, statusText, 20, 44, 180, 200, 120)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
