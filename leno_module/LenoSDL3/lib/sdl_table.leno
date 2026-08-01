@@ -660,63 +660,67 @@ export struct Table impl Widget {
         if ev.isKeyDown() {
             int sc = ev.scancode()
             int mod = ev.keyMod()
-            if sc == core.Scancode.UP {
-                if _rows.len() == 0 { return }
-                int r = _selRow - 1
-                if _selRow < 0 { r = 0 }
-                if r < 0 { r = 0 }
-                _select_key(r)
-                return
-            }
-            if sc == core.Scancode.DOWN {
-                if _rows.len() == 0 { return }
-                int r = _selRow + 1
-                if _selRow < 0 { r = 0 }
-                if r >= _rows.len() { r = _rows.len() - 1 }
-                _select_key(r)
-                return
-            }
-            if sc == core.Scancode.HOME {
-                if _rows.len() == 0 { return }
-                _select_key(0)
-                return
-            }
-            if sc == core.Scancode.END {
-                if _rows.len() == 0 { return }
-                _select_key(_rows.len() - 1)
-                return
-            }
-            if sc == core.Scancode.PAGEUP {
-                if _rows.len() == 0 { return }
-                float bodyH = h - _headerH
-                int pageSteps = _int(bodyH / _rowH)
-                if pageSteps < 1 { pageSteps = 1 }
-                int r = _selRow - pageSteps
-                if r < 0 { r = 0 }
-                _select_key(r)
-                return
-            }
-            if sc == core.Scancode.PAGEDOWN {
-                if _rows.len() == 0 { return }
-                float bodyH = h - _headerH
-                int pageSteps = _int(bodyH / _rowH)
-                if pageSteps < 1 { pageSteps = 1 }
-                int r = _selRow + pageSteps
-                if r >= _rows.len() { r = _rows.len() - 1 }
-                _select_key(r)
-                return
-            }
-            if sc == core.Scancode.RETURN {
-                if _selRow >= 0 and _selRow < _rows.len() {
-                    if _onDblClick != null { _onDblClick(_selRow, _selCol) }
-                    if _editable { _begin_edit(_selRow, _selCol) }
+            switch sc {
+                case core.Scancode.UP {
+                    if _rows.len() == 0 { return }
+                    int r = _selRow - 1
+                    if _selRow < 0 { r = 0 }
+                    if r < 0 { r = 0 }
+                    _select_key(r)
+                    return
                 }
-                return
-            }
-            // Ctrl+A 全选
-            if sc == core.Scancode.A and ((mod & 64) != 0 or (mod & 128) != 0) {
-                if _multi { select_all() }
-                return
+                case core.Scancode.DOWN {
+                    if _rows.len() == 0 { return }
+                    int r = _selRow + 1
+                    if _selRow < 0 { r = 0 }
+                    if r >= _rows.len() { r = _rows.len() - 1 }
+                    _select_key(r)
+                    return
+                }
+                case core.Scancode.HOME {
+                    if _rows.len() == 0 { return }
+                    _select_key(0)
+                    return
+                }
+                case core.Scancode.END {
+                    if _rows.len() == 0 { return }
+                    _select_key(_rows.len() - 1)
+                    return
+                }
+                case core.Scancode.PAGEUP {
+                    if _rows.len() == 0 { return }
+                    float bodyH = h - _headerH
+                    int pageSteps = _int(bodyH / _rowH)
+                    if pageSteps < 1 { pageSteps = 1 }
+                    int r = _selRow - pageSteps
+                    if r < 0 { r = 0 }
+                    _select_key(r)
+                    return
+                }
+                case core.Scancode.PAGEDOWN {
+                    if _rows.len() == 0 { return }
+                    float bodyH = h - _headerH
+                    int pageSteps = _int(bodyH / _rowH)
+                    if pageSteps < 1 { pageSteps = 1 }
+                    int r = _selRow + pageSteps
+                    if r >= _rows.len() { r = _rows.len() - 1 }
+                    _select_key(r)
+                    return
+                }
+                case core.Scancode.RETURN {
+                    if _selRow >= 0 and _selRow < _rows.len() {
+                        if _onDblClick != null { _onDblClick(_selRow, _selCol) }
+                        if _editable { _begin_edit(_selRow, _selCol) }
+                    }
+                    return
+                }
+                case core.Scancode.A {
+                    // Ctrl+A 全选（未按 Ctrl 时不拦截，让事件继续传递）
+                    if (mod & 64) != 0 or (mod & 128) != 0 {
+                        if _multi { select_all() }
+                        return
+                    }
+                }
             }
         }
 
