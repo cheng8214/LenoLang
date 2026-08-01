@@ -1,0 +1,144 @@
+import sockets
+import asyncs
+import io
+
+// ============================================================
+// BUG-1 回归测试：空字符串发送不阻塞接收方
+// ============================================================
+// BUG 描述: sock.send("") 返回 true，但服务器 arecv() 永远阻塞
+// TCP 语义: send("") 不发送实际数据（零长度段），是合法的无操作
+// 修复: 在 send() 中对空字符串显式处理（直接返回 true）
+//
+// 验证场景:
+//   1. send("") 后紧跟 send("DATA") — 服务器应正确收到 "DATA"
+//   2. 仅 send("") 后关闭 — 服务器 arecv 返回 null（连接关闭）
+//   3. send("") 返回 true（不调用系统 send 的优化路径）
+// ============================================================
+
+int g_recv_count = 0
+int g_close_count = 0
+int g_send_ok = 0
+
+async func recv_one_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null { return }
+    var client = await server.aaccept()
+    if client == null {
+        server.close()
+        return
+    }
+    var data = await client.arecv(1024)
+    if data != null {
+        g_recv_count = g_recv_count + 1
+    } else {
+        g_close_count = g_close_count + 1
+    }
+    client.close()
+    server.close()
+}
+
+// 保活 — 用来避免在 BUG-2 修复前的正常退出
+// （如果 BUG-2 已修复，即使没有它也应正常完成，但保留作为超时保护）
+async func watchdog(int ms) {
+    await asyncs.sleep(ms)
+}
+
+main() {
+    io.print("========================================")
+    io.print(" BUG-1: 空字符串发送不阻塞接收方")
+    io.print("========================================")
+    
+    // ── 测试 1: send("") 后紧跟 send("DATA") ──
+    io.print("\n[测试1] send('') + send('DATA')")
+    g_recv_count = 0
+    g_close_count = 0
+    
+    recv_one_server(12700)
+    
+    async func client1() {
+        await asyncs.sleep(100)  // 让服务器先 accept
+        var sock = sockets.connect("127.0.0.1", 12700)
+        if sock == null { return }
+        // 发送空字符串 — 应快速返回 true
+        sock.send("")
+        await asyncs.sleep(50)
+        // 发送真实数据
+        sock.send("DATA")
+        await asyncs.sleep(100)
+        sock.close()
+    }
+    client1()
+    watchdog(5000)  // watchdog — 与 BUG-2 无关的退出保障
+    
+    asyncs.run()
+    io.print("recv=" + g_recv_count + " close=" + g_close_count)
+    
+    if g_recv_count == 1 and g_close_count == 0 {
+        io.print(">>> PASS: 服务器正确收到 'DATA'，send('') 未造成阻塞")
+    } else {
+        io.print(">>> FAIL: 行为异常")
+    }
+    
+    // ── 测试 2: 仅 send("") 然后关闭连接 ──
+    io.print("\n[测试2] send('') 后立即关闭")
+    g_recv_count = 0
+    g_close_count = 0
+    
+    recv_one_server(12701)
+    
+    async func client2() {
+        await asyncs.sleep(100)
+        var sock = sockets.connect("127.0.0.1", 12701)
+        if sock == null { return }
+        sock.send("")
+        await asyncs.sleep(50)
+        sock.close()
+    }
+    client2()
+    watchdog(5000)
+    
+    asyncs.run()
+    io.print("recv=" + g_recv_count + " close=" + g_close_count)
+    
+    if g_close_count == 1 and g_recv_count == 0 {
+        io.print(">>> PASS: 仅发空字符串后关闭，服务器正确返回 null")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    // ── 测试 3: send("") 同步返回 true ──
+    io.print("\n[测试3] send('') 返回值验证")
+    g_send_ok = 0
+    
+    recv_one_server(12702)
+    
+    async func client3() {
+        await asyncs.sleep(100)
+        var sock = sockets.connect("127.0.0.1", 12702)
+        if sock == null { return }
+        var result = sock.send("")
+        if result == true {
+            g_send_ok = 1
+            io.print("send('') 返回 true (快速路径生效)")
+        } else {
+            io.print("send('') 返回 " + result)
+        }
+        await asyncs.sleep(50)
+        sock.close()
+    }
+    client3()
+    watchdog(3000)
+    
+    asyncs.run()
+    
+    if g_send_ok == 1 {
+        io.print(">>> PASS: send('') 正确返回 true")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    io.print("")
+    io.print("========================================")
+    io.print(" BUG-1 测试完成")
+    io.print("========================================")
+}

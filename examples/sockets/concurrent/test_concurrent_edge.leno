@@ -1,0 +1,276 @@
+import sockets
+import asyncs
+import io
+
+// ============================================================
+// 边界条件和压力测试
+// ============================================================
+
+int g_err = 0
+int g_ok = 0
+
+// ============ 测试 A: 基础并发 echo (3 客户端 x 2 消息) ============
+async func server_a(int port) {
+    var srv = sockets.listen("127.0.0.1", port)
+    if srv == null { io.print("[A] srv null"); return }
+    
+    int n = 0
+    while n < 3 {
+        var c = await srv.aaccept()
+        if c == null { break }
+        
+        var d1 = await c.arecv(1024)
+        if d1 != null { c.send("R1_" + d1) }
+        
+        var d2 = await c.arecv(1024)
+        if d2 != null { c.send("R2_" + d2) }
+        
+        c.close()
+        n = n + 1
+    }
+    srv.close()
+}
+
+async func client_a(int port, int id) {
+    var s = sockets.connect("127.0.0.1", port)
+    if s == null { io.print("[CA" + id + "] fail"); g_err = g_err + 1; return }
+    
+    s.send("A" + id)
+    var r1 = await s.arecv(1024)
+    
+    s.send("B" + id)
+    var r2 = await s.arecv(1024)
+    
+    if r1 == "R1_A" + id and r2 == "R2_B" + id {
+        g_ok = g_ok + 1
+    } else {
+        io.print("[CA" + id + "] bad: " + r1 + "," + r2)
+        g_err = g_err + 1
+    }
+    s.close()
+}
+
+// ============ 测试 B: 服务器粘包行为 ============
+async func server_b(int port) {
+    var srv = sockets.listen("127.0.0.1", port)
+    if srv == null { return }
+    
+    var c = await srv.aaccept()
+    if c != null {
+        // 快速发送 3 条短消息（可能粘在一起）
+        c.send("ONE")
+        c.send("TWO")
+        c.send("THREE")
+        c.close()
+    }
+    srv.close()
+}
+
+async func client_b(int port) {
+    await asyncs.sleep(100)
+    var s = sockets.connect("127.0.0.1", port)
+    if s == null { g_err = g_err + 1; return }
+    
+    // 一次性接收所有
+    var all_data = ""
+    var tries = 0
+    while tries < 5 {
+        var d = await s.arecv(1024)
+        if d == null { break }
+        if d.len() == 0 { break }
+        all_data = all_data + d
+        tries = tries + 1
+    }
+    s.close()
+    
+    // 验证数据完整性
+    if all_data == "ONETWOTHREE" {
+        g_ok = g_ok + 1
+    } else {
+        io.print("[B] packet data: '" + all_data + "' len=" + all_data.len())
+        // 即使粘合了，长度应该也是 11
+        if all_data.len() == 11 {
+            g_ok = g_ok + 1
+        } else {
+            g_err = g_err + 1
+        }
+    }
+}
+
+// ============ 测试 C: 空字符串发送 ============
+async func server_c(int port) {
+    var srv = sockets.listen("127.0.0.1", port)
+    if srv == null { return }
+    var c = await srv.aaccept()
+    if c != null {
+        var d = await c.arecv(1024)
+        io.print("[C] server got: '" + d + "' len=" + d.len())
+        c.send("GOT_" + d.len())
+        c.close()
+    }
+    srv.close()
+}
+
+async func client_c(int port) {
+    await asyncs.sleep(100)
+    var s = sockets.connect("127.0.0.1", port)
+    if s == null { g_err = g_err + 1; return }
+    s.send("")
+    var r = await s.arecv(1024)
+    io.print("[C] client got: " + r)
+    if r != null and r == "GOT_0" {
+        g_ok = g_ok + 1
+    } else {
+        g_err = g_err + 1
+    }
+    s.close()
+}
+
+// ============ 测试 D: 服务器先 send ============
+async func server_d(int port) {
+    var srv = sockets.listen("127.0.0.1", port)
+    if srv == null { return }
+    var c = await srv.aaccept()
+    if c != null {
+        c.send("FIRST")
+        var d = await c.arecv(1024)
+        if d != null and d == "BACK" {
+            c.send("DONE")
+        }
+        c.close()
+    }
+    srv.close()
+}
+
+async func client_d(int port) {
+    await asyncs.sleep(100)
+    var s = sockets.connect("127.0.0.1", port)
+    if s == null { g_err = g_err + 1; return }
+    
+    var r1 = await s.arecv(1024)
+    if r1 == "FIRST" {
+        s.send("BACK")
+        var r2 = await s.arecv(1024)
+        if r2 == "DONE" {
+            g_ok = g_ok + 1
+        } else {
+            io.print("[D] no DONE: " + r2)
+            g_err = g_err + 1
+        }
+    } else {
+        io.print("[D] no FIRST: " + r1)
+        g_err = g_err + 1
+    }
+    s.close()
+}
+
+// ============ 测试 E: 大消息 (2KB) ============
+async func server_e(int port) {
+    var srv = sockets.listen("127.0.0.1", port)
+    if srv == null { return }
+    var c = await srv.aaccept()
+    if c != null {
+        // 发 2KB
+        var big = ""
+        var i = 0
+        while i < 2048 {
+            big = big + "X"
+            i = i + 1
+        }
+        c.send(big)
+        c.close()
+    }
+    srv.close()
+}
+
+async func client_e(int port) {
+    await asyncs.sleep(100)
+    var s = sockets.connect("127.0.0.1", port)
+    if s == null { g_err = g_err + 1; return }
+    
+    // 分多次接收（缓冲区可能不够大）
+    var all_data = ""
+    var tries = 0
+    while tries < 10 {
+        var d = await s.arecv(4096)
+        if d == null { break }
+        if d.len() == 0 { break }
+        all_data = all_data + d
+        if all_data.len() >= 2048 { break }
+        tries = tries + 1
+    }
+    s.close()
+    
+    if all_data.len() == 2048 {
+        g_ok = g_ok + 1
+    } else {
+        io.print("[E] big data: got " + all_data.len() + " expected 2048")
+        g_err = g_err + 1
+    }
+}
+
+async func keeper(int ms) {
+    await asyncs.sleep(ms)
+}
+
+// ============ 主测试 ============
+main() {
+    io.print("========= 边界条件测试 =========")
+    
+    // 测试 A
+    var pa = 12500
+    server_a(pa)
+    client_a(pa, 0)
+    client_a(pa, 1)
+    client_a(pa, 2)
+    keeper(5000)
+    asyncs.run()
+    io.print("测试A (3client x 2msg): ok=" + g_ok + " err=" + g_err)
+    
+    var a_ok = g_ok
+    g_ok = 0
+    g_err = 0
+    
+    // 测试 B - 粘包
+    var pb = 12501
+    server_b(pb)
+    client_b(pb)
+    keeper(5000)
+    asyncs.run()
+    io.print("测试B (packet merge): ok=" + g_ok + " err=" + g_err)
+    
+    g_ok = 0
+    g_err = 0
+    
+    // 测试 C - 空数据
+    var pc = 12502
+    server_c(pc)
+    client_c(pc)
+    keeper(5000)
+    asyncs.run()
+    io.print("测试C (empty data): ok=" + g_ok + " err=" + g_err)
+    
+    g_ok = 0
+    g_err = 0
+    
+    // 测试 D - 服务器先发
+    var pd = 12503
+    server_d(pd)
+    client_d(pd)
+    keeper(5000)
+    asyncs.run()
+    io.print("测试D (server-push): ok=" + g_ok + " err=" + g_err)
+    
+    g_ok = 0
+    g_err = 0
+    
+    // 测试 E - 大消息
+    var pe = 12504
+    server_e(pe)
+    client_e(pe)
+    keeper(5000)
+    asyncs.run()
+    io.print("测试E (2KB msg): ok=" + g_ok + " err=" + g_err)
+    
+    io.print("\n========= 测试结束 =========")
+}

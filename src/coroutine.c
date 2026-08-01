@@ -223,6 +223,9 @@ extern int vm_run_coroutine(ObjCoroutine* co);
 // 外部声明：sockets 模块提供的 async I/O poll 接口
 extern int sockets_poll_async_io(uint64_t timeout_ms);
 
+// 外部声明：查询是否有待处理的异步 I/O 请求
+extern int sockets_has_async_io(void);
+
 // 运行事件循环直到所有协程完成
 void event_loop_run(EventLoop* loop) {
     loop->running = 1;
@@ -262,8 +265,11 @@ void event_loop_run(EventLoop* loop) {
         }
         
         // 3. 检查是否还有工作要做
-        if (loop->ready_count == 0 && loop->timer_count == 0) {
-            // 没有就绪协程且没有定时器，退出
+        // 关键修复：必须同时检查待处理的异步 I/O 请求（如 arecv/aaccept）
+        // 否则在网络 I/O 等待期间事件循环会过早退出
+        int has_async_io = sockets_has_async_io();
+        if (loop->ready_count == 0 && loop->timer_count == 0 && has_async_io == 0) {
+            // 没有就绪协程、没有定时器、没有异步 I/O，退出
             break;
         }
 
@@ -274,12 +280,13 @@ void event_loop_run(EventLoop* loop) {
             if (timeout != UINT64_MAX && timeout > now) {
                 timeout = timeout - now;
             } else if (timeout == UINT64_MAX) {
-                timeout = 100; // 无定时器时默认 100ms 超时
+                // 无定时器但有异步 I/O 时使用 100ms 轮询超时
+                timeout = has_async_io ? 100 : 0;
             } else {
                 timeout = 0;
             }
 
-            // 用 sockets_poll_async_io 同时等待 I/O 和定时器
+            // 用 sockets_poll_async_io 等待 I/O 就绪或定时器到期
             sockets_poll_async_io(timeout);
         }
     }

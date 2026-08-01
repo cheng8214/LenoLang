@@ -1,0 +1,200 @@
+import sockets
+import asyncs
+import io
+
+// ============================================================
+// 综合并发测试套件
+// 注意：需要 keeper 协程来保持事件循环活跃
+// ============================================================
+
+int g_sent = 0
+int g_recv = 0
+int g_errors = 0
+int g_clients_ok = 0
+
+// 服务器 echo handler - 每客户端收发 N 轮
+async func echo_handler(Socket client, int cid, int rounds) {
+    int i = 0
+    while i < rounds {
+        var data = await client.arecv(4096)
+        if data == null {
+            break
+        }
+        g_recv = g_recv + 1
+        client.send("E_" + cid + "_" + data)
+        i = i + 1
+    }
+    client.close()
+}
+
+// 服务器主循环 - 接受 N 个客户端
+async func echo_server(int port, int num_clients, int rounds) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("[SRV] listen fail")
+        return
+    }
+    int accepted = 0
+    while accepted < num_clients {
+        var c = await server.aaccept()
+        if c == null {
+            break
+        }
+        echo_handler(c, accepted, rounds)
+        accepted = accepted + 1
+    }
+    server.close()
+}
+
+// 客户端协程：连接、发送 N 条、验证回复
+async func client_func(int port, int cid, int rounds, int padding) {
+    // 错开连接，模拟真实并发
+    await asyncs.sleep(cid * 30)
+    
+    var sock = sockets.connect("127.0.0.1", port)
+    if sock == null {
+        io.print("[C" + cid + "] connect fail")
+        g_errors = g_errors + 1
+        return
+    }
+    
+    int ok = 0
+    int seq = 0
+    while seq < rounds {
+        // 构造消息（含可选填充）
+        var msg = "C" + cid + "_S" + seq
+        if padding > 0 {
+            var p = 0
+            while p < padding {
+                msg = msg + "x"
+                p = p + 1
+            }
+        }
+        
+        // 发送
+        if not sock.send(msg) {
+            io.print("[C" + cid + "] send fail")
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        g_sent = g_sent + 1
+        
+        // 异步接收回复
+        var reply = await sock.arecv(4096)
+        if reply == null {
+            io.print("[C" + cid + "] recv fail seq=" + seq)
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        
+        // 验证
+        var expected = "E_" + cid + "_" + msg
+        if reply != expected {
+            io.print("[C" + cid + "] mismatch! len_exp=" + expected.len() + " len_got=" + reply.len())
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        
+        ok = ok + 1
+        seq = seq + 1
+    }
+    
+    sock.close()
+    if ok == rounds {
+        g_clients_ok = g_clients_ok + 1
+    } else {
+        g_errors = g_errors + 1
+    }
+}
+
+// 保活协程 - 给 I/O 足够时间完成
+async func keeper(int ms) {
+    await asyncs.sleep(ms)
+}
+
+// ============================================================
+// 运行测试
+// ============================================================
+main() {
+    io.print("========================================")
+    io.print("  Leno 网络并发综合测试")
+    io.print("========================================")
+    
+    // 测试 1: 基础并发 - 5 客户端 x 3 消息
+    var port = 12400
+    echo_server(port, 5, 3)
+    client_func(port, 0, 3, 0)
+    client_func(port, 1, 3, 0)
+    client_func(port, 2, 3, 0)
+    client_func(port, 3, 3, 0)
+    client_func(port, 4, 3, 0)
+    keeper(5000)  // 保活
+    
+    asyncs.run()
+    
+    io.print("\n--- 测试1: 5客户端 x 3消息 ---")
+    io.print("发送: " + g_sent + " 接收: " + g_recv + " 错误: " + g_errors)
+    io.print("客户端通过: " + g_clients_ok)
+    
+    if g_errors == 0 and g_clients_ok == 5 {
+        io.print(">>> PASS")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    // 重置统计
+    var saved_sent = g_sent
+    var saved_recv = g_recv
+    g_sent = 0
+    g_recv = 0
+    g_errors = 0
+    g_clients_ok = 0
+    
+    // 测试 2: 填充大数据
+    var port2 = 12401
+    echo_server(port2, 3, 2)
+    client_func(port2, 0, 2, 256)
+    client_func(port2, 1, 2, 256)
+    client_func(port2, 2, 2, 256)
+    keeper(5000)
+    
+    asyncs.run()
+    
+    io.print("\n--- 测试2: 3客户端 x 2消息 (256B padding) ---")
+    io.print("发送: " + g_sent + " 接收: " + g_recv + " 错误: " + g_errors)
+    if g_errors == 0 and g_clients_ok == 3 {
+        io.print(">>> PASS")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    // 重置
+    g_sent = 0
+    g_recv = 0
+    g_errors = 0
+    g_clients_ok = 0
+    
+    // 测试 3: 单客户端大量消息（无并发）
+    var port3 = 12402
+    echo_server(port3, 1, 10)
+    client_func(port3, 0, 10, 0)
+    keeper(5000)
+    
+    asyncs.run()
+    
+    io.print("\n--- 测试3: 1客户端 x 10消息 (串行) ---")
+    io.print("发送: " + g_sent + " 接收: " + g_recv + " 错误: " + g_errors)
+    if g_errors == 0 and g_clients_ok == 1 {
+        io.print(">>> PASS")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    // 总结
+    io.print("\n========================================")
+    io.print("所有测试完成")
+    io.print("========================================")
+}

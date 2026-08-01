@@ -476,9 +476,86 @@ A: 确保使用 `await` 等待 async 函数，并用 `try-catch` 捕获异常。
 - `test_async_yield.leno` - yield 测试
 - `test_async_all.leno` - all 测试
 - `test_async_timeout.leno` - timeout 测试
-- `examples/sockets/test_async_arecv_aaccept.leno` - async socket 测试
-- `examples/sockets/test_async_stress.leno` - async socket 压力测试
+- `examples/sockets/async/test_async_arecv_aaccept.leno` - async socket 测试
+- `examples/sockets/async/test_async_stress.leno` - async socket 压力测试
 
-## 网络 IO 异步
+## 异步网络 IO
 
-`sockets` 模块提供了异步方法 `sock.arecv()` 和 `sock.aaccept()`，配合 `await` 使用时让出执行权给事件循环，实现真正的并发网络服务器。详见 [module_sockets.md](../docs/module_sockets.md)。
+`sockets` 模块提供了异步方法 `sock.arecv()` 和 `sock.aaccept()`，配合 `await` 使用时让出执行权给事件循环，实现真正的并发网络服务器。
+
+### 基本模式
+
+```leno
+import sockets
+import asyncs
+import io
+
+async func echo_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null { return }
+
+    while true {
+        var client = await server.aaccept()
+        if client == null { break }
+        handle_client(client)
+    }
+    server.close()
+}
+
+async func handle_client(Socket client) {
+    while true {
+        var data = await client.arecv(1024)
+        if data == null { break }
+        client.send("Echo: " + data)
+    }
+    client.close()
+}
+
+async func connect_client(int port) {
+    var conn = sockets.connect("127.0.0.1", port)
+    conn.send("Hello")
+    var reply = await conn.arecv(1024)
+    io.print("收到: " + reply)
+    conn.close()
+}
+
+main() {
+    echo_server(8080)
+    connect_client(8080)
+    connect_client(8080)
+    // 无需保活协程 — 事件循环会自动等待所有异步 I/O 完成
+    asyncs.run()
+}
+```
+
+### 关于保活协程
+
+在早期版本中，如果所有协程都阻塞在 `await arecv()`/`await aaccept()` 上，`asyncs.run()` 会过早退出。当时的解决方法是添加一个额外的"保活"协程：
+
+```leno
+// 旧写法（已不再需要）
+async func keeper(int ms) {
+    await asyncs.sleep(ms)
+}
+
+main() {
+    echo_server(8080)
+    client_task(8080)
+    keeper(5000)  // 保活（已不再需要！）
+    asyncs.run()
+}
+```
+
+**当前行为**: 事件循环会检测待处理的异步 I/O 请求并在 I/O 完成前保持活跃，因此不再需要保活协程。只要启动时注册了异步网络任务，`asyncs.run()` 会等待所有连接处理完毕后自然返回。
+
+### 空字符串发送注意
+
+```leno
+// TCP: send("") 不发送任何数据，不会唤醒对端
+sock.send("")   // 返回 true，但不传输
+
+// 正确做法
+sock.send(" ")  // 发送 1 字节确保对端感知
+```
+
+详见 [module_sockets.md](../docs/module_sockets.md)（"空字符串发送行为"小节）。

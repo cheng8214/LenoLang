@@ -1,0 +1,58 @@
+import sockets
+import asyncs
+import io
+
+// 测试：用保活 sleep 让 I/O 有机会完成
+
+int g_done = 0
+
+async func srv(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("[S] listen fail")
+        return
+    }
+    io.print("[S] listening")
+    var c = await server.aaccept()
+    if c != null {
+        io.print("[S] accepted")
+        var d = await c.arecv(1024)
+        io.print("[S] recv: " + d)
+        if d != null {
+            c.send("PONG_" + d)
+        }
+        c.close()
+    }
+    server.close()
+    g_done = g_done + 1
+}
+
+async func cli(int port) {
+    await asyncs.sleep(100)
+    var s = sockets.connect("127.0.0.1", port)
+    if s == null {
+        io.print("[C] null")
+        return
+    }
+    io.print("[C] connected")
+    s.send("PING")
+    var r = await s.arecv(1024)
+    io.print("[C] reply=" + r)
+    s.close()
+    g_done = g_done + 1
+}
+
+async func keeper() {
+    // 保活 - 给 I/O 足够时间
+    await asyncs.sleep(3000)
+}
+
+main() {
+    var port = 12358
+    srv(port)
+    cli(port)
+    keeper()
+    io.print("running...")
+    asyncs.run()
+    io.print("done, g_done=" + g_done)
+}

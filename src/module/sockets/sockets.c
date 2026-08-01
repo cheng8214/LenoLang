@@ -179,6 +179,11 @@ int sockets_poll_async_io(uint64_t timeout_ms) {
     return done;
 }
 
+// 查询是否有待处理的异步 I/O 请求
+int sockets_has_async_io(void) {
+    return g_async_count;
+}
+
 // 清理某个协程关联的所有异步请求（协程结束时调用）
 void sockets_cancel_async(ObjCoroutine* co) {
     for (int i = 0; i < g_async_count; i++) {
@@ -378,7 +383,11 @@ static Value socket_aaccept_func(int argc, Value* args) {
     return val_obj((Object*)future);
 }
 
-/* sock.send(data) -> bool */
+/* sock.send(data) -> bool
+ * 注意：发送空字符串("")是合法的无操作（返回 true），
+ * 但不会导致对端 arecv() 被唤醒。TCP 层面不发送零长度段。
+ * 如果需要确保对端感知到事件，请发送至少 1 字节数据。
+ */
 static Value socket_send_func(int argc, Value* args) {
     (void)argc;
     ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
@@ -388,6 +397,11 @@ static Value socket_send_func(int argc, Value* args) {
 
     if (sock->type == SOCKET_TYPE_TCP && !sock->is_connected) {
         return val_bool(false);
+    }
+
+    /* 空字符串优化：跳过系统调用 */
+    if (data->len == 0) {
+        return val_bool(true);
     }
 
     int sent = send(sock->fd, data->chars, (int)data->len, 0);
@@ -490,7 +504,10 @@ static Value socket_accept_func(int argc, Value* args) {
     return val_obj((Object*)client);
 }
 
-/* sock.sendto(data, addr, port) -> bool */
+/* sock.sendto(data, addr, port) -> bool
+ * 注意：UDP 发送空字符串会发送 0 字节数据报，对端 recvfrom 会返回空字符串。
+ * TCP 模式下 sendto 不是有效操作。
+ */
 static Value socket_sendto_func(int argc, Value* args) {
     (void)argc;
     ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
@@ -499,6 +516,14 @@ static Value socket_sendto_func(int argc, Value* args) {
     int port = val_as_int(args[3]);
 
     if (!socket_is_valid(sock)) return val_bool(false);
+
+    /* 空数据优化：UDP 空数据报 */
+    if (data->len == 0) {
+        /* UDP 允许发送空数据报 */
+        if (sock->type != SOCKET_TYPE_UDP) {
+            return val_bool(false);
+        }
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));

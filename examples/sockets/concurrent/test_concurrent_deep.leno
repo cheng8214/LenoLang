@@ -1,0 +1,224 @@
+import sockets
+import asyncs
+import io
+
+// ============================================================
+// 深入并发测试 - 暴露更多边界问题
+// 测试场景：
+// 1. 同时连接（无延迟错开）
+// 2. 不同消息大小混合
+// 3. 快速断开连接
+// 4. 消息交错收发
+// ============================================================
+
+int g_errors = 0
+int g_pass = 0
+
+// 服务器：简单 echo，收发指定数量后关闭连接
+async func echo_server(int port, int client_count, int rounds_per_client) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("[SERVER] 监听失败")
+        return
+    }
+    
+    int handled = 0
+    while handled < client_count {
+        var client = await server.aaccept()
+        if client == null {
+            break
+        }
+        
+        // 处理当前客户端指定轮次
+        int round = 0
+        while round < rounds_per_client {
+            var data = await client.arecv(4096)
+            if data == null {
+                break
+            }
+            // 简单 echo 加前缀
+            client.send("OK_" + data)
+            round = round + 1
+        }
+        
+        client.close()
+        handled = handled + 1
+    }
+    
+    server.close()
+}
+
+// 客户端：发送 N 条消息，每条前面有 seq 编号
+async func client_send_recv(int port, int client_id, int msg_count, int padding_size) {
+    var sock = sockets.connect("127.0.0.1", port)
+    if sock == null {
+        io.print("[C" + client_id + "] 连接失败")
+        g_errors = g_errors + 1
+        return
+    }
+    
+    int i = 0
+    while i < msg_count {
+        // 构造带填充的消息用于测试不同大小
+        var padding = ""
+        var p = 0
+        while p < padding_size {
+            padding = padding + "x"
+            p = p + 1
+        }
+        var msg = "C" + client_id + "_S" + i + "_" + padding
+        
+        // 发送
+        if not sock.send(msg) {
+            io.print("[C" + client_id + "] 发送失败")
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        
+        // 接收
+        var reply = await sock.arecv(4096)
+        if reply == null {
+            io.print("[C" + client_id + "] 接收失败")
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        
+        // 验证
+        var expected = "OK_" + msg
+        if reply != expected {
+            io.print("[C" + client_id + "] 数据损坏!")
+            io.print("  期望长度: " + expected.len())
+            io.print("  实收长度: " + reply.len())
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        
+        i = i + 1
+    }
+    
+    sock.close()
+    g_pass = g_pass + 1
+}
+
+// 快速断连测试
+async func client_early_disconnect(int port, int client_id) {
+    var sock = sockets.connect("127.0.0.1", port)
+    if sock == null {
+        return
+    }
+    sock.send("QUIT")
+    // 立即关闭不等回复
+    sock.close()
+}
+
+// ============================================================
+// 主测试
+// ============================================================
+main() {
+    // 测试 1: 基础并发
+    io.print("--- 测试1: 3客户端 x 3消息 ---")
+    var port1 = 12351
+    echo_server(port1, 3, 3)
+    
+    // 无延迟同时启动
+    client_send_recv(port1, 0, 3, 0)
+    client_send_recv(port1, 1, 3, 0)
+    client_send_recv(port1, 2, 3, 0)
+    
+    asyncs.run()
+    
+    if g_errors == 0 and g_pass == 3 {
+        io.print(">>> 测试1 PASS")
+    } else {
+        io.print(">>> 测试1 FAIL: errors=" + g_errors + " pass=" + g_pass)
+    }
+    
+    // 测试 2: 大数据量
+    io.print("\n--- 测试2: 2客户端 x 2消息 (512B padding) ---")
+    g_errors = 0
+    g_pass = 0
+    var port2 = 12352
+    echo_server(port2, 2, 2)
+    
+    client_send_recv(port2, 10, 2, 512)
+    client_send_recv(port2, 11, 2, 512)
+    
+    asyncs.run()
+    
+    if g_errors == 0 and g_pass == 2 {
+        io.print(">>> 测试2 PASS")
+    } else {
+        io.print(">>> 测试2 FAIL")
+    }
+    
+    // 测试 3: 快速断连
+    io.print("\n--- 测试3: 快速断连 ---")
+    g_errors = 0
+    g_pass = 0
+    var port3 = 12353
+    
+    // 服务器能处理断开连接
+    async func server_for_dc() {
+        var server = sockets.listen("127.0.0.1", port3)
+        if server == null { return }
+        
+        // 接受连接，收到 QUIT 就关闭
+        var c1 = await server.aaccept()
+        if c1 != null {
+            var d = await c1.arecv(1024)
+            if d != null and d == "QUIT" {
+                c1.send("BYE")
+            }
+            c1.close()
+        }
+        
+        // 另一个正常客户端
+        var c2 = await server.aaccept()
+        if c2 != null {
+            var d = await c2.arecv(1024)
+            if d != null {
+                c2.send("NORMAL_OK_" + d)
+            }
+            c2.close()
+        }
+        
+        server.close()
+    }
+    
+    server_for_dc()
+    client_early_disconnect(port3, 99)
+    
+    async func normal_client() {
+        await asyncs.sleep(100)  // 让断连客户端先跑
+        var sock = sockets.connect("127.0.0.1", port3)
+        if sock != null {
+            sock.send("HELLO")
+            var reply = await sock.arecv(1024)
+            if reply != null and reply == "NORMAL_OK_HELLO" {
+                g_pass = g_pass + 1
+            } else {
+                io.print("[TEST3] 异常回复: " + reply)
+                g_errors = g_errors + 1
+            }
+            sock.close()
+        }
+    }
+    
+    normal_client()
+    
+    asyncs.run()
+    
+    if g_errors == 0 and g_pass == 1 {
+        io.print(">>> 测试3 PASS")
+    } else {
+        io.print(">>> 测试3 FAIL")
+    }
+    
+    // 总结
+    io.print("\n==================================")
+    io.print("所有测试完成")
+    io.print("==================================")
+}

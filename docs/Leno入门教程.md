@@ -7292,9 +7292,7 @@ async func handle_client(Socket client, int id) {
     io.print($"[#{id}] 客户端已连接")
     while true {
         var data = await client.arecv(1024)
-        if data == null or data == "" {
-            break
-        }
+        if data == null { break }
         client.send("Echo: " + data)
         if data == "DISCONNECT" {
             client.close()
@@ -7319,7 +7317,7 @@ async func echo_server(int port) {
 
 main() {
     echo_server(8080)
-    asyncs.run()
+    asyncs.run()  // 事件循环会自动等待 I/O 完成，无需保活协程
 }
 ```
 
@@ -8467,7 +8465,7 @@ async func handle_client(Socket client, int id) {
     io.print($"[#{id}] 客户端已连接")
     while true {
         var data = await client.arecv(1024)  // 异步接收，不阻塞事件循环
-        if data == null or data == "" { break }
+        if data == null { break }
         client.send("Echo: " + data)
         if data == "DISCONNECT" { client.close() return }
     }
@@ -8489,7 +8487,7 @@ async func echo_server(int port) {
 
 main() {
     echo_server(8080)
-    asyncs.run()
+    asyncs.run()  // 无保活协程，事件循环自动保持活跃
 }
 ```
 

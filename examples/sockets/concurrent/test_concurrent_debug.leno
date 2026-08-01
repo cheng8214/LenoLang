@@ -1,0 +1,70 @@
+import sockets
+import asyncs
+import io
+
+// 调试测试A问题 - 连接没有建立？
+
+int g_connections = 0
+int g_ok = 0
+
+async func srv(int port) {
+    var s = sockets.listen("127.0.0.1", port)
+    if s == null { io.print("[S] null"); return }
+    io.print("[S] listening")
+    
+    var n = 0
+    while n < 3 {
+        io.print("[S] waiting accept #" + n)
+        var c = await s.aaccept()
+        io.print("[S] accepted: " + c)
+        if c != null {
+            g_connections = g_connections + 1
+            
+            var d = await c.arecv(1024)
+            io.print("[S] recv: " + d)
+            if d != null {
+                c.send("REPLY_" + d)
+            }
+            c.close()
+        }
+        n = n + 1
+    }
+    s.close()
+}
+
+async func cli(int port, int id) {
+    await asyncs.sleep(id * 50)
+    io.print("[C" + id + "] connecting...")
+    var s = sockets.connect("127.0.0.1", port)
+    io.print("[C" + id + "] connect result: " + s)
+    if s == null {
+        return
+    }
+    
+    io.print("[C" + id + "] sending...")
+    s.send("hi_from_" + id)
+    io.print("[C" + id + "] waiting reply...")
+    var r = await s.arecv(1024)
+    io.print("[C" + id + "] got: " + r)
+    
+    if r != null and r == "REPLY_hi_from_" + id {
+        g_ok = g_ok + 1
+    }
+    s.close()
+}
+
+async func keeper(int ms) {
+    await asyncs.sleep(ms)
+}
+
+main() {
+    var port = 12600
+    srv(port)
+    cli(port, 0)
+    cli(port, 1)
+    cli(port, 2)
+    keeper(5000)
+    io.print("starting run...")
+    asyncs.run()
+    io.print("done. connections=" + g_connections + " ok=" + g_ok)
+}
