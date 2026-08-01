@@ -31,13 +31,13 @@ int _brdR = 110, _brdG = 115, _brdB = 132
 export func setTipDelay(int ms) { _tipDelay = ms }
 
 // 控件在 hover 时调用（每次 mouse motion 上报）。text 为空表示此控件无 tip。
-// 同一文本重复上报不会重置计时；文本变化（或重新进入）才会重新计延迟。
+// 每次上报都重置延迟计时——鼠标移动中不显示，仅当停留 _tipDelay 毫秒后才弹出。
 export func tipReport(string text, float ax, float ay) {
     if text == null or text == "" { tipClear(); return }
     if text != _tipText {
         _tipText = text
-        _tipStart = core.getTicks()
     }
+    _tipStart = core.getTicks()   // 鼠标移动时持续重置延迟，停留 _tipDelay 后才显示
     _tipAX = ax; _tipAY = ay
 }
 

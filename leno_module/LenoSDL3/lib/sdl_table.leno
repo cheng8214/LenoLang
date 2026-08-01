@@ -631,6 +631,7 @@ export struct Table impl Widget {
     func process(Event ev) {
         if not _loaded or not visible or not enabled {
             _hoverRow = -1; _draggingV = false; _draggingH = false; _dragCol = -1
+            tip.tipClear()
             return
         }
         float mx = ev.mouseX(), my = ev.mouseY()
@@ -734,6 +735,7 @@ export struct Table impl Widget {
         // 仅处理命中表格区域内的事件（表格外点击/悬停不触发表头与行交互）
         if not contains(mx, my) {
             _hoverRow = -1
+            tip.tipClear()
             return
         }
 
@@ -853,7 +855,11 @@ export struct Table impl Widget {
                         float availW = _colW[hc] - 2.0 * pad - iconOff
                         float fullW = _font.measureString(cellText).w
                         if fullW > availW {
-                            tip.tipReport(cellText, mx, my)
+                            // 用单元格位置而非鼠标位置作为锚点，使 tooltip 稳定在单元格旁、
+                            // 不随鼠标在单元格内移动而跳动
+                            float cellX = _col_x(hc)
+                            float cellCY = y + _headerH - _scrollY + _hoverRow * _rowH + _rowH / 2.0
+                            tip.tipReport(cellText, cellX, cellCY)
                         } else {
                             tip.tipClear()
                         }
