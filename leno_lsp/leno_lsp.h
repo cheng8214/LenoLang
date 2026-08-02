@@ -128,20 +128,20 @@ typedef struct LspTextDocument {
     struct LspTextDocument* next;
 } LspTextDocument;
 
-// LSP 服务器上下文
+/* LSP 服务器上下文 */
 typedef struct {
     LspServerState state;
     int client_pid;
     char* root_path;
     LspTextDocument* documents;
     
-    // 能力配置
+    /* 能力配置 */
     bool completion_provider;
     bool hover_provider;
     bool definition_provider;
     bool diagnostic_provider;
     
-    // 日志
+    /* 日志 */
     LspLogLevel log_level;
     FILE* log_file;
 } LspServer;

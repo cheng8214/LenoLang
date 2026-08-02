@@ -8,19 +8,26 @@ if not exist build mkdir build
 rem Delete old executable if exists
 if exist build\leno_lsp.exe del /F build\leno_lsp.exe 2>nul
 
-rem LSP source files
+rem === LSP source files ===
 set LSP_SOURCES=
 set LSP_SOURCES=!LSP_SOURCES! lsp_server.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_protocol.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_document.c
-set LSP_SOURCES=!LSP_SOURCES! lsp_diagnostic.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_complete.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_hover.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_definition.c
+set LSP_SOURCES=!LSP_SOURCES! lsp_diagnostic.c
 set LSP_SOURCES=!LSP_SOURCES! json.c
 set LSP_SOURCES=!LSP_SOURCES! leno_compiler_lib.c
 
-rem LenoC source files
+rem === New modular completion engine ===
+set LSP_SOURCES=!LSP_SOURCES! comp_set.c
+set LSP_SOURCES=!LSP_SOURCES! comp_context.c
+set LSP_SOURCES=!LSP_SOURCES! comp_import.c
+set LSP_SOURCES=!LSP_SOURCES! comp_keywords.c
+set LSP_SOURCES=!LSP_SOURCES! comp_symbols.c
+
+rem === LenoC source files ===
 set LENO_SOURCES=
 set LENO_SOURCES=!LENO_SOURCES! ../src/error.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/lexer.c

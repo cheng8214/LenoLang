@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 悬停提示服务
  * 提供鼠标悬停时的类型信息 - 使用 LenoC 编译器
  */
@@ -1390,23 +1390,19 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
         return NULL;
     }
 
-    extern char* read_module_file(const char* file_path, const char* current_file);
-    char* module_source = read_module_file(module_path, current_file);
+    
+    // 使用轻量级 module_symbol_table（带磁盘缓存），不触发完整编译
+    ModuleSymbolTable* table = module_symbol_table_create(module_path);
     free(module_path);
 
-    if (!module_source) {
+    if (!table) {
         for (int i = 0; i < segment_count; i++) free(segments[i]);
         return NULL;
     }
 
-    // 使用编译器分析模块
-    CompilerContext ctx;
-    compiler_context_init(&ctx);
-    bool analyzed = compiler_analyze_with_filename(&ctx, module_source, current_file);
-    free(module_source);
-
-    if (!analyzed || !ctx.root_scope) {
-        compiler_context_cleanup(&ctx);
+    int scan_result = module_symbol_table_scan(table, current_file);
+    if (scan_result != 0) {
+        module_symbol_table_destroy(table);
         for (int i = 0; i < segment_count; i++) free(segments[i]);
         return NULL;
     }
@@ -1414,149 +1410,194 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
     char* result = NULL;
 
     if (segment_count == 2) {
-        // module.symbol - 可能是函数、struct、enum、变量
         const char* symbol_name = segments[1];
 
-        // 从编译器符号表中查找
-        Symbol* sym = scope_resolve_tree_bfs(ctx.root_scope, symbol_name);
-        if (sym) {
-            const char* type_str = type_to_string(sym->type);
-
-            switch (sym->kind) {
-                case SYM_GLOBAL_FUNC: {
-                    int len = 512 + strlen(word) + strlen(type_str);
-                    result = (char*)malloc(len);
-                    if (result) {
-                        snprintf(result, len, "**%s**\n\n"
-                                 "```leno\n"
-                                 "%s() -> %s\n"
-                                 "```\n\n"
-                                 "模块函数",
-                                 word, word, type_str);
+        // 查找函数
+        ModuleFuncSymbol* func = module_symbol_table_find_func(table, symbol_name);
+        if (func) {
+            int len = 1024 + strlen(word);
+            result = (char*)malloc(len);
+            if (result) {
+                const char* ret_str = func->return_struct_name ? func->return_struct_name : type_kind_to_string(func->return_type);
+                if (func->type_param_count > 0) {
+                    char params[128] = "[";
+                    for (int gi = 0; gi < func->type_param_count; gi++) {
+                        if (gi > 0) strcat(params, ", ");
+                        char tb[16]; snprintf(tb, sizeof(tb), "T%d", gi+1);
+                        strcat(params, tb);
                     }
-                    break;
+                    strcat(params, "]");
+                    snprintf(result, len, "**%s**\n\n```leno\n%s%s(...) -> %s\n```\n\n模块函数",
+                             word, word, params, ret_str);
+                } else {
+                    snprintf(result, len, "**%s**\n\n```leno\n%s(...) -> %s\n```\n\n模块函数",
+                             word, word, ret_str);
                 }
-                case SYM_TYPE: {
-                    if (sym->type) {
-                        int len = 512 + strlen(word) + (symbol_name ? strlen(symbol_name) : 0);
-                        const char* kind_label = "type";
-                        const char* kind_desc = "模块导出的类型";
-                        if (sym->type->kind == TYPE_STRUCT) {
-                            kind_label = "struct"; kind_desc = "模块导出的 struct";
-                        } else if (sym->type->kind == TYPE_FACE) {
-                            kind_label = "face"; kind_desc = "模块导出的 face";
-                        } else if (sym->type->kind == TYPE_ENUM) {
-                            kind_label = "enum"; kind_desc = "模块导出的 enum";
-                        } else if (sym->type->kind == TYPE_CLIB) {
-                            kind_label = "clib"; kind_desc = "模块导出的 clib";
-                        } else if (sym->type->kind == TYPE_CFUNC) {
-                            kind_label = "cfunc"; kind_desc = "模块导出的 cfunc";
-                        }
-                        result = (char*)malloc(len);
-                        if (result) {
-                            snprintf(result, len, "**%s**\n\n"
-                                 "```leno\n"
-                                 "%s %s\n"
-                                 "```\n\n"
-                                 "%s",
-                                 word, kind_label, symbol_name, kind_desc);
-                        }
-                    } else {
-                        int len = 512 + strlen(word);
-                        result = (char*)malloc(len);
-                        if (result) {
-                            snprintf(result, len, "**%s**\n\n"
-                                 "```leno\n"
-                                 "enum %s\n"
-                                 "```\n\n"
-                                 "模块导出的 enum",
-                                 word, symbol_name);
-                        }
-                    }
-                    break;
-                }
-                case SYM_CLIB: {
-                    int len = 512 + strlen(word);
-                    result = (char*)malloc(len);
-                    if (result) {
-                        snprintf(result, len, "**%s**\n\n"
-                                 "```leno\n"
-                                 "clib %s\n"
-                                 "```\n\n"
-                                 "模块导出的 C 库类型",
-                                 word, symbol_name);
-                    }
-                    break;
-                }
-                case SYM_GLOBAL:
-                case SYM_LOCAL:
-                case SYM_MODULE: {
-                    int len = 512 + strlen(word) + strlen(type_str);
-                    result = (char*)malloc(len);
-                    if (result) {
-                        snprintf(result, len, "**%s**\n\n"
-                                 "```leno\n"
-                                 "%s: %s\n"
-                                 "```\n\n"
-                                 "模块导出的变量",
-                                 word, word, type_str);
-                    }
-                    break;
-                }
-                default:
-                    break;
             }
         }
+
+        // 查找 struct
+        if (!result) {
+            ModuleStructSymbol* st = module_symbol_table_find_struct(table, symbol_name);
+            if (st) {
+                int len = 1024 + strlen(word);
+                const char* kind_label = st->is_cstruct ? "cstruct" : "struct";
+                result = (char*)malloc(len);
+                if (result) {
+                    if (st->type_param_count > 0) {
+                        char params[128] = "[";
+                        for (int gi = 0; gi < st->type_param_count; gi++) {
+                            if (gi > 0) strcat(params, ", ");
+                            if (st->type_param_names && st->type_param_names[gi])
+                                strcat(params, st->type_param_names[gi]);
+                            else { char tb[16]; snprintf(tb, sizeof(tb), "T%d", gi+1); strcat(params, tb); }
+                        }
+                        strcat(params, "]");
+                        snprintf(result, len, "**%s**\n\n```leno\n%s %s%s\n```\n\n模块导出的 %s (%d 字段, %d 方法)",
+                                 word, kind_label, symbol_name, params, kind_label, st->field_count, st->method_count);
+                    } else {
+                        snprintf(result, len, "**%s**\n\n```leno\n%s %s\n```\n\n模块导出的 %s (%d 字段, %d 方法)",
+                                 word, kind_label, symbol_name, kind_label, st->field_count, st->method_count);
+                    }
+                }
+            }
+        }
+
+        // 查找 enum
+        if (!result) {
+            ModuleEnumSymbol* en = module_symbol_table_find_enum(table, symbol_name);
+            if (en) {
+                int len = 1024 + strlen(word) + en->member_count * 32;
+                result = (char*)malloc(len);
+                if (result) {
+                    char members[512] = {0};
+                    for (int ei = 0; ei < en->member_count && ei < 8; ei++) {
+                        if (ei > 0) strcat(members, ", ");
+                        strcat(members, en->member_names[ei]);
+                    }
+                    if (en->member_count > 8) strcat(members, ", ...");
+                    snprintf(result, len, "**%s**\n\n```leno\nenum %s { %s }\n```\n\n模块导出的 enum (%d 个值)",
+                             word, symbol_name, members, en->member_count);
+                }
+            }
+        }
+
+        // 查找 face
+        if (!result) {
+            ModuleFaceSymbol* face = module_symbol_table_find_face(table, symbol_name);
+            if (face) {
+                int len = 1024 + strlen(word);
+                result = (char*)malloc(len);
+                if (result) {
+                    snprintf(result, len, "**%s**\n\n```leno\nface %s\n```\n\n模块导出的 face (%d 个方法)",
+                             word, symbol_name, face->method_count);
+                }
+            }
+        }
+
+        // 查找变量
+        if (!result) {
+            ModuleVarSymbol* var = module_symbol_table_find_var(table, symbol_name);
+            if (var) {
+                int len = 1024 + strlen(word);
+                result = (char*)malloc(len);
+                if (result) {
+                    const char* tstr = var->struct_name ? var->struct_name : type_kind_to_string(var->type);
+                    snprintf(result, len, "**%s**\n\n```leno\n%s: %s\n```\n\n模块导出的%s变量",
+                             word, word, tstr, var->is_const ? "常量 " : " ");
+                }
+            }
+        }
+
+        // 查找 clib
+        if (!result) {
+            for (int ci = 0; ci < table->clib_count; ci++) {
+                if (strcmp(table->clibs[ci].name, symbol_name) == 0) {
+                    int len = 1024 + strlen(word);
+                    result = (char*)malloc(len);
+                    if (result) {
+                        snprintf(result, len, "**%s**\n\n```leno\nclib %s\n```\n\n模块导出的 C 库类型 (%d 个函数)",
+                                 word, symbol_name, table->clibs[ci].func_count);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // 查找别名
+        if (!result) {
+            ModuleAliasSymbol* als = module_symbol_table_find_alias(table, symbol_name);
+            if (als && als->type_info) {
+                int len = 1024 + strlen(word);
+                result = (char*)malloc(len);
+                if (result) {
+                    snprintf(result, len, "**%s**\n\n```leno\n%s: %s\n```\n\n模块导出的类型别名",
+                             word, word, type_kind_to_string(als->type_info->kind));
+                }
+            }
+        }
+
     } else if (segment_count == 3) {
-        // module.Enum.value 或 module.Struct.field
         const char* type_name = segments[1];
         const char* member_name = segments[2];
 
-        // 查找 enum
-        Symbol* enum_sym = scope_resolve_tree_bfs(ctx.root_scope, type_name);
-        if (enum_sym && enum_sym->kind == SYM_TYPE && enum_sym->type && enum_sym->type->kind == TYPE_ENUM) {
-            // 是 enum，显示 enum 值信息
-            int len = 512 + strlen(word);
-            result = (char*)malloc(len);
-            if (result) {
-                snprintf(result, len, "**%s**\n\n"
-                         "```leno\n"
-                         "%s.%s.%s\n"
-                         "```\n\n"
-                         "%s enum 值 (%s)",
-                         word, segments[0], type_name, member_name,
-                         type_name, type_name);
+        // 查找 enum 值
+        ModuleEnumSymbol* en = module_symbol_table_find_enum(table, type_name);
+        if (en) {
+            for (int ei = 0; ei < en->member_count; ei++) {
+                if (strcmp(en->member_names[ei], member_name) == 0) {
+                    int len = 1024 + strlen(word);
+                    result = (char*)malloc(len);
+                    if (result) {
+                        snprintf(result, len, "**%s**\n\n```leno\n%s.%s.%s\n```\n\n%s enum 值 (%s)",
+                                 word, segments[0], type_name, member_name, type_name, type_name);
+                    }
+                    break;
+                }
             }
         }
 
         // 查找 struct 字段
         if (!result) {
-            Symbol* struct_sym = scope_resolve_tree_bfs(ctx.root_scope, type_name);
-            if (struct_sym && struct_sym->kind == SYM_TYPE && struct_sym->type && struct_sym->type->kind == TYPE_STRUCT) {
-                if (struct_sym->struct_field_names && struct_sym->struct_field_types) {
-                    for (int i = 0; i < struct_sym->struct_field_count; i++) {
-                        if (strcmp(struct_sym->struct_field_names[i], member_name) == 0) {
-                            const char* field_type_str = type_to_string(struct_sym->struct_field_types[i]);
-                            int len = 512 + strlen(word) + strlen(field_type_str);
-                            result = (char*)malloc(len);
-                            if (result) {
-                                snprintf(result, len, "**%s**\n\n"
-                                         "```leno\n"
-                                         "%s: %s\n"
-                                         "```\n\n"
-                                         "%s 字段 (%s)",
-                                         word, word, field_type_str,
-                                         type_name, type_name);
-                            }
-                            break;
+            ModuleStructSymbol* st = module_symbol_table_find_struct(table, type_name);
+            if (st) {
+                for (int fi = 0; fi < st->field_count; fi++) {
+                    if (strcmp(st->fields[fi].name, member_name) == 0) {
+                        int len = 1024 + strlen(word);
+                        result = (char*)malloc(len);
+                        if (result) {
+                            const char* fts = st->fields[fi].struct_name ? st->fields[fi].struct_name : type_kind_to_string(st->fields[fi].type);
+                            snprintf(result, len, "**%s**\n\n```leno\n%s: %s\n```\n\n%s 字段 (%s)",
+                                     word, word, fts, type_name, type_name);
                         }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 查找 struct 方法
+        if (!result) {
+            ModuleStructSymbol* st = module_symbol_table_find_struct(table, type_name);
+            if (st) {
+                for (int mi = 0; mi < st->method_count; mi++) {
+                    if (strcmp(st->methods[mi].name, member_name) == 0) {
+                        int len = 1024 + strlen(word);
+                        result = (char*)malloc(len);
+                        if (result) {
+                            const char* rts = st->methods[mi].return_struct_name ? st->methods[mi].return_struct_name :
+                                                type_kind_to_string(st->methods[mi].return_type);
+                                                        snprintf(result, len, "**%s**\n\n```leno\n%s.%s(...) -> %s\n```\n\n%s 方法",
+                                     word, type_name, member_name, rts, type_name);
+                        }
+                        break;
                     }
                 }
             }
         }
     }
 
-    compiler_context_cleanup(&ctx);
+    module_symbol_table_destroy(table);
     for (int i = 0; i < segment_count; i++) free(segments[i]);
 
     return result;

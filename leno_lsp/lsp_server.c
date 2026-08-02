@@ -40,7 +40,8 @@ LspServer* lsp_server_create(void) {
     // 日志文件已禁用
     server->log_file = NULL;
     
-    fprintf(stderr, "[LSP] Leno LSP Server v%s starting...\n", LSP_VERSION);
+    fprintf(stderr, "[LSP] Leno Lsp Server v%s starting... [MODULAR-COMPLETE-CTX v2]\n", LSP_VERSION);
+    fflush(stderr);
 
     // 初始化 GC（实例方法注册需要）
     gc_init();

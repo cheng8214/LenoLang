@@ -4,9 +4,9 @@ use SDL3.Event
 use SDL3.Renderer
 use SDL3.WindowFlag
 use SDL3.BlendMode
-use SDL3.Scancode
+use SDL3.(Scancode,Window)
 main() {
-    var win = SDL3.createWindow({title: "Hello LenoSDL3 - 绘图演示", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
+    Window win = SDL3.createWindow({title: "Hello LenoSDL3 - 绘图演示", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
     win.setResizable(false)
 
