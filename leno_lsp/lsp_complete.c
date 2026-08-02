@@ -53,10 +53,6 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
     // 检测补全上下文
     CompletionContextInfo ctx = comp_detect_context(content, pos, file_path, import_count, import_aliases);
     
-    fprintf(stderr, "[COMPLETE] ctx.type=%d prefix=%s module_alias=%s\n",
-            ctx.type, ctx.prefix ? ctx.prefix : "(null)", ctx.module_alias ? ctx.module_alias : "(null)");
-    fflush(stderr);
-    
     // === 上下文特定补全 ===
     // 基础补全（关键字/类型/内置）只在需要时添加，避免污染点访问上下文
     switch (ctx.type) {

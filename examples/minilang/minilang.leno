@@ -6,7 +6,7 @@ func tinylang_main(string code) {
     
     try {
         // 1. 分词
-        Array tokens = tinylang_tokenize(code)
+        Array[Dict] tokens = tinylang_tokenize(code)
         // 2. 解析
         var ast = tinylang_parse(tokens)
         // 3. 执行
@@ -20,11 +20,11 @@ func tinylang_main(string code) {
 // ===============================
 // 2. 词法分析：分词器
 // ===============================
-func tinylang_tokenize(string code):Array {
+func tinylang_tokenize(string code):Array[Dict] {
     // 集中定义关键字列表
     var keywords = ["print", "if", "else", "for", "while", "var"]
     
-    Array tokens = []
+    Array[Dict] tokens = []
     var i = 0
     var len = code.len()
     var line = 1  // 当前行号
@@ -112,7 +112,7 @@ func tinylang_tokenize(string code):Array {
 // ===============================
 // 3. 语法分析：生成 AST
 // ===============================
-func tinylang_parse(Array tokens) {
+func tinylang_parse(Array[Dict] tokens): Dict {
     Dict ast = {type: "PROGRAM", statements: []};
     var token_index = 0;
     var len = tokens.len();
@@ -126,8 +126,11 @@ func tinylang_parse(Array tokens) {
     }
     
     // 辅助函数：获取当前标记
-    func peek() {
-        return tokens[token_index] or null;
+    func peek(): Dict {
+        if token_index < len {
+            return tokens[token_index];
+        }
+        return null;
     }
     
     // 辅助函数：消费当前标记
@@ -155,12 +158,12 @@ func tinylang_parse(Array tokens) {
     }
     
     // 解析表达式
-    func parse_expr() {
+    func parse_expr(): Dict {
         return parse_binary_expr();
     }
     
     // 解析二元表达式
-    func parse_binary_expr() {
+    func parse_binary_expr(): Dict {
         var left = parse_primary();
         if not left {return null}
         while token_index < len and (tokens[token_index].type == "OPERATOR" or (tokens[token_index].type == "SYMBOL" and (tokens[token_index].value == "+" or tokens[token_index].value == "-" or tokens[token_index].value == "*" or tokens[token_index].value == "/"))) {
@@ -174,7 +177,7 @@ func tinylang_parse(Array tokens) {
     }
     
     // 解析基本表达式
-    func parse_primary(): any {
+    func parse_primary(): Dict {
         var token = peek()
         if not token {return null}
         
@@ -428,37 +431,38 @@ func tinylang_parse(Array tokens) {
 // ===============================
 // 4. 执行：解释器核心
 // ===============================
-func tinylang_execute(any ast) {
+func tinylang_execute(Dict ast) {
     var env = {}
     
     // 执行表达式
     func execute_expr(any expr) {
         if not expr {return null}
-        
-        if expr.type == "NUMBER" or expr.type == "STRING" {return expr.value}
-        
-        eif expr.type == "IDENTIFIER" {return env[expr.value] or null}
-        
-        eif expr.type == "BINARY" {
-            if not expr.left or not expr.right {return null}
-            var left_val = execute_expr(expr.left)
-            var right_val = execute_expr(expr.right)
-            if left_val == null or right_val == null {return null}
-            var left = _int(left_val)
-            var right = _int(right_val)
+        if expr is Dict {
+            if expr.type == "NUMBER" or expr.type == "STRING" {return expr.value}
             
-            switch expr.op {
-                case "+" {return left + right}
-                case "-" {return left - right}
-                case "*" {return left * right}
-                case "/" {return left / right}
-                case "=="{return left == right}
-                case "!=" {return left != right}
-                case ">" {return left > right}
-                case "<" {return left < right}
-                case ">=" {return left >= right}
-                case "<=" {return left <= right}
-                default {return null}
+            eif expr.type == "IDENTIFIER" {return env[expr.value] or null}
+            
+            eif expr.type == "BINARY" {
+                if not expr.left or not expr.right {return null}
+                var left_val = execute_expr(expr.left)
+                var right_val = execute_expr(expr.right)
+                if left_val == null or right_val == null {return null}
+                var left = _int(left_val)
+                var right = _int(right_val)
+                
+                switch expr.op {
+                    case "+" {return left + right}
+                    case "-" {return left - right}
+                    case "*" {return left * right}
+                    case "/" {return left / right}
+                    case "=="{return left == right}
+                    case "!=" {return left != right}
+                    case ">" {return left > right}
+                    case "<" {return left < right}
+                    case ">=" {return left >= right}
+                    case "<=" {return left <= right}
+                    default {return null}
+                }
             }
         }
         return null
@@ -466,6 +470,7 @@ func tinylang_execute(any ast) {
     
     // 执行语句
     func execute_stmt(any stmt) {
+        if stmt is Dict {
         switch stmt.type {
             case "PROGRAM" {
                 for stmt.statements to var st {
@@ -513,6 +518,7 @@ func tinylang_execute(any ast) {
                     cond = execute_expr(stmt.condition)
                 }
             }
+        }
         }
     }
     

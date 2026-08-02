@@ -454,7 +454,19 @@ static Symbol* find_symbol_in_current_function(Scope* root_scope, const char* na
         if (name_len > 0) {
             // 查找函数体的起始 '{'
             const char* brace = name_end;
-            while (*brace && *brace != '{') brace++;
+            while (*brace && *brace != '{') {
+                // 跳过字符串
+                if (*brace == '"' || *brace == '\'') {
+                    char quote = *brace;
+                    brace++;
+                    while (*brace && *brace != quote) {
+                        if (*brace == '\\' && *(brace+1)) brace++;
+                        brace++;
+                    }
+                }
+                if (*brace == '{') break;
+                brace++;
+            }
 
             if (*brace == '{') {
                 // 计算函数范围
@@ -464,6 +476,29 @@ static Symbol* find_symbol_in_current_function(Scope* root_scope, const char* na
                 int brace_count = 1;
                 const char* p = brace + 1;
                 while (*p && brace_count > 0) {
+                    // 跳过字符串字面量
+                    if (*p == '"' || *p == '\'') {
+                        char quote = *p;
+                        p++;
+                        while (*p && *p != quote) {
+                            if (*p == '\\' && *(p+1)) p++;
+                            p++;
+                        }
+                        if (*p) p++;
+                        continue;
+                    }
+                    // 跳过行注释
+                    if (*p == '/' && *(p+1) == '/') {
+                        while (*p && *p != '\n') p++;
+                        continue;
+                    }
+                    // 跳过块注释
+                    if (*p == '/' && *(p+1) == '*') {
+                        p += 2;
+                        while (*p && !(*p == '*' && *(p+1) == '/')) p++;
+                        if (*p) p += 2;
+                        continue;
+                    }
                     if (*p == '{') brace_count++;
                     else if (*p == '}') brace_count--;
                     p++;
@@ -545,6 +580,19 @@ static Symbol* find_symbol_in_current_function(Scope* root_scope, const char* na
 static char* get_symbol_hover_from_compiler(const char* content, const char* word, LspPosition pos, const char* file_path) {
     if (!content || !word) return NULL;
 
+    // 如果 word 包含点号（如 "tokens.add"），提取第一个段作为变量名查找
+    // 这样悬停在 tokens.add 的 tokens 部分时，能显示变量类型信息
+    char* base_word = NULL;
+    const char* dot_pos = strchr(word, '.');
+    if (dot_pos) {
+        int base_len = dot_pos - word;
+        if (base_len > 0) {
+            base_word = (char*)malloc(base_len + 1);
+            memcpy(base_word, word, base_len);
+            base_word[base_len] = '\0';
+        }
+    }
+
     CompilerContext ctx;
     compiler_context_init(&ctx);
 
@@ -553,8 +601,45 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
     // 检查是否有符号表
     if (!ctx.root_scope) {
+        free(base_word);
         compiler_context_cleanup(&ctx);
         return NULL;
+    }
+
+    // 如果有 base_word（带点号的表达式），优先查找变量本身
+    if (base_word) {
+        // 先在当前函数作用域中查找
+        Symbol* var_sym = find_symbol_in_current_function(ctx.root_scope, base_word, content, pos);
+        if (!var_sym) {
+            var_sym = scope_resolve_tree_bfs(ctx.root_scope, base_word);
+        }
+        if (var_sym) {
+            // 找到了变量，构建悬停信息
+            const char* type_str = type_to_string(var_sym->type);
+            int info_len = 512 + strlen(base_word) + (type_str ? strlen(type_str) : 0);
+            char* info = (char*)malloc(info_len);
+            if (info) {
+                bool is_global = (var_sym->scope == ctx.root_scope);
+                const char* kind_str = "局部";
+                if (is_global) kind_str = "全局";
+                else if (var_sym->kind == SYM_PARAM) kind_str = "参数";
+                else if (var_sym->kind == SYM_MODULE) kind_str = "模块";
+
+                snprintf(info, info_len, "**%s**\n\n"
+                         "```leno\n"
+                         "%s: %s\n"
+                         "```\n\n"
+                         "%s%s",
+                         base_word,
+                         base_word,
+                         type_str ? type_str : "unknown",
+                         kind_str,
+                         " 变量");
+            }
+            free(base_word);
+            compiler_context_cleanup(&ctx);
+            return info;
+        }
     }
 
     // 首先尝试根据光标位置确定所在的 struct（优先处理 struct 字段）
@@ -586,11 +671,15 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
     // 如果不在 struct 定义中，尝试在作用域树中查找符号
     // 优先查找当前函数作用域中的符号，避免其他函数的参数干扰
-    Symbol* sym = find_symbol_in_current_function(ctx.root_scope, word, content, pos);
+    // 使用 base_word（不带点号的变量名）查找，如果没有 base_word 则用原始 word
+    const char* lookup_word = base_word ? base_word : word;
+    Symbol* sym = find_symbol_in_current_function(ctx.root_scope, lookup_word, content, pos);
 
     if (!sym) {
-        sym = scope_resolve_tree_bfs(ctx.root_scope, word);
+        sym = scope_resolve_tree_bfs(ctx.root_scope, lookup_word);
     }
+    free(base_word);
+    base_word = NULL;
 
     // 如果没找到，尝试查找所有包含该字段的 struct
     if (!sym) {
@@ -630,6 +719,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         }
 
         free(current_struct_name);
+        free(base_word);
         compiler_context_cleanup(&ctx);
         return NULL;
     }
@@ -670,17 +760,28 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                      is_global ? "全局" : "局部");
         }
     } else {
-        // 其他符号
+        // 其他符号 - 显示更详细的类型信息
+        const char* kind_str = "符号";
+        if (sym->kind == SYM_LOCAL) kind_str = "局部变量";
+        else if (sym->kind == SYM_PARAM) kind_str = "函数参数";
+        else if (sym->kind == SYM_GLOBAL) kind_str = "全局变量";
+        else if (sym->kind == SYM_GLOBAL_FUNC) kind_str = "全局函数";
+        else if (sym->kind == SYM_MODULE) kind_str = "模块变量";
+        else if (sym->kind == SYM_NATIVE) kind_str = "内置函数";
+        else if (sym->kind == SYM_STRUCT) kind_str = "struct 类型";
+        else if (sym->kind == SYM_CSTRUCT) kind_str = "cstruct 类型";
+        else if (sym->kind == SYM_ENUM) kind_str = "enum 类型";
+        else if (sym->kind == SYM_TYPE) kind_str = "类型别名";
+
         snprintf(info, info_len, "**%s**\n\n"
                  "```leno\n"
                  "%s: %s\n"
                  "```\n\n"
-                 "%s%s",
+                 "%s",
                  word,
                  word,
                  type_str ? type_str : "unknown",
-                 is_global ? "全局" : "局部",
-                 " 符号");
+                 kind_str);
     }
 
     compiler_context_cleanup(&ctx);
@@ -1749,11 +1850,11 @@ static char* get_variable_type_from_compiler(const char* content, const char* va
         if (strstr(type_str, "string") != NULL) {
             result = strdup("string");
         } else if (strstr(type_str, "Array") != NULL || strstr(type_str, "array") != NULL) {
-            result = strdup("array");
+            result = strdup("Array");
         } else if (strstr(type_str, "Dict") != NULL || strstr(type_str, "dict") != NULL) {
-            result = strdup("dict");
+            result = strdup("Dict");
         } else if (strncmp(type_str, "File", 4) == 0) {
-            result = strdup("file");
+            result = strdup("File");
         } else if (strncmp(type_str, "Ptr", 3) == 0) {
             result = strdup("ptr");
         } else if (strstr(type_str, "struct") != NULL) {
@@ -1778,8 +1879,9 @@ static char* get_variable_type_from_compiler(const char* content, const char* va
 // 如果是，返回对应的类型名（如 "array", "string", "dict" 等）
 static const char* is_instance_method(const char* method_name) {
     // 按优先级检查各类型的实例方法
+    // 注意：类型名必须与 method_table_register_with_params 中注册的名称一致
     static const char* type_keys[] = {
-        "array", "string", "dict", "file", "ptr", NULL
+        "Array", "string", "Dict", "File", "Thread", "Channel", "number", NULL
     };
     
     int count;
@@ -1843,7 +1945,27 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         info = get_enum_value_hover(content, word);
     }
 
-    // 1. 检查是否是模块方法调用 (如 "io.print") 或实例方法调用 (如 "s.len")
+    // 1. 尝试获取关键字文档
+    if (!info) {
+        info = get_keyword_doc(word);
+    }
+
+    // 2. 尝试获取内置函数文档
+    if (!info) {
+        const BuiltinFunctionMeta* builtin = find_builtin_function(word);
+        if (builtin) {
+            info = generate_builtin_doc(builtin);
+        }
+    }
+
+    // 3. 尝试从编译器获取符号信息（局部变量、全局变量、函数等）
+    //    这一步在模块方法/实例方法之前，使得悬停在 "tokens.add" 的 "tokens" 上时
+    //    能显示变量类型信息，而不是方法文档
+    if (!info) {
+        info = get_symbol_hover_from_compiler(content, word, pos, file_path);
+    }
+
+    // 4. 检查是否是模块方法调用 (如 "io.print") 或实例方法调用 (如 "s.len")
     char* module = NULL;
     char* method = NULL;
     if (!info && parse_module_method(word, &module, &method)) {
@@ -1894,21 +2016,8 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         free(module);
         free(method);
     }
-    
-    // 2. 尝试获取关键字文档
-    if (!info) {
-        info = get_keyword_doc(word);
-    }
-    
-    // 3. 尝试获取内置函数文档
-    if (!info) {
-        const BuiltinFunctionMeta* builtin = find_builtin_function(word);
-        if (builtin) {
-            info = generate_builtin_doc(builtin);
-        }
-    }
-    
-    // 4. 检查是否在 Style[xxx] = { } 字典初始化上下文中的字段
+
+    // 5. 检查是否在 Style[xxx] = { } 字典初始化上下文中的字段
     if (!info) {
         int offset = lsp_position_to_offset(content, pos);
         if (offset > 0 && !is_inside_string_literal(content, offset) && !is_inside_comment(content, offset)) {
@@ -1951,11 +2060,6 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                 info = generate_instance_method_doc(type_name, word);
             }
         }
-    }
-    
-    // 6. 如果不是关键字、内置函数或实例方法，尝试从编译器获取符号信息
-    if (!info) {
-        info = get_symbol_hover_from_compiler(content, word, pos, file_path);
     }
 
     free(word);

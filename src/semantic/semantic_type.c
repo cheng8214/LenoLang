@@ -1773,6 +1773,28 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             // 可能是变量属性访问
             Symbol* var_sym = scope_resolve(s->current, ast->u.module_access.module_name);
             if (var_sym && var_sym->type) {
+                // 检查 any 类型：需要类型守卫收窄后才能访问字段
+                if (var_sym->type->kind == TYPE_ANY) {
+                    // 尝试查找类型守卫（如 if v is Dict { v.field }）
+                    const char* var_name = ast->u.module_access.module_name;
+                    const char* member_name = ast->u.module_access.member_name;
+                    char guard_name[256];
+                    snprintf(guard_name, sizeof(guard_name), "%s.%s", var_name, member_name);
+                    Symbol* guard_sym = scope_resolve(s->current, guard_name);
+                    if (guard_sym && guard_sym->type) {
+                        ast->cached_type = type_copy(guard_sym->type);
+                        return type_copy(ast->cached_type);
+                    }
+                    // 无类型守卫，报错
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                        "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
+                        "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄",
+                        var_name, member_name, var_name, var_name, member_name);
+                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    ast->cached_type = type_new(TYPE_ANY);
+                    return type_copy(ast->cached_type);
+                }
                 if (var_sym->type->kind == TYPE_DICT && var_sym->type->value_type) {
                     return type_copy(var_sym->type->value_type);
                 }
@@ -1799,6 +1821,37 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index.obj);
             if (obj_type) {
+                // 检查 any 类型：需要类型守卫收窄后才能访问字段/索引
+                if (obj_type->kind == TYPE_ANY) {
+                    const char* field_name = NULL;
+                    if (ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
+                        field_name = ast->u.index.index->u.string.value;
+                    }
+                    const char* var_name = NULL;
+                    if (ast->u.index.obj && ast->u.index.obj->kind == AST_VAR) {
+                        var_name = ast->u.index.obj->u.var.name;
+                    }
+                    char msg[256];
+                    if (var_name && field_name) {
+                        snprintf(msg, sizeof(msg),
+                            "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
+                            "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄",
+                            var_name, field_name, var_name, var_name, field_name);
+                    } else if (field_name) {
+                        snprintf(msg, sizeof(msg),
+                            "不能在 any 类型上直接访问字段 '%s'\n"
+                            "  提示: 使用 if x is Type { x.%s } 进行类型收窄",
+                            field_name, field_name);
+                    } else {
+                        snprintf(msg, sizeof(msg),
+                            "不能在 any 类型上进行索引访问\n"
+                            "  提示: 使用 if x is Array { x[i] } 进行类型收窄");
+                    }
+                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    type_free(obj_type);
+                    ast->cached_type = type_new(TYPE_ANY);
+                    return type_copy(ast->cached_type);
+                }
                 if (obj_type->kind == TYPE_ARRAY) {
                     // 返回数组的元素类型
                     if (obj_type->element_type) {
@@ -1814,6 +1867,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                 } else if (obj_type->kind == TYPE_DICT && obj_type->value_type) {
                     ast->cached_type = type_copy(obj_type->value_type);
+                    type_free(obj_type);
+                    return type_copy(ast->cached_type);
+                } else if (obj_type->kind == TYPE_PTR_GENERIC && obj_type->element_type) {
+                    // 泛型指针 Ptr[T] 的索引访问返回元素类型 T
+                    // 例如 Cv.malloc_array(3) 返回 Ptr[Cv]，v[0] 返回 Cv
+                    fix_struct_to_face(obj_type->element_type);
+                    ast->cached_type = type_copy(obj_type->element_type);
                     type_free(obj_type);
                     return type_copy(ast->cached_type);
                 } else if (obj_type->kind == TYPE_STRING) {
@@ -1836,6 +1896,15 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 }
                             }
                         }
+                    }
+
+                    // cstruct 数组索引：cstruct 指针可通过整数索引访问数组元素
+                    // 例如 Cv.malloc_array(3) 返回的指针可通过 v[0], v[1] 等访问
+                    if (obj_type->kind == TYPE_CSTRUCT && ast->u.index.index &&
+                        ast->u.index.index->kind != AST_STRING) {
+                        ast->cached_type = type_copy(obj_type);
+                        type_free(obj_type);
+                        return type_copy(ast->cached_type);
                     }
 
                     type_free(obj_type);

@@ -34,9 +34,20 @@ main()
             lang: "zh"
         }
     }
-    assert_eq(nested["user"]["name"], "张三")
-    assert_eq(nested["settings"]["theme"], "dark")
-    assert_eq(nested.user.name, "张三")
+    // 嵌套字典访问需要类型收窄：dict 值类型为 any，需先用 is Dict 收窄
+    var user = nested["user"]
+    if user is Dict {
+        assert_eq(user["name"], "张三")
+    }
+    var settings = nested["settings"]
+    if settings is Dict {
+        assert_eq(settings["theme"], "dark")
+    }
+    // 点访问语法同样需要收窄
+    var user2 = nested.user
+    if user2 is Dict {
+        assert_eq(user2["name"], "张三")
+    }
 
     print("test_dict_methods passed")
 }

@@ -3,7 +3,7 @@
 
 import "counter_module.leno" as counter
 
-export func use_counter() {
+export func use_counter(): Dict {
     // 使用计数器模块
     var val1 = counter.increment()
     var val2 = counter.increment()

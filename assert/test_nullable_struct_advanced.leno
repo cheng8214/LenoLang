@@ -61,7 +61,8 @@ func test_nullable_in_dict() {
     assert_eq(a_val == null, true)
 
     var b_val = d.get("b", null)
-    if b_val != null {
+    // dict.get 返回 any，需用 is Widget 收窄（!= null 不收窄类型）
+    if b_val is Widget {
         assert_eq(b_val.name, "input")
         assert_eq(b_val.width, 100)
     }

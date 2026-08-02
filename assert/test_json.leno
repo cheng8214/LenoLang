@@ -35,14 +35,22 @@ main()
 
     // 测试3: decode 对象
     var obj1 = jsons.decode("{\"name\": \"Leno\", \"version\": 1.0}")
-    assert_eq(obj1.name, "Leno")
-    assert_eq(obj1.version, 1.0)
+    // jsons.decode 返回 any，需先用 is Dict 收窄才能访问字段
+    if obj1 is Dict {
+        assert_eq(obj1.name, "Leno")
+        assert_eq(obj1.version, 1.0)
+    }
 
     // 测试4: decode 嵌套对象
     var obj2 = jsons.decode("{\"user\": {\"id\": 1, \"name\": \"张三\"}, \"active\": true}")
-    assert_eq(obj2.user.name, "张三")
-    assert_eq(obj2.user.id, 1)
-    assert_eq(obj2.active, true)
+    if obj2 is Dict {
+        var user = obj2.user
+        if user is Dict {
+            assert_eq(user.name, "张三")
+            assert_eq(user.id, 1)
+        }
+        assert_eq(obj2.active, true)
+    }
 
     // 测试5: encode
     var test_obj = {

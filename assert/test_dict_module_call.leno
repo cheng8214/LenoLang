@@ -2,6 +2,7 @@
 // 修复问题: 在字典字面量中直接调用跨模块函数会导致运行时错误
 
 import "../examples/import/boundary_tests/13_type_cross_module/point_struct.leno" as ps
+use ps.Point
 
 // 辅助函数：创建点
 func create_test_point(any x, any y) {
@@ -87,7 +88,11 @@ func test_nested_dict_with_call() {
         }
     }
     
-    assert(result["meta"]["distance"] == 25, "嵌套字典中的函数调用失败")
+    // dict 值类型为 any，需先用 is Dict 收窄才能链式访问
+    var meta = result["meta"]
+    if meta is Dict {
+        assert(meta["distance"] == 25, "嵌套字典中的函数调用失败")
+    }
     print("✓ test_nested_dict_with_call passed")
 }
 
@@ -115,8 +120,15 @@ func test_dict_without_call() {
         "name": "test"
     }
     
-    assert(result["start"]["x"] == 1, "无函数调用的字典失败")
-    assert(result["end"]["y"] == 4, "无函数调用的字典失败")
+    // dict 值类型为 any，需先用 is Point 收窄才能访问字段
+    var start = result["start"]
+    if start is Point {
+        assert(start.x == 1, "无函数调用的字典失败")
+    }
+    var end = result["end"]
+    if end is Point {
+        assert(end.y == 4, "无函数调用的字典失败")
+    }
     print("✓ test_dict_without_call passed")
 }
 
@@ -165,8 +177,15 @@ func test_module_call_creates_struct() {
         "distance": ps.distance(p1, p2)
     }
     
-    assert(result["point1"]["x"] == 1, "创建结构体作为字典值失败")
-    assert(result["point2"]["y"] == 4, "创建结构体作为字典值失败")
+    // dict 值类型为 any，需先用 is Point 收窄才能访问字段
+    var pt1 = result["point1"]
+    if pt1 is Point {
+        assert(pt1.x == 1, "创建结构体作为字典值失败")
+    }
+    var pt2 = result["point2"]
+    if pt2 is Point {
+        assert(pt2.y == 4, "创建结构体作为字典值失败")
+    }
     assert(result["distance"] == 800, "距离计算错误")
     print("✓ test_module_call_creates_struct passed")
 }

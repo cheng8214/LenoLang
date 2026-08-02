@@ -182,11 +182,13 @@ static bool is_type_annotation_context(const char* content, int cursor_offset) {
     }
     
     // 行首关键字后的类型位置
+    // 注意：必须检查光标所在行，而不是 pos 所在行
+    // 因为 pos 可能已经回退到了上一行（如 func 定义行），导致误判
     {
-        int line_start = pos;
-        while (line_start > 0 && content[line_start - 1] != '\n') line_start--;
-        const char* line = content + line_start;
-        int line_len = pos - line_start;
+        int cursor_line_start = cursor_offset - 1;
+        while (cursor_line_start > 0 && content[cursor_line_start - 1] != '\n') cursor_line_start--;
+        const char* line = content + cursor_line_start;
+        int line_len = cursor_offset - cursor_line_start;
         
         char* line_copy = (char*)malloc(line_len + 1);
         if (!line_copy) return false;
@@ -205,14 +207,12 @@ static bool is_type_annotation_context(const char* content, int cursor_offset) {
         };
         
         bool result = false;
-        if (trimmed[0] == '\0') {
-            result = true;
-        } else {
-            for (int i = 0; type_prefixes[i]; i++) {
-                if (strncmp(trimmed, type_prefixes[i], strlen(type_prefixes[i])) == 0) {
-                    result = true;
-                    break;
-                }
+        // 只有当行首确实是类型定义关键字开头时，才认为是类型注解上下文
+        // 不再把空行当作类型注解上下文（那会导致普通位置的补全失效）
+        for (int i = 0; type_prefixes[i]; i++) {
+            if (strncmp(trimmed, type_prefixes[i], strlen(type_prefixes[i])) == 0) {
+                result = true;
+                break;
             }
         }
         

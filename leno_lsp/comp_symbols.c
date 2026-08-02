@@ -22,6 +22,89 @@
 
 extern char* read_module_file(const char* file_path, const char* current_file);
 
+/* ========== 文本匹配变量类型推断（编译器分析失败时的回退） ========== */
+
+// 从源代码文本中推断变量类型
+// 搜索 "Type varname" 或 "var varname = value" 模式
+// 返回类型名称字符串（如 "string", "Array", "Dict", "number" 等），需调用者 free
+static char* detect_variable_type_from_text(const char* content, const char* var_name) {
+    if (!content || !var_name) return NULL;
+    
+    int var_len = strlen(var_name);
+    const char* p = content;
+    
+    while (*p) {
+        // 查找变量名的出现位置
+        const char* found = strstr(p, var_name);
+        if (!found) break;
+        
+        // 确保是完整的单词（前面和后面不是字母/数字/下划线）
+        if ((found == content || (!isalnum((unsigned char)found[-1]) && found[-1] != '_')) &&
+            (found[var_len] == '\0' || (!isalnum((unsigned char)found[var_len]) && found[var_len] != '_'))) {
+            
+            // 检查 found 之前的内容，看是否有类型声明
+            const char* before = found - 1;
+            
+            // 跳过空白
+            while (before >= content && isspace((unsigned char)*before)) before--;
+            
+            // 检查 "Type varname" 模式（如 "string a", "Array tokens", "Dict d"）
+            if (before >= content && (isalnum((unsigned char)*before) || *before == '_')) {
+                // 提取类型名
+                const char* type_end = before + 1;
+                const char* type_start = before;
+                while (type_start > content && (isalnum((unsigned char)type_start[-1]) || type_start[-1] == '_')) {
+                    type_start--;
+                }
+                int type_len = type_end - type_start;
+                if (type_len > 0 && type_len < 64) {
+                    char type_buf[64];
+                    memcpy(type_buf, type_start, type_len);
+                    type_buf[type_len] = '\0';
+                    
+                    // 映射类型名
+                    if (strcmp(type_buf, "string") == 0) return strdup("string");
+                    if (strcmp(type_buf, "Array") == 0) return strdup("Array");
+                    if (strcmp(type_buf, "Dict") == 0) return strdup("Dict");
+                    if (strcmp(type_buf, "int") == 0 || strcmp(type_buf, "float") == 0 ||
+                        strcmp(type_buf, "bigint") == 0) return strdup("number");
+                    if (strcmp(type_buf, "bool") == 0) return strdup("bool");
+                    if (strcmp(type_buf, "File") == 0) return strdup("File");
+                    // struct/cstruct 类型
+                    if (strstr(type_buf, "struct")) return strdup(type_buf);
+                }
+            }
+            
+            // 检查 "var varname = value" 模式
+            // 回溯查找 "var " 关键字
+            const char* check = found - 1;
+            while (check >= content && isspace((unsigned char)*check)) check--;
+            // 检查是否是 "var"
+            if (check >= content + 2 && 
+                check[-2] == 'v' && check[-1] == 'a' && check[0] == 'r' &&
+                (check - 3 < content || (!isalnum((unsigned char)check[-3]) && check[-3] != '_'))) {
+                // 找到了 "var varname"，查看赋值表达式
+                const char* after = found + var_len;
+                while (*after && isspace((unsigned char)*after)) after++;
+                if (*after == '=') {
+                    after++;
+                    while (*after && isspace((unsigned char)*after)) after++;
+                    // 根据值推断类型
+                    if (*after == '"') return strdup("string");
+                    if (*after == '[') return strdup("Array");
+                    if (*after == '{') return strdup("Dict");
+                    if (*after >= '0' && *after <= '9') return strdup("number");
+                    if (strncmp(after, "true", 4) == 0 || strncmp(after, "false", 5) == 0) return strdup("bool");
+                }
+            }
+        }
+        
+        p = found + var_len;
+    }
+    
+    return NULL;
+}
+
 /* ========== 原生模块方法 ========== */
 
 void comp_provider_add_native_modules(CompletionSet* set, const char* filter) {
@@ -322,7 +405,7 @@ void comp_provider_add_variable_members(
     ImportAlias* import_aliases
 ) {
     if (!set || !content || !var_name) return;
-    
+
     // 获取变量类型
     CompilerContext ctx;
     compiler_context_init(&ctx);
@@ -331,6 +414,12 @@ void comp_provider_add_variable_members(
     char* type_str = NULL;
     if (ctx.root_scope) {
         compiler_get_symbol_info(&ctx, var_name, &type_str, NULL);
+    }
+    compiler_context_cleanup(&ctx);
+
+    // 回退：如果编译器分析失败或未找到符号，使用文本匹配推断类型
+    if (!type_str) {
+        type_str = detect_variable_type_from_text(content, var_name);
     }
     
     char* type_resolved = NULL;
@@ -345,16 +434,16 @@ void comp_provider_add_variable_members(
         } else if (strcmp(type_str, "string") == 0) {
             type_resolved = strdup("string");
         } else if (strncmp(type_str, "Array", 5) == 0) {
-            type_resolved = strdup("array");
+            type_resolved = strdup("Array");
         } else if (strncmp(type_str, "Dict", 4) == 0) {
-            type_resolved = strdup("dict");
+            type_resolved = strdup("Dict");
         } else if (strcmp(type_str, "bool") == 0) {
             type_resolved = strdup("bool");
+        } else if (strcmp(type_str, "File") == 0) {
+            type_resolved = strdup("File");
         }
         free(type_str);
     }
-    
-    compiler_context_cleanup(&ctx);
     
     if (!type_resolved) return;
     
