@@ -23,6 +23,8 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <stdio.h>
 
 /* ========== 导入模块（来自 comp_import.c） ========== */
 
@@ -41,6 +43,11 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
     *count = 0;
     
     if (!content) return NULL;
+    
+    clock_t t_start = clock();
+    fprintf(stderr, "[COMPLETE] lsp_get_completions START file=%s line=%d char=%d\n",
+            file_path ? file_path : "null", pos.line, pos.character);
+    fflush(stderr);
     
     // 创建补全集合
     CompletionSet* set = comp_set_create();
@@ -223,7 +230,8 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             } else {
                 // 变量.成员 补全（类型推断）
                 comp_provider_add_variable_members(set, content, file_path,
-                                                   ctx.module_alias, import_count, import_aliases);
+                                                   ctx.module_alias, import_count, import_aliases,
+                                                   pos);
                 
                 // 也尝试 enum 成员
                 // TODO: 解析文件中的 enum 成员
@@ -248,6 +256,12 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
     comp_set_destroy(set);
     
     *count = out_count;
+    
+    clock_t t_end = clock();
+    fprintf(stderr, "[COMPLETE] END count=%d time=%.0fms\n",
+            out_count, (double)(t_end - t_start) * 1000.0 / CLOCKS_PER_SEC);
+    fflush(stderr);
+    
     return items;
 }
 

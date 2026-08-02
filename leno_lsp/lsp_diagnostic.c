@@ -5,6 +5,8 @@
 
 #include "leno_lsp.h"
 #include "leno_compiler_lib.h"
+#include <time.h>
+#include <stdio.h>
 
 // 发布诊断信息
 // 从 URI 提取文件路径（去掉 file:// 前缀）
@@ -41,6 +43,10 @@ static void uri_to_filepath(const char* uri, char* out, size_t out_size) {
 
 void lsp_publish_diagnostics(LspServer* server, const char* uri) {
     if (!server || !uri) return;
+    
+    clock_t t_start = clock();
+    fprintf(stderr, "[DIAG] publish START uri=%s\n", uri);
+    fflush(stderr);
     
     LspTextDocument* doc = lsp_document_get(server, uri);
     if (!doc) return;
@@ -102,6 +108,11 @@ void lsp_publish_diagnostics(LspServer* server, const char* uri) {
     // 清理
     json_free(params);
     lsp_free_diagnostics(diags, count);
+    
+    clock_t t_end = clock();
+    fprintf(stderr, "[DIAG] publish END count=%d time=%.0fms\n",
+            count, (double)(t_end - t_start) * 1000.0 / CLOCKS_PER_SEC);
+    fflush(stderr);
 }
 
 // 将 LenoC 错误类型转换为 LSP 严重程度

@@ -234,7 +234,8 @@ void comp_provider_add_variable_members(
     const char* file_path,
     const char* var_name,
     int import_count,
-    ImportAlias* import_aliases
+    ImportAlias* import_aliases,
+    LspPosition pos
 );
 
 // CTX_STRING_LITERAL: 字符串实例方法

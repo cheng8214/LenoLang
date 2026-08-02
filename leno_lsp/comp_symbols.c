@@ -14,6 +14,7 @@
 #include "../src/include/leno_types.h"
 #include "../src/include/native.h"
 #include "../src/include/module_symbol_table.h"
+#include "../src/include/leno_value.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,9 @@
 /* ========== Import 相关（兼容旧接口） ========== */
 
 extern char* read_module_file(const char* file_path, const char* current_file);
+
+// 声明：定义在 lsp_hover.c 中
+extern char* detect_closure_param_type_at_position(const char* content, int cursor_offset, const char* var_name);
 
 /* ========== 文本匹配变量类型推断（编译器分析失败时的回退） ========== */
 
@@ -72,6 +76,35 @@ static char* detect_variable_type_from_text(const char* content, const char* var
                     if (strcmp(type_buf, "File") == 0) return strdup("File");
                     // struct/cstruct 类型
                     if (strstr(type_buf, "struct")) return strdup(type_buf);
+                    // 其他类型名（如 struct 名，首字母大写）
+                    if (isupper((unsigned char)type_buf[0])) return strdup(type_buf);
+                }
+            }
+            
+            // 检查闭包参数模式 "func(Type varname" 
+            if (before >= content) {
+                const char* check = before;
+                while (check > content && (isalnum((unsigned char)check[-1]) || check[-1] == '_')) check--;
+                if (check > content) {
+                    const char* before_type = check - 1;
+                    while (before_type >= content && isspace((unsigned char)*before_type)) before_type--;
+                    if (before_type >= content && *before_type == '(') {
+                        int type_len = before - check + 1;
+                        if (type_len > 0 && type_len < 64) {
+                            char type_buf[64];
+                            memcpy(type_buf, check, type_len);
+                            type_buf[type_len] = '\0';
+                            
+                            if (strcmp(type_buf, "string") == 0) return strdup("string");
+                            if (strcmp(type_buf, "Array") == 0) return strdup("Array");
+                            if (strcmp(type_buf, "Dict") == 0) return strdup("Dict");
+                            if (strcmp(type_buf, "int") == 0 || strcmp(type_buf, "float") == 0 ||
+                                strcmp(type_buf, "bigint") == 0) return strdup("number");
+                            if (strcmp(type_buf, "bool") == 0) return strdup("bool");
+                            if (strcmp(type_buf, "File") == 0) return strdup("File");
+                            if (isupper((unsigned char)type_buf[0])) return strdup(type_buf);
+                        }
+                    }
                 }
             }
             
@@ -402,9 +435,111 @@ void comp_provider_add_variable_members(
     const char* file_path,
     const char* var_name,
     int import_count,
-    ImportAlias* import_aliases
+    ImportAlias* import_aliases,
+    LspPosition pos
 ) {
     if (!set || !content || !var_name) return;
+
+    // 首先尝试基于光标位置的闭包参数类型检测
+    // 闭包参数（如 func(Renderer r) 中的 r）在编译器作用域树中可能无法正确查找
+    int cursor_offset = lsp_position_to_offset(content, pos);
+    char* closure_type = detect_closure_param_type_at_position(content, cursor_offset, var_name);
+    if (closure_type) {
+        fprintf(stderr, "[COMPLETE-DEBUG] var='%s' closure param type detected='%s'\n", var_name, closure_type);
+        fflush(stderr);
+        
+        // 将闭包参数类型转换为 type_resolved 格式
+        char* type_resolved = NULL;
+        if (strcmp(closure_type, "string") == 0) {
+            type_resolved = strdup("string");
+        } else if (strcmp(closure_type, "Array") == 0) {
+            type_resolved = strdup("Array");
+        } else if (strcmp(closure_type, "Dict") == 0) {
+            type_resolved = strdup("Dict");
+        } else if (strcmp(closure_type, "number") == 0) {
+            type_resolved = strdup("number");
+        } else if (strcmp(closure_type, "bool") == 0) {
+            type_resolved = strdup("bool");
+        } else if (strcmp(closure_type, "File") == 0) {
+            type_resolved = strdup("File");
+        } else if (isupper((unsigned char)closure_type[0])) {
+            // struct 类型名
+            type_resolved = (char*)malloc(strlen(closure_type) + 16);
+            sprintf(type_resolved, "struct %s", closure_type);
+        }
+        free(closure_type);
+        
+        if (type_resolved) {
+            // 使用 type_resolved 提供成员补全
+            // struct 类型：查找字段和方法
+            if (strstr(type_resolved, "struct") || strstr(type_resolved, "cstruct")) {
+                const char* keyword = strstr(type_resolved, "cstruct") ? "cstruct" : "struct";
+                const char* struct_name = strstr(type_resolved, keyword);
+                if (struct_name) {
+                    struct_name += strlen(keyword);
+                    while (*struct_name && isspace((unsigned char)*struct_name)) struct_name++;
+                    
+                    // 从导入的模块查找 struct 字段和方法
+                    for (int i = 0; i < import_count; i++) {
+                        const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                        if (mp) {
+                            module_symbol_table_reset_scan_stack();
+                            ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                            if (!mtable) continue;
+                            if (module_symbol_table_scan(mtable, file_path) == 0) {
+                                ModuleStructSymbol* mst = module_symbol_table_find_struct(mtable, struct_name);
+                                if (mst) {
+                                    for (int j = 0; j < mst->field_count; j++) {
+                                        const char* fname = mst->fields[j].name;
+                                        const char* fts = mst->fields[j].struct_name ?
+                                            mst->fields[j].struct_name : type_kind_to_string(mst->fields[j].type);
+                                        char detail[256];
+                                        snprintf(detail, sizeof(detail), "%s.%s: %s", var_name, fname, fts);
+                                        comp_set_add(set, fname, LSP_COMP_FIELD, PRIO_FIELD,
+                                                     detail, NULL, NULL, NULL);
+                                    }
+                                    for (int j = 0; j < mst->method_count; j++) {
+                                        const char* mname = mst->methods[j].name;
+                                        const char* sep = strstr(mname, "::");
+                                        if (sep) sep += 2; else sep = mname;
+                                        char detail[256];
+                                        snprintf(detail, sizeof(detail), "%s.%s()", var_name, sep);
+                                        comp_set_add(set, sep, LSP_COMP_METHOD, PRIO_METHOD,
+                                                     detail, NULL, NULL, NULL);
+                                    }
+                                }
+                            }
+                            module_symbol_table_destroy(mtable);
+                        }
+                    }
+                }
+            } else {
+                // 基本类型：实例方法
+                int method_count = 0;
+                char** methods = native_get_instance_methods(type_resolved, &method_count);
+                if (methods && method_count > 0) {
+                    for (int i = 0; i < method_count; i++) {
+                        int arity = native_get_instance_method_arity(type_resolved, methods[i]);
+                        TypeKind rt = native_get_instance_method_return_type(type_resolved, methods[i], NULL);
+                        const char* rt_str = type_kind_to_string(rt);
+                        char detail[256];
+                        if (arity == 0) {
+                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, methods[i], rt_str);
+                        } else if (arity < 0) {
+                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, methods[i], rt_str);
+                        } else {
+                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, methods[i], rt_str);
+                        }
+                        comp_set_add(set, methods[i], LSP_COMP_METHOD, PRIO_METHOD,
+                                     detail, NULL, NULL, NULL);
+                    }
+                    native_free_instance_method_list(methods, method_count);
+                }
+            }
+            free(type_resolved);
+            return;  // 闭包参数类型已处理，不需要继续
+        }
+    }
 
     // 获取变量类型
     CompilerContext ctx;
@@ -441,6 +576,12 @@ void comp_provider_add_variable_members(
             type_resolved = strdup("bool");
         } else if (strcmp(type_str, "File") == 0) {
             type_resolved = strdup("File");
+        } else if (isupper((unsigned char)type_str[0])) {
+            // 可能是用户定义的 struct 类型名（如 MenuBar, TreeView, Window）
+            // 注意：不要求 struct_def_find 成功，因为 struct 可能定义在导入的模块中
+            // 后续会通过模块符号表查找字段和方法
+            type_resolved = (char*)malloc(strlen(type_str) + 16);
+            sprintf(type_resolved, "struct %s", type_str);
         }
         free(type_str);
     }
@@ -474,8 +615,18 @@ void comp_provider_add_variable_members(
                                      detail, NULL, NULL, NULL);
                     }
                     
-                    // 添加方法指针（用于 fn 场景）
-                    // TODO: 如果 struct_sym 包含方法，也在这里添加
+                    // 添加方法
+                    if (struct_sym->type->struct_name) {
+                        ObjStructDef* sdef = struct_def_find(struct_sym->type->struct_name);
+                        if (sdef) {
+                            for (int m = 0; m < sdef->method_count; m++) {
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s.%s()", var_name, sdef->methods[m].name);
+                                comp_set_add(set, sdef->methods[m].name, LSP_COMP_METHOD, PRIO_METHOD,
+                                             detail, NULL, NULL, NULL);
+                            }
+                        }
+                    }
                 }
             }
             compiler_context_cleanup(&sctx);
@@ -497,6 +648,17 @@ void comp_provider_add_variable_members(
                                 char detail[256];
                                 snprintf(detail, sizeof(detail), "%s.%s: %s", var_name, fname, fts);
                                 comp_set_add(set, fname, LSP_COMP_FIELD, PRIO_FIELD,
+                                             detail, NULL, NULL, NULL);
+                            }
+                            // 也添加方法
+                            for (int j = 0; j < mst->method_count; j++) {
+                                const char* mname = mst->methods[j].name;
+                                // 方法名可能带 "StructName::" 前缀（如 "Event::isQuit"），去除前缀
+                                const char* sep = strstr(mname, "::");
+                                if (sep) sep += 2; else sep = mname;
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s.%s()", var_name, sep);
+                                comp_set_add(set, sep, LSP_COMP_METHOD, PRIO_METHOD,
                                              detail, NULL, NULL, NULL);
                             }
                         }

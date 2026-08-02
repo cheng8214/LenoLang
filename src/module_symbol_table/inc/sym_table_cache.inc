@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000009  // v9: 添加 TOK_NULL_COALESCE + OP_IS_NULL，枚举值偏移
+#define LENOSYMC_VERSION 0x0000000A  // v10: 添加 ModuleFuncSymbol.param_text
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -196,6 +196,7 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
         sym_cache_write_string(f, table->funcs[i].return_struct_name);
         uint32_t tpc = (uint32_t)table->funcs[i].type_param_count;
         fwrite(&tpc, 4, 1, f);
+        sym_cache_write_string(f, table->funcs[i].param_text);
     }
 
     // structs
@@ -449,6 +450,7 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
         table->funcs[i].return_struct_name = sym_cache_read_string(f);
         uint32_t tpc; if (fread(&tpc, 4, 1, f) != 1) goto fail;
         table->funcs[i].type_param_count = (int)tpc;
+        table->funcs[i].param_text = sym_cache_read_string(f);
         table->func_count++;
     }
 

@@ -111,6 +111,46 @@ static char* get_word_before_cursor(const char* content, LspPosition pos) {
     if (!word) return NULL;
     memcpy(word, content + start, len);
     word[len] = '\0';
+    
+    // 检查是否在点号表达式的成员部分（如 "bar.add" 中的 "add"）
+    // 如果 word 前面有 "." 和变量名，则返回 __DOT__:varname
+    {
+        int check_pos = start - 1;  // word 开始位置的前一个字符
+        if (check_pos >= 0 && content[check_pos] == '.') {
+            // 找到点号，继续向前提取变量名
+            int var_end = check_pos;
+            int vstart = check_pos - 1;
+            while (vstart >= 0 && (isalnum((unsigned char)content[vstart]) || content[vstart] == '_')) {
+                vstart--;
+            }
+            vstart++;
+            
+            int var_len = var_end - vstart;
+            if (var_len > 0) {
+                // 提取变量名
+                char* var_name = (char*)malloc(var_len + 1);
+                if (var_name) {
+                    memcpy(var_name, content + vstart, var_len);
+                    var_name[var_len] = '\0';
+                    
+                    // 返回 __DOT__:varname 格式
+                    const char* dot_prefix = "__DOT__:";
+                    size_t plen = strlen(dot_prefix);
+                    char* result = (char*)malloc(plen + var_len + 1);
+                    if (result) {
+                        memcpy(result, dot_prefix, plen);
+                        memcpy(result + plen, var_name, var_len);
+                        result[plen + var_len] = '\0';
+                        free(var_name);
+                        free(word);
+                        return result;
+                    }
+                    free(var_name);
+                }
+            }
+        }
+    }
+    
     return word;
 }
 

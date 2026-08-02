@@ -1,5 +1,5 @@
 // 添加函数符号
-void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info) {
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text) {
     if (!table || !name) return;
 
     // 扩容
@@ -17,6 +17,7 @@ void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, Ty
     func->return_type_info = return_type_info ? type_copy(return_type_info) : NULL;
     func->return_struct_name = return_struct_name ? strdup(return_struct_name) : NULL;
     func->type_param_count = type_param_count;
+    func->param_text = param_text ? strdup(param_text) : NULL;
 }
 
 // 添加 struct 符号

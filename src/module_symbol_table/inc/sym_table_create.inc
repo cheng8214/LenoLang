@@ -39,6 +39,7 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
     for (int i = 0; i < table->func_count; i++) {
         free(table->funcs[i].name);
         free(table->funcs[i].return_struct_name);
+        free(table->funcs[i].param_text);
         if (table->funcs[i].return_type_info) {
             type_free(table->funcs[i].return_type_info);
         }

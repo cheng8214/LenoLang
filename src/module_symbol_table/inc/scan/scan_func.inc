@@ -38,11 +38,24 @@
                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                     if (*after_func == '(') {
                         after_func++;
+                        const char* param_start = after_func;
                         int paren_depth = 1;
                         while (*after_func && paren_depth > 0) {
                             if (*after_func == '(') paren_depth++;
                             else if (*after_func == ')') paren_depth--;
                             after_func++;
+                        }
+                        
+                        // 提取参数文本（在 ) 之前的内容）
+                        char param_text[256] = {0};
+                        int param_len = (int)(after_func - 1 - param_start);
+                        if (param_len > 0 && param_len < (int)sizeof(param_text)) {
+                            memcpy(param_text, param_start, param_len);
+                            param_text[param_len] = '\0';
+                            // 去除尾部空白
+                            while (param_len > 0 && isspace((unsigned char)param_text[param_len - 1])) {
+                                param_text[--param_len] = '\0';
+                            }
                         }
 
                         while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
@@ -145,7 +158,8 @@
                         }
 
                         module_symbol_table_add_func(table, func_name, return_type,
-                            return_struct_name[0] ? return_struct_name : NULL, func_type_param_count, return_type_info);
+                            return_struct_name[0] ? return_struct_name : NULL, func_type_param_count, return_type_info,
+                            param_text[0] ? param_text : NULL);
                         if (return_type_info) { type_free(return_type_info); return_type_info = NULL; }
                     }
                 }

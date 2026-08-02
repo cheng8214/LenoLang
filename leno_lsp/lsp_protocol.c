@@ -5,6 +5,8 @@
 
 #include "leno_lsp.h"
 #include <stdarg.h>
+#include <time.h>
+#include "../src/include/module_loader.h"
 
 // 创建 JSON 对象辅助函数
 JsonValue* json_object_new(void) {
@@ -221,6 +223,24 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
         server->root_path = lsp_uri_to_path(json_string_value(root_uri));
     }
     
+    // 设置模块符号表缓存目录（与编译器共享 .lenocache/ 目录）
+    // 这是 LSP 性能的关键：没有缓存目录，每次分析都要重新扫描所有导入的模块源文件
+    if (server->root_path) {
+        char cache_dir[1024];
+#ifdef _WIN32
+        snprintf(cache_dir, sizeof(cache_dir), "%s\\.lenocache\\", server->root_path);
+#else
+        snprintf(cache_dir, sizeof(cache_dir), "%s/.lenocache/", server->root_path);
+#endif
+        module_loader_set_cache_enabled(1);
+        module_loader_set_cache_dir(cache_dir);
+        fprintf(stderr, "[LSP-CACHE] cache_dir=%s\n", cache_dir);
+        fflush(stderr);
+    } else {
+        fprintf(stderr, "[LSP-CACHE] WARNING: root_path is NULL, module cache disabled\n");
+        fflush(stderr);
+    }
+    
     // 构建服务器能力
     JsonValue* capabilities = json_object_new();
     
@@ -349,6 +369,10 @@ char* lsp_handle_did_change(LspServer* server, JsonValue* params) {
     
     if (!uri) return NULL;
     
+    fprintf(stderr, "[DID-CHANGE] uri=%s version=%d\n", json_string_value(uri), 
+            version ? (int)json_int_value(version) : -1);
+    fflush(stderr);
+    
     // 获取文档
     LspTextDocument* doc = lsp_document_get(server, json_string_value(uri));
     if (!doc) return NULL;
@@ -472,18 +496,45 @@ char* lsp_handle_message(LspServer* server, const char* message) {
 char* lsp_uri_to_path(const char* uri) {
     if (!uri) return NULL;
     
+    const char* path_start = uri;
+    
     // file:// 协议
     if (strncmp(uri, "file://", 7) == 0) {
-        // Windows: file:///C:/path -> C:/path
+        // Windows: file:///C:/path -> C:/path  或 file:///d%3A/path -> d:/path
         // Unix: file:///path -> /path
-        if (uri[7] == '/' && uri[9] == ':') {
+        if (uri[7] == '/' && strlen(uri) > 9 &&
+            (uri[9] == ':' || (uri[9] == '%' && uri[10] == '3' && (uri[11] == 'A' || uri[11] == 'a')))) {
             // Windows 绝对路径
-            return strdup(uri + 8);
+            path_start = uri + 8;
+        } else {
+            path_start = uri + 7;
         }
-        return strdup(uri + 7);
     }
     
-    return strdup(uri);
+    // URL 解码（处理 %3A -> : 等编码）
+    const char* src = path_start;
+    int len = strlen(src);
+    char* result = (char*)malloc(len + 1);
+    if (!result) return NULL;
+    
+    int dst = 0;
+    while (*src) {
+        if (*src == '%' && src[1] && src[2]) {
+            // 解析两位十六进制
+            char hex[3] = {src[1], src[2], 0};
+            char* endptr;
+            long val = strtol(hex, &endptr, 16);
+            if (endptr == hex + 2) {
+                result[dst++] = (char)val;
+                src += 3;
+                continue;
+            }
+        }
+        result[dst++] = *src++;
+    }
+    result[dst] = '\0';
+    
+    return result;
 }
 
 char* lsp_path_to_uri(const char* path) {

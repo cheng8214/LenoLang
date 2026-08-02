@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -78,6 +79,8 @@ void compiler_context_cleanup(CompilerContext* ctx) {
 bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, const char* filename) {
     if (!ctx || !source) return false;
     
+    clock_t t_start = clock();
+    
     // 清理之前的状态（包括 AST，防止内存泄露）
     if (ctx->ast_root) {
         ast_free(ctx->ast_root);
@@ -104,6 +107,7 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     lexer_init(&lexer, source);
 
     // 2. 语法分析
+    clock_t t_parse_start = clock();
     Parser parser;
     parser_init(&parser, source);
     if (parser_parse(&parser) < 0) {
@@ -111,8 +115,14 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
         ctx->ast_root = parser.root;
         // 不清除错误 — 语法错误需要被诊断服务收集
         lsp_restore_stderr();
+        clock_t t_end = clock();
+        fprintf(stderr, "[LSP-ANALYZE] file=%s FAILED(parse) time=%.0fms\n",
+                filename ? filename : "null",
+                (double)(t_end - t_start) * 1000.0 / CLOCKS_PER_SEC);
+        fflush(stderr);
         return false;
     }
+    clock_t t_parse_end = clock();
 
     ctx->ast_root = parser.root;
 
@@ -135,11 +145,13 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     }
 
     // 根据文件类型调用相应的分析函数
+    clock_t t_semantic_start = clock();
     if (is_module) {
         semantic_analyze_module(&sem, parser.root);
     } else {
         semantic_analyze(&sem, parser.root);
     }
+    clock_t t_semantic_end = clock();
 
     ctx->root_scope = sem.root_scope;
 
@@ -184,10 +196,15 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     // 恢复 stderr
     lsp_restore_stderr();
 
-    // 调试日志
-    fprintf(stderr, "[LSP-ANALYZE] file=%s imported=%d errors=%d (filtered=%d)\n",
+    // 调试日志（带耗时统计）
+    clock_t t_end = clock();
+    fprintf(stderr, "[LSP-ANALYZE] file=%s imported=%d errors=%d (filtered=%d) "
+            "parse=%.0fms semantic=%.0fms total=%.0fms\n",
             filename ? filename : "null", dbg_imported, err_count,
-            err_count - errors.count);
+            err_count - errors.count,
+            (double)(t_parse_end - t_parse_start) * 1000.0 / CLOCKS_PER_SEC,
+            (double)(t_semantic_end - t_semantic_start) * 1000.0 / CLOCKS_PER_SEC,
+            (double)(t_end - t_start) * 1000.0 / CLOCKS_PER_SEC);
     fflush(stderr);
 
     return true;
