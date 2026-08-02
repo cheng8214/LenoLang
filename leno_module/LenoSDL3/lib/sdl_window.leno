@@ -66,6 +66,16 @@ import "sdl_chart.leno" as cht
 use cht.(BarChart, LineChart, PieChart)
 import "sdl_theme.leno" as theme
 use theme.Theme
+import "sdl_imageview.leno" as ivw
+use ivw.ImageView
+import "sdl_separator.leno" as seplib
+use seplib.Separator
+import "sdl_linkbutton.leno" as lnklib
+use lnklib.LinkButton
+import "sdl_spinner.leno" as spnlib
+use spnlib.Spinner
+import "sdl_groupbox.leno" as gbxlib
+use gbxlib.GroupBox
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
@@ -294,7 +304,7 @@ export struct Window {
         _widgets.add(w)
         // 绑定窗口句柄：容器向下传递，Edit 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
         switch w {
-            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox {
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox {
                 w._bind_window(handle); return w
             }
             case is Edit {
@@ -458,6 +468,48 @@ export struct Window {
         _widgets.add(s as Widget)
         s._bind_window(handle)
         return s
+    }
+
+    // 添加图片视图，opts: {x, y, w, h, image_path, image_mode, radius, border, alpha, tint, cursor, on_click, ...}
+    // image_mode: 0=aspectFit(默认) 1=stretch 2=aspectFill
+    // 返回 ImageView，可 .set_image(path) / .set_mode(mode) / .on_click(func(){...}) 等
+    func addImageView(Dict opts): ImageView {
+        ImageView iv = ivw.createImageView(opts)
+        _widgets.add(iv as Widget)
+        return iv
+    }
+
+    // 添加分隔线，opts: {x, y, w, h, dir, thickness, rgb, alpha, margin}
+    // dir: 0=水平(默认) 1=垂直；布局容器中常用作视觉分隔
+    func addSeparator(Dict opts): Separator {
+        Separator s = seplib.createSeparator(opts)
+        _widgets.add(s as Widget)
+        return s
+    }
+
+    // 添加超链接按钮，opts: {text, x, y, url, font_size, rgb, hover_rgb, underline, visited, on_click, ...}
+    // 返回 LinkButton，可 .on_click(func(){...}) / .set_visited(bool) / .set_text(t) 等
+    func addLinkButton(Dict opts): LinkButton {
+        LinkButton lb = lnklib.createLinkButton(opts)
+        _widgets.add(lb as Widget)
+        return lb
+    }
+
+    // 添加加载旋转动画，opts: {x, y, size, thickness, rgb, speed, running, full_track, ...}
+    // 返回 Spinner，可 .start() / .stop() / .is_running() / .set_color(r,g,b) 等
+    func addSpinner(Dict opts): Spinner {
+        Spinner s = spnlib.createSpinner(opts)
+        _widgets.add(s as Widget)
+        return s
+    }
+
+    // 添加带标题的分组容器，opts: {x, y, w, h, title, bg_rgb, border_rgb, title_rgb, radius, ...}
+    // 用 gb.add(win.addButton({x, y, ...})) 把子控件挂到分组（子控件用窗口绝对坐标）
+    func addGroupBox(Dict opts): GroupBox {
+        GroupBox gb = gbxlib.createGroupBox(opts)
+        _widgets.add(gb as Widget)
+        gb._bind_window(handle)
+        return gb
     }
 
     // 添加树视图，opts: {x, y, w, h, items, row_h, indent, mode, show_check, context_menu, on_change, ...}
@@ -667,6 +719,10 @@ export struct Window {
                     // 透明窗口跳过背景填充，保留 alpha=0 区域透明
                     // 使用主题背景色而非硬编码黑色，消除首帧黑闪
                     var ren = _runRens[i]
+                    // ★ SSAA：每帧渲染前重新设置渲染目标到离屏高分辨率纹理 + 缩放
+                    // present() 每帧执行后会重置渲染目标为窗口、缩放为 1.0，
+                    // 必须在此切回 SSAA 纹理，否则后续 fillRect/控件绘制全部直接画到窗口、SSAA 失效
+                    ren.beginFrame()
                     if not _runTransparent[i] {
                         Theme th = theme.getTheme()
                         ren.setColor(th.bgR, th.bgG, th.bgB, 255)

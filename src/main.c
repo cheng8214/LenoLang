@@ -9,6 +9,7 @@
 #include "include/native.h"
 #include "include/module_compiler.h"
 #include "include/module_loader.h"
+#include "include/module_symbol_table.h"
 #include "include/leno_package.h"
 #include "include/platform.h"
 #include <stdio.h>
@@ -129,9 +130,10 @@ int lenolang_run(const char* source) {
       if (debugMode) {
          printf("debug模式:进入主执行流程\n");
      }
-    // 0. 清空错误
+    // 0. 清空错误和扫描栈
     error_clear();
     warning_clear();
+    module_symbol_table_reset_scan_stack();
      if (debugMode) {
          printf("debug模式:进入语法分析阶段\n");
      }
@@ -327,6 +329,7 @@ int lenolang_compile(const char* source, const char* output_path) {
     clock_t compile_t0 = clock();
     error_clear();
     warning_clear();
+    module_symbol_table_reset_scan_stack();
 
     gc_init();
     vm_init();

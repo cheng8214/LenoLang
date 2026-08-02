@@ -32,11 +32,38 @@
                             error_add(ERR_SEMANTIC, ast->line, msg);
                         }
                     }
-                    type_free(obj_type);
-                    break;
-                }
+                type_free(obj_type);
+                break;
+            }
 
-                // 检查 struct/cstruct 字段是否存在，并设置字段索引
+            // 检查 enum 成员是否存在（跨模块 Module.EnumName.member 访问）
+            if (obj_type && obj_type->kind == TYPE_ENUM && obj_type->struct_name) {
+                const char* member_name = ast->u.field_access.field_name;
+                int found = 0;
+                for (int mi = 0; mi < s->imported_module_count && !found; mi++) {
+                    ImportedModuleInfo* mod = &s->imported_modules[mi];
+                    if (mod->sym_table) {
+                        ModuleEnumSymbol* es = module_symbol_table_find_enum(mod->sym_table, obj_type->struct_name);
+                        if (es) {
+                            for (int ei = 0; ei < es->member_count; ei++) {
+                                if (strcmp(es->member_names[ei], member_name) == 0) {
+                                    found = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!found) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", obj_type->struct_name, member_name);
+                    error_add(ERR_SEMANTIC, ast->line, msg);
+                }
+                type_free(obj_type);
+                break;
+            }
+
+            // 检查 struct/cstruct 字段是否存在，并设置字段索引
                 if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE)) {
                     const char* field_name = ast->u.field_access.field_name;
                     Symbol* struct_sym = NULL;

@@ -4,7 +4,7 @@ import ffi
 import maths
 import "sdl_core.leno" as core
 import "sdl_font.leno" as font
-use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, Color, FColor, Size, FSize)
+use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, Color, FColor, Size, FSize, ScaleMode)
 use font.(Font, TextTexture)
 
 // 模块加载时一次性初始化 DLL，后续直接用 _lib
@@ -60,10 +60,15 @@ export struct Renderer {
         handle = _lib.SDL_CreateRenderer(window, null as string)
         ok = handle != null
         if ok {
+            // ★ 设置默认混合模式为 BLEND（SDL3 创建渲染器后默认为 NONE，alpha 被忽略）
+            // 若保持 NONE，按钮阴影 setColor(0,0,0,40) 的 alpha=40 会被丢弃→纯黑，
+            // 阴影偏移 2px 在右下角露出两条纯黑线条（而非预期的半透明灰色阴影）。
+            // 同理影响所有带 alpha 的图元绘制（边框 alpha、tooltip 半透明背景等）。
+            _lib.SDL_SetRenderDrawBlendMode(handle, core.BlendMode.BLEND)
             // 批处理状态快照复位为 SDL 默认绘制状态
             _bxR = 255; _bxG = 255; _bxB = 255; _bxA = 255; _bxIsFloat = false
             _bxFr = 1.0; _bxFg = 1.0; _bxFb = 1.0; _bxFa = 1.0
-            _bxBlend = 0; _bxClip = false; _bxClipPtr = null; _bxClipOwned = false; _bxTarget = null
+            _bxBlend = core.BlendMode.BLEND; _bxClip = false; _bxClipPtr = null; _bxClipOwned = false; _bxTarget = null
             _clipStack = []; _clipStackOwned = []
             _bxSx = 1.0; _bxSy = 1.0; _bxCScale = 1.0; _bxCur = 0
             _gFillSubmits = 0; _gFillBatched = 0
@@ -137,6 +142,8 @@ export struct Renderer {
             print("[LenoSDL3] SSAA 离屏纹理创建失败，回退普通渲染")
             return false
         }
+        // ★ 关键：显式设置线性缩放模式，确保降采样时 GPU 使用双线性插值平滑边缘
+        _lib.SDL_SetTextureScaleMode(tex, core.ScaleMode.LINEAR)
         _ssaaTex = tex
         _ssaaScale = scale
         _ssaaWinW = winW; _ssaaWinH = winH
@@ -156,12 +163,25 @@ export struct Renderer {
         if tw <= 0 or th <= 0 { return false }
         Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
         if tex == null { return false }
+        _lib.SDL_SetTextureScaleMode(tex, core.ScaleMode.LINEAR)   // 重建纹理也需设置线性缩放
         if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex) }
         _ssaaTex = tex
         _ssaaWinW = newW; _ssaaWinH = newH
         setRenderTarget(_ssaaTex)
         setScale(_ssaaScale, _ssaaScale)
         return true
+    }
+
+    // ★ 帧开始：SSAA 开启时，重新设置渲染目标到离屏纹理 + 设置缩放
+    // present() 每帧执行后会重置渲染目标为 null（窗口）和缩放为 1.0，
+    // 下一帧开始前必须重新切回 SSAA 离屏纹理，否则所有绘制直接画到窗口、SSAA 失效。
+    // 窗口主循环在每帧绘制前调用此方法。
+    func beginFrame() {
+        if _ssaa {
+            _flushBatches()
+            setRenderTarget(_ssaaTex)
+            setScale(_ssaaScale, _ssaaScale)
+        }
     }
 
     // 返回当前 SSAA 倍数（未真正开启/回退为 0.0）；供控件将字体测量与 SSAA 渲染对齐

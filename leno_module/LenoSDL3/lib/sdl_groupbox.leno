@@ -1,0 +1,153 @@
+// sdl_groupbox.leno — 带标题的分组容器
+// 通过 win.addGroupBox({...}) 创建，在 Panel 基础上增加标题文字
+// 标题绘制在边框顶部，子控件用绝对坐标添加
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+import "sdl_theme.leno" as theme; use theme.Theme
+
+export struct GroupBox impl Widget {
+    float x = 0.0, y = 0.0, w = 300.0, h = 200.0
+    string _title = "Group"
+    float _fontSize = 14.0
+    string _fontPath = ""
+    int _fontStyle = 0
+    Font? _font
+    Array[Widget] children = []
+    int _bgR = 44, _bgG = 46, _bgB = 54        // 背景色
+    int _bdrR = 90, _bdrG = 95, _bdrB = 110    // 边框色
+    int _titleR = 200, _titleG = 205, _titleB = 215  // 标题文字色
+    int _brdA = 200                            // 边框透明度
+    float _radius = 8.0
+    float _titlePad = 8.0                      // 标题左右间距
+    bool _clip = true
+    bool _loaded = false, enabled = true, visible = true
+    Ptr[u8] _hwnd
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            else { _font = fnt.acquireFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _bgR = th.bgAltR; _bgG = th.bgAltG; _bgB = th.bgAltB
+        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
+        _titleR = th.txtHeaderR; _titleG = th.txtHeaderG; _titleB = th.txtHeaderB
+        x      = opts.get("x", 0)
+        y      = opts.get("y", 0)
+        w      = opts.get("w", 300)
+        h      = opts.get("h", 200)
+        _title = opts.get("title", "Group")
+        _fontSize = opts.get("font_size", 14)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
+        _radius = opts.get("radius", 8.0)
+        _titlePad = opts.get("title_pad", 8.0)
+        _brdA = opts.get("border_alpha", 200)
+        _clip = opts.get("clip", true)
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        var bgc = opts.get("bg_rgb")
+        if bgc is Array[int] { _bgR = bgc[0]; _bgG = bgc[1]; _bgB = bgc[2] }
+        var bdc = opts.get("border_rgb")
+        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
+        var tc = opts.get("title_rgb")
+        if tc is Array[int] { _titleR = tc[0]; _titleG = tc[1]; _titleB = tc[2] }
+        _ensure_font()
+        children = []
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func set_title(string t) { _title = t }
+    func add(Widget c): Widget {
+        children.add(c)
+        if _hwnd != null { _pass_hwnd(c, _hwnd) }
+        return c
+    }
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for children to c { _pass_hwnd(c, hwnd) }
+    }
+    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+        switch c {
+            case is Edit { c.set_window(hwnd); return }
+            case is HBox, VBox, AnchorBox, GroupBox { c._bind_window(hwnd); return }
+        }
+    }
+    func remove(Widget c) {
+        for children.len() to i { if children[i] == c { children.remove(i); return } }
+    }
+    func clear_children() { children = [] }
+    func set_bg(int r, int g, int b) { _bgR = r; _bgG = g; _bgB = b }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func process(Event ev) {
+        if not _loaded or not enabled or not visible { return }
+        for children to c { c.process(ev) }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        _ensure_font()
+
+        // 背景
+        r.setColor(_bgR, _bgG, _bgB, 255)
+        r.fillRoundedRect(x, y, w, h, _radius)
+
+        // 裁剪子控件
+        SDL_Rect cr = SDL_Rect.malloc()
+        if _clip {
+            cr.x = _int(x); cr.y = _int(y)
+            cr.w = _int(w) + 1; cr.h = _int(h) + 1
+            r.pushClipRect(cr.to_ptr())
+        }
+        for children to c { c.render(r) }
+        if _clip { r.popClipRect() }
+        cr.free()
+
+        // 边框
+        r.setColor(_bdrR, _bdrG, _bdrB, _brdA)
+        r.drawRoundedRect(x, y, w, h, _radius)
+
+        // 标题：在边框顶部画一段背景色遮断边框，再绘制文字
+        if _font != null and _font.ok and _title != "" {
+            var ms = _font.measureString(_title)
+            float tx = x + _titlePad
+            float ty = y - ms.h / 2.0
+            // 用背景色画一个矩形遮断边框（标题位置）
+            r.setColor(_bgR, _bgG, _bgB, 255)
+            r.fillRect(tx - 3.0, ty, ms.w + 6.0, _float(ms.h))
+            // 标题文字
+            r.drawText(_font, _title, tx, ty, _titleR, _titleG, _titleB)
+        }
+    }
+
+    func dispose() {
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        for children to c { c.dispose() }
+    }
+}
+
+// 工厂
+export func createGroupBox(Dict opts): GroupBox {
+    GroupBox gb = new GroupBox(); gb.set(opts); return gb
+}

@@ -29,6 +29,11 @@ import "sdl_widget.leno" as wgt
 import "sdl_chart.leno" as cht
 import "sdl_tray.leno" as tray
 import "sdl_theme.leno" as thm
+import "sdl_imageview.leno" as iv
+import "sdl_separator.leno" as sep
+import "sdl_linkbutton.leno" as lnk
+import "sdl_spinner.leno" as spn
+import "sdl_groupbox.leno" as gbx
 
 
 // ==================== 重新导出类型 ====================
@@ -66,6 +71,11 @@ use wgt.Widget
 use cht.(BarChart, LineChart, PieChart)
 use tray.(Tray, TrayMenu)
 use thm.Theme
+use iv.ImageView
+use sep.Separator
+use lnk.LinkButton
+use spn.Spinner
+use gbx.GroupBox
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
 export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
@@ -87,6 +97,11 @@ export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts
 export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }
 export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
 export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
+export func createImageView(Dict opts): ImageView  { return iv.createImageView(opts) }
+export func createSeparator(Dict opts): Separator  { return sep.createSeparator(opts) }
+export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButton(opts) }
+export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
+export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
 export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
 export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
 export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }
