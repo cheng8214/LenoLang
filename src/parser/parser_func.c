@@ -615,6 +615,31 @@ Ast* parse_alias_stmt(Parser* p) {
 // 变量声明解析 - 支持新类型语法
 // ============================================================================
 
+// 检查变量声明语句边界：声明后同一行不允许出现未分隔的额外 token
+// 例如 `string str="Hello World" 1231` 应该报错，因为 1231 不是合法的分隔符
+static void check_var_decl_boundary(Parser* p, int decl_line) {
+    LenoTokenType t = p->lex.current.type;
+    if (t == TOK_EOF || t == TOK_SEMI || t == TOK_RBRACE) {
+        return; // 合法的语句结束位置（EOF、分号、右花括号）
+    }
+    // 同一行出现非分隔符 token，说明缺少换行或分号
+    if (p->lex.current.line == decl_line) {
+        char msg[128];
+        const char* found;
+        if (t == TOK_NUM) {
+            found = "数字";
+        } else if (t == TOK_STRING) {
+            found = "字符串";
+        } else if (t == TOK_IDENT) {
+            found = "标识符";
+        } else {
+            found = "符号";
+        }
+        snprintf(msg, sizeof(msg), "声明语句后期望换行或 ';'，但同一行出现%s", found);
+        error_add(ERR_SYNTAX, p->lex.current.line, msg);
+    }
+}
+
 Ast* parse_var_decl_internal(Parser* p) {
     int line = p->lex.current.line;
     TypeInfo* shared_type = NULL;
@@ -708,7 +733,10 @@ Ast* parse_var_decl_internal(Parser* p) {
     } while (match(p, TOK_COMMA)); // 如果有逗号，继续解析下一个变量
     
     type_free(shared_type);
-    
+
+    // 检查声明语句边界（检测同一行缺少分隔符的情况）
+    check_var_decl_boundary(p, line);
+
     // 如果只有一个变量，直接返回
     if (decl_count == 1) {
         Ast* result = decls[0];
