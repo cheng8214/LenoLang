@@ -15,7 +15,7 @@ static int scan_stack_contains(const char* path) {
 
 static void scan_stack_push(const char* path) {
     if (g_scan_stack_count < MAX_CIRCULAR_STACK) {
-        strncpy(g_scan_stack[g_scan_stack_count], path, MAX_PATH_LEN - 1);
+        snprintf(g_scan_stack[g_scan_stack_count], MAX_PATH_LEN, "%s", path);
         g_scan_stack[g_scan_stack_count][MAX_PATH_LEN - 1] = '\0';
         g_scan_stack_count++;
     }
