@@ -174,7 +174,7 @@ func tinylang_parse(Array tokens) {
     }
     
     // 解析基本表达式
-    func parse_primary() {
+    func parse_primary(): any {
         var token = peek()
         if not token {return null}
         

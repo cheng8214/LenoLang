@@ -109,7 +109,7 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     if (parser_parse(&parser) < 0) {
         ctx->has_errors = true;
         ctx->ast_root = parser.root;
-        error_clear();
+        // 不清除错误 — 语法错误需要被诊断服务收集
         lsp_restore_stderr();
         return false;
     }
@@ -147,9 +147,36 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     int dbg_imported = sem.imported_module_count;
     int err_count = errors.count;
 
-    // LSP 模式下清除误报错误（因 .leno import 可能未完全解析）
-    ctx->has_errors = false;
-    error_clear();
+    // LSP 模式下过滤误报错误（因 .leno import 可能未完全解析）
+    // 不再无条件清除所有错误，而是只移除与 import 模块解析相关的误报
+    // 保留真正的语法错误、未定义变量、类型不匹配等
+    {
+        int write_idx = 0;
+        for (int read_idx = 0; read_idx < errors.count; read_idx++) {
+            Error* err = &errors.list[read_idx];
+            bool is_import_false_positive = false;
+
+            // 过滤掉因模块导入未完全解析而产生的误报
+            // 这些错误的消息通常包含 "模块" 和 "未导入" 或 "use 语句错误"
+            if (err->type == ERR_SEMANTIC && err->msg[0] != '\0') {
+                if (strstr(err->msg, "未导入") != NULL ||
+                    strstr(err->msg, "use 语句错误") != NULL ||
+                    strstr(err->msg, "use 错误") != NULL) {
+                    is_import_false_positive = true;
+                }
+            }
+
+            if (!is_import_false_positive) {
+                if (write_idx != read_idx) {
+                    errors.list[write_idx] = errors.list[read_idx];
+                }
+                write_idx++;
+            }
+        }
+        errors.count = write_idx;
+    }
+
+    ctx->has_errors = (errors.count > 0);
 
     // 清理语义分析资源（保留 root_scope）
     semantic_cleanup(&sem);
@@ -158,8 +185,9 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     lsp_restore_stderr();
 
     // 调试日志
-    fprintf(stderr, "[LSP-ANALYZE] file=%s imported=%d errors=%d\n",
-            filename ? filename : "null", dbg_imported, err_count);
+    fprintf(stderr, "[LSP-ANALYZE] file=%s imported=%d errors=%d (filtered=%d)\n",
+            filename ? filename : "null", dbg_imported, err_count,
+            err_count - errors.count);
     fflush(stderr);
 
     return true;

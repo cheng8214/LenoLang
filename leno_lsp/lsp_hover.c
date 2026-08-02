@@ -1391,6 +1391,10 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
     }
 
     
+        
+    // 重置模块扫描栈（防止 LSP 多次请求间残留导致误报循环依赖）
+    module_symbol_table_reset_scan_stack();
+    
     // 使用轻量级 module_symbol_table（带磁盘缓存），不触发完整编译
     ModuleSymbolTable* table = module_symbol_table_create(module_path);
     free(module_path);

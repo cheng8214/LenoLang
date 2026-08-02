@@ -186,6 +186,9 @@ void comp_provider_add_module_symbols(
         return;
     }
     
+    // 重置模块扫描栈（防止 LSP 多次请求间残留导致误报循环依赖）
+    module_symbol_table_reset_scan_stack();
+    
     // 使用轻量级 module_symbol_table 替代完整语义分析
     // 优点：1) 不跟随嵌套 import  2) 自动 .lenosymc 磁盘缓存  3) 快速提取符号
     ModuleSymbolTable* table = module_symbol_table_create(module_path);
@@ -392,6 +395,7 @@ void comp_provider_add_variable_members(
             for (int i = 0; i < import_count; i++) {
                 const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
                 if (mp) {
+                    module_symbol_table_reset_scan_stack();
                     ModuleSymbolTable* mtable = module_symbol_table_create(mp);
                     if (!mtable) continue;
                     if (module_symbol_table_scan(mtable, file_path) == 0) {

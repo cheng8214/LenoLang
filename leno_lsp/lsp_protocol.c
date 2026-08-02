@@ -329,10 +329,10 @@ char* lsp_handle_did_open(LspServer* server, JsonValue* params) {
     
     lsp_log(server, LSP_LOG_INFO, "Document opened: %s", uri_str);
     
-    // 发布诊断（暂时禁用，避免崩溃）
-    // if (server->diagnostic_provider) {
-    //     lsp_publish_diagnostics(server, uri_str);
-    // }
+    // 发布诊断
+    if (server->diagnostic_provider) {
+        lsp_publish_diagnostics(server, uri_str);
+    }
     
     return NULL;
 }

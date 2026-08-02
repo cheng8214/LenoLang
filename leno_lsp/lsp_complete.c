@@ -125,8 +125,22 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             const char* mod_path = find_module_path_by_alias(import_aliases, import_count, ctx.module_alias);
             bool is_leno_module = (mod_path != NULL);
             
+            // 检查是否是原生模块（如 io, types, maths 等）
+            int native_mod_count = 0;
+            char** native_mods = native_get_all_modules(&native_mod_count);
+            bool is_native_module = false;
+            if (native_mods) {
+                for (int i = 0; i < native_mod_count; i++) {
+                    if (strcmp(native_mods[i], ctx.module_alias) == 0) {
+                        is_native_module = true;
+                        break;
+                    }
+                }
+                native_free_module_list(native_mods, native_mod_count);
+            }
+            
             if (is_leno_module) {
-                // 模块.成员 补全
+                // .leno 模块.成员 补全
                 comp_provider_add_module_symbols(set, content, file_path,
                                                  ctx.module_alias, ctx.member_prefix,
                                                  import_count, import_aliases);
@@ -159,6 +173,50 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                     for (int i = 0; i < const_count; i++) {
                         bool found = false;
                         int val = native_find_module_const(actual_mod, consts[i], &found);
+                        char detail[256];
+                        snprintf(detail, sizeof(detail), "%s.%s = %d", ctx.module_alias, consts[i], val);
+                        comp_set_add(set, consts[i], LSP_COMP_CONSTANT, PRIO_MODULE,
+                                     detail, NULL, NULL, NULL);
+                    }
+                    native_free_module_const_list(consts, const_count);
+                }
+            } else if (is_native_module) {
+                // 原生模块.成员 补全（如 io., maths., types. 等）
+                int mtd_count = 0;
+                ModuleMethodMeta* metas = native_get_module_method_metas(ctx.module_alias, &mtd_count);
+                if (metas && mtd_count > 0) {
+                    for (int i = 0; i < mtd_count; i++) {
+                        const char* ret_str = type_kind_to_string(metas[i].return_type);
+                        char detail[512];
+                        if (metas[i].arity == 0) {
+                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                        } else if (metas[i].arity < 0) {
+                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                        } else {
+                            char params[256] = "";
+                            int off = 0;
+                            for (int pp = 0; pp < metas[i].arity && pp < MAX_METHOD_PARAMS; pp++) {
+                                const char* pt = type_kind_to_string(metas[i].param_types[pp]);
+                                if (pp > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
+                                off += snprintf(params + off, sizeof(params) - off, "%s", pt);
+                            }
+                            snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", ctx.module_alias, metas[i].method_name, params, ret_str);
+                        }
+                        char doc[1024];
+                        snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
+                        comp_set_add(set, metas[i].method_name, LSP_COMP_METHOD, PRIO_METHOD,
+                                     detail, doc, NULL, NULL);
+                    }
+                    native_free_module_method_metas(metas);
+                }
+                
+                // 原生模块常量
+                int const_count = 0;
+                char** consts = native_get_module_consts(ctx.module_alias, &const_count);
+                if (consts && const_count > 0) {
+                    for (int i = 0; i < const_count; i++) {
+                        bool found = false;
+                        int val = native_find_module_const(ctx.module_alias, consts[i], &found);
                         char detail[256];
                         snprintf(detail, sizeof(detail), "%s.%s = %d", ctx.module_alias, consts[i], val);
                         comp_set_add(set, consts[i], LSP_COMP_CONSTANT, PRIO_MODULE,

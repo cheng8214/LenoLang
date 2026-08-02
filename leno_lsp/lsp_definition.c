@@ -275,6 +275,9 @@ static bool find_definition_in_module(const char* module_path, const char* curre
     if (!resolve_import_path(module_path, current_file, full_path, sizeof(full_path)))
         return false;
 
+    // 重置模块扫描栈（防止 LSP 多次请求间残留导致误报循环依赖）
+    module_symbol_table_reset_scan_stack();
+
     ModuleSymbolTable* sym_table = module_symbol_table_create(full_path);
     if (!sym_table) return false;
 
