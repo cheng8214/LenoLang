@@ -87,7 +87,6 @@ typedef struct {
 
 static AsyncIORequest g_async_requests[MAX_ASYNC_IO];
 static int g_async_count = 0;
-static int g_async_init = 0;
 
 // 注册异步操作，返回 0 成功
 static int async_add(ObjSocket* sock, ObjFuture* future, AsyncOpType op, char* buf, int buf_size) {
