@@ -215,6 +215,8 @@ clib sdl3 {
     bool SDL_SetRenderTarget(Ptr[u8] renderer, Ptr[u8] texture)
     bool SDL_SetTextureAlphaMod(Ptr[u8] texture, u8 alpha)
     bool SDL_SetTextureColorMod(Ptr[u8] texture, u8 r, u8 g, u8 b)
+    bool SDL_SetTextureScaleMode(Ptr[u8] texture, i32 scaleMode)
+    bool SDL_GetTextureScaleMode(Ptr[u8] texture, Ptr[i32] scaleMode)
     bool SDL_FlushRenderer(Ptr[u8] renderer)
     bool SDL_RenderTexture9Grid(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] srcrect, f32 lw, f32 rw, f32 th, f32 bh, f32 scale, Ptr[u8] dstrect)
     bool SDL_RenderTextureTiled(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] srcrect, f32 scale, Ptr[u8] dstrect)
@@ -400,6 +402,8 @@ export enum SystemCursor {
 }
 
 export enum TextureAccess { STATIC = 0; STREAMING = 1; TARGET = 2 }
+
+export enum ScaleMode { NEAREST = 0; LINEAR = 1; BEST = 2 }
 
 export const PIXELFORMAT_RGBA8888 = 373694468  // SDL_PIXELFORMAT_RGBA8888 = 0x16462004
 export const PIXELFORMAT_ARGB8888 = 372645892  // SDL_PIXELFORMAT_ARGB8888 = 0x16362004

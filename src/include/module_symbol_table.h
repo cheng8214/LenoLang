@@ -195,4 +195,7 @@ int module_symbol_table_clib_count(ModuleSymbolTable* table);
 // 从字符串解析完整类型（支持 int/float/string/bool 及 Array[T]/Dict[K,V]）
 TypeInfo* parse_type_from_string(const char* type_str);
 
+// 重置模块扫描栈（用于循环依赖检测，每次编译前调用）
+void module_symbol_table_reset_scan_stack(void);
+
 #endif // MODULE_SYMBOL_TABLE_H

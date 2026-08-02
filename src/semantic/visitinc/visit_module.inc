@@ -1784,6 +1784,16 @@
                                 }
                                 if (member_type != TYPE_ANY) break;
                             }
+                            // 也可能是 enum 类型名（如 Scancode），用于 Module.EnumName.member 访问
+                            if (member_type == TYPE_ANY) {
+                                ModuleEnumSymbol* es = module_symbol_table_find_enum(mod_info->sym_table, ast->u.module_access.member_name);
+                                if (es) {
+                                    member_type = TYPE_ENUM;
+                                    if (ast->cached_type) { type_free(ast->cached_type); }
+                                    ast->cached_type = type_new(TYPE_ENUM);
+                                    ast->cached_type->struct_name = strdup(ast->u.module_access.member_name);
+                                }
+                            }
                         }
                     }
                     ast->u.module_access.ref.type_kind = member_type;

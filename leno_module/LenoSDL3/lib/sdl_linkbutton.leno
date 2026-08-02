@@ -1,0 +1,175 @@
+// sdl_linkbutton.leno — 超链接按钮
+// 通过 win.addLinkButton({...}) 创建，点击触发回调，悬停变色+下划线
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.Theme
+
+export struct LinkButton impl Widget {
+    string text = "Link"
+    string _url = ""             // 关联 URL（可空，纯文字链接）
+    float x = 0.0, y = 0.0
+    float _fontSize = 15.0
+    string _fontPath = ""
+    int _fontStyle = 0
+    Font? _font
+    int _r = 100, _g = 180, _b = 255   // 默认链接色（浅蓝）
+    int _hvR = 130, _hvG = 210, _hvB = 255  // 悬停色
+    int _visR = 80, _visG = 80, _visB = 100   // 已访问色（暗淡）
+    bool _visited = false        // 是否已点击过（变色）
+    bool _underline = true       // 是否显示下划线
+    bool _ulOnHover = false      // 仅悬停时显示下划线（false=始终显示）
+    func():void _onClick
+    bool hover = false, _wasHover = false, _pressed = false
+    bool enabled = true, visible = true, _loaded = false
+    string _tip = ""
+    float _w = 0.0, _h = 16.0
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            else { _font = fnt.acquireFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+        }
+    }
+
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _r = th.accentR + 40; _g = th.accentG + 30; _b = th.accentB
+        if _r > 255 { _r = 255 }; if _g > 255 { _g = 255 }
+        _hvR = _r + 30; _hvG = _g + 30; _hvB = _b
+        if _hvR > 255 { _hvR = 255 }; if _hvG > 255 { _hvG = 255 }
+        _visR = th.txtDimR; _visG = th.txtDimG; _visB = th.txtDimB
+        text      = opts.get("text", "Link")
+        _url      = opts.get("url", "")
+        x         = opts.get("x", 0)
+        y         = opts.get("y", 0)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
+        _underline = opts.get("underline", true)
+        _ulOnHover = opts.get("underline_hover", false)
+        _visited = opts.get("visited", false)
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _tip = opts.get("tip", "")
+        var c = opts.get("rgb")
+        if c is Array[int] { _r = c[0]; _g = c[1]; _b = c[2] }
+        var hc = opts.get("hover_rgb")
+        if hc is Array[int] { _hvR = hc[0]; _hvG = hc[1]; _hvB = hc[2] }
+        _ensure_font()
+        if _font.ok {
+            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
+            _h = _font.measureString("Ag").h
+        } else { _w = 0.0; _h = 16.0 }
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    func set_text(string t) {
+        text = t
+        if _font != null and _font.ok {
+            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
+        }
+    }
+    func set_url(string u) { _url = u }
+    func set_text_rgb(int r, int g, int b) { _r = r; _g = g; _b = b }
+    func set_hover_rgb(int r, int g, int b) { _hvR = r; _hvG = g; _hvB = b }
+    func set_visited(bool v) { _visited = v }
+    func set_underline(bool u) { _underline = u }
+    func set_underline_hover(bool u) { _ulOnHover = u }
+    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
+    func set_font_path(string p) { _fontPath = p; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
+    func set_tip(string t) { _tip = t }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func set_enabled(bool e) { enabled = e }
+    func on_click(func():void cb) { _onClick = cb }
+
+    // ==================== 查询方法 ====================
+    func get_text(): string { return text }
+    func get_url(): string { return _url }
+    func is_hover(): bool { return hover }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func get_w(): float { return _w }
+    func get_h(): float { return _h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) {}
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + _w and my >= y and my <= y + _h
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded or not visible { return }
+        if not enabled { hover = false; return }
+        float mx = ev.mouseX(); float my = ev.mouseY()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        if core.inPopupCapture(mx, my) { return }
+
+        if ev.isMouseMotion() {
+            _wasHover = hover
+            hover = contains(ev.mouseX(), ev.mouseY())
+            if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if hover { core.setSystemCursor(SystemCursor.POINTER) }
+            else if _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            else if _wasHover and not hover { tip.tipClear() }
+        }
+        if ev.isMouseButtonDown() and contains(ev.mouseX(), ev.mouseY()) {
+            _pressed = true
+            core.markFrameRedraw()
+        }
+        if ev.isMouseButtonUp() {
+            if _pressed and contains(ev.mouseX(), ev.mouseY()) {
+                _visited = true
+                if _onClick != null { _onClick() }
+                core.markFrameRedraw()
+            }
+            _pressed = false
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        _ensure_font()
+        if _font == null or not _font.ok { return }
+        if text == "" { return }
+
+        // 选择颜色
+        int cr = _r; int cg = _g; int cb = _b
+        if _visited { cr = _visR; cg = _visG; cb = _visB }
+        if hover { cr = _hvR; cg = _hvG; cb = _hvB }
+        if not enabled { cr = cr / 2; cg = cg / 2; cb = cb / 2 }
+
+        r.drawText(_font, text, x, y, cr, cg, cb)
+
+        // 下划线
+        bool showUl = _underline
+        if _ulOnHover { showUl = hover }
+        if showUl and text != "" {
+            var ms = _font.measureString(text)
+            float uy = y + ms.h - 1.0
+            int ulA = 255
+            if _pressed { ulA = 200 }
+            r.setColor(cr, cg, cb, ulA)
+            r.fillRect(x, uy, ms.w, 1.0)
+        }
+    }
+
+    func dispose() {
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+}
+
+// 工厂
+export func createLinkButton(Dict opts): LinkButton {
+    LinkButton lb = new LinkButton(); lb.set(opts); return lb
+}

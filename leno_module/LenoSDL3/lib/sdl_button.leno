@@ -20,6 +20,7 @@ export struct Button impl Widget {
     int cr = 60, cg = 140, cb = 220   // 背景色（默认 primary）
     int tr = 255, tg = 255, tb = 255  // 文字色
     int hvr = 0, hvg = 0, hvb = 0     // 悬停背景色（为 0 时自动计算）
+    int _prR = 0, _prG = 0, _prB = 0   // 按下背景色（为 0 时自动变暗）
     int _cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
     func():void _onClick    // 点击回调
     bool hover = false
@@ -139,6 +140,10 @@ export struct Button impl Widget {
         var hc = opts.get("hover_rgb")
         if hc is Array[int] { hvr = hc[0]; hvg = hc[1]; hvb = hc[2] }
 
+        // pressed_rgb: 按下背景色 [r, g, b]（不设置则自动变暗）
+        var pc = opts.get("pressed_rgb")
+        if pc is Array[int] { _prR = pc[0]; _prG = pc[1]; _prB = pc[2] }
+
         // 外观开关
         _showShadow = opts.get("shadow", true)
         _showBorder = opts.get("border", true)
@@ -196,6 +201,7 @@ export struct Button impl Widget {
     func set_bg(int r, int g, int b)    { cr = r; cg = g; cb = b }
     func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
     func set_hover_rgb(int r, int g, int b) { hvr = r; hvg = g; hvb = b }
+    func set_pressed_rgb(int r, int g, int b) { _prR = r; _prG = g; _prB = b }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
@@ -279,6 +285,7 @@ export struct Button impl Widget {
 
     // ==================== 查询方法 ====================
     func is_hover(): bool    { return hover }
+    func is_pressed(): bool  { return _pressed }
     func is_enabled(): bool  { return enabled }
     func get_text(): string  { return text }
     func get_x(): float      { return x }
@@ -321,10 +328,14 @@ export struct Button impl Widget {
             if contains(ev.mouseX(), ev.mouseY()) {
                 hover = true
                 _pressed = true
+                core.markFrameRedraw()   // 按下状态变化需重绘
                 if _onClick != null { _onClick() }
             }
         }
-        if ev.isMouseButtonUp() { _pressed = false }
+        if ev.isMouseButtonUp() {
+            if _pressed { core.markFrameRedraw() }   // 释放状态变化需重绘
+            _pressed = false
+        }
     }
 
     // ==================== 渲染 ====================
@@ -344,11 +355,20 @@ export struct Button impl Widget {
                 br = cr + 40; bg = cg + 40; bb = cb + 40
             }
         }
+        // 按下态：优先级高于 hover，背景变暗（模拟按压凹陷感）
+        if _pressed and enabled {
+            if _prR > 0 or _prG > 0 or _prB > 0 {
+                br = _prR; bg = _prG; bb = _prB
+            } else {
+                br = cr - 30; bg = cg - 30; bb = cb - 30
+                if br < 0 { br = 0 }; if bg < 0 { bg = 0 }; if bb < 0 { bb = 0 }
+            }
+        }
         if not enabled { br = cr / 2; bg = cg / 2; bb = cb / 2 }
         if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 }
 
-        // 阴影
-        if _showShadow {
+        // 阴影（按下时消除阴影，模拟按压贴合感）
+        if _showShadow and not (_pressed and enabled) {
             r.setColor(0, 0, 0, 40)
             r.fillRoundedRect(x + 2, y + 2, w, h, _radius)
         }
@@ -364,9 +384,10 @@ export struct Button impl Widget {
             r.drawTextureAt(_bgTex, x, y, w, h)
         }
 
-        // 边框
+        // 边框（按下态使用深色内凹边框，区别于 hover 的亮色高亮边框）
         if _showBorder {
-            if hover { r.setColor(255, 255, 255, 200) }
+            if _pressed and enabled { r.setColor(0, 0, 0, 150) }
+            else if hover { r.setColor(255, 255, 255, 200) }
             else {
                 int bbr = br + 30; int bbg = bg + 30; int bbb = bb + 30
                 if bbr > 255 { bbr = 255 }; if bbg > 255 { bbg = 255 }; if bbb > 255 { bbb = 255 }
