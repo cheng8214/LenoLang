@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -234,6 +235,7 @@ static Value native_arch(int argCount, Value* args) {
 
 // _exec(cmd) - 执行系统命令并返回 [stdout, exit_code]
 // 使用 system() + 临时文件避免 _popen 在大量并发调用时不稳定的问题
+// Windows 版使用 _wsystem + UTF-16 转换以支持中文/Unicode 路径
 static Value native_exec(int argCount, Value* args) {
     if (argCount < 1 || !val_is_string(args[0])) {
         return val_null();
@@ -241,31 +243,40 @@ static Value native_exec(int argCount, Value* args) {
     ObjString* cmd = (ObjString*)val_as_obj(args[0]);
 
 #ifdef _WIN32
-    // Windows: system() 重定向到临时文件
-    char tmp_path[MAX_PATH];
-    DWORD len = GetTempPathA(MAX_PATH, tmp_path);
-    if (len == 0 || len >= MAX_PATH - 64) return val_null();
-    snprintf(tmp_path + len, MAX_PATH - len, "leno_exec_%lu.txt", GetCurrentProcessId());
+    // 将 UTF-8 cmd 转为 UTF-16 宽字符
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, cmd->chars, -1, NULL, 0);
+    if (wlen <= 0) return val_null();
+    wchar_t* wcmd = malloc(wlen * sizeof(wchar_t));
+    if (!wcmd) return val_null();
+    MultiByteToWideChar(CP_UTF8, 0, cmd->chars, -1, wcmd, wlen);
 
-    // 构建命令: cmd /c "command" > tmp 2>&1
-    size_t cmd_len = strlen(cmd->chars) + strlen(tmp_path) + 32;
-    char* full_cmd = malloc(cmd_len);
-    snprintf(full_cmd, cmd_len, "cmd /c %s > \"%s\" 2>&1", cmd->chars, tmp_path);
-    int rc = system(full_cmd);
-    free(full_cmd);
+    // 获取临时目录 (宽字符)
+    wchar_t wtmp_path[MAX_PATH];
+    DWORD tlen = GetTempPathW(MAX_PATH, wtmp_path);
+    if (tlen == 0 || tlen >= MAX_PATH - 64) { free(wcmd); return val_null(); }
+    swprintf(wtmp_path + tlen, MAX_PATH - tlen, L"leno_exec_%lu.txt", GetCurrentProcessId());
 
-    // 读取临时文件
-    FILE* f = fopen(tmp_path, "rb");
-    if (!f) { DeleteFileA(tmp_path); return val_null(); }
+    // 构建宽字符命令: cmd /c "command" > tmp 2>&1
+    size_t full_len = wcslen(wcmd) + wcslen(wtmp_path) + 64;
+    wchar_t* wfull = malloc(full_len * sizeof(wchar_t));
+    if (!wfull) { free(wcmd); return val_null(); }
+    swprintf(wfull, full_len, L"cmd /c %s > \"%s\" 2>&1", wcmd, wtmp_path);
+    int rc = _wsystem(wfull);
+    free(wfull);
+    free(wcmd);
+
+    // 读取临时文件 (宽字符路径)
+    FILE* f = _wfopen(wtmp_path, L"rb");
+    if (!f) { DeleteFileW(wtmp_path); return val_null(); }
     fseek(f, 0, SEEK_END);
     long flen = ftell(f);
     fseek(f, 0, SEEK_SET);
     char* output = malloc(flen + 1);
-    if (!output) { fclose(f); DeleteFileA(tmp_path); return val_null(); }
+    if (!output) { fclose(f); DeleteFileW(wtmp_path); return val_null(); }
     fread(output, 1, flen, f);
     output[flen] = '\0';
     fclose(f);
-    DeleteFileA(tmp_path);
+    DeleteFileW(wtmp_path);
 
     ObjArray* result = arr_new(2);
     arr_write(result, 0, val_obj((Object*)str_copy(output, (int)flen)));
