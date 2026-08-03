@@ -119,13 +119,13 @@ func subFolders(string path): Array[Dict] {
 
 // 人类可读大小
 func fmtSize(int b): string {
-    if b < 1024 { return (b as string) + " B" }
+    if b < 1024 { return b + " B" }
     float kb = _float(b) / 1024.0
     if kb < 1024.0 { return _int(kb) + " KB" }
     float mb = kb / 1024.0
     if mb < 1024.0 { return _int(mb) + " MB" }
     float gb = mb / 1024.0
-    return (_int(gb) as string) + " GB"
+    return _int(gb) + " GB"
 }
 
 // 树节点是否已懒加载过子节点
@@ -151,15 +151,15 @@ func ensureNodeArr(int n) {
 }
 func regDicts(Array[Dict] ds) {
     for ds.len() to i {
-        Dict d = ds[i] as Dict
+        Dict d = ds[i]
         ensureNodeArr(_regCounter)
         Dict dd = d.get("data", {})
         _nodePaths[_regCounter - 1] = dd.get("path", "") 
         _nodeTypes[_regCounter - 1] = dd.get("type", "folder") 
         _regCounter = _regCounter + 1
         var ch = d.get("children", null)
-        if ch is Array[Dict] and (ch as Array[Dict]).len() > 0 {
-            regDicts(ch as Array[Dict])
+        if ch is Array[Dict] and ch.len() > 0 {
+            regDicts(ch)
         }
     }
 }
@@ -197,7 +197,7 @@ func loadPcDrives() {
     var dv = dirs.list_drives()
     if dv != null {
         for dv.len() to i {
-            string d = dv[i] as string
+            string d = dv[i]
             Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/folder_1.png"}
             int nid = _tree.add_child(pcId, node)
             ensureNodeArr(nid)
@@ -217,7 +217,7 @@ func _onTreeToggle(int id, bool expanded) {
         var dv = dirs.list_drives()
         if dv != null {
             for dv.len() to i {
-                string d = dv[i] as string
+                string d = dv[i]
                 Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/folder_1.png"}
                 int nid = _tree.add_child(id, node)
                 ensureNodeArr(nid)
