@@ -34,10 +34,10 @@
                                      ref_type->type->kind != TYPE_CSTRUCT &&
                                      ref_type->type->kind != TYPE_FACE)) {
                                     char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'",
+                                    snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'（请检查是否已通过 use 语句导入该类型，如 use module.%s）",
                                              ast->u.struct_def.name,
                                              ast->u.struct_def.field_names[i],
-                                             field_type->struct_name);
+                                             field_type->struct_name, field_type->struct_name);
                                     error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                                 } else if (ref_type->type->kind == TYPE_CLIB) {
                                     // 修正字段类型为 TYPE_CLIB

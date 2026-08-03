@@ -84,6 +84,7 @@
                 }
 
                 // 检查声明的类型是否存在（对于自定义 struct/cstruct/clib/alias 类型）
+                int declared_type_undefined = 0;  // 标记声明类型是否未定义（用于跳过后续级联类型检查）
                 if ((ast->u.var_decl.type->kind == TYPE_STRUCT || ast->u.var_decl.type->kind == TYPE_CLIB) &&
                     ast->u.var_decl.type->struct_name) {
                     const char* type_name = ast->u.var_decl.type->struct_name;
@@ -93,8 +94,9 @@
                         Symbol* struct_def = scope_resolve(s->current, type_name);
                         if (!struct_def) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                            declared_type_undefined = 1;
                         } else if (struct_def->kind == SYM_TYPE && struct_def->type) {
                             // 类型是 alias（如 FSize = Dict[string,float]），解析为实际类型
                             type_free(ast->u.var_decl.type);
@@ -109,8 +111,9 @@
                                    (struct_def->type->kind != TYPE_STRUCT &&
                                     struct_def->type->kind != TYPE_FACE)) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                            declared_type_undefined = 1;
                         }
                     }
                 } else if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_STRUCT &&
@@ -131,8 +134,9 @@
                                 ast->u.var_decl.type = type_copy(struct_def->type);
                             } else {
                                 char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "未定义的类型: %s", type_name);
+                                snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
                                 error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                                declared_type_undefined = 1;
                             }
                         } else if (struct_def && struct_def->type->kind == TYPE_CSTRUCT) {
                             // 如果实际是 cstruct，更新类型为 TYPE_CSTRUCT
@@ -144,7 +148,12 @@
                 TypeInfo* init_type = infer_expr_type(s, ast->u.var_decl.init);
                 if (init_type) {
                     if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER && !infer_as_param) {
-                        if (!type_is_compatible(ast->u.var_decl.type, init_type)) {
+                        // ★ 如果声明类型已报告未定义，跳过类型不匹配检查（避免级联错误），
+                        //   并用初始化值的实际类型作为变量类型（让后续方法调用能正常解析）
+                        if (declared_type_undefined) {
+                            sym->type = type_copy(init_type);
+                            // init_type 由下方统一的 type_free(init_type) 释放
+                        } else if (!type_is_compatible(ast->u.var_decl.type, init_type)) {
                             char msg[BUFFER_MEDIUM];
                             char context[256];
                             snprintf(context, sizeof(context), "变量 '%s' 声明类型与初始化值类型不匹配",
@@ -253,7 +262,8 @@
                                     struct_def->type->kind != TYPE_CSTRUCT &&
                                     struct_def->type->kind != TYPE_FACE)) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s", sym->type->struct_name);
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）",
+                                     sym->type->struct_name, sym->type->struct_name);
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                         }
                     }

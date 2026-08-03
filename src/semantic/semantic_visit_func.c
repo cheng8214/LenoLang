@@ -16,7 +16,7 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line) {
         if (!struct_def) {
             // 完全找不到 → 未定义的类型
             char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "未定义的类型: %s", type->struct_name);
+            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type->struct_name, type->struct_name);
             error_add(ERR_SEMANTIC, line, msg);
         }
         // 找到了就是合法的 struct 类型（alias 已在 resolve_alias_in_type 中解析）

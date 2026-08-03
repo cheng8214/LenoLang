@@ -1553,8 +1553,21 @@
                     } else {
                         // 方法不存在于该类型
                         char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
-                                 type_to_string(obj_sym->type), method_name);
+                        // ★ 增强报错：当类型是 TYPE_STRUCT 且无定义时，提示可能是未 use 导入的 clib/cstruct 类型
+                        if (obj_sym->type->kind == TYPE_STRUCT && obj_sym->type->struct_name) {
+                            const char* tn = obj_sym->type->struct_name;
+                            Symbol* def_sym = scope_resolve_tree_bfs(s->root_scope, tn);
+                            if (!def_sym) {
+                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'（类型 '%s' 未定义，请检查是否已通过 use 语句导入该类型，如 use module.%s）",
+                                         type_to_string(obj_sym->type), method_name, tn, tn);
+                            } else {
+                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
+                                         type_to_string(obj_sym->type), method_name);
+                            }
+                        } else {
+                            snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
+                                     type_to_string(obj_sym->type), method_name);
+                        }
                         error_add(ERR_SEMANTIC, ast->line, msg);
                     }
 
