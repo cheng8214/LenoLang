@@ -39,6 +39,7 @@ use SDL3.MenuBar
 use SDL3.ComboBox
 use SDL3.HBox
 use SDL3.VBox
+use SDL3.Splitter
 
 // ===================== 模块级状态（供模块函数共享） =====================
 string _curDir = ""
@@ -75,7 +76,7 @@ Window _win
 MenuBar _bar
 VBox   _mainLayout    // 主布局容器（菜单栏下方的所有内容）
 HBox   _toolbar       // 路径工具栏
-HBox   _content       // 内容区（导航面板 + 表格）
+Splitter _content     // 内容区（可拖拽分割：导航面板 | 表格）
 Panel  _navPanel      // 左侧导航面板容器（背景卡片）
 VBox   _navVBox       // 导航面板内部布局
 HBox   _navToolbar    // 导航面板内工具栏按钮行
@@ -562,13 +563,16 @@ main() {
     _toolbar.add(btnRefresh, {grow:0, shrink:0, basis:32, align:3})
     btnRefresh.set_tip("刷新"); btnRefresh.on_click(func() { openDir(_curDir) })
 
-    // ---------- 内容区 HBox（导航面板 + 表格，grow:1 占满剩余高度） ----------
-    _content = SDL3.createHBox({x:0, y:0, w:100, h:100, padX:0, padY:0, spacing:4})
+    // ---------- 内容区 Splitter（可拖拽分割：导航面板 | 表格，grow:1 占满剩余高度） ----------
+    // ★ 使用 Splitter 替代固定宽度 HBox：用户可拖拽分割条调整导航面板与表格的宽度比例
+    _content = SDL3.createSplitter({x:0, y:0, w:100, h:100, orientation:0, ratio:0.3, min_first:120, min_second:300, divider_width:4, hit_pad:4})
     _mainLayout.add(_content, {grow:1, shrink:1, align:3})
+    // ★ 手动下发窗口句柄给 Splitter（_layout_pass_window 不处理 Splitter 类型，避免循环依赖）
+    _content._bind_window(_win.getHandle())
 
     // ---------- 左侧导航面板 ----------
     _navPanel = SDL3.createPanel({x:0, y:0, w:_NAV_W, h:100, bg_rgb:[26,28,36], border_rgb:[70,75,92], radius:8})
-    _content.add(_navPanel, {grow:0, shrink:0, basis:_NAV_W, align:3})
+    _content.set_first(_navPanel)
 
     // 导航面板内部用 VBox 自动排布
     // ★ setLayout：Panel 每帧自动同步 VBox 的位置/尺寸到 Panel 内部区域（减去 padding）
@@ -625,7 +629,7 @@ main() {
         sortable:true, zebra:true, row_h:24, header_h:28, font_size:14,
         image_col:0, image_size:18, image_pad:4, image_gap:4
     })
-    _content.add(_table, {grow:1, shrink:1, align:3})
+    _content.set_second(_table)
     _table.on_select(func(int row) {
         if row < 0 or row >= _table.row_count() { return }
         var r = _table.get_row(row)

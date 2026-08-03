@@ -34,6 +34,8 @@ import "sdl_separator.leno" as sep
 import "sdl_linkbutton.leno" as lnk
 import "sdl_spinner.leno" as spn
 import "sdl_groupbox.leno" as gbx
+import "sdl_splitter.leno" as spl
+use spl.Splitter
 
 
 // ==================== 重新导出类型 ====================
@@ -76,6 +78,7 @@ use sep.Separator
 use lnk.LinkButton
 use spn.Spinner
 use gbx.GroupBox
+use spl.Splitter
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
 export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
@@ -102,6 +105,7 @@ export func createSeparator(Dict opts): Separator  { return sep.createSeparator(
 export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButton(opts) }
 export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
+export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
 export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
 export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
 export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }
@@ -123,6 +127,10 @@ use core.(Color, FColor, Size, FSize, StringSize, GlyphInfo)
 
 // ==================== 重新导出枚举 ====================
 use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp, TrayEntryFlag)
+
+// Splitter 方向常量
+export const SPLIT_HORIZONTAL = spl.SPLIT_HORIZONTAL
+export const SPLIT_VERTICAL   = spl.SPLIT_VERTICAL
 
 export const PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
 export const PIXELFORMAT_ARGB8888 = core.PIXELFORMAT_ARGB8888

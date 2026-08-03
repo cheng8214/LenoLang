@@ -76,6 +76,8 @@ import "sdl_spinner.leno" as spnlib
 use spnlib.Spinner
 import "sdl_groupbox.leno" as gbxlib
 use gbxlib.GroupBox
+import "sdl_splitter.leno" as spllib
+use spllib.Splitter
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
@@ -307,7 +309,7 @@ export struct Window {
         _widgets.add(w)
         // 绑定窗口句柄：容器向下传递，Edit 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
         switch w {
-            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox {
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
                 w._bind_window(handle); return w
             }
             case is Edit {
@@ -321,11 +323,13 @@ export struct Window {
     }
 
     // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
+    // ★ 同时下发窗口句柄（等价于 win.add 的 _bind_window），确保根控件内部的 Edit/TreeView/ComboBox 等能正常工作
     func setRoot(Widget root) {
         _root = root
         _rootX = 0.0; _rootY = 0.0
         root.set_pos(0, 0)
         root.set_size(_w, _h)
+        _passWindowHandle(root)
     }
 
     // 设置根布局控件（带偏移）：窗口缩放时自动把根控件位置/尺寸设为 (x,y,winW-x,winH-y)
@@ -335,6 +339,23 @@ export struct Window {
         _rootX = ox; _rootY = oy
         root.set_pos(ox, oy)
         root.set_size(_float(_w) - ox, _float(_h) - oy)
+        _passWindowHandle(root)
+    }
+
+    // 向控件下发窗口句柄（与 add() 中的 switch 逻辑一致）
+    // 容器类型递归向下传递；Edit/TreeView 直接设置
+    func _passWindowHandle(Widget w) {
+        switch w {
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
+                w._bind_window(handle); return
+            }
+            case is Edit {
+                w.set_window(handle); return
+            }
+            case is TreeView {
+                w.set_window_handle(handle); return
+            }
+        }
     }
 
     // 添加复选框，opts: {text, x, y, box, checked, on_change}
@@ -564,8 +585,17 @@ export struct Window {
     // 仅注册窗口（不启动主循环），用于多窗口场景：先逐个 registerOnly，最后 run() 启动循环
     func registerOnly(EventHandler onEvent, RenderCallback onRender) {
         core.startTextInput(handle)      // 启用文本输入（供 Edit 控件使用）
+        // ★ 获取窗口实际尺寸（系统可能已最大化/恢复到不同尺寸），
+        //   用实际值初始化 SSAA 纹理和根布局，避免首帧渲染到旧尺寸纹理再贴到大窗口左上角
+        Size actualSz = getSize()
+        _w = actualSz.w; _h = actualSz.h
         Renderer ren = renderer.createRenderer(handle)
-        if _aaScale > 0.0 { ren.enableSSAA(_w, _h, _aaScale) }
+        if _aaScale > 0.0 { ren.enableSSAA(actualSz.w, actualSz.h, _aaScale) }
+        // ★ 同步根布局到实际窗口尺寸（setRootAt 在 run() 前调用，此时窗口可能已被系统改变尺寸）
+        if _root != null {
+            _root.set_pos(_rootX, _rootY)
+            _root.set_size(_float(actualSz.w) - _rootX, _float(actualSz.h) - _rootY)
+        }
         _runWids.add(getID())
         _runHnds.add(handle)
         _runRens.add(ren)
@@ -579,8 +609,7 @@ export struct Window {
         _runRoots.add(_root)         // 根布局控件
         _runRootX.add(_rootX)         // 根布局偏移
         _runRootY.add(_rootY)
-        Size sz = getSize()           // 窗口逻辑尺寸（背景填充 + Tooltip 浮层夹紧用）
-        _runW.add(sz.w); _runH.add(sz.h)
+        _runW.add(actualSz.w); _runH.add(actualSz.h)
         _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
         _runTransparent.add(_transparent)    // 透明窗口标志
     }
@@ -592,6 +621,22 @@ export struct Window {
         registerOnly(onEvent, onRender)
         if _runLoopActive { return }
         _runLoopActive = true
+
+        // ★ 首帧前强制检测：Windows 异步最大化时 registerOnly 可能拿到原始请求尺寸（1000x680），
+        //   而非最大化后的实际尺寸（如 1920x1080）。在主循环启动前重新同步所有窗口的
+        //   SSAA 纹理和根布局，彻底消除首帧渲染到小尺寸纹理再缩放导致的「迷你版闪现」。
+        for _runWids.len() to i {
+            SDL_Point pt = SDL_Point.malloc()
+            _lib.SDL_GetWindowSize(_runHnds[i], &pt.x, &pt.y)
+            if pt.x != _runW[i] or pt.y != _runH[i] {
+                _runRens[i].resizeSSAA(pt.x, pt.y)
+                _runW[i] = pt.x; _runH[i] = pt.y
+                var rootWid = _runRoots[i]
+                rootWid?.set_pos(_runRootX[i], _runRootY[i])
+                rootWid?.set_size(_float(pt.x) - _runRootX[i], _float(pt.y) - _runRootY[i])
+            }
+            pt.free()
+        }
 
         Event ev = event.createEvent()
         bool _needRedraw = true       // 初始绘制一次
@@ -664,7 +709,7 @@ export struct Window {
                             _runRens.remove(i);  _runEvts.remove(i)
                             _runRends.remove(i); _runWidgets.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
-                            _runDialogHidden.remove(i)
+                            _runDialogHidden.remove(i); _runTransparent.remove(i)
                             break
                         }
                     }

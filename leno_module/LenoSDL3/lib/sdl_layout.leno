@@ -466,10 +466,10 @@ export struct AnchorBox impl Widget {
 // - 嵌套的布局容器（HBox/VBox/AnchorBox）继续向下传递，保证深层子控件也能拿到句柄。
 // 其它控件忽略即可（无 set_window 需求）。
 func _layout_pass_window(Widget c, Ptr[u8] hwnd) {
-    switch c {
-        case is Edit { c.set_window(hwnd); return }
-        case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
-    }
+switch c {
+case is Edit { c.set_window(hwnd); return }
+case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
+}
 }
 
 // ==================== 工厂 ====================

@@ -3,10 +3,11 @@ import maths
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
-import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_image.leno" as img
 
 export struct ComboBox impl Widget {
     float x = 0.0, y = 0.0, w = 200.0, h = 30.0
@@ -32,6 +33,14 @@ export struct ComboBox impl Widget {
     float _sbDragOffset = 0.0
     func(int):void _onChange
     Ptr[u8]? _winHnd            // 所属窗口句柄：下拉层按窗口隔离绘制；面板/Tab 嵌套未拿到句柄则为 null
+
+    // ==================== 每项图标支持（对齐 Table._rowImages / TreeView image） ====================
+    Array[string] _itemImages = []    // 每项图标路径（与 items 平行，空串=无图标）
+    float _imgSize = 16.0             // 图标边长
+    float _imgGap  = 6.0              // 图标与文字间距
+    // 纹理缓存（避免每帧重载 & 纹理泄漏）
+    Array[string] _imgCachePaths = []
+    Array[Ptr[u8]] _imgCacheTex   = []
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -102,6 +111,12 @@ export struct ComboBox impl Widget {
         var sbc = opts.get("scroll_rgb")
         if sbc is Array[int] { _sbR = sbc[0]; _sbG = sbc[1]; _sbB = sbc[2] }
 
+        // 每项图标
+        var iis = opts.get("item_images")
+        if iis is Array[string] { _itemImages = iis } else { _itemImages = [] }
+        _imgSize = opts.get("image_size", 16)
+        _imgGap  = opts.get("image_gap", 6)
+
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
@@ -112,9 +127,23 @@ export struct ComboBox impl Widget {
     }
 
     // ==================== 设置方法 ====================
-    func set_items(Array[string] its) { items = its; if _sel >= items.len() { _sel = -1 }; _open = false; _scroll = 0.0 }
+    func set_items(Array[string] its) { items = its; if _sel >= items.len() { _sel = -1 }; _open = false; _scroll = 0.0; _itemImages = [] }
+    func set_items_with_images(Array[string] its, Array[string] imgs) {
+        items = its; _itemImages = imgs
+        if _sel >= items.len() { _sel = -1 }; _open = false; _scroll = 0.0
+    }
+    func set_item_image(int idx, string path) {
+        while _itemImages.len() <= idx { _itemImages.add("") }
+        _itemImages[idx] = path
+    }
+    func get_item_image(int idx): string {
+        if idx < 0 or idx >= _itemImages.len() { return "" }
+        return _itemImages[idx]
+    }
+    func set_image_size(float s) { _imgSize = s }
+    func set_image_gap(float g)  { _imgGap = g }
     func add_item(string s)           { items.add(s) }
-    func clear()                      { items = []; _sel = -1; _open = false; _scroll = 0.0; _hover = -1 }
+    func clear()                      { items = []; _itemImages = []; _sel = -1; _open = false; _scroll = 0.0; _hover = -1 }
     func set_enabled(bool e)          { enabled = e }
     func set_visible(bool v)           { visible = v }
     func is_visible(): bool           { return visible }
@@ -134,6 +163,23 @@ export struct ComboBox impl Widget {
     // 记录所属窗口句柄，供下拉层按窗口隔离绘制（渲染循环据 hwnd 只画本窗口下拉框）
     func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
     func getWindowHandle(): Ptr[u8] { return _winHnd }
+
+    // 纹理缓存：按 path 取/载纹理（对齐 Table._get_tex 模式）
+    func _get_tex(Renderer r, string path): Ptr[u8] {
+        for _imgCachePaths.len() to i {
+            if _imgCachePaths[i] == path { return _imgCacheTex[i] }
+        }
+        Ptr[u8] t = img.loadTexture(r.handle, path)
+        _imgCachePaths.add(path); _imgCacheTex.add(t)
+        return t
+    }
+    func _free_img_cache() {
+        sdl3 _lib = core.lib()
+        for _imgCacheTex.len() to i {
+            if _imgCacheTex[i] != null { _lib.SDL_DestroyTexture(_imgCacheTex[i]) }
+        }
+        _imgCachePaths = []; _imgCacheTex = []
+    }
 
     func on_change(func(int):void cb) { _onChange = cb }
 
@@ -280,15 +326,34 @@ export struct ComboBox impl Widget {
         r.setColor(bgr, bgg, bgb, 255)
         r.fillRoundedRect(x, y, w, h, 6.0)
 
-        // 当前文字
+        // 当前文字 + 图标
+        float textX = x + 8.0
         if _font.ok {
+            // 选中项图标
+            if _sel >= 0 and _sel < _itemImages.len() and _itemImages[_sel] != "" {
+                Ptr[u8] tex = _get_tex(r, _itemImages[_sel])
+                if tex != null {
+                    float isz = _imgSize
+                    if isz > h - 8.0 { isz = h - 8.0 }
+                    float iy = y + (h - isz) / 2.0
+                    r.setTextureAlpha(tex, 255); r.setTextureColor(tex, 255, 255, 255)
+                    var nats = r.getTextureSize(tex)
+                    float nw = nats["w"], nh = nats["h"]
+                    if nw > 0.0 and nh > 0.0 {
+                        float s = isz / nw; if isz / nh < s { s = isz / nh }
+                        float dw = nw * s, dh = nh * s
+                        r.drawTextureAt(tex, textX + (isz - dw) / 2.0, iy + (isz - dh) / 2.0, dw, dh)
+                    }
+                    textX = textX + isz + _imgGap
+                }
+            }
             string t = ""
             if _sel >= 0 and _sel < items.len() { t = items[_sel] } else { t = _placeholder }
             float th = _font.measureString("Ag").h
             int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             float ty = r.snapY(y + (h - th) / 2.0)
-            r.drawText(_font, t, r.snapX(x + 8.0), ty, tcR, tcG, tcB)
+            r.drawText(_font, t, r.snapX(textX), ty, tcR, tcG, tcB)
         }
 
         // 下拉箭头（向下填充三角）
@@ -334,7 +399,26 @@ export struct ComboBox impl Widget {
                 float th = _font.measureString("Ag").h
                 int tcR = tr, tcG = tg, tcB = tb
                 float ty = r.snapY(iy + (_itemH - th) / 2.0)
-                r.drawText(_font, items[i], r.snapX(px + 8.0), ty, tcR, tcG, tcB)
+                float tx = r.snapX(px + 8.0)
+                // 每项图标
+                if i < _itemImages.len() and _itemImages[i] != "" {
+                    Ptr[u8] tex = _get_tex(r, _itemImages[i])
+                    if tex != null {
+                        float isz = _imgSize
+                        if isz > _itemH - 4.0 { isz = _itemH - 4.0 }
+                        float iy2 = iy + (_itemH - isz) / 2.0
+                        r.setTextureAlpha(tex, 255); r.setTextureColor(tex, 255, 255, 255)
+                        var nats = r.getTextureSize(tex)
+                        float nw = nats["w"], nh = nats["h"]
+                        if nw > 0.0 and nh > 0.0 {
+                            float s = isz / nw; if isz / nh < s { s = isz / nh }
+                            float dw = nw * s, dh = nh * s
+                            r.drawTextureAt(tex, tx + (isz - dw) / 2.0, iy2 + (isz - dh) / 2.0, dw, dh)
+                        }
+                        tx = tx + isz + _imgGap
+                    }
+                }
+                r.drawText(_font, items[i], tx, ty, tcR, tcG, tcB)
             }
         }
         r.popClipRect()
@@ -359,6 +443,7 @@ export struct ComboBox impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        _free_img_cache()         // 释放图标纹理缓存
         _unregisterComboBox(self)   // 从下拉框登记表摘除自身，避免窗口销毁后悬空引用累积
     }
 }
