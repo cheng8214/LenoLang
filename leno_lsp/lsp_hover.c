@@ -620,7 +620,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                     // 使用点号前的变量名（如 "r"）而非完整表达式（如 "r.clearColor"）
                     char* closure_type = detect_closure_param_type_at_position(content, cursor_offset, base_var);
                     if (closure_type) {
-                        int info_len = 512 + strlen(base_var) + strlen(closure_type);
+                        size_t info_len = 512 + strlen(base_var) + strlen(closure_type);
                         char* info = (char*)malloc(info_len);
                         if (info) {
                             snprintf(info, info_len, "**%s**\n\n"
@@ -639,7 +639,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
             // 无点号的普通变量
             char* closure_type = detect_closure_param_type_at_position(content, cursor_offset, word);
             if (closure_type) {
-                int info_len = 512 + strlen(word) + strlen(closure_type);
+                size_t info_len = 512 + strlen(word) + strlen(closure_type);
                 char* info = (char*)malloc(info_len);
                 if (info) {
                     snprintf(info, info_len, "**%s**\n\n"
@@ -720,7 +720,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         if (var_sym) {
             // 找到了变量，构建悬停信息
             const char* type_str = type_to_string(var_sym->type);
-            int info_len = 512 + strlen(base_word) + (type_str ? strlen(type_str) : 0);
+            size_t info_len = 512 + strlen(base_word) + (type_str ? strlen(type_str) : 0);
             char* info = (char*)malloc(info_len);
             if (info) {
                 bool is_global = (var_sym->scope == ctx.root_scope);
@@ -801,7 +801,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
             free(struct_names);
 
             if (found && type_str) {
-                int info_len = 512 + strlen(word) + strlen(type_str) + strlen(struct_names[0]);
+                size_t info_len = 512 + strlen(word) + strlen(type_str) + strlen(struct_names[0]);
                 char* info = (char*)malloc(info_len);
                 if (info) {
                     snprintf(info, info_len, "**%s**\n\n"
@@ -830,7 +830,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
     // 构建悬停信息
     const char* type_str = type_to_string(sym->type);
-    int info_len = 512 + strlen(word) + (type_str ? strlen(type_str) : 0);
+    size_t info_len = 512 + strlen(word) + (type_str ? strlen(type_str) : 0);
     char* info = (char*)malloc(info_len);
     if (!info) {
         compiler_context_cleanup(&ctx);
@@ -1896,7 +1896,7 @@ static char* get_enum_value_hover(const char* content, const char* word) {
                     // 检查是否匹配
                     if (strcmp(value_name_found, value_name) == 0) {
                         // 找到了，构建悬停信息
-                        int info_len = 512 + strlen(word) + strlen(enum_name);
+                        size_t info_len = 512 + strlen(word) + strlen(enum_name);
                         char* info = (char*)malloc(info_len);
                         if (info) {
                             snprintf(info, info_len, "**%s**\n\n"
