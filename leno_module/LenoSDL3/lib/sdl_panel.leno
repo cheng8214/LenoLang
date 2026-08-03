@@ -12,6 +12,8 @@ import "sdl_theme.leno" as theme; use theme.Theme
 export struct Panel impl Widget {
     float x = 0.0, y = 0.0, w = 200.0, h = 150.0
     Array[Widget] children = []
+    Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 Panel 内部区域（减去 padding）
+    float _layPad = 0.0          // _layoutChild 的内边距
     int br = 44, bg = 46, bb = 54     // 背景色
     int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
     float _radius = 8.0
@@ -56,6 +58,8 @@ export struct Panel impl Widget {
     // 绑定窗口句柄：记录自身，并向下分发给需要它的子控件（Edit / 布局容器 / 嵌套 Panel）
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
+        var lc = _layoutChild
+        if lc is Widget { _pass_hwnd(lc, hwnd) }
         for children to c { _pass_hwnd(c, hwnd) }
     }
     // 把窗口句柄下发给子控件：Edit 直接设置；布局容器/嵌套 Panel 继续向下传递
@@ -69,6 +73,12 @@ export struct Panel impl Widget {
         for children.len() to i { if children[i] == c { children.remove(i); return } }
     }
     func clear_children() { children = [] }
+
+    // 设置自动布局子控件：该控件会每帧自动同步位置/尺寸到 Panel 内部区域（减去 padding）。
+    // 典型用法：panel.setLayout(SDL3.createVBox({...}))，Panel 缩放时 VBox 自动跟随。
+    func setLayout(Widget c) { _layoutChild = c; _layPad = 0.0 }
+    func setLayoutPadded(Widget c, float pad) { _layoutChild = c; _layPad = pad }
+
     func set_bg(int r, int g, int b) { br = r; bg = g; bb = b }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
@@ -87,7 +97,20 @@ export struct Panel impl Widget {
     // 转发事件给所有子控件（子控件各自处理命中）
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
+        // 先同步布局子控件位置（事件处理前，确保 hit-test 正确）
+        _syncLayoutChild()
+        var lc = _layoutChild
+        lc?.process(ev)
         for children to c { c.process(ev) }
+    }
+
+    // 同步 _layoutChild 到 Panel 内部区域
+    func _syncLayoutChild() {
+        var lc = _layoutChild
+        if lc is Widget {
+            lc.set_pos(x + _layPad, y + _layPad)
+            lc.set_size(w - 2.0 * _layPad, h - 2.0 * _layPad)
+        }
     }
 
     // ==================== 渲染 ====================
@@ -104,6 +127,11 @@ export struct Panel impl Widget {
             r.pushClipRect(cr.to_ptr())
         }
 
+        // 同步并渲染布局子控件
+        _syncLayoutChild()
+        var lc = _layoutChild
+        lc?.render(r)
+
         for children to c { c.render(r) }
 
         if _clip { r.popClipRect() }
@@ -116,6 +144,8 @@ export struct Panel impl Widget {
     }
 
     func dispose() {
+        var lc = _layoutChild
+        lc?.dispose()
         for children to c { c.dispose() }
     }
 }

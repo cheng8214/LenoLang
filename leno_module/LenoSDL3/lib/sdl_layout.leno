@@ -45,6 +45,7 @@ export const LAYOUT_STRETCH = 3   // 撑满交叉轴
 export struct HBox impl Widget {
     float x = 0.0, y = 0.0, w = 300.0, h = 40.0
     float padX = 8.0, padY = 8.0, spacing = 6.0
+    float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
     int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
@@ -62,6 +63,10 @@ export struct HBox impl Widget {
         padY = opts.get("padY", 8)
         spacing = opts.get("spacing", 6)
         justify = opts.get("justify", 0)
+        padTop = opts.get("padTop", -1.0)
+        padBottom = opts.get("padBottom", -1.0)
+        padLeft = opts.get("padLeft", -1.0)
+        padRight = opts.get("padRight", -1.0)
         _loaded = true
     }
 
@@ -92,8 +97,13 @@ export struct HBox impl Widget {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
-        float innerW = w - 2.0 * padX
-        float innerH = h - 2.0 * padY
+        // 有效内边距：分立值 >=0 时优先，否则回退 padX/padY
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float innerW = w - pl - pr
+        float innerH = h - pt - pb
         if innerW < 0 { innerW = 0 }
         if innerH < 0 { innerH = 0 }
 
@@ -149,7 +159,7 @@ export struct HBox impl Widget {
             else if justify == 5 { extraGap = free / (n + 1); lead = extraGap }
         }
 
-        float cx = x + padX + lead
+        float cx = x + pl + lead
         for n to i {
             Widget c = _c[i]
             Dict o = _opt[i]
@@ -159,11 +169,11 @@ export struct HBox impl Widget {
             if o.get("expand", false) and g <= 0.0 { g = 1.0 }
             int align = o.get("align", 0)
             float cy
-            if align == 3 { ch = innerH; cy = y + padY }
-            else if g > 0.0 { ch = innerH; cy = y + padY }   // grow 同时撑满交叉轴
-            else if align == 1 { cy = y + padY + (innerH - ch) / 2.0 }
-            else if align == 2 { cy = y + padY + innerH - ch }
-            else { cy = y + padY }
+            if align == 3 { ch = innerH; cy = y + pt }
+            else if g > 0.0 { ch = innerH; cy = y + pt }   // grow 同时撑满交叉轴
+            else if align == 1 { cy = y + pt + (innerH - ch) / 2.0 }
+            else if align == 2 { cy = y + pt + innerH - ch }
+            else { cy = y + pt }
             // 最小/最大约束
             float mn = o.get("minW", -1.0); if mn >= 0.0 and cw < mn { cw = mn }
             float mx = o.get("maxW", -1.0); if mx >= 0.0 and cw > mx { cw = mx }
@@ -194,6 +204,7 @@ export struct HBox impl Widget {
 export struct VBox impl Widget {
     float x = 0.0; float y = 0.0; float w = 200.0; float h = 300.0
     float padX = 8.0; float padY = 8.0; float spacing = 6.0
+    float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
     int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
     Array[Widget] _c = []
     Array[Dict]    _opt = []
@@ -211,6 +222,10 @@ export struct VBox impl Widget {
         padY = opts.get("padY", 8)
         spacing = opts.get("spacing", 6)
         justify = opts.get("justify", 0)
+        padTop = opts.get("padTop", -1.0)
+        padBottom = opts.get("padBottom", -1.0)
+        padLeft = opts.get("padLeft", -1.0)
+        padRight = opts.get("padRight", -1.0)
         _loaded = true
     }
 
@@ -241,8 +256,13 @@ export struct VBox impl Widget {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
-        float innerW = w - 2.0 * padX
-        float innerH = h - 2.0 * padY
+        // 有效内边距：分立值 >=0 时优先，否则回退 padX/padY
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float innerW = w - pl - pr
+        float innerH = h - pt - pb
         if innerW < 0 { innerW = 0 }
         if innerH < 0 { innerH = 0 }
 
@@ -298,7 +318,7 @@ export struct VBox impl Widget {
             else if justify == 5 { extraGap = free / (n + 1); lead = extraGap }
         }
 
-        float cy = y + padY + lead
+        float cy = y + pt + lead
         for n to i {
             Widget c = _c[i]
             Dict o = _opt[i]
@@ -308,10 +328,10 @@ export struct VBox impl Widget {
             if o.get("expand", false) and g <= 0.0 { g = 1.0 }
             int align = o.get("align", 0)
             float cx
-            if align == 3 { cw = innerW; cx = x + padX }
-            else if g > 0.0 { cw = innerW; cx = x + padX }   // grow 同时撑满交叉轴
-            else if align == 1 { cx = x + padX + (innerW - cw) / 2.0 }
-            else if align == 2 { cx = x + padX + innerW - cw }
+            if align == 3 { cw = innerW; cx = x + pl }
+            else if g > 0.0 { cw = innerW; cx = x + pl }   // grow 同时撑满交叉轴
+            else if align == 1 { cx = x + pl + (innerW - cw) / 2.0 }
+            else if align == 2 { cx = x + pl + innerW - cw }
             else { cx = x + padX }
             // 最小/最大约束
             float mn = o.get("minW", -1.0); if mn >= 0.0 and cw < mn { cw = mn }

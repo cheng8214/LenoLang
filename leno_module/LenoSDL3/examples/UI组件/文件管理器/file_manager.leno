@@ -1,15 +1,23 @@
 // file_manager.leno — LenoSDL3 文件管理器示例
 // 演示组合：TreeView 目录树 + Table 文件列表 + Edit 路径栏 + MenuBar + 信息面板
-// 核心能力（均来自 dirs 模块）：
-//   · dirs.script_dir()  起始目录推导
-//   · dirs.listdir()     列目录（仅名称）
-//   · dirs.is_dir()      区分文件/文件夹
-//   · dirs.join()        拼接完整路径
-//   · dirs.stat()        读取大小（Dict{size,...}）
-//   · dirs.extname()     取扩展名
-//   · dirs.basename()/dirname()/abspath()
-//   · dirs.mkdir_p()     新建文件夹
-// 布局：顶部菜单 → 路径工具栏 → 左侧目录树 + 右侧文件表/信息面板 → 底部状态栏
+// 布局：使用 VBox/HBox 弹性布局，窗口缩放时自动适配
+//
+// 布局结构：
+//   Window
+//   ├── MenuBar (win.addMenuBar, 固定顶部 full width)
+//   ├── VBox _mainLayout (0, 30, winW, winH-30)
+//   │   ├── HBox _toolbar (固定高度 36px)
+//   │   │   ├── ComboBox (grow:1)
+//   │   │   └── 4个图标按钮 (固定 32px)
+//   │   ├── HBox _content (grow:1)
+//   │   │   ├── Panel _navPanel (固定 300px)
+//   │   │   │   └── VBox _navVBox (跟随 Panel 内部)
+//   │   │   │       ├── Label "导航"
+//   │   │   │       ├── Edit 搜索框
+//   │   │   │       ├── HBox 工具栏按钮 (3个)
+//   │   │   │       └── TreeView (grow:1)
+//   │   │   └── Table (grow:1)
+//   │   └── Label 状态栏 (固定高度)
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
 import "../../../lib/sdl_filedialog.leno" as fdlg
@@ -29,11 +37,13 @@ use SDL3.Edit
 use SDL3.Button
 use SDL3.MenuBar
 use SDL3.ComboBox
+use SDL3.HBox
+use SDL3.VBox
 
 // ===================== 模块级状态（供模块函数共享） =====================
 string _curDir = ""
 Array[Array[string]] _rows = []     // 表格行：[名称, 大小, 类型, 完整路径, 是否目录("1"/"0")]；第4/5列仅内部用，表头只有3列故不显示
-string _renameOldPath = ""          // 右键“重命名”时暂存旧路径，供编辑提交后 dirs.rename 使用
+string _renameOldPath = ""          // 右键"重命名"时暂存旧路径，供编辑提交后 dirs.rename 使用
 bool _skipComboCallback = false
 string _selPath = ""                // 当前选中项完整路径
 bool   _selIsDir = false
@@ -53,24 +63,36 @@ string _clipOp = ""
 Array[string] _history = []
 int _histIndex = -1
 
+// 布局常量（float 避免 int/float 混合运算类型错误）
+float _MENU_H    = 30.0    // 菜单栏高度
+float _TOOLBAR_H = 36.0    // 工具栏高度
+float _STATUS_H  = 24.0    // 状态栏高度
+float _NAV_W     = 300.0   // 左侧导航面板宽度
+float _PAD       = 8.0     // 通用间距
+
 // 控件引用（main 中赋值）
 Window _win
+MenuBar _bar
+VBox   _mainLayout    // 主布局容器（菜单栏下方的所有内容）
+HBox   _toolbar       // 路径工具栏
+HBox   _content       // 内容区（导航面板 + 表格）
+Panel  _navPanel      // 左侧导航面板容器（背景卡片）
+VBox   _navVBox       // 导航面板内部布局
+HBox   _navToolbar    // 导航面板内工具栏按钮行
 TreeView _tree
 Table  _table
 ComboBox _pathCombo
 Label  _statusLbl
-Panel  _navPanel                     // 左侧导航面板容器（背景卡片）
-Edit   _pathSearch                  // 左侧搜索 / 跳转输入框
-Button _btnNew                      // 左侧"新建"按钮
-Button _btnRefresh                  // 左侧"刷新"按钮
-Button _btnToggle                   // 左侧"展开/折叠"按钮
-Button _btnBack                     // 后退按钮
-Button _btnForward                  // 前进按钮
+Edit   _pathSearch
+Button _btnNew
+Button _btnRefresh
+Button _btnToggle
+Button _btnBack
+Button _btnForward
 
 // ===================== 工具函数 =====================
 
 // 根据文件扩展名/是否目录，返回对应图标路径
-//   文件夹 → folder_1.png   .exe → exe_1.png   .dll → dll_1.png   其他 → file_1.png
 func iconForRow(string ext, bool isDir): string {
     if isDir { return _imgDir + "/folder_1.png" }
     if ext == ".exe" { return _imgDir + "/exe_1.png" }
@@ -225,6 +247,15 @@ func _onTreeChange(Array[int] ids) {
     if p != "" and dirs.is_dir(p) { openDir(p) }
 }
 
+// ===================== 弹性布局：窗口缩放时更新 MenuBar =====================
+// _mainLayout 由 setRootAt 自动跟随窗口缩放，_navVBox 由 Panel.setLayout 自动跟随 Panel。
+// MenuBar 在 _widgets 中（需弹出菜单渲染），需手动同步尺寸。
+func _updateMenuBar(int winW, int winH) {
+    _bar.set_pos(0, 0)
+    _bar.set_size(_float(winW), _MENU_H)
+    _bar.setWindowSize(winW, winH)
+}
+
 // ===================== 导航历史 =====================
 
 func _pushHistory(string path) {
@@ -254,7 +285,6 @@ func goForward() {
 
 // ===================== 目录操作 =====================
 
-// 打开目录（带历史记录）
 func openDir(string path) {
     if not dirs.is_dir(path) {
         _statusLbl.set_text("无法打开目录: " + path)
@@ -264,7 +294,6 @@ func openDir(string path) {
     openDirNoHistory(path)
 }
 
-// 打开目录（不记历史，用于后退前进）
 func openDirNoHistory(string path) {
     if not dirs.is_dir(path) {
         _statusLbl.set_text("无法打开目录: " + path)
@@ -281,7 +310,6 @@ func openDirNoHistory(string path) {
         return
     }
 
-    // 先分文件夹 / 文件两批收集，文件夹排在前；每行第4/5列携带完整路径与是否目录，随排序一起移动
     Array[Array[string]] folders = []
     Array[Array[string]] fileRows = []
     for names.len() to i {
@@ -302,7 +330,6 @@ func openDirNoHistory(string path) {
     for fileRows.len() to i { _rows.add(fileRows[i]) }
 
     _table.set_rows(_rows)
-    // 为每行设置对应类型图标和悬浮 tip（文件名 + 大小 + 类型）
     for _rows.len() to i {
         bool isDir = (_rows[i][4] == "1")
         string ext = dirs.extname(_rows[i][0])
@@ -320,7 +347,6 @@ func openDirNoHistory(string path) {
     _selPath = ""; _selIsDir = false
 }
 
-// 同步 ComboBox 到历史记录
 func _syncComboToHistory() {
     if not _pathCombo._loaded { return }
     _pathCombo.set_items(_history)
@@ -331,14 +357,12 @@ func _syncComboToHistory() {
     }
 }
 
-// 打开选中项（文件夹→进入；文件→系统默认程序打开）
 func openSelected() {
     if _selPath == "" { return }
     if _selIsDir { openDir(_selPath) }
     else { openFile(_selPath) }
 }
 
-// 用系统默认程序打开文件
 func openFile(string path) {
     if path == "" { return }
     if dirs.is_dir(path) { openDir(path); return }
@@ -347,7 +371,6 @@ func openFile(string path) {
     _statusLbl.set_text("已打开: " + dirs.basename(path))
 }
 
-// 文件复制（使用 files 模块读写）
 func _copyFile(string src, string dst): bool {
     if dirs.is_dir(src) { return false }
     var content = files.read(src)
@@ -356,7 +379,6 @@ func _copyFile(string src, string dst): bool {
     return dirs.exists(dst)
 }
 
-// 递归复制目录
 func _copyDirRec(string src, string dst): bool {
     if not dirs.mkdir_p(dst) { return false }
     var names = dirs.listdir(src)
@@ -374,7 +396,6 @@ func _copyDirRec(string src, string dst): bool {
     return true
 }
 
-// 粘贴（复制或移动剪贴板中的文件到当前目录）
 func pasteFiles() {
     if _clipPaths.len() == 0 or _clipOp == "" {
         _statusLbl.set_text("剪贴板为空")
@@ -385,7 +406,6 @@ func pasteFiles() {
         string src = _clipPaths[i]
         string nm = dirs.basename(src)
         string target = dirs.join(_curDir, nm)
-        // 避开重名
         if dirs.exists(target) {
             string nameNoExt = nm
             string ext = dirs.extname(nm)
@@ -412,7 +432,6 @@ func pasteFiles() {
     openDir(_curDir)
 }
 
-// 新建文件夹（自动避开重名）
 func newFolder() {
     int n = 1
     string base = dirs.join(_curDir, "新建文件夹")
@@ -429,7 +448,6 @@ func newFolder() {
     }
 }
 
-// 新建文件（自动避开重名，创建空 .txt 文件）
 func newFile() {
     int n = 1
     string base = dirs.join(_curDir, "新建文本文档")
@@ -450,32 +468,34 @@ func newFile() {
 // ===================== 主程序 =====================
 main() {
     SDL3.ttfInit()
-    _win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, resizable:true})
+    // ★ 启用 SSAA 超采样抗锯齿（aa:2 = 2x 渲染再降采样），消除图片/文字/圆角边缘锯齿
+    _win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, resizable:true, aa:2})
     if not _win.ok { SDL3.ttfQuit(); return }
+    _win.setMinSize(640, 400)   // 防止窗口缩小到不可用
 
     _imgDir = dirs.join(dirs.script_dir(), "images")
 
-    // ---------- 顶部菜单 ----------
-    var bar = _win.addMenuBar({x:0, y:0, w:1000, h:30, font_size:14})
-    int mFile = bar.addMenu("文件")
-    bar.addItem(mFile, {label:"打开目录...", id:"openfolder"})
-    bar.addItem(mFile, {label:"新建文件夹", id:"newfolder"})
-    bar.addItem(mFile, {label:"新建文件", id:"newfile"})
-    bar.addSeparator(mFile)
-    bar.addItem(mFile, {label:"刷新", id:"refresh"})
-    bar.addSeparator(mFile)
-    bar.addItem(mFile, {label:"退出", id:"exit"})
-    int mEdit = bar.addMenu("编辑")
-    bar.addItem(mEdit, {label:"复制", id:"copy"})
-    bar.addItem(mEdit, {label:"剪切", id:"cut"})
-    bar.addItem(mEdit, {label:"粘贴", id:"paste"})
-    bar.addSeparator(mEdit)
-    bar.addItem(mEdit, {label:"删除", id:"del"})
-    bar.setItemEnabled(mEdit, "paste", false)
-    int mHelp = bar.addMenu("帮助")
-    bar.addItem(mHelp, {label:"关于", id:"about"})
+    // ---------- 顶部菜单（固定顶部，满宽） ----------
+    _bar = _win.addMenuBar({x:0, y:0, w:1000, h:_MENU_H, font_size:14})
+    int mFile = _bar.addMenu("文件")
+    _bar.addItem(mFile, {label:"打开目录...", id:"openfolder"})
+    _bar.addItem(mFile, {label:"新建文件夹", id:"newfolder"})
+    _bar.addItem(mFile, {label:"新建文件", id:"newfile"})
+    _bar.addSeparator(mFile)
+    _bar.addItem(mFile, {label:"刷新", id:"refresh"})
+    _bar.addSeparator(mFile)
+    _bar.addItem(mFile, {label:"退出", id:"exit"})
+    int mEdit = _bar.addMenu("编辑")
+    _bar.addItem(mEdit, {label:"复制", id:"copy"})
+    _bar.addItem(mEdit, {label:"剪切", id:"cut"})
+    _bar.addItem(mEdit, {label:"粘贴", id:"paste"})
+    _bar.addSeparator(mEdit)
+    _bar.addItem(mEdit, {label:"删除", id:"del"})
+    _bar.setItemEnabled(mEdit, "paste", false)
+    int mHelp = _bar.addMenu("帮助")
+    _bar.addItem(mHelp, {label:"关于", id:"about"})
 
-    bar.on_select(func(string menu, string id) {
+    _bar.on_select(func(string menu, string id) {
         if id == "openfolder" {
             fdlg.showOpenFolderDialog(_win, func(Array[string] paths, int filter) {
                 if paths != null and paths.len() > 0 { openDir(paths[0]) }
@@ -483,11 +503,11 @@ main() {
         } else if id == "newfolder" { newFolder() }
         else if id == "newfile"   { newFile() }
         else if id == "copy" {
-            if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "copy"; _statusLbl.set_text("已复制: " + dirs.basename(_selPath)); bar.setItemEnabled(mEdit, "paste", true) }
+            if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "copy"; _statusLbl.set_text("已复制: " + dirs.basename(_selPath)); _bar.setItemEnabled(mEdit, "paste", true) }
         } else if id == "cut" {
-            if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "cut"; _statusLbl.set_text("已剪切: " + dirs.basename(_selPath)); bar.setItemEnabled(mEdit, "paste", true) }
+            if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "cut"; _statusLbl.set_text("已剪切: " + dirs.basename(_selPath)); _bar.setItemEnabled(mEdit, "paste", true) }
         } else if id == "paste" {
-            if _clipPaths.len() > 0 and _clipOp != "" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { bar.setItemEnabled(mEdit, "paste", false) } }
+            if _clipPaths.len() > 0 and _clipOp != "" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) } }
             else { _statusLbl.set_text("剪贴板为空，无法粘贴") }
         }
         else if id == "del" {
@@ -503,9 +523,18 @@ main() {
         else if id == "about"     { about.show() }
     })
 
-    // ---------- 路径工具栏（ComboBox 历史下拉） ----------
-    _pathCombo = SDL3.createComboBox({x:12, y:38, w:740, h:28, font_size:14, placeholder:"选择或浏览目录...", popup_h: 300, bg_rgb:[20,22,28], text_rgb:[235,240,255]})
-    _win.add(_pathCombo)
+    // ---------- 主布局 VBox（菜单栏下方所有内容） ----------
+    // ★ 用 setRootAt 注册为根布局控件：窗口缩放时引擎自动调用 set_pos/set_size，
+    //   驱动内部 HBox/VBox 级联 _relayout，无需手动同步。
+    _mainLayout = SDL3.createVBox({x:0, y:_MENU_H, w:1000, h:680-_MENU_H, padX:_PAD, padY:_PAD, spacing:4})
+    _win.setRootAt(_mainLayout, 0, _MENU_H)
+
+    // ---------- 路径工具栏 HBox ----------
+    _toolbar = SDL3.createHBox({x:0, y:0, w:100, h:_TOOLBAR_H, padX:4, padY:2, spacing:4})
+    _mainLayout.add(_toolbar, {grow:0, shrink:0, basis:_TOOLBAR_H, align:3})
+
+    _pathCombo = SDL3.createComboBox({x:0, y:0, w:300, h:28, font_size:14, placeholder:"选择或浏览目录...", popup_h:300, bg_rgb:[20,22,28], text_rgb:[235,240,255]})
+    _toolbar.add(_pathCombo, {grow:1, shrink:1, align:3})   // grow:1 占满剩余宽度
     _pathCombo.on_change(func(int idx) {
         if _skipComboCallback { return }
         if idx >= 0 and idx < _history.len() {
@@ -514,25 +543,42 @@ main() {
             _updateNavButtons()
         }
     })
-    var btnOpen = SDL3.createButton({x:758, y:38, w:32, h:28, text:"", image_path:_imgDir + "/open.png", background:false})
-    _win.add(btnOpen); btnOpen.set_tip("打开选中项"); btnOpen.on_click(func() { openSelected() })
-    _btnBack = SDL3.createButton({x:834, y:38, w:32, h:28, text:"", image_path:_imgDir + "/last.png", background:false})
-    _win.add(_btnBack); _btnBack.set_tip("后退"); _btnBack.on_click(func() { goBack() })
-    _btnForward = SDL3.createButton({x:870, y:38, w:32, h:28, text:"", image_path:_imgDir + "/next.png", background:false})
-    _win.add(_btnForward); _btnForward.set_tip("前进"); _btnForward.on_click(func() { goForward() })
-    var btnRefresh = SDL3.createButton({x:910, y:38, w:32, h:28, text:"", image_path:_imgDir + "/update.png", background:false})
-    _win.add(btnRefresh); btnRefresh.set_tip("刷新"); btnRefresh.on_click(func() { openDir(_curDir) })
 
-    // ---------- 左侧导航面板（此电脑 + 快速访问 + 工具栏） ----------
-    _navPanel = SDL3.createPanel({x:12, y:74, w:300, h:560, bg_rgb:[26,28,36], border_rgb:[70,75,92], radius:8})
-    _win.add(_navPanel)
+    // 图标按钮（固定宽度，用 createButton 而非 win.addButton）
+    var btnOpen = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:_imgDir + "/open.png", background:false})
+    _toolbar.add(btnOpen, {grow:0, shrink:0, basis:32, align:3})
+    btnOpen.set_tip("打开选中项"); btnOpen.on_click(func() { openSelected() })
 
-    var navTitle = SDL3.createLabel({x:24, y:84, text:"导航", font_size:14, text_rgb:[150,200,255]})
-    _navPanel.add(navTitle)
+    _btnBack = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:_imgDir + "/last.png", background:false})
+    _toolbar.add(_btnBack, {grow:0, shrink:0, basis:32, align:3})
+    _btnBack.set_tip("后退"); _btnBack.on_click(func() { goBack() })
 
-    // 搜索 / 跳转路径输入框
-    _pathSearch = SDL3.createEdit({x:24, y:108, w:276, h:26, font_size:13, placeholder:"搜索或输入路径…", bg_rgb:[18,20,26], text_rgb:[230,235,245]})
-    _navPanel.add(_pathSearch)
+    _btnForward = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:_imgDir + "/next.png", background:false})
+    _toolbar.add(_btnForward, {grow:0, shrink:0, basis:32, align:3})
+    _btnForward.set_tip("前进"); _btnForward.on_click(func() { goForward() })
+
+    var btnRefresh = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:_imgDir + "/update.png", background:false})
+    _toolbar.add(btnRefresh, {grow:0, shrink:0, basis:32, align:3})
+    btnRefresh.set_tip("刷新"); btnRefresh.on_click(func() { openDir(_curDir) })
+
+    // ---------- 内容区 HBox（导航面板 + 表格，grow:1 占满剩余高度） ----------
+    _content = SDL3.createHBox({x:0, y:0, w:100, h:100, padX:0, padY:0, spacing:4})
+    _mainLayout.add(_content, {grow:1, shrink:1, align:3})
+
+    // ---------- 左侧导航面板 ----------
+    _navPanel = SDL3.createPanel({x:0, y:0, w:_NAV_W, h:100, bg_rgb:[26,28,36], border_rgb:[70,75,92], radius:8})
+    _content.add(_navPanel, {grow:0, shrink:0, basis:_NAV_W, align:3})
+
+    // 导航面板内部用 VBox 自动排布
+    // ★ setLayout：Panel 每帧自动同步 VBox 的位置/尺寸到 Panel 内部区域（减去 padding）
+    _navVBox = SDL3.createVBox({x:0, y:0, w:100, h:100, padX:_PAD, padY:_PAD, spacing:6})
+    _navPanel.setLayoutPadded(_navVBox, _PAD)
+
+    var navTitle = SDL3.createLabel({x:0, y:0, text:"导航", font_size:14, text_rgb:[150,200,255]})
+    _navVBox.add(navTitle, {grow:0, shrink:0, align:0})
+
+    _pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索或输入路径…", bg_rgb:[18,20,26], text_rgb:[230,235,245]})
+    _navVBox.add(_pathSearch, {grow:0, shrink:0, align:3})
     _pathSearch.on_enter(func() {
         string t = _pathSearch.get_text()
         if t == "" { return }
@@ -545,32 +591,40 @@ main() {
         _pathSearch.set_text("")
     })
 
-    // 工具栏按钮
-    _btnNew = SDL3.createButton({x:24, y:142, w:84, h:26, text:"", image_path:_imgDir + "/new.png", background:false})
-    _navPanel.add(_btnNew); _btnNew.set_tip("新建文件夹"); _btnNew.on_click(func() { newFolder() })
-    _btnRefresh = SDL3.createButton({x:114, y:142, w:84, h:26, text:"", image_path:_imgDir + "/update.png", background:false})
-    _navPanel.add(_btnRefresh); _btnRefresh.set_tip("刷新"); _btnRefresh.on_click(func() { openDir(_curDir) })
-    _btnToggle = SDL3.createButton({x:204, y:142, w:84, h:26, text:"", image_path:_imgDir + "/zhetie.png", background:false})
-    _navPanel.add(_btnToggle); _btnToggle.set_tip("折叠/展开导航树"); _btnToggle.on_click(func() {
+    // 导航面板内工具栏按钮行（HBox）
+    _navToolbar = SDL3.createHBox({x:0, y:0, w:100, h:26, padX:0, padY:0, spacing:4})
+    _navVBox.add(_navToolbar, {grow:0, shrink:0, align:3})
+
+    _btnNew = SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:_imgDir + "/new.png", background:false})
+    _navToolbar.add(_btnNew, {grow:1, shrink:1, align:3})
+    _btnNew.set_tip("新建文件夹"); _btnNew.on_click(func() { newFolder() })
+
+    _btnRefresh = SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:_imgDir + "/update.png", background:false})
+    _navToolbar.add(_btnRefresh, {grow:1, shrink:1, align:3})
+    _btnRefresh.set_tip("刷新"); _btnRefresh.on_click(func() { openDir(_curDir) })
+
+    _btnToggle = SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:_imgDir + "/zhetie.png", background:false})
+    _navToolbar.add(_btnToggle, {grow:1, shrink:1, align:3})
+    _btnToggle.set_tip("折叠/展开导航树"); _btnToggle.on_click(func() {
         if _treeExpanded { _tree.collapse_all(); _treeExpanded = false }
         else { _tree.expand_all(); _treeExpanded = true }
     })
 
-    // 目录树
-    _tree = SDL3.createTreeView({x:24, y:180, w:276, h:448, font_size:14, image_size:16, image_gap:4})
-    _navPanel.add(_tree)
+    // 目录树（grow:1 占满导航面板剩余空间）
+    _tree = SDL3.createTreeView({x:0, y:0, w:100, h:100, font_size:14, image_size:16, image_gap:4})
+    _navVBox.add(_tree, {grow:1, shrink:1, align:3})
     _tree.on_change(_onTreeChange)
     _tree.on_toggle(_onTreeToggle)
 
-    // ---------- 右侧文件列表 ----------
+    // ---------- 右侧文件列表（grow:1 占满内容区剩余宽度） ----------
     _table = SDL3.createTable({
-        x:324, y:74, w:664, h:560,
+        x:0, y:0, w:100, h:100,
         headers:["名称","大小","类型"],
         col_widths:[380,140,140],
         sortable:true, zebra:true, row_h:24, header_h:28, font_size:14,
         image_col:0, image_size:18, image_pad:4, image_gap:4
     })
-    _win.add(_table)
+    _content.add(_table, {grow:1, shrink:1, align:3})
     _table.on_select(func(int row) {
         if row < 0 or row >= _table.row_count() { return }
         var r = _table.get_row(row)
@@ -579,8 +633,7 @@ main() {
         return
     })
 
-    // ---------- 表格右击上下文菜单：按“文件 / 文件夹 / 空白处”动态区分 ----------
-    // 弹出前按命中行类型重建菜单项：文件夹多“在此文件夹内新建文件夹”，文件多“属性”
+    // ---------- 表格右击上下文菜单 ----------
     _table.on_context_will_open(func(int row) {
         _table.clearContextItems()
         if row < 0 {
@@ -590,7 +643,6 @@ main() {
             _table.addContextItem({label:"粘贴", id:"paste"})
             _table.addContextSeparator()
             _table.addContextItem({label:"刷新", id:"refresh"})
-            // 剪贴板为空时禁用粘贴
             if _clipPaths.len() == 0 or _clipOp == "" {
                 _table.setContextItemEnabled("paste", false)
             }
@@ -621,7 +673,7 @@ main() {
         if row < 0 {
             if id == "newfolder" { newFolder() }
             else if id == "newfile" { newFile() }
-            else if id == "paste" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { bar.setItemEnabled(mEdit, "paste", false) } }
+            else if id == "paste" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) } }
             else if id == "refresh" { openDir(_curDir) }
             return
         }
@@ -633,13 +685,13 @@ main() {
         } else if id == "copyfile" {
             _clipPaths = [p]; _clipOp = "copy"
             _statusLbl.set_text("已复制: " + dirs.basename(p))
-            bar.setItemEnabled(mEdit, "paste", true)
+            _bar.setItemEnabled(mEdit, "paste", true)
         } else if id == "cutfile" {
             _clipPaths = [p]; _clipOp = "cut"
             _statusLbl.set_text("已剪切: " + dirs.basename(p))
-            bar.setItemEnabled(mEdit, "paste", true)
+            _bar.setItemEnabled(mEdit, "paste", true)
         } else if id == "paste" {
-            bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { bar.setItemEnabled(mEdit, "paste", false) }
+            bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) }
         } else if id == "rename" {
             _renameOldPath = p
             _table.begin_edit(row, 0)
@@ -659,7 +711,6 @@ main() {
         }
         return
     })
-    // 行内编辑提交（由右键“重命名”触发）：真正落盘到 dirs.rename
     _table.on_edit_commit(func(int row, int col, string text) {
         if _renameOldPath == "" { return }
         string oldP = _renameOldPath; _renameOldPath = ""
@@ -670,10 +721,9 @@ main() {
         } else {
             _statusLbl.set_text("重命名失败（名称冲突或权限不足）: " + text)
         }
-        openDir(_curDir)   // 刷新列表（成功显示新名，失败还原）
+        openDir(_curDir)
         return
     })
-    // 双击行直接打开（文件夹进入、文件提示已选）；行内编辑仅由右键“重命名”触发，故关闭双击编辑
     _table.set_editable(false)
     _table.on_dbl_click(func(int row, int col) {
         if row < 0 or row >= _table.row_count() { return }
@@ -683,9 +733,9 @@ main() {
         return
     })
 
-    // ---------- 底部状态栏 ----------
-    _statusLbl = SDL3.createLabel({x:12, y:648, text:"就绪", font_size:13, text_rgb:[170,200,170]})
-    _win.add(_statusLbl)
+    // ---------- 底部状态栏（固定高度） ----------
+    _statusLbl = SDL3.createLabel({x:0, y:0, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+    _mainLayout.add(_statusLbl, {grow:0, shrink:0, basis:_STATUS_H, align:0})
 
     // ---------- 初始化：导航树（此电脑 + 快速访问） ----------
     _regCounter = 1
@@ -703,13 +753,20 @@ main() {
     _updateNavButtons()
 
     // ---------- 运行主循环 ----------
+    var sz0 = _win.getSize()
+    _updateMenuBar(sz0.w, sz0.h)
     _win.run(
         func(Event ev): bool {
             if _wantQuit or ev.isQuit() { return false }
+            // 窗口缩放时同步 MenuBar 尺寸（_mainLayout 由 setRootAt 自动跟随）
+            if ev.isWindowResized() {
+                var sz = _win.getSize()
+                _updateMenuBar(sz.w, sz.h)
+            }
             return true
         },
         func(Renderer r) {
-             r.clearColor(30, 33, 42, 255)
+            r.clearColor(30, 33, 42, 255)
         }
     )
     SDL3.ttfQuit()

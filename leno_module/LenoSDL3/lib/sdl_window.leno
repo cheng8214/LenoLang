@@ -91,7 +91,9 @@ Array[Array[MenuBar]]   _runMenus   = []
 Array[MenuBar]          _runCtxBar  = []   // 各窗口级右击上下文菜单（由 setContextMenu 注册，run 自动接管弹出）
 Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
 Array[Widget?]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置，可空）
-Array[int]             _runW     = []     // 各窗口逻辑宽（Tooltip 夹紧用）
+Array[float]           _runRootX = []     // 各窗口根布局 X 偏移（如 MenuBar 高度）
+Array[float]           _runRootY = []
+Array[int]             _runW     = []     // 各窗口逻辑宽（背景填充 + Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
 Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
 Array[bool]            _runTransparent = []    // 各窗口是否透明（跳过背景填充）
@@ -137,7 +139,8 @@ export struct Window {
     Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
     MenuBar? _ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
     int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
-    Widget? _root                     // 根布局控件（setRoot 设置），缩放时自动填满窗口
+    Widget? _root                     // 根布局控件（setRoot/setRootAt 设置），缩放时自动跟随
+    float _rootX = 0.0, _rootY = 0.0  // 根布局偏移（如 MenuBar 高度偏移）
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
     bool _transparent = false          // 透明窗口（跳过背景填充）
 
@@ -320,8 +323,18 @@ export struct Window {
     // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
     func setRoot(Widget root) {
         _root = root
+        _rootX = 0.0; _rootY = 0.0
         root.set_pos(0, 0)
         root.set_size(_w, _h)
+    }
+
+    // 设置根布局控件（带偏移）：窗口缩放时自动把根控件位置/尺寸设为 (x,y,winW-x,winH-y)
+    // 典型场景：顶部 MenuBar 占 h=30，根布局从 (0,30) 开始填满剩余空间
+    func setRootAt(Widget root, float ox, float oy) {
+        _root = root
+        _rootX = ox; _rootY = oy
+        root.set_pos(ox, oy)
+        root.set_size(_float(_w) - ox, _float(_h) - oy)
     }
 
     // 添加复选框，opts: {text, x, y, box, checked, on_change}
@@ -564,7 +577,9 @@ export struct Window {
         if cb is MenuBar { _runCtxBar.add(cb); _runCtxIdx.add(_ctxIdx) }
         else { _runCtxBar.add(menu.createMenuBar({})); _runCtxIdx.add(-1) }   // 占位（idx=-1 表示未注册，run 中不弹）
         _runRoots.add(_root)         // 根布局控件
-        Size sz = getSize()           // 窗口逻辑尺寸（Tooltip 浮层夹紧用）
+        _runRootX.add(_rootX)         // 根布局偏移
+        _runRootY.add(_rootY)
+        Size sz = getSize()           // 窗口逻辑尺寸（背景填充 + Tooltip 浮层夹紧用）
         _runW.add(sz.w); _runH.add(sz.h)
         _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
         _runTransparent.add(_transparent)    // 透明窗口标志
@@ -647,7 +662,7 @@ export struct Window {
                             _windowCount -= 1
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i);  _runEvts.remove(i)
-                            _runRends.remove(i); _runWidgets.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runW.remove(i); _runH.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
                             _runDialogHidden.remove(i)
                             break
@@ -661,6 +676,9 @@ export struct Window {
                 if _isMotion { tip.tipBeginMotion() }
                 for _runWids.len() to j {
                     if _runWids[j] == wid {
+                        // 先处理根布局控件（背景层），再处理 _widgets（覆盖层如 MenuBar）
+                        var rootWid = _runRoots[j]
+                        rootWid?.process(ev)
                         var ws = _runWidgets[j]
                         for ws to w { w.process(ev) }
                         break
@@ -680,17 +698,19 @@ export struct Window {
                         }
                     }
                 }
-                // 窗口缩放/最大化：重建该窗口的 SSAA 离屏纹理，使其覆盖新尺寸
-                // （否则 clear/present 仍按初始尺寸，放大区域是黑底、控件落入黑区不可见）
+                // 窗口缩放/最大化：重建 SSAA 离屏纹理 + 更新逻辑尺寸 + 驱动根布局跟随
                 if ev.isWindowResized() {
                     for _runWids.len() to k {
                         if _runWids[k] == wid {
                             SDL_Point pt = SDL_Point.malloc()
                             _lib.SDL_GetWindowSize(_runHnds[k], &pt.x, &pt.y)
                             _runRens[k].resizeSSAA(pt.x, pt.y)
-                            // 驱动根布局控件跟随窗口大小
+                            // ★ 更新逻辑尺寸（背景填充 + Tooltip 夹紧依赖此值）
+                            _runW[k] = pt.x; _runH[k] = pt.y
+                            // 驱动根布局控件跟随窗口大小（带偏移）
                             var rootWid = _runRoots[k]
-                            rootWid?.set_size(pt.x, pt.y)
+                            rootWid?.set_pos(_runRootX[k], _runRootY[k])
+                            rootWid?.set_size(_float(pt.x) - _runRootX[k], _float(pt.y) - _runRootY[k])
                             pt.free()
                             break
                         }
@@ -736,6 +756,9 @@ export struct Window {
                     _runRends[i](_runRens[i])
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
                     core.clearPopupCapture()
+                    // 先渲染根布局控件（背景层），再渲染 _widgets（覆盖层如 MenuBar）
+                    var rootWid = _runRoots[i]
+                    rootWid?.render(_runRens[i])
                     // 自动渲染该窗口的所有控件（按添加顺序层叠）
                     var ws = _runWidgets[i]
                     for ws to w { w.render(_runRens[i]) }

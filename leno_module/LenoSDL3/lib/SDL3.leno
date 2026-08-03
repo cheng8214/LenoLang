@@ -175,6 +175,8 @@ export func hasClipboardText(): bool { return core.hasClipboardText() }
 // ==================== 重新导出工厂函数 ====================
 
 export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
+export func setRoot(Window win, Widget root)   { win.setRoot(root) }
+export func setRootAt(Window win, Widget root, float ox, float oy) { win.setRootAt(root, ox, oy) }
 export func pushModal(int w)                   { wnd.pushModal(w) }
 export func popModalIfTop(int w)               { wnd.popModalIfTop(w) }
 export func setModalWid(int w)                 { wnd.setModalWid(w) }
