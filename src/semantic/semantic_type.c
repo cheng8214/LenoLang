@@ -988,6 +988,8 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 case TOK_NEQ:
                 case TOK_AND:
                 case TOK_OR:
+                case TOK_IN:
+                case TOK_NOT_IN:
                     result = type_new(TYPE_BOOL);
                     break;
                 case TOK_NULL_COALESCE: {

@@ -231,9 +231,20 @@ Ast* parse_if_stmt(Parser* p) {
                         next_cond.guard_type = next_type_info;
                         type_guard_list_add(&guard_conds, next_cond);
 
-                        // 创建下一个条件的占位
-                        Ast* next_cond_ast = ast_new(AST_BOOL, var_line);
-                        next_cond_ast->u.boolean = 1;
+                        // 创建下一个类型守卫的 AST_TYPE_CHECK 节点
+                        // （不能用 AST_BOOL(true) 占位，因为 or + true = 恒真）
+                        Ast* next_cond_ast = ast_new(AST_TYPE_CHECK, var_line);
+                        if (next_field_name) {
+                            next_cond_ast->u.type_check.expr = ast_new(AST_FIELD_ACCESS, var_line);
+                            next_cond_ast->u.type_check.expr->u.field_access.obj = ast_new(AST_VAR, var_line);
+                            next_cond_ast->u.type_check.expr->u.field_access.obj->u.var.name = strdup(next_var_name);
+                            next_cond_ast->u.type_check.expr->u.field_access.field_name = strdup(next_field_name);
+                            next_cond_ast->u.type_check.expr->u.field_access.field_index = -1;
+                        } else {
+                            next_cond_ast->u.type_check.expr = ast_new(AST_VAR, var_line);
+                            next_cond_ast->u.type_check.expr->u.var.name = strdup(next_var_name);
+                        }
+                        next_cond_ast->u.type_check.type = type_copy(next_type_info);
 
                         // 创建二元操作节点
                         Ast* binop = ast_new(AST_BINOP, var_line);
