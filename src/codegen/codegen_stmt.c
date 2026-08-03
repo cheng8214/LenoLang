@@ -281,9 +281,14 @@ void gen_if(CodeGen* gen, Ast* ast) {
     if (ast->u.if_.guard_var != NULL && ast->u.if_.cond && ast->u.if_.cond->kind == AST_TYPE_CHECK) {
         // 条件已经是 AST_TYPE_CHECK，直接通过 gen_expr 生成（避免与 guard_var 路径重复生成）
         gen_expr(gen, ast->u.if_.cond);
-    } else if (ast->u.if_.guard_var != NULL) {
+    } else if (ast->u.if_.guard_var != NULL && ast->u.if_.cond &&
+               (ast->u.if_.cond->kind == AST_UNARY ||
+                ast->u.if_.cond->kind == AST_TYPE_CHECK)) {
+        // 仅当条件是纯类型守卫（AST_TYPE_CHECK）或否定类型守卫（!type_check）时
+        // 才走快速通道。对于复合条件（如 x is int and x > 5），guard_var 可能
+        // 由语义分析重新设置，必须用 gen_expr 生成完整条件。
         // 检查条件表达式是否是否定（not）
-        if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_UNARY && 
+        if (ast->u.if_.cond->kind == AST_UNARY && 
             ast->u.if_.cond->u.unary.op == TOK_NOT) {
             is_negated = 1;
         }

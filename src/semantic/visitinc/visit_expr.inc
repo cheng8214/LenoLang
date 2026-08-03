@@ -1,6 +1,119 @@
         case AST_BINOP: {
-            visit(s, ast->u.binop.l);
-            visit(s, ast->u.binop.r);
+            // 短路类型收窄：对于 `a and b`，先访问 a，如果 a 中包含类型守卫
+            // (如 `x is Type`)，则在访问 b 时将 x 收窄为 Type
+            if (ast->u.binop.op == TOK_AND) {
+                visit(s, ast->u.binop.l);
+
+                // 从左侧 AST 收集类型守卫（遍历 and 链）
+                TypeGuardList temp_guards;
+                type_guard_list_init(&temp_guards);
+                {
+                    Ast* stack[32];
+                    int stack_top = 0;
+                    stack[stack_top++] = ast->u.binop.l;
+                    while (stack_top > 0) {
+                        Ast* node = stack[--stack_top];
+                        if (!node) continue;
+                        if (node->kind == AST_TYPE_CHECK) {
+                            char* gvar_name = NULL;
+                            char* gfield_name = NULL;
+                            TypeInfo* gtype = node->u.type_check.type;
+                            if (node->u.type_check.expr) {
+                                Ast* expr = node->u.type_check.expr;
+                                if (expr->kind == AST_VAR) {
+                                    gvar_name = expr->u.var.name;
+                                } else if (expr->kind == AST_FIELD_ACCESS && expr->u.field_access.obj && expr->u.field_access.obj->kind == AST_VAR) {
+                                    gvar_name = expr->u.field_access.obj->u.var.name;
+                                    gfield_name = expr->u.field_access.field_name;
+                                }
+                            }
+                            if (gvar_name && gtype) {
+                                TypeGuardCond gc;
+                                memset(&gc, 0, sizeof(gc));
+                                gc.var_name = strdup(gvar_name);
+                                gc.field_name = gfield_name ? strdup(gfield_name) : NULL;
+                                gc.guard_type = type_copy(gtype);
+                                type_guard_list_add(&temp_guards, gc);
+                            }
+                        } else if (node->kind == AST_BINOP && node->u.binop.op == TOK_AND) {
+                            if (stack_top < 32) stack[stack_top++] = node->u.binop.r;
+                            if (stack_top < 32) stack[stack_top++] = node->u.binop.l;
+                        }
+                        // or / 其他节点不递归（or 不安全，其他不包含类型守卫）
+                    }
+                }
+
+                if (temp_guards.count > 0) {
+                    // 修正数组元素类型中的 face/enum（如 Array[Speaker] 中 Speaker 被解析为 struct）
+                    for (int gi = 0; gi < temp_guards.count; gi++) {
+                        TypeGuardCond* gc = &temp_guards.items[gi];
+                        if (gc->guard_type && gc->guard_type->kind == TYPE_ARRAY &&
+                            gc->guard_type->element_type &&
+                            gc->guard_type->element_type->kind == TYPE_STRUCT &&
+                            gc->guard_type->element_type->struct_name) {
+                            Symbol* sym = scope_resolve(s->current, gc->guard_type->element_type->struct_name);
+                            if (sym && sym->type && sym->type->kind == TYPE_FACE) {
+                                gc->guard_type->element_type->kind = TYPE_FACE;
+                            } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                                gc->guard_type->element_type->kind = TYPE_ENUM;
+                            }
+                        }
+                    }
+
+                    // 创建子作用域，应用类型收窄
+                    Scope* narrow_scope = scope_new(s->current, 0);
+                    s->current = narrow_scope;
+
+                    for (int gi = 0; gi < temp_guards.count; gi++) {
+                        TypeGuardCond* cond = &temp_guards.items[gi];
+                        if (cond->var_name == NULL) continue;
+
+                        if (cond->field_name != NULL) {
+                            // 属性访问守卫：s.age is int
+                            int guard_name_len = strlen(cond->var_name) + strlen(cond->field_name) + 2;
+                            char* guard_name = (char*)malloc(guard_name_len);
+                            snprintf(guard_name, guard_name_len, "%s.%s", cond->var_name, cond->field_name);
+                            Symbol* field_guard_sym = scope_define(s->current, guard_name, SYM_LOCAL);
+                            if (field_guard_sym) {
+                                field_guard_sym->type = type_copy(cond->guard_type);
+                                field_guard_sym->index = -1;
+                            }
+                            free(guard_name);
+                            continue;
+                        }
+
+                        SymRef ref;
+                        memset(&ref, 0, sizeof(ref));
+                        resolve_variable_with_upvalue(s, cond->var_name, &ref);
+                        if (ref.name) {
+                            SymKind guard_kind;
+                            if (ref.kind == SYM_UPVALUE) guard_kind = SYM_UPVALUE;
+                            else if (ref.kind == SYM_GLOBAL) guard_kind = SYM_GLOBAL;
+                            else guard_kind = SYM_LOCAL;
+
+                            Symbol* guard_sym = scope_define(s->current, cond->var_name, guard_kind);
+                            if (guard_sym) {
+                                guard_sym->type = type_copy(cond->guard_type);
+                                guard_sym->index = ref.index;
+                            }
+                        }
+                    }
+
+                    visit(s, ast->u.binop.r);
+
+                    s->current = narrow_scope->parent;
+                    if (!s->is_lsp_mode) {
+                        scope_detach_child(s->current, narrow_scope);
+                        scope_free(narrow_scope);
+                    }
+                    type_guard_list_free(&temp_guards);
+                } else {
+                    visit(s, ast->u.binop.r);
+                }
+            } else {
+                visit(s, ast->u.binop.l);
+                visit(s, ast->u.binop.r);
+            }
             TypeInfo* binop_type = infer_expr_type(s, ast);
             if (binop_type) { type_free(binop_type); }
             // 泛型运算符无约束警告

@@ -263,6 +263,11 @@ Ast* parse_if_stmt(Parser* p) {
             //       guard_conds 中的拷本由 type_guard_list_free 负责释放
             if (fallback_to_expr) {
                 type_guard_list_free(&guard_conds);
+                // 清除 guard_var/guard_type，因为条件中混有非类型守卫表达式，
+                // gen_if 不能只生成类型检查字节码，需要完整生成条件表达式
+                if (guard_var) { free(guard_var); guard_var = NULL; }
+                if (guard_type) { type_free(guard_type); guard_type = NULL; }
+                has_guard_conds = 0;
                 p->lex = saved_lex;
                 cond = parse_expression(p);
             }
