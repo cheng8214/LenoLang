@@ -469,7 +469,7 @@ func newFile() {
 main() {
     SDL3.ttfInit()
     // ★ 启用 SSAA 超采样抗锯齿（aa:2 = 2x 渲染再降采样），消除图片/文字/圆角边缘锯齿
-    _win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, resizable:true, aa:2})
+    _win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, resizable:true, maximized:true, aa:2})
     if not _win.ok { SDL3.ttfQuit(); return }
     _win.setMinSize(640, 400)   // 防止窗口缩小到不可用
 
