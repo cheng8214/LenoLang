@@ -344,8 +344,8 @@ export struct ListBox impl Widget {
             if atTop {
                 r.fillRoundedRect(x, iy, w, _itemH, radius)  // 顶部圆角与外框一致
             } else if atBottom {
-                r.fillRect(x, iy, w, _itemH - radius)         // 主体矩形
-                r.fillRoundedRect(x, iy + _itemH - radius, w, radius, radius)  // 底部圆角
+                r.fillRect(x, iy, w, _itemH)                              // 完整矩形
+                r.fillRoundedRect(x, iy + _itemH - 2.0 * radius, w, 2.0 * radius, radius)  // 叠加底部圆角
             } else {
                 r.fillRect(x, iy, w, _itemH)
             }
