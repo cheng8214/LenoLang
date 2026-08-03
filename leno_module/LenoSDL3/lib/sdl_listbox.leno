@@ -330,6 +330,7 @@ export struct ListBox impl Widget {
         r.pushClipRect(clip.to_ptr())
 
         float pad = 8.0
+        float radius = 6.0
         for items.len() to i {
             float iy = r.snapY(y - _scroll + i * _itemH)
             if iy + _itemH < y or iy > y + h { continue }
@@ -337,7 +338,24 @@ export struct ListBox impl Widget {
             if _is_selected(i) { rr = _selR; gg = _selG; bb2 = _selB }
             else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
             r.setColor(rr, gg, bb2, 255)
-            r.fillRect(x, iy, w, _itemH)
+            bool atTop = (iy <= y + 0.5)
+            bool atBottom = (iy + _itemH >= y + h - 0.5)
+            if atTop and atBottom {
+                // 唯一一行：全圆角
+                r.fillRoundedRect(x, iy, w, _itemH, radius)
+            } else if atTop {
+                // 首行：全圆角 + 填充底部左右圆角缺口
+                r.fillRoundedRect(x, iy, w, _itemH, radius)
+                r.fillRect(x, iy + _itemH - radius, radius, radius)          // 左下缺口
+                r.fillRect(x + w - radius, iy + _itemH - radius, radius, radius)  // 右下缺口
+            } else if atBottom {
+                // 末行：全圆角矩形 + 填补顶部左右圆角缺口（使顶部为直角，与上行衔接）
+                r.fillRoundedRect(x, iy, w, _itemH, radius)
+                r.fillRect(x, iy, radius, radius)                              // 左上缺口
+                r.fillRect(x + w - radius, iy, radius, radius)                 // 右上缺口
+            } else {
+                r.fillRect(x, iy, w, _itemH)
+            }
 
             if _font != null and _font.ok and i < items.len() {
                 string t = items[i]
