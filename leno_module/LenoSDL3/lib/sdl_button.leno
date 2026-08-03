@@ -29,6 +29,8 @@ export struct Button impl Widget {
     bool visible = true
     bool _showShadow = true // 是否显示阴影
     bool _showBorder = true // 是否显示边框
+    bool _showBackground = true // 是否显示背景（false = 仅显示图标，无框无背景）
+    bool _autoImgEffect = true  // 未提供 hover/press 图时，自动给普通图标加色调效果
     bool _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
 
@@ -147,6 +149,7 @@ export struct Button impl Widget {
         // 外观开关
         _showShadow = opts.get("shadow", true)
         _showBorder = opts.get("border", true)
+        _showBackground = opts.get("background", true)
 
         // 鼠标样式（默认手型，-1 不改变）
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
@@ -219,8 +222,9 @@ export struct Button impl Widget {
     func set_enabled(bool e)   { enabled = e }
     func set_visible(bool v)    { visible = v }
     func is_visible(): bool     { return visible }
-    func set_shadow(bool s)    { _showShadow = s }
-    func set_border(bool b)    { _showBorder = b }
+    func set_shadow(bool s)     { _showShadow = s }
+    func set_border(bool b)     { _showBorder = b }
+    func set_background(bool b) { _showBackground = b }
     func set_cursor(int cur)   { _cursor = cur }
 
     // ==================== 图片设置方法 ====================
@@ -241,6 +245,10 @@ export struct Button impl Widget {
     func set_image_gap(float g)  { _imgGap = g }
     func set_image_alpha(int a)  { _imgAlpha = a }
     func set_image_tint(int r, int g, int b) { _imgTintR = r; _imgTintG = g; _imgTintB = b }
+    func set_image_hover(string path) { _imgPathHover = path; _imgTexHover = null; _imgLoadHover = "" }
+    func set_image_pressed(string path) { _imgPathPressed = path; _imgTexPressed = null; _imgLoadPressed = "" }
+    func set_image_disabled(string path) { _imgPathDisabled = path; _imgTexDisabled = null; _imgLoadDisabled = "" }
+    func set_auto_img_effect(bool e) { _autoImgEffect = e }
     // 内容模式：0=aspectFit 1=stretch 2=aspectFill
     func set_image_mode(int mode) { _imgMode = mode }
     // 状态图片（对齐 iOS setImage(_:forState:)）：state ∈ "hover" | "pressed" | "disabled" | "normal"(默认)
@@ -315,14 +323,12 @@ export struct Button impl Widget {
             // hover 状态变化需请求重绘：run 循环已优化为 motion 不整窗重绘，
             // 由控件在视觉状态变化时自行 markFrameRedraw()（对齐 table/edit 等控件）
             if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
-            // 鼠标样式切换
+            // 鼠标样式切换（集中式：仅请求，帧末 applyFrameCursor 统一应用）
             if _cursor >= 0 {
-                if hover and not _wasHover { core.setSystemCursor(_cursor) }
-                if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+                if hover { core.requestCursor(_cursor) }
             }
-            // 悬停提示：进入上报、离开清除
+            // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
             if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
-            else if _wasHover and not hover { tip.tipClear() }
         }
         if ev.isMouseButtonDown() {
             if contains(ev.mouseX(), ev.mouseY()) {
@@ -367,33 +373,36 @@ export struct Button impl Widget {
         if not enabled { br = cr / 2; bg = cg / 2; bb = cb / 2 }
         if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 }
 
-        // 阴影（按下时消除阴影，模拟按压贴合感）
-        if _showShadow and not (_pressed and enabled) {
-            r.setColor(0, 0, 0, 40)
-            r.fillRoundedRect(x + 2, y + 2, w, h, _radius)
-        }
-
-        // 背景
-        r.setColor(br, bg, bb, 255)
-        r.fillRoundedRect(x, y, w, h, _radius)
-
-        // 背景图（对齐 iOS setBackgroundImage / Android background）：覆盖在纯色背景之上、填满按钮矩形
-        if _bgTex != null {
-            r.setTextureAlpha(_bgTex, 255)
-            r.setTextureColor(_bgTex, 255, 255, 255)
-            r.drawTextureAt(_bgTex, x, y, w, h)
-        }
-
-        // 边框（按下态使用深色内凹边框，区别于 hover 的亮色高亮边框）
-        if _showBorder {
-            if _pressed and enabled { r.setColor(0, 0, 0, 150) }
-            else if hover { r.setColor(255, 255, 255, 200) }
-            else {
-                int bbr = br + 30; int bbg = bg + 30; int bbb = bb + 30
-                if bbr > 255 { bbr = 255 }; if bbg > 255 { bbg = 255 }; if bbb > 255 { bbb = 255 }
-                r.setColor(bbr, bbg, bbb, 180)
+        // 背景/阴影/边框（_showBackground=false 时全部跳过，只显示图标）
+        if _showBackground {
+            // 阴影（按下时消除阴影，模拟按压贴合感）
+            if _showShadow and not (_pressed and enabled) {
+                r.setColor(0, 0, 0, 40)
+                r.fillRoundedRect(x + 2, y + 2, w, h, _radius)
             }
-            r.drawRoundedRect(x, y, w, h, _radius)
+
+            // 背景
+            r.setColor(br, bg, bb, 255)
+            r.fillRoundedRect(x, y, w, h, _radius)
+
+            // 背景图（对齐 iOS setBackgroundImage / Android background）：覆盖在纯色背景之上、填满按钮矩形
+            if _bgTex != null {
+                r.setTextureAlpha(_bgTex, 255)
+                r.setTextureColor(_bgTex, 255, 255, 255)
+                r.drawTextureAt(_bgTex, x, y, w, h)
+            }
+
+            // 边框（按下态使用深色内凹边框，区别于 hover 的亮色高亮边框）
+            if _showBorder {
+                if _pressed and enabled { r.setColor(0, 0, 0, 150) }
+                else if hover { r.setColor(255, 255, 255, 200) }
+                else {
+                    int bbr = br + 30; int bbg = bg + 30; int bbb = bb + 30
+                    if bbr > 255 { bbr = 255 }; if bbg > 255 { bbg = 255 }; if bbb > 255 { bbb = 255 }
+                    r.setColor(bbr, bbg, bbb, 180)
+                }
+                r.drawRoundedRect(x, y, w, h, _radius)
+            }
         }
 
         // ============ 图标 + 文字布局 ============
@@ -421,16 +430,23 @@ export struct Button impl Widget {
 
         // 图标尺寸（对齐 Qt setIconSize / Material iconSize）
         // 自动尺寸须按布局约束，确保图标与文字都能容纳在按钮内：
+        //  - 无文字（纯图标按钮）：图标撑满按钮主体
         //  - 左右布局：图标纵向占满（留 padding）
         //  - 上下布局：图标须给文字预留 (h - 2pad - gap - textH) 高度
+        bool iconOnly = (text == "")
         float isize = _imgSize
         if isize <= 0.0 and itex != null {
             var ts = r.getTextureSize(itex)
             isize = ts["h"]
         }
-        if isize <= 0.0 { isize = h - 2.0 * pad }   // 无图兜底
+        if isize <= 0.0 { isize = h - 2.0 * pad }
         if isize > w - 2.0 * pad { isize = w - 2.0 * pad }
-        if _imgPos == 0 or _imgPos == 1 {
+        if iconOnly {
+            // 纯图标：允许占满整个按钮（只留 2px 边距）
+            float maxS = w - 4.0
+            if maxS > h - 4.0 { maxS = h - 4.0 }
+            if isize > maxS { isize = maxS }
+        } else if _imgPos == 0 or _imgPos == 1 {
             if isize > h - 2.0 * pad { isize = h - 2.0 * pad }
         } else {
             float maxI = h - 2.0 * pad - _imgGap - textH
@@ -438,6 +454,20 @@ export struct Button impl Widget {
             if isize > maxI { isize = maxI }
         }
         if isize < 0.0 { isize = 0.0 }
+
+        // 纯图标按钮：悬浮/按下时在图标区域画半透明高亮矩形（比图标稍大）
+        if iconOnly and (hover or _pressed) {
+            float hx = x + (w - isize) / 2.0 - 3.0
+            float hy = y + (h - isize) / 2.0 - 3.0
+            float hw = isize + 6.0
+            float hh = isize + 6.0
+            if _pressed {
+                r.setColor(0, 0, 0, 60)   // 按下：暗色半透明
+            } else {
+                r.setColor(255, 255, 255, 35)  // 悬浮：亮色半透明
+            }
+            r.fillRoundedRect(hx, hy, hw, hh, 4.0)
+        }
 
         // 实际绘制尺寸（按内容模式保持/拉伸比例，避免非正方形图变形）+ alpha/tint 调制
         float dw = isize; float dh = isize
@@ -465,7 +495,12 @@ export struct Button impl Widget {
 
         if _font.ok {
             var ms = _font.measureString(text)
-            if itex == null {
+            if itex != null and text == "" {
+                // 纯图标（无文字）：整按钮居中绘制
+                float ix = x + (w - isize) / 2.0
+                float iy = y + (h - isize) / 2.0
+                r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
+            } else if itex == null {
                 // 纯文字：整按钮居中
                 float cy = y + (h - ms.h) / 2.0
                 r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)

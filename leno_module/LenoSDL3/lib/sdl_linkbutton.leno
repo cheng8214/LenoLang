@@ -117,10 +117,9 @@ export struct LinkButton impl Widget {
             _wasHover = hover
             hover = contains(ev.mouseX(), ev.mouseY())
             if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
-            if hover { core.setSystemCursor(SystemCursor.POINTER) }
-            else if _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+            if hover { core.requestCursor(SystemCursor.POINTER) }
+            // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
             if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
-            else if _wasHover and not hover { tip.tipClear() }
         }
         if ev.isMouseButtonDown() and contains(ev.mouseX(), ev.mouseY()) {
             _pressed = true

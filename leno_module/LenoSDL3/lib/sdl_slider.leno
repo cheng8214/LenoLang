@@ -151,12 +151,12 @@ export struct Slider impl Widget {
                 core.markFrameRedraw()   // hover 状态变化也需重绘（thumb 高亮）
             }
             if _cursor >= 0 {
-                if (hover or _dragging) and not _wasHover { core.setSystemCursor(_cursor) }
-                if not hover and not _dragging and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+                if hover or _dragging {
+                    core.requestCursor(_cursor)
+                }
             }
-            // 悬停提示：进入上报、离开清除
+            // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
             if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
-            else if _wasHover and not hover { tip.tipClear() }
         }
 
         if ev.isMouseButtonUp() { _dragging = false }

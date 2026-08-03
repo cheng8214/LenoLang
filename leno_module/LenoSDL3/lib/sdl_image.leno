@@ -4,6 +4,8 @@
 import ffi
 import dirs
 import files
+import "sdl_core.leno" as core
+use core.(sdl3, ScaleMode, BlendMode)
 
 clib sdl3_image {
     // 加载
@@ -39,8 +41,17 @@ export func load(string path): Ptr[u8] {
 }
 
 // 从文件直接加载为 GPU 纹理（需要有效渲染器）
+// 加载后自动设为 LINEAR 缩放模式，避免圆形/平滑边缘显示成锯齿多边形
 export func loadTexture(Ptr[u8] renderer, string path): Ptr[u8] {
-    return imgLib().IMG_LoadTexture(renderer, path)
+    sdl3 _lib = core.lib()
+    Ptr[u8] tex = imgLib().IMG_LoadTexture(renderer, path)
+    if tex != null {
+        // 1 = SDL_SCALEMODE_LINEAR
+        _lib.SDL_SetTextureScaleMode(tex, ScaleMode.LINEAR)
+        // 关键：启用 alpha 混合，否则透明区域显示为背景矩形（默认 NONE = 不透明矩形绘制）
+        _lib.SDL_SetTextureBlendMode(tex, BlendMode.BLEND)
+    }
+    return tex
 }
 // ==================== 保存 ====================
 

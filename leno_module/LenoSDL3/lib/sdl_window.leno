@@ -655,6 +655,10 @@ export struct Window {
                     }
                 }
                 // 自动处理该窗口的所有控件事件
+                // 鼠标运动事件：处理前重置 tip 上报标记，处理后若无人上报则清除
+                // （解决多控件处理顺序导致的 tipClear 覆盖 tipReport 问题）
+                bool _isMotion = ev.isMouseMotion()
+                if _isMotion { tip.tipBeginMotion() }
                 for _runWids.len() to j {
                     if _runWids[j] == wid {
                         var ws = _runWidgets[j]
@@ -662,6 +666,7 @@ export struct Window {
                         break
                     }
                 }
+                if _isMotion { tip.tipEndMotion() }
                 // 窗口级右击上下文菜单（统一在底层接管，而非示例 onEvent）：
                 // 先让命中控件自行处理右键（Edit/ComboBox 等会弹出自身菜单并占住弹层捕获区），
                 // 若没有任何控件占用弹层，才弹出窗口级菜单，避免「窗口菜单盖住控件菜单」。

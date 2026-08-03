@@ -227,7 +227,6 @@ export struct SpinBox impl Widget {
             if (upHit or downHit) and _cursor >= 0 { core.requestCursor(_cursor) }
             if _tip != "" {
                 if upHit or downHit { tip.tipReport(_tip, mx, my) }
-                else if _wasUp or _wasDown { tip.tipClear() }
             }
         }
 

@@ -50,6 +50,7 @@ export struct Table impl Widget {
     // 行图标支持：指定某列显示 [图标+文字]，图标路径由 _rowImages 独立存储（对齐 Treeview 模式）
     int          _imageCol = -1           // 图标列索引（0-based，-1=无图标列）
     Array[string] _rowImages = []         // 每行图标路径（与 _rows 平行，空串=无图标）
+    Array[string] _rowTips = []           // 每行自定义悬浮 tip（与 _rows 平行，空串=无自定义 tip）
     float        _imgSize = 0.0           // 图标边长（0 = 自动：取 _rowH - 8）
     int          _imgMode = 0             // 内容模式：0=aspectFit 1=stretch 2=aspectFill
     float        _imgPad = 4.0            // 图标在单元格内的左侧内边距
@@ -345,8 +346,9 @@ export struct Table impl Widget {
         _recompute_cols()
         _clamp_scroll()
         _selRow = -1; _selRows = []
-        // 同步 _rowImages / _rowChecked / _rowColors 长度
+        // 同步 _rowImages / _rowTips / _rowChecked / _rowColors 长度
         while _rowImages.len() > _rows.len() { _rowImages.remove(_rowImages.len() - 1) }
+        while _rowTips.len() > _rows.len() { _rowTips.remove(_rowTips.len() - 1) }
         while _rowChecked.len() > _rows.len() { _rowChecked.remove(_rowChecked.len() - 1) }
         while _rowColors.len() > _rows.len() { _rowColors.remove(_rowColors.len() - 1) }
         while _rowChecked.len() < _rows.len() { _rowChecked.add(false) }
@@ -356,6 +358,7 @@ export struct Table impl Widget {
     func add_row(Array[string] row, string imgPath) {
         _rows.add(row)
         _rowImages.add(imgPath)
+        _rowTips.add("")
         _rowChecked.add(false)
         _rowColors.add(0)
         if row.len() > _ncols and _headers.len() == 0 { _ncols = row.len(); _recompute_cols() }
@@ -365,6 +368,7 @@ export struct Table impl Widget {
     func remove_row(int idx) {
         if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }
         if idx >= 0 and idx < _rowImages.len() { _rowImages.remove(idx) }
+        if idx >= 0 and idx < _rowTips.len() { _rowTips.remove(idx) }
         if idx >= 0 and idx < _rowChecked.len() { _rowChecked.remove(idx) }
         if idx >= 0 and idx < _rowColors.len() { _rowColors.remove(idx) }
         if _selRow == idx { _selRow = -1 }
@@ -380,7 +384,7 @@ export struct Table impl Widget {
         _clamp_scroll()
         _update_check_header()
     }
-    func clear() { _rows = []; _rowImages = []; _rowChecked = []; _rowColors = []; _selRow = -1; _selCol = -1; _selRows = []; _scrollX = 0; _scrollY = 0; _checkHeaderState = false }
+    func clear() { _rows = []; _rowImages = []; _rowTips = []; _rowChecked = []; _rowColors = []; _selRow = -1; _selCol = -1; _selRows = []; _scrollX = 0; _scrollY = 0; _checkHeaderState = false }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return _ncols }
     func get_row(int idx): Array[string] {
@@ -439,6 +443,9 @@ export struct Table impl Widget {
                     if i < _rowImages.len() and j < _rowImages.len() {
                         string ti = _rowImages[i]; _rowImages[i] = _rowImages[j]; _rowImages[j] = ti
                     }
+                    if i < _rowTips.len() and j < _rowTips.len() {
+                        string tt = _rowTips[i]; _rowTips[i] = _rowTips[j]; _rowTips[j] = tt
+                    }
                     if i < _rowChecked.len() and j < _rowChecked.len() {
                         bool tb = _rowChecked[i]; _rowChecked[i] = _rowChecked[j]; _rowChecked[j] = tb
                     }
@@ -472,6 +479,13 @@ export struct Table impl Widget {
     func get_row_image(int row): string {
         if row >= 0 and row < _rowImages.len() { return _rowImages[row] }
         return ""
+    }
+    func set_row_tip(int row, string tip) {
+        if row >= 0 and row < _rowTips.len() { _rowTips[row] = tip }
+        else if row >= 0 {
+            while _rowTips.len() <= row { _rowTips.add("") }
+            _rowTips[row] = tip
+        }
     }
     func set_image_size(float s) { _imgSize = s }
     func set_image_mode(int m) { _imgMode = m }
@@ -647,7 +661,6 @@ export struct Table impl Widget {
     func process(Event ev) {
         if not _loaded or not visible or not enabled {
             _hoverRow = -1; _draggingV = false; _draggingH = false; _dragCol = -1
-            tip.tipClear()
             return
         }
         float mx = ev.mouseX(), my = ev.mouseY()
@@ -751,7 +764,6 @@ export struct Table impl Widget {
         // 仅处理命中表格区域内的事件（表格外点击/悬停不触发表头与行交互）
         if not contains(mx, my) {
             _hoverRow = -1
-            tip.tipClear()
             return
         }
 
@@ -837,7 +849,7 @@ export struct Table impl Widget {
             int prevHover = _hoverRow
             _hoverRow = _row_at(my)
             bool hv = _hoverRow >= 0
-            if _hoverRow != prevHover { core.markFrameRedraw() }
+            if _hoverRow != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             if _dragCol >= 0 {
                 float nw = _dragStartW + (mx - _dragStartX)
                 if nw < 24.0 { nw = 24.0 }
@@ -853,9 +865,12 @@ export struct Table impl Widget {
             } else if hv and _cursor >= 0 {
                 core.requestCursor(_cursor)
             }
+            string rt = if _hoverRow >= 0 and _hoverRow < _rowTips.len() then _rowTips[_hoverRow] else ""
             if _tip != "" {
                 if hv { tip.tipReport(_tip, mx, my) }
-                else { tip.tipClear() }
+            } else if rt != "" and hv {
+                // 行级自定义 tip：跟随鼠标位置显示
+                tip.tipReport(rt, mx, my)
             } else if hv {
                 // 单元格 Tooltip：文字被截断时悬停显示完整内容
                 int hc = _col_at(mx)
@@ -876,17 +891,9 @@ export struct Table impl Widget {
                             float cellX = _col_x(hc)
                             float cellCY = y + _headerH - _scrollY + _hoverRow * _rowH + _rowH / 2.0
                             tip.tipReport(cellText, cellX, cellCY)
-                        } else {
-                            tip.tipClear()
                         }
-                    } else {
-                        tip.tipClear()
                     }
-                } else {
-                    tip.tipClear()
                 }
-            } else {
-                tip.tipClear()
             }
         }
 

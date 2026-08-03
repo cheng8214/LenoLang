@@ -3,6 +3,7 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.Theme
@@ -110,8 +111,9 @@ export struct Label impl Widget {
         _wasHover = hover
         float mx = ev.mouseX(); float my = ev.mouseY()
         hover = mx >= x and mx <= x + _w and my >= y and my <= y + _h
+        // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
         if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
-        else if _wasHover and not hover { tip.tipClear() }
+        core.markFrameMotion()
     }
 
     // ==================== 渲染 ====================

@@ -139,12 +139,10 @@ export struct Toggle impl Widget {
             _wasHover = hover
             hover = contains(ev.mouseX(), ev.mouseY())
             if _cursor >= 0 {
-                if hover and not _wasHover { core.setSystemCursor(_cursor) }
-                if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+                if hover { core.requestCursor(_cursor) }
             }
-            // 悬停提示：进入上报、离开清除
+            // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
             if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
-            else if _wasHover and not hover { tip.tipClear() }
         }
 
         if ev.isMouseButtonUp() { _pressed = false }

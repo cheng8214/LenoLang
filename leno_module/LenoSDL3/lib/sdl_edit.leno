@@ -806,9 +806,8 @@ export struct Edit impl Widget {
             if hit != _hoverText { core.markFrameRedraw() } else { core.markFrameMotion() }
             _hoverText = hit
             if hit { core.requestCursor(core.SystemCursor.TEXT) }
-            // 悬停提示：命中编辑区上报、离开清除
+            // 悬停提示：命中编辑区上报；离开由 tipEndMotion 统一清除
             if hit and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
-            else if not hit { tip.tipClear() }
         }
 
         // ---- 鼠标滚轮（所有模式，仅当光标在本控件内才响应）----

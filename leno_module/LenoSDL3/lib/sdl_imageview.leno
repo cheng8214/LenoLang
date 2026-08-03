@@ -113,11 +113,9 @@ export struct ImageView impl Widget {
             hover = contains(ev.mouseX(), ev.mouseY())
             if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             if _cursor >= 0 {
-                if hover and not _wasHover { core.setSystemCursor(_cursor) }
-                if not hover and _wasHover { core.setSystemCursor(SystemCursor.DEFAULT) }
+                if hover { core.requestCursor(_cursor) }
             }
             if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
-            else if _wasHover and not hover { tip.tipClear() }
         }
         if ev.isMouseButtonDown() and contains(ev.mouseX(), ev.mouseY()) {
             hover = true

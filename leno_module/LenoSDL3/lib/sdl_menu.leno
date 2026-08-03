@@ -319,6 +319,14 @@ export struct MenuBar impl Widget {
         var mi = new MenuItem(); mi.separator = true; mi.submenu = []
         arr[parentIdx].submenu.add(mi)
     }
+    // 按 id 动态启用/禁用某个顶级菜单项（供调用方按当前状态刷新）
+    func setItemEnabled(int menuIdx, string id, bool en) {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return }
+        if _ctxFlag[menuIdx] { return }   // 顶级菜单没有 ctx 标记才操作
+        for _menus[menuIdx].len() to i {
+            if _menus[menuIdx][i].id == id { _menus[menuIdx][i].enabled = en; return }
+        }
+    }
     // 按 id 动态启用/禁用某个上下文菜单项（供调用方按当前状态刷新）
     func setContextItemEnabled(int ctxIdx, string id, bool en) {
         if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }

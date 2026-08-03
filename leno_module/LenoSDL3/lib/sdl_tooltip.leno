@@ -22,6 +22,7 @@ int _tipDelay  = 500        // 悬停多久才显示（毫秒）
 Font? _font
 bool _fontDirty = true
 float _fontSize  = 15.0
+bool _tipReported = false   // 本帧 mouse motion 事件中是否有控件上报了 tip
 
 // 配色（深色半透明浮层）
 int _bgR = 38, _bgG = 40, _bgB = 48
@@ -31,10 +32,24 @@ int _brdR = 110, _brdG = 115, _brdB = 132
 // ==================== 外部可调 ====================
 export func setTipDelay(int ms) { _tipDelay = ms }
 
+// 每次鼠标运动事件处理前由 Window 调用：重置上报标记。
+// 解决多控件处理顺序导致的 tipClear 覆盖 tipReport 问题：
+//   控件 A（先处理）命中 hover → tipReport 设文本
+//   控件 B（后处理）离开 hover → tipClear 清空文本 ← 覆盖了 A 的上报
+// 改为：控件只上报（tipReport），不再自行 tipClear；
+//   全部控件处理完后由 tipEndMotion 统一决定是否清除。
+export func tipBeginMotion() { _tipReported = false }
+
+// 每次鼠标运动事件处理后由 Window 调用：若无任何控件上报 tip 则清除。
+export func tipEndMotion() {
+    if not _tipReported { tipClear() }
+}
+
 // 控件在 hover 时调用（每次 mouse motion 上报）。text 为空表示此控件无 tip。
 // 每次上报都重置延迟计时——鼠标移动中不显示，仅当停留 _tipDelay 毫秒后才弹出。
 export func tipReport(string text, float ax, float ay) {
-    if text == null or text == "" { tipClear(); return }
+    if text == null or text == "" { return }
+    _tipReported = true
     if text != _tipText {
         _tipText = text
     }
@@ -42,7 +57,7 @@ export func tipReport(string text, float ax, float ay) {
     _tipAX = ax; _tipAY = ay
 }
 
-// 控件离开 hover 时调用：立即隐藏（避免残留在屏幕上）。
+// 立即隐藏并清空提示文本（tipEndMotion 内部调用，也可由非 motion 场景调用）。
 export func tipClear() {
     _tipText = ""
     _tipVisible = false
@@ -71,17 +86,28 @@ func _ensureFont(Renderer r) {
     if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }
 }
 
-// 每帧由 Window 在“所有控件 + ComboBox/Menu 弹层”之后调用，浮在最上层。
+// 每帧由 Window 在"所有控件 + ComboBox/Menu 弹层"之后调用，浮在最上层。
 // vw / vh 为窗口逻辑尺寸，用于把浮层夹紧在窗口内。
+// 支持多行文本（以 \n 分隔）。
 export func tipRender(Renderer r, float vw, float vh) {
     if not _tipVisible or _tipText == "" { return }
     _ensureFont(r)
     if not _font.ok { return }
 
+    // 按 \n 拆分行
+    Array[string] lines = _splitLines(_tipText)
     float padX = 10.0; float padY = 7.0
-    var ms = _font.measureString(_tipText)
-    float tw = ms.w
-    float th = ms.h
+    float lineH = 0.0
+    float maxW = 0.0
+    for lines.len() to i {
+        var ms = _font.measureString(lines[i])
+        if ms.w > maxW { maxW = ms.w }
+        if ms.h > lineH { lineH = ms.h }
+    }
+    if lineH == 0.0 { lineH = _fontSize }
+    float gapY = 2.0
+    float tw = maxW
+    float th = lineH * lines.len() + gapY * (lines.len() - 1)
     float bw = tw + padX * 2.0
     float bh = th + padY * 2.0
 
@@ -103,8 +129,30 @@ export func tipRender(Renderer r, float vw, float vh) {
     // 边框
     r.setColor(tm.tipBrdR, tm.tipBrdG, tm.tipBrdB, 220)
     r.drawRoundedRect(bx, by, bw, bh, 5.0)
-    // 文字（垂直居中）
-    float tx = bx + padX
-    float ty = by + (bh - th) / 2.0
-    r.drawText(_font, _tipText, r.snapX(tx), r.snapY(ty), tm.tipTxtR, tm.tipTxtG, tm.tipTxtB)
+    // 文字逐行绘制
+    float ty = by + padY
+    for lines.len() to i {
+        r.drawText(_font, lines[i], r.snapX(bx + padX), r.snapY(ty), tm.tipTxtR, tm.tipTxtG, tm.tipTxtB)
+        ty = ty + lineH + gapY
+    }
+}
+
+// 将文本按换行符拆行
+func _splitLines(string s): Array[string] {
+    Array[string] out = []
+    string cur = ""
+    int i = 0
+    while i < s.len() {
+        string ch = s.slice(i, i + 1)
+        if ch == "\n" {
+            out.add(cur)
+            cur = ""
+            i = i + 1
+        } else {
+            cur = cur + ch
+            i = i + 1
+        }
+    }
+    out.add(cur)
+    return out
 }

@@ -214,6 +214,7 @@ clib sdl3 {
 
     bool SDL_SetRenderTarget(Ptr[u8] renderer, Ptr[u8] texture)
     bool SDL_SetTextureAlphaMod(Ptr[u8] texture, u8 alpha)
+    bool SDL_SetTextureBlendMode(Ptr[u8] texture, i32 blendMode)
     bool SDL_SetTextureColorMod(Ptr[u8] texture, u8 r, u8 g, u8 b)
     bool SDL_SetTextureScaleMode(Ptr[u8] texture, i32 scaleMode)
     bool SDL_GetTextureScaleMode(Ptr[u8] texture, Ptr[i32] scaleMode)
