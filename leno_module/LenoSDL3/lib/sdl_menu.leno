@@ -25,14 +25,16 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
-import "sdl_core.leno" as core; use core.SystemCursor; use core.Scancode; use core.SDL_Rect
+import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_image.leno" as img
 
 // 单个菜单项（可被子菜单嵌套）
 export struct MenuItem {
     string label = ""
     string id = ""
     string shortcut = ""
+    string image = ""           // 图标路径（可选，空则不绘制图标）
     bool enabled = true
     bool separator = false
     Array[MenuItem] submenu = []
@@ -45,6 +47,7 @@ func _makeItem(Dict d): MenuItem {
     mi.label     = d.get("label", "")
     mi.id        = d.get("id", mi.label)
     mi.shortcut  = d.get("shortcut", "")
+    mi.image     = d.get("image", "")
     mi.enabled   = d.get("enabled", true)
     mi.separator = d.get("separator", false)
     mi.action    = d.get("action", null) as func():void
@@ -62,7 +65,7 @@ export func parseMenuItems(Array[Dict] src): Array[MenuItem] {
 }
 
 // ==================== 几何辅助（模块级，供命中判定/绘制共用） ====================
-func _colW(Array[MenuItem] items, Font f, float itemH): float {
+func _colW(Array[MenuItem] items, Font f, float itemH, float imgSize, float imgPad, float imgGap): float {
     float mw = 120.0
     for items.len() to i {
         var it = items[i]
@@ -70,6 +73,7 @@ func _colW(Array[MenuItem] items, Font f, float itemH): float {
         float w = 60.0
         if f.ok { w = f.measureString(it.label).w }
         if it.shortcut != "" and f.ok { w = w + 16.0 + f.measureString(it.shortcut).w }
+        if it.image != "" and imgSize > 0.0 { w = w + imgPad + imgSize + imgGap }
         if w > mw { mw = w }
     }
     return mw + 20.0
@@ -126,6 +130,13 @@ export struct MenuBar impl Widget {
 
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     Ptr[u8]? _winHnd            // 所属窗口句柄：上下文菜单按窗口隔离绘制；面板嵌套未拿到句柄则为 null
+
+    // 菜单项图标配置
+    float _imgSize = 16.0      // 图标边长（0 = 不绘制图标）
+    float _imgPad = 10.0       // 图标左侧内边距
+    float _imgGap = 6.0        // 图标与文字间距
+    Array[string]  _imgCachePaths = []   // 纹理缓存路径
+    Array[Ptr[u8]] _imgCacheTex = []     // 纹理缓存指针
 
     // 配色
     int _barR = 34, _barG = 36, _barB = 44       // 菜单栏背景
@@ -200,6 +211,9 @@ export struct MenuBar impl Widget {
         var accc = opts.get("accent_rgb"); if accc is Array[int] { _accR = accc[0]; _accG = accc[1]; _accB = accc[2] }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _imgSize = opts.get("image_size", 16.0)
+        _imgPad  = opts.get("image_pad", 10.0)
+        _imgGap  = opts.get("image_gap", 6.0)
         _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1   // 重置所有展开/悬停索引
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
@@ -232,6 +246,10 @@ export struct MenuBar impl Widget {
     func set_item_h(float ih) { if ih > 0.0 { _itemH = ih } }
     // 设置竖直项之间的额外间距（下拉项 / 竖栏顶级项）
     func set_item_gap(float g) { _itemGap = g }
+    // 设置菜单项图标尺寸 / 内边距 / 间距
+    func set_image_size(float s) { _imgSize = s }
+    func set_image_pad(float p)  { _imgPad = p }
+    func set_image_gap(float g)  { _imgGap = g }
     // 记录所属窗口句柄，供上下文菜单按窗口隔离绘制（渲染循环据 hwnd 只画本窗口菜单）
     func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
     func getWindowHandle(): Ptr[u8] { return _winHnd }
@@ -403,13 +421,13 @@ export struct MenuBar impl Widget {
         // 上下文菜单：直接使用弹出锚点，而非标题/侧栏旁
         if mIdx >= 0 and mIdx < _ctxFlag.len() and _ctxFlag[mIdx] {
             float ax = _ctxAnchor[mIdx][0], ay = _ctxAnchor[mIdx][1]
-            float pw = _colW(_menus[mIdx], _font, _itemH)
+            float pw = _colW(_menus[mIdx], _font, _itemH, _imgSize, _imgPad, _imgGap)
             float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
             return _clampRect(ax, ay, pw, ph)
         }
         var rs = _topRects()
         var r = rs[mIdx]
-        float pw = _colW(_menus[mIdx], _font, _itemH)
+        float pw = _colW(_menus[mIdx], _font, _itemH, _imgSize, _imgPad, _imgGap)
         float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
         if _orient == "vertical" {
             // 左侧栏：子菜单从顶级项右侧飞出
@@ -427,7 +445,7 @@ export struct MenuBar impl Widget {
         var offs = _itemOffsets(_menus[_open], _itemH, _itemGap)
         float iy = g[1] + offs[parentIdx]
         var sub = _menus[_open][parentIdx].submenu
-        float fw = _colW(sub, _font, _itemH)
+        float fw = _colW(sub, _font, _itemH, _imgSize, _imgPad, _imgGap)
         float fh = _panelH(sub, _itemH, _itemGap)
         float fx = g[0] + g[2] - 2.0
         float fy = iy
@@ -607,6 +625,42 @@ export struct MenuBar impl Widget {
         }
     }
 
+    // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏（对齐 Table/ComboBox 模式）
+    func _get_tex(Renderer r, string path): Ptr[u8] {
+        for _imgCachePaths.len() to i {
+            if _imgCachePaths[i] == path { return _imgCacheTex[i] }
+        }
+        Ptr[u8] t = img.loadTexture(r.handle, path)
+        _imgCachePaths.add(path); _imgCacheTex.add(t)
+        return t
+    }
+    func _free_img_cache() {
+        sdl3 _lib = core.lib()
+        for _imgCacheTex.len() to i {
+            if _imgCacheTex[i] != null { _lib.SDL_DestroyTexture(_imgCacheTex[i]) }
+        }
+        _imgCachePaths = []; _imgCacheTex = []
+    }
+
+    // 绘制菜单项图标（aspectFit 模式），返回图标占据的总宽度（含间距），供文字偏移
+    func _draw_icon(Renderer r, string ipath, float px, float ry): float {
+        if ipath == "" or _imgSize <= 0.0 { return 0.0 }
+        Ptr[u8] tex = _get_tex(r, ipath)
+        if tex == null { return 0.0 }
+        float imgX = px + _imgPad
+        float imgY = ry + (_itemH - _imgSize) / 2.0
+        r.setTextureAlpha(tex, 255)
+        r.setTextureColor(tex, 255, 255, 255)
+        var nats = r.getTextureSize(tex)
+        float nw = nats["w"], nh = nats["h"]
+        // aspectFit：保持比例完整显示
+        float s = _imgSize / nw; if _imgSize / nh < s { s = _imgSize / nh }
+        float dw = nw * s, dh = nh * s
+        r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh,
+            imgX + (_imgSize - dw) / 2.0, imgY + (_imgSize - dh) / 2.0, dw, dh)
+        return _imgPad + _imgSize + _imgGap
+    }
+
     func _drawPanel(Renderer r, Array[MenuItem] items, float px, float py, float pw, int hoverIdx) {
         float ph = _panelH(items, _itemH, _itemGap)
         r.setColor(_bgR, _bgG, _bgB, 255)
@@ -631,10 +685,12 @@ export struct MenuBar impl Widget {
             if hov { r.setColor(_hovR, _hovG, _hovB, 255); r.fillRect(px, ry, pw, _itemH) }
             int lr = _txtR, lg = _txtG, lb2 = _txtB
             if not it.enabled { lr = _disR; lg = _disG; lb2 = _disB }
+            // 图标
+            float iconW = _draw_icon(r, it.image, px, ry)
             if _font != null and _font.ok {
                 float th = _font.measureString("Ag").h
                 float ty = ry + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
-                r.drawText(_font, it.label, r.snapX(px + 12.0), r.snapY(ty), lr, lg, lb2)
+                r.drawText(_font, it.label, r.snapX(px + 12.0 + iconW), r.snapY(ty), lr, lg, lb2)
                 if it.shortcut != "" {
                     float sw = _font.measureString(it.shortcut).w
                     r.drawText(_font, it.shortcut, r.snapX(px + pw - 12.0 - sw), r.snapY(ty), lr, lg, lb2)
@@ -656,6 +712,7 @@ export struct MenuBar impl Widget {
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }
         _font = null
+        _free_img_cache()
         _clearActiveMenu(self)
         _unregisterContextMenu(self)   // 从上下文菜单登记表摘除自身，避免窗口销毁后悬空引用累积
     }

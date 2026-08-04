@@ -483,13 +483,13 @@ main() {
     _imgDir = dirs.join(dirs.script_dir(), "images")
 
     // ---------- 顶部菜单（固定顶部，满宽） ----------
-    _bar = _win.addMenuBar({x:0, y:0, w:1000, h:_MENU_H, font_size:14})
+    _bar = _win.addMenuBar({x:0, y:0, w:1000, h:_MENU_H, font_size:14, image_size:16, image_pad:10, image_gap:6})
     int mFile = _bar.addMenu("文件")
-    _bar.addItem(mFile, {label:"打开目录...", id:"openfolder"})
-    _bar.addItem(mFile, {label:"新建文件夹", id:"newfolder"})
-    _bar.addItem(mFile, {label:"新建文件", id:"newfile"})
+    _bar.addItem(mFile, {label:"打开目录...", id:"openfolder", image:_imgDir + "/open.png"})
+    _bar.addItem(mFile, {label:"新建文件夹", id:"newfolder", image:_imgDir + "/new.png"})
+    _bar.addItem(mFile, {label:"新建文件", id:"newfile", image:_imgDir + "/file_1.png"})
     _bar.addSeparator(mFile)
-    _bar.addItem(mFile, {label:"刷新", id:"refresh"})
+    _bar.addItem(mFile, {label:"刷新", id:"refresh", image:_imgDir + "/update.png"})
     _bar.addSeparator(mFile)
     _bar.addItem(mFile, {label:"退出", id:"exit"})
     int mEdit = _bar.addMenu("编辑")
@@ -646,12 +646,12 @@ main() {
     _table.on_context_will_open(func(int row) {
         _table.clearContextItems()
         if row < 0 {
-            _table.addContextItem({label:"新建文件夹", id:"newfolder"})
-            _table.addContextItem({label:"新建文件", id:"newfile"})
+            _table.addContextItem({label:"新建文件夹", id:"newfolder", image:_imgDir + "/new.png"})
+            _table.addContextItem({label:"新建文件", id:"newfile", image:_imgDir + "/file_1.png"})
             _table.addContextSeparator()
             _table.addContextItem({label:"粘贴", id:"paste"})
             _table.addContextSeparator()
-            _table.addContextItem({label:"刷新", id:"refresh"})
+            _table.addContextItem({label:"刷新", id:"refresh", image:_imgDir + "/update.png"})
             if _clipPaths.len() == 0 or _clipOp == "" {
                 _table.setContextItemEnabled("paste", false)
             }
@@ -659,7 +659,7 @@ main() {
         }
         var r = _table.get_row(row)
         bool isDir = (r.len() >= 5 and r[4] == "1")
-        _table.addContextItem({label:"打开", id:"open"})
+        _table.addContextItem({label:"打开", id:"open", image:_imgDir + "/open.png"})
         _table.addContextSeparator()
         _table.addContextItem({label:"复制", id:"copyfile"})
         _table.addContextItem({label:"剪切", id:"cutfile"})
@@ -669,7 +669,7 @@ main() {
         _table.addContextItem({label:"删除", id:"del"})
         _table.addContextSeparator()
         if isDir {
-            _table.addContextItem({label:"在此文件夹内新建文件夹", id:"newfolder"})
+            _table.addContextItem({label:"在此文件夹内新建文件夹", id:"newfolder", image:_imgDir + "/new.png"})
         } else {
             _table.addContextItem({label:"属性", id:"props"})
         }
