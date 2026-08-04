@@ -32,6 +32,8 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 
 // 交叉轴对齐方式
 export const LAYOUT_START   = 0   // 靠起始边（左/上）
@@ -469,6 +471,7 @@ func _layout_pass_window(Widget c, Ptr[u8] hwnd) {
 switch c {
 case is Edit { c.set_window(hwnd); return }
 case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
+case is Table, TreeView { c.set_window_handle(hwnd); return }
 }
 }
 

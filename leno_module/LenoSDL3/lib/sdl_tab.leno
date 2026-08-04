@@ -20,6 +20,8 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_combobox.leno" as cbx; use cbx.ComboBox
 import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct TabControl impl Widget {
@@ -396,12 +398,13 @@ export struct TabControl impl Widget {
     }
 }
 
-// 把窗口句柄下发给需要它的子控件（Edit 的 IME 定位；嵌套布局继续向下传递）
+// 把窗口句柄下发给需要它的子控件（Edit 的 IME 定位；Table/TreeView 的右键菜单隔离；嵌套布局继续向下传递）
 func _tab_pass_window(Widget c, Ptr[u8] hwnd) {
-    switch c {
-        case is Edit { c.set_window(hwnd); return }
-        case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
-    }
+switch c {
+case is Edit { c.set_window(hwnd); return }
+case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
+case is Table, TreeView { c.set_window_handle(hwnd); return }
+}
 }
 
 // 工厂

@@ -386,6 +386,7 @@ export struct ComboBox impl Widget {
         clip.w = _int(pw) + 1; clip.h = _int(ph) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
+        float radius = 6.0
         for items.len() to i {
             float iy = r.snapY(py - _scroll + i * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }
@@ -393,7 +394,22 @@ export struct ComboBox impl Widget {
             if i == _sel { rr = _selR; gg = _selG; bb2 = _selB }
             else if i == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
             r.setColor(rr, gg, bb2, 255)
-            r.fillRect(px, iy, pw, _itemH)
+            // 首行/末行需用圆角矩形 + 填补缺口，否则高亮背景会溢出弹层的圆角边界
+            bool atTop = (iy <= py + 0.5)
+            bool atBottom = (iy + _itemH >= py + ph - 0.5)
+            if atTop and atBottom {
+                r.fillRoundedRect(px, iy, pw, _itemH, radius)
+            } else if atTop {
+                r.fillRoundedRect(px, iy, pw, _itemH, radius)
+                r.fillRect(px, iy + _itemH - radius, radius, radius)
+                r.fillRect(px + pw - radius, iy + _itemH - radius, radius, radius)
+            } else if atBottom {
+                r.fillRoundedRect(px, iy, pw, _itemH, radius)
+                r.fillRect(px, iy, radius, radius)
+                r.fillRect(px + pw - radius, iy, radius, radius)
+            } else {
+                r.fillRect(px, iy, pw, _itemH)
+            }
 
             if _font.ok {
                 float th = _font.measureString("Ag").h

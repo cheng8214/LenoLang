@@ -307,7 +307,7 @@ export struct Window {
     // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
     func add(Widget w): Widget {
         _widgets.add(w)
-        // 绑定窗口句柄：容器向下传递，Edit 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
+        // 绑定窗口句柄：容器向下传递，Edit/Table/TreeView 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
         switch w {
             case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
                 w._bind_window(handle); return w
@@ -315,7 +315,7 @@ export struct Window {
             case is Edit {
                 w.set_window(handle); return w
             }
-            case is TreeView {
+            case is TreeView, Table {
                 w.set_window_handle(handle); return w
             }
         }
@@ -343,7 +343,7 @@ export struct Window {
     }
 
     // 向控件下发窗口句柄（与 add() 中的 switch 逻辑一致）
-    // 容器类型递归向下传递；Edit/TreeView 直接设置
+    // 容器类型递归向下传递；Edit/TreeView/Table 直接设置
     func _passWindowHandle(Widget w) {
         switch w {
             case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
@@ -352,7 +352,7 @@ export struct Window {
             case is Edit {
                 w.set_window(handle); return
             }
-            case is TreeView {
+            case is TreeView, Table {
                 w.set_window_handle(handle); return
             }
         }

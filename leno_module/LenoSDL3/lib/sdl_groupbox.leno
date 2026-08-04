@@ -8,6 +8,8 @@ import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct GroupBox impl Widget {
@@ -82,6 +84,7 @@ export struct GroupBox impl Widget {
         switch c {
             case is Edit { c.set_window(hwnd); return }
             case is HBox, VBox, AnchorBox, GroupBox { c._bind_window(hwnd); return }
+            case is Table, TreeView { c.set_window_handle(hwnd); return }
         }
     }
     func remove(Widget c) {

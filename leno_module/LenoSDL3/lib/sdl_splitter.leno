@@ -25,6 +25,8 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.(HBox, VBox, AnchorBox)
 import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.Theme
 
 // 方向常量
@@ -93,6 +95,7 @@ export struct Splitter impl Widget {
         switch c {
             case is Edit { c.set_window(hwnd); return }
             case is HBox, VBox, AnchorBox, Panel, Splitter { c._bind_window(hwnd); return }
+            case is Table, TreeView { c.set_window_handle(hwnd); return }
         }
     }
 
@@ -182,9 +185,6 @@ export struct Splitter impl Widget {
         float mx = ev.mouseX(); float my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
-        // 弹层捕获：事件落在他人弹层范围内时忽略
-        if core.inPopupCapture(mx, my) { return }
-
         // 拖拽中：优先处理（即使鼠标移出分割条区域也继续跟随）
         if _dragging {
             if ev.isMouseButtonUp() {
@@ -208,25 +208,34 @@ export struct Splitter impl Widget {
             }
         }
 
-        // 悬停检测
-        if ev.isMouseMotion() {
-            bool prevHover = _hover
-            _hover = _in_divider(mx, my)
-            if _hover != prevHover { core.markFrameRedraw() }
-            else { core.markFrameMotion() }
-            if _hover {
-                if _orientation == 0 { core.requestCursor(SystemCursor.EW_RESIZE) }
-                else { core.requestCursor(SystemCursor.NS_RESIZE) }
+        // 弹层捕获：事件落在他人弹层范围内时，跳过自身交互（悬停/拖拽开始），
+        // 但仍转发给子控件——子控件可能拥有该弹层（如 Table 的右键菜单），需要接收事件。
+        // 各子控件在 process 内自行通过 inPopupCapture 守卫，与 TabControl/Panel 的处理方式一致。
+        bool inPopup = core.inPopupCapture(mx, my)
+        if not inPopup {
+            // 悬停检测
+            if ev.isMouseMotion() {
+                bool prevHover = _hover
+                _hover = _in_divider(mx, my)
+                if _hover != prevHover { core.markFrameRedraw() }
+                else { core.markFrameMotion() }
+                if _hover {
+                    if _orientation == 0 { core.requestCursor(SystemCursor.EW_RESIZE) }
+                    else { core.requestCursor(SystemCursor.NS_RESIZE) }
+                }
             }
-        }
 
-        // 开始拖拽
-        if ev.isMouseButtonDown() and _in_divider(mx, my) {
-            _dragging = true
-            if _orientation == 0 { _dragStartMouse = mx } else { _dragStartMouse = my }
-            _dragStartRatio = _ratio
-            core.markFrameRedraw()
-            return   // 拖拽开始时不转发事件给子控件
+            // 开始拖拽
+            if ev.isMouseButtonDown() and _in_divider(mx, my) {
+                _dragging = true
+                if _orientation == 0 { _dragStartMouse = mx } else { _dragStartMouse = my }
+                _dragStartRatio = _ratio
+                core.markFrameRedraw()
+                return   // 拖拽开始时不转发事件给子控件
+            }
+        } else {
+            // 弹层打开时清除悬停状态，避免分割条残留高亮
+            _hover = false
         }
 
         // 转发事件给子控件（非拖拽时）

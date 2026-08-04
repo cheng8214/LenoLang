@@ -200,7 +200,15 @@ export struct SpinBox impl Widget {
         }
         float mx = ev.mouseX(), my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
-        if core.inPopupCapture(mx, my) { return }
+        // 弹层捕获：事件落在他人弹层范围内时，跳过自身交互（滚轮/箭头），
+        // 但仍转发给内嵌 Edit——Edit 可能拥有该弹层（如右键菜单），需要接收事件。
+        bool inPopup = core.inPopupCapture(mx, my)
+
+        // 其余事件转发给内嵌 Edit（箭头区在 Edit 之外，Edit 自动忽略）
+        // Edit 内部自行通过 inPopupCapture 守卫，无需在此阻断
+        _edit?.process(ev)
+
+        if inPopup { return }
 
         // 滚轮：整框内 → ±step
         if ev.isMouseWheel() {
@@ -211,9 +219,6 @@ export struct SpinBox impl Widget {
             if d > 0.0 { set_value(value + delta) } else { set_value(value - delta) }
             return
         }
-
-        // 其余事件转发给内嵌 Edit（箭头区在 Edit 之外，Edit 自动忽略）
-        _edit?.process(ev)
 
         float ax = x + (w - _arrowW)
         float midY = y + h / 2.0
