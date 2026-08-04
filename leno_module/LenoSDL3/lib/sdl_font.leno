@@ -115,10 +115,18 @@ export struct Font {
     Array[CachedTex] _texCache = []
     int _texCap = 1024
     int _texHead = 0
+    // MRU 快路径：上次命中的缓存 key 与索引。渲染循环中同一文字常被连续多次调用
+    // （如 _fit_cell_text 先 measure 再 draw），单槽快路径将 O(1024) 线性扫描降为 O(1)。
+    string _texLastKey = ""
+    int _texLastIdx = -1
     // 尺寸缓存：measureString 高频调用，缓存避免重复测量
     Array[CachedMeas] _measCache = []
     int _measCap = 256
     int _measHead = 0
+    // MRU 快路径：上次命中的测量 key 与结果。measureString 在渲染中被同一文字
+    // 连续调用（如截断检查 + 实际绘制），单槽快路径将 O(256) 线性扫描降为 O(1)。
+    string _measLastKey = ""
+    float _measLastW = 0.0, _measLastH = 0.0
 
     func load(string path, float ptsize): bool {
         if not ttfInit() { return false }
@@ -172,8 +180,12 @@ export struct Font {
         // 缓存命中时连 TTF_SetFontSize 都省掉（measure 在 Edit 中调用极密集）。
         float mpt = if _aaScale > 0.0 then _pt * _aaScale else _pt
         string key = $"{mpt}\x01{text}"
+        // MRU 快路径：同一文字连续调用时直接命中，跳过 256 槽线性扫描
+        if key == _measLastKey { return {w: _measLastW, h: _measLastH} }
         for _measCache.len() to i {
             if _measCache[i].key == key {
+                _measLastKey = key
+                _measLastW = _measCache[i].w; _measLastH = _measCache[i].h
                 return {w: _measCache[i].w, h: _measCache[i].h}
             }
         }
@@ -208,6 +220,7 @@ export struct Font {
             _measCache[_measHead] = e
             _measHead = (_measHead + 1) % _measCap
         }
+        _measLastKey = key; _measLastW = mw; _measLastH = mh
         return {w: mw, h: mh}
     }
 
@@ -221,10 +234,20 @@ export struct Font {
     func _getCachedTex(Ptr[u8] renderer, string text, int r, int g, int b): TextTexture {
         if not ok { return new TextTexture() }
         string key = $"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
+        // MRU 快路径：同一文字连续调用时直接命中，跳过 1024 槽线性扫描
+        if _texLastIdx >= 0 and _texLastIdx < _texCache.len() and _texLastKey == key {
+            CachedTex c = _texCache[_texLastIdx]
+            if c.ok and c.ren == renderer and c.texture != null {
+                TextTexture t = new TextTexture()
+                t.texture = c.texture; t.ok = true; t.width = c.w; t.height = c.h
+                return t
+            }
+        }
         for _texCache.len() to i {
             CachedTex c = _texCache[i]
             // 必须校验 ren 匹配且纹理仍有效：避免命中「属于已销毁渲染器、且 SDL 复用了同一指针」的失效纹理
             if c.ok and c.ren == renderer and c.texture != null and c.key == key {
+                _texLastKey = key; _texLastIdx = i
                 TextTexture t = new TextTexture()
                 t.texture = c.texture
                 t.ok = true
@@ -249,10 +272,12 @@ export struct Font {
                 e.key = key; e.texture = texPtr; e.w = tw; e.h = th; e.ok = true; e.ren = renderer
                 if _texCache.len() < _texCap {
                     _texCache.add(e)
+                    _texLastKey = key; _texLastIdx = _texCache.len() - 1
                 } else {
                     CachedTex old = _texCache[_texHead]
                     if old.ok and old.texture != null { _lib.SDL_DestroyTexture(old.texture) }
                     _texCache[_texHead] = e
+                    _texLastKey = key; _texLastIdx = _texHead
                     _texHead = (_texHead + 1) % _texCap
                 }
             }
@@ -273,6 +298,7 @@ export struct Font {
                 _texCache[i].key = ""
             }
         }
+        _texLastKey = ""; _texLastIdx = -1
     }
 
     func setStyle(int style) {

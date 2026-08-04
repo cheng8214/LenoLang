@@ -117,6 +117,7 @@ export struct Splitter impl Widget {
     // ==================== 比例管理 ====================
     func _clamp_ratio() {
         if _orientation == 0 {
+            if w <= 0.0 { return }   // 占位尺寸（w:0），等布局系统下发实际尺寸后再 clamp
             // 水平分割：ratio 受 minFirst/w 和 minSecond/w 约束
             float lo = _minFirst / w
             float hi = 1.0 - _minSecond / w
@@ -124,6 +125,7 @@ export struct Splitter impl Widget {
             if _ratio < lo { _ratio = lo }
             if _ratio > hi { _ratio = hi }
         } else {
+            if h <= 0.0 { return }
             float lo = _minFirst / h
             float hi = 1.0 - _minSecond / h
             if lo > hi { lo = hi }

@@ -38,6 +38,12 @@ export struct Table impl Widget {
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
     Ptr[u8]? _clipBase            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
+    Array[float] _colWPrefix = []    // 列宽前缀和缓存：_colWPrefix[i] = sum(_colW[0..i-1])，让 _col_x O(1)
+    bool _colWPrefixValid = false
+    float _cachedTotalW = -1.0       // _total_w() 缓存，避免 process/render 中多次遍历 _colW
+    bool _totalWValid = false
+    int _hoverColForTip = -1         // 缓存：上次做 tooltip 截断检查的列索引
+    string _hoverTipText = ""        // 缓存：当前悬停单元格的 tooltip 文本（空串=无需 tooltip）
     bool _draggingV = false, _draggingH = false; float _vDragOffset = 0.0, _hDragOffset = 0.0
     int _dragCol = -1; float _dragStartX = 0.0, _dragStartW = 0.0; bool _resizable = true
     func(int):void _onSelect
@@ -100,8 +106,10 @@ export struct Table impl Widget {
         }
     }
     func _total_w(): float {
+        if _totalWValid { return _cachedTotalW }
         float s = 0.0
         for _colW.len() to i { s = s + _colW[i] }
+        _cachedTotalW = s; _totalWValid = true
         return s
     }
     func _compute_sb(): Array[float] {
@@ -159,10 +167,20 @@ export struct Table impl Widget {
         else if rowBot > _scrollY + visH { _scrollY = rowBot - visH }
         _clamp_scroll()
     }
+    // 确保列宽前缀和缓存有效（列宽变化时由 _recompute_cols / 列拖拽处失效）
+    func _ensure_col_prefix() {
+        if _colWPrefixValid { return }
+        _colWPrefix = [0.0]
+        float s = 0.0
+        for _colW.len() to i { s = s + _colW[i]; _colWPrefix.add(s) }
+        _colWPrefixValid = true
+    }
     func _col_x(int ci): float {
-        float cx = x - _scrollX
-        for 0 : ci - 1 to k { cx = cx + _colW[k] }
-        return cx
+        _ensure_col_prefix()
+        if ci < 0 { return x - _scrollX }
+        if ci >= _colWPrefix.len() { ci = _colWPrefix.len() - 1 }
+        if ci < 0 { return x - _scrollX }
+        return x - _scrollX + _colWPrefix[ci]
     }
     func _row_at(float my): int {
         if my < y + _headerH { return -1 }
@@ -306,6 +324,8 @@ export struct Table impl Widget {
     }
 
     func _recompute_cols() {
+        _colWPrefixValid = false
+        _totalWValid = false
         int n = _ncols
         if n <= 0 { n = 1 }
         if _autoCols or _colW.len() != n {
@@ -764,6 +784,7 @@ export struct Table impl Widget {
         // 仅处理命中表格区域内的事件（表格外点击/悬停不触发表头与行交互）
         if not contains(mx, my) {
             _hoverRow = -1
+            _hoverColForTip = -1; _hoverTipText = ""
             return
         }
 
@@ -853,7 +874,7 @@ export struct Table impl Widget {
             if _dragCol >= 0 {
                 float nw = _dragStartW + (mx - _dragStartX)
                 if nw < 24.0 { nw = 24.0 }
-                if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw }
+                if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false }
                 _autoCols = false
                 _clamp_scroll()
                 core.markFrameRedraw()
@@ -873,25 +894,33 @@ export struct Table impl Widget {
                 tip.tipReport(rt, mx, my)
             } else if hv {
                 // 单元格 Tooltip：文字被截断时悬停显示完整内容
+                // 优化：仅当悬停单元格(行+列)变化时才做 measureString 截断检查，
+                //       同一单元格内的鼠标移动直接复用缓存的 tooltip 文本，
+                //       避免每次 mouse motion 都调 measureString（线性扫描 256 槽缓存）
                 int hc = _col_at(mx)
                 if hc >= 0 {
-                    string cellText = _cell_text(_hoverRow, hc)
-                    if cellText != "" and cellText != null {
-                        float iconOff = 0.0
-                        if hc == _imageCol and _hoverRow < _rowImages.len() {
-                            string ip = _rowImages[_hoverRow]
-                            if ip != "" and ip != null { iconOff = _rowH * 0.7 }
+                    if _hoverRow != prevHover or hc != _hoverColForTip {
+                        _hoverColForTip = hc
+                        _hoverTipText = ""
+                        string cellText = _cell_text(_hoverRow, hc)
+                        if cellText != "" and cellText != null {
+                            float iconOff = 0.0
+                            if hc == _imageCol and _hoverRow < _rowImages.len() {
+                                string ip = _rowImages[_hoverRow]
+                                if ip != "" and ip != null { iconOff = _rowH * 0.7 }
+                            }
+                            float pad = 8.0
+                            float availW = _colW[hc] - 2.0 * pad - iconOff
+                            float fullW = _font.measureString(cellText).w
+                            if fullW > availW { _hoverTipText = cellText }
                         }
-                        float pad = 8.0
-                        float availW = _colW[hc] - 2.0 * pad - iconOff
-                        float fullW = _font.measureString(cellText).w
-                        if fullW > availW {
-                            // 用单元格位置而非鼠标位置作为锚点，使 tooltip 稳定在单元格旁、
-                            // 不随鼠标在单元格内移动而跳动
-                            float cellX = _col_x(hc)
-                            float cellCY = y + _headerH - _scrollY + _hoverRow * _rowH + _rowH / 2.0
-                            tip.tipReport(cellText, cellX, cellCY)
-                        }
+                    }
+                    // 复用缓存的 tooltip 文本保持 tooltip 可见
+                    // （tipEndMotion 会清除未上报的 tooltip，故仍需每帧上报）
+                    if _hoverTipText != "" {
+                        float cellX = _col_x(hc)
+                        float cellCY = y + _headerH - _scrollY + _hoverRow * _rowH + _rowH / 2.0
+                        tip.tipReport(_hoverTipText, cellX, cellCY)
                     }
                 }
             }

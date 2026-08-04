@@ -177,6 +177,11 @@ export struct Event {
         return ffi.read_string(e.data, 0)
     }
 
+    // 将当前 raw 缓冲区内容复制到 dst（用于事件合并时保存/恢复事件数据）
+    func saveRaw(Ptr[u8] dst) { ffi.memcpy(dst, raw, 128) }
+    // 从 src 恢复 raw 缓冲区内容
+    func restoreRaw(Ptr[u8] src) { ffi.memcpy(raw, src, 128) }
+
     // 释放事件内存
     func uninit() {
         if raw != null { ffi.free(raw); raw = null; has = false }

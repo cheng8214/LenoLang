@@ -56,6 +56,20 @@ bool   _treeExpanded = true         // 导航树当前是否处于展开态
 bool   _wantQuit = false
 string _imgDir = ""                // 图标资源目录（images/）
 
+// 文件扩展名 → 图标文件名映射（消除硬编码 if 链，新增类型只需在 images/ 放图标 + 加一行）
+Dict _extIcons = {
+    ".exe": "/exe_1.png",
+    ".dll": "/dll_1.png"
+    // 扩展示例（把对应 png 放入 images/ 后取消注释即可）：
+    // ".txt":  "/txt_1.png",
+    // ".png":  "/img_1.png",
+    // ".zip":  "/zip_1.png",
+    // ".pdf":  "/pdf_1.png",
+    // ".mp3":  "/music_1.png",
+    // ".mp4":  "/video_1.png",
+    // ".leno": "/code_1.png",
+}
+
 // 文件剪贴板：复制/剪切的文件路径 + 操作类型
 Array[string] _clipPaths = []
 string _clipOp = ""
@@ -96,8 +110,8 @@ Button _btnForward
 // 根据文件扩展名/是否目录，返回对应图标路径
 func iconForRow(string ext, bool isDir): string {
     if isDir { return _imgDir + "/folder_1.png" }
-    if ext == ".exe" { return _imgDir + "/exe_1.png" }
-    if ext == ".dll" { return _imgDir + "/dll_1.png" }
+    var icon = _extIcons.get(ext)
+    if icon is string { return _imgDir + icon }
     return _imgDir + "/file_1.png"
 }
 
@@ -246,15 +260,6 @@ func _onTreeChange(Array[int] ids) {
     if tp == "pc" or tp == "qa" { return }
     string p = nodePath(id)
     if p != "" and dirs.is_dir(p) { openDir(p) }
-}
-
-// ===================== 弹性布局：窗口缩放时更新 MenuBar =====================
-// _mainLayout 由 setRootAt 自动跟随窗口缩放，_navVBox 由 Panel.setLayout 自动跟随 Panel。
-// MenuBar 在 _widgets 中（需弹出菜单渲染），需手动同步尺寸。
-func _updateMenuBar(int winW, int winH) {
-    _bar.set_pos(0, 0)
-    _bar.set_size(_float(winW), _MENU_H)
-    _bar.setWindowSize(winW, winH)
 }
 
 // ===================== 导航历史 =====================
@@ -565,10 +570,9 @@ main() {
 
     // ---------- 内容区 Splitter（可拖拽分割：导航面板 | 表格，grow:1 占满剩余高度） ----------
     // ★ 使用 Splitter 替代固定宽度 HBox：用户可拖拽分割条调整导航面板与表格的宽度比例
-    _content = SDL3.createSplitter({x:0, y:0, w:100, h:100, orientation:0, ratio:0.3, min_first:120, min_second:300, divider_width:4, hit_pad:4})
+    // ★ w:0, h:0 为占位值，由布局系统自动覆盖；窗口句柄由 _layout_pass_window 回调自动下发
+    _content = SDL3.createSplitter({x:0, y:0, w:0, h:0, orientation:0, ratio:0.3, min_first:120, min_second:300, divider_width:4, hit_pad:4})
     _mainLayout.add(_content, {grow:1, shrink:1, align:3})
-    // ★ 手动下发窗口句柄给 Splitter（_layout_pass_window 不处理 Splitter 类型，避免循环依赖）
-    _content._bind_window(_win.getHandle())
 
     // ---------- 左侧导航面板 ----------
     _navPanel = SDL3.createPanel({x:0, y:0, w:_NAV_W, h:100, bg_rgb:[26,28,36], border_rgb:[70,75,92], radius:8})
@@ -723,10 +727,11 @@ main() {
         if oldP == newP { return }
         if dirs.rename(oldP, newP) {
             _statusLbl.set_text("已重命名: " + text)
+            openDir(_curDir)
         } else {
+            // 重命名失败：不刷新列表（保持当前视图），状态栏提示失败原因
             _statusLbl.set_text("重命名失败（名称冲突或权限不足）: " + text)
         }
-        openDir(_curDir)
         return
     })
     _table.set_editable(false)
@@ -758,16 +763,10 @@ main() {
     _updateNavButtons()
 
     // ---------- 运行主循环 ----------
-    var sz0 = _win.getSize()
-    _updateMenuBar(sz0.w, sz0.h)
+    // ★ MenuBar 尺寸由框架 run 循环自动同步（registerOnly + resize 事件），无需手动 _updateMenuBar
     _win.run(
         func(Event ev): bool {
             if _wantQuit or ev.isQuit() { return false }
-            // 窗口缩放时同步 MenuBar 尺寸（_mainLayout 由 setRootAt 自动跟随）
-            if ev.isWindowResized() {
-                var sz = _win.getSize()
-                _updateMenuBar(sz.w, sz.h)
-            }
             return true
         },
         func(Renderer r) {

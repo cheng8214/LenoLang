@@ -137,22 +137,7 @@ export func tipRender(Renderer r, float vw, float vh) {
     }
 }
 
-// 将文本按换行符拆行
+// 将文本按换行符拆行（使用内置 split，避免逐字符拼接的 O(n²) 开销）
 func _splitLines(string s): Array[string] {
-    Array[string] out = []
-    string cur = ""
-    int i = 0
-    while i < s.len() {
-        string ch = s.slice(i, i + 1)
-        if ch == "\n" {
-            out.add(cur)
-            cur = ""
-            i = i + 1
-        } else {
-            cur = cur + ch
-            i = i + 1
-        }
-    }
-    out.add(cur)
-    return out
+    return s.replace("\r", "").split("\n")
 }

@@ -9,6 +9,7 @@
 // 2. 手动轮询模式：
 //    var ev = SDL3.createEvent()
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
+import ffi
 import "sdl_core.leno" as core
 use core.(sdl3, SDL_Point, Size)
 
@@ -78,6 +79,17 @@ import "sdl_groupbox.leno" as gbxlib
 use gbxlib.GroupBox
 import "sdl_splitter.leno" as spllib
 use spllib.Splitter
+
+// ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
+// SpinBox/GroupBox/ScrollView 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
+// import 这些类型（避免循环依赖）。此前示例需手动调用 _content._bind_window()，现在自动完成。
+lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
+    switch c {
+        case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter { c._bind_window(hwnd); return }
+        case is Edit { c.set_window(hwnd); return }
+        case is Table, TreeView { c.set_window_handle(hwnd); return }
+    }
+})
 
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
@@ -596,6 +608,13 @@ export struct Window {
             _root.set_pos(_rootX, _rootY)
             _root.set_size(_float(actualSz.w) - _rootX, _float(actualSz.h) - _rootY)
         }
+        // ★ 同步 MenuBar 到实际窗口尺寸（系统可能已最大化）
+        for _menus.len() to mi {
+            MenuBar mb = _menus[mi]
+            mb.set_pos(0, 0)
+            mb.set_size(_float(actualSz.w), mb.get_h())
+            mb.setWindowSize(actualSz.w, actualSz.h)
+        }
         _runWids.add(getID())
         _runHnds.add(handle)
         _runRens.add(ren)
@@ -669,6 +688,13 @@ export struct Window {
             int _wakeTick = core.getTicks()
             int _wakeWait = _wakeTick - _t0
             if not ev.has and _wakeWait < 5 { core.delay(5 - _wakeWait) }
+            // ★ Motion 事件合并：鼠标快速移动时 SDL 队列中会堆积大量连续 motion 事件，
+            //   每个都触发全控件 process()。弱 CPU 上导致 CPU 占用飙升。
+            //   合并策略：只保留同窗口的最后一个 motion 事件，丢弃中间的。
+            //   _motionBuf 保存最新 motion，_deferredBuf 保存合并期间遇到的非 motion 事件。
+            Ptr[u8] _motionBuf = ffi.malloc(128)
+            Ptr[u8] _deferredBuf = ffi.malloc(128)
+            bool _hasDeferred = false
             while ev.has {
                 // 鼠标移动(motion)不强制整窗重绘：光标为 OS 级、hover 变化已由控件
                 // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
@@ -693,6 +719,30 @@ export struct Window {
                 // 模态：仅栈顶窗口接收事件，其余全部跳过（含主窗口 + 下层模态）
                 // 注意：必须继续 poll 前进事件队列，否则 ev.has 恒为 true 导致 while 死循环（窗口假死）
                 if _isModal() and wid != _modalTop() { ev.poll(); continue }
+                // ★ Motion 事件合并：当前事件是鼠标移动时，连续 poll 直到找到最后一个
+                //   同窗口 motion 事件，中间的全部丢弃。若遇到非 motion 事件则暂存，
+                //   处理完 motion 后再处理。这样无论队列堆积多少 motion，每帧只处理 1 个。
+                if ev.isMouseMotion() and not _hasDeferred {
+                    ev.saveRaw(_motionBuf)
+                    bool _coalescing = true
+                    while _coalescing {
+                        ev.poll()
+                        if not ev.has {
+                            ev.restoreRaw(_motionBuf)
+                            ev.has = true
+                            _coalescing = false
+                        } else if ev.isMouseMotion() and ev.windowID() == wid {
+                            ev.saveRaw(_motionBuf)   // 更新为更新的 motion
+                        } else {
+                            // 遇到非 motion 事件（或其它窗口的 motion）：暂存，先处理 motion
+                            ev.saveRaw(_deferredBuf)
+                            ev.restoreRaw(_motionBuf)
+                            ev.has = true
+                            _hasDeferred = true
+                            _coalescing = false
+                        }
+                    }
+                }
                 for _runWids.len() to i {
                     if _runWids[i] == wid {
                         if not _runEvts[i](ev) or ev.isWindowClose() {
@@ -756,13 +806,29 @@ export struct Window {
                             var rootWid = _runRoots[k]
                             rootWid?.set_pos(_runRootX[k], _runRootY[k])
                             rootWid?.set_size(_float(pt.x) - _runRootX[k], _float(pt.y) - _runRootY[k])
+                            // ★ 自动同步 MenuBar 尺寸到满宽（此前示例需手动 _updateMenuBar）
+                            var menus = _runMenus[k]
+                            for menus.len() to m {
+                                MenuBar bar = menus[m]
+                                bar.set_pos(0, 0)
+                                bar.set_size(_float(pt.x), bar.get_h())
+                                bar.setWindowSize(pt.x, pt.y)
+                            }
                             pt.free()
                             break
                         }
                     }
                 }
-                ev.poll()              // 获取队列中下一个事件
+                // 获取队列中下一个事件（或恢复合并期间暂存的非 motion 事件）
+                if _hasDeferred {
+                    ev.restoreRaw(_deferredBuf)
+                    ev.has = true
+                    _hasDeferred = false
+                } else {
+                    ev.poll()
+                }
             }
+            ffi.free(_motionBuf); ffi.free(_deferredBuf)
             core.applyFrameCursor()    // 帧末：按本帧各控件的请求统一设置一次光标（避免互相覆盖）
             if _runWids.len() == 0 {
                 ev.uninit()

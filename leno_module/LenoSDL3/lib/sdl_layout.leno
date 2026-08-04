@@ -35,6 +35,12 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 
+// 扩展窗口句柄下发回调（由 sdl_window 模块注册，避免循环依赖）
+// _layout_pass_window 只认识本模块导入的类型（Edit/HBox/VBox/AnchorBox/Table/TreeView），
+// 对于 Splitter/Panel/TabControl 等后续扩展类型，通过此回调下发，无需在本模块 import。
+func(Widget, Ptr[u8]):void _extraPassWindow
+export func setExtraPassWindow(func(Widget, Ptr[u8]):void cb) { _extraPassWindow = cb }
+
 // 交叉轴对齐方式
 export const LAYOUT_START   = 0   // 靠起始边（左/上）
 export const LAYOUT_CENTER  = 1   // 居中
@@ -473,6 +479,8 @@ case is Edit { c.set_window(hwnd); return }
 case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
 case is Table, TreeView { c.set_window_handle(hwnd); return }
 }
+// 未匹配的扩展类型（Splitter/Panel/TabControl 等）交给回调处理
+if _extraPassWindow != null { _extraPassWindow(c, hwnd) }
 }
 
 // ==================== 工厂 ====================
