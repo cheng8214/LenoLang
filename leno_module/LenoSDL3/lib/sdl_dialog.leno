@@ -4,15 +4,16 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core; use core.WindowFlag
 
-// 模态对话框：默认不在任务栏显示（SDL_WINDOW_UTILITY），alwaysOnTop，
-// 创建时隐藏（HIDDEN），首帧渲染完后自动 show，消除闪现
-// 用户可通过 style.flags 覆盖，如传入 WindowFlag.UTILITY 之外的其他组合
+// 模态对话框：默认不在任务栏显示（SDL_WINDOW_UTILITY），
+// 创建时隐藏（HIDDEN），首帧渲染完后自动 show，消除闪现。
+// 不再使用 setAlwaysOnTop（会导致切到其他应用时对话框仍浮在最上层）；
+// 改用 raise() 在创建时提升到前台，由 OS 自然管理窗口焦点。
 export func createDialogWindow(Dict style): Window {
     var existingFlags = style.get("flags", 0)
     // 模态对话框默认隐藏任务栏图标（UTILITY 窗口）+ 首帧隐藏消除闪现
     style["flags"] = (existingFlags | WindowFlag.UTILITY | WindowFlag.HIDDEN)
     var win = wnd.createWindow(style)
-    win.setAlwaysOnTop(true)
+    win.raise()
     win._dialogHidden = true
     // 恢复原始的 flags，避免污染调用方的 style 字典
     style["flags"] = existingFlags
@@ -25,6 +26,13 @@ export func createDialogWindow(Dict style): Window {
 export func runModal(Window win, any onEvent, any onRender) {
     wnd.pushModal(win.getID())
     win.run(onEvent, onRender)
+}
+
+// 模态对话框关闭后恢复焦点到下层窗口（由事件循环在窗口销毁时调用）
+// parentWid 为要恢复焦点的窗口 ID，-1 表示无指定窗口
+export func restoreFocus(int parentWid) {
+    if parentWid < 0 { return }
+    wnd.raiseWindow(parentWid)
 }
 
 // 非模态对话框：正常窗口标志（出现在任务栏），可选置顶

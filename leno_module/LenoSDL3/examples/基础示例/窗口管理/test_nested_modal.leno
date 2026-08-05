@@ -1,5 +1,5 @@
 // test_nested_modal.leno — 嵌套模态：主→模态2→模态3
-import "../../lib/SDL3.leno" as SDL3
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

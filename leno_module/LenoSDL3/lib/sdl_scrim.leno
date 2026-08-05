@@ -1,0 +1,64 @@
+// sdl_scrim.leno — 模态遮罩控件（Scrim）
+//
+// 半透明黑色全屏覆盖层，用于模态对话框打开时遮挡背景窗口内容。
+// 用法：
+//   Scrim scrim = win.addScrim({})        // 添加遮罩（默认 z=900）
+//   scrim.show()                          // 显示遮罩（打开对话框时调）
+//   scrim.hide()                          // 隐藏遮罩（关闭对话框时调）
+//
+// Scrim 会拦截所有鼠标事件（process 吞掉），阻止背景控件响应交互。
+// 通过 win.add(scrim, 900.0) 或 addScrim({z:900}) 设置高 z 值确保画在普通控件之上。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_widget.leno" as wgt; use wgt.Widget
+
+export struct Scrim impl Widget {
+    float x = 0.0, y = 0.0
+    float _w = 0.0, _h = 0.0
+    int _r = 0, _g = 0, _b = 0     // 遮罩颜色（默认黑色）
+    int _alpha = 120               // 透明度（0=全透明, 255=全不透明）
+    bool visible = false            // 默认隐藏（仅在模态对话框打开时显示）
+    bool _loaded = true
+
+    func set(Dict opts) {
+        _r = opts.get("r", 0)
+        _g = opts.get("g", 0)
+        _b = opts.get("b", 0)
+        _alpha = opts.get("alpha", 120)
+        visible = opts.get("visible", false)
+        _loaded = true
+    }
+
+    // ==================== 控制方法 ====================
+    func show() { visible = true }
+    func hide() { visible = false }
+    func set_alpha(int a) { _alpha = a }
+    func set_color(int r, int g, int b) { _r = r; _g = g; _b = b }
+
+    // ==================== Widget 接口 ====================
+    func get_w(): float { return _w }
+    func get_h(): float { return _h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { _w = sw; _h = sh }
+
+    // 拦截所有鼠标事件（吞掉，不传递给背景控件）
+    // 仅在 visible 时拦截；隐藏时放行
+    func process(Event ev) {
+        if not visible { return }
+        // 吞掉所有鼠标事件（点击、移动、滚轮等）
+        // 不做任何处理 = 事件被消费，背景控件不会收到
+    }
+
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        r.setColor(_r, _g, _b, _alpha)
+        r.fillRect(x, y, _w, _h)
+    }
+
+    func dispose() {}
+}
+
+// 工厂
+export func createScrim(Dict opts): Scrim {
+    Scrim s = new Scrim(); s.set(opts); return s
+}

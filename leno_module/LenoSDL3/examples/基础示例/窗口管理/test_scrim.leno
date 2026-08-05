@@ -1,0 +1,82 @@
+// test_scrim.leno — Scrim 遮罩测试：模态对话框打开时父窗口被半透明遮罩覆盖
+//
+// 按 M 打开模态对话框，对话框打开时父窗口被半透明黑色覆盖，
+// 同时拦截所有鼠标事件。关闭对话框后遮罩消失。
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_core.leno" as core
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+use SDL3.Scrim
+
+main() {
+    SDL3.ttfInit()
+    var win = SDL3.createWindow({title:"Scrim 遮罩测试 — M=打开模态 ESC退出", w:700, h:500})
+    if not win.ok { SDL3.ttfQuit(); return }
+
+    // 创建 Scrim 遮罩（默认隐藏）
+    var scrim = win.addScrim({})
+    scrim.set_color(30, 30, 46)
+    scrim.set_alpha(160)
+
+    // 窗口里放一些可交互控件
+    var btn = SDL3.createButton({x:250, y:180, w:200, h:60, text:"点击我", font_size:16,
+        bg_rgb:[100, 200, 100], text_rgb:[255,255,255]})
+    btn.on_click(func() { print("按钮被点击！（遮罩时应点不到）") })
+    win.add(btn)
+
+    win.addLabel({x:20, y:20, w:660, h:30,
+        text:"按 M 打开模态对话框，父窗口被遮罩覆盖，按钮无法点击",
+        font_size:14, text_rgb:[200,200,220]})
+    win.addLabel({x:20, y:50, w:660, h:30,
+        text:"ESC 退出主窗口",
+        font_size:14, text_rgb:[180,180,180]})
+
+    win.run(
+        func(Event e): bool {
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE { return false }
+                if e.scancode() == Scancode.M {
+                    openModal(win, scrim)
+                }
+            }
+            if e.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(30, 30, 46, 255)
+            r.setColor(69, 71, 90, 255)
+            r.fillRect(50, 100, 600, 280)
+        }
+    )
+    SDL3.ttfQuit()
+}
+
+func openModal(Window parent, Scrim s) {
+    // 显示遮罩
+    s.show()
+    parent.setWidgetZ(s, 900.0)
+    core.requestRedraw()
+
+    var dlg = SDL3.createDialogWindow({title:"模态对话框", w:400, h:260})
+    if not dlg.ok { s.hide(); return }
+
+    dlg.addLabel({x:200, y:40, text:"模态对话框", font_size:18, text_rgb:[255,220,150], align:1})
+    dlg.addLabel({x:200, y:80, text:"父窗口被遮罩覆盖", font_size:14, text_rgb:[200,200,200], align:1})
+    dlg.addLabel({x:200, y:110, text:"按钮和背景都点不到", font_size:13, text_rgb:[180,100,100], align:1})
+    dlg.addLabel({x:200, y:140, text:"ESC 或点击关闭此对话框", font_size:13, text_rgb:[150,160,180], align:1})
+
+    dlg.run(
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if e.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) { r.clearColor(40, 35, 50, 255) }
+    )
+
+    // 对话框关闭后隐藏遮罩
+    s.hide()
+    core.requestRedraw()
+}

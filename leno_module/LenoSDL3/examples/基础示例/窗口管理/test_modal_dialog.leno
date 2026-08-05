@@ -6,7 +6,7 @@
 // 回退交给 parse_if_expr）。修复见 src/parser/parser_stmt_control.c。
 // 复现/验证脚本：examples/验证/repro_if_expr.leno
 // 注意：Leno 不支持裸表达式自动返回，函数需显式 return 返回 if 表达式结果。
-import "../../lib/SDL3.leno" as SDL3
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

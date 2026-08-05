@@ -71,6 +71,8 @@ import "sdl_imageview.leno" as ivw
 use ivw.ImageView
 import "sdl_separator.leno" as seplib
 use seplib.Separator
+import "sdl_scrim.leno" as scrlib
+use scrlib.Scrim
 import "sdl_linkbutton.leno" as lnklib
 use lnklib.LinkButton
 import "sdl_spinner.leno" as spnlib
@@ -83,7 +85,7 @@ use spllib.Splitter
 // ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
 // SpinBox/GroupBox/ScrollView 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
 // import 这些类型（避免循环依赖）。此前示例需手动调用 _content._bind_window()，现在自动完成。
-lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
+lay.setExtraPassWindow(func(any c, Ptr[u8] hwnd) {
     switch c {
         case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter { c._bind_window(hwnd); return }
         case is Edit { c.set_window(hwnd); return }
@@ -101,6 +103,7 @@ Array[Renderer]        _runRens   = []
 Array[EventHandler]    _runEvts   = []
 Array[RenderCallback]  _runRends  = []
 Array[Array[Widget]]   _runWidgets = []
+Array[Array[float]]   _runWidgetZ = []     // 各窗口控件的 z 值数组（与 _runWidgets 并行）
 Array[Array[MenuBar]]   _runMenus   = []
 Array[MenuBar]          _runCtxBar  = []   // 各窗口级右击上下文菜单（由 setContextMenu 注册，run 自动接管弹出）
 Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
@@ -127,6 +130,24 @@ func _modalTop(): int {
     return -1
 }
 
+// 获取模态栈中指定窗口下方的窗口 ID（即打开该模态窗口的父窗口）
+func _modalParent(int wid): int {
+    for _modalStack.len() to i {
+        if _modalStack[i] == wid {
+            if i > 0 { return _modalStack[i - 1] }
+            return -1
+        }
+    }
+    return -1
+}
+
+// 按 wid 提升窗口到前台（SDL_RaiseWindow）
+export func raiseWindow(int wid) {
+    for _runWids.len() to i {
+        if _runWids[i] == wid { _lib.SDL_RaiseWindow(_runHnds[i]); return }
+    }
+}
+
 // 兼容旧 API（已废弃，仅 test_modal_dialog.leno 等旧示例使用）
 export func setModalWid(int w) {
     if w < 0 { _modalStack = [] }
@@ -150,6 +171,7 @@ export struct Window {
     int _w; int _h; float _aaScale
     int _maxFPS = 30        // 最大渲染帧率（0=不限制）
     Array[Widget] _widgets = []
+    Array[float]  _widgetZ = []   // 各控件的 z 值（与 _widgets 并行），渲染时按 z 升序排列
     Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
     MenuBar? _ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
     int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
@@ -296,6 +318,7 @@ export struct Window {
     func addButton(Dict opts): Button {
         Button b = btn.createButton(opts)
         _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return b
     }
 
@@ -303,6 +326,7 @@ export struct Window {
     func addLabel(Dict opts): Label {
         Label l = lbl.createLabel(opts)
         _widgets.add(l as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return l
     }
 
@@ -313,12 +337,15 @@ export struct Window {
         ed.set_window_size(_w, _h)
         if ed.is_context_menu_enabled() { menu.registerContextMenu(ed.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         _widgets.add(ed as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return ed
     }
 
     // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
+    // z 值默认 0.0；如需自定义层级用 addZ(w, z) 或 setWidgetZ(w, z)
     func add(Widget w): Widget {
         _widgets.add(w)
+        _widgetZ.add(0.0)
         // 绑定窗口句柄：容器向下传递，Edit/Table/TreeView 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
         switch w {
             case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
@@ -332,6 +359,31 @@ export struct Window {
             }
         }
         return w
+    }
+
+    // 带层级的控件注册：z 值大的控件画在 z 值小的控件之上
+    func addZ(Widget w, float z): Widget {
+        _widgets.add(w)
+        _widgetZ.add(z)
+        switch w {
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
+                w._bind_window(handle); return w
+            }
+            case is Edit {
+                w.set_window(handle); return w
+            }
+            case is TreeView, Table {
+                w.set_window_handle(handle); return w
+            }
+        }
+        return w
+    }
+
+    // 设置已有控件的 z 值（用于运行时动态调整层级）
+    func setWidgetZ(Widget w, float z) {
+        for _widgets.len() to i {
+            if _widgets[i] == w { _widgetZ[i] = z; return }
+        }
     }
 
     // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
@@ -375,6 +427,7 @@ export struct Window {
     func addCheckBox(Dict opts): CheckBox {
         CheckBox c = chk.createCheckBox(opts)
         _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -384,6 +437,7 @@ export struct Window {
         RadioButton r = rb.createRadioButton(opts)
         r.setWindowHandle(handle)   // 让同组互斥按窗口隔离（避免跨窗口同组互相取消）
         _widgets.add(r as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return r
     }
 
@@ -391,6 +445,7 @@ export struct Window {
     func addToggle(Dict opts): Toggle {
         Toggle t = tgl.createToggle(opts)
         _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return t
     }
 
@@ -399,6 +454,7 @@ export struct Window {
     func addSlider(Dict opts): Slider {
         Slider s = sld.createSlider(opts)
         _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return s
     }
 
@@ -406,6 +462,7 @@ export struct Window {
     func addProgressBar(Dict opts): ProgressBar {
         ProgressBar p = prg.createProgressBar(opts)
         _widgets.add(p as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return p
     }
 
@@ -414,6 +471,7 @@ export struct Window {
     func addListBox(Dict opts): ListBox {
         ListBox lb2 = lb.createListBox(opts)
         _widgets.add(lb2 as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return lb2
     }
 
@@ -423,6 +481,7 @@ export struct Window {
         ComboBox cb = cbb.createComboBox(opts)
         cb.setWindowHandle(handle)   // 让下拉层按窗口隔离绘制（工厂已登记到 registerComboBox）
         _widgets.add(cb as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return cb
     }
 
@@ -432,6 +491,7 @@ export struct Window {
         MenuBar m = menu.createMenuBar(opts)
         m.setWindowHandle(handle)   // 让活动菜单按窗口隔离（避免跨窗口互相抢互斥）
         _widgets.add(m as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         _menus.add(m)
         m.setWindowSize(_w, _h)   // 供上下文菜单弹出时按窗口边界夹紧
         return m
@@ -447,6 +507,7 @@ export struct Window {
     func addPanel(Dict opts): Panel {
         Panel p = pnl.createPanel(opts)
         _widgets.add(p as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         p._bind_window(handle)
         return p
     }
@@ -456,6 +517,7 @@ export struct Window {
     func addTabControl(Dict opts): TabControl {
         TabControl t = tab.createTabControl(opts)
         _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         t._bind_window(handle)
         return t
     }
@@ -465,6 +527,7 @@ export struct Window {
     func addSpinBox(Dict opts): SpinBox {
         SpinBox s = spb.createSpinBox(opts)
         _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         s._bind_window(handle)
         return s
     }
@@ -476,6 +539,7 @@ export struct Window {
         t.set_window_size(_w, _h)
         t.set_window_handle(handle)
         _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         return t
     }
@@ -485,6 +549,7 @@ export struct Window {
     func addHBox(Dict opts): HBox {
         HBox b = lay.createHBox(opts)
         _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)
         return b
     }
@@ -493,6 +558,7 @@ export struct Window {
     func addVBox(Dict opts): VBox {
         VBox b = lay.createVBox(opts)
         _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)
         return b
     }
@@ -502,6 +568,7 @@ export struct Window {
     func addAnchorBox(Dict opts): AnchorBox {
         AnchorBox b = lay.createAnchorBox(opts)
         _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)
         return b
     }
@@ -512,6 +579,7 @@ export struct Window {
     func addScrollView(Dict opts): ScrollView {
         ScrollView s = scv.createScrollView(opts)
         _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         s._bind_window(handle)
         return s
     }
@@ -522,6 +590,7 @@ export struct Window {
     func addImageView(Dict opts): ImageView {
         ImageView iv = ivw.createImageView(opts)
         _widgets.add(iv as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return iv
     }
 
@@ -530,6 +599,19 @@ export struct Window {
     func addSeparator(Dict opts): Separator {
         Separator s = seplib.createSeparator(opts)
         _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return s
+    }
+
+    // 添加模态遮罩（Scrim），默认 z=900（画在普通控件之上、弹层之下）
+    // 用法：scrim = win.addScrim({}); scrim.show() / scrim.hide()
+    func addScrim(Dict opts): Scrim {
+        float zv = opts.get("z", 900.0)
+        Scrim s = scrlib.createScrim(opts)
+        s.set_pos(0, 0)
+        s.set_size(_float(_w), _float(_h))
+        _widgets.add(s as Widget)
+        _widgetZ.add(zv)
         return s
     }
 
@@ -538,6 +620,7 @@ export struct Window {
     func addLinkButton(Dict opts): LinkButton {
         LinkButton lb = lnklib.createLinkButton(opts)
         _widgets.add(lb as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return lb
     }
 
@@ -546,6 +629,7 @@ export struct Window {
     func addSpinner(Dict opts): Spinner {
         Spinner s = spnlib.createSpinner(opts)
         _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return s
     }
 
@@ -554,6 +638,7 @@ export struct Window {
     func addGroupBox(Dict opts): GroupBox {
         GroupBox gb = gbxlib.createGroupBox(opts)
         _widgets.add(gb as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         gb._bind_window(handle)
         return gb
     }
@@ -567,6 +652,7 @@ export struct Window {
         t.set_window_handle(handle)
         if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 右键上下文菜单登记，由窗口第二遍按窗口隔离绘制
         _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return t
     }
 
@@ -575,6 +661,7 @@ export struct Window {
     func addBarChart(Dict opts): BarChart {
         BarChart c = cht.createBarChart(opts)
         _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -583,6 +670,7 @@ export struct Window {
     func addLineChart(Dict opts): LineChart {
         LineChart c = cht.createLineChart(opts)
         _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -591,6 +679,7 @@ export struct Window {
     func addPieChart(Dict opts): PieChart {
         PieChart c = cht.createPieChart(opts)
         _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -621,6 +710,7 @@ export struct Window {
         _runEvts.add(onEvent)
         _runRends.add(onRender)
         _runWidgets.add(_widgets)    // 统一关联控件列表
+        _runWidgetZ.add(_widgetZ)    // 统一关联 z 值列表
         _runMenus.add(_menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
         MenuBar? cb = _ctxBar
         if cb is MenuBar { _runCtxBar.add(cb); _runCtxIdx.add(_ctxIdx) }
@@ -725,7 +815,14 @@ export struct Window {
                 int wid = ev.windowID()
                 // 模态：仅栈顶窗口接收事件，其余全部跳过（含主窗口 + 下层模态）
                 // 注意：必须继续 poll 前进事件队列，否则 ev.has 恒为 true 导致 while 死循环（窗口假死）
-                if _isModal() and wid != _modalTop() { ev.poll(); continue }
+                if _isModal() and wid != _modalTop() {
+                    // 用户点击了非模态窗口（如父窗口标题栏），OS 已把父窗口提到前面；
+                    // 立刻把模态窗口 raise 回来，防止对话框被遮挡
+                    if ev.isWindowFocusGained() or ev.isMouseButtonDown() {
+                        raiseWindow(_modalTop())
+                    }
+                    ev.poll(); continue
+                }
                 // ★ Motion 事件合并：当前事件是鼠标移动时，连续 poll 直到找到最后一个
                 //   同窗口 motion 事件，中间的全部丢弃。若遇到非 motion 事件则暂存，
                 //   处理完 motion 后再处理。这样无论队列堆积多少 motion，每帧只处理 1 个。
@@ -753,7 +850,12 @@ export struct Window {
                 for _runWids.len() to i {
                     if _runWids[i] == wid {
                         if not _runEvts[i](ev) or ev.isWindowClose() {
-                            if _isModal() and _runWids[i] == _modalTop() { _modalStack.pop() }
+                            // 模态窗口关闭：弹出栈并恢复焦点到父窗口
+                            int _restoreWid = -1
+                            if _isModal() and _runWids[i] == _modalTop() {
+                                _restoreWid = _modalParent(_runWids[i])
+                                _modalStack.pop()
+                            }
                             // 根销毁：关闭窗口前先释放所有控件资源（字体等），沿父子树递归清理
                             var ws = _runWidgets[i]
                             if ws != null { for ws to w { w.dispose() } }
@@ -763,10 +865,12 @@ export struct Window {
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
                             _runWids.remove(i);  _runHnds.remove(i)
-                            _runRens.remove(i);  _runEvts.remove(i)
-                            _runRends.remove(i); _runWidgets.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)
+                            _runRens.remove(i); _runEvts.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i); _runWidgetZ.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
                             _runDialogHidden.remove(i); _runTransparent.remove(i)
+                            // 恢复焦点到父窗口（非模态关闭时 _restoreWid 为 -1，跳过）
+                            if _restoreWid >= 0 { raiseWindow(_restoreWid) }
                             break
                         }
                     }
@@ -877,12 +981,31 @@ export struct Window {
                     _runRends[i](_runRens[i])
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
                     core.clearPopupCapture()
-                    // 先渲染根布局控件（背景层），再渲染 _widgets（覆盖层如 MenuBar）
+                    // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
                     var rootWid = _runRoots[i]
                     rootWid?.render(_runRens[i])
-                    // 自动渲染该窗口的所有控件（按添加顺序层叠）
+                    // 自动渲染该窗口的所有控件（z 值小的先画，大的后画；同 z 值保持添加顺序）
                     var ws = _runWidgets[i]
-                    for ws to w { w.render(_runRens[i]) }
+                    var wz = _runWidgetZ[i]
+                    int wn = ws.len()
+                    if wn > 0 {
+                        // 构建排序索引（稳定排序：同 z 值保持原始顺序）
+                        Array[int] order = []
+                        for wn to k { order.add(k) }
+                        // 选择排序（控件数量通常 < 50，不需要复杂排序算法）
+                        for wn to k {
+                            int minIdx = k
+                            int j = k + 1
+                            while j < wn {
+                                if wz[order[j]] < wz[order[minIdx]] { minIdx = j }
+                                j = j + 1
+                            }
+                            if minIdx != k {
+                                int tmp = order[k]; order[k] = order[minIdx]; order[minIdx] = tmp
+                            }
+                        }
+                        for wn to k { ws[order[k]].render(_runRens[i]) }
+                    }
                     // 第二遍：所有展开的下拉框画在最上层（按窗口隔离；含经 panel/tab/布局添加的，由 registerComboBox 兜底）
                     cbb.renderComboBoxes(_runRens[i], _runHnds[i])
                     // 第二遍：所有展开的下拉菜单画在最上层

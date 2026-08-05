@@ -1,6 +1,6 @@
 // test_tray.leno — 系统托盘功能测试
 // 托盘回调依赖 SDL 事件循环，必须通过 win.run() 驱动
-import "../../lib/SDL3.leno" as SDL3
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.(Tray, TrayMenu, Event, Renderer, Scancode)
 
 main() {

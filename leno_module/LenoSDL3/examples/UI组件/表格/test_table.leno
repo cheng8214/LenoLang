@@ -52,7 +52,7 @@ main() {
     // ---- 第一排按钮 ----
     win.addButton({x: 30, y: 338, w: 150, h: 32, text: "添加一行"}).on_click(func() {
         int n = tbl.row_count()
-        tbl.add_row(["新行" + n, "1", "1.0", "1.0"])
+        tbl.add_row(["新行" + n, "1", "1.0", "1.0"], "")
         print("已添加，当前 " + tbl.row_count() + " 行")
     })
     win.addButton({x: 195, y: 338, w: 150, h: 32, text: "删除选中行"}).on_click(func() {

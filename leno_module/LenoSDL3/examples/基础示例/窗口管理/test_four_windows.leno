@@ -1,5 +1,5 @@
 // test_four_windows.leno — 4 窗口不同位置弹出测试
-import "../../lib/SDL3.leno" as SDL3
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Scancode

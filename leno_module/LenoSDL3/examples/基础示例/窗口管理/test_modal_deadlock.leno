@@ -4,7 +4,7 @@
 //       主窗口因此收到 FOCUS_LOST 事件（windowID=主窗口 != _modalWid）走模态跳过分支；
 //       未修复时该分支 continue 漏掉 ev.poll() -> while(ev.has) 死循环（主线程假死，tick 停止）；
 //       修复后 ev.poll() 前进 -> tick 持续打印。程序靠外部 timeout 终止。
-import "../../lib/SDL3.leno" as SDL3
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.WindowFlag

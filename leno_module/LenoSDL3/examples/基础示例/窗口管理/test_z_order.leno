@@ -1,0 +1,62 @@
+// test_z_order.leno — z-order 层级测试：验证 z 值控制渲染顺序
+//
+// 三个带背景色的按钮重叠放置，z 值大的画在上面。
+// 按 1/2/3 键切换哪个按钮置顶。
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+
+main() {
+    SDL3.ttfInit()
+    var win = SDL3.createWindow({title:"z-order 层级测试 — 1/2/3切换 ESC退出", w:600, h:400})
+    if not win.ok { SDL3.ttfQuit(); return }
+
+    // 创建三个带背景色的按钮，重叠放置
+    var btn1 = SDL3.createButton({x:50, y:50, w:200, h:150, text:"底层(z=0)",
+        font_size:16, bg_rgb:[80,130,220], text_rgb:[255,255,255]})
+    var btn2 = SDL3.createButton({x:100, y:100, w:200, h:150, text:"中层(z=5)",
+        font_size:16, bg_rgb:[100,200,100], text_rgb:[255,255,255]})
+    var btn3 = SDL3.createButton({x:150, y:150, w:200, h:150, text:"顶层(z=10)",
+        font_size:16, bg_rgb:[220,100,100], text_rgb:[255,255,255]})
+
+    // 按 z 值添加到窗口（z 越大越在上层）
+    win.addZ(btn1, 0.0)
+    win.addZ(btn2, 5.0)
+    win.addZ(btn3, 10.0)
+
+    // 提示说明
+    win.addLabel({x:20, y:320, w:560, h:60,
+        text:"按 1=蓝色置顶  2=绿色置顶  3=红色置顶  ESC=退出",
+        font_size:14, text_rgb:[200,200,200]})
+
+    win.run(
+        func(Event e): bool {
+            if e.isKeyDown() {
+                if e.scancode() == Scancode._1 {
+                    win.setWidgetZ(btn1, 20.0)
+                    win.setWidgetZ(btn2, 5.0)
+                    win.setWidgetZ(btn3, 0.0)
+                    print("蓝色置顶")
+                } else if e.scancode() == Scancode._2 {
+                    win.setWidgetZ(btn1, 0.0)
+                    win.setWidgetZ(btn2, 20.0)
+                    win.setWidgetZ(btn3, 5.0)
+                    print("绿色置顶")
+                } else if e.scancode() == Scancode._3 {
+                    win.setWidgetZ(btn1, 0.0)
+                    win.setWidgetZ(btn2, 5.0)
+                    win.setWidgetZ(btn3, 20.0)
+                    print("红色置顶")
+                } else if e.scancode() == Scancode.ESCAPE {
+                    return false
+                }
+            }
+            if e.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {}
+    )
+    SDL3.ttfQuit()
+}

@@ -31,6 +31,7 @@ import "sdl_tray.leno" as tray
 import "sdl_theme.leno" as thm
 import "sdl_imageview.leno" as iv
 import "sdl_separator.leno" as sep
+import "sdl_scrim.leno" as scr; use scr.Scrim
 import "sdl_linkbutton.leno" as lnk
 import "sdl_spinner.leno" as spn
 import "sdl_groupbox.leno" as gbx
@@ -102,6 +103,7 @@ export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts
 export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
 export func createImageView(Dict opts): ImageView  { return iv.createImageView(opts) }
 export func createSeparator(Dict opts): Separator  { return sep.createSeparator(opts) }
+export func createScrim(Dict opts): Scrim           { return scr.createScrim(opts) }
 export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButton(opts) }
 export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }

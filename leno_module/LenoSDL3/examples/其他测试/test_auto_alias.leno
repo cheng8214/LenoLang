@@ -1,5 +1,6 @@
 // 测试：import SDL3 后，SDL3 模块中的 use 传导的 alias 是否自动可用
-import "lib/SDL3.leno" as SDL3
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.FSize
 
 // SDL3.leno 内部有 use core.Color，但我们这里没有 use SDL3.Color
 // 如果 Color 被自动注册了（从 SDL3 模块的符号表自动传导），这行不会报错
