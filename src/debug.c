@@ -478,10 +478,12 @@ int disassembleInstruction(Chunk* chunk, int offset) {
 }
 
 // 前向声明
-static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth);
+// local_count_override > 0 时使用该值（函数场景），否则回退到 chunk->local_count（顶层场景）
+static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth, int local_count_override);
 
 // 递归反汇编字节码块（包括函数体内的字节码）
-static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth) {
+static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth, int local_count_override) {
+    int effective_local_count = (local_count_override > 0) ? local_count_override : chunk->local_count;
     // 打印缩进
     for (int i = 0; i < depth; i++) printf("  ");
     printf("===== %s =====\n", name);
@@ -490,7 +492,7 @@ static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth)
     for (int i = 0; i < depth; i++) printf("  ");
     printf("常量数量: %d\n", chunk->const_cnt);
     for (int i = 0; i < depth; i++) printf("  ");
-    printf("局部变量槽位数: %d\n", chunk->local_count);
+    printf("局部变量槽位数: %d\n", effective_local_count);
     printf("\n");
     
     for (int i = 0; i < depth; i++) printf("  ");
@@ -516,7 +518,8 @@ static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth)
                 char func_name[BUFFER_MEDIUM];
                 snprintf(func_name, sizeof(func_name), "函数: %s", 
                          func->name ? func->name : "<anonymous>");
-                disassembleChunkRecursive(func->chunk, func_name, depth + 1);
+                // 传入 func->local_count，因为函数的 local_count 存在 ObjFunction 上而非 Chunk 上
+                disassembleChunkRecursive(func->chunk, func_name, depth + 1, func->local_count);
             }
         }
     }
@@ -524,7 +527,7 @@ static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth)
 
 // 反汇编整个字节码块（公共接口）
 void disassembleChunk(Chunk* chunk, const char* name) {
-    disassembleChunkRecursive(chunk, name, 0);
+    disassembleChunkRecursive(chunk, name, 0, 0);
 }
 
 // 打印栈内容

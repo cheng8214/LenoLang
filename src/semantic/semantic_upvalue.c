@@ -133,7 +133,10 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
                 }
             }
             // 变量在外层函数中，需要增加 func_boundary_count
-            if (scope->is_func) {
+            // 但只有当当前作用域是函数作用域时才需要补偿，
+            // 因为遍历从 s->current->parent 开始，如果 s->current 不是函数作用域（如 if 块），
+            // 遍历已经经过了当前函数的边界并正确计数了
+            if (scope->is_func && s->current->is_func) {
                 func_boundary_count++;
             }
             break;
