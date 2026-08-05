@@ -680,6 +680,13 @@ export struct Window {
                     if wait > 100 { wait = 100 }
                     timeoutMs = wait
                 }
+                // ★ Tooltip 等待：将 poll 超时设为 tooltip 剩余等待时间，
+                //   到期后唤醒一次渲染以显示 tooltip，而非每帧 60fps 空转重绘。
+                //   旧方案 tipWaiting() 恒为 true → _needRedraw 恒 true → 60fps 全量重绘，
+                //   在弱 CPU 上仅 hover 表格就能占 30%+ CPU。
+                int tipRemain = tip.tipRemainingMs()
+                if tipRemain >= 0 and tipRemain < timeoutMs { timeoutMs = tipRemain }
+                if timeoutMs < 1 { timeoutMs = 1 }
             }
             int _t0 = core.getTicks()
             ev.waitTimeout(timeoutMs)
@@ -838,12 +845,15 @@ export struct Window {
             }
             // 驱动所有定时器（在事件轮询外，确保 idle 期间也能触发定时器与自动重绘）
             timer.tickAllTimers()
-            // 事件驱动重绘：非 motion 事件/动画请求/tooltip等待时才渲染，空闲时跳过以降低 CPU 占用。
+            // 事件驱动重绘：非 motion 事件/动画请求/tooltip就绪时才渲染，空闲时跳过以降低 CPU 占用。
             // 注意：纯鼠标移动(motion)不再触发整窗重绘——其光标为 OS 级、hover 变化由控件
             // markFrameRedraw() 单独请求；否则每次移动都整窗清屏+重绘会偶发“闪一下”。
+            // ★ Tooltip 优化：旧方案 tipWaiting() 在等待延迟期间恒返回 true，导致每帧 60fps
+            //   全量重绘（即使画面无任何变化）。新方案仅在延迟到期时（tipRemainingMs()==0）
+            //   触发一次重绘以显示 tooltip，等待期间通过 poll 超时挂起，CPU 降至接近 0。
             if _hadEvent { _needRedraw = true }
             if core.consumeRedrawRequest() { _needRedraw = true }
-            if tip.tipWaiting() { _needRedraw = true }
+            if tip.tipRemainingMs() == 0 { _needRedraw = true }
             if _needRedraw {
                 int now = core.getTicks()
                 if now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过

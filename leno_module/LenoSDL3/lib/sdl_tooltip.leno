@@ -57,6 +57,18 @@ export func tipReport(string text, float ax, float ay) {
     _tipAX = ax; _tipAY = ay
 }
 
+// 鼠标在同一 tooltip 目标（同一行/同一单元格）内移动时调用。
+// 仅更新锚点坐标并标记已上报（防止 tipEndMotion 清除），但不重置 _tipStart 延迟计时器。
+// 这样 tooltip 仍会在首次进入目标后 _tipDelay 毫秒准时显示，
+// 而不会因鼠标在同一目标内微动而无限推迟，从而避免 tipWaiting() 持续为 true
+// 导致窗口 60fps 空转重绘。
+export func tipKeep(float ax, float ay) {
+    if _tipText == "" { return }
+    _tipReported = true
+    _tipAX = ax; _tipAY = ay
+    // 注意：不重置 _tipStart —— 让延迟计时器从首次 tipReport 起继续运行
+}
+
 // 立即隐藏并清空提示文本（tipEndMotion 内部调用，也可由非 motion 场景调用）。
 export func tipClear() {
     _tipText = ""
@@ -76,6 +88,17 @@ export func tipTick() {
 
 // tooltip 是否正在等待延迟显示（Window 用来判断是否需要持续重绘）
 export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
+
+// 返回 tooltip 距离显示还需多少毫秒。
+// 返回  0：延迟已到期，应立即触发一次重绘以显示 tooltip。
+// 返回 -1：无等待中的 tooltip（无文本或已可见），无需额外重绘。
+// 返回 >0：仍在延迟等待中，Window 应将 poll 超时设为此值，到期后再唤醒渲染。
+export func tipRemainingMs(): int {
+    if _tipText == "" or _tipVisible { return -1 }
+    int remaining = _tipDelay - (core.getTicks() - _tipStart)
+    if remaining < 0 { remaining = 0 }
+    return remaining
+}
 
 func _ensureFont(Renderer r) {
     if _fontDirty or _font == null or not _font.ok {

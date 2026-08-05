@@ -491,7 +491,7 @@ main() {
     SDL3.ttfInit()
     // ★ 启用 SSAA 超采样抗锯齿（aa:2 = 2x 渲染再降采样），消除图片/文字/圆角边缘锯齿
     int flags = 0x20 | 0x80  // RESIZABLE(0x20) | MAXIMIZED(0x80)
-    _win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, flags:flags, aa:2})
+    _win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, flags:flags})
     if not _win.ok { SDL3.ttfQuit(); return }
     _win.setMinSize(640, 400)   // 防止窗口缩小到不可用
 
@@ -686,7 +686,7 @@ main() {
         if isDir {
             _table.addContextItem({label:"在此文件夹内新建文件夹", id:"newfolder", image:_imgDir + "/new.png"})
         } else {
-            _table.addContextItem({label:"属性", id:"props"})
+            _table.addContextItem({label:"属性", id:"props", image:_imgDir + "/normal.png"})
         }
         if _clipPaths.len() == 0 or _clipOp == "" {
             _table.setContextItemEnabled("paste", false)
@@ -785,7 +785,8 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 33, 42, 255)
+            // 窗口主循环已用主题背景色 fillRect 清屏，此处无需再 clearColor
+            // （clearColor 会调 SDL_RenderClear 全屏清除，与 fillRect 重复，浪费一次 GPU 全屏操作）
         }
     )
     SDL3.ttfQuit()
