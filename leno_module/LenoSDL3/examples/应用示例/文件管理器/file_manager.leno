@@ -56,18 +56,33 @@ bool   _treeExpanded = true         // 导航树当前是否处于展开态
 bool   _wantQuit = false
 string _imgDir = ""                // 图标资源目录（images/）
 
-// 文件扩展名 → 图标文件名映射（消除硬编码 if 链，新增类型只需在 images/ 放图标 + 加一行）
+// 文件扩展名 → 图标文件名映射（图标存放在 images/filetypes/ 子目录）
 Dict _extIcons = {
-    ".exe": "/exe_1.png",
-    ".dll": "/dll_1.png"
-    // 扩展示例（把对应 png 放入 images/ 后取消注释即可）：
-    // ".txt":  "/txt_1.png",
-    // ".png":  "/img_1.png",
-    // ".zip":  "/zip_1.png",
-    // ".pdf":  "/pdf_1.png",
-    // ".mp3":  "/music_1.png",
-    // ".mp4":  "/video_1.png",
-    // ".leno": "/code_1.png",
+    ".exe":  "/filetypes/exe_1.png",
+    ".dll":  "/filetypes/dll.png",
+    ".txt":  "/filetypes/txt.png",
+    ".pdf":  "/filetypes/pdf.png",
+    ".doc":  "/filetypes/word.png",
+    ".docx": "/filetypes/word.png",
+    ".xls":  "/filetypes/XLS.png",
+    ".xlsx": "/filetypes/XLS.png",
+    ".ppt":  "/filetypes/ppt.png",
+    ".pptx": "/filetypes/ppt.png",
+    ".png":  "/filetypes/png.png",
+    ".jpg":  "/filetypes/jpg.png",
+    ".jpeg": "/filetypes/jpg.png",
+    ".bmp":  "/filetypes/png.png",
+    ".gif":  "/filetypes/png.png",
+    ".zip":  "/filetypes/zip.png",
+    ".rar":  "/filetypes/zip.png",
+    ".7z":   "/filetypes/zip.png",
+    ".csv":  "/filetypes/csv.png",
+    ".md":   "/filetypes/md.png",
+    ".bat":  "/filetypes/bat.png",
+    ".mov":  "/filetypes/mov.png",
+    ".mp4":  "/filetypes/mov.png",
+    ".avi":  "/filetypes/mov.png",
+    ".mkv":  "/filetypes/mov.png"
 }
 
 // 文件剪贴板：复制/剪切的文件路径 + 操作类型
@@ -109,10 +124,10 @@ Button _btnForward
 
 // 根据文件扩展名/是否目录，返回对应图标路径
 func iconForRow(string ext, bool isDir): string {
-    if isDir { return _imgDir + "/folder_1.png" }
+    if isDir { return _imgDir + "/filetypes/folder_1.png" }
     var icon = _extIcons.get(ext)
     if icon is string { return _imgDir + icon }
-    return _imgDir + "/file_1.png"
+    return _imgDir + "/filetypes/file_1.png"
 }
 
 // 列出某目录下的子文件夹，返回 TreeView 节点字典数组
@@ -124,7 +139,7 @@ func subFolders(string path): Array[Dict] {
             string nm = names[i]
             string fp = dirs.join(path, nm)
             if dirs.is_dir(fp) {
-                out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: _imgDir + "/folder_1.png"})
+                out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: _imgDir + "/filetypes/folder_1.png"})
             }
         }
     }
@@ -194,7 +209,7 @@ func findNodeByType(string tp): int {
 
 // 构建导航树根：此电脑（磁盘入口）+ 快速访问（当前位置）
 func buildNavRoots(): Array[Dict] {
-    string folderIcon = _imgDir + "/folder_1.png"
+    string folderIcon = _imgDir + "/filetypes/folder_1.png"
     Array[Dict] roots = []
     roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true, image:folderIcon})
     string root = dirs.dirname(dirs.script_dir())
@@ -212,7 +227,7 @@ func loadPcDrives() {
     if dv != null {
         for dv.len() to i {
             string d = dv[i]
-            Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/folder_1.png"}
+            Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/filetypes/folder_1.png"}
             int nid = _tree.add_child(pcId, node)
             ensureNodeArr(nid)
             _nodePaths[nid - 1] = d
@@ -232,7 +247,7 @@ func _onTreeToggle(int id, bool expanded) {
         if dv != null {
             for dv.len() to i {
                 string d = dv[i]
-                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/folder_1.png"}
+                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: _imgDir + "/filetypes/folder_1.png"}
                 int nid = _tree.add_child(id, node)
                 ensureNodeArr(nid)
                 _nodePaths[nid - 1] = d
@@ -487,20 +502,20 @@ main() {
     int mFile = _bar.addMenu("文件")
     _bar.addItem(mFile, {label:"打开目录...", id:"openfolder", image:_imgDir + "/open.png"})
     _bar.addItem(mFile, {label:"新建文件夹", id:"newfolder", image:_imgDir + "/new.png"})
-    _bar.addItem(mFile, {label:"新建文件", id:"newfile", image:_imgDir + "/file_1.png"})
+    _bar.addItem(mFile, {label:"新建文件", id:"newfile", image:_imgDir + "/filetypes/file_1.png"})
     _bar.addSeparator(mFile)
     _bar.addItem(mFile, {label:"刷新", id:"refresh", image:_imgDir + "/update.png"})
     _bar.addSeparator(mFile)
-    _bar.addItem(mFile, {label:"退出", id:"exit"})
+    _bar.addItem(mFile, {label:"退出", id:"exit", image:_imgDir + "/exit.png"})
     int mEdit = _bar.addMenu("编辑")
-    _bar.addItem(mEdit, {label:"复制", id:"copy"})
-    _bar.addItem(mEdit, {label:"剪切", id:"cut"})
-    _bar.addItem(mEdit, {label:"粘贴", id:"paste"})
+    _bar.addItem(mEdit, {label:"复制", id:"copy", image:_imgDir + "/copy.png"})
+    _bar.addItem(mEdit, {label:"剪切", id:"cut", image:_imgDir + "/jianqie.png"})
+    _bar.addItem(mEdit, {label:"粘贴", id:"paste", image:_imgDir + "/zhantie.png"})
     _bar.addSeparator(mEdit)
-    _bar.addItem(mEdit, {label:"删除", id:"del"})
+    _bar.addItem(mEdit, {label:"删除", id:"del", image:_imgDir + "/delete.png"})
     _bar.setItemEnabled(mEdit, "paste", false)
     int mHelp = _bar.addMenu("帮助")
-    _bar.addItem(mHelp, {label:"关于", id:"about"})
+    _bar.addItem(mHelp, {label:"关于", id:"about", image:_imgDir + "/about.png"})
 
     _bar.on_select(func(string menu, string id) {
         if id == "openfolder" {
@@ -647,9 +662,9 @@ main() {
         _table.clearContextItems()
         if row < 0 {
             _table.addContextItem({label:"新建文件夹", id:"newfolder", image:_imgDir + "/new.png"})
-            _table.addContextItem({label:"新建文件", id:"newfile", image:_imgDir + "/file_1.png"})
+            _table.addContextItem({label:"新建文件", id:"newfile", image:_imgDir + "/filetypes/file_1.png"})
             _table.addContextSeparator()
-            _table.addContextItem({label:"粘贴", id:"paste"})
+            _table.addContextItem({label:"粘贴", id:"paste", image:_imgDir + "/zhantie.png"})
             _table.addContextSeparator()
             _table.addContextItem({label:"刷新", id:"refresh", image:_imgDir + "/update.png"})
             if _clipPaths.len() == 0 or _clipOp == "" {
@@ -661,12 +676,12 @@ main() {
         bool isDir = (r.len() >= 5 and r[4] == "1")
         _table.addContextItem({label:"打开", id:"open", image:_imgDir + "/open.png"})
         _table.addContextSeparator()
-        _table.addContextItem({label:"复制", id:"copyfile"})
-        _table.addContextItem({label:"剪切", id:"cutfile"})
-        _table.addContextItem({label:"粘贴", id:"paste"})
+        _table.addContextItem({label:"复制", id:"copyfile", image:_imgDir + "/copy.png"})
+        _table.addContextItem({label:"剪切", id:"cutfile", image:_imgDir + "/jianqie.png"})
+        _table.addContextItem({label:"粘贴", id:"paste", image:_imgDir + "/zhantie.png"})
         _table.addContextSeparator()
-        _table.addContextItem({label:"重命名", id:"rename"})
-        _table.addContextItem({label:"删除", id:"del"})
+        _table.addContextItem({label:"重命名", id:"rename", image:_imgDir + "/rename.png"})
+        _table.addContextItem({label:"删除", id:"del", image:_imgDir + "/delete.png"})
         _table.addContextSeparator()
         if isDir {
             _table.addContextItem({label:"在此文件夹内新建文件夹", id:"newfolder", image:_imgDir + "/new.png"})
