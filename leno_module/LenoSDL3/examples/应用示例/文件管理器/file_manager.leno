@@ -1,20 +1,16 @@
 // file_manager.leno — LenoSDL3 文件管理器示例（工程化重构版）
 //
-// 重构目标：
-//   1. 将 40+ 模块级全局变量封装进 FileManager 结构体，实现状态内聚
-//   2. 按职责分组状态字段（目录列表 / 树管理 / 剪贴板 / 导航历史 / UI控件 / 布局常量）
-//   3. 将 main() 拆分为 setupMenuBar / setupToolbar / setupNavPanel / setupTable 等聚焦方法
-//   4. 所有自由函数转为结构体方法，通过 self 隐式访问字段，消除全局状态依赖
-//
 // 架构：
 //   struct FileManager
 //     ├── 状态字段（按职责分组）
+//     ├── 样式工厂：imgPath / iconBtn / navBtn / ctxItem / ctxSep
 //     ├── 工具方法：iconForRow / fmtSize / driveLabel / subFolders
 //     ├── 树管理：buildNavRoots / loadPcDrives / onTreeToggle / onTreeChange / regDicts …
 //     ├── 导航历史：pushHistory / updateNavButtons / goBack / goForward / goUp
 //     ├── 目录操作：openDir / openDirNoHistory / openSelected / openFile
 //     ├── 文件操作：copyFile / copyDirRec / pasteFiles / newFolder / newFile
-//     ├── 搜索过滤：applySearchFilter / statusSummary / syncComboToHistory
+//     ├── 剪贴板操作：doCopy / doCut / doPaste / doDeletePath
+//     ├── 事件回调：onMenuSelect / onComboChange / onSearch* / onTable* / onContext*
 //     ├── UI 构建：setupMenuBar / setupToolbar / setupNavPanel / setupTable
 //     └── 入口：run（创建窗口 + 构建 UI + 主循环）
 //
@@ -58,9 +54,8 @@ use SDL3.VBox
 use SDL3.Splitter
 
 // ===================== 文件管理器结构体 =====================
-// 封装全部状态与行为，消除模块级全局变量
 struct FileManager {
-    // ===== 布局常量（float 避免 int/float 混合运算类型错误） =====
+    // ===== 布局常量 =====
     float MENU_H    = 30.0
     float TOOLBAR_H = 36.0
     float STATUS_H  = 24.0
@@ -69,24 +64,24 @@ struct FileManager {
 
     // ===== 当前目录与文件列表状态 =====
     string curDir = ""
-    Array[Array[string]] rows = []       // 表格行：[名称, 大小, 类型, 完整路径, 是否目录("1"/"0")]；第4/5列仅内部用
-    Array[Array[string]] allRows = []    // 未过滤的完整行数据（搜索过滤用）
-    string searchKeyword = ""            // 当前搜索关键词（实时过滤文件列表）
-    string selPath = ""                  // 当前选中项完整路径
+    Array[Array[string]] rows = []
+    Array[Array[string]] allRows = []
+    string searchKeyword = ""
+    string selPath = ""
     bool   selIsDir = false
-    string renameOldPath = ""            // 右键"重命名"时暂存旧路径
+    string renameOldPath = ""
     bool   skipComboCallback = false
 
     // ===== 树节点管理状态 =====
-    Array[int]    loadedIds = []         // 已懒加载子节点的树节点 id
-    Array[string] nodePaths = []         // 树节点 id-1 → 完整路径
-    Array[string] nodeTypes = []         // 树节点 id-1 → 类型（pc/qa/drive/folder）
-    int           regCounter = 1         // regDicts 用的 id 分配计数器
-    bool          treeExpanded = true    // 导航树当前是否处于展开态
+    Array[int]    loadedIds = []
+    Array[string] nodePaths = []
+    Array[string] nodeTypes = []
+    int           regCounter = 1
+    bool          treeExpanded = true
 
     // ===== 文件剪贴板 =====
     Array[string] clipPaths = []
-    string clipOp = ""                   // "copy" | "cut" | ""
+    string clipOp = ""
 
     // ===== 导航历史 =====
     Array[string] history = []
@@ -94,8 +89,8 @@ struct FileManager {
 
     // ===== 应用状态 =====
     bool   wantQuit = false
-    string imgDir = ""                   // 图标资源目录（images/）
-    int    mEditId = 0                   // 编辑菜单 ID（供 setItemEnabled 跨方法使用）
+    string imgDir = ""
+    int    mEditId = 0
 
     // ===== UI 控件引用 =====
     Window   win
@@ -146,17 +141,36 @@ struct FileManager {
         ".mkv":  "/filetypes/mov.png"
     }
 
-    // ===================== 工具方法 =====================
+    // ===================== 样式工厂方法 =====================
+    // 统一控件样式，修改一处即全局生效
 
-    // 根据文件扩展名/是否目录，返回对应图标路径
-    func iconForRow(string ext, bool isDir): string {
-        if isDir { return imgDir + "/filetypes/folder_1.png" }
-        var icon = extIcons.get(ext)
-        if icon is string { return imgDir + icon }
-        return imgDir + "/filetypes/file_1.png"
+    // 拼接图片完整路径
+    func imgPath(string icon): string { return imgDir + "/" + icon }
+
+    // 工具栏图标按钮（32×28，无背景）
+    func iconBtn(string icon): Button {
+        return SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:imgPath(icon), background:false})
     }
 
-    // 列出某目录下的子文件夹，返回 TreeView 节点字典数组
+    // 导航面板按钮（84×26，无背景）
+    func navBtn(string icon): Button {
+        return SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:imgPath(icon), background:false})
+    }
+
+    // 右键菜单项 Dict
+    func ctxItem(string label, string id, string icon): Dict {
+        return {label: label, id: id, image: imgPath(icon)}
+    }
+
+    // ===================== 工具方法 =====================
+
+    func iconForRow(string ext, bool isDir): string {
+        if isDir { return imgPath("filetypes/folder_1.png") }
+        var icon = extIcons.get(ext)
+        if icon is string { return imgDir + icon }
+        return imgPath("filetypes/file_1.png")
+    }
+
     func subFolders(string path): Array[Dict] {
         Array[Dict] out = []
         var names = dirs.listdir(path)
@@ -165,14 +179,14 @@ struct FileManager {
                 string nm = names[i]
                 string fp = dirs.join(path, nm)
                 if dirs.is_dir(fp) {
-                    out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: imgDir + "/filetypes/folder_1.png"})
+                    out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: imgPath("filetypes/folder_1.png")})
                 }
             }
         }
         return out
     }
 
-    // 人类可读大小
+    // 人类可读大小（GB 级别保留 1 位小数）
     func fmtSize(int b): string {
         if b < 1024 { return b + " B" }
         float kb = _float(b) / 1024.0
@@ -180,10 +194,13 @@ struct FileManager {
         float mb = kb / 1024.0
         if mb < 1024.0 { return _int(mb) + " MB" }
         float gb = mb / 1024.0
-        return _int(gb) + " GB"
+        // GB 保留 1 位小数：如 1.9 GB 而非 "1 GB"
+        int gbInt = _int(gb)
+        int tenths = _int((gb - _float(gbInt)) * 10.0)
+        if tenths == 0 { return gbInt + " GB" }
+        return gbInt + "." + tenths + " GB"
     }
 
-    // 盘符显示名：去掉末尾分隔符
     func driveLabel(string p): string {
         string s = p
         while s.len() > 0 {
@@ -196,13 +213,11 @@ struct FileManager {
 
     // ===================== 树节点管理 =====================
 
-    // 树节点是否已懒加载过子节点
     func isLoaded(int id): bool {
         for loadedIds.len() to i { if loadedIds[i] == id { return true } }
         return false
     }
 
-    // 把节点字典列表登记进 nodePaths/nodeTypes（id 分配顺序与 TreeView 内部 DFS 一致）
     func ensureNodeArr(int n) {
         while nodePaths.len() < n { nodePaths.add(""); nodeTypes.add("") }
     }
@@ -239,9 +254,8 @@ struct FileManager {
         return -1
     }
 
-    // 构建导航树根：此电脑（磁盘入口）+ 快速访问（当前位置）
     func buildNavRoots(): Array[Dict] {
-        string folderIcon = imgDir + "/filetypes/folder_1.png"
+        string folderIcon = imgPath("filetypes/folder_1.png")
         Array[Dict] roots = []
         roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true, image:folderIcon})
         string root = dirs.dirname(dirs.script_dir())
@@ -251,7 +265,6 @@ struct FileManager {
         return roots
     }
 
-    // 此电脑节点：加载全部盘符
     func loadPcDrives() {
         int pcId = findNodeByType("pc")
         if pcId < 0 or isLoaded(pcId) { return }
@@ -259,7 +272,7 @@ struct FileManager {
         if dv != null {
             for dv.len() to i {
                 string d = dv[i]
-                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgDir + "/filetypes/folder_1.png"}
+                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png")}
                 int nid = tree.add_child(pcId, node)
                 ensureNodeArr(nid)
                 nodePaths[nid - 1] = d
@@ -269,7 +282,6 @@ struct FileManager {
         loadedIds.add(pcId)
     }
 
-    // 树节点展开：懒加载子目录
     func onTreeToggle(int id, bool expanded) {
         if not expanded or isLoaded(id) { return }
         string tp = nodeType(id)
@@ -279,7 +291,7 @@ struct FileManager {
             if dv != null {
                 for dv.len() to i {
                     string d = dv[i]
-                    Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgDir + "/filetypes/folder_1.png"}
+                    Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png")}
                     int nid = tree.add_child(id, node)
                     ensureNodeArr(nid)
                     nodePaths[nid - 1] = d
@@ -299,7 +311,6 @@ struct FileManager {
         loadedIds.add(id)
     }
 
-    // 选中树节点：导航（跳过容器节点 pc/qa）
     func onTreeChange(Array[int] ids) {
         if ids.len() == 0 { return }
         int id = ids[0]
@@ -336,7 +347,6 @@ struct FileManager {
         openDirNoHistory(history[histIndex])
     }
 
-    // 向上一级目录
     func goUp() {
         if curDir == "" { return }
         string parent = dirs.dirname(curDir)
@@ -408,7 +418,6 @@ struct FileManager {
         selPath = ""; selIsDir = false
     }
 
-    // 生成状态栏文本
     func statusSummary(): string {
         if allRows.len() == 0 { return "空目录" }
         int nDir = 0, nFile = 0
@@ -424,7 +433,6 @@ struct FileManager {
         return s
     }
 
-    // 根据搜索关键词过滤 allRows，更新 table 显示
     func applySearchFilter() {
         if searchKeyword == "" {
             rows = allRows
@@ -478,11 +486,21 @@ struct FileManager {
 
     // ===================== 文件操作 =====================
 
+    // 分块复制文件（避免大文件一次性读入内存导致爆内存）
     func copyFile(string src, string dst): bool {
         if dirs.is_dir(src) { return false }
-        var content = files.read(src)
-        if content == null { return false }
-        files.write(dst, content)
+        var fin = files.open(src, "rb")
+        if fin == null { return false }
+        var fout = files.open(dst, "wb")
+        if fout == null { fin.close(); return false }
+        int chunk = 65536  // 64KB 分块
+        while not fin.eof() {
+            var data = fin.read(chunk)
+            if data == null { break }
+            fout.write(data)
+        }
+        fin.close()
+        fout.close()
         return dirs.exists(dst)
     }
 
@@ -572,60 +590,234 @@ struct FileManager {
         }
     }
 
+    // ===================== 剪贴板操作（复用逻辑） =====================
+
+    func doCopy(string path) {
+        clipPaths = [path]
+        clipOp = "copy"
+        statusLbl.set_text("已复制: " + dirs.basename(path))
+        bar.setItemEnabled(mEditId, "paste", true)
+    }
+
+    func doCut(string path) {
+        clipPaths = [path]
+        clipOp = "cut"
+        statusLbl.set_text("已剪切: " + dirs.basename(path))
+        bar.setItemEnabled(mEditId, "paste", true)
+    }
+
+    func doPaste() {
+        if clipPaths.len() == 0 or clipOp == "" {
+            statusLbl.set_text("剪贴板为空，无法粘贴")
+            return
+        }
+        bool wasCut = (clipOp == "cut")
+        pasteFiles()
+        if wasCut { bar.setItemEnabled(mEditId, "paste", false) }
+    }
+
+    func doDeletePath(string p, bool isDir) {
+        del_confirm.show(p, isDir, func() {
+            if dirs.delete(p) {
+                statusLbl.set_text("已删除: " + dirs.basename(p))
+                openDir(curDir)
+            } else {
+                statusLbl.set_text("删除失败: " + dirs.basename(p))
+            }
+        })
+    }
+
+    // ===================== 事件回调 =====================
+
+    // --- 菜单栏 ---
+
+    func onMenuSelect(string menu, string id) {
+        if id == "openfolder" {
+            fdlg.showOpenFolderDialog(win, func(Array[string] paths, int filter) {
+                if paths != null and paths.len() > 0 { openDir(paths[0]) }
+            }, {default_location: curDir})
+        }
+        eif id == "newfolder" { newFolder() }
+        eif id == "newfile"   { newFile() }
+        eif id == "copy"      { if selPath != "" { doCopy(selPath) } }
+        eif id == "cut"       { if selPath != "" { doCut(selPath) } }
+        eif id == "paste"     { doPaste() }
+        eif id == "del"       { if selPath != "" { doDeletePath(selPath, selIsDir) } }
+        eif id == "refresh"   { openDir(curDir) }
+        eif id == "up"        { goUp() }
+        eif id == "exit"      { wantQuit = true }
+        eif id == "about"     { about.show() }
+    }
+
+    // --- 工具栏 ComboBox ---
+
+    func onComboChange(int idx) {
+        if skipComboCallback { return }
+        if idx >= 0 and idx < history.len() {
+            histIndex = idx
+            openDirNoHistory(history[idx])
+            updateNavButtons()
+        }
+    }
+
+    // --- 搜索框 ---
+
+    func onSearchChange() {
+        searchKeyword = pathSearch.get_text()
+        if curDir != "" { applySearchFilter() }
+    }
+
+    func onSearchEnter() {
+        string t = pathSearch.get_text()
+        if t == "" { return }
+        if dirs.is_dir(t) {
+            openDir(t)
+            pathSearch.set_text("")
+            searchKeyword = ""
+            return
+        }
+        string j = dirs.join(curDir, t)
+        if dirs.is_dir(j) {
+            openDir(j)
+            pathSearch.set_text("")
+            searchKeyword = ""
+        } else {
+            statusLbl.set_text("搜索: " + t + " (" + table.row_count() + " 个结果)")
+        }
+    }
+
+    // --- 折叠/展开导航树 ---
+
+    func onToggleTree() {
+        if treeExpanded { tree.collapse_all(); treeExpanded = false }
+        else { tree.expand_all(); treeExpanded = true }
+    }
+
+    // --- 表格 ---
+
+    func onTableSelect(int row) {
+        if row < 0 or row >= table.row_count() { return }
+        var r = table.get_row(row)
+        if r.len() < 5 { return }
+        selPath = r[3]; selIsDir = (r[4] == "1")
+        if selIsDir {
+            statusLbl.set_text("选中: " + r[0] + "  (文件夹)")
+        } else {
+            statusLbl.set_text("选中: " + r[0] + "  " + r[1] + "  " + r[2])
+        }
+    }
+
+    func onContextWillOpen(int row) {
+        table.clearContextItems()
+        if row < 0 {
+            table.addContextItem(ctxItem("新建文件夹", "newfolder", "new.png"))
+            table.addContextItem(ctxItem("新建文件", "newfile", "filetypes/file_1.png"))
+            table.addContextSeparator()
+            table.addContextItem(ctxItem("粘贴", "paste", "zhantie.png"))
+            table.addContextSeparator()
+            table.addContextItem(ctxItem("刷新", "refresh", "update.png"))
+            if clipPaths.len() == 0 or clipOp == "" {
+                table.setContextItemEnabled("paste", false)
+            }
+            return
+        }
+        var r = table.get_row(row)
+        bool isDir = (r.len() >= 5 and r[4] == "1")
+        table.addContextItem(ctxItem("打开", "open", "open.png"))
+        table.addContextSeparator()
+        table.addContextItem(ctxItem("复制", "copyfile", "copy.png"))
+        table.addContextItem(ctxItem("剪切", "cutfile", "jianqie.png"))
+        table.addContextItem(ctxItem("粘贴", "paste", "zhantie.png"))
+        table.addContextSeparator()
+        table.addContextItem(ctxItem("重命名", "rename", "rename.png"))
+        table.addContextItem(ctxItem("删除", "del", "delete.png"))
+        table.addContextSeparator()
+        if isDir {
+            table.addContextItem(ctxItem("在此文件夹内新建文件夹", "newfolder", "new.png"))
+        } else {
+            table.addContextItem(ctxItem("属性", "props", "normal.png"))
+        }
+        if clipPaths.len() == 0 or clipOp == "" {
+            table.setContextItemEnabled("paste", false)
+        }
+    }
+
+    func onContextSelect(int row, string id) {
+        if row < 0 {
+            if id == "newfolder" { newFolder() }
+            eif id == "newfile" { newFile() }
+            eif id == "paste" { doPaste() }
+            eif id == "refresh" { openDir(curDir) }
+            return
+        }
+        var r = table.get_row(row)
+        if r.len() < 5 { return }
+        string p = r[3]; bool isDir = (r[4] == "1")
+        if id == "open" {
+            selPath = p; selIsDir = isDir; openSelected()
+        } eif id == "copyfile" {
+            doCopy(p)
+        } eif id == "cutfile" {
+            doCut(p)
+        } eif id == "paste" {
+            doPaste()
+        } eif id == "rename" {
+            renameOldPath = p
+            table.begin_edit(row, 0)
+        } eif id == "del" {
+            doDeletePath(p, isDir)
+        } eif id == "newfolder" {
+            newFolder()
+        } eif id == "props" {
+            props.show(p, isDir)
+        }
+    }
+
+    func onEditCommit(int row, int col, string text) {
+        if renameOldPath == "" { return }
+        string oldP = renameOldPath; renameOldPath = ""
+        string newP = dirs.join(curDir, text)
+        if oldP == newP { return }
+        if dirs.rename(oldP, newP) {
+            statusLbl.set_text("已重命名: " + text)
+            openDir(curDir)
+        } else {
+            statusLbl.set_text("重命名失败（名称冲突或权限不足）: " + text)
+        }
+    }
+
+    func onTableDblClick(int row, int col) {
+        if row < 0 or row >= table.row_count() { return }
+        var r = table.get_row(row)
+        if r.len() < 5 { return }
+        selPath = r[3]; selIsDir = (r[4] == "1"); openSelected()
+    }
+
     // ===================== UI 构建：菜单栏 =====================
 
     func setupMenuBar() {
         bar = win.addMenuBar({x:0, y:0, w:1000, h:MENU_H, font_size:14, image_size:16, image_pad:10, image_gap:6})
         int mFile = bar.addMenu("文件")
-        bar.addItem(mFile, {label:"打开目录...", id:"openfolder", image:imgDir + "/open.png"})
-        bar.addItem(mFile, {label:"新建文件夹", id:"newfolder", image:imgDir + "/new.png"})
-        bar.addItem(mFile, {label:"新建文件", id:"newfile", image:imgDir + "/filetypes/file_1.png"})
+        bar.addItem(mFile, {label:"打开目录...", id:"openfolder", image:imgPath("open.png")})
+        bar.addItem(mFile, {label:"新建文件夹", id:"newfolder", image:imgPath("new.png")})
+        bar.addItem(mFile, {label:"新建文件", id:"newfile", image:imgPath("filetypes/file_1.png")})
         bar.addSeparator(mFile)
-        bar.addItem(mFile, {label:"刷新", id:"refresh", image:imgDir + "/update.png"})
+        bar.addItem(mFile, {label:"刷新", id:"refresh", image:imgPath("update.png")})
         bar.addSeparator(mFile)
-        bar.addItem(mFile, {label:"退出", id:"exit", image:imgDir + "/exit.png"})
+        bar.addItem(mFile, {label:"退出", id:"exit", image:imgPath("exit.png")})
         mEditId = bar.addMenu("编辑")
-        bar.addItem(mEditId, {label:"复制", id:"copy", image:imgDir + "/copy.png"})
-        bar.addItem(mEditId, {label:"剪切", id:"cut", image:imgDir + "/jianqie.png"})
-        bar.addItem(mEditId, {label:"粘贴", id:"paste", image:imgDir + "/zhantie.png"})
+        bar.addItem(mEditId, {label:"复制", id:"copy", image:imgPath("copy.png")})
+        bar.addItem(mEditId, {label:"剪切", id:"cut", image:imgPath("jianqie.png")})
+        bar.addItem(mEditId, {label:"粘贴", id:"paste", image:imgPath("zhantie.png")})
         bar.addSeparator(mEditId)
-        bar.addItem(mEditId, {label:"删除", id:"del", image:imgDir + "/delete.png"})
+        bar.addItem(mEditId, {label:"删除", id:"del", image:imgPath("delete.png")})
         bar.setItemEnabled(mEditId, "paste", false)
         int mView = bar.addMenu("视图")
-        bar.addItem(mView, {label:"刷新\tF5", id:"refresh", image:imgDir + "/update.png"})
-        bar.addItem(mView, {label:"向上\tBackspace", id:"up", image:imgDir + "/filetypes/folder_1.png"})
+        bar.addItem(mView, {label:"刷新\tF5", id:"refresh", image:imgPath("update.png")})
+        bar.addItem(mView, {label:"向上\tBackspace", id:"up", image:imgPath("filetypes/folder_1.png")})
         int mHelp = bar.addMenu("帮助")
-        bar.addItem(mHelp, {label:"关于", id:"about", image:imgDir + "/about.png"})
-
-        bar.on_select(func(string menu, string id) {
-            if id == "openfolder" {
-                fdlg.showOpenFolderDialog(win, func(Array[string] paths, int filter) {
-                    if paths != null and paths.len() > 0 { openDir(paths[0]) }
-                }, {default_location: curDir})
-            }
-            eif id == "newfolder" { newFolder() }
-            eif id == "newfile"   { newFile() }
-            eif id == "copy" {
-                if selPath != "" { clipPaths = [selPath]; clipOp = "copy"; statusLbl.set_text("已复制: " + dirs.basename(selPath)); bar.setItemEnabled(mEditId, "paste", true) }
-            } eif id == "cut" {
-                if selPath != "" { clipPaths = [selPath]; clipOp = "cut"; statusLbl.set_text("已剪切: " + dirs.basename(selPath)); bar.setItemEnabled(mEditId, "paste", true) }
-            } eif id == "paste" {
-                if clipPaths.len() > 0 and clipOp != "" { bool wasCut = (clipOp == "cut"); pasteFiles(); if wasCut { bar.setItemEnabled(mEditId, "paste", false) } }
-                else { statusLbl.set_text("剪贴板为空，无法粘贴") }
-            }
-            eif id == "del" {
-                if selPath != "" {
-                    del_confirm.show(selPath, selIsDir, func() {
-                        if dirs.delete(selPath) { statusLbl.set_text("已删除: " + dirs.basename(selPath)); openDir(curDir) }
-                        else { statusLbl.set_text("删除失败: " + dirs.basename(selPath)) }
-                    })
-                }
-            }
-            eif id == "refresh"   { openDir(curDir) }
-            eif id == "up"        { goUp() }
-            eif id == "exit"      { wantQuit = true }
-            eif id == "about"     { about.show() }
-        })
+        bar.addItem(mHelp, {label:"关于", id:"about", image:imgPath("about.png")})
+        bar.on_select(func(string menu, string id) { onMenuSelect(menu, id) })
     }
 
     // ===================== UI 构建：工具栏 =====================
@@ -636,29 +828,21 @@ struct FileManager {
 
         pathCombo = SDL3.createComboBox({x:0, y:0, w:300, h:28, font_size:14, placeholder:"选择或浏览目录...", popup_h:300, bg_rgb:[20,22,28], text_rgb:[235,240,255]})
         toolbar.add(pathCombo, {grow:1, shrink:1, align:3})
-        pathCombo.on_change(func(int idx) {
-            if skipComboCallback { return }
-            if idx >= 0 and idx < history.len() {
-                histIndex = idx
-                openDirNoHistory(history[idx])
-                updateNavButtons()
-            }
-        })
+        pathCombo.on_change(func(int idx) { onComboChange(idx) })
 
-        // 图标按钮
-        var btnOpen = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:imgDir + "/open.png", background:false})
+        var btnOpen = iconBtn("open.png")
         toolbar.add(btnOpen, {grow:0, shrink:0, basis:32, align:3})
         btnOpen.set_tip("打开选中项"); btnOpen.on_click(func() { openSelected() })
 
-        btnBack = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:imgDir + "/last.png", background:false})
+        btnBack = iconBtn("last.png")
         toolbar.add(btnBack, {grow:0, shrink:0, basis:32, align:3})
         btnBack.set_tip("后退"); btnBack.on_click(func() { goBack() })
 
-        btnForward = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:imgDir + "/next.png", background:false})
+        btnForward = iconBtn("next.png")
         toolbar.add(btnForward, {grow:0, shrink:0, basis:32, align:3})
         btnForward.set_tip("前进"); btnForward.on_click(func() { goForward() })
 
-        var btnRefresh = SDL3.createButton({x:0, y:0, w:32, h:28, text:"", image_path:imgDir + "/update.png", background:false})
+        var btnRefresh = iconBtn("update.png")
         toolbar.add(btnRefresh, {grow:0, shrink:0, basis:32, align:3})
         btnRefresh.set_tip("刷新"); btnRefresh.on_click(func() { openDir(curDir) })
     }
@@ -677,49 +861,24 @@ struct FileManager {
 
         pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索当前目录…", bg_rgb:[18,20,26], text_rgb:[230,235,245]})
         navVBox.add(pathSearch, {grow:0, shrink:0, align:3})
-        pathSearch.on_change(func() {
-            searchKeyword = pathSearch.get_text()
-            if curDir != "" { applySearchFilter() }
-        })
-        pathSearch.on_enter(func() {
-            string t = pathSearch.get_text()
-            if t == "" { return }
-            if dirs.is_dir(t) {
-                openDir(t)
-                pathSearch.set_text("")
-                searchKeyword = ""
-                return
-            }
-            string j = dirs.join(curDir, t)
-            if dirs.is_dir(j) {
-                openDir(j)
-                pathSearch.set_text("")
-                searchKeyword = ""
-            } else {
-                statusLbl.set_text("搜索: " + t + " (" + table.row_count() + " 个结果)")
-            }
-        })
+        pathSearch.on_change(func() { onSearchChange() })
+        pathSearch.on_enter(func() { onSearchEnter() })
 
-        // 导航面板内工具栏按钮行
         navToolbar = SDL3.createHBox({x:0, y:0, w:100, h:26, padX:0, padY:0, spacing:4})
         navVBox.add(navToolbar, {grow:0, shrink:0, align:3})
 
-        btnNew = SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:imgDir + "/new.png", background:false})
+        btnNew = navBtn("new.png")
         navToolbar.add(btnNew, {grow:1, shrink:1, align:3})
         btnNew.set_tip("新建文件夹"); btnNew.on_click(func() { newFolder() })
 
-        btnRefresh = SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:imgDir + "/update.png", background:false})
+        btnRefresh = navBtn("update.png")
         navToolbar.add(btnRefresh, {grow:1, shrink:1, align:3})
         btnRefresh.set_tip("刷新"); btnRefresh.on_click(func() { openDir(curDir) })
 
-        btnToggle = SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:imgDir + "/zhetie.png", background:false})
+        btnToggle = navBtn("zhetie.png")
         navToolbar.add(btnToggle, {grow:1, shrink:1, align:3})
-        btnToggle.set_tip("折叠/展开导航树"); btnToggle.on_click(func() {
-            if treeExpanded { tree.collapse_all(); treeExpanded = false }
-            else { tree.expand_all(); treeExpanded = true }
-        })
+        btnToggle.set_tip("折叠/展开导航树"); btnToggle.on_click(func() { onToggleTree() })
 
-        // 目录树
         tree = SDL3.createTreeView({x:0, y:0, w:100, h:100, font_size:14, image_size:16, image_gap:4})
         navVBox.add(tree, {grow:1, shrink:1, align:3})
         tree.on_change(func(Array[int] ids) { onTreeChange(ids) })
@@ -737,121 +896,16 @@ struct FileManager {
             image_col:0, image_size:18, image_pad:4, image_gap:4
         })
         content.set_second(table)
-        table.on_select(func(int row) {
-            if row < 0 or row >= table.row_count() { return }
-            var r = table.get_row(row)
-            if r.len() < 5 { return }
-            selPath = r[3]; selIsDir = (r[4] == "1")
-            if selIsDir {
-                statusLbl.set_text("选中: " + r[0] + "  (文件夹)")
-            } else {
-                statusLbl.set_text("选中: " + r[0] + "  " + r[1] + "  " + r[2])
-            }
-            return
-        })
-
-        // 表格右击上下文菜单
-        table.on_context_will_open(func(int row) {
-            table.clearContextItems()
-            if row < 0 {
-                table.addContextItem({label:"新建文件夹", id:"newfolder", image:imgDir + "/new.png"})
-                table.addContextItem({label:"新建文件", id:"newfile", image:imgDir + "/filetypes/file_1.png"})
-                table.addContextSeparator()
-                table.addContextItem({label:"粘贴", id:"paste", image:imgDir + "/zhantie.png"})
-                table.addContextSeparator()
-                table.addContextItem({label:"刷新", id:"refresh", image:imgDir + "/update.png"})
-                if clipPaths.len() == 0 or clipOp == "" {
-                    table.setContextItemEnabled("paste", false)
-                }
-                return
-            }
-            var r = table.get_row(row)
-            bool isDir = (r.len() >= 5 and r[4] == "1")
-            table.addContextItem({label:"打开", id:"open", image:imgDir + "/open.png"})
-            table.addContextSeparator()
-            table.addContextItem({label:"复制", id:"copyfile", image:imgDir + "/copy.png"})
-            table.addContextItem({label:"剪切", id:"cutfile", image:imgDir + "/jianqie.png"})
-            table.addContextItem({label:"粘贴", id:"paste", image:imgDir + "/zhantie.png"})
-            table.addContextSeparator()
-            table.addContextItem({label:"重命名", id:"rename", image:imgDir + "/rename.png"})
-            table.addContextItem({label:"删除", id:"del", image:imgDir + "/delete.png"})
-            table.addContextSeparator()
-            if isDir {
-                table.addContextItem({label:"在此文件夹内新建文件夹", id:"newfolder", image:imgDir + "/new.png"})
-            } else {
-                table.addContextItem({label:"属性", id:"props", image:imgDir + "/normal.png"})
-            }
-            if clipPaths.len() == 0 or clipOp == "" {
-                table.setContextItemEnabled("paste", false)
-            }
-            return
-        })
-        table.on_context_select(func(int row, string id) {
-            if row < 0 {
-                if id == "newfolder" { newFolder() }
-                eif id == "newfile" { newFile() }
-                eif id == "paste" { bool wasCut = (clipOp == "cut"); pasteFiles(); if wasCut { bar.setItemEnabled(mEditId, "paste", false) } }
-                eif id == "refresh" { openDir(curDir) }
-                return
-            }
-            var r = table.get_row(row)
-            if r.len() < 5 { return }
-            string p = r[3]; bool isDir = (r[4] == "1")
-            if id == "open" {
-                selPath = p; selIsDir = isDir; openSelected()
-            } eif id == "copyfile" {
-                clipPaths = [p]; clipOp = "copy"
-                statusLbl.set_text("已复制: " + dirs.basename(p))
-                bar.setItemEnabled(mEditId, "paste", true)
-            } eif id == "cutfile" {
-                clipPaths = [p]; clipOp = "cut"
-                statusLbl.set_text("已剪切: " + dirs.basename(p))
-                bar.setItemEnabled(mEditId, "paste", true)
-            } eif id == "paste" {
-                bool wasCut = (clipOp == "cut"); pasteFiles(); if wasCut { bar.setItemEnabled(mEditId, "paste", false) }
-            } eif id == "rename" {
-                renameOldPath = p
-                table.begin_edit(row, 0)
-            } eif id == "del" {
-                del_confirm.show(p, isDir, func() {
-                    if dirs.delete(p) {
-                        statusLbl.set_text("已删除: " + dirs.basename(p))
-                        openDir(curDir)
-                    } else {
-                        statusLbl.set_text("删除失败（可能被占用或权限不足）: " + dirs.basename(p))
-                    }
-                })
-            } eif id == "newfolder" {
-                newFolder()
-            } eif id == "props" {
-                props.show(p, isDir)
-            }
-            return
-        })
-        table.on_edit_commit(func(int row, int col, string text) {
-            if renameOldPath == "" { return }
-            string oldP = renameOldPath; renameOldPath = ""
-            string newP = dirs.join(curDir, text)
-            if oldP == newP { return }
-            if dirs.rename(oldP, newP) {
-                statusLbl.set_text("已重命名: " + text)
-                openDir(curDir)
-            } else {
-                statusLbl.set_text("重命名失败（名称冲突或权限不足）: " + text)
-            }
-            return
-        })
+        table.on_select(func(int row) { onTableSelect(row) })
+        table.on_context_will_open(func(int row) { onContextWillOpen(row) })
+        table.on_context_select(func(int row, string id) { onContextSelect(row, id) })
+        table.on_edit_commit(func(int row, int col, string text) { onEditCommit(row, col, text) })
         table.set_editable(false)
-        table.on_dbl_click(func(int row, int col) {
-            if row < 0 or row >= table.row_count() { return }
-            var r = table.get_row(row)
-            if r.len() < 5 { return }
-            selPath = r[3]; selIsDir = (r[4] == "1"); openSelected()
-            return
-        })
+        table.on_dbl_click(func(int row, int col) { onTableDblClick(row, col) })
     }
 
     // ===================== 键盘快捷键处理 =====================
+    // 返回 true = 继续运行主循环，返回 false = 退出程序
 
     func handleKeyboard(Event ev): bool {
         if wantQuit or ev.isQuit() { return false }
@@ -859,9 +913,7 @@ struct FileManager {
             int sc = ev.scancode()
             int mod = ev.keyMod()
             bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
-            // F5 刷新
             if sc == core.Scancode.F5 { openDir(curDir); return true }
-            // F2 重命名
             if sc == core.Scancode.F2 {
                 int sr = table.get_selected_row()
                 if sr >= 0 and sr < table.row_count() {
@@ -873,33 +925,14 @@ struct FileManager {
                 }
                 return true
             }
-            // Backspace 向上一级
             if sc == core.Scancode.BACKSPACE { goUp(); return true }
-            // Delete 删除选中
             if sc == core.Scancode.DELETE {
-                if selPath != "" {
-                    del_confirm.show(selPath, selIsDir, func() {
-                        if dirs.delete(selPath) { statusLbl.set_text("已删除: " + dirs.basename(selPath)); openDir(curDir) }
-                        else { statusLbl.set_text("删除失败: " + dirs.basename(selPath)) }
-                    })
-                }
+                if selPath != "" { doDeletePath(selPath, selIsDir) }
                 return true
             }
-            // Ctrl+C 复制
-            if ctrl and sc == core.Scancode.C {
-                if selPath != "" { clipPaths = [selPath]; clipOp = "copy"; statusLbl.set_text("已复制: " + dirs.basename(selPath)); bar.setItemEnabled(mEditId, "paste", true) }
-                return true
-            }
-            // Ctrl+X 剪切
-            if ctrl and sc == core.Scancode.X {
-                if selPath != "" { clipPaths = [selPath]; clipOp = "cut"; statusLbl.set_text("已剪切: " + dirs.basename(selPath)); bar.setItemEnabled(mEditId, "paste", true) }
-                return true
-            }
-            // Ctrl+V 粘贴
-            if ctrl and sc == core.Scancode.V {
-                if clipPaths.len() > 0 and clipOp != "" { bool wasCut = (clipOp == "cut"); pasteFiles(); if wasCut { bar.setItemEnabled(mEditId, "paste", false) } }
-                return true
-            }
+            if ctrl and sc == core.Scancode.C { if selPath != "" { doCopy(selPath) }; return true }
+            if ctrl and sc == core.Scancode.X { if selPath != "" { doCut(selPath) }; return true }
+            if ctrl and sc == core.Scancode.V { doPaste(); return true }
         }
         return true
     }
@@ -915,25 +948,19 @@ struct FileManager {
 
         imgDir = dirs.join(dirs.script_dir(), "images")
 
-        // 构建菜单栏
         setupMenuBar()
 
-        // 主布局 VBox
         mainLayout = SDL3.createVBox({x:0, y:MENU_H, w:1000, h:680-MENU_H, padX:PAD, padY:PAD, spacing:4})
         win.setRootAt(mainLayout, 0, MENU_H)
 
-        // 工具栏
         setupToolbar()
 
-        // 内容区 Splitter
         content = SDL3.createSplitter({x:0, y:0, w:0, h:0, orientation:0, ratio:0.3, min_first:120, min_second:300, divider_width:4, hit_pad:4})
         mainLayout.add(content, {grow:1, shrink:1, align:3})
 
-        // 导航面板 + 文件列表
         setupNavPanel()
         setupTable()
 
-        // 底部状态栏
         statusLbl = SDL3.createLabel({x:0, y:0, text:"就绪", font_size:13, text_rgb:[170,200,170]})
         mainLayout.add(statusLbl, {grow:0, shrink:0, basis:STATUS_H, align:0})
 
@@ -952,11 +979,10 @@ struct FileManager {
         openDir(dirs.dirname(dirs.script_dir()))
         updateNavButtons()
 
-        // 主循环
         win.run(
             func(Event ev): bool { return handleKeyboard(ev) },
             func(Renderer r) {
-                // 窗口主循环已用主题背景色 fillRect 清屏，此处无需再 clearColor
+                // 窗口主循环已用主题背景色 fillRect 清屏
             }
         )
         SDL3.ttfQuit()
