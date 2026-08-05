@@ -1535,6 +1535,8 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             // 检查是否是导入的用户模块
             ImportedModuleInfo* module_info = find_imported_module(s, ast->u.module_call.module_name);
             if (module_info && module_info->file_path && module_info->sym_table) {
+                // 模块加载失败时，错误已注册，返回 NULL 避免下游误报 any 错误
+                if (module_info->load_failed) return NULL;
                 const char* method_name = ast->u.module_call.method_name;
 
                 ModuleFuncSymbol* func = module_symbol_table_find_func(module_info->sym_table, method_name);
@@ -1707,6 +1709,8 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             // 模块成员访问：尝试查找导入的模块
             ImportedModuleInfo* module_info = find_imported_module(s, ast->u.module_access.module_name);
             if (module_info) {
+                // 模块加载失败时，错误已注册，返回 NULL 避免下游误报 any 错误
+                if (module_info->load_failed) return NULL;
                 // 检查是否是 enum 成员访问（如 math_enum.Color.RED）
                 // module_name 是模块别名，member_name 是 enum 名或函数名
                 if (module_info->sym_table) {
@@ -1787,13 +1791,15 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         ast->cached_type = type_copy(guard_sym->type);
                         return type_copy(ast->cached_type);
                     }
-                    // 无类型守卫，报错
-                    char msg[256];
-                    snprintf(msg, sizeof(msg),
-                        "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
-                        "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄",
-                        var_name, member_name, var_name, var_name, member_name);
-                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    // 无类型守卫，报错（但如果已有模块加载失败，抑制级联 any 错误）
+                    if (!s->has_module_load_failure) {
+                        char msg[256];
+                        snprintf(msg, sizeof(msg),
+                            "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
+                            "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄",
+                            var_name, member_name, var_name, var_name, member_name);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
                     ast->cached_type = type_new(TYPE_ANY);
                     return type_copy(ast->cached_type);
                 }
@@ -1833,23 +1839,26 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (ast->u.index.obj && ast->u.index.obj->kind == AST_VAR) {
                         var_name = ast->u.index.obj->u.var.name;
                     }
-                    char msg[256];
-                    if (var_name && field_name) {
-                        snprintf(msg, sizeof(msg),
-                            "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
-                            "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄",
-                            var_name, field_name, var_name, var_name, field_name);
-                    } else if (field_name) {
-                        snprintf(msg, sizeof(msg),
-                            "不能在 any 类型上直接访问字段 '%s'\n"
-                            "  提示: 使用 if x is Type { x.%s } 进行类型收窄",
-                            field_name, field_name);
-                    } else {
-                        snprintf(msg, sizeof(msg),
-                            "不能在 any 类型上进行索引访问\n"
-                            "  提示: 使用 if x is Array { x[i] } 进行类型收窄");
+                    // 如果已有模块加载失败，抑制级联 any 错误
+                    if (!s->has_module_load_failure) {
+                        char msg[256];
+                        if (var_name && field_name) {
+                            snprintf(msg, sizeof(msg),
+                                "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
+                                "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄",
+                                var_name, field_name, var_name, var_name, field_name);
+                        } else if (field_name) {
+                            snprintf(msg, sizeof(msg),
+                                "不能在 any 类型上直接访问字段 '%s'\n"
+                                "  提示: 使用 if x is Type { x.%s } 进行类型收窄",
+                                field_name, field_name);
+                        } else {
+                            snprintf(msg, sizeof(msg),
+                                "不能在 any 类型上进行索引访问\n"
+                                "  提示: 使用 if x is Array { x[i] } 进行类型收窄");
+                        }
+                        error_add(ERR_SEMANTIC, ast->line, msg);
                     }
-                    error_add(ERR_SEMANTIC, ast->line, msg);
                     type_free(obj_type);
                     ast->cached_type = type_new(TYPE_ANY);
                     return type_copy(ast->cached_type);

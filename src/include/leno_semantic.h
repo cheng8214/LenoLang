@@ -14,6 +14,7 @@ typedef struct {
     char* alias;                    // 模块别名（如 test）
     char* file_path;                // 模块文件路径（如 test.leno）
     ModuleSymbolTable* sym_table;   // 模块符号表（缓存所有导出符号）
+    int load_failed;                // 模块加载是否失败（文件不存在或读取失败）
 } ImportedModuleInfo;
 
 // ============================================================================
@@ -54,6 +55,7 @@ typedef struct {
     int is_module;      // 是否为模块模式
     int is_lsp_mode;    // 是否为 LSP 模式（保留所有作用域供符号查询）
     int in_clib;        // 是否在 clib/cfunc 声明上下文中（C 布局类型允许）
+    int has_module_load_failure; // 是否有模块加载失败（用于抑制下游级联 any 错误）
 } Semantic;
 
 // 函数表 API

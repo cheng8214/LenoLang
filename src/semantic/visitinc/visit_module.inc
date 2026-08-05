@@ -36,7 +36,19 @@
                     info->sym_table = module_symbol_table_create(ast->u.import.file_path);
                     if (info->sym_table) {
                         const char* current_file = error_get_filename();
-                        module_symbol_table_scan(info->sym_table, current_file);
+                        int scan_result = module_symbol_table_scan(info->sym_table, current_file);
+
+                        // 模块文件扫描失败（文件不存在或读取失败）时，注册错误并跳过后续注册
+                        // 否则空符号表会导致下游变量被推断为 any，掩盖根因
+                        if (scan_result != 0) {
+                            char err_msg[BUFFER_MEDIUM];
+                            snprintf(err_msg, sizeof(err_msg), "找不到模块文件: %s", ast->u.import.file_path);
+                            error_add(ERR_SEMANTIC, ast->line, err_msg);
+                            // 标记模块信息为加载失败，避免后续任何注册
+                            info->load_failed = 1;
+                            // 设置全局标志，抑制下游级联 any 错误
+                            s->has_module_load_failure = 1;
+                        } else {
 
                         // 注意：不再将模块中的 struct 定义注册到当前作用域
                         // struct 必须通过模块名访问，例如：new module.Point()
@@ -104,6 +116,7 @@
                                 }
                             }
                         }
+                        } // end else (scan_result == 0)
                     }
                 } else {
                     free(module_name);
@@ -565,6 +578,8 @@
             ImportedModuleInfo* module_info = find_imported_module(s, ast->u.module_call.module_name);
             if (module_info) {
                 is_imported_module = 1;
+                // 模块加载失败时，跳过后续检查（错误已注册），避免级联 any 错误
+                if (module_info->load_failed) break;
             }
 
             // 检查模块是否已导入：原生模块必须显式导入，用户模块也必须导入
@@ -1614,6 +1629,10 @@
         }
 
         case AST_MODULE_ACCESS: {
+            // 模块加载失败时，跳过后续检查（错误已注册），避免级联 any 错误
+            ImportedModuleInfo* access_module_info = find_imported_module(s, ast->u.module_access.module_name);
+            if (access_module_info && access_module_info->load_failed) break;
+
             Symbol* module_sym = scope_resolve(s->current, ast->u.module_access.module_name);
             int is_module = 0;
             
