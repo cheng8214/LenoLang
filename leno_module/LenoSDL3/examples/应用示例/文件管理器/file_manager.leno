@@ -46,6 +46,8 @@ string _curDir = ""
 Array[Array[string]] _rows = []     // 表格行：[名称, 大小, 类型, 完整路径, 是否目录("1"/"0")]；第4/5列仅内部用，表头只有3列故不显示
 string _renameOldPath = ""          // 右键"重命名"时暂存旧路径，供编辑提交后 dirs.rename 使用
 bool _skipComboCallback = false
+string _searchKeyword = ""          // 当前搜索关键词（实时过滤文件列表）
+Array[Array[string]] _allRows = []  // 未过滤的完整行数据（搜索过滤用）
 string _selPath = ""                // 当前选中项完整路径
 bool   _selIsDir = false
 Array[int] _loadedIds = []          // 已懒加载子节点的树节点 id
@@ -254,7 +256,7 @@ func _onTreeToggle(int id, bool expanded) {
                 _nodeTypes[nid - 1] = "drive"
             }
         }
-    } else if p != "" {
+    } eif p != "" {
         var subs = subFolders(p)
         for subs.len() to i {
             int nid = _tree.add_child(id, subs[i])
@@ -304,6 +306,13 @@ func goForward() {
     openDirNoHistory(_history[_histIndex])
 }
 
+// 向上一级目录
+func goUp() {
+    if _curDir == "" { return }
+    string parent = dirs.dirname(_curDir)
+    if parent != "" and parent != _curDir and dirs.is_dir(parent) { openDir(parent) }
+}
+
 // ===================== 目录操作 =====================
 
 func openDir(string path) {
@@ -322,6 +331,7 @@ func openDirNoHistory(string path) {
     }
     _curDir = path
     _rows = []
+    _allRows = []
 
     var names = dirs.listdir(path)
     if names == null {
@@ -349,7 +359,53 @@ func openDirNoHistory(string path) {
     }
     for folders.len() to i { _rows.add(folders[i]) }
     for fileRows.len() to i { _rows.add(fileRows[i]) }
+    _allRows = _rows
+    _applySearchFilter()
+    for _rows.len() to i {
+        bool isDir = (_rows[i][4] == "1")
+        string ext = dirs.extname(_rows[i][0])
+        _table.set_row_image(i, iconForRow(ext, isDir))
+        string nm = _rows[i][0]
+        string sz = _rows[i][1]
+        string tp = _rows[i][2]
+        string tipText = "名称: " + nm
+        if not isDir { tipText = tipText + "\n大小: " + sz }
+        tipText = tipText + "\n类型: " + tp
+        _table.set_row_tip(i, tipText)
+    }
+    _statusLbl.set_text(_statusSummary())
+    _syncComboToHistory()
+    _selPath = ""; _selIsDir = false
+}
 
+// 生成状态栏文本：显示对象总数 + 文件夹/文件分类计数 + 搜索过滤状态
+func _statusSummary(): string {
+    if _allRows.len() == 0 { return "空目录" }
+    int nDir = 0, nFile = 0
+    for _allRows.len() to i {
+        if _allRows[i][4] == "1" { nDir = nDir + 1 } else { nFile = nFile + 1 }
+    }
+    string s = _allRows.len() + " 个对象"
+    if _searchKeyword != "" {
+        s = s + " (过滤: " + _rows.len() + "/" + _allRows.len() + ")"
+    } else {
+        s = s + "  [文件夹 " + nDir + " + 文件 " + nFile + "]"
+    }
+    return s
+}
+
+// 根据搜索关键词过滤 _allRows，更新 _table 显示
+func _applySearchFilter() {
+    if _searchKeyword == "" {
+        _rows = _allRows
+    } else {
+        _rows = []
+        string kw = _searchKeyword.to_lower()
+        for _allRows.len() to i {
+            string nm = _allRows[i][0]
+            if nm.to_lower().has(kw) { _rows.add(_allRows[i]) }
+        }
+    }
     _table.set_rows(_rows)
     for _rows.len() to i {
         bool isDir = (_rows[i][4] == "1")
@@ -363,9 +419,7 @@ func openDirNoHistory(string path) {
         tipText = tipText + "\n类型: " + tp
         _table.set_row_tip(i, tipText)
     }
-    _statusLbl.set_text(_rows.len() + " 个对象")
-    _syncComboToHistory()
-    _selPath = ""; _selIsDir = false
+    _statusLbl.set_text(_statusSummary())
 }
 
 func _syncComboToHistory() {
@@ -514,6 +568,9 @@ main() {
     _bar.addSeparator(mEdit)
     _bar.addItem(mEdit, {label:"删除", id:"del", image:_imgDir + "/delete.png"})
     _bar.setItemEnabled(mEdit, "paste", false)
+    int mView = _bar.addMenu("视图")
+    _bar.addItem(mView, {label:"刷新\tF5", id:"refresh", image:_imgDir + "/update.png"})
+    _bar.addItem(mView, {label:"向上\tBackspace", id:"up", image:_imgDir + "/filetypes/folder_1.png"})
     int mHelp = _bar.addMenu("帮助")
     _bar.addItem(mHelp, {label:"关于", id:"about", image:_imgDir + "/about.png"})
 
@@ -522,17 +579,18 @@ main() {
             fdlg.showOpenFolderDialog(_win, func(Array[string] paths, int filter) {
                 if paths != null and paths.len() > 0 { openDir(paths[0]) }
             }, {default_location: _curDir})
-        } else if id == "newfolder" { newFolder() }
-        else if id == "newfile"   { newFile() }
-        else if id == "copy" {
+        }
+        eif id == "newfolder" { newFolder() }
+        eif id == "newfile"   { newFile() }
+        eif id == "copy" {
             if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "copy"; _statusLbl.set_text("已复制: " + dirs.basename(_selPath)); _bar.setItemEnabled(mEdit, "paste", true) }
-        } else if id == "cut" {
+        } eif id == "cut" {
             if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "cut"; _statusLbl.set_text("已剪切: " + dirs.basename(_selPath)); _bar.setItemEnabled(mEdit, "paste", true) }
-        } else if id == "paste" {
+        } eif id == "paste" {
             if _clipPaths.len() > 0 and _clipOp != "" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) } }
             else { _statusLbl.set_text("剪贴板为空，无法粘贴") }
         }
-        else if id == "del" {
+        eif id == "del" {
             if _selPath != "" {
                 del_confirm.show(_selPath, _selIsDir, func() {
                     if dirs.delete(_selPath) { _statusLbl.set_text("已删除: " + dirs.basename(_selPath)); openDir(_curDir) }
@@ -540,9 +598,10 @@ main() {
                 })
             }
         }
-        else if id == "refresh"   { openDir(_curDir) }
-        else if id == "exit"      { _wantQuit = true }
-        else if id == "about"     { about.show() }
+        eif id == "refresh"   { openDir(_curDir) }
+        eif id == "up"         { goUp() }
+        eif id == "exit"      { _wantQuit = true }
+        eif id == "about"     { about.show() }
     })
 
     // ---------- 主布局 VBox（菜单栏下方所有内容） ----------
@@ -601,18 +660,31 @@ main() {
     var navTitle = SDL3.createLabel({x:0, y:0, text:"导航", font_size:14, text_rgb:[150,200,255]})
     _navVBox.add(navTitle, {grow:0, shrink:0, align:0})
 
-    _pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索或输入路径…", bg_rgb:[18,20,26], text_rgb:[230,235,245]})
+    _pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索当前目录…", bg_rgb:[18,20,26], text_rgb:[230,235,245]})
     _navVBox.add(_pathSearch, {grow:0, shrink:0, align:3})
+    _pathSearch.on_change(func() {
+        _searchKeyword = _pathSearch.get_text()
+        if _curDir != "" { _applySearchFilter() }
+    })
     _pathSearch.on_enter(func() {
         string t = _pathSearch.get_text()
         if t == "" { return }
-        string target = t
-        if not dirs.is_dir(target) {
-            string j = dirs.join(_curDir, t)
-            if dirs.is_dir(j) { target = j } else { _statusLbl.set_text("找不到: " + t); return }
+        // 如果输入的是路径且目录存在，直接跳转
+        if dirs.is_dir(t) {
+            openDir(t)
+            _pathSearch.set_text("")
+            _searchKeyword = ""
+            return
         }
-        openDir(target)
-        _pathSearch.set_text("")
+        string j = dirs.join(_curDir, t)
+        if dirs.is_dir(j) {
+            openDir(j)
+            _pathSearch.set_text("")
+            _searchKeyword = ""
+        } else {
+            // 非路径：作为搜索关键词，已在 on_change 中处理
+            _statusLbl.set_text("搜索: " + t + " (" + _table.row_count() + " 个结果)")
+        }
     })
 
     // 导航面板内工具栏按钮行（HBox）
@@ -654,6 +726,12 @@ main() {
         var r = _table.get_row(row)
         if r.len() < 5 { return }
         _selPath = r[3]; _selIsDir = (r[4] == "1")
+        // 状态栏显示选中项信息
+        if _selIsDir {
+            _statusLbl.set_text("选中: " + r[0] + "  (文件夹)")
+        } else {
+            _statusLbl.set_text("选中: " + r[0] + "  " + r[1] + "  " + r[2])
+        }
         return
     })
 
@@ -696,9 +774,9 @@ main() {
     _table.on_context_select(func(int row, string id) {
         if row < 0 {
             if id == "newfolder" { newFolder() }
-            else if id == "newfile" { newFile() }
-            else if id == "paste" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) } }
-            else if id == "refresh" { openDir(_curDir) }
+            eif id == "newfile" { newFile() }
+            eif id == "paste" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) } }
+            eif id == "refresh" { openDir(_curDir) }
             return
         }
         var r = _table.get_row(row)
@@ -706,20 +784,20 @@ main() {
         string p = r[3]; bool isDir = (r[4] == "1")
         if id == "open" {
             _selPath = p; _selIsDir = isDir; openSelected()
-        } else if id == "copyfile" {
+        } eif id == "copyfile" {
             _clipPaths = [p]; _clipOp = "copy"
             _statusLbl.set_text("已复制: " + dirs.basename(p))
             _bar.setItemEnabled(mEdit, "paste", true)
-        } else if id == "cutfile" {
+        } eif id == "cutfile" {
             _clipPaths = [p]; _clipOp = "cut"
             _statusLbl.set_text("已剪切: " + dirs.basename(p))
             _bar.setItemEnabled(mEdit, "paste", true)
-        } else if id == "paste" {
+        } eif id == "paste" {
             bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) }
-        } else if id == "rename" {
+        } eif id == "rename" {
             _renameOldPath = p
             _table.begin_edit(row, 0)
-        } else if id == "del" {
+        } eif id == "del" {
             del_confirm.show(p, isDir, func() {
                 if dirs.delete(p) {
                     _statusLbl.set_text("已删除: " + dirs.basename(p))
@@ -728,9 +806,9 @@ main() {
                     _statusLbl.set_text("删除失败（可能被占用或权限不足）: " + dirs.basename(p))
                 }
             })
-        } else if id == "newfolder" {
+        } eif id == "newfolder" {
             newFolder()
-        } else if id == "props" {
+        } eif id == "props" {
             props.show(p, isDir)
         }
         return
@@ -782,6 +860,53 @@ main() {
     _win.run(
         func(Event ev): bool {
             if _wantQuit or ev.isQuit() { return false }
+            // 键盘快捷键：编辑框聚焦时不拦截
+            if ev.isKeyDown() and not _pathSearch.is_focused() {
+                int sc = ev.scancode()
+                int mod = ev.keyMod()
+                bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+                // F5 刷新
+                if sc == core.Scancode.F5 { openDir(_curDir); return true }
+                // F2 重命名
+                if sc == core.Scancode.F2 {
+                    int sr = _table.get_selected_row()
+                    if sr >= 0 and sr < _table.row_count() {
+                        var r = _table.get_row(sr)
+                        if r.len() >= 5 {
+                            _renameOldPath = r[3]
+                            _table.begin_edit(sr, 0)
+                        }
+                    }
+                    return true
+                }
+                // Backspace 向上一级
+                if sc == core.Scancode.BACKSPACE { goUp(); return true }
+                // Delete 删除选中
+                if sc == core.Scancode.DELETE {
+                    if _selPath != "" {
+                        del_confirm.show(_selPath, _selIsDir, func() {
+                            if dirs.delete(_selPath) { _statusLbl.set_text("已删除: " + dirs.basename(_selPath)); openDir(_curDir) }
+                            else { _statusLbl.set_text("删除失败: " + dirs.basename(_selPath)) }
+                        })
+                    }
+                    return true
+                }
+                // Ctrl+C 复制
+                if ctrl and sc == core.Scancode.C {
+                    if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "copy"; _statusLbl.set_text("已复制: " + dirs.basename(_selPath)); _bar.setItemEnabled(mEdit, "paste", true) }
+                    return true
+                }
+                // Ctrl+X 剪切
+                if ctrl and sc == core.Scancode.X {
+                    if _selPath != "" { _clipPaths = [_selPath]; _clipOp = "cut"; _statusLbl.set_text("已剪切: " + dirs.basename(_selPath)); _bar.setItemEnabled(mEdit, "paste", true) }
+                    return true
+                }
+                // Ctrl+V 粘贴
+                if ctrl and sc == core.Scancode.V {
+                    if _clipPaths.len() > 0 and _clipOp != "" { bool wasCut = (_clipOp == "cut"); pasteFiles(); if wasCut { _bar.setItemEnabled(mEdit, "paste", false) } }
+                    return true
+                }
+            }
             return true
         },
         func(Renderer r) {

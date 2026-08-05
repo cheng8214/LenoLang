@@ -1,7 +1,7 @@
 // desktop_pet.leno — 机器人桌宠（拖拽、走动+转身、挥手、跳跃、眨眼、冒泡对话）
 // 使用 win.run() 回调模式，透明窗口
-import "../../lib/SDL3.leno" as SDL3
-import "../../lib/sdl_core.leno" as core
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_core.leno" as core
 use SDL3.(Event, Renderer, WindowFlag, Font)
 import maths
 import rands
