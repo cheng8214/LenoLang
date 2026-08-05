@@ -271,14 +271,14 @@ func saveSelection() {
 main() {
     // 1. 捕获桌面
     var shot = Win32.captureScreen()
-    if not (shot is Dict) {
+    if shot is Dict {
+        _screenW = _int(shot["w"])
+        _screenH = _int(shot["h"])
+        _screenPixels = shot["pixels"] as Ptr[u8]
+    } else {
         print("截屏失败")
         return
     }
-
-    _screenW = _int(shot["w"])
-    _screenH = _int(shot["h"])
-    _screenPixels = shot["pixels"] as Ptr[u8]
 
     if _screenW <= 0 or _screenH <= 0 or _screenPixels == null {
         print("截屏数据无效")

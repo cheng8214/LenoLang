@@ -4,6 +4,8 @@
 import "point_struct.leno" as ps
 import "color_enum.leno" as ce
 import "type_aliases.leno" as ta
+use ps.Point
+use ps.Rectangle
 
 // 1. 使用其他模块的 struct
 export func create_line(any p1, any p2) {
@@ -16,7 +18,7 @@ export func create_line(any p1, any p2) {
     }
 }
 
-export func is_point_in_rect(any point, any rect) {
+export func is_point_in_rect(Point point, Rectangle rect) {
     // 使用局部变量存储中间结果，避免链式访问问题
     var tl = rect.top_left
     var br = rect.bottom_right

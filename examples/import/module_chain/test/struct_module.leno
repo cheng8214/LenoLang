@@ -5,7 +5,7 @@ export struct TestStruct {
     int b
 }
 
-export func create_test(int x, int y)
+export func create_test(int x, int y): TestStruct
 {
     return new TestStruct(a = x, b = y)
 }

@@ -5,6 +5,8 @@ import "point_struct.leno" as ps
 import "color_enum.leno" as ce
 import "type_aliases.leno" as ta
 import "type_user.leno" as tu
+use ps.Point
+use ps.Rectangle
 
 main() {
     print("=== 类型系统跨模块测试 ===")
@@ -24,8 +26,16 @@ main() {
 
     // 创建 Rectangle
     var rect = ps.create_rectangle(p1, p2)
-    print("  rect.top_left: (" + rect.top_left.x + ", " + rect.top_left.y + ")")
-    print("  rect.bottom_right: (" + rect.bottom_right.x + ", " + rect.bottom_right.y + ")")
+    if rect is Rectangle {
+        var tl = rect.top_left
+        var br = rect.bottom_right
+        if tl is Point {
+            if br is Point {
+                print("  rect.top_left: (" + tl.x + ", " + tl.y + ")")
+                print("  rect.bottom_right: (" + br.x + ", " + br.y + ")")
+            }
+        }
+    }
 
     // 计算面积
     var area = ps.rectangle_area(rect)
@@ -63,7 +73,9 @@ main() {
 
     // 创建 IntPair
     var pair = ta.create_int_pair(10, 20)
-    print("  pair: [" + pair[0] + ", " + pair[1] + "] (期望: [10, 20])")
+    if pair is Array {
+        print("  pair: [" + pair[0] + ", " + pair[1] + "] (期望: [10, 20])")
+    }
 
     // 计算和
     var sum = ta.pair_sum(pair)
@@ -71,7 +83,9 @@ main() {
 
     // 交换
     var swapped = ta.pair_swap(pair)
-    print("  pair_swap(pair): [" + swapped[0] + ", " + swapped[1] + "] (期望: [20, 10])")
+    if swapped is Array {
+        print("  pair_swap(pair): [" + swapped[0] + ", " + swapped[1] + "] (期望: [20, 10])")
+    }
 
     // 创建 StringMap
     var map = ta.create_string_map()
@@ -85,7 +99,9 @@ main() {
 
     // 创建线
     var line = tu.create_line(p1, p2)
-    print("  line.length: " + line["length"] + " (期望: 25)")
+    if line is Dict {
+        print("  line.length: " + line["length"] + " (期望: 25)")
+    }
 
     // 检查点是否在矩形内
     var inside = tu.is_point_in_rect(ps.create_point(1, 1), rect)
@@ -96,17 +112,23 @@ main() {
 
     // 创建彩色点
     var colored = tu.create_colored_point(5, 5, ce.Color.GREEN)
-    print("  colored_point.color_name: " + colored["color_name"] + " (期望: Green)")
+    if colored is Dict {
+        print("  colored_point.color_name: " + colored["color_name"] + " (期望: Green)")
+    }
 
     // 处理数据
     var processed = tu.process_data([3, 4])
-    print("  processed.sum: " + processed["sum"] + " (期望: 7)")
+    if processed is Dict {
+        print("  processed.sum: " + processed["sum"] + " (期望: 7)")
+    }
 
     // 创建形状
     var shape = tu.create_shape(p1, p2, ce.Color.RED, ce.Color.BLUE)
-    print("  shape.area: " + shape["area"] + " (期望: 12)")
-    print("  shape.fill: " + shape["fill"] + " (期望: Red)")
-    print("  shape.border: " + shape["border"] + " (期望: Blue)")
+    if shape is Dict {
+        print("  shape.area: " + shape["area"] + " (期望: 12)")
+        print("  shape.fill: " + shape["fill"] + " (期望: Red)")
+        print("  shape.border: " + shape["border"] + " (期望: Blue)")
+    }
 
     print("\n=== 所有类型系统跨模块测试完成 ===")
 }

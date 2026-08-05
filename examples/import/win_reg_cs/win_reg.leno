@@ -34,7 +34,7 @@ export var HKEY_CURRENT_CONFIG = ffi.ptr_from_int(0x80000005)
 // ========== 内部辅助函数 ==========
 
 // 将 UTF-8 字符串转换为 UTF-16 宽字符串指针
-func toWstr(any str) {
+func toWstr(any str):Ptr {
     return ffi.utf8_to_utf16(str)
 }
 

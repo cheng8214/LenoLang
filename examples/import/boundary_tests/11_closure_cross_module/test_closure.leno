@@ -24,10 +24,12 @@ main() {
 
     // 测试4: 银行账户（多个闭包共享 upvalue）
     var account = factory.make_bank_account(100)
-    print("Initial balance: " + account["get_balance"]())
-    print("Deposit 50: " + account["deposit"](50))
-    print("Withdraw 30: " + account["withdraw"](30))
-    print("Final balance: " + account["get_balance"]())
+    if account is Dict {
+        print("Initial balance: " + account["get_balance"]())
+        print("Deposit 50: " + account["deposit"](50))
+        print("Withdraw 30: " + account["withdraw"](30))
+        print("Final balance: " + account["get_balance"]())
+    }
 
     print("=== 测试完成 ===")
 }

@@ -80,7 +80,9 @@ main()
     print("")
     
     var colors = create_colors(5)
-    print("Created " + colors.len() + " colors")
+    if colors is Array {
+        print("Created " + colors.len() + " colors")
+    }
     print("")
     
     test_array_type(colors)

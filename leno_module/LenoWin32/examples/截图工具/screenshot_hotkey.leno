@@ -168,9 +168,10 @@ func _b(int c): int { return c & 0xFF }
 // ==== 截图 Session ====
 func doScreenshot() {
     var shot = Win32.captureScreen()
-    if not (shot is Dict) { return }
-    _sw = _int(shot["w"]); _sh = _int(shot["h"])
-    _pixels = shot["pixels"] as Ptr[u8]
+    if shot is Dict {
+        _sw = _int(shot["w"]); _sh = _int(shot["h"])
+        _pixels = shot["pixels"] as Ptr[u8]
+    } else { return }
     if _sw <= 0 or _sh <= 0 or _pixels == null { return }
 
     SDL3.init(0x20)

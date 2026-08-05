@@ -39,31 +39,31 @@ export struct Person {
 }
 
 // 创建点的函数
-export func create_point(int x, int y)
+export func create_point(int x, int y): Point
 {
     return new Point(x = x, y = y)
 }
 
 // 创建矩形的函数
-export func create_rect(int x, int y, int w, int h)
+export func create_rect(int x, int y, int w, int h): Rectangle
 {
     return new Rectangle(x = x, y = y, width = w, height = h)
 }
 
 // 创建人员的函数
-export func create_person(string name, int age)
+export func create_person(string name, int age): Person
 {
     return new Person(name = name, age = age)
 }
 
 // 计算矩形面积
-export func rect_area(any rect)
+export func rect_area(Rectangle rect): int
 {
     return rect.width * rect.height
 }
 
 // 获取颜色名称
-export func color_name(any color)
+export func color_name(any color): string
 {
     if color == Color.RED {
         return "Red"
@@ -82,7 +82,7 @@ export func color_name(any color)
 }
 
 // 获取状态名称
-export func status_name(any status)
+export func status_name(any status): string
 {
     if status == Status.PENDING {
         return "Pending"

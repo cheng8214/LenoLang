@@ -1,0 +1,18 @@
+// bug3_root_cause_masked.leno — 复现编译器问题 3
+// 根因被掩盖
+//
+// 本文件导入了不存在的模块 nonexistent_module.leno，
+// 但报的第一个错误是 "不能在 any 类型上访问字段"，
+// 而不是 "找不到模块文件"。
+// 缺文件才是根因，应该优先报告，而不是下游的 any 访问错误。
+//
+// 复现步骤：leno -c bug3_root_cause_masked.leno
+// 预期：第一个错误应为 "找不到模块文件: nonexistent_module.leno"
+// 实际：第一个错误是 "不能在 any 类型 'foo' 上直接访问字段 'bar'"
+
+import "nonexistent_module.leno" as nm
+
+main() {
+    var result = nm.do_something()
+    print(result)
+}

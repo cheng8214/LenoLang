@@ -49,8 +49,9 @@ func test()
     print("5. 进程列表 (前 5 个):")
     int count = 0
     for processes.processes to proc {
+        Dict p = proc as Dict
         if count < 5 {
-            print("   - " + proc.name + " (PID: " + proc.pid + ")")
+            print("   - " + p.name + " (PID: " + p.pid + ")")
             count = count + 1
         }
     }

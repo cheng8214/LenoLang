@@ -8,7 +8,7 @@ use c.Runner
 
 export func getSys(): sys_lib { return c.loadSys() }
 
-export func makeData(u32 id, u32 val): Data {
+export func makeData(int id, int val): Data {
     var d = Data.malloc()
     d.id = id; d.value = val
     return d

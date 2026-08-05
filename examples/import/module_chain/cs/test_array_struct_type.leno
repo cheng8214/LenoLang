@@ -51,15 +51,17 @@ func test_element_type(any points)
     
     if points is Array {
         var p = points[0]
-        print("p.x = " + p.x)
-        print("p.y = " + p.y)
-        
-        // 检查 p 是否是 Point 类型
-        // if p is Point {
-        //     print("p is Point: true")
-        // } else {
-        //     print("p is Point: false")
-        // }
+        if p is Point {
+            print("p.x = " + p.x)
+            print("p.y = " + p.y)
+            
+            // 检查 p 是否是 Point 类型
+            // if p is Point {
+            //     print("p is Point: true")
+            // } else {
+            //     print("p is Point: false")
+            // }
+        }
     }
 }
 
@@ -69,7 +71,9 @@ main()
     print("")
     
     var points = create_points(3)
-    print("Created " + points.len() + " points")
+    if points is Array {
+        print("Created " + points.len() + " points")
+    }
     print("")
     
     test_array_type(points)

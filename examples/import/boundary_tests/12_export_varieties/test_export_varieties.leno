@@ -25,9 +25,15 @@ main() {
     print("  MAX_SIZE: " + named.MAX_SIZE + " (期望: 100)")
 
     // 测试导出复杂数据结构
-    print("  config.host: " + named.config["host"] + " (期望: localhost)")
-    print("  config.port: " + named.config["port"] + " (期望: 8080)")
-    print("  data_array[2]: " + named.data_array[2] + " (期望: 3)")
+    var config = named.config
+    if config is Dict {
+        print("  config.host: " + config["host"] + " (期望: localhost)")
+        print("  config.port: " + config["port"] + " (期望: 8080)")
+    }
+    var data_array = named.data_array
+    if data_array is Array {
+        print("  data_array[2]: " + data_array[2] + " (期望: 3)")
+    }
 
     // 测试私有成员不可访问（应该编译错误，这里注释掉）
     // print("  private_var: " + named.private_var)  // 应该报错
@@ -46,11 +52,16 @@ main() {
     print("  reexported_greet('User'): " + reexported.reexported_greet("User"))
 
     var enhanced = reexported.enhanced_config()
-    print("  enhanced_config()['enhanced']: " + enhanced["enhanced"] + " (期望: true)")
-    print("  enhanced_config()['version']: " + enhanced["version"] + " (期望: 2.0)")
+    if enhanced is Dict {
+        print("  enhanced_config()['enhanced']: " + enhanced["enhanced"] + " (期望: true)")
+        print("  enhanced_config()['version']: " + enhanced["version"] + " (期望: 2.0)")
+    }
 
     print("  combined_use(): " + reexported.combined_use())
-    print("  reexported_array[3]: " + reexported.reexported_array[3] + " (期望: 4)")
+    var reexported_array = reexported.reexported_array
+    if reexported_array is Array {
+        print("  reexported_array[3]: " + reexported_array[3] + " (期望: 4)")
+    }
 
     // ========== 测试 3: 导出循环依赖 ==========
     print("\n3. 导出循环依赖测试:")

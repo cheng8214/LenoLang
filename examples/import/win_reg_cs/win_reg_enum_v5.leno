@@ -214,7 +214,7 @@ export func errorToString(any errorCode):string {
 
 // ========== 键操作 ==========
 
-export func openKey(any hKey, string subKey, any samDesired) {
+export func openKey(any hKey, string subKey, any samDesired):OpenKeyResult {
     _ensureLoaded()
     Ptr hResult = ffi.malloc(8)
     try {
@@ -235,7 +235,7 @@ export func openKey(any hKey, string subKey, any samDesired) {
     }
 }
 
-export func createKey(any hKey, string subKey, any samDesired) {
+export func createKey(any hKey, string subKey, any samDesired):CreateKeyResult {
     _ensureLoaded()
     Ptr hResult = ffi.malloc(8)
     Ptr disp = ffi.malloc(4)
@@ -263,17 +263,17 @@ export func createKey(any hKey, string subKey, any samDesired) {
     }
 }
 
-export func closeKey(any hKey) {
+export func closeKey(any hKey):int {
     _ensureLoaded()
-    return ffi.call(_advapi32, "RegCloseKey", hKey)
+    return _int(ffi.call(_advapi32, "RegCloseKey", hKey))
 }
 
-export func deleteKey(any hKey, string subKey) {
+export func deleteKey(any hKey, string subKey):int {
     _ensureLoaded()
     Ptr wSubKey = toWstr(subKey)
     try {
         Ptr hKeyPtr = _ptr(getHKeyPtr(hKey))
-        return ffi.call(_advapi32, "RegDeleteKeyW", hKeyPtr, wSubKey)
+        return _int(ffi.call(_advapi32, "RegDeleteKeyW", hKeyPtr, wSubKey))
     } finally {
         ffi.free(wSubKey)
     }
@@ -281,7 +281,7 @@ export func deleteKey(any hKey, string subKey) {
 
 // ========== 枚举操作 ==========
 
-export func enumSubKeys(any hKey) {
+export func enumSubKeys(any hKey):EnumSubKeysResult {
     _ensureLoaded()
     var subKeys = []
     int index = 0
@@ -317,7 +317,7 @@ export func enumSubKeys(any hKey) {
     }
 }
 
-export func enumValues(any hKey) {
+export func enumValues(any hKey):EnumValuesResult {
     _ensureLoaded()
     var values = []
     int index = 0
@@ -380,7 +380,7 @@ export func enumValues(any hKey) {
 
 // ========== 值操作 ==========
 
-export func readString(any hKey, string valueName) {
+export func readString(any hKey, string valueName):ReadStringResult {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -425,7 +425,7 @@ export func readString(any hKey, string valueName) {
     }
 }
 
-export func readExpandString(any hKey, string valueName) {
+export func readExpandString(any hKey, string valueName):ReadExpandStringResult {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -483,7 +483,7 @@ export func readExpandString(any hKey, string valueName) {
     }
 }
 
-export func readDword(any hKey, string valueName) {
+export func readDword(any hKey, string valueName):ReadDwordResult {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -517,7 +517,7 @@ export func readDword(any hKey, string valueName) {
     }
 }
 
-export func readQword(any hKey, string valueName) {
+export func readQword(any hKey, string valueName):ReadQwordResult {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -552,7 +552,7 @@ export func readQword(any hKey, string valueName) {
     }
 }
 
-export func writeString(any hKey, string valueName, string value) {
+export func writeString(any hKey, string valueName, string value):int {
     _ensureLoaded()
     var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
     Ptr wValue = toWstr(value)
@@ -561,7 +561,7 @@ export func writeString(any hKey, string valueName, string value) {
         var byteLen = ffi.sizeof(wValue)
         var result = ffi.call(_advapi32, "RegSetValueExW",
             hKey, wValueName, 0, ValueType.SZ, wValue, byteLen)
-        return result
+        return _int(result)
     } finally {
         if wValueName != ffi.nullptr() {
             ffi.free(wValueName)
@@ -570,7 +570,7 @@ export func writeString(any hKey, string valueName, string value) {
     }
 }
 
-export func writeExpandString(any hKey, string valueName, string value) {
+export func writeExpandString(any hKey, string valueName, string value):int {
     _ensureLoaded()
     var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
     Ptr wValue = toWstr(value)
@@ -579,7 +579,7 @@ export func writeExpandString(any hKey, string valueName, string value) {
         var byteLen = ffi.sizeof(wValue)
         var result = ffi.call(_advapi32, "RegSetValueExW",
             hKey, wValueName, 0, ValueType.EXPAND_SZ, wValue, byteLen)
-        return result
+        return _int(result)
     } finally {
         if wValueName != ffi.nullptr() {
             ffi.free(wValueName)
@@ -588,15 +588,15 @@ export func writeExpandString(any hKey, string valueName, string value) {
     }
 }
 
-export func writeDword(any hKey, string valueName, int value) {
+export func writeDword(any hKey, string valueName, int value):int {
     _ensureLoaded()
     Ptr buffer = ffi.malloc(4)
     try {
         ffi.write_int(buffer, 0, value)
         var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
         try {
-            return ffi.call(_advapi32, "RegSetValueExW",
-                hKey, wValueName, 0, ValueType.DWORD, buffer, 4)
+            return _int(ffi.call(_advapi32, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.DWORD, buffer, 4))
         } finally {
             if wValueName != ffi.nullptr() {
                 ffi.free(wValueName)
@@ -607,15 +607,15 @@ export func writeDword(any hKey, string valueName, int value) {
     }
 }
 
-export func writeQword(any hKey, string valueName, int value) {
+export func writeQword(any hKey, string valueName, int value):int {
     _ensureLoaded()
     Ptr buffer = ffi.malloc(8)
     try {
         ffi.write_int64(buffer, 0, value)
         var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
         try {
-            return ffi.call(_advapi32, "RegSetValueExW",
-                hKey, wValueName, 0, ValueType.QWORD, buffer, 8)
+            return _int(ffi.call(_advapi32, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.QWORD, buffer, 8))
         } finally {
             if wValueName != ffi.nullptr() {
                 ffi.free(wValueName)
@@ -626,7 +626,7 @@ export func writeQword(any hKey, string valueName, int value) {
     }
 }
 
-export func readBinary(any hKey, string valueName) {
+export func readBinary(any hKey, string valueName):ReadBinaryResult {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -676,7 +676,7 @@ export func readBinary(any hKey, string valueName) {
     }
 }
 
-export func writeBinary(any hKey, string valueName, Array data) {
+export func writeBinary(any hKey, string valueName, Array data):int {
     _ensureLoaded()
     int dataLen = data.len()
     Ptr buffer = ffi.malloc(dataLen)
@@ -688,8 +688,8 @@ export func writeBinary(any hKey, string valueName, Array data) {
         
         var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
         try {
-            return ffi.call(_advapi32, "RegSetValueExW",
-                hKey, wValueName, 0, ValueType.BINARY, buffer, dataLen)
+            return _int(ffi.call(_advapi32, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.BINARY, buffer, dataLen))
         } finally {
             if wValueName != ffi.nullptr() {
                 ffi.free(wValueName)
@@ -700,7 +700,7 @@ export func writeBinary(any hKey, string valueName, Array data) {
     }
 }
 
-export func readMultiString(any hKey, string valueName) {
+export func readMultiString(any hKey, string valueName):ReadMultiStringResult {
     _ensureLoaded()
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
@@ -767,7 +767,7 @@ export func readMultiString(any hKey, string valueName) {
     }
 }
 
-export func writeMultiString(any hKey, string valueName, Array multiStrings) {
+export func writeMultiString(any hKey, string valueName, Array multiStrings):int {
     _ensureLoaded()
     
     // 计算需要的总大小
@@ -803,8 +803,8 @@ export func writeMultiString(any hKey, string valueName, Array multiStrings) {
         
         var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
         try {
-            return ffi.call(_advapi32, "RegSetValueExW",
-                hKey, wValueName, 0, ValueType.MULTI_SZ, buffer, totalSize)
+            return _int(ffi.call(_advapi32, "RegSetValueExW",
+                hKey, wValueName, 0, ValueType.MULTI_SZ, buffer, totalSize))
         } finally {
             if wValueName != ffi.nullptr() {
                 ffi.free(wValueName)
@@ -815,32 +815,32 @@ export func writeMultiString(any hKey, string valueName, Array multiStrings) {
     }
 }
 
-export func deleteValue(any hKey, string valueName) {
+export func deleteValue(any hKey, string valueName):int {
     _ensureLoaded()
     Ptr wValueName = toWstr(valueName)
     try {
-        return ffi.call(_advapi32, "RegDeleteValueW", hKey, wValueName)
+        return _int(ffi.call(_advapi32, "RegDeleteValueW", hKey, wValueName))
     } finally {
         ffi.free(wValueName)
     }
 }
 
-export func setDefaultValue(any hKey, string value) {
+export func setDefaultValue(any hKey, string value):int {
     return writeString(hKey, "", value)
 }
 
-export func getDefaultValue(any hKey) {
+export func getDefaultValue(any hKey):ReadStringResult {
     return readString(hKey, "")
 }
 
-export func flushKey(any hKey) {
+export func flushKey(any hKey):int {
     _ensureLoaded()
-    return ffi.call(_advapi32, "RegFlushKey", hKey)
+    return _int(ffi.call(_advapi32, "RegFlushKey", hKey))
 }
 
 // ========== 高级操作 ==========
 
-export func keyExists(any hKey, string subKey) {
+export func keyExists(any hKey, string subKey):bool {
     var result = openKey(hKey, subKey, KeyAccess.QUERY_VALUE)
     var handle = result.handle
     var errorCode = result.errorCode
@@ -852,13 +852,13 @@ export func keyExists(any hKey, string subKey) {
     return errorCode != WinError.FILE_NOT_FOUND and errorCode != WinError.PATH_NOT_FOUND
 }
 
-export func valueExists(any hKey, string valueName) {
+export func valueExists(any hKey, string valueName):bool {
     var result = readString(hKey, valueName)
     return result.errorCode == 0
 }
 
 // 递归删除键及其所有子键和值
-export func deleteKeyRecursive(any hKey, string subKey) {
+export func deleteKeyRecursive(any hKey, string subKey):int {
     // 打开要删除的键
     var openResult = openKey(hKey, subKey, KeyAccess.ALL_ACCESS)
     if openResult.errorCode != WinError.SUCCESS {
@@ -872,7 +872,8 @@ export func deleteKeyRecursive(any hKey, string subKey) {
         var enumValuesResult = enumValues(targetKey)
         if enumValuesResult.errorCode == WinError.SUCCESS {
             for enumValuesResult.values to valueInfo {
-                deleteValue(targetKey, _str(valueInfo.name))
+                RegValueInfo vi = valueInfo as RegValueInfo
+                deleteValue(targetKey, _str(vi.name))
             }
         }
         

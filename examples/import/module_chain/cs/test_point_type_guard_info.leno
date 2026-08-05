@@ -56,21 +56,23 @@ func test_any_array_access(any points)
         print("points is Array: true")
         
         var p = points[0]
-        print("p.x = " + p.x)
-        print("p.y = " + p.y)
-        
-        // 测试 p 是否是 Point 类型
         if p is Point {
-            print("p is Point: true")
-        } else {
-            print("p is Point: false")
-        }
-        
-        // 测试 p.x 是否是 int 类型
-        if p.x is int {
-            print("p.x is int: true")
-        } else {
-            print("p.x is int: false")
+            print("p.x = " + p.x)
+            print("p.y = " + p.y)
+            
+            // 测试 p 是否是 Point 类型
+            if p is Point {
+                print("p is Point: true")
+            } else {
+                print("p is Point: false")
+            }
+            
+            // 测试 p.x 是否是 int 类型
+            if p.x is int {
+                print("p.x is int: true")
+            } else {
+                print("p.x is int: false")
+            }
         }
     }
 }
@@ -80,14 +82,18 @@ func test_direct_access(any points)
 {
     print("=== 测试直接访问（无类型守卫） ===")
     
-    var p = points[0]
-    print("p.x = " + p.x)
-    print("p.y = " + p.y)
-    
-    if p is Point {
-        print("p is Point: true")
-    } else {
-        print("p is Point: false")
+    if points is Array {
+        var p = points[0]
+        if p is Point {
+            print("p.x = " + p.x)
+            print("p.y = " + p.y)
+        }
+        
+        if p is Point {
+            print("p is Point: true")
+        } else {
+            print("p is Point: false")
+        }
     }
 }
 
@@ -97,7 +103,9 @@ main()
     print("")
     
     var points = create_points(3)
-    print("Created " + points.len() + " points")
+    if points is Array {
+        print("Created " + points.len() + " points")
+    }
     print("")
     
     test_point_array_access(points)

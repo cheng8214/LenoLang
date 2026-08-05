@@ -23,14 +23,27 @@ export func reexported_greet(any name) {
 // 4. 重导出并修改
 export func enhanced_config() {
     var cfg = inner.config
-    cfg["enhanced"] = true
-    cfg["version"] = "2.0"
-    return cfg
+    if cfg is Dict {
+        var result = {}
+        result["enhanced"] = "true"
+        result["version"] = "2.0"
+        result["host"] = _str(cfg["host"])
+        result["port"] = _str(cfg["port"])
+        result["debug"] = _str(cfg["debug"])
+        return result
+    }
+    return null
 }
 
 // 5. 组合多个导出
 export func combined_use() {
-    return inner.public_var + inner.PI + inner.data_array[0]
+    var dv = inner.public_var
+    var dp = inner.PI
+    var da = inner.data_array
+    if da is Array {
+        return dv + dp + da[0]
+    }
+    return dv + dp
 }
 
 // 6. 重导出数组

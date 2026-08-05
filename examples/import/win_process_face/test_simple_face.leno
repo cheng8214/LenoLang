@@ -20,8 +20,9 @@ func printProcessList(ProcessManager manager) {
     // 只显示前 5 个进程
     int count = 0
     for result.processes to proc {
+        Dict p = proc as Dict
         if count >= 5 { break }
-        print("PID: " + proc.pid + " | 名称: " + proc.name)
+        print("PID: " + p.pid + " | 名称: " + p.name)
         count = count + 1
     }
     if result.processes is Array

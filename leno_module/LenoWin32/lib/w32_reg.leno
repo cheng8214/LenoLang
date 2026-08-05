@@ -828,7 +828,8 @@ export func deleteKeyRecursive(any hKey, string subKey):int {
         var enumValuesResult = enumValues(targetKey)
         if enumValuesResult.errorCode == WinError.SUCCESS {
             for enumValuesResult.values to valueInfo {
-                deleteValue(targetKey, _str(valueInfo.name))
+                RegValueInfo vi = valueInfo as RegValueInfo
+                deleteValue(targetKey, _str(vi.name))
             }
         }
 

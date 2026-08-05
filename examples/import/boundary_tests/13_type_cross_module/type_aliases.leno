@@ -15,26 +15,26 @@ export func create_string_map() {
 }
 
 // 3. 导出操作类型别名的函数
-export func pair_sum(any pair) {
+export func pair_sum(Array pair) {
     return pair[0] + pair[1]
 }
 
-export func pair_swap(any pair) {
+export func pair_swap(Array pair) {
     // 返回新数组，不修改原数组
     return [pair[1], pair[0]]
 }
 
-export func map_set(any map, any key, any value) {
+export func map_set(Dict map, any key, any value) {
     map[key] = value
     return map
 }
 
-export func map_get(any map, any key) {
+export func map_get(Dict map, any key) {
     return map[key]
 }
 
 // 4. 导出复杂类型操作
-export func merge_pairs(any p1, any p2) {
+export func merge_pairs(Array p1, Array p2) {
     return [p1[0], p1[1], p2[0], p2[1]]
 }
 

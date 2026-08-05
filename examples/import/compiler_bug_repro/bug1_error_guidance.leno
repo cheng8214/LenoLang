@@ -1,0 +1,19 @@
+// bug1_error_guidance.leno — 复现编译器问题 1
+// ErrorGuidance 误报 unknown_tool_error
+//
+// 任何语义错误（如 any 类型上访问字段）后面都跟了：
+//   错误名: unknown_tool_error
+//   错误解释: 未识别为已知错误类型
+// 但 "不能在 any 类型上访问字段" 是一个明确的语义错误，
+// 有清晰的错误类型和修复路径，不是 "未识别"。
+// 这个标签会让用户以为编译器自身出了问题，而非代码有问题。
+//
+// 复现步骤：leno -c bug1_error_guidance.leno
+// 预期：ErrorGuidance 应报告 semantic_error 或 type_error，而非 unknown_tool_error
+
+export func bad_access(any data)
+{
+    // 在 any 类型上直接访问字段 → 语义错误
+    // ErrorGuidance 应标记为语义错误，实际却报 unknown_tool_error
+    return data.field
+}

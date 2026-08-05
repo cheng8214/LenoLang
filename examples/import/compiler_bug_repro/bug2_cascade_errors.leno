@@ -1,0 +1,21 @@
+// bug2_cascade_errors.leno — 复现编译器问题 2
+// 级联错误没有过滤
+//
+// 当模块 A 编译失败，所有依赖 A 的文件 B、C、D 都会报 "模块加载失败"，
+// 然后 B/C/D 自身使用 A 导出内容的代码又产生一堆 any 类型错误。
+// 实际上用户只需要看到 A 的原始错误就够了。
+//
+// 本文件依赖 upstream_bad.leno（其中有类型错误）。
+// upstream_bad.leno 的错误会导致本文件报 "模块加载失败"，
+// 但用户看本文件的代码完全不知道为什么加载失败。
+//
+// 复现步骤：leno -c bug2_cascade_errors.leno
+// 预期：只报 upstream_bad.leno 的原始错误，本文件只报一条
+//       "模块 upstream_bad 编译失败，请先修复该模块" 并指向原始错误位置
+
+import "upstream_bad.leno" as upstream
+
+main() {
+    var result = upstream.compute(42)
+    print(result)
+}

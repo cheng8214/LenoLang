@@ -16,13 +16,17 @@ main() {
     )
     
     if result != null {
-        var handle = result[0]
-        var isNew = result[1]
-        print("   创建成功，是否新建: " + isNew)
-        
-        // 关闭键
-        reg.closeKey(handle)
-        print("   键已关闭")
+        if result is Array {
+            var handle = result[0]
+            var isNew = result[1]
+            print("   创建成功，是否新建: " + isNew)
+            
+            // 关闭键
+            reg.closeKey(handle)
+            print("   键已关闭")
+        } else {
+            print("   创建失败")
+        }
     } else {
         print("   创建失败")
     }

@@ -1,6 +1,8 @@
 // 简化混合测试
 
-import "shape_math.leno" as sm
+import "shape_math_v2.leno" as sm
+import "../类型定义/types.leno" as ty
+use ty.Rectangle
 
 main()
 {
@@ -13,8 +15,10 @@ main()
     
     // 测试矩形
     var rect = sm.create_rectangle(0, 0, 10, 20)
-    print("Rect width = ")
-    print(rect.width)
+    if rect is Rectangle {
+        print("Rect width = ")
+        print(rect.width)
+    }
     
     // 测试矩形面积
     var rect_area = sm.rectangle_area(rect)
