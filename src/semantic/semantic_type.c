@@ -17,6 +17,17 @@ static void fix_struct_to_face(TypeInfo* type) {
     if (type && type->kind == TYPE_DICT && type->value_type) {
         fix_struct_to_face(type->value_type);
     }
+    // 递归修正 func(P1, P2, ...): R 的参数类型和返回类型
+    if (type && type->kind == TYPE_FUNCTION) {
+        if (type->param_types) {
+            for (int i = 0; i < type->param_count; i++) {
+                fix_struct_to_face(type->param_types[i]);
+            }
+        }
+        if (type->return_type) {
+            fix_struct_to_face(type->return_type);
+        }
+    }
 }
 
 

@@ -85,7 +85,7 @@ use spllib.Splitter
 // ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
 // SpinBox/GroupBox/ScrollView 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
 // import 这些类型（避免循环依赖）。此前示例需手动调用 _content._bind_window()，现在自动完成。
-lay.setExtraPassWindow(func(any c, Ptr[u8] hwnd) {
+lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
     switch c {
         case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter { c._bind_window(hwnd); return }
         case is Edit { c.set_window(hwnd); return }

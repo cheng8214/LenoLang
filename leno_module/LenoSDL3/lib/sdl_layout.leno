@@ -38,10 +38,8 @@ import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 // 扩展窗口句柄下发回调（由 sdl_window 模块注册，避免循环依赖）
 // _layout_pass_window 只认识本模块导入的类型（Edit/HBox/VBox/AnchorBox/Table/TreeView），
 // 对于 Splitter/Panel/TabControl 等后续扩展类型，通过此回调下发，无需在本模块 import。
-// 用 any 类型绕过 face 类型在函数签名中的解析不一致问题（编译器 bug：
-// func(Widget) 在变量声明和参数声明中解析为 struct vs face 不一致）
-func(any, Ptr[u8]):void _extraPassWindow
-export func setExtraPassWindow(func(any, Ptr[u8]):void cb) { _extraPassWindow = cb }
+func(Widget, Ptr[u8]):void _extraPassWindow
+export func setExtraPassWindow(func(Widget, Ptr[u8]):void cb) { _extraPassWindow = cb }
 
 // 交叉轴对齐方式
 export const LAYOUT_START   = 0   // 靠起始边（左/上）

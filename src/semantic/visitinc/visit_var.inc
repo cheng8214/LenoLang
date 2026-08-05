@@ -245,6 +245,9 @@
                 // 变量没有初始化，使用声明的类型或 ANY
                 if (sym) sym->is_initialized = 1;
                 if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
+                    // 递归解析变量声明类型中的 alias / struct→face（与有初始化的路径保持一致）
+                    // 修复：无初始化值时也需修正 func(Widget,...) 等复合类型参数中的 struct→face
+                    resolve_alias_in_type(s, &ast->u.var_decl.type, ast->line);
                     sym->type = type_copy(ast->u.var_decl.type);
 
                     // 检查自定义 struct/cstruct/alias 类型是否已定义

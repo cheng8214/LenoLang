@@ -87,7 +87,7 @@ main() {
 }
 
 // 工具：生成心形三角扇顶点（单色）
-func _writeHeart(any verts, int segs, float cx, float cy, float sr, float r, float g, float b, float a) {
+func _writeHeart(Ptr[SDL_Vertex] verts, int segs, float cx, float cy, float sr, float r, float g, float b, float a) {
     float two_pi = 6.28318531
     float step = two_pi / _float(segs)
     for 0 : segs - 1 to i {
@@ -107,7 +107,7 @@ func _writeHeart(any verts, int segs, float cx, float cy, float sr, float r, flo
 }
 
 // 工具：生成心形三角扇顶点（渐变色：深红→亮红）
-func _writeHeartGradient(any verts, int segs, float cx, float cy, float sr) {
+func _writeHeartGradient(Ptr[SDL_Vertex] verts, int segs, float cx, float cy, float sr) {
     float two_pi = 6.28318531
     float step = two_pi / _float(segs)
     for 0 : segs - 1 to i {
