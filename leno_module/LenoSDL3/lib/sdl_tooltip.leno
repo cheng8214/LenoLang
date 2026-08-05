@@ -21,8 +21,9 @@ bool _tipVisible = false
 int _tipDelay  = 500        // 悬停多久才显示（毫秒）
 Font? _font
 bool _fontDirty = true
-float _fontSize  = 15.0
+float _fontSize  = 12.0
 bool _tipReported = false   // 本帧 mouse motion 事件中是否有控件上报了 tip
+int _tipWindowId = -1       // 当前上报 tip 的窗口 ID（确保 tip 只画在该窗口上）
 
 // 配色（深色半透明浮层）
 int _bgR = 38, _bgG = 40, _bgB = 48
@@ -39,6 +40,9 @@ export func setTipDelay(int ms) { _tipDelay = ms }
 // 改为：控件只上报（tipReport），不再自行 tipClear；
 //   全部控件处理完后由 tipEndMotion 统一决定是否清除。
 export func tipBeginMotion() { _tipReported = false }
+
+// 设置当前鼠标交互的窗口 ID（由 Window 在分发 motion 事件前调用）。
+export func tipSetWindow(int wid) { _tipWindowId = wid }
 
 // 每次鼠标运动事件处理后由 Window 调用：若无任何控件上报 tip 则清除。
 export func tipEndMotion() {
@@ -73,6 +77,7 @@ export func tipKeep(float ax, float ay) {
 export func tipClear() {
     _tipText = ""
     _tipVisible = false
+    _tipWindowId = -1
 }
 
 // 每帧由 Window 调用：根据悬停时长决定是否可见。
@@ -111,9 +116,11 @@ func _ensureFont(Renderer r) {
 
 // 每帧由 Window 在"所有控件 + ComboBox/Menu 弹层"之后调用，浮在最上层。
 // vw / vh 为窗口逻辑尺寸，用于把浮层夹紧在窗口内。
+// wid 为当前渲染的窗口 ID，仅当与 tip 上报的窗口一致时才绘制。
 // 支持多行文本（以 \n 分隔）。
-export func tipRender(Renderer r, float vw, float vh) {
+export func tipRender(Renderer r, float vw, float vh, int wid) {
     if not _tipVisible or _tipText == "" { return }
+    if wid != _tipWindowId { return }
     _ensureFont(r)
     if not _font.ok { return }
 

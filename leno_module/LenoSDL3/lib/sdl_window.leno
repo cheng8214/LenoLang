@@ -775,7 +775,7 @@ export struct Window {
                 // 鼠标运动事件：处理前重置 tip 上报标记，处理后若无人上报则清除
                 // （解决多控件处理顺序导致的 tipClear 覆盖 tipReport 问题）
                 bool _isMotion = ev.isMouseMotion()
-                if _isMotion { tip.tipBeginMotion() }
+                if _isMotion { tip.tipSetWindow(wid); tip.tipBeginMotion() }
                 for _runWids.len() to j {
                     if _runWids[j] == wid {
                         // 先处理根布局控件（背景层），再处理 _widgets（覆盖层如 MenuBar）
@@ -892,8 +892,9 @@ export struct Window {
                     // 在此兜底绘制到最上层，避免被同级控件遮挡）
                     menu.renderContextMenus(_runRens[i], _runHnds[i])
                     // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
-                    tip.tipTick()
-                    tip.tipRender(_runRens[i], _runW[i], _runH[i])
+                    // tipTick 是全局状态更新，每帧只需调一次（在首个窗口时调用）
+                    if i == 0 { tip.tipTick() }
+                    tip.tipRender(_runRens[i], _runW[i], _runH[i], _runWids[i])
                     _runRens[i].present()
                     // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
                     if _runDialogHidden[i] {

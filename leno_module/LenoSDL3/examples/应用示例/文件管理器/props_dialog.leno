@@ -52,12 +52,13 @@ export func show(string path, bool isDir) {
     dlg.addLabel({x:235, y:16, text:"文件属性", font_size:16, text_rgb:[150,200,255], align:1})
 
     int lx = 55; int vx = 155; int y0 = 48; int g2 = 26
+    float valMaxW = 275.0  // 值列最大宽度（对话框 470 - vx 155 - 右边距 40）
     dlg.addLabel({x:lx, y:y0,         text:"名称:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0,         text:nm,    font_size:13, text_rgb:[225,235,255]})
+    dlg.addLabel({x:vx, y:y0,         text:nm,    font_size:13, text_rgb:[225,235,255], max_w:valMaxW, truncate:1})
     dlg.addLabel({x:lx, y:y0 + g2,    text:"类型:", font_size:13, text_rgb:[150,165,185]})
     dlg.addLabel({x:vx, y:y0 + g2,    text:kind,  font_size:13, text_rgb:[225,235,255]})
     dlg.addLabel({x:lx, y:y0 + g2*2,  text:"位置:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2*2,  text:dir,   font_size:12, text_rgb:[180,195,215]})
+    dlg.addLabel({x:vx, y:y0 + g2*2,  text:dir,   font_size:12, text_rgb:[180,195,215], max_w:valMaxW, truncate:1})
     dlg.addLabel({x:lx, y:y0 + g2*3,  text:"大小:", font_size:13, text_rgb:[150,165,185]})
     dlg.addLabel({x:vx, y:y0 + g2*3,  text:szStr, font_size:13, text_rgb:[225,235,255]})
     dlg.addLabel({x:lx, y:y0 + g2*4,  text:"修改时间:", font_size:13, text_rgb:[150,165,185]})
@@ -65,7 +66,7 @@ export func show(string path, bool isDir) {
     dlg.addLabel({x:lx, y:y0 + g2*5,  text:"是否存在:", font_size:13, text_rgb:[150,165,185]})
     dlg.addLabel({x:vx, y:y0 + g2*5,  text:existStr, font_size:13, text_rgb:[225,235,255]})
     dlg.addLabel({x:lx, y:y0 + g2*6,  text:"完整路径:", font_size:12, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2*6,  text:path,       font_size:12, text_rgb:[180,190,205]})
+    dlg.addLabel({x:vx, y:y0 + g2*6,  text:path,       font_size:12, text_rgb:[180,190,205], max_w:valMaxW, truncate:2})
     dlg.addLabel({x:lx, y:y0 + g2*7,  text:"访问状态:", font_size:13, text_rgb:[150,165,185]})
     if exists {
         dlg.addLabel({x:vx, y:y0 + g2*7, text:accessStr, font_size:13, text_rgb:[200,225,200]})

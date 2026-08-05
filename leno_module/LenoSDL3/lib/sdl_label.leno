@@ -4,6 +4,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core
+use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.Theme
@@ -23,6 +24,13 @@ export struct Label impl Widget {
     bool enabled = true
     bool hover = false, _wasHover = false
     string _tip = ""             // 悬停提示文本（空 = 不提示）
+    // ── 截断/滚动支持 ──
+    float max_w = 0.0            // 最大显示宽度（>0 时启用截断或滚动）
+    int _truncate = 0            // 0=无, 1=截断(前...后+tooltip), 2=滚动
+    string _fullText = ""        // 完整文本（截断模式下 tooltip 用）
+    float _scrollOffset = 0.0    // 滚动偏移（像素）
+    int _scrollDir = 1           // 滚动方向: 1=右→左, -1=左→右
+    int _scrollLastTick = 0      // 上次滚动时间戳
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -61,6 +69,13 @@ export struct Label impl Widget {
         } else { _w = 0.0; _h = 16.0 }
         // hover/_wasHover 默认见字段声明
         _tip = opts.get("tip", "")
+        // 截断/滚动支持
+        max_w = opts.get("max_w", 0.0)
+        _truncate = opts.get("truncate", 0)
+        _fullText = text
+        _scrollOffset = 0.0
+        _scrollDir = 1
+        _scrollLastTick = 0
         visible = opts.get("visible", true)
         enabled = opts.get("enabled", true)
         _loaded = true
@@ -69,6 +84,9 @@ export struct Label impl Widget {
     // ==================== 设置方法 ====================
     func set_text(string t)        {
         text = t
+        _fullText = t
+        _scrollOffset = 0.0
+        _scrollLastTick = 0
         if _font != null and _font.ok {
             if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
             _h = _font.measureString("Ag").h
@@ -94,6 +112,44 @@ export struct Label impl Widget {
     func is_visible(): bool { return visible }
     func set_enabled(bool e) { enabled = e }
     func is_enabled(): bool { return enabled }
+    func set_max_w(float w) { max_w = w }
+    func set_truncate(int mode) { _truncate = mode; _scrollOffset = 0.0; _scrollLastTick = 0 }
+
+    // ── 截断文本：测量并裁剪出适合 max_w 的 "前缀...后缀" 形式 ──
+    func _truncatedText(): string {
+        if max_w <= 0.0 or _font == null or not _font.ok { return text }
+        var ms = _font.measureString(text)
+        if ms.w <= max_w { return text }
+        // 省略号宽度
+        string ellipsis = "..."
+        var es = _font.measureString(ellipsis)
+        float avail = max_w - es.w
+        if avail <= 0.0 { return ellipsis }
+        // 从尾部截取后缀（约占可用空间的 40%）
+        int textLen = text.len()
+        int tailStart = textLen
+        float tailW = 0.0
+        for textLen - 1 : 0 to i {
+            string ch = text.slice(i, i + 1)
+            var cs = _font.measureString(ch)
+            if tailW + cs.w > avail * 0.4 { tailStart = i + 1; break }
+            tailW = tailW + cs.w
+            tailStart = i
+        }
+        string tail = text.slice(tailStart, textLen)
+        // 从头部截取前缀（填满剩余空间）
+        float headW = 0.0
+        int headEnd = 0
+        for 0 : textLen - 1 to i {
+            string ch = text.slice(i, i + 1)
+            var cs = _font.measureString(ch)
+            if headW + cs.w > avail - tailW { headEnd = i; break }
+            headW = headW + cs.w
+            headEnd = i + 1
+        }
+        string head = text.slice(0, headEnd)
+        return head + ellipsis + tail
+    }
 
     // ==================== 查询方法 ====================
     func get_text(): string  { return text }
@@ -111,8 +167,12 @@ export struct Label impl Widget {
         _wasHover = hover
         float mx = ev.mouseX(); float my = ev.mouseY()
         hover = mx >= x and mx <= x + _w and my >= y and my <= y + _h
-        // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
-        if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
+        // 截断模式：hover 时显示完整文本
+        if hover and _truncate == 1 and max_w > 0.0 and _fullText != "" {
+            tip.tipReport(_fullText, mx, my)
+        } else if hover and _tip != "" {
+            tip.tipReport(_tip, mx, my)
+        }
         core.markFrameMotion()
     }
 
@@ -123,6 +183,68 @@ export struct Label impl Widget {
         if _font == null or not _font.ok { return }
         if text == "" { return }
 
+        // ── 截断模式 ──
+        if _truncate == 1 and max_w > 0.0 {
+            var ms = _font.measureString(text)
+            if ms.w <= max_w {
+                // 不需要截断，正常绘制
+                float drawX = x
+                if _align == 1 { drawX = x - ms.w / 2.0 }
+                if _align == 2 { drawX = x - ms.w }
+                r.drawText(_font, text, drawX, y, tr, tg, tb)
+                return
+            }
+            // 截断绘制
+            string truncText = _truncatedText()
+            r.drawText(_font, truncText, x, y, tr, tg, tb)
+            return
+        }
+
+        // ── 滚动模式 ──
+        if _truncate == 2 and max_w > 0.0 {
+            var ms = _font.measureString(text)
+            if ms.w <= max_w {
+                // 不需要滚动，正常绘制
+                float drawX = x
+                if _align == 1 { drawX = x - ms.w / 2.0 }
+                if _align == 2 { drawX = x - ms.w }
+                r.drawText(_font, text, drawX, y, tr, tg, tb)
+                return
+            }
+            // 更新滚动偏移
+            int now = core.getTicks()
+            if _scrollLastTick == 0 { _scrollLastTick = now }
+            int dt = now - _scrollLastTick
+            if dt > 0 {
+                _scrollOffset = _scrollOffset + _float(dt) * 0.03 * _float(_scrollDir)
+                _scrollLastTick = now
+            }
+            // 滚动范围：从 0 到 -(textWidth - max_w + 20)
+            float scrollRange = ms.w - max_w + 20.0
+            if _scrollDir == 1 {
+                if _scrollOffset >= scrollRange {
+                    _scrollOffset = scrollRange
+                    _scrollDir = -1
+                }
+            } else {
+                if _scrollOffset <= 0.0 {
+                    _scrollOffset = 0.0
+                    _scrollDir = 1
+                }
+            }
+            // 用裁剪矩形绘制
+            SDL_Rect clip = SDL_Rect.malloc()
+            clip.x = _int(x); clip.y = _int(y)
+            clip.w = _int(max_w); clip.h = _int(_h + 2)
+            r.pushClipRect(clip)
+            r.drawText(_font, text, x - _scrollOffset, y, tr, tg, tb)
+            r.popClipRect()
+            clip.free()
+            core.markFrameRedraw()
+            return
+        }
+
+        // ── 普通绘制 ──
         var ms = _font.measureString(text)
         float drawX = x
         if _align == 0 { drawX = x }                          // 左对齐

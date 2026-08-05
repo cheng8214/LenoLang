@@ -23,8 +23,8 @@ export func show(string path, bool isDir, func():void onConfirm) {
     dlg.addLabel({x:50, y:126, text:"路径:", font_size:12, text_rgb:[140,155,170]})
     dlg.addLabel({x:140, y:126, text:path,  font_size:12, text_rgb:[180,190,205]})
 
-    var btnCancel = dlg.addButton({x:110, y:162, w:100, h:34, text:"取消", bg_rgb:[60,66,80],  text_rgb:[220,230,245]})
-    var btnDel    = dlg.addButton({x:230, y:162, w:100, h:34, text:"删除", bg_rgb:[220,70,70], text_rgb:[255,255,255]})
+    var btnDel    = dlg.addButton({x:110, y:162, w:100, h:34, text:"删除", bg_rgb:[220,70,70], text_rgb:[255,255,255]})
+    var btnCancel = dlg.addButton({x:230, y:162, w:100, h:34, text:"取消", bg_rgb:[60,66,80],  text_rgb:[220,230,245]})
 
     var shouldClose = false
     btnCancel.on_click(func() { shouldClose = true })
