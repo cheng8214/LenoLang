@@ -462,6 +462,13 @@ export struct Table impl Widget {
     func set_multi_select(bool m) { _multi = m }
     func select_all() { _selRows = []; for _rows.len() to i { _selRows.add(i) }; if _selRow < 0 and _rows.len() > 0 { _selRow = 0 } }
     func clear_selection() { _selRows = []; _selRow = -1 }
+    func set_selected_rows(Array[int] rows) {
+        _selRows = []
+        for rows.len() to i {
+            if rows[i] >= 0 and rows[i] < _rows.len() { _selRows.add(rows[i]) }
+        }
+        if _selRows.len() > 0 { _selRow = _selRows[0] } else { _selRow = -1 }
+    }
 
     // ==================== 排序 ====================
     func sort_by(int col, bool desc) {

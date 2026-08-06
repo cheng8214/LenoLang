@@ -107,6 +107,7 @@ float         _dragMouseX = 0.0    // 拖拽中鼠标实时位置
 float         _dragMouseY = 0.0
 string        _dragLabel = ""     // 拖拽浮动框显示文字
 DragHint      dragHint            // 拖拽提示框组件
+Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽时保持多选）
 
     // ===== 应用状态 =====
     bool   wantQuit = false
@@ -1109,6 +1110,7 @@ DragHint      dragHint            // 拖拽提示框组件
             _dragPending = false
             _dragging = false
             _dragPaths = []
+            _dragSelRows = []
             dragHint.hide()
         }
 
@@ -1123,6 +1125,9 @@ DragHint      dragHint            // 拖拽提示框组件
                 _dragPending = true
                 _dragging = false
                 _dragTargetNode = -1
+                // ★ 捕获当前多选：Table.process() 会在此事件中把多选清除为单选，
+                //   如果点击的行已在多选中，拖拽时应保持完整多选
+                _dragSelRows = table.get_selected_rows()
             }
         }
 
@@ -1130,8 +1135,10 @@ DragHint      dragHint            // 拖拽提示框组件
         if ev.isMouseMotion() and _dragPending and not _dragging {
             float dx = ev.mouseX() - _dragStartX
             float dy = ev.mouseY() - _dragStartY
-            if (dx * dx + dy * dy) > 25.0 {
-                _dragPaths = getSelectedPaths()
+                if (dx * dx + dy * dy) > 25.0 {
+                    // ★ 恢复鼠标按下时捕获的多选（Table.process() 可能在按下时清除了多选）
+                    if _dragSelRows.len() > 1 { table.set_selected_rows(_dragSelRows) }
+                    _dragPaths = getSelectedPaths()
 if _dragPaths.len() > 0 {
 _dragging = true
 _dragMouseX = ev.mouseX()
@@ -1181,6 +1188,7 @@ _dragTargetNode = -1
             _dragPending = false
             _dragPaths = []
             _dragTargetNode = -1
+            _dragSelRows = []
             dragHint.hide()
         }
 
