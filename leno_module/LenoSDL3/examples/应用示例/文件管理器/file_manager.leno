@@ -1184,7 +1184,7 @@ _dragTargetNode = -1
         }
 
         // ==================== 键盘快捷键 ====================
-        if ev.isKeyDown() and not pathSearch.is_focused() {
+        if ev.isKeyDown() and not pathSearch.is_focused() and not table.is_editing() {
             int sc = ev.scancode()
             int mod = ev.keyMod()
             bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
