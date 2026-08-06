@@ -34,10 +34,14 @@ void gen_import_inline(CodeGen* gen, Ast* ast) {
     ObjModule* module = load_module_file(ast->u.import.module_name, current_file, alias);
 
     if (!module) {
-        // 模块加载失败，注册编译错误（包含模块路径，帮助用户定位根因）
-        char err_msg[BUFFER_MEDIUM];
-        snprintf(err_msg, sizeof(err_msg), "无法加载模块 '%s'", ast->u.import.module_name);
-        error_add(ERR_SEMANTIC, ast->line, err_msg);
+        // 模块加载失败时，检查是否已有前序语义错误
+        // 如果已有错误（如 face/impl 缺少方法），则不报"无法加载模块"级联错误
+        // 因为根因错误已经在模块自身的编译阶段报告过了，级联错误只会掩盖真正的问题
+        if (!error_has_any()) {
+            char err_msg[BUFFER_MEDIUM];
+            snprintf(err_msg, sizeof(err_msg), "无法加载模块 '%s'", ast->u.import.module_name);
+            error_add(ERR_SEMANTIC, ast->line, err_msg);
+        }
         if (extracted_name) {
             free(extracted_name);
         }

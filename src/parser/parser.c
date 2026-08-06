@@ -360,9 +360,13 @@ static void prescan_struct_definitions(Parser* p) {
 
 // 执行解析
 int parser_parse(Parser* p) {
+    // 记录解析前的错误数量，只关注本次解析新增的错误
+    // 避免模块编译时，前序模块的语义错误导致后续模块的 parser_parse 误判为失败
+    int errors_before = errors.count;
+
     // 预扫描收集 struct 定义，支持前向引用
     prescan_struct_definitions(p);
 
     p->root = parse_program_internal(p);
-    return error_has_any() ? -1 : 0;
+    return (errors.count > errors_before) ? -1 : 0;
 }

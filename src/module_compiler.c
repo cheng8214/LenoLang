@@ -15,19 +15,27 @@
 ObjModule* compile_module_new(const char* source, const char* module_name,
                                char export_names[][MAX_EXPORT_NAME_LEN], int export_count) {
     // 1. 词法分析 + 语法分析
+    // 记录编译前的错误数量，用于区分本模块新增的错误和前序模块遗留的错误
+    int errors_before_parse = errors.count;
     Parser parser;
     parser_init(&parser, source);
     if (parser_parse(&parser) < 0) {
+        // 只打印本模块解析阶段新增的错误，避免重复打印前序模块的错误
+        int saved_count = errors.count;
+        errors.count = errors_before_parse;
         error_print_all();
+        errors.count = saved_count;
         ast_free(parser.root);
         return NULL;
     }
 
     // 2. 语义分析（模块模式）
+    int errors_before_semantic = errors.count;
     Semantic sem;
     semantic_init(&sem, parser.root);
     semantic_analyze_module(&sem, parser.root);
-    if (error_has_any()) {
+    // 只关注本模块语义分析新增的错误，不受前序模块错误影响
+    if (errors.count > errors_before_semantic) {
         ast_free(parser.root);
         semantic_cleanup(&sem);
         return NULL;
@@ -356,6 +364,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
 
     codegen_set_func_dict(func_dict);
     codegen_set_module(module);
+    int errors_before_codegen = errors.count;
     codegen_module(&gen, parser.root);
     codegen_set_func_dict(NULL);
     codegen_set_module(NULL);
@@ -367,7 +376,8 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
         disassembleChunk(&chunk, module_name);
     }
     
-    if (error_has_any()) {
+    // 只关注本模块代码生成阶段新增的错误
+    if (errors.count > errors_before_codegen) {
         codegen_cleanup(&gen);
         ast_free(parser.root);
         semantic_cleanup(&sem);
