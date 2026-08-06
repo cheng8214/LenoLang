@@ -25,7 +25,7 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
-import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3)
+import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3, SDL_Point)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
 import "sdl_tooltip.leno" as tip
@@ -374,8 +374,9 @@ export struct MenuBar impl Widget {
         _openSub = -1; _hoverItem = -1; _hoverSub = -1
         _ensure_font()
         // 统一经 _panelRect 做窗口边界夹紧（主面板与子菜单共用同一逻辑）
+        // ★ _ctxAnchor 保持原始鼠标位置不变，_panelRect 每帧从原始锚点重新计算夹紧位置，
+        //   避免覆盖锚点后 _clampRect 在 renderPopup 中基于已夹紧位置二次计算导致漂移
         var g = _panelRect(ctxIdx)
-        _ctxAnchor[ctxIdx] = [g[0], g[1]]
         core.setPopupCapture(g[0], g[1], g[2], g[3])
         _setActiveMenu(self)   // 标记本菜单为当前活动菜单（窗口级），供互斥关闭
         // ★ 弹出上下文菜单时清除 tooltip，避免 tip 浮在菜单上层
@@ -412,10 +413,32 @@ export struct MenuBar impl Widget {
         }
         return out
     }
-    // 按所属窗口边界夹紧面板矩形（右/下越界则平移进窗口内）
-    func _clampRect(float px, float py, float pw, float ph): Array[float] {
-        if _winW > 0 and px + pw > _winW { px = _winW - pw }
-        if _winH > 0 and py + ph > _winH { py = _winH - ph }
+    // 按所属窗口边界夹紧面板矩形
+    // ★ 关键修复：上下文菜单在边缘时应翻转到锚点另一侧，而非硬挤进窗口
+    func _clampRect(float px, float py, float pw, float ph, bool isCtx): Array[float] {
+        // ★ 窗口尺寸未收到时（嵌套控件未传播到），从 SDL 查询实际窗口尺寸
+        if _winW <= 0 and _winHnd != null {
+            SDL_Point pt = SDL_Point.malloc()
+            core.lib().SDL_GetWindowSize(_winHnd, &pt.x, &pt.y)
+            _winW = pt.x; _winH = pt.y
+            pt.free()
+        }
+        // 使用实际窗口尺寸或保守估计（1080p 屏幕）
+        float winW = if _winW > 0 then _float(_winW) else 1920.0
+        float winH = if _winH > 0 then _float(_winH) else 1080.0
+
+        if isCtx {
+            // 上下文菜单：以锚点为基准，优先向右下展开，溢出则翻转
+            // 水平：右溢出则左翻转
+            if px + pw > winW { px = px - pw }
+            // 垂直：下溢出则上翻转
+            if py + ph > winH { py = py - ph }
+        } else {
+            // 顶部/侧边栏下拉：硬挤到窗口内（保持与触发点对齐）
+            if px + pw > winW { px = winW - pw }
+            if py + ph > winH { py = winH - ph }
+        }
+        // 最后保底：确保不超出左上角
         if px < 0.0 { px = 0.0 }
         if py < 0.0 { py = 0.0 }
         return [px, py, pw, ph]
@@ -426,7 +449,7 @@ export struct MenuBar impl Widget {
             float ax = _ctxAnchor[mIdx][0], ay = _ctxAnchor[mIdx][1]
             float pw = _colW(_menus[mIdx], _font, _itemH, _imgSize, _imgPad, _imgGap)
             float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
-            return _clampRect(ax, ay, pw, ph)
+            return _clampRect(ax, ay, pw, ph, true)
         }
         var rs = _topRects()
         var r = rs[mIdx]
@@ -436,12 +459,12 @@ export struct MenuBar impl Widget {
             // 左侧栏：子菜单从顶级项右侧飞出
             float px = r[0] + r[2]
             float py = r[1]
-            return _clampRect(px, py, pw, ph)
+            return _clampRect(px, py, pw, ph, false)
         }
         // 顶部栏：下拉自标题下方
         float px = r[0]
         float py = y + h
-        return _clampRect(px, py, pw, ph)
+        return _clampRect(px, py, pw, ph, false)
     }
     func _subRect(int parentIdx): Array[float] {
         var g = _panelRect(_open)
@@ -733,11 +756,12 @@ export func registerContextMenu(MenuBar m) {
     _ctxMenuRegistry.add(m)
 }
 // 第二遍：仅绘制归属本窗口（hwnd）的上下文菜单；未登记句柄（嵌套控件）兜底画到任意窗口
-export func renderContextMenus(Renderer r, Ptr[u8] hwnd) {
+export func renderContextMenus(Renderer r, Ptr[u8] hwnd, int winW, int winH) {
     for _ctxMenuRegistry.len() to k {
         var cm = _ctxMenuRegistry[k]
         if cm is MenuBar and cm.isOpen() {
             if cm.getWindowHandle() == null or cm.getWindowHandle() == hwnd {
+                cm.setWindowSize(winW, winH)
                 cm.renderPopup(r)
             }
         }

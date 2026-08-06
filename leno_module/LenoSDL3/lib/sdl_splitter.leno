@@ -53,6 +53,7 @@ export struct Splitter impl Widget {
     bool   _loaded = false
     bool   enabled = true, visible = true
     Ptr[u8] _hwnd                   // 绑定的窗口句柄
+    int    _winW = 0, _winH = 0     // 窗口尺寸（供向下传递）
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
@@ -91,11 +92,26 @@ export struct Splitter impl Widget {
         var f = _first;  if f is Widget { _pass_hwnd(f, hwnd) }
         var s = _second; if s is Widget { _pass_hwnd(s, hwnd) }
     }
+    // ★ 新增：绑定窗口句柄和尺寸，并向下传递
+    func _bind_window_size(Ptr[u8] hwnd, int ww, int hh) {
+        _hwnd = hwnd; _winW = ww; _winH = hh
+        var f = _first;  if f is Widget { _pass_hwnd_size(f, hwnd, ww, hh) }
+        var s = _second; if s is Widget { _pass_hwnd_size(s, hwnd, ww, hh) }
+    }
     func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
         switch c {
             case is Edit { c.set_window(hwnd); return }
             case is HBox, VBox, AnchorBox, Panel, Splitter { c._bind_window(hwnd); return }
             case is Table, TreeView { c.set_window_handle(hwnd); return }
+        }
+    }
+    func _pass_hwnd_size(Widget c, Ptr[u8] hwnd, int ww, int hh) {
+        switch c {
+            case is Edit { c.set_window(hwnd); c.set_window_size(ww, hh); return }
+            case is Splitter { c._bind_window_size(hwnd, ww, hh); return }
+            case is HBox, VBox, AnchorBox, Panel { c._bind_window(hwnd); return }
+            case is TreeView { c.set_window_handle(hwnd); c.set_window(ww, hh); return }
+            case is Table { c.set_window_handle(hwnd); c.set_window_size(ww, hh); return }
         }
     }
 

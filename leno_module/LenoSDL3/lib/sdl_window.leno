@@ -354,8 +354,13 @@ export struct Window {
             case is Edit {
                 w.set_window(handle); return w
             }
-            case is TreeView, Table {
-                w.set_window_handle(handle); return w
+            case is TreeView {
+                w.set_window_handle(handle)
+                w.set_window(_w, _h); return w
+            }
+            case is Table {
+                w.set_window_handle(handle)
+                w.set_window_size(_w, _h); return w
             }
         }
         return w
@@ -372,8 +377,13 @@ export struct Window {
             case is Edit {
                 w.set_window(handle); return w
             }
-            case is TreeView, Table {
-                w.set_window_handle(handle); return w
+            case is TreeView {
+                w.set_window_handle(handle)
+                w.set_window(_w, _h); return w
+            }
+            case is Table {
+                w.set_window_handle(handle)
+                w.set_window_size(_w, _h); return w
             }
         }
         return w
@@ -410,14 +420,23 @@ export struct Window {
     // 容器类型递归向下传递；Edit/TreeView/Table 直接设置
     func _passWindowHandle(Widget w) {
         switch w {
-            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
+            case is Splitter {
+                // ★ Splitter 需要传递窗口尺寸，以便向下传播给内嵌的 Table/TreeView
+                w._bind_window_size(handle, _w, _h); return
+            }
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox {
                 w._bind_window(handle); return
             }
             case is Edit {
                 w.set_window(handle); return
             }
-            case is TreeView, Table {
-                w.set_window_handle(handle); return
+            case is TreeView {
+                w.set_window_handle(handle)
+                w.set_window(_w, _h); return
+            }
+            case is Table {
+                w.set_window_handle(handle)
+                w.set_window_size(_w, _h); return
             }
         }
     }
@@ -704,6 +723,15 @@ export struct Window {
             mb.set_size(_float(actualSz.w), mb.get_h())
             mb.setWindowSize(actualSz.w, actualSz.h)
         }
+        // ★ 同步 Table/TreeView 内嵌上下文菜单的窗口尺寸（供右键菜单边界夹紧）
+        for _widgets.len() to wi {
+            var widget = _widgets[wi]
+            if widget is Table {
+                Table t = widget; t.set_window_size(actualSz.w, actualSz.h)
+            } else if widget is TreeView {
+                TreeView tv = widget; tv.set_window(actualSz.w, actualSz.h)
+            }
+        }
         _runWids.add(getID())
         _runHnds.add(handle)
         _runRens.add(ren)
@@ -743,6 +771,25 @@ export struct Window {
                 var rootWid = _runRoots[i]
                 rootWid?.set_pos(_runRootX[i], _runRootY[i])
                 rootWid?.set_size(_float(pt.x) - _runRootX[i], _float(pt.y) - _runRootY[i])
+                // ★ 同步 MenuBar 尺寸到满宽（首帧尺寸可能与 registerOnly 时不同）
+                var menus0 = _runMenus[i]
+                for menus0.len() to mi0 {
+                    MenuBar bar = menus0[mi0]
+                    bar.set_pos(0, 0)
+                    bar.set_size(_float(pt.x), bar.get_h())
+                    bar.setWindowSize(pt.x, pt.y)
+                }
+                // ★ 同步 Table/TreeView 窗口尺寸 + Splitter 向下传播（供内部右键菜单边界夹紧）
+                var widgets0 = _runWidgets[i]
+                for widgets0.len() to wi0 {
+                    var widget = widgets0[wi0]
+                    if widget is Table { Table t = widget; t.on_window_resize(pt.x, pt.y) }
+                    else if widget is TreeView { TreeView tv = widget; tv.on_window_resize(pt.x, pt.y) }
+                    else if widget is Splitter { Splitter sp = widget; sp._bind_window_size(_runHnds[i], pt.x, pt.y) }
+                }
+                // 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
+                var rw0 = rootWid
+                if rw0 is Splitter { Splitter sp = rw0; sp._bind_window_size(_runHnds[i], pt.x, pt.y) }
             }
             pt.free()
         }
@@ -925,16 +972,22 @@ export struct Window {
                                 bar.set_size(_float(pt.x), bar.get_h())
                                 bar.setWindowSize(pt.x, pt.y)
                             }
-                            // ★ 自动同步窗口尺寸到 Table/TreeView（供内部右键菜单边界夹紧）
+                            // ★ 自动同步窗口尺寸到 Table/TreeView/Splitter（供内部右键菜单边界夹紧）
                             var widgets = _runWidgets[k]
                             for widgets.len() to w {
                                 var widget = widgets[w]
-                                // 动态检查类型并调用 on_window_resize
                                 if widget is Table {
                                     Table t = widget; t.on_window_resize(pt.x, pt.y)
                                 } else if widget is TreeView {
                                     TreeView tv = widget; tv.on_window_resize(pt.x, pt.y)
+                                } else if widget is Splitter {
+                                    Splitter sp = widget; sp._bind_window_size(_runHnds[k], pt.x, pt.y)
                                 }
+                            }
+                            // ★ 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
+                            var rootWid2 = _runRoots[k]
+                            if rootWid2 is Splitter {
+                                Splitter sp = rootWid2; sp._bind_window_size(_runHnds[k], pt.x, pt.y)
                             }
                             pt.free()
                             break
@@ -1024,7 +1077,7 @@ export struct Window {
                     for mns to mn { mn.renderPopup(_runRens[i]) }
                     // 第二遍：所有展开的控件内嵌右击上下文菜单（Edit 经 panel.add 添加时未进 _menus，
                     // 在此兜底绘制到最上层，避免被同级控件遮挡）
-                    menu.renderContextMenus(_runRens[i], _runHnds[i])
+                    menu.renderContextMenus(_runRens[i], _runHnds[i], _runW[i], _runH[i])
                     // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
                     // tipTick 是全局状态更新，每帧只需调一次（在首个窗口时调用）
                     if i == 0 { tip.tipTick() }

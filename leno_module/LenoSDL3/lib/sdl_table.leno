@@ -635,19 +635,24 @@ export struct Table impl Widget {
     func begin_edit(int row, int col) { _begin_edit(row, col) }
 
     // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
-    func _open_ctx_menu(float x, float y) {
+    func _open_ctx_menu(float x, float y, int keyMod) {
         if _ctxMenu == null or _ctxMenuH < 0 { return }
         _ctxRow = _row_at(y); _ctxCol = _col_at(x)
         // 右击命中数据行时，更新选中状态
         if _ctxRow >= 0 {
-            // ★ 多选模式：仅在右击行未被选中时才修改选择（避免覆盖已有多选）
-            //   - 右击行已选中 → 保持当前多选状态不变
-            //   - 右击行未选中 → 将其设为唯一选中项（或追加到多选）
+            // ★ 多选模式右击选中逻辑（对齐 Windows 资源管理器行为）：
+            //   - 右击行已选中 → 保持当前多选状态不变（仅更新 _selRow 为当前行）
+            //   - 右击行未选中 + 无 Ctrl → 替换为唯一选中项（清除旧多选）
+            //   - 右击行未选中 + Ctrl → 追加到多选集
             if not _is_sel(_ctxRow) {
                 _selRow = _ctxRow
                 if _multi {
-                    // 多选模式：将右击行追加到选中集
-                    _selRows.add(_ctxRow)
+                    int MOD_CTRL = 64
+                    if (keyMod & MOD_CTRL) != 0 {
+                        _selRows.add(_ctxRow)       // Ctrl+右击：追加到多选
+                    } else {
+                        _selRows = [_ctxRow]         // 普通右击：替换为唯一选中
+                    }
                 } else {
                     _selRows = [_ctxRow]
                 }
@@ -727,7 +732,7 @@ export struct Table impl Widget {
         if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
             if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
                 _ctxMenu.close()
-                if contains(mx, my) { _open_ctx_menu(mx, my) }
+                if contains(mx, my) { _open_ctx_menu(mx, my, ev.keyMod()) }
                 return
             }
             _ctxMenu.process(ev)
@@ -979,7 +984,7 @@ export struct Table impl Widget {
         if ev.isMouseButtonDown() {
             // 右击：在表格内弹出上下文菜单（默认无预置项，由应用层自定义）
             if _ctxMenuEnabled and _ctxMenu != null and ev.mouseButton() == 3 {
-                if contains(mx, my) { _open_ctx_menu(mx, my) }
+                if contains(mx, my) { _open_ctx_menu(mx, my, ev.keyMod()) }
                 return
             }
             if my < y + _headerH {
