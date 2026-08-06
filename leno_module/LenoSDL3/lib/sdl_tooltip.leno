@@ -57,7 +57,7 @@ export func tipReport(string text, float ax, float ay) {
     if text != _tipText {
         _tipText = text
     }
-    _tipStart = core.getTicks()   // 鼠标移动时持续重置延迟，停留 _tipDelay 后才显示
+    _tipStart = core.getTicks()
     _tipAX = ax; _tipAY = ay
 }
 
@@ -70,7 +70,6 @@ export func tipKeep(float ax, float ay) {
     if _tipText == "" { return }
     _tipReported = true
     _tipAX = ax; _tipAY = ay
-    // 注意：不重置 _tipStart —— 让延迟计时器从首次 tipReport 起继续运行
 }
 
 // 立即隐藏并清空提示文本（tipEndMotion 内部调用，也可由非 motion 场景调用）。
@@ -87,8 +86,9 @@ export func tipTick() {
         return
     }
     int now = core.getTicks()
-    if now - _tipStart >= _tipDelay { _tipVisible = true }
-    else { _tipVisible = false }
+    if now - _tipStart >= _tipDelay {
+        if not _tipVisible { _tipVisible = true }
+    } else { _tipVisible = false }
 }
 
 // tooltip 是否正在等待延迟显示（Window 用来判断是否需要持续重绘）

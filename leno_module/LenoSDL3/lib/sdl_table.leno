@@ -921,9 +921,6 @@ export struct Table impl Widget {
         if ev.isMouseMotion() {
             int prevHover = _hoverRow
             // ★ X 边界检查：_row_at 只验证 Y 坐标，不检查 X。
-            //   若鼠标在 Table 的 Y 范围内但 X 范围外（如导航面板、菜单栏区域），
-            //   _row_at 仍返回有效行号，导致 tipKeep 更新锚点并阻止 tipEndMotion 清除 tooltip，
-            //   造成 tip 跟随鼠标到处走。必须在调用 _row_at 前检查 X 是否在表格内。
             if mx >= x and mx <= x + w {
                 _hoverRow = _row_at(my)
             } else {

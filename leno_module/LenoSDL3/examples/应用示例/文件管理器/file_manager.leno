@@ -54,6 +54,7 @@ use SDL3.MenuBar
 use SDL3.ComboBox
 use SDL3.HBox
 use SDL3.VBox
+use SDL3.Scancode
 use SDL3.Splitter
 
 // ===================== 文件管理器结构体 =====================
@@ -840,6 +841,8 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
         } else {
             table.addContextItem(ctxItem("属性", "props", "normal.png"))
         }
+        table.addContextSeparator()
+        table.addContextItem(ctxItem("测试对话框", "testdlg", "normal.png"))
         if clipPaths.len() == 0 or clipOp == "" {
             table.setContextItemEnabled("paste", false)
         }
@@ -876,6 +879,8 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
             statusLbl.set_text("已添加书签: " + p)
         } eif id == "props" {
             props.show(p, isDir)
+        } eif id == "testdlg" {
+            _showTestDialog()
         }
     }
 
@@ -1099,16 +1104,49 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
         table.on_dbl_click(func(int row, int col) { onTableDblClick(row, col) })
     }
 
+    // ===================== 测试对话框（空对话框，用于排查 tip bug）=====================
+    func _showTestDialog() {
+        var dlg = SDL3.createDialogWindow({title:"测试对话框", w:400, h:200})
+        VBox root = SDL3.createVBox({x:0, y:0, w:400, h:200, padX:30, padY:16, spacing:6})
+        dlg.setRoot(root)
+        root.add(SDL3.dialogLabel("这是一个空测试对话框", 15, 200, 200, 200, 1), {grow:0, shrink:0, align:1})
+        root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
+        Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"关闭", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+        HBox btnRow = SDL3.dialogButtonRow([btnOk], 0)
+        root.add(btnRow, {grow:0, shrink:0, align:3})
+        bool _close = false
+        btnOk.on_click(func() { _close = true })
+        SDL3.runModal(dlg,
+            func(Event ev): bool {
+                if ev.isQuit() or ev.isWindowClose() { return false }
+                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+                if _close { return false }
+                return true
+            },
+            func(Renderer r) { r.clearColor(30, 33, 42, 255) }
+        )
+    }
+
     // ===================== 键盘快捷键处理 =====================
     // 返回 true = 继续运行主循环，返回 false = 退出程序
 
     func handleKeyboard(Event ev): bool {
         if wantQuit or ev.isQuit() { return false }
 
+        // ★ 安全兜底：模态对话框关闭后可能残留 _dragPending 状态
+        //   （左键点击菜单项时误触发），在非左键按下/非拖拽移动事件时强制清除
+        if _dragPending and not ev.isMouseButtonDown() and not (ev.isMouseMotion() and _dragging) {
+            _dragPending = false
+            _dragging = false
+            _dragPaths = []
+        }
+
         // ==================== 拖拽逻辑 ====================
         // 鼠标按下 Table 时记录起点，等待移动阈值触发拖拽
+        // ★ 排除弹层（菜单/下拉框）打开时的点击：左键点击右键菜单项时，
+        //   鼠标位置仍在 Table 区域内，但此时应由菜单处理点击而非触发拖拽。
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
-            if table.contains(ev.mouseX(), ev.mouseY()) {
+            if table.contains(ev.mouseX(), ev.mouseY()) and not core.inPopupCapture(ev.mouseX(), ev.mouseY()) {
                 _dragStartX = ev.mouseX()
                 _dragStartY = ev.mouseY()
                 _dragPending = true
