@@ -910,6 +910,11 @@ export struct Window {
                             if _isModal() and _runWids[i] == _modalTop() {
                                 _restoreWid = _modalParent(_runWids[i])
                                 _modalStack.pop()
+                                // ★ 模态对话框关闭时清除 tooltip 状态：
+                                //   对话框打开期间主窗口不接收 motion 事件，tipEndMotion 无法触发清除，
+                                //   导致对话框前的 tip 状态残留（_tipText 非空、_tipVisible 可能已为 true）。
+                                //   关闭后残留的 tip 会自动弹出并跟随鼠标，必须在此主动清除。
+                                tip.tipClear()
                             }
                             // 根销毁：关闭窗口前先释放所有控件资源（字体等），沿父子树递归清理
                             var ws = _runWidgets[i]
