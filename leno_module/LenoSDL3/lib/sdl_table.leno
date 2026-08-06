@@ -739,6 +739,18 @@ export struct Table impl Widget {
             return
         }
 
+        // ★ 修复：编辑中且 Edit 的右击菜单展开时，事件必须经 Edit 转发给菜单处理。
+        //   若先走 inPopupCapture 拦截，Edit 的菜单将收不到点击事件，导致菜单项无法选中。
+        if _editing and _edit.isContextMenuOpen() {
+            _edit.process(ev)
+            // 菜单关闭后（如点击菜单项执行了动作），若点击在 Edit 外部则提交编辑
+            if not _edit.isContextMenuOpen() and ev.isMouseButtonDown()
+               and not _edit.contains(ev.mouseX(), ev.mouseY()) {
+                _commit_edit()
+            }
+            return
+        }
+
         if core.inPopupCapture(mx, my) { return }
 
         // 编辑中：事件转发给编辑框

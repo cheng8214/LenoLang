@@ -354,6 +354,8 @@ export struct Edit impl Widget {
     // 启用/禁用右击上下文菜单
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
     func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
+    // 检查内嵌右击上下文菜单是否处于展开状态（供 Table 等容器判断是否拦截事件）
+    func isContextMenuOpen(): bool { return _ctxMenu != null and _ctxMenu.isOpen() }
     // 注册上下文菜单自定义回调（内置动作执行之后触发，参数为项 id）
     func on_context_select(func(string):void cb) { _onCtxSelect = cb }
     func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }

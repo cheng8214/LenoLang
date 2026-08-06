@@ -713,7 +713,27 @@ export struct MenuBar impl Widget {
             }
             float ry = iy
             bool hov = (i == hoverIdx) and it.enabled
-            if hov { r.setColor(_hovR, _hovG, _hovB, 255); r.fillRect(px, ry, pw, _itemH) }
+            if hov {
+                r.setColor(_hovR, _hovG, _hovB, 255)
+                // ★ 修复：首尾项的悬停矩形需与面板圆角对齐，否则直角溢出圆角背景。
+                //   对齐 ListBox 的做法：首行/末行用 fillRoundedRect + 填补缺口。
+                float radius = 6.0
+                bool atTop = (ry <= py + 0.5)
+                bool atBottom = (ry + _itemH >= py + ph - 0.5)
+                if atTop and atBottom {
+                    r.fillRoundedRect(px, ry, pw, _itemH, radius)
+                } eif atTop {
+                    r.fillRoundedRect(px, ry, pw, _itemH, radius)
+                    r.fillRect(px, ry + _itemH - radius, radius, radius)
+                    r.fillRect(px + pw - radius, ry + _itemH - radius, radius, radius)
+                } eif atBottom {
+                    r.fillRoundedRect(px, ry, pw, _itemH, radius)
+                    r.fillRect(px, ry, radius, radius)
+                    r.fillRect(px + pw - radius, ry, radius, radius)
+                } else {
+                    r.fillRect(px, ry, pw, _itemH)
+                }
+            }
             int lr = _txtR, lg = _txtG, lb2 = _txtB
             if not it.enabled { lr = _disR; lg = _disG; lb2 = _disB }
             // 图标
