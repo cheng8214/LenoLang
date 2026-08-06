@@ -114,6 +114,7 @@ Array[int]             _runW     = []     // 各窗口逻辑宽（背景填充 +
 Array[int]             _runH     = []     // 各窗口逻辑高
 Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
 Array[bool]            _runTransparent = []    // 各窗口是否透明（跳过背景填充）
+Array[RenderCallback]  _runOverlays = []    // 各窗口叠加层回调（在所有控件/弹层/Tooltip 之上、present 之前调用）
 var _runLoopActive = false    // 主循环是否已在运行
 Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
 
@@ -162,6 +163,7 @@ export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, any onEvent, any onR
     _runRens.add(ren)
     _runEvts.add(onEvent)
     _runRends.add(onRender)
+    _runOverlays.add(null)   // 占位（Dialog 无叠加层）
 }
 
 
@@ -179,6 +181,11 @@ export struct Window {
     float _rootX = 0.0, _rootY = 0.0  // 根布局偏移（如 MenuBar 高度偏移）
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
     bool _transparent = false          // 透明窗口（跳过背景填充）
+    any _overlay = null                 // 叠加层渲染回调（setOverlay 设置，在所有控件/弹层之上绘制）
+
+    // 设置叠加层渲染回调（在所有控件和弹层渲染之后、present 之前调用）
+    // 用途：拖拽浮动框、自定义全局浮层等需要绘制在所有控件之上的场景
+    func setOverlay(RenderCallback cb) { _overlay = cb }
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -749,6 +756,7 @@ export struct Window {
         _runW.add(actualSz.w); _runH.add(actualSz.h)
         _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
         _runTransparent.add(_transparent)    // 透明窗口标志
+        _runOverlays.add(_overlay)           // 叠加层回调（可空）
     }
 
     // 运行主循环（回调模式，支持多窗口）
@@ -916,6 +924,7 @@ export struct Window {
                             _runRends.remove(i); _runWidgets.remove(i); _runWidgetZ.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
                             _runDialogHidden.remove(i); _runTransparent.remove(i)
+                            _runOverlays.remove(i)
                             // 恢复焦点到父窗口（非模态关闭时 _restoreWid 为 -1，跳过）
                             if _restoreWid >= 0 { raiseWindow(_restoreWid) }
                             break
@@ -1082,6 +1091,9 @@ export struct Window {
                     // tipTick 是全局状态更新，每帧只需调一次（在首个窗口时调用）
                     if i == 0 { tip.tipTick() }
                     tip.tipRender(_runRens[i], _runW[i], _runH[i], _runWids[i])
+                    // 叠加层：在所有控件/弹层/Tooltip 之上绘制（拖拽浮动框等），present 之前最后一遍
+                    var _ovl = _runOverlays[i]
+                    if _ovl != null { _ovl(_runRens[i]) }
                     _runRens[i].present()
                     // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
                     if _runDialogHidden[i] {

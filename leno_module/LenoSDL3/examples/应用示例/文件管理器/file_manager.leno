@@ -1252,36 +1252,35 @@ _dragTargetNode = -1
         openDir(dirs.dirname(dirs.script_dir()))
         updateNavButtons()
 
-win.run(
-    func(Event ev): bool { return handleKeyboard(ev) },
-    func(Renderer r) {
-        // 窗口主循环已用主题背景色 fillRect 清屏
-
-        // ===== 拖拽浮动框 =====
-        if _dragging and _dragLabel != "" {
-            statusLbl._ensure_font()
-            Font? f = statusLbl._font
-            if f != null and f.ok {
-                StringSize sz = f.measureString(_dragLabel)
-                float padX = 8.0; float padY = 4.0
-                float boxW = sz.w + padX * 2.0
-                float boxH = sz.h + padY * 2.0
-                float bx = _dragMouseX + 12.0
-                float by = _dragMouseY + 12.0
-                // 半透明背景
-                r.setColor(30, 60, 120, 220)
-                r.fillRect(bx, by, boxW, boxH)
-                // 边框
-                r.setColor(80, 140, 220, 255)
-                r.fillRect(bx, by, boxW, 1.0)             // 上
-                r.fillRect(bx, by + boxH - 1.0, boxW, 1.0) // 下
-                r.fillRect(bx, by, 1.0, boxH)             // 左
-                r.fillRect(bx + boxW - 1.0, by, 1.0, boxH) // 右
-                // 文字
-                r.drawText(f, _dragLabel, bx + padX, by + padY, 255, 255, 255)
-            }
+// 叠加层回调：拖拽浮动框在所有控件/弹层之上绘制
+// （原 render 回调在控件渲染之前调用，会被 Table/TreeView 等覆盖，导致不可见）
+win.setOverlay(func(Renderer r) {
+    if _dragging and _dragLabel != "" {
+        statusLbl._ensure_font()
+        Font? f = statusLbl._font
+        if f != null and f.ok {
+            StringSize sz = f.measureString(_dragLabel)
+            float padX = 10.0; float padY = 5.0
+            float boxW = sz.w + padX * 2.0
+            float boxH = sz.h + padY * 2.0
+            float bx = _dragMouseX + 14.0
+            float by = _dragMouseY + 14.0
+            float radius = 4.0
+            // 半透明圆角背景
+            r.setColor(30, 60, 120, 220)
+            r.fillRoundedRect(bx, by, boxW, boxH, radius)
+            // 圆角边框
+            r.setColor(80, 140, 220, 255)
+            r.drawRoundedRect(bx, by, boxW, boxH, radius)
+            // 文字
+            r.drawText(f, _dragLabel, bx + padX, by + padY, 255, 255, 255)
         }
     }
+})
+
+win.run(
+    func(Event ev): bool { return handleKeyboard(ev) },
+    func(Renderer r) { }   // 渲染回调（控件渲染前调用，拖拽浮动框已移至 setOverlay）
 )
         SDL3.ttfQuit()
     }
