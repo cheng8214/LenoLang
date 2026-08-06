@@ -780,13 +780,34 @@
                         // 从模块符号表推断返回类型
                         ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
                             module_info->sym_table, ast->u.module_call.method_name);
-                        if (func_sym && func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
-                            if (func_sym->return_type_info) {
-                                ast->cached_type = type_copy(func_sym->return_type_info);
-                            } else {
-                                ast->cached_type = type_new(func_sym->return_type);
-                                if (func_sym->return_struct_name) {
-                                    ast->cached_type->struct_name = strdup(func_sym->return_struct_name);
+                        if (func_sym) {
+                            // 检查参数数量（支持默认参数）
+                            int actual_cnt = ast->u.module_call.args.count;
+                            int expected_cnt = func_sym->param_count;
+                            int default_cnt = func_sym->default_count;
+                            int required_cnt = expected_cnt - default_cnt;
+                            if (actual_cnt < required_cnt || actual_cnt > expected_cnt) {
+                                char msg[BUFFER_MEDIUM];
+                                if (actual_cnt < required_cnt) {
+                                    snprintf(msg, sizeof(msg), "%s.%s 参数数量不足: 至少需要 %d 个参数，实际传入 %d 个",
+                                             ast->u.module_call.module_name, ast->u.module_call.method_name,
+                                             required_cnt, actual_cnt);
+                                } else {
+                                    snprintf(msg, sizeof(msg), "%s.%s 参数数量过多: 最多接受 %d 个参数，实际传入 %d 个",
+                                             ast->u.module_call.module_name, ast->u.module_call.method_name,
+                                             expected_cnt, actual_cnt);
+                                }
+                                error_add(ERR_SEMANTIC, ast->line, msg);
+                            }
+                            // 推断返回类型
+                            if (func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
+                                if (func_sym->return_type_info) {
+                                    ast->cached_type = type_copy(func_sym->return_type_info);
+                                } else {
+                                    ast->cached_type = type_new(func_sym->return_type);
+                                    if (func_sym->return_struct_name) {
+                                        ast->cached_type->struct_name = strdup(func_sym->return_struct_name);
+                                    }
                                 }
                             }
                         }

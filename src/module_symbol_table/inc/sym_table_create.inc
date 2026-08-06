@@ -43,6 +43,13 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         if (table->funcs[i].return_type_info) {
             type_free(table->funcs[i].return_type_info);
         }
+        // 释放默认参数文本
+        if (table->funcs[i].param_default_texts) {
+            for (int j = 0; j < table->funcs[i].param_count; j++) {
+                free(table->funcs[i].param_default_texts[j]);
+            }
+            free(table->funcs[i].param_default_texts);
+        }
     }
     free(table->funcs);
 

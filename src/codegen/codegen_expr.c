@@ -451,6 +451,106 @@ static void gen_default_value(CodeGen* gen, Ast* default_expr) {
     }
 }
 
+// 从文本生成默认参数值（用于跨模块函数调用的默认参数填充）
+// 支持的字面量格式: "10", "3.14", "\"hi\"", "true", "false", "null", "-1"
+static void gen_default_value_from_text(CodeGen* gen, const char* text, int line) {
+    if (!text || !*text) {
+        emit_byte(gen, OP_NULL, line);
+        return;
+    }
+
+    // 跳过前导空白
+    while (*text && isspace((unsigned char)*text)) text++;
+    int len = (int)strlen(text);
+    // 去除尾部空白
+    while (len > 0 && isspace((unsigned char)text[len - 1])) len--;
+
+    if (len == 0) {
+        emit_byte(gen, OP_NULL, line);
+        return;
+    }
+
+    // null
+    if (len == 4 && strncmp(text, "null", 4) == 0) {
+        emit_byte(gen, OP_NULL, line);
+        return;
+    }
+    // true
+    if (len == 4 && strncmp(text, "true", 4) == 0) {
+        emit_byte(gen, OP_TRUE, line);
+        return;
+    }
+    // false
+    if (len == 5 && strncmp(text, "false", 5) == 0) {
+        emit_byte(gen, OP_FALSE, line);
+        return;
+    }
+    // 字符串字面量: "..."（文本中包含引号）
+    if (text[0] == '"') {
+        // 提取引号内的内容
+        const char* content_start = text + 1;
+        const char* content_end = text + len - 1;
+        if (content_end > content_start && *content_end == '"') {
+            // 处理转义字符
+            int raw_len = (int)(content_end - content_start);
+            char* buf = (char*)malloc(raw_len + 1);
+            int bi = 0;
+            for (int i = 0; i < raw_len; i++) {
+                if (content_start[i] == '\\' && i + 1 < raw_len) {
+                    char next = content_start[i + 1];
+                    switch (next) {
+                        case 'n': buf[bi++] = '\n'; break;
+                        case 't': buf[bi++] = '\t'; break;
+                        case 'r': buf[bi++] = '\r'; break;
+                        case '\\': buf[bi++] = '\\'; break;
+                        case '"': buf[bi++] = '"'; break;
+                        case '\'': buf[bi++] = '\''; break;
+                        case '0': buf[bi++] = '\0'; break;
+                        default: buf[bi++] = next; break;
+                    }
+                    i++; // 跳过转义字符
+                } else {
+                    buf[bi++] = content_start[i];
+                }
+            }
+            buf[bi] = '\0';
+            ObjString* str = str_copy(buf, bi);
+            free(buf);
+            emit_constant(gen, val_obj((Object*)str), line);
+            return;
+        }
+    }
+    // 数值字面量（含负号）
+    {
+        const char* num_start = text;
+        if (text[0] == '-' || text[0] == '+') {
+            num_start = text + 1;
+        }
+        // 检查是否是纯数字（含小数点）
+        int has_dot = 0;
+        int is_numeric = 1;
+        int num_len = len - (int)(num_start - text);
+        for (int i = 0; i < num_len; i++) {
+            char c = num_start[i];
+            if (c == '.') { has_dot = 1; continue; }
+            if (c < '0' || c > '9') { is_numeric = 0; break; }
+        }
+        if (is_numeric && num_len > 0) {
+            if (has_dot) {
+                double val = atof(text);
+                emit_constant(gen, val_float(val), line);
+            } else {
+                long long val = atoll(text);
+                emit_constant(gen, val_num((int64_t)val), line);
+            }
+            return;
+        }
+    }
+
+    // 无法解析，回退为 null
+    emit_byte(gen, OP_NULL, line);
+}
+
 static void gen_call(CodeGen* gen, Ast* ast) {
     // 检测 clib 调用：lib.func(args) 或 expr.method(args)
     // 生成 ffi.call_xxx 模块调用
@@ -1392,8 +1492,37 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 }
 
                 // 用户定义的模块调用
-                for (int i = 0; i < ast->u.module_call.args.count; i++) {
+                int provided_args = ast->u.module_call.args.count;
+                int total_args = provided_args;
+
+                // 查找导入的模块信息，获取函数默认参数信息
+                ImportedModuleInfo* mod_info = find_imported_module(gen->sem, ast->u.module_call.module_name);
+                if (mod_info && mod_info->sym_table) {
+                    ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
+                        mod_info->sym_table, ast->u.module_call.method_name);
+                    if (func_sym && func_sym->param_count > provided_args) {
+                        total_args = func_sym->param_count;
+                    }
+                }
+
+                // 生成用户提供的参数
+                for (int i = 0; i < provided_args; i++) {
                     gen_expr(gen, ast->u.module_call.args.items[i]);
+                }
+
+                // 填充缺失的默认参数值
+                if (total_args > provided_args && mod_info && mod_info->sym_table) {
+                    ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
+                        mod_info->sym_table, ast->u.module_call.method_name);
+                    if (func_sym && func_sym->param_default_texts) {
+                        for (int i = provided_args; i < func_sym->param_count; i++) {
+                            if (func_sym->param_default_texts[i]) {
+                                gen_default_value_from_text(gen, func_sym->param_default_texts[i], ast->line);
+                            } else {
+                                emit_byte(gen, OP_NULL, ast->line);
+                            }
+                        }
+                    }
                 }
 
                 Symbol* module_sym = scope_resolve(gen->sem->root_scope, ast->u.module_call.module_name);
@@ -1416,7 +1545,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 emit_constant(gen, val_obj((Object*)method_name), ast->line);
                 emit_byte(gen, OP_INDEX, ast->line);
 
-                emit_call(gen, ast->u.module_call.args.count, ast->line);
+                emit_call(gen, total_args, ast->line);
             }
             break;
         }

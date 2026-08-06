@@ -11,6 +11,9 @@ typedef struct {
     char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
     int type_param_count;       // 泛型类型参数数量（如 identity[T] 的 type_param_count=1）
     char* param_text;           // 原始参数文本（如 "Dict opts" 或 "string name, int age"）
+    int param_count;            // 参数总数量
+    int default_count;          // 有默认值的参数数量
+    char** param_default_texts; // 每个参数的默认值文本（NULL 表示该参数无默认值）
 } ModuleFuncSymbol;
 
 // 模块 struct 字段
@@ -152,7 +155,7 @@ ModuleFuncSymbol* module_symbol_table_find_func(ModuleSymbolTable* table, const 
 ModuleStructSymbol* module_symbol_table_find_struct(ModuleSymbolTable* table, const char* struct_name);
 
 // 添加函数符号
-void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text);
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text, int param_count, int default_count, char** param_default_texts);
 
 // 添加 struct 符号
 void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);

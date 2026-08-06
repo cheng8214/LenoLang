@@ -1,0 +1,32 @@
+// 主文件 - 导入模块并调用带默认参数的函数
+
+import "mod_default.leno" as mod
+
+main() {
+    print("=== 测试1: int 默认参数 ===")
+    // 调用时省略有默认值的参数
+    var r1 = mod.test_int(5)
+    print("test_int(5) = " + r1)       // 期望: 15
+    var r2 = mod.test_int(5, 20)
+    print("test_int(5, 20) = " + r2)   // 期望: 25
+
+    print("=== 测试2: any 默认参数 ===")
+    var r3 = mod.test_any(5)
+    print("test_any(5) = " + r3)       // 期望: 15
+    var r4 = mod.test_any(5, 20)
+    print("test_any(5, 20) = " + r4)   // 期望: 25
+
+    print("=== 测试3: 多个默认参数 ===")
+    var r5 = mod.test_multi(1)
+    print("test_multi(1) = " + r5)     // 期望: a=1 b=10 c=hi
+    var r6 = mod.test_multi(1, 20)
+    print("test_multi(1, 20) = " + r6) // 期望: a=1 b=20 c=hi
+    var r7 = mod.test_multi(1, 20, "hey")
+    print("test_multi(1, 20, hey) = " + r7) // 期望: a=1 b=20 c=hey
+
+    print("=== 测试4: 无默认参数（对照组）===")
+    var r8 = mod.test_no_default(3, 4)
+    print("test_no_default(3, 4) = " + r8) // 期望: 7
+
+    print("ALL PASSED")
+}

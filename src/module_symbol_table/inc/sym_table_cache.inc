@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000000A  // v10: 添加 ModuleFuncSymbol.param_text
+#define LENOSYMC_VERSION 0x0000000B  // v11: 添加 ModuleFuncSymbol.param_count/default_count/param_default_texts
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -189,15 +189,27 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
     uint32_t fc = (uint32_t)table->func_count;
     fwrite(&fc, 4, 1, f);
     for (uint32_t i = 0; i < fc; i++) {
-        sym_cache_write_string(f, table->funcs[i].name);
-        uint8_t rt = (uint8_t)table->funcs[i].return_type;
-        fwrite(&rt, 1, 1, f);
-        sym_cache_write_type_info(f, table->funcs[i].return_type_info);
-        sym_cache_write_string(f, table->funcs[i].return_struct_name);
-        uint32_t tpc = (uint32_t)table->funcs[i].type_param_count;
-        fwrite(&tpc, 4, 1, f);
-        sym_cache_write_string(f, table->funcs[i].param_text);
-    }
+sym_cache_write_string(f, table->funcs[i].name);
+uint8_t rt = (uint8_t)table->funcs[i].return_type;
+fwrite(&rt, 1, 1, f);
+sym_cache_write_type_info(f, table->funcs[i].return_type_info);
+sym_cache_write_string(f, table->funcs[i].return_struct_name);
+uint32_t tpc = (uint32_t)table->funcs[i].type_param_count;
+fwrite(&tpc, 4, 1, f);
+sym_cache_write_string(f, table->funcs[i].param_text);
+// v11: 序列化参数默认值信息
+uint32_t pc = (uint32_t)table->funcs[i].param_count;
+fwrite(&pc, 4, 1, f);
+uint32_t dc = (uint32_t)table->funcs[i].default_count;
+fwrite(&dc, 4, 1, f);
+for (uint32_t k = 0; k < pc; k++) {
+uint8_t has_default = table->funcs[i].param_default_texts && table->funcs[i].param_default_texts[k] ? 1 : 0;
+fwrite(&has_default, 1, 1, f);
+if (has_default) {
+sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
+}
+}
+}
 
     // structs
     uint32_t sc = (uint32_t)table->struct_count;
@@ -443,15 +455,30 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
     table->func_count = 0; table->func_capacity = fc > 0 ? fc : 0;
     table->funcs = fc > 0 ? (ModuleFuncSymbol*)calloc(fc, sizeof(ModuleFuncSymbol)) : NULL;
     for (uint32_t i = 0; i < fc; i++) {
-        table->funcs[i].name = sym_cache_read_string(f);
-        uint8_t rt; if (fread(&rt, 1, 1, f) != 1) goto fail;
-        table->funcs[i].return_type = (TypeKind)rt;
-        table->funcs[i].return_type_info = sym_cache_read_type_info(f);
-        table->funcs[i].return_struct_name = sym_cache_read_string(f);
-        uint32_t tpc; if (fread(&tpc, 4, 1, f) != 1) goto fail;
-        table->funcs[i].type_param_count = (int)tpc;
-        table->funcs[i].param_text = sym_cache_read_string(f);
-        table->func_count++;
+table->funcs[i].name = sym_cache_read_string(f);
+uint8_t rt; if (fread(&rt, 1, 1, f) != 1) goto fail;
+table->funcs[i].return_type = (TypeKind)rt;
+table->funcs[i].return_type_info = sym_cache_read_type_info(f);
+table->funcs[i].return_struct_name = sym_cache_read_string(f);
+uint32_t tpc; if (fread(&tpc, 4, 1, f) != 1) goto fail;
+table->funcs[i].type_param_count = (int)tpc;
+table->funcs[i].param_text = sym_cache_read_string(f);
+// v11: 反序列化参数默认值信息
+uint32_t pc2; if (fread(&pc2, 4, 1, f) != 1) goto fail;
+table->funcs[i].param_count = (int)pc2;
+uint32_t dc2; if (fread(&dc2, 4, 1, f) != 1) goto fail;
+table->funcs[i].default_count = (int)dc2;
+table->funcs[i].param_default_texts = NULL;
+if (pc2 > 0) {
+table->funcs[i].param_default_texts = (char**)calloc(pc2, sizeof(char*));
+for (uint32_t k = 0; k < pc2; k++) {
+uint8_t has_default; if (fread(&has_default, 1, 1, f) != 1) goto fail;
+if (has_default) {
+table->funcs[i].param_default_texts[k] = sym_cache_read_string(f);
+}
+}
+}
+table->func_count++;
     }
 
     // structs

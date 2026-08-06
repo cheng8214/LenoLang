@@ -58,6 +58,101 @@
                             }
                         }
 
+                        // 解析参数列表：统计参数数量、默认值数量和默认值文本
+                        int parsed_param_count = 0;
+                        int parsed_default_count = 0;
+                        char* parsed_default_texts[32] = {0};
+                        if (param_text[0] != '\0') {
+                            const char* seg_start = param_text;
+                            const char* p2 = param_text;
+                            int depth = 0;
+                            int in_str = 0;
+                            char str_q = 0;
+                            while (1) {
+                                char c = *p2;
+                                if (c == '\0') {
+                                    int seg_len2 = (int)(p2 - seg_start);
+                                    if (seg_len2 > 0 && parsed_param_count < 32) {
+                                        // 在参数段中查找 = 号（不在字符串/括号内）
+                                        int d2 = 0, s2 = 0; char sq2 = 0;
+                                        for (int k = 0; k < seg_len2; k++) {
+                                            char ch = seg_start[k];
+                                            if (s2) {
+                                                if (ch == '\\') { k++; continue; }
+                                                if (ch == sq2) s2 = 0;
+                                                continue;
+                                            }
+                                            if (ch == '"' || ch == '\'') { s2 = 1; sq2 = ch; continue; }
+                                            if (ch == '(' || ch == '[' || ch == '{') { d2++; continue; }
+                                            if (ch == ')' || ch == ']' || ch == '}') { d2--; continue; }
+                                            if (ch == '=' && d2 == 0) {
+                                                // 找到默认值
+                                                const char* vs = seg_start + k + 1;
+                                                while (vs < p2 && isspace((unsigned char)*vs)) vs++;
+                                                const char* ve = p2 - 1;
+                                                while (ve >= vs && isspace((unsigned char)*ve)) ve--;
+                                                int vl = (int)(ve - vs + 1);
+                                                if (vl > 0) {
+                                                    parsed_default_texts[parsed_param_count] = (char*)malloc(vl + 1);
+                                                    memcpy(parsed_default_texts[parsed_param_count], vs, vl);
+                                                    parsed_default_texts[parsed_param_count][vl] = '\0';
+                                                    parsed_default_count++;
+                                                }
+                                                break;
+                                            }
+                                        }
+                                        parsed_param_count++;
+                                    }
+                                    break;
+                                }
+                                if (in_str) {
+                                    if (c == '\\') { p2 += 2; continue; }
+                                    if (c == str_q) in_str = 0;
+                                    p2++;
+                                    continue;
+                                }
+                                if (c == '"' || c == '\'') { in_str = 1; str_q = c; p2++; continue; }
+                                if (c == '(' || c == '[' || c == '{') { depth++; p2++; continue; }
+                                if (c == ')' || c == ']' || c == '}') { depth--; p2++; continue; }
+                                if (c == ',' && depth == 0) {
+                                    int seg_len2 = (int)(p2 - seg_start);
+                                    if (seg_len2 > 0 && parsed_param_count < 32) {
+                                        int d2 = 0, s2 = 0; char sq2 = 0;
+                                        for (int k = 0; k < seg_len2; k++) {
+                                            char ch = seg_start[k];
+                                            if (s2) {
+                                                if (ch == '\\') { k++; continue; }
+                                                if (ch == sq2) s2 = 0;
+                                                continue;
+                                            }
+                                            if (ch == '"' || ch == '\'') { s2 = 1; sq2 = ch; continue; }
+                                            if (ch == '(' || ch == '[' || ch == '{') { d2++; continue; }
+                                            if (ch == ')' || ch == ']' || ch == '}') { d2--; continue; }
+                                            if (ch == '=' && d2 == 0) {
+                                                const char* vs = seg_start + k + 1;
+                                                while (vs < p2 && isspace((unsigned char)*vs)) vs++;
+                                                const char* ve = p2 - 1;
+                                                while (ve >= vs && isspace((unsigned char)*ve)) ve--;
+                                                int vl = (int)(ve - vs + 1);
+                                                if (vl > 0) {
+                                                    parsed_default_texts[parsed_param_count] = (char*)malloc(vl + 1);
+                                                    memcpy(parsed_default_texts[parsed_param_count], vs, vl);
+                                                    parsed_default_texts[parsed_param_count][vl] = '\0';
+                                                    parsed_default_count++;
+                                                }
+                                                break;
+                                            }
+                                        }
+                                        parsed_param_count++;
+                                    }
+                                    seg_start = p2 + 1;
+                                    p2++;
+                                    continue;
+                                }
+                                p2++;
+                            }
+                        }
+
                         while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
 
                         TypeKind return_type = TYPE_ANY;
@@ -159,8 +254,13 @@
 
                         module_symbol_table_add_func(table, func_name, return_type,
                             return_struct_name[0] ? return_struct_name : NULL, func_type_param_count, return_type_info,
-                            param_text[0] ? param_text : NULL);
+                            param_text[0] ? param_text : NULL,
+                            parsed_param_count, parsed_default_count, parsed_default_texts);
                         if (return_type_info) { type_free(return_type_info); return_type_info = NULL; }
+                        // 释放临时的默认值文本（add_func 内部已 strdup）
+                        for (int i = 0; i < 32; i++) {
+                            free(parsed_default_texts[i]);
+                        }
                     }
                 }
 
