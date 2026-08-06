@@ -54,7 +54,6 @@ use SDL3.MenuBar
 use SDL3.ComboBox
 use SDL3.HBox
 use SDL3.VBox
-use SDL3.Scancode
 use SDL3.Splitter
 
 // ===================== 文件管理器结构体 =====================
@@ -841,8 +840,6 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
         } else {
             table.addContextItem(ctxItem("属性", "props", "normal.png"))
         }
-        table.addContextSeparator()
-        table.addContextItem(ctxItem("测试对话框", "testdlg", "normal.png"))
         if clipPaths.len() == 0 or clipOp == "" {
             table.setContextItemEnabled("paste", false)
         }
@@ -879,8 +876,6 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
             statusLbl.set_text("已添加书签: " + p)
         } eif id == "props" {
             props.show(p, isDir)
-        } eif id == "testdlg" {
-            _showTestDialog()
         }
     }
 
@@ -1102,29 +1097,6 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
         table.set_editable(false)
         table.set_multi_select(true)   // ★ 开启多选：Ctrl+点击切换 / Shift+点击范围选择
         table.on_dbl_click(func(int row, int col) { onTableDblClick(row, col) })
-    }
-
-    // ===================== 测试对话框（空对话框，用于排查 tip bug）=====================
-    func _showTestDialog() {
-        var dlg = SDL3.createDialogWindow({title:"测试对话框", w:400, h:200})
-        VBox root = SDL3.createVBox({x:0, y:0, w:400, h:200, padX:30, padY:16, spacing:6})
-        dlg.setRoot(root)
-        root.add(SDL3.dialogLabel("这是一个空测试对话框", 15, 200, 200, 200, 1), {grow:0, shrink:0, align:1})
-        root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
-        Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"关闭", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
-        HBox btnRow = SDL3.dialogButtonRow([btnOk], 0)
-        root.add(btnRow, {grow:0, shrink:0, align:3})
-        bool _close = false
-        btnOk.on_click(func() { _close = true })
-        SDL3.runModal(dlg,
-            func(Event ev): bool {
-                if ev.isQuit() or ev.isWindowClose() { return false }
-                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-                if _close { return false }
-                return true
-            },
-            func(Renderer r) { r.clearColor(30, 33, 42, 255) }
-        )
     }
 
     // ===================== 键盘快捷键处理 =====================
