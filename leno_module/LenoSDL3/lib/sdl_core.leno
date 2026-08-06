@@ -539,10 +539,11 @@ export func setSystemCursor(int kind): Ptr[u8] {
 // 解决：控件只“请求”光标，由 Window 在每帧事件处理完后统一“应用”一次。
 // DEFAULT(0) 优先级最低，其余（POINTER/HAND/TEXT...）取较大 kind，保证非默认光标优先。
 int  _frameCursorReq   = -1
+int  _frameCursorForce = -1   // 强制光标（拖拽等场景，优先级高于所有 requestCursor）
 bool _frameCursorSeen = false
 
 // 每帧事件处理开始前调用，清空本帧请求
-export func resetFrameCursor() { _frameCursorReq = -1; _frameCursorSeen = false }
+export func resetFrameCursor() { _frameCursorReq = -1; _frameCursorForce = -1; _frameCursorSeen = false }
 
 // 控件在 mouse motion 时调用：标记本帧发生了鼠标移动
 export func markFrameMotion() { _frameCursorSeen = true }
@@ -555,11 +556,22 @@ export func requestCursor(int kind) {
     if kind > _frameCursorReq { _frameCursorReq = kind }
 }
 
+// 拖拽等场景强制光标：优先级高于所有 requestCursor 调用
+// 解决：拖拽中 MOVE(9) 被 TreeView 的 POINTER(11) 覆盖的问题
+export func forceFrameCursor(int kind) {
+    _frameCursorForce = kind
+    _frameCursorSeen = true
+}
+
 // 帧末统一应用：仅当本帧有鼠标移动才设置（静止帧保持上帧结果，避免闪烁/覆盖）
 export func applyFrameCursor() {
     if not _frameCursorSeen { return }
-    int k = _frameCursorReq
-    if k < 0 { k = SystemCursor.DEFAULT }   // 无任何控件请求 → 默认箭头
+    int k = _frameCursorForce                     // 强制光标优先
+    if k < 0 {
+        k = _frameCursorReq
+        if k < 0 { k = SystemCursor.DEFAULT }   // 无任何控件请求 → 默认箭头
+    }
+    _frameCursorForce = -1                        // 用后重置
     setSystemCursor(k)
 }
 

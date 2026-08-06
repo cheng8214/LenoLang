@@ -41,6 +41,8 @@ import files
 import jsons
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.Font
+use SDL3.StringSize
 use SDL3.Window
 use SDL3.Panel
 use SDL3.TreeView
@@ -93,13 +95,16 @@ struct FileManager {
     int           mBookmarkId = 0
     string        bookmarkFile = ""
 
-    // ===== 拖拽状态 =====
-    bool          _dragPending = false
-    bool          _dragging = false
-    float         _dragStartX = 0.0
-    float         _dragStartY = 0.0
-    Array[string] _dragPaths = []
-    int           _dragTargetNode = -1
+// ===== 拖拽状态 =====
+bool          _dragPending = false
+bool          _dragging = false
+float         _dragStartX = 0.0
+float         _dragStartY = 0.0
+Array[string] _dragPaths = []
+int           _dragTargetNode = -1
+float         _dragMouseX = 0.0    // 拖拽中鼠标实时位置
+float         _dragMouseY = 0.0
+string        _dragLabel = ""     // 拖拽浮动框显示文字
 
     // ===== 应用状态 =====
     bool   wantQuit = false
@@ -1118,32 +1123,41 @@ struct FileManager {
             float dy = ev.mouseY() - _dragStartY
             if (dx * dx + dy * dy) > 25.0 {
                 _dragPaths = getSelectedPaths()
-                if _dragPaths.len() > 0 {
-                    _dragging = true
-                    statusLbl.set_text("拖拽 " + _dragPaths.len() + " 项…")
-                }
+if _dragPaths.len() > 0 {
+_dragging = true
+_dragMouseX = ev.mouseX()
+_dragMouseY = ev.mouseY()
+// 构建浮动框显示文字
+if _dragPaths.len() == 1 {
+_dragLabel = dirs.basename(_dragPaths[0])
+} else {
+_dragLabel = dirs.basename(_dragPaths[0]) + "  (+" + (_dragPaths.len() - 1) + ")"
+}
+statusLbl.set_text("拖拽 " + _dragPaths.len() + " 项…")
+}
             }
         }
 
-        if ev.isMouseMotion() and _dragging {
-            if tree.contains(ev.mouseX(), ev.mouseY()) {
-                int nodeId = tree._id_at(ev.mouseX(), ev.mouseY())
-                if nodeId >= 0 {
-                    string tp = nodeType(nodeId)
-                    if tp == "folder" or tp == "drive" {
-                        _dragTargetNode = nodeId
-                        core.requestCursor(core.SystemCursor.MOVE)
-                    } else {
-                        _dragTargetNode = -1
-                        core.requestCursor(core.SystemCursor.NOT_ALLOWED)
-                    }
-                } else {
-                    _dragTargetNode = -1
-                }
-            } else {
-                _dragTargetNode = -1
-            }
-        }
+if ev.isMouseMotion() and _dragging {
+_dragMouseX = ev.mouseX()
+_dragMouseY = ev.mouseY()
+core.markFrameRedraw()   // 拖拽浮动框跟随鼠标，每帧重绘
+if tree.contains(ev.mouseX(), ev.mouseY()) {
+int nodeId = tree._id_at(ev.mouseX(), ev.mouseY())
+if nodeId >= 0 {
+string tp = nodeType(nodeId)
+if tp == "folder" or tp == "drive" {
+_dragTargetNode = nodeId
+} else {
+_dragTargetNode = -1
+}
+} else {
+_dragTargetNode = -1
+}
+} else {
+_dragTargetNode = -1
+}
+}
 
         // 鼠标释放：在 TreeView 文件夹上释放则执行移动
         if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
@@ -1238,12 +1252,37 @@ struct FileManager {
         openDir(dirs.dirname(dirs.script_dir()))
         updateNavButtons()
 
-        win.run(
-            func(Event ev): bool { return handleKeyboard(ev) },
-            func(Renderer r) {
-                // 窗口主循环已用主题背景色 fillRect 清屏
+win.run(
+    func(Event ev): bool { return handleKeyboard(ev) },
+    func(Renderer r) {
+        // 窗口主循环已用主题背景色 fillRect 清屏
+
+        // ===== 拖拽浮动框 =====
+        if _dragging and _dragLabel != "" {
+            statusLbl._ensure_font()
+            Font? f = statusLbl._font
+            if f != null and f.ok {
+                StringSize sz = f.measureString(_dragLabel)
+                float padX = 8.0; float padY = 4.0
+                float boxW = sz.w + padX * 2.0
+                float boxH = sz.h + padY * 2.0
+                float bx = _dragMouseX + 12.0
+                float by = _dragMouseY + 12.0
+                // 半透明背景
+                r.setColor(30, 60, 120, 220)
+                r.fillRect(bx, by, boxW, boxH)
+                // 边框
+                r.setColor(80, 140, 220, 255)
+                r.fillRect(bx, by, boxW, 1.0)             // 上
+                r.fillRect(bx, by + boxH - 1.0, boxW, 1.0) // 下
+                r.fillRect(bx, by, 1.0, boxH)             // 左
+                r.fillRect(bx + boxW - 1.0, by, 1.0, boxH) // 右
+                // 文字
+                r.drawText(f, _dragLabel, bx + padX, by + padY, 255, 255, 255)
             }
-        )
+        }
+    }
+)
         SDL3.ttfQuit()
     }
 }

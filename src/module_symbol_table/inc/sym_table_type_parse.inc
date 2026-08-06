@@ -63,6 +63,9 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
     if (strcmp(buf, "c_ssize") == 0) return type_new(TYPE_C_SSIZE);
     if (strcmp(buf, "str8") == 0)   return type_new(TYPE_STR8);
     if (strcmp(buf, "str16") == 0)  return type_new(TYPE_STR16);
+    // 容器/集合类型
+    if (strcmp(buf, "Array") == 0)  return type_new(TYPE_ARRAY);
+    if (strcmp(buf, "Dict") == 0)   return type_new(TYPE_DICT);
     // 自定义类型名（struct 等）→ TYPE_STRUCT
     TypeInfo* ti = type_new(TYPE_STRUCT);
     ti->struct_name = strdup(buf);
