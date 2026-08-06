@@ -925,10 +925,16 @@ export struct Window {
                                 bar.set_size(_float(pt.x), bar.get_h())
                                 bar.setWindowSize(pt.x, pt.y)
                             }
-                            // ★ 自动同步窗口尺寸到所有子控件（Table/TreeView 等内部菜单需要）
+                            // ★ 自动同步窗口尺寸到 Table/TreeView（供内部右键菜单边界夹紧）
                             var widgets = _runWidgets[k]
                             for widgets.len() to w {
-                                widgets[w].on_window_resize(pt.x, pt.y)
+                                var widget = widgets[w]
+                                // 动态检查类型并调用 on_window_resize
+                                if widget is Table {
+                                    Table t = widget; t.on_window_resize(pt.x, pt.y)
+                                } else if widget is TreeView {
+                                    TreeView tv = widget; tv.on_window_resize(pt.x, pt.y)
+                                }
                             }
                             pt.free()
                             break
