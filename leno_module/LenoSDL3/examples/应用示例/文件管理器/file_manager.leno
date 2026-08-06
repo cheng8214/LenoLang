@@ -592,17 +592,46 @@ struct FileManager {
 
     // ===================== 剪贴板操作（复用逻辑） =====================
 
+    // 获取当前所有选中行的文件路径数组
+    func getSelectedPaths(): Array[string] {
+        Array[int] selRows = table.get_selected_rows()
+        Array[string] paths = []
+        for selRows.len() to i {
+            int r = selRows[i]
+            if r >= 0 and r < table.row_count() {
+                var row = table.get_row(r)
+                if row.len() >= 5 { paths.add(row[3]) }
+            }
+        }
+        if paths.len() == 0 and selPath != "" { paths.add(selPath) }
+        return paths
+    }
+
     func doCopy(string path) {
-        clipPaths = [path]
+        // ★ 批量复制：优先使用多选结果
+        Array[string] paths = getSelectedPaths()
+        if paths.len() == 0 { return }
+        clipPaths = paths
         clipOp = "copy"
-        statusLbl.set_text("已复制: " + dirs.basename(path))
+        if paths.len() == 1 {
+            statusLbl.set_text("已复制: " + dirs.basename(paths[0]))
+        } else {
+            statusLbl.set_text("已复制 " + paths.len() + " 项")
+        }
         bar.setItemEnabled(mEditId, "paste", true)
     }
 
     func doCut(string path) {
-        clipPaths = [path]
+        // ★ 批量剪切：优先使用多选结果
+        Array[string] paths = getSelectedPaths()
+        if paths.len() == 0 { return }
+        clipPaths = paths
         clipOp = "cut"
-        statusLbl.set_text("已剪切: " + dirs.basename(path))
+        if paths.len() == 1 {
+            statusLbl.set_text("已剪切: " + dirs.basename(paths[0]))
+        } else {
+            statusLbl.set_text("已剪切 " + paths.len() + " 项")
+        }
         bar.setItemEnabled(mEditId, "paste", true)
     }
 
@@ -617,6 +646,23 @@ struct FileManager {
     }
 
     func doDeletePath(string p, bool isDir) {
+        // ★ 批量删除：检查是否多选
+        Array[int] selRows = table.get_selected_rows()
+        if selRows.len() > 1 {
+            // 多选删除：收集所有选中路径，逐个删除
+            Array[string] paths = getSelectedPaths()
+            if paths.len() == 0 { return }
+            del_confirm.showBatch(paths.len(), func() {
+                int okCount = 0
+                for paths.len() to i {
+                    if dirs.delete(paths[i]) { okCount = okCount + 1 }
+                }
+                statusLbl.set_text("已删除 " + okCount + "/" + paths.len() + " 项")
+                openDir(curDir)
+            })
+            return
+        }
+        // 单选删除：保留原有确认对话框
         del_confirm.show(p, isDir, func() {
             if dirs.delete(p) {
                 statusLbl.set_text("已删除: " + dirs.basename(p))
@@ -697,13 +743,26 @@ struct FileManager {
 
     func onTableSelect(int row) {
         if row < 0 or row >= table.row_count() { return }
-        var r = table.get_row(row)
-        if r.len() < 5 { return }
-        selPath = r[3]; selIsDir = (r[4] == "1")
-        if selIsDir {
-            statusLbl.set_text("选中: " + r[0] + "  (文件夹)")
-        } else {
-            statusLbl.set_text("选中: " + r[0] + "  " + r[1] + "  " + r[2])
+        // ★ 多选模式：从 table.get_selected_rows() 获取全部选中行
+        Array[int] selRows = table.get_selected_rows()
+        if selRows.len() == 1 {
+            var r = table.get_row(selRows[0])
+            if r.len() < 5 { return }
+            selPath = r[3]; selIsDir = (r[4] == "1")
+            if selIsDir {
+                statusLbl.set_text("选中: " + r[0] + "  (文件夹)")
+            } else {
+                statusLbl.set_text("选中: " + r[0] + "  " + r[1] + "  " + r[2])
+            }
+        } eif selRows.len() > 1 {
+            // 多选：更新 selPath 为最后选中行（供"打开"等单选操作用），状态栏显示计数
+            selPath = ""; selIsDir = false
+            int lastRow = selRows[selRows.len() - 1]
+            if lastRow >= 0 and lastRow < table.row_count() {
+                var r = table.get_row(lastRow)
+                if r.len() >= 5 { selPath = r[3]; selIsDir = (r[4] == "1") }
+            }
+            statusLbl.set_text("已选中 " + selRows.len() + " 项")
         }
     }
 
@@ -901,6 +960,7 @@ struct FileManager {
         table.on_context_select(func(int row, string id) { onContextSelect(row, id) })
         table.on_edit_commit(func(int row, int col, string text) { onEditCommit(row, col, text) })
         table.set_editable(false)
+        table.set_multi_select(true)   // ★ 开启多选：Ctrl+点击切换 / Shift+点击范围选择
         table.on_dbl_click(func(int row, int col) { onTableDblClick(row, col) })
     }
 
@@ -927,11 +987,17 @@ struct FileManager {
             }
             if sc == core.Scancode.BACKSPACE { goUp(); return true }
             if sc == core.Scancode.DELETE {
-                if selPath != "" { doDeletePath(selPath, selIsDir) }
+                // ★ 批量删除：优先检查多选
+                Array[int] selRows = table.get_selected_rows()
+                if selRows.len() > 1 {
+                    doDeletePath("", false)
+                } eif selPath != "" {
+                    doDeletePath(selPath, selIsDir)
+                }
                 return true
             }
-            if ctrl and sc == core.Scancode.C { if selPath != "" { doCopy(selPath) }; return true }
-            if ctrl and sc == core.Scancode.X { if selPath != "" { doCut(selPath) }; return true }
+            if ctrl and sc == core.Scancode.C { doCopy(""); return true }
+            if ctrl and sc == core.Scancode.X { doCut(""); return true }
             if ctrl and sc == core.Scancode.V { doPaste(); return true }
         }
         return true

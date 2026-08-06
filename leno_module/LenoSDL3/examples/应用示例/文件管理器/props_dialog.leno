@@ -1,10 +1,15 @@
-// props_dialog.leno — 文件/文件夹属性对话框（模态窗口）
+// props_dialog.leno — 文件/文件夹属性对话框（模态窗口，自动布局版）
 // 用法：props.show(path, isDir)
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
 import dirs
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.VBox
+use SDL3.HBox
+use SDL3.Label
+use SDL3.Button
+use SDL3.Widget
 use SDL3.Scancode
 
 // 人类可读大小
@@ -19,6 +24,23 @@ func fmtSize(int b): string {
 }
 
 bool _shouldClose = false
+
+// 创建 label 工厂（供布局使用，不注册进窗口）
+func mkLabel(string text, float fontSize, int r, int g, int b): Label {
+    return SDL3.createLabel({x:0, y:0, w:300, h:fontSize+4, text:text, font_size:fontSize, text_rgb:[r,g,b]})
+}
+
+// 创建 label+value 行（HBox 左右排列）
+func propRow(string label, string value): HBox {
+    HBox row = SDL3.createHBox({x:0, y:0, w:0, h:22, padX:0, padY:0, spacing:8})
+    Label l = mkLabel(label, 13, 150, 165, 185)
+    l.set_size(80, 22)
+    Label v = mkLabel(value, 13, 225, 235, 255)
+    v.set_size(280, 22)
+    row.add(l, {grow:0, shrink:0, basis:80, align:0})
+    row.add(v, {grow:1, shrink:1, align:0})
+    return row
+}
 
 // 显示属性对话框
 export func show(string path, bool isDir) {
@@ -45,38 +67,50 @@ export func show(string path, bool isDir) {
     bool exists = _bool(st.get("exists", false))
     string existStr = if exists then "是" else "否"
     string accessStr = if exists then "可访问" else "无法访问（可能已被移动或删除）"
+    int accessR = if exists then 200 else 255
+    int accessG = if exists then 225 else 180
+    int accessB = if exists then 200 else 180
 
     _shouldClose = false
 
-    var dlg = SDL3.createDialogWindow({title:"属性 — " + nm, w:470, h:360})
-    dlg.addLabel({x:235, y:16, text:"文件属性", font_size:16, text_rgb:[150,200,255], align:1})
+    var dlg = SDL3.createDialogWindow({title:"属性 — " + nm, w:470, h:380})
+    VBox root = SDL3.createVBox({x:0, y:0, w:470, h:380, padX:30, padY:16, spacing:6})
+    dlg.setRoot(root)
 
-    int lx = 55; int vx = 155; int y0 = 48; int g2 = 26
-    float valMaxW = 275.0  // 值列最大宽度（对话框 470 - vx 155 - 右边距 40）
-    dlg.addLabel({x:lx, y:y0,         text:"名称:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0,         text:nm,    font_size:13, text_rgb:[225,235,255], max_w:valMaxW, truncate:1})
-    dlg.addLabel({x:lx, y:y0 + g2,    text:"类型:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2,    text:kind,  font_size:13, text_rgb:[225,235,255]})
-    dlg.addLabel({x:lx, y:y0 + g2*2,  text:"位置:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2*2,  text:dir,   font_size:12, text_rgb:[180,195,215], max_w:valMaxW, truncate:1})
-    dlg.addLabel({x:lx, y:y0 + g2*3,  text:"大小:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2*3,  text:szStr, font_size:13, text_rgb:[225,235,255]})
-    dlg.addLabel({x:lx, y:y0 + g2*4,  text:"修改时间:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2*4,  text:mtStr, font_size:13, text_rgb:[200,215,235]})
-    dlg.addLabel({x:lx, y:y0 + g2*5,  text:"是否存在:", font_size:13, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2*5,  text:existStr, font_size:13, text_rgb:[225,235,255]})
-    dlg.addLabel({x:lx, y:y0 + g2*6,  text:"完整路径:", font_size:12, text_rgb:[150,165,185]})
-    dlg.addLabel({x:vx, y:y0 + g2*6,  text:path,       font_size:12, text_rgb:[180,190,205], max_w:valMaxW, truncate:2})
-    dlg.addLabel({x:lx, y:y0 + g2*7,  text:"访问状态:", font_size:13, text_rgb:[150,165,185]})
-    if exists {
-        dlg.addLabel({x:vx, y:y0 + g2*7, text:accessStr, font_size:13, text_rgb:[200,225,200]})
-    } else {
-        dlg.addLabel({x:vx, y:y0 + g2*7, text:accessStr, font_size:13, text_rgb:[255,180,180]})
-    }
+    // 标题
+    Label title = mkLabel("文件属性", 16, 150, 200, 255)
+    title.set_size(410, 22)
+    root.add(title, {grow:0, shrink:0, align:1})
 
-    var btnOk = dlg.addButton({x:185, y:310, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
-    btnOk.on_click(func() { _shouldClose = true 
-    })
+    // 属性行
+    root.add(propRow("名称:", nm), {grow:0, shrink:0, align:3})
+    root.add(propRow("类型:", kind), {grow:0, shrink:0, align:3})
+    root.add(propRow("位置:", dir), {grow:0, shrink:0, align:3})
+    root.add(propRow("大小:", szStr), {grow:0, shrink:0, align:3})
+    root.add(propRow("修改时间:", mtStr), {grow:0, shrink:0, align:3})
+    root.add(propRow("是否存在:", existStr), {grow:0, shrink:0, align:3})
+    root.add(propRow("完整路径:", path), {grow:0, shrink:0, align:3})
+
+    // 访问状态行（颜色按存在性变化）
+    HBox accessRow = SDL3.createHBox({x:0, y:0, w:0, h:22, padX:0, padY:0, spacing:8})
+    Label al = mkLabel("访问状态:", 13, 150, 165, 185)
+    al.set_size(80, 22)
+    Label av = mkLabel(accessStr, 13, accessR, accessG, accessB)
+    av.set_size(280, 22)
+    accessRow.add(al, {grow:0, shrink:0, basis:80, align:0})
+    accessRow.add(av, {grow:1, shrink:1, align:0})
+    root.add(accessRow, {grow:0, shrink:0, align:3})
+
+    // 弹性间隔
+    root.add(SDL3.createLabel({x:0, y:0, w:1, h:1, text:""}), {grow:1, shrink:1, align:0})
+
+    // 确定按钮（居中）
+    HBox btnRow = SDL3.createHBox({x:0, y:0, w:0, h:34, padX:0, padY:0, spacing:0, justify:1})
+    Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+    btnRow.add(btnOk, {grow:0, shrink:0, basis:100, align:0})
+    root.add(btnRow, {grow:0, shrink:0, align:1})
+
+    btnOk.on_click(func() { _shouldClose = true })
 
     SDL3.runModal(dlg,
         func(Event ev): bool {
@@ -85,8 +119,6 @@ export func show(string path, bool isDir) {
             if _shouldClose { return false }
             return true
         },
-        func(Renderer r) {
-            r.clearColor(30, 33, 42, 255)
-        }
+        func(Renderer r) { r.clearColor(30, 33, 42, 255) }
     )
 }

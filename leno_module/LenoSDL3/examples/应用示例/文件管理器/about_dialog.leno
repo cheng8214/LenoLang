@@ -1,24 +1,50 @@
-// about_dialog.leno — 关于对话框（独立模块，模态窗口方案，参考 dashboard.leno）
-// 用法： about.show()   // 菜单"关于"点击时调用，弹出独立模态窗口，直到用户关闭才返回
-// 说明：用 SDL3.createDialogWindow + SDL3.runModal 弹独立窗口，不会遮挡/清空主窗口控件。
+// about_dialog.leno — 关于对话框（模态窗口，自动布局版）
+// 用法： about.show()
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
 use SDL3.Event
 use SDL3.Renderer
+use SDL3.VBox
+use SDL3.HBox
+use SDL3.Label
+use SDL3.Button
+use SDL3.Widget
 use SDL3.Scancode
 
-// 显示模态"关于"对话框；点击"确定"按钮 / 按 ESC / 关闭窗口即返回
+// 创建 label 工厂
+func mkLabel(string text, float fontSize, int r, int g, int b, int align): Label {
+    return SDL3.createLabel({x:0, y:0, w:300, h:fontSize+4, text:text, font_size:fontSize, text_rgb:[r,g,b], align:align})
+}
+
+// 显示模态"关于"对话框
 export func show() {
-    var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:240})
-    dlg.addLabel({x:190, y:26,  text:"LenoSDL3 文件管理器",   font_size:18, text_rgb:[225,235,255], align:1})
-    dlg.addLabel({x:190, y:54,  text:"文件浏览 / 管理 Demo",  font_size:13, text_rgb:[150,165,200], align:1})
-    dlg.addLabel({x:40,  y:96,  text:"版本：v1.0", font_size:13, text_rgb:[200,210,225]})
-    dlg.addLabel({x:40,  y:120, text:"基于 LenoSDL3 即时模式 UI 框架", font_size:13, text_rgb:[200,210,225]})
-    dlg.addLabel({x:40,  y:144, text:"文件夹树 / 列表 / 右键菜单 / 重命名", font_size:13, text_rgb:[200,210,225]})
-    dlg.addLabel({x:40,  y:168, text:"© 2026 LenoLang", font_size:12, text_rgb:[150,160,175]})
+    var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:260})
+    VBox root = SDL3.createVBox({x:0, y:0, w:380, h:260, padX:40, padY:24, spacing:8})
+    dlg.setRoot(root)
+
+    root.add(mkLabel("LenoSDL3 文件管理器", 18, 225, 235, 255, 1), {grow:0, shrink:0, align:1})
+    root.add(mkLabel("文件浏览 / 管理 Demo", 13, 150, 165, 200, 1), {grow:0, shrink:0, align:1})
+
+    // 间隔
+    root.add(SDL3.createLabel({x:0, y:0, w:1, h:8, text:""}), {grow:0, shrink:0, align:0})
+
+    root.add(mkLabel("版本：v1.0", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:0})
+    root.add(mkLabel("基于 LenoSDL3 即时模式 UI 框架", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:0})
+    root.add(mkLabel("文件夹树 / 列表 / 右键菜单 / 重命名", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:0})
+    root.add(mkLabel("© 2026 LenoLang", 12, 150, 160, 175, 0), {grow:0, shrink:0, align:0})
+
+    // 弹性间隔
+    root.add(SDL3.createLabel({x:0, y:0, w:1, h:1, text:""}), {grow:1, shrink:1, align:0})
+
+    // 确定按钮（居中）
+    HBox btnRow = SDL3.createHBox({x:0, y:0, w:0, h:34, padX:0, padY:0, spacing:0, justify:1})
+    Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+    btnRow.add(btnOk, {grow:0, shrink:0, basis:100, align:0})
+    root.add(btnRow, {grow:0, shrink:0, align:1})
 
     var shouldClose = false
-   dlg.addButton({x:140, y:192, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]}).on_click(func() { shouldClose = true })
+    btnOk.on_click(func() { shouldClose = true })
+
     SDL3.runModal(dlg,
         func(Event ev): bool {
             if ev.isQuit() or ev.isWindowClose() { return false }
@@ -26,8 +52,6 @@ export func show() {
             if shouldClose { return false }
             return true
         },
-        func(Renderer r) {
-            r.clearColor(30, 33, 42, 255)
-        }
+        func(Renderer r) { r.clearColor(30, 33, 42, 255) }
     )
 }
