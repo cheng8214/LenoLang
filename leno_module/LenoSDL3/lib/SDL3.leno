@@ -123,9 +123,9 @@ export func createModelessDialog(Dict style): Window { return dlg.createModeless
 export func runModal(Window win, any onEvent, any onRender) { dlg.runModal(win, onEvent, onRender) }
 
 // ==================== 对话框布局辅助工具（转发 sdl_dialog） ====================
-export func dialogLabel(string text, float fontSize, int r, int g, int b, int align): Label { return dlg.dialogLabel(text, fontSize, r, g, b, align) }
+export func dialogLabel(string text, float fontSize, int r = 225, int g = 235, int b = 255, int align = 0): Label { return dlg.dialogLabel(text, fontSize, r, g, b, align) }
 export func dialogPropRow(string label, string value, float maxW): HBox { return dlg.dialogPropRow(label, value, maxW) }
-export func dialogButtonRow(Array[Button] buttons, float spacing): HBox { return dlg.dialogButtonRow(buttons, spacing) }
+export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox { return dlg.dialogButtonRow(buttons, spacing) }
 export func dialogSpacer(): Label { return dlg.dialogSpacer() }
 
 
@@ -151,7 +151,7 @@ export const SDL_Color_SIZE  = core.SDL_Color_SIZE
 
 // ==================== 重新导出核心函数 ====================
 
-export func init(int flags): bool   { return core.init(flags) }
+export func init(int flags = 32): bool   { return core.init(flags) }
 export func initVideo(): bool        { return core.initVideo() }
 export func quit()                   { core.quit(); fnt.ttfQuit() }
 export func getError(): string       { return core.getError() }
@@ -172,7 +172,7 @@ export func cursorVisible(): bool        { return core.cursorVisible() }
 export func warpMouse(Ptr[u8] w, float x, float y): bool { return core.warpMouse(w, x, y) }
 
 export func setSystemCursor(int kind): Ptr[u8] { return core.setSystemCursor(kind) }
-export func showMessageBox(string title, string msg, int flags) { core.showMessageBox(title, msg, flags) }
+export func showMessageBox(string title, string msg, int flags = 0) { core.showMessageBox(title, msg, flags) }
 
 export func markFrameRedraw() { core.markFrameRedraw() }
 export func requestRedraw()   { core.requestRedraw() }
@@ -266,9 +266,9 @@ export const WRAP_ALIGN_RIGHT  = fnt.WRAP_ALIGN_RIGHT
 export func loadImage(string path): Ptr[u8]                  { return img.load(path)}
 export func loadImageTexture(Ptr[u8] ren, string path): Ptr[u8]  { return img.loadTexture(ren, path) }
 export func saveImagePNG(Ptr[u8] surface, string path): bool           { return img.savePNG(surface, path) }
-export func saveImageJPG(Ptr[u8] surface, string path, int q): bool    { return img.saveJPG(surface, path, q) }
+export func saveImageJPG(Ptr[u8] surface, string path, int q = 90): bool    { return img.saveJPG(surface, path, q) }
 export func saveImageBMP(Ptr[u8] surface, string path): bool           { return img.saveBMP(surface, path) }
-export func saveImageWEBP(Ptr[u8] surface, string path, float q): bool { return img.saveWEBP(surface, path, q) }
+export func saveImageWEBP(Ptr[u8] surface, string path, float q = 80.0): bool { return img.saveWEBP(surface, path, q) }
 export func imageVersion(): int { return img.version() }
 
 // 从原始像素创建 surface（配合 LenoWin32 截屏使用）

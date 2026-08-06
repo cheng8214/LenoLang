@@ -67,7 +67,7 @@ export func createModelessDialog(Dict style): Window {
 // ★ 宽度策略：
 //   - align=0 时用 w:300（配合 VBox align:3 stretch 撑满）
 //   - align=1/2 时用 w:1（VBox 用 _natW=文字宽度 来计算居中位置）
-export func dialogLabel(string text, float fontSize, int r, int g, int b, int align): Label {
+export func dialogLabel(string text, float fontSize, int r = 225, int g = 235, int b = 255, int align = 0): Label {
     float lw = if align == 0 then 300.0 else 1.0
     // ★ Label 内部固定 _align=0（左对齐），由调用方 VBox 的 align 参数控制位置
     return lbl.createLabel({x:0, y:0, w:lw, h:fontSize+6, text:text, font_size:fontSize, text_rgb:[r,g,b], align:0})
@@ -95,7 +95,7 @@ export func dialogPropRow(string label, string value, float maxW): HBox {
 
 // 创建居中按钮行（HBox 内按钮居中排列）
 // ★ 调用方需将返回的 HBox 添加到 VBox 时使用 {align:3}(stretch) 撑满宽度
-export func dialogButtonRow(Array[Button] buttons, float spacing): HBox {
+export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox {
     // ★ w:1 而非硬编码 300，让 VBox align:3(stretch) 时 cw=innerW 自动撑满
     HBox row = lay.createHBox({x:0, y:0, w:1, h:34, padX:0, padY:0, spacing:spacing, justify:1})
     for buttons.len() to i {

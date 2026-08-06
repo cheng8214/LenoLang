@@ -210,8 +210,8 @@ export struct Renderer {
     }
 
 
-    // 设置绘制颜色（整数 RGBA，0~255）
-    func setColor(int r, int g, int b, int a): bool {
+    // 设置绘制颜色（整数 RGBA，0~255；a 默认完全不透明）
+    func setColor(int r, int g, int b, int a = 255): bool {
         int rr = r; int gg = g; int bb = b; int aa = a
         if rr > 255 { rr = 255 }; if gg > 255 { gg = 255 }; if bb > 255 { bb = 255 }; if aa > 255 { aa = 255 }
         if rr < 0 { rr = 0 }; if gg < 0 { gg = 0 }; if bb < 0 { bb = 0 }; if aa < 0 { aa = 0 }
@@ -223,8 +223,8 @@ export struct Renderer {
         return _lib.SDL_SetRenderDrawColor(handle, rr, gg, bb, aa)
     }
 
-    // 设置绘制颜色（浮点 RGBA，0.0~1.0）
-    func setColorFloat(float r, float g, float b, float a): bool {
+    // 设置绘制颜色（浮点 RGBA，0.0~1.0；a 默认完全不透明）
+    func setColorFloat(float r, float g, float b, float a = 1.0): bool {
         if _bxIsFloat and r == _bxFr and g == _bxFg and b == _bxFb and a == _bxFa {
             return true
         }
@@ -741,8 +741,8 @@ export struct Renderer {
         return _lib.SDL_RenderGeometry(handle, null, vertices, count, indices, idxCount)
     }
 
-    // 绘制三角形（单色填充，支持旋转和缩放）→ 每顶点独立颜色见 drawTriangleGradient
-    func drawTriangle(float cx, float cy, float size, float angle, float r, float g, float b, float a): bool {
+    // 绘制三角形（单色填充，支持旋转和缩放，a 默认完全不透明）→ 每顶点独立颜色见 drawTriangleGradient
+    func drawTriangle(float cx, float cy, float size, float angle, float r, float g, float b, float a = 1.0): bool {
         _flushBatches()
         float rad = angle * 3.14159265 / 180.0
         float c = maths.cos(rad); float s = maths.sin(rad)

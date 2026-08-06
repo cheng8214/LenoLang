@@ -435,7 +435,7 @@ export func lib(): sdl3 {
 
 // ==================== 核心函数 ====================
 
-export func init(int flags): bool {
+export func init(int flags = 32): bool {
     sdl3 l = lib()
     if l == null { return false }
     return l.SDL_Init(flags)
@@ -602,7 +602,7 @@ export func inPopupCapture(float mx, float my): bool {
 }
 
 // 弹出消息框
-export func showMessageBox(string title, string msg, int flags) {
+export func showMessageBox(string title, string msg, int flags = 0) {
     sdl3 l = lib()
     l.SDL_ShowSimpleMessageBox(flags, title, msg, null)
 }
