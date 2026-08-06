@@ -33,6 +33,7 @@ export struct TreeViewNode {
     int id = -1
     string text = ""
     string image = ""    // 节点图标路径（空 = 无图）；作为唯一数据源
+string imageExpanded = ""  // 展开状态图标（空 = 用 image）
     int imageMode = -1   // 图标内容模式：-1=用全局 _imgMode；0=aspectFit 1=stretch 2=aspectFill
     Array[TreeViewNode] children = []
     bool expanded = false
@@ -127,6 +128,7 @@ export struct TreeView impl Widget {
         n.id = _nextId; _nextId = _nextId + 1
         n.text = d.get("text", "")
         n.image = d.get("image", "")
+n.imageExpanded = d.get("imageExpanded", "")
         n.imageMode = d.get("imageMode", -1)
         n._parent = parentId
         n._depth = depth
@@ -158,7 +160,7 @@ export struct TreeView impl Widget {
         Array[TreeViewNode] out = []
         for list.len() to i {
             TreeViewNode o = new TreeViewNode()
-            o.id = list[i].id; o.text = list[i].text; o.image = list[i].image; o.imageMode = list[i].imageMode; o.expanded = list[i].expanded
+            o.id = list[i].id; o.text = list[i].text; o.image = list[i].image; o.imageExpanded = list[i].imageExpanded; o.imageMode = list[i].imageMode; o.expanded = list[i].expanded
             o.hasChildren = list[i].hasChildren; o.checkable = list[i].checkable; o.checked = list[i].checked
             o._depth = list[i]._depth; o._parent = list[i]._parent; o.data = list[i].data
             o.children = _snap_children(list[i].children)
@@ -172,7 +174,7 @@ export struct TreeView impl Widget {
         for list.len() to i {
             if list[i].id == id {
                 TreeViewNode o = new TreeViewNode()
-                o.id = list[i].id; o.text = list[i].text; o.image = list[i].image; o.imageMode = list[i].imageMode; o.expanded = list[i].expanded
+                o.id = list[i].id; o.text = list[i].text; o.image = list[i].image; o.imageExpanded = list[i].imageExpanded; o.imageMode = list[i].imageMode; o.expanded = list[i].expanded
                 o.hasChildren = list[i].hasChildren; o.checkable = list[i].checkable; o.checked = list[i].checked
                 o._depth = list[i]._depth; o._parent = list[i]._parent; o.data = list[i].data
                 o.children = _snap_children(list[i].children)
@@ -197,7 +199,7 @@ export struct TreeView impl Widget {
         for list.len() to i {
             _flatIds.add(list[i].id)
             _flatText.add(list[i].text)
-            _flatImage.add(list[i].image)
+            _flatImage.add(if list[i].expanded and list[i].imageExpanded != "" then list[i].imageExpanded else list[i].image)
             _flatImgMode.add(list[i].imageMode)
             _flatParent.add(par)
             _flatDepth.add(depth)

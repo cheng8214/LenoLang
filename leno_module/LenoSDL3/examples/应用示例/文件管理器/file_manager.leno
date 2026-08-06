@@ -201,7 +201,7 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
                 string nm = names[i]
                 string fp = dirs.join(path, nm)
                 if dirs.is_dir(fp) {
-                    out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: imgPath("filetypes/folder_1.png")})
+                    out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: imgPath("filetypes/folder_1.png"), imageExpanded: imgPath("filetypes/folder_2.png")})
                 }
             }
         }
@@ -277,13 +277,14 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
     }
 
     func buildNavRoots(): Array[Dict] {
-        string folderIcon = imgPath("filetypes/folder_1.png")
-        Array[Dict] roots = []
-        roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true, image:folderIcon})
-        string root = dirs.dirname(dirs.script_dir())
-        Array[Dict] qaKids = []
-        qaKids.add({text:"当前位置", data:{type:"folder", path:root}, has_children:true, expanded:true, image:folderIcon, children: subFolders(root)})
-        roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, expanded:true, image:folderIcon, children: qaKids})
+string folderIcon = imgPath("filetypes/folder_1.png")
+string folderOpenIcon = imgPath("filetypes/folder_2.png")
+Array[Dict] roots = []
+roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true, image:folderIcon, imageExpanded:folderOpenIcon})
+string root = dirs.dirname(dirs.script_dir())
+Array[Dict] qaKids = []
+qaKids.add({text:"当前位置", data:{type:"folder", path:root}, has_children:true, expanded:true, image:folderIcon, imageExpanded:folderOpenIcon, children: subFolders(root)})
+roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, expanded:true, image:folderIcon, imageExpanded:folderOpenIcon, children: qaKids})
         return roots
     }
 
@@ -294,8 +295,8 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
         if dv != null {
             for dv.len() to i {
                 string d = dv[i]
-                Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png")}
-                int nid = tree.add_child(pcId, node)
+Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png"), imageExpanded: imgPath("filetypes/folder_2.png")}
+int nid = tree.add_child(pcId, node)
                 ensureNodeArr(nid)
                 nodePaths[nid - 1] = d
                 nodeTypes[nid - 1] = "drive"
@@ -313,8 +314,8 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
             if dv != null {
                 for dv.len() to i {
                     string d = dv[i]
-                    Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png")}
-                    int nid = tree.add_child(id, node)
+Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png"), imageExpanded: imgPath("filetypes/folder_2.png")}
+int nid = tree.add_child(id, node)
                     ensureNodeArr(nid)
                     nodePaths[nid - 1] = d
                     nodeTypes[nid - 1] = "drive"
@@ -900,7 +901,7 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
     // ===================== 书签/收藏夹 =====================
 
     func loadBookmarks() {
-        bookmarkFile = dirs.join(dirs.dirname(imgDir), "bookmarks.json")
+        bookmarkFile = dirs.join(dirs.script_dir(), "bookmarks.json")
         if dirs.exists(bookmarkFile) {
             var data = jsons.read_file(bookmarkFile)
             if data is Dict {
@@ -1018,9 +1019,16 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
         toolbar = SDL3.createHBox({x:0, y:0, w:100, h:TOOLBAR_H, padX:4, padY:2, spacing:4})
         mainLayout.add(toolbar, {grow:0, shrink:0, basis:TOOLBAR_H, align:3})
 
-        pathCombo = SDL3.createComboBox({x:0, y:0, w:300, h:28, font_size:14, placeholder:"选择或浏览目录...", popup_h:300, bg_rgb:[20,22,28], text_rgb:[235,240,255]})
-        toolbar.add(pathCombo, {grow:1, shrink:1, align:3})
-        pathCombo.on_change(func(int idx) { onComboChange(idx) })
+pathCombo = SDL3.createComboBox({x:0, y:0, w:300, h:28, font_size:14, editable:true, placeholder:"输入路径或选择历史...", popup_h:300, bg_rgb:[20,22,28], text_rgb:[235,240,255]})
+toolbar.add(pathCombo, {grow:1, shrink:1, align:3})
+pathCombo.on_change(func(int idx) { onComboChange(idx) })
+pathCombo.on_enter(func(string text) {
+    if text == "" { return }
+    if dirs.is_dir(text) { openDir(text); return }
+    string j = dirs.join(curDir, text)
+    if dirs.is_dir(j) { openDir(j); return }
+    statusLbl.set_text("路径不存在: " + text)
+})
 
         var btnOpen = iconBtn("open.png")
         toolbar.add(btnOpen, {grow:0, shrink:0, basis:32, align:3})
@@ -1272,7 +1280,7 @@ win.addShortcut("Ctrl+C", func() { doCopy("") })
 win.addShortcut("Ctrl+X", func() { doCut("") })
 win.addShortcut("Ctrl+V", func() { doPaste() })
 win.setShortcutGuard(func(): bool {
-    return pathSearch.is_focused() or table.is_editing()
+    return pathSearch.is_focused() or table.is_editing() or pathCombo.is_editing()
 })
 
 win.run(

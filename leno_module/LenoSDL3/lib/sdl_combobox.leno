@@ -8,6 +8,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.Theme
 import "sdl_image.leno" as img
+import "sdl_edit.leno" as edt; use edt.Edit
 
 export struct ComboBox impl Widget {
     float x = 0.0, y = 0.0, w = 200.0, h = 30.0
@@ -32,7 +33,11 @@ export struct ComboBox impl Widget {
     bool _draggingScroll = false
     float _sbDragOffset = 0.0
     func(int):void _onChange
+    func(string):void _onEnter     // 可编辑模式：回车回调
     Ptr[u8]? _winHnd            // 所属窗口句柄：下拉层按窗口隔离绘制；面板/Tab 嵌套未拿到句柄则为 null
+    // ===== 可编辑模式 =====
+    bool _editable = false       // 是否可编辑（内嵌 Edit 控件）
+    Edit? _edit                 // 内嵌编辑框（懒创建）
 
     // ==================== 每项图标支持（对齐 Table._rowImages / TreeView image） ====================
     Array[string] _itemImages = []    // 每项图标路径（与 items 平行，空串=无图标）
@@ -122,6 +127,11 @@ export struct ComboBox impl Widget {
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
         _open = false; _scroll = 0.0; _hover = -1   // 重置：收起弹层、滚动归零、悬停行清除
+        _editable = opts.get("editable", false)
+        if _editable and _edit == null {
+            _edit = edt.createEdit({x:x+4, y:y+1, w:w-24, h:h-2, font_size:_fontSize, border:false, radius:0, placeholder:_placeholder, bg_rgb:[br,bg,bb], text_rgb:[tr,tg,tb]})
+            _edit.on_enter(func() { if _onEnter != null { _onEnter(_edit.get_text()) } })
+        }
         _ensure_font()
         _loaded = true
     }
@@ -156,6 +166,7 @@ export struct ComboBox impl Widget {
     func set_selected(int idx) {
         if idx < 0 or idx >= items.len() { return }
         _sel = idx
+        if _editable and _edit != null and not _edit.is_focused() { _edit.set_text(items[_sel]) }
         if _onChange != null { _onChange(_sel) }
     }
     func close() { _open = false }
@@ -182,6 +193,11 @@ export struct ComboBox impl Widget {
     }
 
     func on_change(func(int):void cb) { _onChange = cb }
+    func on_enter(func(string):void cb) { _onEnter = cb }
+    func set_editable(bool e) { _editable = e }
+    func is_editing(): bool { return _editable and _edit != null and _edit.is_focused() }
+    func get_text(): string { if _editable and _edit != null { return _edit.get_text() }; return get_selected_text() }
+    func set_text(string t) { if _editable and _edit != null { _edit.set_text(t) } }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
@@ -234,7 +250,23 @@ export struct ComboBox impl Widget {
 
         float mx = ev.mouseX(); float my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
-        // 弹层捕获：光标落在“他人的下拉弹层”范围内、且本框未展开时，忽略该事件
+
+        // ★ 可编辑模式：Edit 聚焦时，键盘/文本事件路由给 Edit
+        if _editable and _edit != null and _edit.is_focused() {
+            _edit.set_pos(x + 4, y + 1); _edit.set_size(w - 24, h - 2)
+            _edit.process(ev)
+            // 点击箭头区域：展开/收起下拉
+            if ev.isMouseButtonDown() and contains(mx, my) and mx >= x + w - 20.0 {
+                if not _open { _open = true; _scroll = 0.0; if _sel >= 0 { float iy = _sel * _itemH; if iy + _itemH > _ph() { _scroll = iy + _itemH - _ph() }; _clamp_scroll() } }
+                else { _open = false }
+                _edit.blur()
+            } eif ev.isMouseButtonDown() and not _edit.contains(mx, my) {
+                _edit.blur()
+            }
+            return
+        }
+
+        // 弹层捕获：光标落在"他人的下拉弹层"范围内、且本框未展开时，忽略该事件
         if core.inPopupCapture(mx, my) and not _open { return }
 
         // 拖拽结束
@@ -292,6 +324,11 @@ export struct ComboBox impl Widget {
         if ev.isMouseButtonDown() {
             if not _open {
                 if contains(mx, my) {
+                    // ★ 可编辑模式：点击文本区域聚焦 Edit（不展开弹层）
+                    if _editable and _edit != null and mx < x + w - 20.0 {
+                        _edit.set_pos(x + 4, y + 1); _edit.set_size(w - 24, h - 2)
+                        _edit.focus(); return
+                    }
                     _open = true
                     _scroll = 0.0
                     if _sel >= 0 {
@@ -328,6 +365,19 @@ export struct ComboBox impl Widget {
 
         // 当前文字 + 图标
         float textX = x + 8.0
+        // ★ 可编辑模式：渲染 Edit 代替静态文字
+        if _editable and _edit != null {
+            _edit.set_pos(x + 4, y + 1); _edit.set_size(w - 24, h - 2)
+            _edit.render(r)
+            // 下拉箭头
+            float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
+            r.setColor(_bdrR + 60, _bdrG + 60, _bdrB + 60, 255)
+            r.drawTriangle(ax + aw / 2.0, ay, aw / 2.0, 180.0, _bdrR + 60, _bdrG + 60, _bdrB + 60, 255)
+            // 边框
+            r.setColor(_bdrR, _bdrG, _bdrB, 220)
+            r.drawRoundedRect(x, y, w, h, 6.0)
+            return
+        }
         if _font.ok {
             // 选中项图标
             if _sel >= 0 and _sel < _itemImages.len() and _itemImages[_sel] != "" {
@@ -459,6 +509,7 @@ export struct ComboBox impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        _edit?.dispose()
         _free_img_cache()         // 释放图标纹理缓存
         _unregisterComboBox(self)   // 从下拉框登记表摘除自身，避免窗口销毁后悬空引用累积
     }
