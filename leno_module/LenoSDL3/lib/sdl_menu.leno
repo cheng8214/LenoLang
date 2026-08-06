@@ -28,6 +28,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
+import "sdl_tooltip.leno" as tip
 
 // 单个菜单项（可被子菜单嵌套）
 export struct MenuItem {
@@ -377,6 +378,8 @@ export struct MenuBar impl Widget {
         _ctxAnchor[ctxIdx] = [g[0], g[1]]
         core.setPopupCapture(g[0], g[1], g[2], g[3])
         _setActiveMenu(self)   // 标记本菜单为当前活动菜单（窗口级），供互斥关闭
+        // ★ 弹出上下文菜单时清除 tooltip，避免 tip 浮在菜单上层
+        tip.tipClear()
     }
 
     func _topRects(): Array[Array[float]] {
