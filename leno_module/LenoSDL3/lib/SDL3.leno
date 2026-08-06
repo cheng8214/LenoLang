@@ -37,6 +37,8 @@ import "sdl_spinner.leno" as spn
 import "sdl_groupbox.leno" as gbx
 import "sdl_splitter.leno" as spl
 use spl.Splitter
+import "sdl_drag.leno" as drag
+use drag.DragHint
 
 
 // ==================== 重新导出类型 ====================
@@ -108,6 +110,7 @@ export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButto
 export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
+export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
 export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
 export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
 export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }

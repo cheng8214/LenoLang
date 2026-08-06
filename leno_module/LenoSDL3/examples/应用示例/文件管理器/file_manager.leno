@@ -55,6 +55,7 @@ use SDL3.ComboBox
 use SDL3.HBox
 use SDL3.VBox
 use SDL3.Splitter
+use SDL3.DragHint
 
 // ===================== 文件管理器结构体 =====================
 struct FileManager {
@@ -105,6 +106,7 @@ int           _dragTargetNode = -1
 float         _dragMouseX = 0.0    // 拖拽中鼠标实时位置
 float         _dragMouseY = 0.0
 string        _dragLabel = ""     // 拖拽浮动框显示文字
+DragHint      dragHint            // 拖拽提示框组件
 
     // ===== 应用状态 =====
     bool   wantQuit = false
@@ -1106,6 +1108,7 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
             _dragPending = false
             _dragging = false
             _dragPaths = []
+            dragHint.hide()
         }
 
         // ==================== 拖拽逻辑 ====================
@@ -1138,7 +1141,8 @@ _dragLabel = dirs.basename(_dragPaths[0])
 } else {
 _dragLabel = dirs.basename(_dragPaths[0]) + "  (+" + (_dragPaths.len() - 1) + ")"
 }
-statusLbl.set_text("拖拽 " + _dragPaths.len() + " 项…")
+statusLbl.set_text("拖拽 " + _dragPaths.len() + "  项…")
+dragHint.show(_dragLabel, _dragMouseX, _dragMouseY)
 }
             }
         }
@@ -1146,7 +1150,7 @@ statusLbl.set_text("拖拽 " + _dragPaths.len() + " 项…")
 if ev.isMouseMotion() and _dragging {
 _dragMouseX = ev.mouseX()
 _dragMouseY = ev.mouseY()
-core.markFrameRedraw()   // 拖拽浮动框跟随鼠标，每帧重绘
+dragHint.updatePos(_dragMouseX, _dragMouseY)   // 更新提示框位置（内部调用 markFrameRedraw）
 if tree.contains(ev.mouseX(), ev.mouseY()) {
 int nodeId = tree._id_at(ev.mouseX(), ev.mouseY())
 if nodeId >= 0 {
@@ -1176,6 +1180,7 @@ _dragTargetNode = -1
             _dragPending = false
             _dragPaths = []
             _dragTargetNode = -1
+            dragHint.hide()
         }
 
         // ★ 键盘快捷键已由 Window 快捷键系统自动处理（win.addShortcut 注册），
@@ -1227,31 +1232,9 @@ _dragTargetNode = -1
         openDir(dirs.dirname(dirs.script_dir()))
         updateNavButtons()
 
-// 叠加层回调：拖拽浮动框在所有控件/弹层之上绘制
-// （原 render 回调在控件渲染之前调用，会被 Table/TreeView 等覆盖，导致不可见）
-win.setOverlay(func(Renderer r) {
-    if _dragging and _dragLabel != "" {
-        statusLbl._ensure_font()
-        Font? f = statusLbl._font
-        if f != null and f.ok {
-            StringSize sz = f.measureString(_dragLabel)
-            float padX = 10.0; float padY = 5.0
-            float boxW = sz.w + padX * 2.0
-            float boxH = sz.h + padY * 2.0
-            float bx = _dragMouseX + 14.0
-            float by = _dragMouseY + 14.0
-            float radius = 4.0
-            // 半透明圆角背景
-            r.setColor(30, 60, 120, 220)
-            r.fillRoundedRect(bx, by, boxW, boxH, radius)
-            // 圆角边框
-            r.setColor(80, 140, 220, 255)
-            r.drawRoundedRect(bx, by, boxW, boxH, radius)
-            // 文字
-            r.drawText(f, _dragLabel, bx + padX, by + padY, 255, 255, 255)
-        }
-    }
-})
+// 拖拽提示框组件（可配置样式，封装了字体加载 + 圆角背景 + 文字绘制）
+dragHint = SDL3.createDragHint({})
+win.setOverlay(func(Renderer r) { dragHint.render(r) })
 
 // ==================== 快捷键注册 ====================
 // 框架自动匹配并执行，无需手动判断 scancode/modifier；
