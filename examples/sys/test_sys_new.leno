@@ -4,7 +4,7 @@ main() {
 
     // 测试 _env()
     print("--- _env ---")
-    var path = _env("PATH")
+    var path = _env("PATH") as string
     if path != null {
         print("PATH 存在: true (长度: " + path.len() + ")")
     } else {

@@ -15,6 +15,7 @@ export struct Edit impl Widget {
     string text
     float x = 0.0, y = 0.0, w = 200.0, h = 30.0
     float _radius = 4.0             // 圆角半径
+bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设为 false）
     float _fontSize = 15.0          // 字体大小
     string _fontPath = ""
     int _fontStyle = 0
@@ -241,6 +242,7 @@ export struct Edit impl Widget {
         w           = opts.get("w", 180)
         h           = opts.get("h", 36)
         _radius     = opts.get("radius", 5)
+_drawBorder = opts.get("border", true)
         _fontSize   = opts.get("font_size", 15)
         _fontPath   = opts.get("font_path", "")
         _fontStyle  = opts.get("font_style", 0)
@@ -964,19 +966,24 @@ export struct Edit impl Widget {
 
         // 按住拖动扩展选区
         if _mouseDown and ev.isMouseMotion() and _focused and not _draggingVScroll and not _draggingHScroll {
-            if ev.mouseX() >= x and ev.mouseX() <= x + w
-               and ev.mouseY() >= y and ev.mouseY() <= y + h {
-                if _multiline {
-                    _pos_from_xy(ev.mouseX(), ev.mouseY())
-                } else {
-                    _cursorPos = _pos_from_x(ev.mouseX())
-                }
-                if _cursorPos != _selEnd {
-                    _selEnd = _cursorPos
-                    _selActive = true
-                    _adjust_scroll()
-                    core.markFrameRedraw()
-                }
+            // ★ 鼠标拖出编辑框时，钳制到边界继续扩展选区（避免选中一半）
+            float mx = ev.mouseX()
+            float pad = 8.0
+            if mx < x + pad { mx = x + pad }
+            if mx > x + w - pad { mx = x + w - pad }
+            if _multiline {
+                float my = ev.mouseY()
+                if my < y + pad { my = y + pad }
+                if my > y + h - pad { my = y + h - pad }
+                _pos_from_xy(mx, my)
+            } else {
+                _cursorPos = _pos_from_x(mx)
+            }
+            if _cursorPos != _selEnd {
+                _selEnd = _cursorPos
+                _selActive = true
+                _adjust_scroll()
+                core.markFrameRedraw()
             }
         }
 
@@ -1487,13 +1494,17 @@ export struct Edit impl Widget {
         if not _font.ok { return }
 
         // 背景
-        r.setColor(cr, cg, cb, 255)
-        r.fillRoundedRect(x, y, w, h, _radius)
+        if _drawBorder {
+            r.setColor(cr, cg, cb, 255)
+            r.fillRoundedRect(x, y, w, h, _radius)
+        }
 
         // 边框
-        if _focused { r.setColor(_focusR, _focusG, _focusB, 255) }
-        else         { r.setColor(cr + 40, cg + 40, cb + 40, 220) }
-        r.drawRoundedRect(x, y, w, h, _radius)
+        if _drawBorder {
+            if _focused { r.setColor(_focusR, _focusG, _focusB, 255) }
+            else         { r.setColor(cr + 40, cg + 40, cb + 40, 220) }
+            r.drawRoundedRect(x, y, w, h, _radius)
+        }
 
         if _multiline {
             _render_ml(r)
