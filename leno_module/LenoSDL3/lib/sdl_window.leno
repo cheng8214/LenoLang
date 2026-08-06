@@ -96,6 +96,62 @@ lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
 export alias EventHandler  = func(Event):bool
 export alias RenderCallback = func(Renderer)
 
+// ==================== 快捷键系统 ====================
+// 上层通过 win.addShortcut("Ctrl+C", func() { ... }) 注册快捷键，
+// 框架自动在事件循环中匹配并执行，无需手动判断 scancode/modifier。
+// setShortcutGuard 设置守卫回调：返回 true 时阻止快捷键（如 Edit/Table 编辑中）。
+
+export struct Shortcut {
+    string display    // 显示文本: "Ctrl+C", "F5", "Backspace"
+    int scancode      // 解析后的 scancode
+    int modFlags      // bit 0=Ctrl, 1=Shift, 2=Alt, 3=GUI
+    func():void callback
+    bool enabled = true
+}
+
+// 键名 → scancode 映射表（懒加载）
+Dict _keyNameMap = null
+
+func _ensureKeyNameMap() {
+    if _keyNameMap != null { return }
+    _keyNameMap = {
+        "F1": 58, "F2": 59, "F3": 60, "F4": 61, "F5": 62, "F6": 63,
+        "F7": 64, "F8": 65, "F9": 66, "F10": 67, "F11": 68, "F12": 69,
+        "BACKSPACE": 42, "DELETE": 76, "DEL": 76, "INSERT": 73,
+        "ESCAPE": 41, "ESC": 41, "RETURN": 40, "ENTER": 40, "SPACE": 44, "TAB": 43,
+        "HOME": 74, "END": 77, "PAGEUP": 75, "PAGEUP": 75, "PAGEDOWN": 78,
+        "LEFT": 80, "RIGHT": 79, "UP": 82, "DOWN": 81,
+        "A": 4, "B": 5, "C": 6, "D": 7, "E": 8, "F": 9, "G": 10,
+        "H": 11, "I": 12, "J": 13, "K": 14, "L": 15, "M": 16,
+        "N": 17, "O": 18, "P": 19, "Q": 20, "R": 21, "S": 22,
+        "T": 23, "U": 24, "V": 25, "W": 26, "X": 27, "Y": 28, "Z": 29,
+        "0": 39, "1": 30, "2": 31, "3": 32, "4": 33, "5": 34,
+        "6": 35, "7": 36, "8": 37, "9": 38
+    }
+}
+
+// 解析快捷键字符串: "Ctrl+C" → {scancode, modFlags}
+func _parseShortcut(string key): Dict {
+    _ensureKeyNameMap()
+    int mods = 0  // bit 0=Ctrl, 1=Shift, 2=Alt, 3=GUI
+    string k = key
+    while true {
+        if k.starts_with("Ctrl+") {
+            mods = mods | 1; k = k.slice(5, k.len())
+        } eif k.starts_with("Shift+") {
+            mods = mods | 2; k = k.slice(6, k.len())
+        } eif k.starts_with("Alt+") {
+            mods = mods | 4; k = k.slice(4, k.len())
+        } eif k.starts_with("GUI+") {
+            mods = mods | 8; k = k.slice(4, k.len())
+        } else {
+            break
+        }
+    }
+    int sc = _int(_keyNameMap.get(k.to_upper(), 0))
+    return {scancode: sc, mods: mods}
+}
+
 // 多窗口回调缓存
 Array[int]             _runWids   = []
 Array[Ptr[u8]]            _runHnds   = []
@@ -115,8 +171,40 @@ Array[int]             _runH     = []     // 各窗口逻辑高
 Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
 Array[bool]            _runTransparent = []    // 各窗口是否透明（跳过背景填充）
 Array[RenderCallback]  _runOverlays = []    // 各窗口叠加层回调（在所有控件/弹层/Tooltip 之上、present 之前调用）
+Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
+Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
 var _runLoopActive = false    // 主循环是否已在运行
 Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
+
+// 模块级快捷键尝试匹配（事件循环中调用，必须在 _runShortcuts/_runShortcutGuards 定义之后）
+func _tryShortcut(int winIdx, Event ev): bool {
+    if winIdx >= _runShortcuts.len() { return false }
+    var shortcuts = _runShortcuts[winIdx]
+    if shortcuts.len() == 0 { return false }
+    var guard = _runShortcutGuards[winIdx]
+    if guard != null {
+        if guard() { return false }
+    }
+    int sc = ev.scancode()
+    int mod = ev.keyMod()
+    bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+    bool shift = (mod & 1) != 0 or (mod & 2) != 0
+    bool alt = (mod & 4) != 0 or (mod & 8) != 0
+    bool gui = (mod & 16) != 0 or (mod & 32) != 0
+    for shortcuts.len() to si {
+        Shortcut s = shortcuts[si]
+        if not s.enabled { continue }
+        if s.scancode != sc { continue }
+        int mf = s.modFlags
+        if (mf & 1) != 0 and not ctrl { continue }
+        if (mf & 2) != 0 and not shift { continue }
+        if (mf & 4) != 0 and not alt { continue }
+        if (mf & 8) != 0 and not gui { continue }
+        if s.callback != null { s.callback() }
+        return true
+    }
+    return false
+}
 
 // 推入模态窗口（runModal 内部调用）
 export func pushModal(int w) { _modalStack.add(w) }
@@ -182,10 +270,36 @@ export struct Window {
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
     bool _transparent = false          // 透明窗口（跳过背景填充）
     any _overlay = null                 // 叠加层渲染回调（setOverlay 设置，在所有控件/弹层之上绘制）
+    Array[Shortcut] _shortcuts = []    // 本窗口注册的快捷键
+    func():bool _shortcutGuard = null  // 快捷键守卫：返回 true 时阻止快捷键
 
     // 设置叠加层渲染回调（在所有控件和弹层渲染之后、present 之前调用）
     // 用途：拖拽浮动框、自定义全局浮层等需要绘制在所有控件之上的场景
     func setOverlay(RenderCallback cb) { _overlay = cb }
+
+    // ==================== 快捷键注册 ====================
+    // 注册快捷键，key 格式: "F5", "Backspace", "Ctrl+C", "Ctrl+Shift+S"
+    // 返回 Shortcut 对象，可通过 .enabled = false 临时禁用
+    func addShortcut(string key, func():void cb): Shortcut {
+        var parsed = _parseShortcut(key)
+        Shortcut s = new Shortcut()
+        s.display = key
+        s.scancode = parsed.get("scancode", 0)
+        s.modFlags = parsed.get("mods", 0)
+        s.callback = cb
+        _shortcuts.add(s)
+        return s
+    }
+
+    // 移除已注册的快捷键
+    func removeShortcut(Shortcut s) {
+        for _shortcuts.len() to i {
+            if _shortcuts[i] == s { _shortcuts.remove(i); return }
+        }
+    }
+
+    // 设置守卫回调：返回 true 时阻止所有快捷键（如 Edit/Table 编辑中）
+    func setShortcutGuard(func():bool guard) { _shortcutGuard = guard }
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -757,6 +871,8 @@ export struct Window {
         _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
         _runTransparent.add(_transparent)    // 透明窗口标志
         _runOverlays.add(_overlay)           // 叠加层回调（可空）
+        _runShortcuts.add(_shortcuts)          // 快捷键列表
+        _runShortcutGuards.add(_shortcutGuard) // 快捷键守卫
     }
 
     // 运行主循环（回调模式，支持多窗口）
@@ -904,7 +1020,12 @@ export struct Window {
                 }
                 for _runWids.len() to i {
                     if _runWids[i] == wid {
-                        if not _runEvts[i](ev) or ev.isWindowClose() {
+                        // ★ 快捷键优先处理：键按下事件先尝试匹配已注册快捷键，
+                        //   匹配成功则跳过用户事件处理器（避免重复处理）；
+                        //   守卫回调返回 true 时阻止快捷键（如 Edit/Table 编辑中）
+                        bool _shortcutHandled = false
+                        if ev.isKeyDown() { _shortcutHandled = _tryShortcut(i, ev) }
+                        if not _shortcutHandled and (not _runEvts[i](ev) or ev.isWindowClose()) {
                             // 模态窗口关闭：弹出栈并恢复焦点到父窗口
                             int _restoreWid = -1
                             if _isModal() and _runWids[i] == _modalTop() {
@@ -930,6 +1051,7 @@ export struct Window {
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
                             _runDialogHidden.remove(i); _runTransparent.remove(i)
                             _runOverlays.remove(i)
+                            _runShortcuts.remove(i); _runShortcutGuards.remove(i)
                             // 恢复焦点到父窗口（非模态关闭时 _restoreWid 为 -1，跳过）
                             if _restoreWid >= 0 { raiseWindow(_restoreWid) }
                             break

@@ -697,43 +697,46 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
     // --- 菜单栏 ---
 
     func onMenuSelect(string menu, string id) {
-        if id == "openfolder" {
-            fdlg.showOpenFolderDialog(win, func(Array[string] paths, int filter) {
-                if paths != null and paths.len() > 0 { openDir(paths[0]) }
-            }, {default_location: curDir})
-        }
-        eif id == "newfolder" { newFolder() }
-        eif id == "newfile"   { newFile() }
-        eif id == "copy"      { if selPath != "" { doCopy(selPath) } }
-        eif id == "cut"       { if selPath != "" { doCut(selPath) } }
-        eif id == "paste"     { doPaste() }
-        eif id == "del"       { if selPath != "" { doDeletePath(selPath, selIsDir) } }
-        eif id == "refresh"   { openDir(curDir) }
-        eif id == "up"        { goUp() }
-        eif id == "exit"      { wantQuit = true }
-        eif id == "about"     { about.show() }
-        // 书签菜单：添加当前目录
-        eif id == "add_bookmark_cur" {
-            if curDir != "" {
-                addBookmark(dirs.basename(curDir), curDir)
-                statusLbl.set_text("已添加书签: " + curDir)
+        switch id {
+            case "openfolder" {
+                fdlg.showOpenFolderDialog(win, func(Array[string] paths, int filter) {
+                    if paths != null and paths.len() > 0 { openDir(paths[0]) }
+                }, {default_location: curDir})
             }
-        }
-        // 书签菜单：点击书签项跳转
-        for bookmarks.len() to i {
-            if id == "bm_" + i {
-                string pp = bookmarks[i].get("path", "")
-                if pp != "" and dirs.is_dir(pp) { openDir(pp) }
-                return
+            case "newfolder" { newFolder() }
+            case "newfile"   { newFile() }
+            case "copy"      { if selPath != "" { doCopy(selPath) } }
+            case "cut"       { if selPath != "" { doCut(selPath) } }
+            case "paste"     { doPaste() }
+            case "del"       { if selPath != "" { doDeletePath(selPath, selIsDir) } }
+            case "refresh"   { openDir(curDir) }
+            case "up"        { goUp() }
+            case "exit"      { wantQuit = true }
+            case "about"     { about.show() }
+            case "add_bookmark_cur" {
+                if curDir != "" {
+                    addBookmark(dirs.basename(curDir), curDir)
+                    statusLbl.set_text("已添加书签: " + curDir)
+                }
             }
-        }
-        // 书签菜单：删除书签
-        for bookmarks.len() to i {
-            if id == "del_bm_" + i {
-                string bmName = bookmarks[i].get("name", "")
-                removeBookmark(i)
-                statusLbl.set_text("已删除书签: " + bmName)
-                return
+            default {
+                // 书签菜单：点击书签项跳转
+                for bookmarks.len() to i {
+                    if id == "bm_" + i {
+                        string pp = bookmarks[i].get("path", "")
+                        if pp != "" and dirs.is_dir(pp) { openDir(pp) }
+                        return
+                    }
+                }
+                // 书签菜单：删除书签
+                for bookmarks.len() to i {
+                    if id == "del_bm_" + i {
+                        string bmName = bookmarks[i].get("name", "")
+                        removeBookmark(i)
+                        statusLbl.set_text("已删除书签: " + bmName)
+                        return
+                    }
+                }
             }
         }
     }
@@ -847,35 +850,27 @@ string        _dragLabel = ""     // 拖拽浮动框显示文字
 
     func onContextSelect(int row, string id) {
         if row < 0 {
-            if id == "newfolder" { newFolder() }
-            eif id == "newfile" { newFile() }
-            eif id == "paste" { doPaste() }
-            eif id == "refresh" { openDir(curDir) }
+            switch id {
+                case "newfolder" { newFolder() }
+                case "newfile"   { newFile() }
+                case "paste"     { doPaste() }
+                case "refresh"   { openDir(curDir) }
+            }
             return
         }
         var r = table.get_row(row)
         if r.len() < 5 { return }
         string p = r[3]; bool isDir = (r[4] == "1")
-        if id == "open" {
-            selPath = p; selIsDir = isDir; openSelected()
-        } eif id == "copyfile" {
-            doCopy(p)
-        } eif id == "cutfile" {
-            doCut(p)
-        } eif id == "paste" {
-            doPaste()
-        } eif id == "rename" {
-            renameOldPath = p
-            table.begin_edit(row, 0)
-        } eif id == "del" {
-            doDeletePath(p, isDir)
-        } eif id == "newfolder" {
-            newFolder()
-        } eif id == "addbookmark" {
-            addBookmark(dirs.basename(p), p)
-            statusLbl.set_text("已添加书签: " + p)
-        } eif id == "props" {
-            props.show(p, isDir)
+        switch id {
+            case "open"        { selPath = p; selIsDir = isDir; openSelected() }
+            case "copyfile"    { doCopy(p) }
+            case "cutfile"     { doCut(p) }
+            case "paste"       { doPaste() }
+            case "rename"      { renameOldPath = p; table.begin_edit(row, 0) }
+            case "del"         { doDeletePath(p, isDir) }
+            case "newfolder"   { newFolder() }
+            case "addbookmark" { addBookmark(dirs.basename(p), p); statusLbl.set_text("已添加书签: " + p) }
+            case "props"       { props.show(p, isDir) }
         }
     }
 
@@ -1183,38 +1178,8 @@ _dragTargetNode = -1
             _dragTargetNode = -1
         }
 
-        // ==================== 键盘快捷键 ====================
-        if ev.isKeyDown() and not pathSearch.is_focused() and not table.is_editing() {
-            int sc = ev.scancode()
-            int mod = ev.keyMod()
-            bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
-            if sc == core.Scancode.F5 { openDir(curDir); return true }
-            if sc == core.Scancode.F2 {
-                int sr = table.get_selected_row()
-                if sr >= 0 and sr < table.row_count() {
-                    var r = table.get_row(sr)
-                    if r.len() >= 5 {
-                        renameOldPath = r[3]
-                        table.begin_edit(sr, 0)
-                    }
-                }
-                return true
-            }
-            if sc == core.Scancode.BACKSPACE { goUp(); return true }
-            if sc == core.Scancode.DELETE {
-                // ★ 批量删除：优先检查多选
-                Array[int] selRows = table.get_selected_rows()
-                if selRows.len() > 1 {
-                    doDeletePath("", false)
-                } eif selPath != "" {
-                    doDeletePath(selPath, selIsDir)
-                }
-                return true
-            }
-            if ctrl and sc == core.Scancode.C { doCopy(""); return true }
-            if ctrl and sc == core.Scancode.X { doCut(""); return true }
-            if ctrl and sc == core.Scancode.V { doPaste(); return true }
-        }
+        // ★ 键盘快捷键已由 Window 快捷键系统自动处理（win.addShortcut 注册），
+        //   此处不再手动判断 scancode/modifier，避免与框架重复处理。
         return true
     }
 
@@ -1286,6 +1251,36 @@ win.setOverlay(func(Renderer r) {
             r.drawText(f, _dragLabel, bx + padX, by + padY, 255, 255, 255)
         }
     }
+})
+
+// ==================== 快捷键注册 ====================
+// 框架自动匹配并执行，无需手动判断 scancode/modifier；
+// setShortcutGuard 在 Edit/Table 编辑时自动阻止快捷键
+win.addShortcut("F5", func() { openDir(curDir) })
+win.addShortcut("F2", func() {
+    int sr = table.get_selected_row()
+    if sr >= 0 and sr < table.row_count() {
+        var r = table.get_row(sr)
+        if r.len() >= 5 {
+            renameOldPath = r[3]
+            table.begin_edit(sr, 0)
+        }
+    }
+})
+win.addShortcut("Backspace", func() { goUp() })
+win.addShortcut("Delete", func() {
+    Array[int] selRows = table.get_selected_rows()
+    if selRows.len() > 1 {
+        doDeletePath("", false)
+    } eif selPath != "" {
+        doDeletePath(selPath, selIsDir)
+    }
+})
+win.addShortcut("Ctrl+C", func() { doCopy("") })
+win.addShortcut("Ctrl+X", func() { doCut("") })
+win.addShortcut("Ctrl+V", func() { doPaste() })
+win.setShortcutGuard(func(): bool {
+    return pathSearch.is_focused() or table.is_editing()
 })
 
 win.run(

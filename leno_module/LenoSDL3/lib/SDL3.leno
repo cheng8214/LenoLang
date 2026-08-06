@@ -49,7 +49,7 @@ use core.sdl3
 
 use evt.Event
 use r.Renderer
-use wnd.(Window, EventHandler, RenderCallback)
+use wnd.(Window, EventHandler, RenderCallback, Shortcut)
 use fnt.(Font, TextTexture, sdl3_ttf, SDL_SurfaceInfo)
 use tm.(Timer, TimerCallback)
 use btn.Button
