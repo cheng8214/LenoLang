@@ -38,6 +38,7 @@ import "delete_confirm_dialog.leno" as del_confirm
 import "props_dialog.leno" as props
 import dirs
 import files
+import jsons
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Window
@@ -86,6 +87,11 @@ struct FileManager {
     // ===== 导航历史 =====
     Array[string] history = []
     int histIndex = -1
+
+    // ===== 书签/收藏夹 =====
+    Array[Dict]  bookmarks = []
+    int           mBookmarkId = 0
+    string        bookmarkFile = ""
 
     // ===== 应用状态 =====
     bool   wantQuit = false
@@ -693,6 +699,21 @@ struct FileManager {
         eif id == "up"        { goUp() }
         eif id == "exit"      { wantQuit = true }
         eif id == "about"     { about.show() }
+        // 书签菜单：添加当前目录
+        eif id == "add_bookmark_cur" {
+            if curDir != "" {
+                addBookmark(dirs.basename(curDir), curDir)
+                statusLbl.set_text("已添加书签: " + curDir)
+            }
+        }
+        // 书签菜单：点击书签项跳转
+        for bookmarks.len() to i {
+            if id == "bm_" + i {
+                string pp = bookmarks[i].get("path", "")
+                if pp != "" and dirs.is_dir(pp) { openDir(pp) }
+                return
+            }
+        }
     }
 
     // --- 工具栏 ComboBox ---
@@ -793,6 +814,7 @@ struct FileManager {
         table.addContextSeparator()
         if isDir {
             table.addContextItem(ctxItem("在此文件夹内新建文件夹", "newfolder", "new.png"))
+            table.addContextItem(ctxItem("添加到书签", "addbookmark", "normal.png"))
         } else {
             table.addContextItem(ctxItem("属性", "props", "normal.png"))
         }
@@ -827,6 +849,9 @@ struct FileManager {
             doDeletePath(p, isDir)
         } eif id == "newfolder" {
             newFolder()
+        } eif id == "addbookmark" {
+            addBookmark(dirs.basename(p), p)
+            statusLbl.set_text("已添加书签: " + p)
         } eif id == "props" {
             props.show(p, isDir)
         }
@@ -852,6 +877,47 @@ struct FileManager {
         selPath = r[3]; selIsDir = (r[4] == "1"); openSelected()
     }
 
+    // ===================== 书签/收藏夹 =====================
+
+    func loadBookmarks() {
+        bookmarkFile = dirs.join(dirs.script_dir(), "bookmarks.json")
+        if dirs.exists(bookmarkFile) {
+            var data = jsons.read_file(bookmarkFile)
+            if data is Dict {
+                var bms = data.get("bookmarks", [])
+                if bms is Array[Dict] { bookmarks = bms }
+            }
+        }
+    }
+
+    func saveBookmarks() {
+        jsons.write_file(bookmarkFile, {bookmarks: bookmarks})
+    }
+
+    func refreshBookmarkMenu() {
+        bar.clearMenu(mBookmarkId)
+        bar.addItem(mBookmarkId, {label:"添加当前目录到书签", id:"add_bookmark_cur", image:imgPath("new.png")})
+        bar.addSeparator(mBookmarkId)
+        if bookmarks.len() == 0 {
+            bar.addItem(mBookmarkId, {label:"（空）", id:"bm_empty"})
+            bar.setItemEnabled(mBookmarkId, "bm_empty", false)
+        } else {
+            for bookmarks.len() to i {
+                string nm = bookmarks[i].get("name", "")
+                bar.addItem(mBookmarkId, {label:nm, id:"bm_" + i, image:imgPath("filetypes/folder_1.png")})
+            }
+        }
+    }
+
+    func addBookmark(string name, string path) {
+        for bookmarks.len() to i {
+            if bookmarks[i].get("path", "") == path { return }
+        }
+        bookmarks.add({name: name, path: path})
+        saveBookmarks()
+        refreshBookmarkMenu()
+    }
+
     // ===================== UI 构建：菜单栏 =====================
 
     func setupMenuBar() {
@@ -871,6 +937,7 @@ struct FileManager {
         bar.addSeparator(mEditId)
         bar.addItem(mEditId, {label:"删除", id:"del", image:imgPath("delete.png")})
         bar.setItemEnabled(mEditId, "paste", false)
+        mBookmarkId = bar.addMenu("书签")
         int mView = bar.addMenu("视图")
         bar.addItem(mView, {label:"刷新\tF5", id:"refresh", image:imgPath("update.png")})
         bar.addItem(mView, {label:"向上\tBackspace", id:"up", image:imgPath("filetypes/folder_1.png")})
@@ -1015,6 +1082,8 @@ struct FileManager {
         imgDir = dirs.join(dirs.script_dir(), "images")
 
         setupMenuBar()
+        loadBookmarks()
+        refreshBookmarkMenu()
 
         mainLayout = SDL3.createVBox({x:0, y:MENU_H, w:1000, h:680-MENU_H, padX:PAD, padY:PAD, spacing:4})
         win.setRootAt(mainLayout, 0, MENU_H)

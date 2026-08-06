@@ -318,7 +318,12 @@ export struct MenuBar impl Widget {
         var mi = new MenuItem(); mi.separator = true; mi.submenu = []
         _menus[ctxIdx].add(mi)
     }
-    // 清空某上下文菜单的全部项（供调用方在“弹出前”按当前状态动态重建菜单，例如文件/文件夹右键菜单不同）
+    // 清空某顶级菜单的全部项（供动态重建菜单项，如书签列表）
+    func clearMenu(int menuIdx) {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return }
+        _menus[menuIdx] = []
+    }
+    // 清空某上下文菜单的全部项（供调用方在"弹出前"按当前状态动态重建菜单，例如文件/文件夹右键菜单不同）
     func clearContextItems(int ctxIdx) {
         if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
         _menus[ctxIdx] = []
