@@ -93,6 +93,14 @@ struct FileManager {
     int           mBookmarkId = 0
     string        bookmarkFile = ""
 
+    // ===== 拖拽状态 =====
+    bool          _dragPending = false
+    bool          _dragging = false
+    float         _dragStartX = 0.0
+    float         _dragStartY = 0.0
+    Array[string] _dragPaths = []
+    int           _dragTargetNode = -1
+
     // ===== 应用状态 =====
     bool   wantQuit = false
     string imgDir = ""
@@ -940,6 +948,39 @@ struct FileManager {
         refreshBookmarkMenu()
     }
 
+    // ===================== 拖拽移动 =====================
+
+    func moveFilesTo(string targetDir) {
+        int okCount = 0
+        for _dragPaths.len() to i {
+            string src = _dragPaths[i]
+            string nm = dirs.basename(src)
+            string target = dirs.join(targetDir, nm)
+            if src == target { continue }
+            if dirs.exists(target) {
+                string nameNoExt = nm
+                string ext = dirs.extname(nm)
+                if ext != "" and ext != "." {
+                    nameNoExt = nm.slice(0, nm.len() - ext.len())
+                }
+                int n = 1
+                while dirs.exists(target) {
+                    n = n + 1
+                    target = dirs.join(targetDir, nameNoExt + " - 副本 (" + n + ")" + ext)
+                }
+            }
+            if dirs.rename(src, target) {
+                okCount = okCount + 1
+            }
+        }
+        if okCount > 0 {
+            statusLbl.set_text("已移动 " + okCount + " 项到 " + dirs.basename(targetDir))
+            openDir(curDir)
+        } else {
+            statusLbl.set_text("移动失败或目标相同")
+        }
+    }
+
     // ===================== UI 构建：菜单栏 =====================
 
     func setupMenuBar() {
@@ -1058,6 +1099,67 @@ struct FileManager {
 
     func handleKeyboard(Event ev): bool {
         if wantQuit or ev.isQuit() { return false }
+
+        // ==================== 拖拽逻辑 ====================
+        // 鼠标按下 Table 时记录起点，等待移动阈值触发拖拽
+        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+            if table.contains(ev.mouseX(), ev.mouseY()) {
+                _dragStartX = ev.mouseX()
+                _dragStartY = ev.mouseY()
+                _dragPending = true
+                _dragging = false
+                _dragTargetNode = -1
+            }
+        }
+
+        // 鼠标移动：超过阈值进入拖拽模式，追踪 TreeView 放置目标
+        if ev.isMouseMotion() and _dragPending and not _dragging {
+            float dx = ev.mouseX() - _dragStartX
+            float dy = ev.mouseY() - _dragStartY
+            if (dx * dx + dy * dy) > 25.0 {
+                _dragPaths = getSelectedPaths()
+                if _dragPaths.len() > 0 {
+                    _dragging = true
+                    statusLbl.set_text("拖拽 " + _dragPaths.len() + " 项…")
+                }
+            }
+        }
+
+        if ev.isMouseMotion() and _dragging {
+            if tree.contains(ev.mouseX(), ev.mouseY()) {
+                int nodeId = tree._id_at(ev.mouseX(), ev.mouseY())
+                if nodeId >= 0 {
+                    string tp = nodeType(nodeId)
+                    if tp == "folder" or tp == "drive" {
+                        _dragTargetNode = nodeId
+                        core.requestCursor(core.SystemCursor.MOVE)
+                    } else {
+                        _dragTargetNode = -1
+                        core.requestCursor(core.SystemCursor.NOT_ALLOWED)
+                    }
+                } else {
+                    _dragTargetNode = -1
+                }
+            } else {
+                _dragTargetNode = -1
+            }
+        }
+
+        // 鼠标释放：在 TreeView 文件夹上释放则执行移动
+        if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
+            if _dragging and _dragTargetNode >= 0 {
+                string targetPath = nodePath(_dragTargetNode)
+                if targetPath != "" and dirs.is_dir(targetPath) {
+                    moveFilesTo(targetPath)
+                }
+            }
+            _dragging = false
+            _dragPending = false
+            _dragPaths = []
+            _dragTargetNode = -1
+        }
+
+        // ==================== 键盘快捷键 ====================
         if ev.isKeyDown() and not pathSearch.is_focused() {
             int sc = ev.scancode()
             int mod = ev.keyMod()
