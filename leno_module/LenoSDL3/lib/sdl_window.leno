@@ -925,6 +925,11 @@ export struct Window {
                                 bar.set_size(_float(pt.x), bar.get_h())
                                 bar.setWindowSize(pt.x, pt.y)
                             }
+                            // ★ 自动同步窗口尺寸到所有子控件（Table/TreeView 等内部菜单需要）
+                            var widgets = _runWidgets[k]
+                            for widgets.len() to w {
+                                widgets[w].on_window_resize(pt.x, pt.y)
+                            }
                             pt.free()
                             break
                         }

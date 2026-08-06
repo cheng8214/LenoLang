@@ -18,4 +18,7 @@ export face Widget {
     func render(Renderer r)
     // 释放资源（字体、纹理等）
     func dispose()
+    // ★ 窗口尺寸变化时回调（可选实现，默认空）
+    // 用于 Table/TreeView 等内部有上下文菜单的控件同步窗口尺寸到菜单
+    func on_window_resize(int ww, int hh)
 }

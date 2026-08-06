@@ -589,6 +589,10 @@ export struct Table impl Widget {
         _winW = ww; _winH = hh
         _ctxMenu?.setWindowSize(ww, hh)
     }
+    // ★ Widget 接口：窗口 resize 时自动同步尺寸到内部菜单
+    func on_window_resize(int ww, int hh) {
+        set_window_size(ww, hh)
+    }
     // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
     func set_window_handle(Ptr[u8] hwnd) {
         _hwnd = hwnd
