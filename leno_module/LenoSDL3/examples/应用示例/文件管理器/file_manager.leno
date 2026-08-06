@@ -714,6 +714,15 @@ struct FileManager {
                 return
             }
         }
+        // 书签菜单：删除书签
+        for bookmarks.len() to i {
+            if id == "del_bm_" + i {
+                string bmName = bookmarks[i].get("name", "")
+                removeBookmark(i)
+                statusLbl.set_text("已删除书签: " + bmName)
+                return
+            }
+        }
     }
 
     // --- 工具栏 ComboBox ---
@@ -880,7 +889,7 @@ struct FileManager {
     // ===================== 书签/收藏夹 =====================
 
     func loadBookmarks() {
-        bookmarkFile = dirs.join(dirs.script_dir(), "bookmarks.json")
+        bookmarkFile = dirs.join(dirs.dirname(imgDir), "bookmarks.json")
         if dirs.exists(bookmarkFile) {
             var data = jsons.read_file(bookmarkFile)
             if data is Dict {
@@ -906,6 +915,12 @@ struct FileManager {
                 string nm = bookmarks[i].get("name", "")
                 bar.addItem(mBookmarkId, {label:nm, id:"bm_" + i, image:imgPath("filetypes/folder_1.png")})
             }
+            bar.addSeparator(mBookmarkId)
+            int delParent = bar.addItem(mBookmarkId, {label:"删除书签", id:"bm_del_parent", image:imgPath("delete.png")})
+            for bookmarks.len() to i {
+                string nm = bookmarks[i].get("name", "")
+                bar.addSubmenuItem(mBookmarkId, delParent, {label:nm, id:"del_bm_" + i, image:imgPath("delete.png")})
+            }
         }
     }
 
@@ -914,6 +929,13 @@ struct FileManager {
             if bookmarks[i].get("path", "") == path { return }
         }
         bookmarks.add({name: name, path: path})
+        saveBookmarks()
+        refreshBookmarkMenu()
+    }
+
+    func removeBookmark(int idx) {
+        if idx < 0 or idx >= bookmarks.len() { return }
+        bookmarks.remove(idx)
         saveBookmarks()
         refreshBookmarkMenu()
     }
@@ -939,8 +961,8 @@ struct FileManager {
         bar.setItemEnabled(mEditId, "paste", false)
         mBookmarkId = bar.addMenu("书签")
         int mView = bar.addMenu("视图")
-        bar.addItem(mView, {label:"刷新\tF5", id:"refresh", image:imgPath("update.png")})
-        bar.addItem(mView, {label:"向上\tBackspace", id:"up", image:imgPath("filetypes/folder_1.png")})
+        bar.addItem(mView, {label:"刷新", shortcut:"F5", id:"refresh", image:imgPath("update.png")})
+        bar.addItem(mView, {label:"向上", shortcut:"Backspace", id:"up", image:imgPath("filetypes/folder_1.png")})
         int mHelp = bar.addMenu("帮助")
         bar.addItem(mHelp, {label:"关于", id:"about", image:imgPath("about.png")})
         bar.on_select(func(string menu, string id) { onMenuSelect(menu, id) })
