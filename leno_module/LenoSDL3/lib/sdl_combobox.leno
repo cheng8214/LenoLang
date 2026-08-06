@@ -129,8 +129,10 @@ export struct ComboBox impl Widget {
         _open = false; _scroll = 0.0; _hover = -1   // 重置：收起弹层、滚动归零、悬停行清除
         _editable = opts.get("editable", false)
         if _editable and _edit == null {
-            _edit = edt.createEdit({x:x+4, y:y+1, w:w-24, h:h-2, font_size:_fontSize, border:false, radius:0, placeholder:_placeholder, bg_rgb:[br,bg,bb], text_rgb:[tr,tg,tb]})
+            _edit = edt.createEdit({x:x+4, y:y+1, w:w-24, h:h-2, font_size:_fontSize, border:false, draw_bg:false, radius:0, placeholder:_placeholder, text_rgb:[tr,tg,tb]})
             _edit.on_enter(func() { if _onEnter != null { _onEnter(_edit.get_text()) } })
+            // ★ 同步初始选中项文本到 Edit（selected 在 set 前面已解析）
+            if _sel >= 0 and _sel < items.len() { _edit.set_text(items[_sel]) }
         }
         _ensure_font()
         _loaded = true

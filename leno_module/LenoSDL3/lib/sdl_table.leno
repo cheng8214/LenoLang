@@ -318,7 +318,7 @@ export struct Table impl Widget {
         _ensure_font()
         _clamp_scroll()
         // 编辑框（朴素写法：在 sdl_table 内部经模块别名 edt 创建，触发传递加载别名 bug）
-        _edit = edt.createEdit({x:0, y:0, w:w, h:_rowH, font_size:_fontSize, border:false, radius:0})
+        _edit = edt.createEdit({x:0, y:0, w:w, h:_rowH, font_size:_fontSize, border:false, draw_bg:true, radius:2})
         _editing = false
         _editRow = -1; _editCol = -1
         // 内嵌右击上下文菜单（首次 set 时创建，避免重复注册到全局菜单注册表）
@@ -1379,6 +1379,12 @@ export struct Table impl Widget {
                     // 复选框列：绘制行复选框
                     if c == _checkCol and _checkCol >= 0 {
                         _draw_checkbox(r, cx, cw, ry, _rowH, is_row_checked(ri), false)
+                        r.setColor(_sepR, _sepG, _sepB, 70)
+                        r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
+                        continue
+                    }
+                    // ★ 跳过正在编辑的单元格：Edit 控件会自行绘制，避免文字叠加重叠
+                    if _editing and ri == _editRow and c == _editCol {
                         r.setColor(_sepR, _sepG, _sepB, 70)
                         r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
                         continue

@@ -16,6 +16,7 @@ export struct Edit impl Widget {
     float x = 0.0, y = 0.0, w = 200.0, h = 30.0
     float _radius = 4.0             // 圆角半径
 bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设为 false）
+    bool _drawBg = true              // 是否绘制背景（默认 true；Table 内嵌需背景遮住单元格文字）
     float _fontSize = 15.0          // 字体大小
     string _fontPath = ""
     int _fontStyle = 0
@@ -184,6 +185,9 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         float visW = w - pad * 2.0
         if visW <= 0 { return }
         float curX = _text_width_to(_cursorPos)
+        // ★ 全文宽度 ≤ 可视宽度时强制归零（避免 Edit 被 set_size 加宽后 scroll 残留导致开头被裁）
+        float fullW = _text_width_to(text.len())
+        if fullW <= visW { _scrollX = 0.0; return }
         if curX - _scrollX > visW { _scrollX = curX - visW + 4.0 }
         if curX - _scrollX < 0 { _scrollX = curX - 4.0 }
         if _scrollX < 0 { _scrollX = 0 }
@@ -243,6 +247,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         h           = opts.get("h", 36)
         _radius     = opts.get("radius", 5)
 _drawBorder = opts.get("border", true)
+        _drawBg = opts.get("draw_bg", true)
         _fontSize   = opts.get("font_size", 15)
         _fontPath   = opts.get("font_path", "")
         _fontStyle  = opts.get("font_style", 0)
@@ -317,10 +322,11 @@ _drawBorder = opts.get("border", true)
     // ==================== 设置方法 ====================
     func set_text(string t) {
         text = t; _cursorPos = text.len(); _cursorLine = 0; _cursorCol = 0
+        _scrollX = 0.0   // ★ 强制归零：避免短文本替换长文本时 scroll 残留导致显示不完整
         _dirty = true; _adjust_scroll()
     }
     func set_pos(float px, float py)    { x = px; y = py }
-    func set_size(float sw, float sh)   { w = sw; h = sh }
+    func set_size(float sw, float sh)   { w = sw; h = sh; _adjust_scroll() }
     func get_w(): float                 { return w }
     func get_h(): float                 { return h }
     func set_bg(int r, int g, int b)    { cr = r; cg = g; cb = b }
@@ -1493,13 +1499,13 @@ _drawBorder = opts.get("border", true)
         _ensure_font()
         if not _font.ok { return }
 
-        // 背景
-        if _drawBorder {
+        // 背景（由 draw_bg 选项控制：ComboBox/SpinBox 嵌入时可关闭，Table 内嵌时开启以遮住单元格文字）
+        if _drawBg {
             r.setColor(cr, cg, cb, 255)
             r.fillRoundedRect(x, y, w, h, _radius)
         }
 
-        // 边框
+        // 边框（由 border 选项控制是否绘制）
         if _drawBorder {
             if _focused { r.setColor(_focusR, _focusG, _focusB, 255) }
             else         { r.setColor(cr + 40, cg + 40, cb + 40, 220) }
