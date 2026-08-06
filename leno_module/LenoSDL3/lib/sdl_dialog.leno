@@ -73,15 +73,21 @@ export func dialogLabel(string text, float fontSize, int r, int g, int b, int al
     return lbl.createLabel({x:0, y:0, w:lw, h:fontSize+6, text:text, font_size:fontSize, text_rgb:[r,g,b], align:0})
 }
 
-// 创建属性行（Label + Value 左右排列，value 自动截断）
-// maxW: value 列的最大宽度（用于截断），一般取 对话框宽 - padX*2 - labelW - spacing
+// 创建属性行（Label + Value 左右排列，value 自动滚动）
+// maxW: value 列的最大宽度（用于滚动/截断），一般取 对话框宽 - padX*2 - labelW - spacing
+//
+// ★ 溢出策略：truncate=2（滚动模式）
+//   - 短文本：正常显示
+//   - 长文本：在 max_w 范围内自动来回滚动（marquee 效果）
+//   - 对比 truncate=1（截断为 ...+tooltip）：路径等长文本用滚动更直观
 export func dialogPropRow(string label, string value, float maxW): HBox {
     // ★ w:1 而非硬编码 300，让 VBox align:3(stretch) 时 cw=innerW 自动撑满
     HBox row = lay.createHBox({x:0, y:0, w:1, h:22, padX:0, padY:0, spacing:8})
     Label l = lbl.createLabel({x:0, y:0, w:80, h:22, text:label, font_size:13, text_rgb:[150,165,185]})
     float vmw = maxW
     if vmw <= 0.0 { vmw = 260.0 }
-    Label v = lbl.createLabel({x:0, y:0, w:260, h:22, text:value, font_size:13, text_rgb:[225,235,255], max_w:vmw, truncate:1})
+    // ★ truncate=2: 滚动模式（长文本自动 marquee 滚动）
+    Label v = lbl.createLabel({x:0, y:0, w:260, h:22, text:value, font_size:13, text_rgb:[225,235,255], max_w:vmw, truncate:2})
     row.add(l, {grow:0, shrink:0, basis:80, align:0})
     row.add(v, {grow:1, shrink:1, align:0})
     return row
