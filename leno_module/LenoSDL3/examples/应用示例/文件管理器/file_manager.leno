@@ -1103,8 +1103,9 @@ DragHint      dragHint            // 拖拽提示框组件
         if wantQuit or ev.isQuit() { return false }
 
         // ★ 安全兜底：模态对话框关闭后可能残留 _dragPending 状态
-        //   （左键点击菜单项时误触发），在非左键按下/非拖拽移动事件时强制清除
-        if _dragPending and not ev.isMouseButtonDown() and not (ev.isMouseMotion() and _dragging) {
+        //   （左键点击菜单项时误触发），仅在非鼠标事件（键盘/窗口等）时强制清除；
+        //   鼠标按下/移动/释放由各自分支处理，不可在此误清
+        if _dragPending and not ev.isMouseButtonDown() and not ev.isMouseMotion() and not ev.isMouseButtonUp() {
             _dragPending = false
             _dragging = false
             _dragPaths = []
