@@ -192,6 +192,7 @@ export struct Table impl Widget {
     }
     func _row_at(float my): int {
         if my < y + _headerH { return -1 }
+        if my > y + h { return -1 }   // ★ 下边界：鼠标在 Table 下方时不应返回有效行
         int idx = _int((my - y - _headerH + _scrollY) / _rowH)
         if idx < 0 or idx >= _rows.len() { return -1 }
         return idx

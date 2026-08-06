@@ -164,8 +164,10 @@ export struct Label impl Widget {
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
         if not ev.isMouseMotion() { return }
-        _wasHover = hover
         float mx = ev.mouseX(); float my = ev.mouseY()
+        // ★ 弹层捕获：与 Button/Toggle 等控件一致，弹层打开时不响应 hover
+        if core.inPopupCapture(mx, my) { hover = false; return }
+        _wasHover = hover
         hover = mx >= x and mx <= x + _w and my >= y and my <= y + _h
         // 截断模式：hover 时显示完整文本
         if hover and _truncate == 1 and max_w > 0.0 and _fullText != "" {
