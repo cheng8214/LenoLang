@@ -1,8 +1,11 @@
-// sdl_dialog.leno — 对话框工厂
+// sdl_dialog.leno — 对话框工厂 + 对话框布局辅助工具
 import "sdl_window.leno" as wnd; use wnd.Window
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core; use core.WindowFlag
+import "sdl_layout.leno" as lay; use lay.(HBox, VBox)
+import "sdl_label.leno" as lbl; use lbl.Label
+import "sdl_button.leno" as btn; use btn.Button
 
 // 模态对话框：默认不在任务栏显示（SDL_WINDOW_UTILITY），
 // 创建时隐藏（HIDDEN），首帧渲染完后自动 show，消除闪现。
@@ -44,4 +47,58 @@ export func createModelessDialog(Dict style): Window {
     win._dialogHidden = true
     style["flags"] = existingFlags
     return win
+}
+
+// ==================== 对话框布局辅助工具 ====================
+// 解决三个问题：
+// 1. Label 的 _align 基于 x 锚点（非 x+_w/2），居中时需用 w:1 让 VBox 定位到中心
+// 2. 按钮行 HBox 需 align:3(stretch) 撑满宽度后 justify:1 居中
+// 3. 属性行 value 列需 max_w + truncate 才能自动截断
+
+// 创建对话框 Label
+// align: 0=左 1=中 2=右（这是 VBox 的交叉轴对齐方式，不是 Label 内部 _align）
+//
+// ★ 关键设计：Label 内部始终用 _align=0（左对齐），由 VBox 的交叉轴 align 控制位置
+//   - align=0(左)：VBox 把 Label 放在 padX 处，文字从那里开始 → 左对齐 ✓
+//   - align=1(中)：VBox 把 Label 左边缘放在窗口中心，文字从中心开始绘制 → 视觉居中 ✓
+//   - align=2(右)：VBox 把 Label 放在右侧，文字从右边开始 → 右对齐 ✓
+//   如果 Label 也设 _align=1，会导致"双重居中"，文字偏移到错误位置！
+//
+// ★ 宽度策略：
+//   - align=0 时用 w:300（配合 VBox align:3 stretch 撑满）
+//   - align=1/2 时用 w:1（VBox 用 _natW=文字宽度 来计算居中位置）
+export func dialogLabel(string text, float fontSize, int r, int g, int b, int align): Label {
+    float lw = if align == 0 then 300.0 else 1.0
+    // ★ Label 内部固定 _align=0（左对齐），由调用方 VBox 的 align 参数控制位置
+    return lbl.createLabel({x:0, y:0, w:lw, h:fontSize+6, text:text, font_size:fontSize, text_rgb:[r,g,b], align:0})
+}
+
+// 创建属性行（Label + Value 左右排列，value 自动截断）
+// maxW: value 列的最大宽度（用于截断），一般取 对话框宽 - padX*2 - labelW - spacing
+export func dialogPropRow(string label, string value, float maxW): HBox {
+    // ★ w:1 而非硬编码 300，让 VBox align:3(stretch) 时 cw=innerW 自动撑满
+    HBox row = lay.createHBox({x:0, y:0, w:1, h:22, padX:0, padY:0, spacing:8})
+    Label l = lbl.createLabel({x:0, y:0, w:80, h:22, text:label, font_size:13, text_rgb:[150,165,185]})
+    float vmw = maxW
+    if vmw <= 0.0 { vmw = 260.0 }
+    Label v = lbl.createLabel({x:0, y:0, w:260, h:22, text:value, font_size:13, text_rgb:[225,235,255], max_w:vmw, truncate:1})
+    row.add(l, {grow:0, shrink:0, basis:80, align:0})
+    row.add(v, {grow:1, shrink:1, align:0})
+    return row
+}
+
+// 创建居中按钮行（HBox 内按钮居中排列）
+// ★ 调用方需将返回的 HBox 添加到 VBox 时使用 {align:3}(stretch) 撑满宽度
+export func dialogButtonRow(Array[Button] buttons, float spacing): HBox {
+    // ★ w:1 而非硬编码 300，让 VBox align:3(stretch) 时 cw=innerW 自动撑满
+    HBox row = lay.createHBox({x:0, y:0, w:1, h:34, padX:0, padY:0, spacing:spacing, justify:1})
+    for buttons.len() to i {
+        row.add(buttons[i], {grow:0, shrink:0, basis:buttons[i].get_w(), align:0})
+    }
+    return row
+}
+
+// 创建弹性间隔（grow:1 把后续内容推到底部）
+export func dialogSpacer(): Label {
+    return lbl.createLabel({x:0, y:0, w:1, h:1, text:""})
 }

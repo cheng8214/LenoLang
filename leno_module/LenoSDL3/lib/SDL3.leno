@@ -122,6 +122,12 @@ export func createDialogWindow(Dict style): Window { return dlg.createDialogWind
 export func createModelessDialog(Dict style): Window { return dlg.createModelessDialog(style) }
 export func runModal(Window win, any onEvent, any onRender) { dlg.runModal(win, onEvent, onRender) }
 
+// ==================== 对话框布局辅助工具（转发 sdl_dialog） ====================
+export func dialogLabel(string text, float fontSize, int r, int g, int b, int align): Label { return dlg.dialogLabel(text, fontSize, r, g, b, align) }
+export func dialogPropRow(string label, string value, float maxW): HBox { return dlg.dialogPropRow(label, value, maxW) }
+export func dialogButtonRow(Array[Button] buttons, float spacing): HBox { return dlg.dialogButtonRow(buttons, spacing) }
+export func dialogSpacer(): Label { return dlg.dialogSpacer() }
+
 
 // ==================== 重新导出类型别名 ====================
 

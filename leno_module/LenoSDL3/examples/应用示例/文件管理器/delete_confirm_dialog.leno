@@ -1,4 +1,4 @@
-// delete_confirm_dialog.leno — 删除确认对话框（模态窗口，自动布局版）
+// delete_confirm_dialog.leno — 删除确认对话框（模态窗口，VBox/HBox 自动布局）
 // 用法：
 //   delete_confirm.show(path, isDir, onConfirm)       — 单项删除确认
 //   delete_confirm.showBatch(count, onConfirm)         — 批量删除确认
@@ -14,23 +14,6 @@ use SDL3.Button
 use SDL3.Widget
 use SDL3.Scancode
 
-// 创建 label 工厂（供布局使用，不注册进窗口）
-func mkLabel(string text, float fontSize, int r, int g, int b, int align): Label {
-    return SDL3.createLabel({x:0, y:0, w:300, h:fontSize+4, text:text, font_size:fontSize, text_rgb:[r,g,b], align:align})
-}
-
-// 创建 label 行（label+value 左右排列），返回 HBox
-func labelRow(string label, string value, int lr, int lg, int lb, int vr, int vg, int vb): HBox {
-    HBox row = SDL3.createHBox({x:0, y:0, w:0, h:20, padX:0, padY:0, spacing:8})
-    Label l = mkLabel(label, 13, lr, lg, lb, 0)
-    l.set_size(70, 20)
-    Label v = mkLabel(value, 13, vr, vg, vb, 0)
-    v.set_size(260, 20)
-    row.add(l, {grow:0, shrink:0, basis:70, align:0})
-    row.add(v, {grow:1, shrink:1, align:0})
-    return row
-}
-
 // 显示删除确认对话框（单项），用户确认后回调 onConfirm
 export func show(string path, bool isDir, func():void onConfirm) {
     string nm = dirs.basename(path)
@@ -40,21 +23,22 @@ export func show(string path, bool isDir, func():void onConfirm) {
     VBox root = SDL3.createVBox({x:0, y:0, w:440, h:220, padX:40, padY:18, spacing:8})
     dlg.setRoot(root)
 
-    root.add(mkLabel("确认删除", 16, 255, 130, 100, 1), {grow:0, shrink:0, align:1})
-    root.add(mkLabel("确定要删除以下" + kind + "吗？此操作无法撤销。", 13, 200, 210, 225, 1), {grow:0, shrink:0, align:1})
-    root.add(labelRow("名称:", nm, 150, 165, 185, 225, 235, 255), {grow:0, shrink:0, align:3})
-    root.add(labelRow("类型:", kind, 150, 165, 185, 225, 235, 255), {grow:0, shrink:0, align:3})
-    root.add(labelRow("路径:", path, 140, 155, 170, 180, 190, 205), {grow:0, shrink:0, align:3})
+    // ★ 居中 label 用 align:1 添加到 VBox（dialogLabel 内部用 w:1 让 VBox 定位到中心）
+    root.add(SDL3.dialogLabel("确认删除", 16, 255, 130, 100, 1), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("确定要删除以下" + kind + "吗？此操作无法撤销。", 13, 200, 210, 225, 1), {grow:0, shrink:0, align:1})
+    // ★ 属性行用 align:3(stretch) 撑满宽度，value 自动截断
+    root.add(SDL3.dialogPropRow("名称:", nm, 280), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogPropRow("类型:", kind, 280), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogPropRow("路径:", path, 280), {grow:0, shrink:0, align:3})
 
     // 弹性间隔 + 按钮行
-    root.add(SDL3.createLabel({x:0, y:0, w:1, h:1, text:""}), {grow:1, shrink:1, align:0})
+    root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
 
-    HBox btnRow = SDL3.createHBox({x:0, y:0, w:0, h:34, padX:0, padY:0, spacing:16, justify:1})
+    // ★ 按钮行用 align:3(stretch) 撑满宽度，HBox justify:1 居中按钮
     Button btnDel = SDL3.createButton({x:0, y:0, w:100, h:34, text:"删除", bg_rgb:[220,70,70], text_rgb:[255,255,255]})
     Button btnCancel = SDL3.createButton({x:0, y:0, w:100, h:34, text:"取消", bg_rgb:[60,66,80], text_rgb:[220,230,245]})
-    btnRow.add(btnDel, {grow:0, shrink:0, basis:100, align:0})
-    btnRow.add(btnCancel, {grow:0, shrink:0, basis:100, align:0})
-    root.add(btnRow, {grow:0, shrink:0, align:1})
+    HBox btnRow = SDL3.dialogButtonRow([btnDel, btnCancel], 16)
+    root.add(btnRow, {grow:0, shrink:0, align:3})
 
     var shouldClose = false
     btnCancel.on_click(func() { shouldClose = true })
@@ -80,18 +64,16 @@ export func showBatch(int count, func():void onConfirm) {
     VBox root = SDL3.createVBox({x:0, y:0, w:400, h:180, padX:40, padY:20, spacing:10})
     dlg.setRoot(root)
 
-    root.add(mkLabel("确认批量删除", 16, 255, 130, 100, 1), {grow:0, shrink:0, align:1})
-    root.add(mkLabel("确定要删除选中的 " + count + " 个项目吗？", 14, 200, 210, 225, 1), {grow:0, shrink:0, align:1})
-    root.add(mkLabel("此操作无法撤销。", 13, 180, 190, 200, 1), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("确认批量删除", 16, 255, 130, 100, 1), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("确定要删除选中的 " + count + " 个项目吗？", 14, 200, 210, 225, 1), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("此操作无法撤销。", 13, 180, 190, 200, 1), {grow:0, shrink:0, align:1})
 
-    root.add(SDL3.createLabel({x:0, y:0, w:1, h:1, text:""}), {grow:1, shrink:1, align:0})
+    root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
 
-    HBox btnRow = SDL3.createHBox({x:0, y:0, w:0, h:34, padX:0, padY:0, spacing:16, justify:1})
-    Button btnDel = SDL3.createButton({x:0, y:0, w:100, h:34, text:"全部删除", bg_rgb:[220,70,70], text_rgb:[255,255,255]})
+    Button btnDel = SDL3.createButton({x:0, y:0, w:110, h:34, text:"全部删除", bg_rgb:[220,70,70], text_rgb:[255,255,255]})
     Button btnCancel = SDL3.createButton({x:0, y:0, w:100, h:34, text:"取消", bg_rgb:[60,66,80], text_rgb:[220,230,245]})
-    btnRow.add(btnDel, {grow:0, shrink:0, basis:110, align:0})
-    btnRow.add(btnCancel, {grow:0, shrink:0, basis:100, align:0})
-    root.add(btnRow, {grow:0, shrink:0, align:1})
+    HBox btnRow = SDL3.dialogButtonRow([btnDel, btnCancel], 16)
+    root.add(btnRow, {grow:0, shrink:0, align:3})
 
     var shouldClose = false
     btnCancel.on_click(func() { shouldClose = true })

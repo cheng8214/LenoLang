@@ -11,36 +11,32 @@ use SDL3.Button
 use SDL3.Widget
 use SDL3.Scancode
 
-// 创建 label 工厂
-func mkLabel(string text, float fontSize, int r, int g, int b, int align): Label {
-    return SDL3.createLabel({x:0, y:0, w:300, h:fontSize+4, text:text, font_size:fontSize, text_rgb:[r,g,b], align:align})
-}
-
 // 显示模态"关于"对话框
 export func show() {
     var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:260})
     VBox root = SDL3.createVBox({x:0, y:0, w:380, h:260, padX:40, padY:24, spacing:8})
     dlg.setRoot(root)
 
-    root.add(mkLabel("LenoSDL3 文件管理器", 18, 225, 235, 255, 1), {grow:0, shrink:0, align:1})
-    root.add(mkLabel("文件浏览 / 管理 Demo", 13, 150, 165, 200, 1), {grow:0, shrink:0, align:1})
+    // ★ 居中标题：dialogLabel(align:1) 内部 w:1，VBox align:1 定位到窗口中心
+    root.add(SDL3.dialogLabel("LenoSDL3 文件管理器", 18, 225, 235, 255, 1), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("文件浏览 / 管理 Demo", 13, 150, 165, 200, 1), {grow:0, shrink:0, align:1})
 
     // 间隔
-    root.add(SDL3.createLabel({x:0, y:0, w:1, h:8, text:""}), {grow:0, shrink:0, align:0})
+    root.add(SDL3.dialogSpacer(), {grow:0, shrink:0, basis:8, align:0})
 
-    root.add(mkLabel("版本：v1.0", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:0})
-    root.add(mkLabel("基于 LenoSDL3 即时模式 UI 框架", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:0})
-    root.add(mkLabel("文件夹树 / 列表 / 右键菜单 / 重命名", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:0})
-    root.add(mkLabel("© 2026 LenoLang", 12, 150, 160, 175, 0), {grow:0, shrink:0, align:0})
+    // ★ 左对齐信息行：dialogLabel(align:0) 内部 w:300，VBox align:3 撑满宽度
+    root.add(SDL3.dialogLabel("版本：v1.0", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("基于 LenoSDL3 即时模式 UI 框架", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("文件夹树 / 列表 / 右键菜单 / 重命名", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("© 2026 LenoLang", 12, 150, 160, 175, 0), {grow:0, shrink:0, align:3})
 
     // 弹性间隔
-    root.add(SDL3.createLabel({x:0, y:0, w:1, h:1, text:""}), {grow:1, shrink:1, align:0})
+    root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
 
-    // 确定按钮（居中）
-    HBox btnRow = SDL3.createHBox({x:0, y:0, w:0, h:34, padX:0, padY:0, spacing:0, justify:1})
+    // ★ 确定按钮居中：dialogButtonRow + VBox align:3(stretch)
     Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
-    btnRow.add(btnOk, {grow:0, shrink:0, basis:100, align:0})
-    root.add(btnRow, {grow:0, shrink:0, align:1})
+    HBox btnRow = SDL3.dialogButtonRow([btnOk], 0)
+    root.add(btnRow, {grow:0, shrink:0, align:3})
 
     var shouldClose = false
     btnOk.on_click(func() { shouldClose = true })
