@@ -2,6 +2,7 @@
 // 用法：props.show(path, isDir)
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
+import "../../../lib/sdl_theme.leno" as theme
 import dirs
 use SDL3.Event
 use SDL3.Renderer
@@ -50,9 +51,6 @@ export func show(string path, bool isDir) {
     bool exists = _bool(st.get("exists", false))
     string existStr = if exists then "是" else "否"
     string accessStr = if exists then "可访问" else "无法访问（可能已被移动或删除）"
-    int accessR = if exists then 200 else 255
-    int accessG = if exists then 225 else 180
-    int accessB = if exists then 200 else 180
 
     _shouldClose = false
 
@@ -67,7 +65,7 @@ export func show(string path, bool isDir) {
     dlg.setRoot(root)
 
     // ★ 标题居中：dialogLabel(align:1) 内部用 w:1，VBox align:1 定位到中心
-    root.add(SDL3.dialogLabel("文件属性", 16, 150, 200, 255, 1), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("文件属性", 16), {grow:0, shrink:0, align:1})
 
     // ★ 属性行用 dialogPropRow，max_w 实现自动截断
     root.add(SDL3.dialogPropRow("名称:", nm, propMaxW), {grow:0, shrink:0, align:3})
@@ -81,7 +79,11 @@ export func show(string path, bool isDir) {
     // 访问状态行（颜色按存在性变化，手动创建以支持自定义颜色 + 截断）
     // ★ w:1 让 VBox align:3(stretch) 自动撑满
     HBox accessRow = SDL3.createHBox({x:0, y:0, w:1, h:22, padX:0, padY:0, spacing:8})
-    Label al = SDL3.createLabel({x:0, y:0, w:80, h:22, text:"访问状态:", font_size:13, text_rgb:[150,165,185]})
+    Label al = SDL3.createLabel({x:0, y:0, w:80, h:22, text:"访问状态:", font_size:13})
+    // 访问状态值：存在=绿色调，不存在=红色调（这些是语义色，不随主题变）
+    int accessR = if exists then 80 else 220
+    int accessG = if exists then 200 else 60
+    int accessB = if exists then 100 else 60
     Label av = SDL3.createLabel({x:0, y:0, w:260, h:22, text:accessStr, font_size:13, text_rgb:[accessR,accessG,accessB], max_w:propMaxW, truncate:2})
     accessRow.add(al, {grow:0, shrink:0, basis:80, align:0})
     accessRow.add(av, {grow:1, shrink:1, align:0})
@@ -91,7 +93,7 @@ export func show(string path, bool isDir) {
     root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
 
     // ★ 确定按钮居中：dialogButtonRow + VBox align:3(stretch)
-    Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+    Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", type:"primary"})
     HBox btnRow = SDL3.dialogButtonRow([btnOk], 0)
     root.add(btnRow, {grow:0, shrink:0, align:3})
 
@@ -104,6 +106,6 @@ export func show(string path, bool isDir) {
             if _shouldClose { return false }
             return true
         },
-        func(Renderer r) { r.clearColor(30, 33, 42, 255) }
+        func(Renderer r) { var th = theme.getTheme(); r.clearColor(th.bgR, th.bgG, th.bgB, 255) }
     )
 }

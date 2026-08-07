@@ -10,9 +10,9 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
-export struct Table impl Widget {
+export struct Table impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 360.0, h = 240.0
     Array[string] _headers = []
     Array[float] _colW = []
@@ -1477,6 +1477,26 @@ export struct Table impl Widget {
         _imgLastPath = ""; _imgLastTex = null
         _fittedText = []; _fittedW = []; _fittedValid = false
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+br = t.bgR; bg = t.bgG; bb = t.bgB
+_hdrR = t.bgHeaderR; _hdrG = t.bgHeaderG; _hdrB = t.bgHeaderB
+_selR = t.accentR; _selG = t.accentG; _selB = t.accentB
+_hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
+_zebR = t.bgZebraR; _zebG = t.bgZebraG; _zebB = t.bgZebraB
+tr = t.txtR; tg = t.txtG; tb = t.txtB
+_hdrTxtR = t.txtHeaderR; _hdrTxtG = t.txtHeaderG; _hdrTxtB = t.txtHeaderB
+_sepR = t.sepR; _sepG = t.sepG; _sepB = t.sepB
+_sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
+_emptyR = t.txtDimR; _emptyG = t.txtDimG; _emptyB = t.txtDimB
+_chkBoxR = t.borderR; _chkBoxG = t.borderG; _chkBoxB = t.borderB
+_markR = t.txtOnAccentR; _markG = t.txtOnAccentG; _markB = t.txtOnAccentB
+_fittedValid = false
+// 同步内嵌控件的配色
+_edit?.applyTheme(t)
+_ctxMenu?.applyTheme(t)
+}
 }
 
 // 工厂

@@ -1,3 +1,4 @@
+
 // sdl_button.leno — 按钮控件
 // 通过 win.addButton({...}) 创建，run() 自动处理交互和渲染
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -7,9 +8,9 @@ import "sdl_core.leno" as core; use core.(SystemCursor, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_image.leno" as img
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
-export struct Button impl Widget {
+export struct Button impl Widget, Themeable {
     string text = "Button"
     float x = 0.0, y = 0.0, w = 100.0, h = 40.0
     float _radius = 6.0      // 圆角半径
@@ -29,6 +30,7 @@ export struct Button impl Widget {
     bool visible = true
     bool _showShadow = true // 是否显示阴影
     bool _showBorder = true // 是否显示边框
+    string _btnType = ""   // 预设类型（primary/danger/success/warning/dark/normal）
     bool _showBackground = true // 是否显示背景（false = 仅显示图标，无框无背景）
     bool _autoImgEffect = true  // 未提供 hover/press 图时，自动给普通图标加色调效果
     bool _loaded = false
@@ -126,9 +128,9 @@ export struct Button impl Widget {
 
         // 默认颜色见字段声明（cr/cg/cb/tr/tg/tb/hvr/hvg/hvb 均有默认，以下仅 opts 覆盖）
 
-        // 预设类型（优先级低于显式 rgb）
-        var tp = opts.get("type")
-        if tp is string { _apply_type(tp) }
+// 预设类型（优先级低于显式 rgb）
+var tp = opts.get("type")
+if tp is string { _btnType = tp; _apply_type(tp) }
 
         // bg_rgb: 背景色 [r, g, b]
         var c = opts.get("bg_rgb")
@@ -556,11 +558,19 @@ export struct Button impl Widget {
         r.popClipRect(); _btnClip.free()
     }
 
-    // 释放字体与图片资源
-    func dispose() {
-        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
-        _release_all_images()
-    }
+// 释放字体与图片资源
+func dispose() {
+if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+_release_all_images()
+}
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+cr = t.btnPrimaryR; cg = t.btnPrimaryG; cb = t.btnPrimaryB
+tr = t.txtOnAccentR; tg = t.txtOnAccentG; tb = t.txtOnAccentB
+// 重新应用预设类型颜色
+if _btnType != "" { _apply_type(_btnType) }
+}
 }
 
 // 工厂

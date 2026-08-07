@@ -24,7 +24,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
 
@@ -45,7 +45,7 @@ string imageExpanded = ""  // 展开状态图标（空 = 用 image）
     int _parent = -1
 }
 
-export struct TreeView impl Widget {
+export struct TreeView impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 200.0
     int _nextId = 1
     // ===== 规范状态：嵌套树（唯一数据源）=====
@@ -851,6 +851,21 @@ n.imageExpanded = d.get("imageExpanded", "")
         // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
         _imgCacheTex = []; _imgCachePaths = []
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+br = t.bgR; bg = t.bgG; bb = t.bgB
+_bdrR = t.borderR; _bdrG = t.borderG; _bdrB = t.borderB
+_selR = t.accentR; _selG = t.accentG; _selB = t.accentB
+_hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
+tr = t.txtR; tg = t.txtG; tb = t.txtB
+_sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
+_lineR = t.sepR; _lineG = t.sepG; _lineB = t.sepB
+_arrR = t.txtR * 3 / 4; _arrG = t.txtG * 3 / 4; _arrB = t.txtB * 3 / 4
+_markR = t.txtOnAccentR; _markG = t.txtOnAccentG; _markB = t.txtOnAccentB
+// 同步内嵌右键菜单的配色
+_ctxMenu?.applyTheme(t)
+}
 }
 
 // 工厂

@@ -29,6 +29,7 @@ import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
 import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 // 单个菜单项（可被子菜单嵌套）
 export struct MenuItem {
@@ -113,7 +114,7 @@ func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, floa
 Array[Ptr[u8]] _activeHnds = []
 Array[MenuBar] _activeMenus = []
 
-export struct MenuBar impl Widget {
+export struct MenuBar impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 600.0, h = 28.0
     float _itemH = 26.0
     float _itemGap = 0.0          // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项）
@@ -767,6 +768,19 @@ export struct MenuBar impl Widget {
         _clearActiveMenu(self)
         _unregisterContextMenu(self)   // 从上下文菜单登记表摘除自身，避免窗口销毁后悬空引用累积
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+_barR = t.bgHeaderR; _barG = t.bgHeaderG; _barB = t.bgHeaderB
+_barHovR = t.bgHoverR; _barHovG = t.bgHoverG; _barHovB = t.bgHoverB
+_bgR = t.bgAltR; _bgG = t.bgAltG; _bgB = t.bgAltB
+_hovR = t.accentR; _hovG = t.accentG; _hovB = t.accentB
+_txtR = t.txtR; _txtG = t.txtG; _txtB = t.txtB
+_disR = t.txtDimR; _disG = t.txtDimG; _disB = t.txtDimB
+_sepR = t.sepR; _sepG = t.sepG; _sepB = t.sepB
+_bdrR = t.borderR; _brdG = t.borderG; _brdB = t.borderB
+_accR = t.accentBrightR; _accG = t.accentBrightG; _accB = t.accentBrightB
+}
 }
 
 // ==================== 控件内嵌右击上下文菜单登记 ====================

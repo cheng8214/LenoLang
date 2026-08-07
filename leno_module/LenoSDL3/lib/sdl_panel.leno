@@ -9,9 +9,9 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
-export struct Panel impl Widget {
+export struct Panel impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 150.0
     Array[Widget] children = []
     Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 Panel 内部区域（减去 padding）
@@ -151,6 +151,12 @@ export struct Panel impl Widget {
         lc?.dispose()
         for children to c { c.dispose() }
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+br = t.bgAltR; bg = t.bgAltG; bb = t.bgAltB
+_bdrR = t.borderR; _bdrG = t.borderG; _bdrB = t.borderB
+}
 }
 
 // 工厂

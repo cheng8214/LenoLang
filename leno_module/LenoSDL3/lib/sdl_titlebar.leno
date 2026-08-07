@@ -41,9 +41,10 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(sdl3, SystemCursor)
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import "sdl_image.leno" as img
 
-export struct TitleBar impl Widget {
+export struct TitleBar impl Widget, Themeable {
     // ==================== 布局 ====================
     float x = 0.0, y = 0.0, w = 1000.0, h = 32.0
 
@@ -235,9 +236,9 @@ export struct TitleBar impl Widget {
         int winW = core.getWindowW(_winHandle)
         w = _float(winW)
 
-        // 跟踪最大化/还原状态
-        if ev.isWindowMaximized() { _maximized = true; core.markFrameRedraw() }
-        if ev.isWindowRestored() { _maximized = false; core.markFrameRedraw() }
+        // 跟踪最大化/还原状态（切换时清除按钮悬停，防止状态残留导致关闭按钮变红）
+        if ev.isWindowMaximized() { _maximized = true; _btnHover = 0; core.markFrameRedraw() }
+        if ev.isWindowRestored() { _maximized = false; _btnHover = 0; core.markFrameRedraw() }
 
         float mx = ev.mouseX()
         float my = ev.mouseY()
@@ -665,6 +666,15 @@ export struct TitleBar impl Widget {
         _releaseTex(_texRestore); _releaseTex(_texClose)
         _texMin = null; _texMax = null; _texRestore = null; _texClose = null
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+_bgR = t.bgR; _bgG = t.bgG; _bgB = t.bgB
+_txR = t.txtR; _txG = t.txtG; _txB = t.txtB
+_hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
+_sepR = t.sepR; _sepG = t.sepG; _sepB = t.sepB
+_iconR = t.txtR * 3 / 4; _iconG = t.txtG * 3 / 4; _iconB = t.txtB * 3 / 4
+}
 }
 
 // 工厂

@@ -27,13 +27,13 @@ import "sdl_layout.leno" as lay; use lay.(HBox, VBox, AnchorBox)
 import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 // 方向常量
 export const SPLIT_HORIZONTAL = 0   // 左右分割（分割条竖向，左右拖拽）
 export const SPLIT_VERTICAL   = 1   // 上下分割（分割条横向，上下拖拽）
 
-export struct Splitter impl Widget {
+export struct Splitter impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     Widget? _first               // 第一侧子控件（左侧 / 上侧）
     Widget? _second              // 第二侧子控件（右侧 / 下侧）
@@ -292,6 +292,13 @@ export struct Splitter impl Widget {
         var f = _first;  if f is Widget { f.dispose() }
         var s = _second; if s is Widget { s.dispose() }
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+_divR = t.borderR; _divG = t.borderG; _divB = t.borderB
+_hovR = t.accentR; _hovG = t.accentG; _hovB = t.accentB
+// 子控件的递归由 Window._applyThemeWidget 统一处理
+}
 }
 
 // 工厂

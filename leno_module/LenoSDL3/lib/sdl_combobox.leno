@@ -6,11 +6,11 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import "sdl_image.leno" as img
 import "sdl_edit.leno" as edt; use edt.Edit
 
-export struct ComboBox impl Widget {
+export struct ComboBox impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 30.0
     Array[string] items = []
     int _sel = -1              // 选中索引（-1 无）
@@ -515,6 +515,18 @@ export struct ComboBox impl Widget {
         _free_img_cache()         // 释放图标纹理缓存
         _unregisterComboBox(self)   // 从下拉框登记表摘除自身，避免窗口销毁后悬空引用累积
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+br = t.bgR; bg = t.bgG; bb = t.bgB
+_bdrR = t.borderR; _bdrG = t.borderG; _bdrB = t.borderB
+_selR = t.accentR; _selG = t.accentG; _selB = t.accentB
+_hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
+tr = t.txtR; tg = t.txtG; tb = t.txtB
+_sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
+// 同步内嵌 Edit 的颜色
+_edit?.applyTheme(t)
+}
 }
 
 // ==================== 下拉框登记（兜底第二遍绘制） ====================

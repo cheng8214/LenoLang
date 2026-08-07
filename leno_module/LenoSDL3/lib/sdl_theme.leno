@@ -1,16 +1,21 @@
-// sdl_theme.leno — 全局主题系统
+// sdl_theme.leno — 全局主题系统（支持运行时切换）
 //
-// 设计：全局单例。所有控件在 set() 时从 getTheme() 读取默认配色，
-// 用户可通过 setTheme(darkTheme()) 或 setTheme(lightTheme()) 一键切换。
-// 优先级：opts 显式覆盖 > 主题默认 > 结构体硬编码。
+// 设计：
+//   1. 全局单例 _theme，控件在 set() 时读取默认配色
+//   2. Themeable face — 控件实现 applyTheme(Theme) 即可支持运行时切换
+//   3. Window.applyThemeAll(Theme) 遍历所有控件，调用 applyTheme 刷新颜色
 //
 // 用法：
-//   SDL3.setTheme(SDL3.lightTheme())   // 在创建控件之前切换为浅色主题
-//   win.addButton({text:"OK"})         // 自动使用浅色配色
-//   win.addButton({bg_rgb:[100,50,50]}) // 仍可逐控件覆盖
+//   // 创建前设置主题（传统方式）
+//   SDL3.setTheme(SDL3.lightTheme())
+//   win.addButton({text:"OK"})
 //
-// 注意：主题在控件 set() 时读取。已创建的控件不会随主题变更自动刷新；
-//       如需运行时切换，重新创建控件即可。
+//   // 运行时切换主题（无需关闭窗口！）
+//   win.applyThemeAll(SDL3.lightTheme())
+//
+// 优先级：opts 显式覆盖 > 主题默认 > 结构体硬编码
+// 注意：applyTheme 会用新主题覆盖所有主题派生颜色（包括 set() 时通过 opts 设置的）
+import "sdl_widget.leno" as wgt; use wgt.Widget
 
 // ==================== Theme 结构体 ====================
 export struct Theme {
@@ -57,6 +62,13 @@ export struct Theme {
 
     // === 字体 ===
     float fontSize = 15.0
+}
+
+// ==================== Themeable 接口 ====================
+// 控件实现此接口即可支持运行时主题切换。
+// Window.applyThemeAll() 会遍历所有控件，对实现 Themeable 的调用 applyTheme。
+export face Themeable {
+    func applyTheme(Theme t)
 }
 
 // ==================== 全局单例 ====================
@@ -110,5 +122,44 @@ export func lightTheme(): Theme {
     t.tipBgR = 250; t.tipBgG = 250; t.tipBgB = 255
     t.tipTxtR = 30; t.tipTxtG = 30; t.tipTxtB = 40
     t.tipBrdR = 180; t.tipBrdG = 185; t.tipBrdB = 195
+    return t
+}
+
+// 午夜蓝主题（深色变体，偏蓝）
+export func midnightTheme(): Theme {
+    Theme t = new Theme()
+    t.name = "midnight"
+    // 背景层次（深蓝调）
+    t.bgR = 22; t.bgG = 28; t.bgB = 44
+    t.bgAltR = 28; t.bgAltG = 34; t.bgAltB = 52
+    t.bgInputR = 18; t.bgInputG = 24; t.bgInputB = 40
+    t.bgHoverR = 40; t.bgHoverG = 52; t.bgHoverB = 80
+    t.bgZebraR = 28; t.bgZebraG = 34; t.bgZebraB = 52
+    t.bgHeaderR = 30; t.bgHeaderG = 38; t.bgHeaderB = 58
+    // 文字
+    t.txtR = 200; t.txtG = 215; t.txtB = 240
+    t.txtInputR = 190; t.txtInputG = 205; t.txtInputB = 235
+    t.txtOnAccentR = 255; t.txtOnAccentG = 255; t.txtOnAccentB = 255
+    t.txtDimR = 100; t.txtDimG = 115; t.txtDimB = 145
+    t.txtHeaderR = 190; t.txtHeaderG = 205; t.txtHeaderB = 230
+    // 强调/交互（偏青蓝）
+    t.accentR = 50; t.accentG = 170; t.accentB = 220
+    t.accentFocusR = 80; t.accentFocusG = 200; t.accentFocusB = 255
+    t.accentBrightR = 70; t.accentBrightG = 180; t.accentBrightB = 240
+    // 边框/分隔
+    t.borderR = 60; t.borderG = 75; t.borderB = 110
+    t.sepR = 45; t.sepG = 55; t.sepB = 85
+    // 滚动条
+    t.sbR = 80; t.sbG = 100; t.sbB = 140
+    // 预设按钮色
+    t.btnPrimaryR = 45; t.btnPrimaryG = 150; t.btnPrimaryB = 210
+    t.btnDangerR = 210; t.btnDangerG = 55; t.btnDangerB = 55
+    t.btnSuccessR = 50; t.btnSuccessG = 185; t.btnSuccessB = 100
+    t.btnWarningR = 235; t.btnWarningG = 155; t.btnWarningB = 25
+    t.btnDarkR = 40; t.btnDarkG = 50; t.btnDarkB = 70
+    // Tooltip
+    t.tipBgR = 22; t.tipBgG = 28; t.tipBgB = 44
+    t.tipTxtR = 200; t.tipTxtG = 215; t.tipTxtB = 240
+    t.tipBrdR = 70; t.tipBrdG = 85; t.tipBrdB = 120
     return t
 }

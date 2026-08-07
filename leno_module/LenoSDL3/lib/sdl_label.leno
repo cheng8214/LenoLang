@@ -7,9 +7,9 @@ import "sdl_core.leno" as core
 use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
-export struct Label impl Widget {
+export struct Label impl Widget, Themeable {
     string text = ""
     float x = 0.0, y = 0.0
     float _fontSize = 15.0       // 字体大小
@@ -256,10 +256,15 @@ export struct Label impl Widget {
         r.drawText(_font, text, drawX, y, tr, tg, tb)
     }
 
-    // 释放字体资源
-    func dispose() {
-        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
-    }
+// 释放字体资源
+func dispose() {
+if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+}
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+tr = t.txtR; tg = t.txtG; tb = t.txtB
+}
 }
 
 // 工厂

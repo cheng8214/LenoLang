@@ -2,6 +2,7 @@
 // 用法： about.show()
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_core.leno" as core
+import "../../../lib/sdl_theme.leno" as theme
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.VBox
@@ -18,23 +19,23 @@ export func show() {
     dlg.setRoot(root)
 
     // ★ 居中标题：dialogLabel(align:1) 内部 w:1，VBox align:1 定位到窗口中心
-    root.add(SDL3.dialogLabel("LenoSDL3 文件管理器", 18, 225, 235, 255, 1), {grow:0, shrink:0, align:1})
-    root.add(SDL3.dialogLabel("文件浏览 / 管理 Demo", 13, 150, 165, 200, 1), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("LenoSDL3 文件管理器", 18), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("文件浏览 / 管理 Demo", 13), {grow:0, shrink:0, align:1})
 
     // 间隔
     root.add(SDL3.dialogSpacer(), {grow:0, shrink:0, basis:8, align:0})
 
     // ★ 左对齐信息行：dialogLabel(align:0) 内部 w:300，VBox align:3 撑满宽度
-    root.add(SDL3.dialogLabel("版本：v1.0", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:3})
-    root.add(SDL3.dialogLabel("基于 LenoSDL3 即时模式 UI 框架", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:3})
-    root.add(SDL3.dialogLabel("文件夹树 / 列表 / 右键菜单 / 重命名", 13, 200, 210, 225, 0), {grow:0, shrink:0, align:3})
-    root.add(SDL3.dialogLabel("© 2026 LenoLang", 12, 150, 160, 175, 0), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("版本：v1.0", 13), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("基于 LenoSDL3 即时模式 UI 框架", 13), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("文件夹树 / 列表 / 右键菜单 / 重命名", 13), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("© 2026 LenoLang", 12), {grow:0, shrink:0, align:3})
 
     // 弹性间隔
     root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
 
     // ★ 确定按钮居中：dialogButtonRow + VBox align:3(stretch)
-    Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+    Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", type:"primary"})
     HBox btnRow = SDL3.dialogButtonRow([btnOk], 0)
     root.add(btnRow, {grow:0, shrink:0, align:3})
 
@@ -48,6 +49,6 @@ export func show() {
             if shouldClose { return false }
             return true
         },
-        func(Renderer r) { r.clearColor(30, 33, 42, 255) }
+        func(Renderer r) { var th = theme.getTheme(); r.clearColor(th.bgR, th.bgG, th.bgB, 255) }
     )
 }

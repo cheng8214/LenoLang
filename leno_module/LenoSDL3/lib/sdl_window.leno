@@ -386,6 +386,58 @@ export struct Window {
         if ok { _lib.SDL_SetWindowBordered(handle, v) }
     }
 
+    // ==================== 运行时主题切换 ====================
+    // 遍历所有控件（含根布局和 MenuBar），对实现 Themeable 的调用 applyTheme
+    // 无需关闭/重建窗口，立即生效
+    func applyThemeAll(Theme t) {
+        // 1. 更新全局主题单例
+        theme.setTheme(t)
+        // 2. 遍历 _widgets（覆盖层：MenuBar/TitleBar 等）
+        for _widgets.len() to i {
+            _applyThemeWidget(_widgets[i], t)
+        }
+        // 3. 遍历根布局控件（背景层：VBox/HBox 内的 Panel/Table/TreeView 等）
+        if _root != null { _applyThemeWidget(_root, t) }
+        // 4. 请求重绘
+        core.requestRedraw()
+    }
+
+    // 对单个控件及其子控件应用主题（递归容器）
+    func _applyThemeWidget(Widget w, Theme t) {
+        switch w {
+            case is Button { w.applyTheme(t) }
+            case is Label { w.applyTheme(t) }
+            case is Edit { w.applyTheme(t) }
+            case is Table { w.applyTheme(t) }
+            case is TreeView { w.applyTheme(t) }
+            case is ComboBox { w.applyTheme(t) }
+            case is MenuBar { w.applyTheme(t) }
+            case is TitleBar { w.applyTheme(t) }
+            case is Splitter {
+                w.applyTheme(t)
+                // 递归两侧子控件（_first / _second 为 Widget?）
+                var f = w._first
+                if f is Widget { _applyThemeWidget(f, t) }
+                var s = w._second
+                if s is Widget { _applyThemeWidget(s, t) }
+            }
+            case is Panel {
+                w.applyTheme(t)
+                // ★ 递归 _layoutChild（setLayoutPadded 设置的布局子控件，如 VBox）
+                var lc = w._layoutChild
+                if lc is Widget { _applyThemeWidget(lc, t) }
+                // 递归 children（通过 add() 添加的子控件）
+                for w.children.len() to ci { _applyThemeWidget(w.children[ci], t) }
+            }
+            case is HBox {
+                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+            }
+            case is VBox {
+                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+            }
+        }
+    }
+
     // 设置最大渲染帧率（默认 30 FPS；0 = 不限制）
     func setMaxFPS(int fps) { _maxFPS = fps }
 

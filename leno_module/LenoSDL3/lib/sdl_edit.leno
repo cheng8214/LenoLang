@@ -7,11 +7,11 @@ import "sdl_core.leno" as core; use core.Scancode
 use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_timer.leno" as tmr; use tmr.Timer
 
-export struct Edit impl Widget {
+export struct Edit impl Widget, Themeable {
     string text
     float x = 0.0, y = 0.0, w = 200.0, h = 30.0
     float _radius = 4.0             // 圆角半径
@@ -1880,6 +1880,14 @@ _drawBorder = opts.get("border", true)
         _blinkTimer?.stop()
         if _blinkTimer != null { tmr.unregisterTimer(_blinkTimer) }
     }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+cr = t.bgInputR; cg = t.bgInputG; cb = t.bgInputB
+tr = t.txtInputR; tg = t.txtInputG; tb = t.txtInputB
+_focusR = t.accentFocusR; _focusG = t.accentFocusG; _focusB = t.accentFocusB
+_sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
+}
 }
 
 // 工厂
