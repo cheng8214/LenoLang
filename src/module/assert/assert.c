@@ -112,9 +112,15 @@ static Value assert_eq_func(int argc, Value* args) {
             ObjString* msg = (ObjString*)val_as_obj(args[2]);
             native_throw_error(msg->chars);
         } else {
-            char buf[BUFFER_MEDIUM];
+            // val_to_string 使用线程局部静态缓冲区，两次调用会互相覆盖
+            // 必须先将第一次结果复制到独立缓冲区
+            char a_str[BUFFER_MEDIUM];
+            char b_str[BUFFER_MEDIUM];
+            snprintf(b_str, sizeof(b_str), "%s", val_to_string(b));
+            snprintf(a_str, sizeof(a_str), "%s", val_to_string(a));
+            char buf[BUFFER_XLARGE];
             snprintf(buf, sizeof(buf), "断言失败 (assert_eq): 期望 %s, 实际 %s",
-                     val_to_string(b), val_to_string(a));
+                     b_str, a_str);
             native_throw_error(buf);
         }
     }

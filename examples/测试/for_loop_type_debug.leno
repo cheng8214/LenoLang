@@ -1,0 +1,48 @@
+// for_loop_type_debug.leno — 验证 for 循环行为和 assert_eq 显示
+
+func test_for_literal() {
+    // for 0:4 to i 是包含两端的: i = 0, 1, 2, 3, 4 → 5次
+    int count = 0
+    for 0:4 to i {
+        count = count + 1
+    }
+    assert_eq(count, 5)
+}
+
+func test_for_variable() {
+    int n = 4
+    int count = 0
+    for 0:n to i {
+        count = count + 1
+    }
+    assert_eq(count, 5)
+}
+
+func test_for_sum() {
+    // sum = 0+1+2+3+4 = 10
+    int total = 0
+    for 0:4 to i {
+        total = total + i
+    }
+    assert_eq(total, 10)
+}
+
+func test_assert_eq_message() {
+    // 验证 assert_eq 错误消息正确显示两个不同的值
+    int count = 5
+    assert_eq(count, 4)  // 应该报 "期望 4, 实际 5"
+}
+
+main() {
+    test_for_literal()
+    print("test_for_literal passed")
+
+    test_for_variable()
+    print("test_for_variable passed")
+
+    test_for_sum()
+    print("test_for_sum passed")
+
+    print("=== 下面应该报错: 期望 4, 实际 5 ===")
+    test_assert_eq_message()
+}
