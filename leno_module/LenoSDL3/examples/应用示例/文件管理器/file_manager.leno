@@ -82,37 +82,47 @@ func fmtSizeStr(int b): string {
 // 递归搜索目录，将匹配结果通过 channel 发送给主线程
 func searchDirRecursive(string dirPath, string kwLower, Channel ch) {
     if ch.is_closed() { return }
-    var names = dirs.listdir(dirPath)
-    if names == null { return }
-    for names.len() to i {
-        if ch.is_closed() { return }
-        string nm = names[i]
-        string fp = dirs.join(dirPath, nm)
-        bool isDir = dirs.is_dir(fp)
-        if nm.to_lower().has(kwLower) {
-            string sz = ""
-            string tp = "文件夹"
-            if not isDir {
-                var st = dirs.stat(fp)
-                int szb = st.get("size", 0)
-                sz = fmtSizeStr(szb)
-                string ext = dirs.extname(nm)
-                tp = "文件"
-                if ext != "" and ext != "." { tp = "文件 " + ext }
+    try {
+        var names = dirs.listdir(dirPath)
+        if names == null { return }
+        for names.len() to i {
+            if ch.is_closed() { return }
+            string nm = names[i]
+            string fp = dirs.join(dirPath, nm)
+            bool isDir = dirs.is_dir(fp)
+            if nm.to_lower().has(kwLower) {
+                string sz = ""
+                string tp = "文件夹"
+                if not isDir {
+                    var st = dirs.stat(fp)
+                    if st != null {
+                        int szb = st.get("size", 0)
+                        sz = fmtSizeStr(szb)
+                    }
+                    string ext = dirs.extname(nm)
+                    tp = "文件"
+                    if ext != "" and ext != "." { tp = "文件 " + ext }
+                }
+                try { ch.try_send([nm, sz, tp, fp, if isDir then "1" else "0"]) } catch e { }
             }
-            ch.try_send([nm, sz, tp, fp, if isDir then "1" else "0"])
+            if isDir {
+                searchDirRecursive(fp, kwLower, ch)
+            }
         }
-        if isDir {
-            searchDirRecursive(fp, kwLower, ch)
-        }
+    } catch e {
+        // 忽略权限不足等错误，继续搜索其他目录
     }
 }
 
 // 搜索线程入口函数：递归搜索 rootDir，匹配结果通过 ch 发送
 func searchWorker(string rootDir, string kwLower, any ch) {
     if ch is Channel {
-        searchDirRecursive(rootDir, kwLower, ch)
-        ch.close()
+        try {
+            searchDirRecursive(rootDir, kwLower, ch)
+        } catch e {
+            // 搜索过程中出错，确保 channel 关闭
+        }
+        try { ch.close() } catch e { }
     }
 }
 
@@ -583,8 +593,7 @@ int nid = tree.add_child(id, node)
     func cancelSearch() {
         if searchCh != null {
             if searchCh is Channel {
-                Channel ch = searchCh as  Channel 
-                try { ch.close() } catch e { }
+                try { searchCh.close() } catch e { }
             }
             searchCh = null
         }
@@ -595,10 +604,9 @@ int nid = tree.add_child(id, node)
     func pollSearch() {
         if not searching or searchCh == null { return }
         if searchCh is Channel {
-            Channel ch = searchCh as Channel
             int received = 0
             while received < 50 {
-                var msg = ch.try_receive()
+                var msg = searchCh.try_receive()
                 if msg == null { break }
                 if msg is Array[string] {
                     searchResults.add(msg)
@@ -622,7 +630,7 @@ int nid = tree.add_child(id, node)
                 }
                 statusLbl.set_text("搜索中: " + searchKeyword + " (已找到 " + searchResults.len() + " 项)")
             }
-            if ch.is_closed() and ch.len() == 0 {
+            if searchCh.is_closed() and searchCh.len() == 0 {
                 searching = false
                 searchCh = null
                 if searchResults.len() == 0 {
