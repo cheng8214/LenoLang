@@ -1,4 +1,5 @@
 #include "include/native.h"
+#include "include/platform.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -651,13 +652,37 @@ static Value jsons_encode_pretty_func(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// Helper to open file with UTF-8 path support
+static FILE* fopen_utf8(const char* path, const char* mode) {
+#ifdef _WIN32
+    // On Windows, convert UTF-8 path to UTF-16 and use _wfopen
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) return NULL;
+    
+    wchar_t wmode[8];
+    int i = 0;
+    while (mode[i] && i < 7) {
+        wmode[i] = (wchar_t)mode[i];
+        i++;
+    }
+    wmode[i] = L'\0';
+    
+    FILE* file = _wfopen(wpath, wmode);
+    free(wpath);
+    return file;
+#else
+    // On Linux/macOS, fopen supports UTF-8 natively
+    return fopen(path, mode);
+#endif
+}
+
 // jsons.read_file
 static Value jsons_read_file_func(int argc, Value* args) {
     (void)argc;
     ObjString* path = (ObjString*)val_as_obj(args[0]);
 
     // Use binary mode to get accurate file size
-    FILE* file = fopen(path->chars, "rb");
+    FILE* file = fopen_utf8(path->chars, "rb");
     if (!file) {
         return val_null();
     }
@@ -699,7 +724,7 @@ static Value jsons_write_file_func(int argc, Value* args) {
     json_encode_value(&sb, args[1], 0, true);
     
     // Use binary mode to write exact bytes
-    FILE* file = fopen(path->chars, "wb");
+    FILE* file = fopen_utf8(path->chars, "wb");
     if (!file) {
         sb_free(&sb);
         return val_bool(false);

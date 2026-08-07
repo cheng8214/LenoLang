@@ -843,7 +843,7 @@ int nid = tree.add_child(id, node)
         table.addContextSeparator()
         if isDir {
             table.addContextItem(ctxItem("在此文件夹内新建文件夹", "newfolder", "new.png"))
-            table.addContextItem(ctxItem("添加到书签", "addbookmark", "normal.png"))
+            table.addContextItem(ctxItem("添加到书签", "addbookmark", "shuqian.png"))
         } else {
             table.addContextItem(ctxItem("属性", "props", "normal.png"))
         }
@@ -1007,7 +1007,7 @@ int nid = tree.add_child(id, node)
         mBookmarkId = bar.addMenu("书签")
         int mView = bar.addMenu("视图")
         bar.addItem(mView, {label:"刷新", shortcut:"F5", id:"refresh", image:imgPath("update.png")})
-        bar.addItem(mView, {label:"向上", shortcut:"Backspace", id:"up", image:imgPath("filetypes/folder_1.png")})
+        bar.addItem(mView, {label:"向上", shortcut:"Backspace", id:"up", image:imgPath("up.png")})
         int mHelp = bar.addMenu("帮助")
         bar.addItem(mHelp, {label:"关于", id:"about", image:imgPath("about.png")})
         bar.on_select(func(string menu, string id) { onMenuSelect(menu, id) })
@@ -1210,7 +1210,7 @@ _dragTargetNode = -1
     func run() {
         SDL3.ttfInit()
         int flags = 0x20 | 0x80  // RESIZABLE(0x20) | MAXIMIZED(0x80)
-        win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, flags:flags})
+        win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, flags:flags,aa:2})
         if not win.ok { SDL3.ttfQuit(); return }
         win.setMinSize(640, 400)
 
