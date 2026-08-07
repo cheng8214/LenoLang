@@ -81,6 +81,8 @@ import "sdl_groupbox.leno" as gbxlib
 use gbxlib.GroupBox
 import "sdl_splitter.leno" as spllib
 use spllib.Splitter
+import "sdl_titlebar.leno" as tbarlib
+use tbarlib.TitleBar
 
 // ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
 // SpinBox/GroupBox/ScrollView 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
@@ -90,6 +92,7 @@ lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
         case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter { c._bind_window(hwnd); return }
         case is Edit { c.set_window(hwnd); return }
         case is Table, TreeView { c.set_window_handle(hwnd); return }
+        case is TitleBar { c.set_window_handle(hwnd); return }
     }
 })
 
@@ -204,6 +207,16 @@ func _tryShortcut(int winIdx, Event ev): bool {
         return true
     }
     return false
+}
+
+// 查找控件列表中 TitleBar 的高度（用于 MenuBar 偏移）
+func _findTitleBarHeight(Array[Widget] widgets): float {
+    if widgets == null { return 0.0 }
+    for widgets.len() to i {
+        var w = widgets[i]
+        if w is TitleBar { TitleBar tb = w; return tb.get_h() }
+    }
+    return 0.0
 }
 
 // 推入模态窗口（runModal 内部调用）
@@ -368,6 +381,11 @@ export struct Window {
         if ok { _lib.SDL_SetWindowResizable(handle, v) }
     }
 
+    // 设置窗口是否有系统标题栏边框（false = 无边框，自绘标题栏用）
+    func setBordered(bool v) {
+        if ok { _lib.SDL_SetWindowBordered(handle, v) }
+    }
+
     // 设置最大渲染帧率（默认 30 FPS；0 = 不限制）
     func setMaxFPS(int fps) { _maxFPS = fps }
 
@@ -467,7 +485,7 @@ export struct Window {
     func add(Widget w): Widget {
         _widgets.add(w)
         _widgetZ.add(0.0)
-        // 绑定窗口句柄：容器向下传递，Edit/Table/TreeView 直接设置，确保嵌套其中的 Edit 能正确定位 IME 候选框
+        // 绑定窗口句柄：容器向下传递，Edit/Table/TreeView/TitleBar 直接设置
         switch w {
             case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
                 w._bind_window(handle); return w
@@ -482,6 +500,9 @@ export struct Window {
             case is Table {
                 w.set_window_handle(handle)
                 w.set_window_size(_w, _h); return w
+            }
+            case is TitleBar {
+                w.set_window_handle(handle); return w
             }
         }
         return w
@@ -505,6 +526,9 @@ export struct Window {
             case is Table {
                 w.set_window_handle(handle)
                 w.set_window_size(_w, _h); return w
+            }
+            case is TitleBar {
+                w.set_window_handle(handle); return w
             }
         }
         return w
@@ -558,6 +582,9 @@ export struct Window {
             case is Table {
                 w.set_window_handle(handle)
                 w.set_window_size(_w, _h); return
+            }
+            case is TitleBar {
+                w.set_window_handle(handle); return
             }
         }
     }
@@ -843,9 +870,10 @@ export struct Window {
             _root.set_size(_float(actualSz.w) - _rootX, _float(actualSz.h) - _rootY)
         }
         // ★ 同步 MenuBar 到实际窗口尺寸（系统可能已最大化）
+        float _tbH0 = _findTitleBarHeight(_widgets)
         for _menus.len() to mi {
             MenuBar mb = _menus[mi]
-            mb.set_pos(0, 0)
+            mb.set_pos(0, _tbH0)
             mb.set_size(_float(actualSz.w), mb.get_h())
             mb.setWindowSize(actualSz.w, actualSz.h)
         }
@@ -901,10 +929,11 @@ export struct Window {
                 rootWid?.set_pos(_runRootX[i], _runRootY[i])
                 rootWid?.set_size(_float(pt.x) - _runRootX[i], _float(pt.y) - _runRootY[i])
                 // ★ 同步 MenuBar 尺寸到满宽（首帧尺寸可能与 registerOnly 时不同）
+                float _tbH1 = _findTitleBarHeight(_runWidgets[i])
                 var menus0 = _runMenus[i]
                 for menus0.len() to mi0 {
                     MenuBar bar = menus0[mi0]
-                    bar.set_pos(0, 0)
+                    bar.set_pos(0, _tbH1)
                     bar.set_size(_float(pt.x), bar.get_h())
                     bar.setWindowSize(pt.x, pt.y)
                 }
@@ -1111,10 +1140,11 @@ export struct Window {
                             rootWid?.set_pos(_runRootX[k], _runRootY[k])
                             rootWid?.set_size(_float(pt.x) - _runRootX[k], _float(pt.y) - _runRootY[k])
                             // ★ 自动同步 MenuBar 尺寸到满宽（此前示例需手动 _updateMenuBar）
+                            float _tbH2 = _findTitleBarHeight(_runWidgets[k])
                             var menus = _runMenus[k]
                             for menus.len() to m {
                                 MenuBar bar = menus[m]
-                                bar.set_pos(0, 0)
+                                bar.set_pos(0, _tbH2)
                                 bar.set_size(_float(pt.x), bar.get_h())
                                 bar.setWindowSize(pt.x, pt.y)
                             }
@@ -1189,9 +1219,10 @@ export struct Window {
                                 fRoot?.set_pos(_runRootX[fi], _runRootY[fi])
                                 fRoot?.set_size(_float(fpt.x) - _runRootX[fi], _float(fpt.y) - _runRootY[fi])
                                 var fMenus = _runMenus[fi]
+                                float _tbH3 = _findTitleBarHeight(_runWidgets[fi])
                                 for fMenus.len() to fmi {
                                     MenuBar fbar = fMenus[fmi]
-                                    fbar.set_pos(0, 0)
+                                    fbar.set_pos(0, _tbH3)
                                     fbar.set_size(_float(fpt.x), fbar.get_h())
                                     fbar.setWindowSize(fpt.x, fpt.y)
                                 }

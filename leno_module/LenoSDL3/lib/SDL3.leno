@@ -39,6 +39,8 @@ import "sdl_splitter.leno" as spl
 use spl.Splitter
 import "sdl_drag.leno" as drag
 use drag.DragHint
+import "sdl_titlebar.leno" as tbar
+use tbar.TitleBar
 
 
 // ==================== 重新导出类型 ====================
@@ -111,6 +113,7 @@ export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(o
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
 export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
+export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleBar(opts) }
 export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
 export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
 export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }
