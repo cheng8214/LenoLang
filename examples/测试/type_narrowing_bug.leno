@@ -1,0 +1,119 @@
+// type_narrowing_bug.leno — Leno 编译器类型收窄 bug 复现
+//
+// 期望行为：if x is Type { } 内，x 在整个作用域（包括嵌套块）中应被收窄为 Type
+// 实际行为：类型收窄不会传播到嵌套块（try、while、嵌套 if）和变量赋值
+//
+// 编译：leno -c type_narrowing_bug.leno
+
+import threads
+
+struct MyData {
+    int value = 0
+}
+
+func test_narrowing_in_try(any x) {
+    // ★ 测试1: is 收窄后在 try 块中调用方法
+    // 期望：x 在 try 块中仍然是 Channel 类型
+    if x is Channel {
+        // ✅ 直接调用：正常
+        x.close()
+
+        // ❌ 在 try 块中调用：编译错误
+        try {
+            x.close()
+        } catch e {
+        }
+    }
+}
+
+func test_narrowing_in_while(any x) {
+    // ★ 测试2: is 收窄后在 while 块中调用方法
+    if x is Channel {
+        // ✅ 直接调用：正常
+        x.close()
+
+        // ❌ 在 while 块中调用：编译错误
+        int i = 0
+        while i < 3 {
+            var msg = x.try_receive()
+            i = i + 1
+        }
+    }
+}
+
+func test_narrowing_in_nested_if(any x) {
+    // ★ 测试3: is 收窄后在嵌套 if 中调用方法
+    if x is Channel {
+        // ✅ 直接调用：正常
+        x.close()
+
+        // ❌ 在嵌套 if 中调用：编译错误
+        if x.len() > 0 {
+            var msg = x.try_receive()
+        }
+    }
+}
+
+func test_narrowing_assignment(any x) {
+    // ★ 测试4: is 收窄后赋值给同类型变量
+    if x is Channel {
+        // ❌ 赋值给 Channel 变量：编译错误
+        Channel ch = x
+        ch.close()
+    }
+}
+
+func test_narrowing_in_for(any x) {
+    // ★ 测试5: is 收窄后在 for 循环中调用方法
+    if x is Channel {
+        // ✅ 直接调用：正常
+        x.close()
+
+        // ❌ 在 for 块中调用：编译错误
+        for 3 to i {
+            var msg = x.try_receive()
+        }
+    }
+}
+
+func test_narrowing_struct_in_try(any x) {
+    // ★ 测试6: struct 类型在 try 块中访问字段
+    if x is MyData {
+        // ✅ 直接访问：正常
+        var v = x.value
+
+        // ❌ 在 try 块中访问：编译错误？
+        try {
+            var v2 = x.value
+        } catch e {
+        }
+    }
+}
+
+func test_narrowing_struct_in_while(any x) {
+    // ★ 测试7: struct 类型在 while 块中访问字段
+    if x is MyData {
+        // ✅ 直接访问：正常
+        var v = x.value
+
+        // ❌ 在 while 块中访问：编译错误？
+        int i = 0
+        while i < 3 {
+            var v2 = x.value
+            i = i + 1
+        }
+    }
+}
+
+func test_narrowing_struct_assignment(any x) {
+    // ★ 测试8: struct 类型赋值给同类型变量
+    if x is MyData {
+        // ❌ 赋值给 MyData 变量：编译错误？
+        MyData d = x
+        var v = d.value
+    }
+}
+
+main() {
+    print("type narrowing bug reproduction")
+}

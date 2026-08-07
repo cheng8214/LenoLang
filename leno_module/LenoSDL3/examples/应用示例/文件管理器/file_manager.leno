@@ -8,7 +8,8 @@
 //     ├── 树管理：buildNavRoots / loadPcDrives / onTreeToggle / onTreeChange / regDicts …
 //     ├── 导航历史：pushHistory / updateNavButtons / goBack / goForward / goUp
 //     ├── 目录操作：openDir / openDirNoHistory / openSelected / openFile
-//     ├── 文件操作：copyFile / copyDirRec / pasteFiles / newFolder / newFile
+//     ├── 文件操作：copyFile / copyDirRec / pasteFiles / newFolder / newFile（均含 try-catch）
+//     ├── 多线程搜索：startRecursiveSearch / cancelSearch / pollSearch（后台线程 + Channel）
 //     ├── 剪贴板操作：doCopy / doCut / doPaste / doDeletePath
 //     ├── 事件回调：onMenuSelect / onComboChange / onSearch* / onTable* / onContext*
 //     ├── UI 构建：setupMenuBar / setupToolbar / setupNavPanel / setupTable
@@ -29,7 +30,7 @@
 //   │   │   │   └── VBox navVBox
 //   │   │   │       ├── Label "导航"
 //   │   │   │       ├── Edit 搜索框
-//   │   │   │       ├── HBox 工具栏按钮 (3个)
+//   │   │   │       ├── HBox 工具栏按钮 (4个)
 //   │   │   │       └── TreeView (grow:1)
 //   │   │   └── Table (grow:1)
 //   │   └── Label 状态栏 (固定高度)
@@ -42,6 +43,7 @@ import "props_dialog.leno" as props
 import dirs
 import files
 import jsons
+import threads
 use SDL3.Event
 use SDL3.Renderer
 use SDL3.Font
@@ -60,6 +62,59 @@ use SDL3.VBox
 use SDL3.Splitter
 use SDL3.DragHint
 use SDL3.TitleBar
+
+// ===================== 全局辅助函数（供搜索线程使用） =====================
+
+// 人类可读文件大小（搜索线程无法访问 struct 方法，故提取为全局函数）
+func fmtSizeStr(int b): string {
+    if b < 1024 { return b + " B" }
+    float kb = _float(b) / 1024.0
+    if kb < 1024.0 { return _int(kb) + " KB" }
+    float mb = kb / 1024.0
+    if mb < 1024.0 { return _int(mb) + " MB" }
+    float gb = mb / 1024.0
+    int gbInt = _int(gb)
+    int tenths = _int((gb - _float(gbInt)) * 10.0)
+    if tenths == 0 { return gbInt + " GB" }
+    return gbInt + "." + tenths + " GB"
+}
+
+// 递归搜索目录，将匹配结果通过 channel 发送给主线程
+func searchDirRecursive(string dirPath, string kwLower, Channel ch) {
+    if ch.is_closed() { return }
+    var names = dirs.listdir(dirPath)
+    if names == null { return }
+    for names.len() to i {
+        if ch.is_closed() { return }
+        string nm = names[i]
+        string fp = dirs.join(dirPath, nm)
+        bool isDir = dirs.is_dir(fp)
+        if nm.to_lower().has(kwLower) {
+            string sz = ""
+            string tp = "文件夹"
+            if not isDir {
+                var st = dirs.stat(fp)
+                int szb = st.get("size", 0)
+                sz = fmtSizeStr(szb)
+                string ext = dirs.extname(nm)
+                tp = "文件"
+                if ext != "" and ext != "." { tp = "文件 " + ext }
+            }
+            ch.try_send([nm, sz, tp, fp, if isDir then "1" else "0"])
+        }
+        if isDir {
+            searchDirRecursive(fp, kwLower, ch)
+        }
+    }
+}
+
+// 搜索线程入口函数：递归搜索 rootDir，匹配结果通过 ch 发送
+func searchWorker(string rootDir, string kwLower, any ch) {
+    if ch is Channel {
+        searchDirRecursive(rootDir, kwLower, ch)
+        ch.close()
+    }
+}
 
 // ===================== 文件管理器结构体 =====================
 struct FileManager {
@@ -99,6 +154,12 @@ struct FileManager {
     Array[Dict]  bookmarks = []
     int           mBookmarkId = 0
     string        bookmarkFile = ""
+
+    // ===== 多线程搜索状态 =====
+    Channel? searchCh = null
+    Thread? searchThread = null
+    bool searching = false
+    Array[Array[string]] searchResults = []
 
 // ===== 拖拽状态 =====
 bool          _dragPending = false
@@ -140,6 +201,7 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
     Button   btnToggle
     Button   btnBack
     Button   btnForward
+    Button   btnSearch
 
     // ===== 文件扩展名 → 图标映射 =====
     Dict extIcons = {
@@ -386,6 +448,7 @@ int nid = tree.add_child(id, node)
     // ===================== 目录操作 =====================
 
     func openDir(string path) {
+        cancelSearch()
         if not dirs.is_dir(path) {
             statusLbl.set_text("无法打开目录: " + path)
             return
@@ -395,57 +458,63 @@ int nid = tree.add_child(id, node)
     }
 
     func openDirNoHistory(string path) {
+        cancelSearch()
         if not dirs.is_dir(path) {
             statusLbl.set_text("无法打开目录: " + path)
             return
         }
-        curDir = path
-        rows = []
-        allRows = []
+        try {
+            curDir = path
+            rows = []
+            allRows = []
 
-        var names = dirs.listdir(path)
-        if names == null {
-            table.set_rows([])
-            statusLbl.set_text("无法读取目录（权限不足或路径不存在）: " + path)
-            selPath = ""; selIsDir = false
-            return
-        }
-
-        Array[Array[string]] folders = []
-        Array[Array[string]] fileRows = []
-        for names.len() to i {
-            string nm = names[i]
-            string fp = dirs.join(path, nm)
-            if dirs.is_dir(fp) {
-                folders.add([nm, "", "文件夹", fp, "1"])
-            } else {
-                var st = dirs.stat(fp)
-                int szb = st.get("size", 0)
-                string ext = dirs.extname(nm)
-                string tp = "文件"
-                if ext != "" and ext != "." { tp = "文件 " + ext }
-                fileRows.add([nm, fmtSize(szb), tp, fp, "0"])
+            var names = dirs.listdir(path)
+            if names == null {
+                table.set_rows([])
+                statusLbl.set_text("无法读取目录（权限不足或路径不存在）: " + path)
+                selPath = ""; selIsDir = false
+                return
             }
+
+            Array[Array[string]] folders = []
+            Array[Array[string]] fileRows = []
+            for names.len() to i {
+                string nm = names[i]
+                string fp = dirs.join(path, nm)
+                if dirs.is_dir(fp) {
+                    folders.add([nm, "", "文件夹", fp, "1"])
+                } else {
+                    var st = dirs.stat(fp)
+                    int szb = st.get("size", 0)
+                    string ext = dirs.extname(nm)
+                    string tp = "文件"
+                    if ext != "" and ext != "." { tp = "文件 " + ext }
+                    fileRows.add([nm, fmtSize(szb), tp, fp, "0"])
+                }
+            }
+            for folders.len() to i { rows.add(folders[i]) }
+            for fileRows.len() to i { rows.add(fileRows[i]) }
+            allRows = rows
+            applySearchFilter()
+            for rows.len() to i {
+                bool isDir = (rows[i][4] == "1")
+                string ext = dirs.extname(rows[i][0])
+                table.set_row_image(i, iconForRow(ext, isDir))
+                string nm = rows[i][0]
+                string sz = rows[i][1]
+                string tp = rows[i][2]
+                string tipText = "名称: " + nm
+                if not isDir { tipText = tipText + "\n大小: " + sz }
+                tipText = tipText + "\n类型: " + tp
+                table.set_row_tip(i, tipText)
+            }
+            statusLbl.set_text(statusSummary())
+            syncComboToHistory()
+            selPath = ""; selIsDir = false
+        } catch e {
+            statusLbl.set_text("读取目录出错: " + e)
+            table.set_rows([])
         }
-        for folders.len() to i { rows.add(folders[i]) }
-        for fileRows.len() to i { rows.add(fileRows[i]) }
-        allRows = rows
-        applySearchFilter()
-        for rows.len() to i {
-            bool isDir = (rows[i][4] == "1")
-            string ext = dirs.extname(rows[i][0])
-            table.set_row_image(i, iconForRow(ext, isDir))
-            string nm = rows[i][0]
-            string sz = rows[i][1]
-            string tp = rows[i][2]
-            string tipText = "名称: " + nm
-            if not isDir { tipText = tipText + "\n大小: " + sz }
-            tipText = tipText + "\n类型: " + tp
-            table.set_row_tip(i, tipText)
-        }
-        statusLbl.set_text(statusSummary())
-        syncComboToHistory()
-        selPath = ""; selIsDir = false
     }
 
     func statusSummary(): string {
@@ -490,6 +559,74 @@ int nid = tree.add_child(id, node)
         statusLbl.set_text(statusSummary())
     }
 
+    // ===================== 多线程递归搜索 =====================
+
+    func startRecursiveSearch(string keyword) {
+        cancelSearch()
+        searchKeyword = keyword
+        searchResults = []
+        searching = true
+        searchCh = threads.channel(100)
+        string kwLower = keyword.to_lower()
+        searchThread = threads.start(searchWorker, curDir, kwLower, searchCh)
+        statusLbl.set_text("搜索中: " + keyword + " ...")
+    }
+
+    func cancelSearch() {
+        if searchCh != null {
+            if searchCh is Channel {
+                Channel ch = searchCh as  Channel 
+                try { ch.close() } catch e { }
+            }
+            searchCh = null
+        }
+        searching = false
+        searchResults = []
+    }
+
+    func pollSearch() {
+        if not searching or searchCh == null { return }
+        if searchCh is Channel {
+            Channel ch = searchCh as Channel
+            int received = 0
+            while received < 50 {
+                var msg = ch.try_receive()
+                if msg == null { break }
+                if msg is Array[string] {
+                    searchResults.add(msg)
+                    received = received + 1
+                }
+            }
+            if received > 0 {
+                rows = searchResults
+                table.set_rows(rows)
+                for rows.len() to i {
+                    bool isDir = (rows[i][4] == "1")
+                    string ext = dirs.extname(rows[i][0])
+                    table.set_row_image(i, iconForRow(ext, isDir))
+                    string nm = rows[i][0]
+                    string sz = rows[i][1]
+                    string tp = rows[i][2]
+                    string tipText = "名称: " + nm
+                    if not isDir { tipText = tipText + "\n大小: " + sz }
+                    tipText = tipText + "\n类型: " + tp
+                    table.set_row_tip(i, tipText)
+                }
+                statusLbl.set_text("搜索中: " + searchKeyword + " (已找到 " + searchResults.len() + " 项)")
+            }
+            if ch.is_closed() and ch.len() == 0 {
+                searching = false
+                searchCh = null
+                if searchResults.len() == 0 {
+                    statusLbl.set_text("未找到匹配: " + searchKeyword)
+                    table.set_rows([])
+                } else {
+                    statusLbl.set_text("搜索完成: " + searchResults.len() + " 项结果")
+                }
+            }
+        }
+    }
+
     func syncComboToHistory() {
         if not pathCombo._loaded { return }
         pathCombo.set_items(history)
@@ -507,116 +644,142 @@ int nid = tree.add_child(id, node)
     }
 
     func openFile(string path) {
-        if path == "" { return }
-        if dirs.is_dir(path) { openDir(path); return }
-        string cmd = "cmd /c start \"\" \"" + path + "\""
-        var r = _exec(cmd)
-        statusLbl.set_text("已打开: " + dirs.basename(path))
+        try {
+            if path == "" { return }
+            if dirs.is_dir(path) { openDir(path); return }
+            string cmd = "cmd /c start \"\" \"" + path + "\""
+            var r = _exec(cmd)
+            statusLbl.set_text("已打开: " + dirs.basename(path))
+        } catch e {
+            statusLbl.set_text("打开文件出错: " + e)
+        }
     }
 
     // ===================== 文件操作 =====================
 
     // 分块复制文件（避免大文件一次性读入内存导致爆内存）
     func copyFile(string src, string dst): bool {
-        if dirs.is_dir(src) { return false }
-        var fin = files.open(src, "rb")
-        if fin == null { return false }
-        var fout = files.open(dst, "wb")
-        if fout == null { fin.close(); return false }
-        int chunk = 65536  // 64KB 分块
-        while not fin.eof() {
-            var data = fin.read(chunk)
-            if data == null { break }
-            fout.write(data)
+        try {
+            if dirs.is_dir(src) { return false }
+            var fin = files.open(src, "rb")
+            if fin == null { return false }
+            var fout = files.open(dst, "wb")
+            if fout == null { fin.close(); return false }
+            int chunk = 65536  // 64KB 分块
+            while not fin.eof() {
+                var data = fin.read(chunk)
+                if data == null { break }
+                fout.write(data)
+            }
+            fin.close()
+            fout.close()
+            return dirs.exists(dst)
+        } catch e {
+            statusLbl.set_text("复制文件出错: " + e)
+            return false
         }
-        fin.close()
-        fout.close()
-        return dirs.exists(dst)
     }
 
     func copyDirRec(string src, string dst): bool {
-        if not dirs.mkdir_p(dst) { return false }
-        var names = dirs.listdir(src)
-        if names == null { return true }
-        for names.len() to i {
-            string nm = names[i]
-            string sp = dirs.join(src, nm)
-            string dp = dirs.join(dst, nm)
-            if dirs.is_dir(sp) {
-                if not copyDirRec(sp, dp) { return false }
-            } else {
-                if not copyFile(sp, dp) { return false }
+        try {
+            if not dirs.mkdir_p(dst) { return false }
+            var names = dirs.listdir(src)
+            if names == null { return true }
+            for names.len() to i {
+                string nm = names[i]
+                string sp = dirs.join(src, nm)
+                string dp = dirs.join(dst, nm)
+                if dirs.is_dir(sp) {
+                    if not copyDirRec(sp, dp) { return false }
+                } else {
+                    if not copyFile(sp, dp) { return false }
+                }
             }
+            return true
+        } catch e {
+            statusLbl.set_text("复制目录出错: " + e)
+            return false
         }
-        return true
     }
 
     func pasteFiles() {
-        if clipPaths.len() == 0 or clipOp == "" {
-            statusLbl.set_text("剪贴板为空")
-            return
-        }
-        int okCount = 0
-        for clipPaths.len() to i {
-            string src = clipPaths[i]
-            string nm = dirs.basename(src)
-            string target = dirs.join(curDir, nm)
-            if dirs.exists(target) {
-                string nameNoExt = nm
-                string ext = dirs.extname(nm)
-                if ext != "" and ext != "." {
-                    nameNoExt = nm.slice(0, nm.len() - ext.len())
-                }
-                int n = 1
-                while dirs.exists(target) {
-                    n = n + 1
-                    target = dirs.join(curDir, nameNoExt + " - 副本 (" + n + ")" + ext)
-                }
+        try {
+            if clipPaths.len() == 0 or clipOp == "" {
+                statusLbl.set_text("剪贴板为空")
+                return
             }
-            bool ok = false
-            if clipOp == "copy" {
-                if dirs.is_dir(src) { ok = copyDirRec(src, target) } else { ok = copyFile(src, target) }
-            } else if clipOp == "cut" {
-                ok = dirs.rename(src, target)
+            int okCount = 0
+            for clipPaths.len() to i {
+                string src = clipPaths[i]
+                string nm = dirs.basename(src)
+                string target = dirs.join(curDir, nm)
+                if dirs.exists(target) {
+                    string nameNoExt = nm
+                    string ext = dirs.extname(nm)
+                    if ext != "" and ext != "." {
+                        nameNoExt = nm.slice(0, nm.len() - ext.len())
+                    }
+                    int n = 1
+                    while dirs.exists(target) {
+                        n = n + 1
+                        target = dirs.join(curDir, nameNoExt + " - 副本 (" + n + ")" + ext)
+                    }
+                }
+                bool ok = false
+                if clipOp == "copy" {
+                    if dirs.is_dir(src) { ok = copyDirRec(src, target) } else { ok = copyFile(src, target) }
+                } else if clipOp == "cut" {
+                    ok = dirs.rename(src, target)
+                }
+                if ok { okCount = okCount + 1 }
             }
-            if ok { okCount = okCount + 1 }
+            string opName = if clipOp == "copy" then "复制" else "移动"
+            statusLbl.set_text(opName + "完成: " + okCount + " 项")
+            if clipOp == "cut" { clipPaths = []; clipOp = "" }
+            openDir(curDir)
+        } catch e {
+            statusLbl.set_text("粘贴出错: " + e)
         }
-        string opName = if clipOp == "copy" then "复制" else "移动"
-        statusLbl.set_text(opName + "完成: " + okCount + " 项")
-        if clipOp == "cut" { clipPaths = []; clipOp = "" }
-        openDir(curDir)
     }
 
     func newFolder() {
-        int n = 1
-        string base = dirs.join(curDir, "新建文件夹")
-        string target = base
-        while dirs.exists(target) {
-            n = n + 1
-            target = base + " (" + n + ")"
-        }
-        if dirs.mkdir_p(target) {
-            openDir(curDir)
-            statusLbl.set_text("已创建: " + dirs.basename(target))
-        } else {
-            statusLbl.set_text("创建文件夹失败")
+        try {
+            int n = 1
+            string base = dirs.join(curDir, "新建文件夹")
+            string target = base
+            while dirs.exists(target) {
+                n = n + 1
+                target = base + " (" + n + ")"
+            }
+            if dirs.mkdir_p(target) {
+                openDir(curDir)
+                statusLbl.set_text("已创建: " + dirs.basename(target))
+            } else {
+                statusLbl.set_text("创建文件夹失败")
+            }
+        } catch e {
+            statusLbl.set_text("创建文件夹出错: " + e)
         }
     }
 
     func newFile() {
-        int n = 1
-        string base = dirs.join(curDir, "新建文本文档")
-        string target = base + ".txt"
-        while dirs.exists(target) {
-            n = n + 1
-            target = base + " (" + n + ").txt"
-        }
-        files.write(target, "")
-        if dirs.exists(target) {
-            openDir(curDir)
-            statusLbl.set_text("已创建: " + dirs.basename(target))
-        } else {
-            statusLbl.set_text("创建文件失败")
+        try {
+            int n = 1
+            string base = dirs.join(curDir, "新建文本文档")
+            string target = base + ".txt"
+            while dirs.exists(target) {
+                n = n + 1
+                target = base + " (" + n + ").txt"
+            }
+            files.write(target, "")
+            if dirs.exists(target) {
+                openDir(curDir)
+                statusLbl.set_text("已创建: " + dirs.basename(target))
+            } else {
+                statusLbl.set_text("创建文件失败")
+            }
+        } catch e {
+            statusLbl.set_text("创建文件出错: " + e)
         }
     }
 
@@ -683,22 +846,30 @@ int nid = tree.add_child(id, node)
             Array[string] paths = getSelectedPaths()
             if paths.len() == 0 { return }
             del_confirm.showBatch(paths.len(), func() {
-                int okCount = 0
-                for paths.len() to i {
-                    if dirs.delete(paths[i]) { okCount = okCount + 1 }
+                try {
+                    int okCount = 0
+                    for paths.len() to i {
+                        if dirs.delete(paths[i]) { okCount = okCount + 1 }
+                    }
+                    statusLbl.set_text("已删除 " + okCount + "/" + paths.len() + " 项")
+                    openDir(curDir)
+                } catch e {
+                    statusLbl.set_text("删除出错: " + e)
                 }
-                statusLbl.set_text("已删除 " + okCount + "/" + paths.len() + " 项")
-                openDir(curDir)
             })
             return
         }
         // 单选删除：保留原有确认对话框
         del_confirm.show(p, isDir, func() {
-            if dirs.delete(p) {
-                statusLbl.set_text("已删除: " + dirs.basename(p))
-                openDir(curDir)
-            } else {
-                statusLbl.set_text("删除失败: " + dirs.basename(p))
+            try {
+                if dirs.delete(p) {
+                    statusLbl.set_text("已删除: " + dirs.basename(p))
+                    openDir(curDir)
+                } else {
+                    statusLbl.set_text("删除失败: " + dirs.basename(p))
+                }
+            } catch e {
+                statusLbl.set_text("删除出错: " + e)
             }
         })
     }
@@ -770,6 +941,7 @@ case "exit"      { wantQuit = true }
 
     func onSearchChange() {
         searchKeyword = pathSearch.get_text()
+        if searching { cancelSearch() }
         if curDir != "" { applySearchFilter() }
     }
 
@@ -788,7 +960,8 @@ case "exit"      { wantQuit = true }
             pathSearch.set_text("")
             searchKeyword = ""
         } else {
-            statusLbl.set_text("搜索: " + t + " (" + table.row_count() + " 个结果)")
+            // ★ 多线程递归搜索
+            startRecursiveSearch(t)
         }
     }
 
@@ -893,11 +1066,15 @@ case "exit"      { wantQuit = true }
         string oldP = renameOldPath; renameOldPath = ""
         string newP = dirs.join(curDir, text)
         if oldP == newP { return }
-        if dirs.rename(oldP, newP) {
-            statusLbl.set_text("已重命名: " + text)
-            openDir(curDir)
-        } else {
-            statusLbl.set_text("重命名失败（名称冲突或权限不足）: " + text)
+        try {
+            if dirs.rename(oldP, newP) {
+                statusLbl.set_text("已重命名: " + text)
+                openDir(curDir)
+            } else {
+                statusLbl.set_text("重命名失败（名称冲突或权限不足）: " + text)
+            }
+        } catch e {
+            statusLbl.set_text("重命名出错: " + e)
         }
     }
 
@@ -911,18 +1088,27 @@ case "exit"      { wantQuit = true }
     // ===================== 书签/收藏夹 =====================
 
     func loadBookmarks() {
-        bookmarkFile = dirs.join(dirs.script_dir(), "bookmarks.json")
-        if dirs.exists(bookmarkFile) {
-            var data = jsons.read_file(bookmarkFile)
-            if data is Dict {
-                var bms = data.get("bookmarks", [])
-                if bms is Array[Dict] { bookmarks = bms }
+        try {
+            bookmarkFile = dirs.join(dirs.script_dir(), "bookmarks.json")
+            if dirs.exists(bookmarkFile) {
+                var data = jsons.read_file(bookmarkFile)
+                if data is Dict {
+                    var bms = data.get("bookmarks", [])
+                    if bms is Array[Dict] { bookmarks = bms }
+                }
             }
+        } catch e {
+            // 书签文件损坏时静默恢复
+            bookmarks = []
         }
     }
 
     func saveBookmarks() {
-        jsons.write_file(bookmarkFile, {bookmarks: bookmarks})
+        try {
+            jsons.write_file(bookmarkFile, {bookmarks: bookmarks})
+        } catch e {
+            statusLbl.set_text("保存书签出错: " + e)
+        }
     }
 
     func refreshBookmarkMenu() {
@@ -965,33 +1151,37 @@ case "exit"      { wantQuit = true }
     // ===================== 拖拽移动 =====================
 
     func moveFilesTo(string targetDir) {
-        int okCount = 0
-        for _dragPaths.len() to i {
-            string src = _dragPaths[i]
-            string nm = dirs.basename(src)
-            string target = dirs.join(targetDir, nm)
-            if src == target { continue }
-            if dirs.exists(target) {
-                string nameNoExt = nm
-                string ext = dirs.extname(nm)
-                if ext != "" and ext != "." {
-                    nameNoExt = nm.slice(0, nm.len() - ext.len())
+        try {
+            int okCount = 0
+            for _dragPaths.len() to i {
+                string src = _dragPaths[i]
+                string nm = dirs.basename(src)
+                string target = dirs.join(targetDir, nm)
+                if src == target { continue }
+                if dirs.exists(target) {
+                    string nameNoExt = nm
+                    string ext = dirs.extname(nm)
+                    if ext != "" and ext != "." {
+                        nameNoExt = nm.slice(0, nm.len() - ext.len())
+                    }
+                    int n = 1
+                    while dirs.exists(target) {
+                        n = n + 1
+                        target = dirs.join(targetDir, nameNoExt + " - 副本 (" + n + ")" + ext)
+                    }
                 }
-                int n = 1
-                while dirs.exists(target) {
-                    n = n + 1
-                    target = dirs.join(targetDir, nameNoExt + " - 副本 (" + n + ")" + ext)
+                if dirs.rename(src, target) {
+                    okCount = okCount + 1
                 }
             }
-            if dirs.rename(src, target) {
-                okCount = okCount + 1
+            if okCount > 0 {
+                statusLbl.set_text("已移动 " + okCount + " 项到 " + dirs.basename(targetDir))
+                openDir(curDir)
+            } else {
+                statusLbl.set_text("移动失败或目标相同")
             }
-        }
-        if okCount > 0 {
-            statusLbl.set_text("已移动 " + okCount + " 项到 " + dirs.basename(targetDir))
-            openDir(curDir)
-        } else {
-            statusLbl.set_text("移动失败或目标相同")
+        } catch e {
+            statusLbl.set_text("移动文件出错: " + e)
         }
     }
 
@@ -1073,7 +1263,7 @@ pathCombo.on_enter(func(string text) {
         var navTitle = SDL3.createLabel({x:0, y:0, text:"导航", font_size:14})
         navVBox.add(navTitle, {grow:0, shrink:0, align:0})
 
-        pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索当前目录…"})
+        pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索（回车递归搜索）…"})
         navVBox.add(pathSearch, {grow:0, shrink:0, align:3})
         pathSearch.on_change(func() { onSearchChange() })
         pathSearch.on_enter(func() { onSearchEnter() })
@@ -1092,6 +1282,13 @@ pathCombo.on_enter(func(string text) {
         btnToggle = navBtn("zhetie.png")
         navToolbar.add(btnToggle, {grow:1, shrink:1, align:3})
         btnToggle.set_tip("折叠/展开导航树"); btnToggle.on_click(func() { onToggleTree() })
+
+        btnSearch = SDL3.createButton({x:0, y:0, w:84, h:26, text:"搜索", font_size:13, background:false})
+        navToolbar.add(btnSearch, {grow:1, shrink:1, align:3})
+        btnSearch.set_tip("递归搜索当前目录"); btnSearch.on_click(func() {
+            string t = pathSearch.get_text()
+            if t != "" { startRecursiveSearch(t) }
+        })
 
         tree = SDL3.createTreeView({x:0, y:0, w:100, h:100, font_size:14, image_size:16, image_gap:4})
         navVBox.add(tree, {grow:1, shrink:1, align:3})
@@ -1125,6 +1322,7 @@ pathCombo.on_enter(func(string text) {
     // 返回 true = 继续运行主循环，返回 false = 退出程序
 
     func handleKeyboard(Event ev): bool {
+        pollSearch()
         if wantQuit or ev.isQuit() { return false }
 
         // ★ 检查 TitleBar 关闭按钮是否被按下

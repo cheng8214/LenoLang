@@ -16,6 +16,15 @@
                 for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                     TypeInfo* field_type = ast->u.struct_def.field_types[i];
 
+                    // struct 字段不能使用 var 或 any，必须有具体类型
+                    if (field_type && (field_type->kind == TYPE_INFER || field_type->kind == TYPE_ANY)) {
+                        char msg[BUFFER_MEDIUM];
+                        const char* kind_str = (field_type->kind == TYPE_INFER) ? "var" : "any";
+                        snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 不能使用 %s，必须使用具体类型",
+                                 ast->u.struct_def.name, ast->u.struct_def.field_names[i], kind_str);
+                        error_add(ERR_SEMANTIC, ast->line, msg);
+                    }
+
                     // 如果字段类型是 struct/clib/cstruct/face，验证是否已定义
                     if (field_type && field_type->struct_name) {
                         int is_named_type = (field_type->kind == TYPE_STRUCT ||

@@ -211,6 +211,33 @@
                                 // 复用原始变量的索引，这样访问时会读取同一个槽位
                                 guard_sym->index = ref.index;
                             }
+                        } else if (original_sym == NULL) {
+                            // ★ 修复：struct 字段类型守卫不传播的 bug
+                            // 源码 "if data is Channel" 在 struct 方法中，transform_method_body
+                            // 会将 "data" 转换为 "self.data"，但 parser 的 guard_conds 仍然
+                            // 保存 var_name="data" 且 field_name=NULL。
+                            // 此处检查 "data" 是否是 self 的 struct 字段，
+                            // 若是则创建 "self.data" 字段守卫符号。
+                            Symbol* self_sym = scope_resolve(s->current, "self");
+                            if (self_sym && self_sym->type && self_sym->type->kind == TYPE_STRUCT && self_sym->type->struct_name) {
+                                Symbol* struct_def = scope_resolve(s->current, self_sym->type->struct_name);
+                                if (struct_def && struct_def->struct_field_names) {
+                                    for (int fi = 0; fi < struct_def->struct_field_count; fi++) {
+                                        if (strcmp(struct_def->struct_field_names[fi], cond->var_name) == 0) {
+                                            int gn_len = strlen("self") + strlen(cond->var_name) + 2;
+                                            char* gn = (char*)malloc(gn_len);
+                                            snprintf(gn, gn_len, "self.%s", cond->var_name);
+                                            Symbol* fg = scope_define(s->current, gn, SYM_LOCAL);
+                                            if (fg) {
+                                                fg->type = type_copy(cond->guard_type);
+                                                fg->index = -1;
+                                            }
+                                            free(gn);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 } else if (ast->u.if_.guard_var != NULL) {
@@ -241,6 +268,28 @@
                                 guard_sym->type = type_new(TYPE_ANY);
                             }
                             guard_sym->index = ref.index;
+                        }
+                    } else if (original_sym == NULL) {
+                        // ★ 修复：struct 字段类型守卫（旧版单条件路径）
+                        Symbol* self_sym = scope_resolve(s->current, "self");
+                        if (self_sym && self_sym->type && self_sym->type->kind == TYPE_STRUCT && self_sym->type->struct_name) {
+                            Symbol* struct_def = scope_resolve(s->current, self_sym->type->struct_name);
+                            if (struct_def && struct_def->struct_field_names) {
+                                for (int fi = 0; fi < struct_def->struct_field_count; fi++) {
+                                    if (strcmp(struct_def->struct_field_names[fi], ast->u.if_.guard_var) == 0) {
+                                        int gn_len = strlen("self") + strlen(ast->u.if_.guard_var) + 2;
+                                        char* gn = (char*)malloc(gn_len);
+                                        snprintf(gn, gn_len, "self.%s", ast->u.if_.guard_var);
+                                        Symbol* fg = scope_define(s->current, gn, SYM_LOCAL);
+                                        if (fg) {
+                                            fg->type = type_copy(ast->u.if_.guard_type);
+                                            fg->index = -1;
+                                        }
+                                        free(gn);
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
                 }

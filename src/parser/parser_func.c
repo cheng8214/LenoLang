@@ -1535,9 +1535,13 @@ Ast* parse_struct_stmt(Parser* p) {
         // 解析字段类型
         TypeInfo* field_type = NULL;
 
-        // struct 字段不能使用 var，必须有具体类型
+        // struct 字段不能使用 var 或 any，必须有具体类型
         if (p->lex.current.type == TOK_VAR) {
             error_add(ERR_SYNTAX, p->lex.current.line, "struct 字段不能使用 var，必须使用具体类型");
+            lexer_next(&p->lex);
+            // 尝试继续解析
+        } else if (p->lex.current.type == TOK_ANY_TYPE) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "struct 字段不能使用 any，必须使用具体类型");
             lexer_next(&p->lex);
             // 尝试继续解析
         }
