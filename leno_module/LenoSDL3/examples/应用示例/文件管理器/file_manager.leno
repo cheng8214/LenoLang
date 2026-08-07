@@ -16,8 +16,11 @@
 //
 // 布局结构：
 //   Window
-//   ├── MenuBar (固定顶部 full width)
-//   ├── VBox mainLayout (0, MENU_H, winW, winH-MENU_H)
+//   ├── TitleBar 组件 (自动无边框，固定顶部 full width)
+//   │   ├── 标题文字
+//   │   └── 窗口按钮（最小化/最大化/关闭）
+//   ├── MenuBar (0, TITLEBAR_H, winW, MENU_H)
+//   ├── VBox mainLayout (0, TITLEBAR_H+MENU_H, winW, winH-TITLEBAR_H-MENU_H)
 //   │   ├── HBox toolbar (固定高度 TOOLBAR_H)
 //   │   │   ├── ComboBox (grow:1)
 //   │   │   └── 4个图标按钮 (固定 32px)
@@ -56,6 +59,7 @@ use SDL3.HBox
 use SDL3.VBox
 use SDL3.Splitter
 use SDL3.DragHint
+use SDL3.TitleBar
 
 // ===================== 文件管理器结构体 =====================
 struct FileManager {
@@ -113,6 +117,9 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
     bool   wantQuit = false
     string imgDir = ""
     int    mEditId = 0
+
+    // ===== 自绘标题栏组件 =====
+    TitleBar titleBar
 
     // ===== UI 控件引用 =====
     Window   win
@@ -713,9 +720,12 @@ int nid = tree.add_child(id, node)
             case "cut"       { if selPath != "" { doCut(selPath) } }
             case "paste"     { doPaste() }
             case "del"       { if selPath != "" { doDeletePath(selPath, selIsDir) } }
-            case "refresh"   { openDir(curDir) }
-            case "up"        { goUp() }
-            case "exit"      { wantQuit = true }
+case "refresh"   { openDir(curDir) }
+case "up"        { goUp() }
+case "theme_dark"     { win.applyThemeAll(SDL3.darkTheme());     statusLbl.set_text("已切换: 深色主题") }
+case "theme_light"    { win.applyThemeAll(SDL3.lightTheme());    statusLbl.set_text("已切换: 浅色主题") }
+case "theme_midnight" { win.applyThemeAll(SDL3.midnightTheme()); statusLbl.set_text("已切换: 午夜蓝主题") }
+case "exit"      { wantQuit = true }
             case "about"     { about.show() }
             case "add_bookmark_cur" {
                 if curDir != "" {
@@ -988,7 +998,7 @@ int nid = tree.add_child(id, node)
     // ===================== UI 构建：菜单栏 =====================
 
     func setupMenuBar() {
-        bar = win.addMenuBar({x:0, y:0, w:1000, h:MENU_H, font_size:14, image_size:16, image_pad:10, image_gap:6})
+        bar = win.addMenuBar({x:0, y:titleBar.get_h(), w:1000, h:MENU_H, font_size:14, image_size:16, image_pad:10, image_gap:6})
         int mFile = bar.addMenu("文件")
         bar.addItem(mFile, {label:"打开目录...", id:"openfolder", image:imgPath("open.png")})
         bar.addItem(mFile, {label:"新建文件夹", id:"newfolder", image:imgPath("new.png")})
@@ -1008,6 +1018,10 @@ int nid = tree.add_child(id, node)
         int mView = bar.addMenu("视图")
         bar.addItem(mView, {label:"刷新", shortcut:"F5", id:"refresh", image:imgPath("update.png")})
         bar.addItem(mView, {label:"向上", shortcut:"Backspace", id:"up", image:imgPath("up.png")})
+        bar.addSeparator(mView)
+        bar.addItem(mView, {label:"深色主题", id:"theme_dark"})
+        bar.addItem(mView, {label:"浅色主题", id:"theme_light"})
+        bar.addItem(mView, {label:"午夜蓝主题", id:"theme_midnight"})
         int mHelp = bar.addMenu("帮助")
         bar.addItem(mHelp, {label:"关于", id:"about", image:imgPath("about.png")})
         bar.on_select(func(string menu, string id) { onMenuSelect(menu, id) })
@@ -1019,7 +1033,7 @@ int nid = tree.add_child(id, node)
         toolbar = SDL3.createHBox({x:0, y:0, w:100, h:TOOLBAR_H, padX:4, padY:2, spacing:4})
         mainLayout.add(toolbar, {grow:0, shrink:0, basis:TOOLBAR_H, align:3})
 
-pathCombo = SDL3.createComboBox({x:0, y:0, w:300, h:28, font_size:14, editable:true, placeholder:"输入路径或选择历史...", popup_h:300, bg_rgb:[20,22,28], text_rgb:[235,240,255]})
+pathCombo = SDL3.createComboBox({x:0, y:0, w:300, h:28, font_size:14, editable:true, placeholder:"输入路径或选择历史...", popup_h:300})
 toolbar.add(pathCombo, {grow:1, shrink:1, align:3})
 pathCombo.on_change(func(int idx) { onComboChange(idx) })
 pathCombo.on_enter(func(string text) {
@@ -1050,16 +1064,16 @@ pathCombo.on_enter(func(string text) {
     // ===================== UI 构建：导航面板 =====================
 
     func setupNavPanel() {
-        navPanel = SDL3.createPanel({x:0, y:0, w:NAV_W, h:100, bg_rgb:[26,28,36], border_rgb:[70,75,92], radius:8})
+        navPanel = SDL3.createPanel({x:0, y:0, w:NAV_W, h:100, radius:8})
         content.set_first(navPanel)
 
         navVBox = SDL3.createVBox({x:0, y:0, w:100, h:100, padX:PAD, padY:PAD, spacing:6})
         navPanel.setLayoutPadded(navVBox, PAD)
 
-        var navTitle = SDL3.createLabel({x:0, y:0, text:"导航", font_size:14, text_rgb:[150,200,255]})
+        var navTitle = SDL3.createLabel({x:0, y:0, text:"导航", font_size:14})
         navVBox.add(navTitle, {grow:0, shrink:0, align:0})
 
-        pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索当前目录…", bg_rgb:[18,20,26], text_rgb:[230,235,245]})
+        pathSearch = SDL3.createEdit({x:0, y:0, w:100, h:26, font_size:13, placeholder:"搜索当前目录…"})
         navVBox.add(pathSearch, {grow:0, shrink:0, align:3})
         pathSearch.on_change(func() { onSearchChange() })
         pathSearch.on_enter(func() { onSearchEnter() })
@@ -1105,11 +1119,20 @@ pathCombo.on_enter(func(string text) {
         table.on_dbl_click(func(int row, int col) { onTableDblClick(row, col) })
     }
 
+    // ===================== 自绘标题栏（已封装为 TitleBar 组件） =====================
+
     // ===================== 键盘快捷键处理 =====================
     // 返回 true = 继续运行主循环，返回 false = 退出程序
 
     func handleKeyboard(Event ev): bool {
         if wantQuit or ev.isQuit() { return false }
+
+        // ★ 检查 TitleBar 关闭按钮是否被按下
+        if titleBar._loaded and titleBar.is_close_requested() {
+            titleBar.clear_close_request()
+            wantQuit = true
+            return false
+        }
 
         // ★ 安全兜底：模态对话框关闭后可能残留 _dragPending 状态
         //   （左键点击菜单项时误触发），仅在非鼠标事件（键盘/窗口等）时强制清除；
@@ -1209,19 +1232,24 @@ _dragTargetNode = -1
 
     func run() {
         SDL3.ttfInit()
-        int flags = 0x20 | 0x80  // RESIZABLE(0x20) | MAXIMIZED(0x80)
-        win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, flags:flags,aa:2})
+        int flags = 0x20 | 0x80  // RESIZABLE(0x20) | MAXIMIZED(0x80)（TitleBar 组件自动去边框）
+        win = SDL3.createWindow({title:"LenoSDL3 文件管理器", w:1000, h:680, flags:flags})
         if not win.ok { SDL3.ttfQuit(); return }
         win.setMinSize(640, 400)
 
         imgDir = dirs.join(dirs.script_dir(), "images")
 
+        // ★ 创建自绘标题栏组件（win.add 后自动去掉系统标题栏边框）
+        titleBar = SDL3.createTitleBar({title:"LenoSDL3 文件管理器", height:32, font_size:14})
+        win.add(titleBar)
+        float TITLEBAR_H = titleBar.get_h()
+
         setupMenuBar()
         loadBookmarks()
         refreshBookmarkMenu()
 
-        mainLayout = SDL3.createVBox({x:0, y:MENU_H, w:1000, h:680-MENU_H, padX:PAD, padY:PAD, spacing:4})
-        win.setRootAt(mainLayout, 0, MENU_H)
+        mainLayout = SDL3.createVBox({x:0, y:0, w:1000, h:680-TITLEBAR_H-MENU_H, padX:PAD, padY:PAD, spacing:4})
+        win.setRootAt(mainLayout, 0, TITLEBAR_H + MENU_H)
 
         setupToolbar()
 
@@ -1231,7 +1259,7 @@ _dragTargetNode = -1
         setupNavPanel()
         setupTable()
 
-        statusLbl = SDL3.createLabel({x:0, y:0, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+        statusLbl = SDL3.createLabel({x:0, y:0, text:"就绪", font_size:13})
         mainLayout.add(statusLbl, {grow:0, shrink:0, basis:STATUS_H, align:0})
 
         // 初始化导航树
@@ -1285,7 +1313,7 @@ win.setShortcutGuard(func(): bool {
 
 win.run(
     func(Event ev): bool { return handleKeyboard(ev) },
-    func(Renderer r) { }   // 渲染回调（控件渲染前调用，拖拽浮动框已移至 setOverlay）
+    func(Renderer r) { }   // 渲染回调（TitleBar 组件自动渲染）
 )
         SDL3.ttfQuit()
     }
