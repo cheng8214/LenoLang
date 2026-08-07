@@ -496,6 +496,47 @@ static Value native_dirs_is_dir(int argCount, Value* args) {
 #endif
 }
 
+// dirs.is_symlink(path) - 检查是否是符号链接/junction（reparse point）
+// 用于递归搜索时跳过，防止无限递归导致栈溢出
+static Value native_dirs_is_symlink(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("is_symlink 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("is_symlink 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    // 使用 FindFirstFileW 检查 reparse point（junction/symlink）
+    // FindFirstFileW 不跟随符号链接，返回链接本身的属性
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind = FindFirstFileW(wpath, &findData);
+    free(wpath);
+    
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return val_bool(0);
+    }
+    
+    FindClose(hFind);
+    // FILE_ATTRIBUTE_REPARSE_POINT 涵盖 junction、symlink、mount point 等
+    return val_bool(findData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    struct stat st;
+    // lstat 不跟随符号链接，返回链接本身的属性
+    if (lstat(path, &st) != 0) {
+        return val_bool(0);
+    }
+    return val_bool(S_ISLNK(st.st_mode));
+#endif
+}
+
 // dirs.mkdir(path) - 创建目录
 static Value native_dirs_mkdir(int argCount, Value* args) {
     if (argCount < 1) {
@@ -1029,6 +1070,7 @@ void dirs_init_module(void) {
     native_register_module_method("dirs", "exists", native_dirs_exists, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
     native_register_module_method("dirs", "is_file", native_dirs_is_file, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
     native_register_module_method("dirs", "is_dir", native_dirs_is_dir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+native_register_module_method("dirs", "is_symlink", native_dirs_is_symlink, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
 
     // 目录操作
     native_register_module_method("dirs", "mkdir", native_dirs_mkdir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);

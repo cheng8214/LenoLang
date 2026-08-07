@@ -551,12 +551,33 @@ void gc_scan_children(Object* obj) {
 
 // 标记对象：标记 + 压入显式栈（不递归，由 gc_drain_mark_stack 负责扫描子引用）
 void gc_mark_object(Object* obj) {
-    if (!obj || obj->marked) return;
+    if (!obj) return;
 
     // 安全检查：验证对象类型是否有效
     if (!is_valid_obj_type(obj->type)) {
         return;  // 无效的对象类型，跳过
     }
+
+    // ★ Channel 对象使用 malloc 分配（不在任何线程的 GC heap 链表中），
+    // 且被多个线程共享。clear_all_marks 只遍历 gc.young_heap / gc.old_heap，
+    // 永远不会清除 Channel 的 marked 标志。
+    // 这导致第一次 GC 标记 Channel 后，后续 GC 看到 marked==1 就跳过，
+    // 不再扫描 buffer 中的值 → buffer 中的对象被误回收 → use-after-free 崩溃。
+    //
+    // 修复：对 OBJ_CHANNEL，即使 marked==1 也仍然扫描其子对象（buffer 中的值）。
+    // 去重由 gc_mark_object 对每个子对象各自的 marked 检查来保证，不会无限递归。
+    if (obj->type == OBJ_CHANNEL) {
+        if (!obj->marked) {
+            obj->marked = 1;
+            mark_stack_push(obj);
+        } else {
+            // 已标记但仍需扫描 buffer（marked 可能是其他线程 GC 留下的 stale 值）
+            gc_scan_children(obj);
+        }
+        return;
+    }
+
+    if (obj->marked) return;
 
     obj->marked = 1;
     mark_stack_push(obj);

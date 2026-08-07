@@ -657,6 +657,12 @@ Value channel_receive(ObjChannel* channel) {
     }
 
     Value value = channel->buffer[channel->head];
+
+    // ★ 先克隆再移除（关键修复）
+    // 与 channel_try_receive 相同：必须先克隆再从 buffer 移除，
+    // 否则在 unlock 到 clone 之间发送线程 GC 可能释放该对象。
+    Value re_cloned = value_clone_for_channel(value);
+
     channel->buffer[channel->head] = val_null();
     channel->head = (channel->head + 1) % channel->capacity;
     channel->count--;
@@ -664,7 +670,7 @@ Value channel_receive(ObjChannel* channel) {
     platform_cond_signal(&channel->not_full);
     platform_mutex_unlock(&channel->mutex);
 
-    return value;
+    return re_cloned;
 }
 
 int channel_try_send(ObjChannel* channel, Value value) {
@@ -697,6 +703,18 @@ Value channel_try_receive(ObjChannel* channel) {
     }
 
     Value value = channel->buffer[channel->head];
+
+    // ★ 先克隆再移除（关键修复）
+    // channel buffer 中的对象是在发送线程的 GC 上分配的。
+    // 如果先从 buffer 移除再克隆，在 unlock mutex 到 value_clone_for_channel 之间
+    // 存在一个危险窗口：发送线程的 GC 可能在 OP_RETURN 安全点触发，
+    // 此时对象已不在 buffer 中（不可达），会被 sweep 释放，
+    // 导致接收线程 value_clone_for_channel 读取已释放内存 → use-after-free 崩溃。
+    //
+    // 先克隆确保克隆期间对象仍在 buffer 中，被发送线程的 mark_roots
+    // 通过 channel（在发送线程栈上）标记为存活，不会被 GC 回收。
+    Value re_cloned = value_clone_for_channel(value);
+
     channel->buffer[channel->head] = val_null();
     channel->head = (channel->head + 1) % channel->capacity;
     channel->count--;
@@ -704,7 +722,7 @@ Value channel_try_receive(ObjChannel* channel) {
     platform_cond_signal(&channel->not_full);
     platform_mutex_unlock(&channel->mutex);
 
-    return value;
+    return re_cloned;
 }
 
 // 注意：Thread 和 Channel 的实例方法已移到 threads.c 模块中
