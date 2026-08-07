@@ -826,6 +826,11 @@ export struct Window {
     // 仅注册窗口（不启动主循环），用于多窗口场景：先逐个 registerOnly，最后 run() 启动循环
     func registerOnly(EventHandler onEvent, RenderCallback onRender) {
         core.startTextInput(handle)      // 启用文本输入（供 Edit 控件使用）
+        // ★ 阻塞等待 OS 完成异步窗口状态变更（如创建时带 MAXIMIZED 标志的窗口）。
+        //   SDL3 官方 API：SDL_SyncWindow 阻塞直到所有 pending 的窗口状态变更被 OS 应用。
+        //   不调用此函数时，Windows 上最大化是异步的——getSize() 可能返回请求尺寸（1000x680）
+        //   而非最大化后的实际尺寸（如 1920x1080），导致 SSAA 纹理创建为小尺寸→迷你版闪现。
+        _lib.SDL_SyncWindow(handle)
         // ★ 获取窗口实际尺寸（系统可能已最大化/恢复到不同尺寸），
         //   用实际值初始化 SSAA 纹理和根布局，避免首帧渲染到旧尺寸纹理再贴到大窗口左上角
         Size actualSz = getSize()
@@ -883,9 +888,9 @@ export struct Window {
         if _runLoopActive { return }
         _runLoopActive = true
 
-        // ★ 首帧前强制检测：Windows 异步最大化时 registerOnly 可能拿到原始请求尺寸（1000x680），
-        //   而非最大化后的实际尺寸（如 1920x1080）。在主循环启动前重新同步所有窗口的
-        //   SSAA 纹理和根布局，彻底消除首帧渲染到小尺寸纹理再缩放导致的「迷你版闪现」。
+        // ★ 首帧前检测：SDL_SyncWindow 已在 registerOnly 中阻塞等待 OS 完成最大化，
+        //   正常情况下此处尺寸应与 registerOnly 时一致。此检测作为安全网，防止极端时序下
+        //   registerOnly 到 run() 之间窗口尺寸再次变化（如用户快速操作）。
         for _runWids.len() to i {
             SDL_Point pt = SDL_Point.malloc()
             _lib.SDL_GetWindowSize(_runHnds[i], &pt.x, &pt.y)
@@ -922,6 +927,7 @@ export struct Window {
         bool _needRedraw = true       // 初始绘制一次
         int  _lastRenderTicks = core.getTicks()   // 上次渲染时刻，用于帧率节流
         int  _throttleMs = if _maxFPS > 0 then 1000 / _maxFPS else 1
+        int _sizeSyncRemaining = 10   // 安全网：前 N 帧持续检查窗口尺寸（SDL_SyncWindow 已解决主问题）
         while true {
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
             bool _hadEvent = false
@@ -1087,7 +1093,11 @@ export struct Window {
                         }
                     }
                 }
-                // 窗口缩放/最大化：重建 SSAA 离屏纹理 + 更新逻辑尺寸 + 驱动根布局跟随
+                // 窗口缩放：重建 SSAA 离屏纹理 + 更新逻辑尺寸 + 驱动根布局跟随
+                // ★ 不在此处理 WINDOW_MAXIMIZED/WINDOW_RESTORED 事件：这些事件触发时窗口可能尚在
+                //   动画过程中，SDL_GetWindowSize 返回的是最终尺寸而非当前实际尺寸，此时重建 SSAA
+                //   会导致纹理尺寸与窗口实际尺寸不匹配→缩小版。首次最大化的同步由 _sizeSyncRemaining
+                //   在渲染阶段（窗口尺寸已稳定）可靠完成。
                 if ev.isWindowResized() {
                     for _runWids.len() to k {
                         if _runWids[k] == wid {
@@ -1163,6 +1173,41 @@ export struct Window {
                 if now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过
                     _lastRenderTicks = now
                     _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
+                    // ★ 安全网尺寸同步：SDL_SyncWindow 已在 registerOnly 中阻塞等待 OS 完成最大化，
+                    //   正常情况下首帧 getSize() 已返回正确尺寸。此多帧检查仅作为极端时序下的
+                    //   兜底（如某些 Windows 版本 SyncWindow 返回后仍有微小延迟），检测到变化
+                    //   立即重建 SSAA 纹理并同步根布局。未变化时仅多一次 SDL_GetWindowSize 调用。
+                    if _sizeSyncRemaining > 0 {
+                        _sizeSyncRemaining = _sizeSyncRemaining - 1
+                        for _runWids.len() to fi {
+                            SDL_Point fpt = SDL_Point.malloc()
+                            _lib.SDL_GetWindowSize(_runHnds[fi], &fpt.x, &fpt.y)
+                            if fpt.x != _runW[fi] or fpt.y != _runH[fi] {
+                                _runRens[fi].resizeSSAA(fpt.x, fpt.y)
+                                _runW[fi] = fpt.x; _runH[fi] = fpt.y
+                                var fRoot = _runRoots[fi]
+                                fRoot?.set_pos(_runRootX[fi], _runRootY[fi])
+                                fRoot?.set_size(_float(fpt.x) - _runRootX[fi], _float(fpt.y) - _runRootY[fi])
+                                var fMenus = _runMenus[fi]
+                                for fMenus.len() to fmi {
+                                    MenuBar fbar = fMenus[fmi]
+                                    fbar.set_pos(0, 0)
+                                    fbar.set_size(_float(fpt.x), fbar.get_h())
+                                    fbar.setWindowSize(fpt.x, fpt.y)
+                                }
+                                var fWidgets = _runWidgets[fi]
+                                for fWidgets.len() to fwi {
+                                    var fw = fWidgets[fwi]
+                                    if fw is Table { Table ft = fw; ft.on_window_resize(fpt.x, fpt.y) }
+                                    else if fw is TreeView { TreeView ftv = fw; ftv.on_window_resize(fpt.x, fpt.y) }
+                                    else if fw is Splitter { Splitter fsp = fw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
+                                }
+                                var frw = fRoot
+                                if frw is Splitter { Splitter fsp = frw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
+                            }
+                            fpt.free()
+                        }
+                    }
                     for _runWids.len() to i {
                     // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
                     // SDL_RenderClear 在 Win/D3D 后端可能不走 back buffer 缓冲，导致短暂黑闪

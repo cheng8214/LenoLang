@@ -157,6 +157,7 @@ clib sdl3 {
     bool SDL_SetWindowResizable(Ptr[u8] window, bool resizable)
     bool SDL_GetWindowSize(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
     bool SDL_GetWindowPosition(Ptr[u8] window, Ptr[i32] x, Ptr[i32] y)
+    bool SDL_SyncWindow(Ptr[u8] window)
 
 
     Ptr[u8]  SDL_CreateRenderer(Ptr[u8] window, str8 name)
