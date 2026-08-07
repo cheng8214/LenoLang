@@ -1,0 +1,29 @@
+// func_type_param_bug.leno — struct 方法中函数类型参数被解析为 any
+//
+// Bug: struct 方法的函数类型参数（如 func(Renderer)）在方法体内被当作 any
+// 导致赋值给同类型字段时报类型不匹配
+
+struct Renderer {
+    int dummy = 0
+}
+
+struct Window {
+    func(Renderer)? _overlay = null
+
+    // ★ Bug: 参数 cb 声明为 func(Renderer)，但在方法体内被当作 any
+    func setOverlay(func(Renderer) cb) {
+        // 编译报错: 字段 '_overlay' 类型不匹配: 期望 'func(struct Renderer)?'，实际 'any'
+        _overlay = cb
+    }
+
+    // 对比: 无参数函数类型正常工作
+    func():bool _guard = null
+
+    func setGuard(func():bool cb) {
+        _guard = cb  // 这个正常
+    }
+}
+
+main() {
+    print("func type param bug reproduction")
+}

@@ -541,10 +541,8 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 if (param_type->kind == TYPE_INFER) {
                     // var 参数默认为 any
                     sym->type = type_new(TYPE_ANY);
-                } else if (param_type->kind == TYPE_FUNCTION && !param_type->return_type) {
-                    // 对于函数类型参数，如果没有返回类型签名，视为any
-                    sym->type = type_new(TYPE_ANY);
                 } else {
+                    // 包括函数类型（无返回类型签名时 return_type 为 NULL，表示 void）
                     sym->type = type_copy(param_type);
                 }
             } else {

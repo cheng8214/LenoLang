@@ -282,7 +282,7 @@ export struct Window {
     float _rootX = 0.0, _rootY = 0.0  // 根布局偏移（如 MenuBar 高度偏移）
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
     bool _transparent = false          // 透明窗口（跳过背景填充）
-    any _overlay = null                 // 叠加层渲染回调（setOverlay 设置，在所有控件/弹层之上绘制）
+    RenderCallback? _overlay = null      // 叠加层渲染回调（setOverlay 设置，在所有控件/弹层之上绘制）
     Array[Shortcut] _shortcuts = []    // 本窗口注册的快捷键
     func():bool _shortcutGuard = null  // 快捷键守卫：返回 true 时阻止快捷键
 

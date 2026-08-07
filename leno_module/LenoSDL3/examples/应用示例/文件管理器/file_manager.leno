@@ -428,6 +428,14 @@ int nid = tree.add_child(id, node)
     }
 
     func goBack() {
+        // ★ 如果正在搜索或显示搜索结果，先退出搜索回到当前目录
+        if searching or searchResults.len() > 0 {
+            cancelSearch()
+            searchKeyword = ""
+            pathSearch.set_text("")
+            openDirNoHistory(curDir)
+            return
+        }
         if histIndex <= 0 { return }
         histIndex = histIndex - 1
         openDirNoHistory(history[histIndex])
