@@ -1,0 +1,6 @@
+// test_null_index.leno — 验证 null 索引报错增强
+main() {
+    Array[int] arr = null   // null 数组
+    var x = arr[0]          // 对 null 索引
+    print("x="); print(x)
+}

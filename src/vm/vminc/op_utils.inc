@@ -10,8 +10,13 @@ OPCODE(OP_INDEX) {
     Value obj_val = vm_stack_pop(&vm);
 
     if (!val_is_obj(obj_val)) {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "索引操作需要对象类型，但实际类型为 '%s'", value_type_desc(obj_val));
+        char msg[512];
+        const char* desc = value_type_desc(obj_val);
+        snprintf(msg, sizeof(msg),
+                 "索引操作需要对象类型，但实际类型为 '%s'。\n"
+                 "  提示：若操作对象是 null，通常是变量未被正确初始化，"
+                 "或某个初始化调用（如 ffi.load、实例化）失败返回了 null",
+                 desc);
         throw_runtime_error(msg, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;

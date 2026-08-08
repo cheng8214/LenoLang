@@ -501,6 +501,22 @@ static int g_callback_marshal_initialized;
 static int g_pending_count;
 
 static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* arg_types) {
+    // 库对象为空检查：避免 null.bl_xxx() 触发 0xC0000005 访问违规崩溃
+    // 常见原因：ffi.load 失败返回 null，或 clib 实例未正确持有（如跨模块/模块级变量初始化失败）
+    if (val_is_null(args[0]) || !val_is_obj(args[0])) {
+        const char* fname = (argc > 1 && val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_STRING)
+                          ? ((ObjString*)val_as_obj(args[1]))->chars : "?";
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+                 "clib 库对象为空（null），无法调用函数 '%s'。\n"
+                 "  可能原因：\n"
+                 "  - ffi.load 失败返回了 null（库未找到或加载失败）\n"
+                 "  - clib 实例未正确持有（如模块级变量初始化失败、或 clib 被用作 struct 字段/函数返回值）\n"
+                 "  建议：用模块级变量持有 ffi.load 的结果，并在调用前用 'if 变量 == null' 检查",
+                 fname);
+        native_throw_error(msg);
+        return val_null();
+    }
     ObjFFILibrary* lib = val_as_ffi_lib(args[0]);
     CHECK_LIB_FREED(lib);
 
