@@ -42,7 +42,7 @@ ProgressBar progressBar
 Timer pollTimer
 
 // 搜索控制（仅主线程读写，不跨线程共享）
-var searchChannel = null    // channel: 线程→主线程 发送文件路径
+Channel searchChannel = null    // channel: 线程→主线程 发送文件路径
 var searchThreads = []      // 活跃线程列表
 var searchActive = false    // 是否正在搜索
 var totalFound = 0          // 已找到的匹配数（主线程聚合）
@@ -55,7 +55,7 @@ var uiReceived = 0          // UI 线程从 channel 累计接收的条数
 
 // 递归收集目录下所有子目录（非文件），用于均匀分配给工作线程
 // 只展开两层子目录，避免收集阶段耗时过长，同时让大目录树拆分得更均匀
-func _collect_subdirs(string dir, int depth): Array {
+func _collect_subdirs(string dir, int depth): Array[string] {
     var result = []
 
     if depth <= 0 {
@@ -114,10 +114,10 @@ func _collect_subdirs(string dir, int depth): Array {
 
 // 递归扫描目录，返回 [scanned, found]
 // 每个目录操作都独立 try-catch，权限错误只跳过当前目录，不影响兄弟目录
-func _scan_recursive(any ch, string dir, string keyword, int depth): Array {
-    var scanned = 0
-    var found = 0
-    var sent = 0
+func _scan_recursive(any ch, string dir, string keyword, int depth): Array[int] {
+    int scanned = 0
+    int found = 0
+    int sent = 0
 
     // 取消信号：channel 被主线程关闭
     if ch is Channel {
@@ -173,9 +173,9 @@ func _scan_recursive(any ch, string dir, string keyword, int depth): Array {
         if isDir {
             // 递归处理子目录，累加子目录的计数
             var sub = _scan_recursive(ch, fullpath, keyword, depth + 1)
-            scanned = scanned + _int(sub[0])
-            found = found + _int(sub[1])
-            sent = sent + _int(sub[2])
+            scanned = scanned + sub[0]
+            found = found + sub[1]
+            sent = sent + sub[2]
         } else {
             scanned = scanned + 1
 
@@ -208,7 +208,7 @@ func _scan_recursive(any ch, string dir, string keyword, int depth): Array {
 }
 
 // 批量目录搜索线程入口：扫描多个子目录，返回合计 [scanned, found]
-func scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Array {
+func scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Array[int] {
     var total_scanned = 0
     var total_found = 0
     var total_sent = 0
@@ -225,9 +225,9 @@ func scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Arr
         if d == "" { continue }
         try {
             var result = _scan_recursive(ch, d, keyword, 0)
-            total_scanned = total_scanned + _int(result[0])
-            total_found = total_found + _int(result[1])
-            total_sent = total_sent + _int(result[2])
+            total_scanned = total_scanned + result[0]
+            total_found = total_found + result[1]
+            total_sent = total_sent + result[2]
         } catch e {
             // 权限不足等错误，跳过该目录继续下一个
         }
@@ -236,7 +236,7 @@ func scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Arr
 }
 
 // 工作线程入口（具名全局函数，避免匿名闭包被主线程 GC 提前回收导致 use-after-free）
-func _worker_entry(any c, Array dirs_arr, string k, int w): Array {
+func _worker_entry(any c, Array dirs_arr, string k, int w): Array[int] {
     return scan_batch_worker(c, dirs_arr, k, w)
 }
 
@@ -473,9 +473,9 @@ func finishSearch() {
         if t is Thread {
             try {
                 var result = t.join()
-                if result is Array {
-                    totalScanned = totalScanned + _int(result[0])
-                    totalFound = totalFound + _int(result[1])
+                if result is Array[int] {
+                    totalScanned = totalScanned + result[0]
+                    totalFound = totalFound + result[1]
                 }
             } catch e {
                 // 线程异常，跳过
