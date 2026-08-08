@@ -370,20 +370,33 @@ static void* thread_entry_point(void* arg) {
         return NULL;
     }
 
-    // ★ 深拷贝线程初始参数到子线程 GC 堆。
-    // thread_initial_args 中的 Value 指向主线程 GC 堆上的对象（如 batch 数组、keyword 字符串）。
-    // 如果不深拷贝，主线程 GC 可能在这些对象不可达时回收它们，
-    // 导致子线程访问已释放内存 → use-after-free → 内存损坏（乱码、崩溃）。
-    // value_clone_for_channel 在子线程 GC 堆上分配新对象，与主线程 GC 完全隔离。
-    if (thread_initial_args && thread_initial_arg_count > 0) {
-        Value* cloned_args = (Value*)malloc(thread_initial_arg_count * sizeof(Value));
-        if (cloned_args) {
+    // ★ 从 thread->pending_args 读取参数（已在主线程 GC 堆上深拷贝），
+    // re-clone 到子线程 GC 堆。读取和清 NULL 都在 mutex 保护下进行，
+    // 与主线程 GC 的 gc_scan_children(OBJ_THREAD) 同步。
+    // thread_initial_args 已在函数开头声明（从 args->initial_args 初始化为 NULL）
+    platform_mutex_lock(&thread_obj->mutex);
+    if (thread_obj->pending_args && thread_obj->pending_arg_count > 0) {
+        thread_initial_arg_count = thread_obj->pending_arg_count;
+        thread_initial_args = (Value*)malloc(thread_initial_arg_count * sizeof(Value));
+        if (thread_initial_args) {
+            // ★ 禁用同步 GC：防止 value_clone_for_channel → gc_alloc → gc_major_collect
+            // → gc_scan_children(OBJ_THREAD) → lock thread->mutex → 自死锁
+            int saved_gc_enabled = gc_get_enabled();
+            gc_set_enabled(0);
             for (int i = 0; i < thread_initial_arg_count; i++) {
-                cloned_args[i] = value_clone_for_channel(thread_initial_args[i]);
+                thread_initial_args[i] = value_clone_for_channel(thread_obj->pending_args[i]);
             }
+            gc_set_enabled(saved_gc_enabled);
         }
-        free(thread_initial_args);
-        thread_initial_args = cloned_args;
+        // 清 NULL，主线程 GC 不再扫描这些值
+        free(thread_obj->pending_args);
+        thread_obj->pending_args = NULL;
+        thread_obj->pending_arg_count = 0;
+    }
+    platform_mutex_unlock(&thread_obj->mutex);
+
+    // 设置协程的初始参数（已 clone 到子线程 GC 堆）
+    if (thread_initial_args && thread_initial_arg_count > 0) {
         co->initial_args = thread_initial_args;
         co->initial_arg_count = thread_initial_arg_count;
     }
@@ -470,9 +483,33 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
     thread->error_msg = NULL;
     thread->has_result = 0;
     thread->joined = 0;
+    thread->pending_args = NULL;
+    thread->pending_arg_count = 0;
 
     platform_mutex_init(&thread->mutex);
     platform_cond_init(&thread->done_cond);
+
+    // ★ 深拷贝线程参数到主线程 GC 堆，并存入 thread->pending_args。
+    // 这样主线程 GC 可以通过 gc_scan_children(OBJ_THREAD) 扫描到这些值，
+    // 防止子线程读取前被 GC 回收（多线程崩溃的主要根因）。
+    // 子线程在 thread_entry_point 中 re-clone 到自己的 GC 堆后清 NULL。
+    if (call_args && call_arg_count > 0) {
+        platform_mutex_lock(&thread->mutex);
+        thread->pending_args = (Value*)malloc(call_arg_count * sizeof(Value));
+        if (thread->pending_args) {
+            // ★ 禁用同步 GC：value_clone_for_channel → gc_alloc 在 malloc 失败时
+            // 会同步调用 gc_major_collect()，此时 GC 的 gc_scan_children(OBJ_THREAD)
+            // 会尝试 lock thread->mutex，但当前线程已持有 → 自死锁。
+            int saved_gc_enabled = gc_get_enabled();
+            gc_set_enabled(0);
+            for (int i = 0; i < call_arg_count; i++) {
+                thread->pending_args[i] = value_clone_for_channel(call_args[i]);
+            }
+            gc_set_enabled(saved_gc_enabled);
+            thread->pending_arg_count = call_arg_count;
+        }
+        platform_mutex_unlock(&thread->mutex);
+    }
 
     ThreadStartArgs* args = (ThreadStartArgs*)malloc(sizeof(ThreadStartArgs));
     if (!args) {
@@ -482,14 +519,9 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
     memset(args, 0, sizeof(ThreadStartArgs));
     args->closure = closure;
     args->thread_obj = thread;
-
-    if (call_args && call_arg_count > 0) {
-        args->initial_args = (Value*)malloc(call_arg_count * sizeof(Value));
-        if (args->initial_args) {
-            memcpy(args->initial_args, call_args, call_arg_count * sizeof(Value));
-            args->initial_arg_count = call_arg_count;
-        }
-    }
+    // initial_args 不再存储在 args 中，改为存储在 thread->pending_args（GC 可见）
+    args->initial_args = NULL;
+    args->initial_arg_count = 0;
     
     extern THREAD_LOCAL VM* current_exec_vm;
     extern VM vm;
@@ -543,6 +575,26 @@ Value thread_join(ObjThread* thread) {
     while (thread->state == THREAD_RUNNING) {
         platform_cond_wait(&thread->done_cond, &thread->mutex);
     }
+
+    // ★ 在 mutex 内克隆 result 到主线程 GC 堆。
+    // thread->result 是子线程在 thread_entry_point 中通过 value_clone_for_channel
+    // 分配在子线程 GC 堆上的。子线程退出后其 GC 堆被遗弃，如果主线程 GC
+    // 试图扫描该对象（通过 gc_scan_children(OBJ_THREAD)），会访问子线程堆内存——
+    // 虽然 malloc 不会回收，但 marked 标志会 stale，导致 GC 跳过扫描其子对象。
+    // 克隆到主线程堆后，GC 可正确管理。
+    //
+    // ★ 禁用同步 GC：value_clone_for_channel → gc_alloc → gc_major_collect
+    // → gc_scan_children(OBJ_THREAD) → lock thread->mutex → 自死锁
+    Value result_copy = val_null();
+    if (thread->has_result) {
+        int saved_gc_enabled = gc_get_enabled();
+        gc_set_enabled(0);
+        result_copy = value_clone_for_channel(thread->result);
+        gc_set_enabled(saved_gc_enabled);
+        thread->result = result_copy;
+        gc_write_barrier((Object*)thread, result_copy);
+    }
+
     platform_mutex_unlock(&thread->mutex);
 
     if (!thread->joined) {
@@ -578,7 +630,10 @@ Value thread_join(ObjThread* thread) {
 }
 
 ThreadState thread_get_state(ObjThread* thread) {
-    return thread->state;
+    platform_mutex_lock(&thread->mutex);
+    ThreadState state = thread->state;
+    platform_mutex_unlock(&thread->mutex);
+    return state;
 }
 
 // ============================================================================

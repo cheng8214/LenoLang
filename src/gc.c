@@ -496,10 +496,21 @@ void gc_scan_children(Object* obj) {
             gc_mark_object((Object*)future->waiter);
             break;
         }
-        // 线程对象：标记返回值
+        // 线程对象：标记返回值和 pending_args
+        // ★ 加锁扫描：pending_args 在 mutex 保护下被子线程读取/清空，
+        // result 也在 mutex 保护下被设置/克隆。GC 必须加锁同步。
+        // 死锁分析：与 OBJ_CHANNEL 相同——GC 在安全点触发，当前线程不持有
+        // thread mutex；其他线程持有 mutex 时 GC 短暂阻塞，不影响正确性。
         case OBJ_THREAD: {
             ObjThread* thread = (ObjThread*)obj;
+            platform_mutex_lock(&thread->mutex);
             gc_mark_value(thread->result);
+            if (thread->pending_args && thread->pending_arg_count > 0) {
+                for (int i = 0; i < thread->pending_arg_count; i++) {
+                    gc_mark_value(thread->pending_args[i]);
+                }
+            }
+            platform_mutex_unlock(&thread->mutex);
             break;
         }
         // 通道：标记缓冲区中的值
@@ -578,20 +589,18 @@ void gc_mark_object(Object* obj) {
         return;  // 无效的对象类型，跳过
     }
 
-    // ★ Channel 对象使用 malloc 分配（不在任何线程的 GC heap 链表中），
-    // 且被多个线程共享。clear_all_marks 只遍历 gc.young_heap / gc.old_heap，
-    // 永远不会清除 Channel 的 marked 标志。
-    // 这导致第一次 GC 标记 Channel 后，后续 GC 看到 marked==1 就跳过，
-    // 不再扫描 buffer 中的值 → buffer 中的对象被误回收 → use-after-free 崩溃。
-    //
-    // 修复：对 OBJ_CHANNEL，即使 marked==1 也仍然扫描其子对象（buffer 中的值）。
+    // ★ Channel 和 Thread 对象的 marked 标志可能被其他线程的 GC 留下 stale 值：
+    // - Channel: malloc 分配，不在任何线程的 GC heap 链表中，clear_all_marks 不会清除
+    // - Thread: result/pending_args 中的值可能指向子线程 GC 堆上的对象，
+    //   子线程 GC 会设置 marked=1，但主线程 clear_all_marks 不会清除子线程堆对象
+    // 修复：对这两种类型，即使 marked==1 也仍然扫描子对象。
     // 去重由 gc_mark_object 对每个子对象各自的 marked 检查来保证，不会无限递归。
-    if (obj->type == OBJ_CHANNEL) {
+    if (obj->type == OBJ_CHANNEL || obj->type == OBJ_THREAD) {
         if (!obj->marked) {
             obj->marked = 1;
             mark_stack_push(obj);
         } else {
-            // 已标记但仍需扫描 buffer（marked 可能是其他线程 GC 留下的 stale 值）
+            // 已标记但仍需扫描子对象（marked 可能是其他线程 GC 留下的 stale 值）
             gc_scan_children(obj);
         }
         return;
@@ -1189,11 +1198,15 @@ static void free_object_resources(Object* obj) {
         // Future：无额外资源
         case OBJ_FUTURE:
             break;
-        // 线程对象：释放错误消息和同步原语
+        // 线程对象：释放错误消息、pending_args 和同步原语
         case OBJ_THREAD: {
             ObjThread* thread = (ObjThread*)obj;
             if (thread->error_msg) {
                 free(thread->error_msg);
+            }
+            if (thread->pending_args) {
+                free(thread->pending_args);
+                thread->pending_args = NULL;
             }
             platform_mutex_destroy(&thread->mutex);
             platform_cond_destroy(&thread->done_cond);

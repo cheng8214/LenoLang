@@ -670,6 +670,13 @@ typedef struct ObjThread {
     char* error_msg;
     int has_result;
     int joined;
+    // ★ 线程启动参数的 GC 保护锚点
+    // 在 thread_new_with_args 中深拷贝到主线程 GC 堆，子线程在 thread_entry_point
+    // 中读取并 re-clone 到自己的 GC 堆后清 NULL。
+    // GC 通过 gc_scan_children(OBJ_THREAD) 扫描这些值，防止主线程 GC 在子线程
+    // 读取前回收它们（这是多线程崩溃的主要根因）。
+    Value* pending_args;
+    int pending_arg_count;
 } ObjThread;
 
 // Channel 对象

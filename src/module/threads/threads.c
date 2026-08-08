@@ -93,7 +93,10 @@ static Value channel_method_try_receive(int argc, Value* args) {
 static Value channel_method_is_closed(int argc, Value* args) {
     (void)argc;
     ObjChannel* channel = (ObjChannel*)val_as_obj(args[0]);
-    return val_bool(channel->closed);
+    platform_mutex_lock(&channel->mutex);
+    int closed = channel->closed;
+    platform_mutex_unlock(&channel->mutex);
+    return val_bool(closed);
 }
 
 static Value channel_method_len(int argc, Value* args) {
