@@ -638,7 +638,7 @@ int nid = tree.add_child(id, node)
     }
 
     func doCopy(string path) {
-        // ★ 批量复制：优先使用多选结果
+        // 批量复制：优先使用多选结果
         Array[string] paths = getSelectedPaths()
         if paths.len() == 0 { return }
         clipPaths = paths
@@ -652,7 +652,7 @@ int nid = tree.add_child(id, node)
     }
 
     func doCut(string path) {
-        // ★ 批量剪切：优先使用多选结果
+        // 批量剪切：优先使用多选结果
         Array[string] paths = getSelectedPaths()
         if paths.len() == 0 { return }
         clipPaths = paths
@@ -676,7 +676,7 @@ int nid = tree.add_child(id, node)
     }
 
     func doDeletePath(string p, bool isDir) {
-        // ★ 批量删除：检查是否多选
+        // 批量删除：检查是否多选
         Array[int] selRows = table.get_selected_rows()
         if selRows.len() > 1 {
             // 多选删除：收集所有选中路径，逐个删除
@@ -803,7 +803,7 @@ case "exit"      { wantQuit = true }
 
     func onTableSelect(int row) {
         if row < 0 or row >= table.row_count() { return }
-        // ★ 多选模式：从 table.get_selected_rows() 获取全部选中行
+        // 多选模式：从 table.get_selected_rows() 获取全部选中行
         Array[int] selRows = table.get_selected_rows()
         if selRows.len() == 1 {
             var r = table.get_row(selRows[0])
@@ -1115,7 +1115,7 @@ pathCombo.on_enter(func(string text) {
         table.on_context_select(func(int row, string id) { onContextSelect(row, id) })
         table.on_edit_commit(func(int row, int col, string text) { onEditCommit(row, col, text) })
         table.set_editable(false)
-        table.set_multi_select(true)   // ★ 开启多选：Ctrl+点击切换 / Shift+点击范围选择
+        table.set_multi_select(true)   // 开启多选：Ctrl+点击切换 / Shift+点击范围选择
         table.on_dbl_click(func(int row, int col) { onTableDblClick(row, col) })
     }
 
@@ -1127,14 +1127,14 @@ pathCombo.on_enter(func(string text) {
     func handleKeyboard(Event ev): bool {
         if wantQuit or ev.isQuit() { return false }
 
-        // ★ 检查 TitleBar 关闭按钮是否被按下
+        // 检查 TitleBar 关闭按钮是否被按下
         if titleBar._loaded and titleBar.is_close_requested() {
             titleBar.clear_close_request()
             wantQuit = true
             return false
         }
 
-        // ★ 安全兜底：模态对话框关闭后可能残留 _dragPending 状态
+        // 安全兜底：模态对话框关闭后可能残留 _dragPending 状态
         //   （左键点击菜单项时误触发），仅在非鼠标事件（键盘/窗口等）时强制清除；
         //   鼠标按下/移动/释放由各自分支处理，不可在此误清
         if _dragPending and not ev.isMouseButtonDown() and not ev.isMouseMotion() and not ev.isMouseButtonUp() {
@@ -1147,17 +1147,17 @@ pathCombo.on_enter(func(string text) {
 
         // ==================== 拖拽逻辑 ====================
         // 鼠标按下 Table 时记录起点，等待移动阈值触发拖拽
-        // ★ 排除弹层（菜单/下拉框）打开时的点击：左键点击右键菜单项时，
+        // 排除弹层（菜单/下拉框）打开时的点击：左键点击右键菜单项时，
         //   鼠标位置仍在 Table 区域内，但此时应由菜单处理点击而非触发拖拽。
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
-            // ★ 编辑中不启动文件拖拽：否则在 Edit 内按住鼠标选文字时会误触发拖拽提示框
+            // 编辑中不启动文件拖拽：否则在 Edit 内按住鼠标选文字时会误触发拖拽提示框
             if table.contains(ev.mouseX(), ev.mouseY()) and not core.inPopupCapture(ev.mouseX(), ev.mouseY()) and not table.is_editing() {
                 _dragStartX = ev.mouseX()
                 _dragStartY = ev.mouseY()
                 _dragPending = true
                 _dragging = false
                 _dragTargetNode = -1
-                // ★ 捕获当前多选：Table.process() 会在此事件中把多选清除为单选，
+                // 捕获当前多选：Table.process() 会在此事件中把多选清除为单选，
                 //   如果点击的行已在多选中，拖拽时应保持完整多选
                 _dragSelRows = table.get_selected_rows()
             }
@@ -1168,7 +1168,7 @@ pathCombo.on_enter(func(string text) {
             float dx = ev.mouseX() - _dragStartX
             float dy = ev.mouseY() - _dragStartY
                 if (dx * dx + dy * dy) > 25.0 {
-                    // ★ 恢复鼠标按下时捕获的多选（Table.process() 可能在按下时清除了多选）
+                    // 恢复鼠标按下时捕获的多选（Table.process() 可能在按下时清除了多选）
                     if _dragSelRows.len() > 1 { table.set_selected_rows(_dragSelRows) }
                     _dragPaths = getSelectedPaths()
 if _dragPaths.len() > 0 {
@@ -1224,7 +1224,7 @@ _dragTargetNode = -1
             dragHint.hide()
         }
 
-        // ★ 键盘快捷键已由 Window 快捷键系统自动处理（win.addShortcut 注册），
+        // 键盘快捷键已由 Window 快捷键系统自动处理（win.addShortcut 注册），
         //   此处不再手动判断 scancode/modifier，避免与框架重复处理。
         return true
     }
@@ -1240,7 +1240,7 @@ _dragTargetNode = -1
 
         imgDir = dirs.join(dirs.script_dir(), "images")
 
-        // ★ 创建自绘标题栏组件（win.add 后自动去掉系统标题栏边框）
+        // 创建自绘标题栏组件（win.add 后自动去掉系统标题栏边框）
         titleBar = SDL3.createTitleBar({title:"LenoSDL3 文件管理器", height:32, font_size:14})
         win.add(titleBar)
         float TITLEBAR_H = titleBar.get_h()
