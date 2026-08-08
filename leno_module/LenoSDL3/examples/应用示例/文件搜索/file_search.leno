@@ -15,7 +15,7 @@
 //   - 多线程与 SDL3 UI 的安全交互（仅主线程操作 UI，线程只做计算+channel 发送）
 //
 // 运行：leno file_search.leno
-import "../../lib/SDL3.leno" as SDL3
+import "../../../lib/SDL3.leno" as SDL3
 use SDL3.(Event, Renderer, WindowFlag, Scancode, Timer)
 use SDL3.(Window, TitleBar, Edit, Button, ListBox, Label, ProgressBar, HBox, VBox)
 import threads
