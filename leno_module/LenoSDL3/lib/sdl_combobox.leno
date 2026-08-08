@@ -176,6 +176,11 @@ export struct ComboBox impl Widget, Themeable {
     // 记录所属窗口句柄，供下拉层按窗口隔离绘制（渲染循环据 hwnd 只画本窗口下拉框）
     func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
     func getWindowHandle(): Ptr[u8] { return _winHnd }
+    // ★ 容器下发窗口句柄：同时传递给内嵌 Edit，使其 IME 候选框能正确定位
+    func _bind_window(Ptr[u8] hwnd) {
+        _winHnd = hwnd
+        _edit?.set_window(hwnd)
+    }
 
     // 纹理缓存：按 path 取/载纹理（对齐 Table._get_tex 模式）
     func _get_tex(Renderer r, string path): Ptr[u8] {

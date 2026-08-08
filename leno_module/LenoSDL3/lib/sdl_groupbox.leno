@@ -81,11 +81,7 @@ export struct GroupBox impl Widget {
         for children to c { _pass_hwnd(c, hwnd) }
     }
     func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
-        switch c {
-            case is Edit { c.set_window(hwnd); return }
-            case is HBox, VBox, AnchorBox, GroupBox { c._bind_window(hwnd); return }
-            case is Table, TreeView { c.set_window_handle(hwnd); return }
-        }
+        lay.passWindowHandle(c, hwnd)
     }
     func remove(Widget c) {
         for children.len() to i { if children[i] == c { children.remove(i); return } }

@@ -1150,7 +1150,8 @@ pathCombo.on_enter(func(string text) {
         // ★ 排除弹层（菜单/下拉框）打开时的点击：左键点击右键菜单项时，
         //   鼠标位置仍在 Table 区域内，但此时应由菜单处理点击而非触发拖拽。
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
-            if table.contains(ev.mouseX(), ev.mouseY()) and not core.inPopupCapture(ev.mouseX(), ev.mouseY()) {
+            // ★ 编辑中不启动文件拖拽：否则在 Edit 内按住鼠标选文字时会误触发拖拽提示框
+            if table.contains(ev.mouseX(), ev.mouseY()) and not core.inPopupCapture(ev.mouseX(), ev.mouseY()) and not table.is_editing() {
                 _dragStartX = ev.mouseX()
                 _dragStartY = ev.mouseY()
                 _dragPending = true

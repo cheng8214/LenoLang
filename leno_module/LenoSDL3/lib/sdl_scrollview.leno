@@ -72,13 +72,11 @@ export struct ScrollView impl Widget {
     }
 
     // 绑定窗口句柄：记录自身，并下发给需要它的内容控件（如含 Edit 的布局）
+    // 委托给 sdl_layout 的统一函数，确保所有容器类型都能正确传递
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
         Widget c = _content
-        switch c {
-            case is HBox, VBox, AnchorBox, ScrollView, Panel { c._bind_window(hwnd); return }
-            case is Edit { c.set_window(hwnd) }
-        }
+        if c is Widget { lay.passWindowHandle(c, hwnd) }
     }
 
     // 设置内容控件（单一）。content_w/h 未指定时取内容自然尺寸

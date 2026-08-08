@@ -99,11 +99,7 @@ export struct Splitter impl Widget, Themeable {
         var s = _second; if s is Widget { _pass_hwnd_size(s, hwnd, ww, hh) }
     }
     func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
-        switch c {
-            case is Edit { c.set_window(hwnd); return }
-            case is HBox, VBox, AnchorBox, Panel, Splitter { c._bind_window(hwnd); return }
-            case is Table, TreeView { c.set_window_handle(hwnd); return }
-        }
+        lay.passWindowHandle(c, hwnd)
     }
     func _pass_hwnd_size(Widget c, Ptr[u8] hwnd, int ww, int hh) {
         switch c {
@@ -113,6 +109,8 @@ export struct Splitter impl Widget, Themeable {
             case is TreeView { c.set_window_handle(hwnd); c.set_window(ww, hh); return }
             case is Table { c.set_window_handle(hwnd); c.set_window_size(ww, hh); return }
         }
+        // ★ 未识别的容器类型（ScrollView/TabControl/SpinBox/GroupBox 等）通过统一函数传递窗口句柄
+        lay.passWindowHandle(c, hwnd)
     }
 
     // ==================== 尺寸接口 ====================

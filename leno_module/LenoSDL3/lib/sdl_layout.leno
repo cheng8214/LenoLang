@@ -469,18 +469,31 @@ export struct AnchorBox impl Widget {
     func dispose() { for _c to c { c.dispose() } }
 }
 
+// ★ 核心窗口句柄下发逻辑（必须定义在使用它的函数之前，避免前向引用问题）
+func _passWindowHandle(Widget c, Ptr[u8] hwnd) {
+    switch c {
+        case is Edit { c.set_window(hwnd); return }
+        case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
+        case is Table, TreeView { c.set_window_handle(hwnd); return }
+    }
+    // 未匹配的扩展类型（Splitter/Panel/TabControl/ScrollView/SpinBox/GroupBox/ComboBox 等）交给回调处理
+    if _extraPassWindow != null { _extraPassWindow(c, hwnd) }
+}
+
 // 把窗口句柄下发给需要它的子控件：
 // - Edit 需要窗口句柄做 IME 候选框定位（SDL_SetTextInputArea）；
 // - 嵌套的布局容器（HBox/VBox/AnchorBox）继续向下传递，保证深层子控件也能拿到句柄。
 // 其它控件忽略即可（无 set_window 需求）。
 func _layout_pass_window(Widget c, Ptr[u8] hwnd) {
-switch c {
-case is Edit { c.set_window(hwnd); return }
-case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
-case is Table, TreeView { c.set_window_handle(hwnd); return }
+    _passWindowHandle(c, hwnd)
 }
-// 未匹配的扩展类型（Splitter/Panel/TabControl 等）交给回调处理
-if _extraPassWindow != null { _extraPassWindow(c, hwnd) }
+
+// ★ 导出统一的窗口句柄下发函数，供 Panel/GroupBox/Splitter/TabControl/ScrollView
+//   等容器的 _pass_hwnd 调用，确保所有容器类型（含未来新增的）都能正确传递句柄给 Edit。
+//   此前各容器的 _pass_hwnd 只处理了部分类型（如 Panel 不认识 ScrollView），导致嵌套
+//   容器内的 Edit 收不到窗口句柄，IME 候选框位置始终在 (0,0)。
+export func passWindowHandle(Widget c, Ptr[u8] hwnd) {
+    _passWindowHandle(c, hwnd)
 }
 
 // ==================== 工厂 ====================

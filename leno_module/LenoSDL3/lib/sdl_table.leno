@@ -602,9 +602,11 @@ export struct Table impl Widget, Themeable {
         set_window_size(ww, hh)
     }
     // 记录所属窗口句柄，供内嵌右击菜单按窗口隔离绘制
+    // ★ 同时传递给内嵌 Edit，使其 IME 候选框能正确定位（否则 _hwnd 为 null，IME 位置默认 0,0）
     func set_window_handle(Ptr[u8] hwnd) {
         _hwnd = hwnd
         _ctxMenu?.setWindowHandle(hwnd)
+        _edit?.set_window(hwnd)
     }
     // 启用/禁用右击上下文菜单
     func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
@@ -840,6 +842,50 @@ export struct Table impl Widget, Themeable {
             }
         }
 
+        // ★ 拖动状态清理必须在 contains 检查之前：
+        //   鼠标拖动滚动条时移出表格区域，若 contains 拦截了 mouse up 事件，
+        //   _draggingV/H 不会被清除 → 重新进入表格时无需按住即可拖动滚动条
+        if ev.isMouseButtonUp() { _draggingV = false; _draggingH = false; _dragCol = -1 }
+
+        // ★ 拖动滚动条时鼠标移出表格区域仍需继续跟随，否则滚动条卡住不动
+        if _draggingV and ev.isMouseMotion() {
+            var sbV = _compute_sb()
+            float hhV = sbV[1]
+            float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
+            float bodyH = h - _headerH - hhV
+            float track = bodyH - 4.0
+            float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
+            float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
+            _scrollY = (my - (y + _headerH + 2.0) - _vDragOffset) * (maxY / (track - thumbH))
+            _clamp_scroll()
+            core.markFrameRedraw()
+            return
+        }
+        if _draggingH and ev.isMouseMotion() {
+            var sbH = _compute_sb()
+            float vwH = sbH[0]
+            float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
+            float bodyW = w - vwH
+            float track = bodyW - 4.0
+            float tw = _total_w(); if tw <= 0 { tw = 1 }
+            float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
+            _scrollX = (mx - (x + 2.0) - _hDragOffset) * (maxX / (track - thumbW))
+            _clamp_scroll()
+            core.markFrameRedraw()
+            return
+        }
+        // ★ 列宽拖动中：鼠标移出表格仍继续跟随（与滚动条同理）
+        if _dragCol >= 0 and ev.isMouseMotion() {
+            float nw = _dragStartW + (mx - _dragStartX)
+            if nw < 24.0 { nw = 24.0 }
+            if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_fitted() }
+            _autoCols = false
+            _clamp_scroll()
+            core.markFrameRedraw()
+            core.requestCursor(SystemCursor.EW_RESIZE)
+            return
+        }
+
         // 仅处理命中表格区域内的事件（表格外点击/悬停不触发表头与行交互）
         if not contains(mx, my) {
             _hoverRow = -1
@@ -849,8 +895,6 @@ export struct Table impl Widget, Themeable {
 
         var sb = _compute_sb()
         float vw = sb[0], hh = sb[1]
-
-        if ev.isMouseButtonUp() { _draggingV = false; _draggingH = false; _dragCol = -1 }
 
         // 竖向滚动条
         if vw > 0.0 {
@@ -869,17 +913,6 @@ export struct Table impl Widget, Themeable {
                     _scrollY = (my - (y + _headerH + 2.0) - thumbH / 2.0) * (maxY / (track - thumbH))
                     _clamp_scroll()
                 }
-                return
-            }
-            if _draggingV and ev.isMouseMotion() {
-                float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
-                float bodyH = h - _headerH - hh
-                float track = bodyH - 4.0
-                float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
-                float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
-                _scrollY = (my - (y + _headerH + 2.0) - _vDragOffset) * (maxY / (track - thumbH))
-                _clamp_scroll()
-                core.markFrameRedraw()
                 return
             }
         }
@@ -901,17 +934,6 @@ export struct Table impl Widget, Themeable {
                     _scrollX = (mx - (x + 2.0) - thumbW / 2.0) * (maxX / (track - thumbW))
                     _clamp_scroll()
                 }
-                return
-            }
-            if _draggingH and ev.isMouseMotion() {
-                float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
-                float bodyW = w - vw
-                float track = bodyW - 4.0
-                float tw = _total_w(); if tw <= 0 { tw = 1 }
-                float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
-                _scrollX = (mx - (x + 2.0) - _hDragOffset) * (maxX / (track - thumbW))
-                _clamp_scroll()
-                core.markFrameRedraw()
                 return
             }
         }

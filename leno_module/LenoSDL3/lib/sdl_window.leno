@@ -85,11 +85,11 @@ import "sdl_titlebar.leno" as tbarlib
 use tbarlib.TitleBar
 
 // ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
-// SpinBox/GroupBox/ScrollView 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
+// SpinBox/GroupBox/ScrollView/ComboBox 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
 // import 这些类型（避免循环依赖）。此前示例需手动调用 _content._bind_window()，现在自动完成。
 lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
     switch c {
-        case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter { c._bind_window(hwnd); return }
+        case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter, ComboBox { c._bind_window(hwnd); return }
         case is Edit { c.set_window(hwnd); return }
         case is Table, TreeView { c.set_window_handle(hwnd); return }
         case is TitleBar { c.set_window_handle(hwnd); return }
@@ -178,6 +178,19 @@ Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
 Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
 var _runLoopActive = false    // 主循环是否已在运行
 Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
+
+// ★ 安全网：每帧向根控件下发窗口句柄，确保所有子控件（含动态添加的）都能拿到 _hwnd。
+//   与 Window._passWindowHandle 逻辑一致，但作为模块级函数供事件循环调用（可处理多窗口）。
+func _refreshWindowHandle(Widget w, Ptr[u8] hwnd, int ww, int hh) {
+    switch w {
+        case is Splitter { w._bind_window_size(hwnd, ww, hh); return }
+        case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, ComboBox { w._bind_window(hwnd); return }
+        case is Edit { w.set_window(hwnd); return }
+        case is TreeView { w.set_window_handle(hwnd); w.set_window(ww, hh); return }
+        case is Table { w.set_window_handle(hwnd); w.set_window_size(ww, hh); return }
+        case is TitleBar { w.set_window_handle(hwnd); return }
+    }
+}
 
 // 模块级快捷键尝试匹配（事件循环中调用，必须在 _runShortcuts/_runShortcutGuards 定义之后）
 func _tryShortcut(int winIdx, Event ev): bool {
@@ -1154,6 +1167,10 @@ export struct Window {
                     if _runWids[j] == wid {
                         // 先处理根布局控件（背景层），再处理 _widgets（覆盖层如 MenuBar）
                         var rootWid = _runRoots[j]
+                        // ★ 安全网：每帧向根控件下发窗口句柄，确保所有子控件（含动态添加的、
+                        //   或因创建顺序/容器类型遗漏而未收到句柄的）都能拿到 _hwnd。
+                        //   _bind_window 是幂等操作（重复设置同一句柄无副作用），开销可忽略。
+                        if rootWid is Widget { _refreshWindowHandle(rootWid, _runHnds[j], _runW[j], _runH[j]) }
                         rootWid?.process(ev)
                         var ws = _runWidgets[j]
                         for ws to w { w.process(ev) }
