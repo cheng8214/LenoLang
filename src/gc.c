@@ -279,9 +279,14 @@ void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
 void gc_scan_children(Object* obj);
 
 // --- 显式标记栈 ---
-static Object** mark_stack = NULL;
-static int mark_stack_count = 0;
-static int mark_stack_capacity = 0;
+// ★ 必须是 THREAD_LOCAL：GC 状态（LenoGC gc）是线程局部的，
+// 每个 worker 线程独立触发 GC。如果 mark_stack 是全局共享的，
+// 多个线程同时 GC 时会互相冲覆 mark_stack（一个线程 push 的对象
+// 被另一个线程 pop，或 realloc 导致指针失效），导致标记遗漏 →
+// 存活对象被误回收 → use-after-free → 内存损坏。
+static THREAD_LOCAL Object** mark_stack = NULL;
+static THREAD_LOCAL int mark_stack_count = 0;
+static THREAD_LOCAL int mark_stack_capacity = 0;
 
 static void mark_stack_push(Object* obj) {
     if (mark_stack_count >= mark_stack_capacity) {

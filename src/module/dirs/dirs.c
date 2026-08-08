@@ -71,6 +71,8 @@ static const char* get_string(Value value) {
 }
 
 // 创建数组辅助函数
+// ★ 使用 gc_track_memory 追踪 elements 缓冲区的内存占用，
+// 确保 GC 正确计算内存使用量（与 object_array.c 的 arr_new 一致）。
 static ObjArray* arr_new_with_capacity(int capacity) {
     ObjArray* arr = (ObjArray*)gc_alloc(sizeof(ObjArray), OBJ_ARRAY);
     if (!arr) return NULL;
@@ -80,12 +82,24 @@ static ObjArray* arr_new_with_capacity(int capacity) {
         return NULL;
     }
     
+    // 追踪 elements 缓冲区的内存占用
+    gc_track_memory((Object*)arr, 0, capacity * sizeof(Value));
+    
     arr->capacity = capacity;
     arr->count = 0;
+    arr->type_info = NULL;
+    
+    // 初始化为 null，防止 GC 扫描到垃圾值
+    for (int i = 0; i < capacity; i++) {
+        arr->elements[i] = val_null();
+    }
+    
     return arr;
 }
 
 // 向数组添加元素
+// ★ 使用 gc_write_barrier 确保写屏障正确（与 object_array.c 一致），
+// 防止老年代数组引用的年轻代对象在 Minor GC 时被遗漏。
 static void arr_push(ObjArray* arr, Value value) {
     if (arr->count >= arr->capacity) {
         int new_capacity = arr->capacity * 2;
@@ -93,8 +107,11 @@ static void arr_push(ObjArray* arr, Value value) {
         if (!new_elements) return;
         arr->elements = new_elements;
         arr->capacity = new_capacity;
+        // 追踪扩容后的内存变化
+        gc_track_memory((Object*)arr, (arr->count) * sizeof(Value), new_capacity * sizeof(Value));
     }
     arr->elements[arr->count++] = value;
+    gc_write_barrier((Object*)arr, value);
 }
 
 // ==================== 路径操作 ====================
@@ -773,10 +790,17 @@ static Value native_dirs_listdir(int argCount, Value* args) {
         return val_null();
     }
     
+    // ★ 将 arr 注册为 GC 额外根，防止 str_copy → gc_alloc 内部
+    // malloc 失败时触发 gc_major_collect() 误回收 arr 及其已添加的字符串。
+    // arr 是 C 局部变量，不在 VM 栈/帧局部变量中，GC mark_roots 看不到它。
+    Value arr_val = val_obj((Object*)arr);
+    gc_push_root(&arr_val);
+    
 #ifdef _WIN32
     // 将 UTF-8 路径转换为宽字符
     wchar_t* wpath = utf8_to_utf16(path);
     if (!wpath) {
+        gc_pop_root();
         return val_null();
     }
     
@@ -789,6 +813,7 @@ static Value native_dirs_listdir(int argCount, Value* args) {
     HANDLE hFind = FindFirstFileW(search_path, &findData);
     
     if (hFind == INVALID_HANDLE_VALUE) {
+        gc_pop_root();
         return val_null();
     }
     
@@ -810,6 +835,7 @@ static Value native_dirs_listdir(int argCount, Value* args) {
 #else
     DIR* dir = opendir(path);
     if (!dir) {
+        gc_pop_root();
         return val_null();
     }
     
@@ -825,6 +851,7 @@ static Value native_dirs_listdir(int argCount, Value* args) {
     closedir(dir);
 #endif
     
+    gc_pop_root();
     return val_obj((Object*)arr);
 }
 
@@ -839,9 +866,18 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
         return;
     }
 
+    // ★ 将临时数组注册为 GC 额外根，防止 str_copy → gc_alloc 内部
+    // malloc 失败时触发 gc_major_collect() 误回收这些 C 局部变量持有的数组。
+    Value dir_names_val = val_obj((Object*)dir_names);
+    Value file_names_val = val_obj((Object*)file_names);
+    Value subdirs_val = val_obj((Object*)subdirs);
+    gc_push_root(&dir_names_val);
+    gc_push_root(&file_names_val);
+    gc_push_root(&subdirs_val);
+
 #ifdef _WIN32
     wchar_t* wpath = utf8_to_utf16(path);
-    if (!wpath) { return; }
+    if (!wpath) { gc_pop_root(); gc_pop_root(); gc_pop_root(); return; }
 
     wchar_t wsearch[4096];
     swprintf(wsearch, sizeof(wsearch) / sizeof(wchar_t), L"%ls\\*", wpath);
@@ -914,6 +950,10 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
             walk_scan_dir(subdir_path, result);
         }
     }
+
+    gc_pop_root();  // subdirs_val
+    gc_pop_root();  // file_names_val
+    gc_pop_root();  // dir_names_val
 }
 
 // dirs.walk(path) - 递归遍历目录树
@@ -935,8 +975,14 @@ static Value native_dirs_walk(int argCount, Value* args) {
         return val_null();
     }
 
+    // ★ 将 result 注册为 GC 额外根，防止 walk_scan_dir 内部 str_copy
+    // → gc_alloc malloc 失败时触发 gc_major_collect() 误回收 result。
+    Value result_val = val_obj((Object*)result);
+    gc_push_root(&result_val);
+
     walk_scan_dir(path, result);
 
+    gc_pop_root();
     return val_obj((Object*)result);
 }
 
@@ -1024,6 +1070,10 @@ static Value native_dirs_list_drives(int argCount, Value* args) {
         return val_null();
     }
 
+    // ★ GC root 保护（与 listdir 同理）
+    Value arr_val = val_obj((Object*)arr);
+    gc_push_root(&arr_val);
+
 #ifdef _WIN32
     DWORD mask = GetLogicalDrives();
     for (int i = 0; i < 26; i++) {
@@ -1044,6 +1094,7 @@ static Value native_dirs_list_drives(int argCount, Value* args) {
     arr_push(arr, val_obj((Object*)str_copy("/", 1)));
 #endif
 
+    gc_pop_root();
     return val_obj((Object*)arr);
 }
 

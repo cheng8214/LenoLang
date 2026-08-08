@@ -608,7 +608,10 @@ OPCODE(OP_RETURN) {
     // 函数返回是天然的 GC 安全点，每 256 次 return 检查一次延迟 GC
     // 使用计数器摊销开销，避免高频递归（如 fib）的性能回退
     // 注意：GC 检查必须在 vm_stack_pop 之前，确保返回值仍在栈上被 GC 扫描到
-    static int gc_return_counter = 0;
+    // ★ 必须 THREAD_LOCAL：多线程下每个 worker 线程独立执行 VM 循环，
+    // 共享 static 计数器会导致 GC 检查频率不正确（虽然不是严重 bug，
+    // 但线程间竞争计数器会影响 GC 时机精度）。
+    static THREAD_LOCAL int gc_return_counter = 0;
     if (unlikely(++gc_return_counter >= 256)) {
         gc_return_counter = 0;
         if (gc.deferred_gc && gc.enabled && !gc.running) {

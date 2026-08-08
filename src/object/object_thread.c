@@ -306,29 +306,32 @@ static void* thread_entry_point(void* arg) {
     extern void threads_init_instance_methods(void);
     threads_init_instance_methods();
 
-    // 为闭包创建子线程专用的副本（深拷贝 upvalue 值）
-    // 原始闭包的 upvalue 指向主线程栈，子线程不能直接访问
-    ObjClosure* child_closure = closure;
+    // ★ 始终在子线程 GC 堆上创建新的闭包副本。
+    // 原始闭包在主线程 GC 堆上，主线程 GC 可能在闭包不再被主线程引用时回收它，
+    // 导致子线程访问已释放的 ObjClosure → use-after-free。
+    // function 对象是只读的且通常作为全局函数常驻，可以安全共享。
+    ObjClosure* child_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+    if (!child_closure) {
+        platform_mutex_lock(&thread_obj->mutex);
+        thread_obj->state = THREAD_ERROR;
+        thread_obj->error_msg = strdup("Failed to allocate closure for thread");
+        thread_obj->has_result = 0;
+        platform_cond_signal(&thread_obj->done_cond);
+        platform_mutex_unlock(&thread_obj->mutex);
+        if (saved_globals) free(saved_globals);
+        if (saved_global_funcs) free(saved_global_funcs);
+        if (thread_initial_args) free(thread_initial_args);
+        if (child_vm.frames) free(child_vm.frames);
+        if (child_vm.stack) free(child_vm.stack);
+        if (child_vm.globals) free(child_vm.globals);
+        if (child_vm.global_funcs) free(child_vm.global_funcs);
+        return NULL;
+    }
+    child_closure->function = closure->function;
+    child_closure->upvalue_count = closure->upvalue_count;
+    child_closure->type_param_count = closure->type_param_count;
+    child_closure->type_param_args = NULL;  // 不深拷贝类型参数（泛型场景由调用方处理）
     if (closure->upvalue_count > 0) {
-        child_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
-        if (!child_closure) {
-            platform_mutex_lock(&thread_obj->mutex);
-            thread_obj->state = THREAD_ERROR;
-            thread_obj->error_msg = strdup("Failed to allocate closure for thread");
-            thread_obj->has_result = 0;
-            platform_cond_signal(&thread_obj->done_cond);
-            platform_mutex_unlock(&thread_obj->mutex);
-            if (saved_globals) free(saved_globals);
-            if (saved_global_funcs) free(saved_global_funcs);
-            if (thread_initial_args) free(thread_initial_args);
-            if (child_vm.frames) free(child_vm.frames);
-            if (child_vm.stack) free(child_vm.stack);
-            if (child_vm.globals) free(child_vm.globals);
-            if (child_vm.global_funcs) free(child_vm.global_funcs);
-            return NULL;
-        }
-        child_closure->function = closure->function;
-        child_closure->upvalue_count = closure->upvalue_count;
         for (int i = 0; i < closure->upvalue_count; i++) {
             // 读取原始 upvalue 的当前值，创建 closed upvalue
             Value upval = *closure->upvalues[i]->location;
@@ -367,7 +370,20 @@ static void* thread_entry_point(void* arg) {
         return NULL;
     }
 
+    // ★ 深拷贝线程初始参数到子线程 GC 堆。
+    // thread_initial_args 中的 Value 指向主线程 GC 堆上的对象（如 batch 数组、keyword 字符串）。
+    // 如果不深拷贝，主线程 GC 可能在这些对象不可达时回收它们，
+    // 导致子线程访问已释放内存 → use-after-free → 内存损坏（乱码、崩溃）。
+    // value_clone_for_channel 在子线程 GC 堆上分配新对象，与主线程 GC 完全隔离。
     if (thread_initial_args && thread_initial_arg_count > 0) {
+        Value* cloned_args = (Value*)malloc(thread_initial_arg_count * sizeof(Value));
+        if (cloned_args) {
+            for (int i = 0; i < thread_initial_arg_count; i++) {
+                cloned_args[i] = value_clone_for_channel(thread_initial_args[i]);
+            }
+        }
+        free(thread_initial_args);
+        thread_initial_args = cloned_args;
         co->initial_args = thread_initial_args;
         co->initial_arg_count = thread_initial_arg_count;
     }
