@@ -374,8 +374,19 @@ static void* thread_entry_point(void* arg) {
 
     int result = vm_run_coroutine_with_vm(co, &child_vm);
 
+    // ★ 统一在 mutex 内完成状态设置 + 最终 GC + 信号通知
+    // 参考 Go goroutine 退出时的处理：Go 在 goroutine 退出时会清理栈上资源，
+    // 但堆对象由共享 GC 管理。Leno 使用 per-thread GC heap，因此需要在退出前
+    // 主动运行一次 GC 回收不可达对象（临时字符串、局部变量等），减少内存泄漏。
+    //
+    // 关键：gc_collect 必须在持有 thread mutex 时执行，因为：
+    // 1. 主线程 join() 在 cond_wait 上等待，signal 后尝试获取 mutex
+    // 2. GC 期间 thread_obj->result 可能被标记/扫描，必须确保主线程不会并发访问
+    // 3. GC 期间 channel buffer 条目通过 child_vm.globals → channel → buffer 标记为存活
+    // 4. thread_obj->result 通过 gc_push_root 标记为存活，不会被误回收
+    platform_mutex_lock(&thread_obj->mutex);
+
     if (result != 0 || child_vm.has_exception) {
-        platform_mutex_lock(&thread_obj->mutex);
         thread_obj->state = THREAD_ERROR;
         if (child_vm.has_exception && val_is_obj(child_vm.exception) && val_as_obj(child_vm.exception)->type == OBJ_STRING) {
             ObjString* err = (ObjString*)val_as_obj(child_vm.exception);
@@ -384,18 +395,30 @@ static void* thread_entry_point(void* arg) {
             thread_obj->error_msg = strdup("unknown error");
         }
         thread_obj->has_result = 0;
-        platform_cond_signal(&thread_obj->done_cond);
-        platform_mutex_unlock(&thread_obj->mutex);
     } else {
-        platform_mutex_lock(&thread_obj->mutex);
         thread_obj->state = THREAD_DONE;
         // 从协程对象中获取结果
         thread_obj->result = value_clone_for_channel(co->result);
         gc_write_barrier((Object*)thread_obj, thread_obj->result);
         thread_obj->has_result = 1;
-        platform_cond_signal(&thread_obj->done_cond);
-        platform_mutex_unlock(&thread_obj->mutex);
     }
+
+    platform_cond_signal(&thread_obj->done_cond);
+
+    // 最终 GC：回收子线程 GC 堆上的不可达对象
+    // 清除 VM 状态以防止 mark_roots 扫描过期数据（协程已结束，帧/栈可能不一致）
+    gc_push_root(&thread_obj->result);
+    child_vm.frame_cnt = 0;
+    child_vm.sp = 0;
+    child_vm.current_coroutine = NULL;
+    child_vm.all_coroutines = NULL;
+    child_vm.open_upvalues = NULL;
+    child_vm.exception = val_null();
+    child_vm.has_exception = 0;
+    gc_collect();
+    gc_pop_root();
+
+    platform_mutex_unlock(&thread_obj->mutex);
 
     if (saved_globals) free(saved_globals);
     if (saved_global_funcs) free(saved_global_funcs);
@@ -661,7 +684,16 @@ Value channel_receive(ObjChannel* channel) {
     // ★ 先克隆再移除（关键修复）
     // 与 channel_try_receive 相同：必须先克隆再从 buffer 移除，
     // 否则在 unlock 到 clone 之间发送线程 GC 可能释放该对象。
+    //
+    // ★ 同步 GC 死锁防护：
+    // value_clone_for_channel → gc_alloc 在 malloc 失败时会同步调用
+    // gc_major_collect()，此时 GC 的 gc_scan_children 会尝试 lock channel
+    // mutex，但当前线程已持有该 mutex → 死锁。
+    // 解决：临时禁用 GC，gc_alloc 失败时仅返回 NULL 而不触发 gc_major_collect。
+    int saved_gc_enabled = gc_get_enabled();
+    gc_set_enabled(0);
     Value re_cloned = value_clone_for_channel(value);
+    gc_set_enabled(saved_gc_enabled);
 
     channel->buffer[channel->head] = val_null();
     channel->head = (channel->head + 1) % channel->capacity;
@@ -713,7 +745,15 @@ Value channel_try_receive(ObjChannel* channel) {
     //
     // 先克隆确保克隆期间对象仍在 buffer 中，被发送线程的 mark_roots
     // 通过 channel（在发送线程栈上）标记为存活，不会被 GC 回收。
+    //
+    // ★ 同步 GC 死锁防护（与 channel_receive 相同）：
+    // value_clone_for_channel → gc_alloc 在 malloc 失败时同步调用 gc_major_collect()
+    // → gc_scan_children 尝试 lock channel mutex → 死锁（当前线程已持有 mutex）。
+    // 解决：临时禁用 GC，gc_alloc 失败时仅返回 NULL 而不触发同步 GC。
+    int saved_gc_enabled = gc_get_enabled();
+    gc_set_enabled(0);
     Value re_cloned = value_clone_for_channel(value);
+    gc_set_enabled(saved_gc_enabled);
 
     channel->buffer[channel->head] = val_null();
     channel->head = (channel->head + 1) % channel->capacity;

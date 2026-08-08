@@ -498,14 +498,29 @@ void gc_scan_children(Object* obj) {
             break;
         }
         // 通道：标记缓冲区中的值
+        // ★ 线程安全修复：加锁后扫描 buffer，防止与并发 channel_send/try_send/
+        // receive/try_receive 的数据竞争。
+        // 参考 Go channel 的 GC 处理：Go 的 GC 在 stop-the-world 阶段扫描 channel
+        // buffer（所有 goroutine 暂停），而 Leno 是 per-thread GC（其他线程仍在运行），
+        // 因此必须加锁同步。
+        //
+        // 死锁分析：
+        // - GC 在安全点（OP_RETURN / 帧间）触发，当前线程不持有 channel mutex
+        // - channel_try_receive/receive 中 value_clone_for_channel 已禁用同步 GC
+        //   （gc_set_enabled(0)），不会在持有 mutex 时触发 gc_major_collect
+        // - channel_send/try_send 中 value_clone_for_channel 在 mutex 外调用
+        // - 因此 GC lock 不会与当前线程的 channel 操作产生自死锁
+        // - 其他线程持有 mutex 时，GC 线程短暂阻塞等待，不影响正确性
         case OBJ_CHANNEL: {
             ObjChannel* channel = (ObjChannel*)obj;
+            platform_mutex_lock(&channel->mutex);
             if (channel->buffer && channel->count > 0) {
                 for (int i = 0; i < channel->count; i++) {
                     int idx = (channel->head + i) % channel->capacity;
                     gc_mark_value(channel->buffer[idx]);
                 }
             }
+            platform_mutex_unlock(&channel->mutex);
             break;
         }
         // C 结构体数组视图：标记所属 C 结构体

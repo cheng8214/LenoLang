@@ -2,7 +2,7 @@
 //
 // 功能：
 //   1. 输入搜索目录和关键词，点击"搜索"启动后台线程递归扫描文件
-//   2. 多线程并行搜索：将顶层子目录分配给不同线程同时搜索
+//   2. 多线程并行搜索：先收集所有子目录，再均匀分配给最多 8 个线程
 //   3. 线程通过 channel 实时把匹配结果发回主线程（UI 线程）
 //   4. UI 通过 Timer 每 50ms 轮询 channel，非阻塞地获取结果并更新 ListBox
 //   5. 搜索完成/取消/统计信息均实时展示
@@ -49,10 +49,60 @@ var totalScanned = 0        // 已扫描的文件数（主线程聚合）
 var expectedThreads = 0     // 预期线程总数
 var searchStartTime = 0     // 开始时间（毫秒）
 
+// ==================== 目录收集 ====================
+
+// 递归收集目录下所有子目录（非文件），用于均匀分配给工作线程
+// 只展开一层子目录，避免收集阶段耗时过长
+func _collect_subdirs(string dir, int depth): Array {
+    var result = []
+
+    if depth <= 0 {
+        result.add(dir)
+        return result
+    }
+
+    var entries = null
+    try {
+        entries = dirs.listdir(dir)
+    } catch e {
+        result.add(dir)
+        return result
+    }
+    if entries == null {
+        result.add(dir)
+        return result
+    }
+
+    var has_subdir = false
+    for entries to entry {
+        if entry.starts_with("$") or entry.starts_with(".") { continue }
+        var fullpath = dirs.join(dir, entry)
+        try {
+            if dirs.is_dir(fullpath) {
+                has_subdir = true
+                // 递归收集子目录
+                var sub = _collect_subdirs(fullpath, depth - 1)
+                for sub.len() to i {
+                    result.add(sub[i])
+                }
+            }
+        } catch e {
+            // 跳过权限不足的目录
+        }
+    }
+
+    // 如果没有子目录，把自己作为工作单元
+    if not has_subdir {
+        result.add(dir)
+    }
+
+    return result
+}
+
 // ==================== 工作线程函数 ====================
 
 // 递归扫描目录，返回 [scanned, found]
-// 用 ch.is_closed() 作为取消信号（全局变量跨线程不可见）
+// 每个目录操作都独立 try-catch，权限错误只跳过当前目录，不影响兄弟目录
 func _scan_recursive(any ch, string dir, string keyword): Array {
     var scanned = 0
     var found = 0
@@ -62,7 +112,13 @@ func _scan_recursive(any ch, string dir, string keyword): Array {
         if ch.is_closed() { return [0, 0] }
     }
 
-    var entries = dirs.listdir(dir)
+    // listdir 可能因权限不足抛异常
+    var entries = null
+    try {
+        entries = dirs.listdir(dir)
+    } catch e {
+        return [0, 0]
+    }
     if entries == null { return [0, 0] }
 
     for entries to entry {
@@ -76,7 +132,15 @@ func _scan_recursive(any ch, string dir, string keyword): Array {
 
         var fullpath = dirs.join(dir, entry)
 
-        if dirs.is_dir(fullpath) {
+        // is_dir 可能因权限不足抛异常
+        var isDir = false
+        try {
+            isDir = dirs.is_dir(fullpath)
+        } catch e {
+            continue
+        }
+
+        if isDir {
             // 递归处理子目录，累加子目录的计数
             var sub = _scan_recursive(ch, fullpath, keyword)
             scanned = scanned + _int(sub[0])
@@ -109,14 +173,6 @@ func _scan_recursive(any ch, string dir, string keyword): Array {
     return [scanned, found]
 }
 
-// 单个目录搜索线程入口，返回 [scanned, found]
-func scan_dir_worker(any ch, string rootDir, string keyword): Array {
-    if ch is Channel {
-        return _scan_recursive(ch, rootDir, keyword)
-    }
-    return [0, 0]
-}
-
 // 批量目录搜索线程入口：扫描多个子目录，返回合计 [scanned, found]
 func scan_batch_worker(any ch, Array dirs_to_scan, string keyword): Array {
     var total_scanned = 0
@@ -125,9 +181,13 @@ func scan_batch_worker(any ch, Array dirs_to_scan, string keyword): Array {
         for dirs_to_scan.len() to i {
             if ch.is_closed() { break }
             string d = _str(dirs_to_scan[i])
-            var result = _scan_recursive(ch, d, keyword)
-            total_scanned = total_scanned + _int(result[0])
-            total_found = total_found + _int(result[1])
+            try {
+                var result = _scan_recursive(ch, d, keyword)
+                total_scanned = total_scanned + _int(result[0])
+                total_found = total_found + _int(result[1])
+            } catch e {
+                // 权限不足等错误，跳过该目录继续下一个
+            }
         }
     }
     return [total_scanned, total_found]
@@ -238,51 +298,45 @@ func startSearch() {
     } else {
         resultBox.add_item("关键词: (全部文件)")
     }
+
+    statusLbl.set_text("收集子目录中...")
+    SDL3.markFrameRedraw()
+
+    // 创建 channel（大缓冲，减少 try_send 丢弃）
+    searchChannel = threads.channel(4096)
+
+    // 递归收集所有子目录（展开 2 层，让大目录树拆分得更均匀）
+    var allDirs = _collect_subdirs(dirPath, 2)
+
+    resultBox.add_item("子目录数: " + allDirs.len())
     resultBox.add_item("---")
 
-    // 创建 channel（大缓冲，避免线程阻塞）
-    searchChannel = threads.channel(256)
-
-    // 获取顶层子目录列表
-    var topEntries = dirs.listdir(dirPath)
-    var subDirs = []
-
-    for topEntries to entry {
-        if entry.starts_with("$") or entry.starts_with(".") { continue }
-        var fullpath = dirs.join(dirPath, entry)
-        if dirs.is_dir(fullpath) {
-            subDirs.add(fullpath)
-        }
-    }
-
-    // 策略：将所有子目录均匀分配给最多 8 个线程
-    // 每个线程负责一批子目录，确保所有子目录都被扫描
     var ch = searchChannel
 
-    if subDirs.len() == 0 {
+    // 将所有子目录均匀分配给最多 8 个线程
+    var maxThreads = 8
+    if allDirs.len() < maxThreads { maxThreads = allDirs.len() }
+    if maxThreads < 1 { maxThreads = 1 }
+
+    if allDirs.len() == 0 {
         // 没有子目录，单线程搜索整个目录
-        var t = threads.start(func(any c, string d, string k): Array {
-            return scan_dir_worker(c, d, k)
-        }, ch, dirPath, keyword)
+        var t = threads.start(func(any c, Array dirs_arr, string k): Array {
+            return scan_batch_worker(c, dirs_arr, k)
+        }, ch, [dirPath], keyword)
         searchThreads.add(t)
         expectedThreads = 1
     } else {
-        // 将子目录均匀分配给最多 8 个线程
-        var maxThreads = 8
-        if subDirs.len() < maxThreads { maxThreads = subDirs.len() }
-
-        int perThread = subDirs.len() / maxThreads
-        int remainder = subDirs.len() % maxThreads
+        int perThread = allDirs.len() / maxThreads
+        int remainder = allDirs.len() % maxThreads
         int idx = 0
 
         for maxThreads to i {
-            // 收集这个线程负责的子目录列表
             var batch = []
             int count = perThread
             if i < remainder { count = count + 1 }
             for count to j {
-                if idx < subDirs.len() {
-                    batch.add(subDirs[idx])
+                if idx < allDirs.len() {
+                    batch.add(allDirs[idx])
                     idx = idx + 1
                 }
             }
@@ -296,17 +350,26 @@ func startSearch() {
         }
     }
 
-    // 处理顶层文件（主线程直接扫描，因为不涉及递归）
-    // 这些计数直接累加到主线程的全局变量上
-    for topEntries to entry {
-        if entry.starts_with("$") or entry.starts_with(".") { continue }
-        var fullpath = dirs.join(dirPath, entry)
-        if not dirs.is_dir(fullpath) {
-            totalScanned = totalScanned + 1
-            if matchKeyword(entry, keyword) {
-                totalFound = totalFound + 1
-                if ch is Channel {
-                    ch.try_send(fullpath)
+    // 处理顶层文件（主线程直接扫描）
+    var topEntries = null
+    try {
+        topEntries = dirs.listdir(dirPath)
+    } catch e {
+        topEntries = null
+    }
+    if topEntries != null {
+        for topEntries to entry {
+            if entry.starts_with("$") or entry.starts_with(".") { continue }
+            var fullpath = dirs.join(dirPath, entry)
+            var isDir = false
+            try { isDir = dirs.is_dir(fullpath) } catch e { continue }
+            if not isDir {
+                totalScanned = totalScanned + 1
+                if matchKeyword(entry, keyword) {
+                    totalFound = totalFound + 1
+                    if ch is Channel {
+                        ch.try_send(fullpath)
+                    }
                 }
             }
         }
@@ -322,8 +385,6 @@ func startSearch() {
 
 func stopSearch() {
     if not searchActive { return }
-    // 关闭 channel 作为取消信号（全局变量跨线程不可见）
-    // 工作线程检测到 is_closed() 后会中断扫描并返回已扫描的计数
     if searchChannel is Channel {
         searchChannel.close()
     }
@@ -338,10 +399,14 @@ func finishSearch() {
     for searchThreads.len() to i {
         var t = searchThreads[i]
         if t is Thread {
-            var result = t.join()
-            if result is Array {
-                totalScanned = totalScanned + _int(result[0])
-                totalFound = totalFound + _int(result[1])
+            try {
+                var result = t.join()
+                if result is Array {
+                    totalScanned = totalScanned + _int(result[0])
+                    totalFound = totalFound + _int(result[1])
+                }
+            } catch e {
+                // 线程出错（如权限不足），跳过
             }
         }
     }
@@ -385,7 +450,7 @@ func pollChannel() {
     if searchChannel is Channel {
         var ch = searchChannel
         int received = 0
-        int maxPerFrame = 50    // 每帧最多处理 50 条，避免 UI 卡顿
+        int maxPerFrame = 100   // 每帧最多处理 100 条
 
         while received < maxPerFrame {
             var msg = ch.try_receive()
@@ -401,7 +466,6 @@ func pollChannel() {
     }
 
     // 2. 用 thread.state() 检测所有线程是否已完成
-    //    这比 __done__ 消息更可靠：channel 关闭时 try_send 会失败，消息会丢失
     bool allDone = true
     int runningCount = 0
     for searchThreads.len() to i {
@@ -468,7 +532,7 @@ main() {
     for searchThreads.len() to i {
         var t = searchThreads[i]
         if t is Thread {
-            t.join()
+            try { t.join() } catch e {}
         }
     }
 
