@@ -117,6 +117,22 @@ func scan_dir_worker(any ch, string rootDir, string keyword): Array {
     return [0, 0]
 }
 
+// 批量目录搜索线程入口：扫描多个子目录，返回合计 [scanned, found]
+func scan_batch_worker(any ch, Array dirs_to_scan, string keyword): Array {
+    var total_scanned = 0
+    var total_found = 0
+    if ch is Channel {
+        for dirs_to_scan.len() to i {
+            if ch.is_closed() { break }
+            string d = _str(dirs_to_scan[i])
+            var result = _scan_recursive(ch, d, keyword)
+            total_scanned = total_scanned + _int(result[0])
+            total_found = total_found + _int(result[1])
+        }
+    }
+    return [total_scanned, total_found]
+}
+
 // ==================== UI 构建 ====================
 
 func setupUI() {
@@ -239,27 +255,42 @@ func startSearch() {
         }
     }
 
-    // 策略：每个子目录分配一个线程（最多 8 个线程并行）
-    // 如果没有子目录，单线程搜索整个目录
+    // 策略：将所有子目录均匀分配给最多 8 个线程
+    // 每个线程负责一批子目录，确保所有子目录都被扫描
     var ch = searchChannel
 
     if subDirs.len() == 0 {
-        // 没有子目录，单线程搜索
+        // 没有子目录，单线程搜索整个目录
         var t = threads.start(func(any c, string d, string k): Array {
             return scan_dir_worker(c, d, k)
         }, ch, dirPath, keyword)
         searchThreads.add(t)
         expectedThreads = 1
     } else {
-        // 多线程：每个子目录一个线程
+        // 将子目录均匀分配给最多 8 个线程
         var maxThreads = 8
         if subDirs.len() < maxThreads { maxThreads = subDirs.len() }
 
+        int perThread = subDirs.len() / maxThreads
+        int remainder = subDirs.len() % maxThreads
+        int idx = 0
+
         for maxThreads to i {
-            string subdir = subDirs[i]
-            var t = threads.start(func(any c, string d, string k): Array {
-                return scan_dir_worker(c, d, k)
-            }, ch, subdir, keyword)
+            // 收集这个线程负责的子目录列表
+            var batch = []
+            int count = perThread
+            if i < remainder { count = count + 1 }
+            for count to j {
+                if idx < subDirs.len() {
+                    batch.add(subDirs[idx])
+                    idx = idx + 1
+                }
+            }
+            if batch.len() == 0 { continue }
+
+            var t = threads.start(func(any c, Array dirs_arr, string k): Array {
+                return scan_batch_worker(c, dirs_arr, k)
+            }, ch, batch, keyword)
             searchThreads.add(t)
             expectedThreads = expectedThreads + 1
         }
