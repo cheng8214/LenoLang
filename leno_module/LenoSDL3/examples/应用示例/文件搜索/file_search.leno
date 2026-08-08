@@ -34,6 +34,7 @@ Edit searchDirEdit
 Edit keywordEdit
 Button searchBtn
 Button stopBtn
+Button clearBtn
 ListBox resultBox
 Label statusLbl
 Label countLbl
@@ -255,14 +256,14 @@ func setupUI() {
     // 顶部工具栏（搜索目录 + 关键词 + 按钮）
     var toolbar = SDL3.createHBox({x: PAD, y: titleH + PAD, w: W - PAD * 2, h: TOOLBAR_H, padX: 4, padY: 2, spacing: 6})
 
-    var dirLabel = SDL3.createLabel({x: 0, y: 0, text: "目录:", font_size: 14})
+    var dirLabel = SDL3.createLabel({x: 0, y: 2, text: "目录:", font_size: 14})
     toolbar.add(dirLabel, {grow: 0, shrink: 0, align: 3})
 
     searchDirEdit = SDL3.createEdit({x: 0, y: 0, w: 300, h: 28, font_size: 13, placeholder: "搜索目录..."})
     searchDirEdit.set_text(dirs.dirname(dirs.script_dir()))
     toolbar.add(searchDirEdit, {grow: 1, shrink: 1, align: 3})
 
-    var kwLabel = SDL3.createLabel({x: 0, y: 0, text: "关键词:", font_size: 14})
+    var kwLabel = SDL3.createLabel({x: 0, y: 2, text: "关键词:", font_size: 14})
     toolbar.add(kwLabel, {grow: 0, shrink: 0, align: 3})
 
     keywordEdit = SDL3.createEdit({x: 0, y: 0, w: 150, h: 28, font_size: 13, placeholder: "文件名关键词..."})
@@ -276,6 +277,10 @@ func setupUI() {
     toolbar.add(stopBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
     stopBtn.set_enabled(false)
     stopBtn.on_click(func() { stopSearch() })
+
+    clearBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "清空", font_size: 14})
+    toolbar.add(clearBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+    clearBtn.on_click(func() { clearResults() })
 
     // 进度条（搜索中设为 100% 表示活跃，空闲设为 0%）
     progressBar = SDL3.createProgressBar({x: PAD, y: titleH + PAD + TOOLBAR_H + 4, w: W - PAD * 2, h: 6, show_text: false})
@@ -347,6 +352,8 @@ func startSearch() {
     }
 
     statusLbl.set_text("收集子目录中...")
+    // 启动定时器（搜索完成后会 stop，避免空转触发 requestRedraw 浪费 CPU）
+    pollTimer.reset(50)
     SDL3.markFrameRedraw()
 
     // 创建 channel（大缓冲，减少 try_send 丢弃）
@@ -446,6 +453,17 @@ func stopSearch() {
     SDL3.markFrameRedraw()
 }
 
+func clearResults() {
+    if searchActive { return }
+    resultBox.clear()
+    totalFound = 0
+    totalScanned = 0
+    uiReceived = 0
+    countLbl.set_text("找到: 0  扫描: 0  线程: 0")
+    statusLbl.set_text("就绪")
+    SDL3.markFrameRedraw()
+}
+
 func finishSearch() {
     searchActive = false
 
@@ -485,6 +503,8 @@ func finishSearch() {
     searchBtn.set_enabled(true)
     stopBtn.set_enabled(false)
     progressBar.set_value(0.0)
+    // 停止定时器：搜索结束后不再需要轮询 channel，避免每 50ms 触发 requestRedraw 空转耗 CPU
+    pollTimer.stop()
     SDL3.markFrameRedraw()
 }
 
@@ -546,6 +566,7 @@ func pollChannel() {
         if searchChannel is Channel {
             searchChannel.close()
         }
+        pollTimer.stop()
         statusLbl.set_text("错误: " + _str(e))
         searchBtn.set_enabled(true)
         stopBtn.set_enabled(false)
@@ -584,8 +605,9 @@ main() {
 
     setupUI()
 
-    // 创建定时器：每 50ms 轮询 channel（UI 线程，非阻塞）
-    pollTimer = win.addTimer(50, func() {
+    // 创建定时器：初始不启动（ms=0），搜索时 pollTimer.reset(50) 启动，搜索完成时 stop()
+    // 避免空闲时每 50ms 触发 tickAllTimers → requestRedraw → 全量重绘 → CPU 25%
+    pollTimer = win.addTimer(0, func() {
         pollChannel()
     })
 
