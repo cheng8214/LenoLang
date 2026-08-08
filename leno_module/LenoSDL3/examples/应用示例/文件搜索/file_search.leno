@@ -10,9 +10,14 @@
 // 测试重点：
 //   - threads.start() 启动多个工作线程
 //   - threads.channel() 线程间通信
-//   - channel.try_receive() 非阻塞接收（UI 线程不阻塞）
-//   - channel.close() / is_closed() 信号通知
-//   - 多线程与 SDL3 UI 的安全交互（仅主线程操作 UI，线程只做计算+channel 发送）
+//   - channel.try_send() / try_receive() 非阻塞收发
+//   - channel.close() / is_closed() 取消信号
+//   - thread.state() / join() 线程状态检测与返回值
+//
+// 重要：Leno 线程创建时深拷贝全局变量，因此全局变量跨线程不可见。
+//   - 计数：工作线程用局部变量统计，通过 join() 返回值汇总到主线程
+//   - 取消：主线程 close channel，工作线程检测 is_closed() 退出
+//   - 完成：主线程用 thread.state() 检测所有线程结束，再 join() 取返回值
 //
 // 运行：leno file_search.leno
 import "../../../lib/SDL3.leno" as SDL3
@@ -35,26 +40,36 @@ Label countLbl
 ProgressBar progressBar
 Timer pollTimer
 
-// 搜索控制
-var searchChannel = null    // channel: 线程→主线程 发送结果
+// 搜索控制（仅主线程读写，不跨线程共享）
+var searchChannel = null    // channel: 线程→主线程 发送文件路径
 var searchThreads = []      // 活跃线程列表
 var searchActive = false    // 是否正在搜索
-var searchCancel = false    // 取消标志
-var totalFound = 0          // 已找到的匹配数
-var totalScanned = 0        // 已扫描的文件数
+var totalFound = 0          // 已找到的匹配数（主线程聚合）
+var totalScanned = 0        // 已扫描的文件数（主线程聚合）
+var expectedThreads = 0     // 预期线程总数
 var searchStartTime = 0     // 开始时间（毫秒）
 
 // ==================== 工作线程函数 ====================
 
-// 递归扫描目录，匹配关键词的文件路径通过 channel 发送
-func _scan_recursive(any ch, string dir, string keyword) {
-    if searchCancel { return }
+// 递归扫描目录，返回 [scanned, found]
+// 用 ch.is_closed() 作为取消信号（全局变量跨线程不可见）
+func _scan_recursive(any ch, string dir, string keyword): Array {
+    var scanned = 0
+    var found = 0
+
+    // 取消信号：channel 被主线程关闭
+    if ch is Channel {
+        if ch.is_closed() { return [0, 0] }
+    }
 
     var entries = dirs.listdir(dir)
-    if entries == null { return }
+    if entries == null { return [0, 0] }
 
     for entries to entry {
-        if searchCancel { return }
+        // 取消检查
+        if ch is Channel {
+            if ch.is_closed() { break }
+        }
 
         // 跳过系统目录和隐藏文件
         if entry.starts_with("$") or entry.starts_with(".") { continue }
@@ -62,10 +77,12 @@ func _scan_recursive(any ch, string dir, string keyword) {
         var fullpath = dirs.join(dir, entry)
 
         if dirs.is_dir(fullpath) {
-            // 递归处理子目录
-            _scan_recursive(ch, fullpath, keyword)
+            // 递归处理子目录，累加子目录的计数
+            var sub = _scan_recursive(ch, fullpath, keyword)
+            scanned = scanned + _int(sub[0])
+            found = found + _int(sub[1])
         } else {
-            totalScanned = totalScanned + 1
+            scanned = scanned + 1
 
             // 匹配关键词（不区分大小写）
             var matched = false
@@ -80,21 +97,24 @@ func _scan_recursive(any ch, string dir, string keyword) {
             }
 
             if matched {
-                totalFound = totalFound + 1
-                // 通过 channel 发送匹配结果（非阻塞，channel 有缓冲）
+                found = found + 1
+                // 通过 channel 发送匹配结果（try_send 避免关闭后报错）
                 if ch is Channel {
-                    ch.send(fullpath)
+                    ch.try_send(fullpath)
                 }
             }
         }
     }
+
+    return [scanned, found]
 }
 
-// 单个目录搜索线程入口
-func scan_dir_worker(any ch, string rootDir, string keyword) {
+// 单个目录搜索线程入口，返回 [scanned, found]
+func scan_dir_worker(any ch, string rootDir, string keyword): Array {
     if ch is Channel {
-        _scan_recursive(ch, rootDir, keyword)
+        return _scan_recursive(ch, rootDir, keyword)
     }
+    return [0, 0]
 }
 
 // ==================== UI 构建 ====================
@@ -189,9 +209,9 @@ func startSearch() {
 
     // 重置状态
     searchActive = true
-    searchCancel = false
     totalFound = 0
     totalScanned = 0
+    expectedThreads = 0
     searchStartTime = ti.ms()
     searchThreads = []
     resultBox.clear()
@@ -221,16 +241,15 @@ func startSearch() {
 
     // 策略：每个子目录分配一个线程（最多 8 个线程并行）
     // 如果没有子目录，单线程搜索整个目录
-    var threadCount = 0
     var ch = searchChannel
 
     if subDirs.len() == 0 {
         // 没有子目录，单线程搜索
-        var t = threads.start(func(any c, string d, string k) {
-            scan_dir_worker(c, d, k)
+        var t = threads.start(func(any c, string d, string k): Array {
+            return scan_dir_worker(c, d, k)
         }, ch, dirPath, keyword)
         searchThreads.add(t)
-        threadCount = 1
+        expectedThreads = 1
     } else {
         // 多线程：每个子目录一个线程
         var maxThreads = 8
@@ -238,15 +257,16 @@ func startSearch() {
 
         for maxThreads to i {
             string subdir = subDirs[i]
-            var t = threads.start(func(any c, string d, string k) {
-                scan_dir_worker(c, d, k)
+            var t = threads.start(func(any c, string d, string k): Array {
+                return scan_dir_worker(c, d, k)
             }, ch, subdir, keyword)
             searchThreads.add(t)
-            threadCount = threadCount + 1
+            expectedThreads = expectedThreads + 1
         }
     }
 
     // 处理顶层文件（主线程直接扫描，因为不涉及递归）
+    // 这些计数直接累加到主线程的全局变量上
     for topEntries to entry {
         if entry.starts_with("$") or entry.starts_with(".") { continue }
         var fullpath = dirs.join(dirPath, entry)
@@ -255,14 +275,14 @@ func startSearch() {
             if matchKeyword(entry, keyword) {
                 totalFound = totalFound + 1
                 if ch is Channel {
-                    ch.send(fullpath)
+                    ch.try_send(fullpath)
                 }
             }
         }
     }
 
-    statusLbl.set_text("搜索中... " + threadCount + " 个线程并行")
-    countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + threadCount)
+    statusLbl.set_text("搜索中... " + expectedThreads + " 个线程并行")
+    countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + expectedThreads)
     searchBtn.set_enabled(false)
     stopBtn.set_enabled(true)
     progressBar.set_value(100.0)
@@ -271,26 +291,40 @@ func startSearch() {
 
 func stopSearch() {
     if not searchActive { return }
-    searchCancel = true
+    // 关闭 channel 作为取消信号（全局变量跨线程不可见）
+    // 工作线程检测到 is_closed() 后会中断扫描并返回已扫描的计数
+    if searchChannel is Channel {
+        searchChannel.close()
+    }
     statusLbl.set_text("正在停止...")
     SDL3.markFrameRedraw()
 }
 
 func finishSearch() {
     searchActive = false
-    searchCancel = false
 
-    // 等待所有线程结束
+    // join 所有线程并获取返回值 [scanned, found]
     for searchThreads.len() to i {
         var t = searchThreads[i]
         if t is Thread {
-            t.join()
+            var result = t.join()
+            if result is Array {
+                totalScanned = totalScanned + _int(result[0])
+                totalFound = totalFound + _int(result[1])
+            }
         }
     }
     searchThreads = []
 
-    // 关闭 channel
+    // 排空 channel 中剩余的文件路径
     if searchChannel is Channel {
+        var ch = searchChannel
+        while ch.len() > 0 {
+            var msg = ch.try_receive()
+            if msg == null { break }
+            string s = _str(msg)
+            resultBox.add_item(s)
+        }
         searchChannel.close()
     }
 
@@ -314,52 +348,47 @@ func finishSearch() {
 // ==================== 每帧轮询 channel（UI 线程）====================
 
 func pollChannel() {
-    // 即使搜索已结束也要排空 channel 中残留消息
-    if not (searchChannel is Channel) { return }
+    if not searchActive { return }
 
-    var ch = searchChannel
-    int received = 0
-    int maxPerFrame = 50    // 每帧最多处理 50 条，避免 UI 卡顿
+    // 1. 排空 channel 中的文件路径结果
+    if searchChannel is Channel {
+        var ch = searchChannel
+        int received = 0
+        int maxPerFrame = 50    // 每帧最多处理 50 条，避免 UI 卡顿
 
-    // 非阻塞循环：try_receive 取不到就返回 null
-    while received < maxPerFrame {
-        if ch is Channel {
+        while received < maxPerFrame {
             var msg = ch.try_receive()
             if msg == null { break }
-
             string s = _str(msg)
-            // 文件路径结果
             resultBox.add_item(s)
             received = received + 1
-        } else {
-            break
+        }
+
+        if received > 0 {
+            resultBox.scroll_to_bottom()
         }
     }
 
-    if received > 0 {
-        resultBox.scroll_to_bottom()
-    }
-
-    if not searchActive { return }
-
-    // 更新计数
-    countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + searchThreads.len())
-
-    // 检查所有线程是否已完成（state 返回 "done" 或 "error"）
+    // 2. 用 thread.state() 检测所有线程是否已完成
+    //    这比 __done__ 消息更可靠：channel 关闭时 try_send 会失败，消息会丢失
     bool allDone = true
+    int runningCount = 0
     for searchThreads.len() to i {
         var t = searchThreads[i]
         if t is Thread {
             string st = t.state()
             if st == "running" {
                 allDone = false
-                break
+                runningCount = runningCount + 1
             }
         }
     }
 
-    // 所有线程结束 + channel 缓冲已排空 → 搜索完成
-    if allDone and ch is Channel and ch.len() == 0 {
+    // 更新计数显示
+    countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + runningCount + "/" + expectedThreads)
+
+    // 3. 所有线程完成 → join 取返回值并结束搜索
+    if allDone {
         finishSearch()
     }
 }
@@ -400,10 +429,16 @@ main() {
         }
     )
 
-    // 清理
+    // 清理：关闭 channel 通知工作线程停止，再 join 等待退出
     pollTimer.stop()
     if searchChannel is Channel {
         searchChannel.close()
+    }
+    for searchThreads.len() to i {
+        var t = searchThreads[i]
+        if t is Thread {
+            t.join()
+        }
     }
 
     SDL3.quit()
