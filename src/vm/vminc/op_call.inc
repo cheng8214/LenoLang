@@ -20,8 +20,7 @@ OPCODE(OP_CALL) {
             return -1;
         }
     }
-    // 注意：frame 已由上一个 DISPATCH 保证有效，此处无需重载
-    // frame = &vm.frames[vm.frame_cnt - 1];  // 冗余，已移除
+    frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }
 
