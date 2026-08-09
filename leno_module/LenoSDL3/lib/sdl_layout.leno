@@ -101,11 +101,38 @@ export struct HBox impl Widget {
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
 
+    // ==================== 尺寸测量（供 ScrollView 自动内容尺寸用） ====================
+    // HBox 主轴为水平：measure_w 返回所有子项宽度之和 + padding + spacing
+    func measure_w(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float total = pl + pr + spacing * (_c.len() - 1)
+        for _c.len() to i {
+            float basis = _natW[i]
+            float b = _opt[i].get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            total = total + basis
+        }
+        return total
+    }
+    // HBox 交叉轴为竖直：measure_h 返回最大子项高度 + padding
+    func measure_h(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float maxH = 0.0
+        for _c.len() to i {
+            float ch = _natH[i]
+            if ch > maxH { maxH = ch }
+        }
+        return pt + pb + maxH
+    }
+
     func _relayout() {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
-        // 有效内边距：分立值 >=0 时优先，否则回退 padX/padY
         float pl = if padLeft >= 0.0 then padLeft else padX
         float pr = if padRight >= 0.0 then padRight else padX
         float pt = if padTop >= 0.0 then padTop else padY
@@ -114,8 +141,6 @@ export struct HBox impl Widget {
         float innerH = h - pt - pb
         if innerW < 0 { innerW = 0 }
         if innerH < 0 { innerH = 0 }
-
-        // 先扫描，统计各 flex 总和（用于 free / justify 计算）
         float totalSpacing = spacing * (n - 1)
         float totalBasis = 0.0
         float sumGrow = 0.0
@@ -133,8 +158,6 @@ export struct HBox impl Widget {
             sumShrinkBasis = sumShrinkBasis + s * basis
         }
         float free = innerW - totalBasis - totalSpacing
-
-        // 嵌套闭包：计算第 i 个子项的主轴尺寸（捕获 free/sumGrow/sumShrinkBasis 等外层变量）
         func childMain(int i): float {
             Dict o = _opt[i]
             float g = o.get("grow", 0.0)
@@ -155,8 +178,6 @@ export struct HBox impl Widget {
             }
             return basis
         }
-
-        // 主轴起始偏移与间隙（justify-content，仅在无 grow 且有剩余空间时生效）
         float lead = 0.0
         float extraGap = 0.0
         if sumGrow == 0.0 and free > 0.0 {
@@ -166,7 +187,6 @@ export struct HBox impl Widget {
             else if justify == 4 { extraGap = free / n; lead = extraGap / 2.0 }
             else if justify == 5 { extraGap = free / (n + 1); lead = extraGap }
         }
-
         float cx = x + pl + lead
         for n to i {
             Widget c = _c[i]
@@ -178,11 +198,10 @@ export struct HBox impl Widget {
             int align = o.get("align", 0)
             float cy
             if align == 3 { ch = innerH; cy = y + pt }
-            else if g > 0.0 { ch = innerH; cy = y + pt }   // grow 同时撑满交叉轴
+            else if g > 0.0 { ch = innerH; cy = y + pt }
             else if align == 1 { cy = y + pt + (innerH - ch) / 2.0 }
             else if align == 2 { cy = y + pt + innerH - ch }
             else { cy = y + pt }
-            // 最小/最大约束
             float mn = o.get("minW", -1.0); if mn >= 0.0 and cw < mn { cw = mn }
             float mx = o.get("maxW", -1.0); if mx >= 0.0 and cw > mx { cw = mx }
             float mnh = o.get("minH", -1.0); if mnh >= 0.0 and ch < mnh { ch = mnh }
@@ -259,6 +278,34 @@ export struct VBox impl Widget {
     func get_h(): float { return h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
+
+    // ==================== 尺寸测量（供 ScrollView 自动内容尺寸用） ====================
+    // VBox 主轴为竖直：measure_h 返回所有子项高度之和 + padding + spacing
+    func measure_h(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float total = pt + pb + spacing * (_c.len() - 1)
+        for _c.len() to i {
+            float basis = _natH[i]
+            float b = _opt[i].get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            total = total + basis
+        }
+        return total
+    }
+    // VBox 交叉轴为水平：measure_w 返回最大子项宽度 + padding
+    func measure_w(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float maxW = 0.0
+        for _c.len() to i {
+            float cw = _natW[i]
+            if cw > maxW { maxW = cw }
+        }
+        return pl + pr + maxW
+    }
 
     func _relayout() {
         if not _loaded { return }
@@ -412,6 +459,43 @@ export struct AnchorBox impl Widget {
     func get_h(): float { return h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
+
+    // ==================== 尺寸测量（供 ScrollView 自动内容尺寸用） ====================
+    // AnchorBox：按子项锚点计算所需最小尺寸
+    func measure_w(): float {
+        if not _loaded or _c.len() == 0 { return 2.0 * padX }
+        float maxR = 0.0
+        for _c.len() to i {
+            float cw = _natW[i]
+            float ow = _opt[i].get("w", -1.0); if ow >= 0.0 { cw = ow }
+            float l = _opt[i].get("left", -1.0)
+            float r = _opt[i].get("right", -1.0)
+            float edge
+            if l >= 0.0 and r >= 0.0 { edge = l + r }
+            else if l >= 0.0 { edge = l + cw }
+            else if r >= 0.0 { edge = r + cw }
+            else { edge = cw }
+            if edge > maxR { maxR = edge }
+        }
+        return 2.0 * padX + maxR
+    }
+    func measure_h(): float {
+        if not _loaded or _c.len() == 0 { return 2.0 * padY }
+        float maxB = 0.0
+        for _c.len() to i {
+            float ch = _natH[i]
+            float oh = _opt[i].get("h", -1.0); if oh >= 0.0 { ch = oh }
+            float t = _opt[i].get("top", -1.0)
+            float b = _opt[i].get("bottom", -1.0)
+            float edge
+            if t >= 0.0 and b >= 0.0 { edge = t + b }
+            else if t >= 0.0 { edge = t + ch }
+            else if b >= 0.0 { edge = b + ch }
+            else { edge = ch }
+            if edge > maxB { maxB = edge }
+        }
+        return 2.0 * padY + maxB
+    }
 
     func _relayout() {
         if not _loaded { return }

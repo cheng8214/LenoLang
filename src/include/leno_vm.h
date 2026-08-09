@@ -565,12 +565,14 @@ void module_define_func(int index, Value func);
 Value module_get_func(int index);
 
 // ============================================================================
-// 调试功能
+// 调试功能（VM 独立运行时不需要，通过 LENO_VM_ONLY 条件编译排除）
 // ============================================================================
 
+#ifndef LENO_VM_ONLY
 int disassembleInstruction(Chunk* chunk, int offset);
 void disassembleChunk(Chunk* chunk, const char* name);
 void debugPrintStack(Value* stack, int sp);
+#endif // LENO_VM_ONLY
 
 // ============================================================================
 // 协程系统 API

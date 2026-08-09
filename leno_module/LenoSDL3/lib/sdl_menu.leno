@@ -516,6 +516,7 @@ export struct MenuBar impl Widget, Themeable {
 
         if ev.isMouseMotion() {
             int prevHoverTop = _hoverTop, prevHoverItem = _hoverItem
+            int prevHoverSub = _hoverSub, prevOpenSub = _openSub
             var rs = _topRects()
             _hoverTop = -1
             for rs.len() to i {
@@ -545,7 +546,7 @@ export struct MenuBar impl Widget, Themeable {
                 }
             }
             core.markFrameMotion()
-            if _hoverTop != prevHoverTop or _hoverItem != prevHoverItem { core.requestRedraw() }
+            if _hoverTop != prevHoverTop or _hoverItem != prevHoverItem or _hoverSub != prevHoverSub or _openSub != prevOpenSub { core.requestRedraw() }
             if (_hoverTop >= 0 or (_open >= 0 and _hoverItem >= 0)) and _cursor >= 0 { core.requestCursor(_cursor) }
         }
 
@@ -709,7 +710,7 @@ export struct MenuBar impl Widget, Themeable {
             if it.separator {
                 r.setColor(_sepR, _sepG, _sepB, 200)
                 r.drawLine(px + 10.0, iy + 4.0, px + pw - 10.0, iy + 4.0)
-                iy = iy + 9.0 + _itemGap
+                iy = iy + 9.0 + (if i < items.len() - 1 then _itemGap else 0.0)
                 continue
             }
             float ry = iy
@@ -752,7 +753,7 @@ export struct MenuBar impl Widget, Themeable {
                     r.drawTriangle(ax, ay, 5.0, 90.0, lr, lg, lb2, 255)
                 }
             }
-            iy = iy + _itemH + _itemGap
+            iy = iy + _itemH + (if i < items.len() - 1 then _itemGap else 0.0)
         }
         r.popClipRect()
         clip.free()

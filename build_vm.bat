@@ -26,7 +26,7 @@ set SOURCES=!SOURCES! src\object\object_socket.c
 set SOURCES=!SOURCES! src\bound_method.c
 set SOURCES=!SOURCES! src\coroutine.c
 set SOURCES=!SOURCES! src\vm\vm.c
-set SOURCES=!SOURCES! src\debug.c
+REM debug.c 仅包含反汇编函数，VM 运行时不需要，通过 LENO_VM_ONLY 条件编译排除
 set SOURCES=!SOURCES! src\type.c
 set SOURCES=!SOURCES! src\native.c
 set SOURCES=!SOURCES! src\bigint.c
@@ -58,7 +58,7 @@ set SOURCES=!SOURCES! src\module\regexs\regexs.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 
-gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
+gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -DLENO_VM_ONLY -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo VM build failed

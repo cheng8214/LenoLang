@@ -19,7 +19,9 @@
 extern VM vm;
 
 // 全局变量（VM 运行时需要，原定义在 main.c）
+#ifndef LENO_VM_ONLY
 int debugMode = 0;
+#endif
 int g_argc = 0;
 char** g_argv = NULL;
 

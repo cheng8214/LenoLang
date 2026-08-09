@@ -81,6 +81,8 @@ import "sdl_groupbox.leno" as gbxlib
 use gbxlib.GroupBox
 import "sdl_splitter.leno" as spllib
 use spllib.Splitter
+import "sdl_gridlayout.leno" as grdlib
+use grdlib.GridLayout
 import "sdl_titlebar.leno" as tbarlib
 use tbarlib.TitleBar
 
@@ -184,7 +186,7 @@ Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
 func _refreshWindowHandle(Widget w, Ptr[u8] hwnd, int ww, int hh) {
     switch w {
         case is Splitter { w._bind_window_size(hwnd, ww, hh); return }
-        case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, ComboBox { w._bind_window(hwnd); return }
+        case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, GridLayout, ComboBox { w._bind_window(hwnd); return }
         case is Edit { w.set_window(hwnd); return }
         case is TreeView { w.set_window_handle(hwnd); w.set_window(ww, hh); return }
         case is Table { w.set_window_handle(hwnd); w.set_window_size(ww, hh); return }
@@ -442,10 +444,21 @@ export struct Window {
                 // 递归 children（通过 add() 添加的子控件）
                 for w.children.len() to ci { _applyThemeWidget(w.children[ci], t) }
             }
+            case is GroupBox {
+                w.applyTheme(t)
+                // ★ 递归 _layoutChild（setLayoutPadded 设置的布局子控件，如 VBox）
+                var glc = w._layoutChild
+                if glc is Widget { _applyThemeWidget(glc, t) }
+                // 递归 children（通过 add() 添加的子控件）
+                for w.children.len() to ci { _applyThemeWidget(w.children[ci], t) }
+            }
             case is HBox {
                 for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
             }
             case is VBox {
+                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+            }
+            case is GridLayout {
                 for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
             }
         }
@@ -799,6 +812,16 @@ export struct Window {
     // ab.add(win.addButton({...}), {left:10, top:10}) 钉在左上；{centerX:true,centerY:true} 居中
     func addAnchorBox(Dict opts): AnchorBox {
         AnchorBox b = lay.createAnchorBox(opts)
+        _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        b._bind_window(handle)
+        return b
+    }
+
+    // 添加网格布局容器，opts: {x, y, w, h, cols, spacing, padX, padY, col_weights}
+    // grid.add(win.addButton({...}), {align: 1})  align: 0=左上 1=居中 2=右下 3=撑满
+    func addGridLayout(Dict opts): GridLayout {
+        GridLayout b = grdlib.createGridLayout(opts)
         _widgets.add(b as Widget)
         _widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)

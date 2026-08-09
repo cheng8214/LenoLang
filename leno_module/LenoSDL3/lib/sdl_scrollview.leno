@@ -17,6 +17,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+import "sdl_gridlayout.leno" as grd; use grd.GridLayout
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_theme.leno" as theme; use theme.Theme
@@ -43,6 +44,7 @@ export struct ScrollView impl Widget {
     float _vThumbY = 0.0, _vThumbH = 0.0      // 竖直滚动条拇指几何（每帧计算）
     float _hThumbX = 0.0, _hThumbW = 0.0      // 水平滚动条拇指几何
 
+    bool _autoW = false, _autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
     bool _loaded = false, enabled = true, visible = true
     Ptr[u8]? _hwnd
 
@@ -79,16 +81,43 @@ export struct ScrollView impl Widget {
         if c is Widget { lay.passWindowHandle(c, hwnd) }
     }
 
-    // 设置内容控件（单一）。content_w/h 未指定时取内容自然尺寸
+    // 设置内容控件（单一）。content_w/h 未指定时自动测算内容尺寸
     func set_content(Widget c): Widget {
         _content = c
-        if _contentW < 0.0 and c != null { _contentW = c.get_w() }
-        if _contentH < 0.0 and c != null { _contentH = c.get_h() }
+        if _contentW < 0.0 and c != null {
+            _autoW = true
+            _contentW = _measure_w(c)
+        }
+        if _contentH < 0.0 and c != null {
+            _autoH = true
+            _contentH = _measure_h(c)
+        }
         _scrollX = 0.0; _scrollY = 0.0
         if c != null and _hwnd != null { _bind_window(_hwnd) }
         return c
     }
-    func set_content_size(float cw, float ch) { _contentW = cw; _contentH = ch; _clampScroll() }
+    func set_content_size(float cw, float ch) { _autoW = false; _autoH = false; _contentW = cw; _contentH = ch; _clampScroll() }
+
+    // 测量内容控件的自然尺寸（供自动内容尺寸用）
+    // VBox/HBox/AnchorBox 有 measure_w/measure_h 方法，其他控件回退到 get_w/get_h
+    func _measure_w(Widget c): float {
+        switch c {
+            case is VBox { return c.measure_w() }
+            case is HBox { return c.measure_w() }
+            case is AnchorBox { return c.measure_w() }
+            case is GridLayout { return c.measure_w() }
+        }
+        return c.get_w()
+    }
+    func _measure_h(Widget c): float {
+        switch c {
+            case is VBox { return c.measure_h() }
+            case is HBox { return c.measure_h() }
+            case is AnchorBox { return c.measure_h() }
+            case is GridLayout { return c.measure_h() }
+        }
+        return c.get_h()
+    }
     func set_bg(int r, int g, int b) { br = r; bg = g; bb = b }
 
     // ---- 滚动范围与约束 ----
@@ -104,13 +133,34 @@ export struct ScrollView impl Widget {
     }
     func set_scroll(float sx, float sy) { _scrollX = sx; _scrollY = sy; _clampScroll() }
     func scroll_to(float sx, float sy) { set_scroll(sx, sy) }
+
+    // 滚动使内容坐标系中的指定矩形区域可见（常用于「滚动到某控件」）
+    // tx/ty 为目标在内容坐标系中的左上角，tw/th 为目标尺寸
+    // 若目标已完全在视口内则不动；否则最小幅度滚动使其可见
+    func ensure_visible(float tx, float ty, float tw, float th) {
+        float left = _scrollX
+        float right = _scrollX + w
+        float top = _scrollY
+        float bottom = _scrollY + h
+        if tx < left { _scrollX = tx }
+        else if tx + tw > right { _scrollX = tx + tw - w }
+        if ty < top { _scrollY = ty }
+        else if ty + th > bottom { _scrollY = ty + th - h }
+        _clampScroll()
+        core.markFrameRedraw()
+    }
+
     func get_scroll_x(): float { return _scrollX }
     func get_scroll_y(): float { return _scrollY }
     func get_max_scroll_x(): float { return _hmax() }
     func get_max_scroll_y(): float { return _vmax() }
 
     // 每帧把内容定位到（视口 - 偏移），设定内容尺寸，并刷新滚动条几何
+    // 自动内容尺寸模式下，每帧重新测算（子控件可能动态增减）
     func _sync() {
+        if _autoW and _content != null { _contentW = _measure_w(_content) }
+        if _autoH and _content != null { _contentH = _measure_h(_content) }
+        _clampScroll()
         _computeThumbs()
         _content?.set_pos(x - _scrollX, y - _scrollY)
         _content?.set_size(_contentW, _contentH)
@@ -236,6 +286,25 @@ export struct ScrollView impl Widget {
                     _scrollY = _scrollY - ev.wheelY() * _step
                 }
                 _clampScroll()
+            }
+        }
+        // 键盘导航：悬停视口时 PageUp/Down 翻页、Home/End 跳首尾
+        if ev.isKeyDown() {
+            float kx = ev.mouseX(), ky = ev.mouseY()
+            if kx >= x and kx <= x + w and ky >= y and ky <= y + h {
+                int sc = ev.scancode()
+                if sc == 78 {  // PageDown
+                    _scrollY = _scrollY + h * 0.9; _clampScroll(); core.markFrameRedraw(); return
+                }
+                if sc == 75 {  // PageUp
+                    _scrollY = _scrollY - h * 0.9; _clampScroll(); core.markFrameRedraw(); return
+                }
+                if sc == 74 {  // Home
+                    _scrollY = 0.0; _scrollX = 0.0; core.markFrameRedraw(); return
+                }
+                if sc == 77 {  // End
+                    _scrollY = _vmax(); _scrollX = _hmax(); core.markFrameRedraw(); return
+                }
             }
         }
         _content?.process(ev)
