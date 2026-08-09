@@ -45,7 +45,7 @@ void resolve_generic_in_type(TypeInfo* type, char** type_params, char** type_par
 // 前置声明 - struct 方法字段访问转换
 // ============================================================================
 void transform_method_body(Ast* ast, char** field_names, int field_count, char** method_names, int method_count, const char* struct_name,
-    char** param_names, int param_count);
+    char** param_names, int param_count, char** const_names, int const_count);
 
 // ============================================================================
 // 类型工具函数

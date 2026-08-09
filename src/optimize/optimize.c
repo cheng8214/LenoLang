@@ -420,6 +420,9 @@ static void fold_expr(Ast* ast) {
             for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                 fold_expr(ast->u.struct_def.methods[i]);
             }
+            for (int i = 0; i < ast->u.struct_def.const_count; i++) {
+                fold_expr(ast->u.struct_def.const_values[i]);
+            }
             break;
         case AST_FACE_DEF:
         case AST_ALIAS:
@@ -789,6 +792,10 @@ static int dce_expr(Ast* ast) {
             for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                 if (ast->u.struct_def.field_defaults[i])
                     dce_expr(ast->u.struct_def.field_defaults[i]);
+            }
+            for (int i = 0; i < ast->u.struct_def.const_count; i++) {
+                if (ast->u.struct_def.const_values[i])
+                    dce_expr(ast->u.struct_def.const_values[i]);
             }
             for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                 dce_expr(ast->u.struct_def.methods[i]);

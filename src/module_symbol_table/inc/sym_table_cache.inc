@@ -272,6 +272,18 @@ sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
         for (uint32_t j = 0; j < tpc; j++) {
             sym_cache_write_string(f, ss->type_param_names[j]);
         }
+        // 关联常量
+        uint32_t cc = (uint32_t)ss->const_count;
+        fwrite(&cc, 4, 1, f);
+        for (uint32_t j = 0; j < cc; j++) {
+            sym_cache_write_string(f, ss->const_names[j]);
+            // 写入常量值字符串（可能为 NULL）
+            if (ss->const_value_strs && ss->const_value_strs[j]) {
+                sym_cache_write_string(f, ss->const_value_strs[j]);
+            } else {
+                sym_cache_write_string(f, "");
+            }
+        }
     }
 
     // enums
@@ -547,6 +559,22 @@ table->func_count++;
         ss->type_param_names = tpc > 0 ? (char**)calloc(tpc, sizeof(char*)) : NULL;
         for (uint32_t j = 0; j < tpc; j++) {
             ss->type_param_names[j] = sym_cache_read_string(f);
+        }
+        // 关联常量
+        uint32_t cc; if (fread(&cc, 4, 1, f) != 1) goto fail;
+        ss->const_count = (int)cc;
+        ss->const_names = cc > 0 ? (char**)calloc(cc, sizeof(char*)) : NULL;
+        ss->const_value_strs = cc > 0 ? (char**)calloc(cc, sizeof(char*)) : NULL;
+        for (uint32_t j = 0; j < cc; j++) {
+            ss->const_names[j] = sym_cache_read_string(f);
+            // 读取常量值字符串
+            char* val_str = sym_cache_read_string(f);
+            if (val_str && val_str[0] != '\0') {
+                ss->const_value_strs[j] = val_str;
+            } else {
+                if (val_str) free(val_str);
+                ss->const_value_strs[j] = NULL;
+            }
         }
         table->struct_count++;
     }

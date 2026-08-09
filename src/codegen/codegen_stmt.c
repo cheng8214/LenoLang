@@ -26,9 +26,9 @@ static LoopContext* loop_current(CodeGen* gen) {
     return gen->loop_head ? &gen->loop_head->ctx : NULL;
 }
 
-static Value ast_default_to_value(Ast* expr);
+Value ast_default_to_value(Ast* expr);
 
-static Value ast_default_to_value(Ast* expr) {
+Value ast_default_to_value(Ast* expr) {
     if (!expr) return val_null();
     switch (expr->kind) {
         case AST_NUM:
@@ -1726,12 +1726,32 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             if (ctor_idx >= 0) emit_byte(gen, (uint8_t)ctor_idx, ast->line);
             if (dtor_idx >= 0) emit_byte(gen, (uint8_t)dtor_idx, ast->line);
 
+            // 编码关联常量信息
+            emit_byte(gen, ast->u.struct_def.const_count, ast->line);
+            for (int i = 0; i < ast->u.struct_def.const_count; i++) {
+                // 常量名
+                ObjString* cname = str_copy(ast->u.struct_def.const_names[i],
+                                             strlen(ast->u.struct_def.const_names[i]));
+                int cname_const = make_constant(gen, val_obj((Object*)cname));
+                emit_byte(gen, (cname_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, cname_const & 0xff, ast->line);
+                // 常量值
+                Ast* cexpr = ast->u.struct_def.const_values[i];
+                Value cval = ast_default_to_value(cexpr);
+                if (val_is_null(cval) && cexpr && cexpr->kind != AST_NULL) {
+                    // 非常量表达式，用 null 作为占位
+                    cval = val_null();
+                }
+                int cval_const = make_constant(gen, cval);
+                emit_byte(gen, (cval_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, cval_const & 0xff, ast->line);
+            }
+
             if (method_name_consts) free(method_name_consts);
             if (method_func_consts) free(method_func_consts);
             break;
         }
         case AST_CSTRUCT_DEF: {
-            // cstruct 定义 - 生成 C 布局结构体定义指令
             // 将 cstruct 名称作为常量
             ObjString* cstruct_name = str_copy(ast->u.cstruct_def.name, strlen(ast->u.cstruct_def.name));
             int name_const = make_constant(gen, val_obj((Object*)cstruct_name));
@@ -2099,6 +2119,26 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
     emit_byte(gen, ctor_dtor_flags, ast->line);
     if (ctor_idx >= 0) emit_byte(gen, (uint8_t)ctor_idx, ast->line);
     if (dtor_idx >= 0) emit_byte(gen, (uint8_t)dtor_idx, ast->line);
+
+    // 编码关联常量信息
+    emit_byte(gen, ast->u.struct_def.const_count, ast->line);
+    for (int i = 0; i < ast->u.struct_def.const_count; i++) {
+        // 常量名
+        ObjString* cname = str_copy(ast->u.struct_def.const_names[i],
+                                     strlen(ast->u.struct_def.const_names[i]));
+        int cname_const = make_constant(gen, val_obj((Object*)cname));
+        emit_byte(gen, (cname_const >> 8) & 0xff, ast->line);
+        emit_byte(gen, cname_const & 0xff, ast->line);
+        // 常量值
+        Ast* cexpr = ast->u.struct_def.const_values[i];
+        Value cval = ast_default_to_value(cexpr);
+        if (val_is_null(cval) && cexpr && cexpr->kind != AST_NULL) {
+            cval = val_null();
+        }
+        int cval_const = make_constant(gen, cval);
+        emit_byte(gen, (cval_const >> 8) & 0xff, ast->line);
+        emit_byte(gen, cval_const & 0xff, ast->line);
+    }
 
     if (method_name_consts) free(method_name_consts);
     if (method_func_consts) free(method_func_consts);

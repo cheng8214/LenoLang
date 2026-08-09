@@ -112,6 +112,46 @@
                                         }
                                     }
 
+                                    // 设置关联常量（从模块符号表复制名称和解析值）
+                                    if (struct_sym->const_count > 0) {
+                                        sdef->const_count = struct_sym->const_count;
+                                        sdef->const_names = (char**)malloc(sizeof(char*) * sdef->const_count);
+                                        sdef->const_values = (Value*)calloc(sdef->const_count, sizeof(Value));
+                                        for (int ci = 0; ci < sdef->const_count; ci++) {
+                                            sdef->const_names[ci] = strdup(struct_sym->const_names[ci]);
+                                            sdef->const_values[ci] = val_null();
+                                            // 解析常量值字符串
+                                            if (struct_sym->const_value_strs && struct_sym->const_value_strs[ci]) {
+                                                const char* vs = struct_sym->const_value_strs[ci];
+                                                // 跳过前导空白
+                                                while (*vs == ' ' || *vs == '\t') vs++;
+                                                if (strcmp(vs, "true") == 0) {
+                                                    sdef->const_values[ci] = val_bool(1);
+                                                } else if (strcmp(vs, "false") == 0) {
+                                                    sdef->const_values[ci] = val_bool(0);
+                                                } else if (strcmp(vs, "null") == 0) {
+                                                    sdef->const_values[ci] = val_null();
+                                                } else if (vs[0] == '"' || vs[0] == '\'') {
+                                                    // 字符串字面量：去除引号
+                                                    char q = vs[0];
+                                                    const char* end = vs + 1;
+                                                    while (*end && *end != q) end++;
+                                                    int slen = (int)(end - vs - 1);
+                                                    sdef->const_values[ci] = val_obj((Object*)str_new(vs + 1, slen));
+                                                } else if (vs[0] == '0' && (vs[1] == 'x' || vs[1] == 'X')) {
+                                                    // 十六进制整数
+                                                    sdef->const_values[ci] = val_int((int64_t)strtoll(vs, NULL, 16));
+                                                } else if (strchr(vs, '.') || strchr(vs, 'e') || strchr(vs, 'E')) {
+                                                    // 浮点数
+                                                    sdef->const_values[ci] = val_float(atof(vs));
+                                                } else {
+                                                    // 十进制整数
+                                                    sdef->const_values[ci] = val_int((int64_t)strtoll(vs, NULL, 10));
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     struct_def_register(sdef);
                                 }
                             }
@@ -1763,8 +1803,99 @@
                                  ast->u.module_access.module_name, mname);
                         error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                     }
-                } else if (is_struct_type || is_cstruct_type || is_face_type) {
+                } else if (is_struct_type) {
+                    // 检查是否是 struct 关联常量访问（StructName.CONST_NAME）
+                    ObjStructDef* sdef = struct_def_find(var_sym->type->struct_name);
+                    int found_const = 0;
+                    if (sdef && sdef->const_count > 0) {
+                        const char* mname = ast->u.module_access.member_name;
+                        for (int ci = 0; ci < sdef->const_count; ci++) {
+                            if (sdef->const_names[ci] && strcmp(sdef->const_names[ci], mname) == 0) {
+                                // 找到关联常量，转换为常量节点（类似 enum 的处理方式）
+                                Value cv = sdef->const_values[ci];
+                                // 释放 module_access 相关内存
+                                char* mod_name = ast->u.module_access.module_name;
+                                char* mem_name = ast->u.module_access.member_name;
+                                char* ref_name = ast->u.module_access.ref.name;
+                                ast->u.module_access.module_name = NULL;
+                                ast->u.module_access.member_name = NULL;
+                                ast->u.module_access.ref.name = NULL;
+                                free(mod_name); free(mem_name);
+                                if (ref_name) free(ref_name);
+                                if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
+
+                                // 根据 Value 类型转换为相应的 AST 常量节点
+                                if (val_is_int(cv)) {
+                                    ast->kind = AST_NUM;
+                                    ast->u.num.value = (double)val_as_int(cv);
+                                    ast->u.num.is_float = 0;
+                                    ast->u.num.is_bigint = 0;
+                                    ast->u.num.bigint_str = NULL;
+                                    ast->cached_type = type_new(TYPE_INT);
+                                } else if (val_is_float(cv)) {
+                                    ast->kind = AST_NUM;
+                                    ast->u.num.value = val_as_double(cv);
+                                    ast->u.num.is_float = 1;
+                                    ast->u.num.is_bigint = 0;
+                                    ast->u.num.bigint_str = NULL;
+                                    ast->cached_type = type_new(TYPE_FLOAT);
+                                } else if (val_is_string(cv)) {
+                                    ObjString* ostr = (ObjString*)val_as_obj(cv);
+                                    ast->kind = AST_STRING;
+                                    ast->u.string.value = strdup(ostr->chars);
+                                    ast->u.string.len = ostr->len;
+                                    ast->cached_type = type_new(TYPE_STRING);
+                                } else if (val_is_bool(cv)) {
+                                    ast->kind = AST_BOOL;
+                                    ast->u.boolean = val_as_bool(cv);
+                                    ast->cached_type = type_new(TYPE_BOOL);
+                                } else if (val_is_null(cv)) {
+                                    ast->kind = AST_NULL;
+                                    ast->cached_type = type_new(TYPE_ANY);
+                                } else {
+                                    // 数组/字典等复杂类型：保持为常量引用
+                                    // 简单回退：将值编码为 null（复杂类型的关联常量
+                                    // 在实际使用场景中极少，主要是整数/浮点/字符串）
+                                    ast->kind = AST_NULL;
+                                    ast->cached_type = type_new(TYPE_ANY);
+                                }
+
+                                // 释放不再需要的 var_ast
+                                if (var_ast) {
+                                    free(var_ast->u.var.name);
+                                    var_ast->u.var.name = NULL;
+                                    if (var_ast->u.var.ref.name) { free(var_ast->u.var.ref.name); var_ast->u.var.ref.name = NULL; }
+                                    if (var_ast->u.var.ref.struct_name) { free(var_ast->u.var.ref.struct_name); var_ast->u.var.ref.struct_name = NULL; }
+                                    if (var_ast->cached_type) { type_free(var_ast->cached_type); var_ast->cached_type = NULL; }
+                                    free(var_ast);
+                                    var_ast = NULL;
+                                }
+                                found_const = 1;
+                                break;
+                            }
+                        }
+                    }
+                    if (found_const) break;
+
+                    // 不是关联常量，继续走 struct 字段访问逻辑
                     // struct/cstruct 字段访问：转换为 AST_FIELD_ACCESS
+                    char* field_name = strdup(ast->u.module_access.member_name);
+                    char* module_name = ast->u.module_access.module_name;
+                    char* member_name = ast->u.module_access.member_name;
+
+                    ast->kind = AST_FIELD_ACCESS;
+                    ast->u.field_access.obj = var_ast;
+                    ast->u.field_access.field_name = field_name;
+                    ast->u.field_access.field_index = -1;
+
+                    // 释放旧的内存
+                    free(member_name);
+                    free(module_name);
+
+                    // 继续访问转换后的节点
+                    visit(s, ast);
+                } else if (is_cstruct_type || is_face_type) {
+                    // cstruct/face 字段访问：转换为 AST_FIELD_ACCESS
                     char* field_name = strdup(ast->u.module_access.member_name);
                     char* module_name = ast->u.module_access.module_name;
                     char* member_name = ast->u.module_access.member_name;
@@ -1844,6 +1975,16 @@
                                     member_type = TYPE_ENUM;
                                     if (ast->cached_type) { type_free(ast->cached_type); }
                                     ast->cached_type = type_new(TYPE_ENUM);
+                                    ast->cached_type->struct_name = strdup(ast->u.module_access.member_name);
+                                }
+                            }
+                            // 也可能是 struct 类型名，用于 Module.StructName.CONST 访问
+                            if (member_type == TYPE_ANY) {
+                                ModuleStructSymbol* ss = module_symbol_table_find_struct(mod_info->sym_table, ast->u.module_access.member_name);
+                                if (ss && !ss->is_cstruct) {
+                                    member_type = TYPE_STRUCT;
+                                    if (ast->cached_type) { type_free(ast->cached_type); }
+                                    ast->cached_type = type_new(TYPE_STRUCT);
                                     ast->cached_type->struct_name = strdup(ast->u.module_access.member_name);
                                 }
                             }

@@ -33,6 +33,9 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
     def->ctor_index = -1;
     def->has_dtor = 0;
     def->dtor_index = -1;
+    def->const_names = NULL;
+    def->const_values = NULL;
+    def->const_count = 0;
     return def;
 }
 
@@ -69,6 +72,9 @@ void struct_def_register(ObjStructDef* def) {
             old_def->method_count = 0;
             old_def->impl_names = NULL;
             old_def->impl_count = 0;
+            old_def->const_names = NULL;
+            old_def->const_values = NULL;
+            old_def->const_count = 0;
 
             struct_def_table[i] = def;
             return;

@@ -1381,6 +1381,82 @@
                 }
             }
 
+            // 检查 struct 关联常量访问（Module.StructName.CONST 或 StructName.CONST via AST_INDEX）
+            if (obj_type && obj_type->kind == TYPE_STRUCT && obj_type->struct_name &&
+                ast->u.index.index->kind == AST_STRING) {
+                const char* const_name = ast->u.index.index->u.string.value;
+                ObjStructDef* sdef = struct_def_find(obj_type->struct_name);
+                if (sdef && sdef->const_count > 0) {
+                    for (int ci = 0; ci < sdef->const_count; ci++) {
+                        if (sdef->const_names[ci] && strcmp(sdef->const_names[ci], const_name) == 0) {
+                            // 找到关联常量，将 AST_INDEX 折叠为常量值
+                            Value cv = sdef->const_values[ci];
+                            // 释放 AST_INDEX 的子节点
+                            // obj 可能是 AST_MODULE_ACCESS（跨模块）或 AST_VAR（本地）
+                            Ast* obj_node = ast->u.index.obj;
+                            Ast* idx_node = ast->u.index.index;
+                            // 释放 index（AST_STRING）
+                            free(idx_node->u.string.value);
+                            free(idx_node);
+                            // 释放 obj
+                            if (obj_node) {
+                                if (obj_node->kind == AST_MODULE_ACCESS) {
+                                    free(obj_node->u.module_access.module_name);
+                                    free(obj_node->u.module_access.member_name);
+                                    if (obj_node->u.module_access.ref.name) free(obj_node->u.module_access.ref.name);
+                                } else if (obj_node->kind == AST_VAR) {
+                                    free(obj_node->u.var.name);
+                                    if (obj_node->u.var.ref.name) free(obj_node->u.var.ref.name);
+                                }
+                                if (obj_node->cached_type) { type_free(obj_node->cached_type); }
+                                free(obj_node);
+                            }
+                            if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
+
+                            // 根据 Value 类型转换为常量 AST 节点
+                            if (val_is_int(cv)) {
+                                ast->kind = AST_NUM;
+                                ast->u.num.value = (double)val_as_int(cv);
+                                ast->u.num.is_float = 0;
+                                ast->u.num.is_bigint = 0;
+                                ast->u.num.bigint_str = NULL;
+                                ast->cached_type = type_new(TYPE_INT);
+                            } else if (val_is_float(cv)) {
+                                ast->kind = AST_NUM;
+                                ast->u.num.value = val_as_double(cv);
+                                ast->u.num.is_float = 1;
+                                ast->u.num.is_bigint = 0;
+                                ast->u.num.bigint_str = NULL;
+                                ast->cached_type = type_new(TYPE_FLOAT);
+                            } else if (val_is_string(cv)) {
+                                ObjString* ostr = (ObjString*)val_as_obj(cv);
+                                ast->kind = AST_STRING;
+                                ast->u.string.value = strdup(ostr->chars);
+                                ast->u.string.len = ostr->len;
+                                ast->cached_type = type_new(TYPE_STRING);
+                            } else if (val_is_bool(cv)) {
+                                ast->kind = AST_BOOL;
+                                ast->u.boolean = val_as_bool(cv);
+                                ast->cached_type = type_new(TYPE_BOOL);
+                            } else if (val_is_null(cv)) {
+                                ast->kind = AST_NULL;
+                                ast->cached_type = type_new(TYPE_ANY);
+                            } else {
+                                ast->kind = AST_NULL;
+                                ast->cached_type = type_new(TYPE_ANY);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 如果 AST 已被折叠为常量，跳过后续 index 专属检查
+            if (ast->kind != AST_INDEX) {
+                if (obj_type) type_free(obj_type);
+                break;
+            }
+
             if (obj_type && obj_type->kind == TYPE_ARRAY) {
                 TypeInfo* index_type = infer_expr_type(s, ast->u.index.index);
                 if (index_type && index_type->kind != TYPE_INT && index_type->kind != TYPE_ANY) {

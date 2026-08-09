@@ -55,6 +55,9 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
     st->impl_names = NULL;
     st->type_param_count = type_param_count;
     st->type_param_names = NULL;
+    st->const_names = NULL;
+    st->const_value_strs = NULL;
+    st->const_count = 0;
     if (type_param_count > 0 && type_param_names) {
         st->type_param_names = (char**)malloc(sizeof(char*) * type_param_count);
         for (int i = 0; i < type_param_count; i++) {

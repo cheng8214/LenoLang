@@ -1,0 +1,324 @@
+debug模式:进入主执行流程
+debug模式:进入语法分析阶段
+debug模式:进入语义分析
+debug模式:开始生成字节码
+===== 主程序 =====
+代码长度: 20 bytes
+常量数量: 2
+局部变量槽位数: 0
+
+Offset Instruction          Operand
+------ -------------------- -------
+0000 OP_CLOSURE           0
+0003 OP_DEFINE_GLOBAL_FUNC 0
+0006 OP_CONST             1 ([object])
+0009 OP_INIT_LENOMODULE   (init .leno module)
+0010 OP_DEFINE_GLOBAL     0
+0013 OP_GET_GLOBAL_FUNC   0
+0016 OP_CALL              0
+0019 OP_POP              
+==================
+
+  ===== 函数: main =====
+  代码长度: 751 bytes
+  常量数量: 120
+  局部变量槽位数: 10
+
+  Offset Instruction          Operand
+  ------ -------------------- -------
+  0000 OP_NULL             
+  0001 OP_CONST             0 (9.8000000000000007)
+  0004 OP_CALL_NATIVE       1 (assert_eq) args=2
+  0009 OP_POP              
+  0010 OP_NULL             
+  0011 OP_CONST             2 (3.1415899999999999)
+  0014 OP_CALL_NATIVE       3 (assert_eq) args=2
+  0019 OP_POP              
+  0020 OP_NULL             
+  0021 OP_CONST             4 (299792458)
+  0024 OP_CALL_NATIVE       5 (assert_eq) args=2
+  0029 OP_POP              
+  0030 OP_NULL             
+  0031 OP_CONST             6 (SI)
+  0034 OP_CALL_NATIVE       7 (assert_eq) args=2
+  0039 OP_POP              
+  0040 OP_NULL             
+  0041 OP_TRUE             
+  0042 OP_CALL_NATIVE       8 (assert_eq) args=2
+  0047 OP_POP              
+  0048 OP_CONST             9 ([1] cross-module multi-type const passed)
+  0051 OP_CALL_NATIVE       10 (print) args=1
+  0056 OP_POP              
+  0057 OP_NULL             
+  0058 OP_CONST             11 (100)
+  0061 OP_CALL_NATIVE       12 (assert_eq) args=2
+  0066 OP_POP              
+  0067 OP_NULL             
+  0068 OP_CONST             13 (8080)
+  0071 OP_CALL_NATIVE       14 (assert_eq) args=2
+  0076 OP_POP              
+  0077 OP_NULL             
+  0078 OP_CONST             15 (30.0)
+  0081 OP_CALL_NATIVE       16 (assert_eq) args=2
+  0086 OP_POP              
+  0087 OP_NULL             
+  0088 OP_CONST             17 (localhost)
+  0091 OP_CALL_NATIVE       18 (assert_eq) args=2
+  0096 OP_POP              
+  0097 OP_NULL             
+  0098 OP_FALSE            
+  0099 OP_CALL_NATIVE       19 (assert_eq) args=2
+  0104 OP_POP              
+  0105 OP_CONST             20 ([2] cross-module explicit type const passed)
+  0108 OP_CALL_NATIVE       21 (print) args=1
+  0113 OP_POP              
+  0114 OP_CONST             23 (10.0)
+  0117 OP_CONST             24 (5.0)
+  0120 OP_STRUCT_INIT       name=22 args=2 generics=0
+  0127 OP_SET_LOCAL_POP     0
+  0130 OP_GET_LOCAL         0
+  0133 OP_CONST             25 (mass)
+  0136 OP_INDEX            
+  0137 OP_CONST             26 (10.0)
+  0140 OP_CALL_NATIVE       27 (assert_eq) args=2
+  0145 OP_POP              
+  0146 OP_GET_LOCAL         0
+  0149 OP_CONST             28 (velocity)
+  0152 OP_INDEX            
+  0153 OP_CONST             29 (5.0)
+  0156 OP_CALL_NATIVE       30 (assert_eq) args=2
+  0161 OP_POP              
+  0162 OP_CONST             31 (0.5)
+  0165 OP_GET_LOCAL         0
+  0168 OP_CONST             32 (mass)
+  0171 OP_INDEX            
+  0172 OP_MUL              
+  0173 OP_GET_LOCAL         0
+  0176 OP_CONST             33 (velocity)
+  0179 OP_INDEX            
+  0180 OP_MUL              
+  0181 OP_GET_LOCAL         0
+  0184 OP_CONST             34 (velocity)
+  0187 OP_INDEX            
+  0188 OP_MUL              
+  0189 OP_SET_LOCAL_POP     1
+  0192 OP_GET_LOCAL         1
+  0195 OP_CONST             35 (125.0)
+  0198 OP_CALL_NATIVE       36 (assert_eq) args=2
+  0203 OP_POP              
+  0204 OP_CONST             37 ([3] cross-module instance + const in expression passed)
+  0207 OP_CALL_NATIVE       38 (print) args=1
+  0212 OP_POP              
+  0213 OP_GET_GLOBAL        0
+  0216 OP_CONST             39 (make_default_config)
+  0219 OP_INDEX            
+  0220 OP_CALL              0
+  0223 OP_SET_LOCAL_POP     2
+  0226 OP_GET_LOCAL         2
+  0229 OP_CONST             40 (active)
+  0232 OP_INDEX            
+  0233 OP_CONST             41 (0)
+  0236 OP_CALL_NATIVE       42 (assert_eq) args=2
+  0241 OP_POP              
+  0242 OP_GET_GLOBAL        0
+  0245 OP_CONST             43 (get_default_port)
+  0248 OP_INDEX            
+  0249 OP_CALL              0
+  0252 OP_CONST             44 (8080)
+  0255 OP_CALL_NATIVE       45 (assert_eq) args=2
+  0260 OP_POP              
+  0261 OP_GET_GLOBAL        0
+  0264 OP_CONST             46 (get_max_connections)
+  0267 OP_INDEX            
+  0268 OP_CALL              0
+  0271 OP_CONST             47 (100)
+  0274 OP_CALL_NATIVE       48 (assert_eq) args=2
+  0279 OP_POP              
+  0280 OP_CONST             49 ([4] cross-module factory function with const passed)
+  0283 OP_CALL_NATIVE       50 (print) args=1
+  0288 OP_POP              
+  0289 OP_STRUCT_INIT       name=51 args=0 generics=0
+  0294 OP_SET_LOCAL_POP     3
+  0297 OP_GET_LOCAL         3
+  0300 OP_GET_LOCAL         3
+  0303 OP_GET_METHOD        52 (is_min)
+  0306 OP_CALL              1
+  0309 OP_TRUE             
+  0310 OP_CALL_NATIVE       53 (assert_eq) args=2
+  0315 OP_POP              
+  0316 OP_GET_LOCAL         3
+  0319 OP_GET_LOCAL         3
+  0322 OP_GET_METHOD        54 (increment)
+  0325 OP_CALL              1
+  0328 OP_POP              
+  0329 OP_GET_LOCAL         3
+  0332 OP_GET_LOCAL         3
+  0335 OP_GET_METHOD        55 (increment)
+  0338 OP_CALL              1
+  0341 OP_POP              
+  0342 OP_GET_LOCAL         3
+  0345 OP_GET_LOCAL         3
+  0348 OP_GET_METHOD        56 (increment)
+  0351 OP_CALL              1
+  0354 OP_POP              
+  0355 OP_GET_LOCAL         3
+  0358 OP_CONST             57 (count)
+  0361 OP_INDEX            
+  0362 OP_CONST             58 (3)
+  0365 OP_CALL_NATIVE       59 (assert_eq) args=2
+  0370 OP_POP              
+  0371 OP_GET_LOCAL         3
+  0374 OP_GET_LOCAL         3
+  0377 OP_GET_METHOD        60 (is_min)
+  0380 OP_CALL              1
+  0383 OP_FALSE            
+  0384 OP_CALL_NATIVE       61 (assert_eq) args=2
+  0389 OP_POP              
+  0390 OP_GET_LOCAL         3
+  0393 OP_GET_LOCAL         3
+  0396 OP_GET_METHOD        62 (decrement)
+  0399 OP_CALL              1
+  0402 OP_POP              
+  0403 OP_GET_LOCAL         3
+  0406 OP_CONST             63 (count)
+  0409 OP_INDEX            
+  0410 OP_CONST             64 (2)
+  0413 OP_CALL_NATIVE       65 (assert_eq) args=2
+  0418 OP_POP              
+  0419 OP_GET_LOCAL         3
+  0422 OP_GET_LOCAL         3
+  0425 OP_GET_METHOD        66 (reset)
+  0428 OP_CALL              1
+  0431 OP_POP              
+  0432 OP_GET_LOCAL         3
+  0435 OP_CONST             67 (count)
+  0438 OP_INDEX            
+  0439 OP_CONST             68 (0)
+  0442 OP_CALL_NATIVE       69 (assert_eq) args=2
+  0447 OP_POP              
+  0448 OP_GET_LOCAL         3
+  0451 OP_GET_LOCAL         3
+  0454 OP_GET_METHOD        70 (is_min)
+  0457 OP_CALL              1
+  0460 OP_TRUE             
+  0461 OP_CALL_NATIVE       71 (assert_eq) args=2
+  0466 OP_POP              
+  0467 OP_NULL             
+  0468 OP_CONST             72 (1024)
+  0471 OP_CALL_NATIVE       73 (assert_eq) args=2
+  0476 OP_POP              
+  0477 OP_NULL             
+  0478 OP_CONST             74 (0)
+  0481 OP_CALL_NATIVE       75 (assert_eq) args=2
+  0486 OP_POP              
+  0487 OP_NULL             
+  0488 OP_CONST             76 (1)
+  0491 OP_CALL_NATIVE       77 (assert_eq) args=2
+  0496 OP_POP              
+  0497 OP_CONST             78 ([5] cross-module method with associated const passed)
+  0500 OP_CALL_NATIVE       79 (print) args=1
+  0505 OP_POP              
+  0506 OP_NULL             
+  0507 OP_CONST             80 (2)
+  0510 OP_CALL_NATIVE       81 (assert_eq) args=2
+  0515 OP_POP              
+  0516 OP_NULL             
+  0517 OP_CONST             82 (0)
+  0520 OP_CALL_NATIVE       83 (assert_eq) args=2
+  0525 OP_POP              
+  0526 OP_NULL             
+  0527 OP_CONST             84 (2.0.0)
+  0530 OP_CALL_NATIVE       85 (assert_eq) args=2
+  0535 OP_POP              
+  0536 OP_NULL             
+  0537 OP_CONST             86 (2147483647)
+  
+=== 发现 1 个错误 ===
+[运行时错误] d:\CLeno\LenoC\assert\test_struct_const_cross_module.leno 第 8 行第 1 列: 断言失败 (assert_eq): 期望 9.8000000000000007, 实际 null
+===================
+
+0540 OP_CALL_NATIVE       87 (assert_eq) args=2
+  0545 OP_POP              
+  0546 OP_CONST             88 ([6] cross-module pure constant container passed)
+  0549 OP_CALL_NATIVE       89 (print) args=1
+  0554 OP_POP              
+  0555 OP_NULL             
+  0556 OP_CONST             90 (10.0)
+  0559 OP_MUL              
+  0560 OP_SET_LOCAL_POP     4
+  0563 OP_GET_LOCAL         4
+  0566 OP_CONST             91 (98.0)
+  0569 OP_CALL_NATIVE       92 (assert_eq) args=2
+  0574 OP_POP              
+  0575 OP_NULL             
+  0576 OP_NULL             
+  0577 OP_ADD              
+  0578 OP_SET_LOCAL_POP     5
+  0581 OP_GET_LOCAL         5
+  0584 OP_CONST             93 (2)
+  0587 OP_CALL_NATIVE       94 (assert_eq) args=2
+  0592 OP_POP              
+  0593 OP_CONST             95 ([7] cross-module const mixed expressions passed)
+  0596 OP_CALL_NATIVE       96 (print) args=1
+  0601 OP_POP              
+  0602 OP_NULL             
+  0603 OP_SET_LOCAL_POP     6
+  0606 OP_GET_LOCAL         6
+  0609 OP_CONST             97 (2)
+  0612 OP_CALL_NATIVE       98 (assert_eq) args=2
+  0617 OP_POP              
+  0618 OP_NULL             
+  0619 OP_SET_LOCAL_POP     7
+  0622 OP_GET_LOCAL         7
+  0625 OP_CONST             99 (0)
+  0628 OP_CALL_NATIVE       100 (assert_eq) args=2
+  0633 OP_POP              
+  0634 OP_NULL             
+  0635 OP_SET_LOCAL_POP     8
+  0638 OP_GET_LOCAL         8
+  0641 OP_CONST             101 (2.0.0)
+  0644 OP_CALL_NATIVE       102 (assert_eq) args=2
+  0649 OP_POP              
+  0650 OP_NULL             
+  0651 OP_SET_LOCAL_POP     9
+  0654 OP_GET_LOCAL         9
+  0657 OP_CONST             103 (2147483647)
+  0660 OP_CALL_NATIVE       104 (assert_eq) args=2
+  0665 OP_POP              
+  0666 OP_CONST             105 ([8] cross-module const assigned to variables passed)
+  0669 OP_CALL_NATIVE       106 (print) args=1
+  0674 OP_POP              
+  0675 OP_NULL             
+  0676 OP_FALSE            
+  0677 OP_EQ               
+  0678 OP_JUMP_IF_FALSE     15 (to 698)
+  0683 OP_POP              
+  0684 OP_CONST             107 ([9] cross-module const in condition passed)
+  0687 OP_CALL_NATIVE       108 (print) args=1
+  0692 OP_POP              
+  0693 OP_JUMP              13 (to 711)
+  0698 OP_POP              
+  0699 OP_CONST             109 (1)
+  0702 OP_CONST             110 (0)
+  0705 OP_CALL_NATIVE       111 (assert_eq) args=2
+  0710 OP_POP              
+  0711 OP_NULL             
+  0712 OP_CONST             112 (9.8000000000000007)
+  0715 OP_CALL_NATIVE       113 (assert_eq) args=2
+  0720 OP_POP              
+  0721 OP_NULL             
+  0722 OP_CONST             114 (100)
+  0725 OP_CALL_NATIVE       115 (assert_eq) args=2
+  0730 OP_POP              
+  0731 OP_CONST             116 ([10] cross-module const isolation passed)
+  0734 OP_CALL_NATIVE       117 (print) args=1
+  0739 OP_POP              
+  0740 OP_CONST             118 (=== ALL cross-module struct const tests passed ===)
+  0743 OP_CALL_NATIVE       119 (print) args=1
+  0748 OP_POP              
+  0749 OP_NULL             
+  0750 OP_RETURN           
+  ==================
+
+===== 执行跟踪 =====
+===== 执行跟踪 =====

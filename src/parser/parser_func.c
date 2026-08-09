@@ -1428,11 +1428,105 @@ Ast* parse_struct_stmt(Parser* p) {
     int method_capacity = 8;
     methods = (Ast**)malloc(sizeof(Ast*) * method_capacity);
 
+    // 动态数组存储关联常量
+    char** const_names = NULL;
+    Ast** const_values = NULL;
+    int const_count = 0;
+    int const_capacity = 8;
+    const_names = (char**)malloc(sizeof(char*) * const_capacity);
+    const_values = (Ast**)malloc(sizeof(Ast*) * const_capacity);
+
     // 解析字段列表和方法
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
         // 检查是否是注释（跳过）
         if (p->lex.current.type == TOK_ERROR) {
             lexer_next(&p->lex);
+            continue;
+        }
+
+        // 检查是否是关联常量声明（const NAME = value 或 const TYPE NAME = value）
+        if (p->lex.current.type == TOK_CONST) {
+            lexer_next(&p->lex); // 消费 const
+
+            // 复用 parse_var_decl_internal 的预读逻辑：
+            // const 后面可能是 NAME = value（类型推断）或 TYPE NAME = value（显式类型）
+            TypeInfo* const_type = NULL;
+            if (p->lex.current.type == TOK_IDENT) {
+                Lexer saved_lex = p->lex;
+                lexer_next(&p->lex);
+                LenoTokenType peek = p->lex.current.type;
+                p->lex = saved_lex;
+                if (peek == TOK_EQ || peek == TOK_COMMA) {
+                    const_type = type_new(TYPE_INFER);  // 类型推断
+                }
+            }
+            if (!const_type) {
+                const_type = parse_type(p);  // 显式类型
+                if (!const_type) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量期望类型或名称");
+                    while (p->lex.current.type != TOK_SEMI &&
+                           p->lex.current.type != TOK_RBRACE &&
+                           p->lex.current.type != TOK_EOF) {
+                        lexer_next(&p->lex);
+                    }
+                    if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);
+                    continue;
+                }
+            }
+
+            // 解析常量名
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量期望名称");
+                type_free(const_type);
+                while (p->lex.current.type != TOK_SEMI &&
+                       p->lex.current.type != TOK_RBRACE &&
+                       p->lex.current.type != TOK_EOF) {
+                    lexer_next(&p->lex);
+                }
+                if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);
+                continue;
+            }
+
+            // 支持逗号分隔多个常量：const A = 1, B = 2
+            do {
+                char* cname = copy_string(p->lex.current.text, p->lex.current.len);
+                lexer_next(&p->lex);
+
+                // 期望 =
+                if (!match(p, TOK_EQ)) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量必须有初始值");
+                    free(cname);
+                    type_free(const_type);
+                    break;
+                }
+
+                // 解析常量值表达式
+                Ast* cexpr = parse_expression(p);
+                if (!cexpr) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量值解析失败");
+                    free(cname);
+                    type_free(const_type);
+                    break;
+                }
+
+                // 扩容检查
+                if (const_count >= const_capacity) {
+                    const_capacity *= 2;
+                    const_names = (char**)realloc(const_names, sizeof(char*) * const_capacity);
+                    const_values = (Ast**)realloc(const_values, sizeof(Ast*) * const_capacity);
+                }
+
+                const_names[const_count] = cname;
+                const_values[const_count] = cexpr;
+                const_count++;
+            } while (match(p, TOK_COMMA));
+
+            type_free(const_type);
+
+            // 可选的分号
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
             continue;
         }
 
@@ -1617,6 +1711,13 @@ Ast* parse_struct_stmt(Parser* p) {
             ast_free(methods[i]);
         }
         free(methods);
+        // 清理关联常量
+        for (int i = 0; i < const_count; i++) {
+            free(const_names[i]);
+            ast_free(const_values[i]);
+        }
+        free(const_names);
+        free(const_values);
         free(struct_name);
         return NULL;
     }
@@ -1638,6 +1739,9 @@ Ast* parse_struct_stmt(Parser* p) {
     ast->u.struct_def.type_param_constraints = type_param_constraints;
     ast->u.struct_def.type_param_defaults = type_param_defaults;
     ast->u.struct_def.type_param_count = type_param_count;
+    ast->u.struct_def.const_names = const_names;
+    ast->u.struct_def.const_values = const_values;
+    ast->u.struct_def.const_count = const_count;
 
     return ast;
 }

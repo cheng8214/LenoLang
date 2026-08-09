@@ -625,6 +625,13 @@ void comp_provider_add_variable_members(
                                 comp_set_add(set, sdef->methods[m].name, LSP_COMP_METHOD, PRIO_METHOD,
                                              detail, NULL, NULL, NULL);
                             }
+                            // 添加关联常量
+                            for (int c = 0; c < sdef->const_count; c++) {
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s.%s", var_name, sdef->const_names[c]);
+                                comp_set_add(set, sdef->const_names[c], LSP_COMP_FIELD, PRIO_FIELD,
+                                             detail, NULL, NULL, NULL);
+                            }
                         }
                     }
                 }
@@ -659,6 +666,13 @@ void comp_provider_add_variable_members(
                                 char detail[256];
                                 snprintf(detail, sizeof(detail), "%s.%s()", var_name, sep);
                                 comp_set_add(set, sep, LSP_COMP_METHOD, PRIO_METHOD,
+                                             detail, NULL, NULL, NULL);
+                            }
+                            // 添加关联常量
+                            for (int j = 0; j < mst->const_count; j++) {
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s.%s", var_name, mst->const_names[j]);
+                                comp_set_add(set, mst->const_names[j], LSP_COMP_FIELD, PRIO_FIELD,
                                              detail, NULL, NULL, NULL);
                             }
                         }

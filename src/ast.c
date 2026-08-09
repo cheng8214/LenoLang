@@ -305,6 +305,13 @@ void ast_free(Ast* ast) {
                 free(ast->u.struct_def.impl_names[i]);
             }
             free(ast->u.struct_def.impl_names);
+            // 释放关联常量
+            for (int i = 0; i < ast->u.struct_def.const_count; i++) {
+                free(ast->u.struct_def.const_names[i]);
+                ast_free(ast->u.struct_def.const_values[i]);
+            }
+            free(ast->u.struct_def.const_names);
+            free(ast->u.struct_def.const_values);
             break;
         case AST_FACE_DEF:
             free(ast->u.face_def.name);

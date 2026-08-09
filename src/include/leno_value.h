@@ -572,6 +572,10 @@ typedef struct {
     int ctor_index;                 // 构造函数在 methods[] 中的索引（-1 表示无）
     int has_dtor;                   // 是否有析构函数
     int dtor_index;                 // 析构函数在 methods[] 中的索引（-1 表示无）
+    // 关联常量（associated constants）
+    char** const_names;             // 关联常量名数组
+    Value* const_values;            // 关联常量值数组
+    int const_count;                // 关联常量数量
 } ObjStructDef;
 
 // 结构体实例对象

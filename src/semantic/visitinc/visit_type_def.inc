@@ -1,6 +1,8 @@
         case AST_STRUCT_DEF:
             // 注册 struct 类型
             {
+                // 关联常量求值函数（定义在 codegen_stmt.c 中）
+                extern Value ast_default_to_value(Ast* expr);
                 TypeInfo* struct_type = type_new(TYPE_STRUCT);
                 struct_type->struct_name = strdup(ast->u.struct_def.name);
 
@@ -139,6 +141,35 @@
                     }
                 }
 
+                // 处理关联常量：语义检查 + 求值存入 ObjStructDef
+                if (ast->u.struct_def.const_count > 0 && ast->u.struct_def.const_values) {
+                    ObjStructDef* cdef = struct_def_find(ast->u.struct_def.name);
+                    if (cdef) {
+                        cdef->const_count = ast->u.struct_def.const_count;
+                        cdef->const_names = (char**)malloc(sizeof(char*) * cdef->const_count);
+                        cdef->const_values = (Value*)calloc(cdef->const_count, sizeof(Value));
+                        for (int ci = 0; ci < cdef->const_count; ci++) {
+                            // 语义检查常量表达式
+                            if (ast->u.struct_def.const_values[ci]) {
+                                visit(s, ast->u.struct_def.const_values[ci]);
+                                // 求值为常量 Value
+                                Value cv = ast_default_to_value(ast->u.struct_def.const_values[ci]);
+                                if (val_is_null(cv) && ast->u.struct_def.const_values[ci]->kind != AST_NULL) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg),
+                                        "struct '%s' 的关联常量 '%s' 不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量）",
+                                        ast->u.struct_def.name, ast->u.struct_def.const_names[ci]);
+                                    error_add(ERR_SEMANTIC, ast->line, msg);
+                                }
+                                cdef->const_values[ci] = cv;
+                            } else {
+                                cdef->const_values[ci] = val_null();
+                            }
+                            cdef->const_names[ci] = strdup(ast->u.struct_def.const_names[ci]);
+                        }
+                    }
+                }
+
                 // 处理方法定义：分两阶段
                 // 阶段1：准备所有方法（转换方法体、添加self参数、注册到函数表）
                 for (int i = 0; i < ast->u.struct_def.method_count; i++) {
@@ -155,7 +186,7 @@
                             }
                         }
                         transform_method_body(method_ast->u.func.body, ast->u.struct_def.field_names, ast->u.struct_def.field_count, method_names, method_count, ast->u.struct_def.name,
-                            method_ast->u.func.params, method_ast->u.func.pcnt);
+                            method_ast->u.func.params, method_ast->u.func.pcnt, ast->u.struct_def.const_names, ast->u.struct_def.const_count);
                         if (method_names) free(method_names);
 
                         // 2. 添加隐式 self 参数作为第一个参数

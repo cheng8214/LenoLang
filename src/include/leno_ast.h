@@ -276,6 +276,10 @@ struct Ast {
             char** type_param_constraints; // 类型参数约束 face 名
             char** type_param_defaults;    // 类型参数默认值（如 ["int", NULL]）
             int type_param_count;      // 类型参数数量
+            // 关联常量（associated constants）
+            char** const_names;       // 关联常量名数组
+            Ast** const_values;       // 关联常量值表达式数组
+            int const_count;          // 关联常量数量
         } struct_def;
         struct {
             char* name;              // face 名称

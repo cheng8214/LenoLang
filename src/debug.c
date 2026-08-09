@@ -299,6 +299,15 @@ int disassembleInstruction(Chunk* chunk, int offset) {
                 }
             }
             data_offset += method_count * 4; // 每个方法: 方法名(2) + 函数(2)
+            // 跳过 ctor/dtor 标志和索引
+            uint8_t ctor_dtor_flags = chunk->code[data_offset];
+            data_offset += 1;
+            if (ctor_dtor_flags & 1) data_offset += 1; // ctor_index
+            if (ctor_dtor_flags & 2) data_offset += 1; // dtor_index
+            // 跳过关联常量信息
+            int const_count = chunk->code[data_offset];
+            data_offset += 1;
+            data_offset += const_count * 4; // 每个常量: 名称(2) + 值(2)
             return data_offset;
         }
         case OP_STRUCT_INIT: {

@@ -52,6 +52,10 @@ typedef struct {
     char** impl_names;          // 实现的 face 名称数组
     int type_param_count;       // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
     char** type_param_names;    // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
+    // 关联常量
+    char** const_names;         // 关联常量名数组
+    char** const_value_strs;    // 关联常量值字符串（原始文本，导入时解析）
+    int const_count;            // 关联常量数量
 } ModuleStructSymbol;
 
 // 模块 enum 符号

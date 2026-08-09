@@ -94,6 +94,15 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
             free(table->structs[i].type_param_names[j]);
         }
         free(table->structs[i].type_param_names);
+        // 释放关联常量名数组
+        for (int j = 0; j < table->structs[i].const_count; j++) {
+            free(table->structs[i].const_names[j]);
+            if (table->structs[i].const_value_strs && table->structs[i].const_value_strs[j]) {
+                free(table->structs[i].const_value_strs[j]);
+            }
+        }
+        free(table->structs[i].const_names);
+        free(table->structs[i].const_value_strs);
     }
     free(table->structs);
 

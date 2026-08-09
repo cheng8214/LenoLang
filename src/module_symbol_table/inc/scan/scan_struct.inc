@@ -96,6 +96,10 @@
                         ModuleStructMethod methods[MOD_MAX_METHODS];
                         int field_count = 0;
                         int method_count = 0;
+                        // 关联常量临时数组
+                        char* const_names_tmp[64];
+                        char* const_values_tmp[64];
+                        int const_count_tmp = 0;
 
                         while (*after_struct && *after_struct != '}' && (field_count < MOD_MAX_FIELDS || method_count < MOD_MAX_METHODS)) {
                             while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
@@ -103,6 +107,93 @@
 
                             if (*after_struct == '/' && *(after_struct+1) == '/') {
                                 while (*after_struct && *after_struct != '\n') after_struct++;
+                                continue;
+                            }
+
+                            // 检查是否是关联常量声明 (const NAME = value)
+                            if (strncmp(after_struct, "const", 5) == 0 && (after_struct[5] == ' ' || after_struct[5] == '\t')) {
+                                char* after_const = after_struct + 5;
+                                while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+
+                                // 跳过可选的类型注解 (const int X = 1)
+                                // 预读：如果标识符后面跟 = 或 ,，说明是类型推断形式
+                                const char* peek_start = after_const;
+                                while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                // 跳过空白
+                                while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                if (*after_const != '=' && *after_const != ',') {
+                                    // 显式类型形式：token 是类型，跳过类型后再读名称
+                                    after_const = (char*)peek_start; // 回退
+                                    // 跳过类型
+                                    while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                    // 跳过 [T] 泛型部分
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                    if (*after_const == '[') {
+                                        after_const++;
+                                        int depth = 1;
+                                        while (*after_const && depth > 0) {
+                                            if (*after_const == '[') depth++;
+                                            else if (*after_const == ']') depth--;
+                                            after_const++;
+                                        }
+                                    }
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                } else {
+                                    // 类型推断形式：token 就是常量名
+                                    after_const = (char*)peek_start;
+                                }
+
+                                // 支持逗号分隔多个常量：const A = 1, B = 2
+                                do {
+                                    // 跳过空白
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+
+                                    // 读取常量名
+                                    const char* cname_start = after_const;
+                                    while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                    int cname_len = (int)(after_const - cname_start);
+
+                                    if (cname_len > 0 && cname_len < 64) {
+                                        // 存入临时 const_names 数组
+                                        if (const_count_tmp < 64) {
+                                            const_names_tmp[const_count_tmp] = (char*)malloc(cname_len + 1);
+                                            strncpy(const_names_tmp[const_count_tmp], cname_start, cname_len);
+                                            const_names_tmp[const_count_tmp][cname_len] = '\0';
+                                            // 捕获常量值文本
+                                            const_values_tmp[const_count_tmp] = NULL;
+                                            // 跳过空白后检查 '='
+                                            char* after_name = after_const;
+                                            while (*after_name && (*after_name == ' ' || *after_name == '\t')) after_name++;
+                                            if (*after_name == '=') {
+                                                after_name++;
+                                                // 跳过空白
+                                                while (*after_name && (*after_name == ' ' || *after_name == '\t')) after_name++;
+                                                const char* val_start = after_name;
+                                                // 值表达式到逗号或行尾或分号或}
+                                                while (*after_name && *after_name != ',' && *after_name != ';' && *after_name != '\n' && *after_name != '}') after_name++;
+                                                int val_len = (int)(after_name - val_start);
+                                                // 去除尾部空白
+                                                while (val_len > 0 && (val_start[val_len-1] == ' ' || val_start[val_len-1] == '\t' || val_start[val_len-1] == '\r')) val_len--;
+                                                if (val_len > 0) {
+                                                    const_values_tmp[const_count_tmp] = (char*)malloc(val_len + 1);
+                                                    strncpy(const_values_tmp[const_count_tmp], val_start, val_len);
+                                                    const_values_tmp[const_count_tmp][val_len] = '\0';
+                                                }
+                                                after_const = after_name;
+                                            }
+                                            const_count_tmp++;
+                                        }
+                                    }
+
+                                    // 跳过空白
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                } while (*after_const == ',' && (after_const++, 1));
+
+                                after_struct = after_const;
+                                // 跳过已处理的值表达式部分
+                                // （值已在上面处理完毕）
+                                // 跳过分号
+                                if (*after_struct == ';') after_struct++;
                                 continue;
                             }
 
@@ -645,6 +736,25 @@
                             // 释放临时分配的 impl_names
                             for (int i = 0; i < impl_count; i++) {
                                 free(impl_names[i]);
+                            }
+                        }
+
+                        // 设置关联常量信息
+                        if (added_struct && const_count_tmp > 0) {
+                            added_struct->const_count = const_count_tmp;
+                            added_struct->const_names = (char**)malloc(sizeof(char*) * const_count_tmp);
+                            added_struct->const_value_strs = (char**)calloc(const_count_tmp, sizeof(char*));
+                            for (int i = 0; i < const_count_tmp; i++) {
+                                added_struct->const_names[i] = const_names_tmp[i];
+                                const_names_tmp[i] = NULL; // 转移所有权
+                                added_struct->const_value_strs[i] = const_values_tmp[i];
+                                const_values_tmp[i] = NULL; // 转移所有权
+                            }
+                        } else {
+                            // 释放临时分配的 const_names 和 const_values
+                            for (int i = 0; i < const_count_tmp; i++) {
+                                if (const_names_tmp[i]) free(const_names_tmp[i]);
+                                if (const_values_tmp[i]) free(const_values_tmp[i]);
                             }
                         }
 

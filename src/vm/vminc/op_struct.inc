@@ -149,6 +149,25 @@ OPCODE(OP_STRUCT_DEF) {
     if (def->has_dtor) {
         def->dtor_index = READ_BYTE();
     }
+
+    // 读取关联常量信息
+    uint8_t const_count = READ_BYTE();
+    def->const_count = const_count;
+    if (const_count > 0) {
+        def->const_names = (char**)malloc(sizeof(char*) * const_count);
+        def->const_values = (Value*)calloc(const_count, sizeof(Value));
+        for (int i = 0; i < const_count; i++) {
+            uint16_t cname_idx = READ_SHORT();
+            Value cname_val = frame->chunk->constants[cname_idx];
+            if (val_is_obj(cname_val) && val_as_obj(cname_val)->type == OBJ_STRING) {
+                def->const_names[i] = strdup(((ObjString*)val_as_obj(cname_val))->chars);
+            } else {
+                def->const_names[i] = strdup("");
+            }
+            uint16_t cval_idx = READ_SHORT();
+            def->const_values[i] = frame->chunk->constants[cval_idx];
+        }
+    }
     
     // 注册结构体定义
     struct_def_register(def);

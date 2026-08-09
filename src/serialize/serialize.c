@@ -463,6 +463,13 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                 wb_write_string(wb, struct_def->impl_names[i],
                                 (uint32_t)strlen(struct_def->impl_names[i]));
             }
+            // 序列化关联常量
+            wb_write_u32(wb, (uint32_t)struct_def->const_count);
+            for (int i = 0; i < struct_def->const_count; i++) {
+                wb_write_string(wb, struct_def->const_names[i],
+                                (uint32_t)strlen(struct_def->const_names[i]));
+                if (!serialize_constant(wb, struct_def->const_values[i])) return 0;
+            }
             return 1;
         }
         case OBJ_CSTRUCT_DEF: {
@@ -1055,6 +1062,21 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
                 uint32_t iname_len;
                 sdef->impl_names[i] = ctx_read_string(ctx, &iname_len);
                 if (!sdef->impl_names[i]) return 0;
+            }
+        }
+
+        // 反序列化关联常量
+        uint32_t const_count;
+        if (!ctx_read_u32(ctx, &const_count)) return 0;
+        sdef->const_count = (int)const_count;
+        if (const_count > 0) {
+            sdef->const_names = (char**)malloc(sizeof(char*) * const_count);
+            sdef->const_values = (Value*)calloc(const_count, sizeof(Value));
+            for (uint32_t i = 0; i < const_count; i++) {
+                uint32_t cname_len;
+                sdef->const_names[i] = ctx_read_string(ctx, &cname_len);
+                if (!sdef->const_names[i]) return 0;
+                if (!deserialize_constant(ctx, &sdef->const_values[i])) return 0;
             }
         }
 

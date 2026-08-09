@@ -430,6 +430,10 @@ void gc_scan_children(Object* obj) {
                     gc_mark_object((Object*)def->methods[i].func);
                 }
             }
+            // 标记关联常量值
+            for (int i = 0; i < def->const_count; i++) {
+                gc_mark_value(def->const_values[i]);
+            }
             break;
         }
         case OBJ_FACE_DEF:
@@ -860,6 +864,16 @@ static size_t get_object_size(Object* obj) {
                     if (def->type_param_names[i]) size += safe_strlen(def->type_param_names[i]) + 1;
                 }
             }
+            // 关联常量大小
+            if (def->const_names) {
+                size += def->const_count * sizeof(char*);
+                for (int i = 0; i < def->const_count; i++) {
+                    if (def->const_names[i]) size += safe_strlen(def->const_names[i]) + 1;
+                }
+            }
+            if (def->const_values) {
+                size += def->const_count * sizeof(Value);
+            }
             return size;
         }
         case OBJ_FACE_DEF: {
@@ -1141,6 +1155,16 @@ static void free_object_resources(Object* obj) {
                     free(def->type_param_constraints[i]);
                 }
                 free(def->type_param_constraints);
+            }
+            // 释放关联常量
+            if (def->const_names) {
+                for (int i = 0; i < def->const_count; i++) {
+                    free(def->const_names[i]);
+                }
+                free(def->const_names);
+            }
+            if (def->const_values) {
+                free(def->const_values);
             }
             break;
         }
