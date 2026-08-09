@@ -64,47 +64,10 @@ static inline uint32_t dict_hash_value(Value key) {
 }
 
 // 比较两个 Value 键是否相等
+// 统一使用 value_shallow_equal（定义在 leno_value.h）
+// 修复了原先不支持 BigInt 键值比较的问题
 static inline int dict_key_equals(Value a, Value b) {
-    // 快速路径：完全相同
-    if (a == b) return 1;
-
-    // 如果类型不同，不相等
-    if (val_is_int(a) && val_is_int(b)) {
-        return val_as_int(a) == val_as_int(b);
-    }
-    if (val_is_float(a) && val_is_float(b)) {
-        return val_as_double(a) == val_as_double(b);
-    }
-    if (val_is_bool(a) && val_is_bool(b)) {
-        return val_as_bool(a) == val_as_bool(b);
-    }
-    if (val_is_null(a) && val_is_null(b)) {
-        return 1;
-    }
-    if (val_is_obj(a) && val_is_obj(b)) {
-        Object* oa = val_as_obj(a);
-        Object* ob = val_as_obj(b);
-        if (oa->type != ob->type) return 0;
-        if (oa->type == OBJ_STRING) {
-            ObjString* sa = (ObjString*)oa;
-            ObjString* sb = (ObjString*)ob;
-            return sa->len == sb->len &&
-                   sa->hash == sb->hash &&
-                   memcmp(sa->chars, sb->chars, sa->len) == 0;
-        }
-        // 其他对象类型按指针比较
-        return oa == ob;
-    }
-
-    // 跨类型比较：int vs float
-    if (val_is_int(a) && val_is_float(b)) {
-        return (double)val_as_int(a) == val_as_double(b);
-    }
-    if (val_is_float(a) && val_is_int(b)) {
-        return val_as_double(a) == (double)val_as_int(b);
-    }
-
-    return 0;
+    return value_shallow_equal(a, b);
 }
 
 // 查找条目：返回键的位置或应该插入的位置

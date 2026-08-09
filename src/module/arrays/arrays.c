@@ -4,28 +4,9 @@
 
 // ==================== 辅助函数 ====================
 
-static int values_equal(Value a, Value b) {
-    if (val_get_type(a) != val_get_type(b)) return 0;
-    switch (val_get_type(a)) {
-        case VAL_NULL: return 1;
-        case VAL_BOOL: return val_as_bool(a) == val_as_bool(b);
-        case VAL_INT:
-        case VAL_FLOAT: return val_as_num(a) == val_as_num(b);
-        case VAL_OBJ: {
-            if (val_as_obj(a)->type != val_as_obj(b)->type) return 0;
-            if (val_as_obj(a)->type == OBJ_STRING) {
-                ObjString* strA = (ObjString*)val_as_obj(a);
-                ObjString* strB = (ObjString*)val_as_obj(b);
-                return strA->len == strB->len &&
-                       memcmp(strA->chars, strB->chars, strA->len) == 0;
-            }
-            if (val_as_obj(a)->type == OBJ_BIGINT) {
-                return bigint_compare((ObjBigInt*)val_as_obj(a), (ObjBigInt*)val_as_obj(b)) == 0;
-            }
-            return val_as_obj(a) == val_as_obj(b);
-        }
-        default: return 0;
-    }
+// 值比较统一使用 value_shallow_equal（定义在 leno_value.h）
+static inline int values_equal(Value a, Value b) {
+    return value_shallow_equal(a, b);
 }
 
 // ==================== 核心方法实现 ====================

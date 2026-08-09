@@ -1011,6 +1011,98 @@ static inline double val_as_num_ex(Value v) {
 }
 
 // ============================================================================
+// 统一值比较（浅比较）— Single Source of Truth
+// ============================================================================
+// 相关 Issue: 统一与优化 values_equal, dict_key_equals 与 value_deep_equal 的比较逻辑
+// 此函数是所有值比较的核心，其他比较函数（values_equal, dict_key_equals,
+// value_deep_equal）均基于它构建。
+
+// 检查 BigInt 是否等于 int64（无内存分配，避免临时对象）
+static inline int bigint_equals_int64(ObjBigInt* a, int64_t b) {
+    // 零值快速路径
+    if (a->limb_count == 0 || (a->limb_count == 1 && a->limbs[0] == 0)) {
+        return b == 0;
+    }
+    // 3+ limbs: 值超过 2^64，不可能等于 int64
+    if (a->limb_count > 2) return 0;
+
+    // 提取绝对值（base-2^32 小端序）
+    uint64_t abs_a;
+    if (a->limb_count == 1) {
+        abs_a = (uint64_t)a->limbs[0];
+    } else {
+        abs_a = ((uint64_t)a->limbs[1] << 32) | (uint64_t)a->limbs[0];
+    }
+
+    if (a->is_negative) {
+        if (b >= 0) return 0;
+        uint64_t abs_b = (uint64_t)(-(b + 1)) + 1;  // 安全取绝对值
+        return abs_a == abs_b;
+    } else {
+        if (b < 0) return 0;
+        return abs_a == (uint64_t)b;
+    }
+}
+
+// 核心浅比较：处理基本类型、String 内容、BigInt 值、对象指针
+// 快速路径覆盖 null/bool（bit-exact）、同指针对象
+// 跨类型支持 int<->float、int<->BigInt
+static inline int value_shallow_equal(Value a, Value b) {
+    // 1. 快速路径：bit-exact 相等（涵盖 null, bool, 同指针对象, 相同 int/float）
+    if (a == b) return 1;
+
+    // 2. 跨类型比较：int <-> float
+    if (val_is_int(a) && val_is_float(b)) {
+        return (double)val_as_int(a) == val_as_double(b);
+    }
+    if (val_is_float(a) && val_is_int(b)) {
+        return val_as_double(a) == (double)val_as_int(b);
+    }
+
+    // 3. 跨类型比较：int <-> BigInt（无内存分配）
+    if (val_is_int(a) && val_is_bigint(b)) {
+        return bigint_equals_int64(val_as_bigint(b), val_as_int(a));
+    }
+    if (val_is_bigint(a) && val_is_int(b)) {
+        return bigint_equals_int64(val_as_bigint(a), val_as_int(b));
+    }
+
+    // 4. 同类型：int
+    if (val_is_int(a) && val_is_int(b)) {
+        return val_as_int(a) == val_as_int(b);
+    }
+    // 5. 同类型：float
+    if (val_is_float(a) && val_is_float(b)) {
+        return val_as_double(a) == val_as_double(b);
+    }
+
+    // 6. 对象比较
+    if (val_is_obj(a) && val_is_obj(b)) {
+        Object* oa = val_as_obj(a);
+        Object* ob = val_as_obj(b);
+        // a == b 已检查，此处指针不同
+        if (oa->type != ob->type) return 0;
+        if (oa->type == OBJ_STRING) {
+            ObjString* sa = (ObjString*)oa;
+            ObjString* sb = (ObjString*)ob;
+            if (sa->len != sb->len) return 0;
+            if (sa->hash != sb->hash) return 0;
+            for (int i = 0; i < sa->len; i++) {
+                if (sa->chars[i] != sb->chars[i]) return 0;
+            }
+            return 1;
+        }
+        if (oa->type == OBJ_BIGINT) {
+            return bigint_compare((ObjBigInt*)oa, (ObjBigInt*)ob) == 0;
+        }
+        // 其他对象类型：指针不同即不等
+        return 0;
+    }
+
+    return 0;
+}
+
+// ============================================================================
 // 深拷贝 API
 // ============================================================================
 

@@ -1,91 +1,113 @@
 #include "../../include/lenolang.h"
 #include "../../include/native.h"
+#include <stdlib.h>
 
-// 递归深度比较两个 Value 是否相等
-static int value_deep_equal(Value a, Value b, int depth) {
-    // 防止循环引用导致栈溢出
-    if (depth > 20) {
-        return 0;
+// ============================================================================
+// 递归深度比较 — 基于 value_shallow_equal + VisitedSet 防循环引用
+// ============================================================================
+// 相关 Issue: 统一与优化 values_equal, dict_key_equals 与 value_deep_equal 的比较逻辑
+// 改进点：
+//   1. 使用 value_shallow_equal 早退（99% 的情况在此返回）
+//   2. 使用 VisitedSet 彻底解决循环引用导致的 Stack Overflow
+//   3. 修复 Dict 数组部分 asize 不对称的问题
+//   4. 消除 bigint_from_int64 临时对象分配
+
+// VisitedSet：用于追踪已访问的对象，防止循环引用
+typedef struct {
+    Object** items;
+    int count;
+    int capacity;
+} VisitedSet;
+
+static int visited_contains(VisitedSet* set, Object* obj) {
+    for (int i = 0; i < set->count; i++) {
+        if (set->items[i] == obj) return 1;
     }
-
-    if (val_is_int(a) && val_is_int(b)) {
-        return val_as_int(a) == val_as_int(b);
-    } else if (val_is_bigint(a) && val_is_bigint(b)) {
-        return bigint_compare(val_as_bigint(a), val_as_bigint(b)) == 0;
-    } else if (val_is_int(a) && val_is_bigint(b)) {
-        return bigint_compare(bigint_from_int64(val_as_int(a)), val_as_bigint(b)) == 0;
-    } else if (val_is_bigint(a) && val_is_int(b)) {
-        return bigint_compare(val_as_bigint(a), bigint_from_int64(val_as_int(b))) == 0;
-    } else if (val_is_float(a) && val_is_float(b)) {
-        return val_as_double(a) == val_as_double(b);
-    } else if (val_is_int(a) && val_is_float(b)) {
-        return (double)val_as_int(a) == val_as_double(b);
-    } else if (val_is_float(a) && val_is_int(b)) {
-        return val_as_double(a) == (double)val_as_int(b);
-    } else if (val_is_bool(a) && val_is_bool(b)) {
-        return val_as_bool(a) == val_as_bool(b);
-    } else if (val_is_null(a) && val_is_null(b)) {
-        return 1;
-    } else if (val_is_obj(a) && val_is_obj(b)) {
-        Object* obj_a = val_as_obj(a);
-        Object* obj_b = val_as_obj(b);
-
-        // 同一对象直接相等
-        if (obj_a == obj_b) return 1;
-
-        // 类型不同直接不等
-        if (obj_a->type != obj_b->type) return 0;
-
-        switch (obj_a->type) {
-            case OBJ_STRING: {
-                ObjString* str_a = (ObjString*)obj_a;
-                ObjString* str_b = (ObjString*)obj_b;
-                return (str_a->len == str_b->len) &&
-                       (memcmp(str_a->chars, str_b->chars, str_a->len) == 0);
-            }
-            case OBJ_ARRAY: {
-                ObjArray* arr_a = (ObjArray*)obj_a;
-                ObjArray* arr_b = (ObjArray*)obj_b;
-                if (arr_a->count != arr_b->count) return 0;
-                for (int i = 0; i < arr_a->count; i++) {
-                    if (!value_deep_equal(arr_a->elements[i], arr_b->elements[i], depth + 1)) {
-                        return 0;
-                    }
-                }
-                return 1;
-            }
-            case OBJ_DICT: {
-                ObjDict* dict_a = (ObjDict*)obj_a;
-                ObjDict* dict_b = (ObjDict*)obj_b;
-                // 比较键值对数量
-                int count_a = dict_a->acount + dict_a->count;
-                int count_b = dict_b->acount + dict_b->count;
-                if (count_a != count_b) return 0;
-                // 遍历 dict_a 的所有键值对，在 dict_b 中查找
-                // 数组部分
-                for (int i = 0; i < dict_a->asize; i++) {
-                    Value va = dict_a->array[i];
-                    if (val_is_null(va)) continue;
-                    Value vb = dict_b->array && i < dict_b->asize ? dict_b->array[i] : val_null();
-                    if (!value_deep_equal(va, vb, depth + 1)) return 0;
-                }
-                // 哈希部分
-                for (int i = 0; i < dict_a->capacity; i++) {
-                    ObjDictEntry* entry = &dict_a->entries[i];
-                    Value entry_key = entry->key;
-                    if (val_is_null(entry_key) || entry_key == DICT_TOMBSTONE_VAL) continue;
-                    Value vb = dict_get(dict_b, entry_key);
-                    if (!value_deep_equal(entry->value, vb, depth + 1)) return 0;
-                }
-                return 1;
-            }
-            default:
-                // 其他对象类型（函数、struct 等）用指针比较
-                return obj_a == obj_b;
-        }
-    }
-
     return 0;
+}
+
+static void visited_add(VisitedSet* set, Object* obj) {
+    if (set->count >= set->capacity) {
+        set->capacity = set->capacity ? set->capacity * 2 : 16;
+        set->items = (Object**)realloc(set->items, set->capacity * sizeof(Object*));
+    }
+    set->items[set->count++] = obj;
+}
+
+static int value_deep_equal_impl(Value a, Value b, VisitedSet* visited) {
+    // 关键优化：先用浅比较过滤，99% 的情况在这里就结束了
+    if (value_shallow_equal(a, b)) return 1;
+
+    // 如果浅比较不相等，检查是否为需要递归的复合类型 (Array / Dict)
+    if (!val_is_obj(a) || !val_is_obj(b)) return 0;
+
+    Object* obj_a = val_as_obj(a);
+    Object* obj_b = val_as_obj(b);
+
+    if (obj_a->type != obj_b->type) return 0;
+
+    // 循环引用检查：如果已访问过，假设结构对应相等
+    if (visited_contains(visited, obj_a) || visited_contains(visited, obj_b)) {
+        return 1;
+    }
+
+    if (obj_a->type == OBJ_ARRAY) {
+        ObjArray* arr_a = (ObjArray*)obj_a;
+        ObjArray* arr_b = (ObjArray*)obj_b;
+        if (arr_a->count != arr_b->count) return 0;
+
+        visited_add(visited, obj_a);
+        visited_add(visited, obj_b);
+        for (int i = 0; i < arr_a->count; i++) {
+            if (!value_deep_equal_impl(arr_a->elements[i], arr_b->elements[i], visited)) {
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    if (obj_a->type == OBJ_DICT) {
+        ObjDict* dict_a = (ObjDict*)obj_a;
+        ObjDict* dict_b = (ObjDict*)obj_b;
+        // 比较键值对总数量
+        int count_a = dict_a->acount + dict_a->count;
+        int count_b = dict_b->acount + dict_b->count;
+        if (count_a != count_b) return 0;
+
+        visited_add(visited, obj_a);
+        visited_add(visited, obj_b);
+
+        // 数组部分：对称遍历（修复原先只遍历 dict_a->asize 的不对称问题）
+        int max_asize = dict_a->asize > dict_b->asize ? dict_a->asize : dict_b->asize;
+        for (int i = 0; i < max_asize; i++) {
+            Value va = (i < dict_a->asize && dict_a->array) ? dict_a->array[i] : val_null();
+            Value vb = (i < dict_b->asize && dict_b->array) ? dict_b->array[i] : val_null();
+            // 跳过两侧都为 null 的空槽
+            if (val_is_null(va) && val_is_null(vb)) continue;
+            if (!value_deep_equal_impl(va, vb, visited)) return 0;
+        }
+
+        // 哈希部分：遍历 dict_a 的哈希表，在 dict_b 中查找对应键
+        for (int i = 0; i < dict_a->capacity; i++) {
+            ObjDictEntry* entry = &dict_a->entries[i];
+            Value entry_key = entry->key;
+            if (val_is_null(entry_key) || entry_key == DICT_TOMBSTONE_VAL) continue;
+            Value vb = dict_get(dict_b, entry_key);
+            if (!value_deep_equal_impl(entry->value, vb, visited)) return 0;
+        }
+        return 1;
+    }
+
+    // 其他对象类型：浅比较已失败（指针不同），返回 0
+    return 0;
+}
+
+// 对外接口：包装函数，管理 VisitedSet 生命周期
+static int value_deep_equal(Value a, Value b) {
+    VisitedSet visited = {NULL, 0, 0};
+    int result = value_deep_equal_impl(a, b, &visited);
+    if (visited.items) free(visited.items);
+    return result;
 }
 
 static Value assert_func(int argc, Value* args) {
@@ -105,7 +127,7 @@ static Value assert_eq_func(int argc, Value* args) {
     Value a = args[0];
     Value b = args[1];
 
-    int equal = value_deep_equal(a, b, 0);
+    int equal = value_deep_equal(a, b);
 
     if (!equal) {
         if (argc >= 3 && val_is_string(args[2])) {
@@ -132,7 +154,7 @@ static Value assert_ne_func(int argc, Value* args) {
     Value a = args[0];
     Value b = args[1];
 
-    int equal = value_deep_equal(a, b, 0);
+    int equal = value_deep_equal(a, b);
 
     if (equal) {
         if (argc >= 3 && val_is_string(args[2])) {
