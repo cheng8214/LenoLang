@@ -5,9 +5,8 @@
 #include <string.h>  // for memmove
 
 OPCODE(OP_CALL) {
-    frame = &vm.frames[vm.frame_cnt - 1];
     int arg_count = READ_SHORT();
-    Value callee = vm_stack_peek(&vm, 0);
+    Value callee = vm_stack_peek_fast(&vm, 0);
 
     if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
         ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
@@ -21,7 +20,8 @@ OPCODE(OP_CALL) {
             return -1;
         }
     }
-    frame = &vm.frames[vm.frame_cnt - 1];
+    // 注意：frame 已由上一个 DISPATCH 保证有效，此处无需重载
+    // frame = &vm.frames[vm.frame_cnt - 1];  // 冗余，已移除
     DISPATCH;
 }
 
@@ -608,18 +608,15 @@ OPCODE(OP_RETURN) {
     // 函数返回是天然的 GC 安全点，每 256 次 return 检查一次延迟 GC
     // 使用计数器摊销开销，避免高频递归（如 fib）的性能回退
     // 注意：GC 检查必须在 vm_stack_pop 之前，确保返回值仍在栈上被 GC 扫描到
-    // ★ 必须 THREAD_LOCAL：多线程下每个 worker 线程独立执行 VM 循环，
-    // 共享 static 计数器会导致 GC 检查频率不正确（虽然不是严重 bug，
-    // 但线程间竞争计数器会影响 GC 时机精度）。
-    static THREAD_LOCAL int gc_return_counter = 0;
-    if (unlikely(++gc_return_counter >= 256)) {
-        gc_return_counter = 0;
+    // 计数器放在 VM 结构体中，避免 THREAD_LOCAL 的 TLS 访问开销
+    if (unlikely(++vm.gc_return_counter >= 256)) {
+        vm.gc_return_counter = 0;
         if (gc.deferred_gc && gc.enabled && !gc.running) {
             gc_try_collect_deferred();
         }
     }
 
-    Value result = vm_stack_pop(&vm);
+    Value result = vm_stack_pop_fast(&vm);
 
     // 构造函数：返回 self 而不是返回值表达式
     if (frame->closure && frame->closure->function &&
@@ -646,7 +643,10 @@ OPCODE(OP_RETURN) {
 
     // 关闭所有指向当前函数局部变量的 upvalues
     // 这包括当前函数捕获的 upvalues，以及当前函数创建的闭包的 upvalues
-    if (locals != NULL && local_count > 0) {
+    // 优化：直接检查 open_upvalues 是否为空，跳过无 upvalue 的函数（如 fib）
+    // 注意：不能用 frame->has_captures，因为它只表示当前函数是否捕获父函数的 upvalue，
+    // 不表示内部闭包是否捕获了当前函数的局部变量
+    if (locals != NULL && local_count > 0 && vm.open_upvalues != NULL) {
         close_upvalues(locals, local_count, 1);
     }
 

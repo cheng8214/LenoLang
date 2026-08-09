@@ -3,12 +3,12 @@
 // ============================================================================
 
 OPCODE(OP_POP) {
-    vm_stack_pop(&vm);
+    vm_stack_pop_fast(&vm);
     DISPATCH;
 }
 
 OPCODE(OP_DUP) {
-    Value v = vm_stack_peek(&vm, 0);
+    Value v = vm_stack_peek_fast(&vm, 0);
     vm_stack_push(&vm, v);
     DISPATCH;
 }

@@ -129,14 +129,9 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
         locals[i] = val_null();
     }
     
-    // 弹出 callee 和参数
-    vm.sp -= (arg_count + 1);
-    
-    // 为返回值预留一个槽位，避免覆盖调用者的栈
-    // 这样函数的栈空间从 stack_base + 1 开始，不会覆盖调用者的值
-    vm.sp++;
-    
-    // 新的 stack_base = 当前的 vm.sp - 1（返回值槽位）
+    // 弹出 callee 和参数，同时为返回值预留一个槽位
+    // 原来的两步操作 vm.sp -= (arg_count + 1); vm.sp++; 简化为一步
+    vm.sp -= arg_count;
     int new_stack_base = vm.sp - 1;
 
     vm.frame_cnt++;  // 现在才增加帧计数

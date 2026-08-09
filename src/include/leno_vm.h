@@ -449,6 +449,7 @@ typedef struct VM {
     // 泛型类型参数传递：OP_PUSH_TYPE_ARGS → OP_CALL 间的桥接
     char** pending_type_args;    // 待处理的泛型类型参数
     int pending_type_arg_count;  // 待处理数量
+    int gc_return_counter;       // OP_RETURN 的 GC 检查计数器（放在 VM 结构体中避免 THREAD_LOCAL 开销）
 } VM;
 
 // 主线程使用全局 VM（效率第一）
