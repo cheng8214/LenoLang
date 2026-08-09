@@ -134,14 +134,8 @@
                     error_add(ERR_DUPLICATE_VAR, ast->line, msg);
                 }
 
-                // 处理默认值表达式
-                for (int i = 0; i < ast->u.struct_def.field_count; i++) {
-                    if (ast->u.struct_def.field_defaults[i]) {
-                        visit(s, ast->u.struct_def.field_defaults[i]);
-                    }
-                }
-
                 // 处理关联常量：语义检查 + 求值存入 ObjStructDef
+                // 必须在字段默认值之前处理，以便字段初始化器可以引用 StructName.CONST
                 if (ast->u.struct_def.const_count > 0 && ast->u.struct_def.const_values) {
                     ObjStructDef* cdef = struct_def_find(ast->u.struct_def.name);
                     if (cdef) {
@@ -167,6 +161,24 @@
                             }
                             cdef->const_names[ci] = strdup(ast->u.struct_def.const_names[ci]);
                         }
+                    }
+                }
+
+                // 处理默认值表达式（在关联常量之后，以便字段初始化器可引用 StructName.CONST）
+                // 先将字段初始化器中的裸常量名转换为 StructName.CONST（AST_MODULE_ACCESS）
+                // 传 NULL/0 给 field_names 和 method_names，只转换常量名，不转换字段/方法引用
+                if (ast->u.struct_def.const_count > 0) {
+                    for (int i = 0; i < ast->u.struct_def.field_count; i++) {
+                        if (ast->u.struct_def.field_defaults[i]) {
+                            transform_method_body(ast->u.struct_def.field_defaults[i],
+                                NULL, 0, NULL, 0, ast->u.struct_def.name,
+                                NULL, 0, ast->u.struct_def.const_names, ast->u.struct_def.const_count);
+                        }
+                    }
+                }
+                for (int i = 0; i < ast->u.struct_def.field_count; i++) {
+                    if (ast->u.struct_def.field_defaults[i]) {
+                        visit(s, ast->u.struct_def.field_defaults[i]);
                     }
                 }
 

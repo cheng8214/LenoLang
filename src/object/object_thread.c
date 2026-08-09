@@ -435,7 +435,12 @@ static void* thread_entry_point(void* arg) {
     platform_cond_signal(&thread_obj->done_cond);
 
     // 最终 GC：回收子线程 GC 堆上的不可达对象
-    // 清除 VM 状态以防止 mark_roots 扫描过期数据（协程已结束，帧/栈可能不一致）
+    // ★ 关键：不能在此处执行 GC 回收 channel buffer 中的对象。
+    // value_clone_for_channel 在 channel_send 中通过 gc_alloc 在子线程 GC 堆上分配对象，
+    // 这些对象存储在 channel buffer 中，但子线程退出时 VM 状态已清空，
+    // GC 无法通过根集合→栈→channel→buffer 追踪到它们，会误回收 → use-after-free。
+    // 修复：禁用 GC，让 gc_collect 成为空操作。子线程 GC 堆上的对象会在进程退出时
+    // 由 gc_free_all 统一释放，不会永久泄漏。
     gc_push_root(&thread_obj->result);
     child_vm.frame_cnt = 0;
     child_vm.sp = 0;
@@ -444,7 +449,10 @@ static void* thread_entry_point(void* arg) {
     child_vm.open_upvalues = NULL;
     child_vm.exception = val_null();
     child_vm.has_exception = 0;
+    int saved_gc_enabled = gc_get_enabled();
+    gc_set_enabled(0);
     gc_collect();
+    gc_set_enabled(saved_gc_enabled);
     gc_pop_root();
 
     platform_mutex_unlock(&thread_obj->mutex);

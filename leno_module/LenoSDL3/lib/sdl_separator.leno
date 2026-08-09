@@ -7,12 +7,17 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct Separator impl Widget {
+    const HORIZONTAL = 0      // 水平方向
+    const VERTICAL   = 1      // 垂直方向
+    const DEFAULT_THICKNESS = 1   // 默认线条粗细
+    const DEFAULT_ALPHA = 200     // 默认透明度
+
     float x = 0.0, y = 0.0
     float _w = 200.0, _h = 1.0
-    int _dir = 0              // 0=水平, 1=垂直
-    int _thickness = 1        // 线条粗细（像素）
+    int _dir = HORIZONTAL
+    int _thickness = DEFAULT_THICKNESS
     int _r = 70, _g = 74, _b = 84   // 颜色（默认主题分隔色）
-    int _alpha = 200          // 透明度
+    int _alpha = DEFAULT_ALPHA
     float _margin = 0.0       // 内缩边距（两端留白）
     bool _loaded = false, visible = true
 
@@ -21,26 +26,26 @@ export struct Separator impl Widget {
         _r = th.sepR; _g = th.sepG; _b = th.sepB
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
-        _dir   = opts.get("dir", 0)        // 0=水平 1=垂直
-        _thickness = opts.get("thickness", 1)
+        _dir   = opts.get("dir", Separator.HORIZONTAL)
+        _thickness = opts.get("thickness", Separator.DEFAULT_THICKNESS)
         _margin = opts.get("margin", 0.0)
         visible = opts.get("visible", true)
         // 根据方向设定默认尺寸
-        if _dir == 0 { _w = opts.get("w", 200); _h = _float(_thickness) }
+        if _dir == Separator.HORIZONTAL { _w = opts.get("w", 200); _h = _float(_thickness) }
         else { _w = _float(_thickness); _h = opts.get("h", 200) }
         // 颜色覆盖
         var c = opts.get("rgb")
         if c is Array[int] { _r = c[0]; _g = c[1]; _b = c[2] }
-        _alpha = opts.get("alpha", 200)
+        _alpha = opts.get("alpha", Separator.DEFAULT_ALPHA)
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
-    func set_horizontal() { _dir = 0; _h = _float(_thickness) }
-    func set_vertical()   { _dir = 1; _w = _float(_thickness) }
+    func set_horizontal() { _dir = Separator.HORIZONTAL; _h = _float(_thickness) }
+    func set_vertical()   { _dir = Separator.VERTICAL;   _w = _float(_thickness) }
     func set_thickness(int t) {
         _thickness = t
-        if _dir == 0 { _h = _float(t) } else { _w = _float(t) }
+        if _dir == Separator.HORIZONTAL { _h = _float(t) } else { _w = _float(t) }
     }
     func set_color(int r, int g, int b) { _r = r; _g = g; _b = b }
     func set_alpha(int a) { _alpha = a }
@@ -56,7 +61,7 @@ export struct Separator impl Widget {
     func get_h(): float { return _h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
-        if _dir == 0 { _w = sw; _h = _float(_thickness) }
+        if _dir == Separator.HORIZONTAL { _w = sw; _h = _float(_thickness) }
         else { _w = _float(_thickness); _h = sh }
     }
 
@@ -66,7 +71,7 @@ export struct Separator impl Widget {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         r.setColor(_r, _g, _b, _alpha)
-        if _dir == 0 {
+        if _dir == Separator.HORIZONTAL {
             // 水平线：沿 x 方向延伸，居中绘制粗细
             float yy = y + (_h - _float(_thickness)) / 2.0
             r.fillRect(x + _margin, yy, _w - 2.0 * _margin, _float(_thickness))

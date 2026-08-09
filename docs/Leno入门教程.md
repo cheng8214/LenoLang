@@ -3847,6 +3847,75 @@ list.add(30)
 list.print_list()   // 链表 (共 3 个): 10 -> 20 -> 30
 ```
 
+### 关联常量（const）
+
+struct 内部可以定义 `const` 关联常量，用于存储与该类型相关的固定值。关联常量**不属于实例**，而是属于类型本身，通过 `StructName.CONST` 访问。
+
+```leno
+struct Separator {
+    const HORIZONTAL = 0      // 水平方向
+    const VERTICAL   = 1      // 垂直方向
+    const DEFAULT_THICKNESS = 1
+
+    int _dir = HORIZONTAL              // 字段初始化器可直接用裸名
+    int _thickness = DEFAULT_THICKNESS
+
+    func set_horizontal() {
+        _dir = HORIZONTAL              // 方法体内可直接用裸名
+    }
+
+    func is_horizontal(): bool {
+        return _dir == Separator.HORIZONTAL   // 也可用 StructName.CONST
+    }
+}
+
+// 外部访问：必须用 StructName.CONST
+print(Separator.HORIZONTAL)         // 0
+print(Separator.VERTICAL)           // 1
+print(Separator.DEFAULT_THICKNESS)  // 1
+```
+
+**支持的常量类型**：
+
+```leno
+struct Config {
+    const MAX_SIZE = 1024            // 整数
+    const PI = 3.14159               // 浮点数
+    const VERSION = "1.0.0"          // 字符串
+    const ENABLED = true             // 布尔
+    const DEFAULT_TAGS = ["a", "b"]  // 数组
+    const SETTINGS = {key: "value"}  // 字典
+}
+```
+
+**跨模块访问**：
+
+关联常量可以通过模块导入在其他模块中使用：
+
+```leno
+// module_a.leno
+export struct Color {
+    const RED = 0xFF0000
+    const GREEN = 0x00FF00
+    const BLUE = 0x0000FF
+}
+
+// main.leno
+import "module_a.leno" as mod; use mod.Color
+
+print(Color.RED)    // 16711680
+print(Color.GREEN)  // 65280
+```
+
+**为什么使用关联常量？**
+
+- **消除魔术数字**：`Separator.HORIZONTAL` 比 `0` 一目了然
+- **集中管理**：修改常量值只需改一处，所有引用自动生效
+- **防拼写错误**：写错常量名编译器会报错，而写错数字 `0` 为 `1` 不会
+- **IDE 补全**：输入 `Separator.` 即可看到所有可用常量
+
+> **注意**：关联常量在编译期求值，不支持运行时表达式。仅支持字面量（数字、字符串、bool、null）和字面量构成的数组/字典。
+
 ### 性能对比：struct 还是字典模拟？
 
 当需要用"一组字段"表示一个实体时，你可以选择定义 `struct`，也可以用字典对象字面量 `{age:.., score:..}` 来模拟。两者功能相似，但**性能差异显著**——在热路径（大量遍历 + 字段访问）下，struct 明显更快。
