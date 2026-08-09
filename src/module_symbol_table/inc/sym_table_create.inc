@@ -25,6 +25,9 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     table->clibs = NULL;
     table->clib_count = 0;
     table->clib_capacity = 0;
+    table->dep_paths = NULL;
+    table->dep_count = 0;
+    table->dep_capacity = 0;
 
     return table;
 }
@@ -160,6 +163,12 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         free(table->clibs[i].funcs);
     }
     free(table->clibs);
+
+    // 释放依赖路径数组
+    for (int i = 0; i < table->dep_count; i++) {
+        free(table->dep_paths[i]);
+    }
+    free(table->dep_paths);
 
     free(table);
 }

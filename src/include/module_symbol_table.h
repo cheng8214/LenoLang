@@ -139,6 +139,10 @@ typedef struct {
     ModuleClibSymbol* clibs;    // clib 符号数组
     int clib_count;             // clib 数量
     int clib_capacity;          // clib 数组容量
+    // 依赖模块路径（用于 .lenosymc 缓存失效判定）
+    char** dep_paths;           // 依赖模块的绝对路径数组
+    int dep_count;              // 依赖模块数量
+    int dep_capacity;           // 依赖数组容量
 } ModuleSymbolTable;
 
 // 创建模块符号表
@@ -205,5 +209,8 @@ TypeInfo* parse_type_from_string(const char* type_str);
 
 // 重置模块扫描栈（用于循环依赖检测，每次编译前调用）
 void module_symbol_table_reset_scan_stack(void);
+
+// 添加依赖模块路径（用于 .lenosymc 缓存失效判定）
+void module_symbol_table_add_dep(ModuleSymbolTable* table, const char* path);
 
 #endif // MODULE_SYMBOL_TABLE_H

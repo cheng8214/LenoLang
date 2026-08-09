@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000000C  // v12: 传递导入时复制 struct 关联常量
+#define LENOSYMC_VERSION 0x0000000D  // v13: 添加依赖路径追踪，修复传递依赖缓存失效
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -164,6 +164,28 @@ static TypeInfo* sym_cache_read_type_info(FILE* f) {
     return ti;
 }
 
+// 读取文件内容（文本模式）并计算源哈希
+// 返回 0=成功（out_hash 被设置），-1=失败
+static int sym_cache_compute_file_hash(const char* path, uint64_t* out_hash) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return -1;
+    FILE* sf = _wfopen(wp, L"r");
+    free(wp);
+#else
+    FILE* sf = fopen(path, "r");
+#endif
+    if (!sf) return -1;
+    fseek(sf, 0, SEEK_END); long sz = ftell(sf); fseek(sf, 0, SEEK_SET);
+    if (sz < 0) { fclose(sf); return -1; }
+    char* src = (char*)malloc(sz + 1);
+    if (!src) { fclose(sf); return -1; }
+    size_t rd = fread(src, 1, sz, sf); src[rd] = '\0'; fclose(sf);
+    *out_hash = serialize_source_hash(src, strlen(src));
+    free(src);
+    return 0;
+}
+
 // 序列化 ModuleSymbolTable 到文件
 static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
                                uint64_t src_hash, uint64_t src_size) {
@@ -184,6 +206,17 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
     fwrite(&version, 4, 1, f);
     fwrite(&src_hash, 8, 1, f);
     fwrite(&src_size, 8, 1, f);
+
+    // 依赖模块路径及源哈希（用于传递依赖缓存失效判定）
+    uint32_t dc = (uint32_t)table->dep_count;
+    fwrite(&dc, 4, 1, f);
+    for (uint32_t i = 0; i < dc; i++) {
+        sym_cache_write_string(f, table->dep_paths[i]);
+        // 计算依赖源文件当前哈希并存储
+        uint64_t dep_hash = 0;
+        sym_cache_compute_file_hash(table->dep_paths[i], &dep_hash);
+        fwrite(&dep_hash, 8, 1, f);
+    }
 
     // funcs
     uint32_t fc = (uint32_t)table->func_count;
@@ -458,6 +491,29 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
         if (cur_hash != src_hash) { fclose(f); return -1; }
     }
 #endif
+
+    // 依赖模块源文件哈希检查（传递依赖缓存失效判定）
+    uint32_t dc;
+    if (fread(&dc, 4, 1, f) != 1) { fclose(f); return -1; }
+    for (uint32_t i = 0; i < dc; i++) {
+        char* dep_path = sym_cache_read_string(f);
+        if (!dep_path) { fclose(f); return -1; }
+        uint64_t dep_stored_hash;
+        if (fread(&dep_stored_hash, 8, 1, f) != 1) { free(dep_path); fclose(f); return -1; }
+        // 读当前依赖源文件算哈希并比对
+        uint64_t dep_cur_hash = 0;
+        if (sym_cache_compute_file_hash(dep_path, &dep_cur_hash) != 0) {
+            // 依赖文件不存在或无法读取 → 缓存失效
+            free(dep_path); fclose(f); return -1;
+        }
+        if (dep_cur_hash != dep_stored_hash) {
+            // 依赖源文件已变更 → 缓存失效
+            free(dep_path); fclose(f); return -1;
+        }
+        // 记录依赖路径到 table（供上层传递依赖收集使用）
+        module_symbol_table_add_dep(table, dep_path);
+        free(dep_path);
+    }
 
     // 验证通过，开始反序列化符号表
 

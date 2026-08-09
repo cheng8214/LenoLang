@@ -29,6 +29,24 @@ void module_symbol_table_reset_scan_stack(void) {
     g_scan_stack_count = 0;
 }
 
+// 添加依赖模块路径（用于 .lenosymc 缓存失效判定）
+void module_symbol_table_add_dep(ModuleSymbolTable* table, const char* path) {
+    if (!table || !path || !path[0]) return;
+    // 去重
+    for (int i = 0; i < table->dep_count; i++) {
+        if (strcmp(table->dep_paths[i], path) == 0) return;
+    }
+    // 扩容
+    if (table->dep_count >= table->dep_capacity) {
+        int new_cap = table->dep_capacity == 0 ? 16 : table->dep_capacity * 2;
+        char** new_arr = (char**)realloc(table->dep_paths, sizeof(char*) * new_cap);
+        if (!new_arr) return;
+        table->dep_paths = new_arr;
+        table->dep_capacity = new_cap;
+    }
+    table->dep_paths[table->dep_count++] = strdup(path);
+}
+
 // 解析模块的绝对规范化路径（与 load_module_file 路径解析逻辑一致）
 static void resolve_module_full_path(char* full_path, int max_len,
                                        const char* module_path, const char* current_file) {

@@ -430,6 +430,9 @@
                     }
                     normalize_path(sub_full_path, MAX_PATH_LEN);
                     
+                    // 记录 import 依赖路径（用于 .lenosymc 缓存失效判定）
+                    module_symbol_table_add_dep(table, sub_full_path);
+                    
                     // 读取子文件并扫描其中的 clib 定义
                     char* sub_source = read_module_file(import_path, sub_full_path);
                     if (sub_source) {

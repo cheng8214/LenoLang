@@ -124,6 +124,15 @@
                             if (dep_table) {
                                 // 使用入口函数扫描（会先检查 .lenosymc 磁盘缓存，命中则跳过源文件扫描）
                                 if (module_symbol_table_scan(dep_table, normalized_current) == 0) {
+                                    // 记录依赖路径（含传递依赖，用于 .lenosymc 缓存失效判定）
+                                    {
+                                        char dep_full_path[MAX_PATH_LEN] = {0};
+                                        resolve_module_full_path(dep_full_path, MAX_PATH_LEN, resolved_path, normalized_current);
+                                        module_symbol_table_add_dep(table, dep_full_path);
+                                        for (int di = 0; di < dep_table->dep_count; di++) {
+                                            module_symbol_table_add_dep(table, dep_table->dep_paths[di]);
+                                        }
+                                    }
                                     // 查找 struct
                                     ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
                                     ModuleFaceSymbol* f_sym_ptr = module_symbol_table_find_face(dep_table, type_name);

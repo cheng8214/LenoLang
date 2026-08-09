@@ -166,6 +166,15 @@
                                                 ModuleSymbolTable* dep_table = module_symbol_table_create(resolved_path);
                                                 if (dep_table) {
                                                     if (module_symbol_table_scan(dep_table, normalized_current) == 0) {
+                                                        // 记录依赖路径（含传递依赖，用于 .lenosymc 缓存失效判定）
+                                                        {
+                                                            char dep_full_path[MAX_PATH_LEN] = {0};
+                                                            resolve_module_full_path(dep_full_path, MAX_PATH_LEN, resolved_path, normalized_current);
+                                                            module_symbol_table_add_dep(table, dep_full_path);
+                                                            for (int di = 0; di < dep_table->dep_count; di++) {
+                                                                module_symbol_table_add_dep(table, dep_table->dep_paths[di]);
+                                                            }
+                                                        }
                                                         // 查找变量
                                                         ModuleVarSymbol* dep_var = module_symbol_table_find_var(dep_table, member_name);
                                                         if (dep_var) {

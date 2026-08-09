@@ -48,6 +48,10 @@ extern int normalize_path(char* path, int max_len);
 // 导入别名类型依赖传导
 #include "inc/sym_table_import_alias.inc"
 
+// 前向声明（定义在 sym_table_entry.inc，但 scan 阶段需要使用）
+static void resolve_module_full_path(char* full_path, int max_len,
+                                       const char* module_path, const char* current_file);
+
 // 符号表扫描（两遍扫描）
 #include "inc/sym_table_scan.inc"
 
