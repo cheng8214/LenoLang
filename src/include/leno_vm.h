@@ -171,6 +171,8 @@ typedef enum {
     OP_PUSH_TYPE_ARGS,   // 将泛型类型参数推入 VM 待处理区: count(1) [const(2)]...
     // 析构函数调用
     OP_DTOR_LOCAL,       // 对局部变量调用析构函数: slot(2)
+    // 全局函数调用合并指令（省掉 OP_GET_GLOBAL_FUNC + OP_CALL 配对）
+    OP_CALL_GLOBAL_FUNC, // 直接调用全局函数: func_slot(2) arg_count(2)
 } OpCode;
 
 // ============================================================================

@@ -190,6 +190,7 @@
         [OP_U8_TO_F64] = &&LABEL(OP_U8_TO_F64),
         [OP_PUSH_TYPE_ARGS] = &&LABEL(OP_PUSH_TYPE_ARGS),
         [OP_DTOR_LOCAL] = &&LABEL(OP_DTOR_LOCAL),
+        [OP_CALL_GLOBAL_FUNC] = &&LABEL(OP_CALL_GLOBAL_FUNC),
     };
 
     // 宏定义：取指令并分发

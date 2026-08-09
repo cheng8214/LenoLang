@@ -61,7 +61,9 @@ static const char* opCodeNames[] = {
     // 泛型类型参数传递
     "OP_PUSH_TYPE_ARGS",
     // 析构函数调用
-    "OP_DTOR_LOCAL"
+    "OP_DTOR_LOCAL",
+// 全局函数调用合并指令
+"OP_CALL_GLOBAL_FUNC"
 };
 
 // 反汇编单条指令
@@ -480,6 +482,12 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
             printf(" slot=%d", slot);
             return offset + 3;
+        }
+        case OP_CALL_GLOBAL_FUNC: {
+            int func_slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" func=%d args=%d", func_slot, arg_count);
+            return offset + 5;
         }
         default:
             return offset + 1;

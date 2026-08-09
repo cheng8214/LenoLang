@@ -1,6 +1,5 @@
 // 经典斐波那契数列测试
 import times
-
 main() {
   
     var t1=times.ms()

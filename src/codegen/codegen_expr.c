@@ -1041,11 +1041,27 @@ static void gen_call(CodeGen* gen, Ast* ast) {
         }
     }
 
-    gen_expr(gen, ast->u.call.callee);
-
     // 使用完整的参数数量（包括默认值）
     int total_args = func_def ? expected_args : ast->u.call.args.count;
-    
+
+    // 检测全局函数调用，融合为 OP_CALL_GLOBAL_FUNC（省掉 OP_GET_GLOBAL_FUNC + OP_CALL）
+    // 条件：callee 是简单变量、是全局函数、非 async、无泛型类型参数
+    if (ast->u.call.callee->kind == AST_VAR) {
+        Symbol* callee_sym = scope_resolve(gen->sem->current, ast->u.call.callee->u.var.name);
+        if (callee_sym && callee_sym->kind == SYM_GLOBAL_FUNC
+            && !ast->u.call.callee_is_async
+            && ast->u.call.generic_type_count == 0) {
+            emit_byte(gen, OP_CALL_GLOBAL_FUNC, ast->line);
+            emit_byte(gen, (callee_sym->index >> 8) & 0xff, ast->line);
+            emit_byte(gen, callee_sym->index & 0xff, ast->line);
+            emit_byte(gen, (total_args >> 8) & 0xff, ast->line);
+            emit_byte(gen, total_args & 0xff, ast->line);
+            return;
+        }
+    }
+
+    gen_expr(gen, ast->u.call.callee);
+
     // 检查是否是 async 函数调用
     // 优先查 func_table，其次用语义分析标记的 callee_is_async
     int is_async_call = (func_def && func_def->kind == AST_FUNC_DEF && func_def->u.func.is_async)

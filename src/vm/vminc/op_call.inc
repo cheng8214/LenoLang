@@ -10,7 +10,8 @@ OPCODE(OP_CALL) {
 
     if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
         ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
-        if (!call(closure, arg_count, GET_CURRENT_LINE())) {
+        // 闭包调用是热路径，line 仅用于错误报告，传 0 避免 GET_CURRENT_LINE() 的数组访问开销
+        if (!call(closure, arg_count, 0)) {
             if (!vm.has_exception) {
                 return -1;
             }
@@ -687,6 +688,39 @@ OPCODE(OP_RETURN) {
         free(locals);
     }
 
+    frame = &vm.frames[vm.frame_cnt - 1];
+    DISPATCH;
+}
+
+// ============================================================================
+// 全局函数调用合并指令（省掉 OP_GET_GLOBAL_FUNC + OP_CALL 配对）
+// 字节格式: OP_CALL_GLOBAL_FUNC func_slot(2) arg_count(2)
+// 栈布局: [...][arg1][arg2]...[argN]  （无 callee 在栈顶）
+// ============================================================================
+
+OPCODE(OP_CALL_GLOBAL_FUNC) {
+    uint16_t func_slot = READ_SHORT();
+    int arg_count = READ_SHORT();
+
+    if (likely(func_slot < vm.global_func_capacity)) {
+        Value callee = vm.global_funcs[func_slot];
+        if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
+            // 闭包快速路径：在栈顶临时放入 callee 供 call() 读取
+            vm_stack_push_fast(&vm, callee);
+            if (!call((ObjClosure*)val_as_obj(callee), arg_count, 0)) {
+                if (!vm.has_exception) {
+                    return -1;
+                }
+            }
+        } else if (!call_value(callee, arg_count, GET_CURRENT_LINE())) {
+            if (!vm.has_exception) {
+                return -1;
+            }
+        }
+    } else {
+        runtime_error("全局函数索引越界", GET_CURRENT_LINE());
+        return -1;
+    }
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }

@@ -66,8 +66,11 @@ static inline const char* typeinfo_to_generic_type_name(TypeInfo* type) {
 
 // 调用闭包函数
 static inline int call(ObjClosure* closure, int arg_count, int line) {
-    // 需要扩容
-    if (vm.frame_cnt >= vm.frame_capacity) {
+    // 缓存 function 指针，避免重复解引用 closure->function
+    ObjFunction* func = closure->function;
+
+    // 需要扩容（罕见路径）
+    if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
         if (!vm_grow_frames(current_exec_vm)) {
             runtime_error("调用栈内存分配失败", line);
             return 0;
@@ -77,19 +80,15 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     // 从栈中弹出 callee 和参数
     // 栈布局: [...][arg1][arg2][callee]
     
-    int local_count = closure->function->local_count;
+    int local_count = func->local_count;
     Value* locals;
     int locals_is_dynamic = 0;
     
     // 优化：小函数使用内联数组，避免 malloc/free 开销
-    // 大部分函数的局部变量数量不超过 INLINE_LOCALS_MAX
-    CallFrame* frame = &vm.frames[vm.frame_cnt];  // 先获取帧指针
-    if (local_count <= INLINE_LOCALS_MAX) {
-        // 使用内联数组，无需内存分配
+    CallFrame* frame = &vm.frames[vm.frame_cnt];
+    if (likely(local_count <= INLINE_LOCALS_MAX)) {
         locals = frame->inline_locals;
-        locals_is_dynamic = 0;
     } else {
-        // 大函数使用动态分配
         locals = (Value*)malloc(local_count * sizeof(Value));
         if (!locals) {
             runtime_error("局部变量内存分配失败", line);
@@ -99,50 +98,41 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     }
     
     // 初始化locals数组
-    // slot 0..arg_count-1: 参数（与语义分析中的参数索引对应）
+    TypeKind* param_types = func->param_types;
+    int arity = func->arity;
     for (int i = 0; i < arg_count; i++) {
         Value arg = vm.stack[vm.sp - arg_count - 1 + i];
         
-        // 根据参数类型进行类型转换
-        if (closure->function->param_types && i < closure->function->arity) {
-            TypeKind expected_type = closure->function->param_types[i];
-
-            // int -> float 自动提升
+        if (param_types && i < arity) {
+            TypeKind expected_type = param_types[i];
             if (expected_type == TYPE_FLOAT && val_is_int(arg)) {
                 arg = val_float((double)val_as_int(arg));
-            }
-            // bigint -> float 自动提升
-            else if (expected_type == TYPE_FLOAT && val_is_bigint(arg)) {
+            } else if (expected_type == TYPE_FLOAT && val_is_bigint(arg)) {
                 arg = val_float(bigint_to_double(val_as_bigint(arg)));
-            }
-            // float -> int 自动截断
-            else if (expected_type == TYPE_INT && val_is_float(arg)) {
+            } else if (expected_type == TYPE_INT && val_is_float(arg)) {
                 arg = val_int((int)val_as_num(arg));
             }
         }
-
         locals[i] = arg;
     }
     
-    // slot arg_count..local_count-1: 局部变量，初始化为null
     for (int i = arg_count; i < local_count; i++) {
         locals[i] = val_null();
     }
     
     // 弹出 callee 和参数，同时为返回值预留一个槽位
-    // 原来的两步操作 vm.sp -= (arg_count + 1); vm.sp++; 简化为一步
     vm.sp -= arg_count;
     int new_stack_base = vm.sp - 1;
 
-    vm.frame_cnt++;  // 现在才增加帧计数
+    vm.frame_cnt++;
     frame->closure = closure;
-    frame->chunk = closure->function->chunk;
-    frame->ip = closure->function->chunk->code;
+    frame->chunk = func->chunk;
+    frame->ip = func->chunk->code;
     frame->stack_base = new_stack_base;
     frame->slot_count = local_count;
     frame->locals = locals;
     frame->local_count = local_count;
-    frame->locals_is_dynamic = locals_is_dynamic;  // 标记分配方式
+    frame->locals_is_dynamic = locals_is_dynamic;
     frame->catch_ip = NULL;
     frame->finally_ip = NULL;
     frame->prev_catch_ip = NULL;
@@ -150,9 +140,7 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     frame->in_finally = 0;
     frame->try_return_value = val_null();
     frame->has_try_return = 0;
-    // 设置模块信息
-    frame->module = closure->function->module;
-    // 优化标志：检查是否捕获了 upvalue
+    frame->module = func->module;
     frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
 
     return 1;
