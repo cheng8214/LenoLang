@@ -1,5 +1,6 @@
 #include "../include/lenolang.h"
 #include "../include/native.h"
+#include "../include/leno_hash.h"
 #include "../include/platform.h"
 #include "../include/platform_thread.h"
 #include "../include/method_table.h"
@@ -51,16 +52,6 @@ static int cstruct_def_ensure_capacity(int needed) {
 #define FIELD_HASH_INITIAL_CAPACITY 16
 #define FIELD_HASH_LOAD_FACTOR 0.75
 
-// 简单的字符串哈希函数（FNV-1a）
-static uint32_t field_hash_string(const char* str) {
-    uint32_t hash = 2166136261u;
-    while (*str) {
-        hash ^= (uint8_t)*str++;
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
 // 初始化字段哈希表
 static void cstruct_def_init_hash_table(ObjCStructDef* def) {
     def->field_hash_capacity = FIELD_HASH_INITIAL_CAPACITY;
@@ -87,7 +78,7 @@ static void cstruct_def_resize_hash_table(ObjCStructDef* def) {
             CStructFieldHashEntry* next = entry->next;
             
             // 计算新位置
-            uint32_t hash = field_hash_string(entry->name);
+            uint32_t hash = leno_fnv1a(entry->name);
             int index = hash & (new_capacity - 1);
             
             // 插入新表
@@ -127,7 +118,7 @@ static void cstruct_def_hash_add_field(ObjCStructDef* def, const char* name, int
     entry->field_index = field_index;
     
     // 计算哈希位置
-    uint32_t hash = field_hash_string(name);
+    uint32_t hash = leno_fnv1a(name);
     int index = hash & (def->field_hash_capacity - 1);
     
     // 插入链表头部
@@ -141,7 +132,7 @@ static int cstruct_def_hash_find_field(ObjCStructDef* def, const char* name) {
         return -1;
     }
     
-    uint32_t hash = field_hash_string(name);
+    uint32_t hash = leno_fnv1a(name);
     int index = hash & (def->field_hash_capacity - 1);
     
     CStructFieldHashEntry* entry = def->field_hash_table[index];

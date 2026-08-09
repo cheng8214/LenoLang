@@ -1,5 +1,6 @@
 #include "include/lenolang.h"
 #include "include/leno_lexer.h"
+#include "include/leno_hash.h"
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
@@ -50,16 +51,6 @@ typedef struct KeywordEntry {
 
 static KeywordEntry* keyword_table[KEYWORD_TABLE_SIZE];
 static int keyword_table_initialized = 0;
-
-// FNV-1a 哈希函数
-static uint32_t hash_keyword(const char* str, int len) {
-    uint32_t hash = 2166136261u;
-    for (int i = 0; i < len; i++) {
-        hash ^= (unsigned char)str[i];
-        hash *= 16777619;
-    }
-    return hash;
-}
 
 // 初始化关键字哈希表
 static void init_keyword_table(void) {
@@ -157,7 +148,7 @@ static void init_keyword_table(void) {
     
     // 插入到哈希表
     for (int i = 0; i < keyword_count; i++) {
-        uint32_t hash = hash_keyword(keywords[i].kw, strlen(keywords[i].kw));
+        uint32_t hash = leno_fnv1a_len(keywords[i].kw, (int)strlen(keywords[i].kw));
         int index = hash & KEYWORD_TABLE_MASK;
         
         KeywordEntry* entry = (KeywordEntry*)malloc(sizeof(KeywordEntry));
@@ -176,7 +167,7 @@ static LenoTokenType lookup_keyword(const char* text, int len) {
         init_keyword_table();
     }
     
-    uint32_t hash = hash_keyword(text, len);
+    uint32_t hash = leno_fnv1a_len(text, len);
     int index = hash & KEYWORD_TABLE_MASK;
     
     KeywordEntry* entry = keyword_table[index];

@@ -1,5 +1,6 @@
 #include "include/lenolang.h"
 #include "include/native.h"
+#include "include/leno_hash.h"
 #include "include/platform_thread.h"
 #include "include/method_table.h"
 #include <stdlib.h>
@@ -10,17 +11,6 @@
 // ============================================================================
 
 #define METHOD_TABLE_MAX_LOAD 0.75
-
-// FNV-1a 字符串哈希算法（所有类型共享）
-static uint32_t method_hash_string(const char* str) {
-    uint32_t hash = 2166136261u;
-    while (*str) {
-        hash ^= (unsigned char)(*str);
-        hash *= 16777619;
-        str++;
-    }
-    return hash;
-}
 
 // 初始化方法表
 void method_table_init(MethodTable* table, int initial_capacity) {
@@ -61,7 +51,7 @@ void method_table_resize(MethodTable* table) {
         MethodHashEntry* entry = old_entries[i];
         while (entry) {
             MethodHashEntry* next = entry->next;
-            uint32_t hash = method_hash_string(entry->name);
+            uint32_t hash = leno_fnv1a(entry->name);
             int index = hash & (new_capacity - 1);
             entry->next = new_entries[index];
             new_entries[index] = entry;
@@ -88,7 +78,7 @@ void method_table_register_with_params(MethodTable* table, const char* type_name
         method_table_resize(table);
     }
 
-    uint32_t hash = method_hash_string(name);
+    uint32_t hash = leno_fnv1a(name);
     int index = hash & (table->capacity - 1);
 
     // 检查是否已存在
@@ -158,7 +148,7 @@ void method_table_register_with_params(MethodTable* table, const char* type_name
 ObjNative* method_table_find(MethodTable* table, const char* name) {
     if (!table->entries || table->count == 0) return NULL;
 
-    uint32_t hash = method_hash_string(name);
+    uint32_t hash = leno_fnv1a(name);
     int index = hash & (table->capacity - 1);
 
     MethodHashEntry* entry = table->entries[index];
@@ -177,7 +167,7 @@ MethodEntry method_table_find_meta(MethodTable* table, const char* name) {
 
     if (!table->entries || table->count == 0) return result;
 
-    uint32_t hash = method_hash_string(name);
+    uint32_t hash = leno_fnv1a(name);
     int index = hash & (table->capacity - 1);
 
     MethodHashEntry* entry = table->entries[index];
@@ -202,7 +192,7 @@ MethodEntry method_table_find_meta(MethodTable* table, const char* name) {
 TypeKind method_table_get_param_type(MethodTable* table, const char* method_name, int param_index) {
     if (!table->entries || table->count == 0) return TYPE_ANY;
 
-    uint32_t hash = method_hash_string(method_name);
+    uint32_t hash = leno_fnv1a(method_name);
     int index = hash & (table->capacity - 1);
 
     MethodHashEntry* entry = table->entries[index];

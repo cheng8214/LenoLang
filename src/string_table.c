@@ -1,5 +1,6 @@
 #include "include/string_table.h"
 #include "include/native.h"
+#include "include/leno_hash.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -20,12 +21,7 @@ static size_t intern_shared_count = 0;  // 共享字符串的次数
 
 // FNV-1a 哈希算法（与原来兼容）
 uint32_t intern_hash_string(const char* str, int len) {
-    uint32_t hash = 2166136261u;
-    for (int i = 0; i < len; i++) {
-        hash ^= (uint8_t)str[i];
-        hash *= 16777619;
-    }
-    return hash;
+    return leno_fnv1a_len(str, len);
 }
 
 // 字符串比较

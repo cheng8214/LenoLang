@@ -1,4 +1,5 @@
 #include "semantic_internal.h"
+#include "include/leno_hash.h"
 
 // ============================================================================
 // 函数表哈希表实现
@@ -6,17 +7,6 @@
 
 #define FUNC_TABLE_INITIAL_CAPACITY 64    // 初始容量（必须是2的幂）
 #define FUNC_TABLE_MAX_LOAD 0.75           // 最大负载因子
-
-// 计算字符串哈希值（FNV-1a算法）
-static uint32_t func_hash_string(const char* str) {
-    uint32_t hash = 2166136261u;
-    while (*str) {
-        hash ^= (unsigned char)(*str);
-        hash *= 16777619;
-        str++;
-    }
-    return hash;
-}
 
 // 初始化函数表
 void func_table_init(FuncTable* table) {
@@ -62,7 +52,7 @@ static void func_table_resize(FuncTable* table) {
         while (entry) {
             FuncEntry* next = entry->next;
             // 计算新索引
-            uint32_t hash = func_hash_string(entry->name);
+            uint32_t hash = leno_fnv1a(entry->name);
             int index = hash & (new_capacity - 1);
             // 插入到新表
             entry->next = new_entries[index];
@@ -88,7 +78,7 @@ int func_table_add(FuncTable* table, const char* name, Ast* func) {
     }
     
     // 计算哈希索引
-    uint32_t hash = func_hash_string(name);
+    uint32_t hash = leno_fnv1a(name);
     int index = hash & (table->capacity - 1);
     
     // 检查是否已存在
@@ -119,7 +109,7 @@ int func_table_add(FuncTable* table, const char* name, Ast* func) {
 Ast* func_table_find(FuncTable* table, const char* name) {
     if (!table->entries || table->count == 0) return NULL;
     
-    uint32_t hash = func_hash_string(name);
+    uint32_t hash = leno_fnv1a(name);
     int index = hash & (table->capacity - 1);
     
     FuncEntry* entry = table->entries[index];

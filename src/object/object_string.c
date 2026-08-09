@@ -1,6 +1,7 @@
 #include "include/lenolang.h"
 #include "include/string_table.h"
 #include "include/native.h"
+#include "include/leno_hash.h"
 #include "include/platform_thread.h"
 #include "include/method_table.h"
 #include <stdlib.h>
@@ -65,12 +66,7 @@ int utf8_char_byte_len(const char* chars, int byte_len, int offset) {
 
 // 计算字符串哈希值（保持与 string_table.c 兼容）
 uint32_t hash_string(const char* key, int length) {
-    uint32_t hash = 2166136261u;
-    for (int i = 0; i < length; i++) {
-        hash ^= (uint8_t)key[i];
-        hash *= 16777619;
-    }
-    return hash;
+    return leno_fnv1a_len(key, length);
 }
 
 // 分配指定长度的字符串对象（不初始化内容）

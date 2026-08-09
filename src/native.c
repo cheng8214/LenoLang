@@ -1,5 +1,6 @@
 #include "include/native.h"
 #include "include/leno_vm.h"
+#include "include/leno_hash.h"
 #include "include/platform_thread.h"
 #include <string.h>
 
@@ -83,19 +84,9 @@ extern void sys_init_globals(void);
 // 哈希表工具函数（FNV-1a算法）
 // ============================================================================
 
-static uint32_t native_hash_string(const char* str) {
-    uint32_t hash = 2166136261u;
-    while (*str) {
-        hash ^= (unsigned char)(*str);
-        hash *= 16777619;
-        str++;
-    }
-    return hash;
-}
-
 // 组合两个字符串的哈希（用于模块方法：模块名+方法名）
 static uint32_t hash_module_method(const char* module_name, const char* method_name) {
-    uint32_t hash = native_hash_string(module_name);
+    uint32_t hash = leno_fnv1a(module_name);
     // 混合方法名哈希
     while (*method_name) {
         hash ^= (unsigned char)(*method_name);
@@ -199,7 +190,7 @@ typedef struct {
 static THREAD_LOCAL ModuleConstTable moduleConstTable = {NULL, 0, 0};
 
 static uint32_t hash_module_const(const char* module_name, const char* const_name) {
-    uint32_t hash = native_hash_string(module_name);
+    uint32_t hash = leno_fnv1a(module_name);
     while (*const_name) {
         hash ^= (unsigned char)(*const_name);
         hash *= 16777619;
@@ -1041,7 +1032,7 @@ static THREAD_LOCAL InstanceMethodTable instanceMethodTable = {NULL, 0, 0};
 
 // 组合类型名和方法名的哈希
 static uint32_t hash_instance_method(const char* type_name, const char* method_name) {
-    uint32_t hash = native_hash_string(type_name);
+    uint32_t hash = leno_fnv1a(type_name);
     while (*method_name) {
         hash ^= (unsigned char)(*method_name);
         hash *= 16777619;
