@@ -256,15 +256,15 @@ func setupUI() {
     // 顶部工具栏（搜索目录 + 关键词 + 按钮）
     var toolbar = SDL3.createHBox({x: PAD, y: titleH + PAD, w: W - PAD * 2, h: TOOLBAR_H, padX: 4, padY: 2, spacing: 6})
 
-    var dirLabel = SDL3.createLabel({x: 0, y: 2, text: "目录:", font_size: 14})
-    toolbar.add(dirLabel, {grow: 0, shrink: 0, align: 3})
+    var dirLabel = SDL3.createLabel({x: 0, y: 0, text: "目录:", font_size: 14})
+    toolbar.add(dirLabel, {grow: 0, shrink: 0, align: 1})
 
     searchDirEdit = SDL3.createEdit({x: 0, y: 0, w: 300, h: 28, font_size: 13, placeholder: "搜索目录..."})
     searchDirEdit.set_text(dirs.dirname(dirs.script_dir()))
     toolbar.add(searchDirEdit, {grow: 1, shrink: 1, align: 3})
 
-    var kwLabel = SDL3.createLabel({x: 0, y: 2, text: "关键词:", font_size: 14})
-    toolbar.add(kwLabel, {grow: 0, shrink: 0, align: 3})
+    var kwLabel = SDL3.createLabel({x: 0, y: 0, text: "关键词:", font_size: 14})
+    toolbar.add(kwLabel, {grow: 0, shrink: 0, align: 1})
 
     keywordEdit = SDL3.createEdit({x: 0, y: 0, w: 150, h: 28, font_size: 13, placeholder: "文件名关键词..."})
     toolbar.add(keywordEdit, {grow: 0, shrink: 0, basis: 150, align: 3})

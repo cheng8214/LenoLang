@@ -35,6 +35,7 @@ import "sdl_scrim.leno" as scr; use scr.Scrim
 import "sdl_linkbutton.leno" as lnk
 import "sdl_spinner.leno" as spn
 import "sdl_groupbox.leno" as gbx
+import "sdl_gridlayout.leno" as grd
 import "sdl_splitter.leno" as spl
 use spl.Splitter
 import "sdl_drag.leno" as drag
@@ -83,6 +84,7 @@ use sep.Separator
 use lnk.LinkButton
 use spn.Spinner
 use gbx.GroupBox
+use grd.GridLayout
 use spl.Splitter
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
@@ -111,6 +113,7 @@ export func createScrim(Dict opts): Scrim           { return scr.createScrim(opt
 export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButton(opts) }
 export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
+export func createGridLayout(Dict opts): GridLayout { return grd.createGridLayout(opts) }
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
 export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
 export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleBar(opts) }
