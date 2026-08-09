@@ -29,15 +29,15 @@ import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
-// 方向常量
-export const SPLIT_HORIZONTAL = 0   // 左右分割（分割条竖向，左右拖拽）
-export const SPLIT_VERTICAL   = 1   // 上下分割（分割条横向，上下拖拽）
-
 export struct Splitter impl Widget, Themeable {
+    // ==================== 关联常量 ====================
+    const HORIZONTAL = 0   // 左右分割（分割条竖向，左右拖拽）
+    const VERTICAL   = 1   // 上下分割（分割条横向，上下拖拽）
+
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     Widget? _first               // 第一侧子控件（左侧 / 上侧）
     Widget? _second              // 第二侧子控件（右侧 / 下侧）
-    int    _orientation = 0      // 0=水平(左右) 1=垂直(上下)
+    int    _orientation = HORIZONTAL  // 方向（HORIZONTAL/VERTICAL）
     float  _ratio = 0.3          // 分割比例：第一侧占比 (0.0~1.0)
     float  _dividerW = 4.0       // 分割条视觉宽度
     float  _hitPad   = 4.0       // 命中区域额外宽度（视觉宽度两侧各加 _hitPad）
@@ -63,7 +63,7 @@ export struct Splitter impl Widget, Themeable {
         y           = opts.get("y", 0)
         w           = opts.get("w", 400)
         h           = opts.get("h", 300)
-        _orientation = opts.get("orientation", 0)
+        _orientation = opts.get("orientation", HORIZONTAL)
         _ratio       = opts.get("ratio", 0.3)
         _dividerW    = opts.get("divider_width", 4)
         _hitPad      = opts.get("hit_pad", 4)
@@ -130,7 +130,7 @@ export struct Splitter impl Widget, Themeable {
 
     // ==================== 比例管理 ====================
     func _clamp_ratio() {
-        if _orientation == 0 {
+        if _orientation == HORIZONTAL {
             if w <= 0.0 { return }   // 占位尺寸（w:0），等布局系统下发实际尺寸后再 clamp
             // 水平分割：ratio 受 minFirst/w 和 minSecond/w 约束
             float lo = _minFirst / w
@@ -153,7 +153,7 @@ export struct Splitter impl Widget, Themeable {
 
     // 分割条位置（主轴坐标）
     func _divider_pos(): float {
-        if _orientation == 0 { return x + w * _ratio }
+        if _orientation == HORIZONTAL { return x + w * _ratio }
         return y + h * _ratio
     }
 
@@ -161,7 +161,7 @@ export struct Splitter impl Widget, Themeable {
     func _in_divider(float mx, float my): bool {
         float dp = _divider_pos()
         float half = _dividerW / 2.0 + _hitPad
-        if _orientation == 0 {
+        if _orientation == HORIZONTAL {
             return mx >= dp - half and mx <= dp + half and my >= y and my <= y + h
         }
         return my >= dp - half and my <= dp + half and mx >= x and mx <= x + w
@@ -172,7 +172,7 @@ export struct Splitter impl Widget, Themeable {
         float dp = _divider_pos()
         var f = _first
         var s = _second
-        if _orientation == 0 {
+        if _orientation == HORIZONTAL {
             // 水平：first 在左，second 在右
             float fw = dp - x - _dividerW / 2.0
             float sx = dp + _dividerW / 2.0
@@ -209,7 +209,7 @@ export struct Splitter impl Widget, Themeable {
                 return
             }
             if ev.isMouseMotion() {
-                if _orientation == 0 {
+                if _orientation == HORIZONTAL {
                     float delta = mx - _dragStartMouse
                     float newRatio = _dragStartRatio + delta / w
                     _ratio = newRatio
@@ -236,7 +236,7 @@ export struct Splitter impl Widget, Themeable {
                 if _hover != prevHover { core.markFrameRedraw() }
                 else { core.markFrameMotion() }
                 if _hover {
-                    if _orientation == 0 { core.requestCursor(SystemCursor.EW_RESIZE) }
+                    if _orientation == HORIZONTAL { core.requestCursor(SystemCursor.EW_RESIZE) }
                     else { core.requestCursor(SystemCursor.NS_RESIZE) }
                 }
             }
@@ -244,7 +244,7 @@ export struct Splitter impl Widget, Themeable {
             // 开始拖拽
             if ev.isMouseButtonDown() and _in_divider(mx, my) {
                 _dragging = true
-                if _orientation == 0 { _dragStartMouse = mx } else { _dragStartMouse = my }
+                if _orientation == HORIZONTAL { _dragStartMouse = mx } else { _dragStartMouse = my }
                 _dragStartRatio = _ratio
                 core.markFrameRedraw()
                 return   // 拖拽开始时不转发事件给子控件
@@ -277,7 +277,7 @@ export struct Splitter impl Widget, Themeable {
             dw = _dividerW + 1.0   // 悬停/拖拽时稍粗
         }
         r.setColor(cr, cg, cb, 255)
-        if _orientation == 0 {
+        if _orientation == HORIZONTAL {
             // 竖向分割条
             r.fillRect(dp - dw / 2.0, y, dw, h)
         } else {

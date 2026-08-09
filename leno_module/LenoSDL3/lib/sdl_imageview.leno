@@ -9,10 +9,15 @@ import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct ImageView impl Widget {
+    // ==================== 关联常量 ====================
+    const MODE_ASPECT_FIT  = 0   // 保持比例，完整显示（可能留边）
+    const MODE_STRETCH     = 1   // 拉伸填满
+    const MODE_ASPECT_FILL = 2   // 覆盖填满（可能裁剪）
+
     float x = 0.0, y = 0.0
     float _w = 100.0, _h = 100.0
     string _imagePath = ""          // 图片路径
-    int _mode = 0                   // 内容模式: 0=aspectFit 1=stretch 2=aspectFill
+    int _mode = MODE_ASPECT_FIT    // 内容模式（MODE_ASPECT_FIT/STRETCH/ASPECT_FILL）
     float _radius = 0.0             // 圆角半径
     bool _showBorder = false        // 是否显示边框
     int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
@@ -37,7 +42,7 @@ export struct ImageView impl Widget {
         _w     = opts.get("w", 100)
         _h     = opts.get("h", 100)
         _imagePath = opts.get("image_path", "")
-        _mode  = opts.get("image_mode", 0)   // 0=aspectFit 1=stretch 2=aspectFill
+        _mode  = opts.get("image_mode", MODE_ASPECT_FIT)   // MODE_ASPECT_FIT/STRETCH/ASPECT_FILL
         _radius = opts.get("radius", 0.0)
         _showBorder = opts.get("border", false)
         _alpha = opts.get("alpha", 255)
@@ -145,17 +150,17 @@ export struct ImageView impl Widget {
             float dw = _w; float dh = _h
             float dx = x; float dy = y
 
-            if _mode == 1 {
+            if _mode == MODE_STRETCH {
                 // stretch：拉伸填满
                 dw = _w; dh = _h
             } else if _natW > 0.0 and _natH > 0.0 {
-                if _mode == 0 {
+                if _mode == MODE_ASPECT_FIT {
                     // aspectFit：完整显示（可能留边，居中）
                     float s = _w / _natW
                     if _h / _natH < s { s = _h / _natH }
                     dw = _natW * s; dh = _natH * s
                     dx = x + (_w - dw) / 2.0; dy = y + (_h - dh) / 2.0
-                } else if _mode == 2 {
+                } else if _mode == MODE_ASPECT_FILL {
                     // aspectFill：覆盖填满（可能裁剪，居中）
                     float s = _w / _natW
                     if _h / _natH > s { s = _h / _natH }

@@ -10,6 +10,15 @@ import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 export struct Label impl Widget, Themeable {
+    // ==================== 关联常量 ====================
+    const ALIGN_LEFT   = 0   // 左对齐
+    const ALIGN_CENTER = 1   // 居中对齐
+    const ALIGN_RIGHT  = 2   // 右对齐
+
+    const TRUNCATE_NONE     = 0   // 不截断
+    const TRUNCATE_ELLIPSIS = 1   // 截断显示省略号
+    const TRUNCATE_SCROLL   = 2   // 滚动显示
+
     string text = ""
     float x = 0.0, y = 0.0
     float _fontSize = 15.0       // 字体大小
@@ -17,7 +26,7 @@ export struct Label impl Widget, Themeable {
     int _fontStyle = 0           // 字体样式
     Font? _font                  // 字体缓存
     int tr = 255, tg = 255, tb = 255  // 文字色
-    int _align = 0               // 对齐: 0=左, 1=中, 2=右
+    int _align = ALIGN_LEFT          // 对齐（ALIGN_LEFT/CENTER/RIGHT）
     float _w = 0.0; float _h = 16.0  // 缓存自然尺寸（供布局使用）
     bool _loaded = false
     bool visible = true
@@ -26,7 +35,7 @@ export struct Label impl Widget, Themeable {
     string _tip = ""             // 悬停提示文本（空 = 不提示）
     // ── 截断/滚动支持 ──
     float max_w = 0.0            // 最大显示宽度（>0 时启用截断或滚动）
-    int _truncate = 0            // 0=无, 1=截断(前...后+tooltip), 2=滚动
+    int _truncate = TRUNCATE_NONE    // 截断模式（TRUNCATE_NONE/ELLIPSIS/SCROLL）
     string _fullText = ""        // 完整文本（截断模式下 tooltip 用）
     float _scrollOffset = 0.0    // 滚动偏移（像素）
     int _scrollDir = 1           // 滚动方向: 1=右→左, -1=左→右
@@ -60,7 +69,7 @@ export struct Label impl Widget, Themeable {
         if tc is Array[int] { tr = tc[0]; tg = tc[1]; tb = tc[2] }
 
         // 对齐
-        _align = opts.get("align", 0)
+        _align = opts.get("align", ALIGN_LEFT)
 
         _ensure_font()
         if _font.ok {
@@ -71,7 +80,7 @@ export struct Label impl Widget, Themeable {
         _tip = opts.get("tip", "")
         // 截断/滚动支持
         max_w = opts.get("max_w", 0.0)
-        _truncate = opts.get("truncate", 0)
+        _truncate = opts.get("truncate", TRUNCATE_NONE)
         _fullText = text
         _scrollOffset = 0.0
         _scrollDir = 1
@@ -170,7 +179,7 @@ export struct Label impl Widget, Themeable {
         _wasHover = hover
         hover = mx >= x and mx <= x + _w and my >= y and my <= y + _h
         // 截断模式：hover 时显示完整文本
-        if hover and _truncate == 1 and max_w > 0.0 and _fullText != "" {
+        if hover and _truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 and _fullText != "" {
             tip.tipReport(_fullText, mx, my)
         } else if hover and _tip != "" {
             tip.tipReport(_tip, mx, my)
@@ -186,13 +195,13 @@ export struct Label impl Widget, Themeable {
         if text == "" { return }
 
         // ── 截断模式 ──
-        if _truncate == 1 and max_w > 0.0 {
+        if _truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 {
             var ms = _font.measureString(text)
             if ms.w <= max_w {
                 // 不需要截断，正常绘制
                 float drawX = x
-                if _align == 1 { drawX = x - ms.w / 2.0 }
-                if _align == 2 { drawX = x - ms.w }
+                if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }
+                if _align == ALIGN_RIGHT { drawX = x - ms.w }
                 r.drawText(_font, text, drawX, y, tr, tg, tb)
                 return
             }
@@ -203,13 +212,13 @@ export struct Label impl Widget, Themeable {
         }
 
         // ── 滚动模式 ──
-        if _truncate == 2 and max_w > 0.0 {
+        if _truncate == TRUNCATE_SCROLL and max_w > 0.0 {
             var ms = _font.measureString(text)
             if ms.w <= max_w {
                 // 不需要滚动，正常绘制
                 float drawX = x
-                if _align == 1 { drawX = x - ms.w / 2.0 }
-                if _align == 2 { drawX = x - ms.w }
+                if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }
+                if _align == ALIGN_RIGHT { drawX = x - ms.w }
                 r.drawText(_font, text, drawX, y, tr, tg, tb)
                 return
             }
@@ -249,9 +258,9 @@ export struct Label impl Widget, Themeable {
         // ── 普通绘制 ──
         var ms = _font.measureString(text)
         float drawX = x
-        if _align == 0 { drawX = x }                          // 左对齐
-        if _align == 1 { drawX = x - ms.w / 2.0 }     // 居中
-        if _align == 2 { drawX = x - ms.w }           // 右对齐
+        if _align == ALIGN_LEFT { drawX = x }                          // 左对齐
+        if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }     // 居中
+        if _align == ALIGN_RIGHT { drawX = x - ms.w }           // 右对齐
 
         r.drawText(_font, text, drawX, y, tr, tg, tb)
     }

@@ -158,6 +158,21 @@
                                                 }
                                             }
                                         }
+                                        // 传导关联常量（module_symbol_table_add_struct 不含常量参数，需手动复制）
+                                        if (s_sym->const_count > 0) {
+                                            ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
+                                            if (new_sym && new_sym->const_count == 0) {
+                                                new_sym->const_count = s_sym->const_count;
+                                                new_sym->const_names = (char**)malloc(sizeof(char*) * s_sym->const_count);
+                                                new_sym->const_value_strs = (char**)calloc(s_sym->const_count, sizeof(char*));
+                                                for (int ci = 0; ci < s_sym->const_count; ci++) {
+                                                    new_sym->const_names[ci] = strdup(s_sym->const_names[ci]);
+                                                    if (s_sym->const_value_strs && s_sym->const_value_strs[ci]) {
+                                                        new_sym->const_value_strs[ci] = strdup(s_sym->const_value_strs[ci]);
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                     // 查找 face
                                     ModuleFaceSymbol* f_sym = module_symbol_table_find_face(dep_table, type_name);

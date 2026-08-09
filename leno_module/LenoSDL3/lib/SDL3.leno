@@ -146,8 +146,8 @@ use core.(Color, FColor, Size, FSize, StringSize, GlyphInfo)
 use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp, TrayEntryFlag)
 
 // Splitter 方向常量
-export const SPLIT_HORIZONTAL = spl.SPLIT_HORIZONTAL
-export const SPLIT_VERTICAL   = spl.SPLIT_VERTICAL
+export const SPLIT_HORIZONTAL = spl.Splitter.HORIZONTAL
+export const SPLIT_VERTICAL   = spl.Splitter.VERTICAL
 
 export const PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
 export const PIXELFORMAT_ARGB8888 = core.PIXELFORMAT_ARGB8888

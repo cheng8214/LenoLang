@@ -10,6 +10,10 @@ import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.Theme
 
 export struct ListBox impl Widget {
+    // ==================== 关联常量 ====================
+    const MODE_SINGLE = 0   // 单选模式
+    const MODE_MULTI  = 1   // 多选模式
+
     float x = 0.0, y = 0.0, w = 200.0, h = 200.0
     Array[string] items = []
     Array[int] _sel = []          // 已选中索引集合
@@ -17,7 +21,7 @@ export struct ListBox impl Widget {
     float _scroll = 0.0          // 已向下滚动的像素（0 = 顶部）
     int _hover = -1              // 当前悬停行索引（-1 无）
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
-    int _mode = 0                // 0=单选, 1=多选
+    int _mode = MODE_SINGLE       // 选择模式（MODE_SINGLE/MODE_MULTI）
     int br = 38, bg = 40, bb = 48          // 背景色
     int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
     int _selR = 60, _selG = 150, _selB = 235  // 选中行底色
@@ -108,7 +112,7 @@ export struct ListBox impl Widget {
         _fontSize = opts.get("font_size", 15)
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
-        _mode     = opts.get("mode", 0)     // 0 单选 / 1 多选
+        _mode     = opts.get("mode", MODE_SINGLE)     // MODE_SINGLE 单选 / MODE_MULTI 多选
 
         var its = opts.get("items", [])
         if its is Array[string] { items = its } else { items = [] }
@@ -298,7 +302,7 @@ export struct ListBox impl Widget {
         if ev.isMouseButtonDown() {
             int idx = _index_at(mx, my)
             if idx >= 0 {
-                if _mode == 0 {
+                if _mode == MODE_SINGLE {
                     if not _is_selected(idx) {
                         _sel = []; _sel.add(idx)
                         if _onChange != null { _onChange(_sel) }

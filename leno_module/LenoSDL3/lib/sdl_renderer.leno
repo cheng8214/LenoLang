@@ -29,6 +29,12 @@ export func _dbgLinePtr(Renderer r): Ptr[f32] { return r._bxLine }
 export func _dbgLineCount(Renderer r): int { return r._bxLineN }
 
 export struct Renderer {
+    // ==================== 关联常量 ====================
+    const BX_EMPTY  = 0   // 批处理空闲
+    const BX_FILL   = 1   // 批处理填充矩形
+    const BX_STROKE = 2   // 批处理描边矩形
+    const BX_LINE   = 3   // 批处理线段
+
     Ptr[u8] handle; bool ok
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
     Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
@@ -37,7 +43,7 @@ export struct Renderer {
     Ptr[f32] _bxFill; int _bxFillN, _bxFillCap
     Ptr[f32] _bxOut;  int _bxOutN, _bxOutCap
     Ptr[f32] _bxLine; int _bxLineN, _bxLineCap
-    int _bxCur            // 0=空 1=填充 2=描边 3=线段（切换即 flush 保序）
+    int _bxCur            // 批处理状态（BX_EMPTY/FILL/STROKE/LINE，切换即 flush 保序）
     int _bxR, _bxG, _bxB, _bxA
     bool _bxIsFloat
     float _bxFr, _bxFg, _bxFb, _bxFa
@@ -70,7 +76,7 @@ export struct Renderer {
             _bxFr = 1.0; _bxFg = 1.0; _bxFb = 1.0; _bxFa = 1.0
             _bxBlend = core.BlendMode.BLEND; _bxClip = false; _bxClipPtr = null; _bxClipOwned = false; _bxTarget = null
             _clipStack = []; _clipStackOwned = []
-            _bxSx = 1.0; _bxSy = 1.0; _bxCScale = 1.0; _bxCur = 0
+            _bxSx = 1.0; _bxSy = 1.0; _bxCScale = 1.0; _bxCur = BX_EMPTY
             _gFillSubmits = 0; _gFillBatched = 0
             _gOutSubmits = 0;  _gOutBatched = 0
             _gLineSubmits = 0; _gLineBatched = 0
@@ -260,7 +266,7 @@ export struct Renderer {
     // 填充矩形（x, y, w, h）—— 透明自动批处理：同材质连续调用合并为一次 SDL_RenderFillRects
     func fillRect(float x, float y, float w, float h): bool {
         if _bxFill == null { return _emitFill(x, y, w, h) }
-        if _bxCur != 0 and _bxCur != 1 { _flushBatches() }
+        if _bxCur != BX_EMPTY and _bxCur != BX_FILL { _flushBatches() }
         if _bxFillN >= _bxFillCap { _flushBatches() }
         int off = _bxFillN * 16
         ffi.write_float(_bxFill, off,      x)
@@ -268,7 +274,7 @@ export struct Renderer {
         ffi.write_float(_bxFill, off + 8,  w)
         ffi.write_float(_bxFill, off + 12, h)
         _bxFillN = _bxFillN + 1
-        _bxCur = 1
+        _bxCur = BX_FILL
         return true
     }
 
@@ -287,7 +293,7 @@ export struct Renderer {
     // 绘制矩形边框（x, y, w, h）—— 透明自动批处理：同材质连续调用合并为一次 SDL_RenderRects
     func drawRect(float x, float y, float w, float h): bool {
         if _bxOut == null { return _emitRect(x, y, w, h) }
-        if _bxCur != 0 and _bxCur != 2 { _flushBatches() }
+        if _bxCur != BX_EMPTY and _bxCur != BX_STROKE { _flushBatches() }
         if _bxOutN >= _bxOutCap { _flushBatches() }
         int off = _bxOutN * 16
         ffi.write_float(_bxOut, off,      x)
@@ -295,7 +301,7 @@ export struct Renderer {
         ffi.write_float(_bxOut, off + 8,  w)
         ffi.write_float(_bxOut, off + 12, h)
         _bxOutN = _bxOutN + 1
-        _bxCur = 2
+        _bxCur = BX_STROKE
         return true
     }
 
@@ -303,7 +309,7 @@ export struct Renderer {
     // 刷新时逐条 SDL_RenderLine 提交（避免连续折线把独立线段连成斜线）
     func drawLine(float x1, float y1, float x2, float y2): bool {
         if _bxLine == null { return _emitLine(x1, y1, x2, y2) }
-        if _bxCur != 0 and _bxCur != 3 { _flushBatches() }
+        if _bxCur != BX_EMPTY and _bxCur != BX_LINE { _flushBatches() }
         if _bxLineN >= _bxLineCap { _flushBatches() }
         int off = _bxLineN * 16
         ffi.write_float(_bxLine, off,      x1)
@@ -311,7 +317,7 @@ export struct Renderer {
         ffi.write_float(_bxLine, off + 8,  x2)
         ffi.write_float(_bxLine, off + 12, y2)
         _bxLineN = _bxLineN + 1
-        _bxCur = 3
+        _bxCur = BX_LINE
         return true
     }
 
@@ -671,7 +677,7 @@ export struct Renderer {
             _gLineBatched = _gLineBatched + _bxLineN
             _bxLineN = 0
         }
-        _bxCur = 0
+        _bxCur = BX_EMPTY
         return ok
     }
 

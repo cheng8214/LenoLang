@@ -51,10 +51,18 @@ export const LAYOUT_STRETCH = 3   // 撑满交叉轴
 // HBox — 子控件沿水平方向依次排列
 // ============================================================
 export struct HBox impl Widget {
+    // ==================== 关联常量 ====================
+    const JUSTIFY_START        = 0   // 靠起始边
+    const JUSTIFY_CENTER       = 1   // 居中
+    const JUSTIFY_END          = 2   // 靠结束边
+    const JUSTIFY_SPACE_BETWEEN = 3   // 两端对齐，间距等分
+    const JUSTIFY_SPACE_AROUND  = 4   // 每项两侧等距
+    const JUSTIFY_SPACE_EVENLY  = 5   // 含首尾等距
+
     float x = 0.0, y = 0.0, w = 300.0, h = 40.0
     float padX = 8.0, padY = 8.0, spacing = 6.0
     float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
-    int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
+    int justify = JUSTIFY_START  // 主轴分布（JUSTIFY_START/CENTER/END/SPACE_BETWEEN/SPACE_AROUND/SPACE_EVENLY）
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
@@ -70,7 +78,7 @@ export struct HBox impl Widget {
         padX = opts.get("padX", 8)
         padY = opts.get("padY", 8)
         spacing = opts.get("spacing", 6)
-        justify = opts.get("justify", 0)
+        justify = opts.get("justify", JUSTIFY_START)
         padTop = opts.get("padTop", -1.0)
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
@@ -181,11 +189,11 @@ export struct HBox impl Widget {
         float lead = 0.0
         float extraGap = 0.0
         if sumGrow == 0.0 and free > 0.0 {
-            if justify == 1 { lead = free / 2.0 }
-            else if justify == 2 { lead = free }
-            else if justify == 3 { if n > 1 { extraGap = free / (n - 1) } }
-            else if justify == 4 { extraGap = free / n; lead = extraGap / 2.0 }
-            else if justify == 5 { extraGap = free / (n + 1); lead = extraGap }
+            if justify == JUSTIFY_CENTER { lead = free / 2.0 }
+            else if justify == JUSTIFY_END { lead = free }
+            else if justify == JUSTIFY_SPACE_BETWEEN { if n > 1 { extraGap = free / (n - 1) } }
+            else if justify == JUSTIFY_SPACE_AROUND { extraGap = free / n; lead = extraGap / 2.0 }
+            else if justify == JUSTIFY_SPACE_EVENLY { extraGap = free / (n + 1); lead = extraGap }
         }
         float cx = x + pl + lead
         for n to i {
@@ -229,10 +237,18 @@ export struct HBox impl Widget {
 // VBox — 子控件沿垂直方向依次排列（主轴为竖直）
 // ============================================================
 export struct VBox impl Widget {
+    // ==================== 关联常量 ====================
+    const JUSTIFY_START        = 0   // 靠起始边
+    const JUSTIFY_CENTER       = 1   // 居中
+    const JUSTIFY_END          = 2   // 靠结束边
+    const JUSTIFY_SPACE_BETWEEN = 3   // 两端对齐，间距等分
+    const JUSTIFY_SPACE_AROUND  = 4   // 每项两侧等距
+    const JUSTIFY_SPACE_EVENLY  = 5   // 含首尾等距
+
     float x = 0.0; float y = 0.0; float w = 200.0; float h = 300.0
     float padX = 8.0; float padY = 8.0; float spacing = 6.0
     float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
-    int justify = 0            // 主轴分布：0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly
+    int justify = JUSTIFY_START  // 主轴分布（JUSTIFY_START/CENTER/END/SPACE_BETWEEN/SPACE_AROUND/SPACE_EVENLY）
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
@@ -248,7 +264,7 @@ export struct VBox impl Widget {
         padX = opts.get("padX", 8)
         padY = opts.get("padY", 8)
         spacing = opts.get("spacing", 6)
-        justify = opts.get("justify", 0)
+        justify = opts.get("justify", JUSTIFY_START)
         padTop = opts.get("padTop", -1.0)
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
@@ -366,11 +382,11 @@ export struct VBox impl Widget {
         float lead = 0.0
         float extraGap = 0.0
         if sumGrow == 0.0 and free > 0.0 {
-            if justify == 1 { lead = free / 2.0 }
-            else if justify == 2 { lead = free }
-            else if justify == 3 { if n > 1 { extraGap = free / (n - 1) } }
-            else if justify == 4 { extraGap = free / n; lead = extraGap / 2.0 }
-            else if justify == 5 { extraGap = free / (n + 1); lead = extraGap }
+            if justify == JUSTIFY_CENTER { lead = free / 2.0 }
+            else if justify == JUSTIFY_END { lead = free }
+            else if justify == JUSTIFY_SPACE_BETWEEN { if n > 1 { extraGap = free / (n - 1) } }
+            else if justify == JUSTIFY_SPACE_AROUND { extraGap = free / n; lead = extraGap / 2.0 }
+            else if justify == JUSTIFY_SPACE_EVENLY { extraGap = free / (n + 1); lead = extraGap }
         }
 
         float cy = y + pt + lead

@@ -79,7 +79,43 @@
                         // 这样类型检查时可以验证 struct 是否实现了 face
                         for (int si = 0; si < info->sym_table->struct_count; si++) {
                             ModuleStructSymbol* struct_sym = &info->sym_table->structs[si];
-                            if (!struct_sym->is_cstruct && !struct_def_find(struct_sym->name)) {
+                            if (struct_sym->is_cstruct) continue;
+                            ObjStructDef* existing_def = struct_def_find(struct_sym->name);
+                            // 若已有定义但缺少关联常量，而模块符号表有常量，则补充
+                            if (existing_def && existing_def->const_count == 0 && struct_sym->const_count > 0) {
+                                existing_def->const_count = struct_sym->const_count;
+                                existing_def->const_names = (char**)malloc(sizeof(char*) * existing_def->const_count);
+                                existing_def->const_values = (Value*)calloc(existing_def->const_count, sizeof(Value));
+                                for (int ci = 0; ci < existing_def->const_count; ci++) {
+                                    existing_def->const_names[ci] = strdup(struct_sym->const_names[ci]);
+                                    existing_def->const_values[ci] = val_null();
+                                    if (struct_sym->const_value_strs && struct_sym->const_value_strs[ci]) {
+                                        const char* vs = struct_sym->const_value_strs[ci];
+                                        while (*vs == ' ' || *vs == '\t') vs++;
+                                        if (strcmp(vs, "true") == 0) {
+                                            existing_def->const_values[ci] = val_bool(1);
+                                        } else if (strcmp(vs, "false") == 0) {
+                                            existing_def->const_values[ci] = val_bool(0);
+                                        } else if (strcmp(vs, "null") == 0) {
+                                            existing_def->const_values[ci] = val_null();
+                                        } else if (vs[0] == '"' || vs[0] == '\'') {
+                                            char q = vs[0];
+                                            const char* end = vs + 1;
+                                            while (*end && *end != q) end++;
+                                            int slen = (int)(end - vs - 1);
+                                            existing_def->const_values[ci] = val_obj((Object*)str_new(vs + 1, slen));
+                                        } else if (vs[0] == '0' && (vs[1] == 'x' || vs[1] == 'X')) {
+                                            existing_def->const_values[ci] = val_int((int64_t)strtoll(vs, NULL, 16));
+                                        } else if (strchr(vs, '.') || strchr(vs, 'e') || strchr(vs, 'E')) {
+                                            existing_def->const_values[ci] = val_float(atof(vs));
+                                        } else {
+                                            existing_def->const_values[ci] = val_int((int64_t)strtoll(vs, NULL, 10));
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            if (!existing_def) {
                                 ObjStructDef* sdef = struct_def_new(struct_sym->name, struct_sym->field_count, struct_sym->method_count);
                                 if (sdef) {
                                     // 设置泛型类型参数数量

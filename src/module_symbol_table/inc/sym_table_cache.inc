@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000000B  // v11: 添加 ModuleFuncSymbol.param_count/default_count/param_default_texts
+#define LENOSYMC_VERSION 0x0000000C  // v12: 传递导入时复制 struct 关联常量
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {

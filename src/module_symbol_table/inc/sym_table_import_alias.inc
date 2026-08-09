@@ -94,6 +94,21 @@ static void import_alias_type_deps_to_sym_table(
                 module_symbol_table_add_struct(table, dep_name,
                     ssym->field_count, ssym->fields, ssym->method_count, ssym->methods,
                     ssym->is_cstruct, ssym->type_param_count, ssym->type_param_names);
+                // 传导关联常量（module_symbol_table_add_struct 不含常量参数，需手动复制）
+                if (ssym->const_count > 0) {
+                    ModuleStructSymbol* added = module_symbol_table_find_struct(table, dep_name);
+                    if (added && added->const_count == 0) {
+                        added->const_count = ssym->const_count;
+                        added->const_names = (char**)malloc(sizeof(char*) * ssym->const_count);
+                        added->const_value_strs = (char**)calloc(ssym->const_count, sizeof(char*));
+                        for (int ci = 0; ci < ssym->const_count; ci++) {
+                            added->const_names[ci] = strdup(ssym->const_names[ci]);
+                            if (ssym->const_value_strs && ssym->const_value_strs[ci]) {
+                                added->const_value_strs[ci] = strdup(ssym->const_value_strs[ci]);
+                            }
+                        }
+                    }
+                }
                 // 添加到本地名称列表
                 if (ssym->is_cstruct) {
                     if (*cstruct_name_count < MOD_MAX_TYPES) {

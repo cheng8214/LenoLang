@@ -45,6 +45,25 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import "sdl_image.leno" as img
 
 export struct TitleBar impl Widget, Themeable {
+    // ==================== 关联常量 ====================
+    const ALIGN_LEFT   = 0   // 标题左对齐
+    const ALIGN_CENTER = 1   // 标题居中对齐
+
+    const BTN_NONE  = 0   // 无悬停按钮
+    const BTN_MIN   = 1   // 最小化按钮
+    const BTN_MAX   = 2   // 最大化按钮
+    const BTN_CLOSE = 3   // 关闭按钮
+
+    const EDGE_NONE         = 0   // 无边缘命中
+    const EDGE_LEFT         = 1   // 左边缘
+    const EDGE_RIGHT        = 2   // 右边缘
+    const EDGE_TOP          = 3   // 上边缘
+    const EDGE_BOTTOM       = 4   // 下边缘
+    const EDGE_TOP_LEFT     = 5   // 左上角
+    const EDGE_TOP_RIGHT    = 6   // 右上角
+    const EDGE_BOTTOM_LEFT  = 7   // 左下角
+    const EDGE_BOTTOM_RIGHT = 8   // 右下角
+
     // ==================== 布局 ====================
     float x = 0.0, y = 0.0, w = 1000.0, h = 32.0
 
@@ -56,7 +75,7 @@ export struct TitleBar impl Widget, Themeable {
     float  _btnWidth = 40.0
     float  _btnSpacing = 0.0      // 按钮之间的间距
     float  _titlePad = 12.0       // 标题水平内边距
-    int    _titleAlign = 0        // 0=left, 1=center
+    int    _titleAlign = ALIGN_LEFT   // 标题对齐（ALIGN_LEFT/ALIGN_CENTER）
 
     // 按钮可见性
     bool _showMinimize = true
@@ -80,7 +99,7 @@ export struct TitleBar impl Widget, Themeable {
     float _iconImgSize = 16.0
 
     // ==================== 状态 ====================
-    int    _btnHover = 0       // 0=none, 1=min, 2=max, 3=close
+    int    _btnHover = BTN_NONE   // 悬停按钮（BTN_NONE/MIN/MAX/CLOSE）
     bool   _maximized = false
     bool   _dragging = false
     int    _motionSkipCount = 0  // 窗口状态切换后跳过合成 Motion 的 hover 更新（防止关闭按钮误红）
@@ -92,9 +111,7 @@ export struct TitleBar impl Widget, Themeable {
     bool   _closeRequested = false  // 关闭按钮被按下（示例查询后重置）
 
     // ==================== 手动边缘缩放（无边框窗口用） ====================
-    // _resizeEdge: 0=none, 1=left, 2=right, 3=top, 4=bottom,
-    //              5=top-left, 6=top-right, 7=bottom-left, 8=bottom-right
-    int    _resizeEdge = 0
+    int    _resizeEdge = EDGE_NONE
     int    _resizeStartGX = 0, _resizeStartGY = 0
     int    _resizeStartWinX = 0, _resizeStartWinY = 0
     int    _resizeStartW = 0, _resizeStartH = 0
@@ -116,7 +133,7 @@ export struct TitleBar impl Widget, Themeable {
         _titlePad = opts.get("title_pad", 12.0)
         var align = opts.get("title_align", "left")
         if align is string {
-            if align == "center" { _titleAlign = 1 } else { _titleAlign = 0 }
+            if align == "center" { _titleAlign = ALIGN_CENTER } else { _titleAlign = ALIGN_LEFT }
         }
         _showMinimize = opts.get("show_minimize", true)
         _showMaximize = opts.get("show_maximize", true)
@@ -241,20 +258,20 @@ export struct TitleBar impl Widget, Themeable {
         // ★ 同时设置 _motionSkipCount：窗口尺寸变化后 OS 会生成合成 MouseMotion 事件，
         //   此时鼠标的窗口相对坐标可能恰好落在关闭按钮区域，导致 _btnHover 被误设为 3（关闭），
         //   关闭按钮变红。跳过紧随状态切换后的合成 Motion 事件即可避免此问题。
-        if ev.isWindowMaximized() { _maximized = true; _btnHover = 0; _motionSkipCount = 2; core.markFrameRedraw() }
-        if ev.isWindowRestored() { _maximized = false; _btnHover = 0; _motionSkipCount = 2; core.markFrameRedraw() }
+if ev.isWindowMaximized() { _maximized = true; _btnHover = BTN_NONE; _motionSkipCount = 2; core.markFrameRedraw() }
+if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkipCount = 2; core.markFrameRedraw() }
 
         float mx = ev.mouseX()
         float my = ev.mouseY()
 
         // === 手动边缘缩放（非最大化时） ===
-        if _resizeEdge != 0 {
+        if _resizeEdge != EDGE_NONE {
             // 缩放进行中：处理鼠标移动和释放
             if ev.isMouseMotion() {
                 _doResize()
             }
             if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
-                _resizeEdge = 0
+                _resizeEdge = EDGE_NONE
                 core.forceFrameCursor(SystemCursor.DEFAULT)
                 core.markFrameRedraw()
             }
@@ -295,7 +312,7 @@ export struct TitleBar impl Widget, Themeable {
 
         // 非拖拽：仅在标题栏区域处理事件
         if not (my >= y and my < y + h and mx >= x) {
-            if _btnHover != 0 { _btnHover = 0; core.markFrameRedraw() }
+            if _btnHover != BTN_NONE { _btnHover = BTN_NONE; core.markFrameRedraw() }
             return
         }
 
@@ -308,7 +325,7 @@ export struct TitleBar impl Widget, Themeable {
             } else {
                 int oldHover = _btnHover
                 _btnHover = _hitTestBtn(mx)
-                if _btnHover != 0 {
+                if _btnHover != BTN_NONE {
                     core.requestCursor(SystemCursor.POINTER)
                 }
                 if oldHover != _btnHover { core.markFrameRedraw() }
@@ -354,7 +371,7 @@ export struct TitleBar impl Widget, Themeable {
             core.lib().SDL_MaximizeWindow(_winHandle)
             _maximized = true
         }
-        _btnHover = 0            // ★ 立即清除悬停状态
+        _btnHover = BTN_NONE            // ★ 立即清除悬停状态
         _motionSkipCount = 2     // ★ 跳过紧随的合成 Motion 事件
         core.markFrameRedraw()
         if _onMaximize != null { _onMaximize() }
@@ -381,16 +398,16 @@ export struct TitleBar impl Widget, Themeable {
         bool atBottom = my >= fh - th
 
         // 优先检测角（角 = 两个边缘同时命中）
-        if atTop and atLeft     { return 5 }
-        if atTop and atRight    { return 6 }
-        if atBottom and atLeft  { return 7 }
-        if atBottom and atRight { return 8 }
+        if atTop and atLeft     { return EDGE_TOP_LEFT }
+        if atTop and atRight    { return EDGE_TOP_RIGHT }
+        if atBottom and atLeft  { return EDGE_BOTTOM_LEFT }
+        if atBottom and atRight { return EDGE_BOTTOM_RIGHT }
         // 单边缘
-        if atLeft   { return 1 }
-        if atRight  { return 2 }
-        if atTop    { return 3 }
-        if atBottom { return 4 }
-        return 0
+        if atLeft   { return EDGE_LEFT }
+        if atRight  { return EDGE_RIGHT }
+        if atTop    { return EDGE_TOP }
+        if atBottom { return EDGE_BOTTOM }
+        return EDGE_NONE
     }
 
     // 根据 edge 值请求对应的系统缩放光标
@@ -399,13 +416,13 @@ export struct TitleBar impl Widget, Themeable {
         // 3=top, 4=bottom → NS_RESIZE(8)
         // 5=top-left, 8=bottom-right → NWSE_RESIZE(5)
         // 6=top-right, 7=bottom-left → NESW_RESIZE(6)
-        if edge == 1 or edge == 2 {
+        if edge == EDGE_LEFT or edge == EDGE_RIGHT {
             core.requestCursor(SystemCursor.EW_RESIZE)
-        } else if edge == 3 or edge == 4 {
+        } else if edge == EDGE_TOP or edge == EDGE_BOTTOM {
             core.requestCursor(SystemCursor.NS_RESIZE)
-        } else if edge == 5 or edge == 8 {
+        } else if edge == EDGE_TOP_LEFT or edge == EDGE_BOTTOM_RIGHT {
             core.requestCursor(SystemCursor.NWSE_RESIZE)
-        } else if edge == 6 or edge == 7 {
+        } else if edge == EDGE_TOP_RIGHT or edge == EDGE_BOTTOM_LEFT {
             core.requestCursor(SystemCursor.NESW_RESIZE)
         }
     }
@@ -420,13 +437,13 @@ export struct TitleBar impl Widget, Themeable {
         _resizeStartW = core.getWindowW(_winHandle)
         _resizeStartH = core.getWindowH(_winHandle)
         // 强制光标：拖拽中保持缩放光标，防止被其他控件覆盖
-        if edge == 1 or edge == 2 {
+        if edge == EDGE_LEFT or edge == EDGE_RIGHT {
             core.forceFrameCursor(SystemCursor.EW_RESIZE)
-        } else if edge == 3 or edge == 4 {
+        } else if edge == EDGE_TOP or edge == EDGE_BOTTOM {
             core.forceFrameCursor(SystemCursor.NS_RESIZE)
-        } else if edge == 5 or edge == 8 {
+        } else if edge == EDGE_TOP_LEFT or edge == EDGE_BOTTOM_RIGHT {
             core.forceFrameCursor(SystemCursor.NWSE_RESIZE)
-        } else if edge == 6 or edge == 7 {
+        } else if edge == EDGE_TOP_RIGHT or edge == EDGE_BOTTOM_LEFT {
             core.forceFrameCursor(SystemCursor.NESW_RESIZE)
         }
     }
@@ -444,21 +461,21 @@ export struct TitleBar impl Widget, Themeable {
         int edge = _resizeEdge
 
         // 水平方向
-        if edge == 1 or edge == 5 or edge == 7 {
+        if edge == EDGE_LEFT or edge == EDGE_TOP_LEFT or edge == EDGE_BOTTOM_LEFT {
             // 左边缘：宽度减小，位置左移
             newW = _resizeStartW - dx
             newX = _resizeStartWinX + dx
-        } else if edge == 2 or edge == 6 or edge == 8 {
+        } else if edge == EDGE_RIGHT or edge == EDGE_TOP_RIGHT or edge == EDGE_BOTTOM_RIGHT {
             // 右边缘：宽度增大
             newW = _resizeStartW + dx
         }
 
         // 垂直方向
-        if edge == 3 or edge == 5 or edge == 6 {
+        if edge == EDGE_TOP or edge == EDGE_TOP_LEFT or edge == EDGE_TOP_RIGHT {
             // 上边缘：高度减小，位置上移
             newH = _resizeStartH - dy
             newY = _resizeStartWinY + dy
-        } else if edge == 4 or edge == 7 or edge == 8 {
+        } else if edge == EDGE_BOTTOM or edge == EDGE_BOTTOM_LEFT or edge == EDGE_BOTTOM_RIGHT {
             // 下边缘：高度增大
             newH = _resizeStartH + dy
         }
@@ -511,7 +528,7 @@ export struct TitleBar impl Widget, Themeable {
 
         // 标题文字
         if _font != null and _font.ok and _title != "" {
-            if _titleAlign == 1 {
+            if _titleAlign == ALIGN_CENTER {
                 // 居中（在整个标题栏宽度范围内）
                 r.drawTextCentered(_font, _title, x, w, y + (h - _float(_font.height)) * 0.5, _txR, _txG, _txB)
             } else {
@@ -528,7 +545,7 @@ export struct TitleBar impl Widget, Themeable {
 
         // 最小化按钮
         if _showMinimize and minP >= 0.0 {
-            _drawBtnBg(r, minP, _btnHover == 1)
+            _drawBtnBg(r, minP, _btnHover == BTN_MIN)
             if _texMin != null {
                 _drawIcon(r, _texMin, minP)
             } else {
@@ -540,7 +557,7 @@ export struct TitleBar impl Widget, Themeable {
 
         // 最大化/还原按钮
         if _showMaximize and maxP >= 0.0 {
-            _drawBtnBg(r, maxP, _btnHover == 2)
+            _drawBtnBg(r, maxP, _btnHover == BTN_MAX)
             if _maximized and _texRestore != null {
                 _drawIcon(r, _texRestore, maxP)
             } else if not _maximized and _texMax != null {
@@ -556,7 +573,7 @@ export struct TitleBar impl Widget, Themeable {
 
         // 关闭按钮
         if _showClose and closeP >= 0.0 {
-            _drawCloseBtnBg(r, closeP, _btnHover == 3)
+            _drawCloseBtnBg(r, closeP, _btnHover == BTN_CLOSE)
             if _texClose != null {
                 _drawIcon(r, _texClose, closeP)
             } else {

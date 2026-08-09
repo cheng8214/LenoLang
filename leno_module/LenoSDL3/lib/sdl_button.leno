@@ -11,6 +11,16 @@ import "sdl_image.leno" as img
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 export struct Button impl Widget, Themeable {
+    // ==================== 关联常量 ====================
+    const IMG_LEFT   = 0   // 图标在文字左侧
+    const IMG_RIGHT  = 1   // 图标在文字右侧
+    const IMG_TOP    = 2   // 图标在文字上方
+    const IMG_BOTTOM = 3   // 图标在文字下方
+
+    const IMG_ASPECT_FIT   = 0   // 内容模式：保持比例，完整显示
+    const IMG_STRETCH      = 1   // 内容模式：拉伸填满
+    const IMG_ASPECT_FILL  = 2   // 内容模式：覆盖填满（裁剪）
+
     string text = "Button"
     float x = 0.0, y = 0.0, w = 100.0, h = 40.0
     float _radius = 6.0      // 圆角半径
@@ -39,7 +49,7 @@ export struct Button impl Widget, Themeable {
     // ==================== 图片（图标） ====================
     // 设计参考：Qt setIcon/setIconSize、Material iconGravity、WinForms TextImageRelation
     string _imagePath = ""   // 图片路径（空 = 无图）
-    int    _imgPos = 0       // 图标相对文字位置：0=left 1=right 2=top 3=bottom
+    int    _imgPos = IMG_LEFT   // 图标相对文字位置（IMG_LEFT/RIGHT/TOP/BOTTOM）
     float  _imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
     float  _imgGap = 6.0     // 图标与文字间距
     int    _imgAlpha = 255   // 图标透明度 0~255
@@ -54,8 +64,8 @@ export struct Button impl Widget, Themeable {
     bool   _pressed = false       // 鼠标按下且悬停中（用于 pressed 态图片 / 按下高亮）
 
     // ==================== 内容模式（对齐 iOS contentMode / Android scaleType） ====================
-    // 0=aspectFit 默认（保持比例，完整显示在方框内，不拉伸） 1=stretch 拉伸填满 2=aspectFill 覆盖填满(裁剪)
-    int _imgMode = 0
+    // 内容模式（IMG_ASPECT_FIT/STRETCH/ASPECT_FILL）
+    int _imgMode = IMG_ASPECT_FIT
 
     // ==================== 背景图（对齐 iOS setBackgroundImage） ====================
     string _bgImagePath = ""; Ptr[u8]? _bgTex; string _bgLoadPath = ""
@@ -166,11 +176,11 @@ if tp is string { _btnType = tp; _apply_type(tp) }
         var ip = opts.get("image_pos", "left")
         if ip is string {
             switch ip {
-                case "left"   { _imgPos = 0 }
-                case "right"  { _imgPos = 1 }
-                case "top"    { _imgPos = 2 }
-                case "bottom" { _imgPos = 3 }
-                default       { _imgPos = 0 }
+                case "left"   { _imgPos = IMG_LEFT }
+                case "right"  { _imgPos = IMG_RIGHT }
+                case "top"    { _imgPos = IMG_TOP }
+                case "bottom" { _imgPos = IMG_BOTTOM }
+                default       { _imgPos = IMG_LEFT }
             }
         }
         _imgSize  = opts.get("image_size", 0.0)
@@ -180,7 +190,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
         if tint is Array[int] { _imgTintR = tint[0]; _imgTintG = tint[1]; _imgTintB = tint[2] }
 
         // 内容模式 / 状态图片 / 背景图
-        _imgMode        = opts.get("image_mode", 0)
+        _imgMode        = opts.get("image_mode", IMG_ASPECT_FIT)
         _imgPathHover   = opts.get("image_path_hover", "")
         _imgPathPressed = opts.get("image_path_pressed", "")
         _imgPathDisabled = opts.get("image_path_disabled", "")
@@ -236,11 +246,11 @@ if tp is string { _btnType = tp; _apply_type(tp) }
     }
     func set_image_pos(string pos) {
         switch pos {
-            case "left"   { _imgPos = 0 }
-            case "right"  { _imgPos = 1 }
-            case "top"    { _imgPos = 2 }
-            case "bottom" { _imgPos = 3 }
-            default       { _imgPos = 0 }
+            case "left"   { _imgPos = IMG_LEFT }
+            case "right"  { _imgPos = IMG_RIGHT }
+            case "top"    { _imgPos = IMG_TOP }
+            case "bottom" { _imgPos = IMG_BOTTOM }
+            default       { _imgPos = IMG_LEFT }
         }
     }
     func set_image_size(float s) { _imgSize = s }
@@ -251,7 +261,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
     func set_image_pressed(string path) { _imgPathPressed = path; _imgTexPressed = null; _imgLoadPressed = "" }
     func set_image_disabled(string path) { _imgPathDisabled = path; _imgTexDisabled = null; _imgLoadDisabled = "" }
     func set_auto_img_effect(bool e) { _autoImgEffect = e }
-    // 内容模式：0=aspectFit 1=stretch 2=aspectFill
+    // 内容模式：IMG_ASPECT_FIT / IMG_STRETCH / IMG_ASPECT_FILL
     func set_image_mode(int mode) { _imgMode = mode }
     // 状态图片（对齐 iOS setImage(_:forState:)）：state ∈ "hover" | "pressed" | "disabled" | "normal"(默认)
     func set_image_for_state(string path, string state) {
@@ -448,7 +458,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
             float maxS = w - 4.0
             if maxS > h - 4.0 { maxS = h - 4.0 }
             if isize > maxS { isize = maxS }
-        } else if _imgPos == 0 or _imgPos == 1 {
+        } else if _imgPos == IMG_LEFT or _imgPos == IMG_RIGHT {
             if isize > h - 2.0 * pad { isize = h - 2.0 * pad }
         } else {
             float maxI = h - 2.0 * pad - _imgGap - textH
@@ -480,14 +490,14 @@ if tp is string { _btnType = tp; _apply_type(tp) }
             if _imgTintR >= 0 { r.setTextureColor(itex, _imgTintR, _imgTintG, _imgTintB) }
             else if imgAutoDim { r.setTextureColor(itex, 128, 128, 128) }   // 禁用态自动变灰
             else { r.setTextureColor(itex, 255, 255, 255) }
-            if _imgMode != 1 {   // 0=aspectFit / 2=aspectFill：保持原始比例
+            if _imgMode != IMG_STRETCH {   // IMG_ASPECT_FIT / IMG_ASPECT_FILL：保持原始比例
                 var nats = r.getTextureSize(itex)
                 float nw = nats["w"]; float nh = nats["h"]
                 if nw > 0.0 and nh > 0.0 {
-                    if _imgMode == 2 {   // aspectFill：覆盖填满（可能裁剪，居中绘制）
+                    if _imgMode == IMG_ASPECT_FILL {   // 覆盖填满（可能裁剪，居中绘制）
                         float s = isize / nw; if isize / nh > s { s = isize / nh }
                         dw = nw * s; dh = nh * s
-                    } else {             // aspectFit：完整显示（可能留边，居中绘制）
+                    } else {             // IMG_ASPECT_FIT：完整显示（可能留边，居中绘制）
                         float s = isize / nw; if isize / nh < s { s = isize / nh }
                         dw = nw * s; dh = nh * s
                     }
@@ -506,7 +516,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 // 纯文字：整按钮居中
                 float cy = y + (h - ms.h) / 2.0
                 r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
-            } else if _imgPos == 0 {
+            } else if _imgPos == IMG_LEFT {
                 // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
                 float ix = x + pad
                 float iy = y + (h - isize) / 2.0
@@ -515,7 +525,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 float tw = (x + w) - tx - pad
                 float ty = y + (h - ms.h) / 2.0
                 r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
-            } else if _imgPos == 1 {
+            } else if _imgPos == IMG_RIGHT {
                 // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
                 float ix = x + w - pad - isize
                 float iy = y + (h - isize) / 2.0
@@ -524,7 +534,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 float tw = ix - _imgGap - tx
                 float ty = y + (h - ms.h) / 2.0
                 r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
-            } else if _imgPos == 2 {
+            } else if _imgPos == IMG_TOP {
                 // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
                 float ix = x + (w - isize) / 2.0
                 float iy = y + pad
@@ -547,9 +557,9 @@ if tp is string { _btnType = tp; _apply_type(tp) }
             // 仅图标、无文字：居中绘制
             float ix = x + (w - isize) / 2.0
             float iy = y + (h - isize) / 2.0
-            if _imgPos == 0 { ix = x + pad; iy = y + (h - isize) / 2.0 }
-            else if _imgPos == 1 { ix = x + w - pad - isize; iy = y + (h - isize) / 2.0 }
-            else if _imgPos == 2 { ix = x + (w - isize) / 2.0; iy = y + pad }
+            if _imgPos == IMG_LEFT { ix = x + pad; iy = y + (h - isize) / 2.0 }
+            else if _imgPos == IMG_RIGHT { ix = x + w - pad - isize; iy = y + (h - isize) / 2.0 }
+            else if _imgPos == IMG_TOP { ix = x + (w - isize) / 2.0; iy = y + pad }
             else { ix = x + (w - isize) / 2.0; iy = y + h - pad - isize }
             r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
         }
