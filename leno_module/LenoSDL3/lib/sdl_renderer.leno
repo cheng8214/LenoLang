@@ -48,14 +48,21 @@ export struct PixelBuffer {
     // 释放内存
     func free() { if pixels != null { ffi.free(pixels); pixels = null; ok = false } }
 
-    // 整块填充单色（r,g,b,a 0~255），用 memset 极快
+    // 整块填充单色（r,g,b,a 0~255）
     func fill(int r, int g, int b, int a) {
+        // 全 0（透明黑）用 memset 一次清零，比逐像素 write_int 快一个量级
+        if r == 0 and g == 0 and b == 0 and a == 0 {
+            ffi.memset(pixels, 0, w * h * 4)
+            return
+        }
         int color = (r << 24) | (g << 16) | (b << 8) | a
         var total = w * h
         for 0 : total - 1 to i {
             ffi.write_int(pixels, i * 4, color)
         }
     }
+    // 整块清零（全透明黑），用 memset 极快
+    func clear() { ffi.memset(pixels, 0, w * h * 4) }
     // 从另一个像素缓冲整块拷贝（尺寸需一致），用 memcpy 极快
     func fillCopy(PixelBuffer src) {
         ffi.memcpy(pixels, src.pixels, w * h * 4)
@@ -65,6 +72,14 @@ export struct PixelBuffer {
         if 0 <= x and x < w and 0 <= y and y < h {
             ffi.write_int(pixels, (y * pitch + x * 4), (r << 24) | (g << 16) | (b << 8) | a)
         }
+    }
+    // 读回单个像素的 R 通道（0~255；越界返回 0）。常用于把灰度/亮度掩码存进 R 通道再读回上色。
+    // 像素布局 [A,B,G,R]，R 在最高字节（offset+3）
+    func getR(int x, int y): int {
+        if 0 <= x and x < w and 0 <= y and y < h {
+            return ffi.read_byte(pixels, y * pitch + x * 4 + 3)
+        }
+        return 0
     }
 }
 
@@ -770,6 +785,8 @@ export struct Renderer {
             _pixTex = createTexture(core.PIXELFORMAT_RGBA8888, 1, buf.w, buf.h)
             if _pixTex == null { return false }
             _pixTexW = buf.w; _pixTexH = buf.h
+            // 设为 BLEND：透明像素可透出底下的已绘制内容（用于字符特效叠加等场景）
+            _lib.SDL_SetTextureBlendMode(_pixTex, core.BlendMode.BLEND)
         }
         _flushBatches()
         if not _lib.SDL_UpdateTexture(_pixTex, null, buf.pixels, buf.pitch) { return false }

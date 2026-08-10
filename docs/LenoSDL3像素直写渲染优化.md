@@ -52,7 +52,9 @@ export struct PixelBuffer {
     Ptr[u8] pixels; int w, h, pitch; bool ok
     init(w, h)          // 分配像素内存
     setPixel(x,y,r,g,b,a) // 单点写入（越界安全，自动字节序）
-    fill(r,g,b,a)       // 整块填充（for 循环，性能优于 while）
+    getR(x,y)           // 读回 R 通道（常用于读亮度掩码）
+    fill(r,g,b,a)       // 整块填充（全 0 走 memset 快路径）
+    clear()             // 整块清零（memset，极快）
     fillCopy(src)       // 整块拷贝（memcpy）
     free()              // 释放内存
 }
@@ -61,6 +63,30 @@ export struct PixelBuffer {
 `Renderer` 新增方法 `blitBuffer(PixelBuffer buf, dx, dy, dw, dh)`：
 - 内部懒创建/复用流式纹理（尺寸匹配时零分配）
 - 一次 `updateTexture` + `drawTextureAt` 上传绘制
+- **纹理设为 BLEND**：透明像素可透出底下内容，支持"字符/特效缓冲叠加"场景
+
+## 案例二：matrix_rain 矩阵字符雨（18 → 51 fps）
+
+`matrix_rain.leno` 原本每帧用 `drawText` 画 3×N 列个**随机字符**（约 333 次），每次触发 `TTF_RenderText_Blended` CPU 栅格化 + 纹理创建，仅 18fps。
+
+优化（利用 PixelBuffer 像素直写）：
+
+1. **字符掩码预渲染**：字符集（ASCII/KANA 共 ~97 个）初始化时用 `renderTextBlended` 栅格化**一次**，把每个字符的 alpha 提成灰度掩码存进 PixelBuffer（R 通道）。之后每帧不再触发任何 TTF 栅格化。
+2. **拖尾走 GPU**：全屏逐像素 FFI 衰减（420 万次调用/帧）→ `ren.fillRect` 半透明黑（1 次 GPU 调用）。
+3. **字符缓冲透明叠加**：字符画进透明 PixelBuffer（`clear()` memset 清零），`blitBuffer` 叠加在 fillRect 拖尾之上。
+4. **字符写入改直接 ffi 字节操作**：从 `getR`+`setPixel` 方法调用 → 直接 `ffi.read_byte` 读亮度 + `ffi.write_byte` 写 G/A 字节（绿色只需写 G 通道），绕过方法调用开销。
+
+| 阶段 | 做法 | FPS |
+|------|------|-----|
+| 原始 | 每帧 333 次 `drawText` 随机字符 | 18 |
+| v1 | 像素直写 + 全屏逐像素 FFI 衰减拖尾 | 更卡（误伤） |
+| v2 | GPU `fillRect` 拖尾 + 透明字符缓冲叠加 | 38 |
+| v3 | `blitGlyph` 改直接 ffi 字节操作 | **51** |
+
+**经验**：
+- **矩阵雨/拖尾类特效不适合"纯像素直写全屏衰减"**（700000 像素逐像素衰减太慢），应把拖尾交给 GPU `fillRect` 半透明黑。
+- 字符类特效应**预渲染字符集为掩码**，运行时只做内存拷贝/字节写入，绝不实时栅格化。
+- 热点路径应**直接 ffi 字节操作**，避免 `setPixel` 等方法的参数绑定+越界检查开销。
 
 ## 对比版本
 
@@ -82,8 +108,10 @@ export struct PixelBuffer {
 ## 涉及文件
 
 - `leno_module/LenoSDL3/lib/sdl_renderer.leno` — 新增 `PixelBuffer` struct、`Renderer.blitBuffer` 方法
-- `leno_module/LenoSDL3/examples/特效动画/fireworks.leno` — 内联 ffi 版
-- `leno_module/LenoSDL3/examples/特效动画/fireworks_pixelbuf.leno` — PixelBuffer 封装版
+- `leno_module/LenoSDL3/examples/特效动画/fireworks.leno` — 烟花内联 ffi 版
+- `leno_module/LenoSDL3/examples/特效动画/fireworks_pixelbuf.leno` — 烟花 PixelBuffer 封装版
+- `leno_module/LenoSDL3/examples/特效动画/matrix_rain.leno` — 矩阵字符雨（像素直写优化）
+- `leno_module/LenoSDL3/examples/特效动画/fireworks_run.leno` — 烟花 win.run 回调版
 
 ## 记录时间
 

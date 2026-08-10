@@ -47,21 +47,15 @@ main() {
         [255, 50, 200], [100, 255, 100], [255, 255, 100]
     ]
 
-    var MAX_P = 6000
-    var particles = {}
-    var pids = {}
+    var MAX_P = 3000
+    var particles = []
     var pc = 0
-    var nid = 0
 
-    var rockets = {}
-    var rids = {}
+    var rockets = []
     var rc = 0
-    var rid_next = 0
 
-    var stars = {}
-    var sids = {}
+    var stars = []
     var sc = 0
-    var sid_next = 0
 
     var frame = 0
     var peak = 0
@@ -73,16 +67,13 @@ main() {
 
     // 星空
     for 0 : 99 to i {
-        var s = new Star(
+        stars.add(new Star(
             x=rands.floats(0.0, 800.0), y=rands.floats(0.0, 500.0),
             twinkle=rands.floats(0.0, 6.28),
             r=150 + rands.ints(0, 105), g=150 + rands.ints(0, 105), b=200 + rands.ints(0, 55)
-        )
-        stars[sid_next] = s
-        sids[sc] = sid_next
-        sc += 1
-        sid_next += 1
+        ))
     }
+    sc = stars.len()
 
     func clamp(int v): int {
         if v < 0 { return 0 }
@@ -103,7 +94,7 @@ main() {
                 b=clamp(cb + rands.ints(-30, 30)),
                 ptype=ptype
             )
-            particles[nid] = p; pids[pc] = nid; pc += 1; nid += 1
+            particles.add(p); pc += 1
         }
     }
 
@@ -113,19 +104,15 @@ main() {
 
     func remP(int i) {
         var last = pc - 1
-        var id = pids[i]
-        particles.remove(id)
-        if i != last { pids[i] = pids[last] }
-        pids.remove(last)
+        particles[i] = particles[last]
+        particles.pop()
         pc -= 1
     }
 
     func remR(int i) {
         var last = rc - 1
-        var id = rids[i]
-        rockets.remove(id)
-        if i != last { rids[i] = rids[last] }
-        rids.remove(last)
+        rockets[i] = rockets[last]
+        rockets.pop()
         rc -= 1
     }
 
@@ -139,14 +126,12 @@ main() {
             r.clear()
 
             // ---- 星空 ----
-            var si = 0
-            while si < sc {
-                var s = stars[sids[si]]
+            for 0 : sc - 1 to si {
+                var s = stars[si]
                 s.twinkle += 0.03
                 var a = 80 + _int(maths.sin(s.twinkle) * 60.0 + 60.0)
                 r.setColor(s.r, s.g, s.b, a)
                 r.drawPoint(s.x, s.y)
-                si += 1
             }
 
             // ---- 发射 ----
@@ -154,23 +139,20 @@ main() {
                 var count = rands.ints(1, 2)
                 for 0 : count - 1 to _ {
                     var c = colors[rands.ints(0, 8)]
-                    rockets[rid_next] = new Rocket(
+                    rockets.add(new Rocket(
                         x=rands.floats(80.0, 720.0), y=600.0,
                         vy=rands.floats(-6.0, -10.0),
                         r=c[0], g=c[1], b=c[2],
                         burst_y=rands.floats(60.0, 450.0),
                         burst_count=rands.ints(200, 450)
-                    )
-                    rids[rc] = rid_next
+                    ))
                     rc += 1
-                    rid_next += 1
                 }
             }
 
-            // ---- 火箭 ----
-            var ri = 0
-            while ri < rc {
-                var rk = rockets[rids[ri]]
+            // ---- 火箭（倒序 for + 交换删除） ----
+            for rc - 1 : 0 : -1 to ri {
+                var rk = rockets[ri]
                 rk.y += rk.vy
                 if rk.y <= rk.burst_y {
                     burst(rk.x, rk.y, rk.r, rk.g, rk.b, rk.burst_count, 30, 70, 0, 1.5, 6.0)
@@ -182,15 +164,13 @@ main() {
                     r.setColor(rk.r, rk.g, rk.b, 200)
                     r.drawPoint(rk.x, rk.y)
                     r.drawPoint(rk.x + 1, rk.y + 2)
-                    ri += 1
                 }
             }
 
-            // ---- 粒子 ----
+            // ---- 粒子（倒序 for + 交换删除） ----
             if pc > peak { peak = pc }
-            var i = 0
-            while i < pc {
-                var p = particles[pids[i]]
+            for pc - 1 : 0 : -1 to i {
+                var p = particles[i]
                 p.x += p.vx
                 p.y += p.vy + 0.04
                 p.vy *= 0.98
@@ -213,7 +193,6 @@ main() {
                             secBurst(p.x, p.y, p.r, p.g, p.b)
                         }
                     }
-                    i += 1
                 }
             }
 
