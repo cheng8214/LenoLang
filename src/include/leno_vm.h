@@ -173,6 +173,13 @@ typedef enum {
     OP_DTOR_LOCAL,       // 对局部变量调用析构函数: slot(2)
     // 全局函数调用合并指令（省掉 OP_GET_GLOBAL_FUNC + OP_CALL 配对）
     OP_CALL_GLOBAL_FUNC, // 直接调用全局函数: func_slot(2) arg_count(2)
+    // NOPUSH 变体（语句上下文，省掉 OP_POP 分发开销）
+    OP_INC_LOCAL_NOPUSH,   // 局部变量++，不压栈（i++ 语句用）
+    OP_DEC_LOCAL_NOPUSH,   // 局部变量--，不压栈（i-- 语句用）
+    OP_MOVE_LOCAL_POP,     // 局部变量间复制：src→dst，不压栈（a=b 语句用）
+    OP_CALL_NATIVE_VOID,   // 调用原生函数，不压栈结果（print() 语句用）
+    OP_DICT_SET_NOPUSH,    // 字典赋值，不压栈（dict[k]=v 语句用）
+    OP_INDEX_SET_NOPUSH,   // 通用索引赋值，不压栈（arr[i]=v 语句用）
 } OpCode;
 
 // ============================================================================

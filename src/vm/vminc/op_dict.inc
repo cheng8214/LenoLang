@@ -68,6 +68,25 @@ OPCODE(OP_DICT_SET) {
     DISPATCH;
 }
 
+OPCODE(OP_DICT_SET_NOPUSH) {
+    // 同 OP_DICT_SET 但不压栈（语句上下文，省掉 OP_POP）
+    frame = &vm.frames[vm.frame_cnt - 1];
+    Value value = vm_stack_pop(&vm);
+    Value key_val = vm_stack_pop(&vm);
+    Value dict_val = vm_stack_pop(&vm);
+
+    if (!val_is_obj(dict_val) || val_as_obj(dict_val)->type != OBJ_DICT) {
+        throw_runtime_error("赋值操作需要字典", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    ObjDict* dict = (ObjDict*)val_as_obj(dict_val);
+    dict_set(dict, key_val, value);
+    // 不压栈，省掉 OP_POP
+    DISPATCH;
+}
+
 OPCODE(OP_DICT_GET_KEY) {
     frame = &vm.frames[vm.frame_cnt - 1];
     // 按索引获取字典键：栈顶是索引，次栈顶是字典

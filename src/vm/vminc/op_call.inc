@@ -474,6 +474,71 @@ OPCODE(OP_CALL_NATIVE) {
     DISPATCH;
 }
 
+OPCODE(OP_CALL_NATIVE_VOID) {
+    // 同 OP_CALL_NATIVE 但不压入返回值（语句上下文，省掉 OP_POP）
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t name_idx = READ_SHORT();
+    int arg_count = READ_SHORT();
+
+    Value name_val = frame->chunk->constants[name_idx];
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+        runtime_error("native 函数名必须是字符串", GET_CURRENT_LINE());
+        return -1;
+    }
+
+#ifdef VM_USE_THREAD_LOCAL
+    const char* name = ((ObjString*)val_as_obj(name_val))->chars;
+    ObjNative* native = native_find_function(name);
+    if (!native) {
+        runtime_error("未找到 native 函数", GET_CURRENT_LINE());
+        return -1;
+    }
+#else
+    uint8_t* ip_before = frame->ip - 5;
+    int cache_idx = ((uintptr_t)ip_before >> 2) & (IC_NATIVE_CACHE_SIZE - 1);
+    InlineNativeCacheEntry* cache = &vm.ic_native_cache[cache_idx];
+    uint32_t name_hash = ((ObjString*)val_as_obj(name_val))->hash;
+
+    ObjNative* native;
+    if (cache->valid && cache->name_hash == name_hash) {
+        vm.ic_hits++;
+        native = cache->fn;
+    } else {
+        vm.ic_misses++;
+        const char* name = ((ObjString*)val_as_obj(name_val))->chars;
+        native = native_find_function(name);
+        if (!native) {
+            runtime_error("未找到 native 函数", GET_CURRENT_LINE());
+            return -1;
+        }
+        cache->valid = 1;
+        cache->name_hash = name_hash;
+        cache->fn = native;
+    }
+#endif
+
+    native->function(arg_count, vm.stack + vm.sp - arg_count);
+
+    if (vm.has_exception) {
+        char* msg = NULL;
+        if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
+            msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
+        } else {
+            msg = value_to_string(vm.exception);
+        }
+        int line = GET_CURRENT_LINE();
+        error_clear();
+        throw_runtime_error(msg, line);
+        free(msg);
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
+    vm.sp -= arg_count;
+    // 不压入返回值，省掉 OP_POP
+    DISPATCH;
+}
+
 OPCODE(OP_TAIL_CALL_NATIVE) {
     frame = &vm.frames[vm.frame_cnt - 1];
     uint16_t name_idx = READ_SHORT();

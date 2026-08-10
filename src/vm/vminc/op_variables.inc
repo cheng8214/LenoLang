@@ -71,6 +71,24 @@ OPCODE(OP_MOVE_LOCAL) {
     DISPATCH;
 }
 
+OPCODE(OP_MOVE_LOCAL_POP) {
+    // 局部变量间直接复制：src → dst，不压栈（a = b 语句用）
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t src_slot = READ_SHORT();
+    uint16_t dst_slot = READ_SHORT();
+    if (frame->locals != NULL) {
+        if (src_slot >= frame->local_count || dst_slot >= frame->local_count) {
+            runtime_error("局部变量索引越界", GET_CURRENT_LINE());
+            return -1;
+        }
+        frame->locals[dst_slot] = frame->locals[src_slot];
+    } else {
+        vm.stack[frame->stack_base + dst_slot] = vm.stack[frame->stack_base + src_slot];
+    }
+    // 不压栈，省掉 OP_POP
+    DISPATCH;
+}
+
 OPCODE(OP_GET_GLOBAL) {
     uint16_t slot = READ_SHORT();
     if (unlikely(slot >= vm.global_capacity)) {

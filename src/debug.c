@@ -63,7 +63,14 @@ static const char* opCodeNames[] = {
     // 析构函数调用
     "OP_DTOR_LOCAL",
 // 全局函数调用合并指令
-"OP_CALL_GLOBAL_FUNC"
+"OP_CALL_GLOBAL_FUNC",
+// NOPUSH 变体
+"OP_INC_LOCAL_NOPUSH",
+"OP_DEC_LOCAL_NOPUSH",
+"OP_MOVE_LOCAL_POP",
+"OP_CALL_NATIVE_VOID",
+"OP_DICT_SET_NOPUSH",
+"OP_INDEX_SET_NOPUSH"
 };
 
 // 反汇编单条指令
@@ -489,6 +496,27 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             printf(" func=%d args=%d", func_slot, arg_count);
             return offset + 5;
         }
+        case OP_INC_LOCAL_NOPUSH:
+        case OP_DEC_LOCAL_NOPUSH: {
+            int slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            printf(" slot=%d", slot);
+            return offset + 3;
+        }
+        case OP_MOVE_LOCAL_POP: {
+            int src = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int dst = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" src=%d dst=%d", src, dst);
+            return offset + 5;
+        }
+        case OP_CALL_NATIVE_VOID: {
+            int name_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" name=%d args=%d", name_idx, arg_count);
+            return offset + 5;
+        }
+        case OP_DICT_SET_NOPUSH:
+        case OP_INDEX_SET_NOPUSH:
+            return offset + 1;
         default:
             return offset + 1;
     }

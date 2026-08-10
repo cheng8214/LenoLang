@@ -98,3 +98,37 @@ OPCODE(OP_PRE_DEC_LOCAL) {
     vm_stack_push(&vm, new_val);  // 前缀：返回新值
     DISPATCH;
 }
+
+OPCODE(OP_INC_LOCAL_NOPUSH) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t slot = READ_SHORT();
+    int error;
+    Value old_val = get_local_var(frame, slot, &error);
+    if (error) return -1;
+    if (!val_is_num(old_val)) {
+        throw_runtime_error("++ 操作数必须是数字", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    Value new_val = do_inc_dec(old_val, +1, &error);
+    set_local_var(frame, slot, new_val);
+    // 不压栈，省掉 OP_POP
+    DISPATCH;
+}
+
+OPCODE(OP_DEC_LOCAL_NOPUSH) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t slot = READ_SHORT();
+    int error;
+    Value old_val = get_local_var(frame, slot, &error);
+    if (error) return -1;
+    if (!val_is_num(old_val)) {
+        throw_runtime_error("-- 操作数必须是数字", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+    Value new_val = do_inc_dec(old_val, -1, &error);
+    set_local_var(frame, slot, new_val);
+    // 不压栈，省掉 OP_POP
+    DISPATCH;
+}

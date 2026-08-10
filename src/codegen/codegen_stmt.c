@@ -237,8 +237,7 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, fname_const & 0xff, ast->line);
                 emit_byte(gen, OP_INDEX, ast->line);
                 // 存入解构变量
-                emit_bytes_2(gen, OP_SET_LOCAL, local_idx, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
+                emit_bytes_2(gen, OP_SET_LOCAL_POP, local_idx, ast->line);
             }
         }
 
@@ -576,17 +575,14 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     } else {
         emit_byte(gen, OP_ZERO, ast->line);
     }
-    emit_bytes_2(gen, OP_SET_LOCAL, start_slot, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
+    emit_bytes_2(gen, OP_SET_LOCAL_POP, start_slot, ast->line);
 
     gen_expr(gen, ast->u.for_.end);
-    emit_bytes_2(gen, OP_SET_LOCAL, end_slot, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
+    emit_bytes_2(gen, OP_SET_LOCAL_POP, end_slot, ast->line);
 
     if (ast->u.for_.step) {
         gen_expr(gen, ast->u.for_.step);
-        emit_bytes_2(gen, OP_SET_LOCAL, step_slot, ast->line);
-        emit_byte(gen, OP_POP, ast->line);
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, step_slot, ast->line);
     } else {
         // 方案 B：无显式 step 时默认正向 step=+1（不再根据 start/end 自动倒序）。
         // 倒序必须显式写 for A:B:-1。
@@ -602,8 +598,7 @@ static void gen_for(CodeGen* gen, Ast* ast) {
             warning_add(WARN_FOR_EMPTY_RANGE, ast->line, wbuf);
         }
         emit_byte(gen, OP_ONE, ast->line);
-        emit_bytes_2(gen, OP_SET_LOCAL, step_slot, ast->line);
-        emit_byte(gen, OP_POP, ast->line);
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, step_slot, ast->line);
     }
 
     // 所有数值循环使用专用字节码 OP_FOR_PREP 和 OP_FOR_LOOP
@@ -1283,7 +1278,92 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
         }
     }
 
+    // 优化：i++ / i-- 语句（后缀，局部变量）→ OP_INC_LOCAL_NOPUSH / OP_DEC_LOCAL_NOPUSH
+    if (expr->kind == AST_UNARY && expr->u.unary.is_postfix &&
+        (expr->u.unary.op == TOK_INC || expr->u.unary.op == TOK_DEC) &&
+        expr->u.unary.operand->kind == AST_VAR) {
+        SymRef* ref = &expr->u.unary.operand->u.var.ref;
+        if (ref->name && (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM)) {
+            emit_bytes_2(gen, expr->u.unary.op == TOK_INC ? OP_INC_LOCAL_NOPUSH : OP_DEC_LOCAL_NOPUSH,
+                         ref->index, ast->line);
+            return;
+        }
+    }
+
+    // 窥孔优化：赋值语句到局部变量 → OP_SET_LOCAL_POP（省掉 OP_POP 分发开销）
+    // 场景1: a = b（两个局部变量）→ OP_MOVE_LOCAL_POP（不压栈）
+    // 场景2: a = expr（a 是局部变量）→ gen_expr(expr) + OP_SET_LOCAL_POP
+    if (expr->kind == AST_ASSIGN && expr->u.assign.name_count == 1) {
+        Ast* target = expr->u.assign.targets[0];
+        if (target && target->kind == AST_VAR) {
+            SymRef* ref = &expr->u.assign.refs[0];
+            if (ref->name && (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM)) {
+                // a = b（两个局部变量）→ OP_MOVE_LOCAL_POP（不压栈）
+                if (expr->u.assign.value->kind == AST_VAR) {
+                    SymRef* src_ref = &expr->u.assign.value->u.var.ref;
+                    if (src_ref->name && (src_ref->kind == SYM_LOCAL || src_ref->kind == SYM_PARAM)) {
+                        emit_byte(gen, OP_MOVE_LOCAL_POP, ast->line);
+                        emit_byte(gen, (uint8_t)(src_ref->index >> 8), ast->line);
+                        emit_byte(gen, (uint8_t)(src_ref->index & 0xFF), ast->line);
+                        emit_byte(gen, (uint8_t)(ref->index >> 8), ast->line);
+                        emit_byte(gen, (uint8_t)(ref->index & 0xFF), ast->line);
+                        return;
+                    }
+                }
+                // a = expr → gen_expr(expr) + OP_SET_LOCAL_POP（省一次分发）
+                gen_expr(gen, expr->u.assign.value);
+                emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+                return;
+            }
+        }
+        // 索引赋值语句: obj[index] = value → 直接生成 OP_INDEX_SET_NOPUSH
+        // （不能走后置窥孔，因为 OP_SET_FIELD+field_idx 的 field_idx 字节
+        //   可能与 OP_INDEX_SET 枚举值碰撞，导致误替换）
+        if (target && target->kind == AST_INDEX) {
+            gen_expr(gen, target->u.index.obj);
+            gen_expr(gen, target->u.index.index);
+            gen_expr(gen, expr->u.assign.value);
+            emit_byte(gen, OP_INDEX_SET_NOPUSH, ast->line);
+            return;
+        }
+    }
+
+    if (expr->kind == AST_COMPOUND_ASSIGN) {
+        SymRef* ref = &expr->u.compound_assign.ref;
+        if (ref->name && (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) &&
+            strcmp(ref->name, "__self_field__") != 0) {
+            gen_expr(gen, expr);
+            // 检查末尾是否是 OP_SET_LOCAL（排除 INC_LOCAL/DEC_LOCAL 提前返回的情况）
+            if (gen->chunk->len >= 3 &&
+                gen->chunk->code[gen->chunk->len - 3] == OP_SET_LOCAL) {
+                gen->chunk->code[gen->chunk->len - 3] = OP_SET_LOCAL_POP;
+                return;  // 跳过 OP_POP
+            }
+            // INC_LOCAL/DEC_LOCAL 等情况仍需 OP_POP
+            emit_byte(gen, OP_POP, ast->line);
+            return;
+        }
+    }
+
+    // 默认：生成表达式 + OP_POP
     gen_expr(gen, expr);
+
+    // 后置窥孔优化：仅对 AST_CALL 表达式检查，避免误匹配其他指令的操作数
+    if (expr->kind == AST_CALL) {
+        // OP_CALL_NATIVE(5字节) → OP_CALL_NATIVE_VOID（省掉 OP_POP）
+        if (gen->chunk->len >= 5 &&
+            gen->chunk->code[gen->chunk->len - 5] == OP_CALL_NATIVE) {
+            gen->chunk->code[gen->chunk->len - 5] = OP_CALL_NATIVE_VOID;
+            return;
+        }
+        // OP_DICT_SET(1字节) → OP_DICT_SET_NOPUSH
+        if (gen->chunk->len >= 1 &&
+            gen->chunk->code[gen->chunk->len - 1] == OP_DICT_SET) {
+            gen->chunk->code[gen->chunk->len - 1] = OP_DICT_SET_NOPUSH;
+            return;
+        }
+    }
+
     emit_byte(gen, OP_POP, ast->line);
 }
 
@@ -1492,8 +1572,7 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 if (ast->u.try_.catch_var && ast->u.try_.catch_var_ref.name) {
                     int var_idx = ast->u.try_.catch_var_ref.index;
                     // 将栈顶的异常值存入局部变量
-                    emit_bytes_2(gen, OP_SET_LOCAL, var_idx, ast->line);
-                    emit_byte(gen, OP_POP, ast->line);
+                    emit_bytes_2(gen, OP_SET_LOCAL_POP, var_idx, ast->line);
                 } else {
                     // 没有 catch 变量，直接弹出异常值
                     emit_byte(gen, OP_POP, ast->line);

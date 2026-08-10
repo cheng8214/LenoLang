@@ -185,8 +185,7 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
         if (ast->u.func.ref.kind == SYM_GLOBAL_FUNC) {
             emit_define_global_func(gen, ast->u.func.ref.index, ast->line);
         } else if (ast->u.func.ref.kind == SYM_LOCAL) {
-            emit_bytes_2(gen, OP_SET_LOCAL, ast->u.func.ref.index, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
+            emit_bytes_2(gen, OP_SET_LOCAL_POP, ast->u.func.ref.index, ast->line);
         }
     }
 }
