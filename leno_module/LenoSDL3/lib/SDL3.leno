@@ -53,7 +53,7 @@ use core.(SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_Mou
 use core.sdl3
 
 use evt.Event
-use r.Renderer
+use r.(Renderer, PixelBuffer)
 use wnd.(Window, EventHandler, RenderCallback, Shortcut)
 use fnt.(Font, TextTexture, sdl3_ttf, SDL_SurfaceInfo)
 use tm.(Timer, TimerCallback)
@@ -287,6 +287,12 @@ export func createSurfaceFromRaw(int w, int h, int fmt, Ptr[u8] pixels, int pitc
     return _sdlLib.SDL_CreateSurfaceFrom(w, h, fmt, pixels, pitch)
 }
 export func destroySurface(Ptr[u8] surface) { _sdlLib.SDL_DestroySurface(surface) }
+// 由 surface 创建纹理（配合逐像素直写渲染：自己写 pixels 缓冲 -> CreateSurfaceFrom -> 这里上传）
+export func createTextureFromSurface(Ptr[u8] renderer, Ptr[u8] surface): Ptr[u8] {
+    return _sdlLib.SDL_CreateTextureFromSurface(renderer, surface)
+}
+// 销毁纹理（配合逐像素直写渲染：createTextureFromSurface 用完即销毁）
+export func destroyTexture(Ptr[u8] texture) { _sdlLib.SDL_DestroyTexture(texture) }
 
 // ==================== 主题 ====================
 

@@ -28,6 +28,46 @@ export func getBatchLineBatched(): int { return _gLineBatched }
 export func _dbgLinePtr(Renderer r): Ptr[f32] { return r._bxLine }
 export func _dbgLineCount(Renderer r): int { return r._bxLineN }
 
+// ==================== PixelBuffer（逐像素直写，对标 surface.set_at） ====================
+// 自己管理一块 RGBA8888 像素内存（SDL3 little-endian 内存字节序 = [A,B,G,R]，即 u32 = (r<<24)|(g<<16)|(b<<8)|a），
+// 逐点 ffi.write_int 写内存（无 SDL 调用开销），整帧一次性上传纹理绘制。
+// 用途：烟花/粒子/分形/画板等需要海量逐点绘制的场景，性能远超逐点 SDL_RenderPoint。
+export struct PixelBuffer {
+    Ptr[u8] pixels   // 像素内存（ffi.malloc，w*h*4 字节）
+    int w; int h     // 尺寸
+    int pitch        // 每行字节数 = w*4
+    bool ok
+
+    // 创建像素缓冲（w,h 为宽高），失败返回 ok=false
+    func init(int w_, int h_): bool {
+        w = w_; h = h_; pitch = w * 4
+        pixels = ffi.malloc(w * h * 4)
+        ok = pixels != null
+        return ok
+    }
+    // 释放内存
+    func free() { if pixels != null { ffi.free(pixels); pixels = null; ok = false } }
+
+    // 整块填充单色（r,g,b,a 0~255），用 memset 极快
+    func fill(int r, int g, int b, int a) {
+        int color = (r << 24) | (g << 16) | (b << 8) | a
+        var total = w * h
+        for 0 : total - 1 to i {
+            ffi.write_int(pixels, i * 4, color)
+        }
+    }
+    // 从另一个像素缓冲整块拷贝（尺寸需一致），用 memcpy 极快
+    func fillCopy(PixelBuffer src) {
+        ffi.memcpy(pixels, src.pixels, w * h * 4)
+    }
+    // 写单个像素（越界安全：超出则忽略），对标 Python 的 surface.set_at
+    func setPixel(int x, int y, int r, int g, int b, int a) {
+        if 0 <= x and x < w and 0 <= y and y < h {
+            ffi.write_int(pixels, (y * pitch + x * 4), (r << 24) | (g << 16) | (b << 8) | a)
+        }
+    }
+}
+
 export struct Renderer {
     // ==================== 关联常量 ====================
     const BX_EMPTY  = 0   // 批处理空闲
@@ -38,6 +78,8 @@ export struct Renderer {
     Ptr[u8] handle; bool ok
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
     Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
+    // PixelBuffer 复用纹理（懒创建）：blitBuffer 上传用，尺寸匹配时复用
+    Ptr[u8] _pixTex; int _pixTexW; int _pixTexH
 
     // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
     Ptr[f32] _bxFill; int _bxFillN, _bxFillCap
@@ -77,6 +119,7 @@ export struct Renderer {
             _bxBlend = core.BlendMode.BLEND; _bxClip = false; _bxClipPtr = null; _bxClipOwned = false; _bxTarget = null
             _clipStack = []; _clipStackOwned = []
             _bxSx = 1.0; _bxSy = 1.0; _bxCScale = 1.0; _bxCur = BX_EMPTY
+            _pixTex = null; _pixTexW = 0; _pixTexH = 0
             _gFillSubmits = 0; _gFillBatched = 0
             _gOutSubmits = 0;  _gOutBatched = 0
             _gLineSubmits = 0; _gLineBatched = 0
@@ -105,6 +148,7 @@ export struct Renderer {
             if _bxOut != null { ffi.free(_bxOut); _bxOut = null }
             if _bxLine != null { ffi.free(_bxLine); _bxLine = null }
             if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex); _ssaaTex = null }
+            if _pixTex != null { _lib.SDL_DestroyTexture(_pixTex); _pixTex = null }
             // 渲染器销毁前：先使字体库中由本渲染器创建的纹理缓存失效。
             // 否则销毁后这些纹理悬空，SDL 复用同一指针再建渲染器时会命中失效纹理 → 字体不显示。
             font.invalidateRendererTextures(handle)
@@ -714,6 +758,22 @@ export struct Renderer {
     // 更新纹理像素数据
     func updateTexture(Ptr[u8] texture, Ptr[u8] rect, Ptr[u8] pixels, int pitch): bool {
         return _lib.SDL_UpdateTexture(texture, rect, pixels, pitch)
+    }
+
+    // 将 PixelBuffer 像素一次性上传并绘制到 (dx, dy)（尺寸可选缩放）
+    // 内部复用流式纹理：尺寸匹配时懒创建一次，全程零分配。返回 false 表示失败。
+    func blitBuffer(PixelBuffer buf, float dx, float dy, float dw, float dh): bool {
+        if not buf.ok or buf.w <= 0 or buf.h <= 0 { return false }
+        if _pixTex == null or _pixTexW != buf.w or _pixTexH != buf.h {
+            if _pixTex != null { _lib.SDL_DestroyTexture(_pixTex); _pixTex = null }
+            // SDL_TEXTUREACCESS_STREAMING = 1
+            _pixTex = createTexture(core.PIXELFORMAT_RGBA8888, 1, buf.w, buf.h)
+            if _pixTex == null { return false }
+            _pixTexW = buf.w; _pixTexH = buf.h
+        }
+        _flushBatches()
+        if not _lib.SDL_UpdateTexture(_pixTex, null, buf.pixels, buf.pitch) { return false }
+        return drawTextureAt(_pixTex, dx, dy, dw, dh)
     }
 
     // 锁定/解锁纹理以直接操作像素（需 TEXTUREACCESS_STREAMING）

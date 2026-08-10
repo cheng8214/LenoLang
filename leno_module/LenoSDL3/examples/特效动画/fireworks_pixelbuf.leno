@@ -1,12 +1,9 @@
 // fireworks.leno — 对齐 Python 版结构（紧凑索引 + 交换删除）
-// 内联 ffi 版：手写 ffi.write_int 直写像素（最高性能基准）
-// 对比封装版：fireworks_pixelbuf.leno（PixelBuffer struct，代码更清晰）
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
-use SDL3.Renderer
+use SDL3.(Renderer, PixelBuffer)
 import maths
 import rands
-import ffi
 use SDL3.Scancode
 use SDL3.WindowFlag
 
@@ -102,20 +99,18 @@ main() {
     var ev = SDL3.createEvent()
     var running = true
 
-    // 像素缓冲直写（对标 Python 的 surface.set_at）：手写 ffi 管理内存，
-    // 逐点 ffi.write_int 写内存（无 SDL 调用开销），整帧只 1 次 updateTexture 上传。
-    // 像素格式 = RGBA8888，SDL3 little-endian 内存字节序 [A,B,G,R]，u32 = (r<<24)|(g<<16)|(b<<8)|a
-    var pixBuf = ffi.malloc(W * H * 4)
-    var bgBuf  = ffi.malloc(W * H * 4)
+    // 像素缓冲直写（对标 Python 的 surface.set_at）：PixelBuffer 封装了内存管理与字节序，
+    // 逐点 buf.set 写内存（无 SDL 调用开销），整帧只 1 次 blitBuffer 上传纹理。
+    var buf = new PixelBuffer()
+    if not buf.init(W, H) { win.destroy(); return }
+    var bgBuf = new PixelBuffer()
+    if not bgBuf.init(W, H) { win.destroy(); return }
     // 预生成背景（背景 RGB = 2,2,15，a=255）
     for 0 : W - 1 to xx {
         for 0 : H - 1 to yy {
-            ffi.write_int(bgBuf, (yy * W + xx) * 4, (2 << 24) | (2 << 16) | (15 << 8) | 255)
+            bgBuf.setPixel(xx, yy, 2, 2, 15, 255)
         }
     }
-    // 流式纹理（全程复用，无需每帧创建/销毁）
-    var pixelTex = ren.createTexture(SDL3.PIXELFORMAT_RGBA8888, 1, W, H)
-    if pixelTex == null { win.destroy(); return }
 
     while running {
         var t0 = SDL3.getTicks()
@@ -126,7 +121,7 @@ main() {
 
         frame += 1
         // 背景：整块从预生成 bgBuf 复制（C 级 memcpy，约 0.1ms）
-        ffi.memcpy(pixBuf, bgBuf, W * H * 4)
+        buf.fillCopy(bgBuf)
 
         // ---- 星空 ----
         for 0 : stars.len() - 1 to si {
@@ -135,10 +130,7 @@ main() {
             var a = 80 + _int(maths.sin(s.twinkle) * 60.0 + 60.0)
             if a > 255 { a = 255 }
            var px = _int(s.x); var py = _int(s.y)
-            if 0 <= px and px < W and 0 <= py and py < H {
-                ffi.write_int(pixBuf, (py * W + px) * 4,
-                    (s.r << 24) | (s.g << 16) | (s.b << 8) | a)
-            }
+            buf.setPixel(px, py, s.r, s.g, s.b, a)
         }
 
         // ---- 发射（对齐 Python：每 8 帧，1~2 枚） ----
@@ -172,15 +164,8 @@ main() {
                 rockets.pop()
             } else {
                 var px = _int(rk.x); var py = _int(rk.y)
-                if 0 <= px and px < W and 0 <= py and py < H {
-                    ffi.write_int(pixBuf, (py * W + px) * 4,
-                        (rk.r << 24) | (rk.g << 16) | (rk.b << 8) | 255)
-                }
-                var px2 = _int(rk.x + 1); var py2 = _int(rk.y + 2)
-                if 0 <= px2 and px2 < W and 0 <= py2 and py2 < H {
-                    ffi.write_int(pixBuf, (py2 * W + px2) * 4,
-                        (rk.r << 24) | (rk.g << 16) | (rk.b << 8) | 255)
-                }
+                buf.setPixel(px, py, rk.r, rk.g, rk.b, 255)
+                buf.setPixel(px + 1, py + 2, rk.r, rk.g, rk.b, 255)
             }
         }
 
@@ -205,21 +190,16 @@ main() {
                 particles.pop()
             } else {
                 var px = _int(p.x); var py = _int(p.y)
-                if 0 <= px and px < W and 0 <= py and py < H {
-                    if p.ptype == 1 {
-                        var col = (p.r << 24) | (p.g << 16) | (p.b << 8) | 255
-                        ffi.write_int(pixBuf, (py * W + px) * 4, col)
-                        if px + 1 < W { ffi.write_int(pixBuf, (py * W + px + 1) * 4, col) }
-                        if py + 1 < H { ffi.write_int(pixBuf, ((py + 1) * W + px) * 4, col) }
-                    } else if p.ptype == 3 {
-                        ffi.write_int(pixBuf, (py * W + px) * 4,
-                            (p.r << 24) | (clamp(p.g + 50) << 16) | (p.b << 8) | 255)
-                    } else {
-                        ffi.write_int(pixBuf, (py * W + px) * 4,
-                            (p.r << 24) | (p.g << 16) | (p.b << 8) | 255)
-                        if p.ptype == 2 and p.life == _int(_float(p.life) * 0.3) and rands.ints(0, 100) < 5 {
-                            secBurst(p.x, p.y, p.r, p.g, p.b)
-                        }
+                if p.ptype == 1 {
+                    buf.setPixel(px, py, p.r, p.g, p.b, 255)
+                    buf.setPixel(px + 1, py, p.r, p.g, p.b, 255)
+                    buf.setPixel(px, py + 1, p.r, p.g, p.b, 255)
+                } else if p.ptype == 3 {
+                    buf.setPixel(px, py, p.r, clamp(p.g + 50), p.b, 255)
+                } else {
+                    buf.setPixel(px, py, p.r, p.g, p.b, 255)
+                    if p.ptype == 2 and p.life == _int(_float(p.life) * 0.3) and rands.ints(0, 100) < 5 {
+                        secBurst(p.x, p.y, p.r, p.g, p.b)
                     }
                 }
             }
@@ -235,8 +215,7 @@ main() {
         }
 
         // 整帧像素缓冲一次性上传纹理并绘制（对标 Python 的 display.flip）
-        ren.updateTexture(pixelTex, null, pixBuf, W * 4)
-        ren.drawTextureAt(pixelTex, 0.0, 0.0, _float(W), _float(H))
+        ren.blitBuffer(buf, 0.0, 0.0, _float(W), _float(H))
 
         ren.present()
 
@@ -245,9 +224,8 @@ main() {
         perf_idx += 1
     }
 
-    SDL3.destroyTexture(pixelTex)
-    ffi.free(pixBuf)
-    ffi.free(bgBuf)
+    buf.free()
+    bgBuf.free()
     ren.destroy()
     win.destroy()
     ev.uninit()
