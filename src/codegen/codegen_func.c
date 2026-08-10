@@ -134,11 +134,16 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
 
     gen->scope_depth++;
 
+    // 将函数名压入内联检测栈，防止函数体内的递归调用被内联
+    inline_name_stack_push(ast->u.func.name);
+
     // 局部变量由 var_decl 负责初始化，不需要预先生成 null
     // 这样可以避免冗余的 null 赋值（如 var n = arr.len() 时）
 
     gen_block(gen, ast->u.func.body);
     gen->scope_depth--;
+
+    inline_name_stack_pop();
 
     // 更新函数的 local_count：使用峰值为准（覆盖 gen_assign 临时槽位需求）
     // peak_local_slot 避免了 gen_assign 级联膨胀问题，只记录真实需要的最大槽位

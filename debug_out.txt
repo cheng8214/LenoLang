@@ -1,0 +1,104 @@
+debug妯″紡:杩涘叆涓绘墽琛屾祦绋?
+debug妯″紡:杩涘叆璇硶鍒嗘瀽闃舵
+debug妯″紡:杩涘叆璇箟鍒嗘瀽
+debug妯″紡:寮€濮嬬敓鎴愬瓧鑺傜爜
+===== 涓荤▼搴?=====
+浠ｇ爜闀垮害: 19 bytes
+甯搁噺鏁伴噺: 2
+灞€閮ㄥ彉閲忔Ы浣嶆暟: 0
+
+Offset Instruction          Operand
+------ -------------------- -------
+0000 OP_CLOSURE           0
+0003 OP_DEFINE_GLOBAL_FUNC 0
+0006 OP_CLOSURE           1
+0009 OP_DEFINE_GLOBAL_FUNC 1
+0012 OP_GET_GLOBAL_FUNC   1
+0015 OP_CALL              0
+0018 OP_POP              
+==================
+
+  ===== 鍑芥暟: factorial =====
+  浠ｇ爜闀垮害: 93 bytes
+  甯搁噺鏁伴噺: 2
+  灞€閮ㄥ彉閲忔Ы浣嶆暟: 4
+
+  Offset Instruction          Operand
+  ------ -------------------- -------
+  0000 OP_GET_LOCAL         0
+  0003 OP_LE_INT_IMM        1
+  0005 OP_JUMP_IF_FALSE     10 (to 20)
+  0010 OP_POP              
+  0011 OP_CONST             0 (1)
+  0014 OP_RETURN           
+  0015 OP_JUMP              1 (to 21)
+  0020 OP_POP              
+  0021 OP_GET_LOCAL         0
+  0024 OP_GET_LOCAL         0
+  0027 OP_SUB_INT_IMM       1
+  0029 OP_SET_LOCAL_POP     1
+  0032 OP_GET_LOCAL         1
+  0035 OP_LE_INT_IMM        1
+  0037 OP_JUMP_IF_FALSE     17 (to 59)
+  0042 OP_POP              
+  0043 OP_CONST             1 (1)
+  0046 OP_SET_LOCAL         2
+  0049 OP_JUMP              32 (to 86)
+  0054 OP_JUMP              1 (to 60)
+  0059 OP_POP              
+  0060 OP_GET_LOCAL         1
+  0063 OP_GET_LOCAL         1
+  0066 OP_SUB_INT_IMM       1
+  0068 OP_CALL_GLOBAL_FUNC  func=0 args=1
+  0073 OP_MUL_INT          
+  0074 OP_SET_LOCAL         2
+  0077 OP_JUMP              4 (to 86)
+  0082 OP_NULL             
+  0083 OP_SET_LOCAL         2
+  0086 OP_GET_LOCAL         2
+  0089 OP_MUL_INT          
+  0090 OP_RETURN           
+  0091 OP_NULL             
+  0092 OP_RETURN           
+  ==================
+
+  ===== 鍑芥暟: main =====
+  浠ｇ爜闀垮害: 85 bytes
+  甯搁噺鏁伴噺: 5
+  灞€閮ㄥ彉閲忔Ы浣嶆暟: 4
+
+  Offset Instruction          Operand
+  ------ -------------------- -------
+  0000 OP_CONST             0 (5)
+  0003 OP_SET_LOCAL_POP     1
+  0006 OP_GET_LOCAL         1
+  0009 OP_LE_INT_IMM        1
+  0011 OP_JUMP_IF_FALSE     17 (to 33)
+  0016 OP_POP              
+  0017 OP_CONST             1 (1)
+  0020 OP_SET_LOCAL         2
+  0023 OP_JUMP              32 (to 60)
+  0028 OP_JUMP              1 (to 34)
+  0033 OP_POP              
+  0034 OP_GET_LOCAL         1
+  0037 OP_GET_LOCAL         1
+  0040 OP_SUB_INT_IMM       1
+  0042 OP_CALL_GLOBAL_FUNC  func=0 args=1
+  0047 OP_MUL_INT          
+  0048 OP_SET_LOCAL         2
+  0051 OP_JUMP              4 (to 60)
+  0056 OP_NULL             
+  0057 OP_SET_LOCAL         2
+  0060 OP_GET_LOCAL         2
+  0063 OP_SET_LOCAL_POP     0
+  0066 OP_CONST             2 (factorial(5) = )
+  0069 OP_GET_LOCAL         0
+  0072 OP_CALL_NATIVE       3 (_str) args=1
+  0077 OP_ADD              
+  0078 OP_CALL_NATIVE_VOID  name=4 args=1
+  0083 OP_NULL             
+  0084 OP_RETURN           
+  ==================
+
+===== 鎵ц璺熻釜 =====
+factorial(5) = 45

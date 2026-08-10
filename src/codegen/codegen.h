@@ -82,4 +82,9 @@ typedef struct {
 
 MainFuncInfo find_main_function(Semantic* sem);
 
+// 函数内联辅助（定义在 codegen_inline.c 中）
+int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def);
+void inline_name_stack_push(const char* name);
+void inline_name_stack_pop(void);
+
 #endif // LENO_CODEGEN_INTERNAL_H

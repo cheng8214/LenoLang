@@ -2,9 +2,6 @@
 #include "../semantic/semantic_internal.h"
 #include "../module/ffi/ffi_clib.h"
 
-// 函数内联（定义在 codegen_inline.c 中）
-int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def);
-
 static void gen_binary(CodeGen* gen, Ast* ast);
 static void gen_unary(CodeGen* gen, Ast* ast);
 static void gen_variable(CodeGen* gen, Ast* ast, int can_assign);

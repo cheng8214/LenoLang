@@ -11,8 +11,23 @@
 #define MAX_INLINE_STMTS  3
 
 // 正在被内联的函数名栈（防止递归内联）
-static char* inline_name_stack[MAX_INLINE_DEPTH];
+// 也用于跟踪当前正在编译的函数，防止函数体内的递归调用被内联
+static char* inline_name_stack[64];
 static int inline_name_stack_top = 0;
+
+// 编译函数体前调用：将函数名压栈，防止递归调用被内联
+void inline_name_stack_push(const char* name) {
+    if (inline_name_stack_top < 64) {
+        inline_name_stack[inline_name_stack_top++] = (char*)name;
+    }
+}
+
+// 编译函数体后调用：弹栈
+void inline_name_stack_pop(void) {
+    if (inline_name_stack_top > 0) {
+        inline_name_stack_top--;
+    }
+}
 
 // ============================================================================
 // AST 遍历：为所有 SYM_LOCAL/SYM_PARAM 的 index 添加 offset

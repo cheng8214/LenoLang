@@ -1,0 +1,38 @@
+// 递归内联正确性测试
+func fib(int n): int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+func factorial(int n): int {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}
+
+func gcd(int a, int b): int {
+    if b == 0 { return a }
+    return gcd(b, a % b)
+}
+
+main() {
+    // factorial
+    assert_eq(factorial(5), 120)
+    assert_eq(factorial(10), 3628800)
+    assert_eq(factorial(0), 1)
+    assert_eq(factorial(1), 1)
+    print("factorial OK")
+
+    // fibonacci
+    assert_eq(fib(0), 0)
+    assert_eq(fib(1), 1)
+    assert_eq(fib(10), 55)
+    assert_eq(fib(20), 6765)
+    print("fibonacci OK")
+
+    // gcd
+    assert_eq(gcd(48, 36), 12)
+    assert_eq(gcd(17, 5), 1)
+    print("gcd OK")
+
+    print("ALL PASSED")
+}
