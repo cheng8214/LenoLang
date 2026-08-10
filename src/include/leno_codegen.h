@@ -48,6 +48,13 @@ typedef struct {
     int dtor_count;           // 当前条目数
     int dtor_capacity;        // 数组容量
     int dtor_temp_slot;       // return 时保存返回值的临时槽位（-1=未分配）
+    // 函数内联状态
+    int inline_depth;                 // 当前内联嵌套深度（0=不在内联中）
+    int inline_result_slot;           // 内联函数返回值存放槽位
+    int inline_return_jumps[256];     // 内联函数中 return 语句的跳转位置
+    int inline_return_jump_count;     // 待回填的 return 跳转数量
+    int inline_discard_result;        // 1=当前调用结果将被丢弃（表达式语句）
+    int inline_no_result;             // 1=内联未在栈上留下值（void函数+discard）
 } CodeGen;
 
 void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);

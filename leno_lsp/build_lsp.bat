@@ -73,6 +73,7 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_stmt.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_func.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_import.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_utils.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_inline.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/debug.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/native.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/bigint.c

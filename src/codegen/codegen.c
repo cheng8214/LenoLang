@@ -13,6 +13,11 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
     gen->dtor_count = 0;
     gen->dtor_capacity = 0;
     gen->dtor_temp_slot = -1;
+gen->inline_depth = 0;
+gen->inline_result_slot = -1;
+gen->inline_return_jump_count = 0;
+gen->inline_discard_result = 0;
+gen->inline_no_result = 0;
 }
 
 void codegen_cleanup(CodeGen* gen) {

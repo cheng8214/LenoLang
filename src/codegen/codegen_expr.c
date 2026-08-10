@@ -2,6 +2,9 @@
 #include "../semantic/semantic_internal.h"
 #include "../module/ffi/ffi_clib.h"
 
+// 函数内联（定义在 codegen_inline.c 中）
+int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def);
+
 static void gen_binary(CodeGen* gen, Ast* ast);
 static void gen_unary(CodeGen* gen, Ast* ast);
 static void gen_variable(CodeGen* gen, Ast* ast, int can_assign);
@@ -1051,6 +1054,12 @@ static void gen_call(CodeGen* gen, Ast* ast) {
         if (callee_sym && callee_sym->kind == SYM_GLOBAL_FUNC
             && !ast->u.call.callee_is_async
             && ast->u.call.generic_type_count == 0) {
+
+            // 尝试函数内联：小函数体直接嵌入调用点
+            if (func_def && try_inline_call(gen, ast, func_def)) {
+                return;
+            }
+
             emit_byte(gen, OP_CALL_GLOBAL_FUNC, ast->line);
             emit_byte(gen, (callee_sym->index >> 8) & 0xff, ast->line);
             emit_byte(gen, callee_sym->index & 0xff, ast->line);

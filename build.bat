@@ -51,6 +51,7 @@ set SOURCES=!SOURCES! src\codegen\codegen_stmt.c
 set SOURCES=!SOURCES! src\codegen\codegen_func.c
 set SOURCES=!SOURCES! src\codegen\codegen_import.c
 set SOURCES=!SOURCES! src\codegen\codegen_utils.c
+set SOURCES=!SOURCES! src\codegen\codegen_inline.c
 set SOURCES=!SOURCES! src\debug.c
 set SOURCES=!SOURCES! src\type.c
 set SOURCES=!SOURCES! src\native.c

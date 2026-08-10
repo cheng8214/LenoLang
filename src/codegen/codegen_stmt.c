@@ -1215,6 +1215,22 @@ static int is_tail_call(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_return(CodeGen* gen, Ast* ast) {
+    // 函数内联上下文：return 变为 set_local + jump
+    if (gen->inline_depth > 0) {
+        if (ast->u.ret) {
+            gen_expr(gen, ast->u.ret);
+        } else {
+            emit_byte(gen, OP_NULL, ast->line);
+        }
+        emit_bytes_2(gen, OP_SET_LOCAL, gen->inline_result_slot, ast->line);
+        // 记录跳转，稍后回填到内联块末尾
+        if (gen->inline_return_jump_count < 256) {
+            gen->inline_return_jumps[gen->inline_return_jump_count++] =
+                emit_jump(gen, OP_JUMP, ast->line);
+        }
+        return;
+    }
+
     if (gen->dtor_count > 0) {
         // 有需要析构的变量，禁用尾调用优化
         if (ast->u.ret) {
@@ -1346,7 +1362,17 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
     }
 
     // 默认：生成表达式 + OP_POP
+    // 设置 discard 标志：内联 void 函数时可省掉 OP_NULL + OP_POP
+    gen->inline_discard_result = 1;
+    gen->inline_no_result = 0;
     gen_expr(gen, expr);
+    gen->inline_discard_result = 0;
+
+    // 内联 void 函数已跳过 OP_NULL，栈上无值，跳过 OP_POP
+    if (gen->inline_no_result) {
+        gen->inline_no_result = 0;
+        return;
+    }
 
     // 后置窥孔优化：仅对 AST_CALL 表达式检查，避免误匹配其他指令的操作数
     if (expr->kind == AST_CALL) {
