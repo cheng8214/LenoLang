@@ -2,11 +2,10 @@
 // 经典黑客帝国风格字符雨：绿色字符从顶部不断下落，头部亮白，尾部渐隐
 // 操作：ESC 退出 | F1 切换统计信息 | SPACE 切换字符集
 //
-// ★ 性能优化（2026-08-10）：
-//   原版每帧用 ren.drawText 画 3×N 列个「随机字符」→ 每帧 ~333 次 TTF_RenderText_Blended
-//   CPU 栅格化 + 纹理创建，导致仅 18fps。
-//   现改为「PixelBuffer 像素直写」：初始化把字符集每个字符栅格化为灰度掩码（一次），
-//   每帧 memcpy/直写把字符位图贴进整帧像素缓冲 + 整帧一次 blitBuffer 上传。性能提升一个量级。
+// ★ 性能优化（2026-08-10 v3）：
+//   字符掩码预渲染为"可直接 memcpy 的 RGBA 亮绿块"，每帧用整行 ffi.memcpy 拷入整帧缓冲，
+//   再整帧一次 blitBuffer 上传。拖尾用 GPU fillRect 半透明黑。
+//   对比逐像素 read_byte/write_byte，memcpy 一次 FFI 拷整行，FFI 调用从 ~10万 降到 ~3000 次。
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.(Renderer, PixelBuffer)
@@ -18,15 +17,13 @@ import ffi
 
 // ==================== 字符集 ====================
 
-// ASCII 字母 + 数字 + 符号（默认）
 var CHARS_ASCII = [
     "A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z",
     "a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z",
     "0","1","2","3","4","5","6","7","8","9",
-    "@","#","$","%","&","*","+","-","=","<",">","{","}","[","]","|","/","\\","!","?","^","~",".",";",":",",","_"
+    "@","#","$","%","&","*","+","-","=","<",">","{","}","[","]","|","/","\\","!","?","^","~",".",":",";",",","_"
 ]
 
-// 日文片假名 + ASCII（更接近原版 Matrix）
 var CHARS_KANA = [
     "ｱ","ｲ","ｳ","ｴ","ｵ","ｶ","ｷ","ｸ","ｹ","ｺ","ｻ","ｼ","ｽ","ｾ","ｿ",
     "ﾀ","ﾁ","ﾂ","ﾃ","ﾄ","ﾅ","ﾆ","ﾇ","ﾈ","ﾉ","ﾊ","ﾋ","ﾌ","ﾍ","ﾎ",
@@ -38,9 +35,7 @@ var CHARS_KANA = [
 
 var charSet = CHARS_ASCII
 
-func randCharIdx(): int {
-    return rands.ints(0, charSet.len() - 1)
-}
+func randCharIdx(): int { return rands.ints(0, charSet.len() - 1) }
 
 // ==================== 主程序 ====================
 
@@ -52,16 +47,15 @@ main() {
     if not win.ok { return }
 
     SDL3.ttfInit()
-    // 优先等宽字体，字符宽度一致列对齐整齐
     var font = SDL3.createFont("C:/Windows/Fonts/consola.ttf", 16.0)
     if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/consolas.ttf", 16.0) }
     if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 16.0) }
 
     var ren = SDL3.createRenderer(win.handle)
     if not ren.ok { win.destroy(); SDL3.ttfQuit(); return }
-    ren.setVSync(1)
+    ren.setVSync(0)   // 关闭垂直同步，避免锁帧限制上限（对比 Python 不锁帧）
 
-    // 测量字符尺寸（等宽字体测一个字符即可）
+    // 测量字符尺寸
     var charW = 9.0
     var charH = 16.0
     if font.ok {
@@ -71,54 +65,67 @@ main() {
         if charH < 1.0 { charH = 16.0 }
     }
 
-    // ==================== 字符掩码预渲染 ====================
-    // 每个字符栅格化一次（白色），把 alpha 当作亮度存进该字符的 PixelBuffer（R 通道）。
-    // 之后每帧只需把掩码位图按亮度直写进整帧缓冲，不再触发任何 TTF 栅格化。
-    // 预分配一个最大尺寸掩码缓冲（对齐等宽字符，每列一个）
+    // ==================== 字符掩码预渲染（可直接 memcpy 的亮绿 RGBA 块） ====================
+    // 每字符栅格化一次白色，把 alpha 当亮度；预渲染 3 档可直接拷入的 RGBA 掩码：
+    //   [0] 纯白块（闪烁头部）  [1] 亮绿块（头部）  [2] 暗绿块（跟随）
     var glyphW = _int(charW + 1.0)
     var glyphH = _int(charH + 1.0)
-    // glyphs 容量 = 两个字符集长度的较大者（KANA 更长），保证切换后任何索引都不越界
     var glyphsCap = CHARS_KANA.len()
     if CHARS_ASCII.len() > glyphsCap { glyphsCap = CHARS_ASCII.len() }
-    var glyphs = []   // Array[PixelBuffer] 灰度掩码
+    // glyphs[i][档] 存 RGBA 掩码 PixelBuffer；用一维数组压平 [档*glyphsCap + i]
+    var glyphs = []
+    for 0 : 2 to shade {
+        for 0 : glyphsCap - 1 to ci {
+            var g = new PixelBuffer()
+            g.init(glyphW, glyphH)
+            glyphs.add(g)
+        }
+    }
+    // 渲染到 [0] 档（白色块），[1]亮绿 [2]暗绿由白色块派生
     for 0 : glyphsCap - 1 to ci {
-        var g = new PixelBuffer()
-        g.init(glyphW, glyphH)
-        if ci < charSet.len() and font.ok {
-            var surf = font.renderTextBlended(charSet[ci], 255, 255, 255)
-            if surf != null {
-                // SDL_Surface 布局：w@8, h@12, pitch@16, pixels@24
-                var sw = ffi.read_int(surf, 8)
-                var sh = ffi.read_int(surf, 12)
-                var spitch = ffi.read_int(surf, 16)
-                var spixels = ffi.read_ptr(surf, 24)
-                if spixels != null {
-                    // Blended 格式为 [B,G,R,A] 字节序：+0=B,+1=G,+2=R,+3=A(亮度)
-                    if sw > glyphW { sw = glyphW }
-                    if sh > glyphH { sh = glyphH }
-                    for 0 : sh - 1 to row {
-                        for 0 : sw - 1 to col {
-                            var sOff = row * spitch + col * 4
-                            var sa = ffi.read_byte(spixels, sOff + 3)
-                            if sa > 0 {
-                                g.setPixel(col, row, sa, 0, 0, 255)
-                            }
-                        }
-                    }
+        if ci >= charSet.len() or not font.ok { continue }
+        var surf = font.renderTextBlended(charSet[ci], 255, 255, 255)
+        if surf == null { continue }
+        var sw = ffi.read_int(surf, 8)
+        var sh = ffi.read_int(surf, 12)
+        var spitch = ffi.read_int(surf, 16)
+        var spixels = ffi.read_ptr(surf, 24)
+        if spixels != null {
+            if sw > glyphW { sw = glyphW }
+            if sh > glyphH { sh = glyphH }
+            // 目标：亮绿 RGBA 块（G 通道 = 亮度，A=255，R/B=0）
+            PixelBuffer g1 = glyphs[1 * glyphsCap + ci]
+            for 0 : sh - 1 to row {
+                for 0 : sw - 1 to col {
+                    var sa = ffi.read_byte(spixels, row * spitch + col * 4 + 3)
+                    if sa > 0 { g1.setPixel(col, row, 0, sa, 0, 255) }
+                }
+            }
+            // 纯白块（闪烁头部）：R=G=B=亮度，A=255
+            PixelBuffer g0 = glyphs[0 * glyphsCap + ci]
+            for 0 : sh - 1 to row {
+                for 0 : sw - 1 to col {
+                    var sa = ffi.read_byte(spixels, row * spitch + col * 4 + 3)
+                    if sa > 0 { g0.setPixel(col, row, sa, sa, sa, 255) }
                 }
             }
         }
-        glyphs.add(g)
+    }
+    // 暗绿块 [2]：由亮绿块 [1] 减半（用于跟随字符亮度 0.5）
+    for 0 : glyphsCap - 1 to ci {
+        PixelBuffer g1 = glyphs[1 * glyphsCap + ci]
+        PixelBuffer g2 = glyphs[2 * glyphsCap + ci]
+        for 0 : glyphH - 1 to row {
+            for 0 : glyphW - 1 to col {
+                var lum = g1.getR(col, row)
+                if lum > 0 { g2.setPixel(col, row, 0, lum / 2, 0, 255) }
+            }
+        }
     }
 
     // ==================== 列数据 ====================
     var numCols = 0
-    var colX = []         // 列 x 坐标
-    var colY = []         // 头部 y 坐标
-    var colSpeed = []     // 下落速度（像素/帧）
-    var colChar = []      // 头部字符索引（glyphs 下标）
-    var colBright = []    // 亮度因子 (0.5~1.0)
-    var colFlicker = []   // 闪烁计数器
+    var colX = []; var colY = []; var colSpeed = []; var colChar = []; var colBright = []; var colFlicker = []
 
     func initCols(int w) {
         numCols = _int(_float(w) / charW) + 1
@@ -136,53 +143,47 @@ main() {
 
     initCols(winW)
 
-    // ==================== 字符像素缓冲（透明背景，叠加在 GPU 拖尾之上） ====================
+    // ==================== 整帧像素缓冲（透明，叠加 GPU 拖尾之上） ====================
     var buf = new PixelBuffer()
     if not buf.init(winW, winH) { ren.destroy(); win.destroy(); SDL3.ttfQuit(); return }
-    buf.fill(0, 0, 0, 0)   // 初始全透明：字符缓冲只含本帧新字符，其余透明以透出底下的拖尾
+    buf.fill(0, 0, 0, 0)
 
     // ==================== 主循环 ====================
     var ev = SDL3.createEvent()
     var running = true
     var frame = 0
 
-    var fpsFrames = 0
-    var fps = 0
-    var fpsStart = times.ns()
+    var fpsFrames = 0; var fps = 0; var fpsStart = times.ns()
     var showStats = true
     var useKana = false
 
-    // 把列头部字符掩码贴到 (x, y)，bright 控制亮度，flicker 是否纯白
-    // 优化：直接 ffi 字节操作（跳过 setPixel/getR 方法调用开销）。
-    // 掩码亮度存 R 通道(byte3)；buf.clear() 已把 RGB 清 0，故只需写 G 字节(byte2)和 A 字节(byte0)。
-    func blitGlyph(int ci, float x, float y, float bright, bool white) {
-        PixelBuffer g = glyphs[ci]
-        int gx0 = _int(x); int gy0 = _int(y)
-        Ptr[u8] gpx = g.pixels
-        Ptr[u8] bpx = buf.pixels
-        int bpitch = buf.pitch
+    // ==================== 性能统计（退出时输出，对标 Python） ====================
+    var peakDrawn = 0
+    var perfLogs = []      // Array[(字符数, 耗时ms)] 用一维数组存：每元素 = 字符数, 每元素 = ms
+    var perfMs = []
+
+    // 用整行 memcpy 把字符掩码块 [shade档][ci] 贴到 (gx0,gy0)
+    func blitGlyph(int shade, int ci, int gx0, int gy0) {
+        // 目标列数：需要裁剪到窗口右边界，避免 memcpy 越界写
+        var srcCol0 = 0
+        var gx = gx0
+        if gx < 0 { srcCol0 = -gx; gx = 0 }
+        if gx >= winW { return }
+        var copyW = glyphW - srcCol0
+        if gx + copyW > winW { copyW = winW - gx }
+        if copyW <= 0 { return }
+
+        PixelBuffer g = glyphs[shade * glyphsCap + ci]
+        Ptr[u8] src = g.pixels
+        Ptr[u8] dst = buf.pixels
+        int dstPitch = buf.pitch
         for 0 : glyphH - 1 to row {
             var sy = gy0 + row
             if sy < 0 or sy >= winH { continue }
-            for 0 : glyphW - 1 to col {
-                var sx = gx0 + col
-                if sx < 0 or sx >= winW { continue }
-                var lum = ffi.read_byte(gpx, (row * g.pitch + col * 4) + 3)
-                if lum > 0 {
-                    var off = sy * bpitch + sx * 4
-                    if white {
-                        // 纯白：写 R(byte3) G(byte2) B(byte1)
-                        ffi.write_byte(bpx, off + 3, 255)
-                        ffi.write_byte(bpx, off + 2, 255)
-                        ffi.write_byte(bpx, off + 1, 255)
-                    } else {
-                        var gc = _int(_float(lum) * bright)
-                        if gc > 255 { gc = 255 }
-                        ffi.write_byte(bpx, off + 2, gc)   // G 通道
-                    }
-                    ffi.write_byte(bpx, off, 255)          // A 通道（不透明）
-                }
-            }
+            ffi.memcpy(
+                ffi.offset(dst, sy * dstPitch + gx * 4),
+                ffi.offset(src, row * g.pitch + srcCol0 * 4),
+                copyW * 4)
         }
     }
 
@@ -196,26 +197,28 @@ main() {
                 if sc == Scancode.SPACE {
                     useKana = not useKana
                     charSet = if useKana then CHARS_KANA else CHARS_ASCII
-                    // 重新栅格化新字符集（仅在切换时）
-                    for 0 : charSet.len() - 1 to ci {
-                        PixelBuffer g = glyphs[ci]
-                        g.fill(0, 0, 0, 0)
-                        if font.ok {
-                            var surf = font.renderTextBlended(charSet[ci], 255, 255, 255)
-                            if surf != null {
-                                var sw = ffi.read_int(surf, 8)
-                                var sh = ffi.read_int(surf, 12)
-                                var spitch = ffi.read_int(surf, 16)
-                                var spixels = ffi.read_ptr(surf, 24)
-                                if spixels != null {
-                                    if sw > glyphW { sw = glyphW }
-                                    if sh > glyphH { sh = glyphH }
-                                    for 0 : sh - 1 to row {
-                                        for 0 : sw - 1 to col {
-                                            var sOff = row * spitch + col * 4
-                                            var sa = ffi.read_byte(spixels, sOff + 3)
-                                            if sa > 0 { g.setPixel(col, row, sa, 0, 0, 255) }
-                                        }
+                    // 重新栅格化字符掩码（仅切换时）
+                    for 0 : glyphsCap - 1 to ci {
+                        if ci >= charSet.len() { continue }
+                        var surf = font.renderTextBlended(charSet[ci], 255, 255, 255)
+                        if surf == null { continue }
+                        var sw = ffi.read_int(surf, 8)
+                        var sh = ffi.read_int(surf, 12)
+                        var spitch = ffi.read_int(surf, 16)
+                        var spixels = ffi.read_ptr(surf, 24)
+                        if spixels != null {
+                            if sw > glyphW { sw = glyphW }
+                            if sh > glyphH { sh = glyphH }
+                            PixelBuffer g1 = glyphs[1 * glyphsCap + ci]
+                            g1.clear()
+                            PixelBuffer g0 = glyphs[0 * glyphsCap + ci]
+                            g0.clear()
+                            for 0 : sh - 1 to row {
+                                for 0 : sw - 1 to col {
+                                    var sa = ffi.read_byte(spixels, row * spitch + col * 4 + 3)
+                                    if sa > 0 {
+                                        g1.setPixel(col, row, 0, sa, 0, 255)
+                                        g0.setPixel(col, row, sa, sa, sa, 255)
                                     }
                                 }
                             }
@@ -227,14 +230,13 @@ main() {
         }
 
         frame += 1
+        var t0 = times.ns()
 
-        // 窗口大小变化检测
+        // 窗口大小变化
         var sz = win.getSize()
-        var curW = sz.w
-        var curH = sz.h
+        var curW = sz.w; var curH = sz.h
         if curW != winW or curH != winH {
             winW = curW; winH = curH
-            // 重建整帧缓冲
             buf.free()
             buf = new PixelBuffer()
             if not buf.init(winW, winH) { running = false; continue }
@@ -242,38 +244,38 @@ main() {
             initCols(winW)
         }
 
-        // 1. GPU 拖尾渐隐：半透明黑色覆盖整屏（一次 GPU 调用，远快于逐像素衰减）
+        // 1. GPU 拖尾渐隐（一次调用）
         ren.setColor(0, 0, 0, 40)
         ren.fillRect(0, 0, _float(winW), _float(winH))
 
-        // 2. 清空字符缓冲（memset 一次清零，上一帧字符已由 fillRect 淡入背景）
+        // 2. 清空字符缓冲（memset）
         buf.clear()
 
-        // 3. 绘制每列字符（头部 + 紧跟 2 个），写入透明字符缓冲
+        // 3. 绘制每列字符（整行 memcpy 拷贝掩码）
+        var drawn = 0
         for 0 : numCols - 1 to i {
             float x = colX[i]
             float y = colY[i]
             float bright = colBright[i]
+            int gx = _int(x); int gy = _int(y)
 
-            // 头部字符：亮白绿色（闪烁时纯白）
+            // 头部字符（亮绿；闪烁时纯白[0]档）
             var flicker = colFlicker[i] > 0
-            blitGlyph(colChar[i], x, y, bright, flicker)
+            var shadeHead = if flicker then 0 else 1
+            blitGlyph(shadeHead, colChar[i], gx, gy)
+            drawn += 1
             if flicker { colFlicker[i] = colFlicker[i] - 1 }
 
-            // 紧跟头部的 2 个字符：亮绿 → 中绿（用固定索引的随机字符）
+            // 紧跟 2 个字符（暗绿[2]档）
             float y2 = y - charH
-            if y2 >= 0.0 { blitGlyph(randCharIdx(), x, y2, bright, false) }
+            if y2 >= 0.0 { blitGlyph(2, randCharIdx(), gx, _int(y2)); drawn += 1 }
             float y3 = y - charH * 2.0
-            if y3 >= 0.0 { blitGlyph(randCharIdx(), x, y3, bright * 0.7, false) }
+            if y3 >= 0.0 { blitGlyph(2, randCharIdx(), gx, _int(y3)); drawn += 1 }
 
-            // 偶尔切换头部字符 + 随机闪烁
+            // 偶尔切换 / 闪烁 / 下落 / 重置
             if rands.ints(0, 100) < 6 { colChar[i] = randCharIdx() }
             if rands.ints(0, 200) < 3 { colFlicker[i] = rands.ints(2, 6) }
-
-            // 下落
             colY[i] = y + colSpeed[i]
-
-            // 超出屏幕底部则重置到顶部
             if colY[i] > _float(winH + 80) {
                 colY[i] = _float(rands.ints(-400, -20))
                 colSpeed[i] = rands.floats(2.0, 8.0)
@@ -282,34 +284,86 @@ main() {
             }
         }
 
-        // 3. FPS 统计
+        // 4. FPS 统计
         fpsFrames += 1
         var now = times.ns()
-        if now - fpsStart >= 1000000000 {
-            fps = fpsFrames
-            fpsFrames = 0
-            fpsStart = now
-        }
+        if now - fpsStart >= 1000000000 { fps = fpsFrames; fpsFrames = 0; fpsStart = now }
 
-        // 4. 整帧一次性上传绘制
+        // 5. 整帧一次性上传 + 状态文本
         ren.blitBuffer(buf, 0.0, 0.0, _float(winW), _float(winH))
-
-        // 5. 状态信息覆盖层（直接画在 GPU 渲染器上，叠加在字符缓冲之上）
         if showStats and font.ok {
             ren.drawText(font, "FPS: " + fps + "  Columns: " + numCols + "  Frame: " + frame + "  Charset: " + (if useKana then "KANA" else "ASCII"), 10, 10, 0, 255, 0)
             ren.drawText(font, "[F1] Stats  [SPACE] Charset  [ESC] Exit", 10, charH + 12, 0, 180, 0)
         }
 
         ren.present()
+
+        // 记录性能
+        if drawn > peakDrawn { peakDrawn = drawn }
+        perfLogs.add(drawn)
+        perfMs.add(_int(_float(times.ns() - t0) / 1000000.0))
     }
 
-    // ==================== 清理 ====================
-    buf.free()
+    // 清理
     for glyphs.len() to gi { glyphs[gi].free() }
+    buf.free()
     ren.destroy()
     if font.ok { font.close() }
     ev.uninit()
     win.destroy()
     SDL3.ttfQuit()
-    print("Matrix Rain 退出 — 总帧数: " + frame)
+
+    // ========== 输出性能报告（对标 Python） ==========
+    print("\n总帧数: " + frame + "  峰值绘制字符数: " + peakDrawn)
+    print("=======================================================")
+    print("绘制字符区间          帧数      平均fps       平均ms/帧")
+    print("-------------------------------------------------------")
+    // 按字符数分桶（步长 50）
+    var b0 = 0
+    var b1 = 49
+    while b0 <= 5000 {
+        var cnt = 0; var totalMs = 0
+        for 0 : perfLogs.len() - 1 to k {
+            var dc = perfLogs[k]
+            if dc >= b0 and dc <= b1 {
+                cnt += 1
+                totalMs += perfMs[k]
+            }
+        }
+        if cnt > 0 {
+            var avgMs = _float(totalMs) / _float(cnt)
+            var avgFps = 0.0
+            if avgMs > 0.0 { avgFps = 1000.0 / avgMs }
+            print(_pad(b0) + "-" + _pad(b1) + "   " + _pad(cnt) + "   " + _padf(avgFps) + "   " + _padf(avgMs))
+        }
+        b0 += 50; b1 += 50
+    }
+    if perfLogs.len() > 0 {
+        var tot = 0; var sumMs = 0
+        for 0 : perfMs.len() - 1 to k { sumMs += perfMs[k] }
+        var avgMs = _float(sumMs) / _float(perfLogs.len())
+        var avgFps = 0.0
+        if avgMs > 0.0 { avgFps = 1000.0 / avgMs }
+        print("-------------------------------------------------------")
+        print("整体平均      " + _pad(perfLogs.len()) + "   " + _padf(avgFps) + "   " + _padf(avgMs))
+    }
+}
+
+// 整数右对齐填充（宽度8）
+func _pad(int v): string {
+    var s = "" + v
+    var len_ = s.len()
+    while len_ < 8 { s = " " + s; len_ += 1 }
+    return s
+}
+// 浮点右对齐填充（宽度10，保留1位小数）
+func _padf(float v): string {
+    // 手动保留 1 位小数，避免 _str 无小数位控制
+    var iv = _int(v)
+    var dec = _int((v - _float(iv)) * 10.0)
+    if dec < 0 { dec = -dec }
+    var s = "" + iv + "." + dec
+    var len_ = s.len()
+    while len_ < 10 { s = " " + s; len_ += 1 }
+    return s
 }
