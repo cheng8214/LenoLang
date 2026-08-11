@@ -70,7 +70,8 @@ static const char* opCodeNames[] = {
 "OP_MOVE_LOCAL_POP",
 "OP_CALL_NATIVE_VOID",
 "OP_DICT_SET_NOPUSH",
-"OP_INDEX_SET_NOPUSH"
+"OP_INDEX_SET_NOPUSH",
+"OP_CLEAR_LOCAL_RANGE"
 };
 
 // 反汇编单条指令
@@ -280,30 +281,41 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             // 读取 impl 声明信息
             int impl_count = chunk->code[offset + 5];
             printf(" name=%d fields=%d methods=%d impls=%d", name_idx, field_count, method_count, impl_count);
-            // 跳过指令头 (6字节: opcode + name(2) + fields(1) + methods(1) + impl_count(1)) + impl信息 + 字段信息 + 方法信息
+            // 跳过指令头 (6字节: opcode + name(2) + fields(1) + methods(1) + impl_count(1))
+            // + impl信息 + 泛型类型参数信息 + 字段信息 + 方法信息
             // 每个impl: 2字节face名称常量索引
-            // 每个字段: 2字节字段名 + 1字节类型 + [如果是struct: 1字节是否有类型名 + (可选2字节类型名)] + [如果是Ptr[T]: 1字节元素类型] + 1字节是否有默认值 + (可选2字节默认值)
+            // 泛型类型参数: 1字节count + 每个参数2字节名称
+            // 每个字段: 2字节字段名 + 1字节类型 + 1字节nullable + [如果是struct: 1字节是否有类型名 + (可选2字节类型名)] + [如果是Ptr[T]: 1字节元素类型] + 1字节是否有默认值 + (可选2字节默认值)
             // 每个方法: 2字节方法名 + 2字节函数
             int data_offset = offset + 6; // 指令头 6 字节
             // 跳过 impl 名称
             for (int i = 0; i < impl_count; i++) {
                 data_offset += 2; // impl face名称(2)
             }
+            // 跳过泛型类型参数信息
+            int type_param_count = chunk->code[data_offset];
+            data_offset += 1;
+            data_offset += type_param_count * 2; // 每个类型参数: 名称(2)
             for (int i = 0; i < field_count; i++) {
-                data_offset += 3; // 字段名(2) + 类型(1)
+                data_offset += 2; // 字段名(2)
+                uint8_t field_type = chunk->code[data_offset]; // 类型(1)
+                data_offset += 1;
+                data_offset += 1; // nullable 标记(1)
                 // 如果是 struct 类型，读取是否有类型名
-                if (chunk->code[data_offset - 1] == 21) { // TYPE_STRUCT = 21
+                if (field_type == TYPE_STRUCT) {
+                    int has_type_name = chunk->code[data_offset];
                     data_offset += 1; // 是否有类型名字节
-                    if (chunk->code[data_offset - 1]) { // 如果有类型名
+                    if (has_type_name) {
                         data_offset += 2; // 类型名常量索引
                     }
                 }
                 // 如果是 Ptr[T] 类型，读取元素类型
-                if (chunk->code[data_offset - 1] == 26) { // TYPE_PTR_GENERIC = 26
+                if (field_type == TYPE_PTR_GENERIC) {
                     data_offset += 1; // 元素类型
                 }
+                int has_default = chunk->code[data_offset];
                 data_offset += 1; // 是否有默认值
-                if (chunk->code[data_offset - 1]) { // 如果有默认值
+                if (has_default) {
                     data_offset += 2; // 默认值常量索引
                 }
             }
@@ -517,6 +529,8 @@ int disassembleInstruction(Chunk* chunk, int offset) {
         case OP_DICT_SET_NOPUSH:
         case OP_INDEX_SET_NOPUSH:
             return offset + 1;
+        case OP_CLEAR_LOCAL_RANGE:
+            return offset + 5;  // opcode + 2 bytes base + 2 bytes count
         default:
             return offset + 1;
     }

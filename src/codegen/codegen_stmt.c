@@ -1222,7 +1222,7 @@ static void gen_return(CodeGen* gen, Ast* ast) {
         } else {
             emit_byte(gen, OP_NULL, ast->line);
         }
-        emit_bytes_2(gen, OP_SET_LOCAL, gen->inline_result_slot, ast->line);
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
         // 记录跳转，稍后回填到内联块末尾
         if (gen->inline_return_jump_count < 256) {
             gen->inline_return_jumps[gen->inline_return_jump_count++] =

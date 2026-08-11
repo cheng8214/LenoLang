@@ -8,7 +8,7 @@
 #include <string.h>
 
 #define MAX_INLINE_DEPTH  3
-#define MAX_INLINE_STMTS  3
+#define MAX_INLINE_STMTS  8
 
 // 正在被内联的函数名栈（防止递归内联）
 // 也用于跟踪当前正在编译的函数，防止函数体内的递归调用被内联
@@ -27,6 +27,11 @@ void inline_name_stack_pop(void) {
     if (inline_name_stack_top > 0) {
         inline_name_stack_top--;
     }
+}
+
+// 重置内联函数名栈（在 codegen_init 中调用，防止上次编译残留状态）
+void inline_name_stack_reset(void) {
+    inline_name_stack_top = 0;
 }
 
 // ============================================================================
@@ -99,7 +104,9 @@ static void patch_ast_indices(Ast* ast, int offset) {
             return;
 
         case AST_INTERP_STRING:
-            for (int i = 0; i < ast->u.interp_string.count; i++)
+            // count = exprs_count + 1（最后一个位置只有 parts 没有 exprs）
+            // 与 gen_expr 中的循环边界一致：i < count - 1
+            for (int i = 0; i < ast->u.interp_string.count - 1; i++)
                 patch_ast_indices(ast->u.interp_string.exprs[i], offset);
             return;
 
@@ -389,7 +396,6 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
 
     // 分配槽位：从当前 max_local_slot+1 开始
     int base = gen->max_local_slot + 1;
-
     // 检测快速路径：空函数体或单条 return 语句（无条件 return）
     // 这些情况不需要 result_slot 和 return 跳转机制
     int fast_path = 0;
@@ -431,8 +437,21 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     // 2. Patch AST 中所有局部变量索引
     patch_ast_indices(body, base);
 
-    // 压入函数名到递归检测栈
-    inline_name_stack[inline_name_stack_top++] = func_def->u.func.name;
+    // 压入函数名到递归检测栈（使用安全函数，防止越界）
+    inline_name_stack_push(func_def->u.func.name);
+
+    // 保存并清除 inline_discard_result：内联函数体内部的嵌套调用
+    // 其结果不应被丢弃，只有最外层调用的结果才可能被丢弃。
+    // 如果不清除，外层 gen_expr_stmt 设置的 discard 标志会泄漏到
+    // 内联函数体内的嵌套调用（如参数、返回表达式），导致 void 函数
+    // 被错误地跳过 OP_NULL，引发栈不平衡。
+    int saved_discard = gen->inline_discard_result;
+    gen->inline_discard_result = 0;
+    // 保存 dtor_count：内联函数体内部的变量声明可能添加析构条目，
+    // 这些条目不应泄漏到外层作用域（gen_block 会在块结束时调用析构）。
+    // 内联函数的局部变量在 OP_CLEAR_LOCAL_RANGE 时已被清零，
+    // 析构函数不应再被调用。
+    int saved_dtor_count = gen->dtor_count;
 
     if (fast_path) {
         // ===== 快速路径：直接生成返回表达式，无需 result_slot =====
@@ -440,11 +459,12 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
         gen->inline_depth++;  // 仅为递归检测和深度限制
 
         if (fast_return_expr) {
+            // 返回表达式的结果就是内联函数的结果，不应被丢弃
             gen_expr(gen, fast_return_expr);
             gen->inline_no_result = 0;
         } else {
-            // 空函数体：如果结果将被丢弃，什么都不生成
-            if (gen->inline_discard_result) {
+            // 空函数体：只有最外层调用（saved_discard=1）才可跳过 OP_NULL
+            if (saved_discard) {
                 gen->inline_no_result = 1;  // 告知 gen_expr_stmt 跳过 OP_POP
             } else {
                 emit_byte(gen, OP_NULL, ast->line);
@@ -452,8 +472,19 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
             }
         }
 
+        // 清零所有局部变量 slot，防止 GC 扫描到残留的对象引用
+        if (local_count > 0) {
+            emit_byte(gen, OP_CLEAR_LOCAL_RANGE, ast->line);
+            emit_byte(gen, (base >> 8) & 0xff, ast->line);
+            emit_byte(gen, base & 0xff, ast->line);
+            emit_byte(gen, (local_count >> 8) & 0xff, ast->line);
+            emit_byte(gen, local_count & 0xff, ast->line);
+        }
+
         gen->inline_depth = saved_depth;
-        inline_name_stack_top--;
+        gen->inline_discard_result = saved_discard;
+        gen->dtor_count = saved_dtor_count;  // 恢复析构追踪
+        inline_name_stack_pop();
 
         // 恢复 AST 索引
         patch_ast_indices(body, -base);
@@ -479,7 +510,7 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
 
     // 5. 函数体末尾没有 return 的情况（void 函数）：push null
     emit_byte(gen, OP_NULL, ast->line);
-    emit_bytes_2(gen, OP_SET_LOCAL, gen->inline_result_slot, ast->line);
+    emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
 
     // 6. 回填所有 return 跳转到这里
     for (int i = 0; i < gen->inline_return_jump_count; i++) {
@@ -489,11 +520,24 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     // 7. 加载返回值到栈顶
     emit_bytes_2(gen, OP_GET_LOCAL, gen->inline_result_slot, ast->line);
 
+    // 7.5 清零内联使用的所有 locals slot（包括 result_slot），防止 GC 扫描到残留的对象引用
+    emit_byte(gen, OP_CLEAR_LOCAL_RANGE, ast->line);
+    emit_byte(gen, (base >> 8) & 0xff, ast->line);
+    emit_byte(gen, base & 0xff, ast->line);
+    int clear_count = local_count + 1;  // +1 for result_slot
+    emit_byte(gen, (clear_count >> 8) & 0xff, ast->line);
+    emit_byte(gen, clear_count & 0xff, ast->line);
+
     // 8. 恢复上下文
     gen->inline_depth = saved_depth;
     gen->inline_result_slot = saved_result_slot;
     gen->inline_return_jump_count = saved_jump_count;
-    inline_name_stack_top--;
+    // 通用路径总是将结果压栈，必须重置 inline_no_result
+    // （函数体内的嵌套调用可能设置了 inline_no_result=1）
+    gen->inline_no_result = 0;
+    gen->inline_discard_result = saved_discard;
+    gen->dtor_count = saved_dtor_count;  // 恢复析构追踪
+    inline_name_stack_pop();
 
     // 9. 恢复 AST 索引
     patch_ast_indices(body, -base);

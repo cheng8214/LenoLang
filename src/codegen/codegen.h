@@ -86,5 +86,6 @@ MainFuncInfo find_main_function(Semantic* sem);
 int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def);
 void inline_name_stack_push(const char* name);
 void inline_name_stack_pop(void);
+void inline_name_stack_reset(void);
 
 #endif // LENO_CODEGEN_INTERNAL_H

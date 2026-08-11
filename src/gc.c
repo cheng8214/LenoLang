@@ -652,8 +652,13 @@ static void mark_roots(void) {
     // 不截断到 sp：因为当函数调用返回或参数出栈后，sp 可能回退到帧范围内的局部变量之下，
     // 此时 sp 之上的局部变量在步骤 1 中不会被扫描到。
     // val_is_obj 通过 NaN-boxing 标签过滤，对 int/float/bool 无副作用。
+    // 注意：当 frame->locals != NULL 时（函数调用帧），局部变量在独立的 locals 数组中，
+    // 步骤 2 已扫描。栈上的 slot_count 可能因函数内联扩展而远大于实际栈使用量，
+    // 导致扫描到未初始化的栈内存中的垃圾值（可能被 NaN-boxing 误判为对象指针）。
+    // 因此仅对 frame->locals == NULL 的帧（模块初始化帧）做保守栈扫描。
     for (int fi = 0; fi < gc.vm->frame_cnt; fi++) {
         CallFrame* f = &gc.vm->frames[fi];
+        if (f->locals != NULL) continue;  // 函数帧：locals 已在步骤 2 扫描
         int start = f->stack_base;
         int end = f->stack_base + f->slot_count;
         if (start < 0) start = 0;

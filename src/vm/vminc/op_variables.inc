@@ -89,6 +89,25 @@ OPCODE(OP_MOVE_LOCAL_POP) {
     DISPATCH;
 }
 
+OPCODE(OP_CLEAR_LOCAL_RANGE) {
+    // 清零局部变量范围 [base, base+count)，用于内联函数清理
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t base_slot = READ_SHORT();
+    uint16_t count = READ_SHORT();
+    if (frame->locals != NULL) {
+        for (uint16_t i = 0; i < count; i++) {
+            if (base_slot + i < frame->local_count) {
+                frame->locals[base_slot + i] = val_null();
+            }
+        }
+    } else {
+        for (uint16_t i = 0; i < count; i++) {
+            vm.stack[frame->stack_base + base_slot + i] = val_null();
+        }
+    }
+    DISPATCH;
+}
+
 OPCODE(OP_GET_GLOBAL) {
     uint16_t slot = READ_SHORT();
     if (unlikely(slot >= vm.global_capacity)) {

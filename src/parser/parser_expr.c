@@ -215,6 +215,11 @@ Ast* parse_interp_string(Parser* p) {
     ast->u.interp_string.parts = (char**)malloc(sizeof(char*) * capacity);
     ast->u.interp_string.exprs = (Ast**)malloc(sizeof(Ast*) * capacity);
 
+    // 初始化 exprs 数组为 NULL，防止 patch_ast_indices 访问未初始化的槽位
+    for (int i = 0; i < capacity; i++) {
+        ast->u.interp_string.exprs[i] = NULL;
+    }
+
     bool has_content = false;
     int idx = 0;
 
@@ -230,9 +235,14 @@ Ast* parse_interp_string(Parser* p) {
             if (processed_len > 0) {
                 // 扩展数组
                 if (idx >= capacity) {
+                    int old_cap = capacity;
                     capacity *= 2;
                     ast->u.interp_string.parts = (char**)realloc(ast->u.interp_string.parts, sizeof(char*) * capacity);
                     ast->u.interp_string.exprs = (Ast**)realloc(ast->u.interp_string.exprs, sizeof(Ast*) * capacity);
+                    // 初始化新分配的 exprs 槽位为 NULL
+                    for (int i = old_cap; i < capacity; i++) {
+                        ast->u.interp_string.exprs[i] = NULL;
+                    }
                 }
                 ast->u.interp_string.parts[idx] = text;
                 has_content = true;
@@ -259,9 +269,14 @@ Ast* parse_interp_string(Parser* p) {
 
             // 扩展数组
             if (idx >= capacity) {
+                int old_cap = capacity;
                 capacity *= 2;
                 ast->u.interp_string.parts = (char**)realloc(ast->u.interp_string.parts, sizeof(char*) * capacity);
                 ast->u.interp_string.exprs = (Ast**)realloc(ast->u.interp_string.exprs, sizeof(Ast*) * capacity);
+                // 初始化新分配的 exprs 槽位为 NULL
+                for (int i = old_cap; i < capacity; i++) {
+                    ast->u.interp_string.exprs[i] = NULL;
+                }
             }
 
             // 如果没有前置字符串片段，添加空字符串
