@@ -16,6 +16,14 @@ main() {
     var leno_exe = get_arg(0, "build\\leno.exe")
     var test_dir = get_arg(1, "assert")
 
+    // 将解释器转为绝对路径：Windows 下 _exec 用 cmd /c 执行，
+    // cmd 无法解析 POSIX 风格的正斜杠相对路径（如 ./build/leno.exe），
+    // 绝对路径（如 D:\...\build\leno.exe）才能被 cmd 正确执行。
+    var leno_abs = dirs.abspath(leno_exe)
+    if leno_abs != null {
+        leno_exe = leno_abs
+    }
+
     print("LenoC 自举测试运行器")
     print("解释器: " + leno_exe)
     print("测试目录: " + test_dir)
@@ -31,7 +39,7 @@ main() {
         var files = w[2]
         for files to entry {
             if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
-                var full = root + "\\" + entry
+                var full = dirs.abspath(root + "\\" + entry)
                 // 直接传绝对路径，system() 包装层处理 stderr
                 var cmd = leno_exe + " " + full
 
