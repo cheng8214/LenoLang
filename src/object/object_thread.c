@@ -207,6 +207,7 @@ static void* thread_entry_point(void* arg) {
     }
     for (int i = 0; i < IC_MODULE_CACHE_SIZE; i++) {
         child_vm.ic_module_cache[i].valid = 0;
+        child_vm.ic_module_cache[i].combined_hash = 0;
         child_vm.ic_module_cache[i].meta = NULL;
     }
 

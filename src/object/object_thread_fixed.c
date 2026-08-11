@@ -48,6 +48,7 @@ static void* thread_entry_point_fixed(void* arg) {
     }
     for (int i = 0; i < IC_MODULE_CACHE_SIZE; i++) {
         local_vm.ic_module_cache[i].valid = 0;
+        local_vm.ic_module_cache[i].combined_hash = 0;
         local_vm.ic_module_cache[i].meta = NULL;
     }
 
