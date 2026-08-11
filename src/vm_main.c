@@ -171,24 +171,8 @@ int lenolang_run_lenb(const char* filename) {
     return ret;
 }
 
-int wmain(int argc, wchar_t* argv[]) {
-#ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-    setvbuf(stdout, NULL, _IONBF, 0);
-#endif
-
-    // 设置全局参数
-    g_argc = argc;
-    g_argv = (char**)malloc(argc * sizeof(char*));
-    if (g_argv) {
-        for (int i = 0; i < argc; i++) {
-            size_t len = wcstombs(NULL, argv[i], 0);
-            g_argv[i] = (char*)malloc(len + 1);
-            wcstombs(g_argv[i], argv[i], len + 1);
-        }
-    }
-
+// VM 主逻辑（平台无关）
+static int vm_run_main(int argc, char** argv) {
     // 自动检测 exe 尾部是否嵌入了 lenb 数据
     char exe_path[MAX_PATH_LEN];
 #ifdef _WIN32
@@ -211,15 +195,36 @@ int wmain(int argc, wchar_t* argv[]) {
     // 无嵌入数据，作为命令行工具使用
     if (argc < 2) {
         printf("LenoLang VM - 独立运行时\n");
-        printf("用法: leno_vm.exe <file.lenb>\n");
+        printf("用法: leno_vm <file.lenb>\n");
         return 0;
     }
 
-    // 转换宽字符参数为 UTF-8
-    char arg_utf8[MAX_PATH_LEN];
-    size_t arg_len = wcstombs(arg_utf8, argv[1], MAX_PATH_LEN - 1);
-    arg_utf8[arg_len] = '\0';
-
     // 运行 .lenb 文件
-    return lenolang_run_lenb(arg_utf8);
+    return lenolang_run_lenb(argv[1]);
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t* argv[]) {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    // 设置全局参数
+    g_argc = argc;
+    g_argv = (char**)malloc(argc * sizeof(char*));
+    if (g_argv) {
+        for (int i = 0; i < argc; i++) {
+            size_t len = wcstombs(NULL, argv[i], 0);
+            g_argv[i] = (char*)malloc(len + 1);
+            wcstombs(g_argv[i], argv[i], len + 1);
+        }
+    }
+    return vm_run_main(argc, g_argv);
+}
+#else
+int main(int argc, char* argv[]) {
+    g_argc = argc;
+    g_argv = argv;
+    return vm_run_main(argc, argv);
+}
+#endif

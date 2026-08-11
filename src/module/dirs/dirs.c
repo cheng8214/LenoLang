@@ -134,6 +134,7 @@ static Value native_dirs_cwd(int argCount, Value* args) {
     free(utf8);
     return result;
 #else
+    char buffer[4096];
     if (getcwd(buffer, sizeof(buffer)) == NULL) {
         return val_null();
     }
@@ -392,6 +393,7 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     abs_path[sizeof(abs_path) - 1] = '\0';
     free(abs_utf8);
 #else
+    char abs_path[4096];
     if (realpath(target, abs_path) == NULL) {
         // realpath 失败，尝试拼接 cwd
         char cwd[4096];

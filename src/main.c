@@ -108,7 +108,7 @@ static void printHelp(const char* program) {
     printf("  --debug           启用调试模式（输出字节码）\n");
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
-    printf("  -p, --pack        编译并打包为独立 exe（嵌入 leno_vm.exe）\n");
+    printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
     printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
     printf("  --install         安装包或依赖到全局缓存\n");
     printf("\n");
@@ -116,7 +116,7 @@ static void printHelp(const char* program) {
     printf("  %s script.leno       运行脚本\n", program);
     printf("  %s script.lenb       运行编译后的二进制\n", program);
     printf("  %s -c test.leno      编译为二进制\n", program);
-    printf("  %s -p test.leno      打包为独立 exe\n", program);
+    printf("  %s -p test.leno      打包为独立可执行文件\n", program);
     printf("  %s --debug test.leno 调试模式运行\n", program);
     printf("  %s --init my-package 创建新包\n", program);
     printf("  %s --install         安装当前项目依赖\n", program);
@@ -630,18 +630,19 @@ int lenolang_run_file(const char* path) {
         }
         clock_t pack_compile_end = clock();
 
-        // 生成输出 exe 路径：与源文件同目录，扩展名改为 .exe
+        // 生成输出路径：与源文件同目录
         char out_exe[MAX_PATH_LEN];
         strncpy(out_exe, path, MAX_PATH_LEN - 1);
         out_exe[MAX_PATH_LEN - 1] = '\0';
         char* dot = strrchr(out_exe, '.');
         if (dot) {
-            strcpy(dot, ".exe");
-        } else {
-            strcat(out_exe, ".exe");
+            *dot = '\0';
         }
+#ifdef _WIN32
+        strcat(out_exe, ".exe");
+#endif
 
-        // 查找 leno_vm：先在与 leno同目录的 build/ 下找
+        // 查找 leno_vm：先在与 leno 同目录下找
         char vm_exe[MAX_PATH_LEN];
 #ifdef _WIN32
         // 获取当前 exe 所在目录
@@ -651,7 +652,6 @@ int lenolang_run_file(const char* path) {
         char* last_sep = strrchr(exe_dir, '\\');
         if (last_sep) {
             *(last_sep + 1) = '\0';
-            // 检查路径长度，防止缓冲区溢出
             size_t dir_len = strlen(exe_dir);
             const char* vm_name = "leno_vm.exe";
             size_t vm_name_len = strlen(vm_name);
@@ -659,14 +659,35 @@ int lenolang_run_file(const char* path) {
                 memcpy(vm_exe, exe_dir, dir_len);
                 memcpy(vm_exe + dir_len, vm_name, vm_name_len + 1);
             } else {
-                // 路径太长，使用默认名称
                 strcpy(vm_exe, "leno_vm.exe");
             }
         } else {
             strcpy(vm_exe, "leno_vm.exe");
         }
 #else
-        strcpy(vm_exe, "leno_vm");
+        // Linux/macOS：获取当前可执行文件所在目录
+        char exe_dir[MAX_PATH_LEN];
+        ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+        if (len > 0) {
+            exe_dir[len] = '\0';
+            char* last_sep = strrchr(exe_dir, '/');
+            if (last_sep) {
+                *(last_sep + 1) = '\0';
+                const char* vm_name = "leno_vm";
+                size_t dir_len = strlen(exe_dir);
+                size_t vm_name_len = strlen(vm_name);
+                if (dir_len + vm_name_len < MAX_PATH_LEN) {
+                    memcpy(vm_exe, exe_dir, dir_len);
+                    memcpy(vm_exe + dir_len, vm_name, vm_name_len + 1);
+                } else {
+                    strcpy(vm_exe, "leno_vm");
+                }
+            } else {
+                strcpy(vm_exe, "leno_vm");
+            }
+        } else {
+            strcpy(vm_exe, "leno_vm");
+        }
 #endif
 
         // 读取 leno_vm 文件
@@ -678,8 +699,8 @@ int lenolang_run_file(const char* path) {
         FILE* vm_fp = fopen(vm_exe, "rb");
 #endif
         if (!vm_fp) {
-            fprintf(stderr, "[错误] 找不到 leno_vm.exe: %s\n", vm_exe);
-            fprintf(stderr, "请先运行 build_vm.bat 构建 VM 运行时\n");
+            fprintf(stderr, "[错误] 找不到 leno_vm: %s\n", vm_exe);
+            fprintf(stderr, "请先运行 build_vm.sh 构建 VM 运行时\n");
 #ifdef _WIN32
             { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
 #else
@@ -766,6 +787,11 @@ int lenolang_run_file(const char* path) {
         uint32_t magic = 0x424E454C; // "LENB"
         fwrite(&magic, 4, 1, out_fp);
         fclose(out_fp);
+
+#ifndef _WIN32
+        // Linux/macOS：添加可执行权限
+        chmod(out_exe, 0755);
+#endif
 
         free(vm_data);
         free(lenb_data);

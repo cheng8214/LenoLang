@@ -57,6 +57,7 @@ SOURCES="$SOURCES src/module/threads/threads.c"
 SOURCES="$SOURCES src/module/assert/assert.c"
 SOURCES="$SOURCES src/module/sys/sys.c"
 SOURCES="$SOURCES src/module/regexs/regexs.c"
+SOURCES="$SOURCES src/platform/platform_thread.c"
 SOURCES="$SOURCES src/serialize/serialize.c"
 
 # 平台检测
