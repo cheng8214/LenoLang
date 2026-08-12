@@ -124,6 +124,9 @@ typedef int64_t (*f_d_i_i_i)(double, int64_t, int64_t, int64_t);
 typedef int64_t (*f_i_d_d_i)(int64_t, double, double, int64_t);
 typedef int64_t (*f_d_i_d_i)(double, int64_t, double, int64_t);
 typedef int64_t (*f_d_d_i_i)(double, double, int64_t, int64_t);
+typedef int64_t (*f_i_i_d_d)(int64_t, int64_t, double, double);
+typedef int64_t (*f_i_d_i_d)(int64_t, double, int64_t, double);
+typedef int64_t (*f_d_i_i_d)(double, int64_t, int64_t, double);
 
 /* float 版本 — 4 参数混合 */
 typedef int64_t (*f_i_i_i_F)(int64_t, int64_t, int64_t, float);
@@ -231,6 +234,9 @@ static int64_t call_mixed_int_ret(void* func, const FFIArg* a, int total) {
         /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)) return ((f_i_i_d)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2));
         /* double */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_i_d_i)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2));
         /* double */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_d_i_i)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2));
+        /* double×2 */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&argIsDbl(a,2)) return ((f_i_d_d)func)(arg_i(a,0),arg_d(a,1),arg_d(a,2));
+        /* double×2 */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)) return ((f_d_i_d)func)(arg_d(a,0),arg_i(a,1),arg_d(a,2));
+        /* double×2 */ if (argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_d_d_i)func)(arg_d(a,0),arg_d(a,1),arg_i(a,2));
         /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2)) return ((f_i_i_F)func)(arg_i(a,0),arg_i(a,1),arg_f(a,2));
         /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2)) return ((f_i_F_i)func)(arg_i(a,0),arg_f(a,1),arg_i(a,2));
         /* f32    */ if (argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)) return ((f_F_i_i)func)(arg_f(a,0),arg_i(a,1),arg_i(a,2));
@@ -245,6 +251,12 @@ static int64_t call_mixed_int_ret(void* func, const FFIArg* a, int total) {
         /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_i_d_i)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2),arg_i(a,3));
         /* double */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_d_i_i)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2),arg_i(a,3));
         /* double */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_d_i_i_i)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2),arg_i(a,3));
+        /* double×2 */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_i_i_d_d)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2),arg_d(a,3));
+        /* double×2 */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_i_d_i_d)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2),arg_d(a,3));
+        /* double×2 */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_d_d_i)func)(arg_i(a,0),arg_d(a,1),arg_d(a,2),arg_i(a,3));
+        /* double×2 */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_d_i_i_d)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2),arg_d(a,3));
+        /* double×2 */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_d_i_d_i)func)(arg_d(a,0),arg_i(a,1),arg_d(a,2),arg_i(a,3));
+        /* double×2 */ if (argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_d_d_i_i)func)(arg_d(a,0),arg_d(a,1),arg_i(a,2),arg_i(a,3));
         /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)&&argIsF32(a,3)) return ((f_i_i_i_F)func)(arg_i(a,0),arg_i(a,1),arg_i(a,2),arg_f(a,3));
         /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2)&&!argIsF32(a,3)) return ((f_i_i_F_i)func)(arg_i(a,0),arg_i(a,1),arg_f(a,2),arg_i(a,3));
         /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2)&&!argIsF32(a,3)) return ((f_i_F_i_i)func)(arg_i(a,0),arg_f(a,1),arg_i(a,2),arg_i(a,3));
@@ -257,20 +269,25 @@ static int64_t call_mixed_int_ret(void* func, const FFIArg* a, int total) {
 }
 
 static double call_mixed_double_ret(void* func, const FFIArg* args, int total) {
-    /* 2 参数混合，返回 double */
+    /* 2 参数混合，返回 double（区分 f32 和 f64） */
     if (total == 2) {
-        int d0 = is_float_type(args[0].type);
-        int d1 = is_float_type(args[1].type);
+        /* f32 版本 */
+        if (!argIsF32(args,0) && argIsF32(args,1))  return ((f_i_F_r)func)(args[0].value.i, args[1].value.f);
+        if (argIsF32(args,0) && !argIsF32(args,1))  return ((f_F_i_r)func)(args[0].value.f, args[1].value.i);
+        if (argIsF32(args,0) && argIsF32(args,1))   return ((f_F_F_r)func)(args[0].value.f, args[1].value.f);
+        /* f64 版本 */
+        int d0 = is_double_type(args[0].type);
+        int d1 = is_double_type(args[1].type);
         if (!d0 && d1)  return ((f_i_d_r)func)(args[0].value.i, args[1].value.d);
         if (d0 && !d1)  return ((f_d_i_r)func)(args[0].value.d, args[1].value.i);
         if (d0 && d1)   return ((f_d_d_r)func)(args[0].value.d, args[1].value.d);
         return 0;
     }
-    /* 3 参数混合，返回 double */
+    /* 3 参数混合，返回 double（仅 f64，f32 3参数返回 double 极少见，走回退） */
     if (total == 3) {
-        int d0 = is_float_type(args[0].type);
-        int d1 = is_float_type(args[1].type);
-        int d2 = is_float_type(args[2].type);
+        int d0 = is_double_type(args[0].type);
+        int d1 = is_double_type(args[1].type);
+        int d2 = is_double_type(args[2].type);
         if (!d0 && !d1 && d2)  return ((f_i_i_d_r)func)(args[0].value.i, args[1].value.i, args[2].value.d);
         if (!d0 && d1 && !d2)  return ((f_i_d_i_r)func)(args[0].value.i, args[1].value.d, args[2].value.i);
         if (d0 && !d1 && !d2)  return ((f_d_i_i_r)func)(args[0].value.d, args[1].value.i, args[2].value.i);
