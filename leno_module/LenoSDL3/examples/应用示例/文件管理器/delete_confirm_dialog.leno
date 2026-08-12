@@ -20,7 +20,7 @@ export func show(string path, bool isDir, func():void onConfirm) {
     string nm = dirs.basename(path)
     string kind = if isDir then "文件夹" else "文件"
 
-    var dlg = SDL3.createDialogWindow({title:"确认删除 — " + nm, w:440, h:220})
+    var dlg = SDL3.createDialogWindow({title:"确认删除 - " + nm, w:440, h:220})
     VBox root = SDL3.createVBox({x:0, y:0, w:440, h:220, padX:40, padY:18, spacing:8})
     dlg.setRoot(root)
 

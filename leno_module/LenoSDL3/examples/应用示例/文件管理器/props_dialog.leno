@@ -60,7 +60,7 @@ export func show(string path, bool isDir) {
     float innerW = dlgW - padX * 2.0   // 410
     float propMaxW = innerW - 80.0 - 8.0  // label列80 + spacing8 = 322
 
-    var dlg = SDL3.createDialogWindow({title:"属性 — " + nm, w:dlgW, h:dlgH})
+    var dlg = SDL3.createDialogWindow({title:"属性 - " + nm, w:dlgW, h:dlgH})
     VBox root = SDL3.createVBox({x:0, y:0, w:dlgW, h:dlgH, padX:padX, padY:16, spacing:6})
     dlg.setRoot(root)
 

@@ -1391,8 +1391,10 @@ export struct Window {
                     if _ovl != null { _ovl(_runRens[i]) }
                     _runRens[i].present()
                     // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
+                    // show 后立即 raise，确保对话框在主窗口前面
                     if _runDialogHidden[i] {
                         _lib.SDL_ShowWindow(_runHnds[i])
+                        _lib.SDL_RaiseWindow(_runHnds[i])
                         _runDialogHidden[i] = false
                     }
                 }
