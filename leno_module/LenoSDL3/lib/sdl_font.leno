@@ -45,9 +45,10 @@ sdl3_ttf g_ttf = null
 
 export func ttfLib(): sdl3_ttf {
     if g_ttf == null {
-        var path = dirs.script_dir() + "/../SDL3_ttf.dll"
-        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_ttf.dll" }
-        if not files.exists(path) { path = "SDL3_ttf.dll" }
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        var path = dirs.script_dir() + "/../SDL3_ttf" + ext
+        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_ttf" + ext }
+        if not files.exists(path) { path = "SDL3_ttf" + ext }
         g_ttf = ffi.load(path)
     }
     return g_ttf
@@ -476,12 +477,27 @@ export func acquireFont(string path, float ptsize): Font {
     Font f = createFont(path, ptsize); f._refCount = f._refCount + 1; return f
 }
 
-// 加载字体（自动尝试微软雅黑→宋体回退）
+// 加载字体（自动尝试平台默认中文字体回退）
 export func createFontAuto(float ptsize): Font {
-    Font cached = _findCachedFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+    if _os() == "windows" {
+        // Windows: 微软雅黑 → 宋体
+        Font cached = _findCachedFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+        if cached.ok { return cached }
+        Font font = createFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+        if not font.ok { font = createFont("C:/Windows/Fonts/simsun.ttc", ptsize) }
+        return font
+    }
+    // Linux: Noto Sans CJK → 文泉驿 → DejaVu
+    string linuxFont = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    Font cached = _findCachedFont(linuxFont, ptsize)
     if cached.ok { return cached }
-    Font font = createFont("C:/Windows/Fonts/msyh.ttc", ptsize)
-    if not font.ok { font = createFont("C:/Windows/Fonts/simsun.ttc", ptsize) }
+    Font font = createFont(linuxFont, ptsize)
+    if not font.ok {
+        font = createFont("/usr/share/fonts/truetype/arphic/uming.ttc", ptsize)
+    }
+    if not font.ok {
+        font = createFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", ptsize)
+    }
     return font
 }
 // 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放（见 acquireFont 注释）。

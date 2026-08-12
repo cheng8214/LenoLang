@@ -25,9 +25,10 @@ sdl3_image _img = null
 
 func imgLib(): sdl3_image {
     if _img == null {
-        string path = dirs.script_dir() + "/../SDL3_image.dll"
-        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_image.dll" }
-        if not files.exists(path) { path = "SDL3_image.dll" }
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        string path = dirs.script_dir() + "/../SDL3_image" + ext
+        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_image" + ext }
+        if not files.exists(path) { path = "SDL3_image" + ext }
         _img = ffi.load(path)
     }
     return _img

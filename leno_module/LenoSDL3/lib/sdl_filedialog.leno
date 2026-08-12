@@ -44,11 +44,14 @@ var _cb        = null   // 持久化的 C 函数指针（一次创建，重复�
 var _active    = false  // 是否还有对话框在等待结果
 var _filterMem = []     // 本次对话框分配的过滤器内存，回调后统一释放
 
-// SDL3.dll 句柄缓存（只加载一次，避免每次弹框泄漏句柄）
+// SDL3 动态库句柄缓存（只加载一次，避免每次弹框泄漏句柄）
 sdl3dlg _lib = null
 
 func _ensureLib(): sdl3dlg {
-    if _lib == null { _lib = ffi.load("SDL3.dll") }
+    if _lib == null {
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        _lib = ffi.load("SDL3" + ext)
+    }
     return _lib
 }
 

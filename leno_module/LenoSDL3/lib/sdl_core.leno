@@ -425,10 +425,12 @@ sdl3 g_lib = null
 
 export func lib(): sdl3 {
     if g_lib == null {
-        // 从脚本目录和上级目录查找 DLL
-        var path = dirs.script_dir() + "/../SDL3.dll"
-        if not files.exists(path) { path = dirs.script_dir() + "/SDL3.dll" }
-        if not files.exists(path) { path = "SDL3.dll" }
+        // 根据平台选择动态库扩展名
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        // 从脚本目录和上级目录查找
+        var path = dirs.script_dir() + "/../SDL3" + ext
+        if not files.exists(path) { path = dirs.script_dir() + "/SDL3" + ext }
+        if not files.exists(path) { path = "SDL3" + ext }
         g_lib = ffi.load(path)
     }
     return g_lib
