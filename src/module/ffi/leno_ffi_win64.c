@@ -29,6 +29,7 @@
 
 #include "leno_ffi.h"
 #include <string.h>
+#include <stdio.h>
 
 #ifdef _WIN32
 
@@ -113,6 +114,18 @@ typedef int64_t (*f_d_d_i_i)(double, double, int64_t, int64_t);
 typedef int64_t (*f_i_i_d_d)(int64_t, int64_t, double, double);
 typedef int64_t (*f_i_d_i_d)(int64_t, double, int64_t, double);
 typedef int64_t (*f_d_i_i_d)(double, int64_t, int64_t, double);
+
+/* double 返回值版本 — 4 参数混合 */
+typedef double (*f_i_i_i_d_r)(int64_t, int64_t, int64_t, double);
+typedef double (*f_i_i_d_i_r)(int64_t, int64_t, double, int64_t);
+typedef double (*f_i_d_i_i_r)(int64_t, double, int64_t, int64_t);
+typedef double (*f_d_i_i_i_r)(double, int64_t, int64_t, int64_t);
+typedef double (*f_i_i_d_d_r)(int64_t, int64_t, double, double);
+typedef double (*f_i_d_i_d_r)(int64_t, double, int64_t, double);
+typedef double (*f_i_d_d_i_r)(int64_t, double, double, int64_t);
+typedef double (*f_d_i_i_d_r)(double, int64_t, int64_t, double);
+typedef double (*f_d_i_d_i_r)(double, int64_t, double, int64_t);
+typedef double (*f_d_d_i_i_r)(double, double, int64_t, int64_t);
 
 /* float 版本 — 4 参数混合 */
 typedef int64_t (*f_i_i_i_F)(int64_t, int64_t, int64_t, float);
@@ -279,6 +292,26 @@ static double call_mixed_double_ret(void* func, const FFIArg* args, int total) {
         if (d0 && d1 && !d2)   return ((f_d_d_i_r)func)(args[0].value.d, args[1].value.d, args[2].value.i);
         return 0;
     }
+    /* 4 参数混合，返回 double */
+    if (total == 4) {
+        int d0 = is_double_type(args[0].type);
+        int d1 = is_double_type(args[1].type);
+        int d2 = is_double_type(args[2].type);
+        int d3 = is_double_type(args[3].type);
+        /* 1 double */
+        if (!d0 && !d1 && !d2 && d3) return ((f_i_i_i_d_r)func)(args[0].value.i, args[1].value.i, args[2].value.i, args[3].value.d);
+        if (!d0 && !d1 && d2 && !d3) return ((f_i_i_d_i_r)func)(args[0].value.i, args[1].value.i, args[2].value.d, args[3].value.i);
+        if (!d0 && d1 && !d2 && !d3) return ((f_i_d_i_i_r)func)(args[0].value.i, args[1].value.d, args[2].value.i, args[3].value.i);
+        if (d0 && !d1 && !d2 && !d3) return ((f_d_i_i_i_r)func)(args[0].value.d, args[1].value.i, args[2].value.i, args[3].value.i);
+        /* 2 doubles */
+        if (!d0 && !d1 && d2 && d3) return ((f_i_i_d_d_r)func)(args[0].value.i, args[1].value.i, args[2].value.d, args[3].value.d);
+        if (!d0 && d1 && !d2 && d3) return ((f_i_d_i_d_r)func)(args[0].value.i, args[1].value.d, args[2].value.i, args[3].value.d);
+        if (!d0 && d1 && d2 && !d3) return ((f_i_d_d_i_r)func)(args[0].value.i, args[1].value.d, args[2].value.d, args[3].value.i);
+        if (d0 && !d1 && !d2 && d3) return ((f_d_i_i_d_r)func)(args[0].value.d, args[1].value.i, args[2].value.i, args[3].value.d);
+        if (d0 && !d1 && d2 && !d3) return ((f_d_i_d_i_r)func)(args[0].value.d, args[1].value.i, args[2].value.d, args[3].value.i);
+        if (d0 && d1 && !d2 && !d3) return ((f_d_d_i_i_r)func)(args[0].value.d, args[1].value.d, args[2].value.i, args[3].value.i);
+        return 0;
+    }
     return 0;
 }
 
@@ -372,12 +405,17 @@ FFIValue ffi_call_win64(void* func, const FFISignature* sig, const FFIArg* args)
     /* ===== 路径 4: 混合参数回退策略 =====
      * 将所有参数统一为 int64_t 传递（double 转为位模式），
      * 让 C 编译器根据强转后的函数指针类型自动分配寄存器。
-     * 
-     * 注意：这种方法在 x64 上对前 4 个参数是安全的，
-     * 因为整数/浮点寄存器独立分配。但对栈传参（>4 参数），
-     * double 的位模式在栈上不会被自动加载到 XMM 寄存器。
-     * 因此超过 4 个参数的混合调用可能不正确。
+     *
+     * ⚠ 警告：此回退路径对浮点参数不保证正确！
+     * int64 位模式通过整数寄存器/栈传递，但被调函数期望
+     * 浮点参数在 XMM 寄存器中，两者不匹配。
+     * 仅当参数全为整数/指针时此路径完全安全。
      */
+    if (dcount > 0) {
+        fprintf(stderr, "[FFI Warning] 回退调用路径: %d 个参数中含 %d 个浮点参数，"
+                        "浮点参数可能无法正确传递（期望 XMM 寄存器，实际走整数寄存器/栈）\n",
+                total, dcount);
+    }
     {
         int64_t iargs[FFI_MAX_ARGS];
         for (int i = 0; i < total; i++) {
