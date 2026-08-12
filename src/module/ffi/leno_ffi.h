@@ -1,14 +1,19 @@
 /* Leno FFI - 简化外部函数接口
  * 灵感来源于 LuaJIT FFI 和 Python ctypes
- * 支持: Windows x64, Linux x64
+ * 支持: Windows x64, Linux x64, macOS x64, macOS arm64, Linux arm64
  *
  * 类型: void, int, double, pointer
- * 最大参数: 12 (6 寄存器 + 6 栈参数)
+ * 最大参数: 12 (6/8 寄存器 + 栈参数)
  *
  * 核心设计:
  *   参数按原始位置混合打包为统一类型列表 (int64_t/double)，
- *   利用 C 编译器自动按 x64 ABI 规则分配寄存器，
+ *   利用 C 编译器自动按各平台 ABI 规则分配寄存器，
  *   避免手动处理混合寄存器分配的复杂性。
+ *
+ * 平台调用约定:
+ *   - Windows x64:    Microsoft x64 (RCX/RDX/R8/R9 + XMM0-XMM3, 32B shadow)
+ *   - Linux/macOS x64: System V AMD64 (RDI-R9 + XMM0-XMM7, 无 shadow)
+ *   - ARM64 (任意 OS): AAPCS64 (X0-X7 + V0-V7, 无 shadow)
  *
  * 与 LuaJIT FFI 的对比:
  *   LuaJIT 使用 JIT 编译器动态生成调用序列，可处理任意参数组合。
@@ -27,7 +32,7 @@ extern "C" {
 #endif
 
 /* ===== 最大参数数量 ===== */
-#define FFI_MAX_ARGS 12  /* 6 寄存器 + 6 栈参数（x64 ABI） */
+#define FFI_MAX_ARGS 12  /* Win64: 4 reg + 8 stack; SysV: 6 reg + 6 stack; AAPCS64: 8 reg + 4 stack */
 
 /* ===== FFI 参数类型枚举 ===== */
 typedef enum {
@@ -79,6 +84,8 @@ FFIValue ffi_call(void* func, const FFISignature* sig, const FFIArg* args);
 /* ===== 平台特定实现 ===== */
 #ifdef _WIN32
 FFIValue ffi_call_win64(void* func, const FFISignature* sig, const FFIArg* args);
+#elif defined(__arm64__) || defined(__aarch64__)
+FFIValue ffi_call_aapcs(void* func, const FFISignature* sig, const FFIArg* args);
 #else
 FFIValue ffi_call_sysv(void* func, const FFISignature* sig, const FFIArg* args);
 #endif

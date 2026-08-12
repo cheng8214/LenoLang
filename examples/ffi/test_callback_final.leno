@@ -1,4 +1,11 @@
 // 最终版多线程回调测试
+//
+// ★ 重要：不能用 WaitForThreadpoolWorkCallbacks 阻塞等待！
+//   工作线程回调走 marshal 路径，回调被放入队列后工作线程阻塞等待主线程泵送。
+//   如果主线程也阻塞在 WaitForThreadpoolWorkCallbacks 上，无法泵送 → 死锁。
+//   解决方案：用 Sleep 轮询代替阻塞等待。每次 Sleep 返回后
+//   ffi_call_impl 会自动泵送待处理的跨线程回调。
+
 import ffi
 
 cfunc WorkCallback(Ptr instance, Ptr context, Ptr work): void
@@ -28,6 +35,17 @@ main() {
     var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, context, ffi.nullptr())
 
     ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
+
+    // ★ 轮询等待（不能用 WaitForThreadpoolWorkCallbacks，会死锁）
+    // 每次 Sleep 返回后 ffi_call_impl 会自动泵送跨线程回调
+    int wait = 0
+    while callback_value == 0 {
+        ffi.call_void(kernel32, "Sleep", 10)
+        wait = wait + 1
+        if wait > 1000 { print("（等待超时）"); break }  // 10s 上限
+    }
+
+    // 此时工作线程已完成，可安全调用 WaitForThreadpoolWorkCallbacks 确认
     ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
 
     var final_value = ffi.read_int(context, 0)

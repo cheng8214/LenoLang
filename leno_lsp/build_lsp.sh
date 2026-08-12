@@ -101,8 +101,28 @@ LENO_SOURCES="$LENO_SOURCES ../src/package/package_init.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_resolve.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_install.c"
 
-# Platform-specific libraries
+# Platform-specific libraries and FFI implementation
 LIBS="-lm -lpthread -ldl"
+
+# 检测平台和架构，选择对应的 FFI 实现文件
+OS="$(uname -s 2>/dev/null || echo unknown)"
+ARCH="$(uname -m 2>/dev/null || echo x86_64)"
+case "$OS" in
+  Darwin*)
+    if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+      LENO_SOURCES="$LENO_SOURCES ../src/module/ffi/leno_ffi_arm64.c"
+    else
+      LENO_SOURCES="$LENO_SOURCES ../src/module/ffi/leno_ffi_linux.c"
+    fi
+    ;;
+  *)
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+      LENO_SOURCES="$LENO_SOURCES ../src/module/ffi/leno_ffi_arm64.c"
+    else
+      LENO_SOURCES="$LENO_SOURCES ../src/module/ffi/leno_ffi_linux.c"
+    fi
+    ;;
+esac
 
 gcc -o build/leno_lsp $LSP_SOURCES $LENO_SOURCES -I../src -Wall -Wextra -std=c99 -O2 $LIBS
 

@@ -542,7 +542,8 @@ ffi.free(libc)
 | Windows | x86-64 | ✅ 完全支持 | 使用 Microsoft x64 调用约定 |
 | Linux | x86-64 | ✅ 支持 | 使用 System V AMD64 ABI |
 | macOS | x86-64 | ✅ 支持 | 使用 System V AMD64 ABI |
-| ARM64 (任何平台) | - | ❌ 不支持 | 需要额外实现 |
+| macOS | arm64 | ✅ 支持 | 使用 AAPCS64 (AArch64) 调用约定 |
+| Linux | arm64 | ✅ 支持 | 使用 AAPCS64 (AArch64) 调用约定 |
 
 **调用约定差异**:
 
@@ -550,6 +551,7 @@ ffi.free(libc)
 |---------|--------------|--------------|-----------|
 | Windows x64 | RCX, RDX, R8, R9 | XMM0-XMM3 | 4 个整数 + 4 个浮点 |
 | System V AMD64 | RDI, RSI, RDX, RCX, R8, R9 | XMM0-XMM7 | 6 个整数 + 8 个浮点 |
+| AAPCS64 (ARM64) | X0-X7 | V0-V7 | 8 个整数 + 8 个浮点 |
 
 ---
 
@@ -1628,7 +1630,10 @@ main() {
    - 对已释放的对象进行操作会报错，而不是产生未定义行为
 
 5. **参数数量限制**
-   - C 函数调用最多支持 12 个参数（6 寄存器 + 6 栈参数，x64 ABI）
+   - C 函数调用最多支持 12 个参数
+   - Windows x64: 4 寄存器 + 8 栈参数
+   - Linux/macOS x86_64: 6 寄存器 + 6 栈参数
+   - ARM64 (AAPCS64): 8 寄存器 + 4 栈参数
 
 6. **数字类型处理**
    - 十六进制数解析规则：

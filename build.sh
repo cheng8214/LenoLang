@@ -108,11 +108,22 @@ if [ "$PLATFORM" = "windows" ]; then
   LIBS="$LIBS -municode -lws2_32"
   EXE=".exe"
 elif [ "$PLATFORM" = "macos" ]; then
-  # leno_ffi_linux.c 用 #ifndef _WIN32 包裹，macOS（类 Unix）同样适用
-  SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
+  # 检测架构：arm64 (AAPCS64) vs x86_64 (System V AMD64)
+  ARCH="$(uname -m 2>/dev/null || echo x86_64)"
+  if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+    SOURCES="$SOURCES src/module/ffi/leno_ffi_arm64.c"
+  else
+    SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
+  fi
   LIBS="$LIBS -lpthread -ldl"
 else
-  SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
+  # Linux: 检测架构
+  ARCH="$(uname -m 2>/dev/null || echo x86_64)"
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    SOURCES="$SOURCES src/module/ffi/leno_ffi_arm64.c"
+  else
+    SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
+  fi
   LIBS="$LIBS -lpthread -ldl"
   CFLAGS="$CFLAGS -D_GNU_SOURCE"
 fi

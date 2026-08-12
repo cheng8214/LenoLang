@@ -1479,17 +1479,20 @@ FFI 回调功能在不同平台上的支持情况：
 | Windows | x86-64 | ✅ 完全支持 | Microsoft x64 calling convention |
 | Linux | x86-64 | ✅ 支持 | System V AMD64 ABI |
 | macOS | x86-64 | ✅ 支持 | System V AMD64 ABI |
-| ARM64 | - | ❌ 不支持 | 需要额外实现 |
+| macOS | arm64 | ✅ 支持 | AAPCS64 (AArch64) |
+| Linux | arm64 | ✅ 支持 | AAPCS64 (AArch64) |
 
 **调用约定差异：**
 
-| 特性 | Windows x64 | System V AMD64 (Linux/macOS) |
-|-----|-------------|------------------------------|
-| 整数参数寄存器 | RCX, RDX, R8, R9 | RDI, RSI, RDX, RCX, R8, R9 |
-| 浮点参数寄存器 | XMM0-XMM3 | XMM0-XMM7 |
-| 最大整数参数 | 4 个 | 6 个 |
-| 最大浮点参数 | 4 个 | 8 个 |
-| Shadow space | 32 bytes | 无 |
+| 特性 | Windows x64 | System V AMD64 (Linux/macOS x64) | AAPCS64 (ARM64) |
+|-----|-------------|--------------------------------|-----------------|
+| 整数参数寄存器 | RCX, RDX, R8, R9 | RDI, RSI, RDX, RCX, R8, R9 | X0-X7 |
+| 浮点参数寄存器 | XMM0-XMM3 | XMM0-XMM7 | V0-V7 |
+| 最大整数参数 | 4 个 | 6 个 | 8 个 |
+| 最大浮点参数 | 4 个 | 8 个 | 8 个 |
+| Shadow space | 32 bytes | 无 | 无 |
+| 返回值（整数） | RAX | RAX | X0 |
+| 返回值（浮点） | XMM0 | XMM0 | V0 |
 
 ---
 

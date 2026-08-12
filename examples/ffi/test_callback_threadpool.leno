@@ -1,6 +1,13 @@
 // 多线程回调测试 - 使用 Windows 线程池
 // 测试场景：C 库的工作线程调用 Leno 回调
 // 注意：Windows ThreadPoolWork 回调有 3 个参数 (Instance, Context, Work)
+//
+// ★ 重要：不能用 WaitForThreadpoolWorkCallbacks 阻塞等待！
+//   工作线程的回调走 marshal 路径（current_exec_vm==NULL），
+//   回调被放入队列后工作线程阻塞等待主线程泵送。
+//   如果主线程也阻塞在 WaitForThreadpoolWorkCallbacks 上，无法泵送 → 死锁。
+//   解决方案：用 Sleep 轮询代替阻塞等待。每次 Sleep 返回后
+//   ffi_call_impl 会自动泵送待处理的跨线程回调。
 
 import ffi
 import threads
@@ -46,7 +53,14 @@ func test_basic_threadpool_callback() {
         ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
     }
 
-    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+    // ★ 轮询等待（不能用 WaitForThreadpoolWorkCallbacks，会死锁）
+    // 每次 Sleep 返回后 ffi_call_impl 会自动泵送跨线程回调
+    int wait = 0
+    while global_counter < 5 {
+        ffi.call_void(kernel32, "Sleep", 10)
+        wait = wait + 1
+        if wait > 1000 { print("（等待超时）"); break }  // 10s 上限
+    }
 
     assert(global_counter == 5, "应该有 5 次回调，实际: " + global_counter)
     print("✓ 回调执行次数正确: " + global_counter)
@@ -55,6 +69,8 @@ func test_basic_threadpool_callback() {
     assert(final_value == 105, "上下文值应该被增加到 105，实际: " + final_value)
     print("✓ 上下文修改正确: " + final_value)
 
+    // 此时工作线程已完成，可安全调用 WaitForThreadpoolWorkCallbacks 确认
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
     ffi.call_void(kernel32, "CloseThreadpoolWork", work)
     ffi.free(context)
     ffi.free(cb)
@@ -87,12 +103,20 @@ func test_callback_with_ffi() {
     var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, context, ffi.nullptr())
 
     ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
-    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+
+    // ★ 轮询等待（不能用 WaitForThreadpoolWorkCallbacks，会死锁）
+    int wait = 0
+    while ffi.read_int(context, 0) == 0 {
+        ffi.call_void(kernel32, "Sleep", 10)
+        wait = wait + 1
+        if wait > 1000 { print("（等待超时）"); break }
+    }
 
     var tick = ffi.read_int(context, 0)
     assert(tick > 0, "回调应该设置了 tick 值")
     print("✓ 回调中 FFI 调用成功，tick: " + tick)
 
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
     ffi.call_void(kernel32, "CloseThreadpoolWork", work)
     ffi.free(context)
     ffi.free(cb)
@@ -120,16 +144,23 @@ func test_concurrent_callbacks() {
     var cb = ffi.callback(concurrent_callback, ConcurrentCallback)
     var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, ffi.nullptr(), ffi.nullptr())
 
-    // 提交 10 个工作项（减少并发度）
+    // 提交 10 个工作项
     for 10 to i{
         ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
     }
 
-    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
+    // ★ 轮询等待
+    int wait = 0
+    while concurrent_counter < 10 {
+        ffi.call_void(kernel32, "Sleep", 10)
+        wait = wait + 1
+        if wait > 1000 { print("（等待超时）"); break }
+    }
 
     assert(concurrent_counter == 10, "应该有 10 次回调，实际: " + concurrent_counter)
     print("✓ 并发回调执行次数正确: " + concurrent_counter)
 
+    ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
     ffi.call_void(kernel32, "CloseThreadpoolWork", work)
     ffi.free(cb)
     ffi.free(kernel32)
@@ -138,7 +169,12 @@ func test_concurrent_callbacks() {
     print("")
 }
 
-// ========== 测试 4: 回调线程身份验证 ==========
+// ========== 测试 4: 回调 marshal 线程验证 ==========
+// C 库工作线程（ThreadPool）没有 VM 上下文（current_exec_vm==NULL），
+// 回调会走 marshal 路径：工作线程将请求放入队列后阻塞，
+// 主线程通过 ffi_call_impl 的自动泵送机制执行 Leno 回调代码。
+// 因此回调中的 GetCurrentThreadId 返回的是主线程 ID —— 这是正确行为！
+// marshal 机制保护 VM 不被并发访问。
 func check_thread_callback(Ptr instance, Ptr context, Ptr work): void {
     import ffi
 
@@ -150,7 +186,7 @@ func check_thread_callback(Ptr instance, Ptr context, Ptr work): void {
 }
 
 func test_callback_thread_identity() {
-    print("=== 测试 4: 回调线程身份验证 ===")
+    print("=== 测试 4: 回调 marshal 线程验证 ===")
 
     var kernel32 = ffi.load("kernel32.dll")
     main_thread_id = ffi.call_int(kernel32, "GetCurrentThreadId")
@@ -161,13 +197,22 @@ func test_callback_thread_identity() {
     var work = ffi.call_ptr(kernel32, "CreateThreadpoolWork", cb, ffi.nullptr(), ffi.nullptr())
 
     ffi.call_void(kernel32, "SubmitThreadpoolWork", work)
+
+    // ★ 轮询等待
+    int wait = 0
+    while callback_thread_id == 0 {
+        ffi.call_void(kernel32, "Sleep", 10)
+        wait = wait + 1
+        if wait > 1000 { print("（等待超时）"); break }
+    }
+
+    print("回调执行线程 ID: " + callback_thread_id)
+    assert(callback_thread_id != 0, "回调应该已执行并设置线程 ID")
+    // marshal 机制将回调转发到主线程执行，所以线程 ID 应该相同
+    assert(callback_thread_id == main_thread_id, "marshaled 回调应该在主线程上执行 (期望: " + main_thread_id + ", 实际: " + callback_thread_id + ")")
+    print("✓ 回调通过 marshal 机制在主线程上执行 (ID: " + callback_thread_id + ")")
+
     ffi.call_void(kernel32, "WaitForThreadpoolWorkCallbacks", work, 0)
-
-    print("回调线程 ID: " + callback_thread_id)
-    assert(callback_thread_id != 0, "回调应该设置了线程 ID")
-    assert(callback_thread_id != main_thread_id, "回调应该来自工作线程，而非主线程")
-    print("✓ 回调确实来自工作线程 (ID: " + callback_thread_id + ")")
-
     ffi.call_void(kernel32, "CloseThreadpoolWork", work)
     ffi.free(cb)
     ffi.free(kernel32)

@@ -1,5 +1,15 @@
 // 使用线程监控文件夹变化
 // 主线程可以继续执行其他任务
+// 使用 overlapped I/O 实现可优雅停止的监控
+//
+// 优化要点：
+//   1. pathW/pathW2 用完立即释放，消除内存泄漏
+//   2. bytesTransferred 在循环外分配，循环复用
+//   3. 使用 FILE_FLAG_OVERLAPPED + 事件 + WaitForSingleObject(500ms 超时)
+//      替代同步阻塞的 ReadDirectoryChangesW，使线程可被停止
+//   4. 通过独立 stopCh 的 is_closed() 检测停止信号
+//   5. 退出前 CancelIo 取消未完成 I/O，确保安全关闭句柄
+//   6. watch 线程发送 "stopped" 确认后退出，主线程 join 等待
 
 import ffi
 import threads
@@ -12,23 +22,26 @@ var FILE_NOTIFY_CHANGE_LAST_WRITE = 0x00000010
 var FILE_NOTIFY_CHANGE_CREATION = 0x00000040
 
 var FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+var FILE_FLAG_OVERLAPPED = 0x40000000
 var FILE_SHARE_READ = 0x00000001
 var FILE_SHARE_WRITE = 0x00000002
 var FILE_SHARE_DELETE = 0x00000004
 var OPEN_EXISTING = 3
 
-// 监控线程函数
-func watch_folder(any ch, any watchPath) {
+// ========== 监控线程函数 ==========
+func watch_folder(Channel ch, Channel stopCh, string watchPath) {
     import ffi
 
     var kernel32 = ffi.load("kernel32.dll")
     var buffer = ffi.malloc(4096)
+    var bytesTransferred = ffi.malloc(4)  // 循环外分配，复用
 
-    // 创建文件夹
+    // 创建目录（如果不存在，已存在则忽略错误）
     var pathW = ffi.utf8_to_utf16(watchPath)
-    var result = ffi.call_int(kernel32, "CreateDirectoryW", pathW, ffi.nullptr())
+    ffi.call_int(kernel32, "CreateDirectoryW", pathW, ffi.nullptr())
+    ffi.free(pathW)
 
-    // 打开文件夹句柄
+    // 打开文件夹句柄（FILE_FLAG_OVERLAPPED 支持异步 I/O）
     var pathW2 = ffi.utf8_to_utf16(watchPath)
     var hDirectory = ffi.call_ptr(kernel32, "CreateFileW",
         pathW2,
@@ -36,16 +49,24 @@ func watch_folder(any ch, any watchPath) {
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         ffi.nullptr(),
         OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
         ffi.nullptr()
     )
+    ffi.free(pathW2)
 
     if ffi.ptr_to_int(hDirectory) == -1 {
-        ch.send({type: "error", msg: "无法打开文件夹"})
+        ch.send({type: "error", msg: "无法打开文件夹: " + watchPath})
+        ffi.free(bytesTransferred)
         ffi.free(buffer)
         ffi.free(kernel32)
         return
     }
+
+    // 创建手动重置事件用于 overlapped I/O 完成通知
+    var hEvent = ffi.call_ptr(kernel32, "CreateEventW", ffi.nullptr(), 1, 0, ffi.nullptr())
+    // OVERLAPPED 结构体 (x64: 32 字节, hEvent 在 offset 24)
+    var overlapped = ffi.calloc(1, 32)
+    ffi.write_ptr(overlapped, 24, hEvent)
 
     ch.send({type: "started", path: watchPath})
 
@@ -58,104 +79,119 @@ func watch_folder(any ch, any watchPath) {
     var running = true
     while running {
         ffi.memset(buffer, 0, 4096)
+        ffi.call_int(kernel32, "ResetEvent", hEvent)
 
-        var bytesReturned = ffi.malloc(4)
-        ffi.write_uint(bytesReturned, 0, 0)
-
+        // 发起异步 ReadDirectoryChangesW（立即返回，不阻塞）
         var success = ffi.call_int(kernel32, "ReadDirectoryChangesW",
-            hDirectory,
-            buffer,
-            4096,
-            0,
-            notifyFilter,
-            bytesReturned,
-            ffi.nullptr(),
-            ffi.nullptr()
+            hDirectory, buffer, 4096, 0, notifyFilter,
+            ffi.nullptr(),  // overlapped 模式下 lpBytesReturned 传 NULL
+            overlapped, ffi.nullptr()
         )
 
-        var bytesRead = ffi.read_uint(bytesReturned, 0)
-        ffi.free(bytesReturned)
+        if success == 0 {
+            ch.send({type: "error", msg: "ReadDirectoryChangesW 调用失败"})
+            break
+        }
 
-        if success != 0 and bytesRead > 0 {
-            // 解析通知
-            var offset = 0
-            while offset < bytesRead {
-                var action = ffi.read_uint(buffer, offset + 4)
-                var fileNameLen = ffi.read_uint(buffer, offset + 8)
+        // 等待事件触发或超时（500ms）
+        var waitResult = ffi.call_int(kernel32, "WaitForSingleObject", hEvent, 500)
 
-                if fileNameLen > 0 {
-                    var fileNamePtr = ffi.offset(buffer, offset + 12)
-                    var fileName = ffi.utf16_to_utf8(fileNamePtr)
+        if waitResult == 0 {
+            // WAIT_OBJECT_0: 有文件变化
+            var ioResult = ffi.call_int(kernel32, "GetOverlappedResult",
+                hDirectory, overlapped, bytesTransferred, 0)
+            var bytesRead = ffi.read_uint(bytesTransferred, 0)
 
-                    var actionStr = ""
-                    switch action
-                    {
-                    case  1 { actionStr = "添加" }
-                    case  2 { actionStr = "删除" }
-                    case  3 { actionStr = "修改" }
-                    case  4 { actionStr = "重命名(旧)" }
-                    case  5 { actionStr = "重命名(新)" }
-                    default { actionStr = "未知" }
-					}
-                    ch.send({type: "event", action: actionStr, file: fileName})
+            if ioResult != 0 and bytesRead > 0 {
+                var offset = 0
+                while offset < bytesRead {
+                    var action = ffi.read_uint(buffer, offset + 4)
+                    var fileNameLen = ffi.read_uint(buffer, offset + 8)
+
+                    if fileNameLen > 0 {
+                        var fileNamePtr = ffi.offset(buffer, offset + 12)
+                        var fileName = ffi.utf16_to_utf8(fileNamePtr)
+
+                        var actionStr = ""
+                        switch action {
+                        case 1 { actionStr = "添加" }
+                        case 2 { actionStr = "删除" }
+                        case 3 { actionStr = "修改" }
+                        case 4 { actionStr = "重命名(旧)" }
+                        case 5 { actionStr = "重命名(新)" }
+                        default { actionStr = "未知" }
+                        }
+                        ch.send({type: "event", action: actionStr, file: fileName})
+                    }
+
+                    var nextOffset = ffi.read_uint(buffer, offset)
+                    if nextOffset == 0 { break }
+                    offset = offset + nextOffset
                 }
-
-                var nextOffset = ffi.read_uint(buffer, offset)
-                if nextOffset == 0 { break }
-                offset = offset + nextOffset
             }
         }
 
-        // 检查是否收到停止信号（非阻塞检查）
-        // 这里用简单的超时机制
-        ffi.call_void(kernel32, "Sleep", 100)
+        // 检查停止信号（通过 channel 关闭检测，非阻塞）
+        if stopCh.is_closed() {
+            running = false
+        }
     }
 
+    // 取消未完成的异步 I/O
+    ffi.call_void(kernel32, "CancelIo", hDirectory)
+
+    // 清理资源
+    ffi.call_void(kernel32, "CloseHandle", hEvent)
     ffi.call_void(kernel32, "CloseHandle", hDirectory)
+    ffi.free(overlapped)
+    ffi.free(bytesTransferred)
     ffi.free(buffer)
     ffi.free(kernel32)
     ch.send({type: "stopped"})
 }
 
-// 主线程任务：模拟其他工作
-func main_task(any ch) {
+// ========== 主线程任务：模拟其他工作 ==========
+func main_task(Channel ch) {
     import ffi
 
     var kernel32 = ffi.load("kernel32.dll")
     for 0 : 29 to i {
-        ffi.call_void(kernel32, "Sleep", 500)  // 模拟工作
+        ffi.call_void(kernel32, "Sleep", 500)
         ch.send({type: "heartbeat", count: i + 1})
     }
     ffi.free(kernel32)
 }
 
+// ========== 主函数 ==========
 main() {
     print("=== 线程版文件夹监控 ===")
     print("")
 
     var watchPath = "d:\\test_watch_folder"
     var ch = threads.channel(100)
+    var stopCh = threads.channel(1)
 
     // 启动监控线程
-    var watchThread = threads.start(watch_folder, ch, watchPath)
+    var watchThread = threads.start(watch_folder, ch, stopCh, watchPath)
     print("监控线程已启动...")
     print("文件夹: " + watchPath)
     print("")
 
     // 等待监控启动
     var msg = ch.receive()
-    if msg.type == "started" {
-        print("✓ 监控已开始: " + msg.path)
-    } else if msg.type == "error" {
-        print("✗ 启动失败: " + msg.msg)
-        watchThread.join()
-        return
+    if msg is Dict {
+        if msg.type == "started" {
+            print("✓ 监控已开始: " + msg.path)
+        } else if msg.type == "error" {
+            print("✗ 启动失败: " + msg.msg)
+            watchThread.join()
+            return
+        }
     }
 
     print("")
     print("请在文件夹中进行操作（创建/删除/修改文件）")
     print("主线程继续执行其他任务...")
-    print("(输入 'q' 退出)")
     print("")
 
     // 主线程同时执行其他任务
@@ -164,32 +200,39 @@ main() {
     // 处理消息
     var running = true
     var eventCount = 0
+    var heartbeatCount = 0
+    var stopSent = false
 
     while running {
         var msg = ch.receive()
-
-        if msg.type == "event" {
-            eventCount = eventCount + 1
-            print("[监控] " + msg.action + ": " + msg.file)
-        } else if msg.type == "heartbeat" {
-            print("[主任务] 心跳 " + msg.count + "/30")
-        } else if msg.type == "stopped" {
-            print("[监控] 监控已停止")
-            running = false
+        if msg is Dict {
+            if msg.type == "event" {
+                eventCount = eventCount + 1
+                print("[监控] " + msg.action + ": " + msg.file)
+            } else if msg.type == "heartbeat" {
+                heartbeatCount = heartbeatCount + 1
+                print("[主任务] 心跳 " + msg.count + "/30")
+            } else if msg.type == "error" {
+                print("[监控] 错误: " + msg.msg)
+            } else if msg.type == "stopped" {
+                print("[监控] 监控已停止")
+                running = false
+            }
         }
 
-        // 简单退出条件：收到30个心跳或10个事件
-        if eventCount >= 10 {
+        // 达到退出条件时发送停止信号（只发一次）
+        if not stopSent and (heartbeatCount >= 30 or eventCount >= 10) {
             print("")
-            print("已收到10个文件事件，准备退出...")
-            running = false
+            print("准备停止监控...")
+            stopCh.close()
+            stopSent = true
         }
     }
 
     print("")
     print("等待线程结束...")
     taskThread.join()
-    // watchThread 是无限循环，这里不 join，直接退出
+    watchThread.join()
 
     print("=== 测试完成 ===")
 }

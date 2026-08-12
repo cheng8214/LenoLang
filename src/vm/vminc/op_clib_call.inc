@@ -25,6 +25,15 @@ OPCODE(OP_CLIB_CALL) {
     // 调用 FFI（传递 TypeKind 用于返回值自动展开和参数窄化）
     Value result = ffi_clib_call(arg_count, call_args, ret_type_kind, arg_types);
 
+    // ★ 重新读取 frame 指针：ffi_clib_call 内部可能触发自动泵送
+    // (ffi_call_impl → ffi_pump_callbacks_func → callback_dispatch_direct
+    //  → vm_call_value → call_value → vm_grow_frames)，导致 vm.frames
+    //  被 realloc 重新分配。此时旧的 frame 指针成为悬空指针，
+    //  DISPATCH 读取 frame->ip 会触发 use-after-free。
+    // 在 jumptable 模式下（Linux/GCC），DISPATCH 不重新读取 frame，
+    // 所以必须在此处手动刷新。switch 模式下 DISPATCH 会自动重新读取。
+    frame = &vm.frames[vm.frame_cnt - 1];
+
     // 检查是否有异常
     if (vm.has_exception) {
         char* msg = NULL;
@@ -46,5 +55,8 @@ OPCODE(OP_CLIB_CALL) {
 
     // 压入返回值
     vm_stack_push(&vm, result);
+    // ★ 再次刷新 frame：vm_stack_push 可能触发栈扩容（realloc），
+    // 虽然不影响 frames 数组，但保持一致性
+    frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }

@@ -12,7 +12,10 @@
 //     回调也在该工作线程触发（SDL_windowsdialog.c 用 SDL_CreateThread）。
 //     Leno FFI 已支持跨线程回调自动编组：每次 clib 调用返回后会自动泵送
 //     待处理的跨线程回调，无需手动调用 ffi.pump_callbacks()。
-//     （Linux 行为不同，回调通常在同线程触发。）
+//     Linux 上 SDL3 可能使用 DBus portal 或 zenity 后端：
+//     - DBus portal：回调在主线程的 SDL_PumpEvents/SDL_WaitEvent 中触发
+//     - zenity：回调在 SDL3 创建的工作线程中触发（走 marshal 路径）
+//     两种路径均由 FFI 层自动处理，无需手动调用 ffi.pump_callbacks()。
 //   - 回调签名：void (*)(void* userdata, const char* const* filelist, int filter)
 //     filter: 用户选中的过滤器索引；filelist: 取消=空数组，错误=NULL。
 

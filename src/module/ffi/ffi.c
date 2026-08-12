@@ -496,9 +496,13 @@ static FFIType typekind_to_ffitype(TypeKind tk) {
 /* 前置声明：ffi_pump_callbacks_func 定义在 callback_dispatch 之后 */
 static Value ffi_pump_callbacks_func(int argc, Value* args);
 
-/* 前置声明：跨线程回调编组全局变量，定义在 CallbackRegState 之后 */
+/* 前置声明：跨线程回调编组全局变量，定义在 CallbackRegState 之后
+ * g_pending_count 使用 volatile：工作线程在 mutex 内修改它，
+ * 主线程在 ffi_call_impl 的自动泵送中无 mutex 读取它。
+ * 不加 volatile 时 GCC -O2 可能将读取优化掉，导致主线程永远看不到
+ * 工作线程的更新，从而永远不触发泵送 → 程序卡死。 */
 static int g_callback_marshal_initialized;
-static int g_pending_count;
+static volatile int g_pending_count;
 
 static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* arg_types) {
     // 库对象为空检查：避免 null.bl_xxx() 触发 0xC0000005 访问违规崩溃
@@ -2201,8 +2205,8 @@ static Value ffi_alignof_func(int argc, Value* args) {
 /* ==================== FFI 回调机制 ==================== */
 
 typedef struct {
-    int64_t int_args[6];    // Windows: RCX, RDX, R8, R9; Linux: RDI, RSI, RDX, RCX, R8, R9
-    double float_args[8];   // Windows: XMM0-XMM3; Linux: XMM0-XMM7
+    int64_t int_args[8];    // Windows: RCX,RDX,R8,R9; Linux: RDI-R9; ARM64: X0-X7
+    double float_args[8];   // Windows: XMM0-XMM3; Linux/macOS: XMM0-XMM7; ARM64: V0-V7
 } CallbackRegState;
 
 /* 全局变量用于传递浮点返回值 */
@@ -2223,12 +2227,13 @@ typedef struct {
     double float_result;          /* 浮点返回值 */
     int completed;                /* 主线程是否已执行完（0=等待，1=完成） */
     int in_use;                   /* 槽位是否被占用（0=空闲，1=占用） */
+    int processing;               /* 正在主线程执行中（防止重入） */
 } PendingCallback;
 
 static PendingCallback g_pending_queue[MAX_PENDING_CALLBACKS];
 /* g_pending_count 和 g_callback_marshal_initialized 前置声明在 ffi_call_impl 之前 */
 
-static PlatformMutex g_pending_mutex;      /* 队列互斥锁 */
+static PlatformMutex g_pending_mutex;      /* 队列互斥锁（非递归！） */
 static PlatformCondVar g_pending_cond;     /* 队列有新项/有空位条件变量 */
 static PlatformCondVar g_complete_cond;    /* 单项完成条件变量 */
 /* g_callback_marshal_initialized 前置声明在 ffi_call_impl 之前 */
@@ -2236,6 +2241,11 @@ static PlatformCondVar g_complete_cond;    /* 单项完成条件变量 */
 /* 记录主线程 ID（在 ffi_callback_marshal_init 中由主线程设置） */
 static PlatformThreadID g_main_thread_id;
 static int g_main_thread_id_set = 0;
+
+/* 泵送重入标志：防止 ffi_pump_callbacks_func 在回调执行期间被
+ * 嵌套的 ffi_call_impl 自动泵送再次调用。虽然 processing 标志已能
+ * 防止同一回调被重入执行，但此标志可完全跳过不必要的 mutex 操作。 */
+static volatile int g_pump_in_progress = 0;
 
 static void ffi_callback_marshal_init(void) {
     if (g_callback_marshal_initialized) return;
@@ -2265,14 +2275,15 @@ static FFIValue callback_dispatch_direct(int cb_id, CallbackRegState* regs) {
     memset(ffi_args, 0, sizeof(ffi_args));
 
     // 参数提取：根据平台不同，寄存器映射不同
-    // Windows: int_args[0]=RCX, [1]=RDX, [2]=R8, [3]=R9; float_args[0-3]=XMM0-XMM3
-    // Linux:   int_args[0]=RDI, [1]=RSI, [2]=RDX, [3]=RCX, [4]=R8, [5]=R9; float_args[0-7]=XMM0-XMM7
+    // Windows:  int_args[0]=RCX, [1]=RDX, [2]=R8, [3]=R9; float_args[0-3]=XMM0-XMM3
+    // Linux:    int_args[0]=RDI, [1]=RSI, [2]=RDX, [3]=RCX, [4]=R8, [5]=R9; float_args[0-7]=XMM0-XMM7
+    // ARM64:    int_args[0-7]=X0-X7; float_args[0-7]=V0-V7
     int int_idx = 0, float_idx = 0;
     for (int i = 0; i < total; i++) {
         FFIType atype = sig->arg_types[i];
         ffi_args[i].type = atype;
         if (atype == FFI_TYPE_DOUBLE || atype == FFI_TYPE_FLOAT) {
-            // Linux 支持最多 8 个浮点寄存器，Windows 支持 4 个
+            // Windows 支持 4 个浮点寄存器，Linux/macOS/ARM64 支持 8 个
             int max_float_regs = 4;
             #ifndef _WIN32
             max_float_regs = 8;
@@ -2282,10 +2293,14 @@ static FFIValue callback_dispatch_direct(int cb_id, CallbackRegState* regs) {
             else
                 ffi_args[i].value.d = 0.0;
         } else {
-            // Linux 支持最多 6 个整数寄存器，Windows 支持 4 个
+            // Windows 支持 4 个整数寄存器，Linux 支持 6 个，ARM64 支持 8 个
             int max_int_regs = 4;
             #ifndef _WIN32
+            #if defined(__arm64__) || defined(__aarch64__)
+            max_int_regs = 8;
+            #else
             max_int_regs = 6;
+            #endif
             #endif
             if (int_idx < max_int_regs)
                 ffi_args[i].value.i = regs->int_args[int_idx++];
@@ -2464,42 +2479,83 @@ static FFIValue callback_dispatch(int cb_id, CallbackRegState* regs) {
 }
 
 /* ===== 主线程泵送：ffi.pump_callbacks() ===== */
-/* 主线程在事件循环中调用，处理所有排队的跨线程回调 */
+/* 主线程在事件循环中调用，处理所有排队的跨线程回调
+ *
+ * ★ 关键设计：不在持有 g_pending_mutex 时执行回调！
+ *
+ * 原因：callback_dispatch_direct → vm_call_value 会运行任意 Leno 字节码。
+ * 如果 Leno 代码中调用了 clib 函数，ffi_call_impl 末尾的自动泵送会
+ * 尝试再次锁定 g_pending_mutex。由于 pthread_mutex 默认非递归，这会导致
+ * 死锁（程序卡死）。
+ *
+ * 解决方案：在 mutex 内仅查找待处理槽位并拷贝必要数据，
+ * 然后释放 mutex 再执行回调，执行完毕后重新加锁写回结果。
+ */
 static Value ffi_pump_callbacks_func(int argc, Value* args) {
     (void)argc;
     (void)args;
 
     if (!g_callback_marshal_initialized) return val_null();
 
-    platform_mutex_lock(&g_pending_mutex);
+    /* 重入保护：如果已经在泵送中（回调代码触发了嵌套 clib 调用），
+     * 直接返回，避免不必要的 mutex 操作。processing 标志已确保
+     * 当前回调不会被重复执行。 */
+    if (g_pump_in_progress) return val_null();
+    g_pump_in_progress = 1;
 
-    /* 处理所有待处理的回调 */
     while (true) {
-        /* 查找一个 in_use 且未 completed 的槽位 */
+        /* ---- 阶段 1：加锁，查找待处理回调 ---- */
+        platform_mutex_lock(&g_pending_mutex);
+
         int slot = -1;
         for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-            if (g_pending_queue[i].in_use && !g_pending_queue[i].completed) {
+            if (g_pending_queue[i].in_use && !g_pending_queue[i].completed &&
+                !g_pending_queue[i].processing) {
                 slot = i;
                 break;
             }
         }
-        if (slot < 0) break;  /* 没有待处理的 */
 
-        PendingCallback* pending = &g_pending_queue[slot];
+        if (slot < 0) {
+            /* 没有待处理的回调 */
+            platform_mutex_unlock(&g_pending_mutex);
+            break;
+        }
 
-        /* 在主线程上执行回调（复用直接执行逻辑） */
-        FFIValue cb_result = callback_dispatch_direct(pending->cb_id, &pending->regs);
+        /* 拷贝回调数据（在 mutex 内安全读取） */
+        int cb_id = g_pending_queue[slot].cb_id;
+        CallbackRegState regs_copy = g_pending_queue[slot].regs;
+        /* 标记为正在处理，防止重入：回调执行期间如果触发了 clib 调用，
+         * ffi_call_impl 的自动泵送会再次调用本函数，但会跳过此槽位 */
+        g_pending_queue[slot].processing = 1;
 
-        pending->result = cb_result;
-        pending->float_result = g_callback_float_result;
-        pending->completed = 1;
+        /* ---- 阶段 2：解锁，执行回调（不持有 mutex） ---- */
+        platform_mutex_unlock(&g_pending_mutex);
 
-        /* 唤醒等待的工作线程 */
-        platform_cond_broadcast(&g_complete_cond);
+        /* 在主线程上执行回调 */
+        FFIValue cb_result = callback_dispatch_direct(cb_id, &regs_copy);
+        double float_result = g_callback_float_result;
+
+        /* ---- 阶段 3：重新加锁，写回结果 ---- */
+        platform_mutex_lock(&g_pending_mutex);
+
+        /* 槽位可能在此期间被其他线程修改（极端情况），
+         * 但 in_use 由工作线程设置，completed 由我们设置，
+         * 只要 in_use 仍为 1 就安全写入 */
+        if (g_pending_queue[slot].in_use && !g_pending_queue[slot].completed) {
+            g_pending_queue[slot].result = cb_result;
+            g_pending_queue[slot].float_result = float_result;
+            g_pending_queue[slot].completed = 1;
+            g_pending_queue[slot].processing = 0;
+
+            /* 唤醒等待的工作线程 */
+            platform_cond_broadcast(&g_complete_cond);
+        }
+
+        platform_mutex_unlock(&g_pending_mutex);
     }
 
-    platform_mutex_unlock(&g_pending_mutex);
-
+    g_pump_in_progress = 0;
     return val_null();
 }
 
@@ -2548,6 +2604,126 @@ static void* create_callback_trampoline(int cb_id, FFIType ret_type) {
     if (!code) return NULL;
 
     int pos = 0;
+
+#if defined(__arm64__) || defined(__aarch64__)
+    // ========== AAPCS64 (AArch64) Trampoline ==========
+    //
+    // AAPCS64 ABI:
+    //   Integer args: X0-X7 (8 registers)
+    //   Float args:   V0-V7 / D0-D7 (8 registers, 64-bit)
+    //   Return:       X0 (int/ptr), V0/D0 (float/double)
+    //   SP must be 16-byte aligned at all public interfaces
+    //   No shadow space
+    //
+    // CallbackRegState layout on stack (at [sp, #0]):
+    //   offset 0:    int_args[0] = X0
+    //   offset 8:    int_args[1] = X1
+    //   ...
+    //   offset 56:   int_args[7] = X7
+    //   offset 64:   float_args[0] = D0
+    //   offset 72:   float_args[1] = D1
+    //   ...
+    //   offset 120:  float_args[7] = D7
+    //   Total: 128 bytes
+    //
+    // Stack layout:
+    //   [sp, #0..127]  = CallbackRegState (128 bytes)
+    //   [sp, #128]     = saved X29 (frame pointer)
+    //   [sp, #136]     = saved X30 (link register)
+    //   (allocated by stp x29, x30, [sp, #-16]! then sub sp, #128)
+
+    /* Helper: emit a 32-bit AArch64 instruction in little-endian */
+    #define EMIT32(instr) do { \
+        uint32_t _instr = (instr); \
+        code[pos++] = (_instr) & 0xFF; \
+        code[pos++] = ((_instr) >> 8) & 0xFF; \
+        code[pos++] = ((_instr) >> 16) & 0xFF; \
+        code[pos++] = ((_instr) >> 24) & 0xFF; \
+    } while (0)
+
+    /* Helper: load a 64-bit address/constant into a register using MOVZ+MOVK */
+    #define EMIT_LOAD_ADDR64(reg, addr) do { \
+        uint64_t _val = (uint64_t)(addr); \
+        uint16_t _i0 = _val & 0xFFFF; \
+        uint16_t _i1 = (_val >> 16) & 0xFFFF; \
+        uint16_t _i2 = (_val >> 32) & 0xFFFF; \
+        uint16_t _i3 = (_val >> 48) & 0xFFFF; \
+        EMIT32(0xD2800000 | ((uint32_t)_i0 << 5) | (reg));       /* movz xN, #i0 */ \
+        EMIT32(0xF2A00000 | ((uint32_t)_i1 << 5) | (reg));       /* movk xN, #i1, lsl #16 */ \
+        EMIT32(0xF2C00000 | ((uint32_t)_i2 << 5) | (reg));       /* movk xN, #i2, lsl #32 */ \
+        EMIT32(0xF2E00000 | ((uint32_t)_i3 << 5) | (reg));       /* movk xN, #i3, lsl #48 */ \
+    } while (0)
+
+    // ---- Prologue ----
+    // stp x29, x30, [sp, #-16]!  (push fp, lr; SP -= 16)
+    EMIT32(0xA9BF7BFD);
+    // mov x29, sp  (set frame pointer)
+    EMIT32(0x910003FD);
+    // sub sp, sp, #128  (allocate CallbackRegState on stack)
+    EMIT32(0xD10203FF);
+
+    // ---- Save integer argument registers X0-X7 ----
+    // str xN, [sp, #(N*8)]
+    EMIT32(0xF90003E0);  // str x0, [sp, #0]
+    EMIT32(0xF90007E1);  // str x1, [sp, #8]
+    EMIT32(0xF9000BE2);  // str x2, [sp, #16]
+    EMIT32(0xF9000FE3);  // str x3, [sp, #24]
+    EMIT32(0xF90013E4);  // str x4, [sp, #32]
+    EMIT32(0xF90017E5);  // str x5, [sp, #40]
+    EMIT32(0xF9001BE6);  // str x6, [sp, #48]
+    EMIT32(0xF9001FE7);  // str x7, [sp, #56]
+
+    // ---- Save float argument registers D0-D7 ----
+    // str dN, [sp, #(64 + N*8)]
+    EMIT32(0xFD0023E0);  // str d0, [sp, #64]
+    EMIT32(0xFD0027E1);  // str d1, [sp, #72]
+    EMIT32(0xFD002BE2);  // str d2, [sp, #80]
+    EMIT32(0xFD002FE3);  // str d3, [sp, #88]
+    EMIT32(0xFD0033E4);  // str d4, [sp, #96]
+    EMIT32(0xFD0037E5);  // str d5, [sp, #104]
+    EMIT32(0xFD003BE6);  // str d6, [sp, #112]
+    EMIT32(0xFD003FE7);  // str d7, [sp, #120]
+
+    // ---- Set up callback_dispatch arguments ----
+    // movz x0, #cb_id  (first arg: callback ID)
+    EMIT32(0xD2800000 | ((uint32_t)(cb_id & 0xFFFF) << 5));
+
+    // mov x1, sp  (second arg: pointer to CallbackRegState)
+    // This is: add x1, sp, #0
+    EMIT32(0x910003E1);
+
+    // ---- Load callback_dispatch address into x16 (IP0) ----
+    EMIT_LOAD_ADDR64(16, (void*)callback_dispatch);
+
+    // ---- Call callback_dispatch ----
+    // blr x16
+    EMIT32(0xD63F0200);
+
+    // ---- Float return handling ----
+    // X0 now contains the integer/pointer return value.
+    // For float return types, load g_callback_float_result into D0.
+    // Note: on AAPCS64, float returns go in V0/D0, integer returns in X0.
+    // We load D0 after the call returns; X0 is already set by callback_dispatch.
+    if (ret_type == FFI_TYPE_DOUBLE || ret_type == FFI_TYPE_FLOAT) {
+        // Load &g_callback_float_result into x16
+        EMIT_LOAD_ADDR64(16, (void*)&g_callback_float_result);
+        // ldr d0, [x16]  (load double from address)
+        EMIT32(0xFD400200);
+    }
+
+    // ---- Epilogue ----
+    // add sp, sp, #128  (deallocate CallbackRegState)
+    EMIT32(0x910203FF);
+    // ldp x29, x30, [sp], #16  (pop fp, lr; SP += 16)
+    EMIT32(0xA8D07BFD);
+    // ret  (return via x30)
+    EMIT32(0xD65F03C0);
+
+    #undef EMIT32
+    #undef EMIT_LOAD_ADDR64
+
+#else
+    // ========== x86_64 Trampoline (Windows x64 / System V AMD64) ==========
 
     // push rbp
     code[pos++] = 0x55;
@@ -2610,7 +2786,7 @@ static void* create_callback_trampoline(int cb_id, FFIType ret_type) {
     code[pos++] = 0x48; code[pos++] = 0x83; code[pos++] = 0xC4; code[pos++] = 0x28;
 
 #else
-    // ========== System V AMD64 ABI (Linux/macOS) ==========
+    // ========== System V AMD64 ABI (Linux/macOS x86_64) ==========
     // Integer args: RDI, RSI, RDX, RCX, R8, R9
     // Float args: XMM0-XMM7
     // No shadow space required
@@ -2716,6 +2892,7 @@ static void* create_callback_trampoline(int cb_id, FFIType ret_type) {
     code[pos++] = 0x5D;
     // ret
     code[pos++] = 0xC3;
+#endif
 
     return (void*)code;
 }
