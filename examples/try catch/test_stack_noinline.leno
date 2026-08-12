@@ -1,0 +1,62 @@
+// 测试堆栈追踪：使用不会被内联的函数（含 try-catch）
+// can_inline() 会拒绝含 try 的函数
+
+func level3() {
+    try {
+        var arr = [1, 2, 3]
+        var x = arr[10]    // 数组越界
+    } catch e {
+        throw e    // 重新抛出，使 level3 含 try 但不被内联
+    }
+}
+
+func level2() {
+    try {
+        level3()
+    } catch e {
+        throw e
+    }
+}
+
+func level1() {
+    try {
+        level2()
+    } catch e {
+        throw e
+    }
+}
+
+print("=== 测试: catch e 中的调用链 ===")
+try {
+    level1()
+} catch e {
+    print("  e.msg: " + e.msg)
+    print("  e.line: " + e.line)
+    print("  e.stack:")
+    for e.stack to frame {
+        print("    at " + frame)
+    }
+}
+
+print("\n=== 测试: 除零错误调用链 ===")
+func deep_a() {
+    try { var x = 1 / 0 } catch e { throw e }
+}
+
+func deep_b() {
+    try { deep_a() } catch e { throw e }
+}
+
+func deep_c() {
+    try { deep_b() } catch e { throw e }
+}
+
+try {
+    deep_c()
+} catch e {
+    print("  e.msg: " + e.msg)
+    print("  e.stack:")
+    for e.stack to frame {
+        print("    at " + frame)
+    }
+}

@@ -90,14 +90,40 @@ OPCODE(OP_END_TRY) {
                 vm_stack_push(&vm, vm.exception);
                 return -1;  // 触发调用栈回退
             }
-            // 上层也没有异常处理，输出错误并退出
-            char* msg = value_to_string(vm.exception);
+            // 上层也没有异常处理，打印调用栈并退出
+            print_unhandled_exception(vm.exception, vm.exception_line);
+            // 从异常对象中提取消息字符串（避免打印整个 Dict）
+            char* msg = NULL;
+            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_DICT) {
+                ObjDict* err_dict = (ObjDict*)val_as_obj(vm.exception);
+                ObjString* msg_key = str_copy("msg", 3);
+                Value msg_val = dict_get(err_dict, val_obj((Object*)msg_key));
+                if (val_is_string(msg_val)) {
+                    msg = strdup(((ObjString*)val_as_obj(msg_val))->chars);
+                }
+            }
+            if (!msg) {
+                msg = value_to_string(vm.exception);
+            }
             runtime_error(msg, vm.exception_line);
             free(msg);
             return -1;
         } else {
-            // 没有上层异常处理，输出错误并退出
-            char* msg = value_to_string(vm.exception);
+            // 没有上层异常处理，打印调用栈并退出
+            print_unhandled_exception(vm.exception, vm.exception_line);  // 使用保存的异常行号
+            // 从异常对象中提取消息字符串（避免打印整个 Dict）
+            char* msg = NULL;
+            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_DICT) {
+                ObjDict* err_dict = (ObjDict*)val_as_obj(vm.exception);
+                ObjString* msg_key = str_copy("msg", 3);
+                Value msg_val = dict_get(err_dict, val_obj((Object*)msg_key));
+                if (val_is_string(msg_val)) {
+                    msg = strdup(((ObjString*)val_as_obj(msg_val))->chars);
+                }
+            }
+            if (!msg) {
+                msg = value_to_string(vm.exception);
+            }
             runtime_error(msg, vm.exception_line);  // 使用保存的异常行号
             free(msg);
             return -1;
@@ -241,8 +267,21 @@ OPCODE(OP_THROW) {
         if (vm.current_coroutine) {
             return -1;
         }
-        // 不在协程中，报错
-        char* msg = value_to_string(exception);
+        // 不在协程中，打印完整调用栈并报错
+        print_unhandled_exception(exception, GET_CURRENT_LINE());
+        // 从异常对象中提取消息字符串（避免打印整个 Dict）
+        char* msg = NULL;
+        if (val_is_obj(exception) && val_as_obj(exception)->type == OBJ_DICT) {
+            ObjDict* err_dict = (ObjDict*)val_as_obj(exception);
+            ObjString* msg_key = str_copy("msg", 3);
+            Value msg_val = dict_get(err_dict, val_obj((Object*)msg_key));
+            if (val_is_string(msg_val)) {
+                msg = strdup(((ObjString*)val_as_obj(msg_val))->chars);
+            }
+        }
+        if (!msg) {
+            msg = value_to_string(exception);
+        }
         runtime_error(msg, GET_CURRENT_LINE());
         free(msg);
         return -1;

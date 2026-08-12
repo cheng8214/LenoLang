@@ -1,0 +1,22 @@
+// 测试未捕获异常打印调用栈
+// 运行后会看到错误输出 + 调用栈
+
+func inner_func() {
+    try {
+        var arr = [1, 2, 3]
+        var x = arr[99]    // 数组越界
+    } catch e {
+        throw e    // 重新抛出
+    }
+}
+
+func outer_func() {
+    try {
+        inner_func()
+    } catch e {
+        throw e
+    }
+}
+
+// 未捕获：直接调用 outer_func()
+outer_func()

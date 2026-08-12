@@ -54,6 +54,134 @@ static inline void runtime_error(const char* msg, int line) {
     error_set_filename(old_filename);
 }
 
+// ============================================================================
+// 调用栈追踪 (Stack Trace)
+// ============================================================================
+
+// 构建调用栈数组，每帧格式: "func_name (file:line)"
+// 从最内层帧（当前执行帧）到最外层帧（main）排列
+static ObjArray* build_stack_trace(void) {
+    ObjArray* stack_arr = arr_new(vm.frame_cnt);
+    if (!stack_arr) return NULL;
+
+    for (int i = vm.frame_cnt - 1; i >= 0; i--) {
+        CallFrame* f = &vm.frames[i];
+
+        // 获取函数名
+        const char* func_name = NULL;
+        if (f->closure && f->closure->function && f->closure->function->name) {
+            func_name = f->closure->function->name;
+        } else if (i == 0) {
+            func_name = "<main>";
+        } else {
+            func_name = "<anonymous>";
+        }
+
+        // 获取文件名
+        const char* filename = "unknown";
+        if (f->chunk && f->chunk->filename) {
+            filename = f->chunk->filename;
+        }
+
+        // 获取行号（当前 IP 对应的行）
+        int line = 0;
+        if (f->chunk && f->chunk->lines && f->ip && f->chunk->code) {
+            int offset = (int)(f->ip - f->chunk->code);
+            if (offset >= 0 && offset < f->chunk->len) {
+                line = f->chunk->lines[offset];
+            }
+        }
+
+        // 拼接 "func_name (file:line)"
+        char frame_desc[BUFFER_XLARGE];
+        snprintf(frame_desc, sizeof(frame_desc), "%s (%s:%d)", func_name, filename, line);
+        ObjString* frame_str = str_copy(frame_desc, strlen(frame_desc));
+        if (frame_str) {
+            arr_write(stack_arr, stack_arr->count, val_obj((Object*)frame_str));
+        }
+    }
+    return stack_arr;
+}
+
+// 打印未捕获异常的调用栈
+// exception: 异常值（可能是 Dict 或字符串）
+// line: 异常发生时的行号
+static void print_unhandled_exception(Value exception, int line) {
+    const char* msg = "未知错误";
+    const char* filename = "unknown";
+    ObjArray* stack_arr = NULL;
+    int has_stack = 0;
+
+    // 尝试从异常 Dict 中提取信息
+    if (val_is_obj(exception) && val_as_obj(exception)->type == OBJ_DICT) {
+        ObjDict* err_dict = (ObjDict*)val_as_obj(exception);
+
+        // 获取 msg
+        ObjString* msg_key = str_copy("msg", 3);
+        Value msg_val = dict_get(err_dict, val_obj((Object*)msg_key));
+        if (val_is_string(msg_val)) {
+            msg = ((ObjString*)val_as_obj(msg_val))->chars;
+        }
+
+        // 获取 file
+        ObjString* file_key = str_copy("file", 4);
+        Value file_val = dict_get(err_dict, val_obj((Object*)file_key));
+        if (val_is_string(file_val)) {
+            filename = ((ObjString*)val_as_obj(file_val))->chars;
+        }
+
+        // 获取 line
+        ObjString* line_key = str_copy("line", 4);
+        Value line_val = dict_get(err_dict, val_obj((Object*)line_key));
+        if (val_is_int(line_val)) {
+            line = (int)val_as_int(line_val);
+        }
+
+        // 获取 stack
+        ObjString* stack_key = str_copy("stack", 5);
+        Value stack_val = dict_get(err_dict, val_obj((Object*)stack_key));
+        if (val_is_obj(stack_val) && val_as_obj(stack_val)->type == OBJ_ARRAY) {
+            stack_arr = (ObjArray*)val_as_obj(stack_val);
+            has_stack = 1;
+        }
+    } else {
+        // 字符串异常：直接使用 value_to_string
+        char* str = value_to_string(exception);
+        if (str) {
+            // 使用静态缓冲区避免内存管理问题
+            static char msg_buf[BUFFER_XXLARGE];
+            snprintf(msg_buf, sizeof(msg_buf), "%s", str);
+            msg = msg_buf;
+            free(str);
+        }
+
+        // 获取当前文件名
+        if (vm.frame_cnt > 0) {
+            CallFrame* f = &vm.frames[vm.frame_cnt - 1];
+            if (f->chunk && f->chunk->filename) {
+                filename = f->chunk->filename;
+            }
+        }
+    }
+
+    // 如果异常 Dict 中没有 stack（如 throw "string"），实时构建
+    if (!has_stack) {
+        stack_arr = build_stack_trace();
+        has_stack = (stack_arr != NULL);
+    }
+
+    // 打印错误信息和调用栈
+    fprintf(stderr, "[错误] %s:%d: %s\n", filename, line, msg);
+    if (has_stack && stack_arr && stack_arr->count > 0) {
+        fprintf(stderr, "调用栈:\n");
+        for (int i = 0; i < stack_arr->count; i++) {
+            if (val_is_string(stack_arr->elements[i])) {
+                fprintf(stderr, "    at %s\n", ((ObjString*)val_as_obj(stack_arr->elements[i]))->chars);
+            }
+        }
+    }
+}
+
 // 抛出运行时异常（用于 try-catch 捕获）
 // 设置异常状态并跳转到 catch/finally 块
 static inline void throw_runtime_error(const char* msg, int line) {
@@ -91,24 +219,9 @@ static inline void throw_runtime_error(const char* msg, int line) {
         dict_set(err_dict, val_obj((Object*)file_key), val_obj((Object*)file_val));
     }
 
-    // 添加 stack 属性（调用栈）
-    ObjArray* stack_arr = arr_new(vm.frame_cnt);
+    // 添加 stack 属性（调用栈，每帧包含 "func_name (file:line)" 信息）
+    ObjArray* stack_arr = build_stack_trace();
     if (stack_arr) {
-        for (int i = 0; i < vm.frame_cnt; i++) {
-            CallFrame* f = &vm.frames[i];
-            const char* func_name = NULL;
-            if (f->closure && f->closure->function && f->closure->function->name) {
-                func_name = f->closure->function->name;
-            } else if (i == 0) {
-                func_name = "<main>";
-            } else {
-                func_name = "<anonymous>";
-            }
-            ObjString* name_str = str_copy(func_name, strlen(func_name));
-            if (name_str) {
-                arr_write(stack_arr, stack_arr->count, val_obj((Object*)name_str));
-            }
-        }
         ObjString* stack_key = str_copy("stack", 5);
         if (stack_key) {
             dict_set(err_dict, val_obj((Object*)stack_key), val_obj((Object*)stack_arr));
@@ -163,7 +276,8 @@ static inline void throw_runtime_error(const char* msg, int line) {
         }
     }
 
-    // 没有找到任何异常处理，报错并设置异常标志让 VM 停止
+    // 没有找到任何异常处理，打印完整调用栈并设置异常标志让 VM 停止
+    print_unhandled_exception(vm.exception, line);
     runtime_error(msg, line);
     vm.has_exception = 1;
 }
