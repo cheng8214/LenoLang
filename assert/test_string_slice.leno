@@ -1,0 +1,78 @@
+// 字符串切片测试 — 覆盖 str[start:end], str[:end], str[start:]
+// 结束索引为包含（与数组切片一致），索引为 UTF-8 字符级
+
+main() {
+    var s = "Hello,World"
+
+    // 测试1: 基本切片 str[start:end]（包含 end）
+    var s1 = s[0:4]
+    assert_eq(s1, "Hello")       // 索引 0,1,2,3,4 = H,e,l,l,o
+    print("[PASS] 测试1: 基本切片 s[0:4]")
+
+    // 测试2: 中间切片
+    var s2 = s[6:10]
+    assert_eq(s2, "World")       // 索引 6,7,8,9,10 = W,o,r,l,d
+    print("[PASS] 测试2: 中间切片 s[6:10]")
+
+    // 测试3: 从开头切片 str[:end]
+    var s3 = s[:4]
+    assert_eq(s3, "Hello")
+    print("[PASS] 测试3: 从开头切片 s[:4]")
+
+    // 测试4: 到末尾切片 str[start:]
+    var s4 = s[6:]
+    assert_eq(s4, "World")
+    print("[PASS] 测试4: 到末尾切片 s[6:]")
+
+    // 测试5: 单字符切片 str[i:i]
+    var s5 = s[0:0]
+    assert_eq(s5, "H")
+    print("[PASS] 测试5: 单字符切片 s[0:0]")
+
+    // 测试6: 完整切片（等于复制）
+    var s6 = s[0:10]
+    assert_eq(s6, "Hello,World")
+    print("[PASS] 测试6: 完整切片 s[0:10]")
+
+    // 测试7: end 越界自动截断
+    var s7 = s[0:100]
+    assert_eq(s7, "Hello,World")
+    print("[PASS] 测试7: end越界截断 s[0:100]")
+
+    // 测试8: start 越界返回空字符串
+    var s8 = s[100:200]
+    assert_eq(s8, "")
+    print("[PASS] 测试8: start越界返回空串 s[100:200]")
+
+    // 测试9: UTF-8 中文切片
+    var cn = "你好，世界"
+    assert_eq(cn[0:1], "你好")       // 字符索引 0,1
+    assert_eq(cn[0:2], "你好，")     // 字符索引 0,1,2
+    assert_eq(cn[3:4], "世界")       // 字符索引 3,4
+    assert_eq(cn[3:], "世界")        // 从索引3到末尾
+    assert_eq(cn[:2], "你好，")      // 从开头到索引2
+    print("[PASS] 测试9: UTF-8中文切片")
+
+    // 测试10: 中英混合字符串切片
+    var mix = "Hi你好"
+    assert_eq(mix[0:1], "Hi")       // 字符索引 0,1 = H,i
+    assert_eq(mix[2:3], "你好")     // 字符索引 2,3 = 你,好
+    assert_eq(mix[2:], "你好")
+    assert_eq(mix[:1], "Hi")
+    print("[PASS] 测试10: 中英混合切片")
+
+    // 测试11: 切片不修改原字符串
+    var orig = "abcdef"
+    var sliced = orig[1:3]
+    assert_eq(orig, "abcdef")
+    assert_eq(sliced, "bcd")
+    print("[PASS] 测试11: 切片不修改原字符串")
+
+    // 测试12: 空字符串切片
+    var empty = ""
+    assert_eq(empty[0:0], "")
+    assert_eq(empty[0:], "")
+    print("[PASS] 测试12: 空字符串切片")
+
+    print("test_string_slice all passed")
+}

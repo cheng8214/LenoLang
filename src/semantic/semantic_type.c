@@ -2029,12 +2029,15 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return type_copy(ast->cached_type);
         }
         case AST_SLICE: {
-            // 切片操作返回数组类型，元素类型与原数组相同
+            // 切片操作：数组切片返回数组类型，字符串切片返回字符串类型
             TypeInfo* obj_type = infer_expr_type(s, ast->u.slice.obj);
             TypeInfo* result = NULL;
             if (obj_type && obj_type->kind == TYPE_ARRAY) {
                 // 返回相同类型的数组
                 result = type_copy(obj_type);
+            } else if (obj_type && obj_type->kind == TYPE_STRING) {
+                // 字符串切片返回字符串类型
+                result = type_new(TYPE_STRING);
             } else {
                 result = type_new(TYPE_ANY);
             }

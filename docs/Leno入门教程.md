@@ -6414,6 +6414,48 @@ main() {
 
 > **Unicode 索引说明**：LenoC 字符串按 **Unicode 字符** 索引，而非 UTF-8 字节。`len()` 返回字符数，`byte_len()` 返回字节数。这与 Python 3、Java 等现代语言一致。
 
+### 字符串切片
+
+与数组切片类似，字符串也支持 `[start:end]` 切片语法，**结束索引为包含**（闭区间），索引按 **Unicode 字符** 计算，正确处理中文：
+
+```leno
+main() {
+    var s = "Hello,World"
+
+    // 切片语法: str[start:end]（包含end，闭区间）
+    print(s[0:4])      // "Hello"（字符索引 0,1,2,3,4）
+
+    // 从开头切片
+    print(s[:3])       // "Hell"
+
+    // 切到末尾
+    print(s[6:])       // "World"
+
+    // 单字符切片
+    print(s[0:0])      // "H"
+
+    // 中文切片（按字符索引，非字节）
+    var cn = "你好，世界"
+    print(cn[0:1])     // "你好"（字符索引 0,1）
+    print(cn[3:4])     // "世界"（字符索引 3,4）
+    print(cn[3:])      // "世界"
+
+    // 中英混合
+    var mix = "Hi你好"
+    print(mix[0:1])    // "Hi"
+    print(mix[2:3])    // "你好"
+}
+```
+
+> **⚠️ `str[start:end]` 与 `str.slice(start, end)` 的区别**
+>
+> | 语法 | 结束索引 | 示例 | 结果 |
+> |------|---------|------|------|
+> | `str[start:end]` | **包含** end | `"abc"[0:1]` | "ab" |
+> | `str.slice(start, end)` | **不包含** end | `"abc".slice(0,1)` | "a" |
+>
+> 切片语法 `[start:end]` 与数组切片保持一致（闭区间），而 `slice()` 方法采用左闭右开约定。
+
 ### 字符索引 vs 字节索引（重要）
 
 LenoC 字符串内部使用 UTF-8 编码，但对外提供**两套 API**：按字符操作和按字节操作。理解这个区别对正确处理中文和二进制数据至关重要。
@@ -6426,7 +6468,8 @@ LenoC 字符串内部使用 UTF-8 编码，但对外提供**两套 API**：按�
 |------|------|------|
 | `len()` | 返回字符数 | `"你好".len()` → 2 |
 | `str[i]` | 按字符索引 | `"你好"[0]` → "你" |
-| `slice(start, end)` | 按字符位置切片 | `"你好世界".slice(0,2)` → "你好" |
+| `str[start:end]` | 按字符位置切片（包含end） | `"你好世界"[0:1]` → "你好" |
+| `slice(start, end)` | 按字符位置切片（不包含end） | `"你好世界".slice(0,2)` → "你好" |
 | `sub_str(start, len)` | 按字符位置截取 | `"你好世界".sub_str(1,2)` → "好世" |
 | `reverse()` | 按字符反转 | `"你好".reverse()` → "好你" |
 | `find(sub)` | 返回字符位置 | `"你好世界".find("世界")` → 2 |
@@ -9295,6 +9338,7 @@ lenolang program.leno
 | 泛型数组  | `Array[int]`, `Array[Array[int]]`             |
 | 泛型字典  | `Dict[string, int]`, `Dict[int, string]`                           |
 | 数组切片  | `arr[2:8]`, `arr[:5]`, `arr[3:]`              |
+| 字符串切片 | `s[2:8]`, `s[:5]`, `s[3:]`（包含end，UTF-8字符级） |
 | 数组比较  | `[1,2] == [1,2]`                              |
 | 类型转换  | `_int(x)`, `_float(x)`, `_str(x)`, `_bool(x)`, `_int32(x)`, `_int64(x)`, `_uint32(x)`, `_uint64(x)`, `_uint8(x)`, `_byte(x)` |
 | 安全转换  | `x as Type`（原生类型：值转换/截断；结构类型：匹配返回原值，不匹配返回 null） |

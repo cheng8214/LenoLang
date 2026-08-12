@@ -1642,7 +1642,7 @@
             bool is_valid_slice_target = false;
             
             if (slice_obj_type) {
-                if (slice_obj_type->kind == TYPE_ARRAY || slice_obj_type->kind == TYPE_ANY) {
+                if (slice_obj_type->kind == TYPE_ARRAY || slice_obj_type->kind == TYPE_STRING || slice_obj_type->kind == TYPE_ANY) {
                     is_valid_slice_target = true;
                 }
                 // 检查是否是 cstruct 数组字段访问

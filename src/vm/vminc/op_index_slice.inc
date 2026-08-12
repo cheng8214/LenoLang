@@ -314,8 +314,64 @@ OPCODE(OP_SLICE) {
         vm_stack_push(&vm, val_obj((Object*)result));
         DISPATCH;
     }
+    // 处理字符串切片
+    else if (val_is_obj(arr_val) && val_as_obj(arr_val)->type == OBJ_STRING) {
+        ObjString* str = (ObjString*)val_as_obj(arr_val);
+        int char_len = str->char_len;
+        
+        // 计算起始索引（字符级）
+        int start_idx = 0;
+        if (!val_is_null(start_val)) {
+            if (!val_is_num(start_val)) {
+                throw_runtime_error("字符串切片起始索引必须是数字", GET_CURRENT_LINE());
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH;
+            }
+            start_idx = (int)value_to_double(start_val);
+            if (start_idx < 0) start_idx = 0;
+            if (start_idx > char_len) start_idx = char_len;
+        }
+        
+        // 计算结束索引（字符级，包含）
+        int end_idx = char_len - 1;
+        if (!val_is_null(end_val)) {
+            if (!val_is_num(end_val)) {
+                throw_runtime_error("字符串切片结束索引必须是数字", GET_CURRENT_LINE());
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH;
+            }
+            end_idx = (int)value_to_double(end_val);
+            if (end_idx < 0) end_idx = 0;
+            if (end_idx >= char_len) end_idx = char_len - 1;
+        }
+
+        // 计算切片长度（包含 end_idx）
+        int slice_len = end_idx - start_idx + 1;
+        if (slice_len < 0) slice_len = 0;
+
+        if (slice_len == 0) {
+            ObjString* result = str_copy("", 0);
+            vm_stack_push(&vm, val_obj((Object*)result));
+            DISPATCH;
+        }
+
+        // 将字符索引转换为字节偏移
+        int byte_start = utf8_char_offset(str->chars, str->len, start_idx);
+        int byte_end = utf8_char_offset(str->chars, str->len, end_idx + 1);
+        int new_byte_len = byte_end - byte_start;
+        
+        ObjString* result = str_copy(str->chars + byte_start, new_byte_len);
+        if (!result) {
+            throw_runtime_error("字符串切片内存分配失败", GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH;
+        }
+        
+        vm_stack_push(&vm, val_obj((Object*)result));
+        DISPATCH;
+    }
     else {
-        throw_runtime_error("切片操作需要数组或 cstruct 数组字段", GET_CURRENT_LINE());
+        throw_runtime_error("切片操作需要数组、字符串或 cstruct 数组字段", GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
