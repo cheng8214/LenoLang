@@ -8,7 +8,7 @@ main()
         throw "error message"
     } catch e {
         caught = true
-        assert_eq(e, "error message")
+        assert_eq(e.msg, "error message")
     }
     assert_eq(caught, true)
 
@@ -17,7 +17,7 @@ main()
     try {
         throw "test error"
     } catch e {
-        assert_eq(e, "test error")
+        assert_eq(e.msg, "test error")
     } finally {
         finally_executed = true
     }
@@ -51,12 +51,12 @@ main()
             throw "inner error"
         } catch e {
             inner_caught = true
-            assert_eq(e, "inner error")
+            assert_eq(e.msg, "inner error")
             throw "outer error"
         }
     } catch e {
         outer_caught = true
-        assert_eq(e, "outer error")
+        assert_eq(e.msg, "outer error")
     }
     assert_eq(inner_caught, true)
     assert_eq(outer_caught, true)

@@ -136,6 +136,24 @@ char* value_to_string(Value v) {
                 free(element_strs);
             } else if (val_as_obj(v)->type == OBJ_DICT) {
                 ObjDict* dict = (ObjDict*)val_as_obj(v);
+
+                // 检测是否为异常对象（同时含 "msg" 字符串键和 "stack" 数组键）
+                ObjString* msg_lookup = str_copy("msg", 3);
+                Value msg_val = dict_get(dict, val_obj((Object*)msg_lookup));
+                ObjString* stack_lookup = str_copy("stack", 5);
+                Value stack_val = dict_get(dict, val_obj((Object*)stack_lookup));
+                if (val_is_string(msg_val) &&
+                    val_is_obj(stack_val) && val_as_obj(stack_val)->type == OBJ_ARRAY) {
+                    // 异常对象：只返回 msg 字符串内容
+                    ObjString* msg_str = (ObjString*)val_as_obj(msg_val);
+                    result = (char*)malloc(msg_str->len + 1);
+                    if (result) {
+                        memcpy(result, msg_str->chars, msg_str->len);
+                        result[msg_str->len] = '\0';
+                    }
+                    break;
+                }
+
                 // 先计算需要的总长度
                 int total_len = 2; // "{}"
                 int entry_count = 0;

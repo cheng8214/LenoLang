@@ -1,0 +1,70 @@
+// 测试 throw "string" 统一为异常对象
+
+print("=== 测试 1: throw 字符串 → catch e 是异常对象 ===")
+try {
+    throw "自定义错误消息"
+} catch e {
+    print("  print(e): " + e)
+    print("  e.msg: " + e.msg)
+    print("  e.line: " + e.line)
+    print("  e.file: " + e.file)
+    print("  e.stack:")
+    for e.stack to frame {
+        print("    " + frame)
+    }
+}
+
+print("\n=== 测试 2: 运行时异常仍然正常 ===")
+try {
+    var a = 1 / 0
+} catch e {
+    print("  print(e): " + e)
+    print("  e.msg: " + e.msg)
+    print("  e.stack:")
+    for e.stack to frame {
+        print("    " + frame)
+    }
+}
+
+print("\n=== 测试 3: throw 字符串跨函数传播 ===")
+func validate(int x) {
+    if x < 0 {
+        throw "x 不能为负数"
+    }
+}
+
+func do_check() {
+    validate(-1)
+}
+
+try {
+    do_check()
+} catch e {
+    print("  print(e): " + e)
+    print("  e.msg: " + e.msg)
+    print("  e.line: " + e.line)
+    print("  e.stack:")
+    for e.stack to frame {
+        print("    " + frame)
+    }
+}
+
+print("\n=== 测试 4: throw 重新抛出仍保持异常对象 ===")
+try {
+    try {
+        throw "内层错误"
+    } catch e {
+        throw e    // 重新抛出
+    }
+} catch e {
+    print("  print(e): " + e)
+    print("  e.msg: " + e.msg)
+}
+
+print("\n=== 测试 5: 普通字符串插值不受影响 ===")
+var s = "hello"
+print("  普通字符串: " + s)
+var d = {name: "test", value: 42}
+print("  普通 dict: " + d)
+
+print("\n=== 所有测试通过 ===")

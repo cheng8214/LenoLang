@@ -7945,17 +7945,18 @@ main() {
 }
 ```
 
-> **⚠️ 注意：throw 字符串和运行时错误的 e 不同**
+> **✅ 统一异常格式**
 >
-> - `throw "message"` 抛出的是字符串值，`e` 就是字符串本身，没有 `.msg` 等属性
-> - 运行时错误（除零、越界等）抛出的是异常对象，有 `.msg`、`.file`、`.stack` 属性
+> `throw` 语句会自动包装为异常对象，`catch e` 拿到的 `e` 统一是含 `.msg`、`.file`、`.line`、`.stack` 属性的异常对象。`print(e)` 会输出 `.msg` 的值。
 >
 > ```leno
-> // throw 字符串
-> try { throw "error" } catch e { print(e) }        // "error"（字符串）
+> // throw 字符串 → 自动包装为异常对象
+> try { throw "error" } catch e { print(e) }        // "error"（输出 msg）
+> try { throw "error" } catch e { print(e.msg) }    // "error"
+> try { throw "error" } catch e { print(e.stack) }  // 调用栈
 >
-> // 运行时错误
-> try { var a = 1/0 } catch e { print(e.msg) }      // "除零错误"（异常对象）
+> // 运行时错误 → 同样是异常对象
+> try { var a = 1/0 } catch e { print(e.msg) }      // "除零错误"
 > ```
 
 ### 函数内异常传播

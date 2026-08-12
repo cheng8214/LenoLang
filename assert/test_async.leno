@@ -76,7 +76,7 @@ async func run_tests() {
         var r = await risky(-1)
         io.print("不应到达")
     } catch e {
-        assert_eq(e, "negative")
+        assert_eq(e.msg, "negative")
         io.print("[PASS] 测试4: async 异常捕获")
     }
 

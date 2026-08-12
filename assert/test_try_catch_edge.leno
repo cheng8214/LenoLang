@@ -8,7 +8,7 @@ main()
     try {
         throw "error"
     } catch e {
-        assert_eq(e, "error")
+        assert_eq(e.msg, "error")
     } finally {
         finally_count = finally_count + 1
     }
@@ -54,12 +54,12 @@ main()
             throw "inner"
         } catch e {
             inner_caught = true
-            assert_eq(e, "inner")
+            assert_eq(e.msg, "inner")
             throw "rethrown"
         }
     } catch e {
         outer_caught = true
-        assert_eq(e, "rethrown")
+        assert_eq(e.msg, "rethrown")
     }
     assert_eq(inner_caught, true)
     assert_eq(outer_caught, true)
@@ -112,7 +112,7 @@ main()
         try {
             throw "inner error"
         } catch e {
-            assert_eq(e, "inner error")
+            assert_eq(e.msg, "inner error")
         } finally {
             nested_finally_count = nested_finally_count + 1
         }
@@ -136,7 +136,7 @@ main()
         }
     } catch e {
         rethrow_caught = true
-        assert_eq(e, "second")
+        assert_eq(e.msg, "second")
     }
     assert_eq(finally_after_rethrow, true)
     assert_eq(rethrow_caught, true)

@@ -177,7 +177,7 @@ async func run_all_tests() {
         await thrower()
         io.print("[FAIL] 边界4: 未捕获异常")
     } catch e {
-        assert_eq(e, "async_error")
+        assert_eq(e.msg, "async_error")
         io.print("[PASS] 边界4: async throw 异常")
     }
 

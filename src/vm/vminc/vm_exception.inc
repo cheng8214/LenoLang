@@ -182,6 +182,48 @@ static void print_unhandled_exception(Value exception, int line) {
     }
 }
 
+// 将字符串异常包装为异常 Dict 对象
+// 用于 throw "string" 时自动包装为含 msg/line/file/stack 的异常对象
+static Value wrap_string_exception(Value str_val, int line) {
+    if (!val_is_string(str_val)) return str_val;
+
+    ObjDict* err_dict = dict_new(8);
+    if (!err_dict) return str_val;  // 内存不足时回退为原始字符串
+
+    // msg 属性
+    ObjString* msg_key = str_copy("msg", 3);
+    if (msg_key) {
+        dict_set(err_dict, val_obj((Object*)msg_key), str_val);
+    }
+
+    // line 属性
+    ObjString* line_key = str_copy("line", 4);
+    if (line_key) {
+        dict_set(err_dict, val_obj((Object*)line_key), val_int(line));
+    }
+
+    // file 属性
+    CallFrame* current_frame = &vm.frames[vm.frame_cnt - 1];
+    const char* filename = (current_frame->chunk && current_frame->chunk->filename)
+                           ? current_frame->chunk->filename : "unknown";
+    ObjString* file_key = str_copy("file", 4);
+    ObjString* file_val = str_copy(filename, (int)strlen(filename));
+    if (file_key && file_val) {
+        dict_set(err_dict, val_obj((Object*)file_key), val_obj((Object*)file_val));
+    }
+
+    // stack 属性
+    ObjArray* stack_arr = build_stack_trace();
+    if (stack_arr) {
+        ObjString* stack_key = str_copy("stack", 5);
+        if (stack_key) {
+            dict_set(err_dict, val_obj((Object*)stack_key), val_obj((Object*)stack_arr));
+        }
+    }
+
+    return val_obj((Object*)err_dict);
+}
+
 // 抛出运行时异常（用于 try-catch 捕获）
 // 设置异常状态并跳转到 catch/finally 块
 static inline void throw_runtime_error(const char* msg, int line) {

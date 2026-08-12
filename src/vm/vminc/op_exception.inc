@@ -185,6 +185,10 @@ OPCODE(OP_THROW) {
     if (val_is_null(exception)) {
         exception = vm.exception;
     }
+    // 如果 throw 的是字符串，自动包装为异常 Dict 对象（统一异常格式）
+    if (val_is_string(exception)) {
+        exception = wrap_string_exception(exception, GET_CURRENT_LINE());
+    }
     // 清除 pending_exception，因为我们要重新抛出异常
     // 这会触发新的异常处理流程
     if (vm.pending_exception) {
