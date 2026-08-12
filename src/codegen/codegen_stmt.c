@@ -1454,11 +1454,46 @@ void gen_block(CodeGen* gen, Ast* ast) {
 
     // 第三遍：按顺序执行其他语句
     // 在循环体内定义的函数会在这里生成（运行时每次迭代时）
+    // 如果块中有 defer 语句，用 try-finally 包裹，确保 defer 在作用域退出时执行
+
+    // 先扫描是否有 defer 语句
+    int has_defer = 0;
+    for (int i = 0; i < ast->u.block.count; i++) {
+        Ast* stmt = ast->u.block.items[i];
+        if (stmt->kind == AST_DEFER) {
+            has_defer = 1;
+            break;
+        }
+    }
+
+    // 收集 defer 表达式（最多 64 个）
+    Ast* defer_exprs[64];
+    int defer_count = 0;
+
+    int try_start = -1;
+    int finally_patch = -1;
+
+    if (has_defer) {
+        // 发射 OP_TRY（无 catch，只有 finally）
+        try_start = gen->chunk->len;
+        emit_byte(gen, OP_TRY, ast->line);
+        finally_patch = gen->chunk->len;
+        emit_byte(gen, 0, ast->line); // catch 偏移量 = 0（无 catch）
+        emit_byte(gen, 0, ast->line);
+        emit_byte(gen, 0, ast->line); // finally 偏移量占位
+        emit_byte(gen, 0, ast->line);
+    }
+
     for (int i = 0; i < ast->u.block.count; i++) {
         Ast* stmt = ast->u.block.items[i];
         if (stmt->kind == AST_FUNC_DEF && stmt->u.func.is_in_loop) {
             // 循环体内定义的函数：在运行时创建（每次迭代）
             gen_func(gen, stmt);
+        } else if (stmt->kind == AST_DEFER) {
+            // 收集 defer 表达式，不在当前位置生成代码
+            if (defer_count < 64) {
+                defer_exprs[defer_count++] = stmt->u.defer_.expr;
+            }
         } else if (stmt->kind != AST_FUNC_DEF) {
             gen_stmt(gen, stmt);
         }
@@ -1471,6 +1506,30 @@ void gen_block(CodeGen* gen, Ast* ast) {
         emit_byte(gen, (gen->dtor_entries[gen->dtor_count].local_slot >> 8) & 0xff, ast->line);
         emit_byte(gen, gen->dtor_entries[gen->dtor_count].local_slot & 0xff, ast->line);
         emit_byte(gen, OP_POP, ast->line);  // 弹出析构函数返回值(null)
+    }
+
+    // 如果有 defer，生成 finally 块
+    if (has_defer) {
+        // 正常结束 try 块后，需要跳转到 finally 块执行 defer
+        // 这里不需要 OP_JUMP——直接顺序执行到 finally 即可
+        // 因为 OP_TRY 的 finally_ip 已经指向了 finally 块，
+        // 在异常时会自动跳转到 finally_ip；
+        // 在正常退出时，代码顺序流入 finally 块。
+
+        // 回填 finally 偏移量（指向接下来的 OP_FINALLY）
+        int finally_start = gen->chunk->len;
+        int finally_offset = finally_start - try_start;
+        gen->chunk->code[finally_patch + 2] = (finally_offset >> 8) & 0xff;
+        gen->chunk->code[finally_patch + 3] = finally_offset & 0xff;
+
+        // 生成 finally 块
+        emit_byte(gen, OP_FINALLY, ast->line);
+        // 逆序执行 defer 表达式（后注册的先执行）
+        for (int i = defer_count - 1; i >= 0; i--) {
+            gen_expr(gen, defer_exprs[i]);
+            emit_byte(gen, OP_POP, ast->line);
+        }
+        emit_byte(gen, OP_END_TRY, ast->line);
     }
 }
 
@@ -1654,6 +1713,12 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, OP_NULL, ast->line);
             }
             emit_byte(gen, OP_THROW, ast->line);
+            break;
+        case AST_DEFER:
+            // defer 由 gen_block 统一处理，这里不应到达
+            // 如果直接调用 gen_stmt(AST_DEFER)，生成表达式 + POP（降级为普通表达式语句）
+            gen_expr(gen, ast->u.defer_.expr);
+            emit_byte(gen, OP_POP, ast->line);
             break;
         case AST_FACE_DEF: {
             ObjString* face_name = str_copy(ast->u.face_def.name, strlen(ast->u.face_def.name));
@@ -2410,6 +2475,9 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
             gen_stmt(gen, ast);
             break;
         case AST_THROW:
+            gen_stmt(gen, ast);
+            break;
+        case AST_DEFER:
             gen_stmt(gen, ast);
             break;
         case AST_STRUCT_DEF:

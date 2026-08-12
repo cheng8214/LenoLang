@@ -462,6 +462,9 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
         case AST_THROW:
             transform_method_body_ex(ast->u.throw_.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
             break;
+        case AST_DEFER:
+            transform_method_body_ex(ast->u.defer_.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            break;
         case AST_ARRAY: {
             for (int i = 0; i < ast->u.array.count; i++) {
                 transform_method_body_ex(ast->u.array.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
