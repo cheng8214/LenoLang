@@ -454,6 +454,10 @@ Ast* parse_export_stmt(Parser* p) {
         Ast* ast = ast_new(AST_EXPORT, line);
         ast->u.export.decl = decl;
         return ast;
+    } else if (p->lex.current.type == TOK_USE) {
+        error_add(ERR_SYNTAX, p->lex.current.line,
+            "'use' 已自带重导出语义，不需要 'export'，请直接使用 'use module.Type'");
+        return NULL;
     } else {
         error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、const、func、struct、cstruct、clib、enum 或 alias");
         return NULL;

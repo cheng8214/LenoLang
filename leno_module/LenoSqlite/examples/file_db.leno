@@ -1,0 +1,100 @@
+// file_db.leno — LenoSqlite 文件数据库示例
+// 演示文件数据库的创建、读写、只读打开
+import sqlite3
+use sqlite3.Statement
+import files
+
+main() {
+    string dbPath = "test_sqlite.db"
+
+    // 清理旧数据库
+    if files.exists(dbPath) { files.delete(dbPath) }
+
+    // ==================== 创建文件数据库 ====================
+    print("=== 创建文件数据库 ===")
+    var db = sqlite3.open(dbPath)
+    if not db.isOk() {
+        print("打开数据库失败: " + db.errmsg())
+        return
+    }
+
+    // 建表
+    db.exec("CREATE TABLE IF NOT EXISTS contacts (" +
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+            "name TEXT NOT NULL, " +
+            "phone TEXT, " +
+            "email TEXT, " +
+            "created_at TEXT DEFAULT (datetime('now', 'localtime'))" +
+            ")")
+
+    print("表创建成功")
+
+    // 插入联系人
+    var stmt = db.prepare("INSERT INTO contacts (name, phone, email) VALUES (?, ?, ?)")
+
+    Array[Dict] contacts = [
+        {name: "张三", phone: "13800138000", email: "zhangsan@example.com"},
+        {name: "李四", phone: "13900139000", email: "lisi@example.com"},
+        {name: "王五", phone: "13700137000", email: "wangwu@example.com"},
+        {name: "赵六", phone: "13600136000", email: "zhaoliu@example.com"}
+    ]
+
+    for contacts.len() to i {
+        var c = contacts[i]
+        stmt.bind(1, c.get("name", ""))
+        stmt.bind(2, c.get("phone", ""))
+        stmt.bind(3, c.get("email", ""))
+        stmt.step()
+        stmt.reset()
+        stmt.clearBindings()
+    }
+    stmt.finalize()
+
+    print("插入 " + db.totalChanges() + " 条联系人")
+
+    // 查询所有联系人
+    print("\n=== 所有联系人 ===")
+    db.query("SELECT * FROM contacts ORDER BY name", func(Statement s): bool {
+        print("ID: " + s.column_int(0))
+        print("  姓名: " + s.column_text(1))
+        print("  电话: " + s.column_text(2))
+        print("  邮箱: " + s.column_text(3))
+        print("  创建时间: " + s.column_text(4))
+        print("---")
+        return true
+    })
+
+    // 模糊查询
+    print("\n=== 搜索包含 '张' 的联系人 ===")
+    db.queryWithParams("SELECT * FROM contacts WHERE name LIKE ?", ["%张%"], func(Statement s): bool {
+        print("找到: " + s.column_text(1) + " (" + s.column_text(2) + ")")
+        return true
+    })
+
+    // 关闭数据库
+    db.close()
+
+    // ==================== 只读模式打开 ====================
+    print("\n=== 只读模式打开 ===")
+    var dbRead = sqlite3.openReadonly(dbPath)
+    if not dbRead.isOk() {
+        print("只读打开失败: " + dbRead.errmsg())
+    } else {
+        dbRead.query("SELECT COUNT(*) FROM contacts", func(Statement s): bool {
+            print("联系人总数: " + s.column_int(0))
+            return false
+        })
+
+        // 尝试写入（应该失败）
+        int rc = dbRead.exec("INSERT INTO contacts (name) VALUES ('test')")
+        if rc != sqlite3.OK {
+            print("只读模式写入被拒绝（预期行为）")
+        }
+        dbRead.close()
+    }
+
+    // 清理
+    if files.exists(dbPath) { files.delete(dbPath) }
+
+    print("\n文件数据库示例完成")
+}

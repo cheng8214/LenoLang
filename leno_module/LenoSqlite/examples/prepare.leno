@@ -1,0 +1,86 @@
+// prepare.leno — LenoSqlite 预编译语句示例
+// 演示预编译语句的高级用法：参数绑定、批量插入、命名参数
+import sqlite3
+use sqlite3.Statement
+
+main() {
+    var db = sqlite3.openMemory()
+    if not db.isOk() {
+        print("打开数据库失败: " + db.errmsg())
+        return
+    }
+
+    // 建表
+    db.exec("CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, price REAL, stock INTEGER)")
+
+    // ==================== 批量插入（预编译语句复用） ====================
+    var stmt = db.prepare("INSERT INTO products (name, price, stock) VALUES (?, ?, ?)")
+
+    Array[Dict] products = [
+        {name: "苹果", price: 5.5, stock: 100},
+        {name: "香蕉", price: 3.2, stock: 200},
+        {name: "橙子", price: 4.8, stock: 150},
+        {name: "葡萄", price: 8.0, stock: 80},
+        {name: "西瓜", price: 12.0, stock: 50}
+    ]
+
+    for products.len() to i {
+        var p = products[i]
+        stmt.bind(1, p.get("name", ""))
+        stmt.bind_double(2, p.get("price", 0.0))
+        stmt.bind_int(3, p.get("stock", 0))
+        int rc = stmt.step()
+        if rc != sqlite3.DONE {
+            print("插入失败: " + db.errmsg())
+        }
+        stmt.reset()
+        stmt.clearBindings()
+    }
+    stmt.finalize()
+
+    print("批量插入完成，共 " + db.totalChanges() + " 条")
+
+    // ==================== 命名参数查询 ====================
+    print("\n--- 价格大于指定值的商品 ---")
+    var stmt2 = db.prepare("SELECT * FROM products WHERE price > :min_price ORDER BY price")
+    stmt2.bind_double_by_name(":min_price", 5.0)
+    while stmt2.step() == sqlite3.ROW {
+        print("id=" + stmt2.column_int(0) + " name=" + stmt2.column_text(1) +
+              " price=" + stmt2.column_double(2) + " stock=" + stmt2.column_int(3))
+    }
+    stmt2.finalize()
+
+    // ==================== 聚合查询 ====================
+    print("\n--- 聚合查询 ---")
+    db.query("SELECT COUNT(*) as cnt, SUM(stock) as total, AVG(price) as avg FROM products", func(Statement s): bool {
+        print("商品总数: " + s.column_int(0))
+        print("库存总和: " + s.column_int(1))
+        print("平均价格: " + s.column_double(2))
+        return false  // 只有一行，停止遍历
+    })
+
+    // ==================== 事务批量操作 ====================
+    print("\n--- 事务批量操作 ---")
+    db.begin()
+    var stmt4 = db.prepare("UPDATE products SET stock = stock + ? WHERE name = ?")
+    stmt4.bind_int(1, 10)
+    stmt4.bind_text(2, "苹果")
+    stmt4.step()
+    stmt4.reset()
+    stmt4.bind_int(1, 20)
+    stmt4.bind_text(2, "香蕉")
+    stmt4.step()
+    stmt4.finalize()
+    db.commit()
+    print("事务提交完成")
+
+    // 验证更新结果
+    db.query("SELECT name, stock FROM products WHERE name IN ('苹果', '香蕉')", func(Statement s): bool {
+        print(s.column_text(0) + " 库存: " + s.column_int(1))
+        return true
+    })
+
+    // 关闭
+    db.close()
+    print("\n数据库已关闭")
+}

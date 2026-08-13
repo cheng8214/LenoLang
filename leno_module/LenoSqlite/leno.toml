@@ -1,0 +1,14 @@
+[package]
+name = "LenoSqlite"
+version = "1.0.0"
+description = "Leno SQLite3 数据库绑定模块"
+authors = ""
+license = "MIT"
+
+[modules]
+root = "lib"
+
+[native-libs.sqlite3]
+win   = "lib/sqlite3.dll"
+linux = "lib/libsqlite3.so"
+mac   = "lib/libsqlite3.dylib"

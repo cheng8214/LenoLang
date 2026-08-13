@@ -253,7 +253,7 @@ static LenoTokenType check_keyword(const char* text, int len) {
     return lookup_keyword(text, len);
 }
 
-static Token read_string(Lexer* lex) {
+static Token read_string(Lexer* lex, char quote) {
     Token tok = make_token(lex, TOK_STRING);
     const char* start = lex->src + lex->pos;
     advance(lex);
@@ -264,14 +264,14 @@ static Token read_string(Lexer* lex) {
             if (peek(lex) != '\0') {
                 advance(lex);
             }
-        } else if (peek(lex) == '"') {
+        } else if (peek(lex) == quote) {
             break;
         } else {
             advance(lex);
         }
     }
 
-    if (peek(lex) == '"') {
+    if (peek(lex) == quote) {
         tok.text = start + 1;
         tok.len = (lex->src + lex->pos) - tok.text;
         advance(lex);
@@ -588,7 +588,8 @@ void lexer_next(Lexer* lex) {
             }
             break;
 
-        case '"': lex->current = read_string(lex); break;
+        case '"': lex->current = read_string(lex, '"'); break;
+        case '\'': lex->current = read_string(lex, '\''); break;
         case '$':
             if (peek_next(lex) == '"') {
                 advance(lex); // 跳过 $
