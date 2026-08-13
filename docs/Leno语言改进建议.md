@@ -207,12 +207,52 @@ var [r, g, b] = parseColor("#ff8800")   // 函数返回 Array，直接解构
 
 ### 7. 运算符重载
 
+> **状态：评估后建议暂不实现**。经分析，现有功能已经足够应对 UI 库需求，运算符重载的收益不足以覆盖其引入的复杂度。
+
+**原始设想**：
+
 ```leno
 struct Vec2 { float x; float y }
 func +(Vec2 a, Vec2 b): Vec2 { return Vec2{x: a.x+b.x, y: a.y+b.y} }
 ```
 
-UI 库中坐标/尺寸运算频繁，运算符重载能让代码更自然。
+**评估结论——现有功能已足够**：
+
+1. **UI 库实际用法分析**：SDL3 库中坐标运算全部是 `float x, float y` 独立变量或 struct 字段（如 `pt.x + offset`），不存在 `Vec2 + Vec2` 整体运算的场景。运算符重载解决的是一个**不存在的痛点**。
+
+2. **现有等价写法已经足够简洁**：
+
+```leno
+// 方式一：struct 方法（已有，推荐）
+struct Vec2 {
+    float x, y
+    func add(Vec2 other): Vec2 {
+        return Vec2{x: x + other.x, y: y + other.y}
+    }
+}
+var c = a.add(b)  // 比 a + b 多几个字符，但语义清晰
+
+// 方式二：普通函数（已有）
+func vec_add(Vec2 a, Vec2 b): Vec2 {
+    return Vec2{x: a.x + b.x, y: a.y + b.y}
+}
+var c = vec_add(a, b)
+
+// 方式三：直接字段运算（UI 库实际写法，最常见）
+float nx = a.x + b.x
+float ny = a.y + b.y
+```
+
+3. **实现代价过高**：
+   - **Parser**：需要在 struct 方法解析中支持运算符函数名（`+`、`-`、`*`、`==` 等）作为方法名
+   - **Codegen**：`gen_binary()` 中每个 `TOK_PLUS`/`TOK_MINUS`/... 分支都需检查操作数是否为 struct 类型，如是则改走 `OP_GET_METHOD` + `OP_CALL` 路径——破坏当前的类型特化优化（`OP_ADD_INT`/`OP_ADD_FLOAT` 快速路径）
+   - **VM**：`OP_ADD` 等操作码需增加 struct 方法分派逻辑，增加热路径分支
+   - **语义分析**：需处理运算符方法的签名检查、左右操作数类型匹配、交换律等
+   - 估算改动：~500-800 行 C 代码，涉及 parser/codegen/vm/semantic 四层
+
+4. **收益有限**：UI 库中坐标运算用直接字段加法 `a.x + b.x` 已经足够自然，且性能最优（直接 float 运算，无方法分派开销）。运算符重载只对"值语义数学库"有价值，而 Leno 的定位不是数学语言。
+
+**结论**：现有 struct 方法 + 普通函数 + 直接字段运算已覆盖所有实际场景。运算符重载引入的复杂度（parser/codegen/vm/semantic 四层改动）远超收益（语法糖层面的微小便利），**建议暂不实现**。
 
 ---
 
@@ -237,6 +277,6 @@ UI 库中坐标/尺寸运算频繁，运算符重载能让代码更自然。
 | 中 | ~~defer~~（已回退） | 忘记清理资源 | 用 try-finally + GC 兜底替代 |
 | 中 | 访问控制 | 内部 API 无保护 | 设计规范 |
 | 低 | 数组解构 | 多返回值不便 | 小幅 |
-| 低 | 运算符重载 | 坐标运算不自然 | 小幅 |
+| 低 | ~~运算符重载~~（暂不实现） | 坐标运算不自然 | 现有 struct 方法+直接字段运算已足够 |
 
 > 前三项（可空类型、Dict 解构、case is 合并）如果能实现，Leno 的 UI 库代码量预计可减少 25-35%，且显著降低 bool 标志与 struct 不同步的隐性 bug 风险。
