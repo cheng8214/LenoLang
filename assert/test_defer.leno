@@ -1,5 +1,4 @@
 // defer 语句回归测试
-// 测试 defer 在正常退出、异常退出、函数返回时的行为
 
 var log = []
 
@@ -76,6 +75,101 @@ main()
     assert_eq(log[0], "in-if")
     assert_eq(log[1], "defer-if")
     assert_eq(log[2], "after-if")
+
+    // 测试7: defer + break 在 for 循环中
+    // 使用数组记录避免内联函数干扰
+    log = []
+    for 0:3 to i {
+        defer add("defer")
+        add("iter")
+        if i == 1 {
+            add("breaking")
+            break
+        }
+    }
+    add("after")
+    assert_eq(log[0], "iter")
+    assert_eq(log[1], "defer")
+    assert_eq(log[2], "iter")
+    assert_eq(log[3], "breaking")
+    assert_eq(log[4], "defer")
+    assert_eq(log[5], "after")
+
+    // 测试8: defer + continue 在 for 循环中
+    log = []
+    for 0:3 to i {
+        defer add("defer")
+        add("iter")
+        if i == 1 {
+            add("continuing")
+            continue
+        }
+        add("after-if")
+    }
+    add("after")
+    assert_eq(log[0], "iter")
+    assert_eq(log[1], "after-if")
+    assert_eq(log[2], "defer")
+    assert_eq(log[3], "iter")
+    assert_eq(log[4], "continuing")
+    assert_eq(log[5], "defer")
+    assert_eq(log[6], "iter")
+    assert_eq(log[7], "after-if")
+    assert_eq(log[8], "defer")
+
+    // 测试9: defer + break 在 while 循环中
+    log = []
+    var j = 0
+    while j < 3 {
+        defer add("defer")
+        add("iter")
+        if j == 1 {
+            add("breaking")
+            break
+        }
+        j = j + 1
+    }
+    add("after")
+    assert_eq(log[0], "iter")
+    assert_eq(log[1], "defer")
+    assert_eq(log[2], "iter")
+    assert_eq(log[3], "breaking")
+    assert_eq(log[4], "defer")
+    assert_eq(log[5], "after")
+
+    // 测试10: 嵌套块的 defer 执行顺序
+    log = []
+    {
+        defer add("outer-defer")
+        add("outer-start")
+        {
+            defer add("inner-defer")
+            add("inner-start")
+            add("inner-end")
+        }
+        add("outer-end")
+    }
+    assert_eq(log[0], "outer-start")
+    assert_eq(log[1], "inner-start")
+    assert_eq(log[2], "inner-end")
+    assert_eq(log[3], "inner-defer")
+    assert_eq(log[4], "outer-end")
+    assert_eq(log[5], "outer-defer")
+
+    // 测试11: defer 在 for 循环中（无 break）
+    log = []
+    for 0:2 to i {
+        defer add("defer")
+        add("iter")
+    }
+    add("done")
+    assert_eq(log[0], "iter")
+    assert_eq(log[1], "defer")
+    assert_eq(log[2], "iter")
+    assert_eq(log[3], "defer")
+    assert_eq(log[4], "iter")
+    assert_eq(log[5], "defer")
+    assert_eq(log[6], "done")
 
     print("test_defer passed")
 }

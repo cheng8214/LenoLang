@@ -8,6 +8,7 @@ static LoopContext* loop_push(CodeGen* gen) {
     if (!node) return NULL;
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
+    node->ctx.defer_depth = gen->defer_block_top;  // 记录进入循环时的 defer 栈深度
     node->prev = gen->loop_head;
     gen->loop_head = node;
     gen->loop_count++;
@@ -526,6 +527,21 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     int step_slot = ast->u.for_.step_index;
     int start_slot = ast->u.for_.start_index;
     int counter_slot = ast->u.for_.counter_index;
+
+    // 更新 max_local_slot，防止内联函数的 OP_CLEAR_LOCAL_RANGE 覆盖循环变量
+    int for_max = loop_var_slot;
+    if (end_slot > for_max) for_max = end_slot;
+    if (step_slot > for_max) for_max = step_slot;
+    if (start_slot > for_max) for_max = start_slot;
+    if (counter_slot > for_max) for_max = counter_slot;
+    if (ast->u.for_.index_var_name) {
+        int idx = ast->u.for_.index_var_index;
+        if (idx > for_max) for_max = idx;
+    }
+    if (for_max > gen->max_local_slot) gen->max_local_slot = for_max;
+    if (for_max > gen->peak_local_slot) gen->peak_local_slot = for_max;
+    if (gen->current_func && for_max >= gen->current_func->local_count)
+        gen->current_func->local_count = for_max + 1;
 
     Ast* end_expr = ast->u.for_.end;
 
@@ -1466,9 +1482,11 @@ void gen_block(CodeGen* gen, Ast* ast) {
         }
     }
 
-    // 收集 defer 表达式（最多 64 个）
-    Ast* defer_exprs[64];
-    int defer_count = 0;
+    // 压入 defer 块标记
+    int defer_block_idx = gen->defer_block_top;
+    gen->defer_block_starts[defer_block_idx] = gen->defer_expr_top;
+    gen->defer_block_has_try[defer_block_idx] = has_defer;
+    gen->defer_block_top++;
 
     int try_start = -1;
     int finally_patch = -1;
@@ -1490,9 +1508,9 @@ void gen_block(CodeGen* gen, Ast* ast) {
             // 循环体内定义的函数：在运行时创建（每次迭代）
             gen_func(gen, stmt);
         } else if (stmt->kind == AST_DEFER) {
-            // 收集 defer 表达式，不在当前位置生成代码
-            if (defer_count < 64) {
-                defer_exprs[defer_count++] = stmt->u.defer_.expr;
+            // 将 defer 表达式压入 defer 栈（供 break/continue 清理使用）
+            if (gen->defer_expr_top < 256) {
+                gen->defer_expr_stack[gen->defer_expr_top++] = stmt->u.defer_.expr;
             }
         } else if (stmt->kind != AST_FUNC_DEF) {
             gen_stmt(gen, stmt);
@@ -1510,12 +1528,6 @@ void gen_block(CodeGen* gen, Ast* ast) {
 
     // 如果有 defer，生成 finally 块
     if (has_defer) {
-        // 正常结束 try 块后，需要跳转到 finally 块执行 defer
-        // 这里不需要 OP_JUMP——直接顺序执行到 finally 即可
-        // 因为 OP_TRY 的 finally_ip 已经指向了 finally 块，
-        // 在异常时会自动跳转到 finally_ip；
-        // 在正常退出时，代码顺序流入 finally 块。
-
         // 回填 finally 偏移量（指向接下来的 OP_FINALLY）
         int finally_start = gen->chunk->len;
         int finally_offset = finally_start - try_start;
@@ -1524,13 +1536,18 @@ void gen_block(CodeGen* gen, Ast* ast) {
 
         // 生成 finally 块
         emit_byte(gen, OP_FINALLY, ast->line);
-        // 逆序执行 defer 表达式（后注册的先执行）
-        for (int i = defer_count - 1; i >= 0; i--) {
-            gen_expr(gen, defer_exprs[i]);
+        // 逆序执行本块注册的 defer 表达式
+        int block_start = gen->defer_block_starts[defer_block_idx];
+        for (int i = gen->defer_expr_top - 1; i >= block_start; i--) {
+            gen_expr(gen, gen->defer_expr_stack[i]);
             emit_byte(gen, OP_POP, ast->line);
         }
         emit_byte(gen, OP_END_TRY, ast->line);
     }
+
+    // 弹出 defer 块标记
+    gen->defer_expr_top = gen->defer_block_starts[defer_block_idx];
+    gen->defer_block_top--;
 }
 
 void gen_stmt(CodeGen* gen, Ast* ast) {
@@ -1563,6 +1580,26 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 return;
             }
             LoopContext* loop = &gen->loop_head->ctx;
+            // 在 break 跳转前，逆序清理从当前 defer 栈顶到循环入口之间的所有 defer
+            for (int b = gen->defer_block_top - 1; b >= loop->defer_depth; b--) {
+                int block_start = gen->defer_block_starts[b];
+                int block_end = (b + 1 < gen->defer_block_top) ? gen->defer_block_starts[b + 1] : gen->defer_expr_top;
+                // 实际上对于当前活跃的块，block_end 就是 gen->defer_expr_top
+                // 但已弹出的块不应处理，所以直接用当前栈顶
+                if (b == gen->defer_block_top - 1) {
+                    block_end = gen->defer_expr_top;
+                } else {
+                    block_end = gen->defer_block_starts[b + 1];
+                }
+                for (int i = block_end - 1; i >= block_start; i--) {
+                    gen_expr(gen, gen->defer_expr_stack[i]);
+                    emit_byte(gen, OP_POP, ast->line);
+                }
+                // 如果该块有 try-finally，需要 OP_END_TRY 恢复异常处理状态
+                if (gen->defer_block_has_try[b]) {
+                    emit_byte(gen, OP_END_TRY, ast->line);
+                }
+            }
             if (loop->break_count >= MAX_BREAK_JUMPS) {
                 error_add(ERR_RUNTIME, ast->line, "break 太多");
                 return;
@@ -1576,6 +1613,23 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 return;
             }
             LoopContext* loop = &gen->loop_head->ctx;
+            // 在 continue 跳转前，逆序清理从当前 defer 栈顶到循环入口之间的所有 defer
+            for (int b = gen->defer_block_top - 1; b >= loop->defer_depth; b--) {
+                int block_start = gen->defer_block_starts[b];
+                int block_end;
+                if (b == gen->defer_block_top - 1) {
+                    block_end = gen->defer_expr_top;
+                } else {
+                    block_end = gen->defer_block_starts[b + 1];
+                }
+                for (int i = block_end - 1; i >= block_start; i--) {
+                    gen_expr(gen, gen->defer_expr_stack[i]);
+                    emit_byte(gen, OP_POP, ast->line);
+                }
+                if (gen->defer_block_has_try[b]) {
+                    emit_byte(gen, OP_END_TRY, ast->line);
+                }
+            }
             // 对于需要回填的循环（如 for to），使用占位符
             if (loop->continue_count >= MAX_CONTINUE_JUMPS) {
                 error_add(ERR_RUNTIME, ast->line, "continue 太多");

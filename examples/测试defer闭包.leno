@@ -1,0 +1,30 @@
+// 测试: 用 io.print 代替 add
+
+import io
+
+print("=== 测试 1: for + defer + io.print + break ===")
+for 0:3 to i {
+    defer io.print("defer-" + i)
+    io.print("iter-" + i)
+    if i == 1 {
+        io.print("breaking")
+        break
+    }
+}
+io.print("after")
+
+print("\n=== 测试 2: for + defer + add(闭包) + break ===")
+var log = []
+func add(string s) {
+    log.add(s)
+}
+for 0:3 to i {
+    defer add("defer-" + i)
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+io.print("log: " + log)

@@ -1,0 +1,45 @@
+// 精确对比: defer 表达式是否引用循环变量
+
+var log = []
+func add(string s) { log.add(s) }
+
+print("=== A: defer add('defer') 无循环变量 ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 { add("breaking"); break }
+}
+add("after")
+print("  结果: " + log)
+
+print("\n=== B: defer add('defer-' + i) 有循环变量 ===")
+log = []
+for 0:3 to i {
+    defer add("defer-" + i)
+    add("iter-" + i)
+    if i == 1 { add("breaking"); break }
+}
+add("after")
+print("  结果: " + log)
+
+print("\n=== C: defer add('defer') 无 for 循环(while) ===")
+log = []
+var j = 0
+while j < 3 {
+    defer add("defer")
+    add("iter-" + j)
+    if j == 1 { add("breaking"); break }
+    j = j + 1
+}
+add("after")
+print("  结果: " + log)
+
+print("\n=== D: defer add('defer') for 无 break ===")
+log = []
+for 0:2 to i {
+    defer add("defer")
+    add("iter-" + i)
+}
+add("after")
+print("  结果: " + log)

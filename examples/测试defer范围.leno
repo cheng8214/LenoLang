@@ -1,0 +1,32 @@
+// 测试不同 for 语法 + defer + break
+
+var log = []
+func add(string s) { log.add(s) }
+
+print("=== 1: for 0:3 to i (inclusive) ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter")
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter, defer, iter, breaking, defer, after]")
+
+print("\n=== 2: for 0 to 3 to i (exclusive) ===")
+log = []
+for 0 to 3 to i {
+    defer add("defer")
+    add("iter")
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter, defer, iter, breaking, defer, after]")

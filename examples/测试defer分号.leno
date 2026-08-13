@@ -1,0 +1,27 @@
+// 测试分号 vs 换行
+
+var log = []
+func add(string s) { log.add(s) }
+
+print("=== A: 单行 if (分号) ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 { add("breaking"); break }
+}
+add("after")
+print("  结果: " + log)
+
+print("\n=== B: 多行 if ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
