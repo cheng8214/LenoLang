@@ -128,9 +128,22 @@ r = arr[0]; g = arr[1]; b = arr[2]
 
 收益太小，不值得增加语法复杂度。
 
-### Dict 解构初始化 / `case is` 逗号合并 — 暂不实现
+### `case is` 逗号合并 — ✅ 已实现
 
-当前 `opts.get("key", default)` 模式虽然重复，但清晰直观，且已在整个 UI 库中稳定使用。`switch case is` 已支持类型收窄，多写几个 case 不影响可读性。
+`switch case is` 支持逗号合并多个类型共享同一个 body：
+
+```leno
+switch w {
+    case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox {
+        w._bind_window(hwnd)
+    }
+    case is Edit { w.set_window(hwnd) }
+}
+```
+
+### Dict 解构初始化 — 暂不实现
+
+当前 `opts.get("key", default)` 模式虽然重复，但清晰直观，且已在整个 UI 库中稳定使用。
 
 ---
 
@@ -143,6 +156,7 @@ r = arr[0]; g = arr[1]; b = arr[2]
 | `new cs(x=1)` 命名参数 | ✅ 已实现 | 字段默认值 + 命名参数 |
 | 字符串插值 | ✅ 已实现 | `$"Hello {name}"` |
 | `switch case is` | ✅ 已实现 | 类型匹配与收窄 |
+| `case is` 逗号合并 | ✅ 已实现 | `case is A, B, C` 多类型共享 body |
 | 泛型约束 | ✅ 已实现 | `func f[T: Face](...)` |
 | `try-catch-finally` | ✅ 已实现 | 异常安全 |
 | GC 兜底 | ✅ 已实现 | FFI 资源自动回收 |
@@ -154,6 +168,5 @@ r = arr[0]; g = arr[1]; b = arr[2]
 | 访问控制 | ❌ 暂不实现 | 下划线约定已足够 |
 | 数组解构 | ❌ 暂不实现 | 收益太小 |
 | Dict 解构初始化 | ❌ 暂不实现 | `opts.get` 模式已稳定 |
-| `case is` 逗号合并 | ❌ 暂不实现 | 多写几个 case 不影响可读性 |
 
 > **Leno 语言特性已足够且稳定。** 重心放在库生态（LenoSDL3、LenoWin32、LenoMusic）和运行时稳定性上，不再追加新语法特性。
