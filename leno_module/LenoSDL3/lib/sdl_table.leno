@@ -1349,7 +1349,7 @@ export struct Table impl Widget, Themeable {
                 string t = _headers[c]
                 int htcR = _hdrTxtR, htcG = _hdrTxtG, htcB = _hdrTxtB
                 if c == _sortCol {
-                    if _sortDesc { t = t + " ▼" } else { t = t + " ▲" }
+                    if _sortDesc { t = $"{t} ▼" } else { t = $"{t} ▲" }
                 }
                 _draw_cell_text(r, t, cx, cw, y, _headerH, _headerAligns[c], htcR, htcG, htcB, 0.0)
             }

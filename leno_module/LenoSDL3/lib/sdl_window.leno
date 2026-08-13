@@ -332,7 +332,7 @@ export struct Window {
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
         if not core.initVideo() {
-            print("[LenoSDL3] init failed: " + core.getError())
+            print($"[LenoSDL3] init failed: {core.getError()}")
             return false
         }
         string title = opts.get("title", "LenoSDL3")

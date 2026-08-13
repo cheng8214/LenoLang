@@ -10,9 +10,11 @@
 
 ### 1. struct 可空类型 `Type?`
 
-**痛点**：struct 值类型声明即分配，永远不为 null，导致懒初始化模式需要额外的 bool 标志。本次修复中，仅 `_font` 一个字段就在 16 个文件中生成了 `bool _fontDirty`、`_fontDirty = true`、`_fontDirty = false` 等上百处样板代码。
+> **状态：已实现** ✅。`Type?` 可空类型已完整实现，支持 `int?`、`string?`、`Point?` 等所有类型。可空 struct 字段初始为 null，无需 bool 伴生字段。
 
-**现状**：
+**痛点（已解决）**：struct 值类型声明即分配，永远不为 null，导致懒初始化模式需要额外的 bool 标志。本次修复中，仅 `_font` 一个字段就在 16 个文件中生成了 `bool _fontDirty`、`_fontDirty = true`、`_fontDirty = false` 等上百处样板代码。
+
+**旧写法**：
 ```leno
 Font _font
 bool _fontDirty = true        // 仅因为 struct 不能为 null
@@ -271,7 +273,7 @@ float ny = a.y + b.y
 
 | 优先级 | 特性 | 直接痛点 | 预估减少代码量 |
 |--------|------|---------|--------------|
-| 高 | `Type?` 可空类型 | 142 个 null 警告 + bool 伴生字段 | ~30% 控件样板 |
+| 高 | ~~`Type?` 可空类型~~（已实现 ✅） | 142 个 null 警告 + bool 伴生字段 | ~30% 控件样板 |
 | 高 | Dict 解构初始化 | 每个 set() 20+ 行重复赋值 | ~20% 控件代码 |
 | 高 | `case is` 逗号合并 | 9 层重复 case-is | ~50% 分发代码 |
 | 中 | ~~defer~~（已回退） | 忘记清理资源 | 用 try-finally + GC 兜底替代 |

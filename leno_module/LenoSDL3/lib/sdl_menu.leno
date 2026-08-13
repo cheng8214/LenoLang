@@ -21,7 +21,7 @@
 //       { title: "帮助", items: [ { label: "关于", id: "about" } ] },
 //     ]
 //   })
-//   bar.on_select(func(string menu, string id) { print(menu + " -> " + id) })
+//   bar.on_select(func(string menu, string id) { print($"{menu} -> {id}") })
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event

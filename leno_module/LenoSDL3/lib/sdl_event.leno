@@ -3,8 +3,8 @@
 // 用法：
 //   var ev = SDL3.createEvent()
 //   while ev.poll() {
-//       if ev.isKeyDown() { print("按下: " + ev.scancode()) }
-//       if ev.isTextInput() { print("输入: " + ev.text()) }
+//       if ev.isKeyDown() { print($"按下: {ev.scancode()}") }
+//       if ev.isTextInput() { print($"输入: {ev.text()}") }
 //   }
 import ffi
 import "sdl_core.leno" as core
