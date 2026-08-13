@@ -142,6 +142,11 @@ func add(Widget w): Widget {
 
 ### 4. `defer` 延迟执行
 
+> **状态：已回退**。经实践评估，defer 引入的 try-finally 包裹与内联优化的 `OP_CLEAR_LOCAL_RANGE` 有架构级冲突，修一个漏一个。去掉后零影响——FFI 手动内存管理（`ffi.malloc()` + `ffi.free()` 配对）已经很简洁，GC 兜底机制完善（忘记 `free` 时 GC 自动回收 `ObjFFIPointer` 不会泄漏），需要异常安全时用 `try-catch-finally` 功能等价。defer 引入太多不确定性和漏洞，得不偿失。
+
+<details>
+<summary>原始建议（已废弃，仅供参考）</summary>
+
 **痛点**：资源清理模式需要每个退出路径都手动调用 dispose：
 
 ```leno
@@ -167,6 +172,10 @@ func render(Renderer r) {
 ```
 
 **收益**：彻底消除"忘记清理"类 bug，尤其在多 return 路径的函数中。
+
+</details>
+
+**替代方案（已采用）**：`try-catch-finally` + GC 兜底。详见《FFI使用指南》8.2 节。
 
 ---
 
@@ -225,7 +234,7 @@ UI 库中坐标/尺寸运算频繁，运算符重载能让代码更自然。
 | 高 | `Type?` 可空类型 | 142 个 null 警告 + bool 伴生字段 | ~30% 控件样板 |
 | 高 | Dict 解构初始化 | 每个 set() 20+ 行重复赋值 | ~20% 控件代码 |
 | 高 | `case is` 逗号合并 | 9 层重复 case-is | ~50% 分发代码 |
-| 中 | defer | 忘记清理资源 | 防止 bug |
+| 中 | ~~defer~~（已回退） | 忘记清理资源 | 用 try-finally + GC 兜底替代 |
 | 中 | 访问控制 | 内部 API 无保护 | 设计规范 |
 | 低 | 数组解构 | 多返回值不便 | 小幅 |
 | 低 | 运算符重载 | 坐标运算不自然 | 小幅 |

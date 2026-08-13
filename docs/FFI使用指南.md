@@ -1598,6 +1598,8 @@ main() {
 **统一释放：**
 - `ffi.free(x)` - 统一释放 FFI 资源（指针/库/回调），一个函数搞定！
 
+> **GC 兜底机制**：FFI 资源（`ffi.malloc`/`ffi.load`/`ffi.callback` 创建的对象）由 Leno GC 自动追踪。即使忘记显式 `ffi.free()`，当对象不再被引用、GC 回收时会自动释放底层 C 内存/句柄/回调，**不会泄漏**。但 GC 回收时机不确定（取决于堆压力），**推荐显式 `ffi.free()`** 以精确控制生命周期和及时释放资源。需要异常安全时用 `try-catch-finally`，功能等价于 `defer`。
+
 ```leno
 import ffi
 
