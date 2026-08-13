@@ -8081,6 +8081,7 @@ main() {
 2. **finally 用于资源清理**：关闭文件、通道等资源放在 `finally` 中
 3. **避免在 finally 中 throw**：`finally` 块中抛出异常会覆盖原始异常
 4. **利用异常对象属性调试**：`e.msg`、`e.file`、`e.stack` 提供完整的错误上下文
+5. **优先使用 defer 替代 finally**：`defer` 是 `try-finally` 的语法糖，更简洁
 
 ```leno
 // ✅ 推荐：finally 用于清理
@@ -8098,6 +8099,107 @@ main() {
     }
 }
 ```
+
+***
+
+## defer 语句
+
+`defer` 是**作用域退出时自动执行**的延迟调用，类似 Go 语言的 defer。它不是 GC 的一部分，而是编译器在作用域外层自动包裹 `try-finally` 来保证延迟表达式在退出时执行。
+
+### 基本用法
+
+```leno
+main() {
+    {
+        print("开始")
+        defer print("清理2")    // 后注册，先执行
+        defer print("清理1")    // 先注册，后执行
+        print("结束")
+    }
+    // 输出:
+    // 开始
+    // 结束
+    // 清理1
+    // 清理2
+}
+```
+
+### defer 的本质
+
+`defer` **不是告诉 GC 提前释放**，而是编译器生成的 `try-finally` 语法糖：
+
+```leno
+// 你写的 defer 代码
+func work() {
+    var buf = ffi.malloc(1024)
+    defer ffi.free(buf)
+    // ... 使用 buf ...
+}
+
+// 编译器等价展开为
+func work() {
+    var buf = ffi.malloc(1024)
+    try {
+        // ... 使用 buf ...
+    } finally {
+        ffi.free(buf)       // ← 作用域退出时执行
+    }
+}
+```
+
+### defer 执行时机
+
+defer 在以下**所有退出路径**都会执行：
+
+| 退出方式 | defer 执行？ | 说明 |
+|---------|-------------|------|
+| 正常到作用域末尾 | ✅ | 正常退出 |
+| `return` | ✅ | 函数返回前执行 |
+| `throw` 异常 | ✅ | 异常抛出前执行（类似 finally） |
+| `break` / `continue` | ✅ | 跳出循环前执行 |
+
+### 多个 defer 逆序执行
+
+```leno
+main() {
+    {
+        defer print("第1个")   // 先注册
+        defer print("第2个")
+        defer print("第3个")   // 后注册
+    }
+    // 输出: 第3个 → 第2个 → 第1个（逆序）
+}
+```
+
+逆序的原因：后注册的资源依赖先注册的资源（如先打开文件再分配缓冲区，释放时要先释放缓冲区再关文件）。
+
+### defer 用于 FFI 内存管理
+
+```leno
+import ffi
+
+func processData(int size) {
+    var buf = ffi.malloc(size)
+    defer ffi.free(buf)        // ← 作用域退出自动释放
+
+    ffi.write_int(buf, 0, 42)
+    // ... 使用 buf ...
+    // 异常也会释放，无需 try-finally
+}
+```
+
+> **defer 与 GC 的关系**：
+> - `defer ffi.free(ptr)` — **确定性释放**，作用域退出时立即执行 `ffi.free()`
+> - 不写 defer — **GC 兜底**，`ObjFFIPointer` 不可达时 GC 自动调用 `free()`
+> - 两者安全共存：`ffi.free()` 设置 `freed=1`，GC 检查 `!freed` 跳过，无 double-free
+>
+> 推荐始终使用 `defer ffi.free(ptr)`，不依赖 GC 兜底。
+
+### defer 注意事项
+
+1. **只支持单表达式**：`defer ffi.free(buf)` ✅，`defer { a(); b() }` ❌（多语句用辅助函数包装）
+2. **捕获的是注册时的值**：`defer print(x)` 中 `x` 在 defer 执行时才求值，但变量绑定在注册时确定
+3. **循环中每次迭代独立**：`for` 循环体内的 defer 在每次迭代结束时执行，不是循环结束时
 
 ***
 
@@ -9460,6 +9562,7 @@ lenolang program.leno
 | 抛出异常 | `throw "error"` |
 | 异常对象属性 | `e.msg`, `e.file`, `e.stack` |
 | 嵌套 try-catch | 内层 catch 中 `throw` 重新抛出 |
+| defer 语句 | `defer ffi.free(ptr)` — 作用域退出时自动执行（逆序） |
 
 ### 线程与并发
 

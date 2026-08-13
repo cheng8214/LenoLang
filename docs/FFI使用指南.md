@@ -1595,22 +1595,49 @@ main() {
 
 ### 8.2 内存管理
 
+#### 内存释放机制（三层保障）
+
+FFI 内存分配（`ffi.malloc`、`ffi.calloc`、`ffi.alloc`）创建的对象内部标记为 `owned=1, freed=0`。释放有三层机制：
+
+| 层级 | 机制 | 时机 | 确定性 |
+|------|------|------|--------|
+| 1（推荐） | `defer ffi.free(ptr)` | 作用域退出时 | ✅ 确定性 |
+| 2 | 手动 `ffi.free(ptr)` | 调用时 | ✅ 确定性 |
+| 3（兜底） | GC 自动回收 | GC sweep 触发时 / 程序退出时 | ❌ 非确定性 |
+
+- **第 1 层 `defer`**：在作用域退出时**自动执行** `ffi.free`，包括正常退出、异常、return、break、continue。类似 Go 的 defer。
+- **第 2 层手动释放**：直接调用 `ffi.free(ptr)`，立即释放。
+- **第 3 层 GC 兜底**：如果忘记 `defer` 和手动释放，GC 在 sweep 阶段检测到 `ObjFFIPointer` 不可达且 `owned && !freed` 时，自动调用 `free()` 释放。程序退出时 `gc_free_all()` 会释放所有剩余 FFI 内存。
+
+> **⚠️ 注意**：GC 兜底是非确定性的，依赖 GC 触发时机。对于大块内存或长期运行的程序，务必使用 `defer ffi.free(ptr)` 或手动释放，不要依赖 GC。
+
+**double-free 安全**：`ffi.free()` 会设置 `freed=1`，GC 回收时检查 `!freed` 跳过，两者不会重复释放。
+
 **统一释放：**
 - `ffi.free(x)` - 统一释放 FFI 资源（指针/库/回调），一个函数搞定！
 
 ```leno
 import ffi
 
-// ===== 原则 1: 谁分配谁释放 =====
+// ===== 原则 1: defer 自动释放（推荐写法） =====
 func processData() {
     Ptr buffer = ffi.malloc(1024)
-    
+    defer ffi.free(buffer)    // 作用域退出时自动释放，异常也执行
+
+    // 处理数据...
+    ffi.write_string(buffer, 0, "processed data")
+    print(ffi.read_string(buffer, 0))
+    // ← 此处 buffer 自动释放，无需 finally
+}
+
+// ===== 原则 1b: try-finally 手动释放（传统写法） =====
+func processDataOld() {
+    Ptr buffer = ffi.malloc(1024)
+
     try {
-        // 处理数据...
         ffi.write_string(buffer, 0, "processed data")
         print(ffi.read_string(buffer, 0))
     } finally {
-        // 确保释放内存
         ffi.free(buffer)
     }
 }
@@ -1618,56 +1645,48 @@ func processData() {
 // ===== 动态库释放示例 =====
 func useLibrary() {
     var lib = ffi.load("kernel32.dll")
-    
-    try {
-        int pid = ffi.call_int(lib, "GetCurrentProcessId")
-        print("PID: " + pid)
-    } finally {
-        // 释放动态库
-        ffi.free(lib)
-    }
+    defer ffi.free(lib)       // 作用域退出自动释放
+
+    int pid = ffi.call_int(lib, "GetCurrentProcessId")
+    print("PID: " + pid)
 }
 
 // ===== 原则 2: offset 返回的指针不需要释放 =====
 func useOffset() {
     Ptr base = ffi.malloc(100)
-    
+    defer ffi.free(base)
+
     // offset 返回的是视图，不拥有内存
     Ptr view = ffi.offset(base, 10)
-    
-    // 只需要释放 base
-    ffi.free(base)
-    // 不要: ffi.free(view)  <- 错误！
+    // 只释放 base，不要 ffi.free(view)  <- 错误！
 }
 
 // ===== 原则 3: 使用 calloc 清零内存 =====
 func useCalloc() {
     // calloc 分配的内存初始化为 0
     Ptr arr = ffi.calloc(10, 4)  // 10 个 int，共 40 字节，全部清零
-    
+    defer ffi.free(arr)
+
     // 可以直接使用，无需初始化
     int first = ffi.read_int(arr, 0)  // 0
     print("第一个元素: " + first)
-    
-    ffi.free(arr)
 }
 
 // ===== 原则 4: 及时释放不再使用的内存 =====
 func processLargeData() {
     // 阶段 1: 读取数据
     Ptr rawData = ffi.malloc(1000000)
+    defer ffi.free(rawData)
     // ... 填充 rawData ...
-    
+
     // 阶段 2: 处理数据（需要新缓冲区）
     Ptr processedData = ffi.malloc(500000)
-    
-    // 可以立即释放 rawData，如果不再需要
+    defer ffi.free(processedData)
+
+    // 可以提前释放 rawData
     ffi.free(rawData)
-    rawData = null  // 置空避免误用
-    
+
     // ... 使用 processedData ...
-    
-    ffi.free(processedData)
 }
 ```
 
