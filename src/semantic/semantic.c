@@ -336,6 +336,54 @@ void semantic_analyze(Semantic* s, Ast* ast) {
         }
     }
 
+    // 预注册所有全局变量声明（支持前向引用）
+    // struct 方法体可能引用在 struct 之后定义的全局变量，需要提前注册
+    if (ast && ast->kind == AST_BLOCK) {
+        AstList* list = &ast->u.block;
+        for (int i = 0; i < list->count; i++) {
+            Ast* stmt = list->items[i];
+            if (stmt->kind == AST_VAR_DECL && stmt->u.var_decl.name) {
+                // 预注册全局变量（支持前向引用）
+                // 如果有明确类型声明（如 int x = 30），使用声明的类型
+                // 如果是 var（类型推断），暂设为 any，visit 时会更新
+                Symbol* sym = scope_resolve_local(s->current, stmt->u.var_decl.name);
+                if (!sym) {
+                    sym = scope_define(s->current, stmt->u.var_decl.name, SYM_GLOBAL);
+                    if (sym) {
+                        if (stmt->u.var_decl.type && stmt->u.var_decl.type->kind != TYPE_INFER) {
+                            sym->type = type_copy(stmt->u.var_decl.type);
+                        } else {
+                            sym->type = type_new(TYPE_ANY);
+                        }
+                        stmt->u.var_decl.ref.kind = sym->kind;
+                        stmt->u.var_decl.ref.index = sym->index;
+                        stmt->u.var_decl.ref.name = strdup(sym->name);
+                    }
+                }
+            } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                       stmt->u.export.decl->kind == AST_VAR_DECL) {
+                // 预注册 export var 定义
+                Ast* decl = stmt->u.export.decl;
+                if (decl->u.var_decl.name) {
+                    Symbol* sym = scope_resolve_local(s->current, decl->u.var_decl.name);
+                    if (!sym) {
+                        sym = scope_define(s->current, decl->u.var_decl.name, SYM_GLOBAL);
+                        if (sym) {
+                            if (decl->u.var_decl.type && decl->u.var_decl.type->kind != TYPE_INFER) {
+                                sym->type = type_copy(decl->u.var_decl.type);
+                            } else {
+                                sym->type = type_new(TYPE_ANY);
+                            }
+                            decl->u.var_decl.ref.kind = sym->kind;
+                            decl->u.var_decl.ref.index = sym->index;
+                            decl->u.var_decl.ref.name = strdup(sym->name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // 单遍遍历
     if (ast && ast->kind == AST_BLOCK) {
         visit_list(s, &ast->u.block);
@@ -560,6 +608,52 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                     Symbol* sym = scope_define(s->current, stmt->u.alias.name, SYM_TYPE);
                     if (sym) {
                         sym->type = type_copy(stmt->u.alias.type);
+                    }
+                }
+            }
+        }
+    }
+
+    // 预注册所有模块级全局变量声明（支持前向引用）
+    // struct 方法体可能引用在 struct 之后定义的全局变量，需要提前注册
+    if (ast && ast->kind == AST_BLOCK) {
+        AstList* list = &ast->u.block;
+        for (int i = 0; i < list->count; i++) {
+            Ast* stmt = list->items[i];
+            if (stmt->kind == AST_VAR_DECL && stmt->u.var_decl.name) {
+                Symbol* sym = scope_resolve_local(s->current, stmt->u.var_decl.name);
+                if (!sym) {
+                    SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                    sym = scope_define(s->current, stmt->u.var_decl.name, kind);
+                    if (sym) {
+                        if (stmt->u.var_decl.type && stmt->u.var_decl.type->kind != TYPE_INFER) {
+                            sym->type = type_copy(stmt->u.var_decl.type);
+                        } else {
+                            sym->type = type_new(TYPE_ANY);
+                        }
+                        stmt->u.var_decl.ref.kind = sym->kind;
+                        stmt->u.var_decl.ref.index = sym->index;
+                        stmt->u.var_decl.ref.name = strdup(sym->name);
+                    }
+                }
+            } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                       stmt->u.export.decl->kind == AST_VAR_DECL) {
+                Ast* decl = stmt->u.export.decl;
+                if (decl->u.var_decl.name) {
+                    Symbol* sym = scope_resolve_local(s->current, decl->u.var_decl.name);
+                    if (!sym) {
+                        SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                        sym = scope_define(s->current, decl->u.var_decl.name, kind);
+                        if (sym) {
+                            if (decl->u.var_decl.type && decl->u.var_decl.type->kind != TYPE_INFER) {
+                                sym->type = type_copy(decl->u.var_decl.type);
+                            } else {
+                                sym->type = type_new(TYPE_ANY);
+                            }
+                            decl->u.var_decl.ref.kind = sym->kind;
+                            decl->u.var_decl.ref.index = sym->index;
+                            decl->u.var_decl.ref.name = strdup(sym->name);
+                        }
                     }
                 }
             }

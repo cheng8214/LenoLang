@@ -18,7 +18,19 @@
             } else {
                 kind = SYM_LOCAL;
             }
-            Symbol* sym = scope_define(s->current, ast->u.var_decl.name, kind);
+            // 检查是否已被预注册（全局变量前向引用预扫描）
+            Symbol* sym = scope_resolve_local(s->current, ast->u.var_decl.name);
+            if (sym && (sym->kind == SYM_GLOBAL || sym->kind == SYM_MODULE) &&
+                (kind == SYM_GLOBAL || kind == SYM_MODULE)) {
+                // 已被预注册，更新类型和 ref
+                ast->u.var_decl.ref.kind = sym->kind;
+                ast->u.var_decl.ref.index = sym->index;
+                if (!ast->u.var_decl.ref.name) {
+                    ast->u.var_decl.ref.name = strdup(sym->name);
+                }
+            } else {
+                sym = scope_define(s->current, ast->u.var_decl.name, kind);
+            }
             if (sym) {
                 // 设置 const 标志
                 if (ast->u.var_decl.is_const) {
