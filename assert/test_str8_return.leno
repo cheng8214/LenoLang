@@ -1,16 +1,24 @@
 // 测试: clib str8 返回类型基本功能
-// 使用 Windows API 的 GetCommandLineA，返回 char*，不需要释放
+// 使用 msvcrt 的 strerror，返回 char*，不需要释放
 
-clib kernel32 {
-    str8 GetCommandLineA()
+import ffi
+
+clib msvcrt {
+    str8 strerror(i32 errnum)
+    i32 strlen(str8 s)
 }
 
 main() {
-    string cmd = kernel32.GetCommandLineA()
-    if cmd != "" {
-        print("test_str8_return passed")
-        print("command line length: " + cmd.len())
-    } else {
-        print("test_str8_return FAILED: empty string")
-    }
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // str8 返回值自动转为 string
+    string msg = lib.strerror(2)
+    assert_true(msg.len() > 0)
+    assert_true(msg.has("file") or msg.has("No"))
+
+    // str8 参数接受 string
+    int len = lib.strlen("hello")
+    assert_eq(len, 5)
+
+    print("test_str8_return passed")
 }

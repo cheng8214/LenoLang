@@ -13,12 +13,16 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line) {
         if (!struct_def && s->current) {
             struct_def = scope_resolve(s->current, type->struct_name);
         }
-        if (!struct_def) {
-            // 完全找不到 → 未定义的类型
-            char msg[BUFFER_MEDIUM];
+    if (!struct_def) {
+        // 完全找不到 → 未定义的类型
+        char msg[BUFFER_MEDIUM];
+        if (type->struct_name && strcmp(type->struct_name, "double") == 0) {
+            snprintf(msg, sizeof(msg), "未定义的类型: %s（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）", type->struct_name);
+        } else {
             snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type->struct_name, type->struct_name);
-            error_add(ERR_SEMANTIC, line, msg);
         }
+        error_add(ERR_SEMANTIC, line, msg);
+    }
         // 找到了就是合法的 struct 类型（alias 已在 resolve_alias_in_type 中解析）
     }
 

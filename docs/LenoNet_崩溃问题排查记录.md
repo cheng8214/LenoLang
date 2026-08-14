@@ -6,6 +6,8 @@
 经过一整天排查（GC → FFI trampoline → 堆损坏），最终通过 gdb 定位到 **STATUS_HEAP_CORRUPTION (0xC0000374)**，
 根因是**性能优化引入的 `vm_stack_push_fast` 越界写入破坏了堆元数据**。
 
+> **✅ 崩溃已修复**：`op_type_specialized.inc` 中所有 `vm_stack_push_fast` 已回退为安全的 `vm_stack_push`。`vm_stack_push_fast` 在 `leno_vm.h` 中保留但不再被使用。
+
 ---
 
 ## 崩溃现象
@@ -129,6 +131,8 @@ FFI 回调 (libcurl write_callback)
 
 ## 修复方案
 
+> **✅ 已采用方案 A + C**：`op_type_specialized.inc` 中的快速栈操作已全部回退为安全版。
+
 ### 方案 A: 回退 `op_type_specialized.inc` 中的快速栈操作（推荐，安全）
 
 将 `op_type_specialized.inc` 中所有 `vm_stack_push_fast` → `vm_stack_push`，
@@ -182,10 +186,11 @@ static inline void vm_stack_push_fast(VM* vm, Value v) {
 
 ---
 
-### 问题1: `ffi_call_impl` 的 GC 禁用策略不当
+### 问题1: ~~`ffi_call_impl` 的 GC 禁用策略不当~~ （已修复）
 
 **严重程度**: 高
 **类型**: GC 安全性
+**状态**: ✅ 已修复。`ffi.c` 中已移除所有 `gc_set_enabled`/`gc_clear_deferred` 调用，不再永久禁用 GC。
 
 **描述**: `ffi_call_impl` 中调用 `gc_set_enabled(0)` 永久禁用 GC，不恢复。
 程序运行时间越长，内存占用越大，最终可能 OOM。
@@ -203,10 +208,11 @@ gc_set_enabled(saved_gc);
 
 ---
 
-### 问题2: GC `mark_roots` 可能遗漏非活跃模块的全局变量
+### 问题2: ~~GC `mark_roots` 可能遗漏非活跃模块的全局变量~~ （已修复）
 
 **严重程度**: 高
 **类型**: GC 安全性
+**状态**: ✅ 已修复。`mark_roots` 中新增第 13.5 步 `loaded_modules_mark_all()`，遍历所有已加载模块并标记其全局变量，不再依赖 `current_module_frame` 链。
 
 **描述**: 模块初始化完成后 `module_frame_exit()` 弹出模块帧，
 `current_module_frame` 链不再包含该模块。
@@ -227,6 +233,7 @@ gc_set_enabled(saved_gc);
 
 **严重程度**: 中
 **类型**: 语言限制 / 编译器
+**状态**: ⚠️ 未修复，列为待开发功能。cfunc 未被模块符号表扫描器收集，`use` 语句中无 cfunc 查找逻辑。当前变通方案：将 cfunc 声明放在使用它的同一文件中。
 
 **描述**: `use` 语句只支持导入 `struct`、`cstruct`、`clib`、`face`、`alias` 和函数类型，
 不支持导入 `cfunc`（C 回调签名）。
@@ -253,6 +260,7 @@ use core.WriteCb  // 错误: use 语句错误：模块 'core' 中没有类型或
 
 **严重程度**: 高
 **类型**: 语言限制
+**状态**: ⚠️ 未修复（设计限制）。clib 要求固定参数数量和类型，无法支持 C 的 `...` 变参。当前变通方案：用 `ffi.call_int`/`ffi.call_ptr` 等动态调用。
 
 **描述**: C 语言的变参函数（如 `curl_easy_setopt`、`curl_easy_getinfo`、`printf` 等）
 无法在 `clib` 声明中使用，因为 `clib` 要求每个函数有固定的参数数量和类型。
@@ -278,10 +286,11 @@ clib curl {
 
 ---
 
-### 问题5: `enum` 不支持位运算表达式作为成员值
+### 问题5: ~~`enum` 不支持位运算表达式作为成员值~~ （已修复）
 
 **严重程度**: 低
 **类型**: 语言限制
+**状态**: ✅ 已修复。Parser 层新增 `eval_const_expr`，支持 `+` `-` `*` `/` `%` `|` `&` `^` `<<` `>>` `~` `!` 和括号分组的编译期常量表达式。
 
 **描述**: `enum` 成员的显式值必须是整数常量，不支持 `~0`（位取反）或 `0 | 1`（位或）等表达式。
 
@@ -299,10 +308,11 @@ export enum Auth {
 
 ---
 
-### 问题6: `clib` 声明的 `str8` 参数不接受 Leno `string` 类型
+### 问题6: ~~`clib` 声明的 `str8` 参数不接受 Leno `string` 类型~~ （已修复）
 
 **严重程度**: 中
 **类型**: 语言限制
+**状态**: ✅ 已修复。`visit_expr.inc` 中已添加 `TYPE_STRING ↔ TYPE_STR8/TYPE_STR16` 双向兼容检查，`string` 可直接传给 `str8` 参数。
 
 **描述**: 当 `clib` 声明中函数参数为 `str8` 类型时，传入 Leno 的 `string` 类型会报错：
 ```
@@ -318,10 +328,11 @@ clib 函数 'curl_slist_append' 参数 3 类型不能使用 'string'，请使用
 
 ---
 
-### 问题7: `double` 不是有效的 Leno 类型
+### 问题7: ~~`double` 不是有效的 Leno 类型~~ （已修复）
 
 **严重程度**: 低
 **类型**: 错误提示不友好
+**状态**: ✅ 已修复。类型未定义错误中，对 `double` 追加提示："Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数"。
 
 **描述**: Leno 语言中浮点数类型只有 `float`（对应 C 的 `double`，64 位双精度），没有 `double` 关键字。
 初学者容易混淆。
@@ -337,6 +348,7 @@ clib 函数 'curl_slist_append' 参数 3 类型不能使用 'string'，请使用
 
 **严重程度**: 中
 **类型**: 编译器语义检查
+**状态**: ⚠️ 未修复（设计限制）。`Ptr` 类型不接受 `ObjFFICallback`，`var` 声明有语义问题。当前变通：参数声明为 `any`。
 
 **描述**: `setopt_ptr` 函数需要接受不同类型的指针参数（`ObjFFIPointer`、`ObjFFICallback`、`null`）。
 当参数声明为 `Ptr` 时，传入 `ObjFFICallback` 会报类型错误。
@@ -354,23 +366,25 @@ export func setopt_ptr(Ptr handle, int option, any value): int {
 
 ---
 
-### 问题9: 字符串方法命名与常见语言不同
+### 问题9: ~~字符串方法命名与常见语言不同~~ （已修复错误提示）
 
 **严重程度**: 低
 **类型**: 设计差异
+**状态**: ✅ 已修复错误提示。当 `string` 类型调用 `contains` 或 `includes` 时，提示"是否想用 'has'？（如 s.has(sub)）"。
 
 **描述**: Leno 字符串包含检查方法为 `.has(sub)`，而不是 Python/Java/JavaScript 中常见的
 `.contains(sub)` 或 `.includes(sub)`。
 
-**建议**: 增加 `.contains()` 作为 `.has()` 的别名，或在错误提示中建议：
+**建议**: 在错误提示中建议：
 "'string' 类型没有方法 'contains'，是否想用 'has'？"
 
 ---
 
-### 问题10: `CURLINFO_SIZE_DOWNLOAD` 信息码可能不正确
+### 问题10: ~~`CURLINFO_SIZE_DOWNLOAD` 信息码可能不正确~~ （已修复）
 
 **严重程度**: 中
 **类型**: 待确认
+**状态**: ✅ 已修复。`SIZE_DOWNLOAD = 0x300008`（`CURLINFO_DOUBLE + 8`）正确，并新增 `SIZE_DOWNLOAD_T = 0x600008`（`CURLINFO_OFF_T + 8`）。
 
 **描述**: 在 `basic.leno` 测试中，HTTP GET 请求成功返回了完整响应体，
 但 `downloadSize` 始终显示为 0 bytes。
@@ -382,10 +396,11 @@ export func setopt_ptr(Ptr handle, int option, any value): int {
 
 ---
 
-### 问题11: `Opt.ACCEPT_ENCODING` 设为空字符串 `""` 的行为
+### 问题11: ~~`Opt.ACCEPT_ENCODING` 设为空字符串 `""` 的行为~~ （已确认正常）
 
 **严重程度**: 低
 **类型**: 文档缺失
+**状态**: ✅ 已确认正常。`setopt_str` 传空字符串 `""` 正确传递给 libcurl，不会当作 null 处理。LenoNet 测试全部通过。
 
 **描述**: 设置 `curl_easy_setopt(CURLOPT_ACCEPT_ENCODING, "")` 时，
 libcurl 会自动添加 `Accept-Encoding: gzip, deflate` header 并自动解压响应。

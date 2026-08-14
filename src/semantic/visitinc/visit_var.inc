@@ -106,7 +106,11 @@
                         Symbol* struct_def = scope_resolve(s->current, type_name);
                         if (!struct_def) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
+                            if (strcmp(type_name, "double") == 0) {
+                                snprintf(msg, sizeof(msg), "未定义的类型: %s（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）", type_name);
+                            } else {
+                                snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
+                            }
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                             declared_type_undefined = 1;
                         } else if (struct_def->kind == SYM_TYPE && struct_def->type) {
@@ -123,7 +127,11 @@
                                    (struct_def->type->kind != TYPE_STRUCT &&
                                     struct_def->type->kind != TYPE_FACE)) {
                             char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
+                            if (strcmp(type_name, "double") == 0) {
+                                snprintf(msg, sizeof(msg), "未定义的类型: %s（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）", type_name);
+                            } else {
+                                snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
+                            }
                             error_add(ERR_UNDEFINED_VAR, ast->line, msg);
                             declared_type_undefined = 1;
                         }

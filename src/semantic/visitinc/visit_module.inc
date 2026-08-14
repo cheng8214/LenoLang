@@ -1665,8 +1665,12 @@
                     } else {
                         // 方法不存在于该类型
                         char msg[BUFFER_MEDIUM];
-                        // ★ 增强报错：当类型是 TYPE_STRUCT 且无定义时，提示可能是未 use 导入的 clib/cstruct 类型
-                        if (obj_sym->type->kind == TYPE_STRUCT && obj_sym->type->struct_name) {
+                        // ★ 增强报错：当类型是 TYPE_STRING 且方法名是 contains/includes 时，提示用 has
+                        if (obj_sym->type->kind == TYPE_STRING &&
+                            (strcmp(method_name, "contains") == 0 || strcmp(method_name, "includes") == 0)) {
+                            snprintf(msg, sizeof(msg), "类型 'string' 没有方法 '%s'，是否想用 'has'？（如 s.has(sub)）", method_name);
+                        } else if (obj_sym->type->kind == TYPE_STRUCT && obj_sym->type->struct_name) {
+                            // ★ 增强报错：当类型是 TYPE_STRUCT 且无定义时，提示可能是未 use 导入的 clib/cstruct 类型
                             const char* tn = obj_sym->type->struct_name;
                             Symbol* def_sym = scope_resolve_tree_bfs(s->root_scope, tn);
                             if (!def_sym) {

@@ -1,0 +1,31 @@
+// 测试: string 传给 str8 参数
+import ffi
+
+clib msvcrt {
+    i32 strlen(str8 s)
+    i32 strcmp(str8 a, str8 b)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // 直接传 string 字面量给 str8 参数
+    int len = lib.strlen("hello world")
+    assert_eq(len, 11)
+
+    // 传 string 变量给 str8 参数
+    string s = "test string"
+    int len2 = lib.strlen(s)
+    assert_eq(len2, 11)
+
+    // 传两个 string 给 strcmp
+    int cmp = lib.strcmp("abc", "abc")
+    assert_eq(cmp, 0)
+
+    string s1 = "hello"
+    string s2 = "hello"
+    int cmp2 = lib.strcmp(s1, s2)
+    assert_eq(cmp2, 0)
+
+    print("test_str8_accepts_string passed")
+}
