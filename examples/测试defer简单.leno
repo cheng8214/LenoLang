@@ -1,0 +1,62 @@
+// 简化测试: break + defer
+
+var log = []
+
+func add(string s) {
+    log.add(s)
+}
+
+print("=== 测试 A: break in for 0:3 ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter")
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after-loop")
+print("  结果: " + log)
+print("  长度: " + log.len())
+
+print("\n=== 测试 B: 无 break 对照 ===")
+log = []
+for 0:2 to i {
+    defer add("defer")
+    add("iter")
+}
+add("after-loop")
+print("  结果: " + log)
+print("  长度: " + log.len())
+
+print("\n=== 测试 C: break in while ===")
+log = []
+var j = 0
+while j < 3 {
+    defer add("defer")
+    add("iter")
+    if j == 1 {
+        add("breaking")
+        break
+    }
+    j = j + 1
+}
+add("after-loop")
+print("  结果: " + log)
+print("  长度: " + log.len())
+
+print("\n=== 测试 D: continue in for ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter")
+    if i == 1 {
+        add("continuing")
+        continue
+    }
+    add("after-if")
+}
+add("after-loop")
+print("  结果: " + log)
+print("  长度: " + log.len())

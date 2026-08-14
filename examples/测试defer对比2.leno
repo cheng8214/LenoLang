@@ -1,0 +1,58 @@
+// 测试 for-in + defer + break
+
+var log = []
+func add(string s) { log.add(s) }
+
+print("=== for-in + defer add('defer') + break ===")
+log = []
+var items = ["a", "b", "c"]
+for items to item {
+    defer add("defer")
+    add("item-" + item)
+    if item == "b" {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [item-a, defer, item-b, breaking, defer, after]")
+
+print("\n=== for 0:3 + defer add('defer') + break (无if) ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    break
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, defer, after]")
+
+print("\n=== for 0:3 + defer add('defer') + if+break ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, defer, iter-1, breaking, defer, after]")
+
+print("\n=== for 0:3 + defer add('defer') + if+break (无add调用) ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    if i == 1 {
+        add("breaking")
+        break
+    }
+    add("iter-" + i)
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, defer, breaking, defer, after]")

@@ -1,0 +1,25 @@
+// 测试: add 不内联时是否工作
+
+var log = []
+
+// 用一个更复杂的函数防止内联
+func add(string s) {
+    if s == "" {
+        return
+    }
+    log.add(s)
+}
+
+print("=== 测试: for + defer + break inside if (复杂add) ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, defer, iter-1, breaking, defer, after]")

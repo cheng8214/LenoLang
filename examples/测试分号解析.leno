@@ -1,0 +1,20 @@
+// 验证分号问题（无 defer）
+
+print("=== A: 单行 if (分号) - 无 defer ===")
+for 0:3 to i {
+    print("iter-" + i)
+    if i == 1 { print("breaking"); break }
+    print("after-if")
+}
+print("after-loop")
+
+print("\n=== B: 多行 if - 无 defer ===")
+for 0:3 to i {
+    print("iter-" + i)
+    if i == 1 {
+        print("breaking")
+        break
+    }
+    print("after-if")
+}
+print("after-loop")

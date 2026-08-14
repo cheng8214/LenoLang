@@ -1,6 +1,6 @@
 // prepare.leno — LenoSqlite 预编译语句示例
 // 演示预编译语句的高级用法：参数绑定、批量插入、命名参数
-import sqlite3
+import "../lib/sqlite3.leno"
 use sqlite3.Statement
 
 main() {

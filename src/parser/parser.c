@@ -69,6 +69,9 @@ Ast* parse_statement(Parser* p) {
         case TOK_THROW:
             stmt = parse_throw_stmt(p);
             break;
+        case TOK_DEFER:
+            stmt = parse_defer_stmt(p);
+            break;
 
         // 模块系统
         case TOK_IMPORT:

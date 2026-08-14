@@ -273,6 +273,9 @@ void ast_free(Ast* ast) {
         case AST_THROW:
             ast_free(ast->u.throw_.expr);
             break;
+        case AST_DEFER:
+            ast_free(ast->u.defer_.expr);
+            break;
         case AST_TYPE_CHECK:
         case AST_AS_CAST:
             ast_free(ast->u.type_check.expr);

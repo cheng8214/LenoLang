@@ -1,0 +1,31 @@
+// 验证 defer 逻辑（不使用可能被内联的 add 函数）
+import io
+
+var log = []
+
+func tos(int n): string {
+    return "" + n
+}
+
+main() {
+    // 测试: defer 引用循环变量（使用 io.print 而非 add）
+    log = []
+    for 0:2 to i {
+        defer io.print("defer-" + tos(i))
+        io.print("iter-" + tos(i))
+    }
+    io.print("done")
+
+    // 测试: defer 引用循环变量 + break
+    for 0:3 to i {
+        defer io.print("defer-" + tos(i))
+        io.print("iter-" + tos(i))
+        if i == 1 {
+            io.print("breaking")
+            break
+        }
+    }
+    io.print("after")
+
+    print("test passed")
+}

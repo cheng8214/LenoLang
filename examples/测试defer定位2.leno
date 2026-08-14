@@ -1,0 +1,69 @@
+// 精确定位: for + defer + break inside if
+
+var log = []
+
+func add(string s) {
+    log.add(s)
+}
+
+// 测试 A: for + defer + break inside if
+print("=== 测试 A: for + defer + break inside if ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, defer, iter-1, breaking, defer, after]")
+
+// 测试 B: for + defer + continue inside if
+print("\n=== 测试 B: for + defer + continue inside if ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 {
+        add("continuing")
+        continue
+    }
+    add("after-if")
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, after-if, defer, iter-1, continuing, defer, iter-2, after-if, defer, iter-3, after-if, defer, after]")
+
+// 测试 C: while + defer + break inside if
+print("\n=== 测试 C: while + defer + break inside if ===")
+log = []
+var j = 0
+while j < 3 {
+    defer add("defer")
+    add("iter-" + j)
+    if j == 1 {
+        add("breaking")
+        break
+    }
+    j = j + 1
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, defer, iter-1, breaking, defer, after]")
+
+// 测试 D: for + break inside if (无 defer)
+print("\n=== 测试 D: for + break inside if (无 defer) ===")
+log = []
+for 0:3 to i {
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  结果: " + log)
+print("  预期: [iter-0, iter-1, breaking, after]")

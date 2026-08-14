@@ -1,6 +1,6 @@
 // basic.leno — LenoSqlite 基础示例
 // 演示数据库打开、建表、插入、查询等基本操作
-import sqlite3
+import "../lib/sqlite3.leno"
 use sqlite3.Statement
 
 main() {

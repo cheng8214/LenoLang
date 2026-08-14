@@ -1,0 +1,200 @@
+// defer 完整测试 - 多行格式
+
+var log = []
+func add(string s) { log.add(s) }
+
+// ============================================
+// 测试 1: break 跳出含 defer 的循环块
+// ============================================
+log = []
+for 0:3 to i {
+    defer add("defer-" + i)
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after-loop")
+print("测试1 break: " + log)
+assert_eq(log[0], "iter-0")
+assert_eq(log[1], "defer-0")
+assert_eq(log[2], "iter-1")
+assert_eq(log[3], "breaking")
+assert_eq(log[4], "defer-1")
+assert_eq(log[5], "after-loop")
+
+// ============================================
+// 测试 2: continue 跳过含 defer 的循环体
+// ============================================
+log = []
+for 0:3 to i {
+    defer add("defer-" + i)
+    add("iter-" + i)
+    if i == 1 {
+        add("continuing")
+        continue
+    }
+    add("after-if-" + i)
+}
+add("after-loop")
+print("测试2 continue: " + log)
+assert_eq(log[0], "iter-0")
+assert_eq(log[1], "after-if-0")
+assert_eq(log[2], "defer-0")
+assert_eq(log[3], "iter-1")
+assert_eq(log[4], "continuing")
+assert_eq(log[5], "defer-1")
+
+// ============================================
+// 测试 3: defer 捕获变量（引用语义）
+// ============================================
+log = []
+var counter = 0
+{
+    defer add("counter-at-defer=" + counter)
+    counter = 99
+    add("counter-before-exit=" + counter)
+}
+add("counter-after-block=" + counter)
+print("测试3 变量捕获: " + log)
+assert_eq(log[0], "counter-before-exit=99")
+assert_eq(log[1], "counter-at-defer=99")
+assert_eq(log[2], "counter-after-block=99")
+
+// ============================================
+// 测试 4: 嵌套块的 defer 执行顺序
+// ============================================
+log = []
+{
+    defer add("outer-defer")
+    add("outer-start")
+    {
+        defer add("inner-defer")
+        add("inner-start")
+        add("inner-end")
+    }
+    add("outer-end")
+}
+print("测试4 嵌套块: " + log)
+assert_eq(log[0], "outer-start")
+assert_eq(log[1], "inner-start")
+assert_eq(log[2], "inner-end")
+assert_eq(log[3], "inner-defer")
+assert_eq(log[4], "outer-end")
+assert_eq(log[5], "outer-defer")
+
+// ============================================
+// 测试 5: defer 在 for-in 循环中
+// ============================================
+log = []
+var items = ["a", "b", "c"]
+for items to item {
+    defer add("defer-" + item)
+    add("process-" + item)
+}
+add("done")
+print("测试5 for-in: " + log)
+assert_eq(log[0], "process-a")
+assert_eq(log[1], "defer-a")
+assert_eq(log[2], "process-b")
+assert_eq(log[3], "defer-b")
+assert_eq(log[4], "process-c")
+assert_eq(log[5], "defer-c")
+assert_eq(log[6], "done")
+
+// ============================================
+// 测试 6: 嵌套 try-catch 中 defer 的执行
+// ============================================
+log = []
+try {
+    defer add("defer-outer")
+    try {
+        defer add("defer-inner")
+        throw "inner error"
+    } catch e {
+        add("caught-inner: " + e.msg)
+    }
+    add("after-inner-try")
+} catch e {
+    add("caught-outer: " + e.msg)
+}
+print("测试6 嵌套try: " + log)
+assert_eq(log[0], "defer-inner")
+assert_eq(log[1], "caught-inner: inner error")
+assert_eq(log[2], "after-inner-try")
+assert_eq(log[3], "defer-outer")
+
+// ============================================
+// 测试 7: 多层函数调用中 defer 执行
+// ============================================
+log = []
+func level3() {
+    defer add("defer-l3")
+    add("call-l3")
+    throw "from-l3"
+}
+func level2() {
+    defer add("defer-l2")
+    add("call-l2")
+    level3()
+    add("after-l3")
+}
+func level1() {
+    defer add("defer-l1")
+    add("call-l1")
+    try {
+        level2()
+    } catch e {
+        add("caught: " + e.msg)
+    }
+    add("level1-end")
+}
+level1()
+print("测试7 多层调用: " + log)
+assert_eq(log[0], "call-l1")
+assert_eq(log[1], "call-l2")
+assert_eq(log[2], "call-l3")
+assert_eq(log[3], "defer-l3")
+assert_eq(log[4], "defer-l2")
+assert_eq(log[5], "caught: from-l3")
+assert_eq(log[6], "level1-end")
+assert_eq(log[7], "defer-l1")
+
+// ============================================
+// 测试 8: while + defer + break
+// ============================================
+log = []
+var j = 0
+while j < 3 {
+    defer add("defer-" + j)
+    add("iter-" + j)
+    if j == 1 {
+        add("breaking")
+        break
+    }
+    j = j + 1
+}
+add("after")
+print("测试8 while+break: " + log)
+assert_eq(log[0], "iter-0")
+assert_eq(log[1], "defer-0")
+assert_eq(log[2], "iter-1")
+assert_eq(log[3], "breaking")
+assert_eq(log[4], "defer-1")
+assert_eq(log[5], "after")
+
+// ============================================
+// 测试 9: 无 defer 时无回归
+// ============================================
+log = []
+for 0:2 to i {
+    add("iter-" + i)
+}
+add("done")
+assert_eq(log[0], "iter-0")
+assert_eq(log[1], "iter-1")
+assert_eq(log[2], "iter-2")
+assert_eq(log[3], "done")
+
+print("\n=== 所有 defer 严格测试通过 ===")

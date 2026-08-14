@@ -44,6 +44,7 @@ typedef enum {
     AST_INTERP_STRING, // 插值字符串: $("hello {name}")
     AST_TRY,           // try-catch-finally 语句
     AST_THROW,         // throw 语句
+    AST_DEFER,         // defer 语句（作用域退出时执行）
     AST_TYPE_CHECK,    // 类型检查表达式: a is int
     AST_AS_CAST,       // 安全类型转换: a as TypeName
     AST_ALIAS,         // 类型别名: alias Name = Type
@@ -247,6 +248,9 @@ struct Ast {
         struct {
             Ast* expr;         // throw 的表达式
         } throw_;
+        struct {
+            Ast* expr;         // defer 的表达式（作用域退出时执行）
+        } defer_;
         struct {
             Ast* expr;         // 被检查的表达式
             TypeInfo* type;    // 检查的类型

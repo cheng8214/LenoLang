@@ -1,0 +1,53 @@
+// 继续隔离
+
+var log = []
+func add(string s) { log.add(s) }
+
+print("=== 1: add('iter-' + i) + defer add('defer') + break (无if) ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    break
+}
+add("after")
+print("  " + log)
+print("  预期: [iter-0, defer, after]")
+
+print("\n=== 2: add('iter') + defer add('defer') + break (无if) ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter")
+    break
+}
+add("after")
+print("  " + log)
+print("  预期: [iter, defer, after]")
+
+print("\n=== 3: add('iter-' + i) + defer add('defer') + if+break ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 {
+        break
+    }
+}
+add("after")
+print("  " + log)
+print("  预期: [iter-0, defer, iter-1, defer, after]")
+
+print("\n=== 4: add('iter-' + i) + defer add('defer') + if+break+add ===")
+log = []
+for 0:3 to i {
+    defer add("defer")
+    add("iter-" + i)
+    if i == 1 {
+        add("breaking")
+        break
+    }
+}
+add("after")
+print("  " + log)
+print("  预期: [iter-0, defer, iter-1, breaking, defer, after]")

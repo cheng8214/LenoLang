@@ -18,6 +18,8 @@ gen->inline_result_slot = -1;
 gen->inline_return_jump_count = 0;
 gen->inline_discard_result = 0;
 gen->inline_no_result = 0;
+gen->defer_expr_top = 0;
+gen->defer_block_top = 0;
 // 重置内联函数名栈，防止上次编译残留状态影响本次编译
 inline_name_stack_reset();
 }

@@ -1,0 +1,124 @@
+// 测试 defer 语句
+
+var log = []
+
+func add(string s) {
+    log.add(s)
+}
+
+print("=== 测试 1: 基本 defer 执行 ===")
+log = []
+{
+    add("a")
+    defer add("defer-1")
+    add("b")
+    defer add("defer-2")
+    add("c")
+}
+// 预期: a, b, c, defer-2, defer-1 (逆序)
+print("  结果: " + log)
+assert_eq(log[0], "a")
+assert_eq(log[1], "b")
+assert_eq(log[2], "c")
+assert_eq(log[3], "defer-2")
+assert_eq(log[4], "defer-1")
+print("  [PASS]")
+
+print("\n=== 测试 2: defer 在异常时也执行 ===")
+log = []
+try {
+    add("start")
+    defer add("defer-cleanup")
+    add("before-error")
+    throw "test error"
+    add("after-error")  // 不应执行
+} catch e {
+    add("caught: " + e.msg)
+}
+// 预期: start, before-error, defer-cleanup, caught
+print("  结果: " + log)
+assert_eq(log[0], "start")
+assert_eq(log[1], "before-error")
+assert_eq(log[2], "defer-cleanup")
+assert_eq(log[3], "caught: test error")
+print("  [PASS]")
+
+print("\n=== 测试 3: defer 在函数返回时执行 ===")
+func do_work() {
+    add("working")
+    defer add("cleanup-1")
+    defer add("cleanup-2")
+    add("done")
+    return
+}
+
+log = []
+do_work()
+// 预期: working, done, cleanup-2, cleanup-1
+print("  结果: " + log)
+assert_eq(log[0], "working")
+assert_eq(log[1], "done")
+assert_eq(log[2], "cleanup-2")
+assert_eq(log[3], "cleanup-1")
+print("  [PASS]")
+
+print("\n=== 测试 4: defer 在函数返回值之后执行 ===")
+func compute() {
+    defer add("defer-in-compute")
+    add("computing")
+    return 42
+}
+
+log = []
+var result = compute()
+assert_eq(result, 42)
+assert_eq(log[0], "computing")
+assert_eq(log[1], "defer-in-compute")
+print("  [PASS]")
+
+print("\n=== 测试 5: 多个 defer 逆序执行 ===")
+log = []
+{
+    defer add("1")
+    defer add("2")
+    defer add("3")
+    defer add("4")
+    defer add("5")
+}
+// 预期: 5, 4, 3, 2, 1
+print("  结果: " + log)
+assert_eq(log[0], "5")
+assert_eq(log[1], "4")
+assert_eq(log[2], "3")
+assert_eq(log[3], "2")
+assert_eq(log[4], "1")
+print("  [PASS]")
+
+print("\n=== 测试 6: defer 在 if 块中 ===")
+log = []
+var x = 10
+if x > 5 {
+    add("in-if")
+    defer add("defer-if")
+    add("end-if")
+}
+add("after-if")
+// 预期: in-if, end-if, defer-if, after-if
+print("  结果: " + log)
+assert_eq(log[0], "in-if")
+assert_eq(log[1], "end-if")
+assert_eq(log[2], "defer-if")
+assert_eq(log[3], "after-if")
+print("  [PASS]")
+
+print("\n=== 测试 7: 无 defer 时正常工作（无回归）===")
+log = []
+{
+    add("a")
+    add("b")
+}
+assert_eq(log[0], "a")
+assert_eq(log[1], "b")
+print("  [PASS]")
+
+print("\n=== 所有 defer 测试通过 ===")

@@ -76,6 +76,17 @@ static char* detect_variable_type_from_text(const char* content, const char* var
                     if (strcmp(type_buf, "File") == 0) return strdup("File");
                     // struct/cstruct 类型
                     if (strstr(type_buf, "struct")) return strdup(type_buf);
+                    // clib 类型（首字母小写的自定义类型名，如 sqlite3）
+                    if (!isupper((unsigned char)type_buf[0]) &&
+                        strcmp(type_buf, "var") != 0 &&
+                        strcmp(type_buf, "void") != 0 &&
+                        strcmp(type_buf, "null") != 0 &&
+                        strcmp(type_buf, "any") != 0 &&
+                        strcmp(type_buf, "func") != 0) {
+                        char* result = (char*)malloc(strlen(type_buf) + 6);
+                        sprintf(result, "clib %s", type_buf);
+                        return result;
+                    }
                     // 其他类型名（如 struct 名，首字母大写）
                     if (isupper((unsigned char)type_buf[0])) return strdup(type_buf);
                 }
@@ -466,6 +477,10 @@ void comp_provider_add_variable_members(
             // struct 类型名
             type_resolved = (char*)malloc(strlen(closure_type) + 16);
             sprintf(type_resolved, "struct %s", closure_type);
+        } else {
+            // 可能是 clib 类型（首字母小写的自定义类型名，如 sqlite3）
+            type_resolved = (char*)malloc(strlen(closure_type) + 6);
+            sprintf(type_resolved, "clib %s", closure_type);
         }
         free(closure_type);
         
@@ -510,6 +525,97 @@ void comp_provider_add_variable_members(
                                 }
                             }
                             module_symbol_table_destroy(mtable);
+                        }
+                    }
+                }
+            } else if (strncmp(type_resolved, "clib ", 5) == 0) {
+                // clib 类型：查找 clib 函数并添加补全项
+                const char* clib_name = type_resolved + 5;
+                if (*clib_name) {
+                    // 从当前文件的编译器作用域中查找
+                    CompilerContext cctx;
+                    compiler_context_init(&cctx);
+                    compiler_analyze_with_filename(&cctx, content, file_path);
+                    bool clib_found = false;
+                    if (cctx.root_scope) {
+                        Symbol* clib_sym = scope_resolve_tree_bfs(cctx.root_scope, clib_name);
+                        if (clib_sym && clib_sym->clib_func_count > 0) {
+                            clib_found = true;
+                            for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                                const char* fname = clib_sym->clib_func_names[i];
+                                TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                                const char* rt_str = ret_type ? type_to_string(ret_type) : "unknown";
+                                int pc = clib_sym->clib_func_param_counts[i];
+                                char detail[512];
+                                if (pc == 0) {
+                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                } else {
+                                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, fname, rt_str);
+                                }
+                                comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
+                                             detail, NULL, NULL, NULL);
+                            }
+                        }
+                    }
+                    compiler_context_cleanup(&cctx);
+                    // 从导入的模块符号表中查找
+                    if (!clib_found && file_path) {
+                        for (int i = 0; i < import_count; i++) {
+                            const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                            if (!mp) continue;
+                            module_symbol_table_reset_scan_stack();
+                            ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                            if (!mtable) continue;
+                            if (module_symbol_table_scan(mtable, file_path) == 0) {
+                                ModuleClibSymbol* mclib = module_symbol_table_find_clib(mtable, clib_name);
+                                if (mclib) {
+                                    for (int j = 0; j < mclib->func_count; j++) {
+                                        const char* fname = mclib->funcs[j].name;
+                                        const char* rt_str = mclib->funcs[j].return_struct_name ?
+                                            mclib->funcs[j].return_struct_name :
+                                            type_kind_to_string(mclib->funcs[j].return_type);
+                                        int pc = mclib->funcs[j].param_count;
+                                        char detail[512];
+                                        if (pc == 0) {
+                                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                        } else {
+                                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, fname, rt_str);
+                                        }
+                                        comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
+                                                     detail, NULL, NULL, NULL);
+                                    }
+                                }
+                            }
+                            module_symbol_table_destroy(mtable);
+                        }
+                    }
+                    // 途径3：扫描当前文件本身（纯文本解析，不依赖编译器）
+                    if (!clib_found && file_path) {
+                        module_symbol_table_reset_scan_stack();
+                        ModuleSymbolTable* cur_table = module_symbol_table_create(file_path);
+                        if (cur_table) {
+                            if (module_symbol_table_scan(cur_table, file_path) == 0) {
+                                ModuleClibSymbol* mclib = module_symbol_table_find_clib(cur_table, clib_name);
+                                if (mclib) {
+                                    clib_found = true;
+                                    for (int j = 0; j < mclib->func_count; j++) {
+                                        const char* fname = mclib->funcs[j].name;
+                                        const char* rt_str = mclib->funcs[j].return_struct_name ?
+                                            mclib->funcs[j].return_struct_name :
+                                            type_kind_to_string(mclib->funcs[j].return_type);
+                                        int pc = mclib->funcs[j].param_count;
+                                        char detail[512];
+                                        if (pc == 0) {
+                                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                        } else {
+                                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, fname, rt_str);
+                                        }
+                                        comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
+                                                     detail, NULL, NULL, NULL);
+                                    }
+                                }
+                            }
+                            module_symbol_table_destroy(cur_table);
                         }
                     }
                 }
@@ -582,6 +688,9 @@ void comp_provider_add_variable_members(
             // 后续会通过模块符号表查找字段和方法
             type_resolved = (char*)malloc(strlen(type_str) + 16);
             sprintf(type_resolved, "struct %s", type_str);
+        } else if (strncmp(type_str, "clib ", 5) == 0) {
+            // clib 类型（如 "clib sqlite3"）
+            type_resolved = strdup(type_str);
         }
         free(type_str);
     }
@@ -678,6 +787,127 @@ void comp_provider_add_variable_members(
                         }
                     }
                     module_symbol_table_destroy(mtable);
+                }
+            }
+        }
+    } else if (strncmp(type_resolved, "clib ", 5) == 0) {
+        // clib 类型：列出所有 clib 函数作为补全项
+        const char* clib_name = type_resolved + 5;
+        if (*clib_name) {
+            // 途径1：从当前文件的编译器作用域中查找 clib 定义
+            CompilerContext cctx;
+            compiler_context_init(&cctx);
+            compiler_analyze_with_filename(&cctx, content, file_path);
+            bool found = false;
+            if (cctx.root_scope) {
+                Symbol* clib_sym = scope_resolve_tree_bfs(cctx.root_scope, clib_name);
+                if (clib_sym && clib_sym->clib_func_count > 0) {
+                    found = true;
+                    for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                        const char* fname = clib_sym->clib_func_names[i];
+                        TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                        const char* rt_str = ret_type ? type_to_string(ret_type) : "unknown";
+                        int pc = clib_sym->clib_func_param_counts[i];
+                        char detail[512];
+                        if (pc == 0) {
+                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                        } else {
+                            char params[256] = "";
+                            int off = 0;
+                            for (int j = 0; j < pc && off < (int)sizeof(params) - 20; j++) {
+                                TypeInfo* pt = clib_sym->clib_func_param_types[i][j];
+                                const char* pt_str = pt ? type_to_string(pt) : "unknown";
+                                if (j > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
+                                off += snprintf(params + off, sizeof(params) - off, "%s", pt_str);
+                            }
+                            snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", var_name, fname, params, rt_str);
+                        }
+                        char doc[1024];
+                        snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
+                        comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
+                                     detail, doc, NULL, NULL);
+                    }
+                }
+            }
+            compiler_context_cleanup(&cctx);
+
+            // 途径2：从导入的模块符号表中查找
+            if (!found && file_path) {
+                for (int i = 0; i < import_count; i++) {
+                    const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                    if (!mp) continue;
+                    module_symbol_table_reset_scan_stack();
+                    ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                    if (!mtable) continue;
+                    if (module_symbol_table_scan(mtable, file_path) == 0) {
+                        ModuleClibSymbol* mclib = module_symbol_table_find_clib(mtable, clib_name);
+                        if (mclib) {
+                            for (int j = 0; j < mclib->func_count; j++) {
+                                const char* fname = mclib->funcs[j].name;
+                                const char* rt_str = mclib->funcs[j].return_struct_name ?
+                                    mclib->funcs[j].return_struct_name :
+                                    type_kind_to_string(mclib->funcs[j].return_type);
+                                int pc = mclib->funcs[j].param_count;
+                                char detail[512];
+                                if (pc == 0) {
+                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                } else {
+                                    char params[256] = "";
+                                    int off = 0;
+                                    for (int k = 0; k < pc && off < (int)sizeof(params) - 20; k++) {
+                                        const char* pt_str = type_kind_to_string(mclib->funcs[j].param_types[k]);
+                                        if (k > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
+                                        off += snprintf(params + off, sizeof(params) - off, "%s", pt_str);
+                                    }
+                                    snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", var_name, fname, params, rt_str);
+                                }
+                                char doc[1024];
+                                snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
+                                comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
+                                             detail, doc, NULL, NULL);
+                            }
+                        }
+                    }
+                    module_symbol_table_destroy(mtable);
+                }
+            }
+            // 途径3：当编译器解析失败时，使用模块符号表扫描当前文件本身
+            // 模块符号表的扫描是纯文本解析，不依赖编译器
+            if (!found && file_path) {
+                module_symbol_table_reset_scan_stack();
+                ModuleSymbolTable* cur_table = module_symbol_table_create(file_path);
+                if (cur_table) {
+                    if (module_symbol_table_scan(cur_table, file_path) == 0) {
+                        ModuleClibSymbol* mclib = module_symbol_table_find_clib(cur_table, clib_name);
+                        if (mclib) {
+                            found = true;
+                            for (int j = 0; j < mclib->func_count; j++) {
+                                const char* fname = mclib->funcs[j].name;
+                                const char* rt_str = mclib->funcs[j].return_struct_name ?
+                                    mclib->funcs[j].return_struct_name :
+                                    type_kind_to_string(mclib->funcs[j].return_type);
+                                int pc = mclib->funcs[j].param_count;
+                                char detail[512];
+                                if (pc == 0) {
+                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                } else {
+                                    char params[256] = "";
+                                    int off = 0;
+                                    for (int k = 0; k < pc && off < (int)sizeof(params) - 20; k++) {
+                                        const char* pt_str = type_kind_to_string(mclib->funcs[j].param_types[k]);
+                                        if (k > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
+                                        off += snprintf(params + off, sizeof(params) - off, "%s", pt_str);
+                                    }
+                                    snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", var_name, fname, params, rt_str);
+                                }
+                                char doc[1024];
+                                snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
+                                comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
+                                             detail, doc, NULL, NULL);
+                            }
+                        }
+                    }
+                    module_symbol_table_destroy(cur_table);
                 }
             }
         }
