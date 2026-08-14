@@ -1,6 +1,6 @@
 // edge_tests2.leno — LenoSqlite 边界测试补充
 // 覆盖 edge_tests.leno 未覆盖的 API 和场景
-import sqlite3
+import "../lib/sqlite3.leno"
 use sqlite3.Statement
 use sqlite3.DataType
 

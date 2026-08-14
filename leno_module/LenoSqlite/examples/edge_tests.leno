@@ -1,6 +1,6 @@
 // edge_tests.leno — LenoSqlite 边界测试
 // 测试各种边界情况：NULL值、BLOB、错误处理、重复操作等
-import sqlite3
+import "../lib/sqlite3.leno"
 import ffi
 use sqlite3.Statement
 use sqlite3.DataType

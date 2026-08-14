@@ -1,6 +1,6 @@
 // file_db.leno — LenoSqlite 文件数据库示例
 // 演示文件数据库的创建、读写、只读打开
-import sqlite3
+import "../lib/sqlite3.leno"
 use sqlite3.Statement
 import files
 
