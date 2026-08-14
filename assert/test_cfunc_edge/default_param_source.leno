@@ -1,0 +1,24 @@
+// 导出 enum 和函数，测试跨模块默认参数引用 enum
+export enum LogLevel {
+    DEBUG = 0
+    INFO = 1
+    WARN = 2
+    ERROR = 3
+    FATAL = 4
+    DEFAULT = INFO
+}
+
+export const MAX_RETRIES = 5
+
+// 导出带默认参数的函数
+export func log_msg(string msg, int level = LogLevel.INFO): int {
+    return level
+}
+
+export func retry_op(int count = MAX_RETRIES): int {
+    return count
+}
+
+export func mixed_defaults(int a, int b = LogLevel.WARN, int c = 10 * 2): int {
+    return a + b + c
+}

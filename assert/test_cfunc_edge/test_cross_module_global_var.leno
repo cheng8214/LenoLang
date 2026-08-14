@@ -1,0 +1,29 @@
+// 跨模块 struct 方法引用导入的全局变量
+import "global_var_source.leno" as src
+
+struct Service {
+    string name
+
+    func get_timeout(): int {
+        return src.SHARED_TIMEOUT
+    }
+
+    func get_retries(): int {
+        return src.SHARED_RETRIES
+    }
+
+    func get_name(): string {
+        return src.SHARED_NAME
+    }
+}
+
+main() {
+    var svc = new Service()
+    svc.name = "test"
+
+    assert_eq(svc.get_timeout(), 60)
+    assert_eq(svc.get_retries(), 3)
+    assert_eq(svc.get_name(), "shared_app")
+
+    print("cross-module global var ref test passed")
+}

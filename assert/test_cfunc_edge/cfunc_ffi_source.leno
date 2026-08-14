@@ -1,0 +1,6 @@
+// cfunc 跨模块实际功能测试
+// 验证导入的 cfunc 签名能正确配合 ffi.callback 使用
+import ffi
+
+// 导出 cfunc 签名供跨模块使用
+export cfunc MyCompare(Ptr a, Ptr b): i32

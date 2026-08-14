@@ -1,0 +1,6 @@
+// cfunc 跨模块链式导入测试
+// 模块 A 定义 cfunc → 模块 B use 导入 → 模块 C use 从 B 间接导入
+// 验证 cfunc 符号在传递依赖中的正确传导
+
+export cfunc ProgressCb(Ptr context, i64 current, i64 total): i32
+export cfunc LoggerCb(Ptr message, i32 level): void

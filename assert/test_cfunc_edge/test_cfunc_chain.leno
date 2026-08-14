@@ -1,0 +1,14 @@
+// 最终消费模块：从中间模块导入 cfunc
+import "cfunc_middle.leno" as mid
+use mid.TimerCb
+
+// 也直接从源头导入
+import "cfunc_source.leno" as src
+use src.ProgressCb
+use src.LoggerCb
+
+main() {
+    // 如果所有 cfunc 签名都成功导入，编译不报错
+    assert(true, "cfunc chain import succeeded")
+    print("cfunc chain import test passed")
+}

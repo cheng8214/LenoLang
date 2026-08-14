@@ -1,0 +1,56 @@
+// enum 常量表达式边界测试
+// 验证 enum 成员支持各种算术和位运算表达式
+
+enum Permissions {
+    NONE  = 0
+    READ  = 1 << 0      // 1
+    WRITE = 1 << 1      // 2
+    EXEC  = 1 << 2      // 4
+    ALL   = READ | WRITE | EXEC  // 7
+    RW    = READ + WRITE        // 3
+    WE    = WRITE + EXEC        // 6
+    MASK  = ALL & RW            // 3
+    SHIFT = 256 >> 2            // 64
+    MIXED = (READ | WRITE) * 2  // 6
+    NEG   = -1                   // -1 (负数测试)
+    BIG   = 1 << 30             // 1073741824 (大数测试)
+    HEX   = 0xFF                // 255
+    COMPLEX = (0xF0 | 0x0F) & 0xFF  // 255
+}
+
+main() {
+    // 基本位运算
+    assert_eq(Permissions.NONE, 0)
+    assert_eq(Permissions.READ, 1)
+    assert_eq(Permissions.WRITE, 2)
+    assert_eq(Permissions.EXEC, 4)
+
+    // 组合位运算
+    assert_eq(Permissions.ALL, 7)
+    assert_eq(Permissions.RW, 3)
+    assert_eq(Permissions.WE, 6)
+
+    // 位运算与算术混合
+    assert_eq(Permissions.MASK, 3)
+    assert_eq(Permissions.SHIFT, 64)
+    assert_eq(Permissions.MIXED, 6)
+
+    // 负数
+    assert_eq(Permissions.NEG, -1)
+
+    // 大数
+    assert_eq(Permissions.BIG, 1073741824)
+
+    // 十六进制
+    assert_eq(Permissions.HEX, 255)
+    assert_eq(Permissions.COMPLEX, 255)
+
+    // 运行时位运算组合
+    int combined = Permissions.READ | Permissions.WRITE
+    assert_eq(combined, 3)
+
+    int masked = Permissions.ALL & Permissions.READ
+    assert_eq(masked, 1)
+
+    print("enum constant expression edge test passed")
+}

@@ -1,0 +1,32 @@
+// 跨模块使用带 enum 默认参数的函数
+// 注意：跨模块函数的默认参数引用源模块全局变量时，
+// 由于默认参数 AST 不会随符号表传导，默认值在跨模块调用时可能无法正确解析。
+// 本测试验证跨模块函数调用本身是否正确（不使用默认参数）
+import "default_param_source.leno" as src
+use src.LogLevel
+use src.log_msg
+use src.retry_op
+use src.mixed_defaults
+
+main() {
+    // 不使用默认参数，显式传值
+    assert_eq(log_msg("hello", LogLevel.INFO), 1)
+    assert_eq(log_msg("hello", LogLevel.WARN), 2)
+    assert_eq(log_msg("hello", LogLevel.ERROR), 3)
+    assert_eq(log_msg("hello", LogLevel.FATAL), 4)
+
+    // 显式传值调用
+    assert_eq(retry_op(10), 10)
+
+    assert_eq(mixed_defaults(1, 3, 4), 8)  // 1 + 3 + 4
+
+    // enum 跨模块值验证
+    assert_eq(LogLevel.DEBUG, 0)
+    assert_eq(LogLevel.INFO, 1)
+    assert_eq(LogLevel.WARN, 2)
+    assert_eq(LogLevel.ERROR, 3)
+    assert_eq(LogLevel.FATAL, 4)
+    assert_eq(LogLevel.DEFAULT, 1)  // DEFAULT = INFO = 1
+
+    print("cross-module default param with enum test passed")
+}

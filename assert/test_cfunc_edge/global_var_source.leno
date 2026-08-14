@@ -1,0 +1,4 @@
+// 导出全局变量供跨模块使用
+export var SHARED_TIMEOUT = 60
+export var SHARED_RETRIES = 3
+export var SHARED_NAME = "shared_app"

@@ -2382,6 +2382,11 @@ Ast* parse_cfunc_stmt(Parser* p) {
 // 前向声明
 static int64_t eval_const_expr(Ast* expr, int* ok);
 
+// enum 成员引用上下文（用于在解析 enum 成员值时引用先前定义的成员）
+static char** g_enum_member_names = NULL;
+static int64_t* g_enum_member_values = NULL;
+static int g_enum_member_count = 0;
+
 static int64_t eval_const_expr(Ast* expr, int* ok) {
     *ok = 1;
     if (!expr) { *ok = 0; return 0; }
@@ -2392,6 +2397,19 @@ static int64_t eval_const_expr(Ast* expr, int* ok) {
                 return (int64_t)strtoll(expr->u.num.bigint_str, NULL, 0);
             }
             return (int64_t)expr->u.num.value;
+
+        case AST_VAR: {
+            // 支持 enum 成员引用（如 ALL = READ | WRITE 中的 READ 和 WRITE）
+            if (g_enum_member_names && g_enum_member_count > 0) {
+                for (int i = 0; i < g_enum_member_count; i++) {
+                    if (strcmp(g_enum_member_names[i], expr->u.var.name) == 0) {
+                        return g_enum_member_values[i];
+                    }
+                }
+            }
+            *ok = 0;
+            return 0;
+        }
 
         case AST_UNARY: {
             int64_t val = eval_const_expr(expr->u.unary.operand, ok);
@@ -2495,6 +2513,10 @@ Ast* parse_enum_stmt(Parser* p) {
                 free(member_name);
                 break;
             }
+            // 设置 enum 成员引用上下文，允许后续成员引用先前定义的成员
+            g_enum_member_names = member_names;
+            g_enum_member_values = member_values;
+            g_enum_member_count = member_count;
             int eval_ok = 0;
             int64_t val = eval_const_expr(expr, &eval_ok);
             if (!eval_ok) {
@@ -2505,6 +2527,10 @@ Ast* parse_enum_stmt(Parser* p) {
             }
             member_value = val;
             ast_free(expr);
+            // 清除 enum 成员引用上下文
+            g_enum_member_names = NULL;
+            g_enum_member_values = NULL;
+            g_enum_member_count = 0;
         }
 
         // 扩容检查
