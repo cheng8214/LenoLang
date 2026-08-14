@@ -248,7 +248,7 @@ clib 函数的返回值根据 C 类型自动转换为 Leno 原生类型，无需
 | `i8` / `u8` / `i16` / `u16` / `i32` / `u32` / `i64` | `int` | 所有 C 整数自动展开为 Leno int |
 | `u64` | `int` / `BigInt` | 值 ≤ int64 最大值时为 `int`，超出时自动升级为 `BigInt` |
 | `f32` / `f64` | `float` | C 浮点数自动展开为 Leno float |
-| `str8` | `string` | C `char*` 自动转为 Leno string（深拷贝，安全） |
+| `str8` | `string` | C `char*` 自动转为 Leno string（深拷贝）。**注意：原始 C 内存不会被释放**，见下方警告 |
 | `str16` | `string` | C `wchar_t*` 自动 UTF-16→UTF-8 转为 Leno string |
 | `bool` | `bool` | C BOOL 自动转为 Leno bool |
 | `Ptr` | `Ptr` / `null` | 指针原样返回，NULL 返回 null |
@@ -272,6 +272,23 @@ int big = lib._strtoui64("9999999999", null, 10)
 // str8 → string，零摩擦
 string msg = lib.strerror(2)
 ```
+
+> **⚠️ str8 返回值内存泄漏说明**
+>
+> `str8` 返回类型会将 C `char*` **深拷贝**为 Leno `string`，但**原始 C 内存不会被自动释放**。
+> 这是因为 FFI 层无法知道 C 函数用哪个分配器分配的内存（`free`? `curl_free`? `LocalFree`?）。
+>
+> **适用场景**：
+> - ✅ **不需要释放**的 C 字符串（如 `strerror`、`GetCommandLineA`、`SDL_GetError` 等返回静态缓冲区的函数）——直接用 `str8` 返回类型
+> - ❌ **需要释放**的 C 字符串（如 `curl_easy_escape`、`curl_easy_unescape` 等返回动态分配内存的函数）——**不要直接用 `str8`**，改用以下三步走：
+>
+> ```leno
+> // 对于需要释放的 C 字符串，使用 call_ptr + read_string + 手动释放
+> Ptr ptr = ffi.call_ptr(lib, "curl_easy_escape", handle, url, 0)
+> if ptr == null { return url }
+> string result = ffi.read_string(ptr, 0)
+> ffi.call_void(lib, "curl_free", ptr)  // 手动释放 C 内存
+> ```
 
 #### 参数自动窄化（Leno→C 安全转换）
 
@@ -2016,7 +2033,7 @@ ffi.free(base)
 | `i8`/`u8`/`i16`/`u16`/`i32`/`u32`/`i64` | `int` | 自动展开 |
 | `u64` | `int`/`BigInt` | 超出 int64 范围时自动升级 |
 | `f32`/`f64` | `float` | 自动展开 |
-| `str8` | `string` | char* → string（深拷贝） |
+| `str8` | `string` | char* → string（深拷贝）。⚠️ 原始 C 内存不自动释放，需要释放的函数改用 call_ptr+read_string+手动释放 |
 | `str16` | `string` | wchar_t* → string（UTF-16→UTF-8） |
 | `bool` | `bool` | 自动转换 |
 | `Ptr` | `Ptr`/`null` | NULL 返回 null |
@@ -2036,10 +2053,13 @@ ffi.free(base)
 
 ---
 
-*文档版本: 3.3*
-*最后更新: 2026-06-19*
+*文档版本: 3.4*
+*最后更新: 2026-08-14*
 
 ### 更新记录
+
+- **v3.4** (2026-08-14):
+  - **str8 返回值内存泄漏说明**：明确标注 `str8` 返回类型会深拷贝 C `char*` 为 Leno `string`，但原始 C 内存不自动释放。对于需要释放的 C 字符串（如 `curl_easy_escape`），应使用 `call_ptr` + `read_string` + 手动释放三步走方案。
 
 - **v3.3** (2026-06-19):
   - 新增 **8.4 常见陷阱与注意事项**：汇总 LenoMusic 开发中的 8 个实战踩坑：

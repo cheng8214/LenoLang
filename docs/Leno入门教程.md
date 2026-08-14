@@ -8988,6 +8988,47 @@ main() {
 }
 ```
 
+### str8 返回值：C 字符串自动转换
+
+clib 声明的 `str8` 返回类型会将 C `char*` 自动深拷贝为 Leno `string`：
+
+```leno
+import ffi
+
+clib msvcrt {
+    str8 strerror(i32 errnum)
+    i32 strlen(str8 s)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // str8 → string，自动转换
+    string msg = lib.strerror(2)  // "No such file or directory"
+    print("strerror(2): " + msg)
+
+    // str8 参数：Leno string 自动转为 C char*
+    int len = lib.strlen("hello")
+    print("strlen: " + len)  // 5
+
+    ffi.free(lib)
+}
+```
+
+> **⚠️ str8 返回值内存泄漏**
+>
+> `str8` 返回类型会将 C `char*` **深拷贝**为 Leno `string`，但**原始 C 内存不会被自动释放**。
+> FFI 层无法知道 C 函数用哪个分配器分配的内存（`free`? `curl_free`? `LocalFree`?）。
+>
+> - ✅ **不需要释放**的 C 字符串（如 `strerror`、`GetCommandLineA`、`SDL_GetError` 等返回静态缓冲区的函数）——直接用 `str8` 即可
+> - ❌ **需要释放**的 C 字符串（如 `curl_easy_escape` 等返回动态分配内存的函数）——改用三步走：
+>
+> ```leno
+> Ptr ptr = ffi.call_ptr(lib, "curl_easy_escape", handle, url, 0)
+> string result = ffi.read_string(ptr, 0)
+> ffi.call_void(lib, "curl_free", ptr)  // 手动释放 C 内存
+> ```
+
 ### 内存操作
 
 ```leno
@@ -9062,6 +9103,13 @@ main() {
 | `ffi.load(name)`                    | 加载动态库          | `ffi.load("kernel32.dll")`          |
 | `ffi.free(lib)`                     | 释放动态库          | `ffi.free(lib)`                     |
 | `ffi.call(lib, name, ...)`          | 调用函数           | `ffi.call(lib, "Func", arg1, arg2)` |
+| `ffi.call_int(lib, name, ...)`       | 调用函数（返回 int）   | `ffi.call_int(lib, "GetTickCount")` |
+| `ffi.call_double(lib, name, ...)`    | 调用函数（返回 float） | `ffi.call_double(lib, "pow", 2.0, 10.0)` |
+| `ffi.call_ptr(lib, name, ...)`        | 调用函数（返回指针）     | `ffi.call_ptr(lib, "curl_easy_escape", h, url, 0)` |
+| `ffi.call_void(lib, name, ...)`       | 调用函数（无返回值）    | `ffi.call_void(lib, "curl_free", ptr)` |
+| `ffi.call_bool(lib, name, ...)`       | 调用函数（返回 bool）  | `ffi.call_bool(lib, "IsDebuggerPresent")` |
+| `ffi.read_string(ptr, offset)`        | 读取 C 字符串       | `ffi.read_string(ptr, 0)`           |
+| `ffi.read_string_n(ptr, offset, n)`   | 读取定长 C 字符串     | `ffi.read_string_n(ptr, 0, 100)`     |
 | `ffi.malloc(size)`                  | 分配内存           | `ffi.malloc(1024)`                  |
 | `ffi.free(ptr)`                     | 释放内存           | `ffi.free(ptr)`                     |
 | `ffi.nullptr()`                     | 空指针            | `ffi.nullptr()`                     |
@@ -9093,6 +9141,7 @@ main() {
 > - Leno `write_*`/`memset`/`memcpy` 已内置边界检查，`ffi.free` 有哨兵检测 — 溢出报错而非崩溃
 > - 调用外部函数时注意参数类型匹配
 > - Windows API 通常使用 UTF-16，需要 `utf8_to_utf16` 转换
+> - **str8 返回值不自动释放 C 内存**：`str8` 返回类型会深拷贝 C `char*` 为 Leno `string`，但原始 C 内存不释放。对于需要释放的函数（如 `curl_easy_escape`），用 `call_ptr` + `read_string` + 手动释放
 
 ### FFI 回调函数
 
