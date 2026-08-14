@@ -95,7 +95,6 @@ static void init_keyword_table(void) {
         {"catch", TOK_CATCH},
         {"throw", TOK_THROW},
         {"finally", TOK_FINALLY},
-        {"defer", TOK_DEFER},
         {"struct", TOK_STRUCT},
         {"enum", TOK_ENUM},
         {"face", TOK_FACE},

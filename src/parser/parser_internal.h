@@ -127,7 +127,6 @@ Ast* parse_return_stmt(Parser* p);
 Ast* parse_break_stmt(Parser* p);
 Ast* parse_continue_stmt(Parser* p);
 Ast* parse_throw_stmt(Parser* p);
-Ast* parse_defer_stmt(Parser* p);
 Ast* parse_try_stmt(Parser* p);
 
 // ============================================================================

@@ -59,28 +59,6 @@ Ast* parse_throw_stmt(Parser* p) {
 }
 
 // ============================================================================
-// defer 语句解析
-// 语法: defer expression
-// 作用: 在当前作用域正常退出或异常退出时，逆序执行已注册的 defer 表达式
-// ============================================================================
-
-Ast* parse_defer_stmt(Parser* p) {
-    int line = p->lex.current.line;
-    lexer_next(&p->lex); // defer
-
-    // defer 后面必须跟一个表达式
-    Ast* expr = parse_expression(p);
-    if (!expr) {
-        error_add(ERR_SYNTAX, line, "defer 后面必须跟一个表达式");
-        return NULL;
-    }
-
-    Ast* ast = ast_new(AST_DEFER, line);
-    ast->u.defer_.expr = expr;
-    return ast;
-}
-
-// ============================================================================
 // try-catch-finally 语句解析
 // ============================================================================
 

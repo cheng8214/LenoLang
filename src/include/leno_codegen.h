@@ -15,7 +15,6 @@ typedef struct {
     int continue_jumps[MAX_CONTINUE_JUMPS];  // continue 跳转位置数组（需要回填）
     int continue_count;
     int continue_target;      // continue 跳转目标位置（用于简单循环）
-    int defer_depth;          // 进入循环时的 defer 栈深度（用于 break/continue 清理）
 } LoopContext;
 
 // 循环上下文链表节点（堆分配，无嵌套深度限制，不占栈空间）
@@ -57,13 +56,6 @@ typedef struct {
     int inline_discard_result;        // 1=当前调用结果将被丢弃（表达式语句）
     int inline_no_result;             // 1=内联未在栈上留下值（void函数+discard）
 
-    // defer 栈：跟踪每层块作用域中已注册的 defer 表达式
-    Ast* defer_expr_stack[256];       // 所有待执行的 defer 表达式（平坦数组）
-    int defer_expr_top;               // 栈顶索引
-    // 每层块的标记：记录该层块在 defer_expr_stack 中的起始位置和是否有 try-finally
-    int defer_block_starts[64];       // 每层块的 defer 起始索引
-    int defer_block_has_try[64];      // 每层块是否有 try-finally 包裹
-    int defer_block_top;              // 块栈顶索引
 } CodeGen;
 
 void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);

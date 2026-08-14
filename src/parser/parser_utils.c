@@ -145,7 +145,7 @@ static int is_statement_start(LenoTokenType type) {
            type == TOK_ENUM ||
            type == TOK_VAR || type == TOK_RETURN ||
            type == TOK_BREAK || type == TOK_CONTINUE ||
-           type == TOK_THROW || type == TOK_TRY || type == TOK_DEFER ||
+           type == TOK_THROW || type == TOK_TRY ||
            type == TOK_IMPORT || type == TOK_EXPORT || type == TOK_USE ||
            type == TOK_INT_TYPE || type == TOK_FLOAT_TYPE ||
            type == TOK_STRING_TYPE || type == TOK_BOOL_TYPE ||

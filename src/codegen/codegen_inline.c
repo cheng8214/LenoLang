@@ -323,8 +323,6 @@ static int body_has_unsupported(Ast* ast) {
         case AST_CONTINUE:
         case AST_THROW:
             return 0;
-        case AST_DEFER:
-            return 1;  // 不内联含 defer 的函数
         default:
             return 0;
     }

@@ -408,10 +408,6 @@ static void fold_expr(Ast* ast) {
             fold_expr(ast->u.throw_.expr);
             break;
 
-        case AST_DEFER:
-            fold_expr(ast->u.defer_.expr);
-            break;
-
         case AST_TYPE_CHECK:
         case AST_AS_CAST:
             fold_expr(ast->u.type_check.expr);
@@ -571,11 +567,6 @@ static int dce_expr(Ast* ast) {
         case AST_THROW:
             if (ast->u.throw_.expr) dce_expr(ast->u.throw_.expr);
             return 1;
-
-        // defer：递归处理表达式，不是终止语句
-        case AST_DEFER:
-            if (ast->u.defer_.expr) dce_expr(ast->u.defer_.expr);
-            return 0;
 
         // 块：递归处理所有子语句，然后消除终止语句后的死代码
         case AST_BLOCK: {

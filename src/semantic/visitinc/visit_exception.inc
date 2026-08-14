@@ -58,10 +58,3 @@
                 visit(s, ast->u.throw_.expr);
             }
             break;
-
-        case AST_DEFER:
-            // defer 表达式在当前作用域中求值
-            if (ast->u.defer_.expr) {
-                visit(s, ast->u.defer_.expr);
-            }
-            break;
