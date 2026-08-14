@@ -1,0 +1,400 @@
+// curl_core.leno — libcurl 核心绑定（clib/常量/DLL）
+// 封装 libcurl C API，提供 HTTP 请求、回调等功能
+import ffi
+import dirs
+import files
+
+// ==================== clib curl ====================
+// libcurl C API 函数声明
+// 注意：curl_easy_setopt 是变参函数，不支持在 clib 中声明
+//       改用 ffi.call_int / ffi.call_ptr 等运行时调用
+//       其他非变参函数可以用 clib 声明
+clib curl {
+    // ==================== Easy 接口 ====================
+    Ptr[u8] curl_easy_init()
+    void    curl_easy_cleanup(Ptr[u8] handle)
+    void    curl_easy_reset(Ptr[u8] handle)
+    str8    curl_easy_escape(Ptr[u8] handle, str8 url, i32 length)
+    str8    curl_easy_unescape(Ptr[u8] handle, str8 url, i32 length, Ptr[i32] out_length)
+    void    curl_free(Ptr[u8] p)
+
+    // ==================== SList 接口 ====================
+    Ptr[u8] curl_slist_append(Ptr[u8] list, str8 str)
+    void    curl_slist_free_all(Ptr[u8] list)
+
+    // ==================== 全局初始化 ====================
+    i32 curl_global_init(i32 flags)
+    void curl_global_cleanup()
+
+    // ==================== 版本信息 ====================
+    str8 curl_version()
+    str8 curl_version_info(i32 type)  // 简化声明，返回 const curl_version_info_data*
+
+    // ==================== 错误信息 ====================
+    str8 curl_easy_strerror(i32 errcode)
+}
+
+// ==================== 枚举常量 ====================
+
+// CURLcode — libcurl 结果码
+export enum Code {
+    OK                  = 0       // 无错误
+    UNSUPPORTED_PROTOCOL = 1      // 不支持的协议
+    FAILED_INIT         = 2       // 初始化失败
+    URL_MALFORMAT       = 3       // URL 格式错误
+    COULDNT_RESOLVE_PROXY = 5      // 无法解析代理
+    COULDNT_RESOLVE_HOST = 6      // 无法解析主机
+    COULDNT_CONNECT     = 7       // 无法连接
+    WEIRD_SERVER_REPLY   = 8       // 服务器返回异常
+    REMOTE_ACCESS_DENIED = 9       // 远程访问被拒绝
+    FTP_ACCESS_DENIED   = 10      // FTP 访问被拒绝
+    PARTIAL_FILE        = 18      // 文件传输不完整
+    QUOTE_ERROR         = 21      // 引用命令错误
+    HTTP_RETURNED_ERROR = 22      // HTTP 返回错误
+    WRITE_ERROR         = 23      // 写入错误
+    UPLOAD_FAILED       = 25      // 上传失败
+    READ_ERROR          = 26      // 读取错误
+    OUT_OF_MEMORY       = 27      // 内存不足
+    OPERATION_TIMEDOUT  = 28      // 操作超时
+    HTTP_POST_ERROR     = 34      // HTTP POST 错误
+    SSL_CONNECT_ERROR   = 35      // SSL 连接错误
+    BAD_DOWNLOAD_RESUME = 36      // 无法恢复下载
+    FILE_COULDNT_READ_FILE = 37   // 无法读取文件
+    FUNCTION_NOT_FOUND  = 41      // 函数未找到
+    ABORTED_BY_CALLBACK = 42      // 被回调中止
+    TOO_MANY_REDIRECTS  = 47      // 重定向过多
+    SSL_PEER_CERTIFICATE = 51     // SSL 证书问题
+    SSL_ENGINE_NOTFOUND  = 54     // SSL 引擎未找到
+    SSL_CACERT          = 60      // CA 证书问题
+    SSL_CACERT_BADFILE   = 66     // CA 证书文件损坏
+    SSL_CERTPROBLEM     = 58      // 证书问题
+    SSL_CIPHER          = 59      // SSL 密码问题
+    SSL_CONNECT_FAILED  = 64      // SSL 连接失败
+    SEND_ERROR          = 55      // 发送错误
+    RECV_ERROR          = 56      // 接收错误
+}
+
+// CURLoption — curl_easy_setopt 选项
+// 数值来自 curl.h: CURLOPTTYPE_LONG=0, CURLOPTTYPE_OBJECTPOINT=10000,
+// CURLOPTTYPE_FUNCTIONPOINT=20000, CURLOPTTYPE_OFF_T=30000
+// CURLOPTTYPE_STRINGPOINT/CURLOPTTYPE_SLISTPOINT/CURLOPTTYPE_CBPOINT 均等于 OBJECTPOINT(10000)
+// CURLOPTTYPE_VALUES 等于 LONG(0)
+export enum Opt {
+    // 整数选项（CURLOPTTYPE_LONG = 0）
+    VERBOSE             = 41      // CURLOPTTYPE_LONG + 41
+    HEADER              = 42      // CURLOPTTYPE_LONG + 42
+    NOPROGRESS          = 43      // CURLOPTTYPE_LONG + 43
+    NOBODY              = 44      // CURLOPTTYPE_LONG + 44
+    FAILONERROR         = 45      // CURLOPTTYPE_LONG + 45
+    FOLLOWLOCATION      = 52      // CURLOPTTYPE_LONG + 52
+    MAXREDIRS           = 68      // CURLOPTTYPE_LONG + 68
+    POST                = 47      // CURLOPTTYPE_LONG + 47
+    HTTPGET             = 80      // CURLOPTTYPE_LONG + 80
+    TIMEOUT             = 13      // CURLOPTTYPE_LONG + 13, 超时（秒）
+    TIMEOUT_MS          = 155     // CURLOPTTYPE_LONG + 155, 超时（毫秒）
+    CONNECTTIMEOUT      = 78      // CURLOPTTYPE_LONG + 78, 连接超时（秒）
+    CONNECTTIMEOUT_MS   = 156     // CURLOPTTYPE_LONG + 156, 连接超时（毫秒）
+    SSL_VERIFYPEER      = 64      // CURLOPTTYPE_LONG + 64
+    SSL_VERIFYHOST      = 81      // CURLOPTTYPE_LONG + 81
+    SSLVERSION          = 32      // CURLOPTTYPE_VALUES(LONG) + 32
+    HTTP_VERSION        = 84      // CURLOPTTYPE_VALUES(LONG) + 84
+    PROXYTYPE           = 101     // CURLOPTTYPE_VALUES(LONG) + 101（修正：原 10101 错误）
+    UPLOAD              = 46      // CURLOPTTYPE_LONG + 46
+    POSTFIELDSIZE       = 60      // CURLOPTTYPE_LONG + 60
+
+    // 字符串/对象选项（CURLOPTTYPE_OBJECTPOINT = 10000）
+    WRITEDATA           = 10001   // CURLOPTTYPE_CBPOINT    + 1, 写回调的用户数据
+    READDATA            = 10009   // CURLOPTTYPE_CBPOINT    + 9, 读回调的用户数据
+    ERRORBUFFER         = 10010   // CURLOPTTYPE_OBJECTPOINT + 10
+    POSTFIELDS          = 10015   // CURLOPTTYPE_OBJECTPOINT + 15, POST 字段（string）
+    REFERER             = 10016   // CURLOPTTYPE_STRINGPOINT + 16
+    USERAGENT           = 10018   // CURLOPTTYPE_STRINGPOINT + 18
+    COOKIE              = 10022   // CURLOPTTYPE_STRINGPOINT + 22
+    HTTPHEADER          = 10023   // CURLOPTTYPE_SLISTPOINT + 23, HTTP header（slist）（修正：原 10026 错误）
+    HTTPPOST            = 10024   // CURLOPTTYPE_OBJECTPOINT + 24（已弃用，建议用 MIME）
+    COOKIEFILE          = 10031   // CURLOPTTYPE_STRINGPOINT + 31
+    CUSTOMREQUEST       = 10036   // CURLOPTTYPE_STRINGPOINT + 36, 自定义请求方法
+    CAINFO              = 10065   // CURLOPTTYPE_STRINGPOINT + 65, CA 证书路径
+    COOKIEJAR           = 10082   // CURLOPTTYPE_STRINGPOINT + 82
+    CAPATH              = 10097   // CURLOPTTYPE_STRINGPOINT + 97, CA 证书目录
+    ACCEPT_ENCODING     = 10102   // CURLOPTTYPE_STRINGPOINT + 102
+    ENCODING            = 10102   // CURLOPT_ACCEPT_ENCODING 别名
+    USERNAME            = 10173   // CURLOPTTYPE_STRINGPOINT + 173
+    PASSWORD            = 10174   // CURLOPTTYPE_STRINGPOINT + 174
+
+    // 字符串选项（CURLOPTTYPE_STRINGPOINT = 10000）
+    URL                 = 10002   // CURLOPTTYPE_STRINGPOINT + 2, 请求 URL
+    PROXY               = 10004   // CURLOPTTYPE_STRINGPOINT + 4, 代理地址
+    USERPWD             = 10005   // CURLOPTTYPE_STRINGPOINT + 5, 用户名:密码
+    PROXYUSERPWD        = 10006   // CURLOPTTYPE_STRINGPOINT + 6, 代理用户名:密码
+    RANGE               = 10007   // CURLOPTTYPE_STRINGPOINT + 7, 范围请求
+
+    // 函数指针选项（CURLOPTTYPE_FUNCTIONPOINT = 20000）
+    WRITEFUNCTION       = 20011   // CURLOPTTYPE_FUNCTIONPOINT + 11, 写回调函数
+    READFUNCTION        = 20012   // CURLOPTTYPE_FUNCTIONPOINT + 12, 读回调函数
+    HEADERFUNCTION      = 20079   // CURLOPTTYPE_FUNCTIONPOINT + 79, header 回调函数（修正：原 20029 错误）
+    PROGRESSFUNCTION    = 20056   // CURLOPTTYPE_FUNCTIONPOINT + 56, 进度回调函数（修正：原 20057 错误）
+
+    // 回调数据指针选项（CURLOPTTYPE_CBPOINT = 10000）
+    HEADERDATA          = 10029   // CURLOPTTYPE_CBPOINT + 29, header 回调的用户数据
+    PROGRESSDATA        = 10057   // CURLOPTTYPE_CBPOINT + 57, 进度回调的用户数据
+}
+
+// CURLINFO — curl_easy_getinfo 信息码
+// 数值来自 curl.h: CURLINFO_STRING=0x100000 CURLINFO_LONG=0x200000 CURLINFO_DOUBLE=0x300000
+// CURLINFO_SLIST/PTR=0x400000 CURLINFO_OFF_T=0x600000
+// 每个 enum 值 = TYPE + 序号（编译器不支持 enum 表达式，此处使用计算后的十六进制）
+export enum Info {
+    EFFECTIVE_URL       = 0x100001  // CURLINFO_STRING + 1, 最终 URL
+    RESPONSE_CODE       = 0x200002  // CURLINFO_LONG   + 2, HTTP 响应码
+    HTTP_CODE           = 0x200002  // 同 RESPONSE_CODE（已弃用别名）
+    TOTAL_TIME          = 0x300003  // CURLINFO_DOUBLE + 3, 总耗时
+    NAMELOOKUP_TIME     = 0x300004  // CURLINFO_DOUBLE + 4, DNS 解析时间
+    CONNECT_TIME        = 0x300005  // CURLINFO_DOUBLE + 5, 连接时间
+    PRETRANSFER_TIME    = 0x300006  // CURLINFO_DOUBLE + 6, 预传输时间
+    SIZE_DOWNLOAD       = 0x300008  // CURLINFO_DOUBLE + 8, 下载数据大小（已弃用，建议用 SIZE_DOWNLOAD_T）
+    SIZE_DOWNLOAD_T     = 0x600008  // CURLINFO_OFF_T  + 8, 下载数据大小
+    SIZE_UPLOAD         = 0x300007  // CURLINFO_DOUBLE + 7, 上传数据大小（已弃用，建议用 SIZE_UPLOAD_T）
+    SIZE_UPLOAD_T       = 0x600007  // CURLINFO_OFF_T  + 7, 上传数据大小
+    SPEED_DOWNLOAD      = 0x300009  // CURLINFO_DOUBLE + 9, 下载速度（已弃用）
+    SPEED_DOWNLOAD_T    = 0x600009  // CURLINFO_OFF_T  + 9, 下载速度
+    SPEED_UPLOAD        = 0x30000A  // CURLINFO_DOUBLE + 10, 上传速度（已弃用）
+    SPEED_UPLOAD_T      = 0x60000A  // CURLINFO_OFF_T  + 10, 上传速度
+    HEADER_SIZE         = 0x20000B  // CURLINFO_LONG   + 11, header 大小
+    REQUEST_SIZE        = 0x20000C  // CURLINFO_LONG   + 12, 请求大小
+    SSL_VERIFYRESULT    = 0x20000D  // CURLINFO_LONG   + 13, SSL 验证结果
+    FILETIME            = 0x20000E  // CURLINFO_LONG   + 14, 文件时间
+    FILETIME_T          = 0x60000E  // CURLINFO_OFF_T  + 14, 文件时间
+    CONTENT_LENGTH_DOWNLOAD = 0x30000F  // CURLINFO_DOUBLE + 15
+    CONTENT_LENGTH_DOWNLOAD_T = 0x60000F  // CURLINFO_OFF_T + 15
+    CONTENT_LENGTH_UPLOAD   = 0x300010  // CURLINFO_DOUBLE + 16
+    CONTENT_LENGTH_UPLOAD_T   = 0x600010  // CURLINFO_OFF_T  + 16
+    STARTTRANSFER_TIME  = 0x300011  // CURLINFO_DOUBLE + 17, 开始传输时间
+    CONTENT_TYPE        = 0x100012  // CURLINFO_STRING + 18, 内容类型
+    REDIRECT_TIME       = 0x300013  // CURLINFO_DOUBLE + 19, 重定向时间
+    REDIRECT_COUNT      = 0x200014  // CURLINFO_LONG   + 20, 重定向次数
+    PRIVATE             = 0x100015  // CURLINFO_STRING + 21, 私有数据
+    HTTP_CONNECTCODE    = 0x200016  // CURLINFO_LONG   + 22, HTTP 连接码
+    HTTPAUTH_AVAIL      = 0x200017  // CURLINFO_LONG   + 23, 可用认证方式
+    PROXYAUTH_AVAIL     = 0x200018  // CURLINFO_LONG   + 24, 代理认证方式
+    OS_ERRNO            = 0x200019  // CURLINFO_LONG   + 25, 系统错误码
+    NUM_CONNECTS        = 0x20001A  // CURLINFO_LONG   + 26, 连接数
+    SSL_ENGINES         = 0x40001B  // CURLINFO_SLIST  + 27, SSL 引擎列表
+    COOKIELIST          = 0x40001C  // CURLINFO_SLIST  + 28, Cookie 列表
+    FTP_ENTRY_PATH      = 0x10001E  // CURLINFO_STRING + 30, FTP 入口路径
+    REDIRECT_URL        = 0x10001F  // CURLINFO_STRING + 31, 重定向 URL
+    PRIMARY_IP          = 0x100020  // CURLINFO_STRING + 32, 主 IP 地址
+    APPCONNECT_TIME     = 0x300021  // CURLINFO_DOUBLE + 33, SSL 连接时间
+    CONDITION_UNMET     = 0x200023  // CURLINFO_LONG   + 35, 条件未满足
+    PRIMARY_PORT        = 0x200028  // CURLINFO_LONG   + 40, 主端口
+    LOCAL_IP            = 0x100029  // CURLINFO_STRING + 41, 本地 IP
+    LOCAL_PORT          = 0x20002A  // CURLINFO_LONG   + 42, 本地端口
+}
+
+// CURL_GLOBAL — 全局初始化标志
+export enum Global {
+    NOTHING  = 0
+    SSL      = 1
+    WIN32    = 2
+    ALL      = 3       // SSL + WIN32
+}
+
+// CURL_HTTP_VERSION — HTTP 版本
+export enum HttpVersion {
+    NONE            = 0  // 不指定
+    HTTP_1_0        = 1  // HTTP/1.0
+    HTTP_1_1        = 2  // HTTP/1.1
+    HTTP_2_0        = 3  // HTTP/2
+    HTTP_2TLS        = 4  // HTTP/2 over TLS
+    HTTP_2_PRIOR_KNOWLEDGE = 5  // HTTP/2 直接
+}
+
+// CURL_SSL_VERSION — SSL 版本
+export enum SslVersion {
+    DEFAULT         = 0   // 默认
+    TLSv1           = 1   // TLS 1.0
+    SSLv2           = 2   // SSL 2.0
+    SSLv3           = 3   // SSL 3.0
+    TLSv1_0         = 4   // TLS 1.0
+    TLSv1_1         = 5   // TLS 1.1
+    TLSv1_2         = 6   // TLS 1.2
+    TLSv1_3         = 7   // TLS 1.3
+    MAX             = 9   // 最大
+}
+
+// ==================== DLL 加载 ====================
+
+curl g_lib = null
+
+// 加载 libcurl DLL（全局缓存，避免重复加载）
+export func lib(): curl {
+    if g_lib == null {
+        // 根据平台选择动态库
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        // 从脚本目录和上级目录查找
+        var path = dirs.script_dir() + "/libcurl-x64" + ext
+        if not files.exists(path) { path = dirs.script_dir() + "/libcurl" + ext }
+        if not files.exists(path) { path = dirs.script_dir() + "/../libcurl-x64" + ext }
+        if not files.exists(path) { path = dirs.script_dir() + "/../lib/libcurl-x64" + ext }
+        if not files.exists(path) { path = "libcurl" + ext }
+        g_lib = ffi.load(path)
+    }
+    return g_lib
+}
+
+// ==================== 核心函数封装 ====================
+
+// 全局初始化 libcurl（在多线程使用前必须调用）
+export func globalInit(int flags = 3): int {
+    curl l = lib()
+    if l == null { return Code.FAILED_INIT }
+    return l.curl_global_init(flags)
+}
+
+// 全局清理 libcurl
+export func globalCleanup() {
+    curl l = lib()
+    if l == null { return }
+    l.curl_global_cleanup()
+}
+
+// 获取 libcurl 版本号
+export func version(): string {
+    curl l = lib()
+    if l == null { return "libcurl not loaded" }
+    return l.curl_version()
+}
+
+// 初始化一个 easy handle
+export func easyInit(): Ptr[u8] {
+    curl l = lib()
+    if l == null { return null }
+    return l.curl_easy_init()
+}
+
+// 清理 easy handle
+export func easyCleanup(Ptr[u8] handle) {
+    curl l = lib()
+    if l == null { return }
+    l.curl_easy_cleanup(handle)
+}
+
+// 重置 easy handle 的所有选项
+export func easyReset(Ptr[u8] handle) {
+    curl l = lib()
+    if l == null { return }
+    l.curl_easy_reset(handle)
+}
+
+// 获取错误描述
+export func easyStrerror(int errcode): string {
+    curl l = lib()
+    if l == null { return "libcurl not loaded" }
+    return l.curl_easy_strerror(errcode)
+}
+
+// URL 编码
+// 使用 ffi.call_ptr 获取返回的 char* 指针，再读取字符串
+export func escape(Ptr[u8] handle, string url): string {
+    curl l = lib()
+    if l == null { return url }
+    // 注意：curl_easy_escape 的 length 参数，0 表示自动 strlen（不是 -1）
+    Ptr ptr = ffi.call_ptr(l, "curl_easy_escape", handle, url, 0)
+    if ptr == null { return url }
+    string result = ffi.read_string(ptr, 0)
+    ffi.call_void(l, "curl_free", ptr)
+    return result
+}
+
+// URL 解码
+// 使用 ffi.call_ptr 获取返回的 char* 指针，再读取字符串
+export func unescape(Ptr[u8] handle, string url): string {
+    curl l = lib()
+    if l == null { return url }
+    Ptr[u8] outLenBuf = ffi.malloc(4)
+    Ptr ptr = ffi.call_ptr(l, "curl_easy_unescape", handle, url, 0, outLenBuf)
+    ffi.free(outLenBuf)
+    if ptr == null { return url }
+    string result = ffi.read_string(ptr, 0)
+    ffi.call_void(l, "curl_free", ptr)
+    return result
+}
+
+// ==================== setopt 封装 ====================
+// 注意：curl_easy_setopt 是变参函数，不能用 clib 声明
+// 改用 ffi.call_int 运行时调用
+
+// 设置整数选项
+export func setopt_int(Ptr[u8] handle, int option, int value): int {
+    return ffi.call_int(lib(), "curl_easy_setopt", handle, option, value)
+}
+
+// 设置字符串选项
+export func setopt_str(Ptr[u8] handle, int option, string value): int {
+    return ffi.call_int(lib(), "curl_easy_setopt", handle, option, value)
+}
+
+// 设置指针选项（如回调函数、slist 等）
+export func setopt_ptr(Ptr[u8] handle, int option, any value): int {
+    return ffi.call_int(lib(), "curl_easy_setopt", handle, option, value)
+}
+
+// 设置浮点选项（如超时等，libcurl 会将 double 转为 long）
+export func setopt_double(Ptr[u8] handle, int option, float value): int {
+    return ffi.call_int(lib(), "curl_easy_setopt", handle, option, value)
+}
+
+// ==================== getinfo 封装 ====================
+
+// 获取整数信息
+export func getinfo_int(Ptr[u8] handle, int option): int {
+    Ptr[u8] buf = ffi.malloc(8)
+    int rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
+    int val = ffi.read_int64(buf, 0)
+    ffi.free(buf)
+    return val
+}
+
+// 获取字符串信息
+export func getinfo_str(Ptr[u8] handle, int option): string {
+    Ptr[u8] buf = ffi.malloc(8)
+    int rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
+    Ptr[u8] ptr = ffi.read_ptr(buf, 0)
+    string s = ""
+    if ptr != null { s = ffi.read_string(ptr, 0) }
+    ffi.free(buf)
+    return s
+}
+
+// 获取浮点信息
+export func getinfo_double(Ptr[u8] handle, int option): float {
+    Ptr[u8] buf = ffi.malloc(8)
+    int rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
+    float val = ffi.read_double(buf, 0)
+    ffi.free(buf)
+    return val
+}
+
+// ==================== perform 封装 ====================
+
+// 执行 HTTP 请求
+export func perform(Ptr[u8] handle): int {
+    return ffi.call_int(lib(), "curl_easy_perform", handle)
+}
+
+// ==================== slist 封装 ====================
+
+// 创建 slist（用于 HTTP header 等）
+export func slistAppend(Ptr[u8] list, string str): Ptr[u8] {
+    return ffi.call_ptr(lib(), "curl_slist_append", list, str)
+}
+
+// 释放 slist
+export func slistFreeAll(Ptr[u8] list) {
+    ffi.call_void(lib(), "curl_slist_free_all", list)
+}
+
+// 释放 curl 分配的内存
+export func free(Ptr[u8] p) {
+    lib().curl_free(p)
+}

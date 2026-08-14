@@ -1,0 +1,14 @@
+[package]
+name = "LenoNet"
+version = "1.0.0"
+description = "Leno HTTP/HTTPS 网络客户端模块（libcurl 绑定）"
+authors = ""
+license = "MIT"
+
+[modules]
+root = "lib"
+
+[native-libs.curl]
+win   = "lib/libcurl-x64.dll"
+linux = "lib/libcurl.so.4"
+mac   = "lib/libcurl.4.dylib"

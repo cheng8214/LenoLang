@@ -1,0 +1,459 @@
+// net.leno — LenoNet 入口模块（高级 HTTP 客户端封装）
+// 用户只需 import net 即可使用所有功能
+import ffi
+import "curl_core.leno" as core
+// 重新导出核心类型
+use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
+
+// 回调函数签名
+cfunc WriteCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
+cfunc HeaderCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
+
+// ==================== 回调分发的全局变量 ====================
+// 问题：libcurl 的 write_callback 中无法直接访问 Response 对象
+// 方案：使用模块级全局变量传递当前 Response
+// 注意：使用可空类型 Type? 以支持 == null 判断
+Response? _currentResp = null
+
+// ==================== Response 响应结构 ====================
+// 封装 HTTP 响应数据
+export struct Response {
+    int statusCode          // HTTP 状态码（200, 404, 500 等）
+    string body            // 响应体
+    string headers         // 响应头（原始文本）
+    string effectiveUrl     // 最终 URL（可能经重定向后变化）
+    int totalSize           // 下载数据总大小
+    float totalTime         // 总耗时（秒）
+    float connectTime       // 连接耗时（秒）
+    float downloadSpeed     // 下载速度（字节/秒）
+    string contentType      // 内容类型
+    string error            // 错误信息（如果有）
+    int curlCode            // libcurl 结果码
+
+    // 重置响应
+    func reset() {
+        statusCode = 0
+        body = ""
+        headers = ""
+        effectiveUrl = ""
+        totalSize = 0
+        totalTime = 0.0
+        connectTime = 0.0
+        downloadSpeed = 0.0
+        contentType = ""
+        error = ""
+        curlCode = Code.OK
+    }
+
+    // 判断是否成功（2xx 状态码）
+    func ok(): bool { return statusCode >= 200 and statusCode < 300 }
+
+    // 转为可读字符串
+    func str(): string {
+        string s = "HTTP " + statusCode + " (" + effectiveUrl + ")\n"
+        s = s + "  Content-Type: " + contentType + "\n"
+        s = s + "  Size: " + totalSize + " bytes\n"
+        s = s + "  Time: " + totalTime + "s (" + downloadSpeed + " bytes/s)\n"
+        if error != "" {
+            s = s + "  Error: " + error + "\n"
+        }
+        return s
+    }
+}
+
+// ==================== HttpClient 客户端 ====================
+// 封装 libcurl easy handle，支持 GET/POST/PUT/DELETE 等
+export struct HttpClient {
+    Ptr[u8] handle          // curl_easy handle
+    bool ok                 // 是否初始化成功
+    string _lastError       // 最近错误信息
+    Ptr[u8] _writeCb        // 写回调
+    Ptr[u8] _headerCb       // header 回调
+
+    // 初始化客户端
+    func init(): bool {
+        core.globalInit(Global.ALL)
+        handle = core.easyInit()
+        ok = handle != null
+        if not ok {
+            _lastError = "curl_easy_init failed"
+            return false
+        }
+        // 创建回调
+        _writeCb = ffi.callback(_writeDispatch, WriteCb)
+        _headerCb = ffi.callback(_headerDispatch, HeaderCb)
+        // 设置默认选项
+        core.setopt_int(handle, Opt.NOPROGRESS, 1)
+        core.setopt_int(handle, Opt.FOLLOWLOCATION, 1)
+        core.setopt_int(handle, Opt.MAXREDIRS, 10)
+        core.setopt_str(handle, Opt.USERAGENT, "LenoNet/1.0")
+        core.setopt_int(handle, Opt.TIMEOUT_MS, 30000)
+        core.setopt_int(handle, Opt.CONNECTTIMEOUT_MS, 10000)
+        core.setopt_str(handle, Opt.ACCEPT_ENCODING, "")
+        return ok
+    }
+
+    // 关闭客户端
+    func close() {
+        if not ok { return }
+        core.easyCleanup(handle)
+        handle = null; ok = false
+    }
+
+    // 重置所有选项到默认值
+    func reset() {
+        if not ok { return }
+        core.easyReset(handle)
+        // 重新设置默认选项
+        core.setopt_int(handle, Opt.NOPROGRESS, 1)
+        core.setopt_int(handle, Opt.FOLLOWLOCATION, 1)
+        core.setopt_int(handle, Opt.MAXREDIRS, 10)
+        core.setopt_str(handle, Opt.USERAGENT, "LenoNet/1.0")
+        core.setopt_int(handle, Opt.TIMEOUT_MS, 30000)
+        core.setopt_int(handle, Opt.CONNECTTIMEOUT_MS, 10000)
+        core.setopt_str(handle, Opt.ACCEPT_ENCODING, "")
+    }
+
+    // ==================== 设置选项 ====================
+
+    // 设置超时（毫秒）
+    func setTimeout(int ms): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_int(handle, Opt.TIMEOUT_MS, ms)
+    }
+
+    // 设置连接超时（毫秒）
+    func setConnectTimeout(int ms): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_int(handle, Opt.CONNECTTIMEOUT_MS, ms)
+    }
+
+    // 设置 User-Agent
+    func setUserAgent(string ua): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_str(handle, Opt.USERAGENT, ua)
+    }
+
+    // 设置跟随重定向
+    func setFollowRedirect(bool follow, int maxRedirects = 10): int {
+        if not ok { return Code.FAILED_INIT }
+        int f = if follow then 1 else 0
+        core.setopt_int(handle, Opt.FOLLOWLOCATION, f)
+        if follow { return core.setopt_int(handle, Opt.MAXREDIRS, maxRedirects) }
+        return Code.OK
+    }
+
+    // 设置 SSL 验证（默认为 true，自签名证书时可设为 false）
+    func setSSLVerify(bool verifyPeer, bool verifyHost = true): int {
+        if not ok { return Code.FAILED_INIT }
+        int p = if verifyPeer then 1 else 0
+        int h = if verifyHost then 2 else 0
+        core.setopt_int(handle, Opt.SSL_VERIFYPEER, p)
+        return core.setopt_int(handle, Opt.SSL_VERIFYHOST, h)
+    }
+
+    // 设置 HTTP 版本
+    func setHttpVersion(int version): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_int(handle, Opt.HTTP_VERSION, version)
+    }
+
+    // 设置代理
+    func setProxy(string proxy): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_str(handle, Opt.PROXY, proxy)
+    }
+
+    // 设置认证信息（用户名:密码）
+    func setCredentials(string user, string pass): int {
+        if not ok { return Code.FAILED_INIT }
+        string creds = user + ":" + pass
+        return core.setopt_str(handle, Opt.USERPWD, creds)
+    }
+
+    // 设置自定义 header
+    func setHeaders(Array[string] headers): int {
+        if not ok { return Code.FAILED_INIT }
+        Ptr[u8] slist = null
+        for headers.len() to i {
+            slist = core.slistAppend(slist, headers[i])
+        }
+        if slist == null { return Code.OK }
+        return core.setopt_ptr(handle, Opt.HTTPHEADER, slist)
+    }
+
+    // 设置 verbose 模式
+    func setVerbose(bool verbose): int {
+        if not ok { return Code.FAILED_INIT }
+        int v = if verbose then 1 else 0
+        return core.setopt_int(handle, Opt.VERBOSE, v)
+    }
+
+    // 设置自定义请求方法
+    func setCustomRequest(string method): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_str(handle, Opt.CUSTOMREQUEST, method)
+    }
+
+    // 设置 CA 证书路径
+    func setCAInfo(string path): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_str(handle, Opt.CAINFO, path)
+    }
+
+    // ==================== 执行请求 ====================
+
+    // 执行通用请求（内部使用）
+    // method: GET/POST/PUT/DELETE 等
+    // url: 请求 URL
+    // body: POST/PUT 请求体（GET 传 ""）
+    func _doRequest(string method, string url, string body): Response {
+        Response resp = new Response()
+        resp.reset()
+        if not ok {
+            resp.error = "Client not initialized"
+            resp.curlCode = Code.FAILED_INIT
+            return resp
+        }
+
+        // 设置 URL
+        core.setopt_str(handle, Opt.URL, url)
+
+        // 设置方法
+        if method == "HEAD" {
+            core.setopt_int(handle, Opt.NOBODY, 1)
+        } else if method == "GET" {
+            core.setopt_int(handle, Opt.HTTPGET, 1)
+            core.setopt_int(handle, Opt.NOBODY, 0)
+        } else if method == "POST" {
+            core.setopt_int(handle, Opt.POST, 1)
+            if body != "" {
+                core.setopt_str(handle, Opt.POSTFIELDS, body)
+            }
+        } else {
+            // PUT/DELETE/PATCH 等
+            core.setopt_str(handle, Opt.CUSTOMREQUEST, method)
+            if body != "" {
+                core.setopt_str(handle, Opt.POSTFIELDS, body)
+            }
+        }
+
+        // 设置写回调和 header 回调
+        core.setopt_ptr(handle, Opt.WRITEFUNCTION, _writeCb)
+        core.setopt_ptr(handle, Opt.HEADERFUNCTION, _headerCb)
+
+        // 设置 userdata 为 Response 指针（通过全局变量传递）
+        _currentResp = resp
+        core.setopt_ptr(handle, Opt.WRITEDATA, ffi.ptr_from_int(0))
+        core.setopt_ptr(handle, Opt.HEADERDATA, ffi.ptr_from_int(0))
+
+        // 执行请求
+        int rc = core.perform(handle)
+        resp.curlCode = rc
+        if rc != Code.OK {
+            resp.error = core.easyStrerror(rc)
+        }
+
+        // 获取响应信息
+        resp.statusCode = core.getinfo_int(handle, Info.RESPONSE_CODE)
+        resp.effectiveUrl = core.getinfo_str(handle, Info.EFFECTIVE_URL)
+        resp.totalTime = core.getinfo_double(handle, Info.TOTAL_TIME)
+        resp.connectTime = core.getinfo_double(handle, Info.CONNECT_TIME)
+        resp.downloadSpeed = core.getinfo_double(handle, Info.SPEED_DOWNLOAD)
+        resp.contentType = core.getinfo_str(handle, Info.CONTENT_TYPE)
+        resp.totalSize = body.len()
+
+        return resp
+    }
+
+    // GET 请求
+    func get(string url): Response {
+        return _doRequest("GET", url, "")
+    }
+
+    // POST 请求（字符串 body）
+    func post(string url, string body): Response {
+        return _doRequest("POST", url, body)
+    }
+
+    // POST JSON 请求
+    func postJson(string url, string json): Response {
+        if not ok {
+            Response resp = new Response()
+            resp.error = "Client not initialized"
+            return resp
+        }
+        core.setopt_str(handle, Opt.CUSTOMREQUEST, "")
+        Ptr[u8] slist = null
+        slist = core.slistAppend(slist, "Content-Type: application/json")
+        core.setopt_ptr(handle, Opt.HTTPHEADER, slist)
+        Response resp = _doRequest("POST", url, json)
+        if slist != null { core.slistFreeAll(slist) }
+        return resp
+    }
+
+    // PUT 请求
+    func put(string url, string body): Response {
+        return _doRequest("PUT", url, body)
+    }
+
+    // DELETE 请求
+    func del(string url): Response {
+        return _doRequest("DELETE", url, "")
+    }
+
+    // PATCH 请求
+    func patch(string url, string body): Response {
+        return _doRequest("PATCH", url, body)
+    }
+
+    // HEAD 请求（只获取 header，不获取 body）
+    func head(string url): Response {
+        if not ok {
+            Response resp = new Response()
+            resp.error = "Client not initialized"
+            return resp
+        }
+        return _doRequest("HEAD", url, "")
+    }
+
+    // ==================== 便捷方法 ====================
+
+    // 设置 Cookie
+    func setCookie(string cookie): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_str(handle, Opt.COOKIE, cookie)
+    }
+
+    // 设置 Cookie 文件
+    func setCookieFile(string file): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_str(handle, Opt.COOKIEFILE, file)
+    }
+
+    // 设置 Cookie 保存文件
+    func setCookieJar(string file): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_str(handle, Opt.COOKIEJAR, file)
+    }
+
+    // 获取句柄
+    func getHandle(): Ptr[u8] { return handle }
+
+    // 是否有效
+    func isOk(): bool { return ok }
+
+    // 获取最近错误
+    func lastError(): string { return _lastError }
+}
+
+// ==================== 写回调分发 ====================
+
+// 写回调：接收响应 body 数据
+func _writeDispatch(Ptr data, int size, int nmemb, Ptr userdata): int {
+    if _currentResp == null { return 0 }
+    int totalSize = size * nmemb
+    if totalSize <= 0 { return 0 }
+    // 从 C 内存读取数据
+    // 注意：data 是 char* 指向原始数据，不是 null-terminated
+    // 使用 ffi.read_string_n 读取指定长度的数据
+    string chunk = ffi.read_string_n(data, 0, totalSize)
+    _currentResp.body = _currentResp.body + chunk
+    return totalSize
+}
+
+// header 回调：接收响应 header 数据
+func _headerDispatch(Ptr data, int size, int nmemb, Ptr userdata): int {
+    if _currentResp == null { return 0 }
+    int totalSize = size * nmemb
+    if totalSize <= 0 { return 0 }
+    string chunk = ffi.read_string_n(data, 0, totalSize)
+    _currentResp.headers = _currentResp.headers + chunk
+    return totalSize
+}
+
+// ==================== 工厂函数 ====================
+
+// 创建 HTTP 客户端
+export func createClient(): HttpClient {
+    HttpClient c = new HttpClient()
+    c.init()
+    return c
+}
+
+// ==================== 便捷函数 ====================
+
+// GET 请求（便捷接口，自动创建/销毁客户端）
+export func get(string url): Response {
+    HttpClient c = createClient()
+    Response resp = c.get(url)
+    c.close()
+    return resp
+}
+
+// POST 请求
+export func post(string url, string body): Response {
+    HttpClient c = createClient()
+    Response resp = c.post(url, body)
+    c.close()
+    return resp
+}
+
+// POST JSON 请求
+export func postJson(string url, string json): Response {
+    HttpClient c = createClient()
+    Response resp = c.postJson(url, json)
+    c.close()
+    return resp
+}
+
+// PUT 请求
+export func put(string url, string body): Response {
+    HttpClient c = createClient()
+    Response resp = c.put(url, body)
+    c.close()
+    return resp
+}
+
+// PATCH 请求
+export func patch(string url, string body): Response {
+    HttpClient c = createClient()
+    Response resp = c.patch(url, body)
+    c.close()
+    return resp
+}
+
+// DELETE 请求
+export func del(string url): Response {
+    HttpClient c = createClient()
+    Response resp = c.del(url)
+    c.close()
+    return resp
+}
+
+// URL 编码
+export func urlEncode(string url): string {
+    Ptr[u8] handle = core.easyInit()
+    if handle == null { return url }
+    string result = core.escape(handle, url)
+    core.easyCleanup(handle)
+    return result
+}
+
+// URL 解码
+export func urlDecode(string url): string {
+    Ptr[u8] handle = core.easyInit()
+    if handle == null { return url }
+    string result = core.unescape(handle, url)
+    core.easyCleanup(handle)
+    return result
+}
+
+// 获取 libcurl 版本
+export func version(): string { return core.version() }
+
+// 全局初始化
+export func globalInit(int flags = 3): int { return core.globalInit(flags) }
+
+// 全局清理
+export func globalCleanup() { core.globalCleanup() }

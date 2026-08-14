@@ -1,0 +1,53 @@
+// basic_get.leno — LenoNet GET 请求基础示例
+import "../lib/net.leno"
+use net.(HttpClient, Response)
+
+main() {
+    // 初始化全局
+    net.globalInit()
+    print("libcurl 版本: " + net.version())
+
+    // 方式1: 便捷函数（自动管理客户端生命周期）
+    print("\n=== 便捷 GET ===")
+    Response resp = net.get("http://httpbin.org/get")
+    if resp.ok() {
+        print("状态码: " + resp.statusCode)
+        print("Content-Type: " + resp.contentType)
+        print("耗时: " + resp.totalTime + "s")
+        print("响应体 (前 200 字符):")
+        if resp.body.len() > 200 {
+            print(resp.body[:200] + "...")
+        } else {
+            print(resp.body)
+        }
+    } else {
+        print("请求失败: " + resp.error)
+        print("curlCode: " + resp.curlCode)
+    }
+
+    // 方式2: 使用 HttpClient（支持多次请求、自定义配置）
+    print("\n=== HttpClient GET ===")
+    HttpClient client = net.createClient()
+    client.setTimeout(15000)
+    client.setUserAgent("LenoNet-Test/1.0")
+    client.setFollowRedirect(true, 5)
+
+    Response resp2 = client.get("http://httpbin.org/get?name=hello&age=20")
+    if resp2.ok() {
+        print("状态码: " + resp2.statusCode)
+        print("有效 URL: " + resp2.effectiveUrl)
+        print("下载速度: " + resp2.downloadSpeed + " bytes/s")
+    } else {
+        print("请求失败: " + resp2.error)
+    }
+
+    // 第二次请求（复用客户端，连接池效率更高）
+    print("\n=== 复用客户端 GET ===")
+    Response resp3 = client.get("http://httpbin.org/uuid")
+    if resp3.ok() {
+        print("UUID: " + resp3.body)
+    }
+
+    client.close()
+    print("\n客户端已关闭")
+}

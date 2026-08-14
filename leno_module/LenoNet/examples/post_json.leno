@@ -1,0 +1,49 @@
+// post_json.leno — LenoNet POST/JSON 示例
+import "../lib/net.leno"
+use net.(HttpClient, Response)
+
+main() {
+    net.globalInit()
+
+    // POST 字符串
+    print("=== POST 表单 ===")
+    Response resp = net.post("http://httpbin.org/post", "name=hello&age=20")
+    if resp.ok() {
+        print("状态码: " + resp.statusCode)
+        print("响应: " + resp.body[:200])
+    } else {
+        print("失败: " + resp.error)
+    }
+
+    // POST JSON
+    print("\n=== POST JSON ===")
+    string json = '{"name": "Leno", "version": "1.0", "features": ["http", "https", "websocket"]}'
+    Response resp2 = net.postJson("http://httpbin.org/post", json)
+    if resp2.ok() {
+        print("状态码: " + resp2.statusCode)
+        print("Content-Type: " + resp2.contentType)
+        print("响应: " + resp2.body[:300])
+    } else {
+        print("失败: " + resp2.error)
+    }
+
+    // 使用 HttpClient 带自定义 header
+    print("\n=== 带自定义 header 的 POST ===")
+    HttpClient client = net.createClient()
+    client.setHeaders([
+        "Content-Type: application/json",
+        "Authorization: Bearer my-token",
+        "X-Custom-Header: LenoNet"
+    ])
+    string json2 = '{"user": "admin", "action": "login"}'
+    Response resp3 = client.postJson("http://httpbin.org/post", json2)
+    if resp3.ok() {
+        print("状态码: " + resp3.statusCode)
+        print("响应头:")
+        print(resp3.headers)
+    } else {
+        print("失败: " + resp3.error)
+    }
+
+    client.close()
+}

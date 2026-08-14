@@ -1,0 +1,48 @@
+// stress_test.leno — LenoNet 多次请求测试
+// 注意：此测试用于验证 HttpClient 在多次请求时是否稳定
+// 相关 bug: 见 docs/LenoNet_崩溃问题排查记录.md
+import "../lib/net.leno"
+import times
+use net.(HttpClient, Response)
+
+main() {
+    net.globalInit()
+    print("libcurl 版本: " + net.version())
+    print("=== 多次请求压力测试 ===")
+
+    HttpClient client = net.createClient()
+    client.setTimeout(10000)
+
+    int success = 0
+    int fail = 0
+    int count = 20
+
+    int startTime = times.now()
+    for count to i {
+        string url = "http://httpbin.org/get?n=" + i
+        Response resp = client.get(url)
+        if resp.ok() {
+            success = success + 1
+            if i < 3 {
+                print("  [" + i + "] " + resp.statusCode + " " + resp.totalTime + "s")
+            }
+        } else {
+            fail = fail + 1
+            if fail <= 3 {
+                print("  [" + i + "] FAIL: " + resp.error)
+            }
+        }
+    }
+
+    int endTime = times.now()
+    client.close()
+
+    float elapsed = (endTime - startTime) / 1000.0
+    print("\n=== 结果 ===")
+    print("总数: " + count)
+    print("成功: " + success)
+    print("失败: " + fail)
+    print("耗时: " + elapsed + "s")
+    print("平均: " + (elapsed / count) + "s/请求")
+    print("\n如果程序正常退出（无堆损坏），则测试通过。")
+}

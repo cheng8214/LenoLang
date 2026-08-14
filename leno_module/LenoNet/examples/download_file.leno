@@ -1,0 +1,34 @@
+// download_file.leno — LenoNet 文件下载示例
+import "../lib/net.leno"
+import files
+use net.(HttpClient, Response)
+
+main() {
+    net.globalInit()
+
+    string url = "https://httpbin.org/json"
+    string savePath = "downloaded.json"
+
+    print("下载: " + url)
+    print("保存到: " + savePath)
+
+    Response resp = net.get(url)
+    if resp.ok() {
+        // 写入文件
+        files.write(savePath, resp.body)
+        print("下载成功!")
+        print("大小: " + resp.body.len() + " bytes")
+        print("耗时: " + resp.totalTime + "s")
+        print("速度: " + resp.downloadSpeed + " bytes/s")
+
+        // 验证文件
+        if files.exists(savePath) {
+            string content = files.read(savePath)
+            print("文件内容 (前 200 字符):")
+            print(content[:200])
+        }
+    } else {
+        print("下载失败: " + resp.error)
+        print("curlCode: " + resp.curlCode)
+    }
+}

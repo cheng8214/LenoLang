@@ -1,0 +1,52 @@
+// http_methods.leno — LenoNet HTTP 方法测试
+// 测试 GET/POST/PUT/DELETE/PATCH/HEAD
+import "../lib/net.leno"
+use net.(HttpClient, Response)
+
+main() {
+    net.globalInit()
+
+    HttpClient client = net.createClient()
+    client.setTimeout(15000)
+
+    // GET
+    print("=== GET ===")
+    Response r1 = client.get("http://httpbin.org/get")
+    print("状态: " + r1.statusCode + (if r1.ok() then " OK" else " FAIL"))
+
+    // POST
+    print("\n=== POST ===")
+    Response r2 = client.post("http://httpbin.org/post", "data=hello")
+    print("状态: " + r2.statusCode + (if r2.ok() then " OK" else " FAIL"))
+
+    // PUT
+    print("\n=== PUT ===")
+    Response r3 = client.put("http://httpbin.org/put", '{"key": "value"}')
+    print("状态: " + r3.statusCode + (if r3.ok() then " OK" else " FAIL"))
+
+    // DELETE
+    print("\n=== DELETE ===")
+    Response r4 = client.del("http://httpbin.org/delete")
+    print("状态: " + r4.statusCode + (if r4.ok() then " OK" else " FAIL"))
+
+    // PATCH
+    print("\n=== PATCH ===")
+    Response r5 = client.patch("http://httpbin.org/patch", '{"patch": "data"}')
+    print("状态: " + r5.statusCode + (if r5.ok() then " OK" else " FAIL"))
+
+    // HEAD（不返回 body）
+    print("\n=== HEAD ===")
+    Response r6 = client.head("http://httpbin.org/get")
+    print("状态: " + r6.statusCode + (if r6.ok() then " OK" else " FAIL"))
+    print("Headers: " + r6.headers[:200])
+
+    // 自定义方法
+    print("\n=== 自定义方法 (OPTIONS) ===")
+    client.setCustomRequest("OPTIONS")
+    Response r7 = client.get("http://httpbin.org/anything")
+    print("状态: " + r7.statusCode + (if r7.ok() then " OK" else " FAIL"))
+    client.reset()  // 清除自定义方法
+
+    client.close()
+    print("\n所有方法测试完成")
+}

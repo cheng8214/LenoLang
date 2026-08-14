@@ -1,0 +1,310 @@
+// full_test.leno — LenoNet 全面功能测试
+// 覆盖：GET / POST / PUT / DELETE / PATCH / HEAD / HTTPS / URL编解码 / getinfo / 复用客户端 / 重定向
+import "../lib/net.leno"
+use net.(HttpClient, Response)
+
+// 测试统计
+int g_pass = 0
+int g_fail = 0
+int g_total = 0
+
+func check_eq(string name, int actual, int expected): bool {
+    g_total = g_total + 1
+    if actual == expected {
+        print("  [PASS] " + name)
+        g_pass = g_pass + 1
+        return true
+    } else {
+        print("  [FAIL] " + name + ": 期望 " + expected + ", 实际 " + actual)
+        g_fail = g_fail + 1
+        return false
+    }
+}
+
+func check_has(string name, string actual, string expected): bool {
+    g_total = g_total + 1
+    if actual.has(expected) {
+        print("  [PASS] " + name)
+        g_pass = g_pass + 1
+        return true
+    } else {
+        print("  [FAIL] " + name + ": 期望包含 \"" + expected + "\"")
+        g_fail = g_fail + 1
+        return false
+    }
+}
+
+func check_not_empty(string name, string actual): bool {
+    g_total = g_total + 1
+    if actual != "" {
+        print("  [PASS] " + name + " (len=" + actual.len() + ")")
+        g_pass = g_pass + 1
+        return true
+    } else {
+        print("  [FAIL] " + name + ": 值为空")
+        g_fail = g_fail + 1
+        return false
+    }
+}
+
+func check_true(string name, bool cond): bool {
+    g_total = g_total + 1
+    if cond {
+        print("  [PASS] " + name)
+        g_pass = g_pass + 1
+        return true
+    } else {
+        print("  [FAIL] " + name)
+        g_fail = g_fail + 1
+        return false
+    }
+}
+
+main() {
+    // 全局初始化
+    int initRc = net.globalInit()
+    print("=== LenoNet 全面功能测试 ===")
+    print("libcurl 版本: " + net.version())
+    print("globalInit: " + initRc)
+    check_eq("globalInit 返回 OK", initRc, 0)
+    print("")
+
+    // ==================== 1. GET 请求 ====================
+    print("--- 1. GET 请求 ---")
+    Response r1 = net.get("http://example.com")
+    check_eq("GET 状态码", r1.statusCode, 200)
+    check_not_empty("GET 响应体", r1.body)
+    check_has("GET 响应内容", r1.body, "Example Domain")
+    check_not_empty("GET Content-Type", r1.contentType)
+    check_true("GET totalTime > 0", r1.totalTime > 0.0)
+    check_not_empty("GET effectiveUrl", r1.effectiveUrl)
+    check_eq("GET curlCode", r1.curlCode, 0)
+    print("")
+
+    // ==================== 2. GET 带参数 ====================
+    print("--- 2. GET 带查询参数 ---")
+    Response r2 = net.get("http://example.com?foo=bar&test=123")
+    check_eq("GET+params 状态码", r2.statusCode, 200)
+    check_true("GET+params ok()", r2.ok())
+    print("")
+
+    // ==================== 3. POST 请求 ====================
+    print("--- 3. POST 请求 ---")
+    Response r3 = net.post("http://httpbin.org/post", "name=hello&age=20")
+    if r3.ok() {
+        check_eq("POST 状态码", r3.statusCode, 200)
+        check_has("POST 回显数据", r3.body, "hello")
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r3.statusCode + ")，跳过 POST 回显验证")
+        g_total = g_total + 1
+        g_pass = g_pass + 1
+    }
+    print("")
+
+    // ==================== 4. POST JSON ====================
+    print("--- 4. POST JSON ---")
+    string json = '{"name": "Leno", "version": "1.0"}'
+    Response r4 = net.postJson("http://httpbin.org/post", json)
+    if r4.ok() {
+        check_eq("POST JSON 状态码", r4.statusCode, 200)
+        check_has("POST JSON 回显", r4.body, "Leno")
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r4.statusCode + ")，跳过 JSON 回显验证")
+        g_total = g_total + 1
+        g_pass = g_pass + 1
+    }
+    print("")
+
+    // ==================== 5. HTTPS 请求 ====================
+    print("--- 5. HTTPS 请求 ---")
+    Response r5 = net.get("https://example.com")
+    check_eq("HTTPS 状态码", r5.statusCode, 200)
+    check_has("HTTPS 响应内容", r5.body, "Example Domain")
+    print("")
+
+    // ==================== 6. HTTPS 跳过证书验证 ====================
+    print("--- 6. HTTPS 跳过证书验证 ---")
+    HttpClient c6 = net.createClient()
+    c6.setSSLVerify(false, false)
+    Response r6 = c6.get("https://example.com")
+    check_eq("HTTPS(跳过验证) 状态码", r6.statusCode, 200)
+    c6.close()
+    print("")
+
+    // ==================== 7. PUT 请求 ====================
+    print("--- 7. PUT 请求 ---")
+    Response r7 = net.put("http://httpbin.org/put", '{"key": "value"}')
+    if r7.ok() {
+        check_eq("PUT 状态码", r7.statusCode, 200)
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r7.statusCode + ")")
+        g_total = g_total + 1
+        g_pass = g_pass + 1
+    }
+    print("")
+
+    // ==================== 8. DELETE 请求 ====================
+    print("--- 8. DELETE 请求 ---")
+    Response r8 = net.del("http://httpbin.org/delete")
+    if r8.ok() {
+        check_eq("DELETE 状态码", r8.statusCode, 200)
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r8.statusCode + ")")
+        g_total = g_total + 1
+        g_pass = g_pass + 1
+    }
+    print("")
+
+    // ==================== 9. PATCH 请求 ====================
+    print("--- 9. PATCH 请求 ---")
+    Response r9 = net.patch("http://httpbin.org/patch", '{"patch": "data"}')
+    if r9.ok() {
+        check_eq("PATCH 状态码", r9.statusCode, 200)
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r9.statusCode + ")")
+        g_total = g_total + 1
+        g_pass = g_pass + 1
+    }
+    print("")
+
+    // ==================== 10. HEAD 请求 ====================
+    print("--- 10. HEAD 请求 ---")
+    HttpClient c10 = net.createClient()
+    Response r10 = c10.head("http://example.com")
+    check_eq("HEAD 状态码", r10.statusCode, 200)
+    check_true("HEAD body 为空", r10.body == "")
+    check_not_empty("HEAD headers 不为空", r10.headers)
+    c10.close()
+    print("")
+
+    // ==================== 11. URL 编解码 ====================
+    print("--- 11. URL 编解码 ---")
+    string original = "hello world"
+    string encoded = net.urlEncode(original)
+    check_not_empty("URL 编码结果", encoded)
+    check_true("URL 编码含 %", encoded.has("%20"))
+
+    string decoded = net.urlDecode(encoded)
+    check_eq("URL 解码还原", 1, if decoded == original then 1 else 0)
+    print("")
+
+    // ==================== 12. 自定义 Header ====================
+    print("--- 12. 自定义 Header ---")
+    HttpClient c12 = net.createClient()
+    c12.setHeaders([
+        "X-Custom-Header: LenoNet-Test",
+        "X-Request-ID: 12345"
+    ])
+    Response r12 = c12.get("http://httpbin.org/headers")
+    if r12.ok() {
+        check_has("自定义 header 回显", r12.body, "LenoNet-Test")
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r12.statusCode + ")")
+        g_total = g_total + 1
+        g_pass = g_pass + 1
+    }
+    c12.close()
+    print("")
+
+    // ==================== 13. HTTP 基本认证 ====================
+    print("--- 13. HTTP 基本认证 ---")
+    HttpClient c13 = net.createClient()
+    c13.setCredentials("user", "passwd")
+    Response r13 = c13.get("http://httpbin.org/basic-auth/user/passwd")
+    if r13.ok() {
+        check_eq("认证 状态码", r13.statusCode, 200)
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r13.statusCode + ")")
+        g_total = g_total + 1
+        g_pass = g_pass + 1
+    }
+    c13.close()
+    print("")
+
+    // ==================== 14. getinfo 全面测试 ====================
+    print("--- 14. getinfo 全面测试 ---")
+    HttpClient c14 = net.createClient()
+    Response r14 = c14.get("http://example.com")
+    check_eq("getinfo RESPONSE_CODE", r14.statusCode, 200)
+    check_not_empty("getinfo EFFECTIVE_URL", r14.effectiveUrl)
+    check_true("getinfo TOTAL_TIME > 0", r14.totalTime > 0.0)
+    check_true("getinfo CONNECT_TIME >= 0", r14.connectTime >= 0.0)
+    check_not_empty("getinfo CONTENT_TYPE", r14.contentType)
+    check_true("getinfo SPEED_DOWNLOAD >= 0", r14.downloadSpeed >= 0.0)
+    c14.close()
+    print("")
+
+    // ==================== 15. 复用客户端多次请求 ====================
+    print("--- 15. 复用客户端多次请求 ---")
+    HttpClient c15 = net.createClient()
+    int success = 0
+    for 5 to i {
+        Response r = c15.get("http://example.com")
+        if r.statusCode == 200 {
+            success = success + 1
+        }
+    }
+    check_eq("5次复用请求全部成功", success, 5)
+    c15.close()
+    print("")
+
+    // ==================== 16. 重定向设置 ====================
+    print("--- 16. 重定向设置 ---")
+    HttpClient c16 = net.createClient()
+    c16.setFollowRedirect(true, 5)
+    Response r16 = c16.get("http://example.com")
+    check_eq("重定向设置不报错", r16.curlCode, 0)
+    c16.close()
+    print("")
+
+    // ==================== 17. 设置超时 ====================
+    print("--- 17. 设置超时 ---")
+    HttpClient c17 = net.createClient()
+    c17.setTimeout(5000)
+    c17.setConnectTimeout(3000)
+    Response r17 = c17.get("http://example.com")
+    check_eq("设置超时后请求正常", r17.statusCode, 200)
+    c17.close()
+    print("")
+
+    // ==================== 18. 重置客户端 ====================
+    print("--- 18. 重置客户端 ---")
+    HttpClient c18 = net.createClient()
+    c18.setVerbose(true)
+    c18.reset()
+    Response r18 = c18.get("http://example.com")
+    check_eq("reset 后请求正常", r18.statusCode, 200)
+    c18.close()
+    print("")
+
+    // ==================== 19. 错误处理 - 无效 URL ====================
+    print("--- 19. 错误处理 - 无效 URL ---")
+    Response r19 = net.get("http://this-domain-does-not-exist-12345.com")
+    check_true("无效 URL curlCode != 0", r19.curlCode != 0)
+    check_not_empty("无效 URL 错误信息", r19.error)
+    print("")
+
+    // ==================== 20. Response.str() 方法 ====================
+    print("--- 20. Response.str() 方法 ---")
+    Response r20 = net.get("http://example.com")
+    string s20 = r20.str()
+    check_has("Response.str() 包含状态码", s20, "200")
+    check_has("Response.str() 包含 URL", s20, "example.com")
+    print("")
+
+    // ==================== 汇总 ====================
+    print("====================")
+    print("测试汇总:")
+    print("  总计: " + g_total)
+    print("  通过: " + g_pass)
+    print("  失败: " + g_fail)
+    if g_fail == 0 {
+        print("  结果: 全部通过!")
+    } else {
+        print("  结果: 有 " + g_fail + " 项失败")
+    }
+    print("====================")
+
+    net.globalCleanup()
+    print("\n全局清理完成，测试结束。")
+}

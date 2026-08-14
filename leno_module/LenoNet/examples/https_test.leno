@@ -1,0 +1,43 @@
+// https_test.leno — LenoNet HTTPS 测试
+import "../lib/net.leno"
+use net.(HttpClient, Response)
+
+main() {
+    net.globalInit()
+    print("libcurl 版本: " + net.version())
+
+    // HTTPS GET 请求（默认验证 SSL 证书）
+    print("\n=== HTTPS GET（默认验证）===")
+    Response resp = net.get("https://httpbin.org/get")
+    if resp.ok() {
+        print("状态码: " + resp.statusCode)
+        print("Content-Type: " + resp.contentType)
+        print("耗时: " + resp.totalTime + "s")
+        print("响应 (前 200 字符): " + resp.body[:200])
+    } else {
+        print("HTTPS 请求失败: " + resp.error)
+        print("curlCode: " + resp.curlCode)
+    }
+
+    // HTTPS 跳过证书验证（用于自签名证书场景）
+    print("\n=== HTTPS GET（跳过验证）===")
+    HttpClient client = net.createClient()
+    client.setSSLVerify(false, false)
+    Response resp2 = client.get("https://httpbin.org/get")
+    if resp2.ok() {
+        print("状态码: " + resp2.statusCode)
+        print("响应 (前 200 字符): " + resp2.body[:200])
+    } else {
+        print("失败: " + resp2.error)
+    }
+
+    // 测试 HTTPS API
+    print("\n=== HTTPS API 请求 ===")
+    Response resp3 = client.get("https://httpbin.org/headers")
+    if resp3.ok() {
+        print("状态码: " + resp3.statusCode)
+        print("Headers 响应: " + resp3.body[:300])
+    }
+
+    client.close()
+}

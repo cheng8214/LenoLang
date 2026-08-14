@@ -1,0 +1,56 @@
+// custom_headers.leno — LenoNet 自定义 header 示例
+import "../lib/net.leno"
+use net.(HttpClient, Response)
+
+main() {
+    net.globalInit()
+
+    HttpClient client = net.createClient()
+    client.setTimeout(15000)
+
+    // 设置多个自定义 header
+    client.setHeaders([
+        "Accept: application/json",
+        "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+        "X-Request-ID: " + net.version(),
+        "X-Custom: LenoNet-Test"
+    ])
+
+    // 设置 Cookie
+    client.setCookie("session=abc123; user=admin")
+
+    // 设置 User-Agent
+    client.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) LenoNet/1.0")
+
+    // 设置 Referer
+    // 注意: 通过 header 设置 Referer 更可靠
+    client.setHeaders([
+        "Referer: http://httpbin.org"
+    ])
+
+    print("=== 自定义 header 请求 ===")
+    Response resp = client.get("http://httpbin.org/headers")
+    if resp.ok() {
+        print("状态码: " + resp.statusCode)
+        print("服务器收到的 header:")
+        print(resp.body)
+    } else {
+        print("失败: " + resp.error)
+    }
+
+    // 测试 HTTP 基本认证
+    print("\n=== HTTP 基本认证 ===")
+    client.reset()
+    client.setCredentials("user", "passwd")
+    Response resp2 = client.get("http://httpbin.org/basic-auth/user/passwd")
+    if resp2.ok() {
+        print("状态码: " + resp2.statusCode)
+        print("认证成功!")
+        print("响应: " + resp2.body[:200])
+    } else {
+        print("认证失败: " + resp2.error)
+    }
+
+    client.close()
+}
