@@ -233,26 +233,20 @@ gc_set_enabled(saved_gc);
 
 **严重程度**: 中
 **类型**: 语言限制 / 编译器
-**状态**: ⚠️ 未修复，列为待开发功能。cfunc 未被模块符号表扫描器收集，`use` 语句中无 cfunc 查找逻辑。当前变通方案：将 cfunc 声明放在使用它的同一文件中。
+**状态**: ✅ 已修复
 
-**描述**: `use` 语句只支持导入 `struct`、`cstruct`、`clib`、`face`、`alias` 和函数类型，
-不支持导入 `cfunc`（C 回调签名）。
+**描述**: `use` 语句已支持导入 `cfunc`（C 回调签名）。完整实现了 `cfunc` 的跨模块 `use` 导入，
+包括符号表存储、模块扫描器、use 语句查找、缓存序列化/反序列化全链路。
 
-如果在模块 A 中声明了 `cfunc WriteCb(...)`，在模块 B 中无法通过 `use A.WriteCb` 导入。
+**修复内容**:
+1. 在 `module_symbol_table.h` 中定义 `ModuleCfuncSymbol` 结构体和 `cfuncs` 数组
+2. 在 `sym_table_create.inc` 中添加 `cfunc` 的初始化和销毁
+3. 在 `sym_table_add.inc` 中添加 `cfunc` 的 `add`/`find`/`count` 函数
+4. 在 `scan_pass1.inc` 中扫描 `export cfunc` 和裸 `cfunc` 声明，解析参数和返回类型（支持 `Ptr[T]` 语法）
+5. 在 `visit_module.inc` 的 `AST_USE` 中添加 `cfunc` 查找逻辑，从 `ModuleCfuncSymbol` 重建 `TypeInfo*` 签名
+6. 在 `sym_table_cache.inc` 中添加 `cfunc` 的序列化/反序列化（版本号升至 `v14`）
 
-**复现**:
-```leno
-// curl_core.leno
-export cfunc WriteCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
-
-// net.leno
-import "curl_core.leno" as core
-use core.WriteCb  // 错误: use 语句错误：模块 'core' 中没有类型或函数 'WriteCb'
-```
-
-**当前绕过**: 将 `cfunc` 声明放在使用它的同一个文件中（`net.leno`），不跨模块引用。
-
-**建议修复**: 在 `visit_module.inc` 的 `AST_USE` 分支中增加对 `cfunc` 类型的支持。
+**测试**: `assert/test_cfunc_cross_module/` 验证跨模块 `use cfunc` 导入。
 
 ---
 

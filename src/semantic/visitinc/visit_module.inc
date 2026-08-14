@@ -637,7 +637,50 @@
                 }
             }
 
-            // 没有找到 struct、clib、face、alias 或函数
+            // 尝试查找 cfunc 定义（C 回调函数签名）
+            if (module_info->sym_table) {
+                ModuleCfuncSymbol* cfunc_sym = module_symbol_table_find_cfunc(module_info->sym_table, symbol_name);
+                if (cfunc_sym) {
+                    // 注册为 SYM_CFUNC 符号
+                    Symbol* sym = scope_define(s->current, symbol_name, SYM_CFUNC);
+                    if (sym) {
+                        TypeInfo* cfunc_type = type_new(TYPE_CFUNC);
+                        cfunc_type->struct_name = strdup(symbol_name);
+                        sym->type = cfunc_type;
+
+                        // 存储 cfunc 签名信息（从 TypeKind 重建 TypeInfo*）
+                        sym->cfunc_param_count = cfunc_sym->param_count;
+                        if (cfunc_sym->param_count > 0) {
+                            sym->cfunc_param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * cfunc_sym->param_count);
+                            for (int pi = 0; pi < cfunc_sym->param_count; pi++) {
+                                // Ptr[T] 需要 element_type
+                                if (cfunc_sym->param_types[pi] == TYPE_PTR_GENERIC
+                                    && cfunc_sym->param_element_types
+                                    && cfunc_sym->param_element_types[pi] != TYPE_PTR) {
+                                    sym->cfunc_param_types[pi] = type_ptr_generic(
+                                        type_new(cfunc_sym->param_element_types[pi]));
+                                } else {
+                                    sym->cfunc_param_types[pi] = type_new(cfunc_sym->param_types[pi]);
+                                }
+                            }
+                        } else {
+                            sym->cfunc_param_types = NULL;
+                        }
+
+                        // 构造返回类型
+                        if (cfunc_sym->return_type == TYPE_PTR_GENERIC
+                            && cfunc_sym->return_element_type != TYPE_PTR) {
+                            sym->cfunc_return_type = type_ptr_generic(
+                                type_new(cfunc_sym->return_element_type));
+                        } else {
+                            sym->cfunc_return_type = type_new(cfunc_sym->return_type);
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // 没有找到 struct、clib、cfunc、face、alias 或函数
             char msg[BUFFER_MEDIUM];
             snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'", module_name, symbol_name);
             error_add(ERR_SEMANTIC, ast->line, msg);

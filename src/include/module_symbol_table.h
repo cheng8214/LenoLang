@@ -85,6 +85,19 @@ typedef struct {
     ModuleClibFuncSymbol* funcs; // 函数定义数组
 } ModuleClibSymbol;
 
+// 模块 cfunc 符号（C 回调函数签名）
+typedef struct {
+    char* name;                 // cfunc 名称
+    int param_count;            // 参数数量
+    TypeKind* param_types;      // 参数类型数组（TypeKind，与 clib 一致，支持 i32/f64/str8/Ptr 等）
+    TypeKind* param_element_types; // 参数 Ptr[T] 中的 T，TYPE_PTR 表示无（与 clib 一致）
+    char** param_struct_names;  // 参数 struct 名数组（可为 NULL，与 clib 一致）
+    char** param_names;         // 参数名数组（可为 NULL）
+    TypeKind return_type;       // 返回类型
+    TypeKind return_element_type; // 返回类型 Ptr[T] 中的 T，TYPE_PTR 表示无
+    char* return_struct_name;   // 返回 struct 名（可为 NULL）
+} ModuleCfuncSymbol;
+
 // 模块 face 方法符号
 typedef struct {
     char* name;                 // 方法名
@@ -139,6 +152,9 @@ typedef struct {
     ModuleClibSymbol* clibs;    // clib 符号数组
     int clib_count;             // clib 数量
     int clib_capacity;          // clib 数组容量
+    ModuleCfuncSymbol* cfuncs;  // cfunc 符号数组
+    int cfunc_count;             // cfunc 数量
+    int cfunc_capacity;          // cfunc 数组容量
     // 依赖模块路径（用于 .lenosymc 缓存失效判定）
     char** dep_paths;           // 依赖模块的绝对路径数组
     int dep_count;              // 依赖模块数量
@@ -203,6 +219,18 @@ void module_symbol_table_add_clib(ModuleSymbolTable* table, const char* name, in
 
 // clib 符号数量
 int module_symbol_table_clib_count(ModuleSymbolTable* table);
+
+// 查找 cfunc 符号
+ModuleCfuncSymbol* module_symbol_table_find_cfunc(ModuleSymbolTable* table, const char* cfunc_name);
+
+// 添加 cfunc 符号
+void module_symbol_table_add_cfunc(ModuleSymbolTable* table, const char* name,
+    int param_count, TypeKind* param_types, TypeKind* param_element_types,
+    char** param_struct_names, char** param_names,
+    TypeKind return_type, TypeKind return_element_type, const char* return_struct_name);
+
+// cfunc 符号数量
+int module_symbol_table_cfunc_count(ModuleSymbolTable* table);
 
 // 从字符串解析完整类型（支持 int/float/string/bool 及 Array[T]/Dict[K,V]）
 TypeInfo* parse_type_from_string(const char* type_str);

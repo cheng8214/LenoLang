@@ -176,6 +176,141 @@
                 continue;
             }
 
+            // 检查 export cfunc（C 回调函数签名）
+            if (strncmp(after_export, "cfunc", 5) == 0 && (after_export[5] == ' ' || after_export[5] == '\t' || after_export[5] == '\n' || after_export[5] == '\r' || after_export[5] == '\0')) {
+                char* after_cfunc = after_export + 5;
+                while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+                // 解析 cfunc 名称
+                const char* name_start = after_cfunc;
+                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                int name_len = (int)(after_cfunc - name_start);
+
+                if (name_len > 0 && name_len < 64) {
+                    char cfunc_name_buf[64];
+                    strncpy(cfunc_name_buf, name_start, name_len);
+                    cfunc_name_buf[name_len] = '\0';
+
+                    // 检查是否已经存在
+                    if (!module_symbol_table_find_cfunc(table, cfunc_name_buf)) {
+                        // 解析参数列表 (...)（支持 Ptr[T] 语法）
+                        TypeKind param_types[MOD_MAX_PARAMS];
+                        TypeKind param_element_types[MOD_MAX_PARAMS];
+                        char* param_structs[MOD_MAX_PARAMS];
+                        char* param_names[MOD_MAX_PARAMS];
+                        int param_count = 0;
+                        for (int pi = 0; pi < MOD_MAX_PARAMS; pi++) {
+                            param_element_types[pi] = TYPE_PTR;
+                            param_structs[pi] = NULL;
+                            param_names[pi] = NULL;
+                        }
+
+                        // 跳过空白到 (
+                        while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                        if (*after_cfunc == '(') {
+                            after_cfunc++;
+                            while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                                while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
+                                if (*after_cfunc == ')' || *after_cfunc == '\0') break;
+
+                                // 解析参数类型（支持 Ptr[T] 语法）
+                                const char* pt_start = after_cfunc;
+                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                if (*after_cfunc == '[') {
+                                    after_cfunc++;
+                                    while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                                    if (*after_cfunc == ']') after_cfunc++;
+                                }
+                                int pt_len = (int)(after_cfunc - pt_start);
+                                if (pt_len > 0 && pt_len < 128) {
+                                    char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                    char* pbracket = strchr(pt_buf, '[');
+                                    if (pbracket) {
+                                        *pbracket = '\0';
+                                        TypeKind base = parse_base_type(pt_buf);
+                                        if (base == TYPE_PTR) {
+                                            param_types[param_count] = TYPE_PTR_GENERIC;
+                                            char* pelem_start = pbracket + 1;
+                                            char* pelem_end = strchr(pelem_start, ']');
+                                            if (pelem_end) *pelem_end = '\0';
+                                            param_element_types[param_count] = parse_base_type(pelem_start);
+                                        } else {
+                                            param_types[param_count] = base;
+                                        }
+                                    } else {
+                                        param_types[param_count] = parse_base_type(pt_buf);
+                                    }
+                                    param_structs[param_count] = NULL;
+                                    param_count++;
+                                }
+                                // 跳过空白
+                                while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                // 解析参数名
+                                const char* pname_start = after_cfunc;
+                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                int pname_len = (int)(after_cfunc - pname_start);
+                                if (pname_len > 0 && pname_len < 64 && param_count > 0) {
+                                    param_names[param_count - 1] = (char*)malloc(pname_len + 1);
+                                    strncpy(param_names[param_count - 1], pname_start, pname_len);
+                                    param_names[param_count - 1][pname_len] = '\0';
+                                }
+                            }
+                            if (*after_cfunc == ')') after_cfunc++;
+                        }
+
+                        // 跳过空白到 :
+                        while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                        if (*after_cfunc == ':') {
+                            after_cfunc++;
+                            while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+                            // 解析返回类型（支持 Ptr[T] 语法）
+                            const char* ret_start = after_cfunc;
+                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                            if (*after_cfunc == '[') {
+                                after_cfunc++;
+                                while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                                if (*after_cfunc == ']') after_cfunc++;
+                            }
+                            int ret_len = (int)(after_cfunc - ret_start);
+                            TypeKind ret_type = TYPE_I32;
+                            TypeKind ret_element_type = TYPE_PTR;
+                            if (ret_len > 0 && ret_len < 128) {
+                                char ret_buf[128]; strncpy(ret_buf, ret_start, ret_len); ret_buf[ret_len] = '\0';
+                                char* rbracket = strchr(ret_buf, '[');
+                                if (rbracket) {
+                                    *rbracket = '\0';
+                                    ret_type = parse_base_type(ret_buf);
+                                    if (ret_type == TYPE_PTR) {
+                                        ret_type = TYPE_PTR_GENERIC;
+                                        char* elem_start = rbracket + 1;
+                                        char* elem_end = strchr(elem_start, ']');
+                                        if (elem_end) *elem_end = '\0';
+                                        ret_element_type = parse_base_type(elem_start);
+                                    }
+                                } else {
+                                    ret_type = parse_base_type(ret_buf);
+                                }
+                            }
+
+                            // 存储 cfunc 符号
+                            module_symbol_table_add_cfunc(table, cfunc_name_buf,
+                                param_count, param_types, param_element_types,
+                                param_structs, param_names,
+                                ret_type, ret_element_type, NULL);
+
+                            // 释放临时数据
+                            for (int pi = 0; pi < param_count; pi++) {
+                                free(param_names[pi]);
+                            }
+                        }
+                    }
+                }
+
+                p = after_cfunc;
+                continue;
+            }
+
             // 检查 export enum
             if (strncmp(after_export, "enum", 4) == 0 && (after_export[4] == ' ' || after_export[4] == '\t' || after_export[4] == '\n' || after_export[4] == '\r' || after_export[4] == '\0')) {
                 char* after_enum = after_export + 4;
@@ -387,6 +522,141 @@
             continue;
         }
 
+        // 非 export 行也收集 cfunc 并解析签名（模块内的 cfunc 定义不带 export）
+        if (strncmp(p, "cfunc", 5) == 0 && (p[5] == ' ' || p[5] == '\t' || p[5] == '\n' || p[5] == '\r')) {
+            char* after_cfunc = p + 5;
+            while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+            // 解析 cfunc 名称
+            const char* name_start = after_cfunc;
+            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+            int name_len = (int)(after_cfunc - name_start);
+
+            if (name_len > 0 && name_len < 64) {
+                char cfunc_name_buf[64];
+                strncpy(cfunc_name_buf, name_start, name_len);
+                cfunc_name_buf[name_len] = '\0';
+
+                // 检查是否已经存在
+                if (!module_symbol_table_find_cfunc(table, cfunc_name_buf)) {
+                    // 解析参数列表 (...)（支持 Ptr[T] 语法）
+                    TypeKind param_types[MOD_MAX_PARAMS];
+                    TypeKind param_element_types[MOD_MAX_PARAMS];
+                    char* param_structs[MOD_MAX_PARAMS];
+                    char* param_names[MOD_MAX_PARAMS];
+                    int param_count = 0;
+                    for (int pi = 0; pi < MOD_MAX_PARAMS; pi++) {
+                        param_element_types[pi] = TYPE_PTR;
+                        param_structs[pi] = NULL;
+                        param_names[pi] = NULL;
+                    }
+
+                    // 跳过空白到 (
+                    while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                    if (*after_cfunc == '(') {
+                        after_cfunc++;
+                        while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                            while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
+                            if (*after_cfunc == ')' || *after_cfunc == '\0') break;
+
+                            // 解析参数类型（支持 Ptr[T] 语法）
+                            const char* pt_start = after_cfunc;
+                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                            if (*after_cfunc == '[') {
+                                after_cfunc++;
+                                while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                                if (*after_cfunc == ']') after_cfunc++;
+                            }
+                            int pt_len = (int)(after_cfunc - pt_start);
+                            if (pt_len > 0 && pt_len < 128) {
+                                char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                char* pbracket = strchr(pt_buf, '[');
+                                if (pbracket) {
+                                    *pbracket = '\0';
+                                    TypeKind base = parse_base_type(pt_buf);
+                                    if (base == TYPE_PTR) {
+                                        param_types[param_count] = TYPE_PTR_GENERIC;
+                                        char* pelem_start = pbracket + 1;
+                                        char* pelem_end = strchr(pelem_start, ']');
+                                        if (pelem_end) *pelem_end = '\0';
+                                        param_element_types[param_count] = parse_base_type(pelem_start);
+                                    } else {
+                                        param_types[param_count] = base;
+                                    }
+                                } else {
+                                    param_types[param_count] = parse_base_type(pt_buf);
+                                }
+                                param_structs[param_count] = NULL;
+                                param_count++;
+                            }
+                            // 跳过空白
+                            while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                            // 解析参数名
+                            const char* pname_start = after_cfunc;
+                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                            int pname_len = (int)(after_cfunc - pname_start);
+                            if (pname_len > 0 && pname_len < 64 && param_count > 0) {
+                                param_names[param_count - 1] = (char*)malloc(pname_len + 1);
+                                strncpy(param_names[param_count - 1], pname_start, pname_len);
+                                param_names[param_count - 1][pname_len] = '\0';
+                            }
+                        }
+                        if (*after_cfunc == ')') after_cfunc++;
+                    }
+
+                    // 跳过空白到 :
+                    while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                    if (*after_cfunc == ':') {
+                        after_cfunc++;
+                        while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+                        // 解析返回类型（支持 Ptr[T] 语法）
+                        const char* ret_start = after_cfunc;
+                        while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                        if (*after_cfunc == '[') {
+                            after_cfunc++;
+                            while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                            if (*after_cfunc == ']') after_cfunc++;
+                        }
+                        int ret_len = (int)(after_cfunc - ret_start);
+                        TypeKind ret_type = TYPE_I32;
+                        TypeKind ret_element_type = TYPE_PTR;
+                        if (ret_len > 0 && ret_len < 128) {
+                            char ret_buf[128]; strncpy(ret_buf, ret_start, ret_len); ret_buf[ret_len] = '\0';
+                            char* rbracket = strchr(ret_buf, '[');
+                            if (rbracket) {
+                                *rbracket = '\0';
+                                ret_type = parse_base_type(ret_buf);
+                                if (ret_type == TYPE_PTR) {
+                                    ret_type = TYPE_PTR_GENERIC;
+                                    char* elem_start = rbracket + 1;
+                                    char* elem_end = strchr(elem_start, ']');
+                                    if (elem_end) *elem_end = '\0';
+                                    ret_element_type = parse_base_type(elem_start);
+                                }
+                            } else {
+                                ret_type = parse_base_type(ret_buf);
+                            }
+                        }
+
+                        // 存储 cfunc 符号
+                        module_symbol_table_add_cfunc(table, cfunc_name_buf,
+                            param_count, param_types, param_element_types,
+                            param_structs, param_names,
+                            ret_type, ret_element_type, NULL);
+
+                        // 释放临时数据
+                        for (int pi = 0; pi < param_count; pi++) {
+                            free(param_names[pi]);
+                        }
+                    }
+                }
+            }
+
+            p = after_cfunc;
+            continue;
+        }
+
         p++;
     }
 
@@ -579,6 +849,256 @@
                                                 }
                                                 free(funcs[fi].param_types);
                                                 free(funcs[fi].param_element_types);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 查找 export cfunc（子文件中的 cfunc 定义）
+                            if (strncmp(sp, "export", 6) == 0 && (sp[6] == ' ' || sp[6] == '\t' || sp[6] == '\n' || sp[6] == '\r')) {
+                                char* after_exp = sp + 6;
+                                while (*after_exp && (*after_exp == ' ' || *after_exp == '\t' || *after_exp == '\n' || *after_exp == '\r')) after_exp++;
+                                if (strncmp(after_exp, "cfunc", 5) == 0 && (after_exp[5] == ' ' || after_exp[5] == '\t' || after_exp[5] == '\n' || after_exp[5] == '\r' || after_exp[5] == '\0')) {
+                                    char* after_cfunc = after_exp + 5;
+                                    while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+                                    const char* name_start = after_cfunc;
+                                    while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                    int name_len = (int)(after_cfunc - name_start);
+
+                                    if (name_len > 0 && name_len < 64) {
+                                        char cfunc_name_buf[64];
+                                        strncpy(cfunc_name_buf, name_start, name_len);
+                                        cfunc_name_buf[name_len] = '\0';
+
+                                        if (!module_symbol_table_find_cfunc(table, cfunc_name_buf)) {
+                                            // 解析参数列表
+                                            TypeKind param_types[MOD_MAX_PARAMS];
+                                            TypeKind param_element_types[MOD_MAX_PARAMS];
+                                            char* param_structs[MOD_MAX_PARAMS];
+                                            char* param_names[MOD_MAX_PARAMS];
+                                            int param_count = 0;
+                                            for (int pi = 0; pi < MOD_MAX_PARAMS; pi++) {
+                                                param_element_types[pi] = TYPE_PTR;
+                                                param_structs[pi] = NULL;
+                                                param_names[pi] = NULL;
+                                            }
+
+                                            while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                            if (*after_cfunc == '(') {
+                                                after_cfunc++;
+                                                while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                                                    while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
+                                                    if (*after_cfunc == ')' || *after_cfunc == '\0') break;
+
+                                                    const char* pt_start = after_cfunc;
+                                                    while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                    if (*after_cfunc == '[') {
+                                                        after_cfunc++;
+                                                        while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                                                        if (*after_cfunc == ']') after_cfunc++;
+                                                    }
+                                                    int pt_len = (int)(after_cfunc - pt_start);
+                                                    if (pt_len > 0 && pt_len < 128) {
+                                                        char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                                        char* pbracket = strchr(pt_buf, '[');
+                                                        if (pbracket) {
+                                                            *pbracket = '\0';
+                                                            TypeKind base = parse_base_type(pt_buf);
+                                                            if (base == TYPE_PTR) {
+                                                                param_types[param_count] = TYPE_PTR_GENERIC;
+                                                                char* pelem_start = pbracket + 1;
+                                                                char* pelem_end = strchr(pelem_start, ']');
+                                                                if (pelem_end) *pelem_end = '\0';
+                                                                param_element_types[param_count] = parse_base_type(pelem_start);
+                                                            } else {
+                                                                param_types[param_count] = base;
+                                                            }
+                                                        } else {
+                                                            param_types[param_count] = parse_base_type(pt_buf);
+                                                        }
+                                                        param_structs[param_count] = NULL;
+                                                        param_count++;
+                                                    }
+                                                    while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                                    // 解析参数名
+                                                    const char* pname_start = after_cfunc;
+                                                    while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                    int pname_len = (int)(after_cfunc - pname_start);
+                                                    if (pname_len > 0 && pname_len < 64 && param_count > 0) {
+                                                        param_names[param_count - 1] = (char*)malloc(pname_len + 1);
+                                                        strncpy(param_names[param_count - 1], pname_start, pname_len);
+                                                        param_names[param_count - 1][pname_len] = '\0';
+                                                    }
+                                                }
+                                                if (*after_cfunc == ')') after_cfunc++;
+                                            }
+
+                                            while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                            if (*after_cfunc == ':') {
+                                                after_cfunc++;
+                                                while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+                                                const char* ret_start = after_cfunc;
+                                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                if (*after_cfunc == '[') {
+                                                    after_cfunc++;
+                                                    while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                                                    if (*after_cfunc == ']') after_cfunc++;
+                                                }
+                                                int ret_len = (int)(after_cfunc - ret_start);
+                                                TypeKind ret_type = TYPE_I32;
+                                                TypeKind ret_element_type = TYPE_PTR;
+                                                if (ret_len > 0 && ret_len < 128) {
+                                                    char ret_buf[128]; strncpy(ret_buf, ret_start, ret_len); ret_buf[ret_len] = '\0';
+                                                    char* rbracket = strchr(ret_buf, '[');
+                                                    if (rbracket) {
+                                                        *rbracket = '\0';
+                                                        ret_type = parse_base_type(ret_buf);
+                                                        if (ret_type == TYPE_PTR) {
+                                                            ret_type = TYPE_PTR_GENERIC;
+                                                            char* elem_start = rbracket + 1;
+                                                            char* elem_end = strchr(elem_start, ']');
+                                                            if (elem_end) *elem_end = '\0';
+                                                            ret_element_type = parse_base_type(elem_start);
+                                                        }
+                                                    } else {
+                                                        ret_type = parse_base_type(ret_buf);
+                                                    }
+                                                }
+
+                                                module_symbol_table_add_cfunc(table, cfunc_name_buf,
+                                                    param_count, param_types, param_element_types,
+                                                    param_structs, param_names,
+                                                    ret_type, ret_element_type, NULL);
+
+                                                for (int pi = 0; pi < param_count; pi++) {
+                                                    free(param_names[pi]);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 查找非 export cfunc（子文件中的裸 cfunc 定义）
+                            if (strncmp(sp, "cfunc", 5) == 0 && (sp[5] == ' ' || sp[5] == '\t' || sp[5] == '\n' || sp[5] == '\r')) {
+                                char* after_cfunc = sp + 5;
+                                while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+                                const char* name_start = after_cfunc;
+                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                int name_len = (int)(after_cfunc - name_start);
+
+                                if (name_len > 0 && name_len < 64) {
+                                    char cfunc_name_buf[64];
+                                    strncpy(cfunc_name_buf, name_start, name_len);
+                                    cfunc_name_buf[name_len] = '\0';
+
+                                    if (!module_symbol_table_find_cfunc(table, cfunc_name_buf)) {
+                                        // 解析参数列表
+                                        TypeKind param_types[MOD_MAX_PARAMS];
+                                        TypeKind param_element_types[MOD_MAX_PARAMS];
+                                        char* param_structs[MOD_MAX_PARAMS];
+                                        char* param_names[MOD_MAX_PARAMS];
+                                        int param_count = 0;
+                                        for (int pi = 0; pi < MOD_MAX_PARAMS; pi++) {
+                                            param_element_types[pi] = TYPE_PTR;
+                                            param_structs[pi] = NULL;
+                                            param_names[pi] = NULL;
+                                        }
+
+                                        while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                        if (*after_cfunc == '(') {
+                                            after_cfunc++;
+                                            while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                                                while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
+                                                if (*after_cfunc == ')' || *after_cfunc == '\0') break;
+
+                                                const char* pt_start = after_cfunc;
+                                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                if (*after_cfunc == '[') {
+                                                    after_cfunc++;
+                                                    while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                                                    if (*after_cfunc == ']') after_cfunc++;
+                                                }
+                                                int pt_len = (int)(after_cfunc - pt_start);
+                                                if (pt_len > 0 && pt_len < 128) {
+                                                    char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                                    char* pbracket = strchr(pt_buf, '[');
+                                                    if (pbracket) {
+                                                        *pbracket = '\0';
+                                                        TypeKind base = parse_base_type(pt_buf);
+                                                        if (base == TYPE_PTR) {
+                                                            param_types[param_count] = TYPE_PTR_GENERIC;
+                                                            char* pelem_start = pbracket + 1;
+                                                            char* pelem_end = strchr(pelem_start, ']');
+                                                            if (pelem_end) *pelem_end = '\0';
+                                                            param_element_types[param_count] = parse_base_type(pelem_start);
+                                                        } else {
+                                                            param_types[param_count] = base;
+                                                        }
+                                                    } else {
+                                                        param_types[param_count] = parse_base_type(pt_buf);
+                                                    }
+                                                    param_structs[param_count] = NULL;
+                                                    param_count++;
+                                                }
+                                                while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                                // 解析参数名
+                                                const char* pname_start = after_cfunc;
+                                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                int pname_len = (int)(after_cfunc - pname_start);
+                                                if (pname_len > 0 && pname_len < 64 && param_count > 0) {
+                                                    param_names[param_count - 1] = (char*)malloc(pname_len + 1);
+                                                    strncpy(param_names[param_count - 1], pname_start, pname_len);
+                                                    param_names[param_count - 1][pname_len] = '\0';
+                                                }
+                                            }
+                                            if (*after_cfunc == ')') after_cfunc++;
+                                        }
+
+                                        while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                        if (*after_cfunc == ':') {
+                                            after_cfunc++;
+                                            while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+
+                                            const char* ret_start = after_cfunc;
+                                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                            if (*after_cfunc == '[') {
+                                                after_cfunc++;
+                                                while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
+                                                if (*after_cfunc == ']') after_cfunc++;
+                                            }
+                                            int ret_len = (int)(after_cfunc - ret_start);
+                                            TypeKind ret_type = TYPE_I32;
+                                            TypeKind ret_element_type = TYPE_PTR;
+                                            if (ret_len > 0 && ret_len < 128) {
+                                                char ret_buf[128]; strncpy(ret_buf, ret_start, ret_len); ret_buf[ret_len] = '\0';
+                                                char* rbracket = strchr(ret_buf, '[');
+                                                if (rbracket) {
+                                                    *rbracket = '\0';
+                                                    ret_type = parse_base_type(ret_buf);
+                                                    if (ret_type == TYPE_PTR) {
+                                                        ret_type = TYPE_PTR_GENERIC;
+                                                        char* elem_start = rbracket + 1;
+                                                        char* elem_end = strchr(elem_start, ']');
+                                                        if (elem_end) *elem_end = '\0';
+                                                        ret_element_type = parse_base_type(elem_start);
+                                                    }
+                                                } else {
+                                                    ret_type = parse_base_type(ret_buf);
+                                                }
+                                            }
+
+                                            module_symbol_table_add_cfunc(table, cfunc_name_buf,
+                                                param_count, param_types, param_element_types,
+                                                param_structs, param_names,
+                                                ret_type, ret_element_type, NULL);
+
+                                            for (int pi = 0; pi < param_count; pi++) {
+                                                free(param_names[pi]);
                                             }
                                         }
                                     }

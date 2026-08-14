@@ -356,3 +356,63 @@ void module_symbol_table_add_clib(ModuleSymbolTable* table, const char* name, in
 int module_symbol_table_clib_count(ModuleSymbolTable* table) {
     return table ? table->clib_count : 0;
 }
+
+// 查找 cfunc 符号
+ModuleCfuncSymbol* module_symbol_table_find_cfunc(ModuleSymbolTable* table, const char* cfunc_name) {
+    if (!table || !cfunc_name) return NULL;
+    for (int i = 0; i < table->cfunc_count; i++) {
+        if (strcmp(table->cfuncs[i].name, cfunc_name) == 0) return &table->cfuncs[i];
+    }
+    return NULL;
+}
+
+// 添加 cfunc 符号
+void module_symbol_table_add_cfunc(ModuleSymbolTable* table, const char* name,
+    int param_count, TypeKind* param_types, TypeKind* param_element_types,
+    char** param_struct_names, char** param_names,
+    TypeKind return_type, TypeKind return_element_type, const char* return_struct_name) {
+    if (!table || !name) return;
+
+    // 扩容
+    if (table->cfunc_count >= table->cfunc_capacity) {
+        int new_capacity = table->cfunc_capacity == 0 ? 8 : table->cfunc_capacity * 2;
+        ModuleCfuncSymbol* new_cfuncs = (ModuleCfuncSymbol*)realloc(table->cfuncs, sizeof(ModuleCfuncSymbol) * new_capacity);
+        if (!new_cfuncs) return;
+        table->cfuncs = new_cfuncs;
+        table->cfunc_capacity = new_capacity;
+    }
+
+    ModuleCfuncSymbol* cf = &table->cfuncs[table->cfunc_count++];
+    cf->name = strdup(name);
+    cf->param_count = param_count;
+    cf->return_type = return_type;
+    cf->return_element_type = return_element_type;
+    cf->return_struct_name = return_struct_name ? strdup(return_struct_name) : NULL;
+
+    if (param_count > 0 && param_types) {
+        cf->param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+        cf->param_element_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+        cf->param_struct_names = (char**)calloc(param_count, sizeof(char*));
+        cf->param_names = (char**)calloc(param_count, sizeof(char*));
+        for (int i = 0; i < param_count; i++) {
+            cf->param_types[i] = param_types[i];
+            cf->param_element_types[i] = param_element_types ? param_element_types[i] : TYPE_PTR;
+            if (param_struct_names && param_struct_names[i]) {
+                cf->param_struct_names[i] = strdup(param_struct_names[i]);
+            }
+            if (param_names && param_names[i]) {
+                cf->param_names[i] = strdup(param_names[i]);
+            }
+        }
+    } else {
+        cf->param_types = NULL;
+        cf->param_element_types = NULL;
+        cf->param_struct_names = NULL;
+        cf->param_names = NULL;
+    }
+}
+
+// cfunc 符号数量
+int module_symbol_table_cfunc_count(ModuleSymbolTable* table) {
+    return table ? table->cfunc_count : 0;
+}

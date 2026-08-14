@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000000D  // v13: 添加依赖路径追踪，修复传递依赖缓存失效
+#define LENOSYMC_VERSION 0x0000000E  // v14: 添加 cfunc 符号序列化/反序列化
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -415,6 +415,64 @@ sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
         }
     }
 
+    // cfuncs
+    uint32_t cfc_count = (uint32_t)table->cfunc_count;
+    fwrite(&cfc_count, 4, 1, f);
+    for (uint32_t i = 0; i < cfc_count; i++) {
+        ModuleCfuncSymbol* cf = &table->cfuncs[i];
+        sym_cache_write_string(f, cf->name);
+        uint32_t pc = (uint32_t)cf->param_count;
+        fwrite(&pc, 4, 1, f);
+        // param_types
+        if (cf->param_types && pc > 0) {
+            uint8_t has_pt = 1;
+            fwrite(&has_pt, 1, 1, f);
+            for (uint32_t k = 0; k < pc; k++) {
+                uint8_t pt = (uint8_t)cf->param_types[k];
+                fwrite(&pt, 1, 1, f);
+            }
+        } else {
+            uint8_t has_pt = 0;
+            fwrite(&has_pt, 1, 1, f);
+        }
+        // param_element_types
+        if (cf->param_element_types && pc > 0) {
+            uint8_t has_pet = 1;
+            fwrite(&has_pet, 1, 1, f);
+            for (uint32_t k = 0; k < pc; k++) {
+                uint8_t pet = (uint8_t)cf->param_element_types[k];
+                fwrite(&pet, 1, 1, f);
+            }
+        } else {
+            uint8_t has_pet = 0;
+            fwrite(&has_pet, 1, 1, f);
+        }
+        // param_struct_names
+        uint8_t has_psn = cf->param_struct_names ? 1 : 0;
+        fwrite(&has_psn, 1, 1, f);
+        if (has_psn) {
+            for (uint32_t k = 0; k < pc; k++) {
+                sym_cache_write_string(f, cf->param_struct_names[k]);
+            }
+        }
+        // param_names
+        uint8_t has_pn = cf->param_names ? 1 : 0;
+        fwrite(&has_pn, 1, 1, f);
+        if (has_pn) {
+            for (uint32_t k = 0; k < pc; k++) {
+                sym_cache_write_string(f, cf->param_names[k]);
+            }
+        }
+        // return_type
+        uint8_t rt = (uint8_t)cf->return_type;
+        fwrite(&rt, 1, 1, f);
+        // return_element_type
+        uint8_t ret_et = (uint8_t)cf->return_element_type;
+        fwrite(&ret_et, 1, 1, f);
+        // return_struct_name
+        sym_cache_write_string(f, cf->return_struct_name);
+    }
+
     fclose(f);
     return 0;
 }
@@ -745,6 +803,61 @@ table->func_count++;
             }
         }
         table->clib_count++;
+    }
+
+    // cfuncs
+    uint32_t cfc_count;
+    if (fread(&cfc_count, 4, 1, f) != 1) { fclose(f); return -1; }
+    table->cfunc_count = 0; table->cfunc_capacity = cfc_count > 0 ? cfc_count : 0;
+    table->cfuncs = cfc_count > 0 ? (ModuleCfuncSymbol*)calloc(cfc_count, sizeof(ModuleCfuncSymbol)) : NULL;
+    for (uint32_t i = 0; i < cfc_count; i++) {
+        ModuleCfuncSymbol* cf = &table->cfuncs[i];
+        cf->name = sym_cache_read_string(f);
+        uint32_t pc; if (fread(&pc, 4, 1, f) != 1) goto fail;
+        cf->param_count = (int)pc;
+        // param_types
+        uint8_t has_pt; if (fread(&has_pt, 1, 1, f) != 1) goto fail;
+        if (has_pt && pc > 0) {
+            cf->param_types = (TypeKind*)calloc(pc, sizeof(TypeKind));
+            for (uint32_t k = 0; k < pc; k++) {
+                uint8_t pt; if (fread(&pt, 1, 1, f) != 1) goto fail;
+                cf->param_types[k] = (TypeKind)pt;
+            }
+        }
+        // param_element_types
+        uint8_t has_pet; if (fread(&has_pet, 1, 1, f) != 1) goto fail;
+        if (has_pet && pc > 0) {
+            cf->param_element_types = (TypeKind*)calloc(pc, sizeof(TypeKind));
+            for (uint32_t k = 0; k < pc; k++) {
+                uint8_t pet; if (fread(&pet, 1, 1, f) != 1) goto fail;
+                cf->param_element_types[k] = (TypeKind)pet;
+            }
+        }
+        // param_struct_names
+        uint8_t has_psn; if (fread(&has_psn, 1, 1, f) != 1) goto fail;
+        if (has_psn && pc > 0) {
+            cf->param_struct_names = (char**)calloc(pc, sizeof(char*));
+            for (uint32_t k = 0; k < pc; k++) {
+                cf->param_struct_names[k] = sym_cache_read_string(f);
+            }
+        }
+        // param_names
+        uint8_t has_pn; if (fread(&has_pn, 1, 1, f) != 1) goto fail;
+        if (has_pn && pc > 0) {
+            cf->param_names = (char**)calloc(pc, sizeof(char*));
+            for (uint32_t k = 0; k < pc; k++) {
+                cf->param_names[k] = sym_cache_read_string(f);
+            }
+        }
+        // return_type
+        uint8_t rt; if (fread(&rt, 1, 1, f) != 1) goto fail;
+        cf->return_type = (TypeKind)rt;
+        // return_element_type
+        uint8_t ret_et; if (fread(&ret_et, 1, 1, f) != 1) goto fail;
+        cf->return_element_type = (TypeKind)ret_et;
+        // return_struct_name
+        cf->return_struct_name = sym_cache_read_string(f);
+        table->cfunc_count++;
     }
 
     fclose(f);

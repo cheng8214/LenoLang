@@ -1,0 +1,12 @@
+// 测试 cfunc 跨模块 use 导入
+// 从 cfunc_core 模块导入 WriteCb 和 CompareCb 签名
+import "cfunc_core.leno" as core
+use core.WriteCb
+use core.CompareCb
+
+main() {
+    // 如果 cfunc 跨模块 use 成功，编译不会报错
+    // use 语句错误：模块 'core' 中没有类型或函数 'WriteCb'
+    assert(true, "cfunc cross-module use succeeded")
+    print("cfunc cross-module use test passed")
+}

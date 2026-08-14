@@ -25,6 +25,9 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     table->clibs = NULL;
     table->clib_count = 0;
     table->clib_capacity = 0;
+    table->cfuncs = NULL;
+    table->cfunc_count = 0;
+    table->cfunc_capacity = 0;
     table->dep_paths = NULL;
     table->dep_count = 0;
     table->dep_capacity = 0;
@@ -163,6 +166,27 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
         free(table->clibs[i].funcs);
     }
     free(table->clibs);
+
+    // 释放 cfunc 符号
+    for (int i = 0; i < table->cfunc_count; i++) {
+        free(table->cfuncs[i].name);
+        free(table->cfuncs[i].param_types);
+        free(table->cfuncs[i].param_element_types);
+        free(table->cfuncs[i].return_struct_name);
+        if (table->cfuncs[i].param_struct_names) {
+            for (int j = 0; j < table->cfuncs[i].param_count; j++) {
+                free(table->cfuncs[i].param_struct_names[j]);
+            }
+            free(table->cfuncs[i].param_struct_names);
+        }
+        if (table->cfuncs[i].param_names) {
+            for (int j = 0; j < table->cfuncs[i].param_count; j++) {
+                free(table->cfuncs[i].param_names[j]);
+            }
+            free(table->cfuncs[i].param_names);
+        }
+    }
+    free(table->cfuncs);
 
     // 释放依赖路径数组
     for (int i = 0; i < table->dep_count; i++) {

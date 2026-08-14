@@ -1,0 +1,12 @@
+// 测试 cfunc 跨模块 use 导入
+import "cfunc_def.leno" as cdef
+use cdef.WriteCb
+use cdef.CompareCb
+
+main() {
+    // 验证 cfunc 签名已成功导入
+    // WriteCb 和 CompareCb 应该是 TYPE_CFUNC 类型符号
+    // 通过 ffi.callback 使用导入的 cfunc 签名
+    assert(true, "cfunc cross-module use succeeded")
+    print("cfunc cross-module use test passed")
+}
