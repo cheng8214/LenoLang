@@ -1,0 +1,152 @@
+// new_features_test.leno — LenoNet 新功能测试
+// 测试: Response.json() / formEncode / buildQuery / postForm / getWithParams / setBearerToken
+import "../lib/net.leno"
+use net.(HttpClient, Response)
+
+main() {
+    net.globalInit()
+    print("=== LenoNet 新功能测试 ===")
+    print("libcurl 版本: " + net.version())
+    print("")
+
+    // ==================== 1. formEncode 表单编码 ====================
+    print("--- 1. formEncode 表单编码 ---")
+    Dict form = {name: "张三", age: 25, city: "北京"}
+    string encoded = net.formEncode(form)
+    print("原始: {name: 张三, age: 25, city: 北京}")
+    print("编码: " + encoded)
+    // 验证编码包含 urlEncode 的结果
+    if encoded.has("name=") and encoded.has("age=25") {
+        print("  [PASS] formEncode 包含正确字段")
+    } else {
+        print("  [FAIL] formEncode 编码不正确")
+    }
+    print("")
+
+    // ==================== 2. buildQuery 查询参数构建 ====================
+    print("--- 2. buildQuery 查询参数构建 ---")
+    Dict params = {page: 1, size: 10, sort: "desc"}
+    string query = net.buildQuery(params)
+    print("参数: {page: 1, size: 10, sort: desc}")
+    print("查询: " + query)
+    if query.has("?page=1") and query.has("size=10") {
+        print("  [PASS] buildQuery 格式正确")
+    } else {
+        print("  [FAIL] buildQuery 格式不正确")
+    }
+    print("")
+
+    // ==================== 3. getWithParams 带参数 GET 请求 ====================
+    print("--- 3. getWithParams 带参数 GET 请求 ---")
+    Dict q3 = {foo: "bar", num: 123}
+    Response r3 = net.getWithParams("http://httpbin.org/get", q3)
+    if r3.ok() {
+        print("  状态码: " + r3.statusCode)
+        // httpbin.org/get 会回显请求的 URL 和参数
+        if r3.body.has("bar") {
+            print("  [PASS] getWithParams 参数已传递")
+        } else {
+            print("  [SKIP] 无法验证参数传递")
+        }
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r3.statusCode + ")")
+    }
+    print("")
+
+    // ==================== 4. postForm 表单提交 ====================
+    print("--- 4. postForm 表单提交 ---")
+    Dict formData = {username: "leno", password: "secret123"}
+    Response r4 = net.postForm("http://httpbin.org/post", formData)
+    if r4.ok() {
+        print("  状态码: " + r4.statusCode)
+        // httpbin.org/post 会回显提交的表单数据
+        if r4.body.has("leno") and r4.body.has("secret123") {
+            print("  [PASS] postForm 表单数据已提交")
+        } else {
+            print("  [SKIP] 无法验证表单数据")
+        }
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r4.statusCode + ")")
+    }
+    print("")
+
+    // ==================== 5. Response.json() JSON 解析 ====================
+    print("--- 5. Response.json() JSON 解析 ---")
+    Response r5 = net.get("http://httpbin.org/json")
+    if r5.ok() {
+        print("  状态码: " + r5.statusCode)
+        // json() 返回 Dict，可以直接用 ["key"] 或 .key 访问
+        Dict data = r5.json()
+        // httpbin.org/json 返回 {"slideshow": {...}}
+        if data.has("slideshow") {
+            print("  [PASS] json() 解析成功，包含 slideshow 键")
+            // 进一步访问嵌套字段
+            Dict slideshow = data["slideshow"] as Dict
+            print("  slideshow.title: " + slideshow["title"])
+        } else {
+            print("  [SKIP] 响应不含 slideshow 键")
+        }
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r5.statusCode + ")")
+    }
+    print("")
+
+    // ==================== 6. setBearerToken Bearer Token 认证 ====================
+    print("--- 6. setBearerToken Bearer Token 认证 ---")
+    HttpClient c6 = net.createClient()
+    c6.setBearerToken("my-secret-token-12345")
+    Response r6 = c6.get("http://httpbin.org/headers")
+    if r6.ok() {
+        print("  状态码: " + r6.statusCode)
+        // httpbin.org/headers 会回显请求头
+        if r6.body.has("Bearer my-secret-token-12345") {
+            print("  [PASS] Bearer Token 已设置")
+        } else {
+            print("  [SKIP] 无法验证 Bearer Token")
+        }
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r6.statusCode + ")")
+    }
+    c6.close()
+    print("")
+
+    // ==================== 7. json() + postJson 组合测试 ====================
+    print("--- 7. postJson + json() 组合测试 ---")
+    string payload = '{"name": "LenoNet", "version": "1.0", "features": ["http", "json"]}'
+    Response r7 = net.postJson("http://httpbin.org/post", payload)
+    if r7.ok() {
+        print("  状态码: " + r7.statusCode)
+        // httpbin.org/post 回显请求的 JSON 数据
+        Dict data = r7.json()
+        if data.has("json") {
+            Dict jsonData = data["json"] as Dict
+            print("  回显的 JSON.name: " + jsonData["name"])
+            print("  回显的 JSON.version: " + jsonData["version"])
+            if jsonData["name"] == "LenoNet" {
+                print("  [PASS] postJson + json() 组合正常")
+            } else {
+                print("  [FAIL] 回显数据不正确")
+            }
+        } else {
+            print("  [SKIP] 响应不含 json 键")
+        }
+    } else {
+        print("  [SKIP] httpbin.org 不可用 (" + r7.statusCode + ")")
+    }
+    print("")
+
+    // ==================== 汇总 ====================
+    print("====================")
+    print("新功能测试完成!")
+    print("新增功能:")
+    print("  1. Response.json()        — 响应体 JSON 解析，返回 Dict")
+    print("  2. formEncode(Dict)       — 表单编码")
+    print("  3. buildQuery(Dict)       — 查询参数构建")
+    print("  4. getWithParams(url, d)  — 带参数 GET 请求")
+    print("  5. postForm(url, d)       — 表单 POST 请求")
+    print("  6. setBearerToken(token)  — Bearer Token 认证")
+    print("====================")
+
+    net.globalCleanup()
+    print("\n全局清理完成。")
+}

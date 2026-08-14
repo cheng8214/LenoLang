@@ -1,0 +1,93 @@
+// json_unit_test.leno — 纯单元测试，不依赖网络
+// 验证 Response.json() 的核心逻辑: jsons.decode(body) as Dict
+import jsons
+
+// 模拟 Response 结构体（只保留 json() 相关部分）
+struct MockResponse {
+    string body
+
+    func json(): Dict {
+        return jsons.decode(body) as Dict
+    }
+}
+
+main() {
+    print("=== Response.json() 纯单元测试 ===")
+    print("")
+
+    // 测试1: 简单 JSON 对象
+    print("--- 测试1: 简单 JSON 对象 ---")
+    MockResponse r1 = new MockResponse()
+    r1.body = '{"name": "LenoNet", "version": "1.0", "count": 42}'
+    Dict d1 = r1.json()
+    print("  name: " + d1["name"])
+    print("  version: " + d1["version"])
+    print("  count: " + d1["count"])
+    if d1["name"] == "LenoNet" and d1["count"] == 42 {
+        print("  [PASS]")
+    } else {
+        print("  [FAIL]")
+    }
+    print("")
+
+    // 测试2: 嵌套 JSON
+    print("--- 测试2: 嵌套 JSON ---")
+    MockResponse r2 = new MockResponse()
+    r2.body = '{"user": {"id": 1001, "name": "张三"}, "tags": ["vip", "active"]}'
+    Dict d2 = r2.json()
+    Dict user = d2["user"] as Dict
+    print("  user.id: " + user["id"])
+    print("  user.name: " + user["name"])
+    if user["id"] == 1001 and user["name"] == "张三" {
+        print("  [PASS]")
+    } else {
+        print("  [FAIL]")
+    }
+    print("")
+
+    // 测试3: 空对象
+    print("--- 测试3: 空对象 ---")
+    MockResponse r3 = new MockResponse()
+    r3.body = '{}'
+    Dict d3 = r3.json()
+    print("  len: " + d3.len())
+    if d3.len() == 0 {
+        print("  [PASS]")
+    } else {
+        print("  [FAIL]")
+    }
+    print("")
+
+    // 测试4: 包含数组的值
+    print("--- 测试4: 包含数组的值 ---")
+    MockResponse r4 = new MockResponse()
+    r4.body = '{"items": [1, 2, 3], "names": ["a", "b", "c"]}'
+    Dict d4 = r4.json()
+    Array items = d4["items"] as Array
+    print("  items[0]: " + items[0])
+    print("  items[1]: " + items[1])
+    print("  items[2]: " + items[2])
+    if items[0] == 1 and items[2] == 3 {
+        print("  [PASS]")
+    } else {
+        print("  [FAIL]")
+    }
+    print("")
+
+    // 测试5: 包含 null 和 bool
+    print("--- 测试5: 包含 null 和 bool ---")
+    MockResponse r5 = new MockResponse()
+    r5.body = '{"active": true, "deleted": false, "data": null}'
+    Dict d5 = r5.json()
+    print("  active: " + d5["active"])
+    print("  deleted: " + d5["deleted"])
+    print("  data: " + d5["data"])
+    if d5["active"] == true and d5["deleted"] == false {
+        print("  [PASS]")
+    } else {
+        print("  [FAIL]")
+    }
+    print("")
+
+    print("=== 全部测试完成 ===")
+}

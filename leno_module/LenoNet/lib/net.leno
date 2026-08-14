@@ -1,6 +1,7 @@
 // net.leno — LenoNet 入口模块（高级 HTTP 客户端封装）
 // 用户只需 import net 即可使用所有功能
 import ffi
+import jsons
 import "curl_core.leno" as core
 // 重新导出核心类型
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
@@ -47,6 +48,13 @@ export struct Response {
 
     // 判断是否成功（2xx 状态码）
     func ok(): bool { return statusCode >= 200 and statusCode < 300 }
+
+    // 解析响应体为 JSON 字典
+    // 适用于响应是 JSON 对象的场景
+    // 返回 Dict 类型，可直接用 ["key"] 或 .key 访问
+    func json(): Dict {
+        return jsons.decode(body) as Dict
+    }
 
     // 转为可读字符串
     func str(): string {
@@ -337,6 +345,15 @@ export struct HttpClient {
         return core.setopt_str(handle, Opt.COOKIEJAR, file)
     }
 
+    // 设置 Bearer Token 认证
+    // 等价于 setHeaders(["Authorization: Bearer <token>"])
+    func setBearerToken(string token): int {
+        if not ok { return Code.FAILED_INIT }
+        Ptr[u8] slist = null
+        slist = core.slistAppend(slist, "Authorization: Bearer " + token)
+        return core.setopt_ptr(handle, Opt.HTTPHEADER, slist)
+    }
+
     // 获取句柄
     func getHandle(): Ptr[u8] { return handle }
 
@@ -427,6 +444,51 @@ export func patch(string url, string body): Response {
 export func del(string url): Response {
     HttpClient c = createClient()
     Response resp = c.del(url)
+    c.close()
+    return resp
+}
+
+// ==================== 表单/查询编码 ====================
+
+// 将字典编码为 URL 表单格式
+// 例: {name: "张三", age: 25} -> "name=%E5%BC%A0%E4%B8%89&age=25"
+export func formEncode(Dict data): string {
+    string result = ""
+    bool first = true
+    for data to key, value {
+        if not first { result = result + "&" }
+        first = false
+        result = result + urlEncode(_str(key)) + "=" + urlEncode(_str(value))
+    }
+    return result
+}
+
+// 将字典编码为 URL 查询参数
+// 例: {page: 1, size: 10} -> "?page=1&size=10"
+// 如果字典为空，返回空字符串（不带 ?）
+export func buildQuery(Dict params): string {
+    string encoded = formEncode(params)
+    if encoded == "" { return "" }
+    return "?" + encoded
+}
+
+// GET 请求（带查询参数）
+// 自动将 params 字典编码为 query string 拼接到 url
+export func getWithParams(string url, Dict params): Response {
+    string query = buildQuery(params)
+    return get(url + query)
+}
+
+// POST 表单请求（application/x-www-form-urlencoded）
+// 自动将 data 字典编码为表单格式
+export func postForm(string url, Dict data): Response {
+    string body = formEncode(data)
+    HttpClient c = createClient()
+    Ptr[u8] slist = null
+    slist = core.slistAppend(slist, "Content-Type: application/x-www-form-urlencoded")
+    core.setopt_ptr(c.getHandle(), Opt.HTTPHEADER, slist)
+    Response resp = c.post(url, body)
+    if slist != null { core.slistFreeAll(slist) }
     c.close()
     return resp
 }
