@@ -191,10 +191,43 @@ OPCODE(OP_AS_CAST) {
             break;
         case TYPE_PTR:
             (void)READ_BYTE();
-            matches = (val_is_obj(value) &&
-                      (val_as_obj(value)->type == OBJ_FFI_POINTER ||
-                       val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
-                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
+            if (val_is_obj(value) &&
+                (val_as_obj(value)->type == OBJ_FFI_POINTER ||
+                 val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
+                 val_as_obj(value)->type == OBJ_FFI_CALLBACK)) {
+                matches = 1;
+            } else if (val_is_int(value)) {
+                // 整数转指针（如 -1 表示 SQLITE_TRANSIENT）
+                int64_t addr = (int64_t)val_as_int(value);
+                ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+                if (ffi_ptr) {
+                    ffi_ptr->ptr = (void*)addr;
+                    ffi_ptr->size = 0;
+                    ffi_ptr->owned = 0;
+                    ffi_ptr->freed = 0;
+                    ffi_ptr->element_type = TYPE_PTR;
+                    value = val_obj((Object*)ffi_ptr);
+                    matches = 1;
+                } else {
+                    matches = 0;
+                }
+            } else if (val_is_float(value)) {
+                int64_t addr = (int64_t)val_as_double(value);
+                ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+                if (ffi_ptr) {
+                    ffi_ptr->ptr = (void*)addr;
+                    ffi_ptr->size = 0;
+                    ffi_ptr->owned = 0;
+                    ffi_ptr->freed = 0;
+                    ffi_ptr->element_type = TYPE_PTR;
+                    value = val_obj((Object*)ffi_ptr);
+                    matches = 1;
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
             break;
         case TYPE_PTR_GENERIC: {
             TypeKind elem_kind = READ_BYTE();

@@ -1,0 +1,204 @@
+// sqlite3_core.leno — SQLite3 核心绑定（clib/cstruct/常量/DLL）
+// 封装 SQLite3 C API，提供数据库连接、SQL 执行、预编译语句等功能
+import ffi
+import dirs
+import files
+
+// ==================== clib sqlite3 ====================
+// SQLite3 C API 函数声明
+// 注意：sqlite3 使用 sqlite3* 和 sqlite3_stmt* 作为不透明句柄
+//       在 Leno 中用 Ptr[u8] 表示这些不透明指针
+clib sqlite3 {
+    // ==================== 连接管理 ====================
+    i32 sqlite3_open(str8 filename, Ptr db)
+    i32 sqlite3_open_v2(str8 filename, Ptr db, i32 flags, str8 vfs)
+    i32 sqlite3_close(Ptr db)
+    i32 sqlite3_close_v2(Ptr db)
+
+    // ==================== 错误处理 ====================
+    str8 sqlite3_errmsg(Ptr db)
+    i32  sqlite3_errcode(Ptr db)
+    i32  sqlite3_extended_errcode(Ptr db)
+    str8 sqlite3_errstr(i32 errcode)
+
+    // ==================== 执行 SQL（简单接口） ====================
+    i32 sqlite3_exec(Ptr db, str8 sql, Ptr callback, Ptr arg, Ptr errmsg)
+    void sqlite3_free(Ptr p)
+
+    // ==================== 预编译语句 ====================
+    i32 sqlite3_prepare_v2(Ptr db, str8 sql, i32 nbyte, Ptr stmt, Ptr tail)
+    i32 sqlite3_prepare_v3(Ptr db, str8 sql, i32 nbyte, i32 flags, Ptr stmt, Ptr tail)
+    i32 sqlite3_step(Ptr stmt)
+    i32 sqlite3_reset(Ptr stmt)
+    i32 sqlite3_finalize(Ptr stmt)
+    i32 sqlite3_clear_bindings(Ptr stmt)
+
+    // ==================== 参数绑定 ====================
+    i32 sqlite3_bind_int(Ptr stmt, i32 idx, i32 value)
+    i32 sqlite3_bind_int64(Ptr stmt, i32 idx, i64 value)
+    i32 sqlite3_bind_double(Ptr stmt, i32 idx, f64 value)
+    i32 sqlite3_bind_text(Ptr stmt, i32 idx, str8 text, i32 nbyte, Ptr destructor)
+    i32 sqlite3_bind_blob(Ptr stmt, i32 idx, Ptr data, i32 nbyte, Ptr destructor)
+    i32 sqlite3_bind_null(Ptr stmt, i32 idx)
+    i32 sqlite3_bind_parameter_index(Ptr stmt, str8 name)
+    i32 sqlite3_bind_parameter_count(Ptr stmt)
+
+    // ==================== 列信息 ====================
+    i32  sqlite3_column_count(Ptr stmt)
+    str8 sqlite3_column_name(Ptr stmt, i32 col)
+    str8 sqlite3_column_decltype(Ptr stmt, i32 col)
+    i32  sqlite3_column_type(Ptr stmt, i32 col)
+
+    // ==================== 列值读取 ====================
+    i32  sqlite3_column_int(Ptr stmt, i32 col)
+    i64  sqlite3_column_int64(Ptr stmt, i32 col)
+    f64  sqlite3_column_double(Ptr stmt, i32 col)
+    str8 sqlite3_column_text(Ptr stmt, i32 col)
+    Ptr  sqlite3_column_blob(Ptr stmt, i32 col)
+    i32  sqlite3_column_bytes(Ptr stmt, i32 col)
+    i32  sqlite3_column_size(Ptr stmt, i32 col)
+
+    // ==================== 行变化 ====================
+    i32 sqlite3_changes(Ptr db)
+    i64 sqlite3_changes64(Ptr db)
+    i64 sqlite3_last_insert_rowid(Ptr db)
+    i32 sqlite3_total_changes(Ptr db)
+
+    // ==================== 事务 ====================
+    i32 sqlite3_get_autocommit(Ptr db)
+    i32 sqlite3_busy_timeout(Ptr db, i32 ms)
+
+    // ==================== 版本信息 ====================
+    str8 sqlite3_libversion()
+    i32  sqlite3_libversion_number()
+    str8 sqlite3_sourceid()
+
+    // ==================== 初始化/关闭 ====================
+    i32 sqlite3_initialize()
+    i32 sqlite3_shutdown()
+
+    // ==================== 布尔值（SQLite3 没有 boolean 类型，用 int 表示） ====================
+    // sqlite3_bind_int 绑定布尔值时用 0/1
+}
+
+// ==================== 枚举常量 ====================
+
+// SQLite 结果码
+export enum ResultCode {
+    OK           = 0     // 成功
+    ERROR        = 1     // SQL 错误
+    INTERNAL     = 2     // 内部逻辑错误
+    PERM         = 3     // 访问权限被拒绝
+    ABORT        = 4     // 回调请求中止
+    BUSY         = 5     // 数据库文件被锁定
+    LOCKED       = 6     // 数据库中的表被锁定
+    NOMEM        = 7     // 内存分配失败
+    READONLY     = 8     // 尝试写入只读数据库
+    INTERRUPT    = 9     // 操作被中断
+    IOERR        = 10    // 磁盘 I/O 错误
+    CORRUPT      = 11    // 数据库磁盘映像格式错误
+    NOTFOUND     = 12    // 未知操作码
+    FULL         = 13    // 插入失败，因为数据库已满
+    CANTOPEN     = 14    // 无法打开数据库文件
+    PROTOCOL     = 15    // 数据库锁协议错误
+    EMPTY        = 16    // 数据库为空
+    SCHEMA       = 17    // 数据库模式已更改
+    TOOBIG       = 18    // 字符串或 BLOB 超过大小限制
+    CONSTRAINT   = 19    // 违反约束
+    MISMATCH     = 20    // 类型不匹配
+    MISUSE       = 21    // 库使用不当
+    NOLFS        = 22    // 使用了不支持 LFS 的操作系统功能
+    AUTH         = 23    // 授权被拒绝
+    FORMAT       = 24    // 辅助数据库格式错误
+    RANGE        = 25    // 2nd 参数超出范围
+    NOTADB       = 26    // 打开的文件不是数据库文件
+    NOTICE       = 27    // 来自 SQLite 库的通知
+    WARNING      = 28    // 来自 SQLite 库的警告
+    ROW          = 100   // sqlite3_step() 产生新行
+    DONE         = 101   // sqlite3_step() 执行完毕
+}
+
+// SQLite 打开标志（用于 sqlite3_open_v2）
+export enum OpenFlag {
+    READONLY    = 0x00000001  // 只读
+    READWRITE   = 0x00000002  // 读写
+    CREATE      = 0x00000004  // 如果不存在则创建
+    DELETEONCLOSE = 0x00000008 // 关闭时删除
+    EXCLUSIVE   = 0x00000010  // 独占
+    AUTOPROXY   = 0x00000020  // 自动代理
+    URI         = 0x00000040  // URI 文件名
+    MEMORY      = 0x00000080  // 内存数据库
+    NOFOLLOW    = 0x01000000  // 不跟随符号链接
+    SHAREDCACHE  = 0x00020000  // 共享缓存模式
+    PRIVATECACHE = 0x00040000  // 私有缓存模式
+}
+
+// SQLite 存储类型（sqlite3_column_type 返回值）
+export enum DataType {
+    INTEGER = 1  // 有符号整数
+    FLOAT   = 2  // 浮点数
+    TEXT    = 3  // 文本字符串
+    BLOB    = 4  // BLOB 数据
+    NULL    = 5  // NULL 值
+}
+
+// 静态析构常量（用于 sqlite3_bind_text/blob 的 destructor 参数）
+// SQLITE_STATIC 表示字符串/blob 是静态的，SQLite 不需要拷贝
+// SQLITE_TRANSIENT 表示 SQLite 应该拷贝数据
+export const SQLITE_STATIC   = 0
+export const SQLITE_TRANSIENT = -1
+
+// ==================== DLL 加载 ====================
+
+sqlite3 g_lib = null
+
+// 加载 SQLite3 DLL（全局缓存，避免重复加载）
+export func lib(): sqlite3 {
+    if g_lib == null {
+        // 根据平台选择动态库扩展名
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        // 从脚本目录和上级目录查找
+        var path = dirs.script_dir() + "/sqlite3" + ext
+        if not files.exists(path) { path = dirs.script_dir() + "/../sqlite3" + ext }
+        if not files.exists(path) { path = "sqlite3" + ext }
+        g_lib = ffi.load(path)
+    }
+    return g_lib
+}
+
+// ==================== 核心函数封装 ====================
+
+// 获取 SQLite3 库版本号
+export func libversion(): string {
+    sqlite3 l = lib()
+    if l == null { return "SQLite3 not loaded" }
+    return l.sqlite3_libversion()
+}
+
+// 获取 SQLite3 库版本号（数字形式）
+export func libversionNumber(): int {
+    sqlite3 l = lib()
+    if l == null { return 0 }
+    return l.sqlite3_libversion_number()
+}
+
+// 初始化 SQLite3 库
+export func initialize(): int {
+    sqlite3 l = lib()
+    if l == null { return ResultCode.ERROR }
+    return l.sqlite3_initialize()
+}
+
+// 关闭 SQLite3 库
+export func shutdown(): int {
+    sqlite3 l = lib()
+    if l == null { return ResultCode.ERROR }
+    return l.sqlite3_shutdown()
+}
+
+// 将错误码转换为错误消息
+export func errstr(int errcode): string {
+    sqlite3 l = lib()
+    if l == null { return "SQLite3 not loaded" }
+    return l.sqlite3_errstr(errcode)
+}

@@ -1,233 +1,172 @@
-# Leno 语言改进建议
+# Leno 语言特性评估总结
 
-基于对 LenoSDL3 完整 UI 库（~6000 行）的深入阅读和 142 个 struct null 警告的修复实践，以下是从实际痛点出发的改进建议，按优先级排列。
-
-> 已有特性（字符串插值、for-in 遍历、泛型约束）不再列入建议，但 UI 库应积极使用。
+> **结论：Leno 语法和特性已足够且稳定。** 以下是对各项建议的评估结果，大部分已实现或经评估后决定不实现。语言层面不再追加新特性，重心放在库生态和稳定性上。
 
 ---
 
-## 一、高优先级：消除大量样板代码
+## 已实现的特性
 
-### 1. struct 可空类型 `Type?`
+### 1. struct 可空类型 `Type?` ✅
 
-**痛点**：struct 值类型声明即分配，永远不为 null，导致懒初始化模式需要额外的 bool 标志。本次修复中，仅 `_font` 一个字段就在 16 个文件中生成了 `bool _fontDirty`、`_fontDirty = true`、`_fontDirty = false` 等上百处样板代码。
-
-**现状**：
-```leno
-Font _font
-bool _fontDirty = true        // 仅因为 struct 不能为 null
-
-func _ensure_font() {
-    if _fontDirty or not _font.ok {   // 两个条件缺一不可
-        if _font.ok { fnt.releaseFont(_font) }
-        _font = fnt.acquireFontAuto(_fontSize)
-        _fontDirty = false
-    }
-}
-
-func set_font_size(float s) {
-    _fontSize = s
-    if _font.ok { fnt.releaseFont(_font) }; _fontDirty = true  // 容易漏写
-}
-```
-
-**建议**：引入 `Type?` 可空类型语法糖。编译到运行时等价于"全零默认值 + ok=false"，语义上等于 null：
+`Type?` 可空类型已完整实现，支持 `int?`、`string?`、`Point?` 等所有类型。可空 struct 字段初始为 null，无需 bool 伴生字段。
 
 ```leno
 Font? _font                    // 可空 Font，初始为 null
 
 func _ensure_font() {
-    if _font == null or not _font.ok {   // 直觉清晰
+    if _font == null or not _font.ok {
         if _font != null { fnt.releaseFont(_font) }
         _font = fnt.acquireFontAuto(_fontSize)
     }
 }
-
-func set_font_size(float s) {
-    _fontSize = s
-    if _font != null { fnt.releaseFont(_font); _font = null }  // 一行搞定
-}
 ```
 
-**收益**：消除 `bool _fontDirty` / `_hasCtxMenu` / `_hasEdit` / `_hasBlinkTimer` 等所有伴生 bool 字段，减少约 30% 的控件样板代码，且 bool 与 struct 不同步的隐性 bug不再可能。
+### 2. struct 构造函数 / 析构函数 / 命名参数初始化 ✅
 
----
-
-### 2. Dict 解构初始化 / struct 构造器
-
-**痛点**：每个控件的 `set(Dict opts)` 方法中充满了 `x = opts.get("x", 0)` 式的重复代码。一个典型的 Button.set() 有 20+ 行仅做字段赋值：
+已完整支持：
 
 ```leno
-func set(Dict opts) {
-    text      = opts.get("text", "Button")
-    x         = opts.get("x", 0)
-    y         = opts.get("y", 0)
-    _fontSize = opts.get("font_size", 15)
-    _fontPath = opts.get("font_path", "")
-    _fontStyle = opts.get("font_style", 0)
-    _radius   = opts.get("radius", 6.0)
-    enabled   = opts.get("enabled", true)
-    visible   = opts.get("visible", true)
-    _tip      = opts.get("tip", "")
-    // ... 还有 10 行
-}
-```
+struct cs {
+    int x
+    int y
 
-**建议**：支持 struct 字段声明时指定 Dict 键名和默认值，`set()` 自动解构：
-
-```leno
-export struct Button impl Widget {
-    string text = "Button"          // 字段名即键名，等号右侧即默认值
-    float x = 0.0; float y = 0.0
-    float _fontSize = 15.0  @key("font_size")    // 键名与字段名不同时用 @key
-    string _fontPath = ""   @key("font_path")
-    // ...
-}
-
-// 使用时一行搞定，自动从 Dict 提取匹配字段
-Button b = new Button(); b.set(opts)
-```
-
-**收益**：每个控件减少 15-30 行样板代码，且字段声明、默认值、Dict 键名三合一，不易遗漏。
-
----
-
-### 3. `case is` 逗号合并
-
-**痛点**：Widget 类型分发是 UI 库最频繁的操作，当前只能用 `if ... is` 链：
-
-```leno
-func add(Widget w): Widget {
-    if w is Panel     { w._bind_window(handle); return w }
-    if w is ScrollView { w._bind_window(handle); return w }
-    if w is HBox      { w._bind_window(handle); return w }
-    if w is VBox      { w._bind_window(handle); return w }
-    if w is AnchorBox { w._bind_window(handle); return w }
-    if w is TabControl { w._bind_window(handle); return w }
-    if w is Edit      { w.set_window(handle); return w }
-    if w is SpinBox   { w._bind_window(handle); return w }
-    if w is TreeView  { w.set_window_handle(handle); return w }
-    return w
-}
-```
-
-**现状**：`switch case is` 已支持类型匹配和收窄（`switch w { case is Panel { ... } }`），
-但同处理逻辑的多个类型必须重复写多个 case，无法合并。
-
-**建议**：支持 `case is` 逗号合并语法，多个类型共享同一个 body：
-
-```leno
-func add(Widget w): Widget {
-    switch w {
-        case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox {
-            w._bind_window(handle)
-        }
-        case is Edit {
-            w.set_window(handle)
-        }
-        case is TreeView {
-            w.set_window_handle(handle)
-        }
+    func cs() {       // 构造函数，new 时自动调用
+        // 初始化逻辑
     }
-    return w
+
+    func ~cs() {       // 析构函数，GC 回收时自动调用
+        // 清理逻辑
+    }
+}
+
+// 命名参数初始化
+var c = new cs(x = 1, y = 2)
+
+// 也支持默认值 + 部分参数
+struct Point {
+    int x = 0
+    int y = 0
+}
+var p = new Point(x = 10)  // y 自动为 0
+```
+
+### 3. 字符串插值 `$"..."` ✅
+
+```leno
+var name = "Leno"
+print($"Hello {name}!")   // 自动转换，无需 _str()
+```
+
+### 4. `switch case is` 类型匹配与收窄 ✅
+
+```leno
+switch w {
+    case is Panel { w._bind_window(handle) }
+    case is Edit  { w.set_window(handle) }
 }
 ```
 
-**收益**：类型分发代码量减少 50%+，同处理逻辑的类型可合并，可读性大幅提升。
-（`match is` 不再需要——`switch case is` 已具备类型收窄能力，只需加逗号合并即可）
+### 5. 泛型约束 `func f[T: Face](...)` ✅
+
+### 6. `try-catch-finally` 异常安全 ✅
+
+### 7. GC 兜底机制 ✅
+
+FFI 资源（`ffi.malloc`/`ffi.load`/`ffi.callback`）由 GC 自动追踪，忘记 `ffi.free()` 时 GC 自动回收不会泄漏。
+
+### 8. `format` 全局函数 ✅
+
+```leno
+format("%.2f", 3.14159)      // "3.14"
+format("%05d", 42)           // "00042"
+format("%s: %d", "Leno", 5)  // "Leno: 5"
+```
+
+### 9. `?.` 安全访问 / `??` 空值合并 ✅
+
+```leno
+root?.set_size(w, h)
+var font = _font ?? defaultFont
+```
+
+### 10. `for-in` 遍历 / 泛型数组字典 / 数组切片 / 原始字符串 ✅
 
 ---
 
-## 二、中优先级：提升开发效率
+## 经评估后不实现的特性
 
-### 4. `defer` 延迟执行
+### defer 延迟执行 — 已回退
 
-**痛点**：资源清理模式需要每个退出路径都手动调用 dispose：
+defer 引入的 try-finally 包裹与内联优化的 `OP_CLEAR_LOCAL_RANGE` 有架构级冲突。去掉后零影响——FFI 手动内存管理 + GC 兜底 + `try-catch-finally` 功能等价。defer 引入太多不确定性和漏洞，得不偿失。
+
+**替代方案**：`try-catch-finally` + GC 兜底。
+
+### 运算符重载 — 暂不实现
+
+现有功能已足够：
+- struct 方法：`a.add(b)`
+- 普通函数：`vec_add(a, b)`
+- 直接字段运算：`a.x + b.x`（UI 库实际写法，最常见，性能最优）
+
+实现代价过高（parser/codegen/vm/semantic 四层 ~500-800 行改动），且破坏 `OP_ADD_INT`/`OP_ADD_FLOAT` 类型特化快速路径。收益有限——UI 库中不存在 `Vec2 + Vec2` 整体运算场景。
+
+### match 表达式 — 不需要
+
+`switch case is` 已具备类型匹配和收窄能力，功能等价。不需要额外引入 `match` 语法。
+
+### 访问控制关键字 — 暂不实现
+
+当前用下划线前缀约定"私有"（如 `_font`、`_bind_window`），实际使用中已足够。编译器强制的 `private`/`public` 引入语义复杂度，收益不大。
+
+### 数组解构 — 暂不实现
 
 ```leno
-func render(Renderer r) {
-    SDL_Rect cr = SDL_Rect.malloc()
-    r.pushClipRect(cr.to_ptr())
-    // ... 渲染逻辑 ...
-    r.popClipRect()        // 必须记得手动 pop
-    cr.free()              // 必须记得手动 free
+// 当前写法已经足够
+var arr = parseColor(...)
+r = arr[0]; g = arr[1]; b = arr[2]
+```
+
+收益太小，不值得增加语法复杂度。
+
+### `case is` 逗号合并 — ✅ 已实现
+
+`switch case is` 支持逗号合并多个类型共享同一个 body：
+
+```leno
+switch w {
+    case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox {
+        w._bind_window(hwnd)
+    }
+    case is Edit { w.set_window(hwnd) }
 }
 ```
 
-**建议**：
+### Dict 解构初始化 — 暂不实现
 
-```leno
-func render(Renderer r) {
-    SDL_Rect cr = SDL_Rect.malloc()
-    defer { cr.free() }
-    r.pushClipRect(cr.to_ptr())
-    defer { r.popClipRect() }
-    // ... 渲染逻辑，无论如何退出都会自动 pop + free
-}
-```
-
-**收益**：彻底消除"忘记清理"类 bug，尤其在多 return 路径的函数中。
-
----
-
-### 5. 访问控制关键字
-
-**痛点**：当前用下划线前缀约定"私有"（如 `_font`、`_bind_window`），但无编译器强制，外部仍可访问。库作者无法防止用户误用内部 API。
-
-**建议**：
-
-```leno
-export struct Button impl Widget {
-    private Font _font           // 编译器禁止外部访问
-    private func _ensure_font()  // 编译器禁止外部调用
-    public func set_text(string t)  // 显式公开（默认 public）
-}
-```
-
----
-
-## 三、低优先级：锦上添花
-
-### 6. 数组解构
-
-```leno
-var [r, g, b] = parseColor("#ff8800")   // 函数返回 Array，直接解构
-```
-
-当前需要 `var arr = parseColor(...); r = arr[0]; g = arr[1]; b = arr[2]`。
-
-### 7. 运算符重载
-
-```leno
-struct Vec2 { float x; float y }
-func +(Vec2 a, Vec2 b): Vec2 { return Vec2{x: a.x+b.x, y: a.y+b.y} }
-```
-
-UI 库中坐标/尺寸运算频繁，运算符重载能让代码更自然。
-
----
-
-## 附：已有特性但 UI 库未充分使用
-
-以下特性 Leno 已支持，但 UI 库代码中仍在用旧写法，建议逐步迁移：
-
-| 已有特性 | 语法 | UI 库中的旧写法 | 迁移建议 |
-|---------|------|----------------|---------|
-| 字符串插值 | `$"Hello {name}"` | `"Hello " + name` | 全局替换拼接为插值 |
-| 泛型约束 | `func f[T: Face](...)` | 手动类型检查 | 新代码使用约束 |
+当前 `opts.get("key", default)` 模式虽然重复，但清晰直观，且已在整个 UI 库中稳定使用。
 
 ---
 
 ## 优先级总结
 
-| 优先级 | 特性 | 直接痛点 | 预估减少代码量 |
-|--------|------|---------|--------------|
-| 高 | `Type?` 可空类型 | 142 个 null 警告 + bool 伴生字段 | ~30% 控件样板 |
-| 高 | Dict 解构初始化 | 每个 set() 20+ 行重复赋值 | ~20% 控件代码 |
-| 高 | `case is` 逗号合并 | 9 层重复 case-is | ~50% 分发代码 |
-| 中 | defer | 忘记清理资源 | 防止 bug |
-| 中 | 访问控制 | 内部 API 无保护 | 设计规范 |
-| 低 | 数组解构 | 多返回值不便 | 小幅 |
-| 低 | 运算符重载 | 坐标运算不自然 | 小幅 |
+| 特性 | 状态 | 说明 |
+|------|------|------|
+| `Type?` 可空类型 | ✅ 已实现 | 消除 bool 伴生字段 |
+| struct 构造/析构函数 | ✅ 已实现 | `func cs()` / `func ~cs()` |
+| `new cs(x=1)` 命名参数 | ✅ 已实现 | 字段默认值 + 命名参数 |
+| 字符串插值 | ✅ 已实现 | `$"Hello {name}"` |
+| `switch case is` | ✅ 已实现 | 类型匹配与收窄 |
+| `case is` 逗号合并 | ✅ 已实现 | `case is A, B, C` 多类型共享 body |
+| 泛型约束 | ✅ 已实现 | `func f[T: Face](...)` |
+| `try-catch-finally` | ✅ 已实现 | 异常安全 |
+| GC 兜底 | ✅ 已实现 | FFI 资源自动回收 |
+| `format` 全局函数 | ✅ 已实现 | printf 风格格式化 |
+| `?.` / `??` | ✅ 已实现 | 安全访问 / 空值合并 |
+| defer | ❌ 已回退 | 与内联优化架构冲突 |
+| 运算符重载 | ❌ 暂不实现 | 现有写法已足够 |
+| match 表达式 | ❌ 不需要 | `switch case is` 已覆盖 |
+| 访问控制 | ❌ 暂不实现 | 下划线约定已足够 |
+| 数组解构 | ❌ 暂不实现 | 收益太小 |
+| Dict 解构初始化 | ❌ 暂不实现 | `opts.get` 模式已稳定 |
 
-> 前三项（可空类型、Dict 解构、case is 合并）如果能实现，Leno 的 UI 库代码量预计可减少 25-35%，且显著降低 bool 标志与 struct 不同步的隐性 bug 风险。
+> **Leno 语言特性已足够且稳定。** 重心放在库生态（LenoSDL3、LenoWin32、LenoMusic）和运行时稳定性上，不再追加新语法特性。

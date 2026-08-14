@@ -1,0 +1,79 @@
+// basic.leno — LenoSqlite 基础示例
+// 演示数据库打开、建表、插入、查询等基本操作
+import sqlite3
+use sqlite3.Statement
+
+main() {
+    // 初始化 SQLite 库
+    sqlite3.initialize()
+    print("SQLite 版本: " + sqlite3.libversion())
+
+    // 打开内存数据库（无需文件）
+    var db = sqlite3.openMemory()
+    if not db.isOk() {
+        print("打开数据库失败: " + db.errmsg())
+        return
+    }
+
+    // 设置忙等待超时
+    db.busyTimeout(5000)
+
+    // 建表
+    int rc = db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, age INTEGER DEFAULT 0)")
+    if rc != sqlite3.OK {
+        print("建表失败: " + db.errmsg())
+        db.close()
+        return
+    }
+    print("建表成功")
+
+    // 插入数据（简单接口）
+    db.exec("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    db.exec("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    db.exec("INSERT INTO users (name, age) VALUES ('Charlie', 35)")
+
+    // 获取最近插入的 rowid
+    print("最近插入 rowid: " + db.lastInsertRowid())
+    print("总共变化行数: " + db.totalChanges())
+
+    // 使用预编译语句插入（带参数绑定，防 SQL 注入）
+    var stmt = db.prepare("INSERT INTO users (name, age) VALUES (?, ?)")
+    stmt.bind(1, "David")
+    stmt.bind(2, 28)
+    stmt.step()
+    stmt.reset()
+    stmt.clearBindings()
+    stmt.bind(1, "Eve")
+    stmt.bind(2, 22)
+    stmt.step()
+    stmt.finalize()
+
+    print("插入完成，总行数: " + db.changes())
+
+    // 查询所有用户
+    print("\n--- 所有用户 ---")
+    db.query("SELECT * FROM users ORDER BY age", func(Statement s): bool {
+        print("id=" + s.column_int(0) + " name=" + s.column_text(1) + " age=" + s.column_int(2))
+        return true  // 继续遍历
+    })
+
+    // 条件查询（使用参数）
+    print("\n--- 年龄 > 25 的用户 ---")
+    db.queryWithParams("SELECT * FROM users WHERE age > ?", [25], func(Statement s): bool {
+        print("id=" + s.column_int(0) + " name=" + s.column_text(1) + " age=" + s.column_int(2))
+        return true
+    })
+
+    // 事务操作
+    print("\n--- 事务测试 ---")
+    db.begin()
+    db.exec("INSERT INTO users (name, age) VALUES ('Frank', 40)")
+    db.exec("INSERT INTO users (name, age) VALUES ('Grace', 33)")
+    print("事务中行数: " + db.changes())
+    db.rollback()
+    print("回滚后行数: " + db.changes())
+
+    // 关闭数据库
+    db.close()
+    print("\n数据库已关闭")
+}

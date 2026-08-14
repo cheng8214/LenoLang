@@ -45,6 +45,7 @@ char* process_escape_sequences(const char* text, int len, int* out_len) {
                 case 'r': str[j++] = '\r'; i++; break;
                 case '\\': str[j++] = '\\'; i++; break;
                 case '"': str[j++] = '"'; i++; break;
+                case '\'': str[j++] = '\''; i++; break;
                 case '0': str[j++] = '\0'; i++; break;
                 case 'b': str[j++] = '\b'; i++; break;   // 退格 0x08
                 case 'f': str[j++] = '\f'; i++; break;   // 换页 0x0C

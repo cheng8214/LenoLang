@@ -220,7 +220,7 @@ export struct ProgressBar impl Widget {
         // 文字（百分比）
         if _showText and _font != null and _font.ok {
             int pct = _int(ratio * 100.0)
-            string label = pct + "%"
+            string label = $"{pct}%"
             float tw = _font.measureString(label).w
             float th = _font.measureString("Ag").h
             float tx = x + w / 2.0 - tw / 2.0

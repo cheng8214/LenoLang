@@ -1,0 +1,250 @@
+// edge_tests.leno — LenoSqlite 边界测试
+// 测试各种边界情况：NULL值、BLOB、错误处理、重复操作等
+import sqlite3
+import ffi
+use sqlite3.Statement
+use sqlite3.DataType
+
+main() {
+    print("=== LenoSqlite 边界测试 ===")
+    print("SQLite 版本: " + sqlite3.libversion())
+
+    var db = sqlite3.openMemory()
+    if not db.isOk() {
+        print("打开数据库失败: " + db.errmsg())
+        return
+    }
+
+    // ==================== 1. NULL 值绑定与读取 ====================
+    print("\n--- 测试1: NULL 值绑定与读取 ---")
+    db.exec("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val TEXT)")
+    var stmt = db.prepare("INSERT INTO t1 (val) VALUES (?)")
+    stmt.bind_null(1)
+    stmt.step()
+    stmt.finalize()
+
+    db.query("SELECT val FROM t1", func(Statement s): bool {
+        int t = s.columnType(0)
+        if t == DataType.NULL {
+            print("  NULL 值读取: OK (columnType=NULL)")
+        } else {
+            print("  NULL 值读取: FAIL (columnType=" + t + ")")
+        }
+        return false
+    })
+
+    // ==================== 2. 空字符串 vs NULL ====================
+    print("\n--- 测试2: 空字符串 vs NULL ---")
+    db.exec("CREATE TABLE t2 (id INTEGER PRIMARY KEY, val TEXT)")
+    var stmt2 = db.prepare("INSERT INTO t2 (val) VALUES (?)")
+    stmt2.bind_text(1, "")
+    stmt2.step()
+    stmt2.reset()
+    stmt2.bind_null(1)
+    stmt2.step()
+    stmt2.finalize()
+
+    db.query("SELECT val FROM t2 ORDER BY id", func(Statement s): bool {
+        int t = s.columnType(0)
+        string val = s.column_text(0)
+        if t == DataType.TEXT {
+            print("  行: 空字符串 (type=TEXT, val='" + val + "')")
+        } else if t == DataType.NULL {
+            print("  行: NULL (type=NULL)")
+        }
+        return true
+    })
+
+    // ==================== 3. SQL 语法错误处理 ====================
+    print("\n--- 测试3: SQL 语法错误处理 ---")
+    int badRc = db.exec("THIS IS NOT SQL")
+    if badRc != sqlite3.OK {
+        print("  语法错误返回码: " + badRc + " (OK)")
+        print("  错误消息: " + db.errmsg())
+    } else {
+        print("  FAIL: 语法错误应返回非OK码")
+    }
+
+    // execWithErr 测试
+    Dict errResult = db.execWithErr("SELECT * FROM nonexistent_table")
+    if errResult.get("rc", 0) != sqlite3.OK {
+        print("  execWithErr 错误码: " + errResult.get("rc", 0) + " (OK)")
+        print("  execWithErr 错误消息: " + errResult.get("err", ""))
+    } else {
+        print("  FAIL: execWithErr 应返回错误")
+    }
+
+    // ==================== 4. 列信息查询 ====================
+    print("\n--- 测试4: 列信息查询 ---")
+    db.exec("CREATE TABLE t3 (id INTEGER PRIMARY KEY, name TEXT, price REAL)")
+    var stmt3 = db.prepare("SELECT id, name, price FROM t3")
+    int ncol = stmt3.columnCount()
+    print("  列数: " + ncol + " (期望3)")
+    for ncol to i {
+        string cname = stmt3.columnName(i)
+        string ctype = stmt3.columnDeclType(i)
+        print("  列" + i + ": name=" + cname + ", decltype=" + ctype)
+    }
+    print("  参数个数: " + stmt3.bindParameterCount() + " (期望0)")
+    stmt3.finalize()
+
+    // ==================== 5. 空表查询 ====================
+    print("\n--- 测试5: 空表查询 ---")
+    int rc = db.query("SELECT * FROM t3", func(Statement s): bool {
+        print("  FAIL: 空表不应有行")
+        return true
+    })
+    if rc == sqlite3.DONE {
+        print("  空表查询返回 DONE (OK)")
+    } else {
+        print("  空表查询返回 " + rc + " (期望 DONE)")
+    }
+
+    // ==================== 6. 重复 close/finalize 安全性 ====================
+    print("\n--- 测试6: 重复 close/finalize 安全性 ---")
+    var stmt6 = db.prepare("SELECT 1")
+    int rc1 = stmt6.finalize()
+    print("  第一次 finalize: rc=" + rc1)
+    int rc2 = stmt6.finalize()
+    if rc2 == sqlite3.MISUSE {
+        print("  第二次 finalize: rc=MISUSE (OK, 防止了崩溃)")
+    } else {
+        print("  第二次 finalize: rc=" + rc2 + " (期望 MISUSE)")
+    }
+
+    // finalize 后再操作
+    int rc3 = stmt6.step()
+    if rc3 == sqlite3.MISUSE {
+        print("  finalize 后 step: rc=MISUSE (OK)")
+    } else {
+        print("  finalize 后 step: rc=" + rc3 + " (期望 MISUSE)")
+    }
+
+    // ==================== 7. BLOB 数据读写 ====================
+    print("\n--- 测试7: BLOB 数据读写 ---")
+    db.exec("CREATE TABLE t4 (id INTEGER PRIMARY KEY, data BLOB)")
+    // 写入 BLOB: 使用 ffi 分配内存并写入数据
+    Ptr blobData = ffi.malloc(8)
+    ffi.write_int(blobData, 0, 0x41424344)  // "ABCD" 的小端
+    ffi.write_int(blobData, 4, 0x45464748)  // "EFGH" 的小端
+    var stmt7 = db.prepare("INSERT INTO t4 (data) VALUES (?)")
+    int blobRc = stmt7.bind_blob(1, blobData, 8)
+    if blobRc == sqlite3.OK {
+        stmt7.step()
+        print("  BLOB 写入: OK")
+    }
+    stmt7.finalize()
+    ffi.free(blobData)
+
+    // 读取 BLOB
+    db.query("SELECT data FROM t4", func(Statement s): bool {
+        int blobLen = s.column_bytes(0)
+        print("  BLOB 字节数: " + blobLen + " (期望8)")
+        int blobType = s.columnType(0)
+        if blobType == DataType.BLOB {
+            print("  BLOB 类型: BLOB (OK)")
+        } else {
+            print("  BLOB 类型: " + blobType + " (期望 BLOB)")
+        }
+        return false
+    })
+
+    // ==================== 8. 整数边界值 ====================
+    print("\n--- 测试8: 整数边界值 ---")
+    db.exec("CREATE TABLE t5 (id INTEGER PRIMARY KEY, val INTEGER)")
+    var stmt8 = db.prepare("INSERT INTO t5 (val) VALUES (?)")
+    stmt8.bind_int64(1, 2147483647)  // INT_MAX
+    stmt8.step()
+    stmt8.reset()
+    stmt8.bind_int64(1, -2147483648)  // INT_MIN
+    stmt8.step()
+    stmt8.reset()
+    stmt8.bind_int64(1, 0)
+    stmt8.step()
+    stmt8.finalize()
+
+    db.query("SELECT val FROM t5 ORDER BY id", func(Statement s): bool {
+        int v = s.column_int64(0)
+        print("  值: " + v)
+        return true
+    })
+
+    // ==================== 9. 浮点精度 ====================
+    print("\n--- 测试9: 浮点精度 ---")
+    db.exec("CREATE TABLE t6 (id INTEGER PRIMARY KEY, val REAL)")
+    var stmt9 = db.prepare("INSERT INTO t6 (val) VALUES (?)")
+    stmt9.bind_double(1, 3.14159265358979)
+    stmt9.step()
+    stmt9.finalize()
+
+    db.query("SELECT val FROM t6", func(Statement s): bool {
+        float v = s.column_double(0)
+        print("  值: " + v + " (期望 3.14159265358979)")
+        return false
+    })
+
+    // ==================== 10. 事务自动提交状态 ====================
+    print("\n--- 测试10: 事务自动提交状态 ---")
+    bool auto1 = db.getAutocommit()
+    print("  初始 autocommit: " + auto1 + " (期望 true)")
+    db.begin()
+    bool auto2 = db.getAutocommit()
+    print("  BEGIN 后 autocommit: " + auto2 + " (期望 false)")
+    db.commit()
+    bool auto3 = db.getAutocommit()
+    print("  COMMIT 后 autocommit: " + auto3 + " (期望 true)")
+
+    // ==================== 11. 通配 bind (any 类型) ====================
+    print("\n--- 测试11: 通配 bind (any 类型) ---")
+    db.exec("CREATE TABLE t7 (id INTEGER PRIMARY KEY, ival INTEGER, fval REAL, sval TEXT)")
+    var stmt11 = db.prepare("INSERT INTO t7 (ival, fval, sval) VALUES (?, ?, ?)")
+    stmt11.bind(1, 42)
+    stmt11.bind(2, 3.14)
+    stmt11.bind(3, "hello")
+    stmt11.step()
+    stmt11.reset()
+    stmt11.bind(1, null)
+    stmt11.bind(2, null)
+    stmt11.bind(3, null)
+    stmt11.step()
+    stmt11.finalize()
+
+    db.query("SELECT ival, fval, sval FROM t7 ORDER BY id", func(Statement s): bool {
+        int t1 = s.columnType(0)
+        int t2 = s.columnType(1)
+        int t3 = s.columnType(2)
+        if t1 == DataType.INTEGER and t2 == DataType.FLOAT and t3 == DataType.TEXT {
+            print("  行1: int=" + s.column_int(0) + " float=" + s.column_double(1) + " text=" + s.column_text(2) + " (OK)")
+        } else if t1 == DataType.NULL and t2 == DataType.NULL and t3 == DataType.NULL {
+            print("  行2: 全 NULL (OK)")
+        } else {
+            print("  FAIL: 类型不匹配")
+        }
+        return true
+    })
+
+    // ==================== 12. column_size ====================
+    print("\n--- 测试12: column_size ---")
+    var stmt12 = db.prepare("SELECT sval FROM t7 WHERE sval IS NOT NULL")
+    if stmt12.step() == sqlite3.ROW {
+        int sz = stmt12.column_bytes(0)
+        print("  column_bytes(1) 返回了: " + sz)
+    }
+    stmt12.finalize()
+
+    // 关闭数据库
+    db.close()
+
+    // ==================== 13. close 后再操作安全性 ====================
+    print("\n--- 测试13: close 后再操作安全性 ---")
+    int afterClose = db.exec("SELECT 1")
+    if afterClose == sqlite3.MISUSE {
+        print("  close 后 exec: rc=MISUSE (OK)")
+    } else {
+        print("  close 后 exec: rc=" + afterClose + " (期望 MISUSE)")
+    }
+    string afterErr = db.errmsg()
+    print("  close 后 errmsg: " + afterErr)
+
+    print("\n=== 边界测试完成 ===")
+}

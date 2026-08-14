@@ -6,7 +6,7 @@
 //   // 子控件坐标按「内容区左上角」给出（dx, dy 相对内容区），Tab 移动/缩放时内部整体跟随：
 //   tab.addToPage(0, SDL3.createButton({w: 120, h: 32, text: "页1按钮"}), 50, 80)
 //   tab.addToPage(1, SDL3.createSlider({...}), 30, 20)
-//   tab.on_change(func(int idx){ print("切到页 " + idx) })
+//   tab.on_change(func(int idx){ print($"切到页 {idx}") })
 //
 // 说明：每页子控件以「内容区左上角」为原点布置（创建时给定的坐标会被记录为相对偏移），
 //       TabControl 每帧以「内容区原点 + 相对偏移」重排子控件，因此移动/缩放 Tab 时内部整体跟随，

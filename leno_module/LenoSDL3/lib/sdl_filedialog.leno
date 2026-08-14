@@ -82,7 +82,7 @@ func _dispatch(Ptr[u8] userdata, Ptr[u8] filelist, int filter) {
     _active = false
     var cb = _onResult
     _onResult = null
-    print("[filedialog] _dispatch fired, count=" + out.len() + " filter=" + filter)
+    print($"[filedialog] _dispatch fired, count={out.len()} filter={filter}")
     if cb != null { cb(out, filter) }
 }
 

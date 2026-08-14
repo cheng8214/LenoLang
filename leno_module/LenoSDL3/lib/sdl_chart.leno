@@ -271,7 +271,7 @@ export struct BarChart impl Widget {
         }
 
         if hi >= 0 and hi < n {
-            string tip = cats[hi] + ": " + _fmtNum(vals[hi])
+            string tip = $"{cats[hi]}: {_fmtNum(vals[hi])}"
             _drawTip(r, f, _mx, _my, tip)
         }
     }
@@ -497,7 +497,7 @@ export struct LineChart impl Widget {
 
         if hiS >= 0 and hiI >= 0 and hiI < n and series[hiS].len() > hiI {
             string sname = if hiS < seriesNames.len() then seriesNames[hiS] else ""
-            string tip = (if sname != "" then sname + " " else "") + xlabels[hiI] + ": " + _fmtNum(series[hiS][hiI])
+            string tip = format("{0}{1}: {2}", (if sname != "" then sname + " " else ""), xlabels[hiI], _fmtNum(series[hiS][hiI]))
             _drawTip(r, f, _mx, _my, tip)
         }
     }
@@ -607,7 +607,7 @@ export struct PieChart impl Widget {
             // 图例
             r.setColor(c[0], c[1], c[2], 255); r.fillRect(legendX, ly, 12.0, 12.0)
             r.setColor(_legR, _legG, _legB, 255)
-            string lab = labels[i] + "  " + _fmtNum(_animValues[i])
+            string lab = $"{labels[i]}  {_fmtNum(_animValues[i])}"
             r.drawText(f, lab, legendX + 18.0, ly - 1.0, _legR, _legG, _legB)
             ly = ly + 20.0
             a = a1

@@ -155,6 +155,23 @@ Ast* parse_statement(Parser* p) {
 
         // 默认情况：检查是否是入口函数定义、自定义类型变量声明或表达式语句
         default:
+            // 检查是否是未支持的关键字（defer / this）
+            if (p->lex.current.type == TOK_IDENT) {
+                int ident_len = p->lex.current.len;
+                const char* ident_text = p->lex.current.text;
+                if (ident_len == 5 && strncmp(ident_text, "defer", 5) == 0) {
+                    error_add(ERR_SYNTAX, p->lex.current.line,
+                        "不支持的关键字 'defer'，请使用 try-finally 或手动调用清理函数");
+                    lexer_next(&p->lex);  // 跳过 defer
+                    return NULL;
+                }
+                if (ident_len == 4 && strncmp(ident_text, "this", 4) == 0) {
+                    error_add(ERR_SYNTAX, p->lex.current.line,
+                        "不支持的关键字 'this'，请使用 'self' 引用当前对象");
+                    lexer_next(&p->lex);  // 跳过 this
+                    return NULL;
+                }
+            }
             // 检查是否是入口函数定义（如 main() { }）
             if (is_entry_function_def(p)) {
                 stmt = parse_entry_func_stmt(p);

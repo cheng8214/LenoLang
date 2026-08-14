@@ -1,0 +1,245 @@
+// edge_tests2.leno — LenoSqlite 边界测试补充
+// 覆盖 edge_tests.leno 未覆盖的 API 和场景
+import sqlite3
+use sqlite3.Statement
+use sqlite3.DataType
+
+main() {
+    print("=== LenoSqlite 边界测试补充 ===")
+
+    // ==================== 14. errcode / extendedErrcode ====================
+    print("\n--- 测试14: errcode / extendedErrcode ---")
+    var db = sqlite3.openMemory()
+    db.exec("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val TEXT UNIQUE)")
+    db.exec("INSERT INTO t1 (val) VALUES ('aaa')")
+    // 故意触发 UNIQUE 约束冲突
+    int rc = db.exec("INSERT INTO t1 (val) VALUES ('aaa')")
+    if rc != sqlite3.OK {
+        print("  UNIQUE 冲突 errcode: " + db.errcode() + " (期望 19=CONSTRAINT)")
+        print("  extendedErrcode: " + db.extendedErrcode())
+        print("  errmsg: " + db.errmsg())
+    } else {
+        print("  FAIL: UNIQUE 冲突应返回错误")
+    }
+
+    // ==================== 15. 重复 close ====================
+    print("\n--- 测试15: 重复 close ---")
+    int c1 = db.close()
+    print("  第一次 close: rc=" + c1 + " (期望 0=OK)")
+    int c2 = db.close()
+    if c2 == sqlite3.MISUSE {
+        print("  第二次 close: rc=MISUSE (OK, 防止崩溃)")
+    } else {
+        print("  第二次 close: rc=" + c2 + " (期望 MISUSE)")
+    }
+
+    // ==================== 16. quickExec 便捷函数 ====================
+    print("\n--- 测试16: quickExec 便捷函数 ---")
+    // quickExec 自动打开/关闭数据库
+    string dbPath = "test_quickexec.db"
+    int qrc = sqlite3.quickExec(dbPath, "CREATE TABLE IF NOT EXISTS q1 (id INTEGER PRIMARY KEY, name TEXT)")
+    if qrc == sqlite3.OK {
+        print("  quickExec 建表: OK")
+    } else {
+        print("  quickExec 建表: FAIL rc=" + qrc)
+    }
+    sqlite3.quickExec(dbPath, "INSERT INTO q1 (name) VALUES ('test1')")
+    sqlite3.quickExec(dbPath, "INSERT INTO q1 (name) VALUES ('test2')")
+
+    // 验证数据
+    var db2 = sqlite3.open(dbPath)
+    int count = 0
+    db2.query("SELECT COUNT(*) FROM q1", func(Statement s): bool {
+        count = s.column_int(0)
+        print("  quickExec 插入后行数: " + count + " (期望 2)")
+        return false
+    })
+    db2.close()
+
+    // ==================== 17. queryAll 便捷函数 ====================
+    print("\n--- 测试17: queryAll 便捷函数 ---")
+    Array[Dict] rows = sqlite3.queryAll(dbPath, "SELECT * FROM q1 ORDER BY id")
+    print("  queryAll 返回行数: " + rows.len() + " (期望 2)")
+    for rows.len() to i {
+        Dict row = rows[i]
+        print("  行" + i + ": id=" + row.get("id", "") + " name=" + row.get("name", ""))
+    }
+
+    // 清理
+    db2 = sqlite3.open(dbPath)
+    db2.exec("DROP TABLE q1")
+    db2.close()
+
+    // ==================== 18. 事务回滚验证 ====================
+    print("\n--- 测试18: 事务回滚后数据确实不存在 ---")
+    var db3 = sqlite3.openMemory()
+    db3.exec("CREATE TABLE t2 (id INTEGER PRIMARY KEY, name TEXT)")
+    db3.exec("INSERT INTO t2 (name) VALUES ('before')")
+
+    db3.begin()
+    db3.exec("INSERT INTO t2 (name) VALUES ('in_transaction')")
+    // 验证事务中能看到
+    int midCount = 0
+    db3.query("SELECT COUNT(*) FROM t2", func(Statement s): bool {
+        midCount = s.column_int(0)
+        return false
+    })
+    print("  事务中行数: " + midCount + " (期望 2)")
+    db3.rollback()
+    // 验证回滚后只有1条
+    int afterCount = 0
+    db3.query("SELECT COUNT(*) FROM t2", func(Statement s): bool {
+        afterCount = s.column_int(0)
+        return false
+    })
+    print("  回滚后行数: " + afterCount + " (期望 1)")
+
+    // ==================== 19. 嵌套查询 ====================
+    print("\n--- 测试19: 嵌套查询（回调中再 prepare）---")
+    db3.exec("CREATE TABLE t3 (id INTEGER PRIMARY KEY, cat TEXT, name TEXT)")
+    db3.exec("INSERT INTO t3 (cat, name) VALUES ('fruit', 'apple')")
+    db3.exec("INSERT INTO t3 (cat, name) VALUES ('fruit', 'banana')")
+    db3.exec("INSERT INTO t3 (cat, name) VALUES ('veg', 'carrot')")
+    db3.exec("INSERT INTO t3 (cat, name) VALUES ('veg', 'potato')")
+
+    // 外层查询获取分类，内层查询按分类获取明细
+    db3.query("SELECT DISTINCT cat FROM t3", func(Statement s): bool {
+        string cat = s.column_text(0)
+        print("  分类: " + cat)
+        // 嵌套查询
+        var inner = db3.prepare("SELECT name FROM t3 WHERE cat = ? ORDER BY name")
+        inner.bind_text(1, cat)
+        while inner.step() == sqlite3.ROW {
+            print("    - " + inner.column_text(0))
+        }
+        inner.finalize()
+        return true
+    })
+
+    // ==================== 20. bind_int_by_name ====================
+    print("\n--- 测试20: bind_int_by_name ---")
+    var stmt20 = db3.prepare("INSERT INTO t3 (cat, name) VALUES (@cat, @name)")
+    stmt20.bind_text_by_name("@cat", "meat")
+    stmt20.bind_text_by_name("@name", "beef")
+    // 注意：这里用 bind_text_by_name 测试过了，现在测 bind_int_by_name
+    stmt20.finalize()
+
+    db3.exec("CREATE TABLE t4 (id INTEGER PRIMARY KEY, cnt INTEGER)")
+    var stmt20b = db3.prepare("INSERT INTO t4 (cnt) VALUES (:count)")
+    int byNameRc = stmt20b.bind_int_by_name(":count", 99)
+    if byNameRc == sqlite3.OK {
+        stmt20b.step()
+        print("  bind_int_by_name: OK")
+    } else {
+        print("  bind_int_by_name: FAIL rc=" + byNameRc)
+    }
+    stmt20b.finalize()
+
+    db3.query("SELECT cnt FROM t4", func(Statement s): bool {
+        print("  读取值: " + s.column_int(0) + " (期望 99)")
+        return false
+    })
+
+    // ==================== 21. UTF-8 中文数据 ====================
+    print("\n--- 测试21: UTF-8 中文数据 ---")
+    db3.exec("CREATE TABLE t5 (id INTEGER PRIMARY KEY, name TEXT, info TEXT)")
+    var stmt21 = db3.prepare("INSERT INTO t5 (name, info) VALUES (?, ?)")
+    stmt21.bind_text(1, "张三")
+    stmt21.bind_text(2, "中文测试数据，包含标点！@#￥%……&*（）")
+    stmt21.step()
+    stmt21.reset()
+    stmt21.bind_text(1, "李四")
+    stmt21.bind_text(2, "emoji 测试 🎉🚀")
+    stmt21.step()
+    stmt21.finalize()
+
+    db3.query("SELECT name, info FROM t5 ORDER BY id", func(Statement s): bool {
+        print("  " + s.column_text(0) + ": " + s.column_text(1))
+        return true
+    })
+
+    // ==================== 22. 批量插入性能 ====================
+    print("\n--- 测试22: 批量插入性能（1000条）---")
+    db3.exec("CREATE TABLE t6 (id INTEGER PRIMARY KEY, val INTEGER)")
+    var stmt22 = db3.prepare("INSERT INTO t6 (val) VALUES (?)")
+    db3.begin()
+    int total = 1000
+    for total to i {
+        stmt22.bind_int(1, i)
+        stmt22.step()
+        stmt22.reset()
+        stmt22.clearBindings()
+    }
+    stmt22.finalize()
+    db3.commit()
+
+    int rowCount = 0
+    db3.query("SELECT COUNT(*) FROM t6", func(Statement s): bool {
+        rowCount = s.column_int(0)
+        return false
+    })
+    print("  插入 " + total + " 条，验证行数: " + rowCount + " (期望 " + total + ")")
+    print("  totalChanges: " + db3.totalChanges())
+
+    // ==================== 23. forEach 提前终止 ====================
+    print("\n--- 测试23: forEach 提前终止 ---")
+    int seen = 0
+    db3.query("SELECT val FROM t6 ORDER BY val", func(Statement s): bool {
+        seen = seen + 1
+        if seen >= 5 { return false }  // 只看前5条
+        return true
+    })
+    print("  forEach 遍历了 " + seen + " 行后终止 (期望 5)")
+
+    // ==================== 24. errstr 全局函数 ====================
+    print("\n--- 测试24: errstr 全局函数 ---")
+    print("  errstr(0): " + sqlite3.errstr(0))
+    print("  errstr(1): " + sqlite3.errstr(1))
+    print("  errstr(5): " + sqlite3.errstr(5))
+    print("  errstr(100): " + sqlite3.errstr(100))
+
+    // ==================== 25. 内存数据库隔离性 ====================
+    print("\n--- 测试25: 内存数据库隔离性 ---")
+    var dbA = sqlite3.openMemory()
+    var dbB = sqlite3.openMemory()
+    dbA.exec("CREATE TABLE shared (val TEXT)")
+    dbA.exec("INSERT INTO shared VALUES ('from_A')")
+
+    // dbB 不应该看到 dbA 的表
+    int crossRc = dbB.exec("SELECT * FROM shared")
+    if crossRc != sqlite3.OK {
+        print("  dbB 看不到 dbA 的表 (OK)")
+    } else {
+        print("  FAIL: 内存数据库不隔离")
+    }
+    dbA.close()
+    dbB.close()
+
+    // ==================== 26. reset 不清除绑定 ====================
+    print("\n--- 测试26: reset 不清除绑定 ---")
+    var db4 = sqlite3.openMemory()
+    db4.exec("CREATE TABLE t7 (id INTEGER PRIMARY KEY, val INTEGER)")
+    var stmt26 = db4.prepare("INSERT INTO t7 (val) VALUES (?)")
+    stmt26.bind_int(1, 111)
+    stmt26.step()
+    stmt26.reset()
+    // reset 后不清除绑定，再 step 应该还是 111
+    stmt26.step()
+    stmt26.finalize()
+
+    int val26 = 0
+    db4.query("SELECT val FROM t7 ORDER BY id", func(Statement s): bool {
+        val26 = s.column_int(0)
+        print("  行: " + val26 + " (期望 111, reset 不清除绑定)")
+        return true
+    })
+
+    db4.close()
+    db3.close()
+
+    // 清理文件
+    import files
+    if files.exists(dbPath) { files.delete(dbPath) }
+
+    print("\n=== 边界测试补充完成 ===")
+}
