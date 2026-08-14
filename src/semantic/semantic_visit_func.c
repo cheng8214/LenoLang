@@ -359,15 +359,31 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
         if (default_expr) {
             found_default = 1;
             
-            // 2.2 检查：默认值只能是字面量常量
+            // 2.2 检查默认值类型：支持字面量、全局变量引用（如 Global.ALL）、常量表达式
             int is_literal = (default_expr->kind == AST_NUM || 
                              default_expr->kind == AST_STRING || 
                              default_expr->kind == AST_BOOL || 
                              default_expr->kind == AST_NULL);
-            if (!is_literal) {
+            int is_const_expr = (default_expr->kind == AST_BINOP ||
+                                default_expr->kind == AST_UNARY ||
+                                default_expr->kind == AST_VAR ||
+                                default_expr->kind == AST_MODULE_ACCESS);
+            if (!is_literal && !is_const_expr) {
                 char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "参数 '%s' 的默认值必须是字面量常量", ast->u.func.params[i]);
+                snprintf(msg, sizeof(msg), "参数 '%s' 的默认值必须是字面量常量或编译期常量表达式", ast->u.func.params[i]);
                 error_add(ERR_SEMANTIC, ast->line, msg);
+            }
+            
+            // 对非字面量表达式执行语义分析（设置 ref、折叠 enum 常量等）
+            // visit 可能将 AST_MODULE_ACCESS（如 Flags.ALL）折叠为 AST_NUM
+            if (!is_literal) {
+                visit(s, default_expr);
+            }
+            
+            // visit 后重新检查：如果被折叠为字面量，按字面量处理
+            if (default_expr->kind == AST_NUM || default_expr->kind == AST_STRING ||
+                default_expr->kind == AST_BOOL || default_expr->kind == AST_NULL) {
+                is_literal = 1;
             }
             
             // 2.3 & 2.4 检查：默认值类型与参数类型匹配
@@ -383,6 +399,14 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                     default_kind = TYPE_BOOL;
                 } else if (default_expr->kind == AST_NULL) {
                     default_kind = TYPE_NULL;
+                } else if (default_expr->kind == AST_VAR || default_expr->kind == AST_MODULE_ACCESS ||
+                           default_expr->kind == AST_BINOP || default_expr->kind == AST_UNARY) {
+                    // 全局变量引用或常量表达式：尝试推断类型
+                    TypeInfo* expr_type = infer_expr_type(s, default_expr);
+                    if (expr_type) {
+                        default_kind = expr_type->kind;
+                        type_free(expr_type);
+                    }
                 }
                 
                 // 检查类型兼容性
@@ -407,6 +431,13 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                     inferred_kind = TYPE_BOOL;
                 } else if (default_expr->kind == AST_NULL) {
                     inferred_kind = TYPE_NULL;
+                } else if (default_expr->kind == AST_VAR || default_expr->kind == AST_MODULE_ACCESS ||
+                           default_expr->kind == AST_BINOP || default_expr->kind == AST_UNARY) {
+                    TypeInfo* expr_type = infer_expr_type(s, default_expr);
+                    if (expr_type) {
+                        inferred_kind = expr_type->kind;
+                        type_free(expr_type);
+                    }
                 }
                 
                 // 更新参数类型为推断的类型
@@ -426,16 +457,10 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
 
     // 将函数添加到函数表（哈希表自动处理重复）
     // 跳过 struct 方法的注册，因为它们已经在 semantic_visit_ast.c 中以 struct_name::method_name 格式注册
-    // 全局函数正常注册；局部函数仅在是 async 且未被全局定义覆盖时注册（确保代码生成能识别 async）
-    int is_global_func = s->current && s->current->parent == NULL;
-    if (!is_struct_method && is_global_func) {
+    // 全局函数和局部函数都注册到 func_table，以便代码生成器查找函数定义（默认参数填充等）
+    // 局部函数会覆盖同名的全局函数定义（实现遮蔽语义，同时确保默认参数信息可用）
+    if (!is_struct_method) {
         func_table_add(&s->func_table, ast->u.func.name, ast);
-    } else if (!is_struct_method && !is_global_func && ast->u.func.is_async) {
-        // 局部 async 函数：仅当 func_table 中尚无该名称时才注册，避免覆盖全局定义
-        Ast* existing_def = func_table_find(&s->func_table, ast->u.func.name);
-        if (!existing_def) {
-            func_table_add(&s->func_table, ast->u.func.name, ast);
-        }
     }
 
     // 在父作用域注册函数名（如果还没有注册）

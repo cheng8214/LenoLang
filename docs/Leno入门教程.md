@@ -2472,7 +2472,7 @@ main() {
 > **⚠️ 默认参数规则：**
 >
 > 1. 默认参数必须在必选参数**后面**
-> 2. 默认值只能是**字面量常量**（int、float、string、bool、null）
+> 2. 默认值支持**字面量常量**（int、float、string、bool、null）和**编译期常量表达式**（enum 成员引用、全局变量引用、算术/位运算表达式）
 > 3. 默认值类型必须**匹配参数类型**（遵循升级不降级规则）
 > 4. `var a` 无默认值时类型为 `any`，`var b = 0` 推断为 `int`
 >
@@ -2485,6 +2485,22 @@ main() {
 >     b         // 编译期 int（从默认值 10 收窄）
 > }
 > ```
+
+> **✅ 新特性：默认参数支持常量表达式和全局变量引用**
+>
+> 默认值不再局限于字面量，还支持以下形式：
+>
+> ```leno
+> enum Flags { ALL = 0xFF; NONE = 0x00 }
+> int GLOBAL_MAX = 100
+>
+> func f(int x, int y = Flags.ALL):int { return x + y }       // enum 常量
+> func g(int x, int y = 10 + 20):int { return x + y }         // 常量表达式
+> func h(int x, int max = GLOBAL_MAX):int { return x + max }  // 全局变量
+> func k(int x, int y = Flags.ALL, int z = 5 * 2):int { return x + y + z }  // 混合
+> ```
+>
+> 局部函数（定义在 `main` 或其他函数内部的函数）同样支持这些默认值形式。
 
 ### var 速查：变量 vs 参数
 
@@ -5700,7 +5716,26 @@ enum Priority {
     medium  // 自动为 2
     high    // 自动为 3
 }
+
+// 使用常量表达式的枚举（支持算术和位运算）
+enum Http {
+    base    = 0x200000
+    header  = 0x200000 + 0x0C    // 加法表达式
+    mask    = 0xFF & 0x0F        // 位运算
+    shifted = 1 << 8             // 移位
+    combo   = (0x10 + 0x20) | 1  // 括号 + 位运算
+}
 ```
+
+> **✅ 新特性：enum 成员支持常量表达式**
+>
+> enum 成员的显式值现在支持编译期常量表达式，包括：
+> - 算术运算：`+` `-` `*` `/` `%`
+> - 位运算：`|` `&` `^` `<<` `>>`
+> - 一元运算：`-` `~` `!`
+> - 括号分组：`(1 + 2) * 3`
+>
+> 表达式在编译期求值，结果必须为整数。
 
 ### 使用枚举
 

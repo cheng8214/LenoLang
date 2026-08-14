@@ -1,0 +1,60 @@
+// enum 成员常量表达式测试 — 防止回归
+// 验证 enum 成员值支持算术表达式和位运算表达式
+
+enum HexFlags {
+    BASE    = 0x200000
+    HEADER  = 0x200000 + 0x0C       // 2097164
+    MASK    = 0xFF & 0x0F           // 15
+    SHIFTED = 1 << 8                // 256
+    NEG     = ~0                    // -1 (int64)
+    ADD_MUL = 1 + 2 * 3             // 7 (优先级)
+    PAREN   = (1 + 2) * 3           // 9 (括号)
+    BITOR   = 0x1000 | 0x0F         // 4111
+    BITXOR  = 0xFF ^ 0x0F           // 240
+    COMBO   = (0x10 + 0x20) | 0x01  // 49
+}
+
+enum Auto {
+    first               // 0
+    second              // 1
+    explicit = 10       // 10
+    third               // 11 (auto from explicit)
+    fourth              // 12
+}
+
+main() {
+    // 基本十六进制
+    assert_eq(HexFlags.BASE, 0x200000)
+
+    // 加法表达式
+    assert_eq(HexFlags.HEADER, 2097164)
+
+    // 位运算
+    assert_eq(HexFlags.MASK, 15)
+    assert_eq(HexFlags.SHIFTED, 256)
+
+    // 一元运算
+    assert_eq(HexFlags.NEG, -1)
+
+    // 运算符优先级（乘法优先于加法）
+    assert_eq(HexFlags.ADD_MUL, 7)
+
+    // 括号
+    assert_eq(HexFlags.PAREN, 9)
+
+    // 位或、位异或
+    assert_eq(HexFlags.BITOR, 4111)
+    assert_eq(HexFlags.BITXOR, 240)
+
+    // 复合表达式
+    assert_eq(HexFlags.COMBO, 49)
+
+    // 自动递增 + 显式值混合
+    assert_eq(Auto.first, 0)
+    assert_eq(Auto.second, 1)
+    assert_eq(Auto.explicit, 10)
+    assert_eq(Auto.third, 11)
+    assert_eq(Auto.fourth, 12)
+
+    print("test_enum_expression passed")
+}

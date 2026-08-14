@@ -445,8 +445,9 @@ static void gen_default_value(CodeGen* gen, Ast* default_expr) {
             emit_byte(gen, OP_NULL, default_expr->line);
             break;
         default:
-            // 其他情况不应发生（语义分析已确保是字面量）
-            emit_byte(gen, OP_NULL, default_expr->line);
+            // 非字面量表达式（如全局变量引用、enum 常量、常量表达式）
+            // 直接生成表达式代码
+            gen_expr(gen, default_expr);
             break;
     }
 }

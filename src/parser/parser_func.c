@@ -2375,6 +2375,63 @@ Ast* parse_cfunc_stmt(Parser* p) {
 }
 
 // ============================================================================
+// 编译期常量表达式求值（用于 enum 成员值）
+// 支持：整数字面量、十六进制(0x)、二进制(0b)、加减乘除模、位运算(| & ^ << >>)
+// ============================================================================
+
+// 前向声明
+static int64_t eval_const_expr(Ast* expr, int* ok);
+
+static int64_t eval_const_expr(Ast* expr, int* ok) {
+    *ok = 1;
+    if (!expr) { *ok = 0; return 0; }
+
+    switch (expr->kind) {
+        case AST_NUM:
+            if (expr->u.num.is_bigint && expr->u.num.bigint_str) {
+                return (int64_t)strtoll(expr->u.num.bigint_str, NULL, 0);
+            }
+            return (int64_t)expr->u.num.value;
+
+        case AST_UNARY: {
+            int64_t val = eval_const_expr(expr->u.unary.operand, ok);
+            if (!*ok) return 0;
+            switch (expr->u.unary.op) {
+                case TOK_MINUS: return -val;
+                case TOK_PLUS:  return val;
+                case TOK_BITNOT: return ~val;
+                case TOK_NOT:   return !val;
+                default: *ok = 0; return 0;
+            }
+        }
+
+        case AST_BINOP: {
+            int64_t left = eval_const_expr(expr->u.binop.l, ok);
+            if (!*ok) return 0;
+            int64_t right = eval_const_expr(expr->u.binop.r, ok);
+            if (!*ok) return 0;
+            switch (expr->u.binop.op) {
+                case TOK_PLUS:    return left + right;
+                case TOK_MINUS:   return left - right;
+                case TOK_STAR:    return left * right;
+                case TOK_SLASH:   return right != 0 ? left / right : 0;
+                case TOK_MOD:   return right != 0 ? left % right : 0;
+                case TOK_BITOR:   return left | right;
+                case TOK_BITAND:  return left & right;
+                case TOK_BITXOR:  return left ^ right;
+                case TOK_SHL:    return left << right;
+                case TOK_SHR:    return left >> right;
+                default: *ok = 0; return 0;
+            }
+        }
+
+        default:
+            *ok = 0;
+            return 0;
+    }
+}
+
+// ============================================================================
 // enum 定义解析
 // ============================================================================
 
@@ -2431,22 +2488,23 @@ Ast* parse_enum_stmt(Parser* p) {
         if (p->lex.current.type == TOK_EQ) {
             lexer_next(&p->lex); // 消费 '='
 
-            // 期望整数常量
-            if (p->lex.current.type != TOK_NUM) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "enum 成员显式值必须是整数常量");
+            // 解析常量表达式（支持 0x200000 + 0x0C 等表达式）
+            Ast* expr = parse_expression(p);
+            if (!expr) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "enum 成员值表达式解析失败");
                 free(member_name);
                 break;
             }
-
-            // 解析整数值
-            if (p->lex.current.is_bigint && p->lex.current.bigint_str) {
-                // BigInt 值，使用 strtoll 解析
-                member_value = (int64_t)strtoll(p->lex.current.bigint_str, NULL, 10);
-            } else {
-                // 普通数值
-                member_value = (int64_t)p->lex.current.num_val;
+            int eval_ok = 0;
+            int64_t val = eval_const_expr(expr, &eval_ok);
+            if (!eval_ok) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "enum 成员显式值必须是编译期整数常量表达式");
+                free(member_name);
+                ast_free(expr);
+                break;
             }
-            lexer_next(&p->lex);
+            member_value = val;
+            ast_free(expr);
         }
 
         // 扩容检查
