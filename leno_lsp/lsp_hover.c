@@ -1964,6 +1964,33 @@ static char* detect_var_type_from_text(const char* content, const char* var_name
                         strcmp(type_buf, "bigint") == 0) return strdup("number");
                     if (strcmp(type_buf, "bool") == 0) return strdup("bool");
                     if (strcmp(type_buf, "File") == 0) return strdup("File");
+                    // clib 类型（如 "sqlite3" 作为 clib 类型名，首字母小写）
+                    // 检查是否是已知的 clib 类型名
+                    // 注意：clib 名称通常不是大写开头，需要额外检测
+                    // 这里通过检查前一个关键字是否是 "clib" 来确认
+                    // 但在变量声明中 "sqlite3 l = ..." 不会带 "clib" 前缀
+                    // 所以我们检查类型名是否以已知 clib 方式出现
+                    // 回退方案：如果类型名不是大写开头且不是已知基本类型，
+                    // 可能是 clib 类型，直接返回 "clib <name>"
+                    if (!isupper((unsigned char)type_buf[0]) &&
+                        strcmp(type_buf, "var") != 0 &&
+                        strcmp(type_buf, "void") != 0 &&
+                        strcmp(type_buf, "null") != 0 &&
+                        strcmp(type_buf, "any") != 0 &&
+                        strcmp(type_buf, "func") != 0 &&
+                        strcmp(type_buf, "int") != 0 &&
+                        strcmp(type_buf, "float") != 0 &&
+                        strcmp(type_buf, "string") != 0 &&
+                        strcmp(type_buf, "bool") != 0 &&
+                        strcmp(type_buf, "Array") != 0 &&
+                        strcmp(type_buf, "Dict") != 0 &&
+                        strcmp(type_buf, "File") != 0 &&
+                        strcmp(type_buf, "bigint") != 0) {
+                        // 可能是 clib 类型（如 sqlite3, sdl3 等）
+                        char* result = (char*)malloc(strlen(type_buf) + 6);
+                        sprintf(result, "clib %s", type_buf);
+                        return result;
+                    }
                     // 其他类型名（如 struct 名）直接返回
                     if (isupper((unsigned char)type_buf[0])) return strdup(type_buf);
                 }
@@ -1996,6 +2023,17 @@ static char* detect_var_type_from_text(const char* content, const char* var_name
                                 strcmp(type_buf, "bigint") == 0) return strdup("number");
                             if (strcmp(type_buf, "bool") == 0) return strdup("bool");
                             if (strcmp(type_buf, "File") == 0) return strdup("File");
+                            // clib 类型（首字母小写的自定义类型名）
+                            if (!isupper((unsigned char)type_buf[0]) &&
+                                strcmp(type_buf, "var") != 0 &&
+                                strcmp(type_buf, "void") != 0 &&
+                                strcmp(type_buf, "null") != 0 &&
+                                strcmp(type_buf, "any") != 0 &&
+                                strcmp(type_buf, "func") != 0) {
+                                char* result = (char*)malloc(strlen(type_buf) + 6);
+                                sprintf(result, "clib %s", type_buf);
+                                return result;
+                            }
                             // struct 类型名（首字母大写）
                             if (isupper((unsigned char)type_buf[0])) return strdup(type_buf);
                         }
@@ -2189,6 +2227,12 @@ static char* get_variable_type_from_compiler(const char* content, const char* va
                     result = strdup(struct_ptr);
                 }
             }
+        } else if (strncmp(type_str, "clib ", 5) == 0) {
+            // clib 类型（如 "clib sqlite3"）
+            // 提取 clib 名称并返回 "clib <name>" 格式
+            result = strdup(type_str);
+            fprintf(stderr, "[HOVER-DEBUG] var='%s' type_str='%s' (clib type)\n", var_name, type_str);
+            fflush(stderr);
         } else if (isupper((unsigned char)type_str[0])) {
             // 可能是用户定义的 struct 类型名（如 MenuBar, TreeView, Window）
             // type_to_string 对 TYPE_STRUCT 直接返回 struct_name，不含 "struct" 前缀
@@ -2354,6 +2398,183 @@ static char* generate_struct_method_doc_from_modules(const char* struct_name, co
     
     free_import_aliases(import_aliases, import_count);
     return result;
+}
+
+// 生成 clib 方法的悬停文档
+// clib_type_str 格式为 "clib sqlite3"，从中提取 clib 名称并在编译器作用域或模块符号表中查找方法
+static char* generate_clib_method_doc(const char* clib_type_str, const char* method_name,
+                                       const char* content, const char* file_path) {
+    if (!clib_type_str || !method_name || !content) return NULL;
+
+    // 从 "clib sqlite3" 中提取 clib 名称
+    const char* prefix = "clib ";
+    if (strncmp(clib_type_str, prefix, 5) != 0) return NULL;
+    const char* clib_name = clib_type_str + 5;
+    if (!*clib_name) return NULL;
+
+    fprintf(stderr, "[HOVER-DEBUG] generate_clib_method_doc: clib='%s' method='%s'\n", clib_name, method_name);
+    fflush(stderr);
+
+    // 途径1：从当前文件的编译器作用域中查找 clib 定义 Symbol
+    {
+        CompilerContext ctx;
+        compiler_context_init(&ctx);
+        compiler_analyze_with_filename(&ctx, content, file_path);
+
+        if (ctx.root_scope) {
+            Symbol* clib_sym = scope_resolve_tree_bfs(ctx.root_scope, clib_name);
+            if (clib_sym && clib_sym->clib_func_count > 0) {
+                for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                    if (strcmp(clib_sym->clib_func_names[i], method_name) == 0) {
+                        TypeInfo* ret_type = clib_sym->clib_func_return_types[i];
+                        const char* ret_str = ret_type ? type_to_string(ret_type) : "unknown";
+                        int param_count = clib_sym->clib_func_param_counts[i];
+
+                        // 构建参数列表
+                        char params_str[512] = {0};
+                        if (param_count > 0 && clib_sym->clib_func_param_types) {
+                            int off = 0;
+                            for (int j = 0; j < param_count && off < (int)sizeof(params_str) - 20; j++) {
+                                TypeInfo* pt = clib_sym->clib_func_param_types[i][j];
+                                const char* pt_str = pt ? type_to_string(pt) : "unknown";
+                                if (j > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
+                                off += snprintf(params_str + off, sizeof(params_str) - off, "%s", pt_str);
+                            }
+                        }
+
+                        int len = 512 + strlen(clib_name) + strlen(method_name) + strlen(params_str) + strlen(ret_str);
+                        char* info = (char*)malloc(len);
+                        if (info) {
+                            if (param_count == 0) {
+                                snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s() -> %s\n```\n\n%s clib 函数",
+                                         clib_name, method_name, clib_name, method_name, ret_str, clib_name);
+                            } else {
+                                snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) -> %s\n```\n\n%s clib 函数（%d 个参数）",
+                                         clib_name, method_name, params_str,
+                                         clib_name, method_name, params_str, ret_str,
+                                         clib_name, param_count);
+                            }
+                        }
+                        compiler_context_cleanup(&ctx);
+                        return info;
+                    }
+                }
+            }
+        }
+        compiler_context_cleanup(&ctx);
+    }
+
+    // 途径2：从导入的模块符号表中查找
+    if (file_path) {
+        int import_count = 0;
+        ImportAlias* import_aliases = parse_imports(content, &import_count);
+        if (import_aliases && import_count > 0) {
+            for (int i = 0; i < import_count; i++) {
+                const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                if (!mp) continue;
+
+                module_symbol_table_reset_scan_stack();
+                ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                if (!mtable) continue;
+
+                if (module_symbol_table_scan(mtable, file_path) == 0) {
+                    ModuleClibSymbol* mclib = module_symbol_table_find_clib(mtable, clib_name);
+                    if (mclib) {
+                        for (int j = 0; j < mclib->func_count; j++) {
+                            if (strcmp(mclib->funcs[j].name, method_name) == 0) {
+                                const char* ret_str = mclib->funcs[j].return_struct_name ?
+                                    mclib->funcs[j].return_struct_name :
+                                    type_kind_to_string(mclib->funcs[j].return_type);
+                                int param_count = mclib->funcs[j].param_count;
+
+                                // 构建参数列表
+                                char params_str[512] = {0};
+                                if (param_count > 0) {
+                                    int off = 0;
+                                    for (int k = 0; k < param_count && off < (int)sizeof(params_str) - 20; k++) {
+                                        const char* pt_str = type_kind_to_string(mclib->funcs[j].param_types[k]);
+                                        if (k > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
+                                        off += snprintf(params_str + off, sizeof(params_str) - off, "%s", pt_str);
+                                    }
+                                }
+
+                                int len = 512 + strlen(clib_name) + strlen(method_name) + strlen(params_str) + strlen(ret_str);
+                                char* info = (char*)malloc(len);
+                                if (info) {
+                                    if (param_count == 0) {
+                                        snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s() -> %s\n```\n\n%s clib 函数",
+                                                 clib_name, method_name, clib_name, method_name, ret_str, clib_name);
+                                    } else {
+                                        snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) -> %s\n```\n\n%s clib 函数（%d 个参数）",
+                                                 clib_name, method_name, params_str,
+                                                 clib_name, method_name, params_str, ret_str,
+                                                 clib_name, param_count);
+                                    }
+                                }
+                                module_symbol_table_destroy(mtable);
+                                free_import_aliases(import_aliases, import_count);
+                                return info;
+                            }
+                        }
+                    }
+                }
+                module_symbol_table_destroy(mtable);
+            }
+        }
+        if (import_aliases) free_import_aliases(import_aliases, import_count);
+    }
+
+    // 途径3：当编译器解析失败时，使用模块符号表扫描当前文件本身
+    // 模块符号表的扫描是纯文本解析，不依赖编译器
+    if (file_path) {
+        module_symbol_table_reset_scan_stack();
+        ModuleSymbolTable* cur_table = module_symbol_table_create(file_path);
+        if (cur_table) {
+            if (module_symbol_table_scan(cur_table, file_path) == 0) {
+                ModuleClibSymbol* mclib = module_symbol_table_find_clib(cur_table, clib_name);
+                if (mclib) {
+                    for (int j = 0; j < mclib->func_count; j++) {
+                        if (strcmp(mclib->funcs[j].name, method_name) == 0) {
+                            const char* ret_str = mclib->funcs[j].return_struct_name ?
+                                mclib->funcs[j].return_struct_name :
+                                type_kind_to_string(mclib->funcs[j].return_type);
+                            int param_count = mclib->funcs[j].param_count;
+
+                            // 构建参数列表
+                            char params_str[512] = {0};
+                            if (param_count > 0) {
+                                int off = 0;
+                                for (int k = 0; k < param_count && off < (int)sizeof(params_str) - 20; k++) {
+                                    const char* pt_str = type_kind_to_string(mclib->funcs[j].param_types[k]);
+                                    if (k > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
+                                    off += snprintf(params_str + off, sizeof(params_str) - off, "%s", pt_str);
+                                }
+                            }
+
+                            int len = 512 + strlen(clib_name) + strlen(method_name) + strlen(params_str) + strlen(ret_str);
+                            char* info = (char*)malloc(len);
+                            if (info) {
+                                if (param_count == 0) {
+                                    snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s() -> %s\n```\n\n%s clib 函数",
+                                             clib_name, method_name, clib_name, method_name, ret_str, clib_name);
+                                } else {
+                                    snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) -> %s\n```\n\n%s clib 函数（%d 个参数）",
+                                             clib_name, method_name, params_str,
+                                             clib_name, method_name, params_str, ret_str,
+                                             clib_name, param_count);
+                                }
+                            }
+                            module_symbol_table_destroy(cur_table);
+                            return info;
+                        }
+                    }
+                }
+            }
+            module_symbol_table_destroy(cur_table);
+        }
+    }
+
+    return NULL;
 }
 
 // 检查是否是实例方法名（如 add, insert, len 等）
@@ -2533,6 +2754,11 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                     // 如果 struct_def_find 也失败，从导入的模块符号表中查找
                     if (!info) {
                         info = generate_struct_method_doc_from_modules(var_type, method, content, file_path);
+                    }
+                    
+                    // 如果仍然没找到，尝试 clib 方法
+                    if (!info) {
+                        info = generate_clib_method_doc(var_type, method, content, file_path);
                     }
                     free(var_type);
                 } else {
