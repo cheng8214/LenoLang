@@ -1,0 +1,16 @@
+// 测试: clib str8 返回类型基本功能
+// 使用 Windows API 的 GetCommandLineA，返回 char*，不需要释放
+
+clib kernel32 {
+    str8 GetCommandLineA()
+}
+
+main() {
+    string cmd = kernel32.GetCommandLineA()
+    if cmd != "" {
+        print("test_str8_return passed")
+        print("command line length: " + cmd.len())
+    } else {
+        print("test_str8_return FAILED: empty string")
+    }
+}

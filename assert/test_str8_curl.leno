@@ -1,0 +1,36 @@
+// 测试: str8 返回类型用于 curl_easy_escape
+// 验证 str8 返回的 Leno 字符串是否正确
+import ffi
+
+clib curl {
+    Ptr[u8] curl_easy_init()
+    void    curl_easy_cleanup(Ptr[u8] handle)
+    str8    curl_easy_escape(Ptr[u8] handle, str8 url, i32 length)
+    void    curl_free(Ptr[u8] p)
+}
+
+main() {
+    curl l = ffi.load("leno_module/LenoNet/lib/libcurl-x64.dll")
+    if l == null {
+        print("libcurl not loaded, SKIP")
+        return
+    }
+
+    Ptr[u8] handle = l.curl_easy_init()
+    if handle == null {
+        print("curl_easy_init failed")
+        return
+    }
+
+    // 直接用 clib 声明的 str8 返回类型
+    string escaped = l.curl_easy_escape(handle, "hello world", 0)
+    print("escaped: " + escaped)
+    if escaped == "hello%20world" {
+        print("PASS: str8 return from curl_easy_escape")
+    } else {
+        print("FAIL: expected 'hello%20world', got '" + escaped + "'")
+    }
+
+    l.curl_easy_cleanup(handle)
+    print("test_str8_curl passed")
+}

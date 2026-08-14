@@ -73,18 +73,17 @@ typedef enum {
 
 ## 3. 编译器限制记录
 
-### 3.1 Enum 成员不支持表达式
-Leno 的 `enum` 成员不支持表达式计算（如 `HEADER_SIZE = 0x200000 + 0x0C`），只能使用字面量。
-- **影响**：所有需要表达式计算的常量必须手动计算后写入硬编码值。
-- **变通**：在注释中注明原始公式，方便核对。
+### 3.1 ~~Enum 成员不支持表达式~~ （已修复）
+~~Leno 的 `enum` 成员不支持表达式计算（如 `HEADER_SIZE = 0x200000 + 0x0C`），只能使用字面量。~~
+- **状态**：已修复。`enum` 成员现在支持编译期常量表达式（算术/位运算/一元运算/括号分组）。
 
-### 3.2 默认参数必须为字面量
-Leno 的函数默认参数不支持引用全局变量（如 `func(int flags = Global.ALL)`），只能使用字面量。
-- **变通**：直接写入计算后的值（如 `func(int flags = 3)`）。
+### 3.2 ~~默认参数必须为字面量~~ （已修复）
+~~Leno 的函数默认参数不支持引用全局变量（如 `func(int flags = Global.ALL)`），只能使用字面量。~~
+- **状态**：已修复。默认参数现在支持 enum 常量引用、全局变量引用和常量表达式。局部函数的默认参数也已修复。
 
-### 3.3 模块全局变量作用域
-结构体方法中引用模块级全局变量时，如果全局变量定义在结构体之后，编译器无法找到该变量。
-- **变通**：将全局变量定义移到文件顶部，确保在所有引用之前。
+### 3.3 ~~模块全局变量作用域~~ （已修复）
+~~结构体方法中引用模块级全局变量时，如果全局变量定义在结构体之后，编译器无法找到该变量。~~
+- **状态**：已修复。全局变量声明现在会在语义分析预扫描阶段预注册到作用域，支持前向引用。
 
 ---
 
@@ -96,13 +95,16 @@ Leno 的函数默认参数不支持引用全局变量（如 `func(int flags = Gl
 ### 根因
 两个问题叠加：
 
-1. **clib 声明的 str8 返回类型无效**：`clib` 中声明 `str8 curl_easy_escape(Ptr[u8] handle, str8 url, i32 length)`，但 `str8` 返回类型在 FFI 层无法正确处理 libcurl 分配的 `char*` 内存。需要改用 `ffi.call_ptr` 获取指针，再用 `ffi.read_string` 读取，最后用 `curl_free` 释放。
+1. **clib 声明的 str8 返回类型可正常工作但存在内存泄漏**：`clib` 中声明 `str8 curl_easy_escape(...)` 时，FFI 层会正确地将 C `char*` 复制为 Leno `string`。但原始 C 内存（由 libcurl 分配）不会被释放，导致内存泄漏。对于需要释放的 C 函数返回值，应改用 `ffi.call_ptr` 获取指针，再用 `ffi.read_string` 读取，最后手动释放（如 `curl_free`）。
 
 2. **length 参数 -1 传参问题**：`curl_easy_escape` 的 C 签名为 `char* curl_easy_escape(CURL*, const char*, int length)`。当 `length = 0` 时 libcurl 使用 `strlen` 自动计算长度。但传 `-1` 时，FFI 引擎将 `-1` 作为 64 位整数传递，C 函数收到的是 `0xFFFFFFFFFFFFFFFF` 而非 `0xFFFFFFFF`，导致函数返回 `NULL`。
 
 ### 修复
-- 改用 `ffi.call_ptr` + `ffi.read_string` + `ffi.call_void("curl_free")` 三步走
+- 改用 `ffi.call_ptr` + `ffi.read_string` + `ffi.call_void("curl_free")` 三步走（避免内存泄漏）
 - `length` 参数从 `-1` 改为 `0`（让 libcurl 自动 `strlen`）
+
+### 补充说明
+`str8` 返回类型适用于**不需要释放**的 C 字符串（如 `strerror`、`GetCommandLineA` 等返回静态缓冲区的函数）。对于需要释放的 C 字符串（如 `curl_easy_escape`），使用 `ffi.call_ptr` + `read_string` + 手动释放。
 
 ---
 
