@@ -1,0 +1,16 @@
+import times as time
+
+func fib(int n) {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 2) + fib(n - 1)
+}
+
+main() {
+    var t1 = time.ms()
+    var result = fib(30)
+    var t2 = time.ms()
+    print(result)
+    print("" + (t2 - t1) + "ms")
+}
