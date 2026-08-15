@@ -1,0 +1,22 @@
+import "../lib/html.leno" as htmls
+
+main() {
+    var root = htmls.parse("<div>hello</div>")
+    var div = htmls.selectOne(root, "div")
+    print("text: " + htmls.text(div))
+    
+    // Test entity
+    var root2 = htmls.parse("<div>a &amp; b</div>")
+    var div2 = htmls.selectOne(root2, "div")
+    print("entity: " + htmls.allText(div2))
+    
+    // Test DOCTYPE
+    var root3 = htmls.parse("<!DOCTYPE html><div>test</div>")
+    var div3 = htmls.selectOne(root3, "div")
+    print("doctype: " + htmls.text(div3))
+    
+    // Test CDATA
+    var root4 = htmls.parse("<div><![CDATA[hello <world>]]></div>")
+    var div4 = htmls.selectOne(root4, "div")
+    print("cdata: " + htmls.allText(div4))
+}

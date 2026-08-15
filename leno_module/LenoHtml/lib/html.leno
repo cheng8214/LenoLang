@@ -1,6 +1,7 @@
 // LenoHtml - 纯 Leno 实现的 HTML 解析器
-// 使用模块级全局变量管理解析状态（Bug 1 已修复，全局变量可用）
+// 使用模块级全局变量管理解析状态
 // 使用泛型类型 Array[string]/Dict[string,string] 提高类型安全性
+// 支持：HTML 实体解码、DOCTYPE、CDATA、容错解析
 
 import strings
 
@@ -66,10 +67,15 @@ func _parseAttrs(): Dict[string, string] {
         if b == 62 or b == 47 {
             break
         }
+        // 跳过非法字符
+        if b == 60 or b == 38 {
+            _g_pos = _g_pos + 1
+            continue
+        }
         string name = ""
         while _g_pos < len {
             int ch = _g_html.byte(_g_pos)
-            if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 {
+            if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 or ch == 38 {
                 break
             }
             name = name + strings.char(ch)
@@ -79,6 +85,8 @@ func _parseAttrs(): Dict[string, string] {
             _g_pos = _g_pos + 1
             continue
         }
+        // 属性名转小写
+        name = name.to_lower()
         while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
             _g_pos = _g_pos + 1
         }
@@ -104,6 +112,7 @@ func _parseAttrs(): Dict[string, string] {
                     _g_pos = _g_pos + 1
                 }
             } else {
+                // 无引号属性值
                 while _g_pos < len {
                     int ch = _g_html.byte(_g_pos)
                     if _isSpace(ch) or ch == 62 or ch == 47 {
@@ -113,6 +122,10 @@ func _parseAttrs(): Dict[string, string] {
                     _g_pos = _g_pos + 1
                 }
             }
+        } else {
+            // 布尔属性：checked, disabled, selected 等
+            // HTML 中布尔属性存在即表示 true，值设为属性名本身
+            val = name
         }
         attrs[name] = val
     }
@@ -142,6 +155,146 @@ func _isVoidTag(string tagName): bool {
            tagName == "wbr"
 }
 
+// ==================== HTML 实体解码 ====================
+
+func _namedEntity(string name): string {
+    if name == "amp" { return "&" }
+    if name == "lt" { return "<" }
+    if name == "gt" { return ">" }
+    if name == "quot" { return "\"" }
+    if name == "apos" { return "'" }
+    if name == "nbsp" { return " " }
+    if name == "copy" { return "©" }
+    if name == "reg" { return "®" }
+    if name == "trade" { return "™" }
+    if name == "hellip" { return "…" }
+    if name == "mdash" { return "—" }
+    if name == "ndash" { return "–" }
+    if name == "laquo" { return "«" }
+    if name == "raquo" { return "»" }
+    if name == "ldquo" { return "\u201C" }
+    if name == "rdquo" { return "\u201D" }
+    if name == "lsquo" { return "‘" }
+    if name == "rsquo" { return "’" }
+    if name == "bull" { return "•" }
+    if name == "middot" { return "·" }
+    if name == "deg" { return "°" }
+    if name == "plusmn" { return "±" }
+    if name == "times" { return "×" }
+    if name == "divide" { return "÷" }
+    if name == "frac14" { return "¼" }
+    if name == "frac12" { return "½" }
+    if name == "frac34" { return "¾" }
+    return ""
+}
+
+func _hexDigit(int ch): int {
+    if ch >= 48 and ch <= 57 { return ch - 48 }
+    if ch >= 65 and ch <= 70 { return ch - 55 }
+    if ch >= 97 and ch <= 102 { return ch - 87 }
+    return -1
+}
+
+func _codepointToUtf8(int cp): string {
+    if cp <= 127 {
+        return strings.char(cp)
+    }
+    if cp <= 2047 {
+        int b1 = 192 + (cp / 64)
+        int b2 = 128 + (cp % 64)
+        return strings.char(b1) + strings.char(b2)
+    }
+    if cp <= 65535 {
+        int b1 = 224 + (cp / 4096)
+        int b2 = 128 + ((cp / 64) % 64)
+        int b3 = 128 + (cp % 64)
+        return strings.char(b1) + strings.char(b2) + strings.char(b3)
+    }
+    int b1 = 240 + (cp / 262144)
+    int b2 = 128 + ((cp / 4096) % 64)
+    int b3 = 128 + ((cp / 64) % 64)
+    int b4 = 128 + (cp % 64)
+    return strings.char(b1) + strings.char(b2) + strings.char(b3) + strings.char(b4)
+}
+
+func _decodeEntities(string text): string {
+    string result = ""
+    int i = 0
+    int len = text.len()
+    while i < len {
+        int b = text.byte(i)
+        if b == 38 {
+            int savePos = i
+            i = i + 1
+            if i < len and text.byte(i) == 35 {
+                i = i + 1
+                int codepoint = 0
+                if i < len and (text.byte(i) == 120 or text.byte(i) == 88) {
+                    i = i + 1
+                    while i < len {
+                        int ch = text.byte(i)
+                        if ch == 59 {
+                            i = i + 1
+                            break
+                        }
+                        int d = _hexDigit(ch)
+                        if d < 0 { break }
+                        codepoint = codepoint * 16 + d
+                        i = i + 1
+                    }
+                } else {
+                    while i < len {
+                        int ch = text.byte(i)
+                        if ch == 59 {
+                            i = i + 1
+                            break
+                        }
+                        if ch >= 48 and ch <= 57 {
+                            codepoint = codepoint * 10 + (ch - 48)
+                            i = i + 1
+                        } else {
+                            break
+                        }
+                    }
+                }
+                if codepoint > 0 and codepoint <= 1114111 {
+                    result = result + _codepointToUtf8(codepoint)
+                } else {
+                    i = savePos + 1
+                    result = result + strings.char(38)
+                }
+            } else {
+                string name = ""
+                while i < len {
+                    int ch = text.byte(i)
+                    if ch == 59 {
+                        i = i + 1
+                        break
+                    }
+                    if ch == 38 or _isSpace(ch) or ch == 60 or ch == 62 {
+                        break
+                    }
+                    name = name + strings.char(ch)
+                    i = i + 1
+                }
+                string decoded = _namedEntity(name)
+                if decoded != "" {
+                    result = result + decoded
+                } else {
+                    i = savePos + 1
+                    result = result + strings.char(38)
+                }
+            }
+        } else {
+            result = result + strings.char(b)
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// ==================== 元素解析 ====================
+
 func _parseElement(): any {
     int len = _g_html.len()
     if _g_pos >= len {
@@ -159,6 +312,34 @@ func _parseElement(): any {
                 _g_pos = _g_pos + 3
                 break
             }
+            _g_pos = _g_pos + 1
+        }
+        return null
+    }
+
+    // CDATA <![CDATA[ ... ]]>
+    if _g_pos + 8 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 91 and _g_html.byte(_g_pos+3) == 67 and _g_html.byte(_g_pos+4) == 68 and _g_html.byte(_g_pos+5) == 65 and _g_html.byte(_g_pos+6) == 84 and _g_html.byte(_g_pos+7) == 65 and _g_html.byte(_g_pos+8) == 91 {
+        _g_pos = _g_pos + 9
+        string cdata = ""
+        while _g_pos < len {
+            if _g_pos + 2 < len and _g_html.byte(_g_pos) == 93 and _g_html.byte(_g_pos+1) == 93 and _g_html.byte(_g_pos+2) == 62 {
+                _g_pos = _g_pos + 3
+                break
+            }
+            cdata = cdata + strings.char(_g_html.byte(_g_pos))
+            _g_pos = _g_pos + 1
+        }
+        var node = {tag: "#text", attrs: {}, children: [], text: cdata}
+        return node
+    }
+
+    // DOCTYPE / 其他声明 <!...>
+    if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 33 {
+        _g_pos = _g_pos + 2
+        while _g_pos < len and _g_html.byte(_g_pos) != 62 {
+            _g_pos = _g_pos + 1
+        }
+        if _g_pos < len and _g_html.byte(_g_pos) == 62 {
             _g_pos = _g_pos + 1
         }
         return null
@@ -193,7 +374,6 @@ func _parseElement(): any {
         return node
     }
 
-    // void 标签（修复：先解析属性再判断，确保属性已正确收集）
     if _isVoidTag(tagName) {
         var node = {tag: tagName, attrs: attrs, children: [], text: ""}
         return node
@@ -235,7 +415,6 @@ func _parseElement(): any {
 
     while _g_pos < len {
         if _g_html.byte(_g_pos) == 60 {
-            // 注释
             if _g_pos + 3 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 45 and _g_html.byte(_g_pos+3) == 45 {
                 _g_pos = _g_pos + 4
                 while _g_pos < len {
@@ -247,7 +426,25 @@ func _parseElement(): any {
                 }
                 continue
             }
-            // 闭合标签
+            // CDATA in body
+            if _g_pos + 8 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 91 and _g_html.byte(_g_pos+3) == 67 and _g_html.byte(_g_pos+4) == 68 and _g_html.byte(_g_pos+5) == 65 and _g_html.byte(_g_pos+6) == 84 and _g_html.byte(_g_pos+7) == 65 and _g_html.byte(_g_pos+8) == 91 {
+                _g_pos = _g_pos + 9
+                string cdata = ""
+                while _g_pos < len {
+                    if _g_pos + 2 < len and _g_html.byte(_g_pos) == 93 and _g_html.byte(_g_pos+1) == 93 and _g_html.byte(_g_pos+2) == 62 {
+                        _g_pos = _g_pos + 3
+                        break
+                    }
+                    cdata = cdata + strings.char(_g_html.byte(_g_pos))
+                    _g_pos = _g_pos + 1
+                }
+                if cdata != "" {
+                    textContent = textContent + cdata
+                    var textNode = {tag: "#text", attrs: {}, children: [], text: cdata}
+                    children.add(textNode)
+                }
+                continue
+            }
             if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
                 _g_pos = _g_pos + 2
                 _parseTagName()
@@ -259,7 +456,6 @@ func _parseElement(): any {
                 }
                 break
             }
-            // 子元素
             var child = _parseElement()
             if child != null {
                 children.add(child)
@@ -267,6 +463,7 @@ func _parseElement(): any {
         } else {
             string text = _parseText()
             if text != "" {
+                text = _decodeEntities(text)
                 textContent = textContent + text
                 var textNode = {tag: "#text", attrs: {}, children: [], text: text}
                 children.add(textNode)
@@ -307,7 +504,40 @@ export func parse(string html): any {
                 }
                 continue
             }
-            // 闭合标签（忽略）
+            // DOCTYPE / CDATA / 其他声明
+            if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 33 {
+                if _g_pos + 8 < len and _g_html.byte(_g_pos+2) == 91 and _g_html.byte(_g_pos+3) == 67 and _g_html.byte(_g_pos+4) == 68 and _g_html.byte(_g_pos+5) == 65 and _g_html.byte(_g_pos+6) == 84 and _g_html.byte(_g_pos+7) == 65 and _g_html.byte(_g_pos+8) == 91 {
+                    // CDATA
+                    _g_pos = _g_pos + 9
+                    string cdata = ""
+                    while _g_pos < len {
+                        if _g_pos + 2 < len and _g_html.byte(_g_pos) == 93 and _g_html.byte(_g_pos+1) == 93 and _g_html.byte(_g_pos+2) == 62 {
+                            _g_pos = _g_pos + 3
+                            break
+                        }
+                        cdata = cdata + strings.char(_g_html.byte(_g_pos))
+                        _g_pos = _g_pos + 1
+                    }
+                    if cdata != "" {
+                        var textNode = {tag: "#text", attrs: {}, children: [], text: cdata}
+                        var kidsRaw = root["children"]
+                        if kidsRaw is Array {
+                            kidsRaw.add(textNode)
+                        }
+                    }
+                    continue
+                }
+                // 其他 <!...> 跳过
+                _g_pos = _g_pos + 2
+                while _g_pos < len and _g_html.byte(_g_pos) != 62 {
+                    _g_pos = _g_pos + 1
+                }
+                if _g_pos < len and _g_html.byte(_g_pos) == 62 {
+                    _g_pos = _g_pos + 1
+                }
+                continue
+            }
+            // 闭合标签（忽略孤立的）
             if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
                 _g_pos = _g_pos + 2
                 while _g_pos < len and _g_html.byte(_g_pos) != 62 {
@@ -318,7 +548,6 @@ export func parse(string html): any {
                 }
                 continue
             }
-            // 子元素
             var child = _parseElement()
             if child != null {
                 var kidsRaw = root["children"]
@@ -329,6 +558,7 @@ export func parse(string html): any {
         } else {
             string text = _parseText()
             if text != "" {
+                text = _decodeEntities(text)
                 var textNode = {tag: "#text", attrs: {}, children: [], text: text}
                 var kidsRaw = root["children"]
                 if kidsRaw is Array {
@@ -363,7 +593,6 @@ export func text(any node): string {
     return ""
 }
 
-// 修复：allText 只收集子节点的 text，不重复收集父节点的 text
 export func allText(any node): string {
     if node == null {
         return ""
@@ -372,7 +601,6 @@ export func allText(any node): string {
     if node is Dict {
         var t = node["tag"]
         if t is string {
-            // #text 节点直接返回 text
             if t == "#text" {
                 var txt = node["text"]
                 if txt is string {
@@ -380,7 +608,6 @@ export func allText(any node): string {
                 }
             }
         }
-        // 只递归子节点，不收集父节点的 text 字段（避免重复）
         var kids = node["children"]
         if kids is Array {
             for kids to child {
@@ -395,13 +622,16 @@ export func attr(any node, string name): string {
     if node is Dict {
         var a = node["attrs"]
         if a is Dict[string, string] {
-            return a[name]
+            var v = a[name]
+            if v is string {
+                return _decodeEntities(v)
+            }
         }
     }
     return ""
 }
 
-export func children(any node): any {
+export func children(any node): Array {
     if node is Dict {
         var kids = node["children"]
         if kids is Array {
@@ -411,7 +641,7 @@ export func children(any node): any {
     return []
 }
 
-export func getLinks(string html): any {
+export func getLinks(string html): Array[string] {
     var root = parse(html)
     var links = []
     _collectLinks(root, links)
@@ -724,7 +954,7 @@ func _findDirectChildren(any node, Dict sel, Array results) {
     }
 }
 
-export func select(any root, string selector): any {
+export func select(any root, string selector): Array[any] {
     var parts = _splitSelector(selector)
     if parts.len() == 0 {
         return []
@@ -760,10 +990,8 @@ export func select(any root, string selector): any {
 
 export func selectOne(any root, string selector): any {
     var results = select(root, selector)
-    if results is Array {
-        if results.len() > 0 {
-            return results[0]
-        }
+    if results.len() > 0 {
+        return results[0]
     }
     return null
 }

@@ -1,0 +1,58 @@
+// crawl_quotes.leno — 爬取 quotes.toscrape.com 名言
+// 演示：LenoNet HTTP 获取 + LenoHtml CSS 选择器解析
+import "../lib/html.leno" as htmls
+import "../../LenoNet/lib/net.leno"
+use net.(Response)
+
+main() {
+    print("=== 爬取 quotes.toscrape.com ===\n")
+
+    // 1. HTTP GET 获取页面
+    print("[1] 正在请求页面...")
+    Response resp = net.get("http://quotes.toscrape.com/")
+    if not resp.ok() {
+        print("请求失败: " + resp.error)
+        return
+    }
+    print("状态码: " + resp.statusCode)
+    print("耗时: " + resp.totalTime + "s")
+    print("响应长度: " + resp.body.len() + " 字符\n")
+
+    // 2. 解析 HTML
+    print("[2] 解析 HTML...")
+    var doc = htmls.parse(resp.body)
+
+    // 3. 用 CSS 选择器选取所有名言卡片（select 直接返回 Array，无需类型收窄）
+    var quotes = htmls.select(doc, "div.quote")
+    print("找到 " + quotes.len() + " 条名言\n")
+
+    // 4. 遍历提取数据
+    print("[3] 提取数据：")
+    print("----------------------------------------")
+    for quotes to quote, i {
+        // 名言文本
+        var textEl = htmls.selectOne(quote, "span.text")
+        string quoteText = ""
+        if textEl != null { quoteText = htmls.text(textEl) }
+
+        // 作者
+        var authorEl = htmls.selectOne(quote, "small.author")
+        string author = "未知"
+        if authorEl != null { author = htmls.text(authorEl) }
+
+        // 标签（可能有多个）
+        var tagEls = htmls.select(quote, "a.tag")
+        string tags = ""
+        for tagEls to tag, j {
+            if j > 0 { tags = tags + ", " }
+            tags = tags + htmls.text(tag)
+        }
+
+        print((i + 1) + ". " + quoteText)
+        print("   —— " + author)
+        print("   标签: [" + tags + "]")
+        print("")
+    }
+    print("----------------------------------------")
+    print("\n爬取完成！共 " + quotes.len() + " 条名言")
+}
