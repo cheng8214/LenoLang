@@ -91,12 +91,7 @@
                                         if (!parsed) {
                                             // 简易递归下降表达式求值器
                                             // 支持：数字、十六进制、enum 成员引用、+ - * / % << >> | & ^
-                                            const char* ep = expr_buf;
-                                            // 前向声明辅助函数
                                             // 使用内联的方式实现简易求值
-                                            int eval_ok = 0;
-                                            int64_t eval_val = 0;
-
                                             // 简易 token 化 + 递归求值
                                             // 保存当前 enum 的已解析成员用于引用
                                             char* saved_names[MOD_MAX_MEMBERS];
@@ -119,7 +114,6 @@
                                             // primary = number | hex | enum_member_ref
                                             {
                                                 // 内联递归下降求值器
-                                                const char* s = ep;
                                                 // 简易 token 化
                                                 typedef enum { TOK_NUM, TOK_IDENT, TOK_OP, TOK_END } TokType;
                                                 typedef struct { TokType type; int64_t val; char op; char ident[64]; } Token;
@@ -203,10 +197,7 @@
                                                 }
 
                                                 // 简易递归下降求值
-                                                int pos = 0;
-                                                // 使用函数指针数组模拟递归
-                                                // 更简单：直接用栈求值
-                                                // 由于操作符优先级复杂，用 Dijkstra 的 shunting-yard 算法
+                                                // 使用栈求值
                                                 int ok_val = 1;
 
                                                 // 简化版：支持运算符优先级的递归下降

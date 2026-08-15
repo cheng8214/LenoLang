@@ -771,7 +771,7 @@ OPCODE(OP_CALL_GLOBAL_FUNC) {
         Value callee = vm.global_funcs[func_slot];
         if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
             // 闭包快速路径：在栈顶临时放入 callee 供 call() 读取
-            vm_stack_push_fast(&vm, callee);
+            vm_stack_push(&vm, callee);
             if (!call((ObjClosure*)val_as_obj(callee), arg_count, 0)) {
                 if (!vm.has_exception) {
                     return -1;
