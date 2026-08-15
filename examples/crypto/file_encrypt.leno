@@ -11,7 +11,7 @@ import strings
 int DELTA = -0x61C88647
 
 func mx(int z, int y, int sum, int p, int e, int k0, int k1, int k2, int k3):int {
-    int idx = _int32(p & 3) ^ e
+    int idx = (_int32(p & 3) ^ e) & 3  // 确保索引始终在 0-3 范围
     int part1 = _int32(_int32((_int32(z) & 0xFFFFFFFF) >>> 5) ^ _int32(y << 2))
     int part2 = _int32(_int32((_int32(y) & 0xFFFFFFFF) >>> 3) ^ _int32(z << 4))
     int part3 = _int32(part1 + part2)
@@ -158,6 +158,7 @@ func encrypt_file(string src_path, string dst_path, string key) {
     var f_in2 = files.open(src_path, "rb")
     int bytes_read = 0
     int chunk_idx = 0
+    int total_read = 0
 
     while (bytes_read < padded_len) {
         // 读取一个块
@@ -170,7 +171,7 @@ func encrypt_file(string src_path, string dst_path, string key) {
         int chunk_len = chunk_data.byte_len()
 
         // 如果读取不足一个块（文件末尾），需要 PKCS7 填充
-        if (bytes_read + chunk_len == orig_len and chunk_len < to_read) {
+        if (bytes_read + chunk_len >= orig_len) {
             // 这是最后一块，需要填充
             int remaining_data = chunk_len
             int words_in_chunk = to_read / 4
@@ -210,6 +211,7 @@ func encrypt_file(string src_path, string dst_path, string key) {
             }
 
             bytes_read = padded_len
+            total_read += chunk_len
         } else {
             // 正常块，直接转换
             int words_in_chunk = chunk_len / 4
@@ -224,6 +226,7 @@ func encrypt_file(string src_path, string dst_path, string key) {
             }
 
             bytes_read += chunk_len
+            total_read += chunk_len
         }
 
         chunk_idx += 1
@@ -237,6 +240,7 @@ func encrypt_file(string src_path, string dst_path, string key) {
     f_out.close()
     print("加密完成: " + dst_path)
     print("密文大小: " + (4 + padded_len) + " 字节")
+    print("实际读取: " + total_read + " 字节")
 }
 
 // 解密文件：流式分块读取 -> 分块 XXTEA 解密 -> 流式写入
@@ -262,6 +266,7 @@ func decrypt_file(string src_path, string dst_path, string key) {
     var f_out = files.open(dst_path, "wb")
     int bytes_remaining = orig_len
     int chunk_idx = 0
+    int total_written = 0
 
     while (bytes_remaining > 0) {
         // 读取一个加密块
@@ -274,13 +279,20 @@ func decrypt_file(string src_path, string dst_path, string key) {
         // XXTEA 解密
         xxtea_decrypt_block(block, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
 
+        // 调试：跟踪 bytes_remaining 变化
+        if (bytes_remaining != orig_len and (chunk_idx < 5 or bytes_remaining < 100000)) {
+            print("解密 chunk " + chunk_idx + ": 读取 " + chunk_data.byte_len() + " 字节, bytes_remaining: " + bytes_remaining + " -> " + (bytes_remaining - block.len() * 4))
+        }
+
         // 写入解密后的数据（去除末尾填充）
         for 0:block.len() - 1 to i {
             if (bytes_remaining >= 4) {
                 f_out.write(word_to_str(block[i]))
                 bytes_remaining -= 4
+                total_written += 4
             } else if (bytes_remaining > 0) {
                 f_out.write(word_to_str_partial(block[i], bytes_remaining))
+                total_written += bytes_remaining
                 bytes_remaining = 0
             }
         }
@@ -296,6 +308,7 @@ func decrypt_file(string src_path, string dst_path, string key) {
     f_out.close()
     print("解密完成: " + dst_path)
     print("解密大小: " + orig_len + " 字节")
+    print("实际写入: " + total_written + " 字节")
 }
 
 // ==================== 主程序 ====================

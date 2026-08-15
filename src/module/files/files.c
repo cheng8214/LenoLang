@@ -110,7 +110,8 @@ static Value file_method_read(int argCount, Value* args) {
         buffer[read_size] = '\0';
 
         /* 确保 UTF-8 字符边界完整：若尾部截断了多字节序列，回退到上一个完整字符 */
-        if (read_size > 0) {
+        /* 注意：二进制模式（含'b'）时不做 UTF-8 处理，直接按原始字节读写 */
+        if (read_size > 0 && !strchr(file->mode->chars, 'b')) {
             size_t safe_len = read_size;
             unsigned char last = (unsigned char)buffer[safe_len - 1];
             /* 尾字节(0x80-0xBF)说明多字节序列被截断，向前找到首字节 */

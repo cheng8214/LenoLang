@@ -43,10 +43,14 @@
                                     // 解析常量表达式值（支持数字、十六进制、负数、
                                     // 移位 << >>、位运算 | & ^、算术 + - * / %、
                                     // enum 成员引用）
-                                    // 表达式终止于逗号、分号、换行或 }
+                                    // 表达式终止于逗号、分号、换行、} 或行注释 //
                                     const char* expr_start = after_enum;
                                     // 找到表达式结束位置
-                                    while (*after_enum && *after_enum != ',' && *after_enum != ';' && *after_enum != '\n' && *after_enum != '}') after_enum++;
+                                    while (*after_enum && *after_enum != ',' && *after_enum != ';' && *after_enum != '\n' && *after_enum != '}') {
+                                        // 遇到行注释 // 时，表达式结束
+                                        if (*after_enum == '/' && *(after_enum+1) == '/') break;
+                                        after_enum++;
+                                    }
                                     int expr_len = (int)(after_enum - expr_start);
                                     if (expr_len > 0 && expr_len < 256) {
                                         char expr_buf[256];
@@ -71,7 +75,9 @@
                                                 pnum++;
                                                 has_digit = 1;
                                             }
-                                            if (has_digit && *pnum == '\0') {
+                                            // 跳过数字后的尾部空格
+                                            while (*pnum == ' ' || *pnum == '\t') pnum++;
+                                            if (has_digit && (*pnum == '\0' || *pnum == '/')) {
                                                 member_values_buf[member_count] = neg ? -val : val;
                                                 parsed = 1;
                                             }
@@ -81,7 +87,9 @@
                                                 val = val * 10 + (*pnum - '0');
                                                 pnum++;
                                             }
-                                            if (*pnum == '\0') {
+                                            // 跳过数字后的尾部空格
+                                            while (*pnum == ' ' || *pnum == '\t') pnum++;
+                                            if (*pnum == '\0' || *pnum == '/') {
                                                 member_values_buf[member_count] = neg ? -val : val;
                                                 parsed = 1;
                                             }

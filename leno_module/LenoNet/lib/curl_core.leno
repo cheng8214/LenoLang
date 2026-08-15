@@ -233,10 +233,12 @@ export func lib(): curl {
         string ext = if _os() == "windows" then ".dll" else ".so"
         // 从脚本目录和上级目录查找
         var path = dirs.script_dir() + "/libcurl-x64" + ext
-        if not files.exists(path) { path = dirs.script_dir() + "/libcurl" + ext }
+        if not files.exists(path) { path = dirs.script_dir() + "/libcurl-x64" + ext }
         if not files.exists(path) { path = dirs.script_dir() + "/../libcurl-x64" + ext }
         if not files.exists(path) { path = dirs.script_dir() + "/../lib/libcurl-x64" + ext }
-        if not files.exists(path) { path = "libcurl" + ext }
+        // fallback: 纯文件名，让 ffi.load 自动搜索（模块目录、exe目录、系统PATH）
+        if not files.exists(path) { path = "libcurl-x64" + ext }
+        if not files.exists(path) { path = "libcurl-x64" + ext }
         g_lib = ffi.load(path)
     }
     return g_lib

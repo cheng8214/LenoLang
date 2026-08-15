@@ -1,0 +1,79 @@
+// enum 注释值解析回归测试
+// Bug: scan_enum.inc 解析带 // 注释的 enum 成员值时，注释内容被包含在表达式中
+// 导致简单数字解析失败（*pnum != '\0'），最终 enum 值回退为成员序号索引
+// 影响范围：use 导入的跨模块 enum（如 LenoNet 的 Opt.URL 返回 42 而非 10002）
+// 本地 enum 不受影响（运行时从模块 exports dict 获取值）
+
+import "test_enum_comment_mod.leno" as cm
+use cm.(OptWithComments, InfoWithComments, OptNoComments)
+
+// 本地带注释 enum
+enum LocalOpt {
+    VERBOSE             = 41      // 注释测试
+    HEADER              = 42      // 注释测试
+    URL                 = 10002   // 注释测试
+    WRITEFUNCTION       = 20011   // 注释测试
+}
+
+main() {
+    // === use 导入的带注释 enum（bug 触发路径）===
+
+    // 十进制带注释
+    assert_eq(OptWithComments.VERBOSE, 41)
+    assert_eq(OptWithComments.HEADER, 42)
+    assert_eq(OptWithComments.NOPROGRESS, 43)
+    assert_eq(OptWithComments.NOBODY, 44)
+    assert_eq(OptWithComments.FAILONERROR, 45)
+    assert_eq(OptWithComments.FOLLOWLOCATION, 52)
+    assert_eq(OptWithComments.MAXREDIRS, 68)
+    assert_eq(OptWithComments.POST, 47)
+    assert_eq(OptWithComments.HTTPGET, 80)
+    assert_eq(OptWithComments.TIMEOUT, 13)
+    assert_eq(OptWithComments.TIMEOUT_MS, 155)
+
+    // 关键：大数值带注释（之前 URL 返回 42 而非 10002）
+    assert_eq(OptWithComments.URL, 10002)
+    assert_eq(OptWithComments.WRITEDATA, 10001)
+    assert_eq(OptWithComments.USERAGENT, 10018)
+    assert_eq(OptWithComments.ACCEPT_ENCODING, 10102)
+    assert_eq(OptWithComments.WRITEFUNCTION, 20011)
+    assert_eq(OptWithComments.HEADERFUNCTION, 20079)
+    assert_eq(OptWithComments.HTTPHEADER, 10023)
+    assert_eq(OptWithComments.POSTFIELDS, 10015)
+    assert_eq(OptWithComments.CUSTOMREQUEST, 10036)
+
+    // 十六进制带注释
+    assert_eq(InfoWithComments.EFFECTIVE_URL, 0x100001)
+    assert_eq(InfoWithComments.RESPONSE_CODE, 0x200002)
+    assert_eq(InfoWithComments.TOTAL_TIME, 0x300003)
+    assert_eq(InfoWithComments.CONNECT_TIME, 0x300005)
+    assert_eq(InfoWithComments.CONTENT_TYPE, 0x100012)
+    assert_eq(InfoWithComments.HEADER_SIZE, 0x20000B)
+    assert_eq(InfoWithComments.REDIRECT_COUNT, 0x200014)
+
+    // === use 导入的无注释 enum（对照组）===
+    assert_eq(OptNoComments.VERBOSE, 41)
+    assert_eq(OptNoComments.HEADER, 42)
+    assert_eq(OptNoComments.URL, 10002)
+    assert_eq(OptNoComments.WRITEFUNCTION, 20011)
+
+    // === 模块访问路径（cc.Enum.member，不受 bug 影响）===
+    assert_eq(cm.OptWithComments.URL, 10002)
+    assert_eq(cm.OptWithComments.WRITEFUNCTION, 20011)
+    assert_eq(cm.InfoWithComments.RESPONSE_CODE, 0x200002)
+
+    // === 本地定义的带注释 enum（不受 bug 影响）===
+    // 本地 enum 值从运行时 exports dict 获取，不经过 scan_enum.inc
+    // 但仍然测试以确保一致性
+    assert_eq(LocalOpt.VERBOSE, 41)
+    assert_eq(LocalOpt.URL, 10002)
+    assert_eq(LocalOpt.WRITEFUNCTION, 20011)
+
+    // === 关键验证：use 导入 vs 模块访问，值必须一致 ===
+    assert(OptWithComments.URL == cm.OptWithComments.URL)
+    assert(OptWithComments.WRITEFUNCTION == cm.OptWithComments.WRITEFUNCTION)
+    assert(OptWithComments.VERBOSE == cm.OptWithComments.VERBOSE)
+    assert(InfoWithComments.RESPONSE_CODE == cm.InfoWithComments.RESPONSE_CODE)
+
+    print("enum comment value regression test passed")
+}

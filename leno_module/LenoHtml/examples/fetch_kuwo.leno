@@ -1,0 +1,104 @@
+// LenoHtml + LenoNet 实战：抓取并解析真实网页
+import "../../LenoNet/lib/net.leno"
+import strings
+import "../lib/html.leno" as htmls
+
+use net.(Response, HttpClient)
+
+main() {
+    net.globalInit()
+    print("=== LenoNet + LenoHtml 实战 ===")
+    print("libcurl: " + net.version())
+    print("")
+
+    HttpClient client = net.createClient()
+    client.setSSLVerify(false, false)
+    client.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    client.setTimeout(15000)
+
+    // 抓取 example.com（稳定测试站点）
+    string url = "http://example.com"
+    print("正在请求: " + url)
+    Response resp = client.get(url)
+
+    if not resp.ok() {
+        print("请求失败: " + resp.error)
+        print("curlCode: " + resp.curlCode)
+        client.close()
+        return
+    }
+
+    print("状态码: " + resp.statusCode)
+    print("内容大小: " + resp.body.len() + " 字节")
+    print("内容类型: " + resp.contentType)
+    print("")
+
+    // 用 LenoHtml 解析 HTML
+    print("正在解析 HTML...")
+    var root = htmls.parse(resp.body)
+
+    // 提取页面标题
+    string pageTitle = htmls.text(htmls.selectOne(root, "title"))
+    if pageTitle != "" {
+        print("页面标题: " + pageTitle)
+    }
+    print("")
+
+    // 提取 <h1> 标题
+    var h1s = htmls.select(root, "h1")
+    if h1s is Array {
+        print("=== h1 标题 ===")
+        for h1s to h1 {
+            print("  " + htmls.text(h1))
+        }
+        print("")
+    }
+
+    // 提取 <p> 段落
+    var ps = htmls.select(root, "p")
+    if ps is Array {
+        print("=== p 段落 ===")
+        for ps to p {
+            string ptext = htmls.text(p)
+            if ptext != "" {
+                print("  " + ptext)
+            }
+        }
+        print("")
+    }
+
+    // 提取 <a> 链接
+    var links = htmls.select(root, "a")
+    if links is Array {
+        print("=== 链接 ===")
+        for links to link {
+            string href = htmls.attr(link, "href")
+            string linkText = htmls.text(link)
+            print("  " + linkText + " -> " + href)
+        }
+        print("")
+    }
+
+    // 提取 <meta> 标签
+    var metas = htmls.select(root, "meta")
+    if metas is Array {
+        print("=== meta 标签 ===")
+        for metas to meta {
+            string name = htmls.attr(meta, "name")
+            string content = htmls.attr(meta, "content")
+            if name != "" {
+                print("  " + name + " = " + content)
+            }
+        }
+        print("")
+    }
+
+    // allText 提取
+    string allText = htmls.allText(root)
+    print("=== allText ===")
+    print("  (" + allText.len() + " chars): " + allText)
+    print("")
+
+    client.close()
+    print("=== 完成 ===")
+}
