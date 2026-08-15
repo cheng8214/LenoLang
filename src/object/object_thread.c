@@ -290,7 +290,7 @@ static void* thread_entry_point(void* arg) {
     native_init_module("sockets");
     native_init_module("ffi");
     native_init_module("threads");
-
+    native_init_module("regexs");
     // 初始化所有实例方法（与主 VM 一致）
     extern void arrays_init_instance_methods(void);
     arrays_init_instance_methods();
