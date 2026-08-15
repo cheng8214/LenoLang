@@ -1,0 +1,49 @@
+// 验证泛型语法
+import strings
+
+main() {
+    // 1. Array[string] 声明
+    Array[string] arr1 = ["a", "b", "c"]
+    print("Array[string] len=" + arr1.len())
+    print("arr1[0]=" + arr1[0])
+
+    // 2. Array[int] 声明
+    Array[int] arr2 = [1, 2, 3]
+    print("Array[int] len=" + arr2.len())
+    int sum = 0
+    for arr2 to v {
+        sum = sum + v
+    }
+    print("sum=" + sum)
+
+    // 3. Dict[string, string] 声明
+    Dict[string, string] d1 = {name: "hello", value: "world"}
+    print("d1[name]=" + d1["name"])
+
+    // 4. Dict[string, int] 声明
+    Dict[string, int] d2 = {pos: 0, len: 10}
+    print("d2[pos]=" + d2["pos"])
+
+    // 5. is 收窄带泛型参数
+    var v = arr1
+    if v is Array[string] {
+        print("is Array[string] ok, len=" + v.len())
+    }
+
+    var v2 = d2
+    if v2 is Dict[string, int] {
+        print("is Dict[string, int] ok, pos=" + v2["pos"])
+    }
+
+    // 6. 模块级全局变量
+    _g_test = "global value"
+    print("global=" + _getGlobal())
+
+    print("\n全部泛型语法验证通过")
+}
+
+var _g_test = ""
+
+func _getGlobal(): string {
+    return _g_test
+}

@@ -1,0 +1,17 @@
+import "../lib/html.leno" as htmls
+
+main() {
+    var root = htmls.parse("<div>Hello <b>World</b></div>")
+    var b = htmls.selectOne(root, "b")
+    print("b tag = " + htmls.tag(b))
+    print("b text = " + htmls.text(b))
+    var bkids = htmls.children(b)
+    if bkids is Array {
+        print("b kids count = " + bkids.len())
+        for bkids to c {
+            print("  c tag = " + htmls.tag(c) + " c text = " + htmls.text(c))
+        }
+    }
+    print("allText(b) = [" + htmls.allText(b) + "]")
+    print("allText(root) = [" + htmls.allText(root) + "]")
+}

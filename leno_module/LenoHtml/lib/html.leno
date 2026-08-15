@@ -1,8 +1,13 @@
 // LenoHtml - 纯 Leno 实现的 HTML 解析器
-// 不使用模块级全局变量，用 Array 传递解析状态: [pos, len]
-// html 字符串通过参数传递
+// 使用模块级全局变量管理解析状态（Bug 1 已修复，全局变量可用）
+// 使用泛型类型 Array[string]/Dict[string,string] 提高类型安全性
 
 import strings
+
+// ==================== 模块级全局状态 ====================
+
+var _g_pos = 0
+var _g_html = ""
 
 // ==================== 辅助函数 ====================
 
@@ -18,236 +23,208 @@ func _isSpace(int b): bool {
     return b == 32 or b == 9 or b == 10 or b == 13
 }
 
-func _getPos(Array state): int {
-    var v = state[0]
-    if v is int {
-        return v
-    }
-    return 0
-}
-
-func _setPos(Array state, int pos) {
-    state[0] = pos
-}
-
-func _getLen(Array state): int {
-    var v = state[1]
-    if v is int {
-        return v
-    }
-    return 0
-}
-
 // ==================== 解析器 ====================
 
-func _parseTagName(string html, Array state): string {
+func _parseTagName(): string {
     string tag = ""
-    int pos = _getPos(state)
-    int len = _getLen(state)
-    while pos < len {
-        int b = html.byte(pos)
+    int len = _g_html.len()
+    while _g_pos < len {
+        int b = _g_html.byte(_g_pos)
         if _isAlphaNum(b) or b == 45 or b == 95 {
             tag = tag + strings.char(b)
-            pos = pos + 1
+            _g_pos = _g_pos + 1
         } else {
             break
         }
     }
-    _setPos(state, pos)
     return tag
 }
 
-func _skipWs(string html, Array state) {
-    int pos = _getPos(state)
-    int len = _getLen(state)
-    while pos < len {
-        int b = html.byte(pos)
+func _skipWs() {
+    int len = _g_html.len()
+    while _g_pos < len {
+        int b = _g_html.byte(_g_pos)
         if _isSpace(b) {
-            pos = pos + 1
+            _g_pos = _g_pos + 1
         } else {
             break
         }
     }
-    _setPos(state, pos)
 }
 
-func _parseAttrs(string html, Array state): Dict {
-    Dict attrs = {}
-    int pos = _getPos(state)
-    int len = _getLen(state)
-    while pos < len {
-        while pos < len and _isSpace(html.byte(pos)) {
-            pos = pos + 1
+func _parseAttrs(): Dict[string, string] {
+    Dict[string, string] attrs = {}
+    int len = _g_html.len()
+    while _g_pos < len {
+        while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
+            _g_pos = _g_pos + 1
         }
-        if pos >= len {
+        if _g_pos >= len {
             break
         }
-        int b = html.byte(pos)
+        int b = _g_html.byte(_g_pos)
         if b == 62 or b == 47 {
             break
         }
         string name = ""
-        while pos < len {
-            int ch = html.byte(pos)
+        while _g_pos < len {
+            int ch = _g_html.byte(_g_pos)
             if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 {
                 break
             }
             name = name + strings.char(ch)
-            pos = pos + 1
+            _g_pos = _g_pos + 1
         }
         if name == "" {
-            pos = pos + 1
+            _g_pos = _g_pos + 1
             continue
         }
-        while pos < len and _isSpace(html.byte(pos)) {
-            pos = pos + 1
+        while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
+            _g_pos = _g_pos + 1
         }
         string val = ""
-        if pos < len and html.byte(pos) == 61 {
-            pos = pos + 1
-            while pos < len and _isSpace(html.byte(pos)) {
-                pos = pos + 1
+        if _g_pos < len and _g_html.byte(_g_pos) == 61 {
+            _g_pos = _g_pos + 1
+            while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
+                _g_pos = _g_pos + 1
             }
             int q = -1
-            if pos < len {
-                q = html.byte(pos)
+            if _g_pos < len {
+                q = _g_html.byte(_g_pos)
             }
             if q == 34 or q == 39 {
-                pos = pos + 1
-                while pos < len {
-                    int ch = html.byte(pos)
+                _g_pos = _g_pos + 1
+                while _g_pos < len {
+                    int ch = _g_html.byte(_g_pos)
                     if ch == q {
-                        pos = pos + 1
+                        _g_pos = _g_pos + 1
                         break
                     }
                     val = val + strings.char(ch)
-                    pos = pos + 1
+                    _g_pos = _g_pos + 1
                 }
             } else {
-                while pos < len {
-                    int ch = html.byte(pos)
+                while _g_pos < len {
+                    int ch = _g_html.byte(_g_pos)
                     if _isSpace(ch) or ch == 62 or ch == 47 {
                         break
                     }
                     val = val + strings.char(ch)
-                    pos = pos + 1
+                    _g_pos = _g_pos + 1
                 }
             }
         }
         attrs[name] = val
     }
-    _setPos(state, pos)
     return attrs
 }
 
-func _parseText(string html, Array state): string {
+func _parseText(): string {
     string text = ""
-    int pos = _getPos(state)
-    int len = _getLen(state)
-    while pos < len {
-        int b = html.byte(pos)
+    int len = _g_html.len()
+    while _g_pos < len {
+        int b = _g_html.byte(_g_pos)
         if b == 60 {
             break
         }
         text = text + strings.char(b)
-        pos = pos + 1
+        _g_pos = _g_pos + 1
     }
-    _setPos(state, pos)
     return text
 }
 
-func _parseElement(string html, Array state): any {
-    int pos = _getPos(state)
-    int len = _getLen(state)
-    if pos >= len {
+// 判断是否为 void 标签（不需要闭合标签）
+func _isVoidTag(string tagName): bool {
+    return tagName == "br" or tagName == "hr" or tagName == "img" or
+           tagName == "input" or tagName == "meta" or tagName == "link" or
+           tagName == "area" or tagName == "base" or tagName == "col" or
+           tagName == "embed" or tagName == "source" or tagName == "track" or
+           tagName == "wbr"
+}
+
+func _parseElement(): any {
+    int len = _g_html.len()
+    if _g_pos >= len {
         return null
     }
-    if html.byte(pos) != 60 {
+    if _g_html.byte(_g_pos) != 60 {
         return null
     }
 
-    // 注释
-    if pos + 3 < len and html.byte(pos+1) == 33 and html.byte(pos+2) == 45 and html.byte(pos+3) == 45 {
-        pos = pos + 4
-        while pos < len {
-            if html.byte(pos) == 45 and pos+2 < len and html.byte(pos+1) == 45 and html.byte(pos+2) == 62 {
-                pos = pos + 3
+    // 注释 <!-- ... -->
+    if _g_pos + 3 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 45 and _g_html.byte(_g_pos+3) == 45 {
+        _g_pos = _g_pos + 4
+        while _g_pos < len {
+            if _g_html.byte(_g_pos) == 45 and _g_pos+2 < len and _g_html.byte(_g_pos+1) == 45 and _g_html.byte(_g_pos+2) == 62 {
+                _g_pos = _g_pos + 3
                 break
             }
-            pos = pos + 1
+            _g_pos = _g_pos + 1
         }
-        _setPos(state, pos)
         return null
     }
 
-    if pos + 1 < len and html.byte(pos+1) == 47 {
+    // 闭合标签 </...>
+    if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
         return null
     }
 
-    pos = pos + 1
-    _setPos(state, pos)
+    _g_pos = _g_pos + 1
 
-    string tagName = _parseTagName(html, state)
+    string tagName = _parseTagName()
     if tagName == "" {
         return null
     }
     tagName = strings.to_lower(tagName)
 
-    Dict attrs = _parseAttrs(html, state)
-    pos = _getPos(state)
+    Dict[string, string] attrs = _parseAttrs()
 
     bool selfClosing = false
-    if pos < len and html.byte(pos) == 47 {
+    if _g_pos < len and _g_html.byte(_g_pos) == 47 {
         selfClosing = true
-        pos = pos + 1
+        _g_pos = _g_pos + 1
     }
-    if pos < len and html.byte(pos) == 62 {
-        pos = pos + 1
+    if _g_pos < len and _g_html.byte(_g_pos) == 62 {
+        _g_pos = _g_pos + 1
     }
-    _setPos(state, pos)
 
     if selfClosing {
         var node = {tag: tagName, attrs: attrs, children: [], text: ""}
         return node
     }
 
-    // void 标签
-    if tagName == "br" or tagName == "hr" or tagName == "img" or tagName == "input" or tagName == "meta" or tagName == "link" or tagName == "area" or tagName == "base" or tagName == "col" or tagName == "embed" or tagName == "source" or tagName == "track" or tagName == "wbr" {
+    // void 标签（修复：先解析属性再判断，确保属性已正确收集）
+    if _isVoidTag(tagName) {
         var node = {tag: tagName, attrs: attrs, children: [], text: ""}
         return node
     }
 
-    // script/style
+    // script/style 标签：原始内容直接读取
     if tagName == "script" or tagName == "style" {
         string rawContent = ""
-        while pos < len {
-            if html.byte(pos) == 60 and pos+1 < len and html.byte(pos+1) == 47 {
-                int savePos = pos
-                pos = pos + 2
-                _setPos(state, pos)
-                string closeTag = _parseTagName(html, state)
+        while _g_pos < len {
+            if _g_html.byte(_g_pos) == 60 and _g_pos+1 < len and _g_html.byte(_g_pos+1) == 47 {
+                int savePos = _g_pos
+                _g_pos = _g_pos + 2
+                string closeTag = _parseTagName()
                 closeTag = strings.to_lower(closeTag)
-                pos = _getPos(state)
                 if closeTag == tagName {
-                    _parseAttrs(html, state)
-                    pos = _getPos(state)
-                    if pos < len and html.byte(pos) == 62 {
-                        pos = pos + 1
+                    _parseAttrs()
+                    if _g_pos < len and _g_html.byte(_g_pos) == 62 {
+                        _g_pos = _g_pos + 1
                     }
-                    _setPos(state, pos)
                     var node = {tag: tagName, attrs: attrs, children: [], text: rawContent}
                     return node
                 } else {
-                    pos = savePos
-                    rawContent = rawContent + strings.char(html.byte(pos))
-                    pos = pos + 1
+                    _g_pos = savePos
+                    rawContent = rawContent + strings.char(_g_html.byte(_g_pos))
+                    _g_pos = _g_pos + 1
                 }
             } else {
-                rawContent = rawContent + strings.char(html.byte(pos))
-                pos = pos + 1
+                rawContent = rawContent + strings.char(_g_html.byte(_g_pos))
+                _g_pos = _g_pos + 1
             }
         }
-        _setPos(state, pos)
         var node = {tag: tagName, attrs: attrs, children: [], text: rawContent}
         return node
     }
@@ -256,44 +233,39 @@ func _parseElement(string html, Array state): any {
     var children = []
     string textContent = ""
 
-    while pos < len {
-        if html.byte(pos) == 60 {
-            if pos + 3 < len and html.byte(pos+1) == 33 and html.byte(pos+2) == 45 and html.byte(pos+3) == 45 {
-                pos = pos + 4
-                while pos < len {
-                    if html.byte(pos) == 45 and pos+2 < len and html.byte(pos+1) == 45 and html.byte(pos+2) == 62 {
-                        pos = pos + 3
+    while _g_pos < len {
+        if _g_html.byte(_g_pos) == 60 {
+            // 注释
+            if _g_pos + 3 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 45 and _g_html.byte(_g_pos+3) == 45 {
+                _g_pos = _g_pos + 4
+                while _g_pos < len {
+                    if _g_html.byte(_g_pos) == 45 and _g_pos+2 < len and _g_html.byte(_g_pos+1) == 45 and _g_html.byte(_g_pos+2) == 62 {
+                        _g_pos = _g_pos + 3
                         break
                     }
-                    pos = pos + 1
+                    _g_pos = _g_pos + 1
                 }
-                _setPos(state, pos)
                 continue
             }
-            if pos + 1 < len and html.byte(pos+1) == 47 {
-                pos = pos + 2
-                _setPos(state, pos)
-                _parseTagName(html, state)
-                pos = _getPos(state)
-                while pos < len and html.byte(pos) != 62 {
-                    pos = pos + 1
+            // 闭合标签
+            if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
+                _g_pos = _g_pos + 2
+                _parseTagName()
+                while _g_pos < len and _g_html.byte(_g_pos) != 62 {
+                    _g_pos = _g_pos + 1
                 }
-                if pos < len and html.byte(pos) == 62 {
-                    pos = pos + 1
+                if _g_pos < len and _g_html.byte(_g_pos) == 62 {
+                    _g_pos = _g_pos + 1
                 }
-                _setPos(state, pos)
                 break
             }
-            _setPos(state, pos)
-            var child = _parseElement(html, state)
-            pos = _getPos(state)
+            // 子元素
+            var child = _parseElement()
             if child != null {
                 children.add(child)
             }
         } else {
-            _setPos(state, pos)
-            string text = _parseText(html, state)
-            pos = _getPos(state)
+            string text = _parseText()
             if text != "" {
                 textContent = textContent + text
                 var textNode = {tag: "#text", attrs: {}, children: [], text: text}
@@ -302,7 +274,6 @@ func _parseElement(string html, Array state): any {
         }
     }
 
-    _setPos(state, pos)
     var node = {tag: tagName, attrs: attrs, children: children, text: textContent}
     return node
 }
@@ -310,45 +281,45 @@ func _parseElement(string html, Array state): any {
 // ==================== 对外接口 ====================
 
 export func parse(string html): any {
-    Array state = [0, html.len()]
+    _g_html = html
+    _g_pos = 0
 
     var root = {tag: "#document", attrs: {}, children: [], text: ""}
+    int len = _g_html.len()
 
-    int pos = 0
-    int len = html.len()
-
-    while pos < len {
-        while pos < len and _isSpace(html.byte(pos)) {
-            pos = pos + 1
+    while _g_pos < len {
+        while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
+            _g_pos = _g_pos + 1
         }
-        if pos >= len {
+        if _g_pos >= len {
             break
         }
-        if html.byte(pos) == 60 {
-            if pos + 3 < len and html.byte(pos+1) == 33 and html.byte(pos+2) == 45 and html.byte(pos+3) == 45 {
-                pos = pos + 4
-                while pos < len {
-                    if html.byte(pos) == 45 and pos+2 < len and html.byte(pos+1) == 45 and html.byte(pos+2) == 62 {
-                        pos = pos + 3
+        if _g_html.byte(_g_pos) == 60 {
+            // 注释
+            if _g_pos + 3 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 45 and _g_html.byte(_g_pos+3) == 45 {
+                _g_pos = _g_pos + 4
+                while _g_pos < len {
+                    if _g_html.byte(_g_pos) == 45 and _g_pos+2 < len and _g_html.byte(_g_pos+1) == 45 and _g_html.byte(_g_pos+2) == 62 {
+                        _g_pos = _g_pos + 3
                         break
                     }
-                    pos = pos + 1
+                    _g_pos = _g_pos + 1
                 }
                 continue
             }
-            if pos + 1 < len and html.byte(pos+1) == 47 {
-                pos = pos + 2
-                while pos < len and html.byte(pos) != 62 {
-                    pos = pos + 1
+            // 闭合标签（忽略）
+            if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
+                _g_pos = _g_pos + 2
+                while _g_pos < len and _g_html.byte(_g_pos) != 62 {
+                    _g_pos = _g_pos + 1
                 }
-                if pos < len and html.byte(pos) == 62 {
-                    pos = pos + 1
+                if _g_pos < len and _g_html.byte(_g_pos) == 62 {
+                    _g_pos = _g_pos + 1
                 }
                 continue
             }
-            _setPos(state, pos)
-            var child = _parseElement(html, state)
-            pos = _getPos(state)
+            // 子元素
+            var child = _parseElement()
             if child != null {
                 var kidsRaw = root["children"]
                 if kidsRaw is Array {
@@ -356,9 +327,7 @@ export func parse(string html): any {
                 }
             }
         } else {
-            _setPos(state, pos)
-            string text = _parseText(html, state)
-            pos = _getPos(state)
+            string text = _parseText()
             if text != "" {
                 var textNode = {tag: "#text", attrs: {}, children: [], text: text}
                 var kidsRaw = root["children"]
@@ -394,6 +363,7 @@ export func text(any node): string {
     return ""
 }
 
+// 修复：allText 只收集子节点的 text，不重复收集父节点的 text
 export func allText(any node): string {
     if node == null {
         return ""
@@ -402,6 +372,7 @@ export func allText(any node): string {
     if node is Dict {
         var t = node["tag"]
         if t is string {
+            // #text 节点直接返回 text
             if t == "#text" {
                 var txt = node["text"]
                 if txt is string {
@@ -409,25 +380,22 @@ export func allText(any node): string {
                 }
             }
         }
+        // 只递归子节点，不收集父节点的 text 字段（避免重复）
         var kids = node["children"]
         if kids is Array {
             for kids to child {
                 result = result + allText(child)
             }
         }
-        return result
     }
-    return ""
+    return result
 }
 
 export func attr(any node, string name): string {
     if node is Dict {
         var a = node["attrs"]
-        if a is Dict {
-            var v = a[name]
-            if v is string {
-                return v
-            }
+        if a is Dict[string, string] {
+            return a[name]
         }
     }
     return ""
@@ -459,9 +427,9 @@ func _collectLinks(any node, Array links) {
         if t is string {
             if t == "a" {
                 var a = node["attrs"]
-                if a is Dict {
+                if a is Dict[string, string] {
                     var href = a["href"]
-                    if href is string {
+                    if href != "" {
                         links.add(href)
                     }
                 }
@@ -486,7 +454,10 @@ func _parseSimple(string selector): Dict {
     while i < slen {
         int b = selector.byte(i)
         if _isAlphaNum(b) or b == 42 or b == 45 or b == 95 {
-            r["tag"] = _str(r["tag"]) + strings.char(b)
+            var tagRaw = r["tag"]
+            if tagRaw is string {
+                r["tag"] = tagRaw + strings.char(b)
+            }
             i = i + 1
         } else {
             break
