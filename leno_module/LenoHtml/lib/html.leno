@@ -1,0 +1,798 @@
+// LenoHtml - 纯 Leno 实现的 HTML 解析器
+// 不使用模块级全局变量，用 Array 传递解析状态: [pos, len]
+// html 字符串通过参数传递
+
+import strings
+
+// ==================== 辅助函数 ====================
+
+func _isAlpha(int b): bool {
+    return (b >= 97 and b <= 122) or (b >= 65 and b <= 90)
+}
+
+func _isAlphaNum(int b): bool {
+    return (b >= 97 and b <= 122) or (b >= 65 and b <= 90) or (b >= 48 and b <= 57)
+}
+
+func _isSpace(int b): bool {
+    return b == 32 or b == 9 or b == 10 or b == 13
+}
+
+func _getPos(Array state): int {
+    var v = state[0]
+    if v is int {
+        return v
+    }
+    return 0
+}
+
+func _setPos(Array state, int pos) {
+    state[0] = pos
+}
+
+func _getLen(Array state): int {
+    var v = state[1]
+    if v is int {
+        return v
+    }
+    return 0
+}
+
+// ==================== 解析器 ====================
+
+func _parseTagName(string html, Array state): string {
+    string tag = ""
+    int pos = _getPos(state)
+    int len = _getLen(state)
+    while pos < len {
+        int b = html.byte(pos)
+        if _isAlphaNum(b) or b == 45 or b == 95 {
+            tag = tag + strings.char(b)
+            pos = pos + 1
+        } else {
+            break
+        }
+    }
+    _setPos(state, pos)
+    return tag
+}
+
+func _skipWs(string html, Array state) {
+    int pos = _getPos(state)
+    int len = _getLen(state)
+    while pos < len {
+        int b = html.byte(pos)
+        if _isSpace(b) {
+            pos = pos + 1
+        } else {
+            break
+        }
+    }
+    _setPos(state, pos)
+}
+
+func _parseAttrs(string html, Array state): Dict {
+    Dict attrs = {}
+    int pos = _getPos(state)
+    int len = _getLen(state)
+    while pos < len {
+        while pos < len and _isSpace(html.byte(pos)) {
+            pos = pos + 1
+        }
+        if pos >= len {
+            break
+        }
+        int b = html.byte(pos)
+        if b == 62 or b == 47 {
+            break
+        }
+        string name = ""
+        while pos < len {
+            int ch = html.byte(pos)
+            if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 {
+                break
+            }
+            name = name + strings.char(ch)
+            pos = pos + 1
+        }
+        if name == "" {
+            pos = pos + 1
+            continue
+        }
+        while pos < len and _isSpace(html.byte(pos)) {
+            pos = pos + 1
+        }
+        string val = ""
+        if pos < len and html.byte(pos) == 61 {
+            pos = pos + 1
+            while pos < len and _isSpace(html.byte(pos)) {
+                pos = pos + 1
+            }
+            int q = -1
+            if pos < len {
+                q = html.byte(pos)
+            }
+            if q == 34 or q == 39 {
+                pos = pos + 1
+                while pos < len {
+                    int ch = html.byte(pos)
+                    if ch == q {
+                        pos = pos + 1
+                        break
+                    }
+                    val = val + strings.char(ch)
+                    pos = pos + 1
+                }
+            } else {
+                while pos < len {
+                    int ch = html.byte(pos)
+                    if _isSpace(ch) or ch == 62 or ch == 47 {
+                        break
+                    }
+                    val = val + strings.char(ch)
+                    pos = pos + 1
+                }
+            }
+        }
+        attrs[name] = val
+    }
+    _setPos(state, pos)
+    return attrs
+}
+
+func _parseText(string html, Array state): string {
+    string text = ""
+    int pos = _getPos(state)
+    int len = _getLen(state)
+    while pos < len {
+        int b = html.byte(pos)
+        if b == 60 {
+            break
+        }
+        text = text + strings.char(b)
+        pos = pos + 1
+    }
+    _setPos(state, pos)
+    return text
+}
+
+func _parseElement(string html, Array state): any {
+    int pos = _getPos(state)
+    int len = _getLen(state)
+    if pos >= len {
+        return null
+    }
+    if html.byte(pos) != 60 {
+        return null
+    }
+
+    // 注释
+    if pos + 3 < len and html.byte(pos+1) == 33 and html.byte(pos+2) == 45 and html.byte(pos+3) == 45 {
+        pos = pos + 4
+        while pos < len {
+            if html.byte(pos) == 45 and pos+2 < len and html.byte(pos+1) == 45 and html.byte(pos+2) == 62 {
+                pos = pos + 3
+                break
+            }
+            pos = pos + 1
+        }
+        _setPos(state, pos)
+        return null
+    }
+
+    if pos + 1 < len and html.byte(pos+1) == 47 {
+        return null
+    }
+
+    pos = pos + 1
+    _setPos(state, pos)
+
+    string tagName = _parseTagName(html, state)
+    if tagName == "" {
+        return null
+    }
+    tagName = strings.to_lower(tagName)
+
+    Dict attrs = _parseAttrs(html, state)
+    pos = _getPos(state)
+
+    bool selfClosing = false
+    if pos < len and html.byte(pos) == 47 {
+        selfClosing = true
+        pos = pos + 1
+    }
+    if pos < len and html.byte(pos) == 62 {
+        pos = pos + 1
+    }
+    _setPos(state, pos)
+
+    if selfClosing {
+        var node = {tag: tagName, attrs: attrs, children: [], text: ""}
+        return node
+    }
+
+    // void 标签
+    if tagName == "br" or tagName == "hr" or tagName == "img" or tagName == "input" or tagName == "meta" or tagName == "link" or tagName == "area" or tagName == "base" or tagName == "col" or tagName == "embed" or tagName == "source" or tagName == "track" or tagName == "wbr" {
+        var node = {tag: tagName, attrs: attrs, children: [], text: ""}
+        return node
+    }
+
+    // script/style
+    if tagName == "script" or tagName == "style" {
+        string rawContent = ""
+        while pos < len {
+            if html.byte(pos) == 60 and pos+1 < len and html.byte(pos+1) == 47 {
+                int savePos = pos
+                pos = pos + 2
+                _setPos(state, pos)
+                string closeTag = _parseTagName(html, state)
+                closeTag = strings.to_lower(closeTag)
+                pos = _getPos(state)
+                if closeTag == tagName {
+                    _parseAttrs(html, state)
+                    pos = _getPos(state)
+                    if pos < len and html.byte(pos) == 62 {
+                        pos = pos + 1
+                    }
+                    _setPos(state, pos)
+                    var node = {tag: tagName, attrs: attrs, children: [], text: rawContent}
+                    return node
+                } else {
+                    pos = savePos
+                    rawContent = rawContent + strings.char(html.byte(pos))
+                    pos = pos + 1
+                }
+            } else {
+                rawContent = rawContent + strings.char(html.byte(pos))
+                pos = pos + 1
+            }
+        }
+        _setPos(state, pos)
+        var node = {tag: tagName, attrs: attrs, children: [], text: rawContent}
+        return node
+    }
+
+    // 普通标签
+    var children = []
+    string textContent = ""
+
+    while pos < len {
+        if html.byte(pos) == 60 {
+            if pos + 3 < len and html.byte(pos+1) == 33 and html.byte(pos+2) == 45 and html.byte(pos+3) == 45 {
+                pos = pos + 4
+                while pos < len {
+                    if html.byte(pos) == 45 and pos+2 < len and html.byte(pos+1) == 45 and html.byte(pos+2) == 62 {
+                        pos = pos + 3
+                        break
+                    }
+                    pos = pos + 1
+                }
+                _setPos(state, pos)
+                continue
+            }
+            if pos + 1 < len and html.byte(pos+1) == 47 {
+                pos = pos + 2
+                _setPos(state, pos)
+                _parseTagName(html, state)
+                pos = _getPos(state)
+                while pos < len and html.byte(pos) != 62 {
+                    pos = pos + 1
+                }
+                if pos < len and html.byte(pos) == 62 {
+                    pos = pos + 1
+                }
+                _setPos(state, pos)
+                break
+            }
+            _setPos(state, pos)
+            var child = _parseElement(html, state)
+            pos = _getPos(state)
+            if child != null {
+                children.add(child)
+            }
+        } else {
+            _setPos(state, pos)
+            string text = _parseText(html, state)
+            pos = _getPos(state)
+            if text != "" {
+                textContent = textContent + text
+                var textNode = {tag: "#text", attrs: {}, children: [], text: text}
+                children.add(textNode)
+            }
+        }
+    }
+
+    _setPos(state, pos)
+    var node = {tag: tagName, attrs: attrs, children: children, text: textContent}
+    return node
+}
+
+// ==================== 对外接口 ====================
+
+export func parse(string html): any {
+    Array state = [0, html.len()]
+
+    var root = {tag: "#document", attrs: {}, children: [], text: ""}
+
+    int pos = 0
+    int len = html.len()
+
+    while pos < len {
+        while pos < len and _isSpace(html.byte(pos)) {
+            pos = pos + 1
+        }
+        if pos >= len {
+            break
+        }
+        if html.byte(pos) == 60 {
+            if pos + 3 < len and html.byte(pos+1) == 33 and html.byte(pos+2) == 45 and html.byte(pos+3) == 45 {
+                pos = pos + 4
+                while pos < len {
+                    if html.byte(pos) == 45 and pos+2 < len and html.byte(pos+1) == 45 and html.byte(pos+2) == 62 {
+                        pos = pos + 3
+                        break
+                    }
+                    pos = pos + 1
+                }
+                continue
+            }
+            if pos + 1 < len and html.byte(pos+1) == 47 {
+                pos = pos + 2
+                while pos < len and html.byte(pos) != 62 {
+                    pos = pos + 1
+                }
+                if pos < len and html.byte(pos) == 62 {
+                    pos = pos + 1
+                }
+                continue
+            }
+            _setPos(state, pos)
+            var child = _parseElement(html, state)
+            pos = _getPos(state)
+            if child != null {
+                var kidsRaw = root["children"]
+                if kidsRaw is Array {
+                    kidsRaw.add(child)
+                }
+            }
+        } else {
+            _setPos(state, pos)
+            string text = _parseText(html, state)
+            pos = _getPos(state)
+            if text != "" {
+                var textNode = {tag: "#text", attrs: {}, children: [], text: text}
+                var kidsRaw = root["children"]
+                if kidsRaw is Array {
+                    kidsRaw.add(textNode)
+                }
+            }
+        }
+    }
+
+    return root
+}
+
+// ==================== 便捷函数 ====================
+
+export func tag(any node): string {
+    if node is Dict {
+        var v = node["tag"]
+        if v is string {
+            return v
+        }
+    }
+    return ""
+}
+
+export func text(any node): string {
+    if node is Dict {
+        var v = node["text"]
+        if v is string {
+            return v
+        }
+    }
+    return ""
+}
+
+export func allText(any node): string {
+    if node == null {
+        return ""
+    }
+    string result = ""
+    if node is Dict {
+        var t = node["tag"]
+        if t is string {
+            if t == "#text" {
+                var txt = node["text"]
+                if txt is string {
+                    return txt
+                }
+            }
+        }
+        var kids = node["children"]
+        if kids is Array {
+            for kids to child {
+                result = result + allText(child)
+            }
+        }
+        return result
+    }
+    return ""
+}
+
+export func attr(any node, string name): string {
+    if node is Dict {
+        var a = node["attrs"]
+        if a is Dict {
+            var v = a[name]
+            if v is string {
+                return v
+            }
+        }
+    }
+    return ""
+}
+
+export func children(any node): any {
+    if node is Dict {
+        var kids = node["children"]
+        if kids is Array {
+            return kids
+        }
+    }
+    return []
+}
+
+export func getLinks(string html): any {
+    var root = parse(html)
+    var links = []
+    _collectLinks(root, links)
+    return links
+}
+
+func _collectLinks(any node, Array links) {
+    if node == null {
+        return
+    }
+    if node is Dict {
+        var t = node["tag"]
+        if t is string {
+            if t == "a" {
+                var a = node["attrs"]
+                if a is Dict {
+                    var href = a["href"]
+                    if href is string {
+                        links.add(href)
+                    }
+                }
+            }
+        }
+        var kids = node["children"]
+        if kids is Array {
+            for kids to child {
+                _collectLinks(child, links)
+            }
+        }
+    }
+}
+
+// ==================== CSS 选择器 ====================
+
+func _parseSimple(string selector): Dict {
+    var r = {tag: "", id: "", classes: [], attrName: "", attrValue: "", hasAttr: false}
+    int i = 0
+    int slen = selector.len()
+
+    while i < slen {
+        int b = selector.byte(i)
+        if _isAlphaNum(b) or b == 42 or b == 45 or b == 95 {
+            r["tag"] = _str(r["tag"]) + strings.char(b)
+            i = i + 1
+        } else {
+            break
+        }
+    }
+
+    while i < slen {
+        int b = selector.byte(i)
+        if b == 46 {
+            i = i + 1
+            string cls = ""
+            while i < slen {
+                int ch = selector.byte(i)
+                if ch == 46 or ch == 35 or ch == 91 or ch == 58 {
+                    break
+                }
+                cls = cls + strings.char(ch)
+                i = i + 1
+            }
+            var classesRaw = r["classes"]
+            if classesRaw is Array {
+                classesRaw.add(cls)
+            }
+        } else if b == 35 {
+            i = i + 1
+            string idVal = ""
+            while i < slen {
+                int ch = selector.byte(i)
+                if ch == 46 or ch == 35 or ch == 91 or ch == 58 {
+                    break
+                }
+                idVal = idVal + strings.char(ch)
+                i = i + 1
+            }
+            r["id"] = idVal
+        } else if b == 91 {
+            i = i + 1
+            string attrName = ""
+            while i < slen {
+                int ch = selector.byte(i)
+                if ch == 61 or ch == 93 {
+                    break
+                }
+                attrName = attrName + strings.char(ch)
+                i = i + 1
+            }
+            r["attrName"] = attrName
+            r["hasAttr"] = true
+            if i < slen and selector.byte(i) == 61 {
+                i = i + 1
+                string attrVal = ""
+                while i < slen {
+                    int ch = selector.byte(i)
+                    if ch == 93 {
+                        break
+                    }
+                    attrVal = attrVal + strings.char(ch)
+                    i = i + 1
+                }
+                r["attrValue"] = attrVal
+            }
+            if i < slen and selector.byte(i) == 93 {
+                i = i + 1
+            }
+        } else {
+            break
+        }
+    }
+
+    return r
+}
+
+func _splitSelector(string selector): Array {
+    Array parts = []
+    string current = ""
+    int i = 0
+    int slen = selector.len()
+    bool lastWasChild = false
+
+    while i < slen {
+        int b = selector.byte(i)
+        if b == 62 {
+            if current != "" {
+                Dict parsed = _parseSimple(current)
+                parsed["isChild"] = false
+                parts.add(parsed)
+                current = ""
+            }
+            lastWasChild = true
+            i = i + 1
+        } else if _isSpace(b) {
+            if current != "" {
+                Dict parsed = _parseSimple(current)
+                parsed["isChild"] = lastWasChild
+                parts.add(parsed)
+                current = ""
+                lastWasChild = false
+            }
+            i = i + 1
+        } else {
+            current = current + strings.char(b)
+            i = i + 1
+        }
+    }
+
+    if current != "" {
+        Dict parsed = _parseSimple(current)
+        parsed["isChild"] = lastWasChild
+        parts.add(parsed)
+    }
+
+    return parts
+}
+
+func _hasWord(string str, string word): bool {
+    if str == "" or word == "" {
+        return false
+    }
+    int i = 0
+    int slen = str.len()
+    while i < slen {
+        while i < slen and _isSpace(str.byte(i)) {
+            i = i + 1
+        }
+        string w = ""
+        while i < slen {
+            int b = str.byte(i)
+            if _isSpace(b) {
+                break
+            }
+            w = w + strings.char(b)
+            i = i + 1
+        }
+        if w == word {
+            return true
+        }
+    }
+    return false
+}
+
+func _matchSimple(any node, Dict sel): bool {
+    if node == null {
+        return false
+    }
+    if node is Dict {
+        var tagVal = sel["tag"]
+        if tagVal is string {
+            if tagVal != "" and tagVal != "*" {
+                var nt = node["tag"]
+                if nt is string {
+                    if nt != tagVal {
+                        return false
+                    }
+                } else {
+                    return false
+                }
+            }
+        }
+
+        var idVal = sel["id"]
+        if idVal is string {
+            if idVal != "" {
+                var a = node["attrs"]
+                if a is Dict {
+                    var nodeId = a["id"]
+                    if nodeId is string {
+                        if nodeId != idVal {
+                            return false
+                        }
+                    } else {
+                        return false
+                    }
+                } else {
+                    return false
+                }
+            }
+        }
+
+        var classesRaw = sel["classes"]
+        if classesRaw is Array {
+            var nodeAttrs = node["attrs"]
+            if nodeAttrs is Dict {
+                var nodeClass = nodeAttrs["class"]
+                if nodeClass is string {
+                    for classesRaw to cls {
+                        if cls is string {
+                            if not _hasWord(nodeClass, cls) {
+                                return false
+                            }
+                        }
+                    }
+                } else {
+                    if classesRaw.len() > 0 {
+                        return false
+                    }
+                }
+            }
+        }
+
+        var hasAttr = sel["hasAttr"]
+        if hasAttr is bool {
+            if hasAttr {
+                var attrName = sel["attrName"]
+                if attrName is string {
+                    if attrName != "" {
+                        var nodeAttrs = node["attrs"]
+                        if nodeAttrs is Dict {
+                            var nodeAttrVal = nodeAttrs[attrName]
+                            var selAttrVal = sel["attrValue"]
+                            if selAttrVal is string {
+                                if selAttrVal != "" {
+                                    if nodeAttrVal is string {
+                                        if nodeAttrVal != selAttrVal {
+                                            return false
+                                        }
+                                    } else {
+                                        return false
+                                    }
+                                }
+                            }
+                        } else {
+                            return false
+                        }
+                    }
+                }
+            }
+        }
+
+        return true
+    }
+    return false
+}
+
+func _findDescendants(any node, Dict sel, Array results) {
+    if node == null {
+        return
+    }
+    if node is Dict {
+        var kids = node["children"]
+        if kids is Array {
+            for kids to child {
+                if _matchSimple(child, sel) {
+                    results.add(child)
+                }
+                _findDescendants(child, sel, results)
+            }
+        }
+    }
+}
+
+func _findDirectChildren(any node, Dict sel, Array results) {
+    if node == null {
+        return
+    }
+    if node is Dict {
+        var kids = node["children"]
+        if kids is Array {
+            for kids to child {
+                if _matchSimple(child, sel) {
+                    results.add(child)
+                }
+            }
+        }
+    }
+}
+
+export func select(any root, string selector): any {
+    var parts = _splitSelector(selector)
+    if parts.len() == 0 {
+        return []
+    }
+
+    var current = [root]
+    int partsLen = parts.len()
+    for 0:partsLen to pi {
+        if pi >= partsLen {
+            break
+        }
+        var p0raw = parts[pi]
+        if p0raw is Dict {
+            var next = []
+            for current to node {
+                var isChildVal = p0raw["isChild"]
+                if isChildVal is bool {
+                    if isChildVal {
+                        _findDirectChildren(node, p0raw, next)
+                    } else {
+                        _findDescendants(node, p0raw, next)
+                    }
+                } else {
+                    _findDescendants(node, p0raw, next)
+                }
+            }
+            current = next
+        }
+    }
+
+    return current
+}
+
+export func selectOne(any root, string selector): any {
+    var results = select(root, selector)
+    if results is Array {
+        if results.len() > 0 {
+            return results[0]
+        }
+    }
+    return null
+}

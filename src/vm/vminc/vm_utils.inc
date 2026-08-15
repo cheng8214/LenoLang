@@ -44,6 +44,59 @@ static inline int is_falsey(Value v) {
 // 通用错误处理辅助函数
 // ============================================================================
 
+// 通用 VM 类型错误函数：输出详细的调试信息
+// 包括操作数类型/值、栈状态、函数名、调用栈等，便于排查栈损坏和类型错误
+// 用法：throw_vm_type_error("操作数必须是数字", "ADD (+)", a, b, line);
+// 注意：此为函数而非宏，避免在热路径中代码膨胀影响 icache
+static void throw_vm_type_error(const char* msg, const char* op_name, Value a_val, Value b_val, int line) {
+    char err_buf[1024];
+    const char* fn_name = "<main>";
+    CallFrame* frame = &vm.frames[vm.frame_cnt - 1];
+    if (frame->closure && frame->closure->function && frame->closure->function->name) {
+        fn_name = frame->closure->function->name;
+    } else if (frame->closure && frame->closure->function && !frame->closure->function->name) {
+        fn_name = "<anonymous>";
+    }
+    const char* file = (frame->chunk && frame->chunk->filename) ? frame->chunk->filename : "unknown";
+    char* a_str = value_to_string(a_val);
+    char* b_str = value_to_string(b_val);
+    int ip_offset = (int)(frame->ip - frame->chunk->code);
+    int stack_depth = vm.sp - frame->stack_base;
+    int pos = snprintf(err_buf, sizeof(err_buf),
+        "%s\n"
+        "  [操作] %s\n"
+        "  [位置] %s:%d (func: %s, ip_offset: %d)\n"
+        "  [操作数a] type=%s, value=%s\n"
+        "  [操作数b] type=%s, value=%s\n"
+        "  [栈状态] sp=%d, stack_base=%d, depth=%d, frame_cnt=%d\n",
+        msg, op_name, file, line, fn_name, ip_offset,
+        value_type_desc(a_val), a_str ? a_str : "<null>",
+        value_type_desc(b_val), b_str ? b_str : "<null>",
+        vm.sp, frame->stack_base, stack_depth, vm.frame_cnt);
+    if (stack_depth > 0 && vm.sp > 0) {
+        pos += snprintf(err_buf + pos, sizeof(err_buf) - pos,
+            "  [栈内容] ");
+        for (int i = (vm.sp > 8 ? vm.sp - 8 : 0); i < vm.sp; i++) {
+            char* sv = value_to_string(vm.stack[i]);
+            pos += snprintf(err_buf + pos, sizeof(err_buf) - pos,
+                "[%d]=%s:%s ", i, value_type_desc(vm.stack[i]), sv ? sv : "<null>");
+            free(sv);
+        }
+    }
+    if (frame->locals && frame->local_count > 0) {
+        pos += snprintf(err_buf + pos, sizeof(err_buf) - pos,
+            "\n  [locals] ");
+        for (int i = 0; i < frame->local_count && i < 8; i++) {
+            char* lv = value_to_string(frame->locals[i]);
+            pos += snprintf(err_buf + pos, sizeof(err_buf) - pos,
+                "[%d]=%s:%s ", i, value_type_desc(frame->locals[i]), lv ? lv : "<null>");
+            free(lv);
+        }
+    }
+    free(a_str); free(b_str);
+    throw_runtime_error(err_buf, line);
+}
+
 // 检查是否为 null，如果是则抛出运行时错误并返回 1
 static inline int check_null(Value v, const char* context, int line) {
     if (val_is_null(v)) {

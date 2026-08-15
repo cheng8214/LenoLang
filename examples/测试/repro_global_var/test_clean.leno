@@ -1,0 +1,6 @@
+import "./lib_clean.leno" as mod
+
+main() {
+    string tag = mod.parse("<div></div>")
+    print("tag = " + tag)
+}

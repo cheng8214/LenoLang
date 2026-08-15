@@ -511,6 +511,7 @@ static inline void vm_stack_push_fast(VM* vm, Value v) {
 // 栈操作：弹出值（带 VM* 参数）
 static inline Value vm_stack_pop(VM* vm) {
     if (__builtin_expect(vm->sp <= 0, 0)) {
+        fprintf(stderr, "\n[VM 栈下溢] sp=%d, frame_cnt=%d\n", vm->sp, vm->frame_cnt);
         return val_null();
     }
     return vm->stack[--vm->sp];

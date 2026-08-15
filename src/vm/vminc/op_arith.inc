@@ -121,7 +121,7 @@ OPCODE(OP_SUB) {
         Value result = bigint_sub(ba, bb);
         vm_stack_push(&vm, result);
     } else {
-        throw_runtime_error("操作数必须是数字", GET_CURRENT_LINE());
+        throw_vm_type_error("操作数必须是数字", "SUB (-)", a, b, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
     }
     DISPATCH;
@@ -160,7 +160,7 @@ OPCODE(OP_MUL) {
         Value result = bigint_mul(ba, bb);
         vm_stack_push(&vm, result);
     } else {
-        throw_runtime_error("操作数必须是数字", GET_CURRENT_LINE());
+        throw_vm_type_error("操作数必须是数字", "MUL (*)", a, b, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
     }
     DISPATCH;
@@ -224,7 +224,7 @@ OPCODE(OP_DIV) {
         DISPATCH;
     }
     
-    throw_runtime_error("操作数必须是数字", GET_CURRENT_LINE());
+    throw_vm_type_error("操作数必须是数字", "DIV (/)", a, b, GET_CURRENT_LINE());
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }
@@ -264,7 +264,7 @@ OPCODE(OP_MOD) {
         Value result = bigint_mod(ba, bb);
         vm_stack_push(&vm, result);
     } else {
-        throw_runtime_error("取模操作数必须是整数", GET_CURRENT_LINE());
+        throw_vm_type_error("取模操作数必须是整数", "MOD (%)", a, b, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }

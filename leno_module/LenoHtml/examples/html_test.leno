@@ -1,0 +1,133 @@
+import "../lib/html.leno" as htmls
+
+main() {
+    print("=== LenoHtml 测试 ===")
+
+    // 测试1: 基本解析
+    print("\n[1] 基本解析")
+    var root1 = htmls.parse("<div><p>Hello</p></div>")
+    print("  parse ok: " + (root1 != null))
+    var p1 = htmls.selectOne(root1, "p")
+    print("  p text = " + htmls.text(p1))
+
+    // 测试2: 多层嵌套
+    print("\n[2] 多层嵌套")
+    var root2 = htmls.parse("<html><body><div><span>test</span></div></body></html>")
+    var span2 = htmls.selectOne(root2, "span")
+    print("  span text = " + htmls.text(span2))
+
+    // 测试3: 标签选择器
+    print("\n[3] 标签选择器")
+    var root3 = htmls.parse("<ul><li>a</li><li>b</li><li>c</li></ul>")
+    var items3 = htmls.select(root3, "li")
+    if items3 is Array {
+        print("  li count = " + items3.len())
+    }
+
+    // 测试4: ID 选择器
+    print("\n[4] ID 选择器")
+    var root4 = htmls.parse("<div><p id='main'>content</p></div>")
+    var main4 = htmls.selectOne(root4, "#main")
+    print("  #main text = " + htmls.text(main4))
+
+    // 测试5: class 选择器
+    print("\n[5] class 选择器")
+    var root5 = htmls.parse("<div><span class='highlight'>hello</span></div>")
+    var cls5 = htmls.selectOne(root5, ".highlight")
+    print("  .highlight text = " + htmls.text(cls5))
+
+    // 测试6: 标签+class 组合
+    print("\n[6] 标签+class 组合")
+    var root6 = htmls.parse("<div><p class='red'>p1</p><span class='red'>s1</span></div>")
+    var p6 = htmls.selectOne(root6, "p.red")
+    print("  p.red text = " + htmls.text(p6))
+
+    // 测试7: 后代选择器
+    print("\n[7] 后代选择器")
+    var root7 = htmls.parse("<div><ul><li>item</li></ul></div>")
+    var desc7 = htmls.select(root7, "div li")
+    if desc7 is Array {
+        print("  div li count = " + desc7.len())
+    }
+
+    // 测试8: 直接子选择器
+    print("\n[8] 直接子选择器")
+    var root8 = htmls.parse("<div><span>direct</span><p><span>indirect</span></p></div>")
+    var direct8 = htmls.select(root8, "div > span")
+    if direct8 is Array {
+        print("  div > span count = " + direct8.len())
+        if direct8.len() > 0 {
+            print("  first text = " + htmls.text(direct8[0]))
+        }
+    }
+
+    // 测试9: 属性选择器
+    print("\n[9] 属性选择器")
+    var root9 = htmls.parse("<a href='http://example.com'>link</a>")
+    var a9 = htmls.selectOne(root9, "a[href]")
+    print("  a[href] found = " + (a9 != null))
+
+    // 测试10: allText
+    print("\n[10] allText")
+    var root10 = htmls.parse("<div>Hello <b>World</b></div>")
+    print("  allText = " + htmls.allText(root10))
+
+    // 测试11: getLinks
+    print("\n[11] getLinks")
+    var links11 = htmls.getLinks("<ul><li><a href='/page1'>P1</a></li><li><a href='/page2'>P2</a></li></ul>")
+    if links11 is Array {
+        print("  links count = " + links11.len())
+        if links11.len() > 0 {
+            print("  first link = " + links11[0])
+        }
+    }
+
+    // 测试12: children
+    print("\n[12] children")
+    var root12 = htmls.parse("<ul><li>1</li><li>2</li></ul>")
+    var kids12 = htmls.children(root12)
+    if kids12 is Array {
+        print("  children count = " + kids12.len())
+    }
+
+    // 测试13: attr
+    print("\n[13] attr")
+    var root13 = htmls.parse("<img src='pic.jpg' alt='picture'>")
+    var img13 = htmls.selectOne(root13, "img")
+    print("  src = " + htmls.attr(img13, "src"))
+    print("  alt = " + htmls.attr(img13, "alt"))
+
+    // 测试14: 自闭标签
+    print("\n[14] 自闭标签")
+    var root14 = htmls.parse("<div><br/><img src='x.jpg'/></div>")
+    var br14 = htmls.selectOne(root14, "br")
+    print("  br found = " + (br14 != null))
+    var img14 = htmls.selectOne(root14, "img")
+    print("  img found = " + (img14 != null))
+
+    // 测试15: 注释
+    print("\n[15] 注释")
+    var root15 = htmls.parse("<div><!-- comment --><p>text</p></div>")
+    var p15 = htmls.selectOne(root15, "p")
+    print("  p text = " + htmls.text(p15))
+
+    // 测试16: script/style 标签
+    print("\n[16] script 标签")
+    var root16 = htmls.parse("<script>var x = 1;</script><p>after</p>")
+    var script16 = htmls.selectOne(root16, "script")
+    print("  script text = " + htmls.text(script16))
+
+    // 测试17: 多个 class 选择器
+    print("\n[17] 多个 class")
+    var root17 = htmls.parse("<div><p class='red bold'>text</p></div>")
+    var p17 = htmls.selectOne(root17, "p.red.bold")
+    print("  p.red.bold text = " + htmls.text(p17))
+
+    // 测试18: selectOne 返回 null
+    print("\n[18] selectOne null")
+    var root18 = htmls.parse("<div>content</div>")
+    var nope18 = htmls.selectOne(root18, ".notexist")
+    print("  null = " + (nope18 == null))
+
+    print("\n=== 全部测试完成 ===")
+}

@@ -882,7 +882,6 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                         break;
                     case SYM_MODULE:
                         emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                        emit_byte(gen, OP_POP, ast->line);
                         break;
                     case SYM_TYPE:
                     case SYM_STRUCT:
@@ -998,7 +997,6 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 case SYM_MODULE:
                     // 模块变量赋值
                     emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                    emit_byte(gen, OP_POP, ast->line);
                     break;
                 case SYM_TYPE:
                 case SYM_STRUCT:
@@ -1151,7 +1149,6 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
                 break;
             case SYM_MODULE:
                 emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
                 break;
             case SYM_TYPE:
             case SYM_STRUCT:

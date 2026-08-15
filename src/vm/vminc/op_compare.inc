@@ -2,6 +2,7 @@
 // 通用比较运算类操作码 (OP_COMPARE)
 // ============================================================================
 // 完整的类型检查和比较逻辑
+// 类型错误使用通用宏 throw_vm_type_error（定义在 vm_utils.inc 中）
 
 OPCODE(OP_EQ) {
     frame = &vm.frames[vm.frame_cnt - 1];
@@ -324,7 +325,7 @@ OPCODE(OP_LT) {
         DISPATCH;
     }
 
-    throw_runtime_error("操作数必须是数字或字符串", GET_CURRENT_LINE());
+    throw_vm_type_error("操作数必须是数字或字符串", "LT (<)", a, b, GET_CURRENT_LINE());
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }
@@ -365,7 +366,7 @@ OPCODE(OP_GT) {
         DISPATCH;
     }
 
-    throw_runtime_error("操作数必须是数字或字符串", GET_CURRENT_LINE());
+    throw_vm_type_error("操作数必须是数字或字符串", "GT (>)", a, b, GET_CURRENT_LINE());
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }
@@ -406,7 +407,7 @@ OPCODE(OP_LE) {
         DISPATCH;
     }
 
-    throw_runtime_error("操作数必须是数字或字符串", GET_CURRENT_LINE());
+    throw_vm_type_error("操作数必须是数字或字符串", "LE (<=)", a, b, GET_CURRENT_LINE());
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }
@@ -447,7 +448,7 @@ OPCODE(OP_GE) {
         DISPATCH;
     }
 
-    throw_runtime_error("操作数必须是数字或字符串", GET_CURRENT_LINE());
+    throw_vm_type_error("操作数必须是数字或字符串", "GE (>=)", a, b, GET_CURRENT_LINE());
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }

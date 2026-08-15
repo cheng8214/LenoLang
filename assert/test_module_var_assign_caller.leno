@@ -1,0 +1,27 @@
+// 回归测试：模块变量赋值导致栈下溢
+// Bug: gen_assign 中 SYM_MODULE 分支多发射了一个 OP_POP，
+// 导致每次对模块变量赋值时栈多弹一个值，最终栈下溢 VM 崩溃。
+// 修复：移除 gen_assign / gen_compound_assign 中 SYM_MODULE 分支的多余 OP_POP。
+
+import "module_var_assign_mod.leno" as mod
+
+main() {
+    // 测试1: 简单的 HTML 解析（触发模块变量反复赋值）
+    // <div> 解析出 div, </div> 解析出空 tag + 逗号
+    string r1 = mod.parse("<div></div>")
+    assert_eq(r1, "div,,")
+
+    // 测试2: 多标签解析
+    string r2 = mod.parse("<html><body></body></html>")
+    assert_eq(r2, "html,body,,,")
+
+    // 测试3: 空字符串
+    string r3 = mod.parse("")
+    assert_eq(r3, "")
+
+    // 测试4: 无标签的纯文本
+    string r4 = mod.parse("hello world")
+    assert_eq(r4, "")
+
+    print("test_module_var_assign passed")
+}

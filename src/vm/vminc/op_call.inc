@@ -679,6 +679,17 @@ OPCODE(OP_RETURN) {
         if (gc.deferred_gc && gc.enabled && !gc.running) {
             gc_try_collect_deferred();
         }
+        // 栈下溢采样检测：函数返回时检查 sp 是否低于 stack_base
+        // 编译器生成多余 OP_POP 的 bug 会导致栈下溢，在此尽早发现
+        if (vm.sp < frame->stack_base) {
+            const char* _fn = (frame->closure && frame->closure->function && frame->closure->function->name) ? frame->closure->function->name : "<main>";
+            const char* _file = (frame->chunk && frame->chunk->filename) ? frame->chunk->filename : "unknown";
+            int _ip_off = (int)(frame->ip - frame->chunk->code);
+            fprintf(stderr, "\n[VM 栈下溢] sp=%d, stack_base=%d, depth=%d\n  func=%s, file=%s, ip_offset=%d, frame_cnt=%d\n",
+                vm.sp, frame->stack_base, vm.sp - frame->stack_base, _fn, _file, _ip_off, vm.frame_cnt);
+            runtime_error("VM 栈下溢：栈指针低于当前帧基址，可能是编译器生成了多余的 OP_POP", 0);
+            return -1;
+        }
     }
 
     Value result = vm_stack_pop_fast(&vm);
@@ -771,7 +782,7 @@ OPCODE(OP_CALL_GLOBAL_FUNC) {
         Value callee = vm.global_funcs[func_slot];
         if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
             // 闭包快速路径：在栈顶临时放入 callee 供 call() 读取
-            vm_stack_push(&vm, callee);
+            vm_stack_push_fast(&vm, callee);
             if (!call((ObjClosure*)val_as_obj(callee), arg_count, 0)) {
                 if (!vm.has_exception) {
                     return -1;
