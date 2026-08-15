@@ -2,221 +2,123 @@
 
 ## 概述
 
-在开发纯 Leno 实现的 HTML 解析器（`leno_module/LenoHtml/lib/html.leno`）过程中，发现以下 LenoC 语言层面的 bug 和限制。
+在开发纯 Leno 实现的 HTML 解析器（`leno_module/LenoHtml/lib/html.leno`）过程中，记录了以下 LenoC 语言层面的 bug 和限制。
+
+**2026-08-15 更新**: 经过逐条验证，Bug 1 已修复，Bug 9 确认为 Bug 1 的副作用（已修复），其余均为设计限制而非 bug。LenoHtml 全部 18 个测试通过。
 
 ---
 
-## Bug 1: 模块级全局变量在函数内访问不稳定（严重）
+## Bug 1: 模块级全局变量在函数内访问不稳定（严重）✅ 已修复
 
 **严重程度**: 高
 **类型**: 运行时崩溃
-**状态**: ⚠️ 未修复（已绕过）
+**状态**: ✅ 已修复（2026-08-15）
 
 **描述**: 模块级 `var` 全局变量（如 `var _g_pos = 0`、`var _g_html = ""`）在模块函数中被赋值后，跨函数调用时值不稳定，导致程序崩溃。
 
-**复现**:
-```leno
-// 模块文件 lib/test.leno
-var _g_pos = 0
-var _g_html = ""
+**根因**: 编译器在 `gen_assign` 和 `gen_compound_assign` 中为 `SYM_MODULE` 赋值生成了多余的 `OP_POP` 指令。`OP_SET_MODULE_VAR` 本身不修改栈（它只是设置模块变量），但后面的 `OP_POP` 会弹出一个本不存在的值，导致栈下溢（`sp < stack_base`）。栈下溢后，后续操作读取到错误的操作数（表现为 `null` 类型值），触发"操作数必须是数字或字符串"等错误。
 
-func _inner() {
-    // 读取 _g_pos 时可能崩溃或返回错误值
-    while _g_pos < _g_html.len() {
-        ...
-    }
-}
+**修复**: 移除 `src/codegen/codegen_stmt.c` 中 `gen_assign` 和 `gen_compound_assign` 对 `SYM_MODULE` 赋值时的 3 处多余 `emit_byte(gen, OP_POP, ...)`。
 
-export func parse(string html) {
-    _g_html = html
-    _g_pos = 0
-    _inner()  // 崩溃在这里
-}
-```
-
-**影响**: 无法使用模块级全局变量在多个函数间共享状态（如解析器的位置指针和输入字符串）。
-
-**绕过方案**: 使用 `Array` 参数传递状态（如 `Array state = [pos, len]`），通过 `state[0]` 和 `state[1]` 读写，避免使用模块级全局变量。
-
-**推测原因**: 可能是模块级全局变量在函数调用时的 GC 标记或寄存器分配有问题，导致变量值在函数返回后被覆盖或丢失。
+**验证**: `assert/test_module_var_assign_caller.leno` 断言测试通过，LenoHtml 全部 18 个测试通过。
 
 ---
 
 ## Bug 2: 函数参数不能使用 `var` 类型
 
-**严重程度**: 中
-**类型**: 编译器限制
-**状态**: ⚠️ 设计限制
+**严重程度**: 低
+**类型**: 设计限制
+**状态**: ⚠️ 设计限制（非 bug）
 
 **描述**: 函数参数声明为 `var` 类型时编译报错："参数 'xxx' 不能使用 var 类型，请改用 any"。
 
-**复现**:
-```leno
-// 报错
-func foo(var state) { ... }
-
-// 正确
-func foo(any state) { ... }
-```
-
-**影响**: 无法在函数签名中表达"可变容器"语义，只能用 `any` 替代，但这意味着调用方需要在函数内部做类型收窄才能访问字段。
+**说明**: 这是设计决策。`var` 用于局部类型推断，函数参数是外部传入的，类型由调用方决定，不适合用 `var`。用 `any` 替代即可。
 
 ---
 
 ## Bug 3: Dict 索引返回 `any` 类型，不能直接赋值给具体类型变量
 
-**严重程度**: 中
-**类型**: 类型系统限制
-**状态**: ⚠️ 设计限制
+**严重程度**: 低
+**类型**: 设计限制
+**状态**: ⚠️ 设计限制（非 bug）
 
-**描述**: `Dict` 索引访问（如 `dict["key"]`）返回 `any` 类型，不能直接赋值给 `int`、`string` 等具体类型变量，也不能直接调用方法。
+**描述**: `Dict` 索引访问（如 `dict["key"]`）返回 `any` 类型，不能直接赋值给 `int`、`string` 等具体类型变量。
 
-**复现**:
-```leno
-Dict d = {pos: 0, len: 10}
-int pos = d["pos"]  // 报错：any 类型需要显式转换
-int pos = _int(d["pos"])  // 报错：_int() 用于字符串转 int
-
-// 正确方式：类型收窄
-var v = d["pos"]
-if v is int {
-    int pos = v
-}
-```
-
-**影响**: 使用 Dict 传递状态非常繁琐，每次读取都需要类型收窄。这是选择 Array 传递状态的原因之一（Array 索引也返回 `any`，但可以通过 `is int` 收窄）。
-
-**建议**: 支持泛型 Dict（如 `Dict[string, int]`），或在 Dict 索引时自动类型推断。
+**说明**: Dict 的值可以是任意类型，索引访问返回 `any` 是合理的类型安全设计。用 `is` 类型收窄后即可使用。
 
 ---
 
 ## Bug 4: `var` 声明的 Dict 字面量类型推断为 `Dict[string, string]`，无法存储异构类型
 
-**严重程度**: 中
-**类型**: 类型推断限制
-**状态**: ⚠️ 设计限制
+**严重程度**: 低
+**类型**: 设计限制
+**状态**: ⚠️ 设计限制（非 bug）
 
-**描述**: `var node = {tag: "div", attrs: {}, children: [], text: ""}` 这种异构 Dict 字面量在赋值时，如果某个字段值是 `Array` 或 `bool`，会报"字典值类型不匹配"。
+**描述**: `Dict r = {tag: "", classes: [], hasAttr: false}` 这种异构 Dict 字面量会报"字典值类型不匹配"。
 
-**复现**:
-```leno
-// 报错：Dict 字面量中 classes: [] 和 hasAttr: false 的类型与 string 不匹配
-Dict r = {tag: "", id: "", classes: [], attrName: "", attrValue: "", hasAttr: false}
-
-// 正确方式：用 var 声明
-var r = {tag: "", id: "", classes: [], attrName: "", attrValue: "", hasAttr: false}
-```
-
-**影响**: 必须用 `var` 声明异构 Dict，无法在函数签名中指定具体 Dict 类型。
+**说明**: 显式声明 `Dict` 类型时，编译器会推断值类型为第一个值的类型。用 `var` 声明可自动推断为 `Dict[string, any]`。
 
 ---
 
 ## Bug 5: `Array` 返回类型与 `Array[any]` 不兼容
 
-**严重程度**: 中
-**类型**: 类型系统限制
-**状态**: ⚠️ 设计限制
+**严重程度**: 低
+**类型**: 设计限制
+**状态**: ⚠️ 设计限制（非 bug）
 
-**描述**: 函数返回类型声明为 `Array`，但返回 `var current = [root]`（被推断为 `Array[any]`）时，报"返回类型不匹配"。
+**描述**: 函数返回类型声明为 `Array`，但返回 `var current = [root]`（被推断为 `Array[any]`）时报"返回类型不匹配"。
 
-**复现**:
-```leno
-// 报错
-export func select(any root, string selector): Array {
-    var current = [root]  // 被推断为 Array[any]
-    ...
-    return current  // 类型不匹配
-}
-
-// 正确方式：返回类型改为 any
-export func select(any root, string selector): any {
-    ...
-    return current
-}
-```
-
-**影响**: 调用方需要对返回值做 `is Array` 类型收窄才能调用 `.len()` 或索引访问。
-
-**提示**: LenoC 的数组类型是不变的（invariant），`Array[any]` 不能赋给 `Array`。
+**说明**: LenoC 的数组类型是不变的（invariant），`Array[any]` 不能赋给 `Array`。返回类型改为 `any` 即可。
 
 ---
 
 ## Bug 6: `for 0 to N to i` 语法不被支持
 
 **严重程度**: 低
-**类型**: 语法限制
-**状态**: ⚠️ 设计限制
+**类型**: 设计限制
+**状态**: ⚠️ 设计限制（非 bug）
 
 **描述**: LenoC 的数字 for 循环语法是 `for 0:N to i`（用冒号），不是 `for 0 to N to i`。
 
-**复现**:
-```leno
-// 报错：for 循环体必须用大括号 {} 包裹
-for 0 to N to i { ... }
-
-// 正确
-for 0:N to i { ... }
-```
+**说明**: 这是语法设计选择，`for start:end to var` 更简洁。
 
 ---
 
 ## Bug 7: `!` 运算符不支持逻辑非
 
 **严重程度**: 低
-**类型**: 语法限制
-**状态**: ⚠️ 设计限制
+**类型**: 设计限制
+**状态**: ⚠️ 设计限制（非 bug）
 
-**描述**: LenoC 不支持 `!` 作为逻辑非运算符，必须使用 `not` 关键字。
+**描述**: LenoC 不支持 `!` 作为逻辑非运算符，使用 `not` 关键字。
 
-**复现**:
-```leno
-// 报错：意外的字符 '!'
-if !condition { ... }
-
-// 正确
-if not condition { ... }
-```
+**说明**: `not` 关键字可读性更好，且避免了 `!` 与 `!=` 的歧义。
 
 ---
 
 ## Bug 8: 函数参数声明顺序是 `type name` 而非 `name: type`
 
 **严重程度**: 低
-**类型**: 语法限制
-**状态**: ⚠️ 设计限制
+**类型**: 设计限制
+**状态**: ⚠️ 设计限制（非 bug）
 
 **描述**: LenoC 函数参数声明使用 `type name` 顺序（类似 C/Go），不是 `name: type`（类似 Python/Kotlin）。
 
-**复现**:
-```leno
-// 报错：期望参数名
-func foo(x: int, y: string) { ... }
-
-// 正确
-func foo(int x, string y) { ... }
-```
+**说明**: 这是语法风格选择，与 C/Go/Rust 一致。
 
 ---
 
-## Bug 9: 字符串不能用 `>=` 比较单字符
+## Bug 9: 字符串不能用 `>=` 比较单字符 ✅ 已修复（Bug 1 副作用）
 
-**严重程度**: 低
-**类型**: 运行时错误
-**状态**: ⚠️ 已绕过
+**严重程度**: —
+**类型**: 非独立 bug
+**状态**: ✅ 已修复（Bug 1 的副作用）
 
 **描述**: 在模块函数中，对字符串做 `c >= "a"` 这样的比较时，可能触发"操作数必须是数字或字符串"错误。
 
-**绕过方案**: 使用 `.byte(index)` 获取 ASCII 值（int），用 int 比较代替字符串比较。
+**根因**: 这不是字符串比较本身的 bug，而是 Bug 1（模块变量赋值栈下溢）的副作用。栈下溢后，后续操作的栈内容错乱，导致 `>=` 运算读到的操作数不是字符串而是 `null`，从而触发类型错误。修复 Bug 1 后，字符串比较完全正常。
 
-```leno
-// 可能出错
-string c = _str(html[i])
-if c >= "a" and c <= "z" { ... }
-
-// 正确方式
-int b = html.byte(i)
-if b >= 97 and b <= 122 { ... }
-```
+**验证**: `examples/测试/repro_global_var/test_bug9_strcompare.leno` 验证通过，模块函数中 `c >= "a" and c <= "z"` 正常工作。
 
 ---
 
@@ -242,12 +144,12 @@ if b >= 97 and b <= 122 { ... }
 
 | 问题 | 严重程度 | 类型 | 状态 |
 |------|----------|------|------|
-| 模块级全局变量跨函数不稳定 | 高 | 运行时崩溃 | ⚠️ 已绕过（用 Array 传状态） |
-| 函数参数不能用 var | 中 | 编译器限制 | ⚠️ 用 any 替代 |
-| Dict 索引返回 any | 中 | 类型系统限制 | ⚠️ 用 is 收窄 |
-| Dict 字面量异构类型推断 | 中 | 类型推断限制 | ⚠️ 用 var 声明 |
-| Array 返回类型不兼容 | 中 | 类型系统限制 | ⚠️ 返回 any |
-| for 循环语法 | 低 | 语法限制 | ⚠️ 用 0:N 语法 |
-| ! 不支持 | 低 | 语法限制 | ⚠️ 用 not |
-| 参数顺序 | 低 | 语法限制 | ⚠️ 用 type name |
-| 字符串比较 | 低 | 运行时错误 | ⚠️ 用 byte() 比较 |
+| 模块级全局变量跨函数不稳定 | 高 | 运行时崩溃 | ✅ 已修复 |
+| 函数参数不能用 var | 低 | 设计限制 | ⚠️ 用 any |
+| Dict 索引返回 any | 低 | 设计限制 | ⚠️ 用 is 收窄 |
+| Dict 字面量异构类型推断 | 低 | 设计限制 | ⚠️ 用 var 声明 |
+| Array 返回类型不兼容 | 低 | 设计限制 | ⚠️ 返回 any |
+| for 循环语法 | 低 | 设计限制 | ⚠️ 用 0:N 语法 |
+| ! 不支持 | 低 | 设计限制 | ⚠️ 用 not |
+| 参数顺序 | 低 | 设计限制 | ⚠️ 用 type name |
+| 字符串比较 | — | Bug 1 副作用 | ✅ 随 Bug 1 修复 |
