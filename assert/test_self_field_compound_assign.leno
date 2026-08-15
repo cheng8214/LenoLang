@@ -1,0 +1,57 @@
+// 测试 struct 字段复合赋值语句不会栈下溢
+// 回归测试：gen_expr_stmt 对 is_self_field 复合赋值的多余 OP_POP
+
+struct Counter
+{
+    int count
+    string name
+
+    func add(int n)
+    {
+        count += n
+    }
+
+    func sub(int n)
+    {
+        count -= n
+    }
+
+    func mul(int n)
+    {
+        count *= n
+    }
+}
+
+main()
+{
+    var c = new Counter()
+    c.count = 10
+    c.name = "test"
+
+    c.count += 5
+    assert_eq(c.count, 15)
+
+    c.count -= 3
+    assert_eq(c.count, 12)
+
+    c.count *= 2
+    assert_eq(c.count, 24)
+
+    // 方法调用中的 self.field 复合赋值
+    c.add(100)
+    assert_eq(c.count, 124)
+
+    c.sub(24)
+    assert_eq(c.count, 100)
+
+    c.mul(3)
+    assert_eq(c.count, 300)
+
+    // 连续多次操作
+    c.count += 1
+    c.count += 1
+    c.count += 1
+    assert_eq(c.count, 303)
+
+    print("struct 字段复合赋值测试通过!")
+}

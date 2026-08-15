@@ -1402,6 +1402,13 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
         }
     }
 
+    // OP_SET_FIELD(2字节: opcode + field_idx) 已经 pop 了 obj 和 value，栈归零
+    // is_self_field 复合赋值走此路径，末尾是 OP_SET_FIELD，不应再 OP_POP
+    if (gen->chunk->len >= 2 &&
+        gen->chunk->code[gen->chunk->len - 2] == OP_SET_FIELD) {
+        return;
+    }
+
     emit_byte(gen, OP_POP, ast->line);
 }
 
