@@ -60,7 +60,7 @@ static FILE* debug_redirect_stdout(const char* filename) {
     return backup;
 #else
     FILE* backup = stdout;
-    freopen(filename, "w", stdout);
+    FILE* _r = freopen(filename, "w", stdout); (void)_r;
     return backup;
 #endif
 }
@@ -74,7 +74,7 @@ static void debug_restore_stdout(FILE* backup) {
     // 恢复 stdout 的行缓冲模式
     setvbuf(stdout, NULL, _IOLBF, 0);
 #else
-    freopen("/dev/tty", "w", stdout);
+    { FILE* _r = freopen("/dev/tty", "w", stdout); (void)_r; }
     fclose(backup);
 #endif
 }
@@ -718,7 +718,12 @@ int lenolang_run_file(const char* path) {
             free(bin_path);
             return -1;
         }
-        fread(vm_data, 1, vm_size, vm_fp);
+        if (fread(vm_data, 1, vm_size, vm_fp) != (size_t)vm_size) {
+            fclose(vm_fp);
+            free(vm_data);
+            free(bin_path);
+            return -1;
+        }
         fclose(vm_fp);
 
         // 读取编译好的 .lenb 文件
@@ -755,7 +760,13 @@ int lenolang_run_file(const char* path) {
             free(bin_path);
             return -1;
         }
-        fread(lenb_data, 1, lenb_size, lenb_fp);
+        if (fread(lenb_data, 1, lenb_size, lenb_fp) != (size_t)lenb_size) {
+            fclose(lenb_fp);
+            free(lenb_data);
+            free(vm_data);
+            free(bin_path);
+            return -1;
+        }
         fclose(lenb_fp);
 
         // 删除临时 .lenb 文件（已读入内存）

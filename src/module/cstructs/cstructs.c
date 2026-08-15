@@ -1,6 +1,7 @@
 #include "include/native.h"
 #include "include/leno_value.h"
 #include <string.h>
+#include <inttypes.h>
 
 // 前向声明：cstruct 方法支持函数
 extern void cstruct_init_methods(void);
@@ -605,11 +606,11 @@ static Value cstruct_method_debug(int argc, Value* args) {
                         break;
                     case TYPE_I64:
                         offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-                                           "  %s = %lld (i64)\n", field->name, *(int64_t*)field_addr);
+                                           "  %s = %" PRId64 " (i64)\n", field->name, *(int64_t*)field_addr);
                         break;
                     case TYPE_U64:
                         offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-                                           "  %s = %llu (u64)\n", field->name, *(uint64_t*)field_addr);
+                                           "  %s = %" PRIu64 " (u64)\n", field->name, *(uint64_t*)field_addr);
                         break;
                     case TYPE_F32:
                         offset += snprintf(buffer + offset, sizeof(buffer) - offset,

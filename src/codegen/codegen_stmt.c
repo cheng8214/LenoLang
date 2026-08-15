@@ -847,7 +847,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 }
                 emit_byte(gen, OP_SET_FIELD, ast->line);
                 emit_byte(gen, (uint8_t)field_idx, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
+                // OP_SET_FIELD 已经 pop 了 obj 和 value，无需再 OP_POP
                 
             } else if (target->kind == AST_INDEX) {
                 // 保存 value → aux，生成 obj+index，重载 value，INDEX_SET

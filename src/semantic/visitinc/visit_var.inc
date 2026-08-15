@@ -187,7 +187,7 @@
                                 snprintf(hint, sizeof(hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
                                     init_type->struct_name, ast->u.var_decl.type->struct_name,
                                     init_type->struct_name, ast->u.var_decl.type->struct_name);
-                                strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
+                                { size_t _ml = strlen(msg); snprintf(msg + _ml, sizeof(msg) - _ml, "%s", hint); }
                             }
                             error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                             sym->type = type_copy(ast->u.var_decl.type);

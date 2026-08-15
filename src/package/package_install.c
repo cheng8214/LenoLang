@@ -395,7 +395,7 @@ int package_install_from_git(const char* git_url) {
 #else
     char rm_cmd[MAX_PATH_LEN * 2];
     snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf \"%s\"", tmp_dir);
-    system(rm_cmd);
+    { int _r = system(rm_cmd); (void)_r; }
     MKDIR(tmp_dir);
 #endif
 
@@ -478,7 +478,7 @@ int package_install_from_git(const char* git_url) {
 #else
     snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf \"%s\"", tmp_dir);
 #endif
-    system(rm_cmd);
+    { int _r = system(rm_cmd); (void)_r; }
 
     package_config_free(cfg);
     return ret;
@@ -535,7 +535,7 @@ int package_install_from_dir(const char* pkg_path) {
 #else
         char rm_cmd[MAX_PATH_LEN * 2];
         snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf \"%s\"", dst_dir);
-        system(rm_cmd);
+        { int _r = system(rm_cmd); (void)_r; }
 #endif
     }
 

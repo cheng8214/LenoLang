@@ -319,8 +319,8 @@ static Value socket_arecv_func(int argc, Value* args) {
 
     // 设置非阻塞
     if (!sock->is_nonblocking) {
-        u_long mode = 1;
         #ifdef _WIN32
+        u_long mode = 1;
         ioctlsocket(sock->fd, FIONBIO, &mode);
         #else
         int flags = fcntl(sock->fd, F_GETFL, 0);
@@ -360,8 +360,8 @@ static Value socket_aaccept_func(int argc, Value* args) {
 
     // 设置非阻塞
     if (!sock->is_nonblocking) {
-        u_long mode = 1;
         #ifdef _WIN32
+        u_long mode = 1;
         ioctlsocket(sock->fd, FIONBIO, &mode);
         #else
         int flags = fcntl(sock->fd, F_GETFL, 0);

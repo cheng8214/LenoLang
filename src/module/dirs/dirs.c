@@ -184,7 +184,8 @@ static Value native_dirs_abspath(int argCount, Value* args) {
         if (path[0] == '/') {
             return val_obj((Object*)str_copy(path, (int)strlen(path)));
         }
-        snprintf(buffer, sizeof(buffer), "%s/%s", cwd, path);
+        int n = snprintf(buffer, sizeof(buffer), "%s/%s", cwd, path);
+        if (n >= (int)sizeof(buffer)) { buffer[sizeof(buffer)-1] = '\0'; }
         return val_obj((Object*)str_copy(buffer, (int)strlen(buffer)));
     }
     return val_obj((Object*)str_copy(buffer, (int)strlen(buffer)));
@@ -401,7 +402,8 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
             strncpy(abs_path, target, sizeof(abs_path) - 1);
             abs_path[sizeof(abs_path) - 1] = '\0';
         } else if (getcwd(cwd, sizeof(cwd))) {
-            snprintf(abs_path, sizeof(abs_path), "%s/%s", cwd, target);
+            int n = snprintf(abs_path, sizeof(abs_path), "%s/%s", cwd, target);
+            if (n >= (int)sizeof(abs_path)) { abs_path[sizeof(abs_path)-1] = '\0'; }
         } else {
             return val_null();
         }

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <inttypes.h>
 
 // 前向声明
 extern ObjString* dict_key_to_string(Value key);
@@ -63,7 +64,7 @@ static void sb_append_cstr(StringBuilder* sb, const char* str) {
 
 static void sb_append_int(StringBuilder* sb, int64_t num) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%lld", num);
+    snprintf(buf, sizeof(buf), "%" PRId64, num);
     sb_append_cstr(sb, buf);
 }
 

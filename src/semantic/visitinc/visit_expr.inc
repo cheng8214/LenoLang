@@ -1306,7 +1306,7 @@
                                         snprintf(hint, sizeof(hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
                                             arg_type->struct_name, check_type->struct_name,
                                             arg_type->struct_name, check_type->struct_name);
-                                        strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
+                                        { size_t _ml = strlen(msg); snprintf(msg + _ml, sizeof(msg) - _ml, "%s", hint); }
                                     }
                                     error_add(ERR_TYPE_MISMATCH, ast->line, msg);
                                 }

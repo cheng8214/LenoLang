@@ -691,7 +691,7 @@
                         if (!last_sep) last_sep = strrchr(sub_full_path, '/');
                         if (last_sep) {
                             *(last_sep + 1) = '\0';
-                            strncat(sub_full_path, import_path, MAX_PATH_LEN - strlen(sub_full_path) - 1);
+                            { size_t _ml = strlen(sub_full_path); snprintf(sub_full_path + _ml, MAX_PATH_LEN - _ml, "%s", import_path); }
                         } else {
                             snprintf(sub_full_path, MAX_PATH_LEN, "%s", import_path);
                         }

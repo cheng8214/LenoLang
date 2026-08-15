@@ -7,6 +7,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 // VM 独立运行时 - 不依赖编译器
@@ -180,7 +182,7 @@ static int vm_run_main(int argc, char** argv) {
     GetModuleFileNameW(NULL, wexe_path, MAX_PATH_LEN);
     WideCharToMultiByte(CP_UTF8, 0, wexe_path, -1, exe_path, MAX_PATH_LEN, NULL, NULL);
 #else
-    readlink("/proc/self/exe", exe_path, sizeof(exe_path));
+    { ssize_t _r = readlink("/proc/self/exe", exe_path, sizeof(exe_path)); (void)_r; }
 #endif
 
     unsigned char* embedded_data = NULL;

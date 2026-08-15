@@ -679,17 +679,18 @@ OPCODE(OP_RETURN) {
         if (gc.deferred_gc && gc.enabled && !gc.running) {
             gc_try_collect_deferred();
         }
-        // 栈下溢采样检测：函数返回时检查 sp 是否低于 stack_base
-        // 编译器生成多余 OP_POP 的 bug 会导致栈下溢，在此尽早发现
-        if (vm.sp < frame->stack_base) {
-            const char* _fn = (frame->closure && frame->closure->function && frame->closure->function->name) ? frame->closure->function->name : "<main>";
-            const char* _file = (frame->chunk && frame->chunk->filename) ? frame->chunk->filename : "unknown";
-            int _ip_off = (int)(frame->ip - frame->chunk->code);
-            fprintf(stderr, "\n[VM 栈下溢] sp=%d, stack_base=%d, depth=%d\n  func=%s, file=%s, ip_offset=%d, frame_cnt=%d\n",
-                vm.sp, frame->stack_base, vm.sp - frame->stack_base, _fn, _file, _ip_off, vm.frame_cnt);
-            runtime_error("VM 栈下溢：栈指针低于当前帧基址，可能是编译器生成了多余的 OP_POP", 0);
-            return -1;
-        }
+    }
+    // 栈下溢检测：采样检查 sp 是否低于 stack_base（每 256 次返回检查一次）
+    // 如遇栈下溢问题，将下面的 256 改为 1 即可每次返回都检查以定位出错函数
+    #define STACK_UNDERFLOW_CHECK_INTERVAL 256
+    if ((vm.frame_cnt & (STACK_UNDERFLOW_CHECK_INTERVAL - 1)) == 0 && vm.sp < frame->stack_base) {
+        const char* _fn = (frame->closure && frame->closure->function && frame->closure->function->name) ? frame->closure->function->name : "<main>";
+        const char* _file = (frame->chunk && frame->chunk->filename) ? frame->chunk->filename : "unknown";
+        int _ip_off = (int)(frame->ip - frame->chunk->code);
+        fprintf(stderr, "\n[VM 栈下溢] sp=%d, stack_base=%d, depth=%d\n  func=%s, file=%s, ip_offset=%d, frame_cnt=%d\n",
+            vm.sp, frame->stack_base, vm.sp - frame->stack_base, _fn, _file, _ip_off, vm.frame_cnt);
+        runtime_error("VM 栈下溢：栈指针低于当前帧基址，可能是编译器生成了多余的 OP_POP", 0);
+        return -1;
     }
 
     Value result = vm_stack_pop_fast(&vm);

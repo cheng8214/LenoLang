@@ -66,6 +66,7 @@ static void cstruct_def_resize_hash_table(ObjCStructDef* def) {
     
     // 计算新容量
     int new_capacity = old_capacity * 2;
+    if (new_capacity <= 0) new_capacity = FIELD_HASH_INITIAL_CAPACITY;
     
     // 创建新表
     CStructFieldHashEntry** new_table = (CStructFieldHashEntry**)calloc(

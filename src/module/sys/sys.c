@@ -121,9 +121,9 @@ static Value native_clear(int argCount, Value* args) {
     (void)args;
 
     #ifdef _WIN32
-        system("cls");
+        { int _r = system("cls"); (void)_r; }
     #else
-        system("clear");
+        { int _r = system("clear"); (void)_r; }
     #endif
     return val_null();
 }

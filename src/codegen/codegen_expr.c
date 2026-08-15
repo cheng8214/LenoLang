@@ -1,6 +1,7 @@
 #include "codegen.h"
 #include "../semantic/semantic_internal.h"
 #include "../module/ffi/ffi_clib.h"
+#include <ctype.h>
 
 static void gen_binary(CodeGen* gen, Ast* ast);
 static void gen_unary(CodeGen* gen, Ast* ast);
