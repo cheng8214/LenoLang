@@ -27,6 +27,7 @@ export func createSession(): Session { return net.createSession() }
 export func sessionGet(Session s, string url): Response { return net.sessionGet(s, url) }
 export func sessionPost(Session s, string url, string body): Response { return net.sessionPost(s, url, body) }
 export func sessionPostJson(Session s, string url, string json): Response { return net.sessionPostJson(s, url, json) }
+export func sessionPostJSON(Session s, string url, Dict data): Response { return net.sessionPostJSON(s, url, data) }
 export func sessionPut(Session s, string url, string body): Response { return net.sessionPut(s, url, body) }
 export func sessionDel(Session s, string url): Response { return net.sessionDel(s, url) }
 export func sessionPatch(Session s, string url, string body): Response { return net.sessionPatch(s, url, body) }
@@ -37,11 +38,14 @@ export func sessionSetCredentials(Session s, string user, string pass) { net.ses
 export func sessionSetTimeout(Session s, int ms) { net.sessionSetTimeout(s, ms) }
 export func sessionSetProxy(Session s, string proxy) { net.sessionSetProxy(s, proxy) }
 export func sessionClose(Session s) { net.sessionClose(s) }
+export func sessionLoadCookies(Session s, string cookieFile): int { return net.sessionLoadCookies(s, cookieFile) }
+export func sessionSaveCookies(Session s, string cookieFile): int { return net.sessionSaveCookies(s, cookieFile) }
 
 // 便捷 GET/POST/PUT/DELETE/PATCH
 export func get(string url): Response { return net.get(url) }
 export func post(string url, string body): Response { return net.post(url, body) }
 export func postJson(string url, string json): Response { return net.postJson(url, json) }
+export func postJSON(string url, Dict data): Response { return net.postJSON(url, data) }
 export func put(string url, string body): Response { return net.put(url, body) }
 export func patch(string url, string body): Response { return net.patch(url, body) }
 export func del(string url): Response { return net.del(url) }
@@ -65,6 +69,11 @@ export func tag(any node): string { return htmls.tag(node) }
 export func text(any node): string { return htmls.text(node) }
 export func allText(any node): string { return htmls.allText(node) }
 export func cleanText(string raw): string { return htmls.cleanText(raw) }
+export func extractTable(any root): Array[Array[string]] { return htmls.extractTable(root) }
+export func getTitle(any root): string { return htmls.getTitle(root) }
+export func getMeta(any root, string name): string { return htmls.getMeta(root, name) }
+export func getMetas(any root): Dict { return htmls.getMetas(root) }
+export func extractForm(any root): Dict { return htmls.extractForm(root) }
 export func attr(any node, string name): string { return htmls.attr(node, name) }
 export func children(any node): Array { return htmls.children(node) }
 export func getLinks(string html): Array[string] { return htmls.getLinks(html) }

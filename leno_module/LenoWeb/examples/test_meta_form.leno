@@ -1,0 +1,41 @@
+// 测试 LenoWeb 元数据 + 表单提取
+import "../lib/Web.leno" as web
+use web.(parse, getTitle, getMeta, getMetas, extractForm)
+
+main() {
+    print("=== 元数据/表单测试 ===")
+
+    var html = "<html><head>" +
+               "<title>My Page Title</title>" +
+               "<meta name='description' content='A test page'>" +
+               "<meta name='keywords' content='leno,web'>" +
+               "<meta property='og:title' content='OG Title'>" +
+               "</head><body>" +
+               "<form action='/submit' method='post'>" +
+               "<input type='text' name='username' value='admin'>" +
+               "<input type='password' name='password' value=''>" +
+               "<input type='checkbox' name='remember' checked='checked'>" +
+               "<select name='role'><option value='a'>Admin</option><option value='u' selected='selected'>User</option></select>" +
+               "<textarea name='bio'>Hello world</textarea>" +
+               "</form>" +
+               "</body></html>"
+    var root = web.parse(html)
+
+    print("title = " + web.getTitle(root))
+    print("description = " + web.getMeta(root, "description"))
+    print("keywords = " + web.getMeta(root, "keywords"))
+    print("og:title = " + web.getMeta(root, "og:title"))
+
+    var metas = web.getMetas(root)
+    print("metas count = " + metas.len())
+    print("metas description = " + metas["description"])
+
+    var form = web.extractForm(root)
+    print("form username = " + form["username"])
+    print("form password = [" + form["password"] + "]")
+    print("form remember = " + form["remember"])
+    print("form role = " + form["role"])
+    print("form bio = " + form["bio"])
+
+    print("=== 测试完成 ===")
+}

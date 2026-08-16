@@ -1,0 +1,26 @@
+// 测试 LenoWeb extractTable 表格提取
+import "../lib/Web.leno" as web
+use web.(parse, extractTable)
+
+main() {
+    print("=== extractTable 表格提取测试 ===")
+
+    var html = "<table>" +
+               "<tr><th>Name</th><th>Age</th></tr>" +
+               "<tr><td>Alice</td><td>30</td></tr>" +
+               "<tr><td>Bob</td><td>25</td></tr>" +
+               "</table>"
+
+    var root = web.parse(html)
+    var table = web.extractTable(root)
+    print("rows = " + table.len())
+    for table to row {
+        string line = ""
+        for row to cell {
+            if line != "" { line = line + " | " }
+            line = line + cell
+        }
+        print("  " + line)
+    }
+    print("=== 表格测试完成 ===")
+}

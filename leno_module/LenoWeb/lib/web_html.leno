@@ -648,6 +648,36 @@ export func cleanText(string raw): string {
     return out
 }
 
+// 提取 HTML 中第一个表格为二维数组（每行=一行，每格=cleanText 后的文本）
+export func extractTable(any root): Array[Array[string]] {
+    var tables = select(root, "table")
+    Array[Array[string]] tableData = []
+    if tables is Array and tables.len() > 0 {
+        var tbl = tables[0]
+        var rows = select(tbl, "tr")
+        if rows is Array {
+            for rows to tr {
+                // 该行的所有单元格（td + th）
+                var cells = select(tr, "td")
+                var thCells = select(tr, "th")
+                Array[string] rowData = []
+                if cells is Array {
+                    for cells to td {
+                        rowData.add(cleanText(allText(td)))
+                    }
+                }
+                if thCells is Array {
+                    for thCells to th {
+                        rowData.add(cleanText(allText(th)))
+                    }
+                }
+                tableData.add(rowData)
+            }
+        }
+    }
+    return tableData
+}
+
 export func attr(any node, string name): string {
     if node is Dict {
         var a = node["attrs"]
@@ -676,6 +706,101 @@ export func getLinks(string html): Array[string] {
     var links = []
     _collectLinks(root, links)
     return links
+}
+
+// 提取 HTML 的 <title> 文本（不存在返回空串）
+export func getTitle(any root): string {
+    var titles = select(root, "title")
+    if titles is Array and titles.len() > 0 {
+        return cleanText(allText(titles[0]))
+    }
+    return ""
+}
+
+// 提取 HTML 中 <meta> 标签的属性值（按 name 或 property 匹配，取 content 属性）
+export func getMeta(any root, string name): string {
+    var metas = select(root, "meta")
+    if metas is Array {
+        for metas to m {
+            string mname = attr(m, "name")
+            if mname == "" {
+                mname = attr(m, "property")
+            }
+            if mname == name {
+                return attr(m, "content")
+            }
+        }
+    }
+    return ""
+}
+
+// 提取 HTML 中所有 <meta> 标签为 Dict（name/property -> content）
+export func getMetas(any root): Dict {
+    var result = {}
+    var metas = select(root, "meta")
+    if metas is Array {
+        for metas to m {
+            string mname = attr(m, "name")
+            if mname == "" {
+                mname = attr(m, "property")
+            }
+            if mname != "" {
+                result[mname] = attr(m, "content")
+            }
+        }
+    }
+    return result
+}
+
+// 提取 HTML 中表单字段为 Dict（name -> value），仿 BeautifulSoup 表单解析
+// 支持 input/select/textarea，取 name 属性和 value/文本
+export func extractForm(any root): Dict {
+    var result = {}
+    var inputs = select(root, "input")
+    if inputs is Array {
+        for inputs to inp {
+            string iname = attr(inp, "name")
+            if iname != "" {
+                string val = attr(inp, "value")
+                if val == "" and attr(inp, "type") == "checkbox" {
+                    if attr(inp, "checked") != "" {
+                        val = "on"
+                    }
+                }
+                result[iname] = val
+            }
+        }
+    }
+    var selects = select(root, "select")
+    if selects is Array {
+        for selects to sel {
+            string sname = attr(sel, "name")
+            if sname != "" {
+                // 找选中的 option
+                var options = select(sel, "option")
+                string selVal = ""
+                if options is Array {
+                    for options to opt {
+                        if attr(opt, "selected") != "" {
+                            selVal = cleanText(allText(opt))
+                            break
+                        }
+                    }
+                }
+                result[sname] = selVal
+            }
+        }
+    }
+    var textareas = select(root, "textarea")
+    if textareas is Array {
+        for textareas to ta {
+            string taname = attr(ta, "name")
+            if taname != "" {
+                result[taname] = cleanText(allText(ta))
+            }
+        }
+    }
+    return result
 }
 
 // ==================== 便捷查询 API（仿 BeautifulSoup） ====================

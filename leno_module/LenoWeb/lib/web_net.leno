@@ -3,6 +3,7 @@
 import ffi
 import jsons
 import files
+import strings
 import "web_curl_core.leno" as core
 // 重新导出核心类型
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
@@ -55,6 +56,39 @@ export struct Response {
     // 返回 Dict 类型，可直接用 ["key"] 或 .key 访问
     func json(): Dict {
         return jsons.decode(body) as Dict
+    }
+
+    // 按名字获取响应头值（大小写不敏感），不存在返回空串
+    // 例：r.getHeader("content-type")
+    func getHeader(string name): string {
+        string lower = name.to_lower()
+        int pos = 0
+        int n = headers.len()
+        while pos < n {
+            int eol = strings.find(headers.slice(pos, n), "\n")
+            int lineEnd = n
+            if eol >= 0 {
+                lineEnd = pos + eol
+            }
+            string line = headers.slice(pos, lineEnd)
+            // 去掉行尾 \r
+            if line.ends_with("\r") {
+                line = line.slice(0, line.len() - 1)
+            }
+            int colon = strings.find(line, ":")
+            if colon >= 0 {
+                string hname = line.slice(0, colon).to_lower()
+                if hname == lower {
+                    string hval = line.slice(colon + 1, line.len()).trim()
+                    return hval
+                }
+            }
+            if eol < 0 {
+                break
+            }
+            pos = lineEnd + 1
+        }
+        return ""
     }
 
     // 转为可读字符串
@@ -549,6 +583,22 @@ export func sessionSetProxy(Session s, string proxy) {
     s.c.setProxy(proxy)
 }
 
+// 从 cookie 文件加载会话 cookie（下次请求时生效）
+// 注意：必须设置 COOKIEFILE 才会启用 libcurl 的 cookie 引擎
+export func sessionLoadCookies(Session s, string cookieFile): int {
+    return s.c.setCookieFile(cookieFile)
+}
+
+// 把会话 cookie 保存到文件（需同时设置 COOKIEFILE + COOKIEJAR，
+// 调用 sessionClose 后写入；下次重建 session 可恢复）
+export func sessionSaveCookies(Session s, string cookieFile): int {
+    int r1 = s.c.setCookieFile(cookieFile)
+    if r1 != 0 {
+        return r1
+    }
+    return s.c.setCookieJar(cookieFile)
+}
+
 // ==================== 便捷函数 ====================
 
 // GET 请求（便捷接口，自动创建/销毁客户端）
@@ -573,6 +623,22 @@ export func postJson(string url, string json): Response {
     Response resp = c.postJson(url, json)
     c.close()
     return resp
+}
+
+// POST JSON（自动把 Dict 序列化为 JSON body，仿 requests.post(json=...))
+export func postJSON(string url, Dict data): Response {
+    string json = jsons.encode(data)
+    HttpClient c = createClient()
+    Response resp = c.postJson(url, json)
+    c.close()
+    return resp
+}
+
+// Session POST JSON（自动序列化 Dict）
+export func sessionPostJSON(Session s, string url, Dict data): Response {
+    string json = jsons.encode(data)
+    _sessionApplyHeaders(s)
+    return s.c.postJson(url, json)
 }
 
 // PUT 请求
