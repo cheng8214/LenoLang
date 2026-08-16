@@ -498,6 +498,13 @@ OPCODE(OP_GET_PROPERTY) {
         DISPATCH;
     }
 
+    // 可空值（null）未解包就访问属性/方法：给出精准错误，而非笼统的"只能获取数组/字典/模块属性"
+    if (val_is_null(receiver)) {
+        throw_runtime_error("可空值（null）不能访问属性或方法，请先判空后再使用（如 if x != null { ... }）", GET_CURRENT_LINE());
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH;
+    }
+
     throw_runtime_error("只能获取数组、字典或模块的属性", GET_CURRENT_LINE());
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
