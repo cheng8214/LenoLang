@@ -1,0 +1,44 @@
+// 测试 LenoWeb HTML 便捷查询 API
+import "../lib/Web.leno" as web
+use web.(parse, getElementById, getElementsByTag, getElementsByClass, findAll, text, attr, tag)
+
+main() {
+    var html = "<html><body>" +
+               "<h1 id='title'>Hello</h1>" +
+               "<div class='container'>" +
+               "  <p class='item'>Item1</p>" +
+               "  <p class='item special'>Item2</p>" +
+               "  <span>Span</span>" +
+               "</div>" +
+               "</body></html>"
+    var root = web.parse(html)
+
+    // 1. getElementById
+    var title = web.getElementById(root, "title")
+    print("title text = " + web.text(title))
+
+    // 2. getElementsByTag
+    var ps = web.getElementsByTag(root, "p")
+    print("p count = " + ps.len())
+
+    // 3. getElementsByClass
+    var items = web.getElementsByClass(root, "item")
+    print("item count = " + items.len())
+
+    // 4. findAll by tag
+    var spans = web.findAll(root, "span", "", "")
+    print("span count = " + spans.len())
+
+    // 5. findAll by class
+    var specials = web.findAll(root, "", "special", "")
+    print("special count = " + specials.len())
+    if specials.len() > 0 {
+        print("special text = " + web.text(specials[0]))
+    }
+
+    // 6. findAll by id
+    var byId = web.findAll(root, "", "", "title")
+    print("findAll id count = " + byId.len())
+
+    print("=== HTML 便捷查询测试完成 ===")
+}

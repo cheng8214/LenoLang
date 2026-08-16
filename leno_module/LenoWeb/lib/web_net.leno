@@ -398,6 +398,112 @@ export func createClient(): HttpClient {
     return c
 }
 
+// ==================== Session 会话 ====================
+// 仿 requests.Session：复用一个 HttpClient 实例，
+// 跨多个请求保持 cookie / 连接 / 认证等状态。
+
+export struct Session {
+    HttpClient c        // 复用的客户端（保持 cookie/连接状态）
+    Dict headers        // 持久化默认请求头（键值对）
+}
+
+// 创建会话
+export func createSession(): Session {
+    Session s = new Session()
+    s.c = createClient()
+    return s
+}
+
+// 关闭会话（释放底层句柄）
+export func sessionClose(Session s) {
+    if s.c.ok {
+        s.c.close()
+    }
+}
+
+// 应用持久化的默认 headers
+func _sessionApplyHeaders(Session s) {
+    var keys = s.headers.keys()
+    if keys.len() == 0 {
+        return
+    }
+    Array[string] hdrs = []
+    for keys to k {
+        var v = s.headers[k]
+        if v is string {
+            hdrs.add(k + ": " + v)
+        }
+    }
+    s.c.setHeaders(hdrs)
+}
+
+// 会话 GET
+export func sessionGet(Session s, string url): Response {
+    _sessionApplyHeaders(s)
+    return s.c.get(url)
+}
+
+// 会话 POST
+export func sessionPost(Session s, string url, string body): Response {
+    _sessionApplyHeaders(s)
+    return s.c.post(url, body)
+}
+
+// 会话 POST JSON
+export func sessionPostJson(Session s, string url, string json): Response {
+    _sessionApplyHeaders(s)
+    return s.c.postJson(url, json)
+}
+
+// 会话 PUT
+export func sessionPut(Session s, string url, string body): Response {
+    _sessionApplyHeaders(s)
+    return s.c.put(url, body)
+}
+
+// 会话 DELETE
+export func sessionDel(Session s, string url): Response {
+    _sessionApplyHeaders(s)
+    return s.c.del(url)
+}
+
+// 会话 PATCH
+export func sessionPatch(Session s, string url, string body): Response {
+    _sessionApplyHeaders(s)
+    return s.c.patch(url, body)
+}
+
+// 会话 HEAD
+export func sessionHead(Session s, string url): Response {
+    _sessionApplyHeaders(s)
+    return s.c.head(url)
+}
+
+// 设置持久化默认请求头（会持续应用到后续请求）
+export func sessionSetHeader(Session s, string name, string value) {
+    s.headers[name] = value
+}
+
+// 设置会话 Cookie
+export func sessionSetCookie(Session s, string cookie) {
+    s.c.setCookie(cookie)
+}
+
+// 设置会话认证
+export func sessionSetCredentials(Session s, string user, string pass) {
+    s.c.setCredentials(user, pass)
+}
+
+// 设置会话超时（毫秒）
+export func sessionSetTimeout(Session s, int ms) {
+    s.c.setTimeout(ms)
+}
+
+// 设置会话代理
+export func sessionSetProxy(Session s, string proxy) {
+    s.c.setProxy(proxy)
+}
+
 // ==================== 便捷函数 ====================
 
 // GET 请求（便捷接口，自动创建/销毁客户端）

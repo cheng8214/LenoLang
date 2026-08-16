@@ -648,6 +648,92 @@ export func getLinks(string html): Array[string] {
     return links
 }
 
+// ==================== 便捷查询 API（仿 BeautifulSoup） ====================
+
+// 按 id 查找节点，返回第一个匹配或 null
+export func getElementById(any root, string id): any {
+    if id == "" {
+        return null
+    }
+    var parts = _splitSelector("#" + id)
+    if parts.len() == 0 {
+        return null
+    }
+    var current = [root]
+    for 0:parts.len()-1 to pi {
+        Dict p0 = parts[pi]
+        var next = []
+        for current to node {
+            _findDescendants(node, p0, next)
+        }
+        current = next
+    }
+    if current.len() > 0 {
+        return current[0]
+    }
+    return null
+}
+
+// 按标签名查找所有节点
+export func getElementsByTag(any root, string tagName): Array[any] {
+    return select(root, tagName)
+}
+
+// 按 class 名查找所有节点
+export func getElementsByClass(any root, string className): Array[any] {
+    if className == "" {
+        return []
+    }
+    return select(root, "." + className)
+}
+
+// 通用查找：可按 tag/class/id 组合过滤（均为可选，传空串表示不过滤）
+export func findAll(any root, string tagName, string className, string idName): Array[any] {
+    var all = []
+    _findAllRec(root, tagName, className, idName, all)
+    return all
+}
+
+func _findAllRec(any node, string tagName, string className, string idName, Array results) {
+    if node == null {
+        return
+    }
+    if node is Dict {
+        var matched = true
+        if tagName != "" {
+            var t = node["tag"]
+            if t is string {
+                if t != tagName {
+                    matched = false
+                }
+            } else {
+                matched = false
+            }
+        }
+        if matched and className != "" {
+            var cls = attr(node, "class")
+            if not _hasWord(cls, className) {
+                matched = false
+            }
+        }
+        if matched and idName != "" {
+            var idv = attr(node, "id")
+            if idv != idName {
+                matched = false
+            }
+        }
+        if matched {
+            results.add(node)
+        }
+        var kids = node["children"]
+        if kids is Array {
+            for kids to child {
+                _findAllRec(child, tagName, className, idName, results)
+            }
+        }
+    }
+}
+
 func _collectLinks(any node, Array links) {
     if node == null {
         return

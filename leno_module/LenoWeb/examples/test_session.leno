@@ -1,0 +1,26 @@
+// 测试 LenoWeb Session 会话（仿 requests.Session）—— 本地服务验证
+import "../lib/Web.leno" as web
+use web.(Session, Response, createSession, sessionGet, sessionSetHeader, sessionSetCookie, version, globalInit)
+
+main() {
+    globalInit()
+    print("=== Session 会话测试（本地验证） ===")
+
+    Session s = web.createSession()
+
+    // 设置持久 header
+    web.sessionSetHeader(s, "X-Custom-Header", "leno-session-test")
+    web.sessionSetHeader(s, "X-Another", "value2")
+
+    // 第一次请求
+    Response r1 = web.sessionGet(s, "http://127.0.0.1:9999/first")
+    print("GET1 status = " + r1.statusCode)
+    print("GET1 body = " + r1.body)
+
+    // 第二次请求（验证 header 仍持久化）
+    Response r2 = web.sessionGet(s, "http://127.0.0.1:9999/second")
+    print("GET2 status = " + r2.statusCode)
+    print("GET2 body = " + r2.body)
+
+    print("=== Session 测试完成 ===")
+}

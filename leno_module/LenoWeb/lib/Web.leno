@@ -10,10 +10,26 @@ import "web_crawler.leno" as crawler
 
 // ==================== 重新导出 core 类型 ====================
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
-use net.(Response, HttpClient)
+use net.(Response, HttpClient, Session)
 
 // ==================== HTTP 客户端 ====================
 export func createClient(): HttpClient { return net.createClient() }
+
+// ==================== Session 会话（仿 requests.Session） ====================
+export func createSession(): Session { return net.createSession() }
+export func sessionGet(Session s, string url): Response { return net.sessionGet(s, url) }
+export func sessionPost(Session s, string url, string body): Response { return net.sessionPost(s, url, body) }
+export func sessionPostJson(Session s, string url, string json): Response { return net.sessionPostJson(s, url, json) }
+export func sessionPut(Session s, string url, string body): Response { return net.sessionPut(s, url, body) }
+export func sessionDel(Session s, string url): Response { return net.sessionDel(s, url) }
+export func sessionPatch(Session s, string url, string body): Response { return net.sessionPatch(s, url, body) }
+export func sessionHead(Session s, string url): Response { return net.sessionHead(s, url) }
+export func sessionSetHeader(Session s, string name, string value) { net.sessionSetHeader(s, name, value) }
+export func sessionSetCookie(Session s, string cookie) { net.sessionSetCookie(s, cookie) }
+export func sessionSetCredentials(Session s, string user, string pass) { net.sessionSetCredentials(s, user, pass) }
+export func sessionSetTimeout(Session s, int ms) { net.sessionSetTimeout(s, ms) }
+export func sessionSetProxy(Session s, string proxy) { net.sessionSetProxy(s, proxy) }
+export func sessionClose(Session s) { net.sessionClose(s) }
 
 // 便捷 GET/POST/PUT/DELETE/PATCH
 export func get(string url): Response { return net.get(url) }
@@ -46,6 +62,10 @@ export func children(any node): Array { return htmls.children(node) }
 export func getLinks(string html): Array[string] { return htmls.getLinks(html) }
 export func select(any root, string selector): Array[any] { return htmls.select(root, selector) }
 export func selectOne(any root, string selector): any { return htmls.selectOne(root, selector) }
+export func getElementById(any root, string id): any { return htmls.getElementById(root, id) }
+export func getElementsByTag(any root, string tagName): Array[any] { return htmls.getElementsByTag(root, tagName) }
+export func getElementsByClass(any root, string className): Array[any] { return htmls.getElementsByClass(root, className) }
+export func findAll(any root, string tagName, string className, string idName): Array[any] { return htmls.findAll(root, tagName, className, idName) }
 
 // ==================== URL 工具 ====================
 export func parseUrl(string url): Dict { return crawler.parseUrl(url) }
