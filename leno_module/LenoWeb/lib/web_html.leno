@@ -763,7 +763,7 @@ func _collectLinks(any node, Array links) {
 // ==================== CSS 选择器 ====================
 
 func _parseSimple(string selector): Dict {
-    var r = {tag: "", id: "", classes: [], attrName: "", attrValue: "", hasAttr: false}
+    var r = {tag: "", id: "", classes: [], attrName: "", attrValue: "", attrOp: "=", hasAttr: false}
     int i = 0
     int slen = selector.len()
 
@@ -814,7 +814,7 @@ func _parseSimple(string selector): Dict {
             string attrName = ""
             while i < slen {
                 int ch = selector.byte(i)
-                if ch == 61 or ch == 93 {
+                if ch == 61 or ch == 94 or ch == 36 or ch == 42 or ch == 93 {
                     break
                 }
                 attrName = attrName + strings.char(ch)
@@ -822,18 +822,38 @@ func _parseSimple(string selector): Dict {
             }
             r["attrName"] = attrName
             r["hasAttr"] = true
-            if i < slen and selector.byte(i) == 61 {
-                i = i + 1
-                string attrVal = ""
-                while i < slen {
-                    int ch = selector.byte(i)
-                    if ch == 93 {
-                        break
-                    }
-                    attrVal = attrVal + strings.char(ch)
+            r["attrOp"] = "="
+            if i < slen {
+                int op = selector.byte(i)
+                if op == 61 {
+                    // =
                     i = i + 1
+                } else if op == 94 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // ^=
+                    r["attrOp"] = "^="
+                    i = i + 2
+                } else if op == 36 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // $=
+                    r["attrOp"] = "$="
+                    i = i + 2
+                } else if op == 42 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // *=
+                    r["attrOp"] = "*="
+                    i = i + 2
                 }
-                r["attrValue"] = attrVal
+                if i <= slen and i - 1 < slen {
+                    // 读取属性值（到 ] 为止）
+                    string attrVal = ""
+                    while i < slen {
+                        int ch = selector.byte(i)
+                        if ch == 93 {
+                            break
+                        }
+                        attrVal = attrVal + strings.char(ch)
+                        i = i + 1
+                    }
+                    r["attrValue"] = attrVal
+                }
             }
             if i < slen and selector.byte(i) == 93 {
                 i = i + 1
@@ -983,14 +1003,44 @@ func _matchSimple(any node, Dict sel): bool {
                         if nodeAttrs is Dict {
                             var nodeAttrVal = nodeAttrs[attrName]
                             var selAttrVal = sel["attrValue"]
-                            if selAttrVal is string {
-                                if selAttrVal != "" {
-                                    if nodeAttrVal is string {
-                                        if nodeAttrVal != selAttrVal {
+                            var attrOp = sel["attrOp"]
+                            if attrOp is string {
+                                if selAttrVal is string {
+                                    if selAttrVal != "" {
+                                        if nodeAttrVal is string {
+                                            var actual = nodeAttrVal
+                                            if attrOp == "=" {
+                                                if actual != selAttrVal {
+                                                    return false
+                                                }
+                                            } else if attrOp == "^=" {
+                                                // 前缀匹配
+                                                int spos = strings.find(actual, selAttrVal)
+                                                if spos != 0 {
+                                                    return false
+                                                }
+                                            } else if attrOp == "$=" {
+                                                // 后缀匹配
+                                                int pos = strings.find(actual, selAttrVal)
+                                                if pos < 0 {
+                                                    return false
+                                                }
+                                                if pos + selAttrVal.len() != actual.len() {
+                                                    return false
+                                                }
+                                            } else if attrOp == "*=" {
+                                                // 包含匹配
+                                                if strings.find(actual, selAttrVal) < 0 {
+                                                    return false
+                                                }
+                                            } else {
+                                                if actual != selAttrVal {
+                                                    return false
+                                                }
+                                            }
+                                        } else {
                                             return false
                                         }
-                                    } else {
-                                        return false
                                     }
                                 }
                             }

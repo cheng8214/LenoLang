@@ -1,0 +1,46 @@
+// 测试 LenoWeb CSS 选择器增强：[attr^=] [attr$=] [attr*=]
+import "../lib/Web.leno" as web
+use web.(parse, select, selectOne, attr, text)
+
+main() {
+    var html = "<div>" +
+               "<a href='https://example.com/page1'>Link1</a>" +
+               "<a href='http://example.org/page2'>Link2</a>" +
+               "<a href='/relative/path'>Link3</a>" +
+               "<img src='photo.jpg' alt='a photo'>" +
+               "<img src='profile.png' alt='p'>" +
+               "<span data-role='admin-user'>Admin</span>" +
+               "<span data-role='user'>User</span>" +
+               "</div>"
+    var root = web.parse(html)
+
+    // 前缀匹配 [href^=https]
+    var httpsLinks = web.select(root, "a[href^=https]")
+    print("https links = " + httpsLinks.len())   // 期望 1
+
+    // 前缀匹配 [src^=photo]
+    var photos = web.select(root, "img[src^=photo]")
+    print("photo imgs = " + photos.len())        // 期望 1
+
+    // 后缀匹配 [href$=page2]
+    var orgLinks = web.select(root, "a[href$=page2]")
+    print("page2 links = " + orgLinks.len())     // 期望 1
+
+    // 后缀匹配 [src$=png]
+    var pngs = web.select(root, "img[src$=png]")
+    print("png imgs = " + pngs.len())            // 期望 1
+
+    // 包含匹配 [href*=example]
+    var exampleLinks = web.select(root, "a[href*=example]")
+    print("example links = " + exampleLinks.len())  // 期望 2
+
+    // 包含匹配 [data-role*=admin]
+    var admins = web.select(root, "span[data-role*=admin]")
+    print("admin spans = " + admins.len())        // 期望 1
+
+    // 精确匹配 [data-role=user]（回归验证，确保没破坏 =）
+    var users = web.select(root, "span[data-role=user]")
+    print("user spans = " + users.len())          // 期望 1
+
+    print("=== CSS 选择器增强测试完成 ===")
+}
