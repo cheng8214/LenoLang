@@ -1,0 +1,144 @@
+// ============================================================
+// crawl_site.leno — LenoWeb 一站式综合爬虫示例
+// 整合：robots 合规、sitemap 种子、重试、元数据、htmlToText
+// 目标：quotes.toscrape.com（公开测试站，支持 robots/sitemap）
+// ============================================================
+
+import "../lib/Web.leno" as web
+use web.(Crawler, start, nextUrl, shouldStop, markVisited, enqueue, extractLinks, fetchPage,
+         fetchRobots, fetchSitemapUrls, setRobots, getWithRetry, parse,
+         getTitle, getMeta, extractTable, textContent, cleanText, attr,
+         Response, isRobotsAllowed, globalInit)
+import times
+
+main() {
+    globalInit()
+    string ua = "LenoWeb/1.0"
+    string site = "https://quotes.toscrape.com"
+
+    print("=== LenoWeb 综合爬虫演示 ===")
+    print("")
+
+    // ---- 1. 抓取 robots.txt 并检查合规 ----
+    print("[1] 获取 robots.txt ...")
+    string robots = web.fetchRobots(site, ua)
+    if robots != "" {
+        bool allowed = web.isRobotsAllowed(robots, ua, site + "/")
+        print("    robots 允许抓首页: " + allowed)
+    } else {
+        print("    (无 robots.txt 或获取失败)")
+    }
+    print("")
+
+    // ---- 2. 从 sitemap 获取种子 URL ----
+    print("[2] 获取 sitemap.xml 种子 ...")
+    var seedUrls = web.fetchSitemapUrls(site, ua)
+    print("    sitemap 发现 " + seedUrls.len() + " 个 URL")
+    print("")
+
+    // ---- 3. 配置爬虫（启用 robots 合规） ----
+    Dict[string, any] config = {}
+    var seeds = seedUrls
+    if seeds.len() == 0 {
+        seeds = [site + "/"]
+    }
+    config["start_urls"] = seeds
+    config["allowed_domains"] = ["quotes.toscrape.com"]
+    config["max_pages"] = 6
+    config["max_depth"] = 5
+    config["delay_ms"] = 600
+    config["user_agent"] = ua
+    config["respect_robots"] = true
+
+    var crawler = web.Crawler(config)
+    if robots != "" {
+        web.setRobots(crawler, robots)
+    }
+    crawler = web.start(crawler)
+
+    int totalQuotes = 0
+    int startTime = times.ms()
+
+    // ---- 4. 主爬取循环 ----
+    print("[3] 开始爬取 ...")
+    print("")
+    while not web.shouldStop(crawler) {
+        var entry = web.nextUrl(crawler)
+        if entry == null {
+            break
+        }
+        if entry is Dict {
+            string url = ""
+            var eu = entry["url"]
+            if eu is string { url = eu }
+            int depth = 0
+            var ed = entry["depth"]
+            if ed is int { depth = ed }
+
+            print("  [深度 " + depth + "] " + url)
+
+            // 带重试抓取（失败重试 2 次，间隔 300ms）
+            Response resp = web.getWithRetry(url, 2, 300)
+            if resp.isError() {
+                print("    -> HTTP " + resp.statusCode + " 失败，跳过")
+                web.markVisited(crawler, url)
+                continue
+            }
+
+            // 解析 HTML
+            var root = web.parse(resp.body)
+
+            // 提取元数据（标题/描述）
+            string title = web.getTitle(root)
+            if title != "" {
+                print("    title: " + title)
+            }
+
+            // 提取名言（quotes 站结构）
+            var quotes = web.select(root, ".quote")
+            if quotes is Array {
+                for quotes to quote {
+                    var textNode = web.select(quote, ".text")
+                    var authorNode = web.select(quote, ".author")
+                    string text = ""
+                    string author = ""
+                    if textNode is Array and textNode.len() > 0 {
+                        text = web.textContent(textNode[0])
+                    }
+                    if authorNode is Array and authorNode.len() > 0 {
+                        author = web.textContent(authorNode[0])
+                    }
+                    if text != "" {
+                        totalQuotes = totalQuotes + 1
+                        string show = text
+                        if show.len() > 40 {
+                            show = show.slice(0, 40) + "..."
+                        }
+                        print("      - " + show + "  [" + author + "]")
+                    }
+                }
+            }
+
+            // 提取下一页链接（quotes 站用 .next a）
+            var nexts = web.select(root, ".next a")
+            if nexts is Array and nexts.len() > 0 {
+                string href = web.attr(nexts[0], "href")
+                if href != "" {
+                    web.enqueue(crawler, site + href, depth + 1)
+                }
+            }
+
+            web.markVisited(crawler, url)
+            print("")
+        }
+    }
+
+    int elapsed = times.ms() - startTime
+    print("=== 爬取完成 ===")
+    var pc = crawler["page_count"]
+    int pageCount = 0
+    if pc is int { pageCount = pc }
+    print("总访问页面: " + pageCount)
+    print("总名言数: " + totalQuotes)
+    print("耗时: " + elapsed / 1000 + " 秒")
+}
