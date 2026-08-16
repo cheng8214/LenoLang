@@ -1,0 +1,72 @@
+// test_narrowing_real.leno — 在真实 LenoWeb 模块场景下测试类型收窄返回
+// 覆盖：
+// 1. HtmlNode? 判空(null)后直接传给非可空 HtmlNode 参数
+// 2. is string 收窄后作为 string 使用/返回
+// 3. 嵌套收窄（先判 null 再取子节点）
+
+import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
+
+main() {
+    print("=== 真实场景类型收窄测试 ===\n")
+
+    var root = htmls.parse("<div id='d'><p>hi</p><a href='x'>link</a></div>")
+
+    // 场景1: HtmlNode? 判空后直接传给非可空 HtmlNode 参数（htmls.text 参数是 HtmlNode）
+    HtmlNode? p1 = htmls.selectOne(root, "p")
+    string t1 = ""
+    if p1 != null {
+        // 收窄后直接传参，无需 as
+        t1 = htmls.text(p1)
+    }
+    print("[1] HtmlNode? 判空后直接传参 text = " + t1 + " (期望 hi)")
+
+    // 场景2: 判空后作为返回值（调用辅助函数，内部收窄返回）
+    string r2 = _getText(root, "p")
+    print("[2] 函数内收窄返回 = " + r2 + " (期望 hi)")
+
+    // 场景3: is string 收窄（从 Dict 取值）
+    var d = {name: "Leno", version: "1.0"}
+    var v = d["name"]
+    string s3 = ""
+    if v is string {
+        s3 = v   // is string 收窄后直接当 string 用
+    }
+    print("[3] is string 收窄后使用 = " + s3 + " (期望 Leno)")
+
+    // 场景4: 判空后访问字段（HtmlNode 字段）
+    HtmlNode? a1 = htmls.selectOne(root, "a")
+    string href = ""
+    if a1 != null {
+        href = a1.attr("href")   // 收窄后调方法
+    }
+    print("[4] 判空后调方法 attr = " + href + " (期望 x)")
+
+    // 场景5: 嵌套收窄（HtmlNode? 判空后取子节点）
+    string r5 = _getFirstText(root, "div")
+    print("[5] 嵌套收窄 = " + r5 + " (期望 hi)")
+
+    print("\n=== 真实场景收窄测试完成 ===")
+}
+
+// 内部：HtmlNode? 判空后返回 allText（传非可空参数）
+func _getText(HtmlNode root, string sel): string {
+    HtmlNode? node = htmls.selectOne(root, sel)
+    if node != null {
+        return htmls.allText(node)   // 收窄后传非可空参数
+    }
+    return ""
+}
+
+// 内部：先判空根节点，再判空子节点，嵌套收窄
+func _getFirstText(HtmlNode root, string sel): string {
+    HtmlNode? node = htmls.selectOne(root, sel)
+    if node == null {
+        return ""
+    }
+    HtmlNode? child = node.selectOne("p")   // node 已收窄，能调 selectOne
+    if child != null {
+        return htmls.text(child)
+    }
+    return ""
+}
