@@ -155,6 +155,8 @@ typedef struct {
     int global_func_capacity;
     Value* initial_args;
     int initial_arg_count;
+    ObjStructDef** struct_defs;   // 主线程结构体定义快照（供子线程注册）
+    int struct_def_count;
 } ThreadStartArgs;
 
 static void* thread_entry_point(void* arg) {
@@ -170,6 +172,8 @@ static void* thread_entry_point(void* arg) {
     int saved_global_func_capacity = args->global_func_capacity;
     Value* thread_initial_args = args->initial_args;
     int thread_initial_arg_count = args->initial_arg_count;
+    ObjStructDef** saved_struct_defs = args->struct_defs;
+    int saved_struct_def_count = args->struct_def_count;
     free(args);
 
     // 创建子线程自己的 VM（独立的局部变量，不共享主程序数据）
@@ -307,6 +311,14 @@ static void* thread_entry_point(void* arg) {
     extern void threads_init_instance_methods(void);
     threads_init_instance_methods();
 
+    // ★ 将主线程已定义的 struct 类型导入子线程的定义表。
+    // 普通 struct 定义表是线程局部，子线程默认为空；
+    // 不导入则子线程 new StructName() 会报"未定义的结构体"。
+    // struct 定义是只读类型元数据，与 cstruct 一样可跨线程共享。
+    if (saved_struct_defs && saved_struct_def_count > 0) {
+        struct_def_import_from_thread(saved_struct_defs, saved_struct_def_count);
+    }
+
     // ★ 始终在子线程 GC 堆上创建新的闭包副本。
     // 原始闭包在主线程 GC 堆上，主线程 GC 可能在闭包不再被主线程引用时回收它，
     // 导致子线程访问已释放的 ObjClosure → use-after-free。
@@ -321,6 +333,7 @@ static void* thread_entry_point(void* arg) {
         platform_mutex_unlock(&thread_obj->mutex);
         if (saved_globals) free(saved_globals);
         if (saved_global_funcs) free(saved_global_funcs);
+        if (saved_struct_defs) free(saved_struct_defs);
         if (thread_initial_args) free(thread_initial_args);
         if (child_vm.frames) free(child_vm.frames);
         if (child_vm.stack) free(child_vm.stack);
@@ -361,6 +374,7 @@ static void* thread_entry_point(void* arg) {
 
         if (saved_globals) free(saved_globals);
         if (saved_global_funcs) free(saved_global_funcs);
+        if (saved_struct_defs) free(saved_struct_defs);
         if (thread_initial_args) free(thread_initial_args);
 
         if (child_vm.frames) free(child_vm.frames);
@@ -460,6 +474,7 @@ static void* thread_entry_point(void* arg) {
 
     if (saved_globals) free(saved_globals);
     if (saved_global_funcs) free(saved_global_funcs);
+    if (saved_struct_defs) free(saved_struct_defs);
 
     // 释放子线程 VM 资源
     for (int i = 0; i < child_vm.frame_cnt; i++) {
@@ -556,6 +571,21 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
         }
     } else {
         args->global_funcs = NULL;
+    }
+
+    // ★ 抓取主线程的结构体定义快照，供子线程注册。
+    // 普通 struct 的定义表是线程局部（THREAD_LOCAL），子线程默认是空表，
+    // 若不导入，子线程里 new HtmlNode() 会报"未定义的结构体"。
+    // struct 定义是只读类型元数据，跨线程共享（与 cstruct 一致）。
+    args->struct_def_count = struct_def_get_count();
+    args->struct_defs = NULL;
+    if (args->struct_def_count > 0) {
+        args->struct_defs = (ObjStructDef**)malloc(args->struct_def_count * sizeof(ObjStructDef*));
+        if (args->struct_defs) {
+            for (int i = 0; i < args->struct_def_count; i++) {
+                args->struct_defs[i] = struct_def_get(i);
+            }
+        }
     }
 
     if (platform_thread_create(&thread->os_thread, thread_entry_point, args) != 0) {

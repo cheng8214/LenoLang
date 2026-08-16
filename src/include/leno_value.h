@@ -1138,6 +1138,13 @@ ObjStructDef* struct_def_find(const char* name);
 // 注册结构体定义
 void struct_def_register(ObjStructDef* def);
 
+// 跨线程：返回当前线程结构体定义表数量（主线程抓取快照）
+int struct_def_get_count(void);
+// 跨线程：返回当前线程结构体定义表第 i 个定义
+ObjStructDef* struct_def_get(int i);
+// 跨线程：将主线程的定义导入当前（子）线程的定义表
+void struct_def_import_from_thread(ObjStructDef** defs, int count);
+
 // 更新所有结构体方法函数的 module 指针
 void struct_def_update_method_modules(ObjModule* old_module, ObjModule* new_module);
 

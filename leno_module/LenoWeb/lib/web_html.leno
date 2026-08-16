@@ -130,10 +130,21 @@ export struct SelectorPart {
     }
 }
 
-// ==================== 模块级全局状态 ====================
+// ==================== 解析上下文 ====================
 
-var _g_pos = 0
-var _g_html = ""
+// 解析器上下文：每次 parse 调用创建独立实例，保证多线程并发解析安全。
+// 取代原先的模块级全局 _g_pos/_g_html（共享会导致多线程串台）。
+struct _ParseCtx {
+    string html   // 当前解析的 HTML 文本
+    int pos       // 当前解析光标
+
+    func byte(int off): int {
+        if pos + off >= 0 and pos + off < html.len() {
+            return html.byte(pos + off)
+        }
+        return -1
+    }
+}
 
 // ==================== 辅助函数 ====================
 
@@ -151,13 +162,13 @@ func _isSpace(int b): bool {
 
 // ==================== 解析器 ====================
 
-func _parseTagName(): string {
+func _parseTagName(_ParseCtx ctx): string {
     string tag = ""
-    while _g_pos < _g_html.len(){
-        int b = _g_html.byte(_g_pos)
+    while ctx.pos < ctx.html.len(){
+        int b = ctx.html.byte(ctx.pos)
         if _isAlphaNum(b) or b == 45 or b == 95 {
             tag = tag + strings.char(b)
-            _g_pos = _g_pos + 1
+            ctx.pos = ctx.pos + 1
         } else {
             break
         }
@@ -165,84 +176,84 @@ func _parseTagName(): string {
     return tag
 }
 
-func _skipWs() {
-    while _g_pos <  _g_html.len() {
-        int b = _g_html.byte(_g_pos)
+func _skipWs(_ParseCtx ctx) {
+    while ctx.pos <  ctx.html.len() {
+        int b = ctx.html.byte(ctx.pos)
         if _isSpace(b) {
-            _g_pos = _g_pos + 1
+            ctx.pos = ctx.pos + 1
         } else {
             break
         }
     }
 }
 
-func _parseAttrs(): Dict[string, string] {
+func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
     Dict[string, string] attrs = {}
-    int len = _g_html.len()
-    while _g_pos < len {
-        while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
-            _g_pos = _g_pos + 1
+    int len = ctx.html.len()
+    while ctx.pos < len {
+        while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+            ctx.pos = ctx.pos + 1
         }
-        if _g_pos >= len {
+        if ctx.pos >= len {
             break
         }
-        int b = _g_html.byte(_g_pos)
+        int b = ctx.html.byte(ctx.pos)
         if b == 62 or b == 47 {
             break
         }
         // 跳过非法字符
         if b == 60 or b == 38 {
-            _g_pos = _g_pos + 1
+            ctx.pos = ctx.pos + 1
             continue
         }
         string name = ""
-        while _g_pos < len {
-            int ch = _g_html.byte(_g_pos)
+        while ctx.pos < len {
+            int ch = ctx.html.byte(ctx.pos)
             if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 or ch == 38 {
                 break
             }
             name = name + strings.char(ch)
-            _g_pos = _g_pos + 1
+            ctx.pos = ctx.pos + 1
         }
         if name == "" {
-            _g_pos = _g_pos + 1
+            ctx.pos = ctx.pos + 1
             continue
         }
         // 属性名转小写
         name = name.to_lower()
-        while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
-            _g_pos = _g_pos + 1
+        while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+            ctx.pos = ctx.pos + 1
         }
         string val = ""
-        if _g_pos < len and _g_html.byte(_g_pos) == 61 {
-            _g_pos = _g_pos + 1
-            while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
-                _g_pos = _g_pos + 1
+        if ctx.pos < len and ctx.html.byte(ctx.pos) == 61 {
+            ctx.pos = ctx.pos + 1
+            while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+                ctx.pos = ctx.pos + 1
             }
             int q = -1
-            if _g_pos < len {
-                q = _g_html.byte(_g_pos)
+            if ctx.pos < len {
+                q = ctx.html.byte(ctx.pos)
             }
             if q == 34 or q == 39 {
-                _g_pos = _g_pos + 1
-                while _g_pos < len {
-                    int ch = _g_html.byte(_g_pos)
+                ctx.pos = ctx.pos + 1
+                while ctx.pos < len {
+                    int ch = ctx.html.byte(ctx.pos)
                     if ch == q {
-                        _g_pos = _g_pos + 1
+                        ctx.pos = ctx.pos + 1
                         break
                     }
                     val = val + strings.char(ch)
-                    _g_pos = _g_pos + 1
+                    ctx.pos = ctx.pos + 1
                 }
             } else {
                 // 无引号属性值
-                while _g_pos < len {
-                    int ch = _g_html.byte(_g_pos)
+                while ctx.pos < len {
+                    int ch = ctx.html.byte(ctx.pos)
                     if _isSpace(ch) or ch == 62 or ch == 47 {
                         break
                     }
                     val = val + strings.char(ch)
-                    _g_pos = _g_pos + 1
+                    ctx.pos = ctx.pos + 1
                 }
             }
         } else {
@@ -255,16 +266,16 @@ func _parseAttrs(): Dict[string, string] {
     return attrs
 }
 
-func _parseText(): string {
+func _parseText(_ParseCtx ctx): string {
     string text = ""
-    int len = _g_html.len()
-    while _g_pos < len {
-        int b = _g_html.byte(_g_pos)
+    int len = ctx.html.len()
+    while ctx.pos < len {
+        int b = ctx.html.byte(ctx.pos)
         if b == 60 {
             break
         }
         text = text + strings.char(b)
-        _g_pos = _g_pos + 1
+        ctx.pos = ctx.pos + 1
     }
     return text
 }
@@ -430,77 +441,77 @@ func _makeNode(string tag, Dict[string, string] attrs, Array[HtmlNode] children,
     return n
 }
 
-func _parseElement(): HtmlNode? {
-    int len = _g_html.len()
-    if _g_pos >= len {
+func _parseElement(_ParseCtx ctx): HtmlNode? {
+    int len = ctx.html.len()
+    if ctx.pos >= len {
         return null
     }
-    if _g_html.byte(_g_pos) != 60 {
+    if ctx.html.byte(ctx.pos) != 60 {
         return null
     }
 
     // 注释 <!-- ... -->
-    if _g_pos + 3 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 45 and _g_html.byte(_g_pos+3) == 45 {
-        _g_pos = _g_pos + 4
-        while _g_pos < len {
-            if _g_html.byte(_g_pos) == 45 and _g_pos+2 < len and _g_html.byte(_g_pos+1) == 45 and _g_html.byte(_g_pos+2) == 62 {
-                _g_pos = _g_pos + 3
+    if ctx.pos + 3 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 45 and ctx.html.byte(ctx.pos+3) == 45 {
+        ctx.pos = ctx.pos + 4
+        while ctx.pos < len {
+            if ctx.html.byte(ctx.pos) == 45 and ctx.pos+2 < len and ctx.html.byte(ctx.pos+1) == 45 and ctx.html.byte(ctx.pos+2) == 62 {
+                ctx.pos = ctx.pos + 3
                 break
             }
-            _g_pos = _g_pos + 1
+            ctx.pos = ctx.pos + 1
         }
         return null
     }
 
     // CDATA <![CDATA[ ... ]]>
-    if _g_pos + 8 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 91 and _g_html.byte(_g_pos+3) == 67 and _g_html.byte(_g_pos+4) == 68 and _g_html.byte(_g_pos+5) == 65 and _g_html.byte(_g_pos+6) == 84 and _g_html.byte(_g_pos+7) == 65 and _g_html.byte(_g_pos+8) == 91 {
-        _g_pos = _g_pos + 9
+    if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
+        ctx.pos = ctx.pos + 9
         string cdata = ""
-        while _g_pos < len {
-            if _g_pos + 2 < len and _g_html.byte(_g_pos) == 93 and _g_html.byte(_g_pos+1) == 93 and _g_html.byte(_g_pos+2) == 62 {
-                _g_pos = _g_pos + 3
+        while ctx.pos < len {
+            if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
+                ctx.pos = ctx.pos + 3
                 break
             }
-            cdata = cdata + strings.char(_g_html.byte(_g_pos))
-            _g_pos = _g_pos + 1
+            cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+            ctx.pos = ctx.pos + 1
         }
         return _makeNode("#text", {}, [], cdata)
     }
 
     // DOCTYPE / 其他声明 <!...>
-    if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 33 {
-        _g_pos = _g_pos + 2
-        while _g_pos < len and _g_html.byte(_g_pos) != 62 {
-            _g_pos = _g_pos + 1
+    if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 33 {
+        ctx.pos = ctx.pos + 2
+        while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+            ctx.pos = ctx.pos + 1
         }
-        if _g_pos < len and _g_html.byte(_g_pos) == 62 {
-            _g_pos = _g_pos + 1
+        if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+            ctx.pos = ctx.pos + 1
         }
         return null
     }
 
     // 闭合标签 </...>
-    if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
+    if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 47 {
         return null
     }
 
-    _g_pos = _g_pos + 1
+    ctx.pos = ctx.pos + 1
 
-    string tagName = _parseTagName()
+    string tagName = _parseTagName(ctx)
     if tagName == "" {
         return null
     }
     tagName = strings.to_lower(tagName)
 
-    Dict[string, string] attrs = _parseAttrs()
+    Dict[string, string] attrs = _parseAttrs(ctx)
 
     bool selfClosing = false
-    if _g_pos < len and _g_html.byte(_g_pos) == 47 {
+    if ctx.pos < len and ctx.html.byte(ctx.pos) == 47 {
         selfClosing = true
-        _g_pos = _g_pos + 1
+        ctx.pos = ctx.pos + 1
     }
-    if _g_pos < len and _g_html.byte(_g_pos) == 62 {
-        _g_pos = _g_pos + 1
+    if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+        ctx.pos = ctx.pos + 1
     }
 
     if selfClosing {
@@ -514,26 +525,26 @@ func _parseElement(): HtmlNode? {
     // script/style 标签：原始内容直接读取
     if tagName == "script" or tagName == "style" {
         string rawContent = ""
-        while _g_pos < len {
-            if _g_html.byte(_g_pos) == 60 and _g_pos+1 < len and _g_html.byte(_g_pos+1) == 47 {
-                int savePos = _g_pos
-                _g_pos = _g_pos + 2
-                string closeTag = _parseTagName()
+        while ctx.pos < len {
+            if ctx.html.byte(ctx.pos) == 60 and ctx.pos+1 < len and ctx.html.byte(ctx.pos+1) == 47 {
+                int savePos = ctx.pos
+                ctx.pos = ctx.pos + 2
+                string closeTag = _parseTagName(ctx)
                 closeTag = strings.to_lower(closeTag)
                 if closeTag == tagName {
-                    _parseAttrs()
-                    if _g_pos < len and _g_html.byte(_g_pos) == 62 {
-                        _g_pos = _g_pos + 1
+                    _parseAttrs(ctx)
+                    if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                        ctx.pos = ctx.pos + 1
                     }
                     return _makeNode(tagName, attrs, [], rawContent)
                 } else {
-                    _g_pos = savePos
-                    rawContent = rawContent + strings.char(_g_html.byte(_g_pos))
-                    _g_pos = _g_pos + 1
+                    ctx.pos = savePos
+                    rawContent = rawContent + strings.char(ctx.html.byte(ctx.pos))
+                    ctx.pos = ctx.pos + 1
                 }
             } else {
-                rawContent = rawContent + strings.char(_g_html.byte(_g_pos))
-                _g_pos = _g_pos + 1
+                rawContent = rawContent + strings.char(ctx.html.byte(ctx.pos))
+                ctx.pos = ctx.pos + 1
             }
         }
         return _makeNode(tagName, attrs, [], rawContent)
@@ -543,30 +554,30 @@ func _parseElement(): HtmlNode? {
     Array[HtmlNode] children = []
     string textContent = ""
 
-    while _g_pos < len {
-        if _g_html.byte(_g_pos) == 60 {
-            if _g_pos + 3 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 45 and _g_html.byte(_g_pos+3) == 45 {
-                _g_pos = _g_pos + 4
-                while _g_pos < len {
-                    if _g_html.byte(_g_pos) == 45 and _g_pos+2 < len and _g_html.byte(_g_pos+1) == 45 and _g_html.byte(_g_pos+2) == 62 {
-                        _g_pos = _g_pos + 3
+    while ctx.pos < len {
+        if ctx.html.byte(ctx.pos) == 60 {
+            if ctx.pos + 3 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 45 and ctx.html.byte(ctx.pos+3) == 45 {
+                ctx.pos = ctx.pos + 4
+                while ctx.pos < len {
+                    if ctx.html.byte(ctx.pos) == 45 and ctx.pos+2 < len and ctx.html.byte(ctx.pos+1) == 45 and ctx.html.byte(ctx.pos+2) == 62 {
+                        ctx.pos = ctx.pos + 3
                         break
                     }
-                    _g_pos = _g_pos + 1
+                    ctx.pos = ctx.pos + 1
                 }
                 continue
             }
             // CDATA in body
-            if _g_pos + 8 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 91 and _g_html.byte(_g_pos+3) == 67 and _g_html.byte(_g_pos+4) == 68 and _g_html.byte(_g_pos+5) == 65 and _g_html.byte(_g_pos+6) == 84 and _g_html.byte(_g_pos+7) == 65 and _g_html.byte(_g_pos+8) == 91 {
-                _g_pos = _g_pos + 9
+            if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
+                ctx.pos = ctx.pos + 9
                 string cdata = ""
-                while _g_pos < len {
-                    if _g_pos + 2 < len and _g_html.byte(_g_pos) == 93 and _g_html.byte(_g_pos+1) == 93 and _g_html.byte(_g_pos+2) == 62 {
-                        _g_pos = _g_pos + 3
+                while ctx.pos < len {
+                    if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
+                        ctx.pos = ctx.pos + 3
                         break
                     }
-                    cdata = cdata + strings.char(_g_html.byte(_g_pos))
-                    _g_pos = _g_pos + 1
+                    cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+                    ctx.pos = ctx.pos + 1
                 }
                 if cdata != "" {
                     textContent = textContent + cdata
@@ -574,23 +585,23 @@ func _parseElement(): HtmlNode? {
                 }
                 continue
             }
-            if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
-                _g_pos = _g_pos + 2
-                _parseTagName()
-                while _g_pos < len and _g_html.byte(_g_pos) != 62 {
-                    _g_pos = _g_pos + 1
+            if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 47 {
+                ctx.pos = ctx.pos + 2
+                _parseTagName(ctx)
+                while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+                    ctx.pos = ctx.pos + 1
                 }
-                if _g_pos < len and _g_html.byte(_g_pos) == 62 {
-                    _g_pos = _g_pos + 1
+                if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                    ctx.pos = ctx.pos + 1
                 }
                 break
             }
-            HtmlNode? childOpt = _parseElement()
+            HtmlNode? childOpt = _parseElement(ctx)
             if childOpt != null {
                 children.add(childOpt as HtmlNode)
             }
         } else {
-            string text = _parseText()
+            string text = _parseText(ctx)
             if text != "" {
                 text = _decodeEntities(text)
                 textContent = textContent + text
@@ -605,45 +616,47 @@ func _parseElement(): HtmlNode? {
 // ==================== 对外接口 ====================
 
 export func parse(string html): HtmlNode {
-    _g_html = html
-    _g_pos = 0
+    // 每次 parse 创建独立解析上下文，多线程并发解析互不干扰
+    _ParseCtx ctx = new _ParseCtx()
+    ctx.html = html
+    ctx.pos = 0
 
     HtmlNode root = _makeNode("#document", {}, [], "")
-    int len = _g_html.len()
+    int len = ctx.html.len()
 
-    while _g_pos < len {
-        while _g_pos < len and _isSpace(_g_html.byte(_g_pos)) {
-            _g_pos = _g_pos + 1
+    while ctx.pos < len {
+        while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+            ctx.pos = ctx.pos + 1
         }
-        if _g_pos >= len {
+        if ctx.pos >= len {
             break
         }
-        if _g_html.byte(_g_pos) == 60 {
+        if ctx.html.byte(ctx.pos) == 60 {
             // 注释
-            if _g_pos + 3 < len and _g_html.byte(_g_pos+1) == 33 and _g_html.byte(_g_pos+2) == 45 and _g_html.byte(_g_pos+3) == 45 {
-                _g_pos = _g_pos + 4
-                while _g_pos < len {
-                    if _g_html.byte(_g_pos) == 45 and _g_pos+2 < len and _g_html.byte(_g_pos+1) == 45 and _g_html.byte(_g_pos+2) == 62 {
-                        _g_pos = _g_pos + 3
+            if ctx.pos + 3 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 45 and ctx.html.byte(ctx.pos+3) == 45 {
+                ctx.pos = ctx.pos + 4
+                while ctx.pos < len {
+                    if ctx.html.byte(ctx.pos) == 45 and ctx.pos+2 < len and ctx.html.byte(ctx.pos+1) == 45 and ctx.html.byte(ctx.pos+2) == 62 {
+                        ctx.pos = ctx.pos + 3
                         break
                     }
-                    _g_pos = _g_pos + 1
+                    ctx.pos = ctx.pos + 1
                 }
                 continue
             }
             // DOCTYPE / CDATA / 其他声明
-            if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 33 {
-                if _g_pos + 8 < len and _g_html.byte(_g_pos+2) == 91 and _g_html.byte(_g_pos+3) == 67 and _g_html.byte(_g_pos+4) == 68 and _g_html.byte(_g_pos+5) == 65 and _g_html.byte(_g_pos+6) == 84 and _g_html.byte(_g_pos+7) == 65 and _g_html.byte(_g_pos+8) == 91 {
+            if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 33 {
+                if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
                     // CDATA
-                    _g_pos = _g_pos + 9
+                    ctx.pos = ctx.pos + 9
                     string cdata = ""
-                    while _g_pos < len {
-                        if _g_pos + 2 < len and _g_html.byte(_g_pos) == 93 and _g_html.byte(_g_pos+1) == 93 and _g_html.byte(_g_pos+2) == 62 {
-                            _g_pos = _g_pos + 3
+                    while ctx.pos < len {
+                        if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
+                            ctx.pos = ctx.pos + 3
                             break
                         }
-                        cdata = cdata + strings.char(_g_html.byte(_g_pos))
-                        _g_pos = _g_pos + 1
+                        cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+                        ctx.pos = ctx.pos + 1
                     }
                     if cdata != "" {
                         root.children.add(_makeNode("#text", {}, [], cdata))
@@ -651,32 +664,32 @@ export func parse(string html): HtmlNode {
                     continue
                 }
                 // 其他 <!...> 跳过
-                _g_pos = _g_pos + 2
-                while _g_pos < len and _g_html.byte(_g_pos) != 62 {
-                    _g_pos = _g_pos + 1
+                ctx.pos = ctx.pos + 2
+                while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+                    ctx.pos = ctx.pos + 1
                 }
-                if _g_pos < len and _g_html.byte(_g_pos) == 62 {
-                    _g_pos = _g_pos + 1
+                if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                    ctx.pos = ctx.pos + 1
                 }
                 continue
             }
             // 闭合标签（忽略孤立的）
-            if _g_pos + 1 < len and _g_html.byte(_g_pos+1) == 47 {
-                _g_pos = _g_pos + 2
-                while _g_pos < len and _g_html.byte(_g_pos) != 62 {
-                    _g_pos = _g_pos + 1
+            if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 47 {
+                ctx.pos = ctx.pos + 2
+                while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+                    ctx.pos = ctx.pos + 1
                 }
-                if _g_pos < len and _g_html.byte(_g_pos) == 62 {
-                    _g_pos = _g_pos + 1
+                if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                    ctx.pos = ctx.pos + 1
                 }
                 continue
             }
-            HtmlNode? childOpt = _parseElement()
+            HtmlNode? childOpt = _parseElement(ctx)
             if childOpt != null {
                 root.children.add(childOpt as HtmlNode)
             }
         } else {
-            string text = _parseText()
+            string text = _parseText(ctx)
             if text != "" {
                 text = _decodeEntities(text)
                 root.children.add(_makeNode("#text", {}, [], text))

@@ -1,0 +1,80 @@
+// test_thread_parse.leno — 多线程并发调用 parse 的健壮性测试
+// 目的：验证 LenoWeb 的 htmls.parse 在多线程下是否安全（_g_pos/_g_html 全局变量是否会互相踩踏）
+
+import threads
+import "../lib/web_html.leno" as htmls
+import "../lib/web_net.leno" as net
+use net.(createClient)
+use htmls.HtmlNode
+
+main() {
+    print("=== 多线程并发 parse 测试 ===\n")
+
+    // 为每个线程构造不同的 HTML 内容，让每个线程解析不同的数据
+    int threadCount = 8
+    var handles = []
+    for threadCount to i {
+        // 每个线程的 HTML 不同：<h1>Thread-i</h1> + i 个 <p>
+        string html = "<div><h1>Thread-" + i + "</h1>"
+        for i to j {
+            html = html + "<p>item-" + i + "-" + j + "</p>"
+        }
+        html = html + "</div>"
+        string expectedTitle = "Thread-" + i
+        var h = threads.start(func(any hh, any ee) { return _parseAndVerify(hh as string, ee as string) }, html, expectedTitle)
+        handles.add(h)
+    }
+
+    // 收集结果
+    bool allOk = true
+    for threadCount to i {
+        var r = handles[i].join()
+        if r is bool {
+            if r {
+                print("  线程[" + i + "] parse OK")
+            } else {
+                print("  线程[" + i + "] parse FAIL!")
+                allOk = false
+            }
+        } else {
+            print("  线程[" + i + "] 返回异常: " + r)
+            allOk = false
+        }
+    }
+
+    if allOk {
+        print("\n=== 多线程 parse 全部通过 ===")
+    } else {
+        print("\n=== 多线程 parse 存在失败 ===")
+    }
+}
+
+// 在子线程中解析并验证结果，返回是否一致
+func _parseAndVerify(string html, string expected): bool {
+    var root = htmls.parse(html)
+    // 验证标题
+    var h1 = htmls.selectOne(root, "h1")
+    if h1 == null {
+        print("    [verify] h1 为 null!")
+        return false
+    }
+    string title = htmls.text(h1)
+    print("    [verify] title='" + title + "' expected='" + expected + "'")
+    if title != expected {
+        print("    [verify] 标题不匹配!")
+        return false
+    }
+    // 验证 p 的数量
+    var ps = htmls.select(root, "p")
+    print("    [verify] p 数量=" + ps.len())
+    // 每个 p 都应包含 item-
+    for ps.len() to k {
+        string pt = htmls.text(ps[k])
+        if not pt.has("item-") {
+            print("    [verify] p[" + k + "] 不含 item-: '" + pt + "'")
+            return false
+        }
+    }
+    print("    [verify] OK")
+    return true
+}

@@ -113,6 +113,29 @@ ObjStructDef* struct_def_find(const char* name) {
     return NULL;
 }
 
+// 返回当前线程结构体定义表的数量（供主线程抓取快照传给子线程）
+int struct_def_get_count(void) {
+    return struct_def_count;
+}
+
+// 返回当前线程结构体定义表中第 i 个定义（供主线程抓取快照）
+ObjStructDef* struct_def_get(int i) {
+    if (i < 0 || i >= struct_def_count) return NULL;
+    return struct_def_table[i];
+}
+
+// 将主线程定义的结构体导入当前（子）线程的定义表。
+// struct 定义是只读类型元数据，与 cstruct 定义一样可跨线程共享。
+// 注意：def 可能分配在主线程 GC 堆上，子线程只读不写；
+// 主线程通过模块对象持续持有 def，保证其存活，因此子线程引用安全。
+void struct_def_import_from_thread(ObjStructDef** defs, int count) {
+    for (int i = 0; i < count; i++) {
+        if (defs[i]) {
+            struct_def_register(defs[i]);
+        }
+    }
+}
+
 // ============================================================================
 // 结构体实例操作
 // ============================================================================
