@@ -5,6 +5,117 @@
 
 import strings
 
+// ==================== HtmlNode 结构 ====================
+// 强类型 DOM 节点，替代旧的 Dict 表示
+// tag 取值：普通元素为标签名(小写)；文本节点为 "#text"；文档根为 "#document"
+
+export struct HtmlNode {
+    string tag
+    Dict[string, string] attrs
+    Array[HtmlNode] children
+    string text
+
+    // 获取属性值（不存在返回空串）
+    func attr(string name): string {
+        return attrs.get(name, "")
+    }
+
+    // 判断是否有指定属性
+    func hasAttr(string name): bool {
+        return attrs.has(name)
+    }
+
+    // 直接文本内容（不含子节点）
+    func text(): string {
+        return text
+    }
+
+    // 是否文本节点
+    func isTextNode(): bool {
+        return tag == "#text"
+    }
+
+    // 是否元素节点（非文本/非文档根）
+    func isElement(): bool {
+        return tag != "#text" and tag != "#document"
+    }
+
+    // 标签名
+    func tagName(): string {
+        return tag
+    }
+
+    // 获取 class 列表
+    func classes(): Array[string] {
+        string c = attrs.get("class", "")
+        Array[string] result = []
+        if c == "" { return result }
+        Array segs = c.split(" ")
+        for segs.len() to i {
+            if segs[i] != "" { result.add(segs[i]) }
+        }
+        return result
+    }
+
+    // 是否包含某 class
+    func hasClass(string name): bool {
+        Array cl = classes()
+        for cl.len() to i {
+            if cl[i] == name { return true }
+        }
+        return false
+    }
+
+    // 子节点数
+    func childCount(): int {
+        return children.len()
+    }
+
+    // 按选择器查询子元素（后代）
+    func select(string selector): Array[HtmlNode] {
+        Array parts = _splitSelector(selector)
+        if parts.len() == 0 { return [] }
+        Array[HtmlNode] current = [self]
+        int partsLen = parts.len()
+        for 0:partsLen-1 to pi {
+            Dict p0 = parts[pi]
+            Array[HtmlNode] next = []
+            for current.len() to ci {
+                HtmlNode node = current[ci]
+                var isChildVal = p0["isChild"]
+                if isChildVal is bool {
+                    if isChildVal {
+                        _findDirectChildren(node, p0, next)
+                    } else {
+                        _findDescendants(node, p0, next)
+                    }
+                } else {
+                    _findDescendants(node, p0, next)
+                }
+            }
+            current = next
+        }
+        return current
+    }
+
+    // 查询第一个匹配
+    func selectOne(string selector): HtmlNode? {
+        Array[HtmlNode] r = select(selector)
+        if r.len() > 0 { return r[0] }
+        return null
+    }
+
+    // 深度优先文本拼接
+    func allText(): string {
+        return _collectText(self)
+    }
+
+    // 移除匹配选择器的子节点，返回移除数量
+    func remove(string selector): int {
+        return removeElement(self, selector)
+    }
+}
+
 // ==================== 模块级全局状态 ====================
 
 var _g_pos = 0
@@ -295,7 +406,17 @@ func _decodeEntities(string text): string {
 
 // ==================== 元素解析 ====================
 
-func _parseElement(): any {
+// 内部节点工厂：创建 HtmlNode
+func _makeNode(string tag, Dict[string, string] attrs, Array[HtmlNode] children, string text): HtmlNode {
+    HtmlNode n = new HtmlNode()
+    n.tag = tag
+    n.attrs = attrs
+    n.children = children
+    n.text = text
+    return n
+}
+
+func _parseElement(): HtmlNode? {
     int len = _g_html.len()
     if _g_pos >= len {
         return null
@@ -329,8 +450,7 @@ func _parseElement(): any {
             cdata = cdata + strings.char(_g_html.byte(_g_pos))
             _g_pos = _g_pos + 1
         }
-        var node = {tag: "#text", attrs: {}, children: [], text: cdata}
-        return node
+        return _makeNode("#text", {}, [], cdata)
     }
 
     // DOCTYPE / 其他声明 <!...>
@@ -370,13 +490,11 @@ func _parseElement(): any {
     }
 
     if selfClosing {
-        var node = {tag: tagName, attrs: attrs, children: [], text: ""}
-        return node
+        return _makeNode(tagName, attrs, [], "")
     }
 
     if _isVoidTag(tagName) {
-        var node = {tag: tagName, attrs: attrs, children: [], text: ""}
-        return node
+        return _makeNode(tagName, attrs, [], "")
     }
 
     // script/style 标签：原始内容直接读取
@@ -393,8 +511,7 @@ func _parseElement(): any {
                     if _g_pos < len and _g_html.byte(_g_pos) == 62 {
                         _g_pos = _g_pos + 1
                     }
-                    var node = {tag: tagName, attrs: attrs, children: [], text: rawContent}
-                    return node
+                    return _makeNode(tagName, attrs, [], rawContent)
                 } else {
                     _g_pos = savePos
                     rawContent = rawContent + strings.char(_g_html.byte(_g_pos))
@@ -405,12 +522,11 @@ func _parseElement(): any {
                 _g_pos = _g_pos + 1
             }
         }
-        var node = {tag: tagName, attrs: attrs, children: [], text: rawContent}
-        return node
+        return _makeNode(tagName, attrs, [], rawContent)
     }
 
     // 普通标签
-    var children = []
+    Array[HtmlNode] children = []
     string textContent = ""
 
     while _g_pos < len {
@@ -440,8 +556,7 @@ func _parseElement(): any {
                 }
                 if cdata != "" {
                     textContent = textContent + cdata
-                    var textNode = {tag: "#text", attrs: {}, children: [], text: cdata}
-                    children.add(textNode)
+                    children.add(_makeNode("#text", {}, [], cdata))
                 }
                 continue
             }
@@ -456,32 +571,30 @@ func _parseElement(): any {
                 }
                 break
             }
-            var child = _parseElement()
-            if child != null {
-                children.add(child)
+            HtmlNode? childOpt = _parseElement()
+            if childOpt != null {
+                children.add(childOpt as HtmlNode)
             }
         } else {
             string text = _parseText()
             if text != "" {
                 text = _decodeEntities(text)
                 textContent = textContent + text
-                var textNode = {tag: "#text", attrs: {}, children: [], text: text}
-                children.add(textNode)
+                children.add(_makeNode("#text", {}, [], text))
             }
         }
     }
 
-    var node = {tag: tagName, attrs: attrs, children: children, text: textContent}
-    return node
+    return _makeNode(tagName, attrs, children, textContent)
 }
 
 // ==================== 对外接口 ====================
 
-export func parse(string html): any {
+export func parse(string html): HtmlNode {
     _g_html = html
     _g_pos = 0
 
-    var root = {tag: "#document", attrs: {}, children: [], text: ""}
+    HtmlNode root = _makeNode("#document", {}, [], "")
     int len = _g_html.len()
 
     while _g_pos < len {
@@ -519,11 +632,7 @@ export func parse(string html): any {
                         _g_pos = _g_pos + 1
                     }
                     if cdata != "" {
-                        var textNode = {tag: "#text", attrs: {}, children: [], text: cdata}
-                        var kidsRaw = root["children"]
-                        if kidsRaw is Array {
-                            kidsRaw.add(textNode)
-                        }
+                        root.children.add(_makeNode("#text", {}, [], cdata))
                     }
                     continue
                 }
@@ -548,22 +657,15 @@ export func parse(string html): any {
                 }
                 continue
             }
-            var child = _parseElement()
-            if child != null {
-                var kidsRaw = root["children"]
-                if kidsRaw is Array {
-                    kidsRaw.add(child)
-                }
+            HtmlNode? childOpt = _parseElement()
+            if childOpt != null {
+                root.children.add(childOpt as HtmlNode)
             }
         } else {
             string text = _parseText()
             if text != "" {
                 text = _decodeEntities(text)
-                var textNode = {tag: "#text", attrs: {}, children: [], text: text}
-                var kidsRaw = root["children"]
-                if kidsRaw is Array {
-                    kidsRaw.add(textNode)
-                }
+                root.children.add(_makeNode("#text", {}, [], text))
             }
         }
     }
@@ -573,47 +675,26 @@ export func parse(string html): any {
 
 // ==================== 便捷函数 ====================
 
-export func tag(any node): string {
-    if node is Dict {
-        var v = node["tag"]
-        if v is string {
-            return v
-        }
-    }
-    return ""
+export func tag(HtmlNode node): string {
+    return node.tag
 }
 
-export func text(any node): string {
-    if node is Dict {
-        var v = node["text"]
-        if v is string {
-            return v
-        }
-    }
-    return ""
+export func text(HtmlNode node): string {
+    return node.text
 }
 
-export func allText(any node): string {
-    if node == null {
-        return ""
-    }
+export func allText(HtmlNode node): string {
+    return _collectText(node)
+}
+
+// 内部：深度优先收集文本
+func _collectText(HtmlNode node): string {
     string result = ""
-    if node is Dict {
-        var t = node["tag"]
-        if t is string {
-            if t == "#text" {
-                var txt = node["text"]
-                if txt is string {
-                    return txt
-                }
-            }
-        }
-        var kids = node["children"]
-        if kids is Array {
-            for kids to child {
-                result = result + allText(child)
-            }
-        }
+    if node.tag == "#text" {
+        return node.text
+    }
+    for node.children.len() to i {
+        result = result + _collectText(node.children[i])
     }
     return result
 }
@@ -649,98 +730,41 @@ export func cleanText(string raw): string {
 }
 
 // HTML 转可读纯文本（仿 html2text）：保留段落/标题/列表/换行结构
-export func htmlToText(any node): string {
-    if node == null {
-        return ""
-    }
-    string result = ""
-    if node is Dict {
-        var t = node["tag"]
-        string tag = ""
-        if t is string {
-            tag = t
-        }
-        // 文本节点
-        if tag == "#text" {
-            var txt = node["text"]
-            if txt is string {
-                return txt
-            }
-        }
-        // 块级标签：段落前后加换行
-        if tag == "p" or tag == "div" or tag == "section" or tag == "article" or tag == "header" or tag == "footer" {
-            result = result + "\n"
-        }
-        // 标题：前后空行，加 # 标记
-        if tag == "h1" {
-            result = result + "\n# "
-        } else if tag == "h2" {
-            result = result + "\n## "
-        } else if tag == "h3" {
-            result = result + "\n### "
-        } else if tag == "h4" or tag == "h5" or tag == "h6" {
-            result = result + "\n#### "
-        }
-        // 列表项：前缀 "- "
-        if tag == "li" {
-            result = result + "- "
-        }
-        var kids = node["children"]
-        if kids is Array {
-            for kids to child {
-                result = result + _toText(child)
-            }
-        }
-        // 块级结束换行
-        if tag == "p" or tag == "div" or tag == "li" or tag == "h1" or tag == "h2" or tag == "h3" or tag == "h4" or tag == "h5" or tag == "h6" {
-            result = result + "\n"
-        }
-    }
-    return result
+export func htmlToText(HtmlNode node): string {
+    return _toText(node)
 }
 
-func _toText(any node): string {
-    if node == null {
-        return ""
-    }
+func _toText(HtmlNode node): string {
     string result = ""
-    if node is Dict {
-        var t = node["tag"]
-        string tag = ""
-        if t is string {
-            tag = t
-        }
-        if tag == "#text" {
-            var txt = node["text"]
-            if txt is string {
-                return txt
-            }
-        }
-        if tag == "br" {
-            return "\n"
-        }
-        if tag == "p" or tag == "div" or tag == "section" or tag == "article" {
-            result = result + "\n"
-        }
-        if tag == "h1" {
-            result = result + "\n# "
-        } else if tag == "h2" {
-            result = result + "\n## "
-        } else if tag == "h3" {
-            result = result + "\n### "
-        }
-        if tag == "li" {
-            result = result + "- "
-        }
-        var kids = node["children"]
-        if kids is Array {
-            for kids to child {
-                result = result + _toText(child)
-            }
-        }
-        if tag == "p" or tag == "div" or tag == "li" or tag == "h1" or tag == "h2" or tag == "h3" {
-            result = result + "\n"
-        }
+    string tag = node.tag
+    // 文本节点
+    if tag == "#text" {
+        return node.text
+    }
+    // 块级标签：段落前后加换行
+    if tag == "p" or tag == "div" or tag == "section" or tag == "article" or tag == "header" or tag == "footer" {
+        result = result + "\n"
+    }
+    // 标题：前后空行，加 # 标记
+    if tag == "h1" {
+        result = result + "\n# "
+    } else if tag == "h2" {
+        result = result + "\n## "
+    } else if tag == "h3" {
+        result = result + "\n### "
+    } else if tag == "h4" or tag == "h5" or tag == "h6" {
+        result = result + "\n#### "
+    }
+    // 列表项：前缀 "- "
+    if tag == "li" {
+        result = result + "- "
+    }
+    for node.children.len() to i {
+        result = result + _toText(node.children[i])
+    }
+    // 块级结束换行
+    if tag == "p" or tag == "div" or tag == "li" or tag == "h1" or tag == "h2" or tag == "h3" or tag == "h4" or tag == "h5" or tag == "h6" {
+        result = result + "\n"
     }
     return result
 }
@@ -769,61 +793,42 @@ export func stripTags(string html): string {
 }
 
 // 提取节点内所有文本（去标签、合并空白），等价于 allText + cleanText
-export func textContent(any node): string {
+export func textContent(HtmlNode node): string {
     return cleanText(allText(node))
 }
 
 // 提取 HTML 中第一个表格为二维数组（每行=一行，每格=cleanText 后的文本）
-export func extractTable(any root): Array[Array[string]] {
-    var tables = select(root, "table")
+export func extractTable(HtmlNode root): Array[Array[string]] {
+    Array[HtmlNode] tables = select(root, "table")
     Array[Array[string]] tableData = []
-    if tables is Array and tables.len() > 0 {
-        var tbl = tables[0]
-        var rows = select(tbl, "tr")
-        if rows is Array {
-            for rows to tr {
-                // 该行的所有单元格（td + th）
-                var cells = select(tr, "td")
-                var thCells = select(tr, "th")
-                Array[string] rowData = []
-                if cells is Array {
-                    for cells to td {
-                        rowData.add(cleanText(allText(td)))
-                    }
-                }
-                if thCells is Array {
-                    for thCells to th {
-                        rowData.add(cleanText(allText(th)))
-                    }
-                }
-                tableData.add(rowData)
+    if tables.len() > 0 {
+        HtmlNode tbl = tables[0]
+        Array[HtmlNode] rows = select(tbl, "tr")
+        for rows.len() to i {
+            HtmlNode tr = rows[i]
+            Array[HtmlNode] cells = select(tr, "td")
+            Array[HtmlNode] thCells = select(tr, "th")
+            Array[string] rowData = []
+            for cells.len() to j {
+                rowData.add(cleanText(allText(cells[j])))
             }
+            for thCells.len() to j {
+                rowData.add(cleanText(allText(thCells[j])))
+            }
+            tableData.add(rowData)
         }
     }
     return tableData
 }
 
-export func attr(any node, string name): string {
-    if node is Dict {
-        var a = node["attrs"]
-        if a is Dict[string, string] {
-            var v = a[name]
-            if v is string {
-                return _decodeEntities(v)
-            }
-        }
-    }
-    return ""
+export func attr(HtmlNode node, string name): string {
+    string v = node.attrs.get(name, "")
+    if v == "" { return "" }
+    return _decodeEntities(v)
 }
 
-export func children(any node): Array {
-    if node is Dict {
-        var kids = node["children"]
-        if kids is Array {
-            return kids
-        }
-    }
-    return []
+export func children(HtmlNode node): Array[HtmlNode] {
+    return node.children
 }
 
 export func getLinks(string html): Array[string] {
@@ -834,128 +839,113 @@ export func getLinks(string html): Array[string] {
 }
 
 // 提取 HTML 的 <title> 文本（不存在返回空串）
-export func getTitle(any root): string {
-    var titles = select(root, "title")
-    if titles is Array and titles.len() > 0 {
+export func getTitle(HtmlNode root): string {
+    Array[HtmlNode] titles = select(root, "title")
+    if titles.len() > 0 {
         return cleanText(allText(titles[0]))
     }
     return ""
 }
 
 // 提取 HTML 中 <meta> 标签的属性值（按 name 或 property 匹配，取 content 属性）
-export func getMeta(any root, string name): string {
-    var metas = select(root, "meta")
-    if metas is Array {
-        for metas to m {
-            string mname = attr(m, "name")
-            if mname == "" {
-                mname = attr(m, "property")
-            }
-            if mname == name {
-                return attr(m, "content")
-            }
+export func getMeta(HtmlNode root, string name): string {
+    Array[HtmlNode] metas = select(root, "meta")
+    for metas.len() to i {
+        HtmlNode m = metas[i]
+        string mname = attr(m, "name")
+        if mname == "" {
+            mname = attr(m, "property")
+        }
+        if mname == name {
+            return attr(m, "content")
         }
     }
     return ""
 }
 
 // 提取 HTML 中所有 <meta> 标签为 Dict（name/property -> content）
-export func getMetas(any root): Dict {
-    var result = {}
-    var metas = select(root, "meta")
-    if metas is Array {
-        for metas to m {
-            string mname = attr(m, "name")
-            if mname == "" {
-                mname = attr(m, "property")
-            }
-            if mname != "" {
-                result[mname] = attr(m, "content")
-            }
+export func getMetas(HtmlNode root): Dict {
+    Dict result = {}
+    Array[HtmlNode] metas = select(root, "meta")
+    for metas.len() to i {
+        HtmlNode m = metas[i]
+        string mname = attr(m, "name")
+        if mname == "" {
+            mname = attr(m, "property")
+        }
+        if mname != "" {
+            result[mname] = attr(m, "content")
         }
     }
     return result
 }
 
 // 从 DOM 中删除所有匹配 selector 的元素（修改传入的 root），返回删除个数
-export func removeElement(any root, string selector): int {
-    var sels = _splitSelector(selector)
+export func removeElement(HtmlNode root, string selector): int {
+    Array sels = _splitSelector(selector)
     if sels.len() == 0 {
         return 0
     }
     return _removeRec(root, sels)
 }
 
-func _removeRec(any node, Array sels): int {
-    if node == null {
-        return 0
-    }
+func _removeRec(HtmlNode node, Array sels): int {
     int removed = 0
-    if node is Dict {
-        var kids = node["children"]
-        if kids is Array {
-            Array keep = []
-            Dict sel = sels[0] as Dict
-            for kids to child {
-                if _matchSimple(child, sel) {
-                    removed = removed + 1
-                } else {
-                    keep.add(child)
-                    removed = removed + _removeRec(child, sels)
-                }
-            }
-            node["children"] = keep
+    Array[HtmlNode] keep = []
+    Dict sel = sels[0] as Dict
+    for node.children.len() to i {
+        HtmlNode child = node.children[i]
+        if _matchSimple(child, sel) {
+            removed = removed + 1
+        } else {
+            keep.add(child)
+            removed = removed + _removeRec(child, sels)
         }
     }
+    node.children = keep
     return removed
 }
 
 // 提取 HTML 中表单字段为 Dict（name -> value），仿 BeautifulSoup 表单解析
 // 支持 input/select/textarea，取 name 属性和 value/文本
-export func extractForm(any root): Dict {
-    var result = {}
-    var inputs = select(root, "input")
-    if inputs is Array {
-        for inputs to inp {
-            string iname = attr(inp, "name")
-            if iname != "" {
-                string val = attr(inp, "value")
-                if val == "" and attr(inp, "type") == "checkbox" {
-                    if attr(inp, "checked") != "" {
-                        val = "on"
-                    }
+export func extractForm(HtmlNode root): Dict {
+    Dict result = {}
+    Array[HtmlNode] inputs = select(root, "input")
+    for inputs.len() to i {
+        HtmlNode inp = inputs[i]
+        string iname = attr(inp, "name")
+        if iname != "" {
+            string val = attr(inp, "value")
+            if val == "" and attr(inp, "type") == "checkbox" {
+                if attr(inp, "checked") != "" {
+                    val = "on"
                 }
-                result[iname] = val
             }
+            result[iname] = val
         }
     }
-    var selects = select(root, "select")
-    if selects is Array {
-        for selects to sel {
-            string sname = attr(sel, "name")
-            if sname != "" {
-                // 找选中的 option
-                var options = select(sel, "option")
-                string selVal = ""
-                if options is Array {
-                    for options to opt {
-                        if attr(opt, "selected") != "" {
-                            selVal = cleanText(allText(opt))
-                            break
-                        }
-                    }
+    Array[HtmlNode] selects = select(root, "select")
+    for selects.len() to i {
+        HtmlNode sel = selects[i]
+        string sname = attr(sel, "name")
+        if sname != "" {
+            Array[HtmlNode] options = select(sel, "option")
+            string selVal = ""
+            for options.len() to j {
+                if attr(options[j], "selected") != "" {
+                    selVal = cleanText(allText(options[j]))
+                    break
                 }
-                result[sname] = selVal
             }
+            result[sname] = selVal
         }
     }
-    var textareas = select(root, "textarea")
-    if textareas is Array {
-        for textareas to ta {
-            string taname = attr(ta, "name")
-            if taname != "" {
-                result[taname] = cleanText(allText(ta))
-            }
+    Array[HtmlNode] textareas = select(root, "textarea")
+    for textareas.len() to i {
+        HtmlNode ta = textareas[i]
+        string taname = attr(ta, "name")
+        if taname != "" {
+            result[taname] = cleanText(allText(ta))
         }
     }
     return result
@@ -964,20 +954,20 @@ export func extractForm(any root): Dict {
 // ==================== 便捷查询 API（仿 BeautifulSoup） ====================
 
 // 按 id 查找节点，返回第一个匹配或 null
-export func getElementById(any root, string id): any {
+export func getElementById(HtmlNode root, string id): HtmlNode? {
     if id == "" {
         return null
     }
-    var parts = _splitSelector("#" + id)
+    Array parts = _splitSelector("#" + id)
     if parts.len() == 0 {
         return null
     }
-    var current = [root]
+    Array[HtmlNode] current = [root]
     for 0:parts.len()-1 to pi {
         Dict p0 = parts[pi]
-        var next = []
-        for current to node {
-            _findDescendants(node, p0, next)
+        Array[HtmlNode] next = []
+        for current.len() to ci {
+            _findDescendants(current[ci], p0, next)
         }
         current = next
     }
@@ -988,12 +978,12 @@ export func getElementById(any root, string id): any {
 }
 
 // 按标签名查找所有节点
-export func getElementsByTag(any root, string tagName): Array[any] {
+export func getElementsByTag(HtmlNode root, string tagName): Array[HtmlNode] {
     return select(root, tagName)
 }
 
 // 按 class 名查找所有节点
-export func getElementsByClass(any root, string className): Array[any] {
+export func getElementsByClass(HtmlNode root, string className): Array[HtmlNode] {
     if className == "" {
         return []
     }
@@ -1001,75 +991,46 @@ export func getElementsByClass(any root, string className): Array[any] {
 }
 
 // 通用查找：可按 tag/class/id 组合过滤（均为可选，传空串表示不过滤）
-export func findAll(any root, string tagName, string className, string idName): Array[any] {
-    var all = []
+export func findAll(HtmlNode root, string tagName, string className, string idName): Array[HtmlNode] {
+    Array[HtmlNode] all = []
     _findAllRec(root, tagName, className, idName, all)
     return all
 }
 
-func _findAllRec(any node, string tagName, string className, string idName, Array results) {
-    if node == null {
-        return
+func _findAllRec(HtmlNode node, string tagName, string className, string idName, Array[HtmlNode] results) {
+    bool matched = true
+    if tagName != "" {
+        if node.tag != tagName {
+            matched = false
+        }
     }
-    if node is Dict {
-        var matched = true
-        if tagName != "" {
-            var t = node["tag"]
-            if t is string {
-                if t != tagName {
-                    matched = false
-                }
-            } else {
-                matched = false
-            }
+    if matched and className != "" {
+        if not _hasWord(attr(node, "class"), className) {
+            matched = false
         }
-        if matched and className != "" {
-            var cls = attr(node, "class")
-            if not _hasWord(cls, className) {
-                matched = false
-            }
+    }
+    if matched and idName != "" {
+        if attr(node, "id") != idName {
+            matched = false
         }
-        if matched and idName != "" {
-            var idv = attr(node, "id")
-            if idv != idName {
-                matched = false
-            }
-        }
-        if matched {
-            results.add(node)
-        }
-        var kids = node["children"]
-        if kids is Array {
-            for kids to child {
-                _findAllRec(child, tagName, className, idName, results)
-            }
-        }
+    }
+    if matched {
+        results.add(node)
+    }
+    for node.children.len() to ci {
+        _findAllRec(node.children[ci], tagName, className, idName, results)
     }
 }
 
-func _collectLinks(any node, Array links) {
-    if node == null {
-        return
+func _collectLinks(HtmlNode node, Array[string] links) {
+    if node.tag == "a" {
+        string href = node.attrs.get("href", "")
+        if href != "" {
+            links.add(href)
+        }
     }
-    if node is Dict {
-        var t = node["tag"]
-        if t is string {
-            if t == "a" {
-                var a = node["attrs"]
-                if a is Dict[string, string] {
-                    var href = a["href"]
-                    if href != "" {
-                        links.add(href)
-                    }
-                }
-            }
-        }
-        var kids = node["children"]
-        if kids is Array {
-            for kids to child {
-                _collectLinks(child, links)
-            }
-        }
+    for node.children.len() to ci {
+        _collectLinks(node.children[ci], links)
     }
 }
 
@@ -1278,7 +1239,7 @@ func _hasWord(string str, string word): bool {
 }
 
 // 检查伪类匹配：node 是兄弟中第 idx 个（0 起），total 为兄弟总数
-func _matchPseudo(any node, Dict sel, int idx, int total): bool {
+func _matchPseudo(HtmlNode node, Dict sel, int idx, int total): bool {
     var p = sel["pseudo"]
     if not (p is string) {
         return true
@@ -1305,173 +1266,123 @@ func _matchPseudo(any node, Dict sel, int idx, int total): bool {
     return true
 }
 
-func _matchSimple(any node, Dict sel): bool {
-    if node == null {
-        return false
+func _matchSimple(HtmlNode node, Dict sel): bool {
+    var tagVal = sel["tag"]
+    if tagVal is string {
+        if tagVal != "" and tagVal != "*" {
+            if node.tag != tagVal {
+                return false
+            }
+        }
     }
-    if node is Dict {
-        var tagVal = sel["tag"]
-        if tagVal is string {
-            if tagVal != "" and tagVal != "*" {
-                var nt = node["tag"]
-                if nt is string {
-                    if nt != tagVal {
-                        return false
-                    }
-                } else {
-                    return false
-                }
+
+    var idVal = sel["id"]
+    if idVal is string {
+        if idVal != "" {
+            if node.attrs.get("id", "") != idVal {
+                return false
             }
         }
+    }
 
-        var idVal = sel["id"]
-        if idVal is string {
-            if idVal != "" {
-                var a = node["attrs"]
-                if a is Dict {
-                    var nodeId = a["id"]
-                    if nodeId is string {
-                        if nodeId != idVal {
-                            return false
-                        }
-                    } else {
-                        return false
-                    }
-                } else {
-                    return false
-                }
+    var classesRaw = sel["classes"]
+    if classesRaw is Array {
+        string nodeClass = node.attrs.get("class", "")
+        if nodeClass == "" {
+            if classesRaw.len() > 0 {
+                return false
             }
-        }
-
-        var classesRaw = sel["classes"]
-        if classesRaw is Array {
-            var nodeAttrs = node["attrs"]
-            if nodeAttrs is Dict {
-                var nodeClass = nodeAttrs["class"]
-                if nodeClass is string {
-                    for classesRaw to cls {
-                        if cls is string {
-                            if not _hasWord(nodeClass, cls) {
-                                return false
-                            }
-                        }
-                    }
-                } else {
-                    if classesRaw.len() > 0 {
+        } else {
+            for classesRaw.len() to ci {
+                var cls = classesRaw[ci]
+                if cls is string {
+                    if not _hasWord(nodeClass, cls) {
                         return false
                     }
                 }
             }
         }
+    }
 
-        var hasAttr = sel["hasAttr"]
-        if hasAttr is bool {
-            if hasAttr {
-                var attrName = sel["attrName"]
-                if attrName is string {
-                    if attrName != "" {
-                        var nodeAttrs = node["attrs"]
-                        if nodeAttrs is Dict {
-                            var nodeAttrVal = nodeAttrs[attrName]
-                            var selAttrVal = sel["attrValue"]
-                            var attrOp = sel["attrOp"]
-                            if attrOp is string {
-                                if selAttrVal is string {
-                                    if selAttrVal != "" {
-                                        if nodeAttrVal is string {
-                                            var actual = nodeAttrVal
-                                            if attrOp == "=" {
-                                                if actual != selAttrVal {
-                                                    return false
-                                                }
-                                            } else if attrOp == "^=" {
-                                                // 前缀匹配
-                                                if not actual.starts_with(selAttrVal) {
-                                                    return false
-                                                }
-                                            } else if attrOp == "$=" {
-                                                // 后缀匹配
-                                                if not actual.ends_with(selAttrVal) {
-                                                    return false
-                                                }
-                                            } else if attrOp == "*=" {
-                                                // 包含匹配
-                                                if not actual.has(selAttrVal) {
-                                                    return false
-                                                }
-                                            } else {
-                                                if actual != selAttrVal {
-                                                    return false
-                                                }
-                                            }
-                                        } else {
-                                            return false
-                                        }
+    var hasAttr = sel["hasAttr"]
+    if hasAttr is bool {
+        if hasAttr {
+            var attrName = sel["attrName"]
+            if attrName is string {
+                if attrName != "" {
+                    string nodeAttrVal = node.attrs.get(attrName, "")
+                    var selAttrVal = sel["attrValue"]
+                    var attrOp = sel["attrOp"]
+                    if attrOp is string {
+                        if selAttrVal is string {
+                            if selAttrVal != "" {
+                                string actual = nodeAttrVal
+                                if attrOp == "=" {
+                                    if actual != selAttrVal {
+                                        return false
+                                    }
+                                } else if attrOp == "^=" {
+                                    if not actual.starts_with(selAttrVal) {
+                                        return false
+                                    }
+                                } else if attrOp == "$=" {
+                                    if not actual.ends_with(selAttrVal) {
+                                        return false
+                                    }
+                                } else if attrOp == "*=" {
+                                    if not actual.has(selAttrVal) {
+                                        return false
+                                    }
+                                } else {
+                                    if actual != selAttrVal {
+                                        return false
                                     }
                                 }
                             }
-                        } else {
-                            return false
                         }
                     }
                 }
             }
         }
-
-        return true
     }
-    return false
+
+    return true
 }
 
-func _findDescendants(any node, Dict sel, Array results) {
-    if node == null {
-        return
+func _findDescendants(HtmlNode node, Dict sel, Array[HtmlNode] results) {
+    int total = node.children.len()
+    for 0:total-1 to i {
+        HtmlNode child = node.children[i]
+        if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
+            results.add(child)
+        }
+        _findDescendants(child, sel, results)
     }
-    if node is Dict[string,Array] {
-        var kids = node["children"]
-        if kids is Array {
-            int total = kids.len()
-            for 0:total-1 to i {
-                var child = kids[i]
-                if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
-                    results.add(child)
-                }
-                _findDescendants(child, sel, results)
-            }
+}
+
+func _findDirectChildren(HtmlNode node, Dict sel, Array[HtmlNode] results) {
+    int total = node.children.len()
+    for 0:total-1 to i {
+        HtmlNode child = node.children[i]
+        if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
+            results.add(child)
         }
     }
 }
 
-func _findDirectChildren(any node, Dict sel, Array results) {
-    if node == null {
-        return
-    }
-    if node is Dict[string,Array] {
-        var kids = node["children"]
-        if kids is Array {
-            int total = kids.len()
-            for 0:total-1 to i {
-                var child = kids[i]
-                if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
-                    results.add(child)
-                }
-            }
-        }
-    }
-}
-
-export func select(any root, string selector): Array[any] {
-    var parts = _splitSelector(selector)
+export func select(HtmlNode root, string selector): Array[HtmlNode] {
+    Array parts = _splitSelector(selector)
     if parts.len() == 0 {
         return []
     }
 
-    var current = [root]
+    Array[HtmlNode] current = [root]
     int partsLen = parts.len()
     for 0:partsLen-1 to pi {
         Dict p0 = parts[pi]
-        var next = []
-        for current to node {
+        Array[HtmlNode] next = []
+        for current.len() to ci {
+            HtmlNode node = current[ci]
             var isChildVal = p0["isChild"]
             if isChildVal is bool {
                 if isChildVal {
@@ -1489,8 +1400,8 @@ export func select(any root, string selector): Array[any] {
     return current
 }
 
-export func selectOne(any root, string selector): any {
-    var results = select(root, selector)
+export func selectOne(HtmlNode root, string selector): HtmlNode? {
+    Array[HtmlNode] results = select(root, selector)
     if results.len() > 0 {
         return results[0]
     }

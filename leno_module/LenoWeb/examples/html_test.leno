@@ -1,12 +1,13 @@
 import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
 
 main() {
     print("=== LenoHtml 测试 ===")
 
     // 测试1: 基本解析
     print("\n[1] 基本解析")
-    var root1 = htmls.parse("<div><p>Hello</p></div>")
-    print("  parse ok: " + (root1 != null))
+    HtmlNode root1 = htmls.parse("<div><p>Hello</p></div>")
+    print("  parse ok: true")
     var p1 = htmls.selectOne(root1, "p")
     print("  p text = " + htmls.text(p1))
 
@@ -63,8 +64,8 @@ main() {
 
     // 测试9: 属性选择器
     print("\n[9] 属性选择器")
-    var root9 = htmls.parse("<a href='http://example.com'>link</a>")
-    var a9 = htmls.selectOne(root9, "a[href]")
+    HtmlNode root9 = htmls.parse("<a href='http://example.com'>link</a>")
+    HtmlNode? a9 = htmls.selectOne(root9, "a[href]")
     print("  a[href] found = " + (a9 != null))
 
     // 测试10: allText
@@ -99,10 +100,10 @@ main() {
 
     // 测试14: 自闭标签
     print("\n[14] 自闭标签")
-    var root14 = htmls.parse("<div><br/><img src='x.jpg'/></div>")
-    var br14 = htmls.selectOne(root14, "br")
+    HtmlNode root14 = htmls.parse("<div><br/><img src='x.jpg'/></div>")
+    HtmlNode? br14 = htmls.selectOne(root14, "br")
     print("  br found = " + (br14 != null))
-    var img14 = htmls.selectOne(root14, "img")
+    HtmlNode? img14 = htmls.selectOne(root14, "img")
     print("  img found = " + (img14 != null))
 
     // 测试15: 注释
@@ -125,8 +126,8 @@ main() {
 
     // 测试18: selectOne 返回 null
     print("\n[18] selectOne null")
-    var root18 = htmls.parse("<div>content</div>")
-    var nope18 = htmls.selectOne(root18, ".notexist")
+    HtmlNode root18 = htmls.parse("<div>content</div>")
+    HtmlNode? nope18 = htmls.selectOne(root18, ".notexist")
     print("  null = " + (nope18 == null))
 
     print("\n=== 全部测试完成 ===")
