@@ -1,6 +1,6 @@
-// full_test.leno — LenoNet 全面功能测试
+// full_test.leno — LenoWeb 全面功能测试
 // 覆盖：GET / POST / PUT / DELETE / PATCH / HEAD / HTTPS / URL编解码 / getinfo / 复用客户端 / 重定向
-import "../lib/net.leno"
+import "../lib/web_net.leno" as net
 use net.(HttpClient, Response)
 
 // 测试统计

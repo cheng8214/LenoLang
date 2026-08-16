@@ -182,7 +182,7 @@ static inline void vm_stack_push_fast(VM* vm, Value v) {
 
 ## 开发 LenoNet 过程中发现的所有问题
 
-开发 `lib/curl_core.leno` 和 `lib/net.leno` 时，发现以下编译器和语言层面的问题。
+开发 `lib/web_curl_core.leno` 和 `lib/web_net.leno` 时，发现以下编译器和语言层面的问题。
 
 ---
 

@@ -1,9 +1,10 @@
-// LenoCrawler - 高级爬虫框架
+// web_crawler.leno — LenoWeb 爬虫框架（URL 工具 + 队列爬取）
+// 依赖 web_net.leno（HTTP）和 web_html.leno（HTML 解析）
 
 import strings
-import "../../LenoHtml/lib/html.leno" as htmls
-import "../../LenoNet/lib/net.leno"
-use net.(HttpClient, Response, createClient)
+import "web_html.leno" as htmls
+import "web_net.leno"
+use web_net.(HttpClient, Response, createClient)
 
 // ==================== URL 工具 ====================
 

@@ -1,7 +1,7 @@
-// stress_test.leno — LenoNet 多次请求测试
+// stress_test.leno — LenoWeb 多次请求测试
 // 注意：此测试用于验证 HttpClient 在多次请求时是否稳定
 // 相关 bug: 见 docs/LenoNet_崩溃问题排查记录.md
-import "../lib/net.leno"
+import "../lib/web_net.leno" as net
 import times
 use net.(HttpClient, Response)
 

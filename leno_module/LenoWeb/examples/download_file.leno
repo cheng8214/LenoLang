@@ -1,5 +1,5 @@
-// download_file.leno — LenoNet 文件下载示例
-import "../lib/net.leno"
+// download_file.leno — LenoWeb 文件下载示例
+import "../lib/web_net.leno" as net
 import files
 use net.(HttpClient, Response)
 

@@ -1,4 +1,4 @@
-import "../lib/html.leno" as htmls
+import "../lib/web_html.leno" as htmls
 
 main() {
     print("=== LenoHtml 测试 ===")

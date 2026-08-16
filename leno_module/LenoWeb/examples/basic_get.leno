@@ -1,5 +1,5 @@
-// basic_get.leno — LenoNet GET 请求基础示例
-import "../lib/net.leno"
+// basic_get.leno — LenoWeb GET 请求基础示例
+import "../lib/web_net.leno" as net
 use net.(HttpClient, Response)
 
 main() {

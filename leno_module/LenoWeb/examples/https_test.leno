@@ -1,5 +1,5 @@
-// https_test.leno — LenoNet HTTPS 测试
-import "../lib/net.leno"
+// https_test.leno — LenoWeb HTTPS 测试
+import "../lib/web_net.leno" as net
 use net.(HttpClient, Response)
 
 main() {

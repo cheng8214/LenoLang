@@ -10,7 +10,7 @@ clib curl {
 }
 
 main() {
-    curl l = ffi.load("leno_module/LenoNet/lib/libcurl-x64.dll")
+    curl l = ffi.load("leno_module/LenoWeb/lib/libcurl-x64.dll")
     if l == null {
         print("libcurl not loaded, SKIP")
         return

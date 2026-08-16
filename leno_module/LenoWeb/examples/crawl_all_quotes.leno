@@ -1,7 +1,7 @@
-// 使用 LenoCrawler 爬取 quotes.toscrape.com 全站名言
+// 使用 LenoWeb 爬虫框架爬取 quotes.toscrape.com 全站名言
 
-import "../lib/crawler.leno" as crawler
-import "../../LenoHtml/lib/html.leno" as htmls
+import "../lib/web_crawler.leno" as crawler
+import "../lib/web_html.leno" as htmls
 import times
 
 main() {
@@ -45,12 +45,9 @@ main() {
                 print("  -> 状态码: " + format("%d", status))
                 
                 var quotes = htmls.select(page["html"], ".quote")
-                if quotes is Array {
+                if quotes is Array[Dict] {
                     print("  -> 找到 " + format("%d", quotes.len()) + " 条名言")
-                    int qi = 0
-                    while qi < quotes.len() {
-                        var quote = quotes[qi]
-                        if quote is Dict {
+                  for quotes to quote {
                             var tagNode = htmls.select(quote, ".text")
                             var authorNode = htmls.select(quote, ".author")
                             string text = ""
@@ -68,20 +65,13 @@ main() {
                             }
                             print("    " + showText + " —— " + author)
                         }
-                        qi = qi + 1
-                    }
                 }
                 crawler.markVisited(c, url)
                 
                 var links = crawler.extractLinks(page)
-                if links is Array {
-                    int li = 0
-                    while li < links.len() {
-                        var linkStr = links[li]
-                        if linkStr is string {
+                if links is Array[string] {
+                    for links to linkStr{
                             crawler.enqueue(c, linkStr, depth + 1)
-                        }
-                        li = li + 1
                     }
                     print("  -> 提取 " + format("%d", links.len()) + " 个链接")
                 }
@@ -89,8 +79,7 @@ main() {
             
             var delayMs = c["delay_ms"]
             if delayMs is int and delayMs > 0 {
-                int waitStart = times.ms()
-                while times.ms() - waitStart < delayMs { }
+                sleep(delayMs)
             }
             print("")
         }

@@ -1,6 +1,6 @@
 // json_method_test.leno — 专注测试 Response.json() 方法
 // 不依赖外部 API，使用 example.com 的 HTML 响应做反向验证
-import "../lib/net.leno"
+import "../lib/web_net.leno" as net
 import jsons
 use net.(HttpClient, Response)
 

@@ -1,0 +1,67 @@
+// LenoWeb — Web 模块统一入口
+// 用户只需 import 此入口模块，即可使用 HTTP 客户端 + HTML 解析 + 爬虫框架
+// 仿 LenoSDL3 的入口组织方式：import 子模块 -> use 重新导出类型 -> export func 转发
+
+// ==================== 引入子模块 ====================
+import "web_curl_core.leno" as core
+import "web_net.leno" as net
+import "web_html.leno" as htmls
+import "web_crawler.leno" as crawler
+
+// ==================== 重新导出 core 类型 ====================
+use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
+use net.(Response, HttpClient)
+
+// ==================== HTTP 客户端 ====================
+export func createClient(): HttpClient { return net.createClient() }
+
+// 便捷 GET/POST/PUT/DELETE/PATCH
+export func get(string url): Response { return net.get(url) }
+export func post(string url, string body): Response { return net.post(url, body) }
+export func postJson(string url, string json): Response { return net.postJson(url, json) }
+export func put(string url, string body): Response { return net.put(url, body) }
+export func patch(string url, string body): Response { return net.patch(url, body) }
+export func del(string url): Response { return net.del(url) }
+
+// 表单 / 查询 / URL 编解码
+export func formEncode(Dict data): string { return net.formEncode(data) }
+export func buildQuery(Dict params): string { return net.buildQuery(params) }
+export func getWithParams(string url, Dict params): Response { return net.getWithParams(url, params) }
+export func postForm(string url, Dict data): Response { return net.postForm(url, data) }
+export func urlEncode(string url): string { return net.urlEncode(url) }
+export func urlDecode(string url): string { return net.urlDecode(url) }
+
+// 版本 / 全局生命周期
+export func version(): string { return net.version() }
+export func globalInit(int flags = 3): int { return net.globalInit(flags) }
+export func globalCleanup() { net.globalCleanup() }
+
+// ==================== HTML 解析 ====================
+export func parse(string html): any { return htmls.parse(html) }
+export func tag(any node): string { return htmls.tag(node) }
+export func text(any node): string { return htmls.text(node) }
+export func allText(any node): string { return htmls.allText(node) }
+export func attr(any node, string name): string { return htmls.attr(node, name) }
+export func children(any node): Array { return htmls.children(node) }
+export func getLinks(string html): Array[string] { return htmls.getLinks(html) }
+export func select(any root, string selector): Array[any] { return htmls.select(root, selector) }
+export func selectOne(any root, string selector): any { return htmls.selectOne(root, selector) }
+
+// ==================== URL 工具 ====================
+export func parseUrl(string url): Dict { return crawler.parseUrl(url) }
+export func buildUrl(Dict parts): string { return crawler.buildUrl(parts) }
+export func domain(string url): string { return crawler.domain(url) }
+export func baseUrl(string url): string { return crawler.baseUrl(url) }
+export func resolveUrl(string base, string ref): string { return crawler.resolveUrl(base, ref) }
+export func normalizeUrl(string url): string { return crawler.normalizeUrl(url) }
+
+// ==================== 爬虫框架 ====================
+export func Crawler(Dict config): Dict { return crawler.Crawler(config) }
+export func start(Dict[string, any] c): Dict { return crawler.start(c) }
+export func nextUrl(Dict[string, any] c): any { return crawler.nextUrl(c) }
+export func markVisited(Dict[string, any] c, string url) { crawler.markVisited(c, url) }
+export func enqueue(Dict[string, any] c, string url, int depth) { crawler.enqueue(c, url, depth) }
+export func shouldStop(Dict[string, any] c): bool { return crawler.shouldStop(c) }
+export func stop(Dict[string, any] c) { crawler.stop(c) }
+export func fetchPage(string url, string user_agent): any { return crawler.fetchPage(url, user_agent) }
+export func extractLinks(Dict[string, any] page): Array[string] { return crawler.extractLinks(page) }

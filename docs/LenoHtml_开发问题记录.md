@@ -2,7 +2,7 @@
 
 ## 概述
 
-在开发纯 Leno 实现的 HTML 解析器（`leno_module/LenoHtml/lib/html.leno`）过程中，记录了以下 LenoC 语言层面的 bug 和限制。
+在开发纯 Leno 实现的 HTML 解析器（`leno_module/LenoWeb/lib/web_html.leno`）过程中，记录了以下 LenoC 语言层面的 bug 和限制。
 
 **2026-08-15 更新**: 经过逐条验证，Bug 1 已修复，Bug 9 确认为 Bug 1 的副作用（已修复），其余均为设计限制而非 bug。LenoHtml 全部 18 个测试通过。
 

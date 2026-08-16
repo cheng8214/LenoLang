@@ -1,4 +1,4 @@
-// curl_core.leno — libcurl 核心绑定（clib/常量/DLL）
+// web_curl_core.leno — LenoWeb libcurl 核心绑定（clib/常量/DLL）
 // 封装 libcurl C API，提供 HTTP 请求、回调等功能
 import ffi
 import dirs

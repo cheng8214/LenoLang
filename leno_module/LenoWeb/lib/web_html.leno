@@ -1,4 +1,4 @@
-// LenoHtml - 纯 Leno 实现的 HTML 解析器
+// web_html.leno — LenoWeb HTML 解析器（纯 Leno 实现）
 // 使用模块级全局变量管理解析状态
 // 使用泛型类型 Array[string]/Dict[string,string] 提高类型安全性
 // 支持：HTML 实体解码、DOCTYPE、CDATA、容错解析
@@ -28,8 +28,7 @@ func _isSpace(int b): bool {
 
 func _parseTagName(): string {
     string tag = ""
-    int len = _g_html.len()
-    while _g_pos < len {
+    while _g_pos < _g_html.len(){
         int b = _g_html.byte(_g_pos)
         if _isAlphaNum(b) or b == 45 or b == 95 {
             tag = tag + strings.char(b)
@@ -42,8 +41,7 @@ func _parseTagName(): string {
 }
 
 func _skipWs() {
-    int len = _g_html.len()
-    while _g_pos < len {
+    while _g_pos <  _g_html.len() {
         int b = _g_html.byte(_g_pos)
         if _isSpace(b) {
             _g_pos = _g_pos + 1
@@ -158,34 +156,36 @@ func _isVoidTag(string tagName): bool {
 // ==================== HTML 实体解码 ====================
 
 func _namedEntity(string name): string {
-    if name == "amp" { return "&" }
-    if name == "lt" { return "<" }
-    if name == "gt" { return ">" }
-    if name == "quot" { return "\"" }
-    if name == "apos" { return "'" }
-    if name == "nbsp" { return " " }
-    if name == "copy" { return "©" }
-    if name == "reg" { return "®" }
-    if name == "trade" { return "™" }
-    if name == "hellip" { return "…" }
-    if name == "mdash" { return "—" }
-    if name == "ndash" { return "–" }
-    if name == "laquo" { return "«" }
-    if name == "raquo" { return "»" }
-    if name == "ldquo" { return "\u201C" }
-    if name == "rdquo" { return "\u201D" }
-    if name == "lsquo" { return "‘" }
-    if name == "rsquo" { return "’" }
-    if name == "bull" { return "•" }
-    if name == "middot" { return "·" }
-    if name == "deg" { return "°" }
-    if name == "plusmn" { return "±" }
-    if name == "times" { return "×" }
-    if name == "divide" { return "÷" }
-    if name == "frac14" { return "¼" }
-    if name == "frac12" { return "½" }
-    if name == "frac34" { return "¾" }
-    return ""
+    switch name {
+        case "amp" { return "&" }
+        case "lt" { return "<" }
+        case "gt" { return ">" }
+        case "quot" { return "\"" }
+        case "apos" { return "'" }
+        case "nbsp" { return " " }
+        case "copy" { return "©" }
+        case "reg" { return "®" }
+        case "trade" { return "™" }
+        case "hellip" { return "…" }
+        case "mdash" { return "—" }
+        case "ndash" { return "–" }
+        case "laquo" { return "«" }
+        case "raquo" { return "»" }
+        case "ldquo" { return "\u201C" }
+        case "rdquo" { return "\u201D" }
+        case "lsquo" { return "‘" }
+        case "rsquo" { return "’" }
+        case "bull" { return "•" }
+        case "middot" { return "·" }
+        case "deg" { return "°" }
+        case "plusmn" { return "±" }
+        case "times" { return "×" }
+        case "divide" { return "÷" }
+        case "frac14" { return "¼" }
+        case "frac12" { return "½" }
+        case "frac34" { return "¾" }
+        default { return "" }
+    }
 }
 
 func _hexDigit(int ch): int {
@@ -760,8 +760,8 @@ func _parseSimple(string selector): Dict {
     return r
 }
 
-func _splitSelector(string selector): Array {
-    Array parts = []
+func _splitSelector(string selector): Array[Dict] {
+    Array[Dict] parts = []
     string current = ""
     int i = 0
     int slen = selector.len()
@@ -925,15 +925,13 @@ func _findDescendants(any node, Dict sel, Array results) {
     if node == null {
         return
     }
-    if node is Dict {
+    if node is Dict[string,Array] {
         var kids = node["children"]
-        if kids is Array {
-            for kids to child {
-                if _matchSimple(child, sel) {
-                    results.add(child)
-                }
-                _findDescendants(child, sel, results)
+        for kids to child {
+            if _matchSimple(child, sel) {
+                results.add(child)
             }
+            _findDescendants(child, sel, results)
         }
     }
 }
@@ -942,13 +940,11 @@ func _findDirectChildren(any node, Dict sel, Array results) {
     if node == null {
         return
     }
-    if node is Dict {
+    if node is Dict[string,Array] {
         var kids = node["children"]
-        if kids is Array {
-            for kids to child {
-                if _matchSimple(child, sel) {
-                    results.add(child)
-                }
+        for kids to child {
+            if _matchSimple(child, sel) {
+                results.add(child)
             }
         }
     }
@@ -962,27 +958,22 @@ export func select(any root, string selector): Array[any] {
 
     var current = [root]
     int partsLen = parts.len()
-    for 0:partsLen to pi {
-        if pi >= partsLen {
-            break
-        }
-        var p0raw = parts[pi]
-        if p0raw is Dict {
-            var next = []
-            for current to node {
-                var isChildVal = p0raw["isChild"]
-                if isChildVal is bool {
-                    if isChildVal {
-                        _findDirectChildren(node, p0raw, next)
-                    } else {
-                        _findDescendants(node, p0raw, next)
-                    }
+    for 0:partsLen-1 to pi {
+        Dict p0 = parts[pi]
+        var next = []
+        for current to node {
+            var isChildVal = p0["isChild"]
+            if isChildVal is bool {
+                if isChildVal {
+                    _findDirectChildren(node, p0, next)
                 } else {
-                    _findDescendants(node, p0raw, next)
+                    _findDescendants(node, p0, next)
                 }
+            } else {
+                _findDescendants(node, p0, next)
             }
-            current = next
         }
+        current = next
     }
 
     return current

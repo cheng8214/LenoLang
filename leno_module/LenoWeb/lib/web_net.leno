@@ -1,8 +1,8 @@
-// net.leno — LenoNet 入口模块（高级 HTTP 客户端封装）
-// 用户只需 import net 即可使用所有功能
+// web_net.leno — LenoWeb HTTP 客户端（libcurl 高级封装）
+// 提供 Response/HttpClient 及 GET/POST/PUT/DELETE 等请求能力
 import ffi
 import jsons
-import "curl_core.leno" as core
+import "web_curl_core.leno" as core
 // 重新导出核心类型
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 

@@ -1,6 +1,6 @@
-// new_features_test.leno — LenoNet 新功能测试
+// new_features_test.leno — LenoWeb 新功能测试
 // 测试: Response.json() / formEncode / buildQuery / postForm / getWithParams / setBearerToken
-import "../lib/net.leno"
+import "../lib/web_net.leno" as net
 use net.(HttpClient, Response)
 
 main() {

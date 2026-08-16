@@ -1,13 +1,13 @@
-// LenoHtml + LenoNet 实战：抓取并解析真实网页
-import "../../LenoNet/lib/net.leno"
+// LenoWeb 实战：抓取并解析真实网页
+import "../lib/web_net.leno" as net
 import strings
-import "../lib/html.leno" as htmls
+import "../lib/web_html.leno" as htmls
 
 use net.(Response, HttpClient)
 
 main() {
     net.globalInit()
-    print("=== LenoNet + LenoHtml 实战 ===")
+    print("=== LenoWeb HTTP + HTML 实战 ===")
     print("libcurl: " + net.version())
     print("")
 
@@ -33,7 +33,7 @@ main() {
     print("内容类型: " + resp.contentType)
     print("")
 
-    // 用 LenoHtml 解析 HTML
+    // 用 LenoWeb HTML 解析器解析 HTML
     print("正在解析 HTML...")
     var root = htmls.parse(resp.body)
 

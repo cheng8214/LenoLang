@@ -1,5 +1,5 @@
-// custom_headers.leno — LenoNet 自定义 header 示例
-import "../lib/net.leno"
+// custom_headers.leno — LenoWeb 自定义 header 示例
+import "../lib/web_net.leno" as net
 use net.(HttpClient, Response)
 
 main() {

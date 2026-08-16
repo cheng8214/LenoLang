@@ -1,7 +1,7 @@
 [package]
-name = "LenoNet"
+name = "LenoWeb"
 version = "1.0.0"
-description = "Leno HTTP/HTTPS 网络客户端模块（libcurl 绑定）"
+description = "Leno Web 网络模块（HTTP 客户端 + HTML 解析 + 爬虫框架）"
 authors = ""
 license = "MIT"
 

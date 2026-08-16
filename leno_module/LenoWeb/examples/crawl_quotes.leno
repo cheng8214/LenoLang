@@ -1,7 +1,7 @@
 // crawl_quotes.leno — 爬取 quotes.toscrape.com 名言
-// 演示：LenoNet HTTP 获取 + LenoHtml CSS 选择器解析
-import "../lib/html.leno" as htmls
-import "../../LenoNet/lib/net.leno"
+// 演示：LenoWeb HTTP 获取 + HTML CSS 选择器解析
+import "../lib/web_html.leno" as htmls
+import "../lib/web_net.leno" as net
 use net.(Response)
 
 main() {

@@ -1,5 +1,5 @@
-// post_json.leno — LenoNet POST/JSON 示例
-import "../lib/net.leno"
+// post_json.leno — LenoWeb POST/JSON 示例
+import "../lib/web_net.leno" as net
 use net.(HttpClient, Response)
 
 main() {

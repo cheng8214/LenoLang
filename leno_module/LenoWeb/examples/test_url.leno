@@ -1,4 +1,4 @@
-import "../lib/crawler.leno" as crawler
+import "../lib/web_crawler.leno" as crawler
 
 main() {
     // 测试 parseUrl

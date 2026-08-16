@@ -1,6 +1,6 @@
-// http_methods.leno — LenoNet HTTP 方法测试
+// http_methods.leno — LenoWeb HTTP 方法测试
 // 测试 GET/POST/PUT/DELETE/PATCH/HEAD
-import "../lib/net.leno"
+import "../lib/web_net.leno" as net
 use net.(HttpClient, Response)
 
 main() {
