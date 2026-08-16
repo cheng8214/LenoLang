@@ -1,0 +1,39 @@
+// 测试 LenoWeb sitemap.xml 解析
+import "../lib/Web.leno" as web
+use web.(parseSitemap, sitemapUrl)
+
+main() {
+    print("=== sitemap.xml 解析测试 ===")
+
+    // 标准 sitemap
+    string sitemap = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                     "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n" +
+                     "  <url><loc>https://example.com/</loc><lastmod>2024-01-01</lastmod></url>\n" +
+                     "  <url><loc>https://example.com/about</loc></url>\n" +
+                     "  <url><loc>https://example.com/contact</loc></url>\n" +
+                     "</urlset>"
+
+    var urls = web.parseSitemap(sitemap)
+    print("url count = " + urls.len())
+    for urls to u {
+        print("  " + u)
+    }
+
+    // 带换行/缩进的 <loc>
+    string sitemap2 = "<urlset>\n" +
+                      "  <url>\n    <loc>https://a.com/1</loc>\n  </url>\n" +
+                      "  <url>\n    <loc>https://a.com/2</loc>\n  </url>\n" +
+                      "</urlset>"
+    var urls2 = web.parseSitemap(sitemap2)
+    print("url2 count = " + urls2.len())
+
+    // 空 sitemap
+    var urls3 = web.parseSitemap("<urlset></urlset>")
+    print("empty count = " + urls3.len())
+
+    // sitemapUrl
+    print("sitemapUrl = " + web.sitemapUrl("https://example.com"))
+    print("sitemapUrl slash = " + web.sitemapUrl("https://example.com/"))
+
+    print("=== sitemap 测试完成 ===")
+}

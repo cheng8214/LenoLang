@@ -2,6 +2,7 @@
 // 提供 Response/HttpClient 及 GET/POST/PUT/DELETE 等请求能力
 import ffi
 import jsons
+import files
 import "web_curl_core.leno" as core
 // 重新导出核心类型
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
@@ -396,6 +397,20 @@ export func createClient(): HttpClient {
     HttpClient c = new HttpClient()
     c.init()
     return c
+}
+
+// ==================== 文件下载 ====================
+
+// 下载 URL 到本地文件，成功返回下载字节数，失败返回 -1
+export func download(string url, string savePath): int {
+    HttpClient c = createClient()
+    Response r = c.get(url)
+    c.close()
+    if r.ok() {
+        files.write(savePath, r.body)
+        return r.body.len()
+    }
+    return -1
 }
 
 // ==================== Session 会话 ====================

@@ -1,0 +1,40 @@
+// 测试 LenoWeb HTML 伪类选择器
+import "../lib/Web.leno" as web
+use web.(parse, select, text, tag)
+
+main() {
+    print("=== 伪类选择器测试 ===")
+
+    var html = "<ul>" +
+               "<li class='item'>One</li>" +
+               "<li class='item'>Two</li>" +
+               "<li class='item'>Three</li>" +
+               "</ul>" +
+               "<div>" +
+               "<p>P1</p>" +
+               "<span>S1</span>" +
+               "</div>"
+
+    var root = web.parse(html)
+
+    // :first-child
+    var first = web.select(root, "li:first-child")
+    print("first-child count = " + first.len())
+    if first.len() > 0 { print("first text = " + web.text(first[0])) }
+
+    // :last-child
+    var last = web.select(root, "li:last-child")
+    print("last-child count = " + last.len())
+    if last.len() > 0 { print("last text = " + web.text(last[0])) }
+
+    // :nth-child(2)
+    var second = web.select(root, "li:nth-child(2)")
+    print("nth-child(2) count = " + second.len())
+    if second.len() > 0 { print("2nd text = " + web.text(second[0])) }
+
+    // 父节点 div 的 :first-child (p)
+    var divFirst = web.select(root, "div:first-child")
+    print("div first-child count = " + divFirst.len())
+
+    print("=== 伪类测试完成 ===")
+}

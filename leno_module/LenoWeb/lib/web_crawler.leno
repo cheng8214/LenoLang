@@ -218,6 +218,252 @@ export func normalizeUrl(string url): string {
     return buildUrl(r)
 }
 
+// 提取 URL 中指定 query 参数的值，找不到返回空串
+export func getQueryParam(string url, string key): string {
+    int qi = strings.find(url, "?")
+    if qi < 0 {
+        return ""
+    }
+    // 截取 query 部分（去掉 fragment）
+    int end = url.len()
+    int fi = strings.find(url, "#")
+    if fi >= 0 and fi > qi {
+        end = fi
+    }
+    string qs = url.slice(qi + 1, end)
+    // 按 & 分割各参数
+    int start = 0
+    int len = qs.len()
+    while start <= len {
+        int amp = strings.find(qs.slice(start, len), "&")
+        int segEnd = len
+        if amp >= 0 {
+            segEnd = start + amp
+        }
+        string seg = qs.slice(start, segEnd)
+        // 按 = 分割 key=value
+        int eq = strings.find(seg, "=")
+        string k = ""
+        string v = ""
+        if eq >= 0 {
+            k = seg.slice(0, eq)
+            v = seg.slice(eq + 1, seg.len())
+        } else {
+            k = seg
+        }
+        if k == key {
+            return v
+        }
+        if amp < 0 {
+            break
+        }
+        start = segEnd + 1
+    }
+    return ""
+}
+
+// 去掉 URL 的 query 和 fragment，返回纯净 URL
+export func stripQuery(string url): string {
+    int len = url.len()
+    int end = len
+    int qi = strings.find(url, "?")
+    int fi = strings.find(url, "#")
+    if qi >= 0 and (fi < 0 or qi < fi) {
+        end = qi
+    } else if fi >= 0 {
+        end = fi
+    }
+    return url.slice(0, end)
+}
+
+// ==================== Robots.txt 解析 ====================
+
+// 解析 robots.txt 文本，返回规则结构：
+// {groups: [{user_agents: [...], allow: [...], disallow: [...]}]}
+export func parseRobots(string text): Dict {
+    var lines = strings.split(text, "\n")
+    Array groups = []
+    Dict[string, any] cur = {user_agents: [], allow: [], disallow: []}
+    for lines to ln {
+        string line = strings.trim(ln)
+        if line == "" or line.starts_with("#") {
+            continue
+        }
+        int ci = strings.find(line, ":")
+        if ci < 0 {
+            continue
+        }
+        string field = strings.to_lower(strings.trim(line.slice(0, ci)))
+        string value = strings.trim(line.slice(ci + 1, line.len()))
+        if field == "user-agent" {
+            // 新一组
+            var prevUas = cur["user_agents"]
+            if prevUas is Array and prevUas.len() > 0 {
+                groups.add(cur)
+            }
+            cur = {user_agents: [value], allow: [], disallow: []}
+        } else if field == "allow" {
+            if value != "" {
+                var allows = cur["allow"]
+                if allows is Array {
+                    allows.add(value)
+                }
+            }
+        } else if field == "disallow" {
+            if value != "" {
+                var disallows = cur["disallow"]
+                if disallows is Array {
+                    disallows.add(value)
+                }
+            }
+        }
+    }
+    var lastUas = cur["user_agents"]
+    if lastUas is Array and lastUas.len() > 0 {
+        groups.add(cur)
+    }
+    return {groups: groups}
+}
+
+// 判断是否允许抓取 url。userAgent 不区分大小写，支持通配 *
+func _robotsRuleMatch(string rule, string path): bool {
+    // 支持 * 通配符的简单前缀匹配
+    int star = strings.find(rule, "*")
+    if star < 0 {
+        return path.starts_with(rule)
+    }
+    string prefix = rule.slice(0, star)
+    string suffix = rule.slice(star + 1, rule.len())
+    if not path.starts_with(prefix) {
+        return false
+    }
+    if suffix == "" {
+        return true
+    }
+    return path.has(suffix)
+}
+
+// 从 URL 中提取用于 robots 匹配的路径
+func _robotsPath(string url): string {
+    string clean = stripQuery(url)
+    int hi = strings.find(clean, "://")
+    if hi < 0 {
+        return clean
+    }
+    int slash = strings.find(clean.slice(hi + 3, clean.len()), "/")
+    if slash < 0 {
+        return "/"
+    }
+    string p = clean.slice(hi + 3 + slash, clean.len())
+    if p == "" {
+        p = "/"
+    }
+    return p
+}
+
+// 判断 robots.txt 是否允许抓取指定 URL
+export func isRobotsAllowed(string robotsText, string userAgent, string url): bool {
+    var parsed = parseRobots(robotsText)
+    var groups = parsed["groups"]
+    string ua = strings.to_lower(userAgent)
+    string path = _robotsPath(url)
+
+    // 查找最匹配的 UA 组（精确匹配优先，其次 *)
+    Dict[string, any] selected = null
+    bool selectedIsStar = false
+    if groups is Array {
+        for groups to g {
+            if g is Dict[string, any] {
+                var uas = g["user_agents"]
+                if uas is Array {
+                    for uas to gagent {
+                        string gs = strings.to_lower(gagent)
+                        if gs == "*" {
+                            if selected == null {
+                                selected = g
+                                selectedIsStar = true
+                            }
+                        } else if gs == ua {
+                            selected = g
+                            selectedIsStar = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if selected == null {
+        return true
+    }
+
+    // 检查 Allow / Disallow 规则
+    bool allowed = true
+    var allows = selected["allow"]
+    var disallows = selected["disallow"]
+
+    // Disallow 命中即拒绝，除非 Allow 覆盖
+    if disallows is Array {
+        for disallows to rule {
+            if _robotsRuleMatch(rule, path) {
+                allowed = false
+            }
+        }
+    }
+    if allows is Array {
+        for allows to rule {
+            if _robotsRuleMatch(rule, path) {
+                allowed = true
+            }
+        }
+    }
+    return allowed
+}
+
+// ==================== Sitemap.xml 解析 ====================
+
+// 解析 sitemap.xml 文本，提取所有 <loc> 中的 URL
+export func parseSitemap(string xml): Array[string] {
+    Array[string] urls = []
+    int pos = 0
+    int n = xml.len()
+    while true {
+        // 查找 <loc>（大小写不敏感：支持 <loc> 和 <LOC>）
+        int open = strings.find(xml.slice(pos, n), "<loc")
+        if open < 0 {
+            break
+        }
+        int start = pos + open
+        // 跳过标签内容 <loc> 或 <loc ...>
+        int gt = strings.find(xml.slice(start, n), ">")
+        if gt < 0 {
+            break
+        }
+        int contentStart = start + gt + 1
+        // 查找 </loc>
+        int closeTag = strings.find(xml.slice(contentStart, n), "</loc")
+        if closeTag < 0 {
+            break
+        }
+        int contentEnd = contentStart + closeTag
+        string url = xml.slice(contentStart, contentEnd)
+        url = strings.trim(url)
+        if url != "" {
+            urls.add(url)
+        }
+        pos = contentEnd
+    }
+    return urls
+}
+
+// 从 URL 获取其 sitemap.xml 路径（简化：直接返回 /sitemap.xml）
+export func sitemapUrl(string baseUrl): string {
+    string clean = baseUrl
+    if clean.ends_with("/") {
+        clean = clean.slice(0, clean.len() - 1)
+    }
+    return clean + "/sitemap.xml"
+}
+
 // ==================== Crawler 核心 ====================
 
 export func Crawler(Dict config): Dict {

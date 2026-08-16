@@ -1,0 +1,34 @@
+// 测试 LenoWeb URL 便捷工具
+import "../lib/Web.leno" as web
+use web.(getQueryParam, stripQuery)
+
+main() {
+    print("=== URL 工具测试 ===")
+
+    // getQueryParam
+    string url1 = "https://example.com/search?q=leno&page=2&sort=asc"
+    print("q = " + web.getQueryParam(url1, "q"))
+    print("page = " + web.getQueryParam(url1, "page"))
+    print("sort = " + web.getQueryParam(url1, "sort"))
+    print("missing = [" + web.getQueryParam(url1, "xxx") + "]")
+
+    // 带 fragment
+    string url2 = "https://example.com/page?id=5#section"
+    print("id (with frag) = " + web.getQueryParam(url2, "id"))
+
+    // 无 query
+    string url3 = "https://example.com/path"
+    print("no query = [" + web.getQueryParam(url3, "a") + "]")
+
+    // 单参数
+    string url4 = "https://example.com/x?token=abc"
+    print("token = " + web.getQueryParam(url4, "token"))
+
+    // stripQuery
+    print("strip1 = " + web.stripQuery(url1))
+    print("strip2 = " + web.stripQuery(url2))
+    print("strip3 = " + web.stripQuery(url3))
+    print("strip4 = " + web.stripQuery(url4))
+
+    print("=== URL 工具测试完成 ===")
+}

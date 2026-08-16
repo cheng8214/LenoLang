@@ -15,6 +15,9 @@ use net.(Response, HttpClient, Session)
 // ==================== HTTP 客户端 ====================
 export func createClient(): HttpClient { return net.createClient() }
 
+// 下载到文件，成功返回字节数，失败返回 -1
+export func download(string url, string savePath): int { return net.download(url, savePath) }
+
 // ==================== Session 会话（仿 requests.Session） ====================
 export func createSession(): Session { return net.createSession() }
 export func sessionGet(Session s, string url): Response { return net.sessionGet(s, url) }
@@ -57,6 +60,7 @@ export func parse(string html): any { return htmls.parse(html) }
 export func tag(any node): string { return htmls.tag(node) }
 export func text(any node): string { return htmls.text(node) }
 export func allText(any node): string { return htmls.allText(node) }
+export func cleanText(string raw): string { return htmls.cleanText(raw) }
 export func attr(any node, string name): string { return htmls.attr(node, name) }
 export func children(any node): Array { return htmls.children(node) }
 export func getLinks(string html): Array[string] { return htmls.getLinks(html) }
@@ -74,6 +78,12 @@ export func domain(string url): string { return crawler.domain(url) }
 export func baseUrl(string url): string { return crawler.baseUrl(url) }
 export func resolveUrl(string base, string ref): string { return crawler.resolveUrl(base, ref) }
 export func normalizeUrl(string url): string { return crawler.normalizeUrl(url) }
+export func getQueryParam(string url, string key): string { return crawler.getQueryParam(url, key) }
+export func stripQuery(string url): string { return crawler.stripQuery(url) }
+export func parseRobots(string text): Dict { return crawler.parseRobots(text) }
+export func isRobotsAllowed(string robotsText, string userAgent, string url): bool { return crawler.isRobotsAllowed(robotsText, userAgent, url) }
+export func parseSitemap(string xml): Array[string] { return crawler.parseSitemap(xml) }
+export func sitemapUrl(string baseUrl): string { return crawler.sitemapUrl(baseUrl) }
 
 // ==================== 爬虫框架 ====================
 export func Crawler(Dict config): Dict { return crawler.Crawler(config) }

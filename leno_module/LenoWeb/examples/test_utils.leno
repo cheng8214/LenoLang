@@ -1,0 +1,25 @@
+// 测试 LenoWeb 实用工具：cleanText + download
+import "../lib/Web.leno" as web
+use web.(parse, allText, cleanText, download, globalInit, version)
+
+main() {
+    print("=== cleanText 测试 ===")
+    // 合并连续空白、去首尾
+    string raw = "  Hello   world\n\n  this\n  is  \t test  "
+    string clean = web.cleanText(raw)
+    print("[" + clean + "]")
+    print("clean = 'Hello world this is test' ? " + (clean == "Hello world this is test"))
+
+    // HTML 场景：allText 后 cleanText
+    var root = web.parse("<div>\n  <p>Hello</p>\n  <p>World</p>\n</div>")
+    string all = web.allText(root)
+    print("raw allText = [" + all + "]")
+    string cleaned = web.cleanText(all)
+    print("cleaned = [" + cleaned + "]")
+
+    print("=== download 测试 ===")
+    globalInit()
+    print("version = " + web.version())
+
+    print("=== 实用工具测试完成 ===")
+}

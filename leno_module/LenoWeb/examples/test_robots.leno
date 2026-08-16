@@ -1,0 +1,30 @@
+// 测试 LenoWeb robots.txt 解析
+import "../lib/Web.leno" as web
+use web.(isRobotsAllowed, parseRobots)
+
+main() {
+    print("=== robots.txt 解析测试 ===")
+
+    // 标准 robots.txt
+    string robots = "User-agent: *\n" +
+                    "Disallow: /admin/\n" +
+                    "Disallow: /private\n" +
+                    "\n" +
+                    "User-agent: Googlebot\n" +
+                    "Allow: /\n" +
+                    "Disallow: /temp"
+
+    // 测试通配 UA 组的 Disallow
+    print("generic /admin/ blocked ? " + (not web.isRobotsAllowed(robots, "MyBot", "https://example.com/admin/")))
+
+    // 允许的路径
+    print("generic /public allowed ? " + web.isRobotsAllowed(robots, "MyBot", "https://example.com/public"))
+
+    // 精确 UA 组：Googlebot 允许全部
+    print("googlebot /temp allowed (Allow / wins) ? " + web.isRobotsAllowed(robots, "Googlebot", "https://example.com/temp/page"))
+
+    // 其他 UA 在 Googlebot 组下（不应匹配 Googlebot 组）
+    print("other bot /public ? " + web.isRobotsAllowed(robots, "Bingbot", "https://example.com/public"))
+
+    print("=== robots 测试完成 ===")
+}
