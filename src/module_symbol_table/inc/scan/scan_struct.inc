@@ -384,6 +384,14 @@
                                                 ret_type_len = (int)(after_func - ret_type_start);
                                             }
 
+                                            // ★ 消费可空返回类型的尾部 '?'（如 HtmlNode?）
+                                            // 若不消费，方法体将无法被跳过，导致从第一个可空返回方法起
+                                            // 之后的 struct 方法全部丢失（跨模块 use 时报"没有方法"）
+                                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                            if (*after_func == '?') {
+                                                after_func++;
+                                            }
+
                                             if (ret_type_len > 0 && ret_type_len < 128) {
                                                 char ret_type_str[128];
                                                 strncpy(ret_type_str, ret_type_start, ret_type_len);

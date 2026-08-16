@@ -14,6 +14,7 @@ export struct HtmlNode {
     Dict[string, string] attrs
     Array[HtmlNode] children
     string text
+    HtmlNode? _parent   // 父节点（根节点为 null），建树时由 _makeNode 设置；用 parent() 访问
 
     // 获取属性值（不存在返回空串）
     func attr(string name): string {
@@ -108,6 +109,74 @@ export struct HtmlNode {
     // 移除匹配选择器的子节点，返回移除数量
     func remove(string selector): int {
         return removeElement(self, selector)
+    }
+
+    // ===== 向上查询 =====
+
+    // 父节点（根节点返回 null）
+    func parent(): HtmlNode? {
+        return _parent
+    }
+
+    // 向上查找第一个匹配选择器的祖先（含自身），找不到返回 null
+    func closest(string selector): HtmlNode? {
+        HtmlNode? cur = self
+        while cur != null {
+            if _nodeMatches(cur, selector) {
+                return cur
+            }
+            cur = cur._parent
+        }
+        return null
+    }
+
+    // 所有兄弟节点（不含自身）
+    func siblings(): Array[HtmlNode] {
+        Array[HtmlNode] result = []
+        if _parent == null {
+            return result
+        }
+        Array[HtmlNode] bros = _parent.children
+        for bros.len() to i {
+            if bros[i] != self {
+                result.add(bros[i])
+            }
+        }
+        return result
+    }
+
+    // 下一个兄弟节点（不存在返回 null）
+    func nextSibling(): HtmlNode? {
+        if _parent == null {
+            return null
+        }
+        Array[HtmlNode] bros = _parent.children
+        for bros.len() to i {
+            if bros[i] == self {
+                if i + 1 < bros.len() {
+                    return bros[i + 1]
+                }
+                break
+            }
+        }
+        return null
+    }
+
+    // 上一个兄弟节点（不存在返回 null）
+    func prevSibling(): HtmlNode? {
+        if _parent == null {
+            return null
+        }
+        Array[HtmlNode] bros = _parent.children
+        for bros.len() to i {
+            if bros[i] == self {
+                if i - 1 >= 0 {
+                    return bros[i - 1]
+                }
+                break
+            }
+        }
+        return null
     }
 }
 
@@ -431,13 +500,17 @@ func _decodeEntities(string text): string {
 
 // ==================== 元素解析 ====================
 
-// 内部节点工厂：创建 HtmlNode
+// 内部节点工厂：创建 HtmlNode，并给所有子节点设置 parent 指针
 func _makeNode(string tag, Dict[string, string] attrs, Array[HtmlNode] children, string text): HtmlNode {
     HtmlNode n = new HtmlNode()
     n.tag = tag
     n.attrs = attrs
     n.children = children
     n.text = text
+    // 为每个子节点回填 parent 指针（支持 parent()/closest() 向上查询）
+    for children.len() to i {
+        children[i]._parent = n
+    }
     return n
 }
 
@@ -1351,6 +1424,17 @@ func _matchSimple(HtmlNode node, SelectorPart sel): bool {
     }
 
     return true
+}
+
+// 判断单个节点自身是否匹配选择器（供 HtmlNode.closest 使用）
+func _nodeMatches(HtmlNode node, string selector): bool {
+    Array[SelectorPart] parts = _splitSelector(selector)
+    if parts.len() == 0 {
+        return false
+    }
+    // 多段选择器（空格/>级联）用于祖先关系，单节点自身匹配只看最后一段
+    SelectorPart last = parts[parts.len() - 1]
+    return _matchSimple(node, last) and _matchPseudo(node, last, 0, 1)
 }
 
 func _findDescendants(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {

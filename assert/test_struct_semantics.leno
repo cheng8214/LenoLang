@@ -1,0 +1,46 @@
+// test_struct_semantics.leno — 验证 Leno struct 是值语义还是引用语义
+// 关键：决定 _makeNode 里 children[i]._parent = n 是否能让外部看到 parent 指针
+
+struct Node {
+    string tag
+    Node? parent
+}
+
+main() {
+    print("=== struct 值/引用语义测试 ===\n")
+
+    // 测试1: struct 赋值后修改，原变量是否受影响
+    Node a = new Node()
+    a.tag = "a"
+    Node b = a
+    b.tag = "b"
+    print("[1] b.tag='b' 后 a.tag = " + a.tag + " (引用=b, 值=a)")
+
+    // 测试2: 函数内修改传入 struct 是否影响外部
+    Node c = new Node()
+    c.tag = "c"
+    _setTag(c, "c2")
+    print("[2] 函数内改 tag 后 c.tag = " + c.tag + " (引用=c2, 值=c)")
+
+    // 测试3: 函数内设置 struct 字段（parent）是否影响外部
+    Node parentN = new Node()
+    parentN.tag = "parent"
+    Node childN = new Node()
+    childN.tag = "child"
+    _setParent(childN, parentN)
+    if childN.parent == null {
+        print("[3] _setParent 后 childN.parent = null (值拷贝: 修改丢失)")
+    } else {
+        print("[3] _setParent 后 childN.parent.tag = " + childN.parent.tag + " (引用: 修改生效)")
+    }
+
+    print("\n=== 测试完成 ===")
+}
+
+func _setTag(Node n, string t) {
+    n.tag = t
+}
+
+func _setParent(Node child, Node p) {
+    child.parent = p
+}

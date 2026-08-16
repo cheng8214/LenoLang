@@ -1,0 +1,64 @@
+// test_traverse.leno — 测试 HtmlNode parent 指针与向上查询
+// 覆盖：parent()/closest()/siblings()/nextSibling()/prevSibling()
+
+import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
+
+main() {
+    print("=== HtmlNode 向上查询测试 ===\n")
+
+    string html = "<div class='container'><h1>标题</h1><p class='a'>第一段</p><p class='b'>第二段</p><ul><li>项1</li><li>项2</li></ul></div>"
+    HtmlNode root = htmls.parse(html)
+    HtmlNode? container = htmls.selectOne(root, "div.container")
+    if container == null { print("FAIL: container 为空"); return }
+
+    // 测试1: 第一个 <p> 的 parent 是 container
+    HtmlNode? p1 = htmls.selectOne(container as HtmlNode, "p.a")
+    if p1 == null { print("FAIL: p.a 为空"); return }
+    HtmlNode? p1parent = p1.parent()
+    string t1 = _nodeTag(p1parent)
+    print("[1] p.a 的 parent() tag = " + t1 + " (期望 div)")
+
+    // 测试2: <li> 的父级 <ul>
+    HtmlNode? li1 = htmls.selectOne(container as HtmlNode, "li")
+    if li1 == null { print("FAIL: li 为空"); return }
+    HtmlNode? ul = li1.parent()
+    string t2 = _nodeTag(ul)
+    print("[2] li 的 parent() tag = " + t2 + " (期望 ul)")
+
+    // 测试3: closest 向上找 div.container
+    HtmlNode? c = li1.closest("div.container")
+    string t3 = _nodeTag(c)
+    print("[3] li.closest('div.container') = " + t3 + " (期望 div)")
+
+    // 测试4: closest 找不存在的祖先返回 null
+    HtmlNode? noMatch = li1.closest("table")
+    string t4 = _nodeTag(noMatch)
+    print("[4] li.closest('table') = " + t4 + " (期望 null)")
+
+    // 测试5: siblings
+    int sibCount = p1.siblings().len()
+    print("[5] p.a 的 siblings 数量 = " + sibCount + " (期望 5)")
+
+    // 测试6: nextSibling 从 p.a 到 p.b
+    HtmlNode? nxt = p1.nextSibling()
+    while nxt != null and nxt.tag == "#text" {
+        nxt = nxt.nextSibling()
+    }
+    string t6 = _nodeTag(nxt)
+    print("[6] p.a 的下一个元素兄弟 = " + t6 + " (期望 p)")
+
+    // 测试7: 根节点 parent 为 null
+    HtmlNode? rootParent = root.parent()
+    string t7 = _nodeTag(rootParent)
+    print("[7] root 的 parent() = " + t7 + " (期望 null)")
+
+    print("\n=== 向上查询测试完成 ===")
+}
+
+func _nodeTag(HtmlNode? n): string {
+    if n == null {
+        return "null"
+    }
+    return n.tag
+}

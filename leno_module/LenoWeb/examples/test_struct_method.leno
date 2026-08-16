@@ -1,0 +1,41 @@
+// test_struct_method.leno — 验证跨模块调用 struct 方法是否可行
+// 关键：HtmlNode 有 attr()/text()/select() 等方法，验证 import 后能否调用
+import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
+
+main() {
+    print("=== 跨模块 struct 方法测试 ===\n")
+
+    var root = htmls.parse("<div id='d' class='c'><span>hi</span></div>")
+    var div = htmls.selectOne(root, "div")
+    if div == null {
+        print("FAIL: div 为空")
+        return
+    }
+
+    // 测试已存在的 struct 方法 attr()
+    string a = div.attr("id")
+    print("[1] div.attr('id') = " + a + " (期望 d)")
+
+    // 测试已存在的 struct 方法 text()
+    string t = div.text()
+    print("[2] div.text() = " + t + " (期望空串，因为文本在子节点)")
+
+    // 测试已存在的 struct 方法 hasAttr()
+    bool h = div.hasAttr("class")
+    print("[3] div.hasAttr('class') = " + h + " (期望 true)")
+
+    // 测试已存在的 struct 方法 select()
+    var sp = div.select("span")
+    print("[4] div.select('span') len = " + sp.len() + " (期望 1)")
+
+    // 测试新加的 struct 方法 parent()
+    HtmlNode? pd = div.parent()
+    if pd == null {
+        print("[5] div.parent() = null (期望 div 的父节点)")
+    } else {
+        print("[5] div.parent() tag = " + pd.tag + " (期望 #document)")
+    }
+
+    print("\n=== struct 方法测试完成 ===")
+}

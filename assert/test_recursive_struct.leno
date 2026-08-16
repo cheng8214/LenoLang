@@ -1,0 +1,67 @@
+// test_recursive_struct.leno — 最小测试：递归 struct 能否含自身类型字段（如 parent 指针）
+// 目的：验证 HtmlNode 加 parent 字段的可行性（Leno 递归 struct 能否带自身类型的非数组字段）
+
+struct Node {
+    string tag
+    Array[Node] children
+    Node parent    // 自身类型字段（parent 指针）
+    int depth
+}
+
+main() {
+    // 建一个 3 层树：root -> child -> grandchild
+    Node root = new Node()
+    root.tag = "root"
+    root.children = []
+    root.depth = 0
+
+    Node child = new Node()
+    child.tag = "child"
+    child.children = []
+    child.depth = 1
+    root.children.add(child)
+
+    Node grandchild = new Node()
+    grandchild.tag = "grandchild"
+    grandchild.children = []
+    grandchild.depth = 2
+    child.children.add(grandchild)
+
+    // 手动设置 parent 指针
+    child.parent = root
+    grandchild.parent = child
+
+    print("=== 递归 struct + parent 指针测试 ===\n")
+
+    // 测试1: 访问 parent 字段
+    assert_eq(grandchild.parent.tag, "child")
+    assert_eq(child.parent.tag, "root")
+    print("[1] parent 字段读取: OK")
+
+    // 测试2: 通过 parent 链向上访问（模拟 closest/parent 查询）
+    assert_eq(grandchild.parent.parent.tag, "root")
+    print("[2] 两级 parent 链: OK")
+
+    // 测试3: parent 字段可赋值（建树时设置）
+    Node root2 = new Node()
+    root2.tag = "root2"
+    root2.children = []
+    Node c2 = new Node()
+    c2.tag = "c2"
+    c2.children = []
+    c2.parent = root2
+    root2.children.add(c2)
+    assert_eq(c2.parent.tag, "root2")
+    print("[3] parent 赋值: OK")
+
+    // 测试4: 兄弟节点（children 遍历 + parent 判断）
+    int childCount = root.children.len()
+    assert_eq(childCount, 1)
+    print("[4] children 遍历: OK")
+
+    // 测试5: 深度字段（可用于 closest 的层级判断）
+    assert_eq(grandchild.depth, 2)
+    print("[5] 深度字段: OK")
+
+    print("\n=== 递归 struct + parent 测试全部通过 ===")
+}
